@@ -1,0 +1,22 @@
+# 示例媒体与字幕(体积大, 不入库; 本地测试用)
+spoke.mp4
+*.mp4
+*.mkv
+*.webm
+*.avi
+*.mov
+*.srt
+*.ass
+*.ssa
+
+# 本地渲染依赖(由 node editor/scripts/fetch-vendor.js 下载, 约 19MB)
+editor/vendor/
+
+# 工程数据 / 本地测试脚本 / 截图
+.workbuddy/
+
+# 其它
+node_modules/
+Thumbs.db
+desktop.ini
+.DS_Store

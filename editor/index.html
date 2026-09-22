@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>字幕编辑器 · Subtitle Studio</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ══════════ 工具栏 ══════════ -->
+  <header id="toolbar">
+    <div class="tb-group">
+      <span class="app-logo">🎬 字幕编辑器</span>
+    </div>
+    <div class="tb-group">
+      <button class="btn" id="btn-open-video" title="导入视频文件 (mp4/webm/mkv…)">📁 打开视频</button>
+      <button class="btn" id="btn-open-sub" title="导入 SRT / ASS 字幕文件">📄 打开字幕</button>
+      <input type="file" id="file-video" accept="video/*,.mkv,.avi,.mov" hidden>
+      <input type="file" id="file-sub" accept=".srt,.ass,.ssa" hidden>
+    </div>
+    <div class="tb-group tb-samples" id="sample-bar">
+      <span class="tb-label">示例:</span>
+      <button class="btn btn-ghost" id="btn-sample-video" title="加载工作区示例视频">视频</button>
+      <button class="btn btn-ghost" id="btn-sample-srt" title="加载示例双语 SRT">SRT</button>
+      <button class="btn btn-ghost" id="btn-sample-ass" title="加载示例特效 ASS">ASS</button>
+    </div>
+    <div class="tb-group" id="srt-options">
+      <span class="tb-label">双语排列:</span>
+      <select id="sel-bi-order" class="select" title="主/副语言上下排列方式">
+        <option value="main-first">主上副下</option>
+        <option value="sub-first">副上主下</option>
+      </select>
+      <span class="tb-label">字号:</span>
+      <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
+    </div>
+    <div class="tb-group tb-right">
+      <span id="status-file" class="status-file" title="当前字幕文件"></span>
+      <button class="btn btn-ghost" id="btn-shortcuts" title="自定义快捷键与鼠标操作 (Ctrl+,)">⌨ 快捷键</button>
+      <button class="btn btn-accent" id="btn-export" disabled title="导出原始格式(含逐词特效)">💾 导出字幕</button>
+      <button class="btn" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出干净ASS</button>
+      <button class="btn" id="btn-export-json" disabled title="导出词级时间轴 JSON 映射">导出词级JSON</button>
+    </div>
+  </header>
+
+  <!-- ══════════ 左上: 视频播放区 ══════════ -->
+  <main id="stage-wrap">
+    <div id="video-stage">
+      <video id="video" controls preload="metadata"></video>
+      <div id="srt-overlay"></div>
+      <div id="stage-hint">
+        <div class="hint-card">
+          <div class="hint-icon">🎬</div>
+          <div>将 <b>视频文件</b> 与 <b>SRT / ASS 字幕</b> 拖入此处</div>
+          <div class="hint-sub">或点击工具栏「打开视频 / 打开字幕」，也可直接加载右侧示例</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ══════════ 右侧: 字幕编辑区 ══════════ -->
+  <aside id="editor-panel">
+    <div class="panel-head">
+      <div class="ph-title">
+        <span class="ph-ico">▶</span>
+        <span class="ph-name">字幕总览</span>
+        <span class="badge" id="badge-format">未加载</span>
+        <span class="cue-count" id="cue-count"></span>
+      </div>
+      <div class="ph-row">
+        <span class="ph-lbl">显示模式</span>
+        <select id="sel-display-mode" class="select select-dark">
+          <option value="bi">中英双行</option>
+          <option value="first">仅中文</option>
+          <option value="second">仅英文</option>
+        </select>
+        <input type="search" id="search-box" placeholder="输入内容过滤">
+      </div>
+    </div>
+    <div id="cue-list">
+      <div id="cue-spacer"></div>
+    </div>
+    <div id="edit-form">
+      <div class="ef-row ef-meta">
+        <span id="ef-index" class="ef-index">—</span>
+        <span id="ef-style" class="ef-style"></span>
+        <button class="btn btn-mini" id="btn-play-cue" title="播放当前条目">▶ 播放</button>
+      </div>
+      <div class="ef-row ef-times">
+        <label><span>开始</span><input id="inp-start" spellcheck="false"></label>
+        <label><span>结束</span><input id="inp-end" spellcheck="false"></label>
+        <label><span>时长</span><input id="inp-dur" spellcheck="false"></label>
+      </div>
+      <textarea id="inp-text" rows="4" placeholder="第 1 行 = 中文整句, 第 2 行 = 英文逐词句&#10;(ASS: 逐词句改词数会自动重算词级时间; SRT: 每行一门语言)" spellcheck="false"></textarea>
+      <div class="ef-row ef-actions">
+        <button class="btn btn-accent" id="btn-apply">✔ 应用 (Ctrl+Enter)</button>
+        <button class="btn" id="btn-insert">＋ 下方插入</button>
+        <button class="btn btn-danger" id="btn-delete">✖ 删除</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ══════════ 左下: 时间轴 ══════════ -->
+  <section id="timeline-panel">
+    <div class="tl-head">
+      <div class="tl-group">
+        <button class="btn btn-mini" id="btn-tl-zoom-out" title="缩小">−</button>
+        <button class="btn btn-mini" id="btn-tl-fit" title="缩放至全片">适配</button>
+        <button class="btn btn-mini" id="btn-tl-zoom-in" title="放大">＋</button>
+        <button class="btn btn-mini toggle" id="btn-tl-follow" title="播放时自动跟随">跟随</button>
+      </div>
+      <div class="tl-group tl-time">
+        <span id="tl-cursor-time">00:00:00.000</span>
+        <span class="tl-sep">/</span>
+        <span id="tl-duration">00:00:00.000</span>
+      </div>
+      <div class="tl-group tl-hint">滚轮/拖动/双击行为与键盘快捷键均可在工具栏 ⌨ 自定义 · 点击=定位 · 拖动条目=移动 · 拖动边缘=改时长</div>    </div>
+    <div id="tl-canvas-wrap">
+      <canvas id="timeline"></canvas>
+    </div>
+  </section>
+
+</div>
+
+<script src="vendor/subtitles-octopus.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
