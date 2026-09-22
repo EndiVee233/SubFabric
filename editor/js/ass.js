@@ -1,6 +1,9 @@
 /** ASS 文档模型: 保留原文行, 事件级编辑后整体序列化 */
 import { parseTimeAss, fmtTimeAss } from './util.js';
 
+/** 严格合法的 ASS 时间: h:mm:ss.cc (小数固定 2 位) */
+const ASS_TIME_RE = /^\d+:\d{1,2}:\d{2}[.,]\d{2}$/;
+
 export class AssDoc {
   constructor(text) {
     this.text = text.replace(/^﻿/, '');
@@ -62,13 +65,22 @@ export class AssDoc {
     }
     parts.push(s); // text 原文(含前后空格习惯保留)
     const get = (col) => { const i = fmt.indexOf(col); return i === -1 ? '' : parts[i]; };
-    const start = parseTimeAss(get('start'));
-    const end = parseTimeAss(get('end'));
-    if (isNaN(start) || isNaN(end)) return null;
+    const rawStart = String(get('start') || '').trim();
+    const rawEnd = String(get('end') || '').trim();
+    let start = parseTimeAss(rawStart);
+    let end = parseTimeAss(rawEnd);
+    // 时间异常(历史遗留的 .100 厘秒溢出等)不丢弃整条事件: 丢弃会让"模型事件数"少于
+    // "文件行数", 后续 replaceEvents 只替换部分行 → 残留孤儿行 → 重复字幕。
+    // 异常处打上 bad 标记, 供列表「⚠ 异常行」过滤展示。
+    const bad = {};
+    if (!ASS_TIME_RE.test(rawStart) || isNaN(start)) { bad.start = rawStart; if (isNaN(start)) start = 0; }
+    if (!ASS_TIME_RE.test(rawEnd) || isNaN(end)) { bad.end = rawEnd; if (isNaN(end)) end = 0; }
+    if (end < start) { bad.order = `${fmtTimeAss(start)} → ${fmtTimeAss(end)}`; end = start; }
     return {
       lineIdx,
       layer: get('layer') || '0',
       start, end,
+      bad: Object.keys(bad).length ? bad : null,
       style: get('style') || 'Default',
       name: get('name') || '',
       text: parts[fmt.indexOf('text') === -1 ? parts.length - 1 : fmt.indexOf('text')],
@@ -175,7 +187,8 @@ export class AssDoc {
     const delta = newLines.length - (contiguous ? idxs.length : 0);
     const oldSet = new Set(oldEvents);
     this.events = this.events.filter(e => !oldSet.has(e));
-    for (const e of this.events) if (e.lineIdx > last) e.lineIdx += delta;
+    // first 之后的**所有**事件都位移(非连续场景下, 夹在首尾之间的其它事件同样被挤开)
+    for (const e of this.events) if (e.lineIdx >= first) e.lineIdx += delta;
     const newEvents = [];
     newLines.forEach((line, k) => {
       const ev = this._parseDialogue(line.slice('Dialogue: '.length), this.format, first + k);

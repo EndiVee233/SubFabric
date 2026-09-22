@@ -9,6 +9,29 @@ import { assPlainText } from './ass.js';
 /** 逐词高亮切片: {\c&H00FF00&}word{\c} */
 const HL_RE = /\{\\c&H[0-9A-Fa-f]{6}&\}([^{}]+?)\{\\c\}/;
 
+/** 行首样式覆盖: {\c&H......&} → ASS 为 &HAABBGGRR, 返回 '#rrggbb' */
+const LEAD_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
+
+/** 逐词高亮色(默认绿), 不是说话人颜色, 提取时需排除 */
+const HIGHLIGHT_COLORS = new Set(['#00ff00']);
+
+const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
+
+/**
+ * 说话人颜色: 取句子首个事件行首 {\c&H......&} 的颜色(如 [Spoke] → 红 #e50b0b)。
+ * 逐词高亮绿(#00ff00)不算说话人颜色, 需排除。整句样式(如"中文字幕")行上才带此色。
+ */
+export function speakerColorOf(sent) {
+  if (!sent) return null;
+  for (const ev of (sent.events || [])) {
+    const m = LEAD_COLOR_RE.exec(ev.text || '');
+    if (!m) continue;
+    const hex = assColorToHex(m[1].toUpperCase());
+    if (!HIGHLIGHT_COLORS.has(hex)) return hex;
+  }
+  return null;
+}
+
 function stripTags(t) {
   return String(t)
     .replace(/\{[^}]*\}/g, '')
@@ -74,6 +97,7 @@ export function analyzeKaraoke(doc) {
     for (const ev of doc.sorted) {
       sentences.push(makeSentence(ev.style, ev.start, ev.end, assPlainText(ev.text), [ev], [], protoOf(ev, doc.format)));
     }
+    finalizeSentences(sentences);
     return { wordStyle: null, sentences };
   }
 
@@ -151,7 +175,24 @@ export function analyzeKaraoke(doc) {
   flushLoose();
 
   sentences.sort((a, b) => a.start - b.start || a.end - b.end);
+  finalizeSentences(sentences);
   return { wordStyle, sentences };
+}
+
+/** 标记异常句: 任一切片时间无法解析/格式非法, 或句时长 ≤ 0 */
+function markBadSentences(sentences) {
+  for (const s of sentences) {
+    s.bad = s.end <= s.start || s.events.some(e => e.bad);
+  }
+}
+
+/** 补齐显示元数据: 异常标记 + 说话人 / 说话人颜色(供时间轴按人物着色) */
+function finalizeSentences(sentences) {
+  markBadSentences(sentences);
+  for (const s of sentences) {
+    s.color = speakerColorOf(s);
+    s.speaker = (s.proto && s.proto.name) || '';
+  }
 }
 
 /**
@@ -196,7 +237,57 @@ export function pairRows(sentences, wordStyle) {
 function makeRow(zh, en) {
   const start = Math.min(zh ? zh.start : Infinity, en ? en.start : Infinity);
   const end = Math.max(zh ? zh.end : 0, en ? en.end : 0);
-  return { zh, en, start: isFinite(start) ? start : 0, end, no: 0 };
+  // 说话人颜色优先取整句样式行(如中文字幕), 其行首 \c 才是人物颜色
+  return {
+    zh, en, start: isFinite(start) ? start : 0, end, no: 0,
+    color: (zh && zh.color) || (en && en.color) || null,
+    speaker: (zh && zh.speaker) || (en && en.speaker) || ''
+  };
+}
+
+/** 中英是否同起止(允许 ASS 厘秒级微小误差) */
+export function sameTime(a, b, eps = 1e-4) {
+  return !!a && !!b && Math.abs(a.start - b.start) < eps && Math.abs(a.end - b.end) < eps;
+}
+
+/**
+ * 由单个事件构造句子骨架(时间轴上"空白拖动新建字幕块"时用).
+ * 与 analyzeKaraoke 产出的句子结构保持一致, 便于后续统一编辑/重算。
+ */
+export function sentenceFromEvent(style, ev, format, start, end, text) {
+  return makeSentence(style, start, end, text, [ev], [], protoOf(ev, format));
+}
+
+/**
+ * 归一化词级时间: 全部夹在 [start,end] 内、严格单调递增(不重叠)、
+ * 每片至少 1 厘秒(ASS 时间精度), 末词结束贴齐句尾(与 main.py 一致)。
+ * 少了这一步, 缩放后的小数经厘秒取整会出现 0 时长片 / 顺序颠倒,
+ * 表现就是"逐词高亮乱跳 + 画面上多出重复字幕"。
+ */
+function normalizeWords(words, start, end) {
+  const n = words.length;
+  if (!n) return [];
+  const span = Math.max(0.01, end - start);
+  // 句长容不下 n 个厘秒片 → 直接均匀铺满, 不再逐片夹取
+  if (span < n * 0.01) {
+    return words.map((w, i) => ({
+      w: w.w,
+      s: start + span * (i / n),
+      e: start + span * ((i + 1) / n)
+    }));
+  }
+  const out = [];
+  let cursor = start;
+  for (let i = 0; i < n; i++) {
+    const tailKeep = (n - i - 1) * 0.01;           // 给后面的词预留 1 厘秒
+    const sMax = end - tailKeep - 0.01;
+    let s = Math.max(cursor, Math.min(words[i].s, sMax));
+    let e = Math.max(s + 0.01, Math.min(words[i].e, end - tailKeep));
+    if (i === n - 1) e = end;                      // 末词贴齐句尾
+    out.push({ w: words[i].w, s, e });
+    cursor = e;
+  }
+  return out;
 }
 
 /**
@@ -204,24 +295,37 @@ function makeRow(zh, en) {
  *  - 词数不变且句时间不变 → 原样保留逐词时间
  *  - 词数不变仅时间变   → 按原相对比例缩放
  *  - 词数变化          → 在 [newStart,newEnd] 内按原词时长加权重新分配
+ * 返回值一律经过 normalizeWords, 保证可直接用于重建切片。
  */
 export function recalcWords(sentence, newText, newStart, newEnd) {
   const tokens = newText.split(/\s+/).filter(Boolean);
   const n = sentence.words.length, m = tokens.length;
   if (m === 0) return [];
+  // 原本不是逐词句(如刚插入的新行): 没有原始时长可加权, 在句内均匀铺满
+  if (n === 0) {
+    const span0 = Math.max(0.01, newEnd - newStart);
+    return normalizeWords(tokens.map((t, i) => ({
+      w: t,
+      s: newStart + span0 * (i / m),
+      e: newStart + span0 * ((i + 1) / m)
+    })), newStart, newEnd);
+  }
   const oldSpan = Math.max(0.001, sentence.end - sentence.start);
   const span = Math.max(0.05, newEnd - newStart);
 
+  let words;
   if (m === n) {
     const sameTime = Math.abs(newStart - sentence.start) < 1e-6 && Math.abs(newEnd - sentence.end) < 1e-6;
     if (sameTime) {
-      return tokens.map((t, i) => ({ w: t, s: sentence.words[i].s, e: sentence.words[i].e }));
+      words = tokens.map((t, i) => ({ w: t, s: sentence.words[i].s, e: sentence.words[i].e }));
+    } else {
+      words = tokens.map((t, i) => {
+        const r1 = (sentence.words[i].s - sentence.start) / oldSpan;
+        const r2 = (sentence.words[i].e - sentence.start) / oldSpan;
+        return { w: t, s: newStart + r1 * span, e: newStart + r2 * span };
+      });
     }
-    return tokens.map((t, i) => {
-      const r1 = (sentence.words[i].s - sentence.start) / oldSpan;
-      const r2 = (sentence.words[i].e - sentence.start) / oldSpan;
-      return { w: t, s: newStart + r1 * span, e: newStart + r2 * span };
-    });
+    return normalizeWords(words, newStart, newEnd);
   }
 
   // 词数变化: 以原词时长为权重采样再归一化
@@ -233,7 +337,7 @@ export function recalcWords(sentence, newText, newStart, newEnd) {
     weights.push(n > 0 ? oldDurs[oi] : 1);
   }
   const sum = weights.reduce((a, b) => a + b, 0) || 1;
-  const words = [];
+  words = [];
   let acc = 0;
   for (let j = 0; j < m; j++) {
     const s = newStart + span * (acc / sum);
@@ -241,7 +345,7 @@ export function recalcWords(sentence, newText, newStart, newEnd) {
     const e = (j === m - 1) ? newEnd : newStart + span * (acc / sum);
     words.push({ w: tokens[j], s, e });
   }
-  return words;
+  return normalizeWords(words, newStart, newEnd);
 }
 
 /** 依据干净文本 + 词级映射重建逐词 Dialogue spec 列表 */
@@ -254,25 +358,37 @@ export function buildWordSpecs(sentence) {
   const parts = sentence.text.split(/(\s+)/);   // 保留空白, 便于原位包裹
   const idxs = [];
   parts.forEach((t, i) => { if (t.trim()) idxs.push(i); });
-  if (idxs.length !== sentence.words.length) {
-    // 文本与词数不一致(应先重算) → 兜底为单条干净行
-    return [Object.assign({}, base, { start: sentence.start, end: sentence.end, text: sentence.text })];
+
+  // 文本与词数不一致(理论上先经过 recalcWords 不会走到这里):
+  // 不放弃逐词效果 —— 按实际词数在句时长内均匀铺满, 而不是塌成单条干净行。
+  let words = sentence.words;
+  if (idxs.length !== words.length) {
+    const n2 = idxs.length;
+    const s0 = sentence.start, span = Math.max(0.01, sentence.end - s0);
+    words = idxs.map((_, k) => ({
+      w: parts[idxs[k]],
+      s: s0 + span * (k / n2),
+      e: s0 + span * ((k + 1) / n2)
+    }));
   }
+
   const tag = sentence.highlightTag;
   const specs = [];
-  for (let k = 0; k < sentence.words.length; k++) {
-    const w = sentence.words[k];
+  const push = (s, e, text) => specs.push(Object.assign({}, base, { start: s, end: e, text }));
+
+  // 句首空档(英文晚于中文起播时): 补一条无高亮的整句行, 保持与原文件一致
+  if (words[0].s - sentence.start > 0.004) {
+    push(sentence.start, words[0].s, sentence.text);
+  }
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k];
     const marked = parts.map((t, i) => (i === idxs[k] ? tag + t + '{\\c}' : t)).join('');
-    specs.push(Object.assign({}, base, { start: w.s, end: w.e, text: marked }));
-    const nx = sentence.words[k + 1];
-    if (nx && w.e < nx.s - 0.004) {
-      specs.push(Object.assign({}, base, { start: w.e, end: nx.s, text: sentence.text }));
-    }
+    push(w.s, w.e, marked);
+    const nx = words[k + 1];
+    if (nx && w.e < nx.s - 0.004) push(w.e, nx.s, sentence.text);
   }
-  const lastW = sentence.words[sentence.words.length - 1];
-  if (lastW.e < sentence.end - 0.004) {
-    specs.push(Object.assign({}, base, { start: lastW.e, end: sentence.end, text: sentence.text }));
-  }
+  const lastW = words[words.length - 1];
+  if (lastW.e < sentence.end - 0.004) push(lastW.e, sentence.end, sentence.text);
   return specs;
 }
 

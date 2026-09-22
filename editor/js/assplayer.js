@@ -1,7 +1,10 @@
 /** ASS 渲染器: 封装 SubtitlesOctopus (libass-wasm, 完整特效支持) */
-const WORKER_URL = '/editor/vendor/subtitles-octopus-worker.js';
+// 基于模块自身位置推导绝对 URL: 无论站点根是项目根(server.js)还是 editor/(python -m http.server),
+// 都能正确命中 worker/wasm/字体。写死 '/editor/vendor/...' 在后者下会 404 → ASS 完全不渲染。
+const VENDOR_DIR = new URL('../vendor/', import.meta.url);
+const WORKER_URL = new URL('subtitles-octopus-worker.js', VENDOR_DIR).href;
 // 绝对路径: worker 内部 fetch 字体/wasm 时以 worker 脚本为基准, 相对路径会 404
-const FONT_URL = '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf';
+const FONT_URL = new URL('fonts/NotoSansCJKsc-Regular.otf', VENDOR_DIR).href;
 
 export class AssPlayer {
   /**

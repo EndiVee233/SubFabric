@@ -37,7 +37,6 @@
     </div>
     <div class="tb-group tb-right">
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
-      <button class="btn btn-ghost" id="btn-shortcuts" title="自定义快捷键与鼠标操作 (Ctrl+,)">⌨ 快捷键</button>
       <button class="btn btn-accent" id="btn-export" disabled title="导出原始格式(含逐词特效)">💾 导出字幕</button>
       <button class="btn" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出干净ASS</button>
       <button class="btn" id="btn-export-json" disabled title="导出词级时间轴 JSON 映射">导出词级JSON</button>
@@ -63,10 +62,14 @@
   <aside id="editor-panel">
     <div class="panel-head">
       <div class="ph-title">
-        <span class="ph-ico">▶</span>
-        <span class="ph-name">字幕总览</span>
+        <span class="ph-name" id="ph-name" title="">字幕总览</span>
         <span class="badge" id="badge-format">未加载</span>
-        <span class="cue-count" id="cue-count"></span>
+      </div>
+      <div class="ph-search">
+        <input type="search" id="search-box" placeholder="输入内容过滤">
+        <button class="ph-search-btn" id="btn-search" title="搜索" tabindex="-1">
+          <svg viewBox="0 0 24 24" width="13" height="13"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+        </button>
       </div>
       <div class="ph-row">
         <span class="ph-lbl">显示模式</span>
@@ -75,49 +78,35 @@
           <option value="first">仅中文</option>
           <option value="second">仅英文</option>
         </select>
-        <input type="search" id="search-box" placeholder="输入内容过滤">
+        <span class="cue-count" id="cue-count"></span>
+        <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行(时间异常 / 字幕重叠 / 英文行含方括号 / 单中文行 / 单英文行)" disabled>⚠ <span id="bad-count">0</span></button>
       </div>
     </div>
     <div id="cue-list">
       <div id="cue-spacer"></div>
     </div>
-    <div id="edit-form">
-      <div class="ef-row ef-meta">
-        <span id="ef-index" class="ef-index">—</span>
-        <span id="ef-style" class="ef-style"></span>
-        <button class="btn btn-mini" id="btn-play-cue" title="播放当前条目">▶ 播放</button>
-      </div>
-      <div class="ef-row ef-times">
-        <label><span>开始</span><input id="inp-start" spellcheck="false"></label>
-        <label><span>结束</span><input id="inp-end" spellcheck="false"></label>
-        <label><span>时长</span><input id="inp-dur" spellcheck="false"></label>
-      </div>
-      <textarea id="inp-text" rows="4" placeholder="第 1 行 = 中文整句, 第 2 行 = 英文逐词句&#10;(ASS: 逐词句改词数会自动重算词级时间; SRT: 每行一门语言)" spellcheck="false"></textarea>
-      <div class="ef-row ef-actions">
-        <button class="btn btn-accent" id="btn-apply">✔ 应用 (Ctrl+Enter)</button>
-        <button class="btn" id="btn-insert">＋ 下方插入</button>
-        <button class="btn btn-danger" id="btn-delete">✖ 删除</button>
-      </div>
+    <div id="list-actions">
+      <button class="btn btn-mini" id="btn-insert" title="在当前条目下方插入新字幕">＋ 插入</button>
+      <button class="btn btn-mini btn-danger" id="btn-delete" title="删除当前选中的字幕条目">✖ 删除</button>
+      <span class="la-hint">单击文字编辑 · 双击空白处跳转 · 点击别处自动保存</span>
     </div>
   </aside>
 
   <!-- ══════════ 左下: 时间轴 ══════════ -->
   <section id="timeline-panel">
     <div class="tl-head">
-      <div class="tl-group">
-        <button class="btn btn-mini" id="btn-tl-zoom-out" title="缩小">−</button>
-        <button class="btn btn-mini" id="btn-tl-fit" title="缩放至全片">适配</button>
-        <button class="btn btn-mini" id="btn-tl-zoom-in" title="放大">＋</button>
-        <button class="btn btn-mini toggle" id="btn-tl-follow" title="播放时自动跟随">跟随</button>
-      </div>
       <div class="tl-group tl-time">
         <span id="tl-cursor-time">00:00:00.000</span>
         <span class="tl-sep">/</span>
         <span id="tl-duration">00:00:00.000</span>
       </div>
-      <div class="tl-group tl-hint">滚轮/拖动/双击行为与键盘快捷键均可在工具栏 ⌨ 自定义 · 点击=定位 · 拖动条目=移动 · 拖动边缘=改时长</div>    </div>
+      <div class="tl-group tl-hint">滚轮=平移 · Ctrl+滚轮=缩放 · 单击=跳转 · 拖动块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=删除</div>
+    </div>
     <div id="tl-canvas-wrap">
       <canvas id="timeline"></canvas>
+      <div id="tl-menu" hidden>
+        <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除字幕块</button>
+      </div>
     </div>
   </section>
 

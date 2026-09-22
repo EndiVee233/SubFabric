@@ -26,7 +26,9 @@ export function parseSRT(text) {
     const idLine = linesRaw.slice(0, timeIdx).join(' ').trim();
     const id = parseInt(idLine, 10);
     const textLines = linesRaw.slice(timeIdx + 1);
-    cues.push({ id: isNaN(id) ? cues.length + 1 : id, start, end, lines: textLines });
+    // 异常标记: 结束早于开始(含零时长以下) → 列表「⚠ 异常行」可过滤查看
+    const bad = end < start ? { order: `${m[1]} --> ${m[2]}` } : null;
+    cues.push({ id: isNaN(id) ? cues.length + 1 : id, start, end, lines: textLines, bad });
   }
   cues.sort((a, b) => a.start - b.start || a.end - b.end);
   cues.forEach((c, i) => c.id = i + 1);
