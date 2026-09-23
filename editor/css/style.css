@@ -21,6 +21,9 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* hidden 属性一律真正隐藏(避免被 .ptab/.select 等类的 display 覆盖) */
+[hidden] { display: none !important; }
+
 html, body {
   height: 100%;
   background: var(--bg-0);

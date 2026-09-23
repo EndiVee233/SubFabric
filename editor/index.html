@@ -27,11 +27,6 @@
       <button class="btn btn-ghost" id="btn-sample-ass" title="加载示例特效 ASS">ASS</button>
     </div>
     <div class="tb-group" id="srt-options">
-      <span class="tb-label">双语排列:</span>
-      <select id="sel-bi-order" class="select" title="主/副语言上下排列方式">
-        <option value="main-first">主上副下</option>
-        <option value="sub-first">副上主下</option>
-      </select>
       <span class="tb-label">字号:</span>
       <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
     </div>
@@ -89,7 +84,7 @@
             <option value="second">仅英文</option>
           </select>
           <span class="cue-count" id="cue-count"></span>
-          <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行(时间异常 / 字幕重叠 / 英文行含方括号 / 单中文行 / 单英文行)" disabled>⚠ <span id="bad-count">0</span></button>
+          <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行" disabled>⚠ <span id="bad-count">0</span></button>
         </div>
       </div>
       <div id="cue-list">

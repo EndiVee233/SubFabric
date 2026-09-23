@@ -185,13 +185,13 @@ export class EditorPanel {
     this.phName.title = name || '';
   }
 
-  /** 更新坏行计数; 0 时按钮置灰并自动退出"只看坏行"模式 */
-  setBadCount(n) {
+  /** 更新坏行计数; 0 时按钮置灰并自动退出"只看坏行"模式; hint = 坏行类别说明(随格式变化) */
+  setBadCount(n, hint) {
     if (!this.badBtn) return;
     this.badCountEl.textContent = String(n);
     this.badBtn.disabled = n === 0;
     this.badBtn.title = n
-      ? `发现 ${n} 条坏行(时间异常 / 字幕重叠 / 英文行含方括号 / 单中文行 / 单英文行), 点击只显示这些行`
+      ? `发现 ${n} 条坏行(${hint || '字幕重叠'}), 点击只显示这些行`
       : '没有坏行';
     if (n === 0 && this._badOnly) {
       this._badOnly = false;
@@ -224,8 +224,18 @@ export class EditorPanel {
   }
 
   /* ─────────── Tab 切换(字幕 / 角色 / 设置) ─────────── */
+  /** SRT 等格式没有角色概念 → 隐藏角色 Tab 与搜索框旁的角色筛选 */
+  setRolesEnabled(on) {
+    this._rolesEnabled = !!on;
+    const btn = this._tabBtns.find(b => b.dataset.tab === 'roles');
+    if (btn) btn.hidden = !on;
+    if (this.roleFilterSel) this.roleFilterSel.hidden = !on;
+    if (!on && this._tab === 'roles') this.showTab('subs');
+  }
+
   showTab(name) {
     if (!['subs', 'roles', 'settings'].includes(name)) name = 'subs';
+    if (name === 'roles' && !this._rolesEnabled) name = 'subs';
     this._tab = name;
     const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings' };
     for (const [k, id] of Object.entries(bodies)) {

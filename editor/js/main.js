@@ -17,7 +17,6 @@ const statusFile = document.getElementById('status-file');
 const btnExport = document.getElementById('btn-export');
 const tlCursor = document.getElementById('tl-cursor-time');
 const tlDuration = document.getElementById('tl-duration');
-const selBiOrder = document.getElementById('sel-bi-order');
 const rngFont = document.getElementById('rng-font');
 const srtOptions = document.getElementById('srt-options');
 const btnExportClean = document.getElementById('btn-export-clean');
@@ -231,6 +230,7 @@ function setSrt(text, name) {
 
   panel.setBadge('SRT 双语', 'srt');
   panel.setFileName(name);
+  panel.setRolesEnabled(false);   // SRT 没有角色(说话人)概念 → 禁用角色 Tab 与角色筛选
   panel.setModeOptions([
     { v: 'bi', t: '双语双行' },
     { v: 'first', t: '仅主语言' },
@@ -261,6 +261,7 @@ function setAss(text, name) {
 
   panel.setBadge('ASS 特效', 'ass');
   panel.setFileName(name);
+  panel.setRolesEnabled(true);    // ASS 有角色(说话人) → 恢复角色 Tab 与角色筛选
   panel.setModeOptions([
     { v: 'bi', t: '中英双行' },
     { v: 'first', t: '仅中文' },
@@ -295,10 +296,9 @@ function badReasonOf(sent) {
 /* ─────────── 坏行判定 ─────────── */
 /**
  * 汇总坏行原因(供列表 ⚠ 筛选与 tooltip):
- *   · 时间异常(解析失败 / 结束早于开始) —— 来自事件解析
- *   · 字幕重叠 —— 与其它条目时间相交
- *   · 英文行含方括号 —— 说话人标记 [xxx] 串到英文行了
- *   · 单中文行 / 单英文行 —— 缺少配对的另一语言(ASS 双轨; SRT 按主/副语言)
+ *   · 字幕重叠 —— 与其它条目时间相交(两种格式都检测)
+ *   · 仅 ASS: 时间异常(解析失败 / 结束早于开始) / 英文行含方括号 / 单中文行 / 单英文行
+ *   · SRT 只检测重叠(用户要求: SRT 的坏行检测重叠就好)
  */
 function markBadRows(items) {
   // 重叠: 按开始时间扫描, 用"当前最大结束时间"一次扫出所有相交对
@@ -315,12 +315,14 @@ function markBadRows(items) {
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     const reasons = [];
-    if (it.badReason) reasons.push(it.badReason);
+    if (isAss) {
+      if (it.badReason) reasons.push(it.badReason);
+      if (/[[\]]/.test(it.l2 || '')) reasons.push('英文行含方括号');
+      const hasL1 = !!it.l1, hasL2 = !!it.l2;
+      if (hasL1 && !hasL2) reasons.push('单中文行(缺英文)');
+      if (!hasL1 && hasL2) reasons.push('单英文行(缺中文)');
+    }
     if (overlap.has(i)) reasons.push('字幕重叠');
-    if (/[[\]]/.test(it.l2 || '')) reasons.push('英文行含方括号');
-    const hasL1 = !!it.l1, hasL2 = !!it.l2;
-    if (hasL1 && !hasL2) reasons.push(isAss ? '单中文行(缺英文)' : '单主语言行(缺副语言)');
-    if (!hasL1 && hasL2) reasons.push(isAss ? '单英文行(缺中文)' : '单副语言行(缺主语言)');
     it.bad = reasons.length > 0;
     it.badReason = reasons.join('; ');
   }
@@ -391,10 +393,20 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
 
   // 时间轴车道: 每个样式一条轨道(中文 / 英文各归其位); 块内带文本
   if (state.format === 'srt') {
-    timeline.setLanes([{
-      label: '双语字幕', bilingual: true,
-      cues: state.srtCues.map(c => ({ start: c.start, end: c.end, ref: c, row: c, text: (c.lines[0] || '').replace(/<[^>]+>/g, '').slice(0, 40) }))
-    }]);
+    // SRT 与 ASS 同款块样式: 一条合并轨(高度撑满), 块内中间灰色分隔线切两半
+    //   · 上半区 = 主语言(lines[0])
+    //   · 下半区 = 副语言(其余行)
+    // SRT 不做逐词(无 words → 块内只画"主语言 / 分隔线 / 副语言")
+    const cues = state.srtCues.map(c => {
+      const { main, subs } = splitBilingual(c.lines);
+      return {
+        start: c.start, end: c.end, ref: c, row: c,
+        text2: (main || '').replace(/<[^>]+>/g, '').slice(0, 60),                 // 上半: 主语言
+        text: subs.map(l => l.replace(/<[^>]+>/g, '')).join(' / ').slice(0, 60)   // 下半: 副语言
+      };
+    });
+    // 兜底色用与 ASS 相同的中性石板灰(SRT 没有说话人颜色)
+    timeline.setLanes([{ label: '双语字幕', merged: true, cues, color: '#5b6472' }]);
   } else if (state.format === 'ass' && state.kar) {
     // 所有 ASS 字幕都画在**同一条轨**上(不再为中/英单行另开轨道):
     //   · 中英「同开始同结束」→ 整轨一个块(块内英文在上、中文在下, 中间无空隙)
@@ -1132,7 +1144,6 @@ stage.addEventListener('drop', async (e) => {
   }
 });
 
-selBiOrder.addEventListener('change', () => overlay.setOrder(selBiOrder.value));
 rngFont.addEventListener('input', () => overlay.setFontScale(parseFloat(rngFont.value)));
 
 /* 时间轴头部的 跟随 / + / − / 适配 按钮已移除:
