@@ -292,6 +292,17 @@ function badReasonOf(sent) {
 
 /* ─────────── 坏行判定 ─────────── */
 /**
+ * 一条字幕句子的切片是否**时间交叠**(复制粘贴常造成 → 画面叠字)。
+ * 按当前事件现算: 修复/编辑换了事件后徽标即时刷新, 不依赖分析时写入的 sent.overlap。
+ */
+function enSlicesOverlap(sent) {
+  if (!sent || !sent.events || sent.events.length < 2) return false;
+  const evs = sent.events.slice().sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < evs.length; i++) if (evs[i].start < evs[i - 1].end - 1e-3) return true;
+  return false;
+}
+
+/**
  * 汇总坏行原因(供列表 ⚠ 筛选与 tooltip):
  *   · 字幕重叠 —— 与其它条目时间相交(两种格式都检测)
  *   · 仅 ASS: 时间异常(解析失败 / 结束早于开始) / 英文行含方括号 / 单中文行 / 单英文行
@@ -384,7 +395,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           // 英文逐词缺词/重复/交叠检测用(用户报: 重复字幕被并成一句、缺词无警告)
           enWordCount: enS && enS.words ? enS.words.length : 0,
           enTokenCount: enS ? enS.text.replace(/\[[^\]]+\]/g, '').split(/\s+/).filter(Boolean).length : 0,
-          enOverlap: !!(enS && enS.overlap)
+          enOverlap: enSlicesOverlap(enS)
         };
         state.itemByRef.set(row, it);
         return it;
@@ -1049,7 +1060,7 @@ function detectRowProblems(row) {
     if (toks && en.words.length !== toks) {
       issues.wordsMismatch = { text: clean, have: en.words.length, need: toks };
     }
-    if (en.overlap) issues.enOverlap = true;
+    if (enSlicesOverlap(en)) issues.enOverlap = true;
     if (issues.wordsMismatch || issues.enOverlap) {
       needConfirm = true;
       prefill = (issues.wordsMismatch && issues.wordsMismatch.text) || clean || en.words.map(w => w.w).join(' ');
@@ -1067,6 +1078,8 @@ function rebuildEnglishFromText(en, text, clearName) {
   en.highlightTag = '{\\c&H00FF00&}';
   en.words = recalcWords(en, en.text, en.start, en.end);
   en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+  en.bad = false;   // 重建后时间一律合法, 清掉分析时可能留下的时间异常标记
+  en.overlap = enSlicesOverlap(en);
 }
 
 /** 编辑后把行的说话人色/名重新算一遍(防改完行首标签后颜色/筛选没刷新) */
