@@ -20,21 +20,9 @@
       <input type="file" id="file-video" accept="video/*,.mkv,.avi,.mov" hidden>
       <input type="file" id="file-sub" accept=".srt,.ass,.ssa" hidden>
     </div>
-    <div class="tb-group tb-samples" id="sample-bar">
-      <span class="tb-label">示例:</span>
-      <button class="btn btn-ghost" id="btn-sample-video" title="加载工作区示例视频">视频</button>
-      <button class="btn btn-ghost" id="btn-sample-srt" title="加载示例双语 SRT">SRT</button>
-      <button class="btn btn-ghost" id="btn-sample-ass" title="加载示例特效 ASS">ASS</button>
-    </div>
-    <div class="tb-group" id="srt-options">
-      <span class="tb-label">字号:</span>
-      <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
-    </div>
     <div class="tb-group tb-right">
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
       <button class="btn btn-accent" id="btn-export" disabled title="导出原始格式(含逐词特效)">💾 导出字幕</button>
-      <button class="btn" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出干净ASS</button>
-      <button class="btn" id="btn-export-json" disabled title="导出词级时间轴 JSON 映射">导出词级JSON</button>
     </div>
   </header>
 
@@ -133,7 +121,28 @@
           <input type="range" id="set-zoom" class="range" min="1.05" max="2.5" step="0.05" value="1.25">
           <span class="setting-val" id="set-zoom-val">1.25 ×</span>
         </div>
+        <div class="setting-row">
+          <span class="setting-name" title="视频叠加字幕的字号缩放(适用于 SRT 双语叠加)">字幕字号</span>
+          <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
+          <span class="setting-val" id="rng-font-val">1.00 ×</span>
+        </div>
         <div class="setting-note">滚动：下滑=往前看 · 上滑=往后看 · Ctrl+滚轮=缩放。设置自动保存在本机浏览器。</div>
+      </div>
+
+      <!-- F8 显隐区: 示例加载 与 导出干净 ASS / 词级 JSON(默认隐藏, 按 F8 显示) -->
+      <div id="f8-section" class="f8-section" hidden>
+        <div class="f8-group">
+          <span class="f8-label">示例</span>
+          <button class="btn btn-ghost" id="btn-sample-video" title="加载工作区示例视频">视频</button>
+          <button class="btn btn-ghost" id="btn-sample-srt" title="加载示例双语 SRT">SRT</button>
+          <button class="btn btn-ghost" id="btn-sample-ass" title="加载示例特效 ASS">ASS</button>
+        </div>
+        <div class="f8-group">
+          <span class="f8-label">导出</span>
+          <button class="btn" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出干净 ASS</button>
+          <button class="btn" id="btn-export-json" disabled title="导出词级时间轴 JSON 映射">导出词级 JSON</button>
+        </div>
+        <div class="setting-note">按 <b>F8</b> 可隐藏/显示本区域。</div>
       </div>
     </div>
   </aside>

@@ -456,6 +456,12 @@ html, body {
 .setting-val { flex: none; width: 64px; text-align: right; font-family: Consolas, monospace; font-size: 12px; color: var(--accent-2); }
 .setting-note { font-size: 11px; color: var(--text-2); line-height: 1.6; padding: 0 4px; }
 
+/* F8 显隐区: 默认 hidden(见 main.js), 按 F8 切换 */
+.f8-section { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.f8-group { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.f8-label { flex: none; min-width: 40px; font-size: 12px; color: var(--text-2); }
+.f8-section .btn, .f8-section .btn-ghost { font-size: 13px; }
+
 /* 开关(如"显示胶片预览图") */
 .switch { position: relative; flex: 1; display: inline-flex; align-items: center; cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }

@@ -18,7 +18,6 @@ const btnExport = document.getElementById('btn-export');
 const tlCursor = document.getElementById('tl-cursor-time');
 const tlDuration = document.getElementById('tl-duration');
 const rngFont = document.getElementById('rng-font');
-const srtOptions = document.getElementById('srt-options');
 const btnExportClean = document.getElementById('btn-export-clean');
 const btnExportJson = document.getElementById('btn-export-json');
 
@@ -236,7 +235,6 @@ function setSrt(text, name) {
     { v: 'first', t: '仅主语言' },
     { v: 'second', t: '仅副语言' }
   ], 'bi');
-  srtOptions.style.opacity = '1';
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
   btnExport.disabled = false;
@@ -267,7 +265,6 @@ function setAss(text, name) {
     { v: 'first', t: '仅中文' },
     { v: 'second', t: '仅英文' }
   ], 'bi');
-  srtOptions.style.opacity = '.45';
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
   assPlayer.load(state.assDoc.serialize());
@@ -1144,7 +1141,25 @@ stage.addEventListener('drop', async (e) => {
   }
 });
 
-rngFont.addEventListener('input', () => overlay.setFontScale(parseFloat(rngFont.value)));
+const rngFontVal = document.getElementById('rng-font-val');
+rngFont.addEventListener('input', () => {
+  overlay.setFontScale(parseFloat(rngFont.value));
+  if (rngFontVal) rngFontVal.textContent = parseFloat(rngFont.value).toFixed(2) + ' ×';
+});
+
+/* F8: 显隐设置里的「示例 / 导出干净ASS·JSON」区(默认隐藏, 避免工具栏杂乱) */
+const f8Section = document.getElementById('f8-section');
+if (f8Section) {
+  f8Section.hidden = true;     // 默认隐藏
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'F8') return;
+    e.preventDefault();
+    const show = f8Section.hidden;
+    f8Section.hidden = !show;
+    if (show) panel.showTab('settings');   // 切到设置, 让用户看到刚展开的区域
+    toast(show ? '已显示：示例 / 导出干净 ASS·JSON（再按 F8 隐藏）' : '已隐藏示例与导出区');
+  });
+}
 
 /* 时间轴头部的 跟随 / + / − / 适配 按钮已移除:
    跟随默认开启, 缩放与适配走滚轮(Ctrl+滚轮)与键盘 (= / - / 0), 界面上不再放按钮。 */
