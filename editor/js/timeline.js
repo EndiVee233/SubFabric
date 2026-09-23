@@ -153,6 +153,12 @@ export class Timeline {
     this.pxPerSec = 50;
     this.follow = true;       // 默认开启跟随播放头
     this.selected = null;     // 行对象
+    this.panSensitivity = 120;  // 滚轮平移灵敏度(px/格, 设置 Tab 可调)
+    this.zoomSensitivity = 1.25; // Ctrl+滚轮缩放灵敏度(每格倍率, 设置 Tab 可调)
+    this.waveform = null;     // 波形图 Image(ffmpeg 提取, 画在字幕块内; PNG 兜底)
+    this.waveformReady = false;
+    this.peaks = null;        // 峰值数据 {data: Uint8Array, rate} —— 优先用它绘制(任意缩放都锐利)
+    this.showFilm = false;    // 胶片预览图(视频缩略图条): 设置里可开关, 默认关
     this.subStart = 0;        // 字幕内容范围(第一块开始 ~ 最后一块结束)
     this.subEnd = 0;
     this.onSeek = null;
@@ -173,6 +179,22 @@ export class Timeline {
   }
 
   setVideo(video) { this.video = video; this.film.reset(video); }
+
+  /** 波形图(整段视频一张 PNG); 传空清除 */
+  setWaveform(url) {
+    this.waveform = null;
+    this.waveformReady = false;
+    if (!url) return;
+    const img = new Image();
+    img.onload = () => { this.waveform = img; this.waveformReady = true; };
+    img.src = url;
+  }
+
+  /** 峰值数据(推荐): rate = 每秒包络值个数, data = Uint8Array。
+   *  绘制时按屏幕像素列取该列时间范围内的最大峰值 → 矢量绘制, 任意缩放都锐利(不像缩放图片会糊)。 */
+  setPeaks(peaks) {
+    this.peaks = (peaks && peaks.data && peaks.data.length) ? peaks : null;
+  }
 
   setLanes(lanes) {
     this.lanes = lanes.map((l, i) => {
@@ -260,8 +282,21 @@ export class Timeline {
   zoomIn() { this._zoomAt(this._cssW() / 2, 1.6); }
   zoomOut() { this._zoomAt(this._cssW() / 2, 1 / 1.6); }
 
+  /** 胶片预览图高度: 关闭时为 0(不占位, 字幕块直接顶到刻度线下方) */
+  _filmH() { return this.showFilm ? FILM_H : 0; }
+
   _cssW() { return this.canvas.parentElement.clientWidth; }
   _cssH() { return this.canvas.parentElement.clientHeight; }
+  /** 合并轨(唯一主轨)动态填满画布剩余高度 → 字幕块一直顶到面板底端, 不留黑缺 */
+  _laneH(i) {
+    const lane = this.lanes[i];
+    if (lane && lane.merged) {
+      const fill = this._cssH() - this._filmH() - RULER_H - 6;
+      return Math.max(LANE_H * 2 + LANE_GAP, fill);
+    }
+    return (lane && lane.h) || LANE_H;
+  }
+
   _resize() {
     const dpr = window.devicePixelRatio || 1;
     const w = this._cssW(), h = this._cssH();
@@ -307,15 +342,14 @@ export class Timeline {
   t2x(t) { return (t - this.viewStart) * this.pxPerSec; }
   x2t(x) { return this.viewStart + x / this.pxPerSec; }
 
-  _laneH(i) { return (this.lanes[i] && this.lanes[i].h) || LANE_H; }
   _laneTop(i) {
-    let y = FILM_H + RULER_H + 6;
+    let y = this._filmH() + RULER_H + 6;
     for (let k = 0; k < i; k++) y += this._laneH(k) + LANE_GAP;
     return y;
   }
   _lanesBottom() {
     const n = this.lanes.length;
-    return n ? this._laneTop(n - 1) + this._laneH(n - 1) : FILM_H + RULER_H + 6;
+    return n ? this._laneTop(n - 1) + this._laneH(n - 1) : this._filmH() + RULER_H + 6;
   }
 
   /* ─────────── 事件 ─────────── */
@@ -342,13 +376,13 @@ export class Timeline {
       this._showMenu(e.clientX, e.clientY, hit.cue);
     });
 
-    // 滚轮: 平移(上滚=往前看/更早), Ctrl+滚轮: 缩放(上滚=跨度变小/放大)
+    // 滚轮: 平移(下滑=往前看/更早, 上滑=往后看/更晚, 灵敏度=每格像素), Ctrl+滚轮: 缩放(灵敏度=每格倍率)
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
       this._hideMenu();
       const dir = e.deltaY < 0 ? 1 : -1;        // 上滚为正
-      if (e.ctrlKey || e.metaKey) this._zoomAt(e.offsetX, dir > 0 ? 1.25 : 1 / 1.25);
-      else this._panBy(-dir * 120);
+      if (e.ctrlKey || e.metaKey) this._zoomAt(e.offsetX, dir > 0 ? this.zoomSensitivity : 1 / this.zoomSensitivity);
+      else this._panBy(dir * this.panSensitivity);   // 下滚 dir=-1 → 负 → 看更早
     }, { passive: false });
 
     cv.addEventListener('pointerdown', (e) => {
@@ -593,7 +627,7 @@ export class Timeline {
       }
     }
 
-    this._drawFilmstrip(ctx, W);
+    if (this.showFilm) this._drawFilmstrip(ctx, W);
     this._drawRuler(ctx, W);
     this._drawLanes(ctx, W, t);
     if (this._drag && this._drag.type === 'create' && this._drag.moved) this._drawCreatePreview(ctx);
@@ -605,7 +639,7 @@ export class Timeline {
     const d = this._drag;
     const a = Math.min(d.t0, d.t1), b = Math.max(d.t0, d.t1);
     const x1 = this.t2x(a), x2 = this.t2x(b);
-    const top = FILM_H + RULER_H + 6;
+    const top = this._filmH() + RULER_H + 6;
     const bottom = Math.max(top + 24, this._lanesBottom());
     ctx.save();
     ctx.fillStyle = 'rgba(255,122,69,.16)';
@@ -691,7 +725,7 @@ export class Timeline {
   }
 
   _drawRuler(ctx, W) {
-    const top = FILM_H;
+    const top = this._filmH();
     ctx.fillStyle = '#101015';
     ctx.fillRect(0, top, W, RULER_H);
     ctx.strokeStyle = C.laneBorder;
@@ -726,6 +760,39 @@ export class Timeline {
     ctx.closePath();
   }
 
+  /** 波形层: 铺满给定区域(整条轨道), 30% 不透明。
+   *  优先用峰值数据逐屏幕像素列绘制(任意缩放都锐利), 否则退回整段 PNG 切片。 */
+  _drawWaveLayer(ctx, W, top, h) {
+    if (!(this.duration > 0) || h <= 2) return;
+    const cy = top + h / 2, maxH = Math.max(2, h);
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    if (this.peaks && this.peaks.data.length) {
+      const { data, rate } = this.peaks;
+      ctx.fillStyle = '#ffffff';
+      for (let px = 0; px < W; px++) {
+        const b0 = Math.floor(this.x2t(px) * rate);
+        let b1 = Math.ceil(this.x2t(px + 1) * rate);
+        if (b1 <= b0) b1 = b0 + 1;
+        const step = (b1 - b0) > 24 ? Math.ceil((b1 - b0) / 24) : 1;   // 缩得很远时隔段采样
+        let mx = 0;
+        for (let b = b0; b < b1; b += step) {
+          const v = data[b] || 0;
+          if (v > mx) mx = v;
+        }
+        const bh = (mx / 255) * maxH;
+        if (bh >= 1) ctx.fillRect(px, cy - bh / 2, 1, bh);
+      }
+    } else if (this.waveformReady && this.waveform) {
+      const img = this.waveform;
+      const span = W / this.pxPerSec;
+      const sx = (this.viewStart / this.duration) * img.width;
+      const sw = (span / this.duration) * img.width;
+      if (sw > 0) ctx.drawImage(img, sx, 0, sw, img.height, 0, top, W, maxH);
+    }
+    ctx.restore();
+  }
+
   _drawLanes(ctx, W, t) {
     this.lanes.forEach((lane, li) => {
       const yy = this._laneTop(li);
@@ -734,6 +801,9 @@ export class Timeline {
       ctx.fillRect(0, yy, W, lh);
       ctx.strokeStyle = C.laneBorder;
       ctx.beginPath(); ctx.moveTo(0, yy + lh + 0.5); ctx.lineTo(W, yy + lh + 0.5); ctx.stroke();
+
+      // 波形铺满整条轨道(整个视频都有波形, 而不仅限于有字幕块的地方); 字幕块画在它上面
+      this._drawWaveLayer(ctx, W, yy + 4, lh - 8);
 
       const spanStart = this.viewStart - 1, spanEnd = this.viewStart + W / this.pxPerSec + 1;
       const cues = lane.cues;
@@ -745,7 +815,7 @@ export class Timeline {
       const flushRun = () => {
         if (runStart === null) return;
         const b = runBand || { y: yy + 4, h: lh - 8 };
-        ctx.fillStyle = withAlpha(lane.color, 0.42, lane.color + '66');
+        ctx.fillStyle = withAlpha(lane.color, 0.12, lane.color + '1f');
         this._roundRect(ctx, runStart, b.y, Math.max(1.5, runEnd - runStart), b.h, 3);
         ctx.fill();
         runStart = runEnd = runBand = null;
@@ -770,12 +840,12 @@ export class Timeline {
         const base = c.color || lane.color;
         const isSel = this.selected && c.row === this.selected;
         const isPlay = c.start <= t && t < c.end;
-        const alpha = isPlay ? 0.66 : 0.45;
+        const alpha = 0.12;                       // 填充 12% 不透明(清晰可见的描边 + 极淡底色)
         const textColor = textOnTranslucent(base, alpha, '#ffffff');
-        ctx.fillStyle = withAlpha(base, alpha, lane.color + 'cc');
+        ctx.fillStyle = withAlpha(base, alpha, base);
         this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
         ctx.fill();
-        ctx.strokeStyle = withAlpha(base, 0.9, 'transparent');
+        ctx.strokeStyle = withAlpha(base, 1, base); // 边框 100% 不透明
         ctx.lineWidth = 1;
         this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
         ctx.stroke();
@@ -785,7 +855,7 @@ export class Timeline {
           this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
           ctx.stroke();
         }
-        // 块内文字(宽度足够时); 合并块画两行: 英文在上, 中文在下
+        // 块内文字(宽度足够时); 合并块: 中文整句在上, 英文**逐词按词级时间**平铺在块底
         if (wpx > 46 && (c.text || c.text2)) {
           ctx.save();
           ctx.beginPath();
@@ -793,33 +863,61 @@ export class Timeline {
           ctx.clip();
           ctx.fillStyle = textColor;
           if (c.text2) {
-            ctx.font = '10px "Microsoft YaHei", sans-serif';
-            ctx.fillText(c.text.slice(0, 60), x1 + TEXT_PAD, band.y + band.h * 0.36);
             ctx.font = '10.5px "Microsoft YaHei", sans-serif';
-            ctx.fillText(c.text2.slice(0, 60), x1 + TEXT_PAD, band.y + band.h * 0.78);
+            ctx.fillText(c.text2.slice(0, 60), x1 + TEXT_PAD, band.y + band.h * 0.36);
+            const words = c.words;
+            const baseY = band.y + band.h - 3;
+            if (words && words.length && wpx / words.length > 8) {
+              // 逐词平铺: 每个词画在它自己的开始时间处, 词首一根小竖线; 缩太远(词均宽<8px)退化为单行
+              ctx.font = '9px "Microsoft YaHei", sans-serif';
+              for (const wd of words) {
+                const wx = this.t2x(wd.s);
+                if (wx < x1 - 20 || wx > x2 + 20) continue;
+                if (this.t2x(wd.e) - wx < 2) continue;
+                ctx.globalAlpha = 0.6;
+                ctx.fillRect(wx + 0.5, baseY - 11, 1, 11);   // 词首竖线
+                ctx.globalAlpha = 1;
+                ctx.fillText(wd.w, wx + 2.5, baseY - 1);
+              }
+            } else if (!words || !words.length) {
+              ctx.font = '10px "Microsoft YaHei", sans-serif';
+              ctx.fillText(c.text.slice(0, 60), x1 + TEXT_PAD, band.y + band.h * 0.78);
+            }
           } else {
-            ctx.font = '10px "Microsoft YaHei", sans-serif';
-            ctx.fillText(c.text.slice(0, 40), x1 + TEXT_PAD, band.y + band.h / 2 + 3.5);
+            // 纯英文孤行: 同样优先逐词平铺
+            const words = c.words;
+            const baseY = band.y + band.h - 3;
+            if (words && words.length && wpx / words.length > 8) {
+              ctx.font = '9px "Microsoft YaHei", sans-serif';
+              for (const wd of words) {
+                const wx = this.t2x(wd.s);
+                if (wx < x1 - 20 || wx > x2 + 20) continue;
+                if (this.t2x(wd.e) - wx < 2) continue;
+                ctx.globalAlpha = 0.6;
+                ctx.fillRect(wx + 0.5, baseY - 11, 1, 11);
+                ctx.globalAlpha = 1;
+                ctx.fillText(wd.w, wx + 2.5, baseY - 1);
+              }
+            } else {
+              ctx.font = '10px "Microsoft YaHei", sans-serif';
+              ctx.fillText(c.text.slice(0, 40), x1 + TEXT_PAD, band.y + band.h / 2 + 3.5);
+            }
           }
           ctx.restore();
         }
       }
       flushRun();
 
-      // 轨道标签(悬浮于最上层)
+      // 轨道标签: 无背景无边框、半透明, 固定在轨道左下角(文字下方), 不挡字幕块内容
       const label = lane.label || '';
       if (label) {
+        ctx.save();
+        ctx.globalAlpha = 0.5;
         ctx.font = '10px "Microsoft YaHei", sans-serif';
-        const tw = Math.min(CHIP_W, ctx.measureText(label).width + 14);
-        ctx.fillStyle = C.chipBg;
-        this._roundRect(ctx, 5, yy + 6, tw, lh - 12, 8);
-        ctx.fill();
-        ctx.strokeStyle = lane.color + '99';
-        ctx.lineWidth = 1;
-        this._roundRect(ctx, 5.5, yy + 6.5, tw - 1, lh - 13, 8);
-        ctx.stroke();
+        ctx.textAlign = 'left';
         ctx.fillStyle = C.chipText;
-        ctx.fillText(label, 12, yy + lh / 2 + 3.5);
+        ctx.fillText(label, 12, yy + lh - 7);
+        ctx.restore();
       }
     });
   }

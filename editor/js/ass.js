@@ -110,6 +110,16 @@ export class AssDoc {
     this._rebuildLine(ev);
   }
 
+  /** 修改事件的 Name(说话人)栏, 如 '[Spoke]' → '[___]'; 同步 _rawParts 供重建 */
+  setEventName(ev, name) {
+    ev.name = name != null ? String(name) : '';
+    if (ev._rawParts) {
+      const i = this.format.indexOf('name');
+      if (i !== -1) ev._rawParts[i] = ev.name;
+    }
+    this._rebuildLine(ev);
+  }
+
   /** 在指定事件后插入新 Dialogue(复制其样式/说话人) → 返回新事件 */
   insertAfterEvent(ev) {
     const start = ev.end + 0.05;

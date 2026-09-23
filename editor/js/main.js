@@ -37,6 +37,7 @@ const state = {
   assDoc: null,
   items: [],             // 编辑面板视图模型
   itemByRef: new Map(),  // ref(cue|event) → item
+  newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
   selected: null,
   videoLoaded: false
 };
@@ -57,17 +58,140 @@ function toast(msg, ms = 2600) {
   toastTimer = setTimeout(() => el.style.opacity = '0', ms);
 }
 
+/* ─────────── 可拖动分割线: 视频/时间轴(横) 与 左区/字幕列表(竖) ─────────── */
+function bindSplit(el, onMove) {
+  if (!el) return;
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const app = document.getElementById('app');
+    const cs = getComputedStyle(app);
+    const startTl = parseFloat(cs.getPropertyValue('--tl-h')) || 232;
+    const startPw = parseFloat(cs.getPropertyValue('--panel-w')) || 400;
+    const x0 = e.clientX, y0 = e.clientY;
+    const move = (ev) => onMove(app, ev.clientY - y0, ev.clientX - x0, startTl, startPw);
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      overlay.fitToVideo();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+}
+bindSplit(document.getElementById('hsplit'), (app, dy, dx, startTl) => {
+  setTlHeight(startTl - dy, true);    // 拖动即记住, 下次打开保持这个比例
+});
+bindSplit(document.getElementById('vsplit'), (app, dy, dx, startTl, startPw) => {
+  const w = Math.round(Math.max(280, Math.min(720, startPw - dx)));
+  app.style.setProperty('--panel-w', w + 'px');
+  overlay.fitToVideo();
+});
+
+/* ─────────── 波形图(ffmpeg 服务端提取; 视频不在服务端保存) ───────────
+ * 本机 ffmpeg 对管道不流式输出进度, 进度提示用客户端计时: "波形生成中… 已用 Ns" */
+let waveToastTimer = null;
+function startWaveToast() {
+  const t0 = performance.now();
+  clearInterval(waveToastTimer);
+  waveToastTimer = setInterval(() => {
+    toast('波形生成中… 已用 ' + Math.round((performance.now() - t0) / 1000) + 's（视频越长耗时越久）', 120000);
+  }, 500);
+  toast('波形生成中… 已用 0s', 120000);
+  return () => clearInterval(waveToastTimer);
+}
+/** 等视频元数据就绪拿到时长(波形分辨率按时长自适应, 必须在拿到 duration 后请求) */
+function waitDuration(timeoutMs = 10000) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    const tick = () => {
+      if (isFinite(video.duration) && video.duration > 0) return resolve(video.duration);
+      if (performance.now() - t0 > timeoutMs) return resolve(0);
+      setTimeout(tick, 120);
+    };
+    tick();
+  });
+}
+
+async function loadWaveformFromServer() {
+  timeline.setPeaks(null);
+  timeline.setWaveform(null);
+  const stop = startWaveToast();
+  const dur = await waitDuration();
+  try {
+    const name = decodeURIComponent(state.videoUrl.split('/').pop() || '');
+    // 首选峰值数据(矢量绘制, 任意缩放都锐利)
+    const rp = await fetch('/api/peaks?name=' + encodeURIComponent(name) + '&dur=' + dur + '&rate=100');
+    if (rp.ok) {
+      const data = new Uint8Array(await rp.arrayBuffer());
+      timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100') });
+      toast('波形已就绪', 2000);
+      clearInterval(waveToastTimer); stop();
+      return;
+    }
+    throw new Error('peaks HTTP ' + rp.status);
+  } catch {
+    // 兜底: 整段波形 PNG
+    try {
+      const name = decodeURIComponent(state.videoUrl.split('/').pop() || '');
+      const resp = await fetch('/api/waveform?name=' + encodeURIComponent(name) + '&dur=' + dur);
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      timeline.setWaveform(URL.createObjectURL(await resp.blob()));
+      toast('波形图已生成', 2000);
+    } catch { toast('波形生成失败'); }
+  }
+  clearInterval(waveToastTimer);
+  stop();
+}
+async function uploadWaveform(file) {
+  timeline.setPeaks(null);
+  timeline.setWaveform(null);
+  const stop = startWaveToast();
+  const dur = await waitDuration();
+  try {
+    // 首选峰值数据: 视频流式上传到服务端临时文件, 生成后立即删除(不保存)
+    const rp = await fetch('/api/peaks-upload?dur=' + dur + '&rate=100', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file
+    });
+    if (!rp.ok) throw new Error('peaks HTTP ' + rp.status);
+    const data = new Uint8Array(await rp.arrayBuffer());
+    timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100') });
+    toast('波形已就绪', 2000);
+    clearInterval(waveToastTimer); stop();
+    return;
+  } catch {
+    try {
+      const resp = await fetch('/api/waveform-upload?dur=' + dur, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      timeline.setWaveform(URL.createObjectURL(await resp.blob()));
+      toast('波形图已生成', 2000);
+    } catch { toast('波形生成失败'); }
+  }
+  clearInterval(waveToastTimer);
+  stop();
+}
+
 /* ═══════════ 视频加载 ═══════════ */
 function loadVideoUrl(url, name) {
   video.src = url;
+  state.videoUrl = url;
   state.videoLoaded = true;
   timeline.setVideo(video);
   stageHint.classList.add('hidden');
   toast('视频加载中: ' + name);
+  // 服务端直读磁盘原文件提取波形(示例视频是站内相对路径), 不产生任何视频副本
+  if (url && !/^blob:/i.test(url)) loadWaveformFromServer();
 }
 
 function loadVideoFile(file) {
   loadVideoUrl(URL.createObjectURL(file), file.name);
+  // 本地文件: 流式上传到服务端临时文件提取波形, 用完立即删除(服务端不保存视频)
+  uploadWaveform(file);
 }
 
 video.addEventListener('loadedmetadata', () => {
@@ -222,6 +346,8 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           l2: subs.map(l => l.replace(/<[^>]+>/g, '')).join(' / '),
           badge1: '主语言', badge2: subs.length ? '副语言' : '',
           textRaw: c.lines.join('\n'),
+          speaker: '',
+          isNew: state.newRows.has(c),
           bad: !!c.bad,
           badReason: c.bad ? ('结束早于开始(' + c.bad.order + ')') : ''
         };
@@ -242,6 +368,8 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           l1: zhText, l2: enText,
           badge1: zhS ? zhS.style : '', badge2: enS ? enS.style : '',
           color: row.color || null,                 // 角色(说话人)色: 卡片文字/徽标/时间值都跟着它走
+          speaker: row.speaker || '',               // 角色筛选用: 字幕 Name 栏的 [人物]
+          isNew: state.newRows.has(row),            // 新建未输入 → 卡片显示占位, 空着离开则撤销
           textRaw: zhText + '\n' + enText,
           bad: !!((zhS && zhS.bad) || (enS && enS.bad)),
           badReason: [badReasonOf(zhS), badReasonOf(enS)].filter(Boolean).join(' / ')
@@ -254,6 +382,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
     }
     markBadRows(state.items);      // 时间异常 + 重叠 + 英文含方括号 + 单语行
     panel.setItems(state.items, keepView);
+    panel.setRoles(computeRoles()); // 角色 Tab: 解析所有说话人(字幕 Name 栏的 [人物]); computeRoles 见模块级定义
   }
 
   // 坏行计数 → 搜索框旁的 ⚠ 按钮
@@ -286,11 +415,16 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
         cues.push({
           start: row.start, end: row.end, ref: row, row,
           text: (enText || '').slice(0, 60), text2: (zhText || '').slice(0, 60),
+          words: (en && en.words && en.words.length) ? en.words : null,   // 词级时间: 时间轴块内逐词平铺
           color, speaker: row.speaker || ''
         });
       } else {
         if (zh) { hasTop = true; cues.push({ start: zh.start, end: zh.end, ref: row, row, text: zhText.slice(0, 60), color, half: 'top' }); }
-        if (en) cues.push({ start: en.start, end: en.end, ref: row, row, text: enText.slice(0, 60), color: en.color || color, half: 'bottom' });
+        if (en) cues.push({
+          start: en.start, end: en.end, ref: row, row,
+          text: enText.slice(0, 60), color: en.color || color, half: 'bottom',
+          words: (en.words && en.words.length) ? en.words : null
+        });
       }
     }
     // 命中测试/绘制都依赖按开始时间有序
@@ -317,6 +451,198 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   }
 }
 
+/* ═══════════ 角色(说话人) ═══════════ */
+/** 取 Name 栏原始串里的人物名列表: '[Spoke]' → ['Spoke'], '[A][B]' → ['A','B'] */
+function speakerNames(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return [];
+  const segs = s.match(/\[[^\]]+\]/g);
+  return segs && segs.length ? segs.map(x => x.slice(1, -1).trim()).filter(Boolean) : [s];
+}
+
+function escapeReg(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/** '#rrggbb' → ASS 的 'BBGGRR' */
+function hexToAss(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+  if (!m) return null;
+  const h = m[1].toUpperCase();
+  return h[4] + h[5] + h[2] + h[3] + h[0] + h[1];
+}
+
+/**
+ * 解析所有角色(说话人): 取每行字幕 Name 栏里的 [人物] 标记(如 [Spoke])。
+ * 注意: 只解析 Name 栏, 不碰字幕文本 —— 英文行文本里若出现 [xxx] 会被 markBadRows 判为坏行。
+ * 返回 [{name, raw, color, count}] 按出现次数降序。
+ */
+function computeRoles() {
+  if (state.format !== 'ass' || !state.kar) return [];
+  const map = new Map();
+  for (const row of state.kar.rows) {
+    const raw = (row.speaker || '').trim();
+    if (!raw) continue;
+    for (const name of speakerNames(raw)) {
+      const key = name.toLowerCase();
+      if (!map.has(key)) map.set(key, { name, raw, color: row.color || null, count: 0 });
+      const e = map.get(key);
+      e.count++;
+      if (row.color && !e.color) e.color = row.color;
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/** 把事件文本行首可见的 [旧tag] 换成 tag(没有则补上); 不动 {\...} 覆盖标签 */
+function setEventSpeakerTag(ev, tag) {
+  const t = String(ev.text || '');
+  const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+  let rest = t.slice(head.length);
+  const m = /^\s*\[[^\]]*\]/.exec(rest);
+  rest = m ? tag + rest.slice(m[0].length) : tag + rest;
+  state.assDoc.setEventText(ev, head + rest);
+  return true;
+}
+
+/** 把某一行字幕的说话人改成 name —— 角色栏单击(单行) */
+function doAssignSpeaker(hit, name) {
+  const tag = '[' + name + ']';
+  // 颜色即身份: 目标角色已有颜色时, 连该块行首色标一起换成目标角色的颜色
+  const role = computeRoles().find(r => r.name.toLowerCase() === String(name).toLowerCase());
+  const newAss = role && role.color ? hexToAss(role.color) : null;
+  const hexNorm = role && role.color ? ('#' + String(role.color).replace(/^#/, '').toLowerCase()) : null;
+  const leadRe = /^(\s*\{[^}]*?\\c&H)([0-9A-Fa-f]{6})(&)/;
+  for (const s of [hit.zh, hit.en]) {
+    if (!s) continue;
+    if (s.proto) s.proto.name = name;     // 重建逐词切片时沿用新 Name
+    s.speaker = tag;
+    for (const ev of s.events) state.assDoc.setEventName(ev, name);
+  }
+  // 中文行文本行首的可见 [Spoke] 才是用户看到/导出的说话人标记, 必须一起换;
+  // 颜色即身份: 行首没有内联色标时(会渲染成样式默认色)要**补上**目标角色的颜色
+  if (hit.zh) {
+    for (const ev of hit.zh.events) {
+      setEventSpeakerTag(ev, tag);
+      if (!newAss) continue;
+      const t = ev.text || '';
+      if (leadRe.test(t)) {
+        state.assDoc.setEventText(ev, t.replace(leadRe, (all, a, b, c) => a + newAss + c));
+      } else {
+        // 行首没有 \c 色标 → 插到行首标签块之后(或最前面)
+        const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+        state.assDoc.setEventText(ev, head + '{\\c&H' + newAss + '&}' + t.slice(head.length));
+      }
+    }
+    hit.zh.text = assPlainText(hit.zh.events[0].text);
+    if (hexNorm) hit.zh.color = hexNorm;
+  }
+  if (hexNorm) hit.color = hexNorm;
+  hit.speaker = tag;
+  assPlayer.updateNow(state.assDoc.serialize());
+  rebuildItemsAndLanes(true, true);
+  toast(`已将 #${hit.no} 说话人改为 ${tag}`);
+}
+
+/**
+ * 角色栏单击: 把播放头所在的字幕块说话人改成 name。
+ * 播放头同时落在**多条重叠字幕**上时(源文件常有重复行), 弹窗让用户选是哪一条。
+ */
+function assignSpeakerAtPlayhead(name) {
+  const t = video.currentTime;
+  const hits = state.kar.rows.filter(r => t >= r.start - 1e-3 && t <= r.end + 1e-3);
+  if (!hits.length) { toast('播放头不在任何字幕块内——先用播放/单击定位到要改的那句, 再点角色'); return; }
+  if (hits.length === 1) { doAssignSpeaker(hits[0], name); return; }
+  hits.sort((a, b) => a.start - b.start || (a.end - a.start) - (b.end - b.start));
+  panel.showRowPicker('检测到多条重叠的台词，请选择要设置角色的行：', hits.map(r => ({
+    label: (r.zh ? r.zh.text : (r.en ? r.en.text : '')) || '(空)',
+    name: (r.speaker || '').replace(/[[\]]/g, ''),
+    color: r.color || null,
+    row: r
+  })), (row) => doAssignSpeaker(row, name));
+}
+
+/** 事件文本行首可见 [old] → [new]; 返回是否变更 */
+function swapEventSpeakerTag(ev, fromRe, newTag) {
+  const t = String(ev.text || '');
+  const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+  const rest = t.slice(head.length);
+  const m = /^\s*\[([^\]]*)\]/.exec(rest);
+  if (!m || !fromRe.test(m[1])) return false;
+  fromRe.lastIndex = 0;
+  state.assDoc.setEventText(ev, head + newTag + rest.slice(m[0].length));
+  return true;
+}
+
+/** 全局重命名: 文本行首可见 [old] 与 Name 栏([old] 或裸名) → 新名; 并同步句子/行缓存 */
+function renameRoleGlobally(oldName, newName) {
+  const re = new RegExp('^(?:' + escapeReg(oldName) + ')$', 'i');      // Name 栏裸名整字段匹配
+  const tagRe = new RegExp('^(?:\\s*' + escapeReg(oldName) + '\\s*)$', 'i'); // [ ] 内的名字
+  const sub = '[' + newName + ']';
+  let n = 0;
+  for (const ev of state.assDoc.events) {
+    let changed = false;
+    if (ev.name) {
+      const nm = String(ev.name).trim();
+      if (re.test(nm)) { state.assDoc.setEventName(ev, newName); changed = true; }
+      else if (/^\[.+\]$/.test(nm) && tagRe.test(nm.slice(1, -1))) { state.assDoc.setEventName(ev, newName); changed = true; }
+    }
+    if (swapEventSpeakerTag(ev, tagRe, sub)) changed = true;
+    if (changed) n++;
+  }
+  for (const s of state.kar.sentences) {
+    if (s.proto && s.proto.name && re.test(String(s.proto.name).trim())) s.proto.name = newName;
+    if (s.speaker) s.speaker = s.speaker.replace(new RegExp('\\[' + escapeReg(oldName) + '\\]', 'gi'), sub);
+    if (!s.words || !s.words.length) {
+      const t = assPlainText(s.events[0].text);
+      if (t !== s.text) s.text = t;
+    }
+  }
+  for (const r of state.kar.rows) if (r.speaker) r.speaker = r.speaker.replace(new RegExp('\\[' + escapeReg(oldName) + '\\]', 'gi'), sub);
+  return n;
+}
+
+/** 全局换色: 行首 {\c&H......&} 为该角色旧色的所有事件 → 新色; 无旧色时给该角色中文行补上色标 */
+function recolorRoleGlobally(role, newHex) {
+  const hexNorm = '#' + String(newHex).replace(/^#/, '').toLowerCase();
+  const newAss = hexToAss(newHex);
+  if (!newAss) return 0;
+  const leadRe = /^(\s*\{[^}]*?\\c&H)([0-9A-Fa-f]{6})(&)/;
+  let n = 0;
+  if (role.color) {
+    const oldAss = hexToAss(role.color);
+    for (const ev of state.assDoc.events) {
+      const m = leadRe.exec(ev.text || '');
+      if (!m || m[2].toUpperCase() !== oldAss) continue;
+      state.assDoc.setEventText(ev, ev.text.replace(leadRe, (all, a, b, c) => a + newAss + c));
+      n++;
+    }
+    for (const s of state.kar.sentences) {
+      if (s.color && s.color.toLowerCase() === role.color.toLowerCase()) s.color = hexNorm;
+    }
+    for (const r of state.kar.rows) {
+      if (r.color && r.color.toLowerCase() === role.color.toLowerCase()) r.color = hexNorm;
+    }
+  } else {
+    // 角色还没有颜色标记 → 给该角色所有中文字幕行的行首补上新颜色标签
+    const names = new Set(speakerNames(role.raw).map(x => x.toLowerCase()));
+    names.add(role.name.toLowerCase());
+    for (const row of state.kar.rows) {
+      const spk = speakerNames(row.speaker).map(x => x.toLowerCase());
+      if (!spk.some(x => names.has(x))) continue;
+      const zh = row.zh;
+      if (zh) {
+        for (const ev of zh.events) {
+          if (leadRe.test(ev.text || '')) continue;
+          state.assDoc.setEventText(ev, '{\\c&H' + newAss + '&}' + (ev.text || ''));
+        }
+        zh.color = hexNorm;
+      }
+      row.color = hexNorm;
+      n++;
+    }
+  }
+  return n;
+}
+
 /* ═══════════ 选中 / 编辑 ═══════════ */
 function selectItem(item, seek = true) {
   state.selected = item;
@@ -339,6 +665,30 @@ timeline.onSelect = (ref, opts) => {
 };
 timeline.onSeek = (t) => { video.currentTime = t; };
 
+// 角色卡片单击 → 把播放头所在字幕块的说话人标签(Name 栏)改成该角色
+panel.onAssignRole = (name) => {
+  if (state.format !== 'ass' || !state.kar) { toast('角色标记仅支持 ASS 字幕'); return; }
+  assignSpeakerAtPlayhead(name);
+};
+// 角色卡片右键 → 全局重命名: 所有 Name 栏 [旧] → [新]
+panel.onRenameRole = (oldName, newName) => {
+  if (state.format !== 'ass' || !state.kar) return;
+  const n = renameRoleGlobally(oldName, newName);
+  assPlayer.updateNow(state.assDoc.serialize());
+  rebuildItemsAndLanes(true, true);
+  toast(`已将 [${oldName}] 重命名为 [${newName}]（${n} 行）`);
+};
+// 角色卡片右键 → 全局换色: 行首 {\c&H...} 为旧色的所有行 → 新色
+panel.onRecolorRole = (name, hex) => {
+  if (state.format !== 'ass' || !state.kar) return;
+  const role = computeRoles().find(r => r.name.toLowerCase() === String(name).toLowerCase());
+  if (!role) return;
+  const n = recolorRoleGlobally(role, hex);
+  assPlayer.updateNow(state.assDoc.serialize());
+  rebuildItemsAndLanes(true, true);
+  toast(`已将 [${role.name}] 颜色改为 ${hex}（${n} 行）`);
+};
+
 timeline.isEditable = () => true;
 
 /** 去掉一行的逐词效果: 英文切片合并成一条干净整句, 时间对齐中文行(同 main.py 的 remove_karaoke) */
@@ -349,6 +699,12 @@ function deKaraokeRow(row) {
   const s = zh ? zh.start : en.start;
   const e = zh ? zh.end : en.end;
   const text = en.text;
+  // 预留逐词时间轴: 先备份词级时间, 待该句不再与其它字幕重叠时(用户「拉回」)
+  // 由 reconcileKaraoke 自动还原, 避免 Shift 重叠去逐词后无法撤销(防止误操作)。
+  row._karaokeBackup = {
+    words: en.words.map(w => ({ w: w.w, s: w.s, e: w.e })),
+    text
+  };
   en.words = [];
   en.start = s; en.end = e;
   en.events = state.assDoc.replaceEvents(en.events, [{
@@ -359,6 +715,59 @@ function deKaraokeRow(row) {
   row.start = Math.min(zh ? zh.start : Infinity, en.start);
   row.end = Math.max(zh ? zh.end : 0, en.end);
   return true;
+}
+
+/** 还原一句的逐词效果: 用重叠去逐词时预留的备份恢复词级时间轴, 重建逐词切片 */
+function restoreKaraokeRow(row) {
+  const en = row.en;
+  const bk = row._karaokeBackup;
+  if (!en || !bk || !bk.words.length) return false;
+  // 把备份词级时间放回, 再按当前句时间加权重算(时间若变了按比例缩放);
+  // 文本若被改过, recalcWords 会按词数变化加权重新分配。
+  en.words = bk.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
+  en.words = recalcWords(en, en.text, en.start, en.end);
+  en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+  if (row.zh) {
+    row.start = Math.min(row.zh.start, en.start);
+    row.end = Math.max(row.zh.end, en.end);
+  } else {
+    row.start = en.start; row.end = en.end;
+  }
+  delete row._karaokeBackup;
+  return true;
+}
+
+/** 当前正在互相重叠的字幕行集合(供 reconcileKaraoke 判断是否需要保留去逐词) */
+function computeOverlapRows() {
+  const rows = state.kar.rows;
+  const set = new Set();
+  const order = rows.map((r, i) => i)
+    .sort((a, b) => rows[a].start - rows[b].start || rows[a].end - rows[b].end);
+  let curI = -1, curEnd = -Infinity;
+  for (const i of order) {
+    const r = rows[i];
+    if (curI !== -1 && r.start < curEnd - 1e-3) { set.add(r); set.add(rows[curI]); }
+    if (curI === -1 || r.end > curEnd) { curI = i; curEnd = r.end; }
+  }
+  return set;
+}
+
+/** 协调逐词状态: 凡因重叠被去逐词、而现已不再与任何字幕重叠的行, 自动还原逐词效果。
+ *  用不动点迭代, 这样「互叠的两句被一起拉离」时, 后还原的那句也能正确解除。 */
+function reconcileKaraoke() {
+  if (state.format !== 'ass' || !state.kar) return 0;
+  let restored = 0, changed = true;
+  while (changed) {
+    changed = false;
+    const overlap = computeOverlapRows();
+    for (const row of state.kar.rows) {
+      if (!row._karaokeBackup) continue;
+      if (overlap.has(row)) continue;
+      if (restoreKaraokeRow(row)) { restored++; changed = true; }
+    }
+  }
+  if (restored) assPlayer.updateNow(state.assDoc.serialize());
+  return restored;
 }
 
 timeline.onRetime = (row, s, e, done, shift) => {
@@ -384,7 +793,10 @@ timeline.onRetime = (row, s, e, done, shift) => {
   if (state.selected === item) panel.select(item, false);
   if (!done) return;
 
-  // 按住 Shift 拖出的重叠 → 涉及的行一律去掉逐词(整句化), 避免两句话的高亮糊在一起
+  // 按住 Shift 拖出的重叠 → 涉及的行一律去掉逐词(整句化), 避免两句话的高亮糊在一起。
+  // 去逐词前已预留词级时间轴(见 deKaraokeRow); 该句被「拉回」不再与其它字幕重叠时,
+  // 下方 reconcileKaraoke 会自动还原逐词效果, 防止误操作丢失特效。
+  let msg = '';
   if (shift && state.format === 'ass' && state.kar) {
     let cleared = 0;
     for (const r of state.kar.rows) {
@@ -393,9 +805,13 @@ timeline.onRetime = (row, s, e, done, shift) => {
     }
     if (cleared) {
       assPlayer.updateNow(state.assDoc.serialize());
-      toast(`字幕重叠: 已移除 ${cleared} 句的逐词效果`);
+      msg += `重叠: 移除 ${cleared} 句逐词`;
     }
   }
+  // 还原因「不再重叠」而应恢复逐词的行
+  const restored = reconcileKaraoke();
+  if (restored) msg += (msg ? '；' : '') + `还原 ${restored} 句逐词`;
+  if (msg) toast(msg);
   rebuildItemsAndLanes(true, true);
 };
 
@@ -458,12 +874,16 @@ panel.onApply = ({ item: editItem, start, end, dur, text }) => {
   } else {
     applyAssRow(item, s, e, text);
   }
+  state.newRows.delete(item.ref);     // 有内容了 → 不再是"待输入的新字幕"
+  reconcileKaraoke();
   rebuildItemsAndLanes(true, true);
   toast('已应用 #' + item.no);
 };
 
+panel.onDeleteCard = (item) => deleteItem(item);   // 字幕列表右键删除(与时间轴右键同一套逻辑)
+
 /** 删除一条字幕(列表删除按钮 / 时间轴右键菜单共用) */
-function deleteItem(item) {
+function deleteItem(item, silent) {
   if (!item) return;
   if (item.kind === 'srt') {
     const i = state.srtCues.indexOf(item.ref);
@@ -482,12 +902,15 @@ function deleteItem(item) {
     if (ri !== -1) state.kar.rows.splice(ri, 1);
     assPlayer.updateNow(state.assDoc.serialize());
   }
+  state.newRows.delete(item.ref);
   state.selected = null;
   rebuildItemsAndLanes(true, true);
-  toast('已删除 #' + item.no);
+  toast(silent ? '未输入内容，已撤销这条新字幕' : '已删除 #' + item.no);
 }
 
-panel.onDelete = () => deleteItem(state.selected);
+/** 新建的字幕一个字都没写就离开 → 撤销(不留空字幕) */
+panel.onEmptyNew = (item) => deleteItem(item, true);
+
 timeline.onDelete = (ref) => deleteItem(state.itemByRef.get(ref));
 
 /** 为某样式在文档末尾追加一条新事件, 返回与 analyzeKaraoke 同构的句子对象 */
@@ -507,67 +930,39 @@ function appendSentence(style, start, end, text) {
 /** 在指定区间新建一个字幕块(时间轴空白处拖动) */
 function createRowAt(start, end) {
   if (state.format === 'srt') {
-    const cue = { id: 0, start, end, lines: ['新字幕'] };
+    const cue = { id: 0, start, end, lines: [''] };     // 空文本: 列表里显示占位, 输入后才算数
+    state.newRows.add(cue);
     state.srtCues.push(cue);
     state.srtCues.sort((a, b) => a.start - b.start || a.end - b.end);
     state.srtCues.forEach((c, i) => c.id = i + 1);
     overlay.setCues(state.srtCues);
     rebuildItemsAndLanes(true, true);
     const ni = state.itemByRef.get(cue);
-    if (ni) selectItem(ni, false);
-    toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}`);
+    if (ni) { selectItem(ni, false); panel.startEdit(ni, 1); }   // 直接进入编辑, 让用户马上写内容
+    toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，请在列表里输入内容`);
     return;
   }
   if (state.format !== 'ass' || !state.kar) return;
   const zhStyle = (state.kar.sentences.find(s => s.style !== state.kar.wordStyle) || {}).style || '';
   const enStyle = state.kar.wordStyle || '';
-  const zh = zhStyle ? appendSentence(zhStyle, start, end, '新字幕') : null;
-  const en = enStyle ? appendSentence(enStyle, start, end, 'New subtitle') : null;
+  const zh = zhStyle ? appendSentence(zhStyle, start, end, '') : null;
+  const en = enStyle ? appendSentence(enStyle, start, end, '') : null;
   if (!zh && !en) { toast('新建失败: 文档里没有可用的字幕样式'); return; }
   const newRow = { zh, en, start, end, no: 0, color: (zh && zh.color) || null, speaker: (zh && zh.speaker) || '' };
+  state.newRows.add(newRow);          // 空文本: 输入后保留, 空着离开则撤销
   state.kar.rows.push(newRow);
   state.kar.rows.sort((a, b) => a.start - b.start || a.end - b.end);
   state.kar.sentences.sort((a, b) => a.start - b.start || a.end - b.end);
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
   const ni = state.itemByRef.get(newRow);
-  if (ni) selectItem(ni, false);
-  toast(`已新建字幕块 ${fmtTime(start)} → ${fmtTime(end)}`);
+  if (ni) { selectItem(ni, false); panel.startEdit(ni, 1); }   // 直接进入编辑, 让用户马上写内容
+  toast(`已新建字幕块 ${fmtTime(start)} → ${fmtTime(end)}，请在列表里输入内容`);
 }
 timeline.onCreate = (s, e) => createRowAt(s, e);
 
-panel.onInsert = () => {
-  const item = state.selected;
-  if (!item) { toast('请先选择一条字幕'); return; }
-  if (item.kind === 'srt') {
-    const cue = { id: 0, start: item.ref.end + 0.05, end: item.ref.end + 2.05, lines: ['新字幕'] };
-    state.srtCues.push(cue);
-    state.srtCues.sort((a, b) => a.start - b.start || a.end - b.end);
-    state.srtCues.forEach((c, i) => c.id = i + 1);
-    overlay.setCues(state.srtCues);
-    rebuildItemsAndLanes(true, true);
-    const ni = state.itemByRef.get(cue);
-    if (ni) selectItem(ni, true);
-    return;
-  }
-  // ASS: 为每个样式各插入一句(形成新的"中英双行")
-  const row = item.ref;
-  const start = Math.min(row.end + 0.05, Math.max(0, (video.duration || 1e9) - 2.1));
-  const end = start + 2;
-  if (!row.zh && !row.en) { toast('插入失败'); return; }
-  const zh = row.zh ? appendSentence(row.zh.style, start, end, '新字幕') : null;
-  const en = row.en ? appendSentence(row.en.style, start, end, 'New subtitle') : null;
-  if (!zh && !en) { toast('插入失败'); return; }
-  const newRow = { zh, en, start, end, no: 0 };
-  state.kar.rows.push(newRow);
-  state.kar.sentences.sort((a, b) => a.start - b.start || a.end - b.end);
-  assPlayer.updateNow(state.assDoc.serialize());
-  rebuildItemsAndLanes(true, true);
-  const ni = state.itemByRef.get(newRow);
-  if (ni) selectItem(ni, true);
-};
-
 // 「▶ 播放」按钮已移除: 点击右侧列表条目即定位播放并进入编辑
+// 右下角「插入 / 删除」按钮已移除: 时间轴空白处拖动=新建, 右键块=删除, 不再重复提供。
 
 /* ═══════════ 导出 ═══════════ */
 function download(name, text) {
@@ -680,11 +1075,30 @@ const actions = {
   nextCue: () => jumpCue(1),
   selectPlayCue: () => { if (panel.playingItem) selectItem(panel.playingItem, false); },
   applyEdit: () => panel.applyEdit(),
-  insertCue: () => panel.onInsert && panel.onInsert(),
-  deleteCue: () => panel.onDelete && panel.onDelete(),
   focusSearch: () => document.getElementById('search-box').focus(),
   exportSub: () => btnExport.click()
 };
+
+/* 空格(播放/暂停)冷却: 按住重复触发或快速连击会导致状态乱跳 */
+const actionCooldown = { playPause: 0 };
+const PLAY_COOLDOWN_MS = 250;
+
+function isTypingTarget(t) {
+  const tag = (t && t.tagName || '').toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || !!(t && t.isContentEditable);
+}
+/* 空格只由本应用的 keydown 处理一次:
+ * 聚焦 <video> 时浏览器原生空格播放/暂停在 keyup 生效, 会造成"按住=暂停, 松开=播放"的反向行为
+ * —— 捕获阶段吞掉空格的默认动作与冒泡(keyup 连冒泡一起断), 播放/暂停只走下方 keydown 一条路 */
+document.addEventListener('keydown', (e) => {
+  if ((e.key === ' ' || e.code === 'Space') && !isTypingTarget(e.target)) e.preventDefault();
+}, true);
+document.addEventListener('keyup', (e) => {
+  if ((e.key === ' ' || e.code === 'Space') && !isTypingTarget(e.target)) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
 
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
@@ -695,9 +1109,74 @@ document.addEventListener('keydown', (e) => {
   if (!id) return;
   if (typing) return;                             // 输入框/行内编辑内不抢键(Ctrl+Enter 由编辑框自行处理)
   e.preventDefault();
+  if (id === 'playPause') {
+    const now = performance.now();
+    if (e.repeat || now - actionCooldown.playPause < PLAY_COOLDOWN_MS) return;
+    actionCooldown.playPause = now;
+  }
   const fn = actions[id];
   if (fn) fn();
 });
+
+/* ─────────── 设置 Tab: 界面显示 + 时间轴灵敏度 ─────────── */
+const FILM_KEY = 'ss-film';
+const PAN_KEY = 'ss-pan-sens', ZOOM_KEY = 'ss-zoom-sens';
+const setFilm = document.getElementById('set-film');
+const setFilmVal = document.getElementById('set-film-val');
+const setPan = document.getElementById('set-pan');
+const setZoom = document.getElementById('set-zoom');
+const setPanVal = document.getElementById('set-pan-val');
+const setZoomVal = document.getElementById('set-zoom-val');
+function applySensitivity() {
+  const pan = parseFloat(localStorage.getItem(PAN_KEY));
+  const zoom = parseFloat(localStorage.getItem(ZOOM_KEY));
+  timeline.panSensitivity = isFinite(pan) ? pan : 120;
+  timeline.zoomSensitivity = isFinite(zoom) ? zoom : 1.25;
+  if (setPan) { setPan.value = timeline.panSensitivity; setPanVal.textContent = Math.round(timeline.panSensitivity) + ' px'; }
+  if (setZoom) { setZoom.value = timeline.zoomSensitivity; setZoomVal.textContent = timeline.zoomSensitivity.toFixed(2) + ' ×'; }
+}
+if (setPan) setPan.addEventListener('input', () => {
+  timeline.panSensitivity = parseFloat(setPan.value) || 120;
+  localStorage.setItem(PAN_KEY, String(timeline.panSensitivity));
+  setPanVal.textContent = Math.round(timeline.panSensitivity) + ' px';
+});
+if (setZoom) setZoom.addEventListener('input', () => {
+  timeline.zoomSensitivity = parseFloat(setZoom.value) || 1.25;
+  localStorage.setItem(ZOOM_KEY, String(timeline.zoomSensitivity));
+  setZoomVal.textContent = timeline.zoomSensitivity.toFixed(2) + ' ×';
+});
+function applyFilmSetting() {
+  const on = localStorage.getItem(FILM_KEY) === '1';   // 胶片预览图默认关
+  timeline.showFilm = on;
+  if (setFilm) setFilm.checked = on;
+  if (setFilmVal) setFilmVal.textContent = on ? '开' : '关';
+}
+if (setFilm) setFilm.addEventListener('change', () => {
+  localStorage.setItem(FILM_KEY, setFilm.checked ? '1' : '0');
+  applyFilmSetting();
+});
+/** 字幕块区域高度(时间轴占屏幕高度): 设置里可调, 也可拖视频/时间轴中间那根线; 记住用户的舒适值 */
+const TLH_KEY = 'ss-tl-h';
+const setTlh = document.getElementById('set-tlh');
+const setTlhVal = document.getElementById('set-tlh-val');
+function setTlHeight(px, save) {
+  const app = document.getElementById('app');
+  const h = Math.round(Math.max(96, Math.min(window.innerHeight - 260, px)));
+  app.style.setProperty('--tl-h', h + 'px');
+  if (setTlh) setTlh.value = h;
+  if (setTlhVal) setTlhVal.textContent = h + ' px';
+  if (save) localStorage.setItem(TLH_KEY, String(h));
+  overlay.fitToVideo();
+}
+if (setTlh) setTlh.addEventListener('input', () => setTlHeight(parseFloat(setTlh.value) || 232, true));
+function applyTlHeight() {
+  const v = parseFloat(localStorage.getItem(TLH_KEY));
+  const cur = parseFloat(getComputedStyle(document.getElementById('app')).getPropertyValue('--tl-h')) || 232;
+  setTlHeight(isFinite(v) && v > 0 ? v : cur, false);
+}
+applySensitivity();
+applyFilmSetting();
+applyTlHeight();
 
 /* 调试钩子(测试用) */
 window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss };

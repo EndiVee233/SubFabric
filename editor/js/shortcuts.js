@@ -29,8 +29,6 @@ const KEY_MAP = {
   selectPlayCue: ['Alt+P'],
 
   applyEdit: ['Ctrl+Enter'],
-  insertCue: ['Alt+N'],
-  deleteCue: ['Alt+Delete'],
   focusSearch: ['Ctrl+F'],
   exportSub: ['Ctrl+S']
 };

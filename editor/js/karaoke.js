@@ -15,7 +15,8 @@ const LEAD_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
 /** 逐词高亮色(默认绿), 不是说话人颜色, 提取时需排除 */
 const HIGHLIGHT_COLORS = new Set(['#00ff00']);
 
-const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
+/** ASS &HBBGGRR → '#rrggbb'(供说话人颜色解析与全局换色复用) */
+export const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
 
 /**
  * 说话人颜色: 取句子首个事件行首 {\c&H......&} 的颜色(如 [Spoke] → 红 #e50b0b)。
@@ -191,8 +192,23 @@ function finalizeSentences(sentences) {
   markBadSentences(sentences);
   for (const s of sentences) {
     s.color = speakerColorOf(s);
-    s.speaker = (s.proto && s.proto.name) || '';
+    s.speaker = speakerTagOf(s);
   }
+}
+
+/**
+ * 说话人标记: 取行首覆盖标签({\...})之后的可见 [人物] —— 如
+ * "{\c&H0B0BE5&}[Spoke]在 Unstable SMP…" 的 "[Spoke]"(说话人分离工具写入文本)。
+ * 文本没有 [ ] 时回退到 Name 栏(如 "Spoke")。
+ */
+function speakerTagOf(sent) {
+  for (const ev of (sent.events || [])) {
+    const t = String(ev.text || '');
+    const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+    const m = /^\s*\[([^\]]+)\]/.exec(t.slice(head.length));
+    if (m) return '[' + m[1].trim() + ']';
+  }
+  return (sent.proto && sent.proto.name) || '';
 }
 
 /**

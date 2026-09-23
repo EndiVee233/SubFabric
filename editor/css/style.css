@@ -30,17 +30,32 @@ html, body {
   overflow: hidden;
 }
 
-/* ── 三区域网格布局 ─────────────────────────── */
+/* ── 三区域网格布局(含可拖动分割线) ─────────── */
 #app {
+  --tl-h: 232px;      /* 时间轴面板高(拖 #hsplit 调整) */
+  --panel-w: 400px;   /* 右侧字幕列表宽(拖 #vsplit 调整) */
   display: grid;
   height: 100vh;
-  grid-template-columns: 1fr 400px;
-  grid-template-rows: 50px 1fr 232px;
+  grid-template-columns: 1fr 6px var(--panel-w);
+  grid-template-rows: 50px 1fr 6px var(--tl-h);
   grid-template-areas:
-    "toolbar toolbar"
-    "stage   editor"
-    "timeline editor";
+    "toolbar  toolbar toolbar"
+    "stage    vsplit  editor"
+    "hsplit   vsplit  editor"
+    "timeline vsplit  editor";
 }
+
+/* 可拖动分割线 */
+#hsplit, #vsplit { position: relative; background: transparent; }
+#hsplit { grid-area: hsplit; cursor: row-resize; }
+#vsplit { grid-area: vsplit; cursor: col-resize; }
+#hsplit::after, #vsplit::after {
+  content: ""; position: absolute; background: var(--border);
+  transition: background .15s;
+}
+#hsplit::after { left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); }
+#vsplit::after { top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); }
+#hsplit:hover::after, #vsplit:hover::after { background: var(--accent); }
 
 /* ── 工具栏 ────────────────────────────────── */
 #toolbar {
@@ -205,8 +220,15 @@ html, body {
 .badge.ass { color: #ffb08a; border-color: #5a3423; background: rgba(255,122,69,.10); }
 .cue-count { font-size: 11px; color: var(--text-2); flex: 1; text-align: right; white-space: nowrap; }
 
-/* 搜索行: 胶囊输入框 + 右侧圆形搜索按钮 */
+/* 搜索行: 角色筛选 + 胶囊输入框 + 右侧圆形搜索按钮 */
 .ph-search { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+#sel-role-filter {
+  flex: none; max-width: 132px;
+  background: #101015; color: var(--accent-2);
+  border: 1px solid var(--accent); border-radius: 17px;
+  padding: 6px 10px; font-size: 12px; outline: none; cursor: pointer;
+}
+#sel-role-filter:hover { background: #16161c; }
 #search-box {
   flex: 1; min-width: 0;
   background: #101015; color: var(--text-0);
@@ -300,6 +322,9 @@ html, body {
   font-size: 13.5px; line-height: 1.35; color: var(--en);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* 新建字幕的占位提示(用户没输入就不会留下这条) */
+.cc-ph1 { color: #b06a45; font-weight: 500; }
+.cc-ph2 { color: #8f8fb0; font-weight: 400; }
 
 /* ── 列表内行内编辑(无独立编辑框) ───────────── */
 .cue-card.editing .cc-body { opacity: .25; }
@@ -338,6 +363,155 @@ html, body {
 }
 .la-hint { margin-left: auto; font-size: 10.5px; color: var(--text-2); }
 
+/* ── 右侧 Tab 栏(字幕 / 角色 / 设置) ───────────── */
+#panel-tabs {
+  flex: none;
+  display: flex; gap: 4px;
+  padding: 6px 8px 0;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+.ptab {
+  flex: 1;
+  padding: 7px 0;
+  border: 0; border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.ptab:hover { color: var(--text-0); }
+.ptab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.tab-body {
+  display: none;
+  flex: 1; min-height: 0;
+  flex-direction: column;
+}
+.tab-body.active { display: flex; }
+
+.tab-head {
+  flex: none;
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.tab-head-title { font-size: 14px; font-weight: 700; color: var(--text-0); }
+.tab-head-sub { font-size: 11px; color: var(--text-2); }
+
+/* 角色总览 */
+.role-list {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: var(--bg-3) transparent;
+  padding: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.role-card {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  background: #1a1a21;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.role-card:hover { background: #21212b; border-color: var(--accent); }
+.role-dot {
+  flex: none; width: 12px; height: 12px; border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.4) inset;
+}
+.role-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--text-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.role-count { flex: none; font-size: 11px; color: var(--text-2); }
+
+.empty-hint {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  text-align: center; color: var(--text-2); font-size: 13px;
+  padding: 24px;
+}
+
+/* ── 设置 Tab ──────────────────────────────── */
+.settings-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.setting-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: #1a1a21;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.setting-name { flex: none; width: 110px; font-size: 13px; color: var(--text-0); }
+.setting-row .range { flex: 1; width: auto; }
+.setting-val { flex: none; width: 64px; text-align: right; font-family: Consolas, monospace; font-size: 12px; color: var(--accent-2); }
+.setting-note { font-size: 11px; color: var(--text-2); line-height: 1.6; padding: 0 4px; }
+
+/* 开关(如"显示胶片预览图") */
+.switch { position: relative; flex: 1; display: inline-flex; align-items: center; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-slider {
+  position: relative; width: 38px; height: 20px; border-radius: 10px;
+  background: #2a2a34; border: 1px solid var(--border);
+  transition: background .15s, border-color .15s;
+}
+.switch-slider::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--text-1); transition: transform .15s, background .15s;
+}
+.switch input:checked + .switch-slider {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+}
+.switch input:checked + .switch-slider::after { transform: translateX(18px); background: #1a1206; }
+
+/* ── 重叠台词选择弹窗 ───────────────────────── */
+#pick-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(6, 6, 9, .62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+#pick-overlay[hidden] { display: none; }
+.pick-box {
+  width: min(560px, 92vw);
+  max-height: 72vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.6);
+  overflow: hidden;
+}
+.pick-title {
+  flex: none;
+  padding: 14px 16px 12px;
+  font-size: 14px; font-weight: 700; color: var(--text-0);
+  border-bottom: 1px solid var(--border);
+}
+.pick-list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.pick-row {
+  display: flex; flex-direction: column; gap: 6px;
+  text-align: left; width: 100%;
+  padding: 9px 12px;
+  background: #1a1a21; color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 8px;
+  font: inherit; cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.pick-row:hover { background: #23232d; border-color: var(--accent); }
+.pick-text { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.pick-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-1); }
+.pick-dot { width: 11px; height: 11px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,.4) inset; }
+.pick-actions { flex: none; display: flex; justify-content: flex-end; padding: 10px 14px; border-top: 1px solid var(--border); }
+
 /* ── 左下: 时间轴 (胶片 + 分轨) ─────────────── */
 #timeline-panel {
   grid-area: timeline;
@@ -365,13 +539,14 @@ html, body {
 #tl-canvas-wrap { flex: 1; min-height: 0; position: relative; }
 #timeline { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; }
 
-/* 时间轴右键菜单(目前只有"删除") */
-#tl-menu {
+/* 时间轴右键菜单 / 字幕卡片右键菜单 */
+#tl-menu, #card-menu {
   position: fixed; z-index: 60;
   min-width: 152px; padding: 4px;
   background: var(--bg-3); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.55);
 }
+#card-menu[hidden] { display: none; }
 .tl-menu-item {
   display: block; width: 100%; text-align: left;
   padding: 6px 10px; font-size: 12.5px; font-family: inherit;
@@ -381,3 +556,32 @@ html, body {
 .tl-menu-item:hover { background: var(--bg-2); }
 .tl-menu-item.danger { color: #ff9aa2; }
 .tl-menu-item.danger:hover { background: rgba(255,95,107,.16); color: #ffd0d4; }
+
+/* ── 角色右键菜单 / 重命名浮层 / 取色器 ────────── */
+#role-menu {
+  position: fixed; z-index: 70;
+  min-width: 140px; padding: 4px;
+  background: var(--bg-3); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.55);
+}
+#role-menu[hidden] { display: none; }
+#role-rename {
+  position: fixed; z-index: 70;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px;
+  background: var(--bg-3); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.55);
+}
+#role-rename[hidden] { display: none; }
+#role-rename-input {
+  width: 180px;
+  background: #101015; color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; font-size: 12.5px; outline: none;
+}
+#role-rename-input:focus { border-color: var(--accent); }
+#role-color-input {
+  position: fixed; left: 0; bottom: 0;
+  width: 1px; height: 1px; opacity: 0;
+  border: 0; padding: 0; pointer-events: none;
+}

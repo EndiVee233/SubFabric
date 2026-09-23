@@ -56,13 +56,30 @@ export class EditorPanel {
     // 行内编辑状态
     this.editItem = null;     // 正在编辑的条目
     this.editorEl = null;     // 行内编辑器 DOM
+    this._editTag = '';       // 编辑框里被隐藏的角色标签(如 '[Spoke] '), 提交时补回
 
     this.onSelect = null;
     this.onSeek = null;       // 双击非文字区域 → 跳转到该条时间点
     this.onApply = null;
-    this.onDelete = null;
-    this.onInsert = null;
     this.onModeChange = null;
+
+    // Tab / 角色状态
+    this._tab = 'subs';
+    this._roles = [];
+    this._speaker = '';       // 角色(说话人)筛选: 非空时只显示该角色字幕
+    this._tabBtns = [];
+    this.onAssignRole = null; // 单击角色 → 设为播放头所在字幕块的说话人
+    this.onRenameRole = null; // 右键菜单·修改名称 → (oldName, newName) 全局
+    this.onRecolorRole = null;// 右键菜单·修改颜色 → (name, '#rrggbb') 全局
+    this.onDeleteCard = null; // 字幕卡片右键 → 删除该条(与时间轴右键删除同一套逻辑)
+    this.cardMenu = null;
+    this._cardMenuItem = null;
+    this.roleMenu = null;
+    this.renameBox = null;
+    this._menuRole = null;
+    this._menuPos = { x: 0, y: 0 };
+    this._renameRole = null;
+    this._colorRole = null;
 
     this._bind();
   }
@@ -74,6 +91,8 @@ export class EditorPanel {
       this._render();
     });
     // 单击: 文字区域 → 原地进入编辑; 非文字区域 → 仅选中(不跳转)
+    // 双击(非文字区域) → 跳转: 手动判定, 因为单击会触发重渲染换掉 DOM 节点,
+    // 浏览器之后就不再派发 dblclick 事件了(所以不能依赖 dblclick 监听)。
     this.listEl.addEventListener('click', (e) => {
       if (this.editorEl && this.editorEl.contains(e.target)) return;
       const card = e.target.closest('.cue-card');
@@ -81,17 +100,21 @@ export class EditorPanel {
       const item = this.filtered[+card.dataset.idx];
       if (!item) return;
       const line = e.target.closest('.cc-l1') ? 1 : (e.target.closest('.cc-l2') ? 2 : 0);
+      const now = performance.now();
+      if (!line) {
+        const last = this._lastClick;
+        if (last && last.item === item && now - last.t < 400) {
+          this._lastClick = null;
+          if (this.onSelect) this.onSelect(item);
+          if (this.onSeek) this.onSeek(item);      // 双击非文字区域 → 跳转到该条开始时间
+          return;
+        }
+        this._lastClick = { item, t: now };
+      } else {
+        this._lastClick = null;                     // 点文字区域只进入编辑, 不算双击
+      }
       if (this.onSelect) this.onSelect(item);
       if (line) this.startEdit(item, line);
-    });
-    // 双击: 非文字区域(时间列/空白/徽标) → 跳转到该条开始时间; 文字区不触发(避免与编辑冲突)
-    this.listEl.addEventListener('dblclick', (e) => {
-      if (this.editorEl && this.editorEl.contains(e.target)) return;
-      const card = e.target.closest('.cue-card');
-      if (!card) return;
-      if (e.target.closest('.cc-l1, .cc-l2')) return;
-      const item = this.filtered[+card.dataset.idx];
-      if (item && this.onSeek) this.onSeek(item);
     });
     this.searchBox.addEventListener('input', () => {
       this._filterText = this.searchBox.value.trim().toLowerCase();
@@ -99,6 +122,14 @@ export class EditorPanel {
     });
     if (this.searchBtn) {
       this.searchBtn.addEventListener('click', () => this.searchBox.focus());
+    }
+    // 角色筛选: 选了某角色 → 只显示该角色说的字幕
+    this.roleFilterSel = document.getElementById('sel-role-filter');
+    if (this.roleFilterSel) {
+      this.roleFilterSel.addEventListener('change', () => {
+        const v = this.roleFilterSel.value;
+        this.setSpeakerFilter(v === '__all__' ? '' : v);
+      });
     }
     if (this.modeSel) {
       this.modeSel.addEventListener('change', () => {
@@ -114,8 +145,13 @@ export class EditorPanel {
         this._applyFilter();
       });
     }
-    document.getElementById('btn-delete').addEventListener('click', () => this.onDelete && this.onDelete());
-    document.getElementById('btn-insert').addEventListener('click', () => this.onInsert && this.onInsert());
+    // Tab 切换: 字幕 / 角色 / 设置
+    this._tabBtns = Array.from(document.querySelectorAll('#panel-tabs .ptab'));
+    this._tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => this.showTab(btn.dataset.tab));
+    });
+    this._bindRoleMenu();   // 角色右键菜单 / 重命名浮层 / 取色器
+    this._bindCardMenu();   // 字幕卡片右键菜单(删除)
     // 点页面其它任意位置 → 退出编辑并自动保存(pointerdown 比 focusout 更可靠,
     // 覆盖点击非可聚焦区域/滚动条/控件等不会改变焦点的情形)
     document.addEventListener('pointerdown', (e) => {
@@ -181,11 +217,247 @@ export class EditorPanel {
     this.items = items;
     this.selected = null;
     this.playingItem = null;
+    this._speaker = '';       // 新数据 → 重置角色筛选(避免跨文件残留)
+    if (this.roleFilterSel) this.roleFilterSel.value = '__all__';
     this._applyFilter(keepView ? keepTop : 0);
+  }
+
+  /* ─────────── Tab 切换(字幕 / 角色 / 设置) ─────────── */
+  showTab(name) {
+    if (!['subs', 'roles', 'settings'].includes(name)) name = 'subs';
+    this._tab = name;
+    const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings' };
+    for (const [k, id] of Object.entries(bodies)) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('active', k === name);
+    }
+    for (const btn of this._tabBtns) btn.classList.toggle('active', btn.dataset.tab === name);
+    if (name === 'subs') this._render();
+    else if (name === 'roles') this._renderRoles();
+  }
+
+  /** 角色(说话人)列表, 由主逻辑解析后灌入; 仅在角色 Tab 可见时渲染 */
+  setRoles(roles) {
+    this._roles = roles || [];
+    const sel = this.roleFilterSel;
+    if (sel) {
+      const cur = sel.value || '__all__';
+      sel.innerHTML = '<option value="__all__">全部角色</option>' +
+        this._roles.map(r => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.name)}（${r.count}）</option>`).join('');
+      sel.value = [...sel.options].some(o => o.value === cur) ? cur : '__all__';
+      if (sel.value !== cur) this._speaker = '';       // 角色不存在了(换了文件) → 取消筛选
+    }
+    if (this._tab === 'roles') this._renderRoles();
+  }
+
+  /** 按角色(说话人)筛选字幕列表 */
+  setSpeakerFilter(name) {
+    this._speaker = name || '';
+    if (this.roleFilterSel) this.roleFilterSel.value = this._speaker || '__all__';
+    this._applyFilter();
+  }
+  getSpeakerFilter() { return this._speaker; }
+
+  /** 该条字幕的说话人是否匹配筛选(条目上是 '[Wemmbu]', 下拉里是 'Wemmbu', 需归一化比较) */
+  _speakerMatch(it) {
+    const raw = String(it.speaker || '');
+    const segs = raw.match(/\[[^\]]+\]/g);
+    const names = segs && segs.length ? segs.map(s => s.slice(1, -1).trim().toLowerCase()) : [raw.trim().toLowerCase()];
+    return names.includes(this._speaker.toLowerCase());
+  }
+
+  _renderRoles() {
+    const el = document.getElementById('role-list');
+    if (!el) return;
+    if (!this._roles.length) {
+      el.innerHTML = `<div class="empty-hint">当前字幕不含角色标记（Name 栏的 [人物]）。</div>`;
+      return;
+    }
+    el.innerHTML = this._roles.map(r => {
+      const c = r.color ? hexRgb(r.color) : null;
+      const dot = c ? `style="background:rgb(${c.r},${c.g},${c.b})"` : 'style="background:#5b6472"';
+      return `<div class="role-card" data-name="${escapeHtml(r.name)}" title="单击=设为播放头所在字幕块的说话人 · 右键=重命名 / 改色">
+        <span class="role-dot" ${dot}></span>
+        <span class="role-name">${escapeHtml(r.name)}</span>
+        <span class="role-count">${r.count} 条</span>
+      </div>`;
+    }).join('');
+    el.querySelectorAll('.role-card').forEach(card => {
+      card.addEventListener('click', () => {
+        if (this.onAssignRole) this.onAssignRole(card.dataset.name);
+      });
+      card.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const role = this._roles.find(r => r.name === card.dataset.name);
+        if (role) this._showRoleMenu(e.clientX, e.clientY, role);
+      });
+    });
+  }
+
+  /* ─────────── 通用选择弹窗(重叠台词选行等) ─────────── */
+  /** rows: [{label, name, color, row}]；用户选中后回调 onPick(row)，取消不回调 */
+  showRowPicker(title, rows, onPick) {
+    const ov = document.getElementById('pick-overlay');
+    const list = document.getElementById('pick-list');
+    const titleEl = document.getElementById('pick-title');
+    const cancelBtn = document.getElementById('pick-cancel');
+    if (!ov || !list) return;
+    titleEl.textContent = title;
+    list.innerHTML = rows.map((r, i) => {
+      const tone = r.color ? roleTone(r.color) : null;
+      const cs = tone ? ` style="color:${tone.css}"` : '';
+      const dot = `<span class="pick-dot" style="background:${r.color || '#5b6472'}"></span>`;
+      return `<button type="button" class="pick-row" data-i="${i}">
+        <span class="pick-text"${cs}>${escapeHtml(r.label)}</span>
+        <span class="pick-meta">${dot}<span${cs}>${escapeHtml(r.name || '(无角色)')}</span></span>
+      </button>`;
+    }).join('');
+    ov.hidden = false;
+    const finish = (idx) => {
+      ov.hidden = true;
+      list.innerHTML = '';
+      document.removeEventListener('keydown', onKey, true);
+      if (idx !== null && rows[idx] && onPick) onPick(rows[idx].row);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(null); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    list.querySelectorAll('.pick-row').forEach(btn => {
+      btn.addEventListener('click', () => finish(parseInt(btn.dataset.i, 10)));
+    });
+    if (cancelBtn) cancelBtn.onclick = () => finish(null);
+  }
+
+  /* ─────────── 字幕卡片右键菜单(目前只有删除) ─────────── */
+  _bindCardMenu() {
+    this.cardMenu = document.getElementById('card-menu');
+    if (this.cardMenu) {
+      this.cardMenu.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-act]');
+        if (!btn) return;
+        const item = this._cardMenuItem;
+        this._hideCardMenu();
+        if (btn.dataset.act === 'delete' && item && this.onDeleteCard) this.onDeleteCard(item);
+      });
+    }
+    this.listEl.addEventListener('contextmenu', (e) => {
+      const card = e.target.closest('.cue-card');
+      if (!card) return;
+      if (this.editorEl && this.editorEl.contains(e.target)) return;
+      e.preventDefault();
+      const item = this.filtered[+card.dataset.idx];
+      if (!item) return;
+      if (this.onSelect) this.onSelect(item);
+      this._showCardMenu(e.clientX, e.clientY, item);
+    });
+    this.listEl.addEventListener('scroll', () => this._hideCardMenu());
+    document.addEventListener('pointerdown', (e) => {
+      if (this.cardMenu && !this.cardMenu.hidden && !this.cardMenu.contains(e.target)) this._hideCardMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this._hideCardMenu(); });
+  }
+  _showCardMenu(cx, cy, item) {
+    if (!this.cardMenu) return;
+    this._cardMenuItem = item;
+    this.cardMenu.hidden = false;
+    const w = this.cardMenu.offsetWidth, h = this.cardMenu.offsetHeight;
+    this.cardMenu.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
+    this.cardMenu.style.top = Math.max(4, Math.min(cy, window.innerHeight - h - 6)) + 'px';
+  }
+  _hideCardMenu() {
+    if (this.cardMenu && !this.cardMenu.hidden) this.cardMenu.hidden = true;
+    this._cardMenuItem = null;
+  }
+
+  /* ─────────── 角色右键菜单 / 重命名 / 换色 ─────────── */
+  _bindRoleMenu() {
+    this.roleMenu = document.getElementById('role-menu');
+    this.renameBox = document.getElementById('role-rename');
+    this.renameInput = document.getElementById('role-rename-input');
+    this.colorInput = document.getElementById('role-color-input');
+
+    if (this.roleMenu) {
+      this.roleMenu.addEventListener('click', (e) => {
+        const item = e.target.closest('[data-act]');
+        if (!item) return;
+        const role = this._menuRole;
+        const act = item.dataset.act;
+        const pos = { x: this._menuPos.x, y: this._menuPos.y };
+        this._hideRoleMenu();
+        if (!role) return;
+        if (act === 'rename') this._showRenameBox(role, pos.x, pos.y);
+        else if (act === 'recolor') this._openColorPicker(role);
+      });
+    }
+    if (this.renameBox) {
+      const okBtn = document.getElementById('role-rename-ok');
+      const commit = () => {
+        const role = this._renameRole;
+        const name = (this.renameInput.value || '').trim();
+        this._hideRenameBox();
+        if (role && name && name !== role.name && this.onRenameRole) this.onRenameRole(role.name, name);
+      };
+      if (okBtn) okBtn.addEventListener('click', commit);
+      this.renameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        else if (e.key === 'Escape') { e.preventDefault(); this._hideRenameBox(); }
+      });
+    }
+    if (this.colorInput) {
+      this.colorInput.addEventListener('change', () => {
+        const role = this._colorRole;
+        this._colorRole = null;
+        if (role && this.onRecolorRole) this.onRecolorRole(role.name, this.colorInput.value);
+      });
+    }
+    // 点菜单/浮层以外的地方 → 收起
+    document.addEventListener('pointerdown', (e) => {
+      if (this.roleMenu && !this.roleMenu.hidden && !this.roleMenu.contains(e.target)) this._hideRoleMenu();
+      if (this.renameBox && !this.renameBox.hidden && !this.renameBox.contains(e.target)) this._hideRenameBox();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this._hideRoleMenu(); });
+  }
+
+  _showRoleMenu(cx, cy, role) {
+    if (!this.roleMenu) return;
+    this._menuRole = role;
+    this._menuPos = { x: cx, y: cy };
+    this.roleMenu.hidden = false;
+    const w = this.roleMenu.offsetWidth, h = this.roleMenu.offsetHeight;
+    this.roleMenu.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
+    this.roleMenu.style.top = Math.max(4, Math.min(cy, window.innerHeight - h - 6)) + 'px';
+  }
+  _hideRoleMenu() {
+    if (this.roleMenu && !this.roleMenu.hidden) this.roleMenu.hidden = true;
+    this._menuRole = null;
+  }
+
+  _showRenameBox(role, x, y) {
+    if (!this.renameBox) return;
+    this._renameRole = role;
+    this.renameBox.hidden = false;
+    const w = this.renameBox.offsetWidth, h = this.renameBox.offsetHeight;
+    this.renameBox.style.left = Math.max(4, Math.min(x, window.innerWidth - w - 6)) + 'px';
+    this.renameBox.style.top = Math.max(4, Math.min(y, window.innerHeight - h - 6)) + 'px';
+    this.renameInput.value = role.name;
+    setTimeout(() => { this.renameInput.focus(); this.renameInput.select(); }, 0);
+  }
+  _hideRenameBox() {
+    if (this.renameBox && !this.renameBox.hidden) this.renameBox.hidden = true;
+    this._renameRole = null;
+  }
+
+  _openColorPicker(role) {
+    if (!this.colorInput) return;
+    this._colorRole = role;
+    this.colorInput.value = role.color || '#ff7a45';
+    this.colorInput.click();
   }
 
   _matchMode(it) {
     if (this._badOnly && !it.bad) return false;
+    if (this._speaker && !this._speakerMatch(it)) return false;
     if (this._mode === 'first') return !!it.l1;
     if (this._mode === 'second') return !!it.l2;
     return true;
@@ -200,8 +472,9 @@ export class EditorPanel {
       return ((it.l1 || '').toLowerCase().includes(q)) || ((it.l2 || '').toLowerCase().includes(q));
     });
     const parts = [];
+    if (this._speaker) parts.push(`角色「${this._speaker}」`);
     if (this._badOnly) parts.push('⚠坏行');
-    if (this._filterText || this._badOnly || this._mode !== 'bi') {
+    if (this._filterText || this._badOnly || this._mode !== 'bi' || this._speaker) {
       parts.push(`${this.filtered.length} / ${this.items.length} 条`);
     } else {
       parts.push(`${this.items.length} 条`);
@@ -245,8 +518,11 @@ export class EditorPanel {
       if (it.badge1) chips.push(`<span class="cc-chip chip-l1"${chipAttr}>${escapeHtml(it.badge1)}</span>`);
       if (it.badge2 && showSecond) chips.push(`<span class="cc-chip chip-l2"${chipAttr}>${escapeHtml(it.badge2)}</span>`);
       const head = chips.length ? `<div class="cc-head">${chips.join('')}</div>` : '';
-      const l1 = showFirst && it.l1 ? `<div class="cc-l1"${l1Attr}>${escapeHtml(it.l1)}</div>` : '';
-      const l2 = showSecond && it.l2 ? `<div class="cc-l2">${escapeHtml(it.l2)}</div>` : '';
+      // 新建但还没输入的字幕 → 显示占位提示(用户不输入就离开则这条会被撤销)
+      const l1 = showFirst && it.l1 ? `<div class="cc-l1"${l1Attr}>${escapeHtml(it.l1)}</div>`
+        : (showFirst && it.isNew ? `<div class="cc-l1 cc-ph1">（输入中文）</div>` : '');
+      const l2 = showSecond && it.l2 ? `<div class="cc-l2">${escapeHtml(it.l2)}</div>`
+        : (showSecond && it.isNew ? `<div class="cc-l2 cc-ph2">（输入英文）</div>` : '');
       html += `<div class="${cls.join(' ')}" data-idx="${i}" style="${cardStyle.join(';')}">
         <div class="cc-times">
           <div class="cc-t"><span>开始</span><b${timeAttr}>${fmtTime(it.start)}</b></div>
@@ -331,11 +607,14 @@ export class EditorPanel {
     div.className = 'inline-editor';
     div.style.top = (idx * ROW_H + 6) + 'px';
     div.innerHTML = `
-      <div class="ie-line ie-l1" contenteditable="true" spellcheck="false" data-ph="中文整句…"></div>
-      <div class="ie-line ie-l2" contenteditable="true" spellcheck="false" data-ph="英文行…"></div>
+      <div class="ie-line ie-l1" contenteditable="true" spellcheck="false" data-ph="（输入中文）"></div>
+      <div class="ie-line ie-l2" contenteditable="true" spellcheck="false" data-ph="（输入英文）"></div>
       <div class="ie-hint">点击别处自动保存 · Esc 取消 · Enter 换行</div>`;
-    div.querySelector('.ie-l1').textContent = item.l1 || '';
-    div.querySelector('.ie-l2').textContent = item.l2 || '';
+    div.querySelector('.ie-line.ie-l2').textContent = item.l2 || '';
+    // 编辑框里不显示角色名 [Spoke](它由角色栏管理, 混在正文里既碍眼又容易改坏): 只显示正文, 提交时补回
+    const tagM = /^\s*\[[^\]]+\]\s*/.exec(item.l1 || '');
+    this._editTag = tagM ? tagM[0] : '';
+    div.querySelector('.ie-line.ie-l1').textContent = tagM ? (item.l1 || '').slice(tagM[0].length) : (item.l1 || '');
     // 编辑器沿用卡片的口角色, 避免"卡片是红的、点开变橙的"割裂感
     const editTone = item.color ? roleTone(item.color) : null;
     if (editTone) {
@@ -396,10 +675,18 @@ export class EditorPanel {
     if (!this.editItem) return;
     const it = this.editItem;
     const norm = (s) => (s || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-    const l1 = norm(this.editorEl && this.editorEl.querySelector('.ie-l1') ? this.editorEl.querySelector('.ie-l1').textContent : it.l1);
-    const l2 = norm(this.editorEl && this.editorEl.querySelector('.ie-l2') ? this.editorEl.querySelector('.ie-l2').textContent : it.l2);
+    const el = this.editorEl;
+    let l1 = norm(el && el.querySelector('.ie-l1') ? el.querySelector('.ie-l1').textContent : it.l1);
+    const l2 = norm(el && el.querySelector('.ie-l2') ? el.querySelector('.ie-l2').textContent : it.l2);
+    // 编辑框里没有角色名 → 提交时把原来的 [Spoke] 补回(用户自己写了 [xxx] 则以用户的为准)
+    if (this._editTag && !/^\[/.test(l1)) l1 = this._editTag + l1;
     this.closeEdit();
     this._render();
+    // 新建的字幕: 一个字都没写就走开 → 撤销这条(不留空字幕)
+    if (it.isNew && !l1 && !l2) {
+      if (this.onEmptyNew) this.onEmptyNew(it);
+      return;
+    }
     const newText = l1 + '\n' + l2;
     const origText = norm(it.l1) + '\n' + norm(it.l2);
     if (newText === origText) return;          // 没改 → 不动原始数据(保留 SRT 标签等)
@@ -419,6 +706,7 @@ export class EditorPanel {
   /** 关闭行内编辑器(不提交) */
   closeEdit() {
     this.editItem = null;
+    this._editTag = '';
     if (this.editorEl) { this.editorEl.remove(); this.editorEl = null; }
   }
 }

@@ -44,8 +44,7 @@
   </header>
 
   <!-- ══════════ 左上: 视频播放区 ══════════ -->
-  <main id="stage-wrap">
-    <div id="video-stage">
+  <main id="stage-wrap">    <div id="video-stage">
       <video id="video" controls preload="metadata"></video>
       <div id="srt-overlay"></div>
       <div id="stage-hint">
@@ -60,35 +59,87 @@
 
   <!-- ══════════ 右侧: 字幕编辑区 ══════════ -->
   <aside id="editor-panel">
-    <div class="panel-head">
-      <div class="ph-title">
-        <span class="ph-name" id="ph-name" title="">字幕总览</span>
-        <span class="badge" id="badge-format">未加载</span>
+    <div id="panel-tabs">
+      <button class="ptab active" data-tab="subs" title="字幕列表">字幕</button>
+      <button class="ptab" data-tab="roles" title="角色(说话人)总览">角色</button>
+      <button class="ptab" data-tab="settings" title="设置">设置</button>
+    </div>
+
+    <!-- 字幕 Tab: 当前字幕列表 -->
+    <div id="tab-subs" class="tab-body active">
+      <div class="panel-head">
+        <div class="ph-title">
+          <span class="ph-name" id="ph-name" title="">字幕总览</span>
+          <span class="badge" id="badge-format">未加载</span>
+        </div>
+        <div class="ph-search">
+          <select id="sel-role-filter" class="select" title="按角色筛选字幕">
+            <option value="__all__">全部角色</option>
+          </select>
+          <input type="search" id="search-box" placeholder="输入内容过滤">
+          <button class="ph-search-btn" id="btn-search" title="搜索" tabindex="-1">
+            <svg viewBox="0 0 24 24" width="13" height="13"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="ph-row">
+          <span class="ph-lbl">显示模式</span>
+          <select id="sel-display-mode" class="select select-dark">
+            <option value="bi">中英双行</option>
+            <option value="first">仅中文</option>
+            <option value="second">仅英文</option>
+          </select>
+          <span class="cue-count" id="cue-count"></span>
+          <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行(时间异常 / 字幕重叠 / 英文行含方括号 / 单中文行 / 单英文行)" disabled>⚠ <span id="bad-count">0</span></button>
+        </div>
       </div>
-      <div class="ph-search">
-        <input type="search" id="search-box" placeholder="输入内容过滤">
-        <button class="ph-search-btn" id="btn-search" title="搜索" tabindex="-1">
-          <svg viewBox="0 0 24 24" width="13" height="13"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/><line x1="15.5" y1="15.5" x2="21" y2="21" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-        </button>
+      <div id="cue-list">
+        <div id="cue-spacer"></div>
       </div>
-      <div class="ph-row">
-        <span class="ph-lbl">显示模式</span>
-        <select id="sel-display-mode" class="select select-dark">
-          <option value="bi">中英双行</option>
-          <option value="first">仅中文</option>
-          <option value="second">仅英文</option>
-        </select>
-        <span class="cue-count" id="cue-count"></span>
-        <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行(时间异常 / 字幕重叠 / 英文行含方括号 / 单中文行 / 单英文行)" disabled>⚠ <span id="bad-count">0</span></button>
+      <div id="list-actions">
+        <span class="la-hint">单击文字编辑 · 双击空白处跳转 · 点击别处自动保存</span>
       </div>
     </div>
-    <div id="cue-list">
-      <div id="cue-spacer"></div>
+
+    <!-- 角色 Tab: 解析所有人物(字幕 Name 栏的 [人物]) -->
+    <div id="tab-roles" class="tab-body">
+      <div class="tab-head">
+        <span class="tab-head-title">角色总览</span>
+        <span class="tab-head-sub">单击=设为播放头所在块说话人 · 右键=重命名/改色</span>
+      </div>
+      <div id="role-list" class="role-list"></div>
     </div>
-    <div id="list-actions">
-      <button class="btn btn-mini" id="btn-insert" title="在当前条目下方插入新字幕">＋ 插入</button>
-      <button class="btn btn-mini btn-danger" id="btn-delete" title="删除当前选中的字幕条目">✖ 删除</button>
-      <span class="la-hint">单击文字编辑 · 双击空白处跳转 · 点击别处自动保存</span>
+
+    <!-- 设置 Tab: 灵敏度等 -->
+    <div id="tab-settings" class="tab-body">
+      <div class="tab-head">
+        <span class="tab-head-title">设置</span>
+      </div>
+      <div class="settings-list">
+        <div class="setting-row">
+          <span class="setting-name" title="视频与字幕块之间那一条视频缩略图预览">显示胶片预览图</span>
+          <label class="switch">
+            <input type="checkbox" id="set-film">
+            <span class="switch-slider"></span>
+          </label>
+          <span class="setting-val" id="set-film-val">关</span>
+        </div>
+        <div class="setting-row">
+          <span class="setting-name" title="时间轴(字幕块+波形)占屏幕的高度; 也可直接拖动视频与时间轴中间那根线">字幕块区域高度</span>
+          <input type="range" id="set-tlh" class="range" min="96" max="600" step="1" value="232">
+          <span class="setting-val" id="set-tlh-val">232 px</span>
+        </div>
+        <div class="setting-row">
+          <span class="setting-name" title="滚动一格, 时间轴平移多少像素(越大滚得越远)">滚动平移灵敏度</span>
+          <input type="range" id="set-pan" class="range" min="40" max="480" step="20" value="120">
+          <span class="setting-val" id="set-pan-val">120 px</span>
+        </div>
+        <div class="setting-row">
+          <span class="setting-name" title="Ctrl+滚轮每格缩放倍率(越大缩放越猛)">缩放灵敏度</span>
+          <input type="range" id="set-zoom" class="range" min="1.05" max="2.5" step="0.05" value="1.25">
+          <span class="setting-val" id="set-zoom-val">1.25 ×</span>
+        </div>
+        <div class="setting-note">滚动：下滑=往前看 · 上滑=往后看 · Ctrl+滚轮=缩放。设置自动保存在本机浏览器。</div>
+      </div>
     </div>
   </aside>
 
@@ -100,7 +151,7 @@
         <span class="tl-sep">/</span>
         <span id="tl-duration">00:00:00.000</span>
       </div>
-      <div class="tl-group tl-hint">滚轮=平移 · Ctrl+滚轮=缩放 · 单击=跳转 · 拖动块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=删除</div>
+      <div class="tl-group tl-hint">滚轮=平移(下滑=往前/上滑=往后) · Ctrl+滚轮=缩放 · 单击=跳转 · 拖动块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=删除</div>
     </div>
     <div id="tl-canvas-wrap">
       <canvas id="timeline"></canvas>
@@ -110,6 +161,36 @@
     </div>
   </section>
 
+  <!-- ══════════ 可拖动分割线: 视频/时间轴(横) 与 左区/字幕列表(竖) ══════════ -->
+  <div id="hsplit" title="拖动调整视频与时间轴的屏幕比例"></div>
+  <div id="vsplit" title="拖动调整字幕列表宽度"></div>
+
+  <!-- 多条重叠台词 → 选择要设置角色的行 -->
+  <div id="pick-overlay" hidden>
+    <div class="pick-box">
+      <div class="pick-title" id="pick-title">检测到多条重叠的台词，请选择要设置角色的行：</div>
+      <div class="pick-list" id="pick-list"></div>
+      <div class="pick-actions"><button type="button" class="btn" id="pick-cancel">取消</button></div>
+    </div>
+  </div>
+
+  <!-- 字幕卡片右键菜单 -->
+  <div id="card-menu" hidden>
+    <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除该条字幕</button>
+  </div>
+
+  <!-- 角色右键菜单 / 重命名浮层 / 取色器(全局浮层) -->
+  <div id="role-menu" hidden>
+    <button type="button" class="tl-menu-item" data-act="rename">✏ 修改名称</button>
+    <button type="button" class="tl-menu-item" data-act="recolor">🎨 修改颜色</button>
+  </div>
+  <div id="role-rename" hidden>
+    <input id="role-rename-input" type="text" spellcheck="false" maxlength="60" placeholder="新名称">
+    <button type="button" class="btn btn-mini btn-accent" id="role-rename-ok">确定</button>
+  </div>
+  <input type="color" id="role-color-input" value="#ff7a45" aria-hidden="true" tabindex="-1">
+
+</div>
 </div>
 
 <script src="vendor/subtitles-octopus.js"></script>
