@@ -374,6 +374,7 @@ export class Timeline {
         const cue = this._menuCue;
         this._hideMenu();
         if (act === 'delete' && cue && this.onDelete) this.onDelete(cue.ref);
+      else if (act === 'fix' && cue && this.onFix) this.onFix(cue.ref);
       });
     }
 
@@ -989,6 +990,8 @@ export class Timeline {
         }
         // 块内: 中文行(角色色/加粗/100% 不透明) + 分隔线 + 英文逐词轴(可拖动标记)
         if (wpx > 46 && (c.text || c.text2)) this._drawBlockText(ctx, c, band, x1, x2, wpx, base);
+        // 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ —— 英文行(下半区)重叠也能看到
+        if (c.bad) this._drawBadMark(ctx, x1, band, wpx);
       }
       flushRun();
 
@@ -1016,5 +1019,33 @@ export class Timeline {
     ctx.beginPath();
     ctx.moveTo(x - 5, 0); ctx.lineTo(x + 5, 0); ctx.lineTo(x, 7);
     ctx.closePath(); ctx.fill();
+  }
+
+  /** 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ 角标。
+   *  叠在深色轨底上足够醒目, 让英文行(下半区)的重叠也能在时间轴下半部分看到。 */
+  _drawBadMark(ctx, x1, band, wpx) {
+    const bx = x1 + 0.5, by = band.y, bw = Math.max(1.5, wpx - 1), bh = band.h;
+    ctx.save();
+    ctx.strokeStyle = '#ff5c5c';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    this._roundRect(ctx, bx, by, bw, bh, 3);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (wpx >= 16) {
+      const sx = bx + bw - 13, sy = by + 3;
+      ctx.fillStyle = '#ff5c5c';
+      ctx.beginPath();
+      ctx.moveTo(sx + 6, sy);
+      ctx.lineTo(sx + 12, sy + 11);
+      ctx.lineTo(sx, sy + 11);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#1a1a21';
+      ctx.font = '700 9px "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', sx + 6, sy + 9);
+    }
+    ctx.restore();
   }
 }

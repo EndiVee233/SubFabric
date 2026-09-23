@@ -648,3 +648,38 @@ html, body {
   width: 1px; height: 1px; opacity: 0;
   border: 0; padding: 0; pointer-events: none;
 }
+
+/* ── 修复字幕弹窗 ───────────────────────────── */
+#fix-overlay {
+  position: fixed; inset: 0; z-index: 86;
+  background: rgba(6, 6, 9, .62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+#fix-overlay[hidden] { display: none; }
+.fix-box {
+  width: min(460px, 92vw);
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.6);
+}
+.fix-list { display: flex; flex-direction: column; gap: 8px; }
+.fix-issue {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 9px 11px;
+  background: #1a1a21; border: 1px solid var(--border); border-radius: 8px;
+  font-size: 12.5px; line-height: 1.5; color: var(--text-1);
+}
+.fix-ico { flex: none; font-size: 14px; line-height: 1.4; }
+.fix-input-wrap { display: flex; flex-direction: column; gap: 6px; }
+.fix-input-wrap[hidden] { display: none; }
+.fix-input-label { font-size: 12px; color: var(--text-1); }
+.fix-input {
+  width: 100%; resize: vertical;
+  background: #101015; color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; font-family: inherit; line-height: 1.5;
+  outline: none;
+}
+.fix-input:focus { border-color: var(--accent); }

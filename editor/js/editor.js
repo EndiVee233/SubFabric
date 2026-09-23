@@ -72,6 +72,7 @@ export class EditorPanel {
     this.onRenameRole = null; // 右键菜单·修改名称 → (oldName, newName) 全局
     this.onRecolorRole = null;// 右键菜单·修改颜色 → (name, '#rrggbb') 全局
     this.onDeleteCard = null; // 字幕卡片右键 → 删除该条(与时间轴右键删除同一套逻辑)
+    this.onFixCard = null;    // 字幕卡片右键 → 修复该条字幕(与时间轴右键修复同一套逻辑)
     this.onAddRole = null;    // 角色列表里的"＋ 添加角色"
     this.cardMenu = null;
     this._cardMenuItem = null;
@@ -411,6 +412,60 @@ export class EditorPanel {
     if (cancelBtn) cancelBtn.onclick = () => finish(null);
   }
 
+  /* ─────────── 修复字幕弹窗 ─────────── */
+  /** 展示该字幕检测到的问题; 有「缺词」时让用户确认原句; 点「一键修复」回调 onFix(confirmedText) */
+  showFix(no, issues, onFix) {
+    const ov = document.getElementById('fix-overlay');
+    if (!ov) return;
+    const titleEl = document.getElementById('fix-title');
+    const listEl = document.getElementById('fix-list');
+    const inputWrap = document.getElementById('fix-input-wrap');
+    const inputEl = document.getElementById('fix-input');
+    const okBtn = document.getElementById('fix-ok');
+    titleEl.textContent = `修复字幕 #${no}`;
+    const labels = {
+      karaokeMissing: '没有逐词效果，且不与其他字幕重叠 → 将自动添加逐词（均匀铺满该句时长）',
+      overlapNoKaraoke: '该句与其它字幕重叠，重叠时不加逐词（避免两句话高亮糊在一起）',
+      roleName: '英文行含有角色名 [..]，将删除角色名并确保逐词颜色仍是绿色',
+      missingWords: '英文行逐词缺词（切片数少于单词数）'
+    };
+    const keys = Object.keys(issues);
+    listEl.innerHTML = keys.map(k => {
+      let extra = '';
+      if (k === 'missingWords') extra = `（当前 ${issues[k].have} 切片 / 应为 ${issues[k].need} 词）`;
+      return `<div class="fix-issue"><span class="fix-ico">🔧</span><span>${labels[k] || k}${extra}</span></div>`;
+    }).join('');
+    // 缺词项: 必须让用户确认这句话到底是什么
+    if (issues.missingWords) {
+      inputWrap.hidden = false;
+      inputEl.value = issues.missingWords.text || '';
+    } else {
+      inputWrap.hidden = true;
+    }
+    ov.hidden = false;
+    const finish = (ok) => {
+      if (ok && issues.missingWords && !inputEl.value.trim()) {
+        inputEl.focus();   // 缺词必须确认原句, 不允许空着修复
+        return;
+      }
+      ov.hidden = true;
+      document.removeEventListener('keydown', onKey, true);
+      if (ok) {
+        const txt = issues.missingWords ? inputEl.value.trim() : null;
+        onFix(txt);
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      else if (e.key === 'Enter' && !issues.missingWords) { e.preventDefault(); finish(true); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    document.getElementById('fix-cancel').onclick = () => finish(false);
+    okBtn.onclick = () => finish(true);
+    if (issues.missingWords) setTimeout(() => inputEl.focus(), 0);
+    else setTimeout(() => okBtn.focus(), 0);
+  }
+
   /* ─────────── 字幕卡片右键菜单(目前只有删除) ─────────── */
   _bindCardMenu() {
     this.cardMenu = document.getElementById('card-menu');
@@ -421,6 +476,7 @@ export class EditorPanel {
         const item = this._cardMenuItem;
         this._hideCardMenu();
         if (btn.dataset.act === 'delete' && item && this.onDeleteCard) this.onDeleteCard(item);
+        else if (btn.dataset.act === 'fix' && item && this.onFixCard) this.onFixCard(item);
       });
     }
     this.listEl.addEventListener('contextmenu', (e) => {

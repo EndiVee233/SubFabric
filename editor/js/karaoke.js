@@ -13,7 +13,7 @@ const HL_RE = /\{\\c&H[0-9A-Fa-f]{6}&\}([^{}]+?)\{\\c\}/;
 const LEAD_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
 
 /** 逐词高亮色(默认绿), 不是说话人颜色, 提取时需排除 */
-const HIGHLIGHT_COLORS = new Set(['#00ff00']);
+export const HIGHLIGHT_COLORS = new Set(['#00ff00']);
 
 /** ASS &HBBGGRR → '#rrggbb'(供说话人颜色解析与全局换色复用) */
 export const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
@@ -65,10 +65,19 @@ function makeSentence(style, start, end, text, events, words, proto, highlightTa
   };
 }
 
+/**
+ * 取逐词高亮色标: 只从「{\c&H......&}词{\c}」逐词高亮 span 里取开头那个 \c 色标。
+ * 不能取切片里第一个 {\c&H...&} —— 否则英文行行首的角色色标(如 {\c&H0B0BE5&})
+ * 会被误当成逐词高亮色, 导致删角色/改英文行后所有词都染上角色色(用户报的 bug#1)。
+ * 正规 karaoke 文件里逐词色恒为绿 {\c&H00FF00&}; 若文件用了别的逐词色, 同样从 span 取。
+ */
 function firstTag(slices) {
   for (const sl of slices) {
-    const m = /\{\\c&H[0-9A-Fa-f]{6}&\}/.exec(sl.text);
-    if (m) return m[0];
+    const m = HL_RE.exec(sl.text);
+    if (m) {
+      const open = /^\{\\[^}]*\}/.exec(m[0]);   // span 开头的 {\c&H......&}
+      if (open) return open[0];
+    }
   }
   return '{\\c&H00FF00&}';
 }
@@ -201,7 +210,7 @@ function finalizeSentences(sentences) {
  * "{\c&H0B0BE5&}[Spoke]在 Unstable SMP…" 的 "[Spoke]"(说话人分离工具写入文本)。
  * 文本没有 [ ] 时回退到 Name 栏(如 "Spoke")。
  */
-function speakerTagOf(sent) {
+export function speakerTagOf(sent) {
   for (const ev of (sent.events || [])) {
     const t = String(ev.text || '');
     const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];

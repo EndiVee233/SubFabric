@@ -160,6 +160,7 @@
     <div id="tl-canvas-wrap">
       <canvas id="timeline"></canvas>
       <div id="tl-menu" hidden>
+        <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>
         <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除字幕块</button>
       </div>
     </div>
@@ -206,7 +207,24 @@
 
   <!-- 字幕卡片右键菜单 -->
   <div id="card-menu" hidden>
+    <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>
     <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除该条字幕</button>
+  </div>
+
+  <!-- 修复字幕: 展示检测结果, 缺词项让用户确认原句 -->
+  <div id="fix-overlay" hidden>
+    <div class="fix-box">
+      <div class="rn-title" id="fix-title">修复字幕</div>
+      <div class="fix-list" id="fix-list"></div>
+      <div class="fix-input-wrap" id="fix-input-wrap" hidden>
+        <label class="fix-input-label">请确认这句英文原句（缺词将按此重建逐词）：</label>
+        <textarea id="fix-input" class="fix-input" rows="2" spellcheck="false"></textarea>
+      </div>
+      <div class="rn-actions">
+        <button type="button" class="btn" id="fix-cancel">取消</button>
+        <button type="button" class="btn btn-accent" id="fix-ok">一键修复</button>
+      </div>
+    </div>
   </div>
 
   <!-- 角色右键菜单 / 重命名浮层 / 取色器(全局浮层) -->
