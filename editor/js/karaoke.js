@@ -196,12 +196,23 @@ function markBadSentences(sentences) {
   }
 }
 
+/** 句子内部切片是否**时间交叠**(同一条字幕的两份事件互相压住 → 重复/重叠的脏数据)。
+ *  正常 karaoke 切片首尾相接(prev.end == next.start)不算交叠。 */
+function slicesOverlap(s) {
+  const evs = (s.events || []).slice().sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < evs.length; i++) {
+    if (evs[i].start < evs[i - 1].end - 1e-3) return true;
+  }
+  return false;
+}
+
 /** 补齐显示元数据: 异常标记 + 说话人 / 说话人颜色(供时间轴按人物着色) */
 function finalizeSentences(sentences) {
   markBadSentences(sentences);
   for (const s of sentences) {
     s.color = speakerColorOf(s);
     s.speaker = speakerTagOf(s);
+    s.overlap = slicesOverlap(s);
   }
 }
 

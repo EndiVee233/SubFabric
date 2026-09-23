@@ -413,8 +413,9 @@ export class EditorPanel {
   }
 
   /* ─────────── 修复字幕弹窗 ─────────── */
-  /** 展示该字幕检测到的问题; 有「缺词」时让用户确认原句; 点「一键修复」回调 onFix(confirmedText) */
-  showFix(no, issues, onFix) {
+  /** 展示该字幕检测到的问题; needConfirm=true 时让用户确认原句(预填 prefill);
+   *  点「一键修复」回调 onFix(confirmedText| null) */
+  showFix(no, issues, needConfirm, prefill, onFix) {
     const ov = document.getElementById('fix-overlay');
     if (!ov) return;
     const titleEl = document.getElementById('fix-title');
@@ -427,42 +428,43 @@ export class EditorPanel {
       karaokeMissing: '没有逐词效果，且不与其他字幕重叠 → 将自动添加逐词（均匀铺满该句时长）',
       overlapNoKaraoke: '该句与其它字幕重叠，重叠时不加逐词（避免两句话高亮糊在一起）',
       roleName: '英文行含有角色名 [..]，将删除角色名并确保逐词颜色仍是绿色',
-      missingWords: '英文行逐词缺词（切片数少于单词数）'
+      wordsMismatch: '英文行逐词与文本不一致（缺词或多词）',
+      enOverlap: '英文行内部有重叠/重复的字幕（同一段时间里有两条英文）'
     };
     const keys = Object.keys(issues);
     listEl.innerHTML = keys.map(k => {
       let extra = '';
-      if (k === 'missingWords') extra = `（当前 ${issues[k].have} 切片 / 应为 ${issues[k].need} 词）`;
+      if (k === 'wordsMismatch') extra = `（当前 ${issues[k].have} 切片 / 文本 ${issues[k].need} 词）`;
       return `<div class="fix-issue"><span class="fix-ico">🔧</span><span>${labels[k] || k}${extra}</span></div>`;
     }).join('');
-    // 缺词项: 必须让用户确认这句话到底是什么
-    if (issues.missingWords) {
+    // 逐词与文本不一致 / 英文行重复 → 必须让用户确认这句话到底是什么
+    if (needConfirm) {
       inputWrap.hidden = false;
-      inputEl.value = issues.missingWords.text || '';
+      inputEl.value = prefill || '';
     } else {
       inputWrap.hidden = true;
     }
     ov.hidden = false;
     const finish = (ok) => {
-      if (ok && issues.missingWords && !inputEl.value.trim()) {
-        inputEl.focus();   // 缺词必须确认原句, 不允许空着修复
+      if (ok && needConfirm && !inputEl.value.trim()) {
+        inputEl.focus();   // 需要确认原句, 不允许空着修复
         return;
       }
       ov.hidden = true;
       document.removeEventListener('keydown', onKey, true);
       if (ok) {
-        const txt = issues.missingWords ? inputEl.value.trim() : null;
+        const txt = needConfirm ? inputEl.value.trim() : null;
         onFix(txt);
       }
     };
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
-      else if (e.key === 'Enter' && !issues.missingWords) { e.preventDefault(); finish(true); }
+      else if (e.key === 'Enter' && !needConfirm) { e.preventDefault(); finish(true); }
     };
     document.addEventListener('keydown', onKey, true);
     document.getElementById('fix-cancel').onclick = () => finish(false);
     okBtn.onclick = () => finish(true);
-    if (issues.missingWords) setTimeout(() => inputEl.focus(), 0);
+    if (needConfirm) setTimeout(() => inputEl.focus(), 0);
     else setTimeout(() => okBtn.focus(), 0);
   }
 

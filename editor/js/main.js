@@ -318,10 +318,14 @@ function markBadRows(items) {
       const hasL1 = !!it.l1, hasL2 = !!it.l2;
       if (hasL1 && !hasL2) reasons.push('单中文行(缺英文)');
       if (!hasL1 && hasL2) reasons.push('单英文行(缺中文)');
-      // 英文行有逐词特效, 但切片数少于单词数(用户报的 bug#3: 缺词无警告)
+      // 英文行逐词缺词(切片数 < 单词数) —— 用户报的 bug#3(缺词无警告)。
+      // 注: 反向的「逐词多余」(同一词被重复高亮) 在真实文件里很常见(本示例 57 行),
+      //     全量点亮会淹掉 ⚠ 徽标, 因此不并入坏行; 交给「修复字幕」按需深度检测。
       if (it.enWordCount && it.enTokenCount && it.enWordCount < it.enTokenCount) {
         reasons.push(`英文行缺词(切片${it.enWordCount}/单词${it.enTokenCount})`);
       }
+      // 英文行内部切片交叠(同一条字幕有两份事件互相压住 → 画面叠字)
+      if (it.enOverlap) reasons.push('英文行重叠(重复字幕)');
     }
     if (overlap.has(i)) reasons.push('字幕重叠');
     it.bad = reasons.length > 0;
@@ -377,9 +381,10 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           textRaw: zhText + '\n' + enText,
           bad: !!((zhS && zhS.bad) || (enS && enS.bad)),
           badReason: [badReasonOf(zhS), badReasonOf(enS)].filter(Boolean).join(' / '),
-          // 英文逐词缺词检测用: 切片数 vs 去掉[角色名]后的单词数(用户报的 bug#3)
+          // 英文逐词缺词/重复/交叠检测用(用户报: 重复字幕被并成一句、缺词无警告)
           enWordCount: enS && enS.words ? enS.words.length : 0,
-          enTokenCount: enS ? enS.text.replace(/\[[^\]]+\]/g, '').split(/\s+/).filter(Boolean).length : 0
+          enTokenCount: enS ? enS.text.replace(/\[[^\]]+\]/g, '').split(/\s+/).filter(Boolean).length : 0,
+          enOverlap: !!(enS && enS.overlap)
         };
         state.itemByRef.set(row, it);
         return it;
@@ -1009,17 +1014,20 @@ panel.onTabChange = (name) => pruneUnusedRoles(name === 'roles');   // 离开角
 const EN_ROLE_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
 
 /**
- * 检测一行字幕有哪些可自动修复的问题(供右键「修复字幕」).
- * 返回 { karaokeMissing, overlapNoKaraoke, roleName, missingWords } 子集。
+ * 检测一行字幕有哪些问题(供右键「修复字幕」).
+ * 返回 { issues, needConfirm, prefill }：
+ *   issues 子集 { karaokeMissing(自动加逐词), overlapNoKaraoke(仅提示), roleName(自动删角色),
+ *                 wordsMismatch(逐词与文本不一致), enOverlap(英文行重复/交叠) }
+ *   needConfirm=true 表示 wordsMismatch/enOverlap —— 必须让用户确认这句话到底是什么再修。
  */
 function detectRowProblems(row) {
   const issues = {};
   const en = row.en;
+  let needConfirm = false, prefill = '';
   // ① 没有逐词效果
   if (en && (!en.words || !en.words.length)) {
-    const overlap = computeOverlapRows().has(row);
-    if (overlap) issues.overlapNoKaraoke = true;   // 重叠的不加逐词(去重叠会丢特效)
-    else issues.karaokeMissing = true;             // 不重叠 → 可自动加
+    if (computeOverlapRows().has(row)) issues.overlapNoKaraoke = true;  // 重叠的不加逐词(会丢特效)
+    else issues.karaokeMissing = true;                                  // 不重叠 → 可自动加
   }
   // ② 英文行含角色名([..]) 或 行首非绿角色色标
   if (en) {
@@ -1033,52 +1041,32 @@ function detectRowProblems(row) {
     }
     if (roleName) issues.roleName = true;
   }
-  // ③ 英文行逐词缺词(切片数 < 去掉[角色名]后的单词数)
+  // ③ 英文行逐词与文本不一致(缺词/多余) 或 英文行内部切片交叠(重复字幕) —— 都是英文行脏了,
+  //    需要用户确认这句话到底是什么(用户明确要求), 才能重建出正确的逐词。
   if (en && en.words && en.words.length) {
-    const toks = (en.text || '').replace(/\[[^\]]+\]/g, '').split(/\s+/).filter(Boolean);
-    if (en.words.length < toks.length) {
-      issues.missingWords = { text: (en.text || '').trim(), have: en.words.length, need: toks.length };
+    const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    const toks = clean.split(/\s+/).filter(Boolean).length;
+    if (toks && en.words.length !== toks) {
+      issues.wordsMismatch = { text: clean, have: en.words.length, need: toks };
+    }
+    if (en.overlap) issues.enOverlap = true;
+    if (issues.wordsMismatch || issues.enOverlap) {
+      needConfirm = true;
+      prefill = (issues.wordsMismatch && issues.wordsMismatch.text) || clean || en.words.map(w => w.w).join(' ');
     }
   }
-  return issues;
+  return { issues, needConfirm, prefill };
 }
 
-/** 删除英文行的角色名([..]) 与行首非绿角色色标, 并把逐词高亮色校正回绿色(用户 bug#1) */
-function stripRoleFromEnglish(en) {
-  let changed = false;
-  for (const ev of en.events) {
-    let t = ev.text || '';
-    // 移除行首角色色标(纯 {\c&H..&}, 非绿) —— 不动后面的逐词 {\c&H..&}..{\c} span
-    const lead = /^(\s*\{[^}]*?\})/.exec(t);
-    if (lead) {
-      const m = /\\c&H([0-9A-Fa-f]{6})&/.exec(lead[1]);
-      if (m && !HIGHLIGHT_COLORS.has(assColorToHex(m[1].toUpperCase()))) {
-        if (/^\s*\{\\c&H[0-9A-Fa-f]{6}&\}\s*$/.test(lead[1])) {
-          t = t.slice(lead[0].length);
-          changed = true;
-        }
-      }
-    }
-    // 移除可见 [角色名]
-    const tagM = /^\s*\[[^\]]+\]\s*/.exec(t);
-    if (tagM) { t = t.slice(tagM[0].length); changed = true; }
-    if (changed) {
-      state.assDoc.setEventText(ev, t);
-      // Name 栏里的角色也一并删掉(角色即身份, 英文行不该再挂这个名字)
-      if (ev.name) state.assDoc.setEventName(ev, '');
-    }
-  }
-  if (changed) {
-    en.proto && (en.proto.name = '');
-    // 文本从词级时间轴重建(词是逐词真实内容, 不受切片明文长短影响), 避免删角色后词数对不上
-    en.text = (en.words && en.words.length)
-      ? en.words.map(w => w.w).join(' ')
-      : (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '');
-    en.highlightTag = '{\\c&H00FF00&}';          // 确保逐词高亮回绿, 不被角色色污染
-    en.words = recalcWords(en, en.text, en.start, en.end);
-    en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
-  }
-  return changed;
+/** 用目标文本重建英文逐词行: 逐词高亮回绿(用户 bug#1), 并整体替换该句全部切片。
+ *  replaceEvents 会**换掉该句所有事件** → 重复/交叠的脏切片一并清除。
+ *  clearName=true 时把角色名从 Name 栏也删掉(角色名在英文行时)。 */
+function rebuildEnglishFromText(en, text, clearName) {
+  if (clearName && en.proto) en.proto.name = '';
+  en.text = text;
+  en.highlightTag = '{\\c&H00FF00&}';
+  en.words = recalcWords(en, en.text, en.start, en.end);
+  en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
 }
 
 /** 编辑后把行的说话人色/名重新算一遍(防改完行首标签后颜色/筛选没刷新) */
@@ -1089,25 +1077,31 @@ function refinalizeRow(row) {
   row.speaker = (row.zh && row.zh.speaker) || (row.en && row.en.speaker) || '';
 }
 
-/** 应用修复: 按检测结果修复该行(缺词项用用户确认的句子) */
+/** 应用修复: 按检测结果修复该行(不一致/重叠项用用户确认的句子) */
 function fixRow(row, issues, confirmedText) {
   const en = row.en;
   if (!en) { toast('该行没有英文逐词行，无法修复'); return; }
   const done = [];
-  if (issues.roleName && stripRoleFromEnglish(en)) done.push('已删除英文行角色名并校正逐词色');
-  if (issues.missingWords) {
-    const text = (confirmedText != null ? confirmedText : issues.missingWords.text).trim();
-    if (text) {
-      en.text = text;
-      en.words = recalcWords(en, en.text, en.start, en.end);
-      en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
-      done.push('已按确认句子重建逐词');
+  const mismatch = issues.wordsMismatch || issues.enOverlap;
+  if (issues.roleName || mismatch) {
+    let target;
+    if (mismatch) {
+      // 逐词与文本不一致 / 英文行重复交叠 → 以用户确认的句子为准
+      target = ((confirmedText != null ? confirmedText : '') || (issues.wordsMismatch ? issues.wordsMismatch.text : '')).trim();
+    } else {
+      // 仅角色名场景: 文本从词级时间轴重建(词才是逐词真值, 切片明文不可靠)
+      target = (en.words && en.words.length) ? en.words.map(w => w.w).join(' ') : (en.text || '').trim();
+    }
+    target = target.replace(/^\s*\[[^\]]+\]\s*/, '');   // 防用户把角色名也带进来
+    if (target) {
+      rebuildEnglishFromText(en, target, !!issues.roleName);
+      if (issues.roleName) done.push('已删除英文行角色名并校正逐词色');
+      if (mismatch) done.push('已按确认句子重建逐词');
     }
   }
   if (issues.karaokeMissing) {
-    const t = en.text || assPlainText(en.events[0].text);
-    en.words = recalcWords(en, t, en.start, en.end);
-    en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+    const t = (en.text || assPlainText(en.events[0].text)).trim();
+    rebuildEnglishFromText(en, t, false);
     done.push('已自动添加逐词效果');
   }
   if (issues.overlapNoKaraoke) done.push('（该句重叠，未加逐词以免丢特效）');
@@ -1124,14 +1118,14 @@ function openFixForRow(ref) {
   if (state.format !== 'ass' || !state.kar) { toast('修复字幕仅支持 ASS 特效字幕'); return; }
   const row = ref;   // ASS 下 ref 即 karaoke row
   if (!row) { toast('没有找到这条字幕'); return; }
-  const issues = detectRowProblems(row);
+  const { issues, needConfirm, prefill } = detectRowProblems(row);
   if (!Object.keys(issues).length) { toast('这条字幕没有问题 ✅'); return; }
-  const fixable = ['karaokeMissing', 'roleName', 'missingWords'].filter(k => issues[k]);
+  const fixable = ['karaokeMissing', 'roleName', 'wordsMismatch', 'enOverlap'].filter(k => issues[k]);
   if (!fixable.length) {
     toast('这条字幕暂无可自动修复项（仅与其它字幕重叠，重叠时不加逐词以免丢特效）');
     return;
   }
-  panel.showFix(row.no, issues, (confirmedText) => fixRow(row, issues, confirmedText));
+  panel.showFix(row.no, issues, needConfirm, prefill, (confirmedText) => fixRow(row, issues, confirmedText));
 }
 
 timeline.onFix = (ref) => openFixForRow(ref);         // 时间轴块右键「修复字幕」
