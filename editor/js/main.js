@@ -38,6 +38,7 @@ const state = {
   items: [],             // 编辑面板视图模型
   itemByRef: new Map(),  // ref(cue|event) → item
   newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
+  extraRoles: [],        // 用户手动添加、还没用到任何字幕上的角色 [{name, color}]
   selected: null,
   videoLoaded: false
 };
@@ -489,8 +490,26 @@ function computeRoles() {
       if (row.color && !e.color) e.color = row.color;
     }
   }
+  // 合并用户手动添加的角色(还没用上时 count = 0, 也会出现在角色栏/筛选里)
+  for (const ex of state.extraRoles) {
+    const key = ex.name.toLowerCase();
+    if (!map.has(key)) map.set(key, { name: ex.name, raw: '[' + ex.name + ']', color: ex.color || null, count: 0, custom: true });
+  }
   return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
+
+/** 角色栏“＋ 添加角色”: 登记一个新角色, 之后单击它即可应用到播放头所在字幕 */
+panel.onAddRole = () => {
+  if (state.format !== 'ass' || !state.kar) { toast('角色仅支持 ASS 字幕'); return; }
+  panel.showAddRoleDialog(({ name, color }) => {
+    const exists = computeRoles().some(r => r.name.toLowerCase() === name.toLowerCase());
+    if (exists) { toast(`角色「${name}」已存在，请换个名字`); return false; }   // false → 弹窗不关闭
+    state.extraRoles.push({ name, color });
+    panel.showTab('roles');
+    rebuildItemsAndLanes(true, true);
+    toast(`已添加角色「${name}」——单击它即可应用到播放头所在字幕`);
+  });
+};
 
 /** 把事件文本行首可见的 [旧tag] 换成 tag(没有则补上); 不动 {\...} 覆盖标签 */
 function setEventSpeakerTag(ev, tag) {
@@ -503,8 +522,8 @@ function setEventSpeakerTag(ev, tag) {
   return true;
 }
 
-/** 把某一行字幕的说话人改成 name —— 角色栏单击(单行) */
-function doAssignSpeaker(hit, name) {
+/** 把某一行字幕的说话人改成 name(含标签/Name 栏/颜色), 不含重建与提示 —— 供单行与"角色合并"复用 */
+function applyRoleToRow(hit, name) {
   const tag = '[' + name + ']';
   // 颜色即身份: 目标角色已有颜色时, 连该块行首色标一起换成目标角色的颜色
   const role = computeRoles().find(r => r.name.toLowerCase() === String(name).toLowerCase());
@@ -537,9 +556,42 @@ function doAssignSpeaker(hit, name) {
   }
   if (hexNorm) hit.color = hexNorm;
   hit.speaker = tag;
+}
+
+/** 角色栏单击(单行): 改完重建 + 提示 */
+function doAssignSpeaker(hit, name) {
+  applyRoleToRow(hit, name);
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
-  toast(`已将 #${hit.no} 说话人改为 ${tag}`);
+  toast(`已将 #${hit.no} 说话人改为 [${name}]`);
+}
+
+/** 角色合并: 把 fromName 名下所有台词(含颜色)改成 toName, 并删除原角色 */
+function mergeRoleInto(fromName, toName) {
+  const key = String(fromName).toLowerCase();
+  let n = 0;
+  for (const row of state.kar.rows) {
+    const names = speakerNames(row.speaker).map(x => x.toLowerCase());
+    if (!names.includes(key)) continue;
+    applyRoleToRow(row, toName);
+    n++;
+  }
+  state.extraRoles = state.extraRoles.filter(e => e.name.toLowerCase() !== key);
+  assPlayer.updateNow(state.assDoc.serialize());
+  rebuildItemsAndLanes(true, true);
+  toast(`已将「${fromName}」的 ${n} 条台词继承到「${toName}」`);
+}
+
+/** 离开角色栏时: 用户添加但**从未分配过任何台词**的新角色判定作废并移除 */
+function pruneUnusedRoles(onRolesTab) {
+  if (onRolesTab || !state.extraRoles.length) return;
+  const used = new Set();
+  for (const row of state.kar.rows) for (const nm of speakerNames(row.speaker)) used.add(nm.toLowerCase());
+  const dropped = state.extraRoles.filter(e => !used.has(e.name.toLowerCase())).length;
+  // 用上的角色已由字幕内容派生(不再需要额外登记), 没用上的判定作废 —— 离开角色栏时一律清除
+  state.extraRoles = [];
+  panel.setRoles(computeRoles());
+  if (dropped) toast(`已移除 ${dropped} 个未使用的新角色`);
 }
 
 /**
@@ -673,7 +725,20 @@ panel.onAssignRole = (name) => {
 // 角色卡片右键 → 全局重命名: 所有 Name 栏 [旧] → [新]
 panel.onRenameRole = (oldName, newName) => {
   if (state.format !== 'ass' || !state.kar) return;
+  // 目标名称已存在 → 先确认: 是 = 继承并合并(台词+颜色都改成目标角色), 否 = 取消本次改名
+  const target = computeRoles().find(r =>
+    r.name.toLowerCase() === String(newName).toLowerCase() &&
+    r.name.toLowerCase() !== String(oldName).toLowerCase());
+  if (target) {
+    panel.showConfirm('目标角色已存在',
+      `「${target.name}」已经存在（${target.count} 条）。是否把角色「${oldName}」的台词全部继承到「${target.name}」，并合并为一个角色？`,
+      '是，继承并合并', '取消', () => mergeRoleInto(oldName, target.name));
+    return;
+  }
   const n = renameRoleGlobally(oldName, newName);
+  for (const ex of state.extraRoles) {
+    if (ex.name.toLowerCase() === String(oldName).toLowerCase()) ex.name = newName;
+  }
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
   toast(`已将 [${oldName}] 重命名为 [${newName}]（${n} 行）`);
@@ -684,6 +749,9 @@ panel.onRecolorRole = (name, hex) => {
   const role = computeRoles().find(r => r.name.toLowerCase() === String(name).toLowerCase());
   if (!role) return;
   const n = recolorRoleGlobally(role, hex);
+  for (const ex of state.extraRoles) {
+    if (ex.name.toLowerCase() === role.name.toLowerCase()) ex.color = hex;
+  }
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
   toast(`已将 [${role.name}] 颜色改为 ${hex}（${n} 行）`);
@@ -769,6 +837,35 @@ function reconcileKaraoke() {
   if (restored) assPlayer.updateNow(state.assDoc.serialize());
   return restored;
 }
+
+/** 拖动英文逐词的开始标记: 该词的起点 + 前一个词的结束一起移动(两词共享边界)。
+ *  严格夹取——不越过前后词、不超出字幕块范围; **按住 Shift 也不放宽**。
+ *  结果写回 ASS 的逐词切片(视频区高亮与导出都跟着变)。 */
+const WORD_MIN_GAP = 0.02;    // 每个词至少保留的时长(秒)
+timeline.onWordRetime = (row, idx, t, done) => {
+  const en = row && row.en;
+  const words = en && en.words;
+  if (!words || !words[idx]) return;
+  const w = words[idx];
+  const lo = idx > 0
+    ? words[idx - 1].s + WORD_MIN_GAP                      // 不能压到前一个词的起点
+    : Math.max(row.start, en.start);                       // 第一个词: 不超出字幕块
+  const hiRaw = Math.min(
+    w.e - WORD_MIN_GAP,                                    // 不能晚于自己的结束
+    (idx + 1 < words.length) ? words[idx + 1].s - WORD_MIN_GAP : Infinity   // 不能压过下一个词的起点
+  );
+  const hi = Math.max(lo, hiRaw);
+  const nt = Math.min(Math.max(t, lo), hi);
+  if (idx > 0) words[idx - 1].e = nt;                      // 共享边界: 前一个词的结束跟着移动
+  w.s = nt;
+  en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+  if (done) {
+    assPlayer.updateNow(state.assDoc.serialize());
+    rebuildItemsAndLanes(true, true);
+  } else {
+    assPlayer.update(state.assDoc.serialize());
+  }
+};
 
 timeline.onRetime = (row, s, e, done, shift) => {
   const item = state.itemByRef.get(row);
@@ -881,6 +978,7 @@ panel.onApply = ({ item: editItem, start, end, dur, text }) => {
 };
 
 panel.onDeleteCard = (item) => deleteItem(item);   // 字幕列表右键删除(与时间轴右键同一套逻辑)
+panel.onTabChange = (name) => pruneUnusedRoles(name === 'roles');   // 离开角色栏 → 清掉没用上的新角色
 
 /** 删除一条字幕(列表删除按钮 / 时间轴右键菜单共用) */
 function deleteItem(item, silent) {

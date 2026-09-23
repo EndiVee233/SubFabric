@@ -72,6 +72,7 @@ export class EditorPanel {
     this.onRenameRole = null; // 右键菜单·修改名称 → (oldName, newName) 全局
     this.onRecolorRole = null;// 右键菜单·修改颜色 → (name, '#rrggbb') 全局
     this.onDeleteCard = null; // 字幕卡片右键 → 删除该条(与时间轴右键删除同一套逻辑)
+    this.onAddRole = null;    // 角色列表里的"＋ 添加角色"
     this.cardMenu = null;
     this._cardMenuItem = null;
     this.roleMenu = null;
@@ -232,6 +233,7 @@ export class EditorPanel {
       if (el) el.classList.toggle('active', k === name);
     }
     for (const btn of this._tabBtns) btn.classList.toggle('active', btn.dataset.tab === name);
+    if (this.onTabChange) this.onTabChange(name);      // 离开角色栏 → 主逻辑会清掉没用过的新角色
     if (name === 'subs') this._render();
     else if (name === 'roles') this._renderRoles();
   }
@@ -269,11 +271,7 @@ export class EditorPanel {
   _renderRoles() {
     const el = document.getElementById('role-list');
     if (!el) return;
-    if (!this._roles.length) {
-      el.innerHTML = `<div class="empty-hint">当前字幕不含角色标记（Name 栏的 [人物]）。</div>`;
-      return;
-    }
-    el.innerHTML = this._roles.map(r => {
+    const cards = this._roles.map(r => {
       const c = r.color ? hexRgb(r.color) : null;
       const dot = c ? `style="background:rgb(${c.r},${c.g},${c.b})"` : 'style="background:#5b6472"';
       return `<div class="role-card" data-name="${escapeHtml(r.name)}" title="单击=设为播放头所在字幕块的说话人 · 右键=重命名 / 改色">
@@ -281,8 +279,14 @@ export class EditorPanel {
         <span class="role-name">${escapeHtml(r.name)}</span>
         <span class="role-count">${r.count} 条</span>
       </div>`;
-    }).join('');
+    });
+    cards.push(`<div class="role-card role-add" data-act="add" title="添加一个新角色(如 译者注)">＋ 添加角色</div>`);
+    el.innerHTML = cards.join('');
     el.querySelectorAll('.role-card').forEach(card => {
+      if (card.dataset.act === 'add') {
+        card.addEventListener('click', () => { if (this.onAddRole) this.onAddRole(); });
+        return;
+      }
       card.addEventListener('click', () => {
         if (this.onAssignRole) this.onAssignRole(card.dataset.name);
       });
@@ -292,6 +296,74 @@ export class EditorPanel {
         if (role) this._showRoleMenu(e.clientX, e.clientY, role);
       });
     });
+  }
+
+  /* ─────────── 通用确认弹窗 ─────────── */
+  /** title / msg / yesText / noText / onYes: 点"是"回调 */
+  showConfirm(title, msg, yesText, noText, onYes) {
+    const ov = document.getElementById('confirm-overlay');
+    if (!ov) return;
+    document.getElementById('confirm-title').textContent = title || '请确认';
+    document.getElementById('confirm-msg').textContent = msg || '';
+    const yesBtn = document.getElementById('confirm-yes');
+    const noBtn = document.getElementById('confirm-no');
+    yesBtn.textContent = yesText || '确定';
+    noBtn.textContent = noText || '取消';
+    ov.hidden = false;
+    const done = (ok) => {
+      ov.hidden = true;
+      document.removeEventListener('keydown', onKey, true);
+      if (ok && onYes) onYes();
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); done(true); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    yesBtn.onclick = () => done(true);
+    noBtn.onclick = () => done(false);
+    setTimeout(() => yesBtn.focus(), 0);
+  }
+
+  /* ─────────── 添加角色弹窗 ─────────── */
+  /** 弹窗填写名称+颜色, 确定后回调 onSubmit({name, color}) */
+  showAddRoleDialog(onSubmit) {
+    const ov = document.getElementById('role-new');
+    const nameEl = document.getElementById('role-new-name');
+    const colorWrap = document.getElementById('role-new-colors');
+    const customEl = document.getElementById('role-new-color');
+    if (!ov || !nameEl) return;
+    const PALETTE = ['#e50b0b', '#ff7a45', '#ffd54a', '#4fd1a5', '#00aaff', '#8b7cf6', '#ff00d0', '#ffffff', '#c2c2c2', '#5b6472'];
+    let picked = PALETTE[0];
+    colorWrap.innerHTML = PALETTE.map((c, i) =>
+      `<span class="rn-swatch${i === 0 ? ' active' : ''}" data-c="${c}" style="background:${c}"></span>`).join('');
+    customEl.value = picked;
+    nameEl.value = '';
+    ov.hidden = false;
+    const syncSwatches = () => {
+      colorWrap.querySelectorAll('.rn-swatch').forEach(s => s.classList.toggle('active', s.dataset.c === picked));
+      customEl.value = picked;
+    };
+    colorWrap.querySelectorAll('.rn-swatch').forEach(s => {
+      s.onclick = () => { picked = s.dataset.c; syncSwatches(); };
+    });
+    customEl.oninput = () => { picked = customEl.value; syncSwatches(); };
+    const finish = (ok) => {
+      const name = (nameEl.value || '').trim();
+      if (ok && !name) { nameEl.focus(); return; }     // 名称必填: 不关闭弹窗
+      // 回调返回 false(如重名) → 保持弹窗打开, 让用户改名字
+      if (ok && onSubmit && onSubmit({ name, color: picked }) === false) return;
+      ov.hidden = true;
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    document.getElementById('role-new-cancel').onclick = () => finish(false);
+    document.getElementById('role-new-ok').onclick = () => finish(true);
+    setTimeout(() => nameEl.focus(), 0);
   }
 
   /* ─────────── 通用选择弹窗(重叠台词选行等) ─────────── */

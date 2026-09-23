@@ -512,6 +512,60 @@ html, body {
 .pick-dot { width: 11px; height: 11px; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,.4) inset; }
 .pick-actions { flex: none; display: flex; justify-content: flex-end; padding: 10px 14px; border-top: 1px solid var(--border); }
 
+/* ── 添加角色弹窗 ───────────────────────────── */
+#role-new {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(6, 6, 9, .62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+#role-new[hidden] { display: none; }
+#confirm-overlay {
+  position: fixed; inset: 0; z-index: 85;
+  background: rgba(6, 6, 9, .62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+#confirm-overlay[hidden] { display: none; }
+.rn-msg { font-size: 13px; line-height: 1.7; color: var(--text-1); }
+.rn-box {
+  width: min(420px, 92vw);
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.6);
+}
+.rn-title { font-size: 14px; font-weight: 700; color: var(--text-0); }
+#role-new-name {
+  background: #101015; color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 13px; outline: none;
+}
+#role-new-name:focus { border-color: var(--accent); }
+.rn-colors { display: flex; flex-wrap: wrap; gap: 8px; }
+.rn-swatch {
+  width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
+  border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(0,0,0,.45) inset;
+}
+.rn-swatch.active { border-color: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 0 0 3px rgba(255,255,255,.25); }
+.rn-actions { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.rn-custom {
+  margin-right: auto; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-1); cursor: pointer;
+}
+.rn-custom input[type="color"] {
+  width: 24px; height: 22px; padding: 0; border: 1px solid var(--border);
+  border-radius: 6px; background: transparent; cursor: pointer;
+}
+
+/* 角色列表里的“+ 添加角色” */
+.role-card.role-add {
+  justify-content: center; gap: 6px;
+  color: var(--text-1); font-weight: 700;
+  background: transparent; border-style: dashed;
+}
+.role-card.role-add:hover { color: var(--accent); border-color: var(--accent); }
+
 /* ── 左下: 时间轴 (胶片 + 分轨) ─────────────── */
 #timeline-panel {
   grid-area: timeline;

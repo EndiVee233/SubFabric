@@ -7,6 +7,13 @@ const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
 const CHIP_W = 78;       // 轨道标签
 const TEXT_PAD = 6;
+const ZH_FONT = '700 12px "Microsoft YaHei", sans-serif';    // 中文行: 加粗加大
+const EN_FONT = '700 11px "Microsoft YaHei", sans-serif';    // 英文逐词: 加粗加大
+const WORD_MIN = 0.02;      // 拖动逐词标记时, 每个词至少保留的时长(秒)
+const AXIS_COLOR = 'rgba(228,228,238,.42)';   // 逐词轴/中英分隔线(中性浅灰)
+const WORD_MARK = 'rgba(214,214,228,.85)';    // 逐词标记块
+const WORD_MARK_HOT = 'rgba(255,255,255,.95)';// 拖动中的标记
+const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参考图一致)
 const EDGE_TOL = 5;      // 块边缘命中半径(px): 块重叠时优先选中"边界"
 const DRAG_THRESH = 4;   // 区分"单击"与"拖动"的位移阈值(px)
 const DEFAULT_SPAN = 30; // 默认视图跨度(秒): 一上来只看 30 秒, 而不是整个视频
@@ -159,6 +166,9 @@ export class Timeline {
     this.waveformReady = false;
     this.peaks = null;        // 峰值数据 {data: Uint8Array, rate} —— 优先用它绘制(任意缩放都锐利)
     this.showFilm = false;    // 胶片预览图(视频缩略图条): 设置里可开关, 默认关
+    this.onWordRetime = null; // 拖动英文逐词开始标记 → (ref, idx, time, done)
+    this._wordDrag = null;    // 正在拖的逐词标记 {cue, idx}
+    this._selCueRef = null;
     this.subStart = 0;        // 字幕内容范围(第一块开始 ~ 最后一块结束)
     this.subEnd = 0;
     this.onSeek = null;
@@ -393,6 +403,16 @@ export class Timeline {
       const onLane = this._laneIndexAtY(y) !== -1;
       const hit = onLane ? this._hitTest(x, y, true) : null;
 
+      // 优先: 拖英文逐词的开始标记(调整该词开始时间; 严格夹取, Shift 也不放宽)
+      const wh = onLane ? this._hitWordHandle(x, y) : null;
+      if (wh && (!this.isEditable || this.isEditable(wh.cue.ref))) {
+        this._selCueRef = wh.cue.row || wh.cue.ref;
+        this._wordDrag = { cue: wh.cue.row || wh.cue.ref, ref: wh.cue.ref, idx: wh.idx };
+        this._drag = { type: 'word', cue: wh.cue, idx: wh.idx, x0: x, y0: y, moved: false };
+        if (this.onSelect) this.onSelect(wh.cue.ref, { seek: false });
+        return;
+      }
+
       if (hit && (!this.isEditable || this.isEditable(hit.cue.ref))) {
         const c = hit.cue;
         const csx = this.t2x(c.start), cex = this.t2x(c.end);
@@ -419,6 +439,8 @@ export class Timeline {
       if (!this._drag) {
         let cursor = 'default';
         if (this._laneIndexAtY(y) !== -1) {
+          const wh0 = this._hitWordHandle(x, y);
+          if (wh0 && (!this.isEditable || this.isEditable(wh0.cue.ref))) { cv.style.cursor = 'ew-resize'; return; }
           const hit = this._hitTest(x, y, true);
           if (hit && (!this.isEditable || this.isEditable(hit.cue.ref))) {
             const csx = this.t2x(hit.cue.start), cex = this.t2x(hit.cue.end);
@@ -433,6 +455,10 @@ export class Timeline {
       if (!d.moved && Math.abs(x - d.x0) < DRAG_THRESH && Math.abs(y - d.y0) < DRAG_THRESH) return;
       d.moved = true;
 
+      if (d.type === 'word') {
+        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(x), false);
+        return;
+      }
       if (d.type === 'cue') {
         d.shift = e.shiftKey;
         const c = d.cue;
@@ -465,6 +491,11 @@ export class Timeline {
       this._drag = null;
       if (!d) return;
       const t = this._clampT(this.x2t(e.offsetX));
+      if (d.type === 'word') {
+        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true);
+        this._wordDrag = null;
+        return;
+      }
       if (d.type === 'cue') {
         if (d.moved) {
           if (this.onRetime) this.onRetime(d.cue.ref, d.cue.start, d.cue.end, true, !!d.shift);
@@ -760,6 +791,107 @@ export class Timeline {
     ctx.closePath();
   }
 
+  /** 逐词轴几何: 轴(中英分隔线) / 标记块 / 词文本基线 */
+  _wordGeom(band) {
+    const axisY = band.y + Math.round(band.h * 0.66);
+    return { axisY, sepY: axisY, top: axisY - 9, bottom: axisY + 4, baseline: band.y + band.h - 3 };
+  }
+
+  /** 块内文字: 中文整句在上(角色色/加粗), 中英之间是逐词轴, 轴下是英文逐词
+   *  样式对齐参考图: 轴与标记用中性浅灰, 词文本浅色; 词太长/太挤则只留标记不画文字 */
+  _drawBlockText(ctx, c, band, x1, x2, wpx, base) {
+    const g = this._wordGeom(band);
+    const words = (c.words && c.words.length) ? c.words : null;
+    const showWords = !!(words && wpx / words.length > 8);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x1 + TEXT_PAD, band.y, Math.max(1, wpx - TEXT_PAD * 2), band.h);
+    ctx.clip();
+    ctx.textAlign = 'left';
+    if (c.text2) {
+      ctx.fillStyle = base;                       // 中文行: 角色色 100% 不透明
+      ctx.font = ZH_FONT;
+      ctx.fillText(c.text2.slice(0, 60), x1 + TEXT_PAD, band.y + Math.round(band.h * 0.30));
+      if (showWords) {
+        this._drawWordAxis(ctx, words, g, x1, x2, c.end);
+      } else {
+        if (c.text) {
+          ctx.strokeStyle = AXIS_COLOR;           // 中英分隔线(中性浅灰)
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x1 + 4, g.axisY + 0.5);
+          ctx.lineTo(x2 - 4, g.axisY + 0.5);
+          ctx.stroke();
+          ctx.fillStyle = WORD_TEXT;
+          ctx.font = EN_FONT;
+          ctx.fillText(c.text.slice(0, 60), x1 + TEXT_PAD, g.baseline);
+        }
+      }
+    } else if (showWords) {
+      this._drawWordAxis(ctx, words, g, x1, x2, c.end);   // 纯英文孤行
+    } else {
+      ctx.fillStyle = base;
+      ctx.font = ZH_FONT;
+      ctx.fillText((c.text || '').slice(0, 40), x1 + TEXT_PAD, band.y + band.h / 2 + 4);
+    }
+    ctx.restore();
+  }
+
+  /** 英文逐词轴: 一条中性轴的线 + 每个词一个标记块(可拖动, 词太长则只留标记) */
+  _drawWordAxis(ctx, words, g, x1, x2, blockEnd) {
+    const ax0 = Math.max(x1 + 4, 0), ax1 = Math.min(x2 - 4, this._cssW());
+    ctx.strokeStyle = AXIS_COLOR;                   // 轴
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(ax0, g.axisY + 0.5);
+    ctx.lineTo(ax1, g.axisY + 0.5);
+    ctx.stroke();
+
+    ctx.font = EN_FONT;
+    ctx.textAlign = 'left';
+    let lastRight = -Infinity;                      // 已画出去的文字右边界(避免相邻词压字)
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const wx = this.t2x(w.s);
+      if (wx < x1 - 30 || wx > x2 + 30) continue;
+      const hot = this._wordDrag && this._wordDrag.cue === this._selCueRef && this._wordDrag.idx === i;
+      // 标记块(始终画, 拖动时的抓手)
+      ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
+      ctx.fillRect(wx - 2, g.axisY - 9, hot ? 5 : 4, 10);
+      // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记
+      const nextX = (i + 1 < words.length) ? this.t2x(words[i + 1].s) : Math.min(this.t2x(blockEnd), x2);
+      const avail = nextX - (wx + 8) - 3;
+      const tw = ctx.measureText(w.w).width;
+      if (wx + 8 >= lastRight + 2 && tw <= avail) {
+        ctx.fillStyle = WORD_TEXT;
+        ctx.fillText(w.w, wx + 8, g.baseline);
+        lastRight = wx + 8 + tw;
+      }
+    }
+  }
+
+  /** 命中某个英文词的开始标记(用于拖动逐词时间) */
+  _hitWordHandle(x, y) {
+    for (const lane of this.lanes) {
+      const li = this.lanes.indexOf(lane);
+      const yy = this._laneTop(li), lh = this._laneH(li);
+      const t = this.x2t(x);
+      for (const c of lane.cues) {
+        if (!c.words || !c.words.length) continue;
+        if (t < c.start - 1 || t > c.end + 1) continue;
+        const g = this._wordGeom(bandOf(c, yy, lh));
+        if (y < g.top - 4 || y > g.bottom + 4) continue;
+        const wpx = this.t2x(Math.min(c.end, this.viewStart + this._cssW() / this.pxPerSec)) - this.t2x(Math.max(c.start, this.viewStart));
+        if (wpx / c.words.length <= 8) continue;
+        for (let i = 0; i < c.words.length; i++) {
+          const wx = this.t2x(c.words[i].s);
+          if (Math.abs(x - wx) <= 5) return { lane, cue: c, idx: i };
+        }
+      }
+    }
+    return null;
+  }
+
   /** 波形层: 铺满给定区域(整条轨道), 30% 不透明。
    *  优先用峰值数据逐屏幕像素列绘制(任意缩放都锐利), 否则退回整段 PNG 切片。 */
   _drawWaveLayer(ctx, W, top, h) {
@@ -855,56 +987,8 @@ export class Timeline {
           this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
           ctx.stroke();
         }
-        // 块内文字(宽度足够时); 合并块: 中文整句在上, 英文**逐词按词级时间**平铺在块底
-        if (wpx > 46 && (c.text || c.text2)) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(x1 + TEXT_PAD, band.y, wpx - TEXT_PAD * 2, band.h);
-          ctx.clip();
-          ctx.fillStyle = textColor;
-          if (c.text2) {
-            ctx.font = '10.5px "Microsoft YaHei", sans-serif';
-            ctx.fillText(c.text2.slice(0, 60), x1 + TEXT_PAD, band.y + band.h * 0.36);
-            const words = c.words;
-            const baseY = band.y + band.h - 3;
-            if (words && words.length && wpx / words.length > 8) {
-              // 逐词平铺: 每个词画在它自己的开始时间处, 词首一根小竖线; 缩太远(词均宽<8px)退化为单行
-              ctx.font = '9px "Microsoft YaHei", sans-serif';
-              for (const wd of words) {
-                const wx = this.t2x(wd.s);
-                if (wx < x1 - 20 || wx > x2 + 20) continue;
-                if (this.t2x(wd.e) - wx < 2) continue;
-                ctx.globalAlpha = 0.6;
-                ctx.fillRect(wx + 0.5, baseY - 11, 1, 11);   // 词首竖线
-                ctx.globalAlpha = 1;
-                ctx.fillText(wd.w, wx + 2.5, baseY - 1);
-              }
-            } else if (!words || !words.length) {
-              ctx.font = '10px "Microsoft YaHei", sans-serif';
-              ctx.fillText(c.text.slice(0, 60), x1 + TEXT_PAD, band.y + band.h * 0.78);
-            }
-          } else {
-            // 纯英文孤行: 同样优先逐词平铺
-            const words = c.words;
-            const baseY = band.y + band.h - 3;
-            if (words && words.length && wpx / words.length > 8) {
-              ctx.font = '9px "Microsoft YaHei", sans-serif';
-              for (const wd of words) {
-                const wx = this.t2x(wd.s);
-                if (wx < x1 - 20 || wx > x2 + 20) continue;
-                if (this.t2x(wd.e) - wx < 2) continue;
-                ctx.globalAlpha = 0.6;
-                ctx.fillRect(wx + 0.5, baseY - 11, 1, 11);
-                ctx.globalAlpha = 1;
-                ctx.fillText(wd.w, wx + 2.5, baseY - 1);
-              }
-            } else {
-              ctx.font = '10px "Microsoft YaHei", sans-serif';
-              ctx.fillText(c.text.slice(0, 40), x1 + TEXT_PAD, band.y + band.h / 2 + 3.5);
-            }
-          }
-          ctx.restore();
-        }
+        // 块内: 中文行(角色色/加粗/100% 不透明) + 分隔线 + 英文逐词轴(可拖动标记)
+        if (wpx > 46 && (c.text || c.text2)) this._drawBlockText(ctx, c, band, x1, x2, wpx, base);
       }
       flushRun();
 

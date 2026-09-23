@@ -165,6 +165,32 @@
   <div id="hsplit" title="拖动调整视频与时间轴的屏幕比例"></div>
   <div id="vsplit" title="拖动调整字幕列表宽度"></div>
 
+  <!-- 通用确认弹窗(如"改名撞名 → 是否继承合并") -->
+  <div id="confirm-overlay" hidden>
+    <div class="rn-box">
+      <div class="rn-title" id="confirm-title">请确认</div>
+      <div class="rn-msg" id="confirm-msg"></div>
+      <div class="rn-actions">
+        <button type="button" class="btn" id="confirm-no">取消</button>
+        <button type="button" class="btn btn-accent" id="confirm-yes">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加角色 -->
+  <div id="role-new" hidden>
+    <div class="rn-box">
+      <div class="rn-title">添加角色</div>
+      <input id="role-new-name" type="text" spellcheck="false" maxlength="40" placeholder="角色名称，例如 译者注">
+      <div class="rn-colors" id="role-new-colors"></div>
+      <div class="rn-actions">
+        <label class="rn-custom" title="自定义颜色"><input type="color" id="role-new-color" value="#ff7a45">自定义</label>
+        <button type="button" class="btn" id="role-new-cancel">取消</button>
+        <button type="button" class="btn btn-accent" id="role-new-ok">添加角色</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 多条重叠台词 → 选择要设置角色的行 -->
   <div id="pick-overlay" hidden>
     <div class="pick-box">
