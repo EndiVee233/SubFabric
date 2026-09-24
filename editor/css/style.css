@@ -620,6 +620,25 @@ html, body {
 .tl-menu-item.danger { color: #ff9aa2; }
 .tl-menu-item.danger:hover { background: rgba(255,95,107,.16); color: #ffd0d4; }
 
+/* ── 批量选区浮条(Ctrl+左键在时间轴上拖动框选 → 贴着选区左上角出现) ────────── */
+#range-bar {
+  position: fixed; z-index: 62;
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 5px 4px 10px;
+  background: var(--bg-3); border: 1px solid var(--accent, #ff7a45);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.55);
+  font-size: 12.5px; color: var(--text-0); white-space: nowrap;
+}
+#range-bar[hidden] { display: none; }
+#range-bar .rb-count { color: var(--text-1); }
+#range-bar .rb-btn {
+  font: inherit; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  background: transparent; border: 0; color: var(--text-0);
+}
+#range-bar .rb-btn.danger { background: rgba(255,95,107,.18); color: #ffd0d4; }
+#range-bar .rb-btn.danger:hover { background: rgba(255,95,107,.3); }
+#range-bar .rb-btn:disabled { opacity: .45; cursor: default; background: rgba(255,95,107,.08); }
+
 /* ── 角色右键菜单 / 重命名浮层 / 取色器 ────────── */
 #role-menu {
   position: fixed; z-index: 70;

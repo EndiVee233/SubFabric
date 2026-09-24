@@ -65,15 +65,26 @@ function textOnTranslucent(hex, alpha, fallback) {
 
 /**
  * 块在轨道内的纵向分段:
- *  - 中英配对块 → 占满整轨(上半行英文, 下半行中文)
+ *  - 中英配对块 → 占满整轨
  *  - 只有中文的孤行 → 只占**上半区**
  *  - 只有英文的孤行 → 只占**下半区**
  * 于是孤行不必另开轨道, 同时保留「中文在上、英文在下」的位置感。
+ * 注意: 半区必须按轨道**实际高度**对半分 —— 合并轨会撑满整个面板(实测 177px),
+ * 若沿用常量 LANE_H(34) 会把"下半区"画到 y+44(轨道 1/4 处), 看起来仍贴在顶上。
  */
 function bandOf(cue, laneTop, laneH) {
-  if (cue.half === 'top') return { y: laneTop + 4, h: LANE_H - 8 };
-  if (cue.half === 'bottom') return { y: laneTop + LANE_H + LANE_GAP + 4, h: LANE_H - 8 };
+  if (cue.half === 'top' || cue.half === 'bottom') {
+    const pad = 4, gap = 6;
+    const h = Math.max(LANE_H - 8, Math.round((laneH - pad * 2 - gap) / 2));
+    if (cue.half === 'top') return { y: laneTop + pad, h };
+    return { y: laneTop + pad + h + gap, h };
+  }
   return { y: laneTop + 4, h: laneH - 8 };
+}
+
+/** 半区块"缺的那一半"的位置(单语行画虚线空槽用) */
+function otherBandOf(cue, laneTop, laneH) {
+  return bandOf({ half: cue.half === 'top' ? 'bottom' : 'top' }, laneTop, laneH);
 }
 
 class Filmstrip {
@@ -182,6 +193,10 @@ export class Timeline {
     this._viewReady = false;      // 是否已按"默认跨度"摆好视图
     this._viewFromLanes = false;  // 默认视图是否已按真实字幕范围算过
     this._menuCue = null;
+    this.rangeSel = null;         // 批量选区: null | {a, b}(秒, a<=b) —— Ctrl+左键在轨道上拖动框出
+    this._rangeDragging = false;  // 选区是否还在拖(拖动中不弹操作浮条)
+    this.onRangeSelect = null;    // 选区变化回调(拖完 / 清除时触发) → 刷新浮条
+    this.onLayout = null;         // 平移/缩放/resize 回调 → 浮条跟着选区重新定位
 
     this._bindEvents();
     new ResizeObserver(() => this._resize()).observe(canvas.parentElement);
@@ -231,6 +246,16 @@ export class Timeline {
   }
 
   setSelected(ref) { this.selected = ref; }
+
+  _notifyRange() { if (this.onRangeSelect) this.onRangeSelect(this.rangeSel); }
+
+  /** 取消批量选区(点别处 / 删除完 / 换文件时调用) */
+  clearRangeSel() {
+    this._rangeDragging = false;
+    if (!this.rangeSel) return;
+    this.rangeSel = null;
+    this._notifyRange();
+  }
 
   /** 载入新字幕/视频时调用: 下一次 setLanes/setDuration 会重新按默认跨度定位 */
   resetView() {
@@ -297,12 +322,17 @@ export class Timeline {
 
   _cssW() { return this.canvas.parentElement.clientWidth; }
   _cssH() { return this.canvas.parentElement.clientHeight; }
-  /** 合并轨(唯一主轨)动态填满画布剩余高度 → 字幕块一直顶到面板底端, 不留黑缺 */
+  /** 合并轨(主轨)动态填满画布剩余高度 → 字幕块一直顶到面板底端, 不留黑缺。
+   *  双行字幕轨模式会有**多条**合并轨(需要几条给几条, 见 main.js packTracks):
+   *  剩余高度在它们之间平分 —— 不设大下限, 保证再挤也全部装得下、不会漏到面板外面。
+   *  单条时行为与以前完全一致。 */
   _laneH(i) {
     const lane = this.lanes[i];
     if (lane && lane.merged) {
-      const fill = this._cssH() - this._filmH() - RULER_H - 6;
-      return Math.max(LANE_H * 2 + LANE_GAP, fill);
+      const n = Math.max(1, this.lanes.reduce((s, l) => s + (l && l.merged ? 1 : 0), 0));
+      const fill = this._cssH() - this._filmH() - RULER_H - 6 - (n - 1) * LANE_GAP;
+      if (n === 1) return Math.max(LANE_H * 2 + LANE_GAP, fill);
+      return Math.max(10, Math.floor(fill / n));
     }
     return (lane && lane.h) || LANE_H;
   }
@@ -320,6 +350,7 @@ export class Timeline {
     this._lastW = w;
     if (!this._viewReady) this._applyDefaultView();
     else this._clampView();
+    if (this.onLayout) this.onLayout();
   }
 
   _zoomAt(px, factor) {
@@ -331,6 +362,7 @@ export class Timeline {
     this.viewStart = t - px / this.pxPerSec;
     this._clampView();
     this._viewReady = true;
+    if (this.onLayout) this.onLayout();
     return true;
   }
   /** 平移: 正数 = 往时间更晚的方向看 */
@@ -338,6 +370,7 @@ export class Timeline {
     this.viewStart += px / this.pxPerSec;
     this._clampView();
     this._viewReady = true;
+    if (this.onLayout) this.onLayout();
   }
   _clampView() {
     const w = this._cssW();
@@ -402,6 +435,19 @@ export class Timeline {
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 合成事件无捕获 */ }
       const x = e.offsetX, y = e.offsetY;
       const onLane = this._laneIndexAtY(y) !== -1;
+
+      // Ctrl(或 Cmd)+左键在轨道上拖动 = **批量选区**(框出一段时间; 松手后出"批量删除"浮条)
+      if ((e.ctrlKey || e.metaKey) && onLane) {
+        const t = this._clampT(this.x2t(x));
+        this.rangeSel = { a: t, b: t };
+        this._rangeDragging = true;
+        this._notifyRange();
+        this._drag = { type: 'range', x0: x, y0: y, t0: t, moved: false };
+        return;
+      }
+      // 普通点击 = 取消已有选区(用户要求: 选完不操作、点别处就取消)
+      this.clearRangeSel();
+
       const hit = onLane ? this._hitTest(x, y, true) : null;
 
       // 优先: 拖英文逐词的开始标记(调整该词开始时间; 严格夹取, Shift 也不放宽)
@@ -460,6 +506,11 @@ export class Timeline {
         if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(x), false);
         return;
       }
+      if (d.type === 'range') {
+        const t = this._clampT(this.x2t(x));
+        this.rangeSel = { a: Math.min(d.t0, t), b: Math.max(d.t0, t) };
+        return;
+      }
       if (d.type === 'cue') {
         d.shift = e.shiftKey;
         const c = d.cue;
@@ -495,6 +546,15 @@ export class Timeline {
       if (d.type === 'word') {
         if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true);
         this._wordDrag = null;
+        return;
+      }
+      if (d.type === 'range') {
+        const t = this._clampT(this.x2t(e.offsetX));
+        const a = Math.min(d.t0, t), b = Math.max(d.t0, t);
+        this._rangeDragging = false;
+        // 太窄(基本等于单击) → 不当选区, 也不弹浮条
+        this.rangeSel = (this.t2x(b) - this.t2x(a) < 8) ? null : { a, b };
+        this._notifyRange();
         return;
       }
       if (d.type === 'cue') {
@@ -540,9 +600,12 @@ export class Timeline {
   }
 
   /** 前后邻居块的边界(防重叠夹取用): 同一条字幕块的另一半不算邻居 */
+  /** 拖动夹取用的前后邻居。只在**本轨内**找: 双行字幕轨模式下不同轨的块本来就允许
+   *  时间重叠(那正是分轨的目的), 拿别的轨去夹会把块卡住。单轨时与以前完全等价。 */
   _neighbors(cue) {
     let prevEnd = 0, nextStart = Infinity;
     for (const lane of this.lanes) {
+      if (!lane.cues.includes(cue)) continue;
       for (const c of lane.cues) {
         if (c === cue || (c.ref && c.ref === cue.ref)) continue;
         if (c.end <= cue.start + 1e-6) prevEnd = Math.max(prevEnd, c.end);
@@ -663,7 +726,52 @@ export class Timeline {
     this._drawRuler(ctx, W);
     this._drawLanes(ctx, W, t);
     if (this._drag && this._drag.type === 'create' && this._drag.moved) this._drawCreatePreview(ctx);
+    if (this.rangeSel && this.rangeSel.b > this.rangeSel.a) this._drawRangeSel(ctx);
     this._drawPlayhead(ctx, H, t);
+  }
+
+  /** 批量选区(Ctrl+左键拖动): 盖住整条轨道高度的半透明色块 + 虚线边 + 时间范围标签。
+   *  色块叠在字幕块之上, 框内的块自然被"洗"上一层暖色, 一眼看出哪些会被批量删除。 */
+  _drawRangeSel(ctx) {
+    const x1 = this.t2x(this.rangeSel.a), x2 = this.t2x(this.rangeSel.b);
+    const W = this._cssW();
+    const top = this._laneTop(0) - 3;
+    const bottom = Math.min(this._cssH() - 1, this._lanesBottom() + 3);
+    const cx1 = Math.max(-1, x1), cx2 = Math.min(W + 1, x2);
+    const w = Math.max(0.5, cx2 - cx1);
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,122,69,.13)';
+    ctx.fillRect(cx1, top, w, bottom - top);
+    ctx.strokeStyle = C.accent;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(Math.round(cx1) + 0.5, top);
+    ctx.lineTo(Math.round(cx1) + 0.5, bottom);
+    ctx.moveTo(Math.round(cx2) + 0.5, top);
+    ctx.lineTo(Math.round(cx2) + 0.5, bottom);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx1, Math.round(top) + 0.5); ctx.lineTo(cx2, Math.round(top) + 0.5);
+    ctx.moveTo(cx1, Math.round(bottom) - 0.5); ctx.lineTo(cx2, Math.round(bottom) - 0.5);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 拖动中在选区左上角提示当前范围(此时浮条还没出来, 不会互相遮);
+    // 松手后右上角浮条已显示条数, 这里就不画了, 精确时间范围放进浮条的 tooltip
+    if (!this._rangeDragging) { ctx.restore(); return; }
+    const label = `框选中 ${fmtTime(this.rangeSel.a)} → ${fmtTime(this.rangeSel.b)}`;
+    ctx.font = '10px Consolas, monospace';
+    ctx.textAlign = 'left';
+    const tw = ctx.measureText(label).width;
+    if (w > tw + 16) {
+      ctx.fillStyle = 'rgba(255,122,69,.92)';
+      const lx = cx1 + 4, ly = top + 4;
+      this._roundRect(ctx, lx, ly, tw + 8, 14, 3);
+      ctx.fill();
+      ctx.fillStyle = '#22150e';
+      ctx.fillText(label, lx + 4, ly + 10);
+    }
+    ctx.restore();
   }
 
   /** 空白处拖动新建时的虚线预览框 */
@@ -969,6 +1077,12 @@ export class Timeline {
         }
         flushRun();
 
+        // 单语孤行: **有内容的那半画成实心块**(干净的整块边界), **缺的那半画虚线空槽**。
+        //   · 只有该行真的没有另一种语言才画空槽(中英都在、只是起止不同则不画, 免得两半互相叠出噪声);
+        //   · 空槽用坏行红(单语行必然记坏行) → "红虚线 = 缺另一半" 一眼可读, 且不再糊住实心块。
+        const lacks = c.half ? (c.half === 'top' ? !(c.row && c.row.en) : !(c.row && c.row.zh)) : false;
+        if (lacks) this._drawEmptyHalf(ctx, x1, otherBandOf(c, yy, lh), wpx, !!c.bad);
+
         // 说话人颜色优先(半透明底), 否则用轨道色
         const base = c.color || lane.color;
         const isSel = this.selected && c.row === this.selected;
@@ -990,8 +1104,9 @@ export class Timeline {
         }
         // 块内: 中文行(角色色/加粗/100% 不透明) + 分隔线 + 英文逐词轴(可拖动标记)
         if (wpx > 46 && (c.text || c.text2)) this._drawBlockText(ctx, c, band, x1, x2, wpx, base);
-        // 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ —— 英文行(下半区)重叠也能看到
-        if (c.bad) this._drawBadMark(ctx, x1, band, wpx);
+        // 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ —— 英文行(下半区)重叠也能看到。
+        // 单语行的"坏"已经画在**缺的那半**上了, 这里不再把红虚线糊到实心块上(否则看不出块是实心的)。
+        if (c.bad && !lacks) this._drawBadMark(ctx, x1, band, wpx);
       }
       flushRun();
 
@@ -1021,6 +1136,39 @@ export class Timeline {
     ctx.closePath(); ctx.fill();
   }
 
+  /** 单语孤行"缺的另一半": 虚线空槽。bad=true 时用坏行红 + ⚠(缺另一半就是这条行被判坏的原因),
+   *  bad=false 时用中性灰(只是示意该半区没内容)。 */
+  _drawEmptyHalf(ctx, x1, band, wpx, bad) {
+    if (wpx < 12) return;
+    const bx = x1 + 0.5, by = band.y, bw = Math.max(1.5, wpx - 1), bh = band.h;
+    ctx.save();
+    ctx.strokeStyle = bad ? '#ff5c5c' : 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = bad ? 1.5 : 1;
+    ctx.setLineDash(bad ? [4, 3] : [3, 3]);
+    this._roundRect(ctx, bx, by, bw, bh, 3);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (bad) this._drawWarnChip(ctx, bx, by, bw, wpx);
+    ctx.restore();
+  }
+
+  /** 坏行右上角的 ⚠ 角标 */
+  _drawWarnChip(ctx, bx, by, bw, wpx) {
+    if (wpx < 16) return;
+    const sx = bx + bw - 13, sy = by + 3;
+    ctx.fillStyle = '#ff5c5c';
+    ctx.beginPath();
+    ctx.moveTo(sx + 6, sy);
+    ctx.lineTo(sx + 12, sy + 11);
+    ctx.lineTo(sx, sy + 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#1a1a21';
+    ctx.font = '700 9px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('!', sx + 6, sy + 9);
+  }
+
   /** 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ 角标。
    *  叠在深色轨底上足够醒目, 让英文行(下半区)的重叠也能在时间轴下半部分看到。 */
   _drawBadMark(ctx, x1, band, wpx) {
@@ -1032,20 +1180,7 @@ export class Timeline {
     this._roundRect(ctx, bx, by, bw, bh, 3);
     ctx.stroke();
     ctx.setLineDash([]);
-    if (wpx >= 16) {
-      const sx = bx + bw - 13, sy = by + 3;
-      ctx.fillStyle = '#ff5c5c';
-      ctx.beginPath();
-      ctx.moveTo(sx + 6, sy);
-      ctx.lineTo(sx + 12, sy + 11);
-      ctx.lineTo(sx, sy + 11);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#1a1a21';
-      ctx.font = '700 9px "Microsoft YaHei", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('!', sx + 6, sy + 9);
-    }
+    this._drawWarnChip(ctx, bx, by, bw, wpx);
     ctx.restore();
   }
 }

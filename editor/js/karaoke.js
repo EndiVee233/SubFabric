@@ -139,6 +139,7 @@ export function analyzeKaraoke(doc) {
     if (a) { if (!groups.has(a)) groups.set(a, []); groups.get(a).push(sl); }
     else loose.push(sl);
   }
+  repairKaraokeGroups(groups, loose, anchors);
 
   function extractWords(slices) {
     const words = [];
@@ -189,6 +190,52 @@ export function analyzeKaraoke(doc) {
   return { wordStyle, sentences };
 }
 
+/**
+ * 逐词切片归属修正 —— 「整句穿行」:
+ * 一条单行中文字幕(译者注 / 舞台提示, 本身没有英文)完全套在另一条更长中文行里时,
+ * 里层那条会因为"开始得更晚"而被 findAnchor 判为切片的主人, 于是中文字幕凭空多出一条
+ * 英文行、真正的双语行反而变成"缺英文"(用户报的 bug: 单行中文字幕和双语字幕重叠)。
+ *
+ * 判据来自真实文件本身的规律: 切片是**整句铺满所属中文行**的 —— 首片起于行首、末片止于
+ * 行尾(实测 4105/4106 行误差为 0)。因此「拿到的切片没顶到本行两端」的行很可能是整句的
+ * 一截, 但**只有真的存在一条能收下它(且收下后正好铺满自己两端)的中文行**时才改判 ——
+ * 否则一律保持原样(说话人停顿会让首片晚于行首 0.1~0.4s, 这是正常的, 不能动)。
+ */
+function repairKaraokeGroups(groups, loose, anchors) {
+  if (!groups.size) return;
+  const TOL = 0.12;                       // "顶到行首/行尾"的容差(真实数据里误差为 0)
+  const span = (arr) => {
+    let s = Infinity, e = -Infinity;
+    for (const x of arr) { if (x.start < s) s = x.start; if (x.end > e) e = x.end; }
+    return { s, e };
+  };
+  const holds = (a, arr) => arr.every(x => x.start >= a.start - 0.05 && x.end <= a.end + 0.05);
+
+  for (let round = 0; round < 4; round++) {
+    let moved = 0;
+    for (const [x, S] of [...groups]) {
+      if (!S.length) continue;
+      const own = span(S);
+      if (own.s - x.start <= TOL && x.end - own.e <= TOL) continue;      // 整句铺满本行 → 确实是它的
+      let bestY = null, bestDur = Infinity;
+      for (const y of anchors) {
+        if (y === x) continue;
+        if (!holds(y, S)) continue;                                      // 必须"整批被这条行包住"(=套叠)
+        const merged = span((groups.get(y) || []).concat(S));
+        if (merged.s - y.start > TOL || y.end - merged.e > TOL) continue; // 收下仍顶不满 → 它也不是主人
+        const dur = y.end - y.start;
+        if (dur < bestDur) { bestDur = dur; bestY = y; }
+      }
+      if (!bestY) continue;                                              // 找不到收留者 → 不动
+      groups.set(bestY, (groups.get(bestY) || []).concat(S));
+      groups.delete(x);
+      moved++;
+    }
+    if (!moved) break;
+  }
+  for (const [x, S] of [...groups]) if (!S.length) groups.delete(x);
+}
+
 /** 标记异常句: 任一切片时间无法解析/格式非法, 或句时长 ≤ 0 */
 function markBadSentences(sentences) {
   for (const s of sentences) {
@@ -222,48 +269,71 @@ function finalizeSentences(sentences) {
  * 文本没有 [ ] 时回退到 Name 栏(如 "Spoke")。
  */
 export function speakerTagOf(sent) {
-  for (const ev of (sent.events || [])) {
-    const t = String(ev.text || '');
-    const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
-    const m = /^\s*\[([^\]]+)\]/.exec(t.slice(head.length));
-    if (m) return '[' + m[1].trim() + ']';
-  }
+  const name = speakerTextTagOf(sent);
+  if (name) return '[' + name + ']';        // 保持原有格式: 带方括号
   return (sent.proto && sent.proto.name) || '';
 }
 
 /**
- * 跨语言配对: 把「整句样式句」(如中文字幕) 与「逐词样式句」(如英文) 按时间重叠
- * 配成一行(中英双行展示), 未配对的句子各自成行。
+ * 只取字幕**文本**行首的可见 [人物] 标记, 不回退 Name 栏。
+ * 角色身份写在文本里(视频里/列表里看得到的就是它), Name 栏只是裸名兜底;
+ * 因此"没被标注角色"的准判据是这一项为空 —— 坏行判定(见 main.js markBadRows)用它
+ * 区分「文本里真有 [标记]」和「只有 Name 栏裸名(画面上不显示角色)」。
+ * 返回 '人物'(不含方括号) 或 ''。
+ */
+export function speakerTextTagOf(sent) {
+  if (!sent) return '';
+  for (const ev of (sent.events || [])) {
+    const t = String(ev.text || '');
+    const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+    const m = /^\s*\[([^\]]+)\]/.exec(t.slice(head.length));
+    if (m) return m[1].trim();
+  }
+  return '';
+}
+
+/**
+ * 跨语言配对: 把「整句样式句」(如中文字幕) 与「逐词样式句」(如英文) 配成一行(中英双行展示),
+ * 未配对的句子各自成行。
+ *
+ * 配对判据 = **时间上包住**: 英文句的时间范围必须落在中文行范围内(±0.05s); 多条都包住时取
+ * 「最贴合」的那条(起止误差最小, 再比跨度最小 —— 也就是与它同起止的那条)。
+ * 为什么不用"重叠面积 > 50% 就近认领"(旧实现): 一条单行中文字幕(译者注/舞台提示)只要时间上
+ * 压住某条双语行的一半以上, 就会把**整段英文**抢过来, 而真正的双语行反而变成"缺英文"
+ * (用户报的 bug: 单行中文字幕和双语字幕重叠 → 中文字幕凭空多出一条英文行)。
+ * 包不住它的英文句宁可单独成行(会以"单英文行"出现在坏行里), 也不乱配。
  */
 export function pairRows(sentences, wordStyle) {
-  const anchorsLike = sentences.filter(s => s.style !== wordStyle);
-  const wordSents = sentences.filter(s => s.style === wordStyle).sort((a, b) => a.start - b.start);
+  const anchors = sentences.filter(s => s.style !== wordStyle).sort((a, b) => a.start - b.start || a.end - b.end);
+  const wordSents = sentences.filter(s => s.style === wordStyle).sort((a, b) => a.start - b.start || a.end - b.end);
   const used = new Set();
-  const rows = [];
+  const enOf = new Map();
 
-  // 二分 + 窗口扫描, 找时间重叠最大的逐词句
-  function bestMatch(z) {
-    let lo = 0, hi = wordSents.length - 1, first = wordSents.length;
+  const EPS = 0.05;
+  /** 包住 w 的中文行里最贴合的一条(起止误差最小, 同则跨度最小) */
+  function ownerOf(w) {
+    let lo = 0, hi = anchors.length - 1, pos = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
-      if (wordSents[mid].start >= z.start - 5) { first = mid; hi = mid - 1; } else lo = mid + 1;
+      if (anchors[mid].start <= w.start + EPS) { pos = mid; lo = mid + 1; } else hi = mid - 1;
     }
-    let best = null, bestOv = 0;
-    for (let i = Math.max(0, first - 2); i < wordSents.length && wordSents[i].start <= z.end + 5; i++) {
-      const w = wordSents[i];
-      if (used.has(w)) continue;
-      const ov = Math.min(z.end, w.end) - Math.max(z.start, w.start);
-      if (ov > bestOv) { bestOv = ov; best = w; }
+    let best = null;
+    for (let i = pos; i >= 0 && anchors[i].start >= w.start - 5; i--) {
+      const z = anchors[i];
+      if (w.start < z.start - EPS || w.end > z.end + EPS) continue;
+      const err = Math.abs(z.start - w.start) + Math.abs(z.end - w.end);
+      const dur = z.end - z.start;
+      if (!best || err < best.err - 1e-9 || (Math.abs(err - best.err) <= 1e-9 && dur < best.dur)) best = { z, err, dur };
     }
-    const zDur = Math.max(0.001, z.end - z.start);
-    return (best && bestOv / zDur > 0.5) ? best : null;
+    return best ? best.z : null;
   }
 
-  for (const z of anchorsLike) {
-    const en = bestMatch(z);
-    if (en) used.add(en);
-    rows.push(makeRow(z, en));
+  for (const w of wordSents) {
+    const z = ownerOf(w);
+    if (z && !enOf.has(z)) { enOf.set(z, w); used.add(w); }
   }
+
+  const rows = anchors.map(z => makeRow(z, enOf.get(z) || null));
   for (const w of wordSents) if (!used.has(w)) rows.push(makeRow(null, w));
   rows.sort((a, b) => a.start - b.start || a.end - b.end);
   rows.forEach((r, i) => r.no = i + 1);

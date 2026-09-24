@@ -2,7 +2,7 @@
 import { fmtTime, parseTime } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, HIGHLIGHT_COLORS } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -37,6 +37,7 @@ const state = {
   itemByRef: new Map(),  // ref(cue|event) → item
   newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
   extraRoles: [],        // 用户手动添加、还没用到任何字幕上的角色 [{name, color}]
+  trackMode: 'single',   // 字幕轨模式: 'single'=单行轨(所有块挤一条) | 'double'=双行轨(重叠块自动分到第 2 条)
   selected: null,
   videoLoaded: false
 };
@@ -235,6 +236,7 @@ function setSrt(text, name) {
     { v: 'first', t: '仅主语言' },
     { v: 'second', t: '仅副语言' }
   ], 'bi');
+  timeline.clearRangeSel();      // 新文件 → 顺带取消批量选区
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
   btnExport.disabled = false;
@@ -265,6 +267,7 @@ function setAss(text, name) {
     { v: 'first', t: '仅中文' },
     { v: 'second', t: '仅英文' }
   ], 'bi');
+  timeline.clearRangeSel();      // 新文件 → 顺带取消批量选区
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
   assPlayer.load(state.assDoc.serialize());
@@ -306,6 +309,7 @@ function enSlicesOverlap(sent) {
  * 汇总坏行原因(供列表 ⚠ 筛选与 tooltip):
  *   · 字幕重叠 —— 与其它条目时间相交(两种格式都检测)
  *   · 仅 ASS: 时间异常(解析失败 / 结束早于开始) / 英文行含方括号 / 单中文行 / 单英文行
+ *             / 未标注角色 / 英文行缺词 / 英文行重叠
  *   · SRT 只检测重叠(用户要求: SRT 的坏行检测重叠就好)
  */
 function markBadRows(items) {
@@ -329,6 +333,13 @@ function markBadRows(items) {
       const hasL1 = !!it.l1, hasL2 = !!it.l2;
       if (hasL1 && !hasL2) reasons.push('单中文行(缺英文)');
       if (!hasL1 && hasL2) reasons.push('单英文行(缺中文)');
+      // 未标注角色: 角色身份 = 中文行文本行首可见的 [人物] 标记(见 karaoke.js speakerTextTagOf)。
+      //   · 文本里没有该标记(如 "你知道" / 拼错的 "[Spoke}") → 画面上不显示角色, 标坏行;
+      //   · 整行连 Name 栏裸名都没有(row.speaker 为空) → 同样算未标注。
+      // 新建的空行(isNew)在用户输入前不算 —— 否则刚拖出来的块立刻变坏行。
+      const zhS = it.ref && it.ref.zh;
+      const hasRoleTag = !!speakerTextTagOf(zhS);
+      if (!it.isNew && (!it.speaker || (zhS && !hasRoleTag))) reasons.push('未标注角色');
       // 英文行逐词缺词(切片数 < 单词数) —— 用户报的 bug#3(缺词无警告)。
       // 注: 反向的「逐词多余」(同一词被重复高亮) 在真实文件里很常见(本示例 57 行),
       //     全量点亮会淹掉 ⚠ 徽标, 因此不并入坏行; 交给「修复字幕」按需深度检测。
@@ -345,6 +356,46 @@ function markBadRows(items) {
 }
 
 /* ═══════════ 视图模型重建 ═══════════ */
+/**
+ * 把字幕行按「时间重叠」分装到多条轨上(双行字幕轨模式用):
+ * 按开始时间依次放进**第一条不冲突的轨** —— 上轨那段时间已经被占了, 才落到下一条。
+ * 贪心 = 最少轨数; 于是同一条轨里的块互不重叠, 每个块都完整可见。
+ * 注意: 上轨那个位置能放下就**留在上轨**, 只有真正被挡住的块才往下掉
+ * (重叠的两块 = 前者留在上轨、后者掉到下轨, 不是两块都下去)。
+ * 返回 { laneOf: Map<行, 轨序号>, count }。
+ */
+function packTracks(rows) {
+  const order = rows.slice().sort((a, b) => a.start - b.start || a.end - b.end);
+  const ends = [];                       // 每条轨当前的"最后结束时间"
+  const laneOf = new Map();
+  for (const r of order) {
+    let k = ends.findIndex(e => r.start >= e - 1e-3);   // 第一条接得上的轨
+    if (k < 0) { k = ends.length; ends.push(-Infinity); }
+    ends[k] = r.end;
+    laneOf.set(r, k);
+  }
+  return { laneOf, count: Math.max(1, ends.length) };
+}
+
+/** 按当前「字幕轨模式」把 cue 装到 1 条(或 N 条)轨上; label = 单行轨时用的轨道名 */
+function buildTimelineLanes(rows, cues, label) {
+  const one = [{ label, merged: true, cues, color: '#5b6472' }];
+  if (state.trackMode !== 'double' || !rows.length || !cues.length) return one;
+  const { laneOf, count } = packTracks(rows);
+  if (count <= 1) return one;
+  const lanes = [];
+  for (let i = 0; i < count; i++) lanes.push({
+    label: i === 0 ? label : ('重叠' + (i > 1 ? ' ' + (i + 1) : '')),
+    merged: true, cues: [], color: '#5b6472'
+  });
+  for (const c of cues) {
+    const k = laneOf.has(c.row) ? laneOf.get(c.row) : 0;
+    lanes[Math.min(k, count - 1)].cues.push(c);
+  }
+  for (const l of lanes) l.cues.sort((a, b) => a.start - b.start || a.end - b.end);
+  return lanes.filter(l => l.cues.length);
+}
+
 /**
  * 重建视图模型.
  * rebuildItems=true 时重建条目对象(改时间/改文本/增删后调用);
@@ -409,7 +460,10 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   }
 
   // 坏行计数 → 搜索框旁的 ⚠ 按钮
-  panel.setBadCount(state.items.filter(i => i.bad).length);
+  panel.setBadCount(state.items.filter(i => i.bad).length,
+    state.format === 'ass'
+      ? '时间异常 / 重叠 / 未标注角色 / 单语行 / 英文含方括号 / 英文缺词 / 英文行重叠'
+      : '字幕重叠');
 
   // 时间轴车道: 每个样式一条轨道(中文 / 英文各归其位); 块内带文本
   if (state.format === 'srt') {
@@ -428,7 +482,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
       };
     });
     // 兜底色用与 ASS 相同的中性石板灰(SRT 没有说话人颜色)
-    timeline.setLanes([{ label: '双语字幕', merged: true, cues, color: '#5b6472' }]);
+    timeline.setLanes(buildTimelineLanes(state.srtCues, cues, '双语字幕'));
   } else if (state.format === 'ass' && state.kar) {
     // 所有 ASS 字幕都画在**同一条轨**上(不再为中/英单行另开轨道):
     //   · 中英「同开始同结束」→ 整轨一个块(块内英文在上、中文在下, 中间无空隙)
@@ -474,7 +528,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
       // 纯单行文件里"中英双语"这个名字会不对, 按实际内容取标签
       const label = hasFull ? '中英双语' : (hasTop ? (zhStyle || '中文字幕') : (enStyle || 'Default'));
       // 兜底色用中性石板灰: 有说话人内联色时逐块覆盖, 没有时不至于被误读为某个说话人的颜色
-      timeline.setLanes([{ label, merged: true, cues, color: '#5b6472' }]);
+      timeline.setLanes(buildTimelineLanes(state.kar.rows, cues, label));
     } else {
       timeline.setLanes([]);
     }
@@ -490,6 +544,10 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   } else {
     state.selected = null;
   }
+  // 批量选区的条目数可能因增删/改时间而变 → 重建后同步一下浮条(没有选区时什么都不做)
+  if (timeline.rangeSel) refreshRangeBar();
+  // 没载入字幕时「刷新字幕」不可点
+  if (btnRefresh) btnRefresh.disabled = !state.format;
 }
 
 /* ═══════════ 角色(说话人) ═══════════ */
@@ -1145,8 +1203,9 @@ timeline.onFix = (ref) => openFixForRow(ref);         // 时间轴块右键「�
 panel.onFixCard = (item) => openFixForRow(item.ref); // 字幕卡片右键「修复字幕」
 
 /** 删除一条字幕(列表删除按钮 / 时间轴右键菜单共用) */
-function deleteItem(item, silent) {
-  if (!item) return;
+/** 从文档/数据里摘掉一条字幕(**不重建界面**) —— 单条删除与批量删除共用, 批量时只重建一次 */
+function removeItemData(item) {
+  if (!item) return false;
   if (item.kind === 'srt') {
     const i = state.srtCues.indexOf(item.ref);
     if (i !== -1) state.srtCues.splice(i, 1);
@@ -1165,6 +1224,12 @@ function deleteItem(item, silent) {
     assPlayer.updateNow(state.assDoc.serialize());
   }
   state.newRows.delete(item.ref);
+  return true;
+}
+
+function deleteItem(item, silent) {
+  if (!item) return;
+  if (!removeItemData(item)) return;
   state.selected = null;
   rebuildItemsAndLanes(true, true);
   toast(silent ? '未输入内容，已撤销这条新字幕' : '已删除 #' + item.no);
@@ -1174,6 +1239,118 @@ function deleteItem(item, silent) {
 panel.onEmptyNew = (item) => deleteItem(item, true);
 
 timeline.onDelete = (ref) => deleteItem(state.itemByRef.get(ref));
+
+/* ─────────── 时间轴批量选区(Ctrl+左键在轨道上拖动框选 → 批量删除) ─────────── */
+const rangeBar = document.getElementById('range-bar');
+const rbCount = document.getElementById('rb-count');
+const rbDelete = document.getElementById('rb-delete');
+
+/** 与 [a,b] 时间范围**相交**的所有条目 —— 批量删除的作用对象(部分重叠也算) */
+function itemsInRange(a, b) {
+  return state.items.filter(it => it.end > a + 1e-3 && it.start < b - 1e-3);
+}
+
+/** 同步"批量选区"浮条: 贴着选区左上角, 显示会删掉几条; 拖动中 / 没有选区 → 收起。
+ *  以后加「重新识别」按钮就放在这里(先按现有的 rangeSel 接口来实现即可)。 */
+function refreshRangeBar() {
+  if (!rangeBar) return;
+  const sel = timeline.rangeSel;
+  if (!sel || timeline._rangeDragging || sel.b <= sel.a) { rangeBar.hidden = true; return; }
+  const n = itemsInRange(sel.a, sel.b).length;
+  rbCount.textContent = n ? `已选 ${n} 条字幕` : '该区间没有字幕';
+  rangeBar.title = `选区 ${fmtTime(sel.a)} → ${fmtTime(sel.b)} · 点别处取消选区`;
+  if (rbDelete) rbDelete.disabled = n === 0;
+  rangeBar.hidden = false;                     // 先显示再量尺寸(隐藏时 offsetWidth 为 0)
+  const wrap = document.getElementById('tl-canvas-wrap');
+  const r = wrap.getBoundingClientRect();
+  const w = rangeBar.offsetWidth, h = rangeBar.offsetHeight;
+  const x = Math.min(Math.max(r.left + timeline.t2x(sel.a), r.left + 4), Math.max(r.left + 4, r.left + r.width - w - 4));
+  const y = Math.min(Math.max(r.top + timeline._laneTop(0) + 2, r.top + 2), Math.max(r.top + 2, r.top + r.height - h - 2));
+  rangeBar.style.left = Math.round(x) + 'px';
+  rangeBar.style.top = Math.round(y) + 'px';
+}
+
+timeline.onRangeSelect = () => refreshRangeBar();
+// 平移/缩放/改窗口后选区在屏幕上的位置会变, 浮条要跟着走
+timeline.onLayout = () => { if (timeline.rangeSel) refreshRangeBar(); };
+
+if (rbDelete) rbDelete.addEventListener('click', () => {
+  const sel = timeline.rangeSel;
+  if (!sel) return;
+  const targets = itemsInRange(sel.a, sel.b);
+  if (!targets.length) { timeline.clearRangeSel(); return; }
+  for (const it of targets) removeItemData(it);   // 先全部摘掉, 最后只重建一次
+  state.selected = null;
+  timeline.clearRangeSel();                       // 删完取消选区(用户要求的流程)
+  rebuildItemsAndLanes(true, true);
+  toast(`已批量删除 ${targets.length} 条字幕`);
+});
+
+// 点别处 = 取消选区。画布上的点击由 timeline 自己处理, 这里只管"画布之外"(列表/视频区/设置…)
+document.addEventListener('pointerdown', (e) => {
+  if (!timeline.rangeSel) return;
+  if (rangeBar && rangeBar.contains(e.target)) return;   // 点浮条不算"别处"
+  if (e.target === timeline.canvas) return;              // 画布内: 交给 timeline 的 pointerdown
+  timeline.clearRangeSel();
+}, true);
+
+/* ─────────── 手动刷新动态字幕(渲染层兜底) ─────────── */
+const btnRefresh = document.getElementById('btn-refresh-subs');
+
+/**
+ * 按「字幕列表里的干净整句 + 词级时间(JSON)」重新生成动态字幕(逐词切片), 然后重新应用到视频区。
+ * 用途: 某些路径漏了 update / 渲染器没初始化好时, 给用户一个手动兜底(重复点无副作用)。
+ *
+ * 只修**真的不一致**的行, 两类东西刻意不碰:
+ *   · 零长事件(开始==结束): 文件里常见的空档填充, 不显示任何内容, 重建天然不会产生它 —— 不算漂移;
+ *   · 「逐词多余/缺词」(模型词数与文本词数对不上): 已知脏数据, 交给「🛠 修复字幕」按需处理, 刷新不越权代修。
+ * 于是对正常文件, 刷新 = 纯粹的"重新应用", 不会偷偷改数据。
+ */
+function refreshDynamicSubtitles() {
+  if (state.format === 'srt') {                 // SRT: 叠加层重新灌一遍就是"重生成"
+    overlay.setCues(state.srtCues);
+    toast('已按字幕列表重新生成并应用到视频');
+    return;
+  }
+  if (state.format !== 'ass' || !state.kar) { toast('当前没有可刷新的字幕'); return; }
+
+  const near = (a, b) => Math.abs(a - b) < 5e-4;
+  const live = (arr) => arr.filter(x => x.end - x.start > 0.004);   // 丢掉零长事件再比
+  let words = 0, anchors = 0;
+  for (const sent of state.kar.sentences) {
+    if (!sent.events || !sent.events.length) continue;
+    if (sent.words && sent.words.length) {
+      const txtWords = (sent.text || '').split(/\s+/).filter(Boolean).length;
+      if (sent.words.length !== txtWords) continue;      // "逐词多余/缺词" 脏行 → 不代修
+      const specs = live(buildWordSpecs(sent));
+      const evs = live(sent.events);
+      const drifted = specs.length !== evs.length || specs.some((sp, i) => {
+        const ev = evs[i];
+        return !ev || !near(sp.start, ev.start) || !near(sp.end, ev.end)
+          || assPlainText(sp.text) !== assPlainText(ev.text);   // 只比"看得见的文字", 忽略色标大小写等
+      });
+      if (!drifted) continue;
+      sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
+      words++;
+    } else {
+      // 整句行: 文本(剥标签后)或时间与列表不一致才回写, 保留行首 {\c&H…&} 等等
+      const ev = sent.events[0];
+      if (assPlainText(ev.text) === (sent.text || '') && near(ev.start, sent.start) && near(ev.end, sent.end)) continue;
+      applyAnchorSentence(sent, sent.start, sent.end, sent.text || '');
+      anchors++;
+    }
+  }
+
+  const text = state.assDoc.serialize();
+  const wasLoaded = assPlayer.loaded;
+  if (wasLoaded) assPlayer.updateNow(text);
+  else assPlayer.load(text);                    // 渲染器还没起来 → 顺便重建一次
+  const changed = words + anchors;
+  if (!changed) toast('动态字幕已是最新，已重新应用到视频');
+  else toast(`已重新生成动态字幕：修正 ${words} 句逐词 / ${anchors} 句整句${wasLoaded ? '，并已应用' : '，并重建了渲染器'}`);
+}
+
+if (btnRefresh) btnRefresh.addEventListener('click', () => refreshDynamicSubtitles());
 
 /** 为某样式在文档末尾追加一条新事件, 返回与 analyzeKaraoke 同构的句子对象 */
 function appendSentence(style, start, end, text) {
@@ -1434,6 +1611,22 @@ if (setFilm) setFilm.addEventListener('change', () => {
   localStorage.setItem(FILM_KEY, setFilm.checked ? '1' : '0');
   applyFilmSetting();
 });
+/** 字幕轨模式: 单行(默认, 现状) / 双行(重叠块自动分到下面第二条轨)。切换后立刻重排时间轴。 */
+const TRACKS_KEY = 'ss-track-mode';
+const setTracks = document.getElementById('set-tracks');
+const setTracksVal = document.getElementById('set-tracks-val');
+function applyTrackMode(rebuild) {
+  state.trackMode = localStorage.getItem(TRACKS_KEY) === 'double' ? 'double' : 'single';
+  const on = state.trackMode === 'double';
+  if (setTracks) setTracks.checked = on;
+  if (setTracksVal) setTracksVal.textContent = on ? '双行' : '单行';
+  // 只重排轨道, 不重建条目(rebuildItems=false) → 不动用户的编辑结果与滚动位置
+  if (rebuild) rebuildItemsAndLanes(false, true);
+}
+if (setTracks) setTracks.addEventListener('change', () => {
+  localStorage.setItem(TRACKS_KEY, setTracks.checked ? 'double' : 'single');
+  applyTrackMode(true);
+});
 /** 字幕块区域高度(时间轴占屏幕高度): 设置里可调, 也可拖视频/时间轴中间那根线; 记住用户的舒适值 */
 const TLH_KEY = 'ss-tl-h';
 const setTlh = document.getElementById('set-tlh');
@@ -1455,10 +1648,11 @@ function applyTlHeight() {
 }
 applySensitivity();
 applyFilmSetting();
+applyTrackMode(false);
 applyTlHeight();
 
 /* 调试钩子(测试用) */
-window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow };
+window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText };
 
 /* ═══════════ 主循环 ═══════════ */
 function tick() {

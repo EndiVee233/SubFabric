@@ -71,6 +71,7 @@
             <option value="first">仅中文</option>
             <option value="second">仅英文</option>
           </select>
+          <button class="btn btn-mini" id="btn-refresh-subs" title="按字幕列表的干净整句 + 词级时间(JSON) 重新生成动态字幕(逐词切片), 并重新应用到视频区。程序漏更新时手动兜底；只修真的不一致的行，不改动本来就同步的行">↻ 刷新字幕</button>
           <span class="cue-count" id="cue-count"></span>
           <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行" disabled>⚠ <span id="bad-count">0</span></button>
         </div>
@@ -105,6 +106,14 @@
             <span class="switch-slider"></span>
           </label>
           <span class="setting-val" id="set-film-val">关</span>
+        </div>
+        <div class="setting-row">
+          <span class="setting-name" title="单行: 所有字幕块都在同一条轨上, 时间重叠的块会互相压在一起(重叠那一小块看起来更深)。双行: 把重叠的字幕块自动分到下面第二条轨上, 每条轨内部的块互不重叠, 于是每个块都完整可见。刻度尺/播放头/胶片条是两条轨共用的">双行字幕轨</span>
+          <label class="switch">
+            <input type="checkbox" id="set-tracks">
+            <span class="switch-slider"></span>
+          </label>
+          <span class="setting-val" id="set-tracks-val">单行</span>
         </div>
         <div class="setting-row">
           <span class="setting-name" title="时间轴(字幕块+波形)占屏幕的高度; 也可直接拖动视频与时间轴中间那根线">字幕块区域高度</span>
@@ -155,13 +164,18 @@
         <span class="tl-sep">/</span>
         <span id="tl-duration">00:00:00.000</span>
       </div>
-      <div class="tl-group tl-hint">滚轮=平移(下滑=往前/上滑=往后) · Ctrl+滚轮=缩放 · 单击=跳转 · 拖动块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=删除</div>
+      <div class="tl-group tl-hint">滚轮=平移(下滑=往前/上滑=往后) · Ctrl+滚轮=缩放 · 单击=跳转 · Ctrl+拖动=框选批量 · 拖动块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=删除</div>
     </div>
     <div id="tl-canvas-wrap">
       <canvas id="timeline"></canvas>
       <div id="tl-menu" hidden>
         <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>
         <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除字幕块</button>
+      </div>
+      <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消) -->
+      <div id="range-bar" hidden>
+        <span class="rb-count" id="rb-count">已选 0 条</span>
+        <button type="button" class="rb-btn danger" id="rb-delete">🗑 批量删除</button>
       </div>
     </div>
   </section>
