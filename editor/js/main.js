@@ -8,6 +8,7 @@ import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
+import { initProjects } from './project.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -39,7 +40,8 @@ const state = {
   extraRoles: [],        // 用户手动添加、还没用到任何字幕上的角色 [{name, color}]
   trackMode: 'single',   // 字幕轨模式: 'single'=单行轨(所有块挤一条) | 'double'=双行轨(重叠块自动分到第 2 条)
   selected: null,
-  videoLoaded: false
+  videoLoaded: false,
+  project: null          // 项目模式: { id, meta, loadPeaks } (project.js 维护; null=未用项目管理)
 };
 
 /* ─────────── Toast ─────────── */
@@ -115,6 +117,11 @@ function waitDuration(timeoutMs = 10000) {
 async function loadWaveformFromServer() {
   timeline.setPeaks(null);
   timeline.setWaveform(null);
+  // 项目模式: 波形来自项目缓存(peaks.bin), 不再对视频重新生成
+  if (state.project && state.project.loadPeaks) {
+    state.project.loadPeaks();
+    return;
+  }
   const stop = startWaveToast();
   const dur = await waitDuration();
   try {
@@ -548,6 +555,8 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   if (timeline.rangeSel) refreshRangeBar();
   // 没载入字幕时「刷新字幕」不可点
   if (btnRefresh) btnRefresh.disabled = !state.format;
+  // 项目模式: 数据真的变了(文本/时间/增删/角色) → 计划一次自动保存(内部脏检查, 重复触发无害)
+  if (rebuildItems && state.project) Projects.scheduleSave();
 }
 
 /* ═══════════ 角色(说话人) ═══════════ */
@@ -1654,6 +1663,11 @@ applyTlHeight();
 /* 调试钩子(测试用) */
 window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText };
 
+/* ═══════════ 项目系统接线 ═══════════ */
+const Projects = initProjects({
+  state, video, timeline, panel, toast, routeSub, loadVideoUrl
+});
+
 /* ═══════════ 主循环 ═══════════ */
 function tick() {
   const t = video.currentTime;
@@ -1665,11 +1679,18 @@ function tick() {
 }
 requestAnimationFrame(tick);
 
-/* ═══════════ 示例自动加载 ═══════════ */
+/* ═══════════ 示例自动加载(仅 #/editor 直开时; 正常入口是项目主界面 #/home) ═══════════ */
 (async function boot() {
   panel.setBadge('未加载');
   panel.setFileName('');
   timeline.setDuration(0);
+
+  // 路由: 无 hash / #/home → 项目主界面; #/project/<id> → 打开项目; #/editor → 旧的直开模式(示例自动加载)
+  if ((location.hash || '#/home') !== '#/editor') {
+    Projects.applyHash();
+    return;
+  }
+
   let samples = null;
   try {
     const resp = await fetch('/api/samples');

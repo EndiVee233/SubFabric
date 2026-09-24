@@ -13,6 +13,7 @@
   <header id="toolbar">
     <div class="tb-group">
       <span class="app-logo">🎬 字幕编辑器</span>
+      <button class="btn" id="btn-home" title="返回项目主界面（编辑内容会自动保存到项目）">🏠 项目</button>
     </div>
     <div class="tb-group">
       <button class="btn" id="btn-open-video" title="导入视频文件 (mp4/webm/mkv…)">📁 打开视频</button>
@@ -21,6 +22,7 @@
       <input type="file" id="file-sub" accept=".srt,.ass,.ssa" hidden>
     </div>
     <div class="tb-group tb-right">
+      <span id="save-state" class="save-state" hidden title="编辑内容会实时自动保存到项目，不怕忘记导出"></span>
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
       <button class="btn btn-accent" id="btn-export" disabled title="导出原始格式(含逐词特效)">💾 导出字幕</button>
     </div>
@@ -252,7 +254,69 @@
   </div>
   <input type="color" id="role-color-input" value="#ff7a45" aria-hidden="true" tabindex="-1">
 
-</div>
+</div><!-- /#app -->
+
+<!-- ══════════ 项目主界面(全屏覆盖, 有项目/主页两种 hash 状态) ══════════ -->
+<div id="home-view" hidden>
+  <div class="home-inner">
+    <header class="home-head">
+      <div class="home-logo">🎬</div>
+      <h1 class="home-title">字幕编辑器 <span class="home-title-en">Subtitle Studio</span></h1>
+      <p class="home-sub">视频 + 双语字幕 + 逐词特效 · 项目化管理，随时接着上次的进度做</p>
+    </header>
+
+    <div class="home-toolbar">
+      <h2 class="home-list-title">我的项目</h2>
+      <button class="btn btn-accent" id="btn-new-project">＋ 新建项目</button>
+    </div>
+
+    <div id="home-list" class="home-list"></div>
+    <div id="home-empty" class="home-empty" hidden>
+      <div class="he-icon">🗂️</div>
+      <div class="he-name">还没有项目</div>
+      <div class="he-sub">点击右上角「＋ 新建项目」：选择视频与字幕文件，音频和波形会自动提取进项目，下次秒开</div>
+    </div>
+  </div>
+
+  <!-- 新建项目对话框 -->
+  <div id="np-overlay" hidden>
+    <div class="np-box">
+      <div class="np-title">新建项目</div>
+      <div class="np-name-row">
+        <span class="np-lbl">项目名称</span>
+        <input type="text" id="np-name" class="np-input" spellcheck="false" maxlength="60" placeholder="不填则使用视频文件名">
+      </div>
+      <div class="np-modes">
+        <button type="button" class="np-mode active" id="np-mode-import" tabindex="-1">
+          <span class="npm-icon">📄</span>
+          <span class="npm-name">导入已有字幕</span>
+          <span class="npm-desc">选择视频与 SRT / ASS 字幕，进入后自动提取音频、波形</span>
+        </button>
+        <button type="button" class="np-mode disabled" id="np-mode-draft" disabled
+                title="需要语音识别(ASR)模型、自动分句与翻译，将在后续版本提供">
+          <span class="npm-icon">🔒</span>
+          <span class="npm-name">创建初稿</span>
+          <span class="npm-desc">识别视频语音自动生成初稿 · 后续版本提供</span>
+        </button>
+      </div>
+      <div class="np-file-row">
+        <span class="np-lbl">视频</span>
+        <span class="np-file" id="np-video-name">未选择</span>
+        <button type="button" class="btn btn-mini" id="np-pick-video">浏览…</button>
+      </div>
+      <div class="np-file-row">
+        <span class="np-lbl">字幕</span>
+        <span class="np-file" id="np-sub-name">未选择</span>
+        <button type="button" class="btn btn-mini" id="np-pick-sub">浏览…</button>
+      </div>
+      <div class="np-hint">创建时会自动提取音频与波形存入项目（下次打开免生成）；字幕在编辑过程中实时保存</div>
+      <div class="np-actions">
+        <button type="button" class="btn" id="np-cancel">取消</button>
+        <button type="button" class="btn btn-accent" id="np-create" disabled>创建项目</button>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="np-file-sub" accept=".srt,.ass,.ssa" hidden>
 </div>
 
 <script src="vendor/subtitles-octopus.js"></script>
