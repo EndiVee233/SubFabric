@@ -1,5 +1,6 @@
 /** 右侧编辑面板: 虚拟滚动卡片列表(中英双行) + 列表内行内编辑(无独立编辑框) */
 import { fmtTime, escapeHtml, bisectStart } from './util.js';
+import { t } from './i18n.js';
 
 const ROW_H = 92;
 
@@ -175,7 +176,7 @@ export class EditorPanel {
   applyEdit() { this.commitEdit(); }
 
   setBadge(text, cls) {
-    this.badgeEl.textContent = text;
+    this.badgeEl.textContent = t(text);
     this.badgeEl.className = 'badge' + (cls ? ' ' + cls : '');
   }
 
@@ -314,12 +315,12 @@ export class EditorPanel {
   showConfirm(title, msg, yesText, noText, onYes) {
     const ov = document.getElementById('confirm-overlay');
     if (!ov) return;
-    document.getElementById('confirm-title').textContent = title || '请确认';
-    document.getElementById('confirm-msg').textContent = msg || '';
+    document.getElementById('confirm-title').textContent = t(title || '请确认');
+    document.getElementById('confirm-msg').textContent = t(msg || '');
     const yesBtn = document.getElementById('confirm-yes');
     const noBtn = document.getElementById('confirm-no');
-    yesBtn.textContent = yesText || '确定';
-    noBtn.textContent = noText || '取消';
+    yesBtn.textContent = t(yesText || '确定');
+    noBtn.textContent = t(noText || '取消');
     ov.hidden = false;
     const done = (ok) => {
       ov.hidden = true;

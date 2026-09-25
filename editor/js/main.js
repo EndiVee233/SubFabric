@@ -9,6 +9,7 @@ import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
 import { initProjects } from './project.js';
+import { initI18n, t, applyDom, setLocale, getLocale, getLocales } from './i18n.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -92,7 +93,7 @@ function toast(msg, ms = 2600) {
     el.style.cssText = 'position:fixed;left:50%;top:60px;transform:translateX(-50%);background:rgba(28,36,49,.95);border:1px solid var(--border);color:var(--text-0);padding:8px 18px;border-radius:10px;z-index:99;font-size:13px;pointer-events:none;transition:opacity .3s;';
     document.body.appendChild(el);
   }
-  el.textContent = msg;
+  el.textContent = t(msg);                    // 显示出口统一翻译(含服务端返回的中文消息)
   el.style.opacity = '1';
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.style.opacity = '0', ms);
@@ -1881,6 +1882,25 @@ if (setRole) setRole.addEventListener('change', () => {
   applyRoleAnnot(true);
 });
 applyRoleAnnot(false);
+
+/* 界面语言: 设置里切换(zh-CN / en-US), 语言文件在 lang/<locale>.json 可自行增改 */
+const setLocaleSel = document.getElementById('set-locale');
+const setLocaleVal = document.getElementById('set-locale-val');
+function applyLocaleSetting() {
+  const loc = getLocale();
+  if (setLocaleSel) {
+    setLocaleSel.innerHTML = getLocales().map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+    setLocaleSel.value = loc;
+  }
+  if (setLocaleVal) setLocaleVal.textContent = loc;
+}
+if (setLocaleSel) setLocaleSel.addEventListener('change', async () => {
+  await setLocale(setLocaleSel.value);
+  applyLocaleSetting();
+  rebuildItemsAndLanes(true, true);      // 动态渲染的列表/时间轴标签跟着换语言
+  Projects.applyHash();                  // 主界面/弹窗的动态部分重走一遍
+});
+applyLocaleSetting();
 applySensitivity();
 applyFilmSetting();
 applyTrackMode(false);
@@ -1907,6 +1927,8 @@ requestAnimationFrame(tick);
 
 /* ═══════════ 示例自动加载(仅 #/editor 直开时; 正常入口是项目主界面 #/home) ═══════════ */
 (async function boot() {
+  await initI18n();                      // 先载入语言文件: 静态 DOM 文案 + 后续所有 t()
+  applyLocaleSetting();                  // 语言选择器回显已保存的语言
   panel.setBadge('未加载');
   panel.setFileName('');
   timeline.setDuration(0);
