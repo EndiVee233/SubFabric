@@ -295,11 +295,12 @@ export function initProjects(ctx) {
           `确定删除项目「${p.name}」？\n项目内的字幕副本、音频与波形数据将一并删除（不影响原始字幕文件与视频文件）。`,
           '删除', '取消', async () => {
             const r = await fetch('/api/projects/' + p.id, { method: 'DELETE' });
+            const m = await r.json().catch(() => ({}));
             if (r.ok) {
               if (state.project && state.project.id === p.id) detachProject();
               renderList();
               toast('已删除项目「' + p.name + '」');
-            } else toast('删除失败', 3000);
+            } else toast('删除失败：' + (m.error || '未知原因'), 6000);
           });
       });
       elList.appendChild(card);

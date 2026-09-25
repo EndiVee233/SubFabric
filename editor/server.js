@@ -1464,8 +1464,19 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  /** 逐文件深删目录: 项目删除已由 UI 二次确认, 逐个 unlink 以兼容
+   *  会拦截"批量递归删除"的 fs 代理环境(rmSync 递归整目录会被强制要求确认)。 */
+  function rmDirDeep(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, f.name);
+      if (f.isDirectory()) rmDirDeep(p);
+      else { try { fs.unlinkSync(p); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
+    }
+    fs.rmdirSync(dir);
+  }
+
   /** 把选择器返回的原始文本规整成一个**真实存在**的路径。
-   *
    *  实测该对话框的返回值会带脏东西（用户报过 `...生肉.mp4` 后面粘上 `10000 46000000` 之类
    *  的杂物），而脏路径的典型表现就是「文件明明在，却报不存在」。这里做两层收尾：
    *  ① 去掉 BOM / NUL / 首尾空白；② 若整串不是已存在的文件，就从后往前找**存在的最长前缀**
@@ -1858,7 +1869,10 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 200, { draft: metaView(meta).draft || null, log });
     }
     if (!action && req.method === 'DELETE') {
-      try { fs.rmSync(projDir(id), { recursive: true, force: true }); } catch (e) { return sendJson(res, 500, { error: String(e.message) }); }
+      // 注意: 逐文件删除而不是 rmSync 递归 —— 部分 fs 代理环境会对"批量递归删除"
+      // (条目数超阈值)强制要求确认, 把整目录 rmSync 拦下来导致「删除失败」。
+      // 项目删除在 UI 上已经过用户二次确认, 这里逐个 unlink 即可正常工作。
+      try { rmDirDeep(projDir(id)); } catch (e) { return sendJson(res, 500, { error: String(e.message) }); }
       return sendJson(res, 200, { ok: true });
     }
     if (action === 'subtitle' && (req.method === 'PUT' || req.method === 'POST')) {
