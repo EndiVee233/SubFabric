@@ -1066,3 +1066,7 @@ html, body {
   font-size: 14px; line-height: 1; cursor: pointer; transition: background .12s, border-color .12s;
 }
 .gl-del:hover { background: rgba(255, 107, 107, .12); border-color: rgba(255, 107, 107, .45); }
+
+/* 新建项目: 「区分说话人」在 SRT 模式下禁用(SRT 没有角色概念) */
+#np-row-spk.disabled { opacity: .5; }
+#np-row-spk.disabled .np-switch { cursor: not-allowed; }

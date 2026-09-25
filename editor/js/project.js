@@ -480,8 +480,16 @@ export function initProjects(ctx) {
     msgEl.textContent = '';
     msgEl.classList.remove('err');
     let data;
-    try { data = await (await fetch('/api/translate/config')).json(); }
-    catch { toast('读取设置失败（本地服务未启动？）', 3200); return; }
+    try {
+      const resp = await fetch('/api/translate/config', { signal: AbortSignal.timeout(8000) });
+      data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+    } catch (e) {
+      msgEl.textContent = '✗ 读取设置失败：' + String((e && e.message) || e) + '（本地服务是否还在运行？）';
+      msgEl.classList.add('err');
+      renderAsrModels();      // 翻译配置读不到也要让模型列表自己报错/自己重试
+      return;
+    }
     stPresets = data.presets || [];
     $('#st-provider').innerHTML = stPresets
       .map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
@@ -506,8 +514,19 @@ export function initProjects(ctx) {
     const box = $('#st-models');
     if (!box) return;
     let d;
-    try { d = await (await fetch('/api/asr/status')).json(); }
-    catch { box.innerHTML = '<div class="st-row">读取失败</div>'; return; }
+    try {
+      // 加超时: 服务端异常时请求可能一直不返回, 不能让界面永远停在「读取中…」
+      const resp = await fetch('/api/asr/status', { signal: AbortSignal.timeout(8000) });
+      d = await resp.json();
+      if (!resp.ok) throw new Error(d.error || ('HTTP ' + resp.status));
+    } catch (e) {
+      const why = String((e && e.message) || e);
+      box.innerHTML = '<div class="st-row">读取失败：' + esc(why)
+        + ' <button type="button" class="btn btn-mini" id="st-models-retry">重试</button></div>';
+      const rb = document.getElementById('st-models-retry');
+      if (rb) rb.addEventListener('click', () => renderAsrModels());
+      return;
+    }
     const dl = d.download || {};
     const rows = (d.models || []).map((m) => {
       const dlThis = dl.running && (dl.modelId === m.id || (dl.kind === 'runtime' && m.needRuntime));
@@ -795,6 +814,7 @@ export function initProjects(ctx) {
     $('#np-sub-name').classList.remove('filled');
     $('#np-create').disabled = true;
     npSetMode('import');
+    npSyncSpeakers();       // 逐词默认开 → 说话人可勾; 切到 SRT 时自动取消并禁用
   }
   function npMaybeEnable() {
     if (!npVideo.path) { $('#np-create').disabled = true; return; }
@@ -810,10 +830,27 @@ export function initProjects(ctx) {
 
   $('#np-mode-import').addEventListener('click', () => npSetMode('import'));
   $('#np-mode-draft').addEventListener('click', () => npSetMode('draft'));
+  /** 逐词开关 → 说话人开关联动: SRT 没有角色概念(编辑器里禁用角色 Tab/筛选),
+   *  所以关掉逐词时必须把「区分说话人」一并取消并禁用, 免得用户勾了却拿不到角色。 */
+  function npSyncSpeakers() {
+    const wordOn = !!($('#np-word') && $('#np-word').checked);
+    const root = $('#np-row-spk');
+    const box = $('#np-speakers');
+    const cnt = $('#np-spk-count');
+    if (!root || !box) return;
+    box.disabled = !wordOn;
+    if (cnt) cnt.disabled = !wordOn || !box.checked;
+    if (!wordOn && box.checked) box.checked = false;      // SRT 用不上 → 自动取消
+    root.classList.toggle('disabled', !wordOn);
+    root.title = wordOn ? '' : 'SRT 模式没有角色（说话人）概念，需要开启逐词（生成 ASS）才能区分说话人';
+  }
   $('#np-word').addEventListener('change', () => {
     $('#np-word-desc').textContent = $('#np-word').checked
       ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
+    npSyncSpeakers();
   });
+  const npSpk = $('#np-speakers');
+  if (npSpk) npSpk.addEventListener('change', npSyncSpeakers);
 
   $('#np-pick-video').addEventListener('click', async () => {
     let pick;

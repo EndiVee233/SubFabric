@@ -832,7 +832,7 @@ function runWhisperCpp(modelBin, wav, onProgress) {
   });
 }
 
-const server = http.createServer((req, res) => {
+function handleRequest(req, res) {
   const u = new URL(req.url, `http://${req.headers.host || HOST}`);
   const pathname = u.pathname;
 
@@ -2080,7 +2080,9 @@ const server = http.createServer((req, res) => {
       const wordLevel = !!data.wordLevel;
       const draftModelId = String((data.modelId || '')).trim();
       // 说话人分离: 用户勾选 + 告知的说话人数量(没填默认 6, 交给聚类模型)
-      const wantSpeakers = !!data.speakers;
+      // SRT(逐词关) 没有角色概念 —— 前端会禁用开关, 这里再兜一层: 关掉逐词就不做说话人分离,
+      // 否则会白跑一遍分离、生成的角色标注在 SRT 里也无处安放
+      const wantSpeakers = !!data.speakers && !!data.wordLevel;
       const speakerCount = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
       let format = null, file = null, subName = '', subText = '';
 
@@ -2300,9 +2302,35 @@ const server = http.createServer((req, res) => {
   const filePath = safeJoin(ROOT, pathname);
   if (!filePath) return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, '403 Forbidden');
   serveFile(req, res, filePath);
+}
+
+/* 兜底: 处理器里抛异常绝不能让请求一直悬着 —— 前端会卡死在「读取中…」且没有任何提示。
+ * (实测用户报过设置面板识别模型区永远显示"读取中") 这里统一回 500 JSON, 把原因带回前端。 */
+const server = http.createServer((req, res) => {
+  try { handleRequest(req, res); }
+  catch (e) {
+    const msg = String((e && e.message) || e);
+    console.error('[handler error]', req.method, req.url, '\n', (e && e.stack) || e);
+    try {
+      if (!res.headersSent) sendJson(res, 500, { error: '服务器内部错误：' + msg });
+      else res.end();
+    } catch {}
+  }
+});
+process.on('uncaughtException', (e) => {
+  console.error('[uncaught]', (e && e.stack) || e);      // 记日志但不让进程死掉(本地工具优先可用)
+});
+process.on('unhandledRejection', (e) => {
+  console.error('[unhandledRejection]', (e && e.stack) || e);
 });
 
 server.listen(PORT, HOST, () => {
+  console.log(`[subtitle-editor] node ${process.version}`);
   console.log(`[subtitle-editor] serving ${ROOT}`);
   console.log(`[subtitle-editor] open  http://${HOST}:${PORT}/`);
+});
+server.on('error', (e) => {
+  // 端口被占用/被拒绝时给出可读提示, 而不是抛一堆栈
+  console.error('[subtitle-editor] 启动失败：' + String((e && e.message) || e)
+    + (e && e.code === 'EADDRINUSE' ? '（端口 ' + PORT + ' 已被占用：是不是已经开着一个？）' : ''));
 });
