@@ -501,6 +501,20 @@
       </div>
     </div>
 
+    <div class="st-sec">识别增强</div>
+    <div class="st-row st-row-top">
+      <span class="st-lbl">识别提示词 / 热词</span>
+      <textarea id="ah-terms" class="st-area" spellcheck="false" rows="4"
+        title="每行一条或用逗号分隔，填专有名词（人名/地名/作品名等）"
+        placeholder="Bdubs&#10;Etho&#10;Nether"></textarea>
+    </div>
+    <div class="gl-hint">填专有名词即可：whisper 引擎用作初始提示词（实测直接修正人名拼写）；Parakeet 引擎用作热词加权。术语表的「原文」列会自动并入，不用重复填。</div>
+    <div class="st-row">
+      <span class="st-lbl">热词强度（仅 Parakeet）</span>
+      <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" style="max-width:120px">
+      <span class="gl-hint" style="flex:1">实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6</span>
+    </div>
+
     <div class="st-msg" id="st-msg"></div>
     <div class="st-actions">
       <button type="button" class="btn" id="st-test">测试连接</button>

@@ -125,5 +125,10 @@
   "原文词（如 Spike）": "Source term (e.g. Spike)",
   "译法（如 斯派克）": "Translation (e.g. 斯派克)",
   "删除该词条": "Delete this term",
-  "还没有词条 —— 点上面的「＋ 添加词条」开始": "No terms yet — click “+ Add term” above"
+  "还没有词条 —— 点上面的「＋ 添加词条」开始": "No terms yet — click “+ Add term” above",
+  "识别增强": "Recognition boost",
+  "识别提示词 / 热词": "ASR prompt / hotwords",
+  "热词强度（仅 Parakeet）": "Hotword weight (Parakeet only)",
+  "填专有名词即可：whisper 引擎用作初始提示词（实测直接修正人名拼写）；Parakeet 引擎用作热词加权。术语表的「原文」列会自动并入，不用重复填。": "Enter proper nouns: whisper uses them as the initial prompt; Parakeet uses hotword boosting. Glossary source terms are merged in automatically.",
+  "实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6": "Measured: 1.5 no effect / 3.0 works / ≥6 starts repeating, capped at 6"
 }

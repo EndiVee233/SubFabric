@@ -491,6 +491,12 @@ export function initProjects(ctx) {
     $('#st-key').value = c.apiKey || '';
     $('#st-model').value = c.model || '';
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
+    try {
+      const h = await (await fetch('/api/asr/hint')).json();
+      const hint = h.hint || {};
+      $('#ah-terms').value = hint.prompt || '';
+      $('#ah-score').value = hint.hotwordsScore || 3;
+    } catch { /* 识别提示词读不到不影响其它设置 */ }
     glLoad(c.glossary, c.glossaryLang);
     $('#st-auto').checked = !!c.autoTranslate;
     renderAsrModels();
@@ -674,7 +680,17 @@ export function initProjects(ctx) {
     if (srcs.length) srcs[srcs.length - 1].focus();
   });
 
-  function collectSettings() {
+  async function collectSettings() {
+    // 识别提示词是独立的一块(asr/settings.json 的 asr 段), 与翻译配置分开存
+    try {
+      await fetch('/api/asr/hint', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: $('#ah-terms').value,
+          hotwordsScore: parseFloat($('#ah-score').value) || 3,
+        })
+      });
+    } catch { /* 保存失败不阻断翻译配置的保存 */ }
     return {
       provider: $('#st-provider').value,
       baseUrl: $('#st-baseurl').value.trim(),
@@ -687,8 +703,9 @@ export function initProjects(ctx) {
     };
   }
   async function postSettings() {
+    const payload = await collectSettings();     // collectSettings 会顺带保存识别提示词(异步)
     const r = await fetch('/api/translate/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectSettings())
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     });
     const m = await r.json();
     if (!r.ok) throw new Error(m.error || '保存失败');

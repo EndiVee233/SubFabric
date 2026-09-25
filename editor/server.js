@@ -485,6 +485,60 @@ function saveTranslateCfg(patch) {
 }
 const llmReady = (cfg) => !!(cfg && cfg.baseUrl && cfg.apiKey && cfg.model);
 
+/* ═══════════ 识别提示词 / 热词(提升专有名词识别率) ═══════════
+ * 两个引擎各有各的注入方式, 实测(2026-09-25, 本机):
+ *  - whisper.cpp: --prompt 初始提示词 —— 直接有效且无副作用("B-dubs/Itho" → "Bdubs/Etho")
+ *  - Parakeet:    hotwords_file + hotwords_score —— **必须**配 modified_beam_search, 且热词要
+ *                 写成词汇表里的 BPE 片段(asr.py 里转换; 直接写原词会被静默跳过, 看起来像没生效);
+ *                 score 实测: 1.5 无效 / 3.0 生效且正确 / ≥6 开始复读热词 / 12 彻底崩坏
+ *                 → 默认给 3.0, 上限卡在 6。
+ */
+function asrHintCfg() {
+  const a = (readAsrSettings().asr) || {};
+  const sc = Number(a.hotwordsScore);
+  return {
+    prompt: a.prompt || '',
+    hotwordsScore: (isFinite(sc) && sc > 0) ? Math.min(6, sc) : 3,
+  };
+}
+function saveAsrHint(patch) {
+  const s = readAsrSettings();
+  s.asr = Object.assign({ prompt: '', hotwordsScore: 3 }, s.asr || {}, patch || {});
+  writeAsrSettings(s);
+  return asrHintCfg();
+}
+/** 汇总要喂给 ASR 的词: 用户填的识别提示词(逗号/换行分隔) + 术语表「原文」列(自动派生) */
+function asrTerms() {
+  const hint = asrHintCfg();
+  const cfg = translateCfg();
+  const terms = [];
+  const seen = new Set();
+  const add = (t) => {
+    const s = String(t == null ? '' : t).trim();
+    if (!s || seen.has(s.toLowerCase())) return;
+    seen.add(s.toLowerCase());
+    terms.push(s);
+  };
+  for (const part of String(hint.prompt || '').split(/[\n,，、;；]/)) add(part);
+  for (const pair of parseGlossary(cfg.glossary, cfg.glossaryLang)) add(pair[0]);
+  return { terms, score: hint.hotwordsScore };
+}
+/** 给 whisper-cli 的 --prompt: 词表拼成短语, 限长(超长会诱发复读幻觉) */
+function whisperPrompt(terms) {
+  if (!terms || !terms.length) return '';
+  return terms.join(', ').slice(0, 300);
+}
+/** 给 asr.py 的热词参数: 词表写成临时文件(原词, asr.py 负责转 BPE 片段) + 强度 */
+function parakeetHotwordArgs() {
+  const { terms, score } = asrTerms();
+  if (!terms.length) return [];
+  try {
+    const f = path.join(os.tmpdir(), `kass-hot-${process.pid}-${Date.now().toString(36)}.txt`);
+    fs.writeFileSync(f, terms.join('\n') + '\n', 'utf8');
+    return ['--hotwords-file', f, '--hotwords-score', String(score)];
+  } catch { return []; }
+}
+
 /** Python 解释器: 优先本项目 asr/.venv, 其次环境变量, 最后交给 PATH */
 function resolvePython() {
   if (process.env.ASR_PYTHON) return process.env.ASR_PYTHON;
@@ -721,6 +775,9 @@ function runWhisperCpp(modelBin, wav, onProgress) {
   const exe = whisperCli();
   const outPrefix = wav + '.cpp';
   const cmd = [exe, '-m', modelBin, '-f', wav, '-oj', '-of', outPrefix, '-ml', '1', '-sow', '-t', '4', '-l', 'en'];
+  // 识别提示词: 专有名词给解码器做上下文, 实测能显著修正人名/术语拼写(限长防复读幻觉)
+  const wp = whisperPrompt(asrTerms().terms);
+  if (wp) cmd.push('--prompt', wp);
   return new Promise((resolve, reject) => {
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: WHISPER_RUNTIME.dir });
     let out = '';
@@ -1453,7 +1510,8 @@ const server = http.createServer((req, res) => {
             setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（whisper.cpp）… ${pct}%` }));
         } else {
           data = await new Promise((resolve, reject) => {
-            const py = spawn(ASR_PY, [ASR_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson, '--threads', '4'],
+            const py = spawn(ASR_PY, [ASR_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson, '--threads', '4',
+              ...parakeetHotwordArgs()],
               { windowsHide: true, cwd: ASR_DIR });
             let pyErr = '';
             const t = setTimeout(() => { try { py.kill(); } catch {} }, 25 * 60 * 1000);
@@ -1700,7 +1758,8 @@ const server = http.createServer((req, res) => {
     // ── sherpa-onnx 引擎: asr.py ──
     let lastErr = '', buf = '';
     const proc = spawn(ASR_PY,
-      [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4'],
+      [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4',
+        ...parakeetHotwordArgs()],
       { windowsHide: true, cwd: ASR_DIR });
 
     const sink = (chunk) => {
@@ -1956,6 +2015,22 @@ const server = http.createServer((req, res) => {
       return sendJson(res, 200, { cfg: c, ready: llmReady(c) });
     });
   }
+  /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
+  if (pathname === '/api/asr/hint') {
+    // GET 顺带返回实际会喂给引擎的词(用户填的 + 术语表原文列自动派生的), 便于核对
+    if (req.method === 'GET') return sendJson(res, 200, Object.assign({ hint: asrHintCfg() }, asrTerms()));
+    if (req.method === 'POST') {
+      return readBody(req, 256 * 1024, (err, body) => {
+        let p = {};
+        try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const keep = {};
+        for (const k of ['prompt', 'hotwordsScore']) if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
+        return sendJson(res, 200, { hint: saveAsrHint(keep) });
+      });
+    }
+    return sendJson(res, 405, { error: '仅支持 GET / POST' });
+  }
+
   if (pathname === '/api/translate/test' && req.method === 'POST') {
     const c = translateCfg();
     if (!llmReady(c)) return sendJson(res, 400, { error: '请先填写接口地址 / API Key / 模型名' });

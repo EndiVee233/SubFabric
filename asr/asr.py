@@ -156,8 +156,47 @@ def split_chunks(samples, sr, target_sec=26.0, search_sec=5.0, min_tail=3.0):
 # --------------------------------------------------------------------------
 # 模型与推理
 # --------------------------------------------------------------------------
-def load_recognizer(model_dir, threads):
+def load_vocab(tokens_path):
+    """tokens.txt → {片段: id}; 每行形如 '▁the 5'(空格分隔, id 在最后)"""
+    vocab = {}
+    try:
+        with open(tokens_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if not line:
+                    continue
+                i = line.rfind(" ")
+                if i <= 0:
+                    continue
+                vocab[line[:i]] = line[i + 1:]
+    except Exception:
+        return {}
+    return vocab
+
+
+def bpe_encode(word, vocab):
+    """把一个词拆成词表里存在的 BPE 片段(首片段带 ▁); 拆不出来返回 None。
+    贪心最长前缀 —— 不是严格 BPE, 但只要能命中词表就足以让热词生效。"""
+    if not vocab:
+        return None
+    rest = "\u2581" + str(word).strip()
+    out = []
+    while rest:
+        hit = None
+        for n in range(len(rest), 0, -1):
+            if rest[:n] in vocab:
+                hit = rest[:n]
+                break
+        if not hit:
+            return None
+        out.append(hit)
+        rest = rest[len(hit):]
+    return out
+
+
+def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0):
     import glob
+    import tempfile
     import sherpa_onnx
 
     def pick(pattern):
@@ -174,13 +213,48 @@ def load_recognizer(model_dir, threads):
     if missing:
         raise RuntimeError("模型文件不完整(%s): 缺少 %s" % (model_dir, " / ".join(missing)))
 
+    # ── 热词(上下文偏置) ──
+    # 实测(sherpa-onnx 1.13.8 + parakeet-tdt-0.6b-v2):
+    #   ① 热词**必须**用词汇表里的 BPE 片段表示 —— 直接写 "Bdubs" 会被静默跳过(日志里
+    #      Cannot find ID for token), 看起来就像"热词没生效";
+    #   ② 必须配 decoding_method="modified_beam_search"(greedy_search 直接报错);
+    #   ③ hotwords_score 默认 1.5 实测**无效**; 3.0 生效且正确; ≥6 开始复读热词、12 彻底崩坏。
+    #      → 因此默认给 3.0, 并在文档里写清安全区间。
+    hw_path = None
+    if hotwords:
+        pieces_all = []
+        skipped = []
+        vocab = load_vocab(tokens)
+        for w in hotwords:
+            enc_pieces = bpe_encode(w, vocab)
+            if enc_pieces:
+                pieces_all.append(" ".join(enc_pieces))
+            else:
+                skipped.append(w)
+        if skipped:
+            log("热词无法编码(词表缺片段), 已跳过: %s" % ", ".join(skipped))
+        if pieces_all:
+            hw_path = os.path.join(tempfile.gettempdir(),
+                                   "kass-hotwords-%d.txt" % os.getpid())
+            with open(hw_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(pieces_all) + "\n")
+            log("启用热词 %d 条(score=%s): %s" % (len(pieces_all), hotwords_score,
+                                                 ", ".join(hotwords[:8]) + ("…" if len(hotwords) > 8 else "")))
+        else:
+            log("没有可用的热词(全部无法编码), 按无热词识别")
+
     log("加载 Parakeet 模型 …")
     t0 = time.time()
-    rec = sherpa_onnx.OfflineRecognizer.from_transducer(
+    kw = dict(
         encoder=encoder, decoder=decoder, joiner=joiner, tokens=tokens,
         num_threads=threads, sample_rate=SAMPLE_RATE, feature_dim=FEATURE_DIM,
-        decoding_method="greedy_search", model_type="nemo_transducer",
+        decoding_method=("modified_beam_search" if hw_path else "greedy_search"),
+        model_type="nemo_transducer",
     )
+    if hw_path:
+        kw["hotwords_file"] = hw_path
+        kw["hotwords_score"] = float(hotwords_score)
+    rec = sherpa_onnx.OfflineRecognizer.from_transducer(**kw)
     log("模型加载完成, 耗时 %.1fs" % (time.time() - t0))
     return rec
 
@@ -320,7 +394,20 @@ def main():
     ap.add_argument("--audio", required=True, help="16kHz 单声道 PCM wav")
     ap.add_argument("--out", required=True, help="结果 JSON 输出路径")
     ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument("--hotwords-file", default="",
+                    help="热词文件: 每行一个词/短语(原始文本, 本脚本负责转 BPE 片段)")
+    ap.add_argument("--hotwords-score", type=float, default=3.0,
+                    help="热词强度(实测: 1.5 无效 / 3.0 生效且正确 / >=6 开始复读崩坏)")
     args = ap.parse_args()
+
+    hotwords = []
+    if args.hotwords_file:
+        try:
+            with open(args.hotwords_file, encoding="utf-8") as f:
+                hotwords = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+        except Exception as e:
+            log("读取热词文件失败(%s), 按无热词识别" % e)
+            hotwords = []
 
     try:
         log("读取音频 …")
@@ -335,7 +422,7 @@ def main():
         log("分块 %d 段" % len(chunks))
         progress(22, "asr", "开始识别(%d 段)" % len(chunks))
 
-        rec = load_recognizer(args.model, args.threads)
+        rec = load_recognizer(args.model, args.threads, hotwords, args.hotwords_score)
         t0 = time.time()
         words = recognize_words(rec, samples, sr, chunks)
         if not words:
