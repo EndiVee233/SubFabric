@@ -1,0 +1,13 @@
+# K-ASS-Editor「创建初稿」的语音识别 worker 依赖。
+#
+# 建环境（Python 3.10~3.12）：
+#   py -3.12 -m venv .venv
+#   .venv/Scripts/python.exe -m pip install --upgrade pip
+#   .venv/Scripts/pip.exe install -r requirements.txt
+#
+# 本 venv 只用于跑 asr.py 推理；server.js 通过子进程调用它。
+# 模型本体（Parakeet TDT 0.6B v2，631MB）不在这里，由「创建初稿」界面引导选择
+# 一个空目录后下载。
+
+sherpa-onnx>=1.13
+numpy>=1.24

@@ -18,9 +18,21 @@ editor/vendor/
 # main.py 首次运行会在脚本目录写一份本地设置(字体字号等), 不入库
 config.json
 
+# 语音识别(创建初稿): Python 环境 / 模型本体(631MB) / 模型目录配置 都在本地生成
+asr/.venv/
+asr/models/
+asr/settings.json
+asr/__pycache__/
+
+# 本地联调用的视频素材(12 秒英文语音, 供端到端测试)
+/_test/
+
 # 其它
 node_modules/
 Thumbs.db
 desktop.ini
 .DS_Store
 /projects/
+
+# Python 字节码
+__pycache__/

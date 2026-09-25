@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>字幕编辑器 · Subtitle Studio</title>
+<title>SubFabric · 字幕工作台</title>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
   <!-- ══════════ 工具栏 ══════════ -->
   <header id="toolbar">
     <div class="tb-group">
-      <span class="app-logo">🎬 字幕编辑器</span>
+      <span class="app-logo">🎬 SubFabric</span>
       <button class="btn" id="btn-home" title="返回项目主界面（编辑内容会自动保存到项目）">🏠 项目</button>
     </div>
     <div class="tb-group">
@@ -24,6 +24,7 @@
     <div class="tb-group tb-right">
       <span id="save-state" class="save-state" hidden title="编辑内容会实时自动保存到项目，不怕忘记导出"></span>
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
+      <button class="btn" id="btn-settings-ed" title="识别模型 / 字幕翻译（LLM）设置">⚙ 设置</button>
       <button class="btn btn-accent" id="btn-export" disabled title="导出原始格式(含逐词特效)">💾 导出字幕</button>
     </div>
   </header>
@@ -137,6 +138,14 @@
           <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
           <span class="setting-val" id="rng-font-val">1.00 ×</span>
         </div>
+        <div class="setting-row">
+          <span class="setting-name" title="启用: 坏行会标「未标注角色」，右侧有「角色」页与角色筛选。禁用: 不再标未标注角色、隐藏角色页与筛选（字幕里已有的 [角色] 标签保留不动）">启用角色标注</span>
+          <label class="switch">
+            <input type="checkbox" id="set-role" checked>
+            <span class="switch-slider"></span>
+          </label>
+          <span class="setting-val" id="set-role-val">开</span>
+        </div>
         <div class="setting-note">滚动：下滑=往前看 · 上滑=往后看 · Ctrl+滚轮=缩放。设置自动保存在本机浏览器。</div>
       </div>
 
@@ -177,6 +186,7 @@
       <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消) -->
       <div id="range-bar" hidden>
         <span class="rb-count" id="rb-count">已选 0 条</span>
+        <button type="button" class="rb-btn" id="rb-rerecog" title="删除选区内字幕块，用已保存的音频重新识别并翻译">🎙 重新识别</button>
         <button type="button" class="rb-btn danger" id="rb-delete">🗑 批量删除</button>
       </div>
     </div>
@@ -261,13 +271,16 @@
   <div class="home-inner">
     <header class="home-head">
       <div class="home-logo">🎬</div>
-      <h1 class="home-title">字幕编辑器 <span class="home-title-en">Subtitle Studio</span></h1>
+      <h1 class="home-title">SubFabric <span class="home-title-en">v1.1.0</span></h1>
       <p class="home-sub">视频 + 双语字幕 + 逐词特效 · 项目化管理，随时接着上次的进度做</p>
     </header>
 
     <div class="home-toolbar">
       <h2 class="home-list-title">我的项目</h2>
-      <button class="btn btn-accent" id="btn-new-project">＋ 新建项目</button>
+      <div class="home-toolbar-btns">
+        <button class="btn" id="btn-settings" title="识别模型 / 字幕翻译设置">⚙ 设置</button>
+        <button class="btn btn-accent" id="btn-new-project">＋ 新建项目</button>
+      </div>
     </div>
 
     <div id="home-list" class="home-list"></div>
@@ -292,11 +305,10 @@
           <span class="npm-name">导入已有字幕</span>
           <span class="npm-desc">选择视频与 SRT / ASS 字幕，进入后自动提取音频、波形</span>
         </button>
-        <button type="button" class="np-mode disabled" id="np-mode-draft" disabled
-                title="需要语音识别(ASR)模型、自动分句与翻译，将在后续版本提供">
-          <span class="npm-icon">🔒</span>
+        <button type="button" class="np-mode" id="np-mode-draft" tabindex="-1">
+          <span class="npm-icon">🎙️</span>
           <span class="npm-name">创建初稿</span>
-          <span class="npm-desc">识别视频语音自动生成初稿 · 后续版本提供</span>
+          <span class="npm-desc">识别视频语音自动生成字幕（Parakeet 0.6B，英语）</span>
         </button>
       </div>
       <div class="np-file-row">
@@ -304,12 +316,26 @@
         <span class="np-file" id="np-video-name">未选择</span>
         <button type="button" class="btn btn-mini" id="np-pick-video">浏览…</button>
       </div>
-      <div class="np-file-row">
+      <div class="np-file-row" id="np-row-sub">
         <span class="np-lbl">字幕</span>
         <span class="np-file" id="np-sub-name">未选择</span>
         <button type="button" class="btn btn-mini" id="np-pick-sub">浏览…</button>
       </div>
-      <div class="np-hint">创建时会自动提取音频与波形存入项目（下次打开免生成）；字幕在编辑过程中实时保存</div>
+      <div class="np-file-row np-draft-only" id="np-row-word" hidden>
+        <span class="np-lbl">逐词</span>
+        <label class="np-switch">
+          <input type="checkbox" id="np-word" checked>
+          <span id="np-word-desc">开启 → 生成 ASS 逐词字幕</span>
+        </label>
+      </div>
+      <div class="np-model np-draft-only" id="np-model" hidden>
+        <div class="np-file-row">
+          <span class="np-lbl">识别模型</span>
+          <select id="np-model-sel" class="np-select" title="用什么模型识别语音"></select>
+        </div>
+        <div class="np-dl-msg" id="np-dl-msg" hidden></div>
+      </div>
+      <div class="np-hint" id="np-hint">创建时会自动提取音频与波形存入项目（下次打开免生成）；字幕在编辑过程中实时保存</div>
       <div class="np-actions">
         <button type="button" class="btn" id="np-cancel">取消</button>
         <button type="button" class="btn btn-accent" id="np-create" disabled>创建项目</button>
@@ -317,6 +343,75 @@
     </div>
   </div>
   <input type="file" id="np-file-sub" accept=".srt,.ass,.ssa" hidden>
+
+  <!-- 初稿处理进度浮层 -->
+  <div id="dp-overlay" hidden>
+    <div class="dp-box">
+      <div class="dp-steps" id="dp-steps"></div>
+      <div class="dp-bar"><div class="dp-bar-in" id="dp-bar-in"></div></div>
+      <div class="dp-line">
+        <span id="dp-pct">0%</span>
+        <span class="dp-msg" id="dp-msg"></span>
+      </div>
+      <div class="dp-log-label">日志：</div>
+      <pre class="dp-log" id="dp-log"></pre>
+      <div class="dp-actions">
+        <button type="button" class="btn" id="dp-skip" disabled>跳过此步</button>
+        <button type="button" class="btn btn-accent" id="dp-retry" hidden>重试</button>
+        <span class="dp-retries" id="dp-retries"></span>
+        <span class="dp-spacer"></span>
+        <button type="button" class="btn" id="dp-close">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 设置: 识别模型 / 字幕翻译（放在 home-view 外: 编辑器里也要能打开） -->
+<div id="st-overlay" hidden>
+  <div class="st-box">
+    <div class="st-head">
+      <span class="st-title">设置</span>
+      <button type="button" class="btn btn-mini" id="st-close">关闭</button>
+    </div>
+
+      <div class="st-sec">识别模型</div>
+      <div id="st-models" class="st-models">读取中…</div>
+      <div class="st-msg" id="st-model-note"></div>
+
+    <div class="st-sec">字幕翻译</div>
+    <label class="st-check">
+      <input type="checkbox" id="st-auto">
+      <span>创建初稿后自动翻译（不勾选就在项目卡片上手动点「翻译」）</span>
+    </label>
+    <div class="st-row">
+      <span class="st-lbl">服务商</span>
+      <select id="st-provider" class="st-select"></select>
+    </div>
+    <div class="st-row">
+      <span class="st-lbl">接口地址</span>
+      <input type="text" id="st-baseurl" class="st-input" spellcheck="false" placeholder="https://api.deepseek.com/v1">
+    </div>
+    <div class="st-row">
+      <span class="st-lbl">API Key</span>
+      <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
+    </div>
+    <div class="st-row">
+      <span class="st-lbl">模型名</span>
+      <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+    </div>
+    <div class="st-row st-row-top">
+      <span class="st-lbl">提示词</span>
+      <textarea id="st-prompt" class="st-area" spellcheck="false" rows="7"></textarea>
+    </div>
+
+    <div class="st-msg" id="st-msg"></div>
+    <div class="st-actions">
+      <button type="button" class="btn" id="st-test">测试连接</button>
+      <span class="st-spacer"></span>
+      <button type="button" class="btn" id="st-cancel">取消</button>
+      <button type="button" class="btn btn-accent" id="st-save">保存</button>
+    </div>
+  </div>
 </div>
 
 <script src="vendor/subtitles-octopus.js"></script>

@@ -487,72 +487,12 @@ export function initProjects(ctx) {
     $('#st-model').value = c.model || '';
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
     $('#st-auto').checked = !!c.autoTranslate;
-    renderAsrModels();
-  }
-  /** 模型管理: 列出所有识别模型(状态/下载/删除) + whisper.cpp 运行时 */
-  async function renderAsrModels() {
-    const box = $('#st-models');
-    if (!box) return;
-    let d;
-    try { d = await (await fetch('/api/asr/status')).json(); }
-    catch { box.innerHTML = '<div class="st-row">读取失败</div>'; return; }
-    const dl = d.download || {};
-    const rows = (d.models || []).map((m) => {
-      const dlThis = dl.running && (dl.modelId === m.id || (dl.kind === 'runtime' && m.needRuntime));
-      let state, btn = '';
-      if (dlThis) state = `<span class="sm-state running">${esc(dl.msg || '下载中…')} ${dl.pct || 0}%</span>`;
-      else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
-      else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
-      if (dlThis) btn = '';
-      else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
-      else btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 12MB，首次自动下载）</div>' : '';
-      return `<div class="sm-model">
-        <div class="sm-head"><span class="sm-name">${esc(m.name)}</span>${btn}</div>
-        <div class="sm-desc">${esc(m.desc || '')}</div>
-        ${state}${rt}
-      </div>`;
-    }).join('');
-    box.innerHTML = rows || '<div class="st-row">无可用模型</div>';
-    box.querySelectorAll('.sm-dl').forEach(b => b.addEventListener('click', () => downloadModel(b.dataset.id)));
-    box.querySelectorAll('.sm-del').forEach(b => b.addEventListener('click', () => {
-      panel.showConfirm('删除模型',
-        '确定删除该模型的文件吗？（不影响已生成的字幕；之后可重新下载）',
-        '删除', '取消', async () => {
-          await fetch('/api/asr/delete', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: b.dataset.id })
-          });
-          renderAsrModels();
-        });
-    }));
-    // whisper.cpp 运行时: 需要 ggml 模型但运行时缺失时显示下载按钮
-    const note = $('#st-model-note');
-    const needRt = (d.models || []).some(m => m.needRuntime);
-    if (needRt && !dl.running) {
-      const r = await (await fetch('/api/asr/download', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'runtime' })
-      })).json().catch(() => ({}));
-      if (r.started) {
-        note.textContent = '正在下载 whisper.cpp 运行时…';
-        pollModelDownload();
-      }
-    } else if (note) note.textContent = '';
-  }
-  async function pollModelDownload() {
-    for (let i = 0; i < 900; i++) {
-      let d;
-      try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
-      const dl = d.download || {};
-      renderAsrModels();
-      if (!dl.running) { renderAsrModels(); break; }
-      await new Promise(r => setTimeout(r, 1000));
-    }
-  }
-  async function downloadModel(modelId) {
-    await fetch('/api/asr/download', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId })
-    });
-    pollModelDownload();
+    try {
+      const a = await (await fetch('/api/asr/status')).json();
+      $('#st-asr-state').textContent = a.ready
+        ? '已就绪 · ' + a.modelDir
+        : ('未就绪 · ' + (Array.isArray(a.missing) ? a.missing.join('、') : ''));
+    } catch { $('#st-asr-state').textContent = '—'; }
   }
   function closeSettings() { stOverlay.hidden = true; }
   $('#btn-settings').addEventListener('click', openSettings);
@@ -644,21 +584,6 @@ export function initProjects(ctx) {
     npMaybeEnable();
   }
 
-  /** 拉取识别模型状态: 把就绪的模型填进初稿对话框的下拉 */
-  async function refreshAsrStatus() {
-    try { asrStatus = await (await fetch('/api/asr/status')).json(); }
-    catch { asrStatus = { ready: false, models: [] }; }
-    const sel = $('#np-model-sel');
-    if (sel) {
-      const ready = (asrStatus.models || []).filter(m => m.ready);
-      sel.innerHTML = ready.length
-        ? ready.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
-        : '<option value="">（无可用模型，请到设置里下载）</option>';
-      if (asrStatus.selectedModel && ready.some(m => m.id === asrStatus.selectedModel)) sel.value = asrStatus.selectedModel;
-    }
-    npMaybeEnable();
-  }
-
   function npReset() {
     npVideo.path = npVideo.name = '';
     npSub.name = npSub.text = '';
@@ -673,8 +598,7 @@ export function initProjects(ctx) {
   function npMaybeEnable() {
     if (!npVideo.path) { $('#np-create').disabled = true; return; }
     // 初稿模式不需要字幕文件, 但必须有可用的识别模型
-    const hasModel = npMode !== 'draft' || !!($('#np-model-sel') && $('#np-model-sel').value);
-    $('#np-create').disabled = (npMode === 'draft' ? !asrStatus.ready : !npSub.text) || !hasModel;
+    $('#np-create').disabled = npMode === 'draft' ? !asrStatus.ready : !npSub.text;
   }
   function openCreateDialog() { npReset(); npOverlay.hidden = false; $('#np-name').focus(); }
 
@@ -687,6 +611,131 @@ export function initProjects(ctx) {
   $('#np-word').addEventListener('change', () => {
     $('#np-word-desc').textContent = $('#np-word').checked
       ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
+  });
+
+  /* ── 语音识别模型: 状态 / 选择空目录 / 下载进度 ── */
+  function renderAsrState(msg) {
+    const el = $('#np-model-state');
+    if (asrStatus.ready) {
+      el.textContent = '已就绪';
+      el.classList.add('filled');
+      el.title = asrStatus.modelDir;
+    } else {
+      const m = Array.isArray(asrStatus.missing) ? asrStatus.missing.join('、') : String(asrStatus.missing || '');
+      el.textContent = msg || ('未就绪 · ' + m);
+      el.classList.remove('filled');
+      el.title = m;
+    }
+    npMaybeEnable();
+  }
+  async function refreshAsrStatus() {
+    try { asrStatus = await (await fetch('/api/asr/status')).json(); }
+    catch { asrStatus = { ready: false, missing: ['无法连接本地服务'] }; }
+    renderAsrState();
+  }
+  async function pollDownload() {
+    $('#np-dl-bar').hidden = false;
+    $('#np-dl-msg').hidden = false;
+    for (let i = 0; i < 1800; i++) {
+      let s;
+      try { s = (await (await fetch('/api/asr/status')).json()).download; } catch { break; }
+      if (!s) break;
+      $('#np-dl-bar-in').style.width = (s.pct || 0) + '%';
+      $('#np-dl-msg').textContent = s.msg || '';
+      if (s.error) { $('#np-dl-msg').textContent = '✗ ' + s.msg; break; }
+      if (!s.running) {
+        await refreshAsrStatus();
+        $('#np-dl-msg').textContent = s.msg || '下载完成';
+        break;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  $('#np-pick-model').addEventListener('click', async () => {
+    let pick;
+    try {
+      pick = await (await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'folder' })
+      })).json();
+    } catch { toast('无法打开系统目录对话框', 3200); return; }
+    if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
+
+    // 必须是空目录 —— 模型有 4 个文件 661MB, 混在已有文件里既不清理也不安全
+    let chk;
+    try {
+      chk = await (await fetch('/api/asr/check-dir', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir: pick.path })
+      })).json();
+    } catch { toast('校验目录失败', 3200); return; }
+    if (!chk.ok) { toast(chk.reason || '该目录不可用', 4200); return; }
+
+    const r = await fetch('/api/asr/download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir: pick.path })
+    });
+    const m = await r.json();
+    if (!r.ok) { toast(m.error || '开始下载失败', 4200); return; }
+    if (m.ready) { await refreshAsrStatus(); toast('已采用该目录中的模型', 3000); return; }
+    pollDownload();
+  });
+
+  $('#np-pick-video').addEventListener('click', async () => {
+    let pick;
+    try {
+      pick = await (await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' })
+      })).json();
+    } catch { toast('无法打开系统文件对话框', 3200); return; }
+    if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
+    npVideo.path = pick.path; npVideo.name = pick.name;
+    const el = $('#np-video-name');
+    el.textContent = pick.name; el.classList.add('filled');
+    if (!$('#np-name').value.trim()) $('#np-name').value = pick.name.replace(/\.[^.]+$/, '');
+    npMaybeEnable();
+  });
+  $('#np-pick-sub').addEventListener('click', () => $('#np-file-sub').click());
+  $('#np-file-sub').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    npSub.name = f.name; npSub.text = await f.text();
+    const el = $('#np-sub-name');
+    el.textContent = f.name; el.classList.add('filled');
+    npMaybeEnable();
+  });
+  $('#np-create').addEventListener('click', async () => {
+    const btn = $('#np-create');
+    const isDraft = npMode === 'draft';
+    btn.disabled = true; btn.textContent = isDraft ? '提交中…' : '创建中…';
+    try {
+      const payload = { name: $('#np-name').value.trim(), video: { path: npVideo.path, name: npVideo.name } };
+      if (isDraft) {
+        payload.draft = true;
+        payload.wordLevel = !!$('#np-word').checked;
+      } else {
+        payload.subtitle = { name: npSub.name, text: npSub.text };
+      }
+      const r = await fetch('/api/projects', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const m = await r.json();
+      if (!r.ok) { toast(m.error || '创建失败', 4000); return; }
+      npOverlay.hidden = true;
+      if (isDraft) {
+        // 不停留在对话框: 项目立刻进列表, 进度在列表上体现
+        renderList();
+        toast('已提交，正在后台识别语音 —— 可以先去做别的，进度见项目列表', 5200);
+      } else {
+        lastSavedText = npSub.text;
+        location.hash = '#/project/' + m.id;
+        toast('项目已创建，正在后台提取音频与波形…', 4000);
+      }
+    } catch (e) {
+      toast('创建失败: ' + e.message, 3600);
+    } finally {
+      btn.textContent = npMode === 'draft' ? '开始识别' : '创建项目';
+      npMaybeEnable();
+    }
   });
 
   /* ─────────── 路由 ─────────── */

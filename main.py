@@ -37,7 +37,7 @@ import time
 # 常量与默认配置
 # ============================================================
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 # 配置目录名（图形界面与命令行共用同一份 config.json）
 APP_DIR_NAME = "SubtitleTool"
@@ -87,6 +87,7 @@ FONT_DOWNLOAD_URLS = {
 
 DEFAULT_SETTINGS = {
     "replace_punct": True,          # 中文标点（、，。）替换为空格
+    "remove_linebreak": True,       # 删除中文轨硬换行符 \N（关掉则保留原有换行）
     "highlight_color": "&H00ff00&",  # ASS 内嵌颜色（BGR 顺序）
     # 字体与字号中英分离：中文轨（Style「中文字幕」）与英文轨（Style「Default」）
     # 各用一套，双语字幕里两侧字重/字宽差异大时能分别微调。
@@ -319,9 +320,16 @@ def _replace_color_tag(match, color):
     return '{\\c' + color + '}'
 
 
-def clean_chinese_text(text, replace_punct=True):
+def clean_chinese_text(text, replace_punct=True, remove_linebreak=True):
+    """清理中文轨文本。
+
+    remove_linebreak=False 时保留硬换行符 \\N，原有分行排版原样保留
+    （适合 [译者注] 这类本身就分两行/三行的文本）；默认为 True，
+    删掉 \\N 把断行接回一整句。
+    """
     text = clean_text_markers(text)
-    text = text.replace('\\N', '')
+    if remove_linebreak:
+        text = text.replace('\\N', '')
     if replace_punct:
         for punct in ['、', '，', '。']:
             text = text.replace(punct, ' ')
@@ -363,6 +371,54 @@ def generate_karaoke_lines(text, start_time, end_time, style, name,
 # 核心：ASS 处理
 # ============================================================
 
+def apply_font_to_styles(header_lines, settings):
+    """把 settings 里的字体名/字号写进 [V4+ Styles] 中对应 Style。
+
+    只改 Fontname / Fontsize 两个字段，其余样式属性（颜色、对齐、边距、描边等）
+    一律原样保留——避免把源文件精心调过的样式整段覆盖掉。
+    仅当 settings['apply_font'] 为真时由 process_ass 调用。
+
+    字段下标按 Style 区的 Format 行动态解析（标准 ASS 里 Fontname 在第 1 列、
+    Fontsize 在第 2 列），不硬编码，兼容非标准顺序的样式表。
+    """
+    zh_name = settings.get('zh_font_name')
+    zh_size = settings.get('zh_font_size')
+    en_name = settings.get('en_font_name')
+    en_size = settings.get('en_font_size')
+    out = []
+    in_styles = False
+    fmt = None
+    for line in header_lines:
+        if line.startswith('[V4+ Styles]'):
+            in_styles = True
+            fmt = None
+            out.append(line)
+            continue
+        if line.startswith('[') and not line.startswith('[V4+ Styles]'):
+            in_styles = False
+        if in_styles and line.startswith('Format:'):
+            fmt = [f.strip() for f in line[len('Format:'):].split(',')]
+        if in_styles and line.startswith('Style:'):
+            parts = line.rstrip('\n').split(',')
+            if fmt and len(parts) >= len(fmt):
+                name = parts[0][len('Style:'):].strip()
+                idx_name = fmt.index('Fontname') if 'Fontname' in fmt else 1
+                idx_size = fmt.index('Fontsize') if 'Fontsize' in fmt else 2
+                if name == '中文字幕':
+                    if zh_name:
+                        parts[idx_name] = zh_name
+                    if zh_size is not None:
+                        parts[idx_size] = str(zh_size)
+                elif name == 'Default':
+                    if en_name:
+                        parts[idx_name] = en_name
+                    if en_size is not None:
+                        parts[idx_size] = str(en_size)
+                line = ','.join(parts) + '\n'
+        out.append(line)
+    return out
+
+
 def process_ass(input_path, output_path, settings=None, dry_run=False):
     """处理 ASS 文件。返回 (added, removed, color_replaced, stats)。"""
     if settings is None:
@@ -401,7 +457,10 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
             fields = split_dialogue(line)
             if fields and fields[3] == "中文字幕":
                 old_text = fields[9]
-                new_text = clean_chinese_text(old_text, replace_punct=settings['replace_punct'])
+                new_text = clean_chinese_text(
+                    old_text,
+                    replace_punct=settings['replace_punct'],
+                    remove_linebreak=settings['remove_linebreak'])
                 if new_text != old_text:
                     fields[9] = new_text
                     events_section[i] = build_dialogue(fields).rstrip('\n') + '\n'
@@ -456,8 +515,11 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
     # 原实现假定「中文字幕」行后面紧跟属于它的若干「Default」行，但实际文件里
     # 中英文常被导出成两段（英文在前/中文在后），排序交织后这个假定并不总成立，
     # 会使部分英文行被错误地并入最后一条中文。
-    # 改为：先收集全部中文区间，再按「开始时间落在哪个中文区间内」把每条英文
-    # 行分配给对应中文，天然支持英文略早/略晚于中文的抖动。
+    # 改为：先收集全部中文区间，再把英文行聚成「句块」后按块分配。
+    # 句块 = 时间上连续且全文相同的一串英文行（逐词字幕正是同一句文本重复 N 行、
+    # 时间轴首尾相接铺满整句）。必须按块分配而不是按单行：译者注等单中文行与
+    # 双语组重叠（包住/被包住/相交）时，若按单行分配，整句逐词铺满的中间切片
+    # 会离被包住的小时间区间更近，同一句会被拆给两个组，最后重复输出。
     zh_groups = []
     orphan_en = []
     for di, fields in dialogue_indices:
@@ -466,10 +528,25 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
                 'zh_idx': di,
                 'zh_start': parse_time(fields[1]),
                 'zh_end': parse_time(fields[2]),
+                'name': fields[4].strip(),
                 'def_indices': [],
+                'blocks': [],
             })
         elif fields[3] == "Default":
             orphan_en.append((di, fields))
+
+    en_blocks = []
+    for di, fields in orphan_en:
+        t_start = parse_time(fields[1])
+        t_end = parse_time(fields[2])
+        text = remove_ass_tags(fields[9]).strip()
+        if (en_blocks and en_blocks[-1]['text'] == text
+                and t_start <= en_blocks[-1]['end'] + 0.5):
+            en_blocks[-1]['end'] = max(en_blocks[-1]['end'], t_end)
+            en_blocks[-1]['indices'].append(di)
+        else:
+            en_blocks.append({'start': t_start, 'end': t_end, 'text': text,
+                              'indices': [di], 'name': fields[4].strip()})
 
     # 中文区间按起点排序，并计算「前缀最大结束时间」，用于精确剪枝：
     # 对某个英文行，只有起点 <= t_end 的中文才可能与之相交；
@@ -498,46 +575,46 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
             k -= 1
         return out
 
-    for di, fields in orphan_en:
-        t_start = parse_time(fields[1])
-        t_end = parse_time(fields[2])
+    for blk in en_blocks:
+        t_start, t_end = blk['start'], blk['end']
         cand = _candidates(t_start, t_end)
 
+        # 归属打分：
+        # 1) 名字匹配优先——英文句块 Name 非空且候选中文里有同名者（双语成对导出
+        #    的正常情况），只在同名候选里挑。这样「译者注」等无名单中文行即使时间
+        #    上包住/相交双语组，也抢不走英文句块。
+        # 2) 端点贴合度——|块开始-中开始| + |块结束-中结束| 越小越贴合。双语逐词
+        #    句块与其中文区间完全贴合（得 0 分），比旧的中心距离启发式更稳。
+        if blk['name']:
+            named = [gi for gi in cand if zh_groups[gi]['name'] == blk['name']]
+            if named:
+                cand = named
+
         target = None
-        best_center_diff = None
-        best_fallback = None
-        best_fallback_diff = None
+        best_fit = None
         for gi in cand:
             g = zh_groups[gi]
-            gs, ge = g['zh_start'], g['zh_end']
-            if gs <= t_start <= ge:
-                diff = abs((gs + ge) / 2 - t_start)
-                if best_center_diff is None or diff < best_center_diff:
-                    best_center_diff = diff
-                    target = gi
-            elif target is None:
+            fit = abs(t_start - g['zh_start']) + abs(t_end - g['zh_end'])
+            if best_fit is None or fit < best_fit:
+                best_fit = fit
                 target = gi
-            diff2 = abs(gs - t_start)
-            if best_fallback_diff is None or diff2 < best_fallback_diff:
-                best_fallback_diff = diff2
-                best_fallback = gi
 
-        if target is None and best_fallback is None:
-            if zh_groups:
-                best_fallback = min(
-                    range(len(zh_groups)),
-                    key=lambda gi: abs(zh_groups[gi]['zh_start'] - t_start)
-                )
+        if target is None and zh_groups:
+            # 完全不相交时的兜底：取开始时间最接近的中文组
+            target = min(
+                range(len(zh_groups)),
+                key=lambda gi: abs(zh_groups[gi]['zh_start'] - t_start)
+            )
         if target is not None:
-            zh_groups[target]['def_indices'].append(di)
-        elif best_fallback is not None:
-            zh_groups[best_fallback]['def_indices'].append(di)
+            zh_groups[target]['def_indices'].extend(blk['indices'])
+            zh_groups[target]['blocks'].append(blk)
 
     groups = []
     for g in zh_groups:
         groups.append({
             'zh_idx': g['zh_idx'],
             'def_indices': sorted(g['def_indices']),
+            'blocks': sorted(g['blocks'], key=lambda b: b['start']),
             'zh_start': g['zh_start'],
             'zh_end': g['zh_end'],
         })
@@ -567,10 +644,15 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
                     break
             group['action'] = 'remove_karaoke' if need_remove else 'keep'
         else:
-            if len(group['def_indices']) == 1:
-                d_idx = group['def_indices'][0]
-                fields = split_dialogue(new_events_section[d_idx])
-                group['action'] = 'add_karaoke' if not has_karaoke_tag(fields[9]) else 'keep'
+            if len(group['blocks']) == 1:
+                blk = group['blocks'][0]
+                has_kara = False
+                for d_idx in blk['indices']:
+                    fields = split_dialogue(new_events_section[d_idx])
+                    if has_karaoke_tag(fields[9]):
+                        has_kara = True
+                        break
+                group['action'] = 'add_karaoke' if not has_kara else 'keep'
             else:
                 group['action'] = 'keep'
 
@@ -580,13 +662,92 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
     handled = {}
     emit_override = {}
 
+    # 先收集所有 remove_karaoke 组的合并计划（按句块拆分），再做「同句去重」：
+    # 译者注等中文行与双语组重叠时，两组可能各自持有相同全文的英文句块，
+    # 若各自合并输出，同一句英文会出现两条（时间区间还互相重叠）。
+    # 因此把 clean_text 相同且时间区间相交的合并计划并成一条（区间取并集）。
+    merge_plans = []
     for group in groups:
-        defs = group['def_indices']
+        if group['action'] != 'remove_karaoke':
+            continue
+        if LOG_LEVEL == "verbose":
+            log("修改前：", "debug")
+            for d_idx in group['def_indices']:
+                orig_lineno = index_to_orig_lineno.get(d_idx, "?")
+                raw = new_events_section[d_idx].rstrip('\n')
+                log(f"【行{orig_lineno}】{raw}", "debug")
+        zh_fields = split_dialogue(new_events_section[group['zh_idx']])
+        zh_start = parse_time(zh_fields[1])
+        zh_end = parse_time(zh_fields[2])
+        for blk in group['blocks']:
+            first_d_idx = blk['indices'][0]
+            first_fields = split_dialogue(new_events_section[first_d_idx])
+            clean_text = remove_ass_tags(first_fields[9])
+            # 组内只有一个句块时沿用中文区间（英文跟随中文起止）；
+            # 多个句块时各用各的时间区间，避免合并行互相重叠。
+            if len(group['blocks']) == 1:
+                p_start, p_end = zh_start, zh_end
+            else:
+                p_start, p_end = blk['start'], blk['end']
+            merge_plans.append({
+                'start': p_start,
+                'end': p_end,
+                'text': clean_text,
+                'first_d_idx': first_d_idx,
+                'first_fields': first_fields,
+                'indices': list(blk['indices']),
+            })
+
+    def _plans_key(p):
+        return p['text']
+
+    plans_by_text = {}
+    for p in merge_plans:
+        plans_by_text.setdefault(_plans_key(p), []).append(p)
+
+    for text_key, plist in plans_by_text.items():
+        # 同一全文的多条合并计划：按开始时间排序后，把相互重叠/相接的区间
+        # 合并成一条输出；其余组的英文行全部跳过（同句全文，跳过不丢内容）。
+        plist.sort(key=lambda p: (p['start'], p['end']))
+        clusters = []
+        for p in plist:
+            if clusters and p['start'] <= clusters[-1]['end']:
+                clusters[-1]['end'] = max(clusters[-1]['end'], p['end'])
+                clusters[-1]['members'].append(p)
+            else:
+                clusters.append({'start': p['start'], 'end': p['end'],
+                                 'members': [p]})
+        for cl in clusters:
+            members = cl['members']
+            # 并集区间（members[0] 开始时间最早，end 已在聚类时取过最大值）
+            start_s = format_time(cl['start'])
+            end_s = format_time(cl['end'])
+            # 取位置最靠前的成员做载体行（字段/样式沿用它的首行英文）
+            lead = min(members, key=lambda p: p['first_d_idx'])
+            ff = lead['first_fields']
+            merged_fields = [ff[0], start_s, end_s, ff[3],
+                             ff[4], ff[5], ff[6], ff[7], ff[8], text_key]
+            merged_line = build_dialogue(merged_fields)
+            for p in members:
+                for d_idx in p['indices'][1:]:
+                    handled[d_idx] = 'skip'
+                if p is lead:
+                    emit_override[p['first_d_idx']] = [merged_line]
+                else:
+                    # 同句重复组的载体行直接跳过（内容已由 lead 输出）
+                    handled[p['first_d_idx']] = 'skip'
+            if LOG_LEVEL == "verbose":
+                log("修改后：", "debug")
+                log(merged_line.rstrip('\n'), "debug")
+
+    for group in groups:
         if group['action'] == 'add_karaoke':
-            d_idx = defs[0]
+            blk = group['blocks'][0]
+            d_idx = blk['indices'][0]
             fields = split_dialogue(new_events_section[d_idx])
-            start_time = parse_time(fields[1])
-            end_time = parse_time(fields[2])
+            # 用句块的完整时间跨度（单行块即该行区间；多行块为整句铺满区间）
+            start_time = blk['start']
+            end_time = blk['end']
             total_duration = end_time - start_time
             words = fields[9].split()
             out_lines = []
@@ -607,29 +768,6 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
                     t = t_end
             if out_lines:
                 emit_override[d_idx] = out_lines
-        elif group['action'] == 'remove_karaoke':
-            if LOG_LEVEL == "verbose":
-                log("修改前：", "debug")
-                for d_idx in defs:
-                    orig_lineno = index_to_orig_lineno.get(d_idx, "?")
-                    raw = new_events_section[d_idx].rstrip('\n')
-                    log(f"【行{orig_lineno}】{raw}", "debug")
-            zh_fields = split_dialogue(new_events_section[group['zh_idx']])
-            new_start = zh_fields[1]
-            new_end = zh_fields[2]
-            first_d_idx = defs[0]
-            first_fields = split_dialogue(new_events_section[first_d_idx])
-            clean_text = remove_ass_tags(first_fields[9])
-            merged_fields = [first_fields[0], new_start, new_end, first_fields[3],
-                             first_fields[4], first_fields[5], first_fields[6],
-                             first_fields[7], first_fields[8], clean_text]
-            merged_line = build_dialogue(merged_fields)
-            emit_override[first_d_idx] = [merged_line]
-            for d_idx in defs[1:]:
-                handled[d_idx] = 'skip'
-            if LOG_LEVEL == "verbose":
-                log("修改后：", "debug")
-                log(merged_line.rstrip('\n'), "debug")
 
     final_events_section = []
     for i, line in enumerate(new_events_section):
@@ -659,7 +797,10 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
     overlap_count = len(overlap_set)
 
     if not dry_run:
-        output_lines = header + final_events_section
+        out_header = header
+        if settings.get('apply_font'):
+            out_header = apply_font_to_styles(header, settings)
+        output_lines = out_header + final_events_section
         with open(output_path, 'w', encoding='utf-8-sig') as f:
             f.writelines(output_lines)
 
@@ -752,7 +893,10 @@ def merge_srt_to_ass(zh_srt_path, en_srt_path, output_ass_path, settings=None):
         if i >= len(en_subs):
             break
         en_start, en_end, en_text = en_subs[i]
-        zh_text_clean = clean_chinese_text(zh_text, replace_punct=settings['replace_punct'])
+        zh_text_clean = clean_chinese_text(
+            zh_text,
+            replace_punct=settings['replace_punct'],
+            remove_linebreak=settings['remove_linebreak'])
         if not re.search(r'\{.*\}', zh_text_clean):
             zh_text_clean = '{\\c&HFFFFFF&}' + zh_text_clean
         if settings['auto_role'] and '[' not in zh_text_clean:
@@ -814,6 +958,8 @@ def apply_overrides(settings, args):
     s = dict(settings)
     if getattr(args, 'no_replace_punct', False):
         s['replace_punct'] = False
+    if getattr(args, 'keep_linebreak', False):
+        s['remove_linebreak'] = False
     if getattr(args, 'highlight', None):
         s['highlight_color'] = args.highlight
 
@@ -842,6 +988,8 @@ def apply_overrides(settings, args):
         s['overlap_tolerance'] = args.tolerance
     if getattr(args, 'time_mismatch', False):
         s['time_mismatch'] = True
+    if getattr(args, 'apply_font', False):
+        s['apply_font'] = True
     return s
 
 
@@ -859,6 +1007,11 @@ def add_common_settings_args(p, include_tolerance=True):
     g.add_argument("--en-font-size", type=int, metavar="N", help="仅英文字幕轨的字号")
     g.add_argument("--no-replace-punct", action="store_true",
                    help="不把中文标点（、，。）替换为空格")
+    g.add_argument("--apply-font", action="store_true",
+                   help="(ASS 模式) 用设置的字体名/字号覆盖源文件 Style 里的字体"
+                        "（默认保留源文件原有字体，只做逐词/颜色清理）")
+    g.add_argument("--keep-linebreak", action="store_true",
+                   help="保留中文轨的硬换行符 \\N（默认删除，把断行接成一整句）")
     if include_tolerance:
         g.add_argument("--tolerance", type=float, metavar="SEC",
                        help=f"重叠检测容差，秒（默认 {OVERLAP_TOLERANCE}）")
@@ -897,6 +1050,8 @@ def cmd_ass(args):
         log(f"字体：中文 {settings['zh_font_name']} {settings['zh_font_size']}"
             f"  |  英文 {settings['en_font_name']} {settings['en_font_size']}")
         log(f"标点替换：{'开' if settings['replace_punct'] else '关'}"
+            f"  |  换行符：{'删除' if settings['remove_linebreak'] else '保留'}"
+            f"  |  字体覆盖：{'开' if settings.get('apply_font') else '关（保留源样式）'}"
             f"  |  重叠容差：{settings['overlap_tolerance']:.2f}s")
         log("")
 
@@ -955,6 +1110,7 @@ def cmd_srt(args):
         log(f"输出：{'(仅分析，不写出)' if args.dry_run else os.path.abspath(output)}")
         log(f"时间轴：{'独立 + 英文逐词' if settings['time_mismatch'] else '共用中文轴 + 逐词处理'}")
         log(f"自动角色名：{'开' if settings['auto_role'] else '关'}")
+        log(f"换行符：{'删除' if settings['remove_linebreak'] else '保留'}")
         log("")
 
     try:
@@ -1022,6 +1178,7 @@ def cmd_config(args):
         'zh_size': 'zh_font_size',
         'en_size': 'en_font_size',
         'tolerance': 'overlap_tolerance',
+        'linebreak': 'remove_linebreak',
     }
 
     # 同时作用于中英两轨的键（写 --set font=X 时两条都改）
@@ -1069,7 +1226,8 @@ def cmd_config(args):
                     except ValueError:
                         log(f"容差需为数字：{value}", "error")
                         return 2
-                elif target in ('replace_punct', 'auto_role', 'time_mismatch'):
+                elif target in ('replace_punct', 'remove_linebreak',
+                                'auto_role', 'time_mismatch'):
                     cfg[target] = value.lower() in ('1', 'true', 'yes', 'on', '开')
                 else:
                     cfg[target] = value
@@ -1221,21 +1379,15 @@ def build_parser():
 
 
 def launch_gui(mode="ass"):
-    """启动图形界面。缺少 PySide6 时给出可执行的安装提示。"""
-    try:
-        import app_gui
-    except ImportError as e:
-        log("无法加载图形界面：未安装 PySide6。", "error")
-        log(f"  {e}", "error")
-        log("", "plain")
-        log("请执行：", "plain")
-        log("  pip install PySide6", "plain")
-        log("", "plain")
-        log("命令行模式仍然可用，例如：", "plain")
-        log("  python main.py ass -i input.ass", "plain")
-        log("  python main.py --help", "plain")
-        return 1
-    return app_gui.run(mode)
+    """本仓库只保留核心命令行功能，未随附图形界面（app_gui.py 在上游字幕工具仓库）。"""
+    log("本仓库未包含图形界面（app_gui.py 未随仓库提供），请使用命令行模式。", "warn")
+    log("", "plain")
+    log("常用命令：", "plain")
+    log("  python main.py ass -i input.ass            # ASS 逐词/清重叠/统颜色", "plain")
+    log("  python main.py srt --zh zh.srt --en en.srt -o out.ass   # 中英 SRT 合并", "plain")
+    log("  python main.py config --show               # 查看/修改默认设置", "plain")
+    log("  python main.py --help", "plain")
+    return 2
 
 
 def _no_console_guard(argv):
