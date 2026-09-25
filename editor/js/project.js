@@ -490,6 +490,7 @@ export function initProjects(ctx) {
     $('#st-key').value = c.apiKey || '';
     $('#st-model').value = c.model || '';
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
+    $('#st-glossary').value = c.glossary || '';
     $('#st-auto').checked = !!c.autoTranslate;
     renderAsrModels();
   }
@@ -594,6 +595,7 @@ export function initProjects(ctx) {
       apiKey: $('#st-key').value.trim(),
       model: $('#st-model').value.trim(),
       prompt: $('#st-prompt').value,
+      glossary: $('#st-glossary').value,
       autoTranslate: $('#st-auto').checked,
     };
   }

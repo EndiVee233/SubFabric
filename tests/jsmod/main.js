@@ -1362,6 +1362,10 @@ function applyWordSentence(sent, s, e, text) {
 }
 
 /** 应用一行(中英双行)编辑: 中文整句 + 英文逐词句同步更新, 视频区立即重渲染 */
+/** 用户文本 → ASS 安全文本(花括号/反斜杠转义): ASS 里 {…} 是覆盖标签, 不转义会被吃掉 */
+const escAss = (s) => String(s == null ? '' : s)
+  .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\r?\n/g, '\\N');
+
 function applyAssRow(item, s, e, text) {
   const row = item.ref;
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
@@ -1641,8 +1645,9 @@ function addRecognizedRow(seg) {
   if (state.format !== 'ass' || !state.kar) return null;
   const zhStyle = (state.kar.sentences.find(x => x.style !== state.kar.wordStyle) || {}).style || '';
   const enStyle = state.kar.wordStyle || '';
-  const zh = zhStyle ? appendSentence(zhStyle, s, e, zhText) : null;
-  const en = enStyle ? appendSentence(enStyle, s, e, enText) : null;
+  // ASS 里花括号是覆盖标签, 用户文本(译文/ASR)必须转义 —— 与服务端写初稿同一约定
+  const zh = zhStyle ? appendSentence(zhStyle, s, e, escAss(zhText)) : null;
+  const en = enStyle ? appendSentence(enStyle, s, e, escAss(enText)) : null;
   if (!zh && !en) return null;
   // 英文: 用 ASR 的**真实词级时间**直接铺（不按句长加权重算），逐词高亮跟着真实发音走
   if (en) {

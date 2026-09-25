@@ -428,8 +428,34 @@ function translateCfg() {
     model: t.model || (preset ? preset.model : ''),
     autoTranslate: !!t.autoTranslate,
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
+    glossary: t.glossary || '',
     hasKey: !!t.apiKey,
   };
+}
+
+/** 术语表文本 → [['英文','中文'], …]: 每行一条, '英文=中文' 或 '英文 中文';
+ *  # 开头为注释, 空行忽略。译文里出现这些词时按给定译法翻(专有名词一致性)。 */
+function parseGlossary(text) {
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const l = String(line).trim();
+    if (!l || l.startsWith('#')) continue;
+    const m = /^(.+?)\s*=\s*(.+)$/.exec(l) || /^(\S+)\s+(.+)$/.exec(l);
+    if (m) out.push([m[1].trim(), m[2].trim()]);
+  }
+  return out;
+}
+
+/** 系统提示词 = 用户提示词 + 术语表块(有术语表时才追加) */
+function systemPromptWithGlossary(cfg, strict) {
+  const sys = strict
+    ? cfg.prompt + '\n\n【极其重要】上一次的回复不是合法 JSON 数组。这一次必须**只输出 JSON 数组本身**：'
+      + '以 [ 开头、以 ] 结尾，元素个数等于输入行数，不要任何解释、不要 markdown 代码块、不要编号。'
+    : cfg.prompt;
+  const g = parseGlossary(cfg.glossary);
+  if (!g.length) return sys;
+  return sys + '\n\n【术语表】下面的词必须按给定译法翻译，不要音译、不要另译（未列出的按常规翻译）：\n'
+    + g.map(([a, b]) => `${a} = ${b}`).join('\n');
 }
 function saveTranslateCfg(patch) {
   const s = readAsrSettings();
@@ -1053,8 +1079,12 @@ const server = http.createServer((req, res) => {
   /** 一个逐词切片: 文本是**整句全文**, 只有当前词用 {\c&H00ff00&}词{\c} 内联高亮。
    *  这是本编辑器判定逐词特效的格式(karaoke.js 的 HL_RE), 不是 \k 系列标签。
    *  name = 说话人(写进 Name 栏, 编辑器据此显示角色); 角色色只上中文行, 英文行保持绿色高亮。 */
+  /** 用户文本 → ASS 安全文本: 花括号会被 libass 当覆盖标签解析, 必须转义(与 karaoke-scribe 同款做法) */
+  const escAss = (s) => String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\r?\n/g, '\\N');
+
   function wordSliceLine(words, idx, start, end, name) {
-    const text = words.map((w, i) => (i === idx ? `{\\c&H00ff00&}${w.word}{\\c}` : w.word)).join(' ');
+    const text = words.map((w, i) => (i === idx ? `{\\c&H00ff00&}${escAss(w.word)}{\\c}` : escAss(w.word))).join(' ');
     return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${text}\n`;
   }
 
@@ -1094,7 +1124,7 @@ const server = http.createServer((req, res) => {
     const zhLine = (s, t, role) => {
       const tag = role ? `{\\c&H${role.color}&}[SPK${role.n}] ` : '';
       const name = role ? `SPK${role.n}` : '';
-      return `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},中文字幕,${name},0,0,0,,${tag}${t}\n`;
+      return `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},中文字幕,${name},0,0,0,,${tag}${escAss(t)}\n`;
     };
 
     let format, file, text;
@@ -1119,7 +1149,7 @@ const server = http.createServer((req, res) => {
       segs.forEach((s, i) => {
         const zh = zhText(i);
         if (zh) out += zhLine(s, zh, roleOf(s));
-        out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,,0,0,0,,${s.text}\n`;
+        out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,,0,0,0,,${escAss(s.text)}\n`;
       });
       text = out;
     } else {
@@ -1244,10 +1274,7 @@ const server = http.createServer((req, res) => {
 
   /** 请求一次译文。strict=true 时追加"必须只输出 JSON 数组"的强化指令。 */
   async function translateOnce(cfg, texts, strict) {
-    const sys = strict
-      ? cfg.prompt + '\n\n【极其重要】上一次的回复不是合法 JSON 数组。这一次必须**只输出 JSON 数组本身**：'
-        + '以 [ 开头、以 ] 结尾，元素个数等于输入行数，不要任何解释、不要 markdown 代码块、不要编号。'
-      : cfg.prompt;
+    const sys = systemPromptWithGlossary(cfg, strict);
     const content = await llmChat(cfg, [
       { role: 'system', content: sys },
       { role: 'user', content: texts.join('\n') },
@@ -1908,7 +1935,7 @@ const server = http.createServer((req, res) => {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt', 'glossary']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);

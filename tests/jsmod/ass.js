@@ -224,13 +224,29 @@ export class AssDoc {
   }
 }
 
-/** 去除 ASS 覆盖标签 → 预览纯文本 */
+/** 去除 ASS 覆盖标签 → 预览纯文本。
+ *  先还原转义(\N/\n/\h → 空格, \{ → {, \} → }, \\ → \), 再剥掉真正的覆盖标签 {…} ——
+ *  顺序不能反: 否则被转义的成对花括号会被当成标签整段吞掉。 */
+/** 去除 ASS 覆盖标签 → 预览纯文本。
+ *  用扫描器而不是正则: 被转义的 \\{ 必须**先**还原成普通字符, 否则成对花括号会被当成
+ *  覆盖标签整段吞掉(译文里出现 {音效} 这种时就会丢字)。\\N/\\n/\\h 视为空格。 */
 export function assPlainText(text) {
-  return String(text)
-    .replace(/\{[^}]*\}/g, '')
-    .replace(/\\N/gi, ' ')
-    .replace(/\\n/g, ' ')
-    .replace(/\\h/g, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  const s = String(text);
+  let out = '', i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '\\') {
+      const n = s[i + 1];
+      if (n === 'N' || n === 'n' || n === 'h') { out += ' '; i += 2; continue; }
+      if (n === '{' || n === '}' || n === '\\') { out += n; i += 2; continue; }
+      out += c; i += 1; continue;
+    }
+    if (c === '{') {
+      const end = s.indexOf('}', i);       // 覆盖标签: 整段跳过
+      if (end >= 0) { i = end + 1; continue; }
+      out += c; i += 1; continue;
+    }
+    out += c; i += 1;
+  }
+  return out.replace(/\s{2,}/g, ' ').trim();
 }
