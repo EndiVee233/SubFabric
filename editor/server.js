@@ -349,6 +349,7 @@ const prepareJobs = new Set();   // 正在跑 prepare 的项目 id(进程内; �
  * 与 prepareJobs 同理: 这两个容器必须在模块作用域, 放进请求回调会得到新的空容器,
  * 导致运行中的任务被误判为「服务已重启而中断」。 */
 const draftJobs = new Set();     // 正在跑"提取之后"阶段的项目 id
+const draftProcs = new Map();    // 项目 id → 正在跑的识别子进程(ChildProcess), 删项目/重跑时精确清理
 const pendingAsr = new Map();    // prepare 成功后待跑识别的项目 id -> { wordLevel }
 const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId -> job
 
@@ -374,13 +375,13 @@ const ASR_MODELS = [
   },
   {
     id: 'ggml-large-v3-turbo',
-    name: 'Whisper large-v3-turbo（英语·A 卡可用）',
+    name: 'Whisper large-v3-turbo（英语·质量优先）',
     engine: 'whisper.cpp',
     repo: 'ggerganov/whisper.cpp',
     files: ['ggml-large-v3-turbo.bin'],
     sizeMB: 1549,
-    desc: 'whisper.cpp 引擎（Vulkan，A 卡/N 卡/Intel 都能 GPU 加速）；质量接近 large-v3。'
-        + ' 实测 medium.en 在 Vulkan 上只有 0.37 倍实时（不可用），turbo 为 4.7 倍',
+    desc: 'whisper.cpp 引擎，官方运行时为 **CPU 版**（1.5~2 倍实时，34 分钟视频约 15~25 分钟）；质量接近 large-v3。'
+        + ' 追求速度选 Parakeet。需 NVIDIA 显卡时另装 CUDA 版运行时（643MB，官方有包）',
     dirName: 'ggml-large-v3-turbo',
   },
 ];
@@ -405,17 +406,18 @@ const DIARIZE_MODELS = [
 const DIARIZE_DIR = () => path.join(ASR_DIR, 'models', 'diarize');
 const diarizeReady = () => DIARIZE_MODELS.every(m => { try { return fs.statSync(path.join(DIARIZE_DIR(), m.file)).isFile(); } catch { return false; } });
 
-/* whisper.cpp 运行时(whisper-cli.exe + DLL, ~12MB): 用 ggml 模型才需要。
- * 注意: 官方 b5130 release 只有 CPU 版(实测无 Vulkan/CUDA 包可用; Vulkan 需自编译),
- * 所以 whisper.cpp 引擎在本项目是纯 CPU 推理 —— 大音频会慢(约 1.5~2 倍实时),
- * 界面上必须给出进度与预估, 不能让用户以为卡死了。 */
+/* whisper.cpp 运行时: 用 ggml 模型才需要。
+ * 用第三方预编译的 **Vulkan 版**(ggml-vulkan.dll, 55MB) —— 官方 release 无 GPU 包,
+ * 而 Vulkan 版 A 卡/N 卡/Intel 核显通吃(实测 RTX 4060 Ti: encode 20.2s → 0.16s, 126 倍)。
+ * 运行时检测到 Vulkan DLL 自动走 GPU; 没有 Vulkan 驱动的机器 whisper.cpp 会自动回退 CPU。 */
 const WHISPER_RUNTIME = {
-  url: 'https://github.com/ggml-org/whisper.cpp/releases/download/b5130/whisper-bin-x64.zip',
+  url: 'https://github.com/jerryshell/whisper.cpp-windows-vulkan-bin/releases/download/v1.0.0/whisper.cpp-windows-vulkan.zip',
   dir: path.join(ASR_DIR, 'whisper.cpp'),
-  sizeMB: 9,
+  sizeMB: 18,
 };
 const whisperCli = () => path.join(WHISPER_RUNTIME.dir, 'whisper-cli.exe');
 const whisperRuntimeOk = () => { try { return fs.statSync(whisperCli()).isFile(); } catch { return false; } };
+const whisperVulkanOk = () => { try { return fs.statSync(path.join(WHISPER_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
  * diarize / reseg(语义分句, whisper 专用) 均已实现。 */
@@ -833,7 +835,7 @@ function startRuntimeDownload() {
 
 /** whisper.cpp 引擎: 跑 whisper-cli, 词级时间戳用 -ml 1 -sow(每词一段)。
  *  返回 {segments:[{start,end,text,words:[{word,start,end}]}]} —— 与 asr.py 输出同构。 */
-function runWhisperCpp(modelBin, wav, onProgress) {
+function runWhisperCpp(modelBin, wav, onProgress, opts) {
   const exe = whisperCli();
   const outPrefix = wav + '.cpp';
   const cmd = [exe, '-m', modelBin, '-f', wav, '-oj', '-of', outPrefix, '-ml', '1', '-sow', '-t', '4', '-l', 'en'];
@@ -842,6 +844,7 @@ function runWhisperCpp(modelBin, wav, onProgress) {
   if (wp) cmd.push('--prompt', wp);
   return new Promise((resolve, reject) => {
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: WHISPER_RUNTIME.dir });
+    if (opts && opts.register) { try { opts.register(p); } catch {} }
     let out = '';
     const started = Date.now();
     let lastPct = -1, lastErrLine = '';
@@ -1179,9 +1182,20 @@ function handleRequest(req, res) {
     touchMeta(meta);
   }
 
+  /** 杀掉某项目正在跑的识别子进程(精确跟踪, 不会误伤无关 python/whisper)。
+   *  用途: 删除项目 / 重新开始初稿时, 防止旧进程变孤儿继续烧 CPU 半小时。 */
+  function killDraftProc(id) {
+    const p = draftProcs.get(id);
+    if (p) {
+      try { if (p.pid) process.kill(-p.pid); } catch {}
+      try { p.kill('SIGKILL'); } catch {}
+      draftProcs.delete(id);
+    }
+  }
   function finishDraft(id, err, extra) {
     draftJobs.delete(id);
     pendingAsr.delete(id);
+    killDraftProc(id);
     const meta = readMeta(id);
     if (!meta) return;
     const d = Object.assign({ words: 0, lines: 0 }, meta.draft || {}, extra || {});
@@ -1811,17 +1825,15 @@ function handleRequest(req, res) {
     const outJson = path.join(projDir(id), 'asr.json');
     try { fs.unlinkSync(draftLogFile(id)); } catch {}
     try { fs.unlinkSync(outJson); } catch {}
-    // 换任务/重试时, 清掉上一个任务遗留的识别进程(实测同一模型重复启动会双跑抢资源)
-    try {
-      const { execSync } = require('child_process');
-      execSync('taskkill /F /IM whisper-cli.exe /T', { stdio: 'ignore', windowsHide: true });
-      execSync('taskkill /F /IM parakeet-cli.exe /T', { stdio: 'ignore', windowsHide: true });
-    } catch {}
+    // 换任务/重试时, 精确清掉本项目遗留的识别进程(实测重复启动会双跑抢资源)
+    killDraftProc(id);
     setDraft(id, { status: 'running', stage: STAGE.asr, progress: 30, message: '启动识别引擎…' });
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语音识别（模型：${model.name}，逐词：${wordLevel ? '开' : '关'}）`);
     if (model.engine === 'whisper.cpp') {
-      // 官方运行时是 CPU 版(无 GPU 包), 长音频必然要等 —— 明说, 别让用户以为卡死
-      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp 为 CPU 推理，速度约 1.5~2 倍实时：34 分钟视频约需 15~25 分钟，进度会实时更新，请耐心等待`);
+      // GPU(Vulkan)/CPU 模式自动检测: 有 ggml-vulkan.dll 就走 GPU(实测 126 倍于 CPU encode)
+      const mode = whisperVulkanOk() ? 'GPU·Vulkan' : 'CPU';
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp ${mode} 推理`
+        + (whisperVulkanOk() ? '' : '（未检测到 ggml-vulkan.dll，将用 CPU，速度较慢；重新下载运行时可获取 GPU 版）'));
     }
 
     // 识别完成后的收尾三段式: reseg(语义分句, 仅 whisper) → diarize(区分说话人) → 生成字幕。
@@ -1848,8 +1860,8 @@ function handleRequest(req, res) {
       const bin = path.join(mdir, model.files[0]);
       runWhisperCpp(bin, wav, (pct, secs) => {
         const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
-        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·CPU）… ${pct}% ${t}` });
-      }).then(r => {
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·${whisperVulkanOk() ? 'GPU' : 'CPU'}）… ${pct}% ${t}` });
+      }, { register: p => draftProcs.set(id, p) }).then(r => {
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
           fs.renameSync(outJson + '.tmp', outJson);
@@ -1866,6 +1878,7 @@ function handleRequest(req, res) {
       [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4',
         ...parakeetHotwordArgs()],
       { windowsHide: true, cwd: ASR_DIR });
+    draftProcs.set(id, proc);
 
     const sink = (chunk) => {
       buf += String(chunk);
@@ -2347,6 +2360,9 @@ function handleRequest(req, res) {
       return sendJson(res, 200, { draft: metaView(meta).draft || null, log });
     }
     if (!action && req.method === 'DELETE') {
+      // 先停掉该项目还在跑的初稿任务(识别进程精确跟踪, 只杀自己的, 不误伤别的 python)
+      draftJobs.delete(id);
+      killDraftProc(id);
       // 注意: 逐文件删除而不是 rmSync 递归 —— 部分 fs 代理环境会对"批量递归删除"
       // (条目数超阈值)强制要求确认, 把整目录 rmSync 拦下来导致「删除失败」。
       // 项目删除在 UI 上已经过用户二次确认, 这里逐个 unlink 即可正常工作。
