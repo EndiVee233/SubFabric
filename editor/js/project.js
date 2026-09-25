@@ -537,7 +537,7 @@ export function initProjects(ctx) {
       if (dlThis) btn = '';
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
       else btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 12MB，首次自动下载）</div>' : '';
+      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；首次自动下载）</div>' : '';
       return `<div class="sm-model">
         <div class="sm-head"><span class="sm-name">${esc(m.name)}</span>${btn}</div>
         <div class="sm-desc">${esc(m.desc || '')}</div>

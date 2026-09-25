@@ -2,19 +2,19 @@
 # -*- coding: utf-8 -*-
 """打包发行版 zip: 复刻 K-ASS-Editor-1.2.1 的结构(扁平, 无外层目录)。
 
-包含: .gitignore, main.py, asr/, editor/, start-editor.bat, start-editor.command
-排除: .git / venv / models / projects / _test / tests / __pycache__ / *.pyc / node_modules / .workbuddy
+包含: .gitignore, main.py, asr/(不含 whisper.cpp 运行时与模型), editor/, start-editor.bat, start-editor.command
+排除: .git / venv / models / asr/whisper.cpp(首次使用自动下载) / projects / _test / tests / __pycache__ / node_modules / .workbuddy
 
 注意: 打包前先跑 `node editor/scripts/fetch-vendor.js`, 确保 editor/vendor 完整(否则对方渲染不了字幕)。
 用法: python package_release.py [版本号]   默认 1.2.4
 """
 import os, zipfile, sys
 
-VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.2.4'
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.2.5'
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(ROOT, 'K-ASS-Editor-%s.zip' % VERSION)
 
-EXCLUDE_DIRS = {'.git', 'asr/.venv', 'asr/models', 'asr/__pycache__', 'editor/__pycache__',
+EXCLUDE_DIRS = {'.git', 'asr/.venv', 'asr/models', 'asr/whisper.cpp', 'asr/__pycache__', 'editor/__pycache__',
                 'node_modules', 'projects', '_test', 'tests', '__pycache__', '.workbuddy'}
 EXCLUDE_FILES = {'asr/settings.json', '.DS_Store', 'Thumbs.db', 'desktop.ini'}
 EXCLUDE_EXT = {'.pyc'}

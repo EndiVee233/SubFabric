@@ -202,41 +202,6 @@
   <div id="hsplit" title="拖动调整视频与时间轴的屏幕比例"></div>
   <div id="vsplit" title="拖动调整字幕列表宽度"></div>
 
-  <!-- 通用确认弹窗(如"改名撞名 → 是否继承合并") -->
-  <div id="confirm-overlay" hidden>
-    <div class="rn-box">
-      <div class="rn-title" id="confirm-title">请确认</div>
-      <div class="rn-msg" id="confirm-msg"></div>
-      <div class="rn-actions">
-        <button type="button" class="btn" id="confirm-no">取消</button>
-        <button type="button" class="btn btn-accent" id="confirm-yes">确定</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 添加角色 -->
-  <div id="role-new" hidden>
-    <div class="rn-box">
-      <div class="rn-title">添加角色</div>
-      <input id="role-new-name" type="text" spellcheck="false" maxlength="40" placeholder="角色名称，例如 译者注">
-      <div class="rn-colors" id="role-new-colors"></div>
-      <div class="rn-actions">
-        <label class="rn-custom" title="自定义颜色"><input type="color" id="role-new-color" value="#ff7a45">自定义</label>
-        <button type="button" class="btn" id="role-new-cancel">取消</button>
-        <button type="button" class="btn btn-accent" id="role-new-ok">添加角色</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 多条重叠台词 → 选择要设置角色的行 -->
-  <div id="pick-overlay" hidden>
-    <div class="pick-box">
-      <div class="pick-title" id="pick-title">检测到多条重叠的台词，请选择要设置角色的行：</div>
-      <div class="pick-list" id="pick-list"></div>
-      <div class="pick-actions"><button type="button" class="btn" id="pick-cancel">取消</button></div>
-    </div>
-  </div>
-
   <!-- 查找与批量替换 -->
   <div id="fr-overlay" hidden>
     <div class="fr-box">
@@ -311,22 +276,6 @@
     <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除该条字幕</button>
   </div>
 
-  <!-- 修复字幕: 展示检测结果, 缺词项让用户确认原句 -->
-  <div id="fix-overlay" hidden>
-    <div class="fix-box">
-      <div class="rn-title" id="fix-title">修复字幕</div>
-      <div class="fix-list" id="fix-list"></div>
-      <div class="fix-input-wrap" id="fix-input-wrap" hidden>
-        <label class="fix-input-label">请确认这句英文原句（缺词将按此重建逐词）：</label>
-        <textarea id="fix-input" class="fix-input" rows="2" spellcheck="false"></textarea>
-      </div>
-      <div class="rn-actions">
-        <button type="button" class="btn" id="fix-cancel">取消</button>
-        <button type="button" class="btn btn-accent" id="fix-ok">一键修复</button>
-      </div>
-    </div>
-  </div>
-
   <!-- 角色右键菜单 / 重命名浮层 / 取色器(全局浮层) -->
   <div id="role-menu" hidden>
     <button type="button" class="tl-menu-item" data-act="rename">✏ 修改名称</button>
@@ -340,12 +289,66 @@
 
 </div><!-- /#app -->
 
+<!-- ══════════ 全屏浮层(挂在 body 直属: 不受 #app grid 自动放置影响,
+     老内核浏览器不支持 inset 简写时也能全屏居中) ══════════ -->
+
+<!-- 通用确认弹窗(如"删除项目") -->
+<div id="confirm-overlay" hidden>
+  <div class="rn-box">
+    <div class="rn-title" id="confirm-title">请确认</div>
+    <div class="rn-msg" id="confirm-msg"></div>
+    <div class="rn-actions">
+      <button type="button" class="btn" id="confirm-no">取消</button>
+      <button type="button" class="btn btn-accent" id="confirm-yes">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 添加角色 -->
+<div id="role-new" hidden>
+  <div class="rn-box">
+    <div class="rn-title">添加角色</div>
+    <input id="role-new-name" type="text" spellcheck="false" maxlength="40" placeholder="角色名称，例如 译者注">
+    <div class="rn-colors" id="role-new-colors"></div>
+    <div class="rn-actions">
+      <label class="rn-custom" title="自定义颜色"><input type="color" id="role-new-color" value="#ff7a45">自定义</label>
+      <button type="button" class="btn" id="role-new-cancel">取消</button>
+      <button type="button" class="btn btn-accent" id="role-new-ok">添加角色</button>
+    </div>
+  </div>
+</div>
+
+<!-- 多条重叠台词 → 选择要设置角色的行 -->
+<div id="pick-overlay" hidden>
+  <div class="pick-box">
+    <div class="pick-title" id="pick-title">检测到多条重叠的台词，请选择要设置角色的行：</div>
+    <div class="pick-list" id="pick-list"></div>
+    <div class="pick-actions"><button type="button" class="btn" id="pick-cancel">取消</button></div>
+  </div>
+</div>
+
+<!-- 修复字幕: 展示检测结果, 缺词项让用户确认原句 -->
+<div id="fix-overlay" hidden>
+  <div class="fix-box">
+    <div class="rn-title" id="fix-title">修复字幕</div>
+    <div class="fix-list" id="fix-list"></div>
+    <div class="fix-input-wrap" id="fix-input-wrap" hidden>
+      <label class="fix-input-label">请确认这句英文原句（缺词将按此重建逐词）：</label>
+      <textarea id="fix-input" class="fix-input" rows="2" spellcheck="false"></textarea>
+    </div>
+    <div class="rn-actions">
+      <button type="button" class="btn" id="fix-cancel">取消</button>
+      <button type="button" class="btn btn-accent" id="fix-ok">一键修复</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════ 项目主界面(全屏覆盖, 有项目/主页两种 hash 状态) ══════════ -->
 <div id="home-view" hidden>
   <div class="home-inner">
     <header class="home-head">
       <div class="home-logo">🎬</div>
-      <h1 class="home-title">SubFabric <span class="home-title-en" id="app-version">v1.2.4</span></h1>
+      <h1 class="home-title">SubFabric <span class="home-title-en" id="app-version">v1.2.5</span></h1>
       <p class="home-sub">视频 + 双语字幕 + 逐词特效 · 项目化管理，随时接着上次的进度做</p>
     </header>
 

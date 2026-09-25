@@ -482,8 +482,10 @@ html, body {
 .switch input:checked + .switch-slider::after { transform: translateX(18px); background: #1a1206; }
 
 /* ── 重叠台词选择弹窗 ───────────────────────── */
+/* 注意: 用 top/right/bottom/left 而非 inset 简写 — 旧内核不支持 inset 会导致
+   fixed 元素退回静态位置(弹窗跑到页面底部), 即"确认弹窗出现在界面下方"的 bug */
 #pick-overlay {
-  position: fixed; inset: 0; z-index: 80;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 80;
   background: rgba(6, 6, 9, .62);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
@@ -523,14 +525,14 @@ html, body {
 
 /* ── 添加角色弹窗 ───────────────────────────── */
 #role-new {
-  position: fixed; inset: 0; z-index: 80;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 80;
   background: rgba(6, 6, 9, .62);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
 #role-new[hidden] { display: none; }
 #confirm-overlay {
-  position: fixed; inset: 0; z-index: 85;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 85;
   background: rgba(6, 6, 9, .62);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
@@ -670,7 +672,7 @@ html, body {
 
 /* ── 修复字幕弹窗 ───────────────────────────── */
 #fix-overlay {
-  position: fixed; inset: 0; z-index: 86;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 86;
   background: rgba(6, 6, 9, .62);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
@@ -705,7 +707,7 @@ html, body {
 
 /* ═══════════ 项目主界面(主屏幕) ═══════════ */
 #home-view {
-  position: fixed; inset: 0; z-index: 50;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 50;
   background:
     radial-gradient(1100px 500px at 50% -180px, rgba(255, 122, 69, .10), transparent 65%),
     var(--bg-0);
@@ -774,7 +776,7 @@ html, body {
 
 /* ── 设置面板(识别模型 / 字幕翻译) ── */
 #st-overlay {
-  position: fixed; inset: 0; z-index: 95; background: rgba(0, 0, 0, .55);
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 95; background: rgba(0, 0, 0, .55);
   display: flex; align-items: center; justify-content: center;
 }
 #st-overlay[hidden] { display: none; }
@@ -834,7 +836,7 @@ html, body {
 
 /* ── 新建项目对话框 ── */
 #np-overlay {
-  position: fixed; inset: 0; z-index: 84;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 84;
   background: rgba(5, 5, 8, .62);
   display: flex; align-items: center; justify-content: center;
 }
@@ -889,7 +891,7 @@ html, body {
 
 /* ── 初稿处理进度浮层 ── */
 #dp-overlay {
-  position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, .55);
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 90; background: rgba(0, 0, 0, .55);
   display: flex; align-items: center; justify-content: center;
 }
 #dp-overlay[hidden] { display: none; }
@@ -949,7 +951,7 @@ html, body {
 
 /* ── 查找与批量替换 ─────────────────────────── */
 #fr-overlay {
-  position: fixed; inset: 0; z-index: 86;
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 86;
   background: rgba(6, 6, 9, .62);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;

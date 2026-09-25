@@ -24,6 +24,10 @@ asr/models/
 asr/settings.json
 asr/__pycache__/
 
+# whisper.cpp 运行时二进制(约 77MB): 不入库, 首次使用时由服务端自动下载
+# (zips→解压→展平到 asr/whisper.cpp/, 见 server.js startRuntimeDownload)
+asr/whisper.cpp/
+
 # 本地联调用的视频素材(12 秒英文语音, 供端到端测试)
 /_test/
 

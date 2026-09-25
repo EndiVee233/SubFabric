@@ -18,7 +18,7 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.2.4'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.2.5'; // 与打版号一致; 改了就顺手同步这里
 
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
@@ -380,8 +380,7 @@ const ASR_MODELS = [
     repo: 'ggerganov/whisper.cpp',
     files: ['ggml-large-v3-turbo.bin'],
     sizeMB: 1549,
-    desc: 'whisper.cpp 引擎，官方运行时为 **CPU 版**（1.5~2 倍实时，34 分钟视频约 15~25 分钟）；质量接近 large-v3。'
-        + ' 追求速度选 Parakeet。需 NVIDIA 显卡时另装 CUDA 版运行时（643MB，官方有包）',
+    desc: 'whisper.cpp 引擎，运行时带 Vulkan 后端：A 卡 / N 卡 / Intel 核显都走 GPU 加速（实测 RTX 4060 Ti 快约 126 倍）；无 Vulkan 驱动自动回退 CPU。质量接近 large-v3。',
     dirName: 'ggml-large-v3-turbo',
   },
 ];
@@ -822,7 +821,7 @@ function startRuntimeDownload() {
       if (!whisperRuntimeOk()) throw new Error('解压后未找到 whisper-cli.exe');
       cleanup();
       downloadState = { running: false, kind: 'runtime', pct: 100,
-        msg: '运行时就绪（CPU 模式。官方未提供 GPU 版运行时，大音频识别较慢但正常）',
+        msg: whisperVulkanOk() ? '运行时就绪（检测到 Vulkan，识别将走 GPU 加速）' : '运行时就绪（未检测到 Vulkan，将用 CPU 模式）',
         error: null, modelId: '', dir: WHISPER_RUNTIME.dir };
     } catch (e) {
       cleanup();
@@ -858,7 +857,7 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
         const t = line.trim();
         if (!t) continue;
         if (/error|failed|invalid/i.test(t)) lastErrLine = t;
-        const m = /(\d{1,3})%\s*?$/.exec(t) || /(\d{1,3})%\s+\[/._exec(t);
+        const m = /(\d{1,3})%\s*?$/.exec(t) || /(\d{1,3})%\s+\[/.exec(t);
         if (m) {
           const pct = Math.min(100, parseInt(m[1], 10));
           if (pct !== lastPct && onProgress) { lastPct = pct; onProgress(pct); }
@@ -1833,7 +1832,7 @@ function handleRequest(req, res) {
       // GPU(Vulkan)/CPU 模式自动检测: 有 ggml-vulkan.dll 就走 GPU(实测 126 倍于 CPU encode)
       const mode = whisperVulkanOk() ? 'GPU·Vulkan' : 'CPU';
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp ${mode} 推理`
-        + (whisperVulkanOk() ? '' : '（未检测到 ggml-vulkan.dll，将用 CPU，速度较慢；重新下载运行时可获取 GPU 版）'));
+        + (whisperVulkanOk() ? '' : '（未检测到 ggml-vulkan.dll，将用 CPU，速度较慢；可在设置里重新下载运行时获取 GPU 版）'));
     }
 
     // 识别完成后的收尾三段式: reseg(语义分句, 仅 whisper) → diarize(区分说话人) → 生成字幕。
