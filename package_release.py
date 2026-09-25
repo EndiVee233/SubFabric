@@ -6,11 +6,11 @@
 排除: .git / venv / models / projects / _test / tests / __pycache__ / *.pyc / node_modules / .workbuddy
 
 注意: 打包前先跑 `node editor/scripts/fetch-vendor.js`, 确保 editor/vendor 完整(否则对方渲染不了字幕)。
-用法: python package_release.py [版本号]   默认 1.2.3
+用法: python package_release.py [版本号]   默认 1.2.4
 """
 import os, zipfile, sys
 
-VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.2.3'
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.2.4'
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(ROOT, 'K-ASS-Editor-%s.zip' % VERSION)
 
