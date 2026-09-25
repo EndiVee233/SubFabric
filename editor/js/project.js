@@ -179,12 +179,29 @@ export function initProjects(ctx) {
       '重新选择视频', '暂不', () => pickVideoForProject());
   }
   async function pickVideoForProject() {
-    let pick;
+    // 双通道: 原生对话框优先, 超时/失败自动降级浏览器选择(上传成服务端文件再 relink)
+    let pick = null;
     try {
-      pick = await (await fetch('/api/pick', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' })
-      })).json();
-    } catch { toast('无法打开系统文件对话框', 3200); return; }
+      const ctl = new AbortController();
+      const killer = setTimeout(() => ctl.abort(), 38000);
+      const r = await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' }),
+        signal: ctl.signal
+      });
+      clearTimeout(killer);
+      pick = await r.json();
+    } catch { pick = null; }
+    if (!pick || (!pick.path && pick.fallback)) {
+      const f = await browserPickVideo();
+      if (!f) return;
+      toast('正在上传视频…', 4000);
+      const up = await fetch('/api/upload-video?name=' + encodeURIComponent(f.name), {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f
+      });
+      const um = await up.json().catch(() => ({}));
+      if (!up.ok || !um.path) { toast('视频上传失败: ' + (um.error || up.status), 5000); return; }
+      pick = { path: um.path, name: um.name };
+    }
     if (!pick.path) {
       if (pick.error) toast(pick.error, 3200);
       return;
@@ -508,6 +525,7 @@ export function initProjects(ctx) {
     glLoad(c.glossary, c.glossaryLang);
     $('#st-auto').checked = !!c.autoTranslate;
     renderAsrModels();
+    bindModelDirSettings();
   }
   /** 模型管理: 列出所有识别模型(状态/下载/删除) + whisper.cpp 运行时 */
   async function renderAsrModels() {
@@ -527,17 +545,29 @@ export function initProjects(ctx) {
       if (rb) rb.addEventListener('click', () => renderAsrModels());
       return;
     }
-    const dl = d.download || {};
+    const dlMap = {};                    // key → 下载状态(服务端并行下载, 每个 key 独立)
+    (d.downloads || []).forEach(x => { dlMap[x.key] = x; });
+    const dlOf = (key) => dlMap[key] || {};
+    const stateHtml = (st, okText) => st.running
+      ? `<span class="sm-state running">${esc(st.msg || '下载中…')} ${st.pct || 0}%</span>`
+      : (st.error ? `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`
+                  : `<span class="sm-state ok">${okText}</span>`);
+    // 各任务 key: model:<id> / runtime / diarize
     let rows = (d.models || []).map((m) => {
-      const dlThis = dl.running && (dl.modelId === m.id || (dl.kind === 'runtime' && m.needRuntime));
+      const st = dlOf('model:' + m.id);
+      const rtSt = m.needRuntime ? dlOf('runtime') : {};
+      const dlThis = st.running || (m.needRuntime && rtSt.running);
       let state, btn = '';
-      if (dlThis) state = `<span class="sm-state running">${esc(dl.msg || '下载中…')} ${dl.pct || 0}%</span>`;
-      else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
+      if (st.running || (m.needRuntime && rtSt.running)) {
+        state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
+      } else if (st.error) {
+        state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+      } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
       else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
       if (dlThis) btn = '';
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
       else btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；首次自动下载）</div>' : '';
+      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
       return `<div class="sm-model">
         <div class="sm-head"><span class="sm-name">${esc(m.name)}</span>${btn}</div>
         <div class="sm-desc">${esc(m.desc || '')}</div>
@@ -546,13 +576,13 @@ export function initProjects(ctx) {
     }).join('');
     // 说话人分离模型(两个文件一组, ~32MB): 初稿勾选「区分说话人」时需要
     const dz = d.diarize || {};
-    const dzDl = dl.running && dl.kind === 'diarize';
-    const dzBtn = dzDl ? '' : (dz.ready
+    const dzSt = dlOf('diarize');
+    const dzBtn = dzSt.running ? '' : (dz.ready
       ? '<button type="button" class="btn btn-mini sm-del" data-id="diarize" title="删除分离模型文件">删除</button>'
       : '<button type="button" class="btn btn-mini sm-dl" data-id="diarize">下载</button>');
-    const dzState = dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>'
-      : (dzDl ? `<span class="sm-state running">${esc(dl.msg || '下载中…')} ${dl.pct || 0}%</span>`
-              : '<span class="sm-state">未下载 · 32 MB</span>');
+    const dzState = dzSt.running ? `<span class="sm-state running">${esc(dzSt.msg || '下载中…')} ${dzSt.pct || 0}%</span>`
+      : (dzSt.error ? `<span class="sm-state" style="color:var(--danger)">${esc(dzSt.msg || dzSt.error)}</span>`
+      : (dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>' : '<span class="sm-state">未下载 · 32 MB</span>'));
     rows += `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">说话人分离</span>${dzBtn}</div>
       <div class="sm-desc">说话人分段 + 说话人嵌入（约 32MB）。初稿勾选「区分说话人」时需要</div>
@@ -570,10 +600,10 @@ export function initProjects(ctx) {
           renderAsrModels();
         });
     }));
-    // whisper.cpp 运行时: 需要 ggml 模型但运行时缺失时显示下载按钮
+    // whisper.cpp 运行时: 需要 ggml 模型但运行时缺失时自动开始下载(与其它下载并行, 不互斥)
     const note = $('#st-model-note');
     const needRt = (d.models || []).some(m => m.needRuntime);
-    if (needRt && !dl.running) {
+    if (needRt && !dlOf('runtime').running) {
       const r = await (await fetch('/api/asr/download', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'runtime' })
       })).json().catch(() => ({}));
@@ -587,18 +617,48 @@ export function initProjects(ctx) {
     for (let i = 0; i < 900; i++) {
       let d;
       try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
-      const dl = d.download || {};
+      const anyRunning = (d.downloads || []).some(x => x.running);
       renderAsrModels();
-      if (!dl.running) { renderAsrModels(); break; }
+      if (!anyRunning) break;
       await new Promise(r => setTimeout(r, 1000));
     }
   }
   async function downloadModel(id) {
+    // 点下载立刻有反馈(按钮变「排队…」), 再发请求 —— 旧版静默发请求, 服务端忙时用户以为没点上
     const body = id === 'diarize' ? { kind: 'diarize' } : { modelId: id };
-    await fetch('/api/asr/download', {
+    const btn = document.querySelector('.sm-dl[data-id="' + id + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = '开始…'; }
+    const r = await fetch('/api/asr/download', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
+    const m = await r.json().catch(() => ({}));
+    if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
     pollModelDownload();
+  }
+  /** 模型下载位置(设置面板): 指定目录 + 打开目录 */
+  async function bindModelDirSettings() {
+    const inp = document.getElementById('st-model-dir');
+    const openBtn = document.getElementById('st-model-dir-open');
+    if (!inp || inp.dataset.bound) return;
+    inp.dataset.bound = '1';
+    try {
+      const d = await (await fetch('/api/asr/status', { signal: AbortSignal.timeout(8000) })).json();
+      inp.value = d.modelsRoot || '';
+    } catch {}
+    const save = async () => {
+      const r = await fetch('/api/asr/set-dir', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir: inp.value.trim() })
+      });
+      const m = await r.json().catch(() => ({}));
+      if (r.ok) { inp.value = m.modelsRoot || inp.value; toast('模型下载位置已保存', 2600); }
+      else toast(m.error || '保存失败', 4200);
+    };
+    inp.addEventListener('change', save);
+    if (openBtn) openBtn.addEventListener('click', async () => {
+      await fetch('/api/asr/open-dir', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'models' })
+      });
+    });
   }
   function closeSettings() { stOverlay.hidden = true; }
   $('#btn-settings').addEventListener('click', openSettings);
@@ -771,6 +831,9 @@ export function initProjects(ctx) {
   const npSub = { name: '', text: '' };
   let npMode = 'import';                 // 'import' | 'draft'
   let asrStatus = { ready: false, modelDir: '', missing: [], pythonOk: false };
+  // 浏览器选的视频: File 对象暂存(npMode 提交时经 /api/upload-video 落盘),
+  // path 置为 'upload:<name>' 占位 —— npMaybeEnable 只判断 path 非空, 不关心来源
+  let npVideoFile = null;
 
   function npSetMode(mode) {
     npMode = mode;
@@ -807,6 +870,7 @@ export function initProjects(ctx) {
   function npReset() {
     npVideo.path = npVideo.name = '';
     npSub.name = npSub.text = '';
+    npVideoFile = null;
     $('#np-name').value = '';
     $('#np-video-name').textContent = '未选择';
     $('#np-video-name').classList.remove('filled');
@@ -852,20 +916,68 @@ export function initProjects(ctx) {
   const npSpk = $('#np-speakers');
   if (npSpk) npSpk.addEventListener('change', npSyncSpeakers);
 
+  /** 视频选择(双通道):
+   *  ① 服务端原生对话框(快, 直接返回本地路径, 视频不复制); 35s 超时/失败 → ②
+   *  ② 浏览器 <input type=file>(任何环境都能用): File 暂存, 创建项目时经
+   *     /api/upload-video 落盘成服务端持久文件, 之后与本地路径完全同构。 */
+  let npPicking = false;
   $('#np-pick-video').addEventListener('click', async () => {
-    let pick;
+    if (npPicking) return;                       // 防双击重复触发
+    npPicking = true;
+    const btn = $('#np-pick-video');
+    const oldLabel = btn.textContent;
+    btn.textContent = '打开选择框…';
+    let pick = null, usedBrowser = false;
     try {
-      pick = await (await fetch('/api/pick', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' })
-      })).json();
-    } catch { toast('无法打开系统文件对话框', 3200); return; }
-    if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
-    npVideo.path = pick.path; npVideo.name = pick.name;
+      const ctl = new AbortController();
+      const killer = setTimeout(() => ctl.abort(), 38000);   // 服务端 35s 超时 + 余量
+      const r = await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' }),
+        signal: ctl.signal
+      });
+      clearTimeout(killer);
+      pick = await r.json();
+    } catch { pick = null; }
+    if (!pick || (!pick.path && pick.fallback)) {
+      // 原生对话框没弹出来(超时/出错) → 自动降级浏览器选择
+      usedBrowser = true;
+      toast('系统对话框不可用，已改用浏览器选择（视频会复制一份进程序目录）', 4200);
+      const f = await browserPickVideo();
+      btn.textContent = oldLabel; npPicking = false;
+      if (!f) return;
+      npVideoFile = f;
+      npVideo.path = 'upload:' + f.name;
+      npVideo.name = f.name;
+    } else {
+      btn.textContent = oldLabel; npPicking = false;
+      npVideoFile = null;
+      if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
+      npVideo.path = pick.path; npVideo.name = pick.name;
+    }
     const el = $('#np-video-name');
-    el.textContent = pick.name; el.classList.add('filled');
-    if (!$('#np-name').value.trim()) $('#np-name').value = pick.name.replace(/\.[^.]+$/, '');
+    el.textContent = npVideo.name + (usedBrowser ? '（浏览器选择）' : '');
+    el.classList.add('filled');
+    if (!$('#np-name').value.trim()) $('#np-name').value = npVideo.name.replace(/\.[^.]+$/, '');
     npMaybeEnable();
   });
+  /** 浏览器选视频: 动态建 input[type=file], 返回 Promise<File> 或 null */
+  function browserPickVideo() {
+    return new Promise((resolve) => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'video/*,.mkv,.avi,.mov,.m4v';
+      inp.style.display = 'none';
+      inp.addEventListener('change', () => {
+        const f = inp.files && inp.files[0];
+        inp.remove();
+        resolve(f || null);
+      });
+      // 用户取消时 change 不触发 —— 兜底: 失焦 60s 后自动 resolve(null)
+      document.body.appendChild(inp);
+      inp.click();
+      setTimeout(() => { if (inp.isConnected) { inp.remove(); resolve(null); } }, 60000);
+    });
+  }
   $('#np-pick-sub').addEventListener('click', () => $('#np-file-sub').click());
   $('#np-file-sub').addEventListener('change', async (e) => {
     const f = e.target.files[0];
@@ -881,6 +993,19 @@ export function initProjects(ctx) {
     const btn = $('#np-create');
     btn.disabled = true; btn.textContent = isDraft ? '提交中…' : '创建中…';
     try {
+      // 浏览器选的视频: 先把 File 上传成服务端持久文件, 拿到真实路径后走同一条创建链路
+      if (npVideo.path.startsWith('upload:')) {
+        if (!npVideoFile) { toast('视频文件丢失，请重新选择', 3600); return; }
+        btn.textContent = '上传视频中…';
+        const up = await fetch('/api/upload-video?name=' + encodeURIComponent(npVideoFile.name), {
+          method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: npVideoFile
+        });
+        const um = await up.json().catch(() => ({}));
+        if (!up.ok || !um.path) { toast('视频上传失败: ' + (um.error || up.status), 5000); return; }
+        npVideo.path = um.path; npVideo.name = um.name;
+        npVideoFile = null;
+        btn.textContent = isDraft ? '提交中…' : '创建中…';
+      }
       const payload = { name: $('#np-name').value.trim(), video: { path: npVideo.path, name: npVideo.name } };
       if (isDraft) {
         payload.draft = true;

@@ -2,20 +2,24 @@
 # -*- coding: utf-8 -*-
 """打包发行版 zip: 复刻 K-ASS-Editor-1.2.1 的结构(扁平, 无外层目录)。
 
-包含: .gitignore, main.py, asr/(不含 whisper.cpp 运行时与模型), editor/, start-editor.bat, start-editor.command
-排除: .git / venv / models / asr/whisper.cpp(首次使用自动下载) / projects / _test / tests / __pycache__ / node_modules / .workbuddy
+包含: .gitignore, main.py, asr/(不含 whisper.cpp 运行时与模型), editor/,
+      SubFabric.exe(build/ 里的 SEA 单文件启动器, 双击直接开界面, 免装 Node),
+      start-editor.bat(老入口, 保留给装了 Node 的用户), start-editor.command
+排除: .git / venv / models / asr/whisper.cpp(首次使用自动下载) / projects / videos /
+      _test / tests / __pycache__ / node_modules / .workbuddy / build(除 exe 外)
 
-注意: 打包前先跑 `node editor/scripts/fetch-vendor.js`, 确保 editor/vendor 完整(否则对方渲染不了字幕)。
-用法: python package_release.py [版本号]   默认 1.2.4
+注意: 打包前先 `python build_exe.py`(确保 build/SubFabric.exe 存在) 和
+      `node editor/scripts/fetch-vendor.js`(确保 editor/vendor 完整)。
+用法: python package_release.py [版本号]   默认 1.3.0
 """
 import os, zipfile, sys
 
-VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.2.5'
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.3.0'
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(ROOT, 'K-ASS-Editor-%s.zip' % VERSION)
 
 EXCLUDE_DIRS = {'.git', 'asr/.venv', 'asr/models', 'asr/whisper.cpp', 'asr/__pycache__', 'editor/__pycache__',
-                'node_modules', 'projects', '_test', 'tests', '__pycache__', '.workbuddy'}
+                'node_modules', 'projects', 'videos', '_test', 'tests', '__pycache__', '.workbuddy', 'build'}
 EXCLUDE_FILES = {'asr/settings.json', '.DS_Store', 'Thumbs.db', 'desktop.ini'}
 EXCLUDE_EXT = {'.pyc'}
 
@@ -78,6 +82,13 @@ def main():
         z.writestr('start-editor.bat', BAT)
         z.writestr('start-editor.command', CMD)
         count += 2
+        # SEA 单文件启动器(双击 SubFabric.exe 直接开界面; build_exe.py 的产物)
+        exe = os.path.join(ROOT, 'build', 'SubFabric.exe')
+        if os.path.isfile(exe):
+            z.write(exe, 'SubFabric.exe')
+            count += 1
+        else:
+            print('警告: 未找到 build/SubFabric.exe —— 本包用户需要装 Node 才能启动!')
     size = os.path.getsize(OUT)
     print(f'已生成: {OUT}')
     print(f'条目数: {count}  大小: {size/1048576:.1f} MB')

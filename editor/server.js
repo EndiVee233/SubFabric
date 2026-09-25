@@ -18,7 +18,7 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.2.5'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.3.0'; // 与打版号一致; 改了就顺手同步这里
 
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
@@ -284,6 +284,12 @@ function send(res, code, headers, body) {
   res.end(body);
 }
 
+/** JSON 响应快捷方式。模块级函数声明(有提升): 部分路由在它旧定义点之前就 return,
+ *  若用 const 会因 TDZ 在异步回调里炸 ReferenceError(upload-video 踩过这个坑) */
+function sendJson(res, code, obj) {
+  send(res, code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }, JSON.stringify(obj));
+}
+
 function serveFile(req, res, filePath) {
   let stat;
   try { stat = fs.statSync(filePath); } catch { return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, '404 Not Found'); }
@@ -354,7 +360,14 @@ const pendingAsr = new Map();    // prepare 成功后待跑识别的项目 id ->
 const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId -> job
 
 const ASR_DIR = path.join(ROOT, 'asr');
-const modelsRoot = () => path.join(ASR_DIR, 'models');
+const modelsRoot = () => {
+  // 用户可在设置里指定模型下载根目录(settings.json 的 modelsRoot 字段); 未指定 → 程序自带目录
+  try {
+    const mr = readAsrSettings().modelsRoot;
+    if (mr && typeof mr === 'string' && mr.trim()) return path.normalize(mr.trim());
+  } catch {}
+  return path.join(ASR_DIR, 'models');
+};
 const ASR_SCRIPT = path.join(ASR_DIR, 'asr.py');
 const ASR_SETTINGS = path.join(ASR_DIR, 'settings.json');
 const HF_ENDPOINT = (process.env.HF_ENDPOINT || 'https://hf-mirror.com').replace(/\/+$/, '');
@@ -667,8 +680,16 @@ function resolveAsrModel() {
   return null;
 }
 
-/* 模型/运行时下载: Node 内置 fetch + Range 断点续传(保持本项目零 npm 依赖) */
-let downloadState = { running: false, kind: '', pct: 0, msg: '', error: null, modelId: '' };
+/* 模型/运行时下载: Node 内置 fetch + Range 断点续传(保持本项目零 npm 依赖)。
+ * downloads 是 **Map**(任务名 → 状态) —— 不同模型/运行时/说话人模型可**并行**下载,
+ * 互不阻塞(旧版单 downloadState 时, 下着 Parakeet 再点 Whisper 的下载会被静默忽略,
+ * 用户看到的就是"下载按钮点了没反应")。 */
+const downloads = new Map();   // key: 'model:<id>' | 'runtime' | 'diarize'
+const dlState = (key, init) => {
+  if (init) downloads.set(key, init);
+  return downloads.get(key) || { running: false, pct: 0, msg: '', error: null };
+};
+const dlAnyRunning = (kind) => { for (const [k, v] of downloads) if (v.running && (!kind || k.startsWith(kind + ':') || k === kind)) return true; return false; };
 
 async function downloadFile(url, dest, onProgress) {
   const existing = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
@@ -700,8 +721,9 @@ async function downloadFile(url, dest, onProgress) {
 
 /** 下载一个识别模型到 dir; 完成后登记进 settings.models */
 function startModelDownload(model, dir) {
-  if (downloadState.running) return;
-  downloadState = { running: true, kind: 'model', pct: 0, msg: '准备下载…', error: null, modelId: model.id, dir };
+  const key = 'model:' + model.id;
+  if (dlState(key).running) return;
+  dlState(key, { running: true, kind: 'model', pct: 0, msg: '准备下载…', error: null, modelId: model.id, dir });
   (async () => {
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -710,8 +732,9 @@ function startModelDownload(model, dir) {
         const f = model.files[i];
         await downloadFile(`${base}/${f}`, path.join(dir, f), (done, total) => {
           const part = total ? done / total : 0;
-          downloadState.pct = Math.min(99, Math.round(((i + part) / model.files.length) * 100));
-          downloadState.msg = `下载 ${f}：${(done / 1048576).toFixed(0)} / ${(total / 1048576).toFixed(0)} MB`;
+          const st = dlState(key);
+          st.pct = Math.min(99, Math.round(((i + part) / model.files.length) * 100));
+          st.msg = `下载 ${f}：${(done / 1048576).toFixed(0)} / ${(total / 1048576).toFixed(0)} MB`;
         });
       }
       if (missingModelFiles(dir, model).length) throw new Error('下载后模型仍不完整');
@@ -719,19 +742,21 @@ function startModelDownload(model, dir) {
       s.models = Object.assign({}, s.models || {}, { [model.id]: dir });
       writeAsrSettings(s);
       if (!s.selectedModel) setSelectedModel(model.id);
-      downloadState = { running: false, kind: 'model', pct: 100, msg: '下载完成', error: null, modelId: model.id, dir };
+      dlState(key, { running: false, kind: 'model', pct: 100, msg: '下载完成', error: null, modelId: model.id, dir });
     } catch (e) {
-      downloadState.running = false;
-      downloadState.error = String((e && e.message) || e);
-      downloadState.msg = '下载失败: ' + downloadState.error;
+      const st = dlState(key);
+      st.running = false;
+      st.error = String((e && e.message) || e);
+      st.msg = '下载失败: ' + st.error;
     }
   })();
 }
 
 /** 下载说话人分离模型(两个文件)到 DIARIZE_DIR() */
 function startDiarizeDownload() {
-  if (downloadState.running) return;
-  downloadState = { running: true, kind: 'diarize', pct: 0, msg: '准备下载分离模型…', error: null, modelId: 'diarize', dir: DIARIZE_DIR() };
+  const key = 'diarize';
+  if (dlState(key).running) return;
+  dlState(key, { running: true, kind: 'diarize', pct: 0, msg: '准备下载分离模型…', error: null, modelId: 'diarize', dir: DIARIZE_DIR() });
   (async () => {
     try {
       fs.mkdirSync(DIARIZE_DIR(), { recursive: true });
@@ -741,8 +766,9 @@ function startDiarizeDownload() {
         if (fs.existsSync(dest) && fs.statSync(dest).size > 1024) continue;
         const tmp = dest + '.dl';
         await downloadFile(m.url, tmp, (done, total) => {
-          downloadState.pct = total ? Math.min(99, Math.round((i + done / total) / DIARIZE_MODELS.length * 100)) : 0;
-          downloadState.msg = `下载 ${m.name}：${(done / 1048576).toFixed(1)} MB`;
+          const st = dlState(key);
+          st.pct = total ? Math.min(99, Math.round((i + done / total) / DIARIZE_MODELS.length * 100)) : 0;
+          st.msg = `下载 ${m.name}：${(done / 1048576).toFixed(1)} MB`;
         });
         if (m.archive) {
           // 分段模型是 tar.bz2 归档: 解包取出里面的 model.onnx
@@ -761,27 +787,30 @@ function startDiarizeDownload() {
         }
       }
       if (!diarizeReady()) throw new Error('下载后分离模型仍不完整');
-      downloadState = { running: false, kind: 'diarize', pct: 100, msg: '下载完成', error: null, modelId: 'diarize', dir: DIARIZE_DIR() };
+      dlState(key, { running: false, kind: 'diarize', pct: 100, msg: '下载完成', error: null, modelId: 'diarize', dir: DIARIZE_DIR() });
     } catch (e) {
-      downloadState.running = false;
-      downloadState.error = String((e && e.message) || e);
-      downloadState.msg = '下载失败: ' + downloadState.error;
+      const st = dlState(key);
+      st.running = false;
+      st.error = String((e && e.message) || e);
+      st.msg = '下载失败: ' + st.error;
     }
   })();
 }
 
 /** 下载 whisper.cpp 运行时(zip)并解压出 whisper-cli.exe + DLL */
 function startRuntimeDownload() {
-  if (downloadState.running) return;
-  downloadState = { running: true, kind: 'runtime', pct: 0, msg: '准备下载运行时…', error: null, modelId: '', dir: WHISPER_RUNTIME.dir };
+  const key = 'runtime';
+  if (dlState(key).running) return;
+  dlState(key, { running: true, kind: 'runtime', pct: 0, msg: '准备下载运行时…', error: null, modelId: '', dir: WHISPER_RUNTIME.dir });
   (async () => {
     const zip = path.join(os.tmpdir(), `kass-whisper-${Date.now().toString(36)}.zip`);
     const cleanup = () => { try { fs.unlinkSync(zip); } catch {} };
     try {
       fs.mkdirSync(WHISPER_RUNTIME.dir, { recursive: true });
       await downloadFile(WHISPER_RUNTIME.url, zip, (done, total) => {
-        downloadState.pct = total ? Math.min(99, Math.round(done / total * 100)) : 0;
-        downloadState.msg = `下载运行时：${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
+        const st = dlState(key);
+        st.pct = total ? Math.min(99, Math.round(done / total * 100)) : 0;
+        st.msg = `下载运行时：${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
       });
       // 解压: Windows 自带的 bsdtar 能解 zip(最可靠); 失败再退回 Expand-Archive。
       // 注意: 必须用**异步 spawn** —— 本环境下 spawnSync 会 EBUSY(实测),
@@ -820,14 +849,15 @@ function startRuntimeDownload() {
       fs.rmSync(tmpEx, { recursive: true, force: true });
       if (!whisperRuntimeOk()) throw new Error('解压后未找到 whisper-cli.exe');
       cleanup();
-      downloadState = { running: false, kind: 'runtime', pct: 100,
+      dlState(key, { running: false, kind: 'runtime', pct: 100,
         msg: whisperVulkanOk() ? '运行时就绪（检测到 Vulkan，识别将走 GPU 加速）' : '运行时就绪（未检测到 Vulkan，将用 CPU 模式）',
-        error: null, modelId: '', dir: WHISPER_RUNTIME.dir };
+        error: null, modelId: '', dir: WHISPER_RUNTIME.dir });
     } catch (e) {
       cleanup();
-      downloadState.running = false;
-      downloadState.error = String((e && e.message) || e);
-      downloadState.msg = '运行时下载失败: ' + downloadState.error;
+      const st = dlState(key);
+      st.running = false;
+      st.error = String((e && e.message) || e);
+      st.msg = '运行时下载失败: ' + st.error;
     }
   })();
 }
@@ -979,6 +1009,35 @@ function handleRequest(req, res) {
     const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
     return peaksFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0, rate);
   }
+  /** 浏览器选视频的兜底通道: 把上传的视频存成服务端**持久**文件并返回真实路径,
+   *  之后与本地路径选视频完全同构(/api/media Range 流式播放、prepare 提取音频波形)。
+   *  为什么存持久文件: 项目要"下次打开还在", 而浏览器 File 对象只在本次会话有效。
+   *  目标目录: <项目根>/videos/ (文件名去重: 重名追加 -1/-2…) */
+  if (pathname === '/api/upload-video' && req.method === 'POST') {
+    const name = decodeURIComponent(u.searchParams.get('name') || 'video.mp4').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'video.mp4';
+    const ext = path.extname(name) || '.mp4';
+    const base = path.basename(name, ext);
+    const dir = path.join(ROOT, 'videos');
+    fs.mkdirSync(dir, { recursive: true });
+    let finalName = name, n = 0;
+    while (fs.existsSync(path.join(dir, finalName))) finalName = `${base}-${++n}${ext}`;
+    const dest = path.join(dir, finalName);
+    const out = fs.createWriteStream(dest);
+    let size = 0, done = false;
+    const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
+    // 注意: 用 pipe 就不要再手动 out.end() —— 双重 end 会触发 ERR_STREAM_ALREADY_FINISHED,
+    // 流被错误终结后 'finish' 永不触发, 请求挂死(前端兜底通道完全不可用)
+    req.on('data', c => { size += c.length; if (size > 32 * 1024 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(413, { error: '文件超过 32GB 上限' }); } });
+    req.on('error', () => { out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(500, { error: '上传中断' }); });
+    out.on('error', () => { try { fs.unlinkSync(dest); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
+    out.on('finish', () => {
+      let okExt = VIDEO_EXTS.includes(path.extname(dest).toLowerCase());
+      if (!okExt) { try { fs.unlinkSync(dest); } catch {} return finish(400, { error: '不支持的格式: ' + path.extname(dest) }); }
+      return finish(200, { path: dest, name: finalName, size });
+    });
+    req.pipe(out);
+    return;
+  }
 
   /* ═══════════ 项目系统 ═══════════
    * 每个项目一个目录: projects/<id>/project.json + subtitle.{ass,srt} + audio.wav(16k单声道, 给后续 ASR) + peaks.bin(波形包络缓存)
@@ -1030,8 +1089,6 @@ function handleRequest(req, res) {
     req.on('error', () => { if (!dead) { dead = true; cb(new Error('request body 读取失败')); } });
     req.on('end', () => { if (!dead) cb(null, Buffer.concat(chunks)); });
   }
-  const sendJson = (res, code, obj) => send(res, code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }, JSON.stringify(obj));
-
   /** 后台提取: 一次 ffmpeg 同时产出 audio.wav 与 peaks 原始 PCM(asplit), 全部临时文件成功后原子改名 */
   function startPrepare(id, videoPath) {
     if (prepareJobs.has(id)) return;
@@ -1955,7 +2012,6 @@ function handleRequest(req, res) {
     const title = kind === 'video' ? 'Select video file' : 'Select subtitle file';
     const tmp = path.join(os.tmpdir(), `kass-pick-${process.pid}-${Date.now().toString(36)}.txt`);
     const tmpPs = tmp.replace(/'/g, "''");
-
     const ps = [
       '$ErrorActionPreference = "Stop"',
       'Add-Type -AssemblyName System.Windows.Forms | Out-Null',
@@ -1977,27 +2033,30 @@ function handleRequest(req, res) {
     const cleanup = () => { try { fs.unlinkSync(tmp); } catch {} };
     const p = spawn('powershell.exe', ['-NoProfile', '-STA', '-Command', ps], { windowsHide: true });
     let errText = '';
+    let settled = false;
+    const finish = (r) => { if (!settled) { settled = true; clearTimeout(timer); cb(r); } };
     p.stdout.on('data', () => {});                     // 丢弃: 只看临时文件
     p.stderr.on('data', d => { if (errText.length < 1500) errText += String(d); });
-    const timer = setTimeout(() => { try { p.kill(); } catch {} }, 5 * 60 * 1000);
+    // **不能无限等**: 某些环境(服务/计划任务/无交互桌面会话)里 WinForms ShowDialog 永远不可见也不返回,
+    // 用户视角就是"点浏览没反应"。35s 还没结果就按 cancelled 返回, 前端会自动降级到浏览器选文件。
+    const timer = setTimeout(() => { try { p.kill(); } catch {} finish({ cancelled: true, fallback: true, error: '系统对话框未能打开（已超时）' }); }, 35 * 1000);
     p.on('error', () => {
-      clearTimeout(timer); cleanup();
-      cb({ cancelled: true, error: '无法打开系统对话框' });
+      cleanup();
+      finish({ cancelled: true, fallback: true, error: '无法打开系统对话框' });
     });
     p.on('close', () => {
-      clearTimeout(timer);
       let raw = '';
       try { raw = fs.readFileSync(tmp, 'utf8'); } catch {}
       cleanup();
       if (!raw.trim() && errText.trim()) {
-        return cb({ cancelled: true, error: '系统对话框出错: ' + errText.trim().slice(0, 300) });
+        return finish({ cancelled: true, fallback: true, error: '系统对话框出错: ' + errText.trim().slice(0, 300) });
       }
-      if (!raw.trim()) return cb({ cancelled: true });
+      if (!raw.trim()) return finish({ cancelled: true });
       const resolved = normalizePickedPath(raw, isFolder);
       if (!resolved) {
-        return cb({ cancelled: true, error: '对话框返回的路径无法解析（' + raw.trim().slice(0, 200) + '）' });
+        return finish({ cancelled: true, error: '对话框返回的路径无法解析（' + raw.trim().slice(0, 200) + '）' });
       }
-      cb({ path: resolved, name: path.basename(resolved) });
+      finish({ path: resolved, name: path.basename(resolved) });
     });
   }
 
@@ -2031,7 +2090,12 @@ function handleRequest(req, res) {
       // 兼容旧前端字段
       ready: models.some(m => m.ready),
       python: ASR_PY, pythonOk,
-      download: downloadState,
+      // 并行下载: Map → 数组(每项含 key), 前端按 key 匹配各自的进度
+      downloads: Array.from(downloads.entries()).map(([key, v]) => Object.assign({ key }, v)),
+      // 兼容旧前端: 单任务时代的字段(任意一个在跑就给它的状态)
+      download: (() => { for (const v of downloads.values()) if (v.running) return v; return { running: false, kind: '', pct: 0, msg: '', error: null }; })(),
+      modelsRoot: modelsRoot(),
+      settingsDir: ASR_DIR,
     });
   }
   /** 校验用户选的目录能否用来放模型: 必须存在、且是空目录 */
@@ -2051,7 +2115,8 @@ function handleRequest(req, res) {
         reason: empty ? '' : `目录不是空的（已有 ${names.length} 项），请选择一个空目录` });
     });
   }
-  /** 下载识别模型(带 modelId)或 whisper.cpp 运行时(kind='runtime') */
+  /** 下载识别模型(带 modelId)或 whisper.cpp 运行时(kind='runtime')。
+   *  并行友好: 不同 modelId/kind 的任务各自独立跑, 重复点同一个任务会被幂等忽略。 */
   if (pathname === '/api/asr/download' && req.method === 'POST') {
     return readBody(req, 64 * 1024, (err, body) => {
       let p = {}, modelId = '', kind = 'model';
@@ -2061,17 +2126,20 @@ function handleRequest(req, res) {
       } catch {}
       if (kind === 'runtime') {
         if (whisperRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
+        if (dlState('runtime').running) return sendJson(res, 200, { started: true, kind: 'runtime', already: true });
         startRuntimeDownload();
         return sendJson(res, 200, { started: true, kind: 'runtime' });
       }
       if (kind === 'diarize') {
         if (diarizeReady()) return sendJson(res, 200, { started: false, ready: true });
+        if (dlState('diarize').running) return sendJson(res, 200, { started: true, kind: 'diarize', already: true });
         startDiarizeDownload();
         return sendJson(res, 200, { started: true, kind: 'diarize' });
       }
       const model = modelById(modelId) || resolveAsrModel() || ASR_MODELS[0];
       if (!model) return sendJson(res, 400, { error: '未知模型' });
-      // 未指定目录 → 用默认目录(asr/models/<dirName>)
+      const key = 'model:' + model.id;
+      // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
       if (!p) p = path.join(modelsRoot(), model.dirName);
       // 目录里已经有完整模型 → 直接采纳, 不用重下
       if (missingModelFiles(p, model).length === 0) {
@@ -2080,11 +2148,51 @@ function handleRequest(req, res) {
         writeAsrSettings(s);
         return sendJson(res, 200, { started: false, ready: true, dir: p });
       }
+      if (dlState(key).running) return sendJson(res, 200, { started: true, dir: p, modelId: model.id, already: true });
       let names = [];
       try { names = fs.readdirSync(p); } catch { names = []; }
-      if (names.length) return sendJson(res, 400, { error: `目录不是空的（已有 ${names.length} 项）。请选择一个空目录，避免模型文件与你的其它文件混在一起` });
+      if (names.length) return sendJson(res, 400, { error: `目录不是空的（已有 ${names.length} 项）。请换一个空目录，或在设置里修改模型下载位置` });
       startModelDownload(model, p);
       return sendJson(res, 200, { started: true, dir: p, modelId: model.id });
+    });
+  }
+  /** 指定模型下载根目录(空串 = 恢复默认 asr/models) */
+  if (pathname === '/api/asr/set-dir' && req.method === 'POST') {
+    return readBody(req, 64 * 1024, (err, body) => {
+      let p;
+      try { p = String((JSON.parse(body.toString('utf8')) || {}).dir || '').trim(); } catch { p = ''; }
+      const s = readAsrSettings();
+      if (p) {
+        let st = null;
+        try { st = fs.statSync(p); } catch {}
+        if (!st || !st.isDirectory()) {
+          // 目录不存在就尝试创建(用户可能直接填了一个还不存在的路径)
+          try { fs.mkdirSync(p, { recursive: true }); } catch { return sendJson(res, 400, { error: '目录无法创建: ' + p }); }
+        }
+        s.modelsRoot = p;
+      } else {
+        delete s.modelsRoot;      // 恢复默认
+      }
+      writeAsrSettings(s);
+      return sendJson(res, 200, { ok: true, modelsRoot: modelsRoot() });
+    });
+  }
+  /** 用资源管理器打开模型目录(打开下载位置/排查模型文件) */
+  if (pathname === '/api/asr/open-dir' && req.method === 'POST') {
+    return readBody(req, 64 * 1024, (err, body) => {
+      let which = 'models';
+      try { which = String((JSON.parse(body.toString('utf8')) || {}).which || 'models'); } catch {}
+      let dir = modelsRoot();
+      if (which === 'runtime') dir = WHISPER_RUNTIME.dir;
+      else if (which === 'settings') dir = ASR_DIR;
+      try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+      let ok = false;
+      try {
+        const child = spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore', windowsHide: false });
+        child.unref();
+        ok = true;
+      } catch {}
+      return sendJson(res, 200, { ok, dir });
     });
   }
   /** 删除一个模型(连同目录) */

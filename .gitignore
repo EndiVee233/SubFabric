@@ -38,9 +38,15 @@ desktop.ini
 .DS_Store
 /projects/
 
+# 浏览器兜底通道上传的视频副本(/api/upload-video 存放处)
+/videos/
+
 # 发行版打包产物(由 package_release.py 生成) / 解压出来的发行副本
 K-ASS-Editor-*.zip
 K-ASS-Editor-*/
+
+# SEA 构建产物(build_exe.py 生成: node.exe 副本 175MB + blob + 注入后的 exe)
+/build/
 
 
 # Python 字节码

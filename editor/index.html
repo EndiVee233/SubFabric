@@ -348,7 +348,7 @@
   <div class="home-inner">
     <header class="home-head">
       <div class="home-logo">🎬</div>
-      <h1 class="home-title">SubFabric <span class="home-title-en" id="app-version">v1.2.5</span></h1>
+      <h1 class="home-title">SubFabric <span class="home-title-en" id="app-version">v1.3.0</span></h1>
       <p class="home-sub">视频 + 双语字幕 + 逐词特效 · 项目化管理，随时接着上次的进度做</p>
     </header>
 
@@ -463,6 +463,13 @@
       <div class="st-sec">识别模型</div>
       <div id="st-models" class="st-models">读取中…</div>
       <div class="st-msg" id="st-model-note"></div>
+      <div class="st-row st-row-top">
+        <span class="st-lbl">下载位置</span>
+        <input type="text" id="st-model-dir" class="st-input" spellcheck="false"
+          placeholder="留空 = 程序目录\asr\models（改完点别处即保存）">
+        <button type="button" class="btn btn-mini" id="st-model-dir-open" title="在资源管理器中打开模型目录">打开目录</button>
+      </div>
+      <div class="gl-hint" style="margin-bottom:10px">识别模型与说话人模型都下到这里；各模型可同时下载互不阻塞。已有模型不会被移动，重新下载时才会用新位置。</div>
 
     <div class="st-sec">字幕翻译</div>
     <label class="st-check">
