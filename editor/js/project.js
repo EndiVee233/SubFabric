@@ -322,8 +322,8 @@ export function initProjects(ctx) {
   const DP_STEPS = [
     // skipAfterRetries = 重试满 N 次仍失败后允许跳过；语音识别永远不可跳
     { name: '语音识别', enabled: true, skippable: false, skipAfterRetries: false, stages: ['提取音频中', 'ASR识别中'] },
-    { name: '说话人分离', enabled: false, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
-    { name: 'LLM语义分句', enabled: false, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
+    { name: '说话人分离', enabled: true, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
+    { name: 'LLM语义分句', enabled: true, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
     { name: 'LLM翻译', enabled: true, skippable: false, skipAfterRetries: true, stages: ['翻译中'] },
     { name: '完毕', enabled: true, skippable: false, skipAfterRetries: false, stages: ['完毕'] },
   ];
@@ -380,7 +380,7 @@ export function initProjects(ctx) {
       const r = await fetch('/api/projects/' + dpId + '/retry', { method: 'POST' });
       const m = await r.json();
       if (!r.ok) { toast(m.error || '重试失败', 4600); return; }
-      const from = m.from === 'translate' ? '翻译' : (m.from === 'asr' ? '语音识别' : '音频提取');
+      const from = m.from === 'translate' ? '翻译' : (m.from === 'asr' ? '语音识别' : (m.from === 'reseg' ? '语义分句' : '音频提取'));
       toast('已从「' + from + '」继续，已完成的进度不会丢', 4200);
       startDp();
     } catch (e) { toast('重试失败: ' + e.message, 3600); }
@@ -394,7 +394,10 @@ export function initProjects(ctx) {
       const r = await fetch('/api/projects/' + dpId + '/skip', { method: 'POST' });
       const m = await r.json();
       if (!r.ok) { toast(m.error || '跳过失败', 4600); return; }
-      toast('已跳过翻译：保留语音识别结果，之后仍可点「翻译」补中文', 4800);
+      const d2 = m.draft || {};
+      toast(d2.resegSkipped ? '已跳过语义分句：按标点/停顿兜底切句，流水线继续'
+        : d2.diarizeSkipped ? '已跳过说话人分离：不写角色标注，流水线继续'
+        : '已跳过翻译：保留语音识别结果，之后仍可点「翻译」补中文', 4800);
       startDp();
     } catch (e) { toast('跳过失败: ' + e.message, 3600); }
     finally { btn.disabled = false; }

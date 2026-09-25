@@ -25,6 +25,8 @@
   "开始翻译": "Start translation",
   "待翻译": "Pending translation",
   "已跳过翻译": "Translation skipped",
+  "已跳过语义分句：按标点/停顿兜底切句，流水线继续": "Sentence splitting skipped: fallback to punctuation/pause breaks, pipeline continues",
+  "已跳过说话人分离：不写角色标注，流水线继续": "Speaker diarization skipped: no role labels, pipeline continues",
   "初稿已生成": "Draft ready",
   "初稿失败": "Draft failed",
   "待提取": "Pending",

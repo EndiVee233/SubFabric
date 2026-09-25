@@ -13,6 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
+const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), whisper 专用
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
@@ -357,7 +358,7 @@ const whisperCli = () => path.join(WHISPER_RUNTIME.dir, 'whisper-cli.exe');
 const whisperRuntimeOk = () => { try { return fs.statSync(whisperCli()).isFile(); } catch { return false; } };
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
- * diarize 已实现; reseg(语义分句) 未实现, 名字先占好位。 */
+ * diarize / reseg(语义分句, whisper 专用) 均已实现。 */
 const STAGE = {
   extract: '提取音频中',
   asr: 'ASR识别中',
@@ -1344,6 +1345,14 @@ const server = http.createServer((req, res) => {
     writeMeta(meta);
 
     if (hasAsr) {
+      // 语义分句还欠着（whisper 项目 + LLM 可用 + 没做完/没跳过）→ 先补这一步再往下走
+      if (!meta.draft.resegDone && meta.draft.engine === 'whisper.cpp' && llmReady(translateCfg())) {
+        setDraft(id, { status: 'running', stage: STAGE.reseg, progress: 76, message: '重试语义分句…', error: null, failedStage: '' });
+        Promise.resolve(runDraftReseg(id))
+          .then(() => continueDraftAfterAsr(id, wordLevel))
+          .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
+        return { ok: true, from: 'reseg' };
+      }
       setDraft(id, { status: 'running', stage: STAGE.translate, progress: 86, message: '准备重试翻译…', error: null });
       Promise.resolve(startTranslate(id)).catch(e => finishDraft(id, e));
       return { ok: true, from: 'translate' };
@@ -1432,7 +1441,7 @@ const server = http.createServer((req, res) => {
         cleanup();
 
         // 3) 时间戳加回区间偏移
-        const segs = data.segments
+        let segs = data.segments
           .filter(s => s && s.end > s.start)
           .map(s => ({
             start: +(s.start + start).toFixed(3),
@@ -1446,6 +1455,22 @@ const server = http.createServer((req, res) => {
           setRr({ status: 'done', stage: '完毕', progress: 100, segments: [],
             message: '该区间没有识别到语音' });
           return;
+        }
+
+        // 3.5) 语义分句(仅 whisper: 它常整段不给标点) —— LLM 补标点 → 按逗号/句号切句。
+        //      重识别是小区域, 失败不致命: 回退到原启发式分组继续走。
+        if (model.engine === 'whisper.cpp' && llmReady(translateCfg())) {
+          setRr({ stage: '语义分句中', progress: 72, message: '语义分句中 …' });
+          try {
+            const cfgR = translateCfg();
+            const before = segs.length;
+            segs = await resegMod.resegWithLLM(
+              (messages) => llmChat(cfgR, messages), segs,
+              (frac, msg) => setRr({ stage: '语义分句中', progress: 72 + Math.round((frac || 0) * 3), message: msg || '语义分句中 …' }));
+            setRr({ message: `语义分句完成：${before} 行 → ${segs.length} 行` });
+          } catch (e) {
+            setRr({ message: '语义分句失败，按标点/停顿兜底：' + String((e && e.message) || e).slice(0, 80) });
+          }
         }
 
         // 4) 用设置里的 LLM 翻译（Key 为空/未配置 → 明确提示, 只返回识别结果）
@@ -1534,6 +1559,54 @@ const server = http.createServer((req, res) => {
     return m && modelReady(m.id) ? m : null;
   }
 
+  /** 语义分句(whisper 初稿专用): 读 asr.json → LLM 补标点 → 按逗号/句号切句 → 写回。
+   *  成功后 meta.draft.resegDone = true（重试/跳过逻辑靠它判断这一步还欠不欠着）。 */
+  async function runDraftReseg(id) {
+    const cfg = translateCfg();
+    setDraft(id, { status: 'running', stage: STAGE.reseg, progress: 76, message: '语义分句中 …', error: null, failedStage: '' });
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（LLM 补标点 → 按逗号/句号切句）`);
+    const p = path.join(projDir(id), 'asr.json');
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const before = (data.segments || []).length;
+    const segs2 = await resegMod.resegWithLLM(
+      (messages) => llmChat(cfg, messages),
+      data.segments || [],
+      (frac, msg) => setDraft(id, { stage: STAGE.reseg, progress: 76 + Math.round((frac || 0) * 8), message: msg || '语义分句中 …' }));
+    data.segments = segs2;
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data));
+    fs.renameSync(tmp, p);
+    const meta = readMeta(id);
+    if (meta && meta.draft) { meta.draft.resegDone = true; writeMeta(meta); }
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 语义分句完成：${before} 行 → ${segs2.length} 行`);
+  }
+
+  /** 识别之后的两步收尾（模块级, retryDraft 也走这里）:
+   *  勾了「区分说话人」且分离模型就绪（且没被跳过）→ 先分离再生成字幕; 否则直接生成。 */
+  function continueDraftAfterAsr(id, wordLevel) {
+    const meta0 = readMeta(id);
+    const d0 = (meta0 && meta0.draft) || {};
+    const wantSpk = !!d0.speakers && diarizeReady() && !d0.diarizeSkipped;
+    if (wantSpk) {
+      const wav = path.join(projDir(id), 'audio.wav');
+      setDraft(id, { stage: STAGE.diarize, progress: 82, message: '区分说话人中 …' });
+      runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }))
+        .then(r => safeDraftStep(id, () => {
+          try {
+            const d = JSON.parse(fs.readFileSync(path.join(projDir(id), 'asr.json'), 'utf8'));
+            assignSpeakers(d.segments || [], r.regions || []);
+            const tmp = path.join(projDir(id), 'asr.json') + '.tmp';
+            fs.writeFileSync(tmp, JSON.stringify(d));
+            fs.renameSync(tmp, path.join(projDir(id), 'asr.json'));
+          } catch (e) { return finishDraft(id, e); }
+          buildDraftSubtitle(id, wordLevel);
+        }))
+        .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
+      return;
+    }
+    buildDraftSubtitle(id, wordLevel);
+  }
+
   function startDraftAsr(id, wordLevel) {
     const model = resolveDraftModel(readMeta(id));
     if (!model) return finishDraft(id, new Error('语音识别模型不可用：请先在设置里下载模型（或换一个已就绪的模型）'));
@@ -1546,35 +1619,30 @@ const server = http.createServer((req, res) => {
     setDraft(id, { status: 'running', stage: STAGE.asr, progress: 30, message: '启动识别引擎…' });
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语音识别（模型：${model.name}，逐词：${wordLevel ? '开' : '关'}）`);
 
-    // 识别完成后的收尾: 若勾选了「区分说话人」且分离模型就绪 → 先分离再生成字幕;
-    // 分离跑在音频上、与识别引擎无关(Parakeet / whisper.cpp 都能配)
+    // 识别完成后的收尾三段式: reseg(语义分句, 仅 whisper) → diarize(区分说话人) → 生成字幕。
+    // 分离跑在音频上、与识别引擎无关(Parakeet / whisper.cpp 都能配);
+    // reseg 只对 whisper 做(它常整段不给标点, 启发式切句会糊成超长行; Parakeet 标点质量好)。
     const finishAsr = () => {
-      const meta0 = readMeta(id);
-      const wantSpk = !!(meta0 && meta0.draft && meta0.draft.speakers);
-      if (wantSpk && diarizeReady()) {
-        setDraft(id, { stage: STAGE.diarize, progress: 60, message: '区分说话人中 …' });
-        runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 60 + Math.round((pct || 0) * 0.15), message: msg || '区分说话人中 …' }))
-          .then(r => safeDraftStep(id, () => {
-            try {
-              const d = JSON.parse(fs.readFileSync(path.join(projDir(id), 'asr.json'), 'utf8'));
-              assignSpeakers(d.segments || [], r.regions || []);
-              const tmp = path.join(projDir(id), 'asr.json') + '.tmp';
-              fs.writeFileSync(tmp, JSON.stringify(d));
-              fs.renameSync(tmp, path.join(projDir(id), 'asr.json'));
-            } catch (e) { return finishDraft(id, e); }
-            buildDraftSubtitle(id, wordLevel);
-          }))
-          .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
-        return;
+      if (model.engine === 'whisper.cpp') {
+        const cfg = translateCfg();
+        if (llmReady(cfg)) {
+          // whisper 专用: LLM 补标点 → 按逗号/句号切句(用户规则)。
+          // 失败可重试/跳过 —— 跳过时按原启发式(标点/停顿/行长)分组。
+          runDraftReseg(id)
+            .then(() => continueDraftAfterAsr(id, wordLevel))
+            .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
+          return;
+        }
+        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] API Key 为空，跳过语义分句（按标点/停顿兜底切句）`);
       }
-      buildDraftSubtitle(id, wordLevel);
+      continueDraftAfterAsr(id, wordLevel);
     };
 
     // ── whisper.cpp 引擎: whisper-cli(词级用 -ml 1 -sow), 结果转成 asr.json ──
     if (model.engine === 'whisper.cpp') {
       const bin = path.join(mdir, model.files[0]);
       runWhisperCpp(bin, wav, pct => {
-        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.55), message: `识别中（whisper.cpp）… ${pct}%` });
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp）… ${pct}%` });
       }).then(r => {
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
@@ -1926,11 +1994,13 @@ const server = http.createServer((req, res) => {
       };
       if (file) meta.subtitle = { format, file, name: subName };
       if (draftOn) {
+        const draftModel = (draftModelId && modelById(draftModelId)) || resolveAsrModel() || null;
         meta.draft = {
           status: 'running', stage: STAGE.extract, progress: 3,
           message: '提取音频与波形…', wordLevel, lines: 0, words: 0,
           translated: false, needTranslate: false,
-          modelId: (draftModelId && modelById(draftModelId)) ? draftModelId : (resolveAsrModel() || {}).id || null,
+          modelId: draftModel ? draftModel.id : null,
+          engine: draftModel ? (draftModel.engine || '') : '',
           speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
           startedAt: now, error: null,
         };
@@ -1956,16 +2026,33 @@ const server = http.createServer((req, res) => {
     }
 
     // 跳过此步：重试满 SKIP_AFTER_RETRIES 次仍不成功后的出路。
-    // 目前可跳的只有翻译 —— 保留识别结果（英文），不生成中文；语音识别不可跳过。
+    // 按失败所在阶段分流: 语义分句/说话人分离跳过后继续流水线, 翻译跳过则保留纯英文初稿。
+    // 语音识别不可跳过。
     if (action === 'skip' && req.method === 'POST') {
       const d = (metaView(meta) || {}).draft || {};
       if (d.status === 'running') return sendJson(res, 400, { error: '该步骤正在运行，等它结束（或失败）后再跳过' });
       if ((d.retries || 0) < SKIP_AFTER_RETRIES) {
         return sendJson(res, 400, { error: `重试满 ${SKIP_AFTER_RETRIES} 次后才能跳过此步（当前已重试 ${d.retries || 0} 次）` });
       }
-      if (d.skippedTranslate) return sendJson(res, 400, { error: '翻译已经跳过了' });
+      const failedStage = d.failedStage || '';
+      const wordLevel = !!meta.draft.wordLevel;
       draftJobs.delete(id);
       pendingAsr.delete(id);
+      if (failedStage === STAGE.reseg && !meta.draft.resegDone) {
+        meta.draft.resegDone = true; meta.draft.resegSkipped = true; writeMeta(meta);
+        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 已跳过语义分句（按标点/停顿兜底切句）`);
+        setDraft(id, { status: 'running', message: '继续处理（已跳过语义分句）…', error: null, failedStage: '' });
+        Promise.resolve().then(() => continueDraftAfterAsr(id, wordLevel)).catch(e => finishDraft(id, e));
+        return sendJson(res, 200, { skipped: true, draft: (metaView(readMeta(id)) || {}).draft || null });
+      }
+      if (failedStage === STAGE.diarize && !meta.draft.diarizeSkipped) {
+        meta.draft.diarizeSkipped = true; writeMeta(meta);
+        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 已跳过说话人分离（不写角色标注）`);
+        setDraft(id, { status: 'running', message: '继续处理（已跳过说话人分离）…', error: null, failedStage: '' });
+        Promise.resolve().then(() => buildDraftSubtitle(id, wordLevel)).catch(e => finishDraft(id, e));
+        return sendJson(res, 200, { skipped: true, draft: (metaView(readMeta(id)) || {}).draft || null });
+      }
+      if (d.skippedTranslate) return sendJson(res, 400, { error: '翻译已经跳过了' });
       finishDraft(id, null, {
         status: 'done', stage: STAGE.done, progress: 100,
         translated: false, needTranslate: false, skippedTranslate: true, pendingTranslate: 0,

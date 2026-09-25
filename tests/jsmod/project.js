@@ -322,8 +322,8 @@ export function initProjects(ctx) {
   const DP_STEPS = [
     // skipAfterRetries = 重试满 N 次仍失败后允许跳过；语音识别永远不可跳
     { name: '语音识别', enabled: true, skippable: false, skipAfterRetries: false, stages: ['提取音频中', 'ASR识别中'] },
-    { name: '说话人分离', enabled: false, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
-    { name: 'LLM语义分句', enabled: false, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
+    { name: '说话人分离', enabled: true, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
+    { name: 'LLM语义分句', enabled: true, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
     { name: 'LLM翻译', enabled: true, skippable: false, skipAfterRetries: true, stages: ['翻译中'] },
     { name: '完毕', enabled: true, skippable: false, skipAfterRetries: false, stages: ['完毕'] },
   ];
@@ -380,7 +380,7 @@ export function initProjects(ctx) {
       const r = await fetch('/api/projects/' + dpId + '/retry', { method: 'POST' });
       const m = await r.json();
       if (!r.ok) { toast(m.error || '重试失败', 4600); return; }
-      const from = m.from === 'translate' ? '翻译' : (m.from === 'asr' ? '语音识别' : '音频提取');
+      const from = m.from === 'translate' ? '翻译' : (m.from === 'asr' ? '语音识别' : (m.from === 'reseg' ? '语义分句' : '音频提取'));
       toast('已从「' + from + '」继续，已完成的进度不会丢', 4200);
       startDp();
     } catch (e) { toast('重试失败: ' + e.message, 3600); }
@@ -394,7 +394,10 @@ export function initProjects(ctx) {
       const r = await fetch('/api/projects/' + dpId + '/skip', { method: 'POST' });
       const m = await r.json();
       if (!r.ok) { toast(m.error || '跳过失败', 4600); return; }
-      toast('已跳过翻译：保留语音识别结果，之后仍可点「翻译」补中文', 4800);
+      const d2 = m.draft || {};
+      toast(d2.resegSkipped ? '已跳过语义分句：按标点/停顿兜底切句，流水线继续'
+        : d2.diarizeSkipped ? '已跳过说话人分离：不写角色标注，流水线继续'
+        : '已跳过翻译：保留语音识别结果，之后仍可点「翻译」补中文', 4800);
       startDp();
     } catch (e) { toast('跳过失败: ' + e.message, 3600); }
     finally { btn.disabled = false; }
@@ -514,6 +517,20 @@ export function initProjects(ctx) {
         ${state}${rt}
       </div>`;
     }).join('');
+    // 说话人分离模型(两个文件一组, ~32MB): 初稿勾选「区分说话人」时需要
+    const dz = d.diarize || {};
+    const dzDl = dl.running && dl.kind === 'diarize';
+    const dzBtn = dzDl ? '' : (dz.ready
+      ? '<button type="button" class="btn btn-mini sm-del" data-id="diarize" title="删除分离模型文件">删除</button>'
+      : '<button type="button" class="btn btn-mini sm-dl" data-id="diarize">下载</button>');
+    const dzState = dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>'
+      : (dzDl ? `<span class="sm-state running">${esc(dl.msg || '下载中…')} ${dl.pct || 0}%</span>`
+              : '<span class="sm-state">未下载 · 32 MB</span>');
+    rows += `<div class="sm-model">
+      <div class="sm-head"><span class="sm-name">说话人分离</span>${dzBtn}</div>
+      <div class="sm-desc">说话人分段 + 说话人嵌入（约 32MB）。初稿勾选「区分说话人」时需要</div>
+      ${dzState}
+    </div>`;
     box.innerHTML = rows || '<div class="st-row">无可用模型</div>';
     box.querySelectorAll('.sm-dl').forEach(b => b.addEventListener('click', () => downloadModel(b.dataset.id)));
     box.querySelectorAll('.sm-del').forEach(b => b.addEventListener('click', () => {
@@ -549,9 +566,10 @@ export function initProjects(ctx) {
       await new Promise(r => setTimeout(r, 1000));
     }
   }
-  async function downloadModel(modelId) {
+  async function downloadModel(id) {
+    const body = id === 'diarize' ? { kind: 'diarize' } : { modelId: id };
     await fetch('/api/asr/download', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
     pollModelDownload();
   }
@@ -636,6 +654,7 @@ export function initProjects(ctx) {
     const draft = mode === 'draft';
     $('#np-row-sub').hidden = draft;
     $('#np-row-word').hidden = !draft;
+    $('#np-row-spk').hidden = !draft;
     $('#np-model').hidden = !draft;
     $('#np-hint').textContent = draft
       ? '创建后会在后台识别语音并生成字幕；进度可在项目列表上查看，不用守着这个窗口'
@@ -688,6 +707,68 @@ export function initProjects(ctx) {
   $('#np-word').addEventListener('change', () => {
     $('#np-word-desc').textContent = $('#np-word').checked
       ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
+  });
+
+  $('#np-pick-video').addEventListener('click', async () => {
+    let pick;
+    try {
+      pick = await (await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' })
+      })).json();
+    } catch { toast('无法打开系统文件对话框', 3200); return; }
+    if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
+    npVideo.path = pick.path; npVideo.name = pick.name;
+    const el = $('#np-video-name');
+    el.textContent = pick.name; el.classList.add('filled');
+    if (!$('#np-name').value.trim()) $('#np-name').value = pick.name.replace(/\.[^.]+$/, '');
+    npMaybeEnable();
+  });
+  $('#np-pick-sub').addEventListener('click', () => $('#np-file-sub').click());
+  $('#np-file-sub').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    npSub.name = f.name; npSub.text = await f.text();
+    const el = $('#np-sub-name');
+    el.textContent = f.name; el.classList.add('filled');
+    npMaybeEnable();
+  });
+  $('#np-create').addEventListener('click', async () => {
+    const isDraft = npMode === 'draft';
+    const btn = $('#np-create');
+    btn.disabled = true; btn.textContent = isDraft ? '提交中…' : '创建中…';
+    try {
+      const payload = { name: $('#np-name').value.trim(), video: { path: npVideo.path, name: npVideo.name } };
+      if (isDraft) {
+        payload.draft = true;
+        payload.wordLevel = !!$('#np-word').checked;
+        payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
+        payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
+        payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
+      } else {
+        payload.subtitle = { name: npSub.name, text: npSub.text };
+      }
+      const r = await fetch('/api/projects', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const m = await r.json();
+      if (!r.ok) { toast(m.error || '创建失败', 4000); return; }
+      npOverlay.hidden = true;
+      if (isDraft) {
+        renderList();                     // 项目立刻进列表, 进度在卡片上
+        toast('已提交，正在后台识别语音 —— 可以先去做别的，进度见项目列表', 5200);
+      } else {
+        lastSavedText = npSub.text;
+        location.hash = '#/project/' + m.id;
+        toast('项目已创建，正在后台提取音频与波形…', 4000);
+      }
+    } catch (e) {
+      toast('创建失败: ' + e.message, 3600);
+    } finally {
+      btn.textContent = npMode === 'draft' ? '开始识别' : '创建项目';
+      npMaybeEnable();
+    }
   });
 
   /* ─────────── 路由 ─────────── */
