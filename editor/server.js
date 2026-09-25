@@ -18,6 +18,49 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
+const APP_VERSION = '1.2.2'; // 与打版号一致; 改了就顺手同步这里
+
+/* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
+ * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
+ *      ② /api/version 让**已经开着的页面**发现自己过期了 → 提示用户刷新。
+ * (用户报过"改了代码但界面还是老的": 单页应用开着不刷新就一直跑旧 JS) */
+const BUILD_STAMP = (() => {
+  let newest = 0;
+  const scan = (dir) => {
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'vendor' || e.name === 'node_modules') continue;
+        scan(p);
+      } else {
+        try { newest = Math.max(newest, fs.statSync(p).mtimeMs); } catch {}
+      }
+    }
+  };
+  scan(path.join(ROOT, 'editor'));
+  return newest ? String(Math.floor(newest)) : '0';
+})();
+
+/* 给静态资源打版本戳 + 在 HTML 里埋入页面自身的戳, 解决"改了代码界面还是老的" */
+function stampUrl(url) {
+  if (url.includes('?') || /^(https?:)?\/\//i.test(url) || url.startsWith('data:') || url.startsWith('#')) return url;
+  if (/\.(js|css)(\?|$)/i.test(url)) return url + '?v=' + BUILD_STAMP;
+  return url;
+}
+function stampHtml(html) {
+  let out = html
+    .replace(/(src\s*=\s*["'])([^"']+?)(["'])/gi, (m, p1, url, p2) => p1 + stampUrl(url) + p2)
+    .replace(/(href\s*=\s*["'])([^"']+?)(["'])/gi, (m, p1, url, p2) => p1 + stampUrl(url) + p2);
+  const inject = '<meta name="build-stamp" content="' + BUILD_STAMP + '"><script>window.__BUILD_STAMP="' + BUILD_STAMP + '";</script>';
+  return out.includes('</head>') ? out.replace('</head>', inject + '</head>') : (inject + out);
+}
+function stampJs(code) {
+  // 仅给相对路径的 import/export 规范符加戳(裸模块名不动)
+  return code.replace(/(\b(?:from|import)\b\s*\(?\s*(["']))(\.\.?\/[^"']+?)(\2)/g,
+    (m, pre, q, spec, post) => pre + (spec.includes('?') ? spec : spec + '?v=' + BUILD_STAMP) + post);
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -248,6 +291,20 @@ function serveFile(req, res, filePath) {
 
   const ext = path.extname(filePath).toLowerCase();
   const type = MIME[ext] || 'application/octet-stream';
+
+  // HTML / 自有 JS: 注入版本戳, 让"改了代码→刷新必拿新版" + 已开页面能发现自己过期
+  if (ext === '.html') {
+    let html;
+    try { html = fs.readFileSync(filePath, 'utf8'); } catch { return send(res, 500, { 'Content-Type': 'text/plain; charset=utf-8' }, 'read error'); }
+    return send(res, 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' }, stampHtml(html));
+  }
+  const jsDir = path.join(ROOT, 'editor', 'js');
+  if (ext === '.js' && (filePath === jsDir || filePath.startsWith(jsDir + path.sep))) {
+    let code;
+    try { code = fs.readFileSync(filePath, 'utf8'); } catch { return send(res, 500, { 'Content-Type': 'text/plain; charset=utf-8' }, 'read error'); }
+    return send(res, 200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-cache' }, stampJs(code));
+  }
+
   const total = stat.size;
   const range = req.headers.range;
 
@@ -842,6 +899,11 @@ function handleRequest(req, res) {
   if (pathname === '/api/samples') {
     const body = JSON.stringify(listSamples());
     return send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }, body);
+  }
+  // 代码版本戳: 已经开着的页面用它判断自己是否已过期 → 提示用户刷新
+  if (pathname === '/api/version') {
+    return send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' },
+      JSON.stringify({ stamp: BUILD_STAMP, version: APP_VERSION }));
   }
 
   // 波形图: 示例视频直接读磁盘原文件(不复制/不保存), 本地文件走 POST 上传临时文件(用完即删)

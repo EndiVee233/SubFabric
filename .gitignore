@@ -34,5 +34,9 @@ desktop.ini
 .DS_Store
 /projects/
 
+# 发行版打包产物(由 package_release.py 生成)
+K-ASS-Editor-*.zip
+
+
 # Python 字节码
 __pycache__/
