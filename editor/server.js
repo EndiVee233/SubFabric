@@ -373,11 +373,11 @@ const SKIP_AFTER_RETRIES = 3;
 
 /* 说话人角色色板(轮转使用): #RRGGBB, 写进中文行行首色标 —— 编辑器的角色色来源 */
 const ROLE_PALETTE = ['#ff00d0', '#00b0f0', '#ffb400', '#00d26a', '#b066ff', '#ff5f6b', '#00e0b0', '#c2c2c2'];
-/** '#RRGGBB' → ASS 的 '&HBBGGRR&' */
+/** '#RRGGBB' → ASS 的 'BBGGRR'(裸 6 位 hex) —— 与编辑器 hexToAss 一致, 用法 {\c&HBBGGRR&} */
 function assColorFromRgb(hex) {
   const n = String(hex || '').replace('#', '');
-  if (!/^[0-9a-fA-F]{6}$/.test(n)) return 'HFFFFFF&';
-  return '&' + n.slice(4, 6) + n.slice(2, 4) + n.slice(0, 2) + '&';
+  if (!/^[0-9a-fA-F]{6}$/.test(n)) return 'FFFFFF';
+  return n.slice(4, 6) + n.slice(2, 4) + n.slice(0, 2);
 }
 /** 按重叠最大的分离片段给每段 ASR 结果指派说话人, 并重排为 0 起始的 SPK1..N(按出现顺序) */
 function assignSpeakers(segments, regions) {
@@ -1083,7 +1083,9 @@ const server = http.createServer((req, res) => {
     const hasTrans = Array.isArray(trans) && trans.length === segs.length;
     const hasSpk = segs.some(s => s.speaker != null);
     // 部分翻译时 lines 里会有空洞 —— 空洞不写中文行, 免得出现空字幕
-    const zhText = (i) => (hasTrans && String(trans[i] || '').trim()) ? String(trans[i]).replace(/\n/g, ' ') : null;
+    // 用户要求: 翻译写入时把中文的逗号/顿号/句号替换成空格(! ? 保留不动)
+    const zhText = (i) => (hasTrans && String(trans[i] || '').trim())
+      ? String(trans[i]).replace(/\n/g, ' ').replace(/[，、。]/g, ' ') : null;
     // 角色行: 行首色标(角色色) + [SPKn] 标记 + Name 栏 —— 编辑器据此显示角色色与角色列表
     const roleOf = (s) => (hasSpk && s.speaker != null) ? {
       n: s.speaker + 1,

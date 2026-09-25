@@ -124,7 +124,11 @@ export class EditorPanel {
       this._applyFilter();
     });
     if (this.searchBtn) {
-      this.searchBtn.addEventListener('click', () => this.searchBox.focus());
+      // 实时过滤已由输入框承担; 按钮本身打开「查找与批量替换」(main.js 注册 onFindReplace)
+      this.searchBtn.addEventListener('click', () => {
+        if (this.onFindReplace) { this.onFindReplace(); return; }
+        this.searchBox.focus();
+      });
     }
     // 角色筛选: 选了某角色 → 只显示该角色说的字幕
     this.roleFilterSel = document.getElementById('sel-role-filter');

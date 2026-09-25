@@ -236,6 +236,74 @@
     </div>
   </div>
 
+  <!-- 查找与批量替换 -->
+  <div id="fr-overlay" hidden>
+    <div class="fr-box">
+      <div class="fr-head">
+        <span class="fr-title">查找与批量替换</span>
+        <button type="button" class="btn" id="fr-close">关闭</button>
+      </div>
+      <div class="fr-top">
+        <div class="fr-tabs">
+          <button type="button" class="fr-tab active" id="fr-tab-text">正文</button>
+          <button type="button" class="fr-tab" id="fr-tab-role">角色</button>
+        </div>
+        <div class="fr-text-opts" id="fr-text-opts">
+          <span class="fr-lbl">范围</span>
+          <select id="fr-scope" class="select select-dark">
+            <option value="all">全部</option>
+            <option value="zh">中文</option>
+            <option value="en">英文</option>
+          </select>
+          <label class="fr-chk"><input type="checkbox" id="fr-case"><span>区分大小写</span></label>
+          <label class="fr-chk"><input type="checkbox" id="fr-word"><span>全词匹配</span></label>
+        </div>
+      </div>
+      <div id="fr-pane-text">
+        <div class="fr-grid">
+          <div class="fr-cell">
+            <div class="fr-lbl">查找内容</div>
+            <input type="text" id="fr-find" class="fr-input" placeholder="输入要查找的正文">
+          </div>
+          <div class="fr-cell">
+            <div class="fr-lbl">替换为</div>
+            <input type="text" id="fr-repl" class="fr-input" placeholder="替换为">
+          </div>
+        </div>
+        <div class="fr-hint">输入要查找的正文后，可先选择替换范围（全部 / 中文 / 英文），再逐条跳转或执行批量替换。</div>
+      </div>
+      <div id="fr-pane-role" hidden>
+        <div class="fr-grid">
+          <div class="fr-cell">
+            <div class="fr-lbl">源角色</div>
+            <div class="fr-combo">
+              <input type="text" id="fr-src" class="fr-input" placeholder="输入或选择源角色">
+              <button type="button" class="btn fr-dd" id="fr-src-dd" tabindex="-1">▼</button>
+              <div class="fr-menu" id="fr-src-menu" hidden></div>
+            </div>
+          </div>
+          <div class="fr-cell">
+            <div class="fr-lbl">目标角色</div>
+            <div class="fr-combo">
+              <input type="text" id="fr-dst" class="fr-input" placeholder="输入或选择目标角色">
+              <button type="button" class="btn fr-dd" id="fr-dst-dd" tabindex="-1">▼</button>
+              <div class="fr-menu" id="fr-dst-menu" hidden></div>
+            </div>
+          </div>
+        </div>
+        <div class="fr-hint">源角色和目标角色都支持输入或下拉候选。源角色必须确认一个已有角色后才能替换；目标角色可直接输入新名字，也可候选选中已有角色。</div>
+      </div>
+      <div class="fr-status" id="fr-status">输入正文关键词后开始查找</div>
+      <div class="fr-actions">
+        <button type="button" class="btn" id="fr-prev">上一个</button>
+        <button type="button" class="btn" id="fr-next">下一个</button>
+        <button type="button" class="btn" id="fr-locate">定位当前</button>
+        <button type="button" class="btn" id="fr-replace-one">替换当前</button>
+        <button type="button" class="btn btn-accent" id="fr-replace-all">全部替换</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 字幕卡片右键菜单 -->
   <div id="card-menu" hidden>
     <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>

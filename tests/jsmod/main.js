@@ -1,5 +1,5 @@
 /** 主逻辑: 状态管理 + 视频/字幕加载 + 各模块联动 */
-import { fmtTime, parseTime } from './util.js';
+import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
 import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS } from './karaoke.js';
@@ -293,6 +293,22 @@ function setSrt(text, name) {
 }
 
 /* ─────────── ASS ─────────── */
+/** 规整行首角色色标: 旧版服务端写出过 {\c&H&bbggrr&&}(多一层 &H/&) —— libass 解析成黑/默认色,
+ *  且编辑器的颜色解析/全局换色全都匹配不上。加载时统一规整为 {\c&Hbbggrr&}。 */
+function normalizeLeadColors() {
+  if (!state.assDoc) return 0;
+  const re = /\{\\c&H&H?([0-9A-Fa-f]{6})&&\}/g;
+  let n = 0;
+  for (const ev of state.assDoc.events) {
+    const t = ev.text || '';
+    re.lastIndex = 0;
+    if (!re.test(t)) continue;
+    state.assDoc.setEventText(ev, t.replace(re, (all, hex) => '{\\c&H' + hex + '&}'));
+    n++;
+  }
+  return n;
+}
+
 function setAss(text, name) {
   overlay.hide();
   overlay.setCues([]);
@@ -300,6 +316,7 @@ function setAss(text, name) {
   state.fileName = name;
   state.srtCues = [];
   state.assDoc = new AssDoc(text);
+  const fixedColors = normalizeLeadColors();   // 必须在分析/渲染之前
   // 双轨分析: 干净整句(编辑/列表/时间轴) + 词级映射; 原始逐词文档保留给视频渲染
   state.kar = analyzeKaraoke(state.assDoc);
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
@@ -307,7 +324,8 @@ function setAss(text, name) {
 
   panel.setBadge('ASS 特效', 'ass');
   panel.setFileName(name);
-  panel.setRolesEnabled(state.roleAnnot !== false);    // ASS 有角色(说话人) → 恢复; 用户禁用角色标注时不显示
+  applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
+  if (fixedColors) toast(`已修复 ${fixedColors} 行格式错误的说话人色标`, 5000);
   panel.setModeOptions([
     { v: 'bi', t: '中英双行' },
     { v: 'first', t: '仅中文' },
@@ -906,6 +924,255 @@ panel.onRecolorRole = (name, hex) => {
 
 timeline.isEditable = () => true;
 
+/* ═══════════ 查找与批量替换 ═══════════
+ * 顶部搜索框只做实时过滤; 这个弹窗做逐条定位与批量替换:
+ *  正文 tab: 按关键词在中文/英文明文里查(范围/区分大小写/全词匹配), 逐条跳转或批量替换;
+ *  角色 tab: 源角色必须是已有角色, 把它的台词替换成目标角色(可输入新名字=新建)。 */
+const fr = { el: {}, tab: 'text', matches: [], cur: -1, srcRole: '' };
+
+function frInit() {
+  const ids = ['fr-overlay', 'fr-close', 'fr-tab-text', 'fr-tab-role', 'fr-text-opts',
+    'fr-scope', 'fr-case', 'fr-word', 'fr-pane-text', 'fr-pane-role', 'fr-find', 'fr-repl',
+    'fr-src', 'fr-src-dd', 'fr-src-menu', 'fr-dst', 'fr-dst-dd', 'fr-dst-menu',
+    'fr-status', 'fr-prev', 'fr-next', 'fr-locate', 'fr-replace-one', 'fr-replace-all'];
+  for (const id of ids) fr.el[id] = document.getElementById(id);
+  if (!fr.el['fr-overlay']) return;
+  fr.el['fr-tab-text'].addEventListener('click', () => frSetTab('text'));
+  fr.el['fr-tab-role'].addEventListener('click', () => frSetTab('role'));
+  fr.el['fr-close'].addEventListener('click', frClose);
+  fr.el['fr-overlay'].addEventListener('pointerdown', (e) => { if (e.target === fr.el['fr-overlay']) frClose(); });
+  fr.el['fr-find'].addEventListener('input', frScan);
+  for (const id of ['fr-scope', 'fr-case', 'fr-word']) fr.el[id].addEventListener('change', frScan);
+  fr.el['fr-find'].addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); frGo(1); } });
+  fr.el['fr-prev'].addEventListener('click', () => frGo(-1));
+  fr.el['fr-next'].addEventListener('click', () => frGo(1));
+  fr.el['fr-locate'].addEventListener('click', frLocate);
+  fr.el['fr-replace-one'].addEventListener('click', frReplaceCurrent);
+  fr.el['fr-replace-all'].addEventListener('click', frReplaceAll);
+  // 角色组合框: 输入(回车/失焦确认源角色) + 下拉候选
+  fr.el['fr-src'].addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); frConfirmSrc(); } });
+  fr.el['fr-src'].addEventListener('change', frConfirmSrc);
+  fr.el['fr-src-dd'].addEventListener('click', (e) => { e.stopPropagation(); frToggleMenu('src'); });
+  fr.el['fr-dst-dd'].addEventListener('click', (e) => { e.stopPropagation(); frToggleMenu('dst'); });
+  document.addEventListener('click', (e) => {
+    for (const w of ['src', 'dst']) {
+      const menu = fr.el[w + '-menu'];
+      if (menu && !menu.hidden && !menu.contains(e.target) && e.target !== fr.el[w + '-dd']) menu.hidden = true;
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !fr.el['fr-overlay'].hidden) { e.preventDefault(); e.stopPropagation(); frClose(); }
+  }, true);
+}
+
+function frOpen() {
+  if (state.format !== 'ass' || !state.kar) { toast('查找与批量替换仅支持 ASS 字幕'); return; }
+  fr.el['fr-overlay'].hidden = false;
+  frSetTab('text');
+  setTimeout(() => fr.el['fr-find'].focus(), 0);
+}
+function frClose() { fr.el['fr-overlay'].hidden = true; }
+
+function frStatus(msg, hasMatch) {
+  fr.el['fr-status'].textContent = msg;
+  fr.el['fr-status'].classList.toggle('has-match', !!hasMatch);
+}
+
+function frSetTab(tab) {
+  fr.tab = tab;
+  fr.el['fr-tab-text'].classList.toggle('active', tab === 'text');
+  fr.el['fr-tab-role'].classList.toggle('active', tab === 'role');
+  fr.el['fr-text-opts'].hidden = tab !== 'text';
+  fr.el['fr-pane-text'].hidden = tab !== 'text';
+  fr.el['fr-pane-role'].hidden = tab !== 'role';
+  fr.matches = []; fr.cur = -1;
+  if (tab === 'text') frScan();
+  else {
+    fr.srcRole = '';
+    fr.el['fr-src'].value = '';
+    frStatus(t('输入或展开候选并确认一个源角色'));
+  }
+}
+
+/** 由查找输入构造正则(已转义, 含大小写/全词选项), 无关键词返回 null */
+function frRegex() {
+  const q = fr.el['fr-find'].value;
+  if (!q) return null;
+  let src = escapeReg(q);
+  if (fr.el['fr-word'].checked) src = '\\b(?:' + src + ')\\b';
+  try { return new RegExp(src, fr.el['fr-case'].checked ? 'g' : 'gi'); } catch { return null; }
+}
+
+/** 重新扫描匹配(正文: 按关键词; 角色: 按已确认的源角色) */
+function frScan() {
+  fr.matches = []; fr.cur = -1;
+  if (fr.tab === 'text') {
+    const re = frRegex();
+    if (!re) { frStatus(t('输入正文关键词后开始查找')); return; }
+    const scope = fr.el['fr-scope'].value;
+    const fields = scope === 'zh' ? ['zh'] : scope === 'en' ? ['en'] : ['zh', 'en'];
+    let occ = 0;
+    for (const row of state.kar.rows) {
+      for (const f of fields) {
+        const s = row[f] && row[f].text;
+        if (!s) continue;
+        const m = s.match(new RegExp(re.source, 'g' + (fr.el['fr-case'].checked ? '' : 'i')));
+        if (m) { fr.matches.push({ row, field: f }); occ += m.length; }
+      }
+    }
+    frStatus(fr.matches.length
+      ? t(`找到 ${fr.matches.length} 行 / 共 ${occ} 处`)
+      : t('没有找到匹配的字幕 —— 试试勾掉「区分大小写」或取消「全词匹配」'), fr.matches.length > 0);
+  } else {
+    if (!fr.srcRole) { frStatus(t('输入或展开候选并确认一个源角色')); return; }
+    frScanRole();
+  }
+}
+
+function frScanRole() {
+  const key = fr.srcRole.toLowerCase();
+  fr.matches = state.kar.rows
+    .filter(r => speakerNames(r.speaker).map(x => x.toLowerCase()).includes(key))
+    .map(r => ({ row: r, field: null }));
+  fr.cur = -1;
+  frStatus(t(`「${fr.srcRole}」共 ${fr.matches.length} 行 —— 可逐条跳转或替换`), fr.matches.length > 0);
+}
+
+function frGoto(m) {
+  const item = state.itemByRef.get(m.row);
+  if (item) selectItem(item, true);          // 选中 + 播放头跳过去
+  else video.currentTime = m.row.start + 0.001;
+}
+
+function frGo(dir) {
+  if (!fr.matches.length) { frScan(); if (!fr.matches.length) return; }
+  fr.cur = ((fr.cur + dir) % fr.matches.length + fr.matches.length) % fr.matches.length;
+  frGoto(fr.matches[fr.cur]);
+  frStatus(t(`第 ${fr.cur + 1}/${fr.matches.length} 条`), true);
+}
+function frLocate() {
+  if (!fr.matches.length) { frScan(); if (!fr.matches.length) return; }
+  const time = video.currentTime;
+  let idx = fr.matches.findIndex(m => time >= m.row.start - 1e-3 && time <= m.row.end + 1e-3);
+  if (idx < 0) idx = fr.matches.findIndex(m => m.row.start > time);
+  if (idx < 0) idx = fr.matches.length - 1;
+  fr.cur = idx;
+  frGoto(fr.matches[idx]);
+  frStatus(t(`第 ${idx + 1}/${fr.matches.length} 条`), true);
+}
+
+/** 对一行的某个语言字段执行替换(在明文上替换, 经 apply*Sentence 重建事件/逐词); 返回替换处数 */
+function frReplaceField(row, field, re, replText) {
+  const sent = row[field];
+  if (!sent) return 0;
+  const txt = sent.text || '';
+  if (!txt) return 0;
+  const ms = txt.match(new RegExp(re.source, 'g' + (re.flags.includes('i') ? 'i' : '')));
+  if (!ms) return 0;
+  const nt = txt.replace(new RegExp(re.source, 'g' + (re.flags.includes('i') ? 'i' : '')), () => replText);
+  if (field === 'zh') applyAnchorSentence(sent, row.start, row.end, nt);
+  else applyWordSentence(sent, row.start, row.end, nt);
+  return ms.length;
+}
+
+function frCommit() {
+  if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
+  reconcileKaraoke();
+  rebuildItemsAndLanes(true, true);
+}
+
+function frReplaceCurrent() {
+  if (fr.tab === 'role') return frReplaceRole(false);
+  if (!fr.matches.length) { frScan(); if (!fr.matches.length) { toast('没有可替换的匹配'); return; } }
+  if (fr.cur < 0) fr.cur = 0;
+  const re = frRegex();
+  if (!re) { toast('先输入查找内容'); return; }
+  const m = fr.matches[fr.cur];
+  const n = frReplaceField(m.row, m.field, re, fr.el['fr-repl'].value);
+  if (n) {
+    frCommit();
+    frScan();
+    toast(t(`已替换 ${n} 处`));
+  } else toast('该行没有匹配');
+}
+
+function frReplaceAll() {
+  if (fr.tab === 'role') return frReplaceRole(true);
+  const re = frRegex();
+  if (!re) { toast('先输入查找内容'); return; }
+  if (!fr.matches.length) frScan();
+  if (!fr.matches.length) { toast('没有找到匹配的字幕'); return; }
+  const repl = fr.el['fr-repl'].value;
+  let occ = 0;
+  for (const m of fr.matches) occ += frReplaceField(m.row, m.field, re, repl);
+  frCommit();
+  frScan();
+  toast(t(`全部替换完成：共 ${occ} 处`));
+}
+
+/* ── 角色 tab ── */
+function frToggleMenu(which) {
+  const menu = fr.el[which + '-menu'];
+  if (!menu.hidden) { menu.hidden = true; return; }
+  const other = fr.el[which === 'src' ? 'dst-menu' : 'src-menu'];
+  if (other) other.hidden = true;
+  const roles = computeRoles();
+  menu.innerHTML = roles.length
+    ? roles.map(r => `<button type="button" class="fr-menu-item" data-name="${escapeHtml(r.name)}">
+        <span class="pick-dot" style="background:${r.color || '#5b6472'}"></span>
+        <span>${escapeHtml(r.name)}</span><span class="fr-menu-n">${r.count}</span>
+      </button>`).join('')
+    : '<div class="fr-menu-empty">（当前字幕里没有角色）</div>';
+  menu.hidden = false;
+  menu.querySelectorAll('.fr-menu-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      menu.hidden = true;
+      const input = fr.el[which === 'src' ? 'fr-src' : 'fr-dst'];
+      input.value = btn.dataset.name;
+      if (which === 'src') frConfirmSrc();
+    });
+  });
+}
+
+function frConfirmSrc() {
+  const name = fr.el['fr-src'].value.trim();
+  if (!name) { fr.srcRole = ''; fr.matches = []; frStatus(t('输入或展开候选并确认一个源角色')); return; }
+  const role = computeRoles().find(r => r.name.toLowerCase() === name.toLowerCase());
+  if (!role) {
+    fr.srcRole = ''; fr.matches = [];
+    frStatus(t(`「${name}」不是已有角色 —— 源角色必须从已有角色里确认`));
+    return;
+  }
+  fr.srcRole = role.name;
+  fr.el['fr-src'].value = role.name;
+  frScanRole();
+}
+
+function frReplaceRole(all) {
+  const dst = fr.el['fr-dst'].value.trim();
+  if (!fr.srcRole) { toast('先确认一个源角色（输入后回车，或点 ▼ 选择）'); return; }
+  if (!dst) { toast('先填写目标角色'); return; }
+  if (!fr.matches.length) frScanRole();
+  if (!fr.matches.length) { toast(`「${fr.srcRole}」没有台词`); return; }
+  if (!all && fr.cur < 0) fr.cur = 0;
+  const targets = all ? fr.matches.map(m => m.row) : [fr.matches[fr.cur].row];
+  let n = 0;
+  for (const row of targets) { applyRoleToRow(row, dst); n++; }
+  frCommit();
+  const srcGone = !computeRoles().some(r => r.name.toLowerCase() === fr.srcRole.toLowerCase());
+  if (all) {
+    frStatus(t(`已把「${fr.srcRole}」的 ${n} 行替换为「${dst}」`), true);
+    toast(t(`已把「${fr.srcRole}」的 ${n} 行替换为「${dst}」`));
+    fr.srcRole = ''; fr.matches = []; fr.cur = -1;
+    if (srcGone) fr.el['fr-src'].value = '';
+  } else {
+    frScanRole();
+    toast(t(`已将 1 行替换为「${dst}」`));
+  }
+}
+frInit();
+panel.onFindReplace = frOpen;
+
 /** 去掉一行的逐词效果: 英文切片合并成一条干净整句, 时间对齐中文行(同 main.py 的 remove_karaoke) */
 function deKaraokeRow(row) {
   const en = row.en;
@@ -1359,7 +1626,8 @@ let reRecogBusy = false;
 /** 按一条识别结果建字幕块: 中文整句 + 英文逐词句（用 ASR 给的真实词级时间） */
 function addRecognizedRow(seg) {
   const s = seg.start, e = seg.end;
-  const zhText = String(seg.zh || '').trim();
+  // 与初稿写入同一约定: 中文译文里的逗号/顿号/句号替换成空格(! ? 保留)
+  const zhText = String(seg.zh || '').replace(/[，、。]/g, ' ').trim();
   const enText = String(seg.text || '').trim();
   if (!zhText && !enText) return null;
   if (state.format === 'srt') {

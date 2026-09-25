@@ -745,6 +745,8 @@ export function initProjects(ctx) {
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
+        // 勾了「区分说话人」→ 编辑器的「启用角色标注」帮用户打开(字幕里会带 [SPKn] 标签, 禁着没意义)
+        if (payload.speakers) localStorage.setItem('ss-role-annot', '1');
       } else {
         payload.subtitle = { name: npSub.name, text: npSub.text };
       }
