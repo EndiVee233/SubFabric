@@ -487,9 +487,18 @@
     </div>
     <div class="st-row st-row-top">
       <span class="st-lbl">术语表</span>
-      <textarea id="st-glossary" class="st-area" spellcheck="false" rows="5"
-        title="每行一条，格式「英文=中文」或「英文 中文」；# 开头为注释。翻译时会强制按这些译法来译（专有名词一致性）"
-        placeholder="Creeper=苦力怕&#10;Ender Dragon=末影龙"></textarea>
+      <div class="gl-wrap">
+        <div class="gl-hint">添加词条后，原文词在翻译时会自动采用指定译法，无需写进系统提示词。</div>
+        <div class="gl-hint">词条按目标语言分组：在上方切换语言进行编辑，翻译时只应用当前目标语言词条。</div>
+        <div class="gl-tabs" id="gl-tabs"></div>
+        <button type="button" class="gl-add" id="gl-add">＋ 添加词条</button>
+        <div class="gl-head">
+          <span>原文</span>
+          <span>译法 · <b id="gl-langname">简体</b></span>
+          <span></span>
+        </div>
+        <div class="gl-rows" id="gl-rows"></div>
+      </div>
     </div>
 
     <div class="st-msg" id="st-msg"></div>

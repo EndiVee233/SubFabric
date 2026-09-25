@@ -115,5 +115,15 @@
   "先确认一个源角色（输入后回车，或点 ▼ 选择）": "Confirm a source role first (Enter, or pick via ▼)",
   "没有找到匹配的字幕": "No matching subtitles",
   "没有可替换的匹配": "Nothing to replace",
-  "没有找到匹配的字幕 —— 试试勾掉「区分大小写」或取消「全词匹配」": "No matches — try disabling case sensitivity or whole word"
+  "没有找到匹配的字幕 —— 试试勾掉「区分大小写」或取消「全词匹配」": "No matches — try disabling case sensitivity or whole word",
+  "术语表": "Glossary",
+  "添加词条后，原文词在翻译时会自动采用指定译法，无需写进系统提示词。": "Added terms are applied automatically during translation — no need to put them in the system prompt.",
+  "词条按目标语言分组：在上方切换语言进行编辑，翻译时只应用当前目标语言词条。": "Terms are grouped by target language: switch languages above to edit; only the current language group is applied.",
+  "＋ 添加词条": "+ Add term",
+  "原文": "Source",
+  "译法": "Translation",
+  "原文词（如 Spike）": "Source term (e.g. Spike)",
+  "译法（如 斯派克）": "Translation (e.g. 斯派克)",
+  "删除该词条": "Delete this term",
+  "还没有词条 —— 点上面的「＋ 添加词条」开始": "No terms yet — click “+ Add term” above"
 }

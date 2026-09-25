@@ -8,6 +8,7 @@
  * 路由: #/home 主界面 · #/project/<id> 编辑器 · #/editor 无项目直开(兼容旧用法/测试)
  */
 import { serializeSRT } from './srt.js';
+import { t } from './i18n.js';
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, routeSub, loadVideoUrl } = ctx;
@@ -490,7 +491,7 @@ export function initProjects(ctx) {
     $('#st-key').value = c.apiKey || '';
     $('#st-model').value = c.model || '';
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
-    $('#st-glossary').value = c.glossary || '';
+    glLoad(c.glossary, c.glossaryLang);
     $('#st-auto').checked = !!c.autoTranslate;
     renderAsrModels();
   }
@@ -588,6 +589,91 @@ export function initProjects(ctx) {
     if (p && p.baseUrl) { $('#st-baseurl').value = p.baseUrl; $('#st-model').value = p.model; }
   });
 
+  /* ─────────── 术语表词条编辑器 ───────────
+   * 按目标语言分组: 每组一张词条表(原文 → 译法), 翻译时只把当前组的词条注入提示词。
+   * 存盘格式仍是文本('##组名' 分节 + '原文=译法' 行), 服务端 parseGlossary 按目标语言取组。 */
+  const GL_LANGS = ['简体', '繁體', 'English'];
+  const glState = { lang: '简体', terms: {} };
+  function glReset() { for (const l of GL_LANGS) glState.terms[l] = []; }
+  glReset();
+
+  function glParse(text) {
+    glReset();
+    let cur = '简体';
+    for (const raw of String(text || '').split(/\r?\n/)) {
+      const l = raw.trim();
+      if (!l || l.startsWith('#')) continue;
+      const sec = /^##\s*(.+)$/.exec(l);
+      if (sec) {
+        const name = sec[1].trim();
+        cur = GL_LANGS.includes(name) ? name : (GL_LANGS.find(x => x.toLowerCase() === name.toLowerCase()) || '简体');
+        continue;
+      }
+      const m = /^(.+?)\s*=\s*(.+)$/.exec(l) || /^(\S+)\s+(.+)$/.exec(l);
+      if (m) glState.terms[cur].push([m[1].trim(), m[2].trim()]);
+    }
+  }
+  function glSerialize() {
+    const out = [];
+    for (const l of GL_LANGS) {
+      const rows = glState.terms[l].filter(([a, b]) => a && b);
+      if (!rows.length) continue;
+      out.push('##' + l);
+      for (const [a, b] of rows) out.push(a + '=' + b);
+    }
+    return out.join('\n');
+  }
+  function glRowCount() {
+    return GL_LANGS.reduce((n, l) => n + glState.terms[l].filter(([a, b]) => a && b).length, 0);
+  }
+  function glRender() {
+    const tabs = $('#gl-tabs'), box = $('#gl-rows'), name = $('#gl-langname');
+    if (!tabs || !box) return;
+    tabs.innerHTML = GL_LANGS.map(l => {
+      const n = glState.terms[l].filter(([a, b]) => a && b).length;
+      return `<button type="button" class="gl-tab${l === glState.lang ? ' active' : ''}" data-lang="${esc(l)}"
+        title="${esc(l)}：${n} 条词条">${esc(l)}${n ? ' · ' + n : ''}</button>`;
+    }).join('');
+    tabs.querySelectorAll('.gl-tab').forEach(b => b.addEventListener('click', () => {
+      glState.lang = b.dataset.lang;
+      glRender();
+    }));
+    if (name) name.textContent = glState.lang;
+    const rows = glState.terms[glState.lang];
+    box.innerHTML = rows.length ? '' : '<div class="gl-empty">' + esc(t('还没有词条 —— 点上面的「＋ 添加词条」开始')) + '</div>';
+    rows.forEach((pair, i) => {
+      const row = document.createElement('div');
+      row.className = 'gl-row';
+      row.innerHTML = `<input type="text" class="gl-input gl-src" spellcheck="false" placeholder="${esc(t('原文词（如 Spike）'))}">
+        <input type="text" class="gl-input gl-dst" spellcheck="false" placeholder="${esc(t('译法（如 斯派克）'))}">
+        <button type="button" class="gl-del" title="${esc(t('删除该词条'))}">🗑</button>`;
+      const [srcEl, dstEl] = row.querySelectorAll('.gl-input');
+      srcEl.value = pair[0] || '';
+      dstEl.value = pair[1] || '';
+      srcEl.addEventListener('input', () => { rows[i][0] = srcEl.value; });
+      dstEl.addEventListener('input', () => { rows[i][1] = dstEl.value; });
+      row.querySelector('.gl-del').addEventListener('click', () => { rows.splice(i, 1); glRender(); });
+      box.appendChild(row);
+    });
+  }
+  function glLoad(text, lang) {
+    glParse(text);
+    if (GL_LANGS.includes(lang)) glState.lang = lang;
+    else {
+      // 旧配置没有分组标记时, 落在哪组就切到哪组(免得用户以为词条丢了)
+      const only = GL_LANGS.filter(l => glState.terms[l].length);
+      if (only.length === 1) glState.lang = only[0];
+    }
+    glRender();
+  }
+  const glAddBtn = $('#gl-add');
+  if (glAddBtn) glAddBtn.addEventListener('click', () => {
+    glState.terms[glState.lang].push(['', '']);
+    glRender();
+    const srcs = $('#gl-rows').querySelectorAll('.gl-src');
+    if (srcs.length) srcs[srcs.length - 1].focus();
+  });
+
   function collectSettings() {
     return {
       provider: $('#st-provider').value,
@@ -595,7 +681,8 @@ export function initProjects(ctx) {
       apiKey: $('#st-key').value.trim(),
       model: $('#st-model').value.trim(),
       prompt: $('#st-prompt').value,
-      glossary: $('#st-glossary').value,
+      glossary: glSerialize(),
+      glossaryLang: glState.lang,
       autoTranslate: $('#st-auto').checked,
     };
   }

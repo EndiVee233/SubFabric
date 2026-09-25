@@ -429,21 +429,35 @@ function translateCfg() {
     autoTranslate: !!t.autoTranslate,
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
+    glossaryLang: t.glossaryLang || '简体',
     hasKey: !!t.apiKey,
   };
 }
 
-/** 术语表文本 → [['英文','中文'], …]: 每行一条, '英文=中文' 或 '英文 中文';
- *  # 开头为注释, 空行忽略。译文里出现这些词时按给定译法翻(专有名词一致性)。 */
-function parseGlossary(text) {
-  const out = [];
-  for (const line of String(text || '').split(/\r?\n/)) {
-    const l = String(line).trim();
-    if (!l || l.startsWith('#')) continue;
-    const m = /^(.+?)\s*=\s*(.+)$/.exec(l) || /^(\S+)\s+(.+)$/.exec(l);
-    if (m) out.push([m[1].trim(), m[2].trim()]);
+/** 术语表文本 → 当前目标语言的 [['原文','译法'], …]。
+ *  每行一条: '原文=译法' 或 '原文 译法'; '#' 开头为注释;
+ *  '##组名' 切换分组(如 ##简体 / ##繁體 / ##English), 翻译时只用当前目标语言那组;
+ *  没有分组标记的旧格式(纯行)整份生效; 有分组但当前组为空且只有一组非空 → 用那一组兜底。 */
+function parseGlossary(text, lang) {
+  const groups = new Map();
+  let cur = '', sawSection = false;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const l = String(raw).trim();
+    if (!l) continue;
+    const sec = /^##\s*(.+)$/.exec(l);        // 分组标记要**先**判 —— 否则会被 '#' 注释规则吃掉
+    if (sec) { cur = sec[1].trim(); sawSection = true; continue; }
+    if (l.startsWith('#')) continue;          // 注释
+    // '原文=译法' 优先; 没有等号才退回空格分隔(取**最后一个**空白切, 好让 "Ender Dragon 末影龙" 正确)
+    const m = /^(.+?)\s*=\s*(.+)$/.exec(l) || /^(.+)\s+(\S+)$/.exec(l);
+    if (!m) continue;
+    if (!groups.has(cur)) groups.set(cur, []);
+    groups.get(cur).push([m[1].trim(), m[2].trim()]);
   }
-  return out;
+  if (!sawSection) return groups.get('') || [];
+  const want = groups.get(lang || '简体') || [];
+  if (want.length) return want;
+  const nonEmpty = [...groups.entries()].filter(([k, v]) => k && v.length);
+  return nonEmpty.length === 1 ? nonEmpty[0][1] : [];
 }
 
 /** 系统提示词 = 用户提示词 + 术语表块(有术语表时才追加) */
@@ -452,7 +466,7 @@ function systemPromptWithGlossary(cfg, strict) {
     ? cfg.prompt + '\n\n【极其重要】上一次的回复不是合法 JSON 数组。这一次必须**只输出 JSON 数组本身**：'
       + '以 [ 开头、以 ] 结尾，元素个数等于输入行数，不要任何解释、不要 markdown 代码块、不要编号。'
     : cfg.prompt;
-  const g = parseGlossary(cfg.glossary);
+  const g = parseGlossary(cfg.glossary, cfg.glossaryLang);
   if (!g.length) return sys;
   return sys + '\n\n【术语表】下面的词必须按给定译法翻译，不要音译、不要另译（未列出的按常规翻译）：\n'
     + g.map(([a, b]) => `${a} = ${b}`).join('\n');
@@ -1935,7 +1949,7 @@ const server = http.createServer((req, res) => {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt', 'glossary']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);
