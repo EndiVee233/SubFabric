@@ -528,7 +528,7 @@ export function initProjects(ctx) {
       return;
     }
     const dl = d.download || {};
-    const rows = (d.models || []).map((m) => {
+    let rows = (d.models || []).map((m) => {
       const dlThis = dl.running && (dl.modelId === m.id || (dl.kind === 'runtime' && m.needRuntime));
       let state, btn = '';
       if (dlThis) state = `<span class="sm-state running">${esc(dl.msg || '下载中…')} ${dl.pct || 0}%</span>`;

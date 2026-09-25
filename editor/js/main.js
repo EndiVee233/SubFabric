@@ -2262,6 +2262,10 @@ requestAnimationFrame(tick);
         const r = await fetch('/api/version', { signal: AbortSignal.timeout(5000) });
         if (!r.ok) return;
         const j = await r.json();
+        if (j && j.version) {
+          const lv = document.getElementById('app-version');
+          if (lv) lv.textContent = 'v' + j.version;   // 首页版本号永远跟运行中的服务端一致
+        }
         if (j && String(j.stamp) !== pageStamp) showBanner();
       } catch {}
     };

@@ -18,7 +18,7 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.2.2'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.2.3'; // 与打版号一致; 改了就顺手同步这里
 
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
@@ -904,6 +904,12 @@ function handleRequest(req, res) {
   if (pathname === '/api/version') {
     return send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' },
       JSON.stringify({ stamp: BUILD_STAMP, version: APP_VERSION }));
+  }
+  // 站点图标(内联 SVG, 省得浏览器请求 /favicon.ico 报 404 污染控制台)
+  if (pathname === '/favicon.ico' || pathname === '/favicon.svg') {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#6d5efc"/>'
+      + '<text x="16" y="24" font-size="20" text-anchor="middle">🎬</text></svg>';
+    return send(res, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' }, svg);
   }
 
   // 波形图: 示例视频直接读磁盘原文件(不复制/不保存), 本地文件走 POST 上传临时文件(用完即删)

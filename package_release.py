@@ -1,25 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""打包发行版 zip: 复刻 K-ASS-Editor-1.2.1 的结构。
+"""打包发行版 zip: 复刻 K-ASS-Editor-1.2.1 的结构(扁平, 无外层目录)。
 
 包含: .gitignore, main.py, asr/, editor/, start-editor.bat, start-editor.command
 排除: .git / venv / models / projects / _test / tests / __pycache__ / *.pyc / node_modules / .workbuddy
+
+注意: 打包前先跑 `node editor/scripts/fetch-vendor.js`, 确保 editor/vendor 完整(否则对方渲染不了字幕)。
+用法: python package_release.py [版本号]   默认 1.2.3
 """
 import os, zipfile, sys
 
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.2.3'
 ROOT = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(ROOT, 'K-ASS-Editor-1.2.2.zip')
+OUT = os.path.join(ROOT, 'K-ASS-Editor-%s.zip' % VERSION)
 
 EXCLUDE_DIRS = {'.git', 'asr/.venv', 'asr/models', 'asr/__pycache__', 'editor/__pycache__',
                 'node_modules', 'projects', '_test', 'tests', '__pycache__', '.workbuddy'}
-EXCLUDE_FILES = {'asr/settings.json', '.DS_Store', 'Thumbs.db', 'desktop.ini',
-                 'K-ASS-Editor-1.2.2.zip', 'K-ASS-Editor-1.2.1.zip'}
+EXCLUDE_FILES = {'asr/settings.json', '.DS_Store', 'Thumbs.db', 'desktop.ini'}
 EXCLUDE_EXT = {'.pyc'}
 
 INCLUDE_TOP = ['.gitignore', 'main.py', 'asr', 'editor']
 
-BAT = '@echo off\ncd /d "%~dp0editor"\nstart "" http://127.0.0.1:8321/\nnode server.js\npause\n'
-CMD = '#!/bin/bash\ncd "$(dirname "$0")/editor"\nopen http://127.0.0.1:8321/ 2>/dev/null || xdg-open http://127.0.0.1:8321/ 2>/dev/null\nnode server.js\n'
+BAT = ('@echo off\r\n'
+       'cd /d "%~dp0editor"\r\n'
+       'rem 先清掉可能还占着 8321 的旧实例, 免得浏览器连到旧服务看到旧界面/卡在"读取中"\r\n'
+       'for /f "tokens=5" %%p in (\'netstat -ano ^| findstr ":8321" ^| findstr LISTENING\') do taskkill /F /PID %%p >nul 2>&1\r\n'
+       'start "" http://127.0.0.1:8321/\r\n'
+       'node server.js\r\n'
+       'pause\r\n')
+CMD = ('#!/bin/bash\n'
+       'cd "$(dirname "$0")/editor"\n'
+       '# 先清掉可能还占着 8321 的旧实例\n'
+       'lsof -ti tcp:8321 2>/dev/null | xargs -r kill 2>/dev/null\n'
+       '(open http://127.0.0.1:8321/ 2>/dev/null || xdg-open http://127.0.0.1:8321/ 2>/dev/null) &\n'
+       'node server.js\n')
 
 
 def keep(p):
