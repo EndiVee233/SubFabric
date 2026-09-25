@@ -333,6 +333,15 @@
           <span id="np-word-desc">开启 → 生成 ASS 逐词字幕</span>
         </label>
       </div>
+      <div class="np-file-row np-draft-only" id="np-row-spk" hidden>
+        <span class="np-lbl">说话人</span>
+        <label class="np-switch">
+          <input type="checkbox" id="np-speakers">
+          <span>区分说话人（中文行标 [SPKn]，按颜色区分）</span>
+        </label>
+        <input type="number" id="np-spk-count" class="np-input" min="1" max="12" placeholder="6"
+               style="max-width:74px;flex:0 0 74px" title="视频里有几个说话人；留空默认按 6 个聚类">
+      </div>
       <div class="np-model np-draft-only" id="np-model" hidden>
         <div class="np-file-row">
           <span class="np-lbl">识别模型</span>

@@ -295,6 +295,7 @@ const pendingAsr = new Map();    // prepare 成功后待跑识别的项目 id ->
 const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId -> job
 
 const ASR_DIR = path.join(ROOT, 'asr');
+const modelsRoot = () => path.join(ASR_DIR, 'models');
 const ASR_SCRIPT = path.join(ASR_DIR, 'asr.py');
 const ASR_SETTINGS = path.join(ASR_DIR, 'settings.json');
 const HF_ENDPOINT = (process.env.HF_ENDPOINT || 'https://hf-mirror.com').replace(/\/+$/, '');
@@ -329,6 +330,23 @@ const MODEL_PATTERNS = [/^encoder.*\.onnx$/i, /^decoder.*\.onnx$/i, /^joiner.*\.
                         /^ggml-.*\.bin$/i];
 const modelById = (id) => ASR_MODELS.find(m => m.id === id) || null;
 
+/* 说话人分离模型(两个文件一组): 跑在音频上, 与识别引擎无关 —— 两个 ASR 模型都能用 */
+const DIARIZE_MODELS = [
+  {
+    id: 'pyannote-segmentation-3-0', name: '说话人分段模型',
+    url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2',
+    file: 'model.onnx', sizeMB: 7, archive: true,
+    inner: 'sherpa-onnx-pyannote-segmentation-3-0/model.onnx',
+  },
+  {
+    id: 'eres2net-sv-en-voxceleb', name: '说话人嵌入模型（英语）',
+    url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_sv_en_voxceleb_16k.onnx',
+    file: 'speaker-embedding.onnx', sizeMB: 26,
+  },
+];
+const DIARIZE_DIR = () => path.join(ASR_DIR, 'models', 'diarize');
+const diarizeReady = () => DIARIZE_MODELS.every(m => { try { return fs.statSync(path.join(DIARIZE_DIR(), m.file)).isFile(); } catch { return false; } });
+
 /* whisper.cpp 运行时(whisper-cli.exe + DLL, ~12MB): 用 ggml 模型才需要 */
 const WHISPER_RUNTIME = {
   url: 'https://github.com/ggml-org/whisper.cpp/releases/download/b5130/whisper-bin-x64.zip',
@@ -339,7 +357,7 @@ const whisperCli = () => path.join(WHISPER_RUNTIME.dir, 'whisper-cli.exe');
 const whisperRuntimeOk = () => { try { return fs.statSync(whisperCli()).isFile(); } catch { return false; } };
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
- * diarize / reseg 目前未实现, 名字先占好位, 将来接上直接复用同一套状态机。 */
+ * diarize 已实现; reseg(语义分句) 未实现, 名字先占好位。 */
 const STAGE = {
   extract: '提取音频中',
   asr: 'ASR识别中',
@@ -351,6 +369,32 @@ const STAGE = {
 
 // 用户手动续跑满这么多次仍不成功, 就放开「跳过此步」(LLM 偶发怎么重试都不对, 得留条出路)
 const SKIP_AFTER_RETRIES = 3;
+
+/* 说话人角色色板(轮转使用): #RRGGBB, 写进中文行行首色标 —— 编辑器的角色色来源 */
+const ROLE_PALETTE = ['#ff00d0', '#00b0f0', '#ffb400', '#00d26a', '#b066ff', '#ff5f6b', '#00e0b0', '#c2c2c2'];
+/** '#RRGGBB' → ASS 的 '&HBBGGRR&' */
+function assColorFromRgb(hex) {
+  const n = String(hex || '').replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(n)) return 'HFFFFFF&';
+  return '&' + n.slice(4, 6) + n.slice(2, 4) + n.slice(0, 2) + '&';
+}
+/** 按重叠最大的分离片段给每段 ASR 结果指派说话人, 并重排为 0 起始的 SPK1..N(按出现顺序) */
+function assignSpeakers(segments, regions) {
+  for (const s of segments) {
+    let best = -1, bestOv = 0;
+    for (const r of regions) {
+      const ov = Math.min(s.end, r.end) - Math.max(s.start, r.start);
+      if (ov > bestOv) { bestOv = ov; best = r.speaker; }
+    }
+    s.speaker = best >= 0 ? best : 0;
+  }
+  const order = new Map();
+  for (const s of segments) {
+    if (!order.has(s.speaker)) order.set(s.speaker, order.size);
+    s.speaker = order.get(s.speaker);
+  }
+  return segments;
+}
 
 /* 翻译(LLM): 全部服务端发起, 便于把进度写进项目列表。
  * 预设只给常见的 OpenAI 兼容端点; 选 custom 时三项都自己填。 */
@@ -422,7 +466,6 @@ function writeAsrSettings(obj) {
 }
 /* 每个模型一个目录: asr/models/<dirName>。settings.models 记录各模型目录,
  * asrModelDir 是旧字段(仅 parakeet 兼容)。selectedModel = 创建初稿默认用的模型。 */
-const modelsRoot = () => path.join(ASR_DIR, 'models');
 function modelDirFor(modelId) {
   const s = readAsrSettings();
   if (s.models && s.models[modelId]) return String(s.models[modelId]);
@@ -521,6 +564,48 @@ function startModelDownload(model, dir) {
       writeAsrSettings(s);
       if (!s.selectedModel) setSelectedModel(model.id);
       downloadState = { running: false, kind: 'model', pct: 100, msg: '下载完成', error: null, modelId: model.id, dir };
+    } catch (e) {
+      downloadState.running = false;
+      downloadState.error = String((e && e.message) || e);
+      downloadState.msg = '下载失败: ' + downloadState.error;
+    }
+  })();
+}
+
+/** 下载说话人分离模型(两个文件)到 DIARIZE_DIR() */
+function startDiarizeDownload() {
+  if (downloadState.running) return;
+  downloadState = { running: true, kind: 'diarize', pct: 0, msg: '准备下载分离模型…', error: null, modelId: 'diarize', dir: DIARIZE_DIR() };
+  (async () => {
+    try {
+      fs.mkdirSync(DIARIZE_DIR(), { recursive: true });
+      for (let i = 0; i < DIARIZE_MODELS.length; i++) {
+        const m = DIARIZE_MODELS[i];
+        const dest = path.join(DIARIZE_DIR(), m.file);
+        if (fs.existsSync(dest) && fs.statSync(dest).size > 1024) continue;
+        const tmp = dest + '.dl';
+        await downloadFile(m.url, tmp, (done, total) => {
+          downloadState.pct = total ? Math.min(99, Math.round((i + done / total) / DIARIZE_MODELS.length * 100)) : 0;
+          downloadState.msg = `下载 ${m.name}：${(done / 1048576).toFixed(1)} MB`;
+        });
+        if (m.archive) {
+          // 分段模型是 tar.bz2 归档: 解包取出里面的 model.onnx
+          const sysTar = path.join(process.env.SystemRoot || 'C:' + path.sep + 'Windows', 'System32', 'tar.exe');
+          const exDir = path.join(DIARIZE_DIR(), '_ex_' + i);
+          fs.mkdirSync(exDir, { recursive: true });
+          const rr = spawn(sysTar, ['-xf', tmp, '-C', exDir], { windowsHide: true });
+          await new Promise((res) => { rr.on('close', res); rr.on('error', res); });
+          const inner = m.inner ? path.join(exDir, m.inner) : path.join(exDir, path.basename(m.file));
+          if (!fs.existsSync(inner)) throw new Error('归档里未找到 ' + m.file);
+          fs.renameSync(inner, dest);
+          fs.rmSync(exDir, { recursive: true, force: true });
+          fs.unlinkSync(tmp);
+        } else {
+          fs.renameSync(tmp, dest);
+        }
+      }
+      if (!diarizeReady()) throw new Error('下载后分离模型仍不完整');
+      downloadState = { running: false, kind: 'diarize', pct: 100, msg: '下载完成', error: null, modelId: 'diarize', dir: DIARIZE_DIR() };
     } catch (e) {
       downloadState.running = false;
       downloadState.error = String((e && e.message) || e);
@@ -848,6 +933,41 @@ const server = http.createServer((req, res) => {
     }
   }
 
+  /* ═══════════ 说话人分离（后台, 跑在音频上与引擎无关） ═══════════ */
+  function runDiarize(wav, onProgress) {
+    const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
+    const embModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[1].file);
+    const outJson = wav + '.diarize.json';
+    return new Promise((resolve, reject) => {
+      const p = spawn(ASR_PY, [path.join(ASR_DIR, 'diarize.py'),
+        '--segmentation', segModel, '--embedding', embModel, '--audio', wav, '--out', outJson],
+        { windowsHide: true, cwd: ASR_DIR });
+      let buf = '', pyErr = '';
+      const timer = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
+      const done = (fn) => { clearTimeout(timer); try { fs.unlinkSync(outJson); } catch {} fn(); };
+      p.stderr.on('data', d => {
+        const s = String(d);
+        if (pyErr.length < 2000) pyErr += s;
+        for (const line of s.split('\n')) {
+          const tt = line.trim();
+          if (!tt.startsWith('{')) continue;
+          let o; try { o = JSON.parse(tt); } catch { continue; }
+          if (o.type === 'progress' && onProgress) onProgress(o.pct, o.msg);
+        }
+      });
+      p.on('error', e => done(() => reject(new Error('无法启动分离进程: ' + e.message))));
+      p.on('close', c => {
+        let data = null;
+        try { data = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
+        if (c !== 0 || !data || !Array.isArray(data.regions)) {
+          const m = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
+          return done(() => reject(new Error((m && m[1]) || ('分离失败（退出码 ' + c + '）'))));
+        }
+        done(() => resolve(data));
+      });
+    });
+  }
+
   /* ═══════════ 初稿流水线 ═══════════
    * stage 划分: 提取音频+波形(0~28, 由 startPrepare 负责) → 语音识别(28~85)
    *             → 生成字幕(85~100)。状态落在 meta.draft, 前端轮询进度。 */
@@ -930,10 +1050,11 @@ const server = http.createServer((req, res) => {
   }
 
   /** 一个逐词切片: 文本是**整句全文**, 只有当前词用 {\c&H00ff00&}词{\c} 内联高亮。
-   *  这是本编辑器判定逐词特效的格式(karaoke.js 的 HL_RE), 不是 \k 系列标签。 */
-  function wordSliceLine(words, idx, start, end) {
+   *  这是本编辑器判定逐词特效的格式(karaoke.js 的 HL_RE), 不是 \k 系列标签。
+   *  name = 说话人(写进 Name 栏, 编辑器据此显示角色); 角色色只上中文行, 英文行保持绿色高亮。 */
+  function wordSliceLine(words, idx, start, end, name) {
     const text = words.map((w, i) => (i === idx ? `{\\c&H00ff00&}${w.word}{\\c}` : w.word)).join(' ');
-    return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,,0,0,0,,${text}\n`;
+    return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${text}\n`;
   }
 
   /* ── 识别结果 / 译文 读写 ── */
@@ -959,10 +1080,19 @@ const server = http.createServer((req, res) => {
   function writeSubtitle(id, wordLevel, segs, trans) {
     const totalWords = segs.reduce((n, s) => n + ((s.words || []).length), 0);
     const hasTrans = Array.isArray(trans) && trans.length === segs.length;
+    const hasSpk = segs.some(s => s.speaker != null);
     // 部分翻译时 lines 里会有空洞 —— 空洞不写中文行, 免得出现空字幕
     const zhText = (i) => (hasTrans && String(trans[i] || '').trim()) ? String(trans[i]).replace(/\n/g, ' ') : null;
-    const zhLine = (s, t) =>
-      `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},中文字幕,,0,0,0,,${t}\n`;
+    // 角色行: 行首色标(角色色) + [SPKn] 标记 + Name 栏 —— 编辑器据此显示角色色与角色列表
+    const roleOf = (s) => (hasSpk && s.speaker != null) ? {
+      n: s.speaker + 1,
+      color: assColorFromRgb(ROLE_PALETTE[s.speaker % ROLE_PALETTE.length]),
+    } : null;
+    const zhLine = (s, t, role) => {
+      const tag = role ? `{\\c&H${role.color}&}[SPK${role.n}] ` : '';
+      const name = role ? `SPK${role.n}` : '';
+      return `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},中文字幕,${name},0,0,0,,${tag}${t}\n`;
+    };
 
     let format, file, text;
     if (!wordLevel) {
@@ -970,8 +1100,10 @@ const server = http.createServer((req, res) => {
       file = 'subtitle.srt';
       // SRT 双语约定: 第 1 行主语言(中文), 其余为副语言
       text = segs.map((s, i) => {
+        const role = roleOf(s);
         const zh = zhText(i);
-        const body = zh ? `${zh}\n${s.text}` : s.text;
+        let body = s.text;
+        if (zh) body = role ? `[SPK${role.n}] ${zh}\n${s.text}` : `${zh}\n${s.text}`;
         return `${i + 1}\n${fmtSrtTime(s.start)} --> ${fmtSrtTime(s.end)}\n${body}\n\n`;
       }).join('');
     } else if (totalWords < 6) {
@@ -983,7 +1115,7 @@ const server = http.createServer((req, res) => {
       let out = assHeader();
       segs.forEach((s, i) => {
         const zh = zhText(i);
-        if (zh) out += zhLine(s, zh);
+        if (zh) out += zhLine(s, zh, roleOf(s));
         out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,,0,0,0,,${s.text}\n`;
       });
       text = out;
@@ -993,13 +1125,14 @@ const server = http.createServer((req, res) => {
       let out = assHeader();
       segs.forEach((s, i) => {
         const zh = zhText(i);
-        if (zh) out += zhLine(s, zh);
+        if (zh) out += zhLine(s, zh, roleOf(s));
         const ws = s.words || [];
         for (let k = 0; k < ws.length; k++) {
           const st = ws[k].start;
           // 每片一直高亮到下一词起点(最后一片到句尾), 与 main.py 生成的结果一致
           const en = (k + 1 < ws.length) ? Math.max(ws[k + 1].start, st + 0.01) : Math.max(s.end, st + 0.01);
-          out += wordSliceLine(ws, k, st, en);
+          const role = roleOf(s);
+          out += wordSliceLine(ws, k, st, en, role ? `SPK${role.n}` : '');
         }
       });
       text = out;
@@ -1413,7 +1546,29 @@ const server = http.createServer((req, res) => {
     setDraft(id, { status: 'running', stage: STAGE.asr, progress: 30, message: '启动识别引擎…' });
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语音识别（模型：${model.name}，逐词：${wordLevel ? '开' : '关'}）`);
 
-    const finishAsr = () => safeDraftStep(id, () => buildDraftSubtitle(id, wordLevel));
+    // 识别完成后的收尾: 若勾选了「区分说话人」且分离模型就绪 → 先分离再生成字幕;
+    // 分离跑在音频上、与识别引擎无关(Parakeet / whisper.cpp 都能配)
+    const finishAsr = () => {
+      const meta0 = readMeta(id);
+      const wantSpk = !!(meta0 && meta0.draft && meta0.draft.speakers);
+      if (wantSpk && diarizeReady()) {
+        setDraft(id, { stage: STAGE.diarize, progress: 60, message: '区分说话人中 …' });
+        runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 60 + Math.round((pct || 0) * 0.15), message: msg || '区分说话人中 …' }))
+          .then(r => safeDraftStep(id, () => {
+            try {
+              const d = JSON.parse(fs.readFileSync(path.join(projDir(id), 'asr.json'), 'utf8'));
+              assignSpeakers(d.segments || [], r.regions || []);
+              const tmp = path.join(projDir(id), 'asr.json') + '.tmp';
+              fs.writeFileSync(tmp, JSON.stringify(d));
+              fs.renameSync(tmp, path.join(projDir(id), 'asr.json'));
+            } catch (e) { return finishDraft(id, e); }
+            buildDraftSubtitle(id, wordLevel);
+          }))
+          .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
+        return;
+      }
+      buildDraftSubtitle(id, wordLevel);
+    };
 
     // ── whisper.cpp 引擎: whisper-cli(词级用 -ml 1 -sow), 结果转成 asr.json ──
     if (model.engine === 'whisper.cpp') {
@@ -1585,6 +1740,7 @@ const server = http.createServer((req, res) => {
       models,
       selectedModel: selectedModelId(),
       runtime: { ok: whisperRuntimeOk(), dir: WHISPER_RUNTIME.dir, url: WHISPER_RUNTIME.url, sizeMB: WHISPER_RUNTIME.sizeMB },
+      diarize: { ready: diarizeReady(), models: DIARIZE_MODELS },
       // 兼容旧前端字段
       ready: models.some(m => m.ready),
       python: ASR_PY, pythonOk,
@@ -1620,6 +1776,11 @@ const server = http.createServer((req, res) => {
         if (whisperRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
         startRuntimeDownload();
         return sendJson(res, 200, { started: true, kind: 'runtime' });
+      }
+      if (kind === 'diarize') {
+        if (diarizeReady()) return sendJson(res, 200, { started: false, ready: true });
+        startDiarizeDownload();
+        return sendJson(res, 200, { started: true, kind: 'diarize' });
       }
       const model = modelById(modelId) || resolveAsrModel() || ASR_MODELS[0];
       if (!model) return sendJson(res, 400, { error: '未知模型' });
@@ -1732,14 +1893,18 @@ const server = http.createServer((req, res) => {
       const draftOn = !!data.draft;
       const wordLevel = !!data.wordLevel;
       const draftModelId = String((data.modelId || '')).trim();
+      // 说话人分离: 用户勾选 + 告知的说话人数量(没填默认 6, 交给聚类模型)
+      const wantSpeakers = !!data.speakers;
+      const speakerCount = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
       let format = null, file = null, subName = '', subText = '';
 
       if (draftOn) {
         const m = (draftModelId && modelById(draftModelId)) || resolveAsrModel();
-        if (!m) return sendJson(res, 400, { error: '尚未配置语音识别模型：请先在设置里下载（Parakeet / Whisper medium.en 均可）' });
+        if (!m) return sendJson(res, 400, { error: '尚未配置语音识别模型：请先在设置里下载（Parakeet / Whisper large-v3-turbo 均可）' });
         const mdir = modelDirFor(m.id);
         if (missingModelFiles(mdir, m).length) return sendJson(res, 400, { error: `模型 ${m.name} 不完整: 请在设置里重新下载` });
         if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return sendJson(res, 400, { error: 'whisper.cpp 运行时未就绪：请在设置里下载' });
+        if (wantSpeakers && !diarizeReady()) return sendJson(res, 400, { error: '说话人分离模型未就绪：请先在设置里下载（约 32MB）' });
       } else {
         subName = String((data.subtitle && data.subtitle.name) || '');
         subText = String((data.subtitle && data.subtitle.text) || '');
@@ -1766,6 +1931,7 @@ const server = http.createServer((req, res) => {
           message: '提取音频与波形…', wordLevel, lines: 0, words: 0,
           translated: false, needTranslate: false,
           modelId: (draftModelId && modelById(draftModelId)) ? draftModelId : (resolveAsrModel() || {}).id || null,
+          speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
           startedAt: now, error: null,
         };
       }
