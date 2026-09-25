@@ -405,7 +405,10 @@ const DIARIZE_MODELS = [
 const DIARIZE_DIR = () => path.join(ASR_DIR, 'models', 'diarize');
 const diarizeReady = () => DIARIZE_MODELS.every(m => { try { return fs.statSync(path.join(DIARIZE_DIR(), m.file)).isFile(); } catch { return false; } });
 
-/* whisper.cpp 运行时(whisper-cli.exe + DLL, ~12MB): 用 ggml 模型才需要 */
+/* whisper.cpp 运行时(whisper-cli.exe + DLL, ~12MB): 用 ggml 模型才需要。
+ * 注意: 官方 b5130 release 只有 CPU 版(实测无 Vulkan/CUDA 包可用; Vulkan 需自编译),
+ * 所以 whisper.cpp 引擎在本项目是纯 CPU 推理 —— 大音频会慢(约 1.5~2 倍实时),
+ * 界面上必须给出进度与预估, 不能让用户以为卡死了。 */
 const WHISPER_RUNTIME = {
   url: 'https://github.com/ggml-org/whisper.cpp/releases/download/b5130/whisper-bin-x64.zip',
   dir: path.join(ASR_DIR, 'whisper.cpp'),
@@ -816,7 +819,9 @@ function startRuntimeDownload() {
       fs.rmSync(tmpEx, { recursive: true, force: true });
       if (!whisperRuntimeOk()) throw new Error('解压后未找到 whisper-cli.exe');
       cleanup();
-      downloadState = { running: false, kind: 'runtime', pct: 100, msg: `运行时就绪（${n} 个文件）`, error: null, modelId: '', dir: WHISPER_RUNTIME.dir };
+      downloadState = { running: false, kind: 'runtime', pct: 100,
+        msg: '运行时就绪（CPU 模式。官方未提供 GPU 版运行时，大音频识别较慢但正常）',
+        error: null, modelId: '', dir: WHISPER_RUNTIME.dir };
     } catch (e) {
       cleanup();
       downloadState.running = false;
@@ -838,22 +843,43 @@ function runWhisperCpp(modelBin, wav, onProgress) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: WHISPER_RUNTIME.dir });
     let out = '';
+    const started = Date.now();
+    let lastPct = -1, lastErrLine = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
-    p.stdout.on('data', d => {
+    // 进度解析: whisper.cpp 的进度条(%)打在 **stderr**, stdout 只有转写结果 —— 之前只看
+    // stdout 导致界面永远收不到进度, 一直停在「启动识别引擎…」(用户报"卡住"实为此因)。
+    const sink = (d) => {
       const s = String(d);
       out += s;
-      const m = /(\d{1,3})%/.exec(s);
-      if (m && onProgress) onProgress(parseInt(m[1], 10));
-    });
-    p.stderr.on('data', d => { out += String(d); });
-    p.on('error', e => { clearTimeout(timer); reject(new Error('无法启动 whisper-cli: ' + e.message)); });
+      for (const line of s.split(/[\r\n]+/)) {
+        const t = line.trim();
+        if (!t) continue;
+        if (/error|failed|invalid/i.test(t)) lastErrLine = t;
+        const m = /(\d{1,3})%\s*?$/.exec(t) || /(\d{1,3})%\s+\[/._exec(t);
+        if (m) {
+          const pct = Math.min(100, parseInt(m[1], 10));
+          if (pct !== lastPct && onProgress) { lastPct = pct; onProgress(pct); }
+        }
+      }
+    };
+    p.stdout.on('data', sink);
+    p.stderr.on('data', sink);
+    // 兜底心跳: 无论进度解析到没有, 每 20s 报一次已运行时长(用户能看到它活着)
+    const beat = setInterval(() => {
+      if (onProgress) onProgress(Math.max(0, lastPct), Math.round((Date.now() - started) / 1000));
+    }, 20000);
+    p.on('error', e => { clearTimeout(timer); clearInterval(beat); reject(new Error('无法启动 whisper-cli: ' + e.message)); });
     p.on('close', (code) => {
-      clearTimeout(timer);
+      clearTimeout(timer); clearInterval(beat);
       const jsonPath = outPrefix + '.json';
       let data = null;
       try { data = JSON.parse(fs.readFileSync(jsonPath, 'utf8')); } catch {}
       for (const f of [outPrefix + '.json', outPrefix + '.txt', outPrefix + '.json.sys', outPrefix + '.txt.sys']) { try { fs.unlinkSync(f); } catch {} }
-      if (code !== 0 || !data) return reject(new Error('whisper.cpp 转写失败（退出码 ' + code + '）'));
+      if (code !== 0 || !data) {
+        const mins = Math.round((Date.now() - started) / 60000);
+        const hint = lastErrLine ? '：' + lastErrLine.slice(0, 200) : '';
+        return reject(new Error('whisper.cpp 转写失败（退出码 ' + code + '，运行 ' + mins + ' 分钟）' + hint));
+      }
       // 每词一段 → 词数组（毫秒 → 秒），修复零时长词段
       const words = [];
       for (const s of (data.transcription || [])) {
@@ -1785,8 +1811,18 @@ function handleRequest(req, res) {
     const outJson = path.join(projDir(id), 'asr.json');
     try { fs.unlinkSync(draftLogFile(id)); } catch {}
     try { fs.unlinkSync(outJson); } catch {}
+    // 换任务/重试时, 清掉上一个任务遗留的识别进程(实测同一模型重复启动会双跑抢资源)
+    try {
+      const { execSync } = require('child_process');
+      execSync('taskkill /F /IM whisper-cli.exe /T', { stdio: 'ignore', windowsHide: true });
+      execSync('taskkill /F /IM parakeet-cli.exe /T', { stdio: 'ignore', windowsHide: true });
+    } catch {}
     setDraft(id, { status: 'running', stage: STAGE.asr, progress: 30, message: '启动识别引擎…' });
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语音识别（模型：${model.name}，逐词：${wordLevel ? '开' : '关'}）`);
+    if (model.engine === 'whisper.cpp') {
+      // 官方运行时是 CPU 版(无 GPU 包), 长音频必然要等 —— 明说, 别让用户以为卡死
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp 为 CPU 推理，速度约 1.5~2 倍实时：34 分钟视频约需 15~25 分钟，进度会实时更新，请耐心等待`);
+    }
 
     // 识别完成后的收尾三段式: reseg(语义分句, 仅 whisper) → diarize(区分说话人) → 生成字幕。
     // 分离跑在音频上、与识别引擎无关(Parakeet / whisper.cpp 都能配);
@@ -1810,8 +1846,9 @@ function handleRequest(req, res) {
     // ── whisper.cpp 引擎: whisper-cli(词级用 -ml 1 -sow), 结果转成 asr.json ──
     if (model.engine === 'whisper.cpp') {
       const bin = path.join(mdir, model.files[0]);
-      runWhisperCpp(bin, wav, pct => {
-        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp）… ${pct}%` });
+      runWhisperCpp(bin, wav, (pct, secs) => {
+        const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·CPU）… ${pct}% ${t}` });
       }).then(r => {
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
