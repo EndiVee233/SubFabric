@@ -624,6 +624,39 @@ function resolvePython() {
 }
 const ASR_PY = resolvePython();
 
+/** 子进程退出码 → 人话。经典坑: Windows 上「python」不存在时, Microsoft Store 的
+ *  占位别名 python.exe 会启动并退出 9009(它打印的提示是纯文本, 不是 asr.py 的 JSON 日志,
+ *  旧版 sink 直接丢弃 → 用户只见「异常退出(代码 9009)」而日志面板空白, 无从排查)。 */
+function asrExitHint(code) {
+  if (code === 9009) return 'Windows 找不到命令（9009）：通常是 Python 未安装，或只有 Microsoft Store 的占位程序';
+  if (code === 1) return '进程报错退出（1）：通常是 Python 依赖缺失，详见日志';
+  return '退出码 ' + code;
+}
+
+/** 初稿预检: 解释器能启动 + sherpa-onnx/numpy 能导入。结果缓存 5 分钟。
+ *  模型文件就绪 ≠ Python 环境就绪 —— 发行包不含 asr/.venv(体积原因),
+ *  用户机器上有没有 Python、装没装依赖, 只有真跑一下才知道。 */
+let pyProbeCache = null;
+function probePython() {
+  if (pyProbeCache && Date.now() - pyProbeCache.at < 5 * 60 * 1000) return Promise.resolve(pyProbeCache);
+  return new Promise((resolve) => {
+    const p = spawn(ASR_PY,
+      ['-c', 'import sys; import sherpa_onnx; import numpy; print(sys.version.split()[0] + " / sherpa-onnx " + str(getattr(sherpa_onnx, "__version__", "?")))'],
+      { windowsHide: true, cwd: ASR_DIR });
+    let out = '', err = '';
+    const done = (r) => { clearTimeout(timer); pyProbeCache = Object.assign({ at: Date.now() }, r); resolve(pyProbeCache); };
+    const timer = setTimeout(() => { try { p.kill(); } catch {} done({ ok: false, msg: 'Python 预检超时（10s）' }); }, 10000);
+    p.stdout.on('data', c => { out += c; });
+    p.stderr.on('data', c => { err += c; });
+    p.on('error', e => done({ ok: false, msg: '无法启动 ' + ASR_PY + '：' + e.message }));
+    p.on('close', (code) => {
+      if (code === 0) return done({ ok: true, msg: out.trim() });
+      const detail = err.trim().split('\n').filter(Boolean).pop() || '';
+      done({ ok: false, msg: asrExitHint(code) + (detail ? ' —— ' + detail : '') });
+    });
+  });
+}
+
 function readAsrSettings() {
   try { return JSON.parse(fs.readFileSync(ASR_SETTINGS, 'utf8')); } catch { return {}; }
 }
@@ -691,7 +724,21 @@ const dlState = (key, init) => {
 };
 const dlAnyRunning = (kind) => { for (const [k, v] of downloads) if (v.running && (!kind || k.startsWith(kind + ':') || k === kind)) return true; return false; };
 
-async function downloadFile(url, dest, onProgress) {
+/** undici 的 "Fetch failed" 毫无信息量, 真正原因在 e.cause.code —— 翻译成用户能自查的人话 */
+function netErrMsg(e, url) {
+  const cause = (e && e.cause) || {};
+  const code = cause.code || e.code || '';
+  let host = '';
+  try { host = new URL(url).host; } catch {}
+  const hint =
+    code === 'ENOTFOUND' ? '（域名解析失败：检查网络/DNS，或该域名在当前网络不可达）' :
+    (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET' || code === 'ECONNABORTED') ? '（连接被重置：网络不稳定或被防火墙干扰，重试通常可恢复）' :
+    (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') ? '（连接超时：检查网络/代理）' :
+    code === 'EACCES' ? '（连接被拒绝）' : '';
+  return `网络错误${code ? '（' + code + '）' : ''}${hint} —— 无法连接 ${host}`;
+}
+
+async function downloadFileOnce(url, dest, onProgress) {
   const existing = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
   const headers = { 'User-Agent': 'K-ASS-Editor/1.0' };
   if (existing > 0) headers.Range = `bytes=${existing}-`;
@@ -719,6 +766,47 @@ async function downloadFile(url, dest, onProgress) {
   }
 }
 
+/** 带重试的下载: 失败自动重试(断点续传, 指数退避), 错误翻译成可自查的人话。
+ *  背景: 用户朋友机器上下载说话人模型报 "Fetch failed" —— 那是 undici 网络层错误,
+ *  可能是瞬时抖动(重试可救)也可能是 github 直连被墙(重试救不了, 需镜像, 见 downloadAny)。 */
+async function downloadFile(url, dest, onProgress, attempts = 3) {
+  let lastErr = null;
+  for (let a = 1; a <= attempts; a++) {
+    try { return await downloadFileOnce(url, dest, onProgress); }
+    catch (e) {
+      lastErr = e;
+      if (onProgress) onProgress(-1, -1);      // 通知调用方"这一轮挂了"(调用方可忽略)
+      if (a < attempts) await new Promise(r => setTimeout(r, 1500 * a));
+    }
+  }
+  throw new Error(netErrMsg(lastErr, url));
+}
+
+/** GitHub 直连在国内网络经常不可达/被重置(实测本机也 502): 失败时自动换镜像网关。
+ *  镜像只是加前缀的透明代理, 文件内容一致; 顺序 = 直连优先, 镜像兜底。 */
+const GH_MIRRORS = ['https://gh-proxy.com/', 'https://ghfast.top/'];
+function candidateUrls(url) {
+  const u = String(url);
+  const gh = u.match(/^https?:\/\/github\.com\/(.+)$/i);
+  if (gh) return [u, ...GH_MIRRORS.map(m => m + 'https://github.com/' + gh[1])];
+  // HuggingFace: 镜像(hf-mirror)失效时退回官方源, 反之亦然
+  if (u.startsWith(HF_ENDPOINT + '/')) {
+    const alt = HF_ENDPOINT === 'https://hf-mirror.com' ? 'https://huggingface.co' : 'https://hf-mirror.com';
+    return [u, u.replace(HF_ENDPOINT, alt)];
+  }
+  return [u];
+}
+
+/** 依次尝试多个候选源(每个源内部还有 3 次重试); 全挂才报错(附最后一个源的错误) */
+async function downloadAny(urls, dest, onProgress) {
+  let lastErr = null;
+  for (let i = 0; i < urls.length; i++) {
+    try { return await downloadFile(urls[i], dest, onProgress); }
+    catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('所有下载源均失败');
+}
+
 /** 下载一个识别模型到 dir; 完成后登记进 settings.models */
 function startModelDownload(model, dir) {
   const key = 'model:' + model.id;
@@ -730,7 +818,8 @@ function startModelDownload(model, dir) {
       const base = `${HF_ENDPOINT}/${model.repo}/resolve/main`;
       for (let i = 0; i < model.files.length; i++) {
         const f = model.files[i];
-        await downloadFile(`${base}/${f}`, path.join(dir, f), (done, total) => {
+        await downloadAny(candidateUrls(`${base}/${f}`), path.join(dir, f), (done, total) => {
+          if (done < 0) return;                       // 重试开始的通知, 进度不回退
           const part = total ? done / total : 0;
           const st = dlState(key);
           st.pct = Math.min(99, Math.round(((i + part) / model.files.length) * 100));
@@ -765,7 +854,8 @@ function startDiarizeDownload() {
         const dest = path.join(DIARIZE_DIR(), m.file);
         if (fs.existsSync(dest) && fs.statSync(dest).size > 1024) continue;
         const tmp = dest + '.dl';
-        await downloadFile(m.url, tmp, (done, total) => {
+        await downloadAny(candidateUrls(m.url), tmp, (done, total) => {
+          if (done < 0) return;
           const st = dlState(key);
           st.pct = total ? Math.min(99, Math.round((i + done / total) / DIARIZE_MODELS.length * 100)) : 0;
           st.msg = `下载 ${m.name}：${(done / 1048576).toFixed(1)} MB`;
@@ -807,7 +897,8 @@ function startRuntimeDownload() {
     const cleanup = () => { try { fs.unlinkSync(zip); } catch {} };
     try {
       fs.mkdirSync(WHISPER_RUNTIME.dir, { recursive: true });
-      await downloadFile(WHISPER_RUNTIME.url, zip, (done, total) => {
+      await downloadAny(candidateUrls(WHISPER_RUNTIME.url), zip, (done, total) => {
+        if (done < 0) return;
         const st = dlState(key);
         st.pct = total ? Math.min(99, Math.round(done / total * 100)) : 0;
         st.msg = `下载运行时：${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
@@ -1212,7 +1303,7 @@ function handleRequest(req, res) {
         try { data = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
         if (c !== 0 || !data || !Array.isArray(data.regions)) {
           const m = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
-          return done(() => reject(new Error((m && m[1]) || ('分离失败（退出码 ' + c + '）'))));
+          return done(() => reject(new Error((m && m[1]) || ('分离失败（' + asrExitHint(c) + '）'))));
         }
         done(() => resolve(data));
       });
@@ -1697,7 +1788,7 @@ function handleRequest(req, res) {
               try { out = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
               if (c !== 0 || !out || !Array.isArray(out.segments)) {
                 const m = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
-                return reject(new Error((m && m[1]) || ('识别失败（退出码 ' + c + '）')));
+                return reject(new Error((m && m[1]) || ('识别失败（' + asrExitHint(c) + '）')));
               }
               resolve(out);
             });
@@ -1929,37 +2020,53 @@ function handleRequest(req, res) {
     }
 
     // ── sherpa-onnx 引擎: asr.py ──
-    let lastErr = '', buf = '';
-    const proc = spawn(ASR_PY,
-      [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4',
-        ...parakeetHotwordArgs()],
-      { windowsHide: true, cwd: ASR_DIR });
-    draftProcs.set(id, proc);
-
-    const sink = (chunk) => {
-      buf += String(chunk);
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).trim();
-        buf = buf.slice(i + 1);
-        if (!line.startsWith('{')) continue;
-        let o; try { o = JSON.parse(line); } catch { continue; }
-        if (o.type === 'progress') {
-          setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(o.pct * 0.55), message: o.msg });
-        } else if (o.type === 'log') {
-          pushDraftLog(id, `[${new Date().toLocaleTimeString()}] ${o.msg}`);
-        } else if (o.type === 'error') {
-          lastErr = o.msg;
-          pushDraftLog(id, `[错误] ${o.msg}`);
-        }
+    // 预检通过才 spawn: 给远程用户可操作的修复指引, 而不是一句「异常退出(9009)」
+    probePython().then(pre => {
+      const ts = () => new Date().toLocaleTimeString();
+      if (!pre.ok) {
+        pushDraftLog(id, `[${ts()}] [预检失败] ${pre.msg}`);
+        pushDraftLog(id, `[${ts()}] [修复方法] ① 安装 Python 3.10~3.12（python.org，安装时勾选 Add python.exe to PATH）`);
+        pushDraftLog(id, `[${ts()}] [修复方法] ② 在程序目录 asr\\ 下执行: py -3.12 -m venv .venv`);
+        pushDraftLog(id, `[${ts()}] [修复方法] ③ asr\\.venv\\Scripts\\pip.exe install -r requirements.txt`);
+        draftJobs.delete(id);
+        return finishDraft(id, new Error('Python 环境不可用，无法语音识别 —— 详见日志（' + pre.msg + '）'));
       }
-    };
-    proc.stderr.on('data', sink);
-    proc.stdout.on('data', sink);
-    proc.on('error', e => finishDraft(id, new Error('无法启动识别进程（Python: ' + ASR_PY + '）: ' + e.message)));
-    proc.on('close', (code) => {
-      if (code !== 0) { draftJobs.delete(id); return finishDraft(id, new Error(lastErr || ('识别进程异常退出（代码 ' + code + '）'))); }
-      finishAsr();
+      pushDraftLog(id, `[${ts()}] Python: ${ASR_PY}${pre.msg ? '（' + pre.msg + '）' : ''}`);
+
+      let lastErr = '', buf = '';
+      const proc = spawn(ASR_PY,
+        [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4',
+          ...parakeetHotwordArgs()],
+        { windowsHide: true, cwd: ASR_DIR });
+      draftProcs.set(id, proc);
+
+      const sink = (chunk) => {
+        buf += String(chunk);
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          // 非 JSON 行(Python traceback / Store 占位提示 / 引擎警告)原样进日志 —— 丢掉它们曾让 9009 无从排查
+          if (!line.startsWith('{')) { pushDraftLog(id, `[py] ${line}`); continue; }
+          let o; try { o = JSON.parse(line); } catch { pushDraftLog(id, `[py] ${line}`); continue; }
+          if (o.type === 'progress') {
+            setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(o.pct * 0.55), message: o.msg });
+          } else if (o.type === 'log') {
+            pushDraftLog(id, `[${new Date().toLocaleTimeString()}] ${o.msg}`);
+          } else if (o.type === 'error') {
+            lastErr = o.msg;
+            pushDraftLog(id, `[错误] ${o.msg}`);
+          }
+        }
+      };
+      proc.stderr.on('data', sink);
+      proc.stdout.on('data', sink);
+      proc.on('error', e => finishDraft(id, new Error('无法启动识别进程（Python: ' + ASR_PY + '）: ' + e.message)));
+      proc.on('close', (code) => {
+        if (code !== 0) { draftJobs.delete(id); return finishDraft(id, new Error(lastErr || ('识别进程异常退出（' + asrExitHint(code) + '）'))); }
+        finishAsr();
+      });
     });
   }
 
@@ -2015,15 +2122,22 @@ function handleRequest(req, res) {
     const ps = [
       '$ErrorActionPreference = "Stop"',
       'Add-Type -AssemblyName System.Windows.Forms | Out-Null',
+      // 只有 TopMost 不够: Windows 前台锁会阻止后台进程的窗口获得焦点/激活,
+      // 实测对话框开在浏览器后面, 用户根本不知道已经弹出来了 —— 必须显式抢前台
+      "Add-Type -Namespace Kass -Name FG -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);' | Out-Null",
       '$form = New-Object System.Windows.Forms.Form',
       '$form.TopMost = $true',
       '$form.Opacity = 0',
+      '$form.ShowInTaskbar = $false',
       isFolder ? '$d = New-Object System.Windows.Forms.FolderBrowserDialog'
                : '$d = New-Object System.Windows.Forms.OpenFileDialog',
       isFolder ? "$d.Description = '选择语音识别模型存放目录(必须为空目录)'"
                : `$d.Title = '${title}'`,
       isFolder ? '$d.ShowNewFolderButton = $true' : `$d.Filter = '${filter}'`,
       ...(isFolder ? [] : ['$d.CheckFileExists = $true']),
+      '$null = $form.CreateControl()',                       // 确保句柄已创建, 否则 SetForegroundWindow 拿不到 Handle
+      '$null = [Kass.FG]::SetForegroundWindow($form.Handle)',
+      '$null = $form.Activate()',
       '$r = $d.ShowDialog($form)',
       `$p = if ($r -eq [System.Windows.Forms.DialogResult]::OK) { ${isFolder ? '$d.SelectedPath' : '$d.FileName'} } else { '' }`,
       // 显式 UTF-8 无 BOM 写盘, 与 Node 侧的读取编码对齐
@@ -2071,6 +2185,7 @@ function handleRequest(req, res) {
 
   /* ═══════════ 初稿 / 语音识别模型 ═══════════ */
   if (pathname === '/api/asr/status' && req.method === 'GET') {
+    probePython().catch(() => {});          // 后台预热预检缓存(状态页/初稿对话框打开时触发)
     let pythonOk = false;
     try { pythonOk = fs.statSync(ASR_PY).isFile(); } catch {}
     const models = ASR_MODELS.map(m => {
@@ -2090,6 +2205,8 @@ function handleRequest(req, res) {
       // 兼容旧前端字段
       ready: models.some(m => m.ready),
       python: ASR_PY, pythonOk,
+      // Python 环境预检(结果缓存 5 分钟; 触发后台探测, 下次轮询就有)
+      pythonProbe: pyProbeCache,
       // 并行下载: Map → 数组(每项含 key), 前端按 key 匹配各自的进度
       downloads: Array.from(downloads.entries()).map(([key, v]) => Object.assign({ key }, v)),
       // 兼容旧前端: 单任务时代的字段(任意一个在跑就给它的状态)
@@ -2151,7 +2268,17 @@ function handleRequest(req, res) {
       if (dlState(key).running) return sendJson(res, 200, { started: true, dir: p, modelId: model.id, already: true });
       let names = [];
       try { names = fs.readdirSync(p); } catch { names = []; }
-      if (names.length) return sendJson(res, 400, { error: `目录不是空的（已有 ${names.length} 项）。请换一个空目录，或在设置里修改模型下载位置` });
+      // 「目录必须为空」曾挡死重试: 上次下载中途失败留下的不完整文件让重试永远 400。
+      // 现在只拒绝**无关文件** —— 目录里是本模型的(可能不完整的)文件/临时文件就放行,
+      // downloadFile 会按 Range 从断点续传, 不会重头下。
+      const foreign = names.filter(n =>
+        !model.files.some(f =>
+          n.toLowerCase() === f.toLowerCase() ||
+          n.toLowerCase() === (f + '.dl').toLowerCase() ||
+          /\.(dl|tmp|part|crdownload)$/i.test(n)));
+      if (foreign.length) {
+        return sendJson(res, 400, { error: `目录里有无关文件（${foreign.slice(0, 3).join('、')}${foreign.length > 3 ? ' 等' : ''}）。请换一个空目录，或删掉这些文件后重试` });
+      }
       startModelDownload(model, p);
       return sendJson(res, 200, { started: true, dir: p, modelId: model.id });
     });

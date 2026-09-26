@@ -180,6 +180,8 @@ export function initProjects(ctx) {
   }
   async function pickVideoForProject() {
     // 双通道: 原生对话框优先, 超时/失败自动降级浏览器选择(上传成服务端文件再 relink)
+    // 立即提示: 系统对话框开在系统层, 可能被浏览器挡住 —— 用户得知道它已经弹了
+    toast('正在打开系统文件选择窗口（若没看到请看任务栏图标）…', 2600);
     let pick = null;
     try {
       const ctl = new AbortController();
@@ -864,6 +866,12 @@ export function initProjects(ctx) {
         : '<option value="">（无可用模型，请到设置里下载）</option>';
       if (asrStatus.selectedModel && ready.some(m => m.id === asrStatus.selectedModel)) sel.value = asrStatus.selectedModel;
     }
+    // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
+    const hint = $('#np-hint');
+    if (hint && asrStatus.pythonProbe && !asrStatus.pythonProbe.ok) {
+      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + ' —— Parakeet 模型需要 Python（详见创建后日志里的修复方法）；whisper.cpp 引擎不需要';
+      hint.style.color = '#ff9a5c';
+    }
     npMaybeEnable();
   }
 
@@ -927,6 +935,7 @@ export function initProjects(ctx) {
     const btn = $('#np-pick-video');
     const oldLabel = btn.textContent;
     btn.textContent = '打开选择框…';
+    toast('正在打开系统文件选择窗口（若没看到请看任务栏图标）…', 2600);
     let pick = null, usedBrowser = false;
     try {
       const ctl = new AbortController();
