@@ -18,7 +18,7 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.3.2'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.3.4'; // 与打版号一致; 改了就顺手同步这里
 
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
@@ -1476,15 +1476,20 @@ function handleRequest(req, res) {
     req.on('error', () => { if (!dead) { dead = true; cb(new Error('request body 读取失败')); } });
     req.on('end', () => { if (!dead) cb(null, Buffer.concat(chunks)); });
   }
-  /** 后台提取: 一次 ffmpeg 同时产出 audio.wav 与 peaks 原始 PCM(asplit), 全部临时文件成功后原子改名 */
-  function startPrepare(id, videoPath) {
+  /** 后台提取: 一次 ffmpeg 同时产出 audio.wav 与 peaks 原始 PCM(asplit), 全部临时文件成功后原子改名
+   *  mode='denoise'(默认): 音频走 afftdn 降噪(内置滤镜, 无需外部模型)后再保存;
+   *  mode='raw': 直接抽视频原声, 不做任何处理。
+   *  audio.wav 是 ASR(初稿/whisper.cpp/重新识别)与"降噪模式播放"的唯一输入,
+   *  模式记录在 meta.audio.mode, 可在编辑器工具栏切换后「重新生成音频」重建。 */
+  function startPrepare(id, videoPath, mode) {
+    const denoise = mode !== 'raw';
     if (prepareJobs.has(id)) return;
     const meta = readMeta(id);
     if (!meta) return;
     prepareJobs.add(id);
     meta.prepare = { status: 'running', startedAt: new Date().toISOString(), error: null };
     writeMeta(meta);
-    console.log('[project] prepare 开始:', id, videoPath);
+    console.log('[project] prepare 开始:', id, videoPath, denoise ? '(降噪)' : '(原声)');
 
     probeDuration(videoPath, (duration) => {
       if (!(duration > 0)) return finishPrepare(id, new Error('无法探测视频时长(ffprobe 失败或文件不可读)'));
@@ -1493,7 +1498,10 @@ function handleRequest(req, res) {
       const wavOut = path.join(projDir(id), 'audio.wav');
       const peaksOut = path.join(projDir(id), 'peaks.bin');
       const args = ['-hide_banner', '-vn', '-i', videoPath,
-        '-filter_complex', `[0:a]aformat=sample_rates=${AUDIO_SR}:channel_layouts=mono,asplit=2[a1][a2]`,
+        // afftdn: nr=降噪量(dB) nf=噪声底(dB) tn=自适应噪声跟踪 —— 参数温和, 压底噪而不伤语音清晰度
+        '-filter_complex', denoise
+          ? `[0:a]aformat=sample_rates=${AUDIO_SR}:channel_layouts=mono,afftdn=nr=12:nf=-25:tn=1,asplit=2[a1][a2]`
+          : `[0:a]aformat=sample_rates=${AUDIO_SR}:channel_layouts=mono,asplit=2[a1][a2]`,
         '-map', '[a1]', '-c:a', 'pcm_s16le', '-f', 'wav', '-y', wavTmp,
         '-map', '[a2]', '-f', 's16le', pcmTmp];
       const proc = spawn(FFMPEG, args, { windowsHide: true });
@@ -1544,7 +1552,7 @@ function handleRequest(req, res) {
           } catch (e) { return finishPrepare(id, new Error('保存音频/波形失败: ' + e.message)); }
           cleanup();   // 成功分支也要清: peaks.pcm.tmp 是原始 PCM(≈32KB/秒音频),
                        // 漏删会让每个项目长期白占一份与音频等大的临时文件
-          finishPrepare(id, null, { duration, peaksBytes: filled, audioBytes: fs.statSync(wavOut).size, rate });
+          finishPrepare(id, null, { duration, peaksBytes: filled, audioBytes: fs.statSync(wavOut).size, rate, mode: denoise ? 'denoise' : 'raw' });
         });
       });
     });
@@ -1555,7 +1563,7 @@ function handleRequest(req, res) {
     if (!meta) return;
     meta.prepare = Object.assign({ status: err ? 'error' : 'done', finishedAt: new Date().toISOString(), error: err ? String(err.message || err) : null }, info || {});
     if (!err && info) {
-      if (info.audioBytes) meta.audio = { file: 'audio.wav', bytes: info.audioBytes };
+      if (info.audioBytes) meta.audio = { file: 'audio.wav', bytes: info.audioBytes, mode: info.mode || 'denoise' };
       if (info.peaksBytes) meta.peaks = { file: 'peaks.bin', rate: info.rate || 100, bytes: info.peaksBytes };
       if (info.duration) meta.duration = info.duration;
     }
@@ -2016,7 +2024,7 @@ function handleRequest(req, res) {
     }
     pendingAsr.set(id, { wordLevel });
     setDraft(id, { status: 'running', stage: STAGE.extract, progress: 3, message: '重新提取音频与波形…', error: null, failedStage: '' });
-    startPrepare(id, meta.video && meta.video.path);
+    startPrepare(id, meta.video && meta.video.path, (meta.audio && meta.audio.mode) || 'denoise');
     return { ok: true, from: 'extract' };
   }
 
@@ -2950,7 +2958,7 @@ function handleRequest(req, res) {
         meta.video = { path: vp, name: path.basename(vp) };
         touchMeta(meta);
         const v = metaView(meta);
-        if (!v.hasPeaks) startPrepare(id, vp);
+        if (!v.hasPeaks) startPrepare(id, vp, (meta.audio && meta.audio.mode) || 'denoise');
         return sendJson(res, 200, metaView(meta));
       });
     }
@@ -2958,8 +2966,19 @@ function handleRequest(req, res) {
       if (!(meta.video && meta.video.path)) return sendJson(res, 400, { error: '项目还没有视频' });
       const v = metaView(meta);
       if (!v.videoExists) return sendJson(res, 400, { error: '视频文件不存在，请先重新选择' });
-      if (!v.hasPeaks) startPrepare(id, meta.video.path);
-      return sendJson(res, 200, metaView(readMeta(id)));
+      if (prepareJobs.has(id)) return sendJson(res, 409, { error: '音频正在提取中，请等它完成' });
+      // body 可选: {mode:'raw'|'denoise', force:true}
+      //   force=true → 编辑器「重新生成音频」: 按指定模式重抽 audio.wav 与波形(字幕不动)
+      //   无 force   → 兜底补跑: 只有缺 peaks 才跑, 模式沿用项目当前设置
+      return readBody(req, 4 * 1024, (err2, body) => {
+        let opts = {};
+        if (!err2 && body && body.length) { try { opts = JSON.parse(body.toString('utf8')) || {}; } catch {} }
+        const curMode = (meta.audio && meta.audio.mode) || 'denoise';
+        const mode = opts.mode === 'raw' || opts.mode === 'denoise' ? opts.mode : curMode;
+        if (!opts.force && v.hasPeaks) return sendJson(res, 200, metaView(readMeta(id)));
+        startPrepare(id, meta.video.path, mode);
+        return sendJson(res, 200, metaView(readMeta(id)));
+      });
     }
     if (action === 'peaks' && req.method === 'GET') {
       const v = metaView(meta);

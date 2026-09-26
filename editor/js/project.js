@@ -11,7 +11,7 @@ import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
 
 export function initProjects(ctx) {
-  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl } = ctx;
+  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode } = ctx;
   const $ = (s) => document.querySelector(s);
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
@@ -118,7 +118,7 @@ export function initProjects(ctx) {
       else toast(m2.error || '波形提取启动失败', 3600);
     } catch { toast('波形提取启动失败', 3600); }
   }
-  function pollPrepare() {
+  function pollPrepare(onDone) {
     if (pollTimer) return;
     toast('正在提取音频与波形…(完成后自动显示)', 4200);
     pollTimer = setInterval(async () => {
@@ -130,6 +130,8 @@ export function initProjects(ctx) {
       if (st === 'done') {
         clearInterval(pollTimer); pollTimer = 0;
         loadPeaks();
+        syncAudioModeUI(m);
+        if (onDone) onDone(m);
         toast('音频与波形已就绪', 2600);
       } else if (st === 'error') {
         clearInterval(pollTimer); pollTimer = 0;
@@ -137,6 +139,43 @@ export function initProjects(ctx) {
       }
     }, 1500);
   }
+
+  /* ─────────── 音频源(原视频 / 降噪后)与重新生成 ───────────
+   * meta.audio.mode 记录当前 audio.wav 的来源; 播放音轨跟随它:
+   * 降噪后 → 视频静音, 播 audio.wav(ASR 听到的就是它, 方便判断降噪过头/不够); 原视频 → 正常视频出声。 */
+  function syncAudioModeUI(m, bustCache) {
+    const sel = $('#audio-mode');
+    const mode = (m.audio && m.audio.mode) || 'denoise';
+    if (sel) sel.value = mode;
+    setPlaybackAudioMode(mode, !!m.hasAudio, bustCache);
+  }
+  async function regenAudio() {
+    if (!state.project) return;
+    const btn = $('#btn-regen-audio');
+    const mode = ($('#audio-mode') && $('#audio-mode').value) || 'denoise';
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '提取中…';
+    try {
+      const r = await fetch(`/api/projects/${state.project.id}/prepare`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, force: true })
+      });
+      const m2 = await r.json();
+      if (!r.ok) { toast(m2.error || '重新生成失败', 3600); return; }
+      state.project.meta = m2;
+      pollPrepare((m) => syncAudioModeUI(m, true));   // 完成后换新音频(时间戳破缓存)并刷新播放音轨
+    } catch { toast('重新生成失败', 3600); }
+    finally { btn.disabled = false; btn.textContent = old; }
+  }
+  const audioModeSel = $('#audio-mode');
+  if (audioModeSel) audioModeSel.addEventListener('change', () => {
+    toast(t(audioModeSel.value === 'denoise'
+      ? '已切换为降噪后音频，点「↻ 重新生成音频」生效'
+      : '已切换为原视频音频，点「↻ 重新生成音频」生效'), 3200);
+  });
+  const regenBtn = $('#btn-regen-audio');
+  if (regenBtn) regenBtn.addEventListener('click', regenAudio);
 
   /* ─────────── 打开项目 ─────────── */
   async function openProject(pid) {
@@ -171,6 +210,7 @@ export function initProjects(ctx) {
 
     // 3) 波形/音频: 就绪直接读, 没就绪轮询
     handlePrepare(m);
+    syncAudioModeUI(m);          // 音频源下拉回显 + 播放音轨(降噪后→audio.wav 接管发声)
   }
 
   function promptRelink(m) {
@@ -858,6 +898,7 @@ export function initProjects(ctx) {
     clearTimeout(saveTimer);
     clearInterval(pollTimer); pollTimer = 0;
     state.project = null;
+    setPlaybackAudioMode(null, false);          // 脱离项目: 播放恢复视频原声
     const el = $('#save-state');
     if (el) el.hidden = true;
   }
@@ -1088,15 +1129,21 @@ export function initProjects(ctx) {
   /* ─────────── 路由 ─────────── */
   function applyHash() {
     const h = location.hash || '#/home';
+    const audioSrc = $('#audio-src');
     if (h.startsWith('#/project/')) {
       const pid = h.slice('#/project/'.length);
       elHome.hidden = true;
+      if (audioSrc) audioSrc.hidden = false;         // 项目模式才显示音频源控件
       if (!state.project || state.project.id !== pid) openProject(pid);
+      else syncAudioModeUI(state.project.meta);       // 从主界面回到同一项目: 回显 + 恢复播放音轨
     } else if (h === '#/editor') {
       elHome.hidden = true;                          // 无项目直开编辑器(兼容旧用法)
+      if (audioSrc) audioSrc.hidden = true;
+      setPlaybackAudioMode(null, false);             // 无项目: 播放恢复视频原声
       if (state.project) { saveNow(); detachProject(); }
     } else {
       if (!location.hash) history.replaceState(null, '', '#/home');   // 归一化地址栏
+      if (audioSrc) audioSrc.hidden = true;
       showHome();
     }
   }

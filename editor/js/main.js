@@ -240,6 +240,56 @@ function loadVideoFile(file) {
   uploadWaveform(file);
 }
 
+/* ─────────── 播放音频源(项目模式) ───────────
+ * 音频源=降噪后: 视频静音, 用项目里降噪后的 audio.wav(即 ASR 听到的音频)同步发声,
+ * 方便用户直接试听判断降噪是否过头/不够; 音频源=原视频: 视频正常出声。 */
+const altAudio = new Audio();
+altAudio.preload = 'auto';
+let altMode = null;                    // null=视频原声 | 'denoise'=audio.wav 接管发声
+let altUrl = '';                       // 当前已加载的音频地址(避免重复 reload)
+function setPlaybackAudioMode(mode, hasAudio, bustCache) {
+  const useAlt = !!(mode === 'denoise' && hasAudio && state.project);
+  altMode = useAlt ? 'denoise' : null;
+  if (useAlt) {
+    const url = `/api/projects/${state.project.id}/audio` + (bustCache ? '?v=' + Date.now() : '');
+    if (altUrl !== url) {              // 重新生成后带时间戳参数强制换新音频
+      altUrl = url;
+      altAudio.src = url;
+    }
+    video.muted = true;
+    if (!video.paused) { try { altAudio.currentTime = video.currentTime; } catch {} altAudio.play().catch(() => {}); }
+  } else {
+    altMode = null;
+    altAudio.pause();
+    if (altUrl) { altUrl = ''; altAudio.removeAttribute('src'); }
+    video.muted = false;
+  }
+}
+function altSync(hard) {
+  if (altMode !== 'denoise' || !altAudio.src || altAudio.readyState === 0) return;
+  if (hard || Math.abs(altAudio.currentTime - video.currentTime) > 0.18) {
+    try { altAudio.currentTime = video.currentTime; } catch {}
+  }
+}
+video.addEventListener('play', () => {
+  if (altMode !== 'denoise') return;
+  altAudio.playbackRate = video.playbackRate;
+  altSync(true);
+  altAudio.play().catch(() => {});
+});
+video.addEventListener('playing', () => {   // 视频已在播时才挂上 altAudio 的兜底
+  if (altMode === 'denoise' && altAudio.paused) { altSync(true); altAudio.play().catch(() => {}); }
+});
+video.addEventListener('pause', () => { if (altMode === 'denoise') altAudio.pause(); });
+video.addEventListener('seeking', () => altSync(true));
+video.addEventListener('seeked', () => altSync(true));
+video.addEventListener('ratechange', () => { if (altMode === 'denoise') altAudio.playbackRate = video.playbackRate; });
+video.addEventListener('timeupdate', () => altSync(false));   // 软同步: 漂移 >0.18s 才对齐
+video.addEventListener('volumechange', () => {
+  if (altMode === 'denoise' && !video.muted) { video.muted = true; return; }  // 降噪模式: 视频保持静音, 防止用户用原生控件取消静音后双声
+  altAudio.volume = video.volume;   // 只同步音量; muted 由 alt 模式自己管
+});
+
 video.addEventListener('loadedmetadata', () => {
   timeline.setDuration(video.duration);   // 内部会按"默认 30s 跨度"摆好视图
   timeline.setVideo(video);               // 确保胶片缩略图取到新的 currentSrc
@@ -2184,7 +2234,7 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
-  state, video, timeline, panel, toast, routeSub, loadVideoUrl
+  state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode
 });
 
 /* ═══════════ 主循环 ═══════════ */

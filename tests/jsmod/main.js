@@ -240,6 +240,56 @@ function loadVideoFile(file) {
   uploadWaveform(file);
 }
 
+/* ─────────── 播放音频源(项目模式) ───────────
+ * 音频源=降噪后: 视频静音, 用项目里降噪后的 audio.wav(即 ASR 听到的音频)同步发声,
+ * 方便用户直接试听判断降噪是否过头/不够; 音频源=原视频: 视频正常出声。 */
+const altAudio = new Audio();
+altAudio.preload = 'auto';
+let altMode = null;                    // null=视频原声 | 'denoise'=audio.wav 接管发声
+let altUrl = '';                       // 当前已加载的音频地址(避免重复 reload)
+function setPlaybackAudioMode(mode, hasAudio, bustCache) {
+  const useAlt = !!(mode === 'denoise' && hasAudio && state.project);
+  altMode = useAlt ? 'denoise' : null;
+  if (useAlt) {
+    const url = `/api/projects/${state.project.id}/audio` + (bustCache ? '?v=' + Date.now() : '');
+    if (altUrl !== url) {              // 重新生成后带时间戳参数强制换新音频
+      altUrl = url;
+      altAudio.src = url;
+    }
+    video.muted = true;
+    if (!video.paused) { try { altAudio.currentTime = video.currentTime; } catch {} altAudio.play().catch(() => {}); }
+  } else {
+    altMode = null;
+    altAudio.pause();
+    if (altUrl) { altUrl = ''; altAudio.removeAttribute('src'); }
+    video.muted = false;
+  }
+}
+function altSync(hard) {
+  if (altMode !== 'denoise' || !altAudio.src || altAudio.readyState === 0) return;
+  if (hard || Math.abs(altAudio.currentTime - video.currentTime) > 0.18) {
+    try { altAudio.currentTime = video.currentTime; } catch {}
+  }
+}
+video.addEventListener('play', () => {
+  if (altMode !== 'denoise') return;
+  altAudio.playbackRate = video.playbackRate;
+  altSync(true);
+  altAudio.play().catch(() => {});
+});
+video.addEventListener('playing', () => {   // 视频已在播时才挂上 altAudio 的兜底
+  if (altMode === 'denoise' && altAudio.paused) { altSync(true); altAudio.play().catch(() => {}); }
+});
+video.addEventListener('pause', () => { if (altMode === 'denoise') altAudio.pause(); });
+video.addEventListener('seeking', () => altSync(true));
+video.addEventListener('seeked', () => altSync(true));
+video.addEventListener('ratechange', () => { if (altMode === 'denoise') altAudio.playbackRate = video.playbackRate; });
+video.addEventListener('timeupdate', () => altSync(false));   // 软同步: 漂移 >0.18s 才对齐
+video.addEventListener('volumechange', () => {
+  if (altMode === 'denoise' && !video.muted) { video.muted = true; return; }  // 降噪模式: 视频保持静音, 防止用户用原生控件取消静音后双声
+  altAudio.volume = video.volume;   // 只同步音量; muted 由 alt 模式自己管
+});
+
 video.addEventListener('loadedmetadata', () => {
   timeline.setDuration(video.duration);   // 内部会按"默认 30s 跨度"摆好视图
   timeline.setVideo(video);               // 确保胶片缩略图取到新的 currentSrc
@@ -2184,7 +2234,7 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
-  state, video, timeline, panel, toast, routeSub, loadVideoUrl
+  state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode
 });
 
 /* ═══════════ 主循环 ═══════════ */
@@ -2241,4 +2291,35 @@ requestAnimationFrame(tick);
   };
   if (document.readyState === 'complete') setTimeout(autoLoad, 100);
   else window.addEventListener('load', () => setTimeout(autoLoad, 100));
+
+  // ── 代码版本检测: 服务端代码更新后, 已经开着的页面会提示刷新(避免"改了代码界面还是老的") ──
+  (function initVersionCheck() {
+    const pageStamp = String(window.__BUILD_STAMP || '');
+    if (!pageStamp) return;
+    let banner = null;
+    const showBanner = () => {
+      if (banner) return;
+      banner = document.createElement('div');
+      banner.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9999;'
+        + 'background:#2563eb;color:#fff;padding:8px 14px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);'
+        + 'font:13px/1.4 system-ui,sans-serif;display:flex;gap:10px;align-items:center;cursor:pointer;';
+      banner.innerHTML = '已发布新版本，点击此处刷新页面 <b style="text-decoration:underline">刷新</b>';
+      banner.addEventListener('click', () => location.reload(true));
+      (document.body || document.documentElement).appendChild(banner);
+    };
+    const tick = async () => {
+      try {
+        const r = await fetch('/api/version', { signal: AbortSignal.timeout(5000) });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j && j.version) {
+          const lv = document.getElementById('app-version');
+          if (lv) lv.textContent = 'v' + j.version;   // 首页版本号永远跟运行中的服务端一致
+        }
+        if (j && String(j.stamp) !== pageStamp) showBanner();
+      } catch {}
+    };
+    setTimeout(tick, 4000);
+    setInterval(tick, 30000);
+  })();
 })();

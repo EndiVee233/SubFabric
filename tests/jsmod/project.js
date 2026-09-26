@@ -11,7 +11,7 @@ import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
 
 export function initProjects(ctx) {
-  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl } = ctx;
+  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode } = ctx;
   const $ = (s) => document.querySelector(s);
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
@@ -118,7 +118,7 @@ export function initProjects(ctx) {
       else toast(m2.error || '波形提取启动失败', 3600);
     } catch { toast('波形提取启动失败', 3600); }
   }
-  function pollPrepare() {
+  function pollPrepare(onDone) {
     if (pollTimer) return;
     toast('正在提取音频与波形…(完成后自动显示)', 4200);
     pollTimer = setInterval(async () => {
@@ -130,6 +130,8 @@ export function initProjects(ctx) {
       if (st === 'done') {
         clearInterval(pollTimer); pollTimer = 0;
         loadPeaks();
+        syncAudioModeUI(m);
+        if (onDone) onDone(m);
         toast('音频与波形已就绪', 2600);
       } else if (st === 'error') {
         clearInterval(pollTimer); pollTimer = 0;
@@ -137,6 +139,43 @@ export function initProjects(ctx) {
       }
     }, 1500);
   }
+
+  /* ─────────── 音频源(原视频 / 降噪后)与重新生成 ───────────
+   * meta.audio.mode 记录当前 audio.wav 的来源; 播放音轨跟随它:
+   * 降噪后 → 视频静音, 播 audio.wav(ASR 听到的就是它, 方便判断降噪过头/不够); 原视频 → 正常视频出声。 */
+  function syncAudioModeUI(m, bustCache) {
+    const sel = $('#audio-mode');
+    const mode = (m.audio && m.audio.mode) || 'denoise';
+    if (sel) sel.value = mode;
+    setPlaybackAudioMode(mode, !!m.hasAudio, bustCache);
+  }
+  async function regenAudio() {
+    if (!state.project) return;
+    const btn = $('#btn-regen-audio');
+    const mode = ($('#audio-mode') && $('#audio-mode').value) || 'denoise';
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '提取中…';
+    try {
+      const r = await fetch(`/api/projects/${state.project.id}/prepare`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, force: true })
+      });
+      const m2 = await r.json();
+      if (!r.ok) { toast(m2.error || '重新生成失败', 3600); return; }
+      state.project.meta = m2;
+      pollPrepare((m) => syncAudioModeUI(m, true));   // 完成后换新音频(时间戳破缓存)并刷新播放音轨
+    } catch { toast('重新生成失败', 3600); }
+    finally { btn.disabled = false; btn.textContent = old; }
+  }
+  const audioModeSel = $('#audio-mode');
+  if (audioModeSel) audioModeSel.addEventListener('change', () => {
+    toast(t(audioModeSel.value === 'denoise'
+      ? '已切换为降噪后音频，点「↻ 重新生成音频」生效'
+      : '已切换为原视频音频，点「↻ 重新生成音频」生效'), 3200);
+  });
+  const regenBtn = $('#btn-regen-audio');
+  if (regenBtn) regenBtn.addEventListener('click', regenAudio);
 
   /* ─────────── 打开项目 ─────────── */
   async function openProject(pid) {
@@ -171,6 +210,7 @@ export function initProjects(ctx) {
 
     // 3) 波形/音频: 就绪直接读, 没就绪轮询
     handlePrepare(m);
+    syncAudioModeUI(m);          // 音频源下拉回显 + 播放音轨(降噪后→audio.wav 接管发声)
   }
 
   function promptRelink(m) {
@@ -179,12 +219,31 @@ export function initProjects(ctx) {
       '重新选择视频', '暂不', () => pickVideoForProject());
   }
   async function pickVideoForProject() {
-    let pick;
+    // 双通道: 原生对话框优先, 超时/失败自动降级浏览器选择(上传成服务端文件再 relink)
+    // 立即提示: 系统对话框开在系统层, 可能被浏览器挡住 —— 用户得知道它已经弹了
+    toast('正在打开系统文件选择窗口（若没看到请看任务栏图标）…', 2600);
+    let pick = null;
     try {
-      pick = await (await fetch('/api/pick', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' })
-      })).json();
-    } catch { toast('无法打开系统文件对话框', 3200); return; }
+      const ctl = new AbortController();
+      const killer = setTimeout(() => ctl.abort(), 38000);
+      const r = await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' }),
+        signal: ctl.signal
+      });
+      clearTimeout(killer);
+      pick = await r.json();
+    } catch { pick = null; }
+    if (!pick || (!pick.path && pick.fallback)) {
+      const f = await browserPickVideo();
+      if (!f) return;
+      toast('正在上传视频…', 4000);
+      const up = await fetch('/api/upload-video?name=' + encodeURIComponent(f.name), {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f
+      });
+      const um = await up.json().catch(() => ({}));
+      if (!up.ok || !um.path) { toast('视频上传失败: ' + (um.error || up.status), 5000); return; }
+      pick = { path: um.path, name: um.name };
+    }
     if (!pick.path) {
       if (pick.error) toast(pick.error, 3200);
       return;
@@ -480,8 +539,16 @@ export function initProjects(ctx) {
     msgEl.textContent = '';
     msgEl.classList.remove('err');
     let data;
-    try { data = await (await fetch('/api/translate/config')).json(); }
-    catch { toast('读取设置失败（本地服务未启动？）', 3200); return; }
+    try {
+      const resp = await fetch('/api/translate/config', { signal: AbortSignal.timeout(8000) });
+      data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+    } catch (e) {
+      msgEl.textContent = '✗ 读取设置失败：' + String((e && e.message) || e) + '（本地服务是否还在运行？）';
+      msgEl.classList.add('err');
+      renderAsrModels();      // 翻译配置读不到也要让模型列表自己报错/自己重试
+      return;
+    }
     stPresets = data.presets || [];
     $('#st-provider').innerHTML = stPresets
       .map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
@@ -491,28 +558,83 @@ export function initProjects(ctx) {
     $('#st-key').value = c.apiKey || '';
     $('#st-model').value = c.model || '';
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
+    try {
+      const h = await (await fetch('/api/asr/hint')).json();
+      const hint = h.hint || {};
+      $('#ah-terms').value = hint.prompt || '';
+      $('#ah-score').value = hint.hotwordsScore || 3;
+    } catch { /* 识别提示词读不到不影响其它设置 */ }
     glLoad(c.glossary, c.glossaryLang);
     $('#st-auto').checked = !!c.autoTranslate;
     renderAsrModels();
+    bindModelDirSettings();
   }
   /** 模型管理: 列出所有识别模型(状态/下载/删除) + whisper.cpp 运行时 */
   async function renderAsrModels() {
     const box = $('#st-models');
     if (!box) return;
     let d;
-    try { d = await (await fetch('/api/asr/status')).json(); }
-    catch { box.innerHTML = '<div class="st-row">读取失败</div>'; return; }
-    const dl = d.download || {};
-    const rows = (d.models || []).map((m) => {
-      const dlThis = dl.running && (dl.modelId === m.id || (dl.kind === 'runtime' && m.needRuntime));
+    try {
+      // 加超时: 服务端异常时请求可能一直不返回, 不能让界面永远停在「读取中…」
+      const resp = await fetch('/api/asr/status', { signal: AbortSignal.timeout(8000) });
+      d = await resp.json();
+      if (!resp.ok) throw new Error(d.error || ('HTTP ' + resp.status));
+    } catch (e) {
+      const why = String((e && e.message) || e);
+      box.innerHTML = '<div class="st-row">读取失败：' + esc(why)
+        + ' <button type="button" class="btn btn-mini" id="st-models-retry">重试</button></div>';
+      const rb = document.getElementById('st-models-retry');
+      if (rb) rb.addEventListener('click', () => renderAsrModels());
+      return;
+    }
+    const dlMap = {};                    // key → 下载状态(服务端并行下载, 每个 key 独立)
+    (d.downloads || []).forEach(x => { dlMap[x.key] = x; });
+    const dlOf = (key) => dlMap[key] || {};
+    const stateHtml = (st, okText) => st.running
+      ? `<span class="sm-state running">${esc(st.msg || '下载中…')} ${st.pct || 0}%</span>`
+      : (st.error ? `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`
+                  : `<span class="sm-state ok">${okText}</span>`);
+    // Python 环境(Parakeet 需要; whisper.cpp 不需要): 预检状态 + 一键安装
+    const py = d.pythonProbe || null;
+    const pySt = dlOf('pyenv');
+    let pyState;
+    if (pySt.running) {
+      pyState = `<span class="sm-state running">${esc(pySt.msg || '安装中…')} ${pySt.pct || 0}%</span>`;
+    } else if (pySt.error) {
+      pyState = `<span class="sm-state" style="color:var(--danger)">${esc(pySt.msg || pySt.error)} <button type="button" class="btn btn-mini sm-pyinstall">重试安装</button></span>`;
+    } else if (!py) {
+      pyState = '<span class="sm-state">检测中…</span>';          // 预检还没跑完(后台探测中), 别误报"不可用"
+    } else if (py.ok) {
+      pyState = d.provider === 'cuda'
+        ? `<span class="sm-state ok">✓ 可用（${esc(py.msg || '')} · GPU·CUDA${d.gpu ? ' · ' + esc(d.gpu) : ''}）</span>`
+        : `<span class="sm-state" style="color:var(--danger)">基础环境可用，但未启用 GPU·CUDA —— 说话人分离可用；Parakeet 识别必须 N 卡（不支持 CPU 兜底），有 N 卡可点「一键安装」换装 CUDA 版 <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
+    } else {
+      pyState = `<span class="sm-state" style="color:var(--danger)">不可用${py && py.msg ? '：' + esc(py.msg) : ''} <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
+    }
+    let rows = `<div class="sm-model">
+      <div class="sm-head"><span class="sm-name">Python 环境</span></div>
+      <div class="sm-desc">Parakeet 模型的语音识别依赖 Python + sherpa-onnx（whisper.cpp 引擎不需要），且必须跑在 CUDA GPU（N 卡）上，不支持 CPU 兜底；说话人分离只依赖基础 Python 环境，无 N 卡也能装好使用。一键安装会自动装好 Python 与依赖，有 N 卡时再换装 CUDA 版 sherpa-onnx 与 cuDNN/cuBLAS 运行库；不写注册表，删 asr\\runtime-python 目录即卸载</div>
+      ${pyState}
+    </div>`;
+    // 各任务 key: model:<id> / runtime / diarize
+    rows += (d.models || []).map((m) => {
+      const st = dlOf('model:' + m.id);
+      const rtSt = m.needRuntime ? dlOf('runtime') : {};
+      const dlThis = st.running || (m.needRuntime && rtSt.running);
+      const pyBlocked = m.engine === 'sherpa-onnx' && d.provider !== 'cuda';   // Parakeet: 无 CUDA 环境连下载都拦
       let state, btn = '';
-      if (dlThis) state = `<span class="sm-state running">${esc(dl.msg || '下载中…')} ${dl.pct || 0}%</span>`;
-      else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
+      if (st.running || (m.needRuntime && rtSt.running)) {
+        state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
+      } else if (st.error) {
+        state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+      } else if (pyBlocked) {
+        state = '<span class="sm-state" style="color:var(--danger)">需 CUDA GPU（N 卡）才能下载使用，不支持 CPU —— 先在上方完成 Python 环境一键安装</span>';
+      } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
       else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
       if (dlThis) btn = '';
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
-      else btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 12MB，首次自动下载）</div>' : '';
+      else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
+      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
       return `<div class="sm-model">
         <div class="sm-head"><span class="sm-name">${esc(m.name)}</span>${btn}</div>
         <div class="sm-desc">${esc(m.desc || '')}</div>
@@ -521,13 +643,13 @@ export function initProjects(ctx) {
     }).join('');
     // 说话人分离模型(两个文件一组, ~32MB): 初稿勾选「区分说话人」时需要
     const dz = d.diarize || {};
-    const dzDl = dl.running && dl.kind === 'diarize';
-    const dzBtn = dzDl ? '' : (dz.ready
+    const dzSt = dlOf('diarize');
+    const dzBtn = dzSt.running ? '' : (dz.ready
       ? '<button type="button" class="btn btn-mini sm-del" data-id="diarize" title="删除分离模型文件">删除</button>'
       : '<button type="button" class="btn btn-mini sm-dl" data-id="diarize">下载</button>');
-    const dzState = dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>'
-      : (dzDl ? `<span class="sm-state running">${esc(dl.msg || '下载中…')} ${dl.pct || 0}%</span>`
-              : '<span class="sm-state">未下载 · 32 MB</span>');
+    const dzState = dzSt.running ? `<span class="sm-state running">${esc(dzSt.msg || '下载中…')} ${dzSt.pct || 0}%</span>`
+      : (dzSt.error ? `<span class="sm-state" style="color:var(--danger)">${esc(dzSt.msg || dzSt.error)}</span>`
+      : (dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>' : '<span class="sm-state">未下载 · 32 MB</span>'));
     rows += `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">说话人分离</span>${dzBtn}</div>
       <div class="sm-desc">说话人分段 + 说话人嵌入（约 32MB）。初稿勾选「区分说话人」时需要</div>
@@ -535,6 +657,16 @@ export function initProjects(ctx) {
     </div>`;
     box.innerHTML = rows || '<div class="st-row">无可用模型</div>';
     box.querySelectorAll('.sm-dl').forEach(b => b.addEventListener('click', () => downloadModel(b.dataset.id)));
+    box.querySelectorAll('.sm-pyinstall').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = '开始…';
+      try {
+        const r = await (await fetch('/api/asr/download', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'pyenv' })
+        })).json();
+        if (r.started) pollModelDownload();
+      } catch {}
+      renderAsrModels();
+    }));
     box.querySelectorAll('.sm-del').forEach(b => b.addEventListener('click', () => {
       panel.showConfirm('删除模型',
         '确定删除该模型的文件吗？（不影响已生成的字幕；之后可重新下载）',
@@ -545,10 +677,10 @@ export function initProjects(ctx) {
           renderAsrModels();
         });
     }));
-    // whisper.cpp 运行时: 需要 ggml 模型但运行时缺失时显示下载按钮
+    // whisper.cpp 运行时: 需要 ggml 模型但运行时缺失时自动开始下载(与其它下载并行, 不互斥)
     const note = $('#st-model-note');
     const needRt = (d.models || []).some(m => m.needRuntime);
-    if (needRt && !dl.running) {
+    if (needRt && !dlOf('runtime').running) {
       const r = await (await fetch('/api/asr/download', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'runtime' })
       })).json().catch(() => ({}));
@@ -562,18 +694,48 @@ export function initProjects(ctx) {
     for (let i = 0; i < 900; i++) {
       let d;
       try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
-      const dl = d.download || {};
+      const anyRunning = (d.downloads || []).some(x => x.running);
       renderAsrModels();
-      if (!dl.running) { renderAsrModels(); break; }
+      if (!anyRunning) break;
       await new Promise(r => setTimeout(r, 1000));
     }
   }
   async function downloadModel(id) {
+    // 点下载立刻有反馈(按钮变「排队…」), 再发请求 —— 旧版静默发请求, 服务端忙时用户以为没点上
     const body = id === 'diarize' ? { kind: 'diarize' } : { modelId: id };
-    await fetch('/api/asr/download', {
+    const btn = document.querySelector('.sm-dl[data-id="' + id + '"]');
+    if (btn) { btn.disabled = true; btn.textContent = '开始…'; }
+    const r = await fetch('/api/asr/download', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
     });
+    const m = await r.json().catch(() => ({}));
+    if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
     pollModelDownload();
+  }
+  /** 模型下载位置(设置面板): 指定目录 + 打开目录 */
+  async function bindModelDirSettings() {
+    const inp = document.getElementById('st-model-dir');
+    const openBtn = document.getElementById('st-model-dir-open');
+    if (!inp || inp.dataset.bound) return;
+    inp.dataset.bound = '1';
+    try {
+      const d = await (await fetch('/api/asr/status', { signal: AbortSignal.timeout(8000) })).json();
+      inp.value = d.modelsRoot || '';
+    } catch {}
+    const save = async () => {
+      const r = await fetch('/api/asr/set-dir', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dir: inp.value.trim() })
+      });
+      const m = await r.json().catch(() => ({}));
+      if (r.ok) { inp.value = m.modelsRoot || inp.value; toast('模型下载位置已保存', 2600); }
+      else toast(m.error || '保存失败', 4200);
+    };
+    inp.addEventListener('change', save);
+    if (openBtn) openBtn.addEventListener('click', async () => {
+      await fetch('/api/asr/open-dir', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'models' })
+      });
+    });
   }
   function closeSettings() { stOverlay.hidden = true; }
   $('#btn-settings').addEventListener('click', openSettings);
@@ -674,7 +836,17 @@ export function initProjects(ctx) {
     if (srcs.length) srcs[srcs.length - 1].focus();
   });
 
-  function collectSettings() {
+  async function collectSettings() {
+    // 识别提示词是独立的一块(asr/settings.json 的 asr 段), 与翻译配置分开存
+    try {
+      await fetch('/api/asr/hint', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: $('#ah-terms').value,
+          hotwordsScore: parseFloat($('#ah-score').value) || 3,
+        })
+      });
+    } catch { /* 保存失败不阻断翻译配置的保存 */ }
     return {
       provider: $('#st-provider').value,
       baseUrl: $('#st-baseurl').value.trim(),
@@ -687,8 +859,9 @@ export function initProjects(ctx) {
     };
   }
   async function postSettings() {
+    const payload = await collectSettings();     // collectSettings 会顺带保存识别提示词(异步)
     const r = await fetch('/api/translate/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(collectSettings())
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     });
     const m = await r.json();
     if (!r.ok) throw new Error(m.error || '保存失败');
@@ -725,6 +898,7 @@ export function initProjects(ctx) {
     clearTimeout(saveTimer);
     clearInterval(pollTimer); pollTimer = 0;
     state.project = null;
+    setPlaybackAudioMode(null, false);          // 脱离项目: 播放恢复视频原声
     const el = $('#save-state');
     if (el) el.hidden = true;
   }
@@ -735,6 +909,9 @@ export function initProjects(ctx) {
   const npSub = { name: '', text: '' };
   let npMode = 'import';                 // 'import' | 'draft'
   let asrStatus = { ready: false, modelDir: '', missing: [], pythonOk: false };
+  // 浏览器选的视频: File 对象暂存(npMode 提交时经 /api/upload-video 落盘),
+  // path 置为 'upload:<name>' 占位 —— npMaybeEnable 只判断 path 非空, 不关心来源
+  let npVideoFile = null;
 
   function npSetMode(mode) {
     npMode = mode;
@@ -765,12 +942,19 @@ export function initProjects(ctx) {
         : '<option value="">（无可用模型，请到设置里下载）</option>';
       if (asrStatus.selectedModel && ready.some(m => m.id === asrStatus.selectedModel)) sel.value = asrStatus.selectedModel;
     }
+    // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
+    const hint = $('#np-hint');
+    if (hint && asrStatus.pythonProbe && !asrStatus.pythonProbe.ok) {
+      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + ' —— Parakeet 模型需要 Python（详见创建后日志里的修复方法）；whisper.cpp 引擎不需要';
+      hint.style.color = '#ff9a5c';
+    }
     npMaybeEnable();
   }
 
   function npReset() {
     npVideo.path = npVideo.name = '';
     npSub.name = npSub.text = '';
+    npVideoFile = null;
     $('#np-name').value = '';
     $('#np-video-name').textContent = '未选择';
     $('#np-video-name').classList.remove('filled');
@@ -778,6 +962,7 @@ export function initProjects(ctx) {
     $('#np-sub-name').classList.remove('filled');
     $('#np-create').disabled = true;
     npSetMode('import');
+    npSyncSpeakers();       // 逐词默认开 → 说话人可勾; 切到 SRT 时自动取消并禁用
   }
   function npMaybeEnable() {
     if (!npVideo.path) { $('#np-create').disabled = true; return; }
@@ -793,25 +978,91 @@ export function initProjects(ctx) {
 
   $('#np-mode-import').addEventListener('click', () => npSetMode('import'));
   $('#np-mode-draft').addEventListener('click', () => npSetMode('draft'));
+  /** 逐词开关 → 说话人开关联动: SRT 没有角色概念(编辑器里禁用角色 Tab/筛选),
+   *  所以关掉逐词时必须把「区分说话人」一并取消并禁用, 免得用户勾了却拿不到角色。 */
+  function npSyncSpeakers() {
+    const wordOn = !!($('#np-word') && $('#np-word').checked);
+    const root = $('#np-row-spk');
+    const box = $('#np-speakers');
+    const cnt = $('#np-spk-count');
+    if (!root || !box) return;
+    box.disabled = !wordOn;
+    if (cnt) cnt.disabled = !wordOn || !box.checked;
+    if (!wordOn && box.checked) box.checked = false;      // SRT 用不上 → 自动取消
+    root.classList.toggle('disabled', !wordOn);
+    root.title = wordOn ? '' : 'SRT 模式没有角色（说话人）概念，需要开启逐词（生成 ASS）才能区分说话人';
+  }
   $('#np-word').addEventListener('change', () => {
     $('#np-word-desc').textContent = $('#np-word').checked
       ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
+    npSyncSpeakers();
   });
+  const npSpk = $('#np-speakers');
+  if (npSpk) npSpk.addEventListener('change', npSyncSpeakers);
 
+  /** 视频选择(双通道):
+   *  ① 服务端原生对话框(快, 直接返回本地路径, 视频不复制); 35s 超时/失败 → ②
+   *  ② 浏览器 <input type=file>(任何环境都能用): File 暂存, 创建项目时经
+   *     /api/upload-video 落盘成服务端持久文件, 之后与本地路径完全同构。 */
+  let npPicking = false;
   $('#np-pick-video').addEventListener('click', async () => {
-    let pick;
+    if (npPicking) return;                       // 防双击重复触发
+    npPicking = true;
+    const btn = $('#np-pick-video');
+    const oldLabel = btn.textContent;
+    btn.textContent = '打开选择框…';
+    toast('正在打开系统文件选择窗口（若没看到请看任务栏图标）…', 2600);
+    let pick = null, usedBrowser = false;
     try {
-      pick = await (await fetch('/api/pick', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' })
-      })).json();
-    } catch { toast('无法打开系统文件对话框', 3200); return; }
-    if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
-    npVideo.path = pick.path; npVideo.name = pick.name;
+      const ctl = new AbortController();
+      const killer = setTimeout(() => ctl.abort(), 38000);   // 服务端 35s 超时 + 余量
+      const r = await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' }),
+        signal: ctl.signal
+      });
+      clearTimeout(killer);
+      pick = await r.json();
+    } catch { pick = null; }
+    if (!pick || (!pick.path && pick.fallback)) {
+      // 原生对话框没弹出来(超时/出错) → 自动降级浏览器选择
+      usedBrowser = true;
+      toast('系统对话框不可用，已改用浏览器选择（视频会复制一份进程序目录）', 4200);
+      const f = await browserPickVideo();
+      btn.textContent = oldLabel; npPicking = false;
+      if (!f) return;
+      npVideoFile = f;
+      npVideo.path = 'upload:' + f.name;
+      npVideo.name = f.name;
+    } else {
+      btn.textContent = oldLabel; npPicking = false;
+      npVideoFile = null;
+      if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
+      npVideo.path = pick.path; npVideo.name = pick.name;
+    }
     const el = $('#np-video-name');
-    el.textContent = pick.name; el.classList.add('filled');
-    if (!$('#np-name').value.trim()) $('#np-name').value = pick.name.replace(/\.[^.]+$/, '');
+    el.textContent = npVideo.name + (usedBrowser ? '（浏览器选择）' : '');
+    el.classList.add('filled');
+    if (!$('#np-name').value.trim()) $('#np-name').value = npVideo.name.replace(/\.[^.]+$/, '');
     npMaybeEnable();
   });
+  /** 浏览器选视频: 动态建 input[type=file], 返回 Promise<File> 或 null */
+  function browserPickVideo() {
+    return new Promise((resolve) => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'video/*,.mkv,.avi,.mov,.m4v';
+      inp.style.display = 'none';
+      inp.addEventListener('change', () => {
+        const f = inp.files && inp.files[0];
+        inp.remove();
+        resolve(f || null);
+      });
+      // 用户取消时 change 不触发 —— 兜底: 失焦 60s 后自动 resolve(null)
+      document.body.appendChild(inp);
+      inp.click();
+      setTimeout(() => { if (inp.isConnected) { inp.remove(); resolve(null); } }, 60000);
+    });
+  }
   $('#np-pick-sub').addEventListener('click', () => $('#np-file-sub').click());
   $('#np-file-sub').addEventListener('change', async (e) => {
     const f = e.target.files[0];
@@ -827,6 +1078,19 @@ export function initProjects(ctx) {
     const btn = $('#np-create');
     btn.disabled = true; btn.textContent = isDraft ? '提交中…' : '创建中…';
     try {
+      // 浏览器选的视频: 先把 File 上传成服务端持久文件, 拿到真实路径后走同一条创建链路
+      if (npVideo.path.startsWith('upload:')) {
+        if (!npVideoFile) { toast('视频文件丢失，请重新选择', 3600); return; }
+        btn.textContent = '上传视频中…';
+        const up = await fetch('/api/upload-video?name=' + encodeURIComponent(npVideoFile.name), {
+          method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: npVideoFile
+        });
+        const um = await up.json().catch(() => ({}));
+        if (!up.ok || !um.path) { toast('视频上传失败: ' + (um.error || up.status), 5000); return; }
+        npVideo.path = um.path; npVideo.name = um.name;
+        npVideoFile = null;
+        btn.textContent = isDraft ? '提交中…' : '创建中…';
+      }
       const payload = { name: $('#np-name').value.trim(), video: { path: npVideo.path, name: npVideo.name } };
       if (isDraft) {
         payload.draft = true;
@@ -865,15 +1129,21 @@ export function initProjects(ctx) {
   /* ─────────── 路由 ─────────── */
   function applyHash() {
     const h = location.hash || '#/home';
+    const audioSrc = $('#audio-src');
     if (h.startsWith('#/project/')) {
       const pid = h.slice('#/project/'.length);
       elHome.hidden = true;
+      if (audioSrc) audioSrc.hidden = false;         // 项目模式才显示音频源控件
       if (!state.project || state.project.id !== pid) openProject(pid);
+      else syncAudioModeUI(state.project.meta);       // 从主界面回到同一项目: 回显 + 恢复播放音轨
     } else if (h === '#/editor') {
       elHome.hidden = true;                          // 无项目直开编辑器(兼容旧用法)
+      if (audioSrc) audioSrc.hidden = true;
+      setPlaybackAudioMode(null, false);             // 无项目: 播放恢复视频原声
       if (state.project) { saveNow(); detachProject(); }
     } else {
       if (!location.hash) history.replaceState(null, '', '#/home');   // 归一化地址栏
+      if (audioSrc) audioSrc.hidden = true;
       showHome();
     }
   }
