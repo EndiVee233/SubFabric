@@ -28,6 +28,9 @@ asr/__pycache__/
 # (zips→解压→展平到 asr/whisper.cpp/, 见 server.js startRuntimeDownload)
 asr/whisper.cpp/
 
+# 一键安装的内置 Python(Embeddable, 约 60MB): 不入库, 设置里点「一键安装」时下载
+asr/runtime-python/
+
 # 本地联调用的视频素材(12 秒英文语音, 供端到端测试)
 /_test/
 

@@ -554,8 +554,28 @@ export function initProjects(ctx) {
       ? `<span class="sm-state running">${esc(st.msg || '下载中…')} ${st.pct || 0}%</span>`
       : (st.error ? `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`
                   : `<span class="sm-state ok">${okText}</span>`);
+    // Python 环境(Parakeet 需要; whisper.cpp 不需要): 预检状态 + 一键安装
+    const py = d.pythonProbe || null;
+    const pySt = dlOf('pyenv');
+    let pyState;
+    if (pySt.running) {
+      pyState = `<span class="sm-state running">${esc(pySt.msg || '安装中…')} ${pySt.pct || 0}%</span>`;
+    } else if (pySt.error) {
+      pyState = `<span class="sm-state" style="color:var(--danger)">${esc(pySt.msg || pySt.error)} <button type="button" class="btn btn-mini sm-pyinstall">重试安装</button></span>`;
+    } else if (!py) {
+      pyState = '<span class="sm-state">检测中…</span>';          // 预检还没跑完(后台探测中), 别误报"不可用"
+    } else if (py.ok) {
+      pyState = `<span class="sm-state ok">✓ 可用（${esc(py.msg || '')}）</span>`;
+    } else {
+      pyState = `<span class="sm-state" style="color:var(--danger)">不可用${py && py.msg ? '：' + esc(py.msg) : ''} <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
+    }
+    let rows = `<div class="sm-model">
+      <div class="sm-head"><span class="sm-name">Python 环境</span></div>
+      <div class="sm-desc">Parakeet 模型的语音识别依赖 Python + sherpa-onnx（whisper.cpp 引擎不需要）。一键安装会自动下载内置 Python 并装好依赖（约 60MB，不写注册表，删 asr\\runtime-python 目录即卸载）</div>
+      ${pyState}
+    </div>`;
     // 各任务 key: model:<id> / runtime / diarize
-    let rows = (d.models || []).map((m) => {
+    rows += (d.models || []).map((m) => {
       const st = dlOf('model:' + m.id);
       const rtSt = m.needRuntime ? dlOf('runtime') : {};
       const dlThis = st.running || (m.needRuntime && rtSt.running);
@@ -592,6 +612,16 @@ export function initProjects(ctx) {
     </div>`;
     box.innerHTML = rows || '<div class="st-row">无可用模型</div>';
     box.querySelectorAll('.sm-dl').forEach(b => b.addEventListener('click', () => downloadModel(b.dataset.id)));
+    box.querySelectorAll('.sm-pyinstall').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = '开始…';
+      try {
+        const r = await (await fetch('/api/asr/download', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'pyenv' })
+        })).json();
+        if (r.started) pollModelDownload();
+      } catch {}
+      renderAsrModels();
+    }));
     box.querySelectorAll('.sm-del').forEach(b => b.addEventListener('click', () => {
       panel.showConfirm('删除模型',
         '确定删除该模型的文件吗？（不影响已生成的字幕；之后可重新下载）',

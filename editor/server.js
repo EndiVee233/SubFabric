@@ -18,7 +18,7 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.3.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.3.1'; // 与打版号一致; 改了就顺手同步这里
 
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
@@ -613,16 +613,29 @@ function parakeetHotwordArgs() {
   } catch { return []; }
 }
 
-/** Python 解释器: 优先本项目 asr/.venv, 其次环境变量, 最后交给 PATH */
+/** Python 解释器: 优先本项目 asr/.venv, 其次一键安装的内置 Python, 再次环境变量, 最后交给 PATH */
+const EMBEDDED_PY = {
+  version: '3.12.10',
+  dir: path.join(ASR_DIR, 'runtime-python'),
+  zipUrls: [
+    'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip',
+    'https://mirrors.huaweicloud.com/python/3.12.10/python-3.12.10-embed-amd64.zip',
+  ],
+  getPipUrl: 'https://bootstrap.pypa.io/get-pip.py',
+  pipIndex: 'https://pypi.tuna.tsinghua.edu.cn/simple',
+};
+const embeddedPyExe = () => path.join(EMBEDDED_PY.dir, 'python.exe');
+
 function resolvePython() {
   if (process.env.ASR_PYTHON) return process.env.ASR_PYTHON;
   for (const c of [path.join(ASR_DIR, '.venv', 'Scripts', 'python.exe'),
-                   path.join(ASR_DIR, '.venv', 'bin', 'python')]) {
+                   path.join(ASR_DIR, '.venv', 'bin', 'python'),
+                   embeddedPyExe()]) {
     try { fs.accessSync(c); return c; } catch {}
   }
   return 'python';
 }
-const ASR_PY = resolvePython();
+let ASR_PY = resolvePython();   // let: 一键安装完成后会重新解析(见 startPyEnvSetup)
 
 /** 子进程退出码 → 人话。经典坑: Windows 上「python」不存在时, Microsoft Store 的
  *  占位别名 python.exe 会启动并退出 9009(它打印的提示是纯文本, 不是 asr.py 的 JSON 日志,
@@ -950,6 +963,143 @@ function startRuntimeDownload() {
       st.error = String((e && e.message) || e);
       st.msg = '运行时下载失败: ' + st.error;
     }
+  })();
+}
+
+/* ═══════════ Python 环境一键安装 ═══════════
+ * Parakeet(sherpa-onnx) 依赖 Python, 但发行包不带 venv(体积), 用户机器可能没有 Python
+ * 或只有 Microsoft Store 占位程序(退出码 9009)。一键安装两条路线:
+ *   ① 系统 Python 可用(3.10~3.12) → python -m venv .venv → pip 装 requirements.txt(清华源)
+ *   ② 否则 → 下载官方 Embeddable 包(11MB, 解压到 asr/runtime-python, 不写注册表不碰系统)
+ *      → 改 _pth 启用 site-packages → get-pip → pip 装依赖
+ * 进度走 downloads Map(key='pyenv'), 设置面板与其它下载共用同一套进度 UI。 */
+
+/** 跑一个子进程收集输出; 非零退出抛错(带输出尾部)。 */
+function runCapture(cmd, args, timeoutMs, onLine) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(cmd, args, { windowsHide: true, cwd: ASR_DIR });
+    let out = '', err = '';
+    const timer = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('执行超时（' + Math.round(timeoutMs / 1000) + 's）: ' + cmd)); }, timeoutMs);
+    const feed = (chunk, isErr) => {
+      const s = String(chunk);
+      if (isErr) err += s; else out += s;
+      if (onLine) for (const line of s.split(/\r?\n/)) { const t = line.trim(); if (t) onLine(t); }
+    };
+    p.stdout.on('data', c => feed(c, false));
+    p.stderr.on('data', c => feed(c, true));
+    p.on('error', e => { clearTimeout(timer); reject(new Error('无法启动 ' + cmd + ': ' + e.message)); });
+    p.on('close', code => {
+      clearTimeout(timer);
+      const tail = (err || out).trim().split('\n').slice(-3).join(' | ').slice(-300);
+      if (code !== 0) reject(new Error('退出码 ' + code + (tail ? ': ' + tail : '')));
+      else resolve({ code, stdout: out, stderr: err });
+    });
+  });
+}
+
+/** pip 装依赖: 进度按输出行数粗略推进(没法拿精确百分比), 最后报 Successfully installed */
+async function pipInstall(pyExe, prog, p0, p1) {
+  let lines = 0, last = '';
+  await runCapture(pyExe, ['-m', 'pip', 'install', '--upgrade', 'pip', '-i', EMBEDDED_PY.pipIndex, '--quiet'], 300000);
+  prog(Math.round(p0 + (p1 - p0) * 0.1), '正在下载依赖包（sherpa-onnx / numpy）…');
+  await runCapture(pyExe,
+    ['-m', 'pip', 'install', '-r', path.join(ASR_DIR, 'requirements.txt'), '-i', EMBEDDED_PY.pipIndex],
+    600000,
+    (line) => { lines++; last = line; prog(Math.min(p1 - 2, Math.round(p0 + (p1 - p0) * 0.15 + lines * 3)), '依赖安装中: ' + last.slice(0, 60)); });
+}
+
+/** 找可用的系统 Python(3.10~3.12, 排除 Store 占位程序); 找不到返回 null */
+async function findSystemPython() {
+  const candidates = [
+    { cmd: 'python', args: [] },
+    { cmd: 'py', args: ['-3'] },
+  ];
+  for (const c of candidates) {
+    try {
+      const r = await runCapture(c.cmd, [...c.args, '-c', 'import sys; print(sys.version.split()[0])'], 15000);
+      const v = r.stdout.trim();
+      const m = v.match(/^3\.(\d+)\./);
+      if (m && Number(m[1]) >= 10 && Number(m[1]) <= 12) return { cmd: c.cmd, args: c.args, version: v };
+    } catch {}
+  }
+  return null;
+}
+
+function startPyEnvSetup() {
+  const key = 'pyenv';
+  if (dlState(key).running) return;
+  dlState(key, { running: true, kind: 'pyenv', pct: 0, msg: '检查 Python 环境…', error: null, modelId: 'pyenv', dir: EMBEDDED_PY.dir });
+  (async () => {
+    const prog = (pct, msg) => { const st = dlState(key); st.pct = Math.min(99, Math.round(pct)); st.msg = msg; };
+    const finishOk = (msg) => {
+      ASR_PY = resolvePython();      // 新解释器就位, 让后续识别立即用上
+      pyProbeCache = null;           // 强制下次预检重新探测
+      dlState(key, { running: false, kind: 'pyenv', pct: 100, msg, error: null, modelId: 'pyenv', dir: EMBEDDED_PY.dir });
+    };
+    const finishFail = (e) => {
+      const st = dlState(key);
+      st.running = false;
+      st.error = String((e && e.message) || e);
+      st.msg = '环境安装失败: ' + st.error;
+    };
+    const verify = async (pyExe) => {
+      const r = await runCapture(pyExe, ['-c', 'import sherpa_onnx, numpy, sys; print(sys.version.split()[0] + " / sherpa-onnx " + str(getattr(sherpa_onnx, "__version__", "?")))'], 60000);
+      return r.stdout.trim();
+    };
+    try {
+      // 0) 现有解释器已经能用 → 无事可做
+      try {
+        const pre = await probePython();
+        if (pre.ok) return finishOk('已就绪: ' + pre.msg);
+      } catch {}
+
+      // ① 系统 Python 可用 → 建 venv
+      prog(3, '检查系统 Python…');
+      const sys = await findSystemPython();
+      if (sys) {
+        prog(6, '系统 Python ' + sys.version + '，创建虚拟环境…');
+        const venvDir = path.join(ASR_DIR, '.venv');
+        try { fs.rmSync(venvDir, { recursive: true, force: true }); } catch {}
+        await runCapture(sys.cmd, [...sys.args, '-m', 'venv', venvDir], 180000);
+        const vpy = path.join(venvDir, 'Scripts', 'python.exe');
+        prog(15, '虚拟环境已建好，安装 pip…');
+        await pipInstall(vpy, prog, 15, 92);
+        prog(95, '验证依赖…');
+        const info = await verify(vpy);
+        return finishOk('安装完成: ' + info);
+      }
+
+      // ② 内置 Python(Embeddable): 解压即用, 不写注册表/不改 PATH, 删目录即卸载
+      prog(28, '未找到系统 Python，下载内置 Python ' + EMBEDDED_PY.version + '（约 11MB）…');
+      const zip = path.join(os.tmpdir(), `kass-py-${Date.now().toString(36)}.zip`);
+      try { fs.unlinkSync(zip); } catch {}
+      await downloadAny(EMBEDDED_PY.zipUrls, zip, (done, total) => {
+        if (done >= 0 && total) prog(28 + Math.min(14, done / total * 14), `下载内置 Python… ${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`);
+      });
+      prog(44, '解压内置 Python…');
+      fs.rmSync(EMBEDDED_PY.dir, { recursive: true, force: true });
+      fs.mkdirSync(EMBEDDED_PY.dir, { recursive: true });
+      const sysTar = path.join(process.env.SystemRoot || 'C:' + path.sep + 'Windows', 'System32', 'tar.exe');
+      await runCapture(sysTar, ['-xf', zip, '-C', EMBEDDED_PY.dir], 300000);
+      try { fs.unlinkSync(zip); } catch {}
+      // Embeddable 包默认不加载 site-packages: 改 _pth 打开(否则 pip 装的包导不进来)
+      prog(50, '启用 site-packages…');
+      const pth = fs.readdirSync(EMBEDDED_PY.dir).find(n => /^python\d+\._pth$/i.test(n));
+      if (!pth) throw new Error('解压后未找到 python._pth 配置文件');
+      const majMin = (EMBEDDED_PY.version.match(/^3\.(\d+)\./) || [])[1] || '12';
+      fs.writeFileSync(path.join(EMBEDDED_PY.dir, pth),
+        `python3${majMin}.zip\n.\nLib/site-packages\nimport site\n`, 'utf8');
+      prog(54, '安装 pip…');
+      const getpip = path.join(os.tmpdir(), `get-pip-${Date.now().toString(36)}.py`);
+      await downloadAny([EMBEDDED_PY.getPipUrl], getpip, () => {});
+      await runCapture(embeddedPyExe(), [getpip, '--no-warn-script-location', '-i', EMBEDDED_PY.pipIndex], 300000);
+      try { fs.unlinkSync(getpip); } catch {}
+      prog(66, '安装语音识别依赖（sherpa-onnx / numpy，走清华源）…');
+      await pipInstall(embeddedPyExe(), prog, 66, 94);
+      prog(96, '验证依赖…');
+      const info = await verify(embeddedPyExe());
+      finishOk('安装完成: ' + info);
+    } catch (e) { finishFail(e); }
   })();
 }
 
@@ -2029,7 +2179,7 @@ function handleRequest(req, res) {
         pushDraftLog(id, `[${ts()}] [修复方法] ② 在程序目录 asr\\ 下执行: py -3.12 -m venv .venv`);
         pushDraftLog(id, `[${ts()}] [修复方法] ③ asr\\.venv\\Scripts\\pip.exe install -r requirements.txt`);
         draftJobs.delete(id);
-        return finishDraft(id, new Error('Python 环境不可用，无法语音识别 —— 详见日志（' + pre.msg + '）'));
+        return finishDraft(id, new Error('Python 环境不可用，无法语音识别 —— 到「设置 → 识别模型 → Python 环境」点「一键安装」即可自动装好（详见日志：' + pre.msg + '）'));
       }
       pushDraftLog(id, `[${ts()}] Python: ${ASR_PY}${pre.msg ? '（' + pre.msg + '）' : ''}`);
 
@@ -2252,6 +2402,11 @@ function handleRequest(req, res) {
         if (dlState('diarize').running) return sendJson(res, 200, { started: true, kind: 'diarize', already: true });
         startDiarizeDownload();
         return sendJson(res, 200, { started: true, kind: 'diarize' });
+      }
+      if (kind === 'pyenv') {
+        if (dlState('pyenv').running) return sendJson(res, 200, { started: true, kind: 'pyenv', already: true });
+        startPyEnvSetup();
+        return sendJson(res, 200, { started: true, kind: 'pyenv' });
       }
       const model = modelById(modelId) || resolveAsrModel() || ASR_MODELS[0];
       if (!model) return sendJson(res, 400, { error: '未知模型' });

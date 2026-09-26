@@ -10,15 +10,15 @@
 
 注意: 打包前先 `python build_exe.py`(确保 build/SubFabric.exe 存在) 和
       `node editor/scripts/fetch-vendor.js`(确保 editor/vendor 完整)。
-用法: python package_release.py [版本号]   默认 1.3.0
+用法: python package_release.py [版本号]   默认 1.3.1
 """
 import os, zipfile, sys
 
-VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.3.0'
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.3.1'
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(ROOT, 'K-ASS-Editor-%s.zip' % VERSION)
 
-EXCLUDE_DIRS = {'.git', 'asr/.venv', 'asr/models', 'asr/whisper.cpp', 'asr/__pycache__', 'editor/__pycache__',
+EXCLUDE_DIRS = {'.git', 'asr/.venv', 'asr/models', 'asr/whisper.cpp', 'asr/runtime-python', 'asr/__pycache__', 'editor/__pycache__',
                 'node_modules', 'projects', 'videos', '_test', 'tests', '__pycache__', '.workbuddy', 'build'}
 EXCLUDE_FILES = {'asr/settings.json', '.DS_Store', 'Thumbs.db', 'desktop.ini'}
 EXCLUDE_EXT = {'.pyc'}
