@@ -35,7 +35,9 @@ export function speakerColorOf(sent) {
 
 function stripTags(t) {
   return String(t)
-    .replace(/\{[^}]*\}/g, '')
+    // 只剥"覆盖标签"（{\...}）—— 真标签一定以反斜杠开头。文本里的字面大括号（如 {brace}）是用户原文,
+    // 必须原样保留: 否则"序列化 → 重新分析"会把它们吃掉, 编辑后重载文本就变了(实测英文含 {brace} 时丢失)。
+    .replace(/\{\\[^}]*\}/g, '')
     .replace(/\\N/gi, ' ')
     .replace(/\\h/g, ' ')
     .replace(/\s{2,}/g, ' ')
@@ -83,6 +85,56 @@ function firstTag(slices) {
 }
 
 /**
+ * 逐词样式推断(退化态兜底): 文件里一条高亮切片都没有时(整轨「去逐词」后重新打开),
+ * 按与配对同源的规律把它认出来 —— 该样式的句子在时间上被**另一条样式**的句子包住(±0.05s),
+ * 这正是"中文整句行包住英文逐词行"的结构(与 pairRows.ownerOf 同一判据)。
+ * 两条样式互相包含(同起止)时取 CJK 占比更低的那条: 整句样式是中文行, 逐词样式是英文/拉丁行。
+ * 推断不出来就原样返回 —— 文件本就没有双语配对结构时不硬凑。
+ */
+function inferWordStyle(sentences, wordStyle) {
+  if (wordStyle && sentences.some(s => s.style === wordStyle)) return wordStyle;
+  const byStyle = new Map();
+  for (const s of sentences) {
+    if (!byStyle.has(s.style)) byStyle.set(s.style, []);
+    byStyle.get(s.style).push(s);
+  }
+  if (byStyle.size < 2) return wordStyle;          // 单一样式: 谈不上"跨样式配对"
+  const EPS = 0.05;
+  const styles = [...byStyle.keys()];
+  let best = null;
+  for (const w of styles) {
+    const ws = byStyle.get(w);
+    let contained = 0;
+    for (const s of ws) {
+      for (const a of styles) {
+        if (a === w) continue;
+        if (byStyle.get(a).some(z => s.start >= z.start - EPS && s.end <= z.end + EPS)) { contained++; break; }
+      }
+    }
+    const ratio = contained / ws.length;
+    if (ratio < 0.6) continue;                     // 过半被包住才算"内层"样式
+    let cjk = 0, len = 0;
+    for (const s of ws) { cjk += cjkRatio(s.text) * s.text.length; len += s.text.length; }
+    const cand = { style: w, ratio, cjk: len ? cjk / len : 0, n: ws.length };
+    if (!best
+      || cand.ratio > best.ratio + 1e-9
+      || (Math.abs(cand.ratio - best.ratio) <= 1e-9 && cand.cjk < best.cjk - 1e-9)
+      || (Math.abs(cand.ratio - best.ratio) <= 1e-9 && Math.abs(cand.cjk - best.cjk) <= 1e-9 && cand.n > best.n)) {
+      best = cand;
+    }
+  }
+  return best ? best.style : wordStyle;
+}
+
+/** CJK 字符占比(逐词样式通常是按空格分词的拉丁文本, 整句样式是中文行) */
+function cjkRatio(text) {
+  const s = String(text || '');
+  if (!s) return 0;
+  const m = s.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/g);
+  return (m ? m.length : 0) / s.length;
+}
+
+/**
  * 分析 ASS 文档 → { wordStyle, sentences[] }
  * wordStyle=null 表示文件不含逐词切片(每个事件即一句)。
  */
@@ -100,6 +152,16 @@ export function analyzeKaraoke(doc) {
     let hl = 0;
     for (const ev of evs) if (HL_RE.test(ev.text)) hl++;
     if (hl / evs.length > 0.3 && evs.length > best) { wordStyle = style; wordEvents = evs; best = evs.length; }
+  }
+
+  // 检测失败时的兜底: 整轨「去逐词」后文件里一条高亮切片都没有, 检测必然落空。
+  // 若此时直接按"每个事件各自成句"输出, 中英配对会整体失效、重载后行数翻倍(实测 6 行 → 12 行),
+  // 所以改用时间包含规律把逐词样式推断出来, 后面的切片/配对流程照常走。
+  if (!wordStyle) {
+    const plain = [];
+    for (const ev of doc.sorted) plain.push({ style: ev.style, start: ev.start, end: ev.end, text: assPlainText(ev.text) });
+    const inferred = inferWordStyle(plain, null);
+    if (inferred) { wordStyle = inferred; wordEvents = byStyle.get(inferred) || []; }
   }
 
   const sentences = [];
@@ -144,10 +206,26 @@ export function analyzeKaraoke(doc) {
 
   const groups = new Map();   // anchor → slices
   const loose = [];
+  const wholeSents = [];      // 逐词样式里的"整句事件"(已去逐词的行): 不能并进别行的切片组
   for (const sl of wordEvents) {
     const a = findAnchor(sl);
     if (a) { if (!groups.has(a)) groups.set(a, []); groups.get(a).push(sl); }
     else loose.push(sl);
+  }
+  // 组内"无高亮"的事件要分辨两种东西:
+  //   ① 词间空档(buildWordSpecs 补的整句行) —— 纯文本与本组高亮切片一致, 属于这一句, 保留;
+  //   ② 整句事件(该行已"去逐词", 只剩一条无高亮事件) —— 纯文本与本组切片不同, 不是这一句的切片。
+  // 不拆②的后果(实测): 与现有行同起止的新建行, 上一行去逐词后的整句会被并进来,
+  // 文本取最长者导致串味、另一条锚点的英文变空, 重载后与内存模型不一致。
+  // 组内一个高亮切片都没有时(整组都是整句事件), 全部判为②。
+  for (const [a, S] of [...groups]) {
+    const hlTexts = new Set();
+    for (const e of S) if (HL_RE.test(e.text)) hlTexts.add(stripTags(e.text));
+    const keep = [], out = [];
+    for (const e of S) (HL_RE.test(e.text) || hlTexts.has(stripTags(e.text)) ? keep : out).push(e);
+    if (!out.length) continue;
+    if (keep.length) groups.set(a, keep); else groups.delete(a);
+    wholeSents.push(...out);
   }
   repairKaraokeGroups(groups, loose, anchors);
 
@@ -174,6 +252,10 @@ export function analyzeKaraoke(doc) {
     const words = extractWords(slices);
     sentences.push(makeSentence(wordStyle, anchor.start, anchor.end,
       plainOf(slices, words), slices, words, protoOf(slices[0], doc.format), firstTag(slices)));
+  }
+  // 整句事件(逐词样式的"去逐词"行)各自成句 —— 交给 pairRows 按时间与中文行配对, 保持"一行一句"
+  for (const ev of wholeSents) {
+    sentences.push(makeSentence(wordStyle, ev.start, ev.end, stripTags(ev.text), [ev], [], protoOf(ev, doc.format)));
   }
   // 其他样式句子(整句, 原样保留) —— 始终输出, 它们是中文等非逐词语言的字幕内容
   for (const a of anchors) {
@@ -314,14 +396,16 @@ export function speakerTextTagOf(sent) {
  * 包不住它的英文句宁可单独成行(会以"单英文行"出现在坏行里), 也不乱配。
  */
 export function pairRows(sentences, wordStyle) {
+  wordStyle = inferWordStyle(sentences, wordStyle);   // 退化态兜底(见 inferWordStyle)
   const anchors = sentences.filter(s => s.style !== wordStyle).sort((a, b) => a.start - b.start || a.end - b.end);
   const wordSents = sentences.filter(s => s.style === wordStyle).sort((a, b) => a.start - b.start || a.end - b.end);
   const used = new Set();
   const enOf = new Map();
 
   const EPS = 0.05;
-  /** 包住 w 的中文行里最贴合的一条(起止误差最小, 同则跨度最小) */
-  function ownerOf(w) {
+  /** 包住 w 的中文行里最贴合的一条(起止误差最小, 同则跨度最小); taken 里的行已被别的词句认领, 跳过不选 ——
+   *  否则同起止的两行(新建行与现有行完全重叠)会让第二条词句找不到主人, 落单成"单英文行"、另一行英文变空。 */
+  function ownerOf(w, taken) {
     let lo = 0, hi = anchors.length - 1, pos = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
@@ -330,17 +414,21 @@ export function pairRows(sentences, wordStyle) {
     let best = null;
     for (let i = pos; i >= 0 && anchors[i].start >= w.start - 5; i--) {
       const z = anchors[i];
+      if (taken && taken.has(z)) continue;
       if (w.start < z.start - EPS || w.end > z.end + EPS) continue;
       const err = Math.abs(z.start - w.start) + Math.abs(z.end - w.end);
       const dur = z.end - z.start;
-      if (!best || err < best.err - 1e-9 || (Math.abs(err - best.err) <= 1e-9 && dur < best.dur)) best = { z, err, dur };
+      // 并列时(同起止的两条行, 误差/跨度全等)取**靠前**那条 —— 文件里的天然顺序:
+      // 先出现的词句配先出现的整句行, 与编辑时的内存模型一致(否则重载后两行内容互换)。
+      if (!best || err < best.err - 1e-9
+        || (Math.abs(err - best.err) <= 1e-9 && dur <= best.dur + 1e-9)) best = { z, err, dur };
     }
     return best ? best.z : null;
   }
 
   for (const w of wordSents) {
-    const z = ownerOf(w);
-    if (z && !enOf.has(z)) { enOf.set(z, w); used.add(w); }
+    const z = ownerOf(w, enOf);
+    if (z) { enOf.set(z, w); used.add(w); }
   }
 
   const rows = anchors.map(z => makeRow(z, enOf.get(z) || null));
