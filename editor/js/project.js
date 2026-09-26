@@ -565,13 +565,15 @@ export function initProjects(ctx) {
     } else if (!py) {
       pyState = '<span class="sm-state">检测中…</span>';          // 预检还没跑完(后台探测中), 别误报"不可用"
     } else if (py.ok) {
-      pyState = `<span class="sm-state ok">✓ 可用（${esc(py.msg || '')}）</span>`;
+      const canGpu = d.gpu && d.provider !== 'cuda';
+      pyState = `<span class="sm-state ok">✓ 可用（${esc(py.msg || '')} · ${d.provider === 'cuda' ? 'GPU·CUDA' : 'CPU'}${d.gpu ? ' · ' + esc(d.gpu) : ''}）</span>`
+        + (canGpu ? ' <button type="button" class="btn btn-mini sm-pyinstall" title="自动换装 CUDA 版 sherpa-onnx（约 190MB），Parakeet 识别提速">升级 GPU·CUDA</button>' : '');
     } else {
       pyState = `<span class="sm-state" style="color:var(--danger)">不可用${py && py.msg ? '：' + esc(py.msg) : ''} <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
     }
     let rows = `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">Python 环境</span></div>
-      <div class="sm-desc">Parakeet 模型的语音识别依赖 Python + sherpa-onnx（whisper.cpp 引擎不需要）。一键安装会自动下载内置 Python 并装好依赖（约 60MB，不写注册表，删 asr\\runtime-python 目录即卸载）</div>
+      <div class="sm-desc">Parakeet 模型的语音识别依赖 Python + sherpa-onnx（whisper.cpp 引擎不需要）。一键安装会自动装好 Python 与依赖，检测到 N 卡时自动换装 CUDA 版让 Parakeet 跑 GPU；不写注册表，删 asr\\runtime-python 目录即卸载</div>
       ${pyState}
     </div>`;
     // 各任务 key: model:<id> / runtime / diarize

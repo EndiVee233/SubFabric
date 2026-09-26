@@ -194,9 +194,33 @@ def bpe_encode(word, vocab):
     return out
 
 
-def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0):
+def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provider="cpu"):
     import glob
     import tempfile
+    # CUDA 运行库搜索: pip 装的 nvidia-cublas-cu12 / nvidia-cudnn-cu12 / nvidia-cuda-runtime-cu12
+    # 把 DLL 放在 site-packages/nvidia/<pkg>/bin, 默认不在 DLL 搜索路径里 —— 不显式注册的话
+    # onnxruntime_providers_cuda.dll 会因缺 cublasLt64_12.dll 之类加载失败, CUDA 版白装
+    try:
+        import sysconfig
+        _sp = sysconfig.get_paths().get("purelib", "")
+        _nv = os.path.join(_sp, "nvidia") if _sp else ""
+        if _nv and os.path.isdir(_nv):
+            _dirs = []
+            for _d in sorted(os.listdir(_nv)):
+                for _sub in ("bin", "lib"):
+                    _p = os.path.join(_nv, _d, _sub)
+                    if os.path.isdir(_p):
+                        _dirs.append(_p)
+                        try:
+                            os.add_dll_directory(_p)   # 新式搜索(LOAD_LIBRARY_SEARCH_* 模式)
+                        except Exception:
+                            pass
+            if _dirs:
+                # onnxruntime 加载 providers_cuda.dll 用的是旧式搜索(LOAD_WITH_ALTERED_SEARCH_PATH),
+                # 该模式下 add_dll_directory 不生效, 只有 PATH 管用 —— 两个都要设
+                os.environ["PATH"] = os.pathsep.join(_dirs) + os.pathsep + os.environ.get("PATH", "")
+    except Exception:
+        pass
     import sherpa_onnx
 
     def pick(pattern):
@@ -254,8 +278,19 @@ def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0):
     if hw_path:
         kw["hotwords_file"] = hw_path
         kw["hotwords_score"] = float(hotwords_score)
-    rec = sherpa_onnx.OfflineRecognizer.from_transducer(**kw)
-    log("模型加载完成, 耗时 %.1fs" % (time.time() - t0))
+    if provider and provider != "cpu":
+        kw["provider"] = provider
+    try:
+        rec = sherpa_onnx.OfflineRecognizer.from_transducer(**kw)
+    except Exception as e:
+        if provider and provider != "cpu":
+            # CUDA 初始化失败(DLL 缺失/驱动过旧/非 CUDA 构建): 回退 CPU, 保证初稿一定能跑完
+            log("CUDA 初始化失败(%s), 回退 CPU 推理" % str(e).strip().split("\n")[0][:120])
+            kw.pop("provider", None)
+            rec = sherpa_onnx.OfflineRecognizer.from_transducer(**kw)
+        else:
+            raise
+    log("模型加载完成(provider=%s), 耗时 %.1fs" % (kw.get("provider", "cpu"), time.time() - t0))
     return rec
 
 
@@ -394,6 +429,8 @@ def main():
     ap.add_argument("--audio", required=True, help="16kHz 单声道 PCM wav")
     ap.add_argument("--out", required=True, help="结果 JSON 输出路径")
     ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument("--provider", default="cpu", choices=["cpu", "cuda"],
+                    help="推理设备: cpu(默认) / cuda(N 卡 GPU, 需装 CUDA 版 sherpa-onnx; 失败自动回退 CPU)")
     ap.add_argument("--hotwords-file", default="",
                     help="热词文件: 每行一个词/短语(原始文本, 本脚本负责转 BPE 片段)")
     ap.add_argument("--hotwords-score", type=float, default=3.0,
@@ -422,7 +459,8 @@ def main():
         log("分块 %d 段" % len(chunks))
         progress(22, "asr", "开始识别(%d 段)" % len(chunks))
 
-        rec = load_recognizer(args.model, args.threads, hotwords, args.hotwords_score)
+        rec = load_recognizer(args.model, args.threads, hotwords, args.hotwords_score,
+                              provider=getattr(args, "provider", "cpu"))
         t0 = time.time()
         words = recognize_words(rec, samples, sr, chunks)
         if not words:

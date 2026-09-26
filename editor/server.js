@@ -18,7 +18,7 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.3.1'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.3.2'; // 与打版号一致; 改了就顺手同步这里
 
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
@@ -637,11 +637,37 @@ function resolvePython() {
 }
 let ASR_PY = resolvePython();   // let: 一键安装完成后会重新解析(见 startPyEnvSetup)
 
+/** Python 子进程统一环境: 强制 UTF-8 输入输出。
+ *  Windows 管道模式下 Python 默认按 GBK 写 stdout/stderr, Node 这边按 UTF-8 解码,
+ *  asr.py 的中文日志就成了 ◆◆◆ 乱码(实测「分块 358 段」变「◆◆◆ 358 ◆◆」)。 */
+const pySpawnEnv = () => Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' });
+
+/** 检测 NVIDIA 显卡(驱动自带 nvidia-smi); 返回显卡名或 null。结果由调用方缓存。 */
+function detectNvidia() {
+  return new Promise((resolve) => {
+    const p = spawn('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true });
+    let out = '';
+    const t = setTimeout(() => { try { p.kill(); } catch {} resolve(null); }, 8000);
+    p.stdout.on('data', c => { out += c; });
+    p.on('error', () => { clearTimeout(t); resolve(null); });
+    p.on('close', code => { clearTimeout(t); resolve(code === 0 && out.trim() ? out.trim().split('\n')[0].trim() : null); });
+  });
+}
+let nvidiaCache = { at: 0, name: null };
+async function nvidiaGpu() {
+  if (Date.now() - nvidiaCache.at < 5 * 60 * 1000) return nvidiaCache.name;
+  nvidiaCache = { at: Date.now(), name: await detectNvidia() };
+  return nvidiaCache.name;
+}
+/** 当前 Parakeet 推理设备('cpu' | 'cuda'), 由一键安装时实测后写入 settings */
+const asrProvider = () => { const s = readAsrSettings(); return s.asrProvider === 'cuda' ? 'cuda' : 'cpu'; };
+
 /** 子进程退出码 → 人话。经典坑: Windows 上「python」不存在时, Microsoft Store 的
  *  占位别名 python.exe 会启动并退出 9009(它打印的提示是纯文本, 不是 asr.py 的 JSON 日志,
  *  旧版 sink 直接丢弃 → 用户只见「异常退出(代码 9009)」而日志面板空白, 无从排查)。 */
 function asrExitHint(code) {
   if (code === 9009) return 'Windows 找不到命令（9009）：通常是 Python 未安装，或只有 Microsoft Store 的占位程序';
+  if (code === 3221225477) return '进程崩溃（0xC0000005 内存访问违例）：多半是显卡驱动/运行库冲突，先重试一次；持续出现请带上日志反馈';
   if (code === 1) return '进程报错退出（1）：通常是 Python 依赖缺失，详见日志';
   return '退出码 ' + code;
 }
@@ -655,7 +681,7 @@ function probePython() {
   return new Promise((resolve) => {
     const p = spawn(ASR_PY,
       ['-c', 'import sys; import sherpa_onnx; import numpy; print(sys.version.split()[0] + " / sherpa-onnx " + str(getattr(sherpa_onnx, "__version__", "?")))'],
-      { windowsHide: true, cwd: ASR_DIR });
+      { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
     let out = '', err = '';
     const done = (r) => { clearTimeout(timer); pyProbeCache = Object.assign({ at: Date.now() }, r); resolve(pyProbeCache); };
     const timer = setTimeout(() => { try { p.kill(); } catch {} done({ ok: false, msg: 'Python 预检超时（10s）' }); }, 10000);
@@ -706,12 +732,25 @@ function missingModelFiles(dir, model) {
   if (!list) return ['未知模型'];
   return list.filter(f => !names.some(n => n.toLowerCase() === f.toLowerCase()));
 }
-/** 模型是否可用(目录完整); whisper.cpp 引擎还要求运行时就位 */
+/** 模型文件是否完整: 文件都在 + 总大小 ≥ 标称值的 90%。
+ *  只查名字不够 —— 半截/0 字节的残留文件会让模型"看起来就绪", 加载时才炸(实测踩过)。 */
+function modelFilesOk(dir, model) {
+  if (!model || missingModelFiles(dir, model).length) return false;
+  if (!model.sizeMB) return true;
+  let total = 0;
+  try {
+    for (const f of model.files) {
+      try { total += fs.statSync(path.join(dir, f)).size; } catch {}
+    }
+  } catch { return false; }
+  return total >= model.sizeMB * 1048576 * 0.9;
+}
+/** 模型是否可用(文件齐全且大小达标); whisper.cpp 引擎还要求运行时就位 */
 function modelReady(modelId) {
   const m = modelById(modelId);
   if (!m) return false;
   const dir = modelDirFor(modelId);
-  if (!dir || missingModelFiles(dir, m).length) return false;
+  if (!dir || !modelFilesOk(dir, m)) return false;
   if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return false;
   return true;
 }
@@ -839,7 +878,7 @@ function startModelDownload(model, dir) {
           st.msg = `下载 ${f}：${(done / 1048576).toFixed(0)} / ${(total / 1048576).toFixed(0)} MB`;
         });
       }
-      if (missingModelFiles(dir, model).length) throw new Error('下载后模型仍不完整');
+      if (!modelFilesOk(dir, model)) throw new Error('下载后模型仍不完整');
       const s = readAsrSettings();
       s.models = Object.assign({}, s.models || {}, { [model.id]: dir });
       writeAsrSettings(s);
@@ -977,7 +1016,7 @@ function startRuntimeDownload() {
 /** 跑一个子进程收集输出; 非零退出抛错(带输出尾部)。 */
 function runCapture(cmd, args, timeoutMs, onLine) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { windowsHide: true, cwd: ASR_DIR });
+    const p = spawn(cmd, args, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
     let out = '', err = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('执行超时（' + Math.round(timeoutMs / 1000) + 's）: ' + cmd)); }, timeoutMs);
     const feed = (chunk, isErr) => {
@@ -1047,58 +1086,142 @@ function startPyEnvSetup() {
       return r.stdout.trim();
     };
     try {
-      // 0) 现有解释器已经能用 → 无事可做
+      let pyExe = null, info = '';
+
+      // 0) 现有解释器已经能用 → 跳过基础安装; 但有 N 卡且还没上 CUDA 时继续做 GPU 升级
       try {
         const pre = await probePython();
-        if (pre.ok) return finishOk('已就绪: ' + pre.msg);
+        if (pre.ok) {
+          pyExe = ASR_PY;
+          info = pre.msg;
+          const gpu = await nvidiaGpu();
+          if (!gpu || asrProvider() === 'cuda') {
+            return finishOk('已就绪: ' + info + (asrProvider() === 'cuda' ? '（GPU·CUDA）' : '（CPU; 有 N 卡可点安装升级 GPU）'));
+          }
+          prog(50, '检测到 ' + gpu + '，升级 CUDA 版 sherpa-onnx（约 190MB）…');
+        }
       } catch {}
 
       // ① 系统 Python 可用 → 建 venv
-      prog(3, '检查系统 Python…');
-      const sys = await findSystemPython();
-      if (sys) {
-        prog(6, '系统 Python ' + sys.version + '，创建虚拟环境…');
-        const venvDir = path.join(ASR_DIR, '.venv');
-        try { fs.rmSync(venvDir, { recursive: true, force: true }); } catch {}
-        await runCapture(sys.cmd, [...sys.args, '-m', 'venv', venvDir], 180000);
-        const vpy = path.join(venvDir, 'Scripts', 'python.exe');
-        prog(15, '虚拟环境已建好，安装 pip…');
-        await pipInstall(vpy, prog, 15, 92);
-        prog(95, '验证依赖…');
-        const info = await verify(vpy);
-        return finishOk('安装完成: ' + info);
+      if (!pyExe) {
+        prog(3, '检查系统 Python…');
+        const sys = await findSystemPython();
+        if (sys) {
+          prog(6, '系统 Python ' + sys.version + '，创建虚拟环境…');
+          const venvDir = path.join(ASR_DIR, '.venv');
+          try { fs.rmSync(venvDir, { recursive: true, force: true }); } catch {}
+          await runCapture(sys.cmd, [...sys.args, '-m', 'venv', venvDir], 180000);
+          const vpy = path.join(venvDir, 'Scripts', 'python.exe');
+          prog(15, '虚拟环境已建好，安装 pip…');
+          await pipInstall(vpy, prog, 15, 90);
+          prog(92, '验证依赖…');
+          info = await verify(vpy);
+          pyExe = vpy;
+        }
       }
 
       // ② 内置 Python(Embeddable): 解压即用, 不写注册表/不改 PATH, 删目录即卸载
-      prog(28, '未找到系统 Python，下载内置 Python ' + EMBEDDED_PY.version + '（约 11MB）…');
-      const zip = path.join(os.tmpdir(), `kass-py-${Date.now().toString(36)}.zip`);
-      try { fs.unlinkSync(zip); } catch {}
-      await downloadAny(EMBEDDED_PY.zipUrls, zip, (done, total) => {
-        if (done >= 0 && total) prog(28 + Math.min(14, done / total * 14), `下载内置 Python… ${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`);
-      });
-      prog(44, '解压内置 Python…');
-      fs.rmSync(EMBEDDED_PY.dir, { recursive: true, force: true });
-      fs.mkdirSync(EMBEDDED_PY.dir, { recursive: true });
-      const sysTar = path.join(process.env.SystemRoot || 'C:' + path.sep + 'Windows', 'System32', 'tar.exe');
-      await runCapture(sysTar, ['-xf', zip, '-C', EMBEDDED_PY.dir], 300000);
-      try { fs.unlinkSync(zip); } catch {}
-      // Embeddable 包默认不加载 site-packages: 改 _pth 打开(否则 pip 装的包导不进来)
-      prog(50, '启用 site-packages…');
-      const pth = fs.readdirSync(EMBEDDED_PY.dir).find(n => /^python\d+\._pth$/i.test(n));
-      if (!pth) throw new Error('解压后未找到 python._pth 配置文件');
-      const majMin = (EMBEDDED_PY.version.match(/^3\.(\d+)\./) || [])[1] || '12';
-      fs.writeFileSync(path.join(EMBEDDED_PY.dir, pth),
-        `python3${majMin}.zip\n.\nLib/site-packages\nimport site\n`, 'utf8');
-      prog(54, '安装 pip…');
-      const getpip = path.join(os.tmpdir(), `get-pip-${Date.now().toString(36)}.py`);
-      await downloadAny([EMBEDDED_PY.getPipUrl], getpip, () => {});
-      await runCapture(embeddedPyExe(), [getpip, '--no-warn-script-location', '-i', EMBEDDED_PY.pipIndex], 300000);
-      try { fs.unlinkSync(getpip); } catch {}
-      prog(66, '安装语音识别依赖（sherpa-onnx / numpy，走清华源）…');
-      await pipInstall(embeddedPyExe(), prog, 66, 94);
-      prog(96, '验证依赖…');
-      const info = await verify(embeddedPyExe());
-      finishOk('安装完成: ' + info);
+      if (!pyExe) {
+        prog(28, '未找到系统 Python，下载内置 Python ' + EMBEDDED_PY.version + '（约 11MB）…');
+        const zip = path.join(os.tmpdir(), `kass-py-${Date.now().toString(36)}.zip`);
+        try { fs.unlinkSync(zip); } catch {}
+        await downloadAny(EMBEDDED_PY.zipUrls, zip, (done, total) => {
+          if (done >= 0 && total) prog(28 + Math.min(14, done / total * 14), `下载内置 Python… ${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`);
+        });
+        prog(44, '解压内置 Python…');
+        fs.rmSync(EMBEDDED_PY.dir, { recursive: true, force: true });
+        fs.mkdirSync(EMBEDDED_PY.dir, { recursive: true });
+        const sysTar = path.join(process.env.SystemRoot || 'C:' + path.sep + 'Windows', 'System32', 'tar.exe');
+        await runCapture(sysTar, ['-xf', zip, '-C', EMBEDDED_PY.dir], 300000);
+        try { fs.unlinkSync(zip); } catch {}
+        // Embeddable 包默认不加载 site-packages: 改 _pth 打开(否则 pip 装的包导不进来)
+        prog(50, '启用 site-packages…');
+        const pth = fs.readdirSync(EMBEDDED_PY.dir).find(n => /^python\d+\._pth$/i.test(n));
+        if (!pth) throw new Error('解压后未找到 python._pth 配置文件');
+        const majMin = (EMBEDDED_PY.version.match(/^3\.(\d+)\./) || [])[1] || '12';
+        fs.writeFileSync(path.join(EMBEDDED_PY.dir, pth),
+          `python3${majMin}.zip\n.\nLib/site-packages\nimport site\n`, 'utf8');
+        prog(54, '安装 pip…');
+        const getpip = path.join(os.tmpdir(), `get-pip-${Date.now().toString(36)}.py`);
+        await downloadAny([EMBEDDED_PY.getPipUrl], getpip, () => {});
+        await runCapture(embeddedPyExe(), [getpip, '--no-warn-script-location', '-i', EMBEDDED_PY.pipIndex], 300000);
+        try { fs.unlinkSync(getpip); } catch {}
+        prog(66, '安装语音识别依赖（sherpa-onnx / numpy，走清华源）…');
+        await pipInstall(embeddedPyExe(), prog, 66, 90);
+        prog(92, '验证依赖…');
+        info = await verify(embeddedPyExe());
+        pyExe = embeddedPyExe();
+      }
+      if (!pyExe) throw new Error('未能准备可用的 Python 环境');
+
+      // ③ GPU 加速: 检测到 N 卡 → 换装 CUDA 版 sherpa-onnx(wheel 自带 cuDNN/cuBLAS, 约 190MB,
+      //    走 hf-mirror 镜像); import 成功才算数, 失败自动回退 CPU 版, 保证初稿永远能跑。
+      const gpuName = await nvidiaGpu();
+      if (!gpuName) {
+        return finishOk('安装完成: ' + info + '（未检测到 N 卡, Parakeet 走 CPU; A 卡用户建议 whisper.cpp 引擎, 走 Vulkan GPU）');
+      }
+      if (asrProvider() === 'cuda') return finishOk('安装完成: ' + info + ' / GPU·CUDA（' + gpuName + '）');
+
+      let cudaTried = false;
+      try {
+        // 清掉 pip 中断留下的坏分布(~/~xxx 目录): 残留会让包内新旧 DLL 混装, CUDA EP 版本对不上
+        try {
+          const spDir = path.join(path.dirname(path.dirname(pyExe)), 'Lib', 'site-packages');
+          for (const n of fs.readdirSync(spDir)) {
+            if (n.startsWith('~')) { try { fs.rmSync(path.join(spDir, n), { recursive: true, force: true }); } catch {} }
+          }
+        } catch {}
+        prog(94, '检测到 ' + gpuName + '，安装 CUDA 版 sherpa-onnx（约 190MB, 自带 cuDNN 运行库）…');
+        const whlName = 'sherpa_onnx-1.13.8%2Bcuda12.cudnn9-cp312-cp312-win_amd64.whl';
+        // 注意: 必须保留 wheel 原始文件名 —— pip 靠文件名解析包名/版本, 改名直接报 Invalid wheel filename
+        const whl = path.join(os.tmpdir(), decodeURIComponent(whlName));
+        try { fs.unlinkSync(whl); } catch {}
+        await downloadAny([
+          `${HF_ENDPOINT}/csukuangfj2/sherpa-onnx-wheels/resolve/main/cuda/1.13.8/${whlName}`,
+          `https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/main/cuda/1.13.8/${whlName}`,
+        ], whl, (done, total) => {
+          if (done >= 0 && total) prog(94 + Math.min(4, done / total * 4), `下载 CUDA 版 sherpa-onnx… ${(done / 1048576).toFixed(0)} / ${(total / 1048576).toFixed(0)} MB`);
+        });
+        cudaTried = true;
+        // 清理上次安装中断留下的坏分布(site-packages/~xxx): 不清会让新旧 DLL 混装,
+        // 运行时报「ORT API version 28 not available, only [1,17]」这类诡异错误(实测踩过)
+        try {
+          const spOut = await runCapture(pyExe, ['-c', "import sysconfig; print(sysconfig.get_paths()['purelib'])"], 30000);
+          const sp = spOut.stdout.trim();
+          if (sp && fs.existsSync(sp)) {
+            for (const n of fs.readdirSync(sp)) {
+              if (n.startsWith('~')) { try { fs.rmSync(path.join(sp, n), { recursive: true, force: true }); } catch {} }
+            }
+          }
+        } catch {}
+        prog(98, '安装 CUDA 版 sherpa-onnx…');
+        await runCapture(pyExe, ['-m', 'pip', 'install', '--force-reinstall', '--no-deps', whl, '-i', EMBEDDED_PY.pipIndex], 600000);
+        try { fs.unlinkSync(whl); } catch {}
+        // CUDA 运行库: wheel 本体不带 cuBLAS/cuDNN —— 缺了它们 providers_cuda.dll 加载失败(实测),
+        // 用 NVIDIA 官方 pip 包补齐(Windows wheel, 走清华源; cuDNN 约 550MB)
+        prog(98, '安装 CUDA 运行库（cuBLAS / cuDNN，约 1GB，走清华源）…');
+        await runCapture(pyExe,
+          ['-m', 'pip', 'install', 'nvidia-cuda-runtime-cu12', 'nvidia-cublas-cu12', 'nvidia-cudnn-cu12', 'nvidia-cufft-cu12', 'nvidia-curand-cu12', '-i', EMBEDDED_PY.pipIndex],
+          1800000,
+          (line) => { if (/Downloading|Installing|Successfully/i.test(line)) prog(98, 'CUDA 运行库: ' + line.slice(0, 60)); });
+        // import 验证: CUDA 运行库缺失/驱动过旧会在这里直接抛错
+        prog(99, '验证 CUDA 环境…');
+        await runCapture(pyExe, ['-c', 'import sherpa_onnx'], 120000);
+        const s = readAsrSettings();
+        s.asrProvider = 'cuda';
+        writeAsrSettings(s);
+        finishOk('安装完成: ' + info + ' / GPU·CUDA（' + gpuName + '）');
+      } catch (e) {
+        if (cudaTried) {
+          // 回退 CPU 版: 初稿不能因为 CUDA 折腾挂掉
+          prog(97, 'CUDA 不可用（' + String((e && e.message) || e).slice(0, 80) + '），回退 CPU 版…');
+          await runCapture(pyExe, ['-m', 'pip', 'install', '--force-reinstall', '--no-deps', 'sherpa-onnx==1.13.8', '-i', EMBEDDED_PY.pipIndex], 600000);
+          const s = readAsrSettings();
+          s.asrProvider = 'cpu';
+          writeAsrSettings(s);
+          finishOk('安装完成: ' + info + ' / CPU（CUDA 不可用: ' + String((e && e.message) || e).slice(0, 60) + '）');
+        } else throw e;
+      }
     } catch (e) { finishFail(e); }
   })();
 }
@@ -1433,7 +1556,7 @@ function handleRequest(req, res) {
     return new Promise((resolve, reject) => {
       const p = spawn(ASR_PY, [path.join(ASR_DIR, 'diarize.py'),
         '--segmentation', segModel, '--embedding', embModel, '--audio', wav, '--out', outJson],
-        { windowsHide: true, cwd: ASR_DIR });
+        { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       let buf = '', pyErr = '';
       const timer = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
       const done = (fn) => { clearTimeout(timer); try { fs.unlinkSync(outJson); } catch {} fn(); };
@@ -1916,8 +2039,9 @@ function handleRequest(req, res) {
         } else {
           data = await new Promise((resolve, reject) => {
             const py = spawn(ASR_PY, [ASR_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson, '--threads', '4',
+              ...(asrProvider() === 'cuda' ? ['--provider', 'cuda'] : []),
               ...parakeetHotwordArgs()],
-              { windowsHide: true, cwd: ASR_DIR });
+              { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
             let pyErr = '';
             const t = setTimeout(() => { try { py.kill(); } catch {} }, 25 * 60 * 1000);
             py.stderr.on('data', d => {
@@ -2182,12 +2306,14 @@ function handleRequest(req, res) {
         return finishDraft(id, new Error('Python 环境不可用，无法语音识别 —— 到「设置 → 识别模型 → Python 环境」点「一键安装」即可自动装好（详见日志：' + pre.msg + '）'));
       }
       pushDraftLog(id, `[${ts()}] Python: ${ASR_PY}${pre.msg ? '（' + pre.msg + '）' : ''}`);
+      pushDraftLog(id, `[${ts()}] [提示] Parakeet 推理设备: ${asrProvider() === 'cuda' ? 'GPU·CUDA（N 卡）' : 'CPU —— 未检测到 N 卡; A 卡用户建议改用 whisper.cpp 引擎(走 Vulkan GPU)'}`);
 
       let lastErr = '', buf = '';
       const proc = spawn(ASR_PY,
         [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4',
+          ...(asrProvider() === 'cuda' ? ['--provider', 'cuda'] : []),
           ...parakeetHotwordArgs()],
-        { windowsHide: true, cwd: ASR_DIR });
+        { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       draftProcs.set(id, proc);
 
       const sink = (chunk) => {
@@ -2197,9 +2323,11 @@ function handleRequest(req, res) {
           const line = buf.slice(0, i).trim();
           buf = buf.slice(i + 1);
           if (!line) continue;
-          // 非 JSON 行(Python traceback / Store 占位提示 / 引擎警告)原样进日志 —— 丢掉它们曾让 9009 无从排查
-          if (!line.startsWith('{')) { pushDraftLog(id, `[py] ${line}`); continue; }
-          let o; try { o = JSON.parse(line); } catch { pushDraftLog(id, `[py] ${line}`); continue; }
+          // 非 JSON 行(Python traceback / Store 占位提示 / onnxruntime C++ 报错)原样进日志;
+          // 顺手清掉 UTF-16 残留的 \0 和 ANSI 颜色码(onnxruntime 的 C++ 输出混着来, 不清没法看)
+          const clean = line.replace(/\0/g, '').replace(/\x1b\[[0-9;]*m/g, '');
+          if (!line.startsWith('{')) { if (clean.trim()) pushDraftLog(id, `[py] ${clean}`); continue; }
+          let o; try { o = JSON.parse(line); } catch { if (clean.trim()) pushDraftLog(id, `[py] ${clean}`); continue; }
           if (o.type === 'progress') {
             setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(o.pct * 0.55), message: o.msg });
           } else if (o.type === 'log') {
@@ -2336,6 +2464,7 @@ function handleRequest(req, res) {
   /* ═══════════ 初稿 / 语音识别模型 ═══════════ */
   if (pathname === '/api/asr/status' && req.method === 'GET') {
     probePython().catch(() => {});          // 后台预热预检缓存(状态页/初稿对话框打开时触发)
+    nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
     let pythonOk = false;
     try { pythonOk = fs.statSync(ASR_PY).isFile(); } catch {}
     const models = ASR_MODELS.map(m => {
@@ -2343,7 +2472,7 @@ function handleRequest(req, res) {
       const missing = missingModelFiles(dir, m);
       return {
         id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
-        dir, missing, ready: !missing.length && (m.engine !== 'whisper.cpp' || whisperRuntimeOk()),
+        dir, missing, ready: !missing.length && modelFilesOk(dir, m) && (m.engine !== 'whisper.cpp' || whisperRuntimeOk()),
         needRuntime: m.engine === 'whisper.cpp' && !whisperRuntimeOk(),
       };
     });
@@ -2357,6 +2486,8 @@ function handleRequest(req, res) {
       python: ASR_PY, pythonOk,
       // Python 环境预检(结果缓存 5 分钟; 触发后台探测, 下次轮询就有)
       pythonProbe: pyProbeCache,
+      provider: asrProvider(),              // Parakeet 推理设备: 'cpu' | 'cuda'
+      gpu: nvidiaCache.name,                // NVIDIA 显卡名(null = 未检测到/探测中)
       // 并行下载: Map → 数组(每项含 key), 前端按 key 匹配各自的进度
       downloads: Array.from(downloads.entries()).map(([key, v]) => Object.assign({ key }, v)),
       // 兼容旧前端: 单任务时代的字段(任意一个在跑就给它的状态)
@@ -2413,8 +2544,8 @@ function handleRequest(req, res) {
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
       if (!p) p = path.join(modelsRoot(), model.dirName);
-      // 目录里已经有完整模型 → 直接采纳, 不用重下
-      if (missingModelFiles(p, model).length === 0) {
+      // 目录里已经有完整模型(文件齐且大小达标) → 直接采纳, 不用重下
+      if (modelFilesOk(p, model)) {
         const s = readAsrSettings();
         s.models = Object.assign({}, s.models || {}, { [model.id]: p });
         writeAsrSettings(s);
