@@ -1113,23 +1113,17 @@ function startPyEnvSetup() {
     try {
       let pyExe = null, info = '';
 
-      // 0) 现有解释器已经能用 → 跳过基础安装; 有 N 卡且还没上 CUDA 时继续做 GPU 升级。
-      //    不做 CPU 兜底: 没有 N 卡直接失败 —— ASR 必须跑在 GPU 上。
+      // 0) 现有解释器已经能用 → 跳过基础安装; 还没上 CUDA 时继续往下做 GPU 升级(有 N 卡才升)。
+      //    基础环境与 GPU 解耦: 说话人分离(diarize.py)只依赖基础环境, 无 N 卡也能用。
       try {
         const pre = await probePython();
         if (pre.ok) {
           pyExe = ASR_PY;
           info = pre.msg;
-          const gpu = await nvidiaGpu();
-          if (!gpu || asrProvider() === 'cuda') {
-            if (!gpu) throw new Error('未检测到 NVIDIA 显卡 —— 本工具的 Parakeet 识别必须在 GPU 上跑（CUDA），不支持纯 CPU。请确认机器有 N 卡且驱动已安装');
-            return finishOk('已就绪: ' + info + '（GPU·CUDA）');
-          }
-          prog(50, '检测到 ' + gpu + '，升级 CUDA 版 sherpa-onnx（约 190MB）…');
+          if (asrProvider() === 'cuda') return finishOk('已就绪: ' + info + '（GPU·CUDA）');
+          prog(50, '基础环境已就绪，检查 CUDA GPU 升级…');
         }
-      } catch (e) {
-        if (e && /不支持纯 CPU/.test(e.message)) throw e;   // GPU 硬校验失败直接终止, 别吞掉继续装 CPU 版
-      }
+      } catch {}
 
       // ① 系统 Python 可用 → 建 venv
       if (!pyExe) {
@@ -1183,11 +1177,12 @@ function startPyEnvSetup() {
       }
       if (!pyExe) throw new Error('未能准备可用的 Python 环境');
 
-      // ③ GPU 加速: 必须检测到 N 卡 → 换装 CUDA 版 sherpa-onnx(wheel 自带 cuDNN/cuBLAS, 约 190MB,
-      //    走 hf-mirror 镜像)。不做 CPU 兜底: 没有 N 卡 / CUDA 装不上都直接失败。
+      // ③ CUDA 版 sherpa-onnx(Parakeet 专用): 检测到 N 卡 → 换装(wheel 自带 cuDNN/cuBLAS, 约 190MB,
+      //    走 hf-mirror 镜像)。与基础环境解耦: 无 N 卡时基础环境照常完成(说话人分离可用),
+      //    Parakeet 则明确标记不可用 —— ASR 必须 GPU, 不做 CPU 兜底。
       const gpuName = await nvidiaGpu();
       if (!gpuName) {
-        throw new Error('未检测到 NVIDIA 显卡 —— 本工具的 Parakeet 识别必须在 GPU 上跑（CUDA），不支持纯 CPU; CUDA 版安装失败也会报错而不是退回 CPU');
+        return finishOk('基础环境就绪: ' + info + '（未检测到 NVIDIA 显卡 —— 说话人分离可用; Parakeet 识别必须 CUDA GPU，不支持 CPU，不可用）');
       }
       if (asrProvider() === 'cuda') return finishOk('安装完成: ' + info + ' / GPU·CUDA（' + gpuName + '）');
 
@@ -1242,9 +1237,12 @@ function startPyEnvSetup() {
         finishOk('安装完成: ' + info + ' / GPU·CUDA（' + gpuName + '）');
       } catch (e) {
         if (cudaTried) {
-          // 不做 CPU 兜底: CUDA 装不上就明确失败, 让用户看得到原因(而不是悄悄退回慢几个量级的 CPU)
+          // 基础环境已装好(说话人分离可用), 但 Parakeet 依赖的 CUDA 版没装上 → 明确失败, 不做 CPU 兜底。
+          // 先把基础环境标记为可用, 让 diarize 立即能用; 失败状态只针对 Parakeet 的 CUDA 部分。
+          ASR_PY = resolvePython();
+          pyProbeCache = null;
           throw new Error('CUDA 版 sherpa-onnx 安装失败: ' + String((e && e.message) || e).slice(0, 200)
-            + ' —— 请检查显卡驱动版本/磁盘空间后重试; 本工具不支持退回 CPU 推理');
+            + ' —— 基础环境已就绪（说话人分离可用），但 Parakeet 识别不可用（必须 CUDA GPU，不支持退回 CPU）。请检查显卡驱动/磁盘空间后重试');
         } else throw e;
       }
     } catch (e) { finishFail(e); }

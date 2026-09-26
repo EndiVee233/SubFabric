@@ -567,13 +567,13 @@ export function initProjects(ctx) {
     } else if (py.ok) {
       pyState = d.provider === 'cuda'
         ? `<span class="sm-state ok">✓ 可用（${esc(py.msg || '')} · GPU·CUDA${d.gpu ? ' · ' + esc(d.gpu) : ''}）</span>`
-        : `<span class="sm-state" style="color:var(--danger)">不可用（未启用 GPU·CUDA）—— Parakeet 必须 GPU 推理，点「一键安装」换装 CUDA 版（需 N 卡） <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
+        : `<span class="sm-state" style="color:var(--danger)">基础环境可用，但未启用 GPU·CUDA —— 说话人分离可用；Parakeet 识别必须 N 卡（不支持 CPU 兜底），有 N 卡可点「一键安装」换装 CUDA 版 <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
     } else {
       pyState = `<span class="sm-state" style="color:var(--danger)">不可用${py && py.msg ? '：' + esc(py.msg) : ''} <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
     }
     let rows = `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">Python 环境</span></div>
-      <div class="sm-desc">Parakeet 模型的语音识别依赖 Python + sherpa-onnx（whisper.cpp 引擎不需要），且必须跑在 CUDA GPU（N 卡）上 —— 没有 N 卡或 CUDA 环境装不上会直接报错，不支持 CPU 兜底。一键安装会自动装好 Python、CUDA 版 sherpa-onnx 与 cuDNN/cuBLAS 运行库；不写注册表，删 asr\\runtime-python 目录即卸载</div>
+      <div class="sm-desc">Parakeet 模型的语音识别依赖 Python + sherpa-onnx（whisper.cpp 引擎不需要），且必须跑在 CUDA GPU（N 卡）上，不支持 CPU 兜底；说话人分离只依赖基础 Python 环境，无 N 卡也能装好使用。一键安装会自动装好 Python 与依赖，有 N 卡时再换装 CUDA 版 sherpa-onnx 与 cuDNN/cuBLAS 运行库；不写注册表，删 asr\\runtime-python 目录即卸载</div>
       ${pyState}
     </div>`;
     // 各任务 key: model:<id> / runtime / diarize
