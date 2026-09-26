@@ -194,7 +194,7 @@ def bpe_encode(word, vocab):
     return out
 
 
-def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provider="cpu"):
+def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provider="cuda"):
     import glob
     import tempfile
     # CUDA 运行库搜索: pip 装的 nvidia-cublas-cu12 / nvidia-cudnn-cu12 / nvidia-cuda-runtime-cu12
@@ -283,13 +283,12 @@ def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provi
     try:
         rec = sherpa_onnx.OfflineRecognizer.from_transducer(**kw)
     except Exception as e:
-        if provider and provider != "cpu":
-            # CUDA 初始化失败(DLL 缺失/驱动过旧/非 CUDA 构建): 回退 CPU, 保证初稿一定能跑完
-            log("CUDA 初始化失败(%s), 回退 CPU 推理" % str(e).strip().split("\n")[0][:120])
-            kw.pop("provider", None)
-            rec = sherpa_onnx.OfflineRecognizer.from_transducer(**kw)
-        else:
-            raise
+        # 不做 CPU 兜底: ASR 必须跑在 GPU 上(CUDA 初始化失败=DLL 缺失/驱动过旧/非 CUDA 构建)
+        hint = str(e).strip().split("\n")[0][:200]
+        raise RuntimeError(
+            "CUDA 初始化失败, 拒绝回退 CPU 推理 —— 本工具要求 ASR 跑在 GPU 上。"
+            "请到「设置 → 识别模型 → Python 环境」重新一键安装(自动换装 CUDA 版 sherpa-onnx"
+            " 与 cuBLAS/cuDNN 运行库); 或确认显卡驱动为最新。原始错误: " + hint) from e
     log("模型加载完成(provider=%s), 耗时 %.1fs" % (kw.get("provider", "cpu"), time.time() - t0))
     return rec
 
@@ -429,8 +428,8 @@ def main():
     ap.add_argument("--audio", required=True, help="16kHz 单声道 PCM wav")
     ap.add_argument("--out", required=True, help="结果 JSON 输出路径")
     ap.add_argument("--threads", type=int, default=4)
-    ap.add_argument("--provider", default="cpu", choices=["cpu", "cuda"],
-                    help="推理设备: cpu(默认) / cuda(N 卡 GPU, 需装 CUDA 版 sherpa-onnx; 失败自动回退 CPU)")
+    ap.add_argument("--provider", default="cuda", choices=["cuda"],
+                    help="推理设备: 仅支持 cuda(N 卡 GPU; 需装 CUDA 版 sherpa-onnx, 不做 CPU 兜底)")
     ap.add_argument("--hotwords-file", default="",
                     help="热词文件: 每行一个词/短语(原始文本, 本脚本负责转 BPE 片段)")
     ap.add_argument("--hotwords-score", type=float, default=3.0,
@@ -460,7 +459,7 @@ def main():
         progress(22, "asr", "开始识别(%d 段)" % len(chunks))
 
         rec = load_recognizer(args.model, args.threads, hotwords, args.hotwords_score,
-                              provider=getattr(args, "provider", "cpu"))
+                              provider=getattr(args, "provider", "cuda"))
         t0 = time.time()
         words = recognize_words(rec, samples, sr, chunks)
         if not words:

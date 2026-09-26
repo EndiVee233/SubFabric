@@ -373,8 +373,9 @@ const ASR_SETTINGS = path.join(ASR_DIR, 'settings.json');
 const HF_ENDPOINT = (process.env.HF_ENDPOINT || 'https://hf-mirror.com').replace(/\/+$/, '');
 
 /* 可选识别模型。engine 决定推理方式:
- *   sherpa-onnx  → asr.py(sherpa-onnx)
- *   whisper.cpp  → whisper-cli.exe(-oj -ml 1 -sow 词级时间戳)；CPU 跑, A 卡(无 CUDA)也能用 */
+ *   sherpa-onnx  → asr.py(sherpa-onnx, CUDA GPU)
+ *   whisper.cpp  → whisper-cli.exe(-oj -ml 1 -sow 词级时间戳)；Vulkan GPU 跑, A 卡/N 卡/Intel 通吃
+ * 两个引擎都只在 GPU 上推理 —— 没有对应的 GPU 环境直接报错, 不做 CPU 兜底 */
 const ASR_MODELS = [
   {
     id: 'parakeet-tdt-0.6b-v2',
@@ -383,7 +384,7 @@ const ASR_MODELS = [
     repo: 'csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8',
     files: ['tokens.txt', 'encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx'],
     sizeMB: 661,
-    desc: 'CPU 约 7~19 倍实时，标点与词级时间戳质量好；仅英语',
+    desc: 'CUDA GPU（N 卡）推理，无 N 卡或 CUDA 环境不可用会直接报错（不支持 CPU）；仅英语',
     dirName: 'parakeet-tdt-0.6b-v2',
   },
   {
@@ -393,7 +394,7 @@ const ASR_MODELS = [
     repo: 'ggerganov/whisper.cpp',
     files: ['ggml-large-v3-turbo.bin'],
     sizeMB: 1549,
-    desc: 'whisper.cpp 引擎，运行时带 Vulkan 后端：A 卡 / N 卡 / Intel 核显都走 GPU 加速（实测 RTX 4060 Ti 快约 126 倍）；无 Vulkan 驱动自动回退 CPU。质量接近 large-v3。',
+    desc: 'whisper.cpp 引擎 + Vulkan GPU：A 卡 / N 卡 / Intel 核显都走 GPU 加速（实测 RTX 4060 Ti 快约 126 倍）；无 Vulkan 驱动直接报错（不支持 CPU）。质量接近 large-v3。',
     dirName: 'ggml-large-v3-turbo',
   },
 ];
@@ -421,7 +422,7 @@ const diarizeReady = () => DIARIZE_MODELS.every(m => { try { return fs.statSync(
 /* whisper.cpp 运行时: 用 ggml 模型才需要。
  * 用第三方预编译的 **Vulkan 版**(ggml-vulkan.dll, 55MB) —— 官方 release 无 GPU 包,
  * 而 Vulkan 版 A 卡/N 卡/Intel 核显通吃(实测 RTX 4060 Ti: encode 20.2s → 0.16s, 126 倍)。
- * 运行时检测到 Vulkan DLL 自动走 GPU; 没有 Vulkan 驱动的机器 whisper.cpp 会自动回退 CPU。 */
+ * 运行时检测到 Vulkan DLL 自动走 GPU; 没有 Vulkan 驱动的机器直接报错(不做 CPU 兜底, ASR 必须 GPU)。 */
 const WHISPER_RUNTIME = {
   url: 'https://github.com/jerryshell/whisper.cpp-windows-vulkan-bin/releases/download/v1.0.0/whisper.cpp-windows-vulkan.zip',
   dir: path.join(ASR_DIR, 'whisper.cpp'),
@@ -430,6 +431,21 @@ const WHISPER_RUNTIME = {
 const whisperCli = () => path.join(WHISPER_RUNTIME.dir, 'whisper-cli.exe');
 const whisperRuntimeOk = () => { try { return fs.statSync(whisperCli()).isFile(); } catch { return false; } };
 const whisperVulkanOk = () => { try { return fs.statSync(path.join(WHISPER_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
+
+/** ASR 必须 GPU: 不做 CPU 兜底。两个引擎各查各的 GPU 依赖, 不满足返回报错文案(null = 通过)。
+ *  whisper.cpp → 必须有 Vulkan 运行库(ggml-vulkan.dll); sherpa-onnx → 必须是 CUDA 版(安装器实测后写入 settings)。
+ *  provider==='cuda' 本身不保证运行时能起来, 但那是安装器 import 实测过的结果 —— 运行时问题交给 asr.py 报详细错。 */
+function asrGpuGateError(model) {
+  if (model && model.engine === 'whisper.cpp') {
+    if (!whisperRuntimeOk()) return 'whisper.cpp 运行时未就绪：请到「设置 → 识别模型」下载运行时';
+    if (!whisperVulkanOk()) return '未检测到 Vulkan GPU 运行库（ggml-vulkan.dll）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请安装/更新显卡驱动（支持 Vulkan），或在设置里重新下载 whisper.cpp 运行时';
+    return null;
+  }
+  if (asrProvider() !== 'cuda') {
+    return 'Parakeet 未启用 GPU（当前 CPU 推理）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请到「设置 → 识别模型 → Python 环境」点「一键安装」，自动换装 CUDA 版 sherpa-onnx（需 N 卡）';
+  }
+  return null;
+}
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
  * diarize / reseg(语义分句, whisper 专用) 均已实现。 */
@@ -659,7 +675,8 @@ async function nvidiaGpu() {
   nvidiaCache = { at: Date.now(), name: await detectNvidia() };
   return nvidiaCache.name;
 }
-/** 当前 Parakeet 推理设备('cpu' | 'cuda'), 由一键安装时实测后写入 settings */
+/** Parakeet 推理设备('cuda' = 安装器实测 CUDA 环境通过后写入 settings)。
+ *  返回 'cpu' 表示 GPU 环境未就绪 —— ASR 会在创建初稿/选区重识别的 GPU 校验处直接报错, 不做 CPU 兜底 */
 const asrProvider = () => { const s = readAsrSettings(); return s.asrProvider === 'cuda' ? 'cuda' : 'cpu'; };
 
 /** 子进程退出码 → 人话。经典坑: Windows 上「python」不存在时, Microsoft Store 的
@@ -992,8 +1009,16 @@ function startRuntimeDownload() {
       fs.rmSync(tmpEx, { recursive: true, force: true });
       if (!whisperRuntimeOk()) throw new Error('解压后未找到 whisper-cli.exe');
       cleanup();
+      if (!whisperVulkanOk()) {
+        // 不做 CPU 兜底: 没有 Vulkan 运行库 = ASR 没法跑 GPU, 直接算失败
+        const st2 = dlState(key);
+        st2.running = false;
+        st2.error = '未检测到 Vulkan 运行库（ggml-vulkan.dll）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请安装/更新支持 Vulkan 的显卡驱动后重试';
+        st2.msg = '运行时不可用: ' + st2.error;
+        return;
+      }
       dlState(key, { running: false, kind: 'runtime', pct: 100,
-        msg: whisperVulkanOk() ? '运行时就绪（检测到 Vulkan，识别将走 GPU 加速）' : '运行时就绪（未检测到 Vulkan，将用 CPU 模式）',
+        msg: '运行时就绪（检测到 Vulkan，识别将走 GPU 加速）',
         error: null, modelId: '', dir: WHISPER_RUNTIME.dir });
     } catch (e) {
       cleanup();
@@ -1088,7 +1113,8 @@ function startPyEnvSetup() {
     try {
       let pyExe = null, info = '';
 
-      // 0) 现有解释器已经能用 → 跳过基础安装; 但有 N 卡且还没上 CUDA 时继续做 GPU 升级
+      // 0) 现有解释器已经能用 → 跳过基础安装; 有 N 卡且还没上 CUDA 时继续做 GPU 升级。
+      //    不做 CPU 兜底: 没有 N 卡直接失败 —— ASR 必须跑在 GPU 上。
       try {
         const pre = await probePython();
         if (pre.ok) {
@@ -1096,11 +1122,14 @@ function startPyEnvSetup() {
           info = pre.msg;
           const gpu = await nvidiaGpu();
           if (!gpu || asrProvider() === 'cuda') {
-            return finishOk('已就绪: ' + info + (asrProvider() === 'cuda' ? '（GPU·CUDA）' : '（CPU; 有 N 卡可点安装升级 GPU）'));
+            if (!gpu) throw new Error('未检测到 NVIDIA 显卡 —— 本工具的 Parakeet 识别必须在 GPU 上跑（CUDA），不支持纯 CPU。请确认机器有 N 卡且驱动已安装');
+            return finishOk('已就绪: ' + info + '（GPU·CUDA）');
           }
           prog(50, '检测到 ' + gpu + '，升级 CUDA 版 sherpa-onnx（约 190MB）…');
         }
-      } catch {}
+      } catch (e) {
+        if (e && /不支持纯 CPU/.test(e.message)) throw e;   // GPU 硬校验失败直接终止, 别吞掉继续装 CPU 版
+      }
 
       // ① 系统 Python 可用 → 建 venv
       if (!pyExe) {
@@ -1154,11 +1183,11 @@ function startPyEnvSetup() {
       }
       if (!pyExe) throw new Error('未能准备可用的 Python 环境');
 
-      // ③ GPU 加速: 检测到 N 卡 → 换装 CUDA 版 sherpa-onnx(wheel 自带 cuDNN/cuBLAS, 约 190MB,
-      //    走 hf-mirror 镜像); import 成功才算数, 失败自动回退 CPU 版, 保证初稿永远能跑。
+      // ③ GPU 加速: 必须检测到 N 卡 → 换装 CUDA 版 sherpa-onnx(wheel 自带 cuDNN/cuBLAS, 约 190MB,
+      //    走 hf-mirror 镜像)。不做 CPU 兜底: 没有 N 卡 / CUDA 装不上都直接失败。
       const gpuName = await nvidiaGpu();
       if (!gpuName) {
-        return finishOk('安装完成: ' + info + '（未检测到 N 卡, Parakeet 走 CPU; A 卡用户建议 whisper.cpp 引擎, 走 Vulkan GPU）');
+        throw new Error('未检测到 NVIDIA 显卡 —— 本工具的 Parakeet 识别必须在 GPU 上跑（CUDA），不支持纯 CPU; CUDA 版安装失败也会报错而不是退回 CPU');
       }
       if (asrProvider() === 'cuda') return finishOk('安装完成: ' + info + ' / GPU·CUDA（' + gpuName + '）');
 
@@ -1213,13 +1242,9 @@ function startPyEnvSetup() {
         finishOk('安装完成: ' + info + ' / GPU·CUDA（' + gpuName + '）');
       } catch (e) {
         if (cudaTried) {
-          // 回退 CPU 版: 初稿不能因为 CUDA 折腾挂掉
-          prog(97, 'CUDA 不可用（' + String((e && e.message) || e).slice(0, 80) + '），回退 CPU 版…');
-          await runCapture(pyExe, ['-m', 'pip', 'install', '--force-reinstall', '--no-deps', 'sherpa-onnx==1.13.8', '-i', EMBEDDED_PY.pipIndex], 600000);
-          const s = readAsrSettings();
-          s.asrProvider = 'cpu';
-          writeAsrSettings(s);
-          finishOk('安装完成: ' + info + ' / CPU（CUDA 不可用: ' + String((e && e.message) || e).slice(0, 60) + '）');
+          // 不做 CPU 兜底: CUDA 装不上就明确失败, 让用户看得到原因(而不是悄悄退回慢几个量级的 CPU)
+          throw new Error('CUDA 版 sherpa-onnx 安装失败: ' + String((e && e.message) || e).slice(0, 200)
+            + ' —— 请检查显卡驱动版本/磁盘空间后重试; 本工具不支持退回 CPU 推理');
         } else throw e;
       }
     } catch (e) { finishFail(e); }
@@ -2013,6 +2038,9 @@ function handleRequest(req, res) {
         const wav = path.join(projDir(id), 'audio.wav');
         const mdir = modelDirFor(model.id);
         if (!mdir || missingModelFiles(mdir, model).length) throw new Error('模型文件不完整（' + model.id + '）');
+        // GPU 硬校验: ASR 必须跑在 GPU 上, 不做 CPU 兜底
+        const gpuGate = asrGpuGateError(model);
+        if (gpuGate) throw new Error(gpuGate);
         const segWav = path.join(os.tmpdir(), `kass-rr-${process.pid}-${Date.now().toString(36)}.wav`);
         const outJson = segWav + '.json';
         const cleanup = () => { for (const f of [segWav, outJson]) { try { fs.unlinkSync(f); } catch {} } };
@@ -2039,7 +2067,7 @@ function handleRequest(req, res) {
         } else {
           data = await new Promise((resolve, reject) => {
             const py = spawn(ASR_PY, [ASR_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson, '--threads', '4',
-              ...(asrProvider() === 'cuda' ? ['--provider', 'cuda'] : []),
+              '--provider', 'cuda',
               ...parakeetHotwordArgs()],
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
             let pyErr = '';
@@ -2240,6 +2268,12 @@ function handleRequest(req, res) {
   function startDraftAsr(id, wordLevel) {
     const model = resolveDraftModel(readMeta(id));
     if (!model) return finishDraft(id, new Error('语音识别模型不可用：请先在设置里下载模型（或换一个已就绪的模型）'));
+    // GPU 硬校验: ASR 必须跑在 GPU 上, 不做 CPU 兜底
+    const gpuGate = asrGpuGateError(model);
+    if (gpuGate) {
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [GPU 校验失败] ${gpuGate}`);
+      return finishDraft(id, new Error(gpuGate));
+    }
     const mdir = modelDirFor(model.id);
     draftJobs.add(id);
     const wav = path.join(projDir(id), 'audio.wav');
@@ -2251,10 +2285,8 @@ function handleRequest(req, res) {
     setDraft(id, { status: 'running', stage: STAGE.asr, progress: 30, message: '启动识别引擎…' });
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语音识别（模型：${model.name}，逐词：${wordLevel ? '开' : '关'}）`);
     if (model.engine === 'whisper.cpp') {
-      // GPU(Vulkan)/CPU 模式自动检测: 有 ggml-vulkan.dll 就走 GPU(实测 126 倍于 CPU encode)
-      const mode = whisperVulkanOk() ? 'GPU·Vulkan' : 'CPU';
-      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp ${mode} 推理`
-        + (whisperVulkanOk() ? '' : '（未检测到 ggml-vulkan.dll，将用 CPU，速度较慢；可在设置里重新下载运行时获取 GPU 版）'));
+      // GPU 校验已在上面的 asrGpuGateError 通过: 走到这里必然有 Vulkan 运行库
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp GPU·Vulkan 推理`);
     }
 
     // 识别完成后的收尾三段式: reseg(语义分句, 仅 whisper) → diarize(区分说话人) → 生成字幕。
@@ -2281,7 +2313,7 @@ function handleRequest(req, res) {
       const bin = path.join(mdir, model.files[0]);
       runWhisperCpp(bin, wav, (pct, secs) => {
         const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
-        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·${whisperVulkanOk() ? 'GPU' : 'CPU'}）… ${pct}% ${t}` });
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·GPU·Vulkan）… ${pct}% ${t}` });
       }, { register: p => draftProcs.set(id, p) }).then(r => {
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
@@ -2306,12 +2338,12 @@ function handleRequest(req, res) {
         return finishDraft(id, new Error('Python 环境不可用，无法语音识别 —— 到「设置 → 识别模型 → Python 环境」点「一键安装」即可自动装好（详见日志：' + pre.msg + '）'));
       }
       pushDraftLog(id, `[${ts()}] Python: ${ASR_PY}${pre.msg ? '（' + pre.msg + '）' : ''}`);
-      pushDraftLog(id, `[${ts()}] [提示] Parakeet 推理设备: ${asrProvider() === 'cuda' ? 'GPU·CUDA（N 卡）' : 'CPU —— 未检测到 N 卡; A 卡用户建议改用 whisper.cpp 引擎(走 Vulkan GPU)'}`);
+      pushDraftLog(id, `[${ts()}] [提示] Parakeet 推理设备: GPU·CUDA（已通过 GPU 校验; 若运行时报 CUDA 错误请重新一键安装）`);
 
       let lastErr = '', buf = '';
       const proc = spawn(ASR_PY,
         [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4',
-          ...(asrProvider() === 'cuda' ? ['--provider', 'cuda'] : []),
+          '--provider', 'cuda',
           ...parakeetHotwordArgs()],
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       draftProcs.set(id, proc);

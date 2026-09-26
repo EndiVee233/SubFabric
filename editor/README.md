@@ -50,8 +50,8 @@ node editor/server.js
     - **可选识别模型**（创建初稿对话框里选，设置里可下载/删除）：
       | 模型 | 引擎 | 大小 | 说明 |
       |---|---|---|---|
-      | Parakeet TDT 0.6B v2 | sherpa-onnx | 661MB | 英语；CPU 约 7~19 倍实时 |
-      | Whisper large-v3-turbo | whisper.cpp(Vulkan) | 1.5GB | 英语；GPU 加速，**A 卡/N 卡/Intel 通用**，实测 RTX 4060 Ti 约 4.7 倍实时 |
+      | Parakeet TDT 0.6B v2 | sherpa-onnx(CUDA) | 661MB | 英语；**必须 CUDA GPU（N 卡）**，无 N 卡 / CUDA 装不上直接报错（不支持 CPU） |
+      | Whisper large-v3-turbo | whisper.cpp(Vulkan) | 1.5GB | 英语；**必须 Vulkan GPU**，A 卡/N 卡/Intel 通用，实测 RTX 4060 Ti 约 4.7 倍实时；无 Vulkan 驱动直接报错（不支持 CPU） |
       - A 卡用户：官方 whisper.cpp 不发 Windows Vulkan 包，改用社区预编译版（`jerryshell/whisper.cpp-windows-vulkan-bin`），运行时在设置里一键下载（~12MB）
       - 实测 medium.en 在 Vulkan 上只有 0.37 倍实时（不可用），turbo 的 decoder 轻 4 倍、才是 GPU 正解
     - **仅英语**（两个模型都只对英语）；**说话人分离与 LLM 语义重分句未实现**
