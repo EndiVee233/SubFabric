@@ -2571,6 +2571,10 @@ function handleRequest(req, res) {
       }
       const model = modelById(modelId) || resolveAsrModel() || ASR_MODELS[0];
       if (!model) return sendJson(res, 400, { error: '未知模型' });
+      // Parakeet 连下载都拦: 它只能 CUDA GPU 推理, 无 N 卡机器下了也用不了, 不浪费 661MB
+      if (model.engine === 'sherpa-onnx' && asrProvider() !== 'cuda') {
+        return sendJson(res, 400, { error: 'Parakeet 模型需要 CUDA GPU（N 卡）才能使用，不支持 CPU —— 当前环境未启用 GPU·CUDA，请先在「Python 环境」完成一键安装（需 N 卡）后再下载' });
+      }
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
       if (!p) p = path.join(modelsRoot(), model.dirName);

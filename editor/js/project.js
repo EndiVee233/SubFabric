@@ -581,16 +581,19 @@ export function initProjects(ctx) {
       const st = dlOf('model:' + m.id);
       const rtSt = m.needRuntime ? dlOf('runtime') : {};
       const dlThis = st.running || (m.needRuntime && rtSt.running);
+      const pyBlocked = m.engine === 'sherpa-onnx' && d.provider !== 'cuda';   // Parakeet: 无 CUDA 环境连下载都拦
       let state, btn = '';
       if (st.running || (m.needRuntime && rtSt.running)) {
         state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
       } else if (st.error) {
         state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+      } else if (pyBlocked) {
+        state = '<span class="sm-state" style="color:var(--danger)">需 CUDA GPU（N 卡）才能下载使用，不支持 CPU —— 先在上方完成 Python 环境一键安装</span>';
       } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
       else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
       if (dlThis) btn = '';
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
-      else btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
+      else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
       const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
       return `<div class="sm-model">
         <div class="sm-head"><span class="sm-name">${esc(m.name)}</span>${btn}</div>
