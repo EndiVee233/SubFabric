@@ -10,11 +10,11 @@
 
 注意: 打包前先 `python build_exe.py`(确保 build/SubFabric.exe 存在) 和
       `node editor/scripts/fetch-vendor.js`(确保 editor/vendor 完整)。
-用法: python package_release.py [版本号]   默认 1.3.5
+用法: python package_release.py [版本号]   默认 1.4.0
 """
 import os, zipfile, sys
 
-VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.3.5'
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.4.0'
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(ROOT, 'K-ASS-Editor-%s.zip' % VERSION)
 
