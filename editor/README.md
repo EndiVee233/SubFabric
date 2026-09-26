@@ -52,7 +52,12 @@ node editor/server.js
       |---|---|---|---|
       | Parakeet TDT 0.6B v2 | sherpa-onnx(CUDA) | 661MB | 英语；**必须 CUDA GPU（N 卡）**，无 N 卡 / CUDA 装不上直接报错（不支持 CPU） |
       | Whisper large-v3-turbo | whisper.cpp(Vulkan) | 1.5GB | 英语；**必须 Vulkan GPU**，A 卡/N 卡/Intel 通用，实测 RTX 4060 Ti 约 4.7 倍实时；无 Vulkan 驱动直接报错（不支持 CPU） |
+      | Multitalker Parakeet Streaming 0.6B v1 | NeMo(PyTorch·CUDA) | 2.8GB | 英语·多说话人（NVIDIA NeMo 说话人核注入）。**只用于「选区重新识别」，不能创建初稿**；**只能 N 卡**，CPU 推理直接报错；还需单独安装 NeMo 运行时（PyTorch + NeMo，约 5GB） |
       - A 卡用户：官方 whisper.cpp 不发 Windows Vulkan 包，改用社区预编译版（`jerryshell/whisper.cpp-windows-vulkan-bin`），运行时在设置里一键下载（~12MB）
+      - **创建初稿只列前两款**（服务端双重拦截：`modelId` 指向 Multitalker 一律 400）；Multitalker 只从「设置 → 重新识别模型」进入
+      - **Multitalker 的运行时是独立的一套**：设置里的「NeMo 运行时（多说话人）」单独安装（PyTorch + NeMo，约 5GB，装在本项目的 Python 环境里）。装完会自动实测「导入 + `torch.cuda.is_available()`」才算成功 —— PyPI 上的 Windows torch 是 CPU-only 轮子（实测 2.14.0+cpu），安装器会检测到并自动换装官方 cu126 索引的 CUDA 版；Windows 上大包安装偶发 `WinError 5`（杀软扫描锁文件），安装器会自动重试
+      - **该模型要装两套权重**：主权重 2.3GB + 官方流式分离权重 450MB。分离权重不是可选项 —— NeMo 的 `SpeakerTaggedASR` 即使单说话人模式也要传 `diar_model` 对象（构造函数读 `diar_model._cfg.max_num_of_spks`），缺了直接报错。单说话人行为靠 `single_speaker_mode=True` + `max_num_of_spks=1` 触发（NeMo 内部据此把 `spk_targets` 强制全 1，只跑一个 ASR 实例）
+      - **该模型吃内存**：fp32 权重 2.3GB，NeMo 在 CPU 侧实例化编码器（24 层）再载入权重，峰值约 6GB 可用内存 —— 内存不够时进程会**原生崩溃（0xC0000005）而不是抛 Python 异常**，所以 `multitalker.py` 在加载前用 `GlobalMemoryStatusEx` 预检可用内存，不足直接给一句人话。GPU 侧建议 8GB 显存起
       - 实测 medium.en 在 Vulkan 上只有 0.37 倍实时（不可用），turbo 的 decoder 轻 4 倍、才是 GPU 正解
     - **仅英语**（两个模型都只对英语）；**说话人分离与 LLM 语义重分句未实现**
     - 断句只做本地基础规则：句末标点 / 停顿 > 0.8s / 行长兜底（10s 或 30 词，优先回退到逗号处）
@@ -128,7 +133,7 @@ node editor/server.js
   | **Shift** + 拖动 | **允许重叠**；只要真的压上了，涉及的每一行**自动去掉逐词效果**（按 `main.py` 的 `remove_karaoke` 语义：英文逐词切片合并成一条干净整句，时间对齐中文行） |
   | 空白处左键拖动 | 按拖动的起止时间**新建一个字幕块**（ASS 同时建中文行 + 英文行；SRT 建一条 cue），拖出虚线预览框 |
   | **Ctrl** + 左键在轨道上拖动 | **批量选区**：框出一段时间（半透明暖色块 + 虚线边，覆盖全部轨道），松手后贴着选区左上角弹出浮条「已选 N 条字幕 / 🎙 重新识别 / 🗑 批量删除」。拖动中在选区左上角显示当前范围；位移 < 8px 视为单击、不产生选区。**点别处（画布/列表/视频区任意位置）即取消选区**；点「批量删除」则删掉与该时间段**相交**的所有字幕（部分重叠也算），删完自动取消选区。平移/缩放/改窗口后浮条会自动跟着选区走 |
-  | 选区「🎙 重新识别」 | **只在项目模式可用**（需要项目里已保存的 `audio.wav`）。流程：删除选区内所有字幕块 → ffmpeg 从已保存音频切出该时间段 → Parakeet 重新识别（时间戳加回区间偏移）→ 用设置里的 LLM 翻译 → 按识别结果**逐段重建字幕块**（中文整句行 + 英文逐词行，逐词时间用 ASR 给的**真实词级时间**，不做加权重算）→ 自动保存。没配置翻译接口时只返回识别结果并提示。适合改口播/识别错词的局部重做 |
+  | 选区「🎙 重新识别」 | **只在项目模式可用**（需要项目里已保存的 `audio.wav`）。流程：删除选区内所有字幕块 → ffmpeg 从已保存音频切出该时间段 → 用「设置 → 重新识别模型」指定的模型重新识别（默认沿用项目初稿模型；可指定 Multitalker 多说话人模型，它只支持 N 卡且拒绝 CPU）、时间戳加回区间偏移→ 用设置里的 LLM 翻译 → 按识别结果**逐段重建字幕块**（中文整句行 + 英文逐词行，逐词时间用 ASR 给的**真实词级时间**，不做加权重算）→ 自动保存。没配置翻译接口时只返回识别结果并提示。适合改口播/识别错词的局部重做 |
   | 右键字幕块 | 弹出二级菜单：🛠 修复字幕（自动检测修复）/ 🗑 删除字幕块 |
   | 跟随播放 | **默认开启**（只在**播放中**才把播放头拉回视野，暂停时允许自由平移） |
   - 单击与拖动用 4px 位移阈值区分；命中测试**优先判"边界"**：点击落在某块起止边缘 5px 内时，即使它被别的块压住也能选中它、拖得动它的边界
@@ -141,6 +146,7 @@ node editor/server.js
 ```
 asr/                     # 语音识别(创建初稿)—— 独立 Python 环境, 不依赖 npm
 ├── asr.py               # Parakeet TDT 0.6B v2 推理 worker(分块/词级时间戳/基础断句/JSON 进度输出)
+├── multitalker.py       # Multitalker Parakeet Streaming 推理(NeMo, 单说话人模式; 仅"重新识别"用)
 ├── requirements.txt     # sherpa-onnx + numpy
 ├── .venv/               # 本地虚拟环境(不入库, 见 README 快速开始)
 └── models/              # 模型本体 631MB(不入库, 由界面引导下载到用户选的空目录)

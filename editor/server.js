@@ -375,7 +375,9 @@ const HF_ENDPOINT = (process.env.HF_ENDPOINT || 'https://hf-mirror.com').replace
 /* 可选识别模型。engine 决定推理方式:
  *   sherpa-onnx  → asr.py(sherpa-onnx, CUDA GPU)
  *   whisper.cpp  → whisper-cli.exe(-oj -ml 1 -sow 词级时间戳)；Vulkan GPU 跑, A 卡/N 卡/Intel 通吃
- * 两个引擎都只在 GPU 上推理 —— 没有对应的 GPU 环境直接报错, 不做 CPU 兜底 */
+ *   nemo         → multitalker.py(PyTorch + NeMo, CUDA GPU 专属)
+ * 各引擎的 GPU 要求由 asrGpuGateError 逐个校验 —— 都只在 GPU 上推理, 不做 CPU 兜底。
+ * draftAllowed:false 的模型**不能创建初稿**, 只能在「选区重新识别」里用。 */
 const ASR_MODELS = [
   {
     id: 'parakeet-tdt-0.6b-v2',
@@ -386,6 +388,7 @@ const ASR_MODELS = [
     sizeMB: 661,
     desc: 'CUDA GPU（N 卡）推理，无 N 卡或 CUDA 环境不可用会直接报错（不支持 CPU）；仅英语',
     dirName: 'parakeet-tdt-0.6b-v2',
+    draftAllowed: true,
   },
   {
     id: 'ggml-large-v3-turbo',
@@ -396,11 +399,30 @@ const ASR_MODELS = [
     sizeMB: 1549,
     desc: 'whisper.cpp 引擎 + Vulkan GPU：A 卡 / N 卡 / Intel 核显都走 GPU 加速（实测 RTX 4060 Ti 快约 126 倍）；无 Vulkan 驱动直接报错（不支持 CPU）。质量接近 large-v3。',
     dirName: 'ggml-large-v3-turbo',
+    draftAllowed: true,
+  },
+  {
+    id: 'multitalker-parakeet-streaming-0.6b-v1',
+    name: 'Multitalker Parakeet Streaming 0.6B v1（多说话人·仅重新识别）',
+    engine: 'nemo',
+    repo: 'nvidia/multitalker-parakeet-streaming-0.6b-v1',
+    // 除主权重外还要官方流式分离模型: NeMo 的 SpeakerTaggedASR **即使单说话人模式也要 diar_model 对象**
+    // (它读 diar_model._cfg.max_num_of_spks), 所以这 450MB 是必需项, 不是可选项。
+    files: ['multitalker-parakeet-streaming-0.6b-v1.nemo', 'multitalker_transcript_config.py',
+            'diar_streaming_sortformer_4spk-v2.1.nemo'],
+    fileRepos: { 'diar_streaming_sortformer_4spk-v2.1.nemo': 'nvidia/diar_streaming_sortformer_4spk-v2.1' },
+    sizeMB: 2825,
+    // 只能重新识别, 不能创建初稿 —— 见 draftAllowed
+    desc: 'NVIDIA NeMo 流式多说话人 Parakeet（说话人核注入，一次转写可区分重叠语音）。仅 N 卡可用：必须 CUDA GPU，CPU 推理直接报错；只用于「重新识别」，不能创建初稿。权重约 2.3GB，另需 PyTorch + NeMo 运行时（设置里单独安装）',
+    dirName: 'multitalker-parakeet-streaming-0.6b-v1',
+    draftAllowed: false,
   },
 ];
 const MODEL_PATTERNS = [/^encoder.*\.onnx$/i, /^decoder.*\.onnx$/i, /^joiner.*\.onnx$/i, /^tokens\.txt$/i,
-                        /^ggml-.*\.bin$/i];
+                        /^ggml-.*\.bin$/i, /\.nemo$/i];
 const modelById = (id) => ASR_MODELS.find(m => m.id === id) || null;
+/** 能否用于创建初稿(默认可以; draftAllowed===false 的模型只给「重新识别」用) */
+const draftAllowedOf = (m) => !!m && m.draftAllowed !== false;
 
 /* 说话人分离模型(两个文件一组): 跑在音频上, 与识别引擎无关 —— 两个 ASR 模型都能用 */
 const DIARIZE_MODELS = [
@@ -432,19 +454,78 @@ const whisperCli = () => path.join(WHISPER_RUNTIME.dir, 'whisper-cli.exe');
 const whisperRuntimeOk = () => { try { return fs.statSync(whisperCli()).isFile(); } catch { return false; } };
 const whisperVulkanOk = () => { try { return fs.statSync(path.join(WHISPER_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
 
-/** ASR 必须 GPU: 不做 CPU 兜底。两个引擎各查各的 GPU 依赖, 不满足返回报错文案(null = 通过)。
- *  whisper.cpp → 必须有 Vulkan 运行库(ggml-vulkan.dll); sherpa-onnx → 必须是 CUDA 版(安装器实测后写入 settings)。
- *  provider==='cuda' 本身不保证运行时能起来, 但那是安装器 import 实测过的结果 —— 运行时问题交给 asr.py 报详细错。 */
+/** ASR 必须 GPU: 不做 CPU 兜底。三个引擎各查各的 GPU 依赖, 不满足返回报错文案(null = 通过)。
+ *  whisper.cpp → 必须有 Vulkan 运行库(ggml-vulkan.dll); sherpa-onnx → 必须是 CUDA 版(安装器实测后写入 settings);
+ *  nemo(multitalker) → 必须有 PyTorch + NeMo, 且 torch 认到 CUDA —— 它**只认 N 卡**, 别的 GPU 也不行。
+ *  provider==='cuda' 本身不保证运行时能起来, 但那是安装器 import 实测过的结果 —— 运行时问题交给脚本报详细错。 */
 function asrGpuGateError(model) {
   if (model && model.engine === 'whisper.cpp') {
     if (!whisperRuntimeOk()) return 'whisper.cpp 运行时未就绪：请到「设置 → 识别模型」下载运行时';
     if (!whisperVulkanOk()) return '未检测到 Vulkan GPU 运行库（ggml-vulkan.dll）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请安装/更新显卡驱动（支持 Vulkan），或在设置里重新下载 whisper.cpp 运行时';
     return null;
   }
+  if (model && model.engine === 'nemo') {
+    const n = nemoProbeCache;
+    if (!n || !n.ok) {
+      return '「' + model.name + '」需要 NeMo 运行时（PyTorch + NeMo）—— 请在「设置 → 识别模型 → NeMo 运行时（多说话人）」点「安装」（约 5GB，需 N 卡）。'
+        + (n && n.msg ? '（当前预检：' + n.msg + '）' : '');
+    }
+    if (!n.cuda) {
+      return '「' + model.name + '」未启用 GPU·CUDA（当前是 CPU 版 PyTorch）—— 该模型不支持 CPU 推理，只能在 NVIDIA 显卡上运行。'
+        + (n.gpu ? '' : '未检测到 NVIDIA 显卡；') + '请在设置里点「重新安装 NeMo 运行时」装 CUDA 版 PyTorch。';
+    }
+    return null;
+  }
   if (asrProvider() !== 'cuda') {
     return 'Parakeet 未启用 GPU（当前 CPU 推理）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请到「设置 → 识别模型 → Python 环境」点「一键安装」，自动换装 CUDA 版 sherpa-onnx（需 N 卡）';
   }
   return null;
+}
+
+/* ═══════════ NeMo 运行时(仅 multitalker 模型需要) ═══════════
+ * 与 sherpa-onnx 是两套依赖: 前者只要 sherpa-onnx+numpy(约 200MB), 后者要 PyTorch+NeMo(约 5GB)。
+ * 所以单独装、单独探测: 设置里一个独立的「NeMo 运行时」条目, 装好之后 multitalker 模型才可用。 */
+const NEMO_SCRIPT = path.join(ASR_DIR, 'multitalker.py');
+const NEMO_PIP_INDEX = 'https://pypi.tuna.tsinghua.edu.cn/simple';
+const NEMO_NOTE = 'need-pytorch-nemo';
+let nemoProbeCache = null;
+let nemoProbeInflight = null;    // 在途探测(见下)
+/** 探一次 NeMo 运行时: torch / nemo.collections.asr 能否导入 + CUDA 是否可用。结果缓存 5 分钟。
+ *  import nemo.collections.asr 要拉 torch, 首次可能要几十秒 —— 与 Python 预检一样放后台跑, 别堵接口。
+ *  **在途复用**: 设置面板每秒轮询状态页, 若每次都新起一个进程, 几十秒的导入期里会并发几十个 python;
+ *  所以同一时刻只允许一个探测在跑, 其余调用共享它的结果。 */
+function probeNemo(force) {
+  if (!force && nemoProbeCache && Date.now() - nemoProbeCache.at < 5 * 60 * 1000) return Promise.resolve(nemoProbeCache);
+  if (!force && nemoProbeInflight) return nemoProbeInflight;
+  const p = new Promise((resolve) => {
+    const code = 'import json, torch;'
+      + 'info={"torch": torch.__version__, "cuda": bool(torch.cuda.is_available())};'
+      + 'info["gpu"]=torch.cuda.get_device_name(0) if info["cuda"] else "";'
+      + 'import nemo.collections.asr as na;'
+      + 'info["nemo"]=getattr(na, "__version__", "") or "ok";'
+      + 'print(json.dumps(info))';
+    const p = spawn(ASR_PY, ['-c', code], { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+    let out = '', err = '';
+    const done = (r) => { clearTimeout(timer); nemoProbeCache = Object.assign({ at: Date.now() }, r); resolve(nemoProbeCache); };
+    const timer = setTimeout(() => { try { p.kill(); } catch {} done({ ok: false, cuda: false, msg: '预检超时（180s）' }); }, 180000);
+    p.stdout.on('data', c => { out += c; });
+    p.stderr.on('data', c => { err += c; });
+    p.on('error', e => done({ ok: false, cuda: false, msg: '无法启动 ' + ASR_PY + '：' + e.message }));
+    p.on('close', (code) => {
+      if (code === 0) {
+        let info = null;
+        try { info = JSON.parse(out.trim().split('\n').pop()); } catch {}
+        if (info) return done({
+          ok: true, cuda: !!info.cuda, gpu: info.gpu || '', torch: info.torch || '', nemo: info.nemo || '',
+          msg: 'PyTorch ' + info.torch + ' / NeMo ' + (info.nemo || 'ok'),
+        });
+      }
+      const detail = err.trim().split('\n').filter(Boolean).pop() || '';
+      done({ ok: false, cuda: false, msg: (code === 0 ? '输出解析失败' : asrExitHint(code)) + (detail ? ' —— ' + detail.slice(0, 200) : '') });
+    });
+  });
+  nemoProbeInflight = p.finally(() => { nemoProbeInflight = null; });
+  return p;
 }
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
@@ -693,9 +774,11 @@ function asrExitHint(code) {
  *  模型文件就绪 ≠ Python 环境就绪 —— 发行包不含 asr/.venv(体积原因),
  *  用户机器上有没有 Python、装没装依赖, 只有真跑一下才知道。 */
 let pyProbeCache = null;
+let pyProbeInflight = null;      // 与 probeNemo 同理: 状态页每秒轮询, 在途时复用同一个探测
 function probePython() {
   if (pyProbeCache && Date.now() - pyProbeCache.at < 5 * 60 * 1000) return Promise.resolve(pyProbeCache);
-  return new Promise((resolve) => {
+  if (pyProbeInflight) return pyProbeInflight;
+  const p = new Promise((resolve) => {
     const p = spawn(ASR_PY,
       ['-c', 'import sys; import sherpa_onnx; import numpy; print(sys.version.split()[0] + " / sherpa-onnx " + str(getattr(sherpa_onnx, "__version__", "?")))'],
       { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
@@ -711,6 +794,8 @@ function probePython() {
       done({ ok: false, msg: asrExitHint(code) + (detail ? ' —— ' + detail : '') });
     });
   });
+  pyProbeInflight = p.finally(() => { pyProbeInflight = null; });
+  return p;
 }
 
 function readAsrSettings() {
@@ -735,7 +820,9 @@ const selectedModelId = () => {
   return (s.selectedModel && modelById(s.selectedModel)) ? s.selectedModel : ASR_MODELS[0].id;
 };
 function setSelectedModel(id) {
-  if (!modelById(id)) return;
+  const m0 = modelById(id);
+  if (!m0 || !draftAllowedOf(m0)) return;      // 只能重新识别的模型不能当"创建初稿默认模型"
+
   const s = readAsrSettings();
   s.selectedModel = id;
   writeAsrSettings(s);
@@ -771,15 +858,43 @@ function modelReady(modelId) {
   if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return false;
   return true;
 }
-/** 当前选中模型的目录(找不到所选就用第一个可用的) */
+/** 当前选中模型的目录(找不到所选就用第一个可用的)
+ *  注意: 这是「创建初稿」用的默认模型 —— 只挑 draftAllowed 的, multitalker 那种只能重新识别的模型不参与。 */
 function resolveAsrModel() {
   const s = readAsrSettings();
   for (const id of [s.selectedModel, ASR_MODELS[0].id]) {
     const m = modelById(id);
-    if (m && modelReady(m.id)) return m;
+    if (m && draftAllowedOf(m) && modelReady(m.id)) return m;
   }
-  for (const m of ASR_MODELS) if (modelReady(m.id)) return m;
+  for (const m of ASR_MODELS) if (draftAllowedOf(m) && modelReady(m.id)) return m;
   return null;
+}
+
+/** 用户在设置里指定的「重新识别模型」(空 = 没指定, 沿用项目原来的模型)。
+ *  这个设置可以指向任何模型, 包括只能重新识别的 multitalker。 */
+const rerecogModelId = () => {
+  const s = readAsrSettings();
+  return (s.rerecogModel && modelById(s.rerecogModel)) ? s.rerecogModel : '';
+};
+function setRerecogModel(id) {
+  const s = readAsrSettings();
+  if (id) s.rerecogModel = id; else delete s.rerecogModel;
+  writeAsrSettings(s);
+}
+/** 选区重新识别用哪个模型: 设置里指定的 → 项目初稿用的 → 创建初稿默认的。
+ *  找不到时返回 { error } 给出明确原因(未下载 / 没装运行时), 由调用方转成 400 —— 别静默换模型。 */
+function resolveRerecogModel(meta) {
+  const sel = rerecogModelId();
+  if (sel) {
+    const m = modelById(sel);
+    if (!modelReady(m.id)) return { error: '「重新识别模型」选中的「' + m.name + '」还没就绪：请先在设置里完成模型下载' };
+    return { model: m };
+  }
+  const dm = resolveDraftModel(meta);
+  if (dm) return { model: dm };
+  const fallback = resolveAsrModel();
+  if (fallback) return { model: fallback };
+  return { error: '语音识别模型不可用，请先在设置里下载模型' };
 }
 
 /* 模型/运行时下载: Node 内置 fetch + Range 断点续传(保持本项目零 npm 依赖)。
@@ -884,9 +999,11 @@ function startModelDownload(model, dir) {
   (async () => {
     try {
       fs.mkdirSync(dir, { recursive: true });
-      const base = `${HF_ENDPOINT}/${model.repo}/resolve/main`;
       for (let i = 0; i < model.files.length; i++) {
         const f = model.files[i];
+        // 少数模型的主权重与配套模型分属不同仓库(如 multitalker 的流式分离权重) —— 按文件覆盖仓库
+        const repo = (model.fileRepos && model.fileRepos[f]) || model.repo;
+        const base = `${HF_ENDPOINT}/${repo}/resolve/main`;
         await downloadAny(candidateUrls(`${base}/${f}`), path.join(dir, f), (done, total) => {
           if (done < 0) return;                       // 重试开始的通知, 进度不回退
           const part = total ? done / total : 0;
@@ -952,6 +1069,58 @@ function startDiarizeDownload() {
       st.running = false;
       st.error = String((e && e.message) || e);
       st.msg = '下载失败: ' + st.error;
+    }
+  })();
+}
+
+/* ═══════════ NeMo 运行时安装（仅 multitalker 模型需要） ═══════════
+ * 在已有 ASR Python 环境上追加 PyTorch + NeMo。装完**实测 import + CUDA** 才算成功 ——
+ * 装到 CPU 版 torch 上等于白装（multitalker 只认 CUDA, 拒绝 CPU 推理）。
+ * 进度走 downloads key='nemo', 与其它下载共用设置面板的进度 UI。 */
+function startNemoInstall() {
+  const key = 'nemo';
+  const set = (patch) => dlState(key, Object.assign({ kind: 'nemo', modelId: 'nemo' }, patch));
+  set({ running: true, pct: 1, msg: '准备安装 NeMo 运行时…', error: null });
+  const prog = (pct, msg) => set({ running: true, pct: Math.max(1, Math.min(99, Math.round(pct))), msg, error: null });
+  (async () => {
+    const pyExe = ASR_PY;
+    try {
+      prog(3, '升级 pip…');
+      await runCapture(pyExe, ['-m', 'pip', 'install', '--upgrade', 'pip', '-i', NEMO_PIP_INDEX, '--quiet'], 600000);
+
+      // ① PyTorch（约 2.5GB）: 先装 PyPI 通用 wheel, 实测认不到 CUDA 再换 CUDA 专用轮子
+      let lines = 0;
+      prog(6, '安装 PyTorch（约 2.5GB，首次较慢）…');
+      await pipInstallRetry(pyExe, ['-m', 'pip', 'install', 'torch', '-i', NEMO_PIP_INDEX], 3600000,
+        () => { lines++; prog(6 + Math.min(24, lines * 0.2), '安装 PyTorch…（已输出 ' + lines + ' 行）'); });
+      let probeN = await probeNemo(true);
+      if (!probeN.ok || !probeN.cuda) {
+        // PyPI 上的 torch 在 Windows 是 CPU-only 轮子(实测 2.14.0+cpu) —— 必须换官方 CUDA 索引重装
+        prog(32, '换装 CUDA 版 PyTorch（官方 cu126 索引，约 3GB）…');
+        await pipInstallRetry(pyExe, ['-m', 'pip', 'install', '--force-reinstall', 'torch',
+          '--index-url', 'https://download.pytorch.org/whl/cu126',
+          '--extra-index-url', NEMO_PIP_INDEX], 5400000,
+          () => { lines++; prog(32 + Math.min(12, lines * 0.05), '换装 CUDA 版 PyTorch…'); });
+        probeN = await probeNemo(true);
+      }
+
+      // ② NeMo ASR（体积大头: pytorch-lightning / lhotse / librosa / wandb …）
+      let n2 = 0;
+      prog(45, '安装 NeMo（nemo_toolkit[asr]，约 2GB，请耐心等）…');
+      await pipInstallRetry(pyExe, ['-m', 'pip', 'install', 'nemo_toolkit[asr]', '-i', NEMO_PIP_INDEX], 3600000,
+        (line) => { n2++; prog(45 + Math.min(42, n2 * 0.12), '安装 NeMo: ' + String(line).slice(0, 70)); });
+
+      // ③ 实测: torch + nemo.collections.asr 能导入, 且 CUDA 可用
+      prog(93, '实测 NeMo 运行时（导入 torch / NeMo + 检查 CUDA）…');
+      const fin = await probeNemo(true);
+      if (!fin.ok) throw new Error('NeMo 运行时导入失败：' + (fin.msg || ''));
+      if (!fin.cuda) throw new Error('装到的 PyTorch 认不到 CUDA —— multitalker 只支持 GPU 推理（不做 CPU 兜底）。请确认是 NVIDIA 显卡、更新驱动后重试');
+      set({ running: false, pct: 100, msg: '安装完成：' + fin.msg + (fin.gpu ? ' · ' + fin.gpu : ''), error: null });
+      console.log('[asr] NeMo 运行时就绪:', fin.msg, fin.gpu || '');
+    } catch (e) {
+      const msg = String((e && e.message) || e).slice(0, 300);
+      set({ running: false, pct: 0, msg: '安装失败: ' + msg, error: msg });
+      console.error('[asr] NeMo 运行时安装失败:', msg);
     }
   })();
 }
@@ -1059,6 +1228,26 @@ function runCapture(cmd, args, timeoutMs, onLine) {
       else resolve({ code, stdout: out, stderr: err });
     });
   });
+}
+
+/** pip 装大包在 Windows 上偶发「WinError 5 拒绝访问」: 杀软/Defender 实时扫描刚写入的文件,
+ *  把它锁住 → pip rename dist-info 失败整个安装中断。属**可重试**错误(已装好的不会重下),
+ *  所以这里重试几次再去报错 —— 实测 2.5GB 的 PyTorch 安装踩过两次。 */
+async function pipInstallRetry(pyExe, args, timeoutMs, onLine, tries = 3) {
+  let lastErr = null;
+  for (let i = 0; i < tries; i++) {
+    try { return await runCapture(pyExe, args, timeoutMs, onLine); }
+    catch (e) {
+      lastErr = e;
+      const msg = String((e && e.message) || e);
+      if (!/拒绝访问|WinError 5|Access is denied|being used by another process|另一个程序正在使用/i.test(msg)) throw e;
+      if (i < tries - 1) {
+        if (onLine) onLine('（安装被文件锁打断, 3 秒后自动重试 ' + (i + 2) + '/' + tries + '）');
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /** pip 装依赖: 进度按输出行数粗略推进(没法拿精确百分比), 最后报 Successfully installed */
@@ -2070,6 +2259,37 @@ function handleRequest(req, res) {
           const bin = path.join(mdir, model.files[0]);
           data = await runWhisperCpp(bin, segWav, pct =>
             setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（whisper.cpp）… ${pct}%` }));
+        } else if (model.engine === 'nemo') {
+          // NeMo 多说话人: 走 multitalker.py(PyTorch + NeMo, CUDA 专属)。单说话人模式 —— 选区重识别按单人处理
+          data = await new Promise((resolve, reject) => {
+            const py = spawn(ASR_PY, [NEMO_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson,
+              '--threads', '4', '--provider', 'cuda'],
+              { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            let pyErr = '';
+            const t = setTimeout(() => { try { py.kill(); } catch {} }, 25 * 60 * 1000);
+            py.stderr.on('data', d => {
+              const s2 = String(d);
+              if (pyErr.length < 3000) pyErr += s2;
+              for (const line of s2.split('\n')) {
+                const tt = line.trim();
+                if (!tt.startsWith('{')) continue;
+                let o; try { o = JSON.parse(tt); } catch { continue; }
+                if (o.type === 'progress') setRr({ stage: '识别中', progress: 10 + Math.round(o.pct * 0.62), message: o.msg });
+                else if (o.type === 'log') setRr({ message: o.msg });
+              }
+            });
+            py.on('error', e => { clearTimeout(t); reject(new Error('无法启动识别进程: ' + e.message)); });
+            py.on('close', c => {
+              clearTimeout(t);
+              let out = null;
+              try { out = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
+              if (c !== 0 || !out || !Array.isArray(out.segments)) {
+                const m2 = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
+                return reject(new Error((m2 && m2[1]) || ('识别失败（' + asrExitHint(c) + '）')));
+              }
+              resolve(out);
+            });
+          });
         } else {
           data = await new Promise((resolve, reject) => {
             const py = spawn(ASR_PY, [ASR_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson, '--threads', '4',
@@ -2217,10 +2437,12 @@ function handleRequest(req, res) {
   }
 
   /** 该项目初稿用哪个模型: meta.draft.modelId 优先, 回退当前选中 */
+  /** 项目初稿用的模型(meta.draft.modelId)。只认**能创建初稿**的模型 ——
+   *  multitalker 那种 draftAllowed=false 的模型即使被写进 meta 也不会拿来跑初稿。 */
   function resolveDraftModel(meta) {
     const mid = meta && meta.draft && meta.draft.modelId;
     const m = mid ? modelById(mid) : null;
-    return m && modelReady(m.id) ? m : null;
+    return m && draftAllowedOf(m) && modelReady(m.id) ? m : null;
   }
 
   /** 语义分句(whisper 初稿专用): 读 asr.json → LLM 补标点 → 按逗号/句号切句 → 写回。
@@ -2272,7 +2494,14 @@ function handleRequest(req, res) {
   }
 
   function startDraftAsr(id, wordLevel) {
-    const model = resolveDraftModel(readMeta(id));
+    const meta0 = readMeta(id) || {};
+    const wantId = meta0.draft && meta0.draft.modelId;
+    const want = wantId ? modelById(wantId) : null;
+    // 硬拦: 只能重新识别的模型(如 multitalker)不许拿来创建初稿
+    if (want && !draftAllowedOf(want)) {
+      return finishDraft(id, new Error('「' + want.name + '」只能用于「重新识别」，不能创建初稿 —— 请在设置里为初稿选择其它模型'));
+    }
+    const model = resolveDraftModel(meta0);
     if (!model) return finishDraft(id, new Error('语音识别模型不可用：请先在设置里下载模型（或换一个已就绪的模型）'));
     // GPU 硬校验: ASR 必须跑在 GPU 上, 不做 CPU 兜底
     const gpuGate = asrGpuGateError(model);
@@ -2503,20 +2732,33 @@ function handleRequest(req, res) {
   if (pathname === '/api/asr/status' && req.method === 'GET') {
     probePython().catch(() => {});          // 后台预热预检缓存(状态页/初稿对话框打开时触发)
     nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
+    probeNemo().catch(() => {});            // 后台预检 NeMo 运行时(仅 multitalker 需要; 缓存 5 分钟)
     let pythonOk = false;
     try { pythonOk = fs.statSync(ASR_PY).isFile(); } catch {}
+    const nemo = nemoProbeCache || { ok: false, cuda: false, msg: '预检中…' };
     const models = ASR_MODELS.map(m => {
       const dir = modelDirFor(m.id);
       const missing = missingModelFiles(dir, m);
+      const filesOk = !missing.length && modelFilesOk(dir, m);
+      const ready = filesOk && (m.engine !== 'whisper.cpp' || whisperRuntimeOk());
+      // usable: 文件齐 + 该引擎的运行时都就位(NeMo 模型还要 torch/NeMo + CUDA) —— 重新识别下拉按它标记"可用"
+      const usable = ready && (m.engine !== 'nemo' || (nemo.ok && nemo.cuda));
       return {
         id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
-        dir, missing, ready: !missing.length && modelFilesOk(dir, m) && (m.engine !== 'whisper.cpp' || whisperRuntimeOk()),
+        dir, missing, ready, usable,
+        draftAllowed: draftAllowedOf(m),
         needRuntime: m.engine === 'whisper.cpp' && !whisperRuntimeOk(),
+        needNemo: m.engine === 'nemo' && !(nemo.ok && nemo.cuda),
       };
     });
     return sendJson(res, 200, {
       models,
       selectedModel: selectedModelId(),
+      rerecogModel: rerecogModelId(),        // 「重新识别模型」设置(空 = 沿用项目原有模型)
+      nemo: {                                // NeMo 运行时(仅 multitalker 模型需要)
+        ok: !!nemo.ok, cuda: !!nemo.cuda, gpu: nemo.gpu || '', torch: nemo.torch || '', nemoVer: nemo.nemo || '',
+        msg: nemo.msg || '', script: NEMO_SCRIPT, install: NEMO_NOTE,
+      },
       runtime: { ok: whisperRuntimeOk(), dir: WHISPER_RUNTIME.dir, url: WHISPER_RUNTIME.url, sizeMB: WHISPER_RUNTIME.sizeMB },
       diarize: { ready: diarizeReady(), models: DIARIZE_MODELS },
       // 兼容旧前端字段
@@ -2533,6 +2775,22 @@ function handleRequest(req, res) {
       modelsRoot: modelsRoot(),
       settingsDir: ASR_DIR,
     });
+  }
+  /** 安装 NeMo 运行时（仅 multitalker 模型需要）: 在 ASR Python 环境里追加 PyTorch + NeMo。
+   *  与 sherpa-onnx 环境是**两套依赖**（约 200MB vs 约 5GB），所以单独装、单独报进度（downloads key='nemo'）。
+   *  必须 N 卡: multitalker 只认 CUDA, 装到 CPU 版 torch 上等于白装, 这里直接拦。 */
+  if (pathname === '/api/asr/install-nemo' && req.method === 'POST') {
+    return void (async () => {
+      const pyOk = (() => { try { return fs.statSync(ASR_PY).isFile(); } catch { return false; } })();
+      if (!pyOk) {
+        return sendJson(res, 400, { error: '还没有 Python 环境：请先在上方「Python 环境」点「一键安装」（NeMo 运行时是在它的基础上追加 PyTorch + NeMo）' });
+      }
+      const gpu = await nvidiaGpu().catch(() => null);      // 探测带 5 分钟缓存, 没有缓存时现测一次
+      if (!gpu) return sendJson(res, 400, { error: 'NeMo 多说话人模型只能在 NVIDIA 显卡（N 卡）上推理，当前机器未检测到 NVIDIA 显卡 —— 不支持 CPU 推理，无法安装/使用' });
+      if (dlState('nemo').running) return sendJson(res, 200, { started: true, already: true });
+      startNemoInstall();
+      return sendJson(res, 200, { started: true });
+    })();
   }
   /** 校验用户选的目录能否用来放模型: 必须存在、且是空目录 */
   if (pathname === '/api/asr/check-dir' && req.method === 'POST') {
@@ -2579,9 +2837,14 @@ function handleRequest(req, res) {
       }
       const model = modelById(modelId) || resolveAsrModel() || ASR_MODELS[0];
       if (!model) return sendJson(res, 400, { error: '未知模型' });
-      // Parakeet 连下载都拦: 它只能 CUDA GPU 推理, 无 N 卡机器下了也用不了, 不浪费 661MB
+      // Parakeet 连下载都拦: 它只能 CUDA GPU 推理, 无 N 卡机器下了也用不了, 不浪费 661MB。
+      // NeMo(multitalker) 同理, 而且还要额外的 PyTorch+NeMo 运行时 —— 没 N 卡别下 2.3GB。
       if (model.engine === 'sherpa-onnx' && asrProvider() !== 'cuda') {
         return sendJson(res, 400, { error: 'Parakeet 模型需要 CUDA GPU（N 卡）才能使用，不支持 CPU —— 当前环境未启用 GPU·CUDA，请先在「Python 环境」完成一键安装（需 N 卡）后再下载' });
+      }
+      nvidiaGpu().catch(() => {});     // 后台探一次 N 卡(缓存 5 分钟), 下面按缓存值判断
+      if (model.engine === 'nemo' && !nvidiaCache.name) {
+        return sendJson(res, 400, { error: '「' + model.name + '」只能给 N 卡（NVIDIA 显卡）用户使用 —— 当前机器未检测到 NVIDIA 显卡，该模型不支持 CPU 推理，不能下载' });
       }
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
@@ -2670,9 +2933,24 @@ function handleRequest(req, res) {
     return readBody(req, 64 * 1024, (err, body) => {
       let modelId = '';
       try { modelId = String((JSON.parse(body.toString('utf8')) || {}).modelId || ''); } catch {}
-      if (!modelById(modelId)) return sendJson(res, 400, { error: '未知模型' });
-      setSelectedModel(modelId);
-      return sendJson(res, 200, { selected: modelId });
+      const m = modelById(modelId);
+      if (!m) return sendJson(res, 400, { error: '未知模型' });
+      // 只能重新识别的模型不能当"创建初稿默认模型" —— 用「重新识别模型」下拉来选它
+      if (!draftAllowedOf(m)) {
+        return sendJson(res, 400, { error: '「' + m.name + '」只能用于「重新识别」，不能创建初稿。若要重新识别时用它，请在上方「重新识别模型」里选择' });
+      }
+      setSelectedModel(m.id);
+      return sendJson(res, 200, { selected: m.id });
+    });
+  }
+  /** 选择「重新识别」用的模型(可指向任意模型, 含只能重新识别的 multitalker) */
+  if (pathname === '/api/asr/select-rerecog' && req.method === 'POST') {
+    return readBody(req, 64 * 1024, (err, body) => {
+      let modelId = '';
+      try { modelId = String((JSON.parse(body.toString('utf8')) || {}).modelId || ''); } catch {}
+      if (modelId && !modelById(modelId)) return sendJson(res, 400, { error: '未知模型' });
+      setRerecogModel(modelId);      // 空串 = 恢复"沿用项目原有模型"
+      return sendJson(res, 200, { rerecogModel: rerecogModelId() });
     });
   }
 
@@ -2769,6 +3047,10 @@ function handleRequest(req, res) {
       if (draftOn) {
         const m = (draftModelId && modelById(draftModelId)) || resolveAsrModel();
         if (!m) return sendJson(res, 400, { error: '尚未配置语音识别模型：请先在设置里下载（Parakeet / Whisper large-v3-turbo 均可）' });
+        // 只能重新识别的模型(如 multitalker)一律不许创建初稿
+        if (!draftAllowedOf(m)) {
+          return sendJson(res, 400, { error: '「' + m.name + '」只能用于「重新识别」，不能创建初稿 —— 请改选 Parakeet TDT 或 Whisper large-v3-turbo' });
+        }
         const mdir = modelDirFor(m.id);
         if (missingModelFiles(mdir, m).length) return sendJson(res, 400, { error: `模型 ${m.name} 不完整: 请在设置里重新下载` });
         if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return sendJson(res, 400, { error: 'whisper.cpp 运行时未就绪：请在设置里下载' });
@@ -2876,9 +3158,13 @@ function handleRequest(req, res) {
         if (!(start >= 0) || !(end > start)) return sendJson(res, 400, { error: '时间范围无效' });
         const wav = path.join(projDir(id), 'audio.wav');
         if (!fs.existsSync(wav)) return sendJson(res, 400, { error: '该项目没有已保存的音频（audio.wav），无法重新识别' });
-        // 模型: 该项目初稿用的优先, 否则当前选中的
-        const model = resolveDraftModel(meta) || resolveAsrModel();
-        if (!model) return sendJson(res, 400, { error: '语音识别模型不可用，请先完成模型下载' });
+        // 模型: 设置里的「重新识别模型」优先(可指定只做重新识别的 multitalker), 否则沿用项目初稿模型
+        const rr = resolveRerecogModel(meta);
+        if (rr.error) return sendJson(res, 400, { error: rr.error });
+        const model = rr.model;
+        // GPU 硬校验: 三个引擎都必须在各自 GPU 上跑, 不做 CPU 兜底(multitalker 连 CPU 版 torch 都拒)
+        const gpuGate = asrGpuGateError(model);
+        if (gpuGate) return sendJson(res, 400, { error: gpuGate });
         const prev = rerecogJobs.get(id);
         if (prev && prev.status === 'running') return sendJson(res, 400, { error: '已有一个重新识别任务在运行' });
         startRerecognize(id, start, end, model);

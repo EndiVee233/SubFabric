@@ -621,14 +621,20 @@ export function initProjects(ctx) {
       const st = dlOf('model:' + m.id);
       const rtSt = m.needRuntime ? dlOf('runtime') : {};
       const dlThis = st.running || (m.needRuntime && rtSt.running);
-      const pyBlocked = m.engine === 'sherpa-onnx' && d.provider !== 'cuda';   // Parakeet: 无 CUDA 环境连下载都拦
+      // 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户
+      const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
+        || (m.engine === 'nemo' && !d.gpu);
       let state, btn = '';
       if (st.running || (m.needRuntime && rtSt.running)) {
         state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
       } else if (st.error) {
         state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
       } else if (pyBlocked) {
-        state = '<span class="sm-state" style="color:var(--danger)">需 CUDA GPU（N 卡）才能下载使用，不支持 CPU —— 先在上方完成 Python 环境一键安装</span>';
+        state = m.engine === 'nemo'
+          ? '<span class="sm-state" style="color:var(--danger)">只能给 N 卡（NVIDIA 显卡）用户使用 —— 当前未检测到 N 卡，不支持 CPU 推理，无法下载</span>'
+          : '<span class="sm-state" style="color:var(--danger)">需 CUDA GPU（N 卡）才能下载使用，不支持 CPU —— 先在上方完成 Python 环境一键安装</span>';
+      } else if (m.needNemo) {
+        state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
       } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
       else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
       if (dlThis) btn = '';
@@ -636,7 +642,7 @@ export function initProjects(ctx) {
       else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
       const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
       return `<div class="sm-model">
-        <div class="sm-head"><span class="sm-name">${esc(m.name)}</span>${btn}</div>
+        <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
         <div class="sm-desc">${esc(m.desc || '')}</div>
         ${state}${rt}
       </div>`;
@@ -650,12 +656,63 @@ export function initProjects(ctx) {
     const dzState = dzSt.running ? `<span class="sm-state running">${esc(dzSt.msg || '下载中…')} ${dzSt.pct || 0}%</span>`
       : (dzSt.error ? `<span class="sm-state" style="color:var(--danger)">${esc(dzSt.msg || dzSt.error)}</span>`
       : (dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>' : '<span class="sm-state">未下载 · 32 MB</span>'));
+    // NeMo 运行时(只有 multitalker 多说话人模型用得到): PyTorch + NeMo, 约 5GB, 仅 N 卡
+    const nemo = d.nemo || {};
+    const nemoSt = dlOf('nemo');
+    let nemoState;
+    if (nemoSt.running) nemoState = `<span class="sm-state running">${esc(nemoSt.msg || '安装中…')} ${nemoSt.pct || 0}%</span>`;
+    else if (nemoSt.error) nemoState = `<span class="sm-state" style="color:var(--danger)">${esc(nemoSt.msg || nemoSt.error)}</span>`;
+    else if (nemo.ok && nemo.cuda) nemoState = `<span class="sm-state ok">✓ 可用（${esc(nemo.msg || '')}${nemo.gpu ? ' · ' + esc(nemo.gpu) : ''}）</span>`;
+    else if (nemo.ok) nemoState = '<span class="sm-state" style="color:var(--danger)">装到的是 CPU 版 PyTorch —— 多说话人模型拒绝 CPU 推理，请点「重新安装」换 CUDA 版</span>';
+    else nemoState = `<span class="sm-state">未安装 · 约 5GB（PyTorch + NeMo）${nemo.msg ? ' · ' + esc(nemo.msg) : ''}</span>`;
+    const nemoBtn = (nemoSt.running || (nemo.ok && nemo.cuda)) ? ''
+      : `<button type="button" class="btn btn-mini sm-nemoinstall">${nemo.ok ? '重新安装' : '安装'}</button>`;
+    rows += `<div class="sm-model">
+      <div class="sm-head"><span class="sm-name">NeMo 运行时（多说话人）</span>${nemoBtn}</div>
+      <div class="sm-desc">「Multitalker Parakeet Streaming 0.6B v1」专用：PyTorch + NeMo（约 5GB）。与上面的 Python 环境是两套依赖，装在本项目的 Python 环境里；<b>只有 N 卡可用</b>（该模型不支持 CPU 推理）。装完会自动实测「导入 + CUDA」才算成功</div>
+      ${nemoState}
+    </div>`;
+    // 「重新识别模型」: 可指向任意模型(含只能重新识别的 multitalker)
+    const rrCur = d.rerecogModel || '';
+    const rrOpts = ['<option value="">沿用项目原有模型（默认）</option>'].concat(
+      (d.models || []).map(m => {
+        const tag = m.usable ? '' : (m.ready ? '（运行时未就绪）' : '（未下载）');
+        return `<option value="${esc(m.id)}"${m.id === rrCur ? ' selected' : ''}>${esc(m.name)}${tag}</option>`;
+      })).join('');
+    rows += `<div class="sm-model">
+      <div class="sm-head"><span class="sm-name">重新识别模型</span></div>
+      <div class="sm-desc">「选区重新识别」用哪个模型。选了 Multitalker 多说话人模型时：它<b>只能用于重新识别</b>（不能创建初稿），并且必须 N 卡 —— 用 CPU 推理会直接报错</div>
+      <select class="btn" id="st-rerecog-sel">${rrOpts}</select>
+    </div>`;
     rows += `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">说话人分离</span>${dzBtn}</div>
       <div class="sm-desc">说话人分段 + 说话人嵌入（约 32MB）。初稿勾选「区分说话人」时需要</div>
       ${dzState}
     </div>`;
     box.innerHTML = rows || '<div class="st-row">无可用模型</div>';
+    box.querySelectorAll('.sm-nemoinstall').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = '开始…';
+      try {
+        const r = await (await fetch('/api/asr/install-nemo', { method: 'POST' })).json();
+        const msgEl = $('#st-msg');
+        if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); }
+        else if (r.started || r.already) { msgEl.textContent = '正在安装 NeMo 运行时（约 5GB，进度见上方；装完会自动实测 CUDA）…'; msgEl.classList.remove('err'); pollModelDownload(); }
+      } catch (e) { const msgEl = $('#st-msg'); msgEl.textContent = '✗ 安装启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err'); }
+      renderAsrModels();
+    }));
+    const rrSel = box.querySelector('#st-rerecog-sel');
+    if (rrSel) rrSel.addEventListener('change', async () => {
+      const msgEl = $('#st-msg');
+      try {
+        const r = await (await fetch('/api/asr/select-rerecog', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: rrSel.value })
+        })).json();
+        if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); return; }
+        const picked = (d.models || []).find(x => x.id === rrSel.value);
+        msgEl.textContent = picked ? ('重新识别将使用：' + picked.name) : '重新识别将沿用项目原有模型';
+        msgEl.classList.remove('err');
+      } catch (e) { msgEl.textContent = '✗ 保存失败: ' + String((e && e.message) || e); msgEl.classList.add('err'); }
+    });
     box.querySelectorAll('.sm-dl').forEach(b => b.addEventListener('click', () => downloadModel(b.dataset.id)));
     box.querySelectorAll('.sm-pyinstall').forEach(b => b.addEventListener('click', async () => {
       b.disabled = true; b.textContent = '开始…';
@@ -936,7 +993,8 @@ export function initProjects(ctx) {
     catch { asrStatus = { ready: false, models: [] }; }
     const sel = $('#np-model-sel');
     if (sel) {
-      const ready = (asrStatus.models || []).filter(m => m.ready);
+      // 只能重新识别的模型(如 multitalker)不进创建初稿的下拉 —— 它由「设置 → 重新识别模型」使用
+      const ready = (asrStatus.models || []).filter(m => m.ready && m.draftAllowed !== false);
       sel.innerHTML = ready.length
         ? ready.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
         : '<option value="">（无可用模型，请到设置里下载）</option>';
