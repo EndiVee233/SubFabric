@@ -161,18 +161,55 @@ export class EditorPanel {
     this._bindCardMenu();   // 字幕卡片右键菜单(删除)
     // 点页面其它任意位置 → 退出编辑并自动保存(pointerdown 比 focusout 更可靠,
     // 覆盖点击非可聚焦区域/滚动条/控件等不会改变焦点的情形)
+    // **必须延后收敛**: pointerdown 早于 click, 若在此同步移除编辑框并重建列表, 鼠标下的
+    // 节点就被换掉了, 浏览器会因 mousedown/mouseup 目标不同而**不派发 click**。
+    // 另外行内编辑框是浮层, 点"另一条字幕的文字行"时 pointerdown 可能落在编辑框的边缘上,
+    // 于是 mousedown 与 mouseup 的目标也不是同一个节点 —— 两种情形都收不到 click。
+    // 所以**换行在 pointerdown 里直接做**(不等 click), 与主流编辑器一致:
+    // 点了另一条的文字行 → 立刻把编辑转移到那一条(只裁掉 `.editing` 类; 编辑框由
+    // startEdit 自己重挂, 所以不会打断后续的 mousedown/click 派发)。
     document.addEventListener('pointerdown', (e) => {
-      if (!this.editItem) return;
+      if (!this.editItem || this._switching) return;
       if (this.editorEl && this.editorEl.contains(e.target)) return;
-      this.commitEdit();
+      const card = e.target.closest ? e.target.closest('.cue-card') : null;
+      const item = card ? this.filtered[+card.dataset.idx] : null;
+      const line = item ? (e.target.closest('.cc-l1') ? 1 : (e.target.closest('.cc-l2') ? 2 : 0)) : 0;
+      // 点了**另一条**的文字行 → 立刻把编辑转移过去(pointerdown 做, 不等 click):
+      // 行内编辑框是浮层, 换行时 mousedown 与 mouseup 的目标往往不是同一节点, 浏览器就
+      // 不派发 click, 靠 click 换行会变成"要点两次"。
+      // 转移期间(到 pointerup 为止)挂起兜底提交 —— 否则焦点变化触发的**旧行**提交会在
+      // 稍后跑完并把刚建好的新编辑框一起收掉。
+      if (item && item !== this.editItem && line && (!this.isEditable || this.isEditable(item.ref))) {
+        // 整个换行过程收在一个"切换窗口"里(约一次点击的时长): 期间任何兜底提交 / 焦点收尾
+        // 都跳过。换行时旧编辑框被移除、新编辑框刚挂上, 两者的 focusout 都会在同一个 tick
+        // 内触发; 不屏蔽的话它们会接连跑完, 把刚建好的新编辑框连同编辑状态一起收掉
+        // —— 表现就是"点另一条字幕要两次才进编辑"。
+        this._switching = true;
+        clearTimeout(this._switchTimer);
+        this._switchTimer = setTimeout(() => { this._switching = false; }, 60);
+        this.closeEdit();
+        this._render();
+        if (this.onSelect) this.onSelect(item);
+        this.startEdit(item, line);
+        return;
+      }
+      this._deferCommit = true;
+      try { this.commitEdit(); } finally { this._deferCommit = false; }
     });
     // 兜底: 焦点离开编辑器(键盘 Tab 等)
     document.addEventListener('focusin', (e) => {
-      if (!this.editItem) return;
+      if (!this.editItem || this._switching) return;
       if (this.editorEl && this.editorEl.contains(e.target)) return;
-      this.commitEdit();
+      if (this._justMovedFocus()) return;
+      this._deferCommit = true;
+      try { this.commitEdit(); } finally { this._deferCommit = false; }
     });
   }
+
+  /** 同一轮点击里刚把焦点/编辑转移到编辑框 → 不该被后续的 pointerdown/focusout 当成"点了别处"。
+   *  浏览器把焦点交给 contenteditable 的时刻晚于 pointerdown, 而焦点落在编辑器内部同样会
+   *  触发 document 上的兜底监听, 这里用一个很短的时间窗把这些后续事件让过去。 */
+  _justMovedFocus() { return performance.now() - (this._focusMovesAt || 0) < 400; }
 
   get mode() { return this._mode; }
 
@@ -748,13 +785,18 @@ export class EditorPanel {
     if (idx === -1) return;
 
     this.editItem = item;
+    // 正在把编辑转移到这一条(或刚开): 随后到达的 pointerdown/focusout 是**同一轮点击**的
+    // 后续阶段, 不能当成"点了别处"再提交一次 —— 否则刚开好的编辑框会被立刻收掉。
+    this._focusMovesAt = performance.now();
     const div = document.createElement('div');
+    this._editGen = (this._editGen || 0) + 1;      // 新编辑代次: 旧代次的延后收尾会自行作废
+    const myGen = this._editGen;                   // 本编辑框自己的代次(focusout 里用它判别归属)
     div.className = 'inline-editor';
     div.style.top = (idx * ROW_H + 6) + 'px';
     div.innerHTML = `
       <div class="ie-line ie-l1" contenteditable="true" spellcheck="false" data-ph="（输入中文）"></div>
       <div class="ie-line ie-l2" contenteditable="true" spellcheck="false" data-ph="（输入英文）"></div>
-      <div class="ie-hint">点击别处自动保存 · Esc 取消 · Enter 换行</div>`;
+      <div class="ie-hint">点击别处保存 · Tab 中英互切 · 回车提交 · Ctrl+回车 分句 · Ctrl+退格 并上一条</div>`;
     div.querySelector('.ie-line.ie-l2').textContent = item.l2 || '';
     // 编辑框里不显示角色名 [Spoke](它由角色栏管理, 混在正文里既碍眼又容易改坏): 只显示正文, 提交时补回
     const tagM = /^\s*\[[^\]]+\]\s*/.exec(item.l1 || '');
@@ -771,15 +813,49 @@ export class EditorPanel {
     }
 
     const lines = div.querySelectorAll('.ie-line');
-    const [l1, l2] = lines;
-    // Enter: l1→跳到 l2, l2→提交; Ctrl+Enter 提交; Esc 取消
+    const [l1, l2] = lines;          // l1 = 中文行(.ie-l1) · l2 = 英文行(.ie-l2)
+    // 回车 = 直接提交; Tab = 中英两行互切; Esc = 取消。
+    // 两个**只在英文行**生效的编辑动作(光标位置决定, 见下):
+    //   Ctrl+回车    → 在光标处把这一条切成两条(分句)
+    //   Ctrl+退格    → 光标在英文行最前面时, 与上一个字幕块合并
     div.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { e.preventDefault(); this.closeEdit(); this._render(); return; }
+      // 英文行限定: 光标处的切分/合并(必须在 Enter 分支之前判断 Ctrl+Enter)
+      if (document.activeElement === l2) {
+        const plain = (el) => (el.textContent || '').replace(/\u00a0/g, ' ');
+        // Ctrl+退格 在英文行最前面 → 与上一条合并
+        if (e.key === 'Backspace' && (e.ctrlKey || e.metaKey) && !e.altKey) {
+          if (this._caretOffset() === 0) {
+            e.preventDefault();
+            if (this.onMergePrev) this.onMergePrev(this.editItem);
+            return;
+          }
+        }
+        // Ctrl+回车 在英文单词**中间** → 从这里分句(切成两条); 在首/尾 → 交给下面的提交
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          const txt = plain(l2);
+          const at = this._caretOffset();
+          if (this.onSplitRow && this._splitPoint(txt, at) != null) {
+            e.preventDefault();
+            this.onSplitRow(this.editItem, txt, at);
+            return;
+          }
+        }
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); this.commitEdit(); return; }
+      if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        // 两行之间来回切: 英文区按 Tab → 回中文区(新字幕刚拖出来时焦点在英文区, 这样能直接写中文);
+        // 中文区按 Tab → 去英文区。必须 preventDefault: 否则浏览器把焦点移到编辑器外,
+        // 会触发 focusout → 误提交(还在打字就被保存/撤销)。
+        e.preventDefault();
+        if (document.activeElement === l2) this._focusLine(1);
+        else if (document.activeElement === l1) this._focusLine(2);
+        else this._focusLine(1);      // 焦点不在两行上: 回到中文行
+        return;
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        if (document.activeElement === l1) l2.focus();
-        else this.commitEdit();
+        this.commitEdit();            // 回车 = 直接提交
       }
     });
     // 粘贴纯文本(避免带入富文本标签)
@@ -788,10 +864,22 @@ export class EditorPanel {
       const t = (e.clipboardData || window.clipboardData).getData('text') || '';
       document.execCommand('insertText', false, t.replace(/\r?\n/g, ' ').replace(/\s+/g, ' '));
     });
-    // 焦点离开编辑器 → 自动应用
+    // 焦点离开编辑器 → 自动应用。
+    // 换行时(见 pointerdown 的"切换窗口")整段跳过: 那一刻编辑正在转移到另一条,
+    // 这个编辑框的 focusout 只是"被移交"的副产物, 不能当成用户点了别处去提交。
     div.addEventListener('focusout', () => {
       setTimeout(() => {
-        if (this.editItem && this.editorEl && !this.editorEl.contains(document.activeElement)) this.commitEdit();
+        if (this._switching) return;
+        // 归属判别: 只有**本编辑框**仍是当前编辑框、且它真的拿到过焦点时, 这次 focusout
+        // 才代表"用户离开了编辑"。换行时被替换掉的旧编辑框(代次已过期)一律跳过 ——
+        // 否则它会在新编辑框建好之后跑完, 把新编辑框一起收掉(要点两次才能换行的根因)。
+        if (this._editGen !== myGen) return;
+        if (this._focusedGen !== myGen) return;
+        if (this.editItem && this.editorEl && !this.editorEl.contains(document.activeElement)) {
+          // 走鼠标路径: 延后收敛, 别让本次点击被 DOM 变动吃掉
+          this._deferCommit = true;
+          try { this.commitEdit(); } finally { this._deferCommit = false; }
+        }
       }, 0);
     });
 
@@ -807,12 +895,58 @@ export class EditorPanel {
     const el = this.editorEl.querySelector(which === 2 ? '.ie-l2' : '.ie-l1');
     if (!el) return;
     el.focus();
+    // 记下"这个编辑框真的拿到过焦点"的代次 —— 只有拿到过焦点的编辑框, 它的 focusout
+    // 才代表"用户离开了编辑"; 刚建好、焦点还在路上就被换掉的那个不该触发提交。
+    this._focusedGen = this._editGen;
     const sel = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(el);
     range.collapse(false);
     sel.removeAllRanges();
     sel.addRange(range);
+  }
+
+  /** 当前光标在**聚焦那一行**里的字符偏移(行内只有纯文本, 直接按文本节点算)。
+   *  取不到(没选区/多节点) → -1, 调用方据此保守处理(不切分、不合并)。 */
+  _caretOffset() {
+    const el = document.activeElement;
+    if (!el || !el.classList || !el.classList.contains('ie-line')) return -1;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return -1;
+    const n = el.firstChild;
+    if (!n || n.nodeType !== Node.TEXT_NODE) return el.textContent ? -1 : 0;   // 空行 → 偏移 0
+    const r = sel.getRangeAt(0);
+    if (!el.contains(r.startContainer)) return -1;
+    return r.startOffset;
+  }
+
+  /** 计算「在光标处分句」的切点: 返回 {k, sp} =
+   *  k  = 前半的英文词数(1..词数-1)
+   *  sp = 文本里的切分字符位置
+   *  光标落在哪一半就切在哪一半的**词边界**上(光标在词中间时, 该词归前半)。
+   *  切点落在首/尾(会切出一个空半句) → 返回 null, 调用方改为普通提交。 */
+  _splitPoint(text, caret) {
+    const toks = String(text || '').split(/\s+/).filter(Boolean);
+    if (toks.length < 2) return null;
+    const at = (caret == null || caret < 0) ? text.length : caret;
+    // 词尾字符位置表
+    const ends = [];
+    let pos = 0;
+    for (const t of toks) {
+      pos += t.length;
+      ends.push(pos);
+      const sp = text.slice(pos).match(/^\s+/);
+      pos += sp ? sp[0].length : 0;
+    }
+    let k = ends.findIndex(en => en >= at) + 1;      // 光标所在词(含)归前半
+    if (k < 1) k = 1;
+    if (k > toks.length - 1) k = toks.length - 1;    // 不能切出空白的后半
+    if (k < 1) return null;
+    // 切分点: 第 k 个词的结束位置(其后空白留给后半, 两半各自 trim)
+    let sp = ends[k - 1];
+    const m = text.slice(sp).match(/^\s+/);
+    if (m) sp += m[0].length;
+    return { k, sp };
   }
 
   /** 提交行内编辑: 文本有变化才触发 onApply(时间不变, 由主逻辑同步视频区) */
@@ -825,31 +959,55 @@ export class EditorPanel {
     const l2 = norm(el && el.querySelector('.ie-l2') ? el.querySelector('.ie-l2').textContent : it.l2);
     // 编辑框里没有角色名 → 提交时把原来的 [Spoke] 补回(用户自己写了 [xxx] 则以用户的为准)
     if (this._editTag && !/^\[/.test(l1)) l1 = this._editTag + l1;
-    this.closeEdit();
-    this._render();
-    // 新建的字幕: 一个字都没写就走开 → 撤销这条(不留空字幕)
-    if (it.isNew && !l1 && !l2) {
-      if (this.onEmptyNew) this.onEmptyNew(it);
-      return;
-    }
+
+    // **没改动就只收编辑器, 不重建列表**(保留 SRT 标签等原始数据):
+    //   以前无论如何都走 _render() → 重建列表 DOM。于是"编辑器开着时点另一张卡片"会
+    //   先把节点换掉(commitEdit 由 focusout 触发, 早于 click), 浏览器的 click 落到一个
+    //   已脱离文档的元素上 → 第一次点击被吞, 要点两次才进编辑。
+    //   **渲染必须延后到本次点击派发完**(setTimeout 0): 立刻 _render() 同样会换掉节点。
     const newText = l1 + '\n' + l2;
     const origText = norm(it.l1) + '\n' + norm(it.l2);
-    if (newText === origText) return;          // 没改 → 不动原始数据(保留 SRT 标签等)
-    if (this.onApply) {
-      // 必须把"正在编辑的那一条"显式带出去: 编辑期间用户可能已点了别处,
-      // 此刻 state.selected 可能已经换成另一条, 用选中项会写错行。
-      this.onApply({
-        item: it,
-        start: fmtTime(it.start),
-        end: fmtTime(it.end),
-        dur: (it.end - it.start).toFixed(3),
-        text: newText
-      });
-    }
+    const unchanged = (newText === origText);
+    const emptyNew = !!(it.isNew && !l1 && !l2);
+    const gen = this._editGen;         // 本次编辑的代次(开编辑/关编辑都会 +1)
+
+    // 合并后的动作统一延后一次事件循环再执行 —— 编辑器被移出 DOM 会让浏览器取消本次点击:
+    //   focusout 在 pointerdown 与 click 之间触发, 若此刻同步移除编辑框, 鼠标下的节点就变了,
+    //   浏览器不再派发 click → "编辑器开着时点另一张卡片要点两次才进编辑"。
+    //   延后到 setTimeout(0)(此时 click 已派发完) 再动 DOM, 一次点击即可切行。
+    const finish = () => {
+      // **只收自己那一条 / 只提交自己那一条**: 延后执行期间用户可能已经点到另一条并把编辑
+      // 转移过去了(focusout 触发的旧行提交会晚一步跑完)。此时:
+      //   · 绝不能 closeEdit() —— 那会收掉**新**编辑框;
+      //   · 也不能再 onApply 旧行的文本 —— 否则会把界面上正显示的新行内容写回旧行。
+      // 判据: 编辑已经换到别的条目 / 换到别的代次 → 本次提交作废(用户的改动由新行的编辑器承载)。
+      if (this.editItem !== it || this._editGen !== gen) {
+        if (el && el.parentNode) el.remove();     // 只清掉自己这个已脱离的编辑框
+        return;
+      }
+      this.closeEdit();
+      if (emptyNew) { this._render(); if (this.onEmptyNew) this.onEmptyNew(it); return; }
+      this._render();
+      if (unchanged) return;
+      if (this.onApply) {
+        // 必须把"正在编辑的那一条"显式带出去: 编辑期间用户可能已点了别处,
+        // 此刻 state.selected 可能已经换成另一条, 用选中项会写错行。
+        this.onApply({
+          item: it,
+          start: fmtTime(it.start),
+          end: fmtTime(it.end),
+          dur: (it.end - it.start).toFixed(3),
+          text: newText
+        });
+      }
+    };
+    if (this._deferCommit) setTimeout(finish, 0);
+    else finish();
   }
 
   /** 关闭行内编辑器(不提交) */
   closeEdit() {
+    this._editGen = (this._editGen || 0) + 1;
     this.editItem = null;
     this._editTag = '';
     if (this.editorEl) { this.editorEl.remove(); this.editorEl = null; }

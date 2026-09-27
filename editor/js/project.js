@@ -11,7 +11,7 @@ import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
 
 export function initProjects(ctx) {
-  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode } = ctx;
+  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog } = ctx;
   const $ = (s) => document.querySelector(s);
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
@@ -170,9 +170,18 @@ export function initProjects(ctx) {
   }
   const audioModeSel = $('#audio-mode');
   if (audioModeSel) audioModeSel.addEventListener('change', () => {
-    toast(t(audioModeSel.value === 'denoise'
-      ? '已切换为降噪后音频，点「↻ 重新生成音频」生效'
-      : '已切换为原视频音频，点「↻ 重新生成音频」生效'), 3200);
+    // 「音频源」= 播放用哪条音轨, 与"重建 audio.wav"是两回事:
+    //   原视频 → 直接放视频自带原声(不必等提取); 降噪后 → 播放项目里降噪过的 audio.wav。
+    // 以前这里只弹提示、播放音轨要等点了「↻ 重新生成音频」才变, 于是"切不回原声"。
+    const want = audioModeSel.value;
+    const cur = (state.project && state.project.meta && state.project.meta.audio && state.project.meta.audio.mode) || 'denoise';
+    const hasAudio = !!(state.project && state.project.meta && state.project.meta.hasAudio);
+    // 播放音轨立刻切: 未提取过的那一侧只能先退回视频原声(无法凭空变出降噪音频)
+    const playable = want === 'raw' ? null : (want === cur ? want : null);
+    setPlaybackAudioMode(playable, hasAudio);
+    if (want === cur) toast(t(want === 'denoise' ? '已切换为降噪后音频播放' : '已切换为原视频音频播放'), 3200);
+    else toast(t('已切换播放音轨；识别与波形仍是「' + (cur === 'raw' ? '原视频' : '降噪后')
+      + '」版本 —— 要按新选择重做识别，点「↻ 重新生成音频」'), 4000);
   });
   const regenBtn = $('#btn-regen-audio');
   if (regenBtn) regenBtn.addEventListener('click', regenAudio);
@@ -211,6 +220,7 @@ export function initProjects(ctx) {
     // 3) 波形/音频: 就绪直接读, 没就绪轮询
     handlePrepare(m);
     syncAudioModeUI(m);          // 音频源下拉回显 + 播放音轨(降噪后→audio.wav 接管发声)
+    if (resumeRerecog) resumeRerecog(pid);   // 接回后台还在跑的「选区重新识别」任务(刷新后也能看到进度/拿到结果)
   }
 
   function promptRelink(m) {

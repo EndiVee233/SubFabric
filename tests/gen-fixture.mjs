@@ -56,5 +56,5 @@ for (let i = 0; i < 8; i++) {
   const s = 10 + i * 12;
   appendRow(`第${i + 1}句中文内容测试`, `row${i + 1} alpha beta gamma`, s, s + 5);
 }
-fs.writeFileSync('fixture.ass', doc.serialize());
-console.log('夹具已生成');
+fs.writeFileSync(path.join(HERE, 'fixture.ass'), doc.serialize());
+console.log('夹具已生成:', path.join(HERE, 'fixture.ass'));

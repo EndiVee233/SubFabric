@@ -1746,6 +1746,17 @@ function setReRecogRegion(a, b, patch) {
 }
 function clearReRecogRegion() { timeline.reRecogRegion = null; stopRerecogPoll(); }
 
+/** 重开项目(含刷新页面)时接回后台还在跑的重新识别任务:
+ *  否则时间轴上不显示那个紫区、任务跑完了也收不到结果(用户以为白跑了)。 */
+async function resumeRerecog(pid) {
+  if (timeline.reRecogRegion || reRecogPoll) return;
+  let j;
+  try { j = (await (await fetch(`/api/projects/${pid}/rerecognize`)).json()).job; } catch { return; }
+  if (!j || j.status !== 'running' || !state.project || state.project.id !== pid) return;
+  setReRecogRegion(j.start, j.end, { status: j.status, progress: j.progress, message: j.message });
+  startRerecogPoll(pid);
+}
+
 function startRerecogPoll(pid) {
   stopRerecogPoll();
   reRecogPoll = setInterval(async () => {
@@ -1895,7 +1906,7 @@ function createRowAt(start, end) {
     overlay.setCues(state.srtCues);
     rebuildItemsAndLanes(true, true);
     const ni = state.itemByRef.get(cue);
-    if (ni) { selectItem(ni, false); panel.startEdit(ni, 1); }   // 直接进入编辑, 让用户马上写内容
+    if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
     toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，请在列表里输入内容`);
     return;
   }
@@ -1916,11 +1927,169 @@ function createRowAt(start, end) {
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
   const ni = state.itemByRef.get(newRow);
-  if (ni) { selectItem(ni, false); panel.startEdit(ni, 1); }   // 直接进入编辑, 让用户马上写内容
+  if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
   toast(`已新建字幕块 ${fmtTime(start)} → ${fmtTime(end)}，请在列表里输入内容`
     + (cleared ? `（与 ${cleared} 行重叠，已暂去逐词）` : ''));
 }
 timeline.onCreate = (s, e) => createRowAt(s, e);
+
+/* ─────────── 英文行专属: Ctrl+回车 分句 / Ctrl+退格 与上一条合并 ───────────
+ * 只从行内编辑器(editor.js)触发, 且只在**英文行**。两个动作都先 commitEdit():
+ * 用户可能改了字还没离开编辑框, 先把最新文本落盘再动结构, 否则会丢改动。 */
+
+/** 角色标记 [Spoke] 在**中文行**文本里(英文行不该有)。复制到新的中/英半句时,
+ *  英文那半必须剥掉, 否则会触发「英文行含方括号」坏行告警。 */
+function stripLeadSpeakerTag(text) {
+  return String(text || '').replace(/^(\s*\{[^}]*\})*\s*\[[^\]]+\]\s*/, '');
+}
+
+/** 中文按英文词数比例切: 中英本来就是同一句的两种语言(或同一句的译文), 按词数比例最稳。 */
+function splitZhText(zhText, k, nEn) {
+  const zh = stripLeadSpeakerTag(zhText).trim();
+  if (!zh || nEn < 1 || k <= 0 || k >= nEn) return [zh, ''];
+  const cut = Math.max(1, Math.min(zh.length - 1, Math.round(zh.length * k / nEn)));
+  return [zh.slice(0, cut).trim(), zh.slice(cut).trim()];
+}
+
+/** 在光标处把一条字幕切成两条:
+ *  时间切点 = 前半最后一个词的结束与后半第一个词的开始之间的中点(没有词级时间时按词数比例);
+ *  英文词级时间**原样保留**在两半里(不重算), 这样逐词卡拉OK效果不会被切分弄坏。 */
+function splitRowAt(item, enPlainText, caret) {
+  if (!item) return false;
+  panel.commitEdit();                      // 先把编辑框里的最新文本落盘
+  const row = item.ref;
+  if (!row || !state.kar || state.kar.rows.indexOf(row) === -1) { toast('这条字幕不能分句'); return false; }
+  const enPlain = String(enPlainText || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+  const totW = enPlain ? enPlain.split(' ').filter(Boolean).length : 0;
+  const sp = panel._splitPoint ? panel._splitPoint(enPlain, caret) : null;
+  if (!enPlain || !sp || totW < 2) { toast('把光标放在句子中间再按 Ctrl+回车 才能分句'); return false; }
+  const k = sp.k;
+  const enRest = enPlain.split(' ').filter(Boolean).slice(k).join(' ');
+
+  const t0 = row.start, t1 = row.end;
+  const enS = row.en;
+  let st = null;                           // 切点时间
+  if (enS && enS.words && enS.words.length === totW && totW > k) {
+    st = (enS.words[k - 1].e + enS.words[k].s) / 2;
+  } else {
+    st = t0 + (t1 - t0) * k / totW;
+  }
+  st = Math.max(t0 + 0.02, Math.min(t1 - 0.02, st));      // 两半都要有可见时长
+  if (!(st > t0 && st < t1)) { toast('切分点太靠近边缘，无法分句'); return false; }
+
+  const zhText = row.zh ? (row.zh.text || '') : '';
+  const [zhA, zhB] = splitZhText(zhText, k, totW);
+  const enA = enPlain.split(' ').filter(Boolean).slice(0, k).join(' ');
+  if (!enA || !enRest) { toast('切分点太靠近边缘，无法分句'); return false; }
+
+  const zhStyle = row.zh ? row.zh.style : ((state.kar.sentences.find(s => s.style !== state.kar.wordStyle) || {}).style || '');
+  const enStyle = row.en ? row.en.style : (state.kar.wordStyle || '');
+  const color = row.color, speaker = row.speaker, wasNew = state.newRows.has(row);
+
+  removeItemData(item);                    // 摘掉原行(不重建界面), 原时间留给前半
+  const zh1 = zhStyle ? appendSentence(zhStyle, t0, st, zhA) : null;
+  const en1 = enStyle ? appendSentence(enStyle, t0, st, enA) : null;
+  const row1 = { zh: zh1, en: en1, start: t0, end: st, no: 0, color, speaker };
+  state.kar.rows.push(row1);
+  if (wasNew) state.newRows.add(row1);
+
+  const zh2 = zhStyle ? appendSentence(zhStyle, st, t1, zhB) : null;
+  const en2 = enStyle ? appendSentence(enStyle, st, t1, enRest) : null;
+  const row2 = { zh: zh2, en: en2, start: st, end: t1, no: 0, color, speaker };
+
+  // 词级时间: 原样分给两半(用上半的词, 不重算) —— 逐词效果得以保留
+  const allW = (enS && enS.words) ? enS.words : [];
+  if (allW.length === totW && totW > k) {
+    if (en1) { en1.words = allW.slice(0, k).map(w => ({ w: w.w, s: w.s, e: w.e })); en1.text = enA; }
+    if (en2) { en2.words = allW.slice(k).map(w => ({ w: w.w, s: w.s, e: w.e })); en2.text = enRest; }
+  } else {
+    // 没有可用的词级时间 → 各自在句内按词数均匀铺满(cat 端 recalcWords 处理 n===0 的情形)
+    if (en1) en1.words = recalcWords(en1, enA, t0, st);
+    if (en2) en2.words = recalcWords(en2, enRest, st, t1);
+  }
+  if (zh1 && zhA) zh1.text = zhA;
+  if (zh2 && zhB) zh2.text = zhB;
+  // 词级时间/文本改好后必须**显式重建切片**: reconcileKaraoke 只从备份还原被去逐词的行,
+  // 它不会生成逐词(不重建的话分出来的两半会丢掉卡拉OK高亮, 只剩一句干净整句 —— 实测踩过)。
+  // 只有"每半正好一条事件"时才 replaceEvents: 该行若由多条事件组成, 直接替换会漏下
+  // 多余事件变成孤儿(重复字幕), 那种行退回整句输出更安全。
+  if (en1 && en1.words.length && en1.events.length === 1) en1.events = state.assDoc.replaceEvents(en1.events, buildWordSpecs(en1));
+  if (en2 && en2.words.length && en2.events.length === 1) en2.events = state.assDoc.replaceEvents(en2.events, buildWordSpecs(en2));
+
+  state.kar.rows.push(row2);
+  state.kar.rows.sort((a, b) => a.start - b.start || a.end - b.end);
+  state.kar.sentences.sort((a, b) => a.start - b.start || a.end - b.end);
+  state.selected = null;
+  reconcileKaraoke();
+  assPlayer.updateNow(state.assDoc.serialize());
+  rebuildItemsAndLanes(true, true);
+  const ni = state.itemByRef.get(row1);              // 光标留在前半的英文行, 接着往下切
+  if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
+  toast(`已在 ${fmtTime(st)} 处分为两条字幕`, 2600);
+  return true;
+}
+
+/** 与**上一个**字幕块合并: 时间取两者并集, 中英文本各自拼接, 英文词级时间用 recalcWords
+ *  在新句长内加权重算(中英词数都没变时等价于只做平移, 逐词效果保留)。 */
+function mergeRowWithPrev(item) {
+  if (!item) return false;
+  panel.commitEdit();
+  const row = item.ref;
+  if (!row || !state.kar) return false;
+  const rows = state.kar.rows;
+  const i = rows.indexOf(row);
+  if (i <= 0) { toast('这是第一条字幕，前面没有可合并的块'); return false; }
+  const prev = rows[i - 1];
+
+  const start = Math.min(prev.start, row.start);
+  const end = Math.max(prev.end, row.end);
+  const zhA = stripLeadSpeakerTag(prev.zh ? prev.zh.text : '').trim();
+  const zhB = stripLeadSpeakerTag(row.zh ? row.zh.text : '').trim();
+  const enA = (prev.en ? prev.en.text : '').replace(/\s+/g, ' ').trim();
+  const enB = (row.en ? row.en.text : '').replace(/\s+/g, ' ').trim();
+  const zhText = [zhA, zhB].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const enText = [enA, enB].filter(Boolean).join(' ')
+    .replace(/\s+([,.!?;:、。])/g, '$1').replace(/\s+/g, ' ').trim();
+
+  // 只能按各条**自己**的样式重建 —— appendSentence 是按样式找锚点事件插入的,
+  // 样式传错(或该样式在文档里没有事件)就会静默丢掉那一半。
+  const zhStyle = (prev.zh && prev.zh.style) || (row.zh && row.zh.style) || '';
+  const enStyle = (prev.en && prev.en.style) || (row.en && row.en.style) || '';
+  const color = prev.color || row.color;
+  const speaker = prev.speaker || row.speaker;
+
+  const prevItem = state.itemByRef.get(prev);
+  removeItemData(prevItem);                 // 摘掉上一条
+  removeItemData(item);                     // 摘掉本条
+  const zh = zhStyle && zhText ? appendSentence(zhStyle, start, end, zhText) : null;
+  const en = enStyle && enText ? appendSentence(enStyle, start, end, enText) : null;
+  if (zh) zh.words = recalcWords(zh, zh.text, start, end);
+  if (en) en.words = recalcWords(en, en.text, start, end);
+  // 同理: 原来带逐词的行, 合并后也要显式重建切片(否则高亮整段消失)
+  if (zh && zh.words.length) zh.events = state.assDoc.replaceEvents(zh.events, buildWordSpecs(zh));
+  if (en && en.words.length) en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+  const merged = { zh, en, start, end, no: 0, color, speaker };
+  state.kar.rows.push(merged);
+  state.kar.rows.sort((a, b) => a.start - b.start || a.end - b.end);
+  state.kar.sentences.sort((a, b) => a.start - b.start || a.end - b.end);
+  state.selected = null;
+  reconcileKaraoke();
+  assPlayer.updateNow(state.assDoc.serialize());
+  rebuildItemsAndLanes(true, true);
+  const ni = state.itemByRef.get(merged);            // 光标回到合并处, 方便继续往前并
+  if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
+  toast(`已与上一条合并为一条字幕（${fmtTime(start)} → ${fmtTime(end)}）`, 2600);
+  return true;
+}
+
+panel.onSplitRow = (item, enText, caret) => {
+  try { splitRowAt(item, enText, caret); }
+  catch (e) { toast('分句失败: ' + ((e && e.message) || e), 4200); }
+};
+panel.onMergePrev = (item) => {
+  try { mergeRowWithPrev(item); }
+  catch (e) { toast('合并失败: ' + ((e && e.message) || e), 4200); }
+};
 
 // 「▶ 播放」按钮已移除: 点击右侧列表条目即定位播放并进入编辑
 // 右下角「插入 / 删除」按钮已移除: 时间轴空白处拖动=新建, 右键块=删除, 不再重复提供。
@@ -2234,7 +2403,7 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
-  state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode
+  state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog
 });
 
 /* ═══════════ 主循环 ═══════════ */

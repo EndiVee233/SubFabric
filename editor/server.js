@@ -18,7 +18,7 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.4.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.5.0'; // 与打版号一致; 改了就顺手同步这里
 
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
@@ -870,6 +870,16 @@ function resolveAsrModel() {
   return null;
 }
 
+/** 项目初稿用的模型(meta.draft.modelId)。只认**能创建初稿**的模型 ——
+ *  multitalker 那种 draftAllowed=false 的模型即使被写进 meta 也不会拿来跑初稿。
+ *  注意: 必须留在**模块作用域** —— resolveRerecogModel()(选区重新识别)也要用它,
+ *  早先它定义在 http 请求回调里, 导致重新识别一调用就 ReferenceError、请求永不返回。 */
+function resolveDraftModel(meta) {
+  const mid = meta && meta.draft && meta.draft.modelId;
+  const m = mid ? modelById(mid) : null;
+  return m && draftAllowedOf(m) && modelReady(m.id) ? m : null;
+}
+
 /** 用户在设置里指定的「重新识别模型」(空 = 没指定, 沿用项目原来的模型)。
  *  这个设置可以指向任何模型, 包括只能重新识别的 multitalker。 */
 const rerecogModelId = () => {
@@ -1659,11 +1669,29 @@ function handleRequest(req, res) {
     return v;
   }
 
-  function readBody(req, limit, cb) {
+  /** 读满请求体后调用 cb。回调在 **http 请求异步阶段**执行, createServer 的 try/catch 管不到它 ——
+   *  回调里一抛异常, 请求就会永久悬着(前端 fetch 永不 settle, 表现成"按钮点了没反应"),
+   *  只有全局 uncaughtException 记一条日志。实测踩过: resolveRerecogModel 里一个 ReferenceError
+   *  让「选区重新识别」按钮 100% 点不动、连报错提示都没有。
+   *  所以这里就地兜住: 抛了就回 500(带原因), 已发过响应则收尾, 绝不让请求悬着。 */
+  function readBody(req, res, limit, cb) {
     const chunks = []; let size = 0, dead = false;
+    const done = (err, body) => {
+      if (dead) return;
+      dead = true;
+      try { cb(err, body); }
+      catch (e) {
+        const msg = String((e && e.message) || e);
+        console.error('[handler error]', req.method, req.url, '\n', (e && e.stack) || e);
+        try {
+          if (!res.headersSent) sendJson(res, 500, { error: '服务器内部错误：' + msg });
+          else res.end();
+        } catch {}
+      }
+    };
     req.on('data', c => { size += c.length; if (size > limit) { dead = true; req.destroy(); return; } chunks.push(c); });
-    req.on('error', () => { if (!dead) { dead = true; cb(new Error('request body 读取失败')); } });
-    req.on('end', () => { if (!dead) cb(null, Buffer.concat(chunks)); });
+    req.on('error', () => done(new Error('request body 读取失败')));
+    req.on('end', () => done(null, Buffer.concat(chunks)));
   }
   /** 后台提取: 一次 ffmpeg 同时产出 audio.wav 与 peaks 原始 PCM(asplit), 全部临时文件成功后原子改名
    *  mode='denoise'(默认): 音频走 afftdn 降噪(内置滤镜, 无需外部模型)后再保存;
@@ -2227,7 +2255,13 @@ function handleRequest(req, res) {
       startedAt: new Date().toISOString(),
     };
     rerecogJobs.set(id, job);
-    const setRr = (patch) => Object.assign(job, patch);
+    // 收尾时记 finishedAt: GET 路由靠它判断"这条结果已经没人要了", 超时清掉陈旧任务
+    const setRr = (patch) => {
+      if (patch && (patch.status === 'done' || patch.status === 'error') && !patch.finishedAt) {
+        patch = Object.assign({}, patch, { finishedAt: new Date().toISOString() });
+      }
+      return Object.assign(job, patch);
+    };
     (async () => {
       try {
         const wav = path.join(projDir(id), 'audio.wav');
@@ -2434,15 +2468,6 @@ function handleRequest(req, res) {
     }
     if (failedBatches) pushDraftLog(id, `本轮流式结束：${failedBatches}/${batches.length} 批未成功`);
     return finishTranslate(id, segs, lines);
-  }
-
-  /** 该项目初稿用哪个模型: meta.draft.modelId 优先, 回退当前选中 */
-  /** 项目初稿用的模型(meta.draft.modelId)。只认**能创建初稿**的模型 ——
-   *  multitalker 那种 draftAllowed=false 的模型即使被写进 meta 也不会拿来跑初稿。 */
-  function resolveDraftModel(meta) {
-    const mid = meta && meta.draft && meta.draft.modelId;
-    const m = mid ? modelById(mid) : null;
-    return m && draftAllowedOf(m) && modelReady(m.id) ? m : null;
   }
 
   /** 语义分句(whisper 初稿专用): 读 asr.json → LLM 补标点 → 按逗号/句号切句 → 写回。
@@ -2721,7 +2746,7 @@ function handleRequest(req, res) {
 
   // ── 路由 ──
   if (pathname === '/api/pick' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let kind = 'video';
       try { kind = (JSON.parse(body.toString('utf8')) || {}).kind || 'video'; } catch {}
       nativePick(kind, r => sendJson(res, 200, r));   // 'video' | 'sub' | 'folder' 统一走一个实现
@@ -2794,7 +2819,7 @@ function handleRequest(req, res) {
   }
   /** 校验用户选的目录能否用来放模型: 必须存在、且是空目录 */
   if (pathname === '/api/asr/check-dir' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let p = '';
       try { p = String((JSON.parse(body.toString('utf8')) || {}).dir || '').trim(); }
       catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
@@ -2812,7 +2837,7 @@ function handleRequest(req, res) {
   /** 下载识别模型(带 modelId)或 whisper.cpp 运行时(kind='runtime')。
    *  并行友好: 不同 modelId/kind 的任务各自独立跑, 重复点同一个任务会被幂等忽略。 */
   if (pathname === '/api/asr/download' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let p = {}, modelId = '', kind = 'model';
       try {
         const j = JSON.parse(body.toString('utf8')) || {};
@@ -2876,7 +2901,7 @@ function handleRequest(req, res) {
   }
   /** 指定模型下载根目录(空串 = 恢复默认 asr/models) */
   if (pathname === '/api/asr/set-dir' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let p;
       try { p = String((JSON.parse(body.toString('utf8')) || {}).dir || '').trim(); } catch { p = ''; }
       const s = readAsrSettings();
@@ -2897,7 +2922,7 @@ function handleRequest(req, res) {
   }
   /** 用资源管理器打开模型目录(打开下载位置/排查模型文件) */
   if (pathname === '/api/asr/open-dir' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let which = 'models';
       try { which = String((JSON.parse(body.toString('utf8')) || {}).which || 'models'); } catch {}
       let dir = modelsRoot();
@@ -2915,7 +2940,7 @@ function handleRequest(req, res) {
   }
   /** 删除一个模型(连同目录) */
   if (pathname === '/api/asr/delete' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let modelId = '';
       try { modelId = String((JSON.parse(body.toString('utf8')) || {}).modelId || ''); } catch {}
       const m = modelById(modelId);
@@ -2930,7 +2955,7 @@ function handleRequest(req, res) {
   }
   /** 选择创建初稿用的模型 */
   if (pathname === '/api/asr/select' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let modelId = '';
       try { modelId = String((JSON.parse(body.toString('utf8')) || {}).modelId || ''); } catch {}
       const m = modelById(modelId);
@@ -2945,7 +2970,7 @@ function handleRequest(req, res) {
   }
   /** 选择「重新识别」用的模型(可指向任意模型, 含只能重新识别的 multitalker) */
   if (pathname === '/api/asr/select-rerecog' && req.method === 'POST') {
-    return readBody(req, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, (err, body) => {
       let modelId = '';
       try { modelId = String((JSON.parse(body.toString('utf8')) || {}).modelId || ''); } catch {}
       if (modelId && !modelById(modelId)) return sendJson(res, 400, { error: '未知模型' });
@@ -2962,7 +2987,7 @@ function handleRequest(req, res) {
     });
   }
   if (pathname === '/api/translate/config' && req.method === 'POST') {
-    return readBody(req, 256 * 1024, (err, body) => {
+    return readBody(req, res, 256 * 1024, (err, body) => {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
@@ -2978,7 +3003,7 @@ function handleRequest(req, res) {
     // GET 顺带返回实际会喂给引擎的词(用户填的 + 术语表原文列自动派生的), 便于核对
     if (req.method === 'GET') return sendJson(res, 200, Object.assign({ hint: asrHintCfg() }, asrTerms()));
     if (req.method === 'POST') {
-      return readBody(req, 256 * 1024, (err, body) => {
+      return readBody(req, res, 256 * 1024, (err, body) => {
         let p = {};
         try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
         const keep = {};
@@ -3024,7 +3049,7 @@ function handleRequest(req, res) {
     return sendJson(res, 200, { projects: items });
   }
   if (pathname === '/api/projects' && req.method === 'POST') {
-    return readBody(req, 256 * 1024 * 1024, (err, body) => {
+    return readBody(req, res, 256 * 1024 * 1024, (err, body) => {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let data; try { data = JSON.parse(body.toString('utf8')); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       // 再规整一次: 客户端送来的路径若带杂物, 这里同样能从"存在的最长前缀"里救回来
@@ -3149,7 +3174,7 @@ function handleRequest(req, res) {
      *  做成后台任务而不是同步接口: 识别+翻译可能要几分钟, 期间用户要能继续播放/编辑,
      *  区域进度常驻画在时间轴上。 */
     if (action === 'rerecognize' && req.method === 'POST') {
-      return readBody(req, 64 * 1024, (err, body) => {
+      return readBody(req, res, 64 * 1024, (err, body) => {
         let start = NaN, end = NaN;
         try {
           const p = JSON.parse(body.toString('utf8')) || {};
@@ -3173,7 +3198,17 @@ function handleRequest(req, res) {
     }
     // 任务状态(前端每秒轮询): {status, stage, progress, message, error, segments}
     if (action === 'rerecognize' && req.method === 'GET') {
-      return sendJson(res, 200, { job: rerecogJobs.get(id) || null });
+      const job = rerecogJobs.get(id) || null;
+      // 完成/失败的任务留 10 分钟给前端取结果, 之后清掉 —— 否则任务对象永远赖在 Map 里:
+      //   ① 用户刷新页面后重开项目, 这个陈旧 job 会让下一次「重新识别」被
+      //      "已有一个重新识别任务在运行" 永久挡住(实测: 刷新后按钮就废了);
+      //   ② 每个项目的完整识别结果常驻内存, 长会话下白占。
+      if (job && job.status !== 'running' && job.finishedAt
+          && Date.now() - Date.parse(job.finishedAt) > 10 * 60 * 1000) {
+        rerecogJobs.delete(id);
+        return sendJson(res, 200, { job: null });
+      }
+      return sendJson(res, 200, { job });
     }
 
     // 手动触发翻译(自动翻译没勾选时点「翻译」按钮走这里)
@@ -3183,7 +3218,7 @@ function handleRequest(req, res) {
       // 识别/提取还在跑时字幕文件还不存在 —— 此时允许**排队**，而不是报"没有字幕"
       const inFlight = draftJobs.has(id) || pendingAsr.has(id);
       if (!meta.subtitle && !inFlight) return sendJson(res, 400, { error: '该项目还没有初稿字幕' });
-      return readBody(req, 64 * 1024, (err, body) => {
+      return readBody(req, res, 64 * 1024, (err, body) => {
         let redo = false;
         try { redo = !!(JSON.parse(body.toString('utf8') || '{}') || {}).redo; } catch {}
         if (inFlight) {
@@ -3219,7 +3254,7 @@ function handleRequest(req, res) {
     }
     if (action === 'subtitle' && (req.method === 'PUT' || req.method === 'POST')) {
       // 字幕自动保存: 原文整体覆写; sendBeacon 只能 POST, 所以 PUT/POST 都收
-      return readBody(req, 256 * 1024 * 1024, (err2, body) => {
+      return readBody(req, res, 256 * 1024 * 1024, (err2, body) => {
         if (err2) return sendJson(res, 400, { error: String(err2.message) });
         const file = meta.subtitle && meta.subtitle.file;
         if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
@@ -3235,7 +3270,7 @@ function handleRequest(req, res) {
       return serveFile(req, res, path.join(projDir(id), file || 'subtitle.ass'));
     }
     if (action === 'relink' && req.method === 'POST') {
-      return readBody(req, 64 * 1024, (err2, body) => {
+      return readBody(req, res, 64 * 1024, (err2, body) => {
         if (err2) return sendJson(res, 400, { error: String(err2.message) });
         let vp; try { vp = (JSON.parse(body.toString('utf8')) || {}).videoPath || ''; } catch { vp = ''; }
         let ok = false;
@@ -3256,7 +3291,7 @@ function handleRequest(req, res) {
       // body 可选: {mode:'raw'|'denoise', force:true}
       //   force=true → 编辑器「重新生成音频」: 按指定模式重抽 audio.wav 与波形(字幕不动)
       //   无 force   → 兜底补跑: 只有缺 peaks 才跑, 模式沿用项目当前设置
-      return readBody(req, 4 * 1024, (err2, body) => {
+      return readBody(req, res, 4 * 1024, (err2, body) => {
         let opts = {};
         if (!err2 && body && body.length) { try { opts = JSON.parse(body.toString('utf8')) || {}; } catch {} }
         const curMode = (meta.audio && meta.audio.mode) || 'denoise';
