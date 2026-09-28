@@ -1352,7 +1352,9 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 /* ── 13. 视图切换 / 空状态 / 加载指示 ─────────────────────────── */
 #home-view:not([hidden]) { animation: fade-in var(--dur-3) var(--ease-out) both; }
 #home-empty:not([hidden]) { animation: fade-up var(--dur-4) var(--ease-out) both; }
-.st-models { display: flex; align-items: center; gap: 8px; }
+/* 仅加载态("<span class=spin>读取中…")居中显示; 真实卡片列表走默认 stretch 让每张卡等宽 */
+.st-models:not(:has(.sm-model)) { display: flex; align-items: center; gap: 8px; }
+.st-models:has(.sm-model) { align-items: stretch; gap: 10px; }
 /* 通用小转圈: 需要转的地方加 class="spin" 即可 */
 .spin {
   display: inline-block; width: 12px; height: 12px; flex: none; border-radius: 50%;

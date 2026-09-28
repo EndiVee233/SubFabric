@@ -1291,23 +1291,29 @@ export function initProjects(ctx) {
   });
 
   /* ─────────── 路由 ─────────── */
+  // 项目模式下显示"音频源 + 重新生成音频"两行（设置页签里）; 主界面/无项目模式下隐藏
+  function setAudioControlsVisible(on) {
+    const r1 = $('#set-audio-mode-row');
+    const r2 = $('#set-regen-audio-row');
+    if (r1) r1.hidden = !on;
+    if (r2) r2.hidden = !on;
+  }
   function applyHash() {
     const h = location.hash || '#/home';
-    const audioSrc = $('#audio-src');
     if (h.startsWith('#/project/')) {
       const pid = h.slice('#/project/'.length);
       elHome.hidden = true;
-      if (audioSrc) audioSrc.hidden = false;         // 项目模式才显示音频源控件
+      setAudioControlsVisible(true);                   // 项目模式才显示音频源控件
       if (!state.project || state.project.id !== pid) openProject(pid);
       else syncAudioModeUI(state.project.meta);       // 从主界面回到同一项目: 回显 + 恢复播放音轨
     } else if (h === '#/editor') {
-      elHome.hidden = true;                          // 无项目直开编辑器(兼容旧用法)
-      if (audioSrc) audioSrc.hidden = true;
-      setPlaybackAudioMode(null, false);             // 无项目: 播放恢复视频原声
+      elHome.hidden = true;                           // 无项目直开编辑器(兼容旧用法)
+      setAudioControlsVisible(false);
+      setPlaybackAudioMode(null, false);              // 无项目: 播放恢复视频原声
       if (state.project) { saveNow(); detachProject(); }
     } else {
       if (!location.hash) history.replaceState(null, '', '#/home');   // 归一化地址栏
-      if (audioSrc) audioSrc.hidden = true;
+      setAudioControlsVisible(false);
       showHome();
     }
   }

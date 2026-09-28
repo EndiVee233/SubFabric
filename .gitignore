@@ -14,6 +14,7 @@ editor/vendor/
 
 # 工程数据 / 本地测试脚本 / 截图
 .workbuddy/
+.workbuddy-ai/
 
 # main.py 首次运行会在脚本目录写一份本地设置(字体字号等), 不入库
 config.json

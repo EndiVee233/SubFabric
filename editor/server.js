@@ -21,7 +21,7 @@ const llmText = require('./llm-text.js');  // LLM 回复卫生+解析(剥思维�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.9.1'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.9.2'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -2114,7 +2114,12 @@ function handleRequest(req, res) {
         if (zh) out += zhLine(s, zh, roleOf(s));
         const ws = s.words || [];
         for (let k = 0; k < ws.length; k++) {
-          const st = ws[k].start;
+          // 首片起点**必须贴齐句首 s.start**, 不能直接用第一个词的时间:
+          //   云端识别(必剪/剪映)给的首词起点常常比句首晚几十毫秒(句前静音不算进词),
+          //   以前照抄 ws[0].start 会让英文逐词句整体比中文行晚一截 ——
+          //   中英双行时间不一致, 时间轴切不出整块、列表也该记坏行(见 main.js markBadRows)。
+          //   现在首片从 s.start 起高亮, 末片收在 s.end, 英文句 == 中文行 == [s.start, s.end]。
+          const st = (k === 0) ? s.start : ws[k].start;
           // 每片一直高亮到下一词起点(最后一片到句尾), 与 main.py 生成的结果一致
           const en = (k + 1 < ws.length) ? Math.max(ws[k + 1].start, st + 0.01) : Math.max(s.end, st + 0.01);
           const role = roleOf(s);

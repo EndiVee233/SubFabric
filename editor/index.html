@@ -36,15 +36,6 @@
       <button class="btn" id="btn-home" data-ico="home" title="返回项目主界面（编辑内容会自动保存到项目）">项目</button>
     </div>
     <div class="tb-group">
-      <button class="btn" id="btn-open-video" data-ico="folder" title="导入视频文件 (mp4/webm/mkv…)">打开视频</button>
-      <button class="btn" id="btn-open-sub" data-ico="file" title="导入 SRT / ASS 字幕文件">打开字幕</button>
-      <span id="audio-src" hidden>
-        <select class="btn" id="audio-mode" title="音频源（播放用哪条音轨，切换立即生效）：降噪后=播放项目里降噪过的音轨；原视频=直接播视频自带原声。识别与波形用哪一版由下方「重新生成音频」决定">
-          <option value="denoise">音频: 降噪后</option>
-          <option value="raw">音频: 原视频</option>
-        </select>
-        <button class="btn" id="btn-regen-audio" title="按当前选的音频源从视频重新提取 audio.wav 与波形（识别与波形用这一版；字幕内容不动，想更新字幕用「重新识别」）" data-ico="refresh">重新生成音频</button>
-      </span>
       <input type="file" id="file-video" accept="video/*,.mkv,.avi,.mov" hidden>
       <input type="file" id="file-sub" accept=".srt,.ass,.ssa" hidden>
     </div>
@@ -64,7 +55,7 @@
         <div class="hint-card">
           <div class="hint-icon" data-ico="film"></div>
           <div>将 <b>视频文件</b> 与 <b>SRT / ASS 字幕</b> 拖入此处</div>
-          <div class="hint-sub">或点击工具栏「打开视频 / 打开字幕」，也可直接加载右侧示例</div>
+          <div class="hint-sub">或到右侧「设置」页签里点「打开视频 / 打开字幕」，也可直接加载右侧示例</div>
         </div>
       </div>
     </div>
@@ -188,6 +179,29 @@
               <span class="switch-slider"></span>
             </label>
             <span class="setting-val" id="set-role-val">开</span>
+          </div>
+        </div>
+
+        <div class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#7eb6ff"></i><span class="set-group-title">导入与音频</span></div>
+          <div class="setting-row">
+            <span class="setting-name" title="导入视频文件 (mp4 / webm / mkv …)">视频文件</span>
+            <button class="btn btn-mini" id="btn-open-video" data-ico="folder">打开视频</button>
+          </div>
+          <div class="setting-row">
+            <span class="setting-name" title="导入 SRT / ASS 字幕文件">字幕文件</span>
+            <button class="btn btn-mini" id="btn-open-sub" data-ico="file">打开字幕</button>
+          </div>
+          <div class="setting-row" id="set-audio-mode-row" hidden>
+            <span class="setting-name" title="音频源（播放用哪条音轨，切换立即生效）：降噪后=播放项目里降噪过的音轨；原视频=直接播视频自带原声。识别与波形用哪一版由下方「重新生成音频」决定">音频源（播放）</span>
+            <select class="btn btn-mini" id="audio-mode">
+              <option value="denoise">音频: 降噪后</option>
+              <option value="raw">音频: 原视频</option>
+            </select>
+          </div>
+          <div class="setting-row" id="set-regen-audio-row" hidden>
+            <span class="setting-name" title="按当前选的音频源从视频重新提取 audio.wav 与波形（识别与波形用这一版；字幕内容不动，想更新字幕用「重新识别」）">重新生成音频</span>
+            <button class="btn btn-mini" id="btn-regen-audio" data-ico="refresh">重新生成音频</button>
           </div>
         </div>
 

@@ -9,9 +9,10 @@
  */
 import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
+import { ico } from './icons.js';
 
 export function initProjects(ctx) {
-  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode } = ctx;
+  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog } = ctx;
   const $ = (s) => document.querySelector(s);
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
@@ -145,14 +146,16 @@ export function initProjects(ctx) {
    * 降噪后 → 视频静音, 播 audio.wav(ASR 听到的就是它, 方便判断降噪过头/不够); 原视频 → 正常视频出声。 */
   function syncAudioModeUI(m, bustCache) {
     const sel = $('#audio-mode');
-    const mode = (m.audio && m.audio.mode) || 'denoise';
+    // 默认未降噪(原视频); 用户显式切换过则记住其偏好(跨会话)
+    const saved = localStorage.getItem('sf-audio-mode');
+    const mode = saved || (m.audio && m.audio.mode) || 'raw';
     if (sel) sel.value = mode;
     setPlaybackAudioMode(mode, !!m.hasAudio, bustCache);
   }
   async function regenAudio() {
     if (!state.project) return;
     const btn = $('#btn-regen-audio');
-    const mode = ($('#audio-mode') && $('#audio-mode').value) || 'denoise';
+    const mode = ($('#audio-mode') && $('#audio-mode').value) || 'raw';
     btn.disabled = true;
     const old = btn.textContent;
     btn.textContent = '提取中…';
@@ -170,9 +173,19 @@ export function initProjects(ctx) {
   }
   const audioModeSel = $('#audio-mode');
   if (audioModeSel) audioModeSel.addEventListener('change', () => {
-    toast(t(audioModeSel.value === 'denoise'
-      ? '已切换为降噪后音频，点「↻ 重新生成音频」生效'
-      : '已切换为原视频音频，点「↻ 重新生成音频」生效'), 3200);
+    // 「音频源」= 播放用哪条音轨, 与"重建 audio.wav"是两回事:
+    //   原视频 → 直接放视频自带原声(不必等提取); 降噪后 → 播放项目里降噪过的 audio.wav。
+    // 以前这里只弹提示、播放音轨要等点了「↻ 重新生成音频」才变, 于是"切不回原声"。
+    const want = audioModeSel.value;
+    const cur = (state.project && state.project.meta && state.project.meta.audio && state.project.meta.audio.mode) || 'raw';
+    const hasAudio = !!(state.project && state.project.meta && state.project.meta.hasAudio);
+    // 播放音轨立刻切: 未提取过的那一侧只能先退回视频原声(无法凭空变出降噪音频)
+    const playable = want === 'raw' ? null : (want === cur ? want : null);
+    setPlaybackAudioMode(playable, hasAudio);
+    localStorage.setItem('sf-audio-mode', want);   // 记住用户显式选择(默认未降噪)
+    if (want === cur) toast(t(want === 'denoise' ? '已切换为降噪后音频播放' : '已切换为原视频音频播放'), 3200);
+    else toast(t('已切换播放音轨；识别与波形仍是「' + (cur === 'raw' ? '原视频' : '降噪后')
+      + '」版本 —— 要按新选择重做识别，点「↻ 重新生成音频」'), 4000);
   });
   const regenBtn = $('#btn-regen-audio');
   if (regenBtn) regenBtn.addEventListener('click', regenAudio);
@@ -211,6 +224,7 @@ export function initProjects(ctx) {
     // 3) 波形/音频: 就绪直接读, 没就绪轮询
     handlePrepare(m);
     syncAudioModeUI(m);          // 音频源下拉回显 + 播放音轨(降噪后→audio.wav 接管发声)
+    if (resumeRerecog) resumeRerecog(pid);   // 接回后台还在跑的「选区重新识别」任务(刷新后也能看到进度/拿到结果)
   }
 
   function promptRelink(m) {
@@ -265,12 +279,19 @@ export function initProjects(ctx) {
     elHome.hidden = false;
     video.pause();
     if (state.project) { saveNow(); }               // 离开编辑器: 把未保存的立刻写掉
+    listAnim = true;                                // 只在"进入首页"这一帧播放卡片入场动画
     renderList();
   }
   let listPoll = 0;
+  let listAnim = false;                             // 入场动画开关(轮询刷新时不重播, 否则每 1.5s 抖一次)
+  const lastPct = new Map();                        // 项目 id → 上次渲染的进度百分比(给平滑增长/数字滚动用)
   async function renderList() {
-    elList.innerHTML = '<div class="home-loading">读取中…</div>';
+    // 骨架屏：形状和真实卡片一致, 比"读取中…"那行字少一次布局跳动
+    elList.innerHTML = Array.from({ length: 3 }, () =>
+      '<div class="skel-row"><div class="skel-b b1"></div><div class="skel-b b2"></div><div class="skel-b b3"></div><div class="skel-b b4"></div></div>').join('');
     elEmpty.hidden = true;
+    elList.classList.toggle('anim-in', listAnim);      // 只有"进入首页"那一帧播放入场动画
+    listAnim = false;
     let data;
     try { data = await (await fetch('/api/projects')).json(); }
     catch { elList.innerHTML = '<div class="home-loading">读取失败（本地服务未启动？）</div>'; return; }
@@ -278,9 +299,13 @@ export function initProjects(ctx) {
     elList.innerHTML = '';
     elEmpty.hidden = ps.length > 0;
     const ST = { running: '提取中', none: '待提取', error: '提取失败' };
+    const pctTweens = [];                              // 渲染完统一跑百分比数字滚动
+    let cardIdx = 0;
     for (const p of ps) {
       const card = document.createElement('div');
       card.className = 'proj-card' + (p.videoExists ? '' : ' proj-missing');
+      // 入场错峰: CSS 用 --i 算 animation-delay（上限 12 档, 项目多了也不会等太久）
+      card.style.setProperty('--i', String(Math.min(cardIdx++, 12)));
       const st = p.prepare && ST[p.prepare.status];
       const dr = p.draft || null;
       const busyPrep = !!(p.prepare && p.prepare.status === 'running');
@@ -307,11 +332,15 @@ export function initProjects(ctx) {
         else label = stageTxt;
         const cls = dr.status === 'done' ? 'done' : failed ? 'error' : paused ? 'paused' : 'running';
         stChip = ` <span class="pc-st st-${cls}">${esc(running ? label + '...' : label)}</span>`;
+        // 进度条：从"上次渲染到的百分比"平滑长到新值（CSS 用 --from 做起点, 终点就是元素自身 width）
+        const from = lastPct.has(p.id) ? lastPct.get(p.id) : 0;
+        lastPct.set(p.id, pct);
         draftBar = `
           <div class="pc-draft ${esc(dr.status)}">
-            <div class="pc-draft-bar"><div class="pc-draft-bar-in" style="width:${pct}%"></div></div>
-            <div class="pc-draft-txt"><span>${esc(dr.message || label)}</span><span class="pct">${pct}%</span></div>
+            <div class="pc-draft-bar"><div class="pc-draft-bar-in" style="width:${pct}%;--from:${from}%"></div></div>
+            <div class="pc-draft-txt"><span>${esc(dr.message || label)}</span><span class="pct" data-pct="${pct}" data-from="${from}">${from}%</span></div>
           </div>`;
+        pctTweens.push(pct);
         // 可重试/可开始翻译：彻底失败、等待翻译、或翻译只完成了一部分（已跳过的不算）
         const canRetry = (failed || paused
           || (dr.status === 'done' && !dr.translated && !!dr.needTranslate)) && !dr.skippedTranslate;
@@ -326,17 +355,18 @@ export function initProjects(ctx) {
       const fmt = p.format;
       const badge = fmt === 'srt' ? 'SRT' : (fmt === 'ass' ? 'ASS' : (dr ? '初稿' : 'ASS'));
       const locked = !!dr && !hasSub;           // 还没有字幕文件时进去也没内容可读（失败在识别阶段就是这种）
+      const missingTag = p.videoExists ? '' : ` <span class="pc-missing">${ico('alert')}视频丢失</span>`;
       card.innerHTML = `
         <span class="pc-badge ${fmt === 'srt' ? 'srt' : ''}">${badge}</span>
         <div class="pc-main">
-          <div class="pc-name">${esc(p.name)}${p.videoExists ? '' : ' <span class="pc-missing">⚠ 视频丢失</span>'}${stChip}</div>
+          <div class="pc-name">${esc(p.name)}${missingTag}${stChip}</div>
           <div class="pc-meta">${esc(p.video && p.video.name || '无视频')} · ${esc(p.subName || (dr ? '初稿处理中…' : '无字幕'))} · 修改于 ${fmtDate(p.modifiedAt)}</div>
           ${draftBar}
         </div>
         <div class="pc-actions">
           ${progBtn}
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
-          <button type="button" class="btn pc-del" title="删除项目(含音频/波形/字幕副本)">🗑</button>
+          <button type="button" class="btn pc-del ico-only" title="删除项目(含音频/波形/字幕副本)">${ico('trash')}</button>
         </div>`;
       card.querySelector('.pc-open').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -366,11 +396,31 @@ export function initProjects(ctx) {
       elList.appendChild(card);
     }
 
+    // 进度百分比数字滚动：从上次的值数到新值（列表每 1.5s 重建一次, 这样看起来是"在走"而不是"跳"）
+    for (const el of elList.querySelectorAll('.pct[data-pct]')) {
+      countTo(el, Number(el.dataset.from) || 0, Number(el.dataset.pct) || 0, 420);
+    }
+
     // 有任务在跑就自动刷新, 让列表上的进度自己往前走
     clearTimeout(listPoll);
     if (ps.some(p => (p.prepare && p.prepare.status === 'running') || (p.draft && p.draft.status === 'running'))) {
       listPoll = setTimeout(() => renderList(), 1500);
     }
+  }
+
+  /** 数字滚动：把 el 的文本从 a 数到 b（含 % 后缀），rAF 驱动, 只用于很短的过渡 */
+  function countTo(el, a, b, ms) {
+    if (!el) return;
+    if (a === b || Math.abs(b - a) < 1) { el.textContent = b + '%'; return; }
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = b + '%'; return; }
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = Math.round(a + (b - a) * e) + '%';
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   /* ─────────── 初稿进度浮层 ─────────── */
@@ -533,6 +583,58 @@ export function initProjects(ctx) {
   const stOverlay = $('#st-overlay');
   let stPresets = [];
 
+  /* ── 全局设置: 页签切换 + 热词块状编辑(一格一个单词) ── */
+  document.querySelectorAll('.st-tab').forEach(tab => tab.addEventListener('click', () => {
+    document.querySelectorAll('.st-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.st-panel').forEach(p => p.classList.toggle('active', p.dataset.stp === tab.dataset.stp));
+  }));
+  function hotwordRow(val) {
+    const row = document.createElement('div');
+    row.className = 'hotword-row';
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'st-input hotword-input'; inp.spellcheck = false;
+    inp.placeholder = '一个单词'; inp.value = val || '';
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); const add = $('#ah-add'); if (add) add.click(); }
+    });
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'btn btn-mini hotword-del'; del.textContent = '−'; del.title = '删除该热词';
+    row.append(inp, del);
+    return row;
+  }
+  function renderHotwords(words) {
+    const list = $('#ah-terms-list');
+    if (!list) return;
+    list.innerHTML = '';
+    (words && words.length ? words : ['']).forEach(w => list.appendChild(hotwordRow(w)));
+  }
+  function collectHotwords() {
+    const seen = new Set(), out = [];
+    document.querySelectorAll('#ah-terms-list .hotword-input').forEach(inp => {
+      String(inp.value || '').split(/\s+/).forEach(w => {
+        w = w.trim();
+        if (!w) return;
+        const k = w.toLowerCase();
+        if (seen.has(k)) return;
+        seen.add(k); out.push(w);
+      });
+    });
+    return out.join(', ');
+  }
+  const ahAdd = $('#ah-add');
+  if (ahAdd) ahAdd.addEventListener('click', () => {
+    const list = $('#ah-terms-list');
+    if (!list) return;
+    const row = hotwordRow('');
+    list.appendChild(row);
+    row.querySelector('input').focus();
+  });
+  const ahList = $('#ah-terms-list');
+  if (ahList) ahList.addEventListener('click', (e) => {
+    const del = e.target.closest('.hotword-del');
+    if (del) del.closest('.hotword-row').remove();
+  });
+
   async function openSettings() {
     stOverlay.hidden = false;
     const msgEl = $('#st-msg');
@@ -557,15 +659,15 @@ export function initProjects(ctx) {
     $('#st-baseurl').value = c.baseUrl || '';
     $('#st-key').value = c.apiKey || '';
     $('#st-model').value = c.model || '';
+    if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
     try {
       const h = await (await fetch('/api/asr/hint')).json();
       const hint = h.hint || {};
-      $('#ah-terms').value = hint.prompt || '';
+      renderHotwords(String(hint.prompt || '').split(/[,\n;，；]+/).map(s => s.trim()).filter(Boolean));
       $('#ah-score').value = hint.hotwordsScore || 3;
     } catch { /* 识别提示词读不到不影响其它设置 */ }
     glLoad(c.glossary, c.glossaryLang);
-    $('#st-auto').checked = !!c.autoTranslate;
     renderAsrModels();
     bindModelDirSettings();
   }
@@ -625,7 +727,10 @@ export function initProjects(ctx) {
       const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
         || (m.engine === 'nemo' && !d.gpu);
       let state, btn = '';
-      if (st.running || (m.needRuntime && rtSt.running)) {
+      if (m.cloud) {
+        // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
+        state = '<span class="sm-state ok">✓ 云端识别（免下载 · 免显卡 · 需要联网）</span>';
+      } else if (st.running || (m.needRuntime && rtSt.running)) {
         state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
       } else if (st.error) {
         state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
@@ -638,6 +743,7 @@ export function initProjects(ctx) {
       } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
       else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
       if (dlThis) btn = '';
+      else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
       else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
       const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
@@ -865,7 +971,7 @@ export function initProjects(ctx) {
       row.className = 'gl-row';
       row.innerHTML = `<input type="text" class="gl-input gl-src" spellcheck="false" placeholder="${esc(t('原文词（如 Spike）'))}">
         <input type="text" class="gl-input gl-dst" spellcheck="false" placeholder="${esc(t('译法（如 斯派克）'))}">
-        <button type="button" class="gl-del" title="${esc(t('删除该词条'))}">🗑</button>`;
+        <button type="button" class="gl-del" title="${esc(t('删除该词条'))}">${ico('trash')}</button>`;
       const [srcEl, dstEl] = row.querySelectorAll('.gl-input');
       srcEl.value = pair[0] || '';
       dstEl.value = pair[1] || '';
@@ -899,7 +1005,7 @@ export function initProjects(ctx) {
       await fetch('/api/asr/hint', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: $('#ah-terms').value,
+          prompt: collectHotwords(),
           hotwordsScore: parseFloat($('#ah-score').value) || 3,
         })
       });
@@ -909,10 +1015,10 @@ export function initProjects(ctx) {
       baseUrl: $('#st-baseurl').value.trim(),
       apiKey: $('#st-key').value.trim(),
       model: $('#st-model').value.trim(),
+      batchSize: parseInt(($('#st-batch') || {}).value, 10) || 25,     // 每批行数(服务端还会夹到 5~100)
       prompt: $('#st-prompt').value,
       glossary: glSerialize(),
       glossaryLang: glState.lang,
-      autoTranslate: $('#st-auto').checked,
     };
   }
   async function postSettings() {
@@ -1003,7 +1109,7 @@ export function initProjects(ctx) {
     // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
     const hint = $('#np-hint');
     if (hint && asrStatus.pythonProbe && !asrStatus.pythonProbe.ok) {
-      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + ' —— Parakeet 模型需要 Python（详见创建后日志里的修复方法）；whisper.cpp 引擎不需要';
+      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + ' —— Parakeet 模型需要 Python（详见创建后日志里的修复方法）；whisper.cpp 与「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
     }
     npMaybeEnable();
@@ -1185,23 +1291,29 @@ export function initProjects(ctx) {
   });
 
   /* ─────────── 路由 ─────────── */
+  // 项目模式下显示"音频源 + 重新生成音频"两行（设置页签里）; 主界面/无项目模式下隐藏
+  function setAudioControlsVisible(on) {
+    const r1 = $('#set-audio-mode-row');
+    const r2 = $('#set-regen-audio-row');
+    if (r1) r1.hidden = !on;
+    if (r2) r2.hidden = !on;
+  }
   function applyHash() {
     const h = location.hash || '#/home';
-    const audioSrc = $('#audio-src');
     if (h.startsWith('#/project/')) {
       const pid = h.slice('#/project/'.length);
       elHome.hidden = true;
-      if (audioSrc) audioSrc.hidden = false;         // 项目模式才显示音频源控件
+      setAudioControlsVisible(true);                   // 项目模式才显示音频源控件
       if (!state.project || state.project.id !== pid) openProject(pid);
       else syncAudioModeUI(state.project.meta);       // 从主界面回到同一项目: 回显 + 恢复播放音轨
     } else if (h === '#/editor') {
-      elHome.hidden = true;                          // 无项目直开编辑器(兼容旧用法)
-      if (audioSrc) audioSrc.hidden = true;
-      setPlaybackAudioMode(null, false);             // 无项目: 播放恢复视频原声
+      elHome.hidden = true;                           // 无项目直开编辑器(兼容旧用法)
+      setAudioControlsVisible(false);
+      setPlaybackAudioMode(null, false);              // 无项目: 播放恢复视频原声
       if (state.project) { saveNow(); detachProject(); }
     } else {
       if (!location.hash) history.replaceState(null, '', '#/home');   // 归一化地址栏
-      if (audioSrc) audioSrc.hidden = true;
+      setAudioControlsVisible(false);
       showHome();
     }
   }

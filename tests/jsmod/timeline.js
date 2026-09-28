@@ -33,6 +33,13 @@ const C = {
   playhead: '#ff7a45'
 };
 
+/** 读一个 CSS 变量（时间轴要跟着界面主题色走，但 canvas 里拿不到 var()） */
+function cssVar(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  } catch { return fallback; }
+}
 /* 各样式轨道配色(逐词样式 → 紫, 整句样式 → 橙) */
 const LANE_COLORS = ['#ff7a45', '#8b7cf6', '#4fd1a5', '#61b8ff', '#ff5c8a', '#d9c14f'];
 
@@ -162,6 +169,10 @@ class Filmstrip {
 export class Timeline {
   constructor(canvas, video) {
     this.canvas = canvas;
+    /* 主题色：游标 / 选中环 / 波形都跟着界面主题走。
+       换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
+    this.accent = cssVar('--accent', C.accent);
+    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); }); } catch {}
     this.ctx = canvas.getContext('2d');
     this.video = video || null;
     this.film = new Filmstrip(() => { /* 下一帧重绘 */ });
@@ -317,8 +328,8 @@ export class Timeline {
     this._clampView();
     this._viewReady = true;
   }
-  zoomIn() { this._zoomAt(this._cssW() / 2, 1.6); }
-  zoomOut() { this._zoomAt(this._cssW() / 2, 1 / 1.6); }
+  zoomIn() { this._zoomAtSmooth(this._cssW() / 2, 1.6); }
+  zoomOut() { this._zoomAtSmooth(this._cssW() / 2, 1 / 1.6); }
 
   /** 胶片预览图高度: 关闭时为 0(不占位, 字幕块直接顶到刻度线下方) */
   _filmH() { return this.showFilm ? FILM_H : 0; }
@@ -368,6 +379,35 @@ export class Timeline {
     if (this.onLayout) this.onLayout();
     return true;
   }
+
+  /** 缩放（带缓动）：约 160ms 内把倍率补间到目标值，**光标下的时间保持不动**（跟手）。
+   *  连续滚轮会从"当前值"重新起步（不是排队), 所以手感是顺滑而不是卡顿。
+   *  Ctrl+滚轮 / 工具栏 ± / 快捷键都走这里；prefers-reduced-motion 时退化为瞬时。 */
+  _zoomAtSmooth(px, factor) {
+    const lim = this._zoomLimits();
+    const target = Math.max(lim.min, Math.min(lim.max, this.pxPerSec * factor));
+    if (!isFinite(target) || Math.abs(target - this.pxPerSec) < 1e-9) return false;
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (this._zoomAnim) { cancelAnimationFrame(this._zoomAnim); this._zoomAnim = 0; }
+    if (reduced) return this._zoomAt(px, factor);
+    const from = this.pxPerSec;
+    const tUnder = this.viewStart + px / this.pxPerSec;      // 光标下的时间
+    const t0 = performance.now();
+    const DUR = 160;
+    const self = this;
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / DUR);
+      const e = 1 - Math.pow(1 - k, 3);                      // easeOutCubic
+      self.pxPerSec = from + (target - from) * e;
+      self.viewStart = tUnder - px / self.pxPerSec;
+      self._clampView();
+      self._viewReady = true;
+      if (self.onLayout) self.onLayout();
+      self._zoomAnim = k < 1 ? requestAnimationFrame(step) : 0;
+    };
+    this._zoomAnim = requestAnimationFrame(step);
+    return true;
+  }
   /** 平移: 正数 = 往时间更晚的方向看 */
   _panBy(px) {
     this.viewStart += px / this.pxPerSec;
@@ -411,6 +451,7 @@ export class Timeline {
         this._hideMenu();
         if (act === 'delete' && cue && this.onDelete) this.onDelete(cue.ref);
       else if (act === 'fix' && cue && this.onFix) this.onFix(cue.ref);
+      else if (act === 'retranslate' && cue && this.onRetranslate) this.onRetranslate(cue.ref);
       });
     }
 
@@ -428,13 +469,14 @@ export class Timeline {
       e.preventDefault();
       this._hideMenu();
       const dir = e.deltaY < 0 ? 1 : -1;        // 上滚为正
-      if (e.ctrlKey || e.metaKey) this._zoomAt(e.offsetX, dir > 0 ? this.zoomSensitivity : 1 / this.zoomSensitivity);
+      if (e.ctrlKey || e.metaKey) this._zoomAtSmooth(e.offsetX, dir > 0 ? this.zoomSensitivity : 1 / this.zoomSensitivity);
       else this._panBy(dir * this.panSensitivity);   // 下滚 dir=-1 → 负 → 看更早
     }, { passive: false });
 
     cv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;               // 右键交给 contextmenu
       this._hideMenu();
+      this._hideEdgeHint();
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 合成事件无捕获 */ }
       const x = e.offsetX, y = e.offsetY;
       const onLane = this._laneIndexAtY(y) !== -1;
@@ -471,6 +513,25 @@ export class Timeline {
           if (Math.abs(x - csx) <= EDGE_TOL) part = 'left';
           else if (Math.abs(x - cex) <= EDGE_TOL) part = 'right';
         }
+        // 边缘拖动按鼠标在块的上下半区分: 上半=整块边界(onRetime), 下半=首/末词细调(onWordRetime)
+        if ((part === 'left' || part === 'right') && this.onWordRetime && c.words && c.words.length) {
+          const li2 = this._laneIndexAtY(y);
+          const yy2 = this._laneTop(li2), lh2 = this._laneH(li2);
+          const band = c.half ? bandOf(c, yy2, lh2) : { y: yy2, h: lh2 };
+          if (y >= band.y + band.h / 2) {
+            const idx = part === 'left' ? 0 : c.words.length - 1;
+            this._selCueRef = c.row || c.ref;
+            this._wordDrag = { cue: c.row || c.ref, ref: c.ref, idx };
+            // 左边缘=调首词开始(块起始同步); 右边缘=调末词**结束**(块 end 同步延伸)
+            const nb = this._neighbors(c);
+            this._drag = { type: 'word', cue: c, idx, x0: x, y0: y, moved: false,
+              edge: part === 'left' ? 'start' : 'end',
+              loLimit: part === 'left' ? nb.prevEnd : null,
+              hiLimit: part === 'left' ? null : nb.nextStart };
+            if (this.onSelect) this.onSelect(c.ref, { seek: false });
+            return;
+          }
+        }
         const n = this._neighbors(c);
         this._drag = {
           type: 'cue', part, cue: c, x0: x, y0: y, moved: false,
@@ -490,13 +551,33 @@ export class Timeline {
         let cursor = 'default';
         if (this._laneIndexAtY(y) !== -1) {
           const wh0 = this._hitWordHandle(x, y);
-          if (wh0 && (!this.isEditable || this.isEditable(wh0.cue.ref))) { cv.style.cursor = 'ew-resize'; return; }
+          if (wh0 && (!this.isEditable || this.isEditable(wh0.cue.ref))) {
+            cv.style.cursor = 'ew-resize'; this._hideEdgeHint(); return;
+          }
           const hit = this._hitTest(x, y, true);
           if (hit && (!this.isEditable || this.isEditable(hit.cue.ref))) {
-            const csx = this.t2x(hit.cue.start), cex = this.t2x(hit.cue.end);
-            const onEdge = cex - csx >= 8 && (Math.abs(x - csx) <= EDGE_TOL || Math.abs(x - cex) <= EDGE_TOL);
-            cursor = onEdge ? 'ew-resize' : 'move';
-          } else cursor = 'crosshair';
+            const c = hit.cue;
+            const csx = this.t2x(c.start), cex = this.t2x(c.end);
+            const onL = cex - csx >= 8 && Math.abs(x - csx) <= EDGE_TOL;
+            const onR = cex - csx >= 8 && Math.abs(x - cex) <= EDGE_TOL;
+            if (onL || onR) {
+              cv.style.cursor = 'ew-resize';
+              // 悬停提示: 上半=整体边界 / 下半=首末词边界
+              const li2 = this._laneIndexAtY(y);
+              const yy2 = this._laneTop(li2), lh2 = this._laneH(li2);
+              const band = c.half ? bandOf(c, yy2, lh2) : { y: yy2, h: lh2 };
+              const lower = y >= band.y + band.h / 2;
+              const text = onL
+                ? (lower ? '拖动：调整首词边界' : '拖动：整体调整左边界')
+                : (lower ? '拖动：调整末词边界' : '拖动：整体调整右边界');
+              this._showEdgeHint(e.clientX, e.clientY, text);
+              return;
+            }
+            this._hideEdgeHint();
+            cursor = 'move';
+          } else { this._hideEdgeHint(); cursor = 'crosshair'; }
+        } else {
+          this._hideEdgeHint();
         }
         cv.style.cursor = cursor;
         return;
@@ -506,7 +587,9 @@ export class Timeline {
       d.moved = true;
 
       if (d.type === 'word') {
-        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(x), false);
+        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(x), false, d.edge, d.hiLimit, d.loLimit);
+        if (d.edge === 'end') d.cue.end = this.x2t(x);                     // 拖动中块宽度实时跟随(松手 rebuild 校正)
+        else if (d.edge === 'start' && d.idx === 0) d.cue.start = this.x2t(x);
         return;
       }
       if (d.type === 'range') {
@@ -547,7 +630,7 @@ export class Timeline {
       if (!d) return;
       const t = this._clampT(this.x2t(e.offsetX));
       if (d.type === 'word') {
-        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true);
+        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true, d.edge, d.hiLimit, d.loLimit);
         this._wordDrag = null;
         return;
       }
@@ -576,6 +659,7 @@ export class Timeline {
       if (this.onSeek) this.onSeek(t);
     };
     cv.addEventListener('pointerup', finishDrag);
+    cv.addEventListener('pointerleave', () => this._hideEdgeHint());
     cv.addEventListener('pointercancel', () => { this._drag = null; });
 
     // 点画布/菜单以外的地方 → 收起菜单
@@ -585,6 +669,22 @@ export class Timeline {
       this._hideMenu();
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this._hideMenu(); });
+  }
+
+  /** 边缘悬停提示: 跟随鼠标的小浮层(告诉用户当前拖的是整体边界还是首末词边界) */
+  _showEdgeHint(cx, cy, text) {
+    if (!this._hintEl) {
+      this._hintEl = document.createElement('div');
+      this._hintEl.className = 'tl-edge-hint';
+      document.body.appendChild(this._hintEl);
+    }
+    this._hintEl.textContent = text;
+    this._hintEl.hidden = false;
+    this._hintEl.style.left = (cx + 14) + 'px';
+    this._hintEl.style.top = (cy + 16) + 'px';
+  }
+  _hideEdgeHint() {
+    if (this._hintEl && !this._hintEl.hidden) this._hintEl.hidden = true;
   }
 
   _showMenu(cx, cy, cue) {
@@ -914,22 +1014,35 @@ export class Timeline {
 
   _drawRuler(ctx, W) {
     const top = this._filmH();
-    ctx.fillStyle = '#101015';
+    const g = ctx.createLinearGradient(0, top, 0, top + RULER_H);
+    g.addColorStop(0, '#16161c');
+    g.addColorStop(1, '#101015');
+    ctx.fillStyle = g;
     ctx.fillRect(0, top, W, RULER_H);
     ctx.strokeStyle = C.laneBorder;
     ctx.beginPath(); ctx.moveTo(0, top + RULER_H + 0.5); ctx.lineTo(W, top + RULER_H + 0.5); ctx.stroke();
 
     const step = this._niceStep(80);
     const t0 = Math.max(0, Math.floor(this.viewStart / step) * step);
+    const sub = step / 5;                       // 次刻度: 主刻度之间再分 5 格, 读数更好对位
+    const end = this.viewStart + W / this.pxPerSec + step;
+    ctx.strokeStyle = C.rulerTick;
+    ctx.beginPath();
+    for (let st = t0; st <= end; st += sub) {
+      const x = Math.round(this.t2x(st)) + 0.5;
+      if (x < 0 || x > W) continue;
+      const major = Math.abs(st / step - Math.round(st / step)) < 1e-6;
+      ctx.moveTo(x, top + RULER_H - (major ? 7 : 3));
+      ctx.lineTo(x, top + RULER_H);
+    }
+    ctx.stroke();
     ctx.font = '10px Consolas, monospace';
     ctx.textAlign = 'left';
-    for (let tt = t0; tt <= this.viewStart + W / this.pxPerSec + step; tt += step) {
+    for (let tt = t0; tt <= end; tt += step) {
       const x = Math.round(this.t2x(tt)) + 0.5;
       if (x < -60 || x > W + 10) continue;
-      ctx.strokeStyle = C.rulerTick;
-      ctx.beginPath(); ctx.moveTo(x, top + RULER_H - 7); ctx.lineTo(x, top + RULER_H); ctx.stroke();
       ctx.fillStyle = C.ruler;
-      ctx.fillText(fmtTime(tt, 1).replace(/\.0$/, ''), x + 4, top + RULER_H - 8);
+      ctx.fillText(fmtTime(tt, 1).replace(/\.0\$/, ''), x + 4, top + RULER_H - 8);
     }
   }
 
@@ -1145,10 +1258,14 @@ export class Timeline {
         this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
         ctx.stroke();
         if (isSel) {
-          ctx.strokeStyle = '#ffffff';
+          ctx.save();
+          ctx.shadowColor = withAlpha(this.accent || C.accent, 0.5, 'rgba(255,122,69,.5)');
+          ctx.shadowBlur = 7;
+          ctx.strokeStyle = this.accent || C.accent;   // 选中环跟主题色(原为白色)
           ctx.lineWidth = 1.5;
-          this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
+          this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 4);
           ctx.stroke();
+          ctx.restore();
         }
         // 块内: 中文行(角色色/加粗/100% 不透明) + 分隔线 + 英文逐词轴(可拖动标记)
         if (wpx > 46 && (c.text || c.text2)) this._drawBlockText(ctx, c, band, x1, x2, wpx, base);
@@ -1175,12 +1292,19 @@ export class Timeline {
   _drawPlayhead(ctx, H, t) {
     const x = Math.round(this.t2x(t)) + 0.5;
     if (x < -2 || x > this._cssW() + 2) return;
-    ctx.strokeStyle = C.playhead;
+    const acc = this.accent || C.playhead;
+    ctx.save();
+    ctx.shadowColor = withAlpha(acc, 0.55, 'rgba(255,122,69,.55)');   // 游标光晕: 一眼找到当前时间
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = acc;
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    ctx.fillStyle = C.playhead;
+    ctx.restore();
+    ctx.fillStyle = acc;
+    this._roundRect(ctx, x - 5, 0, 10, 9, 2.5);
+    ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(x - 5, 0); ctx.lineTo(x + 5, 0); ctx.lineTo(x, 7);
+    ctx.moveTo(x - 4, 8); ctx.lineTo(x + 4, 8); ctx.lineTo(x, 13);
     ctx.closePath(); ctx.fill();
   }
 

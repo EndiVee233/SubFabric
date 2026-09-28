@@ -1,32 +1,22 @@
 /**
- * i18n: 轻量文案翻译层（choke-point / 显示出口方案）。
+ * 文案层（display-choke-point）。
  *
- * 设计：**不改 400 个调用点**，而是在文案流向屏幕的必经函数（toast/确认框/徽标/
- * 时间轴标签/静态 DOM）上做翻译。语言文件是「原文 → 译文」词典：
- *   { "打开视频": "Open video", "已批量删除 {n} 条字幕": "Deleted {n} subtitles" }
- * - 键缺失 → 回退原文，界面永不缺字
- * - 带变量的文案（代码里是 ${n} 拼接）在运行时到达显示函数时已是成品字符串，
- *   用**归一化模式匹配**（数字/拉丁串归一成 ◇）找到对应模板再回填变量
- * - 语言文件动态加载：lang/<locale>.json，新增语言 = 放一个新 json
- * - zh-CN.json 的值可以直接改写来润色文案（键是原文，值可改）
+ * **界面只有中文**：工具是给国人做双语字幕（中/英字幕轨）的，英文 UI 没有意义 —— 多语言已移除，
+ * `lang/en-US.json` 也删了。这里保留下来的是它**另一个**用途：
+ * `lang/zh-CN.json` 是「原文 → 原文」词典（键=原文，值可改），想让文案更对自己胃口（"打开"改成"载入"
+ * 之类）就直接改那个文件的值，不用碰代码。键缺失一律回退原文，界面永不缺字。
+ *
+ * 设计：**不改 400 个调用点**，而是在文案流向屏幕的必经函数（toast / 确认框 / 徽标 / 时间轴标签 /
+ * 静态 DOM）上查一次词典。带变量的文案在运行时到达显示函数时已是成品字符串，用**归一化模式匹配**
+ * （数字/拉丁串归一成 ◇）找到模板再回填变量。
  */
-const LOCALE_KEY = 'ss-locale';
-const FALLBACK_LOCALE = 'zh-CN';
+const DICT_URL = 'lang/zh-CN.json';
 const VAR = '\u25C7';                       // 归一化占位符 ◇
 
 let dict = {};                              // 原文 → 译文
 let normIndex = new Map();                  // 归一化模板 → 原文键（用于模糊匹配）
-let locale = FALLBACK_LOCALE;
-const listeners = new Set();
 
-export function getLocale() { return locale; }
-export function getLocales() {
-  return [
-    { id: 'zh-CN', name: '简体中文' },
-    { id: 'en-US', name: 'English' },
-  ];
-}
-export function onLocaleChange(fn) { listeners.add(fn); }
+export function getLocale() { return 'zh-CN'; }
 
 /** 归一化: 数字/拉丁字母开头的连续串 → ◇（中文与标点保留），用于模糊匹配带变量的文案 */
 function normalize(s) {
@@ -41,26 +31,17 @@ function rebuildIndex() {
   }
 }
 
-async function loadDict(loc) {
+async function loadDict() {
   dict = {}; normIndex = new Map();
   try {
-    const r = await fetch(`lang/${loc}.json`, { cache: 'no-store' });
+    const r = await fetch(DICT_URL, { cache: 'no-store' });
     if (r.ok) { dict = await r.json(); rebuildIndex(); }
   } catch {}
 }
 
 export async function initI18n() {
-  locale = localStorage.getItem(LOCALE_KEY) || FALLBACK_LOCALE;
-  await loadDict(locale);
+  await loadDict();
   applyDom();
-}
-
-export async function setLocale(loc) {
-  locale = loc;
-  localStorage.setItem(LOCALE_KEY, loc);
-  await loadDict(loc);
-  applyDom();
-  for (const fn of listeners) { try { fn(loc); } catch {} }
 }
 
 /** 翻译入口。无法匹配 → 原样返回（永不破坏界面） */
@@ -83,8 +64,8 @@ export function t(s) {
   return out;
 }
 
-/** 把当前语言应用到静态 DOM（index.html 的静态文案）:
- *  文本节点按去除首尾空白后的整段文本查词典；title/placeholder 属性同样翻译 */
+/** 把词典应用到静态 DOM（index.html 的静态文案）:
+ *  文本节点按去除首尾空白后的整段文本查词典；title/placeholder 属性同样处理 */
 export function applyDom(root = document) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let n = walker.currentNode;

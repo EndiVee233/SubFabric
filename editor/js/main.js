@@ -490,6 +490,23 @@ function markBadRows(items) {
       const hasL1 = !!it.l1, hasL2 = !!it.l2;
       if (hasL1 && !hasL2) reasons.push('单中文行(缺英文)');
       if (!hasL1 && hasL2) reasons.push('单英文行(缺中文)');
+      // 中英时间不一致: 配成双行的中文整句与英文逐词句必须**同起止**。
+      //   注意别拿 en.start/en.end 来比 —— analyzeKaraoke 分组时是直接把中文行(anchor)的
+      //   时间赋给英文句的(见 karaoke.js 第 253 行), 所以界面上永远"看起来一致"、永远不报。
+      //   要比就比英文**切片事件自己写在文件里的时间**: 那才是导出给播放器/别人看到的真值。
+      //   常见来源: 云端识别(必剪/剪映)首词起点晚于句首 → 英文行整段比中文行短一截
+      //   (用户报: 中文 0.00-2.88 / 英文 0.04-0.32, 却没标坏行)。已在 server.js 生成端贴齐,
+      //   这里兜住存量脏文件与手工改过的行。
+      const enS2 = it.ref && it.ref.en;
+      if (zhS && enS2 && (enS2.events || []).length) {
+        let eS = Infinity, eE = -Infinity;
+        for (const ev of enS2.events) { if (ev.start < eS) eS = ev.start; if (ev.end > eE) eE = ev.end; }
+        // 容差半厘秒: ASS 只写到厘秒, 同源写入的两条不该有更大差异
+        if (Math.abs(eS - zhS.start) > 0.005 || Math.abs(eE - zhS.end) > 0.005) {
+          const ds = eS - zhS.start, de = eE - zhS.end;
+          reasons.push(`中英时间不一致(起${ds >= 0 ? '+' : ''}${ds.toFixed(2)}s 止${de >= 0 ? '+' : ''}${de.toFixed(2)}s)`);
+        }
+      }
       // 未标注角色: 角色身份 = 中文行文本行首可见的 [人物] 标记(见 karaoke.js speakerTextTagOf)。
       //   · 文本里没有该标记(如 "你知道" / 拼错的 "[Spoke}") → 画面上不显示角色, 标坏行;
       //   · 整行连 Name 栏裸名都没有(row.speaker 为空) → 同样算未标注。
@@ -620,7 +637,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   // 坏行计数 → 搜索框旁的 ⚠ 按钮
   panel.setBadCount(state.items.filter(i => i.bad).length,
     state.format === 'ass'
-      ? '时间异常 / 重叠 / 未标注角色 / 单语行 / 英文含方括号 / 英文缺词 / 英文行重叠'
+      ? '时间异常 / 重叠 / 未标注角色 / 单语行 / 中英时间不一致 / 英文含方括号 / 英文缺词 / 英文行重叠'
       : '字幕重叠');
 
   // 时间轴车道: 每个样式一条轨道(中文 / 英文各归其位); 块内带文本
