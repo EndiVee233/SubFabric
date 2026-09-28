@@ -2679,6 +2679,39 @@ requestAnimationFrame(tick);
   setTimeout(post, 12000);
 })();
 
+/* ── 首页版本号 + 代码更新提示 ──
+ * 必须是模块级: 首页/项目/编辑器三种路由都要生效。曾经放在 boot() 的 #/editor
+ * 分支之后 —— 首页与项目模式会提前 return, 于是标题版本号永远是 HTML 里的硬编码值。 */
+(function initVersionCheck() {
+  const pageStamp = String(window.__BUILD_STAMP || '');
+  let banner = null;
+  const showBanner = () => {
+    if (banner) return;
+    banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9999;'
+      + 'background:#2563eb;color:#fff;padding:8px 14px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);'
+      + 'font:13px/1.4 system-ui,sans-serif;display:flex;gap:10px;align-items:center;cursor:pointer;';
+    banner.innerHTML = '已发布新版本，点击此处刷新页面 <b style="text-decoration:underline">刷新</b>';
+    banner.addEventListener('click', () => location.reload(true));
+    (document.body || document.documentElement).appendChild(banner);
+  };
+  const tick = async () => {
+    try {
+      const r = await fetch('/api/version', { signal: AbortSignal.timeout(5000) });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j && j.version) {
+        const lv = document.getElementById('app-version');
+        if (lv) lv.textContent = 'v' + j.version;   // 版本号永远跟运行中的服务端一致(不用改 HTML)
+      }
+      if (pageStamp && j && String(j.stamp) !== pageStamp) showBanner();
+    } catch {}
+  };
+  tick();                       // 立即填一次, 别等 4 秒
+  setTimeout(tick, 4000);
+  setInterval(tick, 30000);
+})();
+
 /* ═══════════ 示例自动加载(仅 #/editor 直开时; 正常入口是项目主界面 #/home) ═══════════ */
 (async function boot() {
   await initI18n();                      // 先载入语言文件: 静态 DOM 文案 + 后续所有 t()
@@ -2723,35 +2756,4 @@ requestAnimationFrame(tick);
   };
   if (document.readyState === 'complete') setTimeout(autoLoad, 100);
   else window.addEventListener('load', () => setTimeout(autoLoad, 100));
-
-  // ── 代码版本检测: 服务端代码更新后, 已经开着的页面会提示刷新(避免"改了代码界面还是老的") ──
-  (function initVersionCheck() {
-    const pageStamp = String(window.__BUILD_STAMP || '');
-    if (!pageStamp) return;
-    let banner = null;
-    const showBanner = () => {
-      if (banner) return;
-      banner = document.createElement('div');
-      banner.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9999;'
-        + 'background:#2563eb;color:#fff;padding:8px 14px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);'
-        + 'font:13px/1.4 system-ui,sans-serif;display:flex;gap:10px;align-items:center;cursor:pointer;';
-      banner.innerHTML = '已发布新版本，点击此处刷新页面 <b style="text-decoration:underline">刷新</b>';
-      banner.addEventListener('click', () => location.reload(true));
-      (document.body || document.documentElement).appendChild(banner);
-    };
-    const tick = async () => {
-      try {
-        const r = await fetch('/api/version', { signal: AbortSignal.timeout(5000) });
-        if (!r.ok) return;
-        const j = await r.json();
-        if (j && j.version) {
-          const lv = document.getElementById('app-version');
-          if (lv) lv.textContent = 'v' + j.version;   // 首页版本号永远跟运行中的服务端一致
-        }
-        if (j && String(j.stamp) !== pageStamp) showBanner();
-      } catch {}
-    };
-    setTimeout(tick, 4000);
-    setInterval(tick, 30000);
-  })();
 })();
