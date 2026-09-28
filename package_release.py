@@ -10,11 +10,11 @@
 
 注意: 打包前先 `python build_exe.py`(确保 build/SubFabric.exe 存在) 和
       `node editor/scripts/fetch-vendor.js`(确保 editor/vendor 完整)。
-用法: python package_release.py [版本号]   默认 1.5.0
+用法: python package_release.py [版本号]   默认 1.6.1
 """
 import os, zipfile, sys
 
-VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.5.0'
+VERSION = sys.argv[1] if len(sys.argv) > 1 else '1.6.1'
 ROOT = os.path.dirname(os.path.abspath(__file__))
 # 1.5.0 起资产改名为 SubFabric-<版本>.zip(与产品名一致; 1.4.0 及以前叫 K-ASS-Editor-<版本>.zip)
 OUT = os.path.join(ROOT, 'SubFabric-%s.zip' % VERSION)

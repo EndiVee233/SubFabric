@@ -12,13 +12,32 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawn } = require('child_process');
+const childProcess = require('child_process');
 const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), whisper 专用
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.6.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.6.1'; // 与打版号一致; 改了就顺手同步这里
+
+/* ── 子进程登记表 ──────────────────────────────────────────────
+ * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
+ * 全是本服务的子进程。「退不干净」的根子就在这: 服务进程没了, 它们照旧活着, 用户只能
+ * 去任务管理器里一个个杀。这里包一层**同名** spawn —— 20 多个调用点一个字都不用改,
+ * 但每个子进程都进了 CHILDREN, 「完全退出」时能一并收掉。 */
+const CHILDREN = new Set();
+function spawn(...args) {
+  const p = childProcess.spawn(...args);
+  try {
+    if (p && typeof p.once === 'function') {
+      CHILDREN.add(p);
+      const forget = () => CHILDREN.delete(p);
+      p.once('close', forget);          // 正常结束/被杀都走这里
+      p.once('exit', forget);
+    }
+  } catch {}
+  return p;
+}
 
 /* ── 运行日志: 环形缓冲 + SSE 推送(UI「日志」页实时显示)。
  * GUI 版 exe 无控制台, console 输出本来无处可去 —— 统一收进缓冲,
@@ -26,6 +45,7 @@ const APP_VERSION = '1.6.0'; // 与打版号一致; 改了就顺手同步这里
 const LOG_MAX = 600;
 const logBuf = [];                 // [{t, level, msg}]
 const logClients = new Set();      // SSE 订阅响应
+const lifeClients = new Set();     // 「服务生命周期」SSE 订阅(前端接「完全退出」通知)
 function fmtLogArg(a) {
   if (a instanceof Error) return (a && a.stack) || String(a);
   if (typeof a === 'string') return a;
@@ -38,6 +58,12 @@ function pushLog(level, args) {
   if (logBuf.length > LOG_MAX) logBuf.splice(0, logBuf.length - LOG_MAX);
   const chunk = 'data: ' + JSON.stringify(line) + '\n\n';
   for (const res of logClients) { try { res.write(chunk); } catch { logClients.delete(res); } }
+}
+/* 生命周期事件(目前只有 shutdown): 服务要退出了, 让**已经开着的页面**先补存再关掉自己。
+ * 少了这一步, 用户点了「完全退出」后浏览器窗口还杵在那, 看着就像没退干净。 */
+function broadcastLife(event, data) {
+  const chunk = 'event: ' + event + '\ndata: ' + JSON.stringify(data || {}) + '\n\n';
+  for (const res of lifeClients) { try { res.write(chunk); } catch { lifeClients.delete(res); } }
 }
 const _cLog = console.log.bind(console), _cErr = console.error.bind(console);
 console.log = (...a) => { try { _cLog(...a); } catch {} pushLog('info', a); };
@@ -3087,6 +3113,37 @@ function handleRequest(req, res) {
     });
   }
 
+  /* 生命周期 SSE: 页面常驻订阅一条 —— 托盘点「完全退出」时服务在这里广播 shutdown,
+   * 页面收到后补存一次(靠 beforeunload 的 sendBeacon)并尝试关掉自己的窗口。 */
+  if (pathname === '/api/lifecycle' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.write('retry: 5000\n\n');
+    lifeClients.add(res);
+    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
+    req.on('close', () => { clearInterval(hb); lifeClients.delete(res); });
+    return;
+  }
+
+  /* 完全退出 —— 托盘图标右键的唯一入口。
+   * 只认两种请求: ① 托盘发来的(带 X-SubFabric-Quit 头, 跨站页面设不了这个头 ——
+   * 用了会被 CORS 预检拦下); ② 本机同源的页面 POST(带 Origin)。
+   * 这样别的网页即使用 <img src="…/api/quit"> 也顶不掉用户正在用的编辑器。 */
+  if (pathname === '/api/quit' && req.method === 'POST') {
+    const origin = String(req.headers.origin || '');
+    const byTray = req.headers['x-subfabric-quit'] === '1';
+    const sameOrigin = !!origin && /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(origin);
+    if (!byTray && !sameOrigin) return sendJson(res, 403, { error: 'forbidden' });
+    console.log('[quit] 收到完全退出请求（来源：' + (byTray ? '托盘图标/本机命令' : origin) + '）');
+    sendJson(res, 200, { ok: true, pid: process.pid });   // 先把响应冲回去, 托盘据此判定成功
+    setTimeout(() => shutdown(byTray ? '托盘图标' : '页面请求'), 120);
+    return;
+  }
+
   /* 前端诊断上报: 页面把布局/运行状态快照回传, 落到 .diag.json 供排查(不影响任何功能) */
   if (pathname === '/api/diag' && req.method === 'POST') {
     return readBody(req, res, 128 * 1024, (err, body) => {
@@ -3417,9 +3474,72 @@ server.listen(PORT, HOST, () => {
   console.log(`[subtitle-editor] node ${process.version}`);
   console.log(`[subtitle-editor] serving ${ROOT}`);
   console.log(`[subtitle-editor] open  http://${HOST}:${PORT}/`);
+  startTray();     // 托盘图标(Windows): 右键 → 完全退出
 });
 server.on('error', (e) => {
   // 端口被占用/被拒绝时给出可读提示, 而不是抛一堆栈
   console.error('[subtitle-editor] 启动失败：' + String((e && e.message) || e)
     + (e && e.code === 'EADDRINUSE' ? '（端口 ' + PORT + ' 已被占用：是不是已经开着一个？）' : ''));
 });
+
+/* ═══════════ 完全退出 ═══════════
+ * 为什么需要它: 发行版是 GUI 子系统的 SubFabric.exe —— 双击后**没有控制台窗口**,
+ * 关掉浏览器页面服务照旧在后台跑, 用户以前只能去任务管理器杀进程; 再双击一次也只会
+ * 被"端口 8321 已被占用"顶回来。托盘图标(见 startTray)右键「完全退出」就是那个出口。
+ *
+ * 顺序: ①通知页面收尾(sendBeacon 补存 + 自己关窗) → ②杀子进程 → ③关服务/断长连接 → ④退出。
+ * 每一步都有超时兜底 —— 有子进程赖着不走在 Windows 上 close() 可能一直等, 不能让用户晾着。 */
+let shuttingDown = false;
+function shutdown(reason) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log('[shutdown] 完全退出：' + (reason || '未注明来源'));
+  broadcastLife('shutdown', { reason: String(reason || ''), pid: process.pid });
+
+  // ② ~600ms 后动手: 给页面一点时间把最后一个防抖保存(sendBeacon)发出来
+  setTimeout(() => {
+    for (const p of CHILDREN) {
+      if (p === trayProc) continue;    // 托盘自己收图标(强杀会留下 Windows"幽灵图标")
+      try { p.kill(); } catch {}       // ffmpeg / Python 识别 / 文件选择器
+    }
+    try {
+      server.close(() => {});
+      // SSE 与媒体流是长连接, 不主动销毁的话 close() 会一直等它们自己断
+      if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    } catch {}
+    setTimeout(() => process.exit(0), 250);
+  }, 600);
+
+  // 兜底: 无论如何 4 秒内进程必须消失(端口随之释放)
+  setTimeout(() => process.exit(0), 4000);
+}
+
+/* ── 任务栏托盘图标(仅 Windows) ─────────────────────────────────
+ * 用系统自带的 PowerShell + WinForms NotifyIcon 实现 —— SEA 版 exe 里装不了 npm 原生
+ * 模块(托盘类库都要编译原生插件), 而 Windows 一定自带 powershell.exe 与 .NET。
+ * 图标脚本: editor/scripts/tray.ps1(菜单: 打开界面 / 完全退出)。
+ * 关掉方式: 环境变量 SUBFABRIC_TRAY=0, 或启动参数 --no-tray(自动化测试/无桌面环境)。 */
+let trayProc = null;
+function startTray() {
+  if (process.platform !== 'win32') return;
+  if (process.env.SUBFABRIC_TRAY === '0' || process.env.SUBFABRIC_NO_TRAY) return;
+  if (process.argv.includes('--no-tray')) return;
+  const script = path.join(__dirname, 'scripts', 'tray.ps1');
+  if (!fs.existsSync(script)) return;                 // 老版本目录里没有托盘脚本就安静跳过
+  const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-STA', '-WindowStyle', 'Hidden', '-File', script,
+                '-Port', String(PORT), '-ServerPid', String(process.pid), '-Exe', process.execPath,
+                '-Version', APP_VERSION];
+  const ico = path.join(__dirname, 'scripts', 'tray.ico');
+  if (fs.existsSync(ico)) args.push('-Icon', ico);
+  try {
+    trayProc = spawn('powershell.exe', args, { windowsHide: true, stdio: 'ignore' });
+    trayProc.on('error', (e) => {
+      trayProc = null;
+      console.error('[tray] 托盘图标启动失败：' + ((e && e.message) || e));
+    });
+    trayProc.on('close', () => { trayProc = null; });
+    console.log('[tray] 托盘图标已就绪（右键图标 → 完全退出）');
+  } catch (e) {
+    console.error('[tray] 托盘图标启动失败：' + ((e && e.message) || e));
+  }
+}

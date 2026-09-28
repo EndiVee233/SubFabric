@@ -2300,6 +2300,36 @@ rngFont.addEventListener('input', () => {
   overlay.setFontScale(parseFloat(rngFont.value));
   if (rngFontVal) rngFontVal.textContent = parseFloat(rngFont.value).toFixed(2) + ' ×';
 });
+/* ── 托盘「完全退出」→ 页面收尾 ──────────────────────────────
+ * 托盘右键「完全退出」后, 服务端会在 /api/lifecycle 广播 shutdown(见 server.js):
+ * ① 先手动派发一次 beforeunload —— 复用 project.js 里那条 sendBeacon 兜底保存,
+ *    把最后 1.2 秒防抖窗口里的改动补存出去(服务端留了 600ms 才动手);
+ * ② 再尝试关掉本窗口(Edge 应用模式窗口多数情况下允许 window.close());
+ * ③ 浏览器不允许脚本关窗时, 给一条提示条 —— 否则用户对着一个死界面会以为卡住了。 */
+(function initLifecycle() {
+  if (typeof EventSource === 'undefined') return;
+  const showExited = () => {
+    try {
+      if (document.getElementById('app-exited')) return;
+      const bar = document.createElement('div');
+      bar.id = 'app-exited';
+      bar.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:10000;'
+        + 'background:#b3261e;color:#fff;padding:10px 16px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.35);'
+        + 'font:13px/1.5 system-ui,sans-serif;';
+      bar.textContent = t('SubFabric 已完全退出，可以关闭这个窗口了');
+      (document.body || document.documentElement).appendChild(bar);
+    } catch {}
+  };
+  let es;
+  try { es = new EventSource('/api/lifecycle'); } catch { return; }
+  es.addEventListener('shutdown', () => {
+    try { es.close(); } catch {}
+    try { window.dispatchEvent(new Event('beforeunload')); } catch {}
+    try { window.close(); } catch {}
+    setTimeout(showExited, 1200);
+  });
+})();
+
 /* 服务日志 → UI「日志」页: EventSource 实时流(连接即回放历史, 之后追加) */
 (function initLogView() {
   const view = document.getElementById('log-view');

@@ -1,4 +1,4 @@
-# SubFabric（字幕工作台）v1.2.3
+# SubFabric（字幕工作台）v1.6.1
 
 基于 Web 的字幕编辑器：视频播放 + 字幕实时叠加 + 时间轴 + 编辑面板。
 支持 **SRT 双语字幕**（主/副语言上下排列）与 **ASS 高级特效字幕**（libass 内核，卡拉OK/颜色/定位等特效完整还原）。
@@ -23,6 +23,28 @@ node editor/server.js
 > 仓库不含示例视频与字幕（体积较大）。启动后用工具栏导入自己的视频 / SRT / ASS；
 > 把媒体文件放到项目根目录，`/api/samples` 会自动列出，工具栏「示例」区一键加载。
 > 旧直连 `#/editor` 仍可用（跳过主界面直接进编辑器并自动加载示例，兼容旧用法与自动化测试）。
+
+## 退出程序（任务栏托盘图标）
+
+发行版 `SubFabric.exe` 是 **GUI 子系统**（双击没有控制台窗口）：关掉浏览器页面后服务照旧在后台跑，用户根本找不到"退出这个程序"的地方，只能去任务管理器杀进程；再双击一次也只会被"端口 8321 已被占用"顶回来。
+
+服务起来后会在**右下角托盘**放一个图标（`editor/scripts/tray.ps1`，PowerShell + WinForms，不依赖任何 npm 原生模块）：
+
+| 操作 | 行为 |
+|---|---|
+| 双击图标 | 打开界面（Edge 应用模式窗口） |
+| 右键 → 打开界面 | 同上 |
+| 右键 → **完全退出** | `POST /api/quit` → 页面收到 `shutdown` 后补存并关掉自己的窗口 → 服务端杀掉全部子进程（ffmpeg / Python 识别 / 文件选择器）→ 关服务、断长连接、退出进程（端口随之释放）→ 托盘图标自己摘掉 |
+
+- 首次运行会弹一次气泡提示（Windows 11 默认把新图标收进 **∧ 隐藏区**，拖出来即固定到角上；也可以在 设置 → 个性化 → 任务栏 → 其他系统托盘图标 里打开）
+- 服务意外死掉（崩溃 / 被任务管理器杀掉）时，托盘图标连续 3 秒探不到端口就自己退出，不留孤儿图标
+- 不想要托盘：环境变量 `SUBFABRIC_TRAY=0`（或启动参数 `--no-tray`），自动化测试用这个
+- 自检（不弹窗口）：
+  ```bash
+  powershell -File editor/scripts/tray.ps1 -Port 8321 -SelfTest   # 建好图标/菜单后立刻收摊
+  powershell -File editor/scripts/tray.ps1 -Port 8321 -QuitOnce   # 走一遍「完全退出」
+  node tools/tray_quit_probe.mjs 8321                            # 真 Edge 应用窗口里验前端收尾
+  ```
 
 ## 界面布局
 
@@ -174,6 +196,10 @@ editor/
 │   ├── shortcuts.js     # 固定键盘快捷键映射(写死, 无自定义/无持久化)
 │   ├── editor.js        # 字幕总览卡片列表(中英双行/角色色) + 行内编辑
 │   └── util.js          # 时间格式/二分查找等
+├── scripts/
+│   ├── tray.ps1         # 任务栏托盘图标(打开界面 / 完全退出; 必须存成 UTF-8 带 BOM)
+│   ├── tray.ico         # 托盘图标(多尺寸; gen_tray_icon.py 生成)
+│   └── gen_tray_icon.py # 生成 tray.ico 的小脚本(改动图标设计时跑一次)
 └── vendor/              # libass-wasm + Noto CJK 字体 (由 scripts/fetch-vendor.js 下载, 未入库)
 ```
 
@@ -182,6 +208,11 @@ editor/
 ```bash
 node tests/gen-fixture.mjs        # 生成夹具(8 行双语)
 node tests/karaoke-exhaustive.mjs # 穷举: 13 个场景 + 200 步随机压力, 每步校验 6 条不变量
+
+# 退出链路（托盘/完全退出）
+powershell -File editor/scripts/tray.ps1 -Port 8321 -SelfTest   # 托盘图标 + 菜单能建起来
+powershell -File editor/scripts/tray.ps1 -Port 8321 -QuitOnce   # 走一遍完全退出(含端口释放)
+node tools/tray_quit_probe.mjs 8321                             # 真 Edge --app 窗口里验页面收尾
 ```
 
 无 DOM 依赖, 直接跑真实的 ass.js + karaoke.js（自动同步到 tests/jsmod/）。
@@ -232,3 +263,8 @@ node tests/karaoke-exhaustive.mjs # 穷举: 13 个场景 + 200 步随机压力, 
 - **角色色直接当文字色会糊**：`#e50b0b`（Spoke 红）亮度只有 0.30，写在深色卡片上几乎看不清。`roleTone()` 按亮度缺口混白提亮（`#e50b0b` → `rgb(236,72,72)`），浅色角色（`#add6ff` 浅蓝、`#ffffff` 白）则原样保留。
 - **字幕渲染层必须 pointer-events:none**：octopus 生成的 `.libassjs-canvas-parent` 覆盖整个视频区，只有 canvas 自身被设为 none、容器没有；一旦覆盖层拦截事件，视频区的播放/暂停/进度条点击会全部失效（字幕仍可见，极易误判为播放器状态逻辑问题）。CSS 与 AssPlayer.passThroughClicks() 双重保障。
 - **改字幕起始/结束时间后逐词效果崩掉、多出重复字幕**：根因是 `fmtTimeAss` 把小数位单独 `Math.round((sec-⌊sec⌋)*100)`，遇到 `0.995~0.999` 会进位溢出成 `0:00:01.100`（3 位小数），而 ASS 小数位固定 2 位 → `parseTimeAss` 解析失败 → `_parseDialogue` 静默丢弃整条事件，但行还留在文件中 → 下一帧只替换部分行 → 残留孤儿行（重复字幕）。整体拖动时所有时间点只整体平移、小数不变，所以碰不到该边界。**修复**：`fmtTimeAss` 改为「先 `Math.round(sec*100)` 取整到厘秒再拆秒/分/时」，进位由秒字段承担（与 `main.py` 的 `format_time` 一致）；`parseTimeAss` 容错 1~3 位小数；`_parseDialogue` 对异常时间不再丢事件（夹到 0）；`replaceEvents` 行号位移改为「first 之后的所有事件」；`recalcWords`/`buildWordSpecs` 增加词级时间归一化（句内单调递增、每片 ≥1 厘秒、末词贴齐句尾，文本与词数不符时按词数均匀铺满而非塌成单条）。
+- **「发行版退不干净」的根因不是窗口，是子进程 + 没有出口**（用户报）：GUI 子系统的 `SubFabric.exe` 双击后没有控制台窗口，关掉浏览器页面服务照旧在后台跑；以前唯一的"退出"是靠 `start-editor.bat` 里那句 `taskkill`（还得重新双击一次 bat），或者任务管理器。**现在**：① 托盘图标右键「完全退出」→ `POST /api/quit`；② `server.js` 把 `child_process.spawn` 包了一层**同名** `spawn`（20 多个调用点零改动），每个子进程都进 `CHILDREN` 登记表 —— 退出时 ffmpeg / Python 识别 / PowerShell 文件选择器一并收掉（只关 HTTP 服务的话，识别进程会带着几 GB 显存继续跑）；③ SSE 与媒体流是长连接，必须 `server.closeAllConnections()`，否则 `server.close()` 一直等它们自己断；④ 全链路都有超时兜底（4 秒内进程必须消失）。
+- **退出的收尾顺序：先通知页面，再动手**：`shutdown()` 先 `broadcastLife('shutdown')`，600ms 后才杀子进程/关服务 —— 这 600ms 是留给页面把最后一个防抖保存用 `sendBeacon` 发出去的（前端收到事件会先手动派发一次 `beforeunload` 复用 `project.js` 的兜底保存，再 `window.close()`）。实测 Edge `--app` 窗口的 `window.close()` **生效**（217ms 关闭，`tools/tray_quit_probe.mjs` 可复现）；万一某个浏览器不让脚本关窗，页面会显示一条「已完全退出，可以关闭这个窗口了」的红条，而不是留下一个看着像卡死的界面。
+- **托盘用 PowerShell + WinForms `NotifyIcon`，不是 npm 托盘库**：SEA 单文件 exe 里装不了原生模块（托盘类库都要编译原生插件），而 Windows 一定自带 `powershell.exe` 与 .NET。两个坑：① **参数不能叫 `-Pid`** —— `$PID` 是 PowerShell 只读自动变量，绑定参数会直接报错（脚本里叫 `-ServerPid`，launcher 传的也得是这个名字，传错的表现是"服务日志说托盘已就绪，但进程秒退、日志文件都不生成"）；② **`tray.ps1` 必须存成 UTF-8 带 BOM** —— PowerShell 5.1 对无 BOM 的 UTF-8 按 GBK 解，中文菜单乱码、个别字节还会让整个脚本解析失败（改完这个文件记得补 BOM）。
+- **服务端退出时要跳过托盘进程**：托盘是 `server.js` 的子进程，但**不能**跟着一起强杀 —— 杀掉就没有 `NotifyIcon.Visible = $false`（NIM_DELETE），Windows 会留下一个"幽灵图标"（鼠标扫过才消失）。所以 `shutdown()` 杀子进程时 `p === trayProc` 直接 `continue`，让托盘自己收图标：托盘在「完全退出」里已经先摘图标，服务意外死掉时靠 1.5 秒一次的端口探测（连续 2 次探不到 → 摘图标退出）。
+- **Windows 11 会把新托盘图标收进 `∧` 隐藏区**：系统设置里"其他系统托盘图标"默认关闭，图标不是没出来，是在溢出面板里（已实测截图确认）。所以首次运行弹一次气泡提示告诉用户"右键图标 → 完全退出、图标可以拖出来"，并把这件事写进 README —— 不去改注册表 `NotifyIconSettings` 强行置顶（那会动用户的系统设置，且不同版本键值不稳定）。
