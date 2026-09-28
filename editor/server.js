@@ -16,11 +16,12 @@ const childProcess = require('child_process');
 const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), whisper 专用
 const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型/免显卡, 只把音频传上去
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
+const llmText = require('./llm-text.js');  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.8.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.9.0'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -686,6 +687,13 @@ function translateCfg() {
     glossaryLang: t.glossaryLang || '简体',
     hasKey: !!t.apiKey,
   };
+}
+
+/** 语义分句的切句规则开关（asr/settings.json 的 resegSplitOnComma）：
+ *  默认 **false** —— 只认句末标点(.?!)，逗号降级为行内停顿（长行才用逗号软折）；
+ *  设 true 恢复旧行为「遇到逗号也切句」。用户报"断句很碎很不自然"就是旧行为造成的。 */
+function resegSplitOnComma() {
+  try { return !!readAsrSettings().resegSplitOnComma; } catch { return false; }
 }
 
 /** 术语表文本 → 当前目标语言的 [['原文','译法'], …]。
@@ -2157,56 +2165,92 @@ function handleRequest(req, res) {
   /* ── 翻译 ── */
   const TRANS_BATCH = 25;
 
-  function parseJsonArray(text) {
-    // 模型常返回 ```json ... ``` 或前后带解释, 这里抠出第一个完整数组
-    let s = String(text || '').trim();
-    const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
-    if (fence) s = fence[1].trim();
-    const a = s.indexOf('['), b = s.lastIndexOf(']');
-    if (a >= 0 && b > a) s = s.slice(a, b + 1);
-    try { const v = JSON.parse(s); return Array.isArray(v) ? v : null; }
-    catch { return null; }
+  /* 解析模型回复的工具都在 editor/llm-text.js（纯函数, 可单测）:
+   *  · stripReasoning   —— 剥掉  thinking… 思维链（推理模型必踩的坑, 以前完全没处理）
+   *  · parseJsonArray   —— 平衡扫描取**第一个完整闭合**的数组（不再"首个 [ 到末个 ]", 那会被思考里的示例数组带偏）
+   *  · parseLineArrayReply —— 标准 JSON 之外的兜底: 逐行纯文本/编号行/引号行, 并过滤思考行与寒暄行
+   *  · punctPairsSane   —— 标点密度合理性（防小模型"每词加逗号"） */
+  const parseJsonArray = llmText.parseJsonArray;
+  const parseTranslationReply = llmText.parseLineArrayReply;
+  const LlmError = llmText.LlmError;
+
+  /** 诊断转储: 只有设了 SUBFABRIC_LLM_DEBUG=1 才写（默认不留痕 —— 里面是字幕原文与接口回复） */
+  const LLM_DEBUG = process.env.SUBFABRIC_LLM_DEBUG === '1';
+  function dumpLlmDebug(file, rec) {
+    if (!LLM_DEBUG || !file) return;
+    try {
+      fs.appendFileSync(file, JSON.stringify(Object.assign({ t: new Date().toISOString() }, rec)) + '\n');
+    } catch {}
   }
 
-  /** 解析模型的译文回复。除了标准 JSON 数组，还要容忍「逐行纯文本」这种常见跑偏 ——
-   *  实测模型会无视 JSON 要求、直接把译文一行行吐出来（用户报的失败正是这个），
-   *  这种回复本身是**可用的**，没必要判为失败。 */
-  function parseTranslationReply(text, n) {
-    const arr = parseJsonArray(text);
-    if (arr && arr.length === n) return arr.map(v => String(v == null ? '' : v));
+  /* ── LLM 调用（唯一的出口）─────────────────────────────────────
+   * 用户报「翻译会失效、原因从来定位不到」，根因都在这几行上，逐条治：
+   *  ① **思维链**：推理模型(DeepSeek-R1/QwQ/GLM-Z1/Qwen3-thinking…)正文前有  thinking…，
+   *     以前完全没剥 → 取 JSON 被思考里的示例数组带偏、逐行兜底把思考当译文 → 行数不符 → 失败。现在统一剥掉。
+   *  ② **超时**：以前 fetch 没有超时，服务商挂起就永远等（表现就是"卡住/失效"）。现在 120s（可用 SUBFABRIC_LLM_TIMEOUT_MS 调）。
+   *  ③ **自适应 max_tokens**：以前固定 4096，25 行一批 + 思考 token 会被砍成半截 JSON；现在按批量估算。
+   *  ④ **错误分型**：net/rate/timeout → 退避重试（尊重 Retry-After）；truncated → 交给调用方拆批（原样重试必然再失败）；
+   *     empty → 明确说"模型只吐了思考过程"；format → 换提示词策略。
+   *  ⑤ **可见性**：每次失败都 console.error 一条（进应用「日志」页 SSE），带 HTTP 状态/finish_reason/原始回复前 300 字；
+   *     设 SUBFABRIC_LLM_DEBUG=1 还会把完整请求+回复落到 projects/<id>/llm-debug.jsonl。
+   * ──────────────────────────────────────────────────────────── */
+  const LLM_TIMEOUT_MS = Number(process.env.SUBFABRIC_LLM_TIMEOUT_MS) || 120000;
 
-    let s = String(text || '');
-    const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
-    if (fence) s = fence[1];
-    const chatty = /^\s*(好的|当然|以下是|下面是|翻译如下|这是|注意|说明|Sure|Here|The |Output|Translations)/i;
-    const out = [];
-    for (let line of s.split(/\r?\n/)) {
-      line = line.trim();
-      if (!line || line === '[' || line === ']') continue;
-      line = line.replace(/^\s*\d+\s*[.、):：]\s*/, '');          // 去掉 "1. " / "2)" 之类编号
-      line = line.replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim();
-      if (!line || line === '[' || line === ']' || chatty.test(line)) continue;
-      out.push(line);
-    }
-    return out.length === n ? out : null;
-  }
-
-  async function llmChat(cfg, messages) {
+  async function llmChat(cfg, messages, opts) {
+    const o = opts || {};
     const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
-      body: JSON.stringify({ model: cfg.model, messages, temperature: 0.3, max_tokens: 4096 }),
-    });
-    let body = null;
-    try { body = await resp.json(); } catch { body = null; }
-    if (!resp.ok) {
-      const msg = body && body.error && (body.error.message || JSON.stringify(body.error));
-      throw new Error(msg || ('HTTP ' + resp.status));
+    const maxTokens = Math.max(256, Math.min(16384, Number(o.maxTokens) || 4096));
+    const reqBody = { model: cfg.model, messages, temperature: 0.3, max_tokens: maxTokens };
+    if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
+    let resp = null, text = '', body = null;
+    try {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+        body: JSON.stringify(reqBody),
+        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
+      });
+    } catch (e) {
+      const timeout = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+      const msg = timeout ? `请求超时（${Math.round(LLM_TIMEOUT_MS / 1000)}s）` : ('网络错误：' + ((e && e.message) || e));
+      console.error(`[llm] ${msg}  url=${url} model=${cfg.model}`);
+      throw new LlmError(msg, timeout ? 'timeout' : 'net');
     }
-    const content = body && body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content;
-    if (!content) throw new Error('接口返回内容为空');
-    return content;
+    const retryAfter = Number(resp.headers.get('retry-after')) || 0;
+    try { text = await resp.text(); } catch { text = ''; }
+    try { body = JSON.parse(text); } catch { body = null; }
+    if (!resp.ok) {
+      const detail = (body && body.error && (body.error.message || JSON.stringify(body.error))) || text.slice(0, 300) || ('HTTP ' + resp.status);
+      const kind = resp.status === 429 ? 'rate' : (resp.status >= 500 ? 'net' : 'http');
+      console.error(`[llm] HTTP ${resp.status}（${kind}）model=${cfg.model}：${String(detail).slice(0, 300)}`);
+      throw new LlmError(`HTTP ${resp.status}：${String(detail).slice(0, 300)}`, kind, { status: resp.status, retryAfter });
+    }
+    const choice = body && body.choices && body.choices[0];
+    const message = choice && choice.message;
+    const finishReason = choice && choice.finish_reason;
+    const rawContent = (message && typeof message.content === 'string') ? message.content : '';
+    const reasoning = (message && typeof message.reasoning_content === 'string') ? message.reasoning_content : '';
+    const content = llmText.stripReasoning(rawContent);
+    const debugBase = { kind: o.kind || '', model: cfg.model, status: resp.status, finishReason, maxTokens };
+
+    if (!content) {
+      const why = reasoning
+        ? `模型只返回了思考过程（content 为空, 思考 ${reasoning.length} 字, finish_reason=${finishReason || '?'}）—— 多为 max_tokens 不够或该模型不支持非流式输出`
+        : `接口返回内容为空（finish_reason=${finishReason || '?'}）`;
+      console.error(`[llm] ${why} model=${cfg.model}`);
+      dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000), reasoning: reasoning.slice(0, 4000) }, debugBase));
+      throw new LlmError(why, 'empty', { finishReason });
+    }
+    if (finishReason === 'length') {
+      const why = `输出被 max_tokens 截断（finish_reason=length, max_tokens=${maxTokens}, 已收到 ${content.length} 字）—— 拆小批次重试`;
+      console.error(`[llm] ${why}`);
+      dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000) }, debugBase));
+      throw new LlmError(why, 'truncated', { finishReason, partial: content, maxTokens });
+    }
+    if (llmText.looksLikeReasoning(rawContent)) {
+      dumpLlmDebug(o.debugFile, Object.assign({ note: '含思维链, 已剥离', messages, raw: rawContent.slice(0, 20000), stripped: content.slice(0, 4000) }, debugBase));
+    }
+    return { content, finishReason, status: resp.status, maxTokens, strippedReasoning: rawContent.length !== content.length };
   }
 
   /** 落盘译文（每批一次），服务重启/刷新后可续翻 */
@@ -2217,45 +2261,67 @@ function handleRequest(req, res) {
   }
 
   /** 请求一次译文。strict=true 时追加"必须只输出 JSON 数组"的强化指令。 */
-  async function translateOnce(cfg, texts, strict) {
+  async function translateOnce(cfg, texts, strict, opts) {
+    const o = opts || {};
     const sys = systemPromptWithGlossary(cfg, strict);
-    const content = await llmChat(cfg, [
+    const r = await llmChat(cfg, [
       { role: 'system', content: sys },
       { role: 'user', content: texts.join('\n') },
-    ]);
-    const arr = parseTranslationReply(content, texts.length);
-    if (!arr) throw new Error('返回既不是 JSON 数组、也不是与输入等行数的逐行文本：' + String(content).slice(0, 120));
+    ], { maxTokens: o.maxTokens, debugFile: o.debugFile, kind: 'translate' });
+    const arr = parseTranslationReply(r.content, texts.length);
+    if (!arr) {
+      const head = String(r.content).slice(0, 300);
+      console.error(`[llm] 译文回复不合规（${texts.length} 行, finish_reason=${r.finishReason || '?'}）：${head}`);
+      throw new LlmError('返回既不是 JSON 数组、也不是与输入等行数的逐行文本：' + String(r.content).slice(0, 300), 'format', { rawHead: head });
+    }
     return arr;
   }
 
-  /** 翻译一组文本，带**升级式重试**：原提示词 → 强化指令 → 仍失败就**拆成两半**递归。
-   *  实测模型偶发无视 JSON 要求直接吐译文行，且同一批用同样提示词重试必然再失败，
-   *  所以要换策略 + 缩小批次，而不是原地重试。最多拆到单行。
+  /** 翻译一组文本，带**升级式重试**，并按错误类型分流（用户报"失效且定位不到"的根治）：
+   *  · 原提示词 → 强化指令 → 仍失败就**拆成两半**递归（最多拆到单行）
+   *  · `truncated`（输出被 max_tokens 砍断）：原样重试必然再失败 → **直接拆批**；单行还截断就放大 max_tokens 重试
+   *  · `rate`/`net`/`timeout`：指数退避（尊重 Retry-After）—— 限流时递归拆半只会把请求数翻倍，所以退避更重要
+   *  · `empty`（模型只吐思考过程）：换严格提示词再试一次，仍为空就带着明确原因失败
    *  成功返回与 texts 等长的译文数组；最终失败抛错（调用方决定怎么兜底）。 */
-  async function translateLines(cfg, texts, depth = 0) {
-    let lastErr = '';
+  async function translateLines(cfg, texts, depth = 0, debugFile = null) {
+    const maxTokens = Math.min(8192, Math.max(1024, texts.length * 220 + 512));
+    let lastErr = null;
     for (const strict of [false, true]) {
       for (let attempt = 0; attempt < 2; attempt++) {
-        try { return await translateOnce(cfg, texts, strict); }
+        try { return await translateOnce(cfg, texts, strict, { maxTokens, debugFile }); }
         catch (e) {
-          lastErr = String((e && e.message) || e);
-          await new Promise(r => setTimeout(r, 800));
+          lastErr = e;
+          const kind = e && e.kind;
+          if (kind === 'truncated') break;                       // 截断: 不原地重试
+          if (kind === 'net' || kind === 'rate' || kind === 'timeout') {
+            const wait = Math.min(10000, (e.retryAfter ? e.retryAfter * 1000 : 900 * Math.pow(3, attempt)));
+            await new Promise(r => setTimeout(r, wait));
+          } else {
+            await new Promise(r => setTimeout(r, 500));
+          }
         }
       }
+      if (lastErr && lastErr.kind === 'truncated') break;
+    }
+    // 单行仍然被截断 → 把 max_tokens 放大一倍再试（不能再拆了）
+    if (texts.length === 1 && lastErr && lastErr.kind === 'truncated' && depth < 6) {
+      try {
+        return await translateOnce(cfg, texts, 'strict', { maxTokens: Math.min(16384, maxTokens * 2), debugFile });
+      } catch (e) { lastErr = e; }
     }
     if (texts.length > 1 && depth < 5) {
       const mid = Math.ceil(texts.length / 2);
       try {
-        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1);
-        const b = await translateLines(cfg, texts.slice(mid), depth + 1);
+        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile);
+        const b = await translateLines(cfg, texts.slice(mid), depth + 1, debugFile);
         return a.concat(b);
-      } catch (e) { lastErr = String((e && e.message) || e); }
+      } catch (e) { lastErr = e; }
     }
-    throw new Error(lastErr || '翻译失败');
+    throw new Error(String((lastErr && lastErr.message) || lastErr || '翻译失败'));
   }
 
-  async function translateBatch(cfg, segs, idxs, depth) {
-    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth) }; }
+  async function translateBatch(cfg, segs, idxs, depth, debugFile) {
+    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth, debugFile) }; }
     catch (e) { return { texts: null, err: String((e && e.message) || e) }; }
   }
 
@@ -2491,8 +2557,9 @@ function handleRequest(req, res) {
             const cfgR = translateCfg();
             const before = segs.length;
             segs = await resegMod.resegWithLLM(
-              (messages) => llmChat(cfgR, messages), segs,
-              (frac, msg) => setRr({ stage: '语义分句中', progress: 72 + Math.round((frac || 0) * 3), message: msg || '语义分句中 …' }));
+              (messages, o) => llmChat(cfgR, messages, o).then(r => r.content), segs,
+              (frac, msg) => setRr({ stage: '语义分句中', progress: 72 + Math.round((frac || 0) * 3), message: msg || '语义分句中 …' }),
+              { splitOnComma: resegSplitOnComma(), onLog: (m) => setRr({ message: '语义分句中 … ' + m }) });
             setRr({ message: `语义分句完成：${before} 行 → ${segs.length} 行` });
           } catch (e) {
             setRr({ message: '语义分句失败，按标点/停顿兜底：' + String((e && e.message) || e).slice(0, 80) });
@@ -2508,7 +2575,8 @@ function handleRequest(req, res) {
           const chunks = Math.ceil(segs.length / TRANS_BATCH) || 1;
           try {
             for (let i = 0; i < segs.length; i += TRANS_BATCH) {
-              const part = await translateLines(cfg, segs.slice(i, i + TRANS_BATCH).map(s => s.text));
+              const part = await translateLines(cfg, segs.slice(i, i + TRANS_BATCH).map(s => s.text), 0,
+                path.join(projDir(id), 'llm-debug.jsonl'));
               translations.push(...part);
               setRr({ progress: 76 + Math.round((Math.floor(i / TRANS_BATCH) + 1) / chunks * 21),
                 message: `翻译中 … ${Math.floor(i / TRANS_BATCH) + 1}/${chunks} 批` });
@@ -2559,7 +2627,7 @@ function handleRequest(req, res) {
     for (let bi = 0; bi < batches.length; bi++) {
       const idxs = batches[bi];
       const t0 = Date.now();
-      const r = await translateBatch(cfg, segs, idxs, 0);
+      const r = await translateBatch(cfg, segs, idxs, 0, path.join(projDir(id), 'llm-debug.jsonl'));
       if (r.texts) {
         idxs.forEach((gi, k) => { lines[gi] = String(r.texts[k] == null ? '' : r.texts[k]); });
         saveTranslations(id, cfg.model, lines);      // 每批立刻落盘, 可续翻
@@ -2588,9 +2656,12 @@ function handleRequest(req, res) {
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
     const before = (data.segments || []).length;
     const segs2 = await resegMod.resegWithLLM(
-      (messages) => llmChat(cfg, messages),
+      // chat 注入: 带上诊断转储文件, 并把 llmChat 的新返回形状(content+元数据)拆成纯文本给 reseg
+      (messages, o) => llmChat(cfg, messages, Object.assign({ debugFile: path.join(projDir(id), 'llm-debug.jsonl') }, o))
+        .then(r => r.content),
       data.segments || [],
-      (frac, msg) => setDraft(id, { stage: STAGE.reseg, progress: 76 + Math.round((frac || 0) * 8), message: msg || '语义分句中 …' }));
+      (frac, msg) => setDraft(id, { stage: STAGE.reseg, progress: 76 + Math.round((frac || 0) * 8), message: msg || '语义分句中 …' }),
+      { splitOnComma: resegSplitOnComma(), onLog: (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [分句] ${m}`) });
     data.segments = segs2;
     const tmp = p + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(data));
@@ -3223,8 +3294,8 @@ function handleRequest(req, res) {
   if (pathname === '/api/translate/test' && req.method === 'POST') {
     const c = translateCfg();
     if (!llmReady(c)) return sendJson(res, 400, { error: '请先填写接口地址 / API Key / 模型名' });
-    llmChat(c, [{ role: 'user', content: '只回复一个单词：ok' }])
-      .then(t => sendJson(res, 200, { ok: true, reply: String(t).slice(0, 200) }))
+    llmChat(c, [{ role: 'user', content: '只回复一个单词：ok' }], { maxTokens: 512 })
+      .then(r => sendJson(res, 200, { ok: true, reply: String(r.content).slice(0, 200) }))
       .catch(e => sendJson(res, 200, { ok: false, error: String((e && e.message) || e) }));
     return;
   }
