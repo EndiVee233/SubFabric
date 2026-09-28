@@ -689,7 +689,10 @@ export function initProjects(ctx) {
       const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
         || (m.engine === 'nemo' && !d.gpu);
       let state, btn = '';
-      if (st.running || (m.needRuntime && rtSt.running)) {
+      if (m.cloud) {
+        // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
+        state = '<span class="sm-state ok">✓ 云端识别（免下载 · 免显卡 · 需要联网）</span>';
+      } else if (st.running || (m.needRuntime && rtSt.running)) {
         state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
       } else if (st.error) {
         state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
@@ -702,6 +705,7 @@ export function initProjects(ctx) {
       } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
       else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
       if (dlThis) btn = '';
+      else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
       else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
       const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
@@ -1066,7 +1070,7 @@ export function initProjects(ctx) {
     // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
     const hint = $('#np-hint');
     if (hint && asrStatus.pythonProbe && !asrStatus.pythonProbe.ok) {
-      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + ' —— Parakeet 模型需要 Python（详见创建后日志里的修复方法）；whisper.cpp 引擎不需要';
+      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + ' —— Parakeet 模型需要 Python（详见创建后日志里的修复方法）；whisper.cpp 与「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
     }
     npMaybeEnable();

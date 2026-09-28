@@ -1,4 +1,4 @@
-# SubFabric（字幕工作台）v1.6.1
+# SubFabric（字幕工作台）v1.7.0
 
 基于 Web 的字幕编辑器：视频播放 + 字幕实时叠加 + 时间轴 + 编辑面板。
 支持 **SRT 双语字幕**（主/副语言上下排列）与 **ASS 高级特效字幕**（libass 内核，卡拉OK/颜色/定位等特效完整还原）。
@@ -13,6 +13,7 @@ node editor/scripts/fetch-vendor.js
 py -3.12 -m venv asr/.venv
 asr/.venv/Scripts/pip.exe install -r asr/requirements.txt
 #   模型本体 631MB 不入库: 首次用「创建初稿」时界面会引导你选一个空目录下载
+#   ⚠ 想跳过这一整套（没显卡 / 没 Python / 不想下模型）: 初稿下拉里选「必剪 ASR（英语·云端免下载）」即可
 
 # 3) 启动本地服务器 (支持 Range, 可直接播放本地大视频)
 node editor/server.js
@@ -23,6 +24,22 @@ node editor/server.js
 > 仓库不含示例视频与字幕（体积较大）。启动后用工具栏导入自己的视频 / SRT / ASS；
 > 把媒体文件放到项目根目录，`/api/samples` 会自动列出，工具栏「示例」区一键加载。
 > 旧直连 `#/editor` 仍可用（跳过主界面直接进编辑器并自动加载示例，兼容旧用法与自动化测试）。
+
+## 云端识别（必剪 ASR）
+
+「创建初稿」的模型下拉里多了一个**什么都不用装**的选项：**必剪 ASR（英语·云端免下载）**。它把音频传给必剪（B 站）的云端识别接口，拿回逐词时间戳，再按本项目的老规矩生成逐词 ASS —— 与本地模型走的是同一条流水线（识别 → 可选说话人分离 → LLM 翻译 → 逐词字幕）。
+
+- **零依赖**：不用显卡、不用 Python 环境、不用下载 0.6~2.8GB 模型。实测 13 秒英文音频 → **2.9 秒**返回 4 句 / 31 个逐词时间戳
+- **只做英语**：与 Parakeet / whisper 两个本地模型定位一致；识别结果进**主语言轨**，中文字幕照旧由 LLM 翻译那一步生成
+- **必须显式选中**：它**不会**当"本地没装模型"时的兜底（云端识别要把音频传出去，不能替用户默认决定），设置页里也没有下载/删除按钮
+- **隐私**：音频会上传到 bilibili 服务器 —— 机密素材请改用本地模型
+- **接口是逆向出来的非公开协议**（`member.bilibili.com/x/bcut/rubick-interface`，`model_id=7`）：官方一改就失效。协议实现移植自 **MIT** 许可的 [SocialSisterYi/bcut-asr](https://github.com/SocialSisterYi/bcut-asr)（© 2022 社会易姐QwQ；授权声明见 `editor/bcut-asr.js` 文件头）。出问题时先跑探针看每一步：
+
+  ```bash
+  node tools/bcut_asr_probe.mjs 测试视频.mp4      # 视频自动抽音频 → 直连必剪 → 打印逐词结果
+  ```
+
+- 「选区重新识别」同样支持它（选区切出的音频走同一条云链路，时间戳加回区间偏移）
 
 ## 退出程序（任务栏托盘图标）
 
@@ -75,8 +92,10 @@ node editor/server.js
       | Parakeet TDT 0.6B v2 | sherpa-onnx(CUDA) | 661MB | 英语；**必须 CUDA GPU（N 卡）**，无 N 卡 / CUDA 装不上直接报错（不支持 CPU） |
       | Whisper large-v3-turbo | whisper.cpp(Vulkan) | 1.5GB | 英语；**必须 Vulkan GPU**，A 卡/N 卡/Intel 通用，实测 RTX 4060 Ti 约 4.7 倍实时；无 Vulkan 驱动直接报错（不支持 CPU） |
       | Multitalker Parakeet Streaming 0.6B v1 | NeMo(PyTorch·CUDA) | 2.8GB | 英语·多说话人（NVIDIA NeMo 说话人核注入）。**只用于「选区重新识别」，不能创建初稿**；**只能 N 卡**，CPU 推理直接报错；还需单独安装 NeMo 运行时（PyTorch + NeMo，约 5GB） |
+      | **必剪 ASR（bcut）** | 云端 HTTP | **0** | 英语；**免下载、免显卡、免 Python**，只要联网。音频会上传到 bilibili 服务器（机密素材别用）；非公开接口，官方改协议就会失效 |
       - A 卡用户：官方 whisper.cpp 不发 Windows Vulkan 包，改用社区预编译版（`jerryshell/whisper.cpp-windows-vulkan-bin`），运行时在设置里一键下载（~12MB）
       - **创建初稿只列前两款**（服务端双重拦截：`modelId` 指向 Multitalker 一律 400）；Multitalker 只从「设置 → 重新识别模型」进入
+      - **必剪 ASR 是唯一不需要装任何东西的模型**：没显卡、没 Python 环境也能直接开跑（实测 13 秒英文音频 3 秒出 31 个逐词时间戳）。它**不会**被当作兜底 —— 只有你在下拉里显式选中它才会用（云端识别要把音频传出去，不能替用户默认决定）；设置页里它没有「下载/删除」按钮
       - **Multitalker 的运行时是独立的一套**：设置里的「NeMo 运行时（多说话人）」单独安装（PyTorch + NeMo，约 5GB，装在本项目的 Python 环境里）。装完会自动实测「导入 + `torch.cuda.is_available()`」才算成功 —— PyPI 上的 Windows torch 是 CPU-only 轮子（实测 2.14.0+cpu），安装器会检测到并自动换装官方 cu126 索引的 CUDA 版；Windows 上大包安装偶发 `WinError 5`（杀软扫描锁文件），安装器会自动重试
       - **该模型要装两套权重**：主权重 2.3GB + 官方流式分离权重 450MB。分离权重不是可选项 —— NeMo 的 `SpeakerTaggedASR` 即使单说话人模式也要传 `diar_model` 对象（构造函数读 `diar_model._cfg.max_num_of_spks`），缺了直接报错。单说话人行为靠 `single_speaker_mode=True` + `max_num_of_spks=1` 触发（NeMo 内部据此把 `spk_targets` 强制全 1，只跑一个 ASR 实例）
       - **该模型吃内存**：fp32 权重 2.3GB，NeMo 在 CPU 侧实例化编码器（24 层）再载入权重，峰值约 6GB 可用内存 —— 内存不够时进程会**原生崩溃（0xC0000005）而不是抛 Python 异常**，所以 `multitalker.py` 在加载前用 `GlobalMemoryStatusEx` 预检可用内存，不足直接给一句人话。GPU 侧建议 8GB 显存起
@@ -182,6 +201,7 @@ asr/                     # 语音识别(创建初稿)—— 独立 Python 环境
 
 editor/
 ├── server.js            # 静态服务器(支持 Range / /api/samples / 项目系统 API / 初稿流水线 / 模型下载)
+├── bcut-asr.js          # 必剪(bcut)云端识别客户端(免模型/免显卡; 协议移植自 MIT 的 SocialSisterYi/bcut-asr)
 ├── index.html
 ├── css/style.css        # 深色主题三栏布局 + 主界面/新建项目对话框/初稿进度浮层
 ├── js/
@@ -213,6 +233,9 @@ node tests/karaoke-exhaustive.mjs # 穷举: 13 个场景 + 200 步随机压力, 
 powershell -File editor/scripts/tray.ps1 -Port 8321 -SelfTest   # 托盘图标 + 菜单能建起来
 powershell -File editor/scripts/tray.ps1 -Port 8321 -QuitOnce   # 走一遍完全退出(含端口释放)
 node tools/tray_quit_probe.mjs 8321                             # 真 Edge --app 窗口里验页面收尾
+
+# 必剪云端识别（不进项目流水线, 直连接口看每一步）
+node tools/bcut_asr_probe.mjs 测试视频.mp4                       # 抽音频 → 上传 → 识别 → 打印逐词
 ```
 
 无 DOM 依赖, 直接跑真实的 ass.js + karaoke.js（自动同步到 tests/jsmod/）。
@@ -267,4 +290,11 @@ node tools/tray_quit_probe.mjs 8321                             # 真 Edge --app
 - **退出的收尾顺序：先通知页面，再动手**：`shutdown()` 先 `broadcastLife('shutdown')`，600ms 后才杀子进程/关服务 —— 这 600ms 是留给页面把最后一个防抖保存用 `sendBeacon` 发出去的（前端收到事件会先手动派发一次 `beforeunload` 复用 `project.js` 的兜底保存，再 `window.close()`）。实测 Edge `--app` 窗口的 `window.close()` **生效**（217ms 关闭，`tools/tray_quit_probe.mjs` 可复现）；万一某个浏览器不让脚本关窗，页面会显示一条「已完全退出，可以关闭这个窗口了」的红条，而不是留下一个看着像卡死的界面。
 - **托盘用 PowerShell + WinForms `NotifyIcon`，不是 npm 托盘库**：SEA 单文件 exe 里装不了原生模块（托盘类库都要编译原生插件），而 Windows 一定自带 `powershell.exe` 与 .NET。两个坑：① **参数不能叫 `-Pid`** —— `$PID` 是 PowerShell 只读自动变量，绑定参数会直接报错（脚本里叫 `-ServerPid`，launcher 传的也得是这个名字，传错的表现是"服务日志说托盘已就绪，但进程秒退、日志文件都不生成"）；② **`tray.ps1` 必须存成 UTF-8 带 BOM** —— PowerShell 5.1 对无 BOM 的 UTF-8 按 GBK 解，中文菜单乱码、个别字节还会让整个脚本解析失败（改完这个文件记得补 BOM）。
 - **服务端退出时要跳过托盘进程**：托盘是 `server.js` 的子进程，但**不能**跟着一起强杀 —— 杀掉就没有 `NotifyIcon.Visible = $false`（NIM_DELETE），Windows 会留下一个"幽灵图标"（鼠标扫过才消失）。所以 `shutdown()` 杀子进程时 `p === trayProc` 直接 `continue`，让托盘自己收图标：托盘在「完全退出」里已经先摘图标，服务意外死掉时靠 1.5 秒一次的端口探测（连续 2 次探不到 → 摘图标退出）。
-- **Windows 11 会把新托盘图标收进 `∧` 隐藏区**：系统设置里"其他系统托盘图标"默认关闭，图标不是没出来，是在溢出面板里（已实测截图确认）。所以首次运行弹一次气泡提示告诉用户"右键图标 → 完全退出、图标可以拖出来"，并把这件事写进 README —— 不去改注册表 `NotifyIconSettings` 强行置顶（那会动用户的系统设置，且不同版本键值不稳定）。
+- **Windows 11 会把新托盘图标收进 `∧` 隐藏区**：系统设置里"其他系统托盘图标"默认关闭，图标不是没出来，是在溢出面板里（已实测截图确认）。所以首次运行气泡提示告诉用户"右键图标 → 完全退出、图标可以拖出来"，并把这件事写进 README —— 不去改注册表 `NotifyIconSettings` 强行置顶（那会动用户的系统设置，且不同版本键值不稳定）。
+- **云端模型（必剪）在每个"按本地文件判断"的地方都要特判**：`modelReady()` 直接 `return true`（没有文件可查）、`asrGpuGateError()` 第一句就 `return null`（云端不在本机推理，与三个本地引擎"必须 GPU"的要求正好相反）、`/api/asr/status` 的 `dir/missing/filesOk` 走另一套分支（否则会被显示成"未下载"）、创建项目时的 `missingModelFiles` 校验同样跳过 —— 漏掉任何一处，表现就是"下拉里看不到它"或"创建初稿直接 400"。
+- **`dirName` 为空串的坑：`POST /api/asr/delete` 差点把整个 models 目录清空**：云端模型没有目录，`modelDirFor()` 会退化成 `path.join(modelsRoot(), '')` = **模型根目录本身**，而删除接口的判据是 `dir.startsWith(modelsRoot())` → 判定为真 → `rmSync(dir, {recursive:true})` 把用户下载的所有模型一起删掉。现在删除接口对 `m.cloud` 直接 400（前端也不给「删除」按钮）；下载接口同理加拦 —— 不然 `modelFilesOk()` 会因为"没有文件清单且 sizeMB=0"直接判定"已完整"，把模型根目录当成本模型目录给"采纳"了。
+- **必剪的响应字段名与剪映不是一套**（别看错）：句子文本是 `transcript`（不是 `text`）、逐词文本是 `words[].label`（不是 `word`）、时间单位是**毫秒**；而且 `data.result` 是**一层字符串**，里面才是 `{"utterances":[…]}` 的 JSON，要再 `JSON.parse` 一次。解析失败/字段缺失时打印原始片段（`toSegments`）。
+- **云端识别没有子进程，取消得靠 `AbortController`**：`killDraftProc()` 原先只 kill `draftProcs` 里的子进程；云端任务是 `fetch` 挂在那里的，删项目/重跑时必须 `draftAborts.get(id).abort()`，否则旧任务会继续把音频传完、再回写一个已经删掉的项目。
+- **上传前先转 16k 单声道 64kbps mp3**：项目里的 `audio.wav` 是 16k 单声道 PCM，1 小时 ≈115MB；转成 mp3 后 1 小时 ≈28MB，上传更快、流量更省（`toBcutAudio()`，临时文件在上传结束/失败后都清）。
+- **只写逐词切片、没有「中文字幕」锚点行时，编辑器会按「>0.5s 间隔」重新分句**：实测必剪的 4 句（句间停顿 0.76s / 0.51s / 0.32s）在初稿阶段被并成 3 句 —— 这是既有设计（`analyzeKaraoke` 的未归属切片分组，Parakeet 初稿同样如此）；LLM 翻译写入中文锚点行后，按「归属（containment）」配对会精确还原成 4 句。所以**别把"初稿行数比 ASR 少"当成云端引擎的 bug**。
+- **ASS 头署名改为按项目实际模型**：原先写死 `Generated by K-ASS-Editor draft (Parakeet TDT 0.6B v2)`，用必剪出的初稿也这么署名会误导排查；现在 `assHeader(label)` 从 `meta.draft.modelId` 取模型名。

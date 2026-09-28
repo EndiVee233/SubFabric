@@ -146,5 +146,6 @@
   "热词强度（仅 Parakeet）": "Hotword weight (Parakeet only)",
   "填专有名词即可：whisper 引擎用作初始提示词（实测直接修正人名拼写）；Parakeet 引擎用作热词加权。术语表的「原文」列会自动并入，不用重复填。": "Enter proper nouns: whisper uses them as the initial prompt; Parakeet uses hotword boosting. Glossary source terms are merged in automatically.",
   "实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6": "Measured: 1.5 no effect / 3.0 works / ≥6 starts repeating, capped at 6",
-  "SubFabric 已完全退出，可以关闭这个窗口了": "SubFabric has fully exited — you can close this window now"
+  "SubFabric 已完全退出，可以关闭这个窗口了": "SubFabric has fully exited — you can close this window now",
+  "✓ 云端识别（免下载 · 免显卡 · 需要联网）": "✓ Cloud recognition (no download · no GPU · needs internet)"
 }
