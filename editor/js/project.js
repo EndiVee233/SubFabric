@@ -145,14 +145,16 @@ export function initProjects(ctx) {
    * 降噪后 → 视频静音, 播 audio.wav(ASR 听到的就是它, 方便判断降噪过头/不够); 原视频 → 正常视频出声。 */
   function syncAudioModeUI(m, bustCache) {
     const sel = $('#audio-mode');
-    const mode = (m.audio && m.audio.mode) || 'denoise';
+    // 默认未降噪(原视频); 用户显式切换过则记住其偏好(跨会话)
+    const saved = localStorage.getItem('sf-audio-mode');
+    const mode = saved || (m.audio && m.audio.mode) || 'raw';
     if (sel) sel.value = mode;
     setPlaybackAudioMode(mode, !!m.hasAudio, bustCache);
   }
   async function regenAudio() {
     if (!state.project) return;
     const btn = $('#btn-regen-audio');
-    const mode = ($('#audio-mode') && $('#audio-mode').value) || 'denoise';
+    const mode = ($('#audio-mode') && $('#audio-mode').value) || 'raw';
     btn.disabled = true;
     const old = btn.textContent;
     btn.textContent = '提取中…';
@@ -174,11 +176,12 @@ export function initProjects(ctx) {
     //   原视频 → 直接放视频自带原声(不必等提取); 降噪后 → 播放项目里降噪过的 audio.wav。
     // 以前这里只弹提示、播放音轨要等点了「↻ 重新生成音频」才变, 于是"切不回原声"。
     const want = audioModeSel.value;
-    const cur = (state.project && state.project.meta && state.project.meta.audio && state.project.meta.audio.mode) || 'denoise';
+    const cur = (state.project && state.project.meta && state.project.meta.audio && state.project.meta.audio.mode) || 'raw';
     const hasAudio = !!(state.project && state.project.meta && state.project.meta.hasAudio);
     // 播放音轨立刻切: 未提取过的那一侧只能先退回视频原声(无法凭空变出降噪音频)
     const playable = want === 'raw' ? null : (want === cur ? want : null);
     setPlaybackAudioMode(playable, hasAudio);
+    localStorage.setItem('sf-audio-mode', want);   // 记住用户显式选择(默认未降噪)
     if (want === cur) toast(t(want === 'denoise' ? '已切换为降噪后音频播放' : '已切换为原视频音频播放'), 3200);
     else toast(t('已切换播放音轨；识别与波形仍是「' + (cur === 'raw' ? '原视频' : '降噪后')
       + '」版本 —— 要按新选择重做识别，点「↻ 重新生成音频」'), 4000);
@@ -575,7 +578,6 @@ export function initProjects(ctx) {
       $('#ah-score').value = hint.hotwordsScore || 3;
     } catch { /* 识别提示词读不到不影响其它设置 */ }
     glLoad(c.glossary, c.glossaryLang);
-    $('#st-auto').checked = !!c.autoTranslate;
     renderAsrModels();
     bindModelDirSettings();
   }
@@ -922,7 +924,6 @@ export function initProjects(ctx) {
       prompt: $('#st-prompt').value,
       glossary: glSerialize(),
       glossaryLang: glState.lang,
-      autoTranslate: $('#st-auto').checked,
     };
   }
   async function postSettings() {

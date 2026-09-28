@@ -32,7 +32,7 @@
     <div class="tb-group tb-right">
       <span id="save-state" class="save-state" hidden title="编辑内容会实时自动保存到项目，不怕忘记导出"></span>
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
-      <button class="btn" id="btn-settings-ed" title="识别模型 / 字幕翻译（LLM）设置">⚙ 设置</button>
+      <button class="btn" id="btn-settings-ed" title="识别模型 / 字幕翻译（LLM）设置（与右侧「设置」页签区分）">🌐 全局设置</button>
       <button class="btn btn-accent" id="btn-export" disabled title="导出原始格式(含逐词特效)">💾 导出字幕</button>
     </div>
   </header>
@@ -83,7 +83,10 @@
             <option value="second">仅英文</option>
           </select>
           <button class="btn btn-mini" id="btn-refresh-subs" title="按字幕列表的干净整句 + 词级时间(JSON) 重新生成动态字幕(逐词切片), 并重新应用到视频区。程序漏更新时手动兜底；只修真的不一致的行，不改动本来就同步的行">↻ 刷新字幕</button>
-          <span class="cue-count" id="cue-count"></span>
+          <label class="switch switch-mini" title="自动滚动字幕列表到当前播放行">
+            <input type="checkbox" id="cb-follow-toolbar" checked>
+            <span class="switch-slider"></span>
+          </label>
           <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行" disabled>⚠ <span id="bad-count">0</span></button>
         </div>
       </div>
@@ -159,20 +162,22 @@
           <select id="set-locale" class="setting-select"></select>
           <span class="setting-val" id="set-locale-val"></span>
         </div>
+        <div class="setting-row setting-row-export">
+          <span class="setting-name">导出</span>
+          <div class="export-grid">
+            <button class="btn btn-mini" id="btn-export-zh" disabled title="导出仅中文 ASS(去掉英文行)">导出仅中文</button>
+            <button class="btn btn-mini" id="btn-export-en" disabled title="导出仅英文 ASS(去掉中文行)">导出仅英文</button>
+            <button class="btn btn-mini" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出无逐词</button>
+            <button class="btn btn-mini" id="btn-export-full" disabled title="导出原始格式(含逐词特效)">导出逐词字幕</button>
+          </div>
+        </div>
         <div class="setting-note">滚动：下滑=往前看 · 上滑=往后看 · Ctrl+滚轮=缩放。设置自动保存在本机浏览器。</div>
       </div>
 
-      <!-- F8 显隐区: 示例加载 与 导出干净 ASS / 词级 JSON(默认隐藏, 按 F8 显示) -->
+      <!-- F8 显隐区: 导出词级 JSON(默认隐藏, 按 F8 显示) -->
       <div id="f8-section" class="f8-section" hidden>
         <div class="f8-group">
-          <span class="f8-label">示例</span>
-          <button class="btn btn-ghost" id="btn-sample-video" title="加载工作区示例视频">视频</button>
-          <button class="btn btn-ghost" id="btn-sample-srt" title="加载示例双语 SRT">SRT</button>
-          <button class="btn btn-ghost" id="btn-sample-ass" title="加载示例特效 ASS">ASS</button>
-        </div>
-        <div class="f8-group">
           <span class="f8-label">导出</span>
-          <button class="btn" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出干净 ASS</button>
           <button class="btn" id="btn-export-json" disabled title="导出词级时间轴 JSON 映射">导出词级 JSON</button>
         </div>
         <div class="setting-note">按 <b>F8</b> 可隐藏/显示本区域。</div>
@@ -194,6 +199,7 @@
       <canvas id="timeline"></canvas>
       <div id="tl-menu" hidden>
         <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>
+        <button type="button" class="tl-menu-item" data-act="retranslate">🔁 重新翻译</button>
         <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除字幕块</button>
       </div>
       <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消) -->
@@ -280,6 +286,7 @@
   <!-- 字幕卡片右键菜单 -->
   <div id="card-menu" hidden>
     <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>
+    <button type="button" class="tl-menu-item" data-act="retranslate">🔁 重新翻译</button>
     <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除该条字幕</button>
   </div>
 
@@ -362,7 +369,7 @@
     <div class="home-toolbar">
       <h2 class="home-list-title">我的项目</h2>
       <div class="home-toolbar-btns">
-        <button class="btn" id="btn-settings" title="识别模型 / 字幕翻译设置">⚙ 设置</button>
+        <button class="btn" id="btn-settings" title="识别模型 / 字幕翻译设置">🌐 全局设置</button>
         <button class="btn btn-accent" id="btn-new-project">＋ 新建项目</button>
       </div>
     </div>
@@ -479,10 +486,6 @@
       <div class="gl-hint" style="margin-bottom:10px">识别模型与说话人模型都下到这里；各模型可同时下载互不阻塞。已有模型不会被移动，重新下载时才会用新位置。</div>
 
     <div class="st-sec">字幕翻译</div>
-    <label class="st-check">
-      <input type="checkbox" id="st-auto">
-      <span>创建初稿后自动翻译（不勾选就在项目卡片上手动点「翻译」）</span>
-    </label>
     <div class="st-row">
       <span class="st-lbl">服务商</span>
       <select id="st-provider" class="st-select"></select>

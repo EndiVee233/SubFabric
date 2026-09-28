@@ -93,6 +93,8 @@ html, body {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-3);
+  white-space: nowrap;   /* 空间不足时不许把按钮文字压成竖排 */
+  flex: none;
   color: var(--text-0);
   font-size: 13px;
   cursor: pointer;
@@ -279,8 +281,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 }
 #cue-spacer { position: relative; width: 100%; }
 .cue-card {
-  position: absolute; left: 8px; right: 8px;
-  height: 84px;
+  position: relative; left: 8px; right: 8px;
+  margin-bottom: 6px;
   display: flex; gap: 9px;
   padding: 7px 10px 7px 8px;
   background: #1a1a21;
@@ -322,11 +324,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .chip-l2 { color: #bdb7ff; border-color: #3d3a68; background: rgba(139,124,246,.12); }
 .cc-l1 {
   font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--zh);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: normal; word-break: break-word; overflow-wrap: anywhere;
 }
 .cc-l2 {
   font-size: 13.5px; line-height: 1.35; color: var(--en);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  white-space: normal; word-break: break-word; overflow-wrap: anywhere;
 }
 /* 新建字幕的占位提示(用户没输入就不会留下这条) */
 .cc-ph1 { color: #b06a45; font-weight: 500; }
@@ -458,6 +460,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .setting-row .range { flex: 1; width: auto; }
 .setting-val { flex: none; width: 64px; text-align: right; font-family: Consolas, monospace; font-size: 12px; color: var(--accent-2); }
 .setting-note { font-size: 11px; color: var(--text-2); line-height: 1.6; padding: 0 4px; }
+/* 导出按钮行: 标签不占 110px 固定宽; 按钮 2×2 网格对齐(行高一致) */
+.setting-row-export { flex-wrap: wrap; row-gap: 8px; }
+.setting-row-export .setting-name { width: auto; margin-right: 2px; align-self: flex-start; }
+.export-grid { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.export-grid .btn { width: 100%; display: inline-flex; justify-content: center; }
 
 /* F8 显隐区: 默认 hidden(见 main.js), 按 F8 切换 */
 .f8-section { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
@@ -483,6 +490,10 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   border-color: transparent;
 }
 .switch input:checked + .switch-slider::after { transform: translateX(18px); background: #1a1206; }
+/* 小尺寸开关(用于工具栏内联) */
+.switch-mini .switch-slider { width: 32px; height: 16px; border-radius: 8px; }
+.switch-mini .switch-slider::after { width: 10px; height: 10px; top: 2px; left: 2px; }
+.switch-mini input:checked + .switch-slider::after { transform: translateX(16px); }
 
 /* ── 重叠台词选择弹窗 ───────────────────────── */
 /* 注意: 用 top/right/bottom/left 而非 inset 简写 — 旧内核不支持 inset 会导致
@@ -606,6 +617,16 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 }
 #tl-canvas-wrap { flex: 1; min-height: 0; position: relative; }
 #timeline { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; }
+
+/* 时间轴边缘悬停提示(整体边界 / 首末词边界) */
+.tl-edge-hint {
+  position: fixed; z-index: 90; pointer-events: none;
+  background: rgba(18,18,24,.92); border: 1px solid var(--border);
+  color: #fff; font-size: 12px; line-height: 1.4;
+  padding: 4px 10px; border-radius: 6px;
+  white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,.4);
+}
+.tl-edge-hint[hidden] { display: none; }
 
 /* 时间轴右键菜单 / 字幕卡片右键菜单 */
 #tl-menu, #card-menu {

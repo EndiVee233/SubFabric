@@ -41,10 +41,8 @@ export class EditorPanel {
     this.phName = document.getElementById('ph-name');
     this.badBtn = document.getElementById('btn-bad-rows');
     this.badCountEl = document.getElementById('bad-count');
-    this.countEl = document.getElementById('cue-count');
     this.badgeEl = document.getElementById('badge-format');
     this.modeSel = document.getElementById('sel-display-mode');
-
     this.items = [];          // 全量
     this.filtered = [];       // 过滤后
     this.selected = null;
@@ -53,6 +51,7 @@ export class EditorPanel {
     this._badOnly = false;    // 只看异常行
     this._mode = 'bi';        // bi(双行) | first(仅主) | second(仅副)
     this._progScroll = false;
+    this.followPlayback = true;   // 播放时字幕列表自动滚到对应行(可在设置面板关闭)
 
     // 行内编辑状态
     this.editItem = null;     // 正在编辑的条目
@@ -521,6 +520,7 @@ export class EditorPanel {
         this._hideCardMenu();
         if (btn.dataset.act === 'delete' && item && this.onDeleteCard) this.onDeleteCard(item);
         else if (btn.dataset.act === 'fix' && item && this.onFixCard) this.onFixCard(item);
+        else if (btn.dataset.act === 'retranslate' && item && this.onRetranslateCard) this.onRetranslateCard(item);
       });
     }
     this.listEl.addEventListener('contextmenu', (e) => {
@@ -653,30 +653,18 @@ export class EditorPanel {
       if (!q) return true;
       return ((it.l1 || '').toLowerCase().includes(q)) || ((it.l2 || '').toLowerCase().includes(q));
     });
-    const parts = [];
-    if (this._speaker) parts.push(`角色「${this._speaker}」`);
-    if (this._badOnly) parts.push('⚠坏行');
-    if (this._filterText || this._badOnly || this._mode !== 'bi' || this._speaker) {
-      parts.push(`${this.filtered.length} / ${this.items.length} 条`);
-    } else {
-      parts.push(`${this.items.length} 条`);
-    }
-    this.countEl.textContent = parts.join(' · ');
-    this.spacerEl.style.height = (this.filtered.length * ROW_H) + 'px';
-    this.listEl.scrollTop = restoreTop;   // 高度先设好, 浏览器按新高度自动夹取
+    // 条数提示已按需求移除(工具栏不再显示 "17 / 658 条")
+    this.listEl.scrollTop = restoreTop;
     this._render();
   }
 
   _render() {
-    const scrollTop = this.listEl.scrollTop;
-    const viewH = this.listEl.clientHeight;
-    const start = Math.max(0, Math.floor(scrollTop / ROW_H) - 4);
-    const end = Math.min(this.filtered.length, Math.ceil((scrollTop + viewH) / ROW_H) + 4);
+    // 动态行高: 渲染全部 filtered, 每行高度由内容决定(spacerEl 自然撑开滚动区)
     const showFirst = this._mode !== 'second';
     const showSecond = this._mode !== 'first';
 
     let html = '';
-    for (let i = start; i < end; i++) {
+    for (let i = 0; i < this.filtered.length; i++) {
       const it = this.filtered[i];
       const cls = ['cue-card'];
       if (it === this.selected) cls.push('selected');
@@ -685,7 +673,7 @@ export class EditorPanel {
 
       // 角色(说话人)色: 卡片左标、中文行、两个样式徽标、三个时间值全部跟着它走
       const tone = it.color ? roleTone(it.color) : null;
-      const cardStyle = [`top:${i * ROW_H}px`];
+      const cardStyle = [];
       let chipAttr = '', timeAttr = '', l1Attr = '';
       if (tone) {
         const { r, g, b, css } = tone;
@@ -722,6 +710,20 @@ export class EditorPanel {
 
   refreshItem() { this._render(); }
 
+  /** 按播放时间定位到对应条目: 二分找 start<=t<end 的 item, 仅在**完全不可见**时滚到视野 */
+  selectByTime(t) {
+    const arr = this.items;
+    if (!arr || !arr.length) return;
+    let lo = 0, hi = arr.length - 1, idx = -1;
+    while (lo <= hi) {
+      const m = (lo + hi) >> 1;
+      if (arr[m].start <= t) { idx = m; lo = m + 1; } else hi = m - 1;
+    }
+    if (idx < 0) return;
+    const it = arr[idx];
+    if (t >= it.start && t < it.end) this.select(it, 'keep');
+  }
+
   /**
    * 选中条目.
    * scroll=true  — 未完全可见时滚到视野中部;
@@ -730,21 +732,22 @@ export class EditorPanel {
    */
   select(item, scroll = true) {
     this.selected = item;
+    this._render();    // 先渲染, 才能拿到真实 offsetTop / offsetHeight
     if (scroll && item) {
       const idx = this.filtered.indexOf(item);
-      if (idx !== -1) {
-        const top = idx * ROW_H;
+      const el = this.spacerEl.children[idx];
+      if (el) {
+        const top = el.offsetTop, h = el.offsetHeight;
         const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
         const need = scroll === 'keep'
-          ? (top + ROW_H <= st || top >= st + vh)   // 完全在视野外
-          : (top < st || top > st + vh - ROW_H);    // 部分不可见即居中
+          ? (top + h <= st || top >= st + vh)
+          : (top < st || top > st + vh);
         if (need) {
           this._progScroll = true;
-          this.listEl.scrollTop = Math.max(0, top - vh / 2);
+          this.listEl.scrollTop = Math.max(0, top + h / 2 - vh / 2);
         }
       }
     }
-    this._render();
   }
 
   /** 播放高亮: 由主循环以当前时间驱动 */
@@ -761,11 +764,15 @@ export class EditorPanel {
     if (found && performance.now() - (this._userScrollAt || 0) > 5000) {
       const idx = this.filtered.indexOf(found);
       if (idx !== -1) {
-        const top = idx * ROW_H;
-        const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
-        if (top < st || top > st + vh - ROW_H * 2) {
-          this._progScroll = true;
-          this.listEl.scrollTop = Math.max(0, top - vh / 2);
+        this._render();
+        const el = this.spacerEl.children[idx];
+        if (el) {
+          const top = el.offsetTop, h = el.offsetHeight;
+          const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
+          if (top < st || top > st + vh - h) {
+            this._progScroll = true;
+            this.listEl.scrollTop = Math.max(0, top + h / 2 - vh / 2);
+          }
         }
       }
     }
@@ -788,11 +795,13 @@ export class EditorPanel {
     // 正在把编辑转移到这一条(或刚开): 随后到达的 pointerdown/focusout 是**同一轮点击**的
     // 后续阶段, 不能当成"点了别处"再提交一次 —— 否则刚开好的编辑框会被立刻收掉。
     this._focusMovesAt = performance.now();
+    this._render();   // 先渲染, 编辑器才能贴到对应卡片的位置
     const div = document.createElement('div');
     this._editGen = (this._editGen || 0) + 1;      // 新编辑代次: 旧代次的延后收尾会自行作废
     const myGen = this._editGen;                   // 本编辑框自己的代次(focusout 里用它判别归属)
     div.className = 'inline-editor';
-    div.style.top = (idx * ROW_H + 6) + 'px';
+    const cardEl = this.spacerEl.children[idx];
+    div.style.top = ((cardEl ? cardEl.offsetTop : 0) + 6) + 'px';
     div.innerHTML = `
       <div class="ie-line ie-l1" contenteditable="true" spellcheck="false" data-ph="（输入中文）"></div>
       <div class="ie-line ie-l2" contenteditable="true" spellcheck="false" data-ph="（输入英文）"></div>
@@ -853,6 +862,19 @@ export class EditorPanel {
         else this._focusLine(1);      // 焦点不在两行上: 回到中文行
         return;
       }
+      // 上下方向键 = 模拟多行文本导航: 未到行边界先移到边界(↓→行尾 / ↑→行首), 已在边界才切另一行
+      if (e.key === 'ArrowDown' && !e.ctrlKey && !e.metaKey && !e.altKey && document.activeElement === l1) {
+        e.preventDefault();
+        if (this._caretOffset() < (l1.textContent || '').length) this._caretLine(l1, false);  // 不在行尾 → 先到行尾
+        else this._focusLine(2);                                                             // 已在行尾 → 切英文行
+        return;
+      }
+      if (e.key === 'ArrowUp' && !e.ctrlKey && !e.metaKey && !e.altKey && document.activeElement === l2) {
+        e.preventDefault();
+        if (this._caretOffset() > 0) this._caretLine(l2, true);   // 不在行首 → 先到行首
+        else this._focusLine(1);                                  // 已在行首 → 切中文行
+        return;
+      }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.commitEdit();            // 回车 = 直接提交
@@ -902,6 +924,19 @@ export class EditorPanel {
     const range = document.createRange();
     range.selectNodeContents(el);
     range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  /** 聚焦指定行并把光标放到行首(atStart=true)或行尾(false); 供上下键的行内边界导航用 */
+  _caretLine(el, atStart) {
+    if (!el) return;
+    el.focus();
+    this._focusedGen = this._editGen;
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(atStart);
     sel.removeAllRanges();
     sel.addRange(range);
   }

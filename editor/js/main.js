@@ -22,6 +22,9 @@ const tlDuration = document.getElementById('tl-duration');
 const rngFont = document.getElementById('rng-font');
 const btnExportClean = document.getElementById('btn-export-clean');
 const btnExportJson = document.getElementById('btn-export-json');
+const btnExportZh = document.getElementById('btn-export-zh');
+const btnExportEn = document.getElementById('btn-export-en');
+const btnExportFull = document.getElementById('btn-export-full');
 
 /* 双击视频默认会触发浏览器的原生全屏, 编辑字幕时很容易误触。这里禁掉：
  * ① controlsList 加 nofullscreen(控制条上不再有全屏按钮)
@@ -386,9 +389,12 @@ function setAss(text, name) {
   rebuildItemsAndLanes(true);
   assPlayer.load(state.assDoc.serialize());
   btnExport.disabled = false;
+  if (btnExportFull) btnExportFull.disabled = false;
   const hasKar = !!state.kar.wordStyle;
   btnExportClean.disabled = !hasKar;
   btnExportJson.disabled = !hasKar;
+  btnExportZh.disabled = !hasKar;
+  btnExportEn.disabled = !hasKar;
   statusFile.textContent = `${name} · ${state.kar.rows.length} 行 / ${state.kar.sentences.length} 句` + (hasKar ? '（逐词特效）' : '');
 }
 
@@ -1162,9 +1168,9 @@ function frReplaceAll() {
 
 /* ── 角色 tab ── */
 function frToggleMenu(which) {
-  const menu = fr.el[which + '-menu'];
+  const menu = fr.el['fr-' + which + '-menu'];
   if (!menu.hidden) { menu.hidden = true; return; }
-  const other = fr.el[which === 'src' ? 'dst-menu' : 'src-menu'];
+  const other = fr.el[which === 'src' ? 'fr-dst-menu' : 'fr-src-menu'];
   if (other) other.hidden = true;
   const roles = computeRoles();
   menu.innerHTML = roles.length
@@ -1319,22 +1325,50 @@ function reconcileKaraoke() {
  *  严格夹取——不越过前后词、不超出字幕块范围; **按住 Shift 也不放宽**。
  *  结果写回 ASS 的逐词切片(视频区高亮与导出都跟着变)。 */
 const WORD_MIN_GAP = 0.02;    // 每个词至少保留的时长(秒)
-timeline.onWordRetime = (row, idx, t, done) => {
+timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
   const en = row && row.en;
   const words = en && en.words;
   if (!words || !words[idx]) return;
   const w = words[idx];
-  const lo = idx > 0
-    ? words[idx - 1].s + WORD_MIN_GAP                      // 不能压到前一个词的起点
-    : Math.max(row.start, en.start);                       // 第一个词: 不超出字幕块
-  const hiRaw = Math.min(
-    w.e - WORD_MIN_GAP,                                    // 不能晚于自己的结束
-    (idx + 1 < words.length) ? words[idx + 1].s - WORD_MIN_GAP : Infinity   // 不能压过下一个词的起点
-  );
-  const hi = Math.max(lo, hiRaw);
-  const nt = Math.min(Math.max(t, lo), hi);
-  if (idx > 0) words[idx - 1].e = nt;                      // 共享边界: 前一个词的结束跟着移动
-  w.s = nt;
+  if (edge === 'end') {
+    // 拖末词的**结束**边界: 字幕块最后面 = 末词结束时间(块 end 同步延伸, 中英同行)
+    const lo = w.s + WORD_MIN_GAP;                           // 不能压过自己的开始
+    let hi = (video && video.duration) ? video.duration : Infinity;
+    if (hiLimit != null) hi = Math.min(hi, hiLimit);         // 不越过后一个字幕块
+    const nt = Math.min(Math.max(t, lo), Math.max(lo, hi));
+    w.e = nt;
+    if (idx + 1 < words.length) words[idx + 1].s = nt;       // 保险: 后一词起点贴上来
+    en.end = nt;
+    if (row.zh) {
+      row.zh.end = nt;
+      for (const ev of row.zh.events) state.assDoc.setEventTime(ev, row.zh.start, nt);
+    }
+    row.end = nt;
+  } else {
+    const blockEdge = edge === 'start' && idx === 0;         // 块左边缘拖首词: 字幕块起始时间跟着变
+    const lo = idx > 0
+      ? words[idx - 1].s + WORD_MIN_GAP                      // 不能压到前一个词的起点
+      : (blockEdge
+          ? (loLimit != null ? loLimit + 1e-3 : 0)           // 块边缘: 不越过前一个字幕块
+          : Math.max(row.start, en.start));                  // 词把柄拖动: 保持原约束(不超出字幕块)
+    const hiRaw = Math.min(
+      w.e - WORD_MIN_GAP,                                    // 不能晚于自己的结束
+      (idx + 1 < words.length) ? words[idx + 1].s - WORD_MIN_GAP : Infinity   // 不能压过下一个词的起点
+    );
+    const hi = Math.max(lo, hiRaw);
+    const nt = Math.min(Math.max(t, lo), hi);
+    if (idx > 0) words[idx - 1].e = nt;                      // 共享边界: 前一个词的结束跟着移动
+    w.s = nt;
+    if (blockEdge) {
+      // 块最前面 = 首词开始时间: 整块起点(含中文行)同步前移/后移
+      en.start = nt;
+      row.start = nt;
+      if (row.zh) {
+        row.zh.start = nt;
+        for (const ev of row.zh.events) state.assDoc.setEventTime(ev, nt, row.zh.end);
+      }
+    }
+  }
   en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
   if (done) {
     assPlayer.updateNow(state.assDoc.serialize());
@@ -1943,6 +1977,17 @@ function stripLeadSpeakerTag(text) {
   return String(text || '').replace(/^(\s*\{[^}]*\})*\s*\[[^\]]+\]\s*/, '');
 }
 
+/** 合并时的"纯文本"处理: 去掉颜色覆盖标签({\c&H..&}/{\c}/{\1c..})与行首说话人名字标签 [..],
+ *  换行(\N)转空格。合句时后段经此处理后以纯文本并入上一句, 不再带有后段的颜色/角色标记。 */
+function stripColorAndNameTags(text) {
+  return String(text || '')
+    .replace(/\{\\[1234]?c(?:&H[0-9A-Fa-f]{6}&)?\}/g, '')  // 颜色覆盖标签
+    .replace(/^\s*\[[^\]]+\]\s*/, '')                        // 行首说话人名字标签
+    .replace(/\\[Nn]/g, ' ')                                 // 换行 → 空格
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** 中文按英文词数比例切: 中英本来就是同一句的两种语言(或同一句的译文), 按词数比例最稳。 */
 function splitZhText(zhText, k, nEn) {
   const zh = stripLeadSpeakerTag(zhText).trim();
@@ -1978,7 +2023,13 @@ function splitRowAt(item, enPlainText, caret) {
   if (!(st > t0 && st < t1)) { toast('切分点太靠近边缘，无法分句'); return false; }
 
   const zhText = row.zh ? (row.zh.text || '') : '';
-  const [zhA, zhB] = splitZhText(zhText, k, totW);
+  // 行首标签块(颜色覆盖 + 说话人名字标签 [..]): 分句后前后段都应保留同样的名字标签
+  const zhTagM = /^\s*(\{\\[^}]*\})*\s*(\[[^\]]+\]\s*)?/.exec(zhText);
+  const zhTag = zhTagM ? zhTagM[0] : '';
+  const zhBody = zhText.slice(zhTag.length);
+  const [zhA0, zhB0] = splitZhText(zhBody, k, totW);
+  const zhA = (zhTag + zhA0).trim();
+  const zhB = (zhTag + zhB0).trim();
   const enA = enPlain.split(' ').filter(Boolean).slice(0, k).join(' ');
   if (!enA || !enRest) { toast('切分点太靠近边缘，无法分句'); return false; }
 
@@ -2043,10 +2094,12 @@ function mergeRowWithPrev(item) {
 
   const start = Math.min(prev.start, row.start);
   const end = Math.max(prev.end, row.end);
-  const zhA = stripLeadSpeakerTag(prev.zh ? prev.zh.text : '').trim();
-  const zhB = stripLeadSpeakerTag(row.zh ? row.zh.text : '').trim();
-  const enA = (prev.en ? prev.en.text : '').replace(/\s+/g, ' ').trim();
-  const enB = (row.en ? row.en.text : '').replace(/\s+/g, ' ').trim();
+  // 前段保留原样(含其名字标签与可能的颜色标签); 后段剥掉颜色标签与名字标签, 以纯文本并入上一句
+  const normN = (t) => String(t || '').replace(/\\[Nn]/g, ' ');
+  const zhA = normN(prev.zh ? prev.zh.text : '');
+  const enA = normN(prev.en ? prev.en.text : '');
+  const zhB = stripColorAndNameTags(row.zh ? row.zh.text : '');
+  const enB = stripColorAndNameTags(row.en ? row.en.text : '');
   const zhText = [zhA, zhB].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   const enText = [enA, enB].filter(Boolean).join(' ')
     .replace(/\s+([,.!?;:、。])/g, '$1').replace(/\s+/g, ' ').trim();
@@ -2091,6 +2144,45 @@ panel.onMergePrev = (item) => {
   catch (e) { toast('合并失败: ' + ((e && e.message) || e), 4200); }
 };
 
+/** 右键「重新翻译」: 取该条英文行 → LLM 翻译成中文 → 保留原行首标签(颜色/[角色])回填中文行 */
+async function retranslateRow(item) {
+  if (!item) return;
+  const row = item.ref;
+  if (!row) return;
+  const enText = String(row.en ? row.en.text : '').replace(/\s+/g, ' ').trim();
+  if (!enText) { toast('这一条没有英文内容，无法翻译'); return; }
+  toast('正在重新翻译该行…', 2400);
+  try {
+    const r = await fetch('/api/translate/one', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: enText })
+    });
+    const m = await r.json().catch(() => ({}));
+    if (!r.ok || !m.zh) { toast('翻译失败: ' + (m.error || '空结果'), 4600); return; }
+    // 行首 {\c...} 颜色标签由 applyAnchorSentence 自动从原事件继承; 这里补回 [角色] 名字前缀
+    const zhRaw = row.zh ? (row.zh.text || '') : '';
+    const tagM = /^\s*(\{\\[^}]*\})*\s*(\[[^\]]+\]\s*)?/.exec(zhRaw);
+    const tag = tagM ? tagM[0] : '';
+    if (row.zh) applyAnchorSentence(row.zh, row.start, row.end, (tag + m.zh).trim());
+    assPlayer.updateNow(state.assDoc.serialize());
+    rebuildItemsAndLanes(true, true);
+    toast('已重新翻译该行');
+  } catch (e) {
+    toast('翻译失败: ' + ((e && e.message) || e), 4600);
+  }
+}
+panel.onRetranslateCard = (item) => {
+  try { retranslateRow(item); }
+  catch (e) { toast('翻译失败: ' + ((e && e.message) || e), 4600); }
+};
+timeline.onRetranslate = (ref) => {
+  const item = state.itemByRef.get(ref);
+  if (!item) return;
+  try { retranslateRow(item); }
+  catch (e) { toast('翻译失败: ' + ((e && e.message) || e), 4600); }
+};
+
 // 「▶ 播放」按钮已移除: 点击右侧列表条目即定位播放并进入编辑
 // 右下角「插入 / 删除」按钮已移除: 时间轴空白处拖动=新建, 右键块=删除, 不再重复提供。
 
@@ -2111,6 +2203,23 @@ btnExport.addEventListener('click', () => {
     download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_edited.ass', state.assDoc.serialize());
   }
 });
+
+/* 按语言过滤导出 ASS: lang='zh' 只保留中文整句样式行, lang='en' 只保留英文逐词样式行 */
+function buildLangAss(doc, sentences, wordStyle, lang) {
+  const cut = doc.eventsFormatLineIdx != null ? doc.eventsFormatLineIdx + 1 : doc.lines.length;
+  const head = doc.lines.slice(0, cut).filter(l => l !== null);
+  const body = sentences
+    .filter(sent => lang === 'zh' ? (sent.style !== wordStyle) : (sent.style === wordStyle))
+    .map(sent => {
+      const ev = sent.events[0];
+      return doc._buildDialogueLine({
+        layer: sent.proto.layer, style: sent.style, name: sent.proto.name,
+        effect: sent.proto.effect, margins: sent.proto.margins,
+        start: sent.start, end: sent.end, text: ev.text
+      });
+    });
+  return head.concat(body).join('\r\n');
+}
 
 /* 导出无逐词效果的干净 ASS */
 btnExportClean.addEventListener('click', () => {
@@ -2139,6 +2248,25 @@ btnExportJson.addEventListener('click', () => {
   download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_words.json', JSON.stringify(data, null, 2));
   toast('已导出词级时间轴 JSON');
 });
+
+/* 导出仅中文 ASS */
+btnExportZh.addEventListener('click', () => {
+  if (state.format !== 'ass' || !state.kar) return;
+  const ass = buildLangAss(state.assDoc, state.kar.sentences, state.kar.wordStyle, 'zh');
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_zh.ass', ass);
+  toast('已导出仅中文 ASS');
+});
+
+/* 导出仅英文 ASS */
+btnExportEn.addEventListener('click', () => {
+  if (state.format !== 'ass' || !state.kar) return;
+  const ass = buildLangAss(state.assDoc, state.kar.sentences, state.kar.wordStyle, 'en');
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_en.ass', ass);
+  toast('已导出仅英文 ASS');
+});
+
+/* 导出逐词字幕(设置面板里的入口, 与顶部「导出字幕」同一逻辑) */
+if (btnExportFull) btnExportFull.addEventListener('click', () => btnExport.click());
 
 /* ═══════════ 工具栏 / 文件 / 拖放 ═══════════ */
 document.getElementById('btn-open-video').addEventListener('click', () => document.getElementById('file-video').click());
@@ -2170,7 +2298,7 @@ rngFont.addEventListener('input', () => {
   if (rngFontVal) rngFontVal.textContent = parseFloat(rngFont.value).toFixed(2) + ' ×';
 });
 
-/* F8: 显隐设置里的「示例 / 导出干净ASS·JSON」区(默认隐藏, 避免工具栏杂乱) */
+/* F8: 显隐「导出词级 JSON」区(默认隐藏, 避免设置面板杂乱) */
 const f8Section = document.getElementById('f8-section');
 if (f8Section) {
   f8Section.hidden = true;     // 默认隐藏
@@ -2180,7 +2308,7 @@ if (f8Section) {
     const show = f8Section.hidden;
     f8Section.hidden = !show;
     if (show) panel.showTab('settings');   // 切到设置, 让用户看到刚展开的区域
-    toast(show ? '已显示：示例 / 导出干净 ASS·JSON（再按 F8 隐藏）' : '已隐藏示例与导出区');
+    toast(show ? '已显示：导出词级 JSON（再按 F8 隐藏）' : '已隐藏导出词级 JSON 区');
   });
 }
 
@@ -2375,6 +2503,28 @@ if (setRole) setRole.addEventListener('change', () => {
 });
 applyRoleAnnot(false);
 
+/* 字幕列表跟随播放进度: timeupdate 节流触发 selectByTime, 开关在字幕列表工具栏 */
+const FOLLOW_KEY = 'sf-follow-playback';
+const cbFollowToolbar = document.getElementById('cb-follow-toolbar');
+function applyFollowToolbar() {
+  panel.followPlayback = localStorage.getItem(FOLLOW_KEY) !== '0';   // 默认开启
+  if (cbFollowToolbar) cbFollowToolbar.checked = panel.followPlayback;
+}
+if (cbFollowToolbar) cbFollowToolbar.addEventListener('change', () => {
+  panel.followPlayback = cbFollowToolbar.checked;
+  localStorage.setItem(FOLLOW_KEY, panel.followPlayback ? '1' : '0');
+});
+applyFollowToolbar();
+
+let _followRaf = null;
+video.addEventListener('timeupdate', () => {
+  if (!panel.followPlayback || _followRaf) return;
+  _followRaf = requestAnimationFrame(() => {
+    _followRaf = null;
+    if (panel.followPlayback) panel.selectByTime(video.currentTime);
+  });
+});
+
 /* 界面语言: 设置里切换(zh-CN / en-US), 语言文件在 lang/<locale>.json 可自行增改 */
 const setLocaleSel = document.getElementById('set-locale');
 const setLocaleVal = document.getElementById('set-locale-val');
@@ -2445,12 +2595,13 @@ requestAnimationFrame(tick);
   const btnV = document.getElementById('btn-sample-video');
   const btnS = document.getElementById('btn-sample-srt');
   const btnA = document.getElementById('btn-sample-ass');
-  if (!firstVideo) btnV.disabled = true;
-  if (!firstSrt) btnS.disabled = true;
-  if (!firstAss) btnA.disabled = true;
-  if (firstVideo) btnV.addEventListener('click', () => loadVideoUrl(firstVideo.url, firstVideo.name));
-  if (firstSrt) btnS.addEventListener('click', () => loadSubUrl(firstSrt.url, firstSrt.name));
-  if (firstAss) btnA.addEventListener('click', () => loadSubUrl(firstAss.url, firstAss.name));
+  // 示例按钮已从设置面板移除(可能为 null): 仅为旧 DOM 兼容保留空保护
+  if (!firstVideo && btnV) btnV.disabled = true;
+  if (!firstSrt && btnS) btnS.disabled = true;
+  if (!firstAss && btnA) btnA.disabled = true;
+  if (firstVideo && btnV) btnV.addEventListener('click', () => loadVideoUrl(firstVideo.url, firstVideo.name));
+  if (firstSrt && btnS) btnS.addEventListener('click', () => loadSubUrl(firstSrt.url, firstSrt.name));
+  if (firstAss && btnA) btnA.addEventListener('click', () => loadSubUrl(firstAss.url, firstAss.name));
 
   // 自动加载示例视频 + 示例 SRT, 开箱即用
   // 延迟到 window load 之后: 避免大视频流阻塞页面 load 事件

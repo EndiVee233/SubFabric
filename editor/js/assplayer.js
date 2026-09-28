@@ -28,22 +28,44 @@ export class AssPlayer {
     this.ready = false;
     this.error = null;
     this.onStatus('libass 初始化中(载入 WASM 与中文字体)…');
-    // 等 video 有尺寸后再建, 否则 canvas 可能为 0
     const create = () => {
-      this.instance = new SubtitlesOctopus({
-        video: this.video,
-        subContent: assText,
-        workerUrl: WORKER_URL,
-        fonts: [FONT_URL],
-        fallbackFont: FONT_URL,
-        availableFonts: {
-          'noto sans cjk sc': [FONT_URL]
-        },
-        onReady: () => { this.ready = true; this.passThroughClicks(); this.onStatus('ASS 渲染就绪'); },
-        onError: (e) => { this.error = String(e && e.message || e); this.onStatus('ASS 渲染错误: ' + (e && e.message || e)); }
-      });
-      this.passThroughClicks();
+      try {
+        this.instance = new SubtitlesOctopus({
+          video: this.video,
+          subContent: assText,
+          workerUrl: WORKER_URL,
+          fonts: [FONT_URL],
+          fallbackFont: FONT_URL,
+          availableFonts: {
+            'noto sans cjk sc': [FONT_URL]
+          },
+          onReady: () => {
+            this.ready = true;
+            clearTimeout(this._initTimer);
+            this.passThroughClicks();
+            this.onStatus('ASS 渲染就绪');
+          },
+          onError: (e) => {
+            this.error = String(e && e.message || e);
+            clearTimeout(this._initTimer);
+            this.onStatus('ASS 渲染错误: ' + (e && e.message || e));
+          }
+        });
+        this.passThroughClicks();
+      } catch (e) {
+        // worker/wasm/字体 404 (vendor 未下载) 等启动失败: 给出可执行的修复指引, 而不是永远卡在"初始化中"
+        this.error = String(e && e.message || e);
+        this.onStatus('ASS 渲染器启动失败: ' + this.error
+          + ' —— 请运行 node editor/scripts/fetch-vendor.js 下载渲染依赖后刷新页面');
+      }
     };
+    // 兜底: onReady/onError 都不来(如 worker 静默 404)时, 超时给出提示
+    clearTimeout(this._initTimer);
+    this._initTimer = setTimeout(() => {
+      if (!this.ready && !this.error) {
+        this.onStatus('libass 初始化超时 —— 请确认 editor/vendor 已就绪: node editor/scripts/fetch-vendor.js');
+      }
+    }, 8000);
     if (this.video.videoWidth > 0) create();
     else {
       const v = this.video;

@@ -597,7 +597,7 @@ function translateCfg() {
     baseUrl: t.baseUrl || (preset ? preset.baseUrl : ''),
     apiKey: t.apiKey || '',
     model: t.model || (preset ? preset.model : ''),
-    autoTranslate: !!t.autoTranslate,
+    autoTranslate: t.autoTranslate !== false,
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
     glossaryLang: t.glossaryLang || '简体',
@@ -2241,7 +2241,7 @@ function handleRequest(req, res) {
     }
     pendingAsr.set(id, { wordLevel });
     setDraft(id, { status: 'running', stage: STAGE.extract, progress: 3, message: '重新提取音频与波形…', error: null, failedStage: '' });
-    startPrepare(id, meta.video && meta.video.path, (meta.audio && meta.audio.mode) || 'denoise');
+    startPrepare(id, meta.video && meta.video.path, (meta.audio && meta.audio.mode) || 'raw');
     return { ok: true, from: 'extract' };
   }
 
@@ -3022,6 +3022,19 @@ function handleRequest(req, res) {
       .catch(e => sendJson(res, 200, { ok: false, error: String((e && e.message) || e) }));
     return;
   }
+  /* 单条翻译: 字幕列表/时间轴右键「重新翻译」—— 把一条英文行翻成中文行(前端自动回填) */
+  if (pathname === '/api/translate/one' && req.method === 'POST') {
+    const c = translateCfg();
+    if (!llmReady(c)) return sendJson(res, 400, { error: '翻译未配置：请先在设置里填写接口地址 / API Key / 模型名' });
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      let text = '';
+      try { text = String((JSON.parse(body.toString('utf8')) || {}).text || '').trim(); } catch {}
+      if (!text) return sendJson(res, 400, { error: '缺少 text' });
+      translateLines(c, [text], 0)
+        .then(arr => sendJson(res, 200, { zh: String((arr && arr[0]) || '').trim() }))
+        .catch(e => sendJson(res, 500, { error: String((e && e.message) || e) }));
+    });
+  }
   if (pathname === '/api/media' && req.method === 'GET') {
     const p = u.searchParams.get('path') || '';
     const full = path.normalize(p);
@@ -3279,7 +3292,7 @@ function handleRequest(req, res) {
         meta.video = { path: vp, name: path.basename(vp) };
         touchMeta(meta);
         const v = metaView(meta);
-        if (!v.hasPeaks) startPrepare(id, vp, (meta.audio && meta.audio.mode) || 'denoise');
+        if (!v.hasPeaks) startPrepare(id, vp, (meta.audio && meta.audio.mode) || 'raw');
         return sendJson(res, 200, metaView(meta));
       });
     }
@@ -3294,7 +3307,7 @@ function handleRequest(req, res) {
       return readBody(req, res, 4 * 1024, (err2, body) => {
         let opts = {};
         if (!err2 && body && body.length) { try { opts = JSON.parse(body.toString('utf8')) || {}; } catch {} }
-        const curMode = (meta.audio && meta.audio.mode) || 'denoise';
+        const curMode = (meta.audio && meta.audio.mode) || 'raw';
         const mode = opts.mode === 'raw' || opts.mode === 'denoise' ? opts.mode : curMode;
         if (!opts.force && v.hasPeaks) return sendJson(res, 200, metaView(readMeta(id)));
         startPrepare(id, meta.video.path, mode);

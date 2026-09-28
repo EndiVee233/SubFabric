@@ -411,6 +411,7 @@ export class Timeline {
         this._hideMenu();
         if (act === 'delete' && cue && this.onDelete) this.onDelete(cue.ref);
       else if (act === 'fix' && cue && this.onFix) this.onFix(cue.ref);
+      else if (act === 'retranslate' && cue && this.onRetranslate) this.onRetranslate(cue.ref);
       });
     }
 
@@ -435,6 +436,7 @@ export class Timeline {
     cv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;               // 右键交给 contextmenu
       this._hideMenu();
+      this._hideEdgeHint();
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 合成事件无捕获 */ }
       const x = e.offsetX, y = e.offsetY;
       const onLane = this._laneIndexAtY(y) !== -1;
@@ -471,6 +473,25 @@ export class Timeline {
           if (Math.abs(x - csx) <= EDGE_TOL) part = 'left';
           else if (Math.abs(x - cex) <= EDGE_TOL) part = 'right';
         }
+        // 边缘拖动按鼠标在块的上下半区分: 上半=整块边界(onRetime), 下半=首/末词细调(onWordRetime)
+        if ((part === 'left' || part === 'right') && this.onWordRetime && c.words && c.words.length) {
+          const li2 = this._laneIndexAtY(y);
+          const yy2 = this._laneTop(li2), lh2 = this._laneH(li2);
+          const band = c.half ? bandOf(c, yy2, lh2) : { y: yy2, h: lh2 };
+          if (y >= band.y + band.h / 2) {
+            const idx = part === 'left' ? 0 : c.words.length - 1;
+            this._selCueRef = c.row || c.ref;
+            this._wordDrag = { cue: c.row || c.ref, ref: c.ref, idx };
+            // 左边缘=调首词开始(块起始同步); 右边缘=调末词**结束**(块 end 同步延伸)
+            const nb = this._neighbors(c);
+            this._drag = { type: 'word', cue: c, idx, x0: x, y0: y, moved: false,
+              edge: part === 'left' ? 'start' : 'end',
+              loLimit: part === 'left' ? nb.prevEnd : null,
+              hiLimit: part === 'left' ? null : nb.nextStart };
+            if (this.onSelect) this.onSelect(c.ref, { seek: false });
+            return;
+          }
+        }
         const n = this._neighbors(c);
         this._drag = {
           type: 'cue', part, cue: c, x0: x, y0: y, moved: false,
@@ -490,13 +511,33 @@ export class Timeline {
         let cursor = 'default';
         if (this._laneIndexAtY(y) !== -1) {
           const wh0 = this._hitWordHandle(x, y);
-          if (wh0 && (!this.isEditable || this.isEditable(wh0.cue.ref))) { cv.style.cursor = 'ew-resize'; return; }
+          if (wh0 && (!this.isEditable || this.isEditable(wh0.cue.ref))) {
+            cv.style.cursor = 'ew-resize'; this._hideEdgeHint(); return;
+          }
           const hit = this._hitTest(x, y, true);
           if (hit && (!this.isEditable || this.isEditable(hit.cue.ref))) {
-            const csx = this.t2x(hit.cue.start), cex = this.t2x(hit.cue.end);
-            const onEdge = cex - csx >= 8 && (Math.abs(x - csx) <= EDGE_TOL || Math.abs(x - cex) <= EDGE_TOL);
-            cursor = onEdge ? 'ew-resize' : 'move';
-          } else cursor = 'crosshair';
+            const c = hit.cue;
+            const csx = this.t2x(c.start), cex = this.t2x(c.end);
+            const onL = cex - csx >= 8 && Math.abs(x - csx) <= EDGE_TOL;
+            const onR = cex - csx >= 8 && Math.abs(x - cex) <= EDGE_TOL;
+            if (onL || onR) {
+              cv.style.cursor = 'ew-resize';
+              // 悬停提示: 上半=整体边界 / 下半=首末词边界
+              const li2 = this._laneIndexAtY(y);
+              const yy2 = this._laneTop(li2), lh2 = this._laneH(li2);
+              const band = c.half ? bandOf(c, yy2, lh2) : { y: yy2, h: lh2 };
+              const lower = y >= band.y + band.h / 2;
+              const text = onL
+                ? (lower ? '拖动：调整首词边界' : '拖动：整体调整左边界')
+                : (lower ? '拖动：调整末词边界' : '拖动：整体调整右边界');
+              this._showEdgeHint(e.clientX, e.clientY, text);
+              return;
+            }
+            this._hideEdgeHint();
+            cursor = 'move';
+          } else { this._hideEdgeHint(); cursor = 'crosshair'; }
+        } else {
+          this._hideEdgeHint();
         }
         cv.style.cursor = cursor;
         return;
@@ -506,7 +547,9 @@ export class Timeline {
       d.moved = true;
 
       if (d.type === 'word') {
-        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(x), false);
+        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(x), false, d.edge, d.hiLimit, d.loLimit);
+        if (d.edge === 'end') d.cue.end = this.x2t(x);                     // 拖动中块宽度实时跟随(松手 rebuild 校正)
+        else if (d.edge === 'start' && d.idx === 0) d.cue.start = this.x2t(x);
         return;
       }
       if (d.type === 'range') {
@@ -547,7 +590,7 @@ export class Timeline {
       if (!d) return;
       const t = this._clampT(this.x2t(e.offsetX));
       if (d.type === 'word') {
-        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true);
+        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true, d.edge, d.hiLimit, d.loLimit);
         this._wordDrag = null;
         return;
       }
@@ -576,6 +619,7 @@ export class Timeline {
       if (this.onSeek) this.onSeek(t);
     };
     cv.addEventListener('pointerup', finishDrag);
+    cv.addEventListener('pointerleave', () => this._hideEdgeHint());
     cv.addEventListener('pointercancel', () => { this._drag = null; });
 
     // 点画布/菜单以外的地方 → 收起菜单
@@ -585,6 +629,22 @@ export class Timeline {
       this._hideMenu();
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this._hideMenu(); });
+  }
+
+  /** 边缘悬停提示: 跟随鼠标的小浮层(告诉用户当前拖的是整体边界还是首末词边界) */
+  _showEdgeHint(cx, cy, text) {
+    if (!this._hintEl) {
+      this._hintEl = document.createElement('div');
+      this._hintEl.className = 'tl-edge-hint';
+      document.body.appendChild(this._hintEl);
+    }
+    this._hintEl.textContent = text;
+    this._hintEl.hidden = false;
+    this._hintEl.style.left = (cx + 14) + 'px';
+    this._hintEl.style.top = (cy + 16) + 'px';
+  }
+  _hideEdgeHint() {
+    if (this._hintEl && !this._hintEl.hidden) this._hintEl.hidden = true;
   }
 
   _showMenu(cx, cy, cue) {
