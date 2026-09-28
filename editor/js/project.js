@@ -546,6 +546,58 @@ export function initProjects(ctx) {
   const stOverlay = $('#st-overlay');
   let stPresets = [];
 
+  /* ── 全局设置: 页签切换 + 热词块状编辑(一格一个单词) ── */
+  document.querySelectorAll('.st-tab').forEach(tab => tab.addEventListener('click', () => {
+    document.querySelectorAll('.st-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.st-panel').forEach(p => p.classList.toggle('active', p.dataset.stp === tab.dataset.stp));
+  }));
+  function hotwordRow(val) {
+    const row = document.createElement('div');
+    row.className = 'hotword-row';
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.className = 'st-input hotword-input'; inp.spellcheck = false;
+    inp.placeholder = '一个单词'; inp.value = val || '';
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); const add = $('#ah-add'); if (add) add.click(); }
+    });
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'btn btn-mini hotword-del'; del.textContent = '−'; del.title = '删除该热词';
+    row.append(inp, del);
+    return row;
+  }
+  function renderHotwords(words) {
+    const list = $('#ah-terms-list');
+    if (!list) return;
+    list.innerHTML = '';
+    (words && words.length ? words : ['']).forEach(w => list.appendChild(hotwordRow(w)));
+  }
+  function collectHotwords() {
+    const seen = new Set(), out = [];
+    document.querySelectorAll('#ah-terms-list .hotword-input').forEach(inp => {
+      String(inp.value || '').split(/\s+/).forEach(w => {
+        w = w.trim();
+        if (!w) return;
+        const k = w.toLowerCase();
+        if (seen.has(k)) return;
+        seen.add(k); out.push(w);
+      });
+    });
+    return out.join(', ');
+  }
+  const ahAdd = $('#ah-add');
+  if (ahAdd) ahAdd.addEventListener('click', () => {
+    const list = $('#ah-terms-list');
+    if (!list) return;
+    const row = hotwordRow('');
+    list.appendChild(row);
+    row.querySelector('input').focus();
+  });
+  const ahList = $('#ah-terms-list');
+  if (ahList) ahList.addEventListener('click', (e) => {
+    const del = e.target.closest('.hotword-del');
+    if (del) del.closest('.hotword-row').remove();
+  });
+
   async function openSettings() {
     stOverlay.hidden = false;
     const msgEl = $('#st-msg');
@@ -574,7 +626,7 @@ export function initProjects(ctx) {
     try {
       const h = await (await fetch('/api/asr/hint')).json();
       const hint = h.hint || {};
-      $('#ah-terms').value = hint.prompt || '';
+      renderHotwords(String(hint.prompt || '').split(/[,\n;，；]+/).map(s => s.trim()).filter(Boolean));
       $('#ah-score').value = hint.hotwordsScore || 3;
     } catch { /* 识别提示词读不到不影响其它设置 */ }
     glLoad(c.glossary, c.glossaryLang);
@@ -911,7 +963,7 @@ export function initProjects(ctx) {
       await fetch('/api/asr/hint', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt: $('#ah-terms').value,
+          prompt: collectHotwords(),
           hotwordsScore: parseFloat($('#ah-score').value) || 3,
         })
       });

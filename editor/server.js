@@ -18,13 +18,38 @@ const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.5.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.6.0'; // 与打版号一致; 改了就顺手同步这里
 
-/* 代码版本戳: 取 editor 下静态资源的最新修改时间(启动时算一次)。
+/* ── 运行日志: 环形缓冲 + SSE 推送(UI「日志」页实时显示)。
+ * GUI 版 exe 无控制台, console 输出本来无处可去 —— 统一收进缓冲,
+ * 原始 console 调用 safe 化(无控制台时写 stdout 会 throw)。 ── */
+const LOG_MAX = 600;
+const logBuf = [];                 // [{t, level, msg}]
+const logClients = new Set();      // SSE 订阅响应
+function fmtLogArg(a) {
+  if (a instanceof Error) return (a && a.stack) || String(a);
+  if (typeof a === 'string') return a;
+  try { return JSON.stringify(a); } catch { return String(a); }
+}
+function pushLog(level, args) {
+  const line = { t: new Date().toLocaleTimeString('zh-CN', { hour12: false }), level,
+                 msg: args.map(fmtLogArg).join(' ') };
+  logBuf.push(line);
+  if (logBuf.length > LOG_MAX) logBuf.splice(0, logBuf.length - LOG_MAX);
+  const chunk = 'data: ' + JSON.stringify(line) + '\n\n';
+  for (const res of logClients) { try { res.write(chunk); } catch { logClients.delete(res); } }
+}
+const _cLog = console.log.bind(console), _cErr = console.error.bind(console);
+console.log = (...a) => { try { _cLog(...a); } catch {} pushLog('info', a); };
+console.error = (...a) => { try { _cErr(...a); } catch {} pushLog('error', a); };
+
+/* 代码版本戳: 取 editor 下静态资源的最新修改时间。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
  *      ② /api/version 让**已经开着的页面**发现自己过期了 → 提示用户刷新。
- * (用户报过"改了代码但界面还是老的": 单页应用开着不刷新就一直跑旧 JS) */
-const BUILD_STAMP = (() => {
+ * (用户报过"改了代码但界面还是老的": 单页应用开着不刷新就一直跑旧 JS)
+ * 注意: 版本戳**每 10 秒重算一次** —— 以前是启动时算一次, 结果"改了前端文件但
+ * 没重启服务"时 ?v= 不变, 浏览器一直命中旧缓存, 刷新也拿到旧 JS(实测踩过)。 */
+function computeStamp() {
   let newest = 0;
   const scan = (dir) => {
     let ents = [];
@@ -41,7 +66,9 @@ const BUILD_STAMP = (() => {
   };
   scan(path.join(ROOT, 'editor'));
   return newest ? String(Math.floor(newest)) : '0';
-})();
+}
+let BUILD_STAMP = computeStamp();
+setInterval(() => { BUILD_STAMP = computeStamp(); }, 10000).unref();
 
 /* 给静态资源打版本戳 + 在 HTML 里埋入页面自身的戳, 解决"改了代码界面还是老的" */
 function stampUrl(url) {
@@ -3035,6 +3062,40 @@ function handleRequest(req, res) {
         .catch(e => sendJson(res, 500, { error: String((e && e.message) || e) }));
     });
   }
+  /* 运行日志 SSE: UI「日志」页实时显示(连接即回放历史缓冲, 之后实时推送) */
+  if (pathname === '/api/logs/stream' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.write('retry: 3000\n\n');
+    for (const line of logBuf) { try { res.write('data: ' + JSON.stringify(line) + '\n\n'); } catch {} }
+    logClients.add(res);
+    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
+    req.on('close', () => { clearInterval(hb); logClients.delete(res); });
+    return;
+  }
+
+  /* 前端错误上报: 浏览器 sendBeacon 把 JS 报错送进来 → 进运行日志(UI 可见) */
+  if (pathname === '/api/logs/client' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      const msg = String(body || '').slice(0, 4000);
+      if (msg.trim()) console.error(msg);       // 走 console 拦截 → 环形缓冲 + SSE 广播
+      return sendJson(res, 200, { ok: true });
+    });
+  }
+
+  /* 前端诊断上报: 页面把布局/运行状态快照回传, 落到 .diag.json 供排查(不影响任何功能) */
+  if (pathname === '/api/diag' && req.method === 'POST') {
+    return readBody(req, res, 128 * 1024, (err, body) => {
+      try { fs.writeFileSync(path.join(ROOT, '.diag.json'), body.toString('utf8')); } catch {}
+      console.log('[diag] 收到前端诊断快照 (' + body.length + ' 字节)');
+      sendJson(res, 200, { ok: true });
+    });
+  }
+
   if (pathname === '/api/media' && req.method === 'GET') {
     const p = u.searchParams.get('path') || '';
     const full = path.normalize(p);

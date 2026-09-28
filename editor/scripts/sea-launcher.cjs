@@ -14,6 +14,13 @@ const fs = require('fs');
 const path = require('path');
 const Module = require('module');
 
+/* GUI 子系统构建下没有控制台, console 写 stdout 可能 throw(EBADF) —— 全部静默化。
+ * 运行日志改为进 UI「日志」页(server.js 的 SSE 缓冲), 这里只留安全兜底。 */
+for (const k of ['log', 'error', 'warn', 'info']) {
+  const orig = typeof console[k] === 'function' ? console[k].bind(console) : () => {};
+  console[k] = (...a) => { try { orig(...a); } catch {} };
+}
+
 const PORT = 8321;
 const HOST = '127.0.0.1';
 const URL = `http://${HOST}:${PORT}/`;
@@ -29,6 +36,23 @@ function probePort() {
 }
 
 function openBrowser(url) {
+  /* 优先 Edge 应用模式(--app): 独立无边框窗口、无地址栏 → 桌面应用观感。
+   * 注意: 不带 --user-data-dir —— 独立新 profile 会触发 Edge 首次运行的"登录到 Edge"
+   * 向导(实测点了确定窗口直接没了); 用用户现有 Edge 配置则早已初始化, 直接开窗口。 */
+  const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+  const cand = [
+    path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+  ];
+  const edge = cand.find((p) => { try { return fs.existsSync(p); } catch { return false; } });
+  try {
+    if (edge) {
+      spawn(edge, ['--app=' + url, '--no-first-run', '--no-default-browser-check'],
+        { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      return;
+    }
+  } catch {}
   try {
     const child = spawn('cmd.exe', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true });
     child.unref();

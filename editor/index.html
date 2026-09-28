@@ -6,6 +6,23 @@
 <title>SubFabric · 字幕工作台</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/style.css">
+<script>
+/* 前端错误上报: 任何 JS 报错/未处理 Promise 都上报到服务端日志(UI「日志」页可见),
+ * 方便定位"界面异常但看不到原因"。放在所有脚本之前, 保证模块早期报错也能抓到。 */
+(function () {
+  function report(text) {
+    try { navigator.sendBeacon('/api/logs/client', String(text).slice(0, 4000)); } catch (e) {}
+  }
+  window.addEventListener('error', function (e) {
+    var where = (e.filename || '') + ':' + (e.lineno || 0) + ':' + (e.colno || 0);
+    report('[JS错误] ' + (e.message || '') + ' @ ' + where + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e.reason || {};
+    report('[Promise未处理] ' + (r.stack || r.message || String(r)));
+  });
+})();
+</script>
 </head>
 <body>
 <div id="app">
@@ -57,6 +74,7 @@
       <button class="ptab active" data-tab="subs" title="字幕列表">字幕</button>
       <button class="ptab" data-tab="roles" title="角色(说话人)总览">角色</button>
       <button class="ptab" data-tab="settings" title="设置">设置</button>
+      <button class="ptab" data-tab="logs" title="服务端运行日志">日志</button>
     </div>
 
     <!-- 字幕 Tab: 当前字幕列表 -->
@@ -107,63 +125,81 @@
       <div id="role-list" class="role-list"></div>
     </div>
 
-    <!-- 设置 Tab: 灵敏度等 -->
+    <!-- 设置 Tab: 分组卡片 -->
     <div id="tab-settings" class="tab-body">
       <div class="tab-head">
         <span class="tab-head-title">设置</span>
       </div>
       <div class="settings-list">
-        <div class="setting-row">
-          <span class="setting-name" title="视频与字幕块之间那一条视频缩略图预览">显示胶片预览图</span>
-          <label class="switch">
-            <input type="checkbox" id="set-film">
-            <span class="switch-slider"></span>
-          </label>
-          <span class="setting-val" id="set-film-val">关</span>
+
+        <div class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#ff7a45"></i><span class="set-group-title">时间轴</span></div>
+          <div class="setting-row">
+            <span class="setting-name" title="单行: 所有字幕块都在同一条轨上, 时间重叠的块会互相压在一起(重叠那一小块看起来更深)。双行: 把重叠的字幕块自动分到下面第二条轨上, 每条轨内部的块互不重叠, 于是每个块都完整可见。刻度尺/播放头/胶片条是两条轨共用的">双行字幕轨</span>
+            <label class="switch">
+              <input type="checkbox" id="set-tracks">
+              <span class="switch-slider"></span>
+            </label>
+            <span class="setting-val" id="set-tracks-val">单行</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-name" title="时间轴(字幕块+波形)占屏幕的高度; 也可直接拖动视频与时间轴中间那根线">区域高度</span>
+            <input type="range" id="set-tlh" class="range" min="96" max="600" step="1" value="232">
+            <span class="setting-val" id="set-tlh-val">232 px</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-name" title="滚动一格, 时间轴平移多少像素(越大滚得越远)">平移灵敏度</span>
+            <input type="range" id="set-pan" class="range" min="40" max="480" step="20" value="120">
+            <span class="setting-val" id="set-pan-val">120 px</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-name" title="Ctrl+滚轮每格缩放倍率(越大缩放越猛)">缩放灵敏度</span>
+            <input type="range" id="set-zoom" class="range" min="1.05" max="2.5" step="0.05" value="1.25">
+            <span class="setting-val" id="set-zoom-val">1.25 ×</span>
+          </div>
+          <p class="set-group-note">滚动：下滑=往前看 · 上滑=往后看 · Ctrl+滚轮=缩放</p>
         </div>
-        <div class="setting-row">
-          <span class="setting-name" title="单行: 所有字幕块都在同一条轨上, 时间重叠的块会互相压在一起(重叠那一小块看起来更深)。双行: 把重叠的字幕块自动分到下面第二条轨上, 每条轨内部的块互不重叠, 于是每个块都完整可见。刻度尺/播放头/胶片条是两条轨共用的">双行字幕轨</span>
-          <label class="switch">
-            <input type="checkbox" id="set-tracks">
-            <span class="switch-slider"></span>
-          </label>
-          <span class="setting-val" id="set-tracks-val">单行</span>
+
+        <div class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#4fd1a5"></i><span class="set-group-title">字幕显示</span></div>
+          <div class="setting-row">
+            <span class="setting-name" title="视频与字幕块之间那一条视频缩略图预览">显示胶片预览图</span>
+            <label class="switch">
+              <input type="checkbox" id="set-film">
+              <span class="switch-slider"></span>
+            </label>
+            <span class="setting-val" id="set-film-val">关</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-name" title="视频叠加字幕的字号缩放(适用于 SRT 双语叠加)">字幕字号</span>
+            <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
+            <span class="setting-val" id="rng-font-val">1.00 ×</span>
+          </div>
         </div>
-        <div class="setting-row">
-          <span class="setting-name" title="时间轴(字幕块+波形)占屏幕的高度; 也可直接拖动视频与时间轴中间那根线">字幕块区域高度</span>
-          <input type="range" id="set-tlh" class="range" min="96" max="600" step="1" value="232">
-          <span class="setting-val" id="set-tlh-val">232 px</span>
+
+        <div class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#8b7cf6"></i><span class="set-group-title">角色</span></div>
+          <div class="setting-row">
+            <span class="setting-name" title="启用: 坏行会标「未标注角色」，右侧有「角色」页与角色筛选。禁用: 不再标未标注角色、隐藏角色页与筛选（字幕里已有的 [角色] 标签保留不动）">启用角色标注</span>
+            <label class="switch">
+              <input type="checkbox" id="set-role" checked>
+              <span class="switch-slider"></span>
+            </label>
+            <span class="setting-val" id="set-role-val">开</span>
+          </div>
         </div>
-        <div class="setting-row">
-          <span class="setting-name" title="滚动一格, 时间轴平移多少像素(越大滚得越远)">滚动平移灵敏度</span>
-          <input type="range" id="set-pan" class="range" min="40" max="480" step="20" value="120">
-          <span class="setting-val" id="set-pan-val">120 px</span>
+
+        <div class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#61b8ff"></i><span class="set-group-title">通用</span></div>
+          <div class="setting-row">
+            <span class="setting-name" title="界面显示语言 / UI language">界面语言</span>
+            <select id="set-locale" class="setting-select"></select>
+            <span class="setting-val" id="set-locale-val"></span>
+          </div>
         </div>
-        <div class="setting-row">
-          <span class="setting-name" title="Ctrl+滚轮每格缩放倍率(越大缩放越猛)">缩放灵敏度</span>
-          <input type="range" id="set-zoom" class="range" min="1.05" max="2.5" step="0.05" value="1.25">
-          <span class="setting-val" id="set-zoom-val">1.25 ×</span>
-        </div>
-        <div class="setting-row">
-          <span class="setting-name" title="视频叠加字幕的字号缩放(适用于 SRT 双语叠加)">字幕字号</span>
-          <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
-          <span class="setting-val" id="rng-font-val">1.00 ×</span>
-        </div>
-        <div class="setting-row">
-          <span class="setting-name" title="启用: 坏行会标「未标注角色」，右侧有「角色」页与角色筛选。禁用: 不再标未标注角色、隐藏角色页与筛选（字幕里已有的 [角色] 标签保留不动）">启用角色标注</span>
-          <label class="switch">
-            <input type="checkbox" id="set-role" checked>
-            <span class="switch-slider"></span>
-          </label>
-          <span class="setting-val" id="set-role-val">开</span>
-        </div>
-        <div class="setting-row">
-          <span class="setting-name" title="界面显示语言 / UI language">界面语言 / Language</span>
-          <select id="set-locale" class="setting-select"></select>
-          <span class="setting-val" id="set-locale-val"></span>
-        </div>
-        <div class="setting-row setting-row-export">
-          <span class="setting-name">导出</span>
+
+        <div class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#ffd54a"></i><span class="set-group-title">导出</span><span class="set-group-note">F8 · 词级 JSON</span></div>
           <div class="export-grid">
             <button class="btn btn-mini" id="btn-export-zh" disabled title="导出仅中文 ASS(去掉英文行)">导出仅中文</button>
             <button class="btn btn-mini" id="btn-export-en" disabled title="导出仅英文 ASS(去掉中文行)">导出仅英文</button>
@@ -171,7 +207,22 @@
             <button class="btn btn-mini" id="btn-export-full" disabled title="导出原始格式(含逐词特效)">导出逐词字幕</button>
           </div>
         </div>
-        <div class="setting-note">滚动：下滑=往前看 · 上滑=往后看 · Ctrl+滚轮=缩放。设置自动保存在本机浏览器。</div>
+
+        <div class="setting-note">设置自动保存在本机浏览器。</div>
+      </div>
+    </div>
+
+      <!-- 日志: 服务端运行日志实时流(SSE) -->
+      <div id="tab-logs" class="tab-body">
+        <div class="log-toolbar">
+          <button type="button" class="btn btn-mini" id="btn-log-clear">清空显示</button>
+          <label class="switch switch-mini" title="自动滚动到最新日志">
+            <input type="checkbox" id="cb-log-follow" checked>
+            <span class="switch-slider"></span>
+          </label>
+          <span class="log-hint">实时显示服务端运行日志（最近 600 条）</span>
+        </div>
+        <div id="log-view" dir="ltr"></div>
       </div>
 
       <!-- F8 显隐区: 导出词级 JSON(默认隐藏, 按 F8 显示) -->
@@ -182,7 +233,6 @@
         </div>
         <div class="setting-note">按 <b>F8</b> 可隐藏/显示本区域。</div>
       </div>
-    </div>
   </aside>
 
   <!-- ══════════ 左下: 时间轴 ══════════ -->
@@ -214,6 +264,7 @@
   <!-- ══════════ 可拖动分割线: 视频/时间轴(横) 与 左区/字幕列表(竖) ══════════ -->
   <div id="hsplit" title="拖动调整视频与时间轴的屏幕比例"></div>
   <div id="vsplit" title="拖动调整字幕列表宽度"></div>
+</div>
 
   <!-- 查找与批量替换 -->
   <div id="fr-overlay" hidden>
@@ -468,77 +519,90 @@
 
 <!-- 设置: 识别模型 / 字幕翻译（放在 home-view 外: 编辑器里也要能打开） -->
 <div id="st-overlay" hidden>
-  <div class="st-box">
+  <div class="st-box" id="st-box">
     <div class="st-head">
-      <span class="st-title">设置</span>
+      <span class="st-title">全局设置</span>
       <button type="button" class="btn btn-mini" id="st-close">关闭</button>
     </div>
 
-      <div class="st-sec">识别模型</div>
-      <div id="st-models" class="st-models">读取中…</div>
-      <div class="st-msg" id="st-model-note"></div>
-      <div class="st-row st-row-top">
-        <span class="st-lbl">下载位置</span>
-        <input type="text" id="st-model-dir" class="st-input" spellcheck="false"
-          placeholder="留空 = 程序目录\asr\models（改完点别处即保存）">
-        <button type="button" class="btn btn-mini" id="st-model-dir-open" title="在资源管理器中打开模型目录">打开目录</button>
-      </div>
-      <div class="gl-hint" style="margin-bottom:10px">识别模型与说话人模型都下到这里；各模型可同时下载互不阻塞。已有模型不会被移动，重新下载时才会用新位置。</div>
+    <div class="st-tabs">
+      <button type="button" class="st-tab active" data-stp="models">识别模型</button>
+      <button type="button" class="st-tab" data-stp="translate">字幕翻译</button>
+      <button type="button" class="st-tab" data-stp="enhance">识别增强</button>
+    </div>
 
-    <div class="st-sec">字幕翻译</div>
-    <div class="st-row">
-      <span class="st-lbl">服务商</span>
-      <select id="st-provider" class="st-select"></select>
-    </div>
-    <div class="st-row">
-      <span class="st-lbl">接口地址</span>
-      <input type="text" id="st-baseurl" class="st-input" spellcheck="false" placeholder="https://api.deepseek.com/v1">
-    </div>
-    <div class="st-row">
-      <span class="st-lbl">API Key</span>
-      <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
-    </div>
-    <div class="st-row">
-      <span class="st-lbl">模型名</span>
-      <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
-    </div>
-    <div class="st-row st-row-top">
-      <span class="st-lbl">提示词</span>
-      <textarea id="st-prompt" class="st-area" spellcheck="false" rows="7"></textarea>
-    </div>
-    <div class="st-row st-row-top">
-      <span class="st-lbl">术语表</span>
-      <div class="gl-wrap">
-        <div class="gl-hint">添加词条后，原文词在翻译时会自动采用指定译法，无需写进系统提示词。</div>
-        <div class="gl-hint">词条按目标语言分组：在上方切换语言进行编辑，翻译时只应用当前目标语言词条。</div>
-        <div class="gl-tabs" id="gl-tabs"></div>
-        <button type="button" class="gl-add" id="gl-add">＋ 添加词条</button>
-        <div class="gl-head">
-          <span>原文</span>
-          <span>译法 · <b id="gl-langname">简体</b></span>
-          <span></span>
+    <div class="st-body">
+      <div class="st-panel active" data-stp="models">
+        <div class="st-card">
+          <div class="st-card-title">模型管理</div>
+          <div id="st-models" class="st-models">读取中…</div>
+          <div class="st-msg" id="st-model-note"></div>
         </div>
-        <div class="gl-rows" id="gl-rows"></div>
+        <div class="st-card">
+          <div class="st-card-title">下载位置</div>
+          <div class="st-row">
+            <span class="st-lbl">目录</span>
+            <input type="text" id="st-model-dir" class="st-input" spellcheck="false"
+              placeholder="留空 = 程序目录\asr\models（改完点别处即保存）">
+            <button type="button" class="btn btn-mini" id="st-model-dir-open" title="在资源管理器中打开模型目录">打开目录</button>
+          </div>
+          <p class="gl-hint">识别模型与说话人模型都下到这里；各模型可同时下载互不阻塞。已有模型不会被移动，重新下载时才会用新位置。</p>
+        </div>
+      </div>
+
+      <div class="st-panel" data-stp="translate">
+        <div class="st-card">
+          <div class="st-card-title">连接</div>
+          <div class="st-grid">
+            <span class="st-lbl">服务商</span>
+            <select id="st-provider" class="st-select"></select>
+            <span class="st-lbl">接口地址</span>
+            <input type="text" id="st-baseurl" class="st-input" spellcheck="false" placeholder="https://api.deepseek.com/v1">
+            <span class="st-lbl">API Key</span>
+            <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
+            <span class="st-lbl">模型名</span>
+            <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+          </div>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">翻译提示词</div>
+          <textarea id="st-prompt" class="st-area" spellcheck="false" rows="7"></textarea>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">术语表 <span class="st-card-note">按目标语言分组 · 翻译时只应用当前组</span></div>
+          <div class="gl-wrap">
+            <div class="gl-tabs" id="gl-tabs"></div>
+            <button type="button" class="gl-add" id="gl-add">＋ 添加词条</button>
+            <div class="gl-head">
+              <span>原文</span>
+              <span>译法 · <b id="gl-langname">简体</b></span>
+              <span></span>
+            </div>
+            <div class="gl-rows" id="gl-rows"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="st-panel" data-stp="enhance">
+        <div class="st-card">
+          <div class="st-card-title">热词 <span class="st-card-note">一格一个单词 · ＋ 添加 · − 删除</span></div>
+          <div id="ah-terms-list" class="hotword-list"></div>
+          <button type="button" class="btn btn-mini" id="ah-add">＋ 添加热词</button>
+          <p class="gl-hint">whisper 用作初始提示词（实测直接修正人名拼写）；Parakeet 用作热词加权。术语表的「原文」列会自动并入，不用重复填。</p>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">热词强度 <span class="st-card-note">仅 Parakeet</span></div>
+          <div class="st-row">
+            <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" style="max-width:120px">
+            <span class="gl-hint" style="flex:1">实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6</span>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="st-sec">识别增强</div>
-    <div class="st-row st-row-top">
-      <span class="st-lbl">识别提示词 / 热词</span>
-      <textarea id="ah-terms" class="st-area" spellcheck="false" rows="4"
-        title="每行一条或用逗号分隔，填专有名词（人名/地名/作品名等）"
-        placeholder="Bdubs&#10;Etho&#10;Nether"></textarea>
-    </div>
-    <div class="gl-hint">填专有名词即可：whisper 引擎用作初始提示词（实测直接修正人名拼写）；Parakeet 引擎用作热词加权。术语表的「原文」列会自动并入，不用重复填。</div>
-    <div class="st-row">
-      <span class="st-lbl">热词强度（仅 Parakeet）</span>
-      <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" style="max-width:120px">
-      <span class="gl-hint" style="flex:1">实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6</span>
-    </div>
-
-    <div class="st-msg" id="st-msg"></div>
     <div class="st-actions">
       <button type="button" class="btn" id="st-test">测试连接</button>
+      <span class="st-msg" id="st-msg"></span>
       <span class="st-spacer"></span>
       <button type="button" class="btn" id="st-cancel">取消</button>
       <button type="button" class="btn btn-accent" id="st-save">保存</button>

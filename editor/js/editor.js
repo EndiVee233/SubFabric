@@ -276,10 +276,10 @@ export class EditorPanel {
   }
 
   showTab(name) {
-    if (!['subs', 'roles', 'settings'].includes(name)) name = 'subs';
+    if (!['subs', 'roles', 'settings', 'logs'].includes(name)) name = 'subs';
     if (name === 'roles' && !this._rolesEnabled) name = 'subs';
     this._tab = name;
-    const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings' };
+    const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings', logs: 'tab-logs' };
     for (const [k, id] of Object.entries(bodies)) {
       const el = document.getElementById(id);
       if (el) el.classList.toggle('active', k === name);
@@ -731,12 +731,19 @@ export class EditorPanel {
    * scroll='keep'— 仅在**完全不可见**时才滚(重建后恢复选中用, 保持阅读位置稳定)。
    */
   select(item, scroll = true) {
+    const prev = this.selected;
     this.selected = item;
-    this._render();    // 先渲染, 才能拿到真实 offsetTop / offsetHeight
+    // 轻量高亮: 只切 class, 不全量重建(全量重建 658 行会拖死主循环 → 时间轴黑屏/页面卡死)
+    if (prev && prev !== item) {
+      const pi = this.filtered.indexOf(prev);
+      const pe = pi >= 0 ? this.spacerEl.children[pi] : null;
+      if (pe) pe.classList.remove('selected');
+    }
     if (scroll && item) {
       const idx = this.filtered.indexOf(item);
-      const el = this.spacerEl.children[idx];
+      const el = idx >= 0 ? this.spacerEl.children[idx] : null;
       if (el) {
+        el.classList.add('selected');
         const top = el.offsetTop, h = el.offsetHeight;
         const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
         const need = scroll === 'keep'
@@ -760,13 +767,18 @@ export class EditorPanel {
       if (arr[k].start <= t) { found = arr[k]; break; }
     }
     if (found === this.playingItem) return;
+    const prevPlaying = this.playingItem;
     this.playingItem = found;
-    if (found && performance.now() - (this._userScrollAt || 0) > 5000) {
+    // 轻量高亮: 只切 class(全量重建 658 行会拖死主循环)
+    const pi = prevPlaying ? this.filtered.indexOf(prevPlaying) : -1;
+    const pe = pi >= 0 ? this.spacerEl.children[pi] : null;
+    if (pe) pe.classList.remove('playing');
+    if (found) {
       const idx = this.filtered.indexOf(found);
-      if (idx !== -1) {
-        this._render();
-        const el = this.spacerEl.children[idx];
-        if (el) {
+      const el = idx >= 0 ? this.spacerEl.children[idx] : null;
+      if (el) {
+        el.classList.add('playing');
+        if (performance.now() - (this._userScrollAt || 0) > 5000) {
           const top = el.offsetTop, h = el.offsetHeight;
           const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
           if (top < st || top > st + vh - h) {
@@ -776,7 +788,6 @@ export class EditorPanel {
         }
       }
     }
-    this._render();
   }
 
   /* ─────────── 行内编辑 ─────────── */

@@ -69,6 +69,9 @@ const overlay = new SrtOverlay(document.getElementById('srt-overlay'), video);
 const assPlayer = new AssPlayer(video, (msg) => toast(msg));
 const timeline = new Timeline(document.getElementById('timeline'), video);
 const panel = new EditorPanel();
+/* 诊断用(见 initDiag): 暴露实例供页面状态快照读取 */
+window.__timeline = timeline;
+window.__panel = panel;
 
 /* ─────────── 状态 ─────────── */
 const state = {
@@ -2297,6 +2300,29 @@ rngFont.addEventListener('input', () => {
   overlay.setFontScale(parseFloat(rngFont.value));
   if (rngFontVal) rngFontVal.textContent = parseFloat(rngFont.value).toFixed(2) + ' ×';
 });
+/* 服务日志 → UI「日志」页: EventSource 实时流(连接即回放历史, 之后追加) */
+(function initLogView() {
+  const view = document.getElementById('log-view');
+  const follow = document.getElementById('cb-log-follow');
+  if (!view || typeof EventSource === 'undefined') return;
+  const append = (line) => {
+    try {
+      const div = document.createElement('div');
+      div.className = 'log-line ' + (line.level === 'error' ? 'log-err' : 'log-info');
+      div.textContent = '[' + line.t + '] ' + line.msg;
+      view.appendChild(div);
+      while (view.childElementCount > 800) view.removeChild(view.firstChild);
+      if (!follow || follow.checked) view.scrollTop = view.scrollHeight;
+    } catch {}
+  };
+  const clearBtn = document.getElementById('btn-log-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => { view.innerHTML = ''; });
+  try {
+    const es = new EventSource('/api/logs/stream');
+    es.onmessage = (ev) => { try { append(JSON.parse(ev.data)); } catch {} };
+    es.onerror = () => { /* 断线自动重连(EventSource 内置 retry) */ };
+  } catch {}
+})();
 
 /* F8: 显隐「导出词级 JSON」区(默认隐藏, 避免设置面板杂乱) */
 const f8Section = document.getElementById('f8-section');
@@ -2558,6 +2584,7 @@ const Projects = initProjects({
 
 /* ═══════════ 主循环 ═══════════ */
 function tick() {
+  window.__tickCount = (window.__tickCount || 0) + 1;
   const t = video.currentTime;
   overlay.update(t);
   timeline.draw(t, !video.paused);
@@ -2566,6 +2593,91 @@ function tick() {
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
+
+/* ── 诊断上报: 页面状态快照回传服务端 → .diag.json(排查渲染问题用, 无副作用) ──
+ * 沙箱里没法直连 localhost 跑浏览器, 于是让用户浏览器把真实数据交回来:
+ * 刷新页面 6s/12s 后自动上报; 控制台也可手动 window.__diag()。 */
+(function initDiag() {
+  const errs = [];
+  window.addEventListener('error', (e) => {
+    errs.push('error: ' + (e.message || '') + ' @' + String(e.filename || '').split('/').pop() + ':' + (e.lineno || 0));
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    errs.push('reject: ' + String((e.reason && (e.reason.stack || e.reason.message)) || e.reason).slice(0, 300));
+  });
+  const rect = (el) => {
+    if (!el) return null;
+    const b = el.getBoundingClientRect();
+    return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height), display: getComputedStyle(el).display };
+  };
+  const snap = () => {
+    try {
+      const app = document.getElementById('app');
+      const cs = app ? getComputedStyle(app) : null;
+      const cv = document.getElementById('timeline');
+      const lc = document.getElementById('log-view');
+      const act = document.querySelector('.ptab.active');
+      return {
+        stamp: String(window.__BUILD_STAMP || ''),
+        href: location.href,
+        win: window.innerWidth + 'x' + window.innerHeight,
+        tlH: cs ? cs.getPropertyValue('--tl-h').trim() : '',
+        gridRows: cs ? cs.gridTemplateRows : '',
+        tickCount: window.__tickCount || 0,
+        tlPanel: rect(document.getElementById('timeline-panel')),
+        wrap: rect(document.getElementById('tl-canvas-wrap')),
+        canvas: cv ? Object.assign(rect(cv), { attrW: cv.width, attrH: cv.height }) : null,
+        cueCards: document.querySelectorAll('.cue-card').length,
+        logView: lc ? Object.assign(rect(lc), { lines: lc.childElementCount }) : null,
+        activeTab: act ? act.dataset.tab : null,
+        tabs: [...document.querySelectorAll('#panel-tabs .ptab')].map(b => ({
+          t: b.dataset.tab, active: b.classList.contains('active'), hidden: !!b.hidden })),
+        tabBodies: [...document.querySelectorAll('.tab-body')].map(b => ({
+          id: b.id, active: b.classList.contains('active'), display: getComputedStyle(b).display })),
+        panelTab: (window.__panel && window.__panel._tab) || null,
+        panelTabBtns: (window.__panel && window.__panel._tabBtns) ? window.__panel._tabBtns.length : null,
+        appChildren: (() => {
+          const app = document.getElementById('app');
+          if (!app) return null;
+          return [...app.children].map(el => {
+            const b = el.getBoundingClientRect();
+            const c = getComputedStyle(el);
+            return {
+              tag: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className && typeof el.className === 'string' ? '.' + el.className.split(' ').join('.') : ''),
+              area: c.gridArea, row: c.gridRowStart, col: c.gridColumnStart,
+              pos: c.position, display: c.display,
+              y: Math.round(b.y), h: Math.round(b.height),
+            };
+          });
+        })(),
+        appBox: (() => {
+          const app = document.getElementById('app');
+          return app ? { clientH: app.clientHeight, scrollH: app.scrollHeight, bodyScrollH: document.body.scrollHeight } : null;
+        })(),
+        timelineInfo: (() => {
+          const tl = window.__timeline;
+          if (!tl) return null;
+          return {
+            duration: tl.duration, scale: tl.scale, t0: tl.t0,
+            lanes: tl.lanes ? tl.lanes.length : null,
+            cues: tl.lanes ? tl.lanes.reduce((n, l) => n + (l.cues ? l.cues.length : 0), 0) : null,
+            hasDraw: typeof tl.draw === 'function',
+          };
+        })(),
+        logClients: null,
+        errors: errs.slice(0, 20),
+      };
+    } catch (e) { return { diagError: String((e && e.message) || e) }; }
+  };
+  const post = () => {
+    try {
+      fetch('/api/diag', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snap()) }).catch(() => {});
+    } catch {}
+  };
+  window.__diag = post;
+  setTimeout(post, 6000);
+  setTimeout(post, 12000);
+})();
 
 /* ═══════════ 示例自动加载(仅 #/editor 直开时; 正常入口是项目主界面 #/home) ═══════════ */
 (async function boot() {
