@@ -1,4 +1,4 @@
-# SubFabric（字幕工作台）v1.7.0
+# SubFabric（字幕工作台）v1.8.0
 
 基于 Web 的字幕编辑器：视频播放 + 字幕实时叠加 + 时间轴 + 编辑面板。
 支持 **SRT 双语字幕**（主/副语言上下排列）与 **ASS 高级特效字幕**（libass 内核，卡拉OK/颜色/定位等特效完整还原）。
@@ -25,21 +25,42 @@ node editor/server.js
 > 把媒体文件放到项目根目录，`/api/samples` 会自动列出，工具栏「示例」区一键加载。
 > 旧直连 `#/editor` 仍可用（跳过主界面直接进编辑器并自动加载示例，兼容旧用法与自动化测试）。
 
-## 云端识别（必剪 ASR）
+## 云端识别（必剪 / 剪映，互为备份）
 
-「创建初稿」的模型下拉里多了一个**什么都不用装**的选项：**必剪 ASR（英语·云端免下载）**。它把音频传给必剪（B 站）的云端识别接口，拿回逐词时间戳，再按本项目的老规矩生成逐词 ASS —— 与本地模型走的是同一条流水线（识别 → 可选说话人分离 → LLM 翻译 → 逐词字幕）。
+「创建初稿」的模型下拉里有两个**什么都不用装**的选项：**必剪 ASR（英语·云端免下载）** 与 **剪映 ASR（英语·云端免下载）**。它们把音频传给对应厂商的云端识别接口、拿回逐词时间戳，再按本项目的老规矩生成逐词 ASS —— 与本地模型走的是同一条流水线（识别 → 可选说话人分离 → LLM 翻译 → 逐词字幕）。
 
-- **零依赖**：不用显卡、不用 Python 环境、不用下载 0.6~2.8GB 模型。实测 13 秒英文音频 → **2.9 秒**返回 4 句 / 31 个逐词时间戳
+**为什么给两个**：免费云端服务普遍限次/限流，一个迟早会卡住。选中的那个失败（限流、网络、接口变动）会**自动换另一个重试**，并在日志里写清「谁失败 → 换谁」，字幕照常产出。回退只发生在**云端之间**：
+
+- 本地任务**绝不**被悄悄改成上传（本地模型跑不动就老实报错，不会把音频传出去）
+- 云端任务**绝不**自动退回本地模型（可能没装、没 GPU）
+- 用户主动取消（删除项目/重跑）不触发回退
+- 音频转 mp3 只做一次，换引擎时复用同一个临时文件
+
+其他共同点：
+
+- **零依赖**：不用显卡、不用 Python 环境、不用下载 0.6~2.8GB 模型。实测 13 秒英文音频：必剪 **2.9 秒**（4 句 / 31 词）、剪映 **3.0 秒**（5 句 / 30 词，断句更细）
 - **只做英语**：与 Parakeet / whisper 两个本地模型定位一致；识别结果进**主语言轨**，中文字幕照旧由 LLM 翻译那一步生成
-- **必须显式选中**：它**不会**当"本地没装模型"时的兜底（云端识别要把音频传出去，不能替用户默认决定），设置页里也没有下载/删除按钮
-- **隐私**：音频会上传到 bilibili 服务器 —— 机密素材请改用本地模型
-- **接口是逆向出来的非公开协议**（`member.bilibili.com/x/bcut/rubick-interface`，`model_id=7`）：官方一改就失效。协议实现移植自 **MIT** 许可的 [SocialSisterYi/bcut-asr](https://github.com/SocialSisterYi/bcut-asr)（© 2022 社会易姐QwQ；授权声明见 `editor/bcut-asr.js` 文件头）。出问题时先跑探针看每一步：
+- **必须显式选中**：它们**不会**当"本地没装模型"时的兜底（云端识别要把音频传出去，不能替用户默认决定），设置页里也没有下载/删除按钮
+- **隐私**：音频会上传到第三方服务器（必剪 → bilibili；剪映 → 字节跳动）—— 机密素材请改用本地模型
+- **都是逆向出来的非公开协议**，官方一改就失效
+- 「选区重新识别」同样支持两者，也享受同一套备份逻辑（时间戳加回区间偏移）
+- 项目会记下**实际**用的是哪个引擎（`meta.draft.usedModelId`），ASS 头署名与重试都按它走
 
-  ```bash
-  node tools/bcut_asr_probe.mjs 测试视频.mp4      # 视频自动抽音频 → 直连必剪 → 打印逐词结果
-  ```
+### 许可与出处（两者不同，别混）
 
-- 「选区重新识别」同样支持它（选区切出的音频走同一条云链路，时间戳加回区间偏移）
+| 引擎 | 接口 | 实现来源 |
+|---|---|---|
+| 必剪 bcut | `member.bilibili.com/x/bcut/rubick-interface`，`model_id=7` | **移植**自 MIT 许可的 [SocialSisterYi/bcut-asr](https://github.com/SocialSisterYi/bcut-asr)（© 2022 社会易姐QwQ，授权声明见 `editor/bcut-asr.js` 文件头） |
+| 剪映 CapCut | `lv-pc-api-sinfonlinec.ulikecam.com` + ByteDance VOD 上传 | **没有 MIT 实现可参考**（只有 GPL-3.0-only 与"无许可证"两个项目），所以 `editor/capcut-asr.js` **没有移植任何第三方代码**：按协议事实（端点 / 请求头 / 签名公式 / 字段名）自己写 —— 这些是为互通所必需的事实，不是受版权保护的代码表达 |
+
+出问题时先跑对应探针，逐步看接口返回：
+
+```bash
+node tools/bcut_asr_probe.mjs 测试视频.mp4      # 视频自动抽音频 → 直连必剪 → 打印逐词结果
+node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链路（取凭证→申请上传→上传→建任务→轮询）
+```
+
+调试备份逻辑：`SUBFABRIC_CAPCUT_API` / `SUBFABRIC_CAPCUT_VOD` 可临时改接口地址（把它指到一个打不通的地址，就能现场演练"剪映失败 → 自动换必剪"）。
 
 ## 退出程序（任务栏托盘图标）
 
@@ -93,9 +114,10 @@ node editor/server.js
       | Whisper large-v3-turbo | whisper.cpp(Vulkan) | 1.5GB | 英语；**必须 Vulkan GPU**，A 卡/N 卡/Intel 通用，实测 RTX 4060 Ti 约 4.7 倍实时；无 Vulkan 驱动直接报错（不支持 CPU） |
       | Multitalker Parakeet Streaming 0.6B v1 | NeMo(PyTorch·CUDA) | 2.8GB | 英语·多说话人（NVIDIA NeMo 说话人核注入）。**只用于「选区重新识别」，不能创建初稿**；**只能 N 卡**，CPU 推理直接报错；还需单独安装 NeMo 运行时（PyTorch + NeMo，约 5GB） |
       | **必剪 ASR（bcut）** | 云端 HTTP | **0** | 英语；**免下载、免显卡、免 Python**，只要联网。音频会上传到 bilibili 服务器（机密素材别用）；非公开接口，官方改协议就会失效 |
+      | **剪映 ASR（CapCut）** | 云端 HTTP | **0** | 同上，但走**字节跳动**的云端（剪映 PC 客户端"识别字幕"那条链路）。两者**互为备份**：选中哪个都行，一个限流/失败会自动换另一个 |
       - A 卡用户：官方 whisper.cpp 不发 Windows Vulkan 包，改用社区预编译版（`jerryshell/whisper.cpp-windows-vulkan-bin`），运行时在设置里一键下载（~12MB）
       - **创建初稿只列前两款**（服务端双重拦截：`modelId` 指向 Multitalker 一律 400）；Multitalker 只从「设置 → 重新识别模型」进入
-      - **必剪 ASR 是唯一不需要装任何东西的模型**：没显卡、没 Python 环境也能直接开跑（实测 13 秒英文音频 3 秒出 31 个逐词时间戳）。它**不会**被当作兜底 —— 只有你在下拉里显式选中它才会用（云端识别要把音频传出去，不能替用户默认决定）；设置页里它没有「下载/删除」按钮
+      - **两个云端模型是唯一不需要装任何东西的选项**：没显卡、没 Python 环境也能直接开跑（实测 13 秒英文音频 3 秒出结果）。它们**不会**被当作兜底 —— 只有你在下拉里显式选中才会用（云端识别要把音频传出去，不能替用户默认决定）；设置页里它们没有「下载/删除」按钮。详见下方「云端识别」一节
       - **Multitalker 的运行时是独立的一套**：设置里的「NeMo 运行时（多说话人）」单独安装（PyTorch + NeMo，约 5GB，装在本项目的 Python 环境里）。装完会自动实测「导入 + `torch.cuda.is_available()`」才算成功 —— PyPI 上的 Windows torch 是 CPU-only 轮子（实测 2.14.0+cpu），安装器会检测到并自动换装官方 cu126 索引的 CUDA 版；Windows 上大包安装偶发 `WinError 5`（杀软扫描锁文件），安装器会自动重试
       - **该模型要装两套权重**：主权重 2.3GB + 官方流式分离权重 450MB。分离权重不是可选项 —— NeMo 的 `SpeakerTaggedASR` 即使单说话人模式也要传 `diar_model` 对象（构造函数读 `diar_model._cfg.max_num_of_spks`），缺了直接报错。单说话人行为靠 `single_speaker_mode=True` + `max_num_of_spks=1` 触发（NeMo 内部据此把 `spk_targets` 强制全 1，只跑一个 ASR 实例）
       - **该模型吃内存**：fp32 权重 2.3GB，NeMo 在 CPU 侧实例化编码器（24 层）再载入权重，峰值约 6GB 可用内存 —— 内存不够时进程会**原生崩溃（0xC0000005）而不是抛 Python 异常**，所以 `multitalker.py` 在加载前用 `GlobalMemoryStatusEx` 预检可用内存，不足直接给一句人话。GPU 侧建议 8GB 显存起
@@ -202,6 +224,7 @@ asr/                     # 语音识别(创建初稿)—— 独立 Python 环境
 editor/
 ├── server.js            # 静态服务器(支持 Range / /api/samples / 项目系统 API / 初稿流水线 / 模型下载)
 ├── bcut-asr.js          # 必剪(bcut)云端识别客户端(免模型/免显卡; 协议移植自 MIT 的 SocialSisterYi/bcut-asr)
+├── capcut-asr.js        # 剪映(CapCut)云端识别客户端(无 MIT 实现可移植 → 按协议事实自写, 不含第三方代码)
 ├── index.html
 ├── css/style.css        # 深色主题三栏布局 + 主界面/新建项目对话框/初稿进度浮层
 ├── js/
@@ -236,6 +259,7 @@ node tools/tray_quit_probe.mjs 8321                             # 真 Edge --app
 
 # 必剪云端识别（不进项目流水线, 直连接口看每一步）
 node tools/bcut_asr_probe.mjs 测试视频.mp4                       # 抽音频 → 上传 → 识别 → 打印逐词
+node tools/capcut_asr_probe.mjs 测试视频.mp4                     # 同上, 走剪映云链路
 ```
 
 无 DOM 依赖, 直接跑真实的 ass.js + karaoke.js（自动同步到 tests/jsmod/）。
@@ -297,4 +321,8 @@ node tools/bcut_asr_probe.mjs 测试视频.mp4                       # 抽音频
 - **云端识别没有子进程，取消得靠 `AbortController`**：`killDraftProc()` 原先只 kill `draftProcs` 里的子进程；云端任务是 `fetch` 挂在那里的，删项目/重跑时必须 `draftAborts.get(id).abort()`，否则旧任务会继续把音频传完、再回写一个已经删掉的项目。
 - **上传前先转 16k 单声道 64kbps mp3**：项目里的 `audio.wav` 是 16k 单声道 PCM，1 小时 ≈115MB；转成 mp3 后 1 小时 ≈28MB，上传更快、流量更省（`toBcutAudio()`，临时文件在上传结束/失败后都清）。
 - **只写逐词切片、没有「中文字幕」锚点行时，编辑器会按「>0.5s 间隔」重新分句**：实测必剪的 4 句（句间停顿 0.76s / 0.51s / 0.32s）在初稿阶段被并成 3 句 —— 这是既有设计（`analyzeKaraoke` 的未归属切片分组，Parakeet 初稿同样如此）；LLM 翻译写入中文锚点行后，按「归属（containment）」配对会精确还原成 4 句。所以**别把"初稿行数比 ASR 少"当成云端引擎的 bug**。
-- **ASS 头署名改为按项目实际模型**：原先写死 `Generated by K-ASS-Editor draft (Parakeet TDT 0.6B v2)`，用必剪出的初稿也这么署名会误导排查；现在 `assHeader(label)` 从 `meta.draft.modelId` 取模型名。
+- **ASS 头署名改为按项目实际模型**：原先写死 `Generated by K-ASS-Editor draft (Parakeet TDT 0.6B v2)`，用必剪出的初稿也这么署名会误导排查；现在 `assHeader(label)` 从 `meta.draft.usedModelId || modelId` 取模型名（备份引擎生效时署的是**实际**跑的引擎）。
+- **剪映云链路的关键点（自写实现，没有第三方代码可抄）**：① 请求签名是离线可算的 `MD5("9e2c|" + 路径末 7 字符 + "|" + pf + "|" + appvr + "|" + 秒级时间 + "|" + tdid + "|11ac")`，`tdid` 是免登录设备指纹（`390+年份末位` + 偶数年用 MAC 派生 / 奇数年用固定串）；② 上传位置要用临时凭证做 **AWS SigV4** 签 `ApplyUploadInner`（region=cn / service=vod、空 body、`x-amz-date;x-amz-security-token` 两个签名头）；③ 分片 PUT 带 `Content-CRC32`，随后 `POST 1:{crc32}` 报校验；④ **提交是再 PUT 一次同一份数据**（官方客户端就是这么做的，best-effort、失败不影响识别）—— 所以剪映这条链路的**上行流量约等于文件大小的两倍**，这也是上传前要先转 mp3 的原因之一；⑤ 轮询 `audio_subtitle/query` 时 **`data == null` 表示还在跑**（不是错误），出 `utterances` 才算完；⑥ 字段名与必剪**不是一套**：剪映是 `utterances[].text` / `words[].text`，必剪是 `transcript` / `words[].label`，两者时间都是毫秒。
+- **两个云端引擎互为备份（`transcribeCloud`）**：免费云端普遍限次/限流，所以串起来试 —— 主引擎抛错就换另一个，日志写明「谁失败 → 换谁」。**只在云端之间回退**：本地任务绝不会被悄悄改成上传（本地模型跑不动就报错），云任务也不会退回本地模型（可能没装/没 GPU）；`signal.aborted`（用户删除项目/重跑）直接抛出、不换引擎。mp3 只转一次、换引擎复用同一个临时文件；实际生效的引擎记进 `meta.draft.usedModelId`（连带 `engine` 一起更新，否则 `retryDraft` 的 whisper 语义分句判断会错）。
+- **`model.cloud` 是个通用开关，新加云端引擎不用再到处补分支**：`modelReady` / `asrGpuGateError` / `/api/asr/status` / 创建项目校验 / 删除与下载接口守卫 / 前端设置卡片与初稿下拉，全都按 `cloud` 统一处理 —— 加剪映时只写了一个协议模块 + 一条 `ASR_MODELS` 记录 + 一条引擎表记录。**唯一必须小心的是 `dirName: ''`**：`modelDirFor()` 会退化成模型根目录（见上一条隐患）。
+- **云端识别的"多引擎"还有个隐形好处**：两家的断句并不一样（同一段 13 秒英文：必剪 4 句、剪映 5 句，剪映更细），遇到某家断句不合口味时可以直接换另一家试试，不必改任何设置。

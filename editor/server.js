@@ -15,11 +15,12 @@ const os = require('os');
 const childProcess = require('child_process');
 const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), whisper 专用
 const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型/免显卡, 只把音频传上去
+const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.7.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.8.0'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -473,8 +474,9 @@ const ASR_MODELS = [
     draftAllowed: false,
   },
   {
-    // 云端识别: 没有本地模型文件、不需要显卡, 只要联网。音频会上传到 B 站服务器 —— 由用户在模型下拉里**显式选择**,
-    // 绝不作为"本地没装模型"时的兜底（见 resolveAsrModel）。
+    // 云端识别: 没有本地模型文件、不需要显卡, 只要联网。音频会上传到第三方服务器 —— 由用户在模型下拉里
+    // **显式选择**, 绝不作为"本地没装模型"时的兜底（见 resolveAsrModel）。
+    // 两个云端引擎(必剪/剪映)互为备份: 免费云端普遍限次/限流, 一个不行就换另一个（见 transcribeCloud）。
     id: 'bcut-asr',
     name: '必剪 ASR（英语·云端免下载）',
     engine: 'bcut',
@@ -482,6 +484,17 @@ const ASR_MODELS = [
     files: [],
     sizeMB: 0,
     desc: '调用必剪（B 站）云端识别：本地不装模型、不需要显卡，秒级出结果（实测 13 秒英文音频 3 秒返回逐词时间戳）。仅英语；要求能联网；音频会上传到 bilibili 服务器 —— 机密素材不要用',
+    dirName: '',
+    draftAllowed: true,
+  },
+  {
+    id: 'capcut-asr',
+    name: '剪映 ASR（英语·云端免下载）',
+    engine: 'capcut',
+    cloud: true,
+    files: [],
+    sizeMB: 0,
+    desc: '调用剪映（CapCut）云端识别：同样免下载、免显卡（实测 13 秒英文音频 3 秒返回逐词时间戳，断句比必剪更细）。仅英语；要求能联网；音频会上传到字节跳动服务器 —— 机密素材不要用。与「必剪 ASR」互为备份：一个限流/失败会自动换另一个',
     dirName: '',
     draftAllowed: true,
   },
@@ -2035,10 +2048,12 @@ function handleRequest(req, res) {
     const totalWords = segs.reduce((n, s) => n + ((s.words || []).length), 0);
     const hasTrans = Array.isArray(trans) && trans.length === segs.length;
     const hasSpk = segs.some(s => s.speaker != null);
-    // ASS 头署名: 用项目实际用的识别引擎(必剪云端 / Parakeet / whisper…), 别再写死 Parakeet
+    // ASS 头署名: 用项目**实际**用的识别引擎(可能是云端备份引擎), 别再写死 Parakeet
     const engineLabel = (() => {
       const meta = readMeta(id);
-      const m = meta && meta.draft && meta.draft.modelId ? modelById(meta.draft.modelId) : null;
+      const d = (meta && meta.draft) || {};
+      const mid = d.usedModelId || d.modelId;
+      const m = mid ? modelById(mid) : null;
       return m ? m.name : '';
     })();
     // 部分翻译时 lines 里会有空洞 —— 空洞不写中文行, 免得出现空字幕
@@ -2406,16 +2421,16 @@ function handleRequest(req, res) {
               resolve(out);
             });
           });
-        } else if (model.engine === 'bcut') {
-          // 云端引擎: 选区音频同样转 mp3 上传识别(本地无模型、无子进程)
-          const mp3 = await toBcutAudio(segWav);
+        } else if (model.cloud) {
+          // 云端引擎: 选区音频同样转 mp3 上传识别(本地无模型、无子进程); 同样享受"两个引擎互为备份"
+          const mp3 = await toCloudAudio(segWav);
           try {
-            const r = await bcutAsr.transcribe({
-              audioPath: mp3,
+            const used = await transcribeCloud({
+              engine: model.engine, audioPath: mp3,
               log: (m) => setRr({ message: m }),
               onProgress: (pct, msg) => setRr({ stage: '识别中', progress: 10 + Math.round(pct * 0.62), message: msg }),
             });
-            data = { segments: r.segments };
+            data = { segments: used.segments };
           } finally { try { fs.unlinkSync(mp3); } catch {} }
         } else {
           data = await new Promise((resolve, reject) => {
@@ -2611,11 +2626,11 @@ function handleRequest(req, res) {
     buildDraftSubtitle(id, wordLevel);
   }
 
-  /** 必剪只收 flac/aac/m4a/mp3/wav；而项目里的 audio.wav 是 16k 单声道 PCM（1 小时 ≈ 115MB），
+  /** 两个云端引擎都只收 flac/aac/m4a/mp3/wav；而项目里的 audio.wav 是 16k 单声道 PCM（1 小时 ≈ 115MB），
    *  上传太费流量：统一转成 16kHz 单声道 64kbps mp3（1 小时 ≈ 28MB），上传完即删。 */
-  function toBcutAudio(wav) {
+  function toCloudAudio(wav) {
     return new Promise((resolve, reject) => {
-      const out = path.join(os.tmpdir(), `ss-bcut-${process.pid}-${Date.now().toString(36)}.mp3`);
+      const out = path.join(os.tmpdir(), `ss-cloud-${process.pid}-${Date.now().toString(36)}.mp3`);
       const p = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-i', wav,
         '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k', out], { windowsHide: true });
       const t = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
@@ -2630,6 +2645,37 @@ function handleRequest(req, res) {
         resolve(out);
       });
     });
+  }
+
+  /* ── 云端引擎表 + 「互为备份」的调用 ──────────────────────────────
+   * 免费云端服务普遍限次/限流，所以两个云端引擎(必剪 / 剪映)互为备份：选中的那个失败就自动换另一个重试。
+   * 只做「云端 → 云端」的回退 —— 本地模型可能没装/没 GPU，而且**本地任务绝不该被悄悄改成上传**；
+   * 用户主动取消(abort)也不回退。 */
+  const CLOUD_ASR = [
+    { engine: 'bcut', modelId: 'bcut-asr', name: '必剪 ASR', where: 'bilibili 服务器', client: bcutAsr },
+    { engine: 'capcut', modelId: 'capcut-asr', name: '剪映 ASR', where: '字节跳动服务器', client: capcutAsr },
+  ];
+  async function transcribeCloud({ engine, audioPath, log, onProgress, signal }) {
+    const primary = CLOUD_ASR.find(x => x.engine === engine) || CLOUD_ASR[0];
+    const order = [primary, ...CLOUD_ASR.filter(x => x !== primary)];
+    let lastErr = null;
+    for (let i = 0; i < order.length; i++) {
+      const c = order[i];
+      try {
+        if (i === 0) log(`[提示] ${c.name}：音频会上传到${c.where}（机密素材请换本地模型）`);
+        else {
+          log(`[备份引擎] 改用「${c.name}」重试（前一个失败：${lastErr ? lastErr.message : '未知'}）`);
+          onProgress(32, `改用「${c.name}」重试 …`);
+        }
+        const r = await c.client.transcribe({ audioPath, signal, log, onProgress });
+        return { segments: r.segments, engine: c.engine, modelId: c.modelId, name: c.name, fallback: i > 0 };
+      } catch (e) {
+        if (signal && signal.aborted) throw e;          // 用户取消: 不换引擎
+        lastErr = e;
+        log(`[失败] ${c.name}：${e.message}`);
+      }
+    }
+    throw lastErr || new Error('云端识别失败（两个引擎都没成功）');
   }
 
   function startDraftAsr(id, wordLevel) {
@@ -2699,34 +2745,38 @@ function handleRequest(req, res) {
       return;
     }
 
-    // ── 必剪云端引擎: 没有本地模型、没有子进程, 走"转 mp3 → 上传 → 提交 → 轮询" ──
-    // 取消靠 AbortController(见 killDraftProc); 音频传的是 B 站服务器, 日志里明说一句。
-    if (model.engine === 'bcut') {
+    // ── 云端引擎(必剪 / 剪映): 没有本地模型、没有子进程, 走"转 mp3 → 上传 → 提交 → 轮询" ──
+    // 取消靠 AbortController(见 killDraftProc); 两个引擎互为备份(转 mp3 只做一次, 失败换引擎直接复用)。
+    if (model.cloud) {
       const ctl = new AbortController();
       draftAborts.set(id, ctl);
-      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] 必剪云端识别：音频会上传到 bilibili 服务器（机密素材请换本地模型）`);
-      toBcutAudio(wav)
-        .then((mp3) => {
+      const cloudLog = (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] ${m}`);
+      const cloudProg = (pct, msg) => setDraft(id, { stage: STAGE.asr, progress: pct, message: msg });
+      toCloudAudio(wav)
+        .then(async (mp3) => {
           let mb = 0;
           try { mb = fs.statSync(mp3).size / 1048576; } catch {}
-          pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 已转 mp3（${mb.toFixed(1)} MB），开始上传`);
-          return bcutAsr.transcribe({
-            audioPath: mp3,
-            signal: ctl.signal,
-            log: (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] ${m}`),
-            onProgress: (pct, msg) => setDraft(id, { stage: STAGE.asr, progress: pct, message: msg }),
-          }).finally(() => { try { fs.unlinkSync(mp3); } catch {} });   // 传完/失败都要清临时 mp3
+          cloudLog(`已转 mp3（${mb.toFixed(1)} MB），开始上传`);
+          try {
+            return await transcribeCloud({
+              engine: model.engine, audioPath: mp3, signal: ctl.signal,
+              log: cloudLog, onProgress: cloudProg,
+            });
+          } finally { try { fs.unlinkSync(mp3); } catch {} }   // 传完/失败都要清临时 mp3
         })
-        .then((r) => {
+        .then((used) => {
           draftAborts.delete(id);
-          if (!r.segments.length) {
-            return finishDraft(id, new Error('必剪没有识别到语音 —— 音频可能是纯音乐/静音，或这一段确实没人说话'));
+          if (!used.segments.length) {
+            return finishDraft(id, new Error(`${used.name} 没有识别到语音 —— 音频可能是纯音乐/静音，或这一段确实没人说话`));
           }
           try {
-            fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
+            fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: used.segments }));
             fs.renameSync(outJson + '.tmp', outJson);
+            // 记下**实际**用的引擎(可能是备份引擎): ASS 头署名与重试都用它
+            const meta1 = readMeta(id);
+            if (meta1 && meta1.draft) { meta1.draft.usedModelId = used.modelId; meta1.draft.engine = used.engine; writeMeta(meta1); }
           } catch (e) { return finishDraft(id, e); }
-          finishAsr();                                   // 必剪自带断句, 不走 whisper 的语义分句
+          finishAsr();                                   // 云端自带断句, 不走 whisper 的语义分句
         })
         .catch((e) => {
           draftAborts.delete(id);
