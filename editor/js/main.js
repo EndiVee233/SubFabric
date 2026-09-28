@@ -9,7 +9,8 @@ import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
 import { initProjects } from './project.js';
-import { initI18n, t, applyDom, setLocale, getLocale, getLocales } from './i18n.js';
+import { initI18n, t, applyDom } from './i18n.js';
+import { ico } from './icons.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -89,20 +90,53 @@ const state = {
   project: null          // 项目模式: { id, meta, loadPeaks } (project.js 维护; null=未用项目管理)
 };
 
-/* ─────────── Toast ─────────── */
+/* ─────────── Toast ───────────
+ * 分四级(成功/警告/失败/信息)：按文案里的关键词自动判级, 所以 100+ 个调用点不用改；
+ * 想强制某级就把第 2 参传成 'ok'|'warn'|'err'|'info'。图标 + 左侧色条见 ui.css 的 #toast。 */
 let toastTimer = null;
-function toast(msg, ms = 2600) {
+function toast(msg, ms = 2600, forceKind) {
   let el = document.getElementById('toast');
   if (!el) {
     el = document.createElement('div');
-    el.id = 'toast';
-    el.style.cssText = 'position:fixed;left:50%;top:60px;transform:translateX(-50%);background:rgba(28,36,49,.95);border:1px solid var(--border);color:var(--text-0);padding:8px 18px;border-radius:10px;z-index:99;font-size:13px;pointer-events:none;transition:opacity .3s;';
+    el.id = 'toast';                 // 定位/动画/分级样式都在 style.css + ui.css 的 #toast 里
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
     document.body.appendChild(el);
   }
-  el.textContent = t(msg);                    // 显示出口统一翻译(含服务端返回的中文消息)
-  el.style.opacity = '1';
+  const text = t(msg);                    // 显示出口统一翻译(含服务端返回的中文消息)
+  const kind = forceKind
+    || (/^(✗|×)/.test(text) ? 'err'
+      : /^(⚠)/.test(text) ? 'warn'
+        : /^(✓|✅)/.test(text) ? 'ok'
+          : /失败|错误|无法|不存在|未配置|超时/.test(text) ? 'err'
+            : /警告|为空|注意|重试|跳过/.test(text) ? 'warn'
+              : /完成|成功|已就绪|已保存|已删除|已恢复|已放回/.test(text) ? 'ok'
+                : 'info');
+  const icon = kind === 'err' ? 'xCircle' : kind === 'warn' ? 'alert' : kind === 'ok' ? 'checkCircle' : 'info';
+  el.classList.remove('toast-ok', 'toast-warn', 'toast-err', 'toast-info');
+  el.classList.add('toast-' + kind);
+  el.innerHTML = ico(icon) + '<span></span>';   // 图标与文案分成两个节点: 文案仍可被词典整体替换
+  el.lastElementChild.textContent = text;
+  el.classList.remove('toast-out');
+  el.classList.add('toast-in');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.style.opacity = '0', ms);
+  toastTimer = setTimeout(() => {
+    el.classList.remove('toast-in');
+    el.classList.add('toast-out');            // 动画结束后不用手动隐藏: 停在最后一帧(opacity 0)
+  }, ms);
+}
+
+/* ─────────── 图标注入 ───────────
+ * index.html / 动态模板里用 data-ico="名字" 声明图标（见 js/icons.js），运行时统一插成内联 SVG。
+ * 为什么插在**最前面**：SVG 与文案是两个节点，i18n 按文本节点查词典不受影响；
+ * 千万别把图标塞进文案中间（会拆散文本，词典匹配不上）。重复调用是安全的（已注入会跳过）。 */
+function applyIcons(root = document) {
+  for (const el of root.querySelectorAll('[data-ico]')) {
+    const first = el.firstElementChild;
+    if (first && first.classList && first.classList.contains('ico')) continue;
+    const svg = ico(el.dataset.ico);
+    if (svg) el.insertAdjacentHTML('afterbegin', svg);
+  }
 }
 
 /* ─────────── 可拖动分割线: 视频/时间轴(横) 与 左区/字幕列表(竖) ─────────── */
@@ -2502,6 +2536,37 @@ if (setTracks) setTracks.addEventListener('change', () => {
   localStorage.setItem(TRACKS_KEY, setTracks.checked ? 'double' : 'single');
   applyTrackMode(true);
 });
+/* ─────────── 主题色(界面强调色) ───────────
+ * 数学与套用都在 js/accent.js（head 里的经典脚本, 首屏已按用户存的颜色套过一次），
+ * 这里只做设置面板交互：点色块换色 / 拖色盘实时预览 / 一键恢复默认。
+ * 自定义色用 input 事件做实时预览, change(松手) 时才重画选中态。 */
+const ACC = window.SSAccent;
+function renderThemeSwatches() {
+  const box = document.getElementById('theme-swatches');
+  if (!box || !ACC) return;
+  const cur = ACC.current();
+  box.innerHTML = ACC.PRESETS.map(p =>
+    `<button type="button" class="theme-sw${p.hex === cur ? ' active' : ''}" data-hex="${p.hex}" title="${escapeHtml(p.name)}" style="background:${p.hex}"></button>`).join('');
+  box.querySelectorAll('.theme-sw').forEach(b => {
+    b.addEventListener('click', () => { ACC.set(b.dataset.hex); renderThemeSwatches(); });
+  });
+}
+if (ACC) {
+  renderThemeSwatches();
+  const ci = document.getElementById('theme-color');
+  if (ci) {
+    ci.value = ACC.current();
+    ci.addEventListener('input', () => { ACC.set(ci.value); });                  // 拖色盘即时预览
+    ci.addEventListener('change', () => { ACC.set(ci.value); renderThemeSwatches(); });
+  }
+  const rb = document.getElementById('theme-reset');
+  if (rb) rb.addEventListener('click', () => {
+    ACC.reset(); renderThemeSwatches();
+    if (ci) ci.value = ACC.DEFAULT;
+    toast('已恢复默认主题色');
+  });
+}
+
 /** 字幕块区域高度(时间轴占屏幕高度): 设置里可调, 也可拖视频/时间轴中间那根线; 记住用户的舒适值 */
 const TLH_KEY = 'ss-tl-h';
 const setTlh = document.getElementById('set-tlh');
@@ -2581,24 +2646,8 @@ video.addEventListener('timeupdate', () => {
   });
 });
 
-/* 界面语言: 设置里切换(zh-CN / en-US), 语言文件在 lang/<locale>.json 可自行增改 */
-const setLocaleSel = document.getElementById('set-locale');
-const setLocaleVal = document.getElementById('set-locale-val');
-function applyLocaleSetting() {
-  const loc = getLocale();
-  if (setLocaleSel) {
-    setLocaleSel.innerHTML = getLocales().map(l => `<option value="${l.id}">${l.name}</option>`).join('');
-    setLocaleSel.value = loc;
-  }
-  if (setLocaleVal) setLocaleVal.textContent = loc;
-}
-if (setLocaleSel) setLocaleSel.addEventListener('change', async () => {
-  await setLocale(setLocaleSel.value);
-  applyLocaleSetting();
-  rebuildItemsAndLanes(true, true);      // 动态渲染的列表/时间轴标签跟着换语言
-  Projects.applyHash();                  // 主界面/弹窗的动态部分重走一遍
-});
-applyLocaleSetting();
+/* 界面语言: 只有中文(zh-CN)。工具是给国人做双语字幕的, 英文 UI 没有意义, 已移除。
+ * 文案层(js/i18n.js)保留 —— 它的另一个用途是 lang/zh-CN.json(键=原文, 值可改) 让用户自己润色措辞。 */
 applySensitivity();
 applyFilmSetting();
 applyTrackMode(false);
@@ -2744,8 +2793,8 @@ requestAnimationFrame(tick);
 
 /* ═══════════ 示例自动加载(仅 #/editor 直开时; 正常入口是项目主界面 #/home) ═══════════ */
 (async function boot() {
-  await initI18n();                      // 先载入语言文件: 静态 DOM 文案 + 后续所有 t()
-  applyLocaleSetting();                  // 语言选择器回显已保存的语言
+  await initI18n();                      // 载入 lang/zh-CN.json(用户可改措辞的词典) + 应用到静态 DOM
+  applyIcons();                          // 把 data-ico 声明的地方插成内联 SVG 图标
   panel.setBadge('未加载');
   panel.setFileName('');
   timeline.setDuration(0);

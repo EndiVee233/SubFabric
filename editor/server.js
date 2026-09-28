@@ -21,7 +21,7 @@ const llmText = require('./llm-text.js');  // LLM 回复卫生+解析(剥思维�
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.9.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.9.1'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -685,6 +685,7 @@ function translateCfg() {
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
     glossaryLang: t.glossaryLang || '简体',
+    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 字幕翻译」)
     hasKey: !!t.apiKey,
   };
 }
@@ -2163,7 +2164,10 @@ function handleRequest(req, res) {
   }
 
   /* ── 翻译 ── */
-  const TRANS_BATCH = 25;
+  /* 翻译批量大小：**用户可调**（「全局设置 → 字幕翻译 → 每批行数」，5~100，默认 25）。
+   * 过去是写死的 25：小模型希望更小（"返回行数必须等于输入行数"这条对齐越容易整批翻车），
+   * 强模型希望更大（请求数更少）。夹取与切批都在 llm-text.js（纯函数，有单测），这里只取配置。 */
+  const transBatchSize = (cfg) => llmText.clampBatchSize(cfg && cfg.batchSize);
 
   /* 解析模型回复的工具都在 editor/llm-text.js（纯函数, 可单测）:
    *  · stripReasoning   —— 剥掉  thinking… 思维链（推理模型必踩的坑, 以前完全没处理）
@@ -2572,14 +2576,16 @@ function handleRequest(req, res) {
         if (llmReady(cfg)) {
           setRr({ stage: '翻译中', progress: 76, message: '翻译中 …' });
           const translations = [];
-          const chunks = Math.ceil(segs.length / TRANS_BATCH) || 1;
+          const bSize = transBatchSize(cfg);
+          const parts = llmText.planChunks(segs, bSize);
+          const chunks = parts.length || 1;
           try {
-            for (let i = 0; i < segs.length; i += TRANS_BATCH) {
-              const part = await translateLines(cfg, segs.slice(i, i + TRANS_BATCH).map(s => s.text), 0,
+            for (let bi = 0; bi < parts.length; bi++) {
+              const part = await translateLines(cfg, parts[bi].map(s => s.text), 0,
                 path.join(projDir(id), 'llm-debug.jsonl'));
               translations.push(...part);
-              setRr({ progress: 76 + Math.round((Math.floor(i / TRANS_BATCH) + 1) / chunks * 21),
-                message: `翻译中 … ${Math.floor(i / TRANS_BATCH) + 1}/${chunks} 批` });
+              setRr({ progress: 76 + Math.round(((bi + 1) / chunks) * 21),
+                message: `翻译中 … ${bi + 1}/${chunks} 批（每批 ${bSize} 行）` });
             }
             if (translations.length === segs.length) segs.forEach((s, i) => { s.zh = String(translations[i] == null ? '' : translations[i]); });
             else warning = '翻译行数不一致，已跳过译文';
@@ -2618,10 +2624,10 @@ function handleRequest(req, res) {
       pushDraftLog(id, '每行都已有译文，不需要重翻');
       return finishTranslate(id, segs, lines);
     }
-    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行`);
+    const batchSize = transBatchSize(cfg);
+    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行（每批 ${batchSize} 行）`);
 
-    const batches = [];
-    for (let i = 0; i < todo.length; i += TRANS_BATCH) batches.push(todo.slice(i, i + TRANS_BATCH));
+    const batches = llmText.planChunks(todo, batchSize);
 
     let failedBatches = 0;
     for (let bi = 0; bi < batches.length; bi++) {
@@ -3268,7 +3274,7 @@ function handleRequest(req, res) {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);

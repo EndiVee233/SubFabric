@@ -1,0 +1,292 @@
+/* ══════════════════════════════════════════════════════════════════════════════
+   SubFabric 质感层（v1.9.1）—— 在 style.css 之后加载，只做"看得见的提升"：
+   设计令牌 / 滚动条 / 环境光 / 工具栏 / 视频区 / 首页卡片与骨架屏 / 侧栏字幕卡 /
+   设置面板 / 弹窗统一 / Toast 分级 / 时间轴外壳 / 图标 / 细节。
+   规则全部是"同选择器、靠后生效"的覆盖，不引入新依赖，也不改布局骨架。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. 设计令牌 ─────────────────────────────────────────────────────────── */
+:root {
+  --r-1: 6px;
+  --r-2: 9px;
+  --r-3: 13px;
+  --r-4: 18px;
+  --sh-1: 0 1px 2px rgba(0, 0, 0, .35);
+  --sh-2: 0 6px 18px rgba(0, 0, 0, .36);
+  --sh-3: 0 20px 52px rgba(0, 0, 0, .52);
+  --hair: rgba(255, 255, 255, .055);        /* 顶部高光/分隔细线 */
+  --hair-2: rgba(255, 255, 255, .09);
+  --panel-top: rgba(255, 255, 255, .022);   /* 面板顶部渐隐高光 */
+  --mono: "Cascadia Mono", "Consolas", "SFMono-Regular", ui-monospace, monospace;
+}
+
+/* ── 2. 全局：滚动条 / 选区 / 环境光 / 字体 ───────────────────────────────── */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .10); border-radius: 99px;
+  border: 3px solid transparent; background-clip: content-box;
+  transition: background var(--dur-2) var(--ease);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--accent-a45); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+::selection { background: var(--accent-a40); color: #fff; }
+html { color-scheme: dark; caret-color: var(--accent); }
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+/* 环境光：两团极淡的主题色光晕，换主题色时整机氛围跟着变 */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(58vw 42vh at 8% -10%, var(--accent-a07), transparent 62%),
+    radial-gradient(46vw 34vh at 102% 2%, rgba(97, 184, 255, .045), transparent 60%);
+}
+/* 环境光要落在内容之下：#app 抬一层即可。
+   ⚠ 别给 #home-view 加 position —— 它本来是 position:fixed 的全屏浮层(z-index:50)，
+   改成 relative 会让首页不再盖住编辑器（画面直接穿帮，踩过）。 */
+#app { position: relative; z-index: 1; }
+#home-view { z-index: 51; }
+/* 时间码 / 百分比 / 数值：等宽数字，跳动时不抖 */
+#tl-cursor-time, #tl-duration, .setting-val, .pc-draft-txt .pct, .dp-retries, .fr-status {
+  font-variant-numeric: tabular-nums;
+}
+#tl-cursor-time, #tl-duration { font-family: var(--mono); letter-spacing: -.2px; }
+
+/* ── 3. 工具栏：分层 + 细线分组 + 字标渐变 ───────────────────────────────── */
+#toolbar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .035), transparent 70%), var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--hair), 0 8px 22px rgba(0, 0, 0, .3);
+  position: relative; z-index: 6;
+}
+.tb-group { display: flex; align-items: center; gap: 8px; }
+.tb-group + .tb-group { padding-left: 10px; border-left: 1px solid var(--hair); }
+.app-logo { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; }
+.app-logo b {
+  background: linear-gradient(120deg, var(--text-0) 40%, var(--accent-2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  letter-spacing: .2px;
+}
+.save-state { font-variant-numeric: tabular-nums; }
+
+/* ── 4. 视频区：圆角 + 内阴影 + 暗角，画面更"嵌进"界面 ───────────────────── */
+#stage-wrap { background: radial-gradient(120% 120% at 50% 0%, #101015, #0b0b0e 72%); }
+#video-stage {
+  border-radius: var(--r-3); overflow: hidden; background: #000;
+  box-shadow: var(--sh-2), inset 0 0 0 1px var(--hair);
+  position: relative;
+}
+#video-stage::after {                 /* 暗角，让画面边缘不刺眼 */
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, .5);
+}
+#stage-hint { color: var(--text-2); }
+#stage-hint .sh-box, #stage-hint > div { border-radius: var(--r-2); }
+/* 空视频区的提示卡：虚线圆角框 + 毛玻璃，比裸文字更像"这里可以放东西" */
+.hint-card {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 26px 34px; border-radius: var(--r-4);
+  border: 1px dashed var(--hair-2);
+  background: rgba(255, 255, 255, .015);
+  backdrop-filter: blur(3px);
+  transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-out);
+}
+.hint-card:hover { border-color: var(--accent-a45); background: var(--accent-a07); transform: translateY(-1px); }
+.hint-card .hint-sub { color: var(--text-2); font-size: 12px; }
+.hint-card b { color: var(--text-0); }
+
+/* ── 5. 首页：卡片层次 + 悬停揭示 + 骨架屏 + 空状态 ──────────────────────── */
+.home-inner { max-width: 940px; }
+.home-logo { filter: drop-shadow(0 10px 26px var(--accent-a18)); }
+.home-logo .ico { width: 42px; height: 42px; color: var(--accent); stroke-width: 1.5; }
+.home-title { letter-spacing: .4px; }
+.home-title-en { opacity: .9; }
+.home-sub { color: var(--text-1); }
+/* 视频区留出呼吸空间, 圆角与暗角才看得出来 */
+#stage-wrap { padding: 10px; }
+
+.proj-card {
+  position: relative; overflow: hidden;
+  border-radius: var(--r-3);
+  background: linear-gradient(180deg, var(--panel-top), transparent 55%), var(--bg-1);
+  box-shadow: var(--sh-1), inset 0 1px 0 var(--hair);
+}
+.proj-card::before {                  /* 左侧主题色指示条：悬停时亮起 */
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  opacity: 0; transition: opacity var(--dur-2) var(--ease);
+}
+.proj-card:hover::before { opacity: 1; }
+.proj-card.proj-missing::before { background: var(--danger); opacity: .55; }
+.pc-actions .btn { opacity: .78; transition: opacity var(--dur-2) var(--ease); }
+.proj-card:hover .pc-actions .btn, .pc-actions .btn:focus-visible { opacity: 1; }
+.pc-meta { color: var(--text-2); }
+.pc-draft-bar { border-radius: 99px; overflow: hidden; }
+.pc-draft-bar-in { border-radius: 99px; }
+
+/* 骨架屏（首页读取中 / 模型列表读取中） */
+.skel-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 18px; margin-bottom: 10px; border-radius: var(--r-3);
+  background: linear-gradient(180deg, var(--panel-top), transparent), var(--bg-1);
+  border: 1px solid var(--hair);
+}
+.skel-b { border-radius: 99px; background: linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.11) 37%, rgba(255,255,255,.05) 63%); background-size: 400% 100%; animation: shimmer 1.35s linear infinite; }
+.skel-b.b1 { width: 42px; height: 30px; border-radius: var(--r-1); }
+.skel-b.b2 { flex: 1; height: 12px; }
+.skel-b.b3 { width: 92px; height: 26px; border-radius: var(--r-2); }
+.skel-b.b4 { width: 62px; height: 26px; border-radius: var(--r-2); }
+
+.home-empty { padding: 58px 0 34px; }
+.home-empty .he-icon { font-size: 0; opacity: 1; display: flex; justify-content: center; }
+.home-empty .he-icon .ico { width: 46px; height: 46px; color: var(--accent); opacity: .85; filter: drop-shadow(0 8px 22px var(--accent-a24)); }
+.home-empty .he-name { font-size: 16px; letter-spacing: .3px; }
+.home-empty .he-sub { color: var(--text-2); }
+
+/* ── 6. 侧栏与字幕卡：层次 + 选中反馈 + 中英层级 ─────────────────────────── */
+.panel-head, .tab-head {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .03), transparent), var(--bg-1);
+  border-bottom: 1px solid var(--hair);
+}
+.cue-card {
+  border-radius: var(--r-1);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .014), transparent 60%);
+}
+.cue-card.selected {
+  background: var(--accent-a10);
+  box-shadow: inset 3px 0 0 var(--accent), 0 2px 10px rgba(0, 0, 0, .22);
+}
+.cue-card.playing { box-shadow: inset 3px 0 0 var(--accent-2); }
+.cc-l1 { color: var(--text-0); }        /* 中文行：主信息，最亮 */
+.cc-l2 { color: var(--text-1); }        /* 英文行：退一档，双语层次更清楚 */
+.cc-no { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.glabbr, .st-card-title, .ph-title { letter-spacing: .2px; }
+
+/* ── 7. 设置面板：卡片化 + 吸顶分组头 ────────────────────────────────────── */
+.set-group {
+  border: 1px solid var(--hair); border-radius: var(--r-2);
+  background: linear-gradient(180deg, var(--panel-top), transparent 60%);
+  box-shadow: var(--sh-1);
+}
+.set-group-head {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--bg-1); backdrop-filter: blur(6px);
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  padding-bottom: 4px;
+}
+.setting-row { padding: 5px 0; }
+.st-card { border-radius: var(--r-2); }
+.st-models { color: var(--text-1); }
+
+/* ── 8. 弹窗统一：圆角/投影/毛玻璃遮罩/标题与按钮栏节奏 ──────────────────── */
+#np-overlay, #st-overlay, #fr-overlay, #confirm-overlay, #pick-overlay, #fix-overlay, #dp-overlay {
+  background: rgba(6, 6, 9, .66);
+  backdrop-filter: blur(7px) saturate(120%);
+}
+.np-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box, .dp-box {
+  border-radius: var(--r-4);
+  border: 1px solid var(--hair-2);
+  background: linear-gradient(180deg, #1b1b22, #141419 62%);
+  box-shadow: var(--sh-3), inset 0 1px 0 var(--hair);
+}
+.np-title, .st-title, .fr-title, .rn-title, .pick-title {
+  font-size: 15px; font-weight: 700; letter-spacing: .3px;
+}
+.st-head, .fr-head {
+  border-bottom: 1px solid var(--hair); padding-bottom: 10px; margin-bottom: 12px;
+}
+.np-actions, .st-actions, .fr-actions, .rn-actions, .pick-actions, .dp-actions {
+  border-top: 1px solid var(--hair); padding-top: 12px; margin-top: 14px;
+}
+.fr-tab.active, .gl-tab.active { box-shadow: var(--sh-1); }
+.np-mode, .np-mode.active { border-radius: var(--r-2); }
+.np-mode.active { box-shadow: 0 6px 18px var(--accent-a24), inset 0 1px 0 var(--hair); }
+.dp-steps { gap: 6px; }
+.dp-log { font-family: var(--mono); font-size: 11.5px; line-height: 1.65; }
+
+/* ── 9. Toast：分级（成功/警告/失败）+ 左侧色条 + 图标 ───────────────────── */
+#toast {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 16px 9px 14px; font-weight: 500;
+  border-left: 3px solid var(--accent);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .48);
+}
+#toast .ico { width: 15px; height: 15px; flex: none; color: var(--accent); }
+#toast.toast-ok { border-left-color: #4fd1a5; }
+#toast.toast-ok .ico { color: #4fd1a5; }
+#toast.toast-warn { border-left-color: #ffd54a; }
+#toast.toast-warn .ico { color: #ffd54a; }
+#toast.toast-err { border-left-color: var(--danger); }
+#toast.toast-err .ico { color: var(--danger); }
+
+/* ── 10. 时间轴外壳（画布内部另在 timeline.js 里打磨） ───────────────────── */
+#timeline-panel { border-top: 1px solid var(--hair); background: var(--bg-1); }
+.tl-head { background: linear-gradient(180deg, rgba(255, 255, 255, .025), transparent); border-bottom: 1px solid var(--hair); }
+.tl-hint { color: var(--text-2); }
+#tl-canvas-wrap {
+  border-radius: var(--r-2); overflow: hidden; background: #0e0e12;
+  box-shadow: inset 0 0 0 1px var(--hair);
+}
+.tl-menu-item { border-radius: var(--r-1); }
+.tl-menu-item:hover { background: var(--accent-a12); }
+#range-bar { border-radius: 99px; box-shadow: var(--sh-2); }
+
+/* ── 11. 图标：统一描边风格（emoji 换成内联 SVG） ────────────────────────── */
+.ico {
+  width: 14px; height: 14px; flex: none; display: inline-block; vertical-align: -2px;
+  fill: none; stroke: currentColor; stroke-width: 1.9;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.btn .ico { margin-right: 6px; }
+.btn.ico-only .ico, .btn-icon .ico { margin-right: 0; }
+.rb-btn .ico { margin-right: 6px; }
+.npm-icon { display: inline-flex; align-items: center; justify-content: center; }
+.npm-icon .ico { width: 21px; height: 21px; }
+.np-mode.active .npm-icon .ico { color: var(--accent); }
+.hint-icon .ico { width: 40px; height: 40px; color: var(--text-2); }
+.app-logo .ico { width: 17px; height: 17px; color: var(--accent); }
+.he-icon .ico { stroke-width: 1.5; }
+.tl-menu-item .ico { margin-right: 7px; }
+
+/* ── 12. 细节：徽标/标签统一圆角、日志等宽、保存点呼吸 ───────────────────── */
+.badge, .chip-l1, .chip-bad, .chip-l2, .pc-badge, .pc-st { border-radius: 99px; }
+.pc-badge { letter-spacing: .4px; }
+.log-line { font-variant-numeric: tabular-nums; }
+.log-line .lt { font-family: var(--mono); opacity: .75; }
+#log-view { line-height: 1.6; }
+.save-state::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); margin-right: 6px; vertical-align: 1px;
+  animation: breathe 2.2s var(--ease) infinite;
+}
+.role-card { border-radius: var(--r-2); }
+.role-card:hover { box-shadow: var(--sh-1); }
+.export-grid .btn { border-radius: var(--r-1); }
+.ptab { position: relative; }
+.ptab.active::after {
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px;
+  background: var(--accent); border-radius: 2px 2px 0 0;
+  animation: fade-in var(--dur-2) var(--ease-out) both;
+}
+
+/* ── 13. 首页列表：入场动画只在"进入首页"时播 + 进度条平滑增长 ───────────── */
+/* style.css 里 .proj-card 是全局播放 fade-up；轮询刷新每 1.5s 重建卡片, 会一直重播 → 这里收窄到 .anim-in */
+.proj-card { animation: none; }
+.home-list.anim-in .proj-card {
+  animation: fade-up var(--dur-4) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 36ms);
+}
+/* 进度条从"上次渲染到的宽度"长到新宽度（--from 由 JS 写在元素上, 终点是元素自身 width） */
+@keyframes bar-from { from { width: var(--from, 0%); } }
+.pc-draft-bar-in { animation: bar-from .5s var(--ease-out) both; }
+.pc-draft.running .pc-draft-bar-in { animation: bar-from .5s var(--ease-out) both, shimmer 1.5s linear infinite; }
+/* 小图标在文案里的对齐 */
+.gl-del .ico, .pc-del .ico { margin-right: 0; }
+.pc-missing { display: inline-flex; align-items: center; gap: 3px; }
+.pc-missing .ico { width: 12px; height: 12px; color: #ffd54a; }
+.st-models .spin { margin-right: 2px; }
+
+/* ── 14. 减少动效：质感层里的动画同样关掉（与 style.css 的规则一致，双保险） ── */
+@media (prefers-reduced-motion: reduce) {
+  .skel-b, .save-state::before, .pc-badge, .ptab.active::after,
+  .proj-card, .pc-draft-bar-in { animation: none !important; }
+}

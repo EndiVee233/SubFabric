@@ -132,7 +132,30 @@ class LlmError extends Error {
   }
 }
 
+/* ── 翻译批量大小（用户可调：「全局设置 → 字幕翻译 → 每批行数」）──────────────
+ * 语义 = "一次请求最多带几行给 LLM"。批越大请求越少，但"返回行数必须等于输入行数"
+ * 这条对齐要求越容易整批翻车（小模型少给/多给一行），也更容易被 max_tokens 截断后整批拆半重来。
+ * 失败时仍有自动拆半兜底，所以这个值只是"期望规模"。 */
+const BATCH_MIN = 5;
+const BATCH_MAX = 100;
+const BATCH_DEFAULT = 25;
+function clampBatchSize(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return BATCH_DEFAULT;
+  return Math.max(BATCH_MIN, Math.min(BATCH_MAX, n));
+}
+
+/** 把一个数组按 size 切成若干块（翻译分批用；纯函数, 便于单测边界） */
+function planChunks(items, size) {
+  const list = Array.isArray(items) ? items : [];
+  const n = clampBatchSize(size);
+  const out = [];
+  for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n));
+  return out;
+}
+
 module.exports = {
   stripReasoning, looksLikeReasoning, extractJsonArray, parseJsonArray,
   parseLineArrayReply, punctPairsSane, chattyLine, LlmError,
+  clampBatchSize, planChunks, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
 };

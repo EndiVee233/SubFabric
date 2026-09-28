@@ -33,6 +33,13 @@ const C = {
   playhead: '#ff7a45'
 };
 
+/** 读一个 CSS 变量（时间轴要跟着界面主题色走，但 canvas 里拿不到 var()） */
+function cssVar(name, fallback) {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  } catch { return fallback; }
+}
 /* 各样式轨道配色(逐词样式 → 紫, 整句样式 → 橙) */
 const LANE_COLORS = ['#ff7a45', '#8b7cf6', '#4fd1a5', '#61b8ff', '#ff5c8a', '#d9c14f'];
 
@@ -162,6 +169,10 @@ class Filmstrip {
 export class Timeline {
   constructor(canvas, video) {
     this.canvas = canvas;
+    /* 主题色：游标 / 选中环 / 波形都跟着界面主题走。
+       换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
+    this.accent = cssVar('--accent', C.accent);
+    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); }); } catch {}
     this.ctx = canvas.getContext('2d');
     this.video = video || null;
     this.film = new Filmstrip(() => { /* 下一帧重绘 */ });
@@ -317,8 +328,8 @@ export class Timeline {
     this._clampView();
     this._viewReady = true;
   }
-  zoomIn() { this._zoomAt(this._cssW() / 2, 1.6); }
-  zoomOut() { this._zoomAt(this._cssW() / 2, 1 / 1.6); }
+  zoomIn() { this._zoomAtSmooth(this._cssW() / 2, 1.6); }
+  zoomOut() { this._zoomAtSmooth(this._cssW() / 2, 1 / 1.6); }
 
   /** 胶片预览图高度: 关闭时为 0(不占位, 字幕块直接顶到刻度线下方) */
   _filmH() { return this.showFilm ? FILM_H : 0; }
@@ -366,6 +377,35 @@ export class Timeline {
     this._clampView();
     this._viewReady = true;
     if (this.onLayout) this.onLayout();
+    return true;
+  }
+
+  /** 缩放（带缓动）：约 160ms 内把倍率补间到目标值，**光标下的时间保持不动**（跟手）。
+   *  连续滚轮会从"当前值"重新起步（不是排队), 所以手感是顺滑而不是卡顿。
+   *  Ctrl+滚轮 / 工具栏 ± / 快捷键都走这里；prefers-reduced-motion 时退化为瞬时。 */
+  _zoomAtSmooth(px, factor) {
+    const lim = this._zoomLimits();
+    const target = Math.max(lim.min, Math.min(lim.max, this.pxPerSec * factor));
+    if (!isFinite(target) || Math.abs(target - this.pxPerSec) < 1e-9) return false;
+    const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (this._zoomAnim) { cancelAnimationFrame(this._zoomAnim); this._zoomAnim = 0; }
+    if (reduced) return this._zoomAt(px, factor);
+    const from = this.pxPerSec;
+    const tUnder = this.viewStart + px / this.pxPerSec;      // 光标下的时间
+    const t0 = performance.now();
+    const DUR = 160;
+    const self = this;
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / DUR);
+      const e = 1 - Math.pow(1 - k, 3);                      // easeOutCubic
+      self.pxPerSec = from + (target - from) * e;
+      self.viewStart = tUnder - px / self.pxPerSec;
+      self._clampView();
+      self._viewReady = true;
+      if (self.onLayout) self.onLayout();
+      self._zoomAnim = k < 1 ? requestAnimationFrame(step) : 0;
+    };
+    this._zoomAnim = requestAnimationFrame(step);
     return true;
   }
   /** 平移: 正数 = 往时间更晚的方向看 */
@@ -429,7 +469,7 @@ export class Timeline {
       e.preventDefault();
       this._hideMenu();
       const dir = e.deltaY < 0 ? 1 : -1;        // 上滚为正
-      if (e.ctrlKey || e.metaKey) this._zoomAt(e.offsetX, dir > 0 ? this.zoomSensitivity : 1 / this.zoomSensitivity);
+      if (e.ctrlKey || e.metaKey) this._zoomAtSmooth(e.offsetX, dir > 0 ? this.zoomSensitivity : 1 / this.zoomSensitivity);
       else this._panBy(dir * this.panSensitivity);   // 下滚 dir=-1 → 负 → 看更早
     }, { passive: false });
 
@@ -974,22 +1014,35 @@ export class Timeline {
 
   _drawRuler(ctx, W) {
     const top = this._filmH();
-    ctx.fillStyle = '#101015';
+    const g = ctx.createLinearGradient(0, top, 0, top + RULER_H);
+    g.addColorStop(0, '#16161c');
+    g.addColorStop(1, '#101015');
+    ctx.fillStyle = g;
     ctx.fillRect(0, top, W, RULER_H);
     ctx.strokeStyle = C.laneBorder;
     ctx.beginPath(); ctx.moveTo(0, top + RULER_H + 0.5); ctx.lineTo(W, top + RULER_H + 0.5); ctx.stroke();
 
     const step = this._niceStep(80);
     const t0 = Math.max(0, Math.floor(this.viewStart / step) * step);
+    const sub = step / 5;                       // 次刻度: 主刻度之间再分 5 格, 读数更好对位
+    const end = this.viewStart + W / this.pxPerSec + step;
+    ctx.strokeStyle = C.rulerTick;
+    ctx.beginPath();
+    for (let st = t0; st <= end; st += sub) {
+      const x = Math.round(this.t2x(st)) + 0.5;
+      if (x < 0 || x > W) continue;
+      const major = Math.abs(st / step - Math.round(st / step)) < 1e-6;
+      ctx.moveTo(x, top + RULER_H - (major ? 7 : 3));
+      ctx.lineTo(x, top + RULER_H);
+    }
+    ctx.stroke();
     ctx.font = '10px Consolas, monospace';
     ctx.textAlign = 'left';
-    for (let tt = t0; tt <= this.viewStart + W / this.pxPerSec + step; tt += step) {
+    for (let tt = t0; tt <= end; tt += step) {
       const x = Math.round(this.t2x(tt)) + 0.5;
       if (x < -60 || x > W + 10) continue;
-      ctx.strokeStyle = C.rulerTick;
-      ctx.beginPath(); ctx.moveTo(x, top + RULER_H - 7); ctx.lineTo(x, top + RULER_H); ctx.stroke();
       ctx.fillStyle = C.ruler;
-      ctx.fillText(fmtTime(tt, 1).replace(/\.0$/, ''), x + 4, top + RULER_H - 8);
+      ctx.fillText(fmtTime(tt, 1).replace(/\.0\$/, ''), x + 4, top + RULER_H - 8);
     }
   }
 
@@ -1205,10 +1258,14 @@ export class Timeline {
         this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
         ctx.stroke();
         if (isSel) {
-          ctx.strokeStyle = '#ffffff';
+          ctx.save();
+          ctx.shadowColor = withAlpha(this.accent || C.accent, 0.5, 'rgba(255,122,69,.5)');
+          ctx.shadowBlur = 7;
+          ctx.strokeStyle = this.accent || C.accent;   // 选中环跟主题色(原为白色)
           ctx.lineWidth = 1.5;
-          this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
+          this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 4);
           ctx.stroke();
+          ctx.restore();
         }
         // 块内: 中文行(角色色/加粗/100% 不透明) + 分隔线 + 英文逐词轴(可拖动标记)
         if (wpx > 46 && (c.text || c.text2)) this._drawBlockText(ctx, c, band, x1, x2, wpx, base);
@@ -1235,12 +1292,19 @@ export class Timeline {
   _drawPlayhead(ctx, H, t) {
     const x = Math.round(this.t2x(t)) + 0.5;
     if (x < -2 || x > this._cssW() + 2) return;
-    ctx.strokeStyle = C.playhead;
+    const acc = this.accent || C.playhead;
+    ctx.save();
+    ctx.shadowColor = withAlpha(acc, 0.55, 'rgba(255,122,69,.55)');   // 游标光晕: 一眼找到当前时间
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = acc;
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    ctx.fillStyle = C.playhead;
+    ctx.restore();
+    ctx.fillStyle = acc;
+    this._roundRect(ctx, x - 5, 0, 10, 9, 2.5);
+    ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(x - 5, 0); ctx.lineTo(x + 5, 0); ctx.lineTo(x, 7);
+    ctx.moveTo(x - 4, 8); ctx.lineTo(x + 4, 8); ctx.lineTo(x, 13);
     ctx.closePath(); ctx.fill();
   }
 

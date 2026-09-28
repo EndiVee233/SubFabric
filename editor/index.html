@@ -6,6 +6,8 @@
 <title>SubFabric · 字幕工作台</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/ui.css">
+<script src="js/accent.js"></script>
 <script>
 /* 前端错误上报: 任何 JS 报错/未处理 Promise 都上报到服务端日志(UI「日志」页可见),
  * 方便定位"界面异常但看不到原因"。放在所有脚本之前, 保证模块早期报错也能抓到。 */
@@ -30,18 +32,18 @@
   <!-- ══════════ 工具栏 ══════════ -->
   <header id="toolbar">
     <div class="tb-group">
-      <span class="app-logo">🎬 SubFabric</span>
-      <button class="btn" id="btn-home" title="返回项目主界面（编辑内容会自动保存到项目）">🏠 项目</button>
+      <span class="app-logo" data-ico="film"><b>SubFabric</b></span>
+      <button class="btn" id="btn-home" data-ico="home" title="返回项目主界面（编辑内容会自动保存到项目）">项目</button>
     </div>
     <div class="tb-group">
-      <button class="btn" id="btn-open-video" title="导入视频文件 (mp4/webm/mkv…)">📁 打开视频</button>
-      <button class="btn" id="btn-open-sub" title="导入 SRT / ASS 字幕文件">📄 打开字幕</button>
+      <button class="btn" id="btn-open-video" data-ico="folder" title="导入视频文件 (mp4/webm/mkv…)">打开视频</button>
+      <button class="btn" id="btn-open-sub" data-ico="file" title="导入 SRT / ASS 字幕文件">打开字幕</button>
       <span id="audio-src" hidden>
         <select class="btn" id="audio-mode" title="音频源（播放用哪条音轨，切换立即生效）：降噪后=播放项目里降噪过的音轨；原视频=直接播视频自带原声。识别与波形用哪一版由下方「重新生成音频」决定">
           <option value="denoise">音频: 降噪后</option>
           <option value="raw">音频: 原视频</option>
         </select>
-        <button class="btn" id="btn-regen-audio" title="按当前选的音频源从视频重新提取 audio.wav 与波形（识别与波形用这一版；字幕内容不动，想更新字幕用「重新识别」）">↻ 重新生成音频</button>
+        <button class="btn" id="btn-regen-audio" title="按当前选的音频源从视频重新提取 audio.wav 与波形（识别与波形用这一版；字幕内容不动，想更新字幕用「重新识别」）" data-ico="refresh">重新生成音频</button>
       </span>
       <input type="file" id="file-video" accept="video/*,.mkv,.avi,.mov" hidden>
       <input type="file" id="file-sub" accept=".srt,.ass,.ssa" hidden>
@@ -49,8 +51,8 @@
     <div class="tb-group tb-right">
       <span id="save-state" class="save-state" hidden title="编辑内容会实时自动保存到项目，不怕忘记导出"></span>
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
-      <button class="btn" id="btn-settings-ed" title="识别模型 / 字幕翻译（LLM）设置（与右侧「设置」页签区分）">🌐 全局设置</button>
-      <button class="btn btn-accent" id="btn-export" disabled title="导出原始格式(含逐词特效)">💾 导出字幕</button>
+      <button class="btn" id="btn-settings-ed" data-ico="sliders" title="识别模型 / 字幕翻译（LLM）设置（与右侧「设置」页签区分）">全局设置</button>
+      <button class="btn btn-accent" id="btn-export" disabled data-ico="download" title="导出原始格式(含逐词特效)">导出字幕</button>
     </div>
   </header>
 
@@ -60,7 +62,7 @@
       <div id="srt-overlay"></div>
       <div id="stage-hint">
         <div class="hint-card">
-          <div class="hint-icon">🎬</div>
+          <div class="hint-icon" data-ico="film"></div>
           <div>将 <b>视频文件</b> 与 <b>SRT / ASS 字幕</b> 拖入此处</div>
           <div class="hint-sub">或点击工具栏「打开视频 / 打开字幕」，也可直接加载右侧示例</div>
         </div>
@@ -190,11 +192,15 @@
         </div>
 
         <div class="set-group">
-          <div class="set-group-head"><i class="set-dot" style="background:#61b8ff"></i><span class="set-group-title">通用</span></div>
-          <div class="setting-row">
-            <span class="setting-name" title="界面显示语言 / UI language">界面语言</span>
-            <select id="set-locale" class="setting-select"></select>
-            <span class="setting-val" id="set-locale-val"></span>
+          <div class="set-group-head"><i class="set-dot" style="background:var(--accent)"></i><span class="set-group-title">外观</span><span class="set-group-note">主题色</span></div>
+          <div class="theme-row">
+            <div class="theme-swatches" id="theme-swatches"></div>
+            <label class="theme-custom" title="自定义主题色"><input type="color" id="theme-color" value="#ff7a45">自定义</label>
+            <button type="button" class="btn btn-mini" id="theme-reset">恢复默认</button>
+          </div>
+          <div class="theme-preview">
+            <span class="tp-chip">主题色</span>
+            <span class="gl-hint" style="flex:1">只改界面强调色（按钮 / 高亮 / 选中 / 进度条），不影响字幕颜色与角色色。设置自动保存在本机浏览器。</span>
           </div>
         </div>
 
@@ -248,15 +254,15 @@
     <div id="tl-canvas-wrap">
       <canvas id="timeline"></canvas>
       <div id="tl-menu" hidden>
-        <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>
-        <button type="button" class="tl-menu-item" data-act="retranslate">🔁 重新翻译</button>
-        <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除字幕块</button>
+        <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
+        <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
+        <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除字幕块</button>
       </div>
       <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消) -->
       <div id="range-bar" hidden>
         <span class="rb-count" id="rb-count">已选 0 条</span>
-        <button type="button" class="rb-btn" id="rb-rerecog" title="删除选区内字幕块，用已保存的音频重新识别并翻译">🎙 重新识别</button>
-        <button type="button" class="rb-btn danger" id="rb-delete">🗑 批量删除</button>
+        <button type="button" class="rb-btn" id="rb-rerecog" data-ico="mic" title="删除选区内字幕块，用已保存的音频重新识别并翻译">重新识别</button>
+        <button type="button" class="rb-btn danger" id="rb-delete" data-ico="trash">批量删除</button>
       </div>
     </div>
   </section>
@@ -336,15 +342,15 @@
 
   <!-- 字幕卡片右键菜单 -->
   <div id="card-menu" hidden>
-    <button type="button" class="tl-menu-item" data-act="fix">🛠 修复字幕</button>
-    <button type="button" class="tl-menu-item" data-act="retranslate">🔁 重新翻译</button>
-    <button type="button" class="tl-menu-item danger" data-act="delete">🗑 删除该条字幕</button>
+    <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
+    <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
+    <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除该条字幕</button>
   </div>
 
   <!-- 角色右键菜单 / 重命名浮层 / 取色器(全局浮层) -->
   <div id="role-menu" hidden>
-    <button type="button" class="tl-menu-item" data-act="rename">✏ 修改名称</button>
-    <button type="button" class="tl-menu-item" data-act="recolor">🎨 修改颜色</button>
+    <button type="button" class="tl-menu-item" data-act="rename" data-ico="pencil">修改名称</button>
+    <button type="button" class="tl-menu-item" data-act="recolor" data-ico="palette">修改颜色</button>
   </div>
   <div id="role-rename" hidden>
     <input id="role-rename-input" type="text" spellcheck="false" maxlength="60" placeholder="新名称">
@@ -412,7 +418,7 @@
 <div id="home-view" hidden>
   <div class="home-inner">
     <header class="home-head">
-      <div class="home-logo">🎬</div>
+      <div class="home-logo" data-ico="film"></div>
       <h1 class="home-title">SubFabric <span class="home-title-en" id="app-version"></span></h1>
       <p class="home-sub">视频 + 双语字幕 + 逐词特效 · 项目化管理，随时接着上次的进度做</p>
     </header>
@@ -420,14 +426,14 @@
     <div class="home-toolbar">
       <h2 class="home-list-title">我的项目</h2>
       <div class="home-toolbar-btns">
-        <button class="btn" id="btn-settings" title="识别模型 / 字幕翻译设置">🌐 全局设置</button>
-        <button class="btn btn-accent" id="btn-new-project">＋ 新建项目</button>
+        <button class="btn" id="btn-settings" data-ico="sliders" title="识别模型 / 字幕翻译设置">全局设置</button>
+        <button class="btn btn-accent" id="btn-new-project" data-ico="plus">新建项目</button>
       </div>
     </div>
 
     <div id="home-list" class="home-list"></div>
     <div id="home-empty" class="home-empty" hidden>
-      <div class="he-icon">🗂️</div>
+      <div class="he-icon" data-ico="inbox"></div>
       <div class="he-name">还没有项目</div>
       <div class="he-sub">点击右上角「＋ 新建项目」：选择视频与字幕文件，音频和波形会自动提取进项目，下次秒开</div>
     </div>
@@ -443,12 +449,12 @@
       </div>
       <div class="np-modes">
         <button type="button" class="np-mode active" id="np-mode-import" tabindex="-1">
-          <span class="npm-icon">📄</span>
+          <span class="npm-icon" data-ico="file"></span>
           <span class="npm-name">导入已有字幕</span>
           <span class="npm-desc">选择视频与 SRT / ASS 字幕，进入后自动提取音频、波形</span>
         </button>
         <button type="button" class="np-mode" id="np-mode-draft" tabindex="-1">
-          <span class="npm-icon">🎙️</span>
+          <span class="npm-icon" data-ico="mic"></span>
           <span class="npm-name">创建初稿</span>
           <span class="npm-desc">识别视频语音自动生成字幕（Parakeet 0.6B，英语）</span>
         </button>
@@ -535,7 +541,7 @@
       <div class="st-panel active" data-stp="models">
         <div class="st-card">
           <div class="st-card-title">模型管理</div>
-          <div id="st-models" class="st-models">读取中…</div>
+          <div id="st-models" class="st-models"><span class="spin"></span>读取中…</div>
           <div class="st-msg" id="st-model-note"></div>
         </div>
         <div class="st-card">
@@ -562,7 +568,10 @@
             <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
             <span class="st-lbl">模型名</span>
             <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+            <span class="st-lbl">每批行数</span>
+            <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="25" style="max-width:120px">
           </div>
+          <p class="gl-hint">每批行数 = 一次请求最多带几行给 LLM（5~100）。批越大请求越少，但"译文行数必须与输入行数一致"这条要求越容易整批返工；批越小越稳、但请求更多。失败时程序会自动拆半重试。</p>
         </div>
         <div class="st-card">
           <div class="st-card-title">翻译提示词</div>

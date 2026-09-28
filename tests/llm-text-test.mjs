@@ -66,5 +66,17 @@ ok(L.punctPairsSane(fourCommas, 30) === false, '连续 4 个逗号 → 异常（
 const listCommas = [[3, ','], [8, ','], [12, '.']];
 ok(L.punctPairsSane(listCommas, 30) === true, '正常列举的逗号（不连续）→ 通过');
 
+/* ── clampBatchSize / planChunks: 用户可调的"每批行数"（5~100, 默认 25） ── */
+ok(L.clampBatchSize(25) === 25, 'clampBatchSize 正常值');
+ok(L.clampBatchSize(1) === L.BATCH_MIN, 'clampBatchSize 下限夹到 5', String(L.clampBatchSize(1)));
+ok(L.clampBatchSize(9999) === L.BATCH_MAX, 'clampBatchSize 上限夹到 100', String(L.clampBatchSize(9999)));
+ok(L.clampBatchSize(0) === L.BATCH_DEFAULT && L.clampBatchSize('abc') === L.BATCH_DEFAULT && L.clampBatchSize(null) === L.BATCH_DEFAULT, 'clampBatchSize 非法值回落默认 25');
+ok(L.clampBatchSize('30') === 30, 'clampBatchSize 字符串数字');
+const pc = L.planChunks(Array.from({ length: 12 }, (_, i) => i), 5);
+ok(pc.length === 3 && pc[0].length === 5 && pc[1].length === 5 && pc[2].length === 2, 'planChunks 12 行按每批 5 行切', JSON.stringify(pc.map(x => x.length)));
+const pc1 = L.planChunks(Array.from({ length: 3 }, (_, i) => i), 1);
+ok(pc1.length === 1, 'planChunks 每批 1 行被夹到 5 → 仍是 1 批', JSON.stringify(pc1.map(x => x.length)));
+ok(L.planChunks([], 25).length === 0, 'planChunks 空输入');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

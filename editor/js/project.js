@@ -9,6 +9,7 @@
  */
 import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
+import { ico } from './icons.js';
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog } = ctx;
@@ -278,12 +279,19 @@ export function initProjects(ctx) {
     elHome.hidden = false;
     video.pause();
     if (state.project) { saveNow(); }               // 离开编辑器: 把未保存的立刻写掉
+    listAnim = true;                                // 只在"进入首页"这一帧播放卡片入场动画
     renderList();
   }
   let listPoll = 0;
+  let listAnim = false;                             // 入场动画开关(轮询刷新时不重播, 否则每 1.5s 抖一次)
+  const lastPct = new Map();                        // 项目 id → 上次渲染的进度百分比(给平滑增长/数字滚动用)
   async function renderList() {
-    elList.innerHTML = '<div class="home-loading">读取中…</div>';
+    // 骨架屏：形状和真实卡片一致, 比"读取中…"那行字少一次布局跳动
+    elList.innerHTML = Array.from({ length: 3 }, () =>
+      '<div class="skel-row"><div class="skel-b b1"></div><div class="skel-b b2"></div><div class="skel-b b3"></div><div class="skel-b b4"></div></div>').join('');
     elEmpty.hidden = true;
+    elList.classList.toggle('anim-in', listAnim);      // 只有"进入首页"那一帧播放入场动画
+    listAnim = false;
     let data;
     try { data = await (await fetch('/api/projects')).json(); }
     catch { elList.innerHTML = '<div class="home-loading">读取失败（本地服务未启动？）</div>'; return; }
@@ -291,9 +299,13 @@ export function initProjects(ctx) {
     elList.innerHTML = '';
     elEmpty.hidden = ps.length > 0;
     const ST = { running: '提取中', none: '待提取', error: '提取失败' };
+    const pctTweens = [];                              // 渲染完统一跑百分比数字滚动
+    let cardIdx = 0;
     for (const p of ps) {
       const card = document.createElement('div');
       card.className = 'proj-card' + (p.videoExists ? '' : ' proj-missing');
+      // 入场错峰: CSS 用 --i 算 animation-delay（上限 12 档, 项目多了也不会等太久）
+      card.style.setProperty('--i', String(Math.min(cardIdx++, 12)));
       const st = p.prepare && ST[p.prepare.status];
       const dr = p.draft || null;
       const busyPrep = !!(p.prepare && p.prepare.status === 'running');
@@ -320,11 +332,15 @@ export function initProjects(ctx) {
         else label = stageTxt;
         const cls = dr.status === 'done' ? 'done' : failed ? 'error' : paused ? 'paused' : 'running';
         stChip = ` <span class="pc-st st-${cls}">${esc(running ? label + '...' : label)}</span>`;
+        // 进度条：从"上次渲染到的百分比"平滑长到新值（CSS 用 --from 做起点, 终点就是元素自身 width）
+        const from = lastPct.has(p.id) ? lastPct.get(p.id) : 0;
+        lastPct.set(p.id, pct);
         draftBar = `
           <div class="pc-draft ${esc(dr.status)}">
-            <div class="pc-draft-bar"><div class="pc-draft-bar-in" style="width:${pct}%"></div></div>
-            <div class="pc-draft-txt"><span>${esc(dr.message || label)}</span><span class="pct">${pct}%</span></div>
+            <div class="pc-draft-bar"><div class="pc-draft-bar-in" style="width:${pct}%;--from:${from}%"></div></div>
+            <div class="pc-draft-txt"><span>${esc(dr.message || label)}</span><span class="pct" data-pct="${pct}" data-from="${from}">${from}%</span></div>
           </div>`;
+        pctTweens.push(pct);
         // 可重试/可开始翻译：彻底失败、等待翻译、或翻译只完成了一部分（已跳过的不算）
         const canRetry = (failed || paused
           || (dr.status === 'done' && !dr.translated && !!dr.needTranslate)) && !dr.skippedTranslate;
@@ -339,17 +355,18 @@ export function initProjects(ctx) {
       const fmt = p.format;
       const badge = fmt === 'srt' ? 'SRT' : (fmt === 'ass' ? 'ASS' : (dr ? '初稿' : 'ASS'));
       const locked = !!dr && !hasSub;           // 还没有字幕文件时进去也没内容可读（失败在识别阶段就是这种）
+      const missingTag = p.videoExists ? '' : ` <span class="pc-missing">${ico('alert')}视频丢失</span>`;
       card.innerHTML = `
         <span class="pc-badge ${fmt === 'srt' ? 'srt' : ''}">${badge}</span>
         <div class="pc-main">
-          <div class="pc-name">${esc(p.name)}${p.videoExists ? '' : ' <span class="pc-missing">⚠ 视频丢失</span>'}${stChip}</div>
+          <div class="pc-name">${esc(p.name)}${missingTag}${stChip}</div>
           <div class="pc-meta">${esc(p.video && p.video.name || '无视频')} · ${esc(p.subName || (dr ? '初稿处理中…' : '无字幕'))} · 修改于 ${fmtDate(p.modifiedAt)}</div>
           ${draftBar}
         </div>
         <div class="pc-actions">
           ${progBtn}
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
-          <button type="button" class="btn pc-del" title="删除项目(含音频/波形/字幕副本)">🗑</button>
+          <button type="button" class="btn pc-del ico-only" title="删除项目(含音频/波形/字幕副本)">${ico('trash')}</button>
         </div>`;
       card.querySelector('.pc-open').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -379,11 +396,31 @@ export function initProjects(ctx) {
       elList.appendChild(card);
     }
 
+    // 进度百分比数字滚动：从上次的值数到新值（列表每 1.5s 重建一次, 这样看起来是"在走"而不是"跳"）
+    for (const el of elList.querySelectorAll('.pct[data-pct]')) {
+      countTo(el, Number(el.dataset.from) || 0, Number(el.dataset.pct) || 0, 420);
+    }
+
     // 有任务在跑就自动刷新, 让列表上的进度自己往前走
     clearTimeout(listPoll);
     if (ps.some(p => (p.prepare && p.prepare.status === 'running') || (p.draft && p.draft.status === 'running'))) {
       listPoll = setTimeout(() => renderList(), 1500);
     }
+  }
+
+  /** 数字滚动：把 el 的文本从 a 数到 b（含 % 后缀），rAF 驱动, 只用于很短的过渡 */
+  function countTo(el, a, b, ms) {
+    if (!el) return;
+    if (a === b || Math.abs(b - a) < 1) { el.textContent = b + '%'; return; }
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = b + '%'; return; }
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = Math.round(a + (b - a) * e) + '%';
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   /* ─────────── 初稿进度浮层 ─────────── */
@@ -622,6 +659,7 @@ export function initProjects(ctx) {
     $('#st-baseurl').value = c.baseUrl || '';
     $('#st-key').value = c.apiKey || '';
     $('#st-model').value = c.model || '';
+    if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
     try {
       const h = await (await fetch('/api/asr/hint')).json();
@@ -933,7 +971,7 @@ export function initProjects(ctx) {
       row.className = 'gl-row';
       row.innerHTML = `<input type="text" class="gl-input gl-src" spellcheck="false" placeholder="${esc(t('原文词（如 Spike）'))}">
         <input type="text" class="gl-input gl-dst" spellcheck="false" placeholder="${esc(t('译法（如 斯派克）'))}">
-        <button type="button" class="gl-del" title="${esc(t('删除该词条'))}">🗑</button>`;
+        <button type="button" class="gl-del" title="${esc(t('删除该词条'))}">${ico('trash')}</button>`;
       const [srcEl, dstEl] = row.querySelectorAll('.gl-input');
       srcEl.value = pair[0] || '';
       dstEl.value = pair[1] || '';
@@ -977,6 +1015,7 @@ export function initProjects(ctx) {
       baseUrl: $('#st-baseurl').value.trim(),
       apiKey: $('#st-key').value.trim(),
       model: $('#st-model').value.trim(),
+      batchSize: parseInt(($('#st-batch') || {}).value, 10) || 25,     // 每批行数(服务端还会夹到 5~100)
       prompt: $('#st-prompt').value,
       glossary: glSerialize(),
       glossaryLang: glState.lang,
