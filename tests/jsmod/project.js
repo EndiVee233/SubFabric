@@ -414,14 +414,14 @@ export function initProjects(ctx) {
   function countTo(el, a, b, ms) {
     if (!el) return;
     if (a === b || Math.abs(b - a) < 1) { el.textContent = b + '%'; return; }
-      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = b + '%'; return; }
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = b + '%'; return; }
     const t0 = performance.now();
     const step = (now) => {
       const k = Math.min(1, (now - t0) / ms);
-        // 必须与 ui.css 的 bar-from 动画**同时长(420ms)同缓动(线性)**: 两边不一致时,
-        // 动画期间"条的百分比"与这个数字会明显对不上（用户报的"进度条不一致"；
-        // 旧版条是 cubic-bezier(.16,1,.3,1)、数字是三次缓出, 实测最大差 18~40 个百分点）。
-        const e = k;
+      // 必须与 ui.css 的 bar-from 动画**同时长(420ms)同缓动(线性)**: 两边不一致时,
+      // 动画期间"条的百分比"与这个数字会明显对不上（用户报的"进度条不一致"；
+      // 旧版条是 cubic-bezier(.16,1,.3,1)、数字是三次缓出, 实测最大差 18~40 个百分点）。
+      const e = k;
       el.textContent = Math.round(a + (b - a) * e) + '%';
       if (k < 1) requestAnimationFrame(step);
     };
