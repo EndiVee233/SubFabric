@@ -15,6 +15,7 @@ const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok  ' + n); } else
 const STATES = [
   { key: 'running', name: '进度探针-running', draft: { status: 'running', stage: 'ASR识别中', progress: 37, message: '识别中 …', lines: 0, words: 0 } },
   { key: 'paused', name: '进度探针-paused', draft: { status: 'paused', stage: '翻译中', progress: 86, message: '待翻译', lines: 1231, pendingTranslate: 1231, needTranslate: true } },
+  { key: 'done2', name: '进度探针-done2-名字明显更长一些', draft: { status: 'done', stage: '完毕', progress: 100, message: '初稿已生成: 1331 行（含中文译文）这一条副标题也长得多', lines: 1331, translated: true } },
   { key: 'done', name: '进度探针-done', draft: { status: 'done', stage: '完毕', progress: 100, message: '初稿已生成: 1231 行（含中文译文）', lines: 1231, translated: true } },
   { key: 'error', name: '进度探针-error', draft: { status: 'error', stage: 'ASR识别中', failedStage: 'ASR识别中', progress: 42, message: '识别失败', error: '测试用' } },
 ];

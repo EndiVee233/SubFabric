@@ -844,7 +844,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   background: var(--accent-a14); color: var(--accent);
 }
 .pc-badge.srt { background: rgba(106, 169, 255, .14); color: #6aa9ff; }
-.pc-main { min-width: 0; }
+/* 必须是 flex:1（= 1 1 0%）—— 只写 min-width:0 时这一栏宽度由**内容**决定;
+ * 写成 flex:1 1 auto 也不行: flex-basis:auto 下"内容更宽的那张卡"分到更多空间、缩得更少,
+ * 于是项目名/副标题长的卡片栏更宽、里面的进度条更长 → 两张都 100% 的卡片条一长一短（用户报的 bug）。
+ * flex-basis:0 让每张卡的主栏都均分剩余空间, 条宽就一致了; 文字仍靠 min-width:0 + 省略号截断。 */
+.pc-main { flex: 1 1 0; min-width: 0; }
 .pc-name { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pc-missing { font-size: 12px; font-weight: 500; color: var(--danger); }
 .pc-st { font-size: 11px; font-weight: 500; color: var(--text-2); background: var(--bg-3); border-radius: 999px; padding: 2px 8px; }
