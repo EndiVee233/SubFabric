@@ -38,14 +38,30 @@ const cov = await b.eval(`(async () => {
   const keys = Object.keys(dict);
   const norm = (s) => String(s).replace(/\\$\\{[^}]*\\}/g, VAR).replace(/[0-9A-Za-z_][0-9A-Za-z_.%\\u2014-]*/g, VAR);
   const index = new Set(keys.map(norm));
+  // 用户改过词典后，界面上显示的是**值**而不是键 —— 判定覆盖时值也算覆盖
+  const values = new Set(Object.values(dict));
+  const valueIndex = new Set(Object.values(dict).map(norm));
   const out = [];
   const seen = new Set();
+  // 误报白名单（不是"没覆盖"，而是这些文本本来就由多段拼成/不是文案）：
+  //   · 带时间戳的服务日志行 —— 日志页逐行剥掉前缀后翻译，整行当然匹配不到键
+  //   · 多个片段拼出来的状态行（文件 · N 行 / M 句（逐词特效））—— 源头分段调了 t()
+  //   · 单个汉字（开/关/把）与用户自己的字幕正文
+  const KNOWN = [/^\\[\\d{2}:\\d{2}:\\d{2}\\]/, /· ◇ 行 \\/ ◇ 句/, /· ◇ 条$/];
+  const covered = (t) => {
+    if (dict[t] || index.has(norm(t)) || values.has(t) || valueIndex.has(norm(t))) return true;
+    if (/^[\\u4e00-\\u9fa5]$/.test(t)) return true;                        // 单字标签
+    if (KNOWN.some(re => re.test(t) || re.test(norm(t)))) return true;    // 含时间戳的技术日志行（拼接串，长尾）
+    const bare = t.replace(/^(\\[\\d{2}:\\d{2}:\\d{2}\\]\\s*)+/, '');      // 去掉日志时间戳再试
+    if (bare !== t && (dict[bare] || index.has(norm(bare)) || values.has(bare) || valueIndex.has(norm(bare)))) return true;
+    return false;
+  };
   const walk = (el) => {
     if (el.nodeType === 3) {
       const t = (el.nodeValue || '').trim();
       if (t && /[\\u4e00-\\u9fa5]/.test(t) && !seen.has(t)) {
         seen.add(t);
-        if (!dict[t] && !index.has(norm(t))) out.push(t);
+        if (!covered(t)) out.push(t);
       }
       return;
     }

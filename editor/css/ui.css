@@ -100,6 +100,8 @@ body::before {
 .home-title { letter-spacing: .4px; }
 .home-title-en { opacity: .9; }
 .home-sub { color: var(--text-1); }
+/* 首页标题下面那行只放版本号(动态取 /api/version) */
+.home-sub.ver { color: var(--accent); font-size: 13px; font-weight: 500; letter-spacing: 1px; margin-top: 6px; }
 /* 视频区留出呼吸空间, 圆角与暗角才看得出来 */
 #stage-wrap { padding: 10px; }
 

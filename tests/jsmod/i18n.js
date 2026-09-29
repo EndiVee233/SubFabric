@@ -76,7 +76,9 @@ export function t(s) {
       VAR_RE.lastIndex = 0;
       while ((m = VAR_RE.exec(s))) { vars.push(m[0]); if (vars.length > 12) break; }
       let vi = 0;
-      out = String(val).replace(/\$\{[^}]*\}|[0-9A-Za-z_][0-9A-Za-z_.%\u2014-]*/g, () => (vars[vi] != null ? vars[vi++] : ''));
+      // 值里的占位有三形态：◇（词典规范形）、${x}（未规范化的手写值）、裸拉丁串 —— 都要按位置回填
+      out = String(val).replace(/\u25C7|\$\{[^}]*\}|[0-9A-Za-z_][0-9A-Za-z_.%\u2014-]*/g,
+        () => (vars[vi] != null ? vars[vi++] : ''));
     }
   }
   trCache.set(s, out);
