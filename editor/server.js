@@ -1752,6 +1752,8 @@ function handleRequest(req, res) {
   function metaView(meta) {
     const v = Object.assign({}, meta);
     v.videoExists = !!(meta.video && meta.video.path && fs.existsSync(meta.video.path));
+  // 正在下载的项目: 视频文件还不存在, 但卡片不该显示"找不到视频"
+  v.fetching = !!(meta.draft && meta.draft.status === 'running' && meta.draft.fetch && !v.videoExists);
     v.hasPeaks = !!(meta.peaks && meta.peaks.file && fs.existsSync(path.join(projDir(meta.id), meta.peaks.file)));
     v.hasAudio = !!(meta.audio && meta.audio.file && fs.existsSync(path.join(projDir(meta.id), meta.audio.file)));
     if (v.prepare && v.prepare.status === 'running' && !prepareJobs.has(meta.id)) {
@@ -1794,7 +1796,193 @@ function handleRequest(req, res) {
    *  mode='raw': 直接抽视频原声, 不做任何处理。
    *  audio.wav 是 ASR(初稿/whisper.cpp/重新识别)与"降噪模式播放"的唯一输入,
    *  模式记录在 meta.audio.mode, 可在编辑器工具栏切换后「重新生成音频」重建。 */
-  function startPrepare(id, videoPath, mode) {
+  /* ─────────── 下载初稿流水线（bilibili / YouTube → 下载进项目目录 → 接着跑初稿） ───────────
+ * 设计: 用户在"新建项目"里填链接 → 服务端先建项目(卡片立刻可见, 阶段=下载中) →
+ *       后台跑 asr/fetch/fetch_cli.py（逐行 JSON 进度, 与 asr/*.py 同一协议）→
+ *       下完把 meta.video 指向项目内 video/ 里的文件 + 写 meta.source(给 LLM 分角色用) →
+ *       交棒给现有 prepare/ASR 流水线。
+ * Cookie/代理 存在 asr/settings.json 的 fetch 段; **对外只回"有没有", 绝不回传值**。 */
+const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
+const FETCH_STAGE = '下载中';
+const fetchJobs = new Map();          // 项目 id -> { proc }
+
+function fetchSettings() {
+  try { return readAsrSettings().fetch || {}; } catch { return {}; }
+}
+function patchFetchSettings(patch) {
+  const s = readAsrSettings();
+  s.fetch = Object.assign({}, s.fetch || {}, patch || {});
+  writeAsrSettings(s);
+  return s.fetch;
+}
+/** 对外视图: 只给"有没有 cookie"和键名, 值一律不回传 */
+function fetchPublicSettings() {
+  const f = fetchSettings();
+  const ck = String(f.biliCookie || '');
+  const keys = ck
+    ? Array.from(new Set(ck.split(/[;\n]/).map((x) => String(x).split('=')[0].trim()).filter(Boolean)))
+    : [];
+  return {
+    quality: f.quality || 'best',
+    proxy: f.proxy || '',
+    cookiesFromBrowser: f.cookiesFromBrowser || '',
+    hasBiliCookie: !!ck,
+    biliCookieKeys: keys.slice(0, 12),
+    biliCookieSavedAt: f.biliCookieSavedAt || '',
+    ready: fetchReady(),
+  };
+}
+/** 只认 bilibili / YouTube（用户要求） */
+function fetchSiteOf(url) {
+  const u = String(url || '').toLowerCase();
+  if (u.indexOf('bilibili.com') >= 0 || u.indexOf('b23.tv') >= 0) return 'bilibili';
+  if (u.indexOf('youtube.com') >= 0 || u.indexOf('youtu.be') >= 0) return 'youtube';
+  return '';
+}
+/** 下载内核要 Python 3.8+：先试 ASR 那套, 再试 py -3.12/3.11/3.10、python3、内置 Python。
+ *  结果缓存成一个 Promise（探测只做一次）。用异步 spawn —— 本环境 spawnSync 会 EBUSY（实测）。 */
+let fetchPyPromise = null;
+function pyVersionOk(exe, pre) {
+  return new Promise((resolve) => {
+    let p;
+    try {
+      p = childProcess.spawn(exe, pre.concat(['-c', 'import sys;print(sys.version_info[0]*100+sys.version_info[1])']), { windowsHide: true });
+    } catch { return resolve(false); }
+    let out = '';
+    const timer = setTimeout(() => { try { p.kill(); } catch {} resolve(false); }, 8000);
+    p.stdout.on('data', (c) => { out += c.toString('utf8'); });
+    p.on('error', () => { clearTimeout(timer); resolve(false); });
+    p.on('close', () => { clearTimeout(timer); resolve(parseInt(out.trim(), 10) >= 308); });
+  });
+}
+function resolveFetchPython() {
+  if (!fetchPyPromise) {
+    fetchPyPromise = (async () => {
+      const cands = [];
+      if (ASR_PY && ASR_PY !== 'python') cands.push([ASR_PY, []]);
+      cands.push(['py', ['-3.12']], ['py', ['-3.11']], ['py', ['-3.10']], ['python3', []], [ASR_PY || 'python', []]);
+      try { const e = embeddedPyExe(); if (e) cands.push([e, []]); } catch {}
+      for (const c of cands) {
+        if (await pyVersionOk(c[0], c[1])) return { exe: c[0], pre: c[1] };
+      }
+      return false;
+    })();
+  }
+  return fetchPyPromise;
+}
+/** 同步的廉价检查（设置界面用）: 脚本在不在。真正的 Python 版本在跑任务时判定 */
+function fetchReady() {
+  try { return !!(ASR_PY && fs.existsSync(FETCH_SCRIPT)); } catch { return false; }
+}
+
+/** 跑一次 fetch_cli：逐行读 JSON。返回 {error, done} */
+function runFetchCli(id, args, onEvent) {
+  return new Promise(async (resolve) => {
+    let proc;
+    const py = await resolveFetchPython();
+    if (!py) {
+      return resolve({ error: '下载需要一个 Python 3.8 或更高版本（设置里可一键安装内置 Python，或装个 3.12）', done: null });
+    }
+    try {
+      proc = childProcess.spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
+    } catch (e) {
+      return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
+    }
+    fetchJobs.set(id, { proc });
+    let buf = '';
+    const result = { error: '', done: null };
+    const feed = (chunk) => {
+      buf += chunk.toString('utf8');
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!line) continue;
+        let o = null;
+        try { o = JSON.parse(line); } catch { pushDraftLog(id, '[下载] ' + line.slice(0, 200)); continue; }
+        if (o.type === 'progress') onEvent({ progress: Number(o.pct) || 0, msg: String(o.msg || '') });
+        else if (o.type === 'log') pushDraftLog(id, '[下载] ' + String(o.msg || ''));
+        else if (o.type === 'error') { result.error = String(o.msg || '下载失败'); pushDraftLog(id, '[下载] ✗ ' + result.error); }
+        else if (o.type === 'done') result.done = o;
+      }
+    };
+    proc.stdout.on('data', feed);
+    proc.stderr.on('data', (c) => {
+      const s = c.toString('utf8').trim();
+      if (s) pushDraftLog(id, '[下载] ' + s.slice(0, 200));
+    });
+    proc.on('error', (e) => { fetchJobs.delete(id); resolve({ error: '下载进程出错: ' + e.message, done: null }); });
+    proc.on('close', () => { fetchJobs.delete(id); resolve(result); });
+  });
+}
+
+/** 下载 → 落 meta.video / meta.source → 交棒给 prepare（现有流水线） */
+async function startFetchJob(id, opts) {
+  const meta0 = readMeta(id);
+  if (!meta0) return;
+  // 必须登记进 draftJobs: metaView 把"running 但没登记"的初稿当成服务重启后的残留
+  draftJobs.add(id);
+  const dir = path.join(projDir(id), 'video');
+  fs.mkdirSync(dir, { recursive: true });
+  const f = fetchSettings();
+  const quality = String(opts.quality || f.quality || 'best');
+  const srcPath = path.join(projDir(id), 'source.json');
+  const args = ['--url', opts.url, '--out', dir, '--quality', quality, '--meta-out', srcPath];
+  if (f.proxy) args.push('--proxy', String(f.proxy));
+  if (f.biliCookie) args.push('--cookies', String(f.biliCookie));
+  else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
+  if (FFMPEG && FFMPEG !== 'ffmpeg') args.push('--ffmpeg', FFMPEG);
+  pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] ' + fetchSiteOf(opts.url)
+    + ' · 档位 ' + quality + ' · ' + opts.url);
+
+  const r = await runFetchCli(id, args, (ev) => {
+    const p = Math.max(0, Math.min(100, ev.progress));
+    setDraft(id, { stage: FETCH_STAGE, progress: 2 + Math.round(p * 0.24), message: ev.msg || '下载中 …' });
+  });
+
+  if (r.error || !r.done || !r.done.file) {
+    return finishDraft(id, new Error(r.error || '下载没有产出文件（检查链接、登录态或画质档位）'), { failedStage: FETCH_STAGE });
+  }
+  const file = String(r.done.file);
+  if (!fs.existsSync(file)) return finishDraft(id, new Error('下载完成但文件不见了: ' + file), { failedStage: FETCH_STAGE });
+
+  const meta = readMeta(id);
+  if (!meta) return;
+  const sm = r.done.meta || {};
+  meta.video = { path: file, name: path.basename(file) };
+  meta.source = {
+    url: sm.url || opts.url, site: sm.source || fetchSiteOf(opts.url), id: sm.id || '',
+    title: sm.title || '', description: sm.description || '', uploader: sm.uploader || '',
+    duration: sm.duration || 0, uploadDate: sm.uploadDate || '', tags: sm.tags || [],
+    viewCount: sm.viewCount || 0, thumbnail: sm.thumbnail || '', height: sm.height || 0,
+    qualityPreset: sm.qualityPreset || quality, fileSize: sm.fileSize || 0,
+    fetchedAt: sm.fetchedAt || new Date().toISOString(),
+  };
+  // 名字还是"占位符"(没填 / 用 BV 号兜底) 时, 换成视频真标题
+  const nm = String(meta.name || '').trim();
+  if (sm.title && (!nm || /^BV[0-9A-Za-z]+$/.test(nm) || nm === '下载的视频')) meta.name = String(sm.title).slice(0, 60);
+  meta.draft = Object.assign({}, meta.draft || {}, { sourceFetched: true });
+  writeMeta(meta);
+  pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] 完成: ' + path.basename(file)
+    + '（' + (Number(sm.fileSize || 0) / 1048576).toFixed(1) + ' MB）');
+  setDraft(id, { stage: STAGE.extract, progress: 26, message: '下载完成，开始提取音频与波形…' });
+  pendingAsr.set(id, { wordLevel: !!opts.wordLevel });
+  startPrepare(id, file);
+  draftJobs.delete(id);        // 交棒完成: 之后由 pendingAsr(→识别) / draftJobs(识别中) 接手
+}
+
+
+/** 界面上给的画质档位（与 asr/fetch 里两张站点表保持一致, 值就是 selector.py 认识的档位名） */
+const FETCH_QUALITY_CHOICES = [
+  { value: 'best', label: '最高可用（有大会员 Cookie 时吃到 8K/HDR）' },
+  { value: '2160', label: '4K 及以下' },
+  { value: '1080', label: '1080P 及以下' },
+  { value: '720', label: '720P 及以下' },
+  { value: '480', label: '480P 及以下' },
+  { value: '360', label: '360P（最省流量）' },
+  { value: 'audio', label: '仅音频' },
+];
+function startPrepare(id, videoPath, mode) {
     const denoise = mode !== 'raw';
     if (prepareJobs.has(id)) return;
     const meta = readMeta(id);
@@ -3261,6 +3449,29 @@ function handleRequest(req, res) {
   }
 
   /* ═══════════ 初稿 / 语音识别模型 ═══════════ */
+/* 下载相关的设置路由: GET/POST /api/fetch/settings（Cookie 只写不读回） */
+  if (pathname === '/api/fetch/settings' && req.method === 'GET') {
+    return sendJson(res, 200, fetchPublicSettings());
+  }
+  if (pathname === '/api/fetch/settings' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let d = null;
+      try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const patch = {};
+      if (d.quality !== undefined) patch.quality = String(d.quality || 'best');
+      if (d.proxy !== undefined) patch.proxy = String(d.proxy || '').trim();
+      if (d.cookiesFromBrowser !== undefined) patch.cookiesFromBrowser = String(d.cookiesFromBrowser || '').trim();
+      if (d.biliCookie !== undefined) {
+        const ck = String(d.biliCookie || '').trim();     // 空字符串 = 清除
+        patch.biliCookie = ck;
+        patch.biliCookieSavedAt = ck ? new Date().toISOString() : '';
+      }
+      patchFetchSettings(patch);
+      return sendJson(res, 200, fetchPublicSettings());
+    });
+  }
+
   if (pathname === '/api/asr/status' && req.method === 'GET') {
     probePython().catch(() => {});          // 后台预热预检缓存(状态页/初稿对话框打开时触发)
     nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
@@ -3632,7 +3843,8 @@ function handleRequest(req, res) {
       if (!meta) continue;
       const v = metaView(meta);
       items.push({ id, name: meta.name, modifiedAt: meta.modifiedAt, createdAt: meta.createdAt,
-        video: meta.video, videoExists: v.videoExists, format: meta.subtitle && meta.subtitle.format,
+        video: meta.video, videoExists: v.videoExists,
+        fetching: !!v.fetching, format: meta.subtitle && meta.subtitle.format,
         subName: meta.subtitle && meta.subtitle.name, prepare: meta.prepare, draft: v.draft });
     }
     items.sort((a, b) => String(b.modifiedAt || '').localeCompare(String(a.modifiedAt || '')));
@@ -3643,6 +3855,49 @@ function handleRequest(req, res) {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let data; try { data = JSON.parse(body.toString('utf8')); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       // 再规整一次: 客户端送来的路径若带杂物, 这里同样能从"存在的最长前缀"里救回来
+/* 创建接口里的"链接模式"分支: data.fetch.url 非空时不要求本地视频文件,
+ * 先建项目(卡片立刻出现, 阶段=下载中)再后台下载, 下完接现有 prepare/ASR 流水线。 */
+      const fetchUrl = String((data.fetch && data.fetch.url) || '').trim();
+      if (fetchUrl) {
+        const site = fetchSiteOf(fetchUrl);
+        if (!site) return sendJson(res, 400, { error: '只支持 bilibili 与 YouTube 链接（其他站点暂不支持）' });
+        if (!fetchReady()) return sendJson(res, 400, { error: '下载内核不可用：需要一个可用的 Python（设置里可一键安装）' });
+        const mF = (String(data.modelId || '').trim() && modelById(String(data.modelId).trim())) || resolveAsrModel();
+        if (!mF) return sendJson(res, 400, { error: '还没有语音识别模型，先到设置里下载（Parakeet 或 Whisper large-v3-turbo 都行）' });
+        if (!draftAllowedOf(mF)) return sendJson(res, 400, { error: '「' + mF.name + '」只能用于重新识别，不能创建初稿' });
+        const idF = 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+        fs.mkdirSync(projDir(idF), { recursive: true });
+        const nowF = new Date().toISOString();
+        const bv = (fetchUrl.match(/\/(BV[0-9A-Za-z]+)/) || [])[1];
+        const nameF = String(data.name || '').trim() || bv || '下载的视频';
+        const wordLevelF = !!data.wordLevel;
+        const wantSpkF = !!data.speakers && wordLevelF;
+        const spkCountF = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
+        const metaF = {
+          id: idF, name: nameF, createdAt: nowF, modifiedAt: nowF,
+          video: { path: '', name: '' },
+          prepare: { status: 'none' },
+          draft: {
+            status: 'running', stage: FETCH_STAGE, progress: 1, message: '准备下载…', error: null,
+            wordLevel: wordLevelF, lines: 0, words: 0, translated: false, needTranslate: false,
+            modelId: mF.id, engine: mF.engine || '',
+            speakers: wantSpkF, speakerCount: wantSpkF ? spkCountF : 0,
+            fetch: { url: fetchUrl, site: site, quality: String((data.fetch && data.fetch.quality) || '') },
+            startedAt: nowF,
+          },
+        };
+        writeMeta(metaF);
+        pushDraftLog(idF, '[' + new Date().toLocaleTimeString() + '] 新建项目（下载初稿）: ' + fetchUrl);
+        Promise.resolve()
+          .then(() => startFetchJob(idF, {
+            url: fetchUrl,
+            quality: String((data.fetch && data.fetch.quality) || ''),
+            wordLevel: wordLevelF,
+          }))
+          .catch((e) => finishDraft(idF, e, { failedStage: FETCH_STAGE }));
+        return sendJson(res, 200, metaView(readMeta(idF)));
+      }
+
       const vpRaw = String((data.video && data.video.path) || '');
       const vp = normalizePickedPath(vpRaw, false) || vpRaw;
       let ok = false;
@@ -3876,7 +4131,8 @@ function handleRequest(req, res) {
     if (action === 'prepare' && req.method === 'POST') {
       if (!(meta.video && meta.video.path)) return sendJson(res, 400, { error: '项目还没有视频' });
       const v = metaView(meta);
-      if (!v.videoExists) return sendJson(res, 400, { error: '视频文件找不到了，重新选一个' });
+      if (!v.videoExists && v.fetching) return sendJson(res, 400, { error: '视频还在下载，等下载完成再看' });
+    if (!v.videoExists) return sendJson(res, 400, { error: '视频文件找不到了，重新选一个' });
       if (prepareJobs.has(id)) return sendJson(res, 409, { error: '音频正在提取中，请等它完成' });
       // body 可选: {mode:'raw'|'denoise', force:true}
       //   force=true → 编辑器「重新生成音频」: 按指定模式重抽 audio.wav 与波形(字幕不动)
