@@ -156,6 +156,7 @@ await sleep(200);
 }
 
 /* ── 9. 修复字幕弹窗（需要一条"缺逐词"的英文行） ── */
+let tmpProjectId = '';
 {
   const noKaraoke = `[Script Info]
 ScriptType: v4.00+
@@ -174,6 +175,7 @@ Dialogue: 0,0:00:00.00,0:00:03.00,Default,wato,0,0,0,,Dear player of the Unstabl
 `;
   const body = JSON.stringify({ name: '界面审评 · 待修复', video: { path: 'D:/Vibe Coding/_t/demo.mp4' }, subtitle: { name: 'fix.ass', text: noKaraoke } });
   const r = await (await fetch(BASE + '/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })).json();
+  tmpProjectId = r.id;
   await b.goto(BASE + '/#/project/' + r.id);
   await sleep(3200);
   const pos = await b.eval("(() => { const c = document.querySelector('.cue-card'); const r = c.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + 150), y: Math.round(r.top + 40) }); })()");
