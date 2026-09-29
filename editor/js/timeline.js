@@ -191,7 +191,7 @@ export class Timeline {
     this.onWordRetime = null; // 拖动英文逐词开始标记 → (ref, idx, time, done)
     this._wordDrag = null;    // 正在拖的逐词标记 {cue, idx}
     this._selCueRef = null;
-    this.subStart = 0;        // 字幕内容范围(第一块开始 ~ 最后一块结束)
+    this.subStart = 0;        // 字幕内容范围(第一块开始 ~ 最后一块结束): 仅当视频时长未知/更短时兜底
     this.subEnd = 0;
     this.onSeek = null;
     this.onRetime = null;
@@ -280,7 +280,7 @@ export class Timeline {
     this._hideMenu();
   }
 
-  /** 字幕内容范围(第一块开始 ~ 最后一块结束): 缩放与平移都不许越出它 */
+  /** 字幕内容范围(第一块开始 ~ 最后一块结束): 只在视频时长未知/比字幕短时兜底 */
   _refreshRange() {
     let a = Infinity, b = -Infinity;
     for (const lane of this.lanes) {
@@ -291,14 +291,20 @@ export class Timeline {
     return true;
   }
 
-  /** 视图可用范围: 有字幕时=字幕范围, 否则退化成整段视频 */
+  /**
+   * 视图可用范围 = **视频的跨度**（0 ~ 视频时长），而不是字幕的首末。
+   * 为什么：视频第 0 秒常常没人说话（开场、环境音），若按字幕首末来定跨度，时间轴就会
+   * 直接从第一句开始（"4 秒才说话 → 时间轴从 4 秒开始"），用户既看不到前面那段空白、
+   * 也没法在那儿新建字幕。用户明确要求：**时间轴跨度是视频开始与结束**。
+   * 视频时长未知（或比字幕短）时用字幕结束时间兜底，保证不裁掉任何字幕。
+   */
   _contentRange() {
-    if (this.subEnd > this.subStart) return { a: this.subStart, b: this.subEnd, span: this.subEnd - this.subStart };
-    if (this.duration > 0) return { a: 0, b: this.duration, span: this.duration };
-    return null;
+    const end = Math.max(this.duration || 0, this.subEnd || 0);
+    if (!(end > 0)) return null;
+    return { a: 0, b: end, span: end };
   }
 
-  /** 缩放上下限: 拉到最远时视图恰好覆盖全部字幕(不再超出字幕), 推近约到 0.4 秒铺满 */
+  /** 缩放上下限: 拉到最远时视图恰好覆盖整段视频(不再超出视频), 推近约到 0.4 秒铺满 */
   _zoomLimits() {
     const w = Math.max(1, this._cssW());
     const r = this._contentRange();
@@ -307,7 +313,7 @@ export class Timeline {
     return { min, max: Math.max(w / 0.4, min) };
   }
 
-  /** 默认视图: 跨度 = min(30s, 字幕总时长), 起点对齐第一块 */
+  /** 默认视图: 跨度 = min(30s, 视频时长), 起点固定在 0(视频开头) */
   _applyDefaultView() {
     const r = this._contentRange();
     const w = this._cssW();
@@ -318,7 +324,7 @@ export class Timeline {
     this._viewReady = true;
   }
 
-  /** 适配: 视图正好铺满全部字幕(即缩放到最远) */
+  /** 适配: 视图正好铺满整段视频(即缩放到最远) */
   fit() {
     const r = this._contentRange();
     const w = this._cssW();
