@@ -60,3 +60,6 @@ __pycache__/
 
 # 服务端诊断快照(/api/diag 由前端上报时写, 不入库)
 .diag.json
+
+# 下载内核自举的 yt-dlp（首次使用时从 PyPI 下到 asr/ytdlp/, 约 3MB, 不入库）
+asr/ytdlp/
