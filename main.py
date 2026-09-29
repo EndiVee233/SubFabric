@@ -901,6 +901,10 @@ def merge_srt_to_ass(zh_srt_path, en_srt_path, output_ass_path, settings=None):
             zh_text_clean = '{\\c&HFFFFFF&}' + zh_text_clean
         if settings['auto_role'] and '[' not in zh_text_clean:
             zh_text_clean = re.sub(r'(\{[^}]*\})', r'\1[UNKNOWN]', zh_text_clean, count=1)
+            # 角色名标签与正文之间恒为**一个空格**（与 clean_chinese_text / 编辑器的 normalizeRoleGap 同一条规则）。
+            # 这一步必须在插入**之后**再补一遍：clean_chinese_text 里的 `\](\S) -> ] \1` 早于这里，
+            # 插进来的 [UNKNOWN] 会绕过它，初稿就成了 "[UNKNOWN]正文"（用户报的 bug）。
+            zh_text_clean = re.sub(r'\](\S)', r'] \1', zh_text_clean)
         en_text_clean = clean_text_markers(en_text.strip())
 
         if time_mismatch:
