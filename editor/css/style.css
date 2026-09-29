@@ -1289,9 +1289,9 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
 /* ── 7. Toast：滑入 / 滑出（替代原来的内联 opacity 硬切） ───────── */
 #toast {
   position: fixed; left: 50%; top: 60px; z-index: 99; pointer-events: none;
-  background: rgba(28, 36, 49, .95); border: 1px solid var(--border); color: var(--text-0);
+  background: rgba(22, 24, 31, .97); border: 1px solid var(--border); color: var(--text-0);
   padding: 8px 18px; border-radius: 10px; font-size: 13px;
-  backdrop-filter: blur(8px); box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
 }
 #toast.toast-in { animation: toast-in var(--dur-3) var(--ease-out) both; }
 #toast.toast-out { animation: toast-out var(--dur-2) var(--ease) both; }
