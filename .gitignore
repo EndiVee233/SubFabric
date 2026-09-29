@@ -63,3 +63,6 @@ __pycache__/
 
 # 下载内核自举的 yt-dlp（首次使用时从 PyPI 下到 asr/ytdlp/, 约 3MB, 不入库）
 asr/ytdlp/
+
+# 下载内核自举日志（ytdlp.ensure() 写的 bootstrap.log）
+asr/logs/
