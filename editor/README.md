@@ -461,6 +461,20 @@ SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DI
 ```
 
 **踩过的坑**：① 不跑 `fetch-vendor.js` 直接打，安装包会从 ~33.8MB 掉到 ~22.7MB（少的正是 libass worker 与 CJK 字体，字幕渲染直接废）；② `SubFabric.iss` 与 `build/` 是 gitignore 的，**新克隆里没有**，要单独带上；③ 版本号三处不同步，装完仍显示旧版本。
+
+**升级要能"原地覆盖"（用户报过：每次都得手动改路径）**：`SubFabric.iss` 里有三路检测，按优先级
+① Inno 自带的 `UsePreviousAppDir`（只对有卸载注册项的安装有效）→ ② 扫注册表自己的 AppId（HKLM64/HKLM32/HKCU，
+键名要**去掉一层花括号**：`[Setup]` 里写成两个左花括号是转义，真实键名只有一层）→ ③ **扫盘**
+（`{autopf}\SubFabric`、`{localappdata}\Programs\SubFabric`，再遍历所有盘符的
+`\Program Files\SubFabric`、`\Program Files (x86)\SubFabric`、`\SubFabric`；判定条件是目录里有
+`SubFabric.exe` 或 `editor\server.js`）。③ 是为**老便携版**准备的 —— 手动解压出来的目录没有任何注册记录，
+① 读不到，于是每次都默认回 `C:\Program Files\...`，用户只能手动再改一遍。
+检测结果在**目录页预填**（`InitializeWizard` / `CurPageChanged` 里写 `WizardForm.DirEdit.Text`，
+且只在当前值仍是那个平铺默认值时才覆盖，这样命令行 `/DIR` 与 ① 都不会被顶掉）。
+
+> ⚠ 两个反直觉点（都写在 .iss 注释里了）：**不要**把 `DefaultDirName` 写成 `{code:...}` 来动态决定目录 ——
+> 实测它会**顶掉命令行 `/DIR`**（带 `/DIR` 的静默安装照样装去旧目录），也让 ① 失效；
+> 另外静默安装（`/VERYSILENT`）**不走目录页**，所以检测只对交互式向导生效，我自己的验证流程继续用 `/DIR`。
 不变量: 无孤儿事件 / 无悬空句子 / 行句一致 / 无空文本事件 / 序列化往返一致 / 切片不重叠。
 
 **已知边界（非 bug, 属 ASS 格式固有限制）**：
