@@ -1627,11 +1627,30 @@ function alignEnSpanToZh(row) {
   return true;
 }
 
-/** 载入时自动对齐（用户要求：以后遇到这种字幕直接自动修复）。返回修好的行数 */
+/** 载入时自动对齐（用户要求：以后遇到这种字幕直接自动修复）。返回修好的行数。
+ *
+ *  **只对"除起止不一致外没别的毛病"的双行动手**（用户明确要求：别误触重叠行与单语行）：
+ *   · 与其它字幕重叠的行 → 一律跳过（这类行的逐词本来就不碰，避免两句话高亮糊在一起）；
+ *   · 单语行（只有中文或只有英文）/ 没有中文锚点 → 跳过（没有对齐基准，也没必要改）；
+ *   · 英文切片自己就重叠、词数与文本不符、英文行混进角色名 → 跳过（这些需要用户确认句子，
+ *     交给右键「🛠 修复字幕」按需处理）。
+ *  另：双行的块时间取自中文锚点（见 karaoke.js makeRow），所以这里只挪英文词的时间，
+ *  **不会改变任何行的重叠关系**。 */
 function autoAlignEnSpans() {
   if (state.format !== 'ass' || !state.kar || !state.kar.rows) return 0;
+  const overlap = computeOverlapRows();
   let n = 0;
-  for (const row of state.kar.rows) if (alignEnSpanToZh(row)) n++;
+  for (const row of state.kar.rows) {
+    if (overlap.has(row)) continue;
+    const en = row.en;
+    if (!row.zh || !en || !en.words || !en.words.length) continue;
+    if (enSlicesOverlap(en)) continue;
+    const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    const toks = clean.split(/\s+/).filter(Boolean).length;
+    if (toks && en.words.length !== toks) continue;
+    if (/\[[^\]]+\]/.test(en.text || '')) continue;
+    if (alignEnSpanToZh(row)) n++;
+  }
   return n;
 }
 
