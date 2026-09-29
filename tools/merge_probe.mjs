@@ -5,7 +5,7 @@ import { launch, sleep } from './lib/cdp.mjs';
 import { readFileSync, readdirSync } from 'fs';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8321';
-const PROJ = 'D:/Vibe Coding/SubFabric/projects';
+const PROJ = process.env.PROJ_DIR || 'D:/Vibe Coding/SubFabric/projects';   // 验装机版时指到它的 projects/
 let pass = 0, fail = 0;
 const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok  ' + n); } else { fail++; console.log('FAIL  ' + n + (extra != null ? ' :: ' + extra : '')); } };
 
