@@ -189,6 +189,14 @@ Dialogue: 0,0:00:00.00,0:00:03.00,Default,wato,0,0,0,,Dear player of the Unstabl
   await b.eval("document.getElementById('fix-overlay').hidden = true");
 }
 
+/* 走查用的临时项目用完就删（否则每跑一次首页就多留一张卡） */
+if (tmpProjectId) {
+  try {
+    await fetch(BASE + '/api/projects/' + tmpProjectId, { method: 'DELETE' });
+    console.log('  已删除临时项目 ' + tmpProjectId);
+  } catch {}
+}
+
 writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 2));
 console.log(`\n${manifest.length} 张 → ${OUT}`);
 b.close();
