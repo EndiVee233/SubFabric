@@ -280,10 +280,14 @@ body::before {
   animation: fade-up var(--dur-4) var(--ease-out) both;
   animation-delay: calc(var(--i, 0) * 36ms);
 }
-/* 进度条从"上次渲染到的宽度"长到新宽度（--from 由 JS 写在元素上, 终点是元素自身 width） */
+/* 进度条从"上次渲染到的宽度"长到新宽度（--from 由 JS 写在元素上, 终点是元素自身 width）。
+ * 时长(420ms)与**缓动(linear)**必须与 project.js 里 countTo 的数字滚动**完全一致** ——
+ * 否则动画期间"条的百分比"和"右边那个数字"会对不上（用户报的"进度条不一致"）。
+ * 之前条是 cubic-bezier(.16,1,.3,1)（前 25% 时间就冲到 86%）、数字是三次缓出（同刻才 56%），
+ * 实测动画中最大差 18 个百分点。改这里就一起改那边。 */
 @keyframes bar-from { from { width: var(--from, 0%); } }
-.pc-draft-bar-in { animation: bar-from .5s var(--ease-out) both; }
-.pc-draft.running .pc-draft-bar-in { animation: bar-from .5s var(--ease-out) both, shimmer 1.5s linear infinite; }
+.pc-draft-bar-in { animation: bar-from .42s linear both; }
+.pc-draft.running .pc-draft-bar-in { animation: bar-from .42s linear both, shimmer 1.5s linear infinite; }
 /* 小图标在文案里的对齐 */
 .gl-del .ico, .pc-del .ico { margin-right: 0; }
 .pc-missing { display: inline-flex; align-items: center; gap: 3px; }

@@ -397,6 +397,8 @@ export function initProjects(ctx) {
     }
 
     // 进度百分比数字滚动：从上次的值数到新值（列表每 1.5s 重建一次, 这样看起来是"在走"而不是"跳"）
+    // 420ms 必须与 ui.css 里 .pc-draft-bar-in 的 bar-from 动画时长一致 —— 否则动画期间
+    // "条的百分比"和"这个数字"会对不上（用户报的"进度条不一致"）。改这里就一起改那边。
     for (const el of elList.querySelectorAll('.pct[data-pct]')) {
       countTo(el, Number(el.dataset.from) || 0, Number(el.dataset.pct) || 0, 420);
     }
@@ -412,11 +414,14 @@ export function initProjects(ctx) {
   function countTo(el, a, b, ms) {
     if (!el) return;
     if (a === b || Math.abs(b - a) < 1) { el.textContent = b + '%'; return; }
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = b + '%'; return; }
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = b + '%'; return; }
     const t0 = performance.now();
     const step = (now) => {
       const k = Math.min(1, (now - t0) / ms);
-      const e = 1 - Math.pow(1 - k, 3);
+        // 必须与 ui.css 的 bar-from 动画**同时长(420ms)同缓动(线性)**: 两边不一致时,
+        // 动画期间"条的百分比"与这个数字会明显对不上（用户报的"进度条不一致"；
+        // 旧版条是 cubic-bezier(.16,1,.3,1)、数字是三次缓出, 实测最大差 18~40 个百分点）。
+        const e = k;
       el.textContent = Math.round(a + (b - a) * e) + '%';
       if (k < 1) requestAnimationFrame(step);
     };
