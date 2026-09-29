@@ -269,7 +269,7 @@ function loadVideoUrl(url, name) {
   state.videoLoaded = true;
   timeline.setVideo(video);
   stageHint.classList.add('hidden');
-  toast('视频加载中: ' + name);
+  toast('正在打开视频：' + name);
   // 服务端直读磁盘原文件提取波形(示例视频是站内相对路径), 不产生任何视频副本
   if (url && !/^blob:/i.test(url)) loadWaveformFromServer();
 }
@@ -341,7 +341,7 @@ window.addEventListener('resize', () => overlay.fitToVideo());
 /* ═══════════ 字幕加载 ═══════════ */
 async function loadSubUrl(url, name) {
   const resp = await fetch(url);
-  if (!resp.ok) { toast('字幕加载失败: ' + resp.status); return; }
+  if (!resp.ok) { toast('字幕打开失败：' + resp.status); return; }
   const text = await resp.text();
   routeSub(text, name);
 }
@@ -378,8 +378,8 @@ function setSrt(text, name) {
   btnExport.disabled = false;
   btnExportClean.disabled = true;
   btnExportJson.disabled = true;
-  statusFile.textContent = `${name} · ${state.srtCues.length} 条`;
-  toast(`SRT 已加载: ${state.srtCues.length} 条(双语)`);
+  statusFile.textContent = t(`${name} · ${state.srtCues.length} 条`);
+  toast(`已打开 SRT：${state.srtCues.length} 条（双语）`);
 }
 
 /* ─────────── ASS ─────────── */
@@ -439,7 +439,9 @@ function setAss(text, name) {
   btnExportJson.disabled = !hasKar;
   btnExportZh.disabled = !hasKar;
   btnExportEn.disabled = !hasKar;
-  statusFile.textContent = `${name} · ${state.kar.rows.length} 行 / ${state.kar.sentences.length} 句` + (hasKar ? '（逐词特效）' : '');
+  // 拼接出来的状态行要分段过词典：整段拼接后无法命中任何键（词典层是整段匹配）
+  statusFile.textContent = t(`${name} · ${state.kar.rows.length} 行 / ${state.kar.sentences.length} 句`)
+    + (hasKar ? t('（逐词特效）') : '');
 }
 
 /* ─────────── 异常行 ─────────── */
@@ -529,7 +531,7 @@ function markBadRows(items) {
       // 注: 反向的「逐词多余」(同一词被重复高亮) 在真实文件里很常见(本示例 57 行),
       //     全量点亮会淹掉 ⚠ 徽标, 因此不并入坏行; 交给「修复字幕」按需深度检测。
       if (it.enWordCount && it.enTokenCount && it.enWordCount < it.enTokenCount) {
-        reasons.push(`英文行缺词(切片${it.enWordCount}/单词${it.enTokenCount})`);
+        reasons.push(`英文行缺词（逐词 ${it.enWordCount} 个 / 文本 ${it.enTokenCount} 词）`);
       }
       // 英文行内部切片交叠(同一条字幕有两份事件互相压住 → 画面叠字)
       if (it.enOverlap) reasons.push('英文行重叠(重复字幕)');
@@ -792,7 +794,7 @@ panel.onAddRole = () => {
     state.extraRoles.push({ name, color });
     panel.showTab('roles');
     rebuildItemsAndLanes(true, true);
-    toast(`已添加角色「${name}」——单击它即可应用到播放头所在字幕`);
+    toast(`已添加角色「${name}」，点它就能应用到当前播放的那句`);
   });
 };
 
@@ -886,10 +888,10 @@ function pruneUnusedRoles(onRolesTab) {
 function assignSpeakerAtPlayhead(name) {
   const t = video.currentTime;
   const hits = state.kar.rows.filter(r => t >= r.start - 1e-3 && t <= r.end + 1e-3);
-  if (!hits.length) { toast('播放头不在任何字幕块内——先用播放/单击定位到要改的那句, 再点角色'); return; }
+  if (!hits.length) { toast('播放头不在任何字幕块内。先用播放或点一下定位到要改的那句，再点角色'); return; }
   if (hits.length === 1) { doAssignSpeaker(hits[0], name); return; }
   hits.sort((a, b) => a.start - b.start || (a.end - a.start) - (b.end - b.start));
-  panel.showRowPicker('检测到多条重叠的台词，请选择要设置角色的行：', hits.map(r => ({
+  panel.showRowPicker('这里重叠了好几条字幕，选一条设置角色：', hits.map(r => ({
     label: (r.zh ? r.zh.text : (r.en ? r.en.text : '')) || '(空)',
     name: (r.speaker || '').replace(/[[\]]/g, ''),
     color: r.color || null,
@@ -1142,7 +1144,7 @@ function frScan() {
     }
     frStatus(fr.matches.length
       ? t(`找到 ${fr.matches.length} 行 / 共 ${occ} 处`)
-      : t('没有找到匹配的字幕 —— 试试勾掉「区分大小写」或取消「全词匹配」'), fr.matches.length > 0);
+      : t('没有找到匹配的字幕。试试关掉「区分大小写」或「全词匹配」'), fr.matches.length > 0);
   } else {
     if (!fr.srcRole) { frStatus(t('输入或展开候选并确认一个源角色')); return; }
     frScanRole();
@@ -1155,7 +1157,7 @@ function frScanRole() {
     .filter(r => speakerNames(r.speaker).map(x => x.toLowerCase()).includes(key))
     .map(r => ({ row: r, field: null }));
   fr.cur = -1;
-  frStatus(t(`「${fr.srcRole}」共 ${fr.matches.length} 行 —— 可逐条跳转或替换`), fr.matches.length > 0);
+  frStatus(t(`「${fr.srcRole}」共 ${fr.matches.length} 行，可逐条跳转或替换`), fr.matches.length > 0);
 }
 
 function frGoto(m) {
@@ -1227,7 +1229,7 @@ function frReplaceAll() {
   for (const m of fr.matches) occ += frReplaceField(m.row, m.field, re, repl);
   frCommit();
   frScan();
-  toast(t(`全部替换完成：共 ${occ} 处`));
+  toast(t(`全部替换完成，共 ${occ} 处`));
 }
 
 /* ── 角色 tab ── */
@@ -1260,7 +1262,7 @@ function frConfirmSrc() {
   const role = computeRoles().find(r => r.name.toLowerCase() === name.toLowerCase());
   if (!role) {
     fr.srcRole = ''; fr.matches = [];
-    frStatus(t(`「${name}」不是已有角色 —— 源角色必须从已有角色里确认`));
+    frStatus(t(`「${name}」不是已有角色，源角色要从已有角色里选`));
     return;
   }
   fr.srcRole = role.name;
@@ -1477,7 +1479,7 @@ timeline.onRetime = (row, s, e, done, shift) => {
     }
     if (cleared) {
       assPlayer.updateNow(state.assDoc.serialize());
-      msg += `重叠: 移除 ${cleared} 句逐词`;
+      msg += `重叠：移除 ${cleared} 句逐词`;
     }
   }
   // 还原因「不再重叠」而应恢复逐词的行
@@ -1781,7 +1783,7 @@ function fixRow(row, issues, confirmedText) {
   if (issues.spanMismatch) {
     if (alignEnSpanToZh(row)) done.push('已把英文逐词起止对齐到中文行');
   }
-  if (issues.overlapNoKaraoke) done.push('（该句重叠，未加逐词以免丢特效）');
+  if (issues.overlapNoKaraoke) done.push('这句和别的字幕重叠，没有加逐词');
   if (!done.length) { toast('没有可修复的问题'); return; }
   refinalizeRow(row);
   assPlayer.updateNow(state.assDoc.serialize());
@@ -1796,10 +1798,10 @@ function openFixForRow(ref) {
   const row = ref;   // ASS 下 ref 即 karaoke row
   if (!row) { toast('没有找到这条字幕'); return; }
   const { issues, needConfirm, prefill } = detectRowProblems(row);
-  if (!Object.keys(issues).length) { toast('这条字幕没有问题 ✅'); return; }
+  if (!Object.keys(issues).length) { toast('这条字幕没有问题'); return; }
   const fixable = ['karaokeMissing', 'roleName', 'wordsMismatch', 'enOverlap'].filter(k => issues[k]);
   if (!fixable.length) {
-    toast('这条字幕暂无可自动修复项（仅与其它字幕重叠，重叠时不加逐词以免丢特效）');
+    toast('这条字幕没有可自动修复的问题：它和别的字幕重叠，重叠时不加逐词');
     return;
   }
   panel.showFix(row.no, issues, needConfirm, prefill, (confirmedText) => fixRow(row, issues, confirmedText));
@@ -2026,7 +2028,7 @@ if (rbReRecog) rbReRecog.addEventListener('click', async () => {
     timeline.clearRangeSel();          // 选区收起; 常驻区域留在时间轴上直到任务结束
     setReRecogRegion(a, b, { status: 'running', progress: 2, message: '正在切出音频片段…' });
     startRerecogPoll(state.project.id);
-    toast('重新识别已在后台开始 —— 可以继续播放或编辑其它字幕，完成后会提示', 6600);
+    toast('重新识别已在后台开始，可以继续编辑其它字幕，完成后会提示', 6600);
   } catch (e) {
     toast('重新识别启动失败: ' + e.message, 5600);
   } finally {
@@ -2126,7 +2128,7 @@ function createRowAt(start, end) {
     rebuildItemsAndLanes(true, true);
     const ni = state.itemByRef.get(cue);
     if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
-    toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，请在列表里输入内容`);
+    toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，在列表里输入内容`);
     return;
   }
   if (state.format !== 'ass' || !state.kar) return;
@@ -2134,7 +2136,7 @@ function createRowAt(start, end) {
   const enStyle = state.kar.wordStyle || '';
   const zh = zhStyle ? appendSentence(zhStyle, start, end, '') : null;
   const en = enStyle ? appendSentence(enStyle, start, end, '') : null;
-  if (!zh && !en) { toast('新建失败: 文档里没有可用的字幕样式'); return; }
+  if (!zh && !en) { toast('新建失败：文档里没有可用的字幕样式'); return; }
   const newRow = { zh, en, start, end, no: 0, color: (zh && zh.color) || null, speaker: (zh && zh.speaker) || '' };
   state.newRows.add(newRow);          // 空文本: 输入后保留, 空着离开则撤销
   state.kar.rows.push(newRow);
@@ -2147,7 +2149,7 @@ function createRowAt(start, end) {
   rebuildItemsAndLanes(true, true);
   const ni = state.itemByRef.get(newRow);
   if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
-  toast(`已新建字幕块 ${fmtTime(start)} → ${fmtTime(end)}，请在列表里输入内容`
+  toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，在列表里输入内容`
     + (cleared ? `（与 ${cleared} 行重叠，已暂去逐词）` : ''));
 }
 timeline.onCreate = (s, e) => createRowAt(s, e);
@@ -2431,7 +2433,7 @@ btnExportJson.addEventListener('click', () => {
       }))
   };
   download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_words.json', JSON.stringify(data, null, 2));
-  toast('已导出词级时间轴 JSON');
+  toast('已导出逐词时间轴 JSON');
 });
 
 /* 导出仅中文 ASS */
@@ -2521,7 +2523,7 @@ rngFont.addEventListener('input', () => {
     try {
       const div = document.createElement('div');
       div.className = 'log-line ' + (line.level === 'error' ? 'log-err' : 'log-info');
-      div.textContent = '[' + line.t + '] ' + line.msg;
+      div.textContent = '[' + line.t + '] ' + t(line.msg);   // 服务端消息也过词典(日志页签文案可改)
       view.appendChild(div);
       while (view.childElementCount > 800) view.removeChild(view.firstChild);
       if (!follow || follow.checked) view.scrollTop = view.scrollHeight;
@@ -2546,7 +2548,7 @@ if (f8Section) {
     const show = f8Section.hidden;
     f8Section.hidden = !show;
     if (show) panel.showTab('settings');   // 切到设置, 让用户看到刚展开的区域
-    toast(show ? '已显示：导出词级 JSON（再按 F8 隐藏）' : '已隐藏导出词级 JSON 区');
+    toast(show ? '已显示导出逐词 JSON，再按 F8 隐藏' : '已隐藏导出逐词 JSON');
   });
 }
 
@@ -2943,7 +2945,7 @@ requestAnimationFrame(tick);
 (async function boot() {
   await initI18n();                      // 载入 lang/zh-CN.json(用户可改措辞的词典) + 应用到静态 DOM
   applyIcons();                          // 把 data-ico 声明的地方插成内联 SVG 图标
-  panel.setBadge('未加载');
+  panel.setBadge('还没打开');
   panel.setFileName('');
   timeline.setDuration(0);
 

@@ -185,7 +185,7 @@ export function initProjects(ctx) {
     localStorage.setItem('sf-audio-mode', want);   // 记住用户显式选择(默认未降噪)
     if (want === cur) toast(t(want === 'denoise' ? '已切换为降噪后音频播放' : '已切换为原视频音频播放'), 3200);
     else toast(t('已切换播放音轨；识别与波形仍是「' + (cur === 'raw' ? '原视频' : '降噪后')
-      + '」版本 —— 要按新选择重做识别，点「↻ 重新生成音频」'), 4000);
+      + '」版本。想按新选择重做识别，点「↻ 重新生成音频」'), 4000);
   });
   const regenBtn = $('#btn-regen-audio');
   if (regenBtn) regenBtn.addEventListener('click', regenAudio);
@@ -229,13 +229,13 @@ export function initProjects(ctx) {
 
   function promptRelink(m) {
     panel.showConfirm('找不到视频文件',
-      `项目「${m.name}」关联的视频已不在原位置：\n${(m.video && m.video.path) || ''}\n\n重新选择视频即可继续（字幕与波形数据不受影响）。`,
+      `项目「${m.name}」的视频不在原来的位置了：\n${(m.video && m.video.path) || ''}\n\n重新选一次视频就能继续，字幕和波形不受影响。`,
       '重新选择视频', '暂不', () => pickVideoForProject());
   }
   async function pickVideoForProject() {
     // 双通道: 原生对话框优先, 超时/失败自动降级浏览器选择(上传成服务端文件再 relink)
     // 立即提示: 系统对话框开在系统层, 可能被浏览器挡住 —— 用户得知道它已经弹了
-    toast('正在打开系统文件选择窗口（若没看到请看任务栏图标）…', 2600);
+    toast('正在打开文件选择窗口…没看到的话看任务栏图标', 2600);
     let pick = null;
     try {
       const ctl = new AbortController();
@@ -294,7 +294,7 @@ export function initProjects(ctx) {
     listAnim = false;
     let data;
     try { data = await (await fetch('/api/projects')).json(); }
-    catch { elList.innerHTML = '<div class="home-loading">读取失败（本地服务未启动？）</div>'; return; }
+    catch { elList.innerHTML = '<div class="home-loading">读取失败，本地服务可能没启动</div>'; return; }
     const ps = data.projects || [];
     elList.innerHTML = '';
     elEmpty.hidden = ps.length > 0;
@@ -355,18 +355,18 @@ export function initProjects(ctx) {
       const fmt = p.format;
       const badge = fmt === 'srt' ? 'SRT' : (fmt === 'ass' ? 'ASS' : (dr ? '初稿' : 'ASS'));
       const locked = !!dr && !hasSub;           // 还没有字幕文件时进去也没内容可读（失败在识别阶段就是这种）
-      const missingTag = p.videoExists ? '' : ` <span class="pc-missing">${ico('alert')}视频丢失</span>`;
+      const missingTag = p.videoExists ? '' : ` <span class="pc-missing">${ico('alert')}找不到这个视频</span>`;
       card.innerHTML = `
         <span class="pc-badge ${fmt === 'srt' ? 'srt' : ''}">${badge}</span>
         <div class="pc-main">
           <div class="pc-name">${esc(p.name)}${missingTag}${stChip}</div>
-          <div class="pc-meta">${esc(p.video && p.video.name || '无视频')} · ${esc(p.subName || (dr ? '初稿处理中…' : '无字幕'))} · 修改于 ${fmtDate(p.modifiedAt)}</div>
+          <div class="pc-meta">${esc(p.video && p.video.name || '无视频')} · ${esc(p.subName || (dr ? '初稿处理中…' : '还没字幕'))} · 修改于 ${fmtDate(p.modifiedAt)}</div>
           ${draftBar}
         </div>
         <div class="pc-actions">
           ${progBtn}
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
-          <button type="button" class="btn pc-del ico-only" title="删除项目(含音频/波形/字幕副本)">${ico('trash')}</button>
+          <button type="button" class="btn pc-del ico-only" title="删除项目（音频、波形、字幕副本一起删）">${ico('trash')}</button>
         </div>`;
       card.querySelector('.pc-open').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -382,7 +382,7 @@ export function initProjects(ctx) {
       card.querySelector('.pc-del').addEventListener('click', (e) => {
         e.stopPropagation();
         panel.showConfirm('删除项目',
-          `确定删除项目「${p.name}」？\n项目内的字幕副本、音频与波形数据将一并删除（不影响原始字幕文件与视频文件）。`,
+          `要删掉项目「${p.name}」吗？\n项目里的字幕副本、音频和波形会一起删掉，原始字幕文件和视频不动。`,
           '删除', '取消', async () => {
             const r = await fetch('/api/projects/' + p.id, { method: 'DELETE' });
             const m = await r.json().catch(() => ({}));
@@ -433,9 +433,9 @@ export function initProjects(ctx) {
     // skipAfterRetries = 重试满 N 次仍失败后允许跳过；语音识别永远不可跳
     { name: '语音识别', enabled: true, skippable: false, skipAfterRetries: false, stages: ['提取音频中', 'ASR识别中'] },
     { name: '说话人分离', enabled: true, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
-    { name: 'LLM语义分句', enabled: true, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
-    { name: 'LLM翻译', enabled: true, skippable: false, skipAfterRetries: true, stages: ['翻译中'] },
-    { name: '完毕', enabled: true, skippable: false, skipAfterRetries: false, stages: ['完毕'] },
+    { name: '语义分句', enabled: true, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
+    { name: '翻译', enabled: true, skippable: false, skipAfterRetries: true, stages: ['翻译中'] },
+    { name: '完成', enabled: true, skippable: false, skipAfterRetries: false, stages: ['完毕'] },
   ];
   const stepIndexOf = (stage) => {
     const i = DP_STEPS.findIndex(s => s.stages.indexOf(stage) >= 0);
@@ -466,7 +466,7 @@ export function initProjects(ctx) {
       ? '跳过此步：保留已识别/已翻译的内容，不再继续重试'
       : (retries >= SKIP_AFTER_RETRIES
           ? '该步骤不可跳过（语音识别不可跳过）'
-          : `重试满 ${SKIP_AFTER_RETRIES} 次仍失败后才放开（已重试 ${retries} 次）`);
+          : `连续失败 ${SKIP_AFTER_RETRIES} 次后可以跳过（已重试 ${retries} 次）`);
     $('#dp-retry').hidden = dpRunning || !dpRetryable;
     const hint = $('#dp-retries');
     hint.textContent = (!dpRunning && dpRetryable && retries > 0)
@@ -505,7 +505,7 @@ export function initProjects(ctx) {
       const m = await r.json();
       if (!r.ok) { toast(m.error || '跳过失败', 4600); return; }
       const d2 = m.draft || {};
-      toast(d2.resegSkipped ? '已跳过语义分句：按标点/停顿兜底切句，流水线继续'
+      toast(d2.resegSkipped ? '已跳过语义分句：改用标点和停顿切句，继续处理'
         : d2.diarizeSkipped ? '已跳过说话人分离：不写角色标注，流水线继续'
         : '已跳过翻译：保留语音识别结果，之后仍可点「翻译」补中文', 4800);
       startDp();
@@ -545,7 +545,9 @@ export function initProjects(ctx) {
 
     const logEl = $('#dp-log');
     if (typeof m.log === 'string' && logEl.textContent !== m.log) {
-      logEl.textContent = m.log;
+      // 日志是多行文本：逐行剥掉时间戳前缀后过词典（服务端文案也能改）
+      logEl.textContent = m.log.split('\n').map(l =>
+        l.replace(/^(\[\d{2}:\d{2}:\d{2}\]\s*)([\s\S]*)$/, (all, pre, rest) => pre + t(rest))).join('\n');
       logEl.scrollTop = logEl.scrollHeight;
     }
     if (!dpRunning) { stopDp(); renderList(); }
@@ -646,7 +648,7 @@ export function initProjects(ctx) {
       data = await resp.json();
       if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
     } catch (e) {
-      msgEl.textContent = '✗ 读取设置失败：' + String((e && e.message) || e) + '（本地服务是否还在运行？）';
+      msgEl.textContent = '✗ 读取设置失败：' + String((e && e.message) || e) + '。本地服务可能已退出，重开程序再试';
       msgEl.classList.add('err');
       renderAsrModels();      // 翻译配置读不到也要让模型列表自己报错/自己重试
       return;
@@ -709,13 +711,13 @@ export function initProjects(ctx) {
     } else if (py.ok) {
       pyState = d.provider === 'cuda'
         ? `<span class="sm-state ok">✓ 可用（${esc(py.msg || '')} · GPU·CUDA${d.gpu ? ' · ' + esc(d.gpu) : ''}）</span>`
-        : `<span class="sm-state" style="color:var(--danger)">基础环境可用，但未启用 GPU·CUDA —— 说话人分离可用；Parakeet 识别必须 N 卡（不支持 CPU 兜底），有 N 卡可点「一键安装」换装 CUDA 版 <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
+        : `<span class="sm-state" style="color:var(--danger)">基础环境可用，但没启用 GPU·CUDA。说话人分离能用；Parakeet 识别必须 N 卡（不支持 CPU），有 N 卡可以点「安装」换 CUDA 版 <button type="button" class="btn btn-mini sm-pyinstall">安装</button></span>`;
     } else {
-      pyState = `<span class="sm-state" style="color:var(--danger)">不可用${py && py.msg ? '：' + esc(py.msg) : ''} <button type="button" class="btn btn-mini sm-pyinstall">一键安装</button></span>`;
+      pyState = `<span class="sm-state" style="color:var(--danger)">不可用${py && py.msg ? '：' + esc(py.msg) : ''} <button type="button" class="btn btn-mini sm-pyinstall">安装</button></span>`;
     }
     let rows = `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">Python 环境</span></div>
-      <div class="sm-desc">Parakeet 模型的语音识别依赖 Python + sherpa-onnx（whisper.cpp 引擎不需要），且必须跑在 CUDA GPU（N 卡）上，不支持 CPU 兜底；说话人分离只依赖基础 Python 环境，无 N 卡也能装好使用。一键安装会自动装好 Python 与依赖，有 N 卡时再换装 CUDA 版 sherpa-onnx 与 cuDNN/cuBLAS 运行库；不写注册表，删 asr\\runtime-python 目录即卸载</div>
+      <div class="sm-desc">Parakeet 识别要 Python 和 sherpa-onnx，还得有 N 卡（CUDA）。说话人分离只要基础 Python，没有 N 卡也能用；whisper.cpp 不需要 Python。点「安装」会装好 Python 和依赖，有 N 卡时一并换成 CUDA 版。不写注册表，删掉 asr\\runtime-python 目录就算卸载</div>
       ${pyState}
     </div>`;
     // 各任务 key: model:<id> / runtime / diarize
@@ -736,8 +738,8 @@ export function initProjects(ctx) {
         state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
       } else if (pyBlocked) {
         state = m.engine === 'nemo'
-          ? '<span class="sm-state" style="color:var(--danger)">只能给 N 卡（NVIDIA 显卡）用户使用 —— 当前未检测到 N 卡，不支持 CPU 推理，无法下载</span>'
-          : '<span class="sm-state" style="color:var(--danger)">需 CUDA GPU（N 卡）才能下载使用，不支持 CPU —— 先在上方完成 Python 环境一键安装</span>';
+          ? '<span class="sm-state" style="color:var(--danger)">只支持 N 卡（NVIDIA 显卡）。当前没检测到 N 卡，不支持 CPU 推理，无法下载</span>'
+          : '<span class="sm-state" style="color:var(--danger)">需要 CUDA GPU（N 卡）才能下载使用，不支持 CPU。先在上面把 Python 环境装好</span>';
       } else if (m.needNemo) {
         state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
       } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
@@ -769,13 +771,13 @@ export function initProjects(ctx) {
     if (nemoSt.running) nemoState = `<span class="sm-state running">${esc(nemoSt.msg || '安装中…')} ${nemoSt.pct || 0}%</span>`;
     else if (nemoSt.error) nemoState = `<span class="sm-state" style="color:var(--danger)">${esc(nemoSt.msg || nemoSt.error)}</span>`;
     else if (nemo.ok && nemo.cuda) nemoState = `<span class="sm-state ok">✓ 可用（${esc(nemo.msg || '')}${nemo.gpu ? ' · ' + esc(nemo.gpu) : ''}）</span>`;
-    else if (nemo.ok) nemoState = '<span class="sm-state" style="color:var(--danger)">装到的是 CPU 版 PyTorch —— 多说话人模型拒绝 CPU 推理，请点「重新安装」换 CUDA 版</span>';
+    else if (nemo.ok) nemoState = '<span class="sm-state" style="color:var(--danger)">装到的是 CPU 版 PyTorch，多说话人模型在 CPU 上跑不了。点「重新安装」换 CUDA 版</span>';
     else nemoState = `<span class="sm-state">未安装 · 约 5GB（PyTorch + NeMo）${nemo.msg ? ' · ' + esc(nemo.msg) : ''}</span>`;
     const nemoBtn = (nemoSt.running || (nemo.ok && nemo.cuda)) ? ''
       : `<button type="button" class="btn btn-mini sm-nemoinstall">${nemo.ok ? '重新安装' : '安装'}</button>`;
     rows += `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">NeMo 运行时（多说话人）</span>${nemoBtn}</div>
-      <div class="sm-desc">「Multitalker Parakeet Streaming 0.6B v1」专用：PyTorch + NeMo（约 5GB）。与上面的 Python 环境是两套依赖，装在本项目的 Python 环境里；<b>只有 N 卡可用</b>（该模型不支持 CPU 推理）。装完会自动实测「导入 + CUDA」才算成功</div>
+      <div class="sm-desc">「Multitalker Parakeet Streaming 0.6B v1」专用：PyTorch + NeMo（约 5GB）。与上面的 Python 环境是两套依赖，装在本项目的 Python 环境里；<b>只有 N 卡可用</b>（该模型不支持 CPU 推理）。装完会自动实测「加载 + CUDA」才算成功</div>
       ${nemoState}
     </div>`;
     // 「重新识别模型」: 可指向任意模型(含只能重新识别的 multitalker)
@@ -787,7 +789,7 @@ export function initProjects(ctx) {
       })).join('');
     rows += `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">重新识别模型</span></div>
-      <div class="sm-desc">「选区重新识别」用哪个模型。选了 Multitalker 多说话人模型时：它<b>只能用于重新识别</b>（不能创建初稿），并且必须 N 卡 —— 用 CPU 推理会直接报错</div>
+      <div class="sm-desc">「选区重新识别」用哪个模型。选了 Multitalker 多说话人模型时：它<b>只能用于重新识别</b>（不能创建初稿），并且必须 N 卡，用 CPU 推理会直接报错</div>
       <select class="btn" id="st-rerecog-sel">${rrOpts}</select>
     </div>`;
     rows += `<div class="sm-model">
@@ -802,7 +804,7 @@ export function initProjects(ctx) {
         const r = await (await fetch('/api/asr/install-nemo', { method: 'POST' })).json();
         const msgEl = $('#st-msg');
         if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); }
-        else if (r.started || r.already) { msgEl.textContent = '正在安装 NeMo 运行时（约 5GB，进度见上方；装完会自动实测 CUDA）…'; msgEl.classList.remove('err'); pollModelDownload(); }
+        else if (r.started || r.already) { msgEl.textContent = '正在安装 NeMo 运行时（约 5GB，进度见上方）…装完会自动测一次 CUDA'; msgEl.classList.remove('err'); pollModelDownload(); }
       } catch (e) { const msgEl = $('#st-msg'); msgEl.textContent = '✗ 安装启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err'); }
       renderAsrModels();
     }));
@@ -832,7 +834,7 @@ export function initProjects(ctx) {
     }));
     box.querySelectorAll('.sm-del').forEach(b => b.addEventListener('click', () => {
       panel.showConfirm('删除模型',
-        '确定删除该模型的文件吗？（不影响已生成的字幕；之后可重新下载）',
+        '删除该模型的文件？已生成的字幕不受影响，之后可以重新下载',
         '删除', '取消', async () => {
           await fetch('/api/asr/delete', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: b.dataset.id })
@@ -965,7 +967,7 @@ export function initProjects(ctx) {
     }));
     if (name) name.textContent = glState.lang;
     const rows = glState.terms[glState.lang];
-    box.innerHTML = rows.length ? '' : '<div class="gl-empty">' + esc(t('还没有词条 —— 点上面的「＋ 添加词条」开始')) + '</div>';
+    box.innerHTML = rows.length ? '' : '<div class="gl-empty">' + esc(t('还没有词条，点上面的「＋ 添加词条」')) + '</div>';
     rows.forEach((pair, i) => {
       const row = document.createElement('div');
       row.className = 'gl-row';
@@ -1047,7 +1049,7 @@ export function initProjects(ctx) {
     const msgEl = $('#st-msg');
     try {
       const m = await postSettings();
-      msgEl.textContent = m.ready ? '✓ 已保存，翻译可用' : '已保存（地址 / Key / 模型名不全，翻译暂不可用）';
+      msgEl.textContent = m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译';
       msgEl.classList.remove('err');
       renderList();
       setTimeout(closeSettings, 600);
@@ -1086,8 +1088,8 @@ export function initProjects(ctx) {
     $('#np-row-spk').hidden = !draft;
     $('#np-model').hidden = !draft;
     $('#np-hint').textContent = draft
-      ? '创建后会在后台识别语音并生成字幕；进度可在项目列表上查看，不用守着这个窗口'
-      : '创建时会自动提取音频与波形存入项目（下次打开免生成）；字幕在编辑过程中实时保存';
+      ? '创建后在后台识别，进度看项目列表'
+      : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
     $('#np-create').textContent = draft ? '开始识别' : '创建项目';
     if (draft) refreshAsrStatus();
     npMaybeEnable();
@@ -1103,13 +1105,13 @@ export function initProjects(ctx) {
       const ready = (asrStatus.models || []).filter(m => m.ready && m.draftAllowed !== false);
       sel.innerHTML = ready.length
         ? ready.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
-        : '<option value="">（无可用模型，请到设置里下载）</option>';
+        : '<option value="">（没有可用模型，去设置里下载）</option>';
       if (asrStatus.selectedModel && ready.some(m => m.id === asrStatus.selectedModel)) sel.value = asrStatus.selectedModel;
     }
     // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
     const hint = $('#np-hint');
     if (hint && asrStatus.pythonProbe && !asrStatus.pythonProbe.ok) {
-      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + ' —— Parakeet 模型需要 Python（详见创建后日志里的修复方法）；whisper.cpp 与「必剪 ASR」云端识别都不需要 Python';
+      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp 和「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
     }
     npMaybeEnable();
@@ -1120,9 +1122,9 @@ export function initProjects(ctx) {
     npSub.name = npSub.text = '';
     npVideoFile = null;
     $('#np-name').value = '';
-    $('#np-video-name').textContent = '未选择';
+    $('#np-video-name').textContent = '还没选';
     $('#np-video-name').classList.remove('filled');
-    $('#np-sub-name').textContent = '未选择';
+    $('#np-sub-name').textContent = '还没选';
     $('#np-sub-name').classList.remove('filled');
     $('#np-create').disabled = true;
     npSetMode('import');
@@ -1175,7 +1177,7 @@ export function initProjects(ctx) {
     const btn = $('#np-pick-video');
     const oldLabel = btn.textContent;
     btn.textContent = '打开选择框…';
-    toast('正在打开系统文件选择窗口（若没看到请看任务栏图标）…', 2600);
+    toast('正在打开文件选择窗口…没看到的话看任务栏图标', 2600);
     let pick = null, usedBrowser = false;
     try {
       const ctl = new AbortController();
@@ -1244,7 +1246,7 @@ export function initProjects(ctx) {
     try {
       // 浏览器选的视频: 先把 File 上传成服务端持久文件, 拿到真实路径后走同一条创建链路
       if (npVideo.path.startsWith('upload:')) {
-        if (!npVideoFile) { toast('视频文件丢失，请重新选择', 3600); return; }
+        if (!npVideoFile) { toast('视频文件找不到了，重新选一个', 3600); return; }
         btn.textContent = '上传视频中…';
         const up = await fetch('/api/upload-video?name=' + encodeURIComponent(npVideoFile.name), {
           method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: npVideoFile
@@ -1276,7 +1278,7 @@ export function initProjects(ctx) {
       npOverlay.hidden = true;
       if (isDraft) {
         renderList();                     // 项目立刻进列表, 进度在卡片上
-        toast('已提交，正在后台识别语音 —— 可以先去做别的，进度见项目列表', 5200);
+        toast('开始识别了，不用等着；进度看项目列表', 5200);
       } else {
         lastSavedText = npSub.text;
         location.hash = '#/project/' + m.id;

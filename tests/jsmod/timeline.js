@@ -568,8 +568,8 @@ export class Timeline {
               const band = c.half ? bandOf(c, yy2, lh2) : { y: yy2, h: lh2 };
               const lower = y >= band.y + band.h / 2;
               const text = onL
-                ? (lower ? '拖动：调整首词边界' : '拖动：整体调整左边界')
-                : (lower ? '拖动：调整末词边界' : '拖动：整体调整右边界');
+                ? (lower ? '拖动：只改第一个词的开头' : '拖动：改整块开始时间')
+                : (lower ? '拖动：只改最后一个词的结尾' : '拖动：改整块结束时间');
               this._showEdgeHint(e.clientX, e.clientY, text);
               return;
             }
@@ -811,7 +811,7 @@ export class Timeline {
       ctx.fillStyle = C.ruler;
       ctx.font = '13px "Microsoft YaHei", sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('加载视频后此处显示时间轴', W / 2, H / 2);
+      ctx.fillText('打开视频后，这里显示时间轴', W / 2, H / 2);
       return;
     }
 
