@@ -534,4 +534,15 @@ SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DI
 - **载入即自动对齐中英起止**：云端识别（必剪/剪映）给的首词起点常晚于句首（中文 0.00–2.88 / 英文 0.04–2.88），或整段英文只覆盖一小截（0.04–0.32），在 ASS 里就是"中英时间不一致"的坏行。`setAss()` 里配对完立刻跑 `autoAlignEnSpans()`：把英文逐词的时间**按比例映射到中文行的 [start,end]**（只挪时间，不动文本与高亮标签），随后自动保存写回项目。手工改坏的行走右键「🛠 修复字幕」（`detectRowProblems` 的 `spanMismatch`）。**自动那一步只碰"除起止不一致外没别的毛病"的双行**：与其它字幕重叠的行（`computeOverlapRows`）、单语行（只有中文或只有英文、没有中文锚点可对齐）、英文切片自身重叠、逐词数与文本词数不符、英文行里混进 `[角色名]` 的行 —— 全部跳过（前两类是用户明确要求"别误触"，后三类需要用户确认句子）。另：双行的块时间取自中文锚点（`karaoke.js` 的 `makeRow`），所以对齐英文词只会挪高亮时间，**不会改变任何行的起止、也不会凭空造出重叠**。**别把这一步放进 `reconcileKaraoke`**：它在每次编辑后都会跑，会把用户手动拖动首词的意图立刻抹掉。
 - **角色名标签与正文之间恒为一个空格**（用户要求：`[wato] 我`，不许连着也不许两个空格）：纯函数 `normalizeRoleGap`（`karaoke.js`）—— 载入时（`normalizeAllRoleGaps`）把老文件里的 `[wato]我` / `[wato]  我` / `[wato]<tab>我` 规范成 `[wato] 我`，编辑提交时（`applyAnchorSentence` / `applyWordSentence`）再兜一遍，所以编辑框里可以随便打、落盘与显示永远是一个空格。只规范**标签与正文之间**这一处，正文内部的连续空格不动；`[]`（空标签）与行中间的方括号不认。逐词行**只改事件明文**、不重建切片 —— 重建会因为"多了一个空格"改变词数、进而触发词级时间重排，把用户的逐词时间抹掉。
 - **英文分词口径必须统一在 `karaoke.js`**：`splitEnglishWords` / `splitEnglishWordsWithSpans` —— 空白 **与 `,` `.` `?` `!`** 都算分隔符，标点留在**前一个词尾**（`SMP,I plan.to` → `SMP,` `I` `plan.` `to`），于是"每遇到这类标点就逐词一次"。**三个地方必须用同一口径**：① `recalcWords`（重建词表）；② 所有"数英文词"的地方（`enTokenCount`、`detectRowProblems`、`autoAlignEnSpans` 的守卫）；③ `buildWordSpecs`（在原文本里**原位**包裹高亮）。第③处曾经自己按空白切一遍，结果 12 个词被压回 10 片、标点又黏回去（踩过：**改分词规则时，三处一起改**）。
+  - **第四处（`splitRowAt` 分句）也是同一个口径**：词数必须用 `splitEnglishWords`，不能按空格数 ——
+    `wood,need` 在规范分词里是**两个**词、按空格却只算一个，于是 `k` 与文本切点错位、分句会多切一个词
+    （用户报的「光标在 `…my house|oh my god` 却被切成 `…my house oh / my god`」）。文本一律用 `_splitPoint`
+    返回的**字符位置** `sp` 去 `slice`，这样原始空格也原样保留（`wood,need` 不会被改写成 `wood, need`）。
+  - **分句/合并都不要再走「先删原行再 appendSentence」**：`appendSentence` 是在该样式最后一条事件之后插入，
+    样式被删空（例如文件里只有这一条）就返回 `null`，两半/两条会一起消失。正确做法是**就地改写原行**
+    （`applyAnchorSentence` / `applyWordSentence`），只给新增的那一半 append。
+  - 覆盖词级时间后要**无条件重建切片**：`applyWordSentence` 自己已经重建过一次，事件数早不是 1，
+    拿 `events.length === 1` 当守卫会让覆盖白做（所有词被重排）。
+  - 验证：`tests/split-sentence-test.mjs`（21 项纯逻辑）· `tools/split_probe.mjs`（10 项真机：夹具用规范分词
+    的原位 span 造「文本黏连、词是两个」的情形，光标放 house 之后真按 Ctrl+回车，解析落盘 ASS）。
 - **动效只动 transform/opacity 这类合成属性，且必须留 `prefers-reduced-motion` 的关闭开关**；列表类容器（字幕卡片）只做过渡、不做入场动画 —— 交互频繁的列表重播动画比不动画更烦人。

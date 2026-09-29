@@ -2174,19 +2174,29 @@ function splitZhText(zhText, k, nEn) {
 }
 
 /** 在光标处把一条字幕切成两条:
- *  时间切点 = 前半最后一个词的结束与后半第一个词的开始之间的中点(没有词级时间时按词数比例);
- *  英文词级时间**原样保留**在两半里(不重算), 这样逐词卡拉OK效果不会被切分弄坏。 */
+ *  文本按光标所在的**词边界**切（`_splitPoint`，规范分词口径，与词级时间一致）；
+ *  时间切点 = 前半最后一个词的结束与后半第一个词的开始之间的中点（没有词级时间时按词数比例）；
+ *  英文词级时间**原样保留**在两半里（不重算），逐词卡拉OK效果不会被切分弄坏。
+ *  实现上**前半就地改写原行**（复用它的两条事件），只有后半是新建的 —— 不能"先删原行再
+ *  appendSentence 两次"：那个函数是在该样式最后一条事件之后插入，样式被删空（例如文件里只有这一条）
+ *  会返回 null，两半一起消失（分句真机探针抓到过）。 */
 function splitRowAt(item, enPlainText, caret) {
   if (!item) return false;
   panel.commitEdit();                      // 先把编辑框里的最新文本落盘
   const row = item.ref;
   if (!row || !state.kar || state.kar.rows.indexOf(row) === -1) { toast('这条字幕不能分句'); return false; }
   const enPlain = String(enPlainText || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-  const totW = enPlain ? enPlain.split(' ').filter(Boolean).length : 0;
+  // 词数必须用**规范分词**(空白 + , . ? ! —— 与 _splitPoint / 词级时间同一个口径), 不能按空格数:
+  // "wood,need" 在规范分词里是**两个**词, 按空格切却只算一个 —— k 与文本切点于是错位, 分句会多切一个词
+  // (用户报的: 光标在 "…my house|oh my god" 却被切成 "…my house oh / my god")。
+  const toks = splitEnglishWords(enPlain);
+  const totW = toks.length;
   const sp = panel._splitPoint ? panel._splitPoint(enPlain, caret) : null;
   if (!enPlain || !sp || totW < 2) { toast('把光标放在句子中间再按 Ctrl+回车 才能分句'); return false; }
   const k = sp.k;
-  const enRest = enPlain.split(' ').filter(Boolean).slice(k).join(' ');
+  // 文本按**原字符位置**切(保留原始空格: "wood,need" 不会被改写成 "wood, need"); k 只用来分配词级时间
+  const enA = enPlain.slice(0, sp.sp).trim();
+  const enRest = enPlain.slice(sp.sp).trim();
 
   const t0 = row.start, t1 = row.end;
   const enS = row.en;
@@ -2207,42 +2217,42 @@ function splitRowAt(item, enPlainText, caret) {
   const [zhA0, zhB0] = splitZhText(zhBody, k, totW);
   const zhA = (zhTag + zhA0).trim();
   const zhB = (zhTag + zhB0).trim();
-  const enA = enPlain.split(' ').filter(Boolean).slice(0, k).join(' ');
   if (!enA || !enRest) { toast('切分点太靠近边缘，无法分句'); return false; }
 
   const zhStyle = row.zh ? row.zh.style : ((state.kar.sentences.find(s => s.style !== state.kar.wordStyle) || {}).style || '');
   const enStyle = row.en ? row.en.style : (state.kar.wordStyle || '');
   const color = row.color, speaker = row.speaker, wasNew = state.newRows.has(row);
 
-  removeItemData(item);                    // 摘掉原行(不重建界面), 原时间留给前半
-  const zh1 = zhStyle ? appendSentence(zhStyle, t0, st, zhA) : null;
-  const en1 = enStyle ? appendSentence(enStyle, t0, st, enA) : null;
-  const row1 = { zh: zh1, en: en1, start: t0, end: st, no: 0, color, speaker };
-  state.kar.rows.push(row1);
-  if (wasNew) state.newRows.add(row1);
+  // ── 前半: 就地改写原行(保留它自己的事件与颜色/角色标签) ──
+  if (row.zh) {
+    applyAnchorSentence(row.zh, t0, st, zhA || row.zh.text);
+    row.zh.words = [];                     // 中文行只是整句, 不造逐词切片
+  }
+  if (row.en) applyWordSentence(row.en, t0, st, enA || row.en.text);
+  row.start = t0;
+  row.end = st;
 
+  // ── 后半: 新建(此刻该样式已有前半这条锚点事件, 所以 appendSentence 一定有地方可插) ──
   const zh2 = zhStyle ? appendSentence(zhStyle, st, t1, zhB) : null;
   const en2 = enStyle ? appendSentence(enStyle, st, t1, enRest) : null;
   const row2 = { zh: zh2, en: en2, start: st, end: t1, no: 0, color, speaker };
 
-  // 词级时间: 原样分给两半(用上半的词, 不重算) —— 逐词效果得以保留
+  // 词级时间: 原样分给两半(用原来的词, 不重算) —— 逐词效果得以保留。
+  // 注意: applyWordSentence 已经重建过一次切片(用的是它自己重排出来的时间), 事件数早已不是 1,
+  // 所以这里**不能**再拿 events.length === 1 当守卫(那会让覆盖白做、所有词被重排 —— 合并那边踩过同一个坑)。
   const allW = (enS && enS.words) ? enS.words : [];
-  if (allW.length === totW && totW > k) {
-    if (en1) { en1.words = allW.slice(0, k).map(w => ({ w: w.w, s: w.s, e: w.e })); en1.text = enA; }
-    if (en2) { en2.words = allW.slice(k).map(w => ({ w: w.w, s: w.s, e: w.e })); en2.text = enRest; }
-  } else {
-    // 没有可用的词级时间 → 各自在句内按词数均匀铺满(cat 端 recalcWords 处理 n===0 的情形)
-    if (en1) en1.words = recalcWords(en1, enA, t0, st);
-    if (en2) en2.words = recalcWords(en2, enRest, st, t1);
+  const hasWords = allW.length === totW && totW > k;
+  if (row.en) {
+    row.en.words = hasWords ? allW.slice(0, k).map(w => ({ w: w.w, s: w.s, e: w.e }))
+                            : recalcWords(row.en, row.en.text, t0, st);
+    row.en.events = state.assDoc.replaceEvents(row.en.events, buildWordSpecs(row.en));
   }
-  if (zh1 && zhA) zh1.text = zhA;
-  if (zh2 && zhB) zh2.text = zhB;
-  // 词级时间/文本改好后必须**显式重建切片**: reconcileKaraoke 只从备份还原被去逐词的行,
-  // 它不会生成逐词(不重建的话分出来的两半会丢掉卡拉OK高亮, 只剩一句干净整句 —— 实测踩过)。
-  // 只有"每半正好一条事件"时才 replaceEvents: 该行若由多条事件组成, 直接替换会漏下
-  // 多余事件变成孤儿(重复字幕), 那种行退回整句输出更安全。
-  if (en1 && en1.words.length && en1.events.length === 1) en1.events = state.assDoc.replaceEvents(en1.events, buildWordSpecs(en1));
-  if (en2 && en2.words.length && en2.events.length === 1) en2.events = state.assDoc.replaceEvents(en2.events, buildWordSpecs(en2));
+  if (en2) {
+    en2.words = hasWords ? allW.slice(k).map(w => ({ w: w.w, s: w.s, e: w.e }))
+                         : recalcWords(en2, enRest, st, t1);
+    en2.events = state.assDoc.replaceEvents(en2.events, buildWordSpecs(en2));
+  }
+  if (wasNew) state.newRows.add(row2);
 
   state.kar.rows.push(row2);
   state.kar.rows.sort((a, b) => a.start - b.start || a.end - b.end);
@@ -2251,7 +2261,7 @@ function splitRowAt(item, enPlainText, caret) {
   reconcileKaraoke();
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
-  const ni = state.itemByRef.get(row1);              // 光标留在前半的英文行, 接着往下切
+  const ni = state.itemByRef.get(row);                // 光标留在前半的英文行, 接着往下切
   if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
   toast(`已在 ${fmtTime(st)} 处分为两条字幕`, 2600);
   return true;
