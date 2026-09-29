@@ -341,19 +341,51 @@ editor/
 node tests/gen-fixture.mjs        # 生成夹具(8 行双语)
 node tests/karaoke-exhaustive.mjs # 穷举: 13 个场景 + 200 步随机压力, 每步校验 6 条不变量
 node tests/reseg-test.mjs         # 语义分句: 静音切批/切句规则/密度校验/截断拆批 (49 项)
-node tests/llm-text-test.mjs      # LLM 回复卫生: 剥思维链/JSON 提取/逐行兜底/密度 (28 项)
+node tests/llm-text-test.mjs      # LLM 回复卫生: 剥思维链/JSON 提取/逐行兜底/密度 (36 项)
+node tests/role-gap-test.mjs      # 角色名标签与正文的间距规范 (19 项)
+node tests/word-split-test.mjs    # 英文字幕分词: 空白 + , . ? ! (20 项)
+node tests/ass-escape-test.mjs    # ASS 文本转义 (13 项) · glossary-test.mjs 术语表 (10 项)
 
 # 退出链路（托盘/完全退出）
 powershell -File editor/scripts/tray.ps1 -Port 8321 -SelfTest   # 托盘图标 + 菜单能建起来
 powershell -File editor/scripts/tray.ps1 -Port 8321 -QuitOnce   # 走一遍完全退出(含端口释放)
 node tools/tray_quit_probe.mjs 8321                             # 真 Edge --app 窗口里验页面收尾
 
+# 界面（真机 CDP: 主题色 / 动效 / 图标注入 / 遮罩不模糊 / 无 JS 报错）
+node tools/ui_theme_probe.mjs                                   # 先起服务(默认 8399 或改 BASE)
+
 # 必剪云端识别（不进项目流水线, 直连接口看每一步）
 node tools/bcut_asr_probe.mjs 测试视频.mp4                       # 抽音频 → 上传 → 识别 → 打印逐词
 node tools/capcut_asr_probe.mjs 测试视频.mp4                     # 同上, 走剪映云链路
 ```
 
-无 DOM 依赖, 直接跑真实的 ass.js + karaoke.js（自动同步到 tests/jsmod/）。
+无 DOM 依赖, 直接跑真实的 ass.js + karaoke.js（自动同步到 tests/jsmod/，镜像文件是**入库**的，测试跑完记得把镜像一起提交）。
+
+## 发版流程（只发安装包）
+
+**只发布 Inno Setup 安装包**（`SubFabric-<版本>-setup.exe`），不再出便携版 zip（`package_release.py` 已删除）。
+
+```bash
+# 0) 前置: 发行内容要齐 —— 尤其是 gitignore 的本地渲染依赖(~19MB), 缺了安装包会静默少一块
+node editor/scripts/fetch-vendor.js          # 拉 editor/vendor/: libass worker + Noto CJK 字体
+#    还要有 build/SubFabric.exe(Node SEA, 由 build_exe.py 生成) 与 build/installer/{SubFabric.iss,start-editor.*}
+
+# 1) 三处版本号一起改(漏一处就会出现"装完版本还是旧的")
+#    · editor/server.js          const APP_VERSION = 'x.y.z'
+#    · build/installer/SubFabric.iss   #define MyAppVersion "x.y.z"
+#    · editor/README.md          标题里的版本号
+
+# 2) 编译安装包(输出到 build/installer/)
+"D:\Program Files (x86)\Inno Setup 6\ISCC.exe" build/installer/SubFabric.iss
+
+# 3) 静默安装自检(装到临时目录看内容, 别直接装到 Program Files)
+SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DIR=D:\tmp\inst
+#    期望: 45 个文件 / 约 106MB, 含 editor/vendor/*、SubFabric.exe、main.py、asr/
+
+# 4) 发 Release: 只上传 setup.exe 这一个资产
+```
+
+**踩过的坑**：① 不跑 `fetch-vendor.js` 直接打，安装包会从 ~33.8MB 掉到 ~22.7MB（少的正是 libass worker 与 CJK 字体，字幕渲染直接废）；② `SubFabric.iss` 与 `build/` 是 gitignore 的，**新克隆里没有**，要单独带上；③ 版本号三处不同步，装完仍显示旧版本。
 不变量: 无孤儿事件 / 无悬空句子 / 行句一致 / 无空文本事件 / 序列化往返一致 / 切片不重叠。
 
 **已知边界（非 bug, 属 ASS 格式固有限制）**：

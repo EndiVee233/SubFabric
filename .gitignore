@@ -45,7 +45,7 @@ desktop.ini
 # 浏览器兜底通道上传的视频副本(/api/upload-video 存放处)
 /videos/
 
-# 发行版打包产物(由 package_release.py 生成) / 解压出来的发行副本
+# 发行版产物: 只发安装包(SubFabric-<版本>-setup.exe), 不再出便携版 zip
 K-ASS-Editor-*.zip
 K-ASS-Editor-*/
 SubFabric-*.zip
