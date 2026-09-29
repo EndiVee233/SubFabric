@@ -1554,7 +1554,7 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
     const msg = String((e && e.message) || e);
     const crash = /Vulkan|failed to allocate|ggml_gallocr|out of memory|退出码\s*(-|\d{6,})/.test(msg);
     if (!crash) throw e;
-    console.warn('[asr] whisper GPU 失败, 改用 CPU 重试:', msg.slice(0, 200));
+    console.warn('[asr] whisper GPU 失败，改用 CPU 重试：' + msg.slice(0, 200));
     if (opts && typeof opts.onFallback === 'function') { try { opts.onFallback(msg); } catch {} }
     return runWhisperCppOnce(modelBin, wav, onProgress, opts, true);
   });
@@ -2909,7 +2909,8 @@ function startPrepare(id, videoPath, mode) {
     const stamp = () => '[' + new Date().toLocaleTimeString() + '] ';
     const cfgLLM = translateCfg();
     const castUsable = () => castOn() && llmReady(cfgLLM);
-    const llmCall = (msgs) => llmChat(cfgLLM, msgs, { jsonMode: true, maxTokens: 1200 });
+    // 注意: llmChat 返回的是 { content, finishReason, ... } —— 必须取 .content（分句那边也是这么用的）
+    const llmCall = (msgs) => llmChat(cfgLLM, msgs, { jsonMode: true, maxTokens: 1200 }).then((r) => r.content);
 
     if (wantSpk) {
       const wav = path.join(projDir(id), 'audio.wav');

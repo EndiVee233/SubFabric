@@ -26,7 +26,7 @@ const one = async (id) => await (await fetch(BASE + '/api/projects/' + id)).json
 /* ── 假 LLM ── */
 const FAKE_CAST = { characters: [{ name: 'Rick Astley', aliases: ['Rick'] }, { name: '主唱' }, { name: '旁白' }] };
 const FAKE_MAP = { mapping: { SPK1: 'Rick Astley', SPK2: '主唱', SPK3: null } };
-const seen = [];
+const seen = [];   // 每次请求的类型与内容（分句/阵容/对应）
 const srv = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => { body += c; });
@@ -36,9 +36,22 @@ const srv = http.createServer((req, res) => {
     const msgs = j.messages || [];
     const sys = String((msgs[0] && msgs[0].content) || '');
     const usr = String((msgs[1] && msgs[1].content) || '');
-    seen.push({ sys: sys.slice(0, 50), usr: usr.slice(0, 400) });
     const isCast = sys.includes('说话的角色');
-    const content = JSON.stringify(isCast ? FAKE_CAST : FAKE_MAP);
+    const isMap = sys.includes('说话人编号');
+    const isReseg = /标点/.test(sys) || /词序号/.test(sys);
+    let content = '[]';
+    let kind = 'other';
+    if (isCast) { kind = 'cast'; content = JSON.stringify(FAKE_CAST); }
+    else if (isMap) { kind = 'map'; content = JSON.stringify(FAKE_MAP); }
+    else if (isReseg) {
+      // 语义分句: 期望 [[词序号, 标点], …]；从用户消息里把"编号 词"清单解析出来, 每 ~8 个词给一个句号
+      kind = 'reseg';
+      const idx = (usr.match(/^\s*(\d+)\s+\S/gm) || []).map((x) => parseInt(x.trim(), 10));
+      const pairs = [];
+      for (let k = 7; k < idx.length; k += 8) pairs.push([idx[k], '.']);
+      content = JSON.stringify(pairs);
+    }
+    seen.push({ kind, sys: sys.slice(0, 50), usr: usr.slice(0, 400) });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       id: 'fake-cast', object: 'chat.completion', model: 'fake-cast',
@@ -98,11 +111,16 @@ try {
   ok(log.includes('说话人分离按 3 人'), '② 日志证明数量传给了分离器', log.split('\n').filter((l) => l.includes('分离')).slice(-2));
 
   /* ③ 两次调用 + 内容 */
-  ok(seen.length === 2, '③ 恰好两次模型调用（阵容 + 对应）', seen.length);
-  ok(seen[0] && seen[0].sys.includes('说话的角色'), '③ 第一次是阵容推断');
-  ok(seen[0] && /Rick Astley|Never Gonna|索尼/.test(seen[0].usr), '③ 阵容请求带上了视频信息', (seen[0] || {}).usr && seen[0].usr.slice(0, 80));
-  ok(seen[1] && seen[1].usr.includes('SPK1'), '③ 第二次带上了 SPK 样本', (seen[1] || {}).usr && seen[1].usr.slice(0, 120));
-  ok(seen[1] && seen[1].usr.includes('Rick Astley'), '③ 第二次带上了候选角色');
+  const casts = seen.filter((x) => x.kind === 'cast');
+  const maps = seen.filter((x) => x.kind === 'map');
+  const resegs = seen.filter((x) => x.kind === 'reseg');
+  console.log('  模型调用构成:', JSON.stringify({ 分句: resegs.length, 阵容: casts.length, 对应: maps.length }));
+  ok(casts.length === 1, '③ 阵容推断调了一次', casts.length);
+  ok(maps.length === 1, '③ 角色对应调了一次', maps.length);
+  ok(resegs.length >= 1, '③ 语义分句也走了同一个模型（说明共用配置）', resegs.length);
+  ok(casts[0] && /Rick Astley|Never Gonna|索尼|Unstable/.test(casts[0].usr), '③ 阵容请求带上了视频信息', casts[0] && casts[0].usr.slice(0, 80));
+  ok(maps[0] && maps[0].usr.includes('SPK1'), '③ 对应请求带上了 SPK 样本', maps[0] && maps[0].usr.slice(0, 120));
+  ok(maps[0] && maps[0].usr.includes('Rick Astley'), '③ 对应请求带上了候选角色');
 
   /* ④⑤ 字幕里的角色名 */
   const mp = (d.cast && d.cast.map) || {};
