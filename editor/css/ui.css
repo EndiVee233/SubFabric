@@ -73,7 +73,10 @@ body::before {
 #video-stage {
   border-radius: var(--r-3); overflow: hidden; background: #000;
   box-shadow: var(--sh-2), inset 0 0 0 1px var(--hair);
-  position: relative;
+  /* 这里**不能**写 position: relative —— style.css 的 `#video-stage{position:absolute;inset:0}`
+     才是"填满 #stage-wrap"的关键；一旦被改成 relative，舞台就退回 video 的默认 300×150，
+     于是调时间轴高度时视频区高度纹丝不动（用户报的"视频区高宽不可调整"就是这个）。
+     暗角 ::after 仍以它为定位上下文（absolute 也是 positioned）。 */
 }
 #video-stage::after {                 /* 暗角，让画面边缘不刺眼 */
   content: ''; position: absolute; inset: 0; pointer-events: none;
