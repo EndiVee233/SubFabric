@@ -1,10 +1,25 @@
 /* 布局探针：调"区域高度"与拖分割线时，视频区/时间轴必须**按比例**此消彼长，且不溢出窗口。
  * 同时检查字幕列表能不能滚到最后一条（用户报的"字幕块显示不全"）。 */
 import { launch, sleep } from './lib/cdp.mjs';
+import { readFileSync } from 'fs';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8321';
+/* 项目目录可由 PROJ_DIR 覆盖（验装机版时指到它的 projects/）；一个项目都没有时(全新安装)
+ * 就自己建一个临时项目, 用完删掉 —— 否则探针会崩在 proj.id 上。 */
+const PROJECTS_DIR = process.env.PROJ_DIR || 'D:/Vibe Coding/SubFabric/projects';
 const list = (await (await fetch(BASE + '/api/projects')).json()).projects;
-const proj = list.find(p => !p.draft) || list[0];
+let proj = list.find(p => !p.draft) || list[0];
+let tempProject = false;
+if (!proj) {
+  const ass = readFileSync(new URL('../tests/fixture.ass', import.meta.url), 'utf8');
+  const demoVideo = process.env.DEMO_VIDEO || 'D:/Vibe Coding/_t/demo.mp4';   // 必须给个存在的视频: 空路径会被接口拒掉
+  const body = JSON.stringify({ name: '布局探针临时项目', video: { path: demoVideo }, subtitle: { name: 'fixture.ass', text: ass } });
+  const r = await (await fetch(BASE + '/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })).json();
+  if (!r || !r.id) throw new Error('创建临时项目失败: ' + JSON.stringify(r).slice(0, 200));
+  proj = r;
+  tempProject = true;
+  console.log('（该实例没有项目，已建临时项目 ' + proj.id + '）');
+}
 let pass = 0, fail = 0;
 const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok  ' + n); } else { fail++; console.log('FAIL  ' + n + (extra != null ? ' :: ' + extra : '')); } };
 
