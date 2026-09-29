@@ -16,12 +16,14 @@ const childProcess = require('child_process');
 const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), whisper 专用
 const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型/免显卡, 只把音频传上去
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
+const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
+const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
 const llmText = require('./llm-text.js');  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '1.9.5'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '1.9.6'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -2708,6 +2710,106 @@ function handleRequest(req, res) {
     buildDraftSubtitle(id, wordLevel);
   }
 
+  /* ── 长音频分片（云端与本地共用）────────────────────────────────────
+   *  为什么要分片：云端免费接口对长音频容易超时/限流（几小时基本必挂）；本地 whisper 对长音频也不友好
+   *  （显存占用大、出错重来代价高）。做法：25 分钟一片，切点优先落在静音中点，片间不重叠，
+   *  每片的时间戳加回片起点后合并。云端片间随机等 10~15 秒（模拟人类节奏，降低风控概率），本地不等。
+   *  短视频（≤ 25 分钟 + 1 分钟）完全走原路径：不做静音检测、不切片，行为与以前一致。 */
+  const CHUNK_MIN_SEC = asrChunks.CHUNK_SEC + asrChunks.MIN_TAIL_SEC;
+
+  /* 静音检测与切片都用 editor/audio-slice.js（真 ffmpeg）—— 抽出去是为了让
+     tools/chunk_probe.mjs 能跑**同一份实现**做离线验证，而不是在探针里另抄一遍。 */
+  const detectSilences = (wav, timeoutMs) => audioSlice.detectSilences(FFMPEG, wav, timeoutMs);
+  const sliceAudio = (wav, start, end, out, asMp3) => audioSlice.sliceAudio(FFMPEG, wav, start, end, out, asMp3);
+  /** 分片数据落盘（用户要的「返回分片数据」）：projects/<id>/asr-chunks.json + 草稿摘要 */
+  function writeChunkReport(id, info) {
+    try {
+      const rec = {
+        createdAt: new Date().toISOString(),
+        engine: info.engine || '',
+        duration: info.duration,
+        chunkSec: asrChunks.CHUNK_SEC,
+        source: info.source || 'nominal',            // silence = 按静音切 / nominal = 名义切点
+        silenceCount: info.silenceCount || 0,
+        chunks: (info.plan || []).map((c, i) => Object.assign({}, c, (info.perChunk && info.perChunk[i]) || {})),
+      };
+      fs.writeFileSync(path.join(projDir(id), 'asr-chunks.json'), JSON.stringify(rec, null, 2));
+      const meta = readMeta(id);
+      if (meta && meta.draft) {
+        meta.draft.chunks = { count: rec.chunks.length, chunkSec: rec.chunkSec, source: rec.source };
+        writeMeta(meta);
+      }
+      return rec;
+    } catch { return null; }
+  }
+
+  /** 云端分片：逐片转 mp3 → 逐片走云端（每片各自享受必剪↔剪映回退）→ 片间随机等 10~15 秒 → 合并 */
+  function transcribeCloudChunked(o) {
+    const id = o.id;
+    const cloudLog = (m) => pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] ' + m);
+    const tmp = [];
+    let used = null;
+    cloudLog('[分片] 音频 ' + Math.round(o.duration / 60) + ' 分钟 → 切 ' + o.plan.length + ' 片（每片约 '
+      + Math.round(asrChunks.CHUNK_SEC / 60) + ' 分钟，' + (o.source === 'silence' ? '按静音切' : '按固定时长切')
+      + '），片间随机等 10~15 秒');
+    return asrChunks.runChunks({
+      chunks: o.plan, signal: o.ctl.signal, log: cloudLog,
+      waitBetweenMs: () => asrChunks.randomWaitMs(),          // 云端: 片间 10~15 秒随机
+      onProgress: (done, total) => setDraft(id, {
+        stage: STAGE.asr, progress: 30 + Math.round((done / total) * 45), message: '第 ' + done + '/' + total + ' 片识别中 …',
+      }),
+      runOne: async (c) => {
+        const mp3 = path.join(os.tmpdir(), 'ss-chunk-' + process.pid + '-' + c.index + '-' + Date.now().toString(36) + '.mp3');
+        tmp.push(mp3);
+        await sliceAudio(o.wav, c.start, c.end, mp3, true);
+        let mb = 0; try { mb = fs.statSync(mp3).size / 1048576; } catch {}
+        cloudLog('第 ' + (c.index + 1) + '/' + o.plan.length + ' 片已转 mp3（' + mb.toFixed(1) + ' MB），开始上传');
+        const r = await transcribeCloud({
+          engine: o.engine, audioPath: mp3, signal: o.ctl.signal, log: cloudLog,
+          onProgress: (pct, msg) => setDraft(id, {
+            stage: STAGE.asr,
+            progress: 30 + Math.round(((c.index + (Number(pct) || 0) / 100) / o.plan.length) * 45),
+            message: '第 ' + (c.index + 1) + '/' + o.plan.length + ' 片：' + msg,
+          }),
+        });
+        used = r;
+        return r;
+      },
+    }).then((r) => {
+      const segments = asrChunks.mergeChunkSegments(r.parts);
+      writeChunkReport(id, { engine: o.engine, duration: o.duration, plan: o.plan, perChunk: r.perChunk, silenceCount: o.silenceCount, source: o.source });
+      cloudLog('[分片] 合并完成：' + segments.length + ' 句（分片数据见 asr-chunks.json）');
+      return { segments, used };
+    }).finally(() => { for (const f of tmp) { try { fs.unlinkSync(f); } catch {} } });
+  }
+
+  /** 本地分片：逐片切片 → 逐片识别（片间不等候）→ 合并。runOne(slicePath, chunk) 返回该片的 {segments} */
+  function transcribeLocalChunked(o) {
+    const id = o.id;
+    const lg = (m) => pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] ' + m);
+    const tmp = [];
+    lg('[分片] 音频 ' + Math.round(o.duration / 60) + ' 分钟 → 切 ' + o.plan.length + ' 片（每片约 '
+      + Math.round(asrChunks.CHUNK_SEC / 60) + ' 分钟，' + (o.source === 'silence' ? '按静音切' : '按固定时长切')
+      + '）；本地识别片间不等候');
+    return asrChunks.runChunks({
+      chunks: o.plan, log: lg, waitBetweenMs: null,            // 本地: 片间不等候
+      onProgress: (done, total) => setDraft(id, {
+        stage: STAGE.asr, progress: 30 + Math.round((done / total) * 45), message: '第 ' + done + '/' + total + ' 片识别中 …',
+      }),
+      runOne: async (c) => {
+        const slice = path.join(os.tmpdir(), 'ss-slice-' + process.pid + '-' + c.index + '-' + Date.now().toString(36) + '.wav');
+        tmp.push(slice);
+        await sliceAudio(o.wav, c.start, c.end, slice, false);
+        return await o.runOne(slice, c);
+      },
+    }).then((r) => {
+      const segments = asrChunks.mergeChunkSegments(r.parts);
+      writeChunkReport(id, { engine: o.engine, duration: o.duration, plan: o.plan, perChunk: r.perChunk, silenceCount: o.silenceCount, source: o.source });
+      lg('[分片] 合并完成：' + segments.length + ' 句（分片数据见 asr-chunks.json）');
+      return { segments };
+    }).finally(() => { for (const f of tmp) { try { fs.unlinkSync(f); } catch {} } });
+  }
+
   /** 两个云端引擎都只收 flac/aac/m4a/mp3/wav；而项目里的 audio.wav 是 16k 单声道 PCM（1 小时 ≈ 115MB），
    *  上传太费流量：统一转成 16kHz 单声道 64kbps mp3（1 小时 ≈ 28MB），上传完即删。 */
   function toCloudAudio(wav) {
@@ -2760,7 +2862,7 @@ function handleRequest(req, res) {
     throw lastErr || new Error('云端识别失败（两个引擎都没成功）');
   }
 
-  function startDraftAsr(id, wordLevel) {
+  async function startDraftAsr(id, wordLevel) {
     const meta0 = readMeta(id) || {};
     const wantId = meta0.draft && meta0.draft.modelId;
     const want = wantId ? modelById(wantId) : null;
@@ -2785,6 +2887,18 @@ function handleRequest(req, res) {
     // 换任务/重试时, 精确清掉本项目遗留的识别进程(实测重复启动会双跑抢资源)
     killDraftProc(id);
     setDraft(id, { status: 'running', stage: STAGE.asr, progress: 30, message: '启动识别引擎…' });
+    // 长音频 → 先规划分片（静音优先）。短视频不走这里：不做静音检测、不切片，行为与以前完全一致。
+    const durSec = Number(meta0.duration) || Number(meta0.prepare && meta0.prepare.duration) || 0;
+    let chunkPlan = null, chunkSilences = [];
+    if (durSec > CHUNK_MIN_SEC) {
+      setDraft(id, { stage: STAGE.asr, progress: 30, message: '分析静音，准备分片 …' });
+      pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 音频较长（' + Math.round(durSec / 60) + ' 分钟），先找静音切点 …');
+      chunkSilences = await detectSilences(wav);
+      const plan1 = asrChunks.planAudioChunks({ duration: durSec, silences: chunkSilences });
+      chunkPlan = plan1.length > 1 ? plan1 : null;
+      pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 找到 ' + chunkSilences.length + ' 段静音 → '
+        + (chunkPlan ? chunkPlan.length + ' 片' : '不需要分片'));
+    }
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语音识别（模型：${model.name}，逐词：${wordLevel ? '开' : '关'}）`);
     if (model.engine === 'whisper.cpp') {
       // GPU 校验已在上面的 asrGpuGateError 通过: 走到这里必然有 Vulkan 运行库
@@ -2813,6 +2927,29 @@ function handleRequest(req, res) {
     // ── whisper.cpp 引擎: whisper-cli(词级用 -ml 1 -sow), 结果转成 asr.json ──
     if (model.engine === 'whisper.cpp') {
       const bin = path.join(mdir, model.files[0]);
+      if (chunkPlan) {
+        transcribeLocalChunked({
+          id, wav, plan: chunkPlan, duration: durSec, engine: model.engine,
+          silenceCount: chunkSilences.length, source: chunkSilences.length ? 'silence' : 'nominal',
+          runOne: (slice, c) => runWhisperCpp(bin, slice, (pct, secs) => {
+            const t = (secs != null) ? '（本片已运行 ' + Math.floor(secs / 60) + ' 分 ' + (secs % 60) + ' 秒）' : '';
+            setDraft(id, {
+              stage: STAGE.asr,
+              progress: 30 + Math.round(((c.index + (Number(pct) || 0) / 100) / chunkPlan.length) * 45),
+              message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：whisper.cpp·GPU·Vulkan … ' + pct + '% ' + t,
+            });
+          }, { register: p => draftProcs.set(id, p) }),
+        }).then((r) => {
+          try {
+            fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
+            fs.renameSync(outJson + '.tmp', outJson);
+          } catch (e) { return finishDraft(id, e); }
+          pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] 识别完成 ' + r.segments.length
+            + ' 行（' + chunkPlan.length + ' 片合并）');
+          finishAsr();
+        }).catch((e) => { draftJobs.delete(id); finishDraft(id, e); });
+        return;
+      }
       runWhisperCpp(bin, wav, (pct, secs) => {
         const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
         setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·GPU·Vulkan）… ${pct}% ${t}` });
@@ -2829,6 +2966,34 @@ function handleRequest(req, res) {
 
     // ── 云端引擎(必剪 / 剪映): 没有本地模型、没有子进程, 走"转 mp3 → 上传 → 提交 → 轮询" ──
     // 取消靠 AbortController(见 killDraftProc); 两个引擎互为备份(转 mp3 只做一次, 失败换引擎直接复用)。
+    if (model.cloud && chunkPlan) {
+      const ctl = new AbortController();
+      draftAborts.set(id, ctl);
+      transcribeCloudChunked({
+        id, engine: model.engine, wav, plan: chunkPlan, ctl, duration: durSec,
+        silenceCount: chunkSilences.length, source: chunkSilences.length ? 'silence' : 'nominal',
+      }).then((r) => {
+        draftAborts.delete(id);
+        const segments = r.segments || [];
+        if (!segments.length) {
+          return finishDraft(id, new Error(((r.used && r.used.name) || '云端识别')
+            + ' 没有识别到语音。音频可能是纯音乐或静音，也可能这一段没人说话'));
+        }
+        try {
+          fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments }));
+          fs.renameSync(outJson + '.tmp', outJson);
+          const meta1 = readMeta(id);
+          if (meta1 && meta1.draft && r.used) {
+            meta1.draft.usedModelId = r.used.modelId;
+            meta1.draft.engine = r.used.engine;
+            writeMeta(meta1);
+          }
+        } catch (e) { return finishDraft(id, e); }
+        finishAsr();
+      }).catch((e) => { draftAborts.delete(id); draftJobs.delete(id); finishDraft(id, e); });
+      return;
+    }
+
     if (model.cloud) {
       const ctl = new AbortController();
       draftAborts.set(id, ctl);
@@ -2883,6 +3048,65 @@ function handleRequest(req, res) {
       pushDraftLog(id, `[${ts()}] Python: ${ASR_PY}${pre.msg ? '（' + pre.msg + '）' : ''}`);
       pushDraftLog(id, `[${ts()}] [提示] Parakeet 推理设备：GPU·CUDA（已通过 GPU 校验；运行时报 CUDA 错误就重新安装一次）`);
 
+      if (chunkPlan) {
+        // 本地 sherpa: 逐片切片 → 逐片跑 asr.py → 合并。片间不等候（本地没有限流问题）。
+        const runOneSlice = (slice, c) => new Promise((resolve, reject) => {
+          const outP = path.join(projDir(id), 'asr.chunk' + c.index + '.json');
+          let sliceErr = '', sbuf = '';
+          const pr = spawn(ASR_PY,
+            [ASR_SCRIPT, '--model', mdir, '--audio', slice, '--out', outP, '--threads', '4',
+              '--provider', 'cuda', ...parakeetHotwordArgs()],
+            { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+          draftProcs.set(id, pr);
+          const sink2 = (chunk) => {
+            sbuf += String(chunk);
+            let i;
+            while ((i = sbuf.indexOf('\n')) >= 0) {
+              const line = sbuf.slice(0, i).trim();
+              sbuf = sbuf.slice(i + 1);
+              if (!line) continue;
+              const clean = line.replace(/\0/g, '').replace(/\x1b\[[0-9;]*m/g, '');
+              if (!line.startsWith('{')) { if (clean.trim()) pushDraftLog(id, '[py] ' + clean); continue; }
+              let o; try { o = JSON.parse(line); } catch { continue; }
+              if (o.type === 'progress') {
+                setDraft(id, {
+                  stage: STAGE.asr,
+                  progress: 30 + Math.round(((c.index + (Number(o.pct) || 0) / 100) / chunkPlan.length) * 45),
+                  message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：' + (o.msg || ''),
+                });
+              } else if (o.type === 'log') {
+                pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] ' + o.msg);
+              } else if (o.type === 'error') {
+                sliceErr = o.msg;
+                pushDraftLog(id, '[错误] ' + o.msg);
+              }
+            }
+          };
+          pr.stderr.on('data', sink2);
+          pr.stdout.on('data', sink2);
+          pr.on('error', e => reject(new Error('无法启动识别进程（Python: ' + ASR_PY + '）: ' + e.message)));
+          pr.on('close', (code) => {
+            let parsed = null;
+            try { parsed = JSON.parse(fs.readFileSync(outP, 'utf8')); } catch {}
+            try { fs.unlinkSync(outP); } catch {}
+            if (code !== 0) return reject(new Error(sliceErr || ('识别进程异常退出（' + asrExitHint(code) + '）')));
+            if (!parsed) return reject(new Error('这一片的识别结果读不出来（' + outP + '）'));
+            resolve(parsed);
+          });
+        });
+        transcribeLocalChunked({
+          id, wav, plan: chunkPlan, duration: durSec, engine: model.engine,
+          silenceCount: chunkSilences.length, source: chunkSilences.length ? 'silence' : 'nominal',
+          runOne: runOneSlice,
+        }).then((r) => {
+          try {
+            fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
+            fs.renameSync(outJson + '.tmp', outJson);
+          } catch (e) { return finishDraft(id, e); }
+          finishAsr();
+        }).catch((e) => { draftJobs.delete(id); finishDraft(id, e); });
+        return;
+      }
       let lastErr = '', buf = '';
       const proc = spawn(ASR_PY,
         [ASR_SCRIPT, '--model', mdir, '--audio', wav, '--out', outJson, '--threads', '4',
