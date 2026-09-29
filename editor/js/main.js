@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -411,6 +411,8 @@ function setAss(text, name) {
   state.kar = analyzeKaraoke(state.assDoc);
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
   state.kar.rows = pairRows(state.kar.sentences, state.kar.wordStyle);
+  // 角色名标签与正文之间恒为一个空格(用户要求 '[wato] 我') —— 老文件里粘在一起的先规范掉
+  const gapFixed = normalizeAllRoleGaps();
   // 载入即自动对齐"中英起止不一致"(云端识别的存量文件常带这个毛病) —— 只挪时间、不动文本,
   // 后面的 rebuildItemsAndLanes + 自动保存会把结果写回项目文件。
   const spanAligned = autoAlignEnSpans();
@@ -419,6 +421,7 @@ function setAss(text, name) {
   panel.setFileName(name);
   applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
   if (fixedColors) toast(`已修复 ${fixedColors} 行格式错误的说话人色标`, 5000);
+  if (gapFixed) toast(`已规范 ${gapFixed} 行的角色名间距（[角色] 与正文之间一个空格）`, 4000);
   if (spanAligned) toast(`已自动对齐 ${spanAligned} 行的中英起止（英文逐词原来比中文行短一截）`, 5000);
   panel.setModeOptions([
     { v: 'bi', t: '中英双行' },
@@ -1487,7 +1490,8 @@ timeline.onRetime = (row, s, e, done, shift) => {
 /** 整句样式(如中文字幕): 保留原颜色标签, 更新时间与文本 */
 function applyAnchorSentence(sent, s, e, text) {
   const ev = sent.events[0];
-  let newText = text;
+  // 角色名标签与正文之间恒为**一个空格**（用户要求 '[wato] 我'）——编辑框随便打，落盘时规范
+  let newText = normalizeRoleGap(text);
   if (!/^\s*\{/.test(newText)) {
     const m = /^\s*(\{\\[^}]*\})/.exec(ev.text);   // 继承 {\c&H....&} 之类的前置标签
     if (m) newText = m[1] + newText;
@@ -1500,6 +1504,7 @@ function applyAnchorSentence(sent, s, e, text) {
 
 /** 逐词样式(如英文): 重算词级时间并重建切片 */
 function applyWordSentence(sent, s, e, text) {
+  text = normalizeRoleGap(text);                // 角色名标签与正文之间恒为一个空格（同上）
   sent.words = recalcWords(sent, text, s, e);   // 词数不变→保留原时间; 变化→加权重算
   sent.text = text;
   sent.start = s; sent.end = e;
@@ -1625,6 +1630,28 @@ function alignEnSpanToZh(row) {
   }
   en.overlap = enSlicesOverlap(en);
   return true;
+}
+
+/** 载入时规范"角色名标签 ↔ 正文"的间距（用户要求：'[wato] 我'，不许连着也不许两个空格）。
+ *  做法：**每一条事件的明文都过一遍**（纯文本操作，不动时间、不动词表）；
+ *  整句行（中文锚点）额外同步模型明文 —— 列表/时间轴/坏行检查看的是 `sent.text`。
+ *  为什么逐词行不重建：加一个空格会改变词数 → 触发词级时间重排，反而把用户的逐词时间抹掉。 */
+function normalizeAllRoleGaps() {
+  if (state.format !== 'ass' || !state.kar || !state.kar.sentences) return 0;
+  let n = 0;
+  for (const sent of state.kar.sentences) {
+    let ch = false;
+    for (const ev of (sent.events || [])) {
+      const fixed = normalizeRoleGap(ev.text);
+      if (fixed !== ev.text) { state.assDoc.setEventText(ev, fixed); ch = true; }
+    }
+    if (!(sent.words && sent.words.length)) {
+      const fixedTxt = normalizeRoleGap(sent.text || '');
+      if (fixedTxt !== sent.text) { sent.text = fixedTxt; ch = true; }
+    }
+    if (ch) n++;
+  }
+  return n;
 }
 
 /** 载入时自动对齐（用户要求：以后遇到这种字幕直接自动修复）。返回修好的行数。

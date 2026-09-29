@@ -367,6 +367,26 @@ export function speakerTagOf(sent) {
 }
 
 /**
+ * 角色名标签与正文之间的间距：规范成**恰好一个空格**（用户要求："[wato] 我"，
+ * 不许两个空格、也不许没有空格）。
+ *   '[wato]我' / '[wato]   我' / '[wato]\t我' → '[wato] 我'
+ *   只有标签没有正文 → '[wato]'（不留尾随空格）
+ *   正文内部的空格一律不动（'[wato] 你好  世界' 保持原样），只规范**标签与正文之间**这一处。
+ * 只认行首的 [..]（角色名的位置）；正文里出现的方括号、以及空的 '[]' 都原样返回。
+ * 允许文本以 ASS 覆盖标签开头（'{\c&H..&}[wato]我'），前缀原样保留。
+ */
+export function normalizeRoleGap(text) {
+  const s = String(text == null ? '' : text);
+  const m = /^((?:\s*\{[^}]*\})*)(\s*)\[([^\]\n]{1,64})\]([ \t\u3000]*)([\s\S]*)$/.exec(s);
+  if (!m) return s;
+  const name = m[3].trim();
+  if (!name) return s;                                    // '[]' 不是角色名
+  const body = m[5].replace(/^[ \t\u3000]+/, '').replace(/[ \t\u3000]+$/, '');
+  if (!body) return m[1] + m[2] + '[' + name + ']';
+  return m[1] + m[2] + '[' + name + '] ' + body;
+}
+
+/**
  * 只取字幕**文本**行首的可见 [人物] 标记, 不回退 Name 栏。
  * 角色身份写在文本里(视频里/列表里看得到的就是它), Name 栏只是裸名兜底;
  * 因此"没被标注角色"的准判据是这一项为空 —— 坏行判定(见 main.js markBadRows)用它

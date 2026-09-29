@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -411,11 +411,18 @@ function setAss(text, name) {
   state.kar = analyzeKaraoke(state.assDoc);
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
   state.kar.rows = pairRows(state.kar.sentences, state.kar.wordStyle);
+  // 角色名标签与正文之间恒为一个空格(用户要求 '[wato] 我') —— 老文件里粘在一起的先规范掉
+  const gapFixed = normalizeAllRoleGaps();
+  // 载入即自动对齐"中英起止不一致"(云端识别的存量文件常带这个毛病) —— 只挪时间、不动文本,
+  // 后面的 rebuildItemsAndLanes + 自动保存会把结果写回项目文件。
+  const spanAligned = autoAlignEnSpans();
 
   panel.setBadge('ASS 特效', 'ass');
   panel.setFileName(name);
   applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
   if (fixedColors) toast(`已修复 ${fixedColors} 行格式错误的说话人色标`, 5000);
+  if (gapFixed) toast(`已规范 ${gapFixed} 行的角色名间距（[角色] 与正文之间一个空格）`, 4000);
+  if (spanAligned) toast(`已自动对齐 ${spanAligned} 行的中英起止（英文逐词原来比中文行短一截）`, 5000);
   panel.setModeOptions([
     { v: 'bi', t: '中英双行' },
     { v: 'first', t: '仅中文' },
@@ -1483,7 +1490,8 @@ timeline.onRetime = (row, s, e, done, shift) => {
 /** 整句样式(如中文字幕): 保留原颜色标签, 更新时间与文本 */
 function applyAnchorSentence(sent, s, e, text) {
   const ev = sent.events[0];
-  let newText = text;
+  // 角色名标签与正文之间恒为**一个空格**（用户要求 '[wato] 我'）——编辑框随便打，落盘时规范
+  let newText = normalizeRoleGap(text);
   if (!/^\s*\{/.test(newText)) {
     const m = /^\s*(\{\\[^}]*\})/.exec(ev.text);   // 继承 {\c&H....&} 之类的前置标签
     if (m) newText = m[1] + newText;
@@ -1496,6 +1504,7 @@ function applyAnchorSentence(sent, s, e, text) {
 
 /** 逐词样式(如英文): 重算词级时间并重建切片 */
 function applyWordSentence(sent, s, e, text) {
+  text = normalizeRoleGap(text);                // 角色名标签与正文之间恒为一个空格（同上）
   sent.words = recalcWords(sent, text, s, e);   // 词数不变→保留原时间; 变化→加权重算
   sent.text = text;
   sent.start = s; sent.end = e;
@@ -1560,6 +1569,118 @@ panel.onTabChange = (name) => pruneUnusedRoles(name === 'roles');   // 离开角
 /** 行首角色色标(非绿)判定用: {\c&H......&} */
 const EN_ROLE_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
 
+/* ─────────── 中英起止对齐 ───────────
+ * 云端识别(必剪/剪映)常给出"首词起点晚于句首"或"整段英文只覆盖一小截"的结果：
+ *   中文行 0.00–2.88 / 英文逐词 0.04–2.88（首词晚 40ms）
+ *   中文行 0.00–2.88 / 英文逐词 0.04–0.32（整段只覆盖一小段）
+ * 在 ASS 里这就是"中英时间不一致"的坏行，时间轴上也切不出整块。
+ * 这里把英文逐词的时间**按比例映射到中文行的 [start, end]** —— 只改时间，不动文本与高亮标签。
+ */
+const SPAN_TOL = 0.005;      // ASS 只写到厘秒，同源写入的两条不该有更大差异
+
+/** 读一行的中英跨度信息（不改任何东西）；没有中英双行/退化数据返回 null */
+function enSpanInfo(row) {
+  const zh = row && row.zh, en = row && row.en;
+  if (!zh || !en || !en.words || !en.words.length) return null;
+  if (!(zh.end > zh.start)) return null;
+  let es = Infinity, ee = -Infinity;
+  for (const w of en.words) { if (w.s < es) es = w.s; if (w.e > ee) ee = w.e; }
+  if (!isFinite(es) || !isFinite(ee)) return null;
+  return {
+    zh, en, zs: zh.start, ze: zh.end, es, ee,
+    mismatch: Math.abs(es - zh.start) > SPAN_TOL || Math.abs(ee - zh.end) > SPAN_TOL,
+  };
+}
+
+/** 该行中英起止是否不一致（坏行判定与修复检测共用一处算法） */
+function enSpanMismatch(row) { const i = enSpanInfo(row); return !!(i && i.mismatch); }
+
+/** 把英文逐词的时间对齐到中文行的 [start, end]（按比例，保留词间相对关系）。
+ *  返回 true 表示确实改过。**只动时间**：文本、高亮标签、样式一律不碰。 */
+function alignEnSpanToZh(row) {
+  const info = enSpanInfo(row);
+  if (!info || !info.mismatch) return false;
+  const { en, zs, ze, es, ee } = info;
+  const n = en.words.length;
+  const span = ee - es;
+  if (span <= WORD_MIN_GAP * n) {
+    // 退化成一根线（几乎所有词都挤在一点上）→ 按词数把中文行时长均匀铺开
+    const dur = (ze - zs) / n;
+    en.words.forEach((w, i) => { w.s = +(zs + i * dur).toFixed(3); w.e = +(zs + (i + 1) * dur).toFixed(3); });
+  } else {
+    // 按比例映射：首词晚 40ms 这种，前段微调、后段几乎不动
+    const k = (ze - zs) / span;
+    for (const w of en.words) {
+      w.s = +(zs + (w.s - es) * k).toFixed(3);
+      w.e = +(zs + (w.e - es) * k).toFixed(3);
+    }
+  }
+  // 保底：首词贴句首、末词收句尾，且词与词之间不出现零宽/逆序
+  en.words[0].s = zs;
+  for (let i = 0; i < n; i++) {
+    const w = en.words[i];
+    if (i) w.s = Math.max(w.s, en.words[i - 1].e);
+    if (w.e - w.s < WORD_MIN_GAP) w.e = +(w.s + WORD_MIN_GAP).toFixed(3);
+  }
+  en.words[n - 1].e = ze;
+  en.start = zs;
+  en.end = ze;
+  if (en.events && en.events.length === n) {
+    for (let i = 0; i < n; i++) state.assDoc.setEventTime(en.events[i], en.words[i].s, en.words[i].e);
+  }
+  en.overlap = enSlicesOverlap(en);
+  return true;
+}
+
+/** 载入时规范"角色名标签 ↔ 正文"的间距（用户要求：'[wato] 我'，不许连着也不许两个空格）。
+ *  做法：**每一条事件的明文都过一遍**（纯文本操作，不动时间、不动词表）；
+ *  整句行（中文锚点）额外同步模型明文 —— 列表/时间轴/坏行检查看的是 `sent.text`。
+ *  为什么逐词行不重建：加一个空格会改变词数 → 触发词级时间重排，反而把用户的逐词时间抹掉。 */
+function normalizeAllRoleGaps() {
+  if (state.format !== 'ass' || !state.kar || !state.kar.sentences) return 0;
+  let n = 0;
+  for (const sent of state.kar.sentences) {
+    let ch = false;
+    for (const ev of (sent.events || [])) {
+      const fixed = normalizeRoleGap(ev.text);
+      if (fixed !== ev.text) { state.assDoc.setEventText(ev, fixed); ch = true; }
+    }
+    if (!(sent.words && sent.words.length)) {
+      const fixedTxt = normalizeRoleGap(sent.text || '');
+      if (fixedTxt !== sent.text) { sent.text = fixedTxt; ch = true; }
+    }
+    if (ch) n++;
+  }
+  return n;
+}
+
+/** 载入时自动对齐（用户要求：以后遇到这种字幕直接自动修复）。返回修好的行数。
+ *
+ *  **只对"除起止不一致外没别的毛病"的双行动手**（用户明确要求：别误触重叠行与单语行）：
+ *   · 与其它字幕重叠的行 → 一律跳过（这类行的逐词本来就不碰，避免两句话高亮糊在一起）；
+ *   · 单语行（只有中文或只有英文）/ 没有中文锚点 → 跳过（没有对齐基准，也没必要改）；
+ *   · 英文切片自己就重叠、词数与文本不符、英文行混进角色名 → 跳过（这些需要用户确认句子，
+ *     交给右键「🛠 修复字幕」按需处理）。
+ *  另：双行的块时间取自中文锚点（见 karaoke.js makeRow），所以这里只挪英文词的时间，
+ *  **不会改变任何行的重叠关系**。 */
+function autoAlignEnSpans() {
+  if (state.format !== 'ass' || !state.kar || !state.kar.rows) return 0;
+  const overlap = computeOverlapRows();
+  let n = 0;
+  for (const row of state.kar.rows) {
+    if (overlap.has(row)) continue;
+    const en = row.en;
+    if (!row.zh || !en || !en.words || !en.words.length) continue;
+    if (enSlicesOverlap(en)) continue;
+    const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    const toks = clean.split(/\s+/).filter(Boolean).length;
+    if (toks && en.words.length !== toks) continue;
+    if (/\[[^\]]+\]/.test(en.text || '')) continue;
+    if (alignEnSpanToZh(row)) n++;
+  }
+  return n;
+}
+
 /**
  * 检测一行字幕有哪些问题(供右键「修复字幕」).
  * 返回 { issues, needConfirm, prefill }：
@@ -1602,6 +1723,10 @@ function detectRowProblems(row) {
       prefill = (issues.wordsMismatch && issues.wordsMismatch.text) || clean || en.words.map(w => w.w).join(' ');
     }
   }
+  // ④ 中英起止不一致：英文逐词句的跨度与中文行不等（云端识别的存量文件常见）。
+  //    这一项**不需要**用户确认 —— 只挪时间、不动文本，按比例对齐即可（载入时已自动修过一轮，
+  //    这里是给"载入后被手工改坏"的情况留的手动入口）。
+  if (en && row.zh && enSpanMismatch(row)) issues.spanMismatch = true;
   return { issues, needConfirm, prefill };
 }
 
@@ -1652,6 +1777,9 @@ function fixRow(row, issues, confirmedText) {
     const t = (en.text || assPlainText(en.events[0].text)).trim();
     rebuildEnglishFromText(en, t, false);
     done.push('已自动添加逐词效果');
+  }
+  if (issues.spanMismatch) {
+    if (alignEnSpanToZh(row)) done.push('已把英文逐词起止对齐到中文行');
   }
   if (issues.overlapNoKaraoke) done.push('（该句重叠，未加逐词以免丢特效）');
   if (!done.length) { toast('没有可修复的问题'); return; }
