@@ -18,7 +18,8 @@ const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
-const llmText = require('./llm-text.js');  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
+const llmText = require('./llm-text.js');
+const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容推断 + SPK→角色名)  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
@@ -620,6 +621,7 @@ const STAGE = {
   extract: '提取音频中',
   asr: 'ASR识别中',
   diarize: '区分说话人中',
+  cast: '分角色中',
   reseg: '语义分句中',
   translate: '翻译中',
   done: '完毕',
@@ -2081,13 +2083,15 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* ═══════════ 说话人分离（后台, 跑在音频上与引擎无关） ═══════════ */
-  function runDiarize(wav, onProgress) {
+  function runDiarize(wav, onProgress, speakerCount) {
     const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
     const embModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[1].file);
     const outJson = wav + '.diarize.json';
     return new Promise((resolve, reject) => {
       const p = spawn(ASR_PY, [path.join(ASR_DIR, 'diarize.py'),
-        '--segmentation', segModel, '--embedding', embModel, '--audio', wav, '--out', outJson],
+        '--segmentation', segModel, '--embedding', embModel, '--audio', wav, '--out', outJson,
+      // 0 = 让聚类自己定人数（threshold 生效）; 正数 = 强制聚类数
+      '--speakers', String(Number.isFinite(speakerCount) ? Math.max(0, Math.min(20, Math.round(speakerCount))) : 0)],
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       let buf = '', pyErr = '';
       const timer = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
@@ -2260,13 +2264,16 @@ function startPrepare(id, videoPath, mode) {
     const zhText = (i) => (hasTrans && String(trans[i] || '').trim())
       ? String(trans[i]).replace(/\n/g, ' ').replace(/[，、。]/g, ' ') : null;
     // 角色行: 行首色标(角色色) + [SPKn] 标记 + Name 栏 —— 编辑器据此显示角色色与角色列表
+    // 角色名: 分角色成功就用真实角色名（[SPKn] → [角色名]）; 没映射上的保留 SPKn
+    const castMap = ((readMeta(id) || {}).draft || {}).cast;
+    const spkName = (n) => cast.roleNameFor(castMap && castMap.map, n);
     const roleOf = (s) => (hasSpk && s.speaker != null) ? {
       n: s.speaker + 1,
       color: assColorFromRgb(ROLE_PALETTE[s.speaker % ROLE_PALETTE.length]),
     } : null;
     const zhLine = (s, t, role) => {
-      const tag = role ? `{\\c&H${role.color}&}[SPK${role.n}] ` : '';
-      const name = role ? `SPK${role.n}` : '';
+      const tag = role ? `{\\c&H${role.color}&}[${spkName(role.n)}] ` : '';
+      const name = role ? `${spkName(role.n)}` : '';
       return `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},中文字幕,${name},0,0,0,,${tag}${escAss(t)}\n`;
     };
 
@@ -2279,7 +2286,7 @@ function startPrepare(id, videoPath, mode) {
         const role = roleOf(s);
         const zh = zhText(i);
         let body = s.text;
-        if (zh) body = role ? `[SPK${role.n}] ${zh}\n${s.text}` : `${zh}\n${s.text}`;
+        if (zh) body = role ? `[${spkName(role.n)}] ${zh}\n${s.text}` : `${zh}\n${s.text}`;
         return `${i + 1}\n${fmtSrtTime(s.start)} --> ${fmtSrtTime(s.end)}\n${body}\n\n`;
       }).join('');
     } else if (totalWords < 6) {
@@ -2313,7 +2320,7 @@ function startPrepare(id, videoPath, mode) {
           // 每片一直高亮到下一词起点(最后一片到句尾), 与 main.py 生成的结果一致
           const en = (k + 1 < ws.length) ? Math.max(ws[k + 1].start, st + 0.01) : Math.max(s.end, st + 0.01);
           const role = roleOf(s);
-          out += wordSliceLine(ws, k, st, en, role ? `SPK${role.n}` : '');
+          out += wordSliceLine(ws, k, st, en, role ? `${spkName(role.n)}` : '');
         }
       });
       text = out;
@@ -2878,23 +2885,84 @@ function startPrepare(id, videoPath, mode) {
     const meta0 = readMeta(id);
     const d0 = (meta0 && meta0.draft) || {};
     const wantSpk = !!d0.speakers && diarizeReady() && !d0.diarizeSkipped;
+
+    /** 分角色开关（默认开; 关掉就完全不动, 行为与以前一致） */
+    const castOn = () => {
+      try { return (readAsrSettings().cast || {}).enabled !== false; } catch { return true; }
+    };
+    const stamp = () => '[' + new Date().toLocaleTimeString() + '] ';
+    const cfgLLM = translateCfg();
+    const castUsable = () => castOn() && llmReady(cfgLLM);
+    const llmCall = (msgs) => llmChat(cfgLLM, msgs, { jsonMode: true, maxTokens: 1200 });
+
     if (wantSpk) {
       const wav = path.join(projDir(id), 'audio.wav');
-      setDraft(id, { stage: STAGE.diarize, progress: 82, message: '区分说话人中 …' });
-      runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }))
-        .then(r => safeDraftStep(id, () => {
+      // ① 阵容推断（说话人分离**之前**）: 用 LLM 判断有几个人物 → 作为 SPK 数传给 diarize.py。
+      //    diarize.py 的 num_clusters 是**强制**聚类数, 不传就永远按 6 人分（2 人视频会被硬拆）。
+      const pre = castUsable()
+        ? cast.inferCast({
+            source: meta0.source,
+            userCount: Number(d0.speakerCount) || 0,
+            call: llmCall,
+            log: (m) => pushDraftLog(id, stamp() + m),
+          }).catch((e) => ({ characters: [], speakerCount: Number(d0.speakerCount) || 0, error: String((e && e.message) || e) }))
+        : Promise.resolve({ characters: [], speakerCount: Number(d0.speakerCount) || 0, error: '' });
+
+      pre.then((cs) => {
+        if (cs && cs.characters && cs.characters.length) {
+          const m1 = readMeta(id);
+          if (m1 && m1.draft) {
+            m1.draft.cast = { characters: cs.characters, map: {}, extra: [], at: new Date().toISOString(), source: 'llm' };
+            m1.draft.speakerCount = cs.speakerCount;
+            writeMeta(m1);
+          }
+          setDraft(id, { cast: ((readMeta(id) || {}).draft || {}).cast || null });
+          pushDraftLog(id, stamp() + '说话人分离按 ' + cs.speakerCount + ' 人');
+        }
+        const spkCount = (cs && Number(cs.speakerCount)) || Number(d0.speakerCount) || 0;
+        setDraft(id, { stage: STAGE.diarize, progress: 82, message: '区分说话人中 …' });
+        return runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount);
+      }).then((r) => safeDraftStep(id, async () => {
+        let segs = [];
+        try {
+          const d = JSON.parse(fs.readFileSync(path.join(projDir(id), 'asr.json'), 'utf8'));
+          assignSpeakers(d.segments || [], r.regions || []);
+          const tmp = path.join(projDir(id), 'asr.json') + '.tmp';
+          fs.writeFileSync(tmp, JSON.stringify(d));
+          fs.renameSync(tmp, path.join(projDir(id), 'asr.json'));
+          segs = d.segments || [];
+        } catch (e) { return finishDraft(id, e); }
+
+        // ② SPK → 真实角色名（分离**之后**）: 把每个 SPK 的台词样本喂给 LLM。
+        //    没映射上的保留 SPKn（识别出的说话人比人物多时就是这种）。
+        const m2 = readMeta(id);
+        const saved = (m2 && m2.draft && m2.draft.cast) || null;
+        if (castUsable() && saved && Array.isArray(saved.characters) && saved.characters.length && segs.length) {
+          setDraft(id, { stage: STAGE.cast, progress: 86, message: '分角色中 …' });
           try {
-            const d = JSON.parse(fs.readFileSync(path.join(projDir(id), 'asr.json'), 'utf8'));
-            assignSpeakers(d.segments || [], r.regions || []);
-            const tmp = path.join(projDir(id), 'asr.json') + '.tmp';
-            fs.writeFileSync(tmp, JSON.stringify(d));
-            fs.renameSync(tmp, path.join(projDir(id), 'asr.json'));
-          } catch (e) { return finishDraft(id, e); }
-          buildDraftSubtitle(id, wordLevel);
-        }))
-        .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
+            const mr = await cast.mapSpeakers({
+              source: m2.source, characters: saved.characters, segments: segs,
+              call: llmCall, log: (m) => pushDraftLog(id, stamp() + m),
+            });
+            const m3 = readMeta(id);
+            if (m3 && m3.draft) {
+              m3.draft.cast = Object.assign({}, saved, {
+                map: mr.map || {}, extra: mr.extra || [], unlisted: mr.unlisted || [],
+                mappedAt: new Date().toISOString(),
+              });
+              writeMeta(m3);
+            }
+            if (mr.error) pushDraftLog(id, stamp() + '[分角色] ' + mr.error + '（这些说话人保留 SPK 编号）');
+          } catch (e) {
+            // 分角色失败绝不影响出稿
+            pushDraftLog(id, stamp() + '[分角色] 失败: ' + ((e && e.message) || e) + '（保留 SPK 编号）');
+          }
+        }
+        buildDraftSubtitle(id, wordLevel);
+      })).catch((e) => { draftJobs.delete(id); finishDraft(id, e); });
       return;
     }
+    // 不做说话人分离: 没有 SPK 可分, 直接出稿（也不白花一次模型调用）
     buildDraftSubtitle(id, wordLevel);
   }
 
