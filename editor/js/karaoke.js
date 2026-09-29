@@ -687,3 +687,73 @@ export function buildCleanAss(doc, sentences) {
   });
   return head.concat(body).join('\r\n');
 }
+
+/** 去掉一行的内联标签，只留**纯文本**：颜色覆盖标签(`{\c&H..&}`/`{\c}`/`{\1c..}`)、行首说话人名字
+ *  标签(`[..]`)、逐词高亮标签都剥掉，换行(`\N`)转空格。合并字幕时"后段以纯文本并入上一句"用它。 */
+export function stripInlineTags(text) {
+  return String(text == null ? '' : text)
+    .replace(/\{\\[1234]?c(?:&H[0-9A-Fa-f]{6}&)?\}/g, '')   // 颜色覆盖 / 高亮标签
+    .replace(/\\[Nn]/g, ' ')                                // 换行 → 空格
+    .replace(/^\s*\[[^\]]+\]\s*/, '')                       // 行首说话人名字标签
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * 合并两条相邻字幕的文本与词级时间（纯函数；main.js 的「与上一条合并」用它）。
+ *
+ * 规则（用户定的）：
+ *   · **中文**：后段以**纯文本**并入上一句（剥掉颜色/角色/高亮标签）。中文行**绝不能**造逐词切片 ——
+ *     以前这里跑 recalcWords + buildWordSpecs，中文行会被切成一条条 `{\c&H00FF00&}词{\c}`（用户报的
+ *     「合句会把颜色标签一起合上去」就是它），行首的角色色标也会被高亮标签顶掉。
+ *   · **英文**：**不重排**已有的词级时间 —— 只把「上一句末词的结束」接到「本句开始」（补掉中间的停顿），
+ *     本句的词按原时间接在后面；两段的真实词级时间都不动。
+ *     本句没有词级时间时，把上一句末词延伸到整块结束；上一句没有词级时间时，把本句首词起点拉回整块开始。
+ *
+ * @returns {{ start:number, end:number, zhText:string, enText:string, enWords:Array }}
+ */
+export function mergeRowParts(prev, row) {
+  const P = prev || {}, R = row || {};
+  const normN = (t) => String(t == null ? '' : t).replace(/\\[Nn]/g, ' ');
+  const start = Math.min(Number(P.start) || 0, Number(R.start) || 0);
+  const end = Math.max(Number(P.end) || 0, Number(R.end) || 0);
+
+  // 中文：上一句保留自己的行首角色色标（那是这条字幕的颜色），后段纯文本并入
+  const zhA = normN(P.zh && P.zh.text).trim();
+  const zhB = stripInlineTags(R.zh && R.zh.text);
+  const zhText = [zhA, zhB].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+
+  // 英文：后段同样以纯文本并入（顺手收拾标点前的空格）
+  const enA = normN(P.en && P.en.text).trim();
+  const enB = stripInlineTags(R.en && R.en.text);
+  const enText = [enA, enB].filter(Boolean).join(' ')
+    .replace(/\s+([,.!?;:、。])/g, '$1').replace(/\s+/g, ' ').trim();
+
+  const pw = (P.en && Array.isArray(P.en.words)) ? P.en.words : [];
+  const cw = (R.en && Array.isArray(R.en.words)) ? R.en.words : [];
+  const enWords = [];
+  for (const w of pw) enWords.push({ w: w.w, s: w.s, e: w.e });
+  for (const w of cw) enWords.push({ w: w.w, s: w.s, e: w.e });
+  const MIN = 0.01;                                        // ASS 时间精度：每片至少 1 厘秒
+  if (enWords.length) {
+    if (pw.length && cw.length) {
+      const bi = pw.length - 1;
+      enWords[bi].e = Math.max(enWords[bi].e, Number(R.start) || enWords[bi].e);   // 上句末词接到本句开始
+    } else if (pw.length) {
+      const bi = pw.length - 1;
+      enWords[bi].e = Math.max(enWords[bi].e, end);                                // 本句没有词级时间
+    } else {
+      enWords[0].s = Math.min(enWords[0].s, start);                                // 上句没有词级时间
+    }
+    // 兜底：全部夹进 [start,end]、每片 ≥1 厘秒、相邻不重叠（normalizeWords 同口径的轻量版）
+    for (const w of enWords) {
+      w.s = Math.min(Math.max(w.s, start), Math.max(start, end - MIN));
+      w.e = Math.min(Math.max(w.e, w.s + MIN), Math.max(start + MIN, end));
+    }
+    for (let i = 1; i < enWords.length; i++) {
+      if (enWords[i].s < enWords[i - 1].e) enWords[i].s = enWords[i - 1].e;
+      if (enWords[i].e < enWords[i].s + MIN) enWords[i].e = Math.min(end, enWords[i].s + MIN);
+    }
+  }
+  return { start, end, zhText, enText, enWords };
+}

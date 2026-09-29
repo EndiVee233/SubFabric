@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -2164,16 +2164,6 @@ function stripLeadSpeakerTag(text) {
   return String(text || '').replace(/^(\s*\{[^}]*\})*\s*\[[^\]]+\]\s*/, '');
 }
 
-/** 合并时的"纯文本"处理: 去掉颜色覆盖标签({\c&H..&}/{\c}/{\1c..})与行首说话人名字标签 [..],
- *  换行(\N)转空格。合句时后段经此处理后以纯文本并入上一句, 不再带有后段的颜色/角色标记。 */
-function stripColorAndNameTags(text) {
-  return String(text || '')
-    .replace(/\{\\[1234]?c(?:&H[0-9A-Fa-f]{6}&)?\}/g, '')  // 颜色覆盖标签
-    .replace(/^\s*\[[^\]]+\]\s*/, '')                        // 行首说话人名字标签
-    .replace(/\\[Nn]/g, ' ')                                 // 换行 → 空格
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
 /** 中文按英文词数比例切: 中英本来就是同一句的两种语言(或同一句的译文), 按词数比例最稳。 */
 function splitZhText(zhText, k, nEn) {
@@ -2267,56 +2257,48 @@ function splitRowAt(item, enPlainText, caret) {
   return true;
 }
 
-/** 与**上一个**字幕块合并: 时间取两者并集, 中英文本各自拼接, 英文词级时间用 recalcWords
- *  在新句长内加权重算(中英词数都没变时等价于只做平移, 逐词效果保留)。 */
+/** 与**上一个**字幕块合并: 时间取并集; 文本与词级时间交给纯函数 mergeRowParts(karaoke.js)。
+ *  规则(用户定): 中文后段以**纯文本**并入且中文行**不造逐词切片**(否则每个词会被包一层绿高亮 ——
+ *  用户报的「合句把颜色标签一起合上去」); 英文**不重排**词级时间, 只把上句末词的结束接到本句开始。
+ *  做法: **就地改写上一条**, 只摘掉本条 —— 不能"删掉两条再 appendSentence":
+ *  那个函数是在该样式最后一条事件之后插入, 样式被删空(例如只剩这两条)时会返回 null, 两条一起消失。 */
 function mergeRowWithPrev(item) {
   if (!item) return false;
   panel.commitEdit();
   const row = item.ref;
   if (!row || !state.kar) return false;
+  if (state.format !== 'ass' || !state.assDoc) { toast('合并只支持 ASS 特效字幕'); return false; }
   const rows = state.kar.rows;
   const i = rows.indexOf(row);
   if (i <= 0) { toast('这是第一条字幕，前面没有可合并的块'); return false; }
   const prev = rows[i - 1];
 
-  const start = Math.min(prev.start, row.start);
-  const end = Math.max(prev.end, row.end);
-  // 前段保留原样(含其名字标签与可能的颜色标签); 后段剥掉颜色标签与名字标签, 以纯文本并入上一句
-  const normN = (t) => String(t || '').replace(/\\[Nn]/g, ' ');
-  const zhA = normN(prev.zh ? prev.zh.text : '');
-  const enA = normN(prev.en ? prev.en.text : '');
-  const zhB = stripColorAndNameTags(row.zh ? row.zh.text : '');
-  const enB = stripColorAndNameTags(row.en ? row.en.text : '');
-  const zhText = [zhA, zhB].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-  const enText = [enA, enB].filter(Boolean).join(' ')
-    .replace(/\s+([,.!?;:、。])/g, '$1').replace(/\s+/g, ' ').trim();
+  const parts = mergeRowParts(prev, row);
+  const start = parts.start, end = parts.end;
+  const wasNew = state.newRows.has(prev) || state.newRows.has(row);
 
-  // 只能按各条**自己**的样式重建 —— appendSentence 是按样式找锚点事件插入的,
-  // 样式传错(或该样式在文档里没有事件)就会静默丢掉那一半。
-  const zhStyle = (prev.zh && prev.zh.style) || (row.zh && row.zh.style) || '';
-  const enStyle = (prev.en && prev.en.style) || (row.en && row.en.style) || '';
-  const color = prev.color || row.color;
-  const speaker = prev.speaker || row.speaker;
-
-  const prevItem = state.itemByRef.get(prev);
-  removeItemData(prevItem);                 // 摘掉上一条
-  removeItemData(item);                     // 摘掉本条
-  const zh = zhStyle && zhText ? appendSentence(zhStyle, start, end, zhText) : null;
-  const en = enStyle && enText ? appendSentence(enStyle, start, end, enText) : null;
-  if (zh) zh.words = recalcWords(zh, zh.text, start, end);
-  if (en) en.words = recalcWords(en, en.text, start, end);
-  // 同理: 原来带逐词的行, 合并后也要显式重建切片(否则高亮整段消失)
-  if (zh && zh.words.length) zh.events = state.assDoc.replaceEvents(zh.events, buildWordSpecs(zh));
-  if (en && en.words.length) en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
-  const merged = { zh, en, start, end, no: 0, color, speaker };
-  state.kar.rows.push(merged);
-  state.kar.rows.sort((a, b) => a.start - b.start || a.end - b.end);
-  state.kar.sentences.sort((a, b) => a.start - b.start || a.end - b.end);
+  removeItemData(item);                       // 只摘掉本条; 上一条保留下来就地改
+  if (prev.zh) {
+    applyAnchorSentence(prev.zh, start, end, parts.zhText || prev.zh.text);
+    prev.zh.words = [];                       // 中文行只是整句: 不造词级时间/切片
+  }
+  if (prev.en) {
+    applyWordSentence(prev.en, start, end, parts.enText || prev.en.text);
+    // 用保留下来的真实词级时间**覆盖** recalcWords 的重排结果，然后按这些词重建切片。
+    // 注意：applyWordSentence 已经重建过一次切片（用的是它自己重排出来的时间），事件数早已不是 1，
+    // 所以这里不能再拿 events.length === 1 当守卫 —— 那会让覆盖白做（实测所有词被重排）。
+    prev.en.words = parts.enWords;
+    prev.en.events = state.assDoc.replaceEvents(prev.en.events, buildWordSpecs(prev.en));
+  }
+  prev.start = start;
+  prev.end = end;
+  if (wasNew) state.newRows.add(prev);
+  refinalizeRow(prev);                        // 颜色/说话人与其它编辑路径一致地重算
   state.selected = null;
   reconcileKaraoke();
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
-  const ni = state.itemByRef.get(merged);            // 光标回到合并处, 方便继续往前并
+  const ni = state.itemByRef.get(prev);       // 光标回到合并处, 方便继续往前并
   if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
   toast(`已与上一条合并为一条字幕（${fmtTime(start)} → ${fmtTime(end)}）`, 2600);
   return true;
