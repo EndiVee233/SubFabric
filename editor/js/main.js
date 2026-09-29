@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -630,7 +630,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           badReason: [badReasonOf(zhS), badReasonOf(enS)].filter(Boolean).join(' / '),
           // 英文逐词缺词/重复/交叠检测用(用户报: 重复字幕被并成一句、缺词无警告)
           enWordCount: enS && enS.words ? enS.words.length : 0,
-          enTokenCount: enS ? enS.text.replace(/\[[^\]]+\]/g, '').split(/\s+/).filter(Boolean).length : 0,
+          enTokenCount: enS ? splitEnglishWords(enS.text.replace(/\[[^\]]+\]/g, '')).length : 0,
           enOverlap: enSlicesOverlap(enS)
         };
         state.itemByRef.set(row, it);
@@ -1673,7 +1673,7 @@ function autoAlignEnSpans() {
     if (!row.zh || !en || !en.words || !en.words.length) continue;
     if (enSlicesOverlap(en)) continue;
     const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
-    const toks = clean.split(/\s+/).filter(Boolean).length;
+    const toks = splitEnglishWords(clean).length;
     if (toks && en.words.length !== toks) continue;
     if (/\[[^\]]+\]/.test(en.text || '')) continue;
     if (alignEnSpanToZh(row)) n++;
@@ -1713,7 +1713,7 @@ function detectRowProblems(row) {
   //    需要用户确认这句话到底是什么(用户明确要求), 才能重建出正确的逐词。
   if (en && en.words && en.words.length) {
     const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
-    const toks = clean.split(/\s+/).filter(Boolean).length;
+    const toks = splitEnglishWords(clean).length;
     if (toks && en.words.length !== toks) {
       issues.wordsMismatch = { text: clean, have: en.words.length, need: toks };
     }
@@ -2068,7 +2068,7 @@ function refreshDynamicSubtitles() {
   for (const sent of state.kar.sentences) {
     if (!sent.events || !sent.events.length) continue;
     if (sent.words && sent.words.length) {
-      const txtWords = (sent.text || '').split(/\s+/).filter(Boolean).length;
+      const txtWords = splitEnglishWords(sent.text || '').length;
       if (sent.words.length !== txtWords) continue;      // "逐词多余/缺词" 脏行 → 不代修
       const specs = live(buildWordSpecs(sent));
       const evs = live(sent.events);

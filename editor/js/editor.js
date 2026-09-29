@@ -1,6 +1,7 @@
 /** 右侧编辑面板: 虚拟滚动卡片列表(中英双行) + 列表内行内编辑(无独立编辑框) */
 import { fmtTime, escapeHtml, bisectStart } from './util.js';
 import { t } from './i18n.js';
+import { splitEnglishWords } from './karaoke.js';
 
 const ROW_H = 92;
 
@@ -973,7 +974,8 @@ export class EditorPanel {
    *  光标落在哪一半就切在哪一半的**词边界**上(光标在词中间时, 该词归前半)。
    *  切点落在首/尾(会切出一个空半句) → 返回 null, 调用方改为普通提交。 */
   _splitPoint(text, caret) {
-    const toks = String(text || '').split(/\s+/).filter(Boolean);
+    // 与 recalcWords 同一分词口径（空白 + , . ? !），否则"在光标处分句"切出来的词数与切片对不上
+    const toks = splitEnglishWords(text);
     if (toks.length < 2) return null;
     const at = (caret == null || caret < 0) ? text.length : caret;
     // 词尾字符位置表

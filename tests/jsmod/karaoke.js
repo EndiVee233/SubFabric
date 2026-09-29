@@ -521,8 +521,56 @@ function normalizeWords(words, start, end) {
  *  - 词数变化          → 在 [newStart,newEnd] 内按原词时长加权重新分配
  * 返回值一律经过 normalizeWords, 保证可直接用于重建切片。
  */
+/**
+ * 英文字幕分词：空白 **与 `,` `.` `?` `!`** 都算分隔符（用户要求：遇到这类标点就"逐词一次"）。
+ *   'SMP,I plan.to nuke Capital City,' → ['SMP,','I','plan.','to','nuke','Capital','City,']
+ * 规则说明：
+ *  · 标点**留在前一个词的尾部** —— 于是不会切出"只含标点"的孤立切片（那种片子在画面上闪一下很难看）；
+ *  · 行首若是孤立标点，并到它后面那个词上；
+ *  · 连着的标点（'wait...' / 'what?!'）留在同一个词里；
+ *  · 撇号不切（don't / it's 仍是一个词）。
+ * 这里也是**词数一致性检查**的唯一口径：坏行判定的"逐词数与文本词数不符"必须用它数，
+ * 否则带黏连标点的行会被误判成缺词。
+ */
+/**
+ * 分词 + **在原文本里的位置**（同一套规则）。给 `buildWordSpecs` 用：它必须按同一口径
+ * 把高亮标签包裹到原文的词上，否则"12 个词 / 10 个空白段"对不上，就会退回按空白重建
+ * （结果就是 `SMP,I`、`plan.to` 又黏成一片 —— 踩过）。
+ * 返回 [{ w, start, end }]，start/end 是原文里的字符下标。
+ */
+export function splitEnglishWordsWithSpans(text) {
+  const s = String(text == null ? '' : text);
+  const isPunct = (ch) => ch === ',' || ch === '.' || ch === '?' || ch === '!';
+  const out = [];
+  const n = s.length;
+  let i = 0;
+  while (i < n) {
+    while (i < n && /\s/.test(s[i])) i++;
+    if (i >= n) break;
+    if (isPunct(s[i]) && out.length) {           // 标点 → 挂到前一个词尾
+      let j = i;
+      while (j < n && isPunct(s[j])) j++;
+      out[out.length - 1].w += s.slice(i, j);
+      out[out.length - 1].end = j;
+      i = j;
+      continue;
+    }
+    const start = i;
+    let j = i;
+    while (j < n && !/\s/.test(s[j]) && !(isPunct(s[j]) && j > i)) j++;
+    while (j < n && isPunct(s[j])) j++;          // 词尾紧跟的标点算这个词的
+    out.push({ w: s.slice(start, j), start, end: j });
+    i = j;
+  }
+  return out;
+}
+
+export function splitEnglishWords(text) {
+  return splitEnglishWordsWithSpans(text).map(x => x.w);
+}
+
 export function recalcWords(sentence, newText, newStart, newEnd) {
-  const tokens = newText.split(/\s+/).filter(Boolean);
+  const tokens = splitEnglishWords(newText);
   const n = sentence.words.length, m = tokens.length;
   if (m === 0) return [];
   // 原本不是逐词句(如刚插入的新行): 没有原始时长可加权, 在句内均匀铺满
@@ -579,18 +627,16 @@ export function buildWordSpecs(sentence) {
   if (!sentence.words.length) {
     return [Object.assign({}, base, { start: sentence.start, end: sentence.end, text: sentence.text })];
   }
-  const parts = sentence.text.split(/(\s+)/);   // 保留空白, 便于原位包裹
-  const idxs = [];
-  parts.forEach((t, i) => { if (t.trim()) idxs.push(i); });
+  const spans = splitEnglishWordsWithSpans(sentence.text);   // 与 recalcWords / 词数检查同一口径
 
   // 文本与词数不一致(理论上先经过 recalcWords 不会走到这里):
   // 不放弃逐词效果 —— 按实际词数在句时长内均匀铺满, 而不是塌成单条干净行。
   let words = sentence.words;
-  if (idxs.length !== words.length) {
-    const n2 = idxs.length;
+  if (spans.length !== words.length) {
+    const n2 = spans.length || 1;
     const s0 = sentence.start, span = Math.max(0.01, sentence.end - s0);
-    words = idxs.map((_, k) => ({
-      w: parts[idxs[k]],
+    words = spans.map((sp, k) => ({
+      w: sp.w,
       s: s0 + span * (k / n2),
       e: s0 + span * ((k + 1) / n2)
     }));
@@ -606,7 +652,11 @@ export function buildWordSpecs(sentence) {
   }
   for (let k = 0; k < words.length; k++) {
     const w = words[k];
-    const marked = parts.map((t, i) => (i === idxs[k] ? tag + t + '{\\c}' : t)).join('');
+    const sp = spans[k];
+    // 原位包裹: 把 tag 插到该词的开头、{\c} 插到词尾 —— 词以外的一个字符都不动
+    const marked = sp
+      ? sentence.text.slice(0, sp.start) + tag + sp.w + '{\\c}' + sentence.text.slice(sp.end)
+      : sentence.text;
     push(w.s, w.e, marked);
     const nx = words[k + 1];
     if (nx && w.e < nx.s - 0.004) push(w.e, nx.s, sentence.text);
