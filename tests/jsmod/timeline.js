@@ -338,7 +338,13 @@ export class Timeline {
   zoomOut() { this._zoomAtSmooth(this._cssW() / 2, 1 / 1.6); }
 
   /** 胶片预览图高度: 关闭时为 0(不占位, 字幕块直接顶到刻度线下方) */
-  _filmH() { return this.showFilm ? FILM_H : 0; }
+  /** 胶片条可用高度: 空间不够时**自动收起**（省 46px 给字幕轨）—— 这样浅窗口/矮时间轴也不会挤爆。
+   *  收起只是"这一帧不画", 设置里的开关不动, 空间够了自动回来。 */
+  _filmH() {
+    if (!this.showFilm) return 0;
+    const need = FILM_H + RULER_H + 6 + LANE_H * 2;      // 胶片 + 刻度 + 间距 + 至少两条轨(合并轨下限)
+    return this._cssH() >= need ? FILM_H : 0;
+  }
 
   _cssW() { return this.canvas.parentElement.clientWidth; }
   _cssH() { return this.canvas.parentElement.clientHeight; }
@@ -347,14 +353,35 @@ export class Timeline {
    *  剩余高度在它们之间平分 —— 不设大下限, 保证再挤也全部装得下、不会漏到面板外面。
    *  单条时行为与以前完全一致。 */
   _laneH(i) {
-    const lane = this.lanes[i];
+    const lanes = this.lanes || [];
+    const n = Math.max(1, lanes.length);
+    const avail = Math.max(10, this._cssH() - this._filmH() - RULER_H - 6 - (n - 1) * LANE_GAP);
+    const ideal = (l) => (l && l.merged) ? (LANE_H * 2 + LANE_GAP) : ((l && l.h) || LANE_H);
+    const sumIdeal = lanes.reduce((sum, l) => sum + ideal(l), 0) || 1;
+    const lane = lanes[i];
+    const want = ideal(lane);
+    // ① 装不下 → 按理想高度**等比压缩**（下限 10px）。这样再矮的时间轴也是"整条轨都在面板里"，
+    //    而不是把下面那半截画到面板外面去（用户报的"时间轴太矮直接显示不全"就是这个）。
+    if (sumIdeal > avail) return Math.max(10, Math.floor(avail * want / sumIdeal));
+    // ② 装得下 → 合并轨继续"吃掉剩余高度"（保持原有观感：块一直顶到面板底端，不留黑缺）
     if (lane && lane.merged) {
-      const n = Math.max(1, this.lanes.reduce((s, l) => s + (l && l.merged ? 1 : 0), 0));
-      const fill = this._cssH() - this._filmH() - RULER_H - 6 - (n - 1) * LANE_GAP;
-      if (n === 1) return Math.max(LANE_H * 2 + LANE_GAP, fill);
-      return Math.max(10, Math.floor(fill / n));
+      const merged = lanes.filter(l => l && l.merged);
+      const others = lanes.reduce((sum, l) => sum + (l && l.merged ? 0 : ideal(l)), 0);
+      const rest = Math.max(10, avail - others);
+      const minOne = merged.length === 1 ? LANE_H * 2 + LANE_GAP : 10;
+      return Math.max(minOne, Math.floor(rest / Math.max(1, merged.length)));
     }
-    return (lane && lane.h) || LANE_H;
+    return want;
+  }
+
+  /** 只读诊断(给 tools/layout_probe.mjs 用): 轨的几何, 用来断言"整条轨都在面板内" */
+  debugLayout() {
+    const n = (this.lanes || []).length;
+    return {
+      cssH: this._cssH(), filmH: this._filmH(), rulerH: RULER_H,
+      laneTop: n ? this._laneTop(0) : 0, laneH: n ? this._laneH(0) : 0,
+      laneBottom: this._lanesBottom(), fits: this._lanesBottom() <= this._cssH() + 0.5,
+    };
   }
 
   _resize() {
@@ -831,7 +858,7 @@ export class Timeline {
       }
     }
 
-    if (this.showFilm) this._drawFilmstrip(ctx, W);
+    if (this._filmH() > 0) this._drawFilmstrip(ctx, W);   // 空间不够时 _filmH()=0, 这一帧不画
     this._drawRuler(ctx, W);
     this._drawLanes(ctx, W, t);
     if (this._drag && this._drag.type === 'create' && this._drag.moved) this._drawCreatePreview(ctx);
