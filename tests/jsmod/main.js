@@ -2213,10 +2213,17 @@ function splitRowAt(item, enPlainText, caret) {
   // 行首标签块(颜色覆盖 + 说话人名字标签 [..]): 分句后前后段都应保留同样的名字标签
   const zhTagM = /^\s*(\{\\[^}]*\})*\s*(\[[^\]]+\]\s*)?/.exec(zhText);
   const zhTag = zhTagM ? zhTagM[0] : '';
+  // 中文行的行首内联标签(角色色 {\c&H..&} 之类)在**事件文本**里 —— sent.text 是纯文本, 抠不到。
+  // 前半就地改写时 applyAnchorSentence 会从原事件继承, 但后半是新建事件、没有来源, 必须显式带上,
+  // 否则那一半丢掉角色颜色(用户报的分句后两半变黄)。
+  const zhLead = (row.zh && row.zh.events[0]) ? (((/^\s*(\{\\[^}]*\})/.exec(row.zh.events[0].text) || [])[1]) || '') : '';
   const zhBody = zhText.slice(zhTag.length);
   const [zhA0, zhB0] = splitZhText(zhBody, k, totW);
-  const zhA = (zhTag + zhA0).trim();
-  const zhB = (zhTag + zhB0).trim();
+  // 行首前缀 = 事件里的色标 + 纯文本里的角色名(splitZhText 会把角色名剥掉, 这里补回; 两半都要带)
+  const zhName = (zhTag || '').replace(/^\s*(\{\\[^}]*\})*\s*/, '');   // zhTag 里只取 [..] 那段, 色标用 zhLead
+  const zhPrefix = zhLead + zhName;
+  const zhA = (zhPrefix + zhA0).trim();
+  const zhB = (zhPrefix + zhB0).trim();
   if (!enA || !enRest) { toast('切分点太靠近边缘，无法分句'); return false; }
 
   const zhStyle = row.zh ? row.zh.style : ((state.kar.sentences.find(s => s.style !== state.kar.wordStyle) || {}).style || '');
@@ -2235,6 +2242,7 @@ function splitRowAt(item, enPlainText, caret) {
   // ── 后半: 新建(此刻该样式已有前半这条锚点事件, 所以 appendSentence 一定有地方可插) ──
   const zh2 = zhStyle ? appendSentence(zhStyle, st, t1, zhB) : null;
   const en2 = enStyle ? appendSentence(enStyle, st, t1, enRest) : null;
+  if (row.en && en2) en2.highlightTag = row.en.highlightTag || en2.highlightTag;   // 高亮色沿用原行(默认是绿)
   const row2 = { zh: zh2, en: en2, start: st, end: t1, no: 0, color, speaker };
 
   // 词级时间: 原样分给两半(用原来的词, 不重算) —— 逐词效果得以保留。

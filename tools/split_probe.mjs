@@ -35,7 +35,9 @@ const ass = [
   'Style: Default,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,60,1', '',
   '[Events]',
   'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-  `Dialogue: 0,0:00:00.00,0:00:05.50,中文字幕,SPK1,0,0,0,,${ZH}`,
+  // 中文行带**角色色标签**(行首内联 {\c&Hd000ff&} + 角色名) —— 分句后两半都必须保留它,
+  // 否则会退回默认高亮色(用户截图里的"变黄")
+  `Dialogue: 0,0:00:00.00,0:00:05.50,中文字幕,SPK1,0,0,0,,{\\c&Hd000ff&}[Spoke] ${ZH}`,
   ...slices,
 ].join('\n');
 
@@ -102,9 +104,16 @@ try {
   const firstEnd = en[7].split(',')[2], secondStart = en[8].split(',')[1];
   ok(firstEnd <= secondStart, '两半时间不重叠', firstEnd + ' vs ' + secondStart);
   // 中文文本是否按词数比例切（前半 8/11）
-  const zhA = (zh[0].slice(zh[0].indexOf(',,') + 2) || '').trim();
-  console.log('  前半中文:', JSON.stringify(zhA));
-  ok(zhA.length > 0, '前半中文非空');
+  const zhBodies = zh.map(l => (l.slice(l.indexOf(',,') + 2) || '').trim());
+  console.log('  前半中文:', JSON.stringify(zhBodies[0]));
+  console.log('  后半中文:', JSON.stringify(zhBodies[1]));
+  ok(zhBodies[0] && zhBodies[0].length > 0, '前半中文非空');
+  // ── 角色色/角色名标签必须带到两半（用户报的"分句后变黄"）──
+  ok(zhBodies.every(x => /\{\\c&Hd000ff&\}/i.test(x)), '两半都保留了行首角色色标签', JSON.stringify(zhBodies));
+  ok(zhBodies.every(x => /\[Spoke\]/.test(x)), '两半都保留了角色名标签', JSON.stringify(zhBodies));
+  ok(zhBodies[0].indexOf('{\\c') < zhBodies[0].indexOf('[Spoke]'), '标签顺序仍是 色标 在 角色名 之前');
+  ok((zhBodies[0].match(/\{\\c&H/gi) || []).length === 1 && (zhBodies[1].match(/\{\\c&H/gi) || []).length === 1,
+    '每半只有一个色标（没有重复叠加）', JSON.stringify(zhBodies.map(x => (x.match(/\{\\c&H/gi) || []).length)));
 } catch (e) {
   fail++; console.log('FAIL  探针异常: ' + ((e && e.message) || e));
 } finally {
