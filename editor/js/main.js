@@ -411,11 +411,15 @@ function setAss(text, name) {
   state.kar = analyzeKaraoke(state.assDoc);
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
   state.kar.rows = pairRows(state.kar.sentences, state.kar.wordStyle);
+  // 载入即自动对齐"中英起止不一致"(云端识别的存量文件常带这个毛病) —— 只挪时间、不动文本,
+  // 后面的 rebuildItemsAndLanes + 自动保存会把结果写回项目文件。
+  const spanAligned = autoAlignEnSpans();
 
   panel.setBadge('ASS 特效', 'ass');
   panel.setFileName(name);
   applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
   if (fixedColors) toast(`已修复 ${fixedColors} 行格式错误的说话人色标`, 5000);
+  if (spanAligned) toast(`已自动对齐 ${spanAligned} 行的中英起止（英文逐词原来比中文行短一截）`, 5000);
   panel.setModeOptions([
     { v: 'bi', t: '中英双行' },
     { v: 'first', t: '仅中文' },
@@ -1560,6 +1564,77 @@ panel.onTabChange = (name) => pruneUnusedRoles(name === 'roles');   // 离开角
 /** 行首角色色标(非绿)判定用: {\c&H......&} */
 const EN_ROLE_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
 
+/* ─────────── 中英起止对齐 ───────────
+ * 云端识别(必剪/剪映)常给出"首词起点晚于句首"或"整段英文只覆盖一小截"的结果：
+ *   中文行 0.00–2.88 / 英文逐词 0.04–2.88（首词晚 40ms）
+ *   中文行 0.00–2.88 / 英文逐词 0.04–0.32（整段只覆盖一小段）
+ * 在 ASS 里这就是"中英时间不一致"的坏行，时间轴上也切不出整块。
+ * 这里把英文逐词的时间**按比例映射到中文行的 [start, end]** —— 只改时间，不动文本与高亮标签。
+ */
+const SPAN_TOL = 0.005;      // ASS 只写到厘秒，同源写入的两条不该有更大差异
+
+/** 读一行的中英跨度信息（不改任何东西）；没有中英双行/退化数据返回 null */
+function enSpanInfo(row) {
+  const zh = row && row.zh, en = row && row.en;
+  if (!zh || !en || !en.words || !en.words.length) return null;
+  if (!(zh.end > zh.start)) return null;
+  let es = Infinity, ee = -Infinity;
+  for (const w of en.words) { if (w.s < es) es = w.s; if (w.e > ee) ee = w.e; }
+  if (!isFinite(es) || !isFinite(ee)) return null;
+  return {
+    zh, en, zs: zh.start, ze: zh.end, es, ee,
+    mismatch: Math.abs(es - zh.start) > SPAN_TOL || Math.abs(ee - zh.end) > SPAN_TOL,
+  };
+}
+
+/** 该行中英起止是否不一致（坏行判定与修复检测共用一处算法） */
+function enSpanMismatch(row) { const i = enSpanInfo(row); return !!(i && i.mismatch); }
+
+/** 把英文逐词的时间对齐到中文行的 [start, end]（按比例，保留词间相对关系）。
+ *  返回 true 表示确实改过。**只动时间**：文本、高亮标签、样式一律不碰。 */
+function alignEnSpanToZh(row) {
+  const info = enSpanInfo(row);
+  if (!info || !info.mismatch) return false;
+  const { en, zs, ze, es, ee } = info;
+  const n = en.words.length;
+  const span = ee - es;
+  if (span <= WORD_MIN_GAP * n) {
+    // 退化成一根线（几乎所有词都挤在一点上）→ 按词数把中文行时长均匀铺开
+    const dur = (ze - zs) / n;
+    en.words.forEach((w, i) => { w.s = +(zs + i * dur).toFixed(3); w.e = +(zs + (i + 1) * dur).toFixed(3); });
+  } else {
+    // 按比例映射：首词晚 40ms 这种，前段微调、后段几乎不动
+    const k = (ze - zs) / span;
+    for (const w of en.words) {
+      w.s = +(zs + (w.s - es) * k).toFixed(3);
+      w.e = +(zs + (w.e - es) * k).toFixed(3);
+    }
+  }
+  // 保底：首词贴句首、末词收句尾，且词与词之间不出现零宽/逆序
+  en.words[0].s = zs;
+  for (let i = 0; i < n; i++) {
+    const w = en.words[i];
+    if (i) w.s = Math.max(w.s, en.words[i - 1].e);
+    if (w.e - w.s < WORD_MIN_GAP) w.e = +(w.s + WORD_MIN_GAP).toFixed(3);
+  }
+  en.words[n - 1].e = ze;
+  en.start = zs;
+  en.end = ze;
+  if (en.events && en.events.length === n) {
+    for (let i = 0; i < n; i++) state.assDoc.setEventTime(en.events[i], en.words[i].s, en.words[i].e);
+  }
+  en.overlap = enSlicesOverlap(en);
+  return true;
+}
+
+/** 载入时自动对齐（用户要求：以后遇到这种字幕直接自动修复）。返回修好的行数 */
+function autoAlignEnSpans() {
+  if (state.format !== 'ass' || !state.kar || !state.kar.rows) return 0;
+  let n = 0;
+  for (const row of state.kar.rows) if (alignEnSpanToZh(row)) n++;
+  return n;
+}
+
 /**
  * 检测一行字幕有哪些问题(供右键「修复字幕」).
  * 返回 { issues, needConfirm, prefill }：
@@ -1602,6 +1677,10 @@ function detectRowProblems(row) {
       prefill = (issues.wordsMismatch && issues.wordsMismatch.text) || clean || en.words.map(w => w.w).join(' ');
     }
   }
+  // ④ 中英起止不一致：英文逐词句的跨度与中文行不等（云端识别的存量文件常见）。
+  //    这一项**不需要**用户确认 —— 只挪时间、不动文本，按比例对齐即可（载入时已自动修过一轮，
+  //    这里是给"载入后被手工改坏"的情况留的手动入口）。
+  if (en && row.zh && enSpanMismatch(row)) issues.spanMismatch = true;
   return { issues, needConfirm, prefill };
 }
 
@@ -1652,6 +1731,9 @@ function fixRow(row, issues, confirmedText) {
     const t = (en.text || assPlainText(en.events[0].text)).trim();
     rebuildEnglishFromText(en, t, false);
     done.push('已自动添加逐词效果');
+  }
+  if (issues.spanMismatch) {
+    if (alignEnSpanToZh(row)) done.push('已把英文逐词起止对齐到中文行');
   }
   if (issues.overlapNoKaraoke) done.push('（该句重叠，未加逐词以免丢特效）');
   if (!done.length) { toast('没有可修复的问题'); return; }

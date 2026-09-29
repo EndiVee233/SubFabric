@@ -470,7 +470,8 @@ export class EditorPanel {
       overlapNoKaraoke: '该句与其它字幕重叠，重叠时不加逐词（避免两句话高亮糊在一起）',
       roleName: '英文行含有角色名 [..]，将删除角色名并确保逐词颜色仍是绿色',
       wordsMismatch: '英文行逐词与文本不一致（缺词或多词）',
-      enOverlap: '英文行内部有重叠/重复的字幕（同一段时间里有两条英文）'
+      enOverlap: '英文行内部有重叠/重复的字幕（同一段时间里有两条英文）',
+      spanMismatch: '中英起止不一致（英文逐词句的起止与中文行不等）→ 将按比例把逐词时间对齐到中文行'
     };
     const keys = Object.keys(issues);
     listEl.innerHTML = keys.map(k => {
