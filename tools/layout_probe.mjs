@@ -59,6 +59,33 @@ console.log('向上拖 120px:', JSON.stringify(mDrag));
 ok(mDrag.tlPanel > 300, '拖分割线能加高时间轴', mDrag.tlPanel);
 ok(mDrag.stage < m0.stage - 60, '拖分割线时视频区同步变矮', m0.stage + ' → ' + mDrag.stage);
 
+/* ── 时间轴内部：无论多矮都必须"整条轨都在面板内"（用户报的"太矮显示不全"）── */
+const geom = async () => JSON.parse(await b.eval("JSON.stringify(window.__timeline && window.__timeline.debugLayout ? window.__timeline.debugLayout() : null)"));
+const checkFits = async (label) => {
+  const g = await geom();
+  const good = g && g.fits === true && g.laneBottom <= g.cssH + 0.5 && (g.laneH === 0 || g.laneH >= 10);
+  ok(good, `整条轨都在面板内（${label}）`, JSON.stringify(g));
+  return g;
+};
+for (const [film, filmLabel] of [[false, '胶片关'], [true, '胶片开']]) {
+  await b.eval(`(() => { const c = document.getElementById('set-film'); if (c.checked !== ${film}) { c.checked = ${film}; c.dispatchEvent(new Event('change', { bubbles: true })); } })()`);
+  await sleep(500);
+  for (const px of [96, 120, 160, 232, 400]) {
+    await setTl(px);
+    await checkFits(`${filmLabel} / ${px}px`);
+  }
+}
+// 再收一个"矮窗口"测一遍（时间轴 + 视频区都要活）
+await b.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 560, deviceScaleFactor: 1, mobile: false });
+await sleep(900);
+await setTl(96);
+await checkFits('矮窗口 560px 高 / 96px');
+const mSmallWin = await M();
+ok(mSmallWin.bodyScroll <= mSmallWin.win + 1, '矮窗口下页面也不溢出', mSmallWin.bodyScroll + ' vs ' + mSmallWin.win);
+await b.send('Emulation.clearDeviceMetricsOverride', {});
+await sleep(600);
+
+
 // 字幕列表：滚到最后一条
 await b.eval("document.querySelector('.ptab[data-tab=\"subs\"]').click()");
 await sleep(700);
