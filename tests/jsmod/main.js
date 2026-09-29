@@ -485,6 +485,10 @@ function markBadRows(items) {
     const it = items[i];
     const reasons = [];
     if (isAss) {
+      // 中文行(anchor)——**必须先声明**: 下面的"中英时间不一致"校验要用到它。
+      //   （1.9.2 初版把它写在用到之后 → const 的暂时性死区抛 ReferenceError
+      //     → 整个列表渲染中断, ASS 项目一条字幕都不显示, 而且不报错。已修。）
+      const zhS = it.ref && it.ref.zh;
       if (it.badReason) reasons.push(it.badReason);
       if (/[[\]]/.test(it.l2 || '')) reasons.push('英文行含方括号');
       const hasL1 = !!it.l1, hasL2 = !!it.l2;
@@ -512,7 +516,6 @@ function markBadRows(items) {
       //   · 整行连 Name 栏裸名都没有(row.speaker 为空) → 同样算未标注。
       // 新建的空行(isNew)在用户输入前不算 —— 否则刚拖出来的块立刻变坏行。
       // 用户在设置里禁用角色标注时(state.roleAnnot === false)整类跳过。
-      const zhS = it.ref && it.ref.zh;
       const hasRoleTag = !!speakerTextTagOf(zhS);
       if (state.roleAnnot !== false && !it.isNew && (!it.speaker || (zhS && !hasRoleTag))) reasons.push('未标注角色');
       // 英文行逐词缺词(切片数 < 单词数) —— 用户报的 bug#3(缺词无警告)。
