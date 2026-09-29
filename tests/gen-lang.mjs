@@ -1,38 +1,42 @@
-// 扫描 index.html + js/*.js 里所有含中文的字符串字面量与静态文本,
-// 生成 lang/zh-CN.json（键=原文, 值=原文, 供用户直接改值润色）。
-// 用法: node tests/gen-lang.mjs  (或在 editor 目录外运行也可)
+// 扫描全部用户可见中文文案，生成 lang/zh-CN.json（键=原文, 值=原文, 供用户直接改值润色）。
+// 覆盖: index.html（文本/title/placeholder/aria-label）· js/*.js · server.js · scripts/*
+// 带变量的模板串把变量归一成 ◇（运行时 i18n.js 按位置回填实际值）；
+// JS 里的 HTML 模板只收「屏幕上真正出现的那段文字」，不收整段标签。
+// 用法: node tests/gen-lang.mjs
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { extractVisible, jsLiterals } from '../tools/lib/copy_scan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ED = path.resolve(HERE, '..', 'editor');
 const OUT = path.join(ED, 'lang', 'zh-CN.json');
 
 const strings = new Set();
-const add = (s) => { const k = String(s).trim(); if (/[\u4e00-\u9fa5]/.test(k) && k.length >= 2) strings.add(k); };
+const add = (s) => {
+  const k = String(s).replace(/\$\{[^}]*\}/g, '\u25C7').trim();
+  if (/[\u4e00-\u9fa5]/.test(k) && k.length >= 2) strings.add(k);
+};
 
-// ── index.html: 文本节点 + title/placeholder 属性 ──
+// ── index.html ──
 const html = fs.readFileSync(path.join(ED, 'index.html'), 'utf8');
 for (const m of html.matchAll(/>([^<>{}]*[\u4e00-\u9fa5][^<>{}]*)</g)) add(m[1]);
-for (const m of html.matchAll(/(title|placeholder)="([^"]*[\u4e00-\u9fa5][^"]*)"/g)) add(m[2]);
+for (const m of html.matchAll(/(title|placeholder|aria-label)="([^"]*[\u4e00-\u9fa5][^"]*)"/g)) add(m[2]);
 
-// ── js: 字符串字面量(排除注释行) ──
-for (const f of fs.readdirSync(path.join(ED, 'js'))) {
-  if (!f.endsWith('.js')) continue;
-  const lines = fs.readFileSync(path.join(ED, 'js', f), 'utf8').split('\n');
-  for (const line of lines) {
-    if (!/[\u4e00-\u9fa5]/.test(line)) continue;
-    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;          // 注释跳过
-    // 单引号 / 双引号 / 反引号 字面量
-    for (const m of line.matchAll(/'([^']*[^\u0000-䶿][^']*|[^']*[\u4e00-\u9fa5][^']*)'/g)) add(m[1]);
-    for (const m of line.matchAll(/"([^"]*[\u4e00-\u9fa5][^"]*)"/g)) add(m[1]);
-    for (const m of line.matchAll(/`([^`]*[\u4e00-\u9fa5][^`]*)`/g)) {
-      // 模板串: 把 ${...} 归一成 {x} 作为键(显示出口的模糊匹配按归一化比对)
-      let k = m[1].replace(/\$\{[^}]*\}/g, '{x}');
-      add(k);
-    }
+// ── JS（逐行剥离注释后扫字面量；HTML 模板只收屏幕上真正出现的文字）──
+function scanJs(file) {
+  let src = '';
+  try { src = fs.readFileSync(file, 'utf8'); } catch { return; }
+  for (const { text } of jsLiterals(src)) {
+    const pieces = extractVisible(text);
+    if (pieces.length) pieces.forEach(add);
+    else add(text);
   }
+}
+for (const f of fs.readdirSync(path.join(ED, 'js'))) if (f.endsWith('.js')) scanJs(path.join(ED, 'js', f));
+scanJs(path.join(ED, 'server.js'));
+for (const f of fs.readdirSync(path.join(ED, 'scripts'))) {
+  if (f.endsWith('.ps1') || f.endsWith('.cjs')) scanJs(path.join(ED, 'scripts', f));
 }
 
 const out = {};

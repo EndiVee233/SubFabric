@@ -193,7 +193,7 @@ function renderWaveform(buildArgs, cb, _retry) {
   const done = (err) => {
     fs.unlink(tmpPng, () => {});
     if (err && !_retry) {
-      console.log('[waveform] ffmpeg 失败, 重试一次:', String(err.message || err).slice(0, 200));
+      console.log('[waveform] ffmpeg 失败，重试一次：', String(err.message || err).slice(0, 200));
       return setTimeout(() => renderWaveform(buildArgs, cb, true), 400);
     }
     if (err) return cb(err);
@@ -470,7 +470,7 @@ const ASR_MODELS = [
     fileRepos: { 'diar_streaming_sortformer_4spk-v2.1.nemo': 'nvidia/diar_streaming_sortformer_4spk-v2.1' },
     sizeMB: 2825,
     // 只能重新识别, 不能创建初稿 —— 见 draftAllowed
-    desc: 'NVIDIA NeMo 流式多说话人 Parakeet（说话人核注入，一次转写可区分重叠语音）。仅 N 卡可用：必须 CUDA GPU，CPU 推理直接报错；只用于「重新识别」，不能创建初稿。权重约 2.3GB，另需 PyTorch + NeMo 运行时（设置里单独安装）',
+    desc: 'NVIDIA NeMo 流式多说话人 Parakeet（说话人核注入，一次识别就能区分同时说话的多个说话人）。仅 N 卡可用：必须 CUDA GPU，CPU 推理直接报错；只用于「重新识别」，不能创建初稿。权重约 2.3GB，另需 PyTorch + NeMo 运行时（设置里单独安装）',
     dirName: 'multitalker-parakeet-streaming-0.6b-v1',
     draftAllowed: false,
   },
@@ -484,7 +484,7 @@ const ASR_MODELS = [
     cloud: true,
     files: [],
     sizeMB: 0,
-    desc: '调用必剪（B 站）云端识别：本地不装模型、不需要显卡，秒级出结果（实测 13 秒英文音频 3 秒返回逐词时间戳）。仅英语；要求能联网；音频会上传到 bilibili 服务器 —— 机密素材不要用',
+    desc: '调用必剪（B 站）云端识别：不用装模型，也不用显卡。13 秒英文音频实测 3 秒返回逐词时间戳。只支持英语，需要联网，音频会上传到 bilibili 服务器，机密素材不要用',
     dirName: '',
     draftAllowed: true,
   },
@@ -495,7 +495,7 @@ const ASR_MODELS = [
     cloud: true,
     files: [],
     sizeMB: 0,
-    desc: '调用剪映（CapCut）云端识别：同样免下载、免显卡（实测 13 秒英文音频 3 秒返回逐词时间戳，断句比必剪更细）。仅英语；要求能联网；音频会上传到字节跳动服务器 —— 机密素材不要用。与「必剪 ASR」互为备份：一个限流/失败会自动换另一个',
+    desc: '调用剪映（CapCut）云端识别：同样不用装模型、不用显卡。13 秒英文音频实测 3 秒返回逐词时间戳，分句比必剪更细。只支持英语，需要联网，音频会上传到字节跳动服务器，机密素材不要用。与「必剪 ASR」互为备份：一个限流或失败会自动换另一个',
     dirName: '',
     draftAllowed: true,
   },
@@ -544,24 +544,24 @@ function asrGpuGateError(model) {
   // 云端识别在本机不做任何推理 —— 它不需要 GPU(与三个本地引擎的要求正好相反)
   if (model && model.cloud) return null;
   if (model && model.engine === 'whisper.cpp') {
-    if (!whisperRuntimeOk()) return 'whisper.cpp 运行时未就绪：请到「设置 → 识别模型」下载运行时';
-    if (!whisperVulkanOk()) return '未检测到 Vulkan GPU 运行库（ggml-vulkan.dll）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请安装/更新显卡驱动（支持 Vulkan），或在设置里重新下载 whisper.cpp 运行时';
+    if (!whisperRuntimeOk()) return 'whisper.cpp 运行时没装好，到「设置 → 识别模型」下载';
+    if (!whisperVulkanOk()) return '未检测到 Vulkan 运行库（ggml-vulkan.dll）。语音识别不支持纯 CPU，要装/更新支持 Vulkan 的显卡驱动，或在设置里重新下载 whisper.cpp 运行时';
     return null;
   }
   if (model && model.engine === 'nemo') {
     const n = nemoProbeCache;
     if (!n || !n.ok) {
-      return '「' + model.name + '」需要 NeMo 运行时（PyTorch + NeMo）—— 请在「设置 → 识别模型 → NeMo 运行时（多说话人）」点「安装」（约 5GB，需 N 卡）。'
+      return '「' + model.name + '」需要 NeMo 运行时（PyTorch + NeMo）。到「设置 → 识别模型 → NeMo 运行时（多说话人）」点「安装」，约 5GB，需 N 卡。'
         + (n && n.msg ? '（当前预检：' + n.msg + '）' : '');
     }
     if (!n.cuda) {
-      return '「' + model.name + '」未启用 GPU·CUDA（当前是 CPU 版 PyTorch）—— 该模型不支持 CPU 推理，只能在 NVIDIA 显卡上运行。'
-        + (n.gpu ? '' : '未检测到 NVIDIA 显卡；') + '请在设置里点「重新安装 NeMo 运行时」装 CUDA 版 PyTorch。';
+      return '「' + model.name + '」没启用 GPU·CUDA（当前是 CPU 版 PyTorch），该模型只能在 NVIDIA 显卡上跑。'
+        + (n.gpu ? '' : '未检测到 NVIDIA 显卡；') + '到设置里点「重新安装 NeMo 运行时」，装 CUDA 版 PyTorch。';
     }
     return null;
   }
   if (asrProvider() !== 'cuda') {
-    return 'Parakeet 未启用 GPU（当前 CPU 推理）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请到「设置 → 识别模型 → Python 环境」点「一键安装」，自动换装 CUDA 版 sherpa-onnx（需 N 卡）';
+    return 'Parakeet 当前是 CPU 推理，语音识别不支持纯 CPU。到「设置 → 识别模型 → Python 环境」点「安装」，换装 CUDA 版 sherpa-onnx（需 N 卡）';
   }
   return null;
 }
@@ -991,14 +991,14 @@ function resolveRerecogModel(meta) {
   const sel = rerecogModelId();
   if (sel) {
     const m = modelById(sel);
-    if (!modelReady(m.id)) return { error: '「重新识别模型」选中的「' + m.name + '」还没就绪：请先在设置里完成模型下载' };
+    if (!modelReady(m.id)) return { error: '「重新识别模型」选中的「' + m.name + '」还没装好，先到设置里下载模型' };
     return { model: m };
   }
   const dm = resolveDraftModel(meta);
   if (dm) return { model: dm };
   const fallback = resolveAsrModel();
   if (fallback) return { model: fallback };
-  return { error: '语音识别模型不可用，请先在设置里下载模型' };
+  return { error: '语音识别模型不可用，先到设置里下载' };
 }
 
 /* 模型/运行时下载: Node 内置 fetch + Range 断点续传(保持本项目零 npm 依赖)。
@@ -1023,7 +1023,7 @@ function netErrMsg(e, url) {
     (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET' || code === 'ECONNABORTED') ? '（连接被重置：网络不稳定或被防火墙干扰，重试通常可恢复）' :
     (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') ? '（连接超时：检查网络/代理）' :
     code === 'EACCES' ? '（连接被拒绝）' : '';
-  return `网络错误${code ? '（' + code + '）' : ''}${hint} —— 无法连接 ${host}`;
+  return `网络错误${code ? '（' + code + '）' : ''}${hint}，连不上 ${host}`;
 }
 
 async function downloadFileOnce(url, dest, onProgress) {
@@ -1210,15 +1210,15 @@ function startNemoInstall() {
 
       // ② NeMo ASR（体积大头: pytorch-lightning / lhotse / librosa / wandb …）
       let n2 = 0;
-      prog(45, '安装 NeMo（nemo_toolkit[asr]，约 2GB，请耐心等）…');
+      prog(45, '安装 NeMo（nemo_toolkit[asr]，约 2GB）…');
       await pipInstallRetry(pyExe, ['-m', 'pip', 'install', 'nemo_toolkit[asr]', '-i', NEMO_PIP_INDEX], 3600000,
         (line) => { n2++; prog(45 + Math.min(42, n2 * 0.12), '安装 NeMo: ' + String(line).slice(0, 70)); });
 
       // ③ 实测: torch + nemo.collections.asr 能导入, 且 CUDA 可用
-      prog(93, '实测 NeMo 运行时（导入 torch / NeMo + 检查 CUDA）…');
+      prog(93, '实测 NeMo 运行时（加载 torch / NeMo，并检查 CUDA）…');
       const fin = await probeNemo(true);
-      if (!fin.ok) throw new Error('NeMo 运行时导入失败：' + (fin.msg || ''));
-      if (!fin.cuda) throw new Error('装到的 PyTorch 认不到 CUDA —— multitalker 只支持 GPU 推理（不做 CPU 兜底）。请确认是 NVIDIA 显卡、更新驱动后重试');
+      if (!fin.ok) throw new Error('NeMo 运行时加载失败：' + (fin.msg || ''));
+      if (!fin.cuda) throw new Error('装到的 PyTorch 用不了 CUDA，multitalker 只支持 GPU 推理。确认是 NVIDIA 显卡、更新驱动后重试');
       set({ running: false, pct: 100, msg: '安装完成：' + fin.msg + (fin.gpu ? ' · ' + fin.gpu : ''), error: null });
       console.log('[asr] NeMo 运行时就绪:', fin.msg, fin.gpu || '');
     } catch (e) {
@@ -1286,7 +1286,7 @@ function startRuntimeDownload() {
         // 不做 CPU 兜底: 没有 Vulkan 运行库 = ASR 没法跑 GPU, 直接算失败
         const st2 = dlState(key);
         st2.running = false;
-        st2.error = '未检测到 Vulkan 运行库（ggml-vulkan.dll）—— 本工具的语音识别必须在 GPU 上跑，不支持纯 CPU。请安装/更新支持 Vulkan 的显卡驱动后重试';
+        st2.error = '未检测到 Vulkan 运行库（ggml-vulkan.dll）。语音识别不支持纯 CPU，装/更新支持 Vulkan 的显卡驱动后重试';
         st2.msg = '运行时不可用: ' + st2.error;
         return;
       }
@@ -1475,7 +1475,7 @@ function startPyEnvSetup() {
       //    Parakeet 则明确标记不可用 —— ASR 必须 GPU, 不做 CPU 兜底。
       const gpuName = await nvidiaGpu();
       if (!gpuName) {
-        return finishOk('基础环境就绪: ' + info + '（未检测到 NVIDIA 显卡 —— 说话人分离可用; Parakeet 识别必须 CUDA GPU，不支持 CPU，不可用）');
+        return finishOk('基础环境就绪: ' + info + '（没检测到 NVIDIA 显卡。说话人分离可用；Parakeet 识别必须 CUDA GPU，不支持 CPU）');
       }
       if (asrProvider() === 'cuda') return finishOk('安装完成: ' + info + ' / GPU·CUDA（' + gpuName + '）');
 
@@ -1535,7 +1535,7 @@ function startPyEnvSetup() {
           ASR_PY = resolvePython();
           pyProbeCache = null;
           throw new Error('CUDA 版 sherpa-onnx 安装失败: ' + String((e && e.message) || e).slice(0, 200)
-            + ' —— 基础环境已就绪（说话人分离可用），但 Parakeet 识别不可用（必须 CUDA GPU，不支持退回 CPU）。请检查显卡驱动/磁盘空间后重试');
+            + '。基础环境已就绪（说话人分离可用），Parakeet 识别用不了（必须 CUDA GPU，不支持 CPU）。检查显卡驱动和磁盘空间后重试');
         } else throw e;
       }
     } catch (e) { finishFail(e); }
@@ -1590,7 +1590,7 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
       if (code !== 0 || !data) {
         const mins = Math.round((Date.now() - started) / 60000);
         const hint = lastErrLine ? '：' + lastErrLine.slice(0, 200) : '';
-        return reject(new Error('whisper.cpp 转写失败（退出码 ' + code + '，运行 ' + mins + ' 分钟）' + hint));
+        return reject(new Error('whisper.cpp 识别失败（退出码 ' + code + '，运行 ' + mins + ' 分钟）' + hint));
       }
       // 每词一段 → 词数组（毫秒 → 秒），修复零时长词段
       const words = [];
@@ -2156,7 +2156,7 @@ function handleRequest(req, res) {
       if (!llmReady(cfg)) {
         return finishDraft(id, null, { status: 'paused', stage: STAGE.translate, progress: 86,
           translated: false, needTranslate: true, lines: segs.length, words: info.totalWords,
-          message: '语音识别完成。想自动翻译请在右上角「设置」里填接口地址 / API Key / 模型名' });
+          message: '语音识别完成。要生成译文，在右上角「设置」里填接口地址、API Key 和模型名' });
       }
       // ASR 阶段结束要交棒: draftJobs 里还留着本 id(startDraftAsr 成功时不删,
       // 好让 metaView 判定任务仍活着), 不先清掉会让 startTranslate 的防重入直接 return。
@@ -2244,20 +2244,20 @@ function handleRequest(req, res) {
 
     if (!content) {
       const why = reasoning
-        ? `模型只返回了思考过程（content 为空, 思考 ${reasoning.length} 字, finish_reason=${finishReason || '?'}）—— 多为 max_tokens 不够或该模型不支持非流式输出`
+        ? `模型只返回了思考过程，content 为空（思考 ${reasoning.length} 字, finish_reason=${finishReason || '?'}）。多为 max_tokens 不够，或该模型不支持非流式输出`
         : `接口返回内容为空（finish_reason=${finishReason || '?'}）`;
       console.error(`[llm] ${why} model=${cfg.model}`);
       dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000), reasoning: reasoning.slice(0, 4000) }, debugBase));
       throw new LlmError(why, 'empty', { finishReason });
     }
     if (finishReason === 'length') {
-      const why = `输出被 max_tokens 截断（finish_reason=length, max_tokens=${maxTokens}, 已收到 ${content.length} 字）—— 拆小批次重试`;
+      const why = `输出被 max_tokens 截断（finish_reason=length, max_tokens=${maxTokens}, 已收到 ${content.length} 字）。把「每批行数」调小后重试重试`;
       console.error(`[llm] ${why}`);
       dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000) }, debugBase));
       throw new LlmError(why, 'truncated', { finishReason, partial: content, maxTokens });
     }
     if (llmText.looksLikeReasoning(rawContent)) {
-      dumpLlmDebug(o.debugFile, Object.assign({ note: '含思维链, 已剥离', messages, raw: rawContent.slice(0, 20000), stripped: content.slice(0, 4000) }, debugBase));
+      dumpLlmDebug(o.debugFile, Object.assign({ note: '含思维链，已剥离', messages, raw: rawContent.slice(0, 20000), stripped: content.slice(0, 4000) }, debugBase));
     }
     return { content, finishReason, status: resp.status, maxTokens, strippedReasoning: rawContent.length !== content.length };
   }
@@ -2361,7 +2361,7 @@ function handleRequest(req, res) {
       status: 'paused', stage: STAGE.translate, progress: 86,
       translated: false, needTranslate: true, pendingTranslate: pendingN, retryable: true,
       lines: segs.length, words: info.totalWords,
-      message: `翻译完成 ${doneN}/${lines.length} 行，还有 ${pendingN} 行未完成 —— 点「重试」续翻`,
+      message: `翻译完成 ${doneN}/${lines.length} 行，还有 ${pendingN} 行没翻。点「重试」接着翻`,
     });
   }
 
@@ -2384,7 +2384,7 @@ function handleRequest(req, res) {
     const wavOk = fs.existsSync(path.join(projDir(id), 'audio.wav'));
     // 先做校验再计数：配置不全、点了也不会真正跑的情况，不该消耗重试次数
     if (hasAsr && !llmReady(translateCfg())) {
-      return { error: '翻译未配置：请先在右上角「设置」里填写接口地址 / API Key / 模型名' };
+      return { error: '还没配置翻译：在右上角「设置」里填接口地址、API Key 和模型名' };
     }
     draftJobs.delete(id);
     pendingAsr.delete(id);
@@ -2596,7 +2596,7 @@ function handleRequest(req, res) {
             else warning = '翻译行数不一致，已跳过译文';
           } catch (e) { warning = '翻译失败：' + String((e && e.message) || e); }
         } else {
-          warning = 'API Key 为空，未翻译 —— 点右上角「⚙ 设置」填写后可对其它区间使用';
+          warning = 'API Key 为空，本次没翻。点右上角「设置」填好之后，其它区间就能用';
         }
 
         setRr({ status: 'done', stage: '完毕', progress: 100, segments: segs, warning,
@@ -2611,7 +2611,7 @@ function handleRequest(req, res) {
 
   async function startTranslate(id) {
     const cfg = translateCfg();
-    if (!llmReady(cfg)) return finishDraft(id, new Error('翻译未配置：请先在主界面右上角「设置」里填写接口地址 / API Key / 模型名'));
+    if (!llmReady(cfg)) return finishDraft(id, new Error('还没配置翻译：在主界面右上角「设置」里填接口地址、API Key 和模型名'));
     if (draftJobs.has(id)) return;
 
     let segs;
@@ -2766,10 +2766,10 @@ function handleRequest(req, res) {
     const want = wantId ? modelById(wantId) : null;
     // 硬拦: 只能重新识别的模型(如 multitalker)不许拿来创建初稿
     if (want && !draftAllowedOf(want)) {
-      return finishDraft(id, new Error('「' + want.name + '」只能用于「重新识别」，不能创建初稿 —— 请在设置里为初稿选择其它模型'));
+      return finishDraft(id, new Error('「' + want.name + '」只能用于重新识别，不能创建初稿。到「设置 → 识别模型」给初稿换一个模型'));
     }
     const model = resolveDraftModel(meta0);
-    if (!model) return finishDraft(id, new Error('语音识别模型不可用：请先在设置里下载模型（或换一个已就绪的模型）'));
+    if (!model) return finishDraft(id, new Error('语音识别模型不可用，先到设置里下载，或换一个已经装好的模型'));
     // GPU 硬校验: ASR 必须跑在 GPU 上, 不做 CPU 兜底
     const gpuGate = asrGpuGateError(model);
     if (gpuGate) {
@@ -2849,7 +2849,7 @@ function handleRequest(req, res) {
         .then((used) => {
           draftAborts.delete(id);
           if (!used.segments.length) {
-            return finishDraft(id, new Error(`${used.name} 没有识别到语音 —— 音频可能是纯音乐/静音，或这一段确实没人说话`));
+            return finishDraft(id, new Error(`${used.name} 没有识别到语音。音频可能是纯音乐或静音，也可能这一段没人说话`));
           }
           try {
             fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: used.segments }));
@@ -2878,10 +2878,10 @@ function handleRequest(req, res) {
         pushDraftLog(id, `[${ts()}] [修复方法] ② 在程序目录 asr\\ 下执行: py -3.12 -m venv .venv`);
         pushDraftLog(id, `[${ts()}] [修复方法] ③ asr\\.venv\\Scripts\\pip.exe install -r requirements.txt`);
         draftJobs.delete(id);
-        return finishDraft(id, new Error('Python 环境不可用，无法语音识别 —— 到「设置 → 识别模型 → Python 环境」点「一键安装」即可自动装好（详见日志：' + pre.msg + '）'));
+        return finishDraft(id, new Error('语音识别需要 Python 环境。到「设置 → 识别模型 → Python 环境」点「安装」（详见日志：' + pre.msg + '）'));
       }
       pushDraftLog(id, `[${ts()}] Python: ${ASR_PY}${pre.msg ? '（' + pre.msg + '）' : ''}`);
-      pushDraftLog(id, `[${ts()}] [提示] Parakeet 推理设备: GPU·CUDA（已通过 GPU 校验; 若运行时报 CUDA 错误请重新一键安装）`);
+      pushDraftLog(id, `[${ts()}] [提示] Parakeet 推理设备：GPU·CUDA（已通过 GPU 校验；运行时报 CUDA 错误就重新安装一次）`);
 
       let lastErr = '', buf = '';
       const proc = spawn(ASR_PY,
@@ -3092,10 +3092,10 @@ function handleRequest(req, res) {
     return void (async () => {
       const pyOk = (() => { try { return fs.statSync(ASR_PY).isFile(); } catch { return false; } })();
       if (!pyOk) {
-        return sendJson(res, 400, { error: '还没有 Python 环境：请先在上方「Python 环境」点「一键安装」（NeMo 运行时是在它的基础上追加 PyTorch + NeMo）' });
+        return sendJson(res, 400, { error: '还没有 Python 环境。先在上面「Python 环境」点「安装」，NeMo 运行时是在它之上再加 PyTorch 和 NeMo' });
       }
       const gpu = await nvidiaGpu().catch(() => null);      // 探测带 5 分钟缓存, 没有缓存时现测一次
-      if (!gpu) return sendJson(res, 400, { error: 'NeMo 多说话人模型只能在 NVIDIA 显卡（N 卡）上推理，当前机器未检测到 NVIDIA 显卡 —— 不支持 CPU 推理，无法安装/使用' });
+      if (!gpu) return sendJson(res, 400, { error: 'NeMo 多说话人模型只能在 NVIDIA 显卡（N 卡）上跑，这台机器没检测到 NVIDIA 显卡，不支持 CPU，装不了也用不了' });
       if (dlState('nemo').running) return sendJson(res, 200, { started: true, already: true });
       startNemoInstall();
       return sendJson(res, 200, { started: true });
@@ -3115,7 +3115,7 @@ function handleRequest(req, res) {
       try { names = fs.readdirSync(p); } catch { return sendJson(res, 200, { ok: false, empty: false, reason: '无法读取目录内容' }); }
       const empty = names.length === 0;
       return sendJson(res, 200, { ok: empty, empty, count: names.length,
-        reason: empty ? '' : `目录不是空的（已有 ${names.length} 项），请选择一个空目录` });
+        reason: empty ? '' : `这个目录不是空的（已有 ${names.length} 项），换一个空目录` });
     });
   }
   /** 下载识别模型(带 modelId)或 whisper.cpp 运行时(kind='runtime')。
@@ -3147,15 +3147,15 @@ function handleRequest(req, res) {
       const model = modelById(modelId) || resolveAsrModel() || ASR_MODELS[0];
       if (!model) return sendJson(res, 400, { error: '未知模型' });
       // 云端模型没有文件可下(它的 dirName 是空串, 不拦的话会把模型根目录当成本模型目录"采纳")
-      if (model.cloud) return sendJson(res, 400, { error: '「' + model.name + '」是云端识别，不需要下载模型，直接用即可' });
+      if (model.cloud) return sendJson(res, 400, { error: '「' + model.name + '」是云端识别，不用下载模型，直接用' });
       // Parakeet 连下载都拦: 它只能 CUDA GPU 推理, 无 N 卡机器下了也用不了, 不浪费 661MB。
       // NeMo(multitalker) 同理, 而且还要额外的 PyTorch+NeMo 运行时 —— 没 N 卡别下 2.3GB。
       if (model.engine === 'sherpa-onnx' && asrProvider() !== 'cuda') {
-        return sendJson(res, 400, { error: 'Parakeet 模型需要 CUDA GPU（N 卡）才能使用，不支持 CPU —— 当前环境未启用 GPU·CUDA，请先在「Python 环境」完成一键安装（需 N 卡）后再下载' });
+        return sendJson(res, 400, { error: 'Parakeet 需要 CUDA GPU（N 卡），不支持 CPU。当前环境没启用 GPU·CUDA，先在「Python 环境」装好（需 N 卡）再下载' });
       }
       nvidiaGpu().catch(() => {});     // 后台探一次 N 卡(缓存 5 分钟), 下面按缓存值判断
       if (model.engine === 'nemo' && !nvidiaCache.name) {
-        return sendJson(res, 400, { error: '「' + model.name + '」只能给 N 卡（NVIDIA 显卡）用户使用 —— 当前机器未检测到 NVIDIA 显卡，该模型不支持 CPU 推理，不能下载' });
+        return sendJson(res, 400, { error: '「' + model.name + '」只支持 N 卡（NVIDIA 显卡）。这台机器没检测到 NVIDIA 显卡，该模型不支持 CPU，不能下载' });
       }
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
@@ -3250,7 +3250,7 @@ function handleRequest(req, res) {
       if (!m) return sendJson(res, 400, { error: '未知模型' });
       // 只能重新识别的模型不能当"创建初稿默认模型" —— 用「重新识别模型」下拉来选它
       if (!draftAllowedOf(m)) {
-        return sendJson(res, 400, { error: '「' + m.name + '」只能用于「重新识别」，不能创建初稿。若要重新识别时用它，请在上方「重新识别模型」里选择' });
+        return sendJson(res, 400, { error: '「' + m.name + '」只能用于重新识别，不能创建初稿。重新识别要用它，就在上面「重新识别模型」里选' });
       }
       setSelectedModel(m.id);
       return sendJson(res, 200, { selected: m.id });
@@ -3304,7 +3304,7 @@ function handleRequest(req, res) {
 
   if (pathname === '/api/translate/test' && req.method === 'POST') {
     const c = translateCfg();
-    if (!llmReady(c)) return sendJson(res, 400, { error: '请先填写接口地址 / API Key / 模型名' });
+    if (!llmReady(c)) return sendJson(res, 400, { error: '先填接口地址、API Key 和模型名' });
     llmChat(c, [{ role: 'user', content: '只回复一个单词：ok' }], { maxTokens: 512 })
       .then(r => sendJson(res, 200, { ok: true, reply: String(r.content).slice(0, 200) }))
       .catch(e => sendJson(res, 200, { ok: false, error: String((e && e.message) || e) }));
@@ -3313,7 +3313,7 @@ function handleRequest(req, res) {
   /* 单条翻译: 字幕列表/时间轴右键「重新翻译」—— 把一条英文行翻成中文行(前端自动回填) */
   if (pathname === '/api/translate/one' && req.method === 'POST') {
     const c = translateCfg();
-    if (!llmReady(c)) return sendJson(res, 400, { error: '翻译未配置：请先在设置里填写接口地址 / API Key / 模型名' });
+    if (!llmReady(c)) return sendJson(res, 400, { error: '还没配置翻译：先在设置里填接口地址、API Key 和模型名' });
     return readBody(req, res, 64 * 1024, (err, body) => {
       let text = '';
       try { text = String((JSON.parse(body.toString('utf8')) || {}).text || '').trim(); } catch {}
@@ -3437,15 +3437,15 @@ function handleRequest(req, res) {
 
       if (draftOn) {
         const m = (draftModelId && modelById(draftModelId)) || resolveAsrModel();
-        if (!m) return sendJson(res, 400, { error: '尚未配置语音识别模型：请先在设置里下载（Parakeet / Whisper large-v3-turbo 均可）' });
+        if (!m) return sendJson(res, 400, { error: '还没有语音识别模型，先到设置里下载（Parakeet 或 Whisper large-v3-turbo 都行）' });
         // 只能重新识别的模型(如 multitalker)一律不许创建初稿
         if (!draftAllowedOf(m)) {
-          return sendJson(res, 400, { error: '「' + m.name + '」只能用于「重新识别」，不能创建初稿 —— 请改选 Parakeet TDT 或 Whisper large-v3-turbo' });
+          return sendJson(res, 400, { error: '「' + m.name + '」只能用于重新识别，不能创建初稿。改选 Parakeet TDT 或 Whisper large-v3-turbo' });
         }
         const mdir = m.cloud ? '' : modelDirFor(m.id);
-        if (!m.cloud && missingModelFiles(mdir, m).length) return sendJson(res, 400, { error: `模型 ${m.name} 不完整: 请在设置里重新下载` });
-        if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return sendJson(res, 400, { error: 'whisper.cpp 运行时未就绪：请在设置里下载' });
-        if (wantSpeakers && !diarizeReady()) return sendJson(res, 400, { error: '说话人分离模型未就绪：请先在设置里下载（约 32MB）' });
+        if (!m.cloud && missingModelFiles(mdir, m).length) return sendJson(res, 400, { error: `模型 ${m.name} 不完整，到设置里重新下载` });
+        if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return sendJson(res, 400, { error: 'whisper.cpp 运行时没装好，到设置里下载' });
+        if (wantSpeakers && !diarizeReady()) return sendJson(res, 400, { error: '说话人分离模型没装好，先到设置里下载（约 32MB）' });
       } else {
         subName = String((data.subtitle && data.subtitle.name) || '');
         subText = String((data.subtitle && data.subtitle.text) || '');
@@ -3580,7 +3580,7 @@ function handleRequest(req, res) {
     // 手动触发翻译(自动翻译没勾选时点「翻译」按钮走这里)
     if (action === 'translate' && req.method === 'POST') {
       const cfg = translateCfg();
-      if (!llmReady(cfg)) return sendJson(res, 400, { error: '翻译未配置：请先在主界面右上角「设置」里填写接口地址 / API Key / 模型名' });
+      if (!llmReady(cfg)) return sendJson(res, 400, { error: '还没配置翻译：在主界面右上角「设置」里填接口地址、API Key 和模型名' });
       // 识别/提取还在跑时字幕文件还不存在 —— 此时允许**排队**，而不是报"没有字幕"
       const inFlight = draftJobs.has(id) || pendingAsr.has(id);
       if (!meta.subtitle && !inFlight) return sendJson(res, 400, { error: '该项目还没有初稿字幕' });
@@ -3652,7 +3652,7 @@ function handleRequest(req, res) {
     if (action === 'prepare' && req.method === 'POST') {
       if (!(meta.video && meta.video.path)) return sendJson(res, 400, { error: '项目还没有视频' });
       const v = metaView(meta);
-      if (!v.videoExists) return sendJson(res, 400, { error: '视频文件不存在，请先重新选择' });
+      if (!v.videoExists) return sendJson(res, 400, { error: '视频文件找不到了，重新选一个' });
       if (prepareJobs.has(id)) return sendJson(res, 409, { error: '音频正在提取中，请等它完成' });
       // body 可选: {mode:'raw'|'denoise', force:true}
       //   force=true → 编辑器「重新生成音频」: 按指定模式重抽 audio.wav 与波形(字幕不动)

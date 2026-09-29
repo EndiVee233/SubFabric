@@ -33,7 +33,7 @@
   <header id="toolbar">
     <div class="tb-group">
       <span class="app-logo" data-ico="film"><b>SubFabric</b></span>
-      <button class="btn" id="btn-home" data-ico="home" title="返回项目主界面（编辑内容会自动保存到项目）">项目</button>
+      <button class="btn" id="btn-home" data-ico="home" title="返回项目列表，编辑内容会自动保存">项目</button>
     </div>
     <div class="tb-group">
       <input type="file" id="file-video" accept="video/*,.mkv,.avi,.mov" hidden>
@@ -54,8 +54,8 @@
       <div id="stage-hint">
         <div class="hint-card">
           <div class="hint-icon" data-ico="film"></div>
-          <div>将 <b>视频文件</b> 与 <b>SRT / ASS 字幕</b> 拖入此处</div>
-          <div class="hint-sub">或到右侧「设置」页签里点「打开视频 / 打开字幕」，也可直接加载右侧示例</div>
+          <div>把 <b>视频文件</b> 和 <b>SRT / ASS 字幕</b> 拖到这里</div>
+          <div class="hint-sub">也可以去右侧「设置」里点「打开视频」或「打开字幕」</div>
         </div>
       </div>
     </div>
@@ -75,7 +75,7 @@
       <div class="panel-head">
         <div class="ph-title">
           <span class="ph-name" id="ph-name" title="">字幕总览</span>
-          <span class="badge" id="badge-format">未加载</span>
+          <span class="badge" id="badge-format">还没打开</span>
         </div>
         <div class="ph-search">
           <select id="sel-role-filter" class="select" title="按角色筛选字幕">
@@ -93,19 +93,19 @@
             <option value="first">仅中文</option>
             <option value="second">仅英文</option>
           </select>
-          <button class="btn btn-mini" id="btn-refresh-subs" title="按字幕列表的干净整句 + 词级时间(JSON) 重新生成动态字幕(逐词切片), 并重新应用到视频区。程序漏更新时手动兜底；只修真的不一致的行，不改动本来就同步的行">↻ 刷新字幕</button>
+          <button class="btn btn-mini" id="btn-refresh-subs" title="按字幕列表的整句和逐词时间重新生成动态字幕，并重新应用到视频区。程序漏更新时可以手动兜底，只修真的对不上的行">↻ 刷新字幕</button>
           <label class="switch switch-mini" title="自动滚动字幕列表到当前播放行">
             <input type="checkbox" id="cb-follow-toolbar" checked>
             <span class="switch-slider"></span>
           </label>
-          <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示坏行" disabled>⚠ <span id="bad-count">0</span></button>
+          <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示异常行" disabled>⚠ <span id="bad-count">0</span></button>
         </div>
       </div>
       <div id="cue-list">
         <div id="cue-spacer"></div>
       </div>
       <div id="list-actions">
-        <span class="la-hint">单击文字编辑 · 双击空白处跳转 · 点击别处自动保存</span>
+        <span class="la-hint">点文字就能编辑 · 双击空行跳转 · 点其他位置自动保存</span>
       </div>
     </div>
 
@@ -113,7 +113,7 @@
     <div id="tab-roles" class="tab-body">
       <div class="tab-head">
         <span class="tab-head-title">角色总览</span>
-        <span class="tab-head-sub">单击=设为播放头所在块说话人 · 右键=重命名/改色</span>
+        <span class="tab-head-sub">点一下=设为播放头所在块的角色 · 右键=重命名/改色</span>
       </div>
       <div id="role-list" class="role-list"></div>
     </div>
@@ -128,7 +128,7 @@
         <div class="set-group">
           <div class="set-group-head"><i class="set-dot" style="background:#ff7a45"></i><span class="set-group-title">时间轴</span></div>
           <div class="setting-row">
-            <span class="setting-name" title="单行: 所有字幕块都在同一条轨上, 时间重叠的块会互相压在一起(重叠那一小块看起来更深)。双行: 把重叠的字幕块自动分到下面第二条轨上, 每条轨内部的块互不重叠, 于是每个块都完整可见。刻度尺/播放头/胶片条是两条轨共用的">双行字幕轨</span>
+            <span class="setting-name" title="单行：所有字幕块都在一条轨上，时间重叠的块会互相压住。双行：重叠的块自动分到第二条轨，每个块都完整可见。刻度尺、播放头、胶片条两条轨共用">双行字幕轨</span>
             <label class="switch">
               <input type="checkbox" id="set-tracks">
               <span class="switch-slider"></span>
@@ -136,12 +136,12 @@
             <span class="setting-val" id="set-tracks-val">单行</span>
           </div>
           <div class="setting-row">
-            <span class="setting-name" title="时间轴(字幕块+波形)占屏幕的高度; 也可直接拖动视频与时间轴中间那根线">区域高度</span>
+            <span class="setting-name" title="时间轴占屏幕的高度。也可以直接拖视频和时间轴中间那条线">区域高度</span>
             <input type="range" id="set-tlh" class="range" min="96" max="600" step="1" value="232">
             <span class="setting-val" id="set-tlh-val">232 px</span>
           </div>
           <div class="setting-row">
-            <span class="setting-name" title="滚动一格, 时间轴平移多少像素(越大滚得越远)">平移灵敏度</span>
+            <span class="setting-name" title="滚一格，时间轴移动多少像素（越大滚得越远）">平移灵敏度</span>
             <input type="range" id="set-pan" class="range" min="40" max="480" step="20" value="120">
             <span class="setting-val" id="set-pan-val">120 px</span>
           </div>
@@ -173,7 +173,7 @@
         <div class="set-group">
           <div class="set-group-head"><i class="set-dot" style="background:#8b7cf6"></i><span class="set-group-title">角色</span></div>
           <div class="setting-row">
-            <span class="setting-name" title="启用: 坏行会标「未标注角色」，右侧有「角色」页与角色筛选。禁用: 不再标未标注角色、隐藏角色页与筛选（字幕里已有的 [角色] 标签保留不动）">启用角色标注</span>
+            <span class="setting-name" title="开：角色空着的行标「未标注角色」，右侧显示「角色」页和角色筛选。关：不再标，这两处也一起隐藏。字幕里已有的 [角色] 标签保留">启用角色标注</span>
             <label class="switch">
               <input type="checkbox" id="set-role" checked>
               <span class="switch-slider"></span>
@@ -185,22 +185,22 @@
         <div class="set-group">
           <div class="set-group-head"><i class="set-dot" style="background:#7eb6ff"></i><span class="set-group-title">导入与音频</span></div>
           <div class="setting-row">
-            <span class="setting-name" title="导入视频文件 (mp4 / webm / mkv …)">视频文件</span>
+            <span class="setting-name" title="打开视频文件 (mp4 / webm / mkv …)">视频文件</span>
             <button class="btn btn-mini" id="btn-open-video" data-ico="folder">打开视频</button>
           </div>
           <div class="setting-row">
-            <span class="setting-name" title="导入 SRT / ASS 字幕文件">字幕文件</span>
+            <span class="setting-name" title="打开 SRT / ASS 字幕文件">字幕文件</span>
             <button class="btn btn-mini" id="btn-open-sub" data-ico="file">打开字幕</button>
           </div>
           <div class="setting-row" id="set-audio-mode-row" hidden>
-            <span class="setting-name" title="音频源（播放用哪条音轨，切换立即生效）：降噪后=播放项目里降噪过的音轨；原视频=直接播视频自带原声。识别与波形用哪一版由下方「重新生成音频」决定">音频源（播放）</span>
+            <span class="setting-name" title="播放用哪条音轨，切换立即生效。降噪后=项目里降噪过的音轨；原视频=视频自带原声。识别和波形用哪一版，由下面「重新生成音频」决定">音频源（播放）</span>
             <select class="btn btn-mini" id="audio-mode">
-              <option value="denoise">音频: 降噪后</option>
-              <option value="raw">音频: 原视频</option>
+              <option value="denoise">音频：降噪后</option>
+              <option value="raw">音频：原视频</option>
             </select>
           </div>
           <div class="setting-row" id="set-regen-audio-row" hidden>
-            <span class="setting-name" title="按当前选的音频源从视频重新提取 audio.wav 与波形（识别与波形用这一版；字幕内容不动，想更新字幕用「重新识别」）">重新生成音频</span>
+            <span class="setting-name" title="按当前音频源从视频重新提取 audio.wav 和波形，识别与波形都用这一版。字幕内容不动，要更新字幕用「重新识别」">重新生成音频</span>
             <button class="btn btn-mini" id="btn-regen-audio" data-ico="refresh">重新生成音频</button>
           </div>
         </div>
@@ -214,12 +214,12 @@
           </div>
           <div class="theme-preview">
             <span class="tp-chip">主题色</span>
-            <span class="gl-hint" style="flex:1">只改界面强调色（按钮 / 高亮 / 选中 / 进度条），不影响字幕颜色与角色色。设置自动保存在本机浏览器。</span>
+            <span class="gl-hint" style="flex:1">只改界面强调色，不影响字幕颜色和角色色。设置存在本机浏览器里。</span>
           </div>
         </div>
 
         <div class="set-group">
-          <div class="set-group-head"><i class="set-dot" style="background:#ffd54a"></i><span class="set-group-title">导出</span><span class="set-group-note">F8 · 词级 JSON</span></div>
+          <div class="set-group-head"><i class="set-dot" style="background:#ffd54a"></i><span class="set-group-title">导出</span><span class="set-group-note">F8 · 逐词 JSON</span></div>
           <div class="export-grid">
             <button class="btn btn-mini" id="btn-export-zh" disabled title="导出仅中文 ASS(去掉英文行)">导出仅中文</button>
             <button class="btn btn-mini" id="btn-export-en" disabled title="导出仅英文 ASS(去掉中文行)">导出仅英文</button>
@@ -228,7 +228,7 @@
           </div>
         </div>
 
-        <div class="setting-note">设置自动保存在本机浏览器。</div>
+        <div class="setting-note">设置存在本机浏览器里。</div>
       </div>
     </div>
 
@@ -249,7 +249,7 @@
       <div id="f8-section" class="f8-section" hidden>
         <div class="f8-group">
           <span class="f8-label">导出</span>
-          <button class="btn" id="btn-export-json" disabled title="导出词级时间轴 JSON 映射">导出词级 JSON</button>
+          <button class="btn" id="btn-export-json" disabled title="导出逐词时间轴 JSON">导出逐词 JSON</button>
         </div>
         <div class="setting-note">按 <b>F8</b> 可隐藏/显示本区域。</div>
       </div>
@@ -263,7 +263,7 @@
         <span class="tl-sep">/</span>
         <span id="tl-duration">00:00:00.000</span>
       </div>
-      <div class="tl-group tl-hint">滚轮=平移(下滑=往前/上滑=往后) · Ctrl+滚轮=缩放 · 单击=跳转 · Ctrl+拖动=框选批量 · 拖动块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=删除</div>
+      <div class="tl-group tl-hint">滚轮=平移 · Ctrl+滚轮=缩放 · 点一下=跳转 · Ctrl+拖动=框选 · 拖块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=修复/翻译/删除</div>
     </div>
     <div id="tl-canvas-wrap">
       <canvas id="timeline"></canvas>
@@ -275,7 +275,7 @@
       <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消) -->
       <div id="range-bar" hidden>
         <span class="rb-count" id="rb-count">已选 0 条</span>
-        <button type="button" class="rb-btn" id="rb-rerecog" data-ico="mic" title="删除选区内字幕块，用已保存的音频重新识别并翻译">重新识别</button>
+        <button type="button" class="rb-btn" id="rb-rerecog" data-ico="mic" title="用项目里保存的音频重新识别并翻译这段区间，选区内现有字幕会被替换">重新识别</button>
         <button type="button" class="rb-btn danger" id="rb-delete" data-ico="trash">批量删除</button>
       </div>
     </div>
@@ -320,7 +320,7 @@
             <input type="text" id="fr-repl" class="fr-input" placeholder="替换为">
           </div>
         </div>
-        <div class="fr-hint">输入要查找的正文后，可先选择替换范围（全部 / 中文 / 英文），再逐条跳转或执行批量替换。</div>
+        <div class="fr-hint">范围决定只查中文行、只查英文行，还是都查；然后逐条跳转或一次全换。</div>
       </div>
       <div id="fr-pane-role" hidden>
         <div class="fr-grid">
@@ -341,7 +341,7 @@
             </div>
           </div>
         </div>
-        <div class="fr-hint">源角色和目标角色都支持输入或下拉候选。源角色必须确认一个已有角色后才能替换；目标角色可直接输入新名字，也可候选选中已有角色。</div>
+        <div class="fr-hint">两个框都能输入或从下拉里选。源角色必须选已有角色；目标角色可以直接输一个新名字。</div>
       </div>
       <div class="fr-status" id="fr-status">输入正文关键词后开始查找</div>
       <div class="fr-actions">
@@ -380,7 +380,7 @@
 <!-- 通用确认弹窗(如"删除项目") -->
 <div id="confirm-overlay" hidden>
   <div class="rn-box">
-    <div class="rn-title" id="confirm-title">请确认</div>
+    <div class="rn-title" id="confirm-title">确认</div>
     <div class="rn-msg" id="confirm-msg"></div>
     <div class="rn-actions">
       <button type="button" class="btn" id="confirm-no">取消</button>
@@ -406,7 +406,7 @@
 <!-- 多条重叠台词 → 选择要设置角色的行 -->
 <div id="pick-overlay" hidden>
   <div class="pick-box">
-    <div class="pick-title" id="pick-title">检测到多条重叠的台词，请选择要设置角色的行：</div>
+    <div class="pick-title" id="pick-title">这里重叠了好几条字幕，选一条设置角色：</div>
     <div class="pick-list" id="pick-list"></div>
     <div class="pick-actions"><button type="button" class="btn" id="pick-cancel">取消</button></div>
   </div>
@@ -418,12 +418,12 @@
     <div class="rn-title" id="fix-title">修复字幕</div>
     <div class="fix-list" id="fix-list"></div>
     <div class="fix-input-wrap" id="fix-input-wrap" hidden>
-      <label class="fix-input-label">请确认这句英文原句（缺词将按此重建逐词）：</label>
+      <label class="fix-input-label">确认这句英文（会按它重建逐词）：</label>
       <textarea id="fix-input" class="fix-input" rows="2" spellcheck="false"></textarea>
     </div>
     <div class="rn-actions">
       <button type="button" class="btn" id="fix-cancel">取消</button>
-      <button type="button" class="btn btn-accent" id="fix-ok">一键修复</button>
+      <button type="button" class="btn btn-accent" id="fix-ok">修复</button>
     </div>
   </div>
 </div>
@@ -434,13 +434,13 @@
     <header class="home-head">
       <div class="home-logo" data-ico="film"></div>
       <h1 class="home-title">SubFabric <span class="home-title-en" id="app-version"></span></h1>
-      <p class="home-sub">视频 + 双语字幕 + 逐词特效 · 项目化管理，随时接着上次的进度做</p>
+      <p class="home-sub">视频、双语字幕、逐词特效都放在一个项目里，下次打开接着做</p>
     </header>
 
     <div class="home-toolbar">
       <h2 class="home-list-title">我的项目</h2>
       <div class="home-toolbar-btns">
-        <button class="btn" id="btn-settings" data-ico="sliders" title="识别模型 / 字幕翻译设置">全局设置</button>
+        <button class="btn" id="btn-settings" data-ico="sliders" title="识别模型和字幕翻译的设置">全局设置</button>
         <button class="btn btn-accent" id="btn-new-project" data-ico="plus">新建项目</button>
       </div>
     </div>
@@ -449,7 +449,7 @@
     <div id="home-empty" class="home-empty" hidden>
       <div class="he-icon" data-ico="inbox"></div>
       <div class="he-name">还没有项目</div>
-      <div class="he-sub">点击右上角「＋ 新建项目」：选择视频与字幕文件，音频和波形会自动提取进项目，下次秒开</div>
+      <div class="he-sub">点右上角「新建项目」，选好视频和字幕。音频和波形会自动存进项目，下次打开直接用</div>
     </div>
   </div>
 
@@ -465,22 +465,22 @@
         <button type="button" class="np-mode active" id="np-mode-import" tabindex="-1">
           <span class="npm-icon" data-ico="file"></span>
           <span class="npm-name">导入已有字幕</span>
-          <span class="npm-desc">选择视频与 SRT / ASS 字幕，进入后自动提取音频、波形</span>
+          <span class="npm-desc">选好视频和字幕，建完项目自动提取音频和波形</span>
         </button>
         <button type="button" class="np-mode" id="np-mode-draft" tabindex="-1">
           <span class="npm-icon" data-ico="mic"></span>
           <span class="npm-name">创建初稿</span>
-          <span class="npm-desc">识别视频语音自动生成字幕（Parakeet 0.6B，英语）</span>
+          <span class="npm-desc">识别视频里的语音，自动生成字幕（仅英语，模型在下面选）</span>
         </button>
       </div>
       <div class="np-file-row">
         <span class="np-lbl">视频</span>
-        <span class="np-file" id="np-video-name">未选择</span>
+        <span class="np-file" id="np-video-name">还没选</span>
         <button type="button" class="btn btn-mini" id="np-pick-video">浏览…</button>
       </div>
       <div class="np-file-row" id="np-row-sub">
         <span class="np-lbl">字幕</span>
-        <span class="np-file" id="np-sub-name">未选择</span>
+        <span class="np-file" id="np-sub-name">还没选</span>
         <button type="button" class="btn btn-mini" id="np-pick-sub">浏览…</button>
       </div>
       <div class="np-file-row np-draft-only" id="np-row-word" hidden>
@@ -506,7 +506,7 @@
         </div>
         <div class="np-dl-msg" id="np-dl-msg" hidden></div>
       </div>
-      <div class="np-hint" id="np-hint">创建时会自动提取音频与波形存入项目（下次打开免生成）；字幕在编辑过程中实时保存</div>
+      <div class="np-hint" id="np-hint">音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存</div>
       <div class="np-actions">
         <button type="button" class="btn" id="np-cancel">取消</button>
         <button type="button" class="btn btn-accent" id="np-create" disabled>创建项目</button>
@@ -566,7 +566,7 @@
               placeholder="留空 = 程序目录\asr\models（改完点别处即保存）">
             <button type="button" class="btn btn-mini" id="st-model-dir-open" title="在资源管理器中打开模型目录">打开目录</button>
           </div>
-          <p class="gl-hint">识别模型与说话人模型都下到这里；各模型可同时下载互不阻塞。已有模型不会被移动，重新下载时才会用新位置。</p>
+          <p class="gl-hint">识别模型和说话人模型都下到这里，可以同时下载。已有模型不会被移动，重新下载时才会用新位置。</p>
         </div>
       </div>
 
@@ -585,7 +585,7 @@
             <span class="st-lbl">每批行数</span>
             <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="25" style="max-width:120px">
           </div>
-          <p class="gl-hint">每批行数 = 一次请求最多带几行给 LLM（5~100）。批越大请求越少，但"译文行数必须与输入行数一致"这条要求越容易整批返工；批越小越稳、但请求更多。失败时程序会自动拆半重试。</p>
+          <p class="gl-hint">一次请求最多带多少行给翻译模型（5~100）。批越大请求越少，但译文行数一旦和输入对不上，整批都要重来；批越小越稳，请求也越多。失败时程序会自动拆成两半重试。</p>
         </div>
         <div class="st-card">
           <div class="st-card-title">翻译提示词</div>
@@ -611,7 +611,7 @@
           <div class="st-card-title">热词 <span class="st-card-note">一格一个单词 · ＋ 添加 · − 删除</span></div>
           <div id="ah-terms-list" class="hotword-list"></div>
           <button type="button" class="btn btn-mini" id="ah-add">＋ 添加热词</button>
-          <p class="gl-hint">whisper 用作初始提示词（实测直接修正人名拼写）；Parakeet 用作热词加权。术语表的「原文」列会自动并入，不用重复填。</p>
+          <p class="gl-hint">whisper 用作初始提示词，Parakeet 用作热词加权。术语表的「原文」列会自动并进来。</p>
         </div>
         <div class="st-card">
           <div class="st-card-title">热词强度 <span class="st-card-note">仅 Parakeet</span></div>

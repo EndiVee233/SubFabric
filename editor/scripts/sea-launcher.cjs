@@ -71,7 +71,7 @@ function openBrowser(url) {
 
   const serverPath = path.join(exeDir, 'editor', 'server.js');
   if (!fs.existsSync(serverPath)) {
-    console.error('[SubFabric] 未找到 editor/server.js —— 请把 SubFabric.exe 放在解压后的目录根下再双击。');
+    console.error('[SubFabric] 未找到 editor/server.js。把 SubFabric.exe 放在解压后的目录根下再双击。');
     setTimeout(() => process.exit(1), 4000);
     return;
   }

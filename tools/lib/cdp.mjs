@@ -39,6 +39,7 @@ export async function launch({ url, port = 9333, width = 1600, height = 1000 }) 
   const pending = new Map();
   const logs = [];
   const net = [];
+  const reqUrls = new Map();     // requestId → url（loadingFailed 只给 requestId）
   const send = (method, params = {}) => new Promise((res, rej) => {
     const mid = ++id;
     pending.set(mid, { res, rej });
@@ -59,10 +60,17 @@ export async function launch({ url, port = 9333, width = 1600, height = 1000 }) 
       logs.push('[log.' + m.params.entry.level + '] ' + m.params.entry.text);
     } else if (m.method === 'Network.requestWillBeSent') {
       net.push({ phase: 'req', method: m.params.request.method, url: m.params.request.url });
+      reqUrls.set(m.params.requestId, m.params.request.url);      // 记下 requestId → url，失败时才能报真 URL
     } else if (m.method === 'Network.responseReceived') {
       net.push({ phase: 'res', status: m.params.response.status, url: m.params.response.url });
     } else if (m.method === 'Network.loadingFailed') {
-      net.push({ phase: 'fail', err: m.params.errorText, url: m.params.requestId });
+      // 注意：loadingFailed 带的是 requestId 而不是 url（曾经直接把它当 url 打出来，
+      // 报告里出现 "FAIL 18448.194" 这种莫名其妙的数字 —— 那是 CDP 的内部 id）
+      net.push({
+        phase: 'fail',
+        err: m.params.errorText,
+        url: reqUrls.get(m.params.requestId) || ('requestId:' + m.params.requestId),
+      });
     }
   });
   await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });

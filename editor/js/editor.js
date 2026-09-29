@@ -234,8 +234,8 @@ export class EditorPanel {
     this.badCountEl.textContent = String(n);
     this.badBtn.disabled = n === 0;
     this.badBtn.title = n
-      ? `发现 ${n} 条坏行(${hint || '字幕重叠'}), 点击只显示这些行`
-      : '没有坏行';
+      ? `发现 ${n} 条异常行（${hint || '字幕重叠'}），点一下只看这些行`
+      : '没有异常行';
     if (n === 0 && this._badOnly) {
       this._badOnly = false;
       this.badBtn.classList.remove('active');
@@ -327,7 +327,7 @@ export class EditorPanel {
     const cards = this._roles.map(r => {
       const c = r.color ? hexRgb(r.color) : null;
       const dot = c ? `style="background:rgb(${c.r},${c.g},${c.b})"` : 'style="background:#5b6472"';
-      return `<div class="role-card" data-name="${escapeHtml(r.name)}" title="单击=设为播放头所在字幕块的说话人 · 右键=重命名 / 改色">
+      return `<div class="role-card" data-name="${escapeHtml(r.name)}" title="点一下=设为播放头所在块的角色 · 右键=重命名 / 改色">
         <span class="role-dot" ${dot}></span>
         <span class="role-name">${escapeHtml(r.name)}</span>
         <span class="role-count">${r.count} 条</span>
@@ -356,7 +356,7 @@ export class EditorPanel {
   showConfirm(title, msg, yesText, noText, onYes) {
     const ov = document.getElementById('confirm-overlay');
     if (!ov) return;
-    document.getElementById('confirm-title').textContent = t(title || '请确认');
+    document.getElementById('confirm-title').textContent = t(title || '确认');
     document.getElementById('confirm-msg').textContent = t(msg || '');
     const yesBtn = document.getElementById('confirm-yes');
     const noBtn = document.getElementById('confirm-no');
@@ -467,17 +467,17 @@ export class EditorPanel {
     const okBtn = document.getElementById('fix-ok');
     titleEl.textContent = `修复字幕 #${no}`;
     const labels = {
-      karaokeMissing: '没有逐词效果，且不与其他字幕重叠 → 将自动添加逐词（均匀铺满该句时长）',
-      overlapNoKaraoke: '该句与其它字幕重叠，重叠时不加逐词（避免两句话高亮糊在一起）',
-      roleName: '英文行含有角色名 [..]，将删除角色名并确保逐词颜色仍是绿色',
-      wordsMismatch: '英文行逐词与文本不一致（缺词或多词）',
-      enOverlap: '英文行内部有重叠/重复的字幕（同一段时间里有两条英文）',
-      spanMismatch: '中英起止不一致（英文逐词句的起止与中文行不等）→ 将按比例把逐词时间对齐到中文行'
+      karaokeMissing: '这句没有逐词效果，也不和其他字幕重叠，会自动补上逐词（均匀铺满整句时长）',
+      overlapNoKaraoke: '这句和其他字幕重叠，重叠时不加逐词，免得两句高亮糊在一起',
+      roleName: '英文行里带了角色名 [..]，会删掉它，并让逐词颜色保持绿色',
+      wordsMismatch: '英文行的逐词和文本对不上，缺词或多词',
+      enOverlap: '英文行内部有重叠或重复的字幕，同一段时间里有两条英文',
+      spanMismatch: '中英起止对不上，会按比例把英文逐词的时间对齐到中文行'
     };
     const keys = Object.keys(issues);
     listEl.innerHTML = keys.map(k => {
       let extra = '';
-      if (k === 'wordsMismatch') extra = `（当前 ${issues[k].have} 切片 / 文本 ${issues[k].need} 词）`;
+      if (k === 'wordsMismatch') extra = `（逐词 ${issues[k].have} 个 / 文本 ${issues[k].need} 词）`;
       return `<div class="fix-issue"><span class="fix-ico">🔧</span><span>${labels[k] || k}${extra}</span></div>`;
     }).join('');
     // 逐词与文本不一致 / 英文行重复 → 必须让用户确认这句话到底是什么
@@ -686,7 +686,7 @@ export class EditorPanel {
       }
 
       const chips = [];
-      if (it.bad) chips.push(`<span class="cc-chip chip-bad" title="坏行: ${escapeHtml(it.badReason || '')}">⚠ 坏行</span>`);
+      if (it.bad) chips.push(`<span class="cc-chip chip-bad" title="异常行：${escapeHtml(it.badReason || '')}">⚠ 异常行</span>`);
       if (it.badge1) chips.push(`<span class="cc-chip chip-l1"${chipAttr}>${escapeHtml(it.badge1)}</span>`);
       if (it.badge2 && showSecond) chips.push(`<span class="cc-chip chip-l2"${chipAttr}>${escapeHtml(it.badge2)}</span>`);
       const head = chips.length ? `<div class="cc-head">${chips.join('')}</div>` : '';

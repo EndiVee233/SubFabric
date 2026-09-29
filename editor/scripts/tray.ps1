@@ -130,7 +130,7 @@ function Stop-ServerProcess {
     $path = $null
     try { $path = $proc.Path } catch {}
     if ($Exe -and $path -and ($path -ne $Exe)) {
-      Write-TrayLog ("PID $ServerPid 现在是 $path, 不是启动时的 $Exe —— 放弃强杀")
+      Write-TrayLog ("PID $ServerPid 现在是 $path，不是启动时的 $Exe，放弃强杀")
       return
     }
     Stop-Process -Id $ServerPid -Force -ErrorAction Stop
@@ -168,7 +168,7 @@ function Invoke-Quit {
     Start-Sleep -Milliseconds 100
   }
   # ③ 还没释放 → 按 PID 强杀兜底
-  if (-not $freed) { Write-TrayLog '端口仍未释放, 走强杀兜底'; Stop-ServerProcess }
+  if (-not $freed) { Write-TrayLog '端口仍未释放，走强杀兜底'; Stop-ServerProcess }
   Close-Tray
 }
 
@@ -204,7 +204,7 @@ function Initialize-Tray {
     if (Test-PortOpen) { $script:misses = 0; return }
     $script:misses = $script:misses + 1
     if ($script:misses -ge 2) {           # 连续 3 秒连不上 = 服务确实没了
-      Write-TrayLog '服务已不在, 托盘图标自行退出'
+      Write-TrayLog '服务已退出，托盘图标关闭'
       Close-Tray
     }
   })
