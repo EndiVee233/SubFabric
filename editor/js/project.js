@@ -303,7 +303,7 @@ export function initProjects(ctx) {
     let cardIdx = 0;
     for (const p of ps) {
       const card = document.createElement('div');
-      card.className = 'proj-card' + (p.videoExists ? '' : ' proj-missing');
+      card.className = 'proj-card' + (p.videoExists || p.fetching ? '' : ' proj-missing');
       // 入场错峰: CSS 用 --i 算 animation-delay（上限 12 档, 项目多了也不会等太久）
       card.style.setProperty('--i', String(Math.min(cardIdx++, 12)));
       const st = p.prepare && ST[p.prepare.status];
@@ -355,12 +355,12 @@ export function initProjects(ctx) {
       const fmt = p.format;
       const badge = fmt === 'srt' ? 'SRT' : (fmt === 'ass' ? 'ASS' : (dr ? '初稿' : 'ASS'));
       const locked = !!dr && !hasSub;           // 还没有字幕文件时进去也没内容可读（失败在识别阶段就是这种）
-      const missingTag = p.videoExists ? '' : ` <span class="pc-missing">${ico('alert')}找不到这个视频</span>`;
+      const missingTag = (p.videoExists || p.fetching) ? '' : ` <span class="pc-missing">${ico('alert')}找不到这个视频</span>`;
       card.innerHTML = `
         <span class="pc-badge ${fmt === 'srt' ? 'srt' : ''}">${badge}</span>
         <div class="pc-main">
           <div class="pc-name">${esc(p.name)}${missingTag}${stChip}</div>
-          <div class="pc-meta">${esc(p.video && p.video.name || '无视频')} · ${esc(p.subName || (dr ? '初稿处理中…' : '还没字幕'))} · 修改于 ${fmtDate(p.modifiedAt)}</div>
+          <div class="pc-meta">${esc(p.fetching ? '正在下载…' : (p.video && p.video.name || '无视频'))} · ${esc(p.subName || (dr ? '初稿处理中…' : '还没字幕'))} · 修改于 ${fmtDate(p.modifiedAt)}</div>
           ${draftBar}
         </div>
         <div class="pc-actions">
@@ -644,6 +644,7 @@ export function initProjects(ctx) {
 
   async function openSettings() {
     stOverlay.hidden = false;
+    loadFetchSettings();
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
@@ -909,6 +910,42 @@ export function initProjects(ctx) {
   }
   function closeSettings() { stOverlay.hidden = true; }
   $('#btn-settings').addEventListener('click', openSettings);
+
+  /* ── 下载与登录（设置 → 下载与登录） ── */
+  async function loadFetchSettings() {
+    try {
+      const d = await (await fetch('/api/fetch/settings', { signal: AbortSignal.timeout(8000) })).json();
+      if ($('#st-fetch-quality')) $('#st-fetch-quality').value = d.quality || 'best';
+      if ($('#st-fetch-proxy')) $('#st-fetch-proxy').value = d.proxy || '';
+      if ($('#st-fetch-browser')) $('#st-fetch-browser').value = d.cookiesFromBrowser || '';
+      const note = $('#st-fetch-cookie-note');
+      if (note) {
+        note.textContent = d.hasBiliCookie
+          ? '已保存（' + (d.biliCookieKeys || []).join('、') + '）' + (d.biliCookieSavedAt ? ' · ' + String(d.biliCookieSavedAt).slice(0, 16).replace('T', ' ') : '')
+          : (d.ready ? '未设置（只能下到免登录画质）' : '⚠ 下载内核不可用：需要一个 Python 3.8+');
+      }
+    } catch {}
+  }
+  async function saveFetchSettings(patch) {
+    try {
+      await fetch('/api/fetch/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      loadFetchSettings();
+    } catch (e) { toast('保存失败: ' + e.message, 3600); }
+  }
+  for (const pair of [['st-fetch-quality', 'quality'], ['st-fetch-proxy', 'proxy'], ['st-fetch-browser', 'cookiesFromBrowser']]) {
+    const el = document.getElementById(pair[0]);
+    if (el) el.addEventListener('change', () => saveFetchSettings({ [pair[1]]: el.value }));
+  }
+  const cookieSaveBtn = document.getElementById('st-fetch-cookie-save');
+  if (cookieSaveBtn) cookieSaveBtn.addEventListener('click', () => {
+    const v = (document.getElementById('st-fetch-cookie').value || '').trim();
+    if (!v) { toast('先把浏览器里的 Cookie 粘进来（至少要有 SESSDATA）', 4200); return; }
+    saveFetchSettings({ biliCookie: v });
+    document.getElementById('st-fetch-cookie').value = '';
+    toast('已保存 bilibili Cookie', 3000);
+  });
+  const cookieClearBtn = document.getElementById('st-fetch-cookie-clear');
+  if (cookieClearBtn) cookieClearBtn.addEventListener('click', () => { saveFetchSettings({ biliCookie: '' }); toast('已清除 bilibili Cookie', 3000); });
   // 编辑器工具栏也有一个设置入口(同一套面板)
   const edSettingsBtn = document.getElementById('btn-settings-ed');
   if (edSettingsBtn) edSettingsBtn.addEventListener('click', openSettings);
@@ -1089,6 +1126,7 @@ export function initProjects(ctx) {
     $('#np-mode-draft').classList.toggle('active', mode === 'draft');
     const draft = mode === 'draft';
     $('#np-row-sub').hidden = draft;
+  $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
     $('#np-row-word').hidden = !draft;
     $('#np-row-spk').hidden = !draft;
     $('#np-model').hidden = !draft;
@@ -1097,6 +1135,10 @@ export function initProjects(ctx) {
       : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
     $('#np-create').textContent = draft ? '开始识别' : '创建项目';
     if (draft) refreshAsrStatus();
+  if (draft) {
+    const u = $('#np-url');
+    if (u && !u.dataset.bound) { u.dataset.bound = '1'; u.addEventListener('input', npMaybeEnable); u.addEventListener('change', npMaybeEnable); }
+  }
     npMaybeEnable();
   }
 
@@ -1127,6 +1169,8 @@ export function initProjects(ctx) {
     npSub.name = npSub.text = '';
     npVideoFile = null;
     $('#np-name').value = '';
+  const npUrlEl = $('#np-url');
+  if (npUrlEl) npUrlEl.value = '';
     $('#np-video-name').textContent = '还没选';
     $('#np-video-name').classList.remove('filled');
     $('#np-sub-name').textContent = '还没选';
@@ -1136,7 +1180,9 @@ export function initProjects(ctx) {
     npSyncSpeakers();       // 逐词默认开 → 说话人可勾; 切到 SRT 时自动取消并禁用
   }
   function npMaybeEnable() {
-    if (!npVideo.path) { $('#np-create').disabled = true; return; }
+    const npUrlNow = (($('#np-url') || {}).value || '').trim();
+    const hasSource = !!npVideo.path || (npMode === 'draft' && !!npUrlNow);
+    if (!hasSource) { $('#np-create').disabled = true; return; }
     // 初稿模式不需要字幕文件, 但必须有可用的识别模型
     const hasModel = npMode !== 'draft' || !!($('#np-model-sel') && $('#np-model-sel').value);
     $('#np-create').disabled = (npMode === 'draft' ? !asrStatus.ready : !npSub.text) || !hasModel;
@@ -1246,6 +1292,36 @@ export function initProjects(ctx) {
   });
   $('#np-create').addEventListener('click', async () => {
     const isDraft = npMode === 'draft';
+    const npUrl = (($('#np-url') || {}).value || '').trim();
+    // ── 链接模式: 交给服务端下载 + 跑初稿（视频落在项目目录里） ──
+    if (isDraft && npUrl) {
+      const btn0 = $('#np-create');
+      btn0.disabled = true; btn0.textContent = '提交中…';
+      try {
+        const payload0 = {
+          name: $('#np-name').value.trim(),
+          draft: true,
+          wordLevel: !!$('#np-word').checked,
+          modelId: $('#np-model-sel') ? $('#np-model-sel').value : '',
+          speakers: !!($('#np-speakers') && $('#np-speakers').checked),
+          speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
+          fetch: { url: npUrl },
+        };
+        if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
+        const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
+        const m0 = await r0.json();
+        if (!r0.ok) { toast(m0.error || '创建失败', 4200); return; }
+        npOverlay.hidden = true;
+        renderList();
+        toast('开始下载了，不用等着；进度看项目列表', 5200);
+      } catch (e) {
+        toast('创建失败: ' + e.message, 3600);
+      } finally {
+        btn0.textContent = '开始识别';
+        npMaybeEnable();
+      }
+      return;
+    }
     const btn = $('#np-create');
     btn.disabled = true; btn.textContent = isDraft ? '提交中…' : '创建中…';
     try {

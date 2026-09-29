@@ -473,6 +473,10 @@
           <span class="npm-desc">识别视频里的语音，自动生成字幕（仅英语，模型在下面选）</span>
         </button>
       </div>
+      <div class="np-file-row" id="np-row-url">
+        <span class="np-lbl">链接</span>
+        <input type="text" id="np-url" class="np-input" spellcheck="false" placeholder="粘贴 bilibili / YouTube 链接，自动下载并生成初稿">
+      </div>
       <div class="np-file-row">
         <span class="np-lbl">视频</span>
         <span class="np-file" id="np-video-name">还没选</span>
@@ -549,6 +553,7 @@
       <button type="button" class="st-tab active" data-stp="models">识别模型</button>
       <button type="button" class="st-tab" data-stp="translate">字幕翻译</button>
       <button type="button" class="st-tab" data-stp="enhance">识别增强</button>
+      <button type="button" class="st-tab" data-stp="fetch">下载与登录</button>
     </div>
 
     <div class="st-body">
@@ -570,6 +575,54 @@
         </div>
       </div>
 
+      <div class="st-panel" data-stp="fetch">
+        <div class="st-card">
+          <div class="st-card-title">下载</div>
+          <div class="st-grid">
+            <span class="st-lbl">默认画质</span>
+            <select id="st-fetch-quality" class="select">
+              <option value="best">最高可用（有大会员 Cookie 时吃到 8K/HDR）</option>
+              <option value="2160">4K 及以下</option>
+              <option value="1080">1080P 及以下</option>
+              <option value="720">720P 及以下</option>
+              <option value="480">480P 及以下</option>
+              <option value="360">360P（最省流量）</option>
+              <option value="audio">仅音频</option>
+            </select>
+          </div>
+          <div class="st-grid">
+            <span class="st-lbl">代理</span>
+            <input type="text" id="st-fetch-proxy" class="st-input" spellcheck="false" placeholder="留空 = 不用代理（YouTube 一般需要，如 http://127.0.0.1:7890）">
+          </div>
+          <p class="gl-hint">只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。</p>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">bilibili 登录 <span class="st-card-note">有大会员 Cookie 才能下最高画质</span></div>
+          <div class="st-grid">
+            <span class="st-lbl">Cookie</span>
+            <textarea id="st-fetch-cookie" class="st-input" rows="3" spellcheck="false" placeholder="粘贴浏览器里的 Cookie：SESSDATA=…; bili_jct=…; DedeUserID=…"></textarea>
+          </div>
+          <div class="st-row">
+            <button type="button" class="btn btn-mini btn-accent" id="st-fetch-cookie-save">保存 Cookie</button>
+            <button type="button" class="btn btn-mini" id="st-fetch-cookie-clear">清除</button>
+            <span class="st-msg" id="st-fetch-cookie-note"></span>
+          </div>
+          <p class="gl-hint">Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。</p>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">YouTube 登录</div>
+          <div class="st-grid">
+            <span class="st-lbl">从浏览器读</span>
+            <select id="st-fetch-browser" class="select">
+              <option value="">（不用）</option>
+              <option value="chrome">Chrome</option>
+              <option value="edge">Edge</option>
+              <option value="firefox">Firefox</option>
+            </select>
+          </div>
+          <p class="gl-hint">需要先在该浏览器里登录 YouTube；程序用 yt-dlp 的 --cookies-from-browser 读取。</p>
+        </div>
+      </div>
       <div class="st-panel" data-stp="translate">
         <div class="st-card">
           <div class="st-card-title">连接</div>

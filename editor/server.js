@@ -1881,7 +1881,7 @@ function runFetchCli(id, args, onEvent) {
     let proc;
     const py = await resolveFetchPython();
     if (!py) {
-      return resolve({ error: '下载需要一个 Python 3.8 或更高版本（设置里可一键安装内置 Python，或装个 3.12）', done: null });
+      return resolve({ error: '下载需要一个 Python 3.8 或更高版本。到设置里安装内置 Python，或自己装一个 Python 3.12', done: null });
     }
     try {
       proc = childProcess.spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
@@ -3861,7 +3861,7 @@ function startPrepare(id, videoPath, mode) {
       if (fetchUrl) {
         const site = fetchSiteOf(fetchUrl);
         if (!site) return sendJson(res, 400, { error: '只支持 bilibili 与 YouTube 链接（其他站点暂不支持）' });
-        if (!fetchReady()) return sendJson(res, 400, { error: '下载内核不可用：需要一个可用的 Python（设置里可一键安装）' });
+        if (!fetchReady()) return sendJson(res, 400, { error: '下载内核不可用：需要一个 Python 3.8 或更高版本。到设置里安装内置 Python' });
         const mF = (String(data.modelId || '').trim() && modelById(String(data.modelId).trim())) || resolveAsrModel();
         if (!mF) return sendJson(res, 400, { error: '还没有语音识别模型，先到设置里下载（Parakeet 或 Whisper large-v3-turbo 都行）' });
         if (!draftAllowedOf(mF)) return sendJson(res, 400, { error: '「' + mF.name + '」只能用于重新识别，不能创建初稿' });

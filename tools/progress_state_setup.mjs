@@ -7,6 +7,17 @@ import { launch, sleep } from './lib/cdp.mjs';
 import { readFileSync, writeFileSync, readdirSync } from 'fs';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8356';
+
+/* 清理旧的进度探针夹具: 夹具项目会一直堆在首页, 也会干扰"同按钮数卡片轨道等宽"这类断言 */
+async function purgeOldFixtures() {
+  const ps = (await (await fetch(BASE + '/api/projects')).json()).projects || [];
+  for (const p of ps) {
+    if (/^进度探针/.test(p.name || '')) {
+      try { await fetch(BASE + '/api/projects/' + p.id, { method: 'DELETE' }); } catch {}
+    }
+  }
+}
+await purgeOldFixtures();
 const ROOT = process.env.REPO_DIR || 'D:/Vibe Coding/SubFabric';
 const PROJ = process.env.PROJ_DIR || (ROOT + '/projects');
 let pass = 0, fail = 0;
