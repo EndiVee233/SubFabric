@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -367,6 +367,7 @@ function setSrt(text, name) {
   panel.setBadge('SRT 双语', 'srt');
   panel.setFileName(name);
   panel.setRolesEnabled(false);   // SRT 没有角色(说话人)概念 → 禁用角色 Tab 与角色筛选
+  frSetRolesAvailable(false);     // 批量替换里的角色页签同样不可进入
   panel.setModeOptions([
     { v: 'bi', t: '双语双行' },
     { v: 'first', t: '仅主语言' },
@@ -800,12 +801,10 @@ panel.onAddRole = () => {
 
 /** 把事件文本行首可见的 [旧tag] 换成 tag(没有则补上); 不动 {\...} 覆盖标签 */
 function setEventSpeakerTag(ev, tag) {
-  const t = String(ev.text || '');
-  const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
-  let rest = t.slice(head.length);
-  const m = /^\s*\[[^\]]*\]/.exec(rest);
-  rest = m ? tag + rest.slice(m[0].length) : tag + rest;
-  state.assDoc.setEventText(ev, head + rest);
+  // 纯逻辑在 karaoke.js 的 setSpeakerTagInText: "替换"与"插入"两条分支都保证标签与正文之间一个空格。
+  // 以前插入分支直接拼 tag + 正文 → 初稿(没做说话人分离、没有角色名)后在编辑器里指定角色,
+  // 会得到 "[Spoke]正文"(用户报的 bug)。
+  state.assDoc.setEventText(ev, setSpeakerTagInText(ev.text || '', tag));
   return true;
 }
 
@@ -1087,9 +1086,19 @@ function frInit() {
   }, true);
 }
 
+/** 角色标注关闭时, "查找与批量替换"里的角色页签**不可进入**（用户要求）。 */
+function frSetRolesAvailable(on) {
+  const btn = fr.el['fr-tab-role'];
+  if (!btn) return;
+  btn.disabled = !on;
+  btn.title = on ? '' : t('已在设置里关闭「角色标注」，这个页签不可用');
+  if (!on && fr.tab === 'role') frSetTab('text');
+}
+
 function frOpen() {
   if (state.format !== 'ass' || !state.kar) { toast('查找与批量替换仅支持 ASS 字幕'); return; }
   fr.el['fr-overlay'].hidden = false;
+  frSetRolesAvailable(!!panel._rolesEnabled);
   frSetTab('text');
   setTimeout(() => fr.el['fr-find'].focus(), 0);
 }
@@ -1153,9 +1162,12 @@ function frScan() {
 
 function frScanRole() {
   const key = fr.srcRole.toLowerCase();
-  fr.matches = state.kar.rows
-    .filter(r => speakerNames(r.speaker).map(x => x.toLowerCase()).includes(key))
-    .map(r => ({ row: r, field: null }));
+  // 「未分配角色」是虚拟角色: 指代所有没有 [角色] 标签的行（不在角色列表里, 只在这个页签可选）
+  fr.matches = (key === UNASSIGNED_ROLE.toLowerCase())
+    ? state.kar.rows.filter(r => isUnassignedRole(r)).map(r => ({ row: r, field: null }))
+    : state.kar.rows
+      .filter(r => speakerNames(r.speaker).map(x => x.toLowerCase()).includes(key))
+      .map(r => ({ row: r, field: null }));
   fr.cur = -1;
   frStatus(t(`「${fr.srcRole}」共 ${fr.matches.length} 行，可逐条跳转或替换`), fr.matches.length > 0);
 }
@@ -1239,12 +1251,18 @@ function frToggleMenu(which) {
   const other = fr.el[which === 'src' ? 'fr-dst-menu' : 'fr-src-menu'];
   if (other) other.hidden = true;
   const roles = computeRoles();
-  menu.innerHTML = roles.length
+  // 虚拟角色「未分配角色」永远排在最前: 指代所有没有 [角色] 标签的行。
+  // 它**不进** computeRoles / 角色列表 / 角色筛选, 只在这里可选(用户要求"角色列表不显示")。
+  const unassigned = `<button type="button" class="fr-menu-item fr-menu-unassigned" data-name="${escapeHtml(t(UNASSIGNED_ROLE))}">
+        <span class="pick-dot" style="background:#5b6472"></span>
+        <span>${escapeHtml(t(UNASSIGNED_ROLE))}</span><span class="fr-menu-n">${unassignedCount()}</span>
+      </button>`;
+  menu.innerHTML = unassigned + (roles.length
     ? roles.map(r => `<button type="button" class="fr-menu-item" data-name="${escapeHtml(r.name)}">
         <span class="pick-dot" style="background:${r.color || '#5b6472'}"></span>
         <span>${escapeHtml(r.name)}</span><span class="fr-menu-n">${r.count}</span>
       </button>`).join('')
-    : '<div class="fr-menu-empty">（当前字幕里没有角色）</div>';
+    : '');
   menu.hidden = false;
   menu.querySelectorAll('.fr-menu-item').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1259,6 +1277,13 @@ function frToggleMenu(which) {
 function frConfirmSrc() {
   const name = fr.el['fr-src'].value.trim();
   if (!name) { fr.srcRole = ''; fr.matches = []; frStatus(t('输入或展开候选并确认一个源角色')); return; }
+  // 虚拟角色「未分配角色」不是真角色, 但要能当源角色用
+  if (name.toLowerCase() === t(UNASSIGNED_ROLE).toLowerCase()) {
+    fr.srcRole = t(UNASSIGNED_ROLE);
+    fr.el['fr-src'].value = fr.srcRole;
+    frScanRole();
+    return;
+  }
   const role = computeRoles().find(r => r.name.toLowerCase() === name.toLowerCase());
   if (!role) {
     fr.srcRole = ''; fr.matches = [];
@@ -1270,6 +1295,30 @@ function frConfirmSrc() {
   frScanRole();
 }
 
+/** 未分配角色 = 中文行没有 [角色] 标签的行数 */
+function unassignedCount() {
+  return state.kar ? state.kar.rows.filter(r => isUnassignedRole(r)).length : 0;
+}
+
+/** 把一行的角色标签去掉（"设为未分配角色"）：中文行去掉行首 [..]、Name 栏清空、speaker 字段清空。
+ *  颜色**不动**（颜色不是标签的一部分, 要不要改色是另一件事）。 */
+function clearRoleFromRow(row) {
+  for (const s of [row.zh, row.en]) {
+    if (!s) continue;
+    if (s.proto) s.proto.name = '';
+    s.speaker = '';
+    for (const ev of s.events) {
+      state.assDoc.setEventName(ev, '');
+      if (s === row.zh) {
+        const r = stripSpeakerTag(ev.text || '');
+        if (r.removed) state.assDoc.setEventText(ev, r.text);
+      }
+    }
+  }
+  if (row.zh) row.zh.text = assPlainText(row.zh.events[0].text);
+  row.speaker = '';
+}
+
 function frReplaceRole(all) {
   const dst = fr.el['fr-dst'].value.trim();
   if (!fr.srcRole) { toast('先确认一个源角色（输入后回车，或点 ▼ 选择）'); return; }
@@ -1277,19 +1326,22 @@ function frReplaceRole(all) {
   if (!fr.matches.length) frScanRole();
   if (!fr.matches.length) { toast(`「${fr.srcRole}」没有台词`); return; }
   if (!all && fr.cur < 0) fr.cur = 0;
+  // 目标是虚拟角色「未分配角色」→ 去掉角色标签（而不是写一个叫"未分配角色"的标签）
+  const toUnassigned = dst.toLowerCase() === t(UNASSIGNED_ROLE).toLowerCase();
   const targets = all ? fr.matches.map(m => m.row) : [fr.matches[fr.cur].row];
   let n = 0;
-  for (const row of targets) { applyRoleToRow(row, dst); n++; }
+  for (const row of targets) { if (toUnassigned) clearRoleFromRow(row); else applyRoleToRow(row, dst); n++; }
   frCommit();
   const srcGone = !computeRoles().some(r => r.name.toLowerCase() === fr.srcRole.toLowerCase());
+  const dstLabel = toUnassigned ? t(UNASSIGNED_ROLE) : dst;
   if (all) {
-    frStatus(t(`已把「${fr.srcRole}」的 ${n} 行替换为「${dst}」`), true);
-    toast(t(`已把「${fr.srcRole}」的 ${n} 行替换为「${dst}」`));
+    frStatus(t(`已把「${fr.srcRole}」的 ${n} 行替换为「${dstLabel}」`), true);
+    toast(t(`已把「${fr.srcRole}」的 ${n} 行替换为「${dstLabel}」`));
     fr.srcRole = ''; fr.matches = []; fr.cur = -1;
     if (srcGone) fr.el['fr-src'].value = '';
   } else {
     frScanRole();
-    toast(t(`已将 1 行替换为「${dst}」`));
+    toast(t(`已将 1 行替换为「${dstLabel}」`));
   }
 }
 frInit();
@@ -2754,6 +2806,7 @@ function applyRoleAnnot(rebuild) {
   if (setRoleVal) setRoleVal.textContent = on ? '开' : '关';
   // SRT 本来就没有角色概念；ASS 且禁用时把角色 Tab 与筛选一起藏掉
   panel.setRolesEnabled(state.format === 'ass' && on);
+  frSetRolesAvailable(state.format === 'ass' && on);   // 批量替换里的角色页签跟着开关
   if (rebuild) rebuildItemsAndLanes(true, true);              // 重建会重算坏行标记
 }
 if (setRole) setRole.addEventListener('change', () => {

@@ -757,3 +757,41 @@ export function mergeRowParts(prev, row) {
   }
   return { start, end, zhText, enText, enWords };
 }
+
+/** 在事件文本里**替换或插入**行首的 `[角色名]` 标签，并保证**标签与正文之间恒为一个空格**
+ *  （与 normalizeRoleGap 同一条规则；行首的 `{...}` 色标块原样保留在标签之前）。
+ *
+ *  用户报过的 bug：初稿（没做说话人分离 → 没有角色名标签）之后在编辑器里指定角色，
+ *  标签与正文会紧贴成 `[Spoke]正文` —— 因为只有"替换"分支保留了原文里已有的空格，
+ *  "插入"分支直接把标签拼在正文前面。这里两条分支都走 normalizeRoleGap。 */
+export function setSpeakerTagInText(text, tag) {
+  const t = String(text == null ? '' : text);
+  const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+  const rest = t.slice(head.length);
+  const m = /^\s*\[[^\]]*\]/.exec(rest);
+  const body = m ? rest.slice(m[0].length) : rest;
+  return head + normalizeRoleGap(String(tag) + (/^\s/.test(body) ? '' : ' ') + body);
+}
+
+/** 「未分配角色」—— “查找与批量替换”角色页签里的**虚拟角色**：指代所有**中文行没有 [角色] 标签**的行。
+ *  它不是真角色: 不出现在角色列表/角色筛选里, 只在该页签的两个候选框里可选。 */
+export const UNASSIGNED_ROLE = '未分配角色';
+
+/** 这一行是否"没有角色标签"（= 未分配角色）。以中文行行首**可见**的 [..] 为准, 与角色列表同口径。 */
+export function isUnassignedRole(row) {
+  if (!row) return true;
+  if (!row.zh) return true;
+  return !speakerTextTagOf(row.zh);
+}
+
+/** 去掉事件文本行首的 [角色名] 标签（"设为未分配角色"用）。
+ *  行首的 {..} 覆盖标签原样保留; 标签带的前后空白一起收掉, 免得留下 "{\c..&} 正文" 这种前导空格。
+ *  @returns {{ text: string, removed: boolean }} */
+export function stripSpeakerTag(text) {
+  const t = String(text == null ? '' : text);
+  const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+  const rest = t.slice(head.length);
+  const m = /^\s*\[[^\]]*\]/.exec(rest);
+  if (!m) return { text: t, removed: false };
+  return { text: head + rest.slice(m[0].length).replace(/^\s+/, ''), removed: true };
+}

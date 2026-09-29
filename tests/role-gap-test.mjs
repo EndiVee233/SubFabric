@@ -45,5 +45,19 @@ ok(N('{\\c&Hd000ff&}[wato]我') === '{\\c&Hd000ff&}[wato] 我', '前缀覆盖标
 ok(N('') === '' && N(null) === '' && N(undefined) === '', '空值安全');
 ok(N('没有标签的正文') === '没有标签的正文', '无标签原样');
 
+/* ── setSpeakerTagInText: 编辑器"指定角色"时写标签用的纯函数 ──
+ * 用户报过: 初稿(没做说话人分离 → 没有角色名标签)之后在编辑器里指定角色,
+ * 标签与正文紧贴成 "[Spoke]正文" —— 旧的插入分支直接拼 tag + 正文, 没走 normalizeRoleGap。 */
+const S = K.setSpeakerTagInText;
+ok(S('正文', '[Spoke]') === '[Spoke] 正文', '插入: 无标签的正文 → 补一个空格', S('正文', '[Spoke]'));
+ok(S('{\\c&Hffffff&}正文', '[Spoke]') === '{\\c&Hffffff&}[Spoke] 正文', '插入: 保留行首色标', S('{\\c&Hffffff&}正文', '[Spoke]'));
+ok(S('[旧] 正文', '[Spoke]') === '[Spoke] 正文', '替换: 已有标签（带空格）→ 换名后仍一个空格', S('[旧] 正文', '[Spoke]'));
+ok(S('[旧]正文', '[Spoke]') === '[Spoke] 正文', '替换: 旧标签本来就紧贴 → 顺手补上空格', S('[旧]正文', '[Spoke]'));
+ok(S('[Spoke] 正文', '[Spoke]') === '[Spoke] 正文', '已经是目标标签 → 原样', S('[Spoke] 正文', '[Spoke]'));
+ok(S('{\\c&Hd000ff&}[旧]  正文', '[Spoke]') === '{\\c&Hd000ff&}[Spoke] 正文', '替换: 多余空格收成一个', S('{\\c&Hd000ff&}[旧]  正文', '[Spoke]'));
+ok(S('正文 [旧] 尾巴', '[Spoke]') === '[Spoke] 正文 [旧] 尾巴', '正文中间的方括号不动', S('正文 [旧] 尾巴', '[Spoke]'));
+ok(S('', '[Spoke]') === '[Spoke]', '空正文 → 只有标签、不留尾随空格', JSON.stringify(S('', '[Spoke]')));
+ok(S('正文', '[wato1876]') === '[wato1876] 正文', '真实角色名同样补空格', S('正文', '[wato1876]'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
