@@ -1546,15 +1546,31 @@ function startPyEnvSetup() {
   })();
 }
 
+/** 跑 whisper.cpp: 先用默认后端（可能走 Vulkan）；崩了就自动用 CPU（-ng）重试一次。
+ *  为什么需要: 实测某些机器 Vulkan 设备装不下 large 模型（ggml_gallocr_reserve 失败 → 直接崩进程,
+ *  退出码是 0xC0000409 这类大数/负数）, 而 CPU 能正常出稿 —— 至少让用户拿到字幕, 而不是一片红。 */
+function runWhisperCpp(modelBin, wav, onProgress, opts) {
+  return runWhisperCppOnce(modelBin, wav, onProgress, opts, false).catch((e) => {
+    const msg = String((e && e.message) || e);
+    const crash = /Vulkan|failed to allocate|ggml_gallocr|out of memory|退出码\s*(-|\d{6,})/.test(msg);
+    if (!crash) throw e;
+    console.warn('[asr] whisper GPU 失败, 改用 CPU 重试:', msg.slice(0, 200));
+    if (opts && typeof opts.onFallback === 'function') { try { opts.onFallback(msg); } catch {} }
+    return runWhisperCppOnce(modelBin, wav, onProgress, opts, true);
+  });
+}
+
 /** whisper.cpp 引擎: 跑 whisper-cli, 词级时间戳用 -ml 1 -sow(每词一段)。
  *  返回 {segments:[{start,end,text,words:[{word,start,end}]}]} —— 与 asr.py 输出同构。 */
-function runWhisperCpp(modelBin, wav, onProgress, opts) {
+function runWhisperCppOnce(modelBin, wav, onProgress, opts, noGpu) {
   const exe = whisperCli();
   const outPrefix = wav + '.cpp';
   const cmd = [exe, '-m', modelBin, '-f', wav, '-oj', '-of', outPrefix, '-ml', '1', '-sow', '-t', '4', '-l', 'en'];
   // 识别提示词: 专有名词给解码器做上下文, 实测能显著修正人名/术语拼写(限长防复读幻觉)
   const wp = whisperPrompt(asrTerms().terms);
   if (wp) cmd.push('--prompt', wp);
+  // noGpu: 禁用 GPU（Vulkan 显存不够时的退路, 见下方 runWhisperCpp 的自动重试）
+  if (noGpu) cmd.push('-ng');
   return new Promise((resolve, reject) => {
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: WHISPER_RUNTIME.dir });
     if (opts && opts.register) { try { opts.register(p); } catch {} }
@@ -3790,6 +3806,28 @@ function startPrepare(id, videoPath, mode) {
     });
   }
   /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
+  /* LLM 分角色开关（asr/settings.json 的 cast.enabled; 默认开） */
+  if (pathname === '/api/cast/config' && req.method === 'GET') {
+    let on = true;
+    try { on = (readAsrSettings().cast || {}).enabled !== false; } catch {}
+    const c = translateCfg();
+    return sendJson(res, 200, { enabled: on, llmReady: llmReady(c), model: c.model || '', baseUrl: c.baseUrl || '' });
+  }
+  if (pathname === '/api/cast/config' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let d = null;
+      try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      try {
+        const st = readAsrSettings();
+        st.cast = Object.assign({}, st.cast || {}, { enabled: d.enabled !== false });
+        writeAsrSettings(st);
+      } catch (e) { return sendJson(res, 500, { error: '保存失败: ' + e.message }); }
+      let on = true;
+      try { on = (readAsrSettings().cast || {}).enabled !== false; } catch {}
+      return sendJson(res, 200, { enabled: on });
+    });
+  }
   if (pathname === '/api/asr/hint') {
     // GET 顺带返回实际会喂给引擎的词(用户填的 + 术语表原文列自动派生的), 便于核对
     if (req.method === 'GET') return sendJson(res, 200, Object.assign({ hint: asrHintCfg() }, asrTerms()));

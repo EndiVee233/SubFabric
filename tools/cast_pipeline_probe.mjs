@@ -1,0 +1,140 @@
+/* 功能 B 真机端到端探针（真下载 + 真识别 + 真分离 + 假 LLM 分角色）
+ *
+ * 做一次完整的下载初稿: bilibili 链接 → 下载 → whisper 识别 → 说话人分离 → LLM 分角色 → 写字幕。
+ * LLM 用本进程里的**假服务**(返回固定 JSON), 这样可以断言:
+ *   ① 阵容推断真的发生了, 并且拿它的人数当 SPK 数（用户填的是 6, 期望被改成 3）
+ *   ② 日志里能看到"说话人分离按 3 人" —— 即数量**真的传给了 diarize.py**
+ *   ③ SPK 台词样本真的喂给了第二个请求（假服务收到两次调用, 内容含标题与 SPK 样本）
+ *   ④ 字幕里出现**真实角色名**（[Rick Astley]）
+ *   ⑤ 没映射上的说话人保留编号（[SPK3]）
+ * 用完删项目 + 恢复翻译配置。
+ * 前置: 仓库里能跑起来识别与分离（模型/运行时由联接指到装机版, 见 asr/models、asr/whisper.cpp）。 */
+import http from 'http';
+import { existsSync, readFileSync } from 'fs';
+
+const BASE = process.env.BASE || 'http://127.0.0.1:8360';
+const PROJ = process.env.PROJ_DIR || 'D:/Vibe Coding/SubFabric/projects';
+const VIDEO = process.env.VIDEO_URL || 'https://www.bilibili.com/video/BV1GJ411x7h7';
+const LLM_PORT = Number(process.env.FAKE_LLM_PORT || 8791);
+const TIMEOUT_MIN = Number(process.env.CAST_TIMEOUT_MIN || 20);
+
+let pass = 0, fail = 0;
+const ok = (c, n, extra) => { if (c) { pass++; console.log('  ok  ' + n); } else { fail++; console.log('FAIL  ' + n + (extra !== undefined ? ' :: ' + JSON.stringify(extra) : '')); } };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const one = async (id) => await (await fetch(BASE + '/api/projects/' + id)).json();
+
+/* ── 假 LLM ── */
+const FAKE_CAST = { characters: [{ name: 'Rick Astley', aliases: ['Rick'] }, { name: '主唱' }, { name: '旁白' }] };
+const FAKE_MAP = { mapping: { SPK1: 'Rick Astley', SPK2: '主唱', SPK3: null } };
+const seen = [];
+const srv = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (c) => { body += c; });
+  req.on('end', () => {
+    let j = {};
+    try { j = JSON.parse(body); } catch {}
+    const msgs = j.messages || [];
+    const sys = String((msgs[0] && msgs[0].content) || '');
+    const usr = String((msgs[1] && msgs[1].content) || '');
+    seen.push({ sys: sys.slice(0, 50), usr: usr.slice(0, 400) });
+    const isCast = sys.includes('说话的角色');
+    const content = JSON.stringify(isCast ? FAKE_CAST : FAKE_MAP);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      id: 'fake-cast', object: 'chat.completion', model: 'fake-cast',
+      choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+    }));
+  });
+});
+await new Promise((r) => srv.listen(LLM_PORT, '127.0.0.1', r));
+console.log('假 LLM 已启动: http://127.0.0.1:' + LLM_PORT + '/v1');
+
+let id = '', orig = null;
+try {
+  /* 备份并改指翻译配置（分角色复用这份 LLM 配置） */
+  const c0 = await (await fetch(BASE + '/api/translate/config')).json();
+  orig = c0.cfg || {};
+  const set = await (await fetch(BASE + '/api/translate/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: 'custom', baseUrl: 'http://127.0.0.1:' + LLM_PORT + '/v1', apiKey: 'fake-key', model: 'fake-cast', autoTranslate: false }),
+  })).json();
+  ok(set && set.cfg && set.cfg.baseUrl.includes(String(LLM_PORT)), '翻译配置已临时指向假 LLM', set && set.cfg && set.cfg.baseUrl);
+
+  /* 建项目: 用户填 6 个说话人, 期望被 LLM 推断的 3 个覆盖 */
+  const body = JSON.stringify({
+    name: '', draft: true, wordLevel: true, speakers: true, speakerCount: 6,
+    fetch: { url: VIDEO, quality: process.env.QUALITY || '360' },
+  });
+  const r = await fetch(BASE + '/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+  const created = await r.json();
+  id = created.id || '';
+  ok(!!id, '建项目（下载初稿 + 说话人分离）', JSON.stringify(created).slice(0, 120));
+  if (!id) throw new Error('没创建出项目');
+
+  /* 等流水线跑完（下载 → 提取 → 识别 → 分离 → 分角色 → 写字幕 → 等翻译） */
+  const t0 = Date.now();
+  let last = '';
+  while (Date.now() - t0 < TIMEOUT_MIN * 60000) {
+    await sleep(4000);
+    const m = await one(id);
+    const d = m.draft || {};
+    const line = [d.status, d.stage, d.progress, d.message].join(' | ');
+    if (line !== last) { console.log('  [' + Math.round((Date.now() - t0) / 1000) + 's] ' + line); last = line; }
+    if (d.status && d.status !== 'running') break;
+  }
+  const meta = await one(id);
+  const d = meta.draft || {};
+  const log = (await (await fetch(BASE + '/api/projects/' + id + '/draft')).json()).log || '';
+  console.log('  最终:', JSON.stringify({ status: d.status, stage: d.stage, progress: d.progress, msg: d.message, err: d.error }).slice(0, 220));
+
+  /* ① 阵容推断 */
+  const chars = (d.cast && d.cast.characters) || [];
+  ok(chars.length === 3, '① 阵容推断拿到 3 个人物', chars.map((c) => c.name));
+  ok(chars[0] && chars[0].name === 'Rick Astley', '① 第一个人物是假 LLM 给的', chars[0]);
+
+  /* ② 用推断出的人数作为 SPK 数 */
+  ok(Number(d.speakerCount) === 3, '② 说话人数量被改成 3（用户填的是 6）', d.speakerCount);
+  ok(log.includes('说话人分离按 3 人'), '② 日志证明数量传给了分离器', log.split('\n').filter((l) => l.includes('分离')).slice(-2));
+
+  /* ③ 两次调用 + 内容 */
+  ok(seen.length === 2, '③ 恰好两次模型调用（阵容 + 对应）', seen.length);
+  ok(seen[0] && seen[0].sys.includes('说话的角色'), '③ 第一次是阵容推断');
+  ok(seen[0] && /Rick Astley|Never Gonna|索尼/.test(seen[0].usr), '③ 阵容请求带上了视频信息', (seen[0] || {}).usr && seen[0].usr.slice(0, 80));
+  ok(seen[1] && seen[1].usr.includes('SPK1'), '③ 第二次带上了 SPK 样本', (seen[1] || {}).usr && seen[1].usr.slice(0, 120));
+  ok(seen[1] && seen[1].usr.includes('Rick Astley'), '③ 第二次带上了候选角色');
+
+  /* ④⑤ 字幕里的角色名 */
+  const mp = (d.cast && d.cast.map) || {};
+  ok(mp.SPK1 === 'Rick Astley' && mp.SPK2 === '主唱', '④ 映射结果已存进 meta', mp);
+  ok(Array.isArray(d.cast && d.cast.extra) && d.cast.extra.includes('SPK3'), '⑤ 没映射上的 SPK3 记进 extra', d.cast && d.cast.extra);
+  const subFile = (meta.subtitle && meta.subtitle.file) || '';
+  const subPath = subFile ? (PROJ + '/' + id + '/' + subFile) : '';   // 文件名为空时别去读目录（否则 EISDIR）
+  ok(!!subPath && existsSync(subPath), '④ 字幕文件存在', subPath);
+  if (subPath && existsSync(subPath)) {
+    const text = readFileSync(subPath, 'utf8');
+    ok(text.includes('[Rick Astley]'), '④ 字幕里出现真实角色名 [Rick Astley]', text.match(/\[[^\]]{1,20}\]/g) && text.match(/\[[^\]]{1,20}\]/g).slice(0, 6));
+    ok(text.includes('[主唱]'), '④ 字幕里出现 [主唱]');
+    ok(text.includes('[SPK3]'), '⑤ 没映射上的说话人保留 [SPK3]');
+    ok(!text.includes('[SPK1]') && !text.includes('[SPK2]'), '④ 被映射的编号不再出现', text.match(/\[SPK\d\]/g));
+  } else {
+    fail += 4; console.log('FAIL  字幕文件读不到, 跳过 4 项字幕断言');
+  }
+  ok(/识别|ASR|分离|分角色/.test(log), '跑过了识别与分离阶段');
+} catch (e) {
+  fail++; console.log('FAIL  探针异常: ' + ((e && e.message) || e));
+} finally {
+  if (id) { try { await fetch(BASE + '/api/projects/' + id, { method: 'DELETE' }); console.log('已删除测试项目'); } catch {} }
+  if (orig) {
+    try {
+      await fetch(BASE + '/api/translate/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: orig.provider, baseUrl: orig.baseUrl, apiKey: orig.apiKey, model: orig.model, autoTranslate: !!orig.autoTranslate }),
+      });
+      console.log('翻译配置已恢复');
+    } catch {}
+  }
+  srv.close();
+}
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

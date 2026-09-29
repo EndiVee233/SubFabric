@@ -645,6 +645,7 @@ export function initProjects(ctx) {
   async function openSettings() {
     stOverlay.hidden = false;
     loadFetchSettings();
+    loadCastSettings();
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
@@ -926,6 +927,22 @@ export function initProjects(ctx) {
       }
     } catch {}
   }
+  async function loadCastSettings() {
+    try {
+      const d = await (await fetch('/api/cast/config', { signal: AbortSignal.timeout(8000) })).json();
+      const el = document.getElementById('st-cast-enabled');
+      if (el) el.checked = d.enabled !== false;
+      const note = document.getElementById('st-cast-note');
+      if (note && !d.llmReady) note.textContent = '⚠ 还没配模型：到「字幕翻译」里填接口地址、API Key 和模型名，否则这一步会自动跳过。';
+    } catch {}
+  }
+  const castToggle = document.getElementById('st-cast-enabled');
+  if (castToggle) castToggle.addEventListener('change', async () => {
+    try {
+      await fetch('/api/cast/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !!castToggle.checked }) });
+      toast(castToggle.checked ? '已开启 LLM 分角色' : '已关闭 LLM 分角色', 2600);
+    } catch (e) { toast('保存失败: ' + e.message, 3600); }
+  });
   async function saveFetchSettings(patch) {
     try {
       await fetch('/api/fetch/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });

@@ -667,6 +667,15 @@
           <p class="gl-hint">whisper 用作初始提示词，Parakeet 用作热词加权。术语表的「原文」列会自动并进来。</p>
         </div>
         <div class="st-card">
+          <div class="st-card-title">LLM 分角色 <span class="st-card-note">用视频简介推断人物，再把说话人对应到角色名</span></div>
+          <div class="st-row">
+            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
+              <input type="checkbox" id="st-cast-enabled"> 启用
+            </label>
+            <span class="gl-hint" style="flex:1" id="st-cast-note">先用视频标题/简介让模型判断有几个人物，按这个人数做说话人分离；分离后把说话人换成真实角色名，没对应上的保留说话人编号。模型用「字幕翻译」里配的那份。</span>
+          </div>
+        </div>
+        <div class="st-card">
           <div class="st-card-title">热词强度 <span class="st-card-note">仅 Parakeet</span></div>
           <div class="st-row">
             <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" style="max-width:120px">
