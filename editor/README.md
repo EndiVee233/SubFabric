@@ -471,6 +471,8 @@ SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DI
 ① 读不到，于是每次都默认回 `C:\Program Files\...`，用户只能手动再改一遍。
 检测结果在**目录页预填**（`InitializeWizard` / `CurPageChanged` 里写 `WizardForm.DirEdit.Text`，
 且只在当前值仍是那个平铺默认值时才覆盖，这样命令行 `/DIR` 与 ① 都不会被顶掉）。
+**页面上不要写任何说明文字**：我一开始在目录页加了句"检测到已有安装，将原地覆盖升级…"，用户反馈
+"看起来明显是调试内容，别的用户看了莫名其妙" —— 检测照旧静默生效，页面文案交给 Inno 自己。
 
 > ⚠ 两个反直觉点（都写在 .iss 注释里了）：**不要**把 `DefaultDirName` 写成 `{code:...}` 来动态决定目录 ——
 > 实测它会**顶掉命令行 `/DIR`**（带 `/DIR` 的静默安装照样装去旧目录），也让 ① 失效；
