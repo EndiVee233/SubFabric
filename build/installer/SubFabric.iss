@@ -59,14 +59,14 @@ Source: "start-editor.command";          DestDir: "{app}"; Flags: ignoreversion
 ; ── 编辑器（含 vendor：libass worker + CJK 字体，约 19MB）──
 Source: "{#Root}\editor\*"; DestDir: "{app}\editor"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: "\.*,\node_modules\*"
+    Excludes: "\.*,\node_modules\*,\__pycache__\*,*\__pycache__\*"
 
 ; ── Python 侧（asr.py / diarize.py / multitalker.py / fetch\*）──
 ; 用户数据一律不进安装包，也绝不被安装/卸载碰到：asr\.venv、asr\models、asr\settings.json、
 ; asr\whisper.cpp、asr\runtime-python、asr\ytdlp、asr\logs、projects\
 Source: "{#Root}\asr\*"; DestDir: "{app}\asr"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\runtime-python\*,\ytdlp\*,\logs\*,\__pycache__\*"
+    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\runtime-python\*,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*"
 
 [Icons]
 Name: "{group}\{#MyAppName}";           Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
