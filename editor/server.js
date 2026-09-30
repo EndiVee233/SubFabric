@@ -2576,6 +2576,10 @@ function startPrepare(id, videoPath, mode) {
     const meta = readMeta(id);
     if (!meta) return { error: '项目不存在' };
     if (!meta.draft) return { error: '该项目不是「创建初稿」项目，无法重试' };
+    // 同一步正在跑就拒绝：再点一次会开出第二个任务，两个任务抢同一份 asr.json / reseg.json
+    if (draftJobs.has(id) || pendingAsr.has(id)) {
+      return { error: '这一步正在跑（进度见「查看进度」里的日志），别重复点；它跑完自己会往下走' };
+    }
     const hasAsr = fs.existsSync(path.join(projDir(id), 'asr.json'));
     const wordLevel = !!meta.draft.wordLevel;
     const wavOk = fs.existsSync(path.join(projDir(id), 'audio.wav'));
@@ -2593,6 +2597,9 @@ function startPrepare(id, videoPath, mode) {
       // 语义分句还欠着（LLM 可用 + 没做完/没跳过）→ 先补这一步再往下走。
       // 不再按引擎区分: 所有引擎的初稿都要过语义分句（老项目 resegDone 为空, 重试时正好补上）。
       if (!meta.draft.resegDone && llmReady(translateCfg())) {
+        // ★ 必须登记到 draftJobs：metaView 靠它区分"真在跑"和"服务重启被中断"。
+        //   漏登记时每批都在正常跑，界面却显示 ✕「服务已重启，处理被中断」→ 用户以为点不动（实测踩过）。
+        draftJobs.add(id);
         setDraft(id, { status: 'running', stage: STAGE.reseg, progress: 76, message: '重试语义分句…', error: null, failedStage: '' });
         Promise.resolve(runDraftReseg(id))
           .then(() => continueDraftAfterAsr(id, wordLevel))

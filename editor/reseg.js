@@ -398,8 +398,13 @@ async function resegWithLLM(chat, segs, onProgress, opts) {
       if (typeof o.saveCheckpoint === 'function') {
         try { o.saveCheckpoint(b, pairs, { words: words.length, sig, total: batches.length, model: o.model || '' }); } catch {}
       }
+      // 每批完成写一行日志：52 批要跑几分钟，没有这行用户只能看到进度条"不动"（实测被当成卡死）
+      if (!Array.isArray(done[b])) onLog(`批次 ${label} 完成（累计 ${hi}/${words.length} 词）`);
     }
-    if (onProgress) onProgress((b + 1) / batches.length, `语义分句中 … 批次 ${b + 1}/${batches.length}`);
+    if (onProgress) {
+      const frac = (b + 1) / batches.length;
+      onProgress(frac, `语义分句中 … 批次 ${b + 1}/${batches.length}（${Math.round(frac * 100)}%）`);
+    }
   }
 
   // 整批全军覆没 = 模型根本不能用（配错模型/额度/接口），这时抛错让用户去修，别静默退回引擎断句
