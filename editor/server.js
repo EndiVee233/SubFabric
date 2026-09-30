@@ -2203,18 +2203,30 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* ═══════════ 说话人分离（后台, 跑在音频上与引擎无关） ═══════════ */
-  function runDiarize(wav, onProgress, speakerCount) {
+  function runDiarize(wav, onProgress, speakerCount, log) {
     const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
     const embModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[1].file);
     const outJson = wav + '.diarize.json';
+    // 音频时长: 项目里的 audio.wav 固定是 16kHz / 16bit / 单声道 → 字节数 ÷ (16000×2)。
+    // 说话人分离**不做分片**（与识别的 25 分钟分片不同），整段一次性喂给模型，耗时随时长线性上升。
+    // 原先超时写死 30 分钟 —— 长音频（尤其 CUDA 初始化失败回退 CPU 时）会被这条定时器直接杀掉，
+    // 报出来的却是"退出码 1"，看起来像偶发故障。现在上限跟着时长走：至少 30 分钟，按 4 倍时长给，封顶 4 小时。
+    let durSec = 0;
+    try { durSec = fs.statSync(wav).size / (16000 * 2); } catch {}
+    const budgetMs = Math.max(30 * 60 * 1000, Math.min(4 * 3600 * 1000, durSec * 1000 * 4));
+    const budgetMin = Math.round(budgetMs / 60000);
+    if (log && durSec >= 1800) {
+      log('音频约 ' + Math.round(durSec / 60) + ' 分钟：说话人分离整段一次处理，超时上限 ' + budgetMin + ' 分钟');
+    }
     return new Promise((resolve, reject) => {
       const p = spawn(ASR_PY, [path.join(ASR_DIR, 'diarize.py'),
         '--segmentation', segModel, '--embedding', embModel, '--audio', wav, '--out', outJson,
       // 0 = 让聚类自己定人数（threshold 生效）; 正数 = 强制聚类数
       '--speakers', String(Number.isFinite(speakerCount) ? Math.max(0, Math.min(20, Math.round(speakerCount))) : 0)],
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
-      let buf = '', pyErr = '';
-      const timer = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
+      let buf = '', pyErr = '', timedOut = false, lastLogs = [];
+      const startedAt = Date.now();
+      const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, budgetMs);
       const done = (fn) => { clearTimeout(timer); try { fs.unlinkSync(outJson); } catch {} fn(); };
       p.stderr.on('data', d => {
         const s = String(d);
@@ -2224,6 +2236,12 @@ function startPrepare(id, videoPath, mode) {
           if (!tt.startsWith('{')) continue;
           let o; try { o = JSON.parse(tt); } catch { continue; }
           if (o.type === 'progress' && onProgress) onProgress(o.pct, o.msg);
+          // 留几行普通日志: 用的 provider(CUDA/CPU)、音频多长、内存多大 —— 出问题时靠它们定位,
+          // 而不只是拿到一个干巴巴的"退出码 1"。
+          if (o.type === 'log' && o.msg) {
+            lastLogs.push(String(o.msg));
+            if (lastLogs.length > 6) lastLogs.shift();
+          }
         }
       });
       p.on('error', e => done(() => reject(new Error('无法启动分离进程: ' + e.message))));
@@ -2232,7 +2250,15 @@ function startPrepare(id, videoPath, mode) {
         try { data = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
         if (c !== 0 || !data || !Array.isArray(data.regions)) {
           const m = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
-          return done(() => reject(new Error((m && m[1]) || ('分离失败（' + asrExitHint(c) + '）'))));
+          const mins = Math.round((Date.now() - startedAt) / 60000);
+          const tail = lastLogs.length ? '；最后日志：' + lastLogs.slice(-3).join(' / ') : '';
+          if (timedOut) {
+            return done(() => reject(new Error('区分说话人超时：已跑 ' + mins + ' 分钟（上限 ' + budgetMin
+              + ' 分钟）—— 长音频 + CPU 推理最容易触发。看上面日志确认是否回退了 CPU，'
+              + '或在设置里关掉「区分说话人」先出稿' + tail)));
+          }
+          return done(() => reject(new Error((m && m[1]) || ('分离失败（' + asrExitHint(c) + '）'))
+            + '（已跑 ' + mins + ' 分钟' + tail + '）'));
         }
         done(() => resolve(data));
       });
@@ -3085,7 +3111,8 @@ function startPrepare(id, videoPath, mode) {
         }
         const spkCount = (cs && Number(cs.speakerCount)) || Number(d0.speakerCount) || 0;
         setDraft(id, { stage: STAGE.diarize, progress: 82, message: '区分说话人中 …' });
-        return runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount);
+        return runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount,
+          (m) => pushDraftLog(id, stamp() + m));
       }).then((r) => safeDraftStep(id, async () => {
         let segs = [];
         try {

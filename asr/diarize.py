@@ -46,29 +46,39 @@ def progress(pct, msg):
 
 
 def read_wav_mono16k(path):
-    """读 wav -> (float32 numpy 数组[-1,1], 采样率)。立体声降单声道, 非 16k 则线性重采样兜底。"""
-    import array
+    """读 wav -> (float32 numpy 数组[-1,1], 采样率)。立体声降单声道, 非 16k 则线性重采样兜底。
+
+    长音频下这份数据就是内存大头, 所以刻意压峰值:
+      · np.frombuffer 是 raw 字节的**零拷贝视图**, 不再多留一份 array('h') 副本;
+      · 归一化用**原地**乘, 不再产出一个额外的临时 float32 数组。
+    峰值因此从 8 字节/采样降到 6 字节/采样(1 小时 ≈ 从 460MB 降到 345MB, 3 小时 ≈ 从 1.4GB 降到 1.0GB)。
+    """
     import numpy as np
 
     with wave.open(path, "rb") as wf:
         nch = wf.getnchannels()
         sr = wf.getframerate()
         width = wf.getsampwidth()
-        raw = wf.readframes(wf.getnframes())
+        nframes = wf.getnframes()
+        raw = wf.readframes(nframes)
 
     if width != 2:
         raise RuntimeError("只支持 16-bit PCM wav(当前 %d 字节/样本)" % width)
 
-    a = array.array("h")
-    a.frombytes(raw)
-    data = np.asarray(a, dtype=np.float32) / 32768.0
+    i2 = np.frombuffer(raw, dtype="<i2")            # 零拷贝, 不占新内存
+    data = i2.astype(np.float32)                    # 唯一一份 4 字节/采样
+    data *= (1.0 / 32768.0)                         # 原地归一化, 不再多一份临时数组
+    del i2
+    del raw                                          # 原始字节尽早释放(2 字节/采样)
 
     if nch > 1:
-        usable = (len(data) // nch) * nch
-        data = data[:usable].reshape(-1, nch).mean(axis=1)
+        usable = (data.size // nch) * nch
+        mono = data[:usable].reshape(-1, nch).mean(axis=1)
+        del data
+        data = mono
 
     if sr != SR:
-        n = len(data)
+        n = data.size
         if n == 0:
             return data, sr
         new_n = max(1, int(round(n * SR / float(sr))))
@@ -123,7 +133,13 @@ def main():
         log("读取音频 …")
         samples, sr = read_wav_mono16k(args.audio)
         dur = len(samples) / float(sr)
-        log("音频 %.1fs @ %dHz" % (dur, sr))
+        # 长音频这一行很关键: 分离是**整段一次性处理**(不像识别会分片), 出了问题时
+        # 时长/内存峰值是判断"慢"还是"被杀"的第一手证据, 必须进日志。
+        log("音频 %.1fs(%.2f 小时) @ %dHz, 采样数组约 %.0f MB"
+            % (dur, dur / 3600.0, sr, samples.nbytes / 1048576.0))
+        if dur >= 3600:
+            log("提示: 音频超过 1 小时, 说话人分离不做分片, 耗时与内存随时长线性上升;"
+                " 这一步很慢时先看上面用的 provider —— 回退 CPU 会比 GPU 慢很多")
         if dur < 0.5:
             raise RuntimeError("音频过短或无有效采样")
 
@@ -203,8 +219,23 @@ def main():
         log("结果已写入 %s" % args.out)
         return 0
 
+    except MemoryError:
+        # MemoryError 的 str() 是空字符串, 直接报上去就只剩一个"退出码 1", 查不出所以然。
+        emit({"type": "error",
+              "msg": "内存不足(MemoryError): 音频太长或可用内存不够 —— 说话人分离是整段一次性处理，"
+                     "可先关掉其它占内存的程序重试，或到设置里关掉「区分说话人」"})
+        return 1
     except Exception as e:
-        emit({"type": "error", "msg": str(e)})
+        # 同理: str(e) 为空的异常(如某些原生崩溃)要退回到类型名, 别把空串报上去。
+        msg = str(e).strip() or type(e).__name__
+        try:
+            import traceback
+            tail = traceback.format_exc().strip().split("\n")[-1].strip()
+            if tail and tail not in msg:
+                msg = msg + " | " + tail[:200]
+        except Exception:
+            pass
+        emit({"type": "error", "msg": msg})
         return 1
 
 
