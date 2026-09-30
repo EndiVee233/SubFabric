@@ -2871,20 +2871,48 @@ function startPrepare(id, videoPath, mode) {
     const p = path.join(projDir(id), 'asr.json');
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
     const before = (data.segments || []).length;
+    // 断点续跑：每批成功就落盘 reseg.json（词表指纹对得上才复用）。重试 / 服务重启后跳过做过的批次 ——
+    // 1.2 万词 = 52 批，重跑一遍要几分钟、几十次模型调用，以前每次重试都从第 1 批从头来。
+    const ckPath = path.join(projDir(id), 'reseg.json');
+    const loadCheckpoint = () => { try { return JSON.parse(fs.readFileSync(ckPath, 'utf8')); } catch { return null; } };
+    const saveCheckpoint = (idx, pairs, meta) => {
+      try {
+        const ck = loadCheckpoint() || {};
+        if (ck.model !== cfg.model || ck.words !== meta.words || ck.sig !== meta.sig) {
+          ck.model = cfg.model; ck.words = meta.words; ck.sig = meta.sig; ck.batches = {};
+        }
+        ck.batches = ck.batches || {};
+        ck.batches[String(idx)] = pairs;
+        ck.total = meta.total; ck.updatedAt = new Date().toISOString();
+        fs.writeFileSync(ckPath + '.tmp', JSON.stringify(ck));
+        fs.renameSync(ckPath + '.tmp', ckPath);
+      } catch {}
+    };
+    const stats = {};
     const segs2 = await resegMod.resegWithLLM(
       // chat 注入: 带上诊断转储文件, 并把 llmChat 的新返回形状(content+元数据)拆成纯文本给 reseg
       (messages, o) => llmChat(cfg, messages, Object.assign({ debugFile: path.join(projDir(id), 'llm-debug.jsonl') }, o))
         .then(r => r.content),
       data.segments || [],
       (frac, msg) => setDraft(id, { stage: STAGE.reseg, progress: base + Math.round((frac || 0) * span), message: msg || '语义分句中 …' }),
-      { splitOnComma: resegSplitOnComma(), onLog: (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [分句] ${m}`) });
+      {
+        splitOnComma: resegSplitOnComma(),
+        model: cfg.model,
+        stats, loadCheckpoint, saveCheckpoint,
+        onLog: (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [分句] ${m}`),
+      });
     data.segments = segs2;
     const tmp = p + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(data));
     fs.renameSync(tmp, p);
+    // 统计：抢救 / 放弃 / 续跑各几批 —— 出问题时用户一眼能看出是哪一类
+    const stamp1 = '[' + new Date().toLocaleTimeString() + '] ';
+    if (stats.salvaged && stats.salvaged.length) pushDraftLog(id, stamp1 + `[分句] ${stats.salvaged.length} 批标点密度异常，已只保留句末标点`);
+    if (stats.skipped && stats.skipped.length) pushDraftLog(id, stamp1 + `[分句] ${stats.skipped.length} 批没做出标点，这些词按停顿兜底（其余批次正常）`);
     const meta = readMeta(id);
     if (meta && meta.draft) { meta.draft.resegDone = true; writeMeta(meta); }
-    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 语义分句完成：${before} 行 → ${segs2.length} 行`);
+    pushDraftLog(id, stamp1 + `语义分句完成：${before} 行 → ${segs2.length} 行`
+      + (stats.skipped && stats.skipped.length ? `（${stats.skipped.length} 批按停顿兜底）` : ''));
   }
 
   /** 识别之后的两步收尾（模块级, retryDraft 也走这里）:
