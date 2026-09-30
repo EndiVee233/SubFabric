@@ -60,7 +60,6 @@
   "[SubFabric] 未找到 editor/server.js。把 SubFabric.exe 放在解压后的目录根下再双击。": "[SubFabric] 未找到 editor/server.js。把 SubFabric.exe 放在解压后的目录根下再双击。",
   "[asr] NeMo 运行时安装失败:": "[asr] NeMo 运行时安装失败:",
   "[asr] NeMo 运行时就绪:": "[asr] NeMo 运行时就绪:",
-  "[asr] whisper GPU 失败，改用 CPU 重试：": "[asr] whisper GPU 失败，改用 CPU 重试：",
   "[diag] 收到前端诊断快照 (": "[diag] 收到前端诊断快照 (",
   "[llm] 译文回复不合规（◇ 行, finish_reason=◇）：◇": "[llm] 译文回复不合规（◇ 行, finish_reason=◇）：◇",
   "[project] prepare 开始:": "[project] prepare 开始:",
