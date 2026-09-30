@@ -978,16 +978,23 @@ export class EditorPanel {
     const toks = splitEnglishWords(text);
     if (toks.length < 2) return null;
     const at = (caret == null || caret < 0) ? text.length : caret;
-    // 词尾字符位置表
-    const ends = [];
+    // 词首 / 词尾字符位置表
+    const starts = [], ends = [];
     let pos = 0;
     for (const t of toks) {
+      starts.push(pos);
       pos += t.length;
       ends.push(pos);
       const sp = text.slice(pos).match(/^\s+/);
       pos += sp ? sp[0].length : 0;
     }
-    let k = ends.findIndex(en => en >= at) + 1;      // 光标所在词(含)归前半
+    // 光标归属按**词首**判断（start < 光标 的词全归前半）:
+    //   · 光标在词中间 → 该词归前半（原行为）
+    //   · 光标在两个词之间的**空白里** → 归前一个词之后（空格左边 / 右边同一刀）
+    // 旧实现按词尾判断（ends >= 光标），光标落在空白**右侧**时会多吃一个词 ——
+    // 用户报的「January▕Twelve」与「January ▕Twelve」切出不同结果就是这条。
+    let k = 0;
+    for (const s of starts) if (s < at) k++;
     if (k < 1) k = 1;
     if (k > toks.length - 1) k = toks.length - 1;    // 不能切出空白的后半
     if (k < 1) return null;

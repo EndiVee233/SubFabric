@@ -82,5 +82,39 @@ const CARET = 34;
   ok((h.a + ' ' + h.b).replace(/\s+/g, ' ') === TEXT.replace(/\s+/g, ' '), '两半拼回 = 原文', JSON.stringify(h.a + ' | ' + h.b));
 }
 
+/* ── 光标落在「两个词之间的空白」里: 空格左边 / 右边必须切得一样 ──
+ * 用户报: 一句话里光标紧贴后一个词左边(= 空格右侧)时, 后一个词会被留在上句。 */
+{
+  const S = 'so our journey will start on January Twelve two thousand and twelve';
+  const toks = K.splitEnglishWordsWithSpans(S);
+  const i = toks.findIndex(t => t.w === 'January');
+  const gapL = toks[i].end;                 // "January" 之后、空白之前
+  const gapR = toks[i + 1].start;           // "Twelve" 之前、空白之后
+  const a = halves(S, gapL), b = halves(S, gapR);
+  ok(gapR > gapL, '确实取到了一段空白', JSON.stringify([gapL, gapR]));
+  ok(a && b && a.k === b.k && a.sp === b.sp, '空格左边 / 右边 → 同一个切点', JSON.stringify([a && a.k, b && b.k]));
+  ok(a && a.k === i + 1, 'k = January 之后的词数', a && String(a.k));
+  ok(a && a.a.endsWith('January'), '前半收在 January', a && JSON.stringify(a.a));
+  ok(b && b.b.startsWith('Twelve'), '后半从 Twelve 开始', b && JSON.stringify(b.b));
+  ok(K.splitEnglishWords(a.b).length === K.splitEnglishWords(S).length - a.k, '两半词数守恒');
+}
+
+/* ── 不变量: 每一处词间空白, 空格左右两侧的切点都必须一致 ── */
+{
+  const S = 'all of wood,need to build my house oh my god';
+  const toks = K.splitEnglishWordsWithSpans(S);
+  const bad = [];
+  for (let i = 0; i < toks.length - 1; i++) {
+    const lo = toks[i].end, hi = toks[i + 1].start;
+    const a = halves(S, lo), b = halves(S, hi);
+    if (!(a && b && a.k === b.k && a.sp === b.sp)) bad.push(i + ':' + JSON.stringify([a && a.k, b && b.k]));
+  }
+  ok(bad.length === 0, '所有词间空白: 空格左边 / 右边同一切点', bad.join(', '));
+  // 光标落在下一个词**里面** → 那个词归前半（与"贴左/贴右"区分开）
+  const j = toks.findIndex(t => t.w === 'oh');
+  const inWord = halves(S, toks[j].start + 1);
+  ok(inWord && inWord.k === j + 1, '光标在词里面 → 该词仍归前半', inWord && String(inWord.k));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
