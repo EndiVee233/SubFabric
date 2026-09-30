@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -417,6 +417,35 @@ function setAss(text, name) {
   // 载入即自动对齐"中英起止不一致"(云端识别的存量文件常带这个毛病) —— 只挪时间、不动文本,
   // 后面的 rebuildItemsAndLanes + 自动保存会把结果写回项目文件。
   const spanAligned = autoAlignEnSpans();
+  // 载入自愈: 清理「中文整句样式里残留的逐词切片」行(旧版脏数据, 画面上同一句中文出现两遍、
+  // 列表里挤着几条没有英文的重复中文行)。判定从严(见 ghostZhRows): 漏判不影响播放, 误判才是事故。
+  const ghosts = ghostZhRows(state.kar.rows);
+  for (const g of ghosts) {
+    state.assDoc.deleteEvents(g.zh.events);
+    const si = state.kar.sentences.indexOf(g.zh);
+    if (si !== -1) state.kar.sentences.splice(si, 1);
+    const ri = state.kar.rows.indexOf(g);
+    if (ri !== -1) state.kar.rows.splice(ri, 1);
+  }
+  if (ghosts.length) state.kar.rows.forEach((r, i) => r.no = i + 1);
+  // 同源病灶: 1 号切片被改写成整句时继承了行首逐词绿标 → 整行中文被染成高亮绿。
+  // 说话人色永不可能是逐词绿(speakerColorOf 已排除), 双语行的中文行首见绿即剥。
+  let leadFixed = 0;
+  for (const r of state.kar.rows) {
+    if (!r.zh || !r.en || !r.zh.events || !r.zh.events.length) continue;
+    const ev = r.zh.events[0];
+    const m = /^\s*(\{\\c&H([0-9A-Fa-f]{6})&\})/.exec(ev.text || '');
+    if (m && HIGHLIGHT_COLORS.has(assColorToHex(m[2].toUpperCase()))) {
+      state.assDoc.setEventText(ev, (ev.text || '').slice(m[1].length));   // 只剥行首那一个标签
+      leadFixed++;
+    }
+  }
+  if (ghosts.length || leadFixed) {
+    const msg = [];
+    if (ghosts.length) msg.push(`清理 ${ghosts.length} 条重复的中文切片残留行`);
+    if (leadFixed) msg.push(`剥掉 ${leadFixed} 行的逐词绿标(整行发绿的病灶)`);
+    toast('已修复旧版逐词切片脏数据：' + msg.join('，'), 6000);
+  }
 
   panel.setBadge('ASS 特效', 'ass');
   panel.setFileName(name);
@@ -1543,6 +1572,23 @@ timeline.onRetime = (row, s, e, done, shift) => {
 
 /** 整句样式(如中文字幕): 保留原颜色标签, 更新时间与文本 */
 function applyAnchorSentence(sent, s, e, text) {
+  // 铁律: 整句样式一句话**只有一条事件**。若句子残留词级切片(events>1 或 words 非空 ——
+  // 旧版脏数据, 表现是画面上同一句中文渲染两遍), 先把整句折叠回单事件再改写:
+  // 词 2..n 的切片绝不能留在文档里, 否则重载后各自成行、继续上屏。
+  if ((sent.words && sent.words.length) || sent.events.length > 1) {
+    const keep = sent.events[0];
+    let keepText = keep.text || '';
+    // 切片行首的逐词绿标({\c&H00FF00&})不能被下面的"继承前置标签"逻辑捡走 ——
+    // 否则整句被染成高亮绿。说话人色永不可能是逐词绿(speakerColorOf 已排除), 见绿即剥。
+    const mLead = /^\s*(\{\\c&H([0-9A-Fa-f]{6})&\})/.exec(keepText);
+    if (mLead && HIGHLIGHT_COLORS.has(assColorToHex(mLead[2].toUpperCase()))) keepText = keepText.slice(mLead[1].length);
+    const p = sent.proto || { layer: keep.layer, name: keep.name, effect: keep.effect, margins: keep.margins };
+    sent.events = state.assDoc.replaceEvents(sent.events, [{
+      layer: p.layer, style: sent.style, name: p.name,
+      effect: p.effect, margins: p.margins, start: s, end: e, text: keepText
+    }]);
+    sent.words = [];
+  }
   const ev = sent.events[0];
   // 角色名标签与正文之间恒为**一个空格**（用户要求 '[wato] 我'）——编辑框随便打，落盘时规范
   let newText = normalizeRoleGap(text);
@@ -1558,6 +1604,12 @@ function applyAnchorSentence(sent, s, e, text) {
 
 /** 逐词样式(如英文): 重算词级时间并重建切片 */
 function applyWordSentence(sent, s, e, text) {
+  // 铁律: 只有逐词样式(Default)才允许切片。整句样式(中文)走到这里只能是历史脏数据或行
+  // 错位 —— 一律按整句折叠处理, 绝不给中文造逐词切片(画面上会出现两遍同一句)。
+  if (!state.kar || !state.kar.wordStyle || sent.style !== state.kar.wordStyle) {
+    applyAnchorSentence(sent, s, e, text);
+    return;
+  }
   text = normalizeRoleGap(text);                // 角色名标签与正文之间恒为一个空格（同上）
   sent.words = recalcWords(sent, text, s, e);   // 词数不变→保留原时间; 变化→加权重算
   sent.text = text;
@@ -2121,7 +2173,9 @@ function refreshDynamicSubtitles() {
   let words = 0, anchors = 0;
   for (const sent of state.kar.sentences) {
     if (!sent.events || !sent.events.length) continue;
-    if (sent.words && sent.words.length) {
+    // 整句样式(中文)绝不重切片: 只有逐词样式的句子才允许走逐词重建分支,
+    // 否则历史脏数据(中文句带词级时间)会在这里被重新切片, 画面上同一句中文出现两遍。
+    if (sent.words && sent.words.length && sent.style === state.kar.wordStyle) {
       const txtWords = splitEnglishWords(sent.text || '').length;
       if (sent.words.length !== txtWords) continue;      // "逐词多余/缺词" 脏行 → 不代修
       const specs = live(buildWordSpecs(sent));
@@ -2135,9 +2189,10 @@ function refreshDynamicSubtitles() {
       sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
       words++;
     } else {
-      // 整句行: 文本(剥标签后)或时间与列表不一致才回写, 保留行首 {\c&H…&} 等等
+      // 整句行: 文本(剥标签后)或时间与列表不一致才回写, 保留行首 {\c&H…&} 等等。
+      // events>1 的整句句(残留切片)永远算"漂移" → applyAnchorSentence 会折叠回单事件。
       const ev = sent.events[0];
-      if (assPlainText(ev.text) === (sent.text || '') && near(ev.start, sent.start) && near(ev.end, sent.end)) continue;
+      if (sent.events.length === 1 && assPlainText(ev.text) === (sent.text || '') && near(ev.start, sent.start) && near(ev.end, sent.end)) continue;
       applyAnchorSentence(sent, sent.start, sent.end, sent.text || '');
       anchors++;
     }

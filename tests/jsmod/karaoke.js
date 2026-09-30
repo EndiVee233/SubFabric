@@ -475,6 +475,38 @@ export function sameTime(a, b, eps = 1e-4) {
 }
 
 /**
+ * 找出「中文整句样式里残留的逐词切片」行(载入自愈用, 纯函数便于单测)。
+ * 病灶(实测文件): 中文字幕句被切成逐词切片后, 一次中文整句编辑把 1 号切片原地改写回整句
+ * (applyAnchorSentence 只动 events[0], 还会继承切片的绿色标签) —— 词 2..n 的切片成了无主
+ * 事件留在文档里继续渲染, 画面上**同一句中文出现两遍**; 重载后这些切片各自成行(zh-only),
+ * 挤在主行后面。修复见 main.js 的 applyAnchorSentence(写入端折叠) + setAss(载入清理)。
+ * 判定(全部满足才判残留, 宁可漏判不可误删):
+ *   ① zh-only 行(没配到英文逐词句) 且只有一条事件
+ *   ② 事件文本含逐词高亮标签 {\c&H..&}..{\c} —— 正常中文整句行绝不会有
+ *   ③ 时间被另一条**有英文配对**的中文行严格整段包住(±0.05s)
+ *   ④ 剥标签后文本与宿主行一致或互为包含(切片含整句文本)
+ */
+export function ghostZhRows(rows) {
+  const EPS = 0.05;
+  const hosts = rows.filter(r => r.zh && r.en);
+  const out = [];
+  for (const g of rows) {
+    if (!g.zh || g.en) continue;                       // ①
+    const evs = g.zh.events || [];
+    if (evs.length !== 1 || !HL_RE.test(evs[0].text || '')) continue;   // ①②
+    const gText = assPlainText(evs[0].text);
+    if (!gText) continue;
+    for (const h of hosts) {
+      if (g.zh.start < h.zh.start - EPS || g.zh.end > h.zh.end + EPS) continue;   // ③ 被包住
+      if (h.zh.start >= g.zh.start - EPS && h.zh.end <= g.zh.end + EPS) continue; // ③ 且真包含(排除同跨度的)
+      const hText = assPlainText(h.zh.events[0].text);
+      if (hText && (hText === gText || hText.includes(gText) || gText.includes(hText))) { out.push(g); break; }   // ④
+    }
+  }
+  return out;
+}
+
+/**
  * 由单个事件构造句子骨架(时间轴上"空白拖动新建字幕块"时用).
  * 与 analyzeKaraoke 产出的句子结构保持一致, 便于后续统一编辑/重算。
  */
