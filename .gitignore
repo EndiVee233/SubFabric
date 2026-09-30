@@ -52,7 +52,13 @@ SubFabric-*.zip
 SubFabric-*/
 
 # SEA 构建产物(build_exe.py 生成: node.exe 副本 175MB + blob + 注入后的 exe)
-/build/
+# 例外: 安装包脚本与两个启动脚本体积极小, 入库 —— build/ 被误删过一次, 新克隆里再也拼不回来
+/build/*
+!/build/installer/
+/build/installer/*
+!/build/installer/SubFabric.iss
+!/build/installer/start-editor.bat
+!/build/installer/start-editor.command
 
 
 # Python 字节码

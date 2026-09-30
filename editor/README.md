@@ -461,7 +461,7 @@ SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DI
 # 4) 发 Release: 只上传 setup.exe 这一个资产
 ```
 
-**踩过的坑**：① 不跑 `fetch-vendor.js` 直接打，安装包会从 ~33.8MB 掉到 ~22.7MB（少的正是 libass worker 与 CJK 字体，字幕渲染直接废）；② `SubFabric.iss` 与 `build/` 是 gitignore 的，**新克隆里没有**，要单独带上；③ 版本号三处不同步，装完仍显示旧版本。
+**踩过的坑**：① 不跑 `fetch-vendor.js` 直接打，安装包会从 ~33.8MB 掉到 ~22.7MB（少的正是 libass worker 与 CJK 字体，字幕渲染直接废）；② `build/` 里**只有** `installer/SubFabric.iss` 与 `installer/start-editor.*` 入库（.gitignore 开了例外，2026-09-30 build/ 被误删过一次），`SubFabric.exe`、`node-binary.exe`、`editor/vendor/` 仍然不入库 —— 新克隆要跑 `fetch-vendor.js` + `build_exe.py` 生成；③ 版本号三处不同步，装完仍显示旧版本。
 
 **升级要能"原地覆盖"（用户报过：每次都得手动改路径）**：`SubFabric.iss` 里有三路检测，按优先级
 ① Inno 自带的 `UsePreviousAppDir`（只对有卸载注册项的安装有效）→ ② 扫注册表自己的 AppId（HKLM64/HKLM32/HKCU，
