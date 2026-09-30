@@ -1841,6 +1841,22 @@ function fetchSiteOf(url) {
   if (u.indexOf('youtube.com') >= 0 || u.indexOf('youtu.be') >= 0) return 'youtube';
   return '';
 }
+/** bilibili Cookie 文本规范化: 用户常常**只复制到值**（DevTools / 扩展里点一下就复制了值本身，
+ *  形如 `ac87ca47%2C1806119310%2C…`），这种文本里没有任何 name=value →
+ *  下载内核解析出来是空 cookie（等于未登录，画质掉回免登录档）。这里补上 SESSDATA=。
+ *  规则与 asr/fetch/bilibili.py 的 parse_cookie_input 保持一致。 */
+function normalizeBiliCookie(text) {
+  const s = String(text || '').trim();
+  if (!s) return '';
+  const bare = s.replace(/;\s*$/, '').trim();
+  if (bare.startsWith('{') || /[=;\n\t]/.test(bare)) return s;   // 已经是 name=value / JSON / 多行
+  return bare.length >= 20 ? ('SESSDATA=' + bare) : s;
+}
+/** 分P（bilibili 多P视频）: 缺省 1。链接里自带 ?p=N 时以链接为准（见 fetch_cli 的同名规则）。 */
+function normalizePart(v) {
+  const n = parseInt(v, 10);
+  return (Number.isFinite(n) && n >= 1) ? Math.min(9999, n) : 1;
+}
 /** 下载内核要 Python 3.8+：先试 ASR 那套, 再试 py -3.12/3.11/3.10、python3、内置 Python。
  *  结果缓存成一个 Promise（探测只做一次）。用异步 spawn —— 本环境 spawnSync 会 EBUSY（实测）。 */
 let fetchPyPromise = null;
@@ -1928,14 +1944,17 @@ async function startFetchJob(id, opts) {
   fs.mkdirSync(dir, { recursive: true });
   const f = fetchSettings();
   const quality = String(opts.quality || f.quality || 'best');
+  const part = normalizePart(opts.part);
   const srcPath = path.join(projDir(id), 'source.json');
   const args = ['--url', opts.url, '--out', dir, '--quality', quality, '--meta-out', srcPath];
+  if (part > 1) args.push('--part', String(part));           // 分P: 链接里自带 ?p=N 时由内核以链接为准
   if (f.proxy) args.push('--proxy', String(f.proxy));
-  if (f.biliCookie) args.push('--cookies', String(f.biliCookie));
+  // 只贴了值的 Cookie 在这里补成 SESSDATA=…（老配置也吃这一层，不用重新粘贴）
+  if (f.biliCookie) args.push('--cookies', normalizeBiliCookie(f.biliCookie));
   else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
   if (FFMPEG && FFMPEG !== 'ffmpeg') args.push('--ffmpeg', FFMPEG);
   pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] ' + fetchSiteOf(opts.url)
-    + ' · 档位 ' + quality + ' · ' + opts.url);
+    + ' · 档位 ' + quality + (part > 1 ? ' · 分P ' + part : '') + ' · ' + opts.url);
 
   const r = await runFetchCli(id, args, (ev) => {
     const p = Math.max(0, Math.min(100, ev.progress));
@@ -3577,7 +3596,7 @@ function startPrepare(id, videoPath, mode) {
       if (d.proxy !== undefined) patch.proxy = String(d.proxy || '').trim();
       if (d.cookiesFromBrowser !== undefined) patch.cookiesFromBrowser = String(d.cookiesFromBrowser || '').trim();
       if (d.biliCookie !== undefined) {
-        const ck = String(d.biliCookie || '').trim();     // 空字符串 = 清除
+        const ck = normalizeBiliCookie(d.biliCookie);     // 空字符串 = 清除
         patch.biliCookie = ck;
         patch.biliCookieSavedAt = ck ? new Date().toISOString() : '';
       }
@@ -4018,7 +4037,8 @@ function startPrepare(id, videoPath, mode) {
             wordLevel: wordLevelF, lines: 0, words: 0, translated: false, needTranslate: false,
             modelId: mF.id, engine: mF.engine || '',
             speakers: wantSpkF, speakerCount: wantSpkF ? spkCountF : 0,
-            fetch: { url: fetchUrl, site: site, quality: String((data.fetch && data.fetch.quality) || '') },
+            fetch: { url: fetchUrl, site: site, quality: String((data.fetch && data.fetch.quality) || ''),
+                     part: normalizePart(data.fetch && data.fetch.part) },
             startedAt: nowF,
           },
         };
@@ -4028,6 +4048,7 @@ function startPrepare(id, videoPath, mode) {
           .then(() => startFetchJob(idF, {
             url: fetchUrl,
             quality: String((data.fetch && data.fetch.quality) || ''),
+            part: normalizePart(data.fetch && data.fetch.part),
             wordLevel: wordLevelF,
           }))
           .catch((e) => finishDraft(idF, e, { failedStage: FETCH_STAGE }));

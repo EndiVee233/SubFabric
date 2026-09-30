@@ -85,6 +85,26 @@ ok(bili.has_login(c1) and not bili.has_login({"foo": "1"}), "登录态判定看 
 ok("abc" not in bili.describe_login(c1), "describe_login 不泄露 cookie 值", bili.describe_login(c1))
 ok("未提供" in bili.describe_login({}), "没有 cookie 时给的是「未提供」", bili.describe_login({}))
 
+# 只复制到「值」的情况（DevTools 里最容易发生）—— 以前解析成空 cookie，等于未登录
+BARE = "ac87ca47%2C1806119310%2C8b687%2A91CjBdFFu6xh85n-qW9bEpg_kl6A8Gn4kob5cKqsWlPTtS0JhbBEvtSxwnwgtdrKL"
+cb = bili.parse_cookie_input(BARE)
+ok(cb.get("SESSDATA") == BARE, "只贴了值 → 按 SESSDATA 收下", list(cb.keys()))
+ok(bili.has_login(cb), "只贴了值也算已登录")
+ok("已提供登录 Cookie" in bili.describe_login(cb) and BARE[:8] not in bili.describe_login(cb), "裸值也能判成登录态且不泄露值", bili.describe_login(cb))
+ok(bili.parse_cookie_input(BARE + ";").get("SESSDATA") == BARE, "尾部多个分号也认")
+ok(bili.parse_cookie_input("短值") == {}, "太短的不当 SESSDATA（避免把随手写的东西当 cookie）")
+ok(bili.parse_cookie_input("not a cookie at all") == {}, "带空格的一串字不当 cookie")
+
+print("\n== 分P（bilibili 多P） ==")
+PV = "https://www.bilibili.com/video/BV1xx411c7mD"
+ok(bili.part_of(PV) == 1, "没写 ?p= → 1")
+ok(bili.part_of(PV + "?p=3") == 3 and bili.part_of(PV + "?spm_id_from=333&p=7") == 7, "读得出 ?p=")
+ok(bili.set_part(PV, 1) == PV, "part=1 不往 URL 上加参数（p=1 就是默认行为）")
+ok(bili.set_part(PV, 3) == PV + "?p=3", "part=3 → 补 ?p=3")
+ok(bili.set_part(PV + "?spm_id_from=333", 3).endswith("&p=3"), "已有其它查询参数 → 用 & 接")
+ok(bili.set_part(PV + "?p=5", 3) == PV + "?p=5", "链接里已经写了 ?p= 就以链接为准")
+ok(bili.set_part("", 3) == "", "空 URL 安全")
+
 print("\n== Netscape 往返 ==")
 with tempfile.TemporaryDirectory() as d:
     p = Path(d) / "c.txt"

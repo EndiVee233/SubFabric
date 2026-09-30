@@ -30,6 +30,9 @@ def parse_cookie_input(text: str) -> Dict[str, str]:
       1. 请求头原样:   SESSDATA=xxx; bili_jct=yyy
       2. JSON 对象:    {"SESSDATA": "xxx", ...}
       3. Netscape cookies.txt 的内容（复制整份文件也行）
+    4. **只复制到了值**（DevTools / 扩展里最容易发生）: `ac87ca47%2C1806119310%2C…`
+       —— 这种文本里没有任何 name=value，以前会解析成空 cookie（等于没登录，画质直接掉回免登录档）。
+       现在只要它是一个"像 SESSDATA 的裸值"就按 SESSDATA 收下。
     """
     s = str(text or "").strip()
     if not s:
@@ -64,7 +67,39 @@ def parse_cookie_input(text: str) -> Dict[str, str]:
             name, value = name.strip(), value.strip()
             if name:
                 out[name] = value
+    if out:
+        return out
+    # 一个 name=value 都没有 → 看是不是"只贴了值"：单 token、够长、不像 JSON/Netscape
+    bare = s.rstrip(";").strip()
+    if (len(bare) >= 20 and not re.search(r"[=;\s\t]", bare) and not bare.startswith("{")):
+        return {"SESSDATA": bare}
     return out
+
+
+def part_of(url: str) -> int:
+    """链接里的分P（?p=N）；没写就是 1。"""
+    m = re.search(r"[?&]p=(\d+)", str(url or ""))
+    try:
+        return int(m.group(1)) if m else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def set_part(url: str, part: int = 1) -> str:
+    """把链接定位到第 N 个分P（bilibili 多P视频）。
+
+    规则：**链接里已经写了 ?p= 就以链接为准**（用户直接贴带分P的链接是最明确的意图）；
+    链接没写才用 part（默认 1 —— p=1 本来就是默认行为，不必往 URL 上加参数）。
+    """
+    u = str(url or "").strip()
+    try:
+        n = int(part or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if not u or n <= 1 or part_of(u) > 1:
+        return u
+    return u + ("&" if "?" in u else "?") + "p=%d" % n
+
 
 
 def has_login(cookies: Dict[str, str]) -> bool:
@@ -102,5 +137,6 @@ def describe_login(cookies: Optional[Dict[str, str]]) -> str:
     if not c:
         return "未提供 Cookie（只能下到免登录画质）"
     if has_login(c):
-        return "已提供登录 Cookie（含 SESSDATA，可下会员画质）"
+        tail = "（只贴了值，已按 SESSDATA 处理；bili_jct 等键可选）" if len(c) == 1 else ""
+        return "已提供登录 Cookie（含 SESSDATA，可下会员画质）" + tail
     return "提供了 %d 个 Cookie 但没看到 SESSDATA（可能未登录）" % len(c)

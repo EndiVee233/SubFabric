@@ -978,6 +978,9 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .np-mode.active { border-color: var(--accent); background: var(--accent-a07); }
 .np-mode.disabled, .np-mode:disabled { opacity: .45; cursor: not-allowed; filter: grayscale(.5); }
 .np-file-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* 分P（bilibili 多P）: 只占一个小格; 标签不用 58px 那么宽 */
+.np-part { flex: 0 0 auto; width: 74px; }
+.np-part-lbl { width: auto; }
 .np-file { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-file.filled { color: var(--text-0); }
 .np-hint {

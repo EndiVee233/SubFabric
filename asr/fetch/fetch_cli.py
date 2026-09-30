@@ -94,6 +94,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="SubFabric 视频下载（bilibili / YouTube）")
     ap.add_argument("--url", required=True)
     ap.add_argument("--out", required=True, help="下载目录（通常是项目目录下的 video/）")
+    ap.add_argument("--part", type=int, default=1, help="分P（bilibili 多P视频，默认 1；链接里带 ?p=N 时以链接为准）")
     ap.add_argument("--quality", default="best", help="档位: best/2160/1080/720/480/360/audio/worst")
     ap.add_argument("--custom-format", default="", help="直接给 yt-dlp 的 -f 表达式")
     ap.add_argument("--cookies", default="", help="Cookie 文本（SESSDATA=...; bili_jct=... 或 JSON）")
@@ -111,6 +112,14 @@ def main(argv=None) -> int:
     if not site:
         emit({"type": "error", "msg": "只支持 bilibili 与 YouTube 链接（其他站点暂不支持）"})
         return 2
+
+    # 分P（bilibili 多P视频）：链接里的 ?p=N 优先，其次用 --part（默认 1）
+    if site == "bilibili":
+        part_in_url = bili.part_of(url)
+        part = part_in_url if part_in_url > 1 else max(1, int(a.part or 1))
+        url = bili.set_part(url, part)
+        if part > 1:
+            log("分P: %d%s" % (part, "（取自链接 ?p=）" if part_in_url > 1 else ""))
 
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)

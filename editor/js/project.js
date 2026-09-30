@@ -1308,6 +1308,15 @@ export function initProjects(ctx) {
     el.textContent = f.name; el.classList.add('filled');
     npMaybeEnable();
   });
+  // 分P: 链接里带 ?p=N 就自动填进分P框（两个入口都认, 用户不用记）
+  const npUrlEl = document.getElementById('np-url');
+  const npPartEl = document.getElementById('np-part');
+  if (npUrlEl && npPartEl) {
+    npUrlEl.addEventListener('input', () => {
+      const m = /[?&]p=(\d+)/.exec(npUrlEl.value || '');
+      if (m) npPartEl.value = String(Math.max(1, parseInt(m[1], 10) || 1));
+    });
+  }
   $('#np-create').addEventListener('click', async () => {
     const isDraft = npMode === 'draft';
     const npUrl = (($('#np-url') || {}).value || '').trim();
@@ -1323,7 +1332,7 @@ export function initProjects(ctx) {
           modelId: $('#np-model-sel') ? $('#np-model-sel').value : '',
           speakers: !!($('#np-speakers') && $('#np-speakers').checked),
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
-          fetch: { url: npUrl },
+          fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
