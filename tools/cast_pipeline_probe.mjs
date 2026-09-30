@@ -131,18 +131,43 @@ try {
   ok(!!subPath && existsSync(subPath), '④ 字幕文件存在', subPath);
   if (subPath && existsSync(subPath)) {
     const text = readFileSync(subPath, 'utf8');
-    ok(text.includes('[Rick Astley]'), '④ 字幕里出现真实角色名 [Rick Astley]', text.match(/\[[^\]]{1,20}\]/g) && text.match(/\[[^\]]{1,20}\]/g).slice(0, 6));
-    ok(text.includes('[主唱]'), '④ 字幕里出现 [主唱]');
-    ok(text.includes('[SPK3]'), '⑤ 没映射上的说话人保留 [SPK3]');
-    ok(!text.includes('[SPK1]') && !text.includes('[SPK2]'), '④ 被映射的编号不再出现', text.match(/\[SPK\d\]/g));
+    // ASS 的 Dialogue 行: Dialogue: layer,start,end,Style,Name,... —— 角色名在第 5 列(Name)
+    const evs = text.split('\n').filter((l) => l.startsWith('Dialogue:'));
+    const names = evs.map((l) => l.split(',')[4]).filter((x) => x !== undefined);
+    const uniq = Array.from(new Set(names.filter(Boolean)));
+    console.log('  字幕里的角色名(Name 栏):', JSON.stringify(uniq));
+    ok(uniq.includes('Rick Astley'), '④ 字幕里出现真实角色名 Rick Astley', uniq);
+    ok(uniq.includes('主唱'), '④ 字幕里出现角色名 主唱', uniq);
+    ok(uniq.includes('SPK3'), '⑤ 没映射上的说话人保留 SPK3', uniq);
+    ok(!uniq.includes('SPK1') && !uniq.includes('SPK2'), '④ 被映射的编号不再出现', uniq);
+    ok(evs.length > 0, '④ 字幕里有 Dialogue 事件', evs.length);
   } else {
-    fail += 4; console.log('FAIL  字幕文件读不到, 跳过 4 项字幕断言');
+    fail += 5; console.log('FAIL  字幕文件读不到, 跳过 5 项字幕断言');
   }
   ok(/识别|ASR|分离|分角色/.test(log), '跑过了识别与分离阶段');
+
+  /* ── 诊断（KEEP=1 时保留现场） ── */
+  try {
+    const asrPath = PROJ + '/' + id + '/asr.json';
+    const asr = existsSync(asrPath) ? JSON.parse(readFileSync(asrPath, 'utf8')) : null;
+    const hist = {};
+    for (const g of ((asr && asr.segments) || [])) { const k = String(g.speaker); hist[k] = (hist[k] || 0) + 1; }
+    console.log('  [诊断] draft 字段:', Object.keys(d).join(','));
+    console.log('  [诊断] wordLevel=' + d.wordLevel + ' speakers=' + d.speakers + ' speakerCount=' + d.speakerCount + ' 分离区数=' + ((asr && asr.regions) || []).length);
+    console.log('  [诊断] asr.json segment 说话人分布:', JSON.stringify(hist), ' 段落数=' + ((asr && asr.segments) || []).length);
+    console.log('  [诊断] meta.subtitle=' + JSON.stringify(meta.subtitle || {}));
+    if (subPath && existsSync(subPath)) {
+      const ev = readFileSync(subPath, 'utf8').split('\n').filter((l) => l.startsWith('Dialogue:')).slice(0, 3);
+      console.log('  [诊断] ASS 前 3 条事件:', JSON.stringify(ev).slice(0, 300));
+    }
+    console.log('  [诊断] 日志尾部:');
+    console.log(log.split('\n').slice(-14).map((l) => '      ' + l).join('\n'));
+  } catch (e) { console.log('  [诊断] 失败: ' + e.message); }
 } catch (e) {
   fail++; console.log('FAIL  探针异常: ' + ((e && e.message) || e));
 } finally {
-  if (id) { try { await fetch(BASE + '/api/projects/' + id, { method: 'DELETE' }); console.log('已删除测试项目'); } catch {} }
+  if (id && !process.env.KEEP) { try { await fetch(BASE + '/api/projects/' + id, { method: 'DELETE' }); console.log('已删除测试项目'); } catch {} }
+  else if (id) { console.log('KEEP=1: 保留项目 ' + id + ' 供人工查看'); }
   if (orig) {
     try {
       await fetch(BASE + '/api/translate/config', {
