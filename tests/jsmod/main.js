@@ -11,6 +11,7 @@ import { shortcuts, comboFromEvent } from './shortcuts.js';
 import { initProjects } from './project.js';
 import { initI18n, t, applyDom } from './i18n.js';
 import { ico } from './icons.js';
+import { bindModalDrags } from './modal.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -26,6 +27,7 @@ const btnExportJson = document.getElementById('btn-export-json');
 const btnExportZh = document.getElementById('btn-export-zh');
 const btnExportEn = document.getElementById('btn-export-en');
 const btnExportFull = document.getElementById('btn-export-full');
+const btnFix = document.getElementById('btn-fix-subs');
 
 /* 双击视频默认会触发浏览器的原生全屏, 编辑字幕时很容易误触。这里禁掉：
  * ① controlsList 加 nofullscreen(控制条上不再有全屏按钮)
@@ -70,6 +72,7 @@ const overlay = new SrtOverlay(document.getElementById('srt-overlay'), video);
 const assPlayer = new AssPlayer(video, (msg) => toast(msg));
 const timeline = new Timeline(document.getElementById('timeline'), video);
 const panel = new EditorPanel();
+bindModalDrags();
 /* 诊断用(见 initDiag): 暴露实例供页面状态快照读取 */
 window.__timeline = timeline;
 window.__panel = panel;
@@ -761,6 +764,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   } else {
     state.selected = null;
   }
+  updateFixButton();
   // 批量选区的条目数可能因增删/改时间而变 → 重建后同步一下浮条(没有选区时什么都不做)
   if (timeline.rangeSel) refreshRangeBar();
   // 没载入字幕时「刷新字幕」不可点
@@ -1015,6 +1019,7 @@ function selectItem(item, seek = true) {
   state.selected = item;
   panel.select(item);
   timeline.setSelected(item.ref);
+  updateFixButton();
   if (seek && item) {
     video.currentTime = item.start + 0.001;
   }
@@ -2151,6 +2156,15 @@ document.addEventListener('pointerdown', (e) => {
 /* ─────────── 手动刷新动态字幕(渲染层兜底) ─────────── */
 const btnRefresh = document.getElementById('btn-refresh-subs');
 
+function updateFixButton() {
+  if (!btnFix) return;
+  const enabled = state.format === 'ass' && !!state.kar && !!state.selected;
+  btnFix.disabled = !enabled;
+  btnFix.title = enabled
+    ? '检查并修复当前选中的 ASS 字幕'
+    : '请先选中一条 ASS 字幕';
+}
+
 /**
  * 按「字幕列表里的干净整句 + 词级时间(JSON)」重新生成动态字幕(逐词切片), 然后重新应用到视频区。
  * 用途: 某些路径漏了 update / 渲染器没初始化好时, 给用户一个手动兜底(重复点无副作用)。
@@ -2208,6 +2222,11 @@ function refreshDynamicSubtitles() {
 }
 
 if (btnRefresh) btnRefresh.addEventListener('click', () => refreshDynamicSubtitles());
+if (btnFix) btnFix.addEventListener('click', () => {
+  if (!state.selected) { toast('请先选中一条字幕'); return; }
+  openFixForRow(state.selected.ref);
+});
+updateFixButton();
 
 /** 为某样式在文档末尾追加一条新事件, 返回与 analyzeKaraoke 同构的句子对象 */
 function appendSentence(style, start, end, text) {

@@ -62,8 +62,8 @@ html, body {
   --tl-h: 232px;      /* 时间轴面板高(拖 #hsplit 调整) */
   --panel-w: 400px;   /* 右侧字幕列表宽(拖 #vsplit 调整) */
   display: grid;
-  height: 100vh;
-  grid-template-columns: 1fr 6px var(--panel-w);
+  width: 100%; min-width: 0; height: 100vh;
+  grid-template-columns: minmax(0, 1fr) 6px minmax(0, var(--panel-w));
   grid-template-rows: 50px 1fr 6px var(--tl-h);
   grid-template-areas:
     "toolbar  toolbar toolbar"
@@ -96,6 +96,7 @@ html, body {
 /* ── 工具栏 ────────────────────────────────── */
 #toolbar {
   grid-area: toolbar;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -231,6 +232,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* ── 右侧: 字幕总览(编辑区) ─────────────────── */
 #editor-panel {
   grid-area: editor;
+  min-width: 0; min-height: 0;
   display: flex; flex-direction: column;
   background: var(--bg-1);
   border-left: 1px solid var(--border);
@@ -238,6 +240,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 }
 .panel-head {
   flex: none;
+  min-width: 0;
+  overflow: hidden;
   padding: 9px 12px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
@@ -248,7 +252,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   font-size: 14.5px; font-weight: 700; color: var(--text-0);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ph-row { display: flex; align-items: center; gap: 8px; }
+.ph-row {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px; min-width: 0;
+}
+.ph-row > .select-dark { flex: 0 1 auto; min-width: 0; }
 .ph-lbl { font-size: 11px; color: var(--text-2); flex: none; }
 .badge {
   flex: none;
@@ -262,7 +270,10 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .cue-count { font-size: 11px; color: var(--text-2); flex: 1; text-align: right; white-space: nowrap; }
 
 /* 搜索行: 角色筛选 + 胶囊输入框 + 右侧圆形搜索按钮 */
-.ph-search { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ph-search {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 0; margin-bottom: 8px;
+}
 #sel-role-filter {
   flex: none; max-width: 132px;
   background: #101015; color: var(--accent-2);
@@ -303,6 +314,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   font-weight: 700;
 }
 .warn-toggle:disabled { opacity: .38; }
+.fix-subs-btn:not(:disabled) { border-color: var(--accent-a55); color: var(--accent-2); }
+.fix-subs-btn:not(:disabled):hover { background: var(--accent-a12); }
 
 /* 虚拟滚动列表 (卡片式) */
 #cue-list {
@@ -1432,7 +1445,33 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 }
 .proj-card:hover .pc-badge { transform: scale(1.06); }
 
-/* ── 14. 无障碍：用户要求减少动效时全部关闭 ────────────────────── */
+/* ── 14. 窄屏布局：视频 → 时间轴 → 字幕编辑区纵向排列 ─────────────── */
+@media (max-width: 900px) {
+  html, body { overflow-x: hidden; overflow-y: auto; }
+  #app {
+    height: auto; min-height: 100vh;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 50px 45vh 6px 220px minmax(420px, auto);
+    grid-template-areas:
+      "toolbar"
+      "stage"
+      "hsplit"
+      "timeline"
+      "editor";
+  }
+  #toolbar { grid-row: 1; grid-column: 1; overflow-x: auto; }
+  #stage-wrap { grid-row: 2; grid-column: 1; padding: 6px; }
+  #hsplit { grid-row: 3; grid-column: 1; }
+  #timeline-panel { grid-row: 4; grid-column: 1; }
+  #vsplit { display: none; }
+  #editor-panel { grid-row: 5; grid-column: 1; min-height: 420px; }
+  .tb-right { margin-left: 0; }
+  .status-file { max-width: 180px; }
+  .tl-hint { text-overflow: ellipsis; }
+  .panel-head { padding-left: 10px; padding-right: 10px; }
+}
+
+/* ── 15. 无障碍：用户要求减少动效时全部关闭 ────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .001ms !important;
