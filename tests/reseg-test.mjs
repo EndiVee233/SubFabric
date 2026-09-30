@@ -225,6 +225,80 @@ const mockChat = async () => '[[5, ","],[16, "."],[22, ","],[34, "."],[44, ","]]
   ok(out7.reduce((n, s) => n + s.words.length, 0) === 10,
     '补出来的"整句词"也进词表（9 词 + 1 句）', String(out7.reduce((n, s) => n + s.words.length, 0)));
 
+  /* ── 用户报"重试点的没用"的两条根因：①单批失败拖垮整步 ②重试从头再来 ──
+   * 201 词 + 3 词：攒够 200 词后遇到停顿就收批 → 正好 2 批；让**第二小批**失败
+   * （3 词 ≤ MIN_SPLIT_WORDS，不会再拆，直接走"放弃这批"，测试也跑得快）。 */
+  const ckWords = [];
+  for (let i = 0; i < 201; i++) ckWords.push(w('a' + i, i * 0.2, i * 0.2 + 0.15));
+  for (let i = 0; i < 3; i++) { const s = 201 * 0.2 + 1.0 + i * 0.2; ckWords.push(w('b' + i, s, s + 0.15)); }
+  const ckSegs = [{ start: 0, end: 50, text: '', words: ckWords }];
+  ok(R.planBatches(R.flattenWords(ckSegs)).length === 2, '构造出 2 批（201 + 3）');
+
+  /* 单批失败 → 只放弃这批，整步照常完成，词一个不丢 */
+  {
+    const st = {};
+    const flakyChat = async (messages) => {
+      const nums = messages[1].content.split('\n').map(l => parseInt(l, 10));
+      if (nums[0] >= 201) throw Object.assign(new Error('模拟接口抽风'), { kind: 'http' });
+      return '[[' + nums[nums.length - 1] + ', "."]]';
+    };
+    const out = await R.resegWithLLM(flakyChat, ckSegs, () => {}, { stats: st });
+    ok(st.skipped.length === 1, '单批做不出来 → 只放弃那一批（不再整步抛错）', JSON.stringify(st.skipped.map(x => x.label)));
+    ok(out.reduce((n, s) => n + s.words.length, 0) === 204, '放弃的批次词也没丢（按停顿兜底）',
+      String(out.reduce((n, s) => n + s.words.length, 0)));
+  }
+
+  /* 密度异常 → 抢救：只保留句末标点（逗号全丢）往往就合格了 */
+  {
+    const st = {};
+    const denseSegs = [{ start: 0, end: 12, text: '', words: Array.from({ length: 40 }, (_, i) => w('d' + i, i * 0.3, i * 0.3 + 0.25)) }];
+    const denseChat = async (messages) => {
+      const nums = messages[1].content.split('\n').map(l => parseInt(l, 10));
+      return JSON.stringify(nums.map((k, i) => [k, i % 5 === 0 ? '.' : ',']));    // 每词都带标点 → 密度 1.0
+    };
+    const out = await R.resegWithLLM(denseChat, denseSegs, () => {}, { stats: st });
+    ok(st.salvaged.length === 1 && st.skipped.length === 0, '密度异常 → 抢救成功，不算放弃',
+      JSON.stringify([st.salvaged, st.skipped]));
+    ok(out.reduce((n, s) => n + s.words.length, 0) === 40, '抢救后词数守恒');
+    ok(out.every(s => !/,$/.test(s.text)), '抢救后只剩句末标点（没有逗号结尾的行）', JSON.stringify(out.map(s => s.text).slice(0, 3)));
+  }
+
+  /* 所有批次都没成 → 抛错（模型不可用，别静默退回引擎断句） */
+  {
+    let msg = '';
+    const bad = [{ start: 0, end: 12, text: '', words: Array.from({ length: 20 }, (_, i) => w('x' + i, i * 0.3, i * 0.3 + 0.25)) }];
+    try {
+      await R.resegWithLLM(async () => { throw Object.assign(new Error('模型不可用'), { kind: 'http' }); }, bad, () => {}, { stats: {} });
+    } catch (e) { msg = String(e.message || e); }
+    ok(/全部没做出标点/.test(msg), '所有批次都没成 → 抛错并说清原因', msg.slice(0, 90));
+  }
+
+  /* 断点续跑：第一批跑完把每批落盘 → 再跑一次不再调模型，直接用落盘的批次 */
+  {
+    const store = { data: null };
+    const withCk = (stats) => ({
+      stats,
+      loadCheckpoint: () => store.data,
+      saveCheckpoint: (idx, pairs, meta) => {
+        if (!store.data || store.data.sig !== meta.sig) store.data = { model: meta.model, words: meta.words, sig: meta.sig, batches: {} };
+        store.data.batches[idx] = pairs;
+      },
+    });
+    const goodChat = async (messages) => {
+      const nums = messages[1].content.split('\n').map(l => parseInt(l, 10));
+      return '[[' + nums[nums.length - 1] + ', "."]]';
+    };
+    await R.resegWithLLM(goodChat, ckSegs, () => {}, withCk({}));
+    ok(Object.keys(store.data.batches).length === 2, '每批成功就落盘（2 批）', JSON.stringify(Object.keys(store.data.batches)));
+
+    let calls = 0;
+    const st2 = {};
+    const out = await R.resegWithLLM(async () => { calls++; return '[]'; }, ckSegs, () => {}, withCk(st2));
+    ok(calls === 0 && st2.fromCheckpoint === 2, '断点续跑：重试不再调模型，直接用已落盘的批次',
+      JSON.stringify([calls, st2.fromCheckpoint]));
+    ok(out.reduce((n, s) => n + s.words.length, 0) === 204, '续跑结果词数守恒');
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

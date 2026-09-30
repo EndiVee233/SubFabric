@@ -22,6 +22,11 @@
  *    multitalker.py 拿不到词级时间时的兜底段）。这种段用整句当「一个词」补进词表（时间取
  *    [start, end]），否则 flattenWords 会把它整段吃掉 —— 分句这一步绝不能减少文本。
  *  - 极短碎片(<2词且<1s)并入下一句，免得「uh,」这种独行闪一下就没了。
+ *  - **单批失败不拖垮整步**：某批（大喊大叫、标点给得过密的段落）几轮都做不出来时，不抛错结束整条流水线 ——
+ *    只放弃这批（这些词不加标点、按停顿兜底），其余批次照常做完；只有**所有**批次都没成（模型配错/不可用）
+ *    才抛错。另有一道抢救：密度异常时先"只保留句末标点"重判一次（逗号全丢往往就正常了）。
+ *  - **断点续跑**：每批成功就通过 opts.saveCheckpoint 落盘，重试/服务重启后按词表指纹跳过做过的批次 ——
+ *    1.2 万词 = 52 批，重跑一遍要几分钟、几十次模型调用，不能每次重试都从头来。
  *  - 防小模型抽风: 标点密度合理性校验（每词都加逗号 → 判失败重试/拆批），见 llm-text.js 的 punctPairsSane。
  *  - 输出被 max_tokens 截断（finish_reason=length）→ **直接拆批**（换同样提示词重试必然再失败）。
  *
@@ -236,7 +241,11 @@ const STRICT_PROMPT = '【极其重要】上一次的回复不是合法的 JSON 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /**
- * 请一批词的标点。
+ * 请一批词的标点。返回：
+ *   { pairs }              —— 正常拿到标点对（索引是**全局**词序号）
+ *   { pairs, salvaged }    —— 密度异常但抢救成功（只保留句末标点，逗号全丢）
+ *   { failed: true, err }  —— 这批没做出标点（由调用方决定：拆半 / 放弃这批）
+ *   null                   —— 输出被截断（直接交给调用方拆半，不浪费重试）
  *  重试策略按错误类型分流:
  *   · truncated（输出被截断）→ 直接返回 null 交给调用方拆批，不浪费重试
  *   · net/rate/timeout      → 指数退避（尊重 Retry-After）
@@ -245,8 +254,11 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function askBatch(chat, words, lo, hi, onProgress, label) {
   const n = words.length;
   const list = words.slice(lo, hi).map((w, k) => (lo + k) + ' ' + w.word).join('\n');
-  const maxTokens = Math.min(4096, Math.max(768, Math.round((hi - lo) * 1.2) + 512));
+  // 输出长度按"每个词都可能被标点"估：模型在大喊大叫的段落会给出很密的标点对，
+  // 低估就会被 max_tokens 截断，整批白白重来一次（实测 261 词的批 825 tokens 不够用）。
+  const maxTokens = Math.min(4096, Math.max(768, Math.round((hi - lo) * 2) + 768));
   let lastErr = '';
+  let dense = null;                                  // 解析出来但密度异常的最后一版, 留着抢救
   for (const s of ['', STRICT_PROMPT]) {
     for (let a = 0; a < 2; a++) {
       try {
@@ -256,8 +268,9 @@ async function askBatch(chat, words, lo, hi, onProgress, label) {
         if (!pairs) { lastErr = '未返回合法标点对: ' + String(content || '').slice(0, 160); }
         else if (!punctPairsSane(pairs, hi - lo)) {
           lastErr = `标点密度异常（${pairs.length} 个标点 / ${hi - lo} 词）—— 疑似"每词都加逗号"，已丢弃`;
+          dense = pairs;
           console.error('[reseg] ' + lastErr);
-        } else return pairs;
+        } else return { pairs };
       } catch (e) {
         lastErr = String((e && e.message) || e);
         const kind = e && e.kind;
@@ -269,8 +282,23 @@ async function askBatch(chat, words, lo, hi, onProgress, label) {
       }
     }
   }
+  // 抢救: 密度异常通常是"逗号给太密"（喊叫、感叹的段落）—— 把逗号全丢掉、只留句末标点再判一次。
+  // 有标点总比整批退回"按停顿兜底"好，而且句末标点的密度天然低。
+  if (dense) {
+    const only = dense.filter(p => p[1] !== ',');
+    if (only.length && punctPairsSane(only, hi - lo)) {
+      console.error(`[reseg] 批次 ${label} 密度异常, 已抢救: 只保留句末标点（${only.length} 个 / ${hi - lo} 词）`);
+      return { pairs: only, salvaged: true };
+    }
+  }
   console.error(`[reseg] 批次 ${label} 失败：${lastErr}`);
   return { failed: true, err: lastErr };
+}
+
+/** 词表指纹：断点续跑的凭据（词数 + 首尾几个词），asr.json 换了就作废 */
+function wordsSig(words) {
+  const w = words || [];
+  return w.length + '|' + w.slice(0, 4).map(x => x.word).join(' ') + '|' + w.slice(-4).map(x => x.word).join(' ');
 }
 
 /** 在 [lo,hi) 里找一个"最像句界"的拆点（优先本区间内最大的停顿，靠中间更好） */
@@ -286,10 +314,12 @@ function findSplit(words, lo, hi) {
   return best < 0 ? -1 : best + 1;                     // 拆点 = 下一批的 lo
 }
 
-/** 递归处理一个批次：失败就拆半（优先在停顿处拆），拆到 MIN_SPLIT_WORDS 为止 */
+/** 递归处理一个批次：失败就拆半（优先在停顿处拆），拆到 MIN_SPLIT_WORDS 为止。
+ *  返回 { pairs[, salvaged][, partial] }（partial = 有一半没做出来，那半的词按停顿兜底）；
+ *  两半都做不出来 → 返回 { failed: true }，由**调用方**决定这批怎么办（不再一路抛到顶）。 */
 async function resegRange(chat, words, lo, hi, depth, onProgress, label) {
   const r = await askBatch(chat, words, lo, hi, onProgress, label);
-  if (Array.isArray(r)) return r;
+  if (r && !r.failed) return r;                        // { pairs } / { pairs, salvaged }
   const len = hi - lo;
   if (len > MIN_SPLIT_WORDS && depth < 4) {
     let cut = findSplit(words, lo, hi);
@@ -297,37 +327,92 @@ async function resegRange(chat, words, lo, hi, depth, onProgress, label) {
     console.error(`[reseg] 批次 ${label} 拆半重试：${lo}-${cut - 1} / ${cut}-${hi - 1}`);
     const head = await resegRange(chat, words, lo, cut, depth + 1, onProgress, `${label}a`);
     const tail = await resegRange(chat, words, cut, hi, depth + 1, onProgress, `${label}b`);
-    return head.concat(tail);
+    const bad = (x) => !x || x.failed;
+    if (bad(head) && bad(tail)) return head || tail;   // 两半都不行 → 报失败（由调用方放弃这批）
+    return {
+      pairs: (bad(head) ? [] : head.pairs).concat(bad(tail) ? [] : tail.pairs),
+      salvaged: !!((head && head.salvaged) || (tail && tail.salvaged)),
+      partial: bad(head) || bad(tail),
+    };
   }
-  throw new LlmError(`语义分句失败（第 ${lo}-${hi - 1} 词）：${r && r.err ? r.err : '未知原因'}`, 'format');
+  return { failed: true, err: (r && r.err) || '未知原因' };
 }
 
 /** 语义分句主入口。chat(messages, opts) → Promise<string>（llmChat 的包装）。
  *  opts.splitOnComma 恢复"逗号也切句"的旧行为；opts.onLog 写进度日志。
- *  返回新的 segments；LLM 不可用/失败由调用方决定（这里只抛错）。
+ *  opts.stats        收集统计（skipped / salvaged / partial / fromCheckpoint），调用方负责展示。
+ *  opts.loadCheckpoint() / opts.saveCheckpoint(i, pairs, meta)  断点续跑（存储由调用方负责，
+ *                    本模块保持纯净）：每批成功就落盘，重试 / 服务重启后跳过做过的批次。
+ *  单个批次做不出来**不再拖垮整步**：这些词不加标点、按停顿兜底，其余批次照常；
+ *  只有**所有批次**都没做出标点（模型根本不能用）才抛错。
  *  词太少(<8)直接原样返回 —— 没有切的必要。 */
 async function resegWithLLM(chat, segs, onProgress, opts) {
   const words = flattenWords(segs);
   if (words.length < 8) return segs;
-  const onLog = (opts && opts.onLog) || (() => {});
+  const o = opts || {};
+  const onLog = o.onLog || (() => {});
+  const stats = o.stats || {};
+  stats.skipped = stats.skipped || [];
+  stats.salvaged = stats.salvaged || [];
+  stats.fromCheckpoint = stats.fromCheckpoint || 0;
 
   const batches = planBatches(words);
   onLog(`切批方案：${words.length} 词 → ${batches.length} 批（批边界优先落在停顿处）`);
+
+  // 断点续跑：上一轮已经做好的批次直接用（词表指纹对得上才算数）
+  const sig = wordsSig(words);
+  const ck = (typeof o.loadCheckpoint === 'function') ? o.loadCheckpoint() : null;
+  const done = (ck && ck.words === words.length && ck.sig === sig && ck.batches) ? ck.batches : {};
+  const doneIdx = Object.keys(done).filter(k => Array.isArray(done[k]));
+  if (doneIdx.length) {
+    stats.fromCheckpoint = doneIdx.length;
+    onLog(`断点续跑：${doneIdx.length}/${batches.length} 批上一轮已经做过，跳过`);
+  }
+
   const allPairs = [];
   for (let b = 0; b < batches.length; b++) {
     const [lo, hi] = batches[b];
-    const pairs = (await resegRange(chat, words, lo, hi, 0, onProgress, `${b + 1}/${batches.length}`))
-      .filter(p => p[0] >= lo && p[0] < hi);          // 保险: 只接受本批范围内的标点
-    allPairs.push(...pairs);
+    const label = `${b + 1}/${batches.length}`;
+    let pairs = null;
+    if (Array.isArray(done[b])) {
+      pairs = done[b];
+    } else {
+      try {
+        const r = await resegRange(chat, words, lo, hi, 0, onProgress, label);
+        if (r && r.failed) {
+          stats.skipped.push({ label, err: r.err || '未知原因' });
+          onLog(`批次 ${label} 没做出标点（${String(r.err || '').slice(0, 80)}），这些词按停顿兜底`);
+        } else {
+          pairs = ((r && r.pairs) || []).filter(p => p[0] >= lo && p[0] < hi);   // 保险: 只接受本批范围内的标点
+          if (r.salvaged) stats.salvaged.push(label);
+          if (r.partial) stats.partial = (stats.partial || 0) + 1;
+        }
+      } catch (e) {
+        stats.skipped.push({ label, err: String((e && e.message) || e) });
+        onLog(`批次 ${label} 没做出标点（${String((e && e.message) || e).slice(0, 80)}），这些词按停顿兜底`);
+        pairs = null;
+      }
+    }
+    if (pairs) {
+      allPairs.push(...pairs);
+      if (typeof o.saveCheckpoint === 'function') {
+        try { o.saveCheckpoint(b, pairs, { words: words.length, sig, total: batches.length, model: o.model || '' }); } catch {}
+      }
+    }
     if (onProgress) onProgress((b + 1) / batches.length, `语义分句中 … 批次 ${b + 1}/${batches.length}`);
   }
+
+  // 整批全军覆没 = 模型根本不能用（配错模型/额度/接口），这时抛错让用户去修，别静默退回引擎断句
+  if (batches.length && stats.skipped.length === batches.length) {
+    throw new LlmError(`语义分句失败（${batches.length} 批全部没做出标点）：${stats.skipped[0].err}`, 'format');
+  }
   applyPunct(words, allPairs);
-  const groups = mergeTinyFrags(groupResegWords(words, opts));
+  const groups = mergeTinyFrags(groupResegWords(words, o));
   return groupsToSegments(groups);
 }
 
 module.exports = {
   SENT_PUNCT, cleanWordText, flattenWords, parsePunctReply, applyPunct,
   groupResegWords, mergeTinyFrags, groupsToSegments, resegWithLLM,
-  planBatches, softFold,
+  planBatches, softFold, wordsSig,
 };
