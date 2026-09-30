@@ -914,6 +914,19 @@ export function initProjects(ctx) {
   $('#btn-settings').addEventListener('click', openSettings);
 
   /* ── 下载与登录（设置 → 下载与登录） ── */
+  /** Cookie 备注：保存状态 + 登录检测结果（谁登录的、是不是大会员、密文还是明文存） */
+  function cookieNote(d, check) {
+    const keys = (d && d.biliCookieKeys || []).join('、');
+    const enc = d && d.biliCookieEnc
+      ? ' · 密文保存（' + ((d.cookieBackend || '').startsWith('dpapi') ? 'DPAPI 系统加密' : '本机加密') + '）'
+      : '';
+    if (!d || !d.hasBiliCookie) return d && d.ready ? '未设置（只能下到免登录画质）' : '⚠ 下载内核不可用：需要一个 Python 3.8+';
+    if (!check) return '已保存（' + keys + '）' + enc + '，正在检测登录 …';
+    const v = check.isLogin
+      ? '✓ ' + (check.message || '已登录')
+      : '✗ ' + (check.message || '未登录');
+    return v + ' · ' + (keys || 'Cookie') + enc;
+  }
   async function loadFetchSettings() {
     try {
       const d = await (await fetch('/api/fetch/settings', { signal: AbortSignal.timeout(8000) })).json();
@@ -922,9 +935,14 @@ export function initProjects(ctx) {
       if ($('#st-fetch-browser')) $('#st-fetch-browser').value = d.cookiesFromBrowser || '';
       const note = $('#st-fetch-cookie-note');
       if (note) {
-        note.textContent = d.hasBiliCookie
-          ? '已保存（' + (d.biliCookieKeys || []).join('、') + '）' + (d.biliCookieSavedAt ? ' · ' + String(d.biliCookieSavedAt).slice(0, 16).replace('T', ' ') : '')
-          : (d.ready ? '未设置（只能下到免登录画质）' : '⚠ 下载内核不可用：需要一个 Python 3.8+');
+        note.textContent = cookieNote(d, null);
+        if (d.hasBiliCookie) {
+          // 存了就顺手验一次"到底登录上没有"（网络不通时只是提示，不影响保存状态）
+          fetch('/api/fetch/check-cookie', { signal: AbortSignal.timeout(15000) })
+            .then((r) => r.json())
+            .then((c) => { note.textContent = cookieNote(d, c); })
+            .catch(() => { note.textContent = cookieNote(d, { isLogin: false, message: '登录检测失败（网络不通？）' }); });
+        }
       }
     } catch {}
   }
@@ -946,21 +964,34 @@ export function initProjects(ctx) {
   });
   async function saveFetchSettings(patch) {
     try {
-      await fetch('/api/fetch/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      const r = await fetch('/api/fetch/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      const d = await r.json().catch(() => null);
+      if (d && d.check) {
+        const note = $('#st-fetch-cookie-note');
+        if (note) note.textContent = cookieNote(d, d.check);
+      }
       loadFetchSettings();
-    } catch (e) { toast('保存失败: ' + e.message, 3600); }
+      return d;
+    } catch (e) { toast('保存失败: ' + e.message, 3600); return null; }
   }
   for (const pair of [['st-fetch-quality', 'quality'], ['st-fetch-proxy', 'proxy'], ['st-fetch-browser', 'cookiesFromBrowser']]) {
     const el = document.getElementById(pair[0]);
     if (el) el.addEventListener('change', () => saveFetchSettings({ [pair[1]]: el.value }));
   }
   const cookieSaveBtn = document.getElementById('st-fetch-cookie-save');
-  if (cookieSaveBtn) cookieSaveBtn.addEventListener('click', () => {
+  if (cookieSaveBtn) cookieSaveBtn.addEventListener('click', async () => {
     const v = (document.getElementById('st-fetch-cookie').value || '').trim();
     if (!v) { toast('先把浏览器里的 Cookie 粘进来（至少要有 SESSDATA）', 4200); return; }
-    saveFetchSettings({ biliCookie: v });
+    const note = $('#st-fetch-cookie-note');
+    if (note) note.textContent = '已保存，正在验证登录 …';
+    const d = await saveFetchSettings({ biliCookie: v });
     document.getElementById('st-fetch-cookie').value = '';
-    toast('已保存 bilibili Cookie', 3000);
+    if (d && d.check) {
+      toast(d.check.isLogin ? ('✓ ' + d.check.message) : ('✗ ' + d.check.message), d.check.isLogin ? 4200 : 6000);
+    } else {
+      toast('已保存 bilibili Cookie（密文）', 3000);
+    }
+    if (d && d.cookieFixed && note) note.title = '你只贴了 SESSDATA 的值，已按 SESSDATA=… 保存';
   });
   const cookieClearBtn = document.getElementById('st-fetch-cookie-clear');
   if (cookieClearBtn) cookieClearBtn.addEventListener('click', () => { saveFetchSettings({ biliCookie: '' }); toast('已清除 bilibili Cookie', 3000); });

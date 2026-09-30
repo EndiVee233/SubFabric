@@ -1806,10 +1806,38 @@ function handleRequest(req, res) {
  * Cookie/代理 存在 asr/settings.json 的 fetch 段; **对外只回"有没有", 绝不回传值**。 */
 const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
+const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie 走密文, 不再明文进 settings.json
 const fetchJobs = new Map();          // 项目 id -> { proc }
 
+/** 读 fetch 设置。顺带做两件事：
+ *  ① 旧版的**明文** Cookie（fetch.biliCookie）迁成密文（fetch.biliCookieEnc）并清掉明文字段；
+ *  ② 解密后的明文只放在内存（__biliCookiePlain），**不回传前端、不进日志**。 */
 function fetchSettings() {
-  try { return readAsrSettings().fetch || {}; } catch { return {}; }
+  let f = {};
+  try { f = readAsrSettings().fetch || {}; } catch { return {}; }
+  // 只贴了值的（没有 `SESSDATA=` 前缀）在**读的时候就补上**：这样键名回显、下载、登录检测三处口径一致
+  const plainLegacy = normalizeBiliCookie(String(f.biliCookie || ''));
+  if (plainLegacy) {
+    let enc = '';
+    try { enc = secretStore.encrypt(plainLegacy); } catch (e) { console.error('[fetch] Cookie 加密失败:', e && e.message); }
+    if (enc) {
+      try {
+        patchFetchSettings({ biliCookie: '', biliCookieEnc: enc, biliCookieSavedAt: f.biliCookieSavedAt || new Date().toISOString() });
+        f = Object.assign({}, f, { biliCookie: '', biliCookieEnc: enc });
+        console.log('[fetch] bilibili Cookie 已从明文迁移为密文（' + secretStore.backend() + '）');
+      } catch (e) { console.error('[fetch] Cookie 迁移写盘失败:', e && e.message); }
+    }
+  }
+  let plain = plainLegacy;
+  if (!plain && f.biliCookieEnc) {
+    try { plain = normalizeBiliCookie(secretStore.decrypt(String(f.biliCookieEnc))); }
+    catch (e) {
+      console.error('[fetch] Cookie 解不开（换过机器或 Windows 用户？）：' + ((e && e.message) || e) + '。重新粘贴一次 Cookie 就能恢复');
+      plain = '';
+    }
+  }
+  f.__biliCookiePlain = plain;
+  return f;
 }
 function patchFetchSettings(patch) {
   const s = readAsrSettings();
@@ -1820,7 +1848,7 @@ function patchFetchSettings(patch) {
 /** 对外视图: 只给"有没有 cookie"和键名, 值一律不回传 */
 function fetchPublicSettings() {
   const f = fetchSettings();
-  const ck = String(f.biliCookie || '');
+  const ck = String(f.__biliCookiePlain || f.biliCookie || '');
   const keys = ck
     ? Array.from(new Set(ck.split(/[;\n]/).map((x) => String(x).split('=')[0].trim()).filter(Boolean)))
     : [];
@@ -1831,8 +1859,76 @@ function fetchPublicSettings() {
     hasBiliCookie: !!ck,
     biliCookieKeys: keys.slice(0, 12),
     biliCookieSavedAt: f.biliCookieSavedAt || '',
+    biliCookieEnc: !!f.biliCookieEnc,                 // 磁盘上是密文（不是明文躺着）
+    cookieBackend: secretStore.backend(),             // dpapi = 系统级加密 / aes = 本机混淆
     ready: fetchReady(),
   };
+}
+
+/** 把 `k=v; k2=v2`（或 JSON）写成 yt-dlp 吃的 Netscape cookies.txt ——
+ *  与 asr/fetch/bilibili.py 的 write_netscape 同格式。**下载时不再把明文 Cookie 放命令行**
+ *  （命令行在进程列表里谁都能看），改为落到项目目录的 cookie 文件。 */
+function writeNetscapeCookieFile(cookieText, dest, domain) {
+  const src = String(cookieText || '').trim();
+  const pairs = [];
+  const addPair = (k, v) => { if (k) pairs.push([String(k).trim(), String(v == null ? '' : v).trim()]); };
+  if (src.startsWith('{')) {
+    try {
+      const obj = JSON.parse(src);
+      if (obj && typeof obj === 'object') for (const k of Object.keys(obj)) addPair(k, obj[k]);
+    } catch {}
+  } else {
+    for (const item of src.split(/[;\n]/)) {
+      const it = item.trim();
+      if (!it || it.indexOf('=') < 0) continue;
+      const i = it.indexOf('=');
+      addPair(it.slice(0, i), it.slice(i + 1));
+    }
+  }
+  if (!pairs.length) return false;
+  const exp = Math.floor(Date.now() / 1000) + 180 * 24 * 3600;
+  const lines = ['# Netscape HTTP Cookie File', '# 由 SubFabric 生成（来源：用户在设置里粘贴）', ''];
+  for (const [k, v] of pairs) lines.push([domain || '.bilibili.com', 'TRUE', '/', 'FALSE', String(exp), k, v].join('\t'));
+  fs.writeFileSync(dest, lines.join('\n') + '\n', 'utf8');
+  return true;
+}
+
+/** 用一份 Cookie 问 bilibili：**这次到底登录上没有**（保存后 / 打开设置时调用）。
+ *  返回 {ok, isLogin, uname, vip, vipLabel, vipDue, message}；任何异常都变成 message，不抛。 */
+async function biliLoginCheck(cookieText) {
+  const raw = String(cookieText || '').trim();
+  if (!raw) return { ok: false, isLogin: false, message: '没有 Cookie' };
+  const ck = /[=;]/.test(raw) || raw.startsWith('{') ? raw : ('SESSDATA=' + raw);
+  try {
+    const r = await fetch('https://api.bilibili.com/x/web-interface/nav', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+        'Referer': 'https://www.bilibili.com/',
+        'Cookie': ck,
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    const j = await r.json().catch(() => null);
+    if (!j || typeof j.code !== 'number') return { ok: false, isLogin: false, message: '接口返回看不懂（可能被风控）' };
+    const d = j.data || {};
+    if (!d.isLogin) {
+      return {
+        ok: false, isLogin: false, code: j.code,
+        message: j.code === -101 ? '未登录：Cookie 不完整或已过期，重新复制一份' : ('未登录（code=' + j.code + '）'),
+      };
+    }
+    const vip = d.vipStatus === 1;
+    const vipLabel = vip ? String((d.vip_label && d.vip_label.text) || '大会员') : '';
+    return {
+      ok: true, isLogin: true, code: j.code,
+      uname: String(d.uname || ''), mid: Number(d.mid) || 0,
+      vip, vipLabel, vipDue: Number(d.vipDueDate) || 0,
+      message: '已登录：' + String(d.uname || '') + (vip ? '（' + vipLabel + '）' : '（普通账号，会员画质拿不到）'),
+    };
+  } catch (e) {
+    const t = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    return { ok: false, isLogin: false, message: t ? '检测超时：网络不通或 bilibili 不可达' : ('检测失败：' + ((e && e.message) || e)) };
+  }
 }
 /** 只认 bilibili / YouTube（用户要求） */
 function fetchSiteOf(url) {
@@ -1949,9 +2045,14 @@ async function startFetchJob(id, opts) {
   const args = ['--url', opts.url, '--out', dir, '--quality', quality, '--meta-out', srcPath];
   if (part > 1) args.push('--part', String(part));           // 分P: 链接里自带 ?p=N 时由内核以链接为准
   if (f.proxy) args.push('--proxy', String(f.proxy));
-  // 只贴了值的 Cookie 在这里补成 SESSDATA=…（老配置也吃这一层，不用重新粘贴）
-  if (f.biliCookie) args.push('--cookies', normalizeBiliCookie(f.biliCookie));
-  else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
+  // Cookie: 明文**不放命令行**（进程列表里谁都能看到），落成项目目录里的 Netscape 文件传过去。
+  // 这份文件本来就是下载内核自己会写的（随项目一起删），这里只是提前写、并改用它。
+  const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
+  if (ckPlain) {
+    const ckFile = path.join(projDir(id), '_bili_cookies.txt');
+    if (writeNetscapeCookieFile(ckPlain, ckFile)) args.push('--cookies-file', ckFile);
+    else args.push('--cookies', ckPlain);              // 解析不出 name=value 时退回老办法, 别静默丢
+  } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
   if (FFMPEG && FFMPEG !== 'ffmpeg') args.push('--ffmpeg', FFMPEG);
   pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] ' + fetchSiteOf(opts.url)
     + ' · 档位 ' + quality + (part > 1 ? ' · 分P ' + part : '') + ' · ' + opts.url);
@@ -3586,8 +3687,18 @@ function startPrepare(id, videoPath, mode) {
   if (pathname === '/api/fetch/settings' && req.method === 'GET') {
     return sendJson(res, 200, fetchPublicSettings());
   }
+  /* 用已保存的 Cookie 检测登录态（打开设置面板时调一次） */
+  if (pathname === '/api/fetch/check-cookie' && req.method === 'GET') {
+    const f = fetchSettings();
+    const ck = String(f.__biliCookiePlain || '');
+    if (!ck) return sendJson(res, 200, { ok: false, isLogin: false, message: '还没有保存 Cookie' });
+    biliLoginCheck(ck).then((c) => sendJson(res, 200, c))
+      .catch((e) => sendJson(res, 200, { ok: false, isLogin: false, message: String((e && e.message) || e) }));
+    return;
+  }
   if (pathname === '/api/fetch/settings' && req.method === 'POST') {
-    return readBody(req, res, 64 * 1024, (err, body) => {
+    return readBody(req, res, 64 * 1024, async (err, body) => {
+      try {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let d = null;
       try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
@@ -3595,13 +3706,27 @@ function startPrepare(id, videoPath, mode) {
       if (d.quality !== undefined) patch.quality = String(d.quality || 'best');
       if (d.proxy !== undefined) patch.proxy = String(d.proxy || '').trim();
       if (d.cookiesFromBrowser !== undefined) patch.cookiesFromBrowser = String(d.cookiesFromBrowser || '').trim();
+      let newCookie = '';
+      let cookieFixed = false;
       if (d.biliCookie !== undefined) {
-        const ck = normalizeBiliCookie(d.biliCookie);     // 空字符串 = 清除
-        patch.biliCookie = ck;
-        patch.biliCookieSavedAt = ck ? new Date().toISOString() : '';
+        const rawIn = String(d.biliCookie || '').trim();        // 空字符串 = 清除
+        newCookie = normalizeBiliCookie(rawIn);
+        cookieFixed = !!rawIn && rawIn !== newCookie;           // 只贴了值 → 补成 SESSDATA=
+        try { patch.biliCookieEnc = newCookie ? secretStore.encrypt(newCookie) : ''; }
+        catch (e) { return sendJson(res, 500, { error: 'Cookie 加密失败: ' + ((e && e.message) || e) }); }
+        patch.biliCookie = '';                                  // ★ 明文绝不落盘
+        patch.biliCookieSavedAt = newCookie ? new Date().toISOString() : '';
       }
       patchFetchSettings(patch);
-      return sendJson(res, 200, fetchPublicSettings());
+      const out = fetchPublicSettings();
+      if (d.biliCookie !== undefined) {
+        out.cookieFixed = cookieFixed;
+        out.check = newCookie ? await biliLoginCheck(newCookie) : null;   // 存完立刻验证能不能登录
+      }
+      return sendJson(res, 200, out);
+      } catch (e) {
+        return sendJson(res, 500, { error: String((e && e.message) || e) });
+      }
     });
   }
 

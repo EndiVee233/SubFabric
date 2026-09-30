@@ -19,7 +19,9 @@ FlowFetch 与 SubFabric 同属 EndiVee233，可直接复用；改动处都在文
 ## 设计要点
 
 - **登录态**：`--cookies`（粘贴 `SESSDATA=…; bili_jct=…`）或 `--cookies-file`（Netscape）或 `--cookies-from-browser chrome`。
-  bilibili 的 Cookie 会落到**项目目录**里的 `_bili_cookies.txt`（随项目一起删），绝不写进日志。
+  **只复制到 SESSDATA 的值**（没有 `SESSDATA=` 前缀）也认 —— 会自动按 `SESSDATA=<值>` 处理（否则整份解析成空 = 未登录，画质掉档）。
+  bilibili 的 Cookie 会落到**项目目录**里的 `_bili_cookies.txt`（随项目一起删），绝不写进日志；
+  桌面端的设置里则是**密文保存**（Windows 走 DPAPI，其它平台走 AES-GCM），保存后会立刻调 nav 接口验证登录态。
   有大会员 Cookie 时 `--quality best` 自然吃到 8K/HDR —— 选择器里 qn=127/126/125/120 这些档本来就排在前面。
 - **代理**：`--proxy http://127.0.0.1:7890`（YouTube 在国内必须；bilibili 一般不用）。
 - **兜底**：所有选择器都以 `/bestvideo+bestaudio/best` 结尾 —— 某一档拿不到（比如没有大会员）会往下退，不是直接失败。
