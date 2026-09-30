@@ -288,8 +288,8 @@
 
   <!-- 查找与批量替换 -->
   <div id="fr-overlay" hidden>
-    <div class="fr-box">
-      <div class="fr-head">
+    <div class="fr-box modal-surface">
+      <div class="fr-head modal-drag-handle">
         <span class="fr-title">查找与批量替换</span>
         <button type="button" class="btn" id="fr-close">关闭</button>
       </div>
@@ -379,8 +379,8 @@
 
 <!-- 通用确认弹窗(如"删除项目") -->
 <div id="confirm-overlay" hidden>
-  <div class="rn-box">
-    <div class="rn-title" id="confirm-title">确认</div>
+  <div class="rn-box modal-surface">
+    <div class="rn-title modal-drag-handle" id="confirm-title">确认</div>
     <div class="rn-msg" id="confirm-msg"></div>
     <div class="rn-actions">
       <button type="button" class="btn" id="confirm-no">取消</button>
@@ -391,8 +391,8 @@
 
 <!-- 添加角色 -->
 <div id="role-new" hidden>
-  <div class="rn-box">
-    <div class="rn-title">添加角色</div>
+  <div class="rn-box modal-surface">
+    <div class="rn-title modal-drag-handle">添加角色</div>
     <input id="role-new-name" type="text" spellcheck="false" maxlength="40" placeholder="角色名称，例如 译者注">
     <div class="rn-colors" id="role-new-colors"></div>
     <div class="rn-actions">
@@ -405,8 +405,8 @@
 
 <!-- 多条重叠台词 → 选择要设置角色的行 -->
 <div id="pick-overlay" hidden>
-  <div class="pick-box">
-    <div class="pick-title" id="pick-title">这里重叠了好几条字幕，选一条设置角色：</div>
+  <div class="pick-box modal-surface">
+    <div class="pick-title modal-drag-handle" id="pick-title">这里重叠了好几条字幕，选一条设置角色：</div>
     <div class="pick-list" id="pick-list"></div>
     <div class="pick-actions"><button type="button" class="btn" id="pick-cancel">取消</button></div>
   </div>
@@ -414,8 +414,8 @@
 
 <!-- 修复字幕: 展示检测结果, 缺词项让用户确认原句 -->
 <div id="fix-overlay" hidden>
-  <div class="fix-box">
-    <div class="rn-title" id="fix-title">修复字幕</div>
+  <div class="fix-box modal-surface">
+    <div class="rn-title modal-drag-handle" id="fix-title">修复字幕</div>
     <div class="fix-list" id="fix-list"></div>
     <div class="fix-input-wrap" id="fix-input-wrap" hidden>
       <label class="fix-input-label">确认这句英文（会按它重建逐词）：</label>
@@ -455,8 +455,8 @@
 
   <!-- 新建项目对话框 -->
   <div id="np-overlay" hidden>
-    <div class="np-box">
-      <div class="np-title">新建项目</div>
+    <div class="np-box modal-surface">
+      <div class="np-title modal-drag-handle">新建项目</div>
       <div class="np-name-row">
         <span class="np-lbl">项目名称</span>
         <input type="text" id="np-name" class="np-input" spellcheck="false" maxlength="60" placeholder="不填则使用视频文件名">
@@ -523,7 +523,8 @@
 
   <!-- 初稿处理进度浮层 -->
   <div id="dp-overlay" hidden>
-    <div class="dp-box">
+    <div class="dp-box modal-surface">
+      <div class="dp-head modal-drag-handle"><span class="dp-title">初稿处理进度</span></div>
       <div class="dp-steps" id="dp-steps"></div>
       <div class="dp-bar"><div class="dp-bar-in" id="dp-bar-in"></div></div>
       <div class="dp-line">
@@ -545,21 +546,24 @@
 
 <!-- 设置: 识别模型 / 字幕翻译（放在 home-view 外: 编辑器里也要能打开） -->
 <div id="st-overlay" hidden>
-  <div class="st-box" id="st-box">
-    <div class="st-head">
-      <span class="st-title">全局设置</span>
+  <div class="st-box modal-surface" id="st-box">
+    <div class="st-head modal-drag-handle">
+      <div class="st-title-wrap">
+        <span class="st-title">全局设置</span>
+        <span class="st-subtitle">识别、翻译与下载相关偏好</span>
+      </div>
       <button type="button" class="btn btn-mini" id="st-close">关闭</button>
     </div>
 
-    <div class="st-tabs">
-      <button type="button" class="st-tab active" data-stp="models">识别模型</button>
-      <button type="button" class="st-tab" data-stp="translate">字幕翻译</button>
-      <button type="button" class="st-tab" data-stp="enhance">识别增强</button>
-      <button type="button" class="st-tab" data-stp="fetch">下载与登录</button>
+    <div class="st-tabs" role="tablist" aria-label="全局设置分类">
+      <button type="button" class="st-tab active" role="tab" aria-selected="true" aria-controls="st-panel-models" data-stp="models">识别模型</button>
+      <button type="button" class="st-tab" role="tab" aria-selected="false" aria-controls="st-panel-translate" data-stp="translate">字幕翻译</button>
+      <button type="button" class="st-tab" role="tab" aria-selected="false" aria-controls="st-panel-enhance" data-stp="enhance">识别增强</button>
+      <button type="button" class="st-tab" role="tab" aria-selected="false" aria-controls="st-panel-fetch" data-stp="fetch">下载与登录</button>
     </div>
 
     <div class="st-body">
-      <div class="st-panel active" data-stp="models">
+      <div class="st-panel active" id="st-panel-models" role="tabpanel" data-stp="models">
         <div class="st-card">
           <div class="st-card-title">模型管理</div>
           <div id="st-models" class="st-models"><span class="spin"></span>读取中…</div>
@@ -577,7 +581,7 @@
         </div>
       </div>
 
-      <div class="st-panel" data-stp="fetch">
+      <div class="st-panel" id="st-panel-fetch" role="tabpanel" data-stp="fetch" hidden>
         <div class="st-card">
           <div class="st-card-title">下载</div>
           <div class="st-grid">
@@ -625,7 +629,7 @@
           <p class="gl-hint">需要先在该浏览器里登录 YouTube；程序用 yt-dlp 的 --cookies-from-browser 读取。</p>
         </div>
       </div>
-      <div class="st-panel" data-stp="translate">
+      <div class="st-panel" id="st-panel-translate" role="tabpanel" data-stp="translate" hidden>
         <div class="st-card">
           <div class="st-card-title">连接</div>
           <div class="st-grid">
@@ -661,7 +665,7 @@
         </div>
       </div>
 
-      <div class="st-panel" data-stp="enhance">
+      <div class="st-panel" id="st-panel-enhance" role="tabpanel" data-stp="enhance" hidden>
         <div class="st-card">
           <div class="st-card-title">热词 <span class="st-card-note">一格一个单词 · ＋ 添加 · − 删除</span></div>
           <div id="ah-terms-list" class="hotword-list"></div>

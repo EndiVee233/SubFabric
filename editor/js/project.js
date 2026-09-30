@@ -593,8 +593,16 @@ export function initProjects(ctx) {
 
   /* ── 全局设置: 页签切换 + 热词块状编辑(一格一个单词) ── */
   document.querySelectorAll('.st-tab').forEach(tab => tab.addEventListener('click', () => {
-    document.querySelectorAll('.st-tab').forEach(t => t.classList.toggle('active', t === tab));
-    document.querySelectorAll('.st-panel').forEach(p => p.classList.toggle('active', p.dataset.stp === tab.dataset.stp));
+    document.querySelectorAll('.st-tab').forEach(t => {
+      const active = t === tab;
+      t.classList.toggle('active', active);
+      t.setAttribute('aria-selected', String(active));
+    });
+    document.querySelectorAll('.st-panel').forEach(p => {
+      const active = p.dataset.stp === tab.dataset.stp;
+      p.classList.toggle('active', active);
+      p.hidden = !active;
+    });
   }));
   function hotwordRow(val) {
     const row = document.createElement('div');

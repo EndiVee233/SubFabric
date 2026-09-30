@@ -11,6 +11,7 @@ import { shortcuts, comboFromEvent } from './shortcuts.js';
 import { initProjects } from './project.js';
 import { initI18n, t, applyDom } from './i18n.js';
 import { ico } from './icons.js';
+import { bindModalDrags } from './modal.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -70,6 +71,7 @@ const overlay = new SrtOverlay(document.getElementById('srt-overlay'), video);
 const assPlayer = new AssPlayer(video, (msg) => toast(msg));
 const timeline = new Timeline(document.getElementById('timeline'), video);
 const panel = new EditorPanel();
+bindModalDrags();
 /* 诊断用(见 initDiag): 暴露实例供页面状态快照读取 */
 window.__timeline = timeline;
 window.__panel = panel;

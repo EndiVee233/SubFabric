@@ -184,7 +184,7 @@ body::before {
 /* ── 8. 弹窗统一：圆角/投影/黑玻璃遮罩/标题与按钮栏节奏 ────────────────────
  * 遮罩**不要模糊**：它盖住的正是字幕列表/时间轴这类"要边看边改"的内容，糊掉就没法对照了。
  * 玻璃感靠更深的半透明黑 + 对话框自身的高光与投影（用户明确要求：黑玻璃、不要模糊）。 */
-#np-overlay, #st-overlay, #fr-overlay, #confirm-overlay, #pick-overlay, #fix-overlay, #dp-overlay {
+#np-overlay, #st-overlay, #fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay, #dp-overlay {
   background: linear-gradient(180deg, rgba(5, 5, 8, .78), rgba(2, 2, 4, .86));
 }
 .np-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box, .dp-box {
@@ -198,6 +198,17 @@ body::before {
 }
 .st-head, .fr-head {
   border-bottom: 1px solid var(--hair); padding-bottom: 10px; margin-bottom: 12px;
+}
+.modal-drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.modal-drag-handle.is-dragging { cursor: grabbing; }
+.modal-surface.modal-dragged {
+  position: fixed;
+  margin: 0;
+  transform: none;
 }
 .np-actions, .st-actions, .fr-actions, .rn-actions, .pick-actions, .dp-actions {
   border-top: 1px solid var(--hair); padding-top: 12px; margin-top: 14px;
