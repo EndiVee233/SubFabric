@@ -1,8 +1,10 @@
 /**
- * 语义分句（LLM 补标点 → 按标点切句）—— 专为 whisper.cpp 引擎做。
+ * 语义分句（LLM 补标点 → 按标点切句）—— **所有识别引擎共用**（whisper.cpp / Parakeet /
+ * 必剪 / 剪映 / NeMo 多说话人）：断句不再取决于引擎自带的那一套。
  *
- * 背景: whisper(英语)经常整段不给标点，启发式分组(句末标点/停顿>0.8s/行长兜底)
- * 会切出糊成一片的超长行。Parakeet 标点质量好，没这个问题。
+ * 背景: 各引擎的断句差异很大 —— whisper(英语)经常整段不给标点，启发式分组(句末标点/
+ * 停顿>0.8s/行长兜底)会切出糊成一片的超长行；云端则按自己的 words_per_line 切；
+ * Parakeet 给的是基础标点。统一在这里过一遍：LLM 只补标点，切句规则固定。
  *
  * 设计要点（防止 LLM 破坏时间轴对齐）:
  *  - **不让 LLM 改写/重排单词** —— 它会丢词、换词，词一时间戳立刻错位。
@@ -16,6 +18,9 @@
  *  - 【用户报"逗号也切句导致断句很碎"】**切句只认句末标点**（. ? ! …），
  *    逗号降级为"行内停顿"；只有当一整行超过 30 词 / 10 秒时才用逗号**软折**。
  *    想恢复旧行为（遇到逗号就切）：settings.json 里设 `resegSplitOnComma: true`。
+ *  - **整段没有词级时间的不能丢**：有些引擎的某几段只有 text、`words` 是空的（典型是
+ *    multitalker.py 拿不到词级时间时的兜底段）。这种段用整句当「一个词」补进词表（时间取
+ *    [start, end]），否则 flattenWords 会把它整段吃掉 —— 分句这一步绝不能减少文本。
  *  - 极短碎片(<2词且<1s)并入下一句，免得「uh,」这种独行闪一下就没了。
  *  - 防小模型抽风: 标点密度合理性校验（每词都加逗号 → 判失败重试/拆批），见 llm-text.js 的 punctPairsSane。
  *  - 输出被 max_tokens 截断（finish_reason=length）→ **直接拆批**（换同样提示词重试必然再失败）。
@@ -51,10 +56,13 @@ function cleanWordText(t) {
 
 /** 把 asr.json 的 segments 摊平成词序列。
  *  独立标点 token（whisper 有时把 "." 单独切一段）直接丢掉，
- *  其时间并入前一个词（前词 end 延到标点 end）。 */
+ *  其时间并入前一个词（前词 end 延到标点 end）。
+ *  **整段没有 words 但有 text**（multitalker 的兜底段 / 云端某句没给词级时间）时，
+ *  用整句当「一个词」补进来 —— 宁可切不细，也不能把这段文本丢掉。 */
 function flattenWords(segs) {
   const words = [];
   for (const s of (segs || [])) {
+    const before = words.length;
     for (const w of (s && s.words) || []) {
       if (!w) continue;
       const c = cleanWordText(w.word);
@@ -64,6 +72,10 @@ function flattenWords(segs) {
       }
       words.push({ word: c, start: w.start, end: w.end });
     }
+    if (words.length !== before) continue;                 // 这段有词级时间, 正常走
+    const text = cleanWordText((s && s.text) || '');       // 只有标点的段不算内容, 丢掉无妨
+    const start = Number(s && s.start), end = Number(s && s.end);
+    if (text && end > start) words.push({ word: text, start, end });
   }
   return words;
 }

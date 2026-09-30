@@ -13,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const childProcess = require('child_process');
-const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), whisper 专用
+const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), 所有识别引擎共用
 const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型/免显卡, 只把音频传上去
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
@@ -498,7 +498,7 @@ const ASR_MODELS = [
     cloud: true,
     files: [],
     sizeMB: 0,
-    desc: '调用剪映（CapCut）云端识别：同样不用装模型、不用显卡。13 秒英文音频实测 3 秒返回逐词时间戳，分句比必剪更细。只支持英语，需要联网，音频会上传到字节跳动服务器，机密素材不要用。与「必剪 ASR」互为备份：一个限流或失败会自动换另一个',
+    desc: '调用剪映（CapCut）云端识别：同样不用装模型、不用显卡。13 秒英文音频实测 3 秒返回逐词时间戳。只支持英语，需要联网，音频会上传到字节跳动服务器，机密素材不要用。与「必剪 ASR」互为备份：一个限流或失败会自动换另一个',
     dirName: '',
     draftAllowed: true,
   },
@@ -616,7 +616,7 @@ function probeNemo(force) {
 }
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
- * diarize / reseg(语义分句, whisper 专用) 均已实现。 */
+ * diarize / reseg(语义分句, 所有引擎都走) 均已实现。 */
 const STAGE = {
   extract: '提取音频中',
   asr: 'ASR识别中',
@@ -2581,7 +2581,7 @@ function startPrepare(id, videoPath, mode) {
     const wavOk = fs.existsSync(path.join(projDir(id), 'audio.wav'));
     // 先做校验再计数：配置不全、点了也不会真正跑的情况，不该消耗重试次数
     if (hasAsr && !llmReady(translateCfg())) {
-      return { error: '还没配置翻译：在右上角「设置」里填接口地址、API Key 和模型名' };
+      return { error: '还没配置 LLM（语义分句和翻译都要用）：在右上角「设置」里填接口地址、API Key 和模型名' };
     }
     draftJobs.delete(id);
     pendingAsr.delete(id);
@@ -2590,8 +2590,9 @@ function startPrepare(id, videoPath, mode) {
     writeMeta(meta);
 
     if (hasAsr) {
-      // 语义分句还欠着（whisper 项目 + LLM 可用 + 没做完/没跳过）→ 先补这一步再往下走
-      if (!meta.draft.resegDone && meta.draft.engine === 'whisper.cpp' && llmReady(translateCfg())) {
+      // 语义分句还欠着（LLM 可用 + 没做完/没跳过）→ 先补这一步再往下走。
+      // 不再按引擎区分: 所有引擎的初稿都要过语义分句（老项目 resegDone 为空, 重试时正好补上）。
+      if (!meta.draft.resegDone && llmReady(translateCfg())) {
         setDraft(id, { status: 'running', stage: STAGE.reseg, progress: 76, message: '重试语义分句…', error: null, failedStage: '' });
         Promise.resolve(runDraftReseg(id))
           .then(() => continueDraftAfterAsr(id, wordLevel))
@@ -2755,24 +2756,26 @@ function startPrepare(id, videoPath, mode) {
           return;
         }
 
-        // 3.5) 语义分句(仅 whisper: 它常整段不给标点) —— LLM 补标点 → 按逗号/句号切句。
-        //      重识别是小区域, 失败不致命: 回退到原启发式分组继续走。
-        if (model.engine === 'whisper.cpp' && llmReady(translateCfg())) {
-          setRr({ stage: '语义分句中', progress: 72, message: '语义分句中 …' });
-          try {
-            const cfgR = translateCfg();
-            const before = segs.length;
-            segs = await resegMod.resegWithLLM(
-              (messages, o) => llmChat(cfgR, messages, o).then(r => r.content), segs,
-              (frac, msg) => setRr({ stage: '语义分句中', progress: 72 + Math.round((frac || 0) * 3), message: msg || '语义分句中 …' }),
-              { splitOnComma: resegSplitOnComma(), onLog: (m) => setRr({ message: '语义分句中 … ' + m }) });
-            setRr({ message: `语义分句完成：${before} 行 → ${segs.length} 行` });
-          } catch (e) {
-            setRr({ message: '语义分句失败，按标点/停顿兜底：' + String((e && e.message) || e).slice(0, 80) });
-          }
+        // 3.5) 语义分句(所有引擎都做, 与初稿同一条规则) —— LLM 补标点 → 按逗号/句号切句。
+        //      语义分句是必经步骤: 没配 LLM 就直接报错, 不许静默降级成引擎自带的断句;
+        //      LLM 真跑失败时才是"小区域不致命", 回退到原断句继续走(见下面 catch)。
+        if (!llmReady(translateCfg())) {
+          throw new Error('没配置 LLM：语义分句走不了，先在右上角「设置」里填接口地址、API Key 和模型名，再重新识别这一段');
+        }
+        setRr({ stage: '语义分句中', progress: 72, message: '语义分句中 …' });
+        try {
+          const cfgR = translateCfg();
+          const before = segs.length;
+          segs = await resegMod.resegWithLLM(
+            (messages, o) => llmChat(cfgR, messages, o).then(r => r.content), segs,
+            (frac, msg) => setRr({ stage: '语义分句中', progress: 72 + Math.round((frac || 0) * 3), message: msg || '语义分句中 …' }),
+            { splitOnComma: resegSplitOnComma(), onLog: (m) => setRr({ message: '语义分句中 … ' + m }) });
+          setRr({ message: `语义分句完成：${before} 行 → ${segs.length} 行` });
+        } catch (e) {
+          setRr({ message: '语义分句失败，按标点/停顿兜底：' + String((e && e.message) || e).slice(0, 80) });
         }
 
-        // 4) 用设置里的 LLM 翻译（Key 为空/未配置 → 明确提示, 只返回识别结果）
+        // 4) 用设置里的 LLM 翻译（没配 Key 的情况在上面 3.5 就被拦下了, 这里只兜"跑到一半配置被清掉"）
         const cfg = translateCfg();
         let warning = null;
         if (llmReady(cfg)) {
@@ -2854,11 +2857,16 @@ function startPrepare(id, videoPath, mode) {
     return finishTranslate(id, segs, lines);
   }
 
-  /** 语义分句(whisper 初稿专用): 读 asr.json → LLM 补标点 → 按逗号/句号切句 → 写回。
+  /** 语义分句(初稿, 所有引擎共用): 读 asr.json → LLM 补标点 → 按逗号/句号切句 → 写回。
    *  成功后 meta.draft.resegDone = true（重试/跳过逻辑靠它判断这一步还欠不欠着）。 */
   async function runDraftReseg(id) {
     const cfg = translateCfg();
-    setDraft(id, { status: 'running', stage: STAGE.reseg, progress: 76, message: '语义分句中 …', error: null, failedStage: '' });
+    // 进度条与服务端流水线的顺序一致(识别 → 语义分句 → 说话人分离 → 翻译), 而且不许倒退:
+    // 语义分句占 76~82, 说话人分离接在 82 之后; 从当前值接着走, 绝不硬跳回 76。
+    const curDraft = (readMeta(id) || {}).draft || {};
+    const base = Math.max(76, Math.min(Number(curDraft.progress) || 0, 80));
+    const span = Math.max(1, 82 - base);
+    setDraft(id, { status: 'running', stage: STAGE.reseg, progress: base, message: '语义分句中 …', error: null, failedStage: '' });
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（LLM 补标点 → 按逗号/句号切句）`);
     const p = path.join(projDir(id), 'asr.json');
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -2868,7 +2876,7 @@ function startPrepare(id, videoPath, mode) {
       (messages, o) => llmChat(cfg, messages, Object.assign({ debugFile: path.join(projDir(id), 'llm-debug.jsonl') }, o))
         .then(r => r.content),
       data.segments || [],
-      (frac, msg) => setDraft(id, { stage: STAGE.reseg, progress: 76 + Math.round((frac || 0) * 8), message: msg || '语义分句中 …' }),
+      (frac, msg) => setDraft(id, { stage: STAGE.reseg, progress: base + Math.round((frac || 0) * span), message: msg || '语义分句中 …' }),
       { splitOnComma: resegSplitOnComma(), onLog: (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [分句] ${m}`) });
     data.segments = segs2;
     const tmp = p + '.tmp';
@@ -3162,23 +3170,21 @@ function startPrepare(id, videoPath, mode) {
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp GPU·Vulkan 推理`);
     }
 
-    // 识别完成后的收尾三段式: reseg(语义分句, 仅 whisper) → diarize(区分说话人) → 生成字幕。
-    // 分离跑在音频上、与识别引擎无关(Parakeet / whisper.cpp 都能配);
-    // reseg 只对 whisper 做(它常整段不给标点, 启发式切句会糊成超长行; Parakeet 标点质量好)。
+    // 识别完成后的收尾三段式: reseg(语义分句) → diarize(区分说话人) → 生成字幕 ——
+    // 顺序就是这样: **先把行切开, 再往这些行上标说话人**（进度浮层的步骤条同一顺序）。
+    // 三步都与识别引擎无关: 分离跑在音频上, 任何引擎都能配;
+    // 语义分句**所有引擎都做**, 没配 LLM 就直接失败停在这里, 不会跳过它往下走。
     const finishAsr = () => {
-      if (model.engine === 'whisper.cpp') {
-        const cfg = translateCfg();
-        if (llmReady(cfg)) {
-          // whisper 专用: LLM 补标点 → 按逗号/句号切句(用户规则)。
-          // 失败可重试/跳过 —— 跳过时按原启发式(标点/停顿/行长)分组。
-          runDraftReseg(id)
-            .then(() => continueDraftAfterAsr(id, wordLevel))
-            .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
-          return;
-        }
-        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] API Key 为空，跳过语义分句（按标点/停顿兜底切句）`);
+      // 语义分句是**必经步骤**: 没配 LLM 就在这里失败, 绝不静默降级成引擎自带的断句往下走。
+      // retryDraft 对「没配 LLM」也是直接拒绝(连重试次数都不涨), 所以出路只有一条: 把 Key 填上。
+      if (!llmReady(translateCfg())) {
+        setDraft(id, { stage: STAGE.reseg, message: '语义分句需要 LLM …', error: null, failedStage: '' });
+        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [错误] 没配置 LLM，语义分句走不了，流水线停在这一步`);
+        return finishDraft(id, new Error('没配置 LLM：语义分句走不了，先在右上角「设置」里填接口地址、API Key 和模型名，再点「重试」'));
       }
-      continueDraftAfterAsr(id, wordLevel);
+      runDraftReseg(id)
+        .then(() => continueDraftAfterAsr(id, wordLevel))
+        .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
     };
 
     // ── whisper.cpp 引擎: whisper-cli(词级用 -ml 1 -sow), 结果转成 asr.json ──
@@ -3255,7 +3261,11 @@ function startPrepare(id, videoPath, mode) {
       const ctl = new AbortController();
       draftAborts.set(id, ctl);
       const cloudLog = (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] ${m}`);
-      const cloudProg = (pct, msg) => setDraft(id, { stage: STAGE.asr, progress: pct, message: msg });
+      // 云端客户端报的是它自己的绝对刻度(最后到 86); 这里映射进本流水线的 ASR 段(30~75) ——
+      // 后面还排着语义分句(76~82)与说话人分离(82~86), ASR 不能提前跑到 86。
+      const cloudProg = (pct, msg) => setDraft(id, {
+        stage: STAGE.asr, progress: 30 + Math.round((Number(pct) || 0) * 0.45), message: msg,
+      });
       toCloudAudio(wav)
         .then(async (mp3) => {
           let mb = 0;
@@ -3280,7 +3290,7 @@ function startPrepare(id, videoPath, mode) {
             const meta1 = readMeta(id);
             if (meta1 && meta1.draft) { meta1.draft.usedModelId = used.modelId; meta1.draft.engine = used.engine; writeMeta(meta1); }
           } catch (e) { return finishDraft(id, e); }
-          finishAsr();                                   // 云端自带断句, 不走 whisper 的语义分句
+          finishAsr();                                   // 云端断句也照样过语义分句
         })
         .catch((e) => {
           draftAborts.delete(id);

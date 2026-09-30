@@ -36,6 +36,25 @@ ok(fw[0].end === 0.6, 'flattenWords 前词 end 并入标点时间', String(fw[0]
 ok(R.flattenWords([]).length === 0, 'flattenWords 空输入');
 ok(R.flattenWords(null).length === 0, 'flattenWords null');
 
+/* ── flattenWords: 整段没有 words 时用整句补一个"词", 文本绝不能丢 ──
+ * 真实场景: multitalker.py 拿不到词级时间的兜底段 {text, words: []}；
+ * 语义分句现在对所有引擎都跑, 这种段若被吃掉就是整句消失。 */
+const noWordSegs = [
+  { start: 0, end: 2, text: 'hello world.', words: [] },
+  { start: 2, end: 4, text: 'second line', words: null },
+  { start: 4, end: 5, text: '...', words: [] },                 // 只有标点 → 不算内容
+];
+const fw2 = R.flattenWords(noWordSegs);
+ok(fw2.length === 2, 'flattenWords 无词级时间的段补成整句, 纯标点段丢弃', JSON.stringify(fw2));
+ok(fw2[0].word === 'hello world' && fw2[0].start === 0 && fw2[0].end === 2,
+  'flattenWords 补出的词用整句文本与 [start,end]', JSON.stringify(fw2[0]));
+ok(fw2[1].word === 'second line', 'flattenWords words=null 也当无词级时间处理', JSON.stringify(fw2[1]));
+const fwMix = R.flattenWords([
+  { start: 0, end: 1, text: 'a b', words: [w('a', 0, 0.5), w('b', 0.5, 1)] },
+  { start: 1, end: 2, text: 'c d', words: [] },
+]);
+ok(fwMix.length === 3 && fwMix[2].word === 'c d', 'flattenWords 有词级时间的段照旧, 不影响后续无词段', JSON.stringify(fwMix));
+
 /* ── parsePunctReply ── */
 const n = 10;
 let r = R.parsePunctReply('[[3, ","],[7, "."]]', n);
@@ -187,6 +206,24 @@ const mockChat = async () => '[[5, ","],[16, "."],[22, ","],[34, "."],[44, ","]]
   const tiny = [{ start: 0, end: 1, text: 'hi there', words: [w('hi', 0, 0.5), w('there', 0.5, 1)] }];
   const out6 = await R.resegWithLLM(async () => { called++; return '[]'; }, tiny, () => {});
   ok(called === 0 && out6 === tiny, 'resegWithLLM 词太少跳过');
+
+  /* 云端 / multitalker 形状的输入（含 words: [] 的段）走完整条流程, 文本一个字都不能少 */
+  const mixedSegs = [
+    { start: 0, end: 3, text: 'okay ken take us to the second floor please', words: [
+      w('okay', 0, 0.3), w('ken', 0.3, 0.6), w('take', 0.6, 0.9), w('us', 0.9, 1.2), w('to', 1.2, 1.5),
+      w('the', 1.5, 1.8), w('second', 1.8, 2.1), w('floor', 2.1, 2.4), w('please', 2.4, 2.7)] },
+    { start: 3.0, end: 4.0, text: 'no word timing here', words: [] },
+  ];
+  const echoChat = async (messages) => {
+    const nums = messages[1].content.split('\n').map(l => parseInt(l, 10));
+    return '[[' + nums[nums.length - 1] + ', "."]]';
+  };
+  const out7 = await R.resegWithLLM(echoChat, mixedSegs, () => {});
+  const txt7 = out7.map(s => s.text).join(' ');
+  ok(/okay ken/.test(txt7) && /no word timing here/.test(txt7),
+    '无词级时间段的文本在整条语义分句流水线里活下来', txt7);
+  ok(out7.reduce((n, s) => n + s.words.length, 0) === 10,
+    '补出来的"整句词"也进词表（9 词 + 1 句）', String(out7.reduce((n, s) => n + s.words.length, 0)));
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

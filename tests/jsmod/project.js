@@ -429,7 +429,8 @@ export function initProjects(ctx) {
   }
 
   /* ─────────── 初稿进度浮层 ─────────── */
-  // 步骤条：与 server.js 的 STAGE 文案一一对应。
+  // 步骤条：与 server.js 的 STAGE 文案一一对应，**顺序与服务端流水线一致**：
+  // 识别 → 语义分句 → 说话人分离 → 翻译 → 完毕（分句先把行切开，分离再往这些行上标说话人）。
   // enabled=false 的是尚未实现的步骤（灰显）；skippable 只对可选步骤为真 ——
   // **语音识别与 LLM 翻译不可跳过**。
   // 与 server.js 的 SKIP_AFTER_RETRIES 保持一致：手动续跑满这次数仍不成功就放开「跳过此步」
@@ -437,8 +438,8 @@ export function initProjects(ctx) {
   const DP_STEPS = [
     // skipAfterRetries = 重试满 N 次仍失败后允许跳过；语音识别永远不可跳
     { name: '语音识别', enabled: true, skippable: false, skipAfterRetries: false, stages: ['提取音频中', 'ASR识别中'] },
-    { name: '说话人分离', enabled: true, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
     { name: '语义分句', enabled: true, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
+    { name: '说话人分离', enabled: true, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
     { name: '翻译', enabled: true, skippable: false, skipAfterRetries: true, stages: ['翻译中'] },
     { name: '完成', enabled: true, skippable: false, skipAfterRetries: false, stages: ['完毕'] },
   ];
