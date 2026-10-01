@@ -588,6 +588,15 @@ export function splitEnglishWordsWithSpans(text) {
       continue;
     }
     const start = i;
+    const fusedNumber = /^([a-z]{2,})(\d{2,})(?=[\s.,?!]|$)/.exec(s.slice(i));
+    const fusedToken = fusedNumber && fusedNumber[0].toLowerCase();
+    if (fusedNumber && !['covid19', 'h264', 'h265', 'x264', 'x265', 'win32', 'win64'].includes(fusedToken)
+        && !/^(?:iphone|gpt|rtx|gtx)\d+$/.test(fusedToken)) {
+      const splitAt = i + fusedNumber[1].length;
+      out.push({ w: s.slice(start, splitAt), start, end: splitAt });
+      i = splitAt;
+      continue;
+    }
     let j = i;
     while (j < n && !/\s/.test(s[j]) && !(isPunct(s[j]) && j > i)) j++;
     while (j < n && isPunct(s[j])) j++;          // 词尾紧跟的标点算这个词的

@@ -59,6 +59,59 @@ function cleanWordText(t) {
   return String(t || '').trim().replace(STRIP_RE, '');
 }
 
+// 只修复较明确的「小写英文词 + 至少两位数字」粘连（如 got24）；
+// 单数字缩写（mp3 / gpt4 / wifi6）、常见专名和大小写混合型号不拆。
+const FUSED_WORD_EXCEPTIONS = new Set(['covid19', 'h264', 'h265', 'x264', 'x265']);
+function isFusedWordException(token) {
+  const core = String(token || '').toLowerCase().replace(/[.,!?;:…]+$/, '');
+  return FUSED_WORD_EXCEPTIONS.has(core) || /^(?:iphone|gpt|rtx|gtx)\d+$/.test(core)
+    || core === 'win32' || core === 'win64';
+}
+function fusedEnglishNumberParts(raw) {
+  const m = /^([a-z]{2,})(\d{2,})([.,!?;:…]*)$/.exec(String(raw || '').trim());
+  if (!m || isFusedWordException(m[0])) return null;
+  return { word: m[1], number: m[2] + m[3] };
+}
+function repairFusedEnglishNumberText(text) {
+  return String(text || '').replace(/(^|[^A-Za-z0-9])([a-z]{2,})(\d{2,})(?=[\s.,!?;:…]|$)/g,
+    (full, boundary, word, digits) => {
+      const token = word + digits;
+      return isFusedWordException(token) ? full : boundary + word + ' ' + digits;
+    });
+}
+
+/** 修复 ASR 融合 token。带词级时间时按字符占比估算拆分边界；
+ *  无词级时间时只补正文空格，不伪造词级时间。融合词没有内部时间戳，边界只能近似。 */
+function repairFusedEnglishNumbers(segs) {
+  let changed = false;
+  const out = (segs || []).map((s) => {
+    const sourceWords = (s && Array.isArray(s.words)) ? s.words : null;
+    if (!sourceWords || !sourceWords.length) {
+      const text = repairFusedEnglishNumberText(s && s.text);
+      if (text === (s && s.text)) return s;
+      changed = true;
+      return { ...s, text };
+    }
+    let segmentChanged = false;
+    const words = [];
+    for (const w of sourceWords) {
+      if (!w) continue;
+      const parts = fusedEnglishNumberParts(w.word);
+      if (!parts) { words.push(w); continue; }
+      const start = Number(w.start), end = Number(w.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) { words.push(w); continue; }
+      const ratio = parts.word.length / (parts.word.length + parts.number.replace(/[.,!?;:…]+$/, '').length);
+      const splitAt = start + (end - start) * ratio;
+      words.push({ ...w, word: parts.word, end: splitAt });
+      words.push({ ...w, word: parts.number, start: splitAt });
+      segmentChanged = changed = true;
+    }
+    if (!segmentChanged) return s;
+    return { ...s, text: words.map(w => w.word).join(' '), words };
+  });
+  return changed ? out : (segs || []);
+}
+
 /** 把 asr.json 的 segments 摊平成词序列。
  *  独立标点 token（whisper 有时把 "." 单独切一段）直接丢掉，
  *  其时间并入前一个词（前词 end 延到标点 end）。
@@ -345,10 +398,11 @@ async function resegRange(chat, words, lo, hi, depth, onProgress, label) {
  *                    本模块保持纯净）：每批成功就落盘，重试 / 服务重启后跳过做过的批次。
  *  单个批次做不出来**不再拖垮整步**：这些词不加标点、按停顿兜底，其余批次照常；
  *  只有**所有批次**都没做出标点（模型根本不能用）才抛错。
- *  词太少(<8)直接原样返回 —— 没有切的必要。 */
+ *  词太少(<8)跳过 LLM 标点处理；入口仍会先修复有明确边界特征的英数粘连。 */
 async function resegWithLLM(chat, segs, onProgress, opts) {
-  const words = flattenWords(segs);
-  if (words.length < 8) return segs;
+  const repairedSegs = repairFusedEnglishNumbers(segs);
+  const words = flattenWords(repairedSegs);
+  if (words.length < 8) return repairedSegs;
   const o = opts || {};
   const onLog = o.onLog || (() => {});
   const stats = o.stats || {};
@@ -417,7 +471,7 @@ async function resegWithLLM(chat, segs, onProgress, opts) {
 }
 
 module.exports = {
-  SENT_PUNCT, cleanWordText, flattenWords, parsePunctReply, applyPunct,
-  groupResegWords, mergeTinyFrags, groupsToSegments, resegWithLLM,
+  SENT_PUNCT, cleanWordText, flattenWords, fusedEnglishNumberParts, repairFusedEnglishNumbers,
+  parsePunctReply, applyPunct, groupResegWords, mergeTinyFrags, groupsToSegments, resegWithLLM,
   planBatches, softFold, wordsSig,
 };

@@ -454,6 +454,23 @@
     </div>
   </div>
 
+  <!-- 编辑项目信息 -->
+  <div id="info-overlay" hidden>
+    <form id="info-form" class="info-box modal-surface" aria-labelledby="info-title">
+      <div class="info-title modal-drag-handle" id="info-title">编辑信息</div>
+      <label class="info-field" for="info-name">
+        <span>项目名称</span>
+        <input type="text" id="info-name" class="np-input" maxlength="60" required spellcheck="false" autocomplete="off" placeholder="请输入项目名称">
+      </label>
+      <p class="info-hint">只修改项目列表中的名称，不会更改原视频或字幕文件。</p>
+      <div class="info-error" id="info-error" role="status" aria-live="polite" hidden></div>
+      <div class="info-actions">
+        <button type="button" class="btn" id="info-cancel">取消</button>
+        <button type="submit" class="btn btn-accent" id="info-save">保存</button>
+      </div>
+    </form>
+  </div>
+
   <!-- 新建项目对话框 -->
   <div id="np-overlay" hidden>
     <div class="np-box modal-surface">

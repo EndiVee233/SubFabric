@@ -201,6 +201,43 @@ const mockChat = async () => '[[5, ","],[16, "."],[22, ","],[34, "."],[44, ","]]
   ok(t5.some(t => t.endsWith('w1199.')) && t5.some(t => t.endsWith('w2399.')) && t5.some(t => t.endsWith('w2599.')),
     '分批标点全部生效（批尾那个句号也被接受）', JSON.stringify(t5.filter(t => /w(1199|2399|2599)\.$/.test(t))));
 
+  /* 英文词+数字粘连：所有模型共用语义分句入口，修复带词级时间的 got24 */
+  {
+    const fused = [{ start: 0, end: 2.5, text: 'I just got24 iron bro', words: [
+      w('I', 0, 0.2), w('just', 0.2, 0.6), w('got24', 0.6, 1.4), w('iron', 1.4, 2.0), w('bro', 2.0, 2.5),
+    ] }];
+    let called = 0;
+    const fixed = await R.resegWithLLM(async () => { called++; return '[]'; }, fused, () => {});
+    ok(called === 0 && fixed[0].text === 'I just got 24 iron bro', 'resegWithLLM 短稿也修复 got24', fixed[0].text);
+    ok(fixed[0].words.length === 6 && fixed[0].words[2].word === 'got' && fixed[0].words[3].word === '24',
+      '融合词拆成两个词并保留逐词时间', JSON.stringify(fixed[0].words));
+    ok(fixed[0].words[2].end === fixed[0].words[3].start, '拆分后的相邻时间边界连续');
+  }
+  {
+    const raw = 'I just got24 iron bro and ran away fast';
+    const sourceWords = raw.split(' ').map((word, i) => w(word, i * 0.3, i * 0.3 + 0.25));
+    let prompt = '';
+    const fixed = await R.resegWithLLM(async (messages) => {
+      prompt = messages[1].content;
+      return '[[9, "."]]';
+    }, [{ start: 0, end: 3, text: raw, words: sourceWords }], () => {});
+    ok(/\n2 got\n3 24\n/.test('\n' + prompt + '\n'), '长稿送入共享语义分句前已拆开数字词', prompt.slice(0, 100));
+    ok(fixed[0].text === 'I just got 24 iron bro and ran away fast.', '长稿分句结果保留拆分词', fixed[0].text);
+  }
+  {
+    const textOnly = [{ start: 0, end: 2, text: 'I just got24 iron bro', words: [] }];
+    const fixed = await R.resegWithLLM(async () => { throw new Error('不应调用 LLM'); }, textOnly, () => {});
+    ok(fixed[0].text === 'I just got 24 iron bro' && fixed[0].words.length === 0,
+      '无词级时间的模型仅修正文案，不伪造词级时间', JSON.stringify(fixed[0]));
+  }
+  ok(!R.fusedEnglishNumberParts('mp3') && !R.fusedEnglishNumberParts('gpt4')
+    && !R.fusedEnglishNumberParts('covid19') && !R.fusedEnglishNumberParts('H264')
+    && !R.fusedEnglishNumberParts('iphone15') && !R.fusedEnglishNumberParts('gpt35')
+    && !R.fusedEnglishNumberParts('rtx4090') && !R.fusedEnglishNumberParts('win64'),
+    '单数字缩写/常见型号不拆');
+  ok(R.fusedEnglishNumberParts('got24,').word === 'got'
+    && R.fusedEnglishNumberParts('got24,').number === '24,', '末尾标点留在数字 token 上');
+
   /* 词太少 → 不调 LLM 原样返回 */
   let called = 0;
   const tiny = [{ start: 0, end: 1, text: 'hi there', words: [w('hi', 0, 0.5), w('there', 0.5, 1)] }];

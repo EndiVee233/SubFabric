@@ -26,6 +26,76 @@ export function initProjects(ctx) {
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  let infoProjectId = '';
+  const infoOverlay = $('#info-overlay');
+  const infoForm = $('#info-form');
+  const infoName = $('#info-name');
+  const infoError = $('#info-error');
+  const infoSave = $('#info-save');
+  function openInfoEditor(project) {
+    infoProjectId = project.id;
+    infoName.value = project.name || '';
+    infoError.textContent = '';
+    infoError.hidden = true;
+    infoOverlay.hidden = false;
+    requestAnimationFrame(() => { infoName.focus(); infoName.select(); });
+  }
+  function closeInfoEditor() {
+    infoOverlay.hidden = true;
+    infoProjectId = '';
+    infoError.textContent = '';
+    infoError.hidden = true;
+  }
+  $('#info-cancel').addEventListener('click', closeInfoEditor);
+  infoOverlay.addEventListener('pointerdown', (event) => {
+    if (event.target === infoOverlay && !infoSave.disabled) closeInfoEditor();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !infoOverlay.hidden && !infoSave.disabled) closeInfoEditor();
+  });
+  infoForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = infoProjectId;
+    const name = infoName.value.trim();
+    if (!id || !name) {
+      infoError.textContent = '项目名称不能为空';
+      infoError.hidden = false;
+      infoName.focus();
+      return;
+    }
+    const oldLabel = infoSave.textContent;
+    infoSave.disabled = true;
+    infoSave.textContent = '保存中…';
+    infoError.textContent = '';
+    infoError.hidden = true;
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(id)}/info`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        infoError.textContent = result.error || '保存失败，请重试';
+        infoError.hidden = false;
+        return;
+      }
+      if (state.project && state.project.id === id && state.project.meta) {
+        state.project.meta.name = result.name || name;
+        state.project.meta.nameCustomized = true;
+        state.project.meta.modifiedAt = result.modifiedAt || state.project.meta.modifiedAt;
+      }
+      closeInfoEditor();
+      renderList();
+      toast('项目信息已更新');
+    } catch {
+      infoError.textContent = '保存失败，请检查本地服务后重试';
+      infoError.hidden = false;
+    } finally {
+      infoSave.disabled = false;
+      infoSave.textContent = oldLabel;
+    }
+  });
+
   function fmtDate(iso) {
     const d = new Date(iso);
     if (isNaN(d)) return '';
@@ -365,9 +435,14 @@ export function initProjects(ctx) {
         </div>
         <div class="pc-actions">
           ${progBtn}
+          <button type="button" class="btn pc-edit" title="编辑项目名称">编辑信息</button>
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
           <button type="button" class="btn pc-del ico-only" title="删除项目（音频、波形、字幕副本一起删）">${ico('trash')}</button>
         </div>`;
+      card.querySelector('.pc-edit').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openInfoEditor(p);
+      });
       card.querySelector('.pc-open').addEventListener('click', (e) => {
         e.stopPropagation();
         if (!locked) location.hash = '#/project/' + p.id;

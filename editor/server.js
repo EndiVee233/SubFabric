@@ -24,7 +24,7 @@ const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.0.9'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.0.10'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -2080,9 +2080,9 @@ async function startFetchJob(id, opts) {
     qualityPreset: sm.qualityPreset || quality, fileSize: sm.fileSize || 0,
     fetchedAt: sm.fetchedAt || new Date().toISOString(),
   };
-  // 名字还是"占位符"(没填 / 用 BV 号兜底) 时, 换成视频真标题
+  // 名字还是"占位符"(没填 / 用 BV 号兜底) 时, 换成视频真标题；用户手动编辑过的名称不覆盖
   const nm = String(meta.name || '').trim();
-  if (sm.title && (!nm || /^BV[0-9A-Za-z]+$/.test(nm) || nm === '下载的视频')) meta.name = String(sm.title).slice(0, 60);
+  if (!meta.nameCustomized && sm.title && (!nm || /^BV[0-9A-Za-z]+$/.test(nm) || nm === '下载的视频')) meta.name = String(sm.title).slice(0, 60);
   meta.draft = Object.assign({}, meta.draft || {}, { sourceFetched: true });
   writeMeta(meta);
   pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] 完成: ' + path.basename(file)
@@ -4181,7 +4181,7 @@ function startPrepare(id, videoPath, mode) {
         const wantSpkF = !!data.speakers && wordLevelF;
         const spkCountF = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
         const metaF = {
-          id: idF, name: nameF, createdAt: nowF, modifiedAt: nowF,
+          id: idF, name: nameF, nameCustomized: !!String(data.name || '').trim(), createdAt: nowF, modifiedAt: nowF,
           video: { path: '', name: '' },
           prepare: { status: 'none' },
           draft: {
@@ -4249,6 +4249,7 @@ function startPrepare(id, videoPath, mode) {
       const now = new Date().toISOString();
       const meta = {
         id, name: String(data.name || '').trim() || path.basename(vp, path.extname(vp)),
+        nameCustomized: !!String(data.name || '').trim(),
         createdAt: now, modifiedAt: now,
         video: { path: vp, name: path.basename(vp) },
         prepare: { status: 'none' }
@@ -4278,6 +4279,26 @@ function startPrepare(id, videoPath, mode) {
     if (!meta) return sendJson(res, 404, { error: '项目不存在' });
 
     if (!action && req.method === 'GET') return sendJson(res, 200, metaView(meta));
+
+    if (action === 'info' && req.method === 'PUT') {
+      return readBody(req, res, 8 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let data;
+        try { data = JSON.parse(body.toString('utf8')); }
+        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        if (!data || typeof data.name !== 'string') return sendJson(res, 400, { error: '项目名称格式无效' });
+        const name = data.name.trim();
+        if (!name) return sendJson(res, 400, { error: '项目名称不能为空' });
+        if (name.length > 60) return sendJson(res, 400, { error: '项目名称不能超过 60 个字符' });
+        // 在请求体读完后重新读取，避免用路由入口处的旧对象覆盖后台任务状态。
+        const current = readMeta(id);
+        if (!current) return sendJson(res, 404, { error: '项目不存在' });
+        current.name = name;
+        current.nameCustomized = true;
+        touchMeta(current);
+        return sendJson(res, 200, { ok: true, name: current.name, modifiedAt: current.modifiedAt });
+      });
+    }
 
     // 重试：按现有产物决定从哪一步续跑（有识别结果就只补翻译，不重头来）
     if (action === 'retry' && req.method === 'POST') {

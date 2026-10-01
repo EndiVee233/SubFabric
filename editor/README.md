@@ -1,7 +1,12 @@
-# SubFabric（字幕工作台）v2.0.9
+# SubFabric（字幕工作台）v2.0.10
 
 基于 Web 的字幕编辑器：视频播放 + 字幕实时叠加 + 时间轴 + 编辑面板。
 支持 **SRT 双语字幕**（主/副语言上下排列）与 **ASS 高级特效字幕**（libass 内核，卡拉OK/颜色/定位等特效完整还原）。
+
+## v2.0.10 更新
+
+- 项目列表新增“编辑信息”，可修改项目名称；手动设置的名称不会再被下载完成后的视频标题覆盖。
+- 修复识别稿件中的英数粘连（如 `got24`），所有识别引擎共用的后处理与编辑器分词保持一致；对常见型号和专名采用保护规则。
 
 ## 快速开始
 
@@ -473,10 +478,10 @@ node tools/ui_shot_walk.mjs       # 界面走查截图（21 张 → _t/shots/ + 
 ```bash
 node tests/gen-fixture.mjs        # 生成夹具(8 行双语)
 node tests/karaoke-exhaustive.mjs # 穷举: 13 个场景 + 200 步随机压力, 每步校验 6 条不变量
-node tests/reseg-test.mjs         # 语义分句: 静音切批/切句规则/密度校验/截断拆批/无词级时间段不丢 (55 项)
+node tests/reseg-test.mjs         # 语义分句: 静音切批/切句规则/密度校验/截断拆批/英数粘连修复/无词级时间段不丢 (73 项)
 node tests/llm-text-test.mjs      # LLM 回复卫生: 剥思维链/JSON 提取/逐行兜底/密度 (36 项)
 node tests/role-gap-test.mjs      # 角色名标签与正文的间距规范 (19 项)
-node tests/word-split-test.mjs    # 英文字幕分词: 空白 + , . ? ! (20 项)
+node tests/word-split-test.mjs    # 英文字幕分词: 空白 + 标点 + 英数粘连规则 (24 项)
 node tests/ass-escape-test.mjs    # ASS 文本转义 (13 项) · glossary-test.mjs 术语表 (10 项)
 
 # 退出链路（托盘/完全退出）

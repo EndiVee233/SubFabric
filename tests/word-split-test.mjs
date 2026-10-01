@@ -24,6 +24,11 @@ ok(j(S('hello, world')) === j(['hello,', 'world']), '逗号切', j(S('hello, wor
 ok(j(S('plan.to')) === j(['plan.', 'to']), '黏连的句号切(plan.to)', j(S('plan.to')));
 ok(j(S('SMP,I')) === j(['SMP,', 'I']), '黏连的逗号切(SMP,I)', j(S('SMP,I')));
 ok(j(S('what?really!')) === j(['what?', 'really!']), '问号/叹号切', j(S('what?really!')));
+ok(j(S('I just got24 iron bro')) === j(['I', 'just', 'got', '24', 'iron', 'bro']),
+  '小写英文词与两位数字间自动补分词边界', j(S('I just got24 iron bro')));
+ok(j(S('h264 covid19 iPhone15 gpt35 rtx4090 win64')) ===
+  j(['h264', 'covid19', 'iPhone15', 'gpt35', 'rtx4090', 'win64']),
+  '常见型号/专名保持不拆', j(S('h264 covid19 iPhone15 gpt35 rtx4090 win64')));
 ok(j(S('Dear player of the Unstable SMP,I plan.to nuke Capital City,')) ===
    j(['Dear', 'player', 'of', 'the', 'Unstable', 'SMP,', 'I', 'plan.', 'to', 'nuke', 'Capital', 'City,']),
    '用户报的原句', j(S('Dear player of the Unstable SMP,I plan.to nuke Capital City,')));
@@ -54,6 +59,12 @@ ok(j(S('a . b')) === j(['a.', 'b']), '空格+标点混合', j(S('a . b')));
   ok(sp.length === 12, 'spans 词数 12', String(sp.length));
   ok(sp.every(x => t.slice(x.start, x.end) === x.w), 'spans 的 start/end 与原文一致');
   ok(j(sp.map(x => x.w)) === j(K.splitEnglishWords(t)), 'spans 与 splitEnglishWords 同口径');
+}
+{
+  const t = 'I just got24 iron bro';
+  const sp = K.splitEnglishWordsWithSpans(t);
+  ok(j(sp.map(x => x.w)) === j(['I', 'just', 'got', '24', 'iron', 'bro']), 'got24 spans 也拆成 got / 24');
+  ok(sp.every(x => t.slice(x.start, x.end) === x.w), 'got24 拆分后的字符位置精确');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
