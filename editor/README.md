@@ -526,14 +526,32 @@ node editor/scripts/fetch-vendor.js          # 拉 editor/vendor/: libass worker
 #    · editor/README.md          标题里的版本号
 
 # 2) 编译安装包(输出到 build/installer/)
-"D:\Program Files (x86)\Inno Setup 6\ISCC.exe" build/installer/SubFabric.iss
+#    ISCC 路径随机器而变(本机实测: "Y:\Program Files\Inno Setup 7\ISCC.exe"), 先找到再跑
+"<Inno Setup 目录>\ISCC.exe" build/installer/SubFabric.iss
 
-# 3) 静默安装自检(装到临时目录看内容, 别直接装到 Program Files)
+# 3) 静默安装自检 —— ⚠ 见下方「/DIR 会被 UsePreviousAppDir 顶掉」, 这一步会真的覆盖已安装目录
 SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DIR=D:\tmp\inst
 #    期望: 45 个文件 / 约 106MB, 含 editor/vendor/*、SubFabric.exe、main.py、asr/
+#    自检内容: find <安装目录>/editor -type f | wc -l 应约 41;
+#              逐字节比对 editor/js/*.js 与源码; 确认 asr/.venv、asr/models、projects/ 仍在
 
 # 4) 发 Release: 只上传 setup.exe 这一个资产
+#    本机没有 gh CLI。两条可用路径:
+#      a) GitHub connector 的 MCP 工具(list_releases / get_release_by_tag)可读可核对;
+#      b) 建 Release 走 REST: 凭据用 `git credential fill`(protocol=https host=github.com)
+#         取 username/password 拼 Basic, POST /repos/<owner>/<repo>/releases,
+#         再把 setup.exe POST 到返回的 upload_url(?name=...)。
+#    发完务必复核: assets[].digest 应与本地 sha256sum 一致。
 ```
+
+> **⚠ `/DIR` 会被 `UsePreviousAppDir` 顶掉（2026-10-02 实测）**：`SubFabric.iss` 没有关掉 Inno 默认的
+> `UsePreviousAppDir`，所以**只要本机装过 SubFabric，静默安装的 `/DIR=临时目录` 就被忽略**，
+> 文件照样写进老目录（`{autopf}\SubFabric`，本机是 `Y:\Program Files (x86)\SubFabric`）——
+> 也就是说 README 里那句"装到临时目录看内容，别直接装到 Program Files"**做不到**：
+> 这个"自检"本身就是一次真实的原地升级。它是**无害的**（[Files] 不含 `projects/`，
+> 且排除 `asr\.venv`、`asr\models`、`settings.json`、`whisper.cpp`、`runtime-python`、`ytdlp`、`logs`，
+> 用户数据不会被碰），但要知道自己刚把用户机器上的版本换了。真要隔离验证，得临时给
+> `SubFabric.iss` 加 `UsePreviousAppDir=no` 再编一次。
 
 **踩过的坑**：① 不跑 `fetch-vendor.js` 直接打，安装包会从 ~33.8MB 掉到 ~22.7MB（少的正是 libass worker 与 CJK 字体，字幕渲染直接废）；② `build/` 里**只有** `installer/SubFabric.iss` 与 `installer/start-editor.*` 入库（.gitignore 开了例外，2026-09-30 build/ 被误删过一次），`SubFabric.exe`、`node-binary.exe`、`editor/vendor/` 仍然不入库 —— 新克隆要跑 `fetch-vendor.js` + `build_exe.py` 生成；③ 版本号三处不同步，装完仍显示旧版本。
 
