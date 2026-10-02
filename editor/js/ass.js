@@ -315,6 +315,30 @@ export class AssDoc {
     return this.lines.filter(l => l !== null).join('\r\n');
   }
 
+  /** 临时预览快照：仅替换该句的输出事件；原始事件、行号及导出内容均不变。 */
+  previewEvents(sentence, specs) {
+    if (!sentence || !sentence.events || !sentence.events.length) return this.serialize();
+    const indices = new Set(sentence.events.map(ev => ev.lineIdx));
+    const first = Math.min(...indices);
+    const insert = specs.map(spec => this._buildDialogueLine(spec));
+    const lines = [];
+    this.lines.forEach((value, idx) => {
+      if (idx === first) lines.push(...insert);
+      if (value !== null && !indices.has(idx)) lines.push(value);
+    });
+    return lines.join('\r\n');
+  }
+
+  previewSentence(sentence, safeText) {
+    if (!sentence || !sentence.events || !sentence.events.length) return this.serialize();
+    const p = sentence.proto;
+    return this.previewEvents(sentence, [{
+      layer: p.layer, style: sentence.style, name: p.name,
+      effect: p.effect, margins: p.margins,
+      start: sentence.start, end: sentence.end, text: safeText
+    }]);
+  }
+
   /** 按样式分车道(时间轴用) */
   lanesByStyle() {
     const map = new Map();

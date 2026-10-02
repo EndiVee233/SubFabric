@@ -62,6 +62,9 @@ export class EditorPanel {
     this.onSelect = null;
     this.onSeek = null;       // 双击非文字区域 → 跳转到该条时间点
     this.onApply = null;
+    this.onEnglishInput = null; // 行内英文草稿变化，交给主逻辑管理临时预览
+    this.onEditCancel = null;   // Esc/外部重置只撤销草稿，不提交
+    this.onEditFinish = null;   // 内容未改变时仍需清理临时预览
     this.onModeChange = null;
 
     // Tab / 角色状态
@@ -187,10 +190,12 @@ export class EditorPanel {
         this._switching = true;
         clearTimeout(this._switchTimer);
         this._switchTimer = setTimeout(() => { this._switching = false; }, 60);
-        this.closeEdit();
+        // 切行是提交，不是取消；直接写入旧行但暂不全量重建 DOM，避免吞掉本次点击。
+        this.commitEdit({ switching: true });
         this._render();
-        if (this.onSelect) this.onSelect(item);
-        this.startEdit(item, line);
+        const next = this.items.find(x => x.ref === item.ref) || item;
+        if (this.onSelect) this.onSelect(next);
+        this.startEdit(next, line);
         return;
       }
       this._deferCommit = true;
@@ -841,7 +846,7 @@ export class EditorPanel {
     //   Ctrl+回车    → 在光标处把这一条切成两条(分句)
     //   Ctrl+退格    → 光标在英文行最前面时, 与上一个字幕块合并
     div.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); this.closeEdit(); this._render(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); this.cancelEdit(); this._render(); return; }
       // 英文行限定: 光标处的切分/合并(必须在 Enter 分支之前判断 Ctrl+Enter)
       if (document.activeElement === l2) {
         const plain = (el) => (el.textContent || '').replace(/\u00a0/g, ' ');
@@ -892,6 +897,16 @@ export class EditorPanel {
         e.preventDefault();
         this.commitEdit();            // 回车 = 直接提交
       }
+    });
+    // input 同时覆盖键入、删除、粘贴及输入法完成；组合期间不做逐词重建。
+    let composing = false;
+    l2.addEventListener('compositionstart', () => { composing = true; });
+    l2.addEventListener('compositionend', () => {
+      composing = false;
+      if (this.editItem === item && this.onEnglishInput) this.onEnglishInput(item, l2.textContent || '');
+    });
+    l2.addEventListener('input', () => {
+      if (!composing && this.editItem === item && this.onEnglishInput) this.onEnglishInput(item, l2.textContent || '');
     });
     // 粘贴纯文本(避免带入富文本标签)
     div.addEventListener('paste', (e) => {
@@ -1006,7 +1021,7 @@ export class EditorPanel {
   }
 
   /** 提交行内编辑: 文本有变化才触发 onApply(时间不变, 由主逻辑同步视频区) */
-  commitEdit() {
+  commitEdit({ switching = false } = {}) {
     if (!this.editItem) return;
     const it = this.editItem;
     const norm = (s) => (s || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1041,10 +1056,15 @@ export class EditorPanel {
         if (el && el.parentNode) el.remove();     // 只清掉自己这个已脱离的编辑框
         return;
       }
-      this.closeEdit();
-      if (emptyNew) { this._render(); if (this.onEmptyNew) this.onEmptyNew(it); return; }
-      this._render();
-      if (unchanged) return;
+      this.closeEdit('commit');
+      if (emptyNew) {
+        if (this.onEditFinish) this.onEditFinish(it);
+        if (!switching) this._render();
+        if (this.onEmptyNew) this.onEmptyNew(it);
+        return;
+      }
+      if (!switching) this._render();
+      if (unchanged) { if (this.onEditFinish) this.onEditFinish(it); return; }
       if (this.onApply) {
         // 必须把"正在编辑的那一条"显式带出去: 编辑期间用户可能已点了别处,
         // 此刻 state.selected 可能已经换成另一条, 用选中项会写错行。
@@ -1053,7 +1073,8 @@ export class EditorPanel {
           start: fmtTime(it.start),
           end: fmtTime(it.end),
           dur: (it.end - it.start).toFixed(3),
-          text: newText
+          text: newText,
+          switching
         });
       }
     };
@@ -1061,11 +1082,15 @@ export class EditorPanel {
     else finish();
   }
 
-  /** 关闭行内编辑器(不提交) */
-  closeEdit() {
+  /** Esc 明确取消；提交只通过 commitEdit，内部移除编辑框不等于取消。 */
+  cancelEdit() { this.closeEdit('cancel'); }
+
+  closeEdit(reason = 'cancel') {
+    const oldItem = this.editItem;
     this._editGen = (this._editGen || 0) + 1;
     this.editItem = null;
     this._editTag = '';
     if (this.editorEl) { this.editorEl.remove(); this.editorEl = null; }
+    if (oldItem && reason === 'cancel' && this.onEditCancel) this.onEditCancel(oldItem);
   }
 }

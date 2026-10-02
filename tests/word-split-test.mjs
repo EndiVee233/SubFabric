@@ -67,5 +67,28 @@ ok(j(S('a . b')) === j(['a.', 'b']), '空格+标点混合', j(S('a . b')));
   ok(sp.every(x => t.slice(x.start, x.end) === x.w), 'got24 拆分后的字符位置精确');
 }
 
+/* 普通 ASS 显式转换的边界：只有用户选定样式的英文整句才能进入重建。 */
+{
+  const base = { style: 'Default', text: 'I just got24 iron', start: 1, end: 3,
+    events: [{ text: 'I just got24 iron' }], words: [] };
+  ok(K.eligibleForWordConversion(base, 'Default'), '明确选择样式后英文整句可转换');
+  ok(!K.eligibleForWordConversion(base, ''), '未明确选择英文样式时跳过');
+  ok(!K.eligibleForWordConversion(base, '中文字幕'), '不同样式不被转换');
+  ok(!K.eligibleForWordConversion({ ...base, text: '你好 world' }, 'Default'), '即使误选同样式也跳过中文');
+  ok(!K.eligibleForWordConversion({ ...base, words: [{ w: 'I', s: 1, e: 2 }] }, 'Default'), '已转换句不重复转换');
+  ok(!K.eligibleForWordConversion({ ...base, events: [{ text: '{\\k20}I just got24 iron' }] }, 'Default'), '传统 k 特效行不覆盖');
+  ok(!K.eligibleForWordConversion({ ...base, events: [{ text: '{\\c&H00FF00&}I just got24 iron' }] }, 'Default'),
+    '保留带内联色标的普通 ASS 行，不覆盖既有特效');
+  const words = K.recalcWords(base, base.text, base.start, base.end);
+  ok(j(words.map(x => x.w)) === j(['I', 'just', 'got', '24', 'iron'])
+    && words[0].s === 1 && words.at(-1).e === 3, '普通 ASS 转换复用英数保护和整句时长');
+  const same = K.recalcWords({ ...base, words, text: base.text }, 'We just got24 iron', 1, 3);
+  ok(same.every((w, i) => Math.abs(w.s - words[i].s) < 1e-6 && Math.abs(w.e - words[i].e) < 1e-6),
+    '词数不变优先保持原词时间');
+  const changed = K.recalcWords({ ...base, words, text: base.text }, 'We got 24 iron today now', 1, 3);
+  ok(changed.length === 6 && changed[0].s === 1 && changed.at(-1).e === 3,
+    '词数变化后仍按现有分配策略铺满句时长');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

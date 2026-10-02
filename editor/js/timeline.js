@@ -189,6 +189,7 @@ export class Timeline {
     this.peaks = null;        // 峰值数据 {data: Uint8Array, rate} —— 优先用它绘制(任意缩放都锐利)
     this.showFilm = false;    // 胶片预览图(视频缩略图条): 设置里可开关, 默认关
     this.onWordRetime = null; // 拖动英文逐词开始标记 → (ref, idx, time, done)
+    this.onBeforeWordDrag = null; // 命中拖柄后、建立拖动状态前同步提交文本草稿
     this._wordDrag = null;    // 正在拖的逐词标记 {cue, idx}
     this._selCueRef = null;
     this.subStart = 0;        // 字幕内容范围(第一块开始 ~ 最后一块结束): 仅当视频时长未知/更短时兜底
@@ -531,9 +532,12 @@ export class Timeline {
       // 优先: 拖英文逐词的开始标记(调整该词开始时间; 严格夹取, Shift 也不放宽)
       const wh = onLane ? this._hitWordHandle(x, y) : null;
       if (wh && (!this.isEditable || this.isEditable(wh.cue.ref))) {
+        if (this.onBeforeWordDrag) this.onBeforeWordDrag(wh.cue.ref, wh.cue);
+        if (!wh.cue.words || !wh.cue.words.length) return;
+        const idx = Math.min(wh.idx, wh.cue.words.length - 1);
         this._selCueRef = wh.cue.row || wh.cue.ref;
-        this._wordDrag = { cue: wh.cue.row || wh.cue.ref, ref: wh.cue.ref, idx: wh.idx };
-        this._drag = { type: 'word', cue: wh.cue, idx: wh.idx, x0: x, y0: y, moved: false };
+        this._wordDrag = { cue: wh.cue.row || wh.cue.ref, ref: wh.cue.ref, idx };
+        this._drag = { type: 'word', cue: wh.cue, idx, x0: x, y0: y, moved: false };
         if (this.onSelect) this.onSelect(wh.cue.ref, { seek: false });
         return;
       }
@@ -552,6 +556,8 @@ export class Timeline {
           const yy2 = this._laneTop(li2), lh2 = this._laneH(li2);
           const band = c.half ? bandOf(c, yy2, lh2) : { y: yy2, h: lh2 };
           if (y >= band.y + band.h / 2) {
+            if (this.onBeforeWordDrag) this.onBeforeWordDrag(c.ref, c);
+            if (!c.words || !c.words.length) return;
             const idx = part === 'left' ? 0 : c.words.length - 1;
             this._selCueRef = c.row || c.ref;
             this._wordDrag = { cue: c.row || c.ref, ref: c.ref, idx };
@@ -620,7 +626,8 @@ export class Timeline {
       d.moved = true;
 
       if (d.type === 'word') {
-        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(x), false, d.edge, d.hiLimit, d.loLimit);
+        d.lastT = this.x2t(x);
+        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, d.lastT, false, d.edge, d.hiLimit, d.loLimit);
         if (d.edge === 'end') d.cue.end = this.x2t(x);                     // 拖动中块宽度实时跟随(松手 rebuild 校正)
         else if (d.edge === 'start' && d.idx === 0) d.cue.start = this.x2t(x);
         return;
@@ -693,7 +700,14 @@ export class Timeline {
     };
     cv.addEventListener('pointerup', finishDrag);
     cv.addEventListener('pointerleave', () => this._hideEdgeHint());
-    cv.addEventListener('pointercancel', () => { this._drag = null; });
+    cv.addEventListener('pointercancel', () => {
+      const d = this._drag;
+      this._drag = null;
+      if (d && d.type === 'word' && d.moved && this.onWordRetime) {
+        this.onWordRetime(d.cue.ref, d.idx, d.lastT, true, d.edge, d.hiLimit, d.loLimit);
+      }
+      this._wordDrag = null;
+    });
 
     // 点画布/菜单以外的地方 → 收起菜单
     document.addEventListener('pointerdown', (e) => {

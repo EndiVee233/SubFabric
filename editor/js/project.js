@@ -5,7 +5,8 @@
  *   subtitle.ass|srt  字幕权威内容(自动保存写这里)
  *   audio.wav      16kHz 单声道(给后续"重新识别"铺路)
  *   peaks.bin      波形包络(打开时直接读, 不再重新生成)
- * 路由: #/home 主界面 · #/project/<id> 编辑器 · #/editor 无项目直开(兼容旧用法/测试)
+ * 路由: #/home 项目列表 · #/new 新建项目 · #/settings 全局设置
+ *       #/project/<id> 编辑器 · #/editor 无项目直开(兼容旧用法/测试)
  */
 import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
@@ -23,6 +24,42 @@ export function initProjects(ctx) {
   const elHome = $('#home-view');
   const elList = $('#home-list');
   const elEmpty = $('#home-empty');
+  const pageTimers = new WeakMap();
+  let previousRoute = '';
+  let settingsReturnRoute = '#/home';
+  let settingsVisit = 0;
+  let settingsOpenedFromApp = false;
+  let newOpenedFromApp = false;
+
+  // 离场视图短暂保留以完成淡出；快速往返时取消旧定时器，避免误隐藏新页面。
+  function setPageVisible(page, visible) {
+    clearTimeout(pageTimers.get(page));
+    page.inert = !visible;
+    if (visible) {
+      page.classList.remove('is-leaving');
+      page.hidden = false;
+    } else if (!page.hidden) {
+      page.classList.add('is-leaving');
+      pageTimers.set(page, setTimeout(() => {
+        page.hidden = true;
+        page.classList.remove('is-leaving');
+      }, 200));
+    }
+  }
+  function focusPage(page) {
+    requestAnimationFrame(() => {
+      const heading = page.querySelector('.page-intro h1');
+      if (!page.hidden && heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+    });
+  }
+  function replaceRoute(route) {
+    history.replaceState(null, '', route);
+    applyHash();
+  }
+  function returnFromSettings() {
+    if (settingsOpenedFromApp) history.back();
+    else replaceRoute(settingsReturnRoute === '#/settings' ? '#/home' : settingsReturnRoute);
+  }
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -346,7 +383,6 @@ export function initProjects(ctx) {
 
   /* ─────────── 主界面(项目列表) ─────────── */
   async function showHome() {
-    elHome.hidden = false;
     video.pause();
     if (state.project) { saveNow(); }               // 离开编辑器: 把未保存的立刻写掉
     listAnim = true;                                // 只在"进入首页"这一帧播放卡片入场动画
@@ -663,7 +699,7 @@ export function initProjects(ctx) {
   }
 
   /* ─────────── 设置(识别模型 / 字幕翻译) ─────────── */
-  const stOverlay = $('#st-overlay');
+  const stView = $('#st-view');
   let stPresets = [];
 
   /* ── 全局设置: 页签切换 + 热词块状编辑(一格一个单词) ── */
@@ -726,8 +762,7 @@ export function initProjects(ctx) {
     if (del) del.closest('.hotword-row').remove();
   });
 
-  async function openSettings() {
-    stOverlay.hidden = false;
+  async function loadSettings() {
     loadFetchSettings();
     loadCastSettings();
     const msgEl = $('#st-msg');
@@ -993,7 +1028,13 @@ export function initProjects(ctx) {
       });
     });
   }
-  function closeSettings() { stOverlay.hidden = true; }
+  function openSettings(tabName) {
+    settingsReturnRoute = location.hash === '#/new' ? '#/new'
+      : location.hash.startsWith('#/project/') || location.hash === '#/editor' ? location.hash : '#/home';
+    settingsOpenedFromApp = true;
+    if (tabName === 'models') $('.st-tab[data-stp="models"]').click();
+    location.hash = '#/settings';
+  }
   $('#btn-settings').addEventListener('click', openSettings);
 
   /* ── 下载与登录（设置 → 下载与登录） ── */
@@ -1081,9 +1122,8 @@ export function initProjects(ctx) {
   // 编辑器工具栏也有一个设置入口(同一套面板)
   const edSettingsBtn = document.getElementById('btn-settings-ed');
   if (edSettingsBtn) edSettingsBtn.addEventListener('click', openSettings);
-  $('#st-close').addEventListener('click', closeSettings);
-  $('#st-cancel').addEventListener('click', closeSettings);
-  stOverlay.addEventListener('pointerdown', (e) => { if (e.target === stOverlay) closeSettings(); });
+  $('#st-close').addEventListener('click', returnFromSettings);
+  $('#st-cancel').addEventListener('click', returnFromSettings);
 
   $('#st-provider').addEventListener('change', () => {
     const p = stPresets.find(x => x.id === $('#st-provider').value);
@@ -1221,12 +1261,14 @@ export function initProjects(ctx) {
   });
   $('#st-save').addEventListener('click', async () => {
     const msgEl = $('#st-msg');
+    const visit = settingsVisit;
     try {
       const m = await postSettings();
       msgEl.textContent = m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译';
       msgEl.classList.remove('err');
-      renderList();
-      setTimeout(closeSettings, 600);
+      if (location.hash === '#/settings' && settingsVisit === visit) setTimeout(() => {
+        if (location.hash === '#/settings' && settingsVisit === visit) returnFromSettings();
+      }, 600);
     } catch (e) {
       msgEl.textContent = '✗ ' + e.message;
       msgEl.classList.add('err');
@@ -1242,8 +1284,9 @@ export function initProjects(ctx) {
     if (el) el.hidden = true;
   }
 
-  /* ─────────── 新建项目对话框 ─────────── */
-  const npOverlay = $('#np-overlay');
+  /* ─────────── 新建项目页面 ─────────── */
+  const npView = $('#np-view');
+  let npSubmitting = false;
   const npVideo = { path: '', name: '' };
   const npSub = { name: '', text: '' };
   let npMode = 'import';                 // 'import' | 'draft'
@@ -1255,7 +1298,9 @@ export function initProjects(ctx) {
   function npSetMode(mode) {
     npMode = mode;
     $('#np-mode-import').classList.toggle('active', mode === 'import');
+    $('#np-mode-import').setAttribute('aria-pressed', String(mode === 'import'));
     $('#np-mode-draft').classList.toggle('active', mode === 'draft');
+    $('#np-mode-draft').setAttribute('aria-pressed', String(mode === 'draft'));
     const draft = mode === 'draft';
     $('#np-row-sub').hidden = draft;
   $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
@@ -1265,6 +1310,7 @@ export function initProjects(ctx) {
     $('#np-hint').textContent = draft
       ? '创建后在后台识别，进度看项目列表'
       : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
+    $('#np-hint').style.color = '';
     $('#np-create').textContent = draft ? '开始识别' : '创建项目';
     if (draft) refreshAsrStatus();
   if (draft) {
@@ -1301,8 +1347,13 @@ export function initProjects(ctx) {
     npSub.name = npSub.text = '';
     npVideoFile = null;
     $('#np-name').value = '';
-  const npUrlEl = $('#np-url');
-  if (npUrlEl) npUrlEl.value = '';
+    $('#np-word').checked = true;
+    $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
+    $('#np-speakers').checked = false;
+    $('#np-spk-count').value = '';
+    $('#np-part').value = '1';
+    const npUrlEl = $('#np-url');
+    if (npUrlEl) npUrlEl.value = '';
     $('#np-video-name').textContent = '还没选';
     $('#np-video-name').classList.remove('filled');
     $('#np-sub-name').textContent = '还没选';
@@ -1319,11 +1370,25 @@ export function initProjects(ctx) {
     const hasModel = npMode !== 'draft' || !!($('#np-model-sel') && $('#np-model-sel').value);
     $('#np-create').disabled = (npMode === 'draft' ? !asrStatus.ready : !npSub.text) || !hasModel;
   }
-  function openCreateDialog() { npReset(); npOverlay.hidden = false; $('#np-name').focus(); }
-
-  $('#btn-new-project').addEventListener('click', openCreateDialog);
-  $('#np-cancel').addEventListener('click', () => { npOverlay.hidden = true; });
-  npOverlay.addEventListener('pointerdown', (e) => { if (e.target === npOverlay) npOverlay.hidden = true; });
+  $('#btn-new-project').addEventListener('click', () => {
+    newOpenedFromApp = true;
+    location.hash = '#/new';
+  });
+  const leaveNew = () => {
+    if (npSubmitting) return;
+    if (newOpenedFromApp) history.back();
+    else replaceRoute('#/home');
+  };
+  $('#np-back').addEventListener('click', leaveNew);
+  $('#np-cancel').addEventListener('click', leaveNew);
+  $('#np-open-settings').addEventListener('click', () => {
+    if (!npSubmitting) openSettings('models');
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !$('#confirm-overlay').hidden) return;
+    if (location.hash === '#/new') leaveNew();
+    else if (location.hash === '#/settings' && !$('#st-save').disabled) returnFromSettings();
+  });
 
   $('#np-mode-import').addEventListener('click', () => npSetMode('import'));
   $('#np-mode-draft').addEventListener('click', () => npSetMode('draft'));
@@ -1438,6 +1503,8 @@ export function initProjects(ctx) {
     if (isDraft && npUrl) {
       const btn0 = $('#np-create');
       btn0.disabled = true; btn0.textContent = '提交中…';
+      npSubmitting = true;
+      $('#np-open-settings').disabled = true;
       try {
         const payload0 = {
           name: $('#np-name').value.trim(),
@@ -1452,12 +1519,13 @@ export function initProjects(ctx) {
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
         const m0 = await r0.json();
         if (!r0.ok) { toast(m0.error || '创建失败', 4200); return; }
-        npOverlay.hidden = true;
-        renderList();
+        location.hash = '#/home';
         toast('开始下载了，不用等着；进度看项目列表', 5200);
       } catch (e) {
         toast('创建失败: ' + e.message, 3600);
       } finally {
+        npSubmitting = false;
+        $('#np-open-settings').disabled = false;
         btn0.textContent = '开始识别';
         npMaybeEnable();
       }
@@ -1465,6 +1533,8 @@ export function initProjects(ctx) {
     }
     const btn = $('#np-create');
     btn.disabled = true; btn.textContent = isDraft ? '提交中…' : '创建中…';
+    npSubmitting = true;
+    $('#np-open-settings').disabled = true;
     try {
       // 浏览器选的视频: 先把 File 上传成服务端持久文件, 拿到真实路径后走同一条创建链路
       if (npVideo.path.startsWith('upload:')) {
@@ -1497,9 +1567,8 @@ export function initProjects(ctx) {
       });
       const m = await r.json();
       if (!r.ok) { toast(m.error || '创建失败', 4000); return; }
-      npOverlay.hidden = true;
       if (isDraft) {
-        renderList();                     // 项目立刻进列表, 进度在卡片上
+        location.hash = '#/home';         // 项目立刻进列表，进度在卡片上
         toast('开始识别了，不用等着；进度看项目列表', 5200);
       } else {
         lastSavedText = npSub.text;
@@ -1509,6 +1578,8 @@ export function initProjects(ctx) {
     } catch (e) {
       toast('创建失败: ' + e.message, 3600);
     } finally {
+      npSubmitting = false;
+      $('#np-open-settings').disabled = false;
       btn.textContent = npMode === 'draft' ? '开始识别' : '创建项目';
       npMaybeEnable();
     }
@@ -1523,23 +1594,49 @@ export function initProjects(ctx) {
     if (r2) r2.hidden = !on;
   }
   function applyHash() {
-    const h = location.hash || '#/home';
+    let h = location.hash || '#/home';
+    if (!location.hash || !['#/home', '#/new', '#/settings', '#/editor'].includes(h) && !h.startsWith('#/project/')) {
+      h = '#/home';
+      history.replaceState(null, '', h);
+    }
+    $('#app').inert = h === '#/home' || h === '#/new' || h === '#/settings';
+    setPageVisible(elHome, h === '#/home');
+    setPageVisible(npView, h === '#/new');
+    setPageVisible(stView, h === '#/settings');
     if (h.startsWith('#/project/')) {
       const pid = h.slice('#/project/'.length);
-      elHome.hidden = true;
-      setAudioControlsVisible(true);                   // 项目模式才显示音频源控件
+      setAudioControlsVisible(true);
       if (!state.project || state.project.id !== pid) openProject(pid);
-      else syncAudioModeUI(state.project.meta);       // 从主界面回到同一项目: 回显 + 恢复播放音轨
+      else syncAudioModeUI(state.project.meta);
     } else if (h === '#/editor') {
-      elHome.hidden = true;                           // 无项目直开编辑器(兼容旧用法)
       setAudioControlsVisible(false);
-      setPlaybackAudioMode(null, false);              // 无项目: 播放恢复视频原声
+      setPlaybackAudioMode(null, false);
       if (state.project) { saveNow(); detachProject(); }
-    } else {
-      if (!location.hash) history.replaceState(null, '', '#/home');   // 归一化地址栏
+    } else if (h === '#/home') {
       setAudioControlsVisible(false);
-      showHome();
+      if (previousRoute !== h) showHome();
+      if (previousRoute === '#/new' || previousRoute === '#/settings')
+        requestAnimationFrame(() => $('#btn-new-project').focus({ preventScroll: true }));
+    } else if (h === '#/new') {
+      if (previousRoute !== '#/settings' && previousRoute !== '#/new') npReset();
+      if (previousRoute === '#/settings') refreshAsrStatus();
+      if (previousRoute !== h) focusPage(npView);
+    } else if (h === '#/settings') {
+      if (previousRoute !== h) {
+        settingsVisit++;
+        if (previousRoute.startsWith('#/project/') || previousRoute === '#/editor') {
+          video.pause();
+          if (state.project) saveNow();
+        }
+        const label = settingsReturnRoute === '#/new' ? '返回新建项目'
+          : settingsReturnRoute.startsWith('#/project/') || settingsReturnRoute === '#/editor' ? '返回编辑器' : '返回项目';
+        $('#st-close-label').textContent = label;
+        $('#st-cancel').textContent = label;
+        loadSettings();
+        focusPage(stView);
+      }
     }
+    previousRoute = h;
   }
   window.addEventListener('hashchange', applyHash);
   $('#btn-home').addEventListener('click', () => { location.hash = '#/home'; });

@@ -184,7 +184,7 @@ body::before {
 /* ── 8. 弹窗统一：圆角/投影/黑玻璃遮罩/标题与按钮栏节奏 ────────────────────
  * 遮罩**不要模糊**：它盖住的正是字幕列表/时间轴这类"要边看边改"的内容，糊掉就没法对照了。
  * 玻璃感靠更深的半透明黑 + 对话框自身的高光与投影（用户明确要求：黑玻璃、不要模糊）。 */
-#np-overlay, #info-overlay, #st-overlay, #fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay, #dp-overlay {
+#info-overlay, #fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay, #dp-overlay {
   background: linear-gradient(180deg, rgba(5, 5, 8, .78), rgba(2, 2, 4, .86));
 }
 .np-box, .info-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box, .dp-box {
@@ -304,6 +304,100 @@ body::before {
 .pc-missing { display: inline-flex; align-items: center; gap: 3px; }
 .pc-missing .ico { width: 12px; height: 12px; color: #ffd54a; }
 .st-models .spin { margin-right: 2px; }
+
+/* ── 独立工作页面：沿用首页的深色层次和强调色，不使用遮罩或可拖弹窗 ── */
+.workspace-page {
+  position: fixed; inset: 0; z-index: 52; overflow-y: auto;
+  background: radial-gradient(950px 470px at 50% -170px, var(--accent-a12), transparent 72%), var(--bg-0);
+  animation: fade-up var(--dur-3) var(--ease-out) both;
+}
+.page-inner { width: min(960px, 100%); min-height: 100%; margin: 0 auto; padding: 24px 32px 52px; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 20px; border-bottom: 1px solid var(--hair-2); }
+.page-back { display: inline-flex; align-items: center; }
+.page-back .ico { transform: rotate(90deg); }
+.page-brand { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--text-0); white-space: nowrap; }
+.page-brand .ico { width: 17px; height: 17px; color: var(--accent); }
+.page-brand span { color: var(--text-2); font-weight: 400; }
+.page-intro { padding: 36px 2px 24px; }
+.page-intro h1 { font-size: clamp(23px, 3vw, 30px); font-weight: 700; letter-spacing: .2px; }
+.page-intro h1:focus { outline: none; }
+.page-intro p { margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--text-1); }
+.page-eyebrow { color: var(--accent); font: 600 10px var(--mono); letter-spacing: 1.8px; margin-bottom: 9px; }
+.page-surface {
+  border: 1px solid var(--hair-2); border-radius: var(--r-4);
+  background: linear-gradient(180deg, var(--panel-top), transparent 58%), var(--bg-1);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--hair);
+}
+#np-view .np-box {
+  width: 100%; max-width: none; max-height: none; overflow: visible; padding: 28px 32px;
+  background: linear-gradient(180deg, var(--panel-top), transparent 58%), var(--bg-1);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--hair);
+}
+#np-view .np-title { font-size: 15px; margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--hair); }
+#np-view .np-name-row { max-width: 720px; margin-bottom: 24px; }
+#np-view .np-modes { gap: 14px; margin-bottom: 24px; }
+#np-view .np-mode { min-height: 112px; transition: transform var(--dur-2) var(--ease-out), border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease); }
+#np-view .np-mode:hover { transform: translateY(-2px); border-color: var(--accent-a55); }
+#np-view .np-mode.active { background: var(--accent-a09); border-color: var(--accent); }
+#np-view .np-file-row { max-width: 720px; min-height: 40px; margin-bottom: 12px; }
+#np-view .np-hint { max-width: 720px; margin-top: 20px; }
+#np-view .np-actions { margin-top: 24px; }
+#np-view .np-draft-only:not([hidden]) { animation: fade-up var(--dur-3) var(--ease-out) both; }
+.settings-inner { width: min(1160px, 100%); height: 100%; min-height: 620px; display: flex; flex-direction: column; padding-bottom: 24px; }
+.settings-inner .page-intro { flex: none; padding: 24px 2px 20px; }
+#st-view .st-box {
+  flex: 1; min-height: 0; width: 100%; max-width: none; max-height: none;
+  display: grid; grid-template-columns: 192px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: 0; overflow: hidden; background: var(--bg-1);
+  box-shadow: var(--sh-2), inset 0 1px 0 var(--hair);
+}
+#st-view .st-head { grid-column: 1 / -1; margin: 0; padding: 15px 20px; border-bottom: 1px solid var(--hair-2); }
+#st-view .st-tabs {
+  grid-column: 1; grid-row: 2; display: flex; flex-direction: column; gap: 5px;
+  border-right: 1px solid var(--hair-2); border-bottom: 0; padding: 14px 10px; overflow-y: auto;
+  background: rgba(255, 255, 255, .012);
+}
+#st-view .st-tab { flex: none; min-width: 0; width: 100%; text-align: left; padding: 11px 14px; border: 0; border-radius: var(--r-2); }
+#st-view .st-tab.active { background: var(--accent-a12); box-shadow: inset 3px 0 0 var(--accent); }
+#st-view .st-body { grid-column: 2; grid-row: 2; min-width: 0; padding: 22px 24px; }
+#st-view .st-panel { width: 100%; max-width: 740px; }
+#st-view .st-card { padding: 16px 18px; }
+#st-view .st-actions { grid-column: 1 / -1; grid-row: 3; margin: 0; padding: 12px 20px; border-top: 1px solid var(--hair-2); }
+#st-view .st-actions .st-msg { flex: 1; max-height: 48px; overflow: auto; }
+#home-view.is-leaving, #np-view.is-leaving, #st-view.is-leaving {
+  pointer-events: none;
+  animation: page-leave .2s var(--ease) both;
+}
+@keyframes page-leave { to { opacity: 0; transform: translateY(-6px); } }
+@media (max-width: 720px) {
+  .page-inner { padding: 16px 16px 36px; }
+  .page-intro { padding: 28px 2px 18px; }
+  #np-view .np-box { padding: 20px 18px; }
+  #np-view .np-modes { grid-template-columns: 1fr; gap: 8px; }
+  #np-view .np-mode { min-height: 0; }
+  #np-view .np-file-row { flex-wrap: wrap; }
+  #np-view .np-file-row .np-input { min-width: 0; }
+  #np-view #np-row-url #np-url { flex-basis: calc(100% - 68px); }
+  .settings-inner { height: auto; min-height: 100%; }
+  #st-view .st-box { flex: none; display: flex; flex-direction: column; min-height: 550px; overflow: visible; }
+  #st-view .st-head { display: none; }
+  #st-view .st-tabs { flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--hair-2); padding: 8px; }
+  #st-view .st-tab { width: auto; white-space: nowrap; padding: 10px 12px; }
+  #st-view .st-tab.active { box-shadow: inset 0 -2px 0 var(--accent); }
+  #st-view .st-body { overflow: visible; padding: 16px 14px; }
+  #st-view .st-actions { flex-wrap: wrap; padding: 12px 14px; }
+  #st-view .st-actions .st-msg { flex-basis: 100%; order: -1; }
+}
+@media (max-width: 430px) {
+  .page-brand { font-size: 12px; }
+  #np-view .np-actions { flex-wrap: wrap; }
+  #np-view .np-actions .btn { flex: 1; }
+  #np-view .np-file-row .np-lbl { width: 50px; }
+  #np-view #np-row-spk .np-switch { flex: 1 1 calc(100% - 60px); }
+  #st-view .st-grid { grid-template-columns: 1fr; gap: 5px; }
+  #st-view .st-grid .st-lbl { margin-top: 8px; }
+  #st-view .st-row { flex-wrap: wrap; }
+}
 
 /* ── 14. 减少动效：质感层里的动画同样关掉（与 style.css 的规则一致，双保险） ── */
 @media (prefers-reduced-motion: reduce) {

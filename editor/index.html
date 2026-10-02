@@ -126,6 +126,19 @@
       </div>
       <div class="settings-list">
 
+        <div class="set-group" id="word-convert-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#8b7cf6"></i><span class="set-group-title">ASS 英文逐词转换</span></div>
+          <div class="setting-row"><label class="setting-name" for="word-convert-style">英文样式</label>
+            <select id="word-convert-style" class="select select-dark" disabled><option value="">先打开 ASS 文件</option></select></div>
+          <div class="setting-row"><label class="setting-name" for="word-convert-scope">转换范围</label>
+            <select id="word-convert-scope" class="select select-dark">
+              <option value="selection">选中行／时间轴选区</option><option value="missing">所有待转换英文行</option>
+            </select></div>
+          <div class="setting-row"><button type="button" class="btn btn-mini" id="btn-convert-words" disabled>转为逐词颜色标签</button>
+            <span id="word-convert-loading" class="word-convert-loading" role="status" hidden>处理中…</span></div>
+          <p id="word-convert-hint" class="set-group-note">无法可靠判断英文样式时，请先在上方明确选择；绝不自动猜测。中文、已转换行及带其它内联特效的行会跳过。</p>
+        </div>
+
         <div class="set-group">
           <div class="set-group-head"><i class="set-dot" style="background:#ff7a45"></i><span class="set-group-title">时间轴</span></div>
           <div class="setting-row">
@@ -514,21 +527,33 @@
     </form>
   </div>
 
-  <!-- 新建项目对话框 -->
-  <div id="np-overlay" hidden>
-    <div class="np-box modal-surface">
-      <div class="np-title modal-drag-handle">新建项目</div>
+</div><!-- /#home-view -->
+
+<!-- 新建项目：与项目列表并列的独立页面 -->
+<div id="np-view" class="workspace-page" hidden>
+  <div class="page-inner">
+    <header class="page-head">
+      <button type="button" class="btn page-back" id="np-back" data-ico="chevronDown">返回项目</button>
+      <span class="page-brand" data-ico="film">SubFabric <span>/ 新建项目</span></span>
+    </header>
+    <div class="page-intro">
+      <div class="page-eyebrow">PROJECT WORKSPACE</div>
+      <h1>新建项目</h1>
+      <p>选择导入字幕或创建初稿，准备好素材后即可开始编辑。</p>
+    </div>
+    <div class="np-box page-surface">
+      <div class="np-title">项目资料</div>
       <div class="np-name-row">
         <span class="np-lbl">项目名称</span>
         <input type="text" id="np-name" class="np-input" spellcheck="false" maxlength="60" placeholder="不填则使用视频文件名">
       </div>
       <div class="np-modes">
-        <button type="button" class="np-mode active" id="np-mode-import" tabindex="-1">
+        <button type="button" class="np-mode active" id="np-mode-import" aria-pressed="true">
           <span class="npm-icon" data-ico="file"></span>
           <span class="npm-name">导入已有字幕</span>
           <span class="npm-desc">选好视频和字幕，建完项目自动提取音频和波形</span>
         </button>
-        <button type="button" class="np-mode" id="np-mode-draft" tabindex="-1">
+        <button type="button" class="np-mode" id="np-mode-draft" aria-pressed="false">
           <span class="npm-icon" data-ico="mic"></span>
           <span class="npm-name">创建初稿</span>
           <span class="npm-desc">识别视频里的语音，自动生成字幕（仅英语，模型在下面选）</span>
@@ -570,17 +595,19 @@
         <div class="np-file-row">
           <span class="np-lbl">识别模型</span>
           <select id="np-model-sel" class="np-select" title="用什么模型识别语音"></select>
+          <button type="button" class="btn btn-mini" id="np-open-settings">管理模型</button>
         </div>
         <div class="np-dl-msg" id="np-dl-msg" hidden></div>
       </div>
       <div class="np-hint" id="np-hint">音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存</div>
       <div class="np-actions">
-        <button type="button" class="btn" id="np-cancel">取消</button>
+        <button type="button" class="btn" id="np-cancel">返回项目</button>
         <button type="button" class="btn btn-accent" id="np-create" disabled>创建项目</button>
       </div>
     </div>
   </div>
-  <input type="file" id="np-file-sub" accept=".srt,.ass,.ssa" hidden>
+</div>
+<input type="file" id="np-file-sub" accept=".srt,.ass,.ssa" hidden>
 
   <!-- 初稿处理进度浮层 -->
   <div id="dp-overlay" hidden>
@@ -603,18 +630,26 @@
       </div>
     </div>
   </div>
-</div>
 
-<!-- 设置: 识别模型 / 字幕翻译（放在 home-view 外: 编辑器里也要能打开） -->
-<div id="st-overlay" hidden>
-  <div class="st-box modal-surface" id="st-box">
-    <div class="st-head modal-drag-handle">
-      <div class="st-title-wrap">
-        <span class="st-title">全局设置</span>
-        <span class="st-subtitle">识别、翻译与下载相关偏好</span>
-      </div>
-      <button type="button" class="btn btn-mini" id="st-close">关闭</button>
+<!-- 全局设置：从项目列表和编辑器均可进入的独立页面 -->
+<div id="st-view" class="workspace-page" hidden>
+  <div class="page-inner settings-inner">
+    <header class="page-head">
+      <button type="button" class="btn page-back" id="st-close" data-ico="chevronDown"><span id="st-close-label">返回项目</span></button>
+      <span class="page-brand" data-ico="film">SubFabric <span>/ 全局设置</span></span>
+    </header>
+    <div class="page-intro">
+      <div class="page-eyebrow">PREFERENCES</div>
+      <h1>全局设置</h1>
+      <p>管理识别模型、字幕翻译与下载偏好；部分设置修改后即时生效。</p>
     </div>
+    <div class="st-box page-surface" id="st-box">
+      <div class="st-head">
+        <div class="st-title-wrap">
+          <span class="st-title">设置分类</span>
+          <span class="st-subtitle">选择左侧分类进行配置</span>
+        </div>
+      </div>
 
     <div class="st-tabs" role="tablist" aria-label="全局设置分类">
       <button type="button" class="st-tab active" role="tab" aria-selected="true" aria-controls="st-panel-models" data-stp="models">识别模型</button>
@@ -756,8 +791,9 @@
       <button type="button" class="btn" id="st-test">测试连接</button>
       <span class="st-msg" id="st-msg"></span>
       <span class="st-spacer"></span>
-      <button type="button" class="btn" id="st-cancel">取消</button>
-      <button type="button" class="btn btn-accent" id="st-save">保存</button>
+      <button type="button" class="btn" id="st-cancel">返回</button>
+      <button type="button" class="btn btn-accent" id="st-save">保存并返回</button>
+    </div>
     </div>
   </div>
 </div>

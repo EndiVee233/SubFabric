@@ -1,7 +1,7 @@
 /* ASS 转义/明文往返测试: node tests/ass-escape-test.mjs */
 'use strict';
 import { AssDoc, assPlainText, isAssSubtitle } from '../editor/js/ass.js';
-import { replaceWordHighlightColor, speakerColorOf } from '../editor/js/karaoke.js';
+import { replaceWordHighlightColor, speakerColorOf, recalcWords, buildWordSpecs, analyzeKaraoke, pairRows } from '../editor/js/karaoke.js';
 import { AssPlayer } from '../editor/js/assplayer.js';
 
 let pass = 0, fail = 0;
@@ -100,6 +100,68 @@ ok(!assPlainText(escAss('换\n行')).includes('\n'), '真实换行被转义成 \
 const samples = ['{音效}', 'C:\\path\\to', '他说：{笑}', 'a}b', '普通文本', '{\\c&H...&}'];
 for (const s of samples) {
   ok(assPlainText(escAss(s)) === s.replace(/\r?\n/g, ' ').trim(), `往返一致: ${JSON.stringify(s)}`, JSON.stringify(assPlainText(escAss(s))));
+}
+
+/* 编辑期仅替换内存预览快照：离开/取消后用 serialize 恢复，不写回 ASS 数据。 */
+{
+  const source = '[Script Info]\nTitle: preview\n[Events]\n'
+    + 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'
+    + 'Dialogue: 0,0:00:01.00,0:00:03.00,中文字幕,,0,0,0,,你好\n'
+    + 'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,I just got24 iron\n'
+    + 'Dialogue: 0,0:00:04.00,0:00:05.00,Default,,0,0,0,,next line';
+  const doc = new AssDoc(source);
+  const before = doc.serialize();
+  const ev = doc.events[1];
+  const sent = { style: 'Default', start: 1, end: 3, text: ev.text, events: [ev], words: [],
+    proto: { layer: ev.layer, name: ev.name, effect: '', margins: { marginl: '0', marginr: '0', marginv: '0' } },
+    highlightTag: '{\\c&H00FF00&}' };
+  const plain = doc.previewSentence(sent, 'I just got24 iron now');
+  ok(plain.includes('Default,,0,0,0,,I just got24 iron now') && !plain.includes('{\\c&H00FF00&}'),
+    '即时整句预览无逐词标签');
+  const words = recalcWords(sent, 'I just got24 iron now', 1, 3);
+  const wordTrack = doc.previewEvents(sent, buildWordSpecs({ ...sent, text: 'I just got24 iron now', words }));
+  ok(wordTrack.includes('{\\c&H00FF00&}got{\\c}') && wordTrack.includes('{\\c&H00FF00&}24{\\c}')
+    && !wordTrack.includes('{\\k'), '停顿逐词预览继续使用颜色标签而不是 k');
+  ok(plain.includes('中文字幕,,0,0,0,,你好') && wordTrack.includes('中文字幕,,0,0,0,,你好')
+    && wordTrack.includes('Default,,0,0,0,,next line'), '中文和其他行保持不变');
+  ok(doc.serialize() === before && doc.events[1] === ev && ev.text === 'I just got24 iron',
+    '临时整句和逐词预览都不改原始模型，取消可恢复');
+  sent.words = words;
+  sent.text = 'I just got24 iron now';
+  sent.events = doc.replaceEvents(sent.events, buildWordSpecs(sent));
+  const exported = doc.serialize();
+  ok(exported.includes('{\\c&H00FF00&}got{\\c}') && !exported.includes('{\\k')
+    && exported.includes('中文字幕,,0,0,0,,你好') && exported.includes('next line'),
+    '正式提交只换英文句且导出仍为逐词颜色标签');
+  const beforeDrag = doc.serialize();
+  sent.words[0].e = 1.25;
+  sent.words[1].s = 1.25;
+  const moving = doc.previewEvents(sent, buildWordSpecs(sent));
+  ok(moving !== beforeDrag && doc.serialize() === beforeDrag,
+    '拖拽中只预览当前句新的词级边界，不提前改动导出数据');
+  sent.events = doc.replaceEvents(sent.events, buildWordSpecs(sent));
+  ok(doc.serialize() === moving && doc.events.find(ev2 => ev2.style === '中文字幕').text === '你好',
+    '鼠标松开最终单句重建后与最后预览一致，中文未改变');
+}
+
+/* 小于原分析器 6 条切片阈值的普通 ASS 转换，保存并重载仍保持双语一行。 */
+{
+  const doc = new AssDoc('[Script Info]\nTitle: small\n[Events]\n'
+    + 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'
+    + 'Dialogue: 0,0:00:01.00,0:00:03.00,中文字幕,,0,0,0,,你好\n'
+    + 'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,hello world');
+  const ev = doc.events[1];
+  const sent = { style: 'Default', start: 1, end: 3, text: 'hello world', events: [ev], words: [],
+    proto: { layer: '0', name: '', effect: '', margins: { marginl: '0', marginr: '0', marginv: '0' } },
+    highlightTag: '{\\c&H00FF00&}' };
+  sent.words = recalcWords(sent, sent.text, sent.start, sent.end);
+  sent.events = doc.replaceEvents(sent.events, buildWordSpecs(sent));
+  doc.setScriptInfoComment('SubFabricWordStyle', 'Default');
+  const reloaded = new AssDoc(doc.serialize());
+  const analysis = analyzeKaraoke(reloaded);
+  const rows = pairRows(analysis.sentences, analysis.wordStyle);
+  ok(analysis.wordStyle === 'Default' && rows.length === 1 && rows[0].en.words.length === 2,
+    '用户确认的英文样式在短 ASS 重新打开后仍可识别并保持逐词双语行');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
