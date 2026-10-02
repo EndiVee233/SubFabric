@@ -4,13 +4,25 @@ import { parseTimeAss, fmtTimeAss } from './util.js';
 /** 严格合法的 ASS 时间: h:mm:ss.cc (小数固定 2 位) */
 const ASS_TIME_RE = /^\d+:\d{1,2}:\d{2}[.,]\d{2}$/;
 
+export function isAssSubtitle(text, name = '') {
+  if (/\.(?:ass|ssa)$/i.test(String(name || ''))) return true;
+  const source = String(text || '').replace(/^\uFEFF/, '');
+  const hasStyles = /^\s*\[V4\+?\s+Styles\]\s*$/im.test(source);
+  const hasScriptInfo = /^\s*\[Script Info\]\s*$/im.test(source);
+  const hasEvents = /^\s*\[Events\]\s*$/im.test(source);
+  const hasDialogue = /^\s*(?:Dialogue|Comment)\s*:/im.test(source);
+  return hasEvents && hasDialogue && (hasStyles || hasScriptInfo);
+}
+
 export class AssDoc {
   constructor(text) {
     this.text = text.replace(/^﻿/, '');
     this.lines = this.text.split(/\r\n|\n/);
     this.events = [];      // [{lineIdx, layer, start, end, style, name, text, endByNext}]
     this.format = [];      // Events Format 列
-    this.styleNames = [];  // V4+ Styles 名称
+    this.styleNames = [];  // V4+ / V4 Styles 名称
+    this.styles = new Map(); // 样式名 → 字段值与原文行
+    this.styleFormat = [];
     this.playResX = 384; this.playResY = 288;
     this._parse();
   }
@@ -29,10 +41,24 @@ export class AssDoc {
           if (pr[1].toLowerCase() === 'playresx') this.playResX = +pr[2];
           else this.playResY = +pr[2];
         }
-      } else if (section === 'v4+ styles') {
-        if (/^\s*Style\s*:/i.test(line)) {
-          const name = line.slice(line.indexOf(':') + 1).split(',')[0].trim();
-          this.styleNames.push(name);
+      } else if (section === 'v4+ styles' || section === 'v4 styles') {
+        const fm = /^\s*Format\s*:\s*(.+)$/i.exec(line);
+        if (fm) {
+          this.styleFormat = fm[1].split(',').map(s => s.trim().toLowerCase());
+          this.styleFormatLineIdx = i;
+          continue;
+        }
+        const sm = /^\s*Style\s*:\s*(.*)$/i.exec(line);
+        if (sm && this.styleFormat.length) {
+          const values = sm[1].split(',');
+          const nameIdx = this.styleFormat.indexOf('name');
+          const name = String(values[nameIdx === -1 ? 0 : nameIdx] || '').trim();
+          if (name) {
+            this.styleNames.push(name);
+            this.styles.set(name.toLowerCase(), {
+              name, lineIdx: i, format: this.styleFormat.slice(), values
+            });
+          }
         }
       } else if (section === 'events') {
         const fm = /^\s*Format\s*:\s*(.+)$/i.exec(line);
@@ -207,6 +233,82 @@ export class AssDoc {
     this.events.push(...newEvents);
     this.sorted = this.events.slice().sort((a, b) => a.start - b.start || a.end - b.end);
     return newEvents;
+  }
+
+  getStyle(name) {
+    const rec = this.styles.get(String(name || '').toLowerCase());
+    if (!rec) return null;
+    const out = {};
+    rec.format.forEach((key, i) => { out[key] = String(rec.values[i] == null ? '' : rec.values[i]).trim(); });
+    return out;
+  }
+
+  /** 按 Style Format 字段名更新样式, 保留未知字段和对话内容。 */
+  setStyleFields(name, fields) {
+    const rec = this.styles.get(String(name || '').toLowerCase());
+    if (!rec) return false;
+    const values = rec.values.slice();
+    let changed = false;
+    for (const [key, value] of Object.entries(fields || {})) {
+      const idx = rec.format.indexOf(String(key).toLowerCase());
+      if (idx === -1 || value == null) continue;
+      const next = String(value);
+      if (values[idx] !== next) { values[idx] = next; changed = true; }
+    }
+    if (!changed) return false;
+    const line = this.lines[rec.lineIdx];
+    const colon = line.indexOf(':');
+    this.lines[rec.lineIdx] = line.slice(0, colon + 1) + ' ' + values.join(',');
+    rec.values = values;
+    return true;
+  }
+
+  getScriptInfoComment(key) {
+    const safe = String(key || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let section = '';
+    for (const line of this.lines) {
+      const sec = /^\s*\[(.+)\]\s*$/.exec(line);
+      if (sec) { section = sec[1].toLowerCase(); continue; }
+      if (section !== 'script info') continue;
+      const m = new RegExp('^\\s*;\\s*' + safe + '\\s*:\\s*(.*?)\\s*$', 'i').exec(line);
+      if (m) return m[1];
+    }
+    return '';
+  }
+
+  /** 在 [Script Info] 写入 SubFabric 私有注释元数据(其它 ASS 播放器会忽略)。 */
+  setScriptInfoComment(key, value) {
+    const safe = String(key || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('^\\s*;\\s*' + safe + '\\s*:', 'i');
+    let header = -1, end = this.lines.length;
+    for (let i = 0; i < this.lines.length; i++) {
+      const sec = /^\s*\[(.+)\]\s*$/.exec(this.lines[i]);
+      if (!sec) continue;
+      if (sec[1].toLowerCase() === 'script info') { header = i; continue; }
+      if (header !== -1 && i > header) { end = i; break; }
+    }
+    const comment = `; ${key}: ${value}`;
+    if (header === -1) {
+      this.lines.unshift('[Script Info]', comment, '');
+      for (const ev of this.events) ev.lineIdx += 3;
+      if (this.eventsFormatLineIdx != null) this.eventsFormatLineIdx += 3;
+      if (this.styleFormatLineIdx != null) this.styleFormatLineIdx += 3;
+      for (const rec of this.styles.values()) rec.lineIdx += 3;
+      return true;
+    }
+    for (let i = header + 1; i < end; i++) {
+      if (re.test(this.lines[i])) {
+        if (this.lines[i] === comment) return false;
+        this.lines[i] = comment;
+        return true;
+      }
+    }
+    this.lines.splice(header + 1, 0, comment);
+    for (const ev of this.events) if (ev.lineIdx > header) ev.lineIdx++;
+    if (this.eventsFormatLineIdx > header) this.eventsFormatLineIdx++;
+    if (this.styleFormatLineIdx > header) this.styleFormatLineIdx++;
+    for (const rec of this.styles.values()) if (rec.lineIdx > header) rec.lineIdx++;
+    return true;
   }
 
   serialize() {

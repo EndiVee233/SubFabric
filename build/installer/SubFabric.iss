@@ -9,7 +9,7 @@
 ; 版本号要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "2.0.10"
+#define MyAppVersion "2.0.11"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"

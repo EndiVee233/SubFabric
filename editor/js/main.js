@@ -1,8 +1,8 @@
 /** 主逻辑: 状态管理 + 视频/字幕加载 + 各模块联动 */
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
-import { AssDoc, assPlainText } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
+import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -28,6 +28,24 @@ const btnExportZh = document.getElementById('btn-export-zh');
 const btnExportEn = document.getElementById('btn-export-en');
 const btnExportFull = document.getElementById('btn-export-full');
 const btnFix = document.getElementById('btn-fix-subs');
+const assStyleEls = {
+  group: document.getElementById('ass-style-group'),
+  status: document.getElementById('ass-style-status'),
+  zhName: document.getElementById('ass-style-zh-name'),
+  enName: document.getElementById('ass-style-en-name'),
+  zhFont: document.getElementById('ass-style-zh-font'),
+  enFont: document.getElementById('ass-style-en-font'),
+  zhSize: document.getElementById('ass-style-zh-size'),
+  enSize: document.getElementById('ass-style-en-size'),
+  zhBold: document.getElementById('ass-style-zh-bold'),
+  enBold: document.getElementById('ass-style-en-bold'),
+  zhItalic: document.getElementById('ass-style-zh-italic'),
+  enItalic: document.getElementById('ass-style-en-italic'),
+  wordColor: document.getElementById('ass-style-word-color'),
+  wordColorVal: document.getElementById('ass-style-word-color-val'),
+  zhFontFile: document.getElementById('ass-style-zh-font-file'),
+  enFontFile: document.getElementById('ass-style-en-font-file')
+};
 
 /* 双击视频默认会触发浏览器的原生全屏, 编辑字幕时很容易误触。这里禁掉：
  * ① controlsList 加 nofullscreen(控制条上不再有全屏按钮)
@@ -83,6 +101,7 @@ const state = {
   fileName: '',
   srtCues: [],
   assDoc: null,
+  assStyleTargets: null,
   items: [],             // 编辑面板视图模型
   itemByRef: new Map(),  // ref(cue|event) → item
   newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
@@ -342,6 +361,142 @@ video.addEventListener('loadedmetadata', () => {
 window.addEventListener('resize', () => overlay.fitToVideo());
 
 /* ═══════════ 字幕加载 ═══════════ */
+const ASS_WORD_COLOR_META = 'SubFabricWordHighlightColor';
+
+function resolveAssStyleTargets(doc, kar) {
+  const names = (doc.styleNames || []).filter((name, i, all) => all.findIndex(n => n.toLowerCase() === name.toLowerCase()) === i);
+  if (names.length < 2) return null;
+  const has = (name) => name && names.some(n => n.toLowerCase() === name.toLowerCase());
+  let en = has(kar && kar.wordStyle) ? names.find(n => n.toLowerCase() === kar.wordStyle.toLowerCase()) : '';
+  if (!en) en = names.find(n => /^(default|english|en|eng|英文)$/i.test(n))
+    || names.find(n => /english|英文|(^|[-_])en([-_]|$)/i.test(n)) || '';
+  let zh = names.find(n => n.toLowerCase() !== String(en).toLowerCase()
+    && /chinese|中文|mandarin|(^|[-_])zh([-_]|$)|^(cn|chi)$/i.test(n)) || '';
+  if (!en && zh) en = names.find(n => n.toLowerCase() !== zh.toLowerCase()) || '';
+  if (!zh && en) zh = names.find(n => n.toLowerCase() !== en.toLowerCase()) || '';
+  // 两个样式都没有可识别的语言线索时不按声明顺序猜，避免静默改错轨道。
+  if (!en || !zh || en.toLowerCase() === zh.toLowerCase()) return null;
+  return { zh, en };
+}
+
+function assHexToTag(hex) {
+  const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
+  return /^[0-9A-F]{6}$/.test(rgb) ? `{\\c&H${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}&}` : '{\\c&H00FF00&}';
+}
+
+function assStyleFields(name) {
+  const style = state.assDoc && state.assDoc.getStyle(name);
+  if (!style) return null;
+  const num = Number(style.fontsize);
+  return {
+    font: style.fontname || '', size: isFinite(num) && num > 0 ? num : 48,
+    bold: Number(style.bold) < 0 || style.bold === '1',
+    italic: Number(style.italic) < 0 || style.italic === '1'
+  };
+}
+
+function setAssStyleControls() {
+  const targets = state.format === 'ass' && state.assDoc
+    ? resolveAssStyleTargets(state.assDoc, state.kar) : null;
+  state.assStyleTargets = targets;
+  const enabled = !!targets && !!state.assDoc.getStyle(targets.zh) && !!state.assDoc.getStyle(targets.en);
+  if (assStyleEls.group) assStyleEls.group.classList.toggle('ass-style-disabled', !enabled);
+  const controls = [assStyleEls.zhFont, assStyleEls.enFont, assStyleEls.zhSize, assStyleEls.enSize,
+    assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic, assStyleEls.wordColor,
+    document.getElementById('ass-style-zh-font-file-btn'), document.getElementById('ass-style-en-font-file-btn')];
+  controls.forEach(el => { if (el) el.disabled = !enabled; });
+  if (!enabled) {
+    if (assStyleEls.zhName) assStyleEls.zhName.textContent = '';
+    if (assStyleEls.enName) assStyleEls.enName.textContent = '';
+    if (assStyleEls.status) assStyleEls.status.textContent = state.format === 'srt'
+      ? '当前是 SRT 字幕；ASS 样式只适用于 ASS/SSA。'
+      : '此 ASS 未找到可分别设置的中英两种样式。';
+    return;
+  }
+  const zh = assStyleFields(targets.zh), en = assStyleFields(targets.en);
+  if (assStyleEls.zhName) assStyleEls.zhName.textContent = `(${targets.zh})`;
+  if (assStyleEls.enName) assStyleEls.enName.textContent = `(${targets.en})`;
+  if (assStyleEls.zhFont) assStyleEls.zhFont.value = zh.font;
+  if (assStyleEls.enFont) assStyleEls.enFont.value = en.font;
+  if (assStyleEls.zhSize) assStyleEls.zhSize.value = zh.size;
+  if (assStyleEls.enSize) assStyleEls.enSize.value = en.size;
+  if (assStyleEls.zhBold) assStyleEls.zhBold.checked = zh.bold;
+  if (assStyleEls.enBold) assStyleEls.enBold.checked = en.bold;
+  if (assStyleEls.zhItalic) assStyleEls.zhItalic.checked = zh.italic;
+  if (assStyleEls.enItalic) assStyleEls.enItalic.checked = en.italic;
+  let wordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
+  if (!/^#[0-9a-f]{6}$/i.test(wordColor)) {
+    const sentence = (state.kar && state.kar.sentences || []).find(s => s.style === state.kar.wordStyle && s.words.length);
+    const m = sentence && /^\{\\c&H([0-9A-Fa-f]{6})&\}/.exec(sentence.highlightTag || '');
+    wordColor = m ? assColorToHex(m[1].toUpperCase()) : '#00ff00';
+  }
+  wordColor = wordColor.toLowerCase();
+  if (assStyleEls.wordColor) assStyleEls.wordColor.value = wordColor;
+  if (assStyleEls.wordColorVal) assStyleEls.wordColorVal.textContent = wordColor.toUpperCase();
+  if (assStyleEls.status) assStyleEls.status.textContent = '修改会立即预览并写入文稿；项目自动保存，普通字幕请导出保存。';
+}
+
+function applyAssStyleSettings(forceFontReload = false) {
+  if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return false;
+  const el = assStyleEls, targets = state.assStyleTargets;
+  const oldZhFont = (state.assDoc.getStyle(targets.zh).fontname || '').trim();
+  const oldEnFont = (state.assDoc.getStyle(targets.en).fontname || '').trim();
+  const zhFont = (el.zhFont.value || '').trim(), enFont = (el.enFont.value || '').trim();
+  const zhSize = Number(el.zhSize.value), enSize = Number(el.enSize.value);
+  if (!zhFont || !enFont) { toast('字体名称不能为空'); return false; }
+  if (!Number.isFinite(zhSize) || zhSize < 1 || zhSize > 200 || !Number.isFinite(enSize) || enSize < 1 || enSize > 200) {
+    toast('字号请设置为 1–200'); return false;
+  }
+  let changed = state.assDoc.setStyleFields(targets.zh, {
+    fontname: zhFont, fontsize: Math.round(zhSize), bold: el.zhBold.checked ? -1 : 0, italic: el.zhItalic.checked ? -1 : 0
+  });
+  changed = state.assDoc.setStyleFields(targets.en, {
+    fontname: enFont, fontsize: Math.round(enSize), bold: el.enBold.checked ? -1 : 0, italic: el.enItalic.checked ? -1 : 0
+  }) || changed;
+  const color = (el.wordColor.value || '#00ff00').toLowerCase();
+  const wordEvents = state.kar && state.kar.sentences
+    ? [...new Set(state.kar.sentences
+      .filter(sentence => sentence.style.toLowerCase() === targets.en.toLowerCase() && sentence.words && sentence.words.length)
+      .flatMap(sentence => sentence.events || []))]
+    : [];
+  const wordColorChanged = replaceWordHighlightColor(state.assDoc, targets.en, color, wordEvents);
+  const colorMetaChanged = state.assDoc.setScriptInfoComment(ASS_WORD_COLOR_META, color);
+  if (state.kar && state.kar.sentences) {
+    const tag = assHexToTag(color);
+    for (const sentence of state.kar.sentences) if (sentence.style.toLowerCase() === targets.en.toLowerCase()) sentence.highlightTag = tag;
+  }
+  if (el.wordColorVal) el.wordColorVal.textContent = color.toUpperCase();
+  const anyChanged = changed || wordColorChanged > 0 || colorMetaChanged;
+  if (!anyChanged && !forceFontReload) return false;
+  const text = state.assDoc.serialize();
+  if (forceFontReload || oldZhFont.toLowerCase() !== zhFont.toLowerCase() || oldEnFont.toLowerCase() !== enFont.toLowerCase()) {
+    assPlayer.load(text, [zhFont, enFont]);
+  } else {
+    assPlayer.updateNow(text);
+  }
+  if (state.project) Projects.scheduleSave();
+  if (assStyleEls.status) assStyleEls.status.textContent = state.project
+    ? '样式已应用；项目字幕将自动保存。'
+    : '样式已应用；点击“导出字幕”保存到文件。';
+  return true;
+}
+
+async function loadAssStyleFont(language) {
+  if (!state.assStyleTargets || state.format !== 'ass') return;
+  const input = language === 'zh' ? assStyleEls.zhFontFile : assStyleEls.enFontFile;
+  const family = (language === 'zh' ? assStyleEls.zhFont.value : assStyleEls.enFont.value).trim();
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  if (!family) { toast('请先填写该字体的字体名称'); input.value = ''; return; }
+  if (!/\.(?:ttf|otf)$/i.test(file.name)) { toast('字体文件仅支持 .ttf 或 .otf'); input.value = ''; return; }
+  try {
+    await assPlayer.cacheFont(family, file);
+    applyAssStyleSettings(true);
+    toast(`已载入字体：${family}`);
+  } catch (e) { toast('字体载入失败：' + (e && e.message || e)); }
+  finally { input.value = ''; }
+}
+
 async function loadSubUrl(url, name) {
   const resp = await fetch(url);
   if (!resp.ok) { toast('字幕打开失败：' + resp.status); return; }
@@ -350,8 +505,7 @@ async function loadSubUrl(url, name) {
 }
 
 function routeSub(text, name) {
-  const isAss = /\.(ass|ssa)$/i.test(name) || /\[V4\+? Styles\]/i.test(text.slice(0, 2000));
-  if (isAss) setAss(text, name);
+  if (isAssSubtitle(text, name)) setAss(text, name);
   else setSrt(text, name);
 }
 
@@ -362,6 +516,8 @@ function setSrt(text, name) {
   state.fileName = name;
   state.assDoc = null;
   state.kar = null;
+  state.assStyleTargets = null;
+  setAssStyleControls();
   state.srtCues = parseSRT(text);
 
   overlay.setCues(state.srtCues);
@@ -410,9 +566,14 @@ function setAss(text, name) {
   state.fileName = name;
   state.srtCues = [];
   state.assDoc = new AssDoc(text);
+  const savedWordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
   const fixedColors = normalizeLeadColors();   // 必须在分析/渲染之前
   // 双轨分析: 干净整句(编辑/列表/时间轴) + 词级映射; 原始逐词文档保留给视频渲染
   state.kar = analyzeKaraoke(state.assDoc);
+  if (/^#[0-9a-f]{6}$/i.test(savedWordColor)) {
+    const tag = assHexToTag(savedWordColor);
+    for (const sentence of state.kar.sentences) if (sentence.style === state.kar.wordStyle) sentence.highlightTag = tag;
+  }
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
   state.kar.rows = pairRows(state.kar.sentences, state.kar.wordStyle);
   // 角色名标签与正文之间恒为一个空格(用户要求 '[wato] 我') —— 老文件里粘在一起的先规范掉
@@ -464,7 +625,11 @@ function setAss(text, name) {
   timeline.clearRangeSel();      // 新文件 → 顺带取消批量选区
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
-  assPlayer.load(state.assDoc.serialize());
+  setAssStyleControls();
+  const renderFonts = state.assStyleTargets
+    ? [state.assDoc.getStyle(state.assStyleTargets.zh).fontname, state.assDoc.getStyle(state.assStyleTargets.en).fontname]
+    : [];
+  assPlayer.load(state.assDoc.serialize(), renderFonts);
   btnExport.disabled = false;
   if (btnExportFull) btnExportFull.disabled = false;
   const hasKar = !!state.kar.wordStyle;
@@ -475,6 +640,18 @@ function setAss(text, name) {
   // 拼接出来的状态行要分段过词典：整段拼接后无法命中任何键（词典层是整段匹配）
   statusFile.textContent = t(`${name} · ${state.kar.rows.length} 行 / ${state.kar.sentences.length} 句`)
     + (hasKar ? t('（逐词特效）') : '');
+}
+
+for (const el of [assStyleEls.zhFont, assStyleEls.enFont, assStyleEls.zhSize, assStyleEls.enSize,
+  assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic]) {
+  if (el) el.addEventListener('change', () => applyAssStyleSettings());
+}
+if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () => applyAssStyleSettings());
+for (const [language, buttonId] of [['zh', 'ass-style-zh-font-file-btn'], ['en', 'ass-style-en-font-file-btn']]) {
+  const button = document.getElementById(buttonId);
+  const input = language === 'zh' ? assStyleEls.zhFontFile : assStyleEls.enFontFile;
+  if (button && input) button.addEventListener('click', () => input.click());
+  if (input) input.addEventListener('change', () => loadAssStyleFont(language));
 }
 
 /* ─────────── 异常行 ─────────── */

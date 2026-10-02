@@ -521,6 +521,25 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .set-group .setting-row { background:transparent; border:none; border-radius:0; padding:4px 0; }
 .set-group .setting-name { width:92px; }
 .set-group .export-grid { margin-top:2px; }
+.ass-style-track { margin:8px 0; padding:8px; border:1px solid #30303a; border-radius:7px; background:#17171d; }
+.ass-style-track-title { margin-bottom:7px; color:var(--text-0); font-size:12px; font-weight:600; }
+.ass-style-name { margin-left:4px; color:var(--text-2); font-weight:400; }
+.ass-style-font-row { display:flex; align-items:flex-end; gap:7px; }
+.ass-style-field { display:flex; flex-direction:column; gap:4px; color:var(--text-1); font-size:11px; }
+.ass-style-family { flex:1; min-width:0; }
+.ass-style-field input[type="text"], .ass-style-field input[type="number"] {
+  width:100%; min-width:0; height:28px; padding:4px 7px; border:1px solid var(--border);
+  border-radius:5px; outline:none; background:#101015; color:var(--text-0); font-size:12px;
+}
+.ass-style-field input:focus { border-color:var(--accent); }
+.ass-style-options { display:flex; align-items:flex-end; gap:12px; margin-top:8px; }
+.ass-style-options .ass-style-field { width:72px; }
+.ass-style-check { display:flex; align-items:center; gap:5px; height:28px; color:var(--text-1); font-size:12px; cursor:pointer; }
+.ass-style-check input { accent-color:var(--accent); }
+.ass-style-color-row input[type="color"] { width:34px; height:24px; border:1px solid var(--border); border-radius:5px; padding:2px; background:#101015; cursor:pointer; }
+.ass-style-color-value { color:var(--text-1); font:11px Consolas,monospace; }
+.ass-style-status { color:var(--accent-2) !important; }
+#ass-style-group.ass-style-disabled .ass-style-track, #ass-style-group.ass-style-disabled .ass-style-color-row { opacity:.45; }
 
 /* ── 全局设置弹窗: 页签 + 卡片(页签/主体/卡片的布局样式) ─────────────── */
 .st-title-wrap { display:flex; align-items:baseline; gap:10px; min-width:0; }
