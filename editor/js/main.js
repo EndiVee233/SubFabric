@@ -43,6 +43,8 @@ const assStyleEls = {
   enItalic: document.getElementById('ass-style-en-italic'),
   wordColor: document.getElementById('ass-style-word-color'),
   wordColorVal: document.getElementById('ass-style-word-color-val'),
+  zhFontNote: document.getElementById('ass-style-zh-font-note'),
+  enFontNote: document.getElementById('ass-style-en-font-note'),
   zhFontFile: document.getElementById('ass-style-zh-font-file'),
   enFontFile: document.getElementById('ass-style-en-font-file')
 };
@@ -87,7 +89,12 @@ video.addEventListener('click', (e) => {
 
 /* ─────────── 模块实例 ─────────── */
 const overlay = new SrtOverlay(document.getElementById('srt-overlay'), video);
-const assPlayer = new AssPlayer(video, (msg) => toast(msg));
+const assPlayer = new AssPlayer(video, (msg) => {
+  toast(msg);
+  if (msg === 'ASS 渲染就绪' && state.format === 'ass' && assStyleEls.status) {
+    assStyleEls.status.textContent = 'ASS 预览已就绪，当前稿件样式已同步。';
+  }
+});
 const timeline = new Timeline(document.getElementById('timeline'), video);
 const panel = new EditorPanel();
 bindModalDrags();
@@ -395,6 +402,32 @@ function assStyleFields(name) {
   };
 }
 
+/** 如实标注每轨字体在**预览**里到底有没有字形。
+ *  libass 只用自己 FS 里的字体文件: 只改字体名而没「载入字体」时, 它会回退到内置字体,
+ *  画面看着"没变"并不是没同步, 而是压根没有那个字体 —— 这里把原因写在控件下面。 */
+async function refreshFontNotes() {
+  if (!state.assStyleTargets || !state.assDoc) return;
+  const targets = state.assStyleTargets;
+  const zhName = (assStyleEls.zhFont.value || '').trim();
+  const enName = (assStyleEls.enFont.value || '').trim();
+  const [zhOk, enOk] = await Promise.all([
+    assPlayer.isFontAvailable(zhName),
+    assPlayer.isFontAvailable(enName)
+  ]);
+  // 期间换了稿件/改了名字 → 这次结果作废
+  if (state.assStyleTargets !== targets) return;
+  if ((assStyleEls.zhFont.value || '').trim() !== zhName) return;
+  const paint = (el, ok, name) => {
+    if (!el) return;
+    el.className = 'ass-style-font-note ' + (ok ? 'ok' : 'warn');
+    el.textContent = ok
+      ? (name.toLowerCase() === 'noto sans cjk sc' ? '预览已载入（内置字体）' : '预览已载入该字体')
+      : '预览未载入该字体 → 画面会回退到内置字体，只改名字看不出变化；点「载入字体」导入 .ttf/.otf 才会变';
+  };
+  paint(assStyleEls.zhFontNote, zhOk, zhName);
+  paint(assStyleEls.enFontNote, enOk, enName);
+}
+
 function setAssStyleControls() {
   const targets = state.format === 'ass' && state.assDoc
     ? resolveAssStyleTargets(state.assDoc, state.kar) : null;
@@ -408,6 +441,9 @@ function setAssStyleControls() {
   if (!enabled) {
     if (assStyleEls.zhName) assStyleEls.zhName.textContent = '';
     if (assStyleEls.enName) assStyleEls.enName.textContent = '';
+    for (const note of [assStyleEls.zhFontNote, assStyleEls.enFontNote]) {
+      if (note) { note.className = 'ass-style-font-note'; note.textContent = ''; }
+    }
     if (assStyleEls.status) assStyleEls.status.textContent = state.format === 'srt'
       ? '当前是 SRT 字幕；ASS 样式只适用于 ASS/SSA。'
       : '此 ASS 未找到可分别设置的中英两种样式。';
@@ -434,6 +470,7 @@ function setAssStyleControls() {
   if (assStyleEls.wordColor) assStyleEls.wordColor.value = wordColor;
   if (assStyleEls.wordColorVal) assStyleEls.wordColorVal.textContent = wordColor.toUpperCase();
   if (assStyleEls.status) assStyleEls.status.textContent = '修改会立即预览并写入文稿；项目自动保存，普通字幕请导出保存。';
+  refreshFontNotes();
 }
 
 function applyAssStyleSettings(forceFontReload = false) {
@@ -475,9 +512,13 @@ function applyAssStyleSettings(forceFontReload = false) {
     assPlayer.updateNow(text);
   }
   if (state.project) Projects.scheduleSave();
-  if (assStyleEls.status) assStyleEls.status.textContent = state.project
-    ? '样式已应用；项目字幕将自动保存。'
-    : '样式已应用；点击“导出字幕”保存到文件。';
+  refreshFontNotes();
+  if (assStyleEls.status) {
+    const saveHint = state.project ? '项目字幕将自动保存。' : '点击“导出字幕”保存到文件。';
+    assStyleEls.status.textContent = assPlayer.ready
+      ? `样式已应用，视频预览已刷新；${saveHint}`
+      : `样式已写入，ASS 渲染器就绪后同步预览；${saveHint}`;
+  }
   return true;
 }
 

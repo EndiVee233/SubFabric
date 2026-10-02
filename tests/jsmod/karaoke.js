@@ -18,17 +18,36 @@ export const HIGHLIGHT_COLORS = new Set(['#00ff00']);
 /** ASS &HBBGGRR → '#rrggbb'(供说话人颜色解析与全局换色复用) */
 export const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
 
+/** 把所选逐词颜色写入英文逐词事件, 只改标准高亮 span、不碰角色颜色及其它覆盖标签。 */
+export function replaceWordHighlightColor(doc, style, hex, eventScope = null) {
+  const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(rgb)) return 0;
+  const tag = `{\\c&H${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}&}`;
+  let changed = 0;
+  for (const ev of eventScope || (doc && doc.events) || []) {
+    if (String(ev.style || '').toLowerCase() !== String(style || '').toLowerCase()) continue;
+    const next = String(ev.text || '').replace(HL_RE, (span, word) => tag + word + '{\\c}');
+    if (next !== ev.text) { doc.setEventText(ev, next); changed++; }
+  }
+  return changed;
+}
+
 /**
  * 说话人颜色: 取句子首个事件行首 {\c&H......&} 的颜色(如 [Spoke] → 红 #e50b0b)。
- * 逐词高亮绿(#00ff00)不算说话人颜色, 需排除。整句样式(如"中文字幕")行上才带此色。
+ * 默认绿按颜色排除；自定义逐词色按逐词 span 结构排除。整句样式(如"中文字幕")行上才带说话人色。
  */
 export function speakerColorOf(sent) {
   if (!sent) return null;
   for (const ev of (sent.events || [])) {
-    const m = LEAD_COLOR_RE.exec(ev.text || '');
+    const text = String(ev.text || '');
+    const m = LEAD_COLOR_RE.exec(text);
     if (!m) continue;
     const hex = assColorToHex(m[1].toUpperCase());
-    if (!HIGHLIGHT_COLORS.has(hex)) return hex;
+    const trimmed = text.trimStart();
+    const leadingSpan = HL_RE.exec(trimmed);
+    const isWordHighlight = !!(sent.words && sent.words.length && leadingSpan && leadingSpan.index === 0
+      && leadingSpan[0].startsWith(m[1] ? `{\\c&H${m[1]}&}` : ''));
+    if (!HIGHLIGHT_COLORS.has(hex) && !isWordHighlight) return hex;
   }
   return null;
 }

@@ -539,6 +539,9 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ass-style-color-row input[type="color"] { width:34px; height:24px; border:1px solid var(--border); border-radius:5px; padding:2px; background:#101015; cursor:pointer; }
 .ass-style-color-value { color:var(--text-1); font:11px Consolas,monospace; }
 .ass-style-status { color:var(--accent-2) !important; }
+.ass-style-font-note { margin-top:5px; font-size:11px; line-height:1.5; color:var(--text-2); }
+.ass-style-font-note.ok { color:#4fd1a5; }
+.ass-style-font-note.warn { color:#ffd54a; }
 #ass-style-group.ass-style-disabled .ass-style-track, #ass-style-group.ass-style-disabled .ass-style-color-row { opacity:.45; }
 
 /* ── 全局设置弹窗: 页签 + 卡片(页签/主体/卡片的布局样式) ─────────────── */

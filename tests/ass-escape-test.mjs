@@ -2,6 +2,7 @@
 'use strict';
 import { AssDoc, assPlainText, isAssSubtitle } from '../editor/js/ass.js';
 import { replaceWordHighlightColor, speakerColorOf } from '../editor/js/karaoke.js';
+import { AssPlayer } from '../editor/js/assplayer.js';
 
 let pass = 0, fail = 0;
 const ok = (c, name, extra) => { if (c) { pass++; console.log('  ok  ' + name); } else { fail++; console.log('FAIL  ' + name + (extra ? ' :: ' + extra : '')); } };
@@ -19,6 +20,47 @@ ok(!isAssSubtitle(srtLikeText, 'caption.txt'), '避免把普通文本字幕误�
 const legacySsa = new AssDoc(`[V4 Styles]\nFormat: Name, Fontname, Fontsize\nStyle: Default,Arial,20\n[Events]\nFormat: Marked, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\\move(0,0,100,100)\\t(0,500,\\fscx120)}moving text`);
 ok(legacySsa.styleNames.includes('Default'), '经典 SSA 样式可识别');
 ok(legacySsa.serialize().includes('{\\move(0,0,100,100)\\t(0,500,\\fscx120)}moving text'), 'ASS 动画覆盖标签往返保留');
+
+/* 渲染器初始化期间收到样式更新时，只缓存最新轨道；worker 首条 stdout 不等于 libass ready。 */
+const originalOctopus = globalThis.SubtitlesOctopus;
+let mockOctopus;
+globalThis.SubtitlesOctopus = class {
+  constructor(options) {
+    this.options = options;
+    this.calls = [];
+    this.workerActive = false;
+    this.workerListeners = new Set();
+    this.worker = {
+      addEventListener: (type, fn) => { if (type === 'message') this.workerListeners.add(fn); },
+      removeEventListener: (type, fn) => { if (type === 'message') this.workerListeners.delete(fn); }
+    };
+    mockOctopus = this;
+  }
+  emit(target) {
+    if (!this.workerActive) { this.workerActive = true; this.options.onReady(); }
+    for (const fn of this.workerListeners) fn({ data: { target } });
+  }
+  setTrack(content) { this.calls.push({ type: 'track', content }); }
+  setCurrentTime(time) { this.calls.push({ type: 'time', time }); }
+  dispose() {}
+};
+const previewVideo = {
+  videoWidth: 1920, currentTime: 12.34, paused: true,
+  addEventListener() {}, removeEventListener() {}
+};
+const previewPlayer = new AssPlayer(previewVideo);
+previewPlayer.load('old ASS');
+previewPlayer.updateNow('first style edit');
+previewPlayer.updateNow('latest style edit');
+ok(mockOctopus.calls.length === 0, 'libass 初始化中不提前发 setTrack');
+mockOctopus.emit('stdout');
+ok(!previewPlayer.ready && mockOctopus.calls.length === 0, 'worker 首条 stdout 不会误报就绪或丢更新');
+mockOctopus.emit('ready');
+ok(previewPlayer.ready && mockOctopus.calls.length === 2 && mockOctopus.calls[0].content === 'latest style edit'
+  && mockOctopus.calls[1].time === 12.34, '精确 ready 后应用最新字幕并强制重绘暂停帧');
+previewPlayer.dispose();
+if (originalOctopus === undefined) delete globalThis.SubtitlesOctopus;
+else globalThis.SubtitlesOctopus = originalOctopus;
 
 const styleDoc = new AssDoc(`[Script Info]\nTitle: style test\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,36,&H00FFFFFF,&H0000FF00,&H00000000,&H64000000,-1,0,1,2,0,2,10,10,20,1\nStyle: 中文字幕,Arial,36,&H00FFFFFF,&H0000FF00,&H00000000,&H64000000,0,0,1,2,0,2,10,10,20,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{\\c&H00FF00&}Hello{\\c} {\\c&H00FF00&}world{\\c}\nDialogue: 0,0:00:00.00,0:00:01.00, 中文字幕,,0,0,0,,{\\c&H0000FF&}[角色] 你好`);
 ok(styleDoc.getStyle('Default').fontname === 'Arial' && styleDoc.getStyle('Default').fontsize === '36', '读取 ASS 样式字段');

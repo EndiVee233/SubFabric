@@ -163,6 +163,7 @@
               <button type="button" class="btn btn-mini" id="ass-style-zh-font-file-btn">载入字体</button>
               <input type="file" id="ass-style-zh-font-file" accept=".ttf,.otf,.TTF,.OTF" hidden>
             </div>
+            <div class="ass-style-font-note" id="ass-style-zh-font-note"></div>
             <div class="ass-style-options">
               <label class="ass-style-field">字号<input id="ass-style-zh-size" type="number" min="1" max="200" step="1"></label>
               <label class="ass-style-check"><input id="ass-style-zh-bold" type="checkbox">粗体</label>
@@ -176,6 +177,7 @@
               <button type="button" class="btn btn-mini" id="ass-style-en-font-file-btn">载入字体</button>
               <input type="file" id="ass-style-en-font-file" accept=".ttf,.otf,.TTF,.OTF" hidden>
             </div>
+            <div class="ass-style-font-note" id="ass-style-en-font-note"></div>
             <div class="ass-style-options">
               <label class="ass-style-field">字号<input id="ass-style-en-size" type="number" min="1" max="200" step="1"></label>
               <label class="ass-style-check"><input id="ass-style-en-bold" type="checkbox">粗体</label>
@@ -192,7 +194,7 @@
             <span id="ass-style-word-color-val" class="ass-style-color-value">#00FF00</span>
           </div>
           <p id="ass-style-status" class="set-group-note">请先打开 ASS/SSA 字幕。设置写入当前稿件；项目自动保存，普通文件请导出。</p>
-          <p class="set-group-note">可输入字体名称；若要在视频预览中使用本机字体，请载入对应的 .ttf/.otf 文件。字体文件仅缓存在本机浏览器。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
+          <p class="set-group-note">预览用的字体由 libass 内核自己加载：只改字体名称而没「载入字体」，画面会回退到内置字体（看着不变），导出的 ASS 仍会写上你填的名称。字体文件仅缓存在本机浏览器。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
         </div>
 
         <div class="set-group">

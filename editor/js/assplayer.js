@@ -39,6 +39,7 @@ export class AssPlayer {
     this._pendingText = null;
     this._debounceTimer = null;
     this._generation = 0;
+    this._workerReadyHandler = null;
     this._memoryFonts = new Map();
     this._fontObjectUrls = new Map();
   }
@@ -62,6 +63,16 @@ export class AssPlayer {
     } finally { db.close(); }
   }
 
+  /** 该字体名在预览(libass)里是否真的有字形可用。
+   *  内置 Noto CJK 恒可用; 其余看用户是否用「载入字体」导入过(内存或 IndexedDB 缓存)。
+   *  用来在设置面板上如实提示"改了字体名但画面不会变"的原因。 */
+  async isFontAvailable(name) {
+    const key = fontKey(name);
+    if (!key) return false;
+    if (key === 'noto sans cjk sc') return true;
+    return !!(await this._fontBlob(key));
+  }
+
   async _fontBlob(name) {
     const key = fontKey(name);
     if (!key) return null;
@@ -80,6 +91,11 @@ export class AssPlayer {
   load(assText, fontNames = []) {
     this.dispose();
     const generation = this._generation;
+    // 记住本次要渲染的轨道: 就绪后 _doUpdate() 会 setTrack + setCurrentTime。
+    // 这一步不能省 —— worker 建轨是异步的, 而 libass 只在收到"时间"消息时才重绘;
+    // 视频暂停时根本没有 timeupdate, 于是整轨重建(改字体名走的就是这条路)之后
+    // 画面会一直空着, 直到用户碰一下进度条。
+    this._pendingText = assText;
     this.ready = false;
     this.error = null;
     this.onStatus('libass 初始化中（WASM 和中文字体）…');
@@ -89,7 +105,10 @@ export class AssPlayer {
       createStarted = true;
       try {
         const extraFonts = [];
-        const availableFonts = { 'noto sans cjk sc': [FONT_URL] };
+        // availableFonts 的值必须是**URL 字符串**: worker 的 loadFontFile 会直接对它
+        // 调 path.split('/')。传数组会抛 "path.split is not a function" → 字体加载中断、
+        // 字幕轨半途而废(画面直接空白)。
+        const availableFonts = { 'noto sans cjk sc': FONT_URL };
         for (const name of [...new Set((fontNames || []).map(n => String(n || '').trim()).filter(Boolean))]) {
           const blob = await this._fontBlob(name);
           if (generation !== this._generation) return;
@@ -101,9 +120,17 @@ export class AssPlayer {
             this._fontObjectUrls.set(key, url);
           }
           extraFonts.push(url);
-          availableFonts[key] = [url];
+          availableFonts[key] = url;
         }
         if (generation !== this._generation) return;
+        const markReady = () => {
+          if (generation !== this._generation || this.ready) return;
+          this.ready = true;
+          clearTimeout(this._initTimer);
+          this.passThroughClicks();
+          this._doUpdate();          // 推送轨道并立刻渲染当前帧(暂停时也能看到)
+          this.onStatus('ASS 渲染就绪');
+        };
         this.instance = new SubtitlesOctopus({
           video: this.video,
           subContent: assText,
@@ -112,12 +139,11 @@ export class AssPlayer {
           fallbackFont: FONT_URL,
           availableFonts,
           onReady: () => {
+            // subtitles-octopus 4.x 会在收到 worker 的任意首条消息时调用 onReady；
+            // wasm 尚未 ready 时可能只是 stdout/stderr，因此下面优先监听精确的 target=ready。
             if (generation !== this._generation) return;
-            this.ready = true;
-            clearTimeout(this._initTimer);
-            this.passThroughClicks();
-            this.onStatus('ASS 渲染就绪');
-            if (this._pendingText != null) this._doUpdate();
+            const worker = this.instance && this.instance.worker;
+            if (!worker || typeof worker.addEventListener !== 'function') markReady();
           },
           onError: (e) => {
             if (generation !== this._generation) return;
@@ -126,6 +152,17 @@ export class AssPlayer {
             this.onStatus('ASS 渲染错误: ' + (e && e.message || e));
           }
         });
+        const worker = this.instance && this.instance.worker;
+        if (worker && typeof worker.addEventListener === 'function') {
+          const onWorkerMessage = (event) => {
+            if (!event || !event.data || event.data.target !== 'ready') return;
+            worker.removeEventListener('message', onWorkerMessage);
+            if (this._workerReadyHandler === onWorkerMessage) this._workerReadyHandler = null;
+            markReady();
+          };
+          this._workerReadyHandler = onWorkerMessage;
+          worker.addEventListener('message', onWorkerMessage);
+        }
         this.passThroughClicks();
       } catch (e) {
         if (generation !== this._generation) return;
@@ -190,15 +227,26 @@ export class AssPlayer {
   }
 
   _doUpdate() {
-    if (this.instance && this._pendingText != null) {
-      try { this.instance.setTrack(this._pendingText); }
-      catch (e) { console.warn('setTrack failed', e); }
-    }
+    // worker-init 是异步的；尚未 onReady 时发 setTrack 会与 libass 初始化竞争。
+    // 保留最新文本，由 onReady 再发，避免“稿件已改、视频仍停留在旧轨”。
+    if (!this.instance || !this.ready || this._pendingText == null) return;
+    try {
+      this.instance.setTrack(this._pendingText);
+      // setTrack 会重建 libass track。显式同步当前播放时刻，确保暂停画面也立即重绘。
+      if (typeof this.instance.setCurrentTime === 'function') {
+        this.instance.setCurrentTime(Number(this.video.currentTime) || 0);
+      }
+    } catch (e) { console.warn('setTrack failed', e); }
   }
 
   dispose() {
     this._generation++;
     if (this.instance) {
+      const worker = this.instance.worker;
+      if (worker && this._workerReadyHandler) {
+        try { worker.removeEventListener('message', this._workerReadyHandler); } catch (e) { /* noop */ }
+      }
+      this._workerReadyHandler = null;
       try { this.instance.dispose(); } catch (e) { /* noop */ }
       this.instance = null;
     }
