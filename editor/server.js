@@ -19,6 +19,7 @@ const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
 const llmText = require('./llm-text.js');
+const fonts = require('./fonts.js');          // 本机字体库: 让 ASS 样式面板直接用系统字体
 const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容推断 + SPK→角色名)  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
@@ -1646,6 +1647,30 @@ function handleRequest(req, res) {
   if (pathname === '/api/version') {
     return send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' },
       JSON.stringify({ stamp: BUILD_STAMP, version: APP_VERSION }));
+  }
+  // 本机字体清单: 给 ASS 样式面板做候选, 用户填名字就能用系统字体(见 editor/fonts.js)
+  if (pathname === '/api/fonts') {
+    let list = [];
+    try { list = fonts.listFonts().map(f => f.family); }
+    catch (e) { console.error('[fonts] 字体清单读取失败: ' + (e && e.message || e)); }
+    return sendJson(res, 200, { count: list.length, fonts: list });
+  }
+  // 字体文件字节。**只按家族名查表**, 不接受路径 —— 页面拿不到任意文件读的能力。
+  // 集合字体(.ttc)在这里抽成单个 face 再回, 因为 wasm fontconfig 会静默忽略 .ttc。
+  if (pathname === '/api/font-file') {
+    const want = u.searchParams.get('name') || '';
+    const entry = fonts.findFont(want);
+    if (!entry) return sendJson(res, 404, { error: '未找到字体: ' + want });
+    let buf;
+    try { buf = fonts.readFontBytes(entry); }
+    catch (e) { return sendJson(res, 500, { error: '读取字体失败: ' + (e && e.message || e) }); }
+    res.writeHead(200, {
+      'Content-Type': 'font/ttf',
+      'Cache-Control': 'no-cache',
+      'Content-Length': buf.length,
+      'X-Font-Family': encodeURIComponent(entry.families[0] || want)
+    });
+    return res.end(buf);
   }
   // 站点图标(内联 SVG, 省得浏览器请求 /favicon.ico 报 404 污染控制台)
   if (pathname === '/favicon.ico' || pathname === '/favicon.svg') {

@@ -57,7 +57,7 @@ const ASS = [
 ].join('\n');
 
 /** 页面内执行: 逐项改控件, 每项对比 canvas 指纹 */
-async function pageProbe(assUrl, fontUrl) {
+async function pageProbe(assUrl, fontUrl, fontOpts) {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   const out = { cases: [] };
 
@@ -181,6 +181,7 @@ async function pageProbe(assUrl, fontUrl) {
   out.panelEnabled = !!(els.zhSize && !els.zhSize.disabled);
 
   const step = async (name, mutate, note, which = 'zh', expect = 'canvas') => {
+    if (out.fatal) return;                    // 渲染器已经坏了, 后面的用例没意义
     const before = hashCanvas();
     const diagBefore = diag();
     const beforeDoc = note();
@@ -211,6 +212,7 @@ async function pageProbe(assUrl, fontUrl) {
       diagBefore, diagAfter: diag(),
       fontNotes: notes
     });
+    if (out.cases[out.cases.length - 1].diagAfter.error) out.fatal = true;
   };
 
   const zhSizeOf = () => dbg.state.assDoc.getStyle('中文字幕').fontsize;
@@ -239,21 +241,24 @@ async function pageProbe(assUrl, fontUrl) {
     els.wordColor.dispatchEvent(new Event('input', { bubbles: true }));
   }, wordColorOf);
 
-  /* 载入本机字体: 英文轨换成 Consolas(本机字体文件), 画面应当真的变字形 */
+  /* 载入本机字体文件: 画面应当真的换字形。字体名/文件/轨道由外部指定,
+   * 用来验证「用户填的名字 libass 认不认」(fontconfig 按字体内部家族名匹配)。 */
   if (fontUrl) {
-    const enFontOf = () => dbg.state.assDoc.getStyle('Default').fontname;
+    const track = fontOpts.track === 'zh' ? 'zh' : 'en';
+    const styleName = track === 'zh' ? '中文字幕' : 'Default';
+    const fontOf = () => dbg.state.assDoc.getStyle(styleName).fontname;
     const blob = await (await fetch(fontUrl)).blob();
-    const fontFile = new File([blob], 'consola.ttf', { type: 'font/ttf' });
-    await step('载入本机字体 Consolas', () => {
-      const nameEl = document.getElementById('ass-style-en-font');
-      nameEl.value = 'ConsolasProbe';
+    const fontFile = new File([blob], fontOpts.fileName, { type: 'font/ttf' });
+    await step(`载入本机字体 ${fontOpts.name}`, () => {
+      const nameEl = document.getElementById(`ass-style-${track}-font`);
+      nameEl.value = fontOpts.name;
       nameEl.dispatchEvent(new Event('change', { bubbles: true }));   // 先写名字
-      const fileEl = document.getElementById('ass-style-en-font-file');
+      const fileEl = document.getElementById(`ass-style-${track}-font-file`);
       const dt2 = new DataTransfer();
       dt2.items.add(fontFile);
       fileEl.files = dt2.files;
       fileEl.dispatchEvent(new Event('change', { bubbles: true }));    // 再载入字体文件
-    }, enFontOf, 'en', 'canvas');
+    }, fontOf, track, 'canvas');
   }
 
   out.statusText = (document.getElementById('ass-style-status') || {}).textContent || '';
@@ -279,15 +284,20 @@ if (!userAss) {
   fsMod.writeFileSync(inlinePath, ASS, 'utf8');
 }
 
-/* 本机字体文件(用于验证「载入字体」这条路真的能把字形换掉) */
-const SYS_FONT = 'C:/Windows/Fonts/consola.ttf';
+/* 本机字体文件(验证「载入字体」能把字形换掉)。
+ * 可用 PROBE_FONT_FILE / PROBE_FONT_NAME / PROBE_FONT_TRACK 换别的字体与轨道。 */
+const SYS_FONT = process.env.PROBE_FONT_FILE || 'C:/Windows/Fonts/consola.ttf';
+const FONT_NAME = process.env.PROBE_FONT_NAME || 'ConsolasProbe';
+const FONT_TRACK = process.env.PROBE_FONT_TRACK || 'en';
 let fontUrl = null;
 let fontCopied = null;
 if (existsSync(SYS_FONT)) {
-  fontCopied = join(ROOT, '__probe_font.ttf');
+  // 保留原扩展名: .ttc 集合字体与 .ttf 的单字体, FreeType 走的分支不同
+  fontCopied = join(ROOT, '__probe_font' + (SYS_FONT.match(/\.[a-z0-9]+$/i) || ['.ttf'])[0]);
   copyFileSync(SYS_FONT, fontCopied);
-  fontUrl = '/__probe_font.ttf';
+  fontUrl = '/' + basename(fontCopied);
 }
+const fontOpts = { name: FONT_NAME, track: FONT_TRACK, fileName: fontCopied ? basename(fontCopied) : 'probe.ttf' };
 
 const cleanupFiles = () => {
   for (const p of [copiedPath, userAss ? null : inlinePath, fontCopied]) {
@@ -357,7 +367,8 @@ await send('Log.enable');
 await send('Network.enable');
 await sleep(3000);
 
-const expr = '(' + pageProbe.toString() + ')(' + JSON.stringify(assUrl) + ',' + JSON.stringify(fontUrl) + ')';
+const expr = '(' + pageProbe.toString() + ')(' + JSON.stringify(assUrl) + ','
+  + JSON.stringify(fontUrl) + ',' + JSON.stringify(fontOpts) + ')';
 const res = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
 const out = res && res.result && res.result.value;
 const err = res && res.exceptionDetails;

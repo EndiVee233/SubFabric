@@ -46,10 +46,15 @@ export class AssPlayer {
 
   get loaded() { return !!this.instance; }
 
-  async cacheFont(fontName, file) {
+  /** 记住一个字体文件。
+   *  persist=true 落 IndexedDB(用户自己挑的文件, 下次还得用);
+   *  persist=false 只留内存(本机字体库来的 —— 服务端随时能再给一份,
+   *  没必要把几十 MB 的中文字体长期堆进浏览器存储)。 */
+  async cacheFont(fontName, file, persist = true) {
     const key = fontKey(fontName);
     if (!key || !file) throw new Error('请先填写字体名称并选择字体文件');
     this._memoryFonts.set(key, file);
+    if (!persist) return false;
     const db = await openFontDb();
     if (!db) return false;
     try {
@@ -104,7 +109,6 @@ export class AssPlayer {
       if (generation !== this._generation || createStarted) return;
       createStarted = true;
       try {
-        const extraFonts = [];
         // availableFonts 的值必须是**URL 字符串**: worker 的 loadFontFile 会直接对它
         // 调 path.split('/')。传数组会抛 "path.split is not a function" → 字体加载中断、
         // 字幕轨半途而废(画面直接空白)。
@@ -119,7 +123,6 @@ export class AssPlayer {
             url = URL.createObjectURL(blob);
             this._fontObjectUrls.set(key, url);
           }
-          extraFonts.push(url);
           availableFonts[key] = url;
         }
         if (generation !== this._generation) return;
@@ -135,7 +138,13 @@ export class AssPlayer {
           video: this.video,
           subContent: assText,
           workerUrl: WORKER_URL,
-          fonts: [FONT_URL, ...extraFonts],
+          // fonts 一律留空, 只靠 availableFonts 触发加载。
+          // 原因: worker 给 fonts 里的文件起名 'font<i>-<basename>', 给 availableFonts 的
+          // 却用另一套独立计数器 'font<fontId>-<basename>' —— 同一个 URL 在两个计数器下
+          // 撞上同一个下标时就是同一个 /fonts 路径, createPreloadedFile 撞名即抛
+          // "FS error", 整个 worker 当场挂掉(实测: 中文轨用系统字体、英文轨也用系统字体时必现)。
+          // availableFonts 已足够: worker 的 writeFontToFS 会按 Style 的 Fontname 主动加载。
+          fonts: [],
           fallbackFont: FONT_URL,
           availableFonts,
           onReady: () => {

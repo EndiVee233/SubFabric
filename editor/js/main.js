@@ -92,7 +92,10 @@ const overlay = new SrtOverlay(document.getElementById('srt-overlay'), video);
 const assPlayer = new AssPlayer(video, (msg) => {
   toast(msg);
   if (msg === 'ASS 渲染就绪' && state.format === 'ass' && assStyleEls.status) {
-    assStyleEls.status.textContent = 'ASS 预览已就绪，当前稿件样式已同步。';
+    assStyleEls.status.textContent = pendingFontNotice
+      ? `ASS 预览已就绪；${pendingFontNotice}。`
+      : 'ASS 预览已就绪，当前稿件样式已同步。';
+    pendingFontNotice = '';
   }
 });
 const timeline = new Timeline(document.getElementById('timeline'), video);
@@ -402,6 +405,88 @@ function assStyleFields(name) {
   };
 }
 
+/* ─────────── 本机字体库(服务端读系统字体, 见 editor/fonts.js) ───────────
+ * libass 在 Worker 里跑, 拿不到系统字体 —— 由本地服务把字体文件读出来喂给它。
+ * 于是用户只要填字体名, 不用自己找 .ttf: 填「微软雅黑」就用微软雅黑。 */
+const SYSTEM_FONTS = { promise: null, names: new Set() };
+let pendingFontNotice = '';
+
+/** 缓存的是**同一个 Promise**, 不是"已加载"布尔量 ——
+ *  打开稿件时 setAssStyleControls 与 autoLoadSystemFonts 会同时要这份清单,
+ *  若先置位再 await, 后到的那次会拿到还没填好的空集合, 于是"本机明明装了"却判成没装。 */
+function loadSystemFontList() {
+  if (SYSTEM_FONTS.promise) return SYSTEM_FONTS.promise;
+  SYSTEM_FONTS.promise = (async () => {
+    try {
+      const r = await fetch('/api/fonts');
+      if (!r.ok) return SYSTEM_FONTS;
+      const j = await r.json();
+      const list = Array.isArray(j.fonts) ? j.fonts : [];
+      SYSTEM_FONTS.names = new Set(list.map(n => String(n).trim().toLowerCase()));
+      const dl = document.getElementById('ass-font-list');
+      if (dl && list.length) {
+        dl.innerHTML = '';
+        for (const n of list) {
+          const o = document.createElement('option');
+          o.value = n;
+          dl.appendChild(o);
+        }
+      }
+    } catch { /* 拿不到就用内置那几个候选 */ }
+    return SYSTEM_FONTS;
+  })();
+  return SYSTEM_FONTS.promise;
+}
+
+/** 让这个字体名在预览里可用。
+ *  @returns 'present'(本来就有) | 'loaded'(刚从本机字体库取来) | 'missing'(本机没装) */
+async function ensureSystemFont(name) {
+  const key = String(name || '').trim();
+  if (!key) return 'missing';
+  if (await assPlayer.isFontAvailable(key)) return 'present';
+  const lib = await loadSystemFontList();
+  if (!lib.names.has(key.toLowerCase())) return 'missing';
+  try {
+    const r = await fetch('/api/font-file?name=' + encodeURIComponent(key));
+    if (!r.ok) return 'missing';
+    const blob = await r.blob();
+    await assPlayer.cacheFont(key, new File([blob], key + '.ttf', { type: 'font/ttf' }), false);
+    return 'loaded';
+  } catch { return 'missing'; }
+}
+
+/** 改完字体名: 先把它从本机字体库备好, 再套用样式(只重载一次预览) */
+async function onFontNameChange(track) {
+  const el = track === 'zh' ? assStyleEls.zhFont : assStyleEls.enFont;
+  const name = (el.value || '').trim();
+  if (!name) { applyAssStyleSettings(); return; }
+  if (assStyleEls.status) assStyleEls.status.textContent = `正在查找本机字体「${name}」…`;
+  const res = await ensureSystemFont(name);
+  if (res === 'loaded') pendingFontNotice = `已从本机字体库载入「${name}」`;
+  applyAssStyleSettings();
+  if (res === 'loaded' && !assPlayer.ready && assStyleEls.status) {
+    assStyleEls.status.textContent = `已从本机字体库载入「${name}」，预览重建中…`;
+  }
+}
+
+/** 打开稿件后自动补齐: 样式里写的字体若本机装了, 直接喂给预览(用户不必手动选文件) */
+async function autoLoadSystemFonts() {
+  if (state.format !== 'ass' || !state.assStyleTargets) return;
+  const targets = state.assStyleTargets;
+  const names = [assStyleEls.zhFont.value, assStyleEls.enFont.value]
+    .map(v => String(v || '').trim()).filter(Boolean);
+  const loaded = [];
+  for (const n of names) {
+    const r = await ensureSystemFont(n);
+    if (state.assStyleTargets !== targets) return;   // 期间换了稿件 → 作废
+    if (r === 'loaded') loaded.push(n);
+  }
+  if (!loaded.length) { refreshFontNotes(); return; }
+  pendingFontNotice = `已从本机字体库载入「${loaded.join('、')}」`;
+  // 字体换了 → 整轨重建, 让新字体真正生效
+  applyAssStyleSettings(true);
+}
+
 /** 如实标注每轨字体在**预览**里到底有没有字形。
  *  libass 只用自己 FS 里的字体文件: 只改字体名而没「载入字体」时, 它会回退到内置字体,
  *  画面看着"没变"并不是没同步, 而是压根没有那个字体 —— 这里把原因写在控件下面。 */
@@ -422,7 +507,7 @@ async function refreshFontNotes() {
     el.className = 'ass-style-font-note ' + (ok ? 'ok' : 'warn');
     el.textContent = ok
       ? (name.toLowerCase() === 'noto sans cjk sc' ? '预览已载入（内置字体）' : '预览已载入该字体')
-      : '预览未载入该字体 → 画面会回退到内置字体，只改名字看不出变化；点「载入字体」导入 .ttf/.otf 才会变';
+      : '本机没装这个字体 → 预览会回退到内置字体（画面看着不变）；点「载入字体」挑一个 .ttf/.otf 也能用';
   };
   paint(assStyleEls.zhFontNote, zhOk, zhName);
   paint(assStyleEls.enFontNote, enOk, enName);
@@ -470,6 +555,7 @@ function setAssStyleControls() {
   if (assStyleEls.wordColor) assStyleEls.wordColor.value = wordColor;
   if (assStyleEls.wordColorVal) assStyleEls.wordColorVal.textContent = wordColor.toUpperCase();
   if (assStyleEls.status) assStyleEls.status.textContent = '修改会立即预览并写入文稿；项目自动保存，普通字幕请导出保存。';
+  loadSystemFontList();      // 顺手把本机字体填进候选, 用户打字就有补全
   refreshFontNotes();
 }
 
@@ -671,6 +757,7 @@ function setAss(text, name) {
     ? [state.assDoc.getStyle(state.assStyleTargets.zh).fontname, state.assDoc.getStyle(state.assStyleTargets.en).fontname]
     : [];
   assPlayer.load(state.assDoc.serialize(), renderFonts);
+  autoLoadSystemFonts();     // 样式里写的字体若本机装了 → 自动喂给预览
   btnExport.disabled = false;
   if (btnExportFull) btnExportFull.disabled = false;
   const hasKar = !!state.kar.wordStyle;
@@ -683,7 +770,11 @@ function setAss(text, name) {
     + (hasKar ? t('（逐词特效）') : '');
 }
 
-for (const el of [assStyleEls.zhFont, assStyleEls.enFont, assStyleEls.zhSize, assStyleEls.enSize,
+// 字体名: 先去本机字体库把字体备好再套用(用户不必手动选 .ttf)
+for (const [el, track] of [[assStyleEls.zhFont, 'zh'], [assStyleEls.enFont, 'en']]) {
+  if (el) el.addEventListener('change', () => onFontNameChange(track));
+}
+for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic]) {
   if (el) el.addEventListener('change', () => applyAssStyleSettings());
 }
