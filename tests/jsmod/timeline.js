@@ -3,7 +3,8 @@ import { fmtTime } from './util.js';
 
 const FILM_H = 46;       // 胶片缩略图条
 const RULER_H = 20;      // 刻度
-const WAVE_H = 64;       // 波形带: 独立于字幕轨, 不再被字幕块压住
+const WAVE_H = 64;       // 波形带理想高度
+const WAVE_MIN = 16;     // 波形带低于此值就不画了(太扁的包络看不出内容, 不如让位给字幕轨)
 const WAVE_GAP = 4;      // 波形带与下方轨道之间的间距
 const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
@@ -356,11 +357,42 @@ export class Timeline {
   zoomOut() { this._zoomAtSmooth(this._cssW() / 2, 1 / 1.6); }
 
   /** 胶片预览图高度: 关闭时为 0(不占位, 字幕块直接顶到刻度线下方) */
+  /** 字幕轨的**最低**高度: 低于此值字幕块就画不出来了(块内要放中英两行 + 逐词轴)。
+   *  波形带再怎么挤也不能侵占它 —— 字幕块消失是比波形难看严重得多的回归。 */
+  _laneMinH() { return 24; }
+
   /** 波形带高度: 有波形数据时占一条独立带, 否则 0(不占位)。
    *  为什么独立成带: 原先波形画在字幕轨内部(LANE_H=34, 可用仅 26px), 字幕块再叠上来,
-   *  波形几乎看不见。独立成带后纵向分辨率够, 也不被字幕块遮挡。 */
+   *  波形几乎看不见。独立成带后纵向分辨率够, 也不被字幕块遮挡。
+   *
+   *  ⚠ 关键: 它是**可压缩**的。固定 64px 会在浅窗口/矮时间轴下把字幕轨顶出面板
+   *  (实测面板 ≤104px 时轨道顶到 94px, 只剩 10px 且溢出 → 字幕块整条看不见)。
+   *  所以先给字幕轨留出 _laneMinH(), 剩下的才给波形; 空间实在不够时波形带
+   *  按比例缩到 WAVE_MIN, 宁可波形变扁, 也不能让字幕块消失。 */
   _waveH() {
-    return (this.peaks && this.peaks.data.length) ? WAVE_H : 0;
+    if (!this.peaks || !this.peaks.data.length) return 0;
+    // 注意: 这里用 _filmHint() 而不是 _filmH() —— _filmH() 的判断依赖波形带高度,
+    // 反过来调用会形成循环依赖(且结果依赖调用顺序, 难以推理)。胶片条优先级低于
+    // 字幕轨与波形, 所以这里按"假定胶片收起"来估算, 结果偏保守(波形带略窄), 可接受。
+    const n = Math.max(1, (this.lanes || []).length);
+    const fixed = this._filmHint() + RULER_H + 6 + WAVE_GAP;
+    // 要给**所有**轨道都留够 _laneMinH(), 还要扣掉轨间间隙 —— 只按单轨算会让
+    // 多轨(轨数≥2)时预留不足, 轨道仍会溢出面板。
+    const need = fixed + n * this._laneMinH() + (n - 1) * LANE_GAP;
+    const spare = this._cssH() - need;
+    // ⚠ 波形带高度是"能用多少给多少", 不设硬下限: 面板极矮时(实测 60px)
+    // 强行保底会把字幕轨的预留吃掉、把轨道顶出面板。字幕块优先于波形。
+    // 低于 WAVE_MIN 说明确实没地方了 → 干脆不画波形, 把空间全留给字幕轨。
+    const h = Math.max(0, Math.min(WAVE_H, spare));
+    return h >= WAVE_MIN ? h : 0;
+  }
+
+  /** 胶片条在此处是否占位: 空间不足时自动收起(省 46px 给波形带/字幕轨)。
+   *  只"决定"不"占位" —— 真正的占位高度由 _filmH() 给出, 两者分开避免循环依赖。 */
+  _filmHint() {
+    if (!this.showFilm) return 0;
+    const need = FILM_H + RULER_H + 6 + WAVE_H + WAVE_GAP + LANE_H * 2;
+    return this._cssH() >= need ? FILM_H : 0;
   }
 
   /** 胶片条可用高度: 空间不够时**自动收起**（省 46px 给波形带/字幕轨）—— 这样浅窗口/矮时间轴也不会挤爆。
