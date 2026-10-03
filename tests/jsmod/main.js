@@ -3432,13 +3432,24 @@ if (ACC) {
 
 /** 字幕块区域高度(时间轴占屏幕高度): 设置里可调, 也可拖视频/时间轴中间那根线; 记住用户的舒适值 */
 const TLH_KEY = 'ss-tl-h';
+/* 面板高度的合理区间:
+ *   下限 132px —— 刻度(20) + 波形(>=24) + 字幕块(>=24) + 胶片/间距, 再矮波形与块都展不开;
+ *   上限取屏幕高的 45% 且不超过 420px —— 太高则字幕块被拉得很高而内容仍只占两行,
+ *   块内大片留白、逐词标记离中文行太远(反之则视频区被压得没法看)。
+ * 上限用 min() 而不是固定值: 小屏上 420 可能正好, 大屏上又太占地方。 */
+const TLH_MIN = 132;
+const TLH_MAX = () => Math.max(TLH_MIN, Math.min(420, Math.round(window.innerHeight * 0.45)));
 const setTlh = document.getElementById('set-tlh');
 const setTlhVal = document.getElementById('set-tlh-val');
 function setTlHeight(px, save) {
   const app = document.getElementById('app');
-  const h = Math.round(Math.max(96, Math.min(window.innerHeight - 260, px)));
+  const h = Math.round(Math.max(TLH_MIN, Math.min(TLH_MAX(), px)));
   app.style.setProperty('--tl-h', h + 'px');
-  if (setTlh) setTlh.value = h;
+  if (setTlh) {
+    setTlh.min = String(TLH_MIN);
+    setTlh.max = String(TLH_MAX());
+    setTlh.value = h;
+  }
   if (setTlhVal) setTlhVal.textContent = h + ' px';
   if (save) localStorage.setItem(TLH_KEY, String(h));
   overlay.fitToVideo();

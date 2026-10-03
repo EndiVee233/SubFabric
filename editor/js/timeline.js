@@ -3,9 +3,9 @@ import { fmtTime } from './util.js';
 
 const FILM_H = 46;       // 胶片缩略图条
 const RULER_H = 20;      // 刻度
-const WAVE_H = 72;       // 波形带理想高度(与字幕轨重叠, 不额外占位)
-const WAVE_MIN = 16;     // 波形带低于此值就不画了(太扁的包络看不出内容, 不如让位给字幕轨)
+const WAVE_MIN = 24;     // 波形带低于此值就不画了(太空扁的包络看不出内容, 不如让位给字幕轨)
 const WAVE_BOTTOM_PAD = 4; // 波形底缘离面板底的余量(留出底边线, 不贴死)
+const WAVE_FILL = 220;     // 胶片条收起判据用的"典型满幅波形高"(保守值, 非硬上限)
 const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
 const CHIP_W = 78;       // 轨道标签
@@ -361,29 +361,27 @@ export class Timeline {
    *  波形带再怎么挤也不能侵占它 —— 字幕块消失是比波形难看严重得多的回归。 */
   _laneMinH() { return 24; }
 
-  /** 波形带高度: 波形铺满「刻度线以下、字幕轨底以上」的全部空间, 字幕块半透明叠在它上面。
-   *  所以它不额外占位, 高度 = 面板剩余空间(带一点余量), 并受 WAVE_H/WAVE_MIN 夹取。
-   *  空间太小时返回 0(不画波形) —— 宁可没有波形, 也不能让字幕块被挤没。 */
+  /** 波形带高度: **拉伸填满**「刻度线以下、面板底部以上」的全部空间。
+   *
+   *  为什么拉伸而不是固定值: 面板高度可由用户拖动(见 main.js TLH_MIN/TLH_MAX), 若波形用固定高度,
+   *  面板一高波形只占中间一条、**下方留出大片空白**(实测封顶 200px 时面板 420px 会空 194px),
+   *  视觉上恰恰是"波形没填满"。拉伸后波形与字幕块**共用**同一块纵向空间, 任何面板高度下关系都不变。
+   *
+   *  不设上限: 面板高度本身已被 TLH_MAX(≤420px) 限制, 波形跟着铺满即可;
+   *  真要再高, 胶片条的自动收起会先让出空间。
+   *  WAVE_MIN: 低于此值就不画波形 —— 太空扁的包络看不出内容, 不如把空间全给字幕块。 */
   _waveH() {
     if (!this.peaks || !this.peaks.data.length) return 0;
-    const avail = this._cssH() - this._lanesTop();
-    const h = Math.max(0, Math.min(WAVE_H, avail - WAVE_BOTTOM_PAD));
-    return h >= WAVE_MIN ? h : 0;
+    const avail = this._cssH() - this._lanesTop() - WAVE_BOTTOM_PAD;
+    return avail >= WAVE_MIN ? avail : 0;
   }
 
-  /** 胶片条在此处是否占位: 空间不足时自动收起(省 46px 给波形带/字幕轨)。
-   *  只"决定"不"占位" —— 真正的占位高度由 _filmH() 给出, 两者分开避免循环依赖。 */
-  _filmHint() {
-    if (!this.showFilm) return 0;
-    const need = FILM_H + RULER_H + 6 + WAVE_H + LANE_H * 2;
-    return this._cssH() >= need ? FILM_H : 0;
-  }
-
-  /** 胶片条可用高度: 空间不够时**自动收起**（省 46px 给波形带/字幕轨）—— 这样浅窗口/矮时间轴也不会挤爆。
-   *  收起只是"这一帧不画", 设置里的开关不动, 空间够了自动回来。 */
+  /** 胶片条高度: 空间不足时**自动收起**(省 46px 给波形带/字幕轨)—— 浅窗口/矮时间轴也不会挤爆。
+   *  收起只是"这一帧不画", 设置里的开关不动, 空间够了自动回来。
+   *  判据里用 WAVE_FILL 而非实际波形高: 保守一点, 宁可早收胶片也别让内容挤到面板外。 */
   _filmH() {
     if (!this.showFilm) return 0;
-    const need = FILM_H + RULER_H + 6 + this._waveH() + LANE_H * 2;
+    const need = FILM_H + RULER_H + 6 + WAVE_FILL + LANE_H * 2;
     return this._cssH() >= need ? FILM_H : 0;
   }
 
