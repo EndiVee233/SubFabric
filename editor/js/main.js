@@ -3580,7 +3580,9 @@ requestAnimationFrame(tick);
         tlPanel: rect(document.getElementById('timeline-panel')),
         wrap: rect(document.getElementById('tl-canvas-wrap')),
         canvas: cv ? Object.assign(rect(cv), { attrW: cv.width, attrH: cv.height }) : null,
+        // 虚拟滚动后 DOM 里只有可视窗口那些卡, 总数要看 panel.filtered
         cueCards: document.querySelectorAll('.cue-card').length,
+        cueCardsTotal: (window.__dbg && window.__dbg.panel && window.__dbg.panel.filtered) ? window.__dbg.panel.filtered.length : null,
         logView: lc ? Object.assign(rect(lc), { lines: lc.childElementCount }) : null,
         activeTab: act ? act.dataset.tab : null,
         tabs: [...document.querySelectorAll('#panel-tabs .ptab')].map(b => ({

@@ -326,6 +326,13 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   scrollbar-color: var(--bg-3) transparent;
 }
 #cue-spacer { position: relative; width: 100%; }
+/* 虚拟滚动: 顶部占位把"可视窗口"顶到正确的滚动位置(高度由 JS 按实测行高算出) */
+.cue-pad { width: 100%; }
+/* 隐藏测量容器: 只为量卡片真实行高, 固定定位 + visibility:hidden → 不参与文档布局也不绘制 */
+.cue-measure {
+  position: fixed; left: 0; top: 0;
+  visibility: hidden; pointer-events: none; z-index: -1;
+}
 .cue-card {
   position: relative; left: 8px; right: 8px;
   margin-bottom: 6px;
