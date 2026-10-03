@@ -1167,20 +1167,34 @@ export class Timeline {
    * 保证"中文 < 分隔线 < 标记"三者互不压。
    */
   _wordGeom(band) {
-    // 标记高: 常规 10px(拖动抓手要够大好点中)。上限是**块内实际可用高度**
-    // (块高 − 底部 2px 余量 − 顶部 1px 余量), 面板被压扁时随之收窄, 不顶出块外。
-    const BOT_PAD = 2, TOP_PAD = 1;
-    const markH = Math.max(2, Math.min(10, band.h - BOT_PAD - TOP_PAD));
-    const markBot = band.y + band.h - BOT_PAD;                // 贴底, 留 2px 不碰块边框
-    const markTop = markBot - markH;
+    /* 逐词标记块(拖动抓手): 目标 20×8(拖动中宽 10), 底部留 5px 不贴块边框。
+     *  比原来(10×4)大一倍 —— 小块在密集词里太难点中。
+     *
+     *  高度**按可用空间自适应**: 块内要同时容纳「中文行 + 分隔线 + 标记」, 若块太矮
+     *  (单语孤行/被压扁的矮轨, 实测 ≤39px), 无条件 20px 会让分隔线被标记压住。
+     *  所以先给中文行与分隔线留够, 剩下的才给标记; 实在挤不下就压到最小 6px。
+     *  宽度也不超过高度(极矮时不该是横条)。*/
+    const MARK_H = 20, MARK_W = 8, MARK_W_HOT = 10, MARK_MIN_H = 6;
+    const TOP_PAD = 1, GAP = 3;                                // GAP: 中文/分隔线/标记之间的最小间隙
+    // 底部余量: 2.5px(贴底但仍留一线缝隙, 不与块边框粘连), 且**不能吃掉整块**
+    // (实测块高 4px 时固定 5px 会让 markBot 跑到块顶之上、标记被画到块外)。
+    // 所以按块高缩放, 最少留 1px。
+    const BOT_PAD = Math.max(1, Math.min(2.5, band.h / 4));
     const zhBase = band.y + Math.round(band.h * 0.30);          // 与 _drawBlockText 的中文基线一致
-    const lo = zhBase + 3;                                      // 别压住中文行
-    const hi = markTop - 3;                                     // 别压住标记行
-    let axisY = band.y + Math.round(band.h * AXIS_R);
-    if (axisY < lo) axisY = lo;
-    if (axisY > hi) axisY = hi;
-    if (axisY < lo) axisY = lo;                                 // 空间不够时优先保中文行
-    return { axisY, sepY: axisY, markTop, markBot, markH, top: markTop, bottom: markBot, baseline: band.y + band.h - 3 };
+    const markBot = band.y + band.h - BOT_PAD;                   // 贴底, 不碰块边框
+    /* 优先级: **标记 > 分隔线**。标记是拖动抓手, 大一点才点得中; 分隔线只是装饰,
+     * 挤不下就该让位。所以分隔线的上界由"给标记留够 MARK_H"决定, 而不是反过来。 */
+    const axisLo = Math.min(zhBase + GAP, markBot - MARK_MIN_H);
+    const axisHi = Math.max(axisLo, Math.min(zhBase + Math.round(band.h * 0.5), markBot - MARK_H - GAP));
+    const axisY = Math.max(axisLo, Math.min(band.y + Math.round(band.h * AXIS_R), axisHi));
+    // 标记顶: 紧跟分隔线(GAP), 并保证至少 MARK_MIN_H; 高度优先取满 MARK_H
+    const markTop = Math.max(band.y + TOP_PAD, Math.min(axisY + GAP, markBot - MARK_MIN_H));
+    const markH = Math.max(2, Math.min(MARK_H, markBot - markTop));
+    const markW = Math.max(2, Math.min(MARK_W, markH));          // 极矮时别比高度还宽
+    return {
+      axisY, sepY: axisY, markTop, markBot, markH, markW, markWHot: MARK_W_HOT,
+      top: markTop, bottom: markBot, baseline: band.y + band.h - 3,
+    };
   }
 
   /** 块内文字: 中文整句在上(角色色/加粗), 中英之间是逐词轴, 轴下是英文逐词
@@ -1241,17 +1255,21 @@ export class Timeline {
       const wx = this.t2x(w.s);
       if (wx < x1 - 30 || wx > x2 + 30) continue;
       const hot = this._wordDrag && this._wordDrag.cue === this._selCueRef && this._wordDrag.idx === i;
-      // 标记块(始终画, 拖动时的抓手) —— 贴块底, 与英文词文本同一行
+      // 标记块(始终画, 拖动时的抓手) —— 贴块底, 与英文词文本同一行。
+      // 以词起点 wx 为**中心**画(而不是左边), 变宽后仍与词对齐。
       ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
-      ctx.fillRect(wx - 2, g.markTop, hot ? 5 : 4, g.markH);
-      // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记
+      const mw = hot ? g.markWHot : g.markW;
+      ctx.fillRect(Math.round(wx - mw / 2), g.markTop, mw, g.markH);
+      // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记。
+      // 起点随标记块半宽让位 —— 标记变宽后仍留 4px 间隙, 不压到字。
+      const textX = Math.round(wx + g.markW / 2 + 4);
       const nextX = (i + 1 < words.length) ? this.t2x(words[i + 1].s) : Math.min(this.t2x(blockEnd), x2);
-      const avail = nextX - (wx + 8) - 3;
+      const avail = nextX - textX - 3;
       const tw = ctx.measureText(w.w).width;
-      if (wx + 8 >= lastRight + 2 && tw <= avail) {
+      if (textX >= lastRight + 2 && tw <= avail) {
         ctx.fillStyle = WORD_TEXT;
-        ctx.fillText(w.w, wx + 8, g.baseline);
-        lastRight = wx + 8 + tw;
+        ctx.fillText(w.w, textX, g.baseline);
+        lastRight = textX + tw;
       }
     }
   }
@@ -1275,7 +1293,8 @@ export class Timeline {
         if (wpx / c.words.length <= 8) continue;
         for (let i = 0; i < c.words.length; i++) {
           const wx = this.t2x(c.words[i].s);
-          if (Math.abs(x - wx) <= 5) return { lane, cue: c, idx: i };
+          // 命中半宽跟标记块一致(再加 2px 余量), 看得见的宽度就能点中
+          if (Math.abs(x - wx) <= g.markW / 2 + 2) return { lane, cue: c, idx: i };
         }
       }
     }
