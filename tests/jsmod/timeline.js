@@ -3,9 +3,9 @@ import { fmtTime } from './util.js';
 
 const FILM_H = 46;       // 胶片缩略图条
 const RULER_H = 20;      // 刻度
-const WAVE_H = 64;       // 波形带理想高度
+const WAVE_H = 72;       // 波形带理想高度(与字幕轨重叠, 不额外占位)
 const WAVE_MIN = 16;     // 波形带低于此值就不画了(太扁的包络看不出内容, 不如让位给字幕轨)
-const WAVE_GAP = 4;      // 波形带与下方轨道之间的间距
+const WAVE_BOTTOM_PAD = 4; // 波形底缘离面板底的余量(留出底边线, 不贴死)
 const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
 const CHIP_W = 78;       // 轨道标签
@@ -361,29 +361,13 @@ export class Timeline {
    *  波形带再怎么挤也不能侵占它 —— 字幕块消失是比波形难看严重得多的回归。 */
   _laneMinH() { return 24; }
 
-  /** 波形带高度: 有波形数据时占一条独立带, 否则 0(不占位)。
-   *  为什么独立成带: 原先波形画在字幕轨内部(LANE_H=34, 可用仅 26px), 字幕块再叠上来,
-   *  波形几乎看不见。独立成带后纵向分辨率够, 也不被字幕块遮挡。
-   *
-   *  ⚠ 关键: 它是**可压缩**的。固定 64px 会在浅窗口/矮时间轴下把字幕轨顶出面板
-   *  (实测面板 ≤104px 时轨道顶到 94px, 只剩 10px 且溢出 → 字幕块整条看不见)。
-   *  所以先给字幕轨留出 _laneMinH(), 剩下的才给波形; 空间实在不够时波形带
-   *  按比例缩到 WAVE_MIN, 宁可波形变扁, 也不能让字幕块消失。 */
+  /** 波形带高度: 波形铺满「刻度线以下、字幕轨底以上」的全部空间, 字幕块半透明叠在它上面。
+   *  所以它不额外占位, 高度 = 面板剩余空间(带一点余量), 并受 WAVE_H/WAVE_MIN 夹取。
+   *  空间太小时返回 0(不画波形) —— 宁可没有波形, 也不能让字幕块被挤没。 */
   _waveH() {
     if (!this.peaks || !this.peaks.data.length) return 0;
-    // 注意: 这里用 _filmHint() 而不是 _filmH() —— _filmH() 的判断依赖波形带高度,
-    // 反过来调用会形成循环依赖(且结果依赖调用顺序, 难以推理)。胶片条优先级低于
-    // 字幕轨与波形, 所以这里按"假定胶片收起"来估算, 结果偏保守(波形带略窄), 可接受。
-    const n = Math.max(1, (this.lanes || []).length);
-    const fixed = this._filmHint() + RULER_H + 6 + WAVE_GAP;
-    // 要给**所有**轨道都留够 _laneMinH(), 还要扣掉轨间间隙 —— 只按单轨算会让
-    // 多轨(轨数≥2)时预留不足, 轨道仍会溢出面板。
-    const need = fixed + n * this._laneMinH() + (n - 1) * LANE_GAP;
-    const spare = this._cssH() - need;
-    // ⚠ 波形带高度是"能用多少给多少", 不设硬下限: 面板极矮时(实测 60px)
-    // 强行保底会把字幕轨的预留吃掉、把轨道顶出面板。字幕块优先于波形。
-    // 低于 WAVE_MIN 说明确实没地方了 → 干脆不画波形, 把空间全留给字幕轨。
-    const h = Math.max(0, Math.min(WAVE_H, spare));
+    const avail = this._cssH() - this._lanesTop();
+    const h = Math.max(0, Math.min(WAVE_H, avail - WAVE_BOTTOM_PAD));
     return h >= WAVE_MIN ? h : 0;
   }
 
@@ -391,7 +375,7 @@ export class Timeline {
    *  只"决定"不"占位" —— 真正的占位高度由 _filmH() 给出, 两者分开避免循环依赖。 */
   _filmHint() {
     if (!this.showFilm) return 0;
-    const need = FILM_H + RULER_H + 6 + WAVE_H + WAVE_GAP + LANE_H * 2;
+    const need = FILM_H + RULER_H + 6 + WAVE_H + LANE_H * 2;
     return this._cssH() >= need ? FILM_H : 0;
   }
 
@@ -399,7 +383,7 @@ export class Timeline {
    *  收起只是"这一帧不画", 设置里的开关不动, 空间够了自动回来。 */
   _filmH() {
     if (!this.showFilm) return 0;
-    const need = FILM_H + RULER_H + 6 + this._waveH() + WAVE_GAP + LANE_H * 2;
+    const need = FILM_H + RULER_H + 6 + this._waveH() + LANE_H * 2;
     return this._cssH() >= need ? FILM_H : 0;
   }
 
@@ -519,9 +503,11 @@ export class Timeline {
   t2x(t) { return (t - this.viewStart) * this.pxPerSec; }
   x2t(x) { return this.viewStart + x / this.pxPerSec; }
 
-  /** 所有轨道内容的起始 y(胶片 + 刻度 + 波形带之后)。
-   *  单一事实来源: 以前这个"6px 间距 + 偏移"在 4 处各写一遍, 加波形带时极易漏改。 */
-  _lanesTop() { return this._filmH() + RULER_H + 6 + this._waveH() + WAVE_GAP; }
+  /** 所有轨道内容的起始 y(胶片 + 刻度之下)。
+   *  字幕轨与波形带**故意重叠**: 波形铺满整条带, 字幕块半透明叠在它上面,
+   *  块间缝隙露出波形 —— 这样纵向空间共用, 既不会把波形挤扁, 也不会多占一整条轨。
+   *  (曾改成"波形独立成带、轨道在下", 结果两者上下分离, 既多占高度又看不到叠加关系。) */
+  _lanesTop() { return this._filmH() + RULER_H + 6; }
 
   _laneTop(i) {
     let y = this._lanesTop();
@@ -1300,20 +1286,16 @@ export class Timeline {
 
   /** 波形带: 刻度线下方的一条独立横带, 横贯整个宽度, 下方留出到字幕轨的间距。
    *  与字幕块完全分离 —— 波形不再被字幕块压住, 纵向也有足够分辨率画出音节。 */
+  /** 波形带: 铺满「刻度线以下」的区域, **字幕块半透明叠在它上面**(块间缝隙露出波形)。
+   *  绘制顺序在 draw() 里: 先本方法(波形在下), 再 _drawLanes(字幕块在上)。 */
   _drawWaveBand(ctx, W) {
     const h = this._waveH();
     if (!h) return;
-    const top = this._filmH() + RULER_H + 6;
+    const top = this._lanesTop();
     // 带底色(比轨道底略亮, 让波形所在区域一眼可辨)
     ctx.fillStyle = C.waveBg;
     ctx.fillRect(0, top, W, h);
     this._drawWaveLayer(ctx, W, top + 2, h - 4);
-    ctx.strokeStyle = C.laneBorder;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, Math.round(top + h) + 0.5);
-    ctx.lineTo(W, Math.round(top + h) + 0.5);
-    ctx.stroke();
   }
 
   /** 逐像素列的 min/max 包络(双通道)。
@@ -1402,13 +1384,16 @@ export class Timeline {
     this.lanes.forEach((lane, li) => {
       const yy = this._laneTop(li);
       const lh = this._laneH(li);
-      ctx.fillStyle = C.laneBg;
-      ctx.fillRect(0, yy, W, lh);
+      // 轨道底**只在没有波形时**才铺不透明底色: 波形与轨道重叠, 用不透明底会把波形盖死,
+      // 字幕块就"贴"不到波形上了(块间缝隙也看不到波形)。
+      if (!this._waveH()) {
+        ctx.fillStyle = C.laneBg;
+        ctx.fillRect(0, yy, W, lh);
+      }
       ctx.strokeStyle = C.laneBorder;
       ctx.beginPath(); ctx.moveTo(0, yy + lh + 0.5); ctx.lineTo(W, yy + lh + 0.5); ctx.stroke();
 
-      // 波形**不再**画在轨道里: 已独立成带(见 _drawWaveBand)。
-      // 原先叠在字幕块下面, 既看不清也拖慢每帧绘制(每轨都重画一次整幅波形)。
+      // 波形由 _drawWaveBand 统一画在下面(只画一次), 不再每轨重画。
 
       const spanStart = this.viewStart - 1, spanEnd = this.viewStart + W / this.pxPerSec + 1;
       const cues = lane.cues;

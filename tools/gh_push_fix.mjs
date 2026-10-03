@@ -39,9 +39,23 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileP = promisify(execFile);
 const sh = async (args) => (await execFileP('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64e6 })).stdout.trim();
-let range = '';
-try { range = await sh(['rev-list', '--reverse', `${remoteSha}..HEAD`]); } catch (e) { console.error('rev-list 失败:', e.message); }
-const todo = range ? range.split('\n').filter(Boolean) : [];
+/* ⚠ 不能用 `rev-list remoteSha..HEAD`: 经 API 重建的 commit 在本地不存在,
+ *   比对会报 Invalid revision range。改为"本地 HEAD 往前数, 与远端已有的 SHA 比对"。
+ *   远端历史是通过 API 重建的, 本地与之无共同祖先, 所以按"远端 commit message 已存在"来判断。*/
+const remoteLog = await sh(['log', '--format=%H %s', '-20', 'HEAD']);
+const remoteMsgs = new Set();
+try {
+  const r = await api(`/repos/${REPO}/commits?per_page=30`);
+  if (r.ok) for (const c of r.json) remoteMsgs.add(c.commit.message.split('\n')[0].trim());
+} catch {}
+const localLog = (await sh(['log', '--format=%H%x09%s', '-20', 'HEAD'])).split('\n').filter(Boolean);
+const todo = [];
+for (const line of localLog) {
+  const [sha, ...rest] = line.split('\t');
+  const subj = rest.join('\t').split('\n')[0].trim();
+  if (sha === remoteSha) break;                 // 已推到的位置
+  if (!remoteMsgs.has(subj)) todo.unshift(sha); // 远端没有这条 → 待推(从旧到新)
+}
 console.log('待推送 commit:', todo.length);
 if (!todo.length) { console.log('(无新 commit)'); process.exit(0); }
 
@@ -76,7 +90,11 @@ for (const c of todo) {
 }
 const newSha = parent;
 
-/* 4) 把 tag v2.1.3 移到新提交(先解引用再重建, 因为 tag 是 annotated) */
+/* 4) 把 tag v2.1.3 移到新提交(先解引用再重建, 因为 tag 是 annotated)
+ * ⚠ 补推后续 commit 时应跳过: 通过 API 重建出的 commit 与本地 SHA 不同,
+ *   用 rev-list 比对会报 Invalid revision range; 且 tag 已指向远端对象, 不该再动。*/
+if (process.argv.includes('--no-tag')) { console.log('  (--no-tag: 跳过移动 tag)'); }
+else {
 const tagObj = await api(`/repos/${REPO}/git/refs/tags/v2.1.3`);
 let tagSha = tagObj.ok ? tagObj.json.object.sha : null;
 let tagType = tagObj.ok ? tagObj.json.object.type : null;
@@ -99,5 +117,6 @@ const t3 = await api(`/repos/${REPO}/git/refs`, {
   method: 'POST', body: JSON.stringify({ ref: 'refs/tags/v2.1.3', sha: t2.json.sha }),
 });
 console.log(t3.ok ? '✓ tag v2.1.3 已指向 ' + newSha.slice(0, 8) : '✗ tag 重建失败 ' + t3.status);
+}
 
 console.log('\n最终 main =', newSha);
