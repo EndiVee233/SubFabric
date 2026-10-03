@@ -118,18 +118,48 @@ try {
 
       // 在字幕轨区域量"字幕块像素": 块有绿色/青色描边, 与波形(灰)不同
       const laneTop = tl._laneTop(0), laneH = tl._laneH(0);
+      const waveH = tl._waveH();
       const d = ctx.getImageData(0, 0, W * 2, H * 2).data;
-      let cueInk = 0;
-      for (let y = Math.max(0, laneTop * 2); y < Math.min(H * 2, (laneTop + laneH) * 2); y++) {
-        for (let x = 0; x < W * 2; x += 2) {
+      let cueInk = 0, waveInk = 0, waveInCue = 0;
+      // 统计"字幕块所在区域"里: 绿描边(字幕块) 与 灰阶(波形) 是否共存 → 共存即"叠在波形上"
+      const y0 = Math.max(0, laneTop * 2), y1 = Math.min(H * 2, (laneTop + laneH) * 2);
+      /* 判据: 用「亮度的层数」而不是颜色。
+       * 踩过的坑: 波形透过 12% 绿色底后 r/b 差被放大, 不再是中性灰, 按"灰度"筛会得到 0,
+       * 误判成"波形被盖住"。实际上块内亮度**分层明显**(波形峰 ~200 / 谷 ~30),
+       * 若块被不透明填死则亮度均匀、标准差≈0 —— 用这个才可靠。*/
+      /* 量「字幕块横向条带」的纵向亮度剖面 —— 这才是"波形是否透出"的直接证据。
+       * 之前抓的是绿色**描边**(均匀纯色, 跨度≈0), 抓不到块体内部, 所以误判。
+       * 做法: 在第一个字幕块的时间范围内, 逐行统计该行的最大亮度, 看是否呈"波形起伏"。*/
+      let lumRange = 0;
+      const c0 = tl.lanes[0].cues[0];
+      const bx0 = Math.max(0, Math.floor(tl.t2x(c0.start) * 2));
+      const bx1 = Math.min(W * 2, Math.ceil(tl.t2x(c0.end) * 2));
+      if (bx1 > bx0 + 8) {
+        const rowMax = [];
+        for (let y = y0; y < y1; y++) {
+          let mx = 0;
+          for (let x = bx0; x < bx1; x++) {
+            const i = (y * W * 2 + x) * 4;
+            if (d[i + 3] < 100) continue;
+            mx = Math.max(mx, 0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2]);
+          }
+          rowMax.push(mx);
+        }
+        rowMax.sort((a, b) => a - b);
+        const q = (t) => rowMax.length ? rowMax[Math.floor(rowMax.length * t)] : 0;
+        lumRange = Math.round(q(0.9) - q(0.1));
+      }
+      for (let x = bx0; x < bx1; x++) {
+        for (let y = y0; y < y1; y++) {
           const i = (y * W * 2 + x) * 4;
           if (d[i + 3] < 100) continue;
-          const r = d[i], g = d[i + 1], bl = d[i + 2];
-          if (g > r + 25 && g > 90) cueInk++;       // 绿/青色 = 字幕块描边
+          const r = d[i], g = d[i+1], bl = d[i+2];
+          if (g > r + 25 && g > 90) cueInk++;
         }
       }
-      out['h' + H] = { waveH: tl._waveH(), laneTop, laneH, bottom: tl._lanesBottom(),
-                       fits: tl._lanesBottom() <= H + 0.5, cueInk };
+      out['h' + H] = { waveH, laneTop, laneH, bottom: tl._lanesBottom(),
+                       fits: tl._lanesBottom() <= H + 0.5,
+                       sameTop: laneTop === tl._lanesTop(), cueInk, cueLumRange: lumRange };
       slot++;
     }
     return out;
@@ -139,16 +169,22 @@ try {
   for (const k of Object.keys(res)) {
     const r = res[k];
     console.log(`面板${k.slice(1)}px: 波高=${String(r.waveH).padStart(2)} 轨道顶=${String(r.laneTop).padStart(3)} ` +
-      `轨高=${String(r.laneH).padStart(3)} 轨道底=${String(r.bottom).padStart(3)} ` +
-      `在面板内=${r.fits ? '✓' : '✗'} 字幕块像素=${r.cueInk}`);
+      `轨高=${String(r.laneH).padStart(3)} 底=${String(r.bottom).padStart(3)} 同起点=${r.sameTop ? '✓' : '✗'} ` +
+      `在面板内=${r.fits ? '✓' : '✗'} | 字幕块像素=${r.cueInk} 块内亮度跨度=${r.cueLumRange}`);
   }
 
   const checks = [
-    ['矮面板(100px) 轨道不溢出', res.h100 && res.h100.fits],
-    ['矮面板(100px) 字幕块真的画出来了(像素>500)', res.h100 && res.h100.cueInk > 500],
-    ['正常面板(300px) 字幕块可见', res.h300 && res.h300.cueInk > 500],
-    ['正常面板 波形带保持理想高度 64', res.h300 && res.h300.waveH === 64],
+    ['轨道与波形同起点(重叠而非上下分离)', res.h300 && res.h300.sameTop],
+    ['轨道覆盖整个波形带', res.h300 && res.h300.laneH >= res.h300.waveH],
+    // 阈值依据: 同一量法下"块被不透明填死"跨度=0, "波形透出"实测 27~43
+    // (基线模拟: 填死 0 / 透出 58), 故取 20 即可可靠区分。
+    ['字幕块内可见波形起伏(跨度>20 = 波形透出)', res.h300 && res.h300.cueLumRange > 20],
+    ['矮面板同样透出(跨度>20)', res.h100 && res.h100.cueLumRange > 20],
+    ['字幕块确实画出来了', res.h300 && res.h300.cueInk > 500],
+    ['轨道不溢出面板', res.h300 && res.h300.fits],
+    ['矮面板(100px) 同样重叠且不溢出', res.h100 && res.h100.sameTop && res.h100.fits],
   ];
+
   console.log('\n=== 断言 ===');
   let ok = true;
   for (const [nm, p] of checks) { console.log((p ? '  PASS  ' : '  FAIL  ') + nm); if (!p) ok = false; }

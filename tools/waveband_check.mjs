@@ -149,13 +149,17 @@ try {
   console.log(JSON.stringify(res, null, 2));
   if (res.err) throw new Error(res.err);
 
+  /* 布局已改为「字幕块半透明叠在波形上」(不再上下分离), 断言随之更新。
+   * 依据: 用户给的参考图 —— 字幕块框内可见波形, 块间缝隙露出完整波形。*/
   const checks = [
-    ['有波形数据时波形带存在 (h=64)', res.waveH === 64],
-    ['波形带在字幕轨上方, 不重叠', res.lane0 >= res.waveBottom],
-    ['所有轨道都在面板内', res.fits],
+    ['有波形数据时波形带存在 (h>0)', res.waveH > 0],
+    ['波形带达到理想高度 (>=64px)', res.waveH >= 64],
+    ['轨道与波形**同起点**(重叠, 非上下分离)', res.lane0 === res.waveTop],
+    ['轨道覆盖整个波形带高度', res.lane0H >= res.waveH],
+    ['轨道不溢出面板', res.fits],
     ['波形带画出了实质内容 (墨迹>2万)', res.ink > 20000],
-    ['波形带有足够高度 (>=56px)', res.waveH >= 56],
   ];
+
   console.log('\n=== 断言 ===');
   let ok = true;
   for (const [nm, p] of checks) { console.log((p ? '  PASS  ' : '  FAIL  ') + nm); if (!p) ok = false; }
