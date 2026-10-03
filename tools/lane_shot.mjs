@@ -78,12 +78,12 @@ try {
     const peaks = new Uint8Array(await (await fetch('_lane_peaks.bin')).arrayBuffer());
     const out = {};
     let slot = 0;
-    for (const H of [100, 300]) {
+    for (const H of [132, 232, 420]) {
       const W = 900;
       const cv = document.createElement('canvas');
       cv.width = W * 2; cv.height = H * 2;
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'position:fixed;left:16px;top:' + (16 + slot * (H + 70)) +
+      wrap.style.cssText = 'position:fixed;left:' + (16 + (slot % 2) * 640) + 'px;top:' + (16 + Math.floor(slot / 2) * 430) +
         'px;z-index:2147483000;';
       document.documentElement.appendChild(wrap);
       wrap.appendChild(cv);
@@ -173,16 +173,16 @@ try {
       `在面板内=${r.fits ? '✓' : '✗'} | 字幕块像素=${r.cueInk} 块内亮度跨度=${r.cueLumRange}`);
   }
 
+  const PANELS = ['h132', 'h232', 'h420'];       // 面板可拖范围: 下限 / 默认 / 上限
+  const all = (fn) => PANELS.every((k) => res[k] && fn(res[k]));
   const checks = [
-    ['轨道与波形同起点(重叠而非上下分离)', res.h300 && res.h300.sameTop],
-    ['轨道覆盖整个波形带', res.h300 && res.h300.laneH >= res.h300.waveH],
-    // 阈值依据: 同一量法下"块被不透明填死"跨度=0, "波形透出"实测 27~43
-    // (基线模拟: 填死 0 / 透出 58), 故取 20 即可可靠区分。
-    ['字幕块内可见波形起伏(跨度>20 = 波形透出)', res.h300 && res.h300.cueLumRange > 20],
-    ['矮面板同样透出(跨度>20)', res.h100 && res.h100.cueLumRange > 20],
-    ['字幕块确实画出来了', res.h300 && res.h300.cueInk > 500],
-    ['轨道不溢出面板', res.h300 && res.h300.fits],
-    ['矮面板(100px) 同样重叠且不溢出', res.h100 && res.h100.sameTop && res.h100.fits],
+    ['轨道与波形同起点(重叠而非上下分离)', all(r => r.sameTop)],
+    ['轨道覆盖整个波形带高度', all(r => r.laneH >= r.waveH)],
+    ['波形填满(轨高-波高<=5, 无空白带)', all(r => (r.laneH - r.waveH) <= 5)],
+    ['波形随面板拉伸(h420 > h132)', res.h420 && res.h132 && res.h420.waveH > res.h132.waveH],
+    ['各档字幕块均可见(像素>500)', all(r => r.cueInk > 500)],
+    ['各档块内均可见波形(跨度>20)', all(r => r.cueLumRange > 20)],
+    ['各档轨道均不溢出面板', all(r => r.fits)],
   ];
 
   console.log('\n=== 断言 ===');

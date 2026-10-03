@@ -3,9 +3,9 @@ import { fmtTime } from './util.js';
 
 const FILM_H = 46;       // 胶片缩略图条
 const RULER_H = 20;      // 刻度
-const WAVE_H = 72;       // 波形带理想高度(与字幕轨重叠, 不额外占位)
-const WAVE_MIN = 16;     // 波形带低于此值就不画了(太扁的包络看不出内容, 不如让位给字幕轨)
+const WAVE_MIN = 24;     // 波形带低于此值就不画了(太空扁的包络看不出内容, 不如让位给字幕轨)
 const WAVE_BOTTOM_PAD = 4; // 波形底缘离面板底的余量(留出底边线, 不贴死)
+const WAVE_FILL = 220;     // 胶片条收起判据用的"典型满幅波形高"(保守值, 非硬上限)
 const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
 const CHIP_W = 78;       // 轨道标签
@@ -361,29 +361,27 @@ export class Timeline {
    *  波形带再怎么挤也不能侵占它 —— 字幕块消失是比波形难看严重得多的回归。 */
   _laneMinH() { return 24; }
 
-  /** 波形带高度: 波形铺满「刻度线以下、字幕轨底以上」的全部空间, 字幕块半透明叠在它上面。
-   *  所以它不额外占位, 高度 = 面板剩余空间(带一点余量), 并受 WAVE_H/WAVE_MIN 夹取。
-   *  空间太小时返回 0(不画波形) —— 宁可没有波形, 也不能让字幕块被挤没。 */
+  /** 波形带高度: **拉伸填满**「刻度线以下、面板底部以上」的全部空间。
+   *
+   *  为什么拉伸而不是固定值: 面板高度可由用户拖动(见 main.js TLH_MIN/TLH_MAX), 若波形用固定高度,
+   *  面板一高波形只占中间一条、**下方留出大片空白**(实测封顶 200px 时面板 420px 会空 194px),
+   *  视觉上恰恰是"波形没填满"。拉伸后波形与字幕块**共用**同一块纵向空间, 任何面板高度下关系都不变。
+   *
+   *  不设上限: 面板高度本身已被 TLH_MAX(≤420px) 限制, 波形跟着铺满即可;
+   *  真要再高, 胶片条的自动收起会先让出空间。
+   *  WAVE_MIN: 低于此值就不画波形 —— 太空扁的包络看不出内容, 不如把空间全给字幕块。 */
   _waveH() {
     if (!this.peaks || !this.peaks.data.length) return 0;
-    const avail = this._cssH() - this._lanesTop();
-    const h = Math.max(0, Math.min(WAVE_H, avail - WAVE_BOTTOM_PAD));
-    return h >= WAVE_MIN ? h : 0;
+    const avail = this._cssH() - this._lanesTop() - WAVE_BOTTOM_PAD;
+    return avail >= WAVE_MIN ? avail : 0;
   }
 
-  /** 胶片条在此处是否占位: 空间不足时自动收起(省 46px 给波形带/字幕轨)。
-   *  只"决定"不"占位" —— 真正的占位高度由 _filmH() 给出, 两者分开避免循环依赖。 */
-  _filmHint() {
-    if (!this.showFilm) return 0;
-    const need = FILM_H + RULER_H + 6 + WAVE_H + LANE_H * 2;
-    return this._cssH() >= need ? FILM_H : 0;
-  }
-
-  /** 胶片条可用高度: 空间不够时**自动收起**（省 46px 给波形带/字幕轨）—— 这样浅窗口/矮时间轴也不会挤爆。
-   *  收起只是"这一帧不画", 设置里的开关不动, 空间够了自动回来。 */
+  /** 胶片条高度: 空间不足时**自动收起**(省 46px 给波形带/字幕轨)—— 浅窗口/矮时间轴也不会挤爆。
+   *  收起只是"这一帧不画", 设置里的开关不动, 空间够了自动回来。
+   *  判据里用 WAVE_FILL 而非实际波形高: 保守一点, 宁可早收胶片也别让内容挤到面板外。 */
   _filmH() {
     if (!this.showFilm) return 0;
-    const need = FILM_H + RULER_H + 6 + this._waveH() + LANE_H * 2;
+    const need = FILM_H + RULER_H + 6 + WAVE_FILL + LANE_H * 2;
     return this._cssH() >= need ? FILM_H : 0;
   }
 
@@ -1169,20 +1167,34 @@ export class Timeline {
    * 保证"中文 < 分隔线 < 标记"三者互不压。
    */
   _wordGeom(band) {
-    // 标记高: 常规 10px(拖动抓手要够大好点中)。上限是**块内实际可用高度**
-    // (块高 − 底部 2px 余量 − 顶部 1px 余量), 面板被压扁时随之收窄, 不顶出块外。
-    const BOT_PAD = 2, TOP_PAD = 1;
-    const markH = Math.max(2, Math.min(10, band.h - BOT_PAD - TOP_PAD));
-    const markBot = band.y + band.h - BOT_PAD;                // 贴底, 留 2px 不碰块边框
-    const markTop = markBot - markH;
+    /* 逐词标记块(拖动抓手): 目标 20×8(拖动中宽 10), 底部留 5px 不贴块边框。
+     *  比原来(10×4)大一倍 —— 小块在密集词里太难点中。
+     *
+     *  高度**按可用空间自适应**: 块内要同时容纳「中文行 + 分隔线 + 标记」, 若块太矮
+     *  (单语孤行/被压扁的矮轨, 实测 ≤39px), 无条件 20px 会让分隔线被标记压住。
+     *  所以先给中文行与分隔线留够, 剩下的才给标记; 实在挤不下就压到最小 6px。
+     *  宽度也不超过高度(极矮时不该是横条)。*/
+    const MARK_H = 20, MARK_W = 8, MARK_W_HOT = 10, MARK_MIN_H = 6;
+    const TOP_PAD = 1, GAP = 3;                                // GAP: 中文/分隔线/标记之间的最小间隙
+    // 底部余量: 2.5px(贴底但仍留一线缝隙, 不与块边框粘连), 且**不能吃掉整块**
+    // (实测块高 4px 时固定 5px 会让 markBot 跑到块顶之上、标记被画到块外)。
+    // 所以按块高缩放, 最少留 1px。
+    const BOT_PAD = Math.max(1, Math.min(2.5, band.h / 4));
     const zhBase = band.y + Math.round(band.h * 0.30);          // 与 _drawBlockText 的中文基线一致
-    const lo = zhBase + 3;                                      // 别压住中文行
-    const hi = markTop - 3;                                     // 别压住标记行
-    let axisY = band.y + Math.round(band.h * AXIS_R);
-    if (axisY < lo) axisY = lo;
-    if (axisY > hi) axisY = hi;
-    if (axisY < lo) axisY = lo;                                 // 空间不够时优先保中文行
-    return { axisY, sepY: axisY, markTop, markBot, markH, top: markTop, bottom: markBot, baseline: band.y + band.h - 3 };
+    const markBot = band.y + band.h - BOT_PAD;                   // 贴底, 不碰块边框
+    /* 优先级: **标记 > 分隔线**。标记是拖动抓手, 大一点才点得中; 分隔线只是装饰,
+     * 挤不下就该让位。所以分隔线的上界由"给标记留够 MARK_H"决定, 而不是反过来。 */
+    const axisLo = Math.min(zhBase + GAP, markBot - MARK_MIN_H);
+    const axisHi = Math.max(axisLo, Math.min(zhBase + Math.round(band.h * 0.5), markBot - MARK_H - GAP));
+    const axisY = Math.max(axisLo, Math.min(band.y + Math.round(band.h * AXIS_R), axisHi));
+    // 标记顶: 紧跟分隔线(GAP), 并保证至少 MARK_MIN_H; 高度优先取满 MARK_H
+    const markTop = Math.max(band.y + TOP_PAD, Math.min(axisY + GAP, markBot - MARK_MIN_H));
+    const markH = Math.max(2, Math.min(MARK_H, markBot - markTop));
+    const markW = Math.max(2, Math.min(MARK_W, markH));          // 极矮时别比高度还宽
+    return {
+      axisY, sepY: axisY, markTop, markBot, markH, markW, markWHot: MARK_W_HOT,
+      top: markTop, bottom: markBot, baseline: band.y + band.h - 3,
+    };
   }
 
   /** 块内文字: 中文整句在上(角色色/加粗), 中英之间是逐词轴, 轴下是英文逐词
@@ -1243,17 +1255,21 @@ export class Timeline {
       const wx = this.t2x(w.s);
       if (wx < x1 - 30 || wx > x2 + 30) continue;
       const hot = this._wordDrag && this._wordDrag.cue === this._selCueRef && this._wordDrag.idx === i;
-      // 标记块(始终画, 拖动时的抓手) —— 贴块底, 与英文词文本同一行
+      // 标记块(始终画, 拖动时的抓手) —— 贴块底, 与英文词文本同一行。
+      // 以词起点 wx 为**中心**画(而不是左边), 变宽后仍与词对齐。
       ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
-      ctx.fillRect(wx - 2, g.markTop, hot ? 5 : 4, g.markH);
-      // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记
+      const mw = hot ? g.markWHot : g.markW;
+      ctx.fillRect(Math.round(wx - mw / 2), g.markTop, mw, g.markH);
+      // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记。
+      // 起点随标记块半宽让位 —— 标记变宽后仍留 4px 间隙, 不压到字。
+      const textX = Math.round(wx + g.markW / 2 + 4);
       const nextX = (i + 1 < words.length) ? this.t2x(words[i + 1].s) : Math.min(this.t2x(blockEnd), x2);
-      const avail = nextX - (wx + 8) - 3;
+      const avail = nextX - textX - 3;
       const tw = ctx.measureText(w.w).width;
-      if (wx + 8 >= lastRight + 2 && tw <= avail) {
+      if (textX >= lastRight + 2 && tw <= avail) {
         ctx.fillStyle = WORD_TEXT;
-        ctx.fillText(w.w, wx + 8, g.baseline);
-        lastRight = wx + 8 + tw;
+        ctx.fillText(w.w, textX, g.baseline);
+        lastRight = textX + tw;
       }
     }
   }
@@ -1277,7 +1293,8 @@ export class Timeline {
         if (wpx / c.words.length <= 8) continue;
         for (let i = 0; i < c.words.length; i++) {
           const wx = this.t2x(c.words[i].s);
-          if (Math.abs(x - wx) <= 5) return { lane, cue: c, idx: i };
+          // 命中半宽跟标记块一致(再加 2px 余量), 看得见的宽度就能点中
+          if (Math.abs(x - wx) <= g.markW / 2 + 2) return { lane, cue: c, idx: i };
         }
       }
     }

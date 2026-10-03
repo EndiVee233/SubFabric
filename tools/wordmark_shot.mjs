@@ -133,10 +133,14 @@ try {
 
   const checks = [
     ['标记中心在块下半部 (>70%)', truth.markPct > 70],
-    ['标记底距块底 2px(贴底不重合)', truth.gapToBottom === 2],
+    ['标记底距块底 2.5px(贴底)', Math.abs(truth.gapToBottom - 2.5) < 0.01],
+    ['标记高 = 20px(合并轨)', truth.g.markH === 20],
+    ['标记宽 = 8px(拖动中 10)', truth.g.markW === 8 && truth.g.markWHot === 10],
     ['标记不越出块底', truth.g.markBot <= truth.band.y + truth.band.h],
-    ['分隔线仍在中文行之下', truth.g.axisY >= truth.band.y + Math.round(truth.band.h*0.30)],
     ['标记顶在块内', truth.g.markTop >= truth.band.y],
+    ['标记高度为正(顶<底)', truth.g.markTop < truth.g.markBot],
+    ['分隔线仍在中文行之下', truth.g.axisY >= truth.band.y + Math.round(truth.band.h*0.30)],
+    ['分隔线不压标记行', truth.g.axisY <= truth.g.markTop],
   ];
   console.log('\n=== 断言 ===');
   let ok = true;
