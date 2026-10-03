@@ -25,7 +25,7 @@ const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.1.2'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.1.3'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -216,13 +216,16 @@ function renderWaveform(buildArgs, cb, _retry) {
   });
 }
 
-/** 整段波形: -vn 跳过视频解码(只解音轨); volume=18dB + scale=sqrt 拉起语音振幅(线性只占图高 4%);
- *  宽度按时长自适应, 保证字幕块内能看到真实的语音起伏。 */
+/** 整段波形(仅在拿不到 peaks 时的兜底): -vn 跳过视频解码(只解音轨)。
+ *  振幅处理曾用 `volume=18dB` —— 固定 +18dB 会让正常电平的素材直接过载削顶,
+ *  画出来是一条实心带(与 peaks 旧版同一个病)。这里换成 **alimiter 软限幅**:
+ *  先温和提升 +12dB, 再由 alimiter 兜住峰值(软拐点, 不硬削), 保住起伏。
+ *  真正的分辨率由 peaks 通道提供, PNG 只是兜底, 不追求完美。 */
 function makeWaveform(videoPath, duration, cb, _retry) {
   if (!(duration > 0)) return probeDuration(videoPath, (dur) => makeWaveform(videoPath, dur, cb, _retry));
   const w = waveWidth(duration);
   renderWaveform((tmp) => ['-hide_banner', '-vn', '-i', videoPath,
-    '-filter_complex', `volume=18dB,showwavespic=s=${w}x160:colors=FFFFFF:scale=sqrt`,
+    '-filter_complex', `volume=12dB,alimiter=limit=0.95:level=false,showwavespic=s=${w}x160:colors=FFFFFF:scale=sqrt`,
     '-frames:v', '1', '-y', tmp], cb);
 }
 
@@ -247,22 +250,66 @@ function waveformFromTemp(req, res, duration) {
   req.pipe(out);
 }
 
-/* ── 峰值数据(推荐方案): 每 1/rate 秒一个包络值(Uint8),
- *    前端按屏幕像素列矢量绘制 → 任意缩放都锐利, 不会像缩放图片那样发糊 ── */
+/* ── 峰值数据(推荐方案): 每 1/rate 秒一桶, **min/max 双通道**(Uint8, 128=零位),
+ *    前端按屏幕像素列矢量绘制 → 任意缩放都锐利, 不会像缩放图片那样发糊 ──
+ *
+ * 为什么是 min/max 而不是"绝对峰值单通道":
+ *   真实波形上下不对称(语音的基频与谐波让正负峰不等高)。只存绝对峰值会把它
+ *   画成上下对称的"条形图", 丢掉形态信息; 存 min/max 才能画出真正的包络。
+ *
+ * 为什么不用固定增益(历史踩坑):
+ *   旧实现是 `min(1, peak/32768 * 7.943)` 再 `255*sqrt()` —— 固定 +18dB 撞上
+ *   硬钳位, 实测把 **9.8% 的桶钉死在 255**, 有声段动态范围只剩 6.3dB,
+ *   画出来是一坨实心带、完全看不出起伏(线性只占 4% 高度是靠"无限拉增益"换来的,
+ *   代价就是削顶)。sqrt 还会把弱音整体抬起来, 进一步抹平弱强差异。
+ *   现在改为**按素材自适应**: 取 p99.5 分位数当参考电平归一到 0.95,
+ *   安静素材自动放大、响亮素材自动压小, 且不硬削。 */
 const PEAK_SR = 8000;          // 单声道 8kHz 足够画包络
-const PEAK_GAIN = 7.943;       // ≈ +18dB, 把语音振幅拉起来(线性下只占 4% 高度)
+const PEAK_VER = 2;            // 包络格式版本: 1=旧的单通道abs峰值(已削顶, 需重算), 2=min/max+自适应归一化
+const PEAK_REF_PCT = 0.995;   // 参考电平取 p99.5 分位数(抗个别爆音拉低整体增益)
+const PEAK_TARGET = 0.95;     // 参考电平映射到 0.95, 留 5% 头顶避免瞬态再削顶
 
-/** 峰值分桶采集器: 从 s16le 单声道 PCM 流(inSr 采样率)按 1/rate 秒一桶取包络。
- *  返回 finish(code, stderr) — 流结束后调用, 返回 {buf, code, stderr}。 */
+/** 把线性 min/max 包络(0..1)按 p99.5 归一到 0..255, 编成带符号字节(128=零位)。 */
+function encodeEnvelope(lo, hi, filled) {
+  // ① 先算参考电平: 取所有桶里 |v| 的 p99.5 分位数
+  const abs = new Float32Array(filled);
+  for (let i = 0; i < filled; i++) {
+    const a = hi[i] < 0 ? -hi[i] : hi[i];
+    const b = lo[i] < 0 ? -lo[i] : lo[i];
+    abs[i] = a > b ? a : b;
+  }
+  const sorted = Array.prototype.slice.call(abs).sort((a, b) => a - b);
+  const ref = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * PEAK_REF_PCT))] || 1;
+  const k = ref > 0 ? PEAK_TARGET / ref : 1;
+  // ② 编成 min/max 双通道(128=零位); 用 round 而不是截断, 弱音也能分出灰阶
+  const out = Buffer.allocUnsafe(filled * 2);
+  for (let i = 0; i < filled; i++) {
+    const l = Math.max(-1, Math.min(1, lo[i] * k));
+    const h = Math.max(-1, Math.min(1, hi[i] * k));
+    out[i * 2] = Math.max(0, Math.min(255, Math.round(128 + l * 127)));
+    out[i * 2 + 1] = Math.max(0, Math.min(255, Math.round(128 + h * 127)));
+  }
+  return out;
+}
+
+/** 峰值分桶采集器: 从 s16le 单声道 PCM 流(inSr 采样率)按 1/rate 秒一桶取 min/max 包络。
+ *  返回 finish(code, stderr) — 流结束后调用, 返回 {buf, code, stderr}(buf = min/max 双通道)。
+ *
+ *  total 只是**预分配容量**(有下限/上限防内存爆), 真正决定桶数的是 spb。
+ *  spb 必须按 duration/rate 算, **不能**按 total 算:
+ *    30s 音频 @rate=100 只需 3000 桶, 但 total 被下限 clamp 到 20000;
+ *    若 spb = duration*inSr/total, 就会切出 20000 桶 → 覆盖 200 秒,
+ *    而实际音频只有 30 秒 → 前端按 rate 换算时间轴时波形被压到左侧 15%,
+ *    整个波形与时间轴错位。(旧实现也有这个隐患, 只是单通道时不易察觉。) */
 function attachPeakCollector(readable, duration, rate, inSr) {
-  const total = Math.max(20000, Math.min(2000000, Math.round((duration > 0 ? duration : 600) * rate)));
-  const spb = (duration > 0 ? duration * inSr / total : inSr / rate);   // 每桶样本数(可为小数)
-  const out = Buffer.allocUnsafe(total);
-  let filled = 0, peak = 0, inBucket = 0, carry = null;
+  const dur = duration > 0 ? duration : 600;
+  const total = Math.max(20000, Math.min(2000000, Math.round(dur * rate)));   // 仅预分配
+  const spb = dur * inSr / (dur * rate);                                       // = inSr/rate, 按真实桶密度
+  const lo = new Float32Array(total), hi = new Float32Array(total);
+  let filled = 0, mn = 0, mx = 0, inBucket = 0, carry = null, touched = false;
   const flush = () => {
-    const norm = Math.min(1, (peak / 32768) * PEAK_GAIN);
-    if (filled < total) out[filled++] = Math.min(255, Math.round(255 * Math.sqrt(norm)));
-    peak = 0; inBucket = 0;
+    if (filled < total) { lo[filled] = mn; hi[filled] = mx; filled++; }
+    mn = 0; mx = 0; inBucket = 0; touched = false;
   };
   readable.on('data', (chunk) => {
     let buf = chunk;
@@ -270,15 +317,16 @@ function attachPeakCollector(readable, duration, rate, inSr) {
     const n = buf.length >> 1;
     if (buf.length & 1) carry = buf.subarray(buf.length - 1);
     for (let i = 0; i < n; i++) {
-      const s = buf.readInt16LE(i * 2);
-      const a = s < 0 ? -s : s;
-      if (a > peak) peak = a;
+      const v = buf.readInt16LE(i * 2) / 32768;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+      touched = true;
       if (++inBucket >= spb) flush();
     }
   });
   return (code, stderr) => {
-    if (inBucket > 0 || peak > 0) flush();
-    return { buf: out.subarray(0, filled), code, stderr };
+    if (touched && (inBucket > 0 || mx > 0 || mn < 0)) flush();
+    return { buf: encodeEnvelope(lo, hi, filled), code, stderr };
   };
 }
 
@@ -301,7 +349,9 @@ function sendPeaks(res, buf, rate) {
     'Content-Type': 'application/octet-stream',
     'Cache-Control': 'no-cache',
     'Content-Length': buf.length,
-    'X-Peak-Rate': String(rate)
+    'X-Peak-Rate': String(rate),
+    'X-Peak-Ver': String(PEAK_VER),      // 前端据此判断能否按 min/max 双通道解读
+    'X-Peak-Ch': '2'                     // 每桶字节数: 2 = [min,max]
   });
   res.end(buf);
 }
@@ -1781,7 +1831,12 @@ function handleRequest(req, res) {
     v.videoExists = !!(meta.video && meta.video.path && fs.existsSync(meta.video.path));
   // 正在下载的项目: 视频文件还不存在, 但卡片不该显示"找不到视频"
   v.fetching = !!(meta.draft && meta.draft.status === 'running' && meta.draft.fetch && !v.videoExists);
-    v.hasPeaks = !!(meta.peaks && meta.peaks.file && fs.existsSync(path.join(projDir(meta.id), meta.peaks.file)));
+    // hasPeaks 必须**校验格式版本**: PEAK_VER 升级后老项目的 peaks.bin 是旧格式
+    // (单通道 abs 峰值 + 固定增益削顶), 直接拿来画还是一坨实心带。
+    // 判为 false → 走 prepare 兜底补跑重算(见 POST /api/projects/:id/prepare)。
+    v.hasPeaks = !!(meta.peaks && meta.peaks.file
+      && (meta.peaks.ver || 1) === PEAK_VER
+      && fs.existsSync(path.join(projDir(meta.id), meta.peaks.file)));
     v.hasAudio = !!(meta.audio && meta.audio.file && fs.existsSync(path.join(projDir(meta.id), meta.audio.file)));
     if (v.prepare && v.prepare.status === 'running' && !prepareJobs.has(meta.id)) {
       v.prepare.status = 'error';
@@ -2165,42 +2220,24 @@ function startPrepare(id, videoPath, mode) {
           const noAudio = /matches no streams|does not contain any stream|Output file #0 does not contain any stream|Output file is empty/i.test(stderr);
           return finishPrepare(id, new Error(noAudio ? '该视频没有音轨，无法提取音频与波形' : ('ffmpeg 失败: ' + stderr.slice(-200))));
         }
-        // peaks.pcm.tmp (s16le mono AUDIO_SR) → 分桶包络
+        // peaks.pcm.tmp (s16le mono AUDIO_SR) → min/max 分桶包络
+        // 复用 attachPeakCollector(与 /api/peaks 同一份实现): 旧代码在这里另抄了一份
+        // 分桶逻辑, 两处各自演化 → 固定增益/sqrt 的削顶 bug 要改两遍, 极易漏。
         const rate = 100;
-        const total = Math.max(20000, Math.min(2000000, Math.round(duration * rate)));
-        const inSr = AUDIO_SR;
-        const spb = duration * inSr / total;
-        const buckets = Buffer.allocUnsafe(total);
-        let filled = 0, peak = 0, inBucket = 0, carry = null;
-        const flush = () => {
-          const norm = Math.min(1, (peak / 32768) * PEAK_GAIN);
-          if (filled < total) buckets[filled++] = Math.min(255, Math.round(255 * Math.sqrt(norm)));
-          peak = 0; inBucket = 0;
-        };
         const rs = fs.createReadStream(pcmTmp);
-        rs.on('data', (chunk) => {
-          let buf = chunk;
-          if (carry) { buf = Buffer.concat([carry, chunk]); carry = null; }
-          const n = buf.length >> 1;
-          if (buf.length & 1) carry = buf.subarray(buf.length - 1);
-          for (let i = 0; i < n; i++) {
-            const s = buf.readInt16LE(i * 2);
-            const a = s < 0 ? -s : s;
-            if (a > peak) peak = a;
-            if (++inBucket >= spb) flush();
-          }
-        });
+        const collect = attachPeakCollector(rs, duration, rate, AUDIO_SR);
         rs.on('error', () => { cleanup(); finishPrepare(id, new Error('波形数据读取失败')); });
         rs.on('end', () => {
-          if (inBucket > 0 || peak > 0) flush();
+          const r = collect(0, '');
+          const bytes = r.buf.length;
           try {
-            fs.writeFileSync(path.join(projDir(id), 'peaks.bin.tmp'), buckets.subarray(0, filled));
+            fs.writeFileSync(path.join(projDir(id), 'peaks.bin.tmp'), r.buf);
             fs.renameSync(path.join(projDir(id), 'peaks.bin.tmp'), peaksOut);
             fs.renameSync(wavTmp, wavOut);
           } catch (e) { return finishPrepare(id, new Error('保存音频/波形失败: ' + e.message)); }
           cleanup();   // 成功分支也要清: peaks.pcm.tmp 是原始 PCM(≈32KB/秒音频),
                        // 漏删会让每个项目长期白占一份与音频等大的临时文件
-          finishPrepare(id, null, { duration, peaksBytes: filled, audioBytes: fs.statSync(wavOut).size, rate, mode: denoise ? 'denoise' : 'raw' });
+          finishPrepare(id, null, { duration, peaksBytes: bytes, audioBytes: fs.statSync(wavOut).size, rate, mode: denoise ? 'denoise' : 'raw' });
         });
       });
     });
@@ -2212,7 +2249,7 @@ function startPrepare(id, videoPath, mode) {
     meta.prepare = Object.assign({ status: err ? 'error' : 'done', finishedAt: new Date().toISOString(), error: err ? String(err.message || err) : null }, info || {});
     if (!err && info) {
       if (info.audioBytes) meta.audio = { file: 'audio.wav', bytes: info.audioBytes, mode: info.mode || 'denoise' };
-      if (info.peaksBytes) meta.peaks = { file: 'peaks.bin', rate: info.rate || 100, bytes: info.peaksBytes };
+      if (info.peaksBytes) meta.peaks = { file: 'peaks.bin', rate: info.rate || 100, bytes: info.peaksBytes, ver: PEAK_VER, ch: 2 };
       if (info.duration) meta.duration = info.duration;
     }
     touchMeta(meta);

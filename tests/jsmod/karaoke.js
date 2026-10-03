@@ -173,6 +173,14 @@ export function analyzeKaraoke(doc) {
     if (hl / evs.length > 0.3 && evs.length > best) { wordStyle = style; wordEvents = evs; best = evs.length; }
   }
 
+  // 手动转换短字幕（不到 6 条切片）会被上面的保守阈值漏掉；只信任本应用写入的
+  // 明确样式元数据，且再次确认该样式确有逐词颜色 span，不从语言内容猜测。
+  if (!wordStyle) {
+    const chosen = doc.getScriptInfoComment('SubFabricWordStyle');
+    const events = byStyle.get(chosen) || [];
+    if (chosen && events.some(ev => HL_RE.test(ev.text))) { wordStyle = chosen; wordEvents = events; }
+  }
+
   // 检测失败时的兜底: 整轨「去逐词」后文件里一条高亮切片都没有, 检测必然落空。
   // 若此时直接按"每个事件各自成句"输出, 中英配对会整体失效、重载后行数翻倍(实测 6 行 → 12 行),
   // 所以改用时间包含规律把逐词样式推断出来, 后面的切片/配对流程照常走。
@@ -627,6 +635,17 @@ export function splitEnglishWordsWithSpans(text) {
 
 export function splitEnglishWords(text) {
   return splitEnglishWordsWithSpans(text).map(x => x.w);
+}
+
+/** 显式选定英文样式后仍逐句从严检查：中文、已有切片和不明覆盖特效均跳过。 */
+export function eligibleForWordConversion(sent, style) {
+  if (!sent || !style || sent.style !== style || !sent.events || sent.events.length !== 1 || sent.words.length) return false;
+  if (sent.bad || !(sent.end > sent.start)) return false;
+  const text = String(sent.text || '');
+  if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(text)) return false;
+  // 普通 ASS 若自带内联特效，不能为了转词而抹掉其原始标签；交给用户单独处理。
+  if (/\{\\[^}]*\}/.test(sent.events[0].text || '')) return false;
+  return splitEnglishWords(text).length > 0;
 }
 
 export function recalcWords(sentence, newText, newStart, newEnd) {

@@ -199,7 +199,7 @@ export function initProjects(ctx) {
       const r = await fetch(`/api/projects/${state.project.id}/peaks`);
       if (!r.ok) return false;                     // 未就绪: prepare 轮询完成后会再调
       const data = new Uint8Array(await r.arrayBuffer());
-      timeline.setPeaks({ data, rate: parseFloat(r.headers.get('X-Peak-Rate') || '100') });
+      timeline.setPeaks({ data, rate: parseFloat(r.headers.get('X-Peak-Rate') || '100'), ch: +(r.headers.get('X-Peak-Ch') || 2) });
       toast('波形已就绪(来自项目缓存)', 2000);
       return true;
     } catch { return false; }

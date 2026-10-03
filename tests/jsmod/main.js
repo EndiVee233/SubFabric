@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { Timeline } from './timeline.js';
@@ -28,6 +28,11 @@ const btnExportZh = document.getElementById('btn-export-zh');
 const btnExportEn = document.getElementById('btn-export-en');
 const btnExportFull = document.getElementById('btn-export-full');
 const btnFix = document.getElementById('btn-fix-subs');
+const wordConvertStyle = document.getElementById('word-convert-style');
+const wordConvertScope = document.getElementById('word-convert-scope');
+const btnConvertWords = document.getElementById('btn-convert-words');
+const wordConvertLoading = document.getElementById('word-convert-loading');
+const wordConvertHint = document.getElementById('word-convert-hint');
 const assStyleEls = {
   group: document.getElementById('ass-style-group'),
   status: document.getElementById('ass-style-status'),
@@ -121,6 +126,13 @@ const state = {
   videoLoaded: false,
   project: null          // 项目模式: { id, meta, loadPeaks } (project.js 维护; null=未用项目管理)
 };
+
+// 行内编辑的临时轨道只存在内存中；ASS 文档及导出始终是最后一次提交的数据。
+let editPreview = null;
+let previewTrack = null;
+let previewFrame = 0;
+const pendingPlaybackRows = new Set(); // 非播放句已提交，但视频轨等待播放到该句才同步
+const EDIT_SETTLE_MS = 260;
 
 /* ─────────── Toast ───────────
  * 分四级(成功/警告/失败/信息)：按文案里的关键词自动判级, 所以 100+ 个调用点不用改；
@@ -241,7 +253,7 @@ async function loadWaveformFromServer() {
     const rp = await fetch('/api/peaks?name=' + encodeURIComponent(name) + '&dur=' + dur + '&rate=100');
     if (rp.ok) {
       const data = new Uint8Array(await rp.arrayBuffer());
-      timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100') });
+      timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
       toast('波形已就绪', 2000);
       clearInterval(waveToastTimer); stop();
       return;
@@ -274,7 +286,7 @@ async function uploadWaveform(file) {
     });
     if (!rp.ok) throw new Error('peaks HTTP ' + rp.status);
     const data = new Uint8Array(await rp.arrayBuffer());
-    timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100') });
+    timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
     toast('波形已就绪', 2000);
     clearInterval(waveToastTimer); stop();
     return;
@@ -638,11 +650,15 @@ function routeSub(text, name) {
 
 /* ─────────── SRT ─────────── */
 function setSrt(text, name) {
+  clearEditPreview(false);
+  clearWordPreview(false);
+  pendingPlaybackRows.clear();
   assPlayer.dispose();
   state.format = 'srt';
   state.fileName = name;
   state.assDoc = null;
   state.kar = null;
+  updateWordConvertStyles();
   state.assStyleTargets = null;
   setAssStyleControls();
   state.srtCues = parseSRT(text);
@@ -670,6 +686,33 @@ function setSrt(text, name) {
 }
 
 /* ─────────── ASS ─────────── */
+function updateWordConvertStyles() {
+  if (!wordConvertStyle) return;
+  wordConvertStyle.replaceChildren();
+  const first = document.createElement('option');
+  first.value = '';
+  first.textContent = state.format === 'ass'
+    ? '请选择英文样式（未确认不转换）' : '先打开 ASS 文件';
+  wordConvertStyle.append(first);
+  const styles = state.assDoc
+    ? [...new Set([...state.assDoc.styleNames, ...state.assDoc.events.map(ev => ev.style)])]
+    : [];
+  for (const name of styles) {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    wordConvertStyle.append(opt);
+  }
+  // 只有文件中真实存在逐词颜色 span 才自动沿用；纯时间关系的推断不能算用户确认。
+  const hasTagged = state.assDoc && state.assDoc.events.some(ev =>
+    ev.style === (state.kar && state.kar.wordStyle) && /\{\\c&H[0-9A-Fa-f]{6}&\}[^{}]+?\{\\c\}/.test(ev.text));
+  wordConvertStyle.value = hasTagged ? state.kar.wordStyle : '';
+  wordConvertStyle.disabled = !state.assDoc;
+  if (btnConvertWords) btnConvertWords.disabled = !state.assDoc;
+  if (wordConvertHint) wordConvertHint.textContent = wordConvertStyle.value
+    ? `已检测到逐词颜色标签，英文样式为「${wordConvertStyle.value}」。仅转换尚未逐词化的英文句。`
+    : '无法可靠判定英文样式：请先在上方明确选择，未选择时一律跳过，绝不猜测转换；中文和已转换行不改动。';
+}
 /** 规整行首角色色标: 旧版服务端写出过 {\c&H&bbggrr&&}(多一层 &H/&) —— libass 解析成黑/默认色,
  *  且编辑器的颜色解析/全局换色全都匹配不上。加载时统一规整为 {\c&Hbbggrr&}。 */
 function normalizeLeadColors() {
@@ -687,6 +730,9 @@ function normalizeLeadColors() {
 }
 
 function setAss(text, name) {
+  clearEditPreview(false);
+  clearWordPreview(false);
+  pendingPlaybackRows.clear();
   overlay.hide();
   overlay.setCues([]);
   state.format = 'ass';
@@ -703,6 +749,7 @@ function setAss(text, name) {
   }
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
   state.kar.rows = pairRows(state.kar.sentences, state.kar.wordStyle);
+  updateWordConvertStyles();
   // 角色名标签与正文之间恒为一个空格(用户要求 '[wato] 我') —— 老文件里粘在一起的先规范掉
   const gapFixed = normalizeAllRoleGaps();
   // 载入即自动对齐"中英起止不一致"(云端识别的存量文件常带这个毛病) —— 只挪时间、不动文本,
@@ -1786,6 +1833,23 @@ function reconcileKaraoke() {
  *  严格夹取——不越过前后词、不超出字幕块范围; **按住 Shift 也不放宽**。
  *  结果写回 ASS 的逐词切片(视频区高亮与导出都跟着变)。 */
 const WORD_MIN_GAP = 0.02;    // 每个词至少保留的时长(秒)
+let wordPreviewFrame = 0;
+let wordPreviewTrackRow = null;
+function clearWordPreview(restore = true) {
+  if (wordPreviewFrame) cancelAnimationFrame(wordPreviewFrame);
+  wordPreviewFrame = 0;
+  if (restore && wordPreviewTrackRow && state.format === 'ass' && state.assDoc) {
+    assPlayer.updateNow(state.assDoc.serialize());
+    pendingPlaybackRows.clear();
+  }
+  wordPreviewTrackRow = null;
+}
+timeline.onBeforeWordDrag = (row, cue) => {
+  // document 的 pointerdown 处理发生在画布命中之后，必须在此同步提交而非等待失焦。
+  if (panel.editItem) panel.commitEdit({ switching: true });
+  if (row && row.en && cue) cue.words = row.en.words; // 词数变化时旧 cue 数组已失效
+};
+
 timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
   const en = row && row.en;
   const words = en && en.words;
@@ -1830,12 +1894,26 @@ timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
       }
     }
   }
-  en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
   if (done) {
-    assPlayer.updateNow(state.assDoc.serialize());
+    const hadTransient = !!wordPreviewTrackRow;
+    clearWordPreview(false);
+    // mouseup / pointercancel 一律做最终单句重建，即使上一帧尚未送到渲染器。
+    en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+    if (editRowVisible(row) || hadTransient) {
+      assPlayer.updateNow(state.assDoc.serialize());
+      pendingPlaybackRows.clear();
+    } else pendingPlaybackRows.add(row);
     rebuildItemsAndLanes(true, true);
-  } else {
-    assPlayer.update(state.assDoc.serialize());
+  } else if (!wordPreviewFrame && editRowVisible(row)) {
+    const doc = state.assDoc;
+    wordPreviewFrame = requestAnimationFrame(() => {
+      wordPreviewFrame = 0;
+      if (state.format === 'ass' && state.assDoc === doc && row.en && editRowVisible(row)) {
+        wordPreviewTrackRow = row;
+        assPlayer.updateNow(doc.previewEvents(row.en, buildWordSpecs(row.en)));
+        pendingPlaybackRows.clear();
+      }
+    });
   }
 };
 
@@ -1936,18 +2014,114 @@ function applyWordSentence(sent, s, e, text) {
 const escAss = (s) => String(s == null ? '' : s)
   .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\r?\n/g, '\\N');
 
+function editRowVisible(row) {
+  const en = row && row.en;
+  return !!en && state.format === 'ass' && video.currentTime >= en.start && video.currentTime < en.end;
+}
+
+function clearEditPreview(restore = true) {
+  if (editPreview) clearTimeout(editPreview.timer);
+  editPreview = null;
+  if (previewFrame) cancelAnimationFrame(previewFrame);
+  previewFrame = 0;
+  if (previewTrack && restore && state.format === 'ass' && state.assDoc) {
+    assPlayer.updateNow(state.assDoc.serialize());
+    pendingPlaybackRows.clear();
+  }
+  previewTrack = null;
+}
+
+function renderEditPreview() {
+  previewFrame = 0;
+  const draft = editPreview;
+  if (!draft || draft.doc !== state.assDoc || !editRowVisible(draft.row)) {
+    if (previewTrack) {
+      previewTrack = null;
+      if (state.format === 'ass' && state.assDoc) {
+        assPlayer.updateNow(state.assDoc.serialize());
+        pendingPlaybackRows.clear();
+      }
+    }
+    return;
+  }
+  const mode = draft.specs && draft.builtVersion === draft.version ? 'words' : 'plain';
+  if (previewTrack && previewTrack.row === draft.row && previewTrack.version === draft.version && previewTrack.mode === mode) return;
+  const en = draft.row.en;
+  const track = mode === 'words'
+    ? draft.doc.previewEvents(en, draft.specs)
+    : draft.doc.previewSentence(en, escAss(draft.text));
+  // 唯一的可见版本；逐帧合并输入，永不把临时事件写回 AssDoc。
+  if (draft === editPreview && draft.doc === state.assDoc && editRowVisible(draft.row)) {
+    previewTrack = { row: draft.row, version: draft.version, mode };
+    assPlayer.updateNow(track);
+    pendingPlaybackRows.clear();
+  }
+}
+
+function queueEditPreview() {
+  if (!previewFrame) previewFrame = requestAnimationFrame(renderEditPreview);
+}
+
+function settleEditPreview(draft) {
+  if (!draft || draft !== editPreview || draft.doc !== state.assDoc) return;
+  const version = draft.version;
+  const en = draft.row.en;
+  if (!en) return;
+  // 只计算这句的临时词时间与事件；提交之前不修改正文、时间或原始 ASS。
+  if (state.kar && state.kar.wordStyle && en.style === state.kar.wordStyle) {
+    const text = normalizeRoleGap(draft.text);
+    const words = recalcWords(en, text, en.start, en.end);
+    draft.specs = buildWordSpecs({ ...en, text, words });
+  } else draft.specs = null;
+  if (draft === editPreview && version === draft.version) {
+    draft.builtVersion = version;
+    if (editRowVisible(draft.row)) queueEditPreview();
+  }
+}
+
+panel.onEnglishInput = (item, text) => {
+  if (state.format !== 'ass' || !state.assDoc || !item || !item.ref.en) return;
+  const row = item.ref;
+  if (editPreview && editPreview.row !== row) clearEditPreview();
+  const normalized = String(text || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+  const draft = editPreview || { row, doc: state.assDoc, version: 0, timer: 0, specs: null };
+  if (editPreview && draft.text === normalized) return;
+  draft.text = normalized;
+  draft.version++;
+  draft.specs = null;
+  clearTimeout(draft.timer);
+  editPreview = draft;
+  if (editRowVisible(row)) queueEditPreview();
+  else if (previewTrack) queueEditPreview(); // 播放头离开原句时撤销临时轨
+  draft.timer = setTimeout(() => settleEditPreview(draft), EDIT_SETTLE_MS);
+};
+panel.onEditCancel = () => clearEditPreview();
+panel.onEditFinish = () => clearEditPreview();
+
 function applyAssRow(item, s, e, text) {
   const row = item.ref;
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   const zhText = (lines[0] || '').trim();
   const enText = lines.length > 1 ? lines.slice(1).join(' ').trim() : '';
-  if (row.zh) applyAnchorSentence(row.zh, s, e, zhText || row.zh.text);
-  if (row.en) applyWordSentence(row.en, s, e, enText || row.en.text);
+  const timeChanged = Math.abs(row.start - s) > 1e-4 || Math.abs(row.end - e) > 1e-4;
+  // 英文改动不能重写中文事件；停顿时生成的仅是草稿，提交时每个变动句至多替换一次。
+  if (row.zh && (timeChanged || zhText !== row.zh.text)) applyAnchorSentence(row.zh, s, e, zhText);
+  if (row.en && (timeChanged || enText !== row.en.text)) applyWordSentence(row.en, s, e, enText);
   row.start = s; row.end = e;
-  assPlayer.updateNow(state.assDoc.serialize()); // 视频区立即生效
+  const hadTransient = !!previewTrack;
+  clearEditPreview(false);
+  if (editRowVisible(row) || hadTransient) {
+    // 正在显示该句，或必须清掉残留的临时轨：立即切回真实逐词事件。
+    assPlayer.updateNow(state.assDoc.serialize());
+    pendingPlaybackRows.clear();
+  } else {
+    // 修改非播放句只更新 ASS 数据；播到该句时再把最新整轨送到 libass。
+    pendingPlaybackRows.add(row);
+  }
+  return timeChanged;
 }
 
-panel.onApply = ({ item: editItem, start, end, dur, text }) => {
+panel.onApply = ({ item: editItem, start, end, dur, text, switching = false }) => {
   // 以"正在编辑的那一条"为准(编辑期间选中项可能已被点走), 回退到当前选中项
   const item = editItem || state.selected;
   if (!item) return;
@@ -1962,6 +2136,7 @@ panel.onApply = ({ item: editItem, start, end, dur, text }) => {
   if (isNaN(e)) { toast('结束时间格式无效'); return; }
   if (e <= s) { toast('结束时间必须大于开始时间'); e = s + 0.05; }
 
+  let timeChanged = false;
   if (item.kind === 'srt') {
     const cue = item.ref;
     cue.start = s; cue.end = e;
@@ -1970,16 +2145,25 @@ panel.onApply = ({ item: editItem, start, end, dur, text }) => {
     state.srtCues.forEach((c, i) => c.id = i + 1);
     overlay.setCues(state.srtCues);
   } else {
-    applyAssRow(item, s, e, text);
-    // 应用后若与其它行重叠(双行轨/手改时间都可能) → 与 Shift 拖动同一约定去逐词,
-    // 否则两行的逐词切片同时在画面上渲染、叠成一团。词级时间有备份, 拉开自动还原。
-    const cleared = deKaraokeOverlaps(item.ref);
-    if (cleared) assPlayer.updateNow(state.assDoc.serialize());
+    timeChanged = applyAssRow(item, s, e, text);
+    // 仅改文字不能波及邻行；只有改变时间范围才需执行跨行重叠规则。
+    if (timeChanged) {
+      const cleared = deKaraokeOverlaps(item.ref);
+      if (cleared) assPlayer.updateNow(state.assDoc.serialize());
+    }
   }
   state.newRows.delete(item.ref);     // 有内容了 → 不再是"待输入的新字幕"
-  reconcileKaraoke();
-  rebuildItemsAndLanes(true, true);
-  toast('已应用 #' + item.no);
+  if (!switching) {
+    if (state.format === 'ass' && timeChanged) reconcileKaraoke();
+    rebuildItemsAndLanes(true, true);
+    toast('已应用 #' + item.no);
+  } else {
+    const [zh, ...en] = text.split('\n');
+    item.l1 = zh || '';
+    item.l2 = en.join(' ');
+    item.textRaw = text;
+    if (state.project) Projects.scheduleSave();
+  }
 };
 
 panel.onDeleteCard = (item) => deleteItem(item);   // 字幕列表右键删除(与时间轴右键同一套逻辑)
@@ -2297,6 +2481,100 @@ function refreshRangeBar() {
 }
 
 timeline.onRangeSelect = () => refreshRangeBar();
+
+let convertingWords = false;
+if (wordConvertStyle) wordConvertStyle.addEventListener('change', () => {
+  wordConvertHint.textContent = wordConvertStyle.value
+    ? `仅转换「${wordConvertStyle.value}」样式中尚无逐词标签的英文句；中文和已转换句跳过。`
+    : '请明确选择英文样式后再转换；无法可靠判定时绝不猜测。';
+});
+if (btnConvertWords) btnConvertWords.addEventListener('click', async () => {
+  if (convertingWords || state.format !== 'ass' || !state.kar || !state.assDoc) return;
+  const style = wordConvertStyle.value;
+  if (!style) {
+    wordConvertHint.textContent = '无法可靠判定英文样式。请在「英文样式」下拉框明确选择，未选择时不转换任何字幕。';
+    toast('请先明确选择英文样式，转换已跳过', 5000);
+    wordConvertStyle.focus();
+    return;
+  }
+  if (state.kar.wordStyle && state.kar.wordStyle !== style && state.kar.sentences.some(s => s.words.length)) {
+    toast('当前文件已有其它逐词样式，请选择现有逐词样式以免误转换', 5200);
+    return;
+  }
+  if (panel.editItem) panel.commitEdit();
+  const doc = state.assDoc;
+  const scope = wordConvertScope.value;
+  const selection = timeline.rangeSel;
+  const chosen = scope === 'missing' ? state.kar.sentences.slice()
+    : selection && selection.b > selection.a
+      ? itemsInRange(selection.a, selection.b).flatMap(it => [it.ref.zh, it.ref.en].filter(Boolean))
+      : state.selected ? [state.selected.ref.zh, state.selected.ref.en].filter(Boolean) : [];
+  if (!chosen.length) {
+    toast('请先选中字幕行、框选时间轴区间，或把转换范围改为「所有待转换英文行」', 5600);
+    return;
+  }
+  convertingWords = true;
+  btnConvertWords.disabled = true;
+  wordConvertLoading.hidden = false;
+  wordConvertHint.textContent = '正在检查英文样式、逐词状态和重叠；仅回写符合条件的句子…';
+  // 先让浏览器绘制轻量 Loading，再做批量事件替换；不逐行重建界面。
+  await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  try {
+    if (doc !== state.assDoc) return;
+    const grouped = pairRows(state.kar.sentences, style);
+    const owner = new Map();
+    for (const row of grouped) if (row.en) owner.set(row.en, row);
+    const overlapping = new Set();
+    for (let i = 0; i < grouped.length; i++) {
+      for (let j = i + 1; j < grouped.length && grouped[j].start < grouped[i].end - 1e-3; j++) {
+        if (grouped[j].end > grouped[i].start + 1e-3) {
+          overlapping.add(grouped[i]); overlapping.add(grouped[j]);
+        }
+      }
+    }
+    const targets = [...new Set(chosen)]
+      .filter(s => eligibleForWordConversion(s, style) && owner.has(s) && !overlapping.has(owner.get(s)))
+      .sort((a, b) => b.events[0].lineIdx - a.events[0].lineIdx);
+    if (!targets.length) {
+      wordConvertHint.textContent = '未发现可转换的英文整句：已转换、中文、重叠或无法安全判断的句子均已跳过。';
+      toast('未找到可安全转换的英文句；中文及已有逐词句保持不变', 5400);
+      return;
+    }
+    const savedColor = doc.getScriptInfoComment(ASS_WORD_COLOR_META);
+    for (const sent of targets) {
+      if (/^#[0-9a-f]{6}$/i.test(savedColor)) sent.highlightTag = assHexToTag(savedColor);
+      sent.words = recalcWords(sent, sent.text, sent.start, sent.end);
+      sent.events = doc.replaceEvents(sent.events, buildWordSpecs(sent));
+    }
+    // 短文件达不到分析器的 6 条切片阈值；记住用户亲自确认的英文样式供重新打开时使用。
+    doc.setScriptInfoComment('SubFabricWordStyle', style);
+    const prior = state.selected && (state.selected.ref.en || state.selected.ref.zh);
+    state.kar.wordStyle = style;
+    state.kar.rows = pairRows(state.kar.sentences, style);
+    clearEditPreview(false);
+    assPlayer.updateNow(doc.serialize());
+    rebuildItemsAndLanes(true, true);
+    setAssStyleControls();
+    btnExportClean.disabled = false;
+    btnExportJson.disabled = false;
+    btnExportZh.disabled = false;
+    btnExportEn.disabled = false;
+    if (prior) {
+      const row = state.kar.rows.find(r => r.en === prior || r.zh === prior);
+      const item = row && state.itemByRef.get(row);
+      if (item) selectItem(item, false);
+    }
+    wordConvertHint.textContent = `已转换 ${targets.length} 句；其它句子及中文事件保持不变。`;
+    toast(`已将 ${targets.length} 句英文转为逐词颜色标签`);
+  } catch (e) {
+    wordConvertHint.textContent = '转换中断；请检查字幕数据后重试。';
+    toast('逐词转换失败：' + ((e && e.message) || e), 6500);
+  } finally {
+    convertingWords = false;
+    wordConvertLoading.hidden = true;
+    btnConvertWords.disabled = state.format !== 'ass';
+  }
+});
 // 平移/缩放/改窗口后选区在屏幕上的位置会变, 浮条要跟着走
 timeline.onLayout = () => { if (timeline.rangeSel) refreshRangeBar(); };
 
@@ -3252,6 +3530,16 @@ function tick() {
   window.__tickCount = (window.__tickCount || 0) + 1;
   const t = video.currentTime;
   overlay.update(t);
+  // 非播放句编辑仅更新数据；第一次播入被修改句时再同步真实 ASS 轨。
+  if (pendingPlaybackRows.size && !previewTrack && !wordPreviewTrackRow
+    && !(editPreview && editRowVisible(editPreview.row))
+    && [...pendingPlaybackRows].some(editRowVisible)) {
+    assPlayer.updateNow(state.assDoc.serialize());
+    pendingPlaybackRows.clear();
+  }
+  // 播放头进出正在编辑的句子时切换临时轨；离开即恢复真实 ASS。
+  if (editPreview && editRowVisible(editPreview.row) !== !!previewTrack) queueEditPreview();
+  if (wordPreviewTrackRow && !editRowVisible(wordPreviewTrackRow)) clearWordPreview();
   timeline.draw(t, !video.paused);
   panel.setPlayingByTime(t);
   tlCursor.textContent = fmtTime(t);
@@ -3292,7 +3580,9 @@ requestAnimationFrame(tick);
         tlPanel: rect(document.getElementById('timeline-panel')),
         wrap: rect(document.getElementById('tl-canvas-wrap')),
         canvas: cv ? Object.assign(rect(cv), { attrW: cv.width, attrH: cv.height }) : null,
+        // 虚拟滚动后 DOM 里只有可视窗口那些卡, 总数要看 panel.filtered
         cueCards: document.querySelectorAll('.cue-card').length,
+        cueCardsTotal: (window.__dbg && window.__dbg.panel && window.__dbg.panel.filtered) ? window.__dbg.panel.filtered.length : null,
         logView: lc ? Object.assign(rect(lc), { lines: lc.childElementCount }) : null,
         activeTab: act ? act.dataset.tab : null,
         tabs: [...document.querySelectorAll('#panel-tabs .ptab')].map(b => ({
@@ -3385,7 +3675,7 @@ requestAnimationFrame(tick);
   panel.setFileName('');
   timeline.setDuration(0);
 
-  // 路由: 无 hash / #/home → 项目主界面; #/project/<id> → 打开项目; #/editor → 旧的直开模式(示例自动加载)
+  // 路由由 project.js 接管: 首页 / 新建 / 全局设置 / 项目编辑器；#/editor 保留旧直开模式
   if ((location.hash || '#/home') !== '#/editor') {
     Projects.applyHash();
     return;

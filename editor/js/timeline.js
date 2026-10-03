@@ -3,6 +3,8 @@ import { fmtTime } from './util.js';
 
 const FILM_H = 46;       // 胶片缩略图条
 const RULER_H = 20;      // 刻度
+const WAVE_H = 64;       // 波形带: 独立于字幕轨, 不再被字幕块压住
+const WAVE_GAP = 4;      // 波形带与下方轨道之间的间距
 const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
 const CHIP_W = 78;       // 轨道标签
@@ -15,6 +17,7 @@ const WORD_MARK = 'rgba(214,214,228,.85)';    // 逐词标记块
 const WORD_MARK_HOT = 'rgba(255,255,255,.95)';// 拖动中的标记
 const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参考图一致)
 const EDGE_TOL = 5;      // 块边缘命中半径(px): 块重叠时优先选中"边界"
+const AXIS_R = 0.52;     // 中英分隔线在块高里的相对位置(夹在中文行与标记行之间, 见 _wordGeom)
 const DRAG_THRESH = 4;   // 区分"单击"与"拖动"的位移阈值(px)
 const DEFAULT_SPAN = 30; // 默认视图跨度(秒): 一上来只看 30 秒, 而不是整个视频
 
@@ -25,6 +28,7 @@ const C = {
   filmBorder: '#242430',
   laneBg: '#111116',
   laneBorder: '#20202a',
+  waveBg: '#0e0e14',      // 波形带底色: 比轨道底略亮, 让波形区域一眼可辨
   accent: '#ff7a45',       // 橙色主色
   chipBg: 'rgba(18,18,24,.88)',
   chipText: '#ffb08a',
@@ -186,7 +190,8 @@ export class Timeline {
     this.zoomSensitivity = 1.25; // Ctrl+滚轮缩放灵敏度(每格倍率, 设置 Tab 可调)
     this.waveform = null;     // 波形图 Image(ffmpeg 提取, 画在字幕块内; PNG 兜底)
     this.waveformReady = false;
-    this.peaks = null;        // 峰值数据 {data: Uint8Array, rate} —— 优先用它绘制(任意缩放都锐利)
+    this.peaks = null;        // 峰值包络 {data: Uint8Array, rate, ch} —— 优先用它绘制(任意缩放都锐利)
+    this._waveCache = null;   // 逐列 min/max 包络缓存(按 viewStart/pxPerSec/W 失效)
     this.showFilm = false;    // 胶片预览图(视频缩略图条): 设置里可开关, 默认关
     this.onWordRetime = null; // 拖动英文逐词开始标记 → (ref, idx, time, done)
     this.onBeforeWordDrag = null; // 命中拖柄后、建立拖动状态前同步提交文本草稿
@@ -230,10 +235,22 @@ export class Timeline {
     img.src = url;
   }
 
-  /** 峰值数据(推荐): rate = 每秒包络值个数, data = Uint8Array。
-   *  绘制时按屏幕像素列取该列时间范围内的最大峰值 → 矢量绘制, 任意缩放都锐利(不像缩放图片会糊)。 */
+  /** 峰值包络数据。rate = 每秒包络个数; data = Uint8Array。
+   *
+   *  两种格式(按顺序自动判定, 调用方不必关心):
+   *   · 双通道(新, PEAK_VER=2): 每桶 2 字节 [min, max], 带符号, 128=零位
+   *     → 画真正的 min/max 包络, 保留波形上下不对称
+   *   · 单通道(旧, PEAK_VER=1): 每桶 1 字节 abs 峰值
+   *     → 只能画上下对称的"条形图"。旧数据已被固定增益削顶, 建议重算。
+   *
+   *  通道数无法只靠长度判定(单通道字节数恰好是双通道桶数的 2 倍),
+   *  所以由调用方通过 ch 明确告知; 缺省按 ch=2 之外再按偶数兜底。
+   */
   setPeaks(peaks) {
-    this.peaks = (peaks && peaks.data && peaks.data.length) ? peaks : null;
+    if (!peaks || !peaks.data || !peaks.data.length) { this.peaks = null; return; }
+    const ch = peaks.ch || 2;
+    this.peaks = { data: peaks.data, rate: peaks.rate || 100, ch };
+    this._waveCache = null;      // 数据换了 → 之前按列算好的包络作废
   }
 
   setLanes(lanes) {
@@ -339,11 +356,18 @@ export class Timeline {
   zoomOut() { this._zoomAtSmooth(this._cssW() / 2, 1 / 1.6); }
 
   /** 胶片预览图高度: 关闭时为 0(不占位, 字幕块直接顶到刻度线下方) */
-  /** 胶片条可用高度: 空间不够时**自动收起**（省 46px 给字幕轨）—— 这样浅窗口/矮时间轴也不会挤爆。
+  /** 波形带高度: 有波形数据时占一条独立带, 否则 0(不占位)。
+   *  为什么独立成带: 原先波形画在字幕轨内部(LANE_H=34, 可用仅 26px), 字幕块再叠上来,
+   *  波形几乎看不见。独立成带后纵向分辨率够, 也不被字幕块遮挡。 */
+  _waveH() {
+    return (this.peaks && this.peaks.data.length) ? WAVE_H : 0;
+  }
+
+  /** 胶片条可用高度: 空间不够时**自动收起**（省 46px 给波形带/字幕轨）—— 这样浅窗口/矮时间轴也不会挤爆。
    *  收起只是"这一帧不画", 设置里的开关不动, 空间够了自动回来。 */
   _filmH() {
     if (!this.showFilm) return 0;
-    const need = FILM_H + RULER_H + 6 + LANE_H * 2;      // 胶片 + 刻度 + 间距 + 至少两条轨(合并轨下限)
+    const need = FILM_H + RULER_H + 6 + this._waveH() + WAVE_GAP + LANE_H * 2;
     return this._cssH() >= need ? FILM_H : 0;
   }
 
@@ -356,7 +380,7 @@ export class Timeline {
   _laneH(i) {
     const lanes = this.lanes || [];
     const n = Math.max(1, lanes.length);
-    const avail = Math.max(10, this._cssH() - this._filmH() - RULER_H - 6 - (n - 1) * LANE_GAP);
+    const avail = Math.max(10, this._cssH() - this._lanesTop() - (n - 1) * LANE_GAP);
     const ideal = (l) => (l && l.merged) ? (LANE_H * 2 + LANE_GAP) : ((l && l.h) || LANE_H);
     const sumIdeal = lanes.reduce((sum, l) => sum + ideal(l), 0) || 1;
     const lane = lanes[i];
@@ -380,6 +404,7 @@ export class Timeline {
     const n = (this.lanes || []).length;
     return {
       cssH: this._cssH(), filmH: this._filmH(), rulerH: RULER_H,
+      waveH: this._waveH(), lanesTop: this._lanesTop(),   // 波形带高度与轨道区起点
       laneTop: n ? this._laneTop(0) : 0, laneH: n ? this._laneH(0) : 0,
       laneBottom: this._lanesBottom(), fits: this._lanesBottom() <= this._cssH() + 0.5,
     };
@@ -462,14 +487,18 @@ export class Timeline {
   t2x(t) { return (t - this.viewStart) * this.pxPerSec; }
   x2t(x) { return this.viewStart + x / this.pxPerSec; }
 
+  /** 所有轨道内容的起始 y(胶片 + 刻度 + 波形带之后)。
+   *  单一事实来源: 以前这个"6px 间距 + 偏移"在 4 处各写一遍, 加波形带时极易漏改。 */
+  _lanesTop() { return this._filmH() + RULER_H + 6 + this._waveH() + WAVE_GAP; }
+
   _laneTop(i) {
-    let y = this._filmH() + RULER_H + 6;
+    let y = this._lanesTop();
     for (let k = 0; k < i; k++) y += this._laneH(k) + LANE_GAP;
     return y;
   }
   _lanesBottom() {
     const n = this.lanes.length;
-    return n ? this._laneTop(n - 1) + this._laneH(n - 1) : this._filmH() + RULER_H + 6;
+    return n ? this._laneTop(n - 1) + this._laneH(n - 1) : this._lanesTop();
   }
 
   /* ─────────── 事件 ─────────── */
@@ -874,6 +903,7 @@ export class Timeline {
 
     if (this._filmH() > 0) this._drawFilmstrip(ctx, W);   // 空间不够时 _filmH()=0, 这一帧不画
     this._drawRuler(ctx, W);
+    this._drawWaveBand(ctx, W);
     this._drawLanes(ctx, W, t);
     if (this._drag && this._drag.type === 'create' && this._drag.moved) this._drawCreatePreview(ctx);
     if (this.rangeSel && this.rangeSel.b > this.rangeSel.a) this._drawRangeSel(ctx);
@@ -930,7 +960,7 @@ export class Timeline {
     const d = this._drag;
     const a = Math.min(d.t0, d.t1), b = Math.max(d.t0, d.t1);
     const x1 = this.t2x(a), x2 = this.t2x(b);
-    const top = this._filmH() + RULER_H + 6;
+    const top = this._lanesTop();
     const bottom = Math.max(top + 24, this._lanesBottom());
     ctx.save();
     ctx.fillStyle = 'rgba(255,122,69,.16)';
@@ -1108,10 +1138,33 @@ export class Timeline {
     ctx.closePath();
   }
 
-  /** 逐词轴几何: 轴(中英分隔线) / 标记块 / 词文本基线 */
+  /**
+   * 块内纵向几何。
+   *
+   * 逐词标记块**贴块底**（不再骑在中英分隔线上）:
+   *   标记底 = 块底 − 2px —— "基本贴底", 但那 2px 缺口是刻意的:
+   *   贴到 0 会让标记与块的下边框糊成一条, 看着像"顶到边"。
+   * 标记与英文词文本因此落在同一行, 一眼能对上是哪个词的抓手。
+   *
+   * 分隔线仍是中英分界, 观感上在块高中部(AXIS_R)。但它是**夹**在
+   * 中文行与标记行之间的, 不是固定比例 —— 矮轨/单语半区上按需让位,
+   * 保证"中文 < 分隔线 < 标记"三者互不压。
+   */
   _wordGeom(band) {
-    const axisY = band.y + Math.round(band.h * 0.66);
-    return { axisY, sepY: axisY, top: axisY - 9, bottom: axisY + 4, baseline: band.y + band.h - 3 };
+    // 标记高: 常规 10px(拖动抓手要够大好点中)。上限是**块内实际可用高度**
+    // (块高 − 底部 2px 余量 − 顶部 1px 余量), 面板被压扁时随之收窄, 不顶出块外。
+    const BOT_PAD = 2, TOP_PAD = 1;
+    const markH = Math.max(2, Math.min(10, band.h - BOT_PAD - TOP_PAD));
+    const markBot = band.y + band.h - BOT_PAD;                // 贴底, 留 2px 不碰块边框
+    const markTop = markBot - markH;
+    const zhBase = band.y + Math.round(band.h * 0.30);          // 与 _drawBlockText 的中文基线一致
+    const lo = zhBase + 3;                                      // 别压住中文行
+    const hi = markTop - 3;                                     // 别压住标记行
+    let axisY = band.y + Math.round(band.h * AXIS_R);
+    if (axisY < lo) axisY = lo;
+    if (axisY > hi) axisY = hi;
+    if (axisY < lo) axisY = lo;                                 // 空间不够时优先保中文行
+    return { axisY, sepY: axisY, markTop, markBot, markH, top: markTop, bottom: markBot, baseline: band.y + band.h - 3 };
   }
 
   /** 块内文字: 中文整句在上(角色色/加粗), 中英之间是逐词轴, 轴下是英文逐词
@@ -1172,9 +1225,9 @@ export class Timeline {
       const wx = this.t2x(w.s);
       if (wx < x1 - 30 || wx > x2 + 30) continue;
       const hot = this._wordDrag && this._wordDrag.cue === this._selCueRef && this._wordDrag.idx === i;
-      // 标记块(始终画, 拖动时的抓手)
+      // 标记块(始终画, 拖动时的抓手) —— 贴块底, 与英文词文本同一行
       ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
-      ctx.fillRect(wx - 2, g.axisY - 9, hot ? 5 : 4, 10);
+      ctx.fillRect(wx - 2, g.markTop, hot ? 5 : 4, g.markH);
       // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记
       const nextX = (i + 1 < words.length) ? this.t2x(words[i + 1].s) : Math.min(this.t2x(blockEnd), x2);
       const avail = nextX - (wx + 8) - 3;
@@ -1196,8 +1249,12 @@ export class Timeline {
       for (const c of lane.cues) {
         if (!c.words || !c.words.length) continue;
         if (t < c.start - 1 || t > c.end + 1) continue;
-        const g = this._wordGeom(bandOf(c, yy, lh));
+        const band = bandOf(c, yy, lh);
+        const g = this._wordGeom(band);
+        // 标记贴块底 → 命中区也随之贴底; 再按 ±4 容差夹回块内,
+        // 否则容差会溢出到块外, 抢走**下一条轨**同一时刻的点击。
         if (y < g.top - 4 || y > g.bottom + 4) continue;
+        if (y < band.y || y > band.y + band.h) continue;
         const wpx = this.t2x(Math.min(c.end, this.viewStart + this._cssW() / this.pxPerSec)) - this.t2x(Math.max(c.start, this.viewStart));
         if (wpx / c.words.length <= 8) continue;
         for (let i = 0; i < c.words.length; i++) {
@@ -1209,37 +1266,104 @@ export class Timeline {
     return null;
   }
 
-  /** 波形层: 铺满给定区域(整条轨道), 30% 不透明。
-   *  优先用峰值数据逐屏幕像素列绘制(任意缩放都锐利), 否则退回整段 PNG 切片。 */
+  /** 波形带: 刻度线下方的一条独立横带, 横贯整个宽度, 下方留出到字幕轨的间距。
+   *  与字幕块完全分离 —— 波形不再被字幕块压住, 纵向也有足够分辨率画出音节。 */
+  _drawWaveBand(ctx, W) {
+    const h = this._waveH();
+    if (!h) return;
+    const top = this._filmH() + RULER_H + 6;
+    // 带底色(比轨道底略亮, 让波形所在区域一眼可辨)
+    ctx.fillStyle = C.waveBg;
+    ctx.fillRect(0, top, W, h);
+    this._drawWaveLayer(ctx, W, top + 2, h - 4);
+    ctx.strokeStyle = C.laneBorder;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, Math.round(top + h) + 0.5);
+    ctx.lineTo(W, Math.round(top + h) + 0.5);
+    ctx.stroke();
+  }
+
+  /** 逐像素列的 min/max 包络(双通道)。
+   *  一次算完整条可见区, 结果按 (viewStart, pxPerSec, W) 缓存 —— 平移/缩放时才重算,
+   *  拖动字幕块时每帧重画但不必重扫包络。 */
+  _waveEnvelope(W) {
+    const pk = this.peaks;
+    if (!pk || !pk.data.length) return null;
+    const key = this.viewStart.toFixed(3) + '|' + this.pxPerSec.toFixed(4) + '|' + W;
+    if (this._waveCache && this._waveCache.key === key) return this._waveCache;
+
+    const { data, rate, ch } = pk;
+    const n = ch === 1 ? data.length : (data.length >> 1);
+    const env = new Float32Array(W * 2);          // [min, max] 交错, 值域 −1..1
+    for (let px = 0; px < W; px++) {
+      let b0 = Math.floor(this.x2t(px) * rate);
+      let b1 = Math.ceil(this.x2t(px + 1) * rate);
+      if (b1 <= b0) b1 = b0 + 1;
+      if (b0 < 0) b0 = 0;
+      if (b1 > n) b1 = n;
+      let lo = 0, hi = 0, got = false;
+      if (b1 > b0) {
+        // 一列覆盖的桶数可能上千(缩得很远), 超过 64 就等距抽样 —— 取最值不受抽样影响,
+        // 但要覆盖**峰值**而不是平均, 否则缩远后波形会萎缩。
+        const span = b1 - b0;
+        const step = span > 64 ? Math.ceil(span / 64) : 1;
+        for (let b = b0; b < b1; b += step) {
+          let l, h;
+          if (ch === 1) { const v = (data[b] || 0) / 255; l = -v; h = v; }
+          else { l = (data[b * 2] - 128) / 127; h = (data[b * 2 + 1] - 128) / 127; }
+          if (l < lo) lo = l;
+          if (h > hi) hi = h;
+          got = true;
+        }
+      }
+      env[px * 2] = got ? lo : 0;
+      env[px * 2 + 1] = got ? hi : 0;
+    }
+    this._waveCache = { key, env };
+    return this._waveCache;
+  }
+
+  /** 波形层: 铺满给定区域。
+   *  走 min/max 包络 + 一次 path 填充整条带 —— 上下不对称, 保留真实形态。
+   *  (旧实现每列画一个上下对称的 fillRect 且 30% 透明, 画出来是"条形图"且几乎看不见) */
   _drawWaveLayer(ctx, W, top, h) {
     if (!(this.duration > 0) || h <= 2) return;
-    const cy = top + h / 2, maxH = Math.max(2, h);
-    ctx.save();
-    ctx.globalAlpha = 0.3;
-    if (this.peaks && this.peaks.data.length) {
-      const { data, rate } = this.peaks;
-      ctx.fillStyle = '#ffffff';
+    const cache = this._waveEnvelope(W);
+    if (cache) {
+      const cy = top + h / 2, half = h / 2;
+      const env = cache.env;
+      ctx.save();
+      // 上下对称各留 1px 内缩, 中轴线才不会被波形糊住
+      const s = half - 1;
+      ctx.beginPath();
+      ctx.moveTo(0, cy);
+      let started = false, lastX = 0;
       for (let px = 0; px < W; px++) {
-        const b0 = Math.floor(this.x2t(px) * rate);
-        let b1 = Math.ceil(this.x2t(px + 1) * rate);
-        if (b1 <= b0) b1 = b0 + 1;
-        const step = (b1 - b0) > 24 ? Math.ceil((b1 - b0) / 24) : 1;   // 缩得很远时隔段采样
-        let mx = 0;
-        for (let b = b0; b < b1; b += step) {
-          const v = data[b] || 0;
-          if (v > mx) mx = v;
-        }
-        const bh = (mx / 255) * maxH;
-        if (bh >= 1) ctx.fillRect(px, cy - bh / 2, 1, bh);
+        const y = cy - env[px * 2 + 1] * s;
+        if (!started) { ctx.lineTo(px, y); started = true; } else ctx.lineTo(px, y);
+        lastX = px;
       }
+      ctx.lineTo(lastX, cy);
+      for (let px = lastX; px >= 0; px--) ctx.lineTo(px, cy - env[px * 2] * s);
+      ctx.closePath();
+      const g = ctx.createLinearGradient(0, top, 0, top + h);
+      g.addColorStop(0, 'rgba(190,190,205,.85)');
+      g.addColorStop(0.5, 'rgba(228,228,240,.95)');
+      g.addColorStop(1, 'rgba(190,190,205,.85)');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.restore();
     } else if (this.waveformReady && this.waveform) {
       const img = this.waveform;
       const span = W / this.pxPerSec;
       const sx = (this.viewStart / this.duration) * img.width;
       const sw = (span / this.duration) * img.width;
-      if (sw > 0) ctx.drawImage(img, sx, 0, sw, img.height, 0, top, W, maxH);
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      if (sw > 0) ctx.drawImage(img, sx, 0, sw, img.height, 0, top, W, h);
+      ctx.restore();
     }
-    ctx.restore();
   }
 
   _drawLanes(ctx, W, t) {
@@ -1251,8 +1375,8 @@ export class Timeline {
       ctx.strokeStyle = C.laneBorder;
       ctx.beginPath(); ctx.moveTo(0, yy + lh + 0.5); ctx.lineTo(W, yy + lh + 0.5); ctx.stroke();
 
-      // 波形铺满整条轨道(整个视频都有波形, 而不仅限于有字幕块的地方); 字幕块画在它上面
-      this._drawWaveLayer(ctx, W, yy + 4, lh - 8);
+      // 波形**不再**画在轨道里: 已独立成带(见 _drawWaveBand)。
+      // 原先叠在字幕块下面, 既看不清也拖慢每帧绘制(每轨都重画一次整幅波形)。
 
       const spanStart = this.viewStart - 1, spanEnd = this.viewStart + W / this.pxPerSec + 1;
       const cues = lane.cues;

@@ -253,7 +253,7 @@ async function loadWaveformFromServer() {
     const rp = await fetch('/api/peaks?name=' + encodeURIComponent(name) + '&dur=' + dur + '&rate=100');
     if (rp.ok) {
       const data = new Uint8Array(await rp.arrayBuffer());
-      timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100') });
+      timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
       toast('波形已就绪', 2000);
       clearInterval(waveToastTimer); stop();
       return;
@@ -286,7 +286,7 @@ async function uploadWaveform(file) {
     });
     if (!rp.ok) throw new Error('peaks HTTP ' + rp.status);
     const data = new Uint8Array(await rp.arrayBuffer());
-    timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100') });
+    timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
     toast('波形已就绪', 2000);
     clearInterval(waveToastTimer); stop();
     return;

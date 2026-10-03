@@ -3,7 +3,17 @@ import { fmtTime, escapeHtml, bisectStart } from './util.js';
 import { t } from './i18n.js';
 import { splitEnglishWords } from './karaoke.js';
 
-const ROW_H = 92;
+/* ─────────── 虚拟滚动参数 ───────────
+ * 卡片高度由内容决定(1~3 行), 所以不能按固定行高算位置: 每条的真实高度实测一次后缓存,
+ * 位置表(前缀和)由缓存高度累加得出。窗口 = 可视区 ± OVERSCAN 行。
+ *
+ * 为什么必须虚拟化: 5000 张 .cue-card 全塞进 DOM 时, 真正贵的不是建 DOM(约 65ms)也不是
+ * 布局(约 300ms), 而是**绘制**——每张卡的 overflow:hidden 会各自生成一个裁剪容器,
+ * Chrome 因此要为 5000 个卡片做逐卡离屏合成, 主线程被占住约 4.5s(实测 5.3s 总卡顿)。
+ * 只渲染可视窗口后同样的操作降到约 70ms(见 tools/cue_list_jank_probe.mjs)。
+ */
+const OVERSCAN = 6;      // 可视区上下各多渲染几行(滚动时不至于露白)
+const EST_H = 86;        // 还没量过高度的条目用的估值(只影响滚动条长度, 不影响已渲染行)
 
 /* ─────────── 角色(说话人)配色 ─────────── */
 
@@ -54,6 +64,16 @@ export class EditorPanel {
     this._progScroll = false;
     this.followPlayback = true;   // 播放时字幕列表自动滚到对应行(可在设置面板关闭)
 
+    // ── 虚拟滚动状态 ──
+    this._h = new Map();          // 内容指纹 → 行高(含卡片间距); 实测后才写, 估值不写
+    this._hW = -1;                // 上面那些高度是在多宽的列表里量的(宽度变了要作废)
+    this._gap = null;             // 卡片间距(实测 margin-bottom, 兜底 6)
+    this._offsets = null;         // Float64Array(n+1): 每条相对列表顶部的偏移(前缀和)
+    this._totalH = 0;             // 全列表总高(用来撑出滚动条)
+    this._winStart = 0;           // 当前渲染窗口 = [winStart, winEnd)
+    this._winEnd = 0;
+    this._metricsDirty = true;    // 需要重算高度表/位置表(条目集或显示模式变了)
+
     // 行内编辑状态
     this.editItem = null;     // 正在编辑的条目
     this.editorEl = null;     // 行内编辑器 DOM
@@ -62,6 +82,9 @@ export class EditorPanel {
     this.onSelect = null;
     this.onSeek = null;       // 双击非文字区域 → 跳转到该条时间点
     this.onApply = null;
+    this.onEnglishInput = null; // 行内英文草稿变化，交给主逻辑管理临时预览
+    this.onEditCancel = null;   // Esc/外部重置只撤销草稿，不提交
+    this.onEditFinish = null;   // 内容未改变时仍需清理临时预览
     this.onModeChange = null;
 
     // Tab / 角色状态
@@ -88,11 +111,18 @@ export class EditorPanel {
   }
 
   _bind() {
-    this.listEl.addEventListener('scroll', () => {
-      if (this._progScroll) { this._progScroll = false; return; }
-      this._userScrollAt = performance.now();
+    // 滚动 → 重算窗口。用**捕获阶段**挂在 window 上, 一份监听覆盖三种滚动来源:
+    //   · 桌面布局: #cue-list 自己滚;
+    //   · 窄屏堆叠布局: html/body 是 height:100% + overflow-y:auto, 实际滚的是 document.body;
+    //   · 极端情况下的其它祖先滚动容器。
+    // scroll 事件不冒泡, 普通监听收不到子元素的滚动; 捕获阶段则能从 window 一路收到目标元素。
+    // 程序化滚动(选中/跟随播放)不算"用户滚动", 否则会把自动跟随关掉 5s。
+    window.addEventListener('scroll', () => {
+      const prog = this._progScroll;
+      this._progScroll = false;
+      if (!prog) this._userScrollAt = performance.now();
       this._render();
-    });
+    }, { passive: true, capture: true });
     // 单击: 文字区域 → 原地进入编辑; 非文字区域 → 仅选中(不跳转)
     // 双击(非文字区域) → 跳转: 手动判定, 因为单击会触发重渲染换掉 DOM 节点,
     // 浏览器之后就不再派发 dblclick 事件了(所以不能依赖 dblclick 监听)。
@@ -187,10 +217,12 @@ export class EditorPanel {
         this._switching = true;
         clearTimeout(this._switchTimer);
         this._switchTimer = setTimeout(() => { this._switching = false; }, 60);
-        this.closeEdit();
+        // 切行是提交，不是取消；直接写入旧行但暂不全量重建 DOM，避免吞掉本次点击。
+        this.commitEdit({ switching: true });
         this._render();
-        if (this.onSelect) this.onSelect(item);
-        this.startEdit(item, line);
+        const next = this.items.find(x => x.ref === item.ref) || item;
+        if (this.onSelect) this.onSelect(next);
+        this.startEdit(next, line);
         return;
       }
       this._deferCommit = true;
@@ -248,6 +280,7 @@ export class EditorPanel {
     this.modeSel.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`).join('');
     this.modeSel.value = current || 'bi';
     this._mode = this.modeSel.value;
+    this._metricsDirty = true;      // 显示模式变了 → 卡片行数变了 → 高度表作废
   }
 
   /**
@@ -656,61 +689,221 @@ export class EditorPanel {
       return ((it.l1 || '').toLowerCase().includes(q)) || ((it.l2 || '').toLowerCase().includes(q));
     });
     // 条数提示已按需求移除(工具栏不再显示 "17 / 658 条")
+    this._metricsDirty = true;      // 条目集变了 → 位置表作废
     this.listEl.scrollTop = restoreTop;
     this._render();
   }
 
-  _render() {
-    // 动态行高: 渲染全部 filtered, 每行高度由内容决定(spacerEl 自然撑开滚动区)
+  /* ─────────── 卡片 HTML ─────────── */
+
+  /** 单张卡片的 HTML。idx 必须是 **filtered 里的绝对下标** —— 点击/右键菜单都按它回查条目。 */
+  _cardHtml(it, i) {
     const showFirst = this._mode !== 'second';
     const showSecond = this._mode !== 'first';
+    const cls = ['cue-card'];
+    if (it === this.selected) cls.push('selected');
+    if (it === this.playingItem) cls.push('playing');
+    if (it === this.editItem) cls.push('editing');
 
-    let html = '';
-    for (let i = 0; i < this.filtered.length; i++) {
-      const it = this.filtered[i];
-      const cls = ['cue-card'];
-      if (it === this.selected) cls.push('selected');
-      if (it === this.playingItem) cls.push('playing');
-      if (it === this.editItem) cls.push('editing');
-
-      // 角色(说话人)色: 卡片左标、中文行、两个样式徽标、三个时间值全部跟着它走
-      const tone = it.color ? roleTone(it.color) : null;
-      const cardStyle = [];
-      let chipAttr = '', timeAttr = '', l1Attr = '';
-      if (tone) {
-        const { r, g, b, css } = tone;
-        cardStyle.push(`border-left-color:rgba(${r},${g},${b},.85)`);
-        chipAttr = ` style="color:${css};border-color:rgba(${r},${g},${b},.45);background:rgba(${r},${g},${b},.12)"`;
-        timeAttr = ` style="color:${css}"`;
-        l1Attr = ` style="color:${css}"`;
-      }
-
-      const chips = [];
-      if (it.bad) chips.push(`<span class="cc-chip chip-bad" title="异常行：${escapeHtml(it.badReason || '')}">⚠ 异常行</span>`);
-      if (it.badge1) chips.push(`<span class="cc-chip chip-l1"${chipAttr}>${escapeHtml(it.badge1)}</span>`);
-      if (it.badge2 && showSecond) chips.push(`<span class="cc-chip chip-l2"${chipAttr}>${escapeHtml(it.badge2)}</span>`);
-      const head = chips.length ? `<div class="cc-head">${chips.join('')}</div>` : '';
-      // 新建但还没输入的字幕 → 显示占位提示(用户不输入就离开则这条会被撤销)
-      const l1 = showFirst && it.l1 ? `<div class="cc-l1"${l1Attr}>${escapeHtml(it.l1)}</div>`
-        : (showFirst && it.isNew ? `<div class="cc-l1 cc-ph1">（输入中文）</div>` : '');
-      const l2 = showSecond && it.l2 ? `<div class="cc-l2">${escapeHtml(it.l2)}</div>`
-        : (showSecond && it.isNew ? `<div class="cc-l2 cc-ph2">（输入英文）</div>` : '');
-      html += `<div class="${cls.join(' ')}" data-idx="${i}" style="${cardStyle.join(';')}">
-        <div class="cc-times">
-          <div class="cc-t"><span>开始</span><b${timeAttr}>${fmtTime(it.start)}</b></div>
-          <div class="cc-t"><span>结束</span><b${timeAttr}>${fmtTime(it.end)}</b></div>
-          <div class="cc-t"><span>时长</span><b${timeAttr}>${(it.end - it.start).toFixed(3)}s</b></div>
-        </div>
-        <div class="cc-body">
-          ${head}
-          ${l1}${l2}
-        </div>
-      </div>`;
+    // 角色(说话人)色: 卡片左标、中文行、两个样式徽标、三个时间值全部跟着它走
+    const tone = it.color ? roleTone(it.color) : null;
+    const cardStyle = [];
+    let chipAttr = '', timeAttr = '', l1Attr = '';
+    if (tone) {
+      const { r, g, b, css } = tone;
+      cardStyle.push(`border-left-color:rgba(${r},${g},${b},.85)`);
+      chipAttr = ` style="color:${css};border-color:rgba(${r},${g},${b},.45);background:rgba(${r},${g},${b},.12)"`;
+      timeAttr = ` style="color:${css}"`;
+      l1Attr = ` style="color:${css}"`;
     }
-    this.spacerEl.innerHTML = html;
+
+    const chips = [];
+    if (it.bad) chips.push(`<span class="cc-chip chip-bad" title="异常行：${escapeHtml(it.badReason || '')}">⚠ 异常行</span>`);
+    if (it.badge1) chips.push(`<span class="cc-chip chip-l1"${chipAttr}>${escapeHtml(it.badge1)}</span>`);
+    if (it.badge2 && showSecond) chips.push(`<span class="cc-chip chip-l2"${chipAttr}>${escapeHtml(it.badge2)}</span>`);
+    const head = chips.length ? `<div class="cc-head">${chips.join('')}</div>` : '';
+    // 新建但还没输入的字幕 → 显示占位提示(用户不输入就离开则这条会被撤销)
+    const l1 = showFirst && it.l1 ? `<div class="cc-l1"${l1Attr}>${escapeHtml(it.l1)}</div>`
+      : (showFirst && it.isNew ? `<div class="cc-l1 cc-ph1">（输入中文）</div>` : '');
+    const l2 = showSecond && it.l2 ? `<div class="cc-l2">${escapeHtml(it.l2)}</div>`
+      : (showSecond && it.isNew ? `<div class="cc-l2 cc-ph2">（输入英文）</div>` : '');
+    return `<div class="${cls.join(' ')}" data-idx="${i}" style="${cardStyle.join(';')}">
+      <div class="cc-times">
+        <div class="cc-t"><span>开始</span><b${timeAttr}>${fmtTime(it.start)}</b></div>
+        <div class="cc-t"><span>结束</span><b${timeAttr}>${fmtTime(it.end)}</b></div>
+        <div class="cc-t"><span>时长</span><b${timeAttr}>${(it.end - it.start).toFixed(3)}s</b></div>
+      </div>
+      <div class="cc-body">
+        ${head}
+        ${l1}${l2}
+      </div>
+    </div>`;
   }
 
-  refreshItem() { this._render(); }
+  /** 影响卡片高度的全部因素(显示模式 + 两行文本 + 徽标/异常行 + 新建占位) → 高度缓存键 */
+  _hKey(it) {
+    const showFirst = this._mode !== 'second';
+    const showSecond = this._mode !== 'first';
+    return this._mode + '\u0001' +
+      (showFirst ? (it.l1 || '') : '') + '\u0001' +
+      (showSecond ? (it.l2 || '') : '') + '\u0001' +
+      (it.badge1 || '') + '\u0001' + (showSecond ? (it.badge2 || '') : '') + '\u0001' +
+      (it.bad ? (it.badReason || '1') : '') + '\u0001' +
+      (showFirst && it.isNew && !it.l1 ? '1' : '') + (showSecond && it.isNew && !it.l2 ? '1' : '');
+  }
+
+  /**
+   * 用**隐藏测量容器**量出若干条目的真实行高。
+   * 容器宽度取 spacer 的 clientWidth, 与真实列表同宽 → 换行位置一致, 量出的高度才准。
+   * 只为缓存里没有的条目量(删除一条时通常只有 0~2 条要量), 所以日常操作不会触发全量测量。
+   *
+   * 高度必须取 getBoundingClientRect() 的**小数**值: 卡片真实高度是小数(line-height 1.3 等),
+   * 而 offsetHeight 会四舍五入成整数, 5000 条累积下来会漂 30px 以上(位置表整体偏小)。
+   */
+  _measure(items, keys) {
+    const w = this._hW;
+    if (!w) return;
+    const box = document.createElement('div');
+    box.className = 'cue-measure';
+    box.style.width = w + 'px';
+    box.innerHTML = items.map((it) => this._cardHtml(it, 0)).join('');
+    document.body.appendChild(box);
+    void box.offsetHeight;                 // 逼一次布局; 之后逐个子元素读高不会再触发重排
+    const kids = box.children;
+    for (let i = 0; i < items.length; i++) {
+      const el = kids[i];
+      if (!el) continue;
+      if (this._gap == null) this._gap = parseFloat(getComputedStyle(el).marginBottom) || 0;
+      this._h.set(keys[i], el.getBoundingClientRect().height + this._gap);
+    }
+    box.remove();
+  }
+
+  /** 重建高度缓存 + 位置表(前缀和)。只在 _metricsDirty 或条目数变化时调用, 滚动时不走这里。 */
+  _rebuildMetrics(n) {
+    const spacer = this.spacerEl, listEl = this.listEl;
+    // 测量宽度必须等于"列表撑起来之后"的实际宽度: 列表出现纵向滚动条时内容区会窄十几像素,
+    // 若首次测量发生在滚动条出现之前, 量到的高度对应的是错误宽度 → 下一次重建就会把整张
+    // 高度表作废重测(删除一条也要重测 5000 条的根因)。所以先按估值把 spacer 撑起来,
+    // 逼一次布局让滚动条就位, 再取宽度。
+    if (n * EST_H > listEl.clientHeight) {
+      spacer.style.height = (n * EST_H) + 'px';
+      void spacer.offsetHeight;
+    }
+    const w = spacer.clientWidth || listEl.clientWidth || 0;
+    if (this._hW !== w) { this._h.clear(); this._hW = w; }      // 面板宽度变了 → 换行变了 → 高度作废
+    if (this._h.size > 200000) this._h.clear();                // 极端长会话积累的旧指纹, 兜底清一次(阈值要够大, 否则大稿件每次操作都被清表重测)
+
+    const keys = new Array(n);
+    const missItems = [], missKeys = [];
+    const seen = new Set();
+    for (let i = 0; i < n; i++) {
+      const k = this._hKey(this.filtered[i]);
+      keys[i] = k;
+      // 按指纹去重: 同一种内容(文本/徽标完全一样)只需要量一张卡, 重复的卡片高度必然相同
+      if (!this._h.has(k) && !seen.has(k)) { seen.add(k); missItems.push(this.filtered[i]); missKeys.push(k); }
+    }
+    if (missItems.length && w) this._measure(missItems, missKeys);
+
+    const gap = this._gap != null ? this._gap : 0;
+    const offs = new Float64Array(n + 1);
+    let acc = 0;
+    for (let i = 0; i < n; i++) {
+      offs[i] = acc;
+      const h = this._h.get(keys[i]);
+      acc += h != null ? h : EST_H;
+    }
+    // 最后一条的卡片间距不计入总高 —— 否则列表底部会多出一条 6px 的空档
+    offs[n] = Math.max(0, acc - gap);
+    this._offsets = offs;
+    this._totalH = offs[n];
+    // 面板隐藏(宽 0)时量不准 → 保持 dirty, 等可见后再算一遍
+    this._metricsDirty = !w;
+  }
+
+  /**
+   * 由可见区间算出要渲染的窗口 [start, end)。
+   *
+   * 可见区间用**矩形求交**算: spacer ∩ list 的裁剪区 ∩ 视口, 再换算成 spacer 内部坐标。
+   * 这样两种布局共用一套公式:
+   *   · 桌面布局 —— #cue-list 受高度约束, 列表自己滚(scrollTop 变化);
+   *   · 窄屏堆叠布局 —— #cue-list 跟着内容撑高, 整页滚(window 滚动)。
+   * 只按 listEl.scrollTop 算的话, 窄屏下 clientHeight 等于内容高, 窗口会退化成"全部渲染"。
+   */
+  _window(n) {
+    const offs = this._offsets;
+    const total = this._totalH;
+    const sr = this.spacerEl.getBoundingClientRect();
+    const lr = this.listEl.getBoundingClientRect();
+    const topPx = Math.max(sr.top, lr.top, 0);
+    const botPx = Math.min(sr.bottom, lr.bottom, window.innerHeight || 0);
+    let visTop = Math.max(0, topPx - sr.top);
+    let visBot = Math.min(total, botPx - sr.top);
+    if (!(visBot > visTop)) {
+      // 面板隐藏 / 尺寸为 0 等情形量不到可见区 → 退回按 scrollTop 取顶部一小段, 保证有内容
+      visTop = Math.max(0, this.listEl.scrollTop);
+      visBot = Math.min(total, visTop + EST_H * 8);
+    }
+    // 二分: 第一个 offs[i+1] > visTop 的下标
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (offs[m + 1] > visTop) hi = m; else lo = m + 1;
+    }
+    const start = Math.max(0, lo - OVERSCAN);
+    let i = lo;
+    while (i < n && offs[i] < visBot) i++;
+    let end = Math.min(n, i + OVERSCAN);
+    if (end <= start) end = Math.min(n, start + 1);
+    return { start, end };
+  }
+
+  /** filtered 绝对下标 → 窗口内的卡片元素(不在窗口里返回 null) */
+  _cardElAt(idx) {
+    if (idx < this._winStart || idx >= this._winEnd) return null;
+    const el = this.spacerEl.children[idx - this._winStart + 1];   // 第 0 个孩子是顶部占位
+    return (el && el.classList.contains('cue-card')) ? el : null;
+  }
+
+  /** 条目的真实顶部/高度(来自位置表, 卡片没渲染时也准) */
+  _cardTop(idx) {
+    return (this._offsets && idx >= 0 && idx + 1 < this._offsets.length) ? this._offsets[idx] : 0;
+  }
+  _cardH(idx) {
+    return (this._offsets && idx >= 0 && idx + 1 < this._offsets.length)
+      ? (this._offsets[idx + 1] - this._offsets[idx]) : EST_H;
+  }
+
+  /**
+   * 渲染**可视窗口**(约 10~30 张卡), 而不是全部条目。
+   * 位置靠顶部占位块撑出来: 占位高 = 窗口首条的偏移 → 卡片落在正确的滚动位置上,
+   * 且卡片自身的 offsetTop 仍等于它在列表里的绝对偏移(选中/编辑定位逻辑因此不用改)。
+   */
+  _render() {
+    const spacer = this.spacerEl;
+    const n = this.filtered.length;
+    if (!n) {
+      spacer.innerHTML = '';
+      spacer.style.height = '';
+      this._offsets = null;
+      this._totalH = 0;
+      this._winStart = this._winEnd = 0;
+      return;
+    }
+    if (this._metricsDirty || !this._offsets || this._offsets.length !== n + 1) this._rebuildMetrics(n);
+    // 先把撑高定下来再算可见区: 首帧/内容变化后 spacer 的高度可能还是旧值(甚至 0),
+    // 那时它的矩形底部等于顶部, 可见区求交会得到空区间而退回兜底窗口。
+    spacer.style.height = this._totalH + 'px';
+    const win = this._window(n);
+    this._winStart = win.start;
+    this._winEnd = win.end;
+    let html = `<div class="cue-pad" style="height:${this._offsets[win.start]}px"></div>`;
+    for (let i = win.start; i < win.end; i++) html += this._cardHtml(this.filtered[i], i);
+    spacer.innerHTML = html;     // 撑出完整滚动条的高度已在上面设好
+  }
+
+  refreshItem() { this._metricsDirty = true; this._render(); }
+
 
   /** 按播放时间定位到对应条目: 二分找 start<=t<end 的 item, 仅在**完全不可见**时滚到视野 */
   selectByTime(t) {
@@ -735,18 +928,17 @@ export class EditorPanel {
   select(item, scroll = true) {
     const prev = this.selected;
     this.selected = item;
-    // 轻量高亮: 只切 class, 不全量重建(全量重建 658 行会拖死主循环 → 时间轴黑屏/页面卡死)
+    // 轻量高亮: 只切 class, 不全量重建(虚拟滚动后重建虽便宜, 但切 class 更稳, 不会打断点击)
     if (prev && prev !== item) {
-      const pi = this.filtered.indexOf(prev);
-      const pe = pi >= 0 ? this.spacerEl.children[pi] : null;
+      const pe = this._cardElAt(this.filtered.indexOf(prev));
       if (pe) pe.classList.remove('selected');
     }
     if (scroll && item) {
       const idx = this.filtered.indexOf(item);
-      const el = idx >= 0 ? this.spacerEl.children[idx] : null;
-      if (el) {
-        el.classList.add('selected');
-        const top = el.offsetTop, h = el.offsetHeight;
+      if (idx >= 0) {
+        const el = this._cardElAt(idx);
+        if (el) el.classList.add('selected');
+        const top = this._cardTop(idx), h = this._cardH(idx);
         const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
         const need = scroll === 'keep'
           ? (top + h <= st || top >= st + vh)
@@ -754,6 +946,7 @@ export class EditorPanel {
         if (need) {
           this._progScroll = true;
           this.listEl.scrollTop = Math.max(0, top + h / 2 - vh / 2);
+          this._render();     // 窗口外的卡片不在 DOM 里 → 滚动后必须重算窗口
         }
       }
     }
@@ -771,21 +964,21 @@ export class EditorPanel {
     if (found === this.playingItem) return;
     const prevPlaying = this.playingItem;
     this.playingItem = found;
-    // 轻量高亮: 只切 class(全量重建 658 行会拖死主循环)
-    const pi = prevPlaying ? this.filtered.indexOf(prevPlaying) : -1;
-    const pe = pi >= 0 ? this.spacerEl.children[pi] : null;
+    // 轻量高亮: 只切 class
+    const pe = this._cardElAt(prevPlaying ? this.filtered.indexOf(prevPlaying) : -1);
     if (pe) pe.classList.remove('playing');
     if (found) {
       const idx = this.filtered.indexOf(found);
-      const el = idx >= 0 ? this.spacerEl.children[idx] : null;
-      if (el) {
-        el.classList.add('playing');
+      if (idx >= 0) {
+        const el = this._cardElAt(idx);
+        if (el) el.classList.add('playing');
         if (performance.now() - (this._userScrollAt || 0) > 5000) {
-          const top = el.offsetTop, h = el.offsetHeight;
+          const top = this._cardTop(idx), h = this._cardH(idx);
           const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
           if (top < st || top > st + vh - h) {
             this._progScroll = true;
             this.listEl.scrollTop = Math.max(0, top + h / 2 - vh / 2);
+            this._render();
           }
         }
       }
@@ -808,13 +1001,20 @@ export class EditorPanel {
     // 正在把编辑转移到这一条(或刚开): 随后到达的 pointerdown/focusout 是**同一轮点击**的
     // 后续阶段, 不能当成"点了别处"再提交一次 —— 否则刚开好的编辑框会被立刻收掉。
     this._focusMovesAt = performance.now();
+    // 虚拟滚动: 目标不在当前窗口里(程序化调用编辑) → 先滚到它附近, 否则拿不到卡片位置
+    if (!this._cardElAt(idx)) {
+      const vh = this.listEl.clientHeight;
+      this._progScroll = true;
+      this.listEl.scrollTop = Math.max(0, this._cardTop(idx) + this._cardH(idx) / 2 - vh / 2);
+    }
     this._render();   // 先渲染, 编辑器才能贴到对应卡片的位置
     const div = document.createElement('div');
     this._editGen = (this._editGen || 0) + 1;      // 新编辑代次: 旧代次的延后收尾会自行作废
     const myGen = this._editGen;                   // 本编辑框自己的代次(focusout 里用它判别归属)
     div.className = 'inline-editor';
-    const cardEl = this.spacerEl.children[idx];
-    div.style.top = ((cardEl ? cardEl.offsetTop : 0) + 6) + 'px';
+    // 位置取位置表(卡片没渲染时也准), 与 cardEl.offsetTop 等价(占位块已把偏移撑出来)
+    const cardEl = this._cardElAt(idx);
+    div.style.top = ((cardEl ? cardEl.offsetTop : this._cardTop(idx)) + 6) + 'px';
     div.innerHTML = `
       <div class="ie-line ie-l1" contenteditable="true" spellcheck="false" data-ph="（输入中文）"></div>
       <div class="ie-line ie-l2" contenteditable="true" spellcheck="false" data-ph="（输入英文）"></div>
@@ -841,7 +1041,7 @@ export class EditorPanel {
     //   Ctrl+回车    → 在光标处把这一条切成两条(分句)
     //   Ctrl+退格    → 光标在英文行最前面时, 与上一个字幕块合并
     div.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); this.closeEdit(); this._render(); return; }
+      if (e.key === 'Escape') { e.preventDefault(); this.cancelEdit(); this._render(); return; }
       // 英文行限定: 光标处的切分/合并(必须在 Enter 分支之前判断 Ctrl+Enter)
       if (document.activeElement === l2) {
         const plain = (el) => (el.textContent || '').replace(/\u00a0/g, ' ');
@@ -892,6 +1092,16 @@ export class EditorPanel {
         e.preventDefault();
         this.commitEdit();            // 回车 = 直接提交
       }
+    });
+    // input 同时覆盖键入、删除、粘贴及输入法完成；组合期间不做逐词重建。
+    let composing = false;
+    l2.addEventListener('compositionstart', () => { composing = true; });
+    l2.addEventListener('compositionend', () => {
+      composing = false;
+      if (this.editItem === item && this.onEnglishInput) this.onEnglishInput(item, l2.textContent || '');
+    });
+    l2.addEventListener('input', () => {
+      if (!composing && this.editItem === item && this.onEnglishInput) this.onEnglishInput(item, l2.textContent || '');
     });
     // 粘贴纯文本(避免带入富文本标签)
     div.addEventListener('paste', (e) => {
@@ -1006,7 +1216,7 @@ export class EditorPanel {
   }
 
   /** 提交行内编辑: 文本有变化才触发 onApply(时间不变, 由主逻辑同步视频区) */
-  commitEdit() {
+  commitEdit({ switching = false } = {}) {
     if (!this.editItem) return;
     const it = this.editItem;
     const norm = (s) => (s || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1024,6 +1234,7 @@ export class EditorPanel {
     const newText = l1 + '\n' + l2;
     const origText = norm(it.l1) + '\n' + norm(it.l2);
     const unchanged = (newText === origText);
+    if (!unchanged) this._metricsDirty = true;   // 文本变了 → 这张卡的行高要重量
     const emptyNew = !!(it.isNew && !l1 && !l2);
     const gen = this._editGen;         // 本次编辑的代次(开编辑/关编辑都会 +1)
 
@@ -1041,10 +1252,15 @@ export class EditorPanel {
         if (el && el.parentNode) el.remove();     // 只清掉自己这个已脱离的编辑框
         return;
       }
-      this.closeEdit();
-      if (emptyNew) { this._render(); if (this.onEmptyNew) this.onEmptyNew(it); return; }
-      this._render();
-      if (unchanged) return;
+      this.closeEdit('commit');
+      if (emptyNew) {
+        if (this.onEditFinish) this.onEditFinish(it);
+        if (!switching) this._render();
+        if (this.onEmptyNew) this.onEmptyNew(it);
+        return;
+      }
+      if (!switching) this._render();
+      if (unchanged) { if (this.onEditFinish) this.onEditFinish(it); return; }
       if (this.onApply) {
         // 必须把"正在编辑的那一条"显式带出去: 编辑期间用户可能已点了别处,
         // 此刻 state.selected 可能已经换成另一条, 用选中项会写错行。
@@ -1053,7 +1269,8 @@ export class EditorPanel {
           start: fmtTime(it.start),
           end: fmtTime(it.end),
           dur: (it.end - it.start).toFixed(3),
-          text: newText
+          text: newText,
+          switching
         });
       }
     };
@@ -1061,11 +1278,15 @@ export class EditorPanel {
     else finish();
   }
 
-  /** 关闭行内编辑器(不提交) */
-  closeEdit() {
+  /** Esc 明确取消；提交只通过 commitEdit，内部移除编辑框不等于取消。 */
+  cancelEdit() { this.closeEdit('cancel'); }
+
+  closeEdit(reason = 'cancel') {
+    const oldItem = this.editItem;
     this._editGen = (this._editGen || 0) + 1;
     this.editItem = null;
     this._editTag = '';
     if (this.editorEl) { this.editorEl.remove(); this.editorEl = null; }
+    if (oldItem && reason === 'cancel' && this.onEditCancel) this.onEditCancel(oldItem);
   }
 }

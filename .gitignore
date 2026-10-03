@@ -72,3 +72,7 @@ asr/ytdlp/
 
 # 下载内核自举日志（ytdlp.ensure() 写的 bootstrap.log）
 asr/logs/
+
+# 探针/诊断产物: tools/ 下的脚本会往这里写中间文件与对比截图(体积大、可随时重建, 不入库)
+_t/
+outputs/
