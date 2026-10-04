@@ -86,10 +86,12 @@ function sourceBrief(source) {
   return lines.join('\n');
 }
 
-function castMessages(source) {
+/** systemPrompt: 用户可在「生成设置 → 角色分析提示词」里覆盖；留空/非法则用内置 CAST_SYSTEM。 */
+function castMessages(source, systemPrompt) {
   const brief = sourceBrief(source);
+  const sys = (typeof systemPrompt === 'string' && systemPrompt.trim()) ? systemPrompt.trim() : CAST_SYSTEM;
   return [
-    { role: 'system', content: CAST_SYSTEM },
+    { role: 'system', content: sys },
     { role: 'user', content: (brief ? brief + '\n\n' : '（没有任何视频信息）\n\n') + '请给出这个视频里可能出现的人物列表。' },
   ];
 }
@@ -317,7 +319,7 @@ async function inferCast(p) {
   out.usedLlm = true;
   let reply = '';
   try {
-    reply = await o.call(castMessages(o.source));
+    reply = await o.call(castMessages(o.source, o.systemPrompt));
   } catch (e) {
     out.error = '推断人物失败: ' + ((e && e.message) || e);
     return out;
@@ -393,6 +395,8 @@ function roleNameFor(map, n) {
 
 module.exports = {
   MAX_SPEAKERS,
+  DEFAULT_CAST_PROMPT: CAST_SYSTEM,      // 设置页的「角色分析提示词」用它做默认值/占位
+  DEFAULT_MAP_PROMPT: MAP_SYSTEM,
   extractJsonObject, parseJsonObject,
   sourceBrief, castMessages, parseCastReply, speakerCountFromCast, normalizeCharacter,
   mapMessages, sampleBySpeaker, parseMapReply,

@@ -512,9 +512,9 @@
 
 </div><!-- /#home-view -->
 
-<!-- 稿件详细信息：替代项目列表中的信息编辑与进度二级窗口 -->
+<!-- 稿件详细信息：与新建项目共用同一套 2×2 工作台骨架 -->
 <div id="detail-view" class="workspace-page" hidden>
-  <div class="page-inner detail-inner">
+  <div class="page-inner ws-inner">
     <header class="page-head">
       <button type="button" class="btn page-back" id="detail-back" data-ico="chevronDown">返回项目</button>
       <span class="page-brand" data-ico="film">SubFabric <span>/ 详细信息</span></span>
@@ -524,64 +524,144 @@
       <h1>详细信息</h1>
       <p>查看稿件资料与处理进度，也可以修改项目名称。</p>
     </div>
-    <div class="detail-layout">
-      <form id="detail-form" class="detail-info page-surface" aria-labelledby="detail-info-title">
-        <div class="detail-section-head">
+
+    <div class="ws-grid">
+      <!-- ① 稿件预览 -->
+      <section class="ws-panel page-surface" aria-labelledby="dt-preview-title">
+        <div class="ws-head">
           <div>
-            <div class="detail-section-kicker">PROJECT</div>
-            <h2 id="detail-info-title">项目信息</h2>
+            <div class="ws-kicker">PREVIEW</div>
+            <h2 id="dt-preview-title">稿件预览</h2>
           </div>
-          <span class="detail-format" id="detail-format">—</span>
+          <span class="ws-badge" id="detail-format">—</span>
         </div>
-        <label class="detail-field" for="detail-name">
+        <p class="ws-sub">从链接创建的项目会带上标题、作者和简介；本地文件没有这些信息。</p>
+        <div class="ws-preview">
+          <img class="ws-thumb" id="detail-thumb" alt="" hidden>
+          <div class="ws-preview-empty" id="detail-preview-empty">
+            <span class="ws-play" aria-hidden="true"></span>
+            <div class="ws-empty-title">还没有读取到视频信息</div>
+            <div class="ws-empty-sub">本地视频没有在线标题与简介，但字幕和进度照常显示。</div>
+          </div>
+        </div>
+        <div class="ws-meta">
+          <div class="ws-meta-row"><span>标题</span><strong id="detail-m-title">—</strong></div>
+          <div class="ws-meta-row"><span>作者</span><strong id="detail-m-uploader">—</strong></div>
+          <div class="ws-meta-row"><span>时长</span><strong id="detail-m-duration">—</strong></div>
+          <div class="ws-meta-row ws-meta-row-desc"><span>简介</span><strong id="detail-m-desc">—</strong></div>
+        </div>
+      </section>
+
+      <!-- ② 输入与配置 -->
+      <form id="detail-form" class="ws-panel page-surface" aria-labelledby="dt-input-title">
+        <div class="ws-head">
+          <div>
+            <div class="ws-kicker">INPUT</div>
+            <h2 id="dt-input-title">输入与配置</h2>
+          </div>
+        </div>
+        <p class="ws-sub">项目资料与来源文件；名称只用于项目列表显示。</p>
+        <label class="ws-field" for="detail-name">
           <span>项目名称</span>
           <input type="text" id="detail-name" class="np-input" maxlength="60" required spellcheck="false" autocomplete="off" placeholder="请输入项目名称">
         </label>
-        <div class="detail-meta">
-          <div class="detail-meta-row"><span>视频</span><strong id="detail-video">读取中…</strong></div>
-          <div class="detail-meta-row"><span>字幕</span><strong id="detail-subtitle">—</strong></div>
-          <div class="detail-meta-row"><span>创建时间</span><strong id="detail-created">—</strong></div>
-          <div class="detail-meta-row"><span>最近修改</span><strong id="detail-modified">—</strong></div>
+        <div class="ws-meta">
+          <div class="ws-meta-row"><span>视频</span><strong id="detail-video">读取中…</strong></div>
+          <div class="ws-meta-row"><span>字幕</span><strong id="detail-subtitle">—</strong></div>
+          <div class="ws-meta-row"><span>创建时间</span><strong id="detail-created">—</strong></div>
+          <div class="ws-meta-row"><span>最近修改</span><strong id="detail-modified">—</strong></div>
         </div>
-        <p class="detail-hint">项目名称仅用于项目列表显示，不会更改原视频或字幕文件。</p>
+        <p class="ws-hint">项目名称仅用于项目列表显示，不会更改原视频或字幕文件。</p>
         <div class="detail-error" id="detail-error" role="status" aria-live="polite" hidden></div>
-        <div class="detail-actions">
+        <div class="ws-actions">
           <button type="button" class="btn" id="detail-cancel">返回项目</button>
           <button type="submit" class="btn btn-accent" id="detail-save">保存信息</button>
         </div>
       </form>
 
-      <section class="dp-box page-surface" id="detail-progress" aria-labelledby="detail-progress-title" hidden>
-        <div class="dp-head">
+      <!-- ③ 处理进度 -->
+      <section class="ws-panel page-surface" id="detail-progress" aria-labelledby="dt-progress-title">
+        <div class="ws-head">
           <div>
-            <div class="detail-section-kicker">PROCESS</div>
-            <h2 class="dp-title" id="detail-progress-title">初稿处理进度</h2>
+            <div class="ws-kicker">PROCESS</div>
+            <h2 id="dt-progress-title">处理进度</h2>
           </div>
-          <span class="detail-live"><i></i>实时状态</span>
+          <span class="ws-badge ws-badge-live"><i></i>实时进度</span>
         </div>
+        <p class="ws-sub">各环节状态依次点亮，用状态流转和处理记录。</p>
         <div class="dp-steps" id="dp-steps"></div>
         <div class="dp-bar"><div class="dp-bar-in" id="dp-bar-in"></div></div>
         <div class="dp-line">
           <span id="dp-pct">0%</span>
           <span class="dp-msg" id="dp-msg"></span>
         </div>
-        <div class="dp-log-label">处理日志</div>
-        <pre class="dp-log" id="dp-log"></pre>
-        <div class="dp-actions">
-          <button type="button" class="btn" id="dp-skip" disabled>跳过此步</button>
-          <button type="button" class="btn btn-accent" id="dp-retry" hidden>重试</button>
-          <span class="dp-retries" id="dp-retries"></span>
-          <span class="dp-spacer"></span>
-          <button type="button" class="btn" id="dp-close">返回项目</button>
+        <div class="ws-idle" id="dp-idle">
+          <p class="ws-idle-title">尚未开始</p>
+          <p>这个项目没有初稿任务，直接打开编辑器改字幕就行。</p>
+        </div>
+        <div id="dp-body">
+          <div class="dp-log-label">处理日志</div>
+          <pre class="dp-log" id="dp-log"></pre>
+          <div class="dp-actions">
+            <button type="button" class="btn" id="dp-skip" disabled>跳过此步</button>
+            <button type="button" class="btn btn-accent" id="dp-retry" hidden>重试</button>
+            <span class="dp-retries" id="dp-retries"></span>
+            <span class="dp-spacer"></span>
+            <button type="button" class="btn" id="dp-close">返回项目</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ④ 生成设置 -->
+      <section class="ws-panel page-surface" id="dt-settings-panel" aria-labelledby="dt-set-title">
+        <div class="ws-head">
+          <div>
+            <div class="ws-kicker">GENERATE</div>
+            <h2 id="dt-set-title">生成设置</h2>
+          </div>
+          <span class="ws-badge" id="dt-set-state">—</span>
+        </div>
+        <p class="ws-sub">语音识别、翻译与分角色的参数；改完点下面的保存。</p>
+
+        <div class="ws-group-title">语音识别</div>
+        <div class="ws-row">
+          <select id="dt-model-sel" class="np-select ws-fld"></select>
+          <button type="button" class="btn btn-mini" id="dt-open-settings">管理模型</button>
+        </div>
+
+        <div class="ws-group-title">翻译模型</div>
+        <div class="ws-row"><select id="dt-set-provider" class="np-select ws-fld"></select></div>
+
+        <div class="ws-group-title">模型名称</div>
+        <div class="ws-row"><input type="text" id="dt-set-model" class="np-input ws-fld" spellcheck="false" placeholder="deepseek-chat"></div>
+
+        <div class="ws-group-title">识别后处理 · 分角色识别</div>
+        <div class="ws-checks">
+          <label class="ws-check"><input type="checkbox" id="dt-set-cast"> 开启</label>
+          <label class="ws-check"><input type="checkbox" id="dt-set-speakers"> 自动区分说话人</label>
+        </div>
+        <p class="ws-hint" id="dt-set-speakers-note">说话人是在创建初稿时定下的，这里只显示当时的选择。</p>
+
+        <div class="ws-group-title">识别来源</div>
+        <div class="ws-row"><select id="dt-set-source" class="np-select ws-fld"></select></div>
+
+        <div class="ws-group-title">翻译提示词</div>
+        <textarea id="dt-set-prompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+
+        <div class="ws-group-title">角色分析提示词</div>
+        <textarea id="dt-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+
+        <div class="ws-actions">
+          <button type="button" class="btn btn-accent" id="dt-set-save">保存设置</button>
         </div>
       </section>
     </div>
   </div>
 </div>
 
-<!-- 新建项目：与项目列表并列的独立页面 -->
+<!-- 新建项目：与项目列表并列的独立页面（与详细信息共用 2×2 工作台骨架） -->
 <div id="np-view" class="workspace-page" hidden>
-  <div class="page-inner">
+  <div class="page-inner ws-inner">
     <header class="page-head">
       <button type="button" class="btn page-back" id="np-back" data-ico="chevronDown">返回项目</button>
       <span class="page-brand" data-ico="film">SubFabric <span>/ 新建项目</span></span>
@@ -591,69 +671,181 @@
       <h1>新建项目</h1>
       <p>选择导入字幕或创建初稿，准备好素材后即可开始编辑。</p>
     </div>
-    <div class="np-box page-surface">
-      <div class="np-title">项目资料</div>
-      <div class="np-name-row">
-        <span class="np-lbl">项目名称</span>
-        <input type="text" id="np-name" class="np-input" spellcheck="false" maxlength="60" placeholder="不填则使用视频文件名">
-      </div>
-      <div class="np-modes">
-        <button type="button" class="np-mode active" id="np-mode-import" aria-pressed="true">
-          <span class="npm-icon" data-ico="file"></span>
-          <span class="npm-name">导入已有字幕</span>
-          <span class="npm-desc">选好视频和字幕，建完项目自动提取音频和波形</span>
-        </button>
-        <button type="button" class="np-mode" id="np-mode-draft" aria-pressed="false">
-          <span class="npm-icon" data-ico="mic"></span>
-          <span class="npm-name">创建初稿</span>
-          <span class="npm-desc">识别视频里的语音，自动生成字幕（仅英语，模型在下面选）</span>
-        </button>
-      </div>
-      <div class="np-file-row" id="np-row-url">
-        <span class="np-lbl">链接</span>
-        <input type="text" id="np-url" class="np-input" spellcheck="false" placeholder="粘贴 bilibili / YouTube 链接，自动下载并生成初稿">
-        <span class="np-lbl np-part-lbl">分P</span>
-        <input type="number" id="np-part" class="np-input np-part" min="1" max="9999" step="1" value="1" title="bilibili 多P视频下载第几个分P（默认 1）；链接里带 ?p=3 时以链接为准">
-      </div>
-      <div class="np-file-row">
-        <span class="np-lbl">视频</span>
-        <span class="np-file" id="np-video-name">还没选</span>
-        <button type="button" class="btn btn-mini" id="np-pick-video">浏览…</button>
-      </div>
-      <div class="np-file-row" id="np-row-sub">
-        <span class="np-lbl">字幕</span>
-        <span class="np-file" id="np-sub-name">还没选</span>
-        <button type="button" class="btn btn-mini" id="np-pick-sub">浏览…</button>
-      </div>
-      <div class="np-file-row np-draft-only" id="np-row-word" hidden>
-        <span class="np-lbl">逐词</span>
-        <label class="np-switch">
-          <input type="checkbox" id="np-word" checked>
-          <span id="np-word-desc">开启 → 生成 ASS 逐词字幕</span>
-        </label>
-      </div>
-      <div class="np-file-row np-draft-only" id="np-row-spk" hidden>
-        <span class="np-lbl">说话人</span>
-        <label class="np-switch">
-          <input type="checkbox" id="np-speakers">
-          <span>区分说话人（中文行标 [SPKn]，按颜色区分）</span>
-        </label>
-        <input type="number" id="np-spk-count" class="np-input" min="1" max="12" placeholder="6"
-               style="max-width:74px;flex:0 0 74px" title="视频里有几个说话人；留空默认按 6 个聚类">
-      </div>
-      <div class="np-model np-draft-only" id="np-model" hidden>
-        <div class="np-file-row">
-          <span class="np-lbl">识别模型</span>
-          <select id="np-model-sel" class="np-select" title="用什么模型识别语音"></select>
-          <button type="button" class="btn btn-mini" id="np-open-settings">管理模型</button>
+
+    <div class="ws-grid">
+      <!-- ① 稿件预览 -->
+      <section class="ws-panel page-surface" aria-labelledby="np-preview-title">
+        <div class="ws-head">
+          <div>
+            <div class="ws-kicker">PREVIEW</div>
+            <h2 id="np-preview-title">稿件预览</h2>
+          </div>
+          <span class="ws-badge is-muted" id="np-preview-badge">等待确认</span>
         </div>
-        <div class="np-dl-msg" id="np-dl-msg" hidden></div>
-      </div>
-      <div class="np-hint" id="np-hint">音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存</div>
-      <div class="np-actions">
-        <button type="button" class="btn" id="np-cancel">返回项目</button>
-        <button type="button" class="btn btn-accent" id="np-create" disabled>创建项目</button>
-      </div>
+        <p class="ws-sub">视频加载后，此处会显示初稿、标题、作者和简介。</p>
+        <div class="ws-preview">
+          <img class="ws-thumb" id="np-thumb" alt="" hidden>
+          <div class="ws-preview-empty" id="np-preview-empty">
+            <span class="ws-play" aria-hidden="true"></span>
+            <div class="ws-empty-title">还没有读取到视频信息</div>
+            <div class="ws-empty-sub">把视频地址填到右侧，点一下「解析」就能先确认目标视频是不是你要的那支。</div>
+          </div>
+        </div>
+        <div class="ws-meta">
+          <div class="ws-meta-row"><span>标题</span><strong id="np-m-title">—</strong></div>
+          <div class="ws-meta-row"><span>作者</span><strong id="np-m-uploader">—</strong></div>
+          <div class="ws-meta-row"><span>时长</span><strong id="np-m-duration">—</strong></div>
+          <div class="ws-meta-row ws-meta-row-desc"><span>简介</span><strong id="np-m-desc">—</strong></div>
+        </div>
+      </section>
+
+      <!-- ② 输入与配置 -->
+      <section class="ws-panel page-surface" aria-labelledby="np-input-title">
+        <div class="ws-head">
+          <div>
+            <div class="ws-kicker">INPUT</div>
+            <h2 id="np-input-title">输入与配置</h2>
+          </div>
+        </div>
+        <p class="ws-sub">各环节参数都在这里，确认没问题再开始生成。</p>
+
+        <label class="ws-field" for="np-name">
+          <span>项目名称</span>
+          <input type="text" id="np-name" class="np-input" spellcheck="false" maxlength="60" placeholder="不填则使用视频文件名">
+        </label>
+
+        <div class="ws-group-title">生成方式</div>
+        <div class="np-modes">
+          <button type="button" class="np-mode active" id="np-mode-import" aria-pressed="true">
+            <span class="npm-icon" data-ico="file"></span>
+            <span class="npm-name">导入已有字幕</span>
+            <span class="npm-desc">选好视频和字幕，建完项目自动提取音频和波形</span>
+          </button>
+          <button type="button" class="np-mode" id="np-mode-draft" aria-pressed="false">
+            <span class="npm-icon" data-ico="mic"></span>
+            <span class="npm-name">创建初稿</span>
+            <span class="npm-desc">识别视频里的语音，自动生成字幕（仅英语，模型在下面选）</span>
+          </button>
+        </div>
+
+        <div class="ws-group-title">视频来源</div>
+        <div class="np-file-row" id="np-row-url">
+          <span class="np-lbl">链接</span>
+          <input type="text" id="np-url" class="np-input" spellcheck="false" placeholder="粘贴链接或 BV 号" title="支持 bilibili / YouTube 链接，也可以直接粘 BV 号；会自动下载视频并生成初稿">
+          <button type="button" class="btn btn-mini" id="np-probe" title="只读取标题/作者/简介，不下载视频">解析</button>
+        </div>
+        <div class="np-file-row" id="np-row-part">
+          <span class="np-lbl np-part-lbl">分P</span>
+          <input type="number" id="np-part" class="np-input np-part" min="1" max="9999" step="1" value="1" title="bilibili 多P视频下载第几个分P（默认 1）；链接里带 ?p=3 时以链接为准">
+        </div>
+        <div class="np-file-row">
+          <span class="np-lbl">视频</span>
+          <span class="np-file" id="np-video-name">还没选</span>
+          <button type="button" class="btn btn-mini" id="np-pick-video">浏览…</button>
+        </div>
+        <div class="np-file-row" id="np-row-sub">
+          <span class="np-lbl">字幕</span>
+          <span class="np-file" id="np-sub-name">还没选</span>
+          <button type="button" class="btn btn-mini" id="np-pick-sub">浏览…</button>
+        </div>
+
+        <div class="np-hint" id="np-hint">音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存</div>
+        <div class="ws-actions">
+          <button type="button" class="btn" id="np-cancel">返回项目</button>
+          <button type="button" class="btn btn-accent" id="np-create" disabled>创建项目</button>
+        </div>
+      </section>
+
+      <!-- ③ 处理进度（创建前是静态预览，创建后进度看项目列表） -->
+      <section class="ws-panel page-surface" aria-labelledby="np-progress-title">
+        <div class="ws-head">
+          <div>
+            <div class="ws-kicker">PROCESS</div>
+            <h2 id="np-progress-title">处理进度</h2>
+          </div>
+          <span class="ws-badge ws-badge-live"><i></i>实时进度</span>
+        </div>
+        <p class="ws-sub">各环节状态依次点亮，用状态流转和处理记录。</p>
+        <div class="dp-steps" id="np-steps"></div>
+        <div class="dp-bar"><div class="dp-bar-in" id="np-bar-in"></div></div>
+        <div class="dp-line">
+          <span id="np-pct">0%</span>
+          <span class="dp-msg" id="np-msg">尚未开始</span>
+        </div>
+        <div class="ws-idle">
+          <p class="ws-idle-title">尚未开始</p>
+          <p>先完成上面的配置，再开始生成。</p>
+          <p>建议先确认左侧「稿件预览」里的标题和作者，再点右下角的按钮。</p>
+        </div>
+      </section>
+
+      <!-- ④ 生成设置 -->
+      <section class="ws-panel page-surface" id="np-settings-panel" aria-labelledby="np-set-title">
+        <div class="ws-head">
+          <div>
+            <div class="ws-kicker">GENERATE</div>
+            <h2 id="np-set-title">生成设置</h2>
+          </div>
+          <span class="ws-badge" id="np-set-state">—</span>
+        </div>
+        <p class="ws-sub">语音识别、翻译与分角色的参数；改完点下面的保存。</p>
+
+        <!-- 语音识别 / 识别来源 / 分角色：只有「创建初稿」用得上，导入字幕模式下整组收起 -->
+        <div class="np-draft-only" id="np-voice-group">
+          <div class="ws-group-title">语音识别</div>
+          <div class="np-model" id="np-model">
+            <div class="ws-row">
+              <select id="np-model-sel" class="np-select ws-fld" title="用什么模型识别语音"></select>
+              <button type="button" class="btn btn-mini" id="np-open-settings">管理模型</button>
+            </div>
+            <div class="np-dl-msg" id="np-dl-msg" hidden></div>
+          </div>
+        </div>
+
+        <div class="ws-group-title">翻译模型</div>
+        <div class="ws-row"><select id="np-set-provider" class="np-select ws-fld"></select></div>
+
+        <div class="ws-group-title">模型名称</div>
+        <div class="ws-row"><input type="text" id="np-set-model" class="np-input ws-fld" spellcheck="false" placeholder="deepseek-chat"></div>
+
+        <div class="np-draft-only" id="np-cast-group">
+          <div class="ws-group-title">识别后处理 · 分角色识别</div>
+          <div class="ws-checks">
+            <label class="ws-check"><input type="checkbox" id="np-set-cast"> 开启</label>
+          </div>
+          <div class="np-file-row" id="np-row-word" hidden>
+            <span class="np-lbl">逐词</span>
+            <label class="np-switch">
+              <input type="checkbox" id="np-word" checked>
+              <span id="np-word-desc">开启 → 生成 ASS 逐词字幕</span>
+            </label>
+          </div>
+          <div class="np-file-row" id="np-row-spk" hidden>
+            <span class="np-lbl">说话人</span>
+            <label class="np-switch">
+              <input type="checkbox" id="np-speakers">
+              <span>区分说话人（中文行标 [SPKn]，按颜色区分）</span>
+            </label>
+            <input type="number" id="np-spk-count" class="np-input" min="1" max="12" placeholder="6"
+                   style="max-width:74px;flex:0 0 74px" title="视频里有几个说话人；留空默认按 6 个聚类">
+          </div>
+        </div>
+
+        <div class="np-draft-only" id="np-source-group">
+          <div class="ws-group-title">识别来源</div>
+          <div class="ws-row"><select id="np-set-source" class="np-select ws-fld"></select></div>
+        </div>
+
+        <div class="ws-group-title">翻译提示词</div>
+        <textarea id="np-set-prompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+
+        <div class="ws-group-title">角色分析提示词</div>
+        <textarea id="np-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+
+        <div class="ws-actions">
+          <button type="button" class="btn btn-accent" id="np-set-save">保存设置</button>
+        </div>
+      </section>
     </div>
   </div>
 </div>

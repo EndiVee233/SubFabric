@@ -61,6 +61,9 @@ export function initProjects(ctx) {
     applyHash();
   }
   function returnFromSettings() {
+    // 设置页里改了什么（翻译配置 / 分角色 / 下载或删了模型）这边都不知道，
+    // 所以统一作废生成设置面板的缓存，下次进页面重新拉。
+    genAsr = genTr = genCast = null;
     if (settingsOpenedFromApp) history.back();
     else replaceRoute(settingsReturnRoute === '#/settings' ? '#/home' : settingsReturnRoute);
   }
@@ -72,12 +75,213 @@ export function initProjects(ctx) {
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  /* ─────────── 生成设置面板（新建项目 / 详细信息 共用同一份逻辑） ───────────
+   * 两个页面的面板结构一模一样，只有 id 前缀不同（np- / dt-），所以逻辑只写一份。
+   * 语音识别 / 翻译模型 / 模型名称 / 翻译提示词 / 角色分析提示词 / 分角色开关
+   * 都是**全局设置**（asr/settings.json），点「保存设置」才写回；
+   * 「自动区分说话人」是项目级参数：新建时选定，详细信息里只读回显。 */
+  const ENGINE_LABEL = {
+    'whisper.cpp': '本地 · whisper.cpp',
+    'sherpa-onnx': '本地 · Parakeet',
+    nemo: '本地 · NeMo（多说话人）',
+    bcut: '云端 · 必剪 ASR',
+    capcut: '云端 · 剪映 ASR',
+  };
+  const engineLabel = (e) => ENGINE_LABEL[e] || (e ? String(e) : '未知引擎');
+
+  const GEN_IDS = {
+    np: { asr: '#np-model-sel', provider: '#np-set-provider', model: '#np-set-model',
+          cast: '#np-set-cast', source: '#np-set-source',
+          prompt: '#np-set-prompt', castPrompt: '#np-set-castprompt',
+          save: '#np-set-save', state: '#np-set-state' },
+    dt: { asr: '#dt-model-sel', provider: '#dt-set-provider', model: '#dt-set-model',
+          cast: '#dt-set-cast', source: '#dt-set-source',
+          prompt: '#dt-set-prompt', castPrompt: '#dt-set-castprompt',
+          save: '#dt-set-save', state: '#dt-set-state' },
+  };
+  const genEls = (scope) => {
+    const src = GEN_IDS[scope] || {}, out = {};
+    for (const k of Object.keys(src)) out[k] = $(src[k]);
+    return out;
+  };
+  let genAsr = null, genTr = null, genCast = null;    // 三份缓存，两个面板共用
+
+  function genSetState(scope, text) {
+    const el = $(GEN_IDS[scope].state);
+    if (el) el.textContent = text;
+  }
+  /** 按「识别来源」选中的引擎过滤「语音识别」下拉 */
+  function genFillModels(scope) {
+    const e = genEls(scope);
+    if (!e.asr) return;
+    const pool = ((genAsr && genAsr.models) || []).filter(m => m.ready && m.draftAllowed !== false);
+    const want = e.source ? e.source.value : '';
+    const list = want ? pool.filter(m => (m.engine || '') === want) : pool;
+    const keep = e.asr.value;
+    e.asr.innerHTML = list.length
+      ? list.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
+      : '<option value="">（该来源下没有可用模型，去设置里下载）</option>';
+    if (keep && list.some(m => m.id === keep)) e.asr.value = keep;
+    else if (genAsr && genAsr.selectedModel && list.some(m => m.id === genAsr.selectedModel)) e.asr.value = genAsr.selectedModel;
+  }
+  /** 把三份配置铺到某个面板上 */
+  function genRender(scope) {
+    const e = genEls(scope);
+    if (genAsr) {
+      if (e.source) {
+        const engines = [];
+        let selEngine = '';
+        for (const m of genAsr.models || []) {
+          if (!(m.ready && m.draftAllowed !== false) || !m.engine) continue;
+          if (engines.indexOf(m.engine) < 0) engines.push(m.engine);
+          // 记住当前默认模型属于哪个引擎：没得继承时才用它当「识别来源」，免得把默认模型换掉
+          if (m.id === genAsr.selectedModel) selEngine = m.engine;
+        }
+        const keep = e.source.value;
+        e.source.innerHTML = engines.length
+          ? engines.map(x => '<option value="' + esc(x) + '">' + esc(engineLabel(x)) + '</option>').join('')
+          : '<option value="">（没有可用引擎）</option>';
+        if (keep && engines.indexOf(keep) >= 0) e.source.value = keep;
+        else if (selEngine) e.source.value = selEngine;
+      }
+      genFillModels(scope);
+    }
+    if (genTr) {
+      const presets = genTr.presets || [];
+      const cfg = genTr.cfg || {};
+      if (e.provider) {
+        e.provider.innerHTML = presets.map(p => '<option value="' + esc(p.id) + '">' + esc(p.name || p.id) + '</option>').join('');
+        if (cfg.provider) e.provider.value = cfg.provider;
+      }
+      if (e.model) {
+        const p = presets.find(x => x.id === cfg.provider) || {};
+        e.model.value = cfg.model || p.model || '';
+        e.model.placeholder = p.model || 'deepseek-chat';
+      }
+      if (e.prompt) e.prompt.value = cfg.prompt || '';
+    }
+    if (genCast) {
+      if (e.cast) e.cast.checked = genCast.enabled !== false;
+      if (e.castPrompt) e.castPrompt.value = genCast.prompt || '';
+    }
+  }
+  /** 拉三份配置；有缓存就不重复拉（force=true 时强制刷新） */
+  async function genLoad(scope, force) {
+    try {
+      if (force || !genAsr) genAsr = await (await fetch('/api/asr/status')).json();
+      if (force || !genTr) genTr = await (await fetch('/api/translate/config')).json();
+      if (force || !genCast) genCast = await (await fetch('/api/cast/config')).json();
+    } catch { /* 拉不到就保持旧值，别打断页面 */ }
+    genRender(scope);
+    genSetState(scope, (genTr && genTr.ready) ? '已配置' : '翻译未配置');
+  }
+  /** 保存：只写全局那几项；项目级的（逐词/说话人）不在这里动 */
+  async function genSave(scope) {
+    const e = genEls(scope);
+    const btn = e.save;
+    const oldLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    try {
+      const jobs = [
+        fetch('/api/translate/config', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: e.provider ? e.provider.value : undefined,
+            model: e.model ? e.model.value.trim() : undefined,
+            prompt: e.prompt ? e.prompt.value : undefined,
+          }),
+        }),
+        fetch('/api/cast/config', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: !!(e.cast && e.cast.checked), prompt: e.castPrompt ? e.castPrompt.value : '' }),
+        }),
+      ];
+      if (e.asr && e.asr.value) {
+        jobs.push(fetch('/api/asr/select', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId: e.asr.value }),
+        }));
+      }
+      const rs = await Promise.all(jobs);
+      const bad = rs.find(r => !r.ok);
+      if (bad) {
+        const m = await bad.json().catch(() => ({}));
+        toast(m.error || '保存失败', 4600);
+        genSetState(scope, '保存失败');
+        return;
+      }
+      genAsr = genTr = genCast = null;      // 让两个面板下次都拿到新值
+      genSetState(scope, '已保存');
+      toast('生成设置已保存');
+    } catch (err) {
+      genSetState(scope, '保存失败');
+      toast('保存失败: ' + err.message, 4000);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldLabel; }
+    }
+  }
+  for (const scope of ['np', 'dt']) {
+    const e = genEls(scope);
+    if (e.save) e.save.addEventListener('click', () => genSave(scope));
+    if (e.source) e.source.addEventListener('change', () => { genFillModels(scope); genSetState(scope, '未保存'); });
+    for (const k of ['provider', 'model', 'prompt', 'castPrompt', 'cast']) {
+      const el = e[k];
+      if (!el) continue;
+      el.addEventListener((el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input',
+        () => genSetState(scope, '未保存'));
+    }
+  }
+
+  /* ─────────── 稿件预览：把视频元数据铺到预览面板 ─────────── */
+  function fmtDuration(sec) {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    if (!s) return '—';
+    const pad = (n) => String(n).padStart(2, '0');
+    const h = Math.floor(s / 3600);
+    return (h ? h + ':' : '') + pad(Math.floor((s % 3600) / 60)) + ':' + pad(s % 60);
+  }
+  /** prefix: 'np' | 'detail' —— 两页预览面板的 id 前缀不同，结构一样 */
+  function fillPreview(prefix, source) {
+    const s = source || null;
+    const has = !!(s && (s.title || s.uploader || s.description));
+    const thumb = $('#' + prefix + '-thumb');
+    const empty = $('#' + prefix + '-preview-empty');
+    if (thumb) {
+      if (s && s.thumbnail) {
+        // b 站图床有防盗链：带上 localhost 的 Referer 会 403，索性不发
+        thumb.referrerPolicy = 'no-referrer';
+        if (thumb.getAttribute('src') !== s.thumbnail) thumb.src = s.thumbnail;
+        thumb.alt = s.title || '视频缩略图';
+        thumb.hidden = false;
+      } else {
+        thumb.hidden = true;
+        thumb.removeAttribute('src');
+      }
+      if (!thumb.dataset.errBound) {
+        thumb.dataset.errBound = '1';
+        // 图裂了别留个破图标：收起来，退回空态说明（文字信息还在下面）
+        thumb.addEventListener('error', () => {
+          thumb.hidden = true;
+          const box = $('#' + prefix + '-preview-empty');
+          if (box) box.hidden = false;
+        });
+      }
+    }
+    if (empty) empty.hidden = !!(s && (s.thumbnail || has));
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = (v === undefined || v === null || v === '') ? '—' : String(v); };
+    set('#' + prefix + '-m-title', s && s.title);
+    set('#' + prefix + '-m-uploader', s && s.uploader);
+    const durEl = $('#' + prefix + '-m-duration');
+    if (durEl) durEl.textContent = (s && s.duration) ? fmtDuration(s.duration) : '—';
+    set('#' + prefix + '-m-desc', s && s.description);
+    return has;
+  }
+
   let detailProjectId = '';
   const detailForm = $('#detail-form');
   const detailName = $('#detail-name');
   const detailError = $('#detail-error');
   const detailSave = $('#detail-save');
-  const detailProgress = $('#detail-progress');
   function openProjectDetails(project) {
     const id = project && project.id;
     if (!id) return;
@@ -98,7 +302,8 @@ export function initProjects(ctx) {
     $('#detail-format').textContent = '—';
     $('#detail-created').textContent = '—';
     $('#detail-modified').textContent = '—';
-    detailProgress.hidden = true;
+    // 处理进度面板在 2×2 骨架里是常驻的四块之一，不能整块隐藏
+    // （有没有初稿任务只决定里面显示日志还是空态说明，见下面 dp-idle / dp-body）
     let project;
     try {
       const response = await fetch('/api/projects/' + encodeURIComponent(id));
@@ -118,12 +323,28 @@ export function initProjects(ctx) {
     $('#detail-format').textContent = String((project.subtitle && project.subtitle.format) || (project.draft ? '初稿' : '—')).toUpperCase();
     $('#detail-created').textContent = fmtDate(project.createdAt) || '—';
     $('#detail-modified').textContent = fmtDate(project.modifiedAt) || '—';
-    detailProgress.hidden = !project.draft;
-    // 没有初稿任务时右边整列是空的 → 让信息面板单独居中，别留一块空档
-    const layout = document.querySelector('.detail-layout');
-    if (layout) layout.classList.toggle('is-single', !project.draft);
-    if (project.draft) openProgress(id);
-    else { stopDp(); dpId = ''; }
+    // 稿件预览：从链接创建的项目带 source（标题/作者/简介/缩略图），本地文件没有
+    fillPreview('detail', project.source);
+    // 生成设置里的全局项；「自动区分说话人」是项目级参数，这里只回显当时的选择
+    const spk = $('#dt-set-speakers');
+    if (spk) { spk.checked = !!(project.draft && project.draft.speakers); spk.disabled = true; }
+    genLoad('dt');
+    // 处理进度：有初稿任务才给日志与操作按钮，否则换成一句空态说明（别留个空洞）
+    const live = !!project.draft;
+    const idleEl = $('#dp-idle'), bodyEl = $('#dp-body');
+    if (idleEl) idleEl.hidden = live;
+    if (bodyEl) bodyEl.hidden = !live;
+    if (live) {
+      openProgress(id);
+    } else {
+      stopDp();
+      dpId = '';
+      renderDpSteps(-1);
+      $('#dp-bar-in').style.width = '0%';
+      $('#dp-bar-in').classList.remove('err', 'ok');
+      $('#dp-pct').textContent = '0%';
+      $('#dp-msg').textContent = '尚未开始';
+    }
   }
   $('#detail-back').addEventListener('click', returnFromDetails);
   $('#detail-cancel').addEventListener('click', returnFromDetails);
@@ -596,8 +817,12 @@ export function initProjects(ctx) {
   let dpTimer = 0, dpId = '', dpRunning = false, dpRetryable = false;
   function stopDp() { clearInterval(dpTimer); dpTimer = 0; }
 
-  function renderDpSteps(curIdx) {
-    $('#dp-steps').innerHTML = DP_STEPS.map((s, i) => {
+  /** 步骤条渲染。target 缺省是详细信息页的 #dp-steps；
+   *  新建项目页传 '#np-steps' 画一条全灰的静态预览（curIdx = -1）。 */
+  function renderDpSteps(curIdx, target) {
+    const box = $(target || '#dp-steps');
+    if (!box) return;
+    box.innerHTML = DP_STEPS.map((s, i) => {
       const cls = !s.enabled ? 'off' : (i < curIdx ? 'done' : (i === curIdx ? 'current' : ''));
       const tip = s.enabled ? s.name : (s.name + '（尚未实现）');
       return `<span class="dp-step ${cls}" title="${esc(tip)}"><span class="n">${i + 1}</span>${esc(s.name)}</span>`;
@@ -1061,8 +1286,9 @@ export function initProjects(ctx) {
     });
   }
   function openSettings(tabName) {
-    settingsReturnRoute = location.hash === '#/new' ? '#/new'
-      : location.hash.startsWith('#/project/') || location.hash === '#/editor' ? location.hash : '#/home';
+    const h = location.hash;
+    settingsReturnRoute = h === '#/new' ? '#/new'
+      : (h.startsWith('#/project/') || h === '#/editor' || h.startsWith('#/details/')) ? h : '#/home';
     settingsOpenedFromApp = true;
     if (tabName === 'models') $('.st-tab[data-stp="models"]').click();
     location.hash = '#/settings';
@@ -1326,6 +1552,10 @@ export function initProjects(ctx) {
   // 浏览器选的视频: File 对象暂存(npMode 提交时经 /api/upload-video 落盘),
   // path 置为 'upload:<name>' 占位 —— npMaybeEnable 只判断 path 非空, 不关心来源
   let npVideoFile = null;
+  // 「解析」结果缓存 { url, part, source }：同一链接不重复打远端接口；
+  // 只读元数据（服务端 --simulate），不下载视频。
+  let npProbeSource = null;
+  let npProbing = false;
 
   function npSetMode(mode) {
     npMode = mode;
@@ -1335,10 +1565,16 @@ export function initProjects(ctx) {
     $('#np-mode-draft').setAttribute('aria-pressed', String(mode === 'draft'));
     const draft = mode === 'draft';
     $('#np-row-sub').hidden = draft;
-  $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
+    $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
+    $('#np-row-part').hidden = !draft;     // 分P 跟着链接走
     $('#np-row-word').hidden = !draft;
     $('#np-row-spk').hidden = !draft;
-    $('#np-model').hidden = !draft;
+    // 语音识别 / 识别来源 / 分角色识别：整组跟着模式收起
+    // （这三组只有「创建初稿」用得上；翻译模型/提示词是全局项，两种模式都留着）
+    for (const sel of ['#np-voice-group', '#np-cast-group', '#np-source-group']) {
+      const g = $(sel);
+      if (g) g.hidden = !draft;
+    }
     $('#np-hint').textContent = draft
       ? '创建后在后台识别，进度看项目列表'
       : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
@@ -1352,19 +1588,16 @@ export function initProjects(ctx) {
     npMaybeEnable();
   }
 
-  /** 拉取识别模型状态: 把就绪的模型填进初稿对话框的下拉 */
-  async function refreshAsrStatus() {
-    try { asrStatus = await (await fetch('/api/asr/status')).json(); }
-    catch { asrStatus = { ready: false, models: [] }; }
-    const sel = $('#np-model-sel');
-    if (sel) {
-      // 只能重新识别的模型(如 multitalker)不进创建初稿的下拉 —— 它由「设置 → 重新识别模型」使用
-      const ready = (asrStatus.models || []).filter(m => m.ready && m.draftAllowed !== false);
-      sel.innerHTML = ready.length
-        ? ready.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
-        : '<option value="">（没有可用模型，去设置里下载）</option>';
-      if (asrStatus.selectedModel && ready.some(m => m.id === asrStatus.selectedModel)) sel.value = asrStatus.selectedModel;
+  /** 拉取识别模型状态: 填「识别来源」+「语音识别」两个下拉
+   *  —— 走 genRender 的统一通道，避免和生成设置面板抢同一个 select。 */
+  async function refreshAsrStatus(force) {
+    if (force || !genAsr) {
+      try { genAsr = await (await fetch('/api/asr/status')).json(); }
+      catch { genAsr = { ready: false, models: [] }; }
     }
+    asrStatus = genAsr;
+    genRender('np');
+    genSetState('np', (genTr && genTr.ready) ? '已配置' : '翻译未配置');
     // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
     const hint = $('#np-hint');
     if (hint && asrStatus.pythonProbe && !asrStatus.pythonProbe.ok) {
@@ -1378,6 +1611,7 @@ export function initProjects(ctx) {
     npVideo.path = npVideo.name = '';
     npSub.name = npSub.text = '';
     npVideoFile = null;
+    npProbeSource = null;
     $('#np-name').value = '';
     $('#np-word').checked = true;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
@@ -1391,8 +1625,23 @@ export function initProjects(ctx) {
     $('#np-sub-name').textContent = '还没选';
     $('#np-sub-name').classList.remove('filled');
     $('#np-create').disabled = true;
+    // 稿件预览回到空态：解析结果不跨次保留，免得看到上一个链接的标题
+    fillPreview('np', null);
+    setNpBadge('等待确认', 'muted');
+    const probeBtn = $('#np-probe');
+    if (probeBtn) { probeBtn.disabled = false; probeBtn.textContent = '解析'; }
+    renderDpSteps(-1, '#np-steps');     // 处理进度：全灰的静态预览（真正跑起来在项目列表看）
     npSetMode('import');
     npSyncSpeakers();       // 逐词默认开 → 说话人可勾; 切到 SRT 时自动取消并禁用
+  }
+  /** 预览面板右上角的状态徽标：tone = '' | 'ok' | 'muted' | 'err' */
+  function setNpBadge(text, tone) {
+    const el = $('#np-preview-badge');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('is-muted', tone === 'muted');
+    el.classList.toggle('is-err', tone === 'err');
+    el.classList.toggle('is-ok', tone === 'ok');
   }
   function npMaybeEnable() {
     const npUrlNow = (($('#np-url') || {}).value || '').trim();
@@ -1416,6 +1665,9 @@ export function initProjects(ctx) {
   $('#np-open-settings').addEventListener('click', () => {
     if (!npSubmitting) openSettings('models');
   });
+  // 详细信息页的「管理模型」走同一条路（设置页返回时回到这个项目的详细信息）
+  const dtOpenSettings = $('#dt-open-settings');
+  if (dtOpenSettings) dtOpenSettings.addEventListener('click', () => openSettings('models'));
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.defaultPrevented || !$('#confirm-overlay').hidden) return;
     if (location.hash === '#/new') leaveNew();
@@ -1529,9 +1781,65 @@ export function initProjects(ctx) {
       if (m) npPartEl.value = String(Math.max(1, parseInt(m[1], 10) || 1));
     });
   }
+  /** 只粘 BV 号 / av 号也认（参考图里的「BV 号」入口）→ 补成完整链接再交给下载内核 */
+  function normalizeVideoUrl(v) {
+    const s = String(v || '').trim();
+    if (!s) return '';
+    if (/^BV[0-9A-Za-z]{10}$/.test(s)) return 'https://www.bilibili.com/video/' + s;
+    if (/^av\d{1,12}$/i.test(s)) return 'https://www.bilibili.com/video/' + s.toLowerCase();
+    return s;
+  }
+  /* 「解析」按钮：只读视频元数据（服务端 --simulate，不下载），把标题/作者/简介/缩略图
+   * 铺到左侧「稿件预览」—— 下载几百 MB 之前先确认是不是要找的那支视频。
+   * 同一链接 + 同一分P 只解析一次，重复点击直接回显缓存。 */
+  const npProbeBtn = $('#np-probe');
+  if (npProbeBtn) npProbeBtn.addEventListener('click', async () => {
+    if (npProbing) return;
+    const url = normalizeVideoUrl((npUrlEl || {}).value);
+    if (!url) { toast('先把视频链接粘进来', 3000); if (npUrlEl) npUrlEl.focus(); return; }
+    const part = Math.max(1, parseInt((npPartEl || {}).value, 10) || 1);
+    if (npProbeSource && npProbeSource.url === url && npProbeSource.part === part) {
+      fillPreview('np', npProbeSource.source);
+      setNpBadge(npProbeSource.source ? '已解析' : '没读到信息', npProbeSource.source ? 'ok' : 'muted');
+      return;
+    }
+    npProbing = true;
+    const oldLabel = npProbeBtn.textContent;
+    npProbeBtn.disabled = true;
+    npProbeBtn.textContent = '解析中…';
+    setNpBadge('解析中…', 'muted');
+    try {
+      const r = await fetch('/api/fetch/probe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, part }),
+      });
+      const m = await r.json().catch(() => ({}));
+      if (!r.ok || m.error) {
+        toast(m.error || '解析失败，检查链接或登录态', 4800);
+        setNpBadge('解析失败', 'err');
+        return;
+      }
+      const src = m.source || null;
+      npProbeSource = { url, part, source: src };
+      const ok = fillPreview('np', src);
+      setNpBadge(ok ? '已解析' : '没读到信息', ok ? 'ok' : 'muted');
+      // 项目名称空着才用标题自动填，别覆盖用户自己写的
+      const nameEl = $('#np-name');
+      if (ok && nameEl && !nameEl.value.trim() && src && src.title) {
+        nameEl.value = String(src.title).slice(0, 60);
+      }
+    } catch (e) {
+      toast('解析失败: ' + e.message, 4000);
+      setNpBadge('解析失败', 'err');
+    } finally {
+      npProbing = false;
+      npProbeBtn.disabled = false;
+      npProbeBtn.textContent = oldLabel;
+    }
+  });
   $('#np-create').addEventListener('click', async () => {
     const isDraft = npMode === 'draft';
-    const npUrl = (($('#np-url') || {}).value || '').trim();
+    const npUrl = normalizeVideoUrl(($('#np-url') || {}).value);
     // ── 链接模式: 交给服务端下载 + 跑初稿（视频落在项目目录里） ──
     if (isDraft && npUrl) {
       const btn0 = $('#np-create');
@@ -1667,8 +1975,10 @@ export function initProjects(ctx) {
       if (previousRoute === '#/new' || previousRoute === '#/settings')
         requestAnimationFrame(() => $('#btn-new-project').focus({ preventScroll: true }));
     } else if (h === '#/new') {
-      if (previousRoute !== '#/settings' && previousRoute !== '#/new') npReset();
-      if (previousRoute === '#/settings') refreshAsrStatus();
+      const fromSettings = previousRoute === '#/settings';
+      if (!fromSettings && previousRoute !== '#/new') npReset();
+      // 生成设置面板：从设置页回来时强制刷新（模型/接口/Key 刚改过），其余情况走缓存
+      genLoad('np', fromSettings).then(() => { if (fromSettings) refreshAsrStatus(); });
       if (previousRoute !== h) focusPage(npView);
     } else if (h === '#/settings') {
       if (previousRoute !== h) {
@@ -1678,6 +1988,7 @@ export function initProjects(ctx) {
           if (state.project) saveNow();
         }
         const label = settingsReturnRoute === '#/new' ? '返回新建项目'
+          : settingsReturnRoute.startsWith('#/details/') ? '返回详细信息'
           : settingsReturnRoute.startsWith('#/project/') || settingsReturnRoute === '#/editor' ? '返回编辑器' : '返回项目';
         $('#st-close-label').textContent = label;
         $('#st-cancel').textContent = label;

@@ -954,6 +954,10 @@ function writeAsrSettings(obj) {
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
   fs.renameSync(tmp, ASR_SETTINGS);
 }
+/** 「生成设置 → 角色分析提示词」: 留空则返回空串, cast.js 会退回内置 CAST_SYSTEM */
+function castPromptCfg() {
+  try { return String((readAsrSettings().cast || {}).prompt || ''); } catch { return ''; }
+}
 /* 每个模型一个目录: asr/models/<dirName>。settings.models 记录各模型目录,
  * asrModelDir 是旧字段(仅 parakeet 兼容)。selectedModel = 创建初稿默认用的模型。 */
 function modelDirFor(modelId) {
@@ -3155,6 +3159,7 @@ function startPrepare(id, videoPath, mode) {
         ? cast.inferCast({
             source: meta0.source,
             userCount: Number(d0.speakerCount) || 0,
+            systemPrompt: castPromptCfg(),
             call: llmCall,
             log: (m) => pushDraftLog(id, stamp() + m),
           }).catch((e) => ({ characters: [], speakerCount: Number(d0.speakerCount) || 0, error: String((e && e.message) || e) }))
@@ -3785,6 +3790,47 @@ function startPrepare(id, videoPath, mode) {
       .catch((e) => sendJson(res, 200, { ok: false, isLogin: false, message: String((e && e.message) || e) }));
     return;
   }
+  /* 只解析视频元数据（不下载）: 给「稿件预览」在创建项目前确认目标视频。
+   * 复用下载内核的 --simulate（它把 meta 直接放进 done 事件里，不用读临时文件）。 */
+  if (pathname === '/api/fetch/probe' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let d = {};
+      try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const url = String(d.url || '').trim();
+      if (!url) return sendJson(res, 400, { error: '请先填视频链接' });
+      const site = fetchSiteOf(url);
+      if (!site) return sendJson(res, 400, { error: '只支持 bilibili 与 YouTube 链接（其他站点暂不支持）' });
+      if (!fetchReady()) return sendJson(res, 400, { error: '下载内核不可用：需要一个 Python 3.8 或更高版本。到设置里安装内置 Python' });
+      void (async () => {
+        const f = fetchSettings();
+        const part = normalizePart(d.part);
+        const args = ['--url', url, '--out', os.tmpdir(), '--simulate'];
+        if (part > 1) args.push('--part', String(part));
+        if (f.proxy) args.push('--proxy', String(f.proxy));
+        const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
+        if (ckPlain) {
+          const ckFile = path.join(os.tmpdir(), 'sf-probe-cookies.txt');
+          if (writeNetscapeCookieFile(ckPlain, ckFile)) args.push('--cookies-file', ckFile);
+        } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
+        // id 用 '__probe__': 只用于 fetchJobs 占位，pushDraftLog 写不进去会被静默吞掉
+        const r = await runFetchCli('__probe__', args, () => {});
+        if (r.error) return sendJson(res, 400, { error: r.error });
+        const m = (r.done && r.done.meta) || null;
+        if (!m || (!m.title && !m.id)) {
+          return sendJson(res, 400, { error: '没解析到视频信息（检查链接、登录态或代理）' });
+        }
+        return sendJson(res, 200, { source: {
+          url: m.url || url, site: m.source || site, id: m.id || '',
+          title: m.title || '', description: m.description || '', uploader: m.uploader || '',
+          duration: m.duration || 0, uploadDate: m.uploadDate || '', tags: m.tags || [],
+          viewCount: m.viewCount || 0, thumbnail: m.thumbnail || '', height: m.height || 0,
+        } });
+      })().catch((e) => {
+        try { sendJson(res, 500, { error: '解析失败: ' + String((e && e.message) || e) }); } catch {}
+      });
+    });
+  }
   if (pathname === '/api/fetch/settings' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, async (err, body) => {
       try {
@@ -4069,12 +4115,16 @@ function startPrepare(id, videoPath, mode) {
     });
   }
   /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
-  /* LLM 分角色开关（asr/settings.json 的 cast.enabled; 默认开） */
+  /* LLM 分角色开关 + 角色分析提示词（asr/settings.json 的 cast 段; enabled 默认开）
+   * prompt 留空 = 用 cast.js 内置的 CAST_SYSTEM，GET 一并把内置文案给前端做占位。 */
   if (pathname === '/api/cast/config' && req.method === 'GET') {
-    let on = true;
-    try { on = (readAsrSettings().cast || {}).enabled !== false; } catch {}
+    let on = true, prompt = '';
+    try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
     const c = translateCfg();
-    return sendJson(res, 200, { enabled: on, llmReady: llmReady(c), model: c.model || '', baseUrl: c.baseUrl || '' });
+    return sendJson(res, 200, {
+      enabled: on, prompt, defaultPrompt: cast.DEFAULT_CAST_PROMPT,
+      llmReady: llmReady(c), model: c.model || '', baseUrl: c.baseUrl || '',
+    });
   }
   if (pathname === '/api/cast/config' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
@@ -4083,12 +4133,14 @@ function startPrepare(id, videoPath, mode) {
       try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       try {
         const st = readAsrSettings();
-        st.cast = Object.assign({}, st.cast || {}, { enabled: d.enabled !== false });
+        const patch = { enabled: d.enabled !== false };
+        if (Object.prototype.hasOwnProperty.call(d, 'prompt')) patch.prompt = String(d.prompt || '').slice(0, 8000);
+        st.cast = Object.assign({}, st.cast || {}, patch);
         writeAsrSettings(st);
       } catch (e) { return sendJson(res, 500, { error: '保存失败: ' + e.message }); }
-      let on = true;
-      try { on = (readAsrSettings().cast || {}).enabled !== false; } catch {}
-      return sendJson(res, 200, { enabled: on });
+      let on = true, prompt = '';
+      try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
+      return sendJson(res, 200, { enabled: on, prompt });
     });
   }
   if (pathname === '/api/asr/hint') {
