@@ -672,8 +672,6 @@ export function initProjects(ctx) {
       card.style.setProperty('--i', String(Math.min(cardIdx++, 12)));
       const st = p.prepare && ST[p.prepare.status];
       const dr = p.draft || null;
-      const busyPrep = !!(p.prepare && p.prepare.status === 'running');
-      const busyDraft = !!(dr && dr.status === 'running');
       const hasSub = !!p.format;
 
       // 有初稿任务时以初稿进度为准(它是 prepare 之后的后半段)
@@ -1077,10 +1075,8 @@ export function initProjects(ctx) {
     const dlMap = {};                    // key → 下载状态(服务端并行下载, 每个 key 独立)
     (d.downloads || []).forEach(x => { dlMap[x.key] = x; });
     const dlOf = (key) => dlMap[key] || {};
-    const stateHtml = (st, okText) => st.running
-      ? `<span class="sm-state running">${esc(st.msg || '下载中…')} ${st.pct || 0}%</span>`
-      : (st.error ? `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`
-                  : `<span class="sm-state ok">${okText}</span>`);
+    // 注: 下面各模型的下载状态提示都是就地手写的(见 pyState / state / nemoState 等),
+    // 没有走统一模板 —— 各自要拼的按钮和文案差别太大, 抽象反而更绕。
     // Python 环境(Parakeet 需要; whisper.cpp 不需要): 预检状态 + 一键安装
     const py = d.pythonProbe || null;
     const pySt = dlOf('pyenv');
@@ -1421,9 +1417,6 @@ export function initProjects(ctx) {
       for (const [a, b] of rows) out.push(a + '=' + b);
     }
     return out.join('\n');
-  }
-  function glRowCount() {
-    return GL_LANGS.reduce((n, l) => n + glState.terms[l].filter(([a, b]) => a && b).length, 0);
   }
   function glRender() {
     const tabs = $('#gl-tabs'), box = $('#gl-rows'), name = $('#gl-langname');
