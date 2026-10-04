@@ -151,10 +151,17 @@ const MIME = {
 const VIDEO_EXTS = ['.mp4', '.m4v', '.webm', '.mkv', '.avi', '.mov'];
 const SUB_EXTS = ['.srt', '.ass', '.ssa'];
 
+/* 把 URL 路径安全地映射到 root 下的文件路径, 越界返回 null。
+ * 注意 decodeURIComponent 在 path 之前: new URL() 不会解码 %2f, 所以 "/..%2f" 能带着
+ * 编码斜杠进到这里, 必须先解码再交给 path.join 归一化, 否则 ../ 会被当普通字符放过。 */
 function safeJoin(root, urlPath) {
-  const decoded = decodeURIComponent(urlPath);
+  let decoded;
+  try { decoded = decodeURIComponent(urlPath); }
+  catch { return null; }               // 非法百分号编码(如 /%zz) → 视为越界
   const p = path.normalize(path.join(root, decoded));
-  if (!p.startsWith(root)) return null; // 防目录穿越
+  // 防目录穿越: 纯前缀匹配不够 —— "D:\SubFabric-secret" 也 startsWith "D:\SubFabric",
+  // 会把同前缀的兄弟目录放行。必须补上路径分隔符做边界(同serveFile 里的 jsDir 写法)。
+  if (p !== root && !p.startsWith(root + path.sep)) return null;
   return p;
 }
 
@@ -554,8 +561,6 @@ const ASR_MODELS = [
     draftAllowed: true,
   },
 ];
-const MODEL_PATTERNS = [/^encoder.*\.onnx$/i, /^decoder.*\.onnx$/i, /^joiner.*\.onnx$/i, /^tokens\.txt$/i,
-                        /^ggml-.*\.bin$/i, /\.nemo$/i];
 const modelById = (id) => ASR_MODELS.find(m => m.id === id) || null;
 /** 能否用于创建初稿(默认可以; draftAllowed===false 的模型只给「重新识别」用) */
 const draftAllowedOf = (m) => !!m && m.draftAllowed !== false;
@@ -1069,7 +1074,6 @@ const dlState = (key, init) => {
   if (init) downloads.set(key, init);
   return downloads.get(key) || { running: false, pct: 0, msg: '', error: null };
 };
-const dlAnyRunning = (kind) => { for (const [k, v] of downloads) if (v.running && (!kind || k.startsWith(kind + ':') || k === kind)) return true; return false; };
 
 /** undici 的 "Fetch failed" 毫无信息量, 真正原因在 e.cause.code —— 翻译成用户能自查的人话 */
 function netErrMsg(e, url) {
@@ -1329,12 +1333,11 @@ function startRuntimeDownload() {
       }
       if (r.status !== 0) throw new Error('解压失败: ' + String(r.out || '').slice(-200));
       // 展平: 把所有文件(忽略目录结构)放进 WHISPER_RUNTIME.dir
-      let n = 0;
       const walk = (d) => {
         for (const f of fs.readdirSync(d, { withFileTypes: true })) {
           const p = path.join(d, f.name);
           if (f.isDirectory()) walk(p);
-          else { fs.copyFileSync(p, path.join(WHISPER_RUNTIME.dir, f.name)); n++; }
+          else fs.copyFileSync(p, path.join(WHISPER_RUNTIME.dir, f.name));
         }
       };
       walk(tmpEx);
@@ -1613,15 +1616,15 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: WHISPER_RUNTIME.dir });
     if (opts && opts.register) { try { opts.register(p); } catch {} }
-    let out = '';
     const started = Date.now();
     let lastPct = -1, lastErrLine = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
     // 进度解析: whisper.cpp 的进度条(%)打在 **stderr**, stdout 只有转写结果 —— 之前只看
     // stdout 导致界面永远收不到进度, 一直停在「启动识别引擎…」(用户报"卡住"实为此因)。
+    // 注: 原来这里还把 stdout 累加进 out, 但转写结果是走 whisper 自己的 .json 文件读的,
+    // out 从头到尾没人读 —— 已删(留着只是白白吃内存, 长音频能攒几百 MB)。
     const sink = (d) => {
       const s = String(d);
-      out += s;
       for (const line of s.split(/[\r\n]+/)) {
         const t = line.trim();
         if (!t) continue;
@@ -1675,7 +1678,7 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
         cur.push(w);
       }
       if (cur.length) groups.push(cur);
-      const segments = groups.map((ws, i) => ({
+      const segments = groups.map((ws) => ({
         start: +ws[0].start.toFixed(3), end: +ws[ws.length - 1].end.toFixed(3),
         text: ws.map(w => w.word).join(' ').trim(),
         words: ws.map(w => ({ word: w.word, start: +w.start.toFixed(3), end: +w.end.toFixed(3) })),
@@ -1686,52 +1689,85 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
   });
 }
 
-function handleRequest(req, res) {
-  const u = new URL(req.url, `http://${req.headers.host || HOST}`);
-  const pathname = u.pathname;
+/* ═══════════ 简单路由表 ═══════════
+ * handleRequest 曾是 2900+ 行的单体函数, 光开头这十几个"查一下就回"的简单端点就占了
+ * 40 多行 if。现在把它们抽成这张表: 新增端点 = 加一行, 不用翻 3000 行去找插入点。
+ *
+ * 只收「同步、无副作用、不碰项目状态」的处理器 —— 也就是原来那些一进函数就return 的分支。
+ * 涉及流水线/落盘/共享状态的端点(波形、peaks、项目、ASR、翻译…)仍在 handleRequest 里按原样处理,
+ * 因为它们要读写 draftJobs / fetchJobs 等跨请求状态, 拆出去反而要注入一堆东西。
+ *
+ * 处理器签名统一 (req, res, u) → boolean: 处理了就return true(handleRequest 收尾),
+ * 返回 false 表示"不归我管", 继续往下走原来的 if 链。行为与拆分前逐字一致。
+ */
+const SIMPLE_ROUTES = [
+  // 首页: 302 到真正的编辑器页
+  ['/', (req, res) => { send(res, 302, { Location: '/editor/index.html' }, ''); return true; }],
+  ['/index.html', (req, res) => { send(res, 302, { Location: '/editor/index.html' }, ''); return true; }],
 
-  if (pathname === '/' || pathname === '/index.html') {
-    return send(res, 302, { Location: '/editor/index.html' }, '');
-  }
-  if (pathname === '/api/samples') {
-    const body = JSON.stringify(listSamples());
-    return send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }, body);
-  }
+  // 稿件样本清单
+  ['/api/samples', (req, res) => {
+    send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' },
+      JSON.stringify(listSamples()));
+    return true;
+  }],
+
   // 代码版本戳: 已经开着的页面用它判断自己是否已过期 → 提示用户刷新
-  if (pathname === '/api/version') {
-    return send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' },
+  ['/api/version', (req, res) => {
+    send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' },
       JSON.stringify({ stamp: BUILD_STAMP, version: APP_VERSION }));
-  }
+    return true;
+  }],
+
   // 本机字体清单: 给 ASS 样式面板做候选, 用户填名字就能用系统字体(见 editor/fonts.js)
-  if (pathname === '/api/fonts') {
+  ['/api/fonts', (req, res) => {
     let list = [];
     try { list = fonts.listFonts().map(f => f.family); }
     catch (e) { console.error('[fonts] 字体清单读取失败: ' + (e && e.message || e)); }
-    return sendJson(res, 200, { count: list.length, fonts: list });
-  }
+    sendJson(res, 200, { count: list.length, fonts: list });
+    return true;
+  }],
+
   // 字体文件字节。**只按家族名查表**, 不接受路径 —— 页面拿不到任意文件读的能力。
   // 集合字体(.ttc)在这里抽成单个 face 再回, 因为 wasm fontconfig 会静默忽略 .ttc。
-  if (pathname === '/api/font-file') {
+  ['/api/font-file', (req, res, u) => {
     const want = u.searchParams.get('name') || '';
     const entry = fonts.findFont(want);
-    if (!entry) return sendJson(res, 404, { error: '未找到字体: ' + want });
+    if (!entry) { sendJson(res, 404, { error: '未找到字体: ' + want }); return true; }
     let buf;
     try { buf = fonts.readFontBytes(entry); }
-    catch (e) { return sendJson(res, 500, { error: '读取字体失败: ' + (e && e.message || e) }); }
+    catch (e) { sendJson(res, 500, { error: '读取字体失败: ' + (e && e.message || e) }); return true; }
     res.writeHead(200, {
       'Content-Type': 'font/ttf',
       'Cache-Control': 'no-cache',
       'Content-Length': buf.length,
       'X-Font-Family': encodeURIComponent(entry.families[0] || want)
     });
-    return res.end(buf);
-  }
+    res.end(buf);
+    return true;
+  }],
+
   // 站点图标(内联 SVG, 省得浏览器请求 /favicon.ico 报 404 污染控制台)
-  if (pathname === '/favicon.ico' || pathname === '/favicon.svg') {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#6d5efc"/>'
-      + '<text x="16" y="24" font-size="20" text-anchor="middle">🎬</text></svg>';
-    return send(res, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' }, svg);
-  }
+  ['/favicon.ico', sendFavicon],
+  ['/favicon.svg', sendFavicon],
+];
+
+function sendFavicon(req, res) {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#6d5efc"/>'
+    + '<text x="16" y="24" font-size="20" text-anchor="middle">🎬</text></svg>';
+  send(res, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' }, svg);
+  return true;
+}
+
+const SIMPLE_ROUTE_MAP = new Map(SIMPLE_ROUTES);
+
+function handleRequest(req, res) {
+  const u = new URL(req.url, `http://${req.headers.host || HOST}`);
+  const pathname = u.pathname;
+
+  // 简单端点先查表(见上方 SIMPLE_ROUTES 注释: 只收同步无副作用的处理器)
+  const simple = SIMPLE_ROUTE_MAP.get(pathname);
+  if (simple && simple(req, res, u)) return;
 
   // 波形图: 示例视频直接读磁盘原文件(不复制/不保存), 本地文件走 POST 上传临时文件(用完即删)
   if (pathname === '/api/waveform') {
@@ -2075,43 +2111,51 @@ function fetchReady() {
 
 /** 跑一次 fetch_cli：逐行读 JSON。返回 {error, done} */
 function runFetchCli(id, args, onEvent) {
-  return new Promise(async (resolve) => {
-    let proc;
-    const py = await resolveFetchPython();
-    if (!py) {
-      return resolve({ error: '下载需要一个 Python 3.8 或更高版本。到设置里安装内置 Python，或自己装一个 Python 3.12', done: null });
-    }
-    try {
-      proc = childProcess.spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
-    } catch (e) {
-      return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
-    }
-    fetchJobs.set(id, { proc });
-    let buf = '';
-    const result = { error: '', done: null };
-    const feed = (chunk) => {
-      buf += chunk.toString('utf8');
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).trim();
-        buf = buf.slice(i + 1);
-        if (!line) continue;
-        let o = null;
-        try { o = JSON.parse(line); } catch { pushDraftLog(id, '[下载] ' + line.slice(0, 200)); continue; }
-        if (o.type === 'progress') onEvent({ progress: Number(o.pct) || 0, msg: String(o.msg || '') });
-        else if (o.type === 'log') pushDraftLog(id, '[下载] ' + String(o.msg || ''));
-        else if (o.type === 'error') { result.error = String(o.msg || '下载失败'); pushDraftLog(id, '[下载] ✗ ' + result.error); }
-        else if (o.type === 'done') result.done = o;
+  // 注: 下面这个 async IIFE 不能写成 `new Promise(async (resolve) => ...)`。
+  // async executor 里抛出的异常不会被Promise 捕获 —— 会既不 reject 也不 resolve,
+  // 调用方(await 此Promise)就永久挂起, 表现为"点下载后一直转圈没反应"。
+  // 所以 executor 保持同步, 异步部分交给 promise 链。
+  return Promise.resolve()
+    .then(() => resolveFetchPython())
+    .then((py) => {
+      if (!py) {
+        return { error: '下载需要一个 Python 3.8 或更高版本。到设置里安装内置 Python，或自己装一个 Python 3.12', done: null };
       }
-    };
-    proc.stdout.on('data', feed);
-    proc.stderr.on('data', (c) => {
-      const s = c.toString('utf8').trim();
-      if (s) pushDraftLog(id, '[下载] ' + s.slice(0, 200));
-    });
-    proc.on('error', (e) => { fetchJobs.delete(id); resolve({ error: '下载进程出错: ' + e.message, done: null }); });
-    proc.on('close', () => { fetchJobs.delete(id); resolve(result); });
-  });
+      return new Promise((resolve) => {
+        let proc;
+        try {
+          proc = childProcess.spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
+        } catch (e) {
+          return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
+        }
+        fetchJobs.set(id, { proc });
+        let buf = '';
+        const result = { error: '', done: null };
+        const feed = (chunk) => {
+          buf += chunk.toString('utf8');
+          let i;
+          while ((i = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, i).trim();
+            buf = buf.slice(i + 1);
+            if (!line) continue;
+            let o = null;
+            try { o = JSON.parse(line); } catch { pushDraftLog(id, '[下载] ' + line.slice(0, 200)); continue; }
+            if (o.type === 'progress') onEvent({ progress: Number(o.pct) || 0, msg: String(o.msg || '') });
+            else if (o.type === 'log') pushDraftLog(id, '[下载] ' + String(o.msg || ''));
+            else if (o.type === 'error') { result.error = String(o.msg || '下载失败'); pushDraftLog(id, '[下载] ✗ ' + result.error); }
+            else if (o.type === 'done') result.done = o;
+          }
+        };
+        proc.stdout.on('data', feed);
+        proc.stderr.on('data', (c) => {
+          const s = c.toString('utf8').trim();
+          if (s) pushDraftLog(id, '[下载] ' + s.slice(0, 200));
+        });
+        proc.on('error', (e) => { fetchJobs.delete(id); resolve({ error: '下载进程出错: ' + e.message, done: null }); });
+        proc.on('close', () => { fetchJobs.delete(id); resolve(result); });
+      });
+    })
+    .catch((e) => ({ error: '下载进程启动失败: ' + ((e && e.message) || e), done: null }));
 }
 
 /** 下载 → 落 meta.video / meta.source → 交棒给 prepare（现有流水线） */
@@ -2178,16 +2222,11 @@ async function startFetchJob(id, opts) {
 }
 
 
-/** 界面上给的画质档位（与 asr/fetch 里两张站点表保持一致, 值就是 selector.py 认识的档位名） */
-const FETCH_QUALITY_CHOICES = [
-  { value: 'best', label: '最高可用（有大会员 Cookie 时吃到 8K/HDR）' },
-  { value: '2160', label: '4K 及以下' },
-  { value: '1080', label: '1080P 及以下' },
-  { value: '720', label: '720P 及以下' },
-  { value: '480', label: '480P 及以下' },
-  { value: '360', label: '360P（最省流量）' },
-  { value: 'audio', label: '仅音频' },
-];
+/* 画质档位的取值契约(与 asr/fetch 的两张站点表保持一致, 值就是 selector.py 认识的档位名):
+ * best / 2160 / 1080 / 720 / 480 / 360 / audio。
+ * 界面上的选项硬编码在 index.html 的 #st-fetch-quality 里(那份还多了 UI 需要的顺序),
+ * 改档位时要同时改 HTML —— 以前这里还有一份 FETCH_QUALITY_CHOICES 数组, 无人引用已删。 */
+
 function startPrepare(id, videoPath, mode) {
     const denoise = mode !== 'raw';
     if (prepareJobs.has(id)) return;
@@ -2290,7 +2329,7 @@ function startPrepare(id, videoPath, mode) {
       // 0 = 让聚类自己定人数（threshold 生效）; 正数 = 强制聚类数
       '--speakers', String(Number.isFinite(speakerCount) ? Math.max(0, Math.min(20, Math.round(speakerCount))) : 0)],
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
-      let buf = '', pyErr = '', timedOut = false, lastLogs = [];
+      let pyErr = '', timedOut = false, lastLogs = [];
       const startedAt = Date.now();
       const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, budgetMs);
       const done = (fn) => { clearTimeout(timer); try { fs.unlinkSync(outJson); } catch {} fn(); };
@@ -2587,8 +2626,8 @@ function startPrepare(id, videoPath, mode) {
    *  · stripReasoning   —— 剥掉  thinking… 思维链（推理模型必踩的坑, 以前完全没处理）
    *  · parseJsonArray   —— 平衡扫描取**第一个完整闭合**的数组（不再"首个 [ 到末个 ]", 那会被思考里的示例数组带偏）
    *  · parseLineArrayReply —— 标准 JSON 之外的兜底: 逐行纯文本/编号行/引号行, 并过滤思考行与寒暄行
+   *    （它内部自己调 parseJsonArray, 所以这里不需要再绑一个别名 —— 以前有, 无人调用已删）
    *  · punctPairsSane   —— 标点密度合理性（防小模型"每词加逗号"） */
-  const parseJsonArray = llmText.parseJsonArray;
   const parseTranslationReply = llmText.parseLineArrayReply;
   const LlmError = llmText.LlmError;
 
@@ -4592,7 +4631,6 @@ function startPrepare(id, videoPath, mode) {
       });
     }
     if (action === 'peaks' && req.method === 'GET') {
-      const v = metaView(meta);
       const f = meta.peaks && meta.peaks.file;
       let buf = null;
       try { buf = fs.readFileSync(path.join(projDir(id), f)); } catch {}

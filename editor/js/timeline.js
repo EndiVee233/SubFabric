@@ -8,11 +8,9 @@ const WAVE_BOTTOM_PAD = 4; // 波形底缘离面板底的余量(留出底边线,
 const WAVE_FILL = 220;     // 胶片条收起判据用的"典型满幅波形高"(保守值, 非硬上限)
 const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
-const CHIP_W = 78;       // 轨道标签
 const TEXT_PAD = 6;
 const ZH_FONT = '700 12px "Microsoft YaHei", sans-serif';    // 中文行: 加粗加大
 const EN_FONT = '700 11px "Microsoft YaHei", sans-serif';    // 英文逐词: 加粗加大
-const WORD_MIN = 0.02;      // 拖动逐词标记时, 每个词至少保留的时长(秒)
 const AXIS_COLOR = 'rgba(228,228,238,.42)';   // 逐词轴/中英分隔线(中性浅灰)
 const WORD_MARK = 'rgba(214,214,228,.85)';    // 逐词标记块
 const WORD_MARK_HOT = 'rgba(255,255,255,.95)';// 拖动中的标记
@@ -1005,7 +1003,6 @@ export class Timeline {
   _drawReRecog(ctx, W) {
     const r = this.reRecogRegion;
     if (!r || !(r.b > r.a)) return;
-    const running = r.status !== 'error' && r.status !== 'done';
     const col = r.status === 'error' ? '#ff5f6b' : '#a78bfa';          // 紫: 与选区橙区分
     const fill = r.status === 'error' ? 'rgba(255,95,107,.13)' : 'rgba(139,92,246,.15)';
     const top = this._laneTop(0) - 3;
@@ -1452,6 +1449,11 @@ export class Timeline {
         // 说话人颜色优先(半透明底), 否则用轨道色
         const base = c.color || lane.color;
         const isSel = this.selected && c.row === this.selected;
+        // 下面两个是「播放头所在块高亮」功能预留的变量, 目前绘制逻辑还没用上。
+        // textColor 由 textOnTranslucent() 算出, 若要接上: 把字幕块文本的 fillStyle
+        // 从 C.chipText 换成 textColor, 并在 isPlay 时叠加描边或加深边框。
+        // **先别删** —— 删了要连带删 textOnTranslucent()。
+        // (下面两行因此触发 no-unused-vars 警告, 属预期, 已在 eslint 里标了说明)
         const isPlay = c.start <= t && t < c.end;
         const alpha = 0.12;                       // 填充 12% 不透明(清晰可见的描边 + 极淡底色)
         const textColor = textOnTranslucent(base, alpha, '#ffffff');

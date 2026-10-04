@@ -78,6 +78,42 @@ node editor/server.js
 
 然后打开 <http://127.0.0.1:8321/>
 
+## 依赖清单
+
+| 依赖 | 用途 | 获取方式 |
+| --- | --- | --- |
+| Node.js 22 | 跑 `editor/server.js` 本地服务 | 需自行安装 |
+| libass 渲染器 + 中文字体 | 视频区 ASS 逐词高亮预览 | `node editor/scripts/fetch-vendor.js` 自动下载到 `editor/vendor/` |
+| Python 3.10~3.12 | 语音识别 / 说话人分离 / 下载初稿 | 设置页「安装内置 Python」自动装好，或用系统 Python |
+| `sherpa-onnx`、`numpy` | asr.py 推理、diarize.py 说话人分离 | `pip install -r asr/requirements.txt` |
+| `yt-dlp` | 下载 bilibili / YouTube 初稿 | **不在 requirements.txt 里** —— 由 `asr/fetch/ytdlp.py` 运行时从 PyPI 自举（更新频繁，内置会冻结版本） |
+| `torch` + `nemo_toolkit[asr]` | Multitalker 多说话人（仅「选区重新识别」） | 设置页的 NeMo 安装流程单独装，约数 GB，必须 N 卡 |
+| ffmpeg / ffprobe | 波形图、音频切片 | 装好后设`FFMPEG_PATH` / `FFPROBE_PATH`，或放进 PATH |
+
+装 Python 依赖（推荐 3.12，3.13 未验证）：
+
+```bash
+py -3.12 -m venv asr/.venv
+asr/.venv/Scripts/python.exe -m pip install -r asr/requirements.txt
+```
+
+server.js 会自动完成这套流程（走清华镜像源），手动装只在排查问题时需要。
+
+## 开发
+
+```bash
+# 跑测试（首次会自举生成 tests/fixture.ass）
+node tests/gen-fixture.mjs
+node tests/karaoke-exhaustive.mjs# 逐词高亮的穷举不变量测试
+# 其余测试可逐个直接跑，均为独立的 .mjs
+node tests/reseg-test.mjs
+
+# 代码检查
+npx eslint editor/ tools/            # 项目无 package.json，需先 npm i -D eslint@9
+```
+
+`tests/jsmod/` 是 `editor/js/` 的机械副本，测试启动时按 mtime 自动重建 —— 改动应发生在 `editor/js/`，改完把镜像一起提交。`editor/README.md` 有更细的开发说明。
+
 ## 项目文件与本地数据
 
 - 每个项目的数据保存在本机 `projects/` 下 包括字幕副本 项目资料 以及为波形和后续处理生成的音频数据
