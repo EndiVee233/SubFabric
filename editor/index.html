@@ -210,6 +210,114 @@
           <p class="set-group-note">直接填字体名即可（有补全）：本机装了的字体，预览会自动取来用，不用自己找文件。本机没装的字体，预览会回退到内置字体，「载入字体」可导入 .ttf/.otf 补上。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
         </div>
 
+        <div id="ass-fx-group" class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#38bdf8"></i><span class="set-group-title">字幕后处理特效</span></div>
+          <div class="setting-row">
+            <span class="setting-name" title="开启后，在保留原有文字和时间轴的基础上叠加后处理特效（导出与视频预览完全一致）">启用特效</span>
+            <label class="switch">
+              <input type="checkbox" id="fx-enable">
+              <span class="switch-slider"></span>
+            </label>
+            <span class="setting-val" id="fx-enable-val">关</span>
+          </div>
+          <div id="fx-controls" class="fx-controls" hidden>
+            <div class="setting-row">
+              <span class="setting-name" title="开启文字微光/光晕效果">微光（Glow）</span>
+              <label class="switch">
+                <input type="checkbox" id="fx-glow-enable" checked>
+                <span class="switch-slider"></span>
+              </label>
+              <span class="setting-val" id="fx-glow-enable-val">开</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="生效范围：中文字幕 / 英文字幕 = 整行发光；中英文全部 = 两行各用各自的参数发光；仅逐词高亮词 = 只给逐词高亮的活动词发光（用英文字幕的参数）">生效范围</span>
+              <select class="btn btn-mini" id="fx-glow-target">
+                <option value="active_word">仅逐词高亮词</option>
+                <option value="zh">中文字幕</option>
+                <option value="en">英文字幕</option>
+                <option value="all">中英文全部</option>
+              </select>
+            </div>
+
+            <div class="fx-lang-group" id="fx-zh-group">
+            <div class="fx-lang-head" id="fx-zh-head">
+              <i class="set-dot" style="background:#f472b6"></i><span>中文字幕微光</span>
+              <span class="fx-lang-state" id="fx-zh-state"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="中文字幕行是否发光">启用</span>
+              <label class="switch">
+                <input type="checkbox" id="fx-zh-enable" checked>
+                <span class="switch-slider"></span>
+              </label>
+              <span class="setting-val" id="fx-zh-enable-val">开</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="发光走哪条通道：阴影=保留原黑描边、外圈发光（推荐）；描边=发光色顶替黑描边；双通道=两者叠加，最亮">发光通道</span>
+              <select class="btn btn-mini" id="fx-zh-channel">
+                <option value="shadow">阴影（保留描边）</option>
+                <option value="outline">描边</option>
+                <option value="both">双通道（最强）</option>
+              </select>
+            </div>
+            <div class="setting-row ass-style-color-row">
+              <span class="setting-name" title="中文字幕的微光颜色">微光颜色</span>
+              <input id="fx-zh-color" type="color" value="#00ff88">
+              <span id="fx-zh-color-val" class="ass-style-color-value">#00FF88</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="光晕半径（\blur）：数值越大，光晕扩散得越远、边缘越柔和">光晕半径</span>
+              <input type="range" id="fx-zh-radius" class="range" min="0.5" max="20" step="0.5" value="4">
+              <span class="setting-val" id="fx-zh-radius-val">4.0 px</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="发光强度：发光色的不透明度。100% 最亮，越低越淡（0% 等于不发光）">发光强度</span>
+              <input type="range" id="fx-zh-intensity" class="range" min="0" max="100" step="5" value="100">
+              <span class="setting-val" id="fx-zh-intensity-val">100%</span>
+            </div>
+            </div>
+
+            <div class="fx-lang-group" id="fx-en-group">
+            <div class="fx-lang-head" id="fx-en-head">
+              <i class="set-dot" style="background:#38bdf8"></i><span>英文字幕微光</span>
+              <span class="fx-lang-state" id="fx-en-state"></span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="英文字幕行 / 逐词高亮词是否发光">启用</span>
+              <label class="switch">
+                <input type="checkbox" id="fx-en-enable" checked>
+                <span class="switch-slider"></span>
+              </label>
+              <span class="setting-val" id="fx-en-enable-val">开</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="发光走哪条通道：阴影=保留原黑描边、外圈发光（推荐）；描边=发光色顶替黑描边；双通道=两者叠加，最亮">发光通道</span>
+              <select class="btn btn-mini" id="fx-en-channel">
+                <option value="shadow">阴影（保留描边）</option>
+                <option value="outline">描边</option>
+                <option value="both">双通道（最强）</option>
+              </select>
+            </div>
+            <div class="setting-row ass-style-color-row">
+              <span class="setting-name" title="英文字幕的微光颜色">微光颜色</span>
+              <input id="fx-en-color" type="color" value="#00ff88">
+              <span id="fx-en-color-val" class="ass-style-color-value">#00FF88</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="光晕半径（\blur）：数值越大，光晕扩散得越远、边缘越柔和">光晕半径</span>
+              <input type="range" id="fx-en-radius" class="range" min="0.5" max="20" step="0.5" value="4">
+              <span class="setting-val" id="fx-en-radius-val">4.0 px</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="发光强度：发光色的不透明度。100% 最亮，越低越淡（0% 等于不发光）">发光强度</span>
+              <input type="range" id="fx-en-intensity" class="range" min="0" max="100" step="5" value="100">
+              <span class="setting-val" id="fx-en-intensity-val">100%</span>
+            </div>
+            </div>
+          </div>
+          <p id="fx-status-note" class="set-group-note">纯后处理管线：不破坏原编辑层数据，预览与导出共用同一份特效结果。</p>
+        </div>
+
         <div class="set-group">
           <div class="set-group-head"><i class="set-dot" style="background:#4fd1a5"></i><span class="set-group-title">字幕显示</span></div>
           <div class="setting-row">

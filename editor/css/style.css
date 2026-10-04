@@ -555,6 +555,13 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ass-style-font-note.ok { color:#4fd1a5; }
 .ass-style-font-note.warn { color:#ffd54a; }
 #ass-style-group.ass-style-disabled .ass-style-track, #ass-style-group.ass-style-disabled .ass-style-color-row { opacity:.45; }
+.fx-controls { display:flex; flex-direction:column; margin-top:4px; padding-left:10px; border-left:2px solid var(--accent); }
+/* 后处理特效: 中/英分组小标题 + 「当前生效范围用不到」时整组压暗 */
+.fx-lang-head { display:flex; align-items:center; gap:6px; margin:10px 0 2px; padding-top:8px; border-top:1px dashed var(--hair, rgba(255,255,255,.12)); font-size:12px; font-weight:600; letter-spacing:.02em; color:var(--text-2, #c9d1d9); }
+.fx-lang-head .set-dot { width:7px; height:7px; border-radius:50%; flex:none; }
+.fx-lang-state { margin-left:auto; font-size:11px; font-weight:500; color:var(--text-3, #8b949e); }
+.fx-lang-group.is-out-of-scope { opacity:.42; }
+.fx-lang-group.is-out-of-scope .setting-row { pointer-events:none; }
 
 /* ── 全局设置弹窗: 页签 + 卡片(页签/主体/卡片的布局样式) ─────────────── */
 .st-title-wrap { display:flex; align-items:baseline; gap:10px; min-width:0; }

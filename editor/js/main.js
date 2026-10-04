@@ -5,6 +5,7 @@ import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
 import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
+import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess } from './postprocess.js';
 import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
@@ -103,6 +104,8 @@ const assPlayer = new AssPlayer(video, (msg) => {
     pendingFontNotice = '';
   }
 });
+/* 预览通道：带上编辑器已解析好的中英样式名（比纯样式名推断更准 —— 它会结合逐词分析） */
+assPlayer.postProcessor = (text) => applyPostProcess(text, state.postProcessConfig, state.assStyleTargets);
 const timeline = new Timeline(document.getElementById('timeline'), video);
 const panel = new EditorPanel();
 bindModalDrags();
@@ -117,6 +120,7 @@ const state = {
   srtCues: [],
   assDoc: null,
   assStyleTargets: null,
+  postProcessConfig: loadPostProcessConfig(),
   items: [],             // 编辑面板视图模型
   itemByRef: new Map(),  // ref(cue|event) → item
   newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
@@ -634,6 +638,177 @@ async function loadAssStyleFont(language) {
     toast(`已载入字体：${family}`);
   } catch (e) { toast('字体载入失败：' + (e && e.message || e)); }
   finally { input.value = ''; }
+}
+
+/* ─────────── 字幕后处理特效 (微光 Glow 等) ─────────── */
+const FX_LANGS = ['zh', 'en'];
+const FX_CHANNELS = ['shadow', 'outline', 'both'];
+const FX_TARGETS = ['zh', 'en', 'all', 'active_word'];
+
+/** 某个生效范围下，哪些语言的参数块真的会被用到 */
+const FX_SCOPE = {
+  zh: { zh: true, en: false },
+  en: { zh: false, en: true },
+  all: { zh: true, en: true },
+  active_word: { zh: false, en: true }   // 逐词高亮词在英文轨上，用英文参数
+};
+
+function fxLangEls(lang) {
+  const $ = (suffix) => document.getElementById(`fx-${lang}-${suffix}`);
+  return {
+    group: $( 'group'),
+    head: $('head'),
+    state: $('state'),
+    enable: $('enable'),
+    enableVal: $('enable-val'),
+    channel: $('channel'),
+    color: $('color'),
+    colorVal: $('color-val'),
+    radius: $('radius'),
+    radiusVal: $('radius-val'),
+    intensity: $('intensity'),
+    intensityVal: $('intensity-val')
+  };
+}
+
+const fxEls = {
+  group: document.getElementById('ass-fx-group'),
+  enable: document.getElementById('fx-enable'),
+  enableVal: document.getElementById('fx-enable-val'),
+  controls: document.getElementById('fx-controls'),
+  glowEnable: document.getElementById('fx-glow-enable'),
+  glowEnableVal: document.getElementById('fx-glow-enable-val'),
+  glowTarget: document.getElementById('fx-glow-target'),
+  statusNote: document.getElementById('fx-status-note'),
+  lang: { zh: fxLangEls('zh'), en: fxLangEls('en') }
+};
+
+function fxNormLang(block) {
+  const b = block || {};
+  return {
+    enabled: b.enabled !== false,
+    channel: FX_CHANNELS.includes(b.channel) ? b.channel : 'shadow',
+    color: (b.color || '#00ff88').toLowerCase(),
+    radius: Number(b.radius != null ? b.radius : 4.0),
+    intensity: Number(b.intensity != null ? b.intensity : 100)
+  };
+}
+
+function syncFxUi() {
+  const cfg = state.postProcessConfig;
+  if (!fxEls.enable) return;
+
+  fxEls.enable.checked = !!cfg.enabled;
+  if (fxEls.enableVal) fxEls.enableVal.textContent = cfg.enabled ? '开' : '关';
+  if (fxEls.controls) fxEls.controls.hidden = !cfg.enabled;
+
+  const glow = cfg.glow || {};
+  if (fxEls.glowEnable) fxEls.glowEnable.checked = glow.enabled !== false;
+  if (fxEls.glowEnableVal) fxEls.glowEnableVal.textContent = (glow.enabled !== false) ? '开' : '关';
+
+  const target = FX_TARGETS.includes(glow.target) ? glow.target : 'active_word';
+  if (fxEls.glowTarget) fxEls.glowTarget.value = target;
+  const scope = FX_SCOPE[target];
+
+  for (const lang of FX_LANGS) {
+    const els = fxEls.lang[lang];
+    const b = fxNormLang(glow[lang]);
+
+    if (els.enable) els.enable.checked = b.enabled;
+    if (els.enableVal) els.enableVal.textContent = b.enabled ? '开' : '关';
+    if (els.channel) els.channel.value = b.channel;
+    if (els.color) els.color.value = b.color;
+    if (els.colorVal) els.colorVal.textContent = b.color.toUpperCase();
+    if (els.radius) els.radius.value = b.radius;
+    if (els.radiusVal) els.radiusVal.textContent = `${b.radius.toFixed(1)} px`;
+    if (els.intensity) els.intensity.value = b.intensity;
+    if (els.intensityVal) els.intensityVal.textContent = `${Math.round(b.intensity)}%`;
+
+    const inScope = !!(scope && scope[lang]);
+    if (els.group) els.group.classList.toggle('is-out-of-scope', !inScope);
+    if (els.state) els.state.textContent = inScope ? '生效中' : '当前范围用不到';
+  }
+}
+
+function updateFxConfig(mutateFn) {
+  if (typeof mutateFn === 'function') mutateFn(state.postProcessConfig);
+  savePostProcessConfig(state.postProcessConfig);
+  syncFxUi();
+  // 及时更新视频区 ASS 渲染
+  if (state.format === 'ass' && state.assDoc) {
+    assPlayer.updateNow(state.assDoc.serialize());
+  }
+}
+
+/** 确保 cfg.glow[lang] 存在后执行 mutate */
+function mutateFxLang(lang, mutateFn) {
+  updateFxConfig(cfg => {
+    if (!cfg.glow) cfg.glow = {};
+    if (!cfg.glow[lang]) cfg.glow[lang] = {};
+    mutateFn(cfg.glow[lang], cfg.glow);
+  });
+}
+
+function initFxControls() {
+  if (!fxEls.enable) return;
+
+  syncFxUi();
+
+  fxEls.enable.addEventListener('change', () => {
+    updateFxConfig(cfg => { cfg.enabled = fxEls.enable.checked; });
+  });
+
+  if (fxEls.glowEnable) {
+    fxEls.glowEnable.addEventListener('change', () => {
+      updateFxConfig(cfg => {
+        if (!cfg.glow) cfg.glow = {};
+        cfg.glow.enabled = fxEls.glowEnable.checked;
+      });
+    });
+  }
+
+  if (fxEls.glowTarget) {
+    fxEls.glowTarget.addEventListener('change', () => {
+      updateFxConfig(cfg => {
+        if (!cfg.glow) cfg.glow = {};
+        cfg.glow.target = fxEls.glowTarget.value;
+      });
+    });
+  }
+
+  for (const lang of FX_LANGS) {
+    const els = fxEls.lang[lang];
+
+    if (els.enable) {
+      els.enable.addEventListener('change', () => {
+        mutateFxLang(lang, (b) => { b.enabled = els.enable.checked; });
+      });
+    }
+
+    if (els.channel) {
+      els.channel.addEventListener('change', () => {
+        mutateFxLang(lang, (b) => { b.channel = els.channel.value; });
+      });
+    }
+
+    if (els.color) {
+      const onColor = () => mutateFxLang(lang, (b) => { b.color = els.color.value; });
+      els.color.addEventListener('input', onColor);
+      els.color.addEventListener('change', onColor);
+    }
+
+    if (els.radius) {
+      const onRadius = () => mutateFxLang(lang, (b) => { b.radius = parseFloat(els.radius.value) || 4.0; });
+      els.radius.addEventListener('input', onRadius);
+      els.radius.addEventListener('change', onRadius);
+    }
+
+    if (els.intensity) {
+      const onIntensity = () => mutateFxLang(lang, (b) => { b.intensity = parseFloat(els.intensity.value); });
+      els.intensity.addEventListener('input', onIntensity);
+      els.intensity.addEventListener('change', onIntensity);
+    }
+  }
 }
 
 async function loadSubUrl(url, name) {
@@ -3100,7 +3275,9 @@ btnExport.addEventListener('click', () => {
   if (state.format === 'srt') {
     download(state.fileName.replace(/\.srt$/i, '') + '_edited.srt', serializeSRT(state.srtCues));
   } else if (state.format === 'ass' && state.assDoc) {
-    download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_edited.ass', state.assDoc.serialize());
+    const raw = state.assDoc.serialize();
+    const out = applyPostProcess(raw, state.postProcessConfig, state.assStyleTargets);
+    download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_edited.ass', out);
   }
 });
 
@@ -3125,7 +3302,8 @@ function buildLangAss(doc, sentences, wordStyle, lang) {
 btnExportClean.addEventListener('click', () => {
   if (state.format !== 'ass' || !state.kar) return;
   const clean = buildCleanAss(state.assDoc, state.kar.sentences);
-  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_clean.ass', clean);
+  const out = applyPostProcess(clean, state.postProcessConfig, state.assStyleTargets);
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_clean.ass', out);
   toast('已导出干净 ASS(无逐词特效)');
 });
 
@@ -3153,7 +3331,8 @@ btnExportJson.addEventListener('click', () => {
 btnExportZh.addEventListener('click', () => {
   if (state.format !== 'ass' || !state.kar) return;
   const ass = buildLangAss(state.assDoc, state.kar.sentences, state.kar.wordStyle, 'zh');
-  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_zh.ass', ass);
+  const out = applyPostProcess(ass, state.postProcessConfig, state.assStyleTargets);
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_zh.ass', out);
   toast('已导出仅中文 ASS');
 });
 
@@ -3161,7 +3340,8 @@ btnExportZh.addEventListener('click', () => {
 btnExportEn.addEventListener('click', () => {
   if (state.format !== 'ass' || !state.kar) return;
   const ass = buildLangAss(state.assDoc, state.kar.sentences, state.kar.wordStyle, 'en');
-  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_en.ass', ass);
+  const out = applyPostProcess(ass, state.postProcessConfig, state.assStyleTargets);
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_en.ass', out);
   toast('已导出仅英文 ASS');
 });
 
@@ -3527,6 +3707,7 @@ applySensitivity();
 applyFilmSetting();
 applyTrackMode(false);
 applyTlHeight();
+initFxControls();
 
 /* 调试钩子(测试用) */
 window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText };
