@@ -1,16 +1,20 @@
 /* 2×2 工作台验证探针：新建项目页 / 详细信息页
  * 用法: node tools/ws_workspace_probe.mjs [baseUrl] [outDir]
+ *   （跑之前先起服务: PORT=8356 node editor/server.js）
  * 检查项：
  *   · 两页都是 2×2 网格（左上预览 / 右上输入 / 左下进度 / 右下生成设置）
  *   · 新建项目页：导入/初稿两种模式下「语音识别 · 识别来源 · 分角色」整组显隐
  *   · 详细信息页：稿件预览铺元数据、进度面板常驻、生成设置回显 + 保存
+ *   · 「解析」真跑一次（只粘 BV 号，验证前端补全 + 元数据/缩略图落地）
  *   · 窄屏（<=1080px）退化成单列
+ * 自己造一个带 source 的探针项目（projects/p-wsprobe-0001），跑完删掉。
  * 注意：--window-size 必须显式传（无头默认约 745px 宽，会直接落进窄屏分支）。
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const BASE = process.argv[2] || 'http://127.0.0.1:8356';
@@ -18,6 +22,52 @@ const OUT = process.argv[3] || join(tmpdir(), 'ws-probe-shots');
 const CDP_PORT = 9341;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 mkdirSync(OUT, { recursive: true });
+
+/* ── 测试项目 fixture：详细信息页要看「有 source / 有 draft」的那条路径 ── */
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const FIX_ID = 'p-wsprobe-0001';
+const FIX_DIR = join(ROOT, 'projects', FIX_ID);
+function writeFixture() {
+  const thumb = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#2b2b3a"/>' +
+    '<text x="320" y="190" font-size="34" fill="#ff7a45" text-anchor="middle">THUMB</text></svg>');
+  const now = new Date().toISOString();
+  const meta = {
+    id: FIX_ID, name: '【探针】2×2 工作台验证用项目', nameCustomized: true, createdAt: now, modifiedAt: now,
+    video: { path: join(ROOT, 'probe.mp4'), name: 'probe.mp4' },
+    prepare: { status: 'done', finishedAt: now, error: null, duration: 3725.5, rate: 100, mode: 'denoise' },
+    subtitle: { format: 'ass', file: 'subtitle.ass', name: 'probe.ass' },
+    duration: 3725.5,
+    source: {
+      url: 'https://www.bilibili.com/video/BV1GJ411x7h7', site: 'bilibili', id: 'BV1GJ411x7h7',
+      title: '【探针】这是一条很长的标题，用来验证稿件预览面板在窄列里会不会把面板撑破或者把其他信息挤下去',
+      uploader: 'SubFabric 探针账号', description: '这是简介。'.repeat(20),
+      duration: 3725.5, uploadDate: '2026-10-01', tags: ['字幕', '探针'], viewCount: 123456,
+      thumbnail: thumb, height: 1080, qualityPreset: '1080p', fileSize: 0, fetchedAt: now,
+    },
+    draft: {
+      words: 1200, lines: 180, status: 'done', stage: '完毕', progress: 100,
+      message: '初稿已生成：180 行（含中文译文）', error: null, wordLevel: true, translated: true,
+      needTranslate: false, modelId: 'parakeet-tdt-0.6b-v2', engine: 'sherpa-onnx',
+      speakers: true, speakerCount: 4, startedAt: now, failedStage: '', resegDone: true,
+      pendingTranslate: 0, finishedAt: now,
+    },
+  };
+  mkdirSync(FIX_DIR, { recursive: true });
+  writeFileSync(join(FIX_DIR, 'project.json'), JSON.stringify(meta, null, 2));
+  writeFileSync(join(FIX_DIR, 'subtitle.ass'),
+    '[Script Info]\nTitle: probe\nScriptType: v4.00+\n\n[V4+ Styles]\n'
+    + 'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n'
+    + 'Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,20,20,30,1\n\n'
+    + '[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'
+    + 'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,probe line one\n'
+    + 'Dialogue: 0,0:00:03.50,0:00:05.00,Default,,0,0,0,,probe line two\n');
+  writeFileSync(join(FIX_DIR, 'draft.log'), '[probe] 初稿已生成\n');
+}
+/** 只删自己造的那一个目录（名字是常量，不做通配） */
+function removeFixture() { rmSync(FIX_DIR, { recursive: true, force: true }); }
+writeFixture();
+process.on('exit', removeFixture);
 
 const profile = mkdtempSync(join(tmpdir(), 'edge-ws-'));
 // 沙箱会给子进程塞 HTTP(S)_PROXY，本地 127.0.0.1 走代理会变成 chrome-error 页 —— 直连。
@@ -285,6 +335,7 @@ result.dt_preview_shot = await shotEl('#detail-view .ws-grid > section:nth-child
 result.dt_save = await evalJs(`(async () => {
   const g = (s) => document.querySelector(s);
   const before = g('#dt-set-state').textContent;
+  window.__origCastPrompt = g('#dt-set-castprompt').value;   // 探针会改它，末尾要还原
   g('#dt-set-castprompt').value = 'PROBE-CAST-PROMPT';
   g('#dt-set-castprompt').dispatchEvent(new Event('input', { bubbles: true }));
   const dirty = g('#dt-set-state').textContent;
@@ -339,6 +390,16 @@ result.dt_nodraft = await evalJs(`(() => {
            format: g('#detail-format').textContent };
 })()`);
 result.dt_nodraft_shot = await shot('07-details-nodraft.png');
+
+/* ══════════ 3.5 还原探针写进全局设置的「角色分析提示词」 ══════════ */
+result.restore = await evalJs(`(async () => {
+  const r = await fetch('/api/cast/config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: window.__origCastPrompt || '' }),
+  });
+  const d = await r.json();
+  return { ok: r.ok, prompt: d.prompt };
+})()`);
 
 /* ══════════ 4. 项目列表入口 ══════════ */
 await evalJs(`location.hash = '#/home'`);
