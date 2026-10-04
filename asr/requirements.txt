@@ -1,13 +1,38 @@
-# K-ASS-Editor「创建初稿」的语音识别 worker 依赖。
+# SubFabric Python 侧依赖。
 #
-# 建环境（Python 3.10~3.12）：
-#   py -3.12 -m venv .venv
-#   .venv/Scripts/python.exe -m pip install --upgrade pip
-#   .venv/Scripts/pip.exe install -r requirements.txt
+# 三个 Python 入口各有不同的依赖面，装之前先看清你只需要哪个：
 #
-# 本 venv 只用于跑 asr.py 推理；server.js 通过子进程调用它。
-# 模型本体（Parakeet TDT 0.6B v2，631MB）不在这里，由「创建初稿」界面引导选择
-# 一个空目录后下载。
+#   asr.py          语音识别主worker（sherpa-onnx）。装下面「基础」这一组即可。
+#   diarize.py      说话人分离。同样只用 sherpa-onnx + numpy。
+#   multitalker.py  NeMo 多说话人模型（torch + nemo_toolkit）。**重依赖，数 GB**，
+#                   不要装进日常环境；见下方「可选：NeMo 多说话人」。
+#   fetch/*.py      下载初稿（bilibili / YouTube）。只用标准库 + yt-dlp。
+#
+# ── 建环境（Python 3.10~3.12；3.13 尚未验证，nemo_toolkit 可能不兼容）──
+#   py -3.12 -m venv asr/.venv
+#   asr/.venv/Scripts/python.exe -m pip install --upgrade pip
+#   asr/.venv/Scripts/python.exe -m pip install -r asr/requirements.txt
+#
+# server.js 会自动完成上述流程（设置页「安装内置 Python」/「安装依赖」），
+# 走清华镜像源；asr/.venv/ 已在 .gitignore 中。
+#
+# 模型本体（Parakeet TDT 0.6B v2，631MB）不在这里 —— 由「创建初稿」界面引导
+# 选择一个空目录后下载。
 
+# ── 基础：asr.py 推理 + diarize.py 说话人分离 ──
 sherpa-onnx>=1.13
 numpy>=1.24
+
+# ── 下载初稿（asr/fetch/*.py）刻意不列在这里 ──
+# yt-dlp 更新频繁，打包时内置就等于把版本冻结在打包那一刻，所以走运行时自举：
+# asr/fetch/ytdlp.py 首次需要时从 PyPI 抓 wheel 解压到 asr/ytdlp/，并提供
+# ensure() / require() 与中文错误提示。装进本文件会绕过这套机制，不要重复声明。
+#
+# ── 可选：NeMo 多说话人（multitalker.py）──
+# ⚠️ 体积巨大（torch 单独就 2GB+），且必须 N 卡，CPU 推理会直接报错。
+# 由「设置 → 识别引擎」的 NeMo 安装流程单独处理（server.js 的 startPyEnvSetup，
+# 走清华镜像源），不要装进日常环境，会把 venv 撑到十几 GB。
+#
+#   torch>=2.2
+#   nemo_toolkit[asr]>=1.23    # 自带 omegaconf，不用单独列
+
