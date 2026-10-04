@@ -1,8 +1,4 @@
 
-!/build/installer/
-!/build/installer/SubFabric.iss
-!/build/installer/start-editor.bat
-!/build/installer/start-editor.command
 # (zips→解压→展平到 asr/whisper.cpp/, 见 server.js startRuntimeDownload)
 # Python 字节码
 # SEA 构建产物(build_exe.py 生成: node.exe 副本 175MB + blob + 注入后的 exe)
@@ -62,3 +58,14 @@ node_modules/
 outputs/
 outputs/
 spoke.mp4
+
+# 安装包脚本与图标: 必须放在 /build/* 与 /build/installer/* 之后
+# (gitignore 是"最后匹配生效", 且父目录被排除后无法再包含其中文件)
+# 应用图标 logo.png 是源图, logo.ico 由 editor/scripts/gen_app_icon.py 生成(多尺寸)
+# —— .iss 的 SetupIconFile 直接引用 logo.ico, 两个都入库, 免得新克隆编不出安装包
+!/build/installer/
+!/build/installer/SubFabric.iss
+!/build/installer/start-editor.bat
+!/build/installer/start-editor.command
+!/build/installer/logo.png
+!/build/installer/logo.ico

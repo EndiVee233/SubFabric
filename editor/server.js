@@ -25,7 +25,7 @@ const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.1.4'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.1.5'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -2786,7 +2786,7 @@ function startPrepare(id, videoPath, mode) {
     if (!meta.draft) return { error: '该项目不是「创建初稿」项目，无法重试' };
     // 同一步正在跑就拒绝：再点一次会开出第二个任务，两个任务抢同一份 asr.json / reseg.json
     if (draftJobs.has(id) || pendingAsr.has(id)) {
-      return { error: '这一步正在跑（进度见「查看进度」里的日志），别重复点；它跑完自己会往下走' };
+      return { error: '这一步正在跑（进度见「详细信息」里的日志），别重复点；它跑完自己会往下走' };
     }
     const hasAsr = fs.existsSync(path.join(projDir(id), 'asr.json'));
     const wordLevel = !!meta.draft.wordLevel;
@@ -4473,7 +4473,7 @@ function startPrepare(id, videoPath, mode) {
       });
     }
 
-    // 初稿进度详情: 状态 + 滚动日志(供列表上的「查看进度」弹窗轮询)
+    // 初稿进度详情: 状态 + 滚动日志(供列表上的「详细信息」页面轮询)
     if (action === 'draft' && req.method === 'GET') {
       let log = '';
       try { log = fs.readFileSync(draftLogFile(id), 'utf8'); } catch {}

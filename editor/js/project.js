@@ -24,12 +24,16 @@ export function initProjects(ctx) {
   const elHome = $('#home-view');
   const elList = $('#home-list');
   const elEmpty = $('#home-empty');
+  const detailView = $('#detail-view');
   const pageTimers = new WeakMap();
   let previousRoute = '';
   let settingsReturnRoute = '#/home';
   let settingsVisit = 0;
   let settingsOpenedFromApp = false;
   let newOpenedFromApp = false;
+  let detailReturnRoute = '#/home';
+  let detailsOpenedFromApp = false;
+  let detailLoadToken = 0;
 
   // 离场视图短暂保留以完成淡出；快速往返时取消旧定时器，避免误隐藏新页面。
   function setPageVisible(page, visible) {
@@ -60,60 +64,93 @@ export function initProjects(ctx) {
     if (settingsOpenedFromApp) history.back();
     else replaceRoute(settingsReturnRoute === '#/settings' ? '#/home' : settingsReturnRoute);
   }
+  function returnFromDetails() {
+    if (detailsOpenedFromApp && location.hash.startsWith('#/details/')) history.back();
+    else replaceRoute(detailReturnRoute.startsWith('#/details/') ? '#/home' : detailReturnRoute);
+  }
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-  let infoProjectId = '';
-  const infoOverlay = $('#info-overlay');
-  const infoForm = $('#info-form');
-  const infoName = $('#info-name');
-  const infoError = $('#info-error');
-  const infoSave = $('#info-save');
-  function openInfoEditor(project) {
-    infoProjectId = project.id;
-    infoName.value = project.name || '';
-    infoError.textContent = '';
-    infoError.hidden = true;
-    infoOverlay.hidden = false;
-    requestAnimationFrame(() => { infoName.focus(); infoName.select(); });
+  let detailProjectId = '';
+  const detailForm = $('#detail-form');
+  const detailName = $('#detail-name');
+  const detailError = $('#detail-error');
+  const detailSave = $('#detail-save');
+  const detailProgress = $('#detail-progress');
+  function openProjectDetails(project) {
+    const id = project && project.id;
+    if (!id) return;
+    const route = '#/details/' + encodeURIComponent(id);
+    detailReturnRoute = location.hash.startsWith('#/details/') ? '#/home' : (location.hash || '#/home');
+    detailsOpenedFromApp = true;
+    if (location.hash === route) loadDetailsPage(id);
+    else location.hash = route;
   }
-  function closeInfoEditor() {
-    infoOverlay.hidden = true;
-    infoProjectId = '';
-    infoError.textContent = '';
-    infoError.hidden = true;
-  }
-  $('#info-cancel').addEventListener('click', closeInfoEditor);
-  infoOverlay.addEventListener('pointerdown', (event) => {
-    if (event.target === infoOverlay && !infoSave.disabled) closeInfoEditor();
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !infoOverlay.hidden && !infoSave.disabled) closeInfoEditor();
-  });
-  infoForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const id = infoProjectId;
-    const name = infoName.value.trim();
-    if (!id || !name) {
-      infoError.textContent = '项目名称不能为空';
-      infoError.hidden = false;
-      infoName.focus();
+  async function loadDetailsPage(id) {
+    const requestId = ++detailLoadToken;
+    detailProjectId = id;
+    detailName.value = '';
+    detailError.textContent = '';
+    detailError.hidden = true;
+    $('#detail-video').textContent = '读取中…';
+    $('#detail-subtitle').textContent = '—';
+    $('#detail-format').textContent = '—';
+    $('#detail-created').textContent = '—';
+    $('#detail-modified').textContent = '—';
+    detailProgress.hidden = true;
+    let project;
+    try {
+      const response = await fetch('/api/projects/' + encodeURIComponent(id));
+      project = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(project.error || '读取项目失败');
+    } catch (error) {
+      if (requestId !== detailLoadToken || location.hash !== '#/details/' + id) return;
+      detailError.textContent = error.message || '读取项目失败';
+      detailError.hidden = false;
+      $('#detail-video').textContent = '无法读取';
       return;
     }
-    const oldLabel = infoSave.textContent;
-    infoSave.disabled = true;
-    infoSave.textContent = '保存中…';
-    infoError.textContent = '';
-    infoError.hidden = true;
+    if (requestId !== detailLoadToken || location.hash !== '#/details/' + id) return;
+    detailName.value = project.name || '';
+    $('#detail-video').textContent = project.fetching ? '正在下载…' : (project.video && project.video.name || '未关联视频');
+    $('#detail-subtitle').textContent = (project.subtitle && project.subtitle.name) || '尚无字幕';
+    $('#detail-format').textContent = String((project.subtitle && project.subtitle.format) || (project.draft ? '初稿' : '—')).toUpperCase();
+    $('#detail-created').textContent = fmtDate(project.createdAt) || '—';
+    $('#detail-modified').textContent = fmtDate(project.modifiedAt) || '—';
+    detailProgress.hidden = !project.draft;
+    // 没有初稿任务时右边整列是空的 → 让信息面板单独居中，别留一块空档
+    const layout = document.querySelector('.detail-layout');
+    if (layout) layout.classList.toggle('is-single', !project.draft);
+    if (project.draft) openProgress(id);
+    else { stopDp(); dpId = ''; }
+  }
+  $('#detail-back').addEventListener('click', returnFromDetails);
+  $('#detail-cancel').addEventListener('click', returnFromDetails);
+  $('#dp-close').addEventListener('click', returnFromDetails);
+  detailForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = detailProjectId;
+    const name = detailName.value.trim();
+    if (!id || !name) {
+      detailError.textContent = '项目名称不能为空';
+      detailError.hidden = false;
+      detailName.focus();
+      return;
+    }
+    const oldLabel = detailSave.textContent;
+    detailSave.disabled = true;
+    detailSave.textContent = '保存中…';
+    detailError.textContent = '';
+    detailError.hidden = true;
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(id)}/info`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        infoError.textContent = result.error || '保存失败，请重试';
-        infoError.hidden = false;
+        detailError.textContent = result.error || '保存失败，请重试';
+        detailError.hidden = false;
         return;
       }
       if (state.project && state.project.id === id && state.project.meta) {
@@ -121,15 +158,15 @@ export function initProjects(ctx) {
         state.project.meta.nameCustomized = true;
         state.project.meta.modifiedAt = result.modifiedAt || state.project.meta.modifiedAt;
       }
-      closeInfoEditor();
+      $('#detail-modified').textContent = fmtDate(result.modifiedAt) || $('#detail-modified').textContent;
       renderList();
       toast('项目信息已更新');
     } catch {
-      infoError.textContent = '保存失败，请检查本地服务后重试';
-      infoError.hidden = false;
+      detailError.textContent = '保存失败，请检查本地服务后重试';
+      detailError.hidden = false;
     } finally {
-      infoSave.disabled = false;
-      infoSave.textContent = oldLabel;
+      detailSave.disabled = false;
+      detailSave.textContent = oldLabel;
     }
   });
 
@@ -419,7 +456,7 @@ export function initProjects(ctx) {
       const hasSub = !!p.format;
 
       // 有初稿任务时以初稿进度为准(它是 prepare 之后的后半段)
-      let stChip = '', draftBar = '', progBtn = '';
+      let stChip = '', draftBar = '', progBtn = '<button type="button" class="btn pc-details">详细信息</button>';
       if (dr && dr.status) {
         const pct = Math.max(0, Math.min(100, dr.progress || 0));
         const running = dr.status === 'running';
@@ -451,7 +488,7 @@ export function initProjects(ctx) {
         const canRetry = (failed || paused
           || (dr.status === 'done' && !dr.translated && !!dr.needTranslate)) && !dr.skippedTranslate;
         const retryLabel = paused ? (dr.pendingTranslate ? '重试' : '开始翻译') : '重试';
-        progBtn = '<button type="button" class="btn pc-prog">查看进度</button>';
+        progBtn = '<button type="button" class="btn pc-details">详细信息</button>';
         if (canRetry) progBtn += `<button type="button" class="btn btn-accent pc-retry">${esc(retryLabel)}</button>`;
         else if (dr.skippedTranslate) progBtn += '<button type="button" class="btn pc-trans">翻译</button>';
       } else if (st) {
@@ -471,21 +508,18 @@ export function initProjects(ctx) {
         </div>
         <div class="pc-actions">
           ${progBtn}
-          <button type="button" class="btn pc-edit" title="编辑项目名称">编辑信息</button>
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
           <button type="button" class="btn pc-del ico-only" title="删除项目（音频、波形、字幕副本一起删）">${ico('trash')}</button>
         </div>`;
-      card.querySelector('.pc-edit').addEventListener('click', (e) => {
+      card.querySelector('.pc-details').addEventListener('click', (e) => {
         e.stopPropagation();
-        openInfoEditor(p);
+        openProjectDetails(p);
       });
       card.querySelector('.pc-open').addEventListener('click', (e) => {
         e.stopPropagation();
         if (!locked) location.hash = '#/project/' + p.id;
       });
       card.addEventListener('click', () => { if (!locked) location.hash = '#/project/' + p.id; });
-      const pb = card.querySelector('.pc-prog');
-      if (pb) pb.addEventListener('click', (e) => { e.stopPropagation(); openProgress(p.id); });
       const tb = card.querySelector('.pc-trans');
       if (tb) tb.addEventListener('click', (e) => { e.stopPropagation(); requestTranslate(p.id); });
       const rb = card.querySelector('.pc-retry');
@@ -559,12 +593,8 @@ export function initProjects(ctx) {
     return i < 0 ? 0 : i;
   };
 
-  const dpOverlay = $('#dp-overlay');
   let dpTimer = 0, dpId = '', dpRunning = false, dpRetryable = false;
   function stopDp() { clearInterval(dpTimer); dpTimer = 0; }
-  function closeDp() { stopDp(); dpOverlay.hidden = true; }
-  $('#dp-close').addEventListener('click', closeDp);
-  dpOverlay.addEventListener('pointerdown', (e) => { if (e.target === dpOverlay) closeDp(); });
 
   function renderDpSteps(curIdx) {
     $('#dp-steps').innerHTML = DP_STEPS.map((s, i) => {
@@ -593,7 +623,9 @@ export function initProjects(ctx) {
 
   function openProgress(id) {
     dpId = id;
-    dpOverlay.hidden = false;
+    $('#dp-log').textContent = '';
+    $('#dp-bar-in').style.width = '0%';
+    $('#dp-pct').textContent = '0%';
     stopDp();
     tickDp();
     dpTimer = setInterval(tickDp, 1200);
@@ -694,7 +726,7 @@ export function initProjects(ctx) {
     if (!r.ok) { toast(m.error || '重试失败', 4600); return; }
     const from = m.from === 'translate' ? '翻译' : (m.from === 'asr' ? '语音识别' : '音频提取');
     renderList();
-    openProgress(id);
+    openProjectDetails({ id });
     toast('已从「' + from + '」继续，已完成的进度不会丢', 4200);
   }
 
@@ -1388,6 +1420,7 @@ export function initProjects(ctx) {
     if (event.key !== 'Escape' || event.defaultPrevented || !$('#confirm-overlay').hidden) return;
     if (location.hash === '#/new') leaveNew();
     else if (location.hash === '#/settings' && !$('#st-save').disabled) returnFromSettings();
+    else if (location.hash.startsWith('#/details/') && !detailSave.disabled) returnFromDetails();
   });
 
   $('#np-mode-import').addEventListener('click', () => npSetMode('import'));
@@ -1595,15 +1628,31 @@ export function initProjects(ctx) {
   }
   function applyHash() {
     let h = location.hash || '#/home';
-    if (!location.hash || !['#/home', '#/new', '#/settings', '#/editor'].includes(h) && !h.startsWith('#/project/')) {
+    const detailsMatch = /^#\/details\/([A-Za-z0-9_-]{1,64})$/.exec(h);
+    if (!location.hash || !['#/home', '#/new', '#/settings', '#/editor'].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
       h = '#/home';
       history.replaceState(null, '', h);
     }
-    $('#app').inert = h === '#/home' || h === '#/new' || h === '#/settings';
+    $('#app').inert = h === '#/home' || h === '#/new' || h === '#/settings' || !!detailsMatch;
     setPageVisible(elHome, h === '#/home');
     setPageVisible(npView, h === '#/new');
     setPageVisible(stView, h === '#/settings');
-    if (h.startsWith('#/project/')) {
+    setPageVisible(detailView, !!detailsMatch);
+    if (!detailsMatch && previousRoute.startsWith('#/details/')) {
+      stopDp(); dpId = ''; detailLoadToken++;
+    }
+    if (detailsMatch) {
+      const id = detailsMatch[1];
+      if (previousRoute !== h) {
+        detailsOpenedFromApp = !!previousRoute;
+        if (previousRoute.startsWith('#/project/') || previousRoute === '#/editor') {
+          video.pause();
+          if (state.project) saveNow();
+        }
+        focusPage(detailView);
+      }
+      if (previousRoute !== h || detailProjectId !== id) loadDetailsPage(id);
+    } else if (h.startsWith('#/project/')) {
       const pid = h.slice('#/project/'.length);
       setAudioControlsVisible(true);
       if (!state.project || state.project.id !== pid) openProject(pid);

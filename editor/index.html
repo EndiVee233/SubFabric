@@ -510,24 +510,74 @@
     </div>
   </div>
 
-  <!-- 编辑项目信息 -->
-  <div id="info-overlay" hidden>
-    <form id="info-form" class="info-box modal-surface" aria-labelledby="info-title">
-      <div class="info-title modal-drag-handle" id="info-title">编辑信息</div>
-      <label class="info-field" for="info-name">
-        <span>项目名称</span>
-        <input type="text" id="info-name" class="np-input" maxlength="60" required spellcheck="false" autocomplete="off" placeholder="请输入项目名称">
-      </label>
-      <p class="info-hint">只修改项目列表中的名称，不会更改原视频或字幕文件。</p>
-      <div class="info-error" id="info-error" role="status" aria-live="polite" hidden></div>
-      <div class="info-actions">
-        <button type="button" class="btn" id="info-cancel">取消</button>
-        <button type="submit" class="btn btn-accent" id="info-save">保存</button>
-      </div>
-    </form>
-  </div>
-
 </div><!-- /#home-view -->
+
+<!-- 稿件详细信息：替代项目列表中的信息编辑与进度二级窗口 -->
+<div id="detail-view" class="workspace-page" hidden>
+  <div class="page-inner detail-inner">
+    <header class="page-head">
+      <button type="button" class="btn page-back" id="detail-back" data-ico="chevronDown">返回项目</button>
+      <span class="page-brand" data-ico="film">SubFabric <span>/ 详细信息</span></span>
+    </header>
+    <div class="page-intro">
+      <div class="page-eyebrow">PROJECT DETAILS</div>
+      <h1>详细信息</h1>
+      <p>查看稿件资料与处理进度，也可以修改项目名称。</p>
+    </div>
+    <div class="detail-layout">
+      <form id="detail-form" class="detail-info page-surface" aria-labelledby="detail-info-title">
+        <div class="detail-section-head">
+          <div>
+            <div class="detail-section-kicker">PROJECT</div>
+            <h2 id="detail-info-title">项目信息</h2>
+          </div>
+          <span class="detail-format" id="detail-format">—</span>
+        </div>
+        <label class="detail-field" for="detail-name">
+          <span>项目名称</span>
+          <input type="text" id="detail-name" class="np-input" maxlength="60" required spellcheck="false" autocomplete="off" placeholder="请输入项目名称">
+        </label>
+        <div class="detail-meta">
+          <div class="detail-meta-row"><span>视频</span><strong id="detail-video">读取中…</strong></div>
+          <div class="detail-meta-row"><span>字幕</span><strong id="detail-subtitle">—</strong></div>
+          <div class="detail-meta-row"><span>创建时间</span><strong id="detail-created">—</strong></div>
+          <div class="detail-meta-row"><span>最近修改</span><strong id="detail-modified">—</strong></div>
+        </div>
+        <p class="detail-hint">项目名称仅用于项目列表显示，不会更改原视频或字幕文件。</p>
+        <div class="detail-error" id="detail-error" role="status" aria-live="polite" hidden></div>
+        <div class="detail-actions">
+          <button type="button" class="btn" id="detail-cancel">返回项目</button>
+          <button type="submit" class="btn btn-accent" id="detail-save">保存信息</button>
+        </div>
+      </form>
+
+      <section class="dp-box page-surface" id="detail-progress" aria-labelledby="detail-progress-title" hidden>
+        <div class="dp-head">
+          <div>
+            <div class="detail-section-kicker">PROCESS</div>
+            <h2 class="dp-title" id="detail-progress-title">初稿处理进度</h2>
+          </div>
+          <span class="detail-live"><i></i>实时状态</span>
+        </div>
+        <div class="dp-steps" id="dp-steps"></div>
+        <div class="dp-bar"><div class="dp-bar-in" id="dp-bar-in"></div></div>
+        <div class="dp-line">
+          <span id="dp-pct">0%</span>
+          <span class="dp-msg" id="dp-msg"></span>
+        </div>
+        <div class="dp-log-label">处理日志</div>
+        <pre class="dp-log" id="dp-log"></pre>
+        <div class="dp-actions">
+          <button type="button" class="btn" id="dp-skip" disabled>跳过此步</button>
+          <button type="button" class="btn btn-accent" id="dp-retry" hidden>重试</button>
+          <span class="dp-retries" id="dp-retries"></span>
+          <span class="dp-spacer"></span>
+          <button type="button" class="btn" id="dp-close">返回项目</button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
 
 <!-- 新建项目：与项目列表并列的独立页面 -->
 <div id="np-view" class="workspace-page" hidden>
@@ -608,28 +658,6 @@
   </div>
 </div>
 <input type="file" id="np-file-sub" accept=".srt,.ass,.ssa" hidden>
-
-  <!-- 初稿处理进度浮层 -->
-  <div id="dp-overlay" hidden>
-    <div class="dp-box modal-surface">
-      <div class="dp-head modal-drag-handle"><span class="dp-title">初稿处理进度</span></div>
-      <div class="dp-steps" id="dp-steps"></div>
-      <div class="dp-bar"><div class="dp-bar-in" id="dp-bar-in"></div></div>
-      <div class="dp-line">
-        <span id="dp-pct">0%</span>
-        <span class="dp-msg" id="dp-msg"></span>
-      </div>
-      <div class="dp-log-label">日志：</div>
-      <pre class="dp-log" id="dp-log"></pre>
-      <div class="dp-actions">
-        <button type="button" class="btn" id="dp-skip" disabled>跳过此步</button>
-        <button type="button" class="btn btn-accent" id="dp-retry" hidden>重试</button>
-        <span class="dp-retries" id="dp-retries"></span>
-        <span class="dp-spacer"></span>
-        <button type="button" class="btn" id="dp-close">关闭</button>
-      </div>
-    </div>
-  </div>
 
 <!-- 全局设置：从项目列表和编辑器均可进入的独立页面 -->
 <div id="st-view" class="workspace-page" hidden>

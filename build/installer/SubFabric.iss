@@ -1,15 +1,20 @@
 ; SubFabric 安装包脚本（Inno Setup 6）
 ;
-; 本文件与 build/ 目录一样是 .gitignore 的（本地构建用，不入库），构建步骤见 editor/README.md「发版流程」：
+; 本文件入库（build/ 其余内容是 .gitignore 的），构建步骤见 editor/README.md「发版流程」：
 ;   1) node editor/scripts/fetch-vendor.js      ; 拉 editor/vendor（约 19MB，缺了安装包会小一截）
-;   2) python build_exe.py                     ; 生成 build/SubFabric.exe（Node SEA）
+;   2) python build_exe.py                     ; 生成 build/SubFabric.exe（Node SEA，含图标与版本信息）
 ;   3) "D:\Program Files (x86)\Inno Setup 6\ISCC.exe" build/installer/SubFabric.iss
 ;   4) 静默自检: SubFabric-<版本>-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DIR=<临时目录>
+;
+; 图标：logo.png 是源图，logo.ico 是 editor/scripts/gen_app_icon.py 生成的多尺寸版
+;       （16/24/32/48/64/128/256）。两个都入库，SetupIconFile 直接引用 logo.ico。
+;       build_exe.py 会顺带把 logo.ico 嵌进 SubFabric.exe，所以程序本体、快捷方式、
+;       安装/卸载向导、控制面板「应用和功能」里显示的都是同一张图。
 ;
 ; 版本号要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "2.1.4"
+#define MyAppVersion "2.1.5"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
@@ -39,6 +44,9 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
+; 安装/卸载向导自身的图标（.iss 同目录，相对路径即可）
+SetupIconFile=logo.ico
+; 控制面板「应用和功能」里显示的图标：直接用程序本体的图标（build_exe.py 已嵌入 logo.ico）
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; 关掉 Inno 自带的「关闭正在运行的程序」以外的额外提问（保持默认的 Restart Manager 行为即可）
 
@@ -69,9 +77,11 @@ Source: "{#Root}\asr\*"; DestDir: "{app}\asr"; \
     Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\runtime-python\*,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*"
 
 [Icons]
-Name: "{group}\{#MyAppName}";           Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
-Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}";     Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+; 显式写 IconFilename 指向程序本体（而不是 .iss 里的 SetupIconFile），
+; 这样开始菜单/桌面的快捷方式用的是 exe 内嵌的 logo.ico
+Name: "{group}\{#MyAppName}";           Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; IconFilename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\{#MyAppName}";     Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon; IconFilename: "{app}\{#MyAppExeName}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

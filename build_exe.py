@@ -6,7 +6,7 @@
 用法: python build_exe.py
 前置: 本机有 Node >= 22(用托管版 22.22.2), 需联网下载 node.exe 二进制(仅首次, 有缓存)。
 """
-import json, os, subprocess, sys, hashlib, urllib.request, shutil
+import json, os, re, subprocess, sys, hashlib, urllib.request, shutil
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(ROOT, 'build')
@@ -42,6 +42,69 @@ OUT = os.path.join(BUILD, 'SubFabric.exe')
 CACHE = os.path.join(BUILD, 'node-binary.exe')
 NODE_VERSION = 'v22.22.2'
 NODE_URL = f'https://nodejs.org/dist/{NODE_VERSION}/win-x64/node.exe'
+
+# ── 图标 ──
+ICON_PNG = os.path.join(BUILD, 'installer', 'logo.png')     # 源图(入库)
+ICON_ICO = os.path.join(BUILD, 'installer', 'logo.ico')     # 多尺寸(gen_app_icon.py 生成, 也入库)
+ICON_GEN = os.path.join(ROOT, 'editor', 'scripts', 'gen_app_icon.py')
+TOOLS = os.path.join(BUILD, 'tools')
+RCEDIT = os.path.join(TOOLS, 'rcedit-x64.exe')
+RCEDIT_URL = 'https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe'
+
+
+def app_version():
+    """从 editor/server.js 取 APP_VERSION —— 版本号只维护一处。"""
+    try:
+        src = open(os.path.join(ROOT, 'editor', 'server.js'), encoding='utf-8').read()
+        m = re.search(r"APP_VERSION\s*=\s*'([^']+)'", src)
+        return m.group(1) if m else ''
+    except Exception:
+        return ''
+
+
+def ensure_icon():
+    """确保 logo.ico 存在且不比 logo.png 旧。生成失败不致命(可能没装 Pillow) ——
+    此时若已有入库的 logo.ico 就照用, 真的没有才报错退出。"""
+    if os.path.exists(ICON_ICO) and os.path.exists(ICON_PNG):
+        if os.path.getmtime(ICON_ICO) >= os.path.getmtime(ICON_PNG):
+            print('图标已是最新:', ICON_ICO)
+            return ICON_ICO
+    if os.path.exists(ICON_PNG):
+        try:
+            run([sys.executable, ICON_GEN, ICON_PNG, ICON_ICO])
+            return ICON_ICO
+        except SystemExit as e:
+            print('警告: 生成图标失败(%s), 改用已有 logo.ico' % e)
+    if not os.path.exists(ICON_ICO):
+        sys.exit('缺少应用图标: %s —— 放一张 logo.png 到 build/installer/ 后重跑' % ICON_ICO)
+    return ICON_ICO
+
+
+def ensure_rcedit():
+    """rcedit 用来给 exe 写 RT_ICON/RT_GROUP_ICON 与版本信息(缓存复用)。"""
+    if os.path.exists(RCEDIT):
+        return RCEDIT
+    os.makedirs(TOOLS, exist_ok=True)
+    print('下载 rcedit:', RCEDIT_URL)
+    urllib.request.urlretrieve(RCEDIT_URL, RCEDIT)
+    return RCEDIT
+
+
+def embed_icon_and_version(exe_path, ico):
+    """给 exe 嵌入图标 + 版本信息。**必须在 postject 注入 blob 之前跑** ——
+    SEA blob 在 Windows 上是以 PE 资源(RT_NODE_SEA_BLOB)形式注入的,
+    rcedit 会重建整个 .rsrc 段, 后跑会把 blob 一起抹掉。"""
+    rcedit = ensure_rcedit()
+    ver = app_version() or '0.0.0'
+    run([rcedit, exe_path,
+         '--set-icon', ico,
+         '--set-file-version', ver,
+         '--set-product-version', ver,
+         '--set-version-string', 'ProductName', 'SubFabric',
+         '--set-version-string', 'FileDescription', 'SubFabric 字幕工作台',
+         '--set-version-string', 'CompanyName', 'EndiVee233',
+         '--set-version-string', 'LegalCopyright', 'EndiVee233'])
+    print('已嵌入图标与版本信息: v%s' % ver)
 
 
 def run(cmd, **kw):
@@ -101,15 +164,14 @@ def main():
             print('下载 node.exe:', NODE_URL)
             urllib.request.urlretrieve(NODE_URL, CACHE)
 
-    # 4. 复制底版 → 输出名, 注入 blob
+    # 4. 复制底版 → 输出名, 先写图标/版本信息, 再注入 blob
+    #    顺序不能反: blob 是作为 PE 资源注入的, rcedit 重建 .rsrc 会把它抹掉
     with open(CACHE, 'rb') as a, open(OUT, 'wb') as b:
         b.write(a.read())
-    run([NODE_EXE, '-e',
-         "require('node:fs').copyFileSync(process.argv[1], process.argv[1]);"
-         "const {inject} = require('node:module').flags ? {} : {};"], cwd=ROOT) if False else None
-    postject = None
-    # postject 是官方 SEA 注入工具; node 自带 npx 可能没有, 直接用 node_modules 里缓存的
-    # 简化: 用 npx postject(首次联网装)
+    ico = ensure_icon()
+    embed_icon_and_version(OUT, ico)
+
+    # 5. 注入 SEA blob(postject 是官方工具, 会保留已有的资源段)
     run([NODE_EXE, os.path.join(ROOT, 'editor', 'scripts', 'inject_postject.mjs'), OUT,
          os.path.join(BUILD, 'sea-prep.blob')], cwd=ROOT)
     patch_gui_subsystem(OUT)

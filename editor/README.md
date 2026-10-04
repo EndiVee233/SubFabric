@@ -1,7 +1,18 @@
-# SubFabric（字幕工作台）v2.1.4
+# SubFabric（字幕工作台）v2.1.5
 
 基于 Web 的字幕编辑器：视频播放 + 字幕实时叠加 + 时间轴 + 编辑面板。
 支持 **SRT 双语字幕**（主/副语言上下排列）与 **ASS 高级特效字幕**（libass 内核，卡拉OK/颜色/定位等特效完整还原）。
+
+## v2.1.5 更新
+
+- **安装包与程序有了自己的图标**。`build/installer/logo.png` 作为唯一源图，由 `editor/scripts/gen_app_icon.py`
+  生成多尺寸 `logo.ico`（16/24/32/48/64/128/256）；`build_exe.py` 在注入 SEA blob **之前**用 rcedit
+  把图标与版本信息写进 `SubFabric.exe`，`SubFabric.iss` 再用它做 `SetupIconFile` 与快捷方式图标 ——
+  程序本体、开始菜单/桌面快捷方式、安装与卸载向导、控制面板「应用和功能」显示的是同一张图。
+- **项目列表「查看进度」+「编辑信息」合并为「详细信息」独立页面**（`#/details/<id>`）。左边「项目信息」改名并查看
+  视频/字幕/时间，右边「初稿处理进度」保留步骤条、进度条、滚动日志、跳过与重试；没有初稿任务时收成单列居中。
+  两个二级弹窗（`#info-overlay` / `#dp-overlay`）已删除，卡片上不再有「查看进度」「编辑信息」两个按钮。
+- **全局设置页内容面板居中**：`#st-view .st-panel` 加 `margin-inline: auto`，卡片不再贴着侧栏左对齐。
 
 ## v2.1.4 更新
 
@@ -168,7 +179,7 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链�
 | "失效"且定位不到 | ① **思维链从来没剥**（全项目搜 `think` 原为 0 处）：`indexOf('[')…lastIndexOf(']')` 会被思考过程里的**示例数组**带偏；逐行兜底又把思考行算成译文行 → 行数不符 ② `max_tokens` 固定 4096 被截断 ③ `content` 为空就报"内容为空"（推理模型可能把内容放在 `reasoning_content`） ④ `fetch` **没有超时**，服务商挂起就一直等 ⑤ 429/5xx 与"内容不合规"共用一条重试阶梯，限流时递归拆半反而让请求数翻倍 | 统一收口在 `llmChat`：**剥思维链** → **平衡扫描**取第一个完整闭合的数组 → **120s 超时**（`SUBFABRIC_LLM_TIMEOUT_MS`）→ **按批量自适应 max_tokens** → **错误分型**（net/rate 指数退避并尊重 `Retry-After`；truncated 直接拆批；empty 明确说"模型只吐了思考过程"） |
 | 原因看不到 | 失败细节只有 120 字，且只写进项目自己的 `draft.log` | 每次失败都 `console.error` 一条（进应用「日志」页的 SSE），带 **HTTP 状态 / finish_reason / 原始回复前 300 字**；设 `SUBFABRIC_LLM_DEBUG=1` 还会把**完整请求 + 回复**落到 `projects/<id>/llm-debug.jsonl`（默认不写，避免留痕） |
 
-排查套路：先在「查看进度」的日志区或应用「日志」页找 `[llm]` / `[reseg]` 开头那几行 —— 它会直接告诉你是**超时 / 限流 / 截断 / 还是模型格式跑偏**。要看原始报文就设 `SUBFABRIC_LLM_DEBUG=1` 重跑那一步。
+排查套路：先在「详细信息」页的日志区或应用「日志」页找 `[llm]` / `[reseg]` 开头那几行 —— 它会直接告诉你是**超时 / 限流 / 截断 / 还是模型格式跑偏**。要看原始报文就设 `SUBFABRIC_LLM_DEBUG=1` 重跑那一步。
 
 ### 每批行数（用户可调，v1.10.0）
 
@@ -326,7 +337,7 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链�
 
 - **项目化（主界面）**：打开即见 **#/home 主界面**——项目卡片列表（格式徽标 ASS/SRT、视频名·字幕名·修改时间、状态角标）+「+ 新建项目」。项目数据存于 `projects/<id>/`（`project.json` 元数据 + 字幕副本 + `audio.wav` + `peaks.bin`），不影响原始视频与字幕文件
   - **新建项目 · 导入已有字幕**：选视频 + 选 SRT/ASS 字幕 → 创建后后台**一次 ffmpeg 同时提取** 16kHz 单声道音频（给后续"重新识别"铺路）与波形包络（打开项目免重新生成），完成后自动加载波形
-  - **新建项目 · 创建初稿（语音识别）**：**只选视频**，服务端识别语音自动生成初稿字幕，**不用守着对话框** —— 点「开始识别」后项目立刻出现在列表里，卡片上实时显示阶段与百分比，旁边「查看进度」可展开滚动日志
+  - **新建项目 · 创建初稿（语音识别）**：**只选视频**，服务端识别语音自动生成初稿字幕，**不用守着对话框** —— 点「开始识别」后项目立刻出现在列表里，卡片上实时显示阶段与百分比，旁边「详细信息」可进独立页面看进度与滚动日志
     - 流程：ffmpeg 抽 16kHz 单声道音频 → 识别（默认 Parakeet TDT 0.6B v2 / sherpa-onnx，也可选 whisper.cpp、必剪 / 剪映云端、Multitalker）→ **LLM 语义分句（所有引擎都走；没配 LLM 就停在这一步报错，不往下走）** → 生成字幕。识别阶段约 **15~20 倍实时**（12 秒音频实测 0.7 秒）
     - **逐词开关**：开启 → 生成 **ASS 逐词字幕**（本工具的内联高亮格式，见下）；关闭 → 生成 **SRT** 纯文本
     - 存储约定：服务端保存 `audio.wav` 与波形 `peaks.bin`，**不保存视频**（视频按路径引用）
@@ -349,10 +360,10 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链�
     - **仅英语**（三个本地模型都只对英语）
   - **阶段文案**：项目卡片直接显示服务端给的阶段名（`STAGE`，定义在 `server.js`）——
     `提取音频中` → `ASR识别中` → `语义分句中`（所有引擎：LLM 补标点 → 按**句末标点**切句；没配 LLM 就停在这一步报错）→ `区分说话人中` → `翻译中` → `完毕`，跑动时后面补 `...`
-  - **「查看进度」弹窗**：顶部**步骤条**（`1 语音识别 · 2 LLM语义分句 · 3 说话人分离 · 4 LLM翻译 · 5 完毕`，顺序与服务端流水线一致：**先把行切开、再往这些行上标说话人**），
+  - **「详细信息」独立页面**（`#/details/<id>`，替代原来的「查看进度」弹窗与「编辑信息」弹窗）：左边「项目信息」可改项目名称并查看视频/字幕/创建与修改时间，右边「初稿处理进度」含**步骤条**（`1 语音识别 · 2 LLM语义分句 · 3 说话人分离 · 4 LLM翻译 · 5 完毕`，顺序与服务端流水线一致：**先把行切开、再往这些行上标说话人**，
     当前步圆圈高亮、已过步变色）→ 进度条（完成变绿、失败变红）→ 日志区；
     左下角「跳过此步」（**语音识别与 LLM 翻译不可跳过**；说话人分离/语义分句失败重试满 3 次可跳过并继续流水线），
-    右下角「重试」（LLM 步骤失败/未完成时出现）与「关闭」。项目卡片上同样有「重试」按钮
+    右下角「重试」（LLM 步骤失败/未完成时出现）与「返回项目」。没有初稿任务时只显示居中的项目信息面板。项目卡片上同样有「重试」按钮
   - **字幕翻译（服务端调用 LLM）**：
     - 主界面右上角「⚙ 设置」里配置：服务商预设（DeepSeek / OpenAI / Kimi / 智谱 GLM / 通义千问 / 硅基流动 / 自定义 OpenAI 兼容）+ 接口地址 + API Key + 模型名 + 提示词，可「测试连接」；配置落在 `asr/settings.json`（不入库）
     - **触发**：设置里勾选「创建初稿后自动翻译」则识别完直接接着翻；不勾选就在项目卡片上手动点「翻译」（翻译完不会再出现该按钮）
@@ -612,7 +623,9 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4                     # 同上, �
 ```bash
 # 0) 前置: 发行内容要齐 —— 尤其是 gitignore 的本地渲染依赖(~19MB), 缺了安装包会静默少一块
 node editor/scripts/fetch-vendor.js          # 拉 editor/vendor/: libass worker + Noto CJK 字体
-#    还要有 build/SubFabric.exe(Node SEA, 由 build_exe.py 生成) 与 build/installer/{SubFabric.iss,start-editor.*}
+#    还要有 build/SubFabric.exe(Node SEA, 由 build_exe.py 生成) 与 build/installer/{SubFabric.iss,start-editor.*,logo.png,logo.ico}
+#    图标不用单独处理: build_exe.py 会(必要时)跑 gen_app_icon.py 刷新 logo.ico, 再用 rcedit 嵌进 exe;
+#    logo.png / logo.ico 都已入库, 所以新克隆也能直接编安装包
 
 # 1) 三处版本号一起改(漏一处就会出现"装完版本还是旧的")
 #    · editor/server.js          const APP_VERSION = 'x.y.z'
@@ -647,7 +660,7 @@ SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DI
 > 用户数据不会被碰），但要知道自己刚把用户机器上的版本换了。真要隔离验证，得临时给
 > `SubFabric.iss` 加 `UsePreviousAppDir=no` 再编一次。
 
-**踩过的坑**：① 不跑 `fetch-vendor.js` 直接打，安装包会从 ~33.8MB 掉到 ~22.7MB（少的正是 libass worker 与 CJK 字体，字幕渲染直接废）；② `build/` 里**只有** `installer/SubFabric.iss` 与 `installer/start-editor.*` 入库（.gitignore 开了例外，2026-09-30 build/ 被误删过一次），`SubFabric.exe`、`node-binary.exe`、`editor/vendor/` 仍然不入库 —— 新克隆要跑 `fetch-vendor.js` + `build_exe.py` 生成；③ 版本号三处不同步，装完仍显示旧版本。
+**踩过的坑**：① 不跑 `fetch-vendor.js` 直接打，安装包会从 ~33.8MB 掉到 ~22.7MB（少的正是 libass worker 与 CJK 字体，字幕渲染直接废）；② `build/` 里**只有** `installer/SubFabric.iss`、`installer/start-editor.*` 与 `installer/logo.{png,ico}` 入库（.gitignore 开了例外，2026-09-30 build/ 被误删过一次），`SubFabric.exe`、`node-binary.exe`、`build/tools/rcedit-*.exe`、`editor/vendor/` 仍然不入库 —— 新克隆要跑 `fetch-vendor.js` + `build_exe.py` 生成（rcedit 会按需自动下载）；③ 版本号三处不同步，装完仍显示旧版本。
 
 **升级要能"原地覆盖"（用户报过：每次都得手动改路径）**：`SubFabric.iss` 里有三路检测，按优先级
 ① Inno 自带的 `UsePreviousAppDir`（只对有卸载注册项的安装有效）→ ② 扫注册表自己的 AppId（HKLM64/HKLM32/HKCU，

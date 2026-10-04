@@ -184,16 +184,16 @@ body::before {
 /* ── 8. 弹窗统一：圆角/投影/黑玻璃遮罩/标题与按钮栏节奏 ────────────────────
  * 遮罩**不要模糊**：它盖住的正是字幕列表/时间轴这类"要边看边改"的内容，糊掉就没法对照了。
  * 玻璃感靠更深的半透明黑 + 对话框自身的高光与投影（用户明确要求：黑玻璃、不要模糊）。 */
-#info-overlay, #fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay, #dp-overlay {
+#fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay {
   background: linear-gradient(180deg, rgba(5, 5, 8, .78), rgba(2, 2, 4, .86));
 }
-.np-box, .info-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box, .dp-box {
+.np-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box {
   border-radius: var(--r-4);
   border: 1px solid var(--hair-2);
   background: linear-gradient(180deg, #1b1b22, #141419 62%);
   box-shadow: var(--sh-3), inset 0 1px 0 var(--hair);
 }
-.np-title, .info-title, .st-title, .fr-title, .rn-title, .pick-title {
+.np-title, .st-title, .fr-title, .rn-title, .pick-title {
   font-size: 15px; font-weight: 700; letter-spacing: .3px;
 }
 .st-head, .fr-head {
@@ -360,11 +360,77 @@ body::before {
 #st-view .st-tab { flex: none; min-width: 0; width: 100%; text-align: left; padding: 11px 14px; border: 0; border-radius: var(--r-2); }
 #st-view .st-tab.active { background: var(--accent-a12); box-shadow: inset 3px 0 0 var(--accent); }
 #st-view .st-body { grid-column: 2; grid-row: 2; min-width: 0; padding: 22px 24px; }
-#st-view .st-panel { width: 100%; max-width: 740px; }
+#st-view .st-panel { width: 100%; max-width: 740px; margin-inline: auto; }
 #st-view .st-card { padding: 16px 18px; }
 #st-view .st-actions { grid-column: 1 / -1; grid-row: 3; margin: 0; padding: 12px 20px; border-top: 1px solid var(--hair-2); }
 #st-view .st-actions .st-msg { flex: 1; max-height: 48px; overflow: auto; }
-#home-view.is-leaving, #np-view.is-leaving, #st-view.is-leaving {
+/* ── 稿件详细信息：项目资料 + 处理进度 两块并排的独立页面 ── */
+.detail-inner { width: min(1080px, 100%); }
+.detail-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 18px; align-items: start;
+}
+.detail-info, #detail-view .dp-box { padding: 22px 24px; }
+/* 没有进度面板时只剩一块 → 收成单列并居中，别在右边留空档 */
+.detail-layout.is-single { grid-template-columns: minmax(0, 1fr); }
+.detail-layout.is-single .detail-info { width: 100%; max-width: 720px; margin-inline: auto; }
+/* 两块面板按顺序错峰浮起，切换页面时是"铺开"而不是"闪一下" */
+#detail-view .detail-layout > * { animation: fade-up var(--dur-4) var(--ease-out) both; }
+#detail-view .detail-layout > *:nth-child(2) { animation-delay: 60ms; }
+
+.detail-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.detail-section-kicker { color: var(--accent); font: 600 10px var(--mono); letter-spacing: 1.8px; margin-bottom: 6px; }
+.detail-info h2, #detail-view .dp-title { font-size: 16px; font-weight: 700; letter-spacing: .2px; margin: 0; }
+.detail-format {
+  flex: none; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; letter-spacing: .6px;
+  color: var(--accent); background: var(--accent-a12); border: 1px solid var(--accent-a24);
+}
+.detail-field { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text-1); }
+.detail-field .np-input { width: 100%; }
+.detail-meta {
+  margin-top: 18px; padding: 14px 16px; border-radius: var(--r-2);
+  background: rgba(255, 255, 255, .015); border: 1px solid var(--hair);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.detail-meta-row { display: grid; grid-template-columns: 66px minmax(0, 1fr); gap: 12px; align-items: baseline; font-size: 12.5px; }
+.detail-meta-row > span { color: var(--text-2); }
+.detail-meta-row > strong {
+  min-width: 0; color: var(--text-0); font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.detail-hint { margin: 14px 0 0; font-size: 12px; color: var(--text-2); line-height: 1.6; }
+.detail-error { margin-top: 10px; color: var(--danger); font-size: 12px; line-height: 1.5; }
+.detail-error[hidden] { display: none; }
+.detail-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--hair); }
+
+.detail-live {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.detail-live i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  animation: breathe 1.7s var(--ease) infinite;
+}
+#detail-view .dp-head { justify-content: space-between; margin-bottom: 16px; }
+#detail-view .dp-steps { margin-bottom: 16px; }
+#detail-view .dp-log-label { margin: 14px 0 6px; }
+#detail-view .dp-log { min-height: 150px; max-height: 260px; }
+#detail-view .dp-actions { margin-top: 14px; padding-top: 12px; }
+
+@media (max-width: 900px) {
+  .detail-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .detail-info, #detail-view .dp-box { padding: 18px 16px; }
+  .detail-meta-row { grid-template-columns: 58px minmax(0, 1fr); gap: 10px; }
+  .detail-actions { flex-wrap: wrap; }
+  .detail-actions .btn { flex: 1; }
+  #detail-view .dp-log { min-height: 120px; max-height: 220px; }
+  #detail-view .dp-actions { flex-wrap: wrap; }
+  #detail-view .dp-actions .dp-spacer { display: none; }
+}
+
+#home-view.is-leaving, #np-view.is-leaving, #st-view.is-leaving, #detail-view.is-leaving {
   pointer-events: none;
   animation: page-leave .2s var(--ease) both;
 }
