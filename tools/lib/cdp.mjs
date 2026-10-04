@@ -16,12 +16,18 @@ export async function launch({ url, port = 9333, width = 1600, height = 1000 }) 
   const exe = BROWSERS.find((p) => existsSync(p));
   const profile = mkdtempSync(join(tmpdir(), 'subfab-probe-'));
   const headed = !!process.env.SUBFAB_HEADED;      // SUBFAB_HEADED=1 → 起真实窗口(焦点行为与无头不同)
+  // ⚠ 沙箱会给子进程塞 HTTP(S)_PROXY，本地 127.0.0.1 走代理会变成 chrome-error 页
+  //   （症状是页面里每个 querySelector 都返回 null，而不是报网络错）。必须直连。
+  const env = { ...process.env };
+  for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']) delete env[k];
+  env.NO_PROXY = env.no_proxy = '127.0.0.1,localhost';
   const proc = spawn(exe, [
     ...(headed ? [] : ['--headless=new']), `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--disable-extensions', '--autoplay-policy=no-user-gesture-required',
-    `--window-size=${width},${height}`, 'about:blank',
-  ], { stdio: 'ignore' });
+    '--proxy-server=direct://', '--proxy-bypass-list=*',
+    `--window-size=${width},${height}`, url || 'about:blank',
+  ], { stdio: 'ignore', env });
 
   let target = null;
   for (let i = 0; i < 60; i++) {
@@ -123,6 +129,40 @@ export async function launch({ url, port = 9333, width = 1600, height = 1000 }) 
     async shot(path) {
       const r = await send('Page.captureScreenshot', { format: 'png' });
       writeFileSync(path, Buffer.from(r.data, 'base64'));
+    },
+    /** 改模拟视口。窄屏断点必须显式设 —— 无头默认约 745px 宽，会直接落进窄屏分支 */
+    async setViewport(w, h) {
+      await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false });
+      await sleep(400);
+    },
+    /** 只截某个元素。
+     *  工作页面是 position:fixed 的滚动容器（document 本身不滚），captureBeyondViewport
+     *  抓不到视口外的部分 —— 所以先把视口撑到够高，再按元素矩形裁剪。 */
+    async shotEl(selector, path, { pad = 8, scale = 2 } = {}) {
+      const need = await api.eval(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return 0;
+        const r = el.getBoundingClientRect();
+        return Math.ceil(r.y + r.height) + ${pad * 2 + 40};
+      })()`);
+      if (!need) return false;
+      const [vw] = await api.eval('[innerWidth, innerHeight]');
+      const restore = (await api.eval('innerHeight')) || 1000;
+      if (need > restore) await api.setViewport(vw, need);
+      const rect = await api.eval(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.x) - ${pad}, y: Math.round(r.y) - ${pad},
+                 width: Math.ceil(r.width) + ${pad * 2}, height: Math.ceil(r.height) + ${pad * 2} };
+      })()`);
+      if (!rect || rect.width <= 0) return false;
+      const r = await send('Page.captureScreenshot', {
+        format: 'png', clip: { ...rect, x: Math.max(0, rect.x), y: Math.max(0, rect.y), scale },
+      });
+      writeFileSync(path, Buffer.from(r.data, 'base64'));
+      if (need > restore) await api.setViewport(vw, restore);
+      return true;
     },
     close() { try { ws.close(); } catch {} try { proc.kill(); } catch {} },
   };

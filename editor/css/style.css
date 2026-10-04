@@ -1030,11 +1030,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .sm-state.ok { color: #72e2a0; }
 .sm-state.running { color: var(--accent); }
 .sm-runtime { font-size: 11px; color: var(--text-2); margin-top: 5px; line-height: 1.45; }
-.np-select {
-  flex: 1; min-width: 0; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 12px; color: var(--text-0); font-size: 13px; outline: none;
-}
-.np-select:focus { border-color: var(--accent); }
+/* .np-select 的外观定义在「新建项目表单」那一段（与 .np-input/.np-area 合并成一条规则） */
 .pc-open:disabled { opacity: .38; cursor: not-allowed; }
 
 .home-empty { text-align: center; padding: 64px 0 30px; }
@@ -1052,11 +1048,17 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .np-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
 .np-lbl { flex: 0 0 auto; width: 58px; font-size: 13px; color: var(--text-1); }
 .np-name-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-.np-input {
-  flex: 1; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 12px; color: var(--text-0); font-size: 13px; outline: none;
+/* 新建项目 / 详细信息的输入控件：外观与「全局设置」里的 .st-input/.st-select/.st-area 保持一致。
+ * ⚠ font-family: inherit 不能漏 —— 表单控件默认不继承字体，会掉回 Arial / 等宽，
+ *   中英文混排的字形和行高都跟设置页对不上。 */
+.np-input, .np-select, .np-area {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; color: var(--text-0); font-size: 13px; font-family: inherit; outline: none;
 }
-.np-input:focus { border-color: var(--accent); }
+.np-input, .np-select { flex: 1; min-width: 0; }
+/* 文本域不吃 flex:1：工作台面板是纵向 flex，flex-basis:0 会被拉伸得很高 */
+.np-area { flex: none; width: 100%; box-sizing: border-box; resize: vertical; line-height: 1.6; }
+.np-input:focus, .np-select:focus, .np-area:focus { border-color: var(--accent); }
 .np-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 .np-mode {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px;

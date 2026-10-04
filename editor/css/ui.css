@@ -439,7 +439,7 @@ body::before {
 .ws-panel .np-hint { margin-top: 14px; }
 .ws-panel .np-draft-only:not([hidden]) { animation: fade-up var(--dur-3) var(--ease-out) both; }
 .np-draft-only[hidden] { display: none; }
-.ws-panel .np-area { width: 100%; min-height: 84px; resize: vertical; font-size: 12.5px; line-height: 1.6; }
+.ws-panel .np-area { min-height: 84px; }   /* 外观与设置页一致，见 style.css 的 .np-input/.np-select/.np-area */
 .ws-panel .dp-log { min-height: 150px; max-height: none; flex: 1 1 auto; }
 .ws-panel #dp-body > .dp-actions { margin-top: auto; }
 
