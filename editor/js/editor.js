@@ -277,7 +277,8 @@ export class EditorPanel {
 
   setModeOptions(opts, current) {
     if (!this.modeSel) return;
-    this.modeSel.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`).join('');
+    // 两处都要转义: v 落在属性值里, t 落在文本节点里(同 334 行 roles 下拉的做法)
+    this.modeSel.innerHTML = opts.map(o => `<option value="${escapeHtml(o.v)}">${escapeHtml(o.t)}</option>`).join('');
     this.modeSel.value = current || 'bi';
     this._mode = this.modeSel.value;
     this._metricsDirty = true;      // 显示模式变了 → 卡片行数变了 → 高度表作废
