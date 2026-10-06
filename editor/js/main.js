@@ -640,7 +640,7 @@ async function loadAssStyleFont(language) {
   finally { input.value = ''; }
 }
 
-/* ─────────── 字幕后处理特效 (微光 Glow 等) ─────────── */
+/* ─────────── 字幕后处理特效 (微光 Glow / 词生长 Grow / 柔和淡入 Fade In) ─────────── */
 const FX_LANGS = ['zh', 'en'];
 const FX_CHANNELS = ['shadow', 'outline', 'both'];
 const FX_TARGETS = ['zh', 'en', 'all', 'active_word'];
@@ -652,6 +652,12 @@ const FX_SCOPE = {
   all: { zh: true, en: true },
   active_word: { zh: false, en: true }   // 逐词高亮词在英文轨上，用英文参数
 };
+
+/**
+ * 当前参数组合对应哪个预设按钮。
+ * 判定顺序从「特效最多」往下走，保证全套全开时高亮的是最全的那个按钮，
+ * 而不是先匹配到纯微光就把 grow/fadein 的开关状态显示丢了。
+ */
 
 function fxLangEls(lang) {
   const $ = (suffix) => document.getElementById(`fx-${lang}-${suffix}`);
@@ -680,7 +686,29 @@ const fxEls = {
   glowEnableVal: document.getElementById('fx-glow-enable-val'),
   glowTarget: document.getElementById('fx-glow-target'),
   statusNote: document.getElementById('fx-status-note'),
-  lang: { zh: fxLangEls('zh'), en: fxLangEls('en') }
+  lang: { zh: fxLangEls('zh'), en: fxLangEls('en') },
+  glow: {
+    block: document.getElementById('fx-glow-block')
+  },
+  grow: {
+    block: document.getElementById('fx-grow-block'),
+    enable: document.getElementById('fx-grow-enable'),
+    enableVal: document.getElementById('fx-grow-enable-val'),
+    scale: document.getElementById('fx-grow-scale'),
+    scaleVal: document.getElementById('fx-grow-scale-val')
+  },
+  fadein: {
+    block: document.getElementById('fx-fadein-block'),
+    enable: document.getElementById('fx-fadein-enable'),
+    enableVal: document.getElementById('fx-fadein-enable-val'),
+    target: document.getElementById('fx-fadein-target'),
+    from: document.getElementById('fx-fadein-from'),
+    fromVal: document.getElementById('fx-fadein-from-val'),
+    duration: document.getElementById('fx-fadein-duration'),
+    durationVal: document.getElementById('fx-fadein-duration-val'),
+    ratio: document.getElementById('fx-fadein-ratio'),
+    ratioVal: document.getElementById('fx-fadein-ratio-val')
+  }
 };
 
 function fxNormLang(block) {
@@ -691,6 +719,34 @@ function fxNormLang(block) {
     color: (b.color || '#00ff88').toLowerCase(),
     radius: Number(b.radius != null ? b.radius : 4.0),
     intensity: Number(b.intensity != null ? b.intensity : 100)
+  };
+}
+
+/**
+ * 词生长参数归一化（与 postprocess.js 的 normGrow 同一套夹取区间）。
+ * 注意：旧存档的 scale 是「起始缩放」（恒 <100，配 `\t` 长到 100%）；
+ * 新语义是「放大倍数」（恒 ≥100）。见到 <100 的旧值换成新默认，
+ * 免得老用户升级后活动词反而变小。
+ */
+function fxNormGrow(block) {
+  const b = block || {};
+  const raw = Number.isFinite(+b.scale) ? Math.round(+b.scale) : 130;
+  return {
+    enabled: b.enabled === true,
+    scale: raw < 100 ? 130 : Math.min(250, Math.max(100, raw))
+  };
+}
+
+/** 柔和淡入参数归一化（\fade 是事件级标签，生效范围只有整行三档） */
+function fxNormFadeIn(block) {
+  const b = block || {};
+  const cl = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? Math.round(+v) : d));
+  return {
+    enabled: b.enabled === true,
+    target: (b.target === 'en' || b.target === 'all') ? b.target : 'zh',
+    from: cl(b.from, 0, 100, 55),
+    duration: cl(b.duration, 20, 3000, 300),
+    ratio: cl(b.ratio, 5, 100, 70)
   };
 }
 
@@ -705,6 +761,8 @@ function syncFxUi() {
   const glow = cfg.glow || {};
   if (fxEls.glowEnable) fxEls.glowEnable.checked = glow.enabled !== false;
   if (fxEls.glowEnableVal) fxEls.glowEnableVal.textContent = (glow.enabled !== false) ? '开' : '关';
+  // 三个特效块视觉平级：关掉哪个就把哪个的参数区压暗（与 grow/fadein 同一套表现）
+  if (fxEls.glow.block) fxEls.glow.block.classList.toggle('is-off', glow.enabled === false);
 
   const target = FX_TARGETS.includes(glow.target) ? glow.target : 'active_word';
   if (fxEls.glowTarget) fxEls.glowTarget.value = target;
@@ -728,6 +786,29 @@ function syncFxUi() {
     if (els.group) els.group.classList.toggle('is-out-of-scope', !inScope);
     if (els.state) els.state.textContent = inScope ? '生效中' : '当前范围用不到';
   }
+
+  // ── 词生长（静态放大，只作用逐词高亮词）──
+  const g = fxEls.grow;
+  const gb = fxNormGrow(cfg.grow);
+  if (g.enable) g.enable.checked = gb.enabled;
+  if (g.enableVal) g.enableVal.textContent = gb.enabled ? '开' : '关';
+  if (g.block) g.block.classList.toggle('is-off', !gb.enabled);
+  if (g.scale) g.scale.value = gb.scale;
+  if (g.scaleVal) g.scaleVal.textContent = `${gb.scale}%`;
+
+  // ── 柔和淡入 ──
+  const fd = fxEls.fadein;
+  const fb = fxNormFadeIn(cfg.fadein);
+  if (fd.enable) fd.enable.checked = fb.enabled;
+  if (fd.enableVal) fd.enableVal.textContent = fb.enabled ? '开' : '关';
+  if (fd.block) fd.block.classList.toggle('is-off', !fb.enabled);
+  if (fd.target) fd.target.value = fb.target;
+  if (fd.from) fd.from.value = Math.min(99, fb.from);
+  if (fd.fromVal) fd.fromVal.textContent = `${Math.min(99, fb.from)}%`;
+  if (fd.duration) fd.duration.value = Math.min(1200, fb.duration);
+  if (fd.durationVal) fd.durationVal.textContent = `${Math.min(1200, fb.duration)} ms`;
+  if (fd.ratio) fd.ratio.value = fb.ratio;
+  if (fd.ratioVal) fd.ratioVal.textContent = `${fb.ratio}%`;
 }
 
 function updateFxConfig(mutateFn) {
@@ -746,6 +827,14 @@ function mutateFxLang(lang, mutateFn) {
     if (!cfg.glow) cfg.glow = {};
     if (!cfg.glow[lang]) cfg.glow[lang] = {};
     mutateFn(cfg.glow[lang], cfg.glow);
+  });
+}
+
+/** 确保 cfg.<key> 存在后执行 mutate（词生长/柔和淡入共用） */
+function mutateFxEffect(key, mutateFn) {
+  updateFxConfig(cfg => {
+    if (!cfg[key] || typeof cfg[key] !== 'object') cfg[key] = {};
+    mutateFn(cfg[key]);
   });
 }
 
@@ -808,6 +897,41 @@ function initFxControls() {
       els.intensity.addEventListener('input', onIntensity);
       els.intensity.addEventListener('change', onIntensity);
     }
+  }
+
+  // ── 词生长（静态放大）──
+  const g = fxEls.grow;
+  if (g.enable) {
+    g.enable.addEventListener('change', () => mutateFxEffect('grow', (b) => { b.enabled = g.enable.checked; }));
+  }
+  if (g.scale) {
+    const onScale = () => mutateFxEffect('grow', (b) => { b.scale = parseInt(g.scale.value, 10) || 130; });
+    g.scale.addEventListener('input', onScale);
+    g.scale.addEventListener('change', onScale);
+  }
+
+  // ── 柔和淡入 ──
+  const fd = fxEls.fadein;
+  if (fd.enable) {
+    fd.enable.addEventListener('change', () => mutateFxEffect('fadein', (b) => { b.enabled = fd.enable.checked; }));
+  }
+  if (fd.target) {
+    fd.target.addEventListener('change', () => mutateFxEffect('fadein', (b) => { b.target = fd.target.value; }));
+  }
+  if (fd.from) {
+    const onFrom = () => mutateFxEffect('fadein', (b) => { b.from = parseInt(fd.from.value, 10); });
+    fd.from.addEventListener('input', onFrom);
+    fd.from.addEventListener('change', onFrom);
+  }
+  if (fd.duration) {
+    const onDur = () => mutateFxEffect('fadein', (b) => { b.duration = parseInt(fd.duration.value, 10) || 300; });
+    fd.duration.addEventListener('input', onDur);
+    fd.duration.addEventListener('change', onDur);
+  }
+  if (fd.ratio) {
+    const onRatio = () => mutateFxEffect('fadein', (b) => { b.ratio = parseInt(fd.ratio.value, 10) || 70; });
+    fd.ratio.addEventListener('input', onRatio);
+    fd.ratio.addEventListener('change', onRatio);
   }
 }
 

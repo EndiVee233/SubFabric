@@ -221,14 +221,16 @@
             <span class="setting-val" id="fx-enable-val">关</span>
           </div>
           <div id="fx-controls" class="fx-controls" hidden>
+            <div class="fx-effect-block" id="fx-glow-block">
             <div class="setting-row">
-              <span class="setting-name" title="开启文字微光/光晕效果">微光（Glow）</span>
+              <span class="setting-name" title="文字微光/光晕效果。走\\3c描边与\\4c阴影通道，只糊边缘不影响字形清晰度">微光（Glow）</span>
               <label class="switch">
                 <input type="checkbox" id="fx-glow-enable" checked>
                 <span class="switch-slider"></span>
               </label>
               <span class="setting-val" id="fx-glow-enable-val">开</span>
             </div>
+            <div id="fx-glow-opts">
             <div class="setting-row">
               <span class="setting-name" title="生效范围：中文字幕 / 英文字幕 = 整行发光；中英文全部 = 两行各用各自的参数发光；仅逐词高亮词 = 只给逐词高亮的活动词发光（用英文字幕的参数）">生效范围</span>
               <select class="btn btn-mini" id="fx-glow-target">
@@ -314,8 +316,63 @@
               <span class="setting-val" id="fx-en-intensity-val">100%</span>
             </div>
             </div>
+            </div>
+
+            <div class="fx-effect-block" id="fx-grow-block">
+            <div class="setting-row">
+              <span class="setting-name" title="词生长：把逐词高亮的活动词放大一圈，更有「逐字蹦出来」的节奏感。这里用静态放大 —— 实测 ASS 的 \t 变换动画会让 libass 关掉该行碰撞避让，导致中英两行叠压，所以不能用渐变缩放">词生长（Grow）</span>
+              <label class="switch">
+                <input type="checkbox" id="fx-grow-enable">
+                <span class="switch-slider"></span>
+              </label>
+              <span class="setting-val" id="fx-grow-enable-val">关</span>
+            </div>
+            <div id="fx-grow-opts">
+            <div class="setting-row">
+              <span class="setting-name" title="放大到原字号的百分之几。不建议超过 150%：放大改变该词占宽，太大有可能让整行重新折行">放大到</span>
+              <input type="range" id="fx-grow-scale" class="range" min="100" max="200" step="5" value="130">
+              <span class="setting-val" id="fx-grow-scale-val">130%</span>
+            </div>
+            </div>
+            </div>
+
+            <div class="fx-effect-block" id="fx-fadein-block">
+            <div class="setting-row">
+              <span class="setting-name" title="柔和淡入：高亮颜色保持静止不闪，只让字幕整体轻轻浮现。适合静态高亮风格">柔和淡入（Fade In）</span>
+              <label class="switch">
+                <input type="checkbox" id="fx-fadein-enable">
+                <span class="switch-slider"></span>
+              </label>
+              <span class="setting-val" id="fx-fadein-enable-val">关</span>
+            </div>
+            <div id="fx-fadein-opts">
+            <div class="setting-row">
+              <span class="setting-name" title="生效范围：整行淡入。淡入用 ASS 的 \fade 标签实现，它只能作用于整个事件，无法只淡入某一个词">生效范围</span>
+              <select class="btn btn-mini" id="fx-fadein-target">
+                <option value="zh">中文字幕</option>
+                <option value="en">英文字幕</option>
+                <option value="all">中英文全部</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="起始不透明度：字幕刚出现时有多淡。0% = 从全透明浮入，数值越大越接近「本来就在那」">起始不透明度</span>
+              <input type="range" id="fx-fadein-from" class="range" min="0" max="99" step="1" value="55">
+              <span class="setting-val" id="fx-fadein-from-val">55%</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="淡入时长：从起始不透明度到完全清晰所需的时间">淡入时长</span>
+              <input type="range" id="fx-fadein-duration" class="range" min="40" max="1200" step="10" value="300">
+              <span class="setting-val" id="fx-fadein-duration-val">300 ms</span>
+            </div>
+            <div class="setting-row">
+              <span class="setting-name" title="时长占比上限：实际时长不会超过「本条字幕自身时长 × 此比例」，避免短字幕还没淡完就结束">时长占比上限</span>
+              <input type="range" id="fx-fadein-ratio" class="range" min="10" max="100" step="5" value="70">
+              <span class="setting-val" id="fx-fadein-ratio-val">70%</span>
+            </div>
+            </div>
+            </div>
           </div>
-          <p id="fx-status-note" class="set-group-note">纯后处理管线：不破坏原编辑层数据，预览与导出共用同一份特效结果。</p>
+          <p id="fx-status-note" class="set-group-note">纯后处理管线：不破坏原编辑层数据，预览与导出共用同一份特效结果。全部特效都只用静态标签或 \fade/\k 实现，不新增事件、不改时间轴、不打断多行字幕的自动避让。</p>
         </div>
 
         <div class="set-group">
