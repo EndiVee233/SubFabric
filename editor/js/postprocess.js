@@ -22,10 +22,51 @@
  *  5. `\xshad0\yshad0` 时 libass 不画阴影（拿不到零偏移阴影），要居中光晕得写
  *     极小偏移 `\xshad0.1\yshad0.1`。样式自带 Shadow 时不改偏移也够用。
  *
+ * ── ★★ 绝不要用 `\t()` 做动画（最贵的教训，附 libass 源码证据）★★ ──────
+ *  6. **任何 `\t()` 都会让事件彻底退出 libass 的碰撞避让。**
+ *     libass 源码 `ass_parse.c` 的 `complex_tag("t")` 分支里无条件写着：
+ *         state->detect_collisions = 0;      // ass_parse.c:694
+ *     而 `ass_render.c` 的 fix_collisions() 两处都有
+ *         if (!imgs[i].detect_collisions || ...) continue;   // :3216 / :3255
+ *     —— 该事件既不算「阻挡物」也不算「待避让物」，等于从避让里消失。
+ *
+ *     这是 libass 对齐 VSFilter 的**刻意设计**：变换动画的尺寸随时间变化，
+ *     给不出稳定包围盒，索性不参与避让。
+ *
+ *     实测（ffmpeg + libass 渲染、逐行扫像素带，1280×720，中英双行同 MarginV）：
+ *       - 无特效                  → 3 条文字带  ✓
+ *       - 纯微光 `\blur`           → 3 条文字带  ✓
+ *       - **静态** `\fscx\fscy`    → 3 条文字带  ✓
+ *       - 带动画 `\t()`           → 2 条文字带  ✗ 中文行与英文行叠压
+ *       - `\t(0,240,\fscx100\fscy100)`（空转、零视觉变化）→ 2 条  ✗
+ *       - `\t(0,240,\1a&H00&)`（纯 alpha、不碰几何）        → 2 条  ✗
+ *     结论：**触发条件是 `\t` 这个标签本身，与它内部动画什么属性无关。**
+ *     所以「先小后大」这类真·动画生长，在多行字幕上是做不到的。
+ *
+ *  7. 好消息：`\fad` / `\fade` / `\k` **不**设 detect_collisions=0
+ *     （不在 ass_parse.c 那 6 处赋值里），是碰撞安全的。实测 `\fad(300,0)`
+ *     与 `\k100` 都保持 3 条文字带。
+ *     所以「柔和淡入」用 `\fade` 实现 —— 效果与原 `\t` 版一致，且不破坏避让。
+ *
+ *  8. **时长必须钳到事件自身长度内**（ratio 参数）。否则一个 80ms 的短行配 300ms
+ *     的淡入，动画会在字幕早就消失后才结束 —— 视觉上就是「没淡进来就没了」。
+ *     所以按 `min(配置时长, 事件时长 × ratio%)` 取值。
+ *
+ *  9. 于是「词生长」改成**静态放大**：给活动词加静态 `\fscx\fscy`，
+ *     逐词事件切换时高亮词自然「跳」过去，观感接近逐词强调，且完全碰撞安全。
+ *     放大倍数不宜过大（默认 130%）：`\fscx/\fscy` 会改变该词占宽，
+ *     放大太多可能让整行重新折行。
+ *
+ * 10. `\fade` 是**事件级**标签（libass 里落在 `state->fade`，与 span 无关），
+ *     所以「柔和淡入」只能整行生效，无法只淡入某个词 —— 生效范围因此只有
+ *     中文 / 英文 / 全部三档。要只淡入活动词就得用 `\t`，而那是要点 6 的禁区。
+ *
  * ── 作用范围与分语言参数 ────────────────────────────────────────────
- *  target: 'zh' 只给中文字幕行发光 / 'en' 只给英文字幕行发光 /
- *          'all' 中英各用自己的参数整行发光 / 'active_word' 只给逐词高亮词发光。
- *  中英文各自的颜色、通道、半径、强度完全独立（glow.zh / glow.en）。
+ *  target: 'zh' 只给中文字幕行 / 'en' 只给英文字幕行 /
+ *          'all' 中英各用自己的参数 / 'active_word' 只给逐词高亮词（仅微光/生长）。
+ *  微光（glow）中英文各自的颜色、通道、半径、强度完全独立（glow.zh / glow.en）。
+ *  词生长（grow）与柔和淡入（fadein）只用几何/时间参数、没有颜色分歧，
+ *  因此共用**单个参数块** + 一个 target 选择器，避免 UI 爆炸。
  *  「哪一行是中文/英文」靠 [V4+ Styles] 的样式名推断；调用方若能拿到更准的
  *  结果（编辑器里的 resolveAssStyleTargets 会结合逐词分析），可通过第三个参数传入。
  */
@@ -35,12 +76,12 @@ export const DEFAULT_POSTPROCESS_CONFIG = {
   glow: {
     enabled: true,            // 微光分开关
     target: 'active_word',    // 生效范围: 'zh' | 'en' | 'all' | 'active_word'
-    zh: {                     // 中文字幕行的微光参数
+    zh: {                // 中文字幕行的微光参数
       enabled: true,
       channel: 'shadow',      // 'shadow'(保留黑描边) | 'outline'(顶替描边) | 'both'(最强)
       color: '#00ff88',       // 微光颜色 (Hex RGB)
       radius: 4.0,            // 光晕半径 → \blur (0.5 ~ 20)
-      intensity: 100          // 发光强度 → 发光色不透明度 0~100 (%)
+      intensity: 100// 发光强度 → 发光色不透明度 0~100 (%)
     },
     en: {                     // 英文字幕行的微光参数
       enabled: true,
@@ -49,6 +90,17 @@ export const DEFAULT_POSTPROCESS_CONFIG = {
       radius: 4.0,
       intensity: 100
     }
+  },
+  grow: {                     // 词生长：把逐词高亮的活动词放大一圈（静态，碰撞安全）
+    enabled: false,
+    scale: 130                // 放大到原字号的百分之多少 (100~250)
+  },
+  fadein: {                   // 柔和淡入：整行从较淡渐显到完全清晰（用 \fade，碰撞安全）
+    enabled: false,
+    target: 'zh',             // 整行效果，仅三档: 'zh' | 'en' | 'all'
+    from: 55,                 // 起始不透明度 (%)，100 = 等于不淡入
+    duration: 300,            // 淡入时长 (ms)
+    ratio: 70                 // 时长上限 = 事件自身时长 × 此比例 (%)
   }
 };
 
@@ -56,6 +108,7 @@ const STORAGE_KEY = 'subfabric_postprocess_config';
 
 const GLOW_CHANNELS = ['shadow', 'outline', 'both'];
 const GLOW_TARGETS = ['zh', 'en', 'all', 'active_word'];
+const FADE_TARGETS = ['zh', 'en', 'all'];
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const num = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
 
@@ -77,10 +130,46 @@ function normBlock(src, fallback) {
   };
 }
 
+const normTarget = (v, fallback) => (GLOW_TARGETS.includes(v) ? v : fallback);
+
+/**
+ * 归一化词生长参数块。
+ * 旧存档语义是「起始缩放」（恒 <100，配 `\t` 长到 100%）；新语义是「放大倍数」
+ * （恒 ≥100）。见到 <100 的旧值一律换成新默认，免得老用户升级后得到「反而变小」。
+ */
+function normGrow(src, fallback) {
+  const s = src || {};
+  const fb = fallback || {};
+  const raw = num(s.scale !== undefined ? s.scale : fb.scale, fb.scale);
+  const scale = raw < 100 ? fb.scale : clamp(Math.round(raw), 100, 250);
+  return {
+    enabled: s.enabled === true,
+    scale
+  };
+}
+
+/** 归一化柔和淡入参数块 */
+function normFadeIn(src, fallback) {
+  const s = src || {};
+  const fb = fallback || {};
+  const pick = (k) => (s[k] !== undefined ? s[k] : fb[k]);
+  const t = pick('target');
+  return {
+    enabled: s.enabled === true,
+    // \fade 是事件级标签，无法只作用于某个词 → active_word 落回整行（默认中文轨）
+    target: FADE_TARGETS.includes(t) ? t : 'zh',
+    from: clamp(Math.round(num(pick('from'), fb.from)), 0, 100),
+    duration: clamp(Math.round(num(pick('duration'), fb.duration)), 20, 3000),
+    ratio: clamp(Math.round(num(pick('ratio'), fb.ratio)), 5, 100)
+  };
+}
+
 /**
  * 深拷贝 / 归一化配置对象。
  * 兼容两代旧存档：① 只有 `blur` 没有 `radius`/`intensity`；② 扁平结构
  * （channel/color/radius/intensity 直接挂在 glow 上，没有 zh/en 分组）。
+ * grow / fadein 是后加的，老存档里根本没有这两个键 → 走默认值且默认关闭，
+ * 所以老用户升级后画面不会突然多出特效。
  */
 export function cloneConfig(cfg) {
   if (!cfg) return JSON.parse(JSON.stringify(DEFAULT_POSTPROCESS_CONFIG));
@@ -104,7 +193,9 @@ export function cloneConfig(cfg) {
       target: GLOW_TARGETS.includes(g.target) ? g.target : (g.target === 'all' ? 'all' : 'active_word'),
       zh,
       en
-    }
+    },
+    grow: normGrow(cfg.grow, DEFAULT_POSTPROCESS_CONFIG.grow),
+    fadein: normFadeIn(cfg.fadein, DEFAULT_POSTPROCESS_CONFIG.fadein)
   };
 }
 
@@ -150,10 +241,44 @@ export function assBgrToHex(bgr) {
   return ('#' + r + g + b).toLowerCase();
 }
 
-/** 发光强度(%) → ASS alpha（00 不透明 … FF 全透明） */
+/** 发光强度(%) / 起始不透明度(%) → ASS alpha（00 不透明… FF 全透明） */
 export function intensityToAssAlpha(intensity) {
   const a = Math.round((100 - clamp(num(intensity, 100), 0, 100)) / 100 * 255);
   return a.toString(16).toUpperCase().padStart(2, '0');
+}
+
+/** 同一映射的十进制形式 —— `\fade` 的 alpha 参数要写十进制整数 */
+export function opacityToAlphaValue(pct) {
+  return Math.round((100 - clamp(num(pct, 100), 0, 100)) / 100 * 255);
+}
+
+/**
+ * ASS 时间码 ('H:MM:SS.cc' / 'H:MM:SS:cc'，也兼容无小时位) → 毫秒。
+ * 解析失败返回 null（调用方据此放弃钳制，而不是当成 0 把动画压没）。
+ */
+export function assTimeToMs(t) {
+  const m = /^\s*(\d+):(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\s*$/.exec(String(t == null ? '' : t));
+  if (!m) return null;
+  const fracRaw = m[4] == null ? '' : m[4];
+  const frac = fracRaw === '' ? 0
+    : fracRaw.length <= 2 ? Number(fracRaw.padEnd(2, '0')) / 100
+      : Number(fracRaw) / Math.pow(10, fracRaw.length);
+  return (Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) * 1000 + frac * 1000;
+}
+
+/**
+ * 动画时长钳制：取 min(配置时长, 事件时长 × ratio%)，下限 1ms。
+ * @param {number} cfgMs - 配置里写的时长
+ * @param {number|null} evMs - 事件自身时长（毫秒），null/非法时只用配置值
+ * @param {number} ratioPct - 允许吃掉事件时长的百分比
+ */
+export function resolveAnimDuration(cfgMs, evMs, ratioPct) {
+  let d = clamp(Math.round(num(cfgMs, 250)), 1, 5000);
+  const ev = num(evMs, NaN);
+  if (isFinite(ev) && ev > 0) {
+    d = Math.min(d, Math.max(1, Math.round(ev * clamp(num(ratioPct, 80), 5, 100) / 100)));
+  }
+  return Math.max(1, d);
 }
 
 /**
@@ -188,14 +313,14 @@ export function resolveStyleTargets(assText) {
 
 /**
  * 逐词高亮 span：`{\c&H......&}word{\c}`（karaoke.js 的固定产物，也兼容 \1c）。
- * 开/闭标签的**内部命令原样捕获**，这样注入发光时能保住活动词原本的高亮色 ——
+ * 开/闭标签的**内部命令原样捕获**，这样注入特效时能保住活动词原本的高亮色 ——
  * 直接整段替换会把 `\c&H00FF00&` 一起吃掉，活动词就变回样式白字了。
  */
 const HL_SPAN_SRC = '\\{((?:\\\\[1]?c&H[0-9A-Fa-f]{6}&)+)\\}([^{}]+?)\\{(?:\\\\[1]?c)+\\}';
 const HL_SPAN_TEST = new RegExp(HL_SPAN_SRC);
 const HL_SPAN_ALL = new RegExp(HL_SPAN_SRC, 'g');
 
-/** 行首覆盖标签块（{\...}{\...}…），用于「整行发光」时把标签插在它后面 */
+/** 行首覆盖标签块（{\...}{\...}…），用于「整行特效」时把标签插在它后面 */
 const LEADING_TAGS_RE = /^(?:\s*\{[^}]*\})+/;
 
 /** 拼装发光起始标签的命令串 */
@@ -227,25 +352,68 @@ function buildGlowTags(block) {
   };
 }
 
-/** 只给逐词高亮词发光：把发光命令并进原有的开/闭标签里 */
-function glowActiveWords(text, openCmd, closeCmd) {
+/**
+ * 构造词生长标签 —— **静态** `\fscx\fscy`，绝不用 `\t()`（见文件头要点 6）。
+ * @returns {{openCmd:string, closeCmd:string}|null} 100%（不放大）时返回 null
+ */
+function buildGrowTags(block) {
+  const scale = clamp(Math.round(num(block.scale, 130)), 100, 250);
+  if (scale === 100) return null;
+  return { openCmd: `\\fscx${scale}\\fscy${scale}`, closeCmd: '\\fscx\\fscy' };
+}
+
+/**
+ * 柔和淡入：用 `\fade` 把透明度从 from% 渐显到完全不透明。
+ * `\fade(a1,a2,a3,t1,t2,t3,t4)` 语义（libass ass_parse.c:622）：
+ *   t1→t2 由 a1 插值到 a2；之后保持 a3。
+ * 取 a1=起始不透明度、a2=a3=0（完全不透明）、t2=t3=t4=dur，即「只淡入、淡完不动」。
+ * alpha 参数是**十进制整数**（不是 &H..& 形式），所以这里用 opacityToAlphaValue。
+ * @returns {string|null} 起始已完全不透明时返回 null
+ */
+function buildFadeInCommands(block, evMs) {
+  const from = clamp(Math.round(num(block.from, 55)), 0, 100);
+  if (from >= 100) return null;
+  const dur = resolveAnimDuration(block.duration, evMs, block.ratio);
+  const a1 = opacityToAlphaValue(from);
+  return `\\fade(${a1},0,0,0,${dur},${dur},${dur})`;
+}
+
+/**
+ * 只给逐词高亮词加特效：把命令并进原有的开/闭标签里。
+ * 闭标签保留前导 `\c`（无参复位回样式色），与微光收尾拼接后依然逐像素一致。
+ */
+function applyActiveWordTags(text, openCmd, closeCmd) {
+  if (!openCmd) return null;
   if (!HL_SPAN_TEST.test(text)) return null;
   HL_SPAN_ALL.lastIndex = 0;
   return text.replace(HL_SPAN_ALL,
     (m, openInner, word) => `{${openInner}${openCmd}}${word}{\\c${closeCmd}}`);
 }
 
-/** 整行发光：把发光标签插在行首覆盖标签之后，不闭合（作用到行尾） */
-function glowWholeLine(text, openCmd) {
+/** 整行特效：把标签插在行首覆盖标签之后，不闭合（作用到行尾） */
+function applyLineTags(text, openCmd) {
+  if (!openCmd) return null;
   const plain = text.replace(/\{[^}]*\}/g, '').replace(/\\[Nnh]/gi, '').trim();
-  if (!plain) return null;                          // 空行不发光
+  if (!plain) return null;                          // 空行不处理
   const lead = LEADING_TAGS_RE.exec(text);
   const at = lead ? lead[0].length : 0;
   return text.slice(0, at) + `{${openCmd}}` + text.slice(at);
 }
 
+/** 这个生效范围下，该样式行是否命中整行类特效 */
+function lineScopeHit(effTarget, isZh, isEn, hasTargets) {
+  if (effTarget === 'all') return hasTargets ? (isZh || isEn) : true;  // 认不出语言时整篇都算命中
+  if (effTarget === 'zh') return isZh;
+  if (effTarget === 'en') return isEn;
+  return false;
+}
+
 /**
  * 应用后处理特效核心纯函数。
+ * 逐事件跑一遍「多 pass 管线」：
+ *   ① 逐词 pass —— 微光（target=active_word 时）与词生长，只动高亮 span；
+ *   ② 整行 pass —— 微光（整行范围）与柔和淡入，插在行首标签之后。
+ * 两个 pass **互不排斥**：同一行可以既给活动词加标签、又在行首加淡入。
  * @param {string} assText - 原始 ASS 完整文本
  * @param {object} config  - 后处理配置对象
  * @param {{zh:string,en:string}|null} [styleTargets] - 可选：调用方已解析好的中英样式名
@@ -256,18 +424,27 @@ export function applyPostProcess(assText, config, styleTargets) {
   if (!config || !config.enabled) return assText;   // 关闭 → 原样直通，零开销
 
   const glow = config.glow;
-  if (!glow || !glow.enabled) return assText;
+  const grow = config.grow;
+  const fadein = config.fadein;
+  const glowOn = !!glow && glow.enabled !== false;
+  const growOn = !!grow && grow.enabled === true;
+  const fadeOn = !!fadein && fadein.enabled === true;
+  if (!glowOn && !growOn && !fadeOn) return assText;
 
-  const target = GLOW_TARGETS.includes(glow.target) ? glow.target : 'active_word';
-  const zhBlock = glow.zh || DEFAULT_POSTPROCESS_CONFIG.glow.zh;
-  const enBlock = glow.en || DEFAULT_POSTPROCESS_CONFIG.glow.en;
-  if (target !== 'active_word' && zhBlock.enabled === false && enBlock.enabled === false) return assText;
-
-  const tags = {
-    zh: zhBlock.enabled === false ? null : buildGlowTags(zhBlock),
-    en: enBlock.enabled === false ? null : buildGlowTags(enBlock)
+  const glowTarget = glowOn ? normTarget(glow.target, 'active_word') : null;
+  const zhBlock = (glow && glow.zh) || DEFAULT_POSTPROCESS_CONFIG.glow.zh;
+  const enBlock = (glow && glow.en) || DEFAULT_POSTPROCESS_CONFIG.glow.en;
+  const glowTags = {
+    zh: !glowOn || zhBlock.enabled === false ? null : buildGlowTags(zhBlock),
+    en: !glowOn || enBlock.enabled === false ? null : buildGlowTags(enBlock)
   };
-  if (target === 'active_word' && !tags.en) return assText;   // 逐词用英文参数块
+  const growTags = growOn ? buildGrowTags(grow) : null;
+
+  // 只有微光生效时，若它自己无事可做才能整体直通（保住要点1 的零改动语义）
+  if (glowOn && !growOn && !fadeOn) {
+    if (glowTarget !== 'active_word' && zhBlock.enabled === false && enBlock.enabled === false) return assText;
+    if (glowTarget === 'active_word' && !glowTags.en) return assText;
+  }
 
   const targets = styleTargets || resolveStyleTargets(assText);
   const isZh = (style) => !!targets && String(style).toLowerCase() === targets.zh.toLowerCase();
@@ -278,6 +455,10 @@ export function applyPostProcess(assText, config, styleTargets) {
 
   let inEvents = false;
   let formatCols = null;
+  let startIdx = -1;
+  let endIdx = -1;
+  const needDur = fadeOn;              // 只有淡入需要事件时长（生长是静态的，不关心时长）
+  let changedAny = false;              // 全篇一个字节都没改动时，原样返回入参（连换行符都不规范化）
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -295,6 +476,8 @@ export function applyPostProcess(assText, config, styleTargets) {
     const fmtMatch = /^\s*Format\s*:\s*(.+)$/i.exec(line);
     if (fmtMatch) {
       formatCols = fmtMatch[1].split(',').map(s => s.trim().toLowerCase());
+      startIdx = formatCols.indexOf('start');
+      endIdx = formatCols.indexOf('end');
       outputLines[i] = line;
       continue;
     }
@@ -319,30 +502,63 @@ export function applyPostProcess(assText, config, styleTargets) {
     const style = styleColIdx === -1 ? '' : parts[styleColIdx];
     const rawText = parts[textIdx] || '';
 
-    let newText = null;
-
-    if (target === 'active_word') {
-      // 只给逐词高亮词发光（用英文参数块；中文整句行没有高亮 span，自然不动）
-      newText = glowActiveWords(rawText, tags.en.openCmd, tags.en.closeCmd);
-    } else {
-      // 整行发光：按「生效范围」挑语言，再挑该语言的参数块
-      let block = null;
-      if (target === 'zh') block = isZh(style) ? tags.zh : null;
-      else if (target === 'en') block = isEn(style) ? tags.en : null;
-      else { // all
-        if (isZh(style)) block = tags.zh;
-        else if (isEn(style)) block = tags.en;
-        else if (!targets) block = tags.en;   // 样式识别不出来时兜底：整篇按英文参数发光
-      }
-      if (block) newText = glowWholeLine(rawText, block.openCmd);
+    // 淡入时长要按事件自身长度钳制。只在需要时才解析时间，省掉纯微光时的开销。
+    let evMs = null;
+    if (needDur && startIdx !== -1 && endIdx !== -1) {
+      const a = assTimeToMs(parts[startIdx]);
+      const b = assTimeToMs(parts[endIdx]);
+      if (a != null && b != null && b > a) evMs = b - a;
     }
 
-    if (newText == null) { outputLines[i] = line; continue; }   // 原样保留，不做任何重写
+    let text = rawText;
+
+    // ── ① 逐词 pass：微光(仅活动词) + 词生长，命令合并进同一个覆盖块 ──
+    const wordOpens = [];
+    const wordCloses = [];
+    if (glowTarget === 'active_word' && glowTags.en) {
+      wordOpens.push(glowTags.en.openCmd);
+      wordCloses.push(glowTags.en.closeCmd);
+    }
+    if (growTags) {
+      wordOpens.push(growTags.openCmd);
+      wordCloses.push(growTags.closeCmd);
+    }
+    if (wordOpens.length) {
+      const w = applyActiveWordTags(text, wordOpens.join(''), wordCloses.join(''));
+      if (w != null) text = w;
+    }
+
+    // ── ② 整行 pass：微光(整行范围) + 柔和淡入 ──
+    const lineCmds = [];
+    if (glowOn && glowTarget !== 'active_word') {
+      let block = null;
+      if (glowTarget === 'zh') block = isZh(style) ? glowTags.zh : null;
+      else if (glowTarget === 'en') block = isEn(style) ? glowTags.en : null;
+      else { // all
+        if (isZh(style)) block = glowTags.zh;
+        else if (isEn(style)) block = glowTags.en;
+        else if (!targets) block = glowTags.en;   // 样式识别不出来时兜底：整篇按英文参数发光
+      }
+      if (block) lineCmds.push(block.openCmd);
+    }
+    if (fadeOn && lineScopeHit(fadein.target, isZh(style), isEn(style), !!targets)) {
+      const fc = buildFadeInCommands(fadein, evMs);
+      if (fc) lineCmds.push(fc);
+    }
+    if (lineCmds.length) {
+      const l = applyLineTags(text, lineCmds.join(''));
+      if (l != null) text = l;
+    }
+
+    if (text === rawText) { outputLines[i] = line; continue; }   // 原样保留，不做任何重写
 
     const outParts = parts.slice();
-    outParts[textIdx] = newText;
+    outParts[textIdx] = text;
     outputLines[i] = 'Dialogue: ' + outParts.join(',');
+    changedAny = true;
   }
 
-  return outputLines.join('\r\n');
+  // 开了特效但一条都没命中（比如放大倍数=100、起始不透明度=100）→ 原样返回，
+  // 连 CRLF/LF 都不规范化，确保调用方拿到的仍是**逐字节一致**的原文。
+  return changedAny ? outputLines.join('\r\n') : assText;
 }

@@ -563,6 +563,18 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .fx-lang-group.is-out-of-scope { opacity:.42; }
 .fx-lang-group.is-out-of-scope .setting-row { pointer-events:none; }
 
+/* 后处理特效: 三个特效块(微光/词生长/柔和淡入)视觉上平级 */
+.fx-effect-block { margin-top:10px; padding-top:8px; border-top:1px dashed var(--hair, rgba(255,255,255,.12)); }
+.fx-effect-block > .setting-row:first-child .setting-name { font-size:13px; font-weight:500; letter-spacing:.01em; color:var(--tx, var(--text-2, #c9d1d9)); }
+/* 参数区整体缩进 + 左侧细线，视觉上从属于上面的标题行 */
+.fx-effect-block > div:last-child,
+#fx-glow-opts { margin:2px 0 4px 14px; padding-left:10px; border-left:2px solid var(--hair, rgba(255,255,255,.12)); }
+/* 关闭时只压暗参数区，标题行与开关保持可用 —— 强调「关掉的只是这个特效」 */
+.fx-effect-block.is-off > div:last-child,
+.fx-effect-block.is-off #fx-glow-opts { opacity:.4; }
+.fx-effect-block.is-off > div:last-child .setting-row,
+.fx-effect-block.is-off #fx-glow-opts .setting-row { pointer-events:none; }
+
 /* ── 全局设置弹窗: 页签 + 卡片(页签/主体/卡片的布局样式) ─────────────── */
 .st-title-wrap { display:flex; align-items:baseline; gap:10px; min-width:0; }
 .st-subtitle {
