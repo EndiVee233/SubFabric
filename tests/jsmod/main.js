@@ -1,15 +1,16 @@
 /** 主逻辑: 状态管理 + 视频/字幕加载 + 各模块联动 */
 import { fmtTime, parseTime, escapeHtml } from './util.js';
-import { parseSRT, serializeSRT, splitBilingual, srtPlainText } from './srt.js';
+import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, stripInlineTags, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
+import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess } from './postprocess.js';
 import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
 import { initProjects } from './project.js';
-import { initI18n, t, applyDom } from './i18n.js';
+import { initI18n, t } from './i18n.js';
 import { ico } from './icons.js';
 import { bindModalDrags } from './modal.js';
 
@@ -48,6 +49,14 @@ const assStyleEls = {
   enItalic: document.getElementById('ass-style-en-italic'),
   wordColor: document.getElementById('ass-style-word-color'),
   wordColorVal: document.getElementById('ass-style-word-color-val'),
+  zhColor: document.getElementById('ass-style-zh-color'),
+  zhColorVal: document.getElementById('ass-style-zh-color-val'),
+  zhColor2: document.getElementById('ass-style-zh-color2'),
+  zhColor2Val: document.getElementById('ass-style-zh-color2-val'),
+  enColor: document.getElementById('ass-style-en-color'),
+  enColorVal: document.getElementById('ass-style-en-color-val'),
+  enColor2: document.getElementById('ass-style-en-color2'),
+  enColor2Val: document.getElementById('ass-style-en-color2-val'),
   zhFontNote: document.getElementById('ass-style-zh-font-note'),
   enFontNote: document.getElementById('ass-style-en-font-note'),
   zhFontFile: document.getElementById('ass-style-zh-font-file'),
@@ -103,6 +112,8 @@ const assPlayer = new AssPlayer(video, (msg) => {
     pendingFontNotice = '';
   }
 });
+/* 预览通道：带上编辑器已解析好的中英样式名（比纯样式名推断更准 —— 它会结合逐词分析） */
+assPlayer.postProcessor = (text) => applyPostProcess(text, state.postProcessConfig, state.assStyleTargets);
 const timeline = new Timeline(document.getElementById('timeline'), video);
 const panel = new EditorPanel();
 bindModalDrags();
@@ -117,6 +128,7 @@ const state = {
   srtCues: [],
   assDoc: null,
   assStyleTargets: null,
+  postProcessConfig: loadPostProcessConfig(),
   items: [],             // 编辑面板视图模型
   itemByRef: new Map(),  // ref(cue|event) → item
   newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
@@ -406,6 +418,29 @@ function assHexToTag(hex) {
   return /^[0-9A-F]{6}$/.test(rgb) ? `{\\c&H${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}&}` : '{\\c&H00FF00&}';
 }
 
+/** '#rrggbb' → ASS 的&HAABBGGRR(注意 BGR 顺序)。样式 Primary/SecondaryColour 直接吃这个值。 */
+function assHexToBgr(hex) {
+  const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(rgb)) return null;
+  return `&H00${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}`.toUpperCase();
+}
+
+/** ASS 里的 &HAABBGGRR(常见 8 位) / &HBBGGRR(6 位) → '#rrggbb'，认不出来时返回 fallback。
+   *  必须取**末尾 6 位**: 8 位格式前面还有 2 位 alpha，直接取前 6 位会把 RGB 整体错位。 */
+function assBgrToHex(raw, fallback) {
+  const m = /&H([0-9A-Fa-f]{6,8})/i.exec(String(raw || ''));
+  if (!m) return fallback;
+  const h = m[1].slice(-6).toUpperCase();
+  return assColorToHex(h);
+}
+
+/** hex 为 null 表示稿件里没读到有效颜色, 此时不动控件(保留 HTML 上的默认值)。 */
+function setColorControl(input, label, hex) {
+  if (!hex || !input) return;
+  input.value = hex;
+  if (label) label.textContent = hex.toUpperCase();
+}
+
 function assStyleFields(name) {
   const style = state.assDoc && state.assDoc.getStyle(name);
   if (!style) return null;
@@ -413,7 +448,9 @@ function assStyleFields(name) {
   return {
     font: style.fontname || '', size: isFinite(num) && num > 0 ? num : 48,
     bold: Number(style.bold) < 0 || style.bold === '1',
-    italic: Number(style.italic) < 0 || style.italic === '1'
+    italic: Number(style.italic) < 0 || style.italic === '1',
+    color: assBgrToHex(style.primarycolour, null),
+    color2: assBgrToHex(style.secondarycolour, null)
   };
 }
 
@@ -533,6 +570,7 @@ function setAssStyleControls() {
   if (assStyleEls.group) assStyleEls.group.classList.toggle('ass-style-disabled', !enabled);
   const controls = [assStyleEls.zhFont, assStyleEls.enFont, assStyleEls.zhSize, assStyleEls.enSize,
     assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic, assStyleEls.wordColor,
+    assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2,
     document.getElementById('ass-style-zh-font-file-btn'), document.getElementById('ass-style-en-font-file-btn')];
   controls.forEach(el => { if (el) el.disabled = !enabled; });
   if (!enabled) {
@@ -557,6 +595,11 @@ function setAssStyleControls() {
   if (assStyleEls.enBold) assStyleEls.enBold.checked = en.bold;
   if (assStyleEls.zhItalic) assStyleEls.zhItalic.checked = zh.italic;
   if (assStyleEls.enItalic) assStyleEls.enItalic.checked = en.italic;
+  // 样式里认不出的颜色(老稿件缺字段)别覆盖控件默认值, 保持HTML 上的初始值。
+  setColorControl(assStyleEls.zhColor, assStyleEls.zhColorVal, zh.color);
+  setColorControl(assStyleEls.zhColor2, assStyleEls.zhColor2Val, zh.color2);
+  setColorControl(assStyleEls.enColor, assStyleEls.enColorVal, en.color);
+  setColorControl(assStyleEls.enColor2, assStyleEls.enColor2Val, en.color2);
   let wordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
   if (!/^#[0-9a-f]{6}$/i.test(wordColor)) {
     const sentence = (state.kar && state.kar.sentences || []).find(s => s.style === state.kar.wordStyle && s.words.length);
@@ -588,6 +631,20 @@ function applyAssStyleSettings(forceFontReload = false) {
   changed = state.assDoc.setStyleFields(targets.en, {
     fontname: enFont, fontsize: Math.round(enSize), bold: el.enBold.checked ? -1 : 0, italic: el.enItalic.checked ? -1 : 0
   }) || changed;
+  // 只改样式轨的 Primary/SecondaryColour 默认色, 不动行内\1c/\c 等覆盖标签 ——
+  // 逐词高亮色与角色色是行内标签, 会在下面单独处理。
+  const colorFields = [
+    [targets.zh, el.zhColor, 'primarycolour'], [targets.zh, el.zhColor2, 'secondarycolour'],
+    [targets.en, el.enColor, 'primarycolour'], [targets.en, el.enColor2, 'secondarycolour']
+  ];
+  for (const [styleName, input, key] of colorFields) {
+    const bgr = assHexToBgr(input && input.value);
+    if (bgr) changed = state.assDoc.setStyleFields(styleName, { [key]: bgr }) || changed;
+  }
+  for (const [input, label] of [[el.zhColor, el.zhColorVal], [el.zhColor2, el.zhColor2Val],
+    [el.enColor, el.enColorVal], [el.enColor2, el.enColor2Val]]) {
+    if (input && label) label.textContent = input.value.toUpperCase();
+  }
   const color = (el.wordColor.value || '#00ff00').toLowerCase();
   const wordEvents = state.kar && state.kar.sentences
     ? [...new Set(state.kar.sentences
@@ -634,6 +691,301 @@ async function loadAssStyleFont(language) {
     toast(`已载入字体：${family}`);
   } catch (e) { toast('字体载入失败：' + (e && e.message || e)); }
   finally { input.value = ''; }
+}
+
+/* ─────────── 字幕后处理特效 (微光 Glow / 词生长 Grow / 柔和淡入 Fade In) ─────────── */
+const FX_LANGS = ['zh', 'en'];
+const FX_CHANNELS = ['shadow', 'outline', 'both'];
+const FX_TARGETS = ['zh', 'en', 'all', 'active_word'];
+
+/** 某个生效范围下，哪些语言的参数块真的会被用到 */
+const FX_SCOPE = {
+  zh: { zh: true, en: false },
+  en: { zh: false, en: true },
+  all: { zh: true, en: true },
+  active_word: { zh: false, en: true }   // 逐词高亮词在英文轨上，用英文参数
+};
+
+/**
+ * 当前参数组合对应哪个预设按钮。
+ * 判定顺序从「特效最多」往下走，保证全套全开时高亮的是最全的那个按钮，
+ * 而不是先匹配到纯微光就把 grow/fadein 的开关状态显示丢了。
+ */
+
+function fxLangEls(lang) {
+  const $ = (suffix) => document.getElementById(`fx-${lang}-${suffix}`);
+  return {
+    group: $( 'group'),
+    head: $('head'),
+    state: $('state'),
+    enable: $('enable'),
+    enableVal: $('enable-val'),
+    channel: $('channel'),
+    color: $('color'),
+    colorVal: $('color-val'),
+    radius: $('radius'),
+    radiusVal: $('radius-val'),
+    intensity: $('intensity'),
+    intensityVal: $('intensity-val')
+  };
+}
+
+const fxEls = {
+  group: document.getElementById('ass-fx-group'),
+  enable: document.getElementById('fx-enable'),
+  enableVal: document.getElementById('fx-enable-val'),
+  controls: document.getElementById('fx-controls'),
+  glowEnable: document.getElementById('fx-glow-enable'),
+  glowEnableVal: document.getElementById('fx-glow-enable-val'),
+  glowTarget: document.getElementById('fx-glow-target'),
+  statusNote: document.getElementById('fx-status-note'),
+  lang: { zh: fxLangEls('zh'), en: fxLangEls('en') },
+  glow: {
+    block: document.getElementById('fx-glow-block')
+  },
+  grow: {
+    block: document.getElementById('fx-grow-block'),
+    enable: document.getElementById('fx-grow-enable'),
+    enableVal: document.getElementById('fx-grow-enable-val'),
+    scale: document.getElementById('fx-grow-scale'),
+    scaleVal: document.getElementById('fx-grow-scale-val')
+  },
+  fadein: {
+    block: document.getElementById('fx-fadein-block'),
+    enable: document.getElementById('fx-fadein-enable'),
+    enableVal: document.getElementById('fx-fadein-enable-val'),
+    target: document.getElementById('fx-fadein-target'),
+    from: document.getElementById('fx-fadein-from'),
+    fromVal: document.getElementById('fx-fadein-from-val'),
+    duration: document.getElementById('fx-fadein-duration'),
+    durationVal: document.getElementById('fx-fadein-duration-val'),
+    ratio: document.getElementById('fx-fadein-ratio'),
+    ratioVal: document.getElementById('fx-fadein-ratio-val')
+  }
+};
+
+function fxNormLang(block) {
+  const b = block || {};
+  return {
+    enabled: b.enabled !== false,
+    channel: FX_CHANNELS.includes(b.channel) ? b.channel : 'shadow',
+    color: (b.color || '#00ff88').toLowerCase(),
+    radius: Number(b.radius != null ? b.radius : 4.0),
+    intensity: Number(b.intensity != null ? b.intensity : 100)
+  };
+}
+
+/**
+ * 词生长参数归一化（与 postprocess.js 的 normGrow 同一套夹取区间）。
+ * 注意：旧存档的 scale 是「起始缩放」（恒 <100，配 `\t` 长到 100%）；
+ * 新语义是「放大倍数」（恒 ≥100）。见到 <100 的旧值换成新默认，
+ * 免得老用户升级后活动词反而变小。
+ */
+function fxNormGrow(block) {
+  const b = block || {};
+  const raw = Number.isFinite(+b.scale) ? Math.round(+b.scale) : 130;
+  return {
+    enabled: b.enabled === true,
+    scale: raw < 100 ? 130 : Math.min(250, Math.max(100, raw))
+  };
+}
+
+/** 柔和淡入参数归一化（\fade 是事件级标签，生效范围只有整行三档） */
+function fxNormFadeIn(block) {
+  const b = block || {};
+  const cl = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Number.isFinite(+v) ? Math.round(+v) : d));
+  return {
+    enabled: b.enabled === true,
+    target: (b.target === 'en' || b.target === 'all') ? b.target : 'zh',
+    from: cl(b.from, 0, 100, 55),
+    duration: cl(b.duration, 20, 3000, 300),
+    ratio: cl(b.ratio, 5, 100, 70)
+  };
+}
+
+function syncFxUi() {
+  const cfg = state.postProcessConfig;
+  if (!fxEls.enable) return;
+
+  fxEls.enable.checked = !!cfg.enabled;
+  if (fxEls.enableVal) fxEls.enableVal.textContent = cfg.enabled ? '开' : '关';
+  if (fxEls.controls) fxEls.controls.hidden = !cfg.enabled;
+
+  const glow = cfg.glow || {};
+  if (fxEls.glowEnable) fxEls.glowEnable.checked = glow.enabled !== false;
+  if (fxEls.glowEnableVal) fxEls.glowEnableVal.textContent = (glow.enabled !== false) ? '开' : '关';
+  // 三个特效块视觉平级：关掉哪个就把哪个的参数区压暗（与 grow/fadein 同一套表现）
+  if (fxEls.glow.block) fxEls.glow.block.classList.toggle('is-off', glow.enabled === false);
+
+  const target = FX_TARGETS.includes(glow.target) ? glow.target : 'active_word';
+  if (fxEls.glowTarget) fxEls.glowTarget.value = target;
+  const scope = FX_SCOPE[target];
+
+  for (const lang of FX_LANGS) {
+    const els = fxEls.lang[lang];
+    const b = fxNormLang(glow[lang]);
+
+    if (els.enable) els.enable.checked = b.enabled;
+    if (els.enableVal) els.enableVal.textContent = b.enabled ? '开' : '关';
+    if (els.channel) els.channel.value = b.channel;
+    if (els.color) els.color.value = b.color;
+    if (els.colorVal) els.colorVal.textContent = b.color.toUpperCase();
+    if (els.radius) els.radius.value = b.radius;
+    if (els.radiusVal) els.radiusVal.textContent = `${b.radius.toFixed(1)} px`;
+    if (els.intensity) els.intensity.value = b.intensity;
+    if (els.intensityVal) els.intensityVal.textContent = `${Math.round(b.intensity)}%`;
+
+    const inScope = !!(scope && scope[lang]);
+    if (els.group) els.group.classList.toggle('is-out-of-scope', !inScope);
+    if (els.state) els.state.textContent = inScope ? '生效中' : '当前范围用不到';
+  }
+
+  // ── 词生长（静态放大，只作用逐词高亮词）──
+  const g = fxEls.grow;
+  const gb = fxNormGrow(cfg.grow);
+  if (g.enable) g.enable.checked = gb.enabled;
+  if (g.enableVal) g.enableVal.textContent = gb.enabled ? '开' : '关';
+  if (g.block) g.block.classList.toggle('is-off', !gb.enabled);
+  if (g.scale) g.scale.value = gb.scale;
+  if (g.scaleVal) g.scaleVal.textContent = `${gb.scale}%`;
+
+  // ── 柔和淡入 ──
+  const fd = fxEls.fadein;
+  const fb = fxNormFadeIn(cfg.fadein);
+  if (fd.enable) fd.enable.checked = fb.enabled;
+  if (fd.enableVal) fd.enableVal.textContent = fb.enabled ? '开' : '关';
+  if (fd.block) fd.block.classList.toggle('is-off', !fb.enabled);
+  if (fd.target) fd.target.value = fb.target;
+  if (fd.from) fd.from.value = Math.min(99, fb.from);
+  if (fd.fromVal) fd.fromVal.textContent = `${Math.min(99, fb.from)}%`;
+  if (fd.duration) fd.duration.value = Math.min(1200, fb.duration);
+  if (fd.durationVal) fd.durationVal.textContent = `${Math.min(1200, fb.duration)} ms`;
+  if (fd.ratio) fd.ratio.value = fb.ratio;
+  if (fd.ratioVal) fd.ratioVal.textContent = `${fb.ratio}%`;
+}
+
+function updateFxConfig(mutateFn) {
+  if (typeof mutateFn === 'function') mutateFn(state.postProcessConfig);
+  savePostProcessConfig(state.postProcessConfig);
+  syncFxUi();
+  // 及时更新视频区 ASS 渲染
+  if (state.format === 'ass' && state.assDoc) {
+    assPlayer.updateNow(state.assDoc.serialize());
+  }
+}
+
+/** 确保 cfg.glow[lang] 存在后执行 mutate */
+function mutateFxLang(lang, mutateFn) {
+  updateFxConfig(cfg => {
+    if (!cfg.glow) cfg.glow = {};
+    if (!cfg.glow[lang]) cfg.glow[lang] = {};
+    mutateFn(cfg.glow[lang], cfg.glow);
+  });
+}
+
+/** 确保 cfg.<key> 存在后执行 mutate（词生长/柔和淡入共用） */
+function mutateFxEffect(key, mutateFn) {
+  updateFxConfig(cfg => {
+    if (!cfg[key] || typeof cfg[key] !== 'object') cfg[key] = {};
+    mutateFn(cfg[key]);
+  });
+}
+
+function initFxControls() {
+  if (!fxEls.enable) return;
+
+  syncFxUi();
+
+  fxEls.enable.addEventListener('change', () => {
+    updateFxConfig(cfg => { cfg.enabled = fxEls.enable.checked; });
+  });
+
+  if (fxEls.glowEnable) {
+    fxEls.glowEnable.addEventListener('change', () => {
+      updateFxConfig(cfg => {
+        if (!cfg.glow) cfg.glow = {};
+        cfg.glow.enabled = fxEls.glowEnable.checked;
+      });
+    });
+  }
+
+  if (fxEls.glowTarget) {
+    fxEls.glowTarget.addEventListener('change', () => {
+      updateFxConfig(cfg => {
+        if (!cfg.glow) cfg.glow = {};
+        cfg.glow.target = fxEls.glowTarget.value;
+      });
+    });
+  }
+
+  for (const lang of FX_LANGS) {
+    const els = fxEls.lang[lang];
+
+    if (els.enable) {
+      els.enable.addEventListener('change', () => {
+        mutateFxLang(lang, (b) => { b.enabled = els.enable.checked; });
+      });
+    }
+
+    if (els.channel) {
+      els.channel.addEventListener('change', () => {
+        mutateFxLang(lang, (b) => { b.channel = els.channel.value; });
+      });
+    }
+
+    if (els.color) {
+      const onColor = () => mutateFxLang(lang, (b) => { b.color = els.color.value; });
+      els.color.addEventListener('input', onColor);
+      els.color.addEventListener('change', onColor);
+    }
+
+    if (els.radius) {
+      const onRadius = () => mutateFxLang(lang, (b) => { b.radius = parseFloat(els.radius.value) || 4.0; });
+      els.radius.addEventListener('input', onRadius);
+      els.radius.addEventListener('change', onRadius);
+    }
+
+    if (els.intensity) {
+      const onIntensity = () => mutateFxLang(lang, (b) => { b.intensity = parseFloat(els.intensity.value); });
+      els.intensity.addEventListener('input', onIntensity);
+      els.intensity.addEventListener('change', onIntensity);
+    }
+  }
+
+  // ── 词生长（静态放大）──
+  const g = fxEls.grow;
+  if (g.enable) {
+    g.enable.addEventListener('change', () => mutateFxEffect('grow', (b) => { b.enabled = g.enable.checked; }));
+  }
+  if (g.scale) {
+    const onScale = () => mutateFxEffect('grow', (b) => { b.scale = parseInt(g.scale.value, 10) || 130; });
+    g.scale.addEventListener('input', onScale);
+    g.scale.addEventListener('change', onScale);
+  }
+
+  // ── 柔和淡入 ──
+  const fd = fxEls.fadein;
+  if (fd.enable) {
+    fd.enable.addEventListener('change', () => mutateFxEffect('fadein', (b) => { b.enabled = fd.enable.checked; }));
+  }
+  if (fd.target) {
+    fd.target.addEventListener('change', () => mutateFxEffect('fadein', (b) => { b.target = fd.target.value; }));
+  }
+  if (fd.from) {
+    const onFrom = () => mutateFxEffect('fadein', (b) => { b.from = parseInt(fd.from.value, 10); });
+    fd.from.addEventListener('input', onFrom);
+    fd.from.addEventListener('change', onFrom);
+  }
+  if (fd.duration) {
+    const onDur = () => mutateFxEffect('fadein', (b) => { b.duration = parseInt(fd.duration.value, 10) || 300; });
+    fd.duration.addEventListener('input', onDur);
+    fd.duration.addEventListener('change', onDur);
+  }
+  if (fd.ratio) {
+    const onRatio = () => mutateFxEffect('fadein', (b) => { b.ratio = parseInt(fd.ratio.value, 10) || 70; });
+    fd.ratio.addEventListener('input', onRatio);
+    fd.ratio.addEventListener('change', onRatio);
+  }
 }
 
 async function loadSubUrl(url, name) {
@@ -826,6 +1178,9 @@ for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   if (el) el.addEventListener('change', () => applyAssStyleSettings());
 }
 if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () => applyAssStyleSettings());
+for (const el of [assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2]) {
+  if (el) el.addEventListener('input', () => applyAssStyleSettings());
+}
 for (const [language, buttonId] of [['zh', 'ass-style-zh-font-file-btn'], ['en', 'ass-style-en-font-file-btn']]) {
   const button = document.getElementById(buttonId);
   const input = language === 'zh' ? assStyleEls.zhFontFile : assStyleEls.enFontFile;
@@ -3100,7 +3455,9 @@ btnExport.addEventListener('click', () => {
   if (state.format === 'srt') {
     download(state.fileName.replace(/\.srt$/i, '') + '_edited.srt', serializeSRT(state.srtCues));
   } else if (state.format === 'ass' && state.assDoc) {
-    download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_edited.ass', state.assDoc.serialize());
+    const raw = state.assDoc.serialize();
+    const out = applyPostProcess(raw, state.postProcessConfig, state.assStyleTargets);
+    download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_edited.ass', out);
   }
 });
 
@@ -3125,7 +3482,8 @@ function buildLangAss(doc, sentences, wordStyle, lang) {
 btnExportClean.addEventListener('click', () => {
   if (state.format !== 'ass' || !state.kar) return;
   const clean = buildCleanAss(state.assDoc, state.kar.sentences);
-  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_clean.ass', clean);
+  const out = applyPostProcess(clean, state.postProcessConfig, state.assStyleTargets);
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_clean.ass', out);
   toast('已导出干净 ASS(无逐词特效)');
 });
 
@@ -3153,7 +3511,8 @@ btnExportJson.addEventListener('click', () => {
 btnExportZh.addEventListener('click', () => {
   if (state.format !== 'ass' || !state.kar) return;
   const ass = buildLangAss(state.assDoc, state.kar.sentences, state.kar.wordStyle, 'zh');
-  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_zh.ass', ass);
+  const out = applyPostProcess(ass, state.postProcessConfig, state.assStyleTargets);
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_zh.ass', out);
   toast('已导出仅中文 ASS');
 });
 
@@ -3161,7 +3520,8 @@ btnExportZh.addEventListener('click', () => {
 btnExportEn.addEventListener('click', () => {
   if (state.format !== 'ass' || !state.kar) return;
   const ass = buildLangAss(state.assDoc, state.kar.sentences, state.kar.wordStyle, 'en');
-  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_en.ass', ass);
+  const out = applyPostProcess(ass, state.postProcessConfig, state.assStyleTargets);
+  download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_en.ass', out);
   toast('已导出仅英文 ASS');
 });
 
@@ -3527,6 +3887,7 @@ applySensitivity();
 applyFilmSetting();
 applyTrackMode(false);
 applyTlHeight();
+initFxControls();
 
 /* 调试钩子(测试用) */
 window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText };
