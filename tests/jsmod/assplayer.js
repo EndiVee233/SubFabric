@@ -42,6 +42,7 @@ export class AssPlayer {
     this._workerReadyHandler = null;
     this._memoryFonts = new Map();
     this._fontObjectUrls = new Map();
+    this.postProcessor = null;
   }
 
   get loaded() { return !!this.instance; }
@@ -134,9 +135,12 @@ export class AssPlayer {
           this._doUpdate();          // 推送轨道并立刻渲染当前帧(暂停时也能看到)
           this.onStatus('ASS 渲染就绪');
         };
+        const textToRender = (typeof this.postProcessor === 'function')
+          ? this.postProcessor(assText)
+          : assText;
         this.instance = new SubtitlesOctopus({
           video: this.video,
-          subContent: assText,
+          subContent: textToRender,
           workerUrl: WORKER_URL,
           // fonts 一律留空, 只靠 availableFonts 触发加载。
           // 原因: worker 给 fonts 里的文件起名 'font<i>-<basename>', 给 availableFonts 的
@@ -240,7 +244,10 @@ export class AssPlayer {
     // 保留最新文本，由 onReady 再发，避免“稿件已改、视频仍停留在旧轨”。
     if (!this.instance || !this.ready || this._pendingText == null) return;
     try {
-      this.instance.setTrack(this._pendingText);
+      const textToRender = (typeof this.postProcessor === 'function')
+        ? this.postProcessor(this._pendingText)
+        : this._pendingText;
+      this.instance.setTrack(textToRender);
       // setTrack 会重建 libass track。显式同步当前播放时刻，确保暂停画面也立即重绘。
       if (typeof this.instance.setCurrentTime === 'function') {
         this.instance.setCurrentTime(Number(this.video.currentTime) || 0);
