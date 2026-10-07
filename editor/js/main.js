@@ -49,6 +49,14 @@ const assStyleEls = {
   enItalic: document.getElementById('ass-style-en-italic'),
   wordColor: document.getElementById('ass-style-word-color'),
   wordColorVal: document.getElementById('ass-style-word-color-val'),
+  zhColor: document.getElementById('ass-style-zh-color'),
+  zhColorVal: document.getElementById('ass-style-zh-color-val'),
+  zhColor2: document.getElementById('ass-style-zh-color2'),
+  zhColor2Val: document.getElementById('ass-style-zh-color2-val'),
+  enColor: document.getElementById('ass-style-en-color'),
+  enColorVal: document.getElementById('ass-style-en-color-val'),
+  enColor2: document.getElementById('ass-style-en-color2'),
+  enColor2Val: document.getElementById('ass-style-en-color2-val'),
   zhFontNote: document.getElementById('ass-style-zh-font-note'),
   enFontNote: document.getElementById('ass-style-en-font-note'),
   zhFontFile: document.getElementById('ass-style-zh-font-file'),
@@ -410,6 +418,29 @@ function assHexToTag(hex) {
   return /^[0-9A-F]{6}$/.test(rgb) ? `{\\c&H${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}&}` : '{\\c&H00FF00&}';
 }
 
+/** '#rrggbb' → ASS 的&HAABBGGRR(注意 BGR 顺序)。样式 Primary/SecondaryColour 直接吃这个值。 */
+function assHexToBgr(hex) {
+  const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(rgb)) return null;
+  return `&H00${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}`.toUpperCase();
+}
+
+/** ASS 里的 &HAABBGGRR(常见 8 位) / &HBBGGRR(6 位) → '#rrggbb'，认不出来时返回 fallback。
+   *  必须取**末尾 6 位**: 8 位格式前面还有 2 位 alpha，直接取前 6 位会把 RGB 整体错位。 */
+function assBgrToHex(raw, fallback) {
+  const m = /&H([0-9A-Fa-f]{6,8})/i.exec(String(raw || ''));
+  if (!m) return fallback;
+  const h = m[1].slice(-6).toUpperCase();
+  return assColorToHex(h);
+}
+
+/** hex 为 null 表示稿件里没读到有效颜色, 此时不动控件(保留 HTML 上的默认值)。 */
+function setColorControl(input, label, hex) {
+  if (!hex || !input) return;
+  input.value = hex;
+  if (label) label.textContent = hex.toUpperCase();
+}
+
 function assStyleFields(name) {
   const style = state.assDoc && state.assDoc.getStyle(name);
   if (!style) return null;
@@ -417,7 +448,9 @@ function assStyleFields(name) {
   return {
     font: style.fontname || '', size: isFinite(num) && num > 0 ? num : 48,
     bold: Number(style.bold) < 0 || style.bold === '1',
-    italic: Number(style.italic) < 0 || style.italic === '1'
+    italic: Number(style.italic) < 0 || style.italic === '1',
+    color: assBgrToHex(style.primarycolour, null),
+    color2: assBgrToHex(style.secondarycolour, null)
   };
 }
 
@@ -537,6 +570,7 @@ function setAssStyleControls() {
   if (assStyleEls.group) assStyleEls.group.classList.toggle('ass-style-disabled', !enabled);
   const controls = [assStyleEls.zhFont, assStyleEls.enFont, assStyleEls.zhSize, assStyleEls.enSize,
     assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic, assStyleEls.wordColor,
+    assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2,
     document.getElementById('ass-style-zh-font-file-btn'), document.getElementById('ass-style-en-font-file-btn')];
   controls.forEach(el => { if (el) el.disabled = !enabled; });
   if (!enabled) {
@@ -561,6 +595,11 @@ function setAssStyleControls() {
   if (assStyleEls.enBold) assStyleEls.enBold.checked = en.bold;
   if (assStyleEls.zhItalic) assStyleEls.zhItalic.checked = zh.italic;
   if (assStyleEls.enItalic) assStyleEls.enItalic.checked = en.italic;
+  // 样式里认不出的颜色(老稿件缺字段)别覆盖控件默认值, 保持HTML 上的初始值。
+  setColorControl(assStyleEls.zhColor, assStyleEls.zhColorVal, zh.color);
+  setColorControl(assStyleEls.zhColor2, assStyleEls.zhColor2Val, zh.color2);
+  setColorControl(assStyleEls.enColor, assStyleEls.enColorVal, en.color);
+  setColorControl(assStyleEls.enColor2, assStyleEls.enColor2Val, en.color2);
   let wordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
   if (!/^#[0-9a-f]{6}$/i.test(wordColor)) {
     const sentence = (state.kar && state.kar.sentences || []).find(s => s.style === state.kar.wordStyle && s.words.length);
@@ -592,6 +631,20 @@ function applyAssStyleSettings(forceFontReload = false) {
   changed = state.assDoc.setStyleFields(targets.en, {
     fontname: enFont, fontsize: Math.round(enSize), bold: el.enBold.checked ? -1 : 0, italic: el.enItalic.checked ? -1 : 0
   }) || changed;
+  // 只改样式轨的 Primary/SecondaryColour 默认色, 不动行内\1c/\c 等覆盖标签 ——
+  // 逐词高亮色与角色色是行内标签, 会在下面单独处理。
+  const colorFields = [
+    [targets.zh, el.zhColor, 'primarycolour'], [targets.zh, el.zhColor2, 'secondarycolour'],
+    [targets.en, el.enColor, 'primarycolour'], [targets.en, el.enColor2, 'secondarycolour']
+  ];
+  for (const [styleName, input, key] of colorFields) {
+    const bgr = assHexToBgr(input && input.value);
+    if (bgr) changed = state.assDoc.setStyleFields(styleName, { [key]: bgr }) || changed;
+  }
+  for (const [input, label] of [[el.zhColor, el.zhColorVal], [el.zhColor2, el.zhColor2Val],
+    [el.enColor, el.enColorVal], [el.enColor2, el.enColor2Val]]) {
+    if (input && label) label.textContent = input.value.toUpperCase();
+  }
   const color = (el.wordColor.value || '#00ff00').toLowerCase();
   const wordEvents = state.kar && state.kar.sentences
     ? [...new Set(state.kar.sentences
@@ -1125,6 +1178,9 @@ for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   if (el) el.addEventListener('change', () => applyAssStyleSettings());
 }
 if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () => applyAssStyleSettings());
+for (const el of [assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2]) {
+  if (el) el.addEventListener('input', () => applyAssStyleSettings());
+}
 for (const [language, buttonId] of [['zh', 'ass-style-zh-font-file-btn'], ['en', 'ass-style-en-font-file-btn']]) {
   const button = document.getElementById(buttonId);
   const input = language === 'zh' ? assStyleEls.zhFontFile : assStyleEls.enFontFile;

@@ -20,6 +20,10 @@
   python main.py config --set zh_font_size=72 --set en_font_size=60
   python main.py config --set size=65          # 两轨字号同时改
 
+  # 中英双轨的默认颜色（#RRGGBB）。默认英文白、中文黄。
+  # zh_color/en_color = 主色；zh_color2/en_color2 = 备用色（卡拉OK渐变用，一般不动）
+  python main.py config --set en_color=#38BDF8 --set zh_color=#F472B6
+
   # 其他
   python main.py ass -i in.ass --dry-run       # 仅分析不写文件
   python main.py fonts                          # 打印推荐字体下载地址
@@ -95,6 +99,13 @@ DEFAULT_SETTINGS = {
     "zh_font_size": 65,
     "en_font_name": "Comic Sans MS",
     "en_font_size": 65,
+    # 中英双轨的默认颜色。ASS 用 &HAABBGGRR(BGR 顺序), 这里给的是 RGB 便于手写：
+    #   en=白, zh=黄 —— 与颜色设置项出现前的行为完全一致。
+    # Primary 是行内没有任何颜色覆盖时的显示色；Secondary 供卡拉OK渐变/二次填充用。
+    "zh_color": "#FFFF00",
+    "zh_color2": "#FFFF00",
+    "en_color": "#FFFFFF",
+    "en_color2": "#FFFF00",
     "auto_role": True,              # 无角色名时自动加 [UNKNOWN]
     "overlap_tolerance": OVERLAP_TOLERANCE,
     "time_mismatch": False,         # 中英 SRT 时间轴是否独立
@@ -846,17 +857,37 @@ def srt_time_to_ass(srt_time):
     return format_time(h * 3600 + m * 60 + s)
 
 
+def hex_to_ass_bgr(color, default='&H00FFFFFF'):
+    """'#RRGGBB' → ASS 的 '&HAABBGGRR'(BGR 顺序)。认不出来时返回 default。"""
+    s = str(color or '').strip().lstrip('#')
+    if len(s) != 6:
+        return default
+    try:
+        r, g, b = int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+    except ValueError:
+        return default
+    return f'&H00{b:02X}{g:02X}{r:02X}'
+
+
 def generate_ass_header(zh_font_name='Comic Sans MS', zh_font_size=65,
-                        en_font_name=None, en_font_size=None):
+                        en_font_name=None, en_font_size=None,
+                        zh_color='#FFFF00', zh_color2='#FFFF00',
+                        en_color='#FFFFFF', en_color2='#FFFF00'):
     """生成 ASS 头。
 
-    Style「中文字幕」（中文轨）与 Style「Default」（英文轨）各用一套字体/字号。
+    Style「中文字幕」（中文轨）与 Style「Default」（英文轨）各用一套字体/字号/颜色。
     en_* 省略时与中文保持一致，兼容只传两个参数的旧调用。
+    *_color 给的是 '#RRGGBB'，内部转成 ASS 的 &HAABBGGRR。
     """
     if en_font_name is None:
         en_font_name = zh_font_name
     if en_font_size is None:
         en_font_size = zh_font_size
+    # 中文轨默认黄、英文轨默认白；颜色项认不出来时各自回落到这个默认值。
+    en_primary = hex_to_ass_bgr(en_color, '&H00FFFFFF')
+    en_secondary = hex_to_ass_bgr(en_color2, '&H0000FFFF')
+    zh_primary = hex_to_ass_bgr(zh_color, '&H0000FFFF')
+    zh_secondary = hex_to_ass_bgr(zh_color2, '&H0000FFFF')
     return f"""[Script Info]
 ; This is an Advanced Sub Station Alpha v4+ script.
 Title: Generated from SRT files
@@ -869,8 +900,8 @@ WrapStyle: 3
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{en_font_name},{en_font_size},&H00FFFFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,3,2,20,20,120,1
-Style: 中文字幕,{zh_font_name},{zh_font_size},&H0000FFFF,&H0000FFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3.0,2,2,10,10,125,1
+Style: Default,{en_font_name},{en_font_size},{en_primary},{en_secondary},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3,3,2,20,20,120,1
+Style: 中文字幕,{zh_font_name},{zh_font_size},{zh_primary},{zh_secondary},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,3.0,2,2,10,10,125,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -933,7 +964,11 @@ def merge_srt_to_ass(zh_srt_path, en_srt_path, output_ass_path, settings=None):
     with open(output_ass_path, 'w', encoding='utf-8-sig') as f:
         f.write(generate_ass_header(
             settings['zh_font_name'], settings['zh_font_size'],
-            settings['en_font_name'], settings['en_font_size']))
+            settings['en_font_name'], settings['en_font_size'],
+            settings.get('zh_color', DEFAULT_SETTINGS['zh_color']),
+            settings.get('zh_color2', DEFAULT_SETTINGS['zh_color2']),
+            settings.get('en_color', DEFAULT_SETTINGS['en_color']),
+            settings.get('en_color2', DEFAULT_SETTINGS['en_color2'])))
         f.writelines(dialogues)
 
     log(f"SRT 合并完成：中文 {len(zh_subs)} 条 / 英文 {len(en_subs)} 条 -> {len(dialogues)} 行字幕")
@@ -1323,6 +1358,9 @@ def build_parser():
     python main.py config
     python main.py config --set zh_font_size=72 --set en_font_size=60
     python main.py config --set font_size=65 --set highlight=#00ccff
+
+  设置中英双轨的默认颜色（#RRGGBB，默认英文白、中文黄）：
+    python main.py config --set en_color=#38BDF8 --set zh_color=#F472B6
 """,
     )
     parser.add_argument("-V", "--version", action="version",
