@@ -92,7 +92,9 @@ FONT_DOWNLOAD_URLS = {
 DEFAULT_SETTINGS = {
     "replace_punct": True,          # 中文标点（、，。）替换为空格
     "remove_linebreak": True,       # 删除中文轨硬换行符 \N（关掉则保留原有换行）
-    "highlight_color": "&H00ff00&",  # ASS 内嵌颜色（BGR 顺序）
+    # 逐词高亮色。**必须大写**: 上游工具(Subforges)解析 ASS 颜色标签只认大写十六进制,
+    # 小写(&H00ff00&)会被判为不认得 → 逐词高亮在那边直接失效。
+    "highlight_color": "&H00FF00&",  # ASS 内嵌颜色（BGR 顺序, 大写)
     # 字体与字号中英分离：中文轨（Style「中文字幕」）与英文轨（Style「Default」）
     # 各用一套，双语字幕里两侧字重/字宽差异大时能分别微调。
     "zh_font_name": "Comic Sans MS",
@@ -226,9 +228,15 @@ def hex_to_ass_color(value):
         v = synonyms[v]
     if v.startswith("#"):
         v = v[1:]
-    # 已经是 ASS 格式
+    # 已经是 ASS 格式: 仍要归一化为**大写**。上游工具(Subforges)只认大写十六进制,
+    # 配置文件里的历史小写值(&H00ff00&)若原样透传, 逐词高亮在那边会整体失效。
     if value.strip().startswith("&H"):
-        return value.strip()
+        m = re.fullmatch(r"&[Hh]([0-9a-fA-F]{6})&?", value.strip())
+        if not m:
+            raise argparse.ArgumentTypeError(
+                f"颜色格式无法识别：{value}（应为 #RRGGBB 或 red/green 等名称）")
+        # 统一补上尾部 &, 并大写 —— 上游工具(Subforges)只认大写
+        return f"&H{m.group(1).upper()}&"
     if not re.fullmatch(r"[0-9a-fA-F]{6}", v):
         raise argparse.ArgumentTypeError(
             f"颜色格式无法识别：{value}（应为 #RRGGBB 或 red/green 等名称）")
@@ -428,6 +436,54 @@ def apply_font_to_styles(header_lines, settings):
                 line = ','.join(parts) + '\n'
         out.append(line)
     return out
+
+
+def _upper_color_tag(tag):
+    """把单个颜色标签里的十六进制值转大写, 保持前缀与分隔符原样。"""
+    return re.sub(r'(?i)&H([0-9a-f]{6,8})',
+                  lambda m: '&H' + m.group(1).upper(), tag)
+
+
+def normalize_style_line_colors(line):
+    """把 Style 行的颜色列转大写。
+
+    ASS 的 Style 行里颜色是**裸值**(没有 &H 前缀), 例如:
+        Style: 中文字幕,Comic Sans MS,65,&H0000FFFF,&H0000FFFF,...
+    逐词高亮标签(带 &H)由 normalize_ass_color_tags_to_upper 处理, 这里管样式行。
+    """
+    if not line.startswith('Style:'):
+        return line
+    # 用 splitlines 保住行尾, 不手工去猜换行符在哪(踩过: 按 parts[0] 长度算 eol
+    # 会把整行内容重复追加到末尾)。
+    nl = ''
+    body = line
+    while body and body[-1] in '\r\n':
+        nl = body[-1] + nl
+        body = body[:-1]
+    parts = body.split(',')
+    if len(parts) < 5:
+        return line
+    for i in (3, 4):                      # PrimaryColour / SecondaryColour
+        parts[i] = _upper_color_tag(parts[i])
+    return ','.join(parts) + nl
+
+
+_COLOR_TAG_RE = re.compile(r'\{\\[1-4]?c&H[0-9A-Fa-f]{6,8}&?\}', re.IGNORECASE)
+
+
+def normalize_ass_color_tags_to_upper(text):
+    """把 ASS 里的颜色标签统一成**大写**十六进制。
+
+    为什么必须大写: 上游工具(Subforges)解析 ASS 颜色标签时只认大写, 小写
+    (&H00ff00&)会被判为不认得 → 逐词高亮在那边整体失效, 工作流无法从本工具继承。
+    libass 本身大小写通吃, 所以这只是输出侧的对齐, 不改变本工具的渲染结果。
+
+    同时处理两类历史问题:
+      ① 行内覆盖标签(带 &H): \\c \\1c \\2c \\3c \\4c;
+      ② Style 行的颜色列(裸 6/8 位十六进制, 无 &H 前缀)。
+    """
+    text = _COLOR_TAG_RE.sub(lambda m: _upper_color_tag(m.group(0)), text)
+    return ''.join(normalize_style_line_colors(l) for l in text.splitlines(keepends=True))
 
 
 def process_ass(input_path, output_path, settings=None, dry_run=False):
@@ -812,6 +868,8 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
         if settings.get('apply_font'):
             out_header = apply_font_to_styles(header, settings)
         output_lines = out_header + final_events_section
+        # 统一大写颜色标签(兼容只认大写的上游工具, 见函数注释)
+        output_lines = [normalize_ass_color_tags_to_upper(l) for l in output_lines]
         with open(output_path, 'w', encoding='utf-8-sig') as f:
             f.writelines(output_lines)
 

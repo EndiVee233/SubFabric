@@ -2481,15 +2481,18 @@ function startPrepare(id, videoPath, mode) {
       + 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
   }
 
-  /** 一个逐词切片: 文本是**整句全文**, 只有当前词用 {\c&H00ff00&}词{\c} 内联高亮。
+  /** 一个逐词切片: 文本是**整句全文**, 只有当前词用 {\c&H00FF00&}词{\c} 内联高亮。
    *  这是本编辑器判定逐词特效的格式(karaoke.js 的 HL_RE), 不是 \k 系列标签。
-   *  name = 说话人(写进 Name 栏, 编辑器据此显示角色); 角色色只上中文行, 英文行保持绿色高亮。 */
+   *  name = 说话人(写进 Name 栏, 编辑器据此显示角色); 角色色只上中文行, 英文行保持绿色高亮。
+   *  **颜色一律大写**: 上游工具(Subforges)解析 ASS 颜色标签时只认大写十六进制,
+   *  小写(&H00ff00&)会被当成不认得 → 逐词高亮在那边直接失效。历史稿件里的小写
+   *  值由编辑器加载时 normalizeAssColorTags() 归一化, 不必手工重导。 */
   /** 用户文本 → ASS 安全文本: 花括号会被 libass 当覆盖标签解析, 必须转义(与 karaoke-scribe 同款做法) */
   const escAss = (s) => String(s == null ? '' : s)
     .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\r?\n/g, '\\N');
 
   function wordSliceLine(words, idx, start, end, name) {
-    const text = words.map((w, i) => (i === idx ? `{\\c&H00ff00&}${escAss(w.word)}{\\c}` : escAss(w.word))).join(' ');
+    const text = words.map((w, i) => (i === idx ? `{\\c&H00FF00&}${escAss(w.word)}{\\c}` : escAss(w.word))).join(' ');
     return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${text}\n`;
   }
 

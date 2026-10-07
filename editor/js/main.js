@@ -1065,18 +1065,41 @@ function updateWordConvertStyles() {
     ? `已检测到逐词颜色标签，英文样式为「${wordConvertStyle.value}」。仅转换尚未逐词化的英文句。`
     : '无法可靠判定英文样式：请先在上方明确选择，未选择时一律跳过，绝不猜测转换；中文和已转换行不改动。';
 }
-/** 规整行首角色色标: 旧版服务端写出过 {\c&H&bbggrr&&}(多一层 &H/&) —— libass 解析成黑/默认色,
- *  且编辑器的颜色解析/全局换色全都匹配不上。加载时统一规整为 {\c&Hbbggrr&}。 */
-function normalizeLeadColors() {
+/** 规整 ASS 颜色标签, 加载时统一为**大写**十六进制。
+ *
+ *  为什么要大写: 上游工具(Subforges)解析 ASS 颜色标签时只认大写十六进制,
+ *  小写(&H00ff00&)会被判为不认得 → 逐词高亮在那边整体失效, 工作流无法继承。
+ *  libass 本身大小写通吃, 所以这纯粹是对上游的兼容, 不影响本工具的渲染。
+ *
+ *  处理两类历史问题:
+ *  ① 旧版服务端写出过 {\c&H&bbggrr&&}(多一层 &H/&) —— libass 解析成黑/默认色, 且
+ *     颜色解析/全局换色全都匹配不上, 规整为标准的 {\c&Hbbggrr&};
+ *  ② 值里含小写十六进制 —— 一律转大写。
+ *
+ *  覆盖 \1c(PrimaryColour) / \2c / \3c(Outline) / \4c(Shadow) 与 \c, 逐词高亮
+ *  {\c&H00ff00&}词{\c} 和行首角色色 {\c&H0b0be5&} 都会被规整。
+ *
+ *  @returns 改动的事件数 */
+function normalizeAssColorTags() {
   if (!state.assDoc) return 0;
-  const re = /\{\\c&H&H?([0-9A-Fa-f]{6})&&\}/g;
+  // ① 先修结构错误(多一层 &H/&), ② 再把所有颜色值转大写。
+  // 用同一遍扫描完成: 每次替换都重新构造标签, 避免连续 replace 的匹配漂移。
+  const bad = /\{\\(?:[1-4])?c&H&H?([0-9A-Fa-f]{6})&&\}/g;
+  // 尾部 & 可选: 缺尾& 的 {\c&H00ff00} 同样要接上 —— karaoke.js 的 HL_RE 要求尾&,
+  // 缺了就不被识别为逐词高亮。整段重建(而非局部 replace), 避免吃掉原有的尾&。
+  const anyColor = /\{\\(?:[1-4])?c&H([0-9A-Fa-f]{6})&?\}/g;
   let n = 0;
   for (const ev of state.assDoc.events) {
     const t = ev.text || '';
-    re.lastIndex = 0;
-    if (!re.test(t)) continue;
-    state.assDoc.setEventText(ev, t.replace(re, (all, hex) => '{\\c&H' + hex + '&}'));
-    n++;
+    if (!/\{\\[1-4]?c&H/.test(t)) continue;
+    bad.lastIndex = 0; anyColor.lastIndex = 0;
+    if (!bad.test(t) && !anyColor.test(t)) continue;
+    let next = t.replace(bad, (all, hex) => `{\\c&H${hex.toUpperCase()}&}`);
+    next = next.replace(anyColor, (all, hex) => {
+      const head = all.slice(0, all.indexOf('&H') + 2);   // 保留 {\c / {\1c 前缀
+      return `${head}${hex.toUpperCase()}&}`;              // 统一补尾&
+    });
+    if (next !== t) { state.assDoc.setEventText(ev, next); n++; }
   }
   return n;
 }
@@ -1092,7 +1115,7 @@ function setAss(text, name) {
   state.srtCues = [];
   state.assDoc = new AssDoc(text);
   const savedWordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
-  const fixedColors = normalizeLeadColors();   // 必须在分析/渲染之前
+  const fixedColors = normalizeAssColorTags();   // 必须在分析/渲染之前
   // 双轨分析: 干净整句(编辑/列表/时间轴) + 词级映射; 原始逐词文档保留给视频渲染
   state.kar = analyzeKaraoke(state.assDoc);
   if (/^#[0-9a-f]{6}$/i.test(savedWordColor)) {
@@ -1140,7 +1163,7 @@ function setAss(text, name) {
   panel.setBadge('ASS 特效', 'ass');
   panel.setFileName(name);
   applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
-  if (fixedColors) toast(`已修复 ${fixedColors} 行格式错误的说话人色标`, 5000);
+  if (fixedColors) toast(`已把 ${fixedColors} 行的颜色标签统一为大写（兼容 Subforges 等只认大写的工具）`, 5000);
   if (gapFixed) toast(`已规范 ${gapFixed} 行的角色名间距（[角色] 与正文之间一个空格）`, 4000);
   if (spanAligned) toast(`已自动对齐 ${spanAligned} 行的中英起止（英文逐词原来比中文行短一截）`, 5000);
   panel.setModeOptions([
