@@ -315,6 +315,12 @@ export class EditorPanel {
    * keepView=true 时保留当前滚动位置(改时间/改文本/增删后不跳回顶部),
    * 载入新文件时用默认 false 重置到顶部。
    */
+  /** 取第 i 条的数据（列表用**过滤后**的下标，与 data-idx 一致）。
+   *  外层（main.js）靠它把行内按钮的点击解析成该句的 [start,end]。 */
+  itemAt(i) {
+    return (this.filtered && this.filtered[i]) || null;
+  }
+
   setItems(items, keepView = false) {
     this.closeEdit();
     const keepTop = this.listEl ? this.listEl.scrollTop : 0;
@@ -702,6 +708,11 @@ export class EditorPanel {
   _matchMode(it) {
     if (this._badOnly && !it.bad) return false;
     if (this._lowOnly && !(it.confidence && it.confidence.low)) return false;
+    // 异常行按类别筛（可多选，命中**任一**选中类别即通过）
+    if (this._badCats && this._badCats.size) {
+      const cats = it.badCats || [];
+      if (!cats.some(c => this._badCats.has(c))) return false;
+    }
     if (this._speaker && !this._speakerMatch(it)) return false;
     if (this._mode === 'first') return !!it.l1;
     if (this._mode === 'second') return !!it.l2;
@@ -749,27 +760,38 @@ export class EditorPanel {
     if (it.bad) chips.push(`<span class="cc-chip chip-bad" title="异常行：${escapeHtml(it.badReason || '')}">⚠ 异常行</span>`);
     if (it.badge1) chips.push(`<span class="cc-chip chip-l1"${chipAttr}>${escapeHtml(it.badge1)}</span>`);
     if (it.badge2 && showSecond) chips.push(`<span class="cc-chip chip-l2"${chipAttr}>${escapeHtml(it.badge2)}</span>`);
-    // 置信度徽标：低置信度显眼（提醒复核），高的弱化（不干扰阅读）
+    // 置信度徽标 + 「↻ 重识别」都放在**左侧时间列的下方**（用户要求的位置）。
+    // 两者是同一类操作（看质量 → 决定要不要重识别），放一起最顺；右侧那行徽标留给
+    // 样式/异常这类"描述性"标记，不再混操作按钮。
     const cf = it.confidence;
+    const leftBits = [];
     if (cf && typeof cf.score === 'number') {
       const pct = Math.round(cf.score * 100);
       const tip = `ASR 置信度 ${pct}%` + (cf.worstWord != null ? `；最可疑的是第 ${cf.worstWord + 1} 个词` : '')
         + (cf.low ? '。建议复核这一句' : '');
-      chips.push(cf.low
+      leftBits.push(cf.low
         ? `<span class="cc-chip chip-conf-low" title="${escapeHtml(tip)}">◔ ${pct}%</span>`
         : `<span class="cc-chip chip-conf" title="${escapeHtml(tip)}">${pct}%</span>`);
     }
+    // 重识别按钮：只在区间合法时给 —— 没有 start/end 的行切不出音频
+    if (Number.isFinite(it.start) && Number.isFinite(it.end) && it.end > it.start) {
+      leftBits.push(`<button type="button" class="cc-chip cc-rerecog" data-act="rerecog"`
+        + ` title="重新识别这一句（切出该句音频 → ASR → 翻译 → 写回）">↻ 重识别</button>`);
+    }
+    const leftStack = leftBits.length
+      ? `<div class="cc-left-stack">${leftBits.join('')}</div>` : '';
     const head = chips.length ? `<div class="cc-head">${chips.join('')}</div>` : '';
     // 新建但还没输入的字幕 → 显示占位提示(用户不输入就离开则这条会被撤销)
     const l1 = showFirst && it.l1 ? `<div class="cc-l1"${l1Attr}>${escapeHtml(it.l1)}</div>`
       : (showFirst && it.isNew ? `<div class="cc-l1 cc-ph1">（输入中文）</div>` : '');
-    const l2 = showSecond && it.l2 ? `<div class="cc-l2">${escapeHtml(it.l2)}</div>`
+    const l2 = showSecond && it.l2 ? `<div class="cc-l2${l1 ? ' cc-l2-sep' : ''}">${escapeHtml(it.l2)}</div>`
       : (showSecond && it.isNew ? `<div class="cc-l2 cc-ph2">（输入英文）</div>` : '');
     return `<div class="${cls.join(' ')}" data-idx="${i}" style="${cardStyle.join(';')}">
       <div class="cc-times">
         <div class="cc-t"><span>开始</span><b${timeAttr}>${fmtTime(it.start)}</b></div>
         <div class="cc-t"><span>结束</span><b${timeAttr}>${fmtTime(it.end)}</b></div>
         <div class="cc-t"><span>时长</span><b${timeAttr}>${(it.end - it.start).toFixed(3)}s</b></div>
+        ${leftStack}
       </div>
       <div class="cc-body">
         ${head}
@@ -777,6 +799,16 @@ export class EditorPanel {
       </div>
     </div>`;
   }
+
+  /** 设置「异常行类别」筛选。传空数组/Set 清空（= 不按类别筛）。
+   *  与「只看低置信度」是**并列**条件，两者可同时生效（交集）。 */
+  setBadCats(keys) {
+    this._badCats = new Set(keys || []);
+    this._applyFilter();
+  }
+
+  /** 当前按类别筛了哪些（空 Set = 没筛）。 */
+  get badCats() { return this._badCats || new Set(); }
 
   /** 只显示低置信度行（校对时快速定位可疑句）。传 false 恢复显示全部。 */
   setLowOnly(on) {
