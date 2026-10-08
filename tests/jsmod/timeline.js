@@ -74,6 +74,26 @@ function textOnTranslucent(hex, alpha, fallback) {
 }
 
 /**
+ * 直写在深色画布上的文字该用什么颜色（用于时间轴字幕块的**中文行**）。
+ *
+ * 与 textOnTranslucent 的区别：那个是算"半透明色叠在深底上"的观感色，
+ * 在 alpha=0.12 时恒等于深色 → 恒返回白色，不能用来判断"角色色本身够不够亮"。
+ * 这里直接按**字符原色**判断，且同时看两个指标：
+ *   · 感知亮度 L（0.299R + 0.587G + 0.114B）—— 判断整体是否发闷；
+ *   · 最亮通道 maxC —— 判断是否"鲜艳"。
+ * 为什么要两个：只看 L 会误杀纯红（L 仅 0.299，但 #ff0000 在深底上非常清楚），
+ * 而红色是很常见的角色色；反之 #5b6472 这类灰蓝 L 与 maxC 都低，才是真该换掉的。
+ * 够亮或够鲜艳 → 保留角色色（保住"谁在说话"的可辨识度）；否则换近白。
+ */
+function readableTextOn(hex) {
+  const c = parseHex(hex);
+  if (!c) return '#ffffff';
+  const L = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) / 255;
+  const maxC = Math.max(c.r, c.g, c.b) / 255;
+  return (L >= 0.40 || maxC >= 0.75) ? hex : '#f2f2f7';
+}
+
+/**
  * 块在轨道内的纵向分段:
  *  - 中英配对块 → 占满整轨
  *  - 只有中文的孤行 → 只占**上半区**
@@ -288,10 +308,18 @@ export class Timeline {
     this._notifyRange();
   }
 
-  /** 载入新字幕/视频时调用: 下一次 setLanes/setDuration 会重新按默认跨度定位 */
+  /** 载入新字幕/视频时调用: 下一次 setLanes/setDuration 会重新定位视图 */
   resetView() {
     this._viewReady = false;
     this._viewFromLanes = false;
+    // 载入稿件时**铺满整个视频**，而不是只显示前 30 秒。
+    //
+    // 为什么改：原来一律用默认 30s 跨度，于是打开一个几十分钟的稿子时，时间轴上
+    // 只有开头 30 秒内那几条字幕落在视野里、其余全在视野右侧之外 ——
+    // 用户看到的是"字幕全挤在前几秒"，会以为识别坏了（实测有人因此报 bug）。
+    // 数据一直是好的，坏的只是初始视图。
+    // DEFAULT_SPAN 仍然保留，用于"视频时长未知"的情况（见 _applyDefaultView）。
+    this._fitOnLoad = true;
     this.subStart = 0;
     this.subEnd = 0;
     this._hideMenu();
@@ -330,11 +358,16 @@ export class Timeline {
     return { min, max: Math.max(w / 0.4, min) };
   }
 
-  /** 默认视图: 跨度 = min(30s, 视频时长), 起点固定在 0(视频开头) */
+  /** 默认视图: 跨度 = min(30s, 视频时长), 起点固定在 0(视频开头)。
+   *  但 resetView() 之后的第一次调用改用 fit() 铺满全片（见那里的说明）。 */
   _applyDefaultView() {
     const r = this._contentRange();
     const w = this._cssW();
     if (!r || w <= 0) return;
+    if (this._fitOnLoad) {
+      this._fitOnLoad = false;
+      if (r.span > DEFAULT_SPAN) { this.fit(); return; }
+    }
     this.pxPerSec = w / Math.max(0.2, Math.min(DEFAULT_SPAN, r.span));
     this.viewStart = r.a;
     this._clampView();
@@ -1206,9 +1239,26 @@ export class Timeline {
     ctx.clip();
     ctx.textAlign = 'left';
     if (c.text2) {
-      ctx.fillStyle = base;                       // 中文行: 角色色 100% 不透明
+      /* 中文行原来直接用 base（角色色原色）当填充色，而英文行用的是 WORD_TEXT（#e9e9f0 浅色）。
+         两行不一致，且角色色里只要有低饱和/偏暗的，压在波形与半透明块底上就很难认
+         （用户反馈"中文字幕可读性较低"）。这里做两件事：
+
+         ① 先给中文字形后面铺一层很淡的深色底（压在波形上，波形会把字糊掉）；
+            范围**只比字形大一点点**（实测文本宽度 + 3px 内边距），不是整块铺满 ——
+            铺满会把逐词轴和块的半透明边框色都盖掉。
+         ② 文字色按角色色的感知亮度决定：够亮就保留角色色（保住"谁在说话"的可辨识度），
+            偏暗就换成近白，保证对比度。
+
+         文本色**不改**块自己的边框/底色 —— 角色色在别处（边框、轨道、列表）仍然可见。 */
       ctx.font = ZH_FONT;
-      ctx.fillText(c.text2.slice(0, 60), x1 + TEXT_PAD, band.y + Math.round(band.h * 0.30));
+      const zh = c.text2.slice(0, 60);
+      const zhBase = band.y + Math.round(band.h * 0.30);
+      const tw = ctx.measureText(zh).width;
+      ctx.fillStyle = 'rgba(8,8,12,.45)';                 // 极淡的深色底：压住波形，又不糊掉块
+      this._roundRect(ctx, x1 + TEXT_PAD - 3, zhBase - 11, tw + 6, 14, 3);
+      ctx.fill();
+      ctx.fillStyle = readableTextOn(base);                // 亮角色色保留，暗的换近白
+      ctx.fillText(zh, x1 + TEXT_PAD, zhBase);
       if (showWords) {
         this._drawWordAxis(ctx, words, g, x1, x2, c.end);
       } else {
@@ -1376,9 +1426,12 @@ export class Timeline {
       for (let px = lastX; px >= 0; px--) ctx.lineTo(px, cy - env[px * 2] * s);
       ctx.closePath();
       const g = ctx.createLinearGradient(0, top, 0, top + h);
-      g.addColorStop(0, 'rgba(190,190,205,.85)');
-      g.addColorStop(0.5, 'rgba(228,228,240,.95)');
-      g.addColorStop(1, 'rgba(190,190,205,.85)');
+      /* 波形配色：原来是接近白的浅灰（190,190,205 → 228,228,240），整条带子比字幕块还抢眼，
+         中文字幕压在上面就不好认。整体压暗一档，让波形退成"背景信息"、字幕读到前面来。
+         仍然保留上下渐变（边缘略暗、中间略亮），维持原来的立体感。 */
+      g.addColorStop(0, 'rgba(116,116,134,.72)');
+      g.addColorStop(0.5, 'rgba(146,146,166,.82)');
+      g.addColorStop(1, 'rgba(116,116,134,.72)');
       ctx.fillStyle = g;
       ctx.fill();
       ctx.restore();
@@ -1388,7 +1441,7 @@ export class Timeline {
       const sx = (this.viewStart / this.duration) * img.width;
       const sw = (span / this.duration) * img.width;
       ctx.save();
-      ctx.globalAlpha = 0.55;
+      ctx.globalAlpha = 0.55;                 // 兜底 PNG 路径：与上面的包络配色观感对齐
       if (sw > 0) ctx.drawImage(img, sx, 0, sw, img.height, 0, top, W, h);
       ctx.restore();
     }

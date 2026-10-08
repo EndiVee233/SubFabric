@@ -61,6 +61,9 @@ ENCODER_WINDOW_FRAMES = 1501
 OVERLAP_FRAMES = 166
 ENCODER_FRAME_RATE = 12.5          # 编码器帧率 = 100 / 下采样 8
 MEL_FRAME_RATE = 100.0             # mel 帧率；**token 的 frame 用的是这个单位**
+# token 的 frame 在_tdt_loop 里是**编码器帧**索引，下游一律按 mel 帧解释 —— 
+# 记录时间戳时必须乘这个系数，否则压缩 8 倍（详见 _tdt_loop 里的说明）。
+ENC_TO_MEL = MEL_FRAME_RATE / ENCODER_FRAME_RATE
 
 # ── mel 前端参数(NeMo / parakeet 规范) ──
 N_FFT = 512
@@ -176,8 +179,11 @@ def _serve_recognize(rec, args, job):
             % (overall.get("score", 0.0), parts.get("token", 0.0),
                parts.get("audio", 0.0), parts.get("stability", 0.0)))
     words = refine_word_ends(words, samples, sr)
-    segments = words_to_segments(words, samples, sr)
-    log("断句完成 %d 行" % len(segments))
+    # 必须把 stability 传下去 —— 漏了它，逐句就没有 confidence，ASS 里也就写不出注释，
+    # 界面上看不到任何置信度（实测踩过：整段有值、逐句全空）。
+    segments = words_to_segments(words, samples, sr, overall)
+    n_low = sum(1 for s in segments if (s.get("confidence") or {}).get("low"))
+    log("断句完成 %d 行（其中 %d 行置信度偏低）" % (len(segments), n_low))
     return round(dur, 3), segments, overall
 
 
@@ -527,7 +533,12 @@ class NpuRecognizer:
                 frame = min(frame + dur, valid)
                 continue
             tokens.append(best)
-            timings.append({"id": best, "frame": frame})
+            # ⚠ 单位换算：`frame` 是**编码器帧**索引（12.5fps，和 while 条件、at=frame 同一口径），
+            # 而下游一律按 **mel 帧**（100fps）解释（_decode_windows 加 mel 帧偏移、
+            # _tokens_to_words 用 1/MEL_FRAME_RATE 换算）。不换算的话时间戳会**压缩 8 倍**
+            # （100/12.5），表现为"每句话都挤在开头、几秒就放完"。
+            # 只在记录处换算，循环内部索引语义保持不变。
+            timings.append({"id": best, "frame": frame * ENC_TO_MEL})
             probs.append(float(probs_row[best]))
             last_token = best
             state["hidden"] = np.ascontiguousarray(h_next, dtype=np.float32)
@@ -544,7 +555,8 @@ class NpuRecognizer:
                 if best == BLANK_TOKEN_ID:
                     break
                 tokens.append(best)
-                timings.append({"id": best, "frame": last_frame})
+                # 同上的单位换算：last_frame 也是编码器帧索引（valid 是编码器帧数）
+                timings.append({"id": best, "frame": last_frame * ENC_TO_MEL})
                 probs.append(float(probs_row[best]))
                 last_token = best
                 state["hidden"] = np.ascontiguousarray(h_next, dtype=np.float32)
@@ -774,7 +786,34 @@ def refine_word_ends(words, samples, sr):
     return words
 
 
-def words_to_segments(words, samples=None, sr=SAMPLE_RATE):
+def _pick_stability(conf):
+    """从 confidence 里取出 0~1 的稳定性分数。
+
+    形状（实测）：conf["parts"]["stability"] 才是数值；
+    conf["stability"] 只是 {affectedWords, wordCount, runs} 的统计，**没有分数**。
+    也兼容直接传数字、或传 stability_from_runs 的原始返回值。
+    """
+    if conf is None:
+        return 1.0
+    if isinstance(conf, (int, float)):
+        return float(conf)
+    if not isinstance(conf, dict):
+        return 1.0
+    parts = conf.get("parts")
+    if isinstance(parts, dict):
+        v = parts.get("stability")
+        if isinstance(v, (int, float)):
+            return float(v)
+    for key in ("stability", "score"):
+        v = conf.get(key)
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, dict) and isinstance(v.get("stability"), (int, float)):
+            return float(v["stability"])
+    return 1.0
+
+
+def words_to_segments(words, samples=None, sr=SAMPLE_RATE, stability=None):
     """基础断句: 句末标点 / 长停顿 / 行长兜底(纯本地规则, 不调用 LLM)。"""
     groups, cur = [], []
     for w in words:
@@ -820,6 +859,13 @@ def words_to_segments(words, samples=None, sr=SAMPLE_RATE):
         # 只用**有数据**的词；没有数据的词不参与（否则等于按 0 分算，见 confidence.py）
         valid = sorted(v for v in scores if v is not None)
         seg_audio = C.audio_quality(samples[seg_idx[0]:seg_idx[1]])
+        # 稳定性（全局信号，非逐句）：加噪重跑的一致率。没有它时按 1.0 处理（不惩罚）。
+        # 稳定性数值**不在** confidence["stability"] 里 —— 那个子字典只有
+        # {affectedWords, wordCount, runs}（给界面显示受影响了几个词用）。
+        # 真正的 0~1 分数在 confidence["parts"]["stability"]。
+        # 实测踩过：取错地方 → 拿到 fallback 1.0 → 逐句 parts 里恒为 1.0，
+        # 而整段明明写着 0.94，两边对不上。
+        stab = _pick_stability(stability)
         if valid:
             # 与 confidence.make_confidence 的段级口径**完全一致**。不能只取最差的词 ——
             # 实测 clean 音频第 5 百分位的词分就是 0.0，只取极值会让 7/10 行被误标低置信度。
@@ -827,17 +873,21 @@ def words_to_segments(words, samples=None, sr=SAMPLE_RATE):
             p20 = valid[max(0, int(len(valid) * 0.20) - 1)]
             worst_word = valid[0]
             tok = 0.55 * mean + 0.33 * p20 + 0.12 * worst_word
-            seg_score = seg_audio["score"] * (0.7 + 0.3 * tok)
+            base = seg_audio["score"] * (0.7 + 0.3 * tok)
         else:
             tok = None
-            seg_score = seg_audio["score"] * 0.85       # 无评分数据时只按音频质量保守估计
+            base = seg_audio["score"] * 0.85            # 无评分数据时只按音频质量保守估计
+        # 稳定性作为整体乘数往下压：与 asr.py 同一口径（0.7 + 0.3×stability）。
+        # 少了这一项，句级分数就只反映音频质量与 token，稳定性信号在**界面**上完全体现不出来。
+        seg_score = base * (0.7 + 0.3 * stab)
         seg["confidence"] = {
             "score": round(float(seg_score), 3),
             "low": bool(seg_score < C.LOW_CONFIDENCE),
             "worstWord": (int(scores.index(valid[0])) if valid else None),
             "scoredWords": len(valid),
             "parts": {"token": (None if tok is None else round(float(tok), 3)),
-                      "audio": round(float(seg_audio["score"]), 3)},
+                      "audio": round(float(seg_audio["score"]), 3),
+                      "stability": round(stab, 3)},
         }
         for sc, wout in zip(scores, seg["words"]):
             wout["confidence"] = None if sc is None else round(float(sc), 3)
@@ -918,7 +968,7 @@ def main():
 
         progress(88, "asr", "整理词级时间轴 …")
         words = refine_word_ends(words, samples, sr)
-        segments = words_to_segments(words, samples, sr)
+        segments = words_to_segments(words, samples, sr, res.get("confidence") or {})
         low = sum(1 for s in segments if (s.get("confidence") or {}).get("low"))
         log("断句完成 %d 行（其中 %d 行置信度偏低，建议复核）" % (len(segments), low))
 

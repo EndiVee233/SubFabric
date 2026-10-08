@@ -334,8 +334,13 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   visibility: hidden; pointer-events: none; z-index: -1;
 }
 .cue-card {
-  position: relative; left: 8px; right: 8px;
-  margin-bottom: 6px;
+  /* 原来写的是 `position: relative; left: 8px; right: 8px` —— 但 relative 定位下
+     **`right` 不生效**（left 非 auto 时 right 被算成 -left），于是卡片只是整体右移 8px：
+     它是块级元素、本来就占满 #cue-list 的内容宽度，右移后就超出内容框，
+     而 #cue-list 是 overflow-y:auto（横向同样裁）→ **右边界被切掉**。
+     作者本意是"左右各留 8px 边距"，用 margin 才是正确写法。 */
+  position: relative;
+  margin: 0 8px 6px;
   display: flex; gap: 9px;
   padding: 7px 10px 7px 8px;
   background: #1a1a21;
@@ -365,7 +370,10 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .cc-t { display: flex; align-items: baseline; justify-content: space-between; gap: 3px; font-size: 9px; color: var(--text-2); }
 .cc-t b { font-family: Consolas, monospace; font-weight: 600; font-size: 9.5px; color: var(--accent-2); }
 
-.cc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+/* 顶部对齐（原来是 center）：让右侧内容与左侧时间列齐平。
+   卡片高度是**量出来的**（editor.js 的 _h.set(key, getBoundingClientRect().height)），
+   不是写死的 --row-h，所以改成顶对齐不会把内容挤出卡片。 */
+.cc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; justify-content: flex-start; }
 .cc-head { display: flex; align-items: center; gap: 6px; height: 14px; }
 .cc-no { font-family: Consolas, monospace; font-size: 10px; font-weight: 700; color: var(--accent); }
 .cc-chip {
@@ -373,11 +381,45 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   border: 1px solid #3a3a46; color: var(--text-1);
 }
 .chip-l1 { color: var(--accent-2); border-color: var(--accent-a45); background: var(--accent-a10); }
-/* ASR 置信度徽标：低置信度用警示色，正常的一档弱化（不干扰阅读） */
-.chip-conf { color: var(--text-2); border-color: var(--hair-2); background: rgba(255,255,255,.03); }
-.chip-conf-low { color: #ffd54a; border-color: #5a4a23; background: rgba(255,213,74,.10); font-weight: 700; }
+/* ASR 置信度徽标：低置信度用警示色，正常的一档**提亮**。
+   原来正常档是 var(--text-2) 的灰字 —— 用户反馈"灰色可读性有点差"。
+   改成浅青：在深底上足够亮，又不抢字幕正文的注意力；
+   与低置信度的琥珀色、异常行的红色都分得开（不靠"灰一点/亮一点"区分等级）。 */
+.chip-conf { color: #7fd8e8; border-color: #2b5560; background: rgba(127,216,232,.12); }
+.chip-conf-low { color: #ffd54a; border-color: #6b5828; background: rgba(255,213,74,.16); font-weight: 700; }
 .conf-toggle { color: #ffd54a; border-color: #5a4a23; }
 .conf-toggle.active { background: rgba(255,213,74,.16); color: #ffe08a; }
+
+/* 左列（.cc-times，86px 固定宽）里、三行时间**下方**的那一小块：
+   置信度徽标 + 「↻ 重识别」。两者是同一类操作（看质量 → 决定要不要重识别），放一起最顺；
+   右侧那行徽标留给样式/异常这类描述性标记（见 editor.js 的 leftBits 注释）。
+
+   为什么是**一行横排**而不是竖排：竖排要占约 35px，加上三行时间的 37px 就是 72px，
+   而卡片内可用只有约 78px —— 余量太小，字体或缩放一变就会被 .cue-card 的
+   overflow:hidden 裁掉（表现是按钮整块消失）。横排只占约 21px，合计 58px，余量 20px。 */
+.cc-left-stack {
+  display: flex; flex-direction: row; align-items: center; gap: 3px;
+  margin-top: 4px; padding-top: 4px;
+  border-top: 1px dashed #26262f;
+  white-space: nowrap;
+}
+.cc-left-stack .cc-chip {
+  font-size: 8.5px; line-height: 12px; padding: 0 3px;
+  text-align: center; white-space: nowrap; overflow: hidden;
+  min-width: 0;
+}
+.cc-left-stack .cc-rerecog { flex: none; }
+/* 按钮常驻显示 —— 它现在有自己的位置，不必再靠悬停开关（原来在右侧徽标行，
+   常驻会把阅读区塞满，所以那时是 hover 才显示）。 */
+.cc-rerecog {
+  font-family: inherit; cursor: pointer;
+  color: var(--accent-2) !important;
+  border-color: var(--accent-a45) !important;
+  background: var(--accent-a10) !important;
+  transition: background .12s var(--ease), color .12s var(--ease);
+}
+.cc-rerecog:hover { background: var(--accent-a28) !important; color: #fff !important; }
+.cc-rerecog:disabled { opacity: .4; cursor: default; }
 .chip-bad { color: #ffd54a; border-color: #5a4a23; background: rgba(255,213,74,.10); font-weight: 700; }
 .chip-l2 { color: #bdb7ff; border-color: #3d3a68; background: rgba(139,124,246,.12); }
 .cc-l1 {
@@ -387,6 +429,14 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .cc-l2 {
   font-size: 13.5px; line-height: 1.35; color: var(--en);
   white-space: normal; word-break: break-word; overflow-wrap: anywhere;
+}
+/* 中英之间的淡灰分隔行。只在**两行都有**时出现（由 editor.js 加 .cc-l2-sep）——
+   单语言模式下顶一条线会像是"漏了一行"，反而误导。
+   width: fit-content 让线只跟英文行一样长，不横贯整块。 */
+.cc-l2-sep {
+  border-top: 1px solid rgba(255,255,255,.14);
+  padding-top: 3px; margin-top: 3px;
+  width: fit-content; min-width: 46%;
 }
 /* 新建字幕的占位提示(用户没输入就不会留下这条) */
 .cc-ph1 { color: var(--accent-a55); font-weight: 500; }
@@ -451,6 +501,13 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ptab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+  /* 选中时用一条橙色线**盖住** #panel-tabs 自己的 1px 灰线。
+     不这么做的话两条线是**上下相接**的（容器 padding-bottom 为 0，标签底边正好落在
+     容器 border 之上）：标签区内 2px 橙 + 标签之下 1px 灰 = 看起来"两条线重叠"。
+     做法：给标签多 1px 下内边距，把它推到容器 border 上，再用 0 1px 0 的同色阴影盖住。
+     这不是视觉 hack —— 下划线式分段指示器本来就该覆盖容器的那条线。 */
+  padding-bottom: 8px;
+  box-shadow: 0 1px 0 var(--accent);
 }
 
 .tab-body {
@@ -603,6 +660,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .st-tab.active {
   color:var(--accent); border-bottom-color:var(--accent);
   background:linear-gradient(180deg, var(--accent-a10), transparent);
+  /* 与右侧面板标签（.ptab.active）同一个问题：容器 .st-tabs 有自己的 1px border-bottom，
+     而标签底边正好压在它上面 → 选中时"2px 橙线 + 1px 灰线"上下相接，看着像两条线重叠。
+     多 1px 下内边距把标签推到容器线上，再用同色阴影盖住那 1px。 */
+  padding-bottom:9px;
+  box-shadow:0 1px 0 var(--accent);
 }
 .st-body {
   flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable;
@@ -1406,7 +1468,10 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
   transition: background var(--dur-1) var(--ease), border-color var(--dur-2) var(--ease),
               transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease);
 }
-.cue-card:hover { transform: translateX(2px); border-color: var(--accent-a40); }
+/* 悬停的"浮起"效果原来靠 translateX(2px) —— 但那会再右移 2px，
+   即使修好边距，悬停瞬间右边仍会被 overflow 切掉。
+   改用 inset 阴影：视觉上有强调，但不改变盒子的几何位置，任何宽度下都不会被裁。 */
+.cue-card:hover { transform: none; border-color: var(--accent-a40); box-shadow: inset 2px 0 0 var(--accent-a40); }
 .cue-card.selected { box-shadow: inset 3px 0 0 var(--accent); }
 .cue-card.playing .cc-no {
   transition: color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-back);
@@ -1529,3 +1594,31 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
     scroll-behavior: auto !important;
   }
 }
+
+/* 「异常行筛选」下拉：多选复选框。绝对定位浮在工具栏下方，不占布局宽度
+   （工具栏已经很挤，内联展开会把其它按钮挤走）。 */
+.badcat-wrap { display: inline-flex; }
+/* 浮层挂在 <body> 下、用 fixed 定位（JS 按按钮 rect 现算 left/top）。
+   为什么不用 absolute + 高 z-index：
+     · #toolbar 有 overflow-x:auto → 它是滚动容器，会把浮层**裁掉**；
+     · #cue-list 在 DOM 里排在工具栏之后 → 按绘制顺序盖住工具栏子树，
+       浮层自己的 z-index 只在工具栏那个层叠上下文里有效，出不去。
+   z-index 取 65：高于列表与卡片菜单(60)、低于弹窗(80+)，与 #range-bar(62) 同档。 */
+.badcat-panel {
+  position: fixed; z-index: 65;
+  min-width: 210px; padding: 6px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.badcat-item {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 6px; border-radius: 5px; cursor: pointer;
+  font-size: 12px; color: var(--text-0); white-space: nowrap;
+}
+.badcat-item:hover { background: var(--bg-3); }
+.badcat-item input { margin: 0; cursor: pointer; }
+.badcat-item .n { margin-left: auto; color: var(--text-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.badcat-sep { height: 1px; background: var(--border); margin: 5px 2px; }
+.badcat-act { display: flex; gap: 6px; padding: 2px; }
+.badcat-act .btn { flex: 1; justify-content: center; }
+#btn-badcat.active { background: var(--accent-a16); border-color: var(--accent-a45); color: var(--accent-2); }

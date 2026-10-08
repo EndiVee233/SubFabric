@@ -101,6 +101,10 @@
           </label>
           <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示异常行" disabled>⚠ <span id="bad-count">0</span></button>
   <button class="btn btn-mini conf-toggle" id="btn-low-conf" title="只显示 ASR 置信度偏低的行" disabled>◔ <span id="low-conf-count">0</span></button>
+  <div class="badcat-wrap" id="badcat-wrap" hidden>
+    <button class="btn btn-mini" id="btn-badcat" title="按异常**类别**筛选（可多选）：时间异常、字幕重叠、缺语言行、角色问题、逐词缺词">▾ 异常筛选<span id="badcat-count"></span></button>
+    <div class="badcat-panel" id="badcat-panel" hidden></div>
+  </div>
         </div>
       </div>
       <div id="cue-list">

@@ -81,7 +81,7 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.1.11'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.1.12'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -132,6 +132,23 @@ const _cLog = console.log.bind(console), _cErr = console.error.bind(console);
 console.log = (...a) => { try { _cLog(...a); } catch {} pushLog('info', a); };
 console.error = (...a) => { try { _cErr(...a); } catch {} pushLog('error', a); };
 
+
+/* ── libass 渲染依赖自检 ──
+ * editor/vendor/ 在 .gitignore 里（约 18MB），新克隆必须跑一次
+ * `node editor/scripts/fetch-vendor.js`。缺了它：字幕列表与时间轴都正常，
+ * 但视频画面上没有任何字幕，且样式面板里看不到「ASS 渲染就绪」——
+ * 用户很难自己想到是渲染器缺失（实测有人因此以为软件坏了）。 */
+const LIBASS_FILES = ['subtitles-octopus-worker.js', 'subtitles-octopus-worker.wasm',
+                      path.join('fonts', 'NotoSansCJKsc-Regular.otf')];
+function libassMissing() {
+  const dir = path.join(__dirname, 'vendor');
+  return LIBASS_FILES.filter(f => {
+    try { return !fs.statSync(path.join(dir, f)).isFile(); } catch { return true; }
+  });
+}
+const LIBASS_HINT = '视频区不显示字幕：缺少 libass 渲染器。'
+  + '请在本项目根目录运行  node editor/scripts/fetch-vendor.js  '
+  + '（约 18MB；生成后本提示会自动消失，不用重启）';
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间。
  * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
  *      ② /api/version 让**已经开着的页面**发现自己过期了 → 提示用户刷新。
@@ -1911,8 +1928,12 @@ const SIMPLE_ROUTES = [
 
   // 代码版本戳: 已经开着的页面用它判断自己是否已过期 → 提示用户刷新
   ['/api/version', (req, res) => {
+    const miss = libassMissing();
     send(res, 200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' },
-      JSON.stringify({ stamp: BUILD_STAMP, version: APP_VERSION }));
+      JSON.stringify({ stamp: BUILD_STAMP, version: APP_VERSION,
+                       vendorOk: miss.length === 0,
+                       vendorMissing: miss,
+                       vendorHint: miss.length ? LIBASS_HINT : '' }));
     return true;
   }],
 
@@ -2661,6 +2682,47 @@ function startPrepare(id, videoPath, mode) {
    *  与逐词高亮色同一套元数据约定（见 ass.js 的 getScriptInfoComment），
    *  其它 ASS 播放器会忽略 `;` 开头的注释，所以对成品字幕没有任何影响。
    *  格式: `行号:分数:最差词下标` 逗号分隔；没有置信度数据（其它识别引擎）就返回空串。 */
+  /** 把「分句前」每个 segment 的 confidence 搬到「分句后」的 segment 上。
+   *
+   *  为什么需要：语义分句（reseg）是"给同一串词补标点 → 重新切句"，
+   *  reseg.js 的 groupsToSegments() 只产出 start/end/text/words，会丢掉 confidence，
+   *  于是 asr.json 分句后就没有逐句置信度、ASS 注释也写不出来（实测踩过）。
+   *
+   *  按**时间重叠加权**而不是词序号：实测 reseg 会在句间挪词（27/11 → 28/10），
+   *  按序号会错位；时间区间是稳的，重叠多少就贡献多少。
+   *  句被切开 → 两边各拿一部分；被合并 → 按区间长短加权。
+   */
+  function carryConfidence(oldSegs, newSegs) {
+    const src = (oldSegs || []).filter(s => s && s.confidence
+      && typeof s.confidence.score === 'number' && Number.isFinite(s.confidence.score));
+    if (!src.length) return 0;
+    let n = 0;
+    for (const seg of (newSegs || [])) {
+      if (!seg || !(seg.end > seg.start)) continue;
+      let wsum = 0, ssum = 0, best = null, bestOv = 0;
+      for (const o of src) {
+        const ov = Math.min(seg.end, o.end) - Math.max(seg.start, o.start);
+        if (ov <= 0) continue;
+        wsum += ov;
+        ssum += ov * o.confidence.score;
+        if (ov > bestOv) { bestOv = ov; best = o; }
+      }
+      if (!best) continue;                       // 完全没重叠（理论上不该发生）
+      const score = wsum > 0 ? ssum / wsum : best.confidence.score;
+      seg.confidence = {
+        score: Math.round(Math.max(0, Math.min(1, score)) * 1000) / 1000,
+        // 0.60 与 asr/confidence.py 的 LOW_CONFIDENCE、前端 LOW_CONFIDENCE_UI 同一口径
+        low: score < 0.60,
+        // 最可疑词的下标只在**整句直接沿用**时才有意义；被切/并过的句子不编造
+        worstWord: (bestOv >= (seg.end - seg.start) - 0.02) ? (best.confidence.worstWord ?? null) : null,
+        from: 'carry',                            // 标记来源，便于排查
+        parts: best.confidence.parts || null,
+      };
+      n++;
+    }
+    return n;
+  }
+
   function confidenceMeta(segs) {
     const parts = [];
     for (let i = 0; i < segs.length; i++) {
@@ -3442,6 +3504,12 @@ function startPrepare(id, videoPath, mode) {
         stats, loadCheckpoint, saveCheckpoint,
         onLog: (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [分句] ${m}`),
       });
+    // 分句会重建句子（丢掉 confidence），这里把原句的置信度按时间重叠搬过去 ——
+    // 否则 asr.json 分句后没有逐句置信度，ASS 注释写不出来，界面也看不到。
+    {
+      const carried = carryConfidence(data.segments, segs2);
+      pushDraftLog(id, `[分句] 置信度已随分句迁移到 ${carried} 行`);
+    }
     data.segments = segs2;
     const tmp = p + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(data));
@@ -5219,6 +5287,19 @@ server.listen(PORT, HOST, () => {
   console.log(`[subtitle-editor] node ${process.version}`);
   console.log(`[subtitle-editor] serving ${ROOT}`);
   console.log(`[subtitle-editor] open  http://${HOST}:${PORT}/`);
+  // libass 渲染依赖自检：缺了就直说。否则用户只会看到"视频上没有字幕"，
+  // 而列表与时间轴都正常，很难想到是渲染器缺失。
+  // 用 console.error 而不是 console.warn —— 日志面板只包装了 log/error，
+  // warn 既进不了日志也进不了 UI 的日志页（实测踩过）。
+  {
+    const miss = libassMissing();
+    if (miss.length) {
+      console.error('[subtitle-editor] ⚠ 缺少 libass 渲染依赖，视频区不会显示字幕：'
+        + miss.join('、'));
+      console.error('[subtitle-editor]   修复：在项目根目录运行  node editor/scripts/fetch-vendor.js'
+        + '（约 18MB；生成后刷新页面即可，不用重启）');
+    }
+  }
   startTray();     // 托盘图标(Windows): 右键 → 完全退出
 });
 server.on('error', (e) => {

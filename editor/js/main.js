@@ -1262,6 +1262,51 @@ function badReasonOf(sent) {
   return parts.slice(0, 3).join('; ');
 }
 
+/* ─────────── 异常行的**类别**（供筛选） ───────────
+ * 为什么需要：`badReason` 是给人看的拼接字符串，直接拿它当筛选键太脆
+ * （改一个字筛选就失效）。这里把原因文本映射成稳定的类别键。
+ * 文案与 markBadRows() 里 push 的那些必须对得上 —— 有单测盯着（tests/bad-cats-test.mjs）。
+ */
+const BAD_CATS = [
+  { k: 'time',   t: '时间异常',   hint: '句时长≤0 / 时间解析失败 / 结束早于开始 / 中英时间不一致' },
+  { k: 'overlap', t: '字幕重叠',  hint: '与其它字幕时间相交，或英文行内部有重复切片' },
+  { k: 'lang',   t: '缺语言行',   hint: '只有中文没有英文，或只有英文没有中文' },
+  { k: 'role',   t: '角色问题',   hint: '英文行含 [方括号]，或中文字幕行首没标 [人物]' },
+  { k: 'words',  t: '逐词缺词',   hint: '英文行逐词数量少于文本单词数（导出后会有词不高亮）' },
+];
+
+/** 原因文本 → 类别键。返回 null 表示认不出来（会归入「其它」，仍可被「只看异常行」筛到）。 */
+function classifyBadReason(reason) {
+  const s = String(reason || '');
+  if (!s) return null;
+  // 时间类：4 种文案
+  if (/句时长≤0/.test(s)) return 'time';
+  if (/无法解析/.test(s)) return 'time';
+  if (/结束早于开始/.test(s)) return 'time';
+  if (/中英时间不一致/.test(s)) return 'time';
+  // 重叠类
+  if (/英文行重叠/.test(s)) return 'overlap';
+  if (/^字幕重叠$/.test(s)) return 'overlap';
+  // 缺语言行
+  if (/单中文行|单英文行/.test(s)) return 'lang';
+  // 角色 / 方括号
+  if (/英文行含方括号/.test(s)) return 'role';
+  if (/未标注角色/.test(s)) return 'role';
+  // 逐词缺词
+  if (/英文行缺词/.test(s)) return 'words';
+  return null;
+}
+
+/** 把 badReason（可能含多条，用 '; ' 或 ' / ' 分隔）拆成类别集合。 */
+function badCatsOf(reason) {
+  const out = new Set();
+  for (const piece of String(reason || '').split(/;|\s\/\s/)) {
+    const k = classifyBadReason(piece.trim());
+    if (k) out.add(k);
+  }
+  return out;
+}
+
 /* ─────────── 坏行判定 ─────────── */
 /**
  * 一条字幕句子的切片是否**时间交叠**(复制粘贴常造成 → 画面叠字)。
@@ -1342,6 +1387,9 @@ function markBadRows(items) {
     if (overlap.has(i)) reasons.push('字幕重叠');
     it.bad = reasons.length > 0;
     it.badReason = reasons.join('; ');
+    // 结构化类别（供「异常行筛选」多选）。刻意不解析 badReason 字符串再分类 ——
+    // 这里直接拿刚刚 push 进去的 reasons，最准（badReason 是拼给人看的，格式会变）。
+    it.badCats = it.bad ? [...badCatsOf(reasons.join('; '))] : [];
   }
 }
 
@@ -1451,6 +1499,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   }
 
   // 低置信度计数 → 工具栏的「只看低置信度」按钮（没有该元数据时恒为 0，按钮自动禁用）
+  if (window.__refreshBadCat) setTimeout(window.__refreshBadCat, 0);   // 异常类别计数跟着列表刷新
   panel.setLowCount(state.items.filter(i => i.confidence && i.confidence.low).length,
     '只显示 ASR 置信度偏低的行（识别可能不准，建议复核）');
 
@@ -3120,18 +3169,25 @@ function startRerecogPoll(pid) {
   }, 1000);
 }
 
-if (rbReRecog) rbReRecog.addEventListener('click', async () => {
-  const sel = timeline.rangeSel;
-  if (!sel || reRecogBusy) return;
-  const a = sel.a, b = sel.b;
-  if (!(b > a)) return;
-  if (!state.project) { toast('重新识别只在项目模式可用（需要项目里已保存的音频）', 4600); return; }
-  if (state.format !== 'ass' && state.format !== 'srt') { toast('当前字幕格式不支持重新识别'); return; }
-  if (timeline.reRecogRegion) { toast('已有一个重新识别任务在进行中', 3800); return; }
+/**
+ * 发起一次区间重新识别（切音频 → ASR → 翻译 → 写回）。
+ *
+ * 两个入口共用：时间轴上的**选区**按钮，和字幕列表里**每行**的「↻ 重识别」。
+ * 每行按钮用该句自己的 [start,end]，所以这里只认区间、不关心谁调的。
+ *
+ * @param a,b    时间区间（秒）
+ * @param why    日志/提示里说明来源（'选区' / '第 N 句'）
+ */
+async function startRerecog(a, b, why) {
+  if (reRecogBusy) return false;
+  if (!(b > a)) return false;
+  if (!state.project) { toast('重新识别只在项目模式可用（需要项目里已保存的音频）', 4600); return false; }
+  if (state.format !== 'ass' && state.format !== 'srt') { toast('当前字幕格式不支持重新识别'); return false; }
+  if (timeline.reRecogRegion) { toast('已有一个重新识别任务在进行中，请等它结束', 3800); return false; }
   // API Key 为空时明确告诉用户"只识别不翻译", 别让结果悄无声息地缺了中文
   let llmReadyNow = false;
   try { llmReadyNow = !!(await (await fetch('/api/translate/config')).json()).ready; } catch {}
-  if (!llmReadyNow) toast('API Key 为空：本次只重新识别、不做翻译。点「⚙ 设置」填好后可再对其它区间使用', 8000);
+  if (!llmReadyNow) toast('翻译未就绪（API Key 为空或本地模型缺失）：本次只重新识别、不翻译', 8000);
   reRecogBusy = true;
   try {
     const r = await fetch(`/api/projects/${state.project.id}/rerecognize`, {
@@ -3139,17 +3195,45 @@ if (rbReRecog) rbReRecog.addEventListener('click', async () => {
       body: JSON.stringify({ start: a, end: b })
     });
     const m = await r.json();
-    if (!r.ok) { toast(m.error || '重新识别启动失败', 5600); return; }
-    timeline.clearRangeSel();          // 选区收起; 常驻区域留在时间轴上直到任务结束
+    if (!r.ok) { toast(m.error || '重新识别启动失败', 5600); return false; }
+    if (timeline.rangeSel) timeline.clearRangeSel();   // 选区收起; 常驻区域留在时间轴上直到任务结束
     setReRecogRegion(a, b, { status: 'running', progress: 2, message: '正在切出音频片段…' });
     startRerecogPoll(state.project.id);
-    toast('重新识别已在后台开始，可以继续编辑其它字幕，完成后会提示', 6600);
+    toast(`重新识别已在后台开始（${why}），可以继续编辑其它字幕，完成后会提示`, 6600);
+    return true;
   } catch (e) {
     toast('重新识别启动失败: ' + e.message, 5600);
+    return false;
   } finally {
     reRecogBusy = false;
   }
+}
+
+if (rbReRecog) rbReRecog.addEventListener('click', () => {
+  const sel = timeline.rangeSel;
+  if (!sel) return;
+  startRerecog(sel.a, sel.b, '时间轴选区');
 });
+
+/* 列表里每行的「↻ 重识别」：用**该句自己的区间**。
+ * 事件委托挂在 #cue-spacer 上 —— 列表是虚拟滚动 + 每次重建 innerHTML，
+ * 直接给按钮绑事件会随重建失效。 */
+{
+  const spacer = document.getElementById('cue-spacer');
+  if (spacer) spacer.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest && e.target.closest('.cc-rerecog');
+    if (!btn || !spacer.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();               // 别让点击顺带选中/打开这一行
+    const card = btn.closest('[data-idx]');
+    if (!card) return;
+    const it = panel.itemAt(Number(card.dataset.idx));
+    if (!it) return;
+    if (!(it.end > it.start)) { toast('这一句的时间区间无效，无法重识别', 4200); return; }
+    // 行号：用列表里的显示序号更符合用户预期（卡片上没写序号，但提示里有更清楚）
+    startRerecog(it.start, it.end, `第 ${Number(card.dataset.idx) + 1} 句`);
+  });
+}
 
 // 点别处 = 取消选区。画布上的点击由 timeline 自己处理, 这里只管"画布之外"(列表/视频区/设置…)
 document.addEventListener('pointerdown', (e) => {
@@ -3158,6 +3242,111 @@ document.addEventListener('pointerdown', (e) => {
   if (e.target === timeline.canvas) return;              // 画布内: 交给 timeline 的 pointerdown
   timeline.clearRangeSel();
 }, true);
+
+/* ─────────── 异常行筛选（按类别多选） ───────────
+ * 与「⚠ 只看异常行」「◔ 只看低置信度」是**并列**条件（交集），互不覆盖。
+ * 每类的计数来自当前列表的实际条目，所以能一眼看出哪类最多。
+ */
+function initBadCatFilter() {
+  const wrap = document.getElementById('badcat-wrap');
+  const btn = document.getElementById('btn-badcat');
+  const panelEl = document.getElementById('badcat-panel');
+  const cntEl = document.getElementById('badcat-count');
+  if (!wrap || !btn || !panelEl) return;
+
+  const selected = () => new Set([...panelEl.querySelectorAll('input:checked')].map(i => i.value));
+
+  function renderPanel() {
+    const items = state.items || [];
+    const counts = new Map();
+    for (const it of items) for (const k of (it.badCats || [])) counts.set(k, (counts.get(k) || 0) + 1);
+    const total = items.filter(it => it.bad).length;
+
+    // 没有异常行 → 整个下拉藏起来（避免误点）
+    wrap.hidden = total === 0;
+    if (total === 0) { panelEl.hidden = true; return; }   // 没有异常行 → 收起浮层，别留着飘
+
+    const cur = selected();
+    const rows = BAD_CATS.map(c => {
+      const n = counts.get(c.k) || 0;
+      return `<label class="badcat-item" title="${escapeHtml(c.hint)}">
+        <input type="checkbox" value="${c.k}"${cur.has(c.k) ? ' checked' : ''}${n ? '' : ' disabled'}>
+        <span>${escapeHtml(c.t)}</span><span class="n">${n}</span></label>`;
+    }).join('');
+    panelEl.innerHTML = rows
+      + '<div class="badcat-sep"></div>'
+      + '<div class="badcat-act">'
+      + '<button type="button" class="btn btn-mini" id="badcat-clear">清空</button>'
+      + '<button type="button" class="btn btn-mini" id="badcat-all">全选有问题的</button>'
+      + '</div>';
+
+    panelEl.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', apply);
+    });
+    const clr = document.getElementById('badcat-clear');
+    if (clr) clr.addEventListener('click', () => {
+      panelEl.querySelectorAll('input').forEach(i => { i.checked = false; });
+      apply();
+    });
+    const all = document.getElementById('badcat-all');
+    if (all) all.addEventListener('click', () => {
+      panelEl.querySelectorAll('input').forEach(i => { i.checked = !i.disabled; });
+      apply();
+    });
+  }
+
+  function apply() {
+    const sel = selected();
+    panel.setBadCats(sel);
+    btn.classList.toggle('active', sel.size > 0);
+    if (cntEl) cntEl.textContent = sel.size ? ` ${sel.size}` : '';
+    // 计数要跟着筛选后的条目数走，所以重绘面板；面板本来是开着的就别关（用户还在勾选），
+    // 重绘会清掉内联尺寸，所以重绘后要重新摆一次位置。
+    if (!panelEl.hidden) { renderPanel(); placePanel(); }
+  }
+
+  // 把浮层从工具栏里挪到 <body>：工具栏是 overflow 滚动容器（会裁切），
+  // 而且它在层叠顺序上低于后面的 #cue-list，absolute + z-index 解决不了。
+  if (panelEl.parentNode !== document.body) document.body.appendChild(panelEl);
+
+  /** 按按钮位置摆浮层：右对齐按钮右缘，下方 4px；贴到视口边缘时自动翻到上方/内收。 */
+  function placePanel() {
+    if (panelEl.hidden) return;
+    const b = btn.getBoundingClientRect();
+    const w = panelEl.offsetWidth, h = panelEl.offsetHeight;
+    let left = b.right - w;                       // 右对齐
+    left = Math.max(6, Math.min(left, window.innerWidth - w - 6));
+    let top = b.bottom + 4;
+    if (top + h > window.innerHeight - 6) top = Math.max(6, b.top - h - 4);   // 下面放不下就翻上去
+    panelEl.style.left = left + 'px';
+    panelEl.style.top = top + 'px';
+  }
+  function openPanel() {
+    panelEl.hidden = false;
+    renderPanel();
+    placePanel();
+  }
+  function closePanel() { panelEl.hidden = true; }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (panelEl.hidden) openPanel(); else closePanel();
+  });
+  // 点面板内部不关；点别处关（capture 阶段，先于列表自己的点击处理）
+  panelEl.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('pointerdown', (e) => {
+    if (!panelEl.hidden && !wrap.contains(e.target) && !panelEl.contains(e.target)) closePanel();
+  }, true);
+  // 滚动/缩放后按钮位置会变：浮层是 fixed 定位，得跟着挪（否则会飘在别处）
+  window.addEventListener('resize', placePanel);
+  window.addEventListener('scroll', placePanel, true);
+  const cueList = document.getElementById('cue-list');
+  if (cueList) cueList.addEventListener('scroll', placePanel, { passive: true });
+
+  // 列表每次重建（识别/编辑/筛选）后刷新计数（rebuildItemsAndLanes 会调它）
+  window.__refreshBadCat = renderPanel;
+  renderPanel();
+}
 
 /* ─────────── 手动刷新动态字幕(渲染层兜底) ─────────── */
 const btnRefresh = document.getElementById('btn-refresh-subs');
@@ -3954,6 +4143,8 @@ applyTlHeight();
 initFxControls();
 
 /* 调试钩子(测试用) */
+initBadCatFilter();
+
 window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText };
 
 /* ═══════════ 项目系统接线 ═══════════ */
@@ -4086,6 +4277,28 @@ requestAnimationFrame(tick);
     banner.addEventListener('click', () => location.reload(true));
     (document.body || document.documentElement).appendChild(banner);
   };
+  // 缺 libass 渲染器时的警示横幅（可关闭；依赖补上后由轮询自动撤掉）
+  let vendorBanner = null, vendorDismissed = false;
+  const hideVendorBanner = () => { if (vendorBanner) { vendorBanner.remove(); vendorBanner = null; } };
+  const showVendorBanner = (hint) => {
+    if (vendorBanner || vendorDismissed) return;
+    vendorBanner = document.createElement('div');
+    vendorBanner.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9998;'
+      + 'max-width:min(760px,92vw);background:#b45309;color:#fff;padding:10px 14px;border-radius:8px;'
+      + 'box-shadow:0 4px 16px rgba(0,0,0,.35);font:13px/1.5 system-ui,sans-serif;display:flex;'
+      + 'gap:12px;align-items:flex-start;';
+    const text = document.createElement('div');
+    text.textContent = hint || '视频区不显示字幕：缺少 libass 渲染器，请运行 node editor/scripts/fetch-vendor.js';
+    const close = document.createElement('button');
+    close.textContent = '知道了';
+    close.style.cssText = 'flex:none;background:rgba(255,255,255,.18);color:#fff;border:0;'
+      + 'border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;';
+    close.addEventListener('click', () => { vendorDismissed = true; hideVendorBanner(); });
+    vendorBanner.appendChild(text);
+    vendorBanner.appendChild(close);
+    (document.body || document.documentElement).appendChild(vendorBanner);
+  };
+
   const tick = async () => {
     try {
       const r = await fetch('/api/version', { signal: AbortSignal.timeout(5000) });
@@ -4096,6 +4309,10 @@ requestAnimationFrame(tick);
         if (lv) lv.textContent = 'v' + j.version;   // 版本号永远跟运行中的服务端一致(不用改 HTML)
       }
       if (pageStamp && j && String(j.stamp) !== pageStamp) showBanner();
+      // 渲染依赖自检：缺 libass 时视频区不会有字幕，且用户很难想到原因。
+      // 挂在同一个轮询上 → 跑完 fetch-vendor.js 后横幅**自动消失**，不必重启。
+      if (j && j.vendorOk === false) showVendorBanner(j.vendorHint);
+      else hideVendorBanner();
     } catch {}
   };
   tick();                       // 立即填一次, 别等 4 秒
