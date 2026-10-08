@@ -2,12 +2,17 @@
 
 export function fmtTime(sec, digits = 3) {
   if (!isFinite(sec) || sec < 0) sec = 0;
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = Math.floor(sec % 60);
-  const ms = sec - Math.floor(sec);
-  const frac = (ms).toFixed(digits).slice(2);
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${frac}`;
+  // 与 fmtTimeAss 同款"先整体取整再拆分": 只对小数部分 toFixed 的话,
+  // x.9995~x.9999 会进位成 "1.000" 却带不进秒字段（如 1.9999 → 00:00:01.000, 应为 ..02.000）。
+  const scale = Math.pow(10, digits);
+  const total = Math.round(sec * scale);
+  const unit = Math.floor(total / scale);            // 整秒（进位已并入）
+  const frac = digits > 0 ? String(total % scale).padStart(digits, '0') : '';
+  const h = Math.floor(unit / 3600);
+  const m = Math.floor((unit % 3600) / 60);
+  const s = unit % 60;
+  const tail = digits > 0 ? '.' + frac : '';
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}${tail}`;
 }
 
 export function fmtTimeSrt(sec) { return fmtTime(sec, 3).replace('.', ','); }

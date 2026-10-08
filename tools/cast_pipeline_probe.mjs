@@ -10,7 +10,8 @@
  * 用完删项目 + 恢复翻译配置。
  * 前置: 仓库里能跑起来识别与分离（模型/运行时由联接指到装机版, 见 asr/models、asr/whisper.cpp）。 */
 import http from 'http';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { fileURLToPath } from 'node:url';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8360';
 const PROJ = process.env.PROJ_DIR || 'D:/Vibe Coding/SubFabric/projects';
@@ -63,11 +64,26 @@ const srv = http.createServer((req, res) => {
 await new Promise((r) => srv.listen(LLM_PORT, '127.0.0.1', r));
 console.log('假 LLM 已启动: http://127.0.0.1:' + LLM_PORT + '/v1');
 
-let id = '', orig = null;
+/* 翻译配置的备份/恢复直接走 asr/settings.json 的 translate 段落(原样存取):
+ * GET /api/translate/config 按安全约定不回传明文 apiKey, 恢复不能依赖 API 回读。 */
+const SETTINGS_FILE = fileURLToPath(new URL('../asr/settings.json', import.meta.url));
+const readTranslateSection = () => {
+  try { const s = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')); return s.translate !== undefined ? s.translate : null; }
+  catch { return null; }
+};
+const restoreTranslateSection = (origTrans) => {
+  try {
+    const s = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'));
+    if (origTrans === null) delete s.translate; else s.translate = origTrans;
+    writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2));
+    return true;
+  } catch { return false; }
+};
+
+let id = '';
+const origTrans = readTranslateSection();
 try {
-  /* 备份并改指翻译配置（分角色复用这份 LLM 配置） */
-  const c0 = await (await fetch(BASE + '/api/translate/config')).json();
-  orig = c0.cfg || {};
+  /* 改指翻译配置（分角色复用这份 LLM 配置; 假 key 只影响测试期, 结束时原样恢复） */
   const set = await (await fetch(BASE + '/api/translate/config', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider: 'custom', baseUrl: 'http://127.0.0.1:' + LLM_PORT + '/v1', apiKey: 'fake-key', model: 'fake-cast', autoTranslate: false }),
@@ -168,14 +184,10 @@ try {
 } finally {
   if (id && !process.env.KEEP) { try { await fetch(BASE + '/api/projects/' + id, { method: 'DELETE' }); console.log('已删除测试项目'); } catch {} }
   else if (id) { console.log('KEEP=1: 保留项目 ' + id + ' 供人工查看'); }
-  if (orig) {
-    try {
-      await fetch(BASE + '/api/translate/config', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: orig.provider, baseUrl: orig.baseUrl, apiKey: orig.apiKey, model: orig.model, autoTranslate: !!orig.autoTranslate }),
-      });
-      console.log('翻译配置已恢复');
-    } catch {}
+  if (origTrans !== null) {
+    console.log(restoreTranslateSection(origTrans)
+      ? '翻译配置已恢复(原样写回 settings.json)'
+      : '翻译配置恢复失败, 请手动检查 asr/settings.json');
   }
   srv.close();
 }

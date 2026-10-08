@@ -175,7 +175,7 @@ export class Timeline {
     /* 主题色：游标 / 选中环 / 波形都跟着界面主题走。
        换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
     this.accent = cssVar('--accent', C.accent);
-    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); }); } catch {}
+    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); this._dirty = true; }); } catch {}
     this.ctx = canvas.getContext('2d');
     this.video = video || null;
     this.film = new Filmstrip(() => { /* 下一帧重绘 */ });
@@ -216,21 +216,26 @@ export class Timeline {
     this.reRecogRegion = null;
     this.onRangeSelect = null;    // 选区变化回调(拖完 / 清除时触发) → 刷新浮条
     this.onLayout = null;         // 平移/缩放/resize 回调 → 浮条跟着选区重新定位
+    // 空闲降耗(见 drawIfNeeded): 脏标记 + 上次实际绘制时刻。
+    // 交互/数据/布局任何会改变画面的地方都要置脏; 2s 心跳兜底, 防漏标导致画面永久过期。
+    this._dirty = true;
+    this._lastDrawAt = 0;
 
     this._bindEvents();
     new ResizeObserver(() => this._resize()).observe(canvas.parentElement);
     this._resize();
   }
 
-  setVideo(video) { this.video = video; this.film.reset(video); }
+  setVideo(video) { this.video = video; this.film.reset(video); this._dirty = true; }
 
   /** 波形图(整段视频一张 PNG); 传空清除 */
   setWaveform(url) {
+    this._dirty = true;
     this.waveform = null;
     this.waveformReady = false;
     if (!url) return;
     const img = new Image();
-    img.onload = () => { this.waveform = img; this.waveformReady = true; };
+    img.onload = () => { this.waveform = img; this.waveformReady = true; this._dirty = true; };
     img.src = url;
   }
 
@@ -246,6 +251,7 @@ export class Timeline {
    *  所以由调用方通过 ch 明确告知; 缺省按 ch=2 之外再按偶数兜底。
    */
   setPeaks(peaks) {
+    this._dirty = true;
     if (!peaks || !peaks.data || !peaks.data.length) { this.peaks = null; return; }
     const ch = peaks.ch || 2;
     this.peaks = { data: peaks.data, rate: peaks.rate || 100, ch };
@@ -253,6 +259,7 @@ export class Timeline {
   }
 
   setLanes(lanes) {
+    this._dirty = true;
     this.lanes = lanes.map((l, i) => {
       const lane = Object.assign({ color: LANE_COLORS[i % LANE_COLORS.length] }, l);
       // 合并轨(中英同起止): 高度盖住原来两条轨 + 中间间隙 → 一个块无空隙
@@ -271,17 +278,19 @@ export class Timeline {
   }
 
   setDuration(d) {
+    this._dirty = true;
     const prev = this.duration;
     this.duration = d || 0;
     if (!this._viewReady || Math.abs(this.duration - prev) > 0.05) this._applyDefaultView();
   }
 
-  setSelected(ref) { this.selected = ref; }
+  setSelected(ref) { this.selected = ref; this._dirty = true; }
 
   _notifyRange() { if (this.onRangeSelect) this.onRangeSelect(this.rangeSel); }
 
   /** 取消批量选区(点别处 / 删除完 / 换文件时调用) */
   clearRangeSel() {
+    this._dirty = true;
     this._rangeDragging = false;
     if (!this.rangeSel) return;
     this.rangeSel = null;
@@ -290,6 +299,7 @@ export class Timeline {
 
   /** 载入新字幕/视频时调用: 下一次 setLanes/setDuration 会重新按默认跨度定位 */
   resetView() {
+    this._dirty = true;
     this._viewReady = false;
     this._viewFromLanes = false;
     this.subStart = 0;
@@ -423,6 +433,7 @@ export class Timeline {
   }
 
   _resize() {
+    this._dirty = true;      // 画布被重新分配(width/height 赋值即清空) → 必须重绘
     const dpr = window.devicePixelRatio || 1;
     const w = this._cssW(), h = this._cssH();
     this.canvas.width = Math.max(1, Math.round(w * dpr));
@@ -442,6 +453,7 @@ export class Timeline {
     const lim = this._zoomLimits();
     const next = Math.max(lim.min, Math.min(lim.max, this.pxPerSec * factor));
     if (!isFinite(next) || Math.abs(next - this.pxPerSec) < 1e-9) return false;
+    this._dirty = true;
     const t = this.viewStart + px / this.pxPerSec;
     this.pxPerSec = next;
     this.viewStart = t - px / this.pxPerSec;
@@ -471,6 +483,7 @@ export class Timeline {
       const e = 1 - Math.pow(1 - k, 3);                      // easeOutCubic
       self.pxPerSec = from + (target - from) * e;
       self.viewStart = tUnder - px / self.pxPerSec;
+      self._dirty = true;                                    // 动画期间每帧都要重绘
       self._clampView();
       self._viewReady = true;
       if (self.onLayout) self.onLayout();
@@ -481,6 +494,7 @@ export class Timeline {
   }
   /** 平移: 正数 = 往时间更晚的方向看 */
   _panBy(px) {
+    this._dirty = true;
     this.viewStart += px / this.pxPerSec;
     this._clampView();
     this._viewReady = true;
@@ -552,6 +566,7 @@ export class Timeline {
 
     cv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;               // 右键交给 contextmenu
+      this._dirty = true;                       // 按下即重绘: 选中/菜单状态可能变化
       this._hideMenu();
       this._hideEdgeHint();
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 合成事件无捕获 */ }
@@ -629,6 +644,7 @@ export class Timeline {
 
     cv.addEventListener('pointermove', (e) => {
       const x = e.offsetX, y = e.offsetY;
+      if (this._drag) this._dirty = true;       // 拖动中块/选区/预览每帧要跟着走; 普通悬停只改光标, 不必重绘
       if (!this._drag) {
         let cursor = 'default';
         if (this._laneIndexAtY(y) !== -1) {
@@ -710,6 +726,7 @@ export class Timeline {
     const finishDrag = (e) => {
       const d = this._drag;
       this._drag = null;
+      this._dirty = true;                       // 松手后重建前先重绘一帧(拖到一半的状态立即收尾)
       if (!d) return;
       const t = this._clampT(this.x2t(e.offsetX));
       if (d.type === 'word') {
@@ -890,7 +907,22 @@ export class Timeline {
   }
 
   /* ─────────── 绘制 ─────────── */
+  /** 外部直接改了会被绘制的状态(如 main.js 的 reRecogRegion/showFilm)时调用 —— 手动置脏 */
+  touch() { this._dirty = true; }
+
+  /** 空闲降耗版 draw: 播放中 / 有脏标记 / 播放头动过 / 2s 心跳兜底 才真正重绘。
+   *  draw() 是全量重绘(清屏 + 标尺/波形/胶片/可见块文字度量), 暂停静止时每帧重绘纯属浪费;
+   *  心跳是安全网: 万一有哪处状态变更漏标脏, 画面最多过期 2 秒, 不会永久错。 */
+  drawIfNeeded(t, playing) {
+    const now = performance.now();
+    if (playing || this._dirty || t !== this._lastT || now - this._lastDrawAt > 2000) {
+      return this.draw(t, playing);
+    }
+  }
+
   draw(t, playing) {
+    this._dirty = false;
+    this._lastDrawAt = performance.now();
     this._lastT = t;
     const ctx = this.ctx;
     const W = this._cssW(), H = this._cssH();

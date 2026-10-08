@@ -11,6 +11,7 @@
 import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
+import { stripEffectTagsSafe } from './postprocess.js';
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog } = ctx;
@@ -1017,6 +1018,12 @@ export function initProjects(ctx) {
     if (del) del.closest('.hotword-row').remove();
   });
 
+  /* ── API Key 字段: 服务端只回 hasKey(明文不回传), 输入框留空 = 不修改已存的 Key;
+   * 想删除已存 Key 走「清除已存 Key」链接(显式 apiKeyClear, 与"留空"区分开) ── */
+  function refreshKeyHint(c) {
+    const hint = $('#st-key-hint');
+    if (hint) hint.hidden = !(c && c.hasKey);
+  }
   async function loadSettings() {
     loadFetchSettings();
     loadCastSettings();
@@ -1040,7 +1047,10 @@ export function initProjects(ctx) {
     const c = data.cfg || {};
     $('#st-provider').value = c.provider || 'custom';
     $('#st-baseurl').value = c.baseUrl || '';
-    $('#st-key').value = c.apiKey || '';
+    // 明文 Key 不回传(只回 hasKey): 输入框永远留空起步, 留空 = 不修改已存的 Key
+    $('#st-key').value = '';
+    $('#st-key').placeholder = c.hasKey ? '已保存（留空不修改）' : 'sk-…';
+    refreshKeyHint(c);
     $('#st-model').value = c.model || '';
     if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
@@ -1477,16 +1487,19 @@ export function initProjects(ctx) {
         })
       });
     } catch { /* 保存失败不阻断翻译配置的保存 */ }
-    return {
+    const payload = {
       provider: $('#st-provider').value,
       baseUrl: $('#st-baseurl').value.trim(),
-      apiKey: $('#st-key').value.trim(),
       model: $('#st-model').value.trim(),
       batchSize: parseInt(($('#st-batch') || {}).value, 10) || 25,     // 每批行数(服务端还会夹到 5~100)
       prompt: $('#st-prompt').value,
       glossary: glSerialize(),
       glossaryLang: glState.lang,
     };
+    // API Key: 非空才提交(服务端加密落盘); 留空 = 保持已存 Key 不变 —— 绝不把空串当"清除"
+    const newKey = $('#st-key').value.trim();
+    if (newKey) payload.apiKey = newKey;
+    return payload;
   }
   async function postSettings() {
     const payload = await collectSettings();     // collectSettings 会顺带保存识别提示词(异步)
@@ -1495,6 +1508,12 @@ export function initProjects(ctx) {
     });
     const m = await r.json();
     if (!r.ok) throw new Error(m.error || '保存失败');
+    if (payload.apiKey) {
+      // 保存成功后立刻清掉输入框里的明文(服务端已加密存好), 不让 Key 一直躺在 DOM 里
+      $('#st-key').value = '';
+      $('#st-key').placeholder = '已保存（留空不修改）';
+    }
+    refreshKeyHint(m.cfg || {});
     return m;
   }
   $('#st-test').addEventListener('click', async () => {
@@ -1522,6 +1541,28 @@ export function initProjects(ctx) {
       }, 600);
     } catch (e) {
       msgEl.textContent = '✗ ' + e.message;
+      msgEl.classList.add('err');
+    }
+  });
+  /* 「清除已存 Key」: 立即生效(独立于普通保存), 避免"留空=不修改"之后没有办法删 Key */
+  const stKeyClearLink = $('#st-key-clear');
+  if (stKeyClearLink) stKeyClearLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const msgEl = $('#st-msg');
+    try {
+      const r = await fetch('/api/translate/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKeyClear: true })
+      });
+      const m = await r.json();
+      if (!r.ok) throw new Error(m.error || ('HTTP ' + r.status));
+      $('#st-key').value = '';
+      $('#st-key').placeholder = 'sk-…';
+      refreshKeyHint(m.cfg || {});
+      msgEl.textContent = '✓ 已清除保存的 API Key';
+      msgEl.classList.remove('err');
+    } catch (err) {
+      msgEl.textContent = '✗ 清除失败：' + String((err && err.message) || err);
       msgEl.classList.add('err');
     }
   });
@@ -1760,7 +1801,16 @@ export function initProjects(ctx) {
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    npSub.name = f.name; npSub.text = await f.text();
+    npSub.name = f.name;
+    npSub.text = await f.text();
+    // 导入前把「带特效的导出文件」转成普通字幕（用户报的 bug：直接导入会字幕块破碎 ——
+    // 微光/生长/淡入标签污染了逐词 span, 切片识别失败, 每个词都成了独立的块）。
+    // 转换异常/结果可疑时 stripEffectTagsSafe 返回原文（硬塞, 宁可回到旧行为也不丢内容）。
+    if (/\.(ass|ssa)$/i.test(f.name)) {
+      const { text, cleaned } = stripEffectTagsSafe(npSub.text);
+      npSub.text = text;
+      if (cleaned) toast('已把带特效的字幕转成普通字幕（微光/生长/淡入标签已剥离），避免导入后字幕块破碎', 6000);
+    }
     const el = $('#np-sub-name');
     el.textContent = f.name; el.classList.add('filled');
     npMaybeEnable();

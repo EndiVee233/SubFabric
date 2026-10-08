@@ -1088,7 +1088,7 @@
           <div class="st-grid">
             <span class="st-lbl">默认画质</span>
             <select id="st-fetch-quality" class="select">
-              <option value="best">最高可用（有大会员 Cookie 时吃到 8K/HDR）</option>
+              <option value="best">1080P 优先（大会员先试 60 帧；只降不升）</option>
               <option value="2160">4K 及以下</option>
               <option value="1080">1080P 及以下</option>
               <option value="720">720P 及以下</option>
@@ -1104,7 +1104,7 @@
           <p class="gl-hint">只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。</p>
         </div>
         <div class="st-card">
-          <div class="st-card-title">bilibili 登录 <span class="st-card-note">有大会员 Cookie 才能下最高画质</span></div>
+          <div class="st-card-title">bilibili 登录 <span class="st-card-note">有大会员 Cookie 才能下 1080P 60帧 / 高码率 / 4K</span></div>
           <div class="st-grid">
             <span class="st-lbl">Cookie</span>
             <textarea id="st-fetch-cookie" class="st-input" rows="3" spellcheck="false" placeholder="粘贴浏览器里的 Cookie：SESSDATA=…; bili_jct=…; DedeUserID=…（整段复制最好；只复制到值也认，会按 SESSDATA 存）。保存后加密落到本地、不回显，并立即验证登录是否成功"></textarea>
@@ -1145,6 +1145,7 @@
             <span class="st-lbl">每批行数</span>
             <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="25" style="max-width:120px">
           </div>
+          <p class="gl-hint" id="st-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="st-key-clear" class="st-key-clear">清除已存 Key</a></p>
           <p class="gl-hint">一次请求最多带多少行给翻译模型（5~100）。批越大请求越少，但译文行数一旦和输入对不上，整批都要重来；批越小越稳，请求也越多。失败时程序会自动拆成两半重试。</p>
         </div>
         <div class="st-card">

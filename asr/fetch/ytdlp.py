@@ -137,10 +137,15 @@ def _unpack_wheel(archive: Path) -> bool:
         _PKG_DIR.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(archive) as zf:
             for member in zf.namelist():
-                # 只取包本体与 dist-info：wheel 里不会有路径穿越的合法成员
-                if member.endswith("/") or member.startswith(".."):
+                # 只取包本体与 dist-info。
+                # 路径穿越要**逐段**拒绝: 只查 startswith("..") 挡不住 "yt_dlp/../../x"
+                # 这种"第一段合法、后面绕出去"的成员(wheel 解压会把文件写到包目录外)。
+                if member.endswith("/"):
                     continue
-                top = member.split("/", 1)[0]
+                parts = [p for p in member.replace("\\", "/").split("/") if p]
+                if not parts or any(p in ("..", ".") for p in parts):
+                    continue
+                top = parts[0]
                 if not (top == "yt_dlp" or top.endswith(".dist-info")):
                     continue
                 target = _PKG_DIR / member

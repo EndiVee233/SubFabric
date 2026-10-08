@@ -59,24 +59,26 @@ def quality_choices(url: str) -> List[Dict[str, Any]]:
 
 
 def _bili_qn_candidates(height: int) -> List[int]:
-    """不超过 height 的 qn 候选，按"从高到低"排（高码率/60帧优先于普通档）。"""
-    cands = [qn for qn, h in BILI_QN_HEIGHT.items() if h <= height]
-    cands.sort(key=lambda qn: (-BILI_QN_HEIGHT[qn], -qn))
-    return cands
+    """不超过 height 的 qn 候选，按站点档位表的**原位顺序**（从高到低；60帧/高码率在普通档之前）。
+
+    顺序与 QUALITY_TIERS（BBDown 对齐）一致，例：1080 → [116, 112, 80, 100, 74, 64, 32, 16, 6]。
+    这同时就是 bilibili 默认档的“只降不升”链（见 build_format_selector 的 best 分支）。"""
+    return [q for q in bili_format.DEFAULT_QUALITY_ORDER if BILI_QN_HEIGHT.get(q, 0) <= height]
 
 
 def build_format_selector(url: str, preset: str = "best", cfg: Optional[Dict[str, Any]] = None,
                           custom: str = "") -> str:
     """把档位翻译成 -f 表达式。
 
-    - best    : 站点画质优先级里的最高档（有大会员 cookie 时自然吃到 8K/HDR）
-    - 2160/1080/720/... : 不超过该高度的最高档
+    - best    : bilibili 侧 = **1080P 优先、只降不升**（大会员先试 1080P 60帧，见下方注释）；
+                YouTube 侧仍为站点画质优先级里的最高档（带通用兜底）
+    - 2160/1080/720/... : 不超过该高度的最高档，且**不向上越档**（兜底链带 height 上限）
     - audio   : 只要音频
     - worst   : 最低档（自检/快速试跑用）
-    - bili:<qn> / yt:<height> : 站点专用写法
+    - bili:<qn> / yt:<height> : 站点专用写法（高级用户）
     - custom  : 直接使用用户给的表达式
-    返回值永远**带兜底**（`/bestvideo+bestaudio/best`），某一档拿不到时 yt-dlp 会往下退，
-    而不是直接失败 —— 这是"没有大会员也能下"的关键。
+    bilibili 的兜底链带高度上限（只降不升）；YouTube 侧仍以 /bestvideo+bestaudio/best 收尾 ——
+    某一档拿不到时往下退而不是直接失败，这是“没有大会员也能下”的关键。
     """
     cfg = cfg or {}
     p = str(preset or "best").strip()
@@ -90,13 +92,17 @@ def build_format_selector(url: str, preset: str = "best", cfg: Optional[Dict[str
         return base or "bestaudio/best"
 
     if site == "bilibili":
-        order = bili_format.normalize_quality_order(cfg.get("bili_quality_order"))
         a_order = bili_format.normalize_audio_order(cfg.get("bili_audio_order"))
         c_order = bili_format.normalize_codec_order(cfg.get("bili_codec_order"))
         if p == "worst":
             return "worstvideo*+worstaudio/worst"
         if p == "best":
-            return _with_fallback(bili_format.build_video_selector(order, a_order, c_order))
+            # 默认档 = 「1080P 优先、只降不升」（2026-10-08 定策）:
+            #   · 大会员: 先试 1080P 60帧(116) → 1080P 高码率(112) → 1080P(80) → AI修复(100) → 720P… → 240P
+            #   · 非大会员/未登录: 116/112/100/74 这些 VIP 档不会出现在接口返回的可用列表里,
+            #     选择器就在本地下移到 1080P(80) —— 一条链同时覆盖两种身份, 掉档不发额外请求。
+            #   · **不向上取**: 链与兜底都带 height<=1080; 4K/8K/HDR 需要把档位显式选成 2160。
+            return bili_format.build_video_selector(_bili_qn_candidates(1080), a_order, c_order, height_cap=1080)
         if p.startswith("bili:"):
             try:
                 qn = int(p.split(":", 1)[1])
@@ -105,10 +111,12 @@ def build_format_selector(url: str, preset: str = "best", cfg: Optional[Dict[str
             if qn:
                 return _with_fallback(bili_format.build_video_selector([qn], a_order, c_order))
         if p.isdigit():
-            cands = _bili_qn_candidates(int(p))
+            cap = int(p)
+            cands = _bili_qn_candidates(cap)
             if cands:
-                return _with_fallback(bili_format.build_video_selector(cands, a_order, c_order))
-        return _with_fallback(bili_format.build_video_selector(order, a_order, c_order))
+                return bili_format.build_video_selector(cands, a_order, c_order, height_cap=cap)
+        # 未知档位：退回默认（1080P 优先链，只降不升）
+        return bili_format.build_video_selector(_bili_qn_candidates(1080), a_order, c_order, height_cap=1080)
 
     # YouTube / 其他
     if p == "worst":
