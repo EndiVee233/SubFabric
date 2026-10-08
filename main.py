@@ -102,10 +102,10 @@ DEFAULT_SETTINGS = {
     "en_font_name": "Comic Sans MS",
     "en_font_size": 65,
     # 中英双轨的默认颜色。ASS 用 &HAABBGGRR(BGR 顺序), 这里给的是 RGB 便于手写：
-    #   en=白, zh=黄 —— 与颜色设置项出现前的行为完全一致。
+    #   中英都是白 —— 深色画面下白字最好认。
     # Primary 是行内没有任何颜色覆盖时的显示色；Secondary 供卡拉OK渐变/二次填充用。
-    "zh_color": "#FFFF00",
-    "zh_color2": "#FFFF00",
+    "zh_color": "#FFFFFF",
+    "zh_color2": "#FFFFFF",
     "en_color": "#FFFFFF",
     "en_color2": "#FFFF00",
     "auto_role": True,              # 无角色名时自动加 [UNKNOWN]
@@ -986,8 +986,14 @@ def merge_srt_to_ass(zh_srt_path, en_srt_path, output_ass_path, settings=None):
             zh_text,
             replace_punct=settings['replace_punct'],
             remove_linebreak=settings['remove_linebreak'])
+        # 颜色由 zh_color 决定(默认白)。这里过去写死 &HFFFFFF —— 于是设置里的「默认颜色」
+        # 只改到 Style 那一行, 每条对白上都有显式白色压着, 改成红色也不生效。
+        # 仍然只在正文没有任何覆盖标签时才插入, 以免盖掉逐词/角色色。
+        # hex_to_ass_bgr 返回 '&HAABBGGRR', 而标签要写 '\c&HBBGGRR&' —— 去掉 '&H' 之后
+        # 还要丢掉 alpha 的 '00', 否则会写成 '\c00FFFFFF&'(实测被测试抓到的 bug)。
         if not re.search(r'\{.*\}', zh_text_clean):
-            zh_text_clean = '{\\c&HFFFFFF&}' + zh_text_clean
+            zh_text_clean = '{\\c&H' + hex_to_ass_bgr(
+                settings.get('zh_color', DEFAULT_SETTINGS['zh_color']))[4:] + '&}' + zh_text_clean
         if settings['auto_role'] and '[' not in zh_text_clean:
             zh_text_clean = re.sub(r'(\{[^}]*\})', r'\1[UNKNOWN]', zh_text_clean, count=1)
             # 角色名标签与正文之间恒为**一个空格**（与 clean_chinese_text / 编辑器的 normalizeRoleGap 同一条规则）。
