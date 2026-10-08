@@ -584,6 +584,8 @@ export function initProjects(ctx) {
     }
     state.project = { id: pid, meta: m, loadPeaks };
     setSaveState('', '自动保存已开启');
+    // 备注是按项目存的 —— 切项目要重载（不重载会把上一个项目的备注当弹幕放出来）
+    if (typeof window.__notesReload === 'function') window.__notesReload();
 
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
@@ -1043,6 +1045,7 @@ export function initProjects(ctx) {
     loadCastSettings();
     loadConfidenceSettings();
     correctLoad();
+    realignLoad();
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
@@ -1761,6 +1764,75 @@ async function renderAsrModels() {
       correctFill(await (await fetch('/api/asr/correct', { signal: AbortSignal.timeout(8000) })).json());
     } catch {}
   }
+
+  /* 重排逐词时间的设置（朗读语音 / 语速 / 最低锚点率）。
+     与上面几块同一模式：改了立刻存，存完用服务端返回值回填（服务端会做范围夹取）。 */
+  function realignFill(v) {
+    if (!v) return;
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    set('st-realign-rate', v.rate);
+    set('st-realign-minratio', v.minAnchorRatio);
+    set('st-realign-minconf', v.minConfidence);
+    const rv = document.getElementById('st-realign-rate-val');
+    if (rv) {
+      const n = Number(v.rate) || 0;
+      rv.textContent = n === 0 ? '0（正常）' : (n > 0 ? `+${n}（快）` : `${n}（慢）`);
+    }
+    const sel = document.getElementById('st-realign-voice');
+    if (sel) {
+      const keep = sel.value;
+      sel.replaceChildren();
+      const mk = (val, label) => { const o = document.createElement('option'); o.value = val; o.textContent = label; return o; };
+      sel.append(mk('', '（系统默认英文语音）'));
+      // 只列**英文**语音：TTS 是拿英文台词去念的，中文/日文声音念英文会糊
+      for (const vo of (v.voices || [])) {
+        if (!/^en/i.test(String(vo.culture || ''))) continue;
+        sel.append(mk(vo.name, `${vo.name}（${vo.culture}）`));
+      }
+      sel.value = (v.voice && [...sel.options].some(o => o.value === v.voice)) ? v.voice
+        : (keep && [...sel.options].some(o => o.value === keep) ? keep : '');
+    }
+    const note = document.getElementById('st-realign-note');
+    if (note) {
+      const en = (v.voices || []).filter(vo => /^en/i.test(String(vo.culture || '')));
+      note.textContent = en.length
+        ? `本机可用的英文语音 ${en.length} 个。低于最低锚点率的对齐会被拒绝（不改动字幕），避免给出错的时间。`
+        : '本机没找到英文语音 —— 会退回系统默认，识别准确率可能下降。'
+          + '（Windows 设置 → 时间和语言 → 语音 里可以添加英文语音包）';
+    }
+  }
+  async function realignLoad() {
+    try {
+      realignFill(await (await fetch('/api/asr/realign-settings', { signal: AbortSignal.timeout(10000) })).json());
+    } catch {}
+  }
+  async function realignSave(patch) {
+    try {
+      const r = await fetch('/api/asr/realign-settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      });
+      const v = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((v && v.error) || ('HTTP ' + r.status));
+      realignFill(v);
+    } catch (e) { toast('重排设置保存失败: ' + e.message, 4200); }
+  }
+  {
+    const bind = (id, key, num) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', () => realignSave({ [key]: num ? Number(el.value) : el.value }));
+    };
+    bind('st-realign-voice', 'voice');
+    bind('st-realign-rate', 'rate', true);
+    bind('st-realign-minratio', 'minAnchorRatio', true);
+    bind('st-realign-minconf', 'minConfidence', true);
+    // 拖动语速时先更新旁边的文字（松手才存）
+    const rate = document.getElementById('st-realign-rate');
+    if (rate) rate.addEventListener('input', () => {
+      const rv = document.getElementById('st-realign-rate-val');
+      const n = Number(rate.value) || 0;
+      if (rv) rv.textContent = n === 0 ? '0（正常）' : (n > 0 ? `+${n}（快）` : `${n}（慢）`);
+    });
+  }
   async function correctSave(patch) {
     try {
       const r = await fetch('/api/asr/correct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
@@ -2102,6 +2174,9 @@ async function renderAsrModels() {
       const g = $(sel);
       if (g) g.hidden = !draft;
     }
+    // 「创建后自动处理」只在初稿模式有意义（导入模式的字幕是用户自己的，不该被自动改）
+    const autoWrap = $('#np-auto-wrap');
+    if (autoWrap) autoWrap.hidden = !draft;
     $('#np-hint').textContent = draft
       ? '创建后在后台识别，进度看项目列表'
       : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
@@ -2397,6 +2472,8 @@ async function renderAsrModels() {
           speakers: !!($('#np-speakers') && $('#np-speakers').checked),
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
           confidence: ($('#np-confidence') || {}).value || 'full',
+          // 「创建后自动处理」：出稿后自动跑 反思纠错 + 全片逐词重校对
+          autoPost: !!($('#np-autopost') && $('#np-autopost').checked),
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
@@ -2443,6 +2520,8 @@ async function renderAsrModels() {
         // 逐句置信度档位（off/fast/full）：显式发给服务端，存进 project.json 的
         // draft.confidence。这是个**项目级**选择 —— 建稿时定了，重新识别也沿用。
         payload.confidence = ($('#np-confidence') || {}).value || 'full';
+        // 「创建后自动处理」：出稿后自动跑 反思纠错 + 全片逐词重校对
+        payload.autoPost = !!($('#np-autopost') && $('#np-autopost').checked);
         // 勾了「区分说话人」→ 编辑器的「启用角色标注」帮用户打开(字幕里会带 [SPKn] 标签, 禁着没意义)
         if (payload.speakers) localStorage.setItem('ss-role-annot', '1');
       } else {

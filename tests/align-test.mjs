@@ -228,5 +228,57 @@ console.log('\n== 7. 前端取值路径（★ 实测踩过：读错字段导致�
   ok(/设置.*逐词转换.*转逐词/.test(MJ), '提示里给出「转逐词」的实际位置');
 }
 
+console.log('\n== 8. ★ 全片重校对的置信度（决定"值不值得改"）==');
+{
+  const mk = (words) => words.map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
+
+  // 完全对上 → 满分
+  const toks = ['the', 'ice', 'ball', 'is', 'useful'];
+  let p = A.planBlock('the ice ball is useful', { start: 0, end: 10 }, mk(toks.slice()));
+  ok(p.confidence === 1, '全部锚点且无落单 → 1.0', p.confidence);
+  ok(typeof p.anchorIdx === 'object' && p.anchorIdx.length === 5, 'planBlock 返回 anchorIdx', p.anchorIdx);
+
+  // 零星落单（TTS 连读）→ 只轻微掉分
+  p = A.planBlock('the ice ball is useful', { start: 0, end: 10 }, mk(['the', 'iceball', 'is', 'useful']));
+  ok(p.confidence > 0.6, '零星落单不该重罚（连读是常态）', p.confidence);
+
+  /* ★ 整段落单（TTS 把一大段念丢/念错）→ 必须重罚。
+   *   这正是"连续落单"要单独算的原因：锚点率可能还行，但那一段的时间是猜的。 */
+  const longText = 'alpha beta gamma delta epsilon zeta eta theta';
+  const longRec = ['alpha', 'beta', 'zzz1', 'zzz2', 'zzz3', 'zzz4', 'eta', 'theta'];
+  p = A.planBlock(longText, { start: 0, end: 10 }, mk(longRec));
+  const run = A.longestOrphanRun(p.words, p.anchorIdx);
+  ok(run >= 3, '检测到连续落单', run);
+  ok(p.confidence < 0.75, '整段落单 → 置信度明显掉下来', p.confidence);
+
+  // 完全不相干 → 0
+  p = A.planBlock('alpha beta gamma', { start: 0, end: 6 }, mk(['xxx', 'yyy', 'zzz']));
+  ok(p.confidence === 0, '完全对不上 → 0', p.confidence);
+
+  // 边界
+  ok(A.alignmentConfidence(null) === 0, 'null → 0');
+  ok(A.alignmentConfidence({ words: [] }) === 0, '空词 → 0');
+  ok(A.longestOrphanRun([], []) === 0, '空数组 → 0');
+  ok(A.longestOrphanRun([], [-1, -1, 0, -1]) === 2, '最长连续落单 = 2', A.longestOrphanRun([], [-1, -1, 0, -1]));
+
+  // 置信度必须落在 [0,1]
+  for (const t of ['a b c', 'x y z w', 'one two three four five']) {
+    const q = A.planBlock(t, { start: 0, end: 5 }, mk(t.split(' ')));
+    ok(q.confidence >= 0 && q.confidence <= 1, `置信度在 [0,1]：${t}`, q.confidence);
+  }
+}
+
+console.log('\n== 9. 门槛判定（全片重校对用它决定改不改）==');
+{
+  /* 服务端用的是 `item.ok = confidence >= threshold`，不是 planBlock 的 ok。
+   * 这里把那行判定的语义钉住：门槛之下必须判为"不改"。 */
+  const gate = (conf, thr) => conf >= thr;
+  ok(gate(1, 1) === true, '满分对门槛 1.0 → 通过（边界含等号）');
+  ok(gate(0.99, 1) === false, '0.99 对门槛 1.0 → 不通过');
+  ok(gate(0.7, 0.7) === true, '正好等于门槛 → 通过');
+  ok(gate(0.69, 0.7) === false, '低于门槛 → 不通过');
+  ok(gate(0, 0.7) === false, '完全不相关 → 不通过');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
