@@ -15,6 +15,36 @@ const LEAD_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
 /** 逐词高亮色(默认绿), 不是说话人颜色, 提取时需排除 */
 export const HIGHLIGHT_COLORS = new Set(['#00ff00']);
 
+/**
+ * 当前逐词高亮色(默认绿)。编辑器在**载入 ASS** 与**改字幕样式**时用 setWordHighlightColor
+ * 把它同步过来; 新建切片、逐词重建、重新识别写回都取它。
+ * 以前这里到处写死绿 {\c&H00FF00&}: 用户把高亮色改成白色后, 已存在的 span 会跟着变,
+ * 但**新增字幕 / 重新识别**生成的 span 仍是绿的(用户报的 bug)。
+ */
+let WORD_HIGHLIGHT_COLOR = '#00ff00';
+
+/** '#rrggbb' → ASS 的 6 位颜色串 'BBGGRR'(大写, BGR 顺序); 非法返回 null */
+export function hexToAssBgr6(hex) {
+  const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
+  return /^[0-9A-F]{6}$/.test(rgb) ? rgb.slice(4, 6) + rgb.slice(2, 4) + rgb.slice(0, 2) : null;
+}
+
+/** '#rrggbb' → ASS 覆盖标签 {\c&HBBGGRR&}(ASS 是 BGR 顺序)。非法值回退默认绿。 */
+export function wordHighlightTag(hex) {
+  return `{\\c&H${hexToAssBgr6(hex || WORD_HIGHLIGHT_COLOR) || '00FF00'}&}`;
+}
+
+/** 记住当前逐词高亮色。非法值忽略(保持上一次), 返回是否已采纳。 */
+export function setWordHighlightColor(hex) {
+  const h = String(hex == null ? '' : hex).trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(h)) return false;
+  WORD_HIGHLIGHT_COLOR = h;
+  return true;
+}
+
+/** 当前逐词高亮色('#rrggbb') */
+export function getWordHighlightColor() { return WORD_HIGHLIGHT_COLOR; }
+
 /** ASS &HBBGGRR → '#rrggbb'(供说话人颜色解析与全局换色复用) */
 export const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
 
@@ -82,7 +112,7 @@ function makeSentence(style, start, end, text, events, words, proto, highlightTa
     events,              // 该句在原始(逐词)文档中的 Dialogue 事件
     words,               // [{w, s, e}] 词级时间; 无逐词特效时为 []
     proto: proto || { layer: '0', name: '', effect: '', margins: { marginl: '0', marginr: '0', marginv: '0' } },
-    highlightTag: highlightTag || '{\\c&H00FF00&}'
+    highlightTag: highlightTag || wordHighlightTag()
   };
 }
 
@@ -100,7 +130,7 @@ function firstTag(slices) {
       if (open) return open[0];
     }
   }
-  return '{\\c&H00FF00&}';
+  return wordHighlightTag();
 }
 
 /**
@@ -411,6 +441,26 @@ export function normalizeRoleGap(text) {
   const body = m[5].replace(/^[ \t\u3000]+/, '').replace(/[ \t\u3000]+$/, '');
   if (!body) return m[1] + m[2] + '[' + name + ']';
   return m[1] + m[2] + '[' + name + '] ' + body;
+}
+
+/**
+ * 整句样式行(中文)的**落盘文本**构造: 规范角色标签间距 → 继承原行首 {\c..&} 色标 → 换行转 \N。
+ * @param prevEventText 原事件文本(只为取行首色标; 新文本自带行首 {..} 时不继承)
+ * @param textWithTag   新文本(角色标签已在里面; 编辑框把标签藏起来了, 调用方负责补回)
+ *
+ * 抽出来是为了让「提交落盘」(applyAnchorSentence) 与「行内实时预览」(main.js 的 zhPreviewText)
+ * 走**同一份构造** —— 否则预览看到的和提交后的可能不一致(颜色标签丢/角色名丢)。
+ */
+export function buildAnchorText(prevEventText, textWithTag) {
+  let t = normalizeRoleGap(textWithTag);
+  if (!/^\s*\{/.test(t)) {
+    // 注意正则里的 `\\[^}]` = 字面反斜杠 + 非 `}` 字符类。旧实现写成 `\\[[^}]`(多一个 `[`,
+    // 于是那个 `[` 变成字符类的成员), 匹配永远失败 —— 编辑中文行文本时行首 {\c..&} 色标
+    // 会被**丢掉**(角色色消失)。这里一并修好。
+    const m = /^\s*(\{\\[^}]*\})/.exec(String(prevEventText == null ? '' : prevEventText));
+    if (m) t = m[1] + t;
+  }
+  return t.replace(/\r\n?|\n/g, '\\N');
 }
 
 /**
@@ -873,4 +923,121 @@ export function stripSpeakerTag(text) {
   const m = /^\s*\[[^\]]*\]/.exec(rest);
   if (!m) return { text: t, removed: false };
   return { text: head + rest.slice(m[0].length).replace(/^\s+/, ''), removed: true };
+}
+
+/** 取 Name 栏/说话人原始串里的人物名列表: '[Spoke]' → ['Spoke'], '[A][B]' → ['A','B']。
+ *  没有方括号时把整串当一个名字（Name 栏裸名的情形）。 */
+export function speakerNames(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return [];
+  const segs = s.match(/\[[^\]]+\]/g);
+  return segs && segs.length ? segs.map(x => x.slice(1, -1).trim()).filter(Boolean) : [s];
+}
+
+/**
+ * 角色排序: 按名称**首字母**升序(大小写不敏感, 所以 garlicsizzler 排在 Minute 前)。
+ * 角色栏卡片、角色筛选下拉、查找替换的角色候选共用这一个顺序 —— 以前按出现次数降序,
+ * 高频角色会跳来跳去, 找一个不常出现的角色得扫全表(用户要求改成首字母)。
+ * @param roles [{name, ...}]
+ * @returns 新数组(不改入参)
+ */
+export function sortRoles(roles) {
+  return [...(roles || [])].sort((a, b) =>
+    String(a && a.name == null ? '' : a.name).localeCompare(String(b && b.name == null ? '' : b.name)));
+}
+
+/* ── 中文译文的标点归一化 ────────────────────────────────────────
+ * 项目约定: 中文行用**空格**分词, 不出现 ，、。 (半角 , . 与 ! ? 保留不动)。
+ * 这是"外部文本(LLM 译文 / ASR)入库前"的统一口径 —— 用户手动编辑不走这里。
+ * 服务端同款实现在 editor/llm-text.js 的 normalizeZhPunctuation;
+ * tests/zh-punct-test.mjs 断言两者对同一语料输出一致, 防止再次分叉。
+ * ──────────────────────────────────────────────────────────── */
+export function normalizeZhPunctuation(text) {
+  return String(text == null ? '' : text)
+    .replace(/\r?\n/g, ' ')
+    .replace(/[，、。]+/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]*\\N[ \t]*/g, '\\N')   // 别在 ASS 换行符旁留下空格
+    .trim();
+}
+
+/**
+ * 载入自愈: 把**中文整句行**(非逐词样式)里的 ，、。 归一成空格。
+ * 用户报「存量稿件的中文行里还带 ，。」—— 外部工具(WhisperX 等)导入的字幕常常带这些标点,
+ * 逐行手改太累, 载入时统一清一遍(与译文写入同一口径)。返回改动的行数。
+ *
+ * 只动整句样式行: 逐词样式行的文本是英文、且带 {\c..&}..{\c} 高亮 span, 碰了会毁掉逐词特效。
+ * 行首 {\c..&} 色标与 [角色] 标签原样保留(它们不含中文标点)。
+ * 必须在 analyzeKaraoke 之后调用(wordStyle 已知), 且要同步重算 sent.text(纯文本)。
+ */
+export function normalizeZhPunctuationInSentences(doc, sentences, wordStyle) {
+  let n = 0;
+  for (const s of sentences || []) {
+    if (wordStyle && s.style === wordStyle) continue;
+    const ev = (s.events || [])[0];
+    if (!ev) continue;
+    const before = String(ev.text || '');
+    const after = normalizeZhPunctuation(before);
+    if (after === before) continue;
+    doc.setEventText(ev, after);
+    s.text = assPlainText(after);
+    n++;
+  }
+  return n;
+}
+
+/** 行首是不是逐词高亮 span(如 {\c&HFFFFFF&}word{\c})。整句中文行本不该有它, 但历史脏数据里出现过 ——
+ *  那种行首的 \c 是**逐词色**、不是说话人色, 换色时必须跳过(否则污染逐词高亮色)。 */
+export function leadIsWordSpan(text) {
+  return /^\s*\{\\c&H[0-9A-Fa-f]{6}&\}[^{}]+?\{\\c\}/.test(String(text == null ? '' : text));
+}
+
+/**
+ * 把某角色**名下所有中文字幕行**的行首色标改成 newHex(原本没色标的补上)。
+ * 纯函数: 只读 rows/doc, 通过 doc.setEventText 写回; 同时把 row.color / zh.color 同步成新色。
+ * @param doc        AssDoc（提供 setEventText）
+ * @param rows       pairRows 产出的行数组（每行有 .speaker / .zh / .color）
+ * @param roleNames  该角色的名字/别名数组（大小写不敏感）
+ * @param newHex     '#rrggbb'
+ * @returns 改动的事件条数
+ *
+ * 为什么按**角色名**定位而不是按"旧颜色值"匹配(旧实现的致命 bug):
+ *   角色色是从中文行行首色标推出来的, 两个角色撞同一个色时(实测: Minute 与 garlicsizzler
+ *   都是 #ffffff —— garlicsizzler 的 7 条中文行里只有 1 条带色标), 按色匹配会把**别人的行**
+ *   一起改: 用户改 garlicsizzler 的颜色, 结果 Minute 的 236 行被染色, 而 garlicsizzler
+ *   那 6 条没有色标的行纹丝不动(用户报的 bug)。按名字定位天然不受撞色影响。
+ * 只动中文整句行: 英文逐词行行首的 \c 是逐词高亮 span, 改了会污染逐词高亮色
+ *   (实测旧实现会连带改掉 1020 条英文 span)。
+ */
+export function recolorRoleInRows(doc, rows, roleNames, newHex) {
+  const newAss = hexToAssBgr6(newHex);
+  if (!newAss) return 0;
+  const hexNorm = '#' + String(newHex).replace(/^#/, '').toLowerCase();
+  const names = new Set((roleNames || []).map(x => String(x == null ? '' : x).trim().toLowerCase()).filter(Boolean));
+  if (!names.size) return 0;
+  const hit = (raw) => speakerNames(raw).some(x => names.has(x.toLowerCase()));
+  const leadRe = /^(\s*\{[^}]*?\\c&H)([0-9A-Fa-f]{6})(&)/;
+  const tag = '{\\c&H' + newAss + '&}';
+  let n = 0;
+  for (const row of rows || []) {
+    if (!hit(row.speaker)) continue;
+    const zh = row.zh;
+    if (zh) {
+      for (const ev of zh.events || []) {
+        const t = String(ev.text || '');
+        if (leadIsWordSpan(t)) continue;                       // 逐词 span ≠ 说话人色, 不动
+        if (leadRe.test(t)) {
+          doc.setEventText(ev, t.replace(leadRe, (all, a, b, c) => a + newAss + c));
+        } else {
+          // 行首没有 \c 色标 → 插到行首标签块之后(或最前面)
+          const head = /^(?:\s*\{[^}]*\})*/.exec(t)[0];
+          doc.setEventText(ev, head + tag + t.slice(head.length));
+        }
+        n++;
+      }
+      zh.color = hexNorm;
+    }
+    row.color = hexNorm;
+  }
+  return n;
 }

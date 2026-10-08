@@ -12,6 +12,7 @@ import { shortcuts, comboFromEvent } from './shortcuts.js';
 import { initProjects } from './project.js';
 import { initI18n, t } from './i18n.js';
 import { ico } from './icons.js';
+import { pickDanmaku, danmakuDuration, DUR_DEFAULT } from '../danmaku.js';
 import { bindModalDrags } from './modal.js';
 
 /* ─────────── DOM ─────────── */
@@ -1243,6 +1244,12 @@ function setAss(text, name) {
   if (btnExportFull) btnExportFull.disabled = false;
   // 反思纠错：只在项目模式可用（要用项目里保存的 audio.wav 重识别那几段）
   if (reflectEls.btn) reflectEls.btn.disabled = !state.project;
+  /* 全片逐词重校对：同样要项目模式。**不**在这里判"有没有逐词行"——
+   * 这段是热路径（每次重建列表都跑），而判重要遍历全部句子；
+   * 真没有逐词行时点击后服务端会给出明确原因。
+   * 用 typeof 保护：realignEls 定义在文件更靠后（const 有 TDZ），
+   * 而 rebuildItemsAndLanes 可能在它初始化前就被调用（启动阶段）。 */
+  if (typeof realignEls !== 'undefined' && realignEls.btn) realignEls.btn.disabled = !state.project;
   const hasKar = !!state.kar.wordStyle;
   btnExportClean.disabled = !hasKar;
   btnExportJson.disabled = !hasKar;
@@ -4329,6 +4336,264 @@ async function realignRow(item) {
 panel.onRealignCard = (item) => { realignRow(item); };
 timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref)); };
 
+/* ═══════════ 全片逐词重校对 ═══════════
+ *
+ * 与上面的「重排逐词时间」是一套东西，区别在**判定谁需要改**：
+ *   · 单条重排：用户自己去发现"这句的词时间不对"，右键点名改。
+ *   · 全片重校对：逐句 TTS 朗读 + 重新识别，给每句算一个**对齐置信度**，
+ *     只对达标的句子改。几百句的稿子肉眼看不出来哪句糊了，让程序体检一遍。
+ *
+ * 硬约束同单条：**只改逐词时间戳**，不动文本、不动整句起止。
+ *
+ * 为什么走后台作业 + 轮询：全片几百句、每句一次 TTS + 一次识别（实测 1~2 秒），
+ * 整片要几分钟到十几分钟，同步请求必超时。
+ */
+const realignEls = {
+  overlay: document.getElementById('realign-overlay'),
+  msg: document.getElementById('realign-msg'),
+  conf: document.getElementById('realign-conf'),
+  confVal: document.getElementById('realign-conf-val'),
+  confNote: document.getElementById('realign-conf-note'),
+  summary: document.getElementById('realign-summary'),
+  allWrap: document.getElementById('realign-all-wrap'),
+  all: document.getElementById('realign-all'),
+  allNote: document.getElementById('realign-all-note'),
+  list: document.getElementById('realign-list'),
+  cancel: document.getElementById('realign-cancel'),
+  reload: document.getElementById('realign-reload'),
+  apply: document.getElementById('realign-apply'),
+  btn: document.getElementById('btn-realign-full'),
+};
+let realignData = null;          // { items, threshold, total, usable }
+let realignPicked = new Set();   // 勾选的 items 下标
+let realignRunning = false;
+let realignPollTimer = 0;
+
+function realignShow(show) {
+  if (realignEls.overlay) realignEls.overlay.hidden = !show;
+}
+
+/** 置信度分档：复用反思页既有的 chip 配色（chip-l1 绿 / chip-conf 黄 / chip-conf-low 红），
+ *  别为这一处另造一套颜色。 */
+function confChip(c) {
+  const n = Number(c) || 0;
+  if (n >= 0.85) return { cls: 'chip-l1', word: '高' };
+  if (n >= 0.7) return { cls: 'chip-conf', word: '中' };
+  return { cls: 'chip-conf-low', word: '低' };
+}
+
+function renderRealignList() {
+  const box = realignEls.list;
+  if (!box || !realignData) return;
+  const its = realignData.items || [];
+  box.innerHTML = its.map((it, k) => {
+    const c = Number(it.confidence) || 0;
+    const chip = confChip(c);
+    const pc = Math.round(c * 100);
+    const picked = realignPicked.has(k);
+    const off = !it.ok;
+    return `<label class="reflect-item${off ? ' is-off' : ''}${picked ? ' is-on' : ''}" data-k="${k}"`
+      + ` title="${off ? '置信度未达门槛，会保留原逐词时间' : '勾选后应用它的新逐词时间'}">`
+      + `<input type="checkbox" data-k="${k}"${picked ? ' checked' : ''}${off ? ' disabled' : ''}>`
+      + `<span class="ri-body">`
+      + `<span class="ri-head">`
+      + `<span class="cc-chip ${chip.cls}">置信度${chip.word} ${pc}%</span>`
+      + `<span class="ri-range">${escapeHtml(it.target || '')} · ${fmtTime(it.start)} ~ ${fmtTime(it.end)}</span>`
+      + `<span class="ri-range">锚点 ${it.anchors}/${(it.words || []).length} 词</span>`
+      + `</span>`
+      + `<span class="ri-text">${escapeHtml(String(it.text || '').slice(0, 140))}</span>`
+      + (it.note
+        ? `<span class="ri-reason">${escapeHtml(it.note)}</span>`
+        : (it.heard ? `<span class="ri-reason">识别听到：${escapeHtml(String(it.heard).slice(0, 90))}</span>` : ''))
+      + `</span></label>`;
+  }).join('');
+}
+
+function syncRealignApply() {
+  const n = realignPicked.size;
+  if (realignEls.apply) {
+    realignEls.apply.disabled = n === 0;
+    realignEls.apply.textContent = n ? `应用选中项（${n} 句）` : '应用选中项';
+  }
+  if (realignEls.all) {
+    const usable = (realignData && realignData.items || []).filter(i => i.ok).length;
+    realignEls.all.checked = usable > 0 && n === usable;
+  }
+}
+
+function realignFinishUi() {
+  realignRunning = false;
+  clearTimeout(realignPollTimer);
+  if (realignEls.btn) realignEls.btn.disabled = !state.project;
+  if (realignEls.reload) realignEls.reload.hidden = false;
+}
+
+/** 轮询后台作业 */
+function pollRealignFull(pid) {
+  clearTimeout(realignPollTimer);
+  realignPollTimer = setTimeout(async () => {
+    if (!state.project || state.project.id !== pid) return;
+    try {
+      const r = await fetch(`/api/projects/${pid}/realign-full`, { signal: AbortSignal.timeout(15000) });
+      const j = await r.json().catch(() => ({}));
+      const job = j.job;
+      if (!job) { realignFinishUi(); return; }
+      if (realignEls.msg) {
+        realignEls.msg.textContent = `${job.msg || '处理中…'}（${job.pct || 0}%）`;
+      }
+      jobCardShow('全片逐词重校对', job.msg || '处理中…', job.pct, '每句一次 TTS 朗读 + 重新识别，全片要几分钟');
+      if (job.status === 'running' || job.status === 'pending') {
+        pollRealignFull(pid);
+        return;
+      }
+      jobCardHide();
+      realignFinishUi();
+      if (job.status === 'error') {
+        if (realignEls.msg) realignEls.msg.textContent = '失败：' + (job.error || '');
+        toast('全片重校对失败：' + (job.error || ''), 6600);
+        return;
+      }
+      showRealignResult(job);
+    } catch (e) {
+      if (realignEls.msg) realignEls.msg.textContent = '轮询失败：' + ((e && e.message) || e);
+      realignFinishUi();
+    }
+  }, 900);
+}
+
+function showRealignResult(job) {
+  const items = job.items || [];
+  realignData = { items, threshold: job.threshold || 0.7, total: job.total || items.length, usable: job.usable || 0 };
+  // 默认只勾选**达标**的（不达标的本来就 disabled）
+  realignPicked = new Set(items.map((it, k) => (it.ok ? k : -1)).filter(k => k >= 0));
+  const thr = Math.round((realignData.threshold || 0) * 100);
+  if (realignEls.conf) realignEls.conf.hidden = false;
+  if (realignEls.confVal) realignEls.confVal.textContent = `≥ ${thr}%`;
+  if (realignEls.confNote) {
+    realignEls.confNote.textContent = `低于这个分数的句子**原样保留**（可在「全局设置 → 重排逐词时间」里改）`;
+  }
+  if (realignEls.summary) {
+    realignEls.summary.hidden = false;
+    realignEls.summary.textContent = `共 ${realignData.total} 句：` +
+      `${realignData.usable} 句达标（会重排逐词时间）、${realignData.total - realignData.usable} 句未达标（保留原样）`;
+  }
+  if (realignEls.allWrap) realignEls.allWrap.hidden = false;
+  if (realignEls.allNote) realignEls.allNote.textContent = '只改逐词时间戳，文本与整句时间不动';
+  if (realignEls.list) realignEls.list.hidden = false;
+  if (realignEls.msg) realignEls.msg.textContent = '校对完成，确认后应用（未达标的不可勾选）';
+  renderRealignList();
+  syncRealignApply();
+}
+
+async function startRealignFull() {
+  if (realignRunning) { toast('全片重校对已经在跑了', 3200); return; }
+  if (!state.project) { toast('全片重校对需要项目模式', 4200); return; }
+  const pid = state.project.id;
+  realignRunning = true;
+  if (realignEls.btn) realignEls.btn.disabled = true;
+  realignData = null;
+  realignPicked = new Set();
+  if (realignEls.list) { realignEls.list.hidden = true; realignEls.list.innerHTML = ''; }
+  if (realignEls.summary) realignEls.summary.hidden = true;
+  if (realignEls.allWrap) realignEls.allWrap.hidden = true;
+  if (realignEls.conf) realignEls.conf.hidden = true;
+  if (realignEls.reload) realignEls.reload.hidden = true;
+  if (realignEls.apply) realignEls.apply.disabled = true;
+  if (realignEls.msg) realignEls.msg.textContent = '正在启动…';
+  realignShow(true);
+  jobCardShow('全片逐词重校对', '正在启动…', null, '每句一次 TTS 朗读 + 重新识别，全片要几分钟');
+  try {
+    const r = await fetch(`/api/projects/${pid}/realign-full`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    pollRealignFull(pid);
+  } catch (e) {
+    jobCardHide();
+    realignFinishUi();
+    const msg = String((e && e.message) || e);
+    if (realignEls.msg) realignEls.msg.textContent = '无法开始：' + msg;
+    toast('无法开始全片重校对：' + msg, 6600);
+  }
+}
+
+/** 应用选中项：**只写逐词时间**（文本与整句起止都不碰） */
+let realignApplying = false;
+async function applyRealignFull() {
+  if (realignApplying || !realignData || !state.project) return;
+  const picks = [...realignPicked].filter(k => realignData.items[k] && realignData.items[k].ok);
+  if (!picks.length) return;
+  realignApplying = true;
+  if (realignEls.apply) realignEls.apply.disabled = true;
+  const pid = state.project.id;
+  try {
+    /* 项目里的句子顺序 = state.kar.sentences 的顺序，服务端 readSegments 读的是同一份
+     * asr.json，所以 item.index 可以直接当 sentences 的下标用。
+     * 不放心的话再用**时间**校对一次：序号对不上就按时间找最接近的那句。 */
+    const sents = (state.kar && state.kar.sentences) || [];
+    let n = 0, miss = 0;
+    const detail = [];
+    for (const k of picks) {
+      const it = realignData.items[k];
+      let sent = sents[it.index];
+      if (!sent || !Array.isArray(sent.words) || !sent.words.length
+          || Math.abs(Number(sent.start) - Number(it.start)) > 0.05) {
+        sent = sents.find(s2 => Array.isArray(s2.words) && s2.words.length
+          && Math.abs(Number(s2.start) - Number(it.start)) <= 0.05) || null;
+      }
+      if (!sent) { miss++; continue; }
+      sent.words = (it.words || []).map(w => ({ w: w.w, s: w.s, e: w.e }));
+      sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
+      n++;
+      detail.push(`${fmtTime(it.start)} 置信度 ${Math.round((it.confidence || 0) * 100)}%`);
+    }
+    reconcileKaraoke();
+    rebuildItemsAndLanes(true, true);
+    if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
+    if (state.project && state.project.id === pid && Projects && Projects.scheduleSave) {
+      Projects.scheduleSave();
+    }
+    toast(`已重排 ${n} 句的逐词时间${miss ? `（${miss} 句没对上，已跳过）` : ''}（文本未改动）`, 6200);
+    logOp('realign', `全片逐词重校对：应用 ${n} 句`,
+      `重排了 ${n} 句的逐词时间（文本与整句时间未改动）`,
+      `TTS 朗读 → 重新识别 → 序列对齐；置信度门槛 ${Math.round((realignData.threshold || 0) * 100)}%，`
+      + `达标的 ${realignData.usable}/${realignData.total} 句。示例：${detail.slice(0, 3).join('、')}`);
+    realignShow(false);
+  } catch (e) {
+    toast('应用失败：' + ((e && e.message) || e), 6600);
+  } finally {
+    realignApplying = false;
+    syncRealignApply();
+    if (realignEls.btn) realignEls.btn.disabled = !state.project;
+  }
+}
+
+if (realignEls.btn) realignEls.btn.addEventListener('click', startRealignFull);
+if (realignEls.cancel) realignEls.cancel.addEventListener('click', () => { realignShow(false); });
+if (realignEls.reload) realignEls.reload.addEventListener('click', startRealignFull);
+if (realignEls.apply) realignEls.apply.addEventListener('click', applyRealignFull);
+if (realignEls.list) {
+  realignEls.list.addEventListener('change', (e) => {
+    const lab = e.target.closest('.reflect-item');
+    if (!lab) return;
+    const k = Number(lab.dataset.k);
+    if (e.target.checked) realignPicked.add(k); else realignPicked.delete(k);
+    lab.classList.toggle('is-on', e.target.checked);
+    syncRealignApply();
+  });
+}
+if (realignEls.all) {
+  realignEls.all.addEventListener('change', () => {
+    if (!realignData) return;
+    realignPicked = realignEls.all.checked
+      ? new Set(realignData.items.map((it, k) => (it.ok ? k : -1)).filter(k => k >= 0))
+      : new Set();
+    renderRealignList();
+    syncRealignApply();
+  });
+}
+
 panel.onRetranslateCard = (item) => {
   try { retranslateRow(item); }
   catch (e) { toast('翻译失败: ' + ((e && e.message) || e), 4600); }
@@ -4617,17 +4882,25 @@ async function loadOpLog() {
 (function initLogSubTabs() {
   const tabs = [...document.querySelectorAll('.log-subtab')];
   if (!tabs.length) return;
-  const panes = { app: document.getElementById('log-pane-app'), op: document.getElementById('log-pane-op') };
+  const panes = {
+    app: document.getElementById('log-pane-app'),
+    op: document.getElementById('log-pane-op'),
+    note: document.getElementById('log-pane-note'),
+  };
   const show = (which) => {
     for (const tb of tabs) tb.classList.toggle('active', tb.dataset.log === which);
     for (const [k, el] of Object.entries(panes)) if (el) el.hidden = (k !== which);
-    if (which === 'op') loadOpLog();       // 只在真要看时才拉
+    if (which === 'op') loadOpLog();                     // 只在真要看时才拉
+    if (which === 'note' && window.__onNotesShown) window.__onNotesShown();
   };
   for (const tb of tabs) tb.addEventListener('click', () => show(tb.dataset.log));
   const rf = document.getElementById('btn-oplog-refresh');
   if (rf) rf.addEventListener('click', () => { loadOpLog(); toast('已刷新操作日志', 2000); });
-  // 切到日志页且停在"操作日志"时也要拉一次（首次进入不会触发子标签的 click）
-  window.__onLogsTabShown = () => { if (!panes.op || !panes.op.hidden) loadOpLog(); };
+  // 切到日志页且停在某个板块时也要拉一次（首次进入不会触发子标签的 click）
+  window.__onLogsTabShown = () => {
+    if (panes.op && !panes.op.hidden) loadOpLog();
+    if (panes.note && !panes.note.hidden && window.__onNotesShown) window.__onNotesShown();
+  };
 })();
 
 /* F8: 显隐「导出词级 JSON」区(默认隐藏, 避免设置面板杂乱) */
@@ -4912,6 +5185,222 @@ video.addEventListener('timeupdate', () => {
   });
 });
 
+/* ═══════════ 备注（时间点留言 → 播放时当置顶弹幕） ═══════════
+ *
+ * 用途：看到某处有问题，**不想中断播放**去改字幕 —— 在视频下方写一句，
+ * 自动记下当时的播放位置；播放到那里时以弹幕浮在画面**顶部**。
+ *
+ * 为什么要"置顶弹幕"而不是普通 toast：备注和**画面内容**是对应的
+ * （"这里口型对不上""这句翻译怪"），必须和画面同时可见才有意义；
+ * 而且它跟着播放进度走，播到哪儿显示哪条。
+ *
+ * 行为约定（用户明确要求）：
+ *   · 持续跟随播放时长（每条 2~5 秒可调，默认 2.5 秒）
+ *   · **暂停时不消失** —— 停下来正是为了看清它，这时消失反而没法用
+ */
+(function initNotes() {
+  const bar = document.getElementById('note-bar');
+  const input = document.getElementById('note-input');
+  const atEl = document.getElementById('note-at');
+  const durSel = document.getElementById('note-dur');
+  const sendBtn = document.getElementById('btn-note-send');
+  const cbDanmaku = document.getElementById('cb-danmaku');
+  const layer = document.getElementById('danmaku-layer');
+  const listBox = document.getElementById('note-view');
+  const listEmpty = document.getElementById('note-empty');
+  const cntEl = document.getElementById('note-cnt');
+  if (!bar || !input || !layer) return;
+
+  let notes = [];               // 当前项目的全部备注
+  let loadedFor = null;         // 已加载的项目 id（切项目要重载）
+  let showing = null;           // 当前弹幕显示的那条（"闩住"而不是每次重算，见 danmaku.js）
+  let flashId = null;           // 刚写下的那条 → 高亮
+
+  const durOf = danmakuDuration;   // 与服务端 clampDur 同一套范围（2~5 秒）
+
+  /* ── 输入条上的"当前播放位置" ── */
+  function refreshAtLabel() {
+    if (!atEl) return;
+    const t0 = Number(video.currentTime) || 0;
+    atEl.textContent = fmtTime(t0).replace(/\.(\d)\d\d$/, '.$1');   // 秒数保留一位就够
+    atEl.title = `备注会记下这个播放位置（${fmtTime(t0)}）`;
+  }
+  video.addEventListener('timeupdate', refreshAtLabel);
+  video.addEventListener('seeked', refreshAtLabel);
+  refreshAtLabel();
+
+  /* ── 弹幕层 ── */
+  function hideDanmaku() {
+    showing = null;
+    layer.replaceChildren();
+  }
+
+  function paintDanmaku(n) {
+    const at = fmtTime(Number(n.at) || 0).replace(/^00:/, '');
+    layer.innerHTML = `<div class="dmk${n.id === flashId ? ' is-new' : ''}">`
+      + `<span class="dmk-at">${escapeHtml(at)}</span>${escapeHtml(n.text)}</div>`;
+    flashId = null;
+  }
+
+  /** 播放位置 → 该显示哪条备注。判定逻辑在 ../danmaku.js（纯函数，可离线测）。
+   *  "闩住"模型而不是每帧重算：**暂停时位置不变 → 窗口不会走完 → 弹幕保持显示**，
+   *  这正是用户要的"暂停不消失"。 */
+  function tickDanmaku() {
+    if (!cbDanmaku || !cbDanmaku.checked) { if (showing) hideDanmaku(); return; }
+    const t0 = Number(video.currentTime) || 0;
+    const next = pickDanmaku(notes, t0, showing);
+    if (!next) { if (showing) hideDanmaku(); return; }
+    if (showing && showing.id === next.id) { showing = next; return; }   // 还在窗口内，不重绘（重绘会重放动画、看着在闪）
+    showing = next;
+    paintDanmaku(next);
+    markCurrentRow();
+  }
+  video.addEventListener('timeupdate', tickDanmaku);
+  video.addEventListener('seeked', () => { hideDanmaku(); tickDanmaku(); });
+  if (cbDanmaku) {
+    cbDanmaku.addEventListener('change', () => {
+      if (layer) layer.classList.toggle('is-off', !cbDanmaku.checked);
+      try { localStorage.setItem('sf.danmaku', cbDanmaku.checked ? '1' : '0'); } catch {}
+      if (cbDanmaku.checked) tickDanmaku(); else hideDanmaku();
+    });
+    try {
+      const saved = localStorage.getItem('sf.danmaku');
+      if (saved === '0') { cbDanmaku.checked = false; layer.classList.add('is-off'); }
+    } catch {}
+  }
+
+  /* ── 备注列表（日志页第三个板块）── */
+  function markCurrentRow() {
+    if (!listBox) return;
+    const cur = showing ? showing.id : null;
+    for (const row of listBox.querySelectorAll('.note-row')) {
+      row.classList.toggle('is-here', !!cur && row.dataset.id === cur);
+    }
+  }
+
+  function renderList() {
+    if (!listBox) return;
+    const sorted = notes.slice().sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+    if (listEmpty) listEmpty.hidden = sorted.length > 0;
+    if (cntEl) { cntEl.textContent = sorted.length ? String(sorted.length) : ''; cntEl.hidden = !sorted.length; }
+    if (!sorted.length) { listBox.innerHTML = ''; return; }
+    listBox.innerHTML = sorted.map((n) => {
+      const at = Number(n.at) || 0;
+      const d = durOf(n);
+      return `<div class="note-row" data-id="${escapeHtml(n.id)}">`
+        + `<span class="note-t" data-seek="${at}" title="跳到 ${fmtTime(at)}">${escapeHtml(fmtTime(at).replace(/^00:/, ''))}</span>`
+        + `<span class="note-text">${escapeHtml(n.text)}`
+        + `<span class="note-meta">停留 ${d} 秒 · ${escapeHtml(String(n.createdAt || '').replace('T', ' ').slice(0, 16))}</span>`
+        + `</span>`
+        + `<button type="button" class="note-go" data-seek="${at}" title="跳到该位置">${ico('play')}</button>`
+        + `<button type="button" class="note-del" data-del="${escapeHtml(n.id)}" title="删除这条备注">${ico('trash')}</button>`
+        + `</div>`;
+    }).join('');
+    markCurrentRow();
+  }
+
+  async function loadNotes(force) {
+    const pid = state.project && state.project.id;
+    if (!pid) {
+      notes = []; loadedFor = null; renderList(); hideDanmaku();
+      if (listBox) listBox.innerHTML = '<div class="note-empty-row">备注需要项目模式（备注存在项目目录里）</div>';
+      return;
+    }
+    if (!force && loadedFor === pid) return;
+    try {
+      const r = await fetch(`/api/projects/${pid}/notes`, { signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      notes = Array.isArray(j.notes) ? j.notes : [];
+      loadedFor = pid;
+      renderList();
+    } catch (e) {
+      if (listBox) listBox.innerHTML = `<div class="note-empty-row">读取备注失败：${escapeHtml(String((e && e.message) || e))}</div>`;
+    }
+  }
+
+  async function sendNote() {
+    if (!state.project) { toast('备注需要项目模式（备注存在项目目录里）', 4600); return; }
+    const text = String(input.value || '').trim();
+    if (!text) { input.focus(); return; }
+    const at = Number(video.currentTime) || 0;
+    const danmaku = durSel ? Number(durSel.value) || DUR_DEFAULT : DUR_DEFAULT;
+    const pid = state.project.id;
+    sendBtn.disabled = true;
+    try {
+      const r = await fetch(`/api/projects/${pid}/notes`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ at, text, danmaku }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      notes = Array.isArray(j.notes) ? j.notes : notes.concat(j.note ? [j.note] : []);
+      loadedFor = pid;
+      input.value = '';
+      flashId = j.note ? j.note.id : null;
+      showing = null;                     // 立刻重算：新备注多半就在当前时间点
+      renderList();
+      tickDanmaku();
+      logOp('note', `备注 @${fmtTime(at)}`, text.slice(0, 120), '用户在播放中随手记下（不改字幕）');
+      toast(`备注已记在 ${fmtTime(at)}（停留 ${danmaku} 秒）`, 3200);
+    } catch (e) {
+      toast('备注保存失败：' + ((e && e.message) || e), 5200);
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  sendBtn.addEventListener('click', sendNote);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendNote(); }
+    // 别让空格在这里触发播放/暂停（输入框里打字时）
+    e.stopPropagation();
+  });
+
+  /* 列表里的跳转 / 删除（事件委托，列表会重绘） */
+  if (listBox) {
+    listBox.addEventListener('click', async (e) => {
+      const del = e.target.closest('[data-del]');
+      if (del) {
+        const id = del.dataset.del;
+        const note = notes.find(n => n.id === id);
+        if (!note) return;
+        if (!confirm(`删除这条备注？\n\n${note.text.slice(0, 120)}`)) return;
+        try {
+          const pid = state.project.id;
+          const r = await fetch(`/api/projects/${pid}/notes?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+          notes = Array.isArray(j.notes) ? j.notes : notes.filter(n => n.id !== id);
+          if (showing && showing.id === id) hideDanmaku();
+          renderList();
+          toast('已删除该备注', 2400);
+        } catch (err) { toast('删除失败：' + ((err && err.message) || err), 4600); }
+        return;
+      }
+      const go = e.target.closest('[data-seek]');
+      if (go) {
+        const t0 = Number(go.dataset.seek) || 0;
+        // 停在备注**开始时**：这样它正好落在弹幕窗口里，不会被判成过期
+        try { video.currentTime = t0; } catch {}
+        hideDanmaku();
+        tickDanmaku();
+        toast(`已跳到 ${fmtTime(t0)}`, 1800);
+      }
+    });
+  }
+
+  const rf = document.getElementById('btn-note-refresh');
+  if (rf) rf.addEventListener('click', async () => { await loadNotes(true); toast('已刷新备注', 1800); });
+
+  // 进入「备注列表」时按需加载；切项目由 project.js 打开项目时调 __notesReload() 重载
+  const pane = document.getElementById('log-pane-note');
+  window.__onNotesShown = () => { loadNotes(false); };
+  window.__notesReload = () => { loadNotes(true); };
+  if (pane && !pane.hidden) loadNotes(false);
+})();
+
 /* 界面语言: 只有中文(zh-CN)。工具是给国人做双语字幕的, 英文 UI 没有意义, 已移除。
  * 文案层(js/i18n.js)保留 —— 它的另一个用途是 lang/zh-CN.json(键=原文, 值可改) 让用户自己润色措辞。 */
 applySensitivity();
@@ -4989,6 +5478,67 @@ requestAnimationFrame(tick);
         cueCards: document.querySelectorAll('.cue-card').length,
         cueCardsTotal: (window.__dbg && window.__dbg.panel && window.__dbg.panel.filtered) ? window.__dbg.panel.filtered.length : null,
         logView: lc ? Object.assign(rect(lc), { lines: lc.childElementCount }) : null,
+        /* 「日志」页排查用：三个板块各自的可见性/尺寸/内容量。
+         * 用户报"日志栏完全空的"，而 logView.lines 明明 > 0 —— 说明内容在、
+         * 但看不见。必须把**每个 pane 的几何与 display** 都回传，才能分清是
+         * "没数据"还是"有数据但高度/显示出了问题"。 */
+        logPanel: (() => {
+          const t = document.getElementById('tab-logs');
+          if (!t) return { missing: true };
+          const one = (id) => {
+            const el = document.getElementById(id);
+            if (!el) return null;
+            const cs = getComputedStyle(el);
+            const b = el.getBoundingClientRect();
+            return {
+              hidden: !!el.hidden, display: cs.display, vis: cs.visibility,
+              flex: cs.flex, minH: cs.minHeight, overflowY: cs.overflowY,
+              w: Math.round(b.width), h: Math.round(b.height),
+              kids: el.childElementCount,
+            };
+          };
+          /** 从元素往上数到 #app，把每层的 id/class/display 都带出来。
+           *  这是判断"内容在但被祖先隐藏了"最直接的证据。 */
+          const chain = (el) => {
+            const out = [];
+            let n = el;
+            while (n && n !== document.documentElement) {
+              const cs = getComputedStyle(n);
+              const b = n.getBoundingClientRect();
+              out.push({
+                tag: n.tagName.toLowerCase() + (n.id ? '#' + n.id : '')
+                  + (typeof n.className === 'string' && n.className ? '.' + n.className.trim().split(/\s+/).join('.') : ''),
+                display: cs.display, vis: cs.visibility, overflow: cs.overflow,
+                w: Math.round(b.width), h: Math.round(b.height),
+              });
+              if (n.id === 'app') break;
+              n = n.parentElement;
+            }
+            return out;
+          };
+          const csT = getComputedStyle(t);
+          return {
+            tabDisplay: csT.display, tabActive: t.classList.contains('active'),
+            tabH: Math.round(t.getBoundingClientRect().height),
+            tabParentChain: chain(t),
+            editorPanelActiveTab: (window.__panel && window.__panel._tab) || null,
+            panes: { app: one('log-pane-app'), op: one('log-pane-op'), note: one('log-pane-note') },
+            views: { log: one('log-view'), oplog: one('oplog-view'), note: one('note-view') },
+            empties: {
+              log: one('log-empty'), oplog: one('oplog-empty'), note: one('note-empty'),
+            },
+            subtabs: [...document.querySelectorAll('.log-subtab')].map(b => ({
+              t: b.dataset.log, active: b.classList.contains('active'),
+              hidden: !!b.hidden, h: Math.round(b.getBoundingClientRect().height),
+            })),
+            subtabCount: document.querySelectorAll('.log-subtab').length,
+            // 前几条运行日志的文字（确认到底渲染了什么）
+            sample: lc ? [...lc.children].slice(0, 3).map(d => (d.textContent || '').slice(0, 90)) : null,
+            opCount: (document.getElementById('oplog-view') || {}).childElementCount,
+            noteCount: (document.getElementById('note-view') || {}).childElementCount,
+          };
+        })(),
+        errors: errs.slice(-6),
         activeTab: act ? act.dataset.tab : null,
         tabs: [...document.querySelectorAll('#panel-tabs .ptab')].map(b => ({
           t: b.dataset.tab, active: b.classList.contains('active'), hidden: !!b.hidden })),

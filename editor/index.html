@@ -51,6 +51,9 @@
   <main id="stage-wrap">    <div id="video-stage">
       <video id="video" controls preload="metadata"></video>
       <div id="srt-overlay"></div>
+      <!-- 备注弹幕层: 播放到备注的时间点时浮在画面**顶部**（"置顶弹幕"）。
+           pointer-events:none —— 绝不能挡住视频控件的点击。 -->
+      <div id="danmaku-layer" aria-live="polite"></div>
       <div id="stage-hint">
         <div class="hint-card">
           <div class="hint-icon" data-ico="film"></div>
@@ -107,6 +110,10 @@
   </div>
   <!-- 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，先出预览、确认后再重识别 -->
   <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处（没说完 / 被硬切 / 拼接痕迹 / 疑似听错），先给预览，确认后再重识别那几段" disabled>🧠 反思纠错</button>
+  <!-- 全片逐词重校对：逐句用 TTS 朗读 + 重新识别，给每句算一个"这次对齐有多可信"的分数，
+       只对达标（置信度 ≥ 门槛）的句子改逐词时间。**只改逐词时间戳**，不动文本。 -->
+  <button class="btn btn-mini" id="btn-realign-full"
+          title="逐句用 TTS 朗读并重新识别，算出每句的对齐置信度；只对置信度达标的句子重排逐词时间（不动文本）。全片要几分钟，先出预览再确认" disabled>🎯 全片逐词重校对</button>
         </div>
       </div>
       <div id="cue-list">
@@ -145,6 +152,14 @@
             <span id="word-convert-loading" class="word-convert-loading" role="status" hidden>处理中…</span></div>
           <p id="word-convert-hint" class="set-group-note">无法可靠判断英文样式时，请先在上方明确选择；绝不自动猜测。中文、已转换行及带其它内联特效的行会跳过。</p>
         </div>
+        <!-- ⚠ 上面这个 </div> 曾经缺失，是"日志栏完全空白"的**根因**：
+             这个 set-group 自己 + 两个 setting-row = 3 个 <div>，却只闭了 2 个，
+             于是后面每一张设置卡片都被逐层嵌进前一张里，
+             最终 .settings-list 与 #tab-settings 都无法闭合 ——
+             浏览器只好把紧随其后的 <div id="tab-logs"> 解析成 #tab-settings 的**子元素**。
+             切到「日志」页时 #tab-settings 是 display:none，日志内容跟着一起被隐藏，
+             于是"点日志栏什么都没有，连子标签都看不到"。
+             HTML 嵌错一层不报错，所以潜伏至今。 -->
 
         <div class="set-group">
           <div class="set-group-head"><i class="set-dot" style="background:#ff7a45"></i><span class="set-group-title">时间轴</span></div>
@@ -481,11 +496,21 @@
       </div>
     </div>
 
-      <!-- 日志: 两个板块 —— ①服务运行日志(SSE 实时流) ②用户操作日志(谁改了什么、为什么) -->
+      <!-- ⚠ 上面这个 `</div>` 是 #tab-settings 的闭合，**曾经缺失**：
+           于是浏览器把紧随其后的 <div id="tab-logs"> 解析成了 #tab-settings 的**子元素**。
+           切到「日志」页时 #tab-settings 变 display:none，日志页被收缩成 0×0 ——
+           数据其实都在（实测 log-view 里有 10 条日志、note-view 里有 4 条备注），
+           但什么都看不见，连子标签也不显示。
+           浏览器实测的父级链：#tab-logs → #tab-settings(none) → #editor-panel。
+           HTML 嵌错一层不报错，所以只能靠尺寸遥测发现。 -->
+      <!-- 日志: 三个板块 —— ①运行日志(SSE) ②操作日志(谁改了什么、为什么) ③备注列表 -->
       <div id="tab-logs" class="tab-body">
         <div class="log-subtabs">
           <button type="button" class="log-subtab active" data-log="app" id="log-sub-app">运行日志</button>
           <button type="button" class="log-subtab" data-log="op" id="log-sub-op">操作日志</button>
+          <button type="button" class="log-subtab" data-log="note" id="log-sub-note">
+            备注列表 <span class="log-subtab-cnt" id="note-cnt" hidden></span>
+          </button>
         </div>
 
         <!-- ① 服务运行日志 -->
@@ -520,6 +545,20 @@
             并写明"为什么"（例如对齐的锚点率、纠错的依据）。
           </div>
         </div>
+
+        <!-- ③ 备注列表 -->
+        <div class="log-pane" id="log-pane-note" hidden>
+          <div class="log-toolbar">
+            <button type="button" class="btn btn-mini" id="btn-note-refresh">刷新</button>
+            <span class="log-hint">点时间可跳到该位置；播放到备注时间点时会以弹幕显示在画面上</span>
+          </div>
+          <div id="note-view"></div>
+          <div class="log-empty" id="note-empty">
+            还没有备注。<br>
+            在视频下方的输入框里写一句、点「发送」即可 —— 会记下当时的播放位置，
+            播放到那里时以弹幕浮在画面上。
+          </div>
+        </div>
       </div>
 
       <!-- F8 显隐区: 导出词级 JSON(默认隐藏, 按 F8 显示) -->
@@ -534,6 +573,29 @@
 
   <!-- ══════════ 左下: 时间轴 ══════════ -->
   <section id="timeline-panel">
+    <!-- 备注输入条: 放在视频与时间轴之间。写下的备注会记下**当前播放位置**，
+         播放到那里时以置顶弹幕浮在画面上（见 #danmaku-layer）。 -->
+    <div id="note-bar">
+      <span class="note-ico" data-ico="chat" title="备注"></span>
+      <span id="note-at" class="note-at" title="备注会记下这个播放位置">00:00:00.0</span>
+      <input id="note-input" type="text" spellcheck="false" maxlength="2000"
+             placeholder="在这儿写一句备注，回车发送（会记下当前播放位置，播放时当弹幕显示）">
+      <label class="note-dur-wrap" title="这条备注在画面上停留多久">
+        <span class="note-dur-lbl">停留</span>
+        <select id="note-dur" class="note-dur">
+          <option value="2">2 秒</option>
+          <option value="2.5" selected>2.5 秒</option>
+          <option value="3">3 秒</option>
+          <option value="4">4 秒</option>
+          <option value="5">5 秒</option>
+        </select>
+      </label>
+      <label class="switch switch-mini" title="播放时把备注当弹幕显示在画面上">
+        <input type="checkbox" id="cb-danmaku" checked>
+        <span class="switch-slider"></span>
+      </label>
+      <button type="button" class="btn btn-mini btn-accent" id="btn-note-send">发送</button>
+    </div>
     <div class="tl-head">
       <div class="tl-group tl-time">
         <span id="tl-cursor-time">00:00:00.000</span>
@@ -709,6 +771,34 @@
       <button type="button" class="btn" id="reflect-cancel">关闭</button>
       <button type="button" class="btn" id="reflect-reload" hidden>重新反思</button>
       <button type="button" class="btn btn-accent" id="reflect-apply" disabled>应用选中项</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全片逐词重校对：预览清单（逐句置信度 + 勾选应用，只写逐词时间） -->
+<div id="realign-overlay" hidden>
+  <div class="rn-box modal-surface reflect-box">
+    <div class="rn-title modal-drag-handle">全片逐词重校对 · 预览</div>
+    <div class="rn-msg" id="realign-msg">正在逐句朗读并重新识别…</div>
+
+    <!-- 本次用的门槛：只有置信度 ≥ 它的句子会被选中（可在全局设置里改） -->
+    <div class="reflect-conf" id="realign-conf" hidden>
+      <span class="rc-label">置信度门槛</span>
+      <span class="rc-value" id="realign-conf-val">—</span>
+      <span class="rc-note" id="realign-conf-note"></span>
+    </div>
+
+    <div class="reflect-summary" id="realign-summary" hidden></div>
+    <label class="reflect-all" id="realign-all-wrap" hidden>
+      <input type="checkbox" id="realign-all" checked> 全选达标项
+      <span class="reflect-all-note" id="realign-all-note"></span>
+    </label>
+    <div class="reflect-list" id="realign-list" hidden></div>
+
+    <div class="rn-actions">
+      <button type="button" class="btn" id="realign-cancel">关闭</button>
+      <button type="button" class="btn" id="realign-reload" hidden>重新校对</button>
+      <button type="button" class="btn btn-accent" id="realign-apply" disabled>应用选中项</button>
     </div>
   </div>
 </div>
@@ -1002,6 +1092,24 @@
             <span class="npm-desc">识别视频里的语音，自动生成字幕（仅英语，模型在下面选）</span>
           </button>
         </div>
+
+        <!-- 全流程自动处理：仅在「创建初稿」时可用。
+             出稿后自动接着跑 ①反思纠错 ②全片逐词重校对。
+             两步都**只应用达标的**，不达标的原样保留（自动不等于无脑）。 -->
+        <label class="np-auto" id="np-auto-wrap" hidden>
+          <input type="checkbox" id="np-autopost">
+          <span>
+            <b>创建后自动处理</b>（全流程全自动）
+            <span class="np-auto-note">
+              出稿后自动接着跑：<b>反思纠错</b>（让模型通读全片，把"几行本该是一句 / 那段漏了字幕"
+              这类有硬依据的问题重识别一遍）+ <b>全片逐词重校对</b>（逐句朗读并重新识别，
+              只对置信度达标的句子重排逐词时间）。<br>
+              全程<b>只改该改的</b>：达标的才动，不达标的原样保留。
+              反思的重识别结果会留在「反思纠错」预览里等你复核；逐词重校对自动写回。
+              已出稿的字幕不受影响 —— 这两步都只读已落盘的稿件。
+            </span>
+          </span>
+        </label>
 
         <div class="ws-group-title">视频来源</div>
         <div class="np-file-row" id="np-row-url">
@@ -1411,6 +1519,15 @@
             <input type="number" id="st-realign-minratio" class="st-input" min="0.3" max="1" step="0.05" value="0.6" style="max-width:84px">
             <span class="gl-hint" style="flex:1">
               识别出的词与原文对得上的比例低于这个值就判为「不可信」并拒绝改动（而不是给一个错的时间）
+            </span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <span class="st-lbl" style="min-width:auto">重校对置信度门槛</span>
+            <input type="number" id="st-realign-minconf" class="st-input" min="0.3" max="1" step="0.05" value="0.7" style="max-width:84px">
+            <span class="gl-hint" style="flex:1">
+              「全片逐词重校对」用它决定**哪些句子值得改**：置信度 ≥ 门槛的才重排逐词时间，
+              低于门槛的原样保留。它比「最低锚点率」更严 —— 那个只判"能不能用"，
+              这个还要看有没有整段落单、有没有词被压扁
             </span>
           </div>
           <p class="gl-hint" id="st-realign-note"></p>
