@@ -4452,9 +4452,18 @@ const actions = {
   exportSub: () => btnExport.click()
 };
 
-/* 空格(播放/暂停)冷却: 按住重复触发或快速连击会导致状态乱跳 */
+/* 空格(播放/暂停)的按键去重。
+ *
+ * ⚠ 这里以前是 250ms 冷却，会**吞掉正常的快速按键**（用户实测："开始播放后立刻按空格不会暂停，
+ *   要等一下才行"）。当初写的理由是"按住重复触发或快速连击会导致状态乱跳"，但这两点其实
+ *   各有一个更准确的解法：
+ *     · 按住不放 → 浏览器会连续派发带 `e.repeat=true` 的 keydown，**用它挡就行**，
+ *       不需要时间窗（这正是"按住=暂停、松开=播放"那个反向行为的成因，见下面捕获阶段的注释）
+ *     · 快速连击 → 用户**本来就想连按**（播→停→播），不该挡
+ *   所以冷却窗口从 250ms 收到 40ms：只用来吃掉某些浏览器/输入法把**同一次物理按键**
+ *   重复派发出来的事件，人手动两连按（实测约 100ms 以上）不再受影响。 */
 const actionCooldown = { playPause: 0 };
-const PLAY_COOLDOWN_MS = 250;
+const PLAY_DEDUP_MS = 40;
 
 function isTypingTarget(t) {
   const tag = (t && t.tagName || '').toLowerCase();
@@ -4484,7 +4493,9 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   if (id === 'playPause') {
     const now = performance.now();
-    if (e.repeat || now - actionCooldown.playPause < PLAY_COOLDOWN_MS) return;
+    // e.repeat = 按住不放的自动重复（必须挡，否则状态乱跳）；
+    // PLAY_DEDUP_MS 只挡同一次按键被重复派发，不挡用户连按。
+    if (e.repeat || now - actionCooldown.playPause < PLAY_DEDUP_MS) return;
     actionCooldown.playPause = now;
   }
   const fn = actions[id];
