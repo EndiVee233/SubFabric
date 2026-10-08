@@ -59,7 +59,7 @@ print('== 初稿角色名标签空格 ==')
 # ① 无角色名 → 自动补 [UNKNOWN]，标签与正文之间必须有一个空格
 zh = run(['今天我们来盖房子'], ['today we build a house'])
 ok(len(zh) == 1, '产出了一条中文字幕行', zh)
-ok(zh and re.match(r'^\{\\c&HFFFFFF&\}\[UNKNOWN\] ', zh[0]), '[UNKNOWN] 后面有一个空格', zh[0] if zh else None)
+ok(zh and re.match(r'^\{\\c&H0000FFFF&\}\[UNKNOWN\] ', zh[0]), '[UNKNOWN] 后面有一个空格（行首色标=zh_color 默认黄）', zh[0] if zh else None)
 ok(zh and not re.search(r'\]\S', zh[0]), '不存在 "]正文" 这种紧贴', zh[0] if zh else None)
 ok(zh and zh[0].endswith('今天我们来盖房子'), '正文本身没被改动', zh[0] if zh else None)
 
@@ -81,7 +81,12 @@ ok(zh and '[UNKNOWN]' not in zh[0], 'auto_role=False 时不插 [UNKNOWN]', zh[0]
 # ⑤ 多条也要条条都对
 zh = run(['第一句', '第二句', '第三句'], ['one', 'two', 'three'])
 ok(len(zh) == 3, '三条都产出', len(zh))
-ok(all(re.match(r'^\{\\c&HFFFFFF&\}\[UNKNOWN\] \S', x) for x in zh), '每条都是 "[UNKNOWN] 正文"', zh)
+ok(all(re.match(r'^\{\\c&H0000FFFF&\}\[UNKNOWN\] \S', x) for x in zh), '每条都是 "[UNKNOWN] 正文"', zh)
+
+# ⑥ 行首色标跟随「设置 → 中文颜色」zh_color
+#（2026-10-08 前这里是硬编码白色 {\c&HFFFFFF&}, 会把颜色设置整个盖掉; 默认 zh=黄见 fb2182d）
+zh = run(['我们来盖房子'], ['we build a house'], {'zh_color': '#FF00FF'})
+ok(zh and zh[0].startswith('{\\c&H00FF00FF&}'), 'zh_color=#FF00FF 时行首色标随之变化(BGR=00FF00FF)', zh[0] if zh else None)
 
 print('\n%d passed, %d failed' % (passed, failed))
 sys.exit(1 if failed else 0)

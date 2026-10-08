@@ -5,7 +5,7 @@ import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
 import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
-import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess } from './postprocess.js';
+import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
 import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
@@ -249,7 +249,12 @@ function waitDuration(timeoutMs = 10000) {
   });
 }
 
+/* 波形加载的"代次"守卫: 切视频/换项目后, 旧请求回来不能再往新状态上挂波形。
+ * (曾出现: 切视频的瞬间旧 peaks 返回 → 新视频的时间轴挂上旧视频的波形, 怎么都对不上) */
+let waveLoadGen = 0;
+
 async function loadWaveformFromServer() {
+  const gen = ++waveLoadGen;
   timeline.setPeaks(null);
   timeline.setWaveform(null);
   // 项目模式: 波形来自项目缓存(peaks.bin), 不再对视频重新生成
@@ -259,12 +264,15 @@ async function loadWaveformFromServer() {
   }
   const stop = startWaveToast();
   const dur = await waitDuration();
+  if (gen !== waveLoadGen) return;      // 已切走: 提示条归新调用管, 这里不 stop
   try {
     const name = decodeURIComponent(state.videoUrl.split('/').pop() || '');
     // 首选峰值数据(矢量绘制, 任意缩放都锐利)
     const rp = await fetch('/api/peaks?name=' + encodeURIComponent(name) + '&dur=' + dur + '&rate=100');
+    if (gen !== waveLoadGen) return;
     if (rp.ok) {
       const data = new Uint8Array(await rp.arrayBuffer());
+      if (gen !== waveLoadGen) return;
       timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
       toast('波形已就绪', 2000);
       clearInterval(waveToastTimer); stop();
@@ -277,18 +285,22 @@ async function loadWaveformFromServer() {
       const name = decodeURIComponent(state.videoUrl.split('/').pop() || '');
       const resp = await fetch('/api/waveform?name=' + encodeURIComponent(name) + '&dur=' + dur);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      timeline.setWaveform(URL.createObjectURL(await resp.blob()));
+      const blob = await resp.blob();
+      if (gen !== waveLoadGen) return;
+      timeline.setWaveform(URL.createObjectURL(blob));
       toast('波形图已生成', 2000);
-    } catch { toast('波形生成失败'); }
+    } catch { if (gen === waveLoadGen) toast('波形生成失败'); }
   }
   clearInterval(waveToastTimer);
   stop();
 }
 async function uploadWaveform(file) {
+  const gen = ++waveLoadGen;
   timeline.setPeaks(null);
   timeline.setWaveform(null);
   const stop = startWaveToast();
   const dur = await waitDuration();
+  if (gen !== waveLoadGen) return;
   try {
     // 首选峰值数据: 视频流式上传到服务端临时文件, 生成后立即删除(不保存)
     const rp = await fetch('/api/peaks-upload?dur=' + dur + '&rate=100', {
@@ -296,8 +308,10 @@ async function uploadWaveform(file) {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file
     });
+    if (gen !== waveLoadGen) return;
     if (!rp.ok) throw new Error('peaks HTTP ' + rp.status);
     const data = new Uint8Array(await rp.arrayBuffer());
+    if (gen !== waveLoadGen) return;
     timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
     toast('波形已就绪', 2000);
     clearInterval(waveToastTimer); stop();
@@ -310,9 +324,11 @@ async function uploadWaveform(file) {
         body: file
       });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      timeline.setWaveform(URL.createObjectURL(await resp.blob()));
+      const blob = await resp.blob();
+      if (gen !== waveLoadGen) return;
+      timeline.setWaveform(URL.createObjectURL(blob));
       toast('波形图已生成', 2000);
-    } catch { toast('波形生成失败'); }
+    } catch { if (gen === waveLoadGen) toast('波形生成失败'); }
   }
   clearInterval(waveToastTimer);
   stop();
@@ -996,7 +1012,14 @@ async function loadSubUrl(url, name) {
 }
 
 function routeSub(text, name) {
-  if (isAssSubtitle(text, name)) setAss(text, name);
+  if (isAssSubtitle(text, name)) {
+    // 带特效的导出文件（微光/生长/淡入）直接进来会"字幕块破碎"：逐词 span 被特效标签污染,
+    // 切片识别失败, 一句话的每个词都变成独立的块。先转成普通字幕再加载;
+    // 转换异常/结果可疑 → stripEffectTagsSafe 会原样返回（硬塞, 宁可回到旧行为也不丢内容）。
+    const { text: t, cleaned } = stripEffectTagsSafe(text);
+    if (cleaned) toast('已把带特效的字幕转成普通字幕（微光/生长/淡入标签已剥离）', 5000);
+    setAss(t, name);
+  }
   else setSrt(text, name);
 }
 
@@ -2193,7 +2216,12 @@ function computeOverlapRows() {
  *  用不动点迭代, 这样「互叠的两句被一起拉离」时, 后还原的那句也能正确解除。 */
 function reconcileKaraoke() {
   if (state.format !== 'ass' || !state.kar) return 0;
+  // 快路径: 没有任何"被去逐词"的行时直接返回 —— 每次拖动/编辑都会调到这里,
+  // 不动点循环里那次全量排序+扫描(computeOverlapRows)在无事可做时纯属浪费。
+  if (!state.kar.rows.some(r => r._karaokeBackup)) return 0;
   let restored = 0, changed = true;
+  let round = 0;
+  const maxRounds = state.kar.rows.length + 2;   // restore 正常最多两轮收敛; 上限防病态数据打转
   while (changed) {
     changed = false;
     const overlap = computeOverlapRows();
@@ -2202,6 +2230,7 @@ function reconcileKaraoke() {
       if (overlap.has(row)) continue;
       if (restoreKaraokeRow(row)) { restored++; changed = true; }
     }
+    if (changed && ++round >= maxRounds) break;
   }
   if (restored) assPlayer.updateNow(state.assDoc.serialize());
   return restored;
@@ -3038,8 +3067,9 @@ function setReRecogRegion(a, b, patch) {
   if (a != null) cur.a = a;
   if (b != null) cur.b = b;
   timeline.reRecogRegion = Object.assign(cur, patch || {});
+  timeline.touch();          // 区域/进度是直接改的 timeline 属性, 手动置脏才会立刻重绘
 }
-function clearReRecogRegion() { timeline.reRecogRegion = null; stopRerecogPoll(); }
+function clearReRecogRegion() { timeline.reRecogRegion = null; stopRerecogPoll(); timeline.touch(); }
 
 /** 重开项目(含刷新页面)时接回后台还在跑的重新识别任务:
  *  否则时间轴上不显示那个紫区、任务跑完了也收不到结果(用户以为白跑了)。 */
@@ -3087,21 +3117,24 @@ if (rbReRecog) rbReRecog.addEventListener('click', async () => {
   if (!state.project) { toast('重新识别只在项目模式可用（需要项目里已保存的音频）', 4600); return; }
   if (state.format !== 'ass' && state.format !== 'srt') { toast('当前字幕格式不支持重新识别'); return; }
   if (timeline.reRecogRegion) { toast('已有一个重新识别任务在进行中', 3800); return; }
+  const pidAtStart = state.project.id;    // 下面的 await 期间用户可能切项目: 用捕获值, 返回前再校验
   // API Key 为空时明确告诉用户"只识别不翻译", 别让结果悄无声息地缺了中文
   let llmReadyNow = false;
   try { llmReadyNow = !!(await (await fetch('/api/translate/config')).json()).ready; } catch {}
+  if (!state.project || state.project.id !== pidAtStart) return;   // 期间切走了: 静默放弃
   if (!llmReadyNow) toast('API Key 为空：本次只重新识别、不做翻译。点「⚙ 设置」填好后可再对其它区间使用', 8000);
   reRecogBusy = true;
   try {
-    const r = await fetch(`/api/projects/${state.project.id}/rerecognize`, {
+    const r = await fetch(`/api/projects/${pidAtStart}/rerecognize`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ start: a, end: b })
     });
     const m = await r.json();
+    if (!state.project || state.project.id !== pidAtStart) return;  // 响应回来前又切走了
     if (!r.ok) { toast(m.error || '重新识别启动失败', 5600); return; }
     timeline.clearRangeSel();          // 选区收起; 常驻区域留在时间轴上直到任务结束
     setReRecogRegion(a, b, { status: 'running', progress: 2, message: '正在切出音频片段…' });
-    startRerecogPoll(state.project.id);
+    startRerecogPoll(pidAtStart);
     toast('重新识别已在后台开始，可以继续编辑其它字幕，完成后会提示', 6600);
   } catch (e) {
     toast('重新识别启动失败: ' + e.message, 5600);
@@ -3759,6 +3792,7 @@ if (setZoom) setZoom.addEventListener('input', () => {
 function applyFilmSetting() {
   const on = localStorage.getItem(FILM_KEY) === '1';   // 胶片预览图默认关
   timeline.showFilm = on;
+  timeline.touch();                                    // 直接改属性 → 手动置脏
   if (setFilm) setFilm.checked = on;
   if (setFilmVal) setFilmVal.textContent = on ? '开' : '关';
 }
@@ -3935,7 +3969,7 @@ function tick() {
   // 播放头进出正在编辑的句子时切换临时轨；离开即恢复真实 ASS。
   if (editPreview && editRowVisible(editPreview.row) !== !!previewTrack) queueEditPreview();
   if (wordPreviewTrackRow && !editRowVisible(wordPreviewTrackRow)) clearWordPreview();
-  timeline.draw(t, !video.paused);
+  timeline.drawIfNeeded(t, !video.paused);
   panel.setPlayingByTime(t);
   tlCursor.textContent = fmtTime(t);
   requestAnimationFrame(tick);

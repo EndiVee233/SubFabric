@@ -870,8 +870,11 @@ def process_ass(input_path, output_path, settings=None, dry_run=False):
         output_lines = out_header + final_events_section
         # 统一大写颜色标签(兼容只认大写的上游工具, 见函数注释)
         output_lines = [normalize_ass_color_tags_to_upper(l) for l in output_lines]
-        with open(output_path, 'w', encoding='utf-8-sig') as f:
+        # 原子写: 中途崩溃/磁盘满不留下半截 ASS（tmp + os.replace, 与 asr.py 写识别结果同款）
+        tmp_out = output_path + '.tmp'
+        with open(tmp_out, 'w', encoding='utf-8-sig') as f:
             f.writelines(output_lines)
+        os.replace(tmp_out, output_path)
 
     duration = time.time() - proc_start
     stats = {
@@ -979,47 +982,57 @@ def merge_srt_to_ass(zh_srt_path, en_srt_path, output_ass_path, settings=None):
     dialogues = []
 
     for i, (zh_start, zh_end, zh_text) in enumerate(zh_subs):
-        if i >= len(en_subs):
-            break
-        en_start, en_end, en_text = en_subs[i]
+        # 英文条目少于中文时**不能 break** —— 那会把后半段中文整段丢掉（这里以前只打一条警告就断）。
+        # 缺英文的行降级输出"中文单行", 兑现"以中文为准"的承诺。
+        has_en = i < len(en_subs)
+        if has_en:
+            en_start, en_end, en_text = en_subs[i]
         zh_text_clean = clean_chinese_text(
             zh_text,
             replace_punct=settings['replace_punct'],
             remove_linebreak=settings['remove_linebreak'])
         if not re.search(r'\{.*\}', zh_text_clean):
-            zh_text_clean = '{\\c&HFFFFFF&}' + zh_text_clean
+            # 行首色标 = 说话人色位（编辑器按行首 \c 识别角色色）。以前硬编码白色,
+            # 会把「设置 → 中文颜色」在 SRT→ASS 路径上整个盖掉（fb2182d 注释明确默认 zh=黄）;
+            # 改用配置色, 与样式表 / ASS 路径同源。
+            zh_bgr = hex_to_ass_bgr(settings.get('zh_color', DEFAULT_SETTINGS['zh_color']))
+            zh_text_clean = '{\\c' + zh_bgr + '&}' + zh_text_clean
         if settings['auto_role'] and '[' not in zh_text_clean:
             zh_text_clean = re.sub(r'(\{[^}]*\})', r'\1[UNKNOWN]', zh_text_clean, count=1)
             # 角色名标签与正文之间恒为**一个空格**（与 clean_chinese_text / 编辑器的 normalizeRoleGap 同一条规则）。
             # 这一步必须在插入**之后**再补一遍：clean_chinese_text 里的 `\](\S) -> ] \1` 早于这里，
             # 插进来的 [UNKNOWN] 会绕过它，初稿就成了 "[UNKNOWN]正文"（用户报的 bug）。
             zh_text_clean = re.sub(r'\](\S)', r'] \1', zh_text_clean)
-        en_text_clean = clean_text_markers(en_text.strip())
+        en_text_clean = clean_text_markers(en_text.strip()) if has_en else ''
 
         if time_mismatch:
             zh_ass_start = srt_time_to_ass(zh_start)
             zh_ass_end = srt_time_to_ass(zh_end)
-            en_ass_start = srt_time_to_ass(en_start)
-            en_ass_end = srt_time_to_ass(en_end)
             zh_line = f"Dialogue: 0,{zh_ass_start},{zh_ass_end},中文字幕,,0,0,0,,{zh_text_clean}\n"
             dialogues.append(zh_line)
-            en_words = en_text_clean.split()
-            if en_words:
-                en_lines = generate_karaoke_lines(
-                    en_text_clean, parse_time(en_ass_start), parse_time(en_ass_end),
-                    "Default", "", "0", "0", "0", "", highlight_color
-                )
-                dialogues.extend(en_lines)
-            else:
-                en_line = f"Dialogue: 0,{en_ass_start},{en_ass_end},Default,,0,0,0,,{en_text_clean}\n"
-                dialogues.append(en_line)
+            if has_en:
+                en_ass_start = srt_time_to_ass(en_start)
+                en_ass_end = srt_time_to_ass(en_end)
+                en_words = en_text_clean.split()
+                if en_words:
+                    en_lines = generate_karaoke_lines(
+                        en_text_clean, parse_time(en_ass_start), parse_time(en_ass_end),
+                        "Default", "", "0", "0", "0", "", highlight_color
+                    )
+                    dialogues.extend(en_lines)
+                else:
+                    en_line = f"Dialogue: 0,{en_ass_start},{en_ass_end},Default,,0,0,0,,{en_text_clean}\n"
+                    dialogues.append(en_line)
         else:
             start = srt_time_to_ass(zh_start)
             end = srt_time_to_ass(zh_end)
             dialogues.append(f"Dialogue: 0,{start},{end},中文字幕,,0,0,0,,{zh_text_clean}\n")
-            dialogues.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{en_text_clean}\n")
+            if has_en:
+                dialogues.append(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{en_text_clean}\n")
 
-    with open(output_ass_path, 'w', encoding='utf-8-sig') as f:
+    # 原子写: 中途崩溃/磁盘满不留下半截 ASS（tmp + os.replace, 与 asr.py 写识别结果同款）
+    tmp_ass = output_ass_path + '.tmp'
+    with open(tmp_ass, 'w', encoding='utf-8-sig') as f:
         f.write(generate_ass_header(
             settings['zh_font_name'], settings['zh_font_size'],
             settings['en_font_name'], settings['en_font_size'],
@@ -1028,6 +1041,7 @@ def merge_srt_to_ass(zh_srt_path, en_srt_path, output_ass_path, settings=None):
             settings.get('en_color', DEFAULT_SETTINGS['en_color']),
             settings.get('en_color2', DEFAULT_SETTINGS['en_color2'])))
         f.writelines(dialogues)
+    os.replace(tmp_ass, output_ass_path)
 
     log(f"SRT 合并完成：中文 {len(zh_subs)} 条 / 英文 {len(en_subs)} 条 -> {len(dialogues)} 行字幕")
     log(f"字体：中文 {settings['zh_font_name']} {settings['zh_font_size']}"
