@@ -1322,6 +1322,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* ── 设置: 术语表词条编辑器 ─────────────────── */
 .gl-wrap { display: flex; flex-direction: column; gap: 9px; width: 100%; min-width: 0; }
 .gl-hint { font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.st-key-clear { margin-left: 6px; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.st-key-clear:hover { color: var(--accent-2, var(--accent)); }
 .gl-tabs { display: inline-flex; gap: 4px; padding: 3px; background: #131318; border: 1px solid var(--border); border-radius: 999px; align-self: flex-start; }
 .gl-tab {
   border: none; background: transparent; color: var(--text-1);
@@ -1622,3 +1624,169 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 .badcat-act { display: flex; gap: 6px; padding: 2px; }
 .badcat-act .btn { flex: 1; justify-content: center; }
 #btn-badcat.active { background: var(--accent-a16); border-color: var(--accent-a45); color: var(--accent-2); }
+
+/* ── 反思纠错预览弹窗 ─────────────────────────────────────────────
+   与 .pick-box 同宽同高策略：清单可能几十条，必须能滚、且别撑破屏幕。 */
+.reflect-box {
+  width: min(680px, 94vw);
+  max-height: 78vh;
+  display: flex; flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.55);
+}
+#reflect-overlay {
+  position: fixed; inset: 0; z-index: 88;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.55);
+}
+#reflect-overlay[hidden] { display: none; }
+
+/* 进度：反思是同步请求（一轮十几秒到一两分钟），要有明显的"在跑" */
+/* 概览：先说清"要动多少东西、要重识别多少音频"，别让用户盲点 */
+.reflect-summary {
+  font-size: 12px; line-height: 1.7; color: var(--text-1);
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.reflect-summary[hidden] { display: none; }
+.reflect-summary b { color: var(--text-0); }
+
+.reflect-all {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; color: var(--text-1);
+  padding: 2px 0;
+}
+.reflect-all[hidden] { display: none; }
+.reflect-all-note { color: var(--text-2); font-size: 11.5px; }
+
+.reflect-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 2px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.reflect-list[hidden] { display: none; }
+
+.reflect-item {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-1);
+  cursor: pointer;
+}
+.reflect-item:hover { background: var(--bg-3); }
+.reflect-item input[type="checkbox"] { margin-top: 2px; flex: none; }
+.reflect-item .ri-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.reflect-item .ri-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.reflect-item .ri-range { font-size: 11px; color: var(--text-2); font-family: Consolas, monospace; }
+.reflect-item .ri-reason { font-size: 12.5px; line-height: 1.55; color: var(--text-0); }
+.reflect-item .ri-text {
+  font-size: 11.5px; line-height: 1.5; color: var(--text-2);
+  font-family: Consolas, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* gap（补漏识别）现在**参与执行**了，所以不再弱化、勾选框也不再禁用。
+   只保留一点左侧色条做区分，让人一眼看出这类是"补回漏掉的内容"而不是"改错词"。 */
+.reflect-item.is-gap { box-shadow: inset 2px 0 0 var(--danger, #ff5f6b); }
+.reflect-item.is-gap:hover { background: var(--bg-3); }
+
+/* ── 右下角进度卡：反思 / 纠错重识别等后台长任务 ───────────────────
+   位置与顶部居中的 #toast 错开，互不遮挡。
+   pointer-events 只在卡片自身开启（它是可点关闭的），不拦截背后的编辑操作。 */
+#job-card {
+  position: fixed; right: 16px; bottom: 16px; z-index: 92;
+  width: 300px;
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 11px 13px;
+  background: rgba(22, 24, 31, .97);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .5);
+  animation: jobcard-in var(--dur-3, .2s) var(--ease-out, ease-out) both;
+}
+#job-card[hidden] { display: none; }
+/* 出错时整卡换成红色调，让人一眼看出没成功 */
+#job-card.jc-err { border-left-color: var(--danger, #ff5f6b); }
+#job-card.jc-err .jc-bar-in { background: var(--danger, #ff5f6b); }
+#job-card.jc-done { border-left-color: var(--ok, #34d399); }
+#job-card.jc-done .jc-bar-in { background: var(--ok, #34d399); }
+#job-card.jc-done .jc-spin { display: none; }
+
+@keyframes jobcard-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.jc-head { display: flex; align-items: center; gap: 7px; }
+.jc-title {
+  flex: 1; min-width: 0;
+  font-size: 12.5px; font-weight: 700; color: var(--text-0);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.jc-close {
+  flex: none; width: 18px; height: 18px; line-height: 1;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-2); font-size: 15px; padding: 0;
+  border-radius: 4px;
+}
+.jc-close:hover { color: var(--text-0); background: var(--bg-3); }
+
+/* 转圈：只有"真的在跑"才转（完成/失败时被 .jc-done/.jc-err 关掉） */
+.jc-spin {
+  flex: none; width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid var(--accent); border-top-color: transparent;
+  animation: jc-spin .7s linear infinite;
+}
+@keyframes jc-spin { to { transform: rotate(360deg); } }
+
+.jc-bar {
+  height: 4px; border-radius: 2px; overflow: hidden;
+  background: var(--bg-3);
+}
+.jc-bar-in {
+  height: 100%; width: 0%;
+  background: var(--accent);
+  transition: width .25s var(--ease, ease);
+}
+/* 进度未知（反思是同步请求，拿不到真实批次进度）时用条纹动画表示"在动" */
+#job-card.jc-indet .jc-bar-in {
+  width: 100% !important;
+  background: repeating-linear-gradient(90deg,
+    var(--accent) 0 14px, transparent 14px 28px);
+  background-size: 28px 100%;
+  animation: jc-stripe .8s linear infinite;
+}
+@keyframes jc-stripe { to { background-position: 28px 0; } }
+
+.jc-msg {
+  font-size: 11.5px; line-height: 1.5; color: var(--text-1);
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.jc-foot { font-size: 11px; color: var(--text-2); }
+.jc-foot[hidden] { display: none; }
+.jc-foot b { color: var(--text-1); }
+
+/* 反思预览里的「逐句置信度」一行：只读展示，让用户知道这次重识别会不会带置信度。
+   它跟随全局设置（项目没单独设过就是全局档位），要改得去全局设置 —— 这里给出提示。 */
+.reflect-conf {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text-1);
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+}
+.reflect-conf[hidden] { display: none; }
+.reflect-conf .rc-label { color: var(--text-2); }
+.reflect-conf .rc-value { font-weight: 700; color: var(--accent); }
+.reflect-conf .rc-note { color: var(--text-2); font-size: 11.5px; }

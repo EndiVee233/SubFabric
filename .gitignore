@@ -59,6 +59,14 @@ outputs/
 outputs/
 spoke.mp4
 
+# 本地运行产物（这三条是 fork 补的：上游漏了，实测它们会混进提交）
+#   _testpid.txt          —— 测试脚本写的临时项目 id
+#   asr/perf-result.json  —— 性能测试结果/切片长度基准（内容含本机绝对路径）
+#   logs/                 —— 启动器与服务端日志
+_testpid.txt
+asr/perf-result.json
+logs/
+
 # 安装包脚本与图标: 必须放在 /build/* 与 /build/installer/* 之后
 # (gitignore 是"最后匹配生效", 且父目录被排除后无法再包含其中文件)
 # 应用图标 logo.png 是源图, logo.ico 由 editor/scripts/gen_app_icon.py 生成(多尺寸)

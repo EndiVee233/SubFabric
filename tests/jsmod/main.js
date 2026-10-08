@@ -5,7 +5,7 @@ import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
 import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
-import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess } from './postprocess.js';
+import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
 import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
@@ -249,7 +249,12 @@ function waitDuration(timeoutMs = 10000) {
   });
 }
 
+/* 波形加载的"代次"守卫: 切视频/换项目后, 旧请求回来不能再往新状态上挂波形。
+ * (曾出现: 切视频的瞬间旧 peaks 返回 → 新视频的时间轴挂上旧视频的波形, 怎么都对不上) */
+let waveLoadGen = 0;
+
 async function loadWaveformFromServer() {
+  const gen = ++waveLoadGen;
   timeline.setPeaks(null);
   timeline.setWaveform(null);
   // 项目模式: 波形来自项目缓存(peaks.bin), 不再对视频重新生成
@@ -259,12 +264,15 @@ async function loadWaveformFromServer() {
   }
   const stop = startWaveToast();
   const dur = await waitDuration();
+  if (gen !== waveLoadGen) return;      // 已切走: 提示条归新调用管, 这里不 stop
   try {
     const name = decodeURIComponent(state.videoUrl.split('/').pop() || '');
     // 首选峰值数据(矢量绘制, 任意缩放都锐利)
     const rp = await fetch('/api/peaks?name=' + encodeURIComponent(name) + '&dur=' + dur + '&rate=100');
+    if (gen !== waveLoadGen) return;
     if (rp.ok) {
       const data = new Uint8Array(await rp.arrayBuffer());
+      if (gen !== waveLoadGen) return;
       timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
       toast('波形已就绪', 2000);
       clearInterval(waveToastTimer); stop();
@@ -277,18 +285,22 @@ async function loadWaveformFromServer() {
       const name = decodeURIComponent(state.videoUrl.split('/').pop() || '');
       const resp = await fetch('/api/waveform?name=' + encodeURIComponent(name) + '&dur=' + dur);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      timeline.setWaveform(URL.createObjectURL(await resp.blob()));
+      const blob = await resp.blob();
+      if (gen !== waveLoadGen) return;
+      timeline.setWaveform(URL.createObjectURL(blob));
       toast('波形图已生成', 2000);
-    } catch { toast('波形生成失败'); }
+    } catch { if (gen === waveLoadGen) toast('波形生成失败'); }
   }
   clearInterval(waveToastTimer);
   stop();
 }
 async function uploadWaveform(file) {
+  const gen = ++waveLoadGen;
   timeline.setPeaks(null);
   timeline.setWaveform(null);
   const stop = startWaveToast();
   const dur = await waitDuration();
+  if (gen !== waveLoadGen) return;
   try {
     // 首选峰值数据: 视频流式上传到服务端临时文件, 生成后立即删除(不保存)
     const rp = await fetch('/api/peaks-upload?dur=' + dur + '&rate=100', {
@@ -296,8 +308,10 @@ async function uploadWaveform(file) {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file
     });
+    if (gen !== waveLoadGen) return;
     if (!rp.ok) throw new Error('peaks HTTP ' + rp.status);
     const data = new Uint8Array(await rp.arrayBuffer());
+    if (gen !== waveLoadGen) return;
     timeline.setPeaks({ data, rate: parseFloat(rp.headers.get('X-Peak-Rate') || '100'), ch: +(rp.headers.get('X-Peak-Ch') || 2) });
     toast('波形已就绪', 2000);
     clearInterval(waveToastTimer); stop();
@@ -310,9 +324,11 @@ async function uploadWaveform(file) {
         body: file
       });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      timeline.setWaveform(URL.createObjectURL(await resp.blob()));
+      const blob = await resp.blob();
+      if (gen !== waveLoadGen) return;
+      timeline.setWaveform(URL.createObjectURL(blob));
       toast('波形图已生成', 2000);
-    } catch { toast('波形生成失败'); }
+    } catch { if (gen === waveLoadGen) toast('波形生成失败'); }
   }
   clearInterval(waveToastTimer);
   stop();
@@ -1025,7 +1041,14 @@ async function loadSubUrl(url, name) {
 }
 
 function routeSub(text, name) {
-  if (isAssSubtitle(text, name)) setAss(text, name);
+  if (isAssSubtitle(text, name)) {
+    // 带特效的导出文件（微光/生长/淡入）直接进来会"字幕块破碎"：逐词 span 被特效标签污染,
+    // 切片识别失败, 一句话的每个词都变成独立的块。先转成普通字幕再加载;
+    // 转换异常/结果可疑 → stripEffectTagsSafe 会原样返回（硬塞, 宁可回到旧行为也不丢内容）。
+    const { text: t, cleaned } = stripEffectTagsSafe(text);
+    if (cleaned) toast('已把带特效的字幕转成普通字幕（微光/生长/淡入标签已剥离）', 5000);
+    setAss(t, name);
+  }
   else setSrt(text, name);
 }
 
@@ -1218,6 +1241,8 @@ function setAss(text, name) {
   autoLoadSystemFonts();     // 样式里写的字体若本机装了 → 自动喂给预览
   btnExport.disabled = false;
   if (btnExportFull) btnExportFull.disabled = false;
+  // 反思纠错：只在项目模式可用（要用项目里保存的 audio.wav 重识别那几段）
+  if (reflectEls.btn) reflectEls.btn.disabled = !state.project;
   const hasKar = !!state.kar.wordStyle;
   btnExportClean.disabled = !hasKar;
   btnExportJson.disabled = !hasKar;
@@ -2283,7 +2308,12 @@ function computeOverlapRows() {
  *  用不动点迭代, 这样「互叠的两句被一起拉离」时, 后还原的那句也能正确解除。 */
 function reconcileKaraoke() {
   if (state.format !== 'ass' || !state.kar) return 0;
+  // 快路径: 没有任何"被去逐词"的行时直接返回 —— 每次拖动/编辑都会调到这里,
+  // 不动点循环里那次全量排序+扫描(computeOverlapRows)在无事可做时纯属浪费。
+  if (!state.kar.rows.some(r => r._karaokeBackup)) return 0;
   let restored = 0, changed = true;
+  let round = 0;
+  const maxRounds = state.kar.rows.length + 2;   // restore 正常最多两轮收敛; 上限防病态数据打转
   while (changed) {
     changed = false;
     const overlap = computeOverlapRows();
@@ -2292,6 +2322,7 @@ function reconcileKaraoke() {
       if (overlap.has(row)) continue;
       if (restoreKaraokeRow(row)) { restored++; changed = true; }
     }
+    if (changed && ++round >= maxRounds) break;
   }
   if (restored) assPlayer.updateNow(state.assDoc.serialize());
   return restored;
@@ -3106,17 +3137,117 @@ function registerRecognizedRow(row) {
 }
 
 /** 删掉 [a,b] 内原有字幕块, 再按识别结果逐段重建（rebuildItemsAndLanes 会触发自动保存） */
-function applyRecognized(a, b, segs) {
-  const targets = itemsInRange(a, b);
-  for (const it of targets) removeItemData(it);   // 先全部摘掉, 与批量删除同一套
-  state.selected = null;
+/**
+ * 把重识别区间吸附到**字幕块的边界**上。
+ *
+ * 为什么必须吸附：删除判定是"只要与区间沾边就删整行"（itemsInRange 用 `end > a && start < b`）。
+ * 于是区间边界切在某一行中间时，**整行被删掉，但重识别只覆盖了那一部分音频**，
+ * 露在区间外的那一截内容就永久丢失了。
+ *
+ * 实测（41 行 / 7 段区间）：7 行被部分覆盖，其中一行右侧露出 6.51 秒的内容被白白删掉。
+ *
+ * 吸附规则：边界落在某一行内部时就扩展到该行的边缘，让每一行
+ *   · 要么完全在区间内（整行替换 = 正确）
+ *   · 要么完全在区间外（完全不动）
+ * 两种状态之间没有"覆盖一半"。
+ *
+ * 代价是区间边界可能向外挪最多一行的时长（实测中位 5~6 秒，取决于念白速度），
+ * 换来的是**不丢内容** —— 这个取舍是明确的。
+ */
+function snapRegionsToRows(regions, rows) {
+  const list = (rows || []).filter(r => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+  return (regions || []).map(rg => {
+    if (!Number.isFinite(rg.start) || !Number.isFinite(rg.end) || rg.end <= rg.start) return rg;
+    let a = rg.start, b = rg.end;
+    for (const r of list) {
+      // 边界落在该行内部 → 扩到该行边缘
+      if (r.start < a && a < r.end) a = r.start;
+      if (r.start < b && b < r.end) b = r.end;
+      // 该行**大部分**落在区间内（≥50%）→ 一并纳入，避免留下一条细碎残行
+      const ov = Math.min(b, r.end) - Math.max(a, r.start);
+      if (ov > 0 && ov >= (r.end - r.start) * 0.5 && (r.start < a || r.end > b)) {
+        a = Math.min(a, r.start);
+        b = Math.max(b, r.end);
+      }
+    }
+    return { start: a, end: b };
+  }).sort((x, y) => x.start - y.start);
+}
+
+/**
+ * 把重识别结果写回字幕。
+ *
+ * `regions` 是**实际重识别过的区间列表**（单区间重识别传 null，等价于 [a,b]）。
+ *
+ * 为什么要按区间逐段处理，而不是删掉总跨度 [a,b] 再全部加回：
+ * 批量纠错给出的是**多个互不相邻**的区间（例如 90~104s、168~181s、191~224s）。
+ * 早期实现用 [首段起点, 末段终点] 这一个总跨度去"删掉范围内所有行"，
+ * 于是**段与段之间那些从未被重识别的内容也被一起删掉，且永远不会被加回**——
+ * 用户看到的就是"识别后出现大量空缺"（实测：跨度 134 秒里只有 67 秒真的重识别过）。
+ *
+ * 写回前还会把区间**吸附到字幕块边界**（见 snapRegionsToRows），
+ * 否则边界上那些"只被覆盖一半"的行会整行被删、露出的一截内容永久丢失。
+ */
+function applyRecognized(a, b, segs, regions) {
+  const segsArr = Array.isArray(segs) ? segs : [];
+  let regs = (Array.isArray(regions) ? regions : [])
+    .filter(r => r && Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start)
+    .map(r => ({ start: r.start, end: r.end }))
+    .sort((x, y) => x.start - y.start);
+  if (!regs.length) regs = [{ start: a, end: b }];
+  /* 吸附到字幕块边界：避免"整行被删、只补回一半"造成内容丢失。
+   * 吸附可能让相邻两段扩到同一个字幕块上而**互相重叠**（实测：11~22 与 23~34
+   * 都吸附到 10~25 与 20~35），所以吸附后必须**再求一次并** ——
+   * 重叠区间会破坏"每段只跑一遍"，也会让 segment 归类出现空档。 */
+  regs = snapRegionsToRows(regs, state.items || []);
+  const mergedRegs = [];
+  for (const r of regs) {
+    const last = mergedRegs[mergedRegs.length - 1];
+    if (last && r.start <= last.end + 1e-6) last.end = Math.max(last.end, r.end);
+    else mergedRegs.push({ start: r.start, end: r.end });
+  }
+  regs = mergedRegs;
+
+  // 每段各自认领落在自己范围内的识别结果（用中点判定，避免边界上的抖动）
+  const byReg = regs.map(() => []);
+  for (const seg of segsArr) {
+    const mid = (Number(seg.start) + Number(seg.end)) / 2;
+    let k = regs.findIndex(r => mid >= r.start && mid <= r.end);
+    if (k < 0) {                                   // 落在缝隙里（服务端小抖动）→ 归最近的一段
+      let best = 0, bd = Infinity;
+      regs.forEach((r, i) => {
+        const d = mid < r.start ? r.start - mid : mid - r.end;
+        if (d < bd) { bd = d; best = i; }
+      });
+      k = best;
+    }
+    byReg[k].push(seg);
+  }
+
+  if (state.selected) state.selected = null;
   timeline.clearRangeSel();
+  /* **降序**写回：applyRecognizedOnce 会按区间删行再插行，会改变后面行的下标。
+   * 从后往前做，前面区间的下标才不受影响。 */
   let n = 0;
-  for (const seg of segs) { if (addRecognizedRow(seg)) n++; }
+  const order = regs.map((r, i) => i).sort((x, y) => regs[y].start - regs[x].start);
+  for (const i of order) {
+    n += applyRecognizedOnce(regs[i].start, regs[i].end, byReg[i]);
+  }
   reconcileKaraoke();
   // 视频区(libass 渲染层)必须同步重喂, 否则只有列表有新行、画面上还是旧的
   if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
+  return n;
+}
+
+/** 单个区间的写回：删掉区间内的行，再把该区间的识别结果加回 */
+function applyRecognizedOnce(a, b, segs) {
+  // 向后兼容：老调用点可能传单个 seg 而不是数组
+  const list = Array.isArray(segs) ? segs : (segs ? [segs] : []);
+  const targets = itemsInRange(a, b);
+  for (const it of targets) removeItemData(it);   // 先全部摘掉, 与批量删除同一套
+  let n = 0;
+  for (const seg of list) { if (addRecognizedRow(seg)) n++; }
   return n;
 }
 
@@ -3128,17 +3259,24 @@ function setReRecogRegion(a, b, patch) {
   if (a != null) cur.a = a;
   if (b != null) cur.b = b;
   timeline.reRecogRegion = Object.assign(cur, patch || {});
+  timeline.touch();          // 区域/进度是直接改的 timeline 属性, 手动置脏才会立刻重绘
 }
-function clearReRecogRegion() { timeline.reRecogRegion = null; stopRerecogPoll(); }
+function clearReRecogRegion() { timeline.reRecogRegion = null; stopRerecogPoll(); timeline.touch(); }
 
 /** 重开项目(含刷新页面)时接回后台还在跑的重新识别任务:
- *  否则时间轴上不显示那个紫区、任务跑完了也收不到结果(用户以为白跑了)。 */
+ *  否则时间轴上不显示那个紫区、任务跑完了也收不到结果(用户以为白跑了)。
+ *
+ *  同样走 /reidentify 而不是 /rerecognize：后者回的原始 job 没有 jobView 加工，
+ *  批量任务会丢掉 regions，时间轴上就只画第一段（实测踩过）。 */
 async function resumeRerecog(pid) {
   if (timeline.reRecogRegion || reRecogPoll) return;
   let j;
-  try { j = (await (await fetch(`/api/projects/${pid}/rerecognize`)).json()).job; } catch { return; }
+  try { j = (await (await fetch(`/api/projects/${pid}/reidentify`)).json()).job; } catch { return; }
   if (!j || j.status !== 'running' || !state.project || state.project.id !== pid) return;
-  setReRecogRegion(j.start, j.end, { status: j.status, progress: j.progress, message: j.message });
+  setReRecogRegion(j.start, j.end, {
+    status: j.status, progress: j.progress, message: j.message,
+    regions: (Array.isArray(j.regions) && j.regions.length > 1) ? j.regions : null,
+  });
   startRerecogPoll(pid);
 }
 
@@ -3148,22 +3286,45 @@ function startRerecogPoll(pid) {
     if (!timeline.reRecogRegion) return stopRerecogPoll();
     if (!state.project || state.project.id !== pid) return clearReRecogRegion();   // 切了项目: 收掉
     let m;
-    try { m = await (await fetch(`/api/projects/${pid}/rerecognize`)).json(); } catch { return; }
+    /* 轮询 /reidentify 而不是 /rerecognize：前者的 GET 走 jobView()，会带上
+     * batch / regions / regionDone 这些批量字段；后者的 GET 直接回**原始 job**
+     * （没有 jobView 加工），于是"第 N/M 段"这种进度信息在前端拿不到（实测踩过）。
+     * 两者的任务存在同一个 Map 里，所以对单区间重识别同样有效。 */
+    try { m = await (await fetch(`/api/projects/${pid}/reidentify`)).json(); } catch { return; }
     const j = m.job;
     if (!j) return clearReRecogRegion();                    // 服务重启, 任务没了
     setReRecogRegion(null, null, { status: j.status, progress: j.progress, message: j.message });
-    if (j.status === 'running') return;
+    // 右下角进度卡：批量的显示"第 N/M 段"，单区间的显示阶段与百分比
+    if (j.status === 'running') {
+      const isBatch = !!j.batch && (j.regionTotal | 0) > 1;
+      const foot = isBatch
+        ? `第 <b>${(j.regionIndex | 0) + 1}</b>/${j.regionTotal} 段 · 已完成 ${j.regionDone | 0} 段`
+        : '正在重识别这一段；可以继续编辑其它字幕';
+      jobCardShow(isBatch ? '纠错重识别 · 逐段进行' : '重新识别 · 进行中',
+        j.message || '识别中…', j.progress, foot);
+      return;
+    }
     stopRerecogPoll();
     const a = timeline.reRecogRegion.a, b = timeline.reRecogRegion.b;
     if (j.status === 'done') {
       const segs = j.segments || [];
-      const n = segs.length ? applyRecognized(a, b, segs) : 0;
+      /* 批量纠错返回**多个互不相邻**的区间，必须逐段写回（见 applyRecognized 的说明）——
+       * 早期只传 [首段起点, 末段终点] 的总跨度，会把段与段之间未重识别的内容一起删掉，
+       * 造成"识别后大量空缺"。 */
+      const regs = (Array.isArray(j.regions) && j.regions.length) ? j.regions : null;
+      const n = segs.length ? applyRecognized(a, b, segs, regs) : 0;
       clearReRecogRegion();
       // warning 里可能是「API Key 为空，未翻译」这类必须让用户看到的提示
-      toast(`重新识别已完成：${n} 行已写回字幕` + (j.warning ? ' —— ' + j.warning : ''), 9000);
+      const span = regs
+        ? `（${regs.length} 段，共 ${Math.round(regs.reduce((s, r) => s + (r.end - r.start), 0))} 秒音频）`
+        : '';
+      jobCardDone('重新识别 · 完成', `${n} 行已写回字幕${span}`
+        + (j.warning ? ` —— ${j.warning}` : ''), true);
+      toast(`重新识别已完成：${n} 行已写回字幕${span}` + (j.warning ? ' —— ' + j.warning : ''), 9000);
     } else {
       const err = j.error || '未知错误';
       clearReRecogRegion();
+      jobCardDone('重新识别 · 失败', String(err).slice(0, 160), false);
       toast(`重新识别失败：${err}`, 6600);
     }
   }, 1000);
@@ -3184,21 +3345,24 @@ async function startRerecog(a, b, why) {
   if (!state.project) { toast('重新识别只在项目模式可用（需要项目里已保存的音频）', 4600); return false; }
   if (state.format !== 'ass' && state.format !== 'srt') { toast('当前字幕格式不支持重新识别'); return false; }
   if (timeline.reRecogRegion) { toast('已有一个重新识别任务在进行中，请等它结束', 3800); return false; }
+  const pidAtStart = state.project.id;    // 下面的 await 期间用户可能切项目: 用捕获值, 返回前再校验
   // API Key 为空时明确告诉用户"只识别不翻译", 别让结果悄无声息地缺了中文
   let llmReadyNow = false;
   try { llmReadyNow = !!(await (await fetch('/api/translate/config')).json()).ready; } catch {}
+  if (!state.project || state.project.id !== pidAtStart) return;   // 期间切走了: 静默放弃
   if (!llmReadyNow) toast('翻译未就绪（API Key 为空或本地模型缺失）：本次只重新识别、不翻译', 8000);
   reRecogBusy = true;
   try {
-    const r = await fetch(`/api/projects/${state.project.id}/rerecognize`, {
+    const r = await fetch(`/api/projects/${pidAtStart}/rerecognize`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ start: a, end: b })
     });
     const m = await r.json();
+    if (!state.project || state.project.id !== pidAtStart) return;  // 响应回来前又切走了
     if (!r.ok) { toast(m.error || '重新识别启动失败', 5600); return false; }
     if (timeline.rangeSel) timeline.clearRangeSel();   // 选区收起; 常驻区域留在时间轴上直到任务结束
     setReRecogRegion(a, b, { status: 'running', progress: 2, message: '正在切出音频片段…' });
-    startRerecogPoll(state.project.id);
+    startRerecogPoll(pidAtStart);
     toast(`重新识别已在后台开始（${why}），可以继续编辑其它字幕，完成后会提示`, 6600);
     return true;
   } catch (e) {
@@ -3208,6 +3372,374 @@ async function startRerecog(a, b, why) {
     reRecogBusy = false;
   }
 }
+
+/* ═══════════ 右下角进度卡（后台长任务的统一出口）═══════════════
+ * 反思与纠错重识别都要跑几十秒到几分钟（本地模型更久）。原来只有：
+ *   · 反思 —— 一个挡住编辑区的弹窗（还不能关，关了不知道跑没跑）
+ *   · 重识别 —— 时间轴上的紫带 + 一条几秒就消失的 toast
+ * 都不好用。这里统一成一张右下角的常驻小卡：不挡操作、进度持续可见、结束自动收起。
+ *
+ * 两种进度形态：
+ *   · 确定进度 —— 有真实百分比（重识别按段推进）
+ *   · 不确定进度 —— 拿不到真实进度时用条纹动画表示"在动"（反思是同步请求）
+ */
+const jobCardEls = {
+  box: document.getElementById('job-card'),
+  title: document.getElementById('jc-title'),
+  bar: document.getElementById('jc-bar-in'),
+  msg: document.getElementById('jc-msg'),
+  foot: document.getElementById('jc-foot'),
+  close: document.getElementById('jc-close'),
+};
+let jobCardHideTimer = 0;
+
+/** 显示/更新进度卡。pct 传 null 表示"进度未知"，用条纹动画 */
+function jobCardShow(title, msg, pct, foot) {
+  const e = jobCardEls;
+  if (!e.box) return;
+  clearTimeout(jobCardHideTimer);
+  e.box.hidden = false;
+  e.box.classList.remove('jc-done', 'jc-err');
+  if (e.title && title != null) e.title.textContent = String(title);
+  if (e.msg) e.msg.textContent = String(msg == null ? '' : msg);
+  const indet = !(typeof pct === 'number' && isFinite(pct));
+  e.box.classList.toggle('jc-indet', indet);
+  if (!indet && e.bar) e.bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  if (e.foot) {
+    if (foot) { e.foot.hidden = false; e.foot.innerHTML = foot; }
+    else { e.foot.hidden = true; e.foot.innerHTML = ''; }
+  }
+}
+
+/** 结束态：成功绿、失败红，停留几秒后自动收起（用户也能立刻手动关） */
+function jobCardDone(title, msg, ok) {
+  const e = jobCardEls;
+  if (!e.box || e.box.hidden) return;
+  if (e.title && title != null) e.title.textContent = String(title);
+  if (e.msg) e.msg.textContent = String(msg == null ? '' : msg);
+  e.box.classList.remove('jc-indet');
+  e.box.classList.add(ok ? 'jc-done' : 'jc-err');
+  if (e.bar) e.bar.style.width = '100%';
+  clearTimeout(jobCardHideTimer);
+  // 出错多留一会儿（用户要看原因），成功 4 秒足够
+  jobCardHideTimer = setTimeout(jobCardHide, ok ? 4000 : 12000);
+}
+
+function jobCardHide() {
+  clearTimeout(jobCardHideTimer);
+  if (jobCardEls.box) jobCardEls.box.hidden = true;
+}
+if (jobCardEls.close) jobCardEls.close.addEventListener('click', jobCardHide);
+
+/* ═══════════ 长稿反思纠错（预览优先）═══════════════
+ * 流程：点「🧠 反思纠错」→ 服务端让 LLM **通读全片**（分批 + 相邻批重叠）
+ *      → 返回建议清单 + 去重后的重识别区间 → 用户在预览里逐条勾选或全选
+ *      → 确认后 POST /reidentify 批量重识别 → 轮询 → 一次写回。
+ *
+ * 为什么"全选"不是默认直接执行：一次纠错会改动几十行、烧掉一次模型调用，
+ * 用户要先看到"要改哪些、为什么、代价多大"再决定 —— 这就是预览优先。
+ *
+ * 轮询复用 startRerecogPoll()：它跑完会调 applyRecognized(a, b, segs)，
+ * 而那个函数是"删掉区间内所有目标行 + 把新行全部加回"，
+ * 所以多段一次写回也成立（区间已求并，天然有序、不重叠）。
+ */
+let reflectData = null;        // 最近一次反思结果 { findings, regions, summary, notes, rows }
+let reflectPicked = new Set(); // 勾选的下标（指向 findings）
+let reflectApplying = false;   // "应用选中项"正在进行中（防重入，见 applyReflect）
+
+const reflectEls = {
+  overlay: document.getElementById('reflect-overlay'),
+  msg: document.getElementById('reflect-msg'),
+  conf: document.getElementById('reflect-conf'),
+  confVal: document.getElementById('reflect-conf-val'),
+  confNote: document.getElementById('reflect-conf-note'),
+  summary: document.getElementById('reflect-summary'),
+  allWrap: document.getElementById('reflect-all-wrap'),
+  all: document.getElementById('reflect-all'),
+  allNote: document.getElementById('reflect-all-note'),
+  list: document.getElementById('reflect-list'),
+  cancel: document.getElementById('reflect-cancel'),
+  reload: document.getElementById('reflect-reload'),
+  apply: document.getElementById('reflect-apply'),
+  btn: document.getElementById('btn-reflect'),
+};
+
+function reflectShow(show) {
+  if (reflectEls.overlay) reflectEls.overlay.hidden = !show;
+}
+
+/* 逐句置信度的档位文案（与全局设置页的措辞保持一致，别另起一套说法）。
+ * 档位常量在这里**必须重新声明**：project.js 里那个 CONF_MODES 是 ES 模块作用域的
+ * （project.js 由 main.js `import { initProjects }` 加载），跨模块看不见 ——
+ * main.js 直接引用会 ReferenceError。服务端 CONFIDENCE_MODES 是同一套取值。 */
+const CONF_MODES = ['off', 'fast', 'full'];
+const CONF_MODE_TEXT = {
+  off: { name: '关闭', note: '重识别只出文本，不标可信度（最快）' },
+  fast: { name: '快速', note: '标出可信度，但不做稳定性重跑' },
+  full: { name: '完整', note: '音频加噪重跑 2 遍做稳定性判定，识别约慢一倍' },
+};
+
+/**
+ * 在预览里显示本次重识别会用的置信度档位。
+ *
+ * 用户要求"直接跟随全局设置"：服务端的 asrConfidenceFor() 已经是
+ * 「项目级 → 全局」的链路（项目没单独设过就用全局），这里只是把它**显示出来** ——
+ * 否则用户事后发现"怎么这次没有置信度"，却不知道去哪儿看。
+ * 所以这里只读不写，要改得去全局设置（提示里给出路径）。
+ */
+async function reflectShowConfMode() {
+  const e = reflectEls;
+  if (!e.conf) return;
+  // 项目级优先，其次全局；两者都读不到就不显示，别瞎猜
+  let mode = null, projectLevel = false;
+  try {
+    const meta = (state.project && state.project.draft) || {};
+    if (CONF_MODES.includes(meta.confidence)) { mode = meta.confidence; projectLevel = true; }
+    if (!mode) {
+      const r = await fetch('/api/asr/confidence', { signal: AbortSignal.timeout(6000) });
+      if (r.ok) mode = (await r.json()).mode || null;
+    }
+  } catch { /* 读不到就不显示 */ }
+  if (!CONF_MODES.includes(mode)) { e.conf.hidden = true; return; }
+  const info = CONF_MODE_TEXT[mode] || { name: mode, note: '' };
+  e.conf.hidden = false;
+  if (e.confVal) e.confVal.textContent = info.name;
+  if (e.confNote) {
+    e.confNote.textContent = projectLevel
+      ? `（本稿件单独设为「${info.name}」）${info.note}；改档位去「全局设置 → 识别增强」`
+      : `（跟随全局设置）${info.note}；改档位去「全局设置 → 识别增强」`;
+  }
+}
+function reflectEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+const REFLECT_KIND = {
+  merge:      { label: '合并重听', cls: 'chip-l1', tip: '这几行本该是一句，合并成一个区间重新识别' },
+  reidentify: { label: '重识别',   cls: 'chip-conf-low', tip: '这段疑似听错/拼接，重新识别该区间' },
+  // gap 现在**可执行**：补识别那段空档，把漏掉的内容找回来。
+  // （早期它只是"提示"，因为那时只能靠模型报；模型看不到静音，实测漏掉了
+  //   全片唯一一处 4.75 秒空档 —— 那段漏掉的话就永远补不回来。）
+  gap:        { label: '补漏识别', cls: 'chip-bad', tip: '这一段音频没有识别出内容，补识别一次把它找回来' },
+};
+
+/** 找出某个 finding 对应哪一段重识别区间（用于在清单里显示"这段多长"） */
+function reflectRegionOf(f, regions) {
+  // gap 的区间是它自己那对精确时间（服务端 findTimeGaps 给的）
+  if (f.kind === 'gap') {
+    if (Number.isFinite(f.start) && Number.isFinite(f.end)) {
+      return { start: f.start, end: f.end, dur: Number.isFinite(f.dur) ? f.dur : (f.end - f.start) };
+    }
+    // 模型报的 gap 没带时间（parseFindings 会尽量补上）；退回按行找
+  }
+  return (regions || []).find(r => f.from >= r.lo && f.to <= r.hi) || null;
+}
+
+function reflectRender() {
+  const d = reflectData;
+  if (!d || !reflectEls.list) return;
+  const s = d.summary || {};
+  const kindTxt = Object.entries(s.byKind || {}).map(([k, v]) => `${REFLECT_KIND[k] ? REFLECT_KIND[k].label : k} ${v}`).join(' · ');
+  const secs = Number(s.audioSec) || 0;
+  if (reflectEls.summary) {
+    reflectEls.summary.hidden = false;
+    reflectEls.summary.innerHTML =
+      `通读 <b>${s.rows || 0}</b> 行（${s.batches || 1} 批）→ 建议 <b>${s.findings || 0}</b> 条：${reflectEsc(kindTxt)}<br>`
+      + `实际需要重识别 <b>${s.regions || 0}</b> 段、共 <b>${secs.toFixed(1)}</b> 秒音频`
+      + `（同段只跑一遍；模型 ${reflectEsc(s.model || '?')}）`
+      + (s.dropped ? `<br><span style="color:var(--text-2)">已丢弃 ${s.dropped} 条与其它建议重复的条目</span>` : '')
+      + ((d.notes && d.notes.length) ? `<br><span style="color:var(--text-2)">${reflectEsc(d.notes.join('；'))}</span>` : '');
+  }
+  // gap 也是可执行项了，所以参与"全选"与计数
+  const actionable = (d.findings || []).length;
+  if (reflectEls.allWrap) {
+    reflectEls.allWrap.hidden = !actionable;
+    if (reflectEls.allNote) {
+      reflectEls.allNote.textContent = actionable
+        ? `将重识别 ${d.regions.length} 段、共 ${secs.toFixed(0)} 秒音频；点了「应用」才会改字幕`
+        : '没有需要动手的建议';
+    }
+  }
+  reflectEls.list.hidden = !(d.findings || []).length;
+  reflectEls.list.innerHTML = (d.findings || []).map((f, i) => {
+    const k = REFLECT_KIND[f.kind] || { label: f.kind, cls: '', tip: '' };
+    const reg = reflectRegionOf(f, d.regions);
+    const isGap = f.kind === 'gap';
+    const checked = reflectPicked.has(i) ? ' checked' : '';
+    const oldLines = (state.items || []).slice(f.from - 1, f.to)
+      .map(it => (it && (it.l2 || it.l1)) || '').filter(Boolean).join(' ／ ');
+    return `<label class="reflect-item${isGap ? ' is-gap' : ''}" data-idx="${i}" title="${reflectEsc(k.tip)}">`
+      + `<input type="checkbox" data-idx="${i}"${checked}>`
+      + `<span class="ri-body">`
+      + `<span class="ri-head">`
+      + `<span class="cc-chip ${k.cls}">${reflectEsc(k.label)}</span>`
+      + `<span class="ri-range">第 ${f.from}${f.to > f.from ? '~' + f.to : ''} 行 · 置信度 ${f.confidence}</span>`
+      + (reg ? `<span class="ri-range">→ 重听 ${reg.start.toFixed(1)}~${reg.end.toFixed(1)}s（${Number(reg.dur).toFixed(1)}s）</span>` : '')
+      + `</span>`
+      + `<span class="ri-reason">${reflectEsc(f.reason)}</span>`
+      + (oldLines ? `<span class="ri-text">${reflectEsc(oldLines.slice(0, 140))}</span>` : '')
+      + `</span></label>`;
+  }).join('');
+  reflectUpdateApply();
+}
+
+function reflectUpdateApply() {
+  if (!reflectEls.apply) return;
+  const n = reflectPicked.size;
+  reflectEls.apply.disabled = n === 0;
+  reflectEls.apply.textContent = n ? `应用选中项（${n} 条）` : '应用选中项';
+}
+
+/**
+ * 跑一遍反思。
+ *
+ * 进度放在**右下角进度卡**里，不弹窗挡住编辑区 —— 长稿（几十批）在本地模型上
+ * 可能跑几分钟，弹窗会逼用户干等。跑完（或失败）才弹预览清单。
+ *
+ * 反思是同步请求，拿不到真实批次进度，所以用"不确定进度"条纹 + 已耗时秒数，
+ * 至少让用户知道它**还在动**（早期只有一条静止的弹窗文案，被当成卡死）。
+ */
+async function startReflect() {
+  if (!state.project) { toast('反思纠错需要项目模式（要用项目里保存的音频）', 4600); return; }
+  if (reflectApplying) { toast('正在应用上一次的纠错结果，请等它结束', 3800); return; }
+  if (reflectEls.btn) reflectEls.btn.disabled = true;
+  reflectData = null;
+  reflectPicked = new Set();
+  reflectShow(false);                 // 先不弹窗：进度看右下角那张卡
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    const sec = Math.round((Date.now() - t0) / 1000);
+    jobCardShow('反思纠错 · 通读全片', `正在让模型分批通读字幕…（已用 ${sec} 秒）`, null,
+      '长稿可能要几分钟；跑完会自动弹出预览清单');
+  }, 1000);
+  jobCardShow('反思纠错 · 通读全片', '正在让模型分批通读字幕…', null,
+    '长稿可能要几分钟；跑完会自动弹出预览清单');
+  try {
+    const r = await fetch(`/api/projects/${state.project.id}/reflect`, { method: 'GET' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    reflectData = j;
+    /* 默认勾选"置信度 ≥0.8"的条目 —— 预览优先，但别让用户逐条点。
+     * gap（补漏识别）是**确定性检出**的（扫时间轴空档，不靠模型），置信度恒为 0.9，
+     * 所以自然会被勾上；不想补的取消即可。 */
+    reflectPicked = new Set((j.findings || [])
+      .map((f, i) => (f.confidence >= 0.8 ? i : -1))
+      .filter(i => i >= 0));
+    const sec = Math.round((Date.now() - t0) / 1000);
+    const nf = (j.findings || []).length;
+    jobCardDone('反思纠错 · 完成',
+      nf ? `找到 ${nf} 条建议，用时 ${sec} 秒` : `没有发现明显问题，用时 ${sec} 秒`, true);
+    // 现在才弹预览
+    reflectShow(true);
+    if (reflectEls.summary) reflectEls.summary.hidden = true;   // reflectRender 会重新填
+    if (reflectEls.msg) {
+      const nGap = (j.findings || []).filter(f => f.kind === 'gap').length;
+      reflectEls.msg.textContent = nf
+        ? ('下面是模型认为需要修正的地方。勾选要应用的条目，再点「应用选中项」。'
+           + (nGap ? `其中 ${nGap} 条是「补漏识别」——那段音频没识别出内容，补识别能把它找回来。` : ''))
+        : '模型通读全片后没有发现明显问题。';
+    }
+    if (reflectEls.all) reflectEls.all.checked = reflectPicked.size > 0;
+    if (reflectEls.reload) reflectEls.reload.hidden = false;
+    reflectShowConfMode();          // 显示本次重识别会用哪一档置信度（跟随全局）
+    reflectRender();
+  } catch (e) {
+    jobCardDone('反思纠错 · 失败', String(e.message || e).slice(0, 160), false);
+    // 仍弹窗，让用户在弹窗里看到完整原因（卡片的字体小、两行就截断了）
+    reflectShow(true);
+    if (reflectEls.msg) {
+      reflectEls.msg.innerHTML = `<span style="color:var(--danger)">反思失败：${reflectEsc(e.message)}</span>`;
+    }
+    if (reflectEls.reload) reflectEls.reload.hidden = false;
+  } finally {
+    clearInterval(tick);
+    if (reflectEls.btn) reflectEls.btn.disabled = false;
+  }
+}
+
+/** 把选中的建议 → 区间求并 → POST /reidentify → 复用现有轮询写回 */
+async function applyReflect() {
+  const d = reflectData;
+  // 重入保护：本函数一进来就把弹窗关掉，用户看到的是"已回到编辑页"，
+  // 很容易再点一次（或双击）—— 第二个请求必然撞上服务端的互斥锁，
+  // 弹出"这个稿件已有重新识别任务在跑"，看起来像是上一次失败了。
+  if (reflectApplying) return;
+  if (!d || !reflectPicked.size) return;
+  // 与后端同一套规则：排序后合并重叠/相接的区间（保证每段只跑一次）
+  // gap 也是可执行项（补识别那段空档），不再过滤掉
+  const picked = [...reflectPicked].map(i => d.findings[i]).filter(Boolean);
+  const regs = picked.map(f => reflectRegionOf(f, d.regions)).filter(Boolean);
+  if (!regs.length) { toast('选中的条目没有可执行的区间', 4200); return; }
+  const uniq = [];
+  for (const r of regs.slice().sort((a, b) => a.start - b.start)) {
+    const last = uniq[uniq.length - 1];
+    if (last && r.start <= last.end + 0.001) last.end = Math.max(last.end, r.end);
+    else uniq.push({ start: r.start, end: r.end });
+  }
+  const total = uniq.reduce((s, r) => s + (r.end - r.start), 0);
+  const spanSec = uniq[uniq.length - 1].end - uniq[0].start;
+  reflectShow(false);
+  reflectApplying = true;
+  if (reflectEls.btn) reflectEls.btn.disabled = true;
+  // 让用户先看到"要动多大一块、其中多少是真的要重听"——两者差别大时尤其要讲清楚，
+  // 否则会以为整段都会被重识别。写回是按 uniq 各段做的，不受这个总跨度影响。
+  if (uniq.length > 1 && spanSec > total * 1.25) {
+    toast(`将重识别 ${uniq.length} 段 / 共约 ${total.toFixed(0)} 秒音频；`
+      + `段与段之间的内容（约 ${(spanSec - total).toFixed(0)} 秒）不受影响`, 9000);
+  }
+  try {
+    const r = await fetch(`/api/projects/${state.project.id}/reidentify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regions: uniq }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    // 时间轴上把那几段画出来。传**各段区间**（uniq）而不是首尾跨度：
+    // 逐段画紫带，段与段之间的空隙不涂色，用户才能一眼看出真正在重听的是哪几块。
+    const a0 = uniq[0].start, b0 = uniq[uniq.length - 1].end;
+    setReRecogRegion(a0, b0, { status: 'running', progress: 1, regions: uniq, message: j.message || '纠错重识别中 …' });
+    startRerecogPoll(state.project.id);
+    toast(`纠错重识别已在后台开始：${uniq.length} 段、约 ${total.toFixed(0)} 秒音频，完成后会自动写回`, 8000);
+  } catch (e) {
+    toast('纠错重识别启动失败: ' + e.message, 6000);
+  } finally {
+    reflectApplying = false;
+    if (reflectEls.btn) reflectEls.btn.disabled = false;
+  }
+}
+
+if (reflectEls.btn) reflectEls.btn.addEventListener('click', startReflect);
+if (reflectEls.cancel) reflectEls.cancel.addEventListener('click', () => reflectShow(false));
+if (reflectEls.reload) reflectEls.reload.addEventListener('click', startReflect);
+if (reflectEls.apply) reflectEls.apply.addEventListener('click', applyReflect);
+if (reflectEls.all) {
+  reflectEls.all.addEventListener('change', () => {
+    const d = reflectData;
+    if (!d) return;
+    reflectPicked = reflectEls.all.checked
+      ? new Set((d.findings || []).map((f, i) => i))   // gap 也一起选上（它现在可执行）
+      : new Set();
+    reflectRender();
+  });
+}
+if (reflectEls.list) {
+  // 事件委托：清单是每次重建 innerHTML，逐个绑会失效
+  reflectEls.list.addEventListener('change', (e) => {
+    const cb = e.target;
+    if (!cb || cb.type !== 'checkbox') return;
+    const i = Number(cb.dataset.idx);
+    if (!Number.isFinite(i)) return;
+    if (cb.checked) reflectPicked.add(i); else reflectPicked.delete(i);
+    const d = reflectData;
+    // 全选框的状态要跟"所有可执行项"比 —— gap 现在也是可执行的
+    const actionable = d ? (d.findings || []).length : 0;
+    if (reflectEls.all) reflectEls.all.checked = actionable > 0 && reflectPicked.size === actionable;
+    reflectUpdateApply();
+  });
+}
+// Esc 关闭（与其它弹窗一致）
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && reflectEls.overlay && !reflectEls.overlay.hidden) reflectShow(false);
+});
 
 if (rbReRecog) rbReRecog.addEventListener('click', () => {
   const sel = timeline.rangeSel;
@@ -3989,6 +4521,7 @@ if (setZoom) setZoom.addEventListener('input', () => {
 function applyFilmSetting() {
   const on = localStorage.getItem(FILM_KEY) === '1';   // 胶片预览图默认关
   timeline.showFilm = on;
+  timeline.touch();                                    // 直接改属性 → 手动置脏
   if (setFilm) setFilm.checked = on;
   if (setFilmVal) setFilmVal.textContent = on ? '开' : '关';
 }
@@ -4167,7 +4700,7 @@ function tick() {
   // 播放头进出正在编辑的句子时切换临时轨；离开即恢复真实 ASS。
   if (editPreview && editRowVisible(editPreview.row) !== !!previewTrack) queueEditPreview();
   if (wordPreviewTrackRow && !editRowVisible(wordPreviewTrackRow)) clearWordPreview();
-  timeline.draw(t, !video.paused);
+  timeline.drawIfNeeded(t, !video.paused);
   panel.setPlayingByTime(t);
   tlCursor.textContent = fmtTime(t);
   requestAnimationFrame(tick);

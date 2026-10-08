@@ -62,6 +62,23 @@ def app_version():
         return ''
 
 
+def app_file_version():
+    """从 editor/server.js 取 APP_FILE_VERSION —— 给 Windows 用的**四段纯数字**版本号。
+
+    为什么要单独一个：APP_VERSION 可能带 -fork.1 这类后缀（本 fork 用它区分于上游），
+    而 Windows 的 PE 文件版本号必须是 a.b.c.d 四段数字，
+    rcedit 拿到 "2.1.12-fork.1" 会失败或写出错乱的版本信息。
+    取不到就退回 APP_VERSION（上游的单一路径仍然能用）。"""
+    try:
+        src = open(os.path.join(ROOT, 'editor', 'server.js'), encoding='utf-8').read()
+        m = re.search(r"APP_FILE_VERSION\s*=\s*'([^']+)'", src)
+        if m and re.fullmatch(r'\d+(\.\d+){1,3}', m.group(1)):
+            return m.group(1)
+    except Exception:
+        pass
+    return app_version()
+
+
 def ensure_icon():
     """确保 logo.ico 存在且不比 logo.png 旧。生成失败不致命(可能没装 Pillow) ——
     此时若已有入库的 logo.ico 就照用, 真的没有才报错退出。"""
@@ -95,7 +112,8 @@ def embed_icon_and_version(exe_path, ico):
     SEA blob 在 Windows 上是以 PE 资源(RT_NODE_SEA_BLOB)形式注入的,
     rcedit 会重建整个 .rsrc 段, 后跑会把 blob 一起抹掉。"""
     rcedit = ensure_rcedit()
-    ver = app_version() or '0.0.0'
+    ver = app_file_version() or '0.0.0'
+    display = app_version() or ver
     run([rcedit, exe_path,
          '--set-icon', ico,
          '--set-file-version', ver,
@@ -104,7 +122,7 @@ def embed_icon_and_version(exe_path, ico):
          '--set-version-string', 'FileDescription', 'SubFabric 字幕工作台',
          '--set-version-string', 'CompanyName', 'EndiVee233',
          '--set-version-string', 'LegalCopyright', 'EndiVee233'])
-    print('已嵌入图标与版本信息: v%s' % ver)
+    print('已嵌入图标与版本信息: v%s（文件版本 %s）' % (display, ver))
 
 
 def run(cmd, **kw):

@@ -14,7 +14,11 @@
 ; 版本号要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "2.1.11"
+; 显示版本：本 fork 加 -fork.N 后缀与上游区分（两边曾撞号，都叫 2.1.12）。
+; ⚠ VersionInfoVersion / VersionInfoProductVersion 必须是**四段纯数字** ——
+;   直接塞 "2.1.12-fork.1" 会让 Inno Setup 编译报错，所以另设一个纯数字版本号。
+#define MyAppVersion "2.1.12-fork.1"
+#define MyAppFileVersion "2.1.12.1"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
@@ -31,11 +35,11 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-VersionInfoVersion={#MyAppVersion}.0
+VersionInfoVersion={#MyAppFileVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppFileVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=.

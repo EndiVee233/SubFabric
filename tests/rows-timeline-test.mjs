@@ -16,13 +16,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 const JSMOD = path.join(HERE, 'jsmod');
-const ASS = path.join(REPO, 'projects', 'p-muz7axuw-f0bdc', 'subtitle.ass');
+// 素材：优先真实稿件，没有就用合成 ASS（见 tests/ass-fixture.mjs）
+const { resolveAssFixture } = await import(pathToFileURL(path.join(HERE, 'ass-fixture.mjs')).href);
+const __fx = resolveAssFixture();
 
 const { AssDoc } = await import(pathToFileURL(path.join(JSMOD, 'ass.js')).href);
 const { analyzeKaraoke } = await import(pathToFileURL(path.join(JSMOD, 'karaoke.js')).href);
 const { pairRows } = await import(pathToFileURL(path.join(JSMOD, 'karaoke.js')).href);
 
-const doc = new AssDoc(fs.readFileSync(ASS, 'utf8'));
+console.log(`素材: ${__fx.name}（${__fx.real ? '真实稿件' : '合成'}）`);
+const doc = new AssDoc(__fx.text);
 const kar = analyzeKaraoke(doc);
 console.log(`sentences=${kar.sentences.length}  wordStyle=${kar.wordStyle}`);
 

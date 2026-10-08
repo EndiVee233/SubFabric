@@ -105,6 +105,8 @@
     <button class="btn btn-mini" id="btn-badcat" title="按异常**类别**筛选（可多选）：时间异常、字幕重叠、缺语言行、角色问题、逐词缺词">▾ 异常筛选<span id="badcat-count"></span></button>
     <div class="badcat-panel" id="badcat-panel" hidden></div>
   </div>
+  <!-- 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，先出预览、确认后再重识别 -->
+  <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处（没说完 / 被硬切 / 拼接痕迹 / 疑似听错），先给预览，确认后再重识别那几段" disabled>🧠 反思纠错</button>
         </div>
       </div>
       <div id="cue-list">
@@ -636,6 +638,51 @@
   </div>
 </div>
 
+<!-- 右下角常驻进度卡（反思 / 纠错重识别等后台长任务）。
+     为什么不用弹窗：这些任务要跑几十秒到几分钟，弹窗会挡住编辑区、逼用户干等；
+     放右下角既不挡操作，又能随时看到进度。任务结束自动收起。 -->
+<div id="job-card" hidden>
+  <div class="jc-head">
+    <span class="jc-spin" aria-hidden="true"></span>
+    <span class="jc-title" id="jc-title">处理中</span>
+    <button type="button" class="jc-close" id="jc-close" title="收起（任务仍在后台继续）">×</button>
+  </div>
+  <div class="jc-bar"><div class="jc-bar-in" id="jc-bar-in"></div></div>
+  <div class="jc-msg" id="jc-msg"></div>
+  <div class="jc-foot" id="jc-foot" hidden></div>
+</div>
+
+<!-- 长稿反思纠错：预览清单（逐条勾选 + 全部接受） -->
+<div id="reflect-overlay" hidden>
+  <div class="rn-box modal-surface reflect-box">
+    <div class="rn-title modal-drag-handle">反思纠错 · 预览</div>
+    <div class="rn-msg" id="reflect-msg">正在让模型通读全片…</div>
+
+    <!-- 进度已挪到右下角的 #job-card（不挡编辑区）。
+         这块位置改成显示本次重识别会用的「逐句置信度」档位 ——
+         它**跟随全局设置**（项目没单独设过就用全局），这里只是让用户看得见，
+         免得事后发现"怎么这次没有置信度"。 -->
+    <div class="reflect-conf" id="reflect-conf" hidden>
+      <span class="rc-label">逐句置信度</span>
+      <span class="rc-value" id="reflect-conf-val">—</span>
+      <span class="rc-note" id="reflect-conf-note"></span>
+    </div>
+
+    <div class="reflect-summary" id="reflect-summary" hidden></div>
+    <label class="reflect-all" id="reflect-all-wrap" hidden>
+      <input type="checkbox" id="reflect-all" checked> 全选
+      <span class="reflect-all-note" id="reflect-all-note"></span>
+    </label>
+    <div class="reflect-list" id="reflect-list" hidden></div>
+
+    <div class="rn-actions">
+      <button type="button" class="btn" id="reflect-cancel">关闭</button>
+      <button type="button" class="btn" id="reflect-reload" hidden>重新反思</button>
+      <button type="button" class="btn btn-accent" id="reflect-apply" disabled>应用选中项</button>
+    </div>
+  </div>
+</div>
+
 <!-- 添加角色 -->
 <div id="role-new" hidden>
   <div class="rn-box modal-surface">
@@ -830,7 +877,15 @@
           <label class="ws-check"><input type="checkbox" id="dt-set-cast"> 开启</label>
           <label class="ws-check"><input type="checkbox" id="dt-set-speakers"> 自动区分说话人</label>
         </div>
-        <p class="ws-hint" id="dt-set-speakers-note">说话人是在创建初稿时定下的，这里只显示当时的选择。</p>
+        <div class="ws-row" style="margin-top:8px">
+          <span class="st-lbl" style="min-width:auto">逐句置信度</span>
+          <select id="dt-set-confidence" class="np-select" style="max-width:230px" disabled>
+            <option value="full">完整（含稳定性判定）</option>
+            <option value="fast">快速（不重跑稳定性）</option>
+            <option value="off">关闭（不生成）</option>
+          </select>
+        </div>
+        <p class="ws-hint" id="dt-set-speakers-note">说话人是在创建初稿时定下的；逐句置信度也是，这里只显示当时的选择。</p>
 
         <div class="ws-group-title">识别来源</div>
         <div class="ws-row"><select id="dt-set-source" class="np-select ws-fld"></select></div>
@@ -1010,6 +1065,15 @@
               <span id="np-word-desc">开启 → 生成 ASS 逐词字幕</span>
             </label>
           </div>
+          <div class="np-file-row" id="np-row-conf" hidden>
+            <span class="np-lbl">置信度</span>
+            <select id="np-confidence" class="np-select" style="max-width:230px" title="每句标一个可信度，便于筛出可疑句复核">
+              <option value="full">完整（含稳定性判定）</option>
+              <option value="fast">快速（不重跑稳定性）</option>
+              <option value="off">关闭（不生成）</option>
+            </select>
+            <span class="gl-hint" id="np-confidence-desc" style="flex:1">「完整」会把音频加噪重跑 2 遍做稳定性判定，识别约慢一倍</span>
+          </div>
           <div class="np-file-row" id="np-row-spk" hidden>
             <span class="np-lbl">说话人</span>
             <label class="np-switch">
@@ -1146,7 +1210,7 @@
           <div class="st-grid">
             <span class="st-lbl">默认画质</span>
             <select id="st-fetch-quality" class="select">
-              <option value="best">最高可用（有大会员 Cookie 时吃到 8K/HDR）</option>
+              <option value="best">1080P 优先（大会员先试 60 帧；只降不升）</option>
               <option value="2160">4K 及以下</option>
               <option value="1080">1080P 及以下</option>
               <option value="720">720P 及以下</option>
@@ -1162,7 +1226,7 @@
           <p class="gl-hint">只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。</p>
         </div>
         <div class="st-card">
-          <div class="st-card-title">bilibili 登录 <span class="st-card-note">有大会员 Cookie 才能下最高画质</span></div>
+          <div class="st-card-title">bilibili 登录 <span class="st-card-note">有大会员 Cookie 才能下 1080P 60帧 / 高码率 / 4K</span></div>
           <div class="st-grid">
             <span class="st-lbl">Cookie</span>
             <textarea id="st-fetch-cookie" class="st-input" rows="3" spellcheck="false" placeholder="粘贴浏览器里的 Cookie：SESSDATA=…; bili_jct=…; DedeUserID=…（整段复制最好；只复制到值也认，会按 SESSDATA 存）。保存后加密落到本地、不回显，并立即验证登录是否成功"></textarea>
@@ -1203,6 +1267,7 @@
             <span class="st-lbl">每批行数</span>
             <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="25" style="max-width:120px">
           </div>
+          <p class="gl-hint" id="st-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="st-key-clear" class="st-key-clear">清除已存 Key</a></p>
           <p class="gl-hint">一次请求最多带多少行给翻译模型（5~100）。批越大请求越少，但译文行数一旦和输入对不上，整批都要重来；批越小越稳，请求也越多。失败时程序会自动拆成两半重试。</p>
         </div>
         <div class="st-card">
@@ -1239,6 +1304,59 @@
             </label>
             <span class="gl-hint" style="flex:1" id="st-cast-note">先用视频标题/简介让模型判断有几个人物，按这个人数做说话人分离；分离后把说话人换成真实角色名，没对应上的保留说话人编号。模型用「字幕翻译」里配的那份。</span>
           </div>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">逐句置信度 <span class="st-card-note">标注每句的可信程度，供复核</span></div>
+          <div class="st-row">
+            <select id="st-conf-mode" class="st-input" style="max-width:230px">
+              <option value="full">完整（含稳定性判定）</option>
+              <option value="fast">快速（不重跑稳定性）</option>
+              <option value="off">关闭（不生成）</option>
+            </select>
+            <span class="gl-hint" style="flex:1" id="st-conf-note">置信度由三个信号融合：<b>词级概率</b>与<b>音频质量</b>在解码时白送、不花时间；<b>稳定性</b>要把音频加噪<b>重跑 2 遍</b> —— 实测 236 秒音频 10.7s → 20.8s，<b>约慢一倍</b>。默认「完整」。</span>
+          </div>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">自动纠错 <span class="st-card-note">让 LLM 通读全片找"语句不通顺"</span></div>
+          <div class="st-row">
+            <select id="st-correct-mode" class="st-input" style="max-width:230px">
+              <option value="preview">预览优先（默认）</option>
+              <option value="off">关闭</option>
+              <option value="auto">建稿后自动跑一次（仍需确认才改）</option>
+            </select>
+            <span class="gl-hint" style="flex:1">在稿件页点「🧠 反思纠错」触发。它会找出<b>没说完 / 被硬切 / 拼接痕迹 / 疑似听错</b>的地方，先给预览清单，你勾选后才重识别那几段。</span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <span class="st-lbl" style="min-width:auto">上下文</span>
+            <input type="number" id="st-correct-pad" class="st-input" min="0" max="15" step="1" value="2" style="max-width:74px" title="每段建议前后各取多少秒音频一起重听">
+            <span class="gl-hint">秒／前后各取；单段上限</span>
+            <input type="number" id="st-correct-max" class="st-input" min="3" max="120" step="1" value="30" style="max-width:74px" title="单段重识别区间的时长上限，避免一段吞掉全片">
+            <span class="gl-hint">秒；每批</span>
+            <input type="number" id="st-correct-batch" class="st-input" min="20" max="200" step="10" value="60" style="max-width:74px" title="每次送给模型的字幕行数（长稿会分多批）">
+            <span class="gl-hint">行（长稿会分批通读）</span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
+              <input type="checkbox" id="st-correct-usetranslate" checked> 用字幕翻译的模型
+            </label>
+            <span class="gl-hint" style="flex:1" id="st-correct-eff"></span>
+          </div>
+          <div id="st-correct-custom" hidden>
+            <div class="st-row" style="margin-top:6px">
+              <select id="st-correct-provider" class="st-input" style="max-width:230px"></select>
+            </div>
+            <div class="st-row" style="margin-top:6px">
+              <input type="text" id="st-correct-baseurl" class="st-input" spellcheck="false" placeholder="接口地址，例如 http://127.0.0.1:8000/v1">
+            </div>
+            <div class="st-row" style="margin-top:6px">
+              <input type="text" id="st-correct-model" class="st-input" spellcheck="false" placeholder="模型名，例如 Qwen3-8B">
+            </div>
+            <div class="st-row" style="margin-top:6px">
+              <input type="password" id="st-correct-key" class="st-input" spellcheck="false" placeholder="API Key（本机地址可留空）">
+            </div>
+            <p class="gl-hint">想用<b>本地部署</b>的模型（如 Qwen3 量化版）：起一个 OpenAI 兼容服务后，把地址填成 <code>http://127.0.0.1:端口/v1</code>、模型名填服务暴露的名字，<b>Key 可留空</b>。</p>
+          </div>
+          <p class="gl-hint" id="st-correct-note"></p>
         </div>
         <div class="st-card">
           <div class="st-card-title">热词强度 <span class="st-card-note">仅 Parakeet</span></div>

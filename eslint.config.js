@@ -117,6 +117,7 @@ export default [
       sourceType: 'module',
       globals: {
         process: 'readonly', Buffer: 'readonly', console: 'readonly',
+        global: 'readonly',                  // Node 的 global（karaoke-exhaustive.mjs 的 __dumped 用）
         setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly',
         clearInterval: 'readonly', setImmediate: 'readonly', queueMicrotask: 'readonly',
         URL: 'readonly', URLSearchParams: 'readonly', TextDecoder: 'readonly',

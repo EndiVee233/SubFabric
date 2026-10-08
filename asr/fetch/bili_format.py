@@ -163,8 +163,14 @@ def build_audio_selector(order: Optional[List[int]] = None) -> str:
 
 def build_video_selector(quality_order: Optional[List[int]] = None,
                          audio_order: Optional[List[int]] = None,
-                         codec_order: Optional[List[str]] = None) -> str:
-    """按“画质优先级 × 编码优先级”生成 yt-dlp 的 format 选择器。"""
+                         codec_order: Optional[List[str]] = None,
+                         height_cap: Optional[int] = None) -> str:
+    """按“画质优先级 × 编码优先级”生成 yt-dlp 的 format 选择器。
+
+    height_cap（SubFabric 侧新增，2026-10-08）：不为空时，**最终兜底也限制在该高度以内**。
+    默认下载不允许“越档向上取”—— 1080P 链失败时不会回退到 4K/8K（见 selector.py 的
+    bilibili best 档注释）；传 None 保持老行为（兜底 bestvideo+bestaudio/best）。
+    """
     qualities = [q for q in (quality_order or DEFAULT_QUALITY_ORDER) if q]
     audios = [a for a in (audio_order or DEFAULT_AUDIO_ORDER) if a]
     codecs = [c for c in (codec_order or DEFAULT_CODEC_ORDER) if c in _CODEC_FILTERS]
@@ -186,9 +192,14 @@ def build_video_selector(quality_order: Optional[List[int]] = None,
     # 上述组合都不可用时，仍限制在用户给定的画质档位内
     for qn in qualities:
         parts.append(f"bestvideo[quality={qn}]+bestaudio")
-    # 最终兜底，保证下载不会因为档位表而对所有视频都失败
-    parts.append("bestvideo+bestaudio")
-    parts.append("best")
+    if height_cap:
+        # 带高度上限的兜底（只降不升）：SubFabric 默认/数字档用，绝不回退到更高的画质
+        parts.append(f"bestvideo[height<={height_cap}]+bestaudio")
+        parts.append(f"best[height<={height_cap}]")
+    else:
+        # 最终兜底，保证下载不会因为档位表而对所有视频都失败
+        parts.append("bestvideo+bestaudio")
+        parts.append("best")
 
     seen, out = set(), []
     for item in parts:

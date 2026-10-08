@@ -16,7 +16,113 @@
 本模块只依赖 numpy，可单独测试（见 tests/confidence-test.py）。
 """
 
-from __future__ import annotations
+import re
+
+# 撇号类字符：**词内**字符，绝不在此切开（don't / you've / hunter's）
+_APOS = "'\u2019\u02bc"
+_PUNCT = r"[^\s0-9A-Za-z_" + _APOS + r"]"
+
+
+def split_glommed_word(w: str):
+    """把一个"粘连词"切成多个词；切不开就原样返回（单元素列表）。
+
+    为什么需要：两个引擎的 token→词 都靠"词边界标记"判定新词 ——
+    NPU 引擎看 SentencePiece 的 ▁，sherpa 看 token 的前导空格。
+    **模型在退化的地方会吐出没有边界标记的垃圾片段**，于是被拼进同一个词：
+        series.ies   （SMP is a scripted Minecraft series. 之后又跟了 ies）
+        first......'arc.
+        headquarters..hunter's.
+        players.....ed.
+    表现：一个"词"占 11~12 秒、文本由两半粘成 —— 用户看到的就是
+    "语法不完整的怪句子"（实测某项目 90% 的段被这类词拖坏）。
+
+    切分规则（两条边界，都要求前半像词：≥3 个字母数字、以字母数字结尾、含字母）：
+      A) [标点串] + 字母 + …   —— series.ies / entirely..ive
+      B) [标点串(≥2 个)] 收尾   —— storyline...
+    **单个词尾标点不是边界**（series, / Mr. / SMP. / Hello, 都不能切）；
+    撇号既不作为边界起点、也不许被切走（don't / it's / wasn't 保持原样）。
+    只切第一刀、剩余递归 —— 于是 first......'arc. 先切出 first，
+    剩下的 "......'arc." 因以撇号开头而停下，不会被误切成两半。
+    """
+    if not w:
+        return [w]
+
+    def alnum_count(s):
+        return sum(1 for ch in s if ch.isalnum())
+
+    for i in range(1, len(w)):
+        head, tail = w[:i], w[i:]
+        if alnum_count(head) < 3 or not head[-1].isalnum():
+            continue
+        if not any(ch.isalpha() for ch in head):
+            continue
+        m = re.match(_PUNCT + r"+", tail)
+        if not m:
+            continue
+        rest = tail[m.end():]
+        run2 = m.end() >= 2                      # 标点串 ≥2 个
+        punct_then_word = bool(rest) and rest[0] not in _APOS
+        if not (run2 or punct_then_word):
+            continue
+        if not rest or rest[0] in _APOS:
+            return [head, tail]                  # 边界 B：标点串直接收尾
+        return [head] + split_glommed_word(tail)  # 边界 A：继续处理剩余
+    return [w]
+
+
+def split_words_inplace(words: list) -> int:
+    """把词表里所有粘连词就地切开（保持顺序与时间）。返回切开的个数。
+
+    时间分配：按**字符数比例**把原词的 [start, end) 分给各片段。
+    实测原词的区间是可信的（词尾精修按相邻词起点定），只是内部没有分界信息，
+    按长度分摊是这个约束下最合理的近似。
+    词级概率 _p 对不上号了（原本是整个粘连词的 token 概率），直接丢掉 ——
+    宁可让这几行"没有词级评分"，也不要给一个错位的分数。
+    """
+    out = []
+    n_split = 0
+    n = len(words or [])
+    for i, w in enumerate(words or []):
+        raw = str(w.get("word") or "")
+        parts = split_glommed_word(raw)
+        if len(parts) < 2:
+            out.append(w)
+            continue
+        n_split += 1
+        start = float(w.get("start", 0.0))
+        # 这一步跑在 refine_word_ends **之前**，词上通常还没有 end。
+        # 早期版本写的是 `end = float(w.get("end", start))` —— 缺 end 时退化成
+        # 零长度区间，按字符比例分还是零，切出来的片段 start 全等于原词 start
+        # （实测：series/.ies 都是 14.64，且 .ies 被 refine 拉成 0.52 秒，时间互相重叠）。
+        # 正确做法是照 refine_word_ends 自己的规则：没 end 就用**下一个词的 start**。
+        if "end" in w:
+            end = float(w["end"])
+        elif i + 1 < n:
+            end = float(words[i + 1].get("start", start))
+        else:
+            # 末词：没有下一个词可参照，也没有 end（refine_word_ends 还没跑）。
+            # 用一个**字符数估计**的区间兜底，与 refine_word_ends 的估法同口径
+            # （0.055 秒/字母数字，夹在 0.15~0.6 秒）。
+            # 不给估计的话两段都是零长度、start 全等，切了等于没切。
+            alpha = sum(1 for ch in raw if ch.isalnum())
+            end = start + min(0.6, max(0.15, 0.055 * max(1, alpha)))
+        if not (end > start):
+            end = start        # 实在没有区间可分：保持零长度，交给 refine_word_ends 兜底
+        total = sum(len(p) for p in parts) or 1
+        t = start
+        for k, p in enumerate(parts):
+            share = (end - start) * (len(p) / total)
+            nw = {"word": p, "start": round(t, 3)}
+            t += share
+            nw["end"] = round(t if k < len(parts) - 1 else end, 3)
+            # anchor 只给含字母数字的片段，供 refine_word_ends 用
+            if any(ch.isalnum() for ch in p):
+                nw["anchor"] = nw["start"]
+            out.append(nw)
+    if n_split:
+        words[:] = out
+    return n_split
+
 
 import numpy as np
 
