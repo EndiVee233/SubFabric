@@ -154,8 +154,26 @@ function planChunks(items, size) {
   return out;
 }
 
+/* ── 中文译文的标点归一化 ────────────────────────────────────────
+ * 项目约定: 中文行用**空格**分词, 不出现 ，、。 (半角 , . 与 ! ? 保留不动)。
+ * 这是"外部文本(LLM 译文 / ASR)入库前"的统一口径 —— 用户手动编辑不走这里。
+ *
+ * 为什么单独抽成一个函数: 这条规则以前散在 server.js 写初稿、main.js 选区重新识别两处,
+ * 而**右键「重新翻译」漏了**, 于是那一路径的中文会带回 ，。 (用户报的 bug)。
+ * 浏览器侧同款实现在 editor/js/karaoke.js 的 normalizeZhPunctuation ——
+ * tests/zh-punct-test.mjs 会断言两者对同一语料输出一致, 防止再次分叉。
+ * ──────────────────────────────────────────────────────────── */
+function normalizeZhPunctuation(text) {
+  return String(text == null ? '' : text)
+    .replace(/\r?\n/g, ' ')
+    .replace(/[，、。]+/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]*\\N[ \t]*/g, '\\N')   // 别在 ASS 换行符旁留下空格
+    .trim();
+}
+
 module.exports = {
   stripReasoning, looksLikeReasoning, extractJsonArray, parseJsonArray,
   parseLineArrayReply, punctPairsSane, chattyLine, LlmError,
-  clampBatchSize, planChunks, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
+  clampBatchSize, planChunks, normalizeZhPunctuation, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
 };
