@@ -396,6 +396,35 @@ window.addEventListener('resize', () => overlay.fitToVideo());
 
 /* ═══════════ 字幕加载 ═══════════ */
 const ASS_WORD_COLOR_META = 'SubFabricWordHighlightColor';
+/* ASR 置信度元数据（server.js 写入 Script Info 注释；其它播放器会忽略这些 `;` 注释）。
+ * 格式 `行号:分数:最差词下标` 逗号分隔 —— 行号对应字幕行顺序。
+ * 阈值必须与 asr/confidence.py 的 LOW_CONFIDENCE 保持一致（后端判定与前端筛选同一口径）。
+ * 注意：它声明在解析函数**之前** —— const 在声明前被引用会抛 TDZ 错误。 */
+const ASS_CONFIDENCE_META = 'SubFabricConfidence';
+const LOW_CONFIDENCE_UI = 0.60;   // 与 asr/confidence.py 的 LOW_CONFIDENCE 一致（真实样本扫出来的）
+
+/** 解析置信度注释 → Map(行号 -> {score, low, worstWord})。
+ *  容错优先：格式不对就跳过该条 —— 元数据坏了不能让整个字幕打不开。 */
+function parseConfidenceMeta(assDoc) {
+  const out = new Map();
+  const raw = assDoc && assDoc.getScriptInfoComment
+    ? assDoc.getScriptInfoComment(ASS_CONFIDENCE_META) : '';
+  if (!raw) return out;
+  for (const piece of String(raw).split(',')) {
+    const f = piece.split(':');
+    if (f.length < 2) continue;
+    const idx = parseInt(f[0], 10);
+    const score = parseFloat(f[1]);
+    if (!Number.isInteger(idx) || idx < 0 || !Number.isFinite(score)) continue;
+    const w = parseInt(f[2], 10);
+    out.set(idx, {
+      score: Math.max(0, Math.min(1, score)),
+      low: score < LOW_CONFIDENCE_UI,
+      worstWord: Number.isInteger(w) && w >= 0 ? w : null,
+    });
+  }
+  return out;
+}
 
 function resolveAssStyleTargets(doc, kar) {
   const names = (doc.styleNames || []).filter((name, i, all) => all.findIndex(n => n.toLowerCase() === name.toLowerCase()) === i);
@@ -1124,6 +1153,13 @@ function setAss(text, name) {
   }
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
   state.kar.rows = pairRows(state.kar.sentences, state.kar.wordStyle);
+  // 置信度：按行号挂到 row 上（界面据此显示徽标 / 筛选）。行数对不上就不挂，
+  // 宁可没有置信度显示，也不能把分数标到错误的行上。
+  const confMap = parseConfidenceMeta(state.assDoc);
+  if (confMap.size) {
+    state.kar.rows.forEach((row, i) => { if (confMap.has(i)) row.confidence = confMap.get(i); });
+  }
+  state.lowConfOnly = false;
   updateWordConvertStyles();
   // 角色名标签与正文之间恒为一个空格(用户要求 '[wato] 我') —— 老文件里粘在一起的先规范掉
   const gapFixed = normalizeAllRoleGaps();
@@ -1400,7 +1436,8 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           // 英文逐词缺词/重复/交叠检测用(用户报: 重复字幕被并成一句、缺词无警告)
           enWordCount: enS && enS.words ? enS.words.length : 0,
           enTokenCount: enS ? splitEnglishWords(enS.text.replace(/\[[^\]]+\]/g, '')).length : 0,
-          enOverlap: enSlicesOverlap(enS)
+          enOverlap: enSlicesOverlap(enS),
+          confidence: row.confidence || null      // ASR 置信度（没有该元数据时为 null）
         };
         state.itemByRef.set(row, it);
         return it;
@@ -1412,6 +1449,10 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
     panel.setItems(state.items, keepView);
     panel.setRoles(computeRoles()); // 角色 Tab: 解析所有说话人(字幕 Name 栏的 [人物]); computeRoles 见模块级定义
   }
+
+  // 低置信度计数 → 工具栏的「只看低置信度」按钮（没有该元数据时恒为 0，按钮自动禁用）
+  panel.setLowCount(state.items.filter(i => i.confidence && i.confidence.low).length,
+    '只显示 ASR 置信度偏低的行（识别可能不准，建议复核）');
 
   // 坏行计数 → 搜索框旁的 ⚠ 按钮
   panel.setBadCount(state.items.filter(i => i.bad).length,

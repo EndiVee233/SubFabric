@@ -1032,6 +1032,8 @@ export function initProjects(ctx) {
       msgEl.textContent = '✗ 读取设置失败：' + String((e && e.message) || e) + '。本地服务可能已退出，重开程序再试';
       msgEl.classList.add('err');
       renderAsrModels();      // 翻译配置读不到也要让模型列表自己报错/自己重试
+      initPerfPanel();        // 性能测试页（独立于模型列表，自己管自己的状态）
+      initDualRatio();        // 双引擎分工下拉（事件委托，重渲染不失效）
       return;
     }
     stPresets = data.presets || [];
@@ -1055,7 +1057,271 @@ export function initProjects(ctx) {
     bindModelDirSettings();
   }
   /** 模型管理: 列出所有识别模型(状态/下载/删除) + whisper.cpp 运行时 */
-  async function renderAsrModels() {
+  /* ──────────────────────────────────────────────────────────────────────────
+ * 性能测试页：在本机实测 NPU/GPU 双引擎的最佳分工
+ *
+ * 为什么是"启动 + 轮询"而不是一个同步请求：一次测试要跑 9 次真实识别
+ * （3 种分片 × [GPU 基线 / NPU 基线 / 最优配比验证]），耗时以分钟计，
+ * 同步请求会超时，而且看不到中间进度。
+ * ────────────────────────────────────────────────────────────────────────── */
+let perfTimer = null;
+
+function perfSetBusy(on, msg) {
+  const btn = $('#perf-start');
+  if (btn) { btn.disabled = !!on; btn.textContent = on ? '测试中…' : '开始测试'; }
+  const note = $('#perf-note');
+  if (note && msg !== undefined) note.textContent = msg || '';
+}
+
+async function perfRenderApplied() {
+  const el = $('#perf-applied');
+  if (!el) return;
+  try {
+    const s = await (await fetch('/api/asr/perf/state')).json();
+    const d = (s && s.dual) || null;
+    if (!d) {
+      el.innerHTML = '还没应用过测试结果。<b>双引擎识别目前是独立脚本</b>（asr/asr_dual.py），'
+        + '下面的配置就是它的默认参数。';
+      return;
+    }
+    el.innerHTML = `分片 <b>${d.sliceSec}</b> 秒、配比 <b>${escapeHtml(d.ratio)}</b>`
+      + `（GPU:NPU 分片数）· 应用时间 ${escapeHtml(String(d.updatedAt || '').replace('T', ' ').slice(0, 19))}`;
+  } catch {
+    el.textContent = '读不到设置';
+  }
+}
+
+function perfRenderResult(r) {
+  const box = $('#perf-result');
+  if (!box) return;
+  if (!r || !r.recommend) { box.innerHTML = ''; return; }
+  const rec = r.recommend;
+  const rows = (r.sliceLengths || []).map((e) => {
+    const cells = ['1:0', '0:1', '1:1', '2:1', '1:2'].map((k) => {
+      const p = (e.ratios || {})[k];
+      if (!p) return '<td>—</td>';
+      // 有实测值的（纯单引擎基线与验证过的最优）标粗，其余是推算值
+      const val = p.measuredSec != null ? `<b>${p.measuredSec}s</b>` : `${p.predictedSec}s`;
+      const mark = (k === e.bestRatio) ? ' style="background:var(--accent-soft,rgba(90,140,255,.14))"' : '';
+      return `<td${mark} title="${p.gpuSlices} 片 GPU / ${p.npuSlices} 片 NPU">${val}</td>`;
+    }).join('');
+    return `<tr><td>${e.sliceSec}s</td><td>${e.slices}</td>${cells}`
+      + `<td>${escapeHtml(e.bestRatio)}</td></tr>`;
+  }).join('');
+  box.innerHTML = `
+    <div class="st-section-title">推荐配置</div>
+    <div class="st-help" style="font-size:14px">
+      分片 <b>${rec.sliceSec}</b> 秒、配比 <b>${escapeHtml(rec.ratio)}</b>
+      （GPU:NPU）　实测 <b>${rec.measuredSec != null ? rec.measuredSec + 's' : '—'}</b>
+      （预测 ${rec.predictedSec}s）
+      ${rec.speedupVsNpu ? `　比只用 NPU 快 <b>${rec.speedupVsNpu}×</b>` : ''}
+      ${rec.speedupVsGpu ? `，比只用 GPU 快 <b>${rec.speedupVsGpu}×</b>` : ''}
+    </div>
+    <div class="st-row" style="margin-top:8px">
+      <button type="button" class="btn btn-mini btn-accent" id="perf-apply">应用这组配置</button>
+      <button type="button" class="btn btn-mini" id="perf-copy">复制运行命令</button>
+      <span class="st-msg" id="perf-apply-note"></span>
+    </div>
+    <div class="st-section-title" style="margin-top:14px">各分片长度 × 配比（秒，越小越好）</div>
+    <table class="perf-table">
+      <thead><tr><th>分片</th><th>片数</th><th>仅GPU</th><th>仅NPU</th><th>1:1</th><th>2:1</th><th>1:2</th><th>最优</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="st-help" style="margin-top:8px">
+      <b>粗体</b>是实测值，其余是按“墙钟 ≈ 加载 + 片数×每片净耗时”推算的。
+      两个引擎并行，所以混合配比的耗时约为两者取大。
+      本次测量：GPU 每片 ${r.sliceLengths[0] ? r.sliceLengths[0].gpuPerSlice : '?'}s、
+      NPU 每片 ${r.sliceLengths[0] ? r.sliceLengths[0].npuPerSlice : '?'}s（以第一个分片长度为例），
+      加载 GPU ${r.sliceLengths[0] ? r.sliceLengths[0].gpuLoadSec : '?'}s / NPU ${r.sliceLengths[0] ? r.sliceLengths[0].npuLoadSec : '?'}s。
+      <br><b>注意</b>：分片片数太少时，模型加载会主导耗时，测出的“每片净耗时”是噪声 ——
+      所以每个长度至少跑 15 片，测试素材不够长会自动用整段。
+    </div>`;
+
+  const apply = $('#perf-apply');
+  if (apply) apply.addEventListener('click', async () => {
+    const note = $('#perf-apply-note');
+    apply.disabled = true;
+    try {
+      const r2 = await (await fetch('/api/asr/perf/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ratio: rec.ratio, sliceSec: rec.sliceSec }),
+      })).json();
+      if (note) note.textContent = r2 && r2.ok ? '✓ 已写入设置' : ('失败：' + ((r2 && r2.error) || '未知'));
+      perfRenderApplied();
+    } catch (e) {
+      if (note) note.textContent = '失败：' + e.message;
+    } finally { apply.disabled = false; }
+  });
+  const copy = $('#perf-copy');
+  if (copy) copy.addEventListener('click', async () => {
+    const note = $('#perf-apply-note');
+    try {
+      await navigator.clipboard.writeText(rec.command);
+      if (note) note.textContent = '✓ 命令已复制';
+    } catch {
+      if (note) note.textContent = rec.command;
+    }
+  });
+}
+
+async function perfPoll() {
+  let s = null;
+  try { s = await (await fetch('/api/asr/perf/state')).json(); } catch { return; }
+  const prog = $('#perf-progress');
+  const bar = $('#perf-bar');
+  const stage = $('#perf-stage');
+  if (s.running && prog) {
+    prog.hidden = false;
+    if (bar) bar.style.width = (s.pct || 0) + '%';
+    if (stage) stage.textContent = `${s.pct || 0}%　${s.msg || ''}`;
+  } else if (prog) {
+    prog.hidden = true;
+  }
+  if (!s.running) {
+    clearInterval(perfTimer);
+    perfTimer = null;
+    perfSetBusy(false, s.error ? ('失败：' + s.error) : '');
+    if (s.result) perfRenderResult(s.result);
+  }
+}
+
+function startPerfPolling() {
+  if (perfTimer) return;
+  perfTimer = setInterval(perfPoll, 1500);
+  perfPoll();
+}
+
+function initPerfPanel() {
+  const btn = $('#perf-start');
+  if (!btn || btn.dataset.bound) return;      // 只绑一次
+  btn.dataset.bound = '1';
+
+  const pathEl = $('#perf-audio-path');
+  let audioPath = '';
+
+  const setAudio = (p) => {
+    audioPath = p || '';
+    if (pathEl) pathEl.textContent = audioPath || '（未选择）';
+  };
+  setAudio('');
+
+  const pick = $('#perf-audio-pick');
+  if (pick) pick.addEventListener('click', async () => {
+    const note = $('#perf-note');
+    pick.disabled = true;
+    try {
+      const r = await (await fetch('/api/pick', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'audio' }),
+      })).json();
+      if (r && r.path) setAudio(r.path);
+      else if (note) note.textContent = '没选到文件（需要 16kHz 单声道 wav 最稳）';
+    } catch {
+      if (note) note.textContent = '选择对话框不可用';
+    } finally { pick.disabled = false; }
+  });
+
+  const auto = $('#perf-audio-auto');
+  if (auto) auto.addEventListener('click', async () => {
+    const note = $('#perf-note');
+    auto.disabled = true;
+    try {
+      // 从最近的项目里找一份 source16k.wav（就是识别实际用的那份，最贴近真实负载）
+      const r = await (await fetch('/api/asr/perf/auto-audio')).json();
+      if (r && r.path) { setAudio(r.path); if (note) note.textContent = '已自动选择：' + r.why; }
+      else if (note) note.textContent = (r && r.error) || '没找到可用的音频，请手动选择';
+    } catch (e) {
+      if (note) note.textContent = '失败：' + e.message;
+    } finally { auto.disabled = false; }
+  });
+
+  btn.addEventListener('click', async () => {
+    const note = $('#perf-note');
+    if (!audioPath) { if (note) note.textContent = '先选一份测试音频'; return; }
+    perfSetBusy(true, '启动中…');
+    const box = $('#perf-result');
+    if (box) box.innerHTML = '';
+    try {
+      const r = await (await fetch('/api/asr/perf/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audio: audioPath,
+          slices: ($('#perf-slices') || {}).value || '8,15.01,28',
+          audioSec: Number(($('#perf-audio-sec') || {}).value) || 60,
+        }),
+      })).json();
+      if (r && r.error) { perfSetBusy(false, '失败：' + r.error); return; }
+      startPerfPolling();
+    } catch (e) {
+      perfSetBusy(false, '失败：' + e.message);
+    }
+  });
+
+  // 打开页面时若已有在跑的测试，接管进度
+  fetch('/api/asr/perf/state').then(r => r.json()).then((s) => {
+    if (s && s.running) { perfSetBusy(true); startPerfPolling(); }
+    else if (s && s.result) perfRenderResult(s.result);
+    if (s && s.error) perfSetBusy(false, '上次失败：' + s.error);
+  }).catch(() => {});
+  perfRenderApplied();
+}
+
+/* 双引擎分工下拉。为什么挂在 renderAsrModels 之后：那个面板是整体重建的，
+ * 所以这里只做"每次渲染后刷新一次状态"，事件用委托挂在容器上（见 initDualRatio）。 */
+async function refreshDualRatio() {
+  const row = $('#dual-ratio-row');
+  const sel = $('#dual-ratio');
+  const note = $('#dual-ratio-note');
+  if (!row || !sel) return;
+  try {
+    const s = await (await fetch('/api/asr/dual')).json();
+    const anyDual = state.asrStatus && (state.asrStatus.models || [])
+      .some((m) => m.engine === 'dual' && m.ready);
+    // 只有当机器上确实存在可用的双引擎模型时才显示这一行 —— 否则是噪音
+    row.hidden = !anyDual;
+    if (!anyDual) return;
+    const manual = (s && s.manual) || 'auto';
+    if (sel.value !== manual) sel.value = manual;
+    const cfg = (s && s.cfg) || {};
+    const d = (s && s.measured) || null;
+    if (manual === 'auto') {
+      note.textContent = d
+        ? `实测推荐 ${d.ratio}、分片 ${d.sliceSec}s`
+        : '还没测过，暂时用 1:1、分片 15.01s —— 建议先去「性能测试」测一次';
+    } else {
+      note.textContent = `按 ${manual} 分工、分片 ${cfg.sliceSec}s`;
+    }
+  } catch { /* 接口不可用就不显示 */ }
+}
+
+function initDualRatio() {
+  const box = $('#st-models');
+  if (!box || box.dataset.dualBound) return;
+  box.dataset.dualBound = '1';
+  // 事件委托：面板每次重建都不会丢
+  box.addEventListener('change', async (e) => {
+    const sel = e.target;
+    if (!sel || sel.id !== 'dual-ratio') return;
+    const note = $('#dual-ratio-note');
+    try {
+      const r = await (await fetch('/api/asr/dual', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ratio: sel.value }),
+      })).json();
+      if (r && r.ok) {
+        if (note) note.textContent = sel.value === 'auto'
+          ? '已设为自动' : `已设为 ${sel.value}`;
+        refreshDualRatio();
+      } else if (note) {
+        note.textContent = '失败：' + ((r && r.error) || '未知');
+      }
+    } catch (err) {
+      if (note) note.textContent = '失败：' + err.message;
+    }
+  });
+}
+
+async function renderAsrModels() {
     const box = $('#st-models');
     if (!box) return;
     let d;
@@ -1078,7 +1344,22 @@ export function initProjects(ctx) {
     // 注: 下面各模型的下载状态提示都是就地手写的(见 pyState / state / nemoState 等),
     // 没有走统一模板 —— 各自要拼的按钮和文案差别太大, 抽象反而更绕。
     // Python 环境(Parakeet 需要; whisper.cpp 不需要): 预检状态 + 一键安装
-    const py = d.pythonProbe || null;
+    // pythonProbe 现在按引擎分键（{sherpa, openvino}）—— 直接读 .ok 会得到 undefined，
+    // 于是把好环境误判成"不可用"（实测踩过）。这里挑**当前所选模型**对应的那一项；
+    // 旧版扁平形状（{ok,msg}）仍然兼容。
+    const py = (() => {
+      const pp = d.pythonProbe;
+      if (!pp) return null;
+      if (typeof pp.ok === 'boolean') return pp;                 // 旧形状
+      const sel = (d.models || []).find(m => m.id === d.selectedModel)
+        || (d.models || []).find(m => m.usable) || null;
+      const key = sel && sel.engine === 'openvino' ? 'openvino' : 'sherpa';
+      const one = pp[key];
+      if (one) return one;
+      return d.pythonProbeFlat || null;
+    })();
+    // 探测里带上用的哪个解释器，界面上能看到（多份安装时这点很重要）
+    const pyExe = d.python || '';
     const pySt = dlOf('pyenv');
     let pyState;
     if (pySt.running) {
@@ -1098,6 +1379,12 @@ export function initProjects(ctx) {
       <div class="sm-head"><span class="sm-name">Python 环境</span></div>
       <div class="sm-desc">Parakeet 识别要 Python 和 sherpa-onnx，还得有 N 卡（CUDA）。说话人分离只要基础 Python，没有 N 卡也能用；whisper.cpp 不需要 Python。点「安装」会装好 Python 和依赖，有 N 卡时一并换成 CUDA 版。不写注册表，删掉 asr\\runtime-python 目录就算卸载</div>
       ${pyState}
+      <div class="sm-desc" style="margin-top:6px">当前解释器：<code>${esc(pyExe || '(未定)')}</code>
+        <button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button>
+        <button type="button" class="btn btn-mini sm-pyreset">用回默认</button>
+      </div>
+      <div class="sm-desc">如果另一份安装里已经装好了 torch + NeMo，用上面「指定其他 Python…」指过去即可，不必重下几 GB</div>
+      <div class="sm-pymsg" style="font-size:12px;margin-top:4px"></div>
     </div>`;
     // 各任务 key: model:<id> / runtime / diarize
     rows += (d.models || []).map((m) => {
@@ -1209,6 +1496,45 @@ export function initProjects(ctx) {
         })).json();
         if (r.started) pollModelDownload();
       } catch {}
+      renderAsrModels();
+    }));
+    // 指定 / 恢复 Python 解释器（运行时装在别处时用，例如复用另一份安装里的 torch+NeMo）
+    box.querySelectorAll('.sm-pyset').forEach(b => b.addEventListener('click', async () => {
+      const msg = box.querySelector('.sm-pymsg');
+      b.disabled = true;
+      const old = b.textContent;
+      b.textContent = '选择中…';
+      try {
+        let pick = null;
+        try {
+          pick = await (await fetch('/api/pick', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'python' }),
+          })).json();
+        } catch { pick = null; }
+        if (!pick || !pick.path) {
+          if (msg) msg.textContent = '没选到文件，已取消';
+          return;
+        }
+        const r = await (await fetch('/api/asr/set-python', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exe: pick.path }),
+        })).json();
+        if (msg) msg.textContent = r && r.ok ? ('已切换解释器：' + r.python + '，正在重新检测…') : ('切换失败：' + ((r && r.error) || '未知错误'));
+      } finally {
+        b.disabled = false;
+        b.textContent = old;
+        renderAsrModels();
+      }
+    }));
+    box.querySelectorAll('.sm-pyreset').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        await fetch('/api/asr/set-python', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ exe: '' }),
+        });
+      } catch {}
+      b.disabled = false;
       renderAsrModels();
     }));
     box.querySelectorAll('.sm-del').forEach(b => b.addEventListener('click', () => {
@@ -1593,8 +1919,14 @@ export function initProjects(ctx) {
     genSetState('np', (genTr && genTr.ready) ? '已配置' : '翻译未配置');
     // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
     const hint = $('#np-hint');
-    if (hint && asrStatus.pythonProbe && !asrStatus.pythonProbe.ok) {
-      hint.textContent = '⚠ Python 环境不可用：' + asrStatus.pythonProbe.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp 和「必剪 ASR」云端识别都不需要 Python';
+    const probeForUi = (() => {
+      const pp = asrStatus.pythonProbe;
+      if (!pp) return null;
+      if (typeof pp.ok === 'boolean') return pp;                 // 旧扁平形状
+      return asrStatus.pythonProbeFlat || null;                  // 服务端按当前引擎挑好的
+    })();
+    if (hint && probeForUi && !probeForUi.ok) {
+      hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp 和「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
     }
     npMaybeEnable();

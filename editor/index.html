@@ -100,6 +100,7 @@
             <span class="switch-slider"></span>
           </label>
           <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示异常行" disabled>⚠ <span id="bad-count">0</span></button>
+  <button class="btn btn-mini conf-toggle" id="btn-low-conf" title="只显示 ASR 置信度偏低的行" disabled>◔ <span id="low-conf-count">0</span></button>
         </div>
       </div>
       <div id="cue-list">
@@ -184,13 +185,13 @@
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="中文字幕行的默认颜色">默认颜色</span>
-              <input id="ass-style-zh-color" type="color" value="#ffff00">
-              <span id="ass-style-zh-color-val" class="ass-style-color-value">#FFFF00</span>
+              <input id="ass-style-zh-color" type="color" value="#ffffff">
+              <span id="ass-style-zh-color-val" class="ass-style-color-value">#FFFFFF</span>
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="中文字幕的备用颜色，供卡拉OK渐变/二次填充使用，一般不用改">备用颜色</span>
-              <input id="ass-style-zh-color2" type="color" value="#ffff00">
-              <span id="ass-style-zh-color2-val" class="ass-style-color-value">#FFFF00</span>
+              <input id="ass-style-zh-color2" type="color" value="#ffffff">
+              <span id="ass-style-zh-color2-val" class="ass-style-color-value">#FFFFFF</span>
             </div>
           </div>
           <div class="ass-style-track">
@@ -1060,6 +1061,7 @@
       <button type="button" class="st-tab active" role="tab" aria-selected="true" aria-controls="st-panel-models" data-stp="models">识别模型</button>
       <button type="button" class="st-tab" role="tab" aria-selected="false" aria-controls="st-panel-translate" data-stp="translate">字幕翻译</button>
       <button type="button" class="st-tab" role="tab" aria-selected="false" aria-controls="st-panel-enhance" data-stp="enhance">识别增强</button>
+      <button type="button" class="st-tab" role="tab" aria-selected="false" aria-controls="st-panel-perf" data-stp="perf">性能测试</button>
       <button type="button" class="st-tab" role="tab" aria-selected="false" aria-controls="st-panel-fetch" data-stp="fetch">下载与登录</button>
     </div>
 
@@ -1069,6 +1071,20 @@
           <div class="st-card-title">模型管理</div>
           <div id="st-models" class="st-models"><span class="spin"></span>读取中…</div>
           <div class="st-msg" id="st-model-note"></div>
+        </div>
+        <div id="dual-ratio-row" class="st-row" hidden>
+          <label class="st-label">双引擎分工</label>
+          <select id="dual-ratio" class="select" style="max-width:230px">
+            <option value="auto">自动（用性能测试测出的比例）</option>
+            <option value="1:1">手动 1:1（GPU 1 片 : NPU 1 片）</option>
+            <option value="2:1">手动 2:1（GPU 2 片 : NPU 1 片）</option>
+            <option value="1:2">手动 1:2（GPU 1 片 : NPU 2 片）</option>
+            <option value="3:1">手动 3:1（GPU 3 片 : NPU 1 片）</option>
+            <option value="1:3">手动 1:3（GPU 1 片 : NPU 3 片）</option>
+            <option value="1:0">只用 GPU（不并行）</option>
+            <option value="0:1">只用 NPU（不并行）</option>
+          </select>
+          <span class="st-help" id="dual-ratio-note" style="margin-left:8px"></span>
         </div>
         <div class="st-card">
           <div class="st-card-title">下载位置</div>
@@ -1082,6 +1098,44 @@
         </div>
       </div>
 
+      <div class="st-panel" id="st-panel-perf" role="tabpanel" data-stp="perf" hidden>
+        <div class="st-section">
+          <div class="st-section-title">双引擎分工性能测试</div>
+          <div class="st-help">
+            本机同时有 Intel NPU 与 N 卡，两个识别引擎<b>落在不同硬件上</b>，可以并行工作、各认一部分分片。
+            但速度取决于机型、散热与驱动，<b>没法靠猜</b> —— 这里在你的机器上实测，给出该用多长的分片、以及最佳配比。
+            <br>测法：每个分片长度先各跑一次“只用 GPU”“只用 NPU”作基线，据此推算其余配比的预期耗时，
+            再<b>只把最优的那一个真跑一次</b>验证。于是 9 次真跑覆盖全部配比，推荐值有实测背书。
+          </div>
+          <div class="st-help" style="margin-top:6px">
+            测试素材：<code id="perf-audio-path">（未选择）</code>
+            <button type="button" class="btn btn-mini" id="perf-audio-pick">选择音频…</button>
+            <button type="button" class="btn btn-mini" id="perf-audio-auto">自动找一份</button>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <label class="st-label">分片长度（秒）</label>
+            <input type="text" id="perf-slices" class="st-input" value="8,15.01,28" spellcheck="false" style="max-width:200px">
+          </div>
+          <div class="st-row">
+            <label class="st-label">每个长度的素材</label>
+            <input type="number" id="perf-audio-sec" class="st-input" value="60" min="30" max="600" step="10" style="max-width:120px">
+            <span class="st-help" style="margin-left:8px">秒（越大越准、越慢）</span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <button type="button" class="btn btn-mini btn-accent" id="perf-start">开始测试</button>
+            <span class="st-msg" id="perf-note"></span>
+          </div>
+          <div id="perf-progress" hidden style="margin-top:8px">
+            <div class="st-progress"><div id="perf-bar" style="width:0%"></div></div>
+            <div class="st-help" id="perf-stage" style="margin-top:4px"></div>
+          </div>
+          <div id="perf-result" style="margin-top:12px"></div>
+        </div>
+        <div class="st-section">
+          <div class="st-section-title">当前已应用的配置</div>
+          <div class="st-help" id="perf-applied">读取中…</div>
+        </div>
+      </div>
       <div class="st-panel" id="st-panel-fetch" role="tabpanel" data-stp="fetch" hidden>
         <div class="st-card">
           <div class="st-card-title">下载</div>
