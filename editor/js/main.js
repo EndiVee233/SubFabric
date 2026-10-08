@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows, setWordHighlightColor, getWordHighlightColor, wordHighlightTag, speakerNames, recolorRoleInRows, normalizeZhPunctuation, normalizeZhPunctuationInSentences, buildAnchorText, sortRoles } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
@@ -430,8 +430,8 @@ function resolveAssStyleTargets(doc, kar) {
 }
 
 function assHexToTag(hex) {
-  const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
-  return /^[0-9A-F]{6}$/.test(rgb) ? `{\\c&H${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}&}` : '{\\c&H00FF00&}';
+  // 与 karaoke.js 的 wordHighlightTag 同款换算(BGR 顺序), 非法值回退当前逐词高亮色
+  return wordHighlightTag(hex);
 }
 
 /** '#rrggbb' → ASS 的&HAABBGGRR(注意 BGR 顺序)。样式 Primary/SecondaryColour 直接吃这个值。 */
@@ -623,6 +623,9 @@ function setAssStyleControls() {
     wordColor = m ? assColorToHex(m[1].toUpperCase()) : '#00ff00';
   }
   wordColor = wordColor.toLowerCase();
+  // 让 karaoke.js 记住这份稿件的逐词高亮色 —— 新建字幕/重新识别写回的高亮 span 都要取它,
+  // 否则用户选了白色高亮, 新增出来的仍是绿的(用户报的 bug)。
+  setWordHighlightColor(wordColor);
   if (assStyleEls.wordColor) assStyleEls.wordColor.value = wordColor;
   if (assStyleEls.wordColorVal) assStyleEls.wordColorVal.textContent = wordColor.toUpperCase();
   if (assStyleEls.status) assStyleEls.status.textContent = '修改会立即预览并写入文稿；项目自动保存，普通字幕请导出保存。';
@@ -662,6 +665,7 @@ function applyAssStyleSettings(forceFontReload = false) {
     if (input && label) label.textContent = input.value.toUpperCase();
   }
   const color = (el.wordColor.value || '#00ff00').toLowerCase();
+  setWordHighlightColor(color);      // 同步给 karaoke.js: 之后新建/重建的逐词 span 都用这个色
   const wordEvents = state.kar && state.kar.sentences
     ? [...new Set(state.kar.sentences
       .filter(sentence => sentence.style.toLowerCase() === targets.en.toLowerCase() && sentence.words && sentence.words.length)
@@ -1138,6 +1142,8 @@ function setAss(text, name) {
   state.srtCues = [];
   state.assDoc = new AssDoc(text);
   const savedWordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
+  // 载入即确定本稿件的逐词高亮色(无元数据 → 回到默认绿, 不能沿用上一个文件的颜色)
+  setWordHighlightColor(/^#[0-9a-f]{6}$/i.test(savedWordColor) ? savedWordColor : '#00ff00');
   const fixedColors = normalizeAssColorTags();   // 必须在分析/渲染之前
   // 双轨分析: 干净整句(编辑/列表/时间轴) + 词级映射; 原始逐词文档保留给视频渲染
   state.kar = analyzeKaraoke(state.assDoc);
@@ -1145,6 +1151,10 @@ function setAss(text, name) {
     const tag = assHexToTag(savedWordColor);
     for (const sentence of state.kar.sentences) if (sentence.style === state.kar.wordStyle) sentence.highlightTag = tag;
   }
+  // 载入自愈: 清掉中文整句行里的中文标点 ，、。 (→ 空格)。外部工具(WhisperX 等)导入的存量稿件
+  // 常带这些标点, 而本项目的约定是中文用空格分词。必须在 analyzeKaraoke 之后(wordStyle 已知,
+  // 逐词样式行不能碰)、pairRows 之前(配对看到的就是干净文本)。
+  const punctFixed = normalizeZhPunctuationInSentences(state.assDoc, state.kar.sentences, state.kar.wordStyle);
   // 跨语言配对: 中文整句 + 英文逐词句 → 一行(中英双行)
   state.kar.rows = pairRows(state.kar.sentences, state.kar.wordStyle);
   updateWordConvertStyles();
@@ -1187,6 +1197,7 @@ function setAss(text, name) {
   panel.setFileName(name);
   applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
   if (fixedColors) toast(`已把 ${fixedColors} 行的颜色标签统一为大写（兼容 Subforges 等只认大写的工具）`, 5000);
+  if (punctFixed) toast(`已规范 ${punctFixed} 行中文标点（，、。 → 空格；! ? 保留）`, 5000);
   if (gapFixed) toast(`已规范 ${gapFixed} 行的角色名间距（[角色] 与正文之间一个空格）`, 4000);
   if (spanAligned) toast(`已自动对齐 ${spanAligned} 行的中英起止（英文逐词原来比中文行短一截）`, 5000);
   panel.setModeOptions([
@@ -1531,13 +1542,8 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
 }
 
 /* ═══════════ 角色(说话人) ═══════════ */
-/** 取 Name 栏原始串里的人物名列表: '[Spoke]' → ['Spoke'], '[A][B]' → ['A','B'] */
-function speakerNames(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return [];
-  const segs = s.match(/\[[^\]]+\]/g);
-  return segs && segs.length ? segs.map(x => x.slice(1, -1).trim()).filter(Boolean) : [s];
-}
+/* speakerNames(取 Name 栏里的人物名列表) 已挪到 karaoke.js 并导出 —— 换色纯函数 recolorRoleInRows
+ * 也要用它, 放在纯逻辑模块里才可单测。这里直接用导入的那份。 */
 
 function escapeReg(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
@@ -1552,7 +1558,9 @@ function hexToAss(hex) {
 /**
  * 解析所有角色(说话人): 取每行字幕 Name 栏里的 [人物] 标记(如 [Spoke])。
  * 注意: 只解析 Name 栏, 不碰字幕文本 —— 英文行文本里若出现 [xxx] 会被 markBadRows 判为坏行。
- * 返回 [{name, raw, color, count}] 按出现次数降序。
+ * 返回 [{name, raw, color, count}] **按名称排序**(首字母, 大小写不敏感: Baablu, CalebM, garlicsizzler…)
+ * —— 角色栏卡片、角色筛选下拉、查找替换的角色候选都直接吃这个顺序。
+ * count 仍然统计(卡片/候选里显示条数), 只是不再拿它排序。
  */
 function computeRoles() {
   if (state.format !== 'ass' || !state.kar) return [];
@@ -1573,7 +1581,7 @@ function computeRoles() {
     const key = ex.name.toLowerCase();
     if (!map.has(key)) map.set(key, { name: ex.name, raw: '[' + ex.name + ']', color: ex.color || null, count: 0, custom: true });
   }
-  return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return sortRoles([...map.values()]);
 }
 
 /** 角色栏“＋ 添加角色”: 登记一个新角色, 之后单击它即可应用到播放头所在字幕 */
@@ -1728,47 +1736,13 @@ function renameRoleGlobally(oldName, newName) {
   return n;
 }
 
-/** 全局换色: 行首 {\c&H......&} 为该角色旧色的所有事件 → 新色; 无旧色时给该角色中文行补上色标 */
+/** 全局换色: 把该角色**名下所有中文字幕行**的行首色标换成新色(原本没色标的补上)。
+ *  核心逻辑在 karaoke.js 的 recolorRoleInRows(纯函数, 有单测) —— 按**角色名**定位,
+ *  不按"旧颜色值"匹配(旧实现两个角色撞色时会改到别人身上, 用户报的 bug)。 */
 function recolorRoleGlobally(role, newHex) {
-  const hexNorm = '#' + String(newHex).replace(/^#/, '').toLowerCase();
-  const newAss = hexToAss(newHex);
-  if (!newAss) return 0;
-  const leadRe = /^(\s*\{[^}]*?\\c&H)([0-9A-Fa-f]{6})(&)/;
-  let n = 0;
-  if (role.color) {
-    const oldAss = hexToAss(role.color);
-    for (const ev of state.assDoc.events) {
-      const m = leadRe.exec(ev.text || '');
-      if (!m || m[2].toUpperCase() !== oldAss) continue;
-      state.assDoc.setEventText(ev, ev.text.replace(leadRe, (all, a, b, c) => a + newAss + c));
-      n++;
-    }
-    for (const s of state.kar.sentences) {
-      if (s.color && s.color.toLowerCase() === role.color.toLowerCase()) s.color = hexNorm;
-    }
-    for (const r of state.kar.rows) {
-      if (r.color && r.color.toLowerCase() === role.color.toLowerCase()) r.color = hexNorm;
-    }
-  } else {
-    // 角色还没有颜色标记 → 给该角色所有中文字幕行的行首补上新颜色标签
-    const names = new Set(speakerNames(role.raw).map(x => x.toLowerCase()));
-    names.add(role.name.toLowerCase());
-    for (const row of state.kar.rows) {
-      const spk = speakerNames(row.speaker).map(x => x.toLowerCase());
-      if (!spk.some(x => names.has(x))) continue;
-      const zh = row.zh;
-      if (zh) {
-        for (const ev of zh.events) {
-          if (leadRe.test(ev.text || '')) continue;
-          state.assDoc.setEventText(ev, '{\\c&H' + newAss + '&}' + (ev.text || ''));
-        }
-        zh.color = hexNorm;
-      }
-      row.color = hexNorm;
-      n++;
-    }
-  }
-  return n;
+  const names = speakerNames(role.raw);
+  names.push(role.name);
+  return recolorRoleInRows(state.assDoc, state.kar.rows, names, newHex);
 }
 
 /* ═══════════ 选中 / 编辑 ═══════════ */
@@ -1820,7 +1794,7 @@ panel.onRenameRole = (oldName, newName) => {
   rebuildItemsAndLanes(true, true);
   toast(`已将 [${oldName}] 重命名为 [${newName}]（${n} 行）`);
 };
-// 角色卡片右键 → 全局换色: 行首 {\c&H...} 为旧色的所有行 → 新色
+// 角色卡片右键 → 全局换色: 把该角色**名下**所有中文行的行首色标换成新色(按名字定位, 不按旧色)
 panel.onRecolorRole = (name, hex) => {
   if (state.format !== 'ass' || !state.kar) return;
   const role = computeRoles().find(r => r.name.toLowerCase() === String(name).toLowerCase());
@@ -2389,13 +2363,9 @@ function applyAnchorSentence(sent, s, e, text) {
     sent.words = [];
   }
   const ev = sent.events[0];
-  // 角色名标签与正文之间恒为**一个空格**（用户要求 '[wato] 我'）——编辑框随便打，落盘时规范
-  let newText = normalizeRoleGap(text);
-  if (!/^\s*\{/.test(newText)) {
-    const m = /^\s*(\{\\[^}]*\})/.exec(ev.text);   // 继承 {\c&H....&} 之类的前置标签
-    if (m) newText = m[1] + newText;
-  }
-  newText = newText.replace(/\r\n?|\n/g, '\\N');
+  // 角色名标签与正文之间恒为**一个空格**（用户要求 '[wato] 我'）——编辑框随便打，落盘时规范;
+  // 行首 {\c..&} 色标继承、换行转 \N 也在同一个函数里(与实时预览 zhPreviewText 共用, 见 karaoke.js)
+  const newText = buildAnchorText(ev.text, text);
   state.assDoc.setEventTime(ev, s, e);
   state.assDoc.setEventText(ev, newText);
   sent.start = s; sent.end = e; sent.text = assPlainText(newText);
@@ -2421,9 +2391,20 @@ function applyWordSentence(sent, s, e, text) {
 const escAss = (s) => String(s == null ? '' : s)
   .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\r?\n/g, '\\N');
 
+/** 该行此刻在视频区可见吗(播放头落在它时间范围内) —— 中/英任一有就算(以前只认英文行,
+ *  于是中文单行块编辑时拿不到实时预览)。 */
 function editRowVisible(row) {
-  const en = row && row.en;
-  return !!en && state.format === 'ass' && video.currentTime >= en.start && video.currentTime < en.end;
+  if (!row || state.format !== 'ass') return false;
+  const sent = row.en || row.zh;
+  return !!sent && video.currentTime >= sent.start && video.currentTime < sent.end;
+}
+
+/** 中文整句行的预览文本: 与 applyAnchorSentence **落盘时的构造完全一致**
+ *  (补回被编辑框隐藏的 [角色] 标签 → 继承行首 {\c..&} 色标 → 换行转 \N),
+ *  这样"预览看到的"和"提交后的"必然一致 —— 两者共用 karaoke.js 的 buildAnchorText。 */
+function zhPreviewText(sent, text, tag) {
+  const ev = sent && sent.events && sent.events[0];
+  return buildAnchorText(ev ? ev.text : '', String(tag || '') + String(text == null ? '' : text));
 }
 
 function clearEditPreview(restore = true) {
@@ -2431,32 +2412,51 @@ function clearEditPreview(restore = true) {
   editPreview = null;
   if (previewFrame) cancelAnimationFrame(previewFrame);
   previewFrame = 0;
-  if (previewTrack && restore && state.format === 'ass' && state.assDoc) {
-    assPlayer.updateNow(state.assDoc.serialize());
-    pendingPlaybackRows.clear();
-  }
+  if (previewTrack && restore) restoreRealTrack();
   previewTrack = null;
 }
 
+/** 撤掉临时预览轨, 把真实字幕重新送进渲染器 */
+function restoreRealTrack() {
+  if (state.format !== 'ass' || !state.assDoc) return;
+  assPlayer.updateNow(state.assDoc.serialize());
+  pendingPlaybackRows.clear();
+}
+
+/**
+ * 行内编辑的临时预览(中英两行**一起**上屏)。
+ * 草稿结构 editPreview = { row, doc, version, timer, zh, en, specs, specsText }:
+ *   zh = { text, tag } | null   中文行草稿(文本 + 被编辑框隐藏的 [角色] 标签)
+ *   en = { text } | null        英文行草稿
+ *   specs / specsText           英文行的词级切片 + 它对应的英文文本(文本没变就一直有效)
+ * 只有真正打过字的行才会进草稿 —— 没碰的行在预览里保持真实事件, 不会被清空。
+ * 以前只有英文行接了 input → 中文必须退出编辑框才更新; 现在两行都接, 且共用一份草稿。
+ */
 function renderEditPreview() {
   previewFrame = 0;
   const draft = editPreview;
+  // 草稿失效(切了文档 / 播放头离开该句) → 撤掉临时轨
   if (!draft || draft.doc !== state.assDoc || !editRowVisible(draft.row)) {
-    if (previewTrack) {
-      previewTrack = null;
-      if (state.format === 'ass' && state.assDoc) {
-        assPlayer.updateNow(state.assDoc.serialize());
-        pendingPlaybackRows.clear();
-      }
-    }
+    if (previewTrack) { previewTrack = null; restoreRealTrack(); }
     return;
   }
-  const mode = draft.specs && draft.builtVersion === draft.version ? 'words' : 'plain';
+  const entries = [];
+  if (draft.zh && draft.row.zh) {
+    entries.push({ sentence: draft.row.zh, text: zhPreviewText(draft.row.zh, draft.zh.text, draft.zh.tag) });
+  }
+  const words = draft.en && draft.specs && draft.specsText === draft.en.text;
+  if (draft.en && draft.row.en) {
+    entries.push(words
+      ? { sentence: draft.row.en, specs: draft.specs }
+      : { sentence: draft.row.en, text: escAss(draft.en.text) });
+  }
+  if (!entries.length) {
+    if (previewTrack) { previewTrack = null; restoreRealTrack(); }
+    return;
+  }
+  const mode = (draft.zh ? 'zh' : '') + (draft.en ? (words ? '+words' : '+plain') : '');
   if (previewTrack && previewTrack.row === draft.row && previewTrack.version === draft.version && previewTrack.mode === mode) return;
-  const en = draft.row.en;
-  const track = mode === 'words'
-    ? draft.doc.previewEvents(en, draft.specs)
-    : draft.doc.previewSentence(en, escAss(draft.text));
+  const track = draft.doc.previewMulti(entries);
   // 唯一的可见版本；逐帧合并输入，永不把临时事件写回 AssDoc。
   if (draft === editPreview && draft.doc === state.assDoc && editRowVisible(draft.row)) {
     previewTrack = { row: draft.row, version: draft.version, mode };
@@ -2471,31 +2471,46 @@ function queueEditPreview() {
 
 function settleEditPreview(draft) {
   if (!draft || draft !== editPreview || draft.doc !== state.assDoc) return;
-  const version = draft.version;
   const en = draft.row.en;
-  if (!en) return;
+  if (!draft.en || !en) return;      // 没改英文行 → 不需要词级切片
   // 只计算这句的临时词时间与事件；提交之前不修改正文、时间或原始 ASS。
   if (state.kar && state.kar.wordStyle && en.style === state.kar.wordStyle) {
-    const text = normalizeRoleGap(draft.text);
+    const text = normalizeRoleGap(draft.en.text);
     const words = recalcWords(en, text, en.start, en.end);
     draft.specs = buildWordSpecs({ ...en, text, words });
-  } else draft.specs = null;
-  if (draft === editPreview && version === draft.version) {
-    draft.builtVersion = version;
-    if (editRowVisible(draft.row)) queueEditPreview();
-  }
+    draft.specsText = draft.en.text;      // 这份切片对应的英文文本(文本没变就一直有效)
+  } else { draft.specs = null; draft.specsText = null; }
+  if (draft === editPreview && editRowVisible(draft.row)) queueEditPreview();
 }
 
+/** 英文行行内草稿变化 → 临时预览(与中文行共用同一份 editPreview) */
 panel.onEnglishInput = (item, text) => {
   if (state.format !== 'ass' || !state.assDoc || !item || !item.ref.en) return;
   const row = item.ref;
   if (editPreview && editPreview.row !== row) clearEditPreview();
   const normalized = String(text || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
-  const draft = editPreview || { row, doc: state.assDoc, version: 0, timer: 0, specs: null };
-  if (editPreview && draft.text === normalized) return;
-  draft.text = normalized;
+  const draft = editPreview || { row, doc: state.assDoc, version: 0, timer: 0, specs: null, zh: null, en: null };
+  if (draft.en && draft.en.text === normalized) return;
+  draft.en = { text: normalized };
   draft.version++;
-  draft.specs = null;
+  clearTimeout(draft.timer);
+  editPreview = draft;
+  if (editRowVisible(row)) queueEditPreview();
+  else if (previewTrack) queueEditPreview(); // 播放头离开原句时撤销临时轨
+  draft.timer = setTimeout(() => settleEditPreview(draft), EDIT_SETTLE_MS);
+};
+
+/** 中文行行内草稿变化 → 临时预览(以前中文要等退出编辑框才更新)。
+ *  tag = 编辑框里被隐藏的 [角色] 标签, 预览时要补回, 否则角色名会在预览里消失。 */
+panel.onChineseInput = (item, text, tag) => {
+  if (state.format !== 'ass' || !state.assDoc || !item || !item.ref.zh) return;
+  const row = item.ref;
+  if (editPreview && editPreview.row !== row) clearEditPreview();
+  const normalized = String(text || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+  const draft = editPreview || { row, doc: state.assDoc, version: 0, timer: 0, specs: null, zh: null, en: null };
+  if (draft.zh && draft.zh.text === normalized && draft.zh.tag === (tag || '')) return;
+  draft.zh = { text: normalized, tag: tag || '' };
+  draft.version++;
   clearTimeout(draft.timer);
   editPreview = draft;
   if (editRowVisible(row)) queueEditPreview();
@@ -2747,7 +2762,8 @@ function detectRowProblems(row) {
 function rebuildEnglishFromText(en, text, clearName) {
   if (clearName && en.proto) en.proto.name = '';
   en.text = text;
-  en.highlightTag = '{\\c&H00FF00&}';
+  // 逐词高亮色沿用当前稿件设定的色(默认绿) —— 以前写死绿, 用户改过高亮色后会回退(用户报的 bug)
+  en.highlightTag = wordHighlightTag();
   en.words = recalcWords(en, en.text, en.start, en.end);
   en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
   en.bad = false;   // 重建后时间一律合法, 清掉分析时可能留下的时间异常标记
@@ -2948,8 +2964,9 @@ if (btnConvertWords) btnConvertWords.addEventListener('click', async () => {
       return;
     }
     const savedColor = doc.getScriptInfoComment(ASS_WORD_COLOR_META);
+    const wordTag = wordHighlightTag(/^#[0-9a-f]{6}$/i.test(savedColor) ? savedColor : getWordHighlightColor());
     for (const sent of targets) {
-      if (/^#[0-9a-f]{6}$/i.test(savedColor)) sent.highlightTag = assHexToTag(savedColor);
+      sent.highlightTag = wordTag;
       sent.words = recalcWords(sent, sent.text, sent.start, sent.end);
       sent.events = doc.replaceEvents(sent.events, buildWordSpecs(sent));
     }
@@ -3005,7 +3022,8 @@ let reRecogBusy = false;
 function addRecognizedRow(seg) {
   const s = seg.start, e = seg.end;
   // 与初稿写入同一约定: 中文译文里的逗号/顿号/句号替换成空格(! ? 保留)
-  const zhText = String(seg.zh || '').replace(/[，、。]/g, ' ').trim();
+  // 口径在 karaoke.js 的 normalizeZhPunctuation(服务端同款见 llm-text.js)
+  const zhText = normalizeZhPunctuation(seg.zh);
   const enText = String(seg.text || '').trim();
   if (!zhText && !enText) return null;
   if (state.format === 'srt') {
@@ -3471,11 +3489,15 @@ async function retranslateRow(item) {
     });
     const m = await r.json().catch(() => ({}));
     if (!r.ok || !m.zh) { toast('翻译失败: ' + (m.error || '空结果'), 4600); return; }
+    // 中文标点归一(，、。 → 空格): 服务端已归一, 这里再兜一层 —— 旧版服务端不归一,
+    // 而且右键「重新翻译」以前就是漏了这一处, 中文会带回 ，。(用户报的 bug)
+    const zhClean = normalizeZhPunctuation(m.zh);
+    if (!zhClean) { toast('翻译结果为空', 4600); return; }
     // 行首 {\c...} 颜色标签由 applyAnchorSentence 自动从原事件继承; 这里补回 [角色] 名字前缀
     const zhRaw = row.zh ? (row.zh.text || '') : '';
     const tagM = /^\s*(\{\\[^}]*\})*\s*(\[[^\]]+\]\s*)?/.exec(zhRaw);
     const tag = tagM ? tagM[0] : '';
-    if (row.zh) applyAnchorSentence(row.zh, row.start, row.end, (tag + m.zh).trim());
+    if (row.zh) applyAnchorSentence(row.zh, row.start, row.end, (tag + zhClean).trim());
     assPlayer.updateNow(state.assDoc.serialize());
     rebuildItemsAndLanes(true, true);
     toast('已重新翻译该行');
