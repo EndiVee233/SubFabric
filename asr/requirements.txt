@@ -23,6 +23,12 @@
 sherpa-onnx>=1.13
 numpy>=1.24
 
+# ── 可选：asr_npu.py（Parakeet 的 Intel NPU / OpenVINO 后端）──
+# 只多一个包，装上就能在没有 N 卡的机器上用 Parakeet（编码器跑 Intel NPU、预测/联合网络跑核显）：
+#   asr/.venv/Scripts/pip.exe install openvino
+# 不装 openvino 时 asr_npu.py 会报缺包，sherpa-onnx 那条路径不受影响。
+# 注意: 该后端只需 openvino + numpy, **不需要** sherpa-onnx, 二者可以各自独立安装。
+
 # ── 下载初稿（asr/fetch/*.py）刻意不列在这里 ──
 # yt-dlp 更新频繁，打包时内置就等于把版本冻结在打包那一刻，所以走运行时自举：
 # asr/fetch/ytdlp.py 首次需要时从 PyPI 抓 wheel 解压到 asr/ytdlp/，并提供

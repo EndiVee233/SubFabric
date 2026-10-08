@@ -60,6 +60,7 @@ export class EditorPanel {
     this.playingItem = null;
     this._filterText = '';
     this._badOnly = false;    // 只看异常行
+    this._lowOnly = false;    // 只看低置信度行（ASR 置信度来自 ASS 元数据）
     this._mode = 'bi';        // bi(双行) | first(仅主) | second(仅副)
     this._progScroll = false;
     this.followPlayback = true;   // 播放时字幕列表自动滚到对应行(可在设置面板关闭)
@@ -175,6 +176,14 @@ export class EditorPanel {
         this.onModeChange && this.onModeChange(this._mode);
       });
     }
+    this.lowBtn = document.getElementById('btn-low-conf');
+    if (this.lowBtn) {
+      this.lowBtn.addEventListener('click', () => {
+        this._lowOnly = !this._lowOnly;
+        this.lowBtn.classList.toggle('active', this._lowOnly);
+        this._applyFilter();
+      });
+    }
     if (this.badBtn) {
       this.badBtn.addEventListener('click', () => {
         this._badOnly = !this._badOnly;
@@ -261,6 +270,23 @@ export class EditorPanel {
   }
 
   /** 更新坏行计数; 0 时按钮置灰并自动退出"只看坏行"模式; hint = 坏行类别说明(随格式变化) */
+  /** 低置信度行数 → 「只看低置信度」按钮（0 行时禁用并自动取消筛选）。
+   *  与 setBadCount 同款：计数为 0 就没必要让用户点它。 */
+  setLowCount(n, hint) {
+    this._lowCount = n;
+    const b = this.lowBtn;
+    if (!b) return;
+    b.disabled = n === 0;
+    b.title = hint || ('只显示 ASR 置信度偏低的行' + (n ? `（${n} 行）` : ''));
+    const c = document.getElementById('low-conf-count');
+    if (c) c.textContent = String(n);
+    if (n === 0 && this._lowOnly) {
+      this._lowOnly = false;
+      b.classList.remove('active');
+      this._applyFilter();
+    }
+  }
+
   setBadCount(n, hint) {
     if (!this.badBtn) return;
     this.badCountEl.textContent = String(n);
@@ -675,6 +701,7 @@ export class EditorPanel {
 
   _matchMode(it) {
     if (this._badOnly && !it.bad) return false;
+    if (this._lowOnly && !(it.confidence && it.confidence.low)) return false;
     if (this._speaker && !this._speakerMatch(it)) return false;
     if (this._mode === 'first') return !!it.l1;
     if (this._mode === 'second') return !!it.l2;
@@ -722,6 +749,16 @@ export class EditorPanel {
     if (it.bad) chips.push(`<span class="cc-chip chip-bad" title="异常行：${escapeHtml(it.badReason || '')}">⚠ 异常行</span>`);
     if (it.badge1) chips.push(`<span class="cc-chip chip-l1"${chipAttr}>${escapeHtml(it.badge1)}</span>`);
     if (it.badge2 && showSecond) chips.push(`<span class="cc-chip chip-l2"${chipAttr}>${escapeHtml(it.badge2)}</span>`);
+    // 置信度徽标：低置信度显眼（提醒复核），高的弱化（不干扰阅读）
+    const cf = it.confidence;
+    if (cf && typeof cf.score === 'number') {
+      const pct = Math.round(cf.score * 100);
+      const tip = `ASR 置信度 ${pct}%` + (cf.worstWord != null ? `；最可疑的是第 ${cf.worstWord + 1} 个词` : '')
+        + (cf.low ? '。建议复核这一句' : '');
+      chips.push(cf.low
+        ? `<span class="cc-chip chip-conf-low" title="${escapeHtml(tip)}">◔ ${pct}%</span>`
+        : `<span class="cc-chip chip-conf" title="${escapeHtml(tip)}">${pct}%</span>`);
+    }
     const head = chips.length ? `<div class="cc-head">${chips.join('')}</div>` : '';
     // 新建但还没输入的字幕 → 显示占位提示(用户不输入就离开则这条会被撤销)
     const l1 = showFirst && it.l1 ? `<div class="cc-l1"${l1Attr}>${escapeHtml(it.l1)}</div>`
@@ -739,6 +776,13 @@ export class EditorPanel {
         ${l1}${l2}
       </div>
     </div>`;
+  }
+
+  /** 只显示低置信度行（校对时快速定位可疑句）。传 false 恢复显示全部。 */
+  setLowOnly(on) {
+    this._lowOnly = !!on;
+    if (this.lowBtn) this.lowBtn.classList.toggle('active', this._lowOnly);
+    this._applyFilter();
   }
 
   /** 影响卡片高度的全部因素(显示模式 + 两行文本 + 徽标/异常行 + 新建占位) → 高度缓存键 */
