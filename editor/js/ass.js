@@ -317,26 +317,48 @@ export class AssDoc {
 
   /** 临时预览快照：仅替换该句的输出事件；原始事件、行号及导出内容均不变。 */
   previewEvents(sentence, specs) {
-    if (!sentence || !sentence.events || !sentence.events.length) return this.serialize();
-    const indices = new Set(sentence.events.map(ev => ev.lineIdx));
-    const first = Math.min(...indices);
-    const insert = specs.map(spec => this._buildDialogueLine(spec));
-    const lines = [];
-    this.lines.forEach((value, idx) => {
-      if (idx === first) lines.push(...insert);
-      if (value !== null && !indices.has(idx)) lines.push(value);
-    });
-    return lines.join('\r\n');
+    return this.previewMulti([{ sentence, specs }]);
+  }
+
+  /** 一句(整句/单切片) → 一条输出 spec。预览与多句预览共用。 */
+  _specOf(sentence, text) {
+    const p = sentence.proto || {};
+    return {
+      layer: p.layer, style: sentence.style, name: p.name,
+      effect: p.effect, margins: p.margins,
+      start: sentence.start, end: sentence.end, text
+    };
+  }
+
+  /**
+   * 多句同时替换的临时预览快照 —— 中文行与英文行的行内草稿要**一起**看到,
+   * 不能编辑哪行就只预览哪行(否则按 Tab 切到另一行时, 前一行的草稿会在画面上消失)。
+   * entries: [{ sentence, specs }] 或 [{ sentence, text }]; 原始事件与导出内容一律不动。
+   */
+  previewMulti(entries) {
+    const jobs = [];
+    for (const e of entries || []) {
+      if (!e || !e.sentence || !e.sentence.events || !e.sentence.events.length) continue;
+      const specs = e.specs && e.specs.length ? e.specs
+        : (e.text != null ? [this._specOf(e.sentence, e.text)] : null);
+      if (!specs || !specs.length) continue;
+      const indices = new Set(e.sentence.events.map(ev => ev.lineIdx));
+      jobs.push({ first: Math.min(...indices), indices, insert: specs.map(s => this._buildDialogueLine(s)) });
+    }
+    if (!jobs.length) return this.serialize();
+    const out = [];
+    for (let idx = 0; idx < this.lines.length; idx++) {
+      const job = jobs.find(j => j.first === idx);
+      if (job) out.push(...job.insert);
+      if (jobs.some(j => j.indices.has(idx))) continue;   // 被替换掉的原事件不输出
+      if (this.lines[idx] !== null) out.push(this.lines[idx]);
+    }
+    return out.join('\r\n');
   }
 
   previewSentence(sentence, safeText) {
     if (!sentence || !sentence.events || !sentence.events.length) return this.serialize();
-    const p = sentence.proto;
-    return this.previewEvents(sentence, [{
-      layer: p.layer, style: sentence.style, name: p.name,
-      effect: p.effect, margins: p.margins,
-      start: sentence.start, end: sentence.end, text: safeText
-    }]);
+    return this.previewMulti([{ sentence, text: safeText }]);
   }
 
   /** 按样式分车道(时间轴用) */

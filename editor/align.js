@@ -315,6 +315,51 @@ const MIN_ANCHOR_RATIO = 0.6;
 const MIN_REF_SEC = 0.08;
 
 /**
+ * 「全片逐词重校对」用的**置信度**：这次 TTS 朗读 → ASR 识别 → 序列对齐有多可信。
+ *
+ * 与项目里已有的「逐句置信度」（识别稳定性）不是一回事：
+ *   那个衡量"原音频识别得准不准"，这个衡量"**这次 TTS 对齐做得准不准**"。
+ *   必须是后者 —— 决定要不要用这次的对齐结果去覆盖逐词时间。
+ *
+ * 三个信号融合（都归一到 0~1）：
+ *  ① 锚点率：识别出的词有多少对上了原文。权重最高 —— 它直接反映"念对了没有"。
+ *     文本里有 TTS 念不对的东西（缩写、符号、专有名词）时它会明显掉下来。
+ *  ② 落单词比例：哪怕整体锚点率高，若有一大片连续落单（TTS 整段念丢/念错），
+ *     那段的分摊时间就是猜的，不该算可信。
+ *  ③ 时长合理度：分摊后有没有词被压得几乎没时长（< 20ms）—— 那是模型抖动，
+ *     落到字幕上就是"某个词一闪而过"。
+ */
+function alignmentConfidence(plan) {
+  if (!plan || !Array.isArray(plan.words) || !plan.words.length) return 0;
+  const n = plan.words.length;
+
+  // ① 锚点率：plan.anchors / 词数（planBlock 已算好）
+  const anchor = Math.max(0, Math.min(1, Number(plan.anchors) / n || 0));
+
+  // ② 落单词里"连续成片"的部分要扣分：单个落单（连读/漏字）是正常的
+  const orphanRun = longestOrphanRun(plan.words, plan.anchorIdx);
+
+  // ③ 被压扁的词（<20ms）
+  const flat = plan.words.filter(w => (Number(w.e) - Number(w.s)) < 0.02).length / n;
+
+  const orphanPenalty = Math.min(0.35, orphanRun * 0.12);
+  const flatPenalty = Math.min(0.25, flat * 0.8);
+  const score = anchor * (1 - orphanPenalty) * (1 - flatPenalty);
+  return Math.max(0, Math.min(1, +score.toFixed(4)));
+}
+
+/** 最长的连续落单词数。plan.anchorIdx = 每个原文词对应的识别词下标（-1 = 落单）。 */
+function longestOrphanRun(words, anchorIdx) {
+  const idx = Array.isArray(anchorIdx) ? anchorIdx : null;
+  if (!idx) return 0;
+  let best = 0, cur = 0;
+  for (const v of idx) {
+    if (Number(v) >= 0) { cur = 0; } else { cur++; if (cur > best) best = cur; }
+  }
+  return best;
+}
+
+/**
  * @param text      原字幕文本（不改，只用来分词）
  * @param block     { start, end }
  * @param recWords  识别合成语音得到的词 [{ word, start, end }]，时间是**合成音频**的
@@ -333,17 +378,25 @@ function planBlock(text, block, recWords, opts) {
   const pairs = alignSequences(toks, rec);
   const anchors = pairs.filter(p => p.oi >= 0 && p.ri >= 0).length;
   const ratio = anchors / toks.length;
+  /* 每个原文词对应的识别词下标（-1 = 落单）。全片重校对要用它算"连续落单长度"，
+   * 所以一并返回（早先只返回 words，置信度就没法区分"零星落单"和"整段丢了"）。 */
+  const anchorIdx = new Array(toks.length).fill(-1);
+  for (const p of pairs) {
+    if (p.oi >= 0 && p.ri >= 0) anchorIdx[p.oi] = p.ri;
+  }
   const times = mapTimes(toks, rec, pairs, block.start, block.end);
   const words = toks.map((w, k) => ({ w, s: +times[k].s.toFixed(3), e: +times[k].e.toFixed(3) }));
 
   // 时间必须单调且不超出块范围（识别抖动可能把末词推出块尾）
   const fixed = enforceMonotonic(words, Number(block.start), Number(block.end));
   const ok = ratio >= minRatio;
-  return {
-    words: fixed, anchors, ratio: +ratio.toFixed(3), ok,
+  const out = {
+    words: fixed, anchors, anchorIdx, ratio: +ratio.toFixed(3), ok,
     note: ok ? '' : `只有 ${(ratio * 100).toFixed(0)}% 的词对上了（低于 ${(minRatio * 100).toFixed(0)}%），`
       + '这次对齐不可信 —— 多半是文本里有 TTS 念不对的内容（缩写、符号、专有名词）',
   };
+  out.confidence = alignmentConfidence(out);
+  return out;
 }
 
 /** 夹到 [lo,hi] 内、且保证 s<e、首尾相对有序 */
@@ -368,5 +421,6 @@ function enforceMonotonic(words, lo, hi) {
 export {
   tokenize, normWord, ttsText, alignSequences, editDistance1, mapTimes, evenSplit,
   splitByChars, shareMergedWords, planBlock, enforceMonotonic,
+  alignmentConfidence, longestOrphanRun,
   MIN_ANCHOR_RATIO, MIN_REF_SEC,
 };

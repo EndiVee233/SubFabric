@@ -861,6 +861,41 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .log-line { white-space: pre-wrap; word-break: break-all; color: var(--text-1); }
 .log-err { color: #ff7a7a; }
 .log-info { color: #9fe3b9; }
+/* warn 级：server.js 以前**没包装 console.warn**，所以日志页从来没有这一级；
+ * 补上包装后这类"能跑但不对劲"的信息才会出现在这里。 */
+.log-warn { color: #ffc46b; }
+
+/* ── 创建页的「创建后自动处理」勾选项 ──────────────────────────────
+   做成一个带说明的横条，而不是普通的一行 checkbox ——
+   它会让建稿多跑两步（可能要十几分钟），用户必须看清代价再勾。 */
+.np-auto {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin-top: 10px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-1);
+  font-size: 12.5px; line-height: 1.6; color: var(--text-1);
+  cursor: pointer;
+}
+.np-auto[hidden] { display: none; }
+.np-auto:hover { border-color: var(--accent); }
+.np-auto input[type="checkbox"] { margin-top: 2px; flex: none; }
+.np-auto b { color: var(--text-0); }
+.np-auto-note {
+  display: block; margin-top: 4px;
+  font-size: 11.5px; color: var(--text-2);
+}
+.np-auto-note b { color: var(--text-1); }
+
+/* ── 全片逐词重校对的预览条目（复用反思纠错的 .reflect-item 骨架）──
+   · is-on  ：已勾选 → 左边一条强调色，一眼看出会改哪些
+   · is-off ：置信度未达门槛 → 整条压暗且不可勾选（它会被原样保留） */
+.reflect-item.is-on {
+  background: rgba(90, 130, 255, .10);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.reflect-item.is-off { opacity: .55; }
+.reflect-item.is-off:hover { background: none; }
+.reflect-item.is-off input[type="checkbox"] { cursor: not-allowed; }
 
 /* 时间轴边缘悬停提示(整体边界 / 首末词边界) */
 .tl-edge-hint {
@@ -1790,3 +1825,158 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 .reflect-conf .rc-label { color: var(--text-2); }
 .reflect-conf .rc-value { font-weight: 700; color: var(--accent); }
 .reflect-conf .rc-note { color: var(--text-2); font-size: 11.5px; }
+
+/* ── 日志页：两个板块（运行日志 / 操作日志）────────────────────────
+   面板本身用 flex 撑满，子标签固定在顶部，两个 pane 各自滚动。 */
+.log-subtabs {
+  flex: none; display: flex; gap: 4px; padding: 0 4px 8px;
+  border-bottom: 1px solid var(--border); margin-bottom: 8px;
+}
+.log-subtab {
+  background: none; border: none; cursor: pointer;
+  padding: 4px 10px; border-radius: 6px;
+  font-size: 12.5px; color: var(--text-2);
+}
+.log-subtab:hover { background: var(--bg-3); color: var(--text-1); }
+.log-subtab.active {
+  background: var(--bg-3); color: var(--text-0); font-weight: 700;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+/* 每个 pane 自己要能撑满剩余高度，否则里面的 #log-view / #oplog-view 拿不到高度 */
+.log-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.log-pane[hidden] { display: none; }
+
+/* 空状态：没有日志时给出说明，而不是一片空白（用户会以为功能坏了） */
+.log-empty {
+  flex: none; margin-top: 8px; padding: 10px 12px;
+  font-size: 12px; line-height: 1.7; color: var(--text-2);
+  background: var(--bg-1); border: 1px dashed var(--border); border-radius: 8px;
+}
+.log-empty[hidden] { display: none; }
+
+#oplog-view {
+  flex: 1; min-height: 0; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: #141418;
+}
+.oplog-row {
+  display: grid;
+  grid-template-columns: 62px 96px 1fr;
+  gap: 8px; align-items: start;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, .05);
+  font-size: 12px; line-height: 1.55;
+}
+.oplog-row:last-child { border-bottom: none; }
+.oplog-row:hover { background: rgba(255, 255, 255, .03); }
+.oplog-t { color: var(--text-2); font-family: Consolas, monospace; font-size: 11px; white-space: nowrap; }
+.oplog-act {
+  color: var(--accent); font-weight: 700; font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.oplog-body { min-width: 0; color: var(--text-1); word-break: break-word; }
+.oplog-target { color: var(--text-0); }
+.oplog-detail { color: var(--text-1); }
+.oplog-why { color: var(--text-2); font-size: 11.5px; }
+.oplog-empty-row { padding: 18px; text-align: center; color: var(--text-2); font-size: 12px; }
+
+/* ── 备注输入条（视频与时间轴之间）──────────────────────────────── */
+#note-bar {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+}
+#note-bar .note-ico { display: flex; color: var(--text-2); }
+#note-bar .note-ico .ico { width: 15px; height: 15px; }
+/* 当前播放位置：写备注时记的就是它，所以要在输入框左边一直可见 */
+#note-bar .note-at {
+  font-family: Consolas, monospace; font-size: 11.5px; color: var(--accent);
+  min-width: 62px; text-align: right; flex: none;
+}
+#note-input {
+  flex: 1; min-width: 0;
+  background: var(--bg-1); color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 8px; font-size: 12.5px; font-family: inherit;
+}
+#note-input:focus { outline: none; border-color: var(--accent); }
+#note-input::placeholder { color: var(--text-2); }
+.note-dur-wrap { display: flex; align-items: center; gap: 4px; flex: none; }
+.note-dur-lbl { font-size: 11px; color: var(--text-2); }
+select.note-dur {
+  background: var(--bg-1); color: var(--text-1);
+  border: 1px solid var(--border); border-radius: 5px;
+  font-size: 11.5px; padding: 2px 4px;
+}
+
+/* ── 备注弹幕层（置顶弹幕）──────────────────────────────────────── */
+#danmaku-layer {
+  position: absolute; left: 0; right: 0; top: 0;
+  z-index: 7;                       /* 在 #srt-overlay 之上、#stage-hint(8) 之下 */
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 10px 12px 0;
+  pointer-events: none;             /* 绝不挡视频控件的点击 */
+  overflow: hidden;
+}
+.dmk {
+  max-width: 88%;
+  padding: 4px 12px; border-radius: 999px;
+  background: rgba(0, 0, 0, .62);
+  color: #fff;
+  font-size: 14px; font-weight: 600; line-height: 1.4;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .85);
+  word-break: break-word;
+  animation: dmk-in .18s var(--ease-out, ease-out) both;
+}
+/* 刚写下的那条高亮一下，便于确认"就是这条" */
+.dmk.is-new { background: rgba(90, 130, 255, .78); }
+.dmk .dmk-at {
+  font-family: Consolas, monospace; font-size: 11px; font-weight: 400;
+  opacity: .8; margin-right: 6px;
+}
+#danmaku-layer.is-off { display: none; }
+@keyframes dmk-in {
+  from { opacity: 0; transform: translateY(-6px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── 备注列表（日志页第三个板块）────────────────────────────────── */
+#note-view {
+  flex: 1; min-height: 0; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: #141418;
+}
+.note-row {
+  display: grid; grid-template-columns: 66px 1fr 26px 26px;
+  gap: 8px; align-items: start;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, .05);
+  font-size: 12.5px; line-height: 1.55;
+}
+.note-row:last-child { border-bottom: none; }
+.note-row:hover { background: rgba(255, 255, 255, .03); }
+.note-row.is-here { background: rgba(90, 130, 255, .13); }
+/* 时间是可点的：跳到该位置 */
+.note-row .note-t {
+  font-family: Consolas, monospace; font-size: 11.5px; color: var(--accent);
+  cursor: pointer; white-space: nowrap;
+}
+.note-row .note-t:hover { text-decoration: underline; }
+.note-row .note-text { color: var(--text-0); word-break: break-word; min-width: 0; }
+.note-row .note-meta { display: block; color: var(--text-2); font-size: 10.5px; margin-top: 2px; }
+.note-row button {
+  background: none; border: none; cursor: pointer; padding: 0;
+  color: var(--text-2); display: flex; align-items: center; justify-content: center;
+}
+.note-row button:hover { color: var(--accent); }
+.note-row button.note-del:hover { color: #ff7a7a; }
+.note-row button .ico { width: 14px; height: 14px; }
+.note-empty-row { padding: 18px; text-align: center; color: var(--text-2); font-size: 12px; }
+/* 子标签上的条数小徽标 */
+.log-subtab-cnt {
+  display: inline-block; margin-left: 5px; padding: 0 5px;
+  border-radius: 8px; background: var(--bg-3);
+  font-size: 10.5px; font-weight: 400; color: var(--text-2);
+}
+.log-subtab-cnt[hidden] { display: none; }
