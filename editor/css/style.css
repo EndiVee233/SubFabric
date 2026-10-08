@@ -27,8 +27,8 @@
   --accent-a55: rgba(255, 122, 69, .55);
   --accent-glow: 0 6px 20px var(--accent-a28);
   --danger: #ff5f6b;
-  --zh: #ff8a5c;          /* 中文行 */
-  --en: #e9e9f0;          /* 英文行 */
+  --zh: #ffffff;          /* 中文行：白 —— 深色背景下的默认观感, 与 ASS 样式默认色一致 */
+  --en: #e9e9f0;          /* 英文行：近白(比中文暗一档, 保留中英两轨的层次) */
   --lane-word: #8b7cf6;   /* 逐词轨道块 */
   --main-sub: #ffffff;
   --sub-sub: #ffd54a;
@@ -373,6 +373,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   border: 1px solid #3a3a46; color: var(--text-1);
 }
 .chip-l1 { color: var(--accent-2); border-color: var(--accent-a45); background: var(--accent-a10); }
+/* ASR 置信度徽标：低置信度用警示色，正常的一档弱化（不干扰阅读） */
+.chip-conf { color: var(--text-2); border-color: var(--hair-2); background: rgba(255,255,255,.03); }
+.chip-conf-low { color: #ffd54a; border-color: #5a4a23; background: rgba(255,213,74,.10); font-weight: 700; }
+.conf-toggle { color: #ffd54a; border-color: #5a4a23; }
+.conf-toggle.active { background: rgba(255,213,74,.16); color: #ffe08a; }
 .chip-bad { color: #ffd54a; border-color: #5a4a23; background: rgba(255,213,74,.10); font-weight: 700; }
 .chip-l2 { color: #bdb7ff; border-color: #3d3a68; background: rgba(139,124,246,.12); }
 .cc-l1 {

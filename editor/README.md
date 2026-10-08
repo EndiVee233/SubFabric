@@ -371,6 +371,7 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链�
       | 模型 | 引擎 | 大小 | 说明 |
       |---|---|---|---|
       | Parakeet TDT 0.6B v2 | sherpa-onnx(CUDA) | 661MB | 英语；**必须 CUDA GPU（N 卡）**，无 N 卡 / CUDA 装不上直接报错（不支持 CPU） |
+      | Parakeet TDT 0.6B v2（Intel NPU） | OpenVINO(NPU+核显) | 2.4GB | 英语；**不需要 N 卡** —— 编码器跑 Intel NPU、预测/联合网络跑核显，NPU 不可用时自动退核显/CPU。与上面那条**同一份权重、同一套后处理**，只换推理后端；首次识别要编译计算图（约 1~3 分钟），之后走缓存几秒 |
       | Whisper large-v3-turbo | whisper.cpp(Vulkan) | 1.5GB | 英语；**必须 Vulkan GPU**，A 卡/N 卡/Intel 通用，实测 RTX 4060 Ti 约 4.7 倍实时；无 Vulkan 驱动直接报错（不支持 CPU） |
       | Multitalker Parakeet Streaming 0.6B v1 | NeMo(PyTorch·CUDA) | 2.8GB | 英语·多说话人（NVIDIA NeMo 说话人核注入）。**只用于「选区重新识别」，不能创建初稿**；**只能 N 卡**，CPU 推理直接报错；还需单独安装 NeMo 运行时（PyTorch + NeMo，约 5GB） |
       | **必剪 ASR（bcut）** | 云端 HTTP | **0** | 英语；**免下载、免显卡、免 Python**，只要联网。音频会上传到 bilibili 服务器（机密素材别用）；非公开接口，官方改协议就会失效 |
@@ -482,7 +483,8 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链�
 
 ```
 asr/                     # 语音识别(创建初稿)—— 独立 Python 环境, 不依赖 npm
-├── asr.py               # Parakeet TDT 0.6B v2 推理 worker(分块/词级时间戳/基础断句/JSON 进度输出)
+├── asr.py               # Parakeet TDT 0.6B v2 推理 worker(sherpa-onnx/CUDA; 分块/词级时间戳/基础断句/JSON 进度输出)
+├── asr_npu.py           # 同一模型的 **Intel NPU(OpenVINO)** 后端 —— 命令行契约与 asr.py 完全一致, 无 N 卡可用
 ├── multitalker.py       # Multitalker Parakeet Streaming 推理(NeMo, 单说话人模式; 仅"重新识别"用)
 ├── requirements.txt     # sherpa-onnx + numpy
 ├── .venv/               # 本地虚拟环境(不入库, 见 README 快速开始)

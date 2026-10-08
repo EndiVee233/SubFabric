@@ -29,6 +29,7 @@ param(
   [string]$Exe = '',
   [string]$Icon = '',
   [string]$Version = '',
+  [string]$RootDir = '',        # 数据目录(缺省从脚本位置推: scripts -> editor -> 仓库根)
   [switch]$SelfTest,
   [switch]$QuitOnce
 )
@@ -72,7 +73,29 @@ function Send-TrayLog([string]$msg) {
   } catch {}
 }
 
+# 托盘悬停提示(NOTIFYICONDATA.szTip)是定长字段 —— 超长会被截断甚至取不到,
+# 所以这里显式截到 62 字符, 保证版本号再长也不会让提示整个空掉。
+function Shorten([string]$s, [int]$max = 62) {
+  if ($null -eq $s) { return '' }
+  if ($s.Length -le $max) { return $s }
+  return $s.Substring(0, $max - 1) + '…'
+}
+
+# 数据目录: server.js 会传 -RootDir; 没传(老版本/手工启动)就从脚本位置往上推两级。
+$script:DataDir = ''
+function Get-DataRoot {
+  if ($script:DataDir) { return $script:DataDir }
+  $cand = ''
+  if ($RootDir) { $cand = $RootDir }
+  elseif ($PSScriptRoot) { $cand = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) }
+  $script:DataDir = $cand
+  return $cand
+}
+
 function Test-PortOpen {
+  # 纯 .NET 同步探活。**不要**改回 MSWinsock.Winsock —— 那是 VB6 时代的 COM 控件,
+  # 在 PowerShell 里需要消息泵, 异步 Connect 常常永远到不了 State=7,
+  # 结果是"服务明明活着却被判成退出", 托盘图标起来几秒后自己消失(实测踩过, 见提交说明)。
   $client = New-Object System.Net.Sockets.TcpClient
   try {
     $iar = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
@@ -100,6 +123,7 @@ function Get-TrayIcon {
 }
 
 function Open-Interface {
+  if ($script:quitting) { return }
   $cands = @()
   if (${env:ProgramFiles(x86)}) { $cands += (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe') }
   if ($env:ProgramFiles) { $cands += (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe') }
@@ -172,6 +196,16 @@ function Invoke-Quit {
   Close-Tray
 }
 
+function Open-DataDir {
+  $dir = Get-DataRoot
+  if (-not $dir -or -not (Test-Path -LiteralPath $dir)) {
+    Send-TrayLog '数据目录不存在，无法打开'
+    return
+  }
+  try { Start-Process explorer.exe -ArgumentList ('"' + $dir + '"') }
+  catch { Send-TrayLog ('打开数据目录失败: ' + $_.Exception.Message) }
+}
+
 function Initialize-Tray {
   $script:ni = New-Object System.Windows.Forms.NotifyIcon
   $script:ni.Icon = Get-TrayIcon
@@ -181,16 +215,28 @@ function Initialize-Tray {
   $script:menu = New-Object System.Windows.Forms.ContextMenuStrip
   $headText = 'SubFabric 字幕工作台'
   if ($Version) { $headText = $headText + " v$Version" }
+  # 标题本身当状态用(托盘最容易被看到的一行): 服务一旦没响应这里立刻看得出来
+  $script:headText = $headText
   $title = $script:menu.Items.Add($headText)
   $title.Enabled = $false
+  # 只读的状态行: 端口与 PID —— 排查"到底有没有在跑/是哪个进程"时不用去翻任务管理器
+  $script:statusItem = $script:menu.Items.Add('状态读取中 …')
+  $script:statusItem.Enabled = $false
   $script:menu.Items.Add('-') | Out-Null                       # 分隔线
   $openItem = $script:menu.Items.Add('打开界面')
   $openItem.add_Click({ Open-Interface })
+  $dirItem = $script:menu.Items.Add('打开数据目录')
+  $dirItem.add_Click({ Open-DataDir })
   $script:menu.Items.Add('-') | Out-Null
   $quitItem = $script:menu.Items.Add('完全退出')
   $quitItem.Font = New-Object System.Drawing.Font($quitItem.Font, [System.Drawing.FontStyle]::Bold)
   $quitItem.add_Click({ Invoke-Quit })
   $script:ni.ContextMenuStrip = $script:menu
+  # 初始状态先填上 —— 否则图标刚出现的 1.5 秒里提示是光秃秃的版本号
+  $initLive = '运行中 · 端口 ' + $Port
+  if ($ServerPid -gt 0) { $initLive = $initLive + ' · PID ' + $ServerPid }
+  $script:ni.Text = Shorten ($headText + ' · ' + $initLive)
+  $script:statusItem.Text = $initLive
   $script:ni.add_MouseDoubleClick({
     if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Open-Interface }
   })
@@ -201,7 +247,19 @@ function Initialize-Tray {
   $script:cleanupTimer.Interval = 1500
   $script:cleanupTimer.add_Tick({
     if ($script:quitting) { return }
-    if (Test-PortOpen) { $script:misses = 0; return }
+    if (Test-PortOpen) {
+      $script:misses = 0
+      # 服务活着 —— 顺手把状态刷到提示与菜单上(不额外起定时器)
+      try {
+        $live = '运行中 · 端口 ' + $Port
+        if ($ServerPid -gt 0) { $live = $live + ' · PID ' + $ServerPid }
+        $script:ni.Text = Shorten ($script:headText + ' · ' + $live)
+        if ($script:statusItem) { $script:statusItem.Text = $live }
+      } catch {}
+      return
+    }
+    # 连不上: 图标自身由下面的 misses 计数负责收掉, 这里只把状态改成"无响应"
+    try { $script:ni.Text = Shorten ($script:headText + ' · 无响应') } catch {}
     $script:misses = $script:misses + 1
     if ($script:misses -ge 2) {           # 连续 3 秒连不上 = 服务确实没了
       Write-TrayLog '服务已退出，托盘图标关闭'
@@ -225,7 +283,45 @@ function Initialize-Tray {
     })
     $script:hintTimer.Start()
   }
+  Promote-TrayIcon
   Write-TrayLog ("托盘图标已就绪 (port=$Port, pid=$ServerPid, version=$Version)")
+}
+
+<#
+  让图标默认显示在任务栏上。
+  Windows 11 对**新出现**的通知区域图标默认 IsPromoted=0 —— 也就是先塞进 ^ 隐藏区，
+  用户第一反应就是"没有托盘图标"(实测本机注册表里确实如此)。这里主动把它改成 1。
+  项名是 Win11 内部算出来的(exePath 与 tooltip 的 crc32 组合)，不可推导，所以
+  按 exePath 逐项比对，命中才改；没命中只记一行日志，绝不硬造项名去污染注册表。
+  这个函数任何一步失败都只记日志，绝不能因为它让托盘起不来。
+#>
+function Promote-TrayIcon {
+  try {
+    $exe = $Exe
+    if (-not $exe) { $exe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
+    $key = 'HKCU:\Control Panel\NotifyIconSettings'
+    if (-not (Test-Path $key)) { Write-TrayLog '注册表无 NotifyIconSettings，跳过图标显示设置'; return }
+    $hit = 0
+    foreach ($sub in Get-ChildItem $key -ErrorAction SilentlyContinue) {
+      $p = Get-ItemProperty -Path $sub.PSPath -ErrorAction SilentlyContinue
+      if (-not $p) { continue }
+      if ($p.ExecutablePath -and ($p.ExecutablePath -ieq $exe)) {
+        if ($p.IsPromoted -ne 1) {
+          try {
+            Set-ItemProperty -Path $sub.PSPath -Name IsPromoted -Value 1 -Type DWord -ErrorAction Stop
+            Write-TrayLog ("已设为在任务栏常驻显示: " + $sub.PSChildName)
+          } catch { Write-TrayLog ('设置 IsPromoted 失败: ' + $_.Exception.Message) }
+        }
+        $hit = $hit + 1
+      }
+    }
+    if ($hit -eq 0) {
+      # 首次运行时这一项通常还不存在（图标刚创建，Windows 还没登记），属正常
+      Write-TrayLog ("通知区域里还没有本图标的注册项(首次运行时正常), exe=" + $exe)
+    }
+  } catch {
+    Write-TrayLog ('Promote-TrayIcon 异常(忽略): ' + $_.Exception.Message)
+  }
 }
 
 Initialize-Tray
