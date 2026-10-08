@@ -19,6 +19,9 @@ const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
 const llmText = require('./llm-text.js');
+// 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
+const reflectMod = require('./reflect.js');
+const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有说话、没字幕覆盖的区间
 const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
 
@@ -39,6 +42,7 @@ function localMt() {
 }
 const fonts = require('./fonts.js');          // 本机字体库: 让 ASS 样式面板直接用系统字体
 const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容推断 + SPK→角色名)  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
+const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie / LLM API Key 走密文, 不明文进 settings.json
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 
@@ -81,7 +85,15 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.1.12'; // 与打版号一致; 改了就顺手同步这里
+// 版本号 2.1.12-fork.1：本 fork 与上游 2.1.12 **同名不同内容**，故加 -fork.N 后缀区分
+//（上游 915ca66c7 = 安全加固 / 特效字幕再导入治愈 / bilibili 画质策略 / 时间轴降耗，
+//  已完整合并；本 fork 另外加了波形漏字幕检测、长稿反思纠错、NPU 帧单位修复、
+//  置信度链路、一批写回/互斥 bug 修复，见 editor/README.md 的更新日志）。
+const APP_VERSION = '2.1.12-fork.1'; // 与打版号一致; 改了就顺手同步这里
+// Windows 的文件版本号要求**四段纯数字**，不能带 -fork.1 这种后缀
+//（build_exe.py 用它喂 rcedit，安装包 SubFabric.iss 里也有一份同值的 MyAppFileVersion）。
+// 改 APP_VERSION 时这个也要跟着改，否则 exe 属性里显示的版本会对不上。
+const APP_FILE_VERSION = '2.1.12.1';
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -101,6 +113,10 @@ function spawn(...args) {
   } catch {}
   return p;
 }
+
+/* audio-slice 默认用原生 spawn(为的是能被离线探针独立复用), 这里把**登记版**注入进去 ——
+ * 静音检测/切片用的 ffmpeg 也要进 CHILDREN, 否则「完全退出」后它还在后台占着。 */
+audioSlice.setSpawnImpl(spawn);
 
 /* ── 运行日志: 环形缓冲 + SSE 推送(UI「日志」页实时显示)。
  * GUI 版 exe 无控制台, console 输出本来无处可去 —— 统一收进缓冲,
@@ -224,6 +240,15 @@ const MIME = {
 const VIDEO_EXTS = ['.mp4', '.m4v', '.webm', '.mkv', '.avi', '.mov'];
 const SUB_EXTS = ['.srt', '.ass', '.ssa'];
 
+/* /api/media 视频路径登记表(本地服务安全基线的一部分):
+ * 只服务"登记过"的路径 —— 项目 meta 里记录过的(见 writeMeta), 或本进程内经对话框/上传通道
+ * 返回过的。早先的实现按任意绝对路径直接读盘, 本机任意页面/进程都能借此把磁盘上的视频读走。 */
+const MEDIA_ALLOW = new Set();
+const mediaKey = (p) => {
+  const n = path.normalize(String(p || '').trim());
+  return process.platform === 'win32' ? n.toLowerCase() : n;
+};
+
 /* 把 URL 路径安全地映射到 root 下的文件路径, 越界返回 null。
  * 注意 decodeURIComponent 在 path 之前: new URL() 不会解码 %2f, 所以 "/..%2f" 能带着
  * 编码斜杠进到这里, 必须先解码再交给 path.join 归一化, 否则 ../ 会被当普通字符放过。 */
@@ -261,6 +286,8 @@ function waveWidth(duration) {
 function probeDuration(videoPath, cb) {
   const p = spawn(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', videoPath], { windowsHide: true });
   let out = '';
+  let settled = false;                       // spawn 失败时 error 与 close 都会到, 回调只允许落一次
+  const finish = (v) => { if (!settled) { settled = true; cb(v); } };
   p.stdout.on('data', d => { out += d; });
   p.on('error', () => cb(0));
   p.on('close', () => { const v = parseFloat(String(out).trim()); cb(isFinite(v) && v > 0 ? v : 0); });
@@ -274,7 +301,10 @@ function renderWaveform(buildArgs, cb, _retry) {
   const proc = spawn(FFMPEG, buildArgs(tmpPng), { windowsHide: true });
   let stderr = '';
   proc.stderr.on('data', d => { if (stderr.length < 4000) stderr += d; });
+  let settled = false;          // error/close/超时可能接连到达(如 kill 之后 close), 收尾只允许一次
   const done = (err) => {
+    if (settled) return;
+    settled = true;
     fs.unlink(tmpPng, () => {});
     if (err && !_retry) {
       console.log('[waveform] ffmpeg 失败，重试一次：', String(err.message || err).slice(0, 200));
@@ -861,21 +891,104 @@ function dualCfg() {
            source: (manual && manual !== 'auto') ? 'manual' : 'auto' };
 }
 
+/** 翻译(LLM)配置。API Key 与 fetch Cookie 同款处理（见 fetchSettings 的迁移逻辑）：
+ *  ① 旧版**明文** apiKey 读完即迁成密文 apiKeyEnc 并清掉明文字段；
+ *  ② 解密后的明文只用于服务端内部（llmReady / llmChat 等），**绝不回传前端**
+ *     —— 对前端一律走 translateCfgPublic()，只回 hasKey。 */
 function translateCfg() {
   const t = (readAsrSettings().translate) || {};
   const preset = LLM_PRESETS.find(p => p.id === t.provider) || null;
+  let apiKey = String(t.apiKey || '');
+  if (apiKey) {
+    let enc = '';
+    try { enc = secretStore.encrypt(apiKey); } catch (e) { console.error('[translate] API Key 加密失败:', e && e.message); }
+    if (enc) {
+      try {
+        const s = readAsrSettings();
+        s.translate = Object.assign({}, s.translate || {}, { apiKey: '', apiKeyEnc: enc });
+        writeAsrSettings(s);
+        console.log('[translate] API Key 已从明文迁移为密文（' + secretStore.backend() + '）');
+      } catch (e) { console.error('[translate] API Key 迁移写盘失败:', e && e.message); }
+    }
+  } else if (t.apiKeyEnc) {
+    try { apiKey = secretStore.decrypt(String(t.apiKeyEnc)); }
+    catch (e) {
+      console.error('[translate] API Key 解不开（换过机器或 Windows 用户？）：' + ((e && e.message) || e) + '。重新填一次 Key 就能恢复');
+      apiKey = '';
+    }
+  }
   return {
     provider: t.provider || 'deepseek',
     baseUrl: t.baseUrl || (preset ? preset.baseUrl : ''),
-    apiKey: t.apiKey || '',
+    apiKey,
     model: t.model || (preset ? preset.model : ''),
     autoTranslate: t.autoTranslate !== false,
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
     glossaryLang: t.glossaryLang || '简体',
     batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 字幕翻译」)
-    hasKey: !!t.apiKey,
+    hasKey: !!apiKey,
   };
+}
+
+/* ── 自动纠错用的 LLM 配置 ────────────────────────────────────────
+ * 默认**跟随翻译配置**（用户不必配两遍）。想单独用别的模型时，在 asr/settings.json 的
+ * correct 段覆盖 —— 典型用途：翻译用在线 API，纠错用**本地部署的模型**
+ * （如 Qwen3 量化版，起一个 OpenAI 兼容服务后把 baseUrl 指到 http://127.0.0.1:11434/v1）。
+ * 不新写抽象层：llmChat() 本来就只认 provider/baseUrl/apiKey/model 这几个字段。
+ *
+ * 「跟随翻译」到底是**显式开关**还是**靠空值推断** —— 这里踩过坑：
+ * 曾经用"baseUrl 与 model 都为空 ⇒ 跟随翻译"来推断，于是用户取消勾选、
+ * 还没填地址时，服务端又把它算回"跟随翻译"，勾选框被回弹、**根本取消不掉**。
+ * 现在存显式的 correct.useTranslate；只有该字段不存在（旧配置）时才回退到推断。
+ */
+function correctUseTranslate(raw) {
+  const t = raw || {};
+  if (typeof t.useTranslate === 'boolean') return t.useTranslate;
+  // 旧配置兼容：没有显式开关时，按"有没有自定义地址/模型"推断
+  return !String(t.baseUrl || '').trim() && !String(t.model || '').trim();
+}
+
+function correctCfg() {
+  const t = (readAsrSettings().correct) || {};
+  const base = translateCfg();
+  const follow = correctUseTranslate(t);
+  /* 跟随翻译时，把自定义值**整体忽略**（`f` 置空对象），地址/模型/Key/provider 一律走 base。
+   *
+   * ⚠ 这里踩过一次：只把 `follow` 用在 provider 上、却仍用 pick(t.baseUrl, …) 读自定义字段，
+   *   于是「勾选用字幕翻译的模型」后实际调用的还是自定义的那个模型 ——
+   *   开关看似生效（useTranslate=true），实际没生效。凡是 follow 要管的字段，
+   *   都必须从 `f` 取，不能从 `t` 取。 */
+  const f = follow ? {} : t;
+  const provider = f.provider || '';
+  const preset = LLM_PRESETS.find(p => p.id === provider) || null;
+  const pick = (v, fb) => (v === undefined || v === null || String(v).trim() === '') ? fb : String(v).trim();
+  return {
+    provider: provider || base.provider,
+    baseUrl: pick(f.baseUrl, preset ? preset.baseUrl : base.baseUrl),
+    apiKey: pick(f.apiKey, base.apiKey),
+    model: pick(f.model, preset ? preset.model : base.model),
+    // 纠错比翻译更考验理解力，默认给多点输出预算（批数多、每批都要出 JSON）
+    maxTokens: Math.max(512, Math.min(8192, parseInt(t.maxTokens, 10) || 2048)),
+    mode: (t.mode === 'off' || t.mode === 'preview' || t.mode === 'auto') ? t.mode : 'preview',
+    ctxLines: Math.max(1, Math.min(8, parseInt(t.ctxLines, 10) || reflectMod.CTX_LINES)),
+    batchLines: Math.max(20, Math.min(200, parseInt(t.batchLines, 10) || reflectMod.BATCH_LINES)),
+  };
+}
+
+/** 纠错配置是否可用（要能发请求：有 baseUrl + model，且要么有 Key 要么是本地地址） */
+function correctReady(cfg) {
+  const c = cfg || correctCfg();
+  if (!c.baseUrl || !c.model) return false;
+  if (c.apiKey) return true;
+  // 本地部署通常不校验 Key：地址指向本机就放行
+  return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(c.baseUrl);
+}
+/** 翻译配置的对外视图: 明文 Key 绝不回传(与 fetchPublicSettings 同一约定) */
+function translateCfgPublic(cfg) {
+  const c = Object.assign({}, cfg || {});
+  delete c.apiKey;
+  return c;
 }
 
 /** 语义分句的切句规则开关（asr/settings.json 的 resegSplitOnComma）：
@@ -930,7 +1043,20 @@ function saveTranslateCfg(patch) {
     const preset = LLM_PRESETS.find(p => p.id === patch.provider);
     if (preset) { cur.baseUrl = preset.baseUrl; cur.model = preset.model; }
   }
-  s.translate = Object.assign(cur, patch);
+  const p = Object.assign({}, patch);
+  // apiKey 永不落盘明文: 非空 → 加密存 apiKeyEnc; 空串 → 视为「不改」
+  // (前端输入框不再回显明文 Key, 留空的含义就是保持原值不变)
+  if (Object.prototype.hasOwnProperty.call(p, 'apiKey')) {
+    const v = String(p.apiKey || '');
+    delete p.apiKey;
+    if (v) {
+      try { p.apiKeyEnc = secretStore.encrypt(v); }
+      catch (e) { console.error('[translate] API Key 加密失败, 暂按明文存:', e && e.message); p.apiKey = v; }
+    }
+  }
+  if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }   // 显式清除(设置里的「清除已存 Key」链接)
+  delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
+  s.translate = Object.assign(cur, p);
   writeAsrSettings(s);
   return translateCfg();
 }
@@ -1159,6 +1285,70 @@ function writeAsrSettings(obj) {
   const tmp = ASR_SETTINGS + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
   fs.renameSync(tmp, ASR_SETTINGS);
+}
+
+/* ── 逐句置信度：三档 ──────────────────────────────────────────
+ * 置信度由三个信号融合（见 asr/confidence.py）：token 概率、音频质量、稳定性。
+ *   · token 概率    —— 解码时本来就算，**零额外开销**
+ *   · 音频质量      —— 几毫秒的 numpy，**零额外开销**
+ *   · 稳定性        —— 把音频加噪**重跑 tta 遍**，这是唯一的真开销
+ * 实测 236 秒音频：tta=2 → 20.8s，tta=0 → 10.7s（稳定性占 10.1s，近乎翻倍）。
+ *
+ * 所以按"要不要花这份时间"分三档：
+ *   off  —— 完全不生成：worker 不重跑，且服务端把逐句 confidence 丢掉、
+ *           不写 ASS 注释、界面不显示（列表的置信度徽标与筛选会自然消失）
+ *   fast —— 只融合白送的两路（token + 音频），不重跑稳定性
+ *   full —— 三路齐全（默认）
+ *
+ * 两处控制：全局（设置 → 识别增强）+ 项目级（新建稿件的生成设置）。
+ * 项目级只在用户**显式**选过时覆盖全局 —— 用 null 表示"跟随全局"，
+ * 这样以后改全局设置，老项目会跟着变（而不是把当时的默认值冻在项目里）。 */
+const CONFIDENCE_MODES = ['off', 'fast', 'full'];
+const CONFIDENCE_TTA = 2;                 // full 档的重跑遍数（与 worker 默认值一致）
+
+/** 把任意输入规整成三档之一；认不出来就返回 fallback */
+/** 把任意输入规整成三档之一；认不出来就返回 fallback。
+ *  兼容布尔：true → full、false → off —— 早先这个开关就是布尔的，
+ *  老项目（project.json 的 draft.confidence）与老设置文件里存的都是 true/false。
+ *  `asrConfidenceDefault` 与 `asrConfidenceFor` 都走这里，兼容行为天然一致；
+ *  实测踩过：只在 default 里做兼容、漏了 For → 老项目存的 false 会被当成垃圾值
+ *  而退回全局（全局若是 full，老项目明明关了却又开始做稳定性重跑）。 */
+function normConfMode(v, fallback) {
+  if (v === true) return 'full';
+  if (v === false) return 'off';
+  return CONFIDENCE_MODES.includes(v) ? v : fallback;
+}
+
+/** 全局默认：设置里没写过就是 full */
+function asrConfidenceDefault() {
+  const c = readAsrSettings().confidence || {};
+  // 兼容早期写过的布尔形式 {enabled:false} → off
+  if (typeof c.enabled === 'boolean') return c.enabled ? 'full' : 'off';
+  return normConfMode(c.mode, 'full');
+}
+
+/** 项目级 → 有效档位：项目没表态（undefined/null）就跟随全局 */
+function asrConfidenceFor(meta) {
+  const v = meta && meta.draft ? meta.draft.confidence : undefined;
+  return normConfMode(v, asrConfidenceDefault());
+}
+
+/** 档位 → worker 的 --tta 参数。off 与 fast 都是 0（都不重跑），
+ *  区别在于 off 之后会把逐句 confidence 丢掉 —— 见 draftConfidenceOff()。 */
+function ttaArgs(mode) {
+  return ['--tta', String(mode === 'full' ? CONFIDENCE_TTA : 0)];
+}
+
+/** off 档：把逐句置信度从结果里摘掉（服务端负责，worker 不必知道这个档位）。
+ *  这样 ASS 里不会写 SubFabricConfidence 注释，界面也就没有徽标可显示。 */
+function stripConfidence(segs) {
+  let n = 0;
+  for (const s of (segs || [])) {
+    if (s && s.confidence) { delete s.confidence; n++; }
+    // 词级概率也一并去掉：它是给 make_confidence 用的中间产物，不参与字幕生成
+    for (const w of (s && s.words) || []) { if (w && w._p) delete w._p; }
+  }
+  return n;
 }
 /** 「生成设置 → 角色分析提示词」: 留空则返回空串, cast.js 会退回内置 CAST_SYSTEM */
 function castPromptCfg() {
@@ -1525,7 +1715,7 @@ function startRuntimeDownload() {
       // 解压: Windows 自带的 bsdtar 能解 zip(最可靠); 失败再退回 Expand-Archive。
       // 注意: 必须用**异步 spawn** —— 本环境下 spawnSync 会 EBUSY(实测),
       // 且此处本就在 async IIFE 里, await 天然可用。
-      const { spawn } = require('child_process');
+      // (这里曾局部 require('child_process') —— 那会遮蔽外层包装器, 解压进程漏出 CHILDREN 登记表)
       const tmpEx = path.join(os.tmpdir(), `kass-whisper-ex-${Date.now().toString(36)}`);
       fs.mkdirSync(tmpEx, { recursive: true });
       const sysTar = path.join(process.env.SystemRoot || 'C:' + path.sep + 'Windows', 'System32', 'tar.exe');
@@ -1979,7 +2169,25 @@ function sendFavicon(req, res) {
 
 const SIMPLE_ROUTE_MAP = new Map(SIMPLE_ROUTES);
 
+/* ── 本地服务安全基线(防 DNS rebinding / CSRF) ─────────────────────────
+ * 攻击场景: 恶意网页把自己的域名解析到 127.0.0.1, 浏览器就把"同源请求"打到本服务上
+ * (服务只绑 127.0.0.1 也拦不住 —— 浏览器视角这就是同源)。两道防线:
+ *   ① Host 必须是回环地址 —— rebinding 时浏览器发的是 evil.com, 这里直接 403;
+ *   ② 写方法若带 Origin(浏览器必带), 必须同源; 无 Origin 的非浏览器调用(tray/脚本/测试)放行。 */
+const LOOPBACK_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const LOOPBACK_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+
 function handleRequest(req, res) {
+  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
+    return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
+  }
+  if (UNSAFE_METHODS.has(req.method)) {
+    const origin = String(req.headers.origin || '').trim();
+    if (origin && !LOOPBACK_ORIGIN_RE.test(origin)) {
+      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: origin');
+    }
+  }
   const u = new URL(req.url, `http://${req.headers.host || HOST}`);
   const pathname = u.pathname;
 
@@ -2050,6 +2258,7 @@ function handleRequest(req, res) {
     out.on('finish', () => {
       let okExt = VIDEO_EXTS.includes(path.extname(dest).toLowerCase());
       if (!okExt) { try { fs.unlinkSync(dest); } catch {} return finish(400, { error: '不支持的格式: ' + path.extname(dest) }); }
+      MEDIA_ALLOW.add(mediaKey(dest));   // 上传落盘的视频登记进 /api/media 白名单
       return finish(200, { path: dest, name: finalName, size });
     });
     req.pipe(out);
@@ -2080,6 +2289,9 @@ function handleRequest(req, res) {
     const tmp = metaPath(meta.id) + '.tmp';     // 临时文件 + 原子改名: 并发请求永远读不到半截 JSON
     fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
     fs.renameSync(tmp, metaPath(meta.id));
+    // 项目记录过的视频路径登记进 /api/media 白名单(meta 是本进程内唯一可信来源;
+    // 新建/重连/下载完成后都会途经这里, 保证创建后立刻可播, 不用等 meta 扫描缓存过期)
+    if (meta.video && meta.video.path) MEDIA_ALLOW.add(mediaKey(meta.video.path));
   }
   function touchMeta(meta) { meta.modifiedAt = new Date().toISOString(); writeMeta(meta); }
 
@@ -2144,7 +2356,7 @@ function handleRequest(req, res) {
  * Cookie/代理 存在 asr/settings.json 的 fetch 段; **对外只回"有没有", 绝不回传值**。 */
 const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
-const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie 走密文, 不再明文进 settings.json
+/* 敏感值统一走 secret-store(require 在文件头部): bilibili Cookie / LLM API Key 都走密文, 不明文进 settings.json */
 const fetchJobs = new Map();          // 项目 id -> { proc }
 
 /** 读 fetch 设置。顺带做两件事：
@@ -2268,12 +2480,25 @@ async function biliLoginCheck(cookieText) {
     return { ok: false, isLogin: false, message: t ? '检测超时：网络不通或 bilibili 不可达' : ('检测失败：' + ((e && e.message) || e)) };
   }
 }
-/** 只认 bilibili / YouTube（用户要求） */
+/** 只认 bilibili / YouTube（用户要求）。
+ *  必须按 hostname 严格匹配 —— 曾经用子串匹配, `https://evil.com/bilibili.com`、
+ *  `http://内网地址/?youtube.com` 都会被判成真站, 再把整条 URL 原样交给下载内核(SSRF 面)。 */
 function fetchSiteOf(url) {
-  const u = String(url || '').toLowerCase();
-  if (u.indexOf('bilibili.com') >= 0 || u.indexOf('b23.tv') >= 0) return 'bilibili';
-  if (u.indexOf('youtube.com') >= 0 || u.indexOf('youtu.be') >= 0) return 'youtube';
+  let u;
+  try { u = new URL(normalizeFetchUrl(url)); } catch { return ''; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');   // 结尾的 "." 是 FQDN 写法, 归一掉再比对
+  const isHost = (h) => host === h || host.endsWith('.' + h);
+  if (isHost('bilibili.com') || isHost('b23.tv')) return 'bilibili';
+  if (isHost('youtube.com') || isHost('youtu.be')) return 'youtube';
   return '';
+}
+/** 链接规范化: 少写协议头(如 "www.bilibili.com/video/BV…")按 https 处理,
+ *  与 yt-dlp 自身的 sanitize_url 行为对齐(它缺协议时补 http, 这里补 https 更稳)。 */
+function normalizeFetchUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : 'https://' + s;
 }
 /** bilibili Cookie 文本规范化: 用户常常**只复制到值**（DevTools / 扩展里点一下就复制了值本身，
  *  形如 `ac87ca47%2C1806119310%2C…`），这种文本里没有任何 name=value →
@@ -2298,7 +2523,7 @@ function pyVersionOk(exe, pre) {
   return new Promise((resolve) => {
     let p;
     try {
-      p = childProcess.spawn(exe, pre.concat(['-c', 'import sys;print(sys.version_info[0]*100+sys.version_info[1])']), { windowsHide: true });
+      p = spawn(exe, pre.concat(['-c', 'import sys;print(sys.version_info[0]*100+sys.version_info[1])']), { windowsHide: true });
     } catch { return resolve(false); }
     let out = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} resolve(false); }, 8000);
@@ -2342,7 +2567,7 @@ function runFetchCli(id, args, onEvent) {
       return new Promise((resolve) => {
         let proc;
         try {
-          proc = childProcess.spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
+          proc = spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
         } catch (e) {
           return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
         }
@@ -2660,6 +2885,12 @@ function startPrepare(id, videoPath, mode) {
     return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
   }
 
+  /** ASS 时间 'H:MM:SS.cc' → 秒。解析不出来返回 NaN（调用方必须判，别把 NaN 当 0） */
+  function assTimeToSec(s) {
+    const m = /^(\d+):(\d+):([\d.]+)$/.exec(String(s == null ? '' : s).trim());
+    return m ? (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]) : NaN;
+  }
+
   function fmtSrtTime(sec) {
     const t = Math.max(0, sec);
     const h = Math.floor(t / 3600);
@@ -2798,6 +3029,196 @@ function startPrepare(id, videoPath, mode) {
       if (Array.isArray(t.lines) && t.lines.length === n) return t.lines;
     } catch {}
     return null;
+  }
+
+  /* ── 长稿反思纠错 ──────────────────────────────────────────────
+   * 让 LLM **通读全片**（分批 + 相邻批重叠，见 reflect.js），找出语句不通顺之处，
+   * 产出两类可执行建议（merge / reidentify）+ 一类提示（gap），并把可执行建议
+   * 归并成**去重后的重识别区间**（同稿每段只跑一遍）。
+   *
+   * 只读不写：这个函数不碰字幕，纯产出建议给预览页。执行由前端确认后调
+   * /reidentify 完成 —— 这就是"预览优先、可全部接受"的实现方式。
+   */
+  /* 纠错单批的 token 预算上限：撞到截断就翻倍重试，最多到这个数。
+   * 为什么要自适应：带"思考"的模型（如本地 Qwen3）思考长度与输入成正比，
+   * max_tokens 猜小了整批白跑；固定的默认值无法覆盖所有素材长度。 */
+  const REFLECT_MAX_TOKENS = 16384;
+
+  async function runReflect(id, onProgress) {
+    const cfg = correctCfg();
+    if (!correctReady(cfg)) {
+      throw new Error('纠错用的模型没配好：先在「全局设置 → 识别增强 → 自动纠错」里填接口地址与模型名'
+        + '（默认跟随字幕翻译的配置；也可以用本地部署的 OpenAI 兼容服务）');
+    }
+    const segs = readSegments(id);
+    /* 带上**逐词时间**：行的 start/end 被 reseg 的 groupsToSegments 规整过
+     * （后一行起点被推到前一行终点，杜绝重叠），看上去永远严丝合缝；
+     * 只有逐词时间还保留着真实间隔 —— findTimeGaps 靠它判定"这段音频没识别出内容"，
+     * 否则空档会被行的规整时间掩盖掉（实测：全片唯一 4.75 秒的空档，
+     * 按行时间看就是 0，按词时间是 4.75）。 */
+    const rows = segs.map(s => ({
+      start: s.start, end: s.end, text: String(s.text || ''),
+      words: Array.isArray(s.words)
+        ? s.words.filter(w => w && Number.isFinite(w.start) && Number.isFinite(w.end))
+            .map(w => ({ start: w.start, end: w.end }))
+        : [],
+    }));
+    if (!rows.length) throw new Error('这个稿件还没有可校对的行');
+
+    const zh = readTranslations(id, rows.length);
+    if (zh) rows.forEach((r, i) => { r.zh = String(zh[i] == null ? '' : zh[i]); });
+
+    const batches = reflectMod.planBatches(rows, cfg.batchLines, reflectMod.BATCH_OVERLAP);
+    const all = [];
+    const notes = [];
+    /* 单批：撞上 max_tokens 截断就**自动加大预算重试**。
+     *
+     * 为什么必须自适应（本地模型实测）：Qwen3 这类**带思考**的模型，思考文本与输入长度
+     * 成正比 —— 20 行批次光是思考就吃掉 ~1400 token，长批次更多。而 max_tokens 是猜出来的，
+     * 猜小了整批白跑（实测 4096 仍有两批被截断）。与其让用户反复试参数，
+     * 不如识别出"截断"这个明确的失败信号后翻倍重试。
+     *
+     * 只在 truncated 时重试：其它错误（认证、网络、格式）翻倍预算没有意义。
+     */
+    const runBatch = async (user, budget) => {
+      try {
+        const r = await llmChat(cfg, [
+          { role: 'system', content: reflectMod.SYS_PROMPT },
+          { role: 'user', content: user },
+        ], { jsonMode: true, maxTokens: budget, debugFile: path.join(projDir(id), 'llm-debug.jsonl') });
+        return { raw: (r && r.content) || '', budget };
+      } catch (e) {
+        /* 判定"能不能靠加大预算救回来"。
+         *
+         * 两个信号都要认：
+         *   · kind='truncated' —— 有正文但被切断
+         *   · kind='empty' **且** finishReason='length' —— 预算全被"思考"吃完，
+         *     连正文都没轮上。带思考的模型（Qwen3 等）在思考较长时先走到这一支，
+         *     早期只认 truncated 会漏掉它，自适应重试等于没生效（实测踩过）。
+         */
+        const kind = e && e.kind;
+        const truncated = kind === 'truncated'
+          || (kind === 'empty' && e && e.finishReason === 'length');
+        const canRetry = truncated && budget < REFLECT_MAX_TOKENS;
+        if (!canRetry) throw e;
+        const next = Math.min(REFLECT_MAX_TOKENS, budget * 2);
+        console.log(`[llm] 纠错某批输出被截断（预算 ${budget}），自动加大到 ${next} 重试`);
+        return runBatch(user, next);
+      }
+    };
+
+    for (let k = 0; k < batches.length; k++) {
+      const [bi, lo, hi] = batches[k];
+      if (onProgress) onProgress(k, batches.length, `反思中 … 第 ${k + 1}/${batches.length} 批（第 ${lo}~${hi} 行）`);
+      const user = reflectMod.buildBatchPrompt(rows, lo, hi, rows.length, bi, batches.length);
+      let raw = '';
+      try {
+        const out = await runBatch(user, cfg.maxTokens);
+        raw = out.raw;
+        if (out.budget > cfg.maxTokens) {
+          notes.push(`第 ${k + 1} 批输出较长，已自动把预算从 ${cfg.maxTokens} 提到 ${out.budget} 后成功`);
+        }
+      } catch (e) {
+        // 单批失败不该让整个反思白跑：记下原因，用其余批次的结果继续
+        notes.push(`第 ${k + 1} 批失败：${String((e && e.message) || e).slice(0, 120)}`);
+        continue;
+      }
+      const [fs, note] = reflectMod.parseFindings(raw, rows.length, rows);
+      if (note) notes.push(`第 ${k + 1} 批：${note}`);
+      all.push(...fs);
+    }
+
+    /* 确定性补一条：扫时间轴找出"有一段音频没被识别出内容"的空档。
+     *
+     * 为什么不交给模型：模型的输入是**文本**，看不到静音，只能靠语义感觉。
+     * 实测（41 行 / 235.6 秒）：全片唯一一处 ≥3 秒空档是 78.2~83.0（4.75 秒），
+     * 模型没报成 gap，而是报成 `merge 12~14` —— 于是那段漏掉的内容永远不会被补回来。
+     *
+     * 这里与模型并行给出，两边的 gap 由 mergeFindings 去重。
+     * 找出来的空档**可执行**：用户勾选后会把那段音频重新识别一遍。 */
+    const timeGaps = reflectMod.findTimeGaps(rows, { minSec: reflectMod.GAP_MIN_SEC });
+    if (timeGaps.length) {
+      console.log(`[reflect] 时间轴扫出 ${timeGaps.length} 处空档（≥${reflectMod.GAP_MIN_SEC}s）：`
+        + timeGaps.map(g => `${g.start.toFixed(1)}~${g.end.toFixed(1)}s`).join(', '));
+    }
+
+    /* 波形检测：**有人在说话、却没有任何字幕盖住**的地方。
+     *
+     * 与上面 findTimeGaps 的分工（两者互补，都要）：
+     *   · findTimeGaps  —— 只看字幕行之间的空档。两行**紧挨着**、但中间那段音频
+     *                      本来就没识别出内容，它看不出来。
+     *   · 这一条        —— 直接看音频。实测该稿件检出 5 处、共 23.5 秒（例如
+     *                      36.2~42.4s 与 138.8~145.7s 在 ASS 里完全没有事件）。
+     *
+     * 为什么用 ffmpeg silencedetect 取反而不是自己算 RMS：实测音频全程有底噪，
+     * 单纯按能量阈值会把整片都判成"有声"；silencedetect 用帧内中位能量模型，
+     * 对底噪不敏感。（peaks.bin 也不行：它是被钳位过的显示用包络，不是线性刻度。）
+     *
+     * 判定用**最终字幕文件**而不是 asr.json —— 用户看到的是前者。
+     * 实测两者会分叉（同一稿 asr.json 41 行齐全，ASS 却缺了前 36 秒且只有 37 行乱序）。 */
+    let waveGaps = [];
+    try {
+      const metaW = readMeta(id) || {};
+      const wavName = (metaW.audio && metaW.audio.file) || 'audio.wav';
+      const wav = path.join(projDir(id), wavName);
+      if (fs.existsSync(wav)) {
+        const dur = speechGapMod.readWavDuration(wav)
+          || (rows.length ? Number(rows[rows.length - 1].end) + 2 : 0);
+        // 字幕轨：优先用最终字幕文件（用户看到的），读不到才退回识别行
+        let track = null;
+        try {
+          const sub = (metaW.subtitle && metaW.subtitle.file) || '';
+          if (sub && /\.ass$/i.test(sub)) {
+            const txt = fs.readFileSync(path.join(projDir(id), sub), 'utf8');
+            track = [];
+            for (const line of txt.split('\n')) {
+              if (!line.startsWith('Dialogue:')) continue;
+              const f = line.slice(9).split(',');
+              const a = assTimeToSec(f[1]), b = assTimeToSec(f[2]);
+              if (Number.isFinite(a) && Number.isFinite(b) && b > a) track.push({ start: a, end: b });
+            }
+          }
+        } catch { /* 读不到就退回识别行 */ }
+        if (!track || !track.length) track = rows.map(r => ({ start: r.start, end: r.end }));
+        const sil = await audioSlice.detectSilences(FFMPEG, wav);
+        waveGaps = speechGapMod.speechGaps(sil, track, dur).map(g => ({
+          kind: 'gap',
+          // 用行号表达位置：找"这条时间落在哪两行之间"，好让区间规划与预览复用同一套结构
+          from: Math.max(1, rows.findIndex(r => Number(r.end) >= g.start) + 1),
+          to: Math.max(1, rows.findIndex(r => Number(r.start) >= g.end) + 1),
+          start: g.start, end: g.end, dur: g.dur,
+          reason: `波形显示这里有人在说话（${g.dur.toFixed(1)} 秒），但字幕轨完全没盖住，疑似漏识别`,
+          confidence: 0.95,
+          fromWave: true,
+        }));
+        if (waveGaps.length) {
+          console.log(`[reflect] 波形检出 ${waveGaps.length} 处"有声无字幕"：`
+            + waveGaps.map(g => `${g.start.toFixed(1)}~${g.end.toFixed(1)}s`).join(', '));
+        }
+      }
+    } catch (e) {
+      // 波形检测失败不该让整个反思白跑：记一句提示，其余结果照常
+      notes.push('波形漏字幕检测跳过：' + String((e && e.message) || e).slice(0, 100));
+    }
+
+    const [findings, dropped] = reflectMod.mergeFindings(all.concat(timeGaps, waveGaps), rows.length);
+    /* 传 opts **对象**。
+     * ⚠ 这里以前写的是 `planRegions(rows, findings, cfg.ctxLines)` —— 把 ctxLines（数字）
+     *   当成 opts 传了进去。新实现读的是 o.padSec / o.maxSec，于是**设置页那两项
+     *   「上下文 N 秒 / 单段上限」从来没生效过**，一直在用 reflect.js 里的默认值
+     *   （默认恰好也是 2/30，所以从没暴露出来）。ctxLines 是"按行取上下文"时代的
+     *   遗留字段，现在不再使用。 */
+    const regs0 = (readAsrSettings().correct) || {};
+    const regions = reflectMod.planRegions(rows, findings, {
+      padSec: Number.isFinite(Number(regs0.padSec)) ? Number(regs0.padSec) : reflectMod.PAD_SEC,
+      maxSec: Number.isFinite(Number(regs0.maxSec)) ? Number(regs0.maxSec) : reflectMod.MAX_REGION_SEC,
+    });
+    const summary = reflectMod.summarize(rows, findings, regions);
+    summary.batches = batches.length;
+    summary.dropped = dropped;
+    summary.model = cfg.model;
+    // 同时给出 rows 的时长信息，前端预览要显示"这句多长"以便解释判定
+    return { findings, regions, summary, notes, rows: rows.length };
   }
 
   /** 组装初稿字幕: 英文段 segs + 可选中文译文 trans(长度必须等于 segs)。
@@ -2990,7 +3411,10 @@ function startPrepare(id, videoPath, mode) {
     const message = choice && choice.message;
     const finishReason = choice && choice.finish_reason;
     const rawContent = (message && typeof message.content === 'string') ? message.content : '';
-    const reasoning = (message && typeof message.reasoning_content === 'string') ? message.reasoning_content : '';
+    // 思考文本的字段名各家不同：OpenAI/DeepSeek 用 reasoning_content，**Ollama 用 reasoning**。
+    // 只认前者的话，本地 Qwen3 被截断时会报成"接口返回内容为空"，看不出真实原因（实测踩过）。
+    const reasoning = (message && typeof message.reasoning_content === 'string') ? message.reasoning_content
+      : ((message && typeof message.reasoning === 'string') ? message.reasoning : '');
     const content = llmText.stripReasoning(rawContent);
     const debugBase = { kind: o.kind || '', model: cfg.model, status: resp.status, finishReason, maxTokens };
 
@@ -3003,7 +3427,7 @@ function startPrepare(id, videoPath, mode) {
       throw new LlmError(why, 'empty', { finishReason });
     }
     if (finishReason === 'length') {
-      const why = `输出被 max_tokens 截断（finish_reason=length, max_tokens=${maxTokens}, 已收到 ${content.length} 字）。把「每批行数」调小后重试重试`;
+      const why = `输出被 max_tokens 截断（finish_reason=length, max_tokens=${maxTokens}, 已收到 ${content.length} 字）。把「每批行数」调小后重试`;
       console.error(`[llm] ${why}`);
       dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000) }, debugBase));
       throw new LlmError(why, 'truncated', { finishReason, partial: content, maxTokens });
@@ -3204,12 +3628,22 @@ function startPrepare(id, videoPath, mode) {
   /* ═══════════ 选区重新识别（后台任务执行器） ═══════════
    * 进度分段: 切音频 0~10 → 识别 10~72 → 翻译 76~97 → 完毕 100。
    * 任务对象挂在 rerecogJobs, 前端每秒轮询 GET 同名接口。 */
-  function startRerecognize(id, start, end, model) {
-    const job = {
+  function startRerecognize(id, start, end, model, opt) {
+    const o = opt || {};
+    // 复用外部 job 对象：批量重识别（纠错机制）逐段驱动同一个 job，
+    // 每段识别完把结果**追加**到 job.segments，全部跑完才置 done。
+    // 没有外部 job 时就是原来的单区间行为。
+    const job = o.job || {
       start, end, status: 'running', stage: '切音频', progress: 2,
       message: '正在切出音频片段…', error: null, segments: null,
       startedAt: new Date().toISOString(),
     };
+    if (o.job) {
+      job.start = start; job.end = end;
+      job.status = 'running'; job.stage = '切音频'; job.progress = 2;
+      job.message = '正在切出音频片段…'; job.error = null;
+      if (!Array.isArray(job.segments)) job.segments = [];
+    }
     rerecogJobs.set(id, job);
     // 收尾时记 finishedAt: GET 路由靠它判断"这条结果已经没人要了", 超时清掉陈旧任务
     const setRr = (patch) => {
@@ -3218,7 +3652,15 @@ function startPrepare(id, videoPath, mode) {
       }
       return Object.assign(job, patch);
     };
+    // 逐句置信度的档位：按**项目级 → 全局**解析，与创建初稿同一套规则。
+    // ⚠ 这个变量以前漏了定义，而下面的常驻服务与 spawn 两处都在用它 ——
+    // 结果是**选区/行级重识别一跑就 ReferenceError: confMode is not defined**。
+    // 跟着项目设置走是对的：用户在稿件上选了"关闭"，重新识别也不该偷偷跑稳定性。
+    const confMode = asrConfidenceFor(readMeta(id));
     (async () => {
+      // 从 job 读区间（而不是闭包里的 start/end）：批量模式下每段都会改写它。
+      // 下面的代码全部沿用原来的写法，只有这两行是新增的。
+      start = job.start; end = job.end;
       try {
         const wav = path.join(projDir(id), 'audio.wav');
         const mdir = model.cloud ? '' : modelDirFor(model.id);
@@ -3300,7 +3742,10 @@ function startPrepare(id, videoPath, mode) {
               await asrSvc.transcribe({
                 script: ea.script, model: mdir, provider: ea.provider,
                 extra: (ea.extra || []).concat(ea.hotwords || []),
-                audio: segWav, tta: readAsrSettings().confidenceTta, outPath: outJson,
+                // 常驻服务模式：按项目级→全局解析出的有效值传重跑遍数（关掉=0）。
+                // 原来读 readAsrSettings().confidenceTta —— 那个字段从没被写入过，
+                // 一直是 undefined，worker 便退回了自己的默认值 2（踩过）。
+                audio: segWav, tta: (confMode === 'full' ? CONFIDENCE_TTA : 0), outPath: outJson,
               });
               servedOk = true;
             } catch (e) {
@@ -3311,7 +3756,7 @@ function startPrepare(id, videoPath, mode) {
             : await new Promise((resolve, reject) => {
             const asrArgs = [ea.script, '--model', mdir, '--audio', segWav,
                              '--out', outJson, '--threads', '4', '--provider', ea.provider,
-                             ...(ea.extra || []), ...ea.hotwords];
+                             ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
             const py = spawn(ASR_PY, asrArgs,
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
             let pyErr = '';
@@ -3402,6 +3847,14 @@ function startPrepare(id, videoPath, mode) {
           warning = 'API Key 为空，本次没翻。点右上角「设置」填好之后，其它区间就能用';
         }
 
+        if (o.batch) {
+          // 批量模式：把这一段的结果**追加**到 job.segments，并把状态留在 running
+          // —— 前端要等所有区间跑完才写回（写回必须一次做完, 否则行号会串）。
+          job.segments = (job.segments || []).concat(segs);
+          job.regionDone = (job.regionDone || 0) + 1;
+          job.warnings = (job.warnings || []).concat(warning ? [warning] : []);
+          return;                                  // 不置 done，交给批量调度器
+        }
         setRr({ status: 'done', stage: '完毕', progress: 100, segments: segs, warning,
           message: `识别完成：${segs.length} 行${warning ? `（${warning}）` : '（含中文译文）'}` });
       } catch (e) {
@@ -3411,6 +3864,110 @@ function startPrepare(id, videoPath, mode) {
     })();
     return job;
   }
+
+  /* ── 批量重识别（纠错机制的执行端）──────────────────────────────
+   * 输入是 reflectMod.planRegions() 产出的**互不重叠**区间（路由里还会再求一次并）。
+   * 逐段调用 startRerecognize()，共用**同一个 job 对象**：
+   *   · 每段跑完把结果追加到 job.segments（见 startRerecognize 里的 o.batch 分支）
+   *   · 全部跑完才置 done —— 写回必须一次做完，否则先写回的区间会让后面的行号错位
+   * 于是"同一稿件只重识别一遍"在服务端也成立：区间已经并过，每段音频只进一次模型。
+   */
+  /* 任务是否**真的**还在跑。
+   *
+   * 为什么要这个判断：POST 的互斥检查曾经只看"任务表里有没有这个 id"，不看状态 ——
+   * 于是一个**已经跑完或失败**的任务，只要还没被 10 分钟的老化清理掉，
+   * 就会把该稿件的下一次重识别挡死，报"这个稿件已有重新识别任务在跑"（用户实测报的 bug）。
+   * 前端那边任务已经结束、按钮也恢复了，用户完全不知道为什么被拒。
+   *
+   * 除了状态，还看"最后一次心跳"：状态卡在 running 但没有心跳超过 15 分钟，
+   * 说明这个任务已经不可能再推进（进程被杀、休眠、异常退出没走到收尾），放行新任务，
+   * 别让用户永久卡住。 */
+  const JOB_STALE_MS = 15 * 60 * 1000;
+  function jobStillRunning(job) {
+    if (!job || job.status !== 'running') return false;
+    const beat = job.updatedAt ? Date.parse(job.updatedAt) : NaN;
+    if (Number.isFinite(beat) && Date.now() - beat > JOB_STALE_MS) return false;   // 心跳停了 → 当作死任务
+    return true;
+  }
+
+  function startReidentifyBatch(id, regions, model) {
+    const job = {
+      batch: true,
+      regions: regions.map(r => ({ start: r.start, end: r.end })),
+      regionTotal: regions.length, regionDone: 0,
+      start: regions[0].start, end: regions[0].end,
+      status: 'running', stage: '切音频', progress: 1,
+      message: `纠错重识别：共 ${regions.length} 段 …`, error: null,
+      segments: [], startedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    rerecogJobs.set(id, job);
+    // 心跳：每次读任务状态时刷新。GET /reidentify 与 startRerecognize 的 setRr 都会经过这里
+    job.touch = () => { job.updatedAt = new Date().toISOString(); };
+    (async () => {
+      try {
+        for (let i = 0; i < regions.length; i++) {
+          if (job.status === 'error') return;              // 中途失败：不再往下跑
+          const r = regions[i];
+          job.regionIndex = i;
+          job.message = `纠错重识别 ${i + 1}/${regions.length} 段（${r.start.toFixed(1)}~${r.end.toFixed(1)}s）…`;
+          job.stage = '识别中'; job.progress = Math.round((i / regions.length) * 100);
+          // 复用单区间识别：同一 job、batch 模式（追加结果、不置 done）
+          startRerecognize(id, r.start, r.end, model, { job, batch: true });
+          // 等这一段真正结束（job.status 被单区间流程改成 done/error，batch 模式下
+          // 单区间不会置 done，所以这里用一个"本段完成"的标记来等）
+          const n0 = (job.segments || []).length;
+          const done0 = job.regionDone || 0;
+          // 轮询等待：简单可靠，且不会与单区间流程的内部 await 链打架
+          const t0 = Date.now();
+          // eslint-disable-next-line no-await-in-loop
+          while (job.regionDone === done0 && job.status !== 'error' && Date.now() - t0 < 30 * 60 * 1000) {
+            job.touch();                       // 心跳：本段还在跑，别被当成死任务
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise(res => setTimeout(res, 250));
+          }
+          if (job.status === 'error') return;
+          job.progress = Math.round(((i + 1) / regions.length) * 100);
+          void n0;
+        }
+        // 全部跑完 → 排序（区间是按时间递增的，结果天然有序，保险起见排一次）
+        const segs = (job.segments || []).slice().sort((a, b) => a.start - b.start || a.end - b.end);
+        job.segments = segs;
+        job.status = 'done'; job.stage = '完毕'; job.progress = 100;
+        job.finishedAt = new Date().toISOString();
+        job.warning = (job.warnings || [])[0] || null;
+        job.message = `纠错重识别完成：${regions.length} 段 → ${segs.length} 行`
+          + (job.warning ? `（${job.warning}）` : '');
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        job.status = 'error'; job.error = msg; job.message = msg;
+        job.finishedAt = new Date().toISOString();
+      }
+    })();
+    return job;
+  }
+
+  /** 任务对象 → 给前端的视图（只暴露需要的字段，别把整个 job 抖出去） */
+  function jobView(job) {
+    if (!job) return null;
+    return {
+      batch: !!job.batch,
+      regions: job.regions || null,
+      regionIndex: job.regionIndex | 0,
+      regionTotal: job.regionTotal | 0,
+      regionDone: job.regionDone | 0,
+      start: job.start, end: job.end,
+      status: job.status, stage: job.stage, progress: job.progress,
+      message: job.message, error: job.error, warning: job.warning || null,
+      // 批量模式下 segments 在跑完前是累加中的，前端只在 done 后写回
+      segments: job.status === 'done' ? (job.segments || []) : null,
+      finishedAt: job.finishedAt || null,
+    };
+  }
+  /** 纠错反思的互斥标记：同一稿件不并发反思（会重复烧 token 且结果互相覆盖） */
+  const reflectBusy = new Set();
+  /** 纠错重识别的任务表：与单区间共用 rerecogJobs —— 同一稿件的重识别必须串行，
+   *  否则两个任务会同时改同一份字幕。 */
+  const jobRerecog = rerecogJobs;
 
   async function startTranslate(id) {
     const cfg = translateCfg();
@@ -3783,6 +4340,8 @@ function startPrepare(id, videoPath, mode) {
       return finishDraft(id, new Error(gpuGate));
     }
     const mdir = modelDirFor(model.id);
+    // 逐句置信度：项目级设置优先，没表态就跟随全局。算一次，三处 spawn 与常驻服务共用。
+    const confMode = asrConfidenceFor(meta0);   // off | fast | full
     draftJobs.add(id);
     const wav = path.join(projDir(id), 'audio.wav');
     const outJson = path.join(projDir(id), 'asr.json');
@@ -3814,6 +4373,25 @@ function startPrepare(id, videoPath, mode) {
     // 三步都与识别引擎无关: 分离跑在音频上, 任何引擎都能配;
     // 语义分句**所有引擎都做**, 没配 LLM 就直接失败停在这里, 不会跳过它往下走。
     const finishAsr = () => {
+      // off 档：在往下走之前把逐句置信度摘掉。
+      // 这里是所有识别路径的汇合点（本地/分片/整段/whisper.cpp/云端），
+      // 而且**在语义分句之前** —— 于是 ASS 里不会写 SubFabricConfidence 注释，
+      // 界面也就没有徽标可显示，"关"是彻底的。
+      // worker 那边只是不重跑稳定性（--tta 0）；token 概率与音频质量是解码时白送的，
+      // 让 worker 为它们再跑一遍反而更麻烦，所以"丢弃"这一步放在服务端做。
+      if (confMode === 'off') {
+        try {
+          const p = outJson;
+          const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const n = stripConfidence(d.segments);
+          fs.writeFileSync(p + '.tmp', JSON.stringify(d));
+          fs.renameSync(p + '.tmp', p);
+          pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [置信度] 已关闭：不生成逐句置信度（省掉稳定性重跑，识别更快）`);
+          if (n) pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [置信度] 已丢弃 ${n} 行的置信度数据`);
+        } catch (e) {
+          pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [置信度] 丢弃失败（不影响识别）：${(e && e.message) || e}`);
+        }
+      }
       // 语义分句是**必经步骤**: 没配 LLM 就在这里失败, 绝不静默降级成引擎自带的断句往下走。
       // retryDraft 对「没配 LLM」也是直接拒绝(连重试次数都不涨), 所以出路只有一条: 把 Key 填上。
       if (!llmReady(translateCfg())) {
@@ -3962,7 +4540,7 @@ function startPrepare(id, videoPath, mode) {
           const ea = asrEngineArgs(model);
           const asrArgs = [ea.script, '--model', mdir, '--audio', slice,
                            '--out', outP, '--threads', '4', '--provider', ea.provider,
-                           ...(ea.extra || []), ...ea.hotwords];
+                           ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
           const pr = spawn(ASR_PY, asrArgs,
             { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
           draftProcs.set(id, pr);
@@ -4019,7 +4597,7 @@ function startPrepare(id, videoPath, mode) {
       const ea = asrEngineArgs(model);
       const asrArgs = [ea.script, '--model', mdir, '--audio', wav,
                        '--out', outJson, '--threads', '4', '--provider', ea.provider,
-                       ...(ea.extra || []), ...ea.hotwords];
+                       ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
       const proc = spawn(ASR_PY, asrArgs,
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       draftProcs.set(id, proc);
@@ -4162,6 +4740,7 @@ function startPrepare(id, videoPath, mode) {
       if (!resolved) {
         return finish({ cancelled: true, error: '对话框返回的路径无法解析（' + raw.trim().slice(0, 200) + '）' });
       }
+      if (kind === 'video') MEDIA_ALLOW.add(mediaKey(resolved));   // 用户亲手选的视频登记进 /api/media 白名单
       finish({ path: resolved, name: path.basename(resolved) });
     });
   }
@@ -4196,7 +4775,7 @@ function startPrepare(id, videoPath, mode) {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let d = {};
       try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-      const url = String(d.url || '').trim();
+      const url = normalizeFetchUrl(d.url);
       if (!url) return sendJson(res, 400, { error: '请先填视频链接' });
       const site = fetchSiteOf(url);
       if (!site) return sendJson(res, 400, { error: '只支持 bilibili 与 YouTube 链接（其他站点暂不支持）' });
@@ -4294,6 +4873,8 @@ function startPrepare(id, videoPath, mode) {
       models,
       selectedModel: selectedModelId(),
       rerecogModel: rerecogModelId(),        // 「重新识别模型」设置(空 = 沿用项目原有模型)
+      // 逐句置信度的全局默认（设置页开关用；项目级覆盖见 project.json 的 draft.confidence）
+      confidence: { mode: asrConfidenceDefault(), tta: CONFIDENCE_TTA, modes: CONFIDENCE_MODES },
       nemo: {                                // NeMo 运行时(仅 multitalker 模型需要)
         ok: !!nemo.ok, cuda: !!nemo.cuda, gpu: nemo.gpu || '', torch: nemo.torch || '', nemoVer: nemo.nemo || '',
         msg: nemo.msg || '', script: NEMO_SCRIPT, install: NEMO_NOTE,
@@ -4367,9 +4948,104 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { started: true });
     })();
   }
+  /* 长稿反思纠错：配置读写（全局设置页用）。
+   * GET  → { mode, padSec, maxSec, batchLines, useTranslate, provider, baseUrl, model, hasKey, ready, presets }
+   * POST → 局部更新，写进 asr/settings.json 的 correct 段。
+   * 「用哪个模型」默认跟随字幕翻译；要单独指向**本地部署**（如 Qwen3 量化版起
+   * OpenAI 兼容服务）就在设置页填自己的 baseUrl/model —— 本机地址免 API Key。 */
+  if (pathname === '/api/asr/correct' && (req.method === 'GET' || req.method === 'POST')) {
+    const view = () => {
+      const raw = (readAsrSettings().correct) || {};
+      const cfg = correctCfg();
+      const base = translateCfg();
+      // 显式开关（旧配置回退到"有没有自定义地址"的推断，见 correctUseTranslate）
+      const useTranslate = correctUseTranslate(raw);
+      return {
+        mode: cfg.mode,
+        // 预览时前后各留多少秒 / 单段上限 —— 直接决定"要重识别多少音频"
+        padSec: Number.isFinite(Number(raw.padSec)) ? Number(raw.padSec) : reflectMod.PAD_SEC,
+        maxSec: Number.isFinite(Number(raw.maxSec)) ? Number(raw.maxSec) : reflectMod.MAX_REGION_SEC,
+        batchLines: cfg.batchLines,
+        useTranslate,
+        provider: String(raw.provider || ''),
+        baseUrl: String(raw.baseUrl || ''),
+        model: String(raw.model || ''),
+        hasKey: !!String(raw.apiKey || '').trim() || !!(useTranslate && base.apiKey),
+        // 最终会用的模型（跟随翻译时显示翻译的模型名，用户才知道真正调的是谁）
+        effectiveModel: cfg.model,
+        effectiveBaseUrl: cfg.baseUrl,
+        ready: correctReady(cfg),
+        presets: LLM_PRESETS.map(p => ({ id: p.id, name: p.name, baseUrl: p.baseUrl, model: p.model, local: !!p.local })),
+      };
+    };
+    if (req.method === 'GET') return sendJson(res, 200, view());
+    return readBody(req, res, 16 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let p;
+      try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const s = readAsrSettings();
+      const cur = Object.assign({}, s.correct);
+      if (p.mode !== undefined) {
+        if (!['off', 'preview', 'auto'].includes(p.mode)) return sendJson(res, 400, { error: 'mode 必须是 off / preview / auto' });
+        cur.mode = p.mode;
+      }
+      if (p.padSec !== undefined) cur.padSec = Math.max(0, Math.min(15, Number(p.padSec) || 0));
+      if (p.maxSec !== undefined) cur.maxSec = Math.max(3, Math.min(120, Number(p.maxSec) || 0));
+      if (p.batchLines !== undefined) cur.batchLines = Math.max(20, Math.min(200, parseInt(p.batchLines, 10) || 0));
+      if (p.provider !== undefined) cur.provider = String(p.provider || '').trim();
+      if (p.baseUrl !== undefined) cur.baseUrl = String(p.baseUrl || '').trim();
+      if (p.model !== undefined) cur.model = String(p.model || '').trim();
+      if (p.apiKey !== undefined) cur.apiKey = String(p.apiKey || '').trim();
+      /* 「跟随字幕翻译的模型」是**显式开关**，不是靠空值推断。
+       * 早期只处理 `=== true`，于是前端的 `useTranslate:false` 被完全忽略 ——
+       * 用户取消勾选后，服务端仍按"地址为空 ⇒ 跟随翻译"算回去，勾选框被回弹、
+       * **根本取消不掉**（实测复现）。现在 true/false 都记下来。
+       *
+       * 关掉时**不清空**已填的地址/模型：用户可能只是切过去看一眼再切回来，
+       * 清空会让他重填一遍（原本清空是为了让"跟随翻译"立即生效，现在有显式开关就不需要了）。 */
+      if (p.useTranslate !== undefined) cur.useTranslate = p.useTranslate === true;
+      s.correct = cur;
+      try { writeAsrSettings(s); } catch (e) { return sendJson(res, 500, { error: String(e.message || e) }); }
+      console.log('[asr] 纠错配置已更新：mode=' + (cur.mode || 'preview')
+        + ' 模型=' + correctCfg().model + ' 就绪=' + correctReady(correctCfg()));
+      return sendJson(res, 200, Object.assign({ ok: true }, view()));
+    });
+  }
+
+  /* 逐句置信度：三档 off / fast / full。
+   * GET  → { mode, tta, modes }（没设置过 = full）
+   * POST → { mode: 'off'|'fast'|'full' }；也兼容早期的 { enabled: bool }
+   * 只影响**以后**的初稿/重新识别；已有稿子的置信度已经写进 ASS，不受影响。 */
+  if (pathname === '/api/asr/confidence' && (req.method === 'GET' || req.method === 'POST')) {
+    if (req.method === 'GET') {
+      return sendJson(res, 200, {
+        mode: asrConfidenceDefault(), tta: CONFIDENCE_TTA, modes: CONFIDENCE_MODES,
+      });
+    }
+    return readBody(req, res, 8 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let j;
+      try { j = JSON.parse(body.toString('utf8')) || {}; }
+      catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      // 兼容：早期前端发的是 { enabled: true/false }
+      let mode = j.mode;
+      if (mode === undefined && typeof j.enabled === 'boolean') mode = j.enabled ? 'full' : 'off';
+      if (!CONFIDENCE_MODES.includes(mode)) {
+        return sendJson(res, 400, { error: 'mode 必须是 off / fast / full 之一' });
+      }
+      const s = readAsrSettings();
+      // 只留 mode 一个字段：早期写过的 enabled 一并清掉，避免两个来源打架
+      s.confidence = { mode };
+      try { writeAsrSettings(s); } catch (e) { return sendJson(res, 500, { error: String(e.message || e) }); }
+      const desc = { off: '关闭（不生成置信度，识别最快）',
+                     fast: '快速（只用词级概率+音频质量，不做稳定性重跑）',
+                     full: '完整（含稳定性重跑 ' + CONFIDENCE_TTA + ' 遍，约慢一倍）' }[mode];
+      console.log('[asr] 逐句置信度 = ' + mode + ' —— ' + desc);
+      return sendJson(res, 200, { ok: true, mode, tta: CONFIDENCE_TTA });
+    });
+  }
   /** 校验用户选的目录能否用来放模型: 必须存在、且是空目录 */
-  if (pathname === '/api/asr/check-dir' && req.method === 'POST') {
-    return readBody(req, res, 64 * 1024, (err, body) => {
+  if (pathname === '/api/asr/check-dir' && req.method === 'POST') {    return readBody(req, res, 64 * 1024, (err, body) => {
       let p = '';
       try { p = String((JSON.parse(body.toString('utf8')) || {}).dir || '').trim(); }
       catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
@@ -4537,7 +5213,7 @@ function startPrepare(id, videoPath, mode) {
   if (pathname === '/api/translate/config' && req.method === 'GET') {
     const c = translateCfg();
     return sendJson(res, 200, {
-      presets: LLM_PRESETS, cfg: c, ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT,
+      presets: LLM_PRESETS, cfg: translateCfgPublic(c), ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT,
     });
   }
   if (pathname === '/api/translate/config' && req.method === 'POST') {
@@ -4545,11 +5221,11 @@ function startPrepare(id, videoPath, mode) {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);
-      return sendJson(res, 200, { cfg: c, ready: llmReady(c) });
+      return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: llmReady(c) });
     });
   }
   /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
@@ -4899,9 +5575,34 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
+  /* /api/media 只服务登记过的视频路径(见 MEDIA_ALLOW 的定义处注释)。
+   * meta 扫描加 3 秒缓存: 播放视频会发大量 Range 请求, 不能每个请求都把 projects/ 读一遍; */
+  let mediaMetaCache = { at: 0, set: new Set() };
+  function mediaAllowed(p) {
+    if (!p) return false;
+    const key = mediaKey(p);
+    if (MEDIA_ALLOW.has(key)) return true;
+    const now = Date.now();
+    if (now - mediaMetaCache.at > 3000) {
+      const set = new Set();
+      let ids = [];
+      try { ids = fs.readdirSync(PROJECTS_DIR); } catch {}
+      for (const id of ids) {
+        if (!validId(id)) continue;
+        const meta = readMeta(id);
+        const vp = meta && meta.video && meta.video.path;
+        if (vp) set.add(mediaKey(vp));
+      }
+      mediaMetaCache = { at: now, set };
+    }
+    return mediaMetaCache.set.has(key);
+  }
   if (pathname === '/api/media' && req.method === 'GET') {
     const p = u.searchParams.get('path') || '';
     const full = path.normalize(p);
+    if (!mediaAllowed(full)) {
+      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'forbidden: video path not registered');
+    }
     let ok = false;
     try { ok = fs.statSync(full).isFile() && VIDEO_EXTS.includes(path.extname(full).toLowerCase()); } catch {}
     if (!ok) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found: ' + p);
@@ -4933,7 +5634,7 @@ function startPrepare(id, videoPath, mode) {
       // 再规整一次: 客户端送来的路径若带杂物, 这里同样能从"存在的最长前缀"里救回来
 /* 创建接口里的"链接模式"分支: data.fetch.url 非空时不要求本地视频文件,
  * 先建项目(卡片立刻出现, 阶段=下载中)再后台下载, 下完接现有 prepare/ASR 流水线。 */
-      const fetchUrl = String((data.fetch && data.fetch.url) || '').trim();
+      const fetchUrl = normalizeFetchUrl((data.fetch && data.fetch.url) || '');
       if (fetchUrl) {
         const site = fetchSiteOf(fetchUrl);
         if (!site) return sendJson(res, 400, { error: '只支持 bilibili 与 YouTube 链接（其他站点暂不支持）' });
@@ -4990,6 +5691,9 @@ function startPrepare(id, videoPath, mode) {
       // 否则会白跑一遍分离、生成的角色标注在 SRT 里也无处安放
       const wantSpeakers = !!data.speakers && !!data.wordLevel;
       const speakerCount = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
+      // 逐句置信度：三档。off/fast/full = 用户显式选过；**没给就存 null**（跟随全局设置），
+      // 这样以后改全局设置，这个项目重新识别时会跟着变，而不是把当时的默认值冻住。
+      const confidenceF = CONFIDENCE_MODES.includes(data.confidence) ? data.confidence : null;
       let format = null, file = null, subName = '', subText = '';
 
       if (draftOn) {
@@ -5033,6 +5737,8 @@ function startPrepare(id, videoPath, mode) {
           modelId: draftModel ? draftModel.id : null,
           engine: draftModel ? (draftModel.engine || '') : '',
           speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
+          // true/false = 用户在建稿页显式选过；null = 跟随全局设置（见 asrConfidenceFor）
+          confidence: confidenceF,
           startedAt: now, error: null,
         };
       }
@@ -5048,6 +5754,82 @@ function startPrepare(id, videoPath, mode) {
     if (!meta) return sendJson(res, 404, { error: '项目不存在' });
 
     if (!action && req.method === 'GET') return sendJson(res, 200, metaView(meta));
+
+    /* ═══════════ 长稿反思纠错（预览优先） ═══════════
+     * GET  /api/projects/:id/reflect
+     *   让 LLM 通读全片（分批 + 相邻批重叠），返回**建议**与**去重后的重识别区间**。
+     *   只读不写：这一步不碰字幕。前端把它渲染成预览清单。
+     *   同步接口而不是后台任务：一次反思通常十几秒到一两分钟（取决于批数与模型），
+     *   用户点了就在等这个结果，给个转圈比轮询简单可靠。批数多时前端会显示进度文案。
+     */
+    if (action === 'reflect' && req.method === 'GET') {
+      if (reflectBusy.has(id)) return sendJson(res, 409, { error: '这个稿件正在反思中，等它跑完' });
+      reflectBusy.add(id);
+      return (async () => {
+        try {
+          const out = await runReflect(id);
+          return sendJson(res, 200, out);
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e && e.message) || e) });
+        } finally {
+          reflectBusy.delete(id);
+        }
+      })();
+    }
+
+    /* POST /api/projects/:id/reidentify   批量重识别（按区间，每段只跑一次）
+     * 请求体: { regions: [{start, end}], why? }
+     * 区间由前端从 reflect 的结果里取（reflectMod.planRegions 已保证互不重叠），
+     * 这里**再校验一遍**：合并重叠/相接的区间并限定数量上限，
+     * 这样"同一稿件只重识别一遍"这条约束在服务端也成立，不只靠前端自觉。
+     * 返回: { start, end, status, stage, progress, message, error, regions, done, ... }
+     * 前端轮询同一个地址的 GET 拿进度。
+     */
+    if (action === 'reidentify' && req.method === 'POST') {
+      return readBody(req, res, 256 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let list = [];
+        try {
+          const p = JSON.parse(body.toString('utf8')) || {};
+          list = Array.isArray(p.regions) ? p.regions : [];
+        } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const ranges = [];
+        for (const r of list) {
+          const a = parseFloat(r && r.start), b = parseFloat(r && r.end);
+          if (Number.isFinite(a) && Number.isFinite(b) && b > a && a >= 0) ranges.push({ start: a, end: b });
+        }
+        if (!ranges.length) return sendJson(res, 400, { error: '没有有效的区间' });
+        if (ranges.length > 200) return sendJson(res, 400, { error: '区间太多了（超过 200 段），分批来' });
+        // 服务端再求一次并：重叠或相接的合成一段 —— 保证每段音频只识别一次
+        ranges.sort((x, y) => x.start - y.start);
+        const merged = [];
+        for (const r of ranges) {
+          const last = merged[merged.length - 1];
+          if (last && r.start <= last.end + 0.001) last.end = Math.max(last.end, r.end);
+          else merged.push({ start: r.start, end: r.end });
+        }
+        const wav = path.join(projDir(id), 'audio.wav');
+        if (!fs.existsSync(wav)) return sendJson(res, 400, { error: '该项目没有已保存的音频（audio.wav），无法重新识别' });
+        const rr = resolveRerecogModel(meta);
+        if (rr.error) return sendJson(res, 400, { error: rr.error });
+        const gpuGate = asrGpuGateError(rr.model);
+        if (gpuGate) return sendJson(res, 400, { error: gpuGate });
+        /* 互斥只看"真的还在跑"的任务。
+         * 早期是 `jobRerecog.has(id)` —— 只要 Map 里还有条目就拒绝，
+         * 于是一个**已完成/失败**、尚未被老化清理的旧任务会把稿件挡死
+         * （用户实测："纠错重识别启动失败：这个稿件已有重新识别任务在跑"）。
+         * 已完成的任务会被新任务直接覆盖，不需要等 10 分钟。 */
+        const prevJob = jobRerecog.get(id);
+        if (jobStillRunning(prevJob)) return sendJson(res, 409, { error: '这个稿件已有重新识别任务在跑' });
+        const job = startReidentifyBatch(id, merged, rr.model);
+        return sendJson(res, 200, jobView(job));
+      });
+    }
+    if (action === 'reidentify' && req.method === 'GET') {
+      const job = jobRerecog.get(id);
+      if (!job) return sendJson(res, 200, { job: null });
+      return sendJson(res, 200, { job: jobView(job) });
+    }
 
     if (action === 'info' && req.method === 'PUT') {
       return readBody(req, res, 8 * 1024, (err, body) => {
@@ -5206,8 +5988,10 @@ function startPrepare(id, videoPath, mode) {
         fs.writeFileSync(subTmp, body, 'utf8');
         fs.renameSync(subTmp, path.join(projDir(id), file));   // 原子替换, 打开方不会读到半截字幕
         touchMeta(meta);
-        return sendJson(res, 200, { ok: true, savedAt: meta.modifiedAt });
+        return finish(200, { ok: true, savedAt: meta.modifiedAt });
       });
+      req.pipe(out);
+      return;
     }
     if (action === 'subtitle' && req.method === 'GET') {
       const file = meta.subtitle && meta.subtitle.file;

@@ -195,7 +195,7 @@ export class Timeline {
     /* 主题色：游标 / 选中环 / 波形都跟着界面主题走。
        换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
     this.accent = cssVar('--accent', C.accent);
-    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); }); } catch {}
+    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); this._dirty = true; }); } catch {}
     this.ctx = canvas.getContext('2d');
     this.video = video || null;
     this.film = new Filmstrip(() => { /* 下一帧重绘 */ });
@@ -236,21 +236,26 @@ export class Timeline {
     this.reRecogRegion = null;
     this.onRangeSelect = null;    // 选区变化回调(拖完 / 清除时触发) → 刷新浮条
     this.onLayout = null;         // 平移/缩放/resize 回调 → 浮条跟着选区重新定位
+    // 空闲降耗(见 drawIfNeeded): 脏标记 + 上次实际绘制时刻。
+    // 交互/数据/布局任何会改变画面的地方都要置脏; 2s 心跳兜底, 防漏标导致画面永久过期。
+    this._dirty = true;
+    this._lastDrawAt = 0;
 
     this._bindEvents();
     new ResizeObserver(() => this._resize()).observe(canvas.parentElement);
     this._resize();
   }
 
-  setVideo(video) { this.video = video; this.film.reset(video); }
+  setVideo(video) { this.video = video; this.film.reset(video); this._dirty = true; }
 
   /** 波形图(整段视频一张 PNG); 传空清除 */
   setWaveform(url) {
+    this._dirty = true;
     this.waveform = null;
     this.waveformReady = false;
     if (!url) return;
     const img = new Image();
-    img.onload = () => { this.waveform = img; this.waveformReady = true; };
+    img.onload = () => { this.waveform = img; this.waveformReady = true; this._dirty = true; };
     img.src = url;
   }
 
@@ -266,6 +271,7 @@ export class Timeline {
    *  所以由调用方通过 ch 明确告知; 缺省按 ch=2 之外再按偶数兜底。
    */
   setPeaks(peaks) {
+    this._dirty = true;
     if (!peaks || !peaks.data || !peaks.data.length) { this.peaks = null; return; }
     const ch = peaks.ch || 2;
     this.peaks = { data: peaks.data, rate: peaks.rate || 100, ch };
@@ -273,6 +279,7 @@ export class Timeline {
   }
 
   setLanes(lanes) {
+    this._dirty = true;
     this.lanes = lanes.map((l, i) => {
       const lane = Object.assign({ color: LANE_COLORS[i % LANE_COLORS.length] }, l);
       // 合并轨(中英同起止): 高度盖住原来两条轨 + 中间间隙 → 一个块无空隙
@@ -291,17 +298,19 @@ export class Timeline {
   }
 
   setDuration(d) {
+    this._dirty = true;
     const prev = this.duration;
     this.duration = d || 0;
     if (!this._viewReady || Math.abs(this.duration - prev) > 0.05) this._applyDefaultView();
   }
 
-  setSelected(ref) { this.selected = ref; }
+  setSelected(ref) { this.selected = ref; this._dirty = true; }
 
   _notifyRange() { if (this.onRangeSelect) this.onRangeSelect(this.rangeSel); }
 
   /** 取消批量选区(点别处 / 删除完 / 换文件时调用) */
   clearRangeSel() {
+    this._dirty = true;
     this._rangeDragging = false;
     if (!this.rangeSel) return;
     this.rangeSel = null;
@@ -310,6 +319,7 @@ export class Timeline {
 
   /** 载入新字幕/视频时调用: 下一次 setLanes/setDuration 会重新定位视图 */
   resetView() {
+    this._dirty = true;
     this._viewReady = false;
     this._viewFromLanes = false;
     // 载入稿件时**铺满整个视频**，而不是只显示前 30 秒。
@@ -456,6 +466,7 @@ export class Timeline {
   }
 
   _resize() {
+    this._dirty = true;      // 画布被重新分配(width/height 赋值即清空) → 必须重绘
     const dpr = window.devicePixelRatio || 1;
     const w = this._cssW(), h = this._cssH();
     this.canvas.width = Math.max(1, Math.round(w * dpr));
@@ -475,6 +486,7 @@ export class Timeline {
     const lim = this._zoomLimits();
     const next = Math.max(lim.min, Math.min(lim.max, this.pxPerSec * factor));
     if (!isFinite(next) || Math.abs(next - this.pxPerSec) < 1e-9) return false;
+    this._dirty = true;
     const t = this.viewStart + px / this.pxPerSec;
     this.pxPerSec = next;
     this.viewStart = t - px / this.pxPerSec;
@@ -504,6 +516,7 @@ export class Timeline {
       const e = 1 - Math.pow(1 - k, 3);                      // easeOutCubic
       self.pxPerSec = from + (target - from) * e;
       self.viewStart = tUnder - px / self.pxPerSec;
+      self._dirty = true;                                    // 动画期间每帧都要重绘
       self._clampView();
       self._viewReady = true;
       if (self.onLayout) self.onLayout();
@@ -514,6 +527,7 @@ export class Timeline {
   }
   /** 平移: 正数 = 往时间更晚的方向看 */
   _panBy(px) {
+    this._dirty = true;
     this.viewStart += px / this.pxPerSec;
     this._clampView();
     this._viewReady = true;
@@ -585,6 +599,7 @@ export class Timeline {
 
     cv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;               // 右键交给 contextmenu
+      this._dirty = true;                       // 按下即重绘: 选中/菜单状态可能变化
       this._hideMenu();
       this._hideEdgeHint();
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 合成事件无捕获 */ }
@@ -662,6 +677,7 @@ export class Timeline {
 
     cv.addEventListener('pointermove', (e) => {
       const x = e.offsetX, y = e.offsetY;
+      if (this._drag) this._dirty = true;       // 拖动中块/选区/预览每帧要跟着走; 普通悬停只改光标, 不必重绘
       if (!this._drag) {
         let cursor = 'default';
         if (this._laneIndexAtY(y) !== -1) {
@@ -743,6 +759,7 @@ export class Timeline {
     const finishDrag = (e) => {
       const d = this._drag;
       this._drag = null;
+      this._dirty = true;                       // 松手后重建前先重绘一帧(拖到一半的状态立即收尾)
       if (!d) return;
       const t = this._clampT(this.x2t(e.offsetX));
       if (d.type === 'word') {
@@ -923,7 +940,22 @@ export class Timeline {
   }
 
   /* ─────────── 绘制 ─────────── */
+  /** 外部直接改了会被绘制的状态(如 main.js 的 reRecogRegion/showFilm)时调用 —— 手动置脏 */
+  touch() { this._dirty = true; }
+
+  /** 空闲降耗版 draw: 播放中 / 有脏标记 / 播放头动过 / 2s 心跳兜底 才真正重绘。
+   *  draw() 是全量重绘(清屏 + 标尺/波形/胶片/可见块文字度量), 暂停静止时每帧重绘纯属浪费;
+   *  心跳是安全网: 万一有哪处状态变更漏标脏, 画面最多过期 2 秒, 不会永久错。 */
+  drawIfNeeded(t, playing) {
+    const now = performance.now();
+    if (playing || this._dirty || t !== this._lastT || now - this._lastDrawAt > 2000) {
+      return this.draw(t, playing);
+    }
+  }
+
   draw(t, playing) {
+    this._dirty = false;
+    this._lastDrawAt = performance.now();
     this._lastT = t;
     const ctx = this.ctx;
     const W = this._cssW(), H = this._cssH();
@@ -1032,7 +1064,12 @@ export class Timeline {
   }
 
   /** 重新识别后台任务的常驻区域: 紫色带 + 顶部标签(标题/进度 + 当前阶段)。
-   *  独立于批量选区 —— 点别处/播放/编辑其它字幕都不影响, 任务结束由 main.js 摘除。 */
+   *  独立于批量选区 —— 点别处/播放/编辑其它字幕都不影响, 任务结束由 main.js 摘除。
+   *
+   *  批量纠错时 r.regions 是**多个互不相邻**的区间，此时逐段各画一条窄带：
+   *  早期只画 [首段起点, 末段终点] 一个整块，把中间根本没被重识别的部分也涂成紫色，
+   *  用户会以为"整段都要重识别"，也会以为"选区过大"（实测反馈）。
+   *  逐段画能一眼看出真正在重听的是哪几块。标签只画一次，跟着第一段可见的走。 */
   _drawReRecog(ctx, W) {
     const r = this.reRecogRegion;
     if (!r || !(r.b > r.a)) return;
@@ -1040,22 +1077,37 @@ export class Timeline {
     const fill = r.status === 'error' ? 'rgba(255,95,107,.13)' : 'rgba(139,92,246,.15)';
     const top = this._laneTop(0) - 3;
     const bottom = Math.min(this._cssH() - 1, this._lanesBottom() + 3);
-    const cx1 = Math.max(-1, this.t2x(r.a)), cx2 = Math.min(W + 1, this.t2x(r.b));
+    // 要画的带：有 regions 就逐段，否则整块
+    const bands = (Array.isArray(r.regions) && r.regions.length)
+      ? r.regions.map(x => [x.start, x.end]).filter(x => x[1] > x[0])
+      : [[r.a, r.b]];
+    if (!bands.length) return;
+    const cx1 = Math.max(-1, this.t2x(bands[0][0]));
+    const cx2 = Math.min(W + 1, this.t2x(bands[bands.length - 1][1]));
     if (cx2 <= 0 || cx1 >= W) return;                                   // 整段在视野外
+    let labelX = null;                                                  // 标签锚点：第一段可见的
     ctx.save();
-    ctx.fillStyle = fill;
-    ctx.fillRect(cx1, top, cx2 - cx1, bottom - top);
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(Math.round(cx1) + 0.5, Math.round(top) + 0.5,
-      Math.max(1, Math.round(cx2 - cx1) - 1), Math.max(1, Math.round(bottom - top) - 1));
+    for (const [ba, bb] of bands) {
+      const x1 = Math.max(-1, this.t2x(ba));
+      const x2 = Math.min(W + 1, this.t2x(bb));
+      if (x2 <= 0 || x1 >= W) continue;                                 // 这一段在视野外
+      if (labelX == null) labelX = x1;
+      ctx.fillStyle = fill;
+      ctx.fillRect(x1, top, x2 - x1, bottom - top);
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(Math.round(x1) + 0.5, Math.round(top) + 0.5,
+        Math.max(1, Math.round(x2 - x1) - 1), Math.max(1, Math.round(bottom - top) - 1));
+    }
+    if (labelX == null) { ctx.restore(); return; }
     // 标签: 顶部两行(标题+当前阶段), 横向夹在视野内(区域可能一半在屏幕外)
     const pct = (r.progress == null ? '' : ' ' + r.progress + '%');
-    const title = (r.status === 'error' ? '重新识别失败' : '重新识别处理中') + pct;
+    const nSeg = bands.length > 1 ? ` ${bands.length} 段` : '';
+    const title = (r.status === 'error' ? '重新识别失败' : '重新识别处理中') + nSeg + pct;
     const msg = String(r.message || '').slice(0, 46);
     ctx.font = 'bold 10px Consolas, monospace';
     const tw = Math.max(ctx.measureText(title).width, ctx.measureText(msg).width) + 12;
-    const lx = Math.max(2, Math.min(cx1 + 4, W - tw - 2));
+    const lx = Math.max(2, Math.min(labelX + 4, W - tw - 2));
     const ly = top + 5;
     ctx.fillStyle = 'rgba(24,17,40,.93)';
     this._roundRect(ctx, lx, ly, tw, 27, 4);
@@ -1071,6 +1123,9 @@ export class Timeline {
       ctx.font = '9px Consolas, monospace';
       ctx.fillText(msg, lx + 6, ly + 22);
     }
+    // 这一处 restore 覆盖两种出口：正常画完，以及上面「所有段都在视野外」的早返回
+    // （早返回那条路径原本漏了 restore —— ctx.save() 之后直接 return 会把画布状态
+    //   泄漏给后续绘制。改动时顺手补上，所以下面不能再多一个 restore。）
     ctx.restore();
   }
 

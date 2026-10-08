@@ -11,6 +11,7 @@
 import { serializeSRT } from './srt.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
+import { stripEffectTagsSafe } from './postprocess.js';
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog } = ctx;
@@ -328,6 +329,20 @@ export function initProjects(ctx) {
     // 生成设置里的全局项；「自动区分说话人」是项目级参数，这里只回显当时的选择
     const spk = $('#dt-set-speakers');
     if (spk) { spk.checked = !!(project.draft && project.draft.speakers); spk.disabled = true; }
+    // 逐句置信度也是项目级：存的是档位 off/fast/full；
+    // 空值 = 当初选了"跟随全局"，回显成全局的当前档位
+    const cf = $('#dt-set-confidence');
+    if (cf) {
+      cf.disabled = true;
+      const v = project.draft ? project.draft.confidence : undefined;
+      if (CONF_MODES.includes(v)) cf.value = v;
+      else {
+        cf.value = asrConfDefaultCache || 'full';        // 已知的全局值，先填上避免闪一下
+        fetch('/api/asr/confidence').then(r => r.json())
+          .then(d => { asrConfDefaultCache = d.mode; if (CONF_MODES.includes(d.mode)) cf.value = d.mode; })
+          .catch(() => {});
+      }
+    }
     genLoad('dt');
     // 处理进度：有初稿任务才给日志与操作按钮，否则换成一句空态说明（别留个空洞）
     const live = !!project.draft;
@@ -1017,9 +1032,17 @@ export function initProjects(ctx) {
     if (del) del.closest('.hotword-row').remove();
   });
 
+  /* ── API Key 字段: 服务端只回 hasKey(明文不回传), 输入框留空 = 不修改已存的 Key;
+   * 想删除已存 Key 走「清除已存 Key」链接(显式 apiKeyClear, 与"留空"区分开) ── */
+  function refreshKeyHint(c) {
+    const hint = $('#st-key-hint');
+    if (hint) hint.hidden = !(c && c.hasKey);
+  }
   async function loadSettings() {
     loadFetchSettings();
     loadCastSettings();
+    loadConfidenceSettings();
+    correctLoad();
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
@@ -1042,7 +1065,10 @@ export function initProjects(ctx) {
     const c = data.cfg || {};
     $('#st-provider').value = c.provider || 'custom';
     $('#st-baseurl').value = c.baseUrl || '';
-    $('#st-key').value = c.apiKey || '';
+    // 明文 Key 不回传(只回 hasKey): 输入框永远留空起步, 留空 = 不修改已存的 Key
+    $('#st-key').value = '';
+    $('#st-key').placeholder = c.hasKey ? '已保存（留空不修改）' : 'sk-…';
+    refreshKeyHint(c);
     $('#st-model').value = c.model || '';
     if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
@@ -1666,6 +1692,112 @@ async function renderAsrModels() {
       toast(castToggle.checked ? '已开启 LLM 分角色' : '已关闭 LLM 分角色', 2600);
     } catch (e) { toast('保存失败: ' + e.message, 3600); }
   });
+
+  /* 逐句置信度（全局默认，三档）。与上面分角色同一模式：改了立刻存，不等「保存并返回」。
+     它是**全局默认**；单个项目可以在新建时的生成设置里单独指定档位（存进 project.json）。 */
+  async function loadConfidenceSettings() {
+    try {
+      const d = await (await fetch('/api/asr/confidence', { signal: AbortSignal.timeout(8000) })).json();
+      const el = document.getElementById('st-conf-mode');
+      if (el && CONF_MODES.includes(d.mode)) el.value = d.mode;
+      asrConfDefaultCache = CONF_MODES.includes(d.mode) ? d.mode : 'full';   // 顺手更新缓存
+    } catch {}
+  }
+  const confSel = document.getElementById('st-conf-mode');
+  if (confSel) confSel.addEventListener('change', async () => {
+    const mode = confSel.value;
+    try {
+      const r = await fetch('/api/asr/confidence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      asrConfDefaultCache = mode;                     // 改了立刻反映到建稿页的默认档位
+      toast('逐句置信度：' + ({ off: '已关闭（识别最快）', fast: '快速（不做稳定性重跑）', full: '完整（识别约慢一倍）' }[mode] || mode), 3600);
+    } catch (e) { toast('保存失败: ' + e.message, 3600); }
+  });
+
+  /* 自动纠错（反思纠错的配置）。与上面两块同一模式：改了立刻存。
+     「用字幕翻译的模型」勾上时不填自定义地址；要**本地部署**（Qwen3 等）就取消勾选，
+     把地址指向本机的 OpenAI 兼容服务 —— 本机地址免 API Key（见服务端 correctReady）。 */
+  function correctFill(v) {
+    if (!v) return;
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    const chk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+    set('st-correct-mode', v.mode || 'preview');
+    set('st-correct-pad', v.padSec);
+    set('st-correct-max', v.maxSec);
+    set('st-correct-batch', v.batchLines);
+    chk('st-correct-usetranslate', v.useTranslate);
+    const box = document.getElementById('st-correct-custom');
+    if (box) box.hidden = !!v.useTranslate;
+    set('st-correct-baseurl', v.baseUrl || '');
+    set('st-correct-model', v.model || '');
+    const prov = document.getElementById('st-correct-provider');
+    if (prov) {
+      if (!prov.options.length && v.presets) {
+        prov.innerHTML = '<option value="">（不指定，用下面的地址）</option>'
+          + v.presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+      }
+      prov.value = v.provider || '';
+    }
+    const eff = document.getElementById('st-correct-eff');
+    if (eff) {
+      /* 取消勾选后，若地址与模型都还空着，服务端会**回退**到翻译配置
+       * （correctCfg 的 pick() 兜底）。这是刻意的容错，但直接显示
+       * "实际调用：deepseek-chat" 会让人以为"我明明取消了怎么还在用它" —— 说清楚。 */
+      eff.textContent = v.useTranslate
+        ? `实际调用：${v.effectiveModel}（跟随字幕翻译）`
+        : (v.baseUrl && v.model
+          ? `实际调用：${v.effectiveModel} @ ${v.effectiveBaseUrl}`
+          : `还没填地址与模型名；在填好之前仍会临时沿用「${v.effectiveModel}」（跟随字幕翻译）`);
+    }
+    const note = document.getElementById('st-correct-note');
+    if (note) {
+      note.innerHTML = v.ready
+        ? '✓ 模型可用。纠错会消耗模型调用（长稿分批多次）；实际重识别的音频量由上面的「上下文」决定。'
+        : '<span style="color:var(--danger)">模型还不可用：非本机地址必须填 API Key</span>';
+    }
+  }
+  async function correctLoad() {
+    try {
+      correctFill(await (await fetch('/api/asr/correct', { signal: AbortSignal.timeout(8000) })).json());
+    } catch {}
+  }
+  async function correctSave(patch) {
+    try {
+      const r = await fetch('/api/asr/correct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+      const v = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((v && v.error) || ('HTTP ' + r.status));
+      correctFill(v);
+    } catch (e) { toast('纠错设置保存失败: ' + e.message, 4200); }
+  }
+  {
+    const bind = (id, key, num) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', () => correctSave({ [key]: num ? Number(el.value) : el.value }));
+    };
+    bind('st-correct-mode', 'mode');
+    bind('st-correct-pad', 'padSec', true);
+    bind('st-correct-max', 'maxSec', true);
+    bind('st-correct-batch', 'batchLines', true);
+    bind('st-correct-baseurl', 'baseUrl');
+    bind('st-correct-model', 'model');
+    bind('st-correct-key', 'apiKey');
+    bind('st-correct-provider', 'provider');
+    const ut = document.getElementById('st-correct-usetranslate');
+    if (ut) ut.addEventListener('change', async () => {
+      const box = document.getElementById('st-correct-custom');
+      if (box) box.hidden = ut.checked;
+      /* 明确把开关状态发给服务端（两个方向都发）。
+       * 早期这里在取消勾选时发的是 `{ baseUrl: 当前值 }`，而服务端靠"地址为空 ⇒ 跟随翻译"
+       * 推断 —— 取消勾选那一刻地址还是空的，服务端又算回"跟随翻译"，勾选框被回弹，
+       * **用户根本取消不掉**（实测复现）。现在走显式开关。 */
+      await correctSave({ useTranslate: ut.checked });
+      // 刚切到自定义而地址还空着时，把输入框顶到眼前，别让用户找不到该填什么
+      if (!ut.checked) {
+        const bu = document.getElementById('st-correct-baseurl');
+        if (bu && !bu.value) bu.focus();
+      }
+    });
+  }
   async function saveFetchSettings(patch) {
     try {
       const r = await fetch('/api/fetch/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
@@ -1803,16 +1935,19 @@ async function renderAsrModels() {
         })
       });
     } catch { /* 保存失败不阻断翻译配置的保存 */ }
-    return {
+    const payload = {
       provider: $('#st-provider').value,
       baseUrl: $('#st-baseurl').value.trim(),
-      apiKey: $('#st-key').value.trim(),
       model: $('#st-model').value.trim(),
       batchSize: parseInt(($('#st-batch') || {}).value, 10) || 25,     // 每批行数(服务端还会夹到 5~100)
       prompt: $('#st-prompt').value,
       glossary: glSerialize(),
       glossaryLang: glState.lang,
     };
+    // API Key: 非空才提交(服务端加密落盘); 留空 = 保持已存 Key 不变 —— 绝不把空串当"清除"
+    const newKey = $('#st-key').value.trim();
+    if (newKey) payload.apiKey = newKey;
+    return payload;
   }
   async function postSettings() {
     const payload = await collectSettings();     // collectSettings 会顺带保存识别提示词(异步)
@@ -1821,6 +1956,12 @@ async function renderAsrModels() {
     });
     const m = await r.json();
     if (!r.ok) throw new Error(m.error || '保存失败');
+    if (payload.apiKey) {
+      // 保存成功后立刻清掉输入框里的明文(服务端已加密存好), 不让 Key 一直躺在 DOM 里
+      $('#st-key').value = '';
+      $('#st-key').placeholder = '已保存（留空不修改）';
+    }
+    refreshKeyHint(m.cfg || {});
     return m;
   }
   $('#st-test').addEventListener('click', async () => {
@@ -1851,6 +1992,28 @@ async function renderAsrModels() {
       msgEl.classList.add('err');
     }
   });
+  /* 「清除已存 Key」: 立即生效(独立于普通保存), 避免"留空=不修改"之后没有办法删 Key */
+  const stKeyClearLink = $('#st-key-clear');
+  if (stKeyClearLink) stKeyClearLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const msgEl = $('#st-msg');
+    try {
+      const r = await fetch('/api/translate/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKeyClear: true })
+      });
+      const m = await r.json();
+      if (!r.ok) throw new Error(m.error || ('HTTP ' + r.status));
+      $('#st-key').value = '';
+      $('#st-key').placeholder = 'sk-…';
+      refreshKeyHint(m.cfg || {});
+      msgEl.textContent = '✓ 已清除保存的 API Key';
+      msgEl.classList.remove('err');
+    } catch (err) {
+      msgEl.textContent = '✗ 清除失败：' + String((err && err.message) || err);
+      msgEl.classList.add('err');
+    }
+  });
 
   function detachProject() {
     clearTimeout(saveTimer);
@@ -1875,6 +2038,47 @@ async function renderAsrModels() {
   // 只读元数据（服务端 --simulate），不下载视频。
   let npProbeSource = null;
   let npProbing = false;
+  let npConfSynced = false;              // 初稿模式的置信度档位是否已按全局默认同步过
+  let asrConfDefaultCache = null;         // 全局「逐句置信度」档位（null=还不知道）
+  const CONF_MODES = ['off', 'fast', 'full'];
+  const CONF_DESC = {
+    off: '不生成置信度 —— 识别最快，列表不会显示可信度',
+    fast: '只用词级概率与音频质量（解码时白送），不做稳定性重跑 —— 速度与「关闭」相同，但仍有置信度',
+    full: '三路信号齐全：额外把音频加噪重跑 2 遍做稳定性判定 —— 实测识别时间约翻倍',
+  };
+  /** 把档位的说明写到建稿页那一行的提示上 */
+  function npConfDesc(mode) {
+    const desc = $('#np-confidence-desc');
+    if (desc) desc.textContent = CONF_DESC[mode] || CONF_DESC.full;
+  }
+
+  /** 取全局的逐句置信度档位（带缓存；拿不到就返回 null，调用方按"完整"处理）。 */
+  async function asrConfDefault() {
+    if (asrConfDefaultCache !== null) return asrConfDefaultCache;
+    try {
+      const d = await (await fetch('/api/asr/confidence', { signal: AbortSignal.timeout(8000) })).json();
+      asrConfDefaultCache = CONF_MODES.includes(d.mode) ? d.mode : 'full';
+    } catch { /* 读不到就沿用默认（完整），不阻断建稿 */ }
+    return asrConfDefaultCache;
+  }
+
+  /** 把全局档位套到新建页的下拉上（只做一次，别覆盖用户的改动）。 */
+  async function syncConfidenceFromGlobal() {
+    const mode = (await asrConfDefault()) || 'full';
+    if (npConfSyncedByUser) return;                    // 期间用户已经手动改过 → 尊重他的选择
+    const sel = $('#np-confidence');
+    if (sel) sel.value = mode;
+    npConfDesc(mode);
+  }
+  /** 用户手动动过下拉 → 之后不再被全局默认覆盖 */
+  let npConfSyncedByUser = false;
+  (() => {
+    const sel = document.getElementById('np-confidence');
+    if (sel) sel.addEventListener('change', () => {
+      npConfSyncedByUser = true;
+      npConfDesc(sel.value);
+    });
+  })();
 
   function npSetMode(mode) {
     npMode = mode;
@@ -1887,7 +2091,11 @@ async function renderAsrModels() {
     $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
     $('#np-row-part').hidden = !draft;     // 分P 跟着链接走
     $('#np-row-word').hidden = !draft;
+    $('#np-row-conf').hidden = !draft;
     $('#np-row-spk').hidden = !draft;
+    // 切进初稿模式时，把开关同步成**全局默认**（用户没动过就跟随；动过则以他刚选的为准）。
+    // 只在第一次进入时拉一次，避免每次切模式都把用户的改动冲掉。
+    if (draft && !npConfSynced) { npConfSynced = true; syncConfidenceFromGlobal(); }
     // 语音识别 / 识别来源 / 分角色识别：整组跟着模式收起
     // （这三组只有「创建初稿」用得上；翻译模型/提示词是全局项，两种模式都留着）
     for (const sel of ['#np-voice-group', '#np-cast-group', '#np-source-group']) {
@@ -2092,7 +2300,16 @@ async function renderAsrModels() {
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
-    npSub.name = f.name; npSub.text = await f.text();
+    npSub.name = f.name;
+    npSub.text = await f.text();
+    // 导入前把「带特效的导出文件」转成普通字幕（用户报的 bug：直接导入会字幕块破碎 ——
+    // 微光/生长/淡入标签污染了逐词 span, 切片识别失败, 每个词都成了独立的块）。
+    // 转换异常/结果可疑时 stripEffectTagsSafe 返回原文（硬塞, 宁可回到旧行为也不丢内容）。
+    if (/\.(ass|ssa)$/i.test(f.name)) {
+      const { text, cleaned } = stripEffectTagsSafe(npSub.text);
+      npSub.text = text;
+      if (cleaned) toast('已把带特效的字幕转成普通字幕（微光/生长/淡入标签已剥离），避免导入后字幕块破碎', 6000);
+    }
     const el = $('#np-sub-name');
     el.textContent = f.name; el.classList.add('filled');
     npMaybeEnable();
@@ -2179,6 +2396,7 @@ async function renderAsrModels() {
           modelId: $('#np-model-sel') ? $('#np-model-sel').value : '',
           speakers: !!($('#np-speakers') && $('#np-speakers').checked),
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
+          confidence: ($('#np-confidence') || {}).value || 'full',
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
@@ -2222,6 +2440,9 @@ async function renderAsrModels() {
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
+        // 逐句置信度档位（off/fast/full）：显式发给服务端，存进 project.json 的
+        // draft.confidence。这是个**项目级**选择 —— 建稿时定了，重新识别也沿用。
+        payload.confidence = ($('#np-confidence') || {}).value || 'full';
         // 勾了「区分说话人」→ 编辑器的「启用角色标注」帮用户打开(字幕里会带 [SPKn] 标签, 禁着没意义)
         if (payload.speakers) localStorage.setItem('ss-role-annot', '1');
       } else {
