@@ -1255,6 +1255,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* ── 设置: 术语表词条编辑器 ─────────────────── */
 .gl-wrap { display: flex; flex-direction: column; gap: 9px; width: 100%; min-width: 0; }
 .gl-hint { font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.st-key-clear { margin-left: 6px; color: var(--accent); text-decoration: underline; cursor: pointer; }
+.st-key-clear:hover { color: var(--accent-2, var(--accent)); }
 .gl-tabs { display: inline-flex; gap: 4px; padding: 3px; background: #131318; border: 1px solid var(--border); border-radius: 999px; align-self: flex-start; }
 .gl-tab {
   border: none; background: transparent; color: var(--text-1);

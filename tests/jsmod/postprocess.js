@@ -562,3 +562,55 @@ export function applyPostProcess(assText, config, styleTargets) {
   // 连 CRLF/LF 都不规范化，确保调用方拿到的仍是**逐字节一致**的原文。
   return changedAny ? outputLines.join('\r\n') : assText;
 }
+
+/**
+ * 反向清理：把 applyPostProcess 注入的特效标签剥掉，得到可安全**再导入**的普通字幕。
+ *
+ * 为什么需要（用户报的 bug）：带特效导出（微光/词生长/柔和淡入）的文件重新导入时，
+ * 时间轴的"字幕块"会碎成一地 —— karaoke.js 的逐词切片识别（HL_RE）要求 span 恰好是
+ * `{\c&H......&}词{\c}` 的形状；特效命令（\4c…\blur、\fscx…、\fade…）混进这些覆盖块后
+ * 识别失败，一句话的每个词切片都被当成独立句子。
+ *
+ * 剥的就是本模块注入过的命令（含无参复位），用户原文里的字面大括号不受影响：
+ *   微光: \3c \3a \4c \4a \blur（带参/无参）
+ *   生长: \fscx \fscy（带参/无参）
+ *   淡入: \fade(...)
+ * 处理结果：`{\c&H00FF00&\4c…&\blur4.0}词{\c\4c\4a\blur}` → `{\c&H00FF00&}词{\c}`；
+ * 剥完变空的覆盖块（整行特效插进来的那些）直接删掉。
+ * 没有任何可剥内容时**原样返回**（逐字节一致）—— 普通字幕文件零改动。
+ */
+export function stripEffectTags(assText) {
+  if (typeof assText !== 'string' || !assText) return assText;
+  return assText.replace(/\{([^{}]*)\}/g, (m, inner) => {
+    if (inner.indexOf('\\') === -1) return m;                 // 不含覆盖命令的字面大括号 → 原样
+    const s = inner
+      .replace(/\\[34][ca](?:&H[0-9A-Fa-f]{1,8}&?)?/g, '')    // 微光色/透明度（含无参复位）
+      .replace(/\\blur[0-9.]*/g, '')                          // \blur4.0 / \blur
+      .replace(/\\fsc[xy][0-9.]*/g, '')                       // \fscx130 / \fscx
+      .replace(/\\fade\([^)]*\)/g, '');                       // \fade(a1,a2,a3,t1,t2,t3,t4)
+    if (s === inner) return m;                                // 没剥到东西 → 原样（零改动）
+    const t = s.trim();
+    return t ? '{' + t + '}' : '';                            // 剥空的覆盖块直接删除
+  });
+}
+
+/**
+ * stripEffectTags 的带兜底版本（导入/加载路径用）：转换异常、结果变空、
+ * 或 Dialogue 行数对不上时，一律**原样返回**（"硬塞"语义）——
+ * 宁可回到旧行为, 也不要把用户的内容弄丢。
+ * @param {string} assText
+ * @returns {{text:string, cleaned:boolean}} 结果文本与"是否真的清理过"
+ */
+export function stripEffectTagsSafe(assText) {
+  const src = typeof assText === 'string' ? assText : '';
+  try {
+    const out = stripEffectTags(src);
+    if (!out || !out.trim()) return { text: src, cleaned: false };
+    const n0 = (src.match(/^\s*Dialogue\s*:/gmi) || []).length;
+    const n1 = (out.match(/^\s*Dialogue\s*:/gmi) || []).length;
+    if (n0 !== n1) return { text: src, cleaned: false };   // 清理只动 {...} 块, 行数理应不变
+    return { text: out, cleaned: out !== src };
+  } catch {
+    return { text: src, cleaned: false };
+  }
+}
