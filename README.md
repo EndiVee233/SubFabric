@@ -106,7 +106,8 @@ node editor/server.js
 ## 受支持的模型
 | 模型 | 硬件要求 |
 | --- | --- |
-| Parakeet TDT 0.6B v2 | NVIDIA 显卡加速 |
+| Parakeet TDT 0.6B v2 | NVIDIA 显卡加速（sherpa-onnx / CUDA） |
+| Parakeet TDT 0.6B v2（Intel NPU） | Intel NPU 加速（OpenVINO）：编码器跑 NPU、预测/联合网络跑核显，**无 N 卡可用** |
 | Whisper large-v3-turbo | Vulkan 加速 这意味着只要支持 Vulkan 的显卡均可加速 |
 | Multitalker Parakeet Streaming 0.6B v1 | NVIDIA 显卡加速（但它仅用于重新识别） |
 | 必剪 ASR | 会上传至 bilibili 服务器进行语音识别 无硬件要求 |
