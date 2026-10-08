@@ -589,6 +589,7 @@ export class EditorPanel {
         if (btn.dataset.act === 'delete' && item && this.onDeleteCard) this.onDeleteCard(item);
         else if (btn.dataset.act === 'fix' && item && this.onFixCard) this.onFixCard(item);
         else if (btn.dataset.act === 'retranslate' && item && this.onRetranslateCard) this.onRetranslateCard(item);
+        else if (btn.dataset.act === 'realign' && item && this.onRealignCard) this.onRealignCard(item);
       });
     }
     this.listEl.addEventListener('contextmenu', (e) => {
