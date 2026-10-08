@@ -16,7 +16,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 const JSMOD = path.join(HERE, 'jsmod');
-const ASS = path.join(REPO, 'projects', 'p-muz7axuw-f0bdc', 'subtitle.ass');
+// 素材：优先真实稿件，没有就用合成 ASS（见 tests/ass-fixture.mjs 的说明）。
+// 早先这里硬编码某个本机项目，清掉项目后测试必然假失败。
+const { resolveAssFixture } = await import(pathToFileURL(path.join(HERE, 'ass-fixture.mjs')).href);
+const __fx = resolveAssFixture();
 
 const { AssDoc } = await import(pathToFileURL(path.join(JSMOD, 'ass.js')).href);
 const { analyzeKaraoke, buildCleanAss, pairRows } = await import(pathToFileURL(path.join(JSMOD, 'karaoke.js')).href);
@@ -49,8 +52,9 @@ function spanOf(spans) {
   return { lo, hi, span: hi - lo, n: spans.length };
 }
 
-const raw = fs.readFileSync(ASS, 'utf8');
+const raw = __fx.text;
 const before = spanOf(dialogueSpans(raw));
+console.log('素材: ' + __fx.name + '（' + (__fx.real ? '真实稿件' : '合成') + '）');
 console.log('原文件 Dialogue: ' + before.n + ' 条，跨度 ' + before.span.toFixed(1) + 's');
 console.log('');
 
@@ -63,7 +67,11 @@ ok(after.n === before.n, 'Dialogue 条数不变', after.n + ' vs ' + before.n);
 ok(Math.abs(after.span - before.span) < 1.0, '跨度不变（±1s）',
   after.span.toFixed(1) + ' vs ' + before.span.toFixed(1));
 ok(Math.abs(after.hi - before.hi) < 1.0, '最末时间点不变', after.hi.toFixed(1) + ' vs ' + before.hi.toFixed(1));
-ok(after.span > 3000, '跨度仍是全片量级（>3000s）—— 若这里失败就是"几秒放完"的根因');
+// 关键不变量：往返**不能压缩时间轴**。早期这里断言"跨度 > 3000s"（依赖那份 57 分钟的素材），
+// 换成与输入自洽的写法 —— 素材可换，不变量不变：导出后的跨度必须与输入一致。
+ok(after.span > 0 && Math.abs(after.span - before.span) / before.span < 0.01,
+  '跨度与输入一致（不压缩时间轴）',
+  after.span.toFixed(1) + ' vs ' + before.span.toFixed(1));
 
 console.log('');
 console.log('== 往返 2：buildCleanAss（「导出干净版」走这条）==');
@@ -79,7 +87,7 @@ try {
     console.log('  干净版 Dialogue: ' + cs.n + ' 条，跨度 ' + cs.span.toFixed(1) + 's');
     ok(Math.abs(cs.span - before.span) < 1.0, '跨度不变（±1s）',
       cs.span.toFixed(1) + ' vs ' + before.span.toFixed(1));
-    ok(cs.span > 3000, '跨度仍是全片量级');
+    ok(cs.span > 0, '干净版跨度为正（没被压扁）', cs.span.toFixed(1));
   }
 } catch (e) {
   console.log('  buildCleanAss 调用失败：' + e.message);

@@ -504,6 +504,11 @@ def recognize_words(rec, samples, sr, chunks):
     for i in range(1, len(words)):            # 时间戳偶发抖动, 不允许倒退
         if words[i]["start"] < words[i - 1]["start"]:
             words[i]["start"] = words[i - 1]["start"]
+    # 切开"粘连词"：sherpa 靠 token 的**前导空格**判词首，模型在退化处会吐出
+    # 没有空格的垃圾片段，被 `cur["word"] += piece` 拼成一个词（观感："一个词占 11 秒、
+    # 文本由两半粘成"）。与 NPU 引擎共用同一份实现，保证两个后端行为不分叉。
+    # 放在排序/防倒退之后、refine_word_ends 之前 —— 切开时要依赖已修正的 start。
+    C.split_words_inplace(words)
     return words
 
 

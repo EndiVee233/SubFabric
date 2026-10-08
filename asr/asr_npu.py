@@ -735,6 +735,12 @@ class NpuRecognizer:
         if cur:
             cur["_p"] = cur_probs
             words.append(cur)
+        # 切开"粘连词"：模型在退化处会吐出**没有 ▁ 边界**的垃圾片段，被上面的
+        # `cur["word"] += clean` 拼成一个词，观感是"一个词占 11 秒、文本由两半粘成"
+        # （series.ies / first......'arc. / headquarters..hunter's.）。
+        # 必须在 refine_word_ends **之前**做 —— 否则那个被拉到整段末尾的超长词尾
+        # 会先算出来，切开后两半都继承错误时长。见 confidence.split_glommed_word()。
+        C.split_words_inplace(words)
         return words
 
 
