@@ -1,0 +1,58 @@
+{
+ "_comment": "真实样本：Windows SAPI(Zira) 合成 → parakeet-tdt-0.6b-v2 识别得到的逐词时间。供 tests/align-test.mjs 第 6 节做回归。",
+ "text": "This damage scaling with velocity, should make the ice ball useful.",
+ "start": 36.14,
+ "end": 45.81,
+ "words": [
+  {
+   "word": "This",
+   "start": 0.0,
+   "end": 0.32
+  },
+  {
+   "word": "damage",
+   "start": 0.32,
+   "end": 0.8
+  },
+  {
+   "word": "scaling",
+   "start": 0.8,
+   "end": 1.2
+  },
+  {
+   "word": "withvelocity",
+   "start": 1.2,
+   "end": 2.0
+  },
+  {
+   "word": "should",
+   "start": 2.0,
+   "end": 2.16
+  },
+  {
+   "word": "make",
+   "start": 2.16,
+   "end": 2.32
+  },
+  {
+   "word": "the",
+   "start": 2.32,
+   "end": 2.48
+  },
+  {
+   "word": "ice",
+   "start": 2.48,
+   "end": 2.8
+  },
+  {
+   "word": "ball",
+   "start": 2.8,
+   "end": 3.2
+  },
+  {
+   "word": "useful.",
+   "start": 3.2,
+   "end": 3.52
+  }
+ ]
+}

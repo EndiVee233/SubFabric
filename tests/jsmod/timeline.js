@@ -576,6 +576,8 @@ export class Timeline {
         if (act === 'delete' && cue && this.onDelete) this.onDelete(cue.ref);
       else if (act === 'fix' && cue && this.onFix) this.onFix(cue.ref);
       else if (act === 'retranslate' && cue && this.onRetranslate) this.onRetranslate(cue.ref);
+      // 逐词时间重对齐：只改时间不动文本，所以传整个 cue（要拿它的 row/ref 定位那条字幕）
+      else if (act === 'realign' && cue && this.onRealign) this.onRealign(cue);
       });
     }
 

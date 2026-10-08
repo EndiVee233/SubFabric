@@ -21,6 +21,7 @@ const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffm
 const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
 const reflectMod = require('./reflect.js');
+const alignMod = require('./align.js');           // 逐词时间重对齐(TTS 合成 → 重识别 → 序列对齐)
 const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有说话、没字幕覆盖的区间
 const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
@@ -3311,6 +3312,158 @@ function startPrepare(id, videoPath, mode) {
     return { format, file, totalWords, hasTrans };
   }
 
+  /* ═══════════ 逐词时间重对齐（TTS 合成 → 重新识别 → 序列对齐） ═══════════
+   *
+   * 用途：某条字幕的**逐词时间戳糊了**（拖动过、或识别时把词边界摊平了），
+   * 但文本是对的。这时用 TTS 把这条字幕念一遍、再识别那段合成语音，
+   * 得到的逐词时间是一份**干净的参考节奏**；把它按比例铺回原字幕的时长即可。
+   *
+   * **只改词级时间，绝不动文本** —— 这是这个功能的硬约束。
+   *
+   * 为什么用 TTS 而不是直接对原音频做强制对齐：原音频里词边界只能靠识别结果反推，
+   * 而我们要修的恰恰就是那份糊掉的识别结果；合成语音的文本已知，节奏干净得多。
+   */
+
+  /** 用 Windows 自带的 SAPI 把文本合成成 16k 单声道 WAV。
+   *  不引入任何外部依赖：SAPI 是系统组件，且能直接按目标格式输出
+   *  （SpeechAudioFormatInfo 指定 16kHz/16bit/单声道）—— 连重采样都省了。 */
+  function ttsToWav(text, wavPath, voice, rate) {
+    return new Promise((resolve, reject) => {
+      const safe = String(text || '').slice(0, 2000);
+      if (!safe.trim()) return reject(new Error('没有可合成的文本'));
+      // PowerShell 里用单引号字符串，文本内的单引号转义成两个
+      const lit = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+      const ps = [
+        'Add-Type -AssemblyName System.Speech',
+        '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+        voice ? `try { $s.SelectVoice(${lit(voice)}) } catch {}` : '',
+        `$s.Rate = ${Number.isFinite(rate) ? Math.max(-10, Math.min(10, rate)) : 0}`,
+        '$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000,'
+          + ' [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen,'
+          + ' [System.Speech.AudioFormat.AudioChannel]::Mono)',
+        `$s.SetOutputToWaveFile(${lit(wavPath)}, $f)`,
+        `$s.Speak(${lit(safe)})`,
+        '$s.Dispose()',
+      ].filter(Boolean).join('; ');
+      const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+        { windowsHide: true });
+      let err = '';
+      const t = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('TTS 超时（60s）')); }, 60000);
+      p.stderr.on('data', d => { if (err.length < 800) err += String(d); });
+      p.on('error', e => { clearTimeout(t); reject(new Error('无法启动 PowerShell：' + e.message)); });
+      p.on('close', (code) => {
+        clearTimeout(t);
+        if (code !== 0) return reject(new Error('TTS 合成失败：' + (err.trim().slice(-200) || ('退出码 ' + code))));
+        try { if (!fs.statSync(wavPath).size) throw new Error('空文件'); }
+        catch (e) { return reject(new Error('TTS 没产生音频：' + e.message)); }
+        resolve(wavPath);
+      });
+    });
+  }
+
+  /** 列出本机可用的英文 SAPI 语音（前端下拉用；取不到就返回空数组，前端用系统默认） */
+  function ttsVoices() {
+    return new Promise((resolve) => {
+      const ps = 'Add-Type -AssemblyName System.Speech;'
+        + ' $s = New-Object System.Speech.Synthesis.SpeechSynthesizer;'
+        + ' $s.GetInstalledVoices() | Where-Object { $_.Enabled } | ForEach-Object {'
+        + " $_.VoiceInfo.Name + '|' + $_.VoiceInfo.Culture.Name }; $s.Dispose()";
+      let out = '';
+      let p;
+      try {
+        p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+          { windowsHide: true });
+      } catch { return resolve([]); }
+      const t = setTimeout(() => { try { p.kill(); } catch {} resolve([]); }, 15000);
+      p.stdout.on('data', d => { out += d; });
+      p.on('error', () => { clearTimeout(t); resolve([]); });
+      p.on('close', () => {
+        clearTimeout(t);
+        resolve(out.split('\n').map(l => l.trim()).filter(Boolean).map((l) => {
+          const [name, culture] = l.split('|');
+          return { name: name || '', culture: culture || '' };
+        }).filter(v => v.name));
+      });
+    });
+  }
+
+  /** 对一批字幕块做重对齐。**只算不写** —— 返回提案，由前端确认后才应用。 */
+  async function realignBlocks(id, blocks, opt) {
+    const o = (opt || {});
+    const meta = readMeta(id);
+    if (!meta) throw new Error('项目不存在');
+    const rr = resolveRerecogModel(meta);
+    if (rr.error) throw new Error(rr.error);
+    const model = rr.model;
+    const ea = asrEngineArgs(model);
+    const gate = asrGpuGateError(model);
+    if (gate) throw new Error(gate);
+    const mdir = model.cloud ? '' : modelDirFor(model.id);
+    if (!model.cloud && (!mdir || missingModelFiles(mdir, model).length)) {
+      throw new Error('模型文件不完整（' + model.id + '）');
+    }
+    const confMode = asrConfidenceFor(meta);
+    const voice = String(o.voice || '').trim();
+    const rate = Number.isFinite(Number(o.rate)) ? Number(o.rate) : 0;
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-'));
+    const out = [];
+    try {
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        const text = String(b.text || '');
+        const spoken = alignMod.ttsText(text);
+        const start = Number(b.start), end = Number(b.end);
+        const item = { index: i, start, end, text, ok: false, words: [], anchors: 0, ratio: 0, note: '' };
+        if (!spoken) { item.note = '这条没有可念的文本（可能只有标签）'; out.push(item); continue; }
+        if (!(end > start)) { item.note = '时间区间无效'; out.push(item); continue; }
+        const wav = path.join(tmpDir, `b${i}.wav`);
+        const outJson = path.join(tmpDir, `b${i}.json`);
+        try {
+          await ttsToWav(spoken, wav, voice, rate);
+          // 合成音频走同一套识别参数（含项目当前的逐句置信度档位）
+          const asrArgs = [ea.script, '--model', mdir, '--audio', wav,
+            '--out', outJson, '--threads', '4', '--provider', ea.provider,
+            ...(ea.extra || []), ...(ea.hotwords || []), ...ttaArgs(confMode)];
+          await new Promise((res, rej) => {
+            const pr = spawn(ASR_PY, asrArgs, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            let err = '';
+            const t = setTimeout(() => { try { pr.kill(); } catch {} rej(new Error('识别超时（5 分钟）')); }, 5 * 60 * 1000);
+            pr.stderr.on('data', d => { if (err.length < 4000) err += String(d); });
+            pr.on('error', e => { clearTimeout(t); rej(new Error('无法启动识别进程：' + e.message)); });
+            pr.on('close', (code) => {
+              clearTimeout(t);
+              if (code !== 0) return rej(new Error('识别失败：' + (err.trim().slice(-200) || ('退出码 ' + code))));
+              res();
+            });
+          });
+          const data = JSON.parse(fs.readFileSync(outJson, 'utf8'));
+          const segs = data.segments || [];
+          // 合成音频通常只有一句；多句时把它们按序摊平成一个词序列
+          const recWords = [];
+          for (const s of segs) {
+            for (const w of (s.words || [])) {
+              if (Number.isFinite(w.start) && Number.isFinite(w.end)) {
+                recWords.push({ word: w.word || w.text || '', start: w.start, end: w.end });
+              }
+            }
+          }
+          const plan = alignMod.planBlock(text, { start, end }, recWords);
+          Object.assign(item, {
+            ok: plan.ok, words: plan.words, anchors: plan.anchors, ratio: plan.ratio, note: plan.note,
+            heard: recWords.map(w => w.word).join(' ').slice(0, 200),
+          });
+        } catch (e) {
+          item.note = String((e && e.message) || e).slice(0, 200);
+        }
+        out.push(item);
+      }
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+    return out;
+  }
+
   /** 识别完成: 先落英文初稿, 再按设置决定要不要接着翻译 */
   function buildDraftSubtitle(id, wordLevel) {
     setDraft(id, { stage: STAGE.asr, progress: 88, message: '写入初稿字幕 …' });
@@ -5609,7 +5762,10 @@ function startPrepare(id, videoPath, mode) {
     return serveFile(req, res, full);      // serveFile 自带 Range 支持
   }
 
-  let pm = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/([a-z]+))?$/.exec(pathname);
+  /* action 段允许连字符（如 tts-voices）。原来只写 [a-z]+，于是带连字符的路由
+   * **整条正则都不匹配** → 直接 404，而 `if (pm)` 里的分支根本不会被求值
+   * （实测：加 tts-voices 时踩到，排查了一阵才意识到不是路由写错、是没匹配上）。 */
+  let pm = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/([a-z][a-z-]*))?$/.exec(pathname);
   if (pathname === '/api/projects' && req.method === 'GET') {
     const items = [];
     let ids = [];
@@ -5829,6 +5985,46 @@ function startPrepare(id, videoPath, mode) {
       const job = jobRerecog.get(id);
       if (!job) return sendJson(res, 200, { job: null });
       return sendJson(res, 200, { job: jobView(job) });
+    }
+
+    /* 逐词时间重对齐：只算不写。
+     * body: { blocks:[{text,start,end}], voice?, rate? }
+     * → { blocks:[{index,start,end,text,ok,words:[{w,s,e}],anchors,ratio,note,heard}] }
+     *
+     * 前端拿到提案后自己决定应用哪些、并负责写回 —— 服务端不碰字幕文件，
+     * 与"反思纠错只产出建议"是同一套约定（预览优先）。 */
+    if (action === 'realign' && req.method === 'POST') {
+      return readBody(req, res, 512 * 1024, async (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let data;
+        try { data = JSON.parse(body.toString('utf8')); }
+        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const raw = Array.isArray(data && data.blocks) ? data.blocks : [];
+        if (!raw.length) return sendJson(res, 400, { error: '没有要处理的字幕块' });
+        if (raw.length > 200) return sendJson(res, 400, { error: '一次最多处理 200 条（实测每条约 1~2 秒）' });
+        const blocks = raw.map((b) => ({
+          text: String((b && b.text) || ''),
+          start: Number(b && b.start),
+          end: Number(b && b.end),
+        })).filter(b => b.text.trim());
+        if (!blocks.length) return sendJson(res, 400, { error: '这些块都没有可念的文本' });
+        try {
+          const t0 = Date.now();
+          const result = await realignBlocks(id, blocks, { voice: data.voice, rate: data.rate });
+          const okN = result.filter(r => r.ok).length;
+          console.log(`[align] 逐词重对齐：${blocks.length} 条 → 可用 ${okN} 条，`
+            + `用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+          return sendJson(res, 200, { blocks: result, total: blocks.length, usable: okN });
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e && e.message) || e) });
+        }
+      });
+    }
+
+    // 本机可用的 TTS 语音（前端下拉）—— 不依赖网络，纯 SAPI 枚举
+    if (action === 'tts-voices' && req.method === 'GET') {
+      return ttsVoices().then(v => sendJson(res, 200, { voices: v }))
+        .catch(() => sendJson(res, 200, { voices: [] }));
     }
 
     if (action === 'info' && req.method === 'PUT') {
