@@ -146,8 +146,28 @@ function broadcastLife(event, data) {
   for (const res of lifeClients) { try { res.write(chunk); } catch { lifeClients.delete(res); } }
 }
 const _cLog = console.log.bind(console), _cErr = console.error.bind(console);
+const _cWarn = console.warn.bind(console);
 console.log = (...a) => { try { _cLog(...a); } catch {} pushLog('info', a); };
 console.error = (...a) => { try { _cErr(...a); } catch {} pushLog('error', a); };
+// console.warn 以前**漏了包装** → 所有 warn 级别的信息都不进日志页（排查时看不到，
+// 而这类消息恰恰常是"能跑但不对劲"的线索）。补上。
+console.warn = (...a) => { try { _cWarn(...a); } catch {} pushLog('warn', a); };
+
+/* ── 用户操作日志（「日志」页的第二个板块）──────────────────────────
+ *
+ * 记录**用户做了什么、以及为什么**（例如"重排逐词时间：锚点率 0.91，12 个词"）。
+ * 与服务运行日志分开存：
+ *   · 运行日志是 console 的镜像、只保留最近 600 条、重启即清空；
+ *   · 操作日志要**跨重启留存**（用户可能过几天回来查"这条字幕什么时候被改的"），
+ *     所以按项目落盘到 projects/<id>/oplog.json。
+ *
+ * 为什么不放 settings.js：那是全局配置（会被提交/备份），操作日志是项目数据。
+ */
+const OP_LOG_MAX = 500;
+/* 注意：操作日志的读写辅助必须定义在 handleRequest **内部**（见 projDir 附近），
+ * 因为它们要用 projDir() —— 那是 handleRequest 里的局部函数。
+ * 早期放在模块作用域，于是每次调用都 `ReferenceError: projDir is not defined`，
+ * 而被 catch 吞掉、只表现为"写不进去"（written: 0），排查了好一阵。 */
 
 
 /* ── libass 渲染依赖自检 ──
@@ -2277,6 +2297,43 @@ function handleRequest(req, res) {
   function metaPath(id) { return path.join(projDir(id), 'project.json'); }
   const validId = (id) => /^[A-Za-z0-9_-]{1,64}$/.test(id);
 
+  /* ── 用户操作日志的读写 ────────────────────────────────────────────
+   * 必须放在这里（handleRequest 内部），因为它要用上面的 projDir()。
+   * ⚠ 早期放在模块作用域 → 每次调用都 `ReferenceError: projDir is not defined`，
+   *   又被 catch 吞掉，只表现为"写不进去"（written: 0），排查了好一阵。
+   * 落盘到 projects/<id>/oplog.json：跟着项目走、跨重启留存
+   * （服务运行日志是 console 镜像、只留内存、重启即清，两者用途不同）。 */
+  const opLogPath = (id) => path.join(projDir(id), 'oplog.json');
+  function readOpLog(id) {
+    try {
+      const a = JSON.parse(fs.readFileSync(opLogPath(id), 'utf8'));
+      return Array.isArray(a) ? a : [];
+    } catch { return []; }
+  }
+  /** 追加一条：action 机器可读，detail 给用户看，why 说明原因/依据。
+   *  返回 { ok } 或 { ok:false, err } —— 把原因带出来，否则只能靠猜。 */
+  function appendOpLog(id, entry) {
+    try {
+      const list = readOpLog(id);
+      list.push({
+        t: new Date().toISOString(),
+        action: String((entry && entry.action) || '').slice(0, 60),
+        target: String((entry && entry.target) || '').slice(0, 120),
+        detail: String((entry && entry.detail) || '').slice(0, 400),
+        why: String((entry && entry.why) || '').slice(0, 400),
+      });
+      while (list.length > OP_LOG_MAX) list.shift();
+      const p = opLogPath(id);
+      fs.writeFileSync(p + '.tmp', JSON.stringify(list));
+      fs.renameSync(p + '.tmp', p);          // 原子替换，别留半截
+      return { ok: true };
+    } catch (e) {
+      const err = String((e && e.message) || e);
+      console.warn('[oplog] 写入失败：' + err);
+      return { ok: false, err };
+    }
+  }
+
   function readMeta(id) {
     // 并发写(如 sendBeacon 保存与打开同时发生)可能读到写了一半的文件: 重试几次
     for (let i = 0; i < 3; i++) {
@@ -3403,8 +3460,16 @@ function startPrepare(id, videoPath, mode) {
       throw new Error('模型文件不完整（' + model.id + '）');
     }
     const confMode = asrConfidenceFor(meta);
-    const voice = String(o.voice || '').trim();
-    const rate = Number.isFinite(Number(o.rate)) ? Number(o.rate) : 0;
+    /* 设置页里的 TTS 参数与锚点率门槛。
+     * ⚠ 这里踩过：设置存进了 asr/settings.json，但本函数从没读它、也没把
+     *   minAnchorRatio 传给 planBlock —— 于是"最低锚点率"是个**摆设**，
+     *   不管怎么调都按代码里的默认值 0.6 判定。凡是存进设置的值，都要在这里真正用上。 */
+    const rs = (readAsrSettings().realign) || {};
+    const voice = String((o.voice !== undefined ? o.voice : rs.voice) || '').trim();
+    const rate = Number.isFinite(Number(o.rate)) ? Number(o.rate)
+      : (Number.isFinite(Number(rs.rate)) ? Number(rs.rate) : 0);
+    const minAnchorRatio = Math.max(0.3, Math.min(1,
+      Number.isFinite(Number(rs.minAnchorRatio)) ? Number(rs.minAnchorRatio) : alignMod.MIN_ANCHOR_RATIO));
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-'));
     const out = [];
@@ -3448,7 +3513,8 @@ function startPrepare(id, videoPath, mode) {
               }
             }
           }
-          const plan = alignMod.planBlock(text, { start, end }, recWords);
+          const plan = alignMod.planBlock(text, { start, end }, recWords,
+            { minAnchorRatio });   // ← 设置页里那个门槛真正生效的地方
           Object.assign(item, {
             ok: plan.ok, words: plan.words, anchors: plan.anchors, ratio: plan.ratio, note: plan.note,
             heard: recWords.map(w => w.word).join(' ').slice(0, 200),
@@ -3461,7 +3527,8 @@ function startPrepare(id, videoPath, mode) {
     } finally {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
-    return out;
+    // 带上本次用的 TTS 参数：操作日志里要能看出"是哪一次、用什么声音跑的"
+    return out.map(r => Object.assign(r, { voice: voice || '(系统默认)', rate }));
   }
 
   /** 识别完成: 先落英文初稿, 再按设置决定要不要接着翻译 */
@@ -6027,6 +6094,69 @@ function startPrepare(id, videoPath, mode) {
         .catch(() => sendJson(res, 200, { voices: [] }));
     }
 
+    /* 逐词重排（TTS 对齐）的设置：读 / 写。
+     * GET  → { voice, rate, minAnchorRatio, voices }
+     * POST → 局部更新（存 asr/settings.json 的 realign 段）
+     * 这几个值只影响**以后**的重排，不碰已有字幕。 */
+    if (action === 'realign-settings' && (req.method === 'GET' || req.method === 'POST')) {
+      const view = async () => {
+        const raw = (readAsrSettings().realign) || {};
+        return {
+          voice: String(raw.voice || ''),
+          rate: Number.isFinite(Number(raw.rate)) ? Number(raw.rate) : 0,
+          minAnchorRatio: Number.isFinite(Number(raw.minAnchorRatio))
+            ? Number(raw.minAnchorRatio) : alignMod.MIN_ANCHOR_RATIO,
+          voices: await ttsVoices().catch(() => []),
+        };
+      };
+      if (req.method === 'GET') return view().then(v => sendJson(res, 200, v));
+      return readBody(req, res, 16 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let p;
+        try { p = JSON.parse(body.toString('utf8')) || {}; }
+        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const s = readAsrSettings();
+        const cur = Object.assign({}, s.realign);
+        if (p.voice !== undefined) cur.voice = String(p.voice || '').trim().slice(0, 120);
+        if (p.rate !== undefined) cur.rate = Math.max(-3, Math.min(3, parseInt(p.rate, 10) || 0));
+        if (p.minAnchorRatio !== undefined) {
+          cur.minAnchorRatio = Math.max(0.3, Math.min(1, Number(p.minAnchorRatio) || 0.6));
+        }
+        s.realign = cur;
+        try { writeAsrSettings(s); } catch (e) { return sendJson(res, 500, { error: String(e.message || e) }); }
+        console.log('[align] 重排设置已更新：语音=' + (cur.voice || '(默认)')
+          + ' 语速=' + cur.rate + ' 最低锚点率=' + cur.minAnchorRatio);
+        return view().then(v => sendJson(res, 200, Object.assign({ ok: true }, v)));
+      });
+    }
+
+
+    /* 用户操作日志：读 / 追加。
+     * GET  → { entries:[{t,action,target,detail,why}] }（最近 500 条，跨重启留存）
+     * POST → 追加一条；前端在各处编辑动作里带上"做了什么 + 为什么"。
+     * 落盘失败不报错给用户（日志是辅助信息，不该挡住正常编辑）。 */
+    if (action === 'oplog' && (req.method === 'GET' || req.method === 'POST')) {
+      if (req.method === 'GET') {
+        return sendJson(res, 200, { entries: readOpLog(id) });
+      }
+      return readBody(req, res, 64 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let d;
+        try { d = JSON.parse(body.toString('utf8')); }
+        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const items = Array.isArray(d && d.entries) ? d.entries : [d];
+        if (items.length > 200) return sendJson(res, 400, { error: '一次最多写入 200 条' });
+        let n = 0;
+        const errs = [];
+        for (const e of items) {
+          const r = appendOpLog(id, e);
+          if (r.ok) n++;
+          else if (errs.length < 3) errs.push(r.err);
+        }
+        return sendJson(res, 200, { ok: n > 0, written: n, errors: errs });
+      });
+    }
+
     if (action === 'info' && req.method === 'PUT') {
       return readBody(req, res, 8 * 1024, (err, body) => {
         if (err) return sendJson(res, 400, { error: String(err.message) });
@@ -6180,14 +6310,26 @@ function startPrepare(id, videoPath, mode) {
         if (err2) return sendJson(res, 400, { error: String(err2.message) });
         const file = meta.subtitle && meta.subtitle.file;
         if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
-        const subTmp = path.join(projDir(id), file) + '.tmp';
-        fs.writeFileSync(subTmp, body, 'utf8');
-        fs.renameSync(subTmp, path.join(projDir(id), file));   // 原子替换, 打开方不会读到半截字幕
-        touchMeta(meta);
-        return finish(200, { ok: true, savedAt: meta.modifiedAt });
+        try {
+          const subTmp = path.join(projDir(id), file) + '.tmp';
+          fs.writeFileSync(subTmp, body, 'utf8');
+          fs.renameSync(subTmp, path.join(projDir(id), file));  // 原子替换, 打开方不会读到半截字幕
+          touchMeta(meta);
+        } catch (e) {
+          // 写盘失败要**报出来**（磁盘满/权限/被占用），否则前端以为存上了
+          console.error('[subtitle] 保存失败：' + ((e && e.message) || e));
+          return sendJson(res, 500, { error: '字幕保存失败：' + ((e && e.message) || e) });
+        }
+        return sendJson(res, 200, { ok: true, savedAt: meta.modifiedAt });
       });
-      req.pipe(out);
-      return;
+      /* ⚠ 这里曾经是 `return finish(200, {...})` —— **finish 根本不存在**，
+       *   于是每次自动保存都抛 ReferenceError、被外层 handler 捕获成
+       *   "[handler error] PUT .../subtitle"，返回 500。
+       *   实测某次编辑会话里累计 **58 次**这样的失败：文件其实已经由上面的
+       *   write+rename 写进去了，但前端收到 500 会认为没存上 ——
+       *   用户那边的表现就是"改了半天，稿子莫名其妙缺内容"。
+       *   下面那两行 req.pipe(out) 是更早的流式落盘实现留下的死代码（out 也不存在），
+       *   一并删掉。 */
     }
     if (action === 'subtitle' && req.method === 'GET') {
       const file = meta.subtitle && meta.subtitle.file;

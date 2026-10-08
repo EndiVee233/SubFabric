@@ -2947,7 +2947,14 @@ function deleteItem(item, silent) {
 /** 新建的字幕一个字都没写就离开 → 撤销(不留空字幕) */
 panel.onEmptyNew = (item) => deleteItem(item, true);
 
-timeline.onDelete = (ref) => deleteItem(state.itemByRef.get(ref));
+timeline.onDelete = (ref) => {
+  const it = state.itemByRef.get(ref);
+  deleteItem(it);
+  if (it) {
+    logOp('delete', `第 ${it.no || '?'} 条 ${fmtTime(it.start)}~${fmtTime(it.end)}`,
+      `删除字幕："${String(it.l2 || it.l1 || '').slice(0, 60)}"`, '用户在时间轴上右键删除');
+  }
+};
 
 /* ─────────── 时间轴批量选区(Ctrl+左键在轨道上拖动框选 → 批量删除) ─────────── */
 const rangeBar = document.getElementById('range-bar');
@@ -3699,6 +3706,11 @@ async function applyReflect() {
     setReRecogRegion(a0, b0, { status: 'running', progress: 1, regions: uniq, message: j.message || '纠错重识别中 …' });
     startRerecogPoll(state.project.id);
     toast(`纠错重识别已在后台开始：${uniq.length} 段、约 ${total.toFixed(0)} 秒音频，完成后会自动写回`, 8000);
+    logOp('reflect', `应用 ${picked.length} 条反思建议`,
+      `重识别 ${uniq.length} 段、共约 ${total.toFixed(0)} 秒音频`
+      + `（${uniq.map(r => `${r.start.toFixed(1)}~${r.end.toFixed(1)}s`).join('、')}）`,
+      `模型通读全片给出的建议（合并/重识别${(d.findings || []).some(f => f.kind === 'gap') ? '/补漏识别' : ''}），`
+      + `用户勾选后应用；写回按段进行，段与段之间的内容不动`);
   } catch (e) {
     toast('纠错重识别启动失败: ' + e.message, 6000);
   } finally {
@@ -4125,6 +4137,9 @@ function splitRowAt(item, enPlainText, caret) {
   const ni = state.itemByRef.get(row);                // 光标留在前半的英文行, 接着往下切
   if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
   toast(`已在 ${fmtTime(st)} 处分为两条字幕`, 2600);
+  logOp('split', `第 ${row.no || '?'} 条 → ${fmtTime(t0)}~${fmtTime(st)} / ${fmtTime(st)}~${fmtTime(t1)}`,
+    `按光标位置拆成两条："${enA.slice(0, 40)}" ｜ "${enRest.slice(0, 40)}"`,
+    `切点取第 ${k}/${totW} 个词的词间中点（${fmtTime(st)}），逐词时间原样分配给两半、不重算`);
   return true;
 }
 
@@ -4172,6 +4187,9 @@ function mergeRowWithPrev(item) {
   const ni = state.itemByRef.get(prev);       // 光标回到合并处, 方便继续往前并
   if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
   toast(`已与上一条合并为一条字幕（${fmtTime(start)} → ${fmtTime(end)}）`, 2600);
+  logOp('merge', `第 ${prev.no || '?'} 条 ← 合并第 ${row.no || '?'} 条`,
+    `合并为 ${fmtTime(start)}~${fmtTime(end)}；中文以纯文本并入、英文保留真实词级时间`,
+    '用户手动合并（Ctrl+退格）：两行本是同一句');
   return true;
 }
 
@@ -4208,6 +4226,9 @@ async function retranslateRow(item) {
     assPlayer.updateNow(state.assDoc.serialize());
     rebuildItemsAndLanes(true, true);
     toast('已重新翻译该行');
+    logOp('retranslate', `第 ${row.no || '?'} 条 ${fmtTime(row.start)}~${fmtTime(row.end)}`,
+      `英文：「${enText.slice(0, 50)}」→ 中文：「${String(m.zh).slice(0, 50)}」`,
+      '用户右键重新翻译该行（调用字幕翻译用的同一个模型）');
   } catch (e) {
     toast('翻译失败: ' + ((e && e.message) || e), 4600);
   }
@@ -4247,6 +4268,9 @@ async function realignRow(item) {
   const start = Number(en.start), end = Number(en.end);
   if (!(end > start)) { toast('这条英文句的时间区间无效', 4200); return; }
 
+  // 记下旧逐词时间：写进操作日志，事后看得出"改成了什么样"
+  const beforeWords = en.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
+
   realignBusy = true;
   const pid = state.project.id;
   const secs = (end - start).toFixed(1);
@@ -4283,10 +4307,20 @@ async function realignRow(item) {
     const msec = Math.round((end - start) * 1000);
     jobCardDone('重排逐词时间 · 完成', `${b.words.length} 个词已重排（锚点 ${b.anchors}，${msec}ms 区间）`, true);
     toast(`已重排逐词时间：${b.words.length} 个词（文本未改动）`, 5200);
+    /* 操作日志：记清"哪一条、多少词、依据是什么"。
+     * why 里带上锚点率与 TTS 发音人 —— 这是判断"这次重排可不可信"的关键依据，
+     * 事后复盘时没有它就只能猜。 */
+    logOp('realign', `第 ${(row && row.no) || '?'} 条 ${fmtTime(start)}~${fmtTime(end)}`,
+      `重排 ${b.words.length} 个词的逐词时间（文本未改动）`
+      + `；旧值 ${beforeWords.length} 词。识别听到：${String(b.heard || '').slice(0, 80)}`,
+      `TTS 朗读→重新识别→序列对齐：锚点 ${b.anchors}/${b.words.length}（${Math.round((b.ratio || 0) * 100)}%），`
+      + `发音人 ${b.voice || '系统默认'}${b.rate ? `，语速 ${b.rate > 0 ? '+' : ''}${b.rate}` : ''}`);
   } catch (e) {
     const msg = String((e && e.message) || e);
     jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
     toast('重排失败：' + msg, 6600);
+    logOp('realign', `第 ${(row && row.no) || '?'} 条 ${fmtTime(start)}~${fmtTime(end)}`,
+      '重排逐词时间失败，未改动', msg.slice(0, 200));
   } finally {
     realignBusy = false;
   }
@@ -4459,24 +4493,141 @@ rngFont.addEventListener('input', () => {
 (function initLogView() {
   const view = document.getElementById('log-view');
   const follow = document.getElementById('cb-log-follow');
+  const empty = document.getElementById('log-empty');
   if (!view || typeof EventSource === 'undefined') return;
+  const syncEmpty = () => { if (empty) empty.hidden = view.childElementCount > 0; };
   const append = (line) => {
     try {
       const div = document.createElement('div');
-      div.className = 'log-line ' + (line.level === 'error' ? 'log-err' : 'log-info');
+      div.className = 'log-line ' + (line.level === 'error' ? 'log-err'
+        : line.level === 'warn' ? 'log-warn' : 'log-info');
       div.textContent = '[' + line.t + '] ' + t(line.msg);   // 服务端消息也过词典(日志页签文案可改)
       view.appendChild(div);
       while (view.childElementCount > 800) view.removeChild(view.firstChild);
       if (!follow || follow.checked) view.scrollTop = view.scrollHeight;
+      syncEmpty();
     } catch {}
   };
   const clearBtn = document.getElementById('btn-log-clear');
-  if (clearBtn) clearBtn.addEventListener('click', () => { view.innerHTML = ''; });
+  if (clearBtn) clearBtn.addEventListener('click', () => { view.innerHTML = ''; syncEmpty(); });
+  syncEmpty();
   try {
     const es = new EventSource('/api/logs/stream');
     es.onmessage = (ev) => { try { append(JSON.parse(ev.data)); } catch {} };
     es.onerror = () => { /* 断线自动重连(EventSource 内置 retry) */ };
   } catch {}
+})();
+
+/* ═══════════ 用户操作日志 ═══════════
+ *
+ * 记录"谁改了什么、为什么" —— 与服务运行日志分开（那个是 console 镜像、重启即清）。
+ * 落盘在项目里（projects/<id>/oplog.json），所以跨重启留存、跟着项目走。
+ *
+ * 为什么要有：批量改完之后很难回忆"这条为什么变成这样了"。带原因的记录能在
+ * 事后复盘（尤其是对齐/纠错这类**有依据**的操作：锚点率、命名依据、模型判断）。
+ */
+let opLogPending = [];            // 攒一小批再发，避免每次编辑都打一次请求
+let opLogFlushTimer = 0;
+
+/** 记一条用户操作。detail = 做了什么，why = 为什么/依据。失败静默（日志不该挡住编辑）。 */
+function logOp(action, target, detail, why) {
+  if (!state.project) return;     // 非项目模式没有地方存
+  opLogPending.push({ action, target, detail, why });
+  if (opLogPending.length >= 20) return flushOpLog();
+  clearTimeout(opLogFlushTimer);
+  opLogFlushTimer = setTimeout(flushOpLog, 1500);
+}
+
+function flushOpLog() {
+  clearTimeout(opLogFlushTimer);
+  if (!opLogPending.length || !state.project) return;
+  const pid = state.project.id;
+  const batch = opLogPending;
+  opLogPending = [];
+  try {
+    // 用 sendBeacon：页面正在关/切走时也能发出去，且不阻塞
+    const blob = new Blob([JSON.stringify({ entries: batch })], { type: 'application/json' });
+    if (!navigator.sendBeacon(`/api/projects/${pid}/oplog`, blob)) throw new Error('beacon 被拒');
+  } catch {
+    fetch(`/api/projects/${pid}/oplog`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: batch }),
+    }).catch(() => {});
+  }
+  if (opLogViewVisible()) loadOpLog();
+}
+// 页面隐藏/关闭前把攒着的一起发掉（否则最后一次操作会丢）
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushOpLog(); });
+window.addEventListener('pagehide', flushOpLog);
+
+const OP_ACTION_LABEL = {
+  edit: '编辑字幕', split: '分句', merge: '合并', 'delete': '删除', insert: '新建',
+  realign: '重排逐词', retranslate: '重新翻译', rerecog: '重新识别',
+  reflect: '反思纠错', confidence: '置信度', role: '角色', style: '样式',
+  export: '导出', import: '导入', other: '其它',
+};
+
+function opLogViewVisible() {
+  const p = document.getElementById('log-pane-op');
+  return !!(p && !p.hidden);
+}
+
+function renderOpLog(entries) {
+  const box = document.getElementById('oplog-view');
+  const empty = document.getElementById('oplog-empty');
+  if (!box) return;
+  const list = Array.isArray(entries) ? entries.slice().reverse() : [];   // 新的在上面
+  if (empty) empty.hidden = list.length > 0;
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = list.map((e) => {
+    // 时间只显示 时:分:秒（完整日期占地方、日常排查用不上）
+    const d = new Date(e.t);
+    const hh = isNaN(d) ? String(e.t || '').slice(11, 19)
+      : d.toLocaleTimeString('zh-CN', { hour12: false });
+    const act = OP_ACTION_LABEL[e.action] || e.action || '操作';
+    return `<div class="oplog-row">`
+      + `<span class="oplog-t">${escapeHtml(hh)}</span>`
+      + `<span class="oplog-act" title="${escapeHtml(e.action || '')}">${escapeHtml(act)}</span>`
+      + `<span class="oplog-body">`
+      + (e.target ? `<span class="oplog-target">${escapeHtml(e.target)}</span>` : '')
+      + (e.detail ? (e.target ? ' · ' : '') + `<span class="oplog-detail">${escapeHtml(e.detail)}</span>` : '')
+      + (e.why ? `<br><span class="oplog-why">原因：${escapeHtml(e.why)}</span>` : '')
+      + `</span></div>`;
+  }).join('');
+}
+
+let opLogLoading = false;
+async function loadOpLog() {
+  if (!state.project || opLogLoading) return;
+  opLogLoading = true;
+  try {
+    const r = await fetch(`/api/projects/${state.project.id}/oplog`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    renderOpLog(j.entries);
+  } catch (e) {
+    const box = document.getElementById('oplog-view');
+    if (box) box.innerHTML = `<div class="oplog-empty-row">读取操作日志失败：${escapeHtml(String((e && e.message) || e))}</div>`;
+  } finally {
+    opLogLoading = false;
+  }
+}
+
+/* 两个板块的切换 */
+(function initLogSubTabs() {
+  const tabs = [...document.querySelectorAll('.log-subtab')];
+  if (!tabs.length) return;
+  const panes = { app: document.getElementById('log-pane-app'), op: document.getElementById('log-pane-op') };
+  const show = (which) => {
+    for (const tb of tabs) tb.classList.toggle('active', tb.dataset.log === which);
+    for (const [k, el] of Object.entries(panes)) if (el) el.hidden = (k !== which);
+    if (which === 'op') loadOpLog();       // 只在真要看时才拉
+  };
+  for (const tb of tabs) tb.addEventListener('click', () => show(tb.dataset.log));
+  const rf = document.getElementById('btn-oplog-refresh');
+  if (rf) rf.addEventListener('click', () => { loadOpLog(); toast('已刷新操作日志', 2000); });
+  // 切到日志页且停在"操作日志"时也要拉一次（首次进入不会触发子标签的 click）
+  window.__onLogsTabShown = () => { if (!panes.op || !panes.op.hidden) loadOpLog(); };
 })();
 
 /* F8: 显隐「导出词级 JSON」区(默认隐藏, 避免设置面板杂乱) */
