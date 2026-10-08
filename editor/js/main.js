@@ -4226,16 +4226,26 @@ let realignBusy = false;
 async function realignRow(item) {
   if (realignBusy) { toast('正在重排另一条，请稍等', 3200); return; }
   if (!state.project) { toast('重排逐词时间需要项目模式（要用项目里保存的音频与模型）', 4600); return; }
-  // 中英双行：英文那句才有逐词
-  const en = item && item.l1 && item.l1.words && item.l1.words.length ? item.l1 : (item && item.l2);
-  if (!en || !en.words || !en.words.length) {
-    toast('这条字幕还没有逐词时间，没法重排（先用「转逐词」）', 4600);
+  /* 句子对象在 `item.ref` 上（`item.ref.en` / `item.ref.zh`），**不是** item.l1/l2。
+   * ⚠ 这里踩过：item.l1/l2 是**文本字符串**（见 rebuildItemsAndLanes 里的 `l1: zhText`），
+   *   于是 `item.l1.words` 永远 undefined —— 每条都误报"还没有逐词时间"。 */
+  const row = item && item.ref;
+  // 中英双行：逐词挂在**英文**那句上（中文是整句锚点句）
+  const en = (row && row.en) || null;
+  const hasWords = !!(en && Array.isArray(en.words) && en.words.length);
+  if (!hasWords) {
+    const canConvert = !!(en && en.style && state.kar && en.style === state.kar.wordStyle);
+    toast(canConvert
+      ? '这条还没有逐词时间。到左侧「设置」页最下方「逐词转换」里点「转逐词」，再回来重排'
+      : '这条没有可重排的逐词轨（没有英文行，或英文样式不是逐词样式）', 7000);
     return;
   }
   const text = String(en.text || '').trim();
   if (!text) { toast('这条没有英文文本，没法合成朗读', 4200); return; }
+  /* 用**句子**的时间而不是整行的时间：逐词时间必须落在句子自己的区间里。
+   * （中英双行时整行区间可能比英文句略宽，用整行会把词铺出句子外。） */
   const start = Number(en.start), end = Number(en.end);
-  if (!(end > start)) { toast('这条的时间区间无效', 4200); return; }
+  if (!(end > start)) { toast('这条英文句的时间区间无效', 4200); return; }
 
   realignBusy = true;
   const pid = state.project.id;
