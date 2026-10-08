@@ -178,5 +178,55 @@ console.log('\n== 6. 真实样本回归（有就核对，没有就跳过）==');
   }
 }
 
+console.log('\n== 7. 前端取值路径（★ 实测踩过：读错字段导致每条都误报"没有逐词时间"）==');
+{
+  const MJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
+
+  /* 真实结构（见 rebuildItemsAndLanes）：
+   *   item.l1 / item.l2 是**文本字符串**（`l1: zhText, l2: enText`）
+   *   句子对象在 item.ref 上：item.ref.zh / item.ref.en，词在 .words
+   * 早期写成 `item.l1.words` → 永远 undefined → 每条都提示"还没有逐词时间"。
+   *
+   * 这里不去跑 DOM，而是**按真实结构构造一个 item**，再把 main.js 里那段取值逻辑
+   * 用同样的表达式算一遍，确认两种结构只有正确的那个能取到词。 */
+  const makeItem = (withWords) => {
+    const en = {
+      style: 'Default', start: 1, end: 3, text: 'hello world',
+      words: withWords ? [{ w: 'hello', s: 1, e: 2 }, { w: 'world', s: 2, e: 3 }] : [],
+      events: [{}],
+    };
+    const zh = { style: '中文字幕', start: 1, end: 3, text: '你好世界', words: [], events: [{}] };
+    const row = { zh, en, start: 1, end: 3 };
+    return { kind: 'ass-row', ref: row, l1: zh.text, l2: en.text };  // ← l1/l2 是字符串
+  };
+
+  const item = makeItem(true);
+  ok(typeof item.l1 === 'string', '前提：item.l1 是字符串（不是句子对象）');
+  ok(item.l1.words === undefined, '前提：item.l1.words 取不到词（旧写法必错）');
+  // 正确路径
+  const en = item.ref && item.ref.en;
+  ok(!!en, '正确路径 item.ref.en 能取到英文句');
+  ok(Array.isArray(en.words) && en.words.length === 2, '词在 en.words 上', en.words.length);
+  ok(Number.isFinite(en.start) && Number.isFinite(en.end), '句子自带 start/end（逐词时间要用它，不是整行的）');
+
+  // 没有逐词时也要能识别出来（不该误报成"有"）
+  const bare = makeItem(false);
+  ok(!(bare.ref.en.words || []).length, '无逐词时正确判为无');
+
+  // 源码接线（反向断言：不许退回错误路径）
+  ok(/const row = item && item\.ref;/.test(MJ), 'realignRow 从 item.ref 取行');
+  ok(/const en = \(row && row\.en\) \|\| null;/.test(MJ), '英文句取自 row.en');
+  // 反向断言：不许退回错误路径。
+  // ⚠ 必须排除注释行 —— 我在 realignRow 的注释里写了 `item.l1.words` 来解释这个坑，
+  //   用裸的 /item\.l1\.words/ 会把注释也算上（实测误报）。
+  const codeLines = MJ.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l));
+  ok(!codeLines.some(l => /item\.l1\.words/.test(l)),
+    '代码里不再用 item.l1.words（那永远是 undefined）');
+  ok(/const start = Number\(en\.start\), end = Number\(en\.end\);/.test(MJ),
+    '用句子自己的时间，而不是整行的时间');
+  // 提示要给出真实路径，别说"先用转逐词"却不说在哪
+  ok(/设置.*逐词转换.*转逐词/.test(MJ), '提示里给出「转逐词」的实际位置');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
