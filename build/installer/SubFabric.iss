@@ -14,7 +14,7 @@
 ; 版本号要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "2.1.12"
+#define MyAppVersion "2.1.13"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
@@ -51,8 +51,12 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ; 关掉 Inno 自带的「关闭正在运行的程序」以外的额外提问（保持默认的 Restart Manager 行为即可）
 
 [Languages]
-; 不装第三方语言包：装出来的快捷方式/卸载项与 2.0.x 一致（"Uninstall SubFabric" 就是英文默认文案）
-Name: "english"; MessagesFile: "compiler:Default.isl"
+; 2026-10-09 起安装向导改用**简体中文**(用户要求)。语言文件是 Inno Setup 自带的
+; compiler:Languages\ChineseSimplified.isl(6.5.0+ 版, LanguageID $0804), 不入库。
+; 注意: 这一改会让快捷方式与「应用和功能」里的卸载项文案从英文
+; ("Uninstall SubFabric") 变成中文("卸载 SubFabric"), 与 2.0.x 的英文默认文案不同。
+; 只声明一种语言 → 不会弹语言选择框。
+Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
