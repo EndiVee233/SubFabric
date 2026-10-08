@@ -63,9 +63,11 @@ spoke.mp4
 #   _testpid.txt          —— 测试脚本写的临时项目 id
 #   asr/perf-result.json  —— 性能测试结果/切片长度基准（内容含本机绝对路径）
 #   logs/                 —— 启动器与服务端日志
+#   _tts_probe/           —— 逐词重对齐功能的临时合成音频/识别结果（用完即删）
 _testpid.txt
 asr/perf-result.json
 logs/
+_tts_probe/
 
 # 安装包脚本与图标: 必须放在 /build/* 与 /build/installer/* 之后
 # (gitignore 是"最后匹配生效", 且父目录被排除后无法再包含其中文件)

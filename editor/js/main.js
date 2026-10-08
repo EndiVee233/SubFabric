@@ -4212,6 +4212,79 @@ async function retranslateRow(item) {
     toast('翻译失败: ' + ((e && e.message) || e), 4600);
   }
 }
+/* ═══════════ 逐词时间重对齐（用 TTS 合成 + 重新识别得到的节奏） ═══════════
+ *
+ * 场景：某条字幕的**逐词时间戳糊了**（拖动过、或识别时把词边界摊平了），但文本是对的。
+ * 做法：让服务端把这条字幕念一遍、再识别那段合成语音，得到一份干净的参考节奏，
+ *       按比例铺回原字幕的时长。**只改逐词时间，绝不动文本。**
+ *
+ * 为什么值得单独做：逐词时间糊掉时，视频上的逐词高亮会跟读不对，
+ * 但整句时间往往是对的 —— 重新识别整段代价大、还可能把正确的文本改坏。
+ */
+let realignBusy = false;
+
+async function realignRow(item) {
+  if (realignBusy) { toast('正在重排另一条，请稍等', 3200); return; }
+  if (!state.project) { toast('重排逐词时间需要项目模式（要用项目里保存的音频与模型）', 4600); return; }
+  // 中英双行：英文那句才有逐词
+  const en = item && item.l1 && item.l1.words && item.l1.words.length ? item.l1 : (item && item.l2);
+  if (!en || !en.words || !en.words.length) {
+    toast('这条字幕还没有逐词时间，没法重排（先用「转逐词」）', 4600);
+    return;
+  }
+  const text = String(en.text || '').trim();
+  if (!text) { toast('这条没有英文文本，没法合成朗读', 4200); return; }
+  const start = Number(en.start), end = Number(en.end);
+  if (!(end > start)) { toast('这条的时间区间无效', 4200); return; }
+
+  realignBusy = true;
+  const pid = state.project.id;
+  const secs = (end - start).toFixed(1);
+  jobCardShow('重排逐词时间', `正在朗读并重新识别这条字幕（${secs} 秒）…`, null,
+    '服务端要用系统语音念一遍、再用识别模型听一遍；通常几秒');
+  try {
+    const r = await fetch(`/api/projects/${pid}/realign`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ blocks: [{ text, start, end }] }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    if (!state.project || state.project.id !== pid) return;     // 期间切了项目
+    const b = (j.blocks || [])[0];
+    if (!b) throw new Error('服务端没有返回结果');
+    if (!b.ok || !(b.words || []).length) {
+      throw new Error(b.note || '这次对齐不可信，未改动');
+    }
+    /* 写回：**先剥掉原有的逐词高亮标签再写 words**。
+     * 原文里每个词都带 `{\c...}` 标签，若把它拼进词表，
+     * splitEnglishWords 会把标签当成词，切出来的片数就与词表对不上。 */
+    const inner = text
+      .replace(/\{\\[^}]*\}/g, '')
+      .replace(/\{[^}]*\}/g, '')
+      .replace(/[\u200b\uFEFF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    en.text = inner;                       // 文本内容不变，只是去掉渲染标签
+    en.words = b.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
+    en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+    reconcileKaraoke();
+    rebuildItemsAndLanes(true, true);
+    if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
+    const msec = Math.round((end - start) * 1000);
+    jobCardDone('重排逐词时间 · 完成', `${b.words.length} 个词已重排（锚点 ${b.anchors}，${msec}ms 区间）`, true);
+    toast(`已重排逐词时间：${b.words.length} 个词（文本未改动）`, 5200);
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
+    toast('重排失败：' + msg, 6600);
+  } finally {
+    realignBusy = false;
+  }
+}
+
+panel.onRealignCard = (item) => { realignRow(item); };
+timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref)); };
+
 panel.onRetranslateCard = (item) => {
   try { retranslateRow(item); }
   catch (e) { toast('翻译失败: ' + ((e && e.message) || e), 4600); }
