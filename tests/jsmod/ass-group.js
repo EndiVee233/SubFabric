@@ -28,6 +28,24 @@
 
 const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
 const HAS_WORDTAG = (s) => /\{\\c&H[0-9A-Fa-f]{6}&/.test(String(s || ''));
+/**
+ * 从一条逐词行里取出**这一行高亮的那个词**。
+ *
+ * 逐词行的文本形态（`buildWordSpecs` 是"原位包裹"：把高亮标签插在词前、`{\c}` 插在词尾，
+ * 原作者的特效标签留在外面）：
+ *
+ *     {\c&H00FF00&  \3c&HC2C2C2&\3a&H00&\blur4.0\fscx105\fscy105}  The  {\c\3c\3a\blur\fscx\fscy} unstable …
+ *        ↑高亮色（在前）        ↑原特效标签（在后）                     ↑词     ↑收尾
+ *
+ * 所以规则是：找到高亮标签，**跳过它所在的整个 `{…}` 块**，紧跟其后的、由非 `{` `\` 组成的
+ * 那一段就是这个词。
+ */
+const WORD_AT_RE = /\{\\1?c&H[0-9A-Fa-f]{6}&[^}]*\}([^{\\]*)/;
+function highlightedWord(text) {
+  const m = WORD_AT_RE.exec(String(text || ''));
+  const w = m ? m[1] : '';
+  return w && w.trim() ? w : '';
+}
 const plain = (s) => String(s || '').replace(/\{[^}]*\}/g, '').replace(/\s+/g, ' ').trim();
 const EMPTY = (s) => !plain(s);
 
@@ -83,14 +101,26 @@ function groupAssRows(rows) {
         && Math.abs(r.start - cur.end) < 1e-3 && t === cur.text;
       const sameLine = !tag && !curIsKaraoke
         && Math.abs(r.start - cur.start) < 1e-3 && Math.abs(r.end - cur.end) < 1e-3;
-      if (cont) { cur.end = r.end; cur.n++; continue; }
-      if (sameLine) { cur.text = cur.text + ' ' + t; cur.n++; continue; }
+      if (cont) { cur.end = r.end; cur.n++; cur.rows.push(r); continue; }
+      if (sameLine) { cur.text = cur.text + ' ' + t; cur.n++; cur.rows.push(r); continue; }
       sentences.push(cur);
     }
-    cur = { start: r.start, end: r.end, text: t, n: 1 };
+    cur = { start: r.start, end: r.end, text: t, n: 1, rows: [r] };
     curIsKaraoke = tag;
   }
   if (cur) sentences.push(cur);
+
+  // ②b 每句收集**真实的词级时间**：逐词行自己的 start/end 就是那个词的时间。
+  //     用真实时间，别在导入时用 recalcWords 均匀铺开 —— 那样词序看着对、节奏是假的。
+  for (const s of sentences) {
+    const words = [];
+    for (const r of (s.rows || [])) {
+      const w = highlightedWord(r.text);
+      if (!w) continue;
+      words.push({ word: w, start: Number(r.start), end: Number(r.end) });
+    }
+    s.words = words;
+  }
 
   // ③ 给每句找它包住的整句行（中文原文）
   const usedSent = new Set();
@@ -102,7 +132,7 @@ function groupAssRows(rows) {
     const lines = [];
     if (zh) lines.push(plain(zh.text));
     lines.push(s.text);
-    out.push({ start: s.start, end: s.end, lines, _wordCount: s.n });
+    out.push({ start: s.start, end: s.end, lines, words: s.words || [], _wordCount: s.n });
   }
   // ④ 没被逐词句认领的整句行（单语行）也要带上，否则会漏内容
   for (const r of sentRows) {
@@ -121,4 +151,4 @@ function groupAssRows(rows) {
   };
 }
 
-export { groupAssRows, plain };
+export { groupAssRows, highlightedWord, plain };
