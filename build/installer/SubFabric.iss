@@ -17,7 +17,7 @@
 ;       嫌麻烦可以先 `git ls-remote --tags` 或直接看 Releases 页确认最新号再 +1。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "2.2.0"
+#define MyAppVersion "2.2.1"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
