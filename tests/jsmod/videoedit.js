@@ -660,6 +660,11 @@ export class VideoCueEditor {
       : (fitsBelow && coversOther(above)) ? below : above;
     this.box.style.left = left + 'px';
     this.box.style.top = top + 'px';
+    /* 入场动画（CSS 的 pop-in）从"点中的那一段"长出来：原点 = 片段中心在框内的百分比。
+     * 框在片段下方 → 原点贴顶边；翻到上方 → 贴底边（视觉上永远是"从字幕那侧冒出来"）。 */
+    const ox = Math.max(0, Math.min(100, ((r.left + r.width / 2) - left) / (bw || 1) * 100));
+    this.box.style.setProperty('--pop-ox', ox.toFixed(1) + '%');
+    this.box.style.setProperty('--pop-oy', (top < r.top ? 100 : 0) + '%');
   }
 
   _segRect(item, seg) {

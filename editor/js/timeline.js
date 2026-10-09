@@ -1,5 +1,5 @@
 /** Canvas 时间轴: 胶片缩略图 + 分轨字幕块 + 缩放/平移/定位/拖动改时间/空白拖动新建 */
-import { fmtTime } from './util.js';
+import { fmtTime, popOrigin } from './util.js';
 
 const FILM_H = 46;       // 胶片缩略图条
 const RULER_H = 20;      // 刻度
@@ -806,8 +806,11 @@ export class Timeline {
     if (span && this.kStyleLabel) span.textContent = this.kStyleLabel();
     el.hidden = false;
     const w = el.offsetWidth, h = el.offsetHeight;
-    el.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
-    el.style.top = Math.max(4, Math.min(cy, window.innerHeight - h - 6)) + 'px';
+    const left = Math.max(4, Math.min(cx, window.innerWidth - w - 6));
+    const top = Math.max(4, Math.min(cy, window.innerHeight - h - 6));
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    popOrigin(el, cx, cy, left, top);      // 菜单从右键落点"长出来"（CSS pop-in 的 transform-origin）
   }
   _hideMenu() {
     if (!this.menuEl || this.menuEl.hidden) return;
