@@ -21,6 +21,7 @@ const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffm
 const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
 const reflectMod = require('./reflect.js');
+const packMod = require('./project-pack.js');      // 项目压缩包: 文件分类与校验(纯逻辑)
 const alignMod = require('./align.js');           // 逐词时间重对齐(TTS 合成 → 重识别 → 序列对齐)
 const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有说话、没字幕覆盖的区间
 const mtLocal = require('./mt-local.js');
@@ -91,7 +92,7 @@ const HOST = '127.0.0.1';
 //  角色换色串色 / 中文标点归一 / 中文行实时预览 / 角色列表首字母排序 / 逐词高亮色不丢
 //  —— 上一版 -fork.1 只合并了 server.js 一侧，main.js 与 editor.js 是这一版补上的。
 //  本 fork 自己的功能见 editor/README.md 的更新日志）。
-const APP_VERSION = '2.1.13-fork.2'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.1.13-fork.3'; // 与打版号一致; 改了就顺手同步这里
 // Windows 的文件版本号要求**四段纯数字**，不能带 -fork.1 这种后缀
 //（build_exe.py 用它喂 rcedit，安装包 SubFabric.iss 里也有一份同值的 MyAppFileVersion）。
 // 改 APP_VERSION 时这个也要跟着改，否则 exe 属性里显示的版本会对不上。
@@ -3993,6 +3994,84 @@ function startPrepare(id, videoPath, mode) {
     return Number.isFinite(c) && c > 0 ? c : 0;
   }
 
+  /* ═══════════ 项目压缩包：导出 / 导入 ═══════════
+   *
+   * 导出：只带**人做出来的东西**（字幕 / 识别结果 / 译文 / 备注 / 操作日志 / 建稿日志）。
+   *   刻意**不带** `audio.wav`（40 分钟视频就是 40~80 MB，且能从视频重新生成）、
+   *   `peaks.bin`（audio.wav 的派生）、视频本体（版权 + 体积）。
+   *   一个 40 分钟稿件的包大约 1 MB —— 真正的"分享稿件"。
+   *
+   * 导入：解包 → 校验 → 建新项目 → 由用户选本地/在线视频 → 复用现有 prepare 流水线
+   *   重新生成音频与波形。**包里的 audio.wav / peaks.bin 一律拒绝**：它们可能是
+   *   另一个视频的音频，拿它当权威数据比重新生成危险得多。
+   *
+   * 用 Windows 自带的 bsdtar 建包/解包（本机没有 zip 依赖，项目一直是零依赖；
+   * 实测 bsdtar 建包与解包都正常，中文文件名也保留）。失败再退回 Compress-Archive。
+   */
+  const SYS_TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+
+  /** 跑一个外部命令，返回 { code, out }（与 prepare 里的实现同款：异步 spawn，不阻塞） */
+  function runTool(cmd, args, timeoutMs) {
+    return new Promise((resolve) => {
+      let p;
+      try { p = spawn(cmd, args, { windowsHide: true }); }
+      catch (e) { return resolve({ code: -1, out: String((e && e.message) || e) }); }
+      let out = '';
+      const t = setTimeout(() => { try { p.kill(); } catch {} resolve({ code: -2, out: out + '\n(超时)' }); }, timeoutMs || 10 * 60 * 1000);
+      p.stdout.on('data', d => { if (out.length < 8000) out += d; });
+      p.stderr.on('data', d => { if (out.length < 8000) out += d; });
+      p.on('error', e => { clearTimeout(t); resolve({ code: -1, out: String((e && e.message) || e) }); });
+      p.on('close', c => { clearTimeout(t); resolve({ code: c, out }); });
+    });
+  }
+
+  /** 把项目里该进包的文件打包成 zip。返回 { zipPath, files, bytes } */
+  async function packProject(id) {
+    const dir = projDir(id);
+    const meta = readMeta(id);
+    if (!meta) throw new Error('项目不存在');
+    const names = fs.readdirSync(dir).filter(f => packMod.shouldPack(f));
+    if (!names.length) throw new Error('这个项目里没有可导出的内容');
+    // 打包到临时目录，打完直接回给响应，磁盘上不留文件
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-pack-'));
+    const zipPath = path.join(tmpDir, 'pack.zip');
+    let r = await runTool(SYS_TAR, ['-a', '-c', '-f', zipPath, ...names], 10 * 60 * 1000);
+    if (r.code !== 0 || !fs.existsSync(zipPath)) {
+      // 退回 PowerShell 的 Compress-Archive（bsdtar 不可用/被拦截时）
+      const list = names.map(n => path.join(dir, n));
+      const ps = 'Compress-Archive -LiteralPath ' + list.map(p => `'${String(p).replace(/'/g, "''")}'`).join(',')
+        + ` -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`;
+      const r2 = await runTool('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], 10 * 60 * 1000);
+      if (r2.code !== 0 || !fs.existsSync(zipPath)) {
+        throw new Error('打包失败：bsdtar 与 Compress-Archive 都不可用（' + (r.out || r2.out || '').slice(-160) + '）');
+      }
+    }
+    return { zipPath, tmpDir, files: names, bytes: fs.statSync(zipPath).size };
+  }
+
+  /** 解一个上传的项目包到临时目录，返回 { dir, files, manifest } */
+  async function unpackProject(zipPath) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-unpack-'));
+    const r = await runTool(SYS_TAR, ['-x', '-f', zipPath, '-C', tmpDir], 10 * 60 * 1000);
+    if (r.code !== 0) {
+      const ps = `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${tmpDir.replace(/'/g, "''")}' -Force`;
+      const r2 = await runTool('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], 10 * 60 * 1000);
+      if (r2.code !== 0) {
+        throw new Error('解包失败：不是有效的 zip，或解压工具不可用（' + (r.out || r2.out || '').slice(-160) + '）');
+      }
+    }
+    // 有些包会多套一层目录（比如压缩时选的是文件夹）—— 若顶层只有一个目录，就下沉一层
+    let base = tmpDir;
+    const top = fs.readdirSync(tmpDir);
+    if (top.length === 1 && fs.statSync(path.join(tmpDir, top[0])).isDirectory()) {
+      const inner = path.join(tmpDir, top[0]);
+      if (fs.readdirSync(inner).some(f => packMod.CORE_FILES.includes(f))) base = inner;
+    }
+    const files = fs.readdirSync(base).filter(f => fs.statSync(path.join(base, f)).isFile());
+    const manifest = packMod.validateManifest(files);
+    return { dir: base, tmpDir, files, manifest };
+  }
+
   /** 识别完成: 先落英文初稿, 再按设置决定要不要接着翻译 */
   function buildDraftSubtitle(id, wordLevel) {
     setDraft(id, { stage: STAGE.asr, progress: 88, message: '写入初稿字幕 …' });
@@ -6429,6 +6508,16 @@ function startPrepare(id, videoPath, mode) {
         prepare: { status: 'none' }
       };
       if (file) meta.subtitle = { format, file, name: subName };
+      /* 区域字幕导入（按时间区间裁剪）：把区间记下来。
+       * 意义不只是"存个说明" —— 裁过的稿子时间轴从区间起点才开始，
+       * 之后"波形漏字幕检测""行间空档检测"这类功能必须知道这件事，
+       * 否则会把区间外的正常音频当成"漏字幕"。 */
+      if (!draftOn && data.region && typeof data.region === 'object') {
+        const rs = Number(data.region.start), re = data.region.end == null ? null : Number(data.region.end);
+        if (Number.isFinite(rs) && rs >= 0 && (re === null || (Number.isFinite(re) && re > rs))) {
+          meta.region = { start: rs, end: re, importedAt: now };
+        }
+      }
       /* 创建后自动处理（反思纠错 + 全片逐词重校对）：在创建页勾选。
        * 存在 meta 上而不是全局设置 —— 它是**这个项目**的选择，
        * 之后可以在项目详情里看到"这个稿子是自动处理过的"。 */
@@ -6453,6 +6542,113 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, metaView(readMeta(id)));   // 重读: startPrepare 已把 prepare 置为 running
     });
   }
+  /* ═══ 项目压缩包：导出 / 导入（在 if (pm) 之外 —— 导入没有项目 id，
+   *     导出虽然带 id 但要能在任意路径命中，所以都自取 pathname）═══ */
+
+  /** 导出：只含"人做出来的东西"（字幕/识别结果/译文/备注/日志）。
+   *  不含视频与 audio.wav / peaks.bin —— 那是派生数据，导入端从视频重新生成。 */
+  {
+    const mExp = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/export-pack$/.exec(pathname);
+    if (mExp && req.method === 'GET') {
+      const pid = mExp[1];
+      return (async () => {
+        let packed = null;
+        try {
+          packed = await packProject(pid);
+          const meta = readMeta(pid) || {};
+          const safe = String(meta.name || pid).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || pid;
+          const buf = fs.readFileSync(packed.zipPath);
+          console.log(`[pack] 导出 ${pid}：${packed.files.length} 个文件，${(buf.length / 1024).toFixed(0)} KB`);
+          // 文件名走 RFC 5987，中文项目名也能正确落地
+          return send(res, 200, {
+            'Content-Type': 'application/zip',
+            'Content-Disposition':
+              `attachment; filename="subfabric-${pid}.zip"; filename*=UTF-8''${encodeURIComponent(safe)}.zip`,
+            'Content-Length': String(buf.length),
+            'Cache-Control': 'no-cache',
+          }, buf);
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e && e.message) || e) });
+        } finally {
+          if (packed) { try { fs.rmSync(packed.tmpDir, { recursive: true, force: true }); } catch { /* ignore */ } }
+        }
+      })();
+    }
+  }
+
+  /** 导入：上传 zip（原始二进制）→ 解包 → 校验 → 建新项目。
+   *  **不在这里跑 prepare** —— 视频要由用户在导入端选（本地或在线），
+   *  选完再走现有的提取流程生成 audio.wav 与波形。 */
+  if (pathname === '/api/projects/import-pack' && req.method === 'POST') {
+    const tmpZip = path.join(os.tmpdir(), 'kass-import-' + Date.now().toString(36)
+      + '-' + Math.random().toString(36).slice(2) + '.zip');
+    const out = fs.createWriteStream(tmpZip);
+    let size = 0;
+    let dead = false;
+    req.on('data', c => {
+      size += c.length;
+      if (size > 512 * 1024 * 1024) { dead = true; req.destroy(); }   // 512MB 上限
+    });
+    req.on('error', () => { dead = true; out.destroy(); });
+    req.on('end', () => { out.end(); });
+    out.on('error', () => { dead = true; });
+    out.on('finish', () => {
+      if (dead) { fs.unlink(tmpZip, () => {}); return sendJson(res, 400, { error: '上传中断或文件过大（上限 512MB）' }); }
+      (async () => {
+        let unpacked = null;
+        try {
+          unpacked = await unpackProject(tmpZip);
+          const mf = unpacked.manifest;
+          if (!mf.ok) return sendJson(res, 400, { error: mf.error });
+          // 建新项目：新 id（同一个包可导入多次），不覆盖已有项目
+          const newId = 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+          const now = new Date().toISOString();
+          fs.mkdirSync(projDir(newId), { recursive: true });
+          const copied = [];
+          let meta = null;
+          for (const f of unpacked.files) {
+            if (!packMod.shouldPack(f)) continue;      // 派生文件与杂物一律不落盘
+            const buf = fs.readFileSync(path.join(unpacked.dir, f));
+            if (buf.length > 64 * 1024 * 1024) continue;   // 单个核心文件不该这么大
+            if (f === 'project.json') {
+              try { meta = JSON.parse(buf.toString('utf8')); } catch { meta = null; }
+              continue;                                   // meta 要改写后再写
+            }
+            fs.writeFileSync(path.join(projDir(newId), f), buf);
+            copied.push(f);
+          }
+          const newMeta = packMod.remapMeta(meta, newId, now);
+          if (!newMeta.subtitle) {
+            // 包里的 project.json 没记字幕文件时按实际存在的补
+            newMeta.subtitle = copied.includes('subtitle.ass')
+              ? { format: 'ass', file: 'subtitle.ass', name: 'subtitle.ass' }
+              : { format: 'srt', file: 'subtitle.srt', name: 'subtitle.srt' };
+          }
+          writeMeta(newMeta);
+          if (fs.existsSync(path.join(projDir(newId), 'draft.log'))) {
+            pushDraftLog(newId, '[' + new Date().toLocaleTimeString() + '] 从项目包导入'
+              + (meta && meta.name ? '：' + meta.name : ''));
+          }
+          console.log(`[pack] 导入 → ${newId}：${copied.length} 个文件`
+            + `（视频与音频待用户选择后重新生成）`);
+          return sendJson(res, 200, {
+            ok: true, id: newId, files: copied,
+            // 让前端知道"还差什么"：视频没选、音频没生成
+            needVideo: true, prepare: 'none',
+            missing: mf.missing,
+          });
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e && e.message) || e) });
+        } finally {
+          try { fs.unlinkSync(tmpZip); } catch { /* ignore */ }
+          if (unpacked) { try { fs.rmSync(unpacked.tmpDir, { recursive: true, force: true }); } catch { /* ignore */ } }
+        }
+      })();
+    });
+    req.pipe(out);
+    return;
+  }
+
   if (pm) {
     const id = pm[1], action = pm[2] || '';
     const meta = readMeta(id);

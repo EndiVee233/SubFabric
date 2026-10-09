@@ -44,6 +44,7 @@
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
       <button class="btn" id="btn-settings-ed" data-ico="sliders" title="识别模型 / 字幕翻译（LLM）设置（与右侧「设置」页签区分）">全局设置</button>
       <button class="btn btn-accent" id="btn-export" disabled data-ico="download" title="导出原始格式(含逐词特效)">导出字幕</button>
+      <button class="btn" id="btn-export-pack" disabled data-ico="download" title="把项目打包成 zip：字幕 / 识别结果 / 译文 / 备注 / 操作日志。不含视频与音频 —— 导入端选好视频后自动重新生成，所以包很小">导出项目包</button>
     </div>
   </header>
 
@@ -1132,6 +1133,29 @@
           <button type="button" class="btn btn-mini" id="np-pick-sub">浏览…</button>
         </div>
 
+        <!-- 从项目压缩包导入：字幕/译文/备注/日志都从包里来，视频要另外选（重建音频与波形）。
+             放在字幕行下面 —— 它是"另一种取材方式"，与选字幕文件互斥。 -->
+        <div class="np-file-row" id="np-row-pack">
+          <span class="np-lbl">项目包</span>
+          <span class="np-file" id="np-pack-name">还没选</span>
+          <button type="button" class="btn btn-mini" id="np-pick-pack">浏览…</button>
+        </div>
+
+        <!-- 区域字幕导入：**默认整片**，勾上才限定范围。裁过的项目会在 project.json 里
+             记下 region，事后能看出"这是裁过的"，而不是像丢了内容。 -->
+        <div class="np-file-row" id="np-row-region">
+          <label class="np-lbl np-lbl-check" for="np-region-on">
+            <input type="checkbox" id="np-region-on">
+            <span>只导入一段</span>
+          </label>
+          <span class="np-region" id="np-region-fields" hidden>
+            <input type="text" id="np-region-start" class="np-time" placeholder="开始 如 1:30" inputmode="numeric">
+            <span class="np-tilde">~</span>
+            <input type="text" id="np-region-end" class="np-time" placeholder="结束 留空=片尾" inputmode="numeric">
+          </span>
+          <span class="np-region-note" id="np-region-note"></span>
+        </div>
+
         <div class="np-hint" id="np-hint">音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存</div>
         <div class="ws-actions">
           <button type="button" class="btn" id="np-cancel">返回项目</button>
@@ -1242,6 +1266,7 @@
   </div>
 </div>
 <input type="file" id="np-file-sub" accept=".srt,.ass,.ssa" hidden>
+<input type="file" id="np-file-pack" accept=".zip" hidden>
 
 <!-- 全局设置：从项目列表和编辑器均可进入的独立页面 -->
 <div id="st-view" class="workspace-page" hidden>

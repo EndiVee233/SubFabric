@@ -20,7 +20,7 @@
 ;   上游的做法是 `{#MyAppVersion}.0` 拼出 2.1.13.0；本 fork 显式定义 MyAppFileVersion，
 ;   因为 build_exe.py 也从 editor/server.js 读 APP_FILE_VERSION 喂 rcedit ——
 ;   两处必须同值，显式写出来更好核对。
-#define MyAppVersion "2.1.13-fork.2"
+#define MyAppVersion "2.1.13-fork.3"
 #define MyAppFileVersion "2.1.13.0"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
