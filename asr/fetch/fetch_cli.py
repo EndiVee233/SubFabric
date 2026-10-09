@@ -41,6 +41,11 @@ try:
 except Exception:
     pass
 
+# 兜底"最新 mtime 文件"时的媒体扩展名白名单 —— 免得把 _bili_cookies.txt / *.part / *.ytdl 之类当成下载产物。
+MEDIA_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".flv", ".ts",
+              ".m4a", ".mp3", ".aac", ".opus", ".ogg", ".wav", ".m4v"}
+
+
 def emit(obj: Dict[str, Any]) -> None:
     """一行一个 JSON, flush 掉, 服务端边读边解析。"""
     sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
@@ -131,154 +136,173 @@ def main(argv=None) -> int:
         cookies = bili.parse_cookie_input(a.cookies)
     elif cookies_file and cookies_file.exists():
         cookies = bili.read_netscape(cookies_file)
+    created_cookie_file: Optional[Path] = None
     if cookies and site == "bilibili":
-        cookies_file = out_dir / "_bili_cookies.txt"     # 落在项目目录里, 随项目一起删
+        cookies_file = out_dir / "_bili_cookies.txt"     # 落在项目目录里, 下载收尾随项目一起删
         bili.write_netscape(cookies, cookies_file)
-    log("Cookie: " + (bili.describe_login(cookies) if site == "bilibili"
-                     else ("使用浏览器 Cookie（%s）" % a.cookies_from_browser if a.cookies_from_browser else "未提供 Cookie")))
-
-    # ── yt-dlp 本体: 没有就从 PyPI 下官方 wheel 解到 asr/ytdlp ──
-    ok, why = ytdlp_mod.ensure()
-    if not ok:
-        emit({"type": "error", "msg": "下载引擎不可用: " + str(why)})
-        return 3
-    yt_dlp = ytdlp_mod.require()
-    log("下载引擎 yt-dlp " + (ytdlp_mod.installed_version() or "?"))
-
-    fmt = sel.build_format_selector(url, a.quality, {}, a.custom_format)
-    # 日志里只留开头一段: bilibili 的 best 链会枚举"画质×编码×音质"几千字符, 整条打进日志会把界面刷爆
-    log("格式选择: " + (fmt if len(fmt) <= 160 else fmt[:160] + " …(共 %d 字符, 完整表达式见 source.json)" % len(fmt)))
-
-    state = {"last": -1, "t0": time.time(), "final": None}
-
-    def on_progress(d):
-        try:
-            if d.get("status") == "downloading":
-                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                got = d.get("downloaded_bytes") or 0
-                pct = int(got * 100 / total) if total else 0
-                if pct != state["last"] or time.time() - state["t0"] > 2:
-                    state["last"] = pct
-                    state["t0"] = time.time()
-                    sp = d.get("speed") or 0
-                    eta = d.get("eta") or 0
-                    emit({"type": "progress", "pct": max(0, min(99, pct)), "msg":
-                          "下载中 %d%%  %.1f/%.1f MB  %s  剩 %s" % (
-                              pct, got / 1048576, (total / 1048576) if total else 0,
-                              ("%.1f MB/s" % (sp / 1048576)) if sp else "-",
-                              ("%ds" % eta) if eta else "-")})
-            elif d.get("status") == "finished":
-                emit({"type": "progress", "pct": 99, "msg": "下载完成, 正在合并音视频 …"})
-        except Exception:
-            pass
-
-    def on_pp(d):
-        try:
-            if d.get("status") == "started":
-                emit({"type": "progress", "pct": 99, "msg": "后处理: " + str(d.get("postprocessor") or "")})
-        except Exception:
-            pass
-
-    opts: Dict[str, Any] = {
-        "format": fmt,
-        "outtmpl": str(out_dir / "%(title).120B [%(id)s].%(ext)s"),
-        "merge_output_format": "mp4",
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "progress_hooks": [on_progress],
-        "postprocessor_hooks": [on_pp],
-        "logger": make_logger(),
-        "retries": 5,
-        "fragment_retries": 5,
-        "concurrent_fragment_downloads": 4,
-        "restrictfilenames": False,
-        "windowsfilenames": True,
-        "nopart": False,
-    }
-    ff = find_ffmpeg(a.ffmpeg)
-    if ff:
-        opts["ffmpeg_location"] = ff
-        log("ffmpeg: " + ff)
-    if a.proxy:
-        opts["proxy"] = a.proxy
-        log("代理: " + a.proxy)
-    if cookies_file and Path(cookies_file).exists():
-        opts["cookiefile"] = str(cookies_file)
-    if a.cookies_from_browser:
-        opts["cookiesfrombrowser"] = (a.cookies_from_browser,)
-    if a.timeout:
-        opts["socket_timeout"] = a.timeout
-
-    emit({"type": "progress", "pct": 1, "msg": "解析链接中 …"})
+        created_cookie_file = cookies_file               # 本函数自己落盘的明文文件, 收尾必删
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=not a.simulate)
-    except Exception as exc:
-        emit({"type": "error", "msg": "%s: %s" % (type(exc).__name__, exc)})
-        return 4
+        log("Cookie: " + (bili.describe_login(cookies) if site == "bilibili"
+                         else ("使用浏览器 Cookie（%s）" % a.cookies_from_browser if a.cookies_from_browser else "未提供 Cookie")))
 
-    if info is None:
-        emit({"type": "error", "msg": "解析失败（拿不到视频信息）"})
-        return 4
-    if info.get("_type") == "playlist" and info.get("entries"):
-        info = info["entries"][0]
+        # ── yt-dlp 本体: 没有就从 PyPI 下官方 wheel 解到 asr/ytdlp ──
+        ok, why = ytdlp_mod.ensure()
+        if not ok:
+            emit({"type": "error", "msg": "下载引擎不可用: " + str(why)})
+            return 3
+        yt_dlp = ytdlp_mod.require()
+        log("下载引擎 yt-dlp " + (ytdlp_mod.installed_version() or "?"))
 
-    # 真实落盘文件（合并后的）
-    final_path = ""
-    rds = info.get("requested_downloads") or []
-    if rds and rds[0].get("filepath"):
-        final_path = rds[0]["filepath"]
-    if not final_path:
+        fmt = sel.build_format_selector(url, a.quality, {}, a.custom_format)
+        # 日志里只留开头一段: bilibili 的 best 链会枚举"画质×编码×音质"几千字符, 整条打进日志会把界面刷爆
+        log("格式选择: " + (fmt if len(fmt) <= 160 else fmt[:160] + " …(共 %d 字符, 完整表达式见 source.json)" % len(fmt)))
+
+        state = {"last": -1, "t0": time.time(), "final": None}
+
+        def on_progress(d):
+            try:
+                if d.get("status") == "downloading":
+                    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                    got = d.get("downloaded_bytes") or 0
+                    pct = int(got * 100 / total) if total else 0
+                    if pct != state["last"] or time.time() - state["t0"] > 2:
+                        state["last"] = pct
+                        state["t0"] = time.time()
+                        sp = d.get("speed") or 0
+                        eta = d.get("eta") or 0
+                        emit({"type": "progress", "pct": max(0, min(99, pct)), "msg":
+                              "下载中 %d%%  %.1f/%.1f MB  %s  剩 %s" % (
+                                  pct, got / 1048576, (total / 1048576) if total else 0,
+                                  ("%.1f MB/s" % (sp / 1048576)) if sp else "-",
+                                  ("%ds" % eta) if eta else "-")})
+                elif d.get("status") == "finished":
+                    emit({"type": "progress", "pct": 99, "msg": "下载完成, 正在合并音视频 …"})
+            except Exception:
+                pass
+
+        def on_pp(d):
+            try:
+                if d.get("status") == "started":
+                    emit({"type": "progress", "pct": 99, "msg": "后处理: " + str(d.get("postprocessor") or "")})
+            except Exception:
+                pass
+
+        opts: Dict[str, Any] = {
+            "format": fmt,
+            "outtmpl": str(out_dir / "%(title).120B [%(id)s].%(ext)s"),
+            "merge_output_format": "mp4",
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            "progress_hooks": [on_progress],
+            "postprocessor_hooks": [on_pp],
+            "logger": make_logger(),
+            "retries": 5,
+            "fragment_retries": 5,
+            "concurrent_fragment_downloads": 4,
+            "restrictfilenames": False,
+            "windowsfilenames": True,
+            "nopart": False,
+        }
+        ff = find_ffmpeg(a.ffmpeg)
+        if ff:
+            opts["ffmpeg_location"] = ff
+            log("ffmpeg: " + ff)
+        if a.proxy:
+            opts["proxy"] = a.proxy
+            log("代理: " + a.proxy)
+        if cookies_file and Path(cookies_file).exists():
+            opts["cookiefile"] = str(cookies_file)
+        if a.cookies_from_browser:
+            opts["cookiesfrombrowser"] = (a.cookies_from_browser,)
+        if a.timeout:
+            opts["socket_timeout"] = a.timeout
+
+        emit({"type": "progress", "pct": 1, "msg": "解析链接中 …"})
         try:
-            final_path = info.get("requested_downloads", [{}])[0].get("_filename", "")
-        except Exception:
-            final_path = ""
-    if not final_path and not a.simulate:
-        cands = sorted(out_dir.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-        final_path = str(cands[0]) if cands else ""
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=not a.simulate)
+        except Exception as exc:
+            emit({"type": "error", "msg": "%s: %s" % (type(exc).__name__, exc)})
+            return 4
 
-    meta = {
-        "source": site,
-        "url": url,
-        "id": info.get("id") or "",
-        "title": info.get("title") or "",
-        "description": info.get("description") or "",
-        "uploader": info.get("uploader") or info.get("channel") or "",
-        "uploaderId": info.get("uploader_id") or info.get("channel_id") or "",
-        "duration": info.get("duration") or 0,
-        "uploadDate": info.get("upload_date") or "",
-        "tags": info.get("tags") or [],
-        "categories": info.get("categories") or [],
-        "viewCount": info.get("view_count") or 0,
-        "thumbnail": info.get("thumbnail") or "",
-        "qualityPreset": a.quality,
-        "formatSelector": fmt,
-        "formatId": info.get("format_id") or "",
-        "formatNote": info.get("format_note") or "",
-        "height": info.get("height") or 0,
-        "file": final_path,
-        "fileSize": (Path(final_path).stat().st_size if final_path and Path(final_path).exists() else 0),
-        "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    }
-    if a.meta_out:
-        mp = Path(a.meta_out)
-        mp.parent.mkdir(parents=True, exist_ok=True)
-        tmp = mp.with_suffix(mp.suffix + ".tmp")
-        tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp, mp)
+        if info is None:
+            emit({"type": "error", "msg": "解析失败（拿不到视频信息）"})
+            return 4
+        if info.get("_type") == "playlist" and info.get("entries"):
+            info = info["entries"][0]
 
-    if a.simulate:
-        emit({"type": "done", "file": "", "metaPath": a.meta_out, "meta": meta})
+        # 真实落盘文件（合并后的）
+        final_path = ""
+        rds = info.get("requested_downloads") or []
+        if rds and rds[0].get("filepath"):
+            final_path = rds[0]["filepath"]
+        if not final_path:
+            try:
+                final_path = info.get("requested_downloads", [{}])[0].get("_filename", "")
+            except Exception:
+                final_path = ""
+        if not final_path and not a.simulate:
+            cands = []
+            for p in out_dir.glob("*"):
+                if p.suffix.lower() not in MEDIA_EXTS:
+                    continue                                        # 只认媒体文件, 排除 cookie/part/ytdl 等残留
+                try:
+                    cands.append((p.stat().st_mtime, str(p)))
+                except OSError:
+                    continue                                        # 并发删除/被占用 → 跳过, 别让 stat 异常冒出去
+            cands.sort(reverse=True)
+            final_path = cands[0][1] if cands else ""
+
+        meta = {
+            "source": site,
+            "url": url,
+            "id": info.get("id") or "",
+            "title": info.get("title") or "",
+            "description": info.get("description") or "",
+            "uploader": info.get("uploader") or info.get("channel") or "",
+            "uploaderId": info.get("uploader_id") or info.get("channel_id") or "",
+            "duration": info.get("duration") or 0,
+            "uploadDate": info.get("upload_date") or "",
+            "tags": info.get("tags") or [],
+            "categories": info.get("categories") or [],
+            "viewCount": info.get("view_count") or 0,
+            "thumbnail": info.get("thumbnail") or "",
+            "qualityPreset": a.quality,
+            "formatSelector": fmt,
+            "formatId": info.get("format_id") or "",
+            "formatNote": info.get("format_note") or "",
+            "height": info.get("height") or 0,
+            "file": final_path,
+            "fileSize": (Path(final_path).stat().st_size if final_path and Path(final_path).exists() else 0),
+            "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+        if a.meta_out:
+            mp = Path(a.meta_out)
+            mp.parent.mkdir(parents=True, exist_ok=True)
+            tmp = mp.with_suffix(mp.suffix + ".tmp")
+            tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp, mp)
+
+        if a.simulate:
+            emit({"type": "done", "file": "", "metaPath": a.meta_out, "meta": meta})
+            return 0
+        if not final_path or not Path(final_path).exists():
+            emit({"type": "error", "msg": "下载似乎没有产出文件（检查画质档位或登录态）"})
+            return 5
+
+        emit({"type": "progress", "pct": 100, "msg": "已下载: " + Path(final_path).name})
+        emit({"type": "done", "file": final_path, "metaPath": a.meta_out, "meta": meta})
         return 0
-    if not final_path or not Path(final_path).exists():
-        emit({"type": "error", "msg": "下载似乎没有产出文件（检查画质档位或登录态）"})
-        return 5
-
-    emit({"type": "progress", "pct": 100, "msg": "已下载: " + Path(final_path).name})
-    emit({"type": "done", "file": final_path, "metaPath": a.meta_out, "meta": meta})
-    return 0
+    finally:
+        # 只删本函数自己创建的那份明文 cookie 文件（cookiefile 只喂给 yt-dlp, 此后不再复用）。
+        # 调用方经 --cookies-file 传入的文件不在 created_cookie_file 里, 绝不触碰。
+        if created_cookie_file is not None:
+            try:
+                created_cookie_file.unlink()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
