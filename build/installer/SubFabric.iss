@@ -16,11 +16,11 @@
 #define MyAppName "SubFabric"
 ; 显示版本：本 fork 加 -fork.N 后缀与上游区分（两边曾撞号）。
 ; ⚠ VersionInfoVersion / VersionInfoProductVersion 接受的是**四段纯数字** ——
-;   把带后缀的 "2.1.13-fork.1" 直接塞进去，Inno Setup 会编译报错。
+;   把带后缀的 "2.1.13-fork.2" 直接塞进去，Inno Setup 会编译报错。
 ;   上游的做法是 `{#MyAppVersion}.0` 拼出 2.1.13.0；本 fork 显式定义 MyAppFileVersion，
 ;   因为 build_exe.py 也从 editor/server.js 读 APP_FILE_VERSION 喂 rcedit ——
 ;   两处必须同值，显式写出来更好核对。
-#define MyAppVersion "2.1.13-fork.1"
+#define MyAppVersion "2.1.13-fork.2"
 #define MyAppFileVersion "2.1.13.0"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
