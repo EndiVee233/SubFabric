@@ -1690,6 +1690,7 @@ const rimEls = {
 let rimCues = null;      // [{start, end, lines}]（**完整时间轴**，不做平移）
 let rimName = '';
 let rimPlan = null;
+let rimSelTimer = 0;     // 盯着时间轴选区，拖完自动填（对话框不挡时间轴，用户随时能拖）
 
 /** 从 SRT / ASS 文本里取出「一行字幕 = 起止时间 + 主/副语言」，交给 region-merge 做判定 */
 function rimParseCues(text, name) {
@@ -1807,19 +1808,35 @@ function rimOpen() {
   rimCues = null; rimName = ''; rimPlan = null;
   if (rimEls.fileName) { rimEls.fileName.textContent = '还没选'; rimEls.fileName.classList.remove('filled'); }
   if (rimEls.rangeNote) { rimEls.rangeNote.textContent = ''; rimEls.rangeNote.className = 'np-region-note'; }
-  // 时间轴上已经拖了选区的话，直接填进来（少打一次字，也不容易填错）
-  const sel = timeline.rangeSel;
-  if (sel && sel.b > sel.a) {
-    if (rimEls.start) rimEls.start.value = fmtTime(sel.a);
-    if (rimEls.end) rimEls.end.value = fmtTime(sel.b);
-  } else {
-    if (rimEls.start) rimEls.start.value = '';
-    if (rimEls.end) rimEls.end.value = '';
-  }
+  rimFillFromSel(true);
   rimShowSummary('', false);
   if (rimEls.list) { rimEls.list.innerHTML = ''; rimEls.list.hidden = true; }
   rimEls.apply.disabled = true; rimEls.applyForce.hidden = true; rimEls.recheck.hidden = true;
   rimEls.overlay.hidden = false;
+  // 这个对话框不挡时间轴，用户随时可以拖选区 —— 每秒看一眼，拖完自动填进来
+  if (rimSelTimer) clearInterval(rimSelTimer);
+  rimSelTimer = setInterval(() => {
+    if (rimEls.overlay.hidden) { clearInterval(rimSelTimer); rimSelTimer = 0; return; }
+    rimFillFromSel(false);
+  }, 500);
+}
+
+/** 时间轴上拖了选区就自动填进「这一段」（用户不用再找「用选区」按钮）。
+ *  @param {boolean} force 打开对话框时用：有选区就填，没有就清空 */
+function rimFillFromSel(force) {
+  const sel = timeline.rangeSel;
+  const btn = rimEls.fromSel;
+  const has = !!(sel && sel.b > sel.a);
+  if (btn) {
+    btn.disabled = !has;
+    btn.title = has ? '用时间轴上已拖出的选区填这两个框' : '先在时间轴上拖一段选区';
+  }
+  if (!has) { if (force) { if (rimEls.start) rimEls.start.value = ''; if (rimEls.end) rimEls.end.value = ''; } return; }
+  const a = fmtTime(sel.a), b = fmtTime(sel.b);
+  if (rimEls.start && rimEls.start.value === a && rimEls.end && rimEls.end.value === b) return;  // 没变就别动
+  if (rimEls.start) rimEls.start.value = a;
+  if (rimEls.end) rimEls.end.value = b;
+  rimRecheck();
 }
 
 /** 执行导入。force=true 时把冲突处也覆盖（用户点了那个按钮才算数） */
@@ -1855,7 +1872,10 @@ function rimApply(force) {
 }
 
 if (btnRegionImport) btnRegionImport.addEventListener('click', rimOpen);
-if (rimEls.cancel) rimEls.cancel.addEventListener('click', () => { rimEls.overlay.hidden = true; });
+if (rimEls.cancel) rimEls.cancel.addEventListener('click', () => {
+  rimEls.overlay.hidden = true;
+  if (rimSelTimer) { clearInterval(rimSelTimer); rimSelTimer = 0; }   // 停止盯选区
+});
 if (rimEls.pick) rimEls.pick.addEventListener('click', () => rimEls.file.click());
 if (rimEls.file) rimEls.file.addEventListener('change', async (e) => {
   const f = e.target.files[0];
