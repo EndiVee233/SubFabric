@@ -34,13 +34,22 @@ ok(/console\.warn = \(\.\.\.a\) =>[\s\S]{0,90}pushLog\('warn', a\)/.test(SRV),
 ok(/_cWarn = console\.warn\.bind\(console\)/.test(SRV), '保留原始 warn（仍打到控制台）');
 ok(/\.log-warn\s*\{/.test(CSS), '日志页有 warn 级配色');
 
-console.log('\n== 2. 日志页分成两个板块 ==');
-for (const id of ['log-sub-app', 'log-sub-op', 'log-pane-app', 'log-pane-op',
-                  'log-view', 'oplog-view', 'log-empty', 'oplog-empty', 'btn-oplog-refresh']) {
+console.log('\n== 2. 日志页分成三个板块（操作 / 运行 / 备注）==');
+for (const id of ['log-sub-app', 'log-sub-op', 'log-sub-note',
+                  'log-pane-app', 'log-pane-op', 'log-pane-note',
+                  'log-view', 'oplog-view', 'note-view',
+                  'log-empty', 'oplog-empty', 'note-empty',
+                  'btn-oplog-refresh', 'btn-log-clear', 'btn-note-refresh']) {
   ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
 }
-ok(/id="log-pane-op" hidden/.test(HTML), '操作日志面板默认隐藏');
-ok(/data-log="app"/.test(HTML) && /data-log="op"/.test(HTML), '两个子标签都在');
+// 默认显示「操作日志」—— 用户的诉求是"记录我对字幕的修改"，那栏放第一个且默认展开。
+// （旧版默认显示运行日志；改成操作日志优先是刻意的。）
+ok(/id="log-pane-op">/.test(HTML) && !/id="log-pane-op" hidden/.test(HTML),
+  '★ 操作日志默认显示（它记的是"我改了什么"，用户最想看）');
+ok(/id="log-pane-app" hidden/.test(HTML), '运行日志默认隐藏');
+ok(/id="log-pane-note" hidden/.test(HTML), '备注默认隐藏');
+ok(/data-log="app"/.test(HTML) && /data-log="op"/.test(HTML) && /data-log="note"/.test(HTML),
+  '三个子标签都在');
 ok(/\.log-subtab\.active/.test(CSS), '子标签有选中态样式');
 ok(/\.log-pane\s*\{[^}]*flex: 1/.test(CSS), '面板能撑满剩余高度（否则内层滚动区拿不到高度）');
 
