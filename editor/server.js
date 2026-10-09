@@ -1935,8 +1935,8 @@ const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
 /* 敏感值统一走 secret-store(require 在文件头部): bilibili Cookie / LLM API Key 都走密文, 不明文进 settings.json */
 /* (这里曾有 fetchJobs 下载登记表: 全项目只有写 / 删两个动作, 从无人读取 —— 纯死状态, 已删。
- *  下载进程要收是靠 CHILDREN 登记表(见文件头部包装过的 spawn), 「完全退出」时统一 kill,
- *  不需要按项目 id 反查。) */
+ *  后来确实出现了"按项目反查下载进程"的需求: 删除项目时必须先杀掉它 —— 那份登记
+ *  现在由 projProcs 承担(见其定义处注释), 这里不再另设。) */
 
 /** 读 fetch 设置。顺带做两件事：
  *  ① 旧版的**明文** Cookie（fetch.biliCookie）迁成密文（fetch.biliCookieEnc）并清掉明文字段；
@@ -2150,6 +2150,9 @@ function runFetchCli(id, args, onEvent) {
         } catch (e) {
           return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
         }
+        // 登记进 projProcs: 下载进程握着 video/*.part 的写句柄 ——
+        // 删除项目时必须能把它(连同它拉起的 ffmpeg)杀掉, 否则 unlink 撞 EBUSY 删不掉
+        trackProjProc(id, proc);
         let buf = '';
         const result = { error: '', done: null };
         /* 看门狗: 下载内核卡死时既不报错也不退出 —— 没有它 Promise 永不 settle,
@@ -2292,6 +2295,7 @@ function startPrepare(id, videoPath, mode) {
         '-map', '[a1]', '-c:a', 'pcm_s16le', '-f', 'wav', '-y', wavTmp,
         '-map', '[a2]', '-f', 's16le', pcmTmp];
       const proc = spawn(FFMPEG, args, { windowsHide: true });
+      trackProjProc(id, proc);   // 提取音频/波形要往项目目录写 tmp 文件, 删除项目前必须能停掉它
       let stderr = '';
       proc.stderr.on('data', d => { if (stderr.length < 4000) stderr += d; });
       const cleanup = () => { for (const f of [wavTmp, pcmTmp]) fs.unlink(f, () => {}); };
@@ -2353,7 +2357,7 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* ═══════════ 说话人分离（后台, 跑在音频上与引擎无关） ═══════════ */
-  function runDiarize(wav, onProgress, speakerCount, log) {
+  function runDiarize(id, wav, onProgress, speakerCount, log) {
     const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
     const embModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[1].file);
     const outJson = wav + '.diarize.json';
@@ -2374,6 +2378,7 @@ function startPrepare(id, videoPath, mode) {
       // 0 = 让聚类自己定人数（threshold 生效）; 正数 = 强制聚类数
       '--speakers', String(Number.isFinite(speakerCount) ? Math.max(0, Math.min(20, Math.round(speakerCount))) : 0)],
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+      trackProjProc(id, p);   // 分离进程读项目 audio.wav 且可能跑很久, 删除项目前必须能停掉它
       let pyErr = '', timedOut = false, lastLogs = [];
       const startedAt = Date.now();
       const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, budgetMs);
@@ -2445,6 +2450,36 @@ function startPrepare(id, videoPath, mode) {
       try { if (p.pid) process.kill(-p.pid); } catch {}
       try { p.kill('SIGKILL'); } catch {}
       draftProcs.delete(id);
+    }
+  }
+
+  /* 项目目录里的长任务进程登记表(下载的 python、prepare 的 ffmpeg、说话人分离/选区重识别的进程)。
+   * 删除项目前必须按 id 把它们全部杀掉 —— 它们正握着项目目录里文件的写句柄, Windows 上
+   * 文件被占用时 unlink 直接 EBUSY, 整个删除会失败(实测: 下载中删项目 → 500 + 目录残留)。
+   * 与 draftProcs/draftAborts 分开: 识别链有自己的收尾语义(要往 draft 状态写结果、走 abort 信号)。 */
+  const projProcs = new Map();            // 项目 id -> Set<proc>
+  function trackProjProc(id, proc) {
+    let set = projProcs.get(id);
+    if (!set) { set = new Set(); projProcs.set(id, set); }
+    set.add(proc);
+    const forget = () => { set.delete(proc); if (!set.size) projProcs.delete(id); };
+    proc.once('close', forget);
+    proc.once('exit', forget);
+  }
+  function killProjProcs(id) {
+    const set = projProcs.get(id);
+    if (!set) return;
+    projProcs.delete(id);
+    for (const p of set) {
+      try {
+        if (process.platform === 'win32' && p.pid) {
+          // taskkill /T: 连子孙一起收 —— 下载时 yt-dlp 会拉起 ffmpeg 合并音视频,
+          // 只杀 python 会把 ffmpeg 留成孤儿: 它继续握着(甚至继续写)项目目录里的文件
+          spawn('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        } else {
+          p.kill('SIGKILL');
+        }
+      } catch {}
     }
   }
   function finishDraft(id, err, extra) {
@@ -3044,6 +3079,7 @@ function startPrepare(id, videoPath, mode) {
           const ff = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-ss', String(start), '-i', wav,
             '-t', String(end - start), '-vn', '-ac', '1', '-ar', String(AUDIO_SR), '-c:a', 'pcm_s16le', '-y', segWav],
             { windowsHide: true });
+          trackProjProc(id, ff);   // 切音频要读项目的 audio.wav, 删除项目前要能停掉
           let e2 = '';
           const t = setTimeout(() => { try { ff.kill(); } catch {} }, 5 * 60 * 1000);
           ff.stderr.on('data', d => { if (e2.length < 800) e2 += String(d); });
@@ -3064,6 +3100,7 @@ function startPrepare(id, videoPath, mode) {
             const py = spawn(ASR_PY, [NEMO_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson,
               '--threads', '4', '--provider', 'cuda'],
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            trackProjProc(id, py);   // 删除项目时一起收掉, 别再空烧 GPU
             let pyErr = '';
             const t = setTimeout(() => { try { py.kill(); } catch {} }, 25 * 60 * 1000);
             py.stderr.on('data', d => {
@@ -3106,6 +3143,7 @@ function startPrepare(id, videoPath, mode) {
               '--provider', 'cuda',
               ...parakeetHotwordArgs()],
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            trackProjProc(id, py);   // 删除项目时一起收掉, 别再空烧 GPU
             let pyErr = '';
             const t = setTimeout(() => { try { py.kill(); } catch {} }, 25 * 60 * 1000);
             py.stderr.on('data', d => {
@@ -3354,7 +3392,7 @@ function startPrepare(id, videoPath, mode) {
         }
         const spkCount = (cs && Number(cs.speakerCount)) || Number(d0.speakerCount) || 0;
         setDraft(id, { stage: STAGE.diarize, progress: 82, message: '区分说话人中 …' });
-        return runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount,
+        return runDiarize(id, wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount,
           (m) => pushDraftLog(id, stamp() + m));
       }).then((r) => safeDraftStep(id, async () => {
         let segs = [];
@@ -3841,15 +3879,36 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /** 逐文件深删目录: 项目删除已由 UI 二次确认, 逐个 unlink 以兼容
-   *  会拦截"批量递归删除"的 fs 代理环境(rmSync 递归整目录会被强制要求确认)。 */
+   *  会拦截"批量递归删除"的 fs 代理环境(rmSync 递归整目录会被强制要求确认)。
+   *  project.json **最后删**: 万一有文件被外部进程占着(未登记的子进程/杀毒扫描),
+   *  让删除失败时项目仍留在列表里、可以再删一次 —— 而不是"元数据没了、目录还占着盘"的僵尸态
+   *  (实测旧顺序就是: 删除报错 + 项目从列表消失 + 目录仍在磁盘上)。 */
   function rmDirDeep(dir) {
     if (!fs.existsSync(dir)) return;
-    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+      .sort((a, b) => (a.name === 'project.json' ? 1 : 0) - (b.name === 'project.json' ? 1 : 0));
+    for (const f of entries) {
       const p = path.join(dir, f.name);
       if (f.isDirectory()) rmDirDeep(p);
       else { try { fs.unlinkSync(p); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
     }
     fs.rmdirSync(dir);
+  }
+
+  /** 删除项目目录(带重试): 杀进程与系统释放文件句柄之间有几十~几百毫秒窗口,
+   *  第一次 unlink 可能仍撞 EBUSY(实测: 下载中被占文件的错误码就是 EBUSY)—— 
+   *  每 250ms 重试一次, 最多 8 次(约 2 秒), 仍失败才把错误报给用户。 */
+  function removeProjectDir(id, cb) {
+    let tries = 0;
+    const attempt = () => {
+      try { rmDirDeep(projDir(id)); return cb(null); }
+      catch (e) {
+        const code = e && e.code;
+        if (++tries < 8 && (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES')) return void setTimeout(attempt, 250);
+        return cb(e);
+      }
+    };
+    attempt();
   }
 
   /** 把选择器返回的原始文本规整成一个**真实存在**的路径。
@@ -4869,14 +4928,22 @@ function handleProjectsRoutes(req, res, u) {
       return sendJson(res, 200, { draft: metaView(meta).draft || null, log });
     }
     if (!action && req.method === 'DELETE') {
-      // 先停掉该项目还在跑的初稿任务(识别进程精确跟踪, 只杀自己的, 不误伤别的 python)
+      // 先停掉该项目还在跑的所有任务, 再删文件 —— 顺序不能反:
+      //   ① 识别进程(draftProcs/draftAborts, 精确跟踪, 不误伤别的 python);
+      //   ② 项目目录里的长任务(下载的 python、提取音频的 ffmpeg、说话人分离/选区重识别) ——
+      //      它们握着项目目录里文件的写句柄, Windows 上 unlink 直接 EBUSY。
+      //      (用户实测: 下载中删项目 → 500 删除失败, 还留下删了一半的目录。)
       draftJobs.delete(id);
+      pendingAsr.delete(id);
       killDraftProc(id);
+      killProjProcs(id);
       // 注意: 逐文件删除而不是 rmSync 递归 —— 部分 fs 代理环境会对"批量递归删除"
       // (条目数超阈值)强制要求确认, 把整目录 rmSync 拦下来导致「删除失败」。
       // 项目删除在 UI 上已经过用户二次确认, 这里逐个 unlink 即可正常工作。
-      try { rmDirDeep(projDir(id)); } catch (e) { return sendJson(res, 500, { error: String(e.message) }); }
-      return sendJson(res, 200, { ok: true });
+      return removeProjectDir(id, (err) => {
+        if (err) return sendJson(res, 500, { error: '删除失败（文件正被占用，可稍后再试）: ' + String((err && err.message) || err) });
+        return sendJson(res, 200, { ok: true });
+      });
     }
     if (action === 'subtitle' && (req.method === 'PUT' || req.method === 'POST')) {
       // 字幕自动保存: 原文整体覆写; sendBeacon 只能 POST, 所以 PUT/POST 都收。
