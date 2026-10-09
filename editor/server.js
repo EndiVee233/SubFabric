@@ -1832,94 +1832,13 @@ const LOOPBACK_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 const LOOPBACK_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
-function handleRequest(req, res) {
-  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
-    return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
-  }
-  if (UNSAFE_METHODS.has(req.method)) {
-    const origin = String(req.headers.origin || '').trim();
-    if (origin && !LOOPBACK_ORIGIN_RE.test(origin)) {
-      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: origin');
-    }
-  }
-  const u = new URL(req.url, `http://${req.headers.host || HOST}`);
-  const pathname = u.pathname;
+/* ═══════════ 服务端主体: 项目系统 + 下载/prepare/识别流水线(模块作用域) ═══════════
+ * 这些函数与状态容器原先定义在 handleRequest 函数体内 —— 每个请求都会重新创建一遍
+ * (函数声明重挂、常量重算), 其中 fetchJobs 更是每请求一个新 Map, 全靠「恰好没有跨请求读取」
+ * 才没出事。统一提升到模块作用域: 与 prepareJobs/draftJobs 同一待遇, 语义与注释口径一致。
+ * 函数体一行未改(缩进保留原样, 项目不强制风格)。 */
 
-  // 简单端点先查表(见上方 SIMPLE_ROUTES 注释: 只收同步无副作用的处理器)
-  const simple = SIMPLE_ROUTE_MAP.get(pathname);
-  if (simple && simple(req, res, u)) return;
-
-  // 波形图: 示例视频直接读磁盘原文件(不复制/不保存), 本地文件走 POST 上传临时文件(用完即删)
-  if (pathname === '/api/waveform') {
-    console.log('[waveform] GET', pathname + u.search, 'from', req.headers.referer || '-');
-    const name = u.searchParams.get('name') || '';
-    const dur = parseFloat(u.searchParams.get('dur')) || 0;
-    const full = path.join(ROOT, name);
-    let okPath = false;
-    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
-    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
-    makeWaveform(full, dur, (err, buf) => {
-      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
-      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache', 'Content-Length': buf.length });
-      res.end(buf);
-    });
-    return;
-  }
-  if (pathname === '/api/waveform-upload' && req.method === 'POST') return waveformFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0);
-
-  // 峰值数据: 每 1/rate 秒一个包络值(Uint8 二进制), 前端按像素列矢量绘制(任意缩放都锐利)
-  if (pathname === '/api/peaks') {
-    console.log('[peaks] GET', pathname + u.search, 'from', req.headers.referer || '-');
-    const name = u.searchParams.get('name') || '';
-    const dur = parseFloat(u.searchParams.get('dur')) || 0;
-    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
-    const full = path.join(ROOT, name);
-    let okPath = false;
-    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
-    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
-    const go = (d) => buildPeaks(full, d, rate, (err, buf) => {
-      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
-      sendPeaks(res, buf, rate);
-    });
-    if (dur > 0) go(dur); else probeDuration(full, (d) => go(d));
-    return;
-  }
-  if (pathname === '/api/peaks-upload' && req.method === 'POST') {
-    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
-    return peaksFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0, rate);
-  }
-  /** 浏览器选视频的兜底通道: 把上传的视频存成服务端**持久**文件并返回真实路径,
-   *  之后与本地路径选视频完全同构(/api/media Range 流式播放、prepare 提取音频波形)。
-   *  为什么存持久文件: 项目要"下次打开还在", 而浏览器 File 对象只在本次会话有效。
-   *  目标目录: <项目根>/videos/ (文件名去重: 重名追加 -1/-2…) */
-  if (pathname === '/api/upload-video' && req.method === 'POST') {
-    const name = decodeURIComponent(u.searchParams.get('name') || 'video.mp4').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'video.mp4';
-    const ext = path.extname(name) || '.mp4';
-    const base = path.basename(name, ext);
-    const dir = path.join(ROOT, 'videos');
-    fs.mkdirSync(dir, { recursive: true });
-    let finalName = name, n = 0;
-    while (fs.existsSync(path.join(dir, finalName))) finalName = `${base}-${++n}${ext}`;
-    const dest = path.join(dir, finalName);
-    const out = fs.createWriteStream(dest);
-    let size = 0, done = false;
-    const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
-    // 注意: 用 pipe 就不要再手动 out.end() —— 双重 end 会触发 ERR_STREAM_ALREADY_FINISHED,
-    // 流被错误终结后 'finish' 永不触发, 请求挂死(前端兜底通道完全不可用)
-    req.on('data', c => { size += c.length; if (size > 32 * 1024 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(413, { error: '文件超过 32GB 上限' }); } });
-    req.on('error', () => { out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(500, { error: '上传中断' }); });
-    out.on('error', () => { try { fs.unlinkSync(dest); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
-    out.on('finish', () => {
-      let okExt = VIDEO_EXTS.includes(path.extname(dest).toLowerCase());
-      if (!okExt) { try { fs.unlinkSync(dest); } catch {} return finish(400, { error: '不支持的格式: ' + path.extname(dest) }); }
-      MEDIA_ALLOW.add(mediaKey(dest));   // 上传落盘的视频登记进 /api/media 白名单
-      return finish(200, { path: dest, name: finalName, size });
-    });
-    req.pipe(out);
-    return;
-  }
-
-  /* ═══════════ 项目系统 ═══════════
+/* ═══════════ 项目系统 ═══════════
    * 每个项目一个目录: projects/<id>/project.json + subtitle.{ass,srt} + audio.wav(16k单声道, 给后续 ASR) + peaks.bin(波形包络缓存)
    * 视频不复制: 元数据里记用户选择的本地路径, 播放走 /api/media 按路径 Range 流式; 文件消失 → 客户端要求重选 */
   const PROJECTS_DIR = path.join(ROOT, 'projects');
@@ -2011,6 +1930,8 @@ function handleRequest(req, res) {
 const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
 /* 敏感值统一走 secret-store(require 在文件头部): bilibili Cookie / LLM API Key 都走密文, 不明文进 settings.json */
+/* fetchJobs 必须在模块作用域(与 prepareJobs/draftJobs 同理): 下载进程的登记表,
+ * 若放进请求回调, 一个请求里建的下载在另一个请求里永远查不到(每请求一个新空 Map)。 */
 const fetchJobs = new Map();          // 项目 id -> { proc }
 
 /** 读 fetch 设置。顺带做两件事：
@@ -3985,7 +3906,87 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
-  // ── 路由 ──
+/* 路由段: 波形/峰值/上传视频 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleWaveRoutes(req, res, u) {
+  const pathname = u.pathname;
+  // 波形图: 示例视频直接读磁盘原文件(不复制/不保存), 本地文件走 POST 上传临时文件(用完即删)
+  if (pathname === '/api/waveform') {
+    console.log('[waveform] GET', pathname + u.search, 'from', req.headers.referer || '-');
+    const name = u.searchParams.get('name') || '';
+    const dur = parseFloat(u.searchParams.get('dur')) || 0;
+    const full = path.join(ROOT, name);
+    let okPath = false;
+    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
+    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
+    makeWaveform(full, dur, (err, buf) => {
+      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache', 'Content-Length': buf.length });
+      res.end(buf);
+    });
+    return;
+  }
+  if (pathname === '/api/waveform-upload' && req.method === 'POST') return waveformFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0);
+
+  // 峰值数据: 每 1/rate 秒一个包络值(Uint8 二进制), 前端按像素列矢量绘制(任意缩放都锐利)
+  if (pathname === '/api/peaks') {
+    console.log('[peaks] GET', pathname + u.search, 'from', req.headers.referer || '-');
+    const name = u.searchParams.get('name') || '';
+    const dur = parseFloat(u.searchParams.get('dur')) || 0;
+    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
+    const full = path.join(ROOT, name);
+    let okPath = false;
+    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
+    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
+    const go = (d) => buildPeaks(full, d, rate, (err, buf) => {
+      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
+      sendPeaks(res, buf, rate);
+    });
+    if (dur > 0) go(dur); else probeDuration(full, (d) => go(d));
+    return;
+  }
+  if (pathname === '/api/peaks-upload' && req.method === 'POST') {
+    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
+    return peaksFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0, rate);
+  }
+  /** 浏览器选视频的兜底通道: 把上传的视频存成服务端**持久**文件并返回真实路径,
+   *  之后与本地路径选视频完全同构(/api/media Range 流式播放、prepare 提取音频波形)。
+   *  为什么存持久文件: 项目要"下次打开还在", 而浏览器 File 对象只在本次会话有效。
+   *  目标目录: <项目根>/videos/ (文件名去重: 重名追加 -1/-2…) */
+  if (pathname === '/api/upload-video' && req.method === 'POST') {
+    const name = decodeURIComponent(u.searchParams.get('name') || 'video.mp4').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'video.mp4';
+    const ext = path.extname(name) || '.mp4';
+    const base = path.basename(name, ext);
+    const dir = path.join(ROOT, 'videos');
+    fs.mkdirSync(dir, { recursive: true });
+    let finalName = name, n = 0;
+    while (fs.existsSync(path.join(dir, finalName))) finalName = `${base}-${++n}${ext}`;
+    const dest = path.join(dir, finalName);
+    const out = fs.createWriteStream(dest);
+    let size = 0, done = false;
+    const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
+    // 注意: 用 pipe 就不要再手动 out.end() —— 双重 end 会触发 ERR_STREAM_ALREADY_FINISHED,
+    // 流被错误终结后 'finish' 永不触发, 请求挂死(前端兜底通道完全不可用)
+    req.on('data', c => { size += c.length; if (size > 32 * 1024 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(413, { error: '文件超过 32GB 上限' }); } });
+    req.on('error', () => { out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(500, { error: '上传中断' }); });
+    out.on('error', () => { try { fs.unlinkSync(dest); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
+    out.on('finish', () => {
+      let okExt = VIDEO_EXTS.includes(path.extname(dest).toLowerCase());
+      if (!okExt) { try { fs.unlinkSync(dest); } catch {} return finish(400, { error: '不支持的格式: ' + path.extname(dest) }); }
+      MEDIA_ALLOW.add(mediaKey(dest));   // 上传落盘的视频登记进 /api/media 白名单
+      return finish(200, { path: dest, name: finalName, size });
+    });
+    req.pipe(out);
+    return;
+  }
+
+
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 本机选取 + 下载内核(pick/fetch) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleFetchRoutes(req, res, u) {
+  const pathname = u.pathname;
   if (pathname === '/api/pick' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
       let kind = 'video';
@@ -4082,7 +4083,13 @@ function startPrepare(id, videoPath, mode) {
       }
     });
   }
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
 
+/* 路由段: 语音识别模型管理 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleAsrRoutes(req, res, u) {
+  const pathname = u.pathname;
   if (pathname === '/api/asr/status' && req.method === 'GET') {
     probePython().catch(() => {});          // 后台预热预检缓存(状态页/初稿对话框打开时触发)
     nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
@@ -4314,6 +4321,27 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* ═══════════ 翻译(LLM) 配置 ═══════════ */
+  if (pathname === '/api/asr/hint') {
+    // GET 顺带返回实际会喂给引擎的词(用户填的 + 术语表原文列自动派生的), 便于核对
+    if (req.method === 'GET') return sendJson(res, 200, Object.assign({ hint: asrHintCfg() }, asrTerms()));
+    if (req.method === 'POST') {
+      return readBody(req, res, 256 * 1024, (err, body) => {
+        let p = {};
+        try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const keep = {};
+        for (const k of ['prompt', 'hotwordsScore']) if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
+        return sendJson(res, 200, { hint: saveAsrHint(keep) });
+      });
+    }
+    return sendJson(res, 405, { error: '仅支持 GET / POST' });
+  }
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 翻译/LLM 分角色 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleLlmRoutes(req, res, u) {
+  const pathname = u.pathname;
   if (pathname === '/api/translate/config' && req.method === 'GET') {
     const c = translateCfg();
     return sendJson(res, 200, {
@@ -4361,21 +4389,6 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { enabled: on, prompt });
     });
   }
-  if (pathname === '/api/asr/hint') {
-    // GET 顺带返回实际会喂给引擎的词(用户填的 + 术语表原文列自动派生的), 便于核对
-    if (req.method === 'GET') return sendJson(res, 200, Object.assign({ hint: asrHintCfg() }, asrTerms()));
-    if (req.method === 'POST') {
-      return readBody(req, res, 256 * 1024, (err, body) => {
-        let p = {};
-        try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-        const keep = {};
-        for (const k of ['prompt', 'hotwordsScore']) if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
-        return sendJson(res, 200, { hint: saveAsrHint(keep) });
-      });
-    }
-    return sendJson(res, 405, { error: '仅支持 GET / POST' });
-  }
-
   if (pathname === '/api/translate/test' && req.method === 'POST') {
     const c = translateCfg();
     if (!llmReady(c)) return sendJson(res, 400, { error: '先填接口地址、API Key 和模型名' });
@@ -4400,6 +4413,13 @@ function startPrepare(id, videoPath, mode) {
     });
   }
   /* 运行日志 SSE: UI「日志」页实时显示(连接即回放历史缓冲, 之后实时推送) */
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 运行日志 SSE/生命周期/退出 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleLogsRoutes(req, res, u) {
+  const pathname = u.pathname;
   if (pathname === '/api/logs/stream' && req.method === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -4454,7 +4474,13 @@ function startPrepare(id, videoPath, mode) {
     setTimeout(() => shutdown(byTray ? '托盘图标' : '页面请求'), 120);
     return;
   }
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
 
+/* 路由段: 诊断上报/媒体流白名单 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleDiagRoutes(req, res, u) {
+  const pathname = u.pathname;
   /* 前端诊断上报: 页面把布局/运行状态快照回传, 落到 .diag.json 供排查(不影响任何功能) */
   if (pathname === '/api/diag' && req.method === 'POST') {
     return readBody(req, res, 128 * 1024, (err, body) => {
@@ -4497,7 +4523,13 @@ function startPrepare(id, videoPath, mode) {
     if (!ok) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found: ' + p);
     return serveFile(req, res, full);      // serveFile 自带 Range 支持
   }
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
 
+/* 路由段: 项目 CRUD 与项目内操作 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleProjectsRoutes(req, res, u) {
+  const pathname = u.pathname;
   let pm = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/([a-z]+))?$/.exec(pathname);
   if (pathname === '/api/projects' && req.method === 'GET') {
     const items = [];
@@ -4865,6 +4897,44 @@ function startPrepare(id, videoPath, mode) {
     if (action === 'audio' && req.method === 'GET') {
       return serveFile(req, res, path.join(projDir(id), (meta.audio && meta.audio.file) || 'audio.wav'));
     }
+  }
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段表: 前缀互不相交, 顺序即原 handleRequest 的书写顺序。
+ * 命中前缀即由该段全权处理(未匹配的 method/路径组合由段内兜底回 404)。 */
+const API_SECTIONS = [
+  [/^\/api\/(waveform|peaks|upload-video)\b/, handleWaveRoutes],
+  [/^\/api\/(pick|fetch)\b/, handleFetchRoutes],
+  [/^\/api\/asr\b/, handleAsrRoutes],
+  [/^\/api\/(translate|cast)\b/, handleLlmRoutes],
+  [/^\/api\/(logs|lifecycle|quit)\b/, handleLogsRoutes],
+  [/^\/api\/(diag|media)\b/, handleDiagRoutes],
+  [/^\/api\/projects\b/, handleProjectsRoutes],
+];
+
+function handleRequest(req, res) {
+  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
+    return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
+  }
+  if (UNSAFE_METHODS.has(req.method)) {
+    const origin = String(req.headers.origin || '').trim();
+    if (origin && !LOOPBACK_ORIGIN_RE.test(origin)) {
+      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: origin');
+    }
+  }
+  const u = new URL(req.url, `http://${req.headers.host || HOST}`);
+  const pathname = u.pathname;
+
+  // 简单端点先查表(见上方 SIMPLE_ROUTES 注释: 只收同步无副作用的处理器)
+  const simple = SIMPLE_ROUTE_MAP.get(pathname);
+  if (simple && simple(req, res, u)) return;
+
+
+  // API 段分发: 命中前缀即由该段全权处理
+  for (const [re, h] of API_SECTIONS) {
+    if (re.test(pathname)) { h(req, res, u); return; }
   }
 
   const filePath = safeJoin(ROOT, pathname);

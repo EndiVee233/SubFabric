@@ -242,7 +242,7 @@ this.modeSel.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`)
 
 ### 遗留（未做，需你决定）
 
-- `handleRequest` 余下 2900 行未拆（见上）
+- `handleRequest` 余下 2900 行未拆（见上）→ **已于 2026-10-09 完成，见下文「handleRequest 拆分完成」**
 - 21 个 `no-unused-vars` 警告：多为历史遗留的死变量（如 `server.js` 的 `MODEL_PATTERNS`、`FETCH_QUALITY_CHOICES`）。清理前建议逐个确认是否真是死代码
 - 136 处空 `catch`、37 处同步 IO：核实后确认多为有意设计，非缺陷，仅记录
 
@@ -287,4 +287,40 @@ ESLint 装好后是 321 → **0 error / 21 warn**。这 21 个逐个核实后处
 ### ⚠️ 踩坑：注释里写 `eslint-disable` 会被当成规则名
 
 想局部禁用 lint 规则时，**注释正文里出现 `eslint-disable` 字样会被 ESLint 解析成规则声明**，报 `Definition for rule '...' was not found`。要么用真正的块注释 `/* eslint-disable no-unused-vars */`（且不能与代码同行），要么像本次一样改写注释措辞、接受这 2 个警告存在。
+
+---
+
+## ✅ handleRequest 拆分完成（2026-10-09）
+
+P1「单体路由函数」至此关闭。`handleRequest` 从 **3038 行**（1835-4873，含全部项目系统/下载/prepare/识别流水线）拆为：
+
+| 部分 | 位置 | 说明 |
+| --- | --- | --- |
+| `handleRequest` | 27 行 | 只剩「Host/Origin 守卫 → SIMPLE_ROUTE_MAP 查表 → API 段分发 → 静态回落」 |
+| 7 个路由段函数 | `handleWaveRoutes` / `handleFetchRoutes` / `handleAsrRoutes` / `handleLlmRoutes` / `handleLogsRoutes` / `handleDiagRoutes` / `handleProjectsRoutes` | 段内 if 链原样保留；`API_SECTIONS` 表按**互不相交的前缀**分发，顺序即原书写顺序 |
+| 模块作用域主体区 | 「服务端主体」分区 | 项目系统辅助（projDir/readMeta/metaView/readBody…）+ 下载流水线（fetchSettings/runFetchCli/startFetchJob…）+ prepare/ASR 流水线（startPrepare/finishDraft/startRerecognize…），约 2070 行 |
+
+### 先补测试再动刀（审查报告要求的顺序）
+
+- 新增 `tools/http_layer_probe.mjs`（45 项断言，**自带服务启停**，跑法 `node tools/http_layer_probe.mjs`）：覆盖守卫层（伪造 Host / 跨源 POST / 编码穿越 / 非法百分号编码 / media 白名单）、响应形状（`apiKey`/Cookie 值不外泄）、fetch 设置 POST→GET 往返（动 `settings.json` 先备份后还原）、项目全生命周期（创建→改名→字幕覆写→prepare 产出 peaks/audio→denoise 重提取→DELETE）。
+- 与 `route_smoke.mjs` 的分工：那个是「有响应/不 500」的冒烟网且不碰 POST；这个锁**状态机与守卫行为**，副作用全部登记并在 finally 还原（只删探针自己建的项目目录，绝不动 `projects/` 下用户数据）。
+
+### 顺带修掉 1 个真 bug
+
+**`fetchJobs` 定义在 handleRequest 函数体内** —— 每个请求都会得到一个新的空 Map，与注释宣称的「跨请求状态」相悖。之前没出事只是因为恰好没有跨请求读取（下载进程的登记与清理都在同一个请求的闭包里闭环）。已提升到模块作用域（与 prepareJobs/draftJobs 同一待遇），注释补了「为什么必须在模块作用域」。
+
+### 拆分的正确性证明
+
+- 两阶段脚本搬移（提升 → 段切分），**行多重集对照**：除新增的横幅注释/段包装/段表脚手架外，新增 0 行代码、删除 0 行代码、修改 0 行代码 —— 纯逐字搬移。
+- 一处刻意搬家：`/api/asr/hint` 原代码夹在 translate/cast 路由之间，段化后归回 asr 段（路径不相交，行为等价）。
+- 唯一的行为微差：某段前缀下**未匹配的 method/路径组合**（如 GET /api/pick）原来落到静态回落 serveFile → 404 text，现在由段末兜底回 404 JSON —— 同码同义，探针与冒烟均覆盖。
+
+### 验证
+
+`node --check` ✓；`http_layer_probe` 45/45（拆分前基线同套用例先跑绿）；`route_smoke` 24/24；`karaoke-exhaustive` 28183 断言 0 失败。
+
+### 测试基建备忘
+
+- 生命周期用例的测试视频用 ffmpeg lavfi 合成，**必须带 sine 音轨**：`testsrc` 是纯视频流，prepare 抽音轨会直接失败（首轮踩坑，表现为 peaks 轮询超时 + 后续 force prepare 409「音频正在提取中」）。
+- `.wav` 不在 MIME 表 → serveFile 回 `application/octet-stream` 是既有行为（前端按数组缓冲播放），断言只锁状态码与正文长度。
 
