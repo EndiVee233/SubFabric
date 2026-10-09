@@ -1198,6 +1198,22 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .np-part-lbl { width: auto; }
 .np-file { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-file.filled { color: var(--text-0); }
+/* ── 区域字幕导入（只导入一段）──
+ * 勾选框与标签同一行；区间输入平时隐藏（勾了才出现），免得默认就显示两个空框、
+ * 让人以为必须填。占位符写在 placeholder 里（SRT 时间只能键盘输入）。 */
+.np-lbl-check { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.np-lbl-check input { margin: 0; cursor: pointer; }
+.np-region { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.np-time {
+  width: 96px; font-size: 12px; padding: 3px 7px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg-2); color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+}
+.np-time:focus { outline: none; border-color: var(--accent); }
+.np-tilde { color: var(--text-2); font-size: 12px; }
+.np-region-note { flex: 1; min-width: 0; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 非法区间要**看得出来是错的**（红），否则用户填了 90~30 却以为没事 */
+.np-region-note.bad { color: #ff6b6b; }
 .np-hint {
   font-size: 12px; color: var(--text-2); line-height: 1.6;
   background: var(--bg-2); border-radius: 8px; padding: 8px 12px; margin: 6px 0 16px;
