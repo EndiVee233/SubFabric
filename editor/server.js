@@ -86,13 +86,12 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-// 版本号 2.1.13-fork.1：本 fork 与上游**同名不同内容**，故加 -fork.N 后缀区分。
-//（已合并到上游 6d73a6988 / 2.1.13：安全加固 / 特效字幕再导入治愈 / bilibili 画质策略 /
-//  时间轴降耗 / 角色换色串色 / 中文标点归一 / 中文行实时预览 / 角色列表首字母排序 /
-//  逐词高亮色不丢；本 fork 另外加了波形漏字幕检测、长稿反思纠错、NPU 帧单位修复、
-//  置信度链路、逐词时间重对齐（TTS+ASR）、备注弹幕、全流程自动处理、一批写回/互斥 bug 修复，
-//  见 editor/README.md 的更新日志）。
-const APP_VERSION = '2.1.13-fork.1'; // 与打版号一致; 改了就顺手同步这里
+// 版本号 2.1.13-fork.2：本 fork 与上游**同名不同内容**，故加 -fork.N 后缀区分。
+//（-fork.2 = 上游 6fe18608b / 6d73a6988 的编辑器修复**已全部合并**：
+//  角色换色串色 / 中文标点归一 / 中文行实时预览 / 角色列表首字母排序 / 逐词高亮色不丢
+//  —— 上一版 -fork.1 只合并了 server.js 一侧，main.js 与 editor.js 是这一版补上的。
+//  本 fork 自己的功能见 editor/README.md 的更新日志）。
+const APP_VERSION = '2.1.13-fork.2'; // 与打版号一致; 改了就顺手同步这里
 // Windows 的文件版本号要求**四段纯数字**，不能带 -fork.1 这种后缀
 //（build_exe.py 用它喂 rcedit，安装包 SubFabric.iss 里也有一份同值的 MyAppFileVersion）。
 // 改 APP_VERSION 时这个也要跟着改，否则 exe 属性里显示的版本会对不上。

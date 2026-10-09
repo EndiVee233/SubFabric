@@ -84,6 +84,7 @@ export class EditorPanel {
     this.onSeek = null;       // 双击非文字区域 → 跳转到该条时间点
     this.onApply = null;
     this.onEnglishInput = null; // 行内英文草稿变化，交给主逻辑管理临时预览
+    this.onChineseInput = null; // 行内中文草稿变化，同上(以前只有英文行实时预览，中文要等提交)
     this.onEditCancel = null;   // Esc/外部重置只撤销草稿，不提交
     this.onEditFinish = null;   // 内容未改变时仍需清理临时预览
     this.onModeChange = null;
@@ -1172,6 +1173,17 @@ export class EditorPanel {
       }
     });
     // input 同时覆盖键入、删除、粘贴及输入法完成；组合期间不做逐词重建。
+    // 中文行同理: 组合期间(拼音还没上屏)不预览 —— 否则会把拼音字母当字幕显示;
+    // 组合一结束(每个字上屏)立刻刷新, 于是中文也做到"随改随变"(以前要退出编辑框才更新)。
+    let composingZh = false;
+    l1.addEventListener('compositionstart', () => { composingZh = true; });
+    l1.addEventListener('compositionend', () => {
+      composingZh = false;
+      if (this.editItem === item && this.onChineseInput) this.onChineseInput(item, l1.textContent || '', this._editTag);
+    });
+    l1.addEventListener('input', () => {
+      if (!composingZh && this.editItem === item && this.onChineseInput) this.onChineseInput(item, l1.textContent || '', this._editTag);
+    });
     let composing = false;
     l2.addEventListener('compositionstart', () => { composing = true; });
     l2.addEventListener('compositionend', () => {
