@@ -17,8 +17,6 @@ Dialogue: 0,0:01:30.67,0:01:30.76,Default,,0,0,0,,Each fighter will have three T
 Dialogue: 0,0:01:30.76,0:01:30.99,Default,,0,0,0,,Each fighter will have three Totem of {\c&H00FF00&}Undying{\c}
 ```
 
-我们并没有使用\k标签制作动态效果
-
 ## 特效 
 
 特效现有三个独立开关 可以单独开启 也可以任意组合
@@ -130,6 +128,12 @@ node editor/server.js
 | 必剪 ASR | 会上传至 bilibili 服务器进行语音识别 无硬件要求 |
 | 剪映 ASR | 会上传至字节跳动服务器进行语音识别 无硬件要求 |
   
+## 给 AI 助手
+
+准备阅读或修改本项目的代码前 请看 **[PROJECT_MAP.md](PROJECT_MAP.md)** —— 里面有完整的目录地图 后端/前端结构 核心数据流与必须遵守的约定
+
+代码结构发生变化时 **请同步更新 PROJECT_MAP.md**
+
 ## 你知道吗
 
 - SubFabric 是独立的本地字幕编辑器 SubForges 是在线的多人协作动态字幕编辑器 并非本项目的依赖或关联服务

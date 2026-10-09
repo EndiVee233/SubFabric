@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 字幕编辑器 - 本地静态服务器
  * 特性:
  *  - 服务 D:\subtitle 整个目录(编辑器页面 / 示例视频 / 示例字幕)
@@ -87,20 +87,15 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-// 版本号 2.1.13-fork.10：本 fork 与上游**同名不同内容**，故加 -fork.N 后缀区分。
-//（-fork.10 = ★ 分段导入改用**原文件的真实词级时间**（不再句内均匀铺开）；
-//  -fork.9 = 分段导入的 ASS 解析按"句"聚合（226 句不再被读成 3676 行）；
-//  -fork.8 = 逐词字幕自愈：导入/载入时自动把"被清空/错位"的逐词文本搬回来；
-//  -fork.7 = 载入字幕时做「逐词健康检查」；-fork.6 = 分段导入对话框不挡时间轴；
-//  -fork.5 = 导入的行也铺逐词 span；-fork.4 = 分段导入（多人协作）+ 修两个显示 bug；
-//  -fork.3 = 项目压缩包导出/导入 + 区域字幕导入；
-//  -fork.2 = 上游 6fe18608b / 6d73a6988 的编辑器修复全部合并；
-//  -fork.1 = 只合并了 server.js 一侧。本 fork 自己的功能见 editor/README.md 的更新日志）。
-const APP_VERSION = '2.1.13-fork.11'; // 与打版号一致; 改了就顺手同步这里
+// 版本号 2.2.1-fork.1：本 fork 与上游**同名不同内容**，故加 -fork.N 后缀区分。
+//（基线上游 2.2.1；本 fork 自己的功能见 editor/README.md 的更新日志 ——
+//  分段导入（多人协作）/ 区域字幕导入 / 项目压缩包导出导入 / 逐词字幕自愈 /
+//  全片逐词重校对 / 备注弹幕 / NPU 识别 + 本地 NLLB 翻译 等）。
+const APP_VERSION = '2.2.1-fork.1'; // 与打版号一致; 改了就顺手同步这里
 // Windows 的文件版本号要求**四段纯数字**，不能带 -fork.1 这种后缀
 //（build_exe.py 用它喂 rcedit，安装包 SubFabric.iss 里也有一份同值的 MyAppFileVersion）。
 // 改 APP_VERSION 时这个也要跟着改，否则 exe 属性里显示的版本会对不上。
-const APP_FILE_VERSION = '2.1.13.0';
+const APP_FILE_VERSION = '2.2.1.0';
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,

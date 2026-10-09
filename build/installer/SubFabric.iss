@@ -1,4 +1,4 @@
-﻿; SubFabric 安装包脚本（Inno Setup 6）
+; SubFabric 安装包脚本（Inno Setup 6）
 ;
 ; 本文件入库（build/ 其余内容是 .gitignore 的），构建步骤见 editor/README.md「发版流程」：
 ;   1) node editor/scripts/fetch-vendor.js      ; 拉 editor/vendor（约 19MB，缺了安装包会小一截）
@@ -16,12 +16,12 @@
 #define MyAppName "SubFabric"
 ; 显示版本：本 fork 加 -fork.N 后缀与上游区分（两边曾撞号）。
 ; ⚠ VersionInfoVersion / VersionInfoProductVersion 接受的是**四段纯数字** ——
-;   把带后缀的 "2.1.13-fork.2" 直接塞进去，Inno Setup 会编译报错。
-;   上游的做法是 `{#MyAppVersion}.0` 拼出 2.1.13.0；本 fork 显式定义 MyAppFileVersion，
+;   把带后缀的 "2.2.1-fork.1" 直接塞进去，Inno Setup 会编译报错。
+;   上游的做法是 `{#MyAppVersion}.0` 拼出 2.2.1.0；本 fork 显式定义 MyAppFileVersion，
 ;   因为 build_exe.py 也从 editor/server.js 读 APP_FILE_VERSION 喂 rcedit ——
 ;   两处必须同值，显式写出来更好核对。
-#define MyAppVersion "2.1.13-fork.11"
-#define MyAppFileVersion "2.1.13.0"
+#define MyAppVersion "2.2.1-fork.1"
+#define MyAppFileVersion "2.2.1.0"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
