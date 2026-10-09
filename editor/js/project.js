@@ -25,6 +25,7 @@ export function initProjects(ctx) {
   let saveTimer = 0;
   let saving = false;
   let pollTimer = 0;
+  let nemoPollTimer = 0;       // 盯 NeMo 预检（要导入 PyTorch，30 秒起步）
 
   const elHome = $('#home-view');
   const elList = $('#home-list');
@@ -1735,9 +1736,12 @@ async function renderAsrModels() {
       const st = dlOf('model:' + m.id);
       const rtSt = m.needRuntime ? dlOf('runtime') : {};
       const dlThis = st.running || (m.needRuntime && rtSt.running);
-      // 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户
+      /* 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户。
+       * ⚠ `d.gpu` 为空还有第三种可能：**后台探测还没跑完**（服务端已改成等探测完再回，
+       *   但旧实例/极端慢的 nvidia-smi 仍可能给空）。那种情况下不能说"没检测到 N 卡" —— 是误报。 */
+      const gpuUnknown = !d.gpu && !!d.gpuPending;
       const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
-        || (m.engine === 'nemo' && !d.gpu);
+        || (m.engine === 'nemo' && !d.gpu && !gpuUnknown);
       let state, btn = '';
       if (m.cloud) {
         // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
@@ -1746,6 +1750,8 @@ async function renderAsrModels() {
         state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
       } else if (st.error) {
         state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+      } else if (gpuUnknown && m.engine === 'nemo') {
+        state = '<span class="sm-state">检测中…（正在查显卡）</span>';
       } else if (pyBlocked) {
         state = m.engine === 'nemo'
           ? '<span class="sm-state" style="color:var(--danger)">只支持 N 卡（NVIDIA 显卡）。当前没检测到 N 卡，不支持 CPU 推理，无法下载</span>'
@@ -1777,13 +1783,40 @@ async function renderAsrModels() {
     // NeMo 运行时(只有 multitalker 多说话人模型用得到): PyTorch + NeMo, 约 5GB, 仅 N 卡
     const nemo = d.nemo || {};
     const nemoSt = dlOf('nemo');
+    /* ⚠ 预检要 `import torch`（+ 有时 nemo.collections.asr），**首次 30 秒起步**。
+     *   这期间后端回的是 { ok:false, msg:'预检中…' } —— 直接落到下面的"未安装"分支
+     *   就是**误报**：用户明明装了，界面却写"未安装 · 约 5GB"还给他一个「安装」按钮，
+     *   点下去会白下 5GB。Python 环境那张卡早有这个守卫（见 pyState 的 '检测中…'），
+     *   NeMo 这张卡当初漏了 —— 用户实测就报在这（截图：未安装 · 约 5GB · 预检中…）。 */
+    const nemoPending = !nemo.ok && /预检中|未开始/.test(String(nemo.msg || ''));
+    /* 预检要 30 秒起步，界面不能只刷一次就停在"检测中" —— 盯着它，出结果就重画一次。
+     * 只在面板还开着、且还没出结果时轮询，避免关掉设置页后还在空转。 */
+    if (nemoPending && !nemoPollTimer) {
+      let tries = 0;
+      nemoPollTimer = setInterval(async () => {
+        if (++tries > 30 || !document.getElementById('st-models') || $('#st-models').offsetParent === null) {
+          clearInterval(nemoPollTimer); nemoPollTimer = 0; return;
+        }
+        try {
+          const r = await fetch('/api/asr/status', { signal: AbortSignal.timeout(8000) });
+          const dd = await r.json();
+          const nn = dd.nemo || {};
+          if (nn.ok || !/预检中|未开始/.test(String(nn.msg || ''))) {
+            clearInterval(nemoPollTimer); nemoPollTimer = 0;
+            renderAsrModels();               // 出结果了 → 重画（此时 nemo.ok 已是真值）
+          }
+        } catch { /* 忽略，下一轮再试 */ }
+      }, 3000);
+    }
     let nemoState;
     if (nemoSt.running) nemoState = `<span class="sm-state running">${esc(nemoSt.msg || '安装中…')} ${nemoSt.pct || 0}%</span>`;
     else if (nemoSt.error) nemoState = `<span class="sm-state" style="color:var(--danger)">${esc(nemoSt.msg || nemoSt.error)}</span>`;
     else if (nemo.ok && nemo.cuda) nemoState = `<span class="sm-state ok">✓ 可用（${esc(nemo.msg || '')}${nemo.gpu ? ' · ' + esc(nemo.gpu) : ''}）</span>`;
     else if (nemo.ok) nemoState = '<span class="sm-state" style="color:var(--danger)">装到的是 CPU 版 PyTorch，多说话人模型在 CPU 上跑不了。点「重新安装」换 CUDA 版</span>';
-    else nemoState = `<span class="sm-state">未安装 · 约 5GB（PyTorch + NeMo）${nemo.msg ? ' · ' + esc(nemo.msg) : ''}</span>`;
-    const nemoBtn = (nemoSt.running || (nemo.ok && nemo.cuda)) ? ''
+    else if (nemoPending) nemoState = '<span class="sm-state">检测中…（要导入 PyTorch，首次约半分钟）</span>';
+    else nemoState = `<span class="sm-state" style="color:var(--danger)">不可用${nemo.msg ? '：' + esc(nemo.msg) : ''}</span>`;
+    /* 检测中 / 安装中都不给按钮 —— 检测中给了按钮，用户会以为没装、白点一下。 */
+    const nemoBtn = (nemoSt.running || nemoPending || (nemo.ok && nemo.cuda)) ? ''
       : `<button type="button" class="btn btn-mini sm-nemoinstall">${nemo.ok ? '重新安装' : '安装'}</button>`;
     rows += `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">NeMo 运行时（多说话人）</span>${nemoBtn}</div>
