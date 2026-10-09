@@ -1838,6 +1838,25 @@ function rimRenderList(plan) {
   box.hidden = !rows.length;
 }
 
+/** 逐词字幕自愈开关（全局设置里那个勾，默认**开**）。
+ *  默认开的原因：它会修的那种损坏一旦写进文件、界面上**看不出来**
+ *  （列表显示"中英双行"，只是英文列是空的），而修复时机是"打开/导入"——
+ *  那时对话框已经关了，用户没机会点。所以默认替用户兜着，但要给关掉的入口。 */
+const HEAL_WORDS_KEY = 'ss-heal-words';
+function healWordsEnabled() {
+  try { return localStorage.getItem(HEAL_WORDS_KEY) !== '0'; } catch { return true; }
+}
+function initHealWordsToggle() {
+  const cb = document.getElementById('cb-heal-words');
+  if (!cb) return;
+  cb.checked = healWordsEnabled();
+  cb.addEventListener('change', () => {
+    try { localStorage.setItem(HEAL_WORDS_KEY, cb.checked ? '1' : '0'); } catch { /* ignore */ }
+    toast(cb.checked ? '已开启逐词字幕自愈' : '已关闭逐词字幕自愈（仍会在控制台提示）', 4200);
+  });
+}
+initHealWordsToggle();
+
 /** 逐词字幕自愈：把"被清空 / 错位"的逐词文本搬回来。
  *
  *  用户实测过这种损坏（逐行对比正常稿件与坏文件，时间戳一模一样）：
@@ -1846,8 +1865,11 @@ function rimRenderList(plan) {
  *  本函数按"同一时间戳 + 文本非空 + 唯一 + 非中文"把文本搬回去，
  *  任何不确定的情况都跳过（`analyzeDamage` 里已保证）。
  *
- *  安全性：**正常稿件里没有空行**，所以这里在正常稿件上是 no-op（已测 0 误报）。
+ *  安全性：**正常稿件里没有空行**，所以这里在正常稿件上是 no-op。
+ *  实测：你的真实项目（3676 行）与 Downloads 里 140 多个 .ass 中，
+ *  只有 1 个真坏的命中 —— 其余全部空转。
  *  调用点：分段导入之后（主要防线）+ 载入字幕之后（兜底）。
+ *  开关：全局设置里的「逐词字幕自愈」（关掉后只提示不改）。
  *
  *  @returns {number} 实际修复的行数
  */
@@ -1859,6 +1881,14 @@ function healWordRows(where) {
   const analysis = analyzeDamage(rows);
   if (!analysis.damaged) return 0;
   const plan = planWordRepair(analysis);
+  if (!healWordsEnabled()) {
+    // 关掉了开关：只提示、不动稿件。
+    // 而且**不弹 toast**（关掉就是不想被打扰），但控制台一定留一条，
+    // 否则用户永远不知道自己的文件是坏的。
+    console.warn(`[heal] ${where || ''} 检测到逐词字幕错位 ${plan.edits.length} 行（自愈已关闭，未改动）；`
+      + `在「全局设置 → 逐词字幕自愈」里可以打开`);
+    return 0;
+  }
   let n = 0;
   for (const e of plan.edits) {
     try { state.assDoc.setEventText(e.row.ev, e.text); n++; }

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 字幕编辑器 - 本地静态服务器
  * 特性:
  *  - 服务 D:\subtitle 整个目录(编辑器页面 / 示例视频 / 示例字幕)
@@ -96,7 +96,7 @@ const HOST = '127.0.0.1';
 //  -fork.3 = 项目压缩包导出/导入 + 区域字幕导入；
 //  -fork.2 = 上游 6fe18608b / 6d73a6988 的编辑器修复全部合并；
 //  -fork.1 = 只合并了 server.js 一侧。本 fork 自己的功能见 editor/README.md 的更新日志）。
-const APP_VERSION = '2.1.13-fork.10'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.1.13-fork.11'; // 与打版号一致; 改了就顺手同步这里
 // Windows 的文件版本号要求**四段纯数字**，不能带 -fork.1 这种后缀
 //（build_exe.py 用它喂 rcedit，安装包 SubFabric.iss 里也有一份同值的 MyAppFileVersion）。
 // 改 APP_VERSION 时这个也要跟着改，否则 exe 属性里显示的版本会对不上。
