@@ -293,6 +293,38 @@ function findFfmpeg() {
         ok(r.status === 400, '创建时视频不存在被拒(400)', `status=${r.status}`);
         r = await call('GET', '/api/projects/p-no-such-project');
         ok(r.status === 404 && r.json && r.json.error === '项目不存在', '未知项目 404');
+
+        /* 删除稳健性(用户报过的 bug): 项目目录里有文件被占用时的删除 —— 必须重试到成功,
+         * 不能像旧版那样直接 500 还把元数据删一半(项目从列表消失、目录留在磁盘上)。
+         * 用 CPython 持有写句柄模拟"下载中的 .part": CPython 的 open() 不带 FILE_SHARE_DELETE,
+         * unlink 必 EBUSY(与下载内核 fetch_cli.py 同款句柄共享模式)。 */
+        let pyCand = null;
+        for (const c of [['py', ['-3.12']], ['py', ['-3.11']], ['python3', []], ['python', []]]) {
+          const g = spawnSync(c[0], c[1].concat(['-c', 'print(1)']), { encoding: 'utf8', timeout: 8000 });
+          if (g.status === 0) { pyCand = c; break; }
+        }
+        r = await call('POST', '/api/projects', { body: j({ name: '占用删除', video: { path: vp }, subtitle: { name: 'probe.srt', text: srtText } }) });
+        const pidLock = (r.json || {}).id || null;
+        if (!pidLock) {
+          ok(false, '占用删除用例: 项目创建失败', `status=${r.status} ${r.text.slice(0, 80)}`);
+        } else if (!pyCand) {
+          console.log('  ! 未找到 Python, 占用用例退化为普通删除(不构造文件锁)');
+          r = await call('DELETE', '/api/projects/' + pidLock);
+          ok(r.status === 200, '占用用例(无 Python, 普通删除)', `status=${r.status}`);
+        } else {
+          const lockDir = path.join(ROOT, 'projects', pidLock, 'video');
+          fs.mkdirSync(lockDir, { recursive: true });
+          const held = path.join(lockDir, 'held.part');
+          const holder = spawn(pyCand[0], pyCand[1].concat(['-c',
+            'import sys,time\nf=open(sys.argv[1],"wb")\nf.write(b"x")\nf.flush()\ntime.sleep(0.8)\n', held]),
+            { stdio: 'ignore', windowsHide: true });
+          await new Promise((res) => setTimeout(res, 250));
+          r = await call('DELETE', '/api/projects/' + pidLock);
+          ok(r.status === 200, '占用中删除(句柄释放后重试成功)', `status=${r.status} ${r.text.slice(0, 100)}`);
+          ok(!fs.existsSync(path.join(ROOT, 'projects', pidLock)), '占用删除后目录已清');
+          try { holder.kill(); } catch {}
+          try { fs.rmSync(path.join(ROOT, 'projects', pidLock), { recursive: true, force: true }); } catch {}
+        }
       } finally {
         if (pid) { try { await call('DELETE', '/api/projects/' + pid); } catch {} }
         if (probeProjectDir) { try { fs.rmSync(probeProjectDir, { recursive: true, force: true }); } catch {} }
