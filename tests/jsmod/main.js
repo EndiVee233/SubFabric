@@ -9,6 +9,9 @@ import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, s
   speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
+// 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
+import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
+import { parseRegionTime } from '../region.js';
 import { AssPlayer } from './assplayer.js';
 import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
 import { Timeline } from './timeline.js';
@@ -27,6 +30,7 @@ const stageHint = document.getElementById('stage-hint');
 const statusFile = document.getElementById('status-file');
 const btnExport = document.getElementById('btn-export');
 const btnExportPack = document.getElementById('btn-export-pack');
+const btnRegionImport = document.getElementById('btn-region-import');
 const tlCursor = document.getElementById('tl-cursor-time');
 const tlDuration = document.getElementById('tl-duration');
 const rngFont = document.getElementById('rng-font');
@@ -145,6 +149,12 @@ const state = {
   videoLoaded: false,
   project: null          // 项目模式: { id, meta, loadPeaks } (project.js 维护; null=未用项目管理)
 };
+
+/** 调试出口：URL 里带 debug（如 #/project/xxx?debug）时把 state 挂到 window。
+ *  为什么留着：自动化测试（CDP）读不到模块内的 state，就只能靠 DOM 文字反推 ——
+ *  而"列表里明明有字、程序却读成空"这类问题，光看 DOM 是查不出来的（本次就踩了）。
+ *  带条件判断，平时不影响行为，也不会被误用。 */
+if (/[#?&/]debug\b/.test(location.href || '')) window.__state = state;
 
 // 行内编辑的临时轨道只存在内存中；ASS 文档及导出始终是最后一次提交的数据。
 let editPreview = null;
@@ -1263,6 +1273,8 @@ function setAss(text, name) {
   if (btnExportFull) btnExportFull.disabled = false;
   // 反思纠错：只在项目模式可用（要用项目里保存的 audio.wav 重识别那几段）
   if (reflectEls.btn) reflectEls.btn.disabled = !state.project;
+  // 分段导入：只要有稿件就能用（它不依赖音频，纯字幕合并）
+  if (btnRegionImport) btnRegionImport.disabled = !state.format;
   /* 全片逐词重校对：同样要项目模式。**不**在这里判"有没有逐词行"——
    * 这段是热路径（每次重建列表都跑），而判重要遍历全部句子；
    * 真没有逐词行时点击后服务端会给出明确原因。
@@ -1647,6 +1659,241 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   // 项目模式: 数据真的变了(文本/时间/增删/角色) → 计划一次自动保存(内部脏检查, 重复触发无害)
   if (rebuildItems && state.project) Projects.scheduleSave();
 }
+
+/* ═══════════ 分段导入：把一段字幕并进已有稿件（多人协作）═══════════
+ *
+ * 场景：一个稿件分给几个人做，各人拿同一份参考视频、各自导出一份字幕。
+ * **每份文件的时间轴都从 0 开始**，所以要显式告诉程序"我这份的 0:00 对应本稿的第几秒"。
+ *
+ * 做法（三条约定见 region-merge.js）：
+ *   · 默认**只填空档** —— 碰到已有字幕就列出来问，绝不静默覆盖别人的成果
+ *   · 平移量是显式输入，程序不猜
+ *   · 写回**复用 addRecognizedRow**（反思纠错用的同一条路径），不另造一套
+ */
+const rimEls = {
+  overlay: document.getElementById('rim-overlay'),
+  fileName: document.getElementById('rim-file-name'),
+  pick: document.getElementById('rim-pick'),
+  file: document.getElementById('rim-file'),
+  start: document.getElementById('rim-start'),
+  end: document.getElementById('rim-end'),
+  fromSel: document.getElementById('rim-from-sel'),
+  rangeNote: document.getElementById('rim-range-note'),
+  summary: document.getElementById('rim-summary'),
+  list: document.getElementById('rim-list'),
+  cancel: document.getElementById('rim-cancel'),
+  recheck: document.getElementById('rim-recheck'),
+  apply: document.getElementById('rim-apply'),
+  applyForce: document.getElementById('rim-apply-force'),
+};
+/** 当前待导入的内容（解析一次、多次重算计划，避免每次改区间都重读文件） */
+let rimCues = null;      // [{start, end, lines}]（**完整时间轴**，不做平移）
+let rimName = '';
+let rimPlan = null;
+
+/** 从 SRT / ASS 文本里取出「一行字幕 = 起止时间 + 主/副语言」，交给 region-merge 做判定 */
+function rimParseCues(text, name) {
+  const isAss = /\.(ass|ssa)$/i.test(name || '');
+  if (isAss) {
+    const doc = new AssDoc(text);
+    // 只按时间排序取文本，不区分样式 —— 中英配对交给导入后的 pairRows
+    const evs = doc.events.filter(e => Number.isFinite(e.start) && Number.isFinite(e.end));
+    if (!evs.length) return [];
+    const rows = [];
+    for (const ev of evs) {
+      const t = assPlainText(ev.text || '').trim();
+      if (!t) continue;
+      // ASS 里整句行常带 [角色] 前缀，role 标签不算语言内容，先剥掉再判断
+      const body = t.replace(/^\[[^\]]{1,24}\]\s*/, '');
+      // 含 CJK → 当主语言；否则当副语言
+      const isZh = /[\u3400-\u9fff\uf900-\ufaff]/.test(body);
+      rows.push({ start: ev.start, end: ev.end, lines: isZh ? [body] : [body], _zh: isZh });
+    }
+    // 同一时间段的中英行合并成一条
+    rows.sort((a, b) => a.start - b.start || a.end - b.end);
+    const merged = [];
+    for (const r of rows) {
+      const last = merged[merged.length - 1];
+      if (last && Math.abs(last.start - r.start) < 1e-3 && Math.abs(last.end - r.end) < 1e-3) {
+        if (r._zh && !last._zhMain) { last.lines = [r.lines[0]].concat(last.lines); last._zhMain = true; }
+        else last.lines = last.lines.concat(r.lines);
+      } else merged.push({ start: r.start, end: r.end, lines: r.lines.slice(), _zhMain: !!r._zh });
+    }
+    return merged.map(r => ({ start: r.start, end: r.end, lines: r.lines }));
+  }
+  const cues = parseSRT(text);
+  return cues.map(c => ({ start: c.start, end: c.end, lines: c.lines }));
+}
+
+/** 读当前填的「这一段」。返回 { ok, start, end, error } */
+function rimReadRange() {
+  const rawS = String((rimEls.start || {}).value || '').trim();
+  const rawE = String((rimEls.end || {}).value || '').trim();
+  if (!rawS && !rawE) return { ok: false, empty: true, error: '先填「这一段」的起止时间（也可以先在时间轴上拖个选区，再点「用选区」）' };
+  const s = parseRegionTime(rawS), e = parseRegionTime(rawE);
+  if ((rawS && s === null) || (rawE && e === null)) {
+    return { ok: false, error: '时间看不懂，用 秒（300）、分:秒（5:00）或 时:分:秒（1:02:03）' };
+  }
+  const a = s === null ? 0 : s;
+  if (e === null) return { ok: false, error: '「这一段」需要一个结束时间' };
+  if (e <= a) return { ok: false, error: `结束时间（${e}s）必须大于开始时间（${a}s）` };
+  return { ok: true, start: a, end: e, error: '' };
+}
+
+/** 用当前区间重算计划并刷新预览 */
+function rimRecheck() {
+  if (!rimCues) { rimEls.apply.disabled = true; rimEls.applyForce.hidden = true; return; }
+  const rg = rimReadRange();
+  if (!rg.ok) {
+    if (rimEls.rangeNote) { rimEls.rangeNote.textContent = rg.empty ? '' : rg.error; rimEls.rangeNote.className = 'np-region-note' + (rg.empty ? '' : ' bad'); }
+    rimShowSummary('', false);
+    if (rimEls.list) { rimEls.list.innerHTML = ''; rimEls.list.hidden = true; }
+    rimEls.apply.disabled = true; rimEls.applyForce.hidden = true;
+    return;
+  }
+  if (rimEls.rangeNote) { rimEls.rangeNote.textContent = ''; rimEls.rangeNote.className = 'np-region-note'; }
+  const rows = (state.items || []).map(it => ({ start: it.start, end: it.end, text: it.l1 || it.l2 || '' }));
+  rimPlan = planRegionMerge(rimCues, rows, rg.start, rg.end);
+  if (!rimPlan.ok) {
+    rimShowSummary(rimPlan.error, true);
+    if (rimEls.list) { rimEls.list.innerHTML = ''; rimEls.list.hidden = true; }
+    rimEls.apply.disabled = true; rimEls.applyForce.hidden = true;
+    return;
+  }
+  rimShowSummary(mergeSummary(rimPlan), !rimPlan.picked);
+  rimRenderList(rimPlan);
+  const canFill = rimPlan.items.length > 0;
+  rimEls.apply.disabled = !canFill;
+  rimEls.apply.textContent = canFill ? `只导入空档（${rimPlan.items.length} 行）` : '没有可导入的行';
+  // 有冲突才给"覆盖"这个选项 —— 平时不该出现破坏性按钮
+  const hasClash = rimPlan.conflicts.length > 0;
+  rimEls.applyForce.hidden = !hasClash;
+  rimEls.applyForce.textContent = hasClash ? `重叠处也覆盖（${rimPlan.conflicts.length} 行）` : '';
+  rimEls.recheck.hidden = false;
+}
+
+function rimShowSummary(text, bad) {
+  if (!rimEls.summary) return;
+  rimEls.summary.textContent = text;
+  rimEls.summary.hidden = !text;
+  rimEls.summary.classList.toggle('rim-bad', !!bad);
+}
+
+function rimRenderList(plan) {
+  const box = rimEls.list;
+  if (!box) return;
+  const rows = [];
+  for (const r of plan.items.slice(0, 60)) {
+    rows.push(`<div class="rim-item"><span class="rim-ok">可导入</span>`
+      + `<span class="rim-t">${fmtTime(r.start)} → ${fmtTime(r.end)}</span>`
+      + `<span class="rim-x">${escapeHtml(rowLabel(r, 40))}</span>`
+      + (r.stretched ? '<span class="rim-note">零长行已撑宽</span>' : '') + '</div>');
+  }
+  for (const r of plan.conflicts.slice(0, 60)) {
+    rows.push(`<div class="rim-item rim-clash"><span class="rim-no">重叠</span>`
+      + `<span class="rim-t">${fmtTime(r.start)} → ${fmtTime(r.end)}</span>`
+      + `<span class="rim-x">${escapeHtml(rowLabel(r, 40))}</span>`
+      + `<span class="rim-note">本稿此处已有：${escapeHtml(rowLabel(r.with, 22))}</span></div>`);
+  }
+  const more = (plan.items.length + plan.conflicts.length) - rows.length;
+  if (more > 0) rows.push(`<div class="rim-item"><span class="rim-note">另有 ${more} 行未列出</span></div>`);
+  box.innerHTML = rows.join('');
+  box.hidden = !rows.length;
+}
+
+/** 打开对话框 */
+function rimOpen() {
+  if (!state.format) { toast('先打开一份字幕', 3600); return; }
+  rimCues = null; rimName = ''; rimPlan = null;
+  if (rimEls.fileName) { rimEls.fileName.textContent = '还没选'; rimEls.fileName.classList.remove('filled'); }
+  if (rimEls.rangeNote) { rimEls.rangeNote.textContent = ''; rimEls.rangeNote.className = 'np-region-note'; }
+  // 时间轴上已经拖了选区的话，直接填进来（少打一次字，也不容易填错）
+  const sel = timeline.rangeSel;
+  if (sel && sel.b > sel.a) {
+    if (rimEls.start) rimEls.start.value = fmtTime(sel.a);
+    if (rimEls.end) rimEls.end.value = fmtTime(sel.b);
+  } else {
+    if (rimEls.start) rimEls.start.value = '';
+    if (rimEls.end) rimEls.end.value = '';
+  }
+  rimShowSummary('', false);
+  if (rimEls.list) { rimEls.list.innerHTML = ''; rimEls.list.hidden = true; }
+  rimEls.apply.disabled = true; rimEls.applyForce.hidden = true; rimEls.recheck.hidden = true;
+  rimEls.overlay.hidden = false;
+}
+
+/** 执行导入。force=true 时把冲突处也覆盖（用户点了那个按钮才算数） */
+function rimApply(force) {
+  if (!rimPlan || !rimPlan.ok) return;
+  const res = force ? resolveReplace(rimPlan) : resolveFillOnly(rimPlan);
+  const add = res.add || [];
+  if (!add.length) { toast('没有可导入的行', 3600); return; }
+  const before = state.items.length;
+  if (force && res.replace && res.replace.length) {
+    // 先删被覆盖的（用与批量删除同一套 removeItemData, 不手改数组）
+    for (const rg of res.replace) {
+      for (const it of itemsInRange(rg.start, rg.end)) removeItemData(it);
+    }
+  }
+  let added = 0;
+  for (const r of add) {
+    try {
+      const row = addRecognizedRow({ start: r.start, end: r.end, zh: r.zh, text: r.en, words: [] });
+      if (row) added++;
+    } catch (e) {
+      console.warn('[rim] 插入一行失败', e);
+    }
+  }
+  rebuildItemsAndLanes(true);
+  const rg = rimReadRange();
+  const sum = `分段导入：进来 ${added} 行（原 ${before} 行 → 现 ${state.items.length} 行）`
+    + (force && res.replace ? `，覆盖 ${res.replace.length} 处` : '')
+    + `；区间 ${rg.ok ? fmtTime(rg.start) + '~' + fmtTime(rg.end) : '?'}，来源 ${rimName}`;
+  toast(sum, 8000);
+  if (typeof logOp === 'function') logOp('导入', '分段字幕', sum);
+  rimEls.overlay.hidden = true;
+}
+
+if (btnRegionImport) btnRegionImport.addEventListener('click', rimOpen);
+if (rimEls.cancel) rimEls.cancel.addEventListener('click', () => { rimEls.overlay.hidden = true; });
+if (rimEls.pick) rimEls.pick.addEventListener('click', () => rimEls.file.click());
+if (rimEls.file) rimEls.file.addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  let text = await f.text();
+  // 带特效的导出行会污染解析（与创建页导入同一处理）
+  if (/\.(ass|ssa)$/i.test(f.name)) {
+    const { text: cleanedText } = stripEffectTagsSafe(text);
+    text = cleanedText;
+  }
+  try {
+    rimCues = rimParseCues(text, f.name);
+  } catch (err) {
+    rimCues = null;
+    rimShowSummary('这个文件解析不了：' + (err && err.message ? err.message : err), true);
+    return;
+  }
+  if (!rimCues.length) { rimShowSummary('这个文件里没解析出字幕行', true); return; }
+  rimName = f.name;
+  rimEls.fileName.textContent = `${f.name}（${rimCues.length} 行）`;
+  rimEls.fileName.classList.add('filled');
+  rimRecheck();
+});
+if (rimEls.start) rimEls.start.addEventListener('input', rimRecheck);
+if (rimEls.end) rimEls.end.addEventListener('input', rimRecheck);
+if (rimEls.fromSel) rimEls.fromSel.addEventListener('click', () => {
+  const sel = timeline.rangeSel;
+  if (!sel || sel.b <= sel.a) { toast('先在时间轴上拖出一段选区', 4200); return; }
+  if (rimEls.start) rimEls.start.value = fmtTime(sel.a);
+  if (rimEls.end) rimEls.end.value = fmtTime(sel.b);
+  rimRecheck();
+});
+if (rimEls.recheck) rimEls.recheck.addEventListener('click', rimRecheck);
+if (rimEls.apply) rimEls.apply.addEventListener('click', () => rimApply(false));
+if (rimEls.applyForce) rimEls.applyForce.addEventListener('click', () => {
+  rimApply(true);
+});
 
 /* ═══════════ 角色(说话人) ═══════════ */
 /* speakerNames(取 Name 栏里的人物名列表) 已挪到 karaoke.js 并导出 —— 换色纯函数 recolorRoleInRows
