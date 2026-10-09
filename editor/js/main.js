@@ -424,6 +424,12 @@ video.addEventListener('loadedmetadata', () => {
   tlDuration.textContent = fmtTime(video.duration);
 });
 window.addEventListener('resize', () => overlay.fitToVideo());
+/* 上面这个 window resize 收不到"面板挤压"：拖分栏/收展侧栏只改 CSS grid 轨道，窗口本身没变。
+ * 而 SRT 叠加层的位置是 fitToVideo 用 inline style 算出来的 —— 不重算就留在旧位置，
+ * 画面上的字幕（以及视频区就地编辑框）会集体错位。直接盯 stage 的元素尺寸（与 videoedit 同一素材）。 */
+if (typeof ResizeObserver === 'function') {
+  new ResizeObserver(() => overlay.fitToVideo()).observe(document.getElementById('video-stage'));
+}
 
 /* ═══════════ 字幕加载 ═══════════ */
 const ASS_WORD_COLOR_META = 'SubFabricWordHighlightColor';

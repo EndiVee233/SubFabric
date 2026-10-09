@@ -88,6 +88,10 @@ export class VideoCueEditor {
     this._onShieldMove = this._onShieldMove.bind(this);
     this.input.addEventListener('input', this._onInput);
     this._bindShield();
+    /* #video-stage 被其它面板挤压（元素级尺寸变化）时 window 的 resize 事件不会派发 ——
+     * ResizeObserver 直接盯 stage 本身，就地框开着期间跟着画面重新落位（PLAN md 的遗留项）。
+     * 只在 begin/close 里 observe/disconnect，不在编辑外空跑。 */
+    this._ro = (typeof ResizeObserver === 'function') ? new ResizeObserver(() => this._onRelayout()) : null;
   }
 
   get isOpen() { return !!this.open; }
@@ -626,6 +630,7 @@ export class VideoCueEditor {
     document.addEventListener('keydown', this._onKey, true);
     window.addEventListener('resize', this._onRelayout);
     window.addEventListener('fullscreenchange', this._onRelayout);   // 全屏切换后画面尺寸变了
+    if (this._ro) this._ro.observe(this.stage);                     // 元素级尺寸变化（面板挤压）上面两个事件收不到
     if (this.api.onOpenChange) this.api.onOpenChange(true);
   }
 
@@ -700,6 +705,7 @@ export class VideoCueEditor {
     document.removeEventListener('keydown', this._onKey, true);
     window.removeEventListener('resize', this._onRelayout);
     window.removeEventListener('fullscreenchange', this._onRelayout);
+    if (this._ro) this._ro.disconnect();
     if (this.api.onOpenChange) this.api.onOpenChange(false);
   }
 
@@ -746,8 +752,28 @@ export class VideoCueEditor {
     } else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); this.commit(); }
   }
 
+  /** 重新取"开着的这一行"的最新几何。开框时抓下来的 item 是**那一刻**的坐标，
+   *  窗口/容器尺寸一变就过期 —— 拿旧坐标重摆只会把框摆偏（_place 的 adv/top 全来自 item）。
+   *  身份按底层对象匹配（ASS 的 sent / SRT 的 cue+lineIdx），不按文本 —— 文本正被编辑。 */
+  _refreshOpenItem() {
+    const src = this.open && this.open.item;
+    if (!src) return null;
+    for (const it of this._layoutItems()) {
+      if (it.kind !== src.kind || it.side !== src.side) continue;
+      if (src.kind === 'srt') { if (it.cue === src.cue && it.lineIdx === src.lineIdx) return it; }
+      else if (it.sent === src.sent) return it;
+    }
+    return null;
+  }
+
   _onRelayout() {
     if (!this.open) return;
+    const fresh = this._refreshOpenItem();
+    if (fresh) {
+      this.open.item = fresh;
+      const seg = (fresh.segs || []).find(s => s.start === this.open.seg.start && s.end === this.open.seg.end);
+      if (seg) this.open.seg = seg;                 // 文本未提交，区间必然对得上；对不上就保守沿用旧的
+    }
     this._place(this.open.item, this.open.seg);
   }
 }
