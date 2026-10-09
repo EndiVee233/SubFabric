@@ -15,6 +15,10 @@ import { parseRegionTime } from '../region.js';
 // 逐词字幕修复：把"被清空/错位"的逐词文本搬回来（有 tests/repair-words-test.mjs）。
 // 用户实测过这种损坏：逐词行变空、文本连高亮标签一起跑到了同时间戳的另一行上。
 import { analyzeDamage, planRepair as planWordRepair, repairSummary } from '../repair-words.js';
+// 分段导入的 ASS 解析：**必须把逐词行按"句"聚合**。
+// 逐词 ASS 里一句英文是"每词一条 Dialogue"，一条当一行会把它拆成上千行
+// （用户实测：226 句的稿件被读成「区间内 43 行」、逐词高亮全丢）。
+import { groupAssRows } from '../ass-group.js';
 import { AssPlayer } from './assplayer.js';
 import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
 import { Timeline } from './timeline.js';
@@ -1729,30 +1733,21 @@ function rimParseCues(text, name) {
   const isAss = /\.(ass|ssa)$/i.test(name || '');
   if (isAss) {
     const doc = new AssDoc(text);
-    // 只按时间排序取文本，不区分样式 —— 中英配对交给导入后的 pairRows
     const evs = doc.events.filter(e => Number.isFinite(e.start) && Number.isFinite(e.end));
     if (!evs.length) return [];
-    const rows = [];
-    for (const ev of evs) {
-      const t = assPlainText(ev.text || '').trim();
-      if (!t) continue;
-      // ASS 里整句行常带 [角色] 前缀，role 标签不算语言内容，先剥掉再判断
-      const body = t.replace(/^\[[^\]]{1,24}\]\s*/, '');
-      // 含 CJK → 当主语言；否则当副语言
-      const isZh = /[\u3400-\u9fff\uf900-\ufaff]/.test(body);
-      rows.push({ start: ev.start, end: ev.end, lines: isZh ? [body] : [body], _zh: isZh });
-    }
-    // 同一时间段的中英行合并成一条
-    rows.sort((a, b) => a.start - b.start || a.end - b.end);
-    const merged = [];
-    for (const r of rows) {
-      const last = merged[merged.length - 1];
-      if (last && Math.abs(last.start - r.start) < 1e-3 && Math.abs(last.end - r.end) < 1e-3) {
-        if (r._zh && !last._zhMain) { last.lines = [r.lines[0]].concat(last.lines); last._zhMain = true; }
-        else last.lines = last.lines.concat(r.lines);
-      } else merged.push({ start: r.start, end: r.end, lines: r.lines.slice(), _zhMain: !!r._zh });
-    }
-    return merged.map(r => ({ start: r.start, end: r.end, lines: r.lines }));
+    /* ⚠ 这里**不能**"一条 Dialogue 当一行字幕"。
+     * 逐词 ASS 里一句英文是**每词一条 Dialogue**，一条当一行会把整句拆成上千行：
+     * 用户实测 226 句的稿件被读成「区间内 43 行」、中英配对错乱、逐词高亮全丢。
+     * 交给 ass-group.js 按"句"聚合（判据只看文本与时间，不依赖样式名）。 */
+    const rows = evs.map(ev => ({
+      start: ev.start, end: ev.end, style: ev.style || '',
+      name: ev.name || '', text: ev.text || '',
+    }));
+    const g = groupAssRows(rows);
+    if (!g.ok) return [];
+    console.log(`[rim] ASS 解析：${rows.length} 条 Dialogue → ${g.lines.length} 句`
+      + `（逐词 ${g.stats.wordRows} 条 / 整句 ${g.stats.sentRows} 条，逐词样式 ${JSON.stringify(g.stats.wordStyles)}）`);
+    return g.lines;
   }
   const cues = parseSRT(text);
   return cues.map(c => ({ start: c.start, end: c.end, lines: c.lines }));
@@ -1812,6 +1807,15 @@ function rimShowSummary(text, bad) {
   rimEls.summary.classList.toggle('rim-bad', !!bad);
 }
 
+/** 预览用的行标签：双语行要把主/副语言都显示出来。
+ *  只显示一行的话，用户看不出中英有没有配对上（而这正是分段导入最容易出错的地方）。 */
+function rimRowLabel(r, max = 40) {
+  const zh = String((r && r.zh) || '').trim();
+  const en = String((r && r.en) || '').trim();
+  if (zh && en) return rowLabel({ zh }, max) + ' ／ ' + rowLabel({ zh: en }, max);
+  return rowLabel(r, max * 2);
+}
+
 function rimRenderList(plan) {
   const box = rimEls.list;
   if (!box) return;
@@ -1819,13 +1823,13 @@ function rimRenderList(plan) {
   for (const r of plan.items.slice(0, 60)) {
     rows.push(`<div class="rim-item"><span class="rim-ok">可导入</span>`
       + `<span class="rim-t">${fmtTime(r.start)} → ${fmtTime(r.end)}</span>`
-      + `<span class="rim-x">${escapeHtml(rowLabel(r, 40))}</span>`
+      + `<span class="rim-x">${escapeHtml(rimRowLabel(r, 40))}</span>`
       + (r.stretched ? '<span class="rim-note">零长行已撑宽</span>' : '') + '</div>');
   }
   for (const r of plan.conflicts.slice(0, 60)) {
     rows.push(`<div class="rim-item rim-clash"><span class="rim-no">重叠</span>`
       + `<span class="rim-t">${fmtTime(r.start)} → ${fmtTime(r.end)}</span>`
-      + `<span class="rim-x">${escapeHtml(rowLabel(r, 40))}</span>`
+      + `<span class="rim-x">${escapeHtml(rimRowLabel(r, 40))}</span>`
       + `<span class="rim-note">本稿此处已有：${escapeHtml(rowLabel(r.with, 22))}</span></div>`);
   }
   const more = (plan.items.length + plan.conflicts.length) - rows.length;
