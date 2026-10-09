@@ -1929,7 +1929,13 @@ function rimApply(force) {
   let added = 0;
   for (const r of add) {
     try {
-      const row = addRecognizedRow({ start: r.start, end: r.end, zh: r.zh, text: r.en, words: [] });
+      /* ★ 传**原文件的真实词级时间**（ass-group 从逐词行里提取的：那一行的起止就是那个词的时间）。
+       * 不传的话 addRecognizedRow 会调 recalcWords 在句内均匀铺开 ——
+       * 词序看着对，但节奏是假的（用户实测："逐词不准确，这不是原字幕里的逐词顺序吧"）。 */
+      const row = addRecognizedRow({
+        start: r.start, end: r.end, zh: r.zh, text: r.en,
+        words: (r.words || []).map(w => ({ word: w.word, start: w.start, end: w.end })),
+      });
       if (row) added++;
     } catch (e) {
       console.warn('[rim] 插入一行失败', e);

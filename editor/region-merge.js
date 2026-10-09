@@ -81,7 +81,10 @@ function planRegionMerge(cues, existing, start, end) {
     if (fix) { ce = cs + MIN_ROW_SEC; stretched++; }
     const main = (c.lines && c.lines.length) ? String(c.lines[0] || '') : '';
     const sub = (c.lines && c.lines.length > 1) ? c.lines.slice(1).join(' ').trim() : '';
-    const row = { start: cs, end: ce, zh: main.trim(), en: sub, stretched: fix };
+    // ★ words 必须带下去：导入时要用**原文件的真实词级时间**，
+    //   丢了它 addRecognizedRow 就只能在句内均匀铺开（节奏变成假的）。
+    const row = { start: cs, end: ce, zh: main.trim(), en: sub, stretched: fix,
+      words: Array.isArray(c.words) ? c.words : [] };
     if (!row.zh && !row.en) continue;                // 空行丢弃（没有内容可放）
     // 与项目里**任何**已有行重叠 → 冲突（不静默覆盖）
     const hit = ex.find(r => overlaps(cs, ce, r.start, r.end));

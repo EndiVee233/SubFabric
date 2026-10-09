@@ -83,3 +83,7 @@ _tts_probe/
 # 测试临时文件（不该进仓库）
 .staging-testid.txt
 .diag.json
+
+# 测试运行时生成的临时模块（不该进仓库）
+tests/_carry.mjs
+tests/_*.mjs
