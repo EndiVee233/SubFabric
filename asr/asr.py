@@ -501,8 +501,15 @@ def main():
         log("结果已写入 %s" % args.out)
         return 0
 
+    except MemoryError:
+        # MemoryError 的 str() 是空字符串, 直接报上去就只剩一个"退出码 1", 查不出所以然。
+        emit({"type": "error",
+              "msg": "内存不足(MemoryError): 音频太长或可用内存不够, 可先关掉其它占内存的程序重试"})
+        return 1
     except Exception as e:
-        emit({"type": "error", "msg": str(e)})
+        # 同理: str(e) 为空的异常(如某些原生崩溃)要退回到类型名, 别把空串报上去。
+        msg = str(e).strip() or type(e).__name__
+        emit({"type": "error", "msg": msg})
         return 1
 
 

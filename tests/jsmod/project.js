@@ -557,11 +557,16 @@ export function initProjects(ctx) {
   if (regenBtn) regenBtn.addEventListener('click', regenAudio);
 
   /* ─────────── 打开项目 ─────────── */
+  // openProject 竞态守卫代次: applyHash 快速切换项目(A→B)会并发进入, 每次进入自增;
+  // 旧的响应晚回来时代次不符 → 直接丢弃, 避免旧数据覆盖新项目状态。
+  let _openGen = 0;
   async function openProject(pid) {
+    const gen = ++_openGen;
     let m;
     try {
       const r = await fetch('/api/projects/' + pid);
       m = await r.json();
+      if (gen !== _openGen) return;
       if (!r.ok || m.error) throw new Error(m.error || 'HTTP ' + r.status);
     } catch (e) {
       toast('项目加载失败: ' + e.message, 3600);
@@ -574,6 +579,7 @@ export function initProjects(ctx) {
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
       const text = await (await fetch(`/api/projects/${pid}/subtitle`)).text();
+      if (gen !== _openGen) return;
       lastSavedText = text;
       routeSub(text, (m.subtitle && m.subtitle.name) || (m.subtitle && m.subtitle.file) || 'subtitle.ass');
     } catch {
@@ -1244,27 +1250,40 @@ export function initProjects(ctx) {
       }
     } else if (note) note.textContent = '';
   }
+  // 下载轮询闸门: 多个下载/安装入口都会调用 pollModelDownload, 不加闸门会叠加多个
+  // 900 次循环、每秒重复 renderAsrModels。同一时刻只允许一个轮询在跑。
+  let _modelPolling = false;
   async function pollModelDownload() {
-    for (let i = 0; i < 900; i++) {
-      let d;
-      try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
-      const anyRunning = (d.downloads || []).some(x => x.running);
-      renderAsrModels();
-      if (!anyRunning) break;
-      await new Promise(r => setTimeout(r, 1000));
-    }
+    if (_modelPolling) return;
+    _modelPolling = true;
+    try {
+      for (let i = 0; i < 900; i++) {
+        let d;
+        try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
+        const anyRunning = (d.downloads || []).some(x => x.running);
+        renderAsrModels();
+        if (!anyRunning) break;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    } finally { _modelPolling = false; }
   }
   async function downloadModel(id) {
     // 点下载立刻有反馈(按钮变「排队…」), 再发请求 —— 旧版静默发请求, 服务端忙时用户以为没点上
     const body = id === 'diarize' ? { kind: 'diarize' } : { modelId: id };
     const btn = document.querySelector('.sm-dl[data-id="' + id + '"]');
     if (btn) { btn.disabled = true; btn.textContent = '开始…'; }
-    const r = await fetch('/api/asr/download', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    const m = await r.json().catch(() => ({}));
-    if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
-    pollModelDownload();
+    try {
+      const r = await fetch('/api/asr/download', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const m = await r.json().catch(() => ({}));
+      if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
+      pollModelDownload();
+    } catch (e) {
+      // fetch reject(服务中断): 恢复按钮以便重试, 并提示失败原因(成功路径不在此处理)
+      if (btn) { btn.disabled = false; btn.textContent = '下载'; }
+      toast('下载失败：' + (e && e.message ? e.message : e));
+    }
   }
   /** 模型下载位置(设置面板): 指定目录 + 打开目录 */
   async function bindModelDirSettings() {

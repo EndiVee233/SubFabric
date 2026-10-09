@@ -16,7 +16,7 @@ let spawnImpl = childProcess.spawn;
 function setSpawnImpl(fn) { if (typeof fn === 'function') spawnImpl = fn; }
 
 /** ffmpeg silencedetect 找静音区间；失败/超时返回 []（退化成名义切点，不阻塞识别） */
-function detectSilences(ffmpeg, wav, timeoutMs = 10 * 60 * 1000) {
+function detectSilences(ffmpeg, wav, timeoutMs = 10 * 60 * 1000, durationSec = 0) {
   return new Promise((resolve) => {
     let err = '';
     let p;
@@ -27,7 +27,7 @@ function detectSilences(ffmpeg, wav, timeoutMs = 10 * 60 * 1000) {
     const t = setTimeout(() => { try { p.kill(); } catch {} }, timeoutMs);
     p.stderr.on('data', (d) => { if (err.length < 200000) err += String(d); });
     p.on('error', () => { clearTimeout(t); resolve([]); });
-    p.on('close', () => { clearTimeout(t); resolve(asrChunks.parseSilences(err)); });
+    p.on('close', () => { clearTimeout(t); resolve(asrChunks.parseSilences(err, durationSec)); });
   });
 }
 

@@ -121,15 +121,23 @@ function collectionOffsets(fd) {
  * 但 head 的 checkSumAdjustment 会因此过期(预览/渲染不受影响)。
  */
 function extractFace(buf, dirOff) {
+  // 损坏字体的目录/表长度可能离谱(length 可达 4GB) —— 直接 Buffer.alloc / copy 会 OOM 或 RangeError。
+  // 只要目录本身越界、或任一表的 offset+length 超出文件范围, 就整体判定"该 face 不可用"(返回 null),
+  // 由调用方决定怎么处理: readFontBytes 抛错、--dump 报错退出。buildIndex 只读 name 表, 不受影响。
+  if (!(dirOff >= 0) || dirOff + 12 > buf.length) return null;
   const numTables = buf.readUInt16BE(dirOff + 4);
+  if (!numTables || numTables > 512 || dirOff + 12 + numTables * 16 > buf.length) return null;
   const recs = [];
   for (let i = 0; i < numTables; i++) {
     const rec = dirOff + 12 + i * 16;
+    const offset = buf.readUInt32BE(rec + 8);
+    const length = buf.readUInt32BE(rec + 12);
+    if (offset > buf.length || offset + length > buf.length) return null;
     recs.push({
       tag: buf.toString('latin1', rec, rec + 4),
       checkSum: buf.readUInt32BE(rec + 4),
-      offset: buf.readUInt32BE(rec + 8),
-      length: buf.readUInt32BE(rec + 12)
+      offset,
+      length
     });
   }
   let cursor = 12 + numTables * 16;
@@ -222,7 +230,9 @@ function readFontBytes(entry) {
   if (entry.face === 0 && buf.length >= 4 && buf.toString('latin1', 0, 4) !== 'ttcf') return buf;
   const offs = collectionOffsets2(buf);
   const dirOff = offs && offs[entry.face] != null ? offs[entry.face] : 0;
-  return extractFace(buf, dirOff);
+  const out = extractFace(buf, dirOff);
+  if (!out) throw new Error('字体 face 不可用（表偏移/长度越界）: ' + path.basename(entry.file));
+  return out;
 }
 
 function collectionOffsets2(buf) {
@@ -265,6 +275,7 @@ if (require.main === module) {
     const offs = collectionOffsets2(buf);
     const dirOff = offs && offs[face] != null ? offs[face] : 0;
     const out = extractFace(buf, dirOff);
+    if (!out) { console.error('该 face 不可用（表偏移/长度越界）: ' + a); process.exit(1); }
     fs.writeFileSync(c, out);
     console.log('已导出 face ' + face + ': ' + c + ' (' + out.length + ' 字节)');
   } else {

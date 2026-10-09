@@ -165,6 +165,9 @@ const mediaKey = (p) => {
   const n = path.normalize(String(p || '').trim());
   return process.platform === 'win32' ? n.toLowerCase() : n;
 };
+/* /api/media 的 meta 扫描缓存(3 秒): 播放视频会发大量 Range 请求, 不能每个请求都把
+ * projects/ 读一遍。**必须在模块作用域** —— 放进段函数(每请求执行一次)等于没有缓存。 */
+let mediaMetaCache = { at: 0, set: new Set() };
 
 /* 把 URL 路径安全地映射到 root 下的文件路径, 越界返回 null。
  * 注意 decodeURIComponent 在 path 之前: new URL() 不会解码 %2f, 所以 "/..%2f" 能带着
@@ -1281,6 +1284,8 @@ function startDiarizeDownload() {
           const exDir = path.join(DIARIZE_DIR(), '_ex_' + i);
           fs.mkdirSync(exDir, { recursive: true });
           const rr = spawn(sysTar, ['-xf', tmp, '-C', exDir], { windowsHide: true });
+          rr.stdout.on('data', () => {});    // 消费输出: 管道缓冲写满会让子进程阻塞在写上
+          rr.stderr.on('data', () => {});
           await new Promise((res) => { rr.on('close', res); rr.on('error', res); });
           const inner = m.inner ? path.join(exDir, m.inner) : path.join(exDir, path.basename(m.file));
           if (!fs.existsSync(inner)) throw new Error('归档里未找到 ' + m.file);
@@ -1757,7 +1762,7 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
  *
  * 只收「同步、无副作用、不碰项目状态」的处理器 —— 也就是原来那些一进函数就return 的分支。
  * 涉及流水线/落盘/共享状态的端点(波形、peaks、项目、ASR、翻译…)仍在 handleRequest 里按原样处理,
- * 因为它们要读写 draftJobs / fetchJobs 等跨请求状态, 拆出去反而要注入一堆东西。
+ * 因为它们要读写 draftJobs / prepareJobs 等跨请求状态, 拆出去反而要注入一堆东西。
  *
  * 处理器签名统一 (req, res, u) → boolean: 处理了就return true(handleRequest 收尾),
  * 返回 false 表示"不归我管", 继续往下走原来的 if 链。行为与拆分前逐字一致。
@@ -1834,9 +1839,8 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
 /* ═══════════ 服务端主体: 项目系统 + 下载/prepare/识别流水线(模块作用域) ═══════════
  * 这些函数与状态容器原先定义在 handleRequest 函数体内 —— 每个请求都会重新创建一遍
- * (函数声明重挂、常量重算), 其中 fetchJobs 更是每请求一个新 Map, 全靠「恰好没有跨请求读取」
- * 才没出事。统一提升到模块作用域: 与 prepareJobs/draftJobs 同一待遇, 语义与注释口径一致。
- * 函数体一行未改(缩进保留原样, 项目不强制风格)。 */
+ * (函数声明重挂、常量重算), 靠「恰好没有跨请求读取」才没出事。统一提升到模块作用域:
+ * 与 prepareJobs/draftJobs 同一待遇。函数体一行未改(缩进保留原样, 项目不强制风格)。 */
 
 /* ═══════════ 项目系统 ═══════════
    * 每个项目一个目录: projects/<id>/project.json + subtitle.{ass,srt} + audio.wav(16k单声道, 给后续 ASR) + peaks.bin(波形包络缓存)
@@ -1930,9 +1934,9 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
 /* 敏感值统一走 secret-store(require 在文件头部): bilibili Cookie / LLM API Key 都走密文, 不明文进 settings.json */
-/* fetchJobs 必须在模块作用域(与 prepareJobs/draftJobs 同理): 下载进程的登记表,
- * 若放进请求回调, 一个请求里建的下载在另一个请求里永远查不到(每请求一个新空 Map)。 */
-const fetchJobs = new Map();          // 项目 id -> { proc }
+/* (这里曾有 fetchJobs 下载登记表: 全项目只有写 / 删两个动作, 从无人读取 —— 纯死状态, 已删。
+ *  下载进程要收是靠 CHILDREN 登记表(见文件头部包装过的 spawn), 「完全退出」时统一 kill,
+ *  不需要按项目 id 反查。) */
 
 /** 读 fetch 设置。顺带做两件事：
  *  ① 旧版的**明文** Cookie（fetch.biliCookie）迁成密文（fetch.biliCookieEnc）并清掉明文字段；
@@ -2146,10 +2150,24 @@ function runFetchCli(id, args, onEvent) {
         } catch (e) {
           return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
         }
-        fetchJobs.set(id, { proc });
         let buf = '';
         const result = { error: '', done: null };
+        /* 看门狗: 下载内核卡死时既不报错也不退出 —— 没有它 Promise 永不 settle,
+         * 调用方的 await 永久挂起, 项目永远停在「下载中」(还占着 draftJobs 防重入位)。
+         * 10 分钟没有任何输出(进度行 / stderr 都算)才判卡死, 正常下载会不断重置计时。 */
+        let wd = null, settled = false;
+        const settle = (v) => { if (settled) return; settled = true; if (wd) clearTimeout(wd); resolve(v); };
+        const armWd = () => {
+          if (settled) return;
+          if (wd) clearTimeout(wd);
+          wd = setTimeout(() => {
+            try { proc.kill(); } catch {}
+            settle({ error: '下载超时：10 分钟没有进度输出（网络卡死或下载源无响应），已中止', done: null });
+          }, 10 * 60 * 1000);
+        };
+        armWd();
         const feed = (chunk) => {
+          armWd();
           buf += chunk.toString('utf8');
           let i;
           while ((i = buf.indexOf('\n')) >= 0) {
@@ -2166,11 +2184,12 @@ function runFetchCli(id, args, onEvent) {
         };
         proc.stdout.on('data', feed);
         proc.stderr.on('data', (c) => {
+          armWd();
           const s = c.toString('utf8').trim();
           if (s) pushDraftLog(id, '[下载] ' + s.slice(0, 200));
         });
-        proc.on('error', (e) => { fetchJobs.delete(id); resolve({ error: '下载进程出错: ' + e.message, done: null }); });
-        proc.on('close', () => { fetchJobs.delete(id); resolve(result); });
+        proc.on('error', (e) => settle({ error: '下载进程出错: ' + e.message, done: null }));
+        proc.on('close', () => settle(result));
       });
     })
     .catch((e) => ({ error: '下载进程启动失败: ' + ((e && e.message) || e), done: null }));
@@ -2192,7 +2211,7 @@ async function startFetchJob(id, opts) {
   if (part > 1) args.push('--part', String(part));           // 分P: 链接里自带 ?p=N 时由内核以链接为准
   if (f.proxy) args.push('--proxy', String(f.proxy));
   // Cookie: 明文**不放命令行**（进程列表里谁都能看到），落成项目目录里的 Netscape 文件传过去。
-  // 这份文件本来就是下载内核自己会写的（随项目一起删），这里只是提前写、并改用它。
+  // 这份文件提前写成、传给下载内核；下载结束即删（见本函数下面的 unlink），明文不长期留盘。
   const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
   if (ckPlain) {
     const ckFile = path.join(projDir(id), '_bili_cookies.txt');
@@ -2207,6 +2226,10 @@ async function startFetchJob(id, opts) {
     const p = Math.max(0, Math.min(100, ev.progress));
     setDraft(id, { stage: FETCH_STAGE, progress: 2 + Math.round(p * 0.24), message: ev.msg || '下载中 …' });
   });
+
+  // 明文 cookie 文件用完即删: DPAPI 加密落盘的意义就是明文不长期留盘。
+  // 下载内核已退出不会再读它; 文件不存在时 unlink 抛错被吞。
+  try { fs.unlinkSync(path.join(projDir(id), '_bili_cookies.txt')); } catch {}
 
   if (r.error || !r.done || !r.done.file) {
     return finishDraft(id, new Error(r.error || '下载没有产出文件（检查链接、登录态或画质档位）'), { failedStage: FETCH_STAGE });
@@ -2298,7 +2321,11 @@ function startPrepare(id, videoPath, mode) {
           } catch (e) { return finishPrepare(id, new Error('保存音频/波形失败: ' + e.message)); }
           cleanup();   // 成功分支也要清: peaks.pcm.tmp 是原始 PCM(≈32KB/秒音频),
                        // 漏删会让每个项目长期白占一份与音频等大的临时文件
-          finishPrepare(id, null, { duration, peaksBytes: bytes, audioBytes: fs.statSync(wavOut).size, rate, mode: denoise ? 'denoise' : 'raw' });
+          // statSync 单独兜底: 它若抛错(磁盘瞬断等), prepareJobs 会永久留着 id →
+          // 之后所有 prepare 请求全被 409 挡住。宁可 audioBytes 记 0, 也要让状态收尾。
+          let audioBytes = 0;
+          try { audioBytes = fs.statSync(wavOut).size; } catch {}
+          finishPrepare(id, null, { duration, peaksBytes: bytes, audioBytes, rate, mode: denoise ? 'denoise' : 'raw' });
         });
       });
     });
@@ -2914,10 +2941,17 @@ function startPrepare(id, videoPath, mode) {
 
   /** 把流水线步骤包一层：任何未捕获异常都记成该项目失败，**绝不能带崩整个服务** ——
    *  这些函数都在子进程/回调里被调用，一抛就是进程级崩溃（实测 buildDraftSubtitle
-   *  里引用一个未定义变量就把 server 打挂了）。 */
+   *  里引用一个未定义变量就把 server 打挂了）。
+   *  异步步骤的 reject 也要收 —— try/catch 只接得住同步 throw：startDraftAsr 在
+   *  await detectSilences 处 reject 时（实测 ffmpeg 缺失走的就是这条路），漏接会让
+   *  draftJobs 永远停在 running —— 界面显示"处理中"但没有任何进程在跑，重试按钮
+   *  也被防重入挡住，只能重启服务。 */
   function safeDraftStep(id, fn) {
-    try { return fn(); }
-    catch (e) { finishDraft(id, e); }
+    try {
+      const r = fn();
+      if (r && typeof r.catch === 'function') r.catch((e) => finishDraft(id, e));
+      return r;
+    } catch (e) { finishDraft(id, e); }
   }
 
   /** 重试：按现有产物决定从哪一步续跑 —— 有识别结果就只补翻译（已有译文不重翻），
@@ -2963,7 +2997,7 @@ function startPrepare(id, videoPath, mode) {
     if (wavOk) {
       try { fs.unlinkSync(path.join(projDir(id), 'draft.log')); } catch {}
       setDraft(id, { status: 'running', stage: STAGE.asr, progress: 28, message: '重新识别语音…', error: null, failedStage: '' });
-      startDraftAsr(id, wordLevel);
+      safeDraftStep(id, () => startDraftAsr(id, wordLevel));
       return { ok: true, from: 'asr' };
     }
     pendingAsr.set(id, { wordLevel });
@@ -2984,8 +3018,12 @@ function startPrepare(id, videoPath, mode) {
     rerecogJobs.set(id, job);
     // 收尾时记 finishedAt: GET 路由靠它判断"这条结果已经没人要了", 超时清掉陈旧任务
     const setRr = (patch) => {
-      if (patch && (patch.status === 'done' || patch.status === 'error') && !patch.finishedAt) {
-        patch = Object.assign({}, patch, { finishedAt: new Date().toISOString() });
+      if (patch) {
+        // 每次进展都盖时间戳: GET 路由据此判断任务是否卡死(见那边的自愈逻辑)
+        patch = Object.assign({}, patch, { updatedAt: new Date().toISOString() });
+        if ((patch.status === 'done' || patch.status === 'error') && !patch.finishedAt) {
+          patch.finishedAt = patch.updatedAt;
+        }
       }
       return Object.assign(job, patch);
     };
@@ -3371,7 +3409,8 @@ function startPrepare(id, videoPath, mode) {
 
   /* 静音检测与切片都用 editor/audio-slice.js（真 ffmpeg）—— 抽出去是为了让
      tools/chunk_probe.mjs 能跑**同一份实现**做离线验证，而不是在探针里另抄一遍。 */
-  const detectSilences = (wav, timeoutMs) => audioSlice.detectSilences(FFMPEG, wav, timeoutMs);
+  /* durationSec: 音频总时长 —— 交给 parseSilences 收尾"末尾未闭合的静音"(不传时按 open+0.5 兜底) */
+  const detectSilences = (wav, durationSec) => audioSlice.detectSilences(FFMPEG, wav, undefined, durationSec);
   const sliceAudio = (wav, start, end, out, asMp3) => audioSlice.sliceAudio(FFMPEG, wav, start, end, out, asMp3);
   /** 分片数据落盘（用户要的「返回分片数据」）：projects/<id>/asr-chunks.json + 草稿摘要 */
   function writeChunkReport(id, info) {
@@ -3545,7 +3584,7 @@ function startPrepare(id, videoPath, mode) {
     if (durSec > CHUNK_MIN_SEC) {
       setDraft(id, { stage: STAGE.asr, progress: 30, message: '分析静音，准备分片 …' });
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 音频较长（' + Math.round(durSec / 60) + ' 分钟），先找静音切点 …');
-      chunkSilences = await detectSilences(wav);
+      chunkSilences = await detectSilences(wav, durSec);
       const plan1 = asrChunks.planAudioChunks({ duration: durSec, silences: chunkSilences });
       chunkPlan = plan1.length > 1 ? plan1 : null;
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 找到 ' + chunkSilences.length + ' 段静音 → '
@@ -4028,12 +4067,14 @@ function handleFetchRoutes(req, res, u) {
         if (part > 1) args.push('--part', String(part));
         if (f.proxy) args.push('--proxy', String(f.proxy));
         const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
+        let probeCkFile = '';
         if (ckPlain) {
-          const ckFile = path.join(os.tmpdir(), 'sf-probe-cookies.txt');
-          if (writeNetscapeCookieFile(ckPlain, ckFile)) args.push('--cookies-file', ckFile);
+          probeCkFile = path.join(os.tmpdir(), 'sf-probe-cookies.txt');
+          if (writeNetscapeCookieFile(ckPlain, probeCkFile)) args.push('--cookies-file', probeCkFile);
         } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
-        // id 用 '__probe__': 只用于 fetchJobs 占位，pushDraftLog 写不进去会被静默吞掉
+        // id 用 '__probe__'(不存在的项目): pushDraftLog 写不进去会被静默吞掉, 不会污染真项目
         const r = await runFetchCli('__probe__', args, () => {});
+        if (probeCkFile) { try { fs.unlinkSync(probeCkFile); } catch {} }   // 明文 cookie 用完即删, 不留 %TEMP%
         if (r.error) return sendJson(res, 400, { error: r.error });
         const m = (r.done && r.done.meta) || null;
         if (!m || (!m.title && !m.id)) {
@@ -4412,7 +4453,6 @@ function handleLlmRoutes(req, res, u) {
         .catch(e => sendJson(res, 500, { error: String((e && e.message) || e) }));
     });
   }
-  /* 运行日志 SSE: UI「日志」页实时显示(连接即回放历史缓冲, 之后实时推送) */
   // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
   sendJson(res, 404, { error: 'not found' });
 }
@@ -4420,6 +4460,7 @@ function handleLlmRoutes(req, res, u) {
 /* 路由段: 运行日志 SSE/生命周期/退出 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleLogsRoutes(req, res, u) {
   const pathname = u.pathname;
+  /* 运行日志 SSE: UI「日志」页实时显示(连接即回放历史缓冲, 之后实时推送) */
   if (pathname === '/api/logs/stream' && req.method === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -4491,8 +4532,7 @@ function handleDiagRoutes(req, res, u) {
   }
 
   /* /api/media 只服务登记过的视频路径(见 MEDIA_ALLOW 的定义处注释)。
-   * meta 扫描加 3 秒缓存: 播放视频会发大量 Range 请求, 不能每个请求都把 projects/ 读一遍; */
-  let mediaMetaCache = { at: 0, set: new Set() };
+   * meta 扫描缓存见模块作用域的 mediaMetaCache —— 放段函数里等于没有(每请求执行一次)。 */
   function mediaAllowed(p) {
     if (!p) return false;
     const key = mediaKey(p);
@@ -4781,6 +4821,19 @@ function handleProjectsRoutes(req, res, u) {
         rerecogJobs.delete(id);
         return sendJson(res, 200, { job: null });
       }
+      // 卡死自愈: running 但 20 分钟没有任何进展(updatedAt 由 setRr 每次刷新) → 判失败。
+      // 没有它: 任务一旦 hang 住(如云端识别请求挂起), 上面「已有一个重新识别任务在运行」
+      // 会把按钮永久挡死, 刷新页面也救不回来。
+      if (job && job.status === 'running') {
+        const beat = Date.parse(job.updatedAt || job.startedAt || '') || 0;
+        if (beat && Date.now() - beat > 20 * 60 * 1000) {
+          Object.assign(job, {
+            status: 'error', error: '任务 20 分钟没有进展，已标记失败；可直接重新发起',
+            message: '任务超时', finishedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          });
+          return sendJson(res, 200, { job });
+        }
+      }
       return sendJson(res, 200, { job });
     }
 
@@ -5005,6 +5058,10 @@ function shutdown(reason) {
   // 兜底: 无论如何 4 秒内进程必须消失(端口随之释放)
   setTimeout(() => process.exit(0), 4000);
 }
+/* 控制台 Ctrl+C 等信号也要走同一套收尾 —— 否则 CHILDREN 里的 ffmpeg/Python
+ * 直接变孤儿: 服务没了它们照旧活着(Windows 下继续烧 CPU/显存), 只能去任务管理器杀。 */
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 /* ── 任务栏托盘图标(仅 Windows) ─────────────────────────────────
  * 用系统自带的 PowerShell + WinForms NotifyIcon 实现 —— SEA 版 exe 里装不了 npm 原生

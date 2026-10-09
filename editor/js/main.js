@@ -351,6 +351,9 @@ async function uploadWaveform(file) {
 
 /* ═══════════ 视频加载 ═══════════ */
 function loadVideoUrl(url, name) {
+  // 换视频源前, 释放上一个已确定不再使用的 blob URL(本地文件用完后防泄漏); 同一 URL 不重复 revoke
+  const old = state.videoUrl;
+  if (old && old !== url && String(old).startsWith('blob:')) URL.revokeObjectURL(old);
   video.src = url;
   state.videoUrl = url;
   state.videoLoaded = true;
@@ -1090,10 +1093,15 @@ function initFxControls() {
 }
 
 async function loadSubUrl(url, name) {
-  const resp = await fetch(url);
-  if (!resp.ok) { toast('字幕打开失败：' + resp.status); return; }
-  const text = await resp.text();
-  routeSub(text, name);
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) { toast('字幕打开失败：' + resp.status); return; }
+    const text = await resp.text();
+    routeSub(text, name);
+  } catch (e) {
+    // fetch reject(示例字幕 URL 失败) → 避免 unhandledrejection, 给出用户提示
+    toast('字幕打开失败：' + (e && e.message ? e.message : e));
+  }
 }
 
 function routeSub(text, name) {
