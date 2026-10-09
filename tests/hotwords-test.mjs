@@ -147,5 +147,40 @@ console.log('\n== ⑦ 界面接线：挖掘按钮与候选区的 id 都在 ==');
     '候选带复选框、默认全勾（用户可取消）');
 }
 
+console.log('\n== ⑧ LLM 分析这条链路的接线（踩过的坑都钉住）==');
+{
+  const REPO = path.resolve(HERE, '..');
+  const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
+  const HTML = fs.readFileSync(path.join(REPO, 'editor', 'index.html'), 'utf8');
+  const PJS = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
+
+  // llmChat 必须在**模块作用域** —— 嵌在 handleRequest 里会让模块级的分析函数报
+  // `llmChat is not defined`（实测踩过）
+  const iChat = SRV.indexOf('async function llmChat');
+  const iHandle = SRV.indexOf('function handleRequest');
+  ok(iChat > 0 && iHandle > 0 && iChat < iHandle,
+    '★ llmChat 在 handleRequest **之前**（= 模块作用域）', { iChat, iHandle });
+  ok(/^const LlmError = llmText\.LlmError;$/m.test(SRV), '★ LlmError 也在模块作用域');
+
+  // 分析不能用 jsonMode：Ollama 收到 response_format:json_object 会回空对象 {}
+  const iFn = SRV.indexOf('async function analyzeHotwordsWithLlm');
+  const seg = SRV.slice(iFn, iFn + 3000);
+  ok(/jsonMode: false/.test(seg), '★ 分析这条不用 jsonMode（Ollama 会回空对象）', 'jsonMode');
+  ok(/\/no_think/.test(seg), '★ 带 /no_think（否则推理模型思考吃光预算、正文为空）');
+  ok(/timeoutMs/.test(seg) && /analyzeTimeoutMs/.test(SRV),
+    '★ 分析有自己的超时（推理模型比翻译慢得多）');
+  ok(/analyzeUseTranslate|useTranslate/.test(SRV), '★ 有「跟随翻译」的显式开关');
+
+  // 路由与界面
+  ok(/pathname === '\/api\/analyze\/config'/.test(SRV), '有 /api/analyze/config 路由');
+  for (const id of ['ah-use-llm', 'an-use-translate', 'an-provider', 'an-baseurl', 'an-key', 'an-model', 'an-maxedits']) {
+    ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
+  }
+  ok(/llm=1/.test(PJS), 'project.js 会按开关带 ?llm=1');
+  ok(/hw-mine-tag/.test(PJS) && /hw-mine-tag/.test(
+    fs.readFileSync(path.join(REPO, 'editor', 'css', 'style.css'), 'utf8')),
+    '候选带「模型」来源标记（有样式）');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

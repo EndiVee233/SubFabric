@@ -715,6 +715,17 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .hw-mine-foot { display:flex; gap:6px; align-items:center; margin-top:8px; flex-wrap:wrap; }
 .hw-mine-count { font-size:12px; color:var(--fg-dim); }
 .hw-mine-empty { padding:10px; font-size:12px; line-height:1.6; color:var(--fg-dim); }
+/* 「模型」来源标记：一眼区分规则挖的与模型判断的 */
+.hw-mine-tag {
+  display:inline-block; padding:0 5px; border-radius:4px; font-size:11px; font-weight:400;
+  background:var(--accent-a20, rgba(255,122,69,.18)); color:var(--accent, #ff7a45);
+}
+.hw-llm-toggle {
+  display:flex; gap:8px; align-items:flex-start; margin-top:10px;
+  font-size:12px; line-height:1.5; cursor:pointer;
+}
+.hw-llm-toggle input { flex:none; margin-top:3px; }
+.hw-llm-note { flex:1; min-width:0; color:var(--fg-dim); }
 /* 卡片内的 textarea 不在 flex 行里 → flex:1 无效, 显式全宽 */
 .st-panel .st-area { width:100%; flex:none; display:block; box-sizing:border-box; }
 

@@ -150,12 +150,18 @@ function mineHotwords(entries, opts = {}) {
   const exclude = new Set((opts.exclude || []).map(x => String(x).toLowerCase()));
   const byTerm = new Map();
   let editEntries = 0;
+  /* 原始编辑对也留一份：给 LLM 分析用（它要看到"改前→改后"的原文，
+   * 才能判断"这是专有名词"还是"只是改了个语气词"）。 */
+  const rawEdits = [];
 
   for (const e of list) {
     if (!e || e.action !== 'edit') continue;
     const pairs = parseEditPairs(e.detail);
     if (!pairs.length) continue;
     editEntries++;
+    for (const p of pairs) {
+      rawEdits.push({ target: e.target || '', old: p.old, new: p.new, at: e.t || '' });
+    }
     for (const f of mineFromDetail(e.detail)) {
       const k = f.term.toLowerCase();
       if (exclude.has(k)) continue;
@@ -183,6 +189,7 @@ function mineHotwords(entries, opts = {}) {
 
   return {
     candidates,
+    edits: rawEdits,
     stats: {
       editEntries,
       terms: candidates.length,

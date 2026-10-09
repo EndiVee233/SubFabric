@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 字幕编辑器 - 本地静态服务器
  * 特性:
  *  - 服务 D:\subtitle 整个目录(编辑器页面 / 示例视频 / 示例字幕)
@@ -1013,6 +1013,256 @@ function correctReady(cfg) {
   // 本地部署通常不校验 Key：地址指向本机就放行
   return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(c.baseUrl);
 }
+
+/* ── 热词分析的 LLM 配置 ──────────────────────────────────────────
+ * 与 correctCfg 同一套路：默认**跟随翻译配置**（用户不必配两遍），
+ * 想单独用别的模型时在 asr/settings.json 的 analyze 段覆盖。
+ *
+ * 典型用途（也是做这个功能的原因）：翻译用在线 API（快、便宜），
+ * 热词分析用**本地 Qwen**（不联网、不花钱、可以反复跑）——
+ *   起一个 OpenAI 兼容服务（Ollama: http://127.0.0.1:11434/v1，model=qwen3:8b），
+ *   或者在全局设置里直接选「本地模型」。
+ *
+ * ⚠ 「跟随翻译」用**显式开关** analyze.useTranslate，不靠空值推断 ——
+ *   correctCfg 那边踩过：用"baseUrl 与 model 都为空 ⇒ 跟随"推断时，
+ *   用户取消勾选、还没填地址，服务端又算回"跟随"，勾选框被回弹、根本取消不掉。
+ */
+function analyzeUseTranslate(raw) {
+  const t = raw || {};
+  if (typeof t.useTranslate === 'boolean') return t.useTranslate;
+  return !String(t.baseUrl || '').trim() && !String(t.model || '').trim();
+}
+
+function analyzeCfg() {
+  const t = (readAsrSettings().analyze) || {};
+  const base = translateCfg();
+  const follow = analyzeUseTranslate(t);
+  // 跟随时要管的字段一律从 f 取，不能从 t 取（否则开关看似生效、实际没生效）
+  const f = follow ? {} : t;
+  const provider = f.provider || '';
+  const preset = LLM_PRESETS.find(p => p.id === provider) || null;
+  const pick = (v, fb) => (v === undefined || v === null || String(v).trim() === '') ? fb : String(v).trim();
+  return {
+    provider: provider || base.provider,
+    baseUrl: pick(f.baseUrl, preset ? preset.baseUrl : base.baseUrl),
+    apiKey: pick(f.apiKey, base.apiKey),
+    model: pick(f.model, preset ? preset.model : base.model),
+    // 分析一次只回一小段 JSON，但**推理模型（qwen3 等）会先想一大段再答**——
+    // 预算给小了会只吐思考、content 为空。默认 4096（实测 qwen3:8b 思考约 1500-2500 token）。
+    maxTokens: Math.max(512, Math.min(8192, parseInt(t.maxTokens, 10) || 8192)),
+    // 一次最多送几条编辑给模型（多了既费钱又容易让它抓不住重点）
+    maxEdits: Math.max(5, Math.min(80, parseInt(t.maxEdits, 10) || 40)),
+    useTranslate: follow,
+  };
+}
+
+/** 分析配置是否可用（要能发请求：有 baseUrl + model，且要么有 Key 要么是本地地址） */
+function analyzeReady(cfg) {
+  const c = cfg || analyzeCfg();
+  if (!c.baseUrl || !c.model) return false;
+  if (c.apiKey) return true;
+  return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(c.baseUrl);
+}
+
+/* 热词分析的请求超时。
+ * ⚠ 不能沿用 llmChat 默认的 120s：**推理模型（qwen3 等）会先想一大段**，
+ *   本地 8B 冷启动 + 思考实测能超过 120s（qwen3:8b 实测 120s 直接超时）。
+ *   而这是用户**主动点一下**才发起的操作，等几分钟是可接受的 —— 宁可慢也不要假失败。
+ *   翻译/纠错那种批量调用仍走默认 120s（它们要跑很多批，单批不能太久）。 */
+function analyzeTimeoutMs() {
+  const n = Number(process.env.SUBFABRIC_ANALYZE_TIMEOUT_MS);
+  if (Number.isFinite(n) && n > 0) return Math.min(1800000, n);
+  return 600000;   // 10 分钟
+}
+
+/**
+ * 让 LLM 看一遍"用户改了哪些词"，挑出值得进热词表的。
+ *
+ * 为什么规则挖完还要 LLM：
+ *   · 规则只能看**这一条**编辑，看不出"这个词在好几条里被改成了不同的写法"（其实还是同一个词）
+ *   · 分不清同一个词的不同写法哪个才是标准形（Bdubs / B-Dubs / bdubs）
+ *   · 判断不了"这个词是 Minecraft 里的专有名词"还是"用户只是顺手改了个语气词"
+ *   · 反过来也漏：用户把整句重写了，规则直接跳过，但里面可能就有个专名
+ *
+ * 返回的每条都带 `why`（模型的理由），界面上直接显示给用户看 —— 让用户能反驳。
+ */
+/* =========== LLM call plumbing (single entry point) ===========
+ * These blocks used to live INSIDE handleRequest. Hotword analysis needs to call
+ * llmChat from MODULE scope; nesting it there gave `llmChat is not defined` (hit this).
+ * Hoisting is safe: they only depend on llmText (module-level require), fs, console.
+ * ============================================================== */
+/* ⚠ LlmError 也得在这里：llmChat 现在跑在模块作用域，它抛的正是这个类。
+ *   原来 handleRequest 里那行 `const LlmError = llmText.LlmError` 是同一份东西。 */
+const LlmError = llmText.LlmError;
+/** 诊断转储: 只有设了 SUBFABRIC_LLM_DEBUG=1 才写（默认不留痕 —— 里面是字幕原文与接口回复） */
+const LLM_DEBUG = process.env.SUBFABRIC_LLM_DEBUG === '1';
+function dumpLlmDebug(file, rec) {
+  if (!LLM_DEBUG || !file) return;
+  try {
+    fs.appendFileSync(file, JSON.stringify(Object.assign({ t: new Date().toISOString() }, rec)) + '\n');
+  } catch {}
+}
+
+/* ── LLM 调用（唯一的出口）─────────────────────────────────────
+ * 用户报「翻译会失效、原因从来定位不到」，根因都在这几行上，逐条治：
+ *  ① **思维链**：推理模型(DeepSeek-R1/QwQ/GLM-Z1/Qwen3-thinking…)正文前有  thinking…，
+ *     以前完全没剥 → 取 JSON 被思考里的示例数组带偏、逐行兜底把思考当译文 → 行数不符 → 失败。现在统一剥掉。
+ *  ② **超时**：以前 fetch 没有超时，服务商挂起就永远等（表现就是"卡住/失效"）。现在 120s（可用 SUBFABRIC_LLM_TIMEOUT_MS 调）。
+ *  ③ **自适应 max_tokens**：以前固定 4096，25 行一批 + 思考 token 会被砍成半截 JSON；现在按批量估算。
+ *  ④ **错误分型**：net/rate/timeout → 退避重试（尊重 Retry-After）；truncated → 交给调用方拆批（原样重试必然再失败）；
+ *     empty → 明确说"模型只吐了思考过程"；format → 换提示词策略。
+ *  ⑤ **可见性**：每次失败都 console.error 一条（进应用「日志」页 SSE），带 HTTP 状态/finish_reason/原始回复前 300 字；
+ *     设 SUBFABRIC_LLM_DEBUG=1 还会把完整请求+回复落到 projects/<id>/llm-debug.jsonl。
+ * ──────────────────────────────────────────────────────────── */
+const LLM_TIMEOUT_MS = Number(process.env.SUBFABRIC_LLM_TIMEOUT_MS) || 120000;
+
+async function llmChat(cfg, messages, opts) {
+  const o = opts || {};
+  const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  const maxTokens = Math.max(256, Math.min(16384, Number(o.maxTokens) || 4096));
+  /* 超时：优先 cfg.timeoutMs（按次覆盖，热词分析会用 —— 推理模型慢），
+   * 其次 opts.timeoutMs，最后默认值。 */
+  const timeoutMs = Number(cfg.timeoutMs || o.timeoutMs) || LLM_TIMEOUT_MS;
+  const reqBody = { model: cfg.model, messages, temperature: 0.3, max_tokens: maxTokens };
+  if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
+  let resp = null, text = '', body = null;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+      body: JSON.stringify(reqBody),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    const timeout = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
+    const msg = timeout ? `请求超时（${Math.round(timeoutMs / 1000)}s）` : ('网络错误：' + ((e && e.message) || e));
+    console.error(`[llm] ${msg}  url=${url} model=${cfg.model}`);
+    throw new LlmError(msg, timeout ? 'timeout' : 'net');
+  }
+  const retryAfter = Number(resp.headers.get('retry-after')) || 0;
+  try { text = await resp.text(); } catch { text = ''; }
+  try { body = JSON.parse(text); } catch { body = null; }
+  if (!resp.ok) {
+    const detail = (body && body.error && (body.error.message || JSON.stringify(body.error))) || text.slice(0, 300) || ('HTTP ' + resp.status);
+    const kind = resp.status === 429 ? 'rate' : (resp.status >= 500 ? 'net' : 'http');
+    console.error(`[llm] HTTP ${resp.status}（${kind}）model=${cfg.model}：${String(detail).slice(0, 300)}`);
+    throw new LlmError(`HTTP ${resp.status}：${String(detail).slice(0, 300)}`, kind, { status: resp.status, retryAfter });
+  }
+  const choice = body && body.choices && body.choices[0];
+  const message = choice && choice.message;
+  const finishReason = choice && choice.finish_reason;
+  const rawContent = (message && typeof message.content === 'string') ? message.content : '';
+  // 思考文本的字段名各家不同：OpenAI/DeepSeek 用 reasoning_content，**Ollama 用 reasoning**。
+  // 只认前者的话，本地 Qwen3 被截断时会报成"接口返回内容为空"，看不出真实原因（实测踩过）。
+  const reasoning = (message && typeof message.reasoning_content === 'string') ? message.reasoning_content
+    : ((message && typeof message.reasoning === 'string') ? message.reasoning : '');
+  const content = llmText.stripReasoning(rawContent);
+  const debugBase = { kind: o.kind || '', model: cfg.model, status: resp.status, finishReason, maxTokens };
+
+  if (!content) {
+    const why = reasoning
+      ? `模型只返回了思考过程，content 为空（思考 ${reasoning.length} 字, finish_reason=${finishReason || '?'}）。多为 max_tokens 不够，或该模型不支持非流式输出`
+      : `接口返回内容为空（finish_reason=${finishReason || '?'}）`;
+    console.error(`[llm] ${why} model=${cfg.model}`);
+    dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000), reasoning: reasoning.slice(0, 4000) }, debugBase));
+    throw new LlmError(why, 'empty', { finishReason });
+  }
+  if (finishReason === 'length') {
+    const why = `输出被 max_tokens 截断（finish_reason=length, max_tokens=${maxTokens}, 已收到 ${content.length} 字）。把「每批行数」调小后重试`;
+    console.error(`[llm] ${why}`);
+    dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000) }, debugBase));
+    throw new LlmError(why, 'truncated', { finishReason, partial: content, maxTokens });
+  }
+  if (llmText.looksLikeReasoning(rawContent)) {
+    dumpLlmDebug(o.debugFile, Object.assign({ note: '含思维链，已剥离', messages, raw: rawContent.slice(0, 20000), stripped: content.slice(0, 4000) }, debugBase));
+  }
+  return { content, finishReason, status: resp.status, maxTokens, strippedReasoning: rawContent.length !== content.length };
+}
+
+async function analyzeHotwordsWithLlm(edits) {
+  const cfg = analyzeCfg();
+  if (!analyzeReady(cfg)) {
+    const err = new Error('分析模型没配好：需要在「全局设置」里填接口地址与模型名（本地地址免 Key）');
+    err.code = 'not-ready';
+    throw err;
+  }
+  const list = edits.slice(0, cfg.maxEdits);
+  const payload = list.map((e, i) => ({
+    i: i + 1,
+    at: e.target || '',
+    before: e.old || '',
+    after: e.new || '',
+  }));
+  const sys = [
+    '你在帮一个字幕工具整理「ASR 热词表」。',
+    '热词表会喂给语音识别模型，让它在下一份稿子里更倾向识别出这些词。',
+    '',
+    '用户给的是「他对 ASR 结果做过的修改」：before 是识别出来的，after 是他改成的。',
+    '用户改对了的那个词，往往就是 ASR 听错的专有名词 —— 把它加进热词表，下次就不会再错。',
+    '',
+    '请挑出**值得进热词表**的词，判定标准：',
+    '1) 必须是**专有名词或领域术语**：人名、地名、组织名、游戏/作品里的名词、缩写、技术术语；',
+    '2) **常见的普通词一律不要**（the / and / home / 然后 / 这个），哪怕用户改过它；',
+    '3) 纯语气词、断句调整、标点修正 **不要**；',
+    '4) 同一个词的多种写法只能选**一个**标准形（优先用户 after 里那个写法）；',
+    '5) 拿不准就不要给 —— 热词加错了会让识别模型**反复吐这个词**，宁可少给。',
+    '',
+    '严格只输出一个 JSON 数组，不要解释、不要代码块。格式：',
+    '[{"term":"标准写法","heard":"原来被识别成什么（没有就空串）","why":"一句话理由","ids":[相关的 i]}]',
+    '没有任何合适的词就输出 []。',
+    /* ⚠ /no_think 是给**推理模型**（Qwen3 等，Ollama 走的 OpenAI 兼容层）看的开关。
+     *   实测 qwen3:8b 在这个任务上会思考 6500+ 字，把 max_tokens 吃光、
+     *   finish_reason=length、正文一个字都不吐（服务端只会报"content 为空"）。
+     *   这个任务是"照着规则挑词"，不需要长链推理 —— 关掉思考又快又稳。
+     *   不认识的模型会把这行当普通文本忽略，无副作用。 */
+    '/no_think',
+  ].join('\n');
+  const r = await llmChat(Object.assign({}, cfg, { timeoutMs: analyzeTimeoutMs() }), [
+    { role: 'system', content: sys },
+    { role: 'user', content: JSON.stringify(payload) },
+  ], {
+    /* ⚠ 这里**不能**用 jsonMode。
+     * jsonMode 会发 `response_format: {type:'json_object'}`，而我们要的是**数组**；
+     * Ollama 的 OpenAI 兼容层收到这个字段就要求必须回一个对象，
+     * 于是 qwen3:8b 直接回了空对象 `{}`（实测踩过）。
+     * 改成靠下面的"从回复里抠第一个 JSON 数组"来容错，对各家都稳。 */
+    jsonMode: false,
+    maxTokens: cfg.maxTokens,
+  });
+
+  const content = (r && r.content) || '';
+  // 模型常把 JSON 包在代码块里，或前后带话 → 抠出第一个数组
+  let arr = null;
+  const direct = content.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  try { arr = JSON.parse(direct); } catch { /* 往下抠 */ }
+  if (!Array.isArray(arr)) {
+    const m = content.match(/\[[\s\S]*\]/);
+    if (m) { try { arr = JSON.parse(m[0]); } catch { /* 放弃 */ } }
+  }
+  if (!Array.isArray(arr)) {
+    const err = new Error('分析模型没有返回可解析的 JSON 数组（实际返回：' + content.slice(0, 120) + '）');
+    err.code = 'bad-json';
+    throw err;
+  }
+  const out = [];
+  const seen = new Set();
+  for (const it of arr) {
+    if (!it || typeof it !== 'object') continue;
+    const term = String(it.term == null ? '' : it.term).trim();
+    if (!term) continue;
+    const k = term.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({
+      term,
+      heard: String(it.heard == null ? '' : it.heard).trim(),
+      why: String(it.why == null ? '' : it.why).trim().slice(0, 200),
+      ids: Array.isArray(it.ids) ? it.ids.filter(x => Number.isFinite(+x)).map(Number).slice(0, 8) : [],
+    });
+  }
+  return { terms: out, sent: list.length, model: cfg.model, viaTranslate: !!cfg.useTranslate };
+}
+
 /** 翻译配置的对外视图: 明文 Key 绝不回传(与 fetchPublicSettings 同一约定) */
 function translateCfgPublic(cfg) {
   const c = Object.assign({}, cfg || {});
@@ -1095,6 +1345,31 @@ const llmReady = (cfg) => {
   if (cfg.provider === 'nllb-local') return !!localMt().probe().modelOk;
   return !!(cfg.baseUrl && cfg.apiKey && cfg.model);
 };
+
+/** 保存热词分析的 LLM 配置（asr/settings.json 的 analyze 段）。
+ *  与 saveTranslateCfg 同一套：provider 切换跟随预设、apiKey 加密落盘、空串=不改。 */
+function saveAnalyzeCfg(patch) {
+  const s = readAsrSettings();
+  const cur = Object.assign({}, s.analyze || {});
+  if (patch.provider && patch.provider !== cur.provider) {
+    const preset = LLM_PRESETS.find(p => p.id === patch.provider);
+    if (preset) { cur.baseUrl = preset.baseUrl; cur.model = preset.model; }
+  }
+  const p = Object.assign({}, patch);
+  if (Object.prototype.hasOwnProperty.call(p, 'apiKey')) {
+    const v = String(p.apiKey || '');
+    delete p.apiKey;
+    if (v) {
+      try { p.apiKeyEnc = secretStore.encrypt(v); }
+      catch (e) { console.error('[analyze] API Key 加密失败, 暂按明文存:', e && e.message); p.apiKey = v; }
+    }
+  }
+  if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }
+  delete cur.apiKey;
+  s.analyze = Object.assign(cur, p);
+  writeAsrSettings(s);
+  return analyzeCfg();
+}
 
 /* ═══════════ 识别提示词 / 热词(提升专有名词识别率) ═══════════
  * 两个引擎各有各的注入方式, 实测(2026-09-25, 本机):
@@ -4117,87 +4392,6 @@ function startPrepare(id, videoPath, mode) {
   const parseTranslationReply = llmText.parseLineArrayReply;
   const LlmError = llmText.LlmError;
 
-  /** 诊断转储: 只有设了 SUBFABRIC_LLM_DEBUG=1 才写（默认不留痕 —— 里面是字幕原文与接口回复） */
-  const LLM_DEBUG = process.env.SUBFABRIC_LLM_DEBUG === '1';
-  function dumpLlmDebug(file, rec) {
-    if (!LLM_DEBUG || !file) return;
-    try {
-      fs.appendFileSync(file, JSON.stringify(Object.assign({ t: new Date().toISOString() }, rec)) + '\n');
-    } catch {}
-  }
-
-  /* ── LLM 调用（唯一的出口）─────────────────────────────────────
-   * 用户报「翻译会失效、原因从来定位不到」，根因都在这几行上，逐条治：
-   *  ① **思维链**：推理模型(DeepSeek-R1/QwQ/GLM-Z1/Qwen3-thinking…)正文前有  thinking…，
-   *     以前完全没剥 → 取 JSON 被思考里的示例数组带偏、逐行兜底把思考当译文 → 行数不符 → 失败。现在统一剥掉。
-   *  ② **超时**：以前 fetch 没有超时，服务商挂起就永远等（表现就是"卡住/失效"）。现在 120s（可用 SUBFABRIC_LLM_TIMEOUT_MS 调）。
-   *  ③ **自适应 max_tokens**：以前固定 4096，25 行一批 + 思考 token 会被砍成半截 JSON；现在按批量估算。
-   *  ④ **错误分型**：net/rate/timeout → 退避重试（尊重 Retry-After）；truncated → 交给调用方拆批（原样重试必然再失败）；
-   *     empty → 明确说"模型只吐了思考过程"；format → 换提示词策略。
-   *  ⑤ **可见性**：每次失败都 console.error 一条（进应用「日志」页 SSE），带 HTTP 状态/finish_reason/原始回复前 300 字；
-   *     设 SUBFABRIC_LLM_DEBUG=1 还会把完整请求+回复落到 projects/<id>/llm-debug.jsonl。
-   * ──────────────────────────────────────────────────────────── */
-  const LLM_TIMEOUT_MS = Number(process.env.SUBFABRIC_LLM_TIMEOUT_MS) || 120000;
-
-  async function llmChat(cfg, messages, opts) {
-    const o = opts || {};
-    const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-    const maxTokens = Math.max(256, Math.min(16384, Number(o.maxTokens) || 4096));
-    const reqBody = { model: cfg.model, messages, temperature: 0.3, max_tokens: maxTokens };
-    if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
-    let resp = null, text = '', body = null;
-    try {
-      resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
-        body: JSON.stringify(reqBody),
-        signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
-      });
-    } catch (e) {
-      const timeout = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
-      const msg = timeout ? `请求超时（${Math.round(LLM_TIMEOUT_MS / 1000)}s）` : ('网络错误：' + ((e && e.message) || e));
-      console.error(`[llm] ${msg}  url=${url} model=${cfg.model}`);
-      throw new LlmError(msg, timeout ? 'timeout' : 'net');
-    }
-    const retryAfter = Number(resp.headers.get('retry-after')) || 0;
-    try { text = await resp.text(); } catch { text = ''; }
-    try { body = JSON.parse(text); } catch { body = null; }
-    if (!resp.ok) {
-      const detail = (body && body.error && (body.error.message || JSON.stringify(body.error))) || text.slice(0, 300) || ('HTTP ' + resp.status);
-      const kind = resp.status === 429 ? 'rate' : (resp.status >= 500 ? 'net' : 'http');
-      console.error(`[llm] HTTP ${resp.status}（${kind}）model=${cfg.model}：${String(detail).slice(0, 300)}`);
-      throw new LlmError(`HTTP ${resp.status}：${String(detail).slice(0, 300)}`, kind, { status: resp.status, retryAfter });
-    }
-    const choice = body && body.choices && body.choices[0];
-    const message = choice && choice.message;
-    const finishReason = choice && choice.finish_reason;
-    const rawContent = (message && typeof message.content === 'string') ? message.content : '';
-    // 思考文本的字段名各家不同：OpenAI/DeepSeek 用 reasoning_content，**Ollama 用 reasoning**。
-    // 只认前者的话，本地 Qwen3 被截断时会报成"接口返回内容为空"，看不出真实原因（实测踩过）。
-    const reasoning = (message && typeof message.reasoning_content === 'string') ? message.reasoning_content
-      : ((message && typeof message.reasoning === 'string') ? message.reasoning : '');
-    const content = llmText.stripReasoning(rawContent);
-    const debugBase = { kind: o.kind || '', model: cfg.model, status: resp.status, finishReason, maxTokens };
-
-    if (!content) {
-      const why = reasoning
-        ? `模型只返回了思考过程，content 为空（思考 ${reasoning.length} 字, finish_reason=${finishReason || '?'}）。多为 max_tokens 不够，或该模型不支持非流式输出`
-        : `接口返回内容为空（finish_reason=${finishReason || '?'}）`;
-      console.error(`[llm] ${why} model=${cfg.model}`);
-      dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000), reasoning: reasoning.slice(0, 4000) }, debugBase));
-      throw new LlmError(why, 'empty', { finishReason });
-    }
-    if (finishReason === 'length') {
-      const why = `输出被 max_tokens 截断（finish_reason=length, max_tokens=${maxTokens}, 已收到 ${content.length} 字）。把「每批行数」调小后重试`;
-      console.error(`[llm] ${why}`);
-      dumpLlmDebug(o.debugFile, Object.assign({ error: why, messages, raw: rawContent.slice(0, 20000) }, debugBase));
-      throw new LlmError(why, 'truncated', { finishReason, partial: content, maxTokens });
-    }
-    if (llmText.looksLikeReasoning(rawContent)) {
-      dumpLlmDebug(o.debugFile, Object.assign({ note: '含思维链，已剥离', messages, raw: rawContent.slice(0, 20000), stripped: content.slice(0, 4000) }, debugBase));
-    }
-    return { content, finishReason, status: resp.status, maxTokens, strippedReasoning: rawContent.length !== content.length };
-  }
 
   /** 落盘译文（每批一次），服务重启/刷新后可续翻 */
   function saveTranslations(id, model, lines) {
@@ -6046,6 +6240,36 @@ function startPrepare(id, videoPath, mode) {
     return sendJson(res, 405, { error: '仅支持 GET / POST' });
   }
 
+  /* 热词分析的模型配置（全局设置里选）—— 存 asr/settings.json 的 analyze 段。
+   * 默认跟随翻译配置；想单独用别的模型（典型：翻译用在线、分析用本地 Qwen）就关掉跟随。
+   * GET 顺带把 LLM_PRESETS 给前端填下拉框，并把"跟随翻译时实际会用哪个模型"讲清楚。 */
+  if (pathname === '/api/analyze/config' && req.method === 'GET') {
+    const c = analyzeCfg();
+    const t = translateCfg();
+    return sendJson(res, 200, {
+      presets: LLM_PRESETS,
+      cfg: translateCfgPublic(c),
+      ready: analyzeReady(c),
+      useTranslate: !!c.useTranslate,
+      translate: { provider: t.provider, baseUrl: t.baseUrl, model: t.model, ready: llmReady(t) },
+      hasKey: !!c.apiKey,
+      limits: { maxEdits: c.maxEdits, maxTokens: c.maxTokens },
+    });
+  }
+  if (pathname === '/api/analyze/config' && req.method === 'POST') {
+    return readBody(req, res, 256 * 1024, (err, body) => {
+      if (err) return sendJson(res, 413, { error: '请求体过大' });
+      let p = {};
+      try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const keep = {};
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'useTranslate', 'maxEdits']) {
+        if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
+      }
+      const c = saveAnalyzeCfg(keep);
+      return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: analyzeReady(c), useTranslate: !!c.useTranslate });
+    });
+  }
+
   /* 从操作日志挖 ASR 热词候选 —— 用户把 A 改成 B，就是"B 才是对的词"的弱标注。
    * 把 B 喂回 ASR 当热词，下一份稿子就不会再听错（越用越准的闭环）。
    *
@@ -6066,11 +6290,43 @@ function startPrepare(id, videoPath, mode) {
       const cur = asrTerms();
       const entries = readOpLog(pid);
       const r = hotwordsMod.mineHotwords(entries, { exclude: cur.terms });
-      return sendJson(res, 200, {
+      const wantLlm = /[?&]llm=1\b/.test(req.url || '');
+      const base = {
         candidates: r.candidates,
         stats: r.stats,
         current: { terms: cur.terms, score: cur.score },
-      });
+      };
+      if (!wantLlm) {
+        const c = analyzeCfg();
+        return sendJson(res, 200, Object.assign(base, {
+          llm: { requested: false, ready: analyzeReady(c), model: c.model, useTranslate: !!c.useTranslate },
+        }));
+      }
+      /* ── LLM 分析（可选）──
+       * 规则挖出来的候选先照常返回，LLM 的部分单独放在 llmTerms 里 ——
+       * 这样模型挂了也不会连规则的结果一起丢掉。
+       * ⚠ handleRequest 是同步函数，这里用 IIFE 包一层异步（与其它异步路由同一套路）。 */
+      const cfgA = analyzeCfg();
+      (async () => {
+        try {
+          const llm = await analyzeHotwordsWithLlm(r.edits || []);
+          sendJson(res, 200, Object.assign(base, {
+            llmTerms: llm.terms,
+            llm: { requested: true, ok: true, sent: llm.sent, model: llm.model, viaTranslate: llm.viaTranslate },
+          }));
+        } catch (e) {
+          sendJson(res, 200, Object.assign(base, {
+            llmTerms: [],
+            llm: {
+              requested: true, ok: false,
+              code: e.code || 'error',
+              error: String((e && e.message) || e).slice(0, 300),
+              ready: analyzeReady(cfgA), model: cfgA.model, useTranslate: !!cfgA.useTranslate,
+            },
+          }));
+        }
+      })();
+      return;
     }
 
     if (req.method === 'POST') {

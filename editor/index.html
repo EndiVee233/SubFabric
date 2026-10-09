@@ -1553,6 +1553,13 @@
               <button type="button" class="btn btn-mini btn-accent" id="ah-mine-apply">加入选中的热词</button>
               <span class="hw-mine-count" id="ah-mine-count"></span>
             </div>
+            <!-- 交给 LLM 再筛一遍：规则只看单条编辑，看不出"同一个词被改成了好几种写法"，
+                 也分不清哪是专名、哪只是语气词。默认不开（要花 token / 等模型）。 -->
+            <label class="hw-llm-toggle">
+              <input type="checkbox" id="ah-use-llm">
+              <span>交给 LLM 再分析一遍</span>
+              <span class="hw-llm-note" id="ah-llm-note">用模型判断哪些真是专有名词（模型在下面「用于分析热词的模型」里选）</span>
+            </label>
           </div>
         </div>
         <div class="st-card">
@@ -1677,6 +1684,41 @@
             <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" style="max-width:120px">
             <span class="gl-hint" style="flex:1">实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6</span>
           </div>
+        </div>
+        <!-- 热词分析用的模型：默认跟随「翻译」那套配置，不必配两遍。
+             想单独用别的模型（典型：翻译用在线 API，分析用**本地 Qwen**，不联网不花钱、
+             可以反复跑）就关掉「跟随翻译」，自己填地址与模型名。
+             本地 OpenAI 兼容服务（Ollama）地址形如 http://127.0.0.1:11434/v1，本机地址免 Key。 -->
+        <div class="st-card">
+          <div class="st-card-title">用于分析热词的模型
+            <span class="st-card-note">从操作日志挖热词时，用哪个模型判断"这词是不是专有名词"</span>
+          </div>
+          <div class="st-row" style="margin-bottom:8px">
+            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
+              <input type="checkbox" id="an-use-translate" checked> 跟随字幕翻译的模型
+            </label>
+            <span class="gl-hint" style="flex:1" id="an-follow-note">跟着「翻译」页里配的那套走</span>
+          </div>
+          <div class="st-grid" id="an-fields">
+            <span class="st-lbl">服务商</span>
+            <select id="an-provider" class="st-select"></select>
+            <span class="st-lbl">接口地址</span>
+            <input type="text" id="an-baseurl" class="st-input" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
+            <span class="st-lbl">API Key</span>
+            <input type="password" id="an-key" class="st-input" spellcheck="false" placeholder="本地地址免填">
+            <span class="st-lbl">模型名</span>
+            <input type="text" id="an-model" class="st-input" spellcheck="false" placeholder="qwen3:8b">
+            <span class="st-lbl">最多送几条编辑</span>
+            <input type="number" id="an-maxedits" class="st-input" min="5" max="80" step="5" value="40" style="max-width:120px">
+          </div>
+          <p class="gl-hint" id="an-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="an-key-clear" class="st-key-clear">清除已存 Key</a></p>
+          <p class="gl-hint" id="an-status"></p>
+          <p class="gl-hint">
+            <b>本地 Qwen</b>：起一个 OpenAI 兼容服务（Ollama 装好后地址填
+            <code>http://127.0.0.1:11434/v1</code>、模型名填 <code>qwen3:8b</code>），本机地址免 API Key。
+            <b>在线</b>：选 DeepSeek 等，填 Key 即可（要花钱，但一次只送几十条编辑、很便宜）。
+            跟随翻译时这里留空也不会报错，直接用翻译那套。
+          </p>
         </div>
       </div>
     </div>
