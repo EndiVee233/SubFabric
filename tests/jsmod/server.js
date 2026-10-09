@@ -26,6 +26,7 @@ const alignMod = require('./align.js');           // 逐词时间重对齐(TTS �
 const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有说话、没字幕覆盖的区间
 const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
+const hotwordsMod = require('./hotwords.js');       // 从操作日志挖 ASR 热词候选(纯逻辑, 有单测)
 
 /* ── 本地翻译引擎（NLLB / CTranslate2）──
  * 惰性单例：第一次真正要翻的时候才起服务（起一次要载入 600MB 模型，十几秒）。
@@ -6040,6 +6041,72 @@ function startPrepare(id, videoPath, mode) {
         const keep = {};
         for (const k of ['prompt', 'hotwordsScore']) if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
         return sendJson(res, 200, { hint: saveAsrHint(keep) });
+      });
+    }
+    return sendJson(res, 405, { error: '仅支持 GET / POST' });
+  }
+
+  /* 从操作日志挖 ASR 热词候选 —— 用户把 A 改成 B，就是"B 才是对的词"的弱标注。
+   * 把 B 喂回 ASR 当热词，下一份稿子就不会再听错（越用越准的闭环）。
+   *
+   * GET  /api/projects/:id/hotword-candidates
+   *        → { candidates:[{term,count,edits,samples,lastAt,score}], stats, current:[已有热词] }
+   * POST /api/projects/:id/hotword-candidates  { selected:[词] }
+   *        → 把选中的词**追加**进识别提示词（不覆盖用户已有的），返回新的热词表
+   *
+   * 注意：**只加不减**。用户手动删掉的词不会被这里重新加回来 —— 因为
+   * 挖矿结果先给用户勾选，勾了才写；没勾的不会动。
+   */
+  const mHot = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/hotword-candidates$/.exec(pathname);
+  if (mHot) {
+    const pid = mHot[1];
+    if (!fs.existsSync(projDir(pid))) return sendJson(res, 404, { error: '项目不存在' });
+
+    if (req.method === 'GET') {
+      const cur = asrTerms();
+      const entries = readOpLog(pid);
+      const r = hotwordsMod.mineHotwords(entries, { exclude: cur.terms });
+      return sendJson(res, 200, {
+        candidates: r.candidates,
+        stats: r.stats,
+        current: { terms: cur.terms, score: cur.score },
+      });
+    }
+
+    if (req.method === 'POST') {
+      return readBody(req, res, 256 * 1024, (err, body) => {
+        if (err) return sendJson(res, 413, { error: '请求体过大' });
+        let p = {};
+        try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const picked = Array.isArray(p.selected) ? p.selected : [];
+        if (!picked.length) return sendJson(res, 400, { error: '没有选中任何热词' });
+
+        const cur = asrTerms();
+        const seen = new Set(cur.terms.map(t => String(t).toLowerCase()));
+        const added = [];
+        for (const raw of picked) {
+          const w = String(raw == null ? '' : raw).trim();
+          if (!w) continue;
+          if (seen.has(w.toLowerCase())) continue;
+          seen.add(w.toLowerCase());
+          added.push(w);
+        }
+        if (!added.length) {
+          return sendJson(res, 200, { added: [], terms: cur.terms, note: '选中的词都已经在热词表里了' });
+        }
+        /* 写进 prompt（逗号分隔）—— 它与术语表「原文」列一起会被 asrTerms() 汇总。
+         * ⚠ 保留用户原有的写法与顺序：只在末尾追加，不做任何重排。 */
+        const oldPrompt = String(asrHintCfg().prompt || '').trim();
+        const nextPrompt = oldPrompt ? (oldPrompt.replace(/[,\s]+$/, '') + ', ' + added.join(', ')) : added.join(', ');
+        const hint = saveAsrHint({ prompt: nextPrompt });
+        appendOpLog(pid, {
+          action: 'hotwords',
+          target: `${added.length} 个词`,
+          detail: `从操作日志挖出的热词已加入：${added.join(', ')}`,
+          why: '你在字幕里把这些词改对过，加进热词表后下次识别不会再听错',
+        });
+        const after = asrTerms();
+        return sendJson(res, 200, { added, hint, terms: after.terms, score: after.score });
       });
     }
     return sendJson(res, 405, { error: '仅支持 GET / POST' });

@@ -1535,6 +1535,25 @@
           <div id="ah-terms-list" class="hotword-list"></div>
           <button type="button" class="btn btn-mini" id="ah-add">＋ 添加热词</button>
           <p class="gl-hint">whisper 用作初始提示词，Parakeet 用作热词加权。术语表的「原文」列会自动并进来。</p>
+
+          <!-- 从操作日志挖热词：用户把 A 改成 B，就是"B 才是对的词"的弱标注。
+               把 B 喂回 ASR 当热词，下一份稿子就不会再听错（越用越准的闭环）。
+               ⚠ 只挖不给：**必须用户勾选**才写进热词表，绝不自动加。 -->
+          <div class="hw-mine">
+            <div class="hw-mine-head">
+              <button type="button" class="btn btn-mini btn-accent" id="ah-mine">🔍 从操作日志挖掘</button>
+              <span class="hw-mine-hint" id="ah-mine-hint">
+                你在字幕里改对过的专有名词，就是 ASR 听错的词 —— 挖出来加进热词，下次就不会再错
+              </span>
+            </div>
+            <div class="hw-mine-list" id="ah-mine-list" hidden></div>
+            <div class="hw-mine-foot" id="ah-mine-foot" hidden>
+              <button type="button" class="btn btn-mini" id="ah-mine-all">全选</button>
+              <button type="button" class="btn btn-mini" id="ah-mine-none">全不选</button>
+              <button type="button" class="btn btn-mini btn-accent" id="ah-mine-apply">加入选中的热词</button>
+              <span class="hw-mine-count" id="ah-mine-count"></span>
+            </div>
+          </div>
         </div>
         <div class="st-card">
           <div class="st-card-title">LLM 分角色 <span class="st-card-note">用视频简介推断人物，再把说话人对应到角色名</span></div>
