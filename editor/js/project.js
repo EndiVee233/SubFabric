@@ -1602,6 +1602,8 @@ export function initProjects(ctx) {
     $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
     $('#np-row-part').hidden = !draft;     // 分P 跟着链接走
     $('#np-row-word').hidden = !draft;
+    $('#np-row-kstyle').hidden = !draft || !$('#np-word').checked;   // 跟着「逐词」开关走
+    if (draft) npSyncKStyle();
     $('#np-row-spk').hidden = !draft;
     // 语音识别 / 识别来源 / 分角色识别：整组跟着模式收起
     // （这三组只有「创建初稿」用得上；翻译模型/提示词是全局项，两种模式都留着）
@@ -1649,6 +1651,8 @@ export function initProjects(ctx) {
     $('#np-name').value = '';
     $('#np-word').checked = true;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
+    const kSel = $('#np-kstyle');
+    if (kSel) { delete kSel.dataset.touched; npSyncKStyle(); }   // 逐词样式回到记住的选择
     $('#np-speakers').checked = false;
     $('#np-spk-count').value = '';
     $('#np-part').value = '1';
@@ -1725,9 +1729,26 @@ export function initProjects(ctx) {
     root.classList.toggle('disabled', !wordOn);
     root.title = wordOn ? '' : 'SRT 模式没有角色（说话人）概念，需要开启逐词（生成 ASS）才能区分说话人';
   }
+  /** 逐词样式（颜色高亮 / \k 卡拉OK）：记住上次选择（main.js 的设置面板用同一组 localStorage 键）。
+   *  \kf 扫过 / 未唱默认色属于"打开稿件后"的设置（设置面板），这里只带默认值过去。 */
+  function npSyncKStyle() {
+    const sel = $('#np-kstyle');
+    if (!sel) return;
+    if (!sel.dataset.touched) {
+      let saved = '';
+      try { saved = localStorage.getItem('sf-k-style') || ''; } catch (e) {}
+      if (saved === 'k' || saved === 'color') sel.value = saved;   // 默认 color = 升级前行为
+    }
+  }
+  $('#np-kstyle') && $('#np-kstyle').addEventListener('change', () => {
+    const sel = $('#np-kstyle');
+    sel.dataset.touched = '1';
+    try { localStorage.setItem('sf-k-style', sel.value); } catch (e) {}
+  });
   $('#np-word').addEventListener('change', () => {
     $('#np-word-desc').textContent = $('#np-word').checked
       ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
+    $('#np-row-kstyle').hidden = !$('#np-word').checked;
     npSyncSpeakers();
   });
   const npSpk = $('#np-speakers');
@@ -1899,6 +1920,16 @@ export function initProjects(ctx) {
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
+        // 逐词样式与"本地视频初稿"同款(见下方 payload 的注释)
+        if (payload0.wordLevel) {
+          payload0.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
+          if (payload0.karaokeStyle === 'k') {
+            let sweep = '', base = '';
+            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
+            payload0.karaokeSweep = sweep === '1';
+            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload0.karaokeBase = base;
+          }
+        }
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
         const m0 = await r0.json();
@@ -1940,6 +1971,16 @@ export function initProjects(ctx) {
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
+        // 逐词样式: 颜色高亮(默认) / \k 卡拉OK。扫过(\kf)与未唱默认色跟随设置面板记住的偏好。
+        if (payload.wordLevel) {
+          payload.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
+          if (payload.karaokeStyle === 'k') {
+            let sweep = '', base = '';
+            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
+            payload.karaokeSweep = sweep === '1';
+            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload.karaokeBase = base;
+          }
+        }
         // 勾了「区分说话人」→ 编辑器的「启用角色标注」帮用户打开(字幕里会带 [SPKn] 标签, 禁着没意义)
         if (payload.speakers) localStorage.setItem('ss-role-annot', '1');
       } else {
