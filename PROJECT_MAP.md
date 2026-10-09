@@ -4,7 +4,7 @@
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-09（与"二次加固"提交同步）
+> 最后更新：2026-10-09（二次加固 + 删除项目加固）
 
 ---
 
@@ -90,8 +90,12 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ### 3.3 跨请求状态容器（**铁律：必须放模块作用域**）
 
-`prepareJobs` `draftJobs` `pendingAsr` `draftProcs` `draftAborts` `rerecogJobs` `MEDIA_ALLOW`
+`prepareJobs` `draftJobs` `pendingAsr` `draftProcs` `draftAborts` `rerecogJobs` `projProcs` `MEDIA_ALLOW`
 `mediaMetaCache` `logBuf` `logClients` `lifeClients` `dlState`（模型下载进度）`CHILDREN`
+
+> `projProcs`（项目 id → 进程集合）登记"项目目录里的长任务"（下载的 python、prepare 的 ffmpeg、
+> 说话人分离 / 选区重识别）—— **删除项目前必须杀掉它们**（否则 Windows 上 unlink 撞 EBUSY）。
+> 新增会读写 `projects/<id>/` 的子进程时，spawn 后记得 `trackProjProc(id, proc)`。
 
 > 教训：这些**不能**放进路由段函数体 —— 段函数每个请求执行一次，放进去等于每请求重置
 > （历史上 `fetchJobs` 就这样，已删；`mediaMetaCache` 也踩过一次，已归位）。
@@ -111,6 +115,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - 进度写 `meta.draft`（`status: running / paused / error / done`），前端轮询 `GET /api/projects/:id/draft`。
 - 防重入：`draftJobs.has(id)`；流水线步骤统一走 `safeDraftStep`（**同步异常与 async reject 都收**，漏收会让状态永远停在 running）。
 - 选区重识别是独立后台任务 `rerecogJobs`，前端每秒轮询；**卡死自愈**：20 分钟无进展即判失败（否则按钮被"已有一个任务在运行"永久挡死）。
+- **删除项目**：先停该项目全部任务（`killDraftProc` + `killProjProcs`，Windows 上用 `taskkill /T /F` 连孙进程一起收）→ 再逐文件删；删除带重试（杀进程与系统释放文件句柄之间有窗口）；`project.json` **最后删**（失败时项目不消失、可再删一次，不会留"元数据没了但目录还在"的僵尸）。
 - 下载/重识别/准备等任务全部有超时或看门狗；新增后台任务时照此办理。
 
 ### 3.5 项目内操作（`/api/projects/:id/<action>`）
@@ -219,7 +224,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `tests/audio-chunk-test.mjs` | 分片纯函数（静音解析 / 切点 / 合并） | 38 项 |
 | `tests/colorfix-test.mjs` | 颜色修复 | **需要真实用户项目**，新克隆必失败（非缺陷） |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
-| `tools/http_layer_probe.mjs` | HTTP 层 45 项（守卫 / 形状 / 设置往返 / 项目全生命周期） | **自带服务启停**，直接 `node tools/http_layer_probe.mjs` |
+| `tools/http_layer_probe.mjs` | HTTP 层 47 项（守卫 / 形状 / 设置往返 / 项目全生命周期 / **占用中删除重试**） | **自带服务启停**，直接 `node tools/http_layer_probe.mjs` |
 | `tools/route_smoke.mjs` | 24 路由冒烟 | 需先起服务：`PORT=8399 node editor/server.js` |
 | `tools/chunk_probe.mjs` | 静音检测 / 切片（真 ffmpeg） | |
 | `tools/videoedit_probe.mjs` 等 | 视频区就地编辑（CDP 真机） | 需 `editor/vendor/`（先 fetch-vendor） |
@@ -261,6 +266,9 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **二次加固（2026-10-09）**：`safeDraftStep` 收 async reject、下载看门狗、重识别卡死自愈、
   `mediaMetaCache` 归位、SIGINT/SIGTERM 收尾、明文 cookie 用完即删、前端竞态守卫与 blob 释放、
   `MemoryError` 可读化、字体表边界校验、`detectSilences` 补 duration。
+- **删除项目加固（2026-10-09）**：`projProcs` 登记项目内长任务，删除项目前先杀（`taskkill /T` 连孙进程）
+  → 带重试删除 + `project.json` 最后删。修复用户报障"下载中删项目 → 500 失败、目录残留"
+  （已用真实下载端到端复现与验证）。
 - UI 动效批；视频区就地编辑；`\k` 初稿线。
 
 ---
