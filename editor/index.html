@@ -1602,6 +1602,24 @@
           </div>
           <p class="gl-hint" id="st-realign-note"></p>
         </div>
+        <!-- 逐词字幕自愈开关（默认开）。
+             它只修一种特定损坏：**逐词行被清空、文本跑到同时间戳的另一行上**
+             （旧版导入 bug 的遗留；一旦写进文件，界面上看不出来）。
+             实测在 140 多个 .ass 里只命中过 1 个真坏的 —— 正常稿件上是空转。
+             给开关是因为它会**改动稿件**，用户应当能关掉。 -->
+        <div class="st-card">
+          <div class="st-card-title">逐词字幕自愈
+            <label class="switch switch-mini" style="margin-left:8px" title="开启后，载入字幕或分段导入时自动修复「逐词行被清空」的损坏">
+              <input type="checkbox" id="cb-heal-words" checked>
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <p class="gl-hint">
+            载入或导入时，若发现「逐词行的文本被清空、文本跑到了**同时间戳**的另一行上」
+            （旧版导入 bug 的遗留），自动把文本搬回来。<b>正常稿件上是空转，不会误改</b>。
+            关掉之后只会在控制台提示，不动稿件。
+          </p>
+        </div>
         <div class="st-card">
           <div class="st-card-title">热词强度 <span class="st-card-note">仅 Parakeet</span></div>
           <div class="st-row">
