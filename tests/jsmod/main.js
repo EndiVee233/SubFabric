@@ -3029,8 +3029,27 @@ function applyAssRow(item, s, e, text) {
   const enText = lines.length > 1 ? lines.slice(1).join(' ').trim() : '';
   const timeChanged = Math.abs(row.start - s) > 1e-4 || Math.abs(row.end - e) > 1e-4;
   // 英文改动不能重写中文事件；停顿时生成的仅是草稿，提交时每个变动句至多替换一次。
+  const oldZh = row.zh ? row.zh.text : '';
+  const oldEn = row.en ? row.en.text : '';
+  const oldStart = row.start, oldEnd = row.end;
+  const zhChanged = !!row.zh && zhText !== oldZh;
+  const enChanged = !!row.en && enText !== oldEn;
   if (row.zh && (timeChanged || zhText !== row.zh.text)) applyAnchorSentence(row.zh, s, e, zhText);
   if (row.en && (timeChanged || enText !== row.en.text)) applyWordSentence(row.en, s, e, enText);
+  /* 操作日志：**编辑字幕文本**这一路以前完全没记（`logOp` 只在切分/合并/重排/重识别里调），
+   * 而"我改了哪句、改成什么"恰恰是用户最想看的那一栏。
+   * 只记真的变了的，并把「改前 → 改后」写进去（why 里带时间是否也动了）。 */
+  if (zhChanged || enChanged || timeChanged) {
+    const clip = (t) => String(t || '').replace(/\s+/g, ' ').slice(0, 60);
+    const parts = [];
+    if (zhChanged) parts.push(`中文「${clip(oldZh)}」→「${clip(zhText)}」`);
+    if (enChanged) parts.push(`英文「${clip(oldEn)}」→「${clip(enText)}」`);
+    logOp('edit',
+      `第 ${row.no || '?'} 条 ${fmtTime(s)}~${fmtTime(e)}`,
+      parts.length ? parts.join('；') : '只改了时间',
+      timeChanged ? `时间 ${fmtTime(oldStart)}~${fmtTime(oldEnd)} → ${fmtTime(s)}~${fmtTime(e)}`
+        : '在字幕列表里直接改的文本');
+  }
   row.start = s; row.end = e;
   const hadTransient = !!previewTrack;
   clearEditPreview(false);
