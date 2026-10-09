@@ -12,9 +12,12 @@
 ;       安装/卸载向导、控制面板「应用和功能」里显示的都是同一张图。
 ;
 ; 版本号要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改。
+; 口径：**只看远端最新 tag，补丁位 +1**（远端 https://github.com/EndiVee233/SubFabric/tags ）。
+;       功能再多也走补丁位（2.1.8 加微光特效、2.1.9 加词生长都是这么发的），不要自己跳小版本。
+;       嫌麻烦可以先 `git ls-remote --tags` 或直接看 Releases 页确认最新号再 +1。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "2.1.13"
+#define MyAppVersion "2.1.14"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
