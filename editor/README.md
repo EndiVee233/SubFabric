@@ -1,7 +1,40 @@
-# SubFabric（字幕工作台）v2.1.13-fork.4
+# SubFabric（字幕工作台）v2.1.13-fork.5
 
 基于 Web 的字幕编辑器：视频播放 + 字幕实时叠加 + 时间轴 + 编辑面板。
 支持 **SRT 双语字幕**（主/副语言上下排列）与 **ASS 高级特效字幕**（libass 内核，卡拉OK/颜色/定位等特效完整还原）。
+
+## v2.1.13-fork.5 更新
+
+### 修：分段导入后逐词字幕格式损坏
+
+导入进来的英文行**没有逐词效果**，在逐词稿里那一行就是坏的：
+
+```
+原有英文行：{\c&HFFFFFF&}Original {\c&HFFFFFF&}english {\c&HFFFFFF&}line   ← 有逐词标签
+导入的英文行：first imported line                                        ← 0 个标签 ★
+```
+
+**根因**：`addRecognizedRow` 只在 ASR 给了 `seg.words`（真实词级时间）时才铺逐词 span。
+分段导入的行**没有词级时间**（字幕文件里只有整句起止），于是这条路直接跳过 ——
+写进去的就是一条纯整句。
+
+**修法**：没有词级时间时调 `karaoke.js` 的 `recalcWords` —— 它对
+"原本不是逐词句（如刚插入的新行）"的处理正是**在句内均匀铺满**（那里本来就有这段逻辑，
+只是没人调用）。不另写一套分摊。
+
+修完之后的实际输出：
+
+```
+Dialogue: 0,0:02:00.00,0:02:00.83,英文逐词,[Spoke],0,0,0,,{\c&HFFFFFF&}first{\c} imported line
+Dialogue: 0,0:02:00.83,0:02:01.67,英文逐词,[Spoke],0,0,0,,first {\c&HFFFFFF&}imported{\c} line
+Dialogue: 0,0:02:01.67,0:02:02.50,英文逐词,[Spoke],0,0,0,,first imported {\c&HFFFFFF&}line{\c}
+```
+
+（高亮色跟着项目的 `SubFabricWordHighlightColor` 元数据走，不会退回默认绿。）
+
+回归测试：`tests/region-import-format-test.mjs`（21 项）钉住
+「没有词级时间也能得到合法逐词切片」这条约定 —— 词片首尾相接、严格不重叠、
+末词贴齐句尾、每条 spec 都带高亮标签。
 
 ## v2.1.13-fork.4 更新
 
