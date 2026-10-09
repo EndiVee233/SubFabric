@@ -11,6 +11,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 # bilibili 需要登录态的 Cookie 名（用于判断"这份 cookie 到底算不算登录了"）
 LOGIN_COOKIE_KEYS = ("SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5")
@@ -18,9 +19,28 @@ LOGIN_COOKIE_KEYS = ("SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5")
 NETSCAPE_HEADER = "# Netscape HTTP Cookie File"
 
 
+def _host_of(url: str) -> str:
+    """取 URL 的 hostname（小写、去掉结尾的 "."）。没写协议头时按 https 补上 —— 与 editor/server.js 同口径。"""
+    u = str(url or "").strip()
+    if not u:
+        return ""
+    if "://" not in u:
+        u = "https://" + u
+    try:
+        host = urlsplit(u).hostname or ""
+    except ValueError:
+        return ""
+    return host.lower().rstrip(".")
+
+
 def is_bilibili_url(url: str) -> bool:
-    u = (url or "").lower()
-    return "bilibili.com" in u or "b23.tv" in u
+    """按 hostname 严格判站 —— 不能用子串: `https://evil.com/?bilibili.com`、`nobilibili.com` 都会被误判成真站。
+    判定语义与 editor/server.js 的 fetchSiteOf 一致（含子域名，如 www. / m.）。"""
+    host = _host_of(url)
+    if not host:
+        return False
+    return (host == "bilibili.com" or host.endswith(".bilibili.com")
+            or host == "b23.tv" or host.endswith(".b23.tv"))
 
 
 def parse_cookie_input(text: str) -> Dict[str, str]:

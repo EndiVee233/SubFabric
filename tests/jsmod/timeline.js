@@ -235,6 +235,11 @@ export class Timeline {
     this._dirty = true;
     this.waveform = null;
     this.waveformReady = false;
+    // blob URL 泄漏修复: 换新波形(或传空清除)前, 释放上一个已确定被替换的 objectURL
+    if (this._waveUrl && this._waveUrl !== url && String(this._waveUrl).startsWith('blob:')) {
+      URL.revokeObjectURL(this._waveUrl);
+    }
+    this._waveUrl = url || null;
     if (!url) return;
     const img = new Image();
     img.onload = () => { this.waveform = img; this.waveformReady = true; this._dirty = true; };
