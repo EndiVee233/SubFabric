@@ -18,14 +18,16 @@ const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
+const kLine = require('./k-line.js');        // \k 卡拉OK行文本构造(初稿生成用; 与 karaoke.js 同一格式)
 const llmText = require('./llm-text.js');
 const fonts = require('./fonts.js');          // 本机字体库: 让 ASS 样式面板直接用系统字体
 const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容推断 + SPK→角色名)  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
+const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie / LLM API Key 走密文, 不明文进 settings.json
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8321;
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.1.11'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.1.12'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -45,6 +47,10 @@ function spawn(...args) {
   } catch {}
   return p;
 }
+
+/* audio-slice 默认用原生 spawn(为的是能被离线探针独立复用), 这里把**登记版**注入进去 ——
+ * 静音检测/切片用的 ffmpeg 也要进 CHILDREN, 否则「完全退出」后它还在后台占着。 */
+audioSlice.setSpawnImpl(spawn);
 
 /* ── 运行日志: 环形缓冲 + SSE 推送(UI「日志」页实时显示)。
  * GUI 版 exe 无控制台, console 输出本来无处可去 —— 统一收进缓冲,
@@ -151,6 +157,15 @@ const MIME = {
 const VIDEO_EXTS = ['.mp4', '.m4v', '.webm', '.mkv', '.avi', '.mov'];
 const SUB_EXTS = ['.srt', '.ass', '.ssa'];
 
+/* /api/media 视频路径登记表(本地服务安全基线的一部分):
+ * 只服务"登记过"的路径 —— 项目 meta 里记录过的(见 writeMeta), 或本进程内经对话框/上传通道
+ * 返回过的。早先的实现按任意绝对路径直接读盘, 本机任意页面/进程都能借此把磁盘上的视频读走。 */
+const MEDIA_ALLOW = new Set();
+const mediaKey = (p) => {
+  const n = path.normalize(String(p || '').trim());
+  return process.platform === 'win32' ? n.toLowerCase() : n;
+};
+
 /* 把 URL 路径安全地映射到 root 下的文件路径, 越界返回 null。
  * 注意 decodeURIComponent 在 path 之前: new URL() 不会解码 %2f, 所以 "/..%2f" 能带着
  * 编码斜杠进到这里, 必须先解码再交给 path.join 归一化, 否则 ../ 会被当普通字符放过。 */
@@ -188,9 +203,11 @@ function waveWidth(duration) {
 function probeDuration(videoPath, cb) {
   const p = spawn(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', videoPath], { windowsHide: true });
   let out = '';
+  let settled = false;                       // spawn 失败时 error 与 close 都会到, 回调只允许落一次
+  const finish = (v) => { if (!settled) { settled = true; cb(v); } };
   p.stdout.on('data', d => { out += d; });
-  p.on('error', () => cb(0));
-  p.on('close', () => { const v = parseFloat(String(out).trim()); cb(isFinite(v) && v > 0 ? v : 0); });
+  p.on('error', () => finish(0));
+  p.on('close', () => { const v = parseFloat(String(out).trim()); finish(isFinite(v) && v > 0 ? v : 0); });
   setTimeout(() => { try { p.kill(); } catch {} }, 15000);
 }
 
@@ -201,7 +218,10 @@ function renderWaveform(buildArgs, cb, _retry) {
   const proc = spawn(FFMPEG, buildArgs(tmpPng), { windowsHide: true });
   let stderr = '';
   proc.stderr.on('data', d => { if (stderr.length < 4000) stderr += d; });
+  let settled = false;          // error/close/超时可能接连到达(如 kill 之后 close), 收尾只允许一次
   const done = (err) => {
+    if (settled) return;
+    settled = true;
     fs.unlink(tmpPng, () => {});
     if (err && !_retry) {
       console.log('[waveform] ffmpeg 失败，重试一次：', String(err.message || err).slice(0, 200));
@@ -733,21 +753,50 @@ const DEFAULT_TRANSLATE_PROMPT = [
   '5) 原文为空的行输出空字符串。',
 ].join('\n');
 
+/** 翻译(LLM)配置。API Key 与 fetch Cookie 同款处理（见 fetchSettings 的迁移逻辑）：
+ *  ① 旧版**明文** apiKey 读完即迁成密文 apiKeyEnc 并清掉明文字段；
+ *  ② 解密后的明文只用于服务端内部（llmReady / llmChat 等），**绝不回传前端**
+ *     —— 对前端一律走 translateCfgPublic()，只回 hasKey。 */
 function translateCfg() {
   const t = (readAsrSettings().translate) || {};
   const preset = LLM_PRESETS.find(p => p.id === t.provider) || null;
+  let apiKey = String(t.apiKey || '');
+  if (apiKey) {
+    let enc = '';
+    try { enc = secretStore.encrypt(apiKey); } catch (e) { console.error('[translate] API Key 加密失败:', e && e.message); }
+    if (enc) {
+      try {
+        const s = readAsrSettings();
+        s.translate = Object.assign({}, s.translate || {}, { apiKey: '', apiKeyEnc: enc });
+        writeAsrSettings(s);
+        console.log('[translate] API Key 已从明文迁移为密文（' + secretStore.backend() + '）');
+      } catch (e) { console.error('[translate] API Key 迁移写盘失败:', e && e.message); }
+    }
+  } else if (t.apiKeyEnc) {
+    try { apiKey = secretStore.decrypt(String(t.apiKeyEnc)); }
+    catch (e) {
+      console.error('[translate] API Key 解不开（换过机器或 Windows 用户？）：' + ((e && e.message) || e) + '。重新填一次 Key 就能恢复');
+      apiKey = '';
+    }
+  }
   return {
     provider: t.provider || 'deepseek',
     baseUrl: t.baseUrl || (preset ? preset.baseUrl : ''),
-    apiKey: t.apiKey || '',
+    apiKey,
     model: t.model || (preset ? preset.model : ''),
     autoTranslate: t.autoTranslate !== false,
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
     glossaryLang: t.glossaryLang || '简体',
     batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 字幕翻译」)
-    hasKey: !!t.apiKey,
+    hasKey: !!apiKey,
   };
+}
+/** 翻译配置的对外视图: 明文 Key 绝不回传(与 fetchPublicSettings 同一约定) */
+function translateCfgPublic(cfg) {
+  const c = Object.assign({}, cfg || {});
+  delete c.apiKey;
+  return c;
 }
 
 /** 语义分句的切句规则开关（asr/settings.json 的 resegSplitOnComma）：
@@ -802,7 +851,20 @@ function saveTranslateCfg(patch) {
     const preset = LLM_PRESETS.find(p => p.id === patch.provider);
     if (preset) { cur.baseUrl = preset.baseUrl; cur.model = preset.model; }
   }
-  s.translate = Object.assign(cur, patch);
+  const p = Object.assign({}, patch);
+  // apiKey 永不落盘明文: 非空 → 加密存 apiKeyEnc; 空串 → 视为「不改」
+  // (前端输入框不再回显明文 Key, 留空的含义就是保持原值不变)
+  if (Object.prototype.hasOwnProperty.call(p, 'apiKey')) {
+    const v = String(p.apiKey || '');
+    delete p.apiKey;
+    if (v) {
+      try { p.apiKeyEnc = secretStore.encrypt(v); }
+      catch (e) { console.error('[translate] API Key 加密失败, 暂按明文存:', e && e.message); p.apiKey = v; }
+    }
+  }
+  if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }   // 显式清除(设置里的「清除已存 Key」链接)
+  delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
+  s.translate = Object.assign(cur, p);
   writeAsrSettings(s);
   return translateCfg();
 }
@@ -1311,7 +1373,7 @@ function startRuntimeDownload() {
       // 解压: Windows 自带的 bsdtar 能解 zip(最可靠); 失败再退回 Expand-Archive。
       // 注意: 必须用**异步 spawn** —— 本环境下 spawnSync 会 EBUSY(实测),
       // 且此处本就在 async IIFE 里, await 天然可用。
-      const { spawn } = require('child_process');
+      // (这里曾局部 require('child_process') —— 那会遮蔽外层包装器, 解压进程漏出 CHILDREN 登记表)
       const tmpEx = path.join(os.tmpdir(), `kass-whisper-ex-${Date.now().toString(36)}`);
       fs.mkdirSync(tmpEx, { recursive: true });
       const sysTar = path.join(process.env.SystemRoot || 'C:' + path.sep + 'Windows', 'System32', 'tar.exe');
@@ -1761,7 +1823,25 @@ function sendFavicon(req, res) {
 
 const SIMPLE_ROUTE_MAP = new Map(SIMPLE_ROUTES);
 
+/* ── 本地服务安全基线(防 DNS rebinding / CSRF) ─────────────────────────
+ * 攻击场景: 恶意网页把自己的域名解析到 127.0.0.1, 浏览器就把"同源请求"打到本服务上
+ * (服务只绑 127.0.0.1 也拦不住 —— 浏览器视角这就是同源)。两道防线:
+ *   ① Host 必须是回环地址 —— rebinding 时浏览器发的是 evil.com, 这里直接 403;
+ *   ② 写方法若带 Origin(浏览器必带), 必须同源; 无 Origin 的非浏览器调用(tray/脚本/测试)放行。 */
+const LOOPBACK_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const LOOPBACK_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
+
 function handleRequest(req, res) {
+  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
+    return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
+  }
+  if (UNSAFE_METHODS.has(req.method)) {
+    const origin = String(req.headers.origin || '').trim();
+    if (origin && !LOOPBACK_ORIGIN_RE.test(origin)) {
+      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: origin');
+    }
+  }
   const u = new URL(req.url, `http://${req.headers.host || HOST}`);
   const pathname = u.pathname;
 
@@ -1832,6 +1912,7 @@ function handleRequest(req, res) {
     out.on('finish', () => {
       let okExt = VIDEO_EXTS.includes(path.extname(dest).toLowerCase());
       if (!okExt) { try { fs.unlinkSync(dest); } catch {} return finish(400, { error: '不支持的格式: ' + path.extname(dest) }); }
+      MEDIA_ALLOW.add(mediaKey(dest));   // 上传落盘的视频登记进 /api/media 白名单
       return finish(200, { path: dest, name: finalName, size });
     });
     req.pipe(out);
@@ -1862,6 +1943,9 @@ function handleRequest(req, res) {
     const tmp = metaPath(meta.id) + '.tmp';     // 临时文件 + 原子改名: 并发请求永远读不到半截 JSON
     fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
     fs.renameSync(tmp, metaPath(meta.id));
+    // 项目记录过的视频路径登记进 /api/media 白名单(meta 是本进程内唯一可信来源;
+    // 新建/重连/下载完成后都会途经这里, 保证创建后立刻可播, 不用等 meta 扫描缓存过期)
+    if (meta.video && meta.video.path) MEDIA_ALLOW.add(mediaKey(meta.video.path));
   }
   function touchMeta(meta) { meta.modifiedAt = new Date().toISOString(); writeMeta(meta); }
 
@@ -1926,7 +2010,7 @@ function handleRequest(req, res) {
  * Cookie/代理 存在 asr/settings.json 的 fetch 段; **对外只回"有没有", 绝不回传值**。 */
 const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
-const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie 走密文, 不再明文进 settings.json
+/* 敏感值统一走 secret-store(require 在文件头部): bilibili Cookie / LLM API Key 都走密文, 不明文进 settings.json */
 const fetchJobs = new Map();          // 项目 id -> { proc }
 
 /** 读 fetch 设置。顺带做两件事：
@@ -2050,12 +2134,25 @@ async function biliLoginCheck(cookieText) {
     return { ok: false, isLogin: false, message: t ? '检测超时：网络不通或 bilibili 不可达' : ('检测失败：' + ((e && e.message) || e)) };
   }
 }
-/** 只认 bilibili / YouTube（用户要求） */
+/** 只认 bilibili / YouTube（用户要求）。
+ *  必须按 hostname 严格匹配 —— 曾经用子串匹配, `https://evil.com/bilibili.com`、
+ *  `http://内网地址/?youtube.com` 都会被判成真站, 再把整条 URL 原样交给下载内核(SSRF 面)。 */
 function fetchSiteOf(url) {
-  const u = String(url || '').toLowerCase();
-  if (u.indexOf('bilibili.com') >= 0 || u.indexOf('b23.tv') >= 0) return 'bilibili';
-  if (u.indexOf('youtube.com') >= 0 || u.indexOf('youtu.be') >= 0) return 'youtube';
+  let u;
+  try { u = new URL(normalizeFetchUrl(url)); } catch { return ''; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+  const host = u.hostname.toLowerCase().replace(/\.$/, '');   // 结尾的 "." 是 FQDN 写法, 归一掉再比对
+  const isHost = (h) => host === h || host.endsWith('.' + h);
+  if (isHost('bilibili.com') || isHost('b23.tv')) return 'bilibili';
+  if (isHost('youtube.com') || isHost('youtu.be')) return 'youtube';
   return '';
+}
+/** 链接规范化: 少写协议头(如 "www.bilibili.com/video/BV…")按 https 处理,
+ *  与 yt-dlp 自身的 sanitize_url 行为对齐(它缺协议时补 http, 这里补 https 更稳)。 */
+function normalizeFetchUrl(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : 'https://' + s;
 }
 /** bilibili Cookie 文本规范化: 用户常常**只复制到值**（DevTools / 扩展里点一下就复制了值本身，
  *  形如 `ac87ca47%2C1806119310%2C…`），这种文本里没有任何 name=value →
@@ -2080,7 +2177,7 @@ function pyVersionOk(exe, pre) {
   return new Promise((resolve) => {
     let p;
     try {
-      p = childProcess.spawn(exe, pre.concat(['-c', 'import sys;print(sys.version_info[0]*100+sys.version_info[1])']), { windowsHide: true });
+      p = spawn(exe, pre.concat(['-c', 'import sys;print(sys.version_info[0]*100+sys.version_info[1])']), { windowsHide: true });
     } catch { return resolve(false); }
     let out = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} resolve(false); }, 8000);
@@ -2124,7 +2221,7 @@ function runFetchCli(id, args, onEvent) {
       return new Promise((resolve) => {
         let proc;
         try {
-          proc = childProcess.spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
+          proc = spawn(py.exe, py.pre.concat([FETCH_SCRIPT], args), Object.assign({ windowsHide: true }, pySpawnEnv()));
         } catch (e) {
           return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
         }
@@ -2463,14 +2560,19 @@ function startPrepare(id, videoPath, mode) {
   /** ASS 头: 与 main.py generate_ass_header 一致, 保留 Default / 中文字幕 两个样式轨。
    *  label = 识别引擎名(必剪云端 / Parakeet / whisper…), 导出文件里能看出这份初稿是谁识别的。
    *  colors = { zhColor, zhColor2, enColor, enColor2 }, 缺省时英文白 / 中文黄(与颜色设置项出现前一致)。 */
-  function assHeader(label, colors) {
+  function assHeader(label, colors, kMeta) {
     const c = colors || {};
     const enPrimary = hexToAssBgr(c.enColor, '&H00FFFFFF');
     const enSecondary = hexToAssBgr(c.enColor2, '&H0000FFFF');
     const zhPrimary = hexToAssBgr(c.zhColor, '&H0000FFFF');
     const zhSecondary = hexToAssBgr(c.zhColor2, '&H0000FFFF');
+    // \k 初稿额外写 SubFabric 元数据: 词太少达不到分析器的切片阈值时, 编辑器靠它认出逐词样式/形态
+    const kMetaLines = kMeta
+      ? '; SubFabricWordStyle: Default\n; SubFabricKaraokeStyle: k\n; SubFabricKaraokeBaseColor: ' + kMeta + '\n'
+      : '';
     return '[Script Info]\n'
       + '; Generated by K-ASS-Editor draft (' + (label || 'Parakeet TDT 0.6B v2') + ')\n'
+      + kMetaLines
       + 'ScriptType: v4.00+\nPlayDepth: 0\nScaledBorderAndShadow: Yes\n'
       + 'PlayResX: 1920\nPlayResY: 1080\nWrapStyle: 3\n\n'
       + '[V4+ Styles]\n'
@@ -2495,6 +2597,18 @@ function startPrepare(id, videoPath, mode) {
     const text = words.map((w, i) => (i === idx ? `{\\c&H00FF00&}${escAss(w.word)}{\\c}` : escAss(w.word))).join(' ');
     return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${text}\n`;
   }
+
+  /** \k 卡拉OK行（整行单事件）: 每词一段 `{\k<厘秒>}`，头部自带颜色 `{\1c已唱&\2c未唱&}`。
+   *  与编辑器 karaoke.js 的 buildWordSpecsK 是**同一格式**（那边管"打开后重建"，这里只管初稿生成，
+   *  所以这边简单得多 —— 生成词表没有空档：每词亮到下一词起点、末词收在句尾，与颜色切片同规则，
+   *  段时长总和严格 = 行时长）。baseBgr 为空表示该行没有角色 → 写「未唱默认色」。
+   *  注意 \k 时长单位是**厘秒**，high 亮前显示 \2c、唱到时切 \1c（Aegisub 文档语义）。 */
+  function wordKLine(words, start, end, name, sungBgr, baseBgr) {
+    // 行文本构造提取在 ./k-line.js（CJS 可单测）；与编辑器 karaoke.js buildWordSpecsK 同一格式
+    const txt = kLine.wordKText(words, start, end, sungBgr, baseBgr);
+    return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${txt}\n`;
+  }
+
 
   /* ── 识别结果 / 译文 读写 ── */
   function readSegments(id) {
@@ -2546,6 +2660,18 @@ function startPrepare(id, videoPath, mode) {
       return `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},中文字幕,${name},0,0,0,,${tag}${escAss(t)}\n`;
     };
 
+    // 逐词形态(\k 初稿): 选项在建项目时定, 存 meta.draft —— 识别后/翻译后重写字幕都跟随它
+    const kOpt = (() => {
+      const meta = readMeta(id);
+      const d = (meta && meta.draft) || {};
+      if (d.karaokeStyle !== 'k') return null;
+      return {
+        sweep: !!d.karaokeSweep,
+        base: /^#[0-9a-fA-F]{6}$/.test(String(d.karaokeBase || '')) ? String(d.karaokeBase).toUpperCase() : '#FFFFFF',
+      };
+    })();
+    const sungBgr = '00FF00';   // 已唱位 = 逐词高亮色(与颜色切片的 {\c&H00FF00&} 同一个默认)
+
     let format, file, text;
     if (!wordLevel) {
       format = 'srt';
@@ -2574,11 +2700,19 @@ function startPrepare(id, videoPath, mode) {
     } else {
       format = 'ass';
       file = 'subtitle.ass';
-      let out = assHeader(engineLabel);
+      let out = assHeader(engineLabel, null, kOpt ? kOpt.base : null);
       segs.forEach((s, i) => {
         const zh = zhText(i);
         if (zh) out += zhLine(s, zh, roleOf(s));
         const ws = s.words || [];
+        const role = roleOf(s);
+        if (kOpt) {
+          // \k 卡拉OK形态: 整行单事件。有角色的行未唱位用角色色, 没有就用「未唱默认色」。
+          // hexToAssBgr 返回 &HAABBGGRR(8 位) → 去掉 "A" 前缀取 6 位 BBGGRR, 行内 \2c 只认 6 位
+          const baseBgr = role ? role.color : hexToAssBgr(kOpt.base, '&H00FFFFFF').slice(4);
+          out += wordKLine(ws, s.start, s.end, role ? `${spkName(role.n)}` : '', sungBgr, baseBgr);
+          return;
+        }
         for (let k = 0; k < ws.length; k++) {
           // 首片起点**必须贴齐句首 s.start**, 不能直接用第一个词的时间:
           //   云端识别(必剪/剪映)给的首词起点常常比句首晚几十毫秒(句前静音不算进词),
@@ -2588,7 +2722,6 @@ function startPrepare(id, videoPath, mode) {
           const st = (k === 0) ? s.start : ws[k].start;
           // 每片一直高亮到下一词起点(最后一片到句尾), 与 main.py 生成的结果一致
           const en = (k + 1 < ws.length) ? Math.max(ws[k + 1].start, st + 0.01) : Math.max(s.end, st + 0.01);
-          const role = roleOf(s);
           out += wordSliceLine(ws, k, st, en, role ? `${spkName(role.n)}` : '');
         }
       });
@@ -3820,6 +3953,7 @@ function startPrepare(id, videoPath, mode) {
       if (!resolved) {
         return finish({ cancelled: true, error: '对话框返回的路径无法解析（' + raw.trim().slice(0, 200) + '）' });
       }
+      if (kind === 'video') MEDIA_ALLOW.add(mediaKey(resolved));   // 用户亲手选的视频登记进 /api/media 白名单
       finish({ path: resolved, name: path.basename(resolved) });
     });
   }
@@ -3854,7 +3988,7 @@ function startPrepare(id, videoPath, mode) {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let d = {};
       try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-      const url = String(d.url || '').trim();
+      const url = normalizeFetchUrl(d.url);
       if (!url) return sendJson(res, 400, { error: '请先填视频链接' });
       const site = fetchSiteOf(url);
       if (!site) return sendJson(res, 400, { error: '只支持 bilibili 与 YouTube 链接（其他站点暂不支持）' });
@@ -4156,7 +4290,7 @@ function startPrepare(id, videoPath, mode) {
   if (pathname === '/api/translate/config' && req.method === 'GET') {
     const c = translateCfg();
     return sendJson(res, 200, {
-      presets: LLM_PRESETS, cfg: c, ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT,
+      presets: LLM_PRESETS, cfg: translateCfgPublic(c), ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT,
     });
   }
   if (pathname === '/api/translate/config' && req.method === 'POST') {
@@ -4164,11 +4298,11 @@ function startPrepare(id, videoPath, mode) {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);
-      return sendJson(res, 200, { cfg: c, ready: llmReady(c) });
+      return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: llmReady(c) });
     });
   }
   /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
@@ -4301,9 +4435,34 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
+  /* /api/media 只服务登记过的视频路径(见 MEDIA_ALLOW 的定义处注释)。
+   * meta 扫描加 3 秒缓存: 播放视频会发大量 Range 请求, 不能每个请求都把 projects/ 读一遍; */
+  let mediaMetaCache = { at: 0, set: new Set() };
+  function mediaAllowed(p) {
+    if (!p) return false;
+    const key = mediaKey(p);
+    if (MEDIA_ALLOW.has(key)) return true;
+    const now = Date.now();
+    if (now - mediaMetaCache.at > 3000) {
+      const set = new Set();
+      let ids = [];
+      try { ids = fs.readdirSync(PROJECTS_DIR); } catch {}
+      for (const id of ids) {
+        if (!validId(id)) continue;
+        const meta = readMeta(id);
+        const vp = meta && meta.video && meta.video.path;
+        if (vp) set.add(mediaKey(vp));
+      }
+      mediaMetaCache = { at: now, set };
+    }
+    return mediaMetaCache.set.has(key);
+  }
   if (pathname === '/api/media' && req.method === 'GET') {
     const p = u.searchParams.get('path') || '';
     const full = path.normalize(p);
+    if (!mediaAllowed(full)) {
+      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'forbidden: video path not registered');
+    }
     let ok = false;
     try { ok = fs.statSync(full).isFile() && VIDEO_EXTS.includes(path.extname(full).toLowerCase()); } catch {}
     if (!ok) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found: ' + p);
@@ -4335,7 +4494,7 @@ function startPrepare(id, videoPath, mode) {
       // 再规整一次: 客户端送来的路径若带杂物, 这里同样能从"存在的最长前缀"里救回来
 /* 创建接口里的"链接模式"分支: data.fetch.url 非空时不要求本地视频文件,
  * 先建项目(卡片立刻出现, 阶段=下载中)再后台下载, 下完接现有 prepare/ASR 流水线。 */
-      const fetchUrl = String((data.fetch && data.fetch.url) || '').trim();
+      const fetchUrl = normalizeFetchUrl((data.fetch && data.fetch.url) || '');
       if (fetchUrl) {
         const site = fetchSiteOf(fetchUrl);
         if (!site) return sendJson(res, 400, { error: '只支持 bilibili 与 YouTube 链接（其他站点暂不支持）' });
@@ -4392,6 +4551,12 @@ function startPrepare(id, videoPath, mode) {
       // 否则会白跑一遍分离、生成的角色标注在 SRT 里也无处安放
       const wantSpeakers = !!data.speakers && !!data.wordLevel;
       const speakerCount = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
+      // 逐词形态: 'color'(颜色高亮, 默认=升级前行为) | 'k'(\k 卡拉OK)。只在逐词开时有意义。
+      //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 KARAOKE_DESIGN.md §5。
+      const karaokeStyle = (wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
+      const karaokeSweep = karaokeStyle === 'k' && !!data.karaokeSweep;
+      const karaokeBase = /^#[0-9a-fA-F]{6}$/.test(String(data.karaokeBase || ''))
+        ? String(data.karaokeBase).toUpperCase() : '#FFFFFF';
       let format = null, file = null, subName = '', subText = '';
 
       if (draftOn) {
@@ -4432,6 +4597,7 @@ function startPrepare(id, videoPath, mode) {
           status: 'running', stage: STAGE.extract, progress: 3,
           message: '提取音频与波形…', wordLevel, lines: 0, words: 0,
           translated: false, needTranslate: false,
+          karaokeStyle, karaokeSweep, karaokeBase,
           modelId: draftModel ? draftModel.id : null,
           engine: draftModel ? (draftModel.engine || '') : '',
           speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
@@ -4599,17 +4765,29 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { ok: true });
     }
     if (action === 'subtitle' && (req.method === 'PUT' || req.method === 'POST')) {
-      // 字幕自动保存: 原文整体覆写; sendBeacon 只能 POST, 所以 PUT/POST 都收
-      return readBody(req, res, 256 * 1024 * 1024, (err2, body) => {
-        if (err2) return sendJson(res, 400, { error: String(err2.message) });
-        const file = meta.subtitle && meta.subtitle.file;
-        if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
-        const subTmp = path.join(projDir(id), file) + '.tmp';
-        fs.writeFileSync(subTmp, body, 'utf8');
-        fs.renameSync(subTmp, path.join(projDir(id), file));   // 原子替换, 打开方不会读到半截字幕
-        touchMeta(meta);
-        return sendJson(res, 200, { ok: true, savedAt: meta.modifiedAt });
+      // 字幕自动保存: 原文整体覆写; sendBeacon 只能 POST, 所以 PUT/POST 都收。
+      // 流式落盘(不再整块进内存): 长片字幕 + 逐词切片可以到几十 MB, 全量 readBody 会顶内存峰值;
+      // 仍然 tmp + rename 原子替换, 打开方不会读到半截字幕(与 /api/upload-video 同款写法)。
+      const file = meta.subtitle && meta.subtitle.file;
+      if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
+      const subTmp = path.join(projDir(id), file) + '.tmp';
+      const out = fs.createWriteStream(subTmp);
+      let size = 0, done = false;
+      const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
+      req.on('data', (c) => {
+        size += c.length;
+        if (size > 256 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(subTmp); } catch {} finish(413, { error: '字幕超过 256MB 上限' }); }
       });
+      req.on('error', () => { out.destroy(); try { fs.unlinkSync(subTmp); } catch {} finish(400, { error: '上传中断' }); });
+      out.on('error', () => { try { fs.unlinkSync(subTmp); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
+      out.on('finish', () => {
+        try { fs.renameSync(subTmp, path.join(projDir(id), file)); }
+        catch (e) { try { fs.unlinkSync(subTmp); } catch {} return finish(500, { error: '替换字幕文件失败: ' + String(e && e.message || e) }); }
+        touchMeta(meta);
+        return finish(200, { ok: true, savedAt: meta.modifiedAt });
+      });
+      req.pipe(out);
+      return;
     }
     if (action === 'subtitle' && req.method === 'GET') {
       const file = meta.subtitle && meta.subtitle.file;
