@@ -225,6 +225,83 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   line-height: 2;
 }
 .hint-icon { font-size: 40px; }
+
+/* ── 视频区就地编辑（单击字幕 → 就地改那一段；双击字幕 → 整行弹窗） ─
+ * 本层只做"画出来的东西"：片段高亮框 + 贴片段弹出的小输入框。
+ * pointer-events 只开在输入框上，其余一律穿透（否则挡掉播放/暂停与进度条）。 */
+#cue-edit-layer {
+  position: absolute; inset: 0; z-index: 9;
+  pointer-events: none;
+}
+#cue-edit-layer[hidden] { display: none; }
+
+/* 底部控制条上的"字幕接管层"。
+ * 原生 <video controls> 的控件在 video 的 UA shadow 里，会吃掉底部约 72px 内的一切鼠标事件
+ * （实测：那一条里 pointerdown/mousedown/click/dblclick 一个都到不了页面）。
+ * 字幕行压到这条带子上时，双击就永远打不开编辑框 —— 所以这里用一块透明层把那一条带子
+ * 从控制条手里"抢"回来。它只覆盖"字幕行的实际矩形 ∩ 控制条带"，且默认 pointer-events:none，
+ * 仅当指针悬到这一条上才变 auto（由 videoedit.js 的 _onShieldMove 控制），
+ * 因此进度条/音量在别处一律照常。 */
+#cue-hit-shield {
+  position: absolute; z-index: 8;
+  pointer-events: none;
+  cursor: text;
+}
+#cue-hit-shield[hidden] { display: none; }
+#cue-hit-shield.armed { pointer-events: auto; }
+#cue-seg-box {
+  position: absolute;
+  border: 1px solid rgba(125, 211, 252, .95);
+  background: rgba(56, 189, 248, .14);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .45);
+}
+#cue-inline-editor {
+  position: absolute;
+  min-width: 176px; max-width: min(560px, 88%);
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 6px 8px 5px;
+  background: rgba(16, 16, 20, .96);
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 7px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .62);
+  pointer-events: auto;
+}
+#cue-inline-editor[hidden] { display: none; }
+#cie-input {
+  width: 100%; box-sizing: border-box;
+  background: #0b0b0f; color: #f3f4f6;
+  border: 1px solid rgba(255, 255, 255, .14); border-radius: 4px;
+  padding: 3px 6px; font-size: 13px; line-height: 1.5;
+  outline: none; font-family: inherit;
+}
+#cie-input:focus { border-color: var(--accent); }
+.cie-hints {
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: 10.5px; line-height: 1.45; color: var(--text-2, #9aa0aa);
+}
+
+/* 整行文本弹窗（仅替换 Text 字段） */
+#cue-text-overlay {
+  position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 88;
+  background: rgba(6, 6, 9, .62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+#cue-text-overlay[hidden] { display: none; }
+.ctd-box { width: min(680px, 94vw); }
+.ctd-preview { font-size: 12px; line-height: 1.7; color: var(--text-1); word-break: break-word; }
+.ctd-lbl { margin-right: 4px; color: var(--text-2, #9aa0aa); }
+.ctd-input {
+  width: 100%; box-sizing: border-box; min-height: 118px; resize: vertical;
+  /* 白底深字：一眼看出"这里是可打字的输入区"（与用户给的参考图一致） */
+  background: #f7f7f8; color: #15161a;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px; font-size: 14px; line-height: 1.7; outline: none;
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+}
+.ctd-input:focus { border-color: var(--accent); }
+.ctd-hint { margin: 0; font-size: 11.5px; line-height: 1.65; color: var(--text-2, #9aa0aa); }
 .hint-sub { font-size: 12px; color: var(--text-2); }
 #stage-hint.hidden { display: none; }
 #video-stage.dragover .hint-card { border-color: var(--accent); color: var(--accent); }
@@ -1365,12 +1442,12 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
 
 /* ── 4. 弹窗：遮罩淡入 + 对话框缩放上浮 ─────────────────────────── */
 #fr-overlay:not([hidden]), #confirm-overlay:not([hidden]), #role-new:not([hidden]),
-#pick-overlay:not([hidden]), #fix-overlay:not([hidden]) {
+#pick-overlay:not([hidden]), #fix-overlay:not([hidden]), #cue-text-overlay:not([hidden]) {
   animation: fade-in var(--dur-2) var(--ease-out) both;
 }
 #fr-overlay:not([hidden]) > *:first-child, #confirm-overlay:not([hidden]) > *:first-child,
 #role-new:not([hidden]) > *:first-child, #pick-overlay:not([hidden]) > *:first-child,
-#fix-overlay:not([hidden]) > *:first-child {
+#fix-overlay:not([hidden]) > *:first-child, #cue-text-overlay:not([hidden]) > *:first-child {
   animation: scale-in var(--dur-3) var(--ease-out) both;
 }
 
