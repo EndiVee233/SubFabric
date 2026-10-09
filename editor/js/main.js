@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, normalizeRoleGap, splitEnglishWords, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows, setWordHighlightColor, getWordHighlightColor, wordHighlightTag, speakerNames, recolorRoleInRows, normalizeZhPunctuation, normalizeZhPunctuationInSentences, buildAnchorText, sortRoles } from './karaoke.js';
+import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows, setWordHighlightColor, getWordHighlightColor, wordHighlightTag, speakerNames, recolorRoleInRows, normalizeZhPunctuation, normalizeZhPunctuationInSentences, buildAnchorText, sortRoles } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 import { AssPlayer } from './assplayer.js';
 import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
@@ -51,6 +51,10 @@ const assStyleEls = {
   enItalic: document.getElementById('ass-style-en-italic'),
   wordColor: document.getElementById('ass-style-word-color'),
   wordColorVal: document.getElementById('ass-style-word-color-val'),
+  kBase: document.getElementById('ass-style-k-base'),
+  kBaseVal: document.getElementById('ass-style-k-base-val'),
+  kSweep: document.getElementById('ass-style-k-sweep'),
+  kSweepVal: document.getElementById('ass-style-k-sweep-val'),
   zhColor: document.getElementById('ass-style-zh-color'),
   zhColorVal: document.getElementById('ass-style-zh-color-val'),
   zhColor2: document.getElementById('ass-style-zh-color2'),
@@ -423,6 +427,35 @@ window.addEventListener('resize', () => overlay.fitToVideo());
 
 /* ═══════════ 字幕加载 ═══════════ */
 const ASS_WORD_COLOR_META = 'SubFabricWordHighlightColor';
+/** 卡拉OK(\k)行的两个形态参数（元数据 + 本地记住的默认值，与 SubFabricWordStyle 同一惯例） */
+const ASS_K_BASE_META = 'SubFabricKaraokeBaseColor';
+const K_BASE_KEY = 'sf-k-base';        // localStorage: 未唱默认色（新建/转换 k 行时用）
+const K_SWEEP_KEY = 'sf-k-sweep';      // localStorage: 是否用 \kf 扫过（新建/转换 k 行时用）
+const K_STYLE_META = 'SubFabricKaraokeStyle';
+
+/** 记住的「未唱默认色」：没有记录时用英文样式的默认色（= 与普通英文字幕观感连续），再兜底白 */
+function kBaseDefaultHex() {
+  const saved = (() => { try { return localStorage.getItem(K_BASE_KEY) || ''; } catch { return ''; } })();
+  if (/^#[0-9a-f]{6}$/i.test(saved)) return saved.toLowerCase();
+  const en = state.assDoc && state.assStyleTargets && state.assDoc.getStyle(state.assStyleTargets.en);
+  const hex = (en && assBgrToHex(en.primarycolour, null)) || null;
+  return hex || '#ffffff';
+}
+/** 记住的「\kf 扫过」偏好 */
+function kSweepDefault() {
+  try { return localStorage.getItem(K_SWEEP_KEY) === '1'; } catch { return false; }
+}
+function rememberKDefaults(hex, sweep) {
+  try {
+    if (/^#[0-9a-f]{6}$/i.test(hex || '')) localStorage.setItem(K_BASE_KEY, hex.toLowerCase());
+    localStorage.setItem(K_SWEEP_KEY, sweep ? '1' : '0');
+  } catch { /* 隐私模式下写不了, 不影响本次会话 */ }
+}
+/** 当前稿件里 k 卡拉OK行（指定逐词样式）*/
+function karaokeSentencesOf(style) {
+  const t = String(style || '').toLowerCase();
+  return ((state.kar && state.kar.sentences) || []).filter(s => s.karStyle === 'k' && String(s.style).toLowerCase() === t);
+}
 
 function resolveAssStyleTargets(doc, kar) {
   const names = (doc.styleNames || []).filter((name, i, all) => all.findIndex(n => n.toLowerCase() === name.toLowerCase()) === i);
@@ -597,6 +630,7 @@ function setAssStyleControls() {
   if (assStyleEls.group) assStyleEls.group.classList.toggle('ass-style-disabled', !enabled);
   const controls = [assStyleEls.zhFont, assStyleEls.enFont, assStyleEls.zhSize, assStyleEls.enSize,
     assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic, assStyleEls.wordColor,
+    assStyleEls.kBase, assStyleEls.kSweep,
     assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2,
     document.getElementById('ass-style-zh-font-file-btn'), document.getElementById('ass-style-en-font-file-btn')];
   controls.forEach(el => { if (el) el.disabled = !enabled; });
@@ -639,6 +673,20 @@ function setAssStyleControls() {
   setWordHighlightColor(wordColor);
   if (assStyleEls.wordColor) assStyleEls.wordColor.value = wordColor;
   if (assStyleEls.wordColorVal) assStyleEls.wordColorVal.textContent = wordColor.toUpperCase();
+  // 卡拉OK行两项: 未唱默认色（元数据 → 稿件里第一条 k 行的 \2c → 记住的默认值）
+  let kBase = state.assDoc.getScriptInfoComment(ASS_K_BASE_META);
+  if (!/^#[0-9a-f]{6}$/i.test(kBase)) {
+    const kSent = karaokeSentencesOf(targets.en).find(s => s.kBaseHex);
+    kBase = (kSent && kSent.kBaseHex) || kBaseDefaultHex();
+  }
+  kBase = kBase.toLowerCase();
+  if (assStyleEls.kBase) assStyleEls.kBase.value = kBase;
+  if (assStyleEls.kBaseVal) assStyleEls.kBaseVal.textContent = kBase.toUpperCase();
+  // 逐词扫过: 以稿件里 k 行的实际标签为准（有 \kf 就是开），没有 k 行时用记住的偏好
+  const kSents = karaokeSentencesOf(targets.en);
+  const sweep = kSents.length ? kSents.some(s => s.kTag === '\\kf') : kSweepDefault();
+  if (assStyleEls.kSweep) assStyleEls.kSweep.checked = sweep;
+  if (assStyleEls.kSweepVal) assStyleEls.kSweepVal.textContent = sweep ? '开' : '关';
   if (assStyleEls.status) assStyleEls.status.textContent = '修改会立即预览并写入文稿；项目自动保存，普通字幕请导出保存。';
   loadSystemFontList();      // 顺手把本机字体填进候选, 用户打字就有补全
   refreshFontNotes();
@@ -689,7 +737,23 @@ function applyAssStyleSettings(forceFontReload = false) {
     for (const sentence of state.kar.sentences) if (sentence.style.toLowerCase() === targets.en.toLowerCase()) sentence.highlightTag = tag;
   }
   if (el.wordColorVal) el.wordColorVal.textContent = color.toUpperCase();
-  const anyChanged = changed || wordColorChanged > 0 || colorMetaChanged;
+  // ── 卡拉OK(\k)行: 未唱默认色 + 段标签形态 ──
+  // 两色都只写"没有角色色"的行：有角色的行未唱位显示该行角色色（设计稿 §5/§11）。
+  const kSents = karaokeSentencesOf(targets.en);
+  const kBaseHex = (el.kBase && el.kBase.value || '').toLowerCase();
+  const kBaseApply = kSents.filter(s => !speakerColorOf(s));
+  const kBaseEvents = [...new Set(kBaseApply.flatMap(s => s.events || []))];
+  const kBaseChanged = kBaseEvents.length ? replaceKaraokeBaseColor(state.assDoc, targets.en, kBaseHex, kBaseEvents) : 0;
+  for (const s of kBaseApply) s.kBaseHex = kBaseHex;
+  const kBaseMetaChanged = kSents.length ? state.assDoc.setScriptInfoComment(ASS_K_BASE_META, kBaseHex) : false;
+  if (el.kBaseVal) el.kBaseVal.textContent = kBaseHex.toUpperCase();
+  const kTag = (el.kSweep && el.kSweep.checked) ? '\\kf' : '\\k';
+  const kTagEvents = [...new Set(kSents.flatMap(s => s.events || []))];
+  const kTagChanged = kTagEvents.length ? replaceKaraokeTag(state.assDoc, targets.en, kTag, kTagEvents) : 0;
+  for (const s of kSents) s.kTag = kTag;
+  if (el.kSweepVal) el.kSweepVal.textContent = (el.kSweep && el.kSweep.checked) ? '开' : '关';
+  rememberKDefaults(kBaseHex, kTag === '\\kf');
+  const anyChanged = changed || wordColorChanged > 0 || colorMetaChanged || kBaseChanged > 0 || kBaseMetaChanged || kTagChanged > 0;
   if (!anyChanged && !forceFontReload) return false;
   const text = state.assDoc.serialize();
   if (forceFontReload || oldZhFont.toLowerCase() !== zhFont.toLowerCase() || oldEnFont.toLowerCase() !== enFont.toLowerCase()) {
@@ -1250,6 +1314,8 @@ for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   if (el) el.addEventListener('change', () => applyAssStyleSettings());
 }
 if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () => applyAssStyleSettings());
+if (assStyleEls.kBase) assStyleEls.kBase.addEventListener('input', () => applyAssStyleSettings());
+if (assStyleEls.kSweep) assStyleEls.kSweep.addEventListener('change', () => applyAssStyleSettings());
 for (const el of [assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2]) {
   if (el) el.addEventListener('input', () => applyAssStyleSettings());
 }
@@ -1757,6 +1823,8 @@ function renameRoleGlobally(oldName, newName) {
 function recolorRoleGlobally(role, newHex) {
   const names = speakerNames(role.raw);
   names.push(role.name);
+  // recolorRoleInRows(karaoke.js, 按角色名定位) 同时处理中文行行首 \c 与 k 行未唱位 \2c
+  // —— k 行的行首 \c/\1c 是已唱高亮色不是角色色, 在那边被天然跳过(只遍历 rows[].zh)。
   return recolorRoleInRows(state.assDoc, state.kar.rows, names, newHex);
 }
 
@@ -2919,7 +2987,11 @@ function alignEnSpanToZh(row) {
   en.words[n - 1].e = ze;
   en.start = zs;
   en.end = ze;
-  if (en.events && en.events.length === n) {
+  if (en.karStyle === 'k') {
+    // k 卡拉OK行是**单事件**整行（events.length === 1 ≠ 词数 n）→ 走不了下面"逐条切片改时间"，
+    // 必须按新词时间**重建**整行，否则文件里的 \k 时间还是旧的、模型却说已对齐（重载又报坏行）。
+    en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+  } else if (en.events && en.events.length === n) {
     for (let i = 0; i < n; i++) state.assDoc.setEventTime(en.events[i], en.words[i].s, en.words[i].e);
   }
   en.overlap = enSlicesOverlap(en);
@@ -2967,7 +3039,8 @@ function autoAlignEnSpans() {
     if (!row.zh || !en || !en.words || !en.words.length) continue;
     if (enSlicesOverlap(en)) continue;
     const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
-    const toks = splitEnglishWords(clean).length;
+    // k 行用文件侧的 \k 段数比对（见 detectRowProblems 同款说明）——否则外来 k 文件永远不进对齐。
+    const toks = en.karStyle === 'k' ? kLineTokens(en) : splitEnglishWords(clean).length;
     if (toks && en.words.length !== toks) continue;
     if (/\[[^\]]+\]/.test(en.text || '')) continue;
     if (alignEnSpanToZh(row)) n++;
@@ -3007,7 +3080,10 @@ function detectRowProblems(row) {
   //    需要用户确认这句话到底是什么(用户明确要求), 才能重建出正确的逐词。
   if (en && en.words && en.words.length) {
     const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
-    const toks = splitEnglishWords(clean).length;
+    // k 卡拉OK行的分词由文件自身的 \k 段序列决定（一段一音节），与本应用"按 , . ? ! 再切一刀"
+    // 的 splitEnglishWords 口径本就不同 —— 拿后者去判会一打开外来 k 文件就整轨误报"英文缺词"。
+    // 对 k 行改比"内存模型 ⟷ 落盘段数": 两者不一致才是真漂移。
+    const toks = en.karStyle === 'k' ? kLineTokens(en) : splitEnglishWords(clean).length;
     if (toks && en.words.length !== toks) {
       issues.wordsMismatch = { text: clean, have: en.words.length, need: toks };
     }
@@ -3102,6 +3178,64 @@ function openFixForRow(ref) {
 
 timeline.onFix = (ref) => openFixForRow(ref);         // 时间轴块右键「修复字幕」
 panel.onFixCard = (item) => openFixForRow(item.ref); // 字幕卡片右键「修复字幕」
+
+/* ═══════════ 整轨形态切换: 颜色高亮 ↔ \k 卡拉OK(右键菜单) ═══════════
+ * 同一份 words[] 模型换条序列化通道而已 —— 词级时间、文本、中英配对一律不动,
+ * 用户对两种模式的操作完全一致(设计稿 §7"几乎无感")。 */
+
+/** 当前稿件的逐词形态: 有 k 句就是 'k'; 没有则看元数据(决定"新建行/初稿"的默认), 再默认颜色形态 */
+function currentKaraokeStyle() {
+  if (karaokeSentencesOf(state.assStyleTargets && state.assStyleTargets.en).length) return 'k';
+  const meta = state.assDoc && state.assDoc.getScriptInfoComment(K_STYLE_META);
+  return meta === 'k' ? 'k' : 'color';
+}
+function karaokeStyleMenuLabel() {
+  return currentKaraokeStyle() === 'k' ? '整轨切回颜色高亮' : '整轨切换为 \\k 卡拉OK';
+}
+
+/** 整轨切换英文逐词行的形态（已是目标形态的行原样保留）。写入 SubFabricKaraokeStyle 元数据,
+ *  之后"新建行"与"创建初稿"都跟随它。 */
+function convertKaraokeStyle(target) {
+  if (state.format !== 'ass' || !state.kar || !state.assDoc) { toast('整轨切换仅支持 ASS 字幕'); return; }
+  const en = state.assStyleTargets && state.assStyleTargets.en;
+  const all = ((state.kar && state.kar.sentences) || [])
+    .filter(s => String(s.style).toLowerCase() === String(en || '').toLowerCase() && s.words && s.words.length);
+  if (!all.length) {
+    state.assDoc.setScriptInfoComment(K_STYLE_META, target);
+    if (state.project) Projects.scheduleSave();
+    toast(target === 'k' ? '这篇字幕没有英文逐词行；新行的默认形态已记为 \\k 卡拉OK' : '这篇字幕没有英文逐词行');
+    return;
+  }
+  const todo = all.filter(s => (target === 'k') ? s.karStyle !== 'k' : s.karStyle === 'k');
+  const kSweep = kSweepDefault(), kBase = kBaseDefaultHex();
+  for (const s of todo) {
+    if (target === 'k') {
+      s.karStyle = 'k';
+      s.kTag = kSweep ? '\\kf' : '\\k';
+      s.kHead = '';
+      // 未唱位: 该行有角色色就沿用角色色(= 颜色形态的行首 \c), 否则用「未唱默认色」
+      s.kBaseHex = speakerColorOf(s) || kBase;
+    } else {
+      s.karStyle = 'color';      // highlightTag 原样保留 → 颜色形态的高亮 span 沿用同一个色
+    }
+    s.events = state.assDoc.replaceEvents(s.events, buildWordSpecs(s));
+  }
+  state.assDoc.setScriptInfoComment(K_STYLE_META, target);
+  if (todo.length) {
+    clearEditPreview(false);
+    assPlayer.updateNow(state.assDoc.serialize());
+  }
+  rebuildItemsAndLanes(true, true);
+  setAssStyleControls();
+  if (state.project) Projects.scheduleSave();
+  if (!todo.length) toast(target === 'k' ? '英文行已是 \\k 卡拉OK形态' : '英文行已是颜色高亮形态');
+  else if (target === 'k') toast(`已把 ${todo.length} 行英文逐词切换为 \\k 卡拉OK（${kSweep ? '扫过' : '瞬切'}）`);
+  else toast(`已把 ${todo.length} 行切回颜色高亮`);
+}
+timeline.onToggleKaraokeStyle = () => convertKaraokeStyle(currentKaraokeStyle() === 'k' ? 'color' : 'k');
+panel.onToggleKaraokeStyle = timeline.onToggleKaraokeStyle;
+timeline.kStyleLabel = karaokeStyleMenuLabel;
+panel.kStyleLabel = karaokeStyleMenuLabel;
 
 /** 删除一条字幕(列表删除按钮 / 时间轴右键菜单共用) */
 /** 从文档/数据里摘掉一条字幕(**不重建界面**) —— 单条删除与批量删除共用, 批量时只重建一次 */
@@ -3474,7 +3608,9 @@ function refreshDynamicSubtitles() {
     // 整句样式(中文)绝不重切片: 只有逐词样式的句子才允许走逐词重建分支,
     // 否则历史脏数据(中文句带词级时间)会在这里被重新切片, 画面上同一句中文出现两遍。
     if (sent.words && sent.words.length && sent.style === state.kar.wordStyle) {
-      const txtWords = splitEnglishWords(sent.text || '').length;
+      // k 卡拉OK行的分词由文件自己的 \k 段序列决定（一段一音节）, 不吃应用分词口径 ——
+      // 拿 splitEnglishWords 去比会把外来 k 文件整轨判成"脏行"跳过, 自愈永远轮不到它们。
+      const txtWords = sent.karStyle === 'k' ? kLineTokens(sent) : splitEnglishWords(sent.text || '').length;
       if (sent.words.length !== txtWords) continue;      // "逐词多余/缺词" 脏行 → 不代修
       const specs = live(buildWordSpecs(sent));
       const evs = live(sent.events);
