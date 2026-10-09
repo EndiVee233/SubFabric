@@ -115,6 +115,10 @@
        只对达标（置信度 ≥ 门槛）的句子改逐词时间。**只改逐词时间戳**，不动文本。 -->
   <button class="btn btn-mini" id="btn-realign-full"
           title="逐句用 TTS 朗读并重新识别，算出每句的对齐置信度；只对置信度达标的句子重排逐词时间（不动文本）。全片要几分钟，先出预览再确认" disabled>🎯 全片逐词重校对</button>
+  <!-- 分段导入（多人协作）：把别人做的那一段字幕并进本稿。
+       默认只填空档；撞到已有字幕会列出来问，不会静默覆盖。 -->
+  <button class="btn btn-mini" id="btn-region-import"
+          title="多人协作：把别人做的这一段字幕并进当前稿件。要先说明「我这份的 0:00 对应本稿的第几秒」；默认只填空档，碰到已有字幕会先问" disabled>📥 分段导入</button>
         </div>
       </div>
       <div id="cue-list">
@@ -776,6 +780,42 @@
   </div>
 </div>
 
+<!-- 分段导入（多人协作）：把别人做的这一段字幕并进当前稿件。
+     大家的字幕文件都是**完整时间轴**，所以不需要偏移 —— 只要圈出"这一段"在哪。
+     默认**只填空档**，撞到已有字幕就列出来问，绝不静默覆盖别人的成果。 -->
+<div id="rim-overlay" hidden>
+  <div class="rn-box modal-surface reflect-box">
+    <div class="rn-title modal-drag-handle">分段导入 · 把一段字幕并进本稿</div>
+    <div class="rn-msg">字幕文件是完整时间轴的，所以只要圈出<b>这一段在本稿的哪个位置</b>；
+      程序会把落在区间里的行挑出来，**默认只填空档**，碰到已有字幕会先问你。</div>
+
+    <div class="np-file-row">
+      <span class="np-lbl">字幕文件</span>
+      <span class="np-file" id="rim-file-name">还没选</span>
+      <button type="button" class="btn btn-mini" id="rim-pick">浏览…</button>
+    </div>
+    <div class="np-file-row">
+      <span class="np-lbl">这一段</span>
+      <input type="text" id="rim-start" class="np-time" placeholder="开始 如 5:00" inputmode="numeric">
+      <span class="np-tilde">~</span>
+      <input type="text" id="rim-end" class="np-time" placeholder="结束 如 8:30" inputmode="numeric">
+      <button type="button" class="btn btn-mini" id="rim-from-sel" title="用时间轴上已拖出的选区填这两个框">用选区</button>
+    </div>
+    <div class="np-region-note" id="rim-range-note"></div>
+
+    <div class="reflect-summary" id="rim-summary" hidden></div>
+    <div class="reflect-list" id="rim-list" hidden></div>
+
+    <div class="rn-actions">
+      <button type="button" class="btn" id="rim-cancel">关闭</button>
+      <button type="button" class="btn" id="rim-recheck" hidden>重新检查</button>
+      <button type="button" class="btn btn-accent" id="rim-apply" disabled>只导入空档</button>
+      <button type="button" class="btn" id="rim-apply-force" hidden>重叠处也覆盖</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="rim-file" accept=".srt,.ass,.ssa" hidden>
+
 <!-- 全片逐词重校对：预览清单（逐句置信度 + 勾选应用，只写逐词时间） -->
 <div id="realign-overlay" hidden>
   <div class="rn-box modal-surface reflect-box">
@@ -1142,7 +1182,8 @@
         </div>
 
         <!-- 区域字幕导入：**默认整片**，勾上才限定范围。裁过的项目会在 project.json 里
-             记下 region，事后能看出"这是裁过的"，而不是像丢了内容。 -->
+             记下 region，事后能看出"这是裁过的"，而不是像丢了内容。
+             提示文字单独占一行 —— 创建页面板只有 ~370px 宽，挤在同一行必然被截断。 -->
         <div class="np-file-row" id="np-row-region">
           <label class="np-lbl np-lbl-check" for="np-region-on">
             <input type="checkbox" id="np-region-on">
@@ -1153,8 +1194,8 @@
             <span class="np-tilde">~</span>
             <input type="text" id="np-region-end" class="np-time" placeholder="结束 留空=片尾" inputmode="numeric">
           </span>
-          <span class="np-region-note" id="np-region-note"></span>
         </div>
+        <div class="np-region-note" id="np-region-note"></div>
 
         <div class="np-hint" id="np-hint">音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存</div>
         <div class="ws-actions">
