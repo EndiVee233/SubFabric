@@ -12,6 +12,9 @@ import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
 import { parseRegionTime } from '../region.js';
+// 逐词字幕修复：把"被清空/错位"的逐词文本搬回来（有 tests/repair-words-test.mjs）。
+// 用户实测过这种损坏：逐词行变空、文本连高亮标签一起跑到了同时间戳的另一行上。
+import { analyzeDamage, planRepair as planWordRepair, repairSummary } from '../repair-words.js';
 import { AssPlayer } from './assplayer.js';
 import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
 import { Timeline } from './timeline.js';
@@ -1188,6 +1191,11 @@ function setAss(text, name) {
   state.fileName = name;
   state.srtCues = [];
   state.assDoc = new AssDoc(text);
+  /* ★ 载入即自愈：先修"逐词行被清空/文本错位"再往下分析。
+   *   必须在下面 normalizeAssColorTags / analyzeKaraoke **之前** ——
+   *   修好之后再分析，配对看到的才是干净数据；
+   *   放在后面的话，行已经按坏数据配好对了，修了也白修。 */
+  healWordRows('载入字幕');
   const savedWordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
   // 载入即确定本稿件的逐词高亮色(无元数据 → 回到默认绿, 不能沿用上一个文件的颜色)
   setWordHighlightColor(/^#[0-9a-f]{6}$/i.test(savedWordColor) ? savedWordColor : '#00ff00');
@@ -1826,6 +1834,44 @@ function rimRenderList(plan) {
   box.hidden = !rows.length;
 }
 
+/** 逐词字幕自愈：把"被清空 / 错位"的逐词文本搬回来。
+ *
+ *  用户实测过这种损坏（逐行对比正常稿件与坏文件，时间戳一模一样）：
+ *    · 逐词行的**文本被清空**（画面上英文永远整句亮着、没有逐词推进）
+ *    · 那份文本（连 `{\c&H..&}` 高亮标签一起丢了）跑到了**同时间戳**的另一行上
+ *  本函数按"同一时间戳 + 文本非空 + 唯一 + 非中文"把文本搬回去，
+ *  任何不确定的情况都跳过（`analyzeDamage` 里已保证）。
+ *
+ *  安全性：**正常稿件里没有空行**，所以这里在正常稿件上是 no-op（已测 0 误报）。
+ *  调用点：分段导入之后（主要防线）+ 载入字幕之后（兜底）。
+ *
+ *  @returns {number} 实际修复的行数
+ */
+function healWordRows(where) {
+  if (state.format !== 'ass' || !state.assDoc) return 0;
+  const evs = state.assDoc.events;
+  if (!evs || !evs.length) return 0;
+  const rows = evs.map(ev => ({ ev, start: ev.start, end: ev.end, text: ev.text || '' }));
+  const analysis = analyzeDamage(rows);
+  if (!analysis.damaged) return 0;
+  const plan = planWordRepair(analysis);
+  let n = 0;
+  for (const e of plan.edits) {
+    try { state.assDoc.setEventText(e.row.ev, e.text); n++; }
+    catch (err) { console.warn('[heal] 写入失败', err); }
+  }
+  if (plan.deletes.length) {
+    try { state.assDoc.deleteEvents(plan.deletes.map(d => d.row.ev)); }
+    catch (err) { console.warn('[heal] 删除副本失败', err); }
+  }
+  const msg = repairSummary(analysis, plan);
+  if (msg) {
+    console.warn(`[heal] ${where || ''} ${msg}`);
+    toast(`⚠ 检测到逐词字幕错位，已自动修好：${msg}`, 9000);
+  }
+  return n;
+}
+
 /** 打开对话框 */
 function rimOpen() {
   if (!state.format) { toast('先打开一份字幕', 3600); return; }
@@ -1885,10 +1931,15 @@ function rimApply(force) {
       console.warn('[rim] 插入一行失败', e);
     }
   }
+  // ★ 导入后自动自愈：把"被清空/错位"的逐词文本搬回来。
+  //   放在这个位置的原因：损坏一旦写进文件就会永久留下（列表里看不出、画面只是
+  //   "整句一直亮着"），所以每次导入都顺手体检一遍，而不是等用户发现再处理。
+  const healed = healWordRows('分段导入后');
   rebuildItemsAndLanes(true);
   const rg = rimReadRange();
   const sum = `分段导入：进来 ${added} 行（原 ${before} 行 → 现 ${state.items.length} 行）`
     + (force && res.replace ? `，覆盖 ${res.replace.length} 处` : '')
+    + (healed ? `；顺带修好 ${healed} 行错位的逐词文本` : '')
     + `；区间 ${rg.ok ? fmtTime(rg.start) + '~' + fmtTime(rg.end) : '?'}，来源 ${rimName}`;
   toast(sum, 8000);
   if (typeof logOp === 'function') logOp('导入', '分段字幕', sum);
