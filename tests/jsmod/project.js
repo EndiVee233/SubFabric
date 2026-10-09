@@ -1051,7 +1051,6 @@ export function initProjects(ctx) {
   function hwRender(list) {
     const box = $('#ah-mine-list');
     const foot = $('#ah-mine-foot');
-    const cnt = $('#ah-mine-count');
     if (!box) return;
     box.innerHTML = '';
     if (!list || !list.length) {
@@ -1077,15 +1076,28 @@ export function initProjects(ctx) {
       const term = document.createElement('span');
       term.className = 'hw-mine-term';
       term.textContent = c.term;
+      // 来源标记：规则挖的 / 模型判断的（模型那条带理由，直接显示给用户看，让他能反驳）
+      if (c.source === 'llm') {
+        const tag = document.createElement('span');
+        tag.className = 'hw-mine-tag';
+        tag.textContent = '模型';
+        term.appendChild(document.createTextNode(' '));
+        term.appendChild(tag);
+      }
       const bits = [];
+      if (c.why) bits.push(c.why);                     // LLM 的理由优先显示
       if (c.count > 1) bits.push(`改过 ${c.count} 次`);
+      if (c.heard) bits.push(`原来听成「${c.heard}」`);
+      else {
+        const sm = (c.samples || [])[0];
+        if (sm && sm.replaced) bits.push(`原来听成「${sm.replaced}」`);
+      }
       const sm = (c.samples || [])[0];
-      if (sm && sm.replaced) bits.push(`原来听成「${sm.replaced}」`);
       if (sm && sm.target) bits.push(sm.target);
       const sub = document.createElement('span');
       sub.className = 'hw-mine-src';
       sub.textContent = bits.join(' · ');
-      meta.append(term, document.createTextNode(bits.length ? '  ' : ''), sub);
+      meta.append(term, document.createTextNode('  '), sub);
       row.append(cb, meta);
       box.appendChild(row);
     }
@@ -1114,17 +1126,44 @@ export function initProjects(ctx) {
     }
     ahMine.disabled = true;
     const old = hint ? hint.textContent : '';
-    if (hint) hint.textContent = '正在读操作日志…';
+    const useLlm = !!($('#ah-use-llm') && $('#ah-use-llm').checked);
+    if (hint) hint.textContent = useLlm ? '正在读操作日志，并交给模型分析（可能要十几秒）…' : '正在读操作日志…';
     try {
-      const r = await fetch(`/api/projects/${pid}/hotword-candidates`, { signal: AbortSignal.timeout(20000) });
+      const r = await fetch(`/api/projects/${pid}/hotword-candidates${useLlm ? '?llm=1' : ''}`,
+        { signal: AbortSignal.timeout(useLlm ? 180000 : 20000) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      hwCands = j.candidates || [];
+
+      /* 两条来源合并呈现：
+       *   · 规则挖的（count/samples）—— 有统计依据
+       *   · 模型判断的（why）      —— 能看出一词多写法、能覆盖整句重写那些规则跳过的
+       * 同名以模型那条为准（它的 term 是"标准形"，正是我们想要的）。 */
+      const rule = (j.candidates || []).map(c => Object.assign({ source: 'rule' }, c));
+      const llm = (j.llmTerms || []).map(c => Object.assign({ source: 'llm', count: 0, samples: [] }, c));
+      const byKey = new Map();
+      for (const c of rule) byKey.set(c.term.toLowerCase(), c);
+      for (const c of llm) byKey.set(c.term.toLowerCase(), c);
+      const merged = [...byKey.values()].sort((a, b) => {
+        if ((a.source === 'llm') !== (b.source === 'llm')) return a.source === 'llm' ? -1 : 1;
+        return (b.score || 0) - (a.score || 0);
+      });
+      hwCands = merged;
       hwRender(hwCands);
+
       const st = j.stats || {};
+      const li = j.llm || {};
+      const parts = [];
+      if (st.editEntries) parts.push(`读了 ${st.editEntries} 条编辑记录`);
+      parts.push(`规则挖到 ${rule.length} 个`);
+      if (useLlm) {
+        if (li.ok) parts.push(`模型（${li.model || '?'}）给出 ${llm.length} 个`);
+        else if (li.code === 'not-ready') parts.push('模型没配好 —— 去「全局设置 → 增强 → 用于分析热词的模型」里选一个');
+        else parts.push(`模型分析失败：${li.error || '未知原因'}`);
+      }
+      const total = merged.length;
       if (hint) {
         hint.textContent = st.editEntries
-          ? `读了 ${st.editEntries} 条编辑记录，挖到 ${hwCands.length} 个候选。勾选后点「加入选中的热词」。`
+          ? `${parts.join('，')}。合计 ${total} 个候选，勾选后点「加入选中的热词」。`
           : '这个项目的操作日志里还没有「编辑字幕」的记录 —— 先去改几句字幕（把 ASR 听错的专有名词改对），再回来挖。';
       }
     } catch (e) {
@@ -1194,6 +1233,121 @@ export function initProjects(ctx) {
     }
   });
 
+  /* ═══════════ 热词分析用的模型（全局设置 → 增强）═══════════
+   * 默认跟随字幕翻译那套配置（用户不必配两遍）。想单独用别的模型就取消跟随 ——
+   * 典型用法：翻译用在线 API（快、便宜），热词分析用**本地 Qwen**（不联网、不花钱、可反复跑）。
+   * 配置落在 asr/settings.json 的 analyze 段（服务端 analyzeCfg 负责解析）。
+   */
+  let anPresets = [];
+
+  function anSetFieldsEnabled(on) {
+    const f = $('#an-fields');
+    if (!f) return;
+    f.querySelectorAll('input,select').forEach(x => { x.disabled = !on; });
+    f.style.opacity = on ? '1' : '.5';
+  }
+
+  function anStatus(j) {
+    const el = $('#an-status');
+    if (!el || !j) return;
+    const c = (j.cfg || {});
+    if (j.useTranslate) {
+      const t = j.translate || {};
+      el.innerHTML = t.model
+        ? `跟随翻译：实际用 <b>${esc(t.model)}</b>${t.ready ? '' : '（但翻译那套还没配好：缺接口地址或 Key）'}`
+        : '跟随翻译，但翻译那套还没配好 —— 先去「翻译」页填接口地址与模型名';
+    } else {
+      el.innerHTML = j.ready
+        ? `用 <b>${esc(c.model || '')}</b>${c.baseUrl ? ' @ ' + esc(c.baseUrl) : ''}`
+        : '✗ 还没配好：接口地址与模型名都要填（本地地址 http://127.0.0.1:… 免 Key）';
+    }
+  }
+
+  async function anLoad() {
+    const sel = $('#an-provider');
+    if (!sel) return;
+    try {
+      const r = await fetch('/api/analyze/config', { signal: AbortSignal.timeout(8000) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      anPresets = j.presets || [];
+      sel.innerHTML = anPresets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+      const c = j.cfg || {};
+      sel.value = c.provider || 'custom';
+      $('#an-baseurl').value = c.baseUrl || '';
+      $('#an-key').value = '';
+      $('#an-key').placeholder = j.hasKey ? '已保存（留空不修改）' : '本地地址免填';
+      const kh = $('#an-key-hint');
+      if (kh) kh.hidden = !j.hasKey;
+      $('#an-model').value = c.model || '';
+      if ($('#an-maxedits')) $('#an-maxedits').value = (j.limits && j.limits.maxEdits) || 40;
+      const cb = $('#an-use-translate');
+      if (cb) cb.checked = j.useTranslate !== false;
+      anSetFieldsEnabled(!(cb && cb.checked));
+      anStatus(j);
+    } catch (e) {
+      const el = $('#an-status');
+      if (el) el.textContent = '✗ 读不到分析模型配置：' + String((e && e.message) || e);
+    }
+  }
+
+  async function anSave() {
+    const cb = $('#an-use-translate');
+    const body = {
+      useTranslate: !!(cb && cb.checked),
+      provider: $('#an-provider') ? $('#an-provider').value : 'custom',
+      baseUrl: $('#an-baseurl') ? $('#an-baseurl').value.trim() : '',
+      model: $('#an-model') ? $('#an-model').value.trim() : '',
+      maxEdits: $('#an-maxedits') ? (parseInt($('#an-maxedits').value, 10) || 40) : 40,
+    };
+    const key = $('#an-key') ? $('#an-key').value : '';
+    if (key) body.apiKey = key;          // 留空 = 不修改已存的 Key
+    try {
+      const r = await fetch('/api/analyze/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(10000),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      if ($('#an-key')) { $('#an-key').value = ''; }
+      await anLoad();
+      if (typeof toast === 'function') toast('分析模型设置已保存', 2600);
+    } catch (e) {
+      const el = $('#an-status');
+      if (el) el.textContent = '✗ 保存失败：' + String((e && e.message) || e);
+    }
+  }
+
+  const anCb = $('#an-use-translate');
+  if (anCb) anCb.addEventListener('change', () => {
+    anSetFieldsEnabled(!anCb.checked);
+    anSave();
+  });
+  const anSel = $('#an-provider');
+  if (anSel) anSel.addEventListener('change', () => {
+    // 切服务商时把该家的预设地址/模型填上（与「翻译」页同一行为），用户可再手改
+    const p = (anPresets || []).find(x => x.id === anSel.value);
+    if (p && $('#an-baseurl')) {
+      $('#an-baseurl').value = p.baseUrl || '';
+      $('#an-model').value = p.model || '';
+    }
+  });
+  for (const id of ['#an-baseurl', '#an-key', '#an-model', '#an-maxedits']) {
+    const el = $(id);
+    if (el) el.addEventListener('change', anSave);
+  }
+  const anClear = $('#an-key-clear');
+  if (anClear) anClear.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      const r = await fetch('/api/analyze/config', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKeyClear: true }), signal: AbortSignal.timeout(10000),
+      });
+      if (r.ok) { if (typeof toast === 'function') toast('已清除分析模型的 API Key', 2600); await anLoad(); }
+    } catch { /* 忽略 */ }
+  });
+
   /* ── API Key 字段: 服务端只回 hasKey(明文不回传), 输入框留空 = 不修改已存的 Key;
    * 想删除已存 Key 走「清除已存 Key」链接(显式 apiKeyClear, 与"留空"区分开) ── */
   function refreshKeyHint(c) {
@@ -1244,6 +1398,7 @@ export function initProjects(ctx) {
     glLoad(c.glossary, c.glossaryLang);
     renderAsrModels();
     bindModelDirSettings();
+    anLoad();            // 热词分析模型（自己拉 /api/analyze/config，与翻译配置分开）
   }
   /** 模型管理: 列出所有识别模型(状态/下载/删除) + whisper.cpp 运行时 */
   /* ──────────────────────────────────────────────────────────────────────────
