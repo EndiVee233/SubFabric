@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 字幕编辑器 - 本地静态服务器
  * 特性:
  *  - 服务 D:\subtitle 整个目录(编辑器页面 / 示例视频 / 示例字幕)
@@ -5837,7 +5837,13 @@ function startPrepare(id, videoPath, mode) {
         needNemo: m.engine === 'nemo' && !(nemo.ok && nemo.cuda),
       };
     });
-    return sendJson(res, 200, {
+    /* ⚠ 下面整段包在 async IIFE 里，只为了 `await nvidiaGpu()` 一个字段。
+     *   原来的写法是直接读 `nvidiaCache.name`（后台探测的缓存）：服务器刚起来时缓存是空的，
+     *   于是第一次查状态就回 gpu:null —— 前端把 null 当成"没有 N 卡"，给 Multitalker 卡打上
+     *   「只支持 N 卡。当前没检测到 N 卡，无法下载」的**误报**（用户实测撞到过）。
+     *   改成等这次探测完再回：nvidia-smi 毫秒级 + 8 秒超时，比 NeMo 那种要导入 torch 的 30 秒轻得多。
+     *   现在 gpu:null 只有一种含义了：真的没有 N 卡。 */
+    return (async () => sendJson(res, 200, {
       models,
       selectedModel: selectedModelId(),
       rerecogModel: rerecogModelId(),        // 「重新识别模型」设置(空 = 沿用项目原有模型)
@@ -5864,14 +5870,26 @@ function startPrepare(id, videoPath, mode) {
       // Python 环境预检(结果缓存 5 分钟; 触发后台探测, 下次轮询就有)
       pythonProbe: pyProbeCache,
       provider: asrProvider(),              // Parakeet 推理设备: 'cpu' | 'cuda'
-      gpu: nvidiaCache.name,                // NVIDIA 显卡名(null = 未检测到/探测中)
+      /* ⚠ 这里原来直接读 `nvidiaCache.name`（后台探测的缓存）。
+       *   服务器刚起来时缓存还是空的，于是第一次查状态就返回 gpu:null ——
+       *   前端把 null 当成"没有 N 卡"，给 Multitalker 卡打上
+       *   「只支持 N 卡。当前没检测到 N 卡，无法下载」的**误报**（用户实测撞到过）。
+       *   改成**等这次探测完**再回：nvidia-smi 是毫秒级 + 8 秒超时，
+       *   比 NeMo 那种要导入 torch 的 30 秒轻得多，等得起。
+       *   现在 gpu:null 只有一种含义了：真的没有 N 卡。 */
+      gpu: await nvidiaGpu().catch(() => null),
+      /* gpu 为空到底是"没 N 卡"还是"还没探测"—— 告诉前端这个信号，
+       * 免得它在探测期间误报"没检测到 N 卡"。
+       * 走到这里时 nvidiaGpu() 已经 await 过了；只有它超时/null 才会是空，
+       * 而 5 分钟内再次查询命中缓存，所以 pending 基本只在"探测失败"时为真。 */
+      gpuPending: !nvidiaCache.name && (Date.now() - nvidiaCache.at) < 9000,
       // 并行下载: Map → 数组(每项含 key), 前端按 key 匹配各自的进度
       downloads: Array.from(downloads.entries()).map(([key, v]) => Object.assign({ key }, v)),
       // 兼容旧前端: 单任务时代的字段(任意一个在跑就给它的状态)
       download: (() => { for (const v of downloads.values()) if (v.running) return v; return { running: false, kind: '', pct: 0, msg: '', error: null }; })(),
       modelsRoot: modelsRoot(),
       settingsDir: ASR_DIR,
-    });
+    }))();
   }
   /** 安装 NeMo 运行时（仅 multitalker 模型需要）: 在 ASR Python 环境里追加 PyTorch + NeMo。
    *  与 sherpa-onnx 环境是**两套依赖**（约 200MB vs 约 5GB），所以单独装、单独报进度（downloads key='nemo'）。
@@ -6031,7 +6049,8 @@ function startPrepare(id, videoPath, mode) {
   /** 下载识别模型(带 modelId)或 whisper.cpp 运行时(kind='runtime')。
    *  并行友好: 不同 modelId/kind 的任务各自独立跑, 重复点同一个任务会被幂等忽略。 */
   if (pathname === '/api/asr/download' && req.method === 'POST') {
-    return readBody(req, res, 64 * 1024, (err, body) => {
+    /* 回调改成 **async** —— 只为了下面能 `await nvidiaGpu()`（见那里的注释：读缓存会误拦下载）。 */
+    return readBody(req, res, 64 * 1024, async (err, body) => {
       let p = {}, modelId = '', kind = 'model';
       try {
         const j = JSON.parse(body.toString('utf8')) || {};
@@ -6063,8 +6082,12 @@ function startPrepare(id, videoPath, mode) {
       if (model.engine === 'sherpa-onnx' && asrProvider() !== 'cuda') {
         return sendJson(res, 400, { error: 'Parakeet 需要 CUDA GPU（N 卡），不支持 CPU。当前环境没启用 GPU·CUDA，先在「Python 环境」装好（需 N 卡）再下载' });
       }
-      nvidiaGpu().catch(() => {});     // 后台探一次 N 卡(缓存 5 分钟), 下面按缓存值判断
-      if (model.engine === 'nemo' && !nvidiaCache.name) {
+      /* ⚠ 这里以前是 `nvidiaGpu().catch(()=>{})` 打后台 + 紧接着读 `nvidiaCache.name` ——
+       *   冷启动后**第一次**点下载时缓存还是空的，于是明明是 N 卡机器也会被回一句
+       *   「这台机器没检测到 NVIDIA 显卡…不能下载」拦下来（与列表卡那次误报同源）。
+       *   改成 await：nvidia-smi 毫秒级 + 8 秒超时，在用户点「下载」这个节骨眼上等得起。 */
+      const gpuNameForDl = await nvidiaGpu().catch(() => null);
+      if (model.engine === 'nemo' && !gpuNameForDl) {
         return sendJson(res, 400, { error: '「' + model.name + '」只支持 N 卡（NVIDIA 显卡）。这台机器没检测到 NVIDIA 显卡，该模型不支持 CPU，不能下载' });
       }
       const key = 'model:' + model.id;

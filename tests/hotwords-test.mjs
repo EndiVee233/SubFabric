@@ -182,5 +182,45 @@ console.log('\n== ⑧ LLM 分析这条链路的接线（踩过的坑都钉住）
     '候选带「模型」来源标记（有样式）');
 }
 
+console.log('\n== ⑨ 「模型管理」状态卡不能误报（三个实测撞到的坑）==');
+{
+  const REPO = path.resolve(HERE, '..');
+  const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
+  const PJS = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
+
+  /* ① NeMo 预检要 `import torch`，首次 30 秒起步。这期间后端回 ok:false/msg:'预检中…'，
+   *    前端原来直接落到"未安装 · 约 5GB"分支 —— 用户明明装了却被告知没装，
+   *    还给他一个「安装」按钮（点下去白下 5GB）。 */
+  const nemoStateLine = PJS.split('\n').find(l => /nemoState = `/.test(l)) || '';
+  ok(!/未安装/.test(nemoStateLine), '★ NeMo 卡的"未安装"文案已去掉（不再误报）', nemoStateLine.trim().slice(0, 90));
+  ok(/nemoPending/.test(PJS) && /预检中/.test(PJS),
+    '★ NeMo 卡区分「检测中」与「未安装」');
+  ok(/nemoPollTimer/.test(PJS) && /clearInterval\(nemoPollTimer\)/.test(PJS),
+    '★ 预检期间会轮询，出结果自动重画（不用手动刷页）');
+
+  /* ② GPU 探测是异步的（spawn nvidia-smi）。状态接口原来直接读缓存 nvidiaCache.name，
+   *    服务器刚起来的第一次查询就回 gpu:null —— 前端当成"没有 N 卡"，
+   *    给 Multitalker 卡打上「当前没检测到 N 卡，无法下载」的误报。 */
+  ok(/gpu: await nvidiaGpu\(\)/.test(SRV), '★ 状态接口等 GPU 探测完再回（原来读缓存 → 首查是 null）');
+  ok(/gpuNameForDl = await nvidiaGpu\(\)/.test(SRV),
+    '★ 下载接口也 await（原来"打后台 + 立刻读缓存"会误拦下载）');
+  ok(/gpuPending/.test(SRV) && /gpuPending/.test(PJS),
+    '★ 有 gpuPending 信号，前端能区分"没卡"与"还在查"');
+  ok(/gpuUnknown/.test(PJS) && /正在查显卡/.test(PJS),
+    '★ Multitalker 卡探测期间显示「检测中」，不说"没检测到 N 卡"');
+
+  /* ③ nvidiaCache.name 在**业务代码**里只该剩三处，且都说得通：
+   *      · nvidiaGpu() 内部两处（读缓存 / 写回后返回）
+   *      · gpuPending 一处（它就在 `gpu: await nvidiaGpu()` **之后**，用来判断探测结果空不空）
+   *    任何"打后台 + 立刻读缓存"的写法都会在冷启动时读到 null → 误报。 */
+  const bizCacheReads = SRV.split('\n')
+    .map(l => l.trim())
+    .filter(t => /nvidiaCache\.name/.test(t) && !t.startsWith('*') && !t.startsWith('/*') && !t.startsWith('//'));
+  ok(bizCacheReads.length === 3,
+    `★ 业务代码里读缓存只剩 3 处（实际 ${bizCacheReads.length}）`, bizCacheReads);
+  ok(bizCacheReads.filter(t => !/gpuPending|return nvidiaCache\.name|nvidiaCache\.at/.test(t)).length === 0,
+    '★ 那 3 处都说得通（nvidiaGpu 内部 ×2 + gpuPending ×1）', bizCacheReads);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
