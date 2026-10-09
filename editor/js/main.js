@@ -3412,13 +3412,21 @@ function addRecognizedRow(seg) {
   const zh = zhStyle ? appendSentence(zhStyle, s, e, escAss(zhText)) : null;
   const en = enStyle ? appendSentence(enStyle, s, e, escAss(enText)) : null;
   if (!zh && !en) return null;
-  // 英文: 用 ASR 的**真实词级时间**直接铺（不按句长加权重算），逐词高亮跟着真实发音走
+  // 英文: 有 ASR 的**真实词级时间**就按它铺（逐词高亮跟着真实发音走）
   if (en) {
     const words = (seg.words || [])
       .map(w => ({ w: w.word, s: w.start, e: w.end }))
       .filter(w => w.e > w.s && w.s >= s - 0.05 && w.e <= e + 0.05);
     if (words.length) {
       en.words = words;
+      en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+    } else if (enText) {
+      /* ★ 没有 ASR 词级时间时**也要铺逐词**。
+       * 这里以前直接跳过 —— 于是"分段导入"进来的英文行成了**纯整句**，
+       * 在逐词稿里那一行的逐词格式就是坏的（用户报"导入后逐词字幕格式损坏"）。
+       * karaoke.js 的 recalcWords 对"原本不是逐词句（如刚插入的新行）"的处理
+       * 正是**在句内均匀铺满**（见那里的注释），直接调它，不另写一套分摊逻辑。 */
+      en.words = recalcWords(en, en.text, s, e);
       en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
     }
   }
