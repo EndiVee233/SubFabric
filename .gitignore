@@ -79,3 +79,7 @@ _tts_probe/
 !/build/installer/start-editor.command
 !/build/installer/logo.png
 !/build/installer/logo.ico
+
+# 测试临时文件（不该进仓库）
+.staging-testid.txt
+.diag.json

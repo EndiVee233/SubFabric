@@ -87,11 +87,13 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-// 版本号 2.1.13-fork.4：本 fork 与上游**同名不同内容**，故加 -fork.N 后缀区分。
-//（-fork.4 = 项目压缩包导出/导入、区域字幕导入、分段导入（多人协作）；
-//  -fork.3 = 项目包与区域导入；-fork.2 = 上游 6fe18608b / 6d73a6988 的编辑器修复全部合并；
+// 版本号 2.1.13-fork.5：本 fork 与上游**同名不同内容**，故加 -fork.N 后缀区分。
+//（-fork.5 = 修"分段导入后逐词格式损坏"：导入的行也要铺逐词 span；
+//  -fork.4 = 分段导入（多人协作）+ 修两个显示 bug；
+//  -fork.3 = 项目压缩包导出/导入 + 区域字幕导入；
+//  -fork.2 = 上游 6fe18608b / 6d73a6988 的编辑器修复全部合并；
 //  -fork.1 = 只合并了 server.js 一侧。本 fork 自己的功能见 editor/README.md 的更新日志）。
-const APP_VERSION = '2.1.13-fork.4'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.1.13-fork.5'; // 与打版号一致; 改了就顺手同步这里
 // Windows 的文件版本号要求**四段纯数字**，不能带 -fork.1 这种后缀
 //（build_exe.py 用它喂 rcedit，安装包 SubFabric.iss 里也有一份同值的 MyAppFileVersion）。
 // 改 APP_VERSION 时这个也要跟着改，否则 exe 属性里显示的版本会对不上。
