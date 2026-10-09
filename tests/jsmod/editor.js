@@ -98,6 +98,7 @@ export class EditorPanel {
     this.onRecolorRole = null;// 右键菜单·修改颜色 → (name, '#rrggbb') 全局
     this.onDeleteCard = null; // 字幕卡片右键 → 删除该条(与时间轴右键删除同一套逻辑)
     this.onFixCard = null;    // 字幕卡片右键 → 修复该条字幕(与时间轴右键修复同一套逻辑)
+    this.onToggleKaraokeStyle = null; // 字幕卡片右键 → 整轨切换颜色高亮 ↔ \k 卡拉OK
     this.onAddRole = null;    // 角色列表里的"＋ 添加角色"
     this.cardMenu = null;
     this._cardMenuItem = null;
@@ -558,6 +559,7 @@ export class EditorPanel {
         if (btn.dataset.act === 'delete' && item && this.onDeleteCard) this.onDeleteCard(item);
         else if (btn.dataset.act === 'fix' && item && this.onFixCard) this.onFixCard(item);
         else if (btn.dataset.act === 'retranslate' && item && this.onRetranslateCard) this.onRetranslateCard(item);
+        else if (btn.dataset.act === 'karaoke-style' && item && this.onToggleKaraokeStyle) this.onToggleKaraokeStyle(item.ref);
       });
     }
     this.listEl.addEventListener('contextmenu', (e) => {
@@ -579,6 +581,7 @@ export class EditorPanel {
   _showCardMenu(cx, cy, item) {
     if (!this.cardMenu) return;
     this._cardMenuItem = item;
+    this._refreshKStyleLabel(this.cardMenu);
     this.cardMenu.hidden = false;
     const w = this.cardMenu.offsetWidth, h = this.cardMenu.offsetHeight;
     this.cardMenu.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
@@ -587,6 +590,13 @@ export class EditorPanel {
   _hideCardMenu() {
     if (this.cardMenu && !this.cardMenu.hidden) this.cardMenu.hidden = true;
     this._cardMenuItem = null;
+  }
+
+  /** 整轨形态切换那一项的文案是**动态**的（当前是颜色形态就写"切换为 \k 卡拉OK", 反之写"切回颜色高亮"）。
+   *  只改内层 span 的文本节点：图标是 afterbegin 插进来的 SVG, 直接 textContent 会把图标一起抹掉。 */
+  _refreshKStyleLabel(menu) {
+    const span = menu && menu.querySelector('[data-kstyle-label]');
+    if (span && this.kStyleLabel) span.textContent = this.kStyleLabel();
   }
 
   /* ─────────── 角色右键菜单 / 重命名 / 换色 ─────────── */

@@ -203,6 +203,8 @@ export class Timeline {
     this.onSelect = null;
     this.onCreate = null;     // 空白处拖动新建: (start, end)
     this.onDelete = null;     // 右键菜单删除: (ref)
+    this.onToggleKaraokeStyle = null; // 右键菜单 → 整轨切换 颜色高亮 ↔ \k 卡拉OK: (ref)
+    this.kStyleLabel = null;  // 菜单文案提供者: () => '切换为 \k 卡拉OK' | '切回颜色高亮'
     this.isEditable = null;
     this._drag = null;
     this._filmRotate = 0;
@@ -543,6 +545,7 @@ export class Timeline {
         if (act === 'delete' && cue && this.onDelete) this.onDelete(cue.ref);
       else if (act === 'fix' && cue && this.onFix) this.onFix(cue.ref);
       else if (act === 'retranslate' && cue && this.onRetranslate) this.onRetranslate(cue.ref);
+      else if (act === 'karaoke-style' && cue && this.onToggleKaraokeStyle) this.onToggleKaraokeStyle(cue.ref);
       });
     }
 
@@ -798,6 +801,9 @@ export class Timeline {
     const el = this.menuEl;
     if (!el) return;
     this._menuCue = cue;
+    // 整轨形态切换的文案随当前形态变（只改内层 span —— 图标是插进来的 SVG, 不能 textContent）
+    const span = el.querySelector('[data-kstyle-label]');
+    if (span && this.kStyleLabel) span.textContent = this.kStyleLabel();
     el.hidden = false;
     const w = el.offsetWidth, h = el.offsetHeight;
     el.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
