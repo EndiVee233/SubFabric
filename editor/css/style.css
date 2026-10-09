@@ -1200,18 +1200,32 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .np-file.filled { color: var(--text-0); }
 /* ── 区域字幕导入（只导入一段）──
  * 勾选框与标签同一行；区间输入平时隐藏（勾了才出现），免得默认就显示两个空框、
- * 让人以为必须填。占位符写在 placeholder 里（SRT 时间只能键盘输入）。 */
+ * 让人以为必须填。占位符写在 placeholder 里（SRT 时间只能键盘输入）。
+ *
+ * ⚠ 布局踩过的坑：这里曾把输入框那组设成 `flex: 1 1 0%`，它被压缩到 148px，
+ *   而里面两个 96px 的输入框**不会跟着缩**（固定宽度），于是子元素溢出容器、
+ *   盖到右边的提示文字上（实测重叠 55px）。
+ *   现在的约定：**输入框那组不缩（flex:0 0 auto），多余空间给提示文字**，
+ *   文字自己 overflow:hidden 截断 —— 宁可截断提示，也不能让输入框被压扁或压住别人。 */
 .np-lbl-check { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .np-lbl-check input { margin: 0; cursor: pointer; }
-.np-region { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.np-region { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .np-time {
   width: 96px; font-size: 12px; padding: 3px 7px; border-radius: 6px;
   border: 1px solid var(--border); background: var(--bg-2); color: var(--text-0);
   font-variant-numeric: tabular-nums;
+  flex: 0 0 auto; box-sizing: border-box;
 }
 .np-time:focus { outline: none; border-color: var(--accent); }
-.np-tilde { color: var(--text-2); font-size: 12px; }
-.np-region-note { flex: 1; min-width: 0; font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-tilde { color: var(--text-2); font-size: 12px; flex: 0 0 auto; }
+/* 提示文字**单独占一行**（创建页面板只有 ~370px 宽，挤在同一行必然被截断）；
+ * 空的时候不占高度，免得白留一条空隙。 */
+.np-region-note {
+  font-size: 12px; color: var(--text-2); line-height: 1.5;
+  margin: -4px 0 10px; padding-left: 64px;   /* 与上面的标签列对齐 */
+  min-height: 0;
+}
+.np-region-note:empty { display: none; }
 /* 非法区间要**看得出来是错的**（红），否则用户填了 90~30 却以为没事 */
 .np-region-note.bad { color: #ff6b6b; }
 .np-hint {
@@ -1695,6 +1709,33 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   background: rgba(0,0,0,.55);
 }
 #reflect-overlay[hidden] { display: none; }
+
+/* 分段导入（多人协作）与全片逐词重校对的浮层。
+ * ⚠ 这两个 id 以前**没有任何 CSS 规则**，于是 position:static —— 显示时不是浮在画面中间，
+ *   而是作为普通块堆到**页面最底部**（实测 top:803px，在视口之外），用户根本看不到。
+ *   这里补上与 #reflect-overlay 一致的定位。 */
+#realign-overlay, #rim-overlay {
+  position: fixed; inset: 0; z-index: 88;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.55);
+}
+#realign-overlay[hidden], #rim-overlay[hidden] { display: none; }
+
+/* ── 分段导入：预览清单 ── */
+.rim-hint { flex: 1; min-width: 0; font-size: 12px; color: var(--text-2); }
+.rim-item {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-2); font-size: 12px; line-height: 1.5;
+}
+.rim-item .rim-ok { flex: 0 0 auto; color: #4ec9b0; font-size: 11px; }
+.rim-item .rim-no { flex: 0 0 auto; color: #ff6b6b; font-size: 11px; font-weight: 600; }
+.rim-item.rim-clash { border-color: rgba(255,107,107,.45); background: rgba(255,107,107,.07); }
+.rim-item .rim-t { flex: 0 0 auto; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.rim-item .rim-x { flex: 1; min-width: 0; color: var(--text-0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rim-item .rim-note { flex: 0 0 auto; color: var(--text-2); font-size: 11px; }
+/* 区间内没有字幕时用红字说明（否则用户以为程序坏了） */
+.reflect-summary.rim-bad { color: #ff6b6b; border-color: rgba(255,107,107,.45); }
 
 /* 进度：反思是同步请求（一轮十几秒到一两分钟），要有明显的"在跑" */
 /* 概览：先说清"要动多少东西、要重识别多少音频"，别让用户盲点 */
