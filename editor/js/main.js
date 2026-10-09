@@ -1247,6 +1247,30 @@ function setAss(text, name) {
     toast('已修复旧版逐词切片脏数据：' + msg.join('，'), 6000);
   }
 
+  /* 逐词健康检查：**报告**而不是静默继续。
+   * 起因：分段导入曾经有一条路径（fork.5 之前）会让英文逐词行变成**空行**、
+   * 英文整句跑到中文行里 —— 一旦落盘就永久留在文件里，而且用户看不出来
+   * （列表里显示"中英双行"，但英文列是空的）。
+   * 这里只**报**不自动改：怎么修取决于内容，猜着改比报出来更危险。
+   * 提示里给出条数，用户就知道该不该用导出包/备份回退。 */
+  {
+    const blankWordRows = state.kar.rows.filter(r =>
+      r.en && !r.en.words.length && !String(r.en.text || '').trim());
+    const enInZhRows = state.kar.rows.filter(r =>
+      r.zh && !r.zh.words.length
+      && /^[A-Za-z]/.test(String(r.zh.text || '').trim())
+      && !/[\u3400-\u9fff]/.test(String(r.zh.text || '')));
+    if (blankWordRows.length || enInZhRows.length) {
+      const parts = [];
+      if (blankWordRows.length) parts.push(`${blankWordRows.length} 行英文是空的`);
+      if (enInZhRows.length) parts.push(`${enInZhRows.length} 行的英文跑到了中文行里`);
+      console.error('[字幕健康] 这份字幕的逐词格式像是被旧版导入写坏过：' + parts.join('，')
+        + '（在编辑器里搜这些行确认；需要的话用导出的项目包回退）');
+      toast('⚠ 这份字幕有逐词格式损坏：' + parts.join('，')
+        + '。建议从项目包或备份恢复；重新导入那一段也能修', 12000);
+    }
+  }
+
   panel.setBadge('ASS 特效', 'ass');
   panel.setFileName(name);
   applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
