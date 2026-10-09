@@ -694,6 +694,27 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .hotword-row { display:flex; gap:6px; align-items:center; }
 .hotword-row .hotword-input { flex:1; padding:5px 10px; }
 .hotword-del { flex:none; min-width:28px; }
+
+/* ── 从操作日志挖热词 ──────────────────────────────────────────────
+   挖出来的候选**只能勾选后加入**，绝不自动写进热词表 —— 颜色上用强调色边框
+   把它和上面的手工热词列表区分开。 */
+.hw-mine { margin-top:12px; padding-top:12px; border-top:1px dashed var(--border); }
+.hw-mine-head { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; }
+.hw-mine-hint { flex:1; min-width:180px; font-size:12px; line-height:1.5; color:var(--fg-dim); }
+.hw-mine-list {
+  display:flex; flex-direction:column; gap:4px; margin-top:8px;
+  max-height:240px; overflow-y:auto;
+  border:1px solid var(--border); border-radius:8px; padding:6px;
+}
+.hw-mine-item { display:flex; gap:8px; align-items:flex-start; padding:4px 6px; border-radius:6px; cursor:pointer; }
+.hw-mine-item:hover { background:var(--hover, rgba(255,255,255,.04)); }
+.hw-mine-item input { flex:none; margin-top:3px; }
+.hw-mine-term { font-weight:600; color:var(--accent, #ff7a45); }
+.hw-mine-meta { flex:1; min-width:0; font-size:12px; line-height:1.5; color:var(--fg-dim); }
+.hw-mine-src { display:block; opacity:.75; word-break:break-all; }
+.hw-mine-foot { display:flex; gap:6px; align-items:center; margin-top:8px; flex-wrap:wrap; }
+.hw-mine-count { font-size:12px; color:var(--fg-dim); }
+.hw-mine-empty { padding:10px; font-size:12px; line-height:1.6; color:var(--fg-dim); }
 /* 卡片内的 textarea 不在 flex 行里 → flex:1 无效, 显式全宽 */
 .st-panel .st-area { width:100%; flex:none; display:block; box-sizing:border-box; }
 

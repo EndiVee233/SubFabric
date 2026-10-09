@@ -1038,6 +1038,162 @@ export function initProjects(ctx) {
     if (del) del.closest('.hotword-row').remove();
   });
 
+  /* ═══════════ 从操作日志挖热词 ═══════════
+   * 用户把 A 改成 B（多半是纠正 ASR 听错的专有名词），这条记录就是"B 才是对的词"的弱标注。
+   * 把 B 喂回 ASR 当热词，下一份稿子就不会再听错 —— 越用越准的闭环。
+   *
+   * ⚠ 设计上**只挖不给**：候选一律要用户勾选后才写进热词表，绝不自动加。
+   *   理由：改字幕也可能只是改语气/断句，挖出来的词不一定真该进热词表；
+   *   而热词加错了是会让 ASR 复读的（实测 score≥6 就开始复读热词）。
+   */
+  let hwCands = [];
+
+  function hwRender(list) {
+    const box = $('#ah-mine-list');
+    const foot = $('#ah-mine-foot');
+    const cnt = $('#ah-mine-count');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!list || !list.length) {
+      const p = document.createElement('div');
+      p.className = 'hw-mine-empty';
+      p.innerHTML = '没有挖到新的候选。<br>'
+        + '这需要你先在字幕里**改对过一些专有名词**（人名 / 地名 / 组织名 / 术语）—— '
+        + '改得越多，这里挖出来的越准。';
+      box.appendChild(p);
+      box.hidden = false;
+      if (foot) foot.hidden = true;
+      return;
+    }
+    for (const c of list) {
+      const row = document.createElement('label');
+      row.className = 'hw-mine-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;                       // 默认全勾：挖出来的通常都该加
+      cb.dataset.term = c.term;
+      const meta = document.createElement('span');
+      meta.className = 'hw-mine-meta';
+      const term = document.createElement('span');
+      term.className = 'hw-mine-term';
+      term.textContent = c.term;
+      const bits = [];
+      if (c.count > 1) bits.push(`改过 ${c.count} 次`);
+      const sm = (c.samples || [])[0];
+      if (sm && sm.replaced) bits.push(`原来听成「${sm.replaced}」`);
+      if (sm && sm.target) bits.push(sm.target);
+      const sub = document.createElement('span');
+      sub.className = 'hw-mine-src';
+      sub.textContent = bits.join(' · ');
+      meta.append(term, document.createTextNode(bits.length ? '  ' : ''), sub);
+      row.append(cb, meta);
+      box.appendChild(row);
+    }
+    box.hidden = false;
+    if (foot) foot.hidden = false;
+    hwUpdateCount();
+  }
+
+  function hwUpdateCount() {
+    const cnt = $('#ah-mine-count');
+    if (!cnt) return;
+    const all = document.querySelectorAll('#ah-mine-list input[type=checkbox]');
+    const on = [...all].filter(x => x.checked).length;
+    cnt.textContent = all.length ? `已选 ${on} / ${all.length} 个` : '';
+    const apply = $('#ah-mine-apply');
+    if (apply) apply.disabled = on === 0;
+  }
+
+  const ahMine = $('#ah-mine');
+  if (ahMine) ahMine.addEventListener('click', async () => {
+    const hint = $('#ah-mine-hint');
+    const pid = (typeof state !== 'undefined' && state.project) ? state.project.id : null;
+    if (!pid) {
+      if (hint) hint.textContent = '要先打开一个项目 —— 热词是从「这个项目的操作日志」里挖的。';
+      return;
+    }
+    ahMine.disabled = true;
+    const old = hint ? hint.textContent : '';
+    if (hint) hint.textContent = '正在读操作日志…';
+    try {
+      const r = await fetch(`/api/projects/${pid}/hotword-candidates`, { signal: AbortSignal.timeout(20000) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      hwCands = j.candidates || [];
+      hwRender(hwCands);
+      const st = j.stats || {};
+      if (hint) {
+        hint.textContent = st.editEntries
+          ? `读了 ${st.editEntries} 条编辑记录，挖到 ${hwCands.length} 个候选。勾选后点「加入选中的热词」。`
+          : '这个项目的操作日志里还没有「编辑字幕」的记录 —— 先去改几句字幕（把 ASR 听错的专有名词改对），再回来挖。';
+      }
+    } catch (e) {
+      if (hint) hint.textContent = '✗ 挖掘失败：' + String((e && e.message) || e);
+    } finally {
+      ahMine.disabled = false;
+      if (!hint.textContent) hint.textContent = old;
+    }
+  });
+
+  const ahMineList = $('#ah-mine-list');
+  if (ahMineList) ahMineList.addEventListener('change', hwUpdateCount);
+  const ahMineAll = $('#ah-mine-all');
+  if (ahMineAll) ahMineAll.addEventListener('click', () => {
+    document.querySelectorAll('#ah-mine-list input[type=checkbox]').forEach(x => { x.checked = true; });
+    hwUpdateCount();
+  });
+  const ahMineNone = $('#ah-mine-none');
+  if (ahMineNone) ahMineNone.addEventListener('click', () => {
+    document.querySelectorAll('#ah-mine-list input[type=checkbox]').forEach(x => { x.checked = false; });
+    hwUpdateCount();
+  });
+
+  const ahMineApply = $('#ah-mine-apply');
+  if (ahMineApply) ahMineApply.addEventListener('click', async () => {
+    const pid = (typeof state !== 'undefined' && state.project) ? state.project.id : null;
+    if (!pid) return;
+    const picked = [...document.querySelectorAll('#ah-mine-list input[type=checkbox]')]
+      .filter(x => x.checked).map(x => x.dataset.term);
+    if (!picked.length) { toast('先勾选要加入的热词', 2600); return; }
+    const hint = $('#ah-mine-hint');
+    ahMineApply.disabled = true;
+    try {
+      const r = await fetch(`/api/projects/${pid}/hotword-candidates`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selected: picked }),
+        signal: AbortSignal.timeout(20000),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      const added = j.added || [];
+      /* 写回界面上的热词输入框 —— 服务端已经把词并进 prompt 了，
+       * 但**必须刷新这里**，否则显示的还是旧的，用户会以为没生效。 */
+      renderHotwords(String(j.hint && j.hint.prompt || '').split(/[\n,，、;；]/).map(x => x.trim()).filter(Boolean));
+      /* 候选区整个收起（不是显示"没有候选"的空状态）—— 加完了就该让它消失，
+       * 上面的提示文字已经说清加了什么。 */
+      const box = $('#ah-mine-list'), foot = $('#ah-mine-foot');
+      if (box) { box.innerHTML = ''; box.hidden = true; }
+      if (foot) foot.hidden = true;
+      if (hint) {
+        hint.textContent = added.length
+          ? `已加入 ${added.length} 个热词：${added.join('、')}。下次识别就会用上它们。`
+          : (j.note || '选中的词都已经在热词表里了');
+      }
+      if (typeof toast === 'function') {
+        toast(added.length ? `已加入 ${added.length} 个热词（来自你的修改记录）` : '这些词已经在热词表里了', 4200);
+      }
+      if (typeof logOp === 'function' && added.length) {
+        logOp('hotwords', `${added.length} 个词`, `从操作日志挖出的热词已加入：${added.join('、')}`,
+          '你在字幕里把这些词改对过，加进热词表后下次识别不会再听错');
+      }
+    } catch (e) {
+      if (hint) hint.textContent = '✗ 加入失败：' + String((e && e.message) || e);
+    } finally {
+      ahMineApply.disabled = false;
+      hwUpdateCount();
+    }
+  });
+
   /* ── API Key 字段: 服务端只回 hasKey(明文不回传), 输入框留空 = 不修改已存的 Key;
    * 想删除已存 Key 走「清除已存 Key」链接(显式 apiKeyClear, 与"留空"区分开) ── */
   function refreshKeyHint(c) {
