@@ -26,6 +26,7 @@ const stage = document.getElementById('video-stage');
 const stageHint = document.getElementById('stage-hint');
 const statusFile = document.getElementById('status-file');
 const btnExport = document.getElementById('btn-export');
+const btnExportPack = document.getElementById('btn-export-pack');
 const tlCursor = document.getElementById('tl-cursor-time');
 const tlDuration = document.getElementById('tl-duration');
 const rngFont = document.getElementById('rng-font');
@@ -1093,6 +1094,7 @@ function setSrt(text, name) {
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
   btnExport.disabled = false;
+  if (btnExportPack) btnExportPack.disabled = false;
   btnExportClean.disabled = true;
   btnExportJson.disabled = true;
   statusFile.textContent = t(`${name} · ${state.srtCues.length} 条`);
@@ -1257,6 +1259,7 @@ function setAss(text, name) {
   assPlayer.load(state.assDoc.serialize(), renderFonts);
   autoLoadSystemFonts();     // 样式里写的字体若本机装了 → 自动喂给预览
   btnExport.disabled = false;
+  if (btnExportPack) btnExportPack.disabled = false;
   if (btnExportFull) btnExportFull.disabled = false;
   // 反思纠错：只在项目模式可用（要用项目里保存的 audio.wav 重识别那几段）
   if (reflectEls.btn) reflectEls.btn.disabled = !state.project;
@@ -4661,6 +4664,42 @@ btnExport.addEventListener('click', () => {
   }
 });
 
+/* 导出项目压缩包：字幕 / 识别结果 / 译文 / 备注 / 操作日志 / 建稿日志。
+ * **不含**视频与 audio.wav / peaks.bin —— 那能从视频重新生成，打进去只会让包变成几百兆。
+ * 走服务端打包（Windows 自带 bsdtar），前端只负责触发下载。 */
+if (btnExportPack) btnExportPack.addEventListener('click', async () => {
+  if (!state.project) { toast('先打开一个项目（项目包要带上项目里的识别结果与日志）', 4200); return; }
+  const old = btnExportPack.textContent;
+  btnExportPack.disabled = true; btnExportPack.textContent = '打包中…';
+  try {
+    const r = await fetch(`/api/projects/${state.project.id}/export-pack`);
+    if (!r.ok) {
+      const m = await r.json().catch(() => ({}));
+      toast('导出失败: ' + (m.error || r.status), 5000);
+      return;
+    }
+    const blob = await r.blob();
+    // 文件名优先用响应头里的（服务端做了中文与非法字符处理）
+    let fname = '';
+    const cd = r.headers.get('Content-Disposition') || '';
+    const mStar = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    if (mStar) { try { fname = decodeURIComponent(mStar[1]); } catch { fname = ''; } }
+    if (!fname) fname = `subfabric-${state.project.id}.zip`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    toast(`已导出项目包（${(blob.size / 1024).toFixed(0)} KB）：字幕 / 识别结果 / 译文 / 备注 / 日志；不含视频与音频`, 7000);
+    if (typeof logOp === 'function') logOp('导出', '项目包', `${(blob.size / 1024).toFixed(0)} KB`);
+  } catch (e) {
+    toast('导出失败: ' + e.message, 5000);
+  } finally {
+    btnExportPack.disabled = false; btnExportPack.textContent = old;
+  }
+});
+
 /* 按语言过滤导出 ASS: lang='zh' 只保留中文整句样式行, lang='en' 只保留英文逐词样式行 */
 function buildLangAss(doc, sentences, wordStyle, lang) {
   const cut = doc.eventsFormatLineIdx != null ? doc.eventsFormatLineIdx + 1 : doc.lines.length;
@@ -4679,8 +4718,7 @@ function buildLangAss(doc, sentences, wordStyle, lang) {
 }
 
 /* 导出无逐词效果的干净 ASS */
-btnExportClean.addEventListener('click', () => {
-  if (state.format !== 'ass' || !state.kar) return;
+btnExportClean.addEventListener('click', () => {  if (state.format !== 'ass' || !state.kar) return;
   const clean = buildCleanAss(state.assDoc, state.kar.sentences);
   const out = applyPostProcess(clean, state.postProcessConfig, state.assStyleTargets);
   download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_clean.ass', out);

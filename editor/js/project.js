@@ -9,6 +9,10 @@
  *       #/project/<id> 编辑器 · #/editor 无项目直开(兼容旧用法/测试)
  */
 import { serializeSRT } from './srt.js';
+import { parseSRT } from './srt.js';
+import { AssDoc } from './ass.js';
+// 区域字幕导入（按时间区间裁剪）：纯逻辑模块，有 tests/region-test.mjs 钉住行为
+import { normalizeRegion, filterCues, regionSummary } from '../region.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
 import { stripEffectTagsSafe } from './postprocess.js';
@@ -2101,6 +2105,8 @@ async function renderAsrModels() {
   let npSubmitting = false;
   const npVideo = { path: '', name: '' };
   const npSub = { name: '', text: '' };
+  // 项目压缩包导入：选中包后先只记文件名，点「创建项目」时才上传（几十 MB 不该选完就传）
+  const npPack = { file: null, name: '' };
   let npMode = 'import';                 // 'import' | 'draft'
   let asrStatus = { ready: false, modelDir: '', missing: [], pythonOk: false };
   // 浏览器选的视频: File 对象暂存(npMode 提交时经 /api/upload-video 落盘),
@@ -2160,6 +2166,13 @@ async function renderAsrModels() {
     $('#np-mode-draft').setAttribute('aria-pressed', String(mode === 'draft'));
     const draft = mode === 'draft';
     $('#np-row-sub').hidden = draft;
+    // 项目包导入也是"导入模式"的事（初稿模式是从视频识别，用不上包）
+    const rowPack = $('#np-row-pack');
+    if (rowPack) rowPack.hidden = draft;
+    // 区域裁剪两种模式都可能有意义：导入模式裁字幕/包；初稿模式暂时用不上（识别本来就全片）
+    const rowRegion = $('#np-row-region');
+    if (rowRegion) rowRegion.hidden = draft;
+    // 从初稿切回导入模式时，若之前选过包，得让"字幕"行也可见（两者互斥但都显示）
     $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
     $('#np-row-part').hidden = !draft;     // 分P 跟着链接走
     $('#np-row-word').hidden = !draft;
@@ -2257,7 +2270,13 @@ async function renderAsrModels() {
     if (!hasSource) { $('#np-create').disabled = true; return; }
     // 初稿模式不需要字幕文件, 但必须有可用的识别模型
     const hasModel = npMode !== 'draft' || !!($('#np-model-sel') && $('#np-model-sel').value);
-    $('#np-create').disabled = (npMode === 'draft' ? !asrStatus.ready : !npSub.text) || !hasModel;
+    // 导入模式：字幕文件**或**项目包，二选一即可
+    const hasSubOrPack = npMode === 'draft' ? true : (!!npSub.text || !!npPack.file);
+    // 填了非法区间就别让点（提示已经在 npRegionFeedback 里给了）
+    const regionOk = npReadRegion().ok;
+    // 初稿模式必须有可用的识别模型（导入模式不需要）
+    const draftReady = npMode !== 'draft' || !!asrStatus.ready;
+    $('#np-create').disabled = !hasSubOrPack || !hasModel || !regionOk || !draftReady;
   }
   $('#btn-new-project').addEventListener('click', () => {
     newOpenedFromApp = true;
@@ -2370,6 +2389,98 @@ async function renderAsrModels() {
       setTimeout(() => { if (inp.isConnected) { inp.remove(); resolve(null); } }, 60000);
     });
   }
+  /* ── 区域字幕导入（按时间区间裁剪）──
+   * 默认整片；勾了「只导入一段」才裁。跨界行**整行保留**（不切文字，见 region.js）。 */
+
+  /** 读当前填的区间。返回 { ok, region, error }；未勾选或都留空 → region.active=false */
+  function npReadRegion() {
+    const on = !!($('#np-region-on') || {}).checked;
+    if (!on) return { ok: true, region: normalizeRegion(null, null), error: '' };
+    const r = normalizeRegion(($('#np-region-start') || {}).value, ($('#np-region-end') || {}).value);
+    return { ok: r.ok, region: r, error: r.error };
+  }
+
+  /** 实时回显区间状态（合法/非法）——输入时就告诉用户，而不是点了创建才报错 */
+  function npRegionFeedback() {
+    const note = $('#np-region-note');
+    if (!note) return;
+    const { ok, region, error } = npReadRegion();
+    /* ⚠ 顺序要紧：**先判 ok 再判 active**。
+     * normalizeRegion 对非法输入的返回值是 { ok:false, active:false }，
+     * 所以"先判 active"会把非法输入当成"没填区间"直接清空提示 ——
+     * 用户填了 90~30 却什么也看不到，点创建时才发现被拦下。
+     * （这个顺序错误真的写错过一次，靠浏览器里的实测才发现。） */
+    if (!ok) { note.textContent = error; note.className = 'np-region-note bad'; return; }
+    if (!region.active) { note.textContent = ''; note.className = 'np-region-note'; return; }
+    // 只显示"只导入 x ~ y"这半句（保留行数要等真读过字幕才知道，这里不猜）
+    const head = regionSummary(region, 0, 0);
+    note.textContent = head ? head.split('：')[0] : '';
+    note.className = 'np-region-note';
+  }
+
+  /**
+   * 按时间区间裁剪字幕文本。
+   * SRT / ASS 各自解析 → 过滤 → 回写**同一种格式**（不擅自改格式）。
+   * @returns {{ text:string, kept:number, dropped:number, summary:string, error:string }}
+   */
+  function npClipSubtitle(text, name, region) {
+    if (!region || !region.active) return { text, kept: -1, dropped: 0, summary: '', error: '' };
+    const isAss = /\.(ass|ssa)$/i.test(name || '');
+    if (isAss) {
+      let doc;
+      try { doc = new AssDoc(text); } catch (e) { return { text, kept: -1, dropped: 0, summary: '', error: '这个 ASS 解析不了：' + e.message }; }
+      const before = doc.events.length;
+      const keep = doc.events.filter(ev => filterCues([ev], region.start, region.end, true).kept.length);
+      const gone = doc.events.filter(ev => !keep.includes(ev));
+      if (gone.length) doc.deleteEvents(gone);
+      const r = { text: doc.serialize(), kept: keep.length, dropped: before - keep.length, summary: '', error: '' };
+      r.summary = regionSummary(region, r.kept, r.dropped);
+      return r;
+    }
+    let cues;
+    try { cues = parseSRT(text); } catch (e) { return { text, kept: -1, dropped: 0, summary: '', error: '这个 SRT 解析不了：' + e.message }; }
+    if (!cues.length) return { text, kept: -1, dropped: 0, summary: '', error: '这个文件里没解析出字幕行' };
+    const f = filterCues(cues, region.start, region.end, true);
+    const r = {
+      text: serializeSRT(f.kept), kept: f.kept.length, dropped: f.dropped,
+      summary: '', error: '',
+      from: f.from, to: f.to,
+    };
+    r.summary = regionSummary(region, r.kept, r.dropped);
+    return r;
+  }
+
+  /** 选中项目包（不立刻上传，点创建时才传） */
+  $('#np-pick-pack').addEventListener('click', () => $('#np-file-pack').click());
+  $('#np-file-pack').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!/\.zip$/i.test(f.name)) { toast('项目包是 .zip 文件，这个不是', 3600); return; }
+    npPack.file = f;
+    npPack.name = f.name;
+    // 选了包就把字幕文件让出来（两种取材方式互斥，避免用户以为两个都会用上）
+    npSub.name = ''; npSub.text = '';
+    const subEl = $('#np-sub-name');
+    if (subEl) { subEl.textContent = '还没选'; subEl.classList.remove('filled'); }
+    const el = $('#np-pack-name');
+    el.textContent = f.name + '（' + (f.size / 1024).toFixed(0) + ' KB）';
+    el.classList.add('filled');
+    npMaybeEnable();
+  });
+
+  $('#np-region-on').addEventListener('change', () => {
+    const on = $('#np-region-on').checked;
+    $('#np-region-fields').hidden = !on;
+    if (on) { const s = $('#np-region-start'); if (s) s.focus(); }
+    npRegionFeedback();
+    npMaybeEnable();
+  });
+  for (const sel of ['#np-region-start', '#np-region-end']) {
+    const el = $(sel);
+    if (el) el.addEventListener('input', npRegionFeedback);
+  }
+
   $('#np-pick-sub').addEventListener('click', () => $('#np-file-sub').click());
   $('#np-file-sub').addEventListener('change', async (e) => {
     const f = e.target.files[0];
@@ -2497,6 +2608,39 @@ async function renderAsrModels() {
     npSubmitting = true;
     $('#np-open-settings').disabled = true;
     try {
+      // ── 项目包导入：上传 zip → 服务端建新项目 → 再走下面同一条"上传视频 + prepare"链路 ──
+      // （包里没有视频与音频，所以导入完成后视频仍要走正常流程生成音频与波形）
+      if (!isDraft && npPack.file) {
+        btn.textContent = '导入项目包中…';
+        const up = await fetch('/api/projects/import-pack', {
+          method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: npPack.file,
+        });
+        const um = await up.json().catch(() => ({}));
+        if (!up.ok || !um.id) { toast('导入失败: ' + (um.error || up.status), 6000); return; }
+        npPack.file = null; npPack.name = '';
+        toast('项目包已导入，正在为它准备视频…', 4200);
+        // 继续往下走：上传视频 → PUT 到新项目的 prepare
+        const importedId = um.id;
+        if (npVideo.path.startsWith('upload:')) {
+          if (!npVideoFile) { toast('视频文件找不到了，重新选一个', 3600); return; }
+          btn.textContent = '上传视频中…';
+          const uv = await fetch('/api/upload-video?name=' + encodeURIComponent(npVideoFile.name), {
+            method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: npVideoFile,
+          });
+          const uvm = await uv.json().catch(() => ({}));
+          if (!uv.ok || !uvm.path) { toast('视频上传失败: ' + (uvm.error || uv.status), 5000); return; }
+          npVideo.path = uvm.path; npVideo.name = uvm.name; npVideoFile = null;
+        }
+        const pr = await fetch('/api/projects/' + importedId + '/relink', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ videoPath: npVideo.path }),
+        });
+        const prm = await pr.json().catch(() => ({}));
+        if (!pr.ok) { toast('视频关联失败: ' + (prm.error || pr.status), 5000); return; }
+        location.hash = '#/project/' + importedId;
+        toast('项目包已导入；音频与波形正在后台生成', 5200);
+        return;
+      }
       // 浏览器选的视频: 先把 File 上传成服务端持久文件, 拿到真实路径后走同一条创建链路
       if (npVideo.path.startsWith('upload:')) {
         if (!npVideoFile) { toast('视频文件找不到了，重新选一个', 3600); return; }
@@ -2509,6 +2653,20 @@ async function renderAsrModels() {
         npVideo.path = um.path; npVideo.name = um.name;
         npVideoFile = null;
         btn.textContent = isDraft ? '提交中…' : '创建中…';
+      }
+      // 区域裁剪：只在勾选「只导入一段」时生效（默认整片）
+      let region = normalizeRegion(null, null);
+      let clipped = null;
+      if (!isDraft) {
+        const rr = npReadRegion();
+        if (!rr.ok) { toast(rr.error, 5000); return; }
+        region = rr.region;
+        if (region.active) {
+          const c = npClipSubtitle(npSub.text, npSub.name, region);
+          if (c.error) { toast(c.error, 5600); return; }
+          if (!c.kept) { toast('这个时间段里没有字幕，换个范围试试', 5200); return; }
+          clipped = c;
+        }
       }
       const payload = { name: $('#np-name').value.trim(), video: { path: npVideo.path, name: npVideo.name } };
       if (isDraft) {
@@ -2525,7 +2683,16 @@ async function renderAsrModels() {
         // 勾了「区分说话人」→ 编辑器的「启用角色标注」帮用户打开(字幕里会带 [SPKn] 标签, 禁着没意义)
         if (payload.speakers) localStorage.setItem('ss-role-annot', '1');
       } else {
-        payload.subtitle = { name: npSub.name, text: npSub.text };
+        // 区域裁剪后的文本（没勾选时 clipped 为 null，原样提交）
+        payload.subtitle = { name: npSub.name, text: clipped ? clipped.text : npSub.text };
+        // 把区间记进项目元信息：事后能看出"这份稿子是裁过的"，而不是像丢了内容
+        if (region.active) {
+          payload.region = {
+            start: region.start === null ? 0 : region.start,
+            end: Number.isFinite(region.end) ? region.end : null,
+          };
+        }
+        if (clipped) toast(clipped.summary, 6000);
       }
       const r = await fetch('/api/projects', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
