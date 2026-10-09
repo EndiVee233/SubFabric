@@ -1,5 +1,5 @@
 /** 右侧编辑面板: 虚拟滚动卡片列表(中英双行) + 列表内行内编辑(无独立编辑框) */
-import { fmtTime, escapeHtml, bisectStart } from './util.js';
+import { fmtTime, escapeHtml, bisectStart, popOrigin } from './util.js';
 import { t } from './i18n.js';
 import { splitEnglishWords } from './karaoke.js';
 
@@ -584,8 +584,11 @@ export class EditorPanel {
     this._refreshKStyleLabel(this.cardMenu);
     this.cardMenu.hidden = false;
     const w = this.cardMenu.offsetWidth, h = this.cardMenu.offsetHeight;
-    this.cardMenu.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
-    this.cardMenu.style.top = Math.max(4, Math.min(cy, window.innerHeight - h - 6)) + 'px';
+    const left = Math.max(4, Math.min(cx, window.innerWidth - w - 6));
+    const top = Math.max(4, Math.min(cy, window.innerHeight - h - 6));
+    this.cardMenu.style.left = left + 'px';
+    this.cardMenu.style.top = top + 'px';
+    popOrigin(this.cardMenu, cx, cy, left, top);   // 从右键落点"长出来"
   }
   _hideCardMenu() {
     if (this.cardMenu && !this.cardMenu.hidden) this.cardMenu.hidden = true;
@@ -654,8 +657,11 @@ export class EditorPanel {
     this._menuPos = { x: cx, y: cy };
     this.roleMenu.hidden = false;
     const w = this.roleMenu.offsetWidth, h = this.roleMenu.offsetHeight;
-    this.roleMenu.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
-    this.roleMenu.style.top = Math.max(4, Math.min(cy, window.innerHeight - h - 6)) + 'px';
+    const left = Math.max(4, Math.min(cx, window.innerWidth - w - 6));
+    const top = Math.max(4, Math.min(cy, window.innerHeight - h - 6));
+    this.roleMenu.style.left = left + 'px';
+    this.roleMenu.style.top = top + 'px';
+    popOrigin(this.roleMenu, cx, cy, left, top);   // 从右键落点"长出来"
   }
   _hideRoleMenu() {
     if (this.roleMenu && !this.roleMenu.hidden) this.roleMenu.hidden = true;
