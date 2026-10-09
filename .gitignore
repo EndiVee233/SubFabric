@@ -69,3 +69,6 @@ spoke.mp4
 !/build/installer/start-editor.command
 !/build/installer/logo.png
 !/build/installer/logo.ico
+
+# 本地临时脚本/素材(不入库; 与 /_test/ 同性质)
+/tmp-test/

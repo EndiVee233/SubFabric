@@ -13,6 +13,8 @@ import { initProjects } from './project.js';
 import { initI18n, t } from './i18n.js';
 import { ico } from './icons.js';
 import { bindModalDrags } from './modal.js';
+import { VideoCueEditor, CueTextDialog } from './videoedit.js';
+import { splitSegments, replaceSegmentInRaw, escapeAssUser, leadPrefixLen, htmlPlainAndMap } from './segment.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -87,13 +89,22 @@ document.addEventListener('fullscreenchange', () => {
 
 /* 点击视频区 = 播放/暂停（禁全屏不能把单击播放也禁掉）。
  * 双击已不再触发全屏，所以单击要等 ~240ms 排除双击，否则双击会连切两次等于没切。
- * 底部控制条区域交给原生控件，这里不拦。 */
+ * 底部控制条区域交给原生控件，这里不拦。
+ * 例外：单击**落在字幕上**不算"点视频" —— 那是"进入就地编辑"的手势（双击才是整行弹窗），
+ * 所以这里绝不切播放；分派交给 videoEditor.clickAt()，它内部再等一个双击窗口。 */
 let videoClickTimer = 0;
+let videoEditor = null;      // 视频区就地编辑器；实例在下面创建(见"视频区就地编辑"一节)
 video.addEventListener('click', (e) => {
   if (!video.currentSrc) return;
+  // 这一下点击是用来关掉视频区编辑框的 → 先把这个记号清掉（带在手上会把下一次正常单击吞掉）
+  const swallowed = videoEditor ? videoEditor.consumeClick() : false;
   const r = video.getBoundingClientRect();
   if (r.bottom - e.clientY < 72) return;                       // 底部控制条: 原生控件自己处理
-  if (videoClickTimer) { clearTimeout(videoClickTimer); videoClickTimer = 0; return; }
+  // 点在字幕上 → 编辑手势（单击就地编辑 / 双击整行弹窗），不切播放
+  const onCue = videoEditor ? videoEditor.clickAt(e.clientX, e.clientY) : false;
+  if (videoClickTimer) { clearTimeout(videoClickTimer); videoClickTimer = 0; }
+  if (onCue) return;
+  if (swallowed) return;                                       // 这一下本来就只负责"关框"
   videoClickTimer = setTimeout(() => {
     videoClickTimer = 0;
     if (video.paused) video.play().catch(() => {});
@@ -1029,6 +1040,8 @@ function routeSub(text, name) {
 
 /* ─────────── SRT ─────────── */
 function setSrt(text, name) {
+  // 换了稿子 → 就地编辑框必须收掉（它指向的是旧数据）。用 window 上的引用，避开 let 的 TDZ
+  if (window.__videoEditor && window.__videoEditor.isOpen) window.__videoEditor.close();
   clearEditPreview(false);
   clearWordPreview(false);
   pendingPlaybackRows.clear();
@@ -1132,6 +1145,8 @@ function normalizeAssColorTags() {
 }
 
 function setAss(text, name) {
+  // 换了稿子 → 就地编辑框必须收掉（它指向的是旧数据）。用 window 上的引用，避开 let 的 TDZ
+  if (window.__videoEditor && window.__videoEditor.isOpen) window.__videoEditor.close();
   clearEditPreview(false);
   clearWordPreview(false);
   pendingPlaybackRows.clear();
@@ -2587,6 +2602,259 @@ panel.onApply = ({ item: editItem, start, end, dur, text, switching = false }) =
     if (state.project) Projects.scheduleSave();
   }
 };
+
+/* ═══════════ 视频区就地编辑（单击字幕 → 就地改那一段；双击字幕 → 整行弹窗） ═
+ * 交互与"画面几何怎么估"见 videoedit.js 头部注释；这里只负责**给数据**和**落盘**。
+ * 落盘仍然只有两条老路：中文整句行改事件原文（最小替换）/ 英文逐词行重建切片 ——
+ * 不新增第三套写盘逻辑，导出内容与左侧列表编辑完全等价。 */
+let cueEditOpen = false;
+
+/** 画面矩形（去掉黑边），与 SrtOverlay.fitToVideo 同一套算法；坐标相对 #video-stage */
+function pictureRect() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const w = video.clientWidth, h = video.clientHeight;
+  if (!vw || !vh || !w || !h) return null;
+  const vr = vw / vh, er = w / h;
+  let rw = w, rh = h;
+  if (er > vr) rw = Math.floor(h * vr); else rh = Math.floor(w / vr);
+  // video 在 stage 里通常压在 (0,0)，但不写死：拿真实偏移补齐，返回值才真的"相对 #video-stage"
+  const st = stage.getBoundingClientRect(), vr2 = video.getBoundingClientRect();
+  const ox = vr2.left - st.left, oy = vr2.top - st.top;
+  return { left: ox + (w - rw) / 2, top: oy + (h - rh) / 2, width: rw, height: rh };
+}
+
+/** libass 的字幕画布（只有字幕、背景透明）→ videoedit.js 直接读它的 alpha 拿**真实墨迹** */
+function assCanvasEl() {
+  return (assPlayer && assPlayer.instance && assPlayer.instance.canvas) || null;
+}
+
+/** 该句此刻的可见纯文本（口径与列表 rebuildItemsAndLanes 一致：逐词行用 sent.text） */
+function sentencePlain(sent, side) {
+  if (!sent) return '';
+  const ev = sent.events && sent.events[0];
+  if (side === 'en') return (sent.words && sent.words.length) ? sent.text : assPlainText(ev ? ev.text : '');
+  return assPlainText(ev ? ev.text : '');
+}
+
+/** 逐词英文行的"文本"由流水线重建（事件里的 Text 是切片产物，不是源），
+ *  所以给它纯文本；整句中文行直接改事件原文，才能保留行内变色标签。 */
+function sentenceSource(sent, side) {
+  return side === 'en' ? sentencePlain(sent, 'en') : ((sent.events && sent.events[0]) ? sent.events[0].text : '');
+}
+
+function cueEditItemOf(sent, side) {
+  const plain = sentencePlain(sent, side);
+  return {
+    kind: 'ass', side, sent, styleName: sent.style,
+    plain, raw: sentenceSource(sent, side),
+    prefix: plain.slice(0, leadPrefixLen(plain)),
+    segs: splitSegments(plain).segs           // 片段区间是相对**纯文本**的下标
+  };
+}
+
+/** 播放头所在的字幕行（画面上看不见的行不可能被点中，所以只收当前可见的） */
+function cueEditItemsAt(t) {
+  const out = [];
+  if (state.format === 'ass' && state.kar) {
+    for (const row of state.kar.rows) {
+      if (row.zh && row.zh.start <= t && t < row.zh.end) out.push(cueEditItemOf(row.zh, 'zh'));
+      if (row.en && row.en.start <= t && t < row.en.end) out.push(cueEditItemOf(row.en, 'en'));
+    }
+  } else if (state.format === 'srt') {
+    for (const cue of state.srtCues) {
+      if (t < cue.start || t >= cue.end) continue;
+      cue.lines.forEach((line, i) => {
+        const plain = htmlPlainAndMap(line).plain;
+        if (!plain.trim()) return;
+        out.push({
+          kind: 'srt', side: 'srt', cue, lineIdx: i, raw: line, styleName: '',
+          plain, prefix: plain.slice(0, leadPrefixLen(plain)),
+          segs: splitSegments(plain).segs
+        });
+      });
+    }
+  }
+  return out;
+}
+
+/** 就地编辑落盘后：把最新字幕推给视频区 → 刷新列表 → 记自动保存 */
+function afterCueEdit(sent) {
+  if (state.format === 'ass' && state.assDoc) {
+    clearEditPreview(false);
+    assPlayer.updateNow(state.assDoc.serialize());
+    pendingPlaybackRows.clear();
+  }
+  rebuildItemsAndLanes(true, true);
+  if (state.project) Projects.scheduleSave();
+  void sent;
+}
+
+/* 就地编辑的实时预览：把"如果现在按 Enter 会写成什么样"推给播放器/叠加层。
+ * 只预览、绝不改文档 —— 草稿全是临时对象（ASS 走 previewMulti 临时轨，SRT 走浅拷贝的 cues），
+ * 取消/提交时 endCuePreview 还原。用的是与提交**同一批函数**，预览即所得。 */
+let cuePreviewOn = false;
+
+function previewCueEdit(item, seg, text) {
+  if (!item) return;
+  if (item.kind === 'srt') {
+    const cur = item.cue.lines[item.lineIdx];
+    const raw = replaceSegmentInRaw(cur, 'srt', seg, text);
+    if (raw == null) return;
+    const lines = item.cue.lines.slice();
+    lines[item.lineIdx] = raw;
+    overlay.setCues(state.srtCues.map(c => (c === item.cue ? Object.assign({}, c, { lines }) : c)));
+    cuePreviewOn = true;
+    return;
+  }
+  if (state.format !== 'ass' || !state.assDoc) return;
+  const ev = item.sent.events && item.sent.events[0];
+  if (!ev) return;
+  let entry;
+  if (item.side === 'zh') {
+    const raw = replaceSegmentInRaw(ev.text, 'ass', seg, text);
+    if (raw == null) return;
+    entry = { sentence: item.sent, text: raw };        // 原文整行替换 → 行内色标照样在画面上
+  } else {
+    // 逐词行：文本变了就按当前词表重算切片（与 applyWordSentence 同一套，词数不变则时间不变）
+    const plain = normalizeRoleGap(item.plain.slice(0, seg.start)
+      + escapeAssUser(text).replace(/\\N/g, ' ') + item.plain.slice(seg.end));
+    if (state.kar && state.kar.wordStyle && item.sent.style === state.kar.wordStyle) {
+      const words = recalcWords(item.sent, plain, item.sent.start, item.sent.end);
+      entry = { sentence: item.sent, specs: buildWordSpecs({ ...item.sent, text: plain, words }) };
+    } else {
+      entry = { sentence: item.sent, text: escAss(plain) };
+    }
+  }
+  assPlayer.updateNow(state.assDoc.previewMulti([entry]));
+  pendingPlaybackRows.clear();
+  cuePreviewOn = true;
+}
+
+function endCuePreview() {
+  if (!cuePreviewOn) return;
+  cuePreviewOn = false;
+  if (state.format === 'srt') { overlay.setCues(state.srtCues); return; }
+  if (state.format === 'ass' && state.assDoc) {
+    assPlayer.updateNow(state.assDoc.serialize());
+    pendingPlaybackRows.clear();
+  }
+}
+
+/** 只替换被点中的那一段 → 新文本；区间对不上（文档已变）返回 null */
+function commitCueSegment(item, seg, text) {
+  if (item.kind === 'srt') {
+    const raw = replaceSegmentInRaw(item.cue.lines[item.lineIdx], 'srt', seg, text);
+    if (raw == null) return false;
+    item.cue.lines[item.lineIdx] = raw;
+    overlay.setCues(state.srtCues);
+    rebuildItemsAndLanes(true, true);
+    if (state.project) Projects.scheduleSave();
+    return true;
+  }
+  if (item.side === 'zh') {
+    // 中文整句行：最小替换事件原文，行内其它变色标签/换行一律不动
+    const ev = item.sent.events[0];
+    const raw = replaceSegmentInRaw(ev.text, 'ass', seg, text);
+    if (raw == null) return false;
+    state.assDoc.setEventText(ev, normalizeRoleGap(raw));
+    item.sent.text = assPlainText(ev.text);
+    afterCueEdit(item.sent);
+    return true;
+  }
+  // 逐词英文行：词数不变 → 逐词时间不变；打了空格拆词 → 按新词数重算词级时间
+  const plain = item.plain.slice(0, seg.start) + escapeAssUser(text).replace(/\\N/g, ' ') + item.plain.slice(seg.end);
+  applyWordSentence(item.sent, item.sent.start, item.sent.end, plain);
+  afterCueEdit(item.sent);
+  return true;
+}
+
+/** 整行文本弹窗保存：行首只读前缀（[角色] + 颜色前缀）自动补回 */
+function commitCueWhole(item, body) {
+  const user = item.kind === 'srt' ? String(body || '').replace(/\r\n?/g, '\n').replace(/\n/g, ' ')
+    : String(body || '').replace(/\r\n?/g, '\n');
+  const full = item.prefix + user;
+  if (item.kind === 'srt') {
+    const plain = htmlPlainAndMap(item.cue.lines[item.lineIdx]).plain;
+    if (plain === full) return false;
+    // SRT 行内可能有 <i>/<b>：整行替换会丢标签，所以这里只按纯文本整行改写
+    item.cue.lines[item.lineIdx] = full;
+    overlay.setCues(state.srtCues);
+    rebuildItemsAndLanes(true, true);
+    if (state.project) Projects.scheduleSave();
+    return true;
+  }
+  if (item.side === 'zh') {
+    const ev = item.sent.events[0];
+    // 整行弹窗允许直接写 ASS 内联标签 → 不做转义，只把换行转成 \N（与 Text 字段一致）
+    state.assDoc.setEventText(ev, normalizeRoleGap(item.prefix + user.replace(/\n/g, '\\N')));
+    item.sent.text = assPlainText(ev.text);
+    afterCueEdit(item.sent);
+    return true;
+  }
+  applyWordSentence(item.sent, item.sent.start, item.sent.end, normalizeRoleGap(full.replace(/\n/g, ' ')));
+  afterCueEdit(item.sent);
+  return true;
+}
+
+const cueSegBox = document.getElementById('cue-seg-box');
+const cueInlineBox = document.getElementById('cue-inline-editor');
+const cueInput = document.getElementById('cie-input');
+videoEditor = new VideoCueEditor(
+  { video, stage, layer: document.getElementById('cue-edit-layer'), segBox: cueSegBox, box: cueInlineBox, input: cueInput,
+    shield: document.getElementById('cue-hit-shield') },
+  {
+    pictureRect, itemsAt: cueEditItemsAt,
+    assCanvas: assCanvasEl,
+    styleOf: (name) => (state.assDoc ? state.assDoc.getStyle(name) : null),
+    playResY: () => (state.assDoc ? state.assDoc.playResY : 1080),
+    commit: commitCueSegment,
+    commitWhole: commitCueWhole,
+    preview: previewCueEdit,
+    endPreview: endCuePreview,
+    contextAt: openCueTextAt,
+    toast: (msg) => toast(msg),
+    onOpenChange: (open) => { cueEditOpen = open; }
+  }
+);
+
+const cueTextDialog = new CueTextDialog({
+  overlay: document.getElementById('cue-text-overlay'),
+  title: document.querySelector('#cue-text-overlay .rn-title'),
+  preview: document.getElementById('ctd-preview'),
+  hint: document.getElementById('ctd-hint'),
+  input: document.getElementById('ctd-input'),
+  cancelBtn: document.getElementById('ctd-cancel'),
+  okBtn: document.getElementById('ctd-ok')
+}, { commitWhole: commitCueWhole, toast: (msg) => toast(msg) });
+videoEditor.dialog = cueTextDialog;            // 片段框内 Ctrl+Enter 升级为整行编辑
+/* 诊断用(与 __timeline/__panel 一致): 供探针读取编辑状态 */
+window.__videoEditor = videoEditor;
+window.__cueTextDialog = cueTextDialog;
+
+/* 视频区手势（与参考图一致）：
+ *   单击字幕 → 就地编辑（改被点中的那一段）
+ *   双击字幕 → 整行文本弹窗
+ *   点其它视频区 → 播放/暂停（上面那个 click 处理器，逻辑未变）
+ * 原来的 dblclick 监听器仍只负责"禁掉浏览器原生全屏"，两者互不干扰
+ * （同一元素上的多个监听器都会跑；那个监听器里的 stopPropagation 不会拦同元素上的其它监听器）。 */
+video.addEventListener('dblclick', (e) => {
+  if (!video.currentSrc || !state.format) return;
+  videoEditor.dblClickAt(e.clientX, e.clientY);
+}, true);
+
+/* 视频区右键某条字幕 = 整行文本弹窗（不是字幕就不拦，保留浏览器原生菜单）。
+ * 抽成函数是因为"底部控制条接管层"(#cue-hit-shield) 要用同一条路径 —— 见下面 videoEditor 的 contextAt。 */
+function openCueTextAt(clientX, clientY) {
+  if (videoEditor.isOpen || !video.currentSrc || !state.format) return false;
+  const st = stage.getBoundingClientRect();
+  const hit = videoEditor.hitTestAt(clientX - st.left, clientY - st.top);
+  if (!hit) return false;
+  cueTextDialog.show(hit.item);
+  return true;
+}
+video.addEventListener('contextmenu', (e) => {
+  if (openCueTextAt(e.clientX, e.clientY)) e.preventDefault();
+});
 
 panel.onDeleteCard = (item) => deleteItem(item);   // 字幕列表右键删除(与时间轴右键同一套逻辑)
 panel.onTabChange = (name) => pruneUnusedRoles(name === 'roles');   // 离开角色栏 → 清掉没用上的新角色
