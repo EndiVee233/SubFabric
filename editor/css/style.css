@@ -132,7 +132,8 @@ html, body {
   color: var(--text-0);
   font-size: 13px;
   cursor: pointer;
-  transition: all .15s;
+  /* 显式列属性，不用 all（all 会把将来新增的属性也一并过渡，出问题难排查） */
+  transition: background .15s, border-color .15s, color .15s;
 }
 .btn:hover { border-color: var(--accent); background: linear-gradient(var(--accent-a12), var(--accent-a12)), var(--bg-2); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
@@ -372,9 +373,12 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   display: flex; align-items: center; justify-content: center;
   background: var(--bg-3); color: var(--text-1);
   border: 1px solid var(--border); border-radius: 50%;
-  cursor: pointer; transition: all .15s;
+  cursor: pointer;
+  transition: color var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+              background var(--dur-1) var(--ease), transform var(--dur-1) var(--ease-out);
 }
 .ph-search-btn:hover { color: var(--accent); border-color: var(--accent); }
+.ph-search-btn:active { transform: scale(.94); }   /* 小圆钮按下去要"缩一下"，不然像没接住这一下 */
 
 /* ⚠ 异常行过滤按钮(搜索框右侧) */
 .warn-toggle {
@@ -914,7 +918,9 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 #range-bar .rb-btn {
   font: inherit; padding: 4px 10px; border-radius: 6px; cursor: pointer;
   background: transparent; border: 0; color: var(--text-0);
+  transition: transform var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
 }
+#range-bar .rb-btn:not(:disabled):active { transform: scale(.96); }
 #range-bar .rb-btn.danger { background: rgba(255,95,107,.18); color: #ffd0d4; }
 #range-bar .rb-btn.danger:hover { background: rgba(255,95,107,.3); }
 #range-bar .rb-btn:disabled { opacity: .45; cursor: default; background: rgba(255,95,107,.08); }
@@ -1437,8 +1443,9 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
 .tab-body:not([hidden]), .st-panel:not([hidden]) { animation: fade-up var(--dur-3) var(--ease-out) both; }
 .ptab, .st-tab, .gl-tab {
   transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
-              border-color var(--dur-1) var(--ease);
+              border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease-out);
 }
+.ptab:active, .st-tab:active, .gl-tab:active { transform: scale(.97); }
 
 /* ── 4. 弹窗：遮罩淡入 + 对话框缩放上浮 ─────────────────────────── */
 #fr-overlay:not([hidden]), #confirm-overlay:not([hidden]), #role-new:not([hidden]),
@@ -1481,6 +1488,7 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
               transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease);
 }
 .cue-card:hover { transform: translateX(2px); border-color: var(--accent-a40); }
+.cue-card:active { transform: translateX(2px) scale(.994); }   /* 按住整卡轻微"下压" */
 .cue-card.selected { box-shadow: inset 3px 0 0 var(--accent); }
 .cue-card.playing .cc-no {
   transition: color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-back);
@@ -1594,7 +1602,23 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   .panel-head { padding-left: 10px; padding-right: 10px; }
 }
 
-/* ── 15. 无障碍：用户要求减少动效时全部关闭 ────────────────────── */
+/* ── 15. 弹出层：从触发点"长出来" ─────────────────────────────────
+ * --pop-ox/--pop-oy 由 JS 写（util.js 的 popOrigin / videoedit.js 的 _place）：
+ * 右键菜单从鼠标落点缩放浮现、就地编辑框从被点中的那一段长出来。
+ * 取不到触发点时退回 50% 0%（顶边中点）—— 弹出层不写死 center（modals 才用 center）。 */
+@keyframes pop-in { from { opacity: 0; transform: scale(.96) } to { opacity: 1; transform: none } }
+#tl-menu:not([hidden]), #card-menu:not([hidden]), #role-menu:not([hidden]),
+#range-bar:not([hidden]) {
+  animation: pop-in .15s var(--ease-out) both;
+  transform-origin: var(--pop-ox, 50%) var(--pop-oy, 0%);
+}
+#cue-inline-editor:not([hidden]) {
+  animation: pop-in .14s var(--ease-out) both;
+  transform-origin: var(--pop-ox, 50%) var(--pop-oy, 0%);
+}
+#cue-edit-layer:not([hidden]) #cue-seg-box { animation: fade-in .12s var(--ease-out) both; }
+
+/* ── 16. 无障碍：用户要求减少动效时全部关闭 ────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .001ms !important;
