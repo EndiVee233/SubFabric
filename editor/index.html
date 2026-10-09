@@ -799,9 +799,13 @@
       <input type="text" id="rim-start" class="np-time" placeholder="开始 如 5:00" inputmode="numeric">
       <span class="np-tilde">~</span>
       <input type="text" id="rim-end" class="np-time" placeholder="结束 如 8:30" inputmode="numeric">
-      <button type="button" class="btn btn-mini" id="rim-from-sel" title="用时间轴上已拖出的选区填这两个框">用选区</button>
+      <button type="button" class="btn btn-mini" id="rim-from-sel" title="用时间轴上已拖出的选区填这两个框（选区 = Ctrl+左键在轨道上拖）">用选区</button>
     </div>
     <div class="np-region-note" id="rim-range-note"></div>
+    <!-- 这个对话框**不挡时间轴**（见 style.css 里 #rim-overlay 的注释），
+         所以可以直接去下面拖一段选区 —— 但选区手势是 Ctrl+拖，不写出来没人知道。 -->
+    <div class="rim-hintbar">在下面的<b>时间轴</b>上按住 <b>Ctrl</b> 用左键拖一段选区，
+      这里会自动填好（也可以直接手输时间）。</div>
 
     <div class="reflect-summary" id="rim-summary" hidden></div>
     <div class="reflect-list" id="rim-list" hidden></div>

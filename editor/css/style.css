@@ -1721,6 +1721,32 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 }
 #realign-overlay[hidden], #rim-overlay[hidden] { display: none; }
 
+/* ── 分段导入：**不挡时间轴** ──
+ * 这个对话框要求用户先在时间轴上拖一段选区（或确认区间填得对），
+ * 而它原来跟别的浮层一样铺满视口 + 半透明遮罩 —— 时间轴被整个盖住，
+ * 点不到，「用选区」就成了死路（用户实测："此界面下无法点击时间轴"）。
+ * 现在：容器不吃点击（pointer-events:none）、去掉遮罩变暗、对话框靠上放，
+ * 于是时间轴**露出来且可操作**；对话框本体仍然可点（pointer-events:auto）。
+ * 别的浮层（反思纠错 / 全片重校对）是纯确认式，保持原来的模态行为不变。 */
+#rim-overlay {
+  align-items: flex-start;
+  padding-top: 3vh;
+  background: transparent;
+  pointer-events: none;
+}
+#rim-overlay .rn-box {
+  pointer-events: auto;
+  box-shadow: 0 18px 56px rgba(0,0,0,.7);   /* 没有遮罩了，靠阴影把对话框托起来 */
+  max-height: 62vh;
+  overflow-y: auto;
+}
+/* 提示"现在可以去时间轴拖选区" */
+#rim-overlay .rim-hintbar {
+  font-size: 12px; line-height: 1.5; color: var(--text-2);
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 9px;
+}
+
 /* ── 分段导入：预览清单 ── */
 .rim-hint { flex: 1; min-width: 0; font-size: 12px; color: var(--text-2); }
 .rim-item {
