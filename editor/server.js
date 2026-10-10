@@ -27,6 +27,7 @@ const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有
 const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
 const hotwordsMod = require('./hotwords.js');       // 从操作日志挖 ASR 热词候选(纯逻辑, 有单测)
+const gluedWordsMod = require('./glued-words.js');  // 扫"单词被粘住"(toescape 这类), 有单测
 
 /* ── 本地翻译引擎（NLLB / CTranslate2）──
  * 惰性单例：第一次真正要翻的时候才起服务（起一次要载入 600MB 模型，十几秒）。
@@ -3486,10 +3487,20 @@ function startPrepare(id, videoPath, mode) {
       }
     };
 
+    /* 确定性扫一遍"单词被粘住"（toescape / weescape 这类）—— 两处用它：
+     *   ① 贴到对应行后面给模型当提示（它才有机会确认并报 reidentify）
+     *   ② 模型漏报时**确定性补条目**（下面按批补），保证召回不依赖模型的强弱
+     * 为什么需要确定性兜底：实测 qwen3:8b 光靠提示词抓不住这种粘连。 */
+    const gluedByRow = gluedWordsMod.scanGluedByRow(rows);
+    if (gluedByRow.size) {
+      const n = Array.from(gluedByRow.values()).reduce((a, v) => a + v.length, 0);
+      console.log(`[reflect] 扫出 ${n} 处疑似"单词被粘住"（${gluedByRow.size} 行）`);
+    }
+
     for (let k = 0; k < batches.length; k++) {
       const [bi, lo, hi] = batches[k];
       if (onProgress) onProgress(k, batches.length, `反思中 … 第 ${k + 1}/${batches.length} 批（第 ${lo}~${hi} 行）`);
-      const user = reflectMod.buildBatchPrompt(rows, lo, hi, rows.length, bi, batches.length);
+      const user = reflectMod.buildBatchPrompt(rows, lo, hi, rows.length, bi, batches.length, gluedByRow);
       let raw = '';
       try {
         const out = await runBatch(user, cfg.maxTokens);
@@ -3500,11 +3511,27 @@ function startPrepare(id, videoPath, mode) {
       } catch (e) {
         // 单批失败不该让整个反思白跑：记下原因，用其余批次的结果继续
         notes.push(`第 ${k + 1} 批失败：${String((e && e.message) || e).slice(0, 120)}`);
-        continue;
       }
       const [fs, note] = reflectMod.parseFindings(raw, rows.length, rows);
       if (note) notes.push(`第 ${k + 1} 批：${note}`);
       all.push(...fs);
+
+      /* 本批里扫出粘连、而模型没报到的行 → 确定性地补一条 reidentify。
+       * 为什么必须补：漏一行的代价是"这句永远读不通"，而误补一行的代价只是
+       * "多听一遍那段音频"（用户还能在预览里取消勾选）。两者不对称，宁可多报。 */
+      let added = 0;
+      for (const [ln, hits] of gluedByRow) {
+        if (ln < lo || ln > hi) continue;
+        if (fs.some(f => Number(f.from) <= ln && ln <= Number(f.to))) continue;  // 模型已覆盖
+        const first = hits[0];
+        all.push({
+          kind: 'reidentify', from: ln, to: ln,
+          reason: `${first.word} 像是两个词粘在一起（应为「${first.head} ${first.tail}」），这段需要重听`,
+          confidence: 0.9,
+        });
+        added++;
+      }
+      if (added) notes.push(`第 ${k + 1} 批：另有 ${added} 行是机器扫出的粘连（模型没报到），已一并列入`);
     }
 
     /* 确定性补一条：扫时间轴找出"有一段音频没被识别出内容"的空档。
