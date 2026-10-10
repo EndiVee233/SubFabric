@@ -648,6 +648,22 @@ const ASR_MODELS = [
     draftAllowed: true,
   },
   {
+    // Vulkan 通用版 Parakeet：走 CrispASR（ggml、whisper.cpp 的 fork，单二进制多模型）——
+    // **不需要 Python、不需要 N 卡**：只要机器有 Vulkan 驱动（A 卡 / Intel 核显 / N 卡通吃）就能 GPU 加速。
+    // 补的正是本机这类"无 CUDA、无 NPU"机器的空档（sherpa 那条要 CUDA、OpenVINO 那条要 NPU）。
+    // 模型是 cstr 的 GGUF 量化版（q4_k ≈ 468MB，纯英语 v2）；词级时间戳是 Parakeet 原生的 TDT 输出。
+    // 实测（2026-10-10，RX 550 + UHD 730 双显卡机器）crispasr 启动即列出 2 个 Vulkan 设备。
+    id: 'parakeet-tdt-0.6b-v2-vulkan',
+    name: 'Parakeet TDT 0.6B v2（英语·Vulkan 通用）',
+    engine: 'crispasr',
+    repo: 'cstr/parakeet-tdt-0.6b-v2-GGUF',
+    files: ['parakeet-tdt-0.6b-v2-q4_k.gguf'],
+    sizeMB: 379,
+    desc: 'CrispASR（ggml）+ Vulkan GPU：A 卡 / N 卡 / Intel 核显都走 GPU 加速，没有 N 卡也能用；不需要 Python。没有 Vulkan 驱动时自动改用 CPU 模式（慢很多）。词级时间戳为 Parakeet 原生 TDT 输出。仅英语。',
+    dirName: 'parakeet-tdt-0.6b-v2',
+    draftAllowed: true,
+  },
+  {
     id: 'multitalker-parakeet-streaming-0.6b-v1',
     name: 'Multitalker Parakeet Streaming 0.6B v1（多说话人·仅重新识别）',
     engine: 'nemo',
@@ -755,6 +771,20 @@ const whisperCli = () => path.join(WHISPER_RUNTIME.dir, 'whisper-cli.exe');
 const whisperRuntimeOk = () => { try { return fs.statSync(whisperCli()).isFile(); } catch { return false; } };
 const whisperVulkanOk = () => { try { return fs.statSync(path.join(WHISPER_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
 
+/* CrispASR 运行时（Vulkan 版，34MB）: 给「英语·Vulkan 通用」那条 Parakeet 用。
+ * 为什么单独一套: 与 whisper.cpp 同属 ggml 家族但独立二进制（单文件支持 Parakeet/Canary 等几十个模型）。
+ * 与 whisper.cpp 的两点不同（都实测过，2026-10-10）:
+ *   ① 它**允许 CPU 兜底** —— 识别失败会自动用 --no-gpu 重试一次（whisper 那条是"必须 GPU"）；
+ *   ② 自带 ggml-vulkan.dll，所以"有没有 Vulkan"只用于状态提示，不做硬拦。 */
+const CRISPASR_RUNTIME = {
+  url: 'https://github.com/CrispStrobe/CrispASR/releases/download/v0.8.42/crispasr-windows-x86_64-vulkan.zip',
+  dir: path.join(ASR_DIR, 'crispasr'),
+  sizeMB: 34,
+};
+const crispasrCli = () => path.join(CRISPASR_RUNTIME.dir, 'crispasr.exe');
+const crispasrRuntimeOk = () => { try { return fs.statSync(crispasrCli()).isFile(); } catch { return false; } };
+const crispasrVulkanOk = () => { try { return fs.statSync(path.join(CRISPASR_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
+
 /** ASR 必须 GPU: 不做 CPU 兜底。三个引擎各查各的 GPU 依赖, 不满足返回报错文案(null = 通过)。
  *  whisper.cpp → 必须有 Vulkan 运行库(ggml-vulkan.dll); sherpa-onnx → 必须是 CUDA 版(安装器实测后写入 settings);
  *  nemo(multitalker) → 必须有 PyTorch + NeMo, 且 torch 认到 CUDA —— 它**只认 N 卡**, 别的 GPU 也不行。
@@ -770,6 +800,12 @@ function asrGpuGateError(model) {
   if (model && model.engine === 'whisper.cpp') {
     if (!whisperRuntimeOk()) return 'whisper.cpp 运行时没装好，到「设置 → 识别模型」下载';
     if (!whisperVulkanOk()) return '未检测到 Vulkan 运行库（ggml-vulkan.dll）。语音识别不支持纯 CPU，要装/更新支持 Vulkan 的显卡驱动，或在设置里重新下载 whisper.cpp 运行时';
+    return null;
+  }
+  if (model && model.engine === 'crispasr') {
+    // 与 whisper.cpp 相反: 这一条**允许 CPU 兜底**（识别失败会自动 --no-gpu 重试），
+    // 所以只查运行时装没装、不硬拦 Vulkan —— 没有独显的机器也能用（慢），这正是它存在的意义。
+    if (!crispasrRuntimeOk()) return 'CrispASR 运行时没装好，到「设置 → 识别模型」下载（约 34MB）';
     return null;
   }
   if (model && model.engine === 'nemo') {
@@ -1704,6 +1740,7 @@ function modelReady(modelId) {
   const dir = modelDirFor(modelId);
   if (!dir || !modelFilesOk(dir, m)) return false;
   if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return false;
+  if (m.engine === 'crispasr' && !crispasrRuntimeOk()) return false;
   // dual 引擎要两套模型都在（NPU 那套 + sherpa int8 那套）。不这么判的话，
   // 缺一套时会在识别跑到一半才炸，用户看到的是莫名其妙的失败。
   if (m.alsoNeeds) {
@@ -1998,27 +2035,31 @@ function startNemoInstall() {
   })();
 }
 
-/** 下载 whisper.cpp 运行时(zip)并解压出 whisper-cli.exe + DLL */
-function startRuntimeDownload() {
-  const key = 'runtime';
+/** 运行时下载（zip → 解压 → 展平）：whisper.cpp 与 CrispASR 共用一套实现。
+ *  cfg.key 是下载状态与前端轮询用的 key（whisper='runtime' 保持原样；
+ *  crispasr 用 'runtime:crispasr' —— 不动 'runtime' 是因为前端旧代码按它轮询 whisper）。
+ *  cfg.vulkanHardFail=true（whisper）→ 缺 ggml-vulkan.dll 判失败（它不支持纯 CPU）；
+ *  crispasr 传 false —— 没有 Vulkan 也能 CPU 慢跑，只在提示里说明（详见 CRISPASR_RUNTIME 注释）。 */
+function startRuntimeDownload(cfg) {
+  const key = cfg.key;
   if (dlState(key).running) return;
-  dlState(key, { running: true, kind: 'runtime', pct: 0, msg: '准备下载运行时…', error: null, modelId: '', dir: WHISPER_RUNTIME.dir });
+  dlState(key, { running: true, kind: key, pct: 0, msg: '准备下载运行时…', error: null, modelId: '', dir: cfg.dir });
   (async () => {
-    const zip = path.join(os.tmpdir(), `kass-whisper-${Date.now().toString(36)}.zip`);
+    const zip = path.join(os.tmpdir(), `kass-rt-${Date.now().toString(36)}.zip`);
     const cleanup = () => { try { fs.unlinkSync(zip); } catch {} };
     try {
-      fs.mkdirSync(WHISPER_RUNTIME.dir, { recursive: true });
-      await downloadAny(candidateUrls(WHISPER_RUNTIME.url), zip, (done, total) => {
+      fs.mkdirSync(cfg.dir, { recursive: true });
+      await downloadAny(candidateUrls(cfg.url), zip, (done, total) => {
         if (done < 0) return;
         const st = dlState(key);
         st.pct = total ? Math.min(99, Math.round(done / total * 100)) : 0;
-        st.msg = `下载运行时：${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
+        st.msg = `下载${cfg.name}运行时：${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(1)} MB`;
       });
       // 解压: Windows 自带的 bsdtar 能解 zip(最可靠); 失败再退回 Expand-Archive。
       // 注意: 必须用**异步 spawn** —— 本环境下 spawnSync 会 EBUSY(实测),
       // 且此处本就在 async IIFE 里, await 天然可用。
       // (这里曾局部 require('child_process') —— 那会遮蔽外层包装器, 解压进程漏出 CHILDREN 登记表)
-      const tmpEx = path.join(os.tmpdir(), `kass-whisper-ex-${Date.now().toString(36)}`);
+      const tmpEx = path.join(os.tmpdir(), `kass-rt-ex-${Date.now().toString(36)}`);
       fs.mkdirSync(tmpEx, { recursive: true });
       const sysTar = path.join(process.env.SystemRoot || 'C:' + path.sep + 'Windows', 'System32', 'tar.exe');
       const runCmd = (cmd, args) => new Promise((resolve) => {
@@ -2038,29 +2079,31 @@ function startRuntimeDownload() {
         r = await runCmd('power' + 'shell.exe', ['-NoProfile', '-Command', psCmd]);
       }
       if (r.status !== 0) throw new Error('解压失败: ' + String(r.out || '').slice(-200));
-      // 展平: 把所有文件(忽略目录结构)放进 WHISPER_RUNTIME.dir
+      // 展平: 把所有文件(忽略目录结构)放进 cfg.dir
       const walk = (d) => {
         for (const f of fs.readdirSync(d, { withFileTypes: true })) {
           const p = path.join(d, f.name);
           if (f.isDirectory()) walk(p);
-          else fs.copyFileSync(p, path.join(WHISPER_RUNTIME.dir, f.name));
+          else fs.copyFileSync(p, path.join(cfg.dir, f.name));
         }
       };
       walk(tmpEx);
       fs.rmSync(tmpEx, { recursive: true, force: true });
-      if (!whisperRuntimeOk()) throw new Error('解压后未找到 whisper-cli.exe');
+      if (!cfg.exeOk()) throw new Error('解压后未找到 ' + cfg.name + ' 可执行文件');
       cleanup();
-      if (!whisperVulkanOk()) {
-        // 不做 CPU 兜底: 没有 Vulkan 运行库 = ASR 没法跑 GPU, 直接算失败
+      if (cfg.vulkanHardFail && !cfg.vulkanOk()) {
+        // whisper.cpp 不做 CPU 兜底: 没有 Vulkan 运行库 = ASR 没法跑 GPU, 直接算失败
         const st2 = dlState(key);
         st2.running = false;
         st2.error = '未检测到 Vulkan 运行库（ggml-vulkan.dll）。语音识别不支持纯 CPU，装/更新支持 Vulkan 的显卡驱动后重试';
         st2.msg = '运行时不可用: ' + st2.error;
         return;
       }
-      dlState(key, { running: false, kind: 'runtime', pct: 100,
-        msg: '运行时就绪（检测到 Vulkan，识别将走 GPU 加速）',
-        error: null, modelId: '', dir: WHISPER_RUNTIME.dir });
+      const tail = cfg.vulkanHardFail
+        ? '（检测到 Vulkan，识别将走 GPU 加速）'
+        : (cfg.vulkanOk() ? '（检测到 Vulkan，识别将走 GPU 加速）' : '（未检测到 Vulkan 运行库：识别将走 CPU，较慢）');
+      dlState(key, { running: false, kind: key, pct: 100, msg: cfg.name + ' 运行时就绪' + tail,
+        error: null, modelId: '', dir: cfg.dir });
     } catch (e) {
       cleanup();
       const st = dlState(key);
@@ -2069,6 +2112,16 @@ function startRuntimeDownload() {
       st.msg = '运行时下载失败: ' + st.error;
     }
   })();
+}
+/** whisper.cpp 运行时（key='runtime'，重构前后行为一致） */
+function startWhisperRuntimeDownload() {
+  startRuntimeDownload({ key: 'runtime', url: WHISPER_RUNTIME.url, dir: WHISPER_RUNTIME.dir,
+    name: 'whisper.cpp', exeOk: whisperRuntimeOk, vulkanOk: whisperVulkanOk, vulkanHardFail: true });
+}
+/** CrispASR 运行时（key='runtime:crispasr'；缺 Vulkan 不判失败，识别时自动退 CPU） */
+function startCrispasrRuntimeDownload() {
+  startRuntimeDownload({ key: 'runtime:crispasr', url: CRISPASR_RUNTIME.url, dir: CRISPASR_RUNTIME.dir,
+    name: 'CrispASR', exeOk: crispasrRuntimeOk, vulkanOk: crispasrVulkanOk, vulkanHardFail: false });
 }
 
 /* ═══════════ Python 环境一键安装 ═══════════
@@ -2392,6 +2445,100 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
       for (let i = 1; i < segments.length; i++) if (segments[i].start < segments[i - 1].end) segments[i].start = segments[i - 1].end;
       resolve({ segments, language: 'en' });
     });
+  });
+}
+
+/** CrispASR 引擎（ggml；Parakeet 走 Vulkan，机器没驱动就退 CPU）: 跑 crispasr.exe。
+ *  词级时间戳取 -ojf 的 words[].offsets（毫秒，实测 v0.8.42 与 t0/t1 厘秒一致）；
+ *  与 runWhisperCpp 同构: 词数组 → 按句末标点/停顿>0.8s/行长 分句 → {segments:[{start,end,text,words}]}。
+ *  ⚠ 必须显式传 -l en: 不传它会去下载 LID 语言检测小模型（本机实测下载失败还白等 9 秒）。
+ *  ⚠ Vulkan 版**不自动回落 CPU**（上游设计），所以这里自己兜底: GPU 起不来/显存不足 → --no-gpu 重试一次。 */
+function runCrispAsr(modelGguf, wav, onProgress, opts) {
+  const exe = crispasrCli();
+  const outPrefix = wav + '.crisp';
+  const runOnce = (noGpu) => new Promise((resolve, reject) => {
+    const cmd = [exe, '--backend', 'parakeet', '-m', modelGguf, '-f', wav,
+                 '-ojf', '-of', outPrefix, '-t', '6', '-l', 'en'];
+    if (noGpu) cmd.push('--no-gpu');
+    const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: CRISPASR_RUNTIME.dir });
+    if (opts && opts.register) { try { opts.register(p); } catch {} }
+    const started = Date.now();
+    let lastPct = -1, lastErrLine = '';
+    const timer = setTimeout(() => { try { p.kill(); } catch {} }, 30 * 60 * 1000);
+    // 进度解析与 whisper.cpp 同一套（crispasr 同属 ggml 家族, 进度条样式一致; 解析不到也有心跳兜底）
+    const sink = (d) => {
+      const s = String(d);
+      for (const line of s.split(/[\r\n]+/)) {
+        const t = line.trim();
+        if (!t) continue;
+        if (/error|failed|invalid|abort/i.test(t)) lastErrLine = t;
+        const m = /(\d{1,3})%\s*?$/.exec(t) || /(\d{1,3})%\s+\[/.exec(t);
+        if (m) {
+          const pct = Math.min(100, parseInt(m[1], 10));
+          if (pct !== lastPct && onProgress) { lastPct = pct; onProgress(pct); }
+        }
+      }
+    };
+    p.stdout.on('data', sink);
+    p.stderr.on('data', sink);
+    const beat = setInterval(() => {
+      if (onProgress) onProgress(Math.max(0, lastPct), Math.round((Date.now() - started) / 1000));
+    }, 20000);
+    p.on('error', e => { clearTimeout(timer); clearInterval(beat); reject(new Error('无法启动 crispasr: ' + e.message)); });
+    p.on('close', (code) => {
+      clearTimeout(timer); clearInterval(beat);
+      const jsonPath = outPrefix + '.json';
+      let data = null;
+      let rawHead = '';
+      try { const raw = fs.readFileSync(jsonPath, 'utf8'); data = JSON.parse(raw); rawHead = raw.slice(0, 300); } catch {}
+      for (const f of [jsonPath, outPrefix + '.txt', outPrefix + '.srt', outPrefix + '.vtt']) { try { fs.unlinkSync(f); } catch {} }
+      if (code !== 0 || !data) {
+        const mins = Math.round((Date.now() - started) / 60000);
+        const hint = lastErrLine ? '：' + lastErrLine.slice(0, 200) : (rawHead ? '：输出异常 ' + rawHead.replace(/\s+/g, ' ').slice(0, 200) : '');
+        return reject(new Error('crispasr 识别失败（退出码 ' + code + '，运行 ' + mins + ' 分钟' + (noGpu ? '，CPU 模式' : '') + '）' + hint));
+      }
+      // 词数组: offsets 是毫秒（主）, t0/t1 是厘秒（退化兜底）。
+      // 不用分段自带的 offsets —— 短音频它常整段返回一条, 分句统一交给下面与 whisper 同款的规则。
+      const words = [];
+      for (const seg of (data.transcription || [])) {
+        for (const w of (seg.words || [])) {
+          const text = String(w.text || '').trim();
+          if (!text) continue;
+          const off = w.offsets || {};
+          const st = (off.from != null ? Number(off.from) : Number(w.t0 || 0) * 10) / 1000;
+          let en = (off.to != null ? Number(off.to) : Number(w.t1 || 0) * 10) / 1000;
+          if (!(en > st)) en = st + 0.2;
+          words.push({ word: text, start: st, end: en });
+        }
+      }
+      if (!words.length) return reject(new Error('未识别到语音内容（crispasr 输出为空）'));
+      words.sort((a, b) => a.start - b.start);
+      const groups = [];
+      let cur = [];
+      for (const w of words) {
+        if (cur.length) {
+          const prev = cur[cur.length - 1];
+          const tooLong = (w.start - cur[0].start) > 10 || cur.length >= 30;
+          if (/[.?!…]$/.test(prev.word) || (w.start - prev.end) > 0.8 || tooLong) { groups.push(cur); cur = []; }
+        }
+        cur.push(w);
+      }
+      if (cur.length) groups.push(cur);
+      const segments = groups.map((ws) => ({
+        start: +ws[0].start.toFixed(3), end: +ws[ws.length - 1].end.toFixed(3),
+        text: ws.map(w => w.word).join(' ').trim(),
+        words: ws.map(w => ({ word: w.word, start: +w.start.toFixed(3), end: +w.end.toFixed(3) })),
+      }));
+      for (let i = 1; i < segments.length; i++) if (segments[i].start < segments[i - 1].end) segments[i].start = segments[i - 1].end;
+      resolve({ segments, language: 'en' });
+    });
+  });
+  return runOnce(false).catch((e) => {
+    const msg = String((e && e.message) || e);
+    // GPU 起不来（Vulkan 不可用 / 显存不足）→ 自动改用 CPU 再试一次; 明显的业务错误（输出为空等）不重试
+    if (!/vulkan|device|memory|alloc|init/i.test(msg)) throw e;
+    if (opts && opts.onLog) opts.onLog('GPU 不可用（' + msg.slice(0, 120) + '），自动改用 CPU 模式重试…');
+    return runOnce(true).then((r) => { r.cpuFallback = true; return r; });
   });
 }
 
@@ -4661,6 +4808,10 @@ function startPrepare(id, videoPath, mode) {
           const bin = path.join(mdir, model.files[0]);
           data = await runWhisperCpp(bin, segWav, pct =>
             setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（whisper.cpp）… ${pct}%` }));
+        } else if (model.engine === 'crispasr') {
+          const bin = path.join(mdir, model.files[0]);
+          data = await runCrispAsr(bin, segWav, pct =>
+            setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（Parakeet·Vulkan）… ${pct}%` }));
         } else if (model.engine === 'nemo') {
           // NeMo 多说话人: 走 multitalker.py(PyTorch + NeMo, CUDA 专属)。单说话人模式 —— 选区重识别按单人处理
           data = await new Promise((resolve, reject) => {
@@ -5353,6 +5504,10 @@ function startPrepare(id, videoPath, mode) {
       // GPU 校验已在上面的 asrGpuGateError 通过: 走到这里必然有 Vulkan 运行库
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp GPU·Vulkan 推理`);
     }
+    if (model.engine === 'crispasr') {
+      // 这条不硬要求 GPU: 有 Vulkan 就走 GPU, 起不来 runCrispAsr 会自动退 CPU（见那里的注释）
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] CrispASR/Parakeet 推理：${crispasrVulkanOk() ? '检测到 Vulkan，走 GPU' : '未检测到 Vulkan，将走 CPU（较慢）'}`);
+    }
 
     // 识别完成后的收尾三段式: reseg(语义分句) → diarize(区分说话人) → 生成字幕 ——
     // 顺序就是这样: **先把行切开, 再往这些行上标说话人**（进度浮层的步骤条同一顺序）。
@@ -5420,6 +5575,48 @@ function startPrepare(id, videoPath, mode) {
         const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
         setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·GPU·Vulkan）… ${pct}% ${t}` });
       }, { register: p => draftProcs.set(id, p) }).then(r => {
+        try {
+          fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
+          fs.renameSync(outJson + '.tmp', outJson);
+        } catch (e) { return finishDraft(id, e); }
+        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 识别完成 ${r.segments.length} 行`);
+        finishAsr();
+      }).catch(e => { draftJobs.delete(id); finishDraft(id, e); });
+      return;
+    }
+
+    // ── crispasr 引擎: Parakeet（Vulkan/CPU）—— 与 whisper.cpp 同构: 长音频分片, 短片单次 ──
+    if (model.engine === 'crispasr') {
+      const bin = path.join(mdir, model.files[0]);
+      const onLog = (m) => pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [提示] ' + m);
+      if (chunkPlan) {
+        transcribeLocalChunked({
+          id, wav, plan: chunkPlan, duration: durSec, engine: model.engine,
+          silenceCount: chunkSilences.length, source: chunkSilences.length ? 'silence' : 'nominal',
+          runOne: (slice, c) => runCrispAsr(bin, slice, (pct, secs) => {
+            const t = (secs != null) ? '（本片已运行 ' + Math.floor(secs / 60) + ' 分 ' + (secs % 60) + ' 秒）' : '';
+            setDraft(id, {
+              stage: STAGE.asr,
+              progress: 30 + Math.round(((c.index + (Number(pct) || 0) / 100) / chunkPlan.length) * 45),
+              message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：Parakeet·Vulkan … ' + pct + '% ' + t,
+            });
+          }, { register: p => draftProcs.set(id, p), onLog }),
+        }).then((r) => {
+          try {
+            fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
+            fs.renameSync(outJson + '.tmp', outJson);
+          } catch (e) { return finishDraft(id, e); }
+          pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] 识别完成 ' + r.segments.length
+            + ' 行（' + chunkPlan.length + ' 片合并）');
+          finishAsr();
+        }).catch((e) => { draftJobs.delete(id); finishDraft(id, e); });
+        return;
+      }
+      runCrispAsr(bin, wav, (pct, secs) => {
+        const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（Parakeet·Vulkan）… ${pct}% ${t}` });
+      }, { register: p => draftProcs.set(id, p), onLog }).then(r => {
+        if (r.cpuFallback) pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] 已改用 CPU 模式完成识别（未启用 GPU 加速）`);
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
           fs.renameSync(outJson + '.tmp', outJson);
@@ -5956,14 +6153,23 @@ function handleAsrRoutes(req, res, u) {
       const dir = m.cloud ? '' : modelDirFor(m.id);
       const missing = m.cloud ? [] : missingModelFiles(dir, m);
       const filesOk = m.cloud ? true : (!missing.length && modelFilesOk(dir, m));
-      const ready = filesOk && (m.engine !== 'whisper.cpp' || whisperRuntimeOk());
+      // 引擎级运行时: whisper.cpp→'runtime'、crispasr→'runtime:crispasr'（key 也是前端的下载/轮询键）。
+      // 注意两个键的差异是刻意的: 'runtime' 是 whisper 的老键, 动它会打断前端既有轮询逻辑。
+      const rt = m.engine === 'whisper.cpp'
+        ? { key: 'runtime', name: 'whisper.cpp', sizeMB: WHISPER_RUNTIME.sizeMB, ok: whisperRuntimeOk() }
+        : (m.engine === 'crispasr'
+          ? { key: 'runtime:crispasr', name: 'CrispASR', sizeMB: CRISPASR_RUNTIME.sizeMB, ok: crispasrRuntimeOk() }
+          : null);
+      const ready = filesOk && (!rt || rt.ok);
       // usable: 文件齐 + 该引擎的运行时都就位(NeMo 模型还要 torch/NeMo + CUDA) —— 重新识别下拉按它标记"可用"
       const usable = ready && (m.engine !== 'nemo' || (nemo.ok && nemo.cuda));
       return {
         id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
         dir, missing, ready, usable, cloud: !!m.cloud,
         draftAllowed: draftAllowedOf(m),
-        needRuntime: m.engine === 'whisper.cpp' && !whisperRuntimeOk(),
+        needRuntime: !!rt && !rt.ok,
+        runtimeKey: rt ? rt.key : '', runtimeName: rt ? rt.name : '',
+        runtimeSizeMB: rt ? rt.sizeMB : 0, runtimeReady: rt ? rt.ok : false,
         needNemo: m.engine === 'nemo' && !(nemo.ok && nemo.cuda),
       };
     });
@@ -5984,6 +6190,9 @@ function handleAsrRoutes(req, res, u) {
         msg: nemo.msg || '', script: NEMO_SCRIPT, install: NEMO_NOTE,
       },
       runtime: { ok: whisperRuntimeOk(), dir: WHISPER_RUNTIME.dir, url: WHISPER_RUNTIME.url, sizeMB: WHISPER_RUNTIME.sizeMB },
+      // CrispASR 运行时(Parakeet Vulkan 通用版用): 与 whisper 分开报 —— vulkan 只用于状态提示(它允许 CPU 兜底)
+      crispasrRuntime: { ok: crispasrRuntimeOk(), dir: CRISPASR_RUNTIME.dir, url: CRISPASR_RUNTIME.url,
+                         sizeMB: CRISPASR_RUNTIME.sizeMB, vulkan: crispasrVulkanOk() },
       diarize: { ready: diarizeReady(), models: DIARIZE_MODELS },
       // 兼容旧前端字段
       ready: models.some(m => m.ready),
@@ -6194,8 +6403,14 @@ function handleAsrRoutes(req, res, u) {
       if (kind === 'runtime') {
         if (whisperRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
         if (dlState('runtime').running) return sendJson(res, 200, { started: true, kind: 'runtime', already: true });
-        startRuntimeDownload();
+        startWhisperRuntimeDownload();
         return sendJson(res, 200, { started: true, kind: 'runtime' });
+      }
+      if (kind === 'runtime:crispasr') {
+        if (crispasrRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
+        if (dlState('runtime:crispasr').running) return sendJson(res, 200, { started: true, kind: 'runtime:crispasr', already: true });
+        startCrispasrRuntimeDownload();
+        return sendJson(res, 200, { started: true, kind: 'runtime:crispasr' });
       }
       if (kind === 'diarize') {
         if (diarizeReady()) return sendJson(res, 200, { started: false, ready: true });
@@ -6934,6 +7149,7 @@ function handleProjectsRoutes(req, res, u) {
         const mdir = m.cloud ? '' : modelDirFor(m.id);
         if (!m.cloud && missingModelFiles(mdir, m).length) return sendJson(res, 400, { error: `模型 ${m.name} 不完整，到设置里重新下载` });
         if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return sendJson(res, 400, { error: 'whisper.cpp 运行时没装好，到设置里下载' });
+        if (m.engine === 'crispasr' && !crispasrRuntimeOk()) return sendJson(res, 400, { error: 'CrispASR 运行时没装好，到设置里下载（约 34MB）' });
         if (wantSpeakers && !diarizeReady()) return sendJson(res, 400, { error: '说话人分离模型没装好，先到设置里下载（约 32MB）' });
       } else {
         subName = String((data.subtitle && data.subtitle.name) || '');

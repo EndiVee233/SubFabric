@@ -4,6 +4,7 @@
 # SEA 构建产物(build_exe.py 生成: node.exe 副本 175MB + blob + 注入后的 exe)
 # main.py 首次运行会在脚本目录写一份本地设置(字体字号等), 不入库
 # whisper.cpp 运行时二进制(约 77MB): 不入库, 首次使用时由服务端自动下载
+# CrispASR 运行时二进制(约 96MB 解压后, Parakeet Vulkan 通用版用): 不入库, 服务端自动下载
 # 一键安装的内置 Python(Embeddable, 约 60MB): 不入库, 设置里点「一键安装」时下载
 # 下载内核自举日志（ytdlp.ensure() 写的 bootstrap.log）
 # 下载内核自举的 yt-dlp（首次使用时从 PyPI 下到 asr/ytdlp/, 约 3MB, 不入库）
@@ -50,6 +51,7 @@ asr/models/
 asr/runtime-python/
 asr/settings.json
 asr/whisper.cpp/
+asr/crispasr/
 asr/ytdlp/
 config.json
 desktop.ini
