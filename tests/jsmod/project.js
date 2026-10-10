@@ -88,6 +88,7 @@ export function initProjects(ctx) {
    * 「自动区分说话人」是项目级参数：新建时选定，详细信息里只读回显。 */
   const ENGINE_LABEL = {
     'whisper.cpp': '本地 · whisper.cpp',
+    'crispasr': '本地 · Parakeet（Vulkan）',
     'sherpa-onnx': '本地 · Parakeet',
     nemo: '本地 · NeMo（多说话人）',
     bcut: '云端 · 必剪 ASR',
@@ -1694,7 +1695,7 @@ async function renderAsrModels() {
     const dlOf = (key) => dlMap[key] || {};
     // 注: 下面各模型的下载状态提示都是就地手写的(见 pyState / state / nemoState 等),
     // 没有走统一模板 —— 各自要拼的按钮和文案差别太大, 抽象反而更绕。
-    // Python 环境(Parakeet 需要; whisper.cpp 不需要): 预检状态 + 一键安装
+    // Python 环境(Parakeet 需要; whisper.cpp 与 Vulkan 版 Parakeet/CrispASR 不需要): 预检状态 + 一键安装
     // pythonProbe 现在按引擎分键（{sherpa, openvino}）—— 直接读 .ok 会得到 undefined，
     // 于是把好环境误判成"不可用"（实测踩过）。这里挑**当前所选模型**对应的那一项；
     // 旧版扁平形状（{ok,msg}）仍然兼容。
@@ -1728,7 +1729,7 @@ async function renderAsrModels() {
     }
     let rows = `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">Python 环境</span></div>
-      <div class="sm-desc">Parakeet 识别要 Python 和 sherpa-onnx，还得有 N 卡（CUDA）。说话人分离只要基础 Python，没有 N 卡也能用；whisper.cpp 不需要 Python。点「安装」会装好 Python 和依赖，有 N 卡时一并换成 CUDA 版。不写注册表，删掉 asr\\runtime-python 目录就算卸载</div>
+      <div class="sm-desc">Parakeet 识别要 Python 和 sherpa-onnx，还得有 N 卡（CUDA）。说话人分离只要基础 Python，没有 N 卡也能用；whisper.cpp 与 Vulkan 版 Parakeet（CrispASR）都不需要 Python。点「安装」会装好 Python 和依赖，有 N 卡时一并换成 CUDA 版。不写注册表，删掉 asr\\runtime-python 目录就算卸载</div>
       ${pyState}
       <div class="sm-desc" style="margin-top:6px">当前解释器：<code>${esc(pyExe || '(未定)')}</code>
         <button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button>
@@ -1737,10 +1738,10 @@ async function renderAsrModels() {
       <div class="sm-desc">如果另一份安装里已经装好了 torch + NeMo，用上面「指定其他 Python…」指过去即可，不必重下几 GB</div>
       <div class="sm-pymsg" style="font-size:12px;margin-top:4px"></div>
     </div>`;
-    // 各任务 key: model:<id> / runtime / diarize
+    // 各任务 key: model:<id> / runtime / runtime:crispasr / diarize（运行时按 runtimeKey 取，服务端给）
     rows += (d.models || []).map((m) => {
       const st = dlOf('model:' + m.id);
-      const rtSt = m.needRuntime ? dlOf('runtime') : {};
+      const rtSt = m.needRuntime ? dlOf(m.runtimeKey || 'runtime') : {};
       const dlThis = st.running || (m.needRuntime && rtSt.running);
       /* 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户。
        * ⚠ `d.gpu` 为空还有第三种可能：**后台探测还没跑完**（服务端已改成等探测完再回，
@@ -1770,7 +1771,7 @@ async function renderAsrModels() {
       else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
       else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
+      const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>` : '';
       return `<div class="sm-model">
         <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
         <div class="sm-desc">${esc(m.desc || '')}</div>
@@ -1930,18 +1931,24 @@ async function renderAsrModels() {
           renderAsrModels();
         });
     }));
-    // whisper.cpp 运行时: 需要 ggml 模型但运行时缺失时自动开始下载(与其它下载并行, 不互斥)
+    // 引擎运行时(whisper.cpp / CrispASR): 需要 ggml 模型但运行时缺失时自动开始下载(与其它下载并行, 不互斥)。
+    // 运行时可能有多个 —— 按服务端给的 runtimeKey 逐个补（各自独立下载任务, 互不阻塞）。
     const note = $('#st-model-note');
-    const needRt = (d.models || []).some(m => m.needRuntime);
-    if (needRt && !dlOf('runtime').running) {
+    const rtKeys = [...new Set((d.models || []).filter(m => m.needRuntime).map(m => m.runtimeKey || 'runtime'))];
+    let rtStarted = false;
+    for (const key of rtKeys) {
+      if (dlOf(key).running) continue;                       // 已在下载: 交给既有轮询
       const r = await (await fetch('/api/asr/download', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'runtime' })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: key })
       })).json().catch(() => ({}));
       if (r.started) {
-        note.textContent = '正在下载 whisper.cpp 运行时…';
-        pollModelDownload();
+        const mm = (d.models || []).find(x => (x.runtimeKey || 'runtime') === key);
+        note.textContent = '正在下载 ' + ((mm && mm.runtimeName) || key) + ' 运行时…';
+        rtStarted = true;
       }
-    } else if (note) note.textContent = '';
+    }
+    if (rtStarted) pollModelDownload();
+    else if (note && !rtKeys.length) note.textContent = '';
   }
   // 下载轮询闸门: 多个下载/安装入口都会调用 pollModelDownload, 不加闸门会叠加多个
   // 900 次循环、每秒重复 renderAsrModels。同一时刻只允许一个轮询在跑。
@@ -2587,7 +2594,7 @@ async function renderAsrModels() {
       return asrStatus.pythonProbeFlat || null;                  // 服务端按当前引擎挑好的
     })();
     if (hint && probeForUi && !probeForUi.ok) {
-      hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp 和「必剪 ASR」云端识别都不需要 Python';
+      hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp、Vulkan 版 Parakeet（CrispASR）和「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
     }
     npMaybeEnable();

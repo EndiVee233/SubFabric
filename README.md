@@ -123,6 +123,7 @@ node editor/server.js
 | 模型 | 硬件要求 |
 | --- | --- |
 | Parakeet TDT 0.6B v2 | NVIDIA 显卡加速（sherpa-onnx / CUDA） |
+| Parakeet TDT 0.6B v2（Vulkan 通用） | Vulkan 加速（CrispASR/ggml）：A 卡 / Intel 核显 / N 卡都能用，**无 N 卡也能跑**；不需要 Python，没有 Vulkan 驱动时自动退 CPU |
 | Parakeet TDT 0.6B v2（Intel NPU） | Intel NPU 加速（OpenVINO）：编码器跑 NPU、预测/联合网络跑核显，**无 N 卡可用** |
 | Whisper large-v3-turbo | Vulkan 加速 这意味着只要支持 Vulkan 的显卡均可加速 |
 | Multitalker Parakeet Streaming 0.6B v1 | NVIDIA 显卡加速（但它仅用于重新识别） |
