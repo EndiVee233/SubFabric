@@ -58,8 +58,9 @@ desktop.ini
 editor/vendor/
 node_modules/
 outputs/
-outputs/
 spoke.mp4
+# TRAE 的计划/文档目录（Plan 模式生成的方案文件，本机保留、不入库）
+.trae/
 
 # 本地运行产物（这三条是 fork 补的：上游漏了，实测它们会混进提交）
 #   _testpid.txt          —— 测试脚本写的临时项目 id
