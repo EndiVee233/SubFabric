@@ -31,6 +31,15 @@ import wave
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+# stderr 强制 UTF-8: Windows 默认按 ANSI(GBK) 写给管道, 中文日志会抛 UnicodeEncodeError
+# 被 emit 的 except 吞掉 —— 独立跑 CLI 时表现为"一条日志都没有"(应用内已由 pySpawnEnv()
+# 设 PYTHONIOENCODING 兜住, 但 worker 不该依赖调用方; 与 fetch_cli.py 同款做法)。
+# reconfigure 是 3.7+ 的接口, 3.6 下直接跳过(AttributeError 由 except 兜住)。
+try:
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # 置信度算法与 NPU 引擎共用同一个模块（asr/confidence.py，有单元测试）。
 # 注意：本引擎拿不到 token 概率（sherpa 的 result 只有 text/tokens/timestamps），
 # 所以只有「音频质量」与「稳定性」两个信号 —— 融合时按可用信号加权。
@@ -238,7 +247,13 @@ def read_wav_mono16k(path):
 
 
 def frame_energies(samples, sr, frame_ms=20.0, hop_ms=10.0):
-    """返回 (每帧 RMS, 每帧起始秒, hop秒)。"""
+    """返回 (每帧 RMS, 每帧起始秒, hop秒)。
+
+    按块计算: 老实现一次性广播出 (n_frames, frame) 的 int64 索引矩阵,
+    1 小时音频 ≈ 1.15 亿索引(索引 + 浮点切片 + 平方临时量峰值约 1.8GB), 长片有 OOM 风险;
+    分块后内存占用只与块大小有关、与音频长度无关, 逐帧数值与老实现完全一致
+    (同一行内的 square/mean 归约顺序不变)。
+    """
     import numpy as np
 
     frame = max(1, int(sr * frame_ms / 1000.0))
@@ -248,8 +263,13 @@ def frame_energies(samples, sr, frame_ms=20.0, hop_ms=10.0):
         return np.array([e], dtype=np.float32), 0.0, float(hop) / sr
 
     n_frames = 1 + (len(samples) - frame) // hop
-    idx = np.arange(frame, dtype=np.int64)[None, :] + hop * np.arange(n_frames, dtype=np.int64)[:, None]
-    energies = np.sqrt(np.mean(np.square(samples[idx]), axis=1)).astype(np.float32)
+    energies = np.empty(n_frames, dtype=np.float32)
+    offs = np.arange(frame, dtype=np.int64)[None, :]              # 帧内偏移, 建一次复用
+    block = max(1, 2000000 // frame)                              # 每块索引元素 ≤200万(int64 约16MB)
+    for b0 in range(0, n_frames, block):
+        b1 = min(n_frames, b0 + block)
+        idx = offs + (hop * np.arange(b0, b1, dtype=np.int64))[:, None]
+        energies[b0:b1] = np.sqrt(np.mean(np.square(samples[idx]), axis=1)).astype(np.float32)
     return energies, 0.0, float(hop) / sr
 
 
@@ -729,8 +749,15 @@ def main():
         log("结果已写入 %s" % args.out)
         return 0
 
+    except MemoryError:
+        # MemoryError 的 str() 是空字符串, 直接报上去就只剩一个"退出码 1", 查不出所以然。
+        emit({"type": "error",
+              "msg": "内存不足(MemoryError): 音频太长或可用内存不够, 可先关掉其它占内存的程序重试"})
+        return 1
     except Exception as e:
-        emit({"type": "error", "msg": str(e)})
+        # 同理: str(e) 为空的异常(如某些原生崩溃)要退回到类型名, 别把空串报上去。
+        msg = str(e).strip() or type(e).__name__
+        emit({"type": "error", "msg": msg})
         return 1
 
 

@@ -12,16 +12,12 @@
 ;       安装/卸载向导、控制面板「应用和功能」里显示的都是同一张图。
 ;
 ; 版本号要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改。
+; 口径：**只看远端最新 tag，补丁位 +1**（远端 https://github.com/EndiVee233/SubFabric/tags ）。
+;       功能再多也走补丁位（2.1.8 加微光特效、2.1.9 加词生长都是这么发的），不要自己跳小版本。
+;       嫌麻烦可以先 `git ls-remote --tags` 或直接看 Releases 页确认最新号再 +1。
 
 #define MyAppName "SubFabric"
-; 显示版本：本 fork 加 -fork.N 后缀与上游区分（两边曾撞号）。
-; ⚠ VersionInfoVersion / VersionInfoProductVersion 接受的是**四段纯数字** ——
-;   把带后缀的 "2.2.1-fork.1" 直接塞进去，Inno Setup 会编译报错。
-;   上游的做法是 `{#MyAppVersion}.0` 拼出 2.2.1.0；本 fork 显式定义 MyAppFileVersion，
-;   因为 build_exe.py 也从 editor/server.js 读 APP_FILE_VERSION 喂 rcedit ——
-;   两处必须同值，显式写出来更好核对。
-#define MyAppVersion "2.2.1-fork.1"
-#define MyAppFileVersion "2.2.1.0"
+#define MyAppVersion "2.2.1"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
@@ -38,11 +34,11 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-VersionInfoVersion={#MyAppFileVersion}
+VersionInfoVersion={#MyAppVersion}.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppFileVersion}
+VersionInfoProductVersion={#MyAppVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=.
@@ -58,8 +54,12 @@ UninstallDisplayIcon={app}\{#MyAppExeName}
 ; 关掉 Inno 自带的「关闭正在运行的程序」以外的额外提问（保持默认的 Restart Manager 行为即可）
 
 [Languages]
-; 不装第三方语言包：装出来的快捷方式/卸载项与 2.0.x 一致（"Uninstall SubFabric" 就是英文默认文案）
-Name: "english"; MessagesFile: "compiler:Default.isl"
+; 2026-10-09 起安装向导改用**简体中文**(用户要求)。语言文件是 Inno Setup 自带的
+; compiler:Languages\ChineseSimplified.isl(6.5.0+ 版, LanguageID $0804), 不入库。
+; 注意: 这一改会让快捷方式与「应用和功能」里的卸载项文案从英文
+; ("Uninstall SubFabric") 变成中文("卸载 SubFabric"), 与 2.0.x 的英文默认文案不同。
+; 只声明一种语言 → 不会弹语言选择框。
+Name: "chinesesimplified"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked

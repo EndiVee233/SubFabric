@@ -184,10 +184,10 @@ body::before {
 /* ── 8. 弹窗统一：圆角/投影/黑玻璃遮罩/标题与按钮栏节奏 ────────────────────
  * 遮罩**不要模糊**：它盖住的正是字幕列表/时间轴这类"要边看边改"的内容，糊掉就没法对照了。
  * 玻璃感靠更深的半透明黑 + 对话框自身的高光与投影（用户明确要求：黑玻璃、不要模糊）。 */
-#fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay {
+#fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay, #cue-text-overlay {
   background: linear-gradient(180deg, rgba(5, 5, 8, .78), rgba(2, 2, 4, .86));
 }
-.np-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box {
+.np-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box, .ctd-box {
   border-radius: var(--r-4);
   border: 1px solid var(--hair-2);
   background: linear-gradient(180deg, #1b1b22, #141419 62%);

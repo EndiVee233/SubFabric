@@ -9,6 +9,13 @@ import { assPlainText } from './ass.js';
 /** 逐词高亮切片: {\c&H00FF00&}word{\c} */
 const HL_RE = /\{\\c&H[0-9A-Fa-f]{6}&\}([^{}]+?)\{\\c\}/;
 
+/** \k 家族标签（卡拉OK时长，单位厘秒）: \k / \kf / \ko / \K / \kt。
+ *  识别"这篇/这行是不是 k 形态"用它; 具体解析在 parseKLine 里逐覆盖块做。 */
+const K_ANY_RE = /\\[kK](?:[fot])?\s*\d+/;
+
+/** 这行是不是 \k 卡拉OK形态（供 main.js 的行内改写 / 坏行检测复用同一判据） */
+export const isKaraokeLine = (text) => K_ANY_RE.test(String(text || ''));
+
 /** 行首样式覆盖: {\c&H......&} → ASS 为 &HAABBGGRR, 返回 '#rrggbb' */
 const LEAD_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
 
@@ -48,15 +55,52 @@ export function getWordHighlightColor() { return WORD_HIGHLIGHT_COLOR; }
 /** ASS &HBBGGRR → '#rrggbb'(供说话人颜色解析与全局换色复用) */
 export const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
 
-/** 把所选逐词颜色写入英文逐词事件, 只改标准高亮 span、不碰角色颜色及其它覆盖标签。 */
+/** 把所选逐词颜色写入英文逐词事件, 只改标准高亮 span、不碰角色颜色及其它覆盖标签。
+ *  \k 卡拉OK行的高亮色在头部 `\1c`（形态不同、语义相同）→ 就地改写头部颜色位, 不重建整行。 */
 export function replaceWordHighlightColor(doc, style, hex, eventScope = null) {
-  const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
-  if (!/^[0-9A-F]{6}$/.test(rgb)) return 0;
+  const rgb = normHex6(hex);
+  if (!rgb) return 0;
   const tag = `{\\c&H${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}&}`;
+  const bgr = rgb.slice(4, 6) + rgb.slice(2, 4) + rgb.slice(0, 2);
   let changed = 0;
   for (const ev of eventScope || (doc && doc.events) || []) {
     if (String(ev.style || '').toLowerCase() !== String(style || '').toLowerCase()) continue;
-    const next = String(ev.text || '').replace(HL_RE, (span, word) => tag + word + '{\\c}');
+    const text = String(ev.text || '');
+    const next = isKaraokeLine(text)
+      ? patchKHeadColor(text, '1c', bgr)
+      : text.replace(HL_RE, (span, word) => tag + word + '{\\c}');
+    if (next !== ev.text) { doc.setEventText(ev, next); changed++; }
+  }
+  return changed;
+}
+
+/** 把「未唱默认色」写入 \k 行的头部 `\2c`。调用方需自己排除"有角色色"的行
+ *  （有角色的行未唱位显示该行角色色, 见设计稿 §5/§11）。 */
+export function replaceKaraokeBaseColor(doc, style, hex, eventScope = null) {
+  const rgb = normHex6(hex);
+  if (!rgb) return 0;
+  const bgr = rgb.slice(4, 6) + rgb.slice(2, 4) + rgb.slice(0, 2);
+  let changed = 0;
+  for (const ev of eventScope || (doc && doc.events) || []) {
+    if (String(ev.style || '').toLowerCase() !== String(style || '').toLowerCase()) continue;
+    const text = String(ev.text || '');
+    if (!isKaraokeLine(text)) continue;
+    const next = patchKHeadColor(text, '2c', bgr);
+    if (next !== ev.text) { doc.setEventText(ev, next); changed++; }
+  }
+  return changed;
+}
+
+/** 切换 \k 行段标签形态（\k 瞬切 / \kf 扫过 / \ko 仅描边）。\K 按 Aegisub 语义等同 \kf,
+ *  `\kt` 是"设定下一段起点"不是段时长 → 绝不能被改写。时长原样保留, 切换是无损的。 */
+export function replaceKaraokeTag(doc, style, tag, eventScope = null) {
+  if (!K_TAGS.has(tag)) return 0;
+  let changed = 0;
+  for (const ev of eventScope || (doc && doc.events) || []) {
+    if (String(ev.style || '').toLowerCase() !== String(style || '').toLowerCase()) continue;
+    const text = String(ev.text || '');
+    if (!isKaraokeLine(text)) continue;
+    const next = text.replace(/\\[kK][fo]?\s*(\d+)/g, (all, d) => tag + d);
     if (next !== ev.text) { doc.setEventText(ev, next); changed++; }
   }
   return changed;
@@ -71,7 +115,18 @@ export function speakerColorOf(sent) {
   for (const ev of (sent.events || [])) {
     const text = String(ev.text || '');
     const m = LEAD_COLOR_RE.exec(text);
-    if (!m) continue;
+    if (!m) {
+      // k 卡拉OK行: 说话人色在颜色头的 \2c(未唱位)。只有"该行确有角色"时才认它,
+      // 否则无角色行的"未唱默认色"会被误当成角色色(行卡片会整片染色)。
+      if (sent.karStyle === 'k' && speakerTagOf(sent)) {
+        const k2 = /\\2c&H([0-9A-Fa-f]{6})&/.exec(text);
+        if (k2) {
+          const khex = assColorToHex(k2[1].toUpperCase());
+          if (!HIGHLIGHT_COLORS.has(khex)) return khex;
+        }
+      }
+      continue;
+    }
     const hex = assColorToHex(m[1].toUpperCase());
     const trimmed = text.trimStart();
     const leadingSpan = HL_RE.exec(trimmed);
@@ -183,6 +238,166 @@ function cjkRatio(text) {
   return (m ? m.length : 0) / s.length;
 }
 
+/** k 段标签白名单（只允许这三个字面，防止外部输入拼出奇怪的覆盖标签） */
+const K_TAGS = new Set(['\\k', '\\kf', '\\ko']);
+
+/** '#rrggbb' → ASS 的 'BBGGRR'（大写 6 位，与 assColorToHex 互逆）。无效返回 null。 */
+const normHex6 = (hex) => {
+  const s = String(hex || '').replace('#', '').toUpperCase();
+  return /^[0-9A-F]{6}$/.test(s) ? s : null;
+};
+const hexToBgr6 = (hex) => {
+  const s = normHex6(hex);
+  return s ? s.slice(4, 6) + s.slice(2, 4) + s.slice(0, 2) : '00FF00';
+};
+
+/** k 行头部 = 首个 `\k` 之前的**真正的覆盖标签块**（块首必须是反斜杠 —— 文本里的字面
+ *  `{大括号}` 不能当头部，往里塞标签会把用户原文改成覆盖标签）。缺颜色位时追加到它末尾；
+ *  连标签块都没有就在行首新建一个（永远安全）。 */
+function insertIntoKHead(text, tag) {
+  const firstK = text.search(/\\[kK]/);
+  const zone = firstK === -1 ? text : text.slice(0, firstK);
+  const m = /\{\\[^}]*\}/.exec(zone);
+  if (m) {
+    const at = m.index + m[0].length - 1;          // 闭合花括号的位置
+    return text.slice(0, at) + tag + text.slice(at);
+  }
+  return '{' + tag + '}' + text;
+}
+
+/** 就地改写 k 行头部的一个颜色位（tag = '1c' 已唱 / '2c' 未唱）。
+ *  已有该标签 → 换值；没有 → 插入头部块（`\c` 与 `\1c` 等价，已唱位优先改已有的 `\c`，
+ *  免得同一行留下两个互相打架的"已唱色"）。 */
+function patchKHeadColor(text, tag, bgr) {
+  const re = new RegExp('\\\\' + tag + '&H[0-9A-Fa-f]{6}&');
+  if (re.test(text)) return text.replace(re, '\\' + tag + '&H' + bgr + '&');
+  if (tag === '1c') {
+    const c = /\\c&H[0-9A-Fa-f]{6}&/.exec(text);
+    if (c) return text.slice(0, c.index) + '\\c&H' + bgr + '&' + text.slice(c.index + c[0].length);
+  }
+  return insertIntoKHead(text, '\\' + tag + '&H' + bgr + '&');
+}
+
+/**
+ * 解析一条 \k 卡拉OK行（单事件整行）→ 词级时间 + 头部信息。
+ *
+ * 与"颜色高亮切片"形态的关系：两种形态都还原成同一份 words[{w,s,e}]（见文件头与设计稿）。
+ * 解析规则（全部按**厘秒整数**累计，避免浮点误差）：
+ *   · 段序列：每个 `\k/\kf/\ko/\K<dur>` 开启一个段，跟在其后的文本属于该段；
+ *     无文本的段 = 空档 filler（只推进进度，不产生词）；
+ *   · `\kt<cs>`：把下一段起点设为相对行首的该绝对时间（Aegisub 文档语义）；
+ *   · 第一个 `\k` 之前的覆盖块 = 颜色头（解析 \1c/\2c；原文存进 head 供序列化保留其它 tag）；
+ *   · 首个 k 段之前的散文本（罕见布局）并入第一段文本。
+ *
+ * @returns {{head:string, highlightTag:string|null, baseHex:string|null, kTag:string,
+ *            words:Array<{w:string,s:number,e:number}>, text:string}}
+ *   head = 头部覆盖块的**内部 tag 串**（不含花括号）；highlightTag/baseHex 解析失败为 null；
+ *   kTag = 该行段标签的形态（`\kf`/`\ko`/`\k`，`\K` 按 Aegisub 语义等同 `\kf`），重建时沿用 → 形态不丢失。
+ */
+export function parseKLine(text, evStart, evEnd) {
+  const src = String(text || '');
+  let cursor = 0;              // 相对行首，厘秒
+  let plainLen = 0;            // 明文游标（裸文本按序拼接的长度 = 明文里的偏移）
+  let leadStart = -1;          // 首个 k 之前散文本在明文里的起点
+  let open = null;             // 当前段 { startCs, durCs, text, pStart, pEnd }
+  const segments = [];
+  const headParts = [];
+  let sawK = false;
+  let kTag = '';               // 段标签形态（取第一个 k 段的写法）
+  let lead = '';               // 首个 k 之前的散文本（并入第一段）
+  const plainChunks = [];      // 按出现顺序收集的裸文本 = 该行渲染出的明文
+
+  const flush = () => { if (open) { segments.push(open); open = null; } };
+  const openSeg = (durCs) => { flush(); open = { startCs: cursor, durCs, text: '', pStart: plainLen, pEnd: plainLen }; cursor += durCs; };
+
+  const re = /\{([^{}]*)\}|([^{}]+)/g;
+  let m;
+  while ((m = re.exec(src))) {
+    if (m[1] != null) {
+      const inner = m[1];
+      const tagRe = /\\([kK])([fo]?|t)\s*(\d+)/g;
+      let t, any = false;
+      while ((t = tagRe.exec(inner))) {
+        any = true;
+        if (t[2] === 't') {                       // \kt<cs>: 下一段起点 = 相对行首的绝对时间
+          flush();
+          cursor = parseInt(t[3], 10) || 0;
+        } else {
+          if (!kTag) {
+            const mod = (t[2] || '').toLowerCase();
+            kTag = (mod === 'f' || (mod === '' && t[1] === 'K')) ? '\\kf' : (mod === 'o' ? '\\ko' : '\\k');
+          }
+          openSeg(parseInt(t[3], 10) || 0);
+        }
+      }
+      if (any) {
+        sawK = true;
+        if (open && lead) { open.text = lead + open.text; open.pStart = leadStart; open.pEnd = plainLen; lead = ''; }
+      } else if (!sawK) {
+        headParts.push(inner);                    // 颜色头等（第一个 k 之前的块）
+      }
+      // 第一个 k 之后的非 k 覆盖块：忽略（罕见布局，重生成时不保留——设计稿已注明）
+    } else {
+      // 裸文本 = 该行渲染出的**明文**。按出现顺序原样收集（parseKLine 的 text 用它拼,
+      // 保住原文里的空格 —— "plan.to" 不能被重排成 "plan. to"）；\N/\h 视为空格。
+      const chunk = m[2].replace(/\\[Nn]/g, ' ').replace(/\\h/g, ' ');
+      const cStart = plainLen;
+      plainLen += chunk.length;
+      plainChunks.push(chunk);
+      if (open) { open.text += chunk; open.pEnd = plainLen; }
+      else if (!sawK) { lead += chunk; if (leadStart < 0) leadStart = cStart; }
+      // k 段之后的裸文本（极端布局）：并入当前段
+    }
+  }
+  flush();
+
+  // 明文 = 该行渲染出的文字（原样保留词间空格；只去首尾空白）。它既进列表编辑,
+  // 也是重建时"按原文位置交错"的基准 —— 用 words.join(' ') 会把 "plan.to" 重排成 "plan. to"。
+  const rawPlain = plainChunks.join('');
+  const trimmedOff = rawPlain.length - rawPlain.replace(/^\s+/, '').length;
+  const plain = rawPlain.trim();
+
+  const words = [];
+  const lo = evStart, hi = Math.max(evStart, evEnd);   // 防御: 夹进事件范围(脏文件里 \k 总长可能超出事件)
+  for (const seg of segments) {
+    const raw = String(seg.text);
+    const w = raw.trim();
+    if (!w) continue;
+    // 该词在明文里的位置（trim 掉的首尾空白不计入）—— 重建时按它逐字回填, 任何空格布局都零损失
+    const leadWs = raw.length - raw.trimStart().length;
+    const trailWs = raw.length - raw.trimEnd().length;
+    const pStart = Math.max(0, (seg.pStart || 0) + leadWs - trimmedOff);
+    const pEnd = Math.max(pStart, (seg.pEnd || 0) - trailWs - trimmedOff);
+    words.push({
+      w,
+      s: Math.max(lo, Math.min(hi, evStart + seg.startCs / 100)),
+      e: Math.max(lo, Math.min(hi, evStart + (seg.startCs + seg.durCs) / 100)),
+      pStart, pEnd
+    });
+  }
+  const head = headParts.join('');
+  const m1 = /\\1?c&H([0-9A-Fa-f]{6})&/.exec(head);      // \c 与 \1c 等价（已唱/高亮位）
+  const m2 = /\\2c&H([0-9A-Fa-f]{6})&/.exec(head);       // \2c 未唱位
+  const highlightTag = m1 ? `{\\c&H${m1[1].toUpperCase()}&}` : null;
+  const baseHex = m2 ? assColorToHex(m2[1].toUpperCase()) : null;
+  return { head, highlightTag, baseHex, kTag, words, text: plain };
+}
+
+/**
+ * k 卡拉OK行在**文件侧**的词数 = 该行事件里 `\k` 段中带文本的段数。
+ *
+ * 用途: 坏行检测判"内存模型 ↔ 落盘段序列"是否漂移。k 行的分词由**文件自己**决定（一段一音节,
+ * 是作者的原始切分）, 与 `splitEnglishWords`（本应用按 `, . ? !` 再切一刀的规则）本就不同 ——
+ * 拿后者去比会一打开外来 k 文件就整轨误报"英文缺词"。k 行只在该段数与内存里的 words 不一致时
+ * 才算真脏（那才是文本/序列化漂移）。
+ * 事件不是单条（脏数据）→ 返回 0（调用方按"无从判定"处理）。
+ */
+export function kLineTokens(sent) {
+  const evs = (sent && sent.events) || [];
+  if (evs.length !== 1) return 0;
+  return parseKLine(evs[0].text, sent.start, sent.end).words.length;
+}
+
 /**
  * 分析 ASS 文档 → { wordStyle, sentences[] }
  * wordStyle=null 表示文件不含逐词切片(每个事件即一句)。
@@ -199,7 +414,7 @@ export function analyzeKaraoke(doc) {
   for (const [style, evs] of byStyle) {
     if (evs.length < 6) continue;
     let hl = 0;
-    for (const ev of evs) if (HL_RE.test(ev.text)) hl++;
+    for (const ev of evs) if (HL_RE.test(ev.text) || K_ANY_RE.test(ev.text)) hl++;
     if (hl / evs.length > 0.3 && evs.length > best) { wordStyle = style; wordEvents = evs; best = evs.length; }
   }
 
@@ -208,7 +423,7 @@ export function analyzeKaraoke(doc) {
   if (!wordStyle) {
     const chosen = doc.getScriptInfoComment('SubFabricWordStyle');
     const events = byStyle.get(chosen) || [];
-    if (chosen && events.some(ev => HL_RE.test(ev.text))) { wordStyle = chosen; wordEvents = events; }
+    if (chosen && events.some(ev => HL_RE.test(ev.text) || K_ANY_RE.test(ev.text))) { wordStyle = chosen; wordEvents = events; }
   }
 
   // 检测失败时的兜底: 整轨「去逐词」后文件里一条高亮切片都没有, 检测必然落空。
@@ -264,7 +479,23 @@ export function analyzeKaraoke(doc) {
   const groups = new Map();   // anchor → slices
   const loose = [];
   const wholeSents = [];      // 逐词样式里的"整句事件"(已去逐词的行): 不能并进别行的切片组
+  const kSentences = [];      // \k 卡拉OK行(单事件整行): 解析成同一份 words[], 不参与切片分组
   for (const sl of wordEvents) {
+    if (K_ANY_RE.test(sl.text)) {
+      const parsed = parseKLine(sl.text, sl.start, sl.end);
+      if (parsed.words.length) {
+        const sent = makeSentence(wordStyle, sl.start, sl.end, parsed.text, [sl], parsed.words,
+          protoOf(sl, doc.format), parsed.highlightTag);
+        sent.karStyle = 'k';
+        sent.kHead = parsed.head;
+        sent.kBaseHex = parsed.baseHex;
+        sent.kTag = parsed.kTag || '\\k';
+        kSentences.push(sent);
+      } else {
+        wholeSents.push(sl);   // 空词条的 k 行(极端脏数据): 退回整句, 重建时按普通行输出
+      }
+      continue;
+    }
     const a = findAnchor(sl);
     if (a) { if (!groups.has(a)) groups.set(a, []); groups.get(a).push(sl); }
     else loose.push(sl);
@@ -334,6 +565,7 @@ export function analyzeKaraoke(doc) {
   }
   flushLoose();
 
+  sentences.push(...kSentences);
   sentences.sort((a, b) => a.start - b.start || a.end - b.end);
   finalizeSentences(sentences);
   return { wordStyle, sentences };
@@ -749,8 +981,15 @@ export function recalcWords(sentence, newText, newStart, newEnd) {
   return normalizeWords(words, newStart, newEnd);
 }
 
-/** 依据干净文本 + 词级映射重建逐词 Dialogue spec 列表 */
+/** 依据干净文本 + 词级映射重建逐词 Dialogue spec 列表 —— 按句子形态分派:
+ *  karStyle='k' → 单事件 \k 卡拉OK形态(buildWordSpecsK); 其余 → 逐词颜色切片形态(原实现)。
+ *  所有调用点(拖词重计时/改文本/去逐词还原/导出…)无需关心形态差异。 */
 export function buildWordSpecs(sentence) {
+  return sentence.karStyle === 'k' ? buildWordSpecsK(sentence) : buildWordSpecsColor(sentence);
+}
+
+/** 颜色切片形态(原实现, 行为零改动) */
+function buildWordSpecsColor(sentence) {
   const p = sentence.proto;
   const base = { layer: p.layer, style: sentence.style, name: p.name, effect: p.effect, margins: p.margins };
   if (!sentence.words.length) {
@@ -793,6 +1032,82 @@ export function buildWordSpecs(sentence) {
   const lastW = words[words.length - 1];
   if (lastW.e < sentence.end - 0.004) push(lastW.e, sentence.end, sentence.text);
   return specs;
+}
+
+/** \k 卡拉OK形态: 单事件整行。全部按**厘秒整数**推进段序列, 严格保证总和 = 行时长。
+ *  · 已唱/高亮色 ← sentence.highlightTag(沿用现有"逐词高亮色"链路); 未唱色 ← sentence.kBaseHex(可空)
+ *  · 空档(句首/词间/行尾)写空段 filler: 渲染上与连排等效, 但能把词的真实 e 保真还原(往返=0 误差)
+ *  · 头部保留 kHead 里的其它 tag(如 \an8), 只重写两个颜色位 */
+function buildWordSpecsK(sentence) {
+  const p = sentence.proto;
+  const base = { layer: p.layer, style: sentence.style, name: p.name, effect: p.effect, margins: p.margins };
+  if (!sentence.words.length) {
+    return [Object.assign({}, base, { start: sentence.start, end: sentence.end, text: sentence.text })];
+  }
+  const startCs = Math.round(sentence.start * 100);
+  const endCs = Math.max(startCs + 1, Math.round(sentence.end * 100));
+
+  // 词边界 → 厘秒(夹进行范围), 单调防御(与 normalizeWords 同口径)
+  const ws = sentence.words.map((x) => ({
+    w: x.w,
+    sCs: Math.max(startCs, Math.min(endCs - 1, Math.round(x.s * 100))),
+    eCs: Math.max(startCs + 1, Math.min(endCs, Math.round(x.e * 100)))
+  }));
+  for (let i = 0; i < ws.length; i++) {
+    if (i > 0 && ws[i].sCs < ws[i - 1].eCs) ws[i].sCs = ws[i - 1].eCs;
+    if (ws[i].eCs <= ws[i].sCs) ws[i].eCs = Math.min(endCs, ws[i].sCs + 1);
+  }
+  // 末词**不**强贴行尾: 行尾留空时写一条 filler 空段兜底(与颜色形态同构)。
+  // 应用自身的编辑路径(拖末词结束边界 / normalizeWords)恒有 words[last].e == 句尾, 所以正常情况下
+  // 与"末词吸收全部舍入误差"等价; 但也因此外来文件尾部留空时能原样往返, 不会被静默改写。
+
+  let txt = kHeadFor(sentence);
+  let cursor = startCs;
+  const kt = K_TAGS.has(sentence.kTag) ? sentence.kTag : '\\k';   // 形态沿用原文件（\kf/\ko 不丢）
+  const pushK = (durCs) => { txt += '{' + kt + Math.max(0, durCs) + '}'; };
+  // 词间/首尾的**原文**按位置回填 —— "plan.to" 不能被重排成 "plan. to"（颜色形态是原位包标签,
+  // 明文从来不动; k 形态也必须做到, 外来文件的无空格分段/CJK 歌词才不会被塞进空格）。
+  // 位置来源按可靠性递减:
+  //   ① parseKLine 记下的原文位置（words[].pStart/pEnd, 文件自己的分段布局, 逐字节零损失）
+  //   ② 应用分词口径在 sentence.text 里对齐（编辑/重算过的模型, 词就是从这段文本切出来的）
+  //   ③ 兜底"词 + 空格"连排（连明文都对不上时的最后手段, 仅脏数据会发生）
+  const src = String(sentence.text || '');
+  let spans = null;
+  if (sentence.words.every(w => typeof w.pStart === 'number' && typeof w.pEnd === 'number')) {
+    const cand = sentence.words.map(w => ({ start: w.pStart, end: w.pEnd }));
+    if (cand.every((sp, i) => src.slice(sp.start, sp.end) === sentence.words[i].w)) spans = cand;
+  }
+  if (!spans) {
+    const toks = splitEnglishWordsWithSpans(src);
+    if (toks.length === ws.length) spans = toks.map(t => ({ start: t.start, end: t.end }));
+  }
+  const literal = !!spans;
+  let prev = 0;
+  for (let i = 0; i < ws.length; i++) {
+    if (literal) txt += src.slice(prev, spans[i].start);                          // 词间原文（归属上一段）
+    if (ws[i].sCs > cursor) { pushK(ws[i].sCs - cursor); cursor = ws[i].sCs; }   // 空档 filler
+    pushK(ws[i].eCs - cursor);                                                  // 词段
+    cursor = ws[i].eCs;
+    txt += literal ? src.slice(spans[i].start, spans[i].end)
+      : (ws[i].w + (i < ws.length - 1 ? ' ' : ''));
+    if (literal) prev = spans[i].end;
+  }
+  if (literal) txt += src.slice(prev);                                          // 尾部原文
+  if (cursor < endCs) pushK(endCs - cursor);                                    // 行尾兜底
+  return [Object.assign({}, base, { start: sentence.start, end: sentence.end, text: txt })];
+}
+
+/** k 行的颜色头: {\1c已唱&\2c未唱&…}。已唱 ← highlightTag 解析(默认绿); 未唱 ← kBaseHex(没有则不写)。
+ *  kHead 里的其它 tag 保留; 颜色位统一重写一份, 避免重复与顺序问题。 */
+function kHeadFor(sentence) {
+  let sung = '#00ff00';
+  const m = /\\1?c&H([0-9A-Fa-f]{6})&/.exec(sentence.highlightTag || '');
+  if (m) sung = assColorToHex(m[1].toUpperCase());
+  const rest = String(sentence.kHead || '')
+    .replace(/\\(?:1c|2c)&H[0-9A-Fa-f]{6}&/g, '')
+    .replace(/\\c&H[0-9A-Fa-f]{6}&/g, '');
+  const baseBgr = sentence.kBaseHex ? hexToBgr6(sentence.kBaseHex) : '';
+  return '{\\1c&H' + hexToBgr6(sung) + '&' + (baseBgr ? '\\2c&H' + baseBgr + '&' : '') + rest + '}';
 }
 
 /** 生成无逐词效果的干净 ASS 全文 */
@@ -1036,6 +1351,13 @@ export function recolorRoleInRows(doc, rows, roleNames, newHex) {
         n++;
       }
       zh.color = hexNorm;
+    }
+    // 英文行是 \k 卡拉OK行时, 未唱位（头部 \2c）跟着角色色走; 行首 \c/\1c 是已唱高亮色, 绝不碰。
+    // (replaceKaraokeBaseColor 只匹配 k 行的 \2c, 无角色色概念的行不经过这里)
+    const en = row.en;
+    if (en && en.karStyle === 'k' && en.events && en.events.length) {
+      replaceKaraokeBaseColor(doc, en.style, newHex, en.events);
+      en.kBaseHex = hexNorm;
     }
     row.color = hexNorm;
   }

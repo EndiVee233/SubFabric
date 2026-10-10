@@ -124,28 +124,33 @@ console.log('\n== 7. ★ 字幕自动保存必须能成功（丢字幕的真凶�
 {
   /* 实测：PUT /api/projects/<id>/subtitle 每次保存都返回 500，
    * 日志里累计 58 次 `[handler error] ... ReferenceError: finish is not defined`。
-   * 而 finish 在这个作用域里根本不存在 —— 更早的流式落盘实现留下的残迹
-   * （连同下面两行 `req.pipe(out)` 的死代码一起）。
-   *
-   * 后果：文件其实由 write+rename 写进去了，但前端收到 500 会认为没存上；
+   * 根因：那版实现引用了作用域里根本不存在的 finish()。
+   * 后果：文件其实被写进去了，但前端收到 500 会认为没存上；
    * 用户那边的表现就是"改了半天，稿子莫名其妙缺内容"。
+   *
+   * 现在这段是**流式落盘**实现（上游版）: finish 在本段内就地定义、req.pipe(out)
+   * 是真实接线（out = createWriteStream）。断言按这个形态守，但保留原来的本意:
+   * 「不许引用未定义的符号」「成功必须回 200」「失败要明确报错」「原子替换」。
    */
   const i = SRV.indexOf("action === 'subtitle' && (req.method === 'PUT' || req.method === 'POST')");
   ok(i > 0, '找到字幕保存路由');
   // 只看这一段（到下一个 action 判断为止），并**剥掉注释** ——
-  // 我在那段注释里写了 `finish(...)` 和 `req.pipe(out)` 来解释这个坑，
-  // 不剥注释的话断言会扫到注释、误报（实测踩过）。
+  // 注释里也会出现 `finish(...)` / `req.pipe(out)` 字样，不剥会误报（实测踩过）。
   const raw = SRV.slice(i, SRV.indexOf("action === 'subtitle' && req.method === 'GET'", i));
   const seg = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  ok(!/\bfinish\s*\(/.test(seg), '这一段里不再调用未定义的 finish()');
-  ok(!/req\.pipe\(out\)/.test(seg), '删掉了 `req.pipe(out)` 那段死代码（out 也不存在）');
-  ok(/sendJson\(res, 200, \{ ok: true, savedAt: meta\.modifiedAt \}\)/.test(seg),
-    '成功时用 sendJson 回应 200');
+  const defAt = seg.search(/const\s+finish\s*=\s*\(code, body\)\s*=>/);
+  ok(defAt >= 0, 'finish 在本段内有局部定义（不是引用外部符号）');
+  const calls = [];
+  { const re = /[^\w.$]finish\s*\(/g; let m; while ((m = re.exec(seg))) calls.push(m.index); }
+  ok(defAt >= 0 && calls.length > 0 && calls.every(ix => ix > defAt),
+    '所有 finish() 调用都在局部定义之后（不再有 "finish is not defined"）');
+  ok(/const out = fs\.createWriteStream\(subTmp\)/.test(seg) && /req\.pipe\(out\)/.test(seg),
+    '流式落盘接线完整（out 有定义 + req.pipe(out) 是真接线）');
+  ok(/finish\(200, \{ ok: true, savedAt: meta\.modifiedAt \}\)/.test(seg),
+    '成功时回应 200（sendJson 由 finish 收口）');
   // 写盘失败必须报出来，而不是静默或抛到外层
-  ok(/catch \(e\) \{[\s\S]{0,220}字幕保存失败/.test(seg), '写盘失败会返回明确的错误信息');
+  ok(/写入失败\(磁盘\/权限\?\)/.test(seg), '写盘失败会返回明确的错误信息');
   ok(/renameSync\(subTmp/.test(seg), '仍是原子替换（打开方读不到半截字幕）');
-  // 这一段里所有 finish 调用都必须有局部定义
-  ok(!/[^\w.]finish\s*\(/.test(seg.replace(/\/\*[\s\S]*?\*\//g, '')), '去掉注释后也没有 finish 调用');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

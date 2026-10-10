@@ -73,6 +73,17 @@ export function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** 记录"弹出层是从哪里长出来的"：把触发点(点击坐标)换算成框内百分比，写进 --pop-ox/--pop-oy，
+ *  供 CSS 的 pop-in 动画当 transform-origin（原点夹在 0~100%：框被窗口边缘推走时也不会指到框外）。
+ *  left/top 传框最终落位的坐标 —— 就是刚写进 style.left/top 的那两个数。 */
+export function popOrigin(el, cx, cy, left, top) {
+  const w = el.offsetWidth || 1, h = el.offsetHeight || 1;
+  const ox = Math.max(0, Math.min(100, ((cx - left) / w) * 100));
+  const oy = Math.max(0, Math.min(100, ((cy - top) / h) * 100));
+  el.style.setProperty('--pop-ox', ox.toFixed(1) + '%');
+  el.style.setProperty('--pop-oy', oy.toFixed(1) + '%');
+}
+
 /** 二分查找: 在按 start 升序的数组中找 start <= t 的最后一项下标 */
 export function bisectStart(arr, t) {
   let lo = 0, hi = arr.length - 1, ans = -1;
