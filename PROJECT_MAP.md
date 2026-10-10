@@ -4,7 +4,7 @@
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-10（路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删）
+> 最后更新：2026-10-10（路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`）
 
 ---
 
@@ -54,8 +54,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | `tools/` | 探针 / 诊断脚本（CDP 真机测试、布局探针、HTTP 层探针等） |
 | `build/`、`build_exe.py` | 打包（`build/installer/` 内图标与 `.iss` 入库，其余产物不入库） |
 | `main.py` | **历史遗留**的 Python GUI 工具（字体/颜色等默认值处理），与编辑器主线关系弱 |
-| `KARAOKE_DESIGN.md`、`KARAOKE_REFS.md` | 逐词高亮与 `\k` 的格式设计与调研记录（**改字幕格式前必读**） |
-| `CODE_REVIEW.md` | 第一轮代码审查报告（2026-10-04，条目已全部关闭，留作记录） |
+| `docs/` | 归档/设计文档（**不在根目录堆着**）：`docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`（逐词高亮与 `\k` 的格式设计与调研，**改字幕格式前必读**）；`docs/CODE_REVIEW.md`（第一轮审查记录）；`docs/双引擎实测结论.md`（NPU+GPU 双引擎实测：本机无收益） |
 | `eslint.config.js` | 只抓真错的规则（`no-undef` 等）；跑 lint 需自行 `npm i eslint`（项目无 `node_modules`） |
 
 ---
@@ -185,7 +184,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 ## 6. 核心机制备忘（改相关代码前先读）
 
 - **逐词高亮**：不用 `\k`。中文整句一条事件；英文按词切多条事件，当前词用行内色标
-  `{\c&H..&}word{\c}` 标记。配对与时间映射全在 `karaoke.js`；格式设计见 `KARAOKE_DESIGN.md`。
+  `{\c&H..&}word{\c}` 标记。配对与时间映射全在 `karaoke.js`；格式设计见 `docs/KARAOKE_DESIGN.md`。
 - **`\k` 是另一条线**（`editor/k-line.js`）：初稿生成用 `\k` 行文本（每词亮到下一词起点）。
   生成端与编辑器端"同一格式、两个场景"，改动要两边对齐。
 - **就地编辑（`segment.js`）只做最小替换**：把被点中的那一段换成新文本，
@@ -248,7 +247,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   否 → 归到对应 `handleXxxRoutes` 段内的 if 链（保持段内书写顺序，段末已有 404 兜底）。
 - **加一个前端弹层**：`[hidden]` 切 display + `:not([hidden]){animation:pop-in}` + JS 设 `--pop-ox/oy`（用 `popOrigin`）。
 - **改 UI 文案**：编辑 `editor/lang/zh-CN.json` 的值即可（键=原文）。
-- **改 ASS / 逐词相关**：先读 `KARAOKE_DESIGN.md`、`KARAOKE_REFS.md`、`karaoke.js` 与 `postprocess.js` 头注释。
+- **改 ASS / 逐词相关**：先读 `docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`、`karaoke.js` 与 `postprocess.js` 头注释。
 - **改下载内核**：`asr/fetch/`，先读 `asr/fetch/README.md`；站点判定必须**严格 hostname**（子串判站是历史漏洞）。
 - **改敏感字段**：走 `secret-store.js`；涉及 Cookie 的临时明文文件用完即删。
 - **排查"卡在运行中"**：找对应任务容器（`draftJobs` / `rerecogJobs` / 下载看门狗）与异常收尾路径；
@@ -272,6 +271,10 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **文档整理（2026-10-10）**：根目录只留 `README.md` + `PROJECT_MAP.md`（入口与地图），历史/设计文档归入 `docs/`
+  （KARAOKE 设计/调研、第一轮审查记录、双引擎实测结论）；删除已完成文档 `CODE_REVIEW_2026-10-08.md`
+  （第二轮审查，内容在 git 历史 `git show 2a6dd23:CODE_REVIEW_2026-10-08.md`；曾被 PR 合并复活，再次删除）与
+  `UPSTREAM_MERGE_STATUS.md`（2.1.13 合并状态记录，要点已并入本章与 `editor/README.md` 更新日志）。
 - **路由重构恢复 + 测试基建修复（2026-10-10）**：`handleRequest` 拆回"薄分发器 + 7 段函数 + `API_SECTIONS`"
   （f8be06a 的做法在合并树上重做；行多重集 + AST 路由字面量对照 + `http_layer_probe`/`route_smoke` 新旧对照
   证明行为等价 —— 唯一差异：`/api/*` 前缀命中但 method 不匹配的 404 由 text 变 JSON，同码同义）；
