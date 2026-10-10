@@ -89,7 +89,7 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.2.1'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = '2.3.0'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
