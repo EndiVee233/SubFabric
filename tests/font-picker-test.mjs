@@ -140,6 +140,13 @@ if (!svc) {
       ok(g2.panel.t >= 0 && g2.panel.t + g2.panel.h <= 761, '面板完全在视口内', g2.panel);
     }
     ok(errs.length === 0, '浏览器无未捕获异常', errs.slice(0, 3));
+
+    /* 说明：字体三态反馈（present / loaded / missing）的断言不在这里 ——
+     * 它们依赖真实应用页的 #ass-style-status 与 #ass-style-*-font-note，
+     * 而本验证页只有选择器组件本身，没有那些元素（放这儿测会假失败）。
+     * 那部分见 tests/jsmod/main.js 的 onFontNameChange 与
+     * .staging/verify_font_status.mjs（12/12，已在真实页面验过）。 */
+
     try { ws.close(); } catch {}
     finished = true;
   } finally {

@@ -574,18 +574,38 @@ async function ensureSystemFont(name) {
   } catch { return 'missing'; }
 }
 
-/** 改完字体名: 先把它从本机字体库备好, 再套用样式(只重载一次预览) */
+/** 改完字体名: 先把它从本机字体库备好, 再套用样式(只重载一次预览)。
+ *
+ * ⚠ 三种结果都要给**明确反馈**，不能只处理 'loaded'。
+ *   踩过的坑：这里先写「正在查找本机字体「X」…」，然后只在 `res === 'loaded'` 时
+ *   更新成"已载入"。而**打开稿件时 autoLoadSystemFonts 已经把样式里用到的字体
+ *   都载进内存了**，于是用户再手动改字体名时 ensureSystemFont 走的是
+ *   `isFontAvailable → true` 那条路、返回 `'present'`（不是 'loaded'）——
+ *   两个 if 都不成立，状态就**永远停在"正在查找…"**，看着像"改了没生效"。
+ *   （实测：改英文字体后状态卡 6 秒以上不动，而 ASS 里其实早就改好了。） */
 async function onFontNameChange(track) {
   const el = track === 'zh' ? assStyleEls.zhFont : assStyleEls.enFont;
   const name = (el.value || '').trim();
   if (!name) { applyAssStyleSettings(); return; }
+  const label = track === 'zh' ? '中文字幕' : '英文字幕';
   if (assStyleEls.status) assStyleEls.status.textContent = `正在查找本机字体「${name}」…`;
   const res = await ensureSystemFont(name);
   if (res === 'loaded') pendingFontNotice = `已从本机字体库载入「${name}」`;
   applyAssStyleSettings();
-  if (res === 'loaded' && !assPlayer.ready && assStyleEls.status) {
-    assStyleEls.status.textContent = `已从本机字体库载入「${name}」，预览重建中…`;
+  if (!assStyleEls.status) return;
+  if (res === 'loaded') {
+    assStyleEls.status.textContent = assPlayer.ready
+      ? `已从本机字体库载入「${name}」，并套用到${label}`
+      : `已从本机字体库载入「${name}」，预览重建中…`;
+  } else if (res === 'present') {
+    // 字体本来就在（多半是打开稿件时 autoLoadSystemFonts 载的）—— 也要说清楚，别让它停在"正在查找"
+    assStyleEls.status.textContent = `${label}字体已切换为「${name}」（该字体已在预览里可用）`;
+  } else {
+    // 'missing'：本机没装 → 预览会回退。这正是用户最容易误判成"改了没生效"的情况。
+    assStyleEls.status.textContent = `本机没装「${name}」：名字已写进样式，但预览会回退到内置字体；`
+      + `点「载入字体」手动挑一个 .ttf/.otf 也能用`;
   }
+  refreshFontNotes();
 }
 
 /** 打开稿件后自动补齐: 样式里写的字体若本机装了, 直接喂给预览(用户不必手动选文件) */
