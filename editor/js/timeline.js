@@ -15,15 +15,50 @@ const EN_FONT = '700 14px "Microsoft YaHei", sans-serif';    // 英文逐词: �
  * 改动字号时必须同步 —— 否则分隔线/标记会压到字上。 */
 const ZH_LINE = 19;
 const EN_LINE = 18;
-/* 中文行在块高里占的比例 —— 分隔线画在它下面，剩下的给英文逐词行。
- * 取 0.30 是为了跟原来"中文基线在块高 30%"的观感接近，同时保证中文行整行都在分隔线之上。 */
+/* 中文行在块高里占的比例 —— 分隔线画在它下面，剩下的给英文逐词行。 */
 const ZH_ROW_R = 0.30;
+/* 坏行/空槽的红色虚线边框。原来是 [4,3]（4px 实 + 3px 空）—— 在 1.5px 线宽下
+ * 密到像一层毛边，"这片全是毛病"的压迫感远大于它要表达的"这行时间或文本有异常"
+ * （用户反馈："表明字幕异常的红框线条不要这么密集，稀疏一点，红线长一点"）。
+ * 改成 11px 实 + 7px 空：一眼能看出是虚线，又不抢画面的注意力。 */
+const DASH_BAD = [11, 7];
+const DASH_EMPTY = [9, 6];
 const AXIS_COLOR = 'rgba(228,228,238,.42)';   // 逐词轴/中英分隔线(中性浅灰)
 const WORD_MARK = 'rgba(214,214,228,.85)';    // 逐词标记块
 const WORD_MARK_HOT = 'rgba(255,255,255,.95)';// 拖动中的标记
 const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参考图一致)
+
+/* ── 字体度量：按**实际字形**算，而不是按字号估 ────────────────────────
+ * 居中必须用真实 ascent/descent —— 用"字号"当高度，微软雅黑这类中文字体的
+ * 观感中心会明显偏（汉字占满 em，拉丁字母只占 x-height 一段）。
+ * 度量按 font 字符串缓存：每帧重画时间轴都会问几次，measureText 不便宜。 */
+const _fontMetrics = new Map();
+function fontMetrics(ctx, font) {
+  const hit = _fontMetrics.get(font);
+  if (hit) return hit;
+  let m = null;
+  try {
+    const prev = ctx.font;
+    ctx.font = font;
+    m = ctx.measureText('Hxg汉字');
+    ctx.font = prev;
+  } catch { m = null; }
+  const asc = (m && Number.isFinite(m.actualBoundingBoxAscent) && m.actualBoundingBoxAscent > 0)
+    ? m.actualBoundingBoxAscent : null;
+  const desc = (m && Number.isFinite(m.actualBoundingBoxDescent)) ? m.actualBoundingBoxDescent : null;
+  const out = (asc != null && desc != null)
+    ? { asc, desc, h: asc + desc }
+    /* 量不到（老浏览器没有 actualBoundingBox*）→ 按字号估算：
+     * 中文字形大致满 em，拉丁字母的升部约 0.75em、降部约 0.22em。 */
+    : { asc: parseFontPx(font) * 0.78, desc: parseFontPx(font) * 0.22, h: parseFontPx(font) };
+  _fontMetrics.set(font, out);
+  return out;
+}
+function parseFontPx(font) {
+  const m = /(\d+(?:\.\d+)?)px/.exec(String(font || ''));
+  return m ? Number(m[1]) : 12;
+}
 const EDGE_TOL = 5;      // 块边缘命中半径(px): 块重叠时优先选中"边界"
-const AXIS_R = 0.52;     // 中英分隔线在块高里的相对位置(夹在中文行与标记行之间, 见 _wordGeom)
 const DRAG_THRESH = 4;   // 区分"单击"与"拖动"的位移阈值(px)
 const DEFAULT_SPAN = 30; // 默认视图跨度(秒): 一上来只看 30 秒, 而不是整个视频
 
@@ -1266,102 +1301,84 @@ export class Timeline {
   /**
    * 块内纵向几何。
    *
-   * 逐词标记块**贴块底**（不再骑在中英分隔线上）:
-   *   标记底 = 块底 − 2px —— "基本贴底", 但那 2px 缺口是刻意的:
-   *   贴到 0 会让标记与块的下边框糊成一条, 看着像"顶到边"。
-   * 标记与英文词文本因此落在同一行, 一眼能对上是哪个词的抓手。
+   * 三行，各自在分到的区间里**上下居中**：
+   *   ① 中文行（句首那条 `{\c}` 色标行）—— 上半区
+   *   ② 中英分隔线 —— 两区之间（就是"中文 < 分隔线 < 英文"这条顺序的可视化）
+   *   ③ 英文逐词行 + 逐词起始标记 —— 下半区
    *
-   * 分隔线仍是中英分界, 观感上在块高中部(AXIS_R)。但它是**夹**在
-   * 中文行与标记行之间的, 不是固定比例 —— 矮轨/单语半区上按需让位,
-   * 保证"中文 < 分隔线 < 标记"三者互不压。
+   * 居中都按**实际字形**（fontMetrics）算，不按字号 —— 汉字占满 em、拉丁字母
+   * 只占 x-height 一段，用字号估会明显偏。
+   *
+   * 三行的顺序必须严格保持：中文行不越过分隔线、分隔线不越过英文行。
+   * 块矮时按"先保每行完整、再谈间距"的顺序让步。
    */
   _wordGeom(band) {
-    /* 逐词标记块(拖动抓手): 目标 20×8(拖动中宽 10), 底部留 5px 不贴块边框。
+    /* 逐词标记块(拖动抓手): 目标 20×8(拖动中宽 10)。
      *  比原来(10×4)大一倍 —— 小块在密集词里太难点中。
-     *
-     *  高度**按可用空间自适应**: 块内要同时容纳「中文行 + 分隔线 + 标记」, 若块太矮
-     *  (单语孤行/被压扁的矮轨, 实测 ≤39px), 无条件 20px 会让分隔线被标记压住。
-     *  所以先给中文行与分隔线留够, 剩下的才给标记; 实在挤不下就压到最小 6px。
+     *  高度**按下半区可用空间自适应**: 块矮时先保 MARK_MIN_H(6px) 进得来,
+     *  不能再出现"先给文字留位、标记被夹成负高"那种情况。
      *  宽度也不超过高度(极矮时不该是横条)。*/
-    /* 标记块(拖动抓手)。上限仍取 20px（宽 8、拖动中 10），但**必须给逐词文字让位**：
-     *  文字行 14px、标记 20px，块高 137 时两者会重叠（实测标记 138~158 正压住文字中心 142）。
-     *  所以标记高度取「文字行的下沿往下到块底」这一段与 20px 的较小值 —— 文字在上、
-     *  标记紧贴其下，拖动抓手在块底一条，点起来照样好点。 */
     const MARK_H = 20, MARK_W = 8, MARK_W_HOT = 10, MARK_MIN_H = 6;
-    const TOP_PAD = 1, GAP = 3;                                // GAP: 中文/分隔线/标记之间的最小间隙
+    const TOP_PAD = 1, GAP = 3;
     // 底部余量: 2.5px(贴底但仍留一线缝隙, 不与块边框粘连), 且**不能吃掉整块**
     // (实测块高 4px 时固定 5px 会让 markBot 跑到块顶之上、标记被画到块外)。
     // 所以按块高缩放, 最少留 1px。
     const BOT_PAD = Math.max(1, Math.min(2.5, band.h / 4));
-    const zhBase = band.y + Math.round(band.h * 0.30);          // 中文行基线（**唯一定义处**，_drawBlockText 用 g.zhBase 取）
     const markBot = band.y + band.h - BOT_PAD;                   // 贴底, 不碰块边框
-    /* 块内竖直分区 —— 三行：中文行 / 分隔线 / 英文逐词行。
+
+    /* ── 块内竖直排布 ────────────────────────────────────────────────
+     * 三行，**各自在分到的区间里上下居中**：
+     *     ① 中文行（含句首的 `{\c}` 色标行）—— 上半区
+     *     ② 分隔线 —— 两区之间
+     *     ③ 英文逐词行 + 拖动标记 —— 下半区
      *
-     * ⚠ 这里踩过一个坑：`enTop` 早先写成固定 `band.y + ZH_LINE`（19px），块高 137 时
-     *   它算出来才 78 —— 比中文行（数据在 88~105）还靠上，于是分隔线被夹到 89，
-     *   **正好压在中文上**。根因是把"行高"当成了"到块顶的距离"（只对矮块成立）。
-     *   现在按**比例**分区：中文行占上面 ZH_ROW_R，剩下的给英文行，
-     *   两行之间留 GAP 给分隔线。矮块下按比例缩，高块下跟着放大，都不会互相压。 */
-    const GAP_ROW = 5;                                           // 中文行与英文行之间的空档（分隔线画在这里）
-    const zhRowTop = band.y;
-    /* 中文行高度：矮块下按 ZH_LINE 撑住（不然中文会被分隔线切），高块下按比例放大。
-     * 不用固定 band.h*ZH_ROW_R —— 块高 62 时它只有 18.6px，装不下 15px 的中文。 */
-    const zhRowH = Math.max(ZH_LINE, Math.round(band.h * ZH_ROW_R));
-    const enTop = Math.min(band.y + band.h - 2, zhRowTop + zhRowH + GAP_ROW);   // 英文行上界
-    const enBot = band.y + band.h;                               // 下半框下界 = 块底
-    /* 分隔线的位置：夹在中文行与英文文字行之间。
-     * 优先级 **分隔线 > 标记** —— 分隔线是"中英分界"这个语义本身，标记只是抓手；
-     * 让标记去挤压分隔线会让分界糊掉（用户看的就是这条线）。 */
-    const axisLo = Math.min(zhBase + GAP, enTop + GAP);
-    const axisHi = Math.max(axisLo, Math.min(zhBase + Math.round(band.h * 0.5), enTop + Math.round(EN_LINE * 0.6)));
-    const axisY = Math.max(axisLo, Math.min(band.y + Math.round(band.h * AXIS_R), axisHi));
-    /* 标记顶：从块底往上取 MARK_H，但**不得越过中文行的下缘**。
-     *  实测踩过的坑：块高 137 时标记落在 97~117，而中文行占 86~105 —— 竖条压在中文上。
-     *  注意要避开的是中文的**下缘**（zhBase 是基线，汉字有下线，取 +5 容差），不是基线本身。
-     *  标记与**英文**词文本横向不重叠（标记在词起点 wx、文字从其右侧起，见 _drawWordAxis），
-     *  所以跟英文行共存没问题；真正要避开的是上面那行中文。
-     *  空间不够时**保高度**（拖动抓手要够大），宁可让标记稍微上探一点。 */
-    const zhBottom = zhBase + 5;
-    let markTop = markBot - MARK_H;
-    if (markTop < zhBottom) markTop = Math.min(zhBottom, markBot - MARK_MIN_H);
-    markTop = Math.max(band.y + TOP_PAD, markTop);
-    const markH = Math.max(2, Math.min(MARK_H, markBot - markTop));
-    const markW = Math.max(2, Math.min(MARK_W, markH));          // 极矮时别比高度还宽
-    /* 英文逐词行的基线 —— **在下半框里上下居中**。
+     * 居中一律用 fontMetrics() 的**实际字形**高度，不用字号：汉字占满 em、
+     * 拉丁字母只占 x-height 一段，用字号估会让观感中心明显偏。
      *
-     * 原来是 `band.y + band.h - 3`（贴块底），于是词文本几乎碰到下边框、与标记块挤在一处
-     * （用户截图反馈："把下面的英语字幕在下半框上下居中"）。
-     *
-     * 居中怎么定义：下半框上界 = 中文行下沿（有分隔线时就是分隔线），下界 = 块底。
-     * 词文本按**实际的 ascent/descent**（而不是字号）算视觉中心，
-     * 这样不同字体/字号的观感一致，不会出现"看着偏上/偏下"。
-     * 量不到度量时退回字号估算。 */
-    const enCenter = enTop + (enBot - enTop) / 2;
-    let ascend = EN_LINE * 0.78, descend = EN_LINE * 0.22;
-    try {
-      /* 必须先把 font 设成英文逐词的字号再量 —— ctx.font 是跨调用残留的，
-       * 直接量会拿到上一段文字（中文行 15px）的度量，居中就会偏。 */
-      const ctx = this.ctx;
-      const prevFont = ctx.font;
-      ctx.font = EN_FONT;
-      const m = ctx.measureText('Hxg');
-      if (m && Number.isFinite(m.actualBoundingBoxAscent) && m.actualBoundingBoxAscent > 0) {
-        ascend = m.actualBoundingBoxAscent;
-        descend = Number.isFinite(m.actualBoundingBoxDescent) ? m.actualBoundingBoxDescent : 0;
-      }
-      ctx.font = prevFont;
-    } catch { /* 老浏览器没有这些字段，用上面的估算 */ }
-    let enBase = Math.round(enCenter + (ascend - descend) / 2);
-    // 夹进下半框：别顶到中文行，也别让 descent 溢出块底
-    const enBaseLo = Math.round(enTop + ascend);
-    const enBaseHi = Math.round(enBot - descend - 1);
-    enBase = Math.max(enBaseLo, Math.min(enBaseHi, enBase));
+     * 上半区高度按比例给（块高 0.30），但**下限是中文行本身的高度** ——
+     * 否则块矮时（实测 62px → 18.6px）装不下 15px 的中文，分隔线会切到字上。 */
+    const ctx = this.ctx;
+    const mZh = fontMetrics(ctx, ZH_FONT);
+    const mEn = fontMetrics(ctx, EN_FONT);
+
+    const zhTop = band.y;                                        // 上半区
+    const zhBot = Math.min(band.y + band.h, band.y + Math.max(mZh.h, Math.round(band.h * ZH_ROW_R)));
+    const zhBase = Math.round(zhTop + (zhBot - zhTop) / 2 + (mZh.asc - mZh.desc) / 2);   // 中文行居中
+
+    /* 分隔线：夹在中文行下缘与下半区顶之间，位置取"两行之间"的中线。
+     *  原来按 0.52×块高 定位，块一高就跑到英文行下面去了；现在跟两行绑定。 */
+    const zhBottom = zhBase + mZh.desc;
+    const axisLo = Math.min(zhBottom, markBot - MARK_MIN_H);
+    const axisHi = Math.max(axisLo, band.y + band.h);
+    const axisY = Math.round(Math.max(axisLo, Math.min(zhBottom + 3, axisHi)));
+
+    /* 下半区：从分隔线往下到块底。英文词线与**标记行**一起在这个区间里居中 ——
+     *  标记是"词的起始时刻"的可视锚点，跟词分开摆会让人以为它们不是一回事。 */
+    const enTop = axisY + 2;
+    const enBot = band.y + band.h;
+    /* 标记行高度（居中的那一"行"）：至少 MARK_MIN_H，最多 MARK_H。
+     *  矮块下**必须先让它进得来** —— 早期版本先给文字留位再夹标记，块矮时标记被夹成负高。 */
+    const markBandH = Math.max(MARK_MIN_H, Math.min(MARK_H, Math.round((enBot - enTop) * 0.45)));
+    const markW = Math.max(2, Math.min(MARK_W, markBandH));      // 极矮时别比高度还宽
+
+    /* 词线与标记线的**基线**：整个下半区居中 —— 总高 = 标记行 + 间隙 + 文字行，
+     *  起点 = 区间中心 - 总高/2。这样"标记+文字"作为一个整体在框里是正的。 */
+    const stackH = markBandH + GAP + mEn.h;
+    const stackTop = enTop + ((enBot - enTop) - stackH) / 2;
+    let markTop = Math.round(Math.max(zhBottom, stackTop));      // 标记行顶（别越过中文行）
+    markTop = Math.max(band.y + TOP_PAD, Math.min(markTop, markBot - MARK_MIN_H));
+    const markH = Math.max(2, Math.min(markBandH, markBot - markTop));
+    let enBase = Math.round(markTop + markH + GAP + mEn.asc);    // 文字行紧接标记行之下
+    // 夹进下半区：别顶到分隔线，也别让 descent 溢出块底
+    enBase = Math.max(Math.round(enTop + mEn.asc), Math.min(Math.round(enBot - mEn.desc - 1), enBase));
+
     return {
       axisY, sepY: axisY, markTop, markBot, markH, markW, markWHot: MARK_W_HOT,
       top: markTop, bottom: markBot,
-      baseline: enBase,          // 英文逐词行的基线（下半框居中）
-      zhBase,                    // 中文行基线 —— 唯一来源，_drawBlockText 直接用它
+      baseline: enBase,          // 英文逐词行的基线
+      zhBase,                    // 中文行基线 —— 唯一定义处，_drawBlockText 用 g.zhBase 取
       enLine: EN_LINE, zhLine: ZH_LINE, enTop, enBot,
+      zhTop, zhBot, mZh, mEn,
     };
   }
 
@@ -1371,6 +1388,11 @@ export class Timeline {
     const g = this._wordGeom(band);
     const words = (c.words && c.words.length) ? c.words : null;
     const showWords = !!(words && wpx / words.length > 8);
+    /* 竖直空间够不够摆下"中文行 + 英文逐词行"。
+     *  双行字幕轨拉到最紧时块高只有 22px（实测），而 15px 中文 + 14px 英文
+     *  两行加起来 39px —— 物理上摆不下。这时**宁可不画逐词行**（只留分隔线与标记），
+     *  也不要把文字硬挤出块外、糊成一团。 */
+    const fitWords = (band.h - g.mZh.h) >= (g.mEn.h + g.markH + 4);
     ctx.save();
     ctx.beginPath();
     ctx.rect(x1 + TEXT_PAD, band.y, Math.max(1, wpx - TEXT_PAD * 2), band.h);
@@ -1396,16 +1418,29 @@ export class Timeline {
        *   （实测分隔线 89 压在中文 88~105 上）。统一到一处就不会再漂。 */
       const zhBase = g.zhBase;
       const tw = ctx.measureText(zh).width;
-      /* 深色底的尺寸跟着中文字号走（原来写死 -11 / 高 14，字号 12px）。
-       * 15px 的字用 14px 高的底会露头露尾，所以按 ZH_LINE 算并让字居中于底。 */
-      const bgTop = zhBase - Math.round(ZH_LINE * 0.78);
+      /* 深色底的尺寸跟**实际字形**走（原来写死 -11 / 高 14，那是按 12px 字号配的）。
+       * 用 g.mZh（15px 中文的真实 ascent/descent）再加 1px 余量，
+       * 换字体/换字号都不用改这里。 */
+      const bgPadY = 1;
+      const bgTop = Math.round(zhBase - g.mZh.asc - bgPadY);
+      const bgH = Math.round(g.mZh.asc + g.mZh.desc + bgPadY * 2);
       ctx.fillStyle = 'rgba(8,8,12,.45)';                 // 极淡的深色底：压住波形，又不糊掉块
-      this._roundRect(ctx, x1 + TEXT_PAD - 3, bgTop, tw + 6, ZH_LINE, 3);
+      this._roundRect(ctx, x1 + TEXT_PAD - 3, bgTop, tw + 6, bgH, 3);
       ctx.fill();
       ctx.fillStyle = readableTextOn(base);                // 亮角色色保留，暗的换近白
       ctx.fillText(zh, x1 + TEXT_PAD, zhBase);
-      if (showWords) {
+      if (showWords && fitWords) {
         this._drawWordAxis(ctx, words, g, x1, x2, c.end);
+      } else if (showWords) {
+        /* 有逐词但竖直空间不够 → **只画分隔线**，标记与词都不画（免得糊在中文字上）。
+         *  这是"块太矮"的兜底，正常字号下不会走到这里；也别退化去画整句英文 ——
+         *  那同样会溢出块外。 */
+        ctx.strokeStyle = AXIS_COLOR;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x1 + 4, g.axisY + 0.5);
+        ctx.lineTo(x2 - 4, g.axisY + 0.5);
+        ctx.stroke();
       } else {
         if (c.text) {
           ctx.strokeStyle = AXIS_COLOR;           // 中英分隔线(中性浅灰)
@@ -1419,8 +1454,10 @@ export class Timeline {
           ctx.fillText(c.text.slice(0, 60), x1 + TEXT_PAD, g.baseline);
         }
       }
-    } else if (showWords) {
+    } else if (showWords && fitWords) {
       this._drawWordAxis(ctx, words, g, x1, x2, c.end);   // 纯英文孤行
+    } else if (showWords) {
+      /* 纯英文孤行但空间不够：不画词，留白（用户拉高轨道就会显示出来） */
     } else {
       ctx.fillStyle = base;
       ctx.font = ZH_FONT;
@@ -1781,7 +1818,7 @@ export class Timeline {
     ctx.save();
     ctx.strokeStyle = bad ? '#ff5c5c' : 'rgba(255,255,255,0.16)';
     ctx.lineWidth = bad ? 1.5 : 1;
-    ctx.setLineDash(bad ? [4, 3] : [3, 3]);
+    ctx.setLineDash(bad ? DASH_BAD : DASH_EMPTY);
     this._roundRect(ctx, bx, by, bw, bh, 3);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -1813,7 +1850,7 @@ export class Timeline {
     ctx.save();
     ctx.strokeStyle = '#ff5c5c';
     ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 3]);
+    ctx.setLineDash(DASH_BAD);        // 稀疏长虚线（原 [4,3] 太密，见常量处注释）
     this._roundRect(ctx, bx, by, bw, bh, 3);
     ctx.stroke();
     ctx.setLineDash([]);
