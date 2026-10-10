@@ -87,3 +87,6 @@ _tts_probe/
 # 测试运行时生成的临时模块（不该进仓库）
 tests/_carry.mjs
 tests/_*.mjs
+
+# 本地临时脚本/素材(不入库; 与 /_test/ 同性质)
+/tmp-test/
