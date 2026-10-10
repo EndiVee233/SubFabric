@@ -17,7 +17,14 @@ export class SrtOverlay {
     this.visible = false;
   }
 
-  setCues(cues) { this.cues = cues || []; this._lastKey = '__force__'; }
+  setCues(cues) {
+    this.cues = cues || [];
+    // 预计算前缀最大结束时间: cues 只按 start 排序, 重叠/嵌套时 end 不随 start 单调,
+    // 回扫检索需要"到 k 为止的最大 end"才能安全提前终止（与 timeline.js 的 _maxEnd 同一防御）。
+    let mx = -Infinity;
+    for (const c of this.cues) { mx = Math.max(mx, c.end); c._maxEnd = mx; }
+    this._lastKey = '__force__';
+  }
   setOrder(order) { this.order = order; this._lastKey = '__force__'; }
   setFontScale(v) { this.fontScale = v; this._lastKey = '__force__'; }
 
@@ -46,10 +53,17 @@ export class SrtOverlay {
     const actives = [];
     if (this.cues.length) {
       let i = bisectStart(this.cues, t);
-      for (let k = i; k >= 0 && this.cues[k].end > t; k--) actives.unshift(this.cues[k]);
+      // ⚠ 回扫条件必须用 _maxEnd（前缀最大 end）而不是 cues[k].end：
+      // cues 只按 start 排序, 一个早已结束的短块会挡住对更早开始的长块的回扫
+      // （反例: A=[0,100], B=[1,2], t=50 —— 老写法 bisect 命中 B 后因 B.end<=t
+      // 立即退出, A 整条漏显示）。链上 end<=t 的块本身跳过但不能停。
+      for (let k = i; k >= 0 && this.cues[k]._maxEnd > t; k--) {
+        if (this.cues[k].end > t) actives.unshift(this.cues[k]);
+      }
+      // bisectStart 返回"最后一个 start<=t"的下标, 理论上正向没有候选;
+      // 保留这段作语义保险（若 bisectStart 将来改为插入点语义仍然正确）。
       for (let k = i + 1; k < this.cues.length && this.cues[k].start <= t; k++) {
         if (this.cues[k].end > t) actives.push(this.cues[k]);
-        else break;
       }
     }
     const key = actives.map(c => c.id).join('|') + '#' + this.order + '#' + this.fontScale;

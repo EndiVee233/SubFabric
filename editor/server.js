@@ -308,9 +308,14 @@ function probeDuration(videoPath, cb) {
   let settled = false;                       // spawn 失败时 error 与 close 都会到, 回调只允许落一次
   const finish = (v) => { if (!settled) { settled = true; cb(v); } };
   p.stdout.on('data', d => { out += d; });
-  p.on('error', () => cb(0));
-  p.on('close', () => { const v = parseFloat(String(out).trim()); cb(isFinite(v) && v > 0 ? v : 0); });
-  setTimeout(() => { try { p.kill(); } catch {} }, 15000);
+  // ⚠ 必须走 finish(): 新版 Node 在 spawn 失败时 error 与 close 会**都**触发,
+  // 直接调 cb 会双回调 —— /api/peaks 端 go() 跑两次 → sendPeaks 二次 writeHead 抛
+  // ERR_HTTP_HEADERS_SENT; makeWaveform 的兜底还会拿 duration=0 无限递归 spawn。
+  // (此护栏 2026-10-10 前就写在这里, 但两个 handler 接线时绕过了它, 属"护栏没接线"。)
+  p.on('error', () => finish(0));
+  p.on('close', () => { const v = parseFloat(String(out).trim()); finish(isFinite(v) && v > 0 ? v : 0); });
+  const probeTimer = setTimeout(() => { try { p.kill(); } catch {} }, 15000);
+  probeTimer.unref?.();
 }
 
 /** 对给定视频路径生成波形 PNG(临时文件用完即删), 完成后回调 (err, pngBuffer)。
@@ -464,12 +469,16 @@ function buildPeaks(videoPath, duration, rate, cb) {
     '-f', 's16le', '-ac', '1', '-ar', String(PEAK_SR), '-'], { windowsHide: true });
   let stderr = '';
   proc.stderr.on('data', d => { if (stderr.length < 2000) stderr += d; });
-  proc.on('error', (e) => cb(new Error('ffmpeg 不可用: ' + e.message)));
+  // settle 护栏(对照 renderWaveform): ffmpeg 不在 PATH 时 error 与 close 都会到,
+  // 不挡的话 cb 跑两次 → /api/peaks 二次 writeHead 抛 ERR_HTTP_HEADERS_SENT
+  let settled = false;
+  const done = (err, buf) => { if (!settled) { settled = true; cb(err, buf); } };
+  proc.on('error', (e) => done(new Error('ffmpeg 不可用: ' + e.message)));
   const finish = attachPeakCollector(proc.stdout, duration, rate, PEAK_SR);
   proc.on('close', (code) => {
     const r = finish(code, stderr);
-    if (r.code !== 0) return cb(new Error('ffmpeg failed: ' + String(r.stderr).slice(-200)));
-    cb(null, r.buf);
+    if (r.code !== 0) return done(new Error('ffmpeg failed: ' + String(r.stderr).slice(-200)));
+    done(null, r.buf);
   });
 }
 
@@ -2935,7 +2944,7 @@ function pyVersionOk(exe, pre) {
 }
 function resolveFetchPython() {
   if (!fetchPyPromise) {
-    fetchPyPromise = (async () => {
+    const p = (async () => {
       const cands = [];
       if (ASR_PY && ASR_PY !== 'python') cands.push([ASR_PY, []]);
       cands.push(['py', ['-3.12']], ['py', ['-3.11']], ['py', ['-3.10']], ['python3', []], [ASR_PY || 'python', []]);
@@ -2945,6 +2954,12 @@ function resolveFetchPython() {
       }
       return false;
     })();
+    // 探测失败(结果为 false)不缓存: 用户随后在设置里装好 Python 环境后,
+    // 下一次调用必须重新探测 —— 否则"装好了还报需要一个 Python 3.8"直到重启服务。
+    // (fetchSettings 里 ASR_PY/pyProbeCache 会在 finishOk 时重置, 但本 Promise 不会,
+    //  所以干脆只在**成功**时记住结果。)
+    p.then((ok) => { if (!ok) fetchPyPromise = null; }, () => { fetchPyPromise = null; });
+    fetchPyPromise = p;
   }
   return fetchPyPromise;
 }
@@ -3040,8 +3055,14 @@ async function startFetchJob(id, opts) {
   const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
   if (ckPlain) {
     const ckFile = path.join(projDir(id), '_bili_cookies.txt');
-    if (writeNetscapeCookieFile(ckPlain, ckFile)) args.push('--cookies-file', ckFile);
-    else args.push('--cookies', ckPlain);              // 解析不出 name=value 时退回老办法, 别静默丢
+    // Cookie 明文**绝不进命令行**(argv 在 Windows 上可被同用户任意进程经 WMI
+    // Win32_Process.CommandLine 读到, 进程列表里谁都能看到)。写 Netscape 文件失败就
+    // 直接终止任务并报错, 不做 argv 兜底 —— 静默丢 Cookie 会让会员视频下载失败,
+    // argv 兜底则是泄密面, 两者都不可接受; 报错让用户检查磁盘/路径是唯一正确解。
+    if (!writeNetscapeCookieFile(ckPlain, ckFile)) {
+      return finishDraft(id, new Error('Cookie 写入临时文件失败（检查项目目录磁盘与权限），已取消下载以避免明文进进程列表'), { failedStage: FETCH_STAGE });
+    }
+    args.push('--cookies-file', ckFile);
   } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
   if (FFMPEG && FFMPEG !== 'ffmpeg') args.push('--ffmpeg', FFMPEG);
   pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] ' + fetchSiteOf(opts.url)
@@ -4287,12 +4308,14 @@ function startPrepare(id, videoPath, mode) {
         job.usable = r.usable;
         job.status = 'done'; job.pct = 100;
         job.msg = `完成：${r.usable}/${r.total} 句达标`;
+        job.finishedAt = new Date().toISOString();   // GET 路由的老化清理靠它（与重识别同套路）
         console.log(`[realign-full] ${id}：${r.usable}/${r.total} 句达到置信度门槛 `
           + `${(r.threshold * 100).toFixed(0)}%`);
       } catch (e) {
         job.status = 'error';
         job.error = String((e && e.message) || e);
         job.msg = '失败：' + job.error.slice(0, 120);
+        job.finishedAt = new Date().toISOString();
         console.error('[realign-full] 失败：' + job.error);
       }
     })();
@@ -4777,6 +4800,9 @@ function startPrepare(id, videoPath, mode) {
       // 从 job 读区间（而不是闭包里的 start/end）：批量模式下每段都会改写它。
       // 下面的代码全部沿用原来的写法，只有这两行是新增的。
       start = job.start; end = job.end;
+      // 收尾函数提到 try 外面: catch 分支也要能清理临时文件 —— 识别失败时 25 分钟长
+      // 的 wav 切片(~45MB)不该留在 %TEMP%（此前 catch 不调 cleanup，每次失败泄漏一份）。
+      let cleanup = () => {};
       try {
         const wav = path.join(projDir(id), 'audio.wav');
         const mdir = model.cloud ? '' : modelDirFor(model.id);
@@ -4786,7 +4812,7 @@ function startPrepare(id, videoPath, mode) {
         if (gpuGate) throw new Error(gpuGate);
         const segWav = path.join(os.tmpdir(), `kass-rr-${process.pid}-${Date.now().toString(36)}.wav`);
         const outJson = segWav + '.json';
-        const cleanup = () => { for (const f of [segWav, outJson]) { try { fs.unlinkSync(f); } catch {} } };
+        cleanup = () => { for (const f of [segWav, outJson]) { try { fs.unlinkSync(f); } catch {} } };
 
         // 1) 从已保存的音频切出该时间段（-ss 放 -i 前 + -t, 对 PCM 是采样级精确的）
         await new Promise((resolve, reject) => {
@@ -4922,6 +4948,19 @@ function startPrepare(id, videoPath, mode) {
             })),
           }));
         if (!segs.length) {
+          // 空区间也要清理切片临时文件（这条 return 之前不经过 4911 行的 cleanup）
+          cleanup();
+          if (o.batch) {
+            // 批量模式**不能**把 status 置 done：调度器 startReidentifyBatch 的等待
+            // 循环只排除 error、等的是 regionDone 递增 —— 置 done 会让循环对"本段
+            // 已结束"视而不见，空转等满 30 分钟才开下一段（实测含 N 个静音区间的
+            // 批量任务挂 N×30min）。这里按"跳过"处理：regionDone+1 + 记 warning。
+            job.regionDone = (job.regionDone || 0) + 1;
+            job.warnings = (job.warnings || []).concat(['该区间没有识别到语音']);
+            job.message = '该区间没有识别到语音，已跳过';
+            job.updatedAt = new Date().toISOString();
+            return;
+          }
           setRr({ status: 'done', stage: '完毕', progress: 100, segments: [],
             message: '该区间没有识别到语音' });
           return;
@@ -4981,6 +5020,7 @@ function startPrepare(id, videoPath, mode) {
         setRr({ status: 'done', stage: '完毕', progress: 100, segments: segs, warning,
           message: `识别完成：${segs.length} 行${warning ? `（${warning}）` : '（含中文译文）'}` });
       } catch (e) {
+        cleanup();                               // 失败路径同样清掉 wav 切片/结果 JSON, 别留 %TEMP%
         const msg = String((e && e.message) || e);
         setRr({ status: 'error', error: msg, message: msg });
       }
@@ -6072,14 +6112,22 @@ function handleFetchRoutes(req, res, u) {
         if (part > 1) args.push('--part', String(part));
         if (f.proxy) args.push('--proxy', String(f.proxy));
         const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
-        let probeCkFile = '';
-        if (ckPlain) {
-          probeCkFile = path.join(os.tmpdir(), 'sf-probe-cookies.txt');
-          if (writeNetscapeCookieFile(ckPlain, probeCkFile)) args.push('--cookies-file', probeCkFile);
-        } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
-        // id 用 '__probe__'(不存在的项目): pushDraftLog 写不进去会被静默吞掉, 不会污染真项目
-        const r = await runFetchCli('__probe__', args, () => {});
-        if (probeCkFile) { try { fs.unlinkSync(probeCkFile); } catch {} }   // 明文 cookie 用完即删, 不留 %TEMP%
+        let probeDir = '';
+        let r;
+        try {
+          if (ckPlain) {
+            // 明文 cookie 落**随机目录**（mkdtemp）而非固定名文件：固定名（如
+            // sf-probe-cookies.txt）路径可预测，同机其它进程可抢占/替换；放在
+            // finally 里 rmSync 整目录，进程崩溃前的异常路径也能删干净。
+            probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-probe-ck-'));
+            const probeCkFile = path.join(probeDir, 'cookies.txt');
+            if (writeNetscapeCookieFile(ckPlain, probeCkFile)) args.push('--cookies-file', probeCkFile);
+          } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
+          // id 用 '__probe__'(不存在的项目): pushDraftLog 写不进去会被静默吞掉, 不会污染真项目
+          r = await runFetchCli('__probe__', args, () => {});
+        } finally {
+          if (probeDir) { try { fs.rmSync(probeDir, { recursive: true, force: true }); } catch {} }   // 明文 cookie 用完即删, 不留 %TEMP%
+        }
         if (r.error) return sendJson(res, 400, { error: r.error });
         const m = (r.done && r.done.meta) || null;
         if (!m || (!m.title && !m.id)) {
@@ -7426,6 +7474,14 @@ function handleProjectsRoutes(req, res, u) {
     }
     if (action === 'realign-full' && req.method === 'GET') {
       const job = realignJobs.get(id);
+      // 完成/失败的任务留 10 分钟给前端取结果, 之后清掉（与 rerecognize 的 GET 轮询
+      // 同一套路, 见那边的注释）—— 否则 job（含全片逐句 items）永久赖在 Map 里,
+      // 长会话内存只增不减。
+      if (job && job.status !== 'running' && job.status !== 'pending' && job.finishedAt
+          && Date.now() - Date.parse(job.finishedAt) > 10 * 60 * 1000) {
+        realignJobs.delete(id);
+        return sendJson(res, 200, { job: null });
+      }
       if (!job) return sendJson(res, 200, { job: null });
       return sendJson(res, 200, { job: realignJobView(job) });
     }
@@ -7603,7 +7659,10 @@ function handleProjectsRoutes(req, res, u) {
       runAutoPost(id).catch(e => {
         const msg = String((e && e.message) || e);
         console.error('[autopost] ' + id + ' 失败：' + msg);
-        pushDraftLog(id, stamp() + '[自动后处理] 失败：' + msg);
+        // ⚠ 这里必须用模块作用域的 apStamp()。`stamp` 是 continueDraftAfterAsr 的
+        // 局部 const（见 4081 行注释的同款教训）—— 引用它会 ReferenceError,
+        // catch 处理器自身崩掉, 失败日志一条都不剩（实测踩过）。
+        pushDraftLog(id, apStamp() + '[自动后处理] 失败：' + msg);
       });
       return sendJson(res, 200, { ok: true, started: true });
     }
@@ -7720,7 +7779,10 @@ function handleProjectsRoutes(req, res, u) {
         const gpuGate = asrGpuGateError(model);
         if (gpuGate) return sendJson(res, 400, { error: gpuGate });
         const prev = rerecogJobs.get(id);
-        if (prev && prev.status === 'running') return sendJson(res, 400, { error: '已有一个重新识别任务在运行' });
+        // 互斥判定与 reidentify(7395 行)同一口径 jobStillRunning: 除了状态还看心跳 ——
+        // 只看 status==='running' 时, 一个卡死任务(心跳已停)在 20 分钟自愈触发前
+        // 会把按钮挡死, 用户明明能开新任务却被拒。
+        if (jobStillRunning(prev)) return sendJson(res, 400, { error: '已有一个重新识别任务在运行' });
         startRerecognize(id, start, end, model);
         return sendJson(res, 200, { started: true, model: { id: model.id, name: model.name } });
       });
