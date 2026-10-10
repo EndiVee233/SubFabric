@@ -24,8 +24,11 @@ const CHUNK = 80;          // 一次建多少个 <li>
 
 let fsCache = null;        // 系统字体名数组（同一个 promise 复用）
 
-/** 拿系统字体名清单；失败返回空数组（此时组件静默不装，输入框照旧可用） */
-function loadFontNames() {
+/** 拿系统字体名清单；失败返回空数组（此时组件静默不装，输入框照旧可用）
+ *  **导出**给别处复用 —— "这个字体本机装了没"就以这份清单为唯一依据
+ *  （main.js 的缺字红感叹号走这里；不用 document.fonts.check，
+ *    实测它对不存在的字体名也返回 true，判不出来）。 */
+export function loadFontNames() {
   if (fsCache) return fsCache;
   fsCache = (async () => {
     try {

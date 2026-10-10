@@ -616,6 +616,12 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ass-style-font-note { margin-top:5px; font-size:11px; line-height:1.5; color:var(--text-2); }
 .ass-style-font-note.ok { color:#4fd1a5; }
 .ass-style-font-note.warn { color:#ffd54a; }
+/* 缺字时挂在轨道标题旁的红色感叹号（用户要求"显示一个小红色感叹号"）。
+ * 放标题行而不是 note 里 —— 标题行一眼可见，note 的长文字容易看漏。 */
+.font-missing-mark {
+  margin-left:5px; color:#ff4d4f; font-weight:700; font-size:12px;
+  cursor:help; vertical-align:top;
+}
 
 /* ── 字体选择器（带预览的下拉，见 editor/js/font-picker.js）─────────────
    每个字体名用它**自己的字形**渲染，选之前就能看到长什么样。

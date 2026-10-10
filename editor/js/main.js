@@ -29,7 +29,7 @@ import { initI18n, t } from './i18n.js';
 import { ico } from './icons.js';
 import { pickDanmaku, danmakuDuration, DUR_DEFAULT } from '../danmaku.js';
 import { bindModalDrags } from './modal.js';
-import { enhanceFontInput } from './font-picker.js';
+import { enhanceFontInput, loadFontNames } from './font-picker.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -80,6 +80,8 @@ const assStyleEls = {
   orderVal: document.getElementById('ass-style-order-val'),
   zhFontNote: document.getElementById('ass-style-zh-font-note'),
   enFontNote: document.getElementById('ass-style-en-font-note'),
+  zhFontMark: document.getElementById('ass-style-zh-font-mark'),
+  enFontMark: document.getElementById('ass-style-en-font-mark'),
   zhFontFile: document.getElementById('ass-style-zh-font-file'),
   enFontFile: document.getElementById('ass-style-en-font-file')
 };
@@ -581,14 +583,58 @@ function refreshOrderControl() {
 
 /** 把稿件样式的字体名推给时间轴 —— 字幕块上的字要跟视频里真播出来的字一致。
  *  用户用"猫啃什锦黑"时，块上的中文也应当是猫啃什锦黑，否则改字时对不上字宽。
- *  样式取不到（非 ASS / 还没解析）就传空串，时间轴用回内置字体。 */
+ *  样式取不到（非 ASS / 还没解析）就传空串，时间轴用回内置字体。
+ *  **缺字的判定是异步的**（要拉系统字体清单），所以本函数会先按"没缺"推一次
+ *  （打开稿件立刻有字形），拿到清单后再按真实情况推第二次 —— 缺字时第二次会
+ *  显式回退到微软雅黑，并把红感叹号挂上。 */
 function syncBlockFonts() {
   if (!timeline || typeof timeline.setBlockFonts !== 'function') return;
   const t = state.format === 'ass' && state.assDoc ? state.assStyleTargets : null;
   if (!t) { timeline.setBlockFonts('', ''); return; }
   const zh = (state.assDoc.getStyle(t.zh) || {}).fontname || '';
   const en = (state.assDoc.getStyle(t.en) || {}).fontname || '';
-  timeline.setBlockFonts(zh, en);
+  timeline.setBlockFonts(zh, en);                 // 先按本机装着来（不阻塞）
+  const snapshot = `${zh}\u0000${en}`;
+  Promise.all([fontInstalled(zh), fontInstalled(en)]).then(([zm, em]) => {
+    // 期间换了稿件/改了字体 → 这次结果作废
+    if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return;
+    const now = `${(state.assDoc.getStyle(state.assStyleTargets.zh) || {}).fontname || ''}`
+      + `\u0000${(state.assDoc.getStyle(state.assStyleTargets.en) || {}).fontname || ''}`;
+    if (now !== snapshot) return;
+    /* 缺字 → zh/en 传空 + missing 标记：时间轴显式回退到微软雅黑（而不是靠 generics
+     * 撞一个默认字体），设置页也据此挂红感叹号。 */
+    timeline.setBlockFonts(zh, en, { zhMissing: zm === false, enMissing: em === false });
+  }).catch(() => { /* 判定失败就按"没缺"处理，不改动 */ });
+}
+
+/* ── 字体"本机装了没"的判定 ────────────────────────────────────────────
+ * 以 /api/fonts 返回的**系统字体清单**为唯一依据（与设置页的字体选择器同一份数据）。
+ * 为什么不换别的办法：
+ *   · document.fonts.check()  实测对 __no_such_font__ 这类不存在的名字也返回 true，判不出来
+ *   · 中文字形不能靠量字宽区分 —— CJK 的 advance width 恒为 1em/字（15px × 11 字 = 165），
+ *     跟字形无关（这条踩过，写下来免得以后又走一遍）
+ *   · assPlayer.isFontAvailable() 查的是"用户手动载入"的字体（IndexedDB），
+ *     对系统字体一律 false —— 拿它当"没装"会误报一片
+ * 另外把用户点过「载入字体」的名字也算已装（自载字体 libass 与 canvas 都能用）。 */
+const _loadedFontNames = new Set();      // 用户「载入字体」载进来的名字
+const _sysFontKeys = new Set();
+
+function rememberLoadedFont(name) {
+  const k = String(name || '').trim().toLowerCase();
+  if (k) _loadedFontNames.add(k);
+}
+
+/** 本机是否装了该字体（系统清单 ∪ 用户手动载入）。清单还没拉到时返回 null = 未知，
+ *  调用方据此**不要**乱报警（否则打开页面瞬间会闪一片红感叹号）。 */
+async function fontInstalled(name) {
+  const nm = String(name || '').trim();
+  if (!nm) return true;                                  // 空 = 用内置字体，不算缺
+  if (nm.toLowerCase() === 'noto sans cjk sc') return true;   // 内置兜底字体
+  if (_loadedFontNames.has(nm.toLowerCase())) return true;
+  const list = await loadFontNames();
+  if (!list || !list.length) return null;                // 清单不可用 → 未知
+  if (!_sysFontKeys.size) for (const n of list) _sysFontKeys.add(String(n).toLowerCase());
+  return _sysFontKeys.has(nm.toLowerCase());
 }
 
 /* ─────────── 本机字体库(服务端读系统字体, 见 editor/fonts.js) ───────────
@@ -701,22 +747,46 @@ async function refreshFontNotes() {
   const targets = state.assStyleTargets;
   const zhName = (assStyleEls.zhFont.value || '').trim();
   const enName = (assStyleEls.enFont.value || '').trim();
-  const [zhOk, enOk] = await Promise.all([
-    assPlayer.isFontAvailable(zhName),
-    assPlayer.isFontAvailable(enName)
+  /* 两个来源都要看：
+   *   installed —— 本机系统字体清单里有（决定"会不会回退"）
+   *   ok        —— libass 预览那边真能取到字形（系统字体或手动载入的都算） */
+  const [zhInstalled, enInstalled, zhOk, enOk] = await Promise.all([
+    fontInstalled(zhName), fontInstalled(enName),
+    assPlayer.isFontAvailable(zhName), assPlayer.isFontAvailable(enName)
   ]);
   // 期间换了稿件/改了名字 → 这次结果作废
   if (state.assStyleTargets !== targets) return;
   if ((assStyleEls.zhFont.value || '').trim() !== zhName) return;
-  const paint = (el, ok, name) => {
+  const paint = (el, installed, ok, name) => {
     if (!el) return;
-    el.className = 'ass-style-font-note ' + (ok ? 'ok' : 'warn');
-    el.textContent = ok
-      ? (name.toLowerCase() === 'noto sans cjk sc' ? '预览已载入（内置字体）' : '预览已载入该字体')
-      : '本机没装这个字体 → 预览会回退到内置字体（画面看着不变）；点「载入字体」挑一个 .ttf/.otf 也能用';
+    el.className = 'ass-style-font-note ' + (installed === false ? 'warn' : (ok ? 'ok' : 'warn'));
+    if (installed === false) {
+      /* 缺字：说清两件事 —— 画面会回退到哪个字体、以及怎么补上。
+       *  原话只说"预览会回退到内置字体"，没说回退成什么，用户看到块上的字
+       *  跟设置里写的不一样会以为是 bug（实测反馈过）。 */
+      el.textContent = '本机没装这个字体 → 画面与时间轴都会回退到 微软雅黑；'
+        + '想用原字体请点「载入字体」挑一个 .ttf/.otf';
+    } else if (ok || installed === true) {
+      el.textContent = (name.toLowerCase() === 'noto sans cjk sc') ? '预览已载入（内置字体）' : '预览已载入该字体';
+    } else {
+      el.textContent = '预览暂未载入该字体（点「载入字体」可载入 .ttf/.otf）';
+    }
   };
-  paint(assStyleEls.zhFontNote, zhOk, zhName);
-  paint(assStyleEls.enFontNote, enOk, enName);
+  paint(assStyleEls.zhFontNote, zhInstalled, zhOk, zhName);
+  paint(assStyleEls.enFontNote, enInstalled, enOk, enName);
+  /* 缺字时在轨道标题旁挂一个红色感叹号 —— 用户要求"在设置页显示一个小红色感叹号"。
+   *  放在标题行而不是 note 里：标题行一眼可见，note 的文字容易看漏。 */
+  markFontMissing(assStyleEls.zhFontMark, zhInstalled, zhName);
+  markFontMissing(assStyleEls.enFontMark, enInstalled, enName);
+}
+
+/** 缺字时显示红感叹号（带 tooltip 说明），否则隐藏 */
+function markFontMissing(el, installed, name) {
+  if (!el) return;
+  const missing = installed === false;
+  el.hidden = !missing;
+  el.textContent = missing ? '\u2757' : '';
+  el.title = missing ? `本机没装「${name}」→ 画面与时间轴已回退到 微软雅黑` : '';
 }
 
 function setAssStyleControls() {
@@ -831,6 +901,11 @@ function applyAssStyleSettings(forceFontReload = false) {
   }
   if (state.project) Projects.scheduleSave();
   refreshFontNotes();
+  /* ⚠ 块内字体必须在这里也同步一次。
+   *  这个函数**不调 setAssStyleControls**（那是另一条路：打开稿件/初次装配时走），
+   *  所以只在那边调 syncBlockFonts 的话，用户在设置页改字体名就**不会**传到时间轴
+   *  （实测踩过：文档里的 fontname 改了，时间轴还是旧字体）。 */
+  syncBlockFonts();
   if (assStyleEls.status) {
     const saveHint = state.project ? '项目字幕将自动保存。' : '点击“导出字幕”保存到文件。';
     assStyleEls.status.textContent = assPlayer.ready
@@ -850,6 +925,7 @@ async function loadAssStyleFont(language) {
   if (!/\.(?:ttf|otf)$/i.test(file.name)) { toast('字体文件仅支持 .ttf 或 .otf'); input.value = ''; return; }
   try {
     await assPlayer.cacheFont(family, file);
+    rememberLoadedFont(family);      // 登记为"已载入"，缺字红感叹号据此消失
     applyAssStyleSettings(true);
     toast(`已载入字体：${family}`);
   } catch (e) { toast('字体载入失败：' + (e && e.message || e)); }
@@ -6028,7 +6104,7 @@ initFxControls();
 /* 调试钩子(测试用) */
 initBadCatFilter();
 
-window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText };
+window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText, fontInstalled, syncBlockFonts, refreshFontNotes };
 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({

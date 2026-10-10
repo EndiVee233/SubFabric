@@ -11,8 +11,8 @@ const LANE_GAP = 6;
 const TEXT_PAD = 6;
 /* 块内两行文字的字体基线（字号/字重/回退族）。
  * 字号改这里一处即可 —— zhFontOf/enFontOf 都从它拼，不会再出现两处写死不同的情况。 */
-const ZH_TEXT = { weight: 700, px: 15, fallback: '"Microsoft YaHei", sans-serif' };
-const EN_TEXT = { weight: 700, px: 14, fallback: '"Microsoft YaHei", sans-serif' };
+const ZH_TEXT = { weight: 700, px: 17, fallback: '"Microsoft YaHei", sans-serif' };
+const EN_TEXT = { weight: 700, px: 15, fallback: '"Microsoft YaHei", sans-serif' };
 const ZH_FONT = `${ZH_TEXT.weight} ${ZH_TEXT.px}px ${ZH_TEXT.fallback}`;
 const EN_FONT = `${EN_TEXT.weight} ${EN_TEXT.px}px ${EN_TEXT.fallback}`;
 /* 两行文字各自需要的竖直空间(px)，用于 _wordGeom 排布。取字号 + 一点行距，
@@ -50,6 +50,11 @@ const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参�
 function cssFamily(name) {
   return String(name || '').replace(/["'\\\r\n]/g, ' ').trim();
 }
+/* "微软雅黑" —— 字体族写了但本机没装时的**显式回退字体**。
+ *  不写它也能靠 generics 落到某个默认中文字体，但用户看不到"到底回退成了什么"，
+ *  会觉得块上的字跟设置里写的不一样是 bug。显式写出来，设置页也照这个说法提示。 */
+const FALLBACK_FAMILY = 'Microsoft YaHei';
+
 /** 中文行：字号字重跟内置一致，只换字体族（末尾保留中文回退族，缺字时才不至于画成方框） */
 function zhFontOf(name) {
   const f = cssFamily(name);
@@ -342,6 +347,7 @@ export class Timeline {
      *     setBlockFonts({ zh: '猫啃什锦黑', en: 'Comic Sans MS' })
      * 传空串/不传 = 该语言用回内置字体。 */
     this.blockFonts = { zh: '', en: '' };
+    this.blockFontsMissing = { zh: false, en: false };   // 该字体本机没装 → 已回退到微软雅黑
     this.onBlockFonts = null;     // 字体变化回调 → main.js 用来重画 + 失效度量缓存
 
     this._bindEvents();
@@ -352,12 +358,17 @@ export class Timeline {
   setVideo(video) { this.video = video; this.film.reset(video); this._dirty = true; }
 
   /** 设置块内字体（来自稿件样式的 Fontname）。传空串 = 该语言用回内置字体。
+   *  zhMissing / enMissing = 该字体**本机没装**（由 main.js 用系统字体清单判定），
+   *  此时显式退回 微软雅黑 而不是靠 generics 撞一个默认字体 —— 设置页也是这么告诉用户的。
    *  字体变了必须清 fontMetrics 缓存 —— 它是按 font 字符串缓存的，不清会拿到旧度量的
    *  （同样的 font 字符串，换了实际字体文件大小不一样）。 */
-  setBlockFonts(zh, en) {
-    const z = cssFamily(zh), e = cssFamily(en);
+  setBlockFonts(zh, en, opt) {
+    const o = opt || {};
+    const z = o.zhMissing ? '' : cssFamily(zh);
+    const e = o.enMissing ? '' : cssFamily(en);
     if (z === this.blockFonts.zh && e === this.blockFonts.en) return;
     this.blockFonts = { zh: z, en: e };
+    this.blockFontsMissing = { zh: !!o.zhMissing, en: !!o.enMissing };
     _fontMetrics.clear();
     this._dirty = true;
     if (this.onBlockFonts) { try { this.onBlockFonts(this.blockFonts); } catch { /* 回调出错不影响绘制 */ } }
