@@ -70,6 +70,12 @@ class Worker {
         p.reject(new Error(`常驻识别进程退出（代码 ${code}）`));
       }
       this.pending.clear();
+      // ready 之前就退出（模型损坏/依赖崩溃）也要唤醒 waitReady —— 否则它干等满
+      // 180s 超时才失败，初稿流水线白白卡 3 分钟。
+      for (const w of this.readyWaiters) {
+        try { w.reject(new Error(`常驻识别进程退出（代码 ${code}），模型未就绪`)); } catch {}
+      }
+      this.readyWaiters = [];
     });
     this.proc.on('error', (e) => {
       for (const [, p] of this.pending) {
@@ -77,6 +83,10 @@ class Worker {
         p.reject(new Error('常驻识别进程启动失败：' + e.message));
       }
       this.pending.clear();
+      for (const w of this.readyWaiters) {
+        try { w.reject(new Error('常驻识别进程启动失败：' + e.message)); } catch {}
+      }
+      this.readyWaiters = [];
     });
   }
 
@@ -111,7 +121,11 @@ class Worker {
       const t = setTimeout(() => reject(new Error(
         `常驻识别进程 ${timeoutMs / 1000}s 内没有就绪（首次要编译/加载模型，也可能是模型损坏）`)),
         timeoutMs);
-      this.readyWaiters.push({ resolve: () => { clearTimeout(t); resolve(); } });
+      // reject 也要存进 waiter: 进程在 ready 前崩溃时 close/error 要能逐个唤醒（见那边）
+      this.readyWaiters.push({
+        resolve: () => { clearTimeout(t); resolve(); },
+        reject: (e) => { clearTimeout(t); reject(e); },
+      });
     });
   }
 
@@ -168,24 +182,36 @@ export class AsrService {
     }
     if (w.idleTimer) { clearTimeout(w.idleTimer); w.idleTimer = null; }
     w.start();
-    await w.waitReady();
-    const res = await w.transcribe({ audio, tta }, outPath);
-    const payload = {
-      duration: res.duration, language: res.language || language || 'en',
-      segments: res.segments || [],
-    };
-    if (res.confidence) payload.confidence = res.confidence;
-    const tmp = outPath + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(payload));
-    fs.renameSync(tmp, outPath);
-    // 空闲超时收掉：模型可能占几 GB 内存，不该一直挂着
+    try {
+      await w.waitReady();
+      const res = await w.transcribe({ audio, tta }, outPath);
+      const payload = {
+        duration: res.duration, language: res.language || language || 'en',
+        segments: res.segments || [],
+      };
+      if (res.confidence) payload.confidence = res.confidence;
+      const tmp = outPath + '.tmp';
+      fs.writeFileSync(tmp, JSON.stringify(payload));
+      fs.renameSync(tmp, outPath);
+      this._scheduleIdle(key, w);
+      return payload;
+    } catch (e) {
+      // 失败路径同样布置空闲回收: 否则最后一次调用失败（超时/进程退出）后没人再
+      // 清 timer，worker 进程与 Map 条目永驻内存。短暂失败后 5 分钟内重试仍复用进程。
+      this._scheduleIdle(key, w);
+      throw e;
+    }
+  }
+
+  /** 空闲超时收掉：模型可能占几 GB 内存，不该一直挂着 */
+  _scheduleIdle(key, w) {
+    if (w.idleTimer) clearTimeout(w.idleTimer);
     w.idleTimer = setTimeout(() => {
       this.onLog('[asr-serve] 空闲超时，关闭常驻识别进程释放内存');
       w.stop();
       this.workers.delete(key);
     }, IDLE_MS);
     w.idleTimer.unref?.();
-    return payload;
   }
 
   stopAll() {
