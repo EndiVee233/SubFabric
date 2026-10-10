@@ -6973,7 +6973,7 @@ function handleProjectsRoutes(req, res, u) {
       if (draftOn) {
         const draftModel = (draftModelId && modelById(draftModelId)) || resolveAsrModel() || null;
         // 逐词形态: 'color'(颜色高亮, 默认=升级前行为) | 'k'(\k 卡拉OK)。只在逐词开时有意义。
-        //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 KARAOKE_DESIGN.md §5。
+        //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 docs/KARAOKE_DESIGN.md §5。
         const karaokeStyle = (wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
         const karaokeSweep = karaokeStyle === 'k' && !!data.karaokeSweep;
         const karaokeBase = /^#[0-9a-fA-F]{6}$/.test(String(data.karaokeBase || ''))

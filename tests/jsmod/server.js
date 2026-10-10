@@ -6493,13 +6493,6 @@ function handleAsrRoutes(req, res, u) {
     });
   }
 
-  /* ── 性能测试：测出本机 NPU/GPU 的最佳分工 ── */
-  if (pathname === '/api/asr/perf/state' && req.method === 'GET') {
-    // 顺便带上已应用的配置，省得前端再要一个设置接口
-    return sendJson(res, 200, Object.assign({}, perfState,
-      { dual: (readAsrSettings() || {}).dual || null }));
-  }
-
   /* 自动找一份测试音频：优先用最近项目里的音频（就是识别实际吃的那份，最贴近真实负载）。
    * 直接用项目音频还有个好处：不必要求用户手动转成 16kHz wav。 */
   if (pathname === '/api/asr/perf/auto-audio' && req.method === 'GET') {
@@ -6521,84 +6514,6 @@ function handleAsrRoutes(req, res, u) {
     } catch (e) {
       return sendJson(res, 200, { error: '查找失败：' + String((e && e.message) || e) });
     }
-  }
-
-  if (pathname === '/api/asr/perf/apply' && req.method === 'POST') {
-    return readBody(req, res, 32 * 1024, (err, body) => {
-      let ratio = '', sliceSec = 0;
-      try {
-        const b = JSON.parse(body.toString('utf8')) || {};
-        ratio = String(b.ratio || '');
-        sliceSec = Number(b.sliceSec) || 0;
-      } catch {}
-      if (!/^\d+:\d+$/.test(ratio) || !(sliceSec > 0)) {
-        return sendJson(res, 400, { error: 'ratio 形如 "1:1"，sliceSec 为正数' });
-      }
-      const s = readAsrSettings();
-      s.dual = { ratio: ratio, sliceSec: sliceSec, updatedAt: new Date().toISOString() };
-      writeAsrSettings(s);
-      return sendJson(res, 200, { ok: true, dual: s.dual });
-    });
-  }
-
-  if (pathname === '/api/asr/perf/start' && req.method === 'POST') {
-    if (perfState.running) return sendJson(res, 200, { started: false, already: true, state: perfState });
-    return readBody(req, res, 32 * 1024, (err, body) => {
-      let b = {};
-      try { b = JSON.parse(body.toString('utf8')) || {}; } catch {}
-      const audio = String(b.audio || '').trim();
-      if (!audio || !fs.existsSync(audio)) {
-        return sendJson(res, 400, { error: '需要一份 16kHz 单声道 wav 作为测试素材' });
-      }
-      const slices = String(b.slices || '8,15.01,28');
-      const audioSec = Math.max(30, Math.min(600, Number(b.audioSec) || 60));
-      const out = path.join(ASR_DIR, 'perf-result.json');
-      const args = [path.join(ASR_DIR, 'asr_perf.py'), '--audio', audio,
-                    '--slices', slices, '--audio-sec', String(audioSec),
-                    '--python', ASR_PY, '--out', out];
-      if (b.modelNpu) args.push('--model-npu', String(b.modelNpu));
-      if (b.modelGpu) args.push('--model-gpu', String(b.modelGpu));
-      perfState = { running: true, pct: 0, msg: '启动中…', error: null, result: null,
-                    startedAt: Date.now() };
-      let proc;
-      try {
-        proc = spawn(ASR_PY, args, { windowsHide: true, cwd: ROOT,
-                                     env: pySpawnEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-      } catch (e) {
-        perfState = Object.assign({}, perfState, { running: false, error: String(e && e.message || e) });
-        return sendJson(res, 500, { error: perfState.error });
-      }
-      perfProc = proc;
-      const onLine = (buf) => {
-        for (const line of String(buf).split('\n')) {
-          const t = line.trim();
-          if (!t.startsWith('{')) continue;
-          let o = null;
-          try { o = JSON.parse(t); } catch { continue; }
-          if (o.type === 'progress') {
-            perfState.pct = o.pct || perfState.pct;
-            perfState.msg = o.msg || perfState.msg;
-          } else if (o.type === 'log') {
-            perfState.msg = o.msg || perfState.msg;
-          } else if (o.type === 'result') {
-            perfState.result = o.data || null;      // 完整结果直接带回来，省一次读文件
-          } else if (o.type === 'error') {
-            perfState.error = o.msg || '测试失败';
-          }
-        }
-      };
-      proc.stdout.on('data', onLine);
-      proc.stderr.on('data', onLine);
-      proc.on('close', (code) => {
-        perfProc = null;
-        perfState.running = false;
-        if (code !== 0 && !perfState.error) perfState.error = '测试脚本退出码 ' + code;
-        else if (code === 0 && !perfState.result) {
-          try { perfState.result = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
-        }
-      });
-      return sendJson(res, 200, { started: true, state: perfState });
-    });
   }
 
   // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
@@ -7058,7 +6973,7 @@ function handleProjectsRoutes(req, res, u) {
       if (draftOn) {
         const draftModel = (draftModelId && modelById(draftModelId)) || resolveAsrModel() || null;
         // 逐词形态: 'color'(颜色高亮, 默认=升级前行为) | 'k'(\k 卡拉OK)。只在逐词开时有意义。
-        //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 KARAOKE_DESIGN.md §5。
+        //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 docs/KARAOKE_DESIGN.md §5。
         const karaokeStyle = (wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
         const karaokeSweep = karaokeStyle === 'k' && !!data.karaokeSweep;
         const karaokeBase = /^#[0-9a-fA-F]{6}$/.test(String(data.karaokeBase || ''))
