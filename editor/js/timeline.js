@@ -1327,50 +1327,69 @@ export class Timeline {
     const markBot = band.y + band.h - BOT_PAD;                   // 贴底, 不碰块边框
 
     /* ── 块内竖直排布 ────────────────────────────────────────────────
-     * 三行，**各自在分到的区间里上下居中**：
-     *     ① 中文行（含句首的 `{\c}` 色标行）—— 上半区
-     *     ② 分隔线 —— 两区之间
-     *     ③ 英文逐词行 + 拖动标记 —— 下半区
+     * 块内**上下两块等高**，分隔线落在两块的视觉中点：
+     *     上半块 = 中文行（含句首的 `{\c}` 色标行），在该块里居中
+     *     分隔线 = 中文行下缘与英文行上缘之间的**中点**
+     *     下半块 = 英文逐词行 + 拖动标记，在该块里居中
+     *
+     * ⚠ 这里返工过一次：早先按"中文行占块高 30%"给上半区定高，结果
+     *   **上半区只有 45% 高**（130px 块里分隔线落在 61px 而不是 65px），
+     *   中文行还被顶到紧贴上边框 —— 上下两块看起来明显不等高
+     *   （用户反馈："中间的虚线放在中间，让上下中英文字幕显示高度一致"）。
+     *   现在由"两行各自的实际位置"反推分隔线，使分隔线到两行等距。
      *
      * 居中一律用 fontMetrics() 的**实际字形**高度，不用字号：汉字占满 em、
-     * 拉丁字母只占 x-height 一段，用字号估会让观感中心明显偏。
-     *
-     * 上半区高度按比例给（块高 0.30），但**下限是中文行本身的高度** ——
-     * 否则块矮时（实测 62px → 18.6px）装不下 15px 的中文，分隔线会切到字上。 */
+     * 拉丁字母只占 x-height 一段，用字号估会让观感中心明显偏。 */
     const ctx = this.ctx;
     const mZh = fontMetrics(ctx, ZH_FONT);
     const mEn = fontMetrics(ctx, EN_FONT);
+    const bTop = band.y, bBot = band.y + band.h;
 
-    const zhTop = band.y;                                        // 上半区
-    const zhBot = Math.min(band.y + band.h, band.y + Math.max(mZh.h, Math.round(band.h * ZH_ROW_R)));
-    const zhBase = Math.round(zhTop + (zhBot - zhTop) / 2 + (mZh.asc - mZh.desc) / 2);   // 中文行居中
+    /* 上下两块**各占块高一半**，分隔线落在正中间 —— 用户明确要求
+     * "中间的虚线放在中间，让上下中英文字幕显示高度一致"。
+     *
+     * 于是规则只剩两条，没有需要解的方程：
+     *     上半块 = [块顶, 块底 − 块高/2]，中文行在其中居中
+     *     下半块 = [块顶 + 块高/2, 块底]，标记行 + 英文词行作为整体在其中居中
+     *
+     * ⚠ 这条路径返工过三次，都是把"居中"想成了需要解的方程：
+     *   ① 按"中文行占块高 30%"给上半区定高 → 分隔线落在 45%，上下明显不等高；
+     *   ② 用"镜像"公式解下半块高 → 把下半块推到了分隔线之上（负偏差）；
+     *   ③ 按"两端到线等距"去解 → 两端指的是两个中心，解出来的线会贴着中文行，
+     *      与"线在中间"直接矛盾。
+     *   其实用户要的就是最简单的那个：线在中间、各自在半块里居中。 */
+    const halfH = Math.round(band.h / 2);
+    const zhTop = bTop;
+    const zhBot = Math.min(bBot, bTop + Math.max(mZh.h, halfH));
+    const zhBase = Math.round(zhTop + (zhBot - zhTop) / 2 + (mZh.asc - mZh.desc) / 2);
+    const zhBottom = zhBase + mZh.desc;              // 中文行的下缘
 
-    /* 分隔线：夹在中文行下缘与下半区顶之间，位置取"两行之间"的中线。
-     *  原来按 0.52×块高 定位，块一高就跑到英文行下面去了；现在跟两行绑定。 */
-    const zhBottom = zhBase + mZh.desc;
-    const axisLo = Math.min(zhBottom, markBot - MARK_MIN_H);
-    const axisHi = Math.max(axisLo, band.y + band.h);
-    const axisY = Math.round(Math.max(axisLo, Math.min(zhBottom + 3, axisHi)));
-
-    /* 下半区：从分隔线往下到块底。英文词线与**标记行**一起在这个区间里居中 ——
-     *  标记是"词的起始时刻"的可视锚点，跟词分开摆会让人以为它们不是一回事。 */
-    const enTop = axisY + 2;
-    const enBot = band.y + band.h;
-    /* 标记行高度（居中的那一"行"）：至少 MARK_MIN_H，最多 MARK_H。
-     *  矮块下**必须先让它进得来** —— 早期版本先给文字留位再夹标记，块矮时标记被夹成负高。 */
-    const markBandH = Math.max(MARK_MIN_H, Math.min(MARK_H, Math.round((enBot - enTop) * 0.45)));
-    const markW = Math.max(2, Math.min(MARK_W, markBandH));      // 极矮时别比高度还宽
-
-    /* 词线与标记线的**基线**：整个下半区居中 —— 总高 = 标记行 + 间隙 + 文字行，
-     *  起点 = 区间中心 - 总高/2。这样"标记+文字"作为一个整体在框里是正的。 */
+    /* 标记行高度：跟半块高成比例，夹在 MIN..MAX 之间。 */
+    const markBandH = Math.max(MARK_MIN_H, Math.min(MARK_H, Math.round(halfH * 0.45)));
+    const markW = Math.max(2, Math.min(MARK_W, markBandH));      // 极矮时别比高度才宽
+    /** 下半块的内容高度 = 标记行 + 间隙 + 英文文字行 */
     const stackH = markBandH + GAP + mEn.h;
-    const stackTop = enTop + ((enBot - enTop) - stackH) / 2;
-    let markTop = Math.round(Math.max(zhBottom, stackTop));      // 标记行顶（别越过中文行）
-    markTop = Math.max(band.y + TOP_PAD, Math.min(markTop, markBot - MARK_MIN_H));
-    const markH = Math.max(2, Math.min(markBandH, markBot - markTop));
-    let enBase = Math.round(markTop + markH + GAP + mEn.asc);    // 文字行紧接标记行之下
-    // 夹进下半区：别顶到分隔线，也别让 descent 溢出块底
-    enBase = Math.max(Math.round(enTop + mEn.asc), Math.min(Math.round(enBot - mEn.desc - 1), enBase));
+    /** 给定分隔线位置 sep，算出下半块内部的完整布局（标记行 + 英文基线） */
+    function lowerLayout(sep) {
+      const top = sep, bot = bBot;
+      const stackTop = top + ((bot - top) - stackH) / 2;
+      let mt = Math.round(stackTop);
+      mt = Math.max(top + 1, Math.min(mt, markBot - MARK_MIN_H));
+      mt = Math.max(band.y + TOP_PAD, mt);
+      const mh = Math.max(2, Math.min(markBandH, markBot - mt));
+      let base = Math.round(mt + mh + GAP + mEn.asc);
+      base = Math.max(Math.round(top + mEn.asc), Math.min(Math.round(bot - mEn.desc - 1), base));
+      return { markTop: mt, markH: mh, baseline: base, stackTop: mt, stackBot: base + mEn.desc };
+    }
+
+    /* 分隔线 = 块的正中间；但**不许压到中文行上**（矮块下中文行可能撑过半块） */
+    let axisY = Math.max(Math.round(zhBottom), Math.round(bTop + halfH));
+    axisY = Math.max(Math.round(zhBottom), Math.min(bBot, axisY));
+
+    const lower = lowerLayout(axisY);
+    const enTop = axisY, enBot = bBot;
+    const markTop = lower.markTop, markH = lower.markH;
+    let enBase = lower.baseline;
 
     return {
       axisY, sepY: axisY, markTop, markBot, markH, markW, markWHot: MARK_W_HOT,
