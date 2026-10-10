@@ -4,7 +4,7 @@
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-10（并入 PR #1 的 fork 功能，并恢复被其合并丢失的上游功能；当前主线 server.js 为单体结构）
+> 最后更新：2026-10-10（路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删）
 
 ---
 
@@ -44,7 +44,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 
 | 路径 | 职责 |
 | --- | --- |
-| `editor/server.js` | **后端全部**（约 5000 行单文件：安全守卫、路由、项目系统、下载/prepare/ASR/翻译流水线、托盘、退出） |
+| `editor/server.js` | **后端全部**（约 7900 行单文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘、退出） |
 | `editor/index.html`、`editor/css/` | 单页界面（`<script type="module" src="js/main.js">`） |
 | `editor/js/` | 前端模块（见 §4） |
 | `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr`；fork 并入：`align` `asr-service` `ass-group` `danmaku` `hotwords` `mt-local` `project-pack` `reflect` `region` `region-merge` `repair-words` `speech-gap` |
@@ -74,11 +74,13 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 2. **安全基线**：`safeJoin`（先解码再归一 + 路径分隔符边界，防穿越）、Host 回环校验（防 DNS rebinding）、写方法 Origin 校验（防 CSRF）、`MEDIA_ALLOW` 视频路径登记表。
 3. **简单路由表 `SIMPLE_ROUTE_MAP`**：`/` `/index.html` `/api/samples` `/api/version` `/api/fonts` `/api/font-file` `/favicon.ico|svg`；处理器签名 `(req,res,u) → boolean`。
 4. **主体（模块作用域）**：项目系统（`projDir/readMeta/writeMeta/metaView/readBody…`）＋ 下载/prepare/ASR/翻译流水线 ＋ 状态容器。
-5. **路由分发**：`SIMPLE_ROUTE_MAP`（同步无副作用端点）查表 → `handleRequest` 里的大 if 链 → 静态回落（`serveFile`）。
-   ⚠ 2026-10-09 曾把 `handleRequest` 拆成"薄分发器 + 7 个路由段函数"（提交 f8be06a，行为零变化）；
-   **PR #1 合并时该重构被整体回退**（fork 侧保留了单体版），当前主线是**单体**。若想再拆：
-   `git show f8be06a` 有完整做法（纯逐字搬移 + 行多重集对照验证），可照做。
-6. `handleRequest` 实际结构：守卫（Host/Origin）→ URL 解析 → SIMPLE 查表 → `/api/projects` 大 `if (pm)` 块（项目 CRUD 与全部项目内操作）→ 其余 `/api/*` if 链 → 静态回落。
+5. **路由分发**：`SIMPLE_ROUTE_MAP`（同步无副作用端点）查表 → `API_SECTIONS` 前缀表分发到 7 个路由段函数 → 静态回落（`serveFile`）。
+   段函数签名统一 `(req, res, u)`，段内保持原书写顺序的 if 链，段末 404 JSON 兜底（同码同义，见 §10）。
+   2026-10-09 首拆（f8be06a）→ PR #1 合并时被整体回退 → **2026-10-10 在合并后的树上重做**（纯逐字搬移；
+   行为等价由行多重集 + AST 路由字面量对照 + `route_smoke`/`http_layer_probe` 新旧对照证明）。
+6. 七个段：`handleWaveRoutes`(waveform/peaks/upload-video) · `handleFetchRoutes`(pick/fetch) · `handleAsrRoutes`(asr/analyze) ·
+   `handleLlmRoutes`(translate/cast/mt) · `handleLogsRoutes`(logs/lifecycle/quit) · `handleDiagRoutes`(diag/media) ·
+   `handleProjectsRoutes`(projects：含热词候选/压缩包/`if (pm)` 项目内操作)。`API_SECTIONS` 正则前缀互不相交（`\b` 防误匹配）。
 7. **退出**：`shutdown()`（`/api/quit` 或 SIGINT/SIGTERM 触发）：广播 lifecycle → 杀 `CHILDREN` → `close` + `closeAllConnections` → 超时强退；托盘由 `scripts/tray.ps1`（PowerShell WinForms）实现。
 
 ### 3.3 跨请求状态容器（**铁律：必须放模块作用域**）
@@ -231,9 +233,10 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `tests/fetch-format-test.py` | 下载内核站点 / 档位 / Cookie | 用 Python 3.8+ 跑 |
 | fork 并入的测试 | 置信度 / 分段导入 / 区域导入 / 压缩包 / 备注弹幕 / 热词 / 反思纠错 / 自愈 等（`tests/*-test.mjs`） | 多为纯函数直测 |
 
-> ⚠ **`tests/jsmod/` 镜像的注意点**：有两族自举（上游族从 `editor/js/` 拷贝、fork 族从 `editor/` 拷贝），
-> 任一族判定"过期"就会**清空重建**，会临时删掉另一族的镜像 —— 跑测试时若见 `jsmod/*` 缺失/异动，
-> 在仓库根 `git checkout -- tests/jsmod` 恢复即可（提交状态即完整集）。
+> ✅ **`tests/jsmod/` 镜像自举（2026-10-10 修复）**：两族自举（上游族源 `editor/js/`、fork 族源 `editor/`）+ `ensureJsmod()`
+> 现在**只按内容比对补齐/更新本族文件，绝不清空目录**（旧实现 `rmSync` 清空会顺手删掉另一族的文件，
+> 导致"哪个测试先跑"决定别的测试能不能过）。跑完测试镜像恒等于源，**无需再 `git checkout` 恢复**；
+> 改过源码后跑一次测试即自动同步镜像，**镜像要与源码一起提交**。
 > `reload-pipeline-test.mjs` 需要 fork 作者机器上的私有基线（未入库），缺失时**自动跳过**（正常，非跳过即异常）。
 > `colorfix-test.mjs` 需要真实用户项目 `projects/p-mugzcab2-09f7z/`，新克隆必然失败（既有基线，非缺陷）。
 
@@ -262,11 +265,18 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **`secret-store` 不可用时降级 AES**：DPAPI 被策略拦截（如 powershell 不可用）时的有意取舍。
 - **`timeline.js` 的 `isPlay` / `textColor` 两个"死变量"**：为"播放头高亮"预留，别删。
 - **`detectSilences` 包装里显式传 `undefined`**：透传默认超时，别"顺手清理"。
+- **路由段末的 404 JSON**：`/api/*` 前缀命中但 method/路径不匹配时，由段函数回 `{error:'not found'}`（旧单体实现落到静态回落回 text）——
+  状态码同为 404，JSON 对 API 调用方更可用；`route_smoke` 里 `/api/diag` GET 的 404 body 是唯一可见差异（有意保留）。
 
 ---
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **路由重构恢复 + 测试基建修复（2026-10-10）**：`handleRequest` 拆回"薄分发器 + 7 段函数 + `API_SECTIONS`"
+  （f8be06a 的做法在合并树上重做；行多重集 + AST 路由字面量对照 + `http_layer_probe`/`route_smoke` 新旧对照
+  证明行为等价 —— 唯一差异：`/api/*` 前缀命中但 method 不匹配的 404 由 text 变 JSON，同码同义）；
+  `tests/jsmod` 自举 16 处改为"按需补齐 + 内容比对"、不再清空互删；log-panel 测试改为断言"模块级同域"；
+  `postprocess.js` 重删 fork 带回的死代码 `has`；server.js 清掉区域里重复的 `LlmError` 声明（模块作用域已有一份）。
 - 安全加固：`safeJoin` 边界、Host/Origin 守卫、`/api/media` 白名单、`secret-store` 密文。
 - 大拆分：`handleRequest` 3038 行 → 薄分发器 + 7 段函数（行为逐字等价，行多重集对照证明过）。
 - **二次加固（2026-10-09）**：`safeDraftStep` 收 async reject、下载看门狗、重识别卡死自愈、
