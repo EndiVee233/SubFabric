@@ -529,48 +529,68 @@ function assStyleFields(name) {
   };
 }
 
-/* ─── 中英哪一轨在上 ───────────────────────────────────────────────
- * ASS 里两轨都是「底部对齐」样式（Alignment 2），谁在上完全由 **MarginV** 决定：
- * MarginV 大的那条离底边更远 → 显示在上面。
- * 本 fork 生成的初稿是「中文字幕 125 / Default 120」→ 中文在上。
- * 导入的 ASS 则是它自己带的值，所以这里不去猜、直接读两条样式的 MarginV 来判定。
- * 切顺序 = **交换两者的 MarginV**，预览与导出立刻生效（不动文本、不动时间）。 */
+/* ─── 中英哪一轨在上：靠 [Events] 里 **Dialogue 行的先后** ──────────────
+ *
+ * 两条样式都是「置底」（Alignment 2），落在同一位置；libass 从底部往上摆，
+ * **先写的事件贴 margin（渲染在下面）**，后写的被自动上推（渲染在上面）。
+ * 所以"谁在上"= "谁的事件在文件里靠后"。
+ *
+ * ⚠ 我为此返工两次，两次都想错：
+ *   ① 先用"交换两条样式的 MarginV" —— 错。两条本来就都置底，换完只是整体平移，
+ *      上下并没有对调（用户反馈"不生效"）。
+ *   ② 再用"重排 [V4+ Styles] 的样式声明顺序" —— 也错。
+ *      用最小 ASS 做了四组对照实测（就是预览用的那个 libass-wasm）：
+ *          样式[ZH,EN] 事件[ZH,EN] → 中文在下、英文在上
+ *          样式[EN,ZH] 事件[ZH,EN] → 中文在下、英文在上   ← 换样式顺序，结果没变
+ *          样式[任意]  事件[EN,ZH] → 中文在上、英文在下   ← 只有事件顺序起作用
+ *      项目里 videoedit.js 早就写下了正确的规则（"行号升序 = 由下到上"），
+ *      我一开始没去找这条笔记，白绕了两圈。
+ *
+ * 所以真正要做的是：把**要显示在下面**的那种样式的事件排到前面去。
+ */
 const ZH_ORDER_KEY = 'ss-zh-en-order';   // 'zh-top'（默认）| 'en-top'
 
+/** 读当前稿件的实际顺序（按对话事件的行序反推）：
+ *  取一对"时间重叠的中英事件"，谁的行号小谁在下面。 */
 function currentOrderInfo() {
-  if (state.format !== 'ass' || !state.assStyleTargets) return null;
+  if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return null;
   const t = state.assStyleTargets;
-  const zh = assStyleFields(t.zh), en = assStyleFields(t.en);
-  if (!zh || !en) return null;
-  const zv = Number(zh.marginv) || 0, ev = Number(en.marginv) || 0;
-  /* 相等时无法从数值判断谁在上（libass 会按声明顺序排）—— 报 null 让调用方显示"—"，
-   * 不硬猜一个，免得设置项显示的和画面上看到的相反。 */
-  if (zv === ev) return { zh: zv, en: ev, order: null };
-  return { zh: zv, en: ev, order: zv > ev ? 'zh-top' : 'en-top' };
+  const evs = state.assDoc.events;
+  const zh = String(t.zh).toLowerCase(), en = String(t.en).toLowerCase();
+  // 找第一对时间重叠的中英事件
+  for (let i = 0; i < evs.length; i++) {
+    const a = evs[i];
+    const as = String(a.style || '').toLowerCase();
+    if (as !== zh && as !== en) continue;
+    for (let j = 0; j < evs.length; j++) {
+      const b = evs[j];
+      const bs = String(b.style || '').toLowerCase();
+      if (bs === as || (bs !== zh && bs !== en)) continue;
+      if (b.start < a.end - 1e-6 && a.start < b.end - 1e-6) {
+        /* 行号小的**渲染在下面**（libass 从底部往上摆，先写的贴 margin）。
+         * 所以"中文在下"= 中文那条行号更小 → 顺序是 'en-top'（英文在上面）。 */
+        const zhBelow = (as === zh) === (a.lineIdx < b.lineIdx);
+        return { order: zhBelow ? 'en-top' : 'zh-top', pair: [a.lineIdx, b.lineIdx] };
+      }
+    }
+  }
+  return null;
 }
 
-/** 把两轨的 MarginV 换成「谁在上」要求的值。@returns 是否改动过 */
+/** 按「谁在上」重排 Dialogue 行序。@returns 是否改动过 */
 function applyZhEnOrder(order) {
   if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return false;
-  const info = currentOrderInfo();
-  if (!info) return false;
   const t = state.assStyleTargets;
-  // 用"较大的那个值"当上轨、较小的当下轨，交换时保留两者原本的间距差
-  const hi = Math.max(info.zh, info.en), lo = Math.min(info.zh, info.en);
-  const wantZh = order === 'zh-top' ? hi : lo;
-  const wantEn = order === 'zh-top' ? lo : hi;
-  if (Number(info.zh) === wantZh && Number(info.en) === wantEn) return false;
-  let changed = state.assDoc.setStyleFields(t.zh, { marginv: String(wantZh) });
-  changed = state.assDoc.setStyleFields(t.en, { marginv: String(wantEn) }) || changed;
+  const info = currentOrderInfo();
+  if (info && info.order === order) return false;         // 已经是这个顺序
+  // 要显示在下面的是谁：'zh-top' → 英文在下面 → 英文事件排前面
+  const bottomStyle = order === 'zh-top' ? t.en : t.zh;
+  const changed = state.assDoc.orderDialoguesByStyle(bottomStyle);
   if (!changed) return false;
-  /* ⚠ **这里必须自己把新文本推给预览**，不能只靠调用方随后调 applyAssStyleSettings()。
-   *  那个函数开头有一道 `if (!anyChanged && !forceFontReload) return false;` ——
-   *  此时文档里两条 MarginV **已经是新值**，它逐个字段比对下来"什么都没变"，
-   *  于是**直接返回、根本不会通知 assPlayer 重绘**，
-   *  表现就是"改了中英上下顺序，视频画面纹丝不动"（用户实测反馈的 bug）。
-   *  实测证据：两态的 libass 画布像素哈希完全相同。 */
+  /* 顺序变了必须自己把新文本推给预览 —— 不能只靠调用方随后调 applyAssStyleSettings()：
+   * 那个函数开头有 `if (!anyChanged && !forceFontReload) return false;`，
+   * 此处样式字段都没变，它会直接返回、根本不通知 assPlayer 重绘。 */
   assPlayer.updateNow(state.assDoc.serialize());
-  // 顺序也影响块内两行的字体度量缓存？不影响（块内版面固定），但让时间轴重画一次无妨
   if (timeline && timeline.touch) timeline.touch();
   if (state.project && Projects && Projects.scheduleSave) Projects.scheduleSave();
   return true;
@@ -579,17 +599,15 @@ function applyZhEnOrder(order) {
 /** 把「中英上下顺序」下拉同步成**当前稿件实际的样子**（读两条样式的 MarginV 反推），
  *  而不是读 localStorage 里的偏好 —— 打开别人的稿件时偏好不该覆盖人家的样式。
  *  两条 MarginV 相同时 libass 按声明顺序排，无法判定 → 右侧写明原因，不硬猜。 */
+/** 把「中英上下顺序」下拉同步成**当前稿件实际的样子** —— 读 Dialogue 事件的行序反推
+ *  （不读 localStorage 里的偏好，打开别人的稿件不该覆盖人家的文件）。 */
 function refreshOrderControl() {
   const el = assStyleEls.order, val = assStyleEls.orderVal;
   if (!el) return;
   const info = currentOrderInfo();
-  if (!info) { if (val) val.textContent = '—'; return; }
-  if (info.order) {
-    el.value = info.order;
-    if (val) val.textContent = `中 ${info.zh} / 英 ${info.en}`;
-  } else if (val) {
-    val.textContent = `都是 ${info.zh}（按声明顺序排，无法判定）`;
-  }
+  if (!info) { if (val) val.textContent = '未找到中英重叠的句子'; return; }
+  el.value = info.order;
+  if (val) val.textContent = '（按对话行序判定：先写的那行渲染在下面）';
 }
 
 /** 把稿件样式的字体名推给时间轴 —— 字幕块上的字要跟视频里真播出来的字一致。
@@ -1526,18 +1544,19 @@ if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () =>
  * 所以这里要连**轨道一起重建**，不能只 touch 一下。 */
 if (timeline) timeline.onBlockFonts = () => { rebuildItemsAndLanes(false, true); };
 /* 中英上下顺序（**管的是 ASS 文件在视频里显示的上下**，不是时间轴块里的版面）：
- * 切换即交换两条样式的 MarginV —— ASS 里谁 MarginV 大谁离底边远、谁就在上面。
+ * 切换即重排 [Events] 里 **Dialogue 行的先后** —— 两个样式都置底、落在同一位置，
+ * libass 从底部往上摆，先写的那行贴 margin（在下面）、后写的被上推（在上面）。
  * 值本身存 localStorage（"我想怎么看"的偏好，不是稿件内容），
- * 但真正生效的是稿件里的 MarginV；打开别人的稿件时按该稿件的实际值反推显示
+ * 但真正生效的是稿件里的对话行序；打开别人的稿件时按该稿件的实际行序反推显示
  * （见 refreshOrderControl），不会硬套这个偏好。 */
 if (assStyleEls.order) {
   assStyleEls.order.addEventListener('change', () => {
     const want = assStyleEls.order.value === 'en-top' ? 'en-top' : 'zh-top';
     try { localStorage.setItem(ZH_ORDER_KEY, want); } catch { /* 隐私模式下写不了，忽略 */ }
     // applyZhEnOrder 内部已经负责把新文本推给预览 / 存盘 —— 这里不再重复
-    applyZhEnOrder(want);
-    refreshOrderControl();      // 交换完立刻把右侧数值刷新（否则提示还停在交换前的值）
-    toast(want === 'en-top' ? '已改为英文在上' : '已改为中文在上', 2600);
+    const ok = applyZhEnOrder(want);
+    refreshOrderControl();
+    toast(ok ? (want === 'en-top' ? '已改为英文在上' : '已改为中文在上') : '顺序没有变化', 2600);
   });
 }
 for (const el of [assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2]) {
