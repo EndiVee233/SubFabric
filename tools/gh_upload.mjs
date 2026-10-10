@@ -58,7 +58,7 @@ try {
     ], { encoding: 'utf8' });
     console.log(`  已删除旧资产 id=${a.id} (${(a.size / 1048576).toFixed(1)}MB)`);
   }
-} catch (e) { console.log('  (清理旧资产时出错, 继续):', e.message.slice(0, 80)); }
+} catch (e) { console.log('  (清理旧资产时出错, 继续):', String(e.message || e).replace(TOKEN, '***').slice(0, 80)); }
 
 const t0 = Date.now();
 try {
@@ -89,6 +89,7 @@ print(json.dumps({"name": d["name"], "size": d["size"], "digest": d.get("digest"
   console.log('  下载:', d.url);
   writeFileSync(resolve(ROOT, '_t/asset_ok.json'), JSON.stringify(d));
 } catch (e) {
-  console.error('✗ 上传失败:', (e.stderr || e.message || '').toString().slice(0, 400));
+  /* ⚠ 错误信息里可能带上完整命令行/python 源码(含 token)，打印前先屏蔽 —— 否则一次失败就把凭据写进日志 */
+  console.error('✗ 上传失败:', (e.stderr || e.message || '').toString().replace(TOKEN, '***').slice(0, 400));
   process.exitCode = 1;
 }
