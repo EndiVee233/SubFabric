@@ -562,7 +562,18 @@ function applyZhEnOrder(order) {
   if (Number(info.zh) === wantZh && Number(info.en) === wantEn) return false;
   let changed = state.assDoc.setStyleFields(t.zh, { marginv: String(wantZh) });
   changed = state.assDoc.setStyleFields(t.en, { marginv: String(wantEn) }) || changed;
-  return changed;
+  if (!changed) return false;
+  /* ⚠ **这里必须自己把新文本推给预览**，不能只靠调用方随后调 applyAssStyleSettings()。
+   *  那个函数开头有一道 `if (!anyChanged && !forceFontReload) return false;` ——
+   *  此时文档里两条 MarginV **已经是新值**，它逐个字段比对下来"什么都没变"，
+   *  于是**直接返回、根本不会通知 assPlayer 重绘**，
+   *  表现就是"改了中英上下顺序，视频画面纹丝不动"（用户实测反馈的 bug）。
+   *  实测证据：两态的 libass 画布像素哈希完全相同。 */
+  assPlayer.updateNow(state.assDoc.serialize());
+  // 顺序也影响块内两行的字体度量缓存？不影响（块内版面固定），但让时间轴重画一次无妨
+  if (timeline && timeline.touch) timeline.touch();
+  if (state.project && Projects && Projects.scheduleSave) Projects.scheduleSave();
+  return true;
 }
 
 /** 把「中英上下顺序」下拉同步成**当前稿件实际的样子**（读两条样式的 MarginV 反推），
@@ -1514,24 +1525,19 @@ if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () =>
  * 位置计算依赖字体度量（fontMetrics 按 font 字符串缓存，setBlockFonts 里已清），
  * 所以这里要连**轨道一起重建**，不能只 touch 一下。 */
 if (timeline) timeline.onBlockFonts = () => { rebuildItemsAndLanes(false, true); };
-/* 中英上下顺序：切换即交换两轨的 MarginV。
- * 值本身存在 localStorage（这是"我想怎么看"的偏好，不是稿件内容），
- * 但**真正生效的是稿件里两条样式的 MarginV** —— 所以切完要立刻套用并重建预览。
- * 注意：打开别的稿件时会按该稿件自己的 MarginV 反推显示（见 refreshOrderControl），
- * 不会硬套这个偏好 —— 否则一打开就把人家的样式改了。 */
+/* 中英上下顺序（**管的是 ASS 文件在视频里显示的上下**，不是时间轴块里的版面）：
+ * 切换即交换两条样式的 MarginV —— ASS 里谁 MarginV 大谁离底边远、谁就在上面。
+ * 值本身存 localStorage（"我想怎么看"的偏好，不是稿件内容），
+ * 但真正生效的是稿件里的 MarginV；打开别人的稿件时按该稿件的实际值反推显示
+ * （见 refreshOrderControl），不会硬套这个偏好。 */
 if (assStyleEls.order) {
   assStyleEls.order.addEventListener('change', () => {
     const want = assStyleEls.order.value === 'en-top' ? 'en-top' : 'zh-top';
     try { localStorage.setItem(ZH_ORDER_KEY, want); } catch { /* 隐私模式下写不了，忽略 */ }
-    if (applyZhEnOrder(want)) {
-      applyAssStyleSettings();
-      assPlayer.updateNow(state.assDoc.serialize());
-      if (state.project && Projects && Projects.scheduleSave) Projects.scheduleSave();
-      refreshOrderControl();      // 交换完立刻把右侧数值刷新（否则提示还停在交换前的值）
-      toast(want === 'en-top' ? '已改为英文在上' : '已改为中文在上', 2600);
-    } else {
-      refreshOrderControl();
-    }
+    // applyZhEnOrder 内部已经负责把新文本推给预览 / 存盘 —— 这里不再重复
+    applyZhEnOrder(want);
+    refreshOrderControl();      // 交换完立刻把右侧数值刷新（否则提示还停在交换前的值）
+    toast(want === 'en-top' ? '已改为英文在上' : '已改为中文在上', 2600);
   });
 }
 for (const el of [assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2]) {

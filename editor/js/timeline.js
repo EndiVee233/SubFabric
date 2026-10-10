@@ -11,7 +11,10 @@ const LANE_GAP = 6;
 const TEXT_PAD = 6;
 /* 块内两行文字的字体基线（字号/字重/回退族）。
  * 字号改这里一处即可 —— zhFontOf/enFontOf 都从它拼，不会再出现两处写死不同的情况。 */
-const ZH_TEXT = { weight: 700, px: 17, fallback: '"Microsoft YaHei", sans-serif' };
+/* 中文行：**不加粗**（用户明确要求"字幕块里的中文字幕不要加粗，无论设置中文字幕是否加粗"）。
+ *  字号是 17px，靠字号而不是字重来保证可读性 —— 加粗在 17px 下会让笔画糊在一起。
+ *  EN 行保持加粗：拉丁字母在 15px 下细体偏虚。 */
+const ZH_TEXT = { weight: 400, px: 17, fallback: '"Microsoft YaHei", sans-serif' };
 const EN_TEXT = { weight: 700, px: 15, fallback: '"Microsoft YaHei", sans-serif' };
 const ZH_FONT = `${ZH_TEXT.weight} ${ZH_TEXT.px}px ${ZH_TEXT.fallback}`;
 const EN_FONT = `${EN_TEXT.weight} ${EN_TEXT.px}px ${EN_TEXT.fallback}`;
@@ -348,6 +351,9 @@ export class Timeline {
      * 传空串/不传 = 该语言用回内置字体。 */
     this.blockFonts = { zh: '', en: '' };
     this.blockFontsMissing = { zh: false, en: false };   // 该字体本机没装 → 已回退到微软雅黑
+    /* ⚠ 这里曾经有过 blockOrder（让字幕块里中英两行也随"中英上下顺序"换位）—— **已删除**。
+     *  用户要的是**ASS 文件在视频里显示的上下**，不是时间轴块里的上下；
+     *  块里保持固定的"中文在上、英文在下"作为版面约定。 */
     this.onBlockFonts = null;     // 字体变化回调 → main.js 用来重画 + 失效度量缓存
 
     this._bindEvents();
@@ -1447,10 +1453,13 @@ export class Timeline {
      *      与"线在中间"直接矛盾。
      *   其实用户要的就是最简单的那个：线在中间、各自在半块里居中。 */
     const halfH = Math.round(band.h / 2);
-    const zhTop = bTop;
-    const zhBot = Math.min(bBot, bTop + Math.max(mZh.h, halfH));
-    const zhBase = Math.round(zhTop + (zhBot - zhTop) / 2 + (mZh.asc - mZh.desc) / 2);
-    const zhBottom = zhBase + mZh.desc;              // 中文行的下缘
+    /* 中英两行各占一半：**中文固定在上、英文+标记固定在下**（版面约定，与"中英上下顺序"
+     * 设置无关 —— 那个设置管的是 **ASS 文件在视频里**的上下，不是这里）。 */
+    const zhBandTop = bTop;
+    const zhBandBot = Math.min(bBot, bTop + Math.max(mZh.h, halfH));
+    const zhBase = Math.round(zhBandTop + (zhBandBot - zhBandTop) / 2 + (mZh.asc - mZh.desc) / 2);
+    const zhBottom = zhBase + mZh.desc;              // 中文行的下缘（用来夹分隔线）
+    const zhBand = { y: zhBandTop, h: Math.max(1, zhBandBot - zhBandTop) };
 
     /* 逐词标记条的高度 —— **按英文单词的实际墨迹高度**（mEn.latH，用 'Hxg' 量的）。
      *
@@ -1462,16 +1471,15 @@ export class Timeline {
      *   只有拿**拉丁字母自己的墨迹高度**做标准，白条才真的和英文单词一样高。 */
     const markBandH = Math.max(MARK_MIN_H, Math.round(mEn.latH));
     const markW = Math.max(2, Math.min(MARK_W, markBandH));      // 极矮时别比高度还宽
-    /* 下半块的内容高度 = 标记条（与英文等高，两者**同一水平轴**）。
+    /* 英文那一块的内容高度 = 标记条（与英文等高，两者**同一水平轴**）。
      *  不是"条 + 间隙 + 文字"三段叠加 —— 那样条会悬在单词上方，看着不像同一个词的标记。
      *  并排时内容高就是 max(条高, 词墨迹高)，两者既然等高就正好相等。 */
     const stackH = Math.max(markBandH, mEn.latH);
-    /** 给定分隔线位置 sep，算出下半块内部的完整布局（标记条 + 英文基线） */
-    function lowerLayout(sep) {
-      const top = sep, bot = bBot;
+    /** 给定英文那一块的上下界，算出标记条位置 + 英文基线。 */
+    function enLayout(top, bot) {
       const stackTop = top + ((bot - top) - stackH) / 2;
       let mt = Math.round(stackTop);
-      mt = Math.max(top + 1, Math.min(mt, markBot - MARK_MIN_H));
+      mt = Math.max(top + TOP_PAD, Math.min(mt, markBot - MARK_MIN_H));
       mt = Math.max(band.y + TOP_PAD, mt);
       const mh = Math.max(2, Math.min(markBandH, markBot - mt));
       /* 英文基线：把词的**墨迹**与标记条对齐在同一水平轴上。
@@ -1479,15 +1487,18 @@ export class Timeline {
       const barMid = mt + mh / 2;
       let base = Math.round(barMid + (mEn.latAsc - mEn.latDesc) / 2);
       base = Math.max(Math.round(top + mEn.latAsc), Math.min(Math.round(bot - mEn.latDesc - 1), base));
-      return { markTop: mt, markH: mh, baseline: base, stackTop: mt, stackBot: base + mEn.latDesc };
+      return { markTop: mt, markH: mh, baseline: base, stackTop: mt, stackBot: base + mEn.latDesc, top: top, bot: bot };
     }
 
-    /* 分隔线 = 块的正中间；但**不许压到中文行上**（矮块下中文行可能撑过半块） */
-    let axisY = Math.max(Math.round(zhBottom), Math.round(bTop + halfH));
-    axisY = Math.max(Math.round(zhBottom), Math.min(bBot, axisY));
+    /* 分隔线 = 块的正中间（中英各占一半）。矮块下若中文行撑过半块，
+     *  分隔线**不许压到中文行上** —— 此时改由中文行下缘定位。 */
+    let axisY = Math.round(bTop + halfH);
+    axisY = Math.max(axisY, Math.round(zhBottom));
+    axisY = Math.max(TOP_PAD + bTop, Math.min(bBot, axisY));
 
-    const lower = lowerLayout(axisY);
+    /* 英文那一块 = 下半块（中文固定在上） */
     const enTop = axisY, enBot = bBot;
+    const lower = enLayout(enTop, enBot);
     const markTop = lower.markTop, markH = lower.markH;
     let enBase = lower.baseline;
 
@@ -1497,12 +1508,12 @@ export class Timeline {
       baseline: enBase,          // 英文逐词行的基线
       zhBase,                    // 中文行基线 —— 唯一定义处，_drawBlockText 用 g.zhBase 取
       enLine: EN_LINE, zhLine: ZH_LINE, enTop, enBot,
-      zhTop, zhBot, mZh, mEn,
+      zhTop: zhBandTop, zhBot: zhBandBot, zhBand, mZh, mEn,
     };
   }
 
-  /** 块内文字: 中文整句在上(角色色/加粗), 中英之间是逐词轴, 轴下是英文逐词
-   *  样式对齐参考图: 轴与标记用中性浅灰, 词文本浅色; 词太长/太挤则只留标记不画文字 */
+  /** 块内文字: 中文整句一行在上、英文逐词一行在下，中间是分隔线（版面固定）。
+   *  样式对齐参考图: 分隔线与标记用中性浅灰, 词文本浅色; 词太长/太挤则只留标记不画文字 */
   _drawBlockText(ctx, c, band, x1, x2, wpx, base) {
     const g = this._wordGeom(band);
     const words = (c.words && c.words.length) ? c.words : null;
@@ -1511,8 +1522,10 @@ export class Timeline {
      *  双行字幕轨拉到最紧时块高只有 22px（实测），而 15px 中文 + 14px 英文
      *  两行加起来 39px —— 物理上摆不下。这时**宁可不画逐词行**（只留分隔线与标记），
      *  也不要把文字硬挤出块外、糊成一团。 */
-    /* 装不下就只画分隔线：需要的高度 = 中文行 + 下方那一块（条与词同轴，取 max） */
-    const fitWords = (band.h - g.mZh.h) >= (Math.max(g.mEn.latH, g.markH) + 4);
+    /* 装不下就只画分隔线。需要的竖直空间 = 中文那行 + 英文那一块（条与词同轴，取 max）。
+     *  两行各占半块，所以判据就是"半块放得下"。 */
+    const enBlockH = Math.max(g.mEn.latH, g.markH);
+    const fitWords = (band.h / 2) >= Math.max(g.mZh.h, enBlockH) - 1;
     ctx.save();
     ctx.beginPath();
     ctx.rect(x1 + TEXT_PAD, band.y, Math.max(1, wpx - TEXT_PAD * 2), band.h);
