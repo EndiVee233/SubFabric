@@ -76,6 +76,8 @@ const assStyleEls = {
   enColorVal: document.getElementById('ass-style-en-color-val'),
   enColor2: document.getElementById('ass-style-en-color2'),
   enColor2Val: document.getElementById('ass-style-en-color2-val'),
+  order: document.getElementById('ass-style-order'),
+  orderVal: document.getElementById('ass-style-order-val'),
   zhFontNote: document.getElementById('ass-style-zh-font-note'),
   enFontNote: document.getElementById('ass-style-en-font-note'),
   zhFontFile: document.getElementById('ass-style-zh-font-file'),
@@ -520,8 +522,61 @@ function assStyleFields(name) {
     bold: Number(style.bold) < 0 || style.bold === '1',
     italic: Number(style.italic) < 0 || style.italic === '1',
     color: assBgrToHex(style.primarycolour, null),
-    color2: assBgrToHex(style.secondarycolour, null)
+    color2: assBgrToHex(style.secondarycolour, null),
+    marginv: style.marginv,          // 底部留白 —— 决定这一轨在画面上的高低
   };
+}
+
+/* ─── 中英哪一轨在上 ───────────────────────────────────────────────
+ * ASS 里两轨都是「底部对齐」样式（Alignment 2），谁在上完全由 **MarginV** 决定：
+ * MarginV 大的那条离底边更远 → 显示在上面。
+ * 本 fork 生成的初稿是「中文字幕 125 / Default 120」→ 中文在上。
+ * 导入的 ASS 则是它自己带的值，所以这里不去猜、直接读两条样式的 MarginV 来判定。
+ * 切顺序 = **交换两者的 MarginV**，预览与导出立刻生效（不动文本、不动时间）。 */
+const ZH_ORDER_KEY = 'ss-zh-en-order';   // 'zh-top'（默认）| 'en-top'
+
+function currentOrderInfo() {
+  if (state.format !== 'ass' || !state.assStyleTargets) return null;
+  const t = state.assStyleTargets;
+  const zh = assStyleFields(t.zh), en = assStyleFields(t.en);
+  if (!zh || !en) return null;
+  const zv = Number(zh.marginv) || 0, ev = Number(en.marginv) || 0;
+  /* 相等时无法从数值判断谁在上（libass 会按声明顺序排）—— 报 null 让调用方显示"—"，
+   * 不硬猜一个，免得设置项显示的和画面上看到的相反。 */
+  if (zv === ev) return { zh: zv, en: ev, order: null };
+  return { zh: zv, en: ev, order: zv > ev ? 'zh-top' : 'en-top' };
+}
+
+/** 把两轨的 MarginV 换成「谁在上」要求的值。@returns 是否改动过 */
+function applyZhEnOrder(order) {
+  if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return false;
+  const info = currentOrderInfo();
+  if (!info) return false;
+  const t = state.assStyleTargets;
+  // 用"较大的那个值"当上轨、较小的当下轨，交换时保留两者原本的间距差
+  const hi = Math.max(info.zh, info.en), lo = Math.min(info.zh, info.en);
+  const wantZh = order === 'zh-top' ? hi : lo;
+  const wantEn = order === 'zh-top' ? lo : hi;
+  if (Number(info.zh) === wantZh && Number(info.en) === wantEn) return false;
+  let changed = state.assDoc.setStyleFields(t.zh, { marginv: String(wantZh) });
+  changed = state.assDoc.setStyleFields(t.en, { marginv: String(wantEn) }) || changed;
+  return changed;
+}
+
+/** 把「中英上下顺序」下拉同步成**当前稿件实际的样子**（读两条样式的 MarginV 反推），
+ *  而不是读 localStorage 里的偏好 —— 打开别人的稿件时偏好不该覆盖人家的样式。
+ *  两条 MarginV 相同时 libass 按声明顺序排，无法判定 → 右侧写明原因，不硬猜。 */
+function refreshOrderControl() {
+  const el = assStyleEls.order, val = assStyleEls.orderVal;
+  if (!el) return;
+  const info = currentOrderInfo();
+  if (!info) { if (val) val.textContent = '—'; return; }
+  if (info.order) {
+    el.value = info.order;
+    if (val) val.textContent = `中 ${info.zh} / 英 ${info.en}`;
+  } else if (val) {
+    val.textContent = `都是 ${info.zh}（按声明顺序排，无法判定）`;
+  }
 }
 
 /* ─────────── 本机字体库(服务端读系统字体, 见 editor/fonts.js) ───────────
@@ -704,6 +759,7 @@ function setAssStyleControls() {
   if (assStyleEls.wordColorVal) assStyleEls.wordColorVal.textContent = wordColor.toUpperCase();
   if (assStyleEls.status) assStyleEls.status.textContent = '修改会立即预览并写入文稿；项目自动保存，普通字幕请导出保存。';
   loadSystemFontList();      // 顺手把本机字体填进候选, 用户打字就有补全
+  refreshOrderControl();     // 「中英上下顺序」按下稿件的实际 MarginV 显示
   refreshFontNotes();
 }
 
@@ -1365,6 +1421,26 @@ for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   if (el) el.addEventListener('change', () => applyAssStyleSettings());
 }
 if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () => applyAssStyleSettings());
+/* 中英上下顺序：切换即交换两轨的 MarginV。
+ * 值本身存在 localStorage（这是"我想怎么看"的偏好，不是稿件内容），
+ * 但**真正生效的是稿件里两条样式的 MarginV** —— 所以切完要立刻套用并重建预览。
+ * 注意：打开别的稿件时会按该稿件自己的 MarginV 反推显示（见 refreshOrderControl），
+ * 不会硬套这个偏好 —— 否则一打开就把人家的样式改了。 */
+if (assStyleEls.order) {
+  assStyleEls.order.addEventListener('change', () => {
+    const want = assStyleEls.order.value === 'en-top' ? 'en-top' : 'zh-top';
+    try { localStorage.setItem(ZH_ORDER_KEY, want); } catch { /* 隐私模式下写不了，忽略 */ }
+    if (applyZhEnOrder(want)) {
+      applyAssStyleSettings();
+      assPlayer.updateNow(state.assDoc.serialize());
+      if (state.project && Projects && Projects.scheduleSave) Projects.scheduleSave();
+      refreshOrderControl();      // 交换完立刻把右侧数值刷新（否则提示还停在交换前的值）
+      toast(want === 'en-top' ? '已改为英文在上' : '已改为中文在上', 2600);
+    } else {
+      refreshOrderControl();
+    }
+  });
+}
 for (const el of [assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2]) {
   if (el) el.addEventListener('input', () => applyAssStyleSettings());
 }

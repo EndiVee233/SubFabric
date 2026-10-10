@@ -271,6 +271,14 @@
             <input id="ass-style-word-color" type="color" value="#00ff00">
             <span id="ass-style-word-color-val" class="ass-style-color-value">#00FF00</span>
           </div>
+          <div class="setting-row">
+            <span class="setting-name" title="两轨都是底部对齐，谁在上由样式的底部留白（MarginV）决定。切换即交换两者，预览与导出立刻生效；不动文本与时间">中英上下顺序</span>
+            <select id="ass-style-order" class="btn">
+              <option value="zh-top">中文在上</option>
+              <option value="en-top">英文在上</option>
+            </select>
+            <span id="ass-style-order-val" class="setting-val"></span>
+          </div>
           <p id="ass-style-status" class="set-group-note">请先打开 ASS/SSA 字幕。设置写入当前稿件；项目自动保存，普通文件请导出。</p>
           <p class="set-group-note">直接填字体名即可（有补全）：本机装了的字体，预览会自动取来用，不用自己找文件。本机没装的字体，预览会回退到内置字体，「载入字体」可导入 .ttf/.otf 补上。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
         </div>

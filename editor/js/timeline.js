@@ -674,7 +674,13 @@ export class Timeline {
         return;
       }
       // 空白处: 拖动 = 按拖动起止时间新建字幕块; 单击 = 跳转
-      this._drag = { type: onLane ? 'create' : 'seek', x0: x, y0: y, t0: this.x2t(x), moved: false };
+      /* 记下**按下时所在的那条轨**（laneIdx）：双行字幕轨模式下轨道区有多条轨，
+       * 新建预览框只能画在这一条里。早先预览框用 _lanesTop() → _lanesBottom()，
+       * 于是框会**横跨所有重叠轨**，看着像"这一步会把所有轨都新建一遍"（用户反馈的 bug）。 */
+      this._drag = {
+        type: onLane ? 'create' : 'seek', x0: x, y0: y, t0: this.x2t(x), moved: false,
+        laneIdx: onLane ? this._laneIndexAtY(y) : -1,
+      };
     });
 
     cv.addEventListener('pointermove', (e) => {
@@ -985,6 +991,8 @@ export class Timeline {
     if (this._filmH() > 0) this._drawFilmstrip(ctx, W);   // 空间不够时 _filmH()=0, 这一帧不画
     this._drawRuler(ctx, W);
     this._drawWaveBand(ctx, W);
+    // 块内背景模糊 + 压暗：必须在波形之后、块之前 —— 它处理的就是"块底下那块波形"
+    this._drawBlockBackdrop(ctx, W);
     this._drawLanes(ctx, W, t);
     if (this._drag && this._drag.type === 'create' && this._drag.moved) this._drawCreatePreview(ctx);
     if (this.rangeSel && this.rangeSel.b > this.rangeSel.a) this._drawRangeSel(ctx);
@@ -1036,26 +1044,33 @@ export class Timeline {
     ctx.restore();
   }
 
-  /** 空白处拖动新建时的虚线预览框 */
+  /** 空白处拖动新建时的虚线预览框。
+   *  只画在**按下时所在的那条轨**里 —— 双行字幕轨模式下轨道区有多条轨，
+   *  早先用整块轨道区的上下边界，框会横跨所有重叠轨，看起来像要一次新建好几条。 */
   _drawCreatePreview(ctx) {
     const d = this._drag;
     const a = Math.min(d.t0, d.t1), b = Math.max(d.t0, d.t1);
     const x1 = this.t2x(a), x2 = this.t2x(b);
-    const top = this._lanesTop();
-    const bottom = Math.max(top + 24, this._lanesBottom());
+    const nLanes = this.lanes.length;
+    let li = Number.isInteger(d.laneIdx) ? d.laneIdx : -1;
+    if (li < 0 || li >= nLanes) li = 0;                 // 兜底：拿不到就画在第一条轨
+    const liY = this._laneTop(li);
+    const liH = this._laneH(li);
+    const top = liY + 2;
+    const bottom = Math.max(top + 18, liY + liH - 2);
     ctx.save();
     ctx.fillStyle = 'rgba(255,122,69,.16)';
     ctx.strokeStyle = C.accent;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 3]);
-    this._roundRect(ctx, x1, top + 2, Math.max(1.5, x2 - x1), bottom - top - 4, 4);
+    this._roundRect(ctx, x1, top, Math.max(1.5, x2 - x1), bottom - top, 4);
     ctx.fill();
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = '#ffd9c7';
     ctx.font = '10px Consolas, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(`新建 ${fmtTime(a)} → ${fmtTime(b)}`, Math.min(x1, x2) + 4, top - 4);
+    ctx.fillText(`新建 ${fmtTime(a)} → ${fmtTime(b)}`, Math.min(x1, x2) + 4, Math.max(10, liY - 3));
     ctx.restore();
   }
 
@@ -1504,6 +1519,63 @@ export class Timeline {
     }
   }
 
+  /** 字幕块范围内的「背景模糊 + 压暗」。
+   *
+   *  目的：块底下的波形太抢眼，字幕压在波形上不好认。做法是在**每个块覆盖的区域**里
+   *  把已画好的波形模糊掉、再压一层暗色，块上的文字仍然顶在最上面（这里只动背景）。
+   *
+   *  实现要点：
+   *   · 波形已经在同一张 canvas 上画过了，所以「原地重画一遍波形 + ctx.filter=blur()」
+   *     就是"模糊背景"（模糊会把已有像素一起采样进来，观感正确）。
+   *   · 用一条**合并路径**做 clip，只对块覆盖的区域生效，块与块之间留缝隙正常显示波形。
+   *   · `ctx.filter` 不支持时（老的 Safari / 部分边缘浏览器）**自动退回纯压暗**——
+   *     压暗本身就能让块浮起来，不能因为不支持模糊就什么都不做。
+   *     实测 Edge/Chromium 的 'none' 与 blur() 行为差异，这里用一次自检写进注释口径。 */
+  _drawBlockBackdrop(ctx, W) {
+    const wh = this._waveH();
+    if (!(wh > 2)) return;                       // 没有波形就没什么可模糊的
+    /* 与 _drawWaveBand 用同一套坐标：带顶 = _lanesTop()，波形本身内缩 2px、高 h-4。
+     * （早先这里我写成不存在的 _waveTop()，靠这条注释记住正确来源。） */
+    const bandTop = this._lanesTop();
+    const top = bandTop + 2, h = wh - 4;
+    const path = new Path2D();
+    let n = 0;
+    const spanStart = this.viewStart - 1, spanEnd = this.viewStart + W / this.pxPerSec + 1;
+    for (let li = 0; li < this.lanes.length; li++) {
+      const lane = this.lanes[li];
+      const yy = this._laneTop(li), lh = this._laneH(li);
+      const cues = lane.cues;
+      let lo = 0, hi = cues.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (cues[mid].end >= spanStart) hi = mid; else lo = mid + 1; }
+      for (let i = lo; i < cues.length && cues[i].start <= spanEnd; i++) {
+        const c = cues[i];
+        const x1 = this.t2x(Math.max(c.start, spanStart));
+        const x2 = this.t2x(Math.min(c.end, spanEnd));
+        if (!(x2 - x1 >= 1)) continue;
+        const b = bandOf(c, yy, lh);
+        /* 块只覆盖轨道带的一部分（半区块），但模糊/压暗按**整条波形带**来 ——
+         * 否则同一句的上下两半各糊一块、中间留一条没处理的缝，看着更乱。 */
+        const y0 = Math.max(bandTop, b.y - 2);
+        const y1 = Math.min(bandTop + wh, b.y + b.h + 2);
+        if (!(y1 > y0)) continue;
+        path.rect(x1, y0, x2 - x1, y1 - y0);
+        n++;
+      }
+    }
+    if (!n) return;
+    ctx.save();
+    ctx.clip(path);
+    /* 支持 filter 才重画波形做模糊；不支持就只压暗（老浏览器上仍能分出层次）。
+     * 注意顺序：先设 filter 再画，画完必须复位，否则会影响后面的绘制。 */
+    const canBlur = typeof ctx.filter === 'string';
+    if (canBlur) ctx.filter = 'blur(3px)';
+    this._drawWaveLayer(ctx, W, top, h);         // 在裁剪区内重画一遍 → 这块被模糊
+    if (canBlur) ctx.filter = 'none';
+    ctx.fillStyle = 'rgba(8,8,12,.46)';          // 压暗：让块与波形分出层次
+    ctx.fillRect(0, 0, W, this._cssH());
+    ctx.restore();
+  }
+
   _drawLanes(ctx, W, t) {
     this.lanes.forEach((lane, li) => {
       const yy = this._laneTop(li);
@@ -1571,16 +1643,19 @@ export class Timeline {
         this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
         ctx.fill();
         ctx.strokeStyle = withAlpha(base, 1, base); // 边框 100% 不透明
-        ctx.lineWidth = 1;
-        this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
+        /* 边框加粗到 2px（原 1px）——用户要求"字幕块边框加粗"。
+         * 1px 在高分屏 + 波形底上偏虚，2px 才能把块的边界立住。
+         * 描边要往内收 1px（0.5 → 1），否则 2px 线会有一半画在块外、把相邻块连起来。 */
+        ctx.lineWidth = 2;
+        this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), 3);
         ctx.stroke();
         if (isSel) {
           ctx.save();
           ctx.shadowColor = withAlpha(this.accent || C.accent, 0.5, 'rgba(255,122,69,.5)');
           ctx.shadowBlur = 7;
           ctx.strokeStyle = this.accent || C.accent;   // 选中环跟主题色(原为白色)
-          ctx.lineWidth = 1.5;
-          this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 4);
+          ctx.lineWidth = 2.5;                          // 比块边框再粗一档, 选中才压得住
+          this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), 4);
           ctx.stroke();
           ctx.restore();
         }

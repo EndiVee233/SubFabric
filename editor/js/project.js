@@ -433,8 +433,17 @@ export function initProjects(ctx) {
     el.className = 'save-state' + (cls ? ' ' + cls : '');
     el.textContent = text;
   }
+  /* 待保存的文本快照。为什么要存它：
+   *   scheduleSave() 会**无条件**把状态标成「有未保存更改」，而 saveNow() 发现
+   *   内容没变时直接 return —— 于是状态永远停在"未保存"。
+   *   实测：只要 scheduleSave() 被调用的间隔 < 1200ms（重建条目时会触发），
+   *   倒计时被反复重置、saveNow() 一次都不跑，顶栏就**一直**显示「● 有未保存更改」，
+   *   而文件其实早就是最新的（哈希比对过，内容没变）。用户就会以为没保存上。
+   *   现在：saveNow() 无论保存与否都给状态一个明确结论。 */
+  let pendingText = null;
   function scheduleSave() {
     if (!state.project) return;
+    pendingText = currentText();
     setSaveState('', '● 有未保存更改');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 1200);
@@ -443,7 +452,12 @@ export function initProjects(ctx) {
     if (!state.project) return;
     if (saving) { scheduleSave(); return; }       // 上一轮未完成, 稍后再存
     const text = currentText();
-    if (!text || text === lastSavedText) return;
+    /* 内容与已存盘的一致 → 没什么可存，但**必须把状态改回"已保存"**，
+     * 否则 scheduleSave 刚才标的"有未保存更改"会永远留着（这就是那个 bug）。 */
+    if (!text || text === lastSavedText) {
+      if (text) setSaveState('saved', '已保存 ' + new Date().toTimeString().slice(0, 5));
+      return;
+    }
     saving = true;
     setSaveState('saving', '保存中…');
     try {
@@ -460,6 +474,8 @@ export function initProjects(ctx) {
       setSaveState('', '⚠ 保存失败(稍后自动重试)');
     }
     saving = false;
+    /* 保存期间又改了（pendingText 与刚存的不一致）→ 立刻再存一轮，别等下一次触发 */
+    if (pendingText && pendingText !== lastSavedText) scheduleSave();
   }
   // 页面关闭/刷新兜底: 未保存的改动用 sendBeacon 补一刀(服务端 PUT/POST 都收)
   window.addEventListener('beforeunload', () => {
