@@ -61,16 +61,16 @@ ok(/const syncEmpty = \(\) => \{ if \(empty\) empty\.hidden = view\.childElement
 ok(/\.log-empty\[hidden\] \{ display: none; \}/.test(CSS), '隐藏规则在');
 
 console.log('\n== 4. 操作日志：服务端读写 ==');
-// ⚠ 必须定义在 handleRequest 内部（要用 projDir）
+// ⚠ 必须与 projDir 同作用域（历史上跨作用域引用 → 每次调用 ReferenceError，
+//    被 catch 吞成 written: 0）。2026-10-10 路由重构后 projDir/appendOpLog/opLogPath
+//    全在模块作用域 —— 断言改为"模块级 + 同域"，跨域坑从此结构上不可能再出现。
 const hIdx = SRV.indexOf('function handleRequest(');
 const appendIdx = SRV.indexOf('function appendOpLog(');
-ok(appendIdx > 0 && appendIdx > hIdx, 'appendOpLog 定义在 handleRequest 之后（内部）');
+const projDirIdx = SRV.indexOf('function projDir(');
+ok(appendIdx > 0 && appendIdx < hIdx, 'appendOpLog 定义在模块作用域（不再是 handleRequest 内部）');
 ok(/const opLogPath = \(id\) => path\.join\(projDir\(id\), 'oplog\.json'\)/.test(SRV),
   '落盘到 projects/<id>/oplog.json');
-// 反向断言：模块作用域里不许再有直接调 projDir 的定义
-const beforeHandle = SRV.slice(0, hIdx);
-ok(!/function appendOpLog/.test(beforeHandle), '模块作用域里没有 appendOpLog（那会 ReferenceError）');
-ok(!/const opLogPath/.test(beforeHandle), '模块作用域里没有 opLogPath');
+ok(projDirIdx > 0 && projDirIdx < hIdx, 'projDir 也在模块作用域（appendOpLog/opLogPath 与它同域，无跨域 ReferenceError）');
 ok(/function readOpLog\(id\)/.test(SRV), '有读函数');
 ok(/return \{ ok: false, err \};/.test(SRV), '写失败返回**原因**（不是静默 false）');
 ok(/errors: errs/.test(SRV), '接口把错误带出来，便于排查"written: 0"');

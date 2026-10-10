@@ -2480,93 +2480,6 @@ const LOOPBACK_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 const LOOPBACK_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
-function handleRequest(req, res) {
-  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
-    return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
-  }
-  if (UNSAFE_METHODS.has(req.method)) {
-    const origin = String(req.headers.origin || '').trim();
-    if (origin && !LOOPBACK_ORIGIN_RE.test(origin)) {
-      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: origin');
-    }
-  }
-  const u = new URL(req.url, `http://${req.headers.host || HOST}`);
-  const pathname = u.pathname;
-
-  // 简单端点先查表(见上方 SIMPLE_ROUTES 注释: 只收同步无副作用的处理器)
-  const simple = SIMPLE_ROUTE_MAP.get(pathname);
-  if (simple && simple(req, res, u)) return;
-
-  // 波形图: 示例视频直接读磁盘原文件(不复制/不保存), 本地文件走 POST 上传临时文件(用完即删)
-  if (pathname === '/api/waveform') {
-    console.log('[waveform] GET', pathname + u.search, 'from', req.headers.referer || '-');
-    const name = u.searchParams.get('name') || '';
-    const dur = parseFloat(u.searchParams.get('dur')) || 0;
-    const full = path.join(ROOT, name);
-    let okPath = false;
-    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
-    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
-    makeWaveform(full, dur, (err, buf) => {
-      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
-      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache', 'Content-Length': buf.length });
-      res.end(buf);
-    });
-    return;
-  }
-  if (pathname === '/api/waveform-upload' && req.method === 'POST') return waveformFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0);
-
-  // 峰值数据: 每 1/rate 秒一个包络值(Uint8 二进制), 前端按像素列矢量绘制(任意缩放都锐利)
-  if (pathname === '/api/peaks') {
-    console.log('[peaks] GET', pathname + u.search, 'from', req.headers.referer || '-');
-    const name = u.searchParams.get('name') || '';
-    const dur = parseFloat(u.searchParams.get('dur')) || 0;
-    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
-    const full = path.join(ROOT, name);
-    let okPath = false;
-    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
-    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
-    const go = (d) => buildPeaks(full, d, rate, (err, buf) => {
-      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
-      sendPeaks(res, buf, rate);
-    });
-    if (dur > 0) go(dur); else probeDuration(full, (d) => go(d));
-    return;
-  }
-  if (pathname === '/api/peaks-upload' && req.method === 'POST') {
-    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
-    return peaksFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0, rate);
-  }
-  /** 浏览器选视频的兜底通道: 把上传的视频存成服务端**持久**文件并返回真实路径,
-   *  之后与本地路径选视频完全同构(/api/media Range 流式播放、prepare 提取音频波形)。
-   *  为什么存持久文件: 项目要"下次打开还在", 而浏览器 File 对象只在本次会话有效。
-   *  目标目录: <项目根>/videos/ (文件名去重: 重名追加 -1/-2…) */
-  if (pathname === '/api/upload-video' && req.method === 'POST') {
-    const name = decodeURIComponent(u.searchParams.get('name') || 'video.mp4').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'video.mp4';
-    const ext = path.extname(name) || '.mp4';
-    const base = path.basename(name, ext);
-    const dir = path.join(ROOT, 'videos');
-    fs.mkdirSync(dir, { recursive: true });
-    let finalName = name, n = 0;
-    while (fs.existsSync(path.join(dir, finalName))) finalName = `${base}-${++n}${ext}`;
-    const dest = path.join(dir, finalName);
-    const out = fs.createWriteStream(dest);
-    let size = 0, done = false;
-    const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
-    // 注意: 用 pipe 就不要再手动 out.end() —— 双重 end 会触发 ERR_STREAM_ALREADY_FINISHED,
-    // 流被错误终结后 'finish' 永不触发, 请求挂死(前端兜底通道完全不可用)
-    req.on('data', c => { size += c.length; if (size > 32 * 1024 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(413, { error: '文件超过 32GB 上限' }); } });
-    req.on('error', () => { out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(500, { error: '上传中断' }); });
-    out.on('error', () => { try { fs.unlinkSync(dest); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
-    out.on('finish', () => {
-      let okExt = VIDEO_EXTS.includes(path.extname(dest).toLowerCase());
-      if (!okExt) { try { fs.unlinkSync(dest); } catch {} return finish(400, { error: '不支持的格式: ' + path.extname(dest) }); }
-      MEDIA_ALLOW.add(mediaKey(dest));   // 上传落盘的视频登记进 /api/media 白名单
-      return finish(200, { path: dest, name: finalName, size });
-    });
-    req.pipe(out);
-    return;
-  }
-
   /* ═══════════ 项目系统 ═══════════
    * 每个项目一个目录: projects/<id>/project.json + subtitle.{ass,srt} + audio.wav(16k单声道, 给后续 ASR) + peaks.bin(波形包络缓存)
    * 视频不复制: 元数据里记用户选择的本地路径, 播放走 /api/media 按路径 Range 流式; 文件消失 → 客户端要求重选 */
@@ -4481,7 +4394,6 @@ function startPrepare(id, videoPath, mode) {
    *    （它内部自己调 parseJsonArray, 所以这里不需要再绑一个别名 —— 以前有, 无人调用已删）
    *  · punctPairsSane   —— 标点密度合理性（防小模型"每词加逗号"） */
   const parseTranslationReply = llmText.parseLineArrayReply;
-  const LlmError = llmText.LlmError;
 
 
   /** 落盘译文（每批一次），服务重启/刷新后可续翻 */
@@ -5840,7 +5752,86 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
-  // ── 路由 ──
+/* 路由段: 波形/峰值/上传视频 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleWaveRoutes(req, res, u) {
+  const pathname = u.pathname;
+  // 波形图: 示例视频直接读磁盘原文件(不复制/不保存), 本地文件走 POST 上传临时文件(用完即删)
+  if (pathname === '/api/waveform') {
+    console.log('[waveform] GET', pathname + u.search, 'from', req.headers.referer || '-');
+    const name = u.searchParams.get('name') || '';
+    const dur = parseFloat(u.searchParams.get('dur')) || 0;
+    const full = path.join(ROOT, name);
+    let okPath = false;
+    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
+    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
+    makeWaveform(full, dur, (err, buf) => {
+      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache', 'Content-Length': buf.length });
+      res.end(buf);
+    });
+    return;
+  }
+  if (pathname === '/api/waveform-upload' && req.method === 'POST') return waveformFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0);
+
+  // 峰值数据: 每 1/rate 秒一个包络值(Uint8 二进制), 前端按像素列矢量绘制(任意缩放都锐利)
+  if (pathname === '/api/peaks') {
+    console.log('[peaks] GET', pathname + u.search, 'from', req.headers.referer || '-');
+    const name = u.searchParams.get('name') || '';
+    const dur = parseFloat(u.searchParams.get('dur')) || 0;
+    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
+    const full = path.join(ROOT, name);
+    let okPath = false;
+    try { okPath = fs.statSync(full).isFile() && path.dirname(full) === ROOT && VIDEO_EXTS.includes(path.extname(name).toLowerCase()); } catch {}
+    if (!okPath) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found');
+    const go = (d) => buildPeaks(full, d, rate, (err, buf) => {
+      if (err) return send(res, 502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, String(err.message || err));
+      sendPeaks(res, buf, rate);
+    });
+    if (dur > 0) go(dur); else probeDuration(full, (d) => go(d));
+    return;
+  }
+  if (pathname === '/api/peaks-upload' && req.method === 'POST') {
+    const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
+    return peaksFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0, rate);
+  }
+  /** 浏览器选视频的兜底通道: 把上传的视频存成服务端**持久**文件并返回真实路径,
+   *  之后与本地路径选视频完全同构(/api/media Range 流式播放、prepare 提取音频波形)。
+   *  为什么存持久文件: 项目要"下次打开还在", 而浏览器 File 对象只在本次会话有效。
+   *  目标目录: <项目根>/videos/ (文件名去重: 重名追加 -1/-2…) */
+  if (pathname === '/api/upload-video' && req.method === 'POST') {
+    const name = decodeURIComponent(u.searchParams.get('name') || 'video.mp4').replace(/[\\/:*?"<>|]/g, '_').slice(0, 180) || 'video.mp4';
+    const ext = path.extname(name) || '.mp4';
+    const base = path.basename(name, ext);
+    const dir = path.join(ROOT, 'videos');
+    fs.mkdirSync(dir, { recursive: true });
+    let finalName = name, n = 0;
+    while (fs.existsSync(path.join(dir, finalName))) finalName = `${base}-${++n}${ext}`;
+    const dest = path.join(dir, finalName);
+    const out = fs.createWriteStream(dest);
+    let size = 0, done = false;
+    const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
+    // 注意: 用 pipe 就不要再手动 out.end() —— 双重 end 会触发 ERR_STREAM_ALREADY_FINISHED,
+    // 流被错误终结后 'finish' 永不触发, 请求挂死(前端兜底通道完全不可用)
+    req.on('data', c => { size += c.length; if (size > 32 * 1024 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(413, { error: '文件超过 32GB 上限' }); } });
+    req.on('error', () => { out.destroy(); try { fs.unlinkSync(dest); } catch {} finish(500, { error: '上传中断' }); });
+    out.on('error', () => { try { fs.unlinkSync(dest); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
+    out.on('finish', () => {
+      let okExt = VIDEO_EXTS.includes(path.extname(dest).toLowerCase());
+      if (!okExt) { try { fs.unlinkSync(dest); } catch {} return finish(400, { error: '不支持的格式: ' + path.extname(dest) }); }
+      MEDIA_ALLOW.add(mediaKey(dest));   // 上传落盘的视频登记进 /api/media 白名单
+      return finish(200, { path: dest, name: finalName, size });
+    });
+    req.pipe(out);
+    return;
+  }
+
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 本机选取 + 下载内核(pick/fetch) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleFetchRoutes(req, res, u) {
+  const pathname = u.pathname;
   if (pathname === '/api/pick' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
       let kind = 'video';
@@ -5854,6 +5845,7 @@ function startPrepare(id, videoPath, mode) {
   if (pathname === '/api/fetch/settings' && req.method === 'GET') {
     return sendJson(res, 200, fetchPublicSettings());
   }
+
   /* 用已保存的 Cookie 检测登录态（打开设置面板时调一次） */
   if (pathname === '/api/fetch/check-cookie' && req.method === 'GET') {
     const f = fetchSettings();
@@ -5863,6 +5855,7 @@ function startPrepare(id, videoPath, mode) {
       .catch((e) => sendJson(res, 200, { ok: false, isLogin: false, message: String((e && e.message) || e) }));
     return;
   }
+
   /* 只解析视频元数据（不下载）: 给「稿件预览」在创建项目前确认目标视频。
    * 复用下载内核的 --simulate（它把 meta 直接放进 done 事件里，不用读临时文件）。 */
   if (pathname === '/api/fetch/probe' && req.method === 'POST') {
@@ -5906,6 +5899,7 @@ function startPrepare(id, videoPath, mode) {
       });
     });
   }
+
   if (pathname === '/api/fetch/settings' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, async (err, body) => {
       try {
@@ -5940,6 +5934,13 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 语音识别模型管理 + 语义/热词分析(asr/analyze) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleAsrRoutes(req, res, u) {
+  const pathname = u.pathname;
   if (pathname === '/api/asr/status' && req.method === 'GET') {
     // 预热预检缓存。**必须按当前所选引擎探** —— 写死 probePython()（=sherpa）时，
     // 选的是 NPU 引擎就永远拿不到 openvino 的探测结果，界面会一直停在检测中…（实测踩过）。
@@ -6020,6 +6021,7 @@ function startPrepare(id, videoPath, mode) {
       settingsDir: ASR_DIR,
     }))();
   }
+
   /** 安装 NeMo 运行时（仅 multitalker 模型需要）: 在 ASR Python 环境里追加 PyTorch + NeMo。
    *  与 sherpa-onnx 环境是**两套依赖**（约 200MB vs 约 5GB），所以单独装、单独报进度（downloads key='nemo'）。
    *  必须 N 卡: multitalker 只认 CUDA, 装到 CPU 版 torch 上等于白装, 这里直接拦。 */
@@ -6050,6 +6052,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { ok: true, python: ASR_PY });
     });
   }
+
   if (pathname === '/api/asr/install-nemo' && req.method === 'POST') {
     return void (async () => {
       const pyOk = (() => { try { return fs.statSync(ASR_PY).isFile(); } catch { return false; } })();
@@ -6063,6 +6066,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { started: true });
     })();
   }
+
   /* 长稿反思纠错：配置读写（全局设置页用）。
    * GET  → { mode, padSec, maxSec, batchLines, useTranslate, provider, baseUrl, model, hasKey, ready, presets }
    * POST → 局部更新，写进 asr/settings.json 的 correct 段。
@@ -6159,6 +6163,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { ok: true, mode, tta: CONFIDENCE_TTA });
     });
   }
+
   /** 校验用户选的目录能否用来放模型: 必须存在、且是空目录 */
   if (pathname === '/api/asr/check-dir' && req.method === 'POST') {    return readBody(req, res, 64 * 1024, (err, body) => {
       let p = '';
@@ -6175,6 +6180,7 @@ function startPrepare(id, videoPath, mode) {
         reason: empty ? '' : `这个目录不是空的（已有 ${names.length} 项），换一个空目录` });
     });
   }
+
   /** 下载识别模型(带 modelId)或 whisper.cpp 运行时(kind='runtime')。
    *  并行友好: 不同 modelId/kind 的任务各自独立跑, 重复点同一个任务会被幂等忽略。 */
   if (pathname === '/api/asr/download' && req.method === 'POST') {
@@ -6247,6 +6253,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { started: true, dir: p, modelId: model.id });
     });
   }
+
   /** 指定模型下载根目录(空串 = 恢复默认 asr/models) */
   if (pathname === '/api/asr/set-dir' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
@@ -6268,6 +6275,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { ok: true, modelsRoot: modelsRoot() });
     });
   }
+
   /** 用资源管理器打开模型目录(打开下载位置/排查模型文件) */
   if (pathname === '/api/asr/open-dir' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
@@ -6286,6 +6294,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { ok, dir });
     });
   }
+
   /** 删除一个模型(连同目录) */
   if (pathname === '/api/asr/delete' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
@@ -6303,6 +6312,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { deleted: true, id: m.id });
     });
   }
+
   /** 选择创建初稿用的模型 */
   if (pathname === '/api/asr/select' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
@@ -6318,6 +6328,7 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { selected: m.id });
     });
   }
+
   /** 选择「重新识别」用的模型(可指向任意模型, 含只能重新识别的 multitalker) */
   if (pathname === '/api/asr/select-rerecog' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
@@ -6329,54 +6340,6 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
-  /* ═══════════ 翻译(LLM) 配置 ═══════════ */
-  if (pathname === '/api/translate/config' && req.method === 'GET') {
-    const c = translateCfg();
-    return sendJson(res, 200, {
-      presets: LLM_PRESETS, cfg: translateCfgPublic(c), ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT,
-    });
-  }
-  if (pathname === '/api/translate/config' && req.method === 'POST') {
-    return readBody(req, res, 256 * 1024, (err, body) => {
-      let p = {};
-      try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-      const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
-        if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
-      }
-      const c = saveTranslateCfg(keep);
-      return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: llmReady(c) });
-    });
-  }
-  /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
-  /* LLM 分角色开关 + 角色分析提示词（asr/settings.json 的 cast 段; enabled 默认开）
-   * prompt 留空 = 用 cast.js 内置的 CAST_SYSTEM，GET 一并把内置文案给前端做占位。 */
-  if (pathname === '/api/cast/config' && req.method === 'GET') {
-    let on = true, prompt = '';
-    try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
-    const c = translateCfg();
-    return sendJson(res, 200, {
-      enabled: on, prompt, defaultPrompt: cast.DEFAULT_CAST_PROMPT,
-      llmReady: llmReady(c), model: c.model || '', baseUrl: c.baseUrl || '',
-    });
-  }
-  if (pathname === '/api/cast/config' && req.method === 'POST') {
-    return readBody(req, res, 64 * 1024, (err, body) => {
-      if (err) return sendJson(res, 400, { error: String(err.message) });
-      let d = null;
-      try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-      try {
-        const st = readAsrSettings();
-        const patch = { enabled: d.enabled !== false };
-        if (Object.prototype.hasOwnProperty.call(d, 'prompt')) patch.prompt = String(d.prompt || '').slice(0, 8000);
-        st.cast = Object.assign({}, st.cast || {}, patch);
-        writeAsrSettings(st);
-      } catch (e) { return sendJson(res, 500, { error: '保存失败: ' + e.message }); }
-      let on = true, prompt = '';
-      try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
-      return sendJson(res, 200, { enabled: on, prompt });
-    });
-  }
   if (pathname === '/api/asr/hint') {
     // GET 顺带返回实际会喂给引擎的词(用户填的 + 术语表原文列自动派生的), 便于核对
     if (req.method === 'GET') return sendJson(res, 200, Object.assign({ hint: asrHintCfg() }, asrTerms()));
@@ -6408,6 +6371,7 @@ function startPrepare(id, videoPath, mode) {
       limits: { maxEdits: c.maxEdits, maxTokens: c.maxTokens },
     });
   }
+
   if (pathname === '/api/analyze/config' && req.method === 'POST') {
     return readBody(req, res, 256 * 1024, (err, body) => {
       if (err) return sendJson(res, 413, { error: '请求体过大' });
@@ -6422,6 +6386,437 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
+  /* 双引擎分工比例：供「识别模型」页的下拉读写。
+   * ratio='auto' 时用性能测试测出的值（settings.dual），没测过就退 1:1。 */
+  if (pathname === '/api/asr/dual' && req.method === 'GET') {
+    const s = readAsrSettings() || {};
+    return sendJson(res, 200, { cfg: dualCfg(), manual: s.dualRatio || 'auto',
+                                measured: s.dual || null });
+  }
+
+  if (pathname === '/api/asr/dual' && req.method === 'POST') {
+    return readBody(req, res, 32 * 1024, (err, body) => {
+      let v = 'auto';
+      try { v = String((JSON.parse(body.toString('utf8')) || {}).ratio || 'auto'); } catch {}
+      if (v !== 'auto' && !/^\d+:\d+$/.test(v)) {
+        return sendJson(res, 400, { error: 'ratio 应为 auto 或形如 "1:1"' });
+      }
+      const s = readAsrSettings();
+      s.dualRatio = v;
+      writeAsrSettings(s);
+      return sendJson(res, 200, { ok: true, cfg: dualCfg() });
+    });
+  }
+
+  /* ── 性能测试：测出本机 NPU/GPU 的最佳分工 ── */
+  if (pathname === '/api/asr/perf/state' && req.method === 'GET') {
+    // 顺便带上已应用的配置，省得前端再要一个设置接口
+    return sendJson(res, 200, Object.assign({}, perfState,
+      { dual: (readAsrSettings() || {}).dual || null }));
+  }
+
+  if (pathname === '/api/asr/perf/apply' && req.method === 'POST') {
+    return readBody(req, res, 32 * 1024, (err, body) => {
+      let ratio = '', sliceSec = 0;
+      try {
+        const b = JSON.parse(body.toString('utf8')) || {};
+        ratio = String(b.ratio || '');
+        sliceSec = Number(b.sliceSec) || 0;
+      } catch {}
+      if (!/^\d+:\d+$/.test(ratio) || !(sliceSec > 0)) {
+        return sendJson(res, 400, { error: 'ratio 形如 "1:1"，sliceSec 为正数' });
+      }
+      const s = readAsrSettings();
+      s.dual = { ratio: ratio, sliceSec: sliceSec, updatedAt: new Date().toISOString() };
+      writeAsrSettings(s);
+      return sendJson(res, 200, { ok: true, dual: s.dual });
+    });
+  }
+
+  if (pathname === '/api/asr/perf/start' && req.method === 'POST') {
+    if (perfState.running) return sendJson(res, 200, { started: false, already: true, state: perfState });
+    return readBody(req, res, 32 * 1024, (err, body) => {
+      let b = {};
+      try { b = JSON.parse(body.toString('utf8')) || {}; } catch {}
+      const audio = String(b.audio || '').trim();
+      if (!audio || !fs.existsSync(audio)) {
+        return sendJson(res, 400, { error: '需要一份 16kHz 单声道 wav 作为测试素材' });
+      }
+      const slices = String(b.slices || '8,15.01,28');
+      const audioSec = Math.max(30, Math.min(600, Number(b.audioSec) || 60));
+      const out = path.join(ASR_DIR, 'perf-result.json');
+      const args = [path.join(ASR_DIR, 'asr_perf.py'), '--audio', audio,
+                    '--slices', slices, '--audio-sec', String(audioSec),
+                    '--python', ASR_PY, '--out', out];
+      if (b.modelNpu) args.push('--model-npu', String(b.modelNpu));
+      if (b.modelGpu) args.push('--model-gpu', String(b.modelGpu));
+      perfState = { running: true, pct: 0, msg: '启动中…', error: null, result: null,
+                    startedAt: Date.now() };
+      let proc;
+      try {
+        proc = spawn(ASR_PY, args, { windowsHide: true, cwd: ROOT,
+                                     env: pySpawnEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (e) {
+        perfState = Object.assign({}, perfState, { running: false, error: String(e && e.message || e) });
+        return sendJson(res, 500, { error: perfState.error });
+      }
+      perfProc = proc;
+      const onLine = (buf) => {
+        for (const line of String(buf).split('\n')) {
+          const t = line.trim();
+          if (!t.startsWith('{')) continue;
+          let o = null;
+          try { o = JSON.parse(t); } catch { continue; }
+          if (o.type === 'progress') {
+            perfState.pct = o.pct || perfState.pct;
+            perfState.msg = o.msg || perfState.msg;
+          } else if (o.type === 'log') {
+            perfState.msg = o.msg || perfState.msg;
+          } else if (o.type === 'result') {
+            perfState.result = o.data || null;      // 完整结果直接带回来，省一次读文件
+          } else if (o.type === 'error') {
+            perfState.error = o.msg || '测试失败';
+          }
+        }
+      };
+      proc.stdout.on('data', onLine);
+      proc.stderr.on('data', onLine);
+      proc.on('close', (code) => {
+        perfProc = null;
+        perfState.running = false;
+        if (code !== 0 && !perfState.error) perfState.error = '测试脚本退出码 ' + code;
+        else if (code === 0 && !perfState.result) {
+          try { perfState.result = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
+        }
+      });
+      return sendJson(res, 200, { started: true, state: perfState });
+    });
+  }
+
+  /* ── 性能测试：测出本机 NPU/GPU 的最佳分工 ── */
+  if (pathname === '/api/asr/perf/state' && req.method === 'GET') {
+    // 顺便带上已应用的配置，省得前端再要一个设置接口
+    return sendJson(res, 200, Object.assign({}, perfState,
+      { dual: (readAsrSettings() || {}).dual || null }));
+  }
+
+  /* 自动找一份测试音频：优先用最近项目里的音频（就是识别实际吃的那份，最贴近真实负载）。
+   * 直接用项目音频还有个好处：不必要求用户手动转成 16kHz wav。 */
+  if (pathname === '/api/asr/perf/auto-audio' && req.method === 'GET') {
+    try {
+      const dirs = fs.readdirSync(PROJECTS_DIR).filter((n) => n.startsWith('p-'))
+        .map((n) => path.join(PROJECTS_DIR, n))
+        .map((p) => { try { return { p, m: fs.statSync(p).mtimeMs }; } catch { return null; } })
+        .filter(Boolean).sort((a, b) => b.m - a.m);
+      for (const d of dirs) {
+        for (const name of ['audio.wav', 'source16k.wav']) {
+          const f = path.join(d.p, name);
+          if (fs.existsSync(f) && fs.statSync(f).size > 100000) {
+            return sendJson(res, 200, { path: f,
+              why: path.basename(d.p) + '/' + name });
+          }
+        }
+      }
+      return sendJson(res, 200, { error: '没找到现成音频：先随便导入一个视频建过一次初稿，或手动选择 wav' });
+    } catch (e) {
+      return sendJson(res, 200, { error: '查找失败：' + String((e && e.message) || e) });
+    }
+  }
+
+  if (pathname === '/api/asr/perf/apply' && req.method === 'POST') {
+    return readBody(req, res, 32 * 1024, (err, body) => {
+      let ratio = '', sliceSec = 0;
+      try {
+        const b = JSON.parse(body.toString('utf8')) || {};
+        ratio = String(b.ratio || '');
+        sliceSec = Number(b.sliceSec) || 0;
+      } catch {}
+      if (!/^\d+:\d+$/.test(ratio) || !(sliceSec > 0)) {
+        return sendJson(res, 400, { error: 'ratio 形如 "1:1"，sliceSec 为正数' });
+      }
+      const s = readAsrSettings();
+      s.dual = { ratio: ratio, sliceSec: sliceSec, updatedAt: new Date().toISOString() };
+      writeAsrSettings(s);
+      return sendJson(res, 200, { ok: true, dual: s.dual });
+    });
+  }
+
+  if (pathname === '/api/asr/perf/start' && req.method === 'POST') {
+    if (perfState.running) return sendJson(res, 200, { started: false, already: true, state: perfState });
+    return readBody(req, res, 32 * 1024, (err, body) => {
+      let b = {};
+      try { b = JSON.parse(body.toString('utf8')) || {}; } catch {}
+      const audio = String(b.audio || '').trim();
+      if (!audio || !fs.existsSync(audio)) {
+        return sendJson(res, 400, { error: '需要一份 16kHz 单声道 wav 作为测试素材' });
+      }
+      const slices = String(b.slices || '8,15.01,28');
+      const audioSec = Math.max(30, Math.min(600, Number(b.audioSec) || 60));
+      const out = path.join(ASR_DIR, 'perf-result.json');
+      const args = [path.join(ASR_DIR, 'asr_perf.py'), '--audio', audio,
+                    '--slices', slices, '--audio-sec', String(audioSec),
+                    '--python', ASR_PY, '--out', out];
+      if (b.modelNpu) args.push('--model-npu', String(b.modelNpu));
+      if (b.modelGpu) args.push('--model-gpu', String(b.modelGpu));
+      perfState = { running: true, pct: 0, msg: '启动中…', error: null, result: null,
+                    startedAt: Date.now() };
+      let proc;
+      try {
+        proc = spawn(ASR_PY, args, { windowsHide: true, cwd: ROOT,
+                                     env: pySpawnEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (e) {
+        perfState = Object.assign({}, perfState, { running: false, error: String(e && e.message || e) });
+        return sendJson(res, 500, { error: perfState.error });
+      }
+      perfProc = proc;
+      const onLine = (buf) => {
+        for (const line of String(buf).split('\n')) {
+          const t = line.trim();
+          if (!t.startsWith('{')) continue;
+          let o = null;
+          try { o = JSON.parse(t); } catch { continue; }
+          if (o.type === 'progress') {
+            perfState.pct = o.pct || perfState.pct;
+            perfState.msg = o.msg || perfState.msg;
+          } else if (o.type === 'log') {
+            perfState.msg = o.msg || perfState.msg;
+          } else if (o.type === 'result') {
+            perfState.result = o.data || null;      // 完整结果直接带回来，省一次读文件
+          } else if (o.type === 'error') {
+            perfState.error = o.msg || '测试失败';
+          }
+        }
+      };
+      proc.stdout.on('data', onLine);
+      proc.stderr.on('data', onLine);
+      proc.on('close', (code) => {
+        perfProc = null;
+        perfState.running = false;
+        if (code !== 0 && !perfState.error) perfState.error = '测试脚本退出码 ' + code;
+        else if (code === 0 && !perfState.result) {
+          try { perfState.result = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
+        }
+      });
+      return sendJson(res, 200, { started: true, state: perfState });
+    });
+  }
+
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 翻译/LLM 分角色/本地翻译(translate/cast/mt) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleLlmRoutes(req, res, u) {
+  const pathname = u.pathname;
+  /* ═══════════ 翻译(LLM) 配置 ═══════════ */
+  if (pathname === '/api/translate/config' && req.method === 'GET') {
+    const c = translateCfg();
+    return sendJson(res, 200, {
+      presets: LLM_PRESETS, cfg: translateCfgPublic(c), ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT,
+    });
+  }
+
+  if (pathname === '/api/translate/config' && req.method === 'POST') {
+    return readBody(req, res, 256 * 1024, (err, body) => {
+      let p = {};
+      try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const keep = {};
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
+        if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
+      }
+      const c = saveTranslateCfg(keep);
+      return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: llmReady(c) });
+    });
+  }
+
+  /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
+  /* LLM 分角色开关 + 角色分析提示词（asr/settings.json 的 cast 段; enabled 默认开）
+   * prompt 留空 = 用 cast.js 内置的 CAST_SYSTEM，GET 一并把内置文案给前端做占位。 */
+  if (pathname === '/api/cast/config' && req.method === 'GET') {
+    let on = true, prompt = '';
+    try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
+    const c = translateCfg();
+    return sendJson(res, 200, {
+      enabled: on, prompt, defaultPrompt: cast.DEFAULT_CAST_PROMPT,
+      llmReady: llmReady(c), model: c.model || '', baseUrl: c.baseUrl || '',
+    });
+  }
+
+  if (pathname === '/api/cast/config' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let d = null;
+      try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      try {
+        const st = readAsrSettings();
+        const patch = { enabled: d.enabled !== false };
+        if (Object.prototype.hasOwnProperty.call(d, 'prompt')) patch.prompt = String(d.prompt || '').slice(0, 8000);
+        st.cast = Object.assign({}, st.cast || {}, patch);
+        writeAsrSettings(st);
+      } catch (e) { return sendJson(res, 500, { error: '保存失败: ' + e.message }); }
+      let on = true, prompt = '';
+      try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
+      return sendJson(res, 200, { enabled: on, prompt });
+    });
+  }
+
+  /* 本地翻译引擎状态：设置页显示"模型在不在 / 服务起没起"，并可预热 */
+  if (pathname === '/api/mt/local/status' && req.method === 'GET') {
+    return sendJson(res, 200, localMt().probe());
+  }
+
+  if (pathname === '/api/mt/local/start' && req.method === 'POST') {
+    localMt().ensure()
+      .then(port => sendJson(res, 200, { ok: true, port, model: localMt().probe().model }))
+      .catch(e => sendJson(res, 200, { ok: false, error: String((e && e.message) || e) }));
+    return;
+  }
+
+  if (pathname === '/api/translate/test' && req.method === 'POST') {
+    const c = translateCfg();
+    if (!llmReady(c)) return sendJson(res, 400, { error: '先填接口地址、API Key 和模型名' });
+    llmChat(c, [{ role: 'user', content: '只回复一个单词：ok' }], { maxTokens: 512 })
+      .then(r => sendJson(res, 200, { ok: true, reply: String(r.content).slice(0, 200) }))
+      .catch(e => sendJson(res, 200, { ok: false, error: String((e && e.message) || e) }));
+    return;
+  }
+
+  /* 单条翻译: 字幕列表/时间轴右键「重新翻译」—— 把一条英文行翻成中文行(前端自动回填) */
+  if (pathname === '/api/translate/one' && req.method === 'POST') {
+    const c = translateCfg();
+    if (!llmReady(c)) return sendJson(res, 400, { error: '还没配置翻译：先在设置里填接口地址、API Key 和模型名' });
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      let text = '';
+      try { text = String((JSON.parse(body.toString('utf8')) || {}).text || '').trim(); } catch {}
+      if (!text) return sendJson(res, 400, { error: '缺少 text' });
+      translateLines(c, [text], 0)
+        // 与写初稿同一口径: 中文里的 ，、。 → 空格(! ? 保留)。在这里归一,
+        // 所有调用方(右键「重新翻译」等)拿到的就是干净文本, 不会再漏。
+        .then(arr => sendJson(res, 200, { zh: llmText.normalizeZhPunctuation((arr && arr[0]) || '') }))
+        .catch(e => sendJson(res, 500, { error: String((e && e.message) || e) }));
+    });
+  }
+
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 运行日志 SSE/生命周期/退出 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleLogsRoutes(req, res, u) {
+  const pathname = u.pathname;
+  /* 运行日志 SSE: UI「日志」页实时显示(连接即回放历史缓冲, 之后实时推送) */
+  if (pathname === '/api/logs/stream' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.write('retry: 3000\n\n');
+    for (const line of logBuf) { try { res.write('data: ' + JSON.stringify(line) + '\n\n'); } catch {} }
+    logClients.add(res);
+    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
+    req.on('close', () => { clearInterval(hb); logClients.delete(res); });
+    return;
+  }
+
+  /* 前端错误上报: 浏览器 sendBeacon 把 JS 报错送进来 → 进运行日志(UI 可见) */
+  if (pathname === '/api/logs/client' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      const msg = String(body || '').slice(0, 4000);
+      if (msg.trim()) console.error(msg);       // 走 console 拦截 → 环形缓冲 + SSE 广播
+      return sendJson(res, 200, { ok: true });
+    });
+  }
+
+  /* 生命周期 SSE: 页面常驻订阅一条 —— 托盘点「完全退出」时服务在这里广播 shutdown,
+   * 页面收到后补存一次(靠 beforeunload 的 sendBeacon)并尝试关掉自己的窗口。 */
+  if (pathname === '/api/lifecycle' && req.method === 'GET') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    res.write('retry: 5000\n\n');
+    lifeClients.add(res);
+    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
+    req.on('close', () => { clearInterval(hb); lifeClients.delete(res); });
+    return;
+  }
+
+  /* 完全退出 —— 托盘图标右键的唯一入口。
+   * 只认两种请求: ① 托盘发来的(带 X-SubFabric-Quit 头, 跨站页面设不了这个头 ——
+   * 用了会被 CORS 预检拦下); ② 本机同源的页面 POST(带 Origin)。
+   * 这样别的网页即使用 <img src="…/api/quit"> 也顶不掉用户正在用的编辑器。 */
+  if (pathname === '/api/quit' && req.method === 'POST') {
+    const origin = String(req.headers.origin || '');
+    const byTray = req.headers['x-subfabric-quit'] === '1';
+    const sameOrigin = !!origin && /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(origin);
+    if (!byTray && !sameOrigin) return sendJson(res, 403, { error: 'forbidden' });
+    console.log('[quit] 收到完全退出请求（来源：' + (byTray ? '托盘图标/本机命令' : origin) + '）');
+    sendJson(res, 200, { ok: true, pid: process.pid });   // 先把响应冲回去, 托盘据此判定成功
+    setTimeout(() => shutdown(byTray ? '托盘图标' : '页面请求'), 120);
+    return;
+  }
+
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 诊断上报/媒体流白名单 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleDiagRoutes(req, res, u) {
+  const pathname = u.pathname;
+  /* 前端诊断上报: 页面把布局/运行状态快照回传, 落到 .diag.json 供排查(不影响任何功能) */
+  if (pathname === '/api/diag' && req.method === 'POST') {
+    return readBody(req, res, 128 * 1024, (err, body) => {
+      try { fs.writeFileSync(path.join(ROOT, '.diag.json'), body.toString('utf8')); } catch {}
+      console.log('[diag] 收到前端诊断快照 (' + body.length + ' 字节)');
+      sendJson(res, 200, { ok: true });
+    });
+  }
+
+  /* /api/media 只服务登记过的视频路径(见 MEDIA_ALLOW 的定义处注释)。
+   * meta 扫描缓存见模块作用域的 mediaMetaCache —— 放段函数里等于没有(每请求执行一次)。 */
+  function mediaAllowed(p) {
+    if (!p) return false;
+    const key = mediaKey(p);
+    if (MEDIA_ALLOW.has(key)) return true;
+    const now = Date.now();
+    if (now - mediaMetaCache.at > 3000) {
+      const set = new Set();
+      let ids = [];
+      try { ids = fs.readdirSync(PROJECTS_DIR); } catch {}
+      for (const id of ids) {
+        if (!validId(id)) continue;
+        const meta = readMeta(id);
+        const vp = meta && meta.video && meta.video.path;
+        if (vp) set.add(mediaKey(vp));
+      }
+      mediaMetaCache = { at: now, set };
+    }
+    return mediaMetaCache.set.has(key);
+  }
+
+  if (pathname === '/api/media' && req.method === 'GET') {
+    const p = u.searchParams.get('path') || '';
+    const full = path.normalize(p);
+    if (!mediaAllowed(full)) {
+      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'forbidden: video path not registered');
+    }
+    let ok = false;
+    try { ok = fs.statSync(full).isFile() && VIDEO_EXTS.includes(path.extname(full).toLowerCase()); } catch {}
+    if (!ok) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found: ' + p);
+    return serveFile(req, res, full);      // serveFile 自带 Range 支持
+  }
+
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段: 项目 CRUD 与项目内操作(含热词候选/压缩包) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
+function handleProjectsRoutes(req, res, u) {
+  const pathname = u.pathname;
   /* 从操作日志挖 ASR 热词候选 —— 用户把 A 改成 B，就是"B 才是对的词"的弱标注。
    * 把 B 喂回 ASR 当热词，下一份稿子就不会再听错（越用越准的闭环）。
    *
@@ -6434,6 +6829,7 @@ function startPrepare(id, videoPath, mode) {
    * 挖矿结果先给用户勾选，勾了才写；没勾的不会动。
    */
   const mHot = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/hotword-candidates$/.exec(pathname);
+
   if (mHot) {
     const pid = mHot[1];
     if (!fs.existsSync(projDir(pid))) return sendJson(res, 404, { error: '项目不存在' });
@@ -6520,348 +6916,11 @@ function startPrepare(id, videoPath, mode) {
     return sendJson(res, 405, { error: '仅支持 GET / POST' });
   }
 
-  /* 双引擎分工比例：供「识别模型」页的下拉读写。
-   * ratio='auto' 时用性能测试测出的值（settings.dual），没测过就退 1:1。 */
-  if (pathname === '/api/asr/dual' && req.method === 'GET') {
-    const s = readAsrSettings() || {};
-    return sendJson(res, 200, { cfg: dualCfg(), manual: s.dualRatio || 'auto',
-                                measured: s.dual || null });
-  }
-  if (pathname === '/api/asr/dual' && req.method === 'POST') {
-    return readBody(req, res, 32 * 1024, (err, body) => {
-      let v = 'auto';
-      try { v = String((JSON.parse(body.toString('utf8')) || {}).ratio || 'auto'); } catch {}
-      if (v !== 'auto' && !/^\d+:\d+$/.test(v)) {
-        return sendJson(res, 400, { error: 'ratio 应为 auto 或形如 "1:1"' });
-      }
-      const s = readAsrSettings();
-      s.dualRatio = v;
-      writeAsrSettings(s);
-      return sendJson(res, 200, { ok: true, cfg: dualCfg() });
-    });
-  }
-
-  /* ── 性能测试：测出本机 NPU/GPU 的最佳分工 ── */
-  if (pathname === '/api/asr/perf/state' && req.method === 'GET') {
-    // 顺便带上已应用的配置，省得前端再要一个设置接口
-    return sendJson(res, 200, Object.assign({}, perfState,
-      { dual: (readAsrSettings() || {}).dual || null }));
-  }
-  if (pathname === '/api/asr/perf/apply' && req.method === 'POST') {
-    return readBody(req, res, 32 * 1024, (err, body) => {
-      let ratio = '', sliceSec = 0;
-      try {
-        const b = JSON.parse(body.toString('utf8')) || {};
-        ratio = String(b.ratio || '');
-        sliceSec = Number(b.sliceSec) || 0;
-      } catch {}
-      if (!/^\d+:\d+$/.test(ratio) || !(sliceSec > 0)) {
-        return sendJson(res, 400, { error: 'ratio 形如 "1:1"，sliceSec 为正数' });
-      }
-      const s = readAsrSettings();
-      s.dual = { ratio: ratio, sliceSec: sliceSec, updatedAt: new Date().toISOString() };
-      writeAsrSettings(s);
-      return sendJson(res, 200, { ok: true, dual: s.dual });
-    });
-  }
-  if (pathname === '/api/asr/perf/start' && req.method === 'POST') {
-    if (perfState.running) return sendJson(res, 200, { started: false, already: true, state: perfState });
-    return readBody(req, res, 32 * 1024, (err, body) => {
-      let b = {};
-      try { b = JSON.parse(body.toString('utf8')) || {}; } catch {}
-      const audio = String(b.audio || '').trim();
-      if (!audio || !fs.existsSync(audio)) {
-        return sendJson(res, 400, { error: '需要一份 16kHz 单声道 wav 作为测试素材' });
-      }
-      const slices = String(b.slices || '8,15.01,28');
-      const audioSec = Math.max(30, Math.min(600, Number(b.audioSec) || 60));
-      const out = path.join(ASR_DIR, 'perf-result.json');
-      const args = [path.join(ASR_DIR, 'asr_perf.py'), '--audio', audio,
-                    '--slices', slices, '--audio-sec', String(audioSec),
-                    '--python', ASR_PY, '--out', out];
-      if (b.modelNpu) args.push('--model-npu', String(b.modelNpu));
-      if (b.modelGpu) args.push('--model-gpu', String(b.modelGpu));
-      perfState = { running: true, pct: 0, msg: '启动中…', error: null, result: null,
-                    startedAt: Date.now() };
-      let proc;
-      try {
-        proc = spawn(ASR_PY, args, { windowsHide: true, cwd: ROOT,
-                                     env: pySpawnEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-      } catch (e) {
-        perfState = Object.assign({}, perfState, { running: false, error: String(e && e.message || e) });
-        return sendJson(res, 500, { error: perfState.error });
-      }
-      perfProc = proc;
-      const onLine = (buf) => {
-        for (const line of String(buf).split('\n')) {
-          const t = line.trim();
-          if (!t.startsWith('{')) continue;
-          let o = null;
-          try { o = JSON.parse(t); } catch { continue; }
-          if (o.type === 'progress') {
-            perfState.pct = o.pct || perfState.pct;
-            perfState.msg = o.msg || perfState.msg;
-          } else if (o.type === 'log') {
-            perfState.msg = o.msg || perfState.msg;
-          } else if (o.type === 'result') {
-            perfState.result = o.data || null;      // 完整结果直接带回来，省一次读文件
-          } else if (o.type === 'error') {
-            perfState.error = o.msg || '测试失败';
-          }
-        }
-      };
-      proc.stdout.on('data', onLine);
-      proc.stderr.on('data', onLine);
-      proc.on('close', (code) => {
-        perfProc = null;
-        perfState.running = false;
-        if (code !== 0 && !perfState.error) perfState.error = '测试脚本退出码 ' + code;
-        else if (code === 0 && !perfState.result) {
-          try { perfState.result = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
-        }
-      });
-      return sendJson(res, 200, { started: true, state: perfState });
-    });
-  }
-  /* ── 性能测试：测出本机 NPU/GPU 的最佳分工 ── */
-  if (pathname === '/api/asr/perf/state' && req.method === 'GET') {
-    // 顺便带上已应用的配置，省得前端再要一个设置接口
-    return sendJson(res, 200, Object.assign({}, perfState,
-      { dual: (readAsrSettings() || {}).dual || null }));
-  }
-  /* 自动找一份测试音频：优先用最近项目里的音频（就是识别实际吃的那份，最贴近真实负载）。
-   * 直接用项目音频还有个好处：不必要求用户手动转成 16kHz wav。 */
-  if (pathname === '/api/asr/perf/auto-audio' && req.method === 'GET') {
-    try {
-      const dirs = fs.readdirSync(PROJECTS_DIR).filter((n) => n.startsWith('p-'))
-        .map((n) => path.join(PROJECTS_DIR, n))
-        .map((p) => { try { return { p, m: fs.statSync(p).mtimeMs }; } catch { return null; } })
-        .filter(Boolean).sort((a, b) => b.m - a.m);
-      for (const d of dirs) {
-        for (const name of ['audio.wav', 'source16k.wav']) {
-          const f = path.join(d.p, name);
-          if (fs.existsSync(f) && fs.statSync(f).size > 100000) {
-            return sendJson(res, 200, { path: f,
-              why: path.basename(d.p) + '/' + name });
-          }
-        }
-      }
-      return sendJson(res, 200, { error: '没找到现成音频：先随便导入一个视频建过一次初稿，或手动选择 wav' });
-    } catch (e) {
-      return sendJson(res, 200, { error: '查找失败：' + String((e && e.message) || e) });
-    }
-  }
-  if (pathname === '/api/asr/perf/apply' && req.method === 'POST') {
-    return readBody(req, res, 32 * 1024, (err, body) => {
-      let ratio = '', sliceSec = 0;
-      try {
-        const b = JSON.parse(body.toString('utf8')) || {};
-        ratio = String(b.ratio || '');
-        sliceSec = Number(b.sliceSec) || 0;
-      } catch {}
-      if (!/^\d+:\d+$/.test(ratio) || !(sliceSec > 0)) {
-        return sendJson(res, 400, { error: 'ratio 形如 "1:1"，sliceSec 为正数' });
-      }
-      const s = readAsrSettings();
-      s.dual = { ratio: ratio, sliceSec: sliceSec, updatedAt: new Date().toISOString() };
-      writeAsrSettings(s);
-      return sendJson(res, 200, { ok: true, dual: s.dual });
-    });
-  }
-  if (pathname === '/api/asr/perf/start' && req.method === 'POST') {
-    if (perfState.running) return sendJson(res, 200, { started: false, already: true, state: perfState });
-    return readBody(req, res, 32 * 1024, (err, body) => {
-      let b = {};
-      try { b = JSON.parse(body.toString('utf8')) || {}; } catch {}
-      const audio = String(b.audio || '').trim();
-      if (!audio || !fs.existsSync(audio)) {
-        return sendJson(res, 400, { error: '需要一份 16kHz 单声道 wav 作为测试素材' });
-      }
-      const slices = String(b.slices || '8,15.01,28');
-      const audioSec = Math.max(30, Math.min(600, Number(b.audioSec) || 60));
-      const out = path.join(ASR_DIR, 'perf-result.json');
-      const args = [path.join(ASR_DIR, 'asr_perf.py'), '--audio', audio,
-                    '--slices', slices, '--audio-sec', String(audioSec),
-                    '--python', ASR_PY, '--out', out];
-      if (b.modelNpu) args.push('--model-npu', String(b.modelNpu));
-      if (b.modelGpu) args.push('--model-gpu', String(b.modelGpu));
-      perfState = { running: true, pct: 0, msg: '启动中…', error: null, result: null,
-                    startedAt: Date.now() };
-      let proc;
-      try {
-        proc = spawn(ASR_PY, args, { windowsHide: true, cwd: ROOT,
-                                     env: pySpawnEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
-      } catch (e) {
-        perfState = Object.assign({}, perfState, { running: false, error: String(e && e.message || e) });
-        return sendJson(res, 500, { error: perfState.error });
-      }
-      perfProc = proc;
-      const onLine = (buf) => {
-        for (const line of String(buf).split('\n')) {
-          const t = line.trim();
-          if (!t.startsWith('{')) continue;
-          let o = null;
-          try { o = JSON.parse(t); } catch { continue; }
-          if (o.type === 'progress') {
-            perfState.pct = o.pct || perfState.pct;
-            perfState.msg = o.msg || perfState.msg;
-          } else if (o.type === 'log') {
-            perfState.msg = o.msg || perfState.msg;
-          } else if (o.type === 'result') {
-            perfState.result = o.data || null;      // 完整结果直接带回来，省一次读文件
-          } else if (o.type === 'error') {
-            perfState.error = o.msg || '测试失败';
-          }
-        }
-      };
-      proc.stdout.on('data', onLine);
-      proc.stderr.on('data', onLine);
-      proc.on('close', (code) => {
-        perfProc = null;
-        perfState.running = false;
-        if (code !== 0 && !perfState.error) perfState.error = '测试脚本退出码 ' + code;
-        else if (code === 0 && !perfState.result) {
-          try { perfState.result = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
-        }
-      });
-      return sendJson(res, 200, { started: true, state: perfState });
-    });
-  }
-  /* 本地翻译引擎状态：设置页显示"模型在不在 / 服务起没起"，并可预热 */
-  if (pathname === '/api/mt/local/status' && req.method === 'GET') {
-    return sendJson(res, 200, localMt().probe());
-  }
-  if (pathname === '/api/mt/local/start' && req.method === 'POST') {
-    localMt().ensure()
-      .then(port => sendJson(res, 200, { ok: true, port, model: localMt().probe().model }))
-      .catch(e => sendJson(res, 200, { ok: false, error: String((e && e.message) || e) }));
-    return;
-  }
-  if (pathname === '/api/translate/test' && req.method === 'POST') {
-    const c = translateCfg();
-    if (!llmReady(c)) return sendJson(res, 400, { error: '先填接口地址、API Key 和模型名' });
-    llmChat(c, [{ role: 'user', content: '只回复一个单词：ok' }], { maxTokens: 512 })
-      .then(r => sendJson(res, 200, { ok: true, reply: String(r.content).slice(0, 200) }))
-      .catch(e => sendJson(res, 200, { ok: false, error: String((e && e.message) || e) }));
-    return;
-  }
-  /* 单条翻译: 字幕列表/时间轴右键「重新翻译」—— 把一条英文行翻成中文行(前端自动回填) */
-  if (pathname === '/api/translate/one' && req.method === 'POST') {
-    const c = translateCfg();
-    if (!llmReady(c)) return sendJson(res, 400, { error: '还没配置翻译：先在设置里填接口地址、API Key 和模型名' });
-    return readBody(req, res, 64 * 1024, (err, body) => {
-      let text = '';
-      try { text = String((JSON.parse(body.toString('utf8')) || {}).text || '').trim(); } catch {}
-      if (!text) return sendJson(res, 400, { error: '缺少 text' });
-      translateLines(c, [text], 0)
-        // 与写初稿同一口径: 中文里的 ，、。 → 空格(! ? 保留)。在这里归一,
-        // 所有调用方(右键「重新翻译」等)拿到的就是干净文本, 不会再漏。
-        .then(arr => sendJson(res, 200, { zh: llmText.normalizeZhPunctuation((arr && arr[0]) || '') }))
-        .catch(e => sendJson(res, 500, { error: String((e && e.message) || e) }));
-    });
-  }
-  /* 运行日志 SSE: UI「日志」页实时显示(连接即回放历史缓冲, 之后实时推送) */
-  if (pathname === '/api/logs/stream' && req.method === 'GET') {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-    res.write('retry: 3000\n\n');
-    for (const line of logBuf) { try { res.write('data: ' + JSON.stringify(line) + '\n\n'); } catch {} }
-    logClients.add(res);
-    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
-    req.on('close', () => { clearInterval(hb); logClients.delete(res); });
-    return;
-  }
-
-  /* 前端错误上报: 浏览器 sendBeacon 把 JS 报错送进来 → 进运行日志(UI 可见) */
-  if (pathname === '/api/logs/client' && req.method === 'POST') {
-    return readBody(req, res, 64 * 1024, (err, body) => {
-      const msg = String(body || '').slice(0, 4000);
-      if (msg.trim()) console.error(msg);       // 走 console 拦截 → 环形缓冲 + SSE 广播
-      return sendJson(res, 200, { ok: true });
-    });
-  }
-
-  /* 生命周期 SSE: 页面常驻订阅一条 —— 托盘点「完全退出」时服务在这里广播 shutdown,
-   * 页面收到后补存一次(靠 beforeunload 的 sendBeacon)并尝试关掉自己的窗口。 */
-  if (pathname === '/api/lifecycle' && req.method === 'GET') {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no'
-    });
-    res.write('retry: 5000\n\n');
-    lifeClients.add(res);
-    const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch {} }, 15000);
-    req.on('close', () => { clearInterval(hb); lifeClients.delete(res); });
-    return;
-  }
-
-  /* 完全退出 —— 托盘图标右键的唯一入口。
-   * 只认两种请求: ① 托盘发来的(带 X-SubFabric-Quit 头, 跨站页面设不了这个头 ——
-   * 用了会被 CORS 预检拦下); ② 本机同源的页面 POST(带 Origin)。
-   * 这样别的网页即使用 <img src="…/api/quit"> 也顶不掉用户正在用的编辑器。 */
-  if (pathname === '/api/quit' && req.method === 'POST') {
-    const origin = String(req.headers.origin || '');
-    const byTray = req.headers['x-subfabric-quit'] === '1';
-    const sameOrigin = !!origin && /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(origin);
-    if (!byTray && !sameOrigin) return sendJson(res, 403, { error: 'forbidden' });
-    console.log('[quit] 收到完全退出请求（来源：' + (byTray ? '托盘图标/本机命令' : origin) + '）');
-    sendJson(res, 200, { ok: true, pid: process.pid });   // 先把响应冲回去, 托盘据此判定成功
-    setTimeout(() => shutdown(byTray ? '托盘图标' : '页面请求'), 120);
-    return;
-  }
-
-  /* 前端诊断上报: 页面把布局/运行状态快照回传, 落到 .diag.json 供排查(不影响任何功能) */
-  if (pathname === '/api/diag' && req.method === 'POST') {
-    return readBody(req, res, 128 * 1024, (err, body) => {
-      try { fs.writeFileSync(path.join(ROOT, '.diag.json'), body.toString('utf8')); } catch {}
-      console.log('[diag] 收到前端诊断快照 (' + body.length + ' 字节)');
-      sendJson(res, 200, { ok: true });
-    });
-  }
-
-  /* /api/media 只服务登记过的视频路径(见 MEDIA_ALLOW 的定义处注释)。
-   * meta 扫描缓存见模块作用域的 mediaMetaCache —— 放段函数里等于没有(每请求执行一次)。 */
-  function mediaAllowed(p) {
-    if (!p) return false;
-    const key = mediaKey(p);
-    if (MEDIA_ALLOW.has(key)) return true;
-    const now = Date.now();
-    if (now - mediaMetaCache.at > 3000) {
-      const set = new Set();
-      let ids = [];
-      try { ids = fs.readdirSync(PROJECTS_DIR); } catch {}
-      for (const id of ids) {
-        if (!validId(id)) continue;
-        const meta = readMeta(id);
-        const vp = meta && meta.video && meta.video.path;
-        if (vp) set.add(mediaKey(vp));
-      }
-      mediaMetaCache = { at: now, set };
-    }
-    return mediaMetaCache.set.has(key);
-  }
-  if (pathname === '/api/media' && req.method === 'GET') {
-    const p = u.searchParams.get('path') || '';
-    const full = path.normalize(p);
-    if (!mediaAllowed(full)) {
-      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'forbidden: video path not registered');
-    }
-    let ok = false;
-    try { ok = fs.statSync(full).isFile() && VIDEO_EXTS.includes(path.extname(full).toLowerCase()); } catch {}
-    if (!ok) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found: ' + p);
-    return serveFile(req, res, full);      // serveFile 自带 Range 支持
-  }
-
   /* action 段允许连字符（如 tts-voices）。原来只写 [a-z]+，于是带连字符的路由
    * **整条正则都不匹配** → 直接 404，而 `if (pm)` 里的分支根本不会被求值
    * （实测：加 tts-voices 时踩到，排查了一阵才意识到不是路由写错、是没匹配上）。 */
   let pm = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/([a-z][a-z-]*))?$/.exec(pathname);
+
   if (pathname === '/api/projects' && req.method === 'GET') {
     const items = [];
     let ids = [];
@@ -6879,6 +6938,7 @@ function startPrepare(id, videoPath, mode) {
     items.sort((a, b) => String(b.modifiedAt || '').localeCompare(String(a.modifiedAt || '')));
     return sendJson(res, 200, { projects: items });
   }
+
   if (pathname === '/api/projects' && req.method === 'POST') {
     return readBody(req, res, 256 * 1024 * 1024, (err, body) => {
       if (err) return sendJson(res, 400, { error: String(err.message) });
@@ -7688,6 +7748,44 @@ function startPrepare(id, videoPath, mode) {
     if (action === 'audio' && req.method === 'GET') {
       return serveFile(req, res, path.join(projDir(id), (meta.audio && meta.audio.file) || 'audio.wav'));
     }
+  }
+
+  // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
+  sendJson(res, 404, { error: 'not found' });
+}
+
+/* 路由段表: 前缀互不相交, 顺序即原 handleRequest 的书写顺序。
+ * 命中前缀即由该段全权处理(未匹配的 method/路径组合由段内兜底回 404)。 */
+const API_SECTIONS = [
+  [/^\/api\/(waveform|peaks|upload-video)\b/, handleWaveRoutes],
+  [/^\/api\/(pick|fetch)\b/, handleFetchRoutes],
+  [/^\/api\/(asr|analyze)\b/, handleAsrRoutes],
+  [/^\/api\/(translate|cast|mt)\b/, handleLlmRoutes],
+  [/^\/api\/(logs|lifecycle|quit)\b/, handleLogsRoutes],
+  [/^\/api\/(diag|media)\b/, handleDiagRoutes],
+  [/^\/api\/projects\b/, handleProjectsRoutes],
+];
+
+function handleRequest(req, res) {
+  if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
+    return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
+  }
+  if (UNSAFE_METHODS.has(req.method)) {
+    const origin = String(req.headers.origin || '').trim();
+    if (origin && !LOOPBACK_ORIGIN_RE.test(origin)) {
+      return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: origin');
+    }
+  }
+  const u = new URL(req.url, `http://${req.headers.host || HOST}`);
+  const pathname = u.pathname;
+
+  // 简单端点先查表(见上方 SIMPLE_ROUTES 注释: 只收同步无副作用的处理器)
+  const simple = SIMPLE_ROUTE_MAP.get(pathname);
+  if (simple && simple(req, res, u)) return;
+
+  // API 段分发: 命中前缀即由该段全权处理(段内未匹配的 method/路径组合由段尾兜底回 404)
+  for (const [re, h] of API_SECTIONS) {
+    if (re.test(pathname)) { h(req, res, u); return; }
   }
 
   const filePath = safeJoin(ROOT, pathname);
