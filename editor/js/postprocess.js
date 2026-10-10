@@ -300,7 +300,6 @@ export function resolveStyleTargets(assText) {
   }
   const uniq = names.filter((n, i, all) => all.findIndex(x => x.toLowerCase() === n.toLowerCase()) === i);
   if (uniq.length < 2) return null;
-  const has = (n) => n && uniq.some(x => x.toLowerCase() === n.toLowerCase());
   let en = uniq.find(n => /^(default|english|en|eng|英文)$/i.test(n))
     || uniq.find(n => /english|英文|(^|[-_])en([-_]|$)/i.test(n)) || '';
   let zh = uniq.find(n => n.toLowerCase() !== String(en).toLowerCase()
