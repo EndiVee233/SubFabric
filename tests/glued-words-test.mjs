@@ -154,6 +154,25 @@ console.log('\n== ⑦ scanGluedWords 按行扫描 ==');
   // 没有 words 字段时退化成按文本切词
   const noWords = GW.scanGluedWords([{ text: 'no way toescape here' }]);
   ok(noWords.length === 1 && noWords[0].head === 'to', '没有词级信息时按文本切词', noWords);
+
+  /* ★ 关键回归：words 里只有时间、**没有 word 字段**时必须回退到按文本扫。
+   * 反思纠错的调用方（server.js 的 runReflect）传的就是 {start,end} ——
+   * 早先这里只看 words.length 就进词级分支，每个 w.word 都是 undefined，
+   * 一个粘连都报不出来（实测：走 DeepSeek 跑完整反思，toescape/weescape 全漏）。 */
+  const timeOnly = [
+    { text: 'With no way toescape, I was bound to die.', words: [{ start: 15.75, end: 15.99 }, { start: 15.99, end: 16.15 }] },
+    { text: 'Then how do weescape?', words: [{ start: 203.59, end: 203.91 }, { start: 203.91, end: 204.07 }] },
+  ];
+  const tHits = GW.scanGluedWords(timeOnly);
+  ok(tHits.length === 2, `★ words 只有时间时也能扫出来（实际 ${tHits.length}）`, tHits.map(h => h.word));
+  ok(tHits[0] && tHits[0].head === 'to' && tHits[0].tail === 'escape', '★ 第 1 行仍解析成 to + escape', tHits[0]);
+  ok(tHits[1] && tHits[1].head === 'we' && tHits[1].tail === 'escape', '★ 第 2 行仍解析成 we + escape', tHits[1]);
+  // 混着来：有的行有 word、有的只有时间，都要能扫
+  const mixed = GW.scanGluedWords([
+    { text: 'xx', words: [{ word: 'toescape' }] },
+    { text: 'no way toescape here', words: [{ start: 1, end: 2 }] },
+  ]);
+  ok(mixed.length === 2, '词级与文本级两种来源混用都能扫', mixed.map(h => h.word));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

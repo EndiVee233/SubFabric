@@ -127,7 +127,15 @@ function detectGluedWord(raw, dict) {
 
 /**
  * 扫一遍句子/词表，返回所有疑似粘连的位置。
- * @param {Array<{text?:string, words?:Array<{word:string}>}>} rows 行（或段落）
+ *
+ * ⚠ `words` 里的元素**未必带 `word` 字段**：反思纠错的调用方（server.js 的 runReflect）
+ *   传的是 `{start, end}` —— 它只需要时间，不需要词面。早先这里只看
+ *   `words.length` 就走进词级分支，于是每个 `w.word` 都是 undefined、
+ *   `detectGluedWord(undefined)` 一律返回 null，**一个粘连都报不出来**（实测踩过：
+ *   走 DeepSeek 跑完整反思，toescape/weescape 都没进结果，notes 也是空的）。
+ *   所以这里必须检查"真的拿到了词面"，拿不到就退回按文本扫。
+ *
+ * @param {Array<{text?:string, words?:Array<{word?:string}>}>} rows 行（或段落）
  * @param {object} [opts] { dict } 自定义词表
  * @returns {Array<{row:number, from:number, to:number, word:string, head:string, tail:string, line:string, reason:string}>}
  */
@@ -139,30 +147,18 @@ function scanGluedWords(rows, opts) {
   for (let i = 0; i < list.length; i++) {
     const r = list[i] || {};
     const words = Array.isArray(r.words) ? r.words : null;
-    if (words && words.length) {
-      for (const w of words) {
-        const hit = detectGluedWord(w && w.word, dict);
-        if (hit) {
-          out.push({
-            row: i, from: i + 1, to: i + 1,
-            word: hit.word, head: hit.head, tail: hit.tail,
-            line: String(r.text || ''),
-            reason: `「${hit.word}」像是两个词粘在一起：应为「${hit.head} ${hit.tail}」`,
-          });
-        }
-      }
-    } else {
-      // 没有词级信息就扫文本里的每个词
-      for (const tok of String(r.text || '').split(/\s+/)) {
-        const hit = detectGluedWord(tok, dict);
-        if (hit) {
-          out.push({
-            row: i, from: i + 1, to: i + 1,
-            word: hit.word, head: hit.head, tail: hit.tail,
-            line: String(r.text || ''),
-            reason: `「${hit.word}」像是两个词粘在一起：应为「${hit.head} ${hit.tail}」`,
-          });
-        }
+    // 只有"真的能拿到词面"才走词级路径
+    const usable = words && words.length && words.some(w => w && typeof w.word === 'string' && w.word);
+    const sources = usable ? words.map(w => w && w.word) : String(r.text || '').split(/\s+/);
+    for (const src of sources) {
+      const hit = detectGluedWord(src, dict);
+      if (hit) {
+        out.push({
+          row: i, from: i + 1, to: i + 1,
+          word: hit.word, head: hit.head, tail: hit.tail,
+          line: String(r.text || ''),
+          reason: `「${hit.word}」像是两个词粘在一起：应为「${hit.head} ${hit.tail}」`,
+        });
       }
     }
   }

@@ -3490,17 +3490,27 @@ function startPrepare(id, videoPath, mode) {
     /* 确定性扫一遍"单词被粘住"（toescape / weescape 这类）—— 两处用它：
      *   ① 贴到对应行后面给模型当提示（它才有机会确认并报 reidentify）
      *   ② 模型漏报时**确定性补条目**（下面按批补），保证召回不依赖模型的强弱
-     * 为什么需要确定性兜底：实测 qwen3:8b 光靠提示词抓不住这种粘连。 */
+     * 为什么需要确定性兜底：实测 qwen3:8b 光靠提示词抓不住这种粘连。
+     *
+     * ⚠ SUBFABRIC_NO_GLUE_HINT=1 **只关①（提示）**，不关扫描本身 ——
+     *   兜底②要照常工作。早先这里写成"关提示时连 scanGluedByRow 也不跑"，
+     *   于是 gluedByRow 是空的、兜底循环没东西可遍历，**两个都废了**（实测踩过：
+     *   关了提示后 toescape/weescape 两条全丢，notes 也是空的）。
+     *   这个开关只用于对照实验，判断"提示"相对"兜底"各自贡献多少。 */
+    const glueHintOn = process.env.SUBFABRIC_NO_GLUE_HINT !== '1';
     const gluedByRow = gluedWordsMod.scanGluedByRow(rows);
     if (gluedByRow.size) {
       const n = Array.from(gluedByRow.values()).reduce((a, v) => a + v.length, 0);
-      console.log(`[reflect] 扫出 ${n} 处疑似"单词被粘住"（${gluedByRow.size} 行）`);
+      console.log(`[reflect] 扫出 ${n} 处疑似"单词被粘住"（${gluedByRow.size} 行：`
+        + [...gluedByRow.keys()].join(',') + `）提示${glueHintOn ? '已开' : '已关·兜底仍生效'}`);
     }
 
     for (let k = 0; k < batches.length; k++) {
       const [bi, lo, hi] = batches[k];
       if (onProgress) onProgress(k, batches.length, `反思中 … 第 ${k + 1}/${batches.length} 批（第 ${lo}~${hi} 行）`);
-      const user = reflectMod.buildBatchPrompt(rows, lo, hi, rows.length, bi, batches.length, gluedByRow);
+      // 提示按开关传；**兜底不看这个开关**（见上面 glueHintOn 的说明）
+      const user = reflectMod.buildBatchPrompt(rows, lo, hi, rows.length, bi, batches.length,
+        glueHintOn ? gluedByRow : null);
       let raw = '';
       try {
         const out = await runBatch(user, cfg.maxTokens);
