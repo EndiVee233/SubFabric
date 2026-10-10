@@ -1551,7 +1551,12 @@ function buildTimelineLanes(rows, cues, label) {
   if (count <= 1) return one;
   const lanes = [];
   for (let i = 0; i < count; i++) lanes.push({
-    label: i === 0 ? label : ('重叠' + (i > 1 ? ' ' + (i + 1) : '')),
+    /* 溢出轨命名：**全部带序号**（重叠2 / 重叠3 / 重叠4…）。
+     * ⚠ 早先是 `'重叠' + (i > 1 ? ' ' + (i + 1) : '')` —— 第 2 条轨（i=1）不带号，
+     *   于是三条溢出轨显示成「重叠 / 重叠 3 / 重叠 4」，看起来像缺了个"重叠2"，
+     *   用户实测就问过"为什么没有重叠2"（标签在序号上自相矛盾）。
+     *   这里改成从 2 开始连续编号（1 号轨就是主轨，用 label）。 */
+    label: i === 0 ? label : ('重叠' + (i + 1)),
     merged: true, cues: [], color: '#5b6472'
   });
   for (const c of cues) {
