@@ -9,8 +9,12 @@ const WAVE_FILL = 220;     // 胶片条收起判据用的"典型满幅波形高"
 const LANE_H = 34;       // 每轨高度
 const LANE_GAP = 6;
 const TEXT_PAD = 6;
-const ZH_FONT = '700 15px "Microsoft YaHei", sans-serif';    // 中文行: 加粗加大(原 12px)
-const EN_FONT = '700 14px "Microsoft YaHei", sans-serif';    // 英文逐词: 加粗加大(原 11px)
+/* 块内两行文字的字体基线（字号/字重/回退族）。
+ * 字号改这里一处即可 —— zhFontOf/enFontOf 都从它拼，不会再出现两处写死不同的情况。 */
+const ZH_TEXT = { weight: 700, px: 15, fallback: '"Microsoft YaHei", sans-serif' };
+const EN_TEXT = { weight: 700, px: 14, fallback: '"Microsoft YaHei", sans-serif' };
+const ZH_FONT = `${ZH_TEXT.weight} ${ZH_TEXT.px}px ${ZH_TEXT.fallback}`;
+const EN_FONT = `${EN_TEXT.weight} ${EN_TEXT.px}px ${EN_TEXT.fallback}`;
 /* 两行文字各自需要的竖直空间(px)，用于 _wordGeom 排布。取字号 + 一点行距，
  * 改动字号时必须同步 —— 否则分隔线/标记会压到字上。 */
 const ZH_LINE = 19;
@@ -38,6 +42,24 @@ const AXIS_COLOR = 'rgba(180,180,198,.85)';
 const WORD_MARK = 'rgba(214,214,228,.85)';    // 逐词标记块
 const WORD_MARK_HOT = 'rgba(255,255,255,.95)';// 拖动中的标记
 const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参考图一致)
+
+/* ── 块内字体：跟稿件样式同步 ──────────────────────────────────────────
+ * 时间轴块上的字应当是"视频里真播出来的那套字" —— 否则改字时字宽对不上。
+ * 从样式名拼出 CSS font 简写；名字里可能有引号/反斜杠，先清一遍防注入与串行
+ * （与 font-picker.js 的 safeFamily 同一约定）。 */
+function cssFamily(name) {
+  return String(name || '').replace(/["'\\\r\n]/g, ' ').trim();
+}
+/** 中文行：字号字重跟内置一致，只换字体族（末尾保留中文回退族，缺字时才不至于画成方框） */
+function zhFontOf(name) {
+  const f = cssFamily(name);
+  return f ? `${ZH_TEXT.weight} ${ZH_TEXT.px}px "${f}", ${ZH_TEXT.fallback}` : ZH_FONT;
+}
+/** 英文逐词行：同上 */
+function enFontOf(name) {
+  const f = cssFamily(name);
+  return f ? `${EN_TEXT.weight} ${EN_TEXT.px}px "${f}", ${EN_TEXT.fallback}` : EN_FONT;
+}
 
 /* ── 字体度量：按**实际字形**算，而不是按字号估 ────────────────────────
  * 居中必须用真实 ascent/descent —— 用"字号"当高度，微软雅黑这类中文字体的
@@ -311,12 +333,39 @@ export class Timeline {
     this._dirty = true;
     this._lastDrawAt = 0;
 
+    /* ── 块内文字用的字体 ──────────────────────────────────────────────
+     * 默认用内置的 generic 字体（见 ZH_FONT / EN_FONT）。
+     * 但**字幕块上的字应当和视频里真播出来的字是同一套** —— 用户用的是
+     * "猫啃什锦黑"，块上却是微软雅黑，改字时对不上字宽（实测反馈：
+     * "把字幕块上的字体和字幕字体同步一下"）。
+     * 所以 main.js 会把稿件样式的 Fontname 推给这里：
+     *     setBlockFonts({ zh: '猫啃什锦黑', en: 'Comic Sans MS' })
+     * 传空串/不传 = 该语言用回内置字体。 */
+    this.blockFonts = { zh: '', en: '' };
+    this.onBlockFonts = null;     // 字体变化回调 → main.js 用来重画 + 失效度量缓存
+
     this._bindEvents();
     new ResizeObserver(() => this._resize()).observe(canvas.parentElement);
     this._resize();
   }
 
   setVideo(video) { this.video = video; this.film.reset(video); this._dirty = true; }
+
+  /** 设置块内字体（来自稿件样式的 Fontname）。传空串 = 该语言用回内置字体。
+   *  字体变了必须清 fontMetrics 缓存 —— 它是按 font 字符串缓存的，不清会拿到旧度量的
+   *  （同样的 font 字符串，换了实际字体文件大小不一样）。 */
+  setBlockFonts(zh, en) {
+    const z = cssFamily(zh), e = cssFamily(en);
+    if (z === this.blockFonts.zh && e === this.blockFonts.en) return;
+    this.blockFonts = { zh: z, en: e };
+    _fontMetrics.clear();
+    this._dirty = true;
+    if (this.onBlockFonts) { try { this.onBlockFonts(this.blockFonts); } catch { /* 回调出错不影响绘制 */ } }
+  }
+  /** 当前中文行用的 CSS font 简写 */
+  zhFont() { return zhFontOf(this.blockFonts.zh); }
+  /** 当前英文逐词行用的 CSS font 简写 */
+  enFont() { return enFontOf(this.blockFonts.en); }
 
   /** 波形图(整段视频一张 PNG); 传空清除 */
   setWaveform(url) {
@@ -1367,8 +1416,10 @@ export class Timeline {
      * 居中一律用 fontMetrics() 的**实际字形**高度，不用字号：汉字占满 em、
      * 拉丁字母只占 x-height 一段，用字号估会让观感中心明显偏。 */
     const ctx = this.ctx;
-    const mZh = fontMetrics(ctx, ZH_FONT);
-    const mEn = fontMetrics(ctx, EN_FONT);
+    /* 字体来自稿件样式（见 setBlockFonts）；没设置时用内置的 generic 字体。 */
+    const zhFont = this.zhFont(), enFont = this.enFont();
+    const mZh = fontMetrics(ctx, zhFont);
+    const mEn = fontMetrics(ctx, enFont);
     const bTop = band.y, bBot = band.y + band.h;
 
     /* 上下两块**各占块高一半**，分隔线落在正中间 —— 用户明确要求
@@ -1468,7 +1519,7 @@ export class Timeline {
             偏暗就换成近白，保证对比度。
 
          文本色**不改**块自己的边框/底色 —— 角色色在别处（边框、轨道、列表）仍然可见。 */
-      ctx.font = ZH_FONT;
+      ctx.font = this.zhFont();      // 与稿件样式的中文字体同步
       const zh = c.text2.slice(0, 60);
       /* ⚠ 中文基线**必须用 g.zhBase**（_wordGeom 算好的那个），不能在这里另算一份。
        *   早先两处各自写 `band.y + band.h*0.30`，后来分区逻辑改了 _wordGeom 的英文区，
@@ -1508,7 +1559,7 @@ export class Timeline {
           ctx.lineTo(x2 - 4, g.axisY + 0.5);
           ctx.stroke();
           ctx.fillStyle = WORD_TEXT;
-          ctx.font = EN_FONT;
+          ctx.font = this.enFont();      // 与稿件样式的英文字体同步
           ctx.fillText(c.text.slice(0, 60), x1 + TEXT_PAD, g.baseline);
         }
       }
@@ -1518,7 +1569,7 @@ export class Timeline {
       /* 纯英文孤行但空间不够：不画词，留白（用户拉高轨道就会显示出来） */
     } else {
       ctx.fillStyle = base;
-      ctx.font = ZH_FONT;
+      ctx.font = this.zhFont();      // 单语孤行的整句文字也跟稿件样式同步
       ctx.fillText((c.text || '').slice(0, 40), x1 + TEXT_PAD, band.y + band.h / 2 + 4);
     }
     ctx.restore();
@@ -1534,7 +1585,7 @@ export class Timeline {
     ctx.lineTo(ax1, g.axisY + 0.5);
     ctx.stroke();
 
-    ctx.font = EN_FONT;
+    ctx.font = this.enFont();      // 词文本也跟稿件样式同步
     ctx.textAlign = 'left';
     let lastRight = -Infinity;                      // 已画出去的文字右边界(避免相邻词压字)
     for (let i = 0; i < words.length; i++) {

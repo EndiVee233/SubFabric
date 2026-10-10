@@ -579,6 +579,18 @@ function refreshOrderControl() {
   }
 }
 
+/** 把稿件样式的字体名推给时间轴 —— 字幕块上的字要跟视频里真播出来的字一致。
+ *  用户用"猫啃什锦黑"时，块上的中文也应当是猫啃什锦黑，否则改字时对不上字宽。
+ *  样式取不到（非 ASS / 还没解析）就传空串，时间轴用回内置字体。 */
+function syncBlockFonts() {
+  if (!timeline || typeof timeline.setBlockFonts !== 'function') return;
+  const t = state.format === 'ass' && state.assDoc ? state.assStyleTargets : null;
+  if (!t) { timeline.setBlockFonts('', ''); return; }
+  const zh = (state.assDoc.getStyle(t.zh) || {}).fontname || '';
+  const en = (state.assDoc.getStyle(t.en) || {}).fontname || '';
+  timeline.setBlockFonts(zh, en);
+}
+
 /* ─────────── 本机字体库(服务端读系统字体, 见 editor/fonts.js) ───────────
  * libass 在 Worker 里跑, 拿不到系统字体 —— 由本地服务把字体文件读出来喂给它。
  * 于是用户只要填字体名, 不用自己找 .ttf: 填「微软雅黑」就用微软雅黑。 */
@@ -761,6 +773,7 @@ function setAssStyleControls() {
   loadSystemFontList();      // 顺手把本机字体填进候选, 用户打字就有补全
   refreshOrderControl();     // 「中英上下顺序」按下稿件的实际 MarginV 显示
   refreshFontNotes();
+  syncBlockFonts();          // 块内字体跟稿件样式同步（改字体后时间轴立刻跟着变）
 }
 
 function applyAssStyleSettings(forceFontReload = false) {
@@ -1421,6 +1434,10 @@ for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   if (el) el.addEventListener('change', () => applyAssStyleSettings());
 }
 if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () => applyAssStyleSettings());
+/* 块内字体变了 → 时间轴重画。
+ * 位置计算依赖字体度量（fontMetrics 按 font 字符串缓存，setBlockFonts 里已清），
+ * 所以这里要连**轨道一起重建**，不能只 touch 一下。 */
+if (timeline) timeline.onBlockFonts = () => { rebuildItemsAndLanes(false, true); };
 /* 中英上下顺序：切换即交换两轨的 MarginV。
  * 值本身存在 localStorage（这是"我想怎么看"的偏好，不是稿件内容），
  * 但**真正生效的是稿件里两条样式的 MarginV** —— 所以切完要立刻套用并重建预览。
