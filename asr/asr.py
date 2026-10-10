@@ -434,20 +434,29 @@ def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provi
 
 
 def _decode_chunks(rec, samples, sr, chunks, noise=0.0, seed=12345, quiet=False):
-    """逐块推理 -> [[{id, frame, text}, ...], ...]（每块一个 token 列表）。
+    """逐块推理 -> [(token 列表, 该块完整文本), ...]（每块一项）。
 
     为什么单独抽出来：稳定性那一项要给音频加噪声**重跑**，两次必须走**完全相同**的
-    分块与解码路径，才能逐位置比对 token。所以这里只做"块 → token 序列"，
+    分块与解码路径，才能逐位置比对 token。所以这里只做"块 → token + 文本"，
     词的重建留给 recognize_words —— 免得两份逻辑漂移。
 
     frame 用真实秒数（与 chunk 起点对齐后）—— 上游 confidence.py 按序号区间归词，
     不依赖时间，这里留真实时间只是为了排查方便。
+
+    ⚠ **纯空白 token 必须留着**（别在这里 `if not tok.strip(): continue`）：
+    sherpa 把词边界符 `▁` 单独吐成**一个只有空格的 token**，它正是"这里该断词"的信号。
+    早先这里把它过滤掉了，害得 recognize_words 无从判断词边界，
+    "we escape" 被拼成 "weescape"、"to escape" 被拼成 "toescape"
+    （2026-10-10 用户实测，两个真实项目里都有）。
+
+    同时把 `r.text` 带出来：它是 sherpa 自己拼的完整文本，词间空格**可信**
+    （实测：token 直接拼接 == r.text 去掉空格，逐字相同），是词边界的最终依据。
     """
     out = []
     for ci, (cs, ce) in enumerate(chunks):
         seg = samples[int(cs * sr):int(ce * sr)]
         if len(seg) == 0:
-            out.append([])
+            out.append(([], ""))
             continue
         if noise > 0:
             import numpy as np
@@ -459,36 +468,105 @@ def _decode_chunks(rec, samples, sr, chunks, noise=0.0, seed=12345, quiet=False)
         r = stream.result
         toks = []
         for tid, (tok, ts) in enumerate(zip(r.tokens, getattr(r, "timestamps", []))):
-            if not tok.strip():
-                continue
             toks.append({"id": tid, "frame": float(ts) + cs, "text": tok})
-        out.append(toks)
+        out.append((toks, getattr(r, "text", "") or ""))
         if not quiet:
             progress(30 + int((ci + 1) / max(1, len(chunks)) * 55), "asr",
                      "识别中 … 第 %d/%d 块" % (ci + 1, len(chunks)))
     return out
 
 
+def align_word_starts(tokens, text):
+    """用**完整文本**标出 token 流里哪些位置是"真正的词首"。
+
+    解决什么问题：sherpa 的 token 流里，词首靠边界符 `▁`（转成前导空格）标识，
+    但模型在退化处会**丢掉那个边界标记** ——
+        ' we' + 'es' + 'ca' + 'pe'   →   "weescape"（本该是 "we escape"）
+    而这个丢失**只发生在 token 流里**：sherpa 自己拼的 `r.text` 仍然是对的
+    （实测该处 text = "How do we escape?"）。所以拿文本当**真值**回头修。
+
+    做法：把 token 逐个在文本里"对表"（跳过空格）；只有**同时**满足下面两条才打
+    `wordStart`：
+      · 文本游标**跳过了空格** —— 说明这里按文本看确实是个词界
+      · 该 token **自己不带前导空格** —— 带的话 `recognize_words` 本来就认得出，
+        这里再打一次只会把同一个词切碎
+
+    ⚠ 两条"不能算词首"的例外（都是实测踩出来的）：
+      · **标点**：文本里 `"point. How"`，`.` 前面没空格、它自己前面也没空格，
+        但它是**独立 token** 且不带前导空格 —— 用上面两条判据会把它标成词首，
+        于是 "point" 和 "." 被拆成两个词（观感："point . How"）。标点必须挂在前一个词尾。
+      · **词中间的片段**：`' H'` + `'ow'` → 文本 "How"。`H` 带前导空格（对表得到词界标记，
+        但被上面第二条挡掉），`ow` 前面没空格（不构成边界）→ 拼回 "How"。
+    """
+    out = []
+    pos = 0
+    n = len(text or "")
+    for tk in tokens or []:
+        t = str(tk.get("text") or "")
+        if not t.strip():
+            out.append(dict(tk))              # 纯空白 token：原样保留
+            continue
+        skipped = 0
+        while pos < n and text[pos].isspace():
+            pos += 1
+            skipped += 1
+        nt = dict(tk)
+        is_punct = not any(ch.isalnum() for ch in t)
+        # 只给"真正的词首"打标记：
+        #   · 文本游标跳过了空格（文本说这里有词界）
+        #   · 该 token 自己**不带**前导空格（带的话 recognize_words 本来就认得出）
+        #   · 不是标点（标点要挂在前一个词尾，不能独立成词）
+        if skipped and not t.startswith(" ") and not is_punct and out:
+            nt["wordStart"] = True
+        out.append(nt)
+        # ⚠ 游标只前进**内容长度**，不能算 token 自带的前导空格 ——
+        #   那个空格对应的正是上面已经跳过的那一格，算进去就重复计数，
+        #   游标会不断超前、越对越偏（实测：token ' point'(6 字符) 对上文本 "point."(5 字符)，
+        #   每遇一个带前导空格的 token 就多走 1 格，于是真正需要修的位置全被错过）。
+        pos += len(t.strip())
+    return out
+
+
 def recognize_words(rec, samples, sr, chunks):
     """逐块推理 -> 词列表 [{word, start, anchor}]。
 
-    token 聚成词靠 BPE 约定「以空格开头的 token 是词首」。模型给的是 token 起始时间;
-    标点 token 的时间戳常落在停顿里, 所以额外记录最后一个「含字母数字的 token」的
-    时间作为 anchor, 后续用它推算真实结束时间。
+    token 聚成词靠**两种**词边界信号 —— 模型两种都会用，漏认任何一种都会把两个词粘起来：
+      ① 边界符挂在词首：' escape'（前导空格）
+      ② 边界符**单独成一个 token**：' '（只有空格）
+    另外用 align_word_starts 拿完整文本兜底，把模型在 token 流里**整个丢掉**的边界补回来。
+
+    token 聚成词靠 BPE 词边界：sherpa 把**词首**的边界符转成前导空格（实测
+    ' F' / ' pr' / ' need'），另外还可能吐一个**孤立的边界 token**（单独成 token，
+    转成 ' '）—— 见下面 `boundary` 那段，那是本函数最容易出错的地方。
+    模型给的是 token 起始时间；标点 token 的时间戳常落在停顿里，所以额外记录最后一个
+    「含字母数字的 token」的时间作为 anchor，后续用它推算真实结束时间。
     """
     per_chunk = _decode_chunks(rec, samples, sr, chunks)
 
     words = []
-    for toks in per_chunk:
+    for toks, text in per_chunk:
+        # 用完整文本把模型**在 token 流里丢掉的**词边界补回来（文本是可信真值）
+        toks = align_word_starts(toks, text)
         cur = None
         for tk in toks:
             tok = tk["text"]
             piece = tok.strip()
+            # 纯空白 token = 孤立的边界符：结掉当前词
             if not piece:
+                if cur is not None:
+                    words.append(cur)
+                    cur = None
                 continue
             t_abs = tk["frame"]
-            # 词首判定：sherpa 的 token 带前导空格（实测 ' F' / ' pr' / ' need'）。
-            if cur is not None and tok.startswith(" "):
+            # 词首判定：token 自带前导空格（模型自己标了边界），
+            # 或文本对齐补出来的 wordStart（模型把边界整个丢了时靠它兜底）。
+            #
+            # ⚠ 这里**不要**再加"前一个 token 没带边界符"之类的附加条件。
+            #   align_word_starts 只给"文本说该断、且 token 自己没标边界"的位置打标记，
+            #   已经把误断挡在源头了；在消费端再挡一次会把真正该断的位置也挡掉
+            #   （实测：' we'(带空格) 后面的 'es' 被打上 wordStart，却因为
+            #     "前一个带空格"被跳过 → 又拼回 "weescape"）。
+            if cur is not None and (tok.startswith(" ") or tk.get("wordStart")):
                 words.append(cur)
                 cur = None
             if cur is None:
@@ -504,9 +582,9 @@ def recognize_words(rec, samples, sr, chunks):
     for i in range(1, len(words)):            # 时间戳偶发抖动, 不允许倒退
         if words[i]["start"] < words[i - 1]["start"]:
             words[i]["start"] = words[i - 1]["start"]
-    # 切开"粘连词"：sherpa 靠 token 的**前导空格**判词首，模型在退化处会吐出
-    # 没有空格的垃圾片段，被 `cur["word"] += piece` 拼成一个词（观感："一个词占 11 秒、
-    # 文本由两半粘成"）。与 NPU 引擎共用同一份实现，保证两个后端行为不分叉。
+    # 切开"粘连词"：边界符**完全缺失**时（模型退化处连孤立的边界 token 都没有），
+    # 片段仍会被 `cur["word"] += piece` 拼成一个词（观感："一个词占 11 秒、文本由两半粘成"）。
+    # 上面处理的是"有边界却认不出"，这里是"压根没有边界"，两者互补、都要留着。
     # 放在排序/防倒退之后、refine_word_ends 之前 —— 切开时要依赖已修正的 start。
     C.split_words_inplace(words)
     return words
@@ -528,8 +606,9 @@ def stability_of(rec, samples, sr, chunks, clean_per_chunk, tta_runs, log_fn=Non
                                    noise=0.02 + 0.01 * k, seed=1000 + 977 * k, quiet=True))
     # 把所有块的 token 首尾相接，变成整段序列 —— 上游 stability_from_runs 只吃一维序列，
     # 而块之间本来就连续（split_chunks 切的是同一段音频），接起来不影响"位置可比"。
-    clean_ids = [tk["id"] for toks in clean_per_chunk for tk in toks]
-    noisy_ids = [[tk["id"] for toks in one for tk in toks] for one in runs]
+    # ⚠ _decode_chunks 现在返回 (tokens, text) 元组，这里只取 tokens。
+    clean_ids = [tk["id"] for toks, _t in clean_per_chunk for tk in toks]
+    noisy_ids = [[tk["id"] for toks, _t in one for tk in toks] for one in runs]
     return C.stability_score_runs(clean_ids, noisy_ids)
 
 
