@@ -4,7 +4,7 @@
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-10（新增 Parakeet-Vulkan（CrispASR）引擎；路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`）
+> 最后更新：2026-10-10（新增 Parakeet-Vulkan（CrispASR）引擎；路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`；**第二轮全面审查 + 24 处修复**，见 `docs/CODE_REVIEW_2026-10-10.md` 与 §11）
 
 ---
 
@@ -218,10 +218,11 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 | 测试 | 覆盖 | 备注 |
 | --- | --- | --- |
-| `tests/karaoke-exhaustive.mjs` | 逐词高亮全链路（28183 断言） | 也负责同步 `tests/jsmod` 镜像 |
+| `tests/karaoke-exhaustive.mjs` | 逐词高亮全链路（28183 断言） | 也负责同步 `tests/jsmod` 镜像；报 `fixture.ass` ENOENT 时先跑 `node tests/gen-fixture.mjs`（夹具是生成物，`*.ass` 不入库） |
 | `tests/cue-segment-test.mjs` | 就地编辑分段 / 最小替换 | 17 项 |
 | `tests/secret-store-test.mjs` | 密文往返 / 篡改检测 | 17 项 |
 | `tests/audio-chunk-test.mjs` | 分片纯函数（静音解析 / 切点 / 合并） | 38 项 |
+| `tests/overlay-test.mjs` | SRT 叠加层活动 cue 检索（重叠/嵌套不漏显示，钉死 `_maxEnd` 回归） | 11 项，直接可跑 |
 | `tests/colorfix-test.mjs` | 颜色修复 | **需要真实用户项目**，新克隆必失败（非缺陷） |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
 | `tools/http_layer_probe.mjs` | HTTP 层 47 项（守卫 / 形状 / 设置往返 / 项目全生命周期 / **占用中删除重试**） | **自带服务启停**，直接 `node tools/http_layer_probe.mjs` |
@@ -271,6 +272,13 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **第二轮全面审查 + 修复（2026-10-10）**：审查报告在 `docs/CODE_REVIEW_2026-10-10.md`（10 高危/30+ 中危/分阶段计划）。本轮已修全部高危 + 安全资源类中危，共 24 处：
+  - **server.js**：① autopost 失败兜底的 `stamp()` 是未定义符号（函数内局部 const）→ 改 `apStamp()`，此前该路径一失败就 ReferenceError 吞日志；② `probeDuration`/`buildPeaks` 补 settle 护栏接线（error+close 双触发曾致 `/api/peaks` 双响应崩溃与 `makeWaveform` 无限递归 spawn）；③ **批量重识别空区间**改为按"跳过"处理（`regionDone+1` + warning），此前每段空转等满 30 分钟；④ `startRerecognize` 的 `cleanup` 提到 try 外，失败/空区间路径也清 %TEMP% 切片（~45MB/次）；⑤ **Cookie 写 Netscape 文件失败改为终止任务**（删除 `--cookies <明文>` 的 argv 兜底 —— 明文进程列表可读，宁报错不泄密）；⑥ probe 用 cookie 改 `mkdtemp` 随机目录 + finally 整目录删除；⑦ `fetchPyPromise` 否定结果不再缓存（装好 Python 后无需重启）；⑧ `realignJobs` 完成/失败 10 分钟老化（照抄 rerecognize 套路，内存不再只增不减）；⑨ `rerecognize` POST 互斥改 `jobStillRunning`（与 reidentify 同口径，卡死任务不再挡按钮）。
+  - **前端**：`project.js` 打开项目检查字幕 `r.ok`（**此前 500 的错误页会被当字幕解析并污染 lastSavedText，编辑即把坏内容写回 subtitle.ass**）；`refreshDualRatio` 自取 `/api/asr/status`（原来读不存在的 `state.asrStatus`，双引擎分工行永久隐藏）；`timeline.js` 刻度 `/\.0\$/` → `/\.0$/`；`overlay.js` setCues 预计算前缀 `_maxEnd` 修重叠 cue 漏显示（与 timeline 同款防御）；`main.js` rim 解析统计 `console.log` → `debug`。
+  - **asr-service.js**：worker ready 前崩溃立即 reject 全部 `readyWaiters`（原来干等 180s）；`waitReady` 的 waiter 补 reject；识别失败路径也布置空闲回收（worker 不再永驻）。
+  - **Python**：`asr_npu.py` 复用 `asr.frame_energies`（refine_word_ends 曾复制旧版全量广播索引，1 小时音频 ~0.9GB —— **合并丢修复的 OOM 回归**）+ `log_mel` 分块；`asr_dual.py` `run_engine` 加 Timer 看门狗（加载 120s + 音频×10，至少 300s）；`asr_perf.py` 子进程 timeout + emit 补 UTF-8 reconfigure/try；`asr.py` 单文件模式 `--out` 缺失校验与热词临时文件清理未做（留在审查报告阶段 2）。
+  - **新增 `tests/overlay-test.mjs`**（11 断言，O1 用例钉死重叠漏显示回归）；`tests/fixture.ass` 是**生成物**（`node tests/gen-fixture.mjs`），缺失导致 karaoke-exhaustive 报 ENOENT 时先跑它。
+  - 验证：6 文件 `node --check` + 3 文件 `py_compile` + karaoke-exhaustive 28183 断言 + http_layer_probe 23 项（ffmpeg 生命周期用例因探针硬编码 D: 路径在本机跳过，先验问题）+ route_smoke 24 路由 + overlay-test 11 断言，全绿。
 - **Parakeet-Vulkan 引擎（CrispASR，2026-10-10）**：新增本地引擎 `crispasr`（ggml；CrispASR v0.8.42 Windows Vulkan 包，
   含 ggml-vulkan.dll；MIT）。模型「Parakeet TDT 0.6B v2（英语·Vulkan 通用）」= `cstr/parakeet-tdt-0.6b-v2-GGUF` q4_k
   （实测 379MB / sha256 287f8a46…）。**不需要 Python、不需要 N 卡**：A 卡/Intel 核显/N 卡通吃，无 Vulkan 时自动

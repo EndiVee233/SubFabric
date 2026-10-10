@@ -49,6 +49,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 置信度算法单独一个模块，便于单测（tests/confidence-test.py）
 import confidence as C  # noqa: E402
 
+# 能量逐帧 RMS 与 asr.py 共用同一份实现（asr.frame_energies，分块计算）。
+# ⚠ 不要在本文件里重新手写：refine_word_ends 曾复制过 asr.py 的老版全量广播索引
+# 矩阵，把 asr.py 后来补的 OOM 分块修复一起弄丢了（1 小时音频 ~0.9GB 索引，
+# NPU 后端会在 GPU 后端不崩的地方 OOM）。教训：跨引擎同算法只留一份实现。
+from asr import frame_energies  # noqa: E402  F401 (refine_word_ends 用)
+
 SAMPLE_RATE = 16000
 MEL_BINS = 128
 BLANK_TOKEN_ID = 1024
@@ -335,10 +341,20 @@ class MelFrontend:
         if x.size < WIN_LENGTH:
             x = np.pad(x, (0, WIN_LENGTH - x.size))
         n_frames = 1 + (x.size - WIN_LENGTH) // HOP_LENGTH
-        idx = np.arange(WIN_LENGTH)[None, :] + HOP_LENGTH * np.arange(n_frames)[:, None]
-        spec = np.fft.rfft(x[idx] * self._window[None, :], n=N_FFT, axis=1)
-        power = spec.real ** 2 + spec.imag ** 2
-        feat = np.log(power @ self._fb.T + LOG_GUARD).T          # [mel, frames]
+        # 分块计算帧索引（与 asr.frame_energies 同一个教训）：一次性广播
+        # (n_frames, WIN_LENGTH) 的索引在 1 小时音频上 ≈ 1.4 亿元素，长音频有 OOM 风险；
+        # 分块后内存只与块大小有关。rfft 逐行独立，分块数值与一次性计算完全一致。
+        win_offs = np.arange(WIN_LENGTH)[None, :]
+        mel_bins = self._fb.shape[0]
+        feat_t = np.empty((n_frames, mel_bins), dtype=np.float64)   # [frames, mel]
+        block = max(1, 2000000 // WIN_LENGTH)                       # 每块索引元素 ≤200万(int64 约16MB)
+        for b0 in range(0, n_frames, block):
+            b1 = min(n_frames, b0 + block)
+            idx = win_offs + HOP_LENGTH * np.arange(b0, b1, dtype=np.int64)[:, None]
+            spec = np.fft.rfft(x[idx] * self._window[None, :], n=N_FFT, axis=1)
+            power = spec.real ** 2 + spec.imag ** 2
+            feat_t[b0:b1] = np.log(power @ self._fb.T + LOG_GUARD)
+        feat = feat_t.T                                             # [mel, frames]
         if not normalize:
             return feat.astype(np.float32)
         mean = feat.mean(axis=1, keepdims=True)
@@ -753,15 +769,10 @@ def refine_word_ends(words, samples, sr):
 
     MAX_PAUSE = 0.5
     total_sec = len(samples) / float(sr)
-    frame = max(1, int(sr * 0.020))
-    hop = max(1, int(sr * 0.010))
-    hop_sec = float(hop) / sr
-    if len(samples) >= frame:
-        n_frames = 1 + (len(samples) - frame) // hop
-        idx = np.arange(frame, dtype=np.int64)[None, :] + hop * np.arange(n_frames, dtype=np.int64)[:, None]
-        energies = np.sqrt(np.mean(np.square(samples[idx]), axis=1)).astype(np.float32)
-    else:
-        energies = np.array([float(np.sqrt(np.mean(np.square(samples)))) if len(samples) else 0.0], dtype=np.float32)
+    # 能量逐帧 RMS 复用 asr.frame_energies（分块计算，与 asr.py 逐帧数值完全一致）。
+    # ⚠ 这里曾是全量广播索引矩阵的老实现（1 小时音频 ≈ 1.15 亿 int64 索引 ~0.9GB），
+    # 复制自 asr.py 修复前的版本 —— 见文件头 import 处的说明。
+    energies, _start_off, hop_sec = frame_energies(samples, sr, frame_ms=20.0, hop_ms=10.0)
 
     thr = max(float(np.percentile(energies, 30)) * 2.0, float(energies.max()) * 0.10, 1e-4) \
         if len(energies) else 1e-4

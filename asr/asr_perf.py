@@ -39,6 +39,12 @@ import wave
 
 import numpy as np
 
+# stderr 强制 UTF-8（GBK 管道下中文日志会抛 UnicodeEncodeError），与 asr.py 同款
+try:
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
@@ -49,8 +55,14 @@ RATIOS = ["1:0", "0:1", "1:1", "2:1", "1:2"]
 
 
 def emit(obj):
-    sys.stderr.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stderr.flush()
+    # 兜底 try + UTF-8 reconfigure: Windows 默认按 ANSI(GBK) 写管道, 中文日志会抛
+    # UnicodeEncodeError —— 独立跑(不经 server.js 的 PYTHONIOENCODING)时表现为
+    # "第一条中文日志就崩"或"日志全静默蒸发"。与 asr.py 同款做法, worker 不该依赖调用方。
+    try:
+        sys.stderr.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
 
 
 def log(msg):
@@ -118,8 +130,20 @@ def run_one_engine(name, script, model, extra, python_exe, slices, tmpdir):
         json.dump({"slices": slices, "out": out}, fh, ensure_ascii=False)
     cmd = [python_exe, script, "--model", model, "--manifest", man, "--out", out] + extra
     t0 = time.time()
-    r = subprocess.run(cmd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace")
+    # 看门狗: 性能测试跑的就是重负载场景, 子进程挂死（NPU/CUDA 原生层）时不能永久等待。
+    # 预算 = 模型加载 120s + 音频×10, 至少 600s; subprocess.run 超时会自己 kill 子进程。
+    total_audio = 0.0
+    for s in slices:
+        try:
+            total_audio += max(0.0, float(s.get("end", 0)) - float(s.get("start", 0)))
+        except Exception:
+            pass
+    timeout = max(600.0, 120.0 + total_audio * 10.0)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{name} 超过 {int(timeout)}s 没跑完（疑似原生层挂死），已强制终止")
     dt = time.time() - t0
     if r.returncode != 0:
         tail = ((r.stderr or "").strip().splitlines() or ["(无输出)"])[-1]

@@ -600,10 +600,18 @@ export function initProjects(ctx) {
 
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
-      const text = await (await fetch(`/api/projects/${pid}/subtitle`)).text();
+      // ⚠ 必须检查 r.ok: 服务端 500/404 时响应体是 HTML/JSON 错误页, 不挡的话会被
+      // 当字幕解析成空/坏文档, 且 lastSavedText 被污染 —— 用户随后任何一次编辑触发
+      // saveNow() 都会把坏内容 PUT 回写 subtitle.ass, 覆盖权威字幕文件(数据丢失)。
+      const r = await fetch(`/api/projects/${pid}/subtitle`);
       if (gen !== _openGen) return;
-      lastSavedText = text;
-      routeSub(text, (m.subtitle && m.subtitle.name) || (m.subtitle && m.subtitle.file) || 'subtitle.ass');
+      if (!r.ok) { toast(`项目字幕读取失败（HTTP ${r.status}）`, 3600); }
+      else {
+        const text = await r.text();
+        if (gen !== _openGen) return;
+        lastSavedText = text;
+        routeSub(text, (m.subtitle && m.subtitle.name) || (m.subtitle && m.subtitle.file) || 'subtitle.ass');
+      }
     } catch {
       toast('项目字幕读取失败', 3600);
     }
@@ -1627,8 +1635,14 @@ async function refreshDualRatio() {
   if (!row || !sel) return;
   try {
     const s = await (await fetch('/api/asr/dual')).json();
-    const anyDual = state.asrStatus && (state.asrStatus.models || [])
-      .some((m) => m.engine === 'dual' && m.ready);
+    // ⚠ 这里原来读 state.asrStatus —— main.js 的 state 根本没有这个字段（恒 undefined）,
+    // anyDual 恒为 false, 双引擎分工行永久隐藏, initDualRatio 整套交互不可达。
+    // 设置页的模型面板(renderAsrModels)自己拉 /api/asr/status, 不会同步回本模块的
+    // asrStatus 局部变量, 所以这里干脆自取一份（调用频率低: 仅设置页交互触发）。
+    let st = null;
+    try { st = await (await fetch('/api/asr/status')).json(); } catch {}
+    const anyDual = !!(st && (st.models || [])
+      .some((m) => m.engine === 'dual' && m.ready));
     // 只有当机器上确实存在可用的双引擎模型时才显示这一行 —— 否则是噪音
     row.hidden = !anyDual;
     if (!anyDual) return;

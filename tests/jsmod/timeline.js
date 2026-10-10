@@ -1236,7 +1236,7 @@ export class Timeline {
       const x = Math.round(this.t2x(tt)) + 0.5;
       if (x < -60 || x > W + 10) continue;
       ctx.fillStyle = C.ruler;
-      ctx.fillText(fmtTime(tt, 1).replace(/\.0\$/, ''), x + 4, top + RULER_H - 8);
+      ctx.fillText(fmtTime(tt, 1).replace(/\.0$/, ''), x + 4, top + RULER_H - 8);
     }
   }
 

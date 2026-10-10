@@ -1840,7 +1840,8 @@ function rimParseCues(text, name) {
     }));
     const g = groupAssRows(rows);
     if (!g.ok) return [];
-    console.log(`[rim] ASS 解析：${rows.length} 条 Dialogue → ${g.lines.length} 句`
+    // 解析统计走 console.debug（带 ?debug 时浏览器控制台才显示），别每次导入都刷生产日志
+    console.debug(`[rim] ASS 解析：${rows.length} 条 Dialogue → ${g.lines.length} 句`
       + `（逐词 ${g.stats.wordRows} 条 / 整句 ${g.stats.sentRows} 条，逐词样式 ${JSON.stringify(g.stats.wordStyles)}）`);
     return g.lines;
   }
