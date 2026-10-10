@@ -242,7 +242,7 @@ this.modeSel.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`)
 
 ### 遗留（未做，需你决定）
 
-- `handleRequest` 余下 2900 行未拆（见上）
+- `handleRequest` 余下 2900 行未拆（见上）→ **已于 2026-10-10 在并入 PR #1 后的树上完成**（按 f8be06a 的做法重做：薄分发器 + 7 个路由段函数 + `API_SECTIONS` 前缀表；纯逐字搬移，行为等价由行多重集 + AST 路由字面量对照 + `route_smoke`/`http_layer_probe` 新旧对照证明）
 - 21 个 `no-unused-vars` 警告：多为历史遗留的死变量（如 `server.js` 的 `MODEL_PATTERNS`、`FETCH_QUALITY_CHOICES`）。清理前建议逐个确认是否真是死代码
 - 136 处空 `catch`、37 处同步 IO：核实后确认多为有意设计，非缺陷，仅记录
 
