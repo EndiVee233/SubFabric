@@ -47,21 +47,38 @@ const _fontMetrics = new Map();
 function fontMetrics(ctx, font) {
   const hit = _fontMetrics.get(font);
   if (hit) return hit;
-  let m = null;
+  let m = null, mi = null;
   try {
     const prev = ctx.font;
     ctx.font = font;
     m = ctx.measureText('Hxg汉字');
+    /* 第二把尺子量"拉丁字母的墨迹高度"（大写 + x-height + 降部）。
+     *  为什么要单独量：'Hxg汉字' 里汉字的墨迹占满 em，比英文词高一大截；
+     *  拿它当"逐词标记条"的高度，白条就会明显高出英文单词
+     *  （用户连续两次反馈："让英文单词和那些分隔条一样高" / "高度参考那些竖向的白条"）。 */
+    mi = ctx.measureText('Hxg');
     ctx.font = prev;
-  } catch { m = null; }
+  } catch { m = null; mi = null; }
   const asc = (m && Number.isFinite(m.actualBoundingBoxAscent) && m.actualBoundingBoxAscent > 0)
     ? m.actualBoundingBoxAscent : null;
   const desc = (m && Number.isFinite(m.actualBoundingBoxDescent)) ? m.actualBoundingBoxDescent : null;
+  const latAsc = (mi && Number.isFinite(mi.actualBoundingBoxAscent) && mi.actualBoundingBoxAscent > 0)
+    ? mi.actualBoundingBoxAscent : null;
+  const latDesc = (mi && Number.isFinite(mi.actualBoundingBoxDescent)) ? mi.actualBoundingBoxDescent : null;
+  const px = parseFontPx(font);
   const out = (asc != null && desc != null)
-    ? { asc, desc, h: asc + desc }
+    ? {
+      asc, desc, h: asc + desc,
+      latAsc: latAsc != null ? latAsc : asc,
+      latDesc: latDesc != null ? latDesc : desc,
+    }
     /* 量不到（老浏览器没有 actualBoundingBox*）→ 按字号估算：
      * 中文字形大致满 em，拉丁字母的升部约 0.75em、降部约 0.22em。 */
-    : { asc: parseFontPx(font) * 0.78, desc: parseFontPx(font) * 0.22, h: parseFontPx(font) };
+    : {
+      asc: px * 0.78, desc: px * 0.22, h: px,
+      latAsc: px * 0.75, latDesc: px * 0.22,
+    };
+  out.latH = out.latAsc + out.latDesc;          // 拉丁字母的实际墨迹高度
   _fontMetrics.set(font, out);
   return out;
 }
@@ -1373,14 +1390,21 @@ export class Timeline {
     const zhBase = Math.round(zhTop + (zhBot - zhTop) / 2 + (mZh.asc - mZh.desc) / 2);
     const zhBottom = zhBase + mZh.desc;              // 中文行的下缘
 
-    /* 标记行高度 = **与英文词文本一样高**（用户要求："让英文单词和那些分隔条一样高"）。
-     *  竖条与词是同一个东西的两种表示（词的起点 / 词的文字），高度一致才整齐。
-     *  矮块下按可用空间收缩，但保持 MARK_MIN_H 起步。 */
-    const markBandH = Math.max(MARK_MIN_H, Math.round(mEn.h));
-    const markW = Math.max(2, Math.min(MARK_W, markBandH));      // 极矮时别比高度才宽
-    /** 下半块的内容高度 = 标记行 + 间隙 + 英文文字行 */
-    const stackH = markBandH + GAP + mEn.h;
-    /** 给定分隔线位置 sep，算出下半块内部的完整布局（标记行 + 英文基线） */
+    /* 逐词标记条的高度 —— **按英文单词的实际墨迹高度**（mEn.latH，用 'Hxg' 量的）。
+     *
+     * ⚠ 这里踩过两次：
+     *   ① 原来固定 20px（比词文本高一大截）；
+     *   ② 改成 mEn.h（'Hxg汉字' 的行盒高）—— 汉字墨迹占满 em，仍比英文词高，
+     *      而且行盒的升部含半个行距，量出来更高。
+     *   用户反馈："让英文单词和那些分隔条一样高" → "高度参考那些竖向的白条"。
+     *   只有拿**拉丁字母自己的墨迹高度**做标准，白条才真的和英文单词一样高。 */
+    const markBandH = Math.max(MARK_MIN_H, Math.round(mEn.latH));
+    const markW = Math.max(2, Math.min(MARK_W, markBandH));      // 极矮时别比高度还宽
+    /* 下半块的内容高度 = 标记条（与英文等高，两者**同一水平轴**）。
+     *  不是"条 + 间隙 + 文字"三段叠加 —— 那样条会悬在单词上方，看着不像同一个词的标记。
+     *  并排时内容高就是 max(条高, 词墨迹高)，两者既然等高就正好相等。 */
+    const stackH = Math.max(markBandH, mEn.latH);
+    /** 给定分隔线位置 sep，算出下半块内部的完整布局（标记条 + 英文基线） */
     function lowerLayout(sep) {
       const top = sep, bot = bBot;
       const stackTop = top + ((bot - top) - stackH) / 2;
@@ -1388,9 +1412,12 @@ export class Timeline {
       mt = Math.max(top + 1, Math.min(mt, markBot - MARK_MIN_H));
       mt = Math.max(band.y + TOP_PAD, mt);
       const mh = Math.max(2, Math.min(markBandH, markBot - mt));
-      let base = Math.round(mt + mh + GAP + mEn.asc);
-      base = Math.max(Math.round(top + mEn.asc), Math.min(Math.round(bot - mEn.desc - 1), base));
-      return { markTop: mt, markH: mh, baseline: base, stackTop: mt, stackBot: base + mEn.desc };
+      /* 英文基线：把词的**墨迹**与标记条对齐在同一水平轴上。
+       *  条代表"这个词从这一刻开始"，与词的文字同轴才读得出对应关系。 */
+      const barMid = mt + mh / 2;
+      let base = Math.round(barMid + (mEn.latAsc - mEn.latDesc) / 2);
+      base = Math.max(Math.round(top + mEn.latAsc), Math.min(Math.round(bot - mEn.latDesc - 1), base));
+      return { markTop: mt, markH: mh, baseline: base, stackTop: mt, stackBot: base + mEn.latDesc };
     }
 
     /* 分隔线 = 块的正中间；但**不许压到中文行上**（矮块下中文行可能撑过半块） */
@@ -1422,7 +1449,8 @@ export class Timeline {
      *  双行字幕轨拉到最紧时块高只有 22px（实测），而 15px 中文 + 14px 英文
      *  两行加起来 39px —— 物理上摆不下。这时**宁可不画逐词行**（只留分隔线与标记），
      *  也不要把文字硬挤出块外、糊成一团。 */
-    const fitWords = (band.h - g.mZh.h) >= (g.mEn.h + g.markH + 4);
+    /* 装不下就只画分隔线：需要的高度 = 中文行 + 下方那一块（条与词同轴，取 max） */
+    const fitWords = (band.h - g.mZh.h) >= (Math.max(g.mEn.latH, g.markH) + 4);
     ctx.save();
     ctx.beginPath();
     ctx.rect(x1 + TEXT_PAD, band.y, Math.max(1, wpx - TEXT_PAD * 2), band.h);
