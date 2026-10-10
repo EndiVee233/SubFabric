@@ -4,7 +4,7 @@
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-10（路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`）
+> 最后更新：2026-10-10（新增 Parakeet-Vulkan（CrispASR）引擎；路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`）
 
 ---
 
@@ -100,7 +100,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 创建（本地视频 / 链接）
 → [下载] startFetchJob → runFetchCli → asr/fetch/fetch_cli.py（10 分钟无输出看门狗）
 → [prepare] startPrepare：ffprobe → ffmpeg 抽 audio.wav + peaks.bin（min/max 包络）
-→ [ASR] startDraftAsr：whisper.cpp / Parakeet / 必剪 / 剪映 / NeMo；长音频先静音分片
+→ [ASR] startDraftAsr：whisper.cpp / Parakeet（sherpa-onnx·CUDA / OpenVINO·NPU / CrispASR·Vulkan 三条） / 必剪 / 剪映 / NeMo；长音频先静音分片
 → [语义分句] reseg（LLM 补标点；所有引擎必经，没配 LLM 就停在这一步）
 → [说话人分离] diarize（可选） → [写字幕]（逐词 ASS 或 SRT）
 → [翻译] translate（LLM，可暂停后"重试"续跑）
@@ -173,7 +173,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `video/` | 下载产物 |
 
 全局 / 本机（**全部不入库**，见 `.gitignore`）：`asr/settings.json`（含**密文**敏感值）、`asr/models/`、
-`asr/whisper.cpp/`、`asr/ytdlp/`、`asr/runtime-python/`（内置 Python）、`editor/vendor/`（libass，约 19MB）。
+`asr/whisper.cpp/`（whisper 运行时）、`asr/crispasr/`（CrispASR 运行时，Parakeet Vulkan 通用版用）、`asr/ytdlp/`、`asr/runtime-python/`（内置 Python）、`editor/vendor/`（libass，约 19MB）。
 
 **敏感数据**（bilibili Cookie / LLM API Key）统一走 `editor/secret-store.js`：Windows DPAPI 密文落盘
 （不可用时降级 AES，解密值仅存内存）。**新敏感字段必须走它**：不进命令行参数、不进日志、不回传前端；
@@ -271,6 +271,12 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **Parakeet-Vulkan 引擎（CrispASR，2026-10-10）**：新增本地引擎 `crispasr`（ggml；CrispASR v0.8.42 Windows Vulkan 包，
+  含 ggml-vulkan.dll；MIT）。模型「Parakeet TDT 0.6B v2（英语·Vulkan 通用）」= `cstr/parakeet-tdt-0.6b-v2-GGUF` q4_k
+  （实测 379MB / sha256 287f8a46…）。**不需要 Python、不需要 N 卡**：A 卡/Intel 核显/N 卡通吃，无 Vulkan 时自动
+  `--no-gpu` 退 CPU（这是与 whisper.cpp "必须 GPU" 的刻意差异）。识别链镜像 whisper.cpp：`runCrispAsr` 用
+  `-ojf` 取 words[].offsets（ms）+ 同款分句规则；运行时下载走抽出来的通用 `startRuntimeDownload`（key=`runtime:crispasr`）。
+  本机实测：i5-12400 + RX550/UHD730 双 Vulkan 设备，11.6s 音频 2.7s 跑完（6.6x 实时）；端到端建初稿一次通过。
 - **文档整理（2026-10-10）**：根目录只留 `README.md` + `PROJECT_MAP.md`（入口与地图），历史/设计文档归入 `docs/`
   （KARAOKE 设计/调研、第一轮审查记录、双引擎实测结论）；删除已完成文档 `CODE_REVIEW_2026-10-08.md`
   （第二轮审查，内容在 git 历史 `git show 2a6dd23:CODE_REVIEW_2026-10-08.md`；曾被 PR 合并复活，再次删除）与
