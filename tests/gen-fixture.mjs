@@ -6,9 +6,13 @@ import { fileURLToPath } from 'url';
 // 自举: 同步 editor/js → jsmod (见 karaoke-exhaustive.mjs)
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const JSMOD = path.join(HERE, 'jsmod'), SRC = path.resolve(HERE, '..', 'editor', 'js');
-fs.rmSync(JSMOD, { recursive: true, force: true });
+/* 镜像同步: 只补齐/更新本族文件, 绝不清空目录(jsmod 两族共用, 清空会删掉另一族的文件) */
 fs.mkdirSync(JSMOD, { recursive: true });
-for (const f of fs.readdirSync(SRC)) if (f.endsWith('.js')) fs.copyFileSync(path.join(SRC, f), path.join(JSMOD, f));
+for (const f of fs.readdirSync(SRC)) {
+  if (!f.endsWith('.js')) continue;
+  const a = path.join(JSMOD, f), b = path.join(SRC, f);
+  if (!fs.existsSync(a) || !fs.readFileSync(a).equals(fs.readFileSync(b))) fs.copyFileSync(b, a);
+}
 fs.writeFileSync(path.join(JSMOD, 'package.json'), '{"type":"module"}\n');
 
 const { AssDoc, assPlainText } = await import('./jsmod/ass.js');
