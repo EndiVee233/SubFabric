@@ -277,6 +277,9 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   证明行为等价 —— 唯一差异：`/api/*` 前缀命中但 method 不匹配的 404 由 text 变 JSON，同码同义）；
   `tests/jsmod` 自举 16 处改为"按需补齐 + 内容比对"、不再清空互删；log-panel 测试改为断言"模块级同域"；
   `postprocess.js` 重删 fork 带回的死代码 `has`；server.js 清掉区域里重复的 `LlmError` 声明（模块作用域已有一份）。
+- **perf 死代码清理（2026-10-10）**：`/api/asr/perf/*` 在合并后有**成对重复**路由（第一组先命中，
+  第二组 state/apply/start 实际不可达，仅 auto-audio 独立可用）——已删除第二组死副本（与活块逐字相同，
+  净删 85 行），保留 auto-audio；7 条请求新旧逐字节一致 + `route_smoke`/`http_layer_probe` 双端一致。
 - 安全加固：`safeJoin` 边界、Host/Origin 守卫、`/api/media` 白名单、`secret-store` 密文。
 - 大拆分：`handleRequest` 3038 行 → 薄分发器 + 7 段函数（行为逐字等价，行多重集对照证明过）。
 - **二次加固（2026-10-09）**：`safeDraftStep` 收 async reject、下载看门狗、重识别卡死自愈、
