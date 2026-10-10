@@ -28,6 +28,7 @@ const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
 const hotwordsMod = require('./hotwords.js');       // 从操作日志挖 ASR 热词候选(纯逻辑, 有单测)
 const gluedWordsMod = require('./glued-words.js');  // 扫"单词被粘住"(toescape 这类), 有单测
+const assSentencesMod = require('./ass-sentences.js'); // 从 karaoke 式 ASS 还原"句子+逐词"(服务端, 无 DOM)
 
 /* 测试用页面：`/__test/<name>` 直接吐 tests/<name>。
  * 为什么需要：`tests/*.html` 的验证页要用 fetch 调 /api/*，而 file:// 下是跨源、
@@ -1529,7 +1530,17 @@ async function nvidiaGpu() {
 const asrProvider = () => { const s = readAsrSettings(); return s.asrProvider === 'cuda' ? 'cuda' : 'cpu'; };
 
 /** 该引擎该用哪个 Python 脚本 + provider 参数。
- *  sherpa-onnx → asr.py(CUDA provider; 官方不支持 CPU); openvino → asr_npu.py(NPU/核显/CPU)。 */
+ *
+ *  ⚠ 各脚本的 **CLI 契约并不相同**（实测逐个数出来的）：
+ *      asr.py          --tta ✓   --hotwords-file/score ✓   --threads ✓
+ *      asr_npu.py      --tta ✓   --hotwords-file/score ✓   --threads ✓
+ *      asr_dual.py     --tta ✗   --hotwords ✗              --threads ✗（它自己有 --ratio/--slice-sec）
+ *      multitalker.py  --tta ✗   --hotwords ✗              --threads ✓
+ *    早先这里只返回 script/provider/hotwords，而调用点**各自**去拼
+ *    `--threads/--provider/--tta/hotwords` —— 于是 nemo 被塞了 `--tta`，
+ *    argparse 直接报 "unrecognized arguments: --tta 2" 整个识别失败（实测复现）。
+ *    所以现在由这里统一给出 `asrArgs(model, mdir, audio, out, confMode)`，
+ *    调用点只管展开，不再各自拼参数 —— 契约差异只在这一个地方描述。 */
 const asrEngineArgs = (model) => {
   const eng = model && model.engine;
   if (eng === 'dual') {
@@ -1541,6 +1552,22 @@ const asrEngineArgs = (model) => {
       provider: 'dual',
       hotwords: [],                 // 两个后端里有一个不支持热词，统一不带
       extra: ['--ratio', d.ratio, '--slice-sec', String(d.sliceSec), '--joint', d.joint],
+      noThreads: true,              // asr_dual.py 没有 --threads
+      noTta: true,                  // 也没有 --tta
+    };
+  }
+  /* nemo(多说话人) 有**自己的脚本** multitalker.py，绝不能落到 asr.py。
+   *   这里踩过：早先只判了 dual 与 openvino，nemo 于是走 default 分支拿到 asr.py ——
+   *   而 asr.py 是 sherpa-onnx 的脚本、只认 encoder/decoder/joiner .onnx + tokens.txt，
+   *   在 .nemo 目录里必然报「模型文件不完整(...): 缺少 encoder*.onnx / decoder*.onnx /
+   *   joiner*.onnx / tokens.txt」。用户看到的就是「重排逐词时间」失败，
+   *   而报错里那句 onnx 清单与所选模型对不上，非常难自查（实测复现过）。 */
+  if (eng === 'nemo') {
+    return {
+      script: path.join(ASR_DIR, 'multitalker.py'),
+      provider: 'cuda',
+      hotwords: [],
+      noTta: true,                  // multitalker.py 不吃 --tta
     };
   }
   const openvino = eng === 'openvino';
@@ -1551,6 +1578,17 @@ const asrEngineArgs = (model) => {
     hotwords: openvino ? [] : parakeetHotwordArgs(),
   };
 };
+
+/** 按引擎契约拼出完整的 ASR 命令行参数（脚本名之后的部分）。
+ *  调用点一律用这个，**不要**自己拼 --tta/--threads —— 见 asrEngineArgs 的说明。 */
+const asrArgsFor = (ea, modelDir, audio, out, confMode) => [
+  '--model', modelDir, '--audio', audio, '--out', out,
+  ...(ea.noThreads ? [] : ['--threads', '4']),
+  '--provider', ea.provider,
+  ...(ea.extra || []),
+  ...(ea.hotwords || []),
+  ...(ea.noTta ? [] : ttaArgs(confMode)),
+];
 
 /** 子进程退出码 → 人话。经典坑: Windows 上「python」不存在时, Microsoft Store 的
  *  占位别名 python.exe 会启动并退出 9009(它打印的提示是纯文本, 不是 asr.py 的 JSON 日志,
@@ -3888,10 +3926,10 @@ function startPrepare(id, videoPath, mode) {
     const wav = path.join(tmpDir, `a-${tag}.wav`);
     const outJson = path.join(tmpDir, `a-${tag}.json`);
     await ttsToWav(spoken, wav, prep.voice, prep.rate);
-    // 合成音频走同一套识别参数（含项目当前的逐句置信度档位）
-    const asrArgs = [prep.ea.script, '--model', prep.mdir, '--audio', wav,
-      '--out', outJson, '--threads', '4', '--provider', prep.ea.provider,
-      ...(prep.ea.extra || []), ...(prep.ea.hotwords || []), ...ttaArgs(prep.confMode)];
+    // 合成音频走同一套识别参数（含项目当前的逐句置信度档位）。
+    // 参数由 asrArgsFor 按**该引擎的 CLI 契约**生成 —— nemo 不吃 --tta，别再这里手拼。
+    const asrArgs = [prep.ea.script,
+      ...asrArgsFor(prep.ea, prep.mdir, wav, outJson, prep.confMode)];
     await new Promise((res, rej) => {
       const pr = spawn(ASR_PY, asrArgs, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       let err = '';
@@ -4121,6 +4159,19 @@ function startPrepare(id, videoPath, mode) {
   async function applyRealignToProject(id, items) {
     const meta = readMeta(id);
     if (!meta) throw new Error('项目不存在');
+
+    /* 没有 asr.json 的稿件（**导入 ASS 建的**）走另一条写回路径：
+     * 直接按行改字幕文件里那一句的时间戳 —— 不去猜 asr.json，也不重建整份 ASS
+     * （那份 ASS 里有用户自己的角色色标/说话人名/样式，重建必丢细节）。 */
+    if (!fs.existsSync(path.join(projDir(id), 'asr.json'))) {
+      const subFile = meta.subtitle && meta.subtitle.file;
+      if (!subFile) throw new Error('这个项目没有字幕文件，无法写回');
+      const r = assSentencesMod.applyWordsToFile(path.join(projDir(id), subFile),
+        items.filter(it => it && Array.isArray(it.words) && it.words.length));
+      if (!r.changed) throw new Error('没有匹配到可改写的句子（字幕可能已变动，重新校对一次）');
+      return r.changed;
+    }
+
     const segs = readSegments(id);
     if (!segs.length) throw new Error('这个项目还没有识别结果');
     const n = segs.length;
@@ -4214,8 +4265,29 @@ function startPrepare(id, videoPath, mode) {
 
   /** 取该项目的**英文逐词句**：只有逐词轨上的句子才谈得上"重校对逐词时间"。 */
   function realignTargets(id, meta) {
-    const segs = readSegments(id);
     const kar = meta && meta.kar;
+    /* 句子来源有两条路：
+     *   ① 有 asr.json（正常识别出来的稿件）→ 直接用它的 segments
+     *   ② 没有 asr.json（**导入 ASS 建的稿件**）→ 从字幕里还原 karaoke 结构
+     * 早先只走 ①，于是导入的稿件点「全片逐词重校对」直接报
+     *   ENOENT: ...\asr.json —— 用户看到的就是"这个功能对导入的稿件用不了"。 */
+    let segs;
+    try {
+      segs = readSegments(id);
+    } catch (e) {
+      segs = null;
+      /* 导入 ASS 建的稿件没有 asr.json —— 改成从字幕本身还原 karaoke 结构。
+       * 逐词样式优先用 meta.kar.wordStyle（编辑器解析出来的那个），
+       * 取不到就让解析器自己挑"条数最多的样式"。 */
+      const subFile = meta && meta.subtitle && meta.subtitle.file;
+      if (subFile) {
+        const parsed = assSentencesMod.sentencesFromFile(path.join(projDir(id), subFile), {
+          wordStyle: kar && kar.wordStyle,
+        });
+        if (parsed && parsed.length) return parsed;
+      }
+      throw e;                       // 两条路都走不通时，把原始原因抛出去
+    }
     /* 判断哪一轨是逐词轨：识别结果里带 words 的句子就是。
      * 不带 words 的是中文整句锚点句（翻译结果），它没有逐词时间可改。 */
     return segs.map((s, i) => ({ s, i }))
@@ -4773,9 +4845,8 @@ function startPrepare(id, videoPath, mode) {
           }
           data = servedOk ? JSON.parse(fs.readFileSync(outJson, 'utf8'))
             : await new Promise((resolve, reject) => {
-            const asrArgs = [ea.script, '--model', mdir, '--audio', segWav,
-                             '--out', outJson, '--threads', '4', '--provider', ea.provider,
-                             ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
+            const asrArgs = [ea.script,
+                             ...asrArgsFor(ea, mdir, segWav, outJson, confMode)];
             const py = spawn(ASR_PY, asrArgs,
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
             let pyErr = '';
@@ -5570,9 +5641,8 @@ function startPrepare(id, videoPath, mode) {
           const outP = path.join(projDir(id), 'asr.chunk' + c.index + '.json');
           let sliceErr = '', sbuf = '';
           const ea = asrEngineArgs(model);
-          const asrArgs = [ea.script, '--model', mdir, '--audio', slice,
-                           '--out', outP, '--threads', '4', '--provider', ea.provider,
-                           ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
+          const asrArgs = [ea.script,
+                           ...asrArgsFor(ea, mdir, slice, outP, confMode)];
           const pr = spawn(ASR_PY, asrArgs,
             { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
           draftProcs.set(id, pr);
@@ -5627,9 +5697,8 @@ function startPrepare(id, videoPath, mode) {
       }
       let lastErr = '', buf = '';
       const ea = asrEngineArgs(model);
-      const asrArgs = [ea.script, '--model', mdir, '--audio', wav,
-                       '--out', outJson, '--threads', '4', '--provider', ea.provider,
-                       ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
+      const asrArgs = [ea.script,
+                       ...asrArgsFor(ea, mdir, wav, outJson, confMode)];
       const proc = spawn(ASR_PY, asrArgs,
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       draftProcs.set(id, proc);
@@ -7212,6 +7281,33 @@ function startPrepare(id, videoPath, mode) {
      * GET  → { voice, rate, minAnchorRatio, voices }
      * POST → 局部更新（存 asr/settings.json 的 realign 段）
      * 这几个值只影响**以后**的重排，不碰已有字幕。 */
+    /* 只读诊断：把「从字幕还原出来的句子」列出来（导入 ASS 的稿件没有 asr.json）。
+     * 用途：① 排查"为什么这句没被重校对" ② 与前端 analyzeKaraoke 的结果对下标
+     * （全片重校对返回的 index 是这里的下标，前端拿它去索引 state.kar.sentences，
+     *   两边若不一致就会改错句 —— 必须能核对）。不写任何文件。 */
+    if (action === 'sentences' && req.method === 'GET') {
+      const meta = readMeta(id);
+      if (!meta) return sendJson(res, 404, { error: '项目不存在' });
+      const subFile = meta.subtitle && meta.subtitle.file;
+      let fromAsr = null;
+      try { fromAsr = readSegments(id).length; } catch { fromAsr = null; }
+      const parsed = subFile
+        ? assSentencesMod.sentencesFromFile(path.join(projDir(id), subFile),
+          { wordStyle: (meta.kar || {}).wordStyle })
+        : null;
+      return sendJson(res, 200, {
+        hasAsrJson: fromAsr !== null,
+        asrSegments: fromAsr,
+        source: fromAsr !== null ? 'asr.json' : (parsed ? 'subtitle(parsed)' : 'none'),
+        wordStyle: (meta.kar || {}).wordStyle || null,
+        count: parsed ? parsed.length : 0,
+        first: (parsed || []).slice(0, 8).map(s => ({
+          index: s.index, start: s.start, end: s.end,
+          words: s.words.length, text: String(s.text).slice(0, 70),
+        })),
+      });
+    }
+
     if (action === 'realign-settings' && (req.method === 'GET' || req.method === 'POST')) {
       const view = async () => {
         const raw = (readAsrSettings().realign) || {};

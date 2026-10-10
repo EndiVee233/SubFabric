@@ -5002,19 +5002,28 @@ async function applyRealignFull() {
   if (realignEls.apply) realignEls.apply.disabled = true;
   const pid = state.project.id;
   try {
-    /* 项目里的句子顺序 = state.kar.sentences 的顺序，服务端 readSegments 读的是同一份
-     * asr.json，所以 item.index 可以直接当 sentences 的下标用。
-     * 不放心的话再用**时间**校对一次：序号对不上就按时间找最接近的那句。 */
+    /* ⚠ **不能**拿 item.index 直接索引 state.kar.sentences：
+     *   服务端返回的 index 是它那边的句子序号，而它解析出的句子集合与前端
+     *   analyzeKaraoke 的**不一样** —— 实测导入 ASS 的稿件：
+     *     前端 11947 句（中英**交替**：英文、中文、英文、中文…）
+     *     服务端 4892 句（**只有英文** —— 中文整句锚点句不参与重校对）
+     *   两边下标从第 1 条起就错开了，按下标改会**改到别的句子**（实测核对过）。
+     *   所以这里一律按「开始时间 + 文本」定位 —— 这两个字段服务端都返回了。 */
     const sents = (state.kar && state.kar.sentences) || [];
     let n = 0, miss = 0;
     const detail = [];
     for (const k of picks) {
       const it = realignData.items[k];
-      let sent = sents[it.index];
-      if (!sent || !Array.isArray(sent.words) || !sent.words.length
-          || Math.abs(Number(sent.start) - Number(it.start)) > 0.05) {
+      const want = String(it.text || '').trim();
+      const at = Number(it.start);
+      /* 先按"文本 + 时间"同时匹配（最稳——同一文本可能在片中出现多次）；
+       * 文本对不上时退回"开始时间最近且带逐词"的那句。 */
+      let sent = sents.find(s2 => Array.isArray(s2.words) && s2.words.length
+        && String(s2.text || '').trim() === want
+        && Math.abs(Number(s2.start) - at) <= 0.5) || null;
+      if (!sent) {
         sent = sents.find(s2 => Array.isArray(s2.words) && s2.words.length
-          && Math.abs(Number(s2.start) - Number(it.start)) <= 0.05) || null;
+          && Math.abs(Number(s2.start) - at) <= 0.05) || null;
       }
       if (!sent) { miss++; continue; }
       sent.words = (it.words || []).map(w => ({ w: w.w, s: w.s, e: w.e }));
