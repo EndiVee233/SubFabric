@@ -18,6 +18,7 @@ const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
+const kLine = require('./k-line.js');        // \k 卡拉OK行文本构造(初稿生成用; 与 karaoke.js 同一格式)
 const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
 const reflectMod = require('./reflect.js');
@@ -88,15 +89,7 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-// 版本号 2.2.1-fork.1：本 fork 与上游**同名不同内容**，故加 -fork.N 后缀区分。
-//（基线上游 2.2.1；本 fork 自己的功能见 editor/README.md 的更新日志 ——
-//  分段导入（多人协作）/ 区域字幕导入 / 项目压缩包导出导入 / 逐词字幕自愈 /
-//  全片逐词重校对 / 备注弹幕 / NPU 识别 + 本地 NLLB 翻译 等）。
-const APP_VERSION = '2.2.1-fork.1'; // 与打版号一致; 改了就顺手同步这里
-// Windows 的文件版本号要求**四段纯数字**，不能带 -fork.1 这种后缀
-//（build_exe.py 用它喂 rcedit，安装包 SubFabric.iss 里也有一份同值的 MyAppFileVersion）。
-// 改 APP_VERSION 时这个也要跟着改，否则 exe 属性里显示的版本会对不上。
-const APP_FILE_VERSION = '2.2.1.0';
+const APP_VERSION = '2.2.1'; // 与打版号一致; 改了就顺手同步这里
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -271,6 +264,9 @@ const mediaKey = (p) => {
   const n = path.normalize(String(p || '').trim());
   return process.platform === 'win32' ? n.toLowerCase() : n;
 };
+/* /api/media 的 meta 扫描缓存(3 秒): 播放视频会发大量 Range 请求, 不能每个请求都把
+ * projects/ 读一遍。**必须在模块作用域** —— 放进段函数(每请求执行一次)等于没有缓存。 */
+let mediaMetaCache = { at: 0, set: new Set() };
 
 /* 把 URL 路径安全地映射到 root 下的文件路径, 越界返回 null。
  * 注意 decodeURIComponent 在 path 之前: new URL() 不会解码 %2f, 所以 "/..%2f" 能带着
@@ -1927,6 +1923,8 @@ function startDiarizeDownload() {
           const exDir = path.join(DIARIZE_DIR(), '_ex_' + i);
           fs.mkdirSync(exDir, { recursive: true });
           const rr = spawn(sysTar, ['-xf', tmp, '-C', exDir], { windowsHide: true });
+          rr.stdout.on('data', () => {});    // 消费输出: 管道缓冲写满会让子进程阻塞在写上
+          rr.stderr.on('data', () => {});
           await new Promise((res) => { rr.on('close', res); rr.on('error', res); });
           const inner = m.inner ? path.join(exDir, m.inner) : path.join(exDir, path.basename(m.file));
           if (!fs.existsSync(inner)) throw new Error('归档里未找到 ' + m.file);
@@ -2698,7 +2696,9 @@ function handleRequest(req, res) {
 const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
 /* 敏感值统一走 secret-store(require 在文件头部): bilibili Cookie / LLM API Key 都走密文, 不明文进 settings.json */
-const fetchJobs = new Map();          // 项目 id -> { proc }
+/* (这里曾有 fetchJobs 下载登记表: 全项目只有写 / 删两个动作, 从无人读取 —— 纯死状态, 已删。
+ *  后来确实出现了"按项目反查下载进程"的需求: 删除项目时必须先杀掉它 —— 那份登记
+ *  现在由 projProcs 承担(见其定义处注释), 这里不再另设。) */
 
 /** 读 fetch 设置。顺带做两件事：
  *  ① 旧版的**明文** Cookie（fetch.biliCookie）迁成密文（fetch.biliCookieEnc）并清掉明文字段；
@@ -2912,10 +2912,27 @@ function runFetchCli(id, args, onEvent) {
         } catch (e) {
           return resolve({ error: '启动下载进程失败: ' + e.message, done: null });
         }
-        fetchJobs.set(id, { proc });
+        // 登记进 projProcs: 下载进程握着 video/*.part 的写句柄 ——
+        // 删除项目时必须能把它(连同它拉起的 ffmpeg)杀掉, 否则 unlink 撞 EBUSY 删不掉
+        trackProjProc(id, proc);
         let buf = '';
         const result = { error: '', done: null };
+        /* 看门狗: 下载内核卡死时既不报错也不退出 —— 没有它 Promise 永不 settle,
+         * 调用方的 await 永久挂起, 项目永远停在「下载中」(还占着 draftJobs 防重入位)。
+         * 10 分钟没有任何输出(进度行 / stderr 都算)才判卡死, 正常下载会不断重置计时。 */
+        let wd = null, settled = false;
+        const settle = (v) => { if (settled) return; settled = true; if (wd) clearTimeout(wd); resolve(v); };
+        const armWd = () => {
+          if (settled) return;
+          if (wd) clearTimeout(wd);
+          wd = setTimeout(() => {
+            try { proc.kill(); } catch {}
+            settle({ error: '下载超时：10 分钟没有进度输出（网络卡死或下载源无响应），已中止', done: null });
+          }, 10 * 60 * 1000);
+        };
+        armWd();
         const feed = (chunk) => {
+          armWd();
           buf += chunk.toString('utf8');
           let i;
           while ((i = buf.indexOf('\n')) >= 0) {
@@ -2932,11 +2949,12 @@ function runFetchCli(id, args, onEvent) {
         };
         proc.stdout.on('data', feed);
         proc.stderr.on('data', (c) => {
+          armWd();
           const s = c.toString('utf8').trim();
           if (s) pushDraftLog(id, '[下载] ' + s.slice(0, 200));
         });
-        proc.on('error', (e) => { fetchJobs.delete(id); resolve({ error: '下载进程出错: ' + e.message, done: null }); });
-        proc.on('close', () => { fetchJobs.delete(id); resolve(result); });
+        proc.on('error', (e) => settle({ error: '下载进程出错: ' + e.message, done: null }));
+        proc.on('close', () => settle(result));
       });
     })
     .catch((e) => ({ error: '下载进程启动失败: ' + ((e && e.message) || e), done: null }));
@@ -2958,7 +2976,7 @@ async function startFetchJob(id, opts) {
   if (part > 1) args.push('--part', String(part));           // 分P: 链接里自带 ?p=N 时由内核以链接为准
   if (f.proxy) args.push('--proxy', String(f.proxy));
   // Cookie: 明文**不放命令行**（进程列表里谁都能看到），落成项目目录里的 Netscape 文件传过去。
-  // 这份文件本来就是下载内核自己会写的（随项目一起删），这里只是提前写、并改用它。
+  // 这份文件提前写成、传给下载内核；下载结束即删（见本函数下面的 unlink），明文不长期留盘。
   const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
   if (ckPlain) {
     const ckFile = path.join(projDir(id), '_bili_cookies.txt');
@@ -2973,6 +2991,10 @@ async function startFetchJob(id, opts) {
     const p = Math.max(0, Math.min(100, ev.progress));
     setDraft(id, { stage: FETCH_STAGE, progress: 2 + Math.round(p * 0.24), message: ev.msg || '下载中 …' });
   });
+
+  // 明文 cookie 文件用完即删: DPAPI 加密落盘的意义就是明文不长期留盘。
+  // 下载内核已退出不会再读它; 文件不存在时 unlink 抛错被吞。
+  try { fs.unlinkSync(path.join(projDir(id), '_bili_cookies.txt')); } catch {}
 
   if (r.error || !r.done || !r.done.file) {
     return finishDraft(id, new Error(r.error || '下载没有产出文件（检查链接、登录态或画质档位）'), { failedStage: FETCH_STAGE });
@@ -3035,6 +3057,7 @@ function startPrepare(id, videoPath, mode) {
         '-map', '[a1]', '-c:a', 'pcm_s16le', '-f', 'wav', '-y', wavTmp,
         '-map', '[a2]', '-f', 's16le', pcmTmp];
       const proc = spawn(FFMPEG, args, { windowsHide: true });
+      trackProjProc(id, proc);   // 提取音频/波形要往项目目录写 tmp 文件, 删除项目前必须能停掉它
       let stderr = '';
       proc.stderr.on('data', d => { if (stderr.length < 4000) stderr += d; });
       const cleanup = () => { for (const f of [wavTmp, pcmTmp]) fs.unlink(f, () => {}); };
@@ -3064,7 +3087,11 @@ function startPrepare(id, videoPath, mode) {
           } catch (e) { return finishPrepare(id, new Error('保存音频/波形失败: ' + e.message)); }
           cleanup();   // 成功分支也要清: peaks.pcm.tmp 是原始 PCM(≈32KB/秒音频),
                        // 漏删会让每个项目长期白占一份与音频等大的临时文件
-          finishPrepare(id, null, { duration, peaksBytes: bytes, audioBytes: fs.statSync(wavOut).size, rate, mode: denoise ? 'denoise' : 'raw' });
+          // statSync 单独兜底: 它若抛错(磁盘瞬断等), prepareJobs 会永久留着 id →
+          // 之后所有 prepare 请求全被 409 挡住。宁可 audioBytes 记 0, 也要让状态收尾。
+          let audioBytes = 0;
+          try { audioBytes = fs.statSync(wavOut).size; } catch {}
+          finishPrepare(id, null, { duration, peaksBytes: bytes, audioBytes, rate, mode: denoise ? 'denoise' : 'raw' });
         });
       });
     });
@@ -3092,7 +3119,7 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* ═══════════ 说话人分离（后台, 跑在音频上与引擎无关） ═══════════ */
-  function runDiarize(wav, onProgress, speakerCount, log) {
+  function runDiarize(id, wav, onProgress, speakerCount, log) {
     const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
     const embModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[1].file);
     const outJson = wav + '.diarize.json';
@@ -3113,6 +3140,7 @@ function startPrepare(id, videoPath, mode) {
       // 0 = 让聚类自己定人数（threshold 生效）; 正数 = 强制聚类数
       '--speakers', String(Number.isFinite(speakerCount) ? Math.max(0, Math.min(20, Math.round(speakerCount))) : 0)],
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+      trackProjProc(id, p);   // 分离进程读项目 audio.wav 且可能跑很久, 删除项目前必须能停掉它
       let pyErr = '', timedOut = false, lastLogs = [];
       const startedAt = Date.now();
       const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, budgetMs);
@@ -3184,6 +3212,36 @@ function startPrepare(id, videoPath, mode) {
       try { if (p.pid) process.kill(-p.pid); } catch {}
       try { p.kill('SIGKILL'); } catch {}
       draftProcs.delete(id);
+    }
+  }
+
+  /* 项目目录里的长任务进程登记表(下载的 python、prepare 的 ffmpeg、说话人分离/选区重识别的进程)。
+   * 删除项目前必须按 id 把它们全部杀掉 —— 它们正握着项目目录里文件的写句柄, Windows 上
+   * 文件被占用时 unlink 直接 EBUSY, 整个删除会失败(实测: 下载中删项目 → 500 + 目录残留)。
+   * 与 draftProcs/draftAborts 分开: 识别链有自己的收尾语义(要往 draft 状态写结果、走 abort 信号)。 */
+  const projProcs = new Map();            // 项目 id -> Set<proc>
+  function trackProjProc(id, proc) {
+    let set = projProcs.get(id);
+    if (!set) { set = new Set(); projProcs.set(id, set); }
+    set.add(proc);
+    const forget = () => { set.delete(proc); if (!set.size) projProcs.delete(id); };
+    proc.once('close', forget);
+    proc.once('exit', forget);
+  }
+  function killProjProcs(id) {
+    const set = projProcs.get(id);
+    if (!set) return;
+    projProcs.delete(id);
+    for (const p of set) {
+      try {
+        if (process.platform === 'win32' && p.pid) {
+          // taskkill /T: 连子孙一起收 —— 下载时 yt-dlp 会拉起 ffmpeg 合并音视频,
+          // 只杀 python 会把 ffmpeg 留成孤儿: 它继续握着(甚至继续写)项目目录里的文件
+          spawn('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        } else {
+          p.kill('SIGKILL');
+        }
+      } catch {}
     }
   }
   function finishDraft(id, err, extra) {
@@ -3342,16 +3400,21 @@ function startPrepare(id, videoPath, mode) {
    *  深色画面下白字最好认, 也避免与 main.py 生成的对白颜色不一致(那边过去硬编码白、样式表却是黄)。
    *  wordColor 会写成 SubFabricWordHighlightColor 元数据, 编辑器据此恢复用户选的逐词高亮色
    *  —— 重新识别/重跑初稿不再把它丢回绿色（上游 2.1.13 修复）。 */
-  function assHeader(label, colors) {
+  function assHeader(label, colors, kMeta) {
     const c = colors || {};
     const enPrimary = hexToAssBgr(c.enColor, '&H00FFFFFF');
     const enSecondary = hexToAssBgr(c.enColor2, '&H0000FFFF');
     const zhPrimary = hexToAssBgr(c.zhColor, '&H00FFFFFF');
     const zhSecondary = hexToAssBgr(c.zhColor2, '&H00FFFFFF');
     const wordColor = /^#[0-9a-f]{6}$/i.test(String(c.wordColor || '')) ? String(c.wordColor).toLowerCase() : '#00ff00';
+    // \k 初稿额外写 SubFabric 元数据: 词太少达不到分析器的切片阈值时, 编辑器靠它认出逐词样式/形态
+    const kMetaLines = kMeta
+      ? '; SubFabricWordStyle: Default\n; SubFabricKaraokeStyle: k\n; SubFabricKaraokeBaseColor: ' + kMeta + '\n'
+      : '';
     return '[Script Info]\n'
       + '; Generated by K-ASS-Editor draft (' + (label || 'Parakeet TDT 0.6B v2') + ')\n'
       + '; SubFabricWordHighlightColor: ' + wordColor + '\n'
+      + kMetaLines
       + 'ScriptType: v4.00+\nPlayDepth: 0\nScaledBorderAndShadow: Yes\n'
       + 'PlayResX: 1920\nPlayResY: 1080\nWrapStyle: 3\n\n'
       + '[V4+ Styles]\n'
@@ -3378,6 +3441,17 @@ function startPrepare(id, videoPath, mode) {
     const hl = wordAss || '00FF00';
     const text = words.map((w, i) => (i === idx ? `{\\c&H${hl}&}${escAss(w.word)}{\\c}` : escAss(w.word))).join(' ');
     return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${text}\n`;
+  }
+
+  /** \k 卡拉OK行（整行单事件）: 每词一段 `{\k<厘秒>}`，头部自带颜色 `{\1c已唱&\2c未唱&}`。
+   *  与编辑器 karaoke.js 的 buildWordSpecsK 是**同一格式**（那边管"打开后重建"，这里只管初稿生成，
+   *  所以这边简单得多 —— 生成词表没有空档：每词亮到下一词起点、末词收在句尾，与颜色切片同规则，
+   *  段时长总和严格 = 行时长）。baseBgr 为空表示该行没有角色 → 写「未唱默认色」。
+   *  注意 \k 时长单位是**厘秒**，high 亮前显示 \2c、唱到时切 \1c（Aegisub 文档语义）。 */
+  function wordKLine(words, start, end, name, sungBgr, baseBgr) {
+    // 行文本构造提取在 ./k-line.js（CJS 可单测）；与编辑器 karaoke.js buildWordSpecsK 同一格式
+    const txt = kLine.wordKText(words, start, end, sungBgr, baseBgr);
+    return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${txt}\n`;
   }
 
   /** 读项目现有字幕里的逐词高亮色('#rrggbb'), 没有/读不出时返回 null。
@@ -3638,6 +3712,16 @@ function startPrepare(id, videoPath, mode) {
     const wordColor = readSavedWordColor(metaNow) || '#00ff00';
     const wordAss = hexToAssBgr(wordColor, '00FF00').replace(/^&H00/, '');
     const styleColors = { wordColor };
+    // 逐词形态(\k 初稿): 选项在建项目时定, 存 meta.draft —— 识别后/翻译后重写字幕都跟随它
+    const kOpt = (() => {
+      const meta = readMeta(id);
+      const d = (meta && meta.draft) || {};
+      if (d.karaokeStyle !== 'k') return null;
+      return {
+        sweep: !!d.karaokeSweep,
+        base: /^#[0-9a-fA-F]{6}$/.test(String(d.karaokeBase || '')) ? String(d.karaokeBase).toUpperCase() : '#FFFFFF',
+      };
+    })();
 
     let format, file, text;
     if (!wordLevel) {
@@ -3667,11 +3751,19 @@ function startPrepare(id, videoPath, mode) {
     } else {
       format = 'ass';
       file = 'subtitle.ass';
-      let out = withConfidence(assHeader(engineLabel, styleColors), segs);
+      let out = withConfidence(assHeader(engineLabel, styleColors, kOpt ? kOpt.base : null), segs);
       segs.forEach((s, i) => {
         const zh = zhText(i);
         if (zh) out += zhLine(s, zh, roleOf(s));
         const ws = s.words || [];
+        const role = roleOf(s);
+        if (kOpt) {
+          // \k 卡拉OK形态: 整行单事件。有角色的行未唱位用角色色, 没有就用「未唱默认色」。
+          // hexToAssBgr 返回 &HAABBGGRR(8 位) → 去掉 "A" 前缀取 6 位 BBGGRR, 行内 \2c 只认 6 位
+          const baseBgr = role ? role.color : hexToAssBgr(kOpt.base, '&H00FFFFFF').slice(4);
+          out += wordKLine(ws, s.start, s.end, role ? `${spkName(role.n)}` : '', wordAss, baseBgr);
+          return;
+        }
         for (let k = 0; k < ws.length; k++) {
           // 首片起点**必须贴齐句首 s.start**, 不能直接用第一个词的时间:
           //   云端识别(必剪/剪映)给的首词起点常常比句首晚几十毫秒(句前静音不算进词),
@@ -3681,7 +3773,6 @@ function startPrepare(id, videoPath, mode) {
           const st = (k === 0) ? s.start : ws[k].start;
           // 每片一直高亮到下一词起点(最后一片到句尾), 与 main.py 生成的结果一致
           const en = (k + 1 < ws.length) ? Math.max(ws[k + 1].start, st + 0.01) : Math.max(s.end, st + 0.01);
-          const role = roleOf(s);
           out += wordSliceLine(ws, k, st, en, role ? `${spkName(role.n)}` : '', wordAss);
         }
       });
@@ -4522,10 +4613,17 @@ function startPrepare(id, videoPath, mode) {
 
   /** 把流水线步骤包一层：任何未捕获异常都记成该项目失败，**绝不能带崩整个服务** ——
    *  这些函数都在子进程/回调里被调用，一抛就是进程级崩溃（实测 buildDraftSubtitle
-   *  里引用一个未定义变量就把 server 打挂了）。 */
+   *  里引用一个未定义变量就把 server 打挂了）。
+   *  异步步骤的 reject 也要收 —— try/catch 只接得住同步 throw：startDraftAsr 在
+   *  await detectSilences 处 reject 时（实测 ffmpeg 缺失走的就是这条路），漏接会让
+   *  draftJobs 永远停在 running —— 界面显示"处理中"但没有任何进程在跑，重试按钮
+   *  也被防重入挡住，只能重启服务。 */
   function safeDraftStep(id, fn) {
-    try { return fn(); }
-    catch (e) { finishDraft(id, e); }
+    try {
+      const r = fn();
+      if (r && typeof r.catch === 'function') r.catch((e) => finishDraft(id, e));
+      return r;
+    } catch (e) { finishDraft(id, e); }
   }
 
   /** 重试：按现有产物决定从哪一步续跑 —— 有识别结果就只补翻译（已有译文不重翻），
@@ -4571,7 +4669,7 @@ function startPrepare(id, videoPath, mode) {
     if (wavOk) {
       try { fs.unlinkSync(path.join(projDir(id), 'draft.log')); } catch {}
       setDraft(id, { status: 'running', stage: STAGE.asr, progress: 28, message: '重新识别语音…', error: null, failedStage: '' });
-      startDraftAsr(id, wordLevel);
+      safeDraftStep(id, () => startDraftAsr(id, wordLevel));
       return { ok: true, from: 'asr' };
     }
     pendingAsr.set(id, { wordLevel });
@@ -4602,8 +4700,12 @@ function startPrepare(id, videoPath, mode) {
     rerecogJobs.set(id, job);
     // 收尾时记 finishedAt: GET 路由靠它判断"这条结果已经没人要了", 超时清掉陈旧任务
     const setRr = (patch) => {
-      if (patch && (patch.status === 'done' || patch.status === 'error') && !patch.finishedAt) {
-        patch = Object.assign({}, patch, { finishedAt: new Date().toISOString() });
+      if (patch) {
+        // 每次进展都盖时间戳: GET 路由据此判断任务是否卡死(见那边的自愈逻辑)
+        patch = Object.assign({}, patch, { updatedAt: new Date().toISOString() });
+        if ((patch.status === 'done' || patch.status === 'error') && !patch.finishedAt) {
+          patch.finishedAt = patch.updatedAt;
+        }
       }
       return Object.assign(job, patch);
     };
@@ -4632,6 +4734,7 @@ function startPrepare(id, videoPath, mode) {
           const ff = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-ss', String(start), '-i', wav,
             '-t', String(end - start), '-vn', '-ac', '1', '-ar', String(AUDIO_SR), '-c:a', 'pcm_s16le', '-y', segWav],
             { windowsHide: true });
+          trackProjProc(id, ff);   // 切音频要读项目的 audio.wav, 删除项目前要能停掉
           let e2 = '';
           const t = setTimeout(() => { try { ff.kill(); } catch {} }, 5 * 60 * 1000);
           ff.stderr.on('data', d => { if (e2.length < 800) e2 += String(d); });
@@ -4652,6 +4755,7 @@ function startPrepare(id, videoPath, mode) {
             const py = spawn(ASR_PY, [NEMO_SCRIPT, '--model', mdir, '--audio', segWav, '--out', outJson,
               '--threads', '4', '--provider', 'cuda'],
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            trackProjProc(id, py);   // 删除项目时一起收掉, 别再空烧 GPU
             let pyErr = '';
             const t = setTimeout(() => { try { py.kill(); } catch {} }, 25 * 60 * 1000);
             py.stderr.on('data', d => {
@@ -4714,6 +4818,7 @@ function startPrepare(id, videoPath, mode) {
                              ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
             const py = spawn(ASR_PY, asrArgs,
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            trackProjProc(id, py);   // 删除项目时一起收掉, 别再空烧 GPU
             let pyErr = '';
             const t = setTimeout(() => { try { py.kill(); } catch {} }, 25 * 60 * 1000);
             py.stderr.on('data', d => {
@@ -5093,7 +5198,7 @@ function startPrepare(id, videoPath, mode) {
         }
         const spkCount = (cs && Number(cs.speakerCount)) || Number(d0.speakerCount) || 0;
         setDraft(id, { stage: STAGE.diarize, progress: 82, message: '区分说话人中 …' });
-        return runDiarize(wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount,
+        return runDiarize(id, wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount,
           (m) => pushDraftLog(id, stamp() + m));
       }).then((r) => safeDraftStep(id, async () => {
         let segs = [];
@@ -5148,7 +5253,8 @@ function startPrepare(id, videoPath, mode) {
 
   /* 静音检测与切片都用 editor/audio-slice.js（真 ffmpeg）—— 抽出去是为了让
      tools/chunk_probe.mjs 能跑**同一份实现**做离线验证，而不是在探针里另抄一遍。 */
-  const detectSilences = (wav, timeoutMs) => audioSlice.detectSilences(FFMPEG, wav, timeoutMs);
+  /* durationSec: 音频总时长 —— 交给 parseSilences 收尾"末尾未闭合的静音"(不传时按 open+0.5 兜底) */
+  const detectSilences = (wav, durationSec) => audioSlice.detectSilences(FFMPEG, wav, undefined, durationSec);
   const sliceAudio = (wav, start, end, out, asMp3) => audioSlice.sliceAudio(FFMPEG, wav, start, end, out, asMp3);
   /** 分片数据落盘（用户要的「返回分片数据」）：projects/<id>/asr-chunks.json + 草稿摘要 */
   function writeChunkReport(id, info) {
@@ -5324,7 +5430,7 @@ function startPrepare(id, videoPath, mode) {
     if (durSec > CHUNK_MIN_SEC) {
       setDraft(id, { stage: STAGE.asr, progress: 30, message: '分析静音，准备分片 …' });
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 音频较长（' + Math.round(durSec / 60) + ' 分钟），先找静音切点 …');
-      chunkSilences = await detectSilences(wav);
+      chunkSilences = await detectSilences(wav, durSec);
       const plan1 = asrChunks.planAudioChunks({ duration: durSec, silences: chunkSilences });
       chunkPlan = plan1.length > 1 ? plan1 : null;
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 找到 ' + chunkSilences.length + ' 段静音 → '
@@ -5603,15 +5709,36 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /** 逐文件深删目录: 项目删除已由 UI 二次确认, 逐个 unlink 以兼容
-   *  会拦截"批量递归删除"的 fs 代理环境(rmSync 递归整目录会被强制要求确认)。 */
+   *  会拦截"批量递归删除"的 fs 代理环境(rmSync 递归整目录会被强制要求确认)。
+   *  project.json **最后删**: 万一有文件被外部进程占着(未登记的子进程/杀毒扫描),
+   *  让删除失败时项目仍留在列表里、可以再删一次 —— 而不是"元数据没了、目录还占着盘"的僵尸态
+   *  (实测旧顺序就是: 删除报错 + 项目从列表消失 + 目录仍在磁盘上)。 */
   function rmDirDeep(dir) {
     if (!fs.existsSync(dir)) return;
-    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+      .sort((a, b) => (a.name === 'project.json' ? 1 : 0) - (b.name === 'project.json' ? 1 : 0));
+    for (const f of entries) {
       const p = path.join(dir, f.name);
       if (f.isDirectory()) rmDirDeep(p);
       else { try { fs.unlinkSync(p); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
     }
     fs.rmdirSync(dir);
+  }
+
+  /** 删除项目目录(带重试): 杀进程与系统释放文件句柄之间有几十~几百毫秒窗口,
+   *  第一次 unlink 可能仍撞 EBUSY(实测: 下载中被占文件的错误码就是 EBUSY)—— 
+   *  每 250ms 重试一次, 最多 8 次(约 2 秒), 仍失败才把错误报给用户。 */
+  function removeProjectDir(id, cb) {
+    let tries = 0;
+    const attempt = () => {
+      try { rmDirDeep(projDir(id)); return cb(null); }
+      catch (e) {
+        const code = e && e.code;
+        if (++tries < 8 && (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES')) return void setTimeout(attempt, 250);
+        return cb(e);
+      }
+    };
+    attempt();
   }
 
   /** 把选择器返回的原始文本规整成一个**真实存在**的路径。
@@ -5755,12 +5882,14 @@ function startPrepare(id, videoPath, mode) {
         if (part > 1) args.push('--part', String(part));
         if (f.proxy) args.push('--proxy', String(f.proxy));
         const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
+        let probeCkFile = '';
         if (ckPlain) {
-          const ckFile = path.join(os.tmpdir(), 'sf-probe-cookies.txt');
-          if (writeNetscapeCookieFile(ckPlain, ckFile)) args.push('--cookies-file', ckFile);
+          probeCkFile = path.join(os.tmpdir(), 'sf-probe-cookies.txt');
+          if (writeNetscapeCookieFile(ckPlain, probeCkFile)) args.push('--cookies-file', probeCkFile);
         } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
-        // id 用 '__probe__': 只用于 fetchJobs 占位，pushDraftLog 写不进去会被静默吞掉
+        // id 用 '__probe__'(不存在的项目): pushDraftLog 写不进去会被静默吞掉, 不会污染真项目
         const r = await runFetchCli('__probe__', args, () => {});
+        if (probeCkFile) { try { fs.unlinkSync(probeCkFile); } catch {} }   // 明文 cookie 用完即删, 不留 %TEMP%
         if (r.error) return sendJson(res, 400, { error: r.error });
         const m = (r.done && r.done.meta) || null;
         if (!m || (!m.title && !m.id)) {
@@ -6697,8 +6826,7 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* /api/media 只服务登记过的视频路径(见 MEDIA_ALLOW 的定义处注释)。
-   * meta 扫描加 3 秒缓存: 播放视频会发大量 Range 请求, 不能每个请求都把 projects/ 读一遍; */
-  let mediaMetaCache = { at: 0, set: new Set() };
+   * meta 扫描缓存见模块作用域的 mediaMetaCache —— 放段函数里等于没有(每请求执行一次)。 */
   function mediaAllowed(p) {
     if (!p) return false;
     const key = mediaKey(p);
@@ -6869,10 +6997,17 @@ function startPrepare(id, videoPath, mode) {
       if (draftOn && data.autoPost) meta.autoPost = true;
       if (draftOn) {
         const draftModel = (draftModelId && modelById(draftModelId)) || resolveAsrModel() || null;
+        // 逐词形态: 'color'(颜色高亮, 默认=升级前行为) | 'k'(\k 卡拉OK)。只在逐词开时有意义。
+        //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 KARAOKE_DESIGN.md §5。
+        const karaokeStyle = (wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
+        const karaokeSweep = karaokeStyle === 'k' && !!data.karaokeSweep;
+        const karaokeBase = /^#[0-9a-fA-F]{6}$/.test(String(data.karaokeBase || ''))
+          ? String(data.karaokeBase).toUpperCase() : '#FFFFFF';
         meta.draft = {
           status: 'running', stage: STAGE.extract, progress: 3,
           message: '提取音频与波形…', wordLevel, lines: 0, words: 0,
           translated: false, needTranslate: false,
+          karaokeStyle, karaokeSweep, karaokeBase,
           modelId: draftModel ? draftModel.id : null,
           engine: draftModel ? (draftModel.engine || '') : '',
           speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
@@ -7411,6 +7546,19 @@ function startPrepare(id, videoPath, mode) {
         rerecogJobs.delete(id);
         return sendJson(res, 200, { job: null });
       }
+      // 卡死自愈: running 但 20 分钟没有任何进展(updatedAt 由 setRr 每次刷新) → 判失败。
+      // 没有它: 任务一旦 hang 住(如云端识别请求挂起), 上面「已有一个重新识别任务在运行」
+      // 会把按钮永久挡死, 刷新页面也救不回来。
+      if (job && job.status === 'running') {
+        const beat = Date.parse(job.updatedAt || job.startedAt || '') || 0;
+        if (beat && Date.now() - beat > 20 * 60 * 1000) {
+          Object.assign(job, {
+            status: 'error', error: '任务 20 分钟没有进展，已标记失败；可直接重新发起',
+            message: '任务超时', finishedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+          });
+          return sendJson(res, 200, { job });
+        }
+      }
       return sendJson(res, 200, { job });
     }
 
@@ -7446,41 +7594,52 @@ function startPrepare(id, videoPath, mode) {
       return sendJson(res, 200, { draft: metaView(meta).draft || null, log });
     }
     if (!action && req.method === 'DELETE') {
-      // 先停掉该项目还在跑的初稿任务(识别进程精确跟踪, 只杀自己的, 不误伤别的 python)
+      // 先停掉该项目还在跑的所有任务, 再删文件 —— 顺序不能反:
+      //   ① 识别进程(draftProcs/draftAborts, 精确跟踪, 不误伤别的 python);
+      //   ② 项目目录里的长任务(下载的 python、提取音频的 ffmpeg、说话人分离/选区重识别) ——
+      //      它们握着项目目录里文件的写句柄, Windows 上 unlink 直接 EBUSY。
+      //      (用户实测: 下载中删项目 → 500 删除失败, 还留下删了一半的目录。)
       draftJobs.delete(id);
+      pendingAsr.delete(id);
       killDraftProc(id);
+      killProjProcs(id);
       // 注意: 逐文件删除而不是 rmSync 递归 —— 部分 fs 代理环境会对"批量递归删除"
       // (条目数超阈值)强制要求确认, 把整目录 rmSync 拦下来导致「删除失败」。
       // 项目删除在 UI 上已经过用户二次确认, 这里逐个 unlink 即可正常工作。
-      try { rmDirDeep(projDir(id)); } catch (e) { return sendJson(res, 500, { error: String(e.message) }); }
-      return sendJson(res, 200, { ok: true });
+      return removeProjectDir(id, (err) => {
+        if (err) return sendJson(res, 500, { error: '删除失败（文件正被占用，可稍后再试）: ' + String((err && err.message) || err) });
+        return sendJson(res, 200, { ok: true });
+      });
     }
     if (action === 'subtitle' && (req.method === 'PUT' || req.method === 'POST')) {
-      // 字幕自动保存: 原文整体覆写; sendBeacon 只能 POST, 所以 PUT/POST 都收
-      return readBody(req, res, 256 * 1024 * 1024, (err2, body) => {
-        if (err2) return sendJson(res, 400, { error: String(err2.message) });
-        const file = meta.subtitle && meta.subtitle.file;
-        if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
-        try {
-          const subTmp = path.join(projDir(id), file) + '.tmp';
-          fs.writeFileSync(subTmp, body, 'utf8');
-          fs.renameSync(subTmp, path.join(projDir(id), file));  // 原子替换, 打开方不会读到半截字幕
-          touchMeta(meta);
-        } catch (e) {
-          // 写盘失败要**报出来**（磁盘满/权限/被占用），否则前端以为存上了
-          console.error('[subtitle] 保存失败：' + ((e && e.message) || e));
-          return sendJson(res, 500, { error: '字幕保存失败：' + ((e && e.message) || e) });
-        }
-        return sendJson(res, 200, { ok: true, savedAt: meta.modifiedAt });
+      // 字幕自动保存: 原文整体覆写; sendBeacon 只能 POST, 所以 PUT/POST 都收。
+      // 流式落盘(不再整块进内存): 长片字幕 + 逐词切片可以到几十 MB, 全量 readBody 会顶内存峰值;
+      // 仍然 tmp + rename 原子替换, 打开方不会读到半截字幕(与 /api/upload-video 同款写法)。
+      const file = meta.subtitle && meta.subtitle.file;
+      if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
+      const subTmp = path.join(projDir(id), file) + '.tmp';
+      const out = fs.createWriteStream(subTmp);
+      let size = 0, done = false;
+      const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
+      req.on('data', (c) => {
+        size += c.length;
+        if (size > 256 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(subTmp); } catch {} finish(413, { error: '字幕超过 256MB 上限' }); }
       });
-      /* ⚠ 这里曾经是 `return finish(200, {...})` —— **finish 根本不存在**，
-       *   于是每次自动保存都抛 ReferenceError、被外层 handler 捕获成
-       *   "[handler error] PUT .../subtitle"，返回 500。
-       *   实测某次编辑会话里累计 **58 次**这样的失败：文件其实已经由上面的
-       *   write+rename 写进去了，但前端收到 500 会认为没存上 ——
-       *   用户那边的表现就是"改了半天，稿子莫名其妙缺内容"。
-       *   下面那两行 req.pipe(out) 是更早的流式落盘实现留下的死代码（out 也不存在），
-       *   一并删掉。 */
+      req.on('error', () => { out.destroy(); try { fs.unlinkSync(subTmp); } catch {} finish(400, { error: '上传中断' }); });
+      out.on('error', () => { try { fs.unlinkSync(subTmp); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
+      out.on('finish', () => {
+        try { fs.renameSync(subTmp, path.join(projDir(id), file)); }
+        catch (e) { try { fs.unlinkSync(subTmp); } catch {} return finish(500, { error: '替换字幕文件失败: ' + String(e && e.message || e) }); }
+        touchMeta(meta);
+        return finish(200, { ok: true, savedAt: meta.modifiedAt });
+      });
+      req.pipe(out);
+      return;
+      /* ⚠ 这个处理器历史上踩过一个大坑（fork 侧记录）: 旧版这里写 `return finish(200, ...)`
+       *   但 finish 从未定义 → 每次自动保存都抛 ReferenceError、被外层捕获成 500
+       *   （实测某次编辑会话累计 **58 次**失败: 文件其实已被 write+rename 写进去,
+       *   但前端收到 500 会认为没存上 —— 用户表现是"改了半天，稿子莫名其妙缺内容"）。
+       *   现在的实现把 finish 定义在本处理器内（见上），不要再引用不存在的符号。 */
     }
     if (action === 'subtitle' && req.method === 'GET') {
       const file = meta.subtitle && meta.subtitle.file;
@@ -7613,6 +7772,10 @@ function shutdown(reason) {
   // 兜底: 无论如何 4 秒内进程必须消失(端口随之释放)
   setTimeout(() => process.exit(0), 4000);
 }
+/* 控制台 Ctrl+C 等信号也要走同一套收尾 —— 否则 CHILDREN 里的 ffmpeg/Python
+ * 直接变孤儿: 服务没了它们照旧活着(Windows 下继续烧 CPU/显存), 只能去任务管理器杀。 */
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 /* ── 任务栏托盘图标(仅 Windows) ─────────────────────────────────
  * 用系统自带的 PowerShell + WinForms NotifyIcon 实现 —— SEA 版 exe 里装不了 npm 原生

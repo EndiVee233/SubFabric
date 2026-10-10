@@ -576,11 +576,16 @@ export function initProjects(ctx) {
   if (regenBtn) regenBtn.addEventListener('click', regenAudio);
 
   /* ─────────── 打开项目 ─────────── */
+  // openProject 竞态守卫代次: applyHash 快速切换项目(A→B)会并发进入, 每次进入自增;
+  // 旧的响应晚回来时代次不符 → 直接丢弃, 避免旧数据覆盖新项目状态。
+  let _openGen = 0;
   async function openProject(pid) {
+    const gen = ++_openGen;
     let m;
     try {
       const r = await fetch('/api/projects/' + pid);
       m = await r.json();
+      if (gen !== _openGen) return;
       if (!r.ok || m.error) throw new Error(m.error || 'HTTP ' + r.status);
     } catch (e) {
       toast('项目加载失败: ' + e.message, 3600);
@@ -595,6 +600,7 @@ export function initProjects(ctx) {
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
       const text = await (await fetch(`/api/projects/${pid}/subtitle`)).text();
+      if (gen !== _openGen) return;
       lastSavedText = text;
       routeSub(text, (m.subtitle && m.subtitle.name) || (m.subtitle && m.subtitle.file) || 'subtitle.ass');
     } catch {
@@ -1937,27 +1943,40 @@ async function renderAsrModels() {
       }
     } else if (note) note.textContent = '';
   }
+  // 下载轮询闸门: 多个下载/安装入口都会调用 pollModelDownload, 不加闸门会叠加多个
+  // 900 次循环、每秒重复 renderAsrModels。同一时刻只允许一个轮询在跑。
+  let _modelPolling = false;
   async function pollModelDownload() {
-    for (let i = 0; i < 900; i++) {
-      let d;
-      try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
-      const anyRunning = (d.downloads || []).some(x => x.running);
-      renderAsrModels();
-      if (!anyRunning) break;
-      await new Promise(r => setTimeout(r, 1000));
-    }
+    if (_modelPolling) return;
+    _modelPolling = true;
+    try {
+      for (let i = 0; i < 900; i++) {
+        let d;
+        try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
+        const anyRunning = (d.downloads || []).some(x => x.running);
+        renderAsrModels();
+        if (!anyRunning) break;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    } finally { _modelPolling = false; }
   }
   async function downloadModel(id) {
     // 点下载立刻有反馈(按钮变「排队…」), 再发请求 —— 旧版静默发请求, 服务端忙时用户以为没点上
     const body = id === 'diarize' ? { kind: 'diarize' } : { modelId: id };
     const btn = document.querySelector('.sm-dl[data-id="' + id + '"]');
     if (btn) { btn.disabled = true; btn.textContent = '开始…'; }
-    const r = await fetch('/api/asr/download', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    const m = await r.json().catch(() => ({}));
-    if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
-    pollModelDownload();
+    try {
+      const r = await fetch('/api/asr/download', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const m = await r.json().catch(() => ({}));
+      if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
+      pollModelDownload();
+    } catch (e) {
+      // fetch reject(服务中断): 恢复按钮以便重试, 并提示失败原因(成功路径不在此处理)
+      if (btn) { btn.disabled = false; btn.textContent = '下载'; }
+      toast('下载失败：' + (e && e.message ? e.message : e));
+    }
   }
   /** 模型下载位置(设置面板): 指定目录 + 打开目录 */
   async function bindModelDirSettings() {
@@ -2520,6 +2539,8 @@ async function renderAsrModels() {
     $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
     $('#np-row-part').hidden = !draft;     // 分P 跟着链接走
     $('#np-row-word').hidden = !draft;
+    $('#np-row-kstyle').hidden = !draft || !$('#np-word').checked;   // 跟着「逐词」开关走
+    if (draft) npSyncKStyle();
     $('#np-row-conf').hidden = !draft;
     $('#np-row-spk').hidden = !draft;
     // 切进初稿模式时，把开关同步成**全局默认**（用户没动过就跟随；动过则以他刚选的为准）。
@@ -2580,6 +2601,8 @@ async function renderAsrModels() {
     $('#np-name').value = '';
     $('#np-word').checked = true;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
+    const kSel = $('#np-kstyle');
+    if (kSel) { delete kSel.dataset.touched; npSyncKStyle(); }   // 逐词样式回到记住的选择
     $('#np-speakers').checked = false;
     $('#np-spk-count').value = '';
     $('#np-part').value = '1';
@@ -2662,9 +2685,26 @@ async function renderAsrModels() {
     root.classList.toggle('disabled', !wordOn);
     root.title = wordOn ? '' : 'SRT 模式没有角色（说话人）概念，需要开启逐词（生成 ASS）才能区分说话人';
   }
+  /** 逐词样式（颜色高亮 / \k 卡拉OK）：记住上次选择（main.js 的设置面板用同一组 localStorage 键）。
+   *  \kf 扫过 / 未唱默认色属于"打开稿件后"的设置（设置面板），这里只带默认值过去。 */
+  function npSyncKStyle() {
+    const sel = $('#np-kstyle');
+    if (!sel) return;
+    if (!sel.dataset.touched) {
+      let saved = '';
+      try { saved = localStorage.getItem('sf-k-style') || ''; } catch (e) {}
+      if (saved === 'k' || saved === 'color') sel.value = saved;   // 默认 color = 升级前行为
+    }
+  }
+  $('#np-kstyle') && $('#np-kstyle').addEventListener('change', () => {
+    const sel = $('#np-kstyle');
+    sel.dataset.touched = '1';
+    try { localStorage.setItem('sf-k-style', sel.value); } catch (e) {}
+  });
   $('#np-word').addEventListener('change', () => {
     $('#np-word-desc').textContent = $('#np-word').checked
       ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
+    $('#np-row-kstyle').hidden = !$('#np-word').checked;
     npSyncSpeakers();
   });
   const npSpk = $('#np-speakers');
@@ -2931,6 +2971,16 @@ async function renderAsrModels() {
           autoPost: !!($('#np-autopost') && $('#np-autopost').checked),
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
+        // 逐词样式与"本地视频初稿"同款(见下方 payload 的注释)
+        if (payload0.wordLevel) {
+          payload0.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
+          if (payload0.karaokeStyle === 'k') {
+            let sweep = '', base = '';
+            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
+            payload0.karaokeSweep = sweep === '1';
+            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload0.karaokeBase = base;
+          }
+        }
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
         const m0 = await r0.json();
@@ -3019,6 +3069,16 @@ async function renderAsrModels() {
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
+        // 逐词样式: 颜色高亮(默认) / \k 卡拉OK。扫过(\kf)与未唱默认色跟随设置面板记住的偏好。
+        if (payload.wordLevel) {
+          payload.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
+          if (payload.karaokeStyle === 'k') {
+            let sweep = '', base = '';
+            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
+            payload.karaokeSweep = sweep === '1';
+            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload.karaokeBase = base;
+          }
+        }
         // 逐句置信度档位（off/fast/full）：显式发给服务端，存进 project.json 的
         // draft.confidence。这是个**项目级**选择 —— 建稿时定了，重新识别也沿用。
         payload.confidence = ($('#np-confidence') || {}).value || 'full';

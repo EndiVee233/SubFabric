@@ -52,6 +52,11 @@
   <main id="stage-wrap">    <div id="video-stage">
       <video id="video" controls preload="metadata"></video>
       <div id="srt-overlay"></div>
+      <!-- 底部原生控制条（约 72px，见 main.js 里同一个 72 的判定）会把鼠标事件**全部吃掉**：
+           落在这一条里的字幕行，双击连 <video> 都到不了，于是"字幕点不动"。
+           这块透明接管层仅在"某条字幕行的下半截压到控制条上"时出现，且只接管那一条带子，
+           其余地方的进度条/音量照常可用。 -->
+      <div id="cue-hit-shield" hidden></div>
       <!-- 备注弹幕层: 播放到备注的时间点时浮在画面**顶部**（"置顶弹幕"）。
            pointer-events:none —— 绝不能挡住视频控件的点击。 -->
       <div id="danmaku-layer" aria-live="polite"></div>
@@ -60,6 +65,18 @@
           <div class="hint-icon" data-ico="film"></div>
           <div>把 <b>视频文件</b> 和 <b>SRT / ASS 字幕</b> 拖到这里</div>
           <div class="hint-sub">也可以去右侧「设置」里点「打开视频」或「打开字幕」</div>
+        </div>
+      </div>
+      <!-- 视频区就地编辑：单击字幕 → 就地改那一段；双击字幕 → 整行文本弹窗
+           #cue-seg-box = 画面上那圈高亮框；#cue-inline-editor = 贴着片段弹出的小输入框 -->
+      <div id="cue-edit-layer" hidden>
+        <div id="cue-seg-box"></div>
+        <div id="cue-inline-editor" hidden>
+          <input id="cie-input" type="text" spellcheck="false" autocomplete="off">
+          <div class="cie-hints">
+            <span>Enter 保存 / Esc 取消</span>
+            <span>双击字幕 / Ctrl+Enter = 整行编辑 · 打空格拆成两段</span>
+          </div>
         </div>
       </div>
     </div>
@@ -271,6 +288,20 @@
             <input id="ass-style-word-color" type="color" value="#00ff00">
             <span id="ass-style-word-color-val" class="ass-style-color-value">#00FF00</span>
           </div>
+          <div class="setting-row ass-style-color-row">
+            <span class="setting-name" title="卡拉OK(\k)形态里「未唱」部分的颜色；有角色台词的行仍显示该行角色色">未唱默认色</span>
+            <input id="ass-style-k-base" type="color" value="#ffffff">
+            <span id="ass-style-k-base-val" class="ass-style-color-value">#FFFFFF</span>
+          </div>
+          <div class="setting-row">
+            <span class="setting-name" title="卡拉OK(\k)的推进方式：关 = \k 逐词瞬切；开 = \kf 从左到右扫过。只影响卡拉OK行，词级时间不变">逐词扫过（\kf）</span>
+            <label class="switch">
+              <input type="checkbox" id="ass-style-k-sweep">
+              <span class="switch-slider"></span>
+            </label>
+            <span class="setting-val" id="ass-style-k-sweep-val">关</span>
+          </div>
+          <p class="set-group-note">「未唱默认色 / 逐词扫过」只作用于卡拉OK(\k)形态的英文行：颜色切片形态用「逐词高亮色」逐词瞬时点亮，不受这两项影响。</p>
           <p id="ass-style-status" class="set-group-note">请先打开 ASS/SSA 字幕。设置写入当前稿件；项目自动保存，普通文件请导出。</p>
           <p class="set-group-note">直接填字体名即可（有补全）：本机装了的字体，预览会自动取来用，不用自己找文件。本机没装的字体，预览会回退到内置字体，「载入字体」可导入 .ttf/.otf 补上。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
         </div>
@@ -646,6 +677,7 @@
       <div id="tl-menu" hidden>
         <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
         <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
+        <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
         <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="把这条字幕念一遍再识别，用得到的节奏重排每个词的时间。只改逐词时间，不动文本">重排逐词时间</button>
         <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除字幕块</button>
       </div>
@@ -735,6 +767,7 @@
   <div id="card-menu" hidden>
     <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
     <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
+    <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
     <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="把这条字幕念一遍再识别，用得到的节奏重排每个词的时间。只改逐词时间，不动文本">重排逐词时间</button>
     <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除该条字幕</button>
   </div>
@@ -900,6 +933,21 @@
     <div class="pick-title modal-drag-handle" id="pick-title">这里重叠了好几条字幕，选一条设置角色：</div>
     <div class="pick-list" id="pick-list"></div>
     <div class="pick-actions"><button type="button" class="btn" id="pick-cancel">取消</button></div>
+  </div>
+</div>
+
+<!-- 整行文本编辑: 仅替换 Text 字段, 时间与样式不动。
+     入口 = 片段框内 Ctrl+Enter, 或在视频画面上右键该条字幕 -->
+<div id="cue-text-overlay" hidden>
+  <div class="rn-box modal-surface ctd-box">
+    <div class="rn-title modal-drag-handle">编辑字幕文本（仅修改 Text 字段，不改变时间与样式）</div>
+    <div class="ctd-preview"><span class="ctd-lbl">行预览:</span><span id="ctd-preview"></span></div>
+    <textarea id="ctd-input" class="ctd-input" rows="5" spellcheck="false"></textarea>
+    <p class="ctd-hint" id="ctd-hint">提示：仅替换 ASS 的 Text 字段；行首角色/颜色前缀会自动保留，不应在编辑框中重复输入。可在此输入 ASS 内联标签。</p>
+    <div class="rn-actions">
+      <button type="button" class="btn" id="ctd-cancel">取消</button>
+      <button type="button" class="btn btn-accent" id="ctd-ok">保存</button>
+    </div>
   </div>
 </div>
 
@@ -1302,6 +1350,15 @@
             <label class="np-switch">
               <input type="checkbox" id="np-word" checked>
               <span id="np-word-desc">开启 → 生成 ASS 逐词字幕</span>
+            </label>
+          </div>
+          <div class="np-file-row" id="np-row-kstyle" hidden>
+            <span class="np-lbl">逐词样式</span>
+            <label class="np-switch">
+              <select id="np-kstyle" class="np-select">
+                <option value="color">颜色高亮（当前词瞬时点亮）</option>
+                <option value="k">\k 卡拉OK（唱过不灭，视频区观感不同）</option>
+              </select>
             </label>
           </div>
           <div class="np-file-row" id="np-row-conf" hidden>
