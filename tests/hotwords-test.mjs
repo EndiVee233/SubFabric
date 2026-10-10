@@ -222,5 +222,54 @@ console.log('\n== ⑨ 「模型管理」状态卡不能误报（三个实测撞�
     '★ 那 3 处都说得通（nvidiaGpu 内部 ×2 + gpuPending ×1）', bizCacheReads);
 }
 
+console.log('\n== ⑩ 「自动纠错」卡：不能选做不了纠错的模型、报错要指向真原因 ==');
+{
+  const REPO = path.resolve(HERE, '..');
+  const PJS = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
+  const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
+
+  /* ① 服务商下拉必须滤掉本地引擎（NLLB）。
+   * NLLB 是翻译专用的编码器-解码器模型，不做自由文本生成，
+   * 所以「通读全片找语句不通顺」它干不了；correctCfg 也没为它分流。
+   * 实测踩过：用户选了它，baseUrl 是空的 → 卡片永远"不可用"。 */
+  const provLine = PJS.split('\n').find(l => /const usable = \(v\.presets/.test(l)) || '';
+  ok(/filter\(p => !p\.local\)/.test(provLine),
+    '★ 纠错的服务商下拉滤掉了 local 预设（NLLB）', provLine.trim().slice(0, 90));
+  ok(/prov\._presets = usable/.test(PJS),
+    '★ 存下过滤后的列表，change 时用它填地址');
+  ok(/if \(prov\.value !== \(v\.provider \|\| ''\)\) prov\.value = '';/.test(PJS),
+    '★ 旧配置里存的 local 预设值会被清掉，不显示成空白');
+
+  /* ② 选服务商时要**连带填地址与模型名**。
+   * 原来只发 provider —— 选了 DeepSeek 地址栏还是空的，卡片继续报不可用。 */
+  const chgSeg = PJS.slice(PJS.indexOf("const prov = document.getElementById('st-correct-provider')"),
+                           PJS.indexOf("const ut = document.getElementById('st-correct-usetranslate')"));
+  ok(/patch\.baseUrl = p\.baseUrl/.test(chgSeg) && /patch\.model = p\.model/.test(chgSeg),
+    '★ 选预设时把 baseUrl/model 一起填并保存');
+
+  /* ③ 报错要指向**真正缺的那个东西**。
+   * 原来不管什么原因都写"非本机地址必须填 API Key" —— 地址明明是空的时候也这么说。 */
+  const noteSeg = PJS.slice(PJS.indexOf("const note = document.getElementById('st-correct-note')"),
+                           PJS.indexOf('async function correctLoad'));
+  ok(/!v\.effectiveBaseUrl \|\| !v\.effectiveModel/.test(noteSeg),
+    '★ 先判"地址/模型名是否为空"');
+  ok(/还没填「接口地址」与「模型名」/.test(noteSeg),
+    '★ 缺地址时说"还没填接口地址与模型名"');
+  ok(/非本机地址，必须填 API Key/.test(noteSeg),
+    '★ 只有地址存在、Key 缺失时才说 Key 的事');
+  ok(/127\.0\.0\.1/.test(noteSeg), '★ 顺带告诉用户本机地址免 Key');
+
+  /* ④ 跟随翻译时自定义区要 disable，不能只是 hidden。
+   * 只 hidden 的话输入框仍参与焦点，用户会以为"填了能生效"（服务端整段忽略）。 */
+  ok(/box\.querySelectorAll\('input,select'\)\.forEach\(el => \{ el\.disabled = !!v\.useTranslate; \}\)/.test(PJS),
+    '★ 跟随状态下把自定义区输入框一并 disable');
+  ok(/box\.querySelectorAll\('input,select'\)\.forEach\(el => \{ el\.disabled = ut\.checked; \}\)/.test(PJS),
+    '★ 切换勾选框时同步 disable 状态');
+
+  // ⑤ 服务端确实有 local 标记可供过滤
+  ok(/local: !!p\.local/.test(SRV) || /local: !!/i.test(SRV),
+    '★ 服务端 presets 里带 local 标记（前端靠它过滤）');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

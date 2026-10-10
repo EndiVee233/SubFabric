@@ -2078,16 +2078,31 @@ async function renderAsrModels() {
     set('st-correct-batch', v.batchLines);
     chk('st-correct-usetranslate', v.useTranslate);
     const box = document.getElementById('st-correct-custom');
-    if (box) box.hidden = !!v.useTranslate;
+    if (box) {
+      box.hidden = !!v.useTranslate;
+      /* 跟随翻译时把这些输入框**一起 disable**：
+       * 只 hidden 不 disable 的话，它们仍参与 Tab 焦点与表单语义，
+       * 而且用户会以为"填了就能生效"（其实服务端整段忽略，见 correctCfg 的 `f = follow ? {} : t`）。 */
+      box.querySelectorAll('input,select').forEach(el => { el.disabled = !!v.useTranslate; });
+    }
     set('st-correct-baseurl', v.baseUrl || '');
     set('st-correct-model', v.model || '');
     const prov = document.getElementById('st-correct-provider');
     if (prov) {
       if (!prov.options.length && v.presets) {
+        /* ⚠ 这里必须滤掉**不能做纠错**的本地引擎（NLLB）。
+         * NLLB 是翻译专用的编码器-解码器模型：它只会"把一句翻成另一种语言"，
+         * 不做自由文本生成，所以「通读全片找语句不通顺」这件事它根本干不了
+         * （服务端 correctCfg 也完全没为它分流，选了只会拿到一个空 baseUrl → 永远不可用）。
+         * 实测踩过：用户选了它，卡片就卡在"模型还不可用"且提示文案还是错的。 */
+        const usable = (v.presets || []).filter(p => !p.local);
         prov.innerHTML = '<option value="">（不指定，用下面的地址）</option>'
-          + v.presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+          + usable.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+        // 旧配置里存着 local 预设时，下拉里没这个 option → 强制回到"不指定"，别显示成空白
+        prov._presets = usable;
       }
       prov.value = v.provider || '';
+      if (prov.value !== (v.provider || '')) prov.value = '';
     }
     const eff = document.getElementById('st-correct-eff');
     if (eff) {
@@ -2102,9 +2117,21 @@ async function renderAsrModels() {
     }
     const note = document.getElementById('st-correct-note');
     if (note) {
-      note.innerHTML = v.ready
-        ? '✓ 模型可用。纠错会消耗模型调用（长稿分批多次）；实际重识别的音频量由上面的「上下文」决定。'
-        : '<span style="color:var(--danger)">模型还不可用：非本机地址必须填 API Key</span>';
+      /* ⚠ 报错要指向**真正缺的那个东西**。
+       * 原来不管什么原因都写"非本机地址必须填 API Key" ——
+       * 地址明明是空的时候也这么说，把人往错方向引（实测踩过：
+       * 用户以为要补 Key，其实是要么跟翻译、要么填地址）。 */
+      if (v.ready) {
+        note.innerHTML = '✓ 模型可用。纠错会消耗模型调用（长稿分批多次）；实际重识别的音频量由上面的「上下文」决定。';
+      } else if (!v.effectiveBaseUrl || !v.effectiveModel) {
+        note.innerHTML = '<span style="color:var(--danger)">模型还不可用：还没填「接口地址」与「模型名」</span>'
+          + '<span class="gl-hint"> —— 想省事就勾上「用字幕翻译的模型」（跟着「翻译」页那套走）；'
+          + '想单独指定就填一个 OpenAI 兼容服务的地址，本机地址（127.0.0.1）免 Key。</span>';
+      } else if (!v.hasKey) {
+        note.innerHTML = '<span style="color:var(--danger)">模型还不可用：这是非本机地址，必须填 API Key</span>';
+      } else {
+        note.innerHTML = `<span style="color:var(--danger)">模型还不可用：${esc(v.effectiveBaseUrl)} 这套配置没通过检查</span>`;
+      }
     }
   }
   async function correctLoad() {
@@ -2201,11 +2228,32 @@ async function renderAsrModels() {
     bind('st-correct-baseurl', 'baseUrl');
     bind('st-correct-model', 'model');
     bind('st-correct-key', 'apiKey');
-    bind('st-correct-provider', 'provider');
+    /* 选服务商时**把该家的地址与模型名一起填上**（与「翻译」页同一行为）。
+     * 原来只发 provider、不填地址 —— 于是选了 DeepSeek 地址栏还是空的，
+     * 卡片继续报"还不可用"，用户以为选择没生效（实测踩过）。 */
+    {
+      const prov = document.getElementById('st-correct-provider');
+      if (prov) prov.addEventListener('change', () => {
+        const p = (prov._presets || []).find(x => x.id === prov.value);
+        const patch = { provider: prov.value };
+        if (p) {
+          const bu = document.getElementById('st-correct-baseurl');
+          const md = document.getElementById('st-correct-model');
+          if (bu) bu.value = p.baseUrl || '';
+          if (md) md.value = p.model || '';
+          patch.baseUrl = p.baseUrl || '';
+          patch.model = p.model || '';
+        }
+        correctSave(patch);
+      });
+    }
     const ut = document.getElementById('st-correct-usetranslate');
     if (ut) ut.addEventListener('change', async () => {
       const box = document.getElementById('st-correct-custom');
-      if (box) box.hidden = ut.checked;
+      if (box) {
+        box.hidden = ut.checked;
+        box.querySelectorAll('input,select').forEach(el => { el.disabled = ut.checked; });
+      }
       /* 明确把开关状态发给服务端（两个方向都发）。
        * 早期这里在取消勾选时发的是 `{ baseUrl: 当前值 }`，而服务端靠"地址为空 ⇒ 跟随翻译"
        * 推断 —— 取消勾选那一刻地址还是空的，服务端又算回"跟随翻译"，勾选框被回弹，
