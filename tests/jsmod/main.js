@@ -29,6 +29,7 @@ import { initI18n, t } from './i18n.js';
 import { ico } from './icons.js';
 import { pickDanmaku, danmakuDuration, DUR_DEFAULT } from '../danmaku.js';
 import { bindModalDrags } from './modal.js';
+import { enhanceFontInput } from './font-picker.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -1330,6 +1331,14 @@ function setAss(text, name) {
 // 字体名: 先去本机字体库把字体备好再套用(用户不必手动选 .ttf)
 for (const [el, track] of [[assStyleEls.zhFont, 'zh'], [assStyleEls.enFont, 'en']]) {
   if (el) el.addEventListener('change', () => onFontNameChange(track));
+}
+
+/* 字体名输入框加「带预览的下拉」（见 font-picker.js）：
+ * 每个字体名用它自己的字形渲染，选之前就能看到长什么样 —— 原生 datalist 只能显示纯文字。
+ * 输入框本身保留（仍可手打本机没装的字体名），只在右侧多一个 ▾ 按钮。
+ * 组件内部是"设 value + 派发 change"，所以上面那个 change 监听照常工作，这里不用重复接线。 */
+for (const el of [assStyleEls.zhFont, assStyleEls.enFont]) {
+  if (el) enhanceFontInput(el);
 }
 for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic]) {

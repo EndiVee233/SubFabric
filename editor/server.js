@@ -29,6 +29,30 @@ const asrServiceMod = require('./asr-service.js');
 const hotwordsMod = require('./hotwords.js');       // 从操作日志挖 ASR 热词候选(纯逻辑, 有单测)
 const gluedWordsMod = require('./glued-words.js');  // 扫"单词被粘住"(toescape 这类), 有单测
 
+/* 测试用页面：`/__test/<name>` 直接吐 tests/<name>。
+ * 为什么需要：`tests/*.html` 的验证页要用 fetch 调 /api/*，而 file:// 下是跨源、
+ * 拿不到数据（实测踩过：验证页里 fetch('/api/fonts') 静默失败 → 组件空转，
+ * 于是"定位对不对"这类断言测的其实是个空盒子）。
+ * ⚠ 只在测试目录里按文件名取，不做路径拼接 —— 不给任意文件读取留口子。 */
+function serveTestPage(req, res, pathname) {
+  const m = /^\/__test\/([A-Za-z0-9_.-]{1,64})$/.exec(pathname);
+  if (!m) return false;
+  const name = m[1];
+  const p = path.join(ROOT, 'tests', name);
+  if (!p.startsWith(path.join(ROOT, 'tests')) || !fs.existsSync(p) || !fs.statSync(p).isFile()) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('not found');
+    return true;
+  }
+  const ext = path.extname(name).toLowerCase();
+  const type = ext === '.html' ? 'text/html; charset=utf-8'
+    : ext === '.js' || ext === '.mjs' ? 'text/javascript; charset=utf-8'
+      : ext === '.css' ? 'text/css; charset=utf-8' : 'application/octet-stream';
+  res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+  res.end(fs.readFileSync(p));
+  return true;
+}
+
 /* ── 本地翻译引擎（NLLB / CTranslate2）──
  * 惰性单例：第一次真正要翻的时候才起服务（起一次要载入 600MB 模型，十几秒）。
  * ⚠ 必须定义在**模块级**：llmReady 与 /api/mt/local/* 路由都在这个作用域调用它。
@@ -2495,6 +2519,9 @@ function handleRequest(req, res) {
   }
   const u = new URL(req.url, `http://${req.headers.host || HOST}`);
   const pathname = u.pathname;
+
+  // 测试用页面（tests/*.html 的验证页要 fetch /api/*，file:// 下是跨源拿不到数据）
+  if (serveTestPage(req, res, pathname)) return;
 
   // 简单端点先查表(见上方 SIMPLE_ROUTES 注释: 只收同步无副作用的处理器)
   const simple = SIMPLE_ROUTE_MAP.get(pathname);

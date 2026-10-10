@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>字体选择器 · 定位验证</title>
+<!-- ⚠ 必须引入真实样式表：.fp-panel 的 position:fixed / max-height 都在里面。
+     少了它，面板会退化成 static、高度不受限，定位断言测的就不是真实观感
+     （实测踩过：只加了页内样式 → position=static、高 1581px）。 -->
+<link rel="stylesheet" href="/editor/css/style.css">
+<style>
+  :root{
+    --border:#2a2a34; --accent:#ff7a45; --accent-a28:rgba(255,122,69,.28);
+    --text-0:#e8e8ef; --text-1:#b8b8c4; --text-2:#8a8a98;
+  }
+  html,body{margin:0;background:#0c0c11;color:var(--text-0);
+    font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  /* 复刻设置面板里的滚动容器：组件必须在这种容器里也能定位正确 */
+  .settings-list{
+    position:absolute; left:60px; top:40px; width:360px; height:520px;
+    overflow-y:auto; padding:12px; box-sizing:border-box;
+    background:#141419; border:1px solid var(--border); border-radius:8px;
+  }
+  .pad{height:260px;color:var(--text-2);display:flex;align-items:center;justify-content:center}
+  .ass-style-field{display:flex;flex-direction:column;gap:4px;color:var(--text-1);font-size:11px}
+  .ass-style-field input[type="text"]{
+    width:100%;min-width:0;height:28px;padding:4px 7px;border:1px solid var(--border);
+    border-radius:5px;outline:none;background:#101015;color:var(--text-0);font-size:12px;box-sizing:border-box
+  }
+  .ass-style-field input:focus{border-color:var(--accent)}
+  h3{margin:8px 0 6px;font-size:12px;color:var(--text-1)}
+  #probe{position:absolute;right:24px;top:24px;width:300px;font:12px/1.6 Consolas,monospace;
+    background:#141419;border:1px solid var(--border);border-radius:8px;padding:12px;white-space:pre-wrap}
+  .note{color:var(--text-2);font-size:11px;margin-top:6px}
+</style>
+</head>
+<body>
+<div id="probe">等待…</div>
+
+<div class="settings-list" id="scroller">
+  <h3>ASS 双语样式 · 中文字幕</h3>
+  <label class="ass-style-field">字体名称
+    <input id="ass-style-zh-font" type="text" spellcheck="false" placeholder="输入字体名">
+  </label>
+  <div class="note">上面这个输入框在**有滚动条的容器里**，用于验证面板定位。</div>
+
+  <div class="pad">↓ 往下滚，测"面板跟随滚动"</div>
+  <h3>底部的另一处</h3>
+  <label class="ass-style-field">另一个字体框
+    <input id="second-font" type="text" spellcheck="false" placeholder="输入字体名">
+  </label>
+  <div class="pad">底部占位</div>
+</div>
+
+<script type="module">
+import { enhanceFontInput } from '/editor/js/font-picker.js';
+
+const out = document.getElementById('probe');
+const log = (s) => { out.textContent += '\n' + s; };
+out.textContent = '';
+
+const zh = document.getElementById('ass-style-zh-font');
+const second = document.getElementById('second-font');
+enhanceFontInput(zh);
+enhanceFontInput(second);
+
+const panelOf = () => document.querySelector('.fp-panel:not([hidden])');
+const R = (el) => { const r = el.getBoundingClientRect(); return { t: Math.round(r.top), l: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) }; };
+
+/** 检查当前打开的面板是否贴合它的输入框 */
+function check() {
+  const p = panelOf();
+  if (!p) return { ok: false, why: '面板没开' };
+  // 找出这个面板归谁：用宽度/位置近似判断不了，改用组件实例
+  const owner = zh.__fontPicker || second.__fontPicker;
+  const btn = document.activeElement && document.activeElement.closest
+    ? document.activeElement.closest('.fp-wrap') : null;
+  return { ok: true, panel: R(p) };
+}
+
+window.__fpTest = {
+  open(which) {
+    const el = which === 'second' ? second : zh;
+    el.closest('.fp-wrap').querySelector('.fp-btn').click();
+    return 1;
+  },
+  close() {
+    const p = panelOf();
+    if (p) p.querySelector('.fp-filter').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return 1;
+  },
+  /** 面板与指定输入框的几何关系 */
+  gap(which) {
+    const el = which === 'second' ? second : zh;
+    const p = panelOf();
+    if (!p) return { err: '面板没开' };
+    const w = el.closest('.fp-wrap').getBoundingClientRect();
+    const pr = p.getBoundingClientRect();
+    return {
+      input: R(el), wrap: R(el.closest('.fp-wrap')), panel: R(p),
+      gapX: Math.round(pr.left - w.left),
+      gapY: Math.round(pr.top - w.bottom),
+      overlap: !(pr.bottom <= w.top || pr.top >= w.bottom || pr.right <= w.left || pr.left >= w.right),
+    };
+  },
+  /** 滚动容器后再看面板有没有跟着走 */
+  scrollBy(px) {
+    document.getElementById('scroller').scrollTop += px;
+    return document.getElementById('scroller').scrollTop;
+  },
+  itemFontFamilies(n) {
+    const p = panelOf();
+    if (!p) return [];
+    return [].slice.call(p.querySelectorAll('.fp-item'), 0, n)
+      .map(x => ({ text: x.textContent, ff: getComputedStyle(x).fontFamily }));
+  },
+  count() {
+    const p = panelOf();
+    return p ? p.querySelectorAll('.fp-item').length : -1;
+  },
+  type(q) {
+    const p = panelOf();
+    if (!p) return -1;
+    const f = p.querySelector('.fp-filter');
+    f.value = q;
+    f.dispatchEvent(new Event('input', { bubbles: true }));
+    return 1;
+  },
+  names() {
+    const p = panelOf();
+    return p ? [].slice.call(p.querySelectorAll('.fp-item')).map(x => x.dataset.name) : [];
+  },
+  reset() { out.textContent = '就绪'; },
+};
+out.textContent = '就绪';
+window.__fpReady = true;
+</script>
+</body>
+</html>
