@@ -82,7 +82,8 @@ export function bindModalDrags(root = document) {
     ['#confirm-overlay', '.rn-box', '.rn-title'],
     ['#role-new', '.rn-box', '.rn-title'],
     ['#pick-overlay', '.pick-box', '.pick-title'],
-    ['#fix-overlay', '.fix-box', '.rn-title']
+    ['#fix-overlay', '.fix-box', '.rn-title'],
+    ['#cue-text-overlay', '.ctd-box', '.rn-title']
   ];
 
   for (const [overlaySelector, surfaceSelector, handleSelector] of definitions) {

@@ -1,5 +1,5 @@
 /** Canvas 时间轴: 胶片缩略图 + 分轨字幕块 + 缩放/平移/定位/拖动改时间/空白拖动新建 */
-import { fmtTime } from './util.js';
+import { fmtTime, popOrigin } from './util.js';
 
 const FILM_H = 46;       // 胶片缩略图条
 const RULER_H = 20;      // 刻度
@@ -223,6 +223,8 @@ export class Timeline {
     this.onSelect = null;
     this.onCreate = null;     // 空白处拖动新建: (start, end)
     this.onDelete = null;     // 右键菜单删除: (ref)
+    this.onToggleKaraokeStyle = null; // 右键菜单 → 整轨切换 颜色高亮 ↔ \k 卡拉OK: (ref)
+    this.kStyleLabel = null;  // 菜单文案提供者: () => '切换为 \k 卡拉OK' | '切回颜色高亮'
     this.isEditable = null;
     this._drag = null;
     this._filmRotate = 0;
@@ -253,6 +255,11 @@ export class Timeline {
     this._dirty = true;
     this.waveform = null;
     this.waveformReady = false;
+    // blob URL 泄漏修复: 换新波形(或传空清除)前, 释放上一个已确定被替换的 objectURL
+    if (this._waveUrl && this._waveUrl !== url && String(this._waveUrl).startsWith('blob:')) {
+      URL.revokeObjectURL(this._waveUrl);
+    }
+    this._waveUrl = url || null;
     if (!url) return;
     const img = new Image();
     img.onload = () => { this.waveform = img; this.waveformReady = true; this._dirty = true; };
@@ -576,6 +583,7 @@ export class Timeline {
         if (act === 'delete' && cue && this.onDelete) this.onDelete(cue.ref);
       else if (act === 'fix' && cue && this.onFix) this.onFix(cue.ref);
       else if (act === 'retranslate' && cue && this.onRetranslate) this.onRetranslate(cue.ref);
+      else if (act === 'karaoke-style' && cue && this.onToggleKaraokeStyle) this.onToggleKaraokeStyle(cue.ref);
       // 逐词时间重对齐：只改时间不动文本，所以传整个 cue（要拿它的 row/ref 定位那条字幕）
       else if (act === 'realign' && cue && this.onRealign) this.onRealign(cue);
       });
@@ -833,10 +841,16 @@ export class Timeline {
     const el = this.menuEl;
     if (!el) return;
     this._menuCue = cue;
+    // 整轨形态切换的文案随当前形态变（只改内层 span —— 图标是插进来的 SVG, 不能 textContent）
+    const span = el.querySelector('[data-kstyle-label]');
+    if (span && this.kStyleLabel) span.textContent = this.kStyleLabel();
     el.hidden = false;
     const w = el.offsetWidth, h = el.offsetHeight;
-    el.style.left = Math.max(4, Math.min(cx, window.innerWidth - w - 6)) + 'px';
-    el.style.top = Math.max(4, Math.min(cy, window.innerHeight - h - 6)) + 'px';
+    const left = Math.max(4, Math.min(cx, window.innerWidth - w - 6));
+    const top = Math.max(4, Math.min(cy, window.innerHeight - h - 6));
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    popOrigin(el, cx, cy, left, top);      // 菜单从右键落点"长出来"（CSS pop-in 的 transform-origin）
   }
   _hideMenu() {
     if (!this.menuEl || this.menuEl.hidden) return;
