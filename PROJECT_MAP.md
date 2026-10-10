@@ -4,7 +4,7 @@
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-09（二次加固 + 删除项目加固）
+> 最后更新：2026-10-10（并入 PR #1 的 fork 功能，并恢复被其合并丢失的上游功能；当前主线 server.js 为单体结构）
 
 ---
 
@@ -18,6 +18,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 - **发行形态**：Node SEA 打成单文件 `SubFabric.exe` + Inno Setup 安装包。
 - **开发方式**：项目由 AI 开发维护，作者不看代码 —— 注释写"为什么"并带实测数据，是给下一个 AI 的交接材料。
 - 设计参考 [Subforges](https://www.subforges.com/)（在线协作编辑器），但**无关联、无依赖**；本项目取舍是"单机、不卡顿、逐词高亮为核心"。
+- **2026-10-10 起并入 R2FtYml0 的 fork 功能**（PR #1）：分段导入（多人协作）/ 区域字幕导入 / 项目压缩包导出导入 / 逐词字幕自愈 / 全片逐词重校对 / 备注弹幕 / 句级置信度 / NPU 识别 / 本地 NLLB 翻译 / 热词挖掘 / 长稿反思纠错 等。
 
 **读法建议**：先 §1–§2 建立全貌；动手改哪块读哪块；**动手前务必读 §6、§7**。
 
@@ -46,7 +47,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | `editor/server.js` | **后端全部**（约 5000 行单文件：安全守卫、路由、项目系统、下载/prepare/ASR/翻译流水线、托盘、退出） |
 | `editor/index.html`、`editor/css/` | 单页界面（`<script type="module" src="js/main.js">`） |
 | `editor/js/` | 前端模块（见 §4） |
-| `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr` |
+| `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr`；fork 并入：`align` `asr-service` `ass-group` `danmaku` `hotwords` `mt-local` `project-pack` `reflect` `region` `region-merge` `repair-words` `speech-gap` |
 | `asr/` | Python 侧：`asr.py`（本地识别）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（yt-dlp 自举、格式选择、Cookie、分P），细节见 `asr/fetch/README.md` |
 | `tests/` | Node / Python 测试（见 §8）；`tests/jsmod/` 是**前端模块自动同步镜像** |
@@ -73,19 +74,11 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 2. **安全基线**：`safeJoin`（先解码再归一 + 路径分隔符边界，防穿越）、Host 回环校验（防 DNS rebinding）、写方法 Origin 校验（防 CSRF）、`MEDIA_ALLOW` 视频路径登记表。
 3. **简单路由表 `SIMPLE_ROUTE_MAP`**：`/` `/index.html` `/api/samples` `/api/version` `/api/fonts` `/api/font-file` `/favicon.ico|svg`；处理器签名 `(req,res,u) → boolean`。
 4. **主体（模块作用域）**：项目系统（`projDir/readMeta/writeMeta/metaView/readBody…`）＋ 下载/prepare/ASR/翻译流水线 ＋ 状态容器。
-5. **7 个路由段函数**，由 `API_SECTIONS` 表按前缀分发，段末统一 404 JSON 兜底：
-
-| 段函数 | 前缀 | 内容 |
-| --- | --- | --- |
-| `handleWaveRoutes` | `/api/(waveform\|peaks\|upload-video)` | 波形 PNG / 包络流、视频上传 |
-| `handleFetchRoutes` | `/api/(pick\|fetch)` | 文件选择、下载设置 / Cookie 检查 / probe |
-| `handleAsrRoutes` | `/api/asr` | 模型状态 / 下载 / 安装 / 目录 / 选择（含 hint） |
-| `handleLlmRoutes` | `/api/(translate\|cast)` | 翻译配置、测试、单条翻译、分角色配置 |
-| `handleLogsRoutes` | `/api/(logs\|lifecycle\|quit)` | 日志 SSE、生命周期 SSE、完全退出 |
-| `handleDiagRoutes` | `/api/(diag\|media)` | 前端诊断上报、视频 Range 流（白名单） |
-| `handleProjectsRoutes` | `/api/projects` | 项目 CRUD 与项目内全部操作 |
-
-6. `handleRequest`：守卫 → URL 解析 → SIMPLE 查表 → 段分发 → 静态回落（`serveFile`）。
+5. **路由分发**：`SIMPLE_ROUTE_MAP`（同步无副作用端点）查表 → `handleRequest` 里的大 if 链 → 静态回落（`serveFile`）。
+   ⚠ 2026-10-09 曾把 `handleRequest` 拆成"薄分发器 + 7 个路由段函数"（提交 f8be06a，行为零变化）；
+   **PR #1 合并时该重构被整体回退**（fork 侧保留了单体版），当前主线是**单体**。若想再拆：
+   `git show f8be06a` 有完整做法（纯逐字搬移 + 行多重集对照验证），可照做。
+6. `handleRequest` 实际结构：守卫（Host/Origin）→ URL 解析 → SIMPLE 查表 → `/api/projects` 大 `if (pm)` 块（项目 CRUD 与全部项目内操作）→ 其余 `/api/*` if 链 → 静态回落。
 7. **退出**：`shutdown()`（`/api/quit` 或 SIGINT/SIGTERM 触发）：广播 lifecycle → 杀 `CHILDREN` → `close` + `closeAllConnections` → 超时强退；托盘由 `scripts/tray.ps1`（PowerShell WinForms）实现。
 
 ### 3.3 跨请求状态容器（**铁律：必须放模块作用域**）
@@ -150,6 +143,12 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `shortcuts.js` | 固定键盘快捷键表（刻意不可配置） |
 | `accent.js` | 主题强调色（经典脚本，`<head>` 内同步执行防首屏闪色） |
 | `icons.js` | 内联 SVG 图标集（不要塞进文本节点中间，会拆散 i18n 词典匹配） |
+| `align.js` | 逐词时间重对齐（TTS 合成 → 重识别 → 序列对齐；fork） |
+| `asr-service.js` / `mt-local.js` | 常驻识别服务；本地 NLLB 翻译（fork） |
+| `ass-group.js` / `region.js` / `region-merge.js` | 分段导入（多人协作·按句聚合）/ 区域字幕导入 / 合并（fork） |
+| `project-pack.js` | 项目压缩包导出/导入（字幕+置信度+操作日志，不含视频/音频本体；fork） |
+| `repair-words.js` | 逐词字幕自愈（导入/载入时修复被写坏的逐词文本；fork） |
+| `danmaku.js` / `hotwords.js` / `reflect.js` / `speech-gap.js` | 备注弹幕 / 热词挖掘 / 长稿反思纠错 / 波形漏字幕检测（fork） |
 
 ---
 
@@ -230,6 +229,13 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `tools/videoedit_probe.mjs` 等 | 视频区就地编辑（CDP 真机） | 需 `editor/vendor/`（先 fetch-vendor） |
 | `tools/videoedit_live_check.mjs` | 有头窗口真机验收 | 同上 |
 | `tests/fetch-format-test.py` | 下载内核站点 / 档位 / Cookie | 用 Python 3.8+ 跑 |
+| fork 并入的测试 | 置信度 / 分段导入 / 区域导入 / 压缩包 / 备注弹幕 / 热词 / 反思纠错 / 自愈 等（`tests/*-test.mjs`） | 多为纯函数直测 |
+
+> ⚠ **`tests/jsmod/` 镜像的注意点**：有两族自举（上游族从 `editor/js/` 拷贝、fork 族从 `editor/` 拷贝），
+> 任一族判定"过期"就会**清空重建**，会临时删掉另一族的镜像 —— 跑测试时若见 `jsmod/*` 缺失/异动，
+> 在仓库根 `git checkout -- tests/jsmod` 恢复即可（提交状态即完整集）。
+> `reload-pipeline-test.mjs` 需要 fork 作者机器上的私有基线（未入库），缺失时**自动跳过**（正常，非跳过即异常）。
+> `colorfix-test.mjs` 需要真实用户项目 `projects/p-mugzcab2-09f7z/`，新克隆必然失败（既有基线，非缺陷）。
 
 ---
 
@@ -269,6 +275,10 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **删除项目加固（2026-10-09）**：`projProcs` 登记项目内长任务，删除项目前先杀（`taskkill /T` 连孙进程）
   → 带重试删除 + `project.json` 最后删。修复用户报障"下载中删项目 → 500 失败、目录残留"
   （已用真实下载端到端复现与验证）。
+- **并入 PR #1（2026-10-10，提交 af04b08/0446ce2）**：接受 R2FtYml0 的 fork 全部功能，并**恢复被其合并
+  丢失的上游内容**——\k 卡拉OK全套（karaoke.js/main.js/project.js/index.html/server.js）、视频区就地编辑
+  接线（main.js/index.html/css/modal）、2.2.1 全部加固（projProcs/看门狗/自愈/SIGINT/流式字幕保存/前端
+  守卫/Python 修复等）。教训：**fork 类大 PR 不能只看"mergeable"，必须逐文件核对"上游内容有没有被合并回退"**。
 - UI 动效批；视频区就地编辑；`\k` 初稿线。
 
 ---
