@@ -433,21 +433,40 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   transition: background .12s, border-color .12s;
 }
 .cue-card:hover { background: #1f1f28; }
+/* ⚠ 这里**不能再用 inset box-shadow 画左条** —— 卡片本来就有 `border-left: 3px`，
+ *  再加一条 inset 阴影就是**两条并排的竖线**（用户反馈："可以明显看出是两个竖线"）。
+ *  选中/播放一律通过**加粗那条已有的左边框 + 换色**来表达；
+ *  外圈光晕用 outline（跟着 border-radius 走），而不是 `box-shadow: 0 0 0 1px` 那种假边框环。 */
 .cue-card.selected {
   border-color: var(--accent);
+  border-left-width: 4px;
+  border-left-color: var(--accent);
   background: #241b16;
-  box-shadow: 0 0 0 1px var(--accent-a45), 0 3px 12px var(--accent-a12);
+  outline: 1px solid var(--accent-a45);
+  outline-offset: 1px;
 }
 .cue-card.playing { border-left-color: var(--accent); }
 .cue-card.playing .cc-no { color: var(--accent); }
 
+/* 三行时间：**标签在上、值在下**，统一左对齐。
+ *
+ * ⚠ 原来是一行 `标签 ……………… 值`（justify-content: space-between）。
+ *   但这一列可用宽度只有 77px，而 `00:00:00.030` 在 9.5px 等宽下就占 62.7px，
+ *   留给标签的只剩 ~14px —— 两个汉字要 18px，于是「开始/结束」被**挤成竖排**
+ *   （实测标签矩形 9×24，也就是"开"和"始"各占一行）。
+ *   值又不能换行（会拆成两行更难读），所以只能在版式上让步：
+ *   改成上下两行后，标签和值各自有整列宽度可用，谁都不会被压。
+ *   也顺便跟用户给的参考图一致（开始/结束/时长 各占一行，值在其下）。 */
 .cc-times {
   flex: none; width: 86px;
-  display: flex; flex-direction: column; gap: 2px;
+  display: flex; flex-direction: column; gap: 4px;
   padding-right: 8px;
   border-right: 1px solid #26262f;
 }
-.cc-t { display: flex; align-items: baseline; justify-content: space-between; gap: 3px; font-size: 9px; color: var(--text-2); }
+.cc-t {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  font-size: 9px; color: var(--text-2);
+}
 .cc-t b { font-family: Consolas, monospace; font-weight: 600; font-size: 9.5px; color: var(--accent-2); }
 
 /* 顶部对齐（原来是 center）：让右侧内容与左侧时间列齐平。
@@ -560,6 +579,19 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .la-hint { margin-left: auto; font-size: 10.5px; color: var(--text-2); }
 
 /* ── 右侧 Tab 栏(字幕 / 角色 / 设置) ───────────── */
+/* 选中态**只用一条线**，而且整条标签栏连成一条。
+ *
+ * ⚠ 这里以前同时存在三套"下划线"画法，叠在一起就是用户看到的
+ *   "一条短的 + 一条长的"（截图反馈："这里的两条横线能不能换成一条？把那个短的去掉"）：
+ *     ① .ptab.active               { border-bottom: 2px accent }      → 标签宽 93px，底边 y=92
+ *     ② .ptab.active               { box-shadow: 0 1px 0 accent }     → 又一条 93px，y=93
+ *     ③ ui.css .ptab.active::after { left/right:10px; bottom:-1px }   → 73px，更短且左右错开
+ *   ①② 和容器自己的 1px 边框还差 1px —— 根本没对齐，所以看着是两层错开的线。
+ *
+ * 现在统一成：**只保留标签自己的 2px 底边框**，用 margin-bottom:-1px 让它压住
+ * 容器那条 1px 灰线。相邻标签的线首尾相接 → 选中段落是连续的一条，
+ * ui.css 里的 ::after 已删除。容器保留 1px 下边框：未选中的段落靠它显示灰线，
+ * 选中的段落被橙线盖住 —— 整条标签栏始终是**一条**线，只是选中那段换了颜色。 */
 #panel-tabs {
   flex: none;
   display: flex; gap: 4px;
@@ -570,7 +602,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ptab {
   flex: 1;
   padding: 7px 0;
-  border: 0; border-bottom: 2px solid transparent;
+  border: 0;
+  /* 每个标签都留 2px 透明底边框：选中时只换颜色，几何量不变，
+     不会因为线出现/消失让文字上下跳 1px。 */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;          /* 压住容器的 1px 下边框，两条合成一条 */
   background: transparent;
   color: var(--text-1);
   font-size: 13px; font-weight: 600;
@@ -581,13 +617,6 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ptab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
-  /* 选中时用一条橙色线**盖住** #panel-tabs 自己的 1px 灰线。
-     不这么做的话两条线是**上下相接**的（容器 padding-bottom 为 0，标签底边正好落在
-     容器 border 之上）：标签区内 2px 橙 + 标签之下 1px 灰 = 看起来"两条线重叠"。
-     做法：给标签多 1px 下内边距，把它推到容器 border 上，再用 0 1px 0 的同色阴影盖住。
-     这不是视觉 hack —— 下划线式分段指示器本来就该覆盖容器的那条线。 */
-  padding-bottom: 8px;
-  box-shadow: 0 1px 0 var(--accent);
 }
 
 .tab-body {
@@ -696,6 +725,47 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ass-style-font-note { margin-top:5px; font-size:11px; line-height:1.5; color:var(--text-2); }
 .ass-style-font-note.ok { color:#4fd1a5; }
 .ass-style-font-note.warn { color:#ffd54a; }
+/* 缺字时挂在轨道标题旁的红色感叹号（用户要求"显示一个小红色感叹号"）。
+ * 放标题行而不是 note 里 —— 标题行一眼可见，note 的长文字容易看漏。 */
+.font-missing-mark {
+  margin-left:5px; color:#ff4d4f; font-weight:700; font-size:12px;
+  cursor:help; vertical-align:top;
+}
+
+/* ── 字体选择器（带预览的下拉，见 editor/js/font-picker.js）─────────────
+   每个字体名用它**自己的字形**渲染，选之前就能看到长什么样。
+   输入框保留原样（仍可手打任意字体名），只在右侧加一个 ▾ 按钮。 */
+.fp-wrap { position:relative; display:flex; align-items:center; gap:4px; width:100%; min-width:0; }
+.fp-wrap > input[type="text"] { flex:1; min-width:0; }
+.fp-btn {
+  flex:none; width:26px; height:28px; padding:0; line-height:1; cursor:pointer;
+  border:1px solid var(--border); border-radius:5px; background:#101015;
+  color:var(--text-1); font-size:12px;
+}
+.fp-btn:hover { border-color:var(--accent); color:var(--text-0); }
+.fp-btn.on { border-color:var(--accent); color:var(--accent); }
+.fp-panel {
+  position:fixed; z-index:9999; display:flex; flex-direction:column;
+  max-height:320px; padding:8px; gap:6px;
+  background:#141419; border:1px solid var(--border); border-radius:8px;
+  box-shadow:0 12px 32px rgba(0,0,0,.45);
+}
+.fp-filter {
+  width:100%; height:28px; padding:4px 7px; box-sizing:border-box;
+  border:1px solid var(--border); border-radius:5px; outline:none;
+  background:#101015; color:var(--text-0); font-size:12px;
+}
+.fp-filter:focus { border-color:var(--accent); }
+.fp-list { flex:1; overflow-y:auto; min-height:0; }
+.fp-item {
+  padding:5px 8px; border-radius:5px; cursor:pointer;
+  font-size:17px;            /* 大一点才看得出字形差异 */
+  line-height:1.35; color:var(--text-0);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.fp-item:hover { background:rgba(255,255,255,.06); }
+.fp-item.active { background:var(--accent-a28, rgba(255,122,69,.28)); }
+.fp-empty { padding:12px 8px; color:var(--text-2); font-size:12px; line-height:1.6; }
 #ass-style-group.ass-style-disabled .ass-style-track, #ass-style-group.ass-style-disabled .ass-style-color-row { opacity:.45; }
 .fx-controls { display:flex; flex-direction:column; margin-top:4px; padding-left:10px; border-left:2px solid var(--accent); }
 /* 后处理特效: 中/英分组小标题 + 「当前生效范围用不到」时整组压暗 */
@@ -733,6 +803,10 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   flex:1 1 0; min-width:0; border:none; background:transparent;
   color:var(--text-2); border-bottom:2px solid transparent;
   border-radius:8px 8px 0 0; padding:9px 10px 8px;
+  /* 压住 .st-tabs 自己的 1px 下边框 —— 和 #panel-tabs 同一套做法（见那边 502 行的说明）。
+     原来靠"多 1px 下内边距 + box-shadow 盖住"，那会让标签底边和容器边框差 1px、
+     两条线没真正对齐；margin-bottom:-1px 是几何上真的重合。 */
+  margin-bottom:-1px;
   font-size:12.5px; cursor:pointer; font-family:inherit; white-space:nowrap;
   transition:background .12s, color .12s, border-color .12s;
 }
@@ -740,11 +814,6 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .st-tab.active {
   color:var(--accent); border-bottom-color:var(--accent);
   background:linear-gradient(180deg, var(--accent-a10), transparent);
-  /* 与右侧面板标签（.ptab.active）同一个问题：容器 .st-tabs 有自己的 1px border-bottom，
-     而标签底边正好压在它上面 → 选中时"2px 橙线 + 1px 灰线"上下相接，看着像两条线重叠。
-     多 1px 下内边距把标签推到容器线上，再用同色阴影盖住那 1px。 */
-  padding-bottom:9px;
-  box-shadow:0 1px 0 var(--accent);
 }
 .st-body {
   flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable;
@@ -1001,9 +1070,32 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* ── 全片逐词重校对的预览条目（复用反思纠错的 .reflect-item 骨架）──
    · is-on  ：已勾选 → 左边一条强调色，一眼看出会改哪些
    · is-off ：置信度未达门槛 → 整条压暗且不可勾选（它会被原样保留） */
+/* 左侧色条统一用**伪元素**画，而不是 inset box-shadow。
+ *
+ * 原来 `box-shadow: inset 3px 0 0 accent` 是**直角**的，塞在 border-radius:8px 的
+ * 圆角框里、紧贴 1px 边框 —— 圆角处对不齐，看着像"两条竖直的线糊在一起"
+ * （用户反馈："左侧有两个竖着的线，能不能美观点"）。
+ * 现在：贴在边框内侧（left:1px）、自带 4px 圆角、上下各留 3px，跟卡片圆角对齐；
+ * 再配一层淡淡的同色渐变底，读起来是一条完整的强调边而不是一根孤立的棍子。
+ * 两种色条（选中=强调色 / 补漏识别=危险色）共用这套画法，只换颜色。 */
+.reflect-item.is-on,
+.reflect-item.is-gap { position: relative; overflow: hidden; }
+.reflect-item.is-on::before,
+.reflect-item.is-gap::before {
+  content: '';
+  position: absolute; left: 1px; top: 3px; bottom: 3px; width: 3px;
+  border-radius: 4px;
+}
+/* ⚠ 颜色**直接写在伪元素规则里**，不要用 `var(--reflect-bar, …)` 中转：
+ *  实测自定义属性在 `::before` 上取不到值，`background` 解析成 `none`、色条整个消失。 */
+.reflect-item.is-on::before { background: var(--accent); }
+.reflect-item.is-gap::before { background: var(--danger, #ff5f6b); }
 .reflect-item.is-on {
-  background: rgba(90, 130, 255, .10);
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: linear-gradient(90deg, rgba(90, 130, 255, .16), rgba(90, 130, 255, .07) 42%, transparent 78%);
+}
+/* 两个标记同时出现时（补漏识别 + 已选中）用双色：上面危险色、下面强调色 */
+.reflect-item.is-gap.is-on::before {
+  background: linear-gradient(180deg, var(--danger, #ff5f6b) 0 46%, transparent 46% 54%, var(--accent) 54% 100%);
 }
 .reflect-item.is-off { opacity: .55; }
 .reflect-item.is-off:hover { background: none; }
@@ -1645,17 +1737,24 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
 .pc-draft.running .pc-draft-bar-in { animation: shimmer 1.5s linear infinite; }
 .pc-st.st-running { animation: breathe 1.7s var(--ease) infinite; }
 
-/* ── 6. 字幕列表卡片：悬停右移、选中/播放过渡 ───────────────────── */
+/* ── 6. 字幕列表卡片：悬停 / 选中 / 播放 的过渡 ───────────────────── */
 .cue-card {
+  /* 左边框宽度也在过渡里 —— 选中时 3px→4px 会平滑变粗，不会"跳"一下 */
   transition: background var(--dur-1) var(--ease), border-color var(--dur-2) var(--ease),
+              border-left-width var(--dur-2) var(--ease),
               transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease);
 }
 /* 悬停的"浮起"效果原来靠 translateX(2px) —— 但那会再右移 2px，
    即使修好边距，悬停瞬间右边仍会被 overflow 切掉。
-   改用 inset 阴影：视觉上有强调，但不改变盒子的几何位置，任何宽度下都不会被裁。 */
-.cue-card:hover { transform: none; border-color: var(--accent-a40); box-shadow: inset 2px 0 0 var(--accent-a40); }
+   早期这里改用 inset 阴影，但那会和已有的 border-left 叠成**两条竖线**（见 355 行附近的说明）。
+   现在只换边框颜色，几何完全不动。
+   ⚠ 合并上游 2.3.0 时**丢掉**了上游这两行：
+       .cue-card:hover    { … box-shadow: inset 2px 0 0 var(--accent-a40); }
+       .cue-card.selected { box-shadow: inset 3px 0 0 var(--accent); }
+   上游那份是从本 fork 的**旧版**搬过去的，没带上"两条竖线"的修复。
+   上游真正新增的只有 :active 的按压效果，那个保留。 */
+.cue-card:hover { transform: none; border-color: var(--accent-a40); }
 .cue-card:active { transform: scale(.994); }   /* 按住整卡轻微"下压" */
-.cue-card.selected { box-shadow: inset 3px 0 0 var(--accent); }
 .cue-card.playing .cc-no {
   transition: color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-back);
   transform: scale(1.12);
@@ -1938,8 +2037,8 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* gap（补漏识别）现在**参与执行**了，所以不再弱化、勾选框也不再禁用。
-   只保留一点左侧色条做区分，让人一眼看出这类是"补回漏掉的内容"而不是"改错词"。 */
-.reflect-item.is-gap { box-shadow: inset 2px 0 0 var(--danger, #ff5f6b); }
+   左侧色条由上面 `.reflect-item.is-gap::before` 统一画（危险色），
+   这里不再用 inset box-shadow —— 那是直角条，和卡片圆角对不齐。 */
 .reflect-item.is-gap:hover { background: var(--bg-3); }
 
 /* ── 右下角进度卡：反思 / 纠错重识别等后台长任务 ───────────────────
@@ -2033,6 +2132,16 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 .reflect-conf[hidden] { display: none; }
 .reflect-conf .rc-label { color: var(--text-2); }
 .reflect-conf .rc-value { font-weight: 700; color: var(--accent); }
+/* 置信度门槛的数字输入框（内嵌在 rc-value 里，跟随强调色） */
+.reflect-conf .rc-value input[type="number"] {
+  width: 54px; padding: 1px 4px; margin: 0 2px;
+  font: 700 13px Consolas, monospace; text-align: right;
+  color: var(--accent); background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.16); border-radius: 4px;
+}
+.reflect-conf .rc-value input[type="number"]:focus {
+  outline: none; border-color: var(--accent); background: rgba(255,255,255,.1);
+}
 .reflect-conf .rc-note { color: var(--text-2); font-size: 11.5px; }
 
 /* ── 日志页：两个板块（运行日志 / 操作日志）────────────────────────
