@@ -305,7 +305,16 @@ export class Timeline {
     /* 主题色：游标 / 选中环 / 波形都跟着界面主题走。
        换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
     this.accent = cssVar('--accent', C.accent);
-    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); this._dirty = true; }); } catch {}
+    /* 主题色上该用的前景色（accent.js 按主题色亮度算的 --accent-ink）。canvas 读不到 CSS
+     * 变量，和 accent 一起缓存、一起在 ss-accent 里刷新。 */
+    this.accentInk = cssVar('--accent-ink', '#22150e');
+    try {
+      window.addEventListener('ss-accent', () => {
+        this.accent = cssVar('--accent', C.accent);
+        this.accentInk = cssVar('--accent-ink', '#22150e');
+        this._dirty = true;
+      });
+    } catch {}
     this.ctx = canvas.getContext('2d');
     this.video = video || null;
     this.film = new Filmstrip(() => { /* 下一帧重绘 */ });
@@ -1170,9 +1179,11 @@ export class Timeline {
     const cx1 = Math.max(-1, x1), cx2 = Math.min(W + 1, x2);
     const w = Math.max(0.5, cx2 - cx1);
     ctx.save();
-    ctx.fillStyle = 'rgba(255,122,69,.13)';
+    /* 选区色跟主题色（以前写死 rgba(255,122,69,…) / C.accent —— 用户换主题后
+     * 选中环会变色、这两个选框却仍是橙的，同一屏里两种强调色）。 */
+    ctx.fillStyle = withAlpha(this.accent || C.accent, 0.13, 'rgba(255,122,69,.13)');
     ctx.fillRect(cx1, top, w, bottom - top);
-    ctx.strokeStyle = C.accent;
+    ctx.strokeStyle = this.accent || C.accent;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 3]);
     ctx.beginPath();
@@ -1194,11 +1205,12 @@ export class Timeline {
     ctx.textAlign = 'left';
     const tw = ctx.measureText(label).width;
     if (w > tw + 16) {
-      ctx.fillStyle = 'rgba(255,122,69,.92)';
+      // 提示条的底色/文字色都跟主题色（底色=主题色近实心，文字=--accent-ink 保证对比度）
+      ctx.fillStyle = withAlpha(this.accent || C.accent, 0.92, 'rgba(255,122,69,.92)');
       const lx = cx1 + 4, ly = top + 4;
       this._roundRect(ctx, lx, ly, tw + 8, 14, 3);
       ctx.fill();
-      ctx.fillStyle = '#22150e';
+      ctx.fillStyle = this.accentInk || '#22150e';
       ctx.fillText(label, lx + 4, ly + 10);
     }
     ctx.restore();
@@ -1219,8 +1231,8 @@ export class Timeline {
     const top = liY + 2;
     const bottom = Math.max(top + 18, liY + liH - 2);
     ctx.save();
-    ctx.fillStyle = 'rgba(255,122,69,.16)';
-    ctx.strokeStyle = C.accent;
+    ctx.fillStyle = withAlpha(this.accent || C.accent, 0.16, 'rgba(255,122,69,.16)');   // 同上：跟主题色
+    ctx.strokeStyle = this.accent || C.accent;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 3]);
     this._roundRect(ctx, x1, top, Math.max(1.5, x2 - x1), bottom - top, 4);
@@ -1352,7 +1364,7 @@ export class Timeline {
         const tw = ctx.measureText(label).width;
         ctx.fillStyle = 'rgba(0,0,0,.62)';
         ctx.fillRect(c.x1 + 3, FILM_H - 13, tw + 6, 11);
-        ctx.fillStyle = C.accent;
+        ctx.fillStyle = this.accent || C.accent;   // 胶片时间标签也跟主题色（原写死 C.accent）
         ctx.textAlign = 'left';
         ctx.fillText(label, c.x1 + 6, FILM_H - 4);
       }
