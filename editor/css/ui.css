@@ -155,11 +155,18 @@ body::before {
   border-radius: var(--r-1);
   background: linear-gradient(180deg, rgba(255, 255, 255, .014), transparent 60%);
 }
+/* ⚠ 左侧那一条**只能用 `border-left` 画**（style.css 的 .cue-card 已经有一条 3px 的）。
+ *  早期这里又叠了一条 `inset 3px 0 0` 阴影 —— 那就是**两条并排的竖线**
+ *  （用户反馈："可以明显看出是两个竖线"）。选中/播放一律靠加粗+换色那条边框表达。 */
 .cue-card.selected {
   background: var(--accent-a10);
-  box-shadow: inset 3px 0 0 var(--accent), 0 2px 10px rgba(0, 0, 0, .22);
+  border-left-width: 4px;
+  border-left-color: var(--accent);
 }
-.cue-card.playing { box-shadow: inset 3px 0 0 var(--accent-2); }
+.cue-card.playing {
+  border-left-width: 4px;
+  border-left-color: var(--accent-2);
+}
 .cc-l1 { color: var(--text-0); }        /* 中文行：主信息，最亮 */
 .cc-l2 { color: var(--text-1); }        /* 英文行：退一档，双语层次更清楚 */
 .cc-no { font-family: var(--mono); font-variant-numeric: tabular-nums; }

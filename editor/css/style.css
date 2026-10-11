@@ -353,10 +353,17 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   transition: background .12s, border-color .12s;
 }
 .cue-card:hover { background: #1f1f28; }
+/* ⚠ 这里**不能再用 inset box-shadow 画左条** —— 卡片本来就有 `border-left: 3px`，
+ *  再加一条 inset 阴影就是**两条并排的竖线**（用户反馈："可以明显看出是两个竖线"）。
+ *  选中/播放一律通过**加粗那条已有的左边框 + 换色**来表达；
+ *  外圈光晕用 outline（跟着 border-radius 走），而不是 `box-shadow: 0 0 0 1px` 那种假边框环。 */
 .cue-card.selected {
   border-color: var(--accent);
+  border-left-width: 4px;
+  border-left-color: var(--accent);
   background: #241b16;
-  box-shadow: 0 0 0 1px var(--accent-a45), 0 3px 12px var(--accent-a12);
+  outline: 1px solid var(--accent-a45);
+  outline-offset: 1px;
 }
 .cue-card.playing { border-left-color: var(--accent); }
 .cue-card.playing .cc-no { color: var(--accent); }
@@ -1626,16 +1633,18 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
 .pc-draft.running .pc-draft-bar-in { animation: shimmer 1.5s linear infinite; }
 .pc-st.st-running { animation: breathe 1.7s var(--ease) infinite; }
 
-/* ── 6. 字幕列表卡片：悬停右移、选中/播放过渡 ───────────────────── */
+/* ── 6. 字幕列表卡片：悬停 / 选中 / 播放 的过渡 ───────────────────── */
 .cue-card {
+  /* 左边框宽度也在过渡里 —— 选中时 3px→4px 会平滑变粗，不会"跳"一下 */
   transition: background var(--dur-1) var(--ease), border-color var(--dur-2) var(--ease),
+              border-left-width var(--dur-2) var(--ease),
               transform var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease);
 }
 /* 悬停的"浮起"效果原来靠 translateX(2px) —— 但那会再右移 2px，
    即使修好边距，悬停瞬间右边仍会被 overflow 切掉。
-   改用 inset 阴影：视觉上有强调，但不改变盒子的几何位置，任何宽度下都不会被裁。 */
-.cue-card:hover { transform: none; border-color: var(--accent-a40); box-shadow: inset 2px 0 0 var(--accent-a40); }
-.cue-card.selected { box-shadow: inset 3px 0 0 var(--accent); }
+   （早期这里改用 inset 阴影，但那会和已有的 border-left 叠成两条竖线 —— 见 355 行附近的说明。
+     现在只换边框颜色，几何完全不动。） */
+.cue-card:hover { transform: none; border-color: var(--accent-a40); }
 .cue-card.playing .cc-no {
   transition: color var(--dur-1) var(--ease), transform var(--dur-2) var(--ease-back);
   transform: scale(1.12);
