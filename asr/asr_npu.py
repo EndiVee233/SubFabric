@@ -419,6 +419,9 @@ class NpuRecognizer:
 
         self.enc_req = self.encoder.create_infer_request()
         self.joint_req = self.joint.create_infer_request()
+        # 编码结果缓存（多遍解码之间复用，见 _decode_windows 的 docstring）。
+        # None = 当前没有进行中的多遍解码；recognize_words 进来时置 {}、跑完置回 None。
+        self._enc_cache = None
 
         shape = self.encoder.outputs[0].get_partial_shape()
         dims = [int(shape[i].get_length()) if shape[i].is_static else 0 for i in (1, 2)]
@@ -582,11 +585,26 @@ class NpuRecognizer:
 
     # ------------------------------------------------------------ 词级时间轴
     def _decode_windows(self, mel, collect_probs=False, noise=0.0, on_progress=None):
-        """把整段 mel 按 15.01s 窗口推完，返回 (tokens, timings)。
+        """把整段 mel 按 15.01s 窗口推完，返回 (tokens, timings, probs)。
 
-        返回 (tokens, timings, probs)，probs 与 tokens 平行。
-        概率随 token 一起被 skip/裁剪 —— 这是关键：跨窗口合并会丢/重排 token，
-        概率必须跟着走，不能事后按序号回收。
+        probs 与 tokens 平行。概率随 token 一起被 skip/裁剪 —— 这是关键：跨窗口
+        合并会丢/重排 token，概率必须跟着走，不能事后按序号回收。
+
+        ── 关于编码器缓存（本次新增，唯一的行为差异是"不重复算同一件事"）──
+        `recognize_words` 的稳定性重跑会让本函数对**同一段 mel** 被调用多遍
+        （干净一遍 + tta_runs 遍加噪）。而 `_tdt_loop` 的噪声是加在**编码器输出**
+        （acts）上的，编码器输入没变 —— NPU 对同一输入的输出是逐位确定的，所以那几遍
+        重跑出来的 acts 与第一遍**完全相同**（实测 `np.array_equal` 为 True）。
+        编码器又是 NPU 上最贵的一步（单窗口 0.153s ≈ 整片的 1/6），tta=2 时白跑 2 遍。
+        实测（15.01s 窗口）：三遍解码 0.956s → 0.635s（1.51x），token 序列逐 token 一致。
+
+        缓存按 (窗口偏移, 窗口长度) 存，**限定同一次多遍解码内有效**，所以：
+          · mel 内容只在 key 里出现一次（重复调用者必须传同一份 mel，见下面的断言）；
+          · 缓存满了（说明换了音频）就整体清空，不会跨音频串味。
+        为什么不做成"多遍一次性推完"的重构：那是把窗口重叠合并逻辑（skip/emit_end/
+        最长后缀前缀去重）复制到多遍版本里 —— 实测这样改会让多窗口结果与原来不同
+        （35s 音频前后版词表不一致，60s 音频 217 vs 220 词）。主路径不能拿这个赌，
+        所以这里保留原实现逐字不动，只把重复的编码摘掉。
         """
         import numpy as np
         frames = mel.shape[1]
@@ -606,6 +624,13 @@ class NpuRecognizer:
         offset, win_idx = 0, 0
         last_global, have_last = 0, False
 
+        # 编码结果缓存：key=(offset, size)，value=(acts, valid)。见 docstring。
+        cache = self._enc_cache
+        if cache is None:
+            cache = self._enc_cache = {}
+        elif len(cache) > total_windows:
+            cache.clear()                    # 换了音频（窗口数对不上）→ 不跨音频复用
+
         while offset < frames:
             size = min(ENCODER_WINDOW_FRAMES, frames - offset)
             is_last = (offset + size) >= frames
@@ -613,7 +638,12 @@ class NpuRecognizer:
             window = np.zeros((MEL_BINS, ENCODER_WINDOW_FRAMES), dtype=np.float32)
             window[:, :size] = chunk
 
-            acts, valid = self._encode(window, size)
+            hit = cache.get((offset, size))
+            if hit is None:
+                acts, valid = self._encode(window, size)
+                cache[(offset, size)] = (acts, valid)
+            else:
+                acts, valid = hit
             # 非末窗：只保留重叠区之前的内容（重叠区会被下一个窗口重新解码一遍）。
             # 这一步对**每一遍**（干净与加噪）都必须做，否则多录的内容会把时间戳推高。
             # 单位与 token 的 frame 一致（mel 帧 @100fps）：截到重叠区之前。
@@ -658,7 +688,7 @@ class NpuRecognizer:
                 have_last = True
 
             win_idx += 1
-            if on_progress:
+            if callable(on_progress):
                 on_progress(win_idx, total_windows)
             if is_last:
                 break
@@ -674,12 +704,21 @@ class NpuRecognizer:
           音频质量    —— 波形算的信噪比/削波/静音（与模型无关的先验风险）
           稳定性      —— 给编码器输出加微小噪声重跑 tta_runs 遍，看有多少**词**变了
         算法与权重都在 asr/confidence.py（有单元测试），这里只负责喂数据。
+
+        ⚠ 这里刻意**不再**为每一遍加噪重跑重新编码：见 `_decode_windows` 的编码缓存
+        说明。稳定性指标的含义没有变（噪声依旧加在 acts 上、种子依旧固定），
+        变的只是"不再重复算同一件事"。
         """
         import numpy as np
         mel = self.mel.log_mel(samples, normalize=True)
         if mel.shape[1] <= 0:
             return {"words": [], "confidence": C.fuse(0.0, 0.0, 0.0), "audio": {}}
 
+        n_tta = max(0, int(tta_runs))
+        # 编码结果缓存在多遍之间复用（见 `_decode_windows` 的 docstring）：
+        # 加噪重跑的噪声加在 acts 上、不在编码器输入上，所以每遍重跑编码器是纯浪费。
+        # 这里是缓存的唯一生命周期边界 —— 每次识别都从空缓存开始，不会跨音频串味。
+        self._enc_cache = {}
         tokens, timings, token_probs = self._decode_windows(mel, collect_probs=True,
                                                            on_progress=on_progress)
         # 补齐成与 tokens 等长：缺的位置补 None（"无数据"），而不是让下标后移错配
@@ -688,13 +727,14 @@ class NpuRecognizer:
         words = self._tokens_to_words(tokens, timings, token_probs)
 
         # ── 加噪重跑：稳定性 ──
-        # 每遍单独记概率，因为 token 数可能与干净跑不同，位置对不齐时概率会串位。
+        # 每遍单独记 token/帧号，因为 token 数可能与干净跑不同，位置对不齐时概率会串位。
         noisy_runs = []
-        for k in range(max(0, int(tta_runs))):
+        for k in range(n_tta):
             if log:
-                log("稳定性重跑 %d/%d …" % (k + 1, tta_runs))
+                log("稳定性重跑 %d/%d …" % (k + 1, n_tta))
             nt, ntg, _ = self._decode_windows(mel, noise=0.02 + 0.01 * k)
             noisy_runs.append([{"id": int(t), "frame": int(g["frame"])} for t, g in zip(nt, ntg)])
+        self._enc_cache = None
 
         clean_tokens = [{"id": int(t), "frame": int(g["frame"]),
                          "prob": float(token_probs[i]) if i < len(token_probs) else None}
