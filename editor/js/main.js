@@ -7,7 +7,8 @@ import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, s
   // 这些纯函数放在 karaoke.js 里以便单测；main.js 必须**显式导入**，
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
   speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
-  buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor } from './karaoke.js';
+  buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
+  highlightTagForRebuild } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
@@ -4011,13 +4012,18 @@ function detectRowProblems(row) {
   return { issues, needConfirm, prefill };
 }
 
-/** 用目标文本重建英文逐词行: 逐词高亮回绿(用户 bug#1), 并整体替换该句全部切片。
+/** 用目标文本重建英文逐词行: 并整体替换该句全部切片。
  *  replaceEvents 会**换掉该句所有事件** → 重复/交叠的脏切片一并清除。
  *  clearName=true 时把角色名从 Name 栏也删掉(角色名在英文行时)。 */
 function rebuildEnglishFromText(en, text, clearName) {
   if (clearName && en.proto) en.proto.name = '';
   en.text = text;
-  en.highlightTag = '{\\c&H00FF00&}';
+  /* ⚠ 这里以前写死 `{\c&H00FF00&}`（注释还写着"逐词高亮回绿"）—— 用户报的正是这个：
+   *   点「修复字幕」后逐词高亮色变成绿色，**重开稿件才恢复**（重开时会从
+   *   SubFabricWordColor 元数据读回配置色并 setWordHighlightColor）。
+   *   修复字幕的语义是修坏掉的逐词/文本，**不该顺手改颜色** —— 优先沿用这一行原有的
+   *   高亮色，行上没有/非法才退回当前配置色。与"新增字幕 / 重新识别不得写死绿"同一类修复。 */
+  en.highlightTag = highlightTagForRebuild(en.highlightTag);
   en.words = recalcWords(en, en.text, en.start, en.end);
   en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
   en.bad = false;   // 重建后时间一律合法, 清掉分析时可能留下的时间异常标记

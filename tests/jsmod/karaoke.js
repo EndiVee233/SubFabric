@@ -52,6 +52,20 @@ export function setWordHighlightColor(hex) {
 /** 当前逐词高亮色('#rrggbb') */
 export function getWordHighlightColor() { return WORD_HIGHLIGHT_COLOR; }
 
+/** 逐词**重建**时该用哪个高亮标签：能沿用行上原有的就沿用，否则退回当前配置色。
+ *
+ * 为什么不能直接在重建处写 `{\c&H00FF00&}`：那条路正是"点「修复字幕」后高亮色变成绿色、
+ * 重开稿件才恢复"的成因 —— 重建把整句切片换成绿的，而重开稿件时会从
+ * SubFabricWordColor 元数据读回配置色并 setWordHighlightColor，所以只有重开才恢复。
+ * 修复字幕的语义是"修坏掉的逐词/文本"，**不该顺手改颜色**。
+ *
+ * 与上面 WORD_HIGHLIGHT_COLOR 的注释是同一类问题（新增字幕 / 重新识别曾写死绿），
+ * 这里是第三个入口 —— 统一走这个函数，别再各写各的。 */
+export function highlightTagForRebuild(existingTag) {
+  const t = String(existingTag == null ? '' : existingTag);
+  return /^\{\\c&H[0-9A-Fa-f]{6}&\}$/.test(t) ? t : wordHighlightTag();
+}
+
 /** ASS &HBBGGRR → '#rrggbb'(供说话人颜色解析与全局换色复用) */
 export const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
 
