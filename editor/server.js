@@ -4529,10 +4529,14 @@ function startPrepare(id, videoPath, mode) {
   const LlmError = llmText.LlmError;
 
 
-  /** 落盘译文（每批一次），服务重启/刷新后可续翻 */
+  /** 落盘译文（每批一次），服务重启/刷新后可续翻。
+   *  ⚠ 落盘前过一遍 unwrapJsonArrayString：实测有整句译文是**原样的 JSON 数组字符串**
+   *  （`["译文1","译文2"]`）被写了进来，然后行首那个 `["…` 被当成 `[角色名]` 读走
+   *  → 角色栏里列出一堆台词（用户报的 bug）。解析层已经修了根因，这里是最后一道闸。 */
   function saveTranslations(id, model, lines) {
     const tp = path.join(projDir(id), 'translation.json');
-    fs.writeFileSync(tp + '.tmp', JSON.stringify({ model, updatedAt: new Date().toISOString(), lines }));
+    const clean = (lines || []).map(v => llmText.unwrapJsonArrayString(v));
+    fs.writeFileSync(tp + '.tmp', JSON.stringify({ model, updatedAt: new Date().toISOString(), lines: clean }));
     fs.renameSync(tp + '.tmp', tp);
   }
 
