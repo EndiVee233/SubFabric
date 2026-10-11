@@ -13,13 +13,20 @@ function eq(name, got, want) {
   if (g === w) { pass++; console.log('  ✓ ' + name); }
   else { fail++; console.log('  ★ ' + name + '\n      得到 ' + g + '\n      期望 ' + w); }
 }
+function ok(name, cond) {
+  if (cond) { pass++; console.log('  ✓ ' + name); }
+  else { fail++; console.log('  ★ ' + name); }
+}
 
 console.log('\n【1】复现原 bug：n=1，模型给了 4 个元素的 JSON 数组');
 // 这条输入是 "I should be winning so hard Like, this shouldn\'t even be a close fight He\'sp, wech Oh, bro"
 const raw4 = '["我应该赢得毫无悬念","这根本不该是场势均力敌的较量","他呃，我们","哦，兄弟"]';
+/* ⚠ 这两条断言的**期望值**当初写错了（写成了修复前的行为），已按修复后的正确行为改写：
+ *   修复后，元素数(4) ≠ 预期行数(1) 时**返回 null** —— 也就是明确报"格式不合规"，
+ *   交给上层换严格提示词重试。**绝不能**把 JSON 原文当成一句译文返回（那正是本 bug）。 */
 const r1 = parseLineArrayReply(raw4, 1);
-eq('不再把整个 JSON 原文当成一句译文', r1 && r1[0].startsWith('['), false);
-eq('返回 1 条（并成一句）', r1 && r1.length, 1);
+eq('元素数与输入行数对不齐时返回 null（明确报格式错，而不是把 JSON 原文当译文）', r1, null);
+ok('返回的不是"整串 JSON 当一句译文"', !(Array.isArray(r1) && r1.some(x => String(x).includes('["'))));
 console.log('      实际 = ' + JSON.stringify(r1));
 
 console.log('\n【2】n 与元素数一致时直接采用');

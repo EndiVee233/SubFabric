@@ -50,7 +50,11 @@ ok(/\.fp-list\s*\{[^}]*overflow-y:\s*auto/.test(CSS), '.fp-list 可滚动');
 ok(/\.fp-item\s*\{[^}]*font-size:\s*1[5-9]px/.test(CSS), '★ .fp-item 字号够大（要看得出字形差异）');
 
 const MAIN = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
-ok(/import \{ enhanceFontInput \} from '\.\/font-picker\.js'/.test(MAIN), 'main.js 引入了组件');
+/* ⚠ 不要断言 import 的**逐字**形态 —— 这个 fork 后来为了「缺字时显示 ❗ 并回退微软雅黑」
+ *   又从这个模块多导了一个 loadFontNames，逐字断言会因此过期。
+ *   断言"从这个模块导入了 enhanceFontInput"才是有意义的（模块来源 + 用到了它）。 */
+ok(/import \{[^}]*\benhanceFontInput\b[^}]*\} from '\.\/font-picker\.js'/.test(MAIN),
+  'main.js 从 font-picker.js 引入了组件');
 ok(/enhanceFontInput\(el\)/.test(MAIN), 'main.js 在两个字体框上调用它');
 // 旧的原生补全逻辑不该再把 datalist 当主路径（留着无妨，但 list 属性已被摘掉）
 ok(/loadSystemFontList/.test(MAIN), '/api/fonts 的读取仍保留（组件用的是同一份数据）');

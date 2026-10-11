@@ -128,8 +128,17 @@ ok(stripConfidence([]) === 0, '空数组不炸');
 ok(stripConfidence(null) === 0, 'null 不炸');
 
 console.log('\n== 源码接线 ==');
-const spread = (SRC.match(/\.\.\.\(ea\.extra \|\| \[\]\), \.\.\.ea\.hotwords, \.\.\.ttaArgs\(confMode\)\]/g) || []).length;
-ok(spread === 3, `三处 spawn 都接 ttaArgs(confMode)（找到 ${spread}）`);
+/* ⚠ 这条断言以前钉的是**重排前**的逐字写法
+ *   （`...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)]`）。
+ *   上游把 ASR 参数生成抽成了 asrArgsFor(ea, modelDir, audio, out, confMode)，
+ *   并把 extra/hotwords 拆成两行 —— 逐字形态必然过期，**但接线没丢**：
+ *   4 处 ASR spawn 点全部把 confMode 传进 asrArgsFor（实得 4，且 >= 3）。
+ *   所以改成断言"参数生成函数收了 confMode"+"所有 spawn 点都用了它"，
+ *   这才是真正要防回归的东西（新增 spawn 点漏传 confMode 会被抓住）。 */
+ok(/const asrArgsFor = \(ea, modelDir, audio, out, confMode\)/.test(SRC),
+  'asrArgsFor 签名里有 confMode');
+const spread = (SRC.match(/asrArgsFor\([^)]*confMode\s*\)/g) || []).length;
+ok(spread >= 3, `ASR spawn 点都接 confMode（找到 ${spread}，>= 3）`);
 ok(/const confMode = asrConfidenceFor\(meta0\)/.test(SRC), 'startDraftAsr 里算出 confMode');
 ok(/tta: \(confMode === 'full' \? CONFIDENCE_TTA : 0\)/.test(SRC), '常驻服务模式也按档位传');
 ok(/if \(confMode === 'off'\)/.test(SRC), 'off 档有专门分支');

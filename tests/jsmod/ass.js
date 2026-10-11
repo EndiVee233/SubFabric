@@ -28,6 +28,14 @@ export class AssDoc {
   }
 
   _parse() {
+    /* ⚠ 必须先清空再解析 —— 这个函数原来只在构造函数里跑一次，所以是"累加"写法。
+     *  现在 orderDialoguesByStyle() 会**再跑一次**（行序/行号变了要重新对齐），
+     *  不清就会把样式和事件重复一份（styles 后写覆盖、events 直接翻倍）。 */
+    this.events = [];
+    this.styleNames = [];
+    this.styles = new Map();
+    this.format = [];
+    this.styleFormat = [];
     let section = '';
     let fmt = null;
     for (let i = 0; i < this.lines.length; i++) {
@@ -262,6 +270,95 @@ export class AssDoc {
     rec.values = values;
     return true;
   }
+
+  /** [V4+ Styles] 里的样式声明顺序（名字数组）。
+   *  ⚠ **这个顺序不影响画面上下** —— 实测过（最小 ASS × 四种组合）：
+   *     样式[ZH,EN] 事件[ZH,EN] → 中文在下、英文在上
+   *     样式[EN,ZH] 事件[ZH,EN] → 中文在下、英文在上   ← 换样式顺序，结果不变
+   *     样式[*]     事件[EN,ZH] → 中文在上、英文在下
+   *  决定上下的是 **Dialogue 事件在文件里的先后**（先写的贴 margin、后写的被上顶），
+   *  见 orderDialoguesByStyle()。留着这个只读接口是为了排查与展示。 */
+  stylesInOrder() {
+    const arr = [];
+    for (const idx of this._styleOrder()) {
+      for (const rec of this.styles.values()) if (rec.lineIdx === idx) { arr.push(rec.name); break; }
+    }
+    return arr;
+  }
+
+  /**
+   * 按"某种样式的事件排在前面"重排 [Events] 里的 Dialogue 行 —— 这才是决定画面上下
+   * 的东西：libass 从底部往上摆，**先写的事件贴 margin（在下面）、后写的被上推**。
+   *
+   * `bottomStyle` = 要显示在**下面**的那条样式，它的事件排前面。
+   *
+   * 只在"时间上互相重叠"的事件之间调整相对顺序（按开始时间贪心分组），
+   * 这样既改对了重叠那几行的上下，又不会把整份稿件的阅读顺序打乱。
+   * @returns {boolean} 行序是否真的变了
+   */
+  orderDialoguesByStyle(bottomStyle) {
+    const want = String(bottomStyle || '').toLowerCase();
+    if (!want || !this.events.length) return false;
+    const rank = (ev) => (String(ev.style || '').toLowerCase() === want ? 0 : 1);
+
+    /* 按开始时间排序后贪心分组：与当前组"时间有交叠"的事件归为一组。
+     * 组内重排（下面那条样式排前面），组间保持原顺序。 */
+    const sorted = this.events.slice().sort((a, b) => a.start - b.start || a.end - b.end);
+    const groups = [];
+    for (const ev of sorted) {
+      const g = groups[groups.length - 1];
+      if (g && ev.start < g.maxEnd - 1e-6) { g.list.push(ev); g.maxEnd = Math.max(g.maxEnd, ev.end); }
+      else groups.push({ list: [ev], maxEnd: ev.end });
+    }
+    const ordered = [];
+    for (const g of groups) {
+      // 组内按 rank 稳定排序：rank 0（下面那条）在前，同 rank 保持原先后
+      const idx = g.list.map((ev, i) => ({ ev, i }));
+      idx.sort((a, b) => (rank(a.ev) - rank(b.ev)) || (a.i - b.i));
+      for (const { ev } of idx) ordered.push(ev);
+    }
+    // 与现有顺序一致就不用动
+    let same = ordered.length === this.events.length;
+    for (let i = 0; same && i < ordered.length; i++) if (ordered[i] !== this.events[i]) same = false;
+    if (same) return false;
+
+    /* 把这些事件的行**按新顺序重新填回它们原本占用的那些行号**（行号集合不变，
+     * 所以 [Events] 段的位置、以及其它行都不动 —— 不需要动整个文件的行号）。
+     * 直接搬 `_rawParts`（原始的逐列内容），只把 style 列换成新事件的样式：
+     * 这样 margin/effect 等列原样保留，也不会碰任何文本。 */
+    const slots = this.events.map(ev => ev.lineIdx).sort((a, b) => a - b);
+    const styleCol = this.format.indexOf('style');
+    ordered.forEach((ev, i) => {
+      const parts = (ev._rawParts || []).slice();
+      if (styleCol !== -1) parts[styleCol] = ev.style;
+      this.lines[slots[i]] = 'Dialogue: ' + parts.join(',');
+    });
+    this._parse();          // 行号/顺序都变了 → 重新对齐
+    return true;
+  }
+
+  /** [V4+ Styles] 段里所有样式行的行号（按文件顺序）。
+   *  仅供 stylesInOrder() 展示用 —— **不参与"谁在上"的判定**（见下）。 */
+  _styleOrder() {
+    const out = [];
+    let inStyles = false;
+    for (let i = 0; i < this.lines.length; i++) {
+      const t = this.lines[i].trim();
+      const sec = /^\[(.+)\]$/.exec(t);
+      if (sec) { inStyles = /^v4\+? styles$/i.test(sec[1].trim()); continue; }
+      if (inStyles && /^Style\s*:/i.test(t)) out.push(i);
+    }
+    return out;
+  }
+
+  /**
+   * ⚠ 这里原来有个 `moveStyleBefore()`（重排 [V4+ Styles] 的声明顺序），**已删除**。
+   *   它基于一个**错误假设**：以为"谁后声明谁被上推"。用最小 ASS 做过四组对照实测
+   *   （就是预览用的那个 libass-wasm），样式顺序对上下**毫无影响**：
+   *       样式[ZH,EN] 事件[ZH,EN] → 中文在下    样式[EN,ZH] 事件[ZH,EN] → 中文在下
+   *       样式[任意]  事件[EN,ZH] → 中文在上
+   *   决定上下的是 **Dialogue 事件的行序** —— 见 orderDialoguesByStyle()。
+   */
 
   getScriptInfoComment(key) {
     const safe = String(key || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
