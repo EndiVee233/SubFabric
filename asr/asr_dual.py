@@ -404,11 +404,8 @@ def main() -> int:
             by_engine[name].append({"index": idx, "start": start, "end": end, "wav": wav})
             by_engine["_byIndex"][idx] = {"index": idx, "start": start, "end": end, "wav": wav}
 
-        py = args.python
-        scripts = {"gpu": (os.path.join(HERE, "asr.py"), args.model_gpu,
-                           ["--threads", str(args.threads), "--provider", "cuda"]),
-                   "npu": (os.path.join(HERE, "asr_npu.py"), args.model_npu,
-                           ["--threads", str(args.threads), "--provider", "npu"])}
+        # 两个引擎的脚本 / 模型目录 / 固定参数。这里原本**整块重复了两遍**（逐字相同，
+        # 是某次打补丁留下的死副本）——已删掉第二份，行为完全不变。
         py = args.python
         scripts = {"gpu": (os.path.join(HERE, "asr.py"), args.model_gpu,
                            ["--threads", str(args.threads), "--provider", "cuda"]),
