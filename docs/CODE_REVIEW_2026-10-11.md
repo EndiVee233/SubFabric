@@ -378,3 +378,62 @@ HTML 结构是 `#st-panel-models` 下同时挂着 `#st-models` 与 `#dual-ratio-
 
 > 走查用到的临时项目与 `asr/settings.json`（POST 写入的测试配置）已全部清理，
 > 未污染工作树。
+
+---
+
+## 十、第九轮：`asr/common.py` 提取（同日完成，护栏先行）
+
+第九轮做了第二轮审查"阶段 2"里收益最大的单项：把两个引擎**逐字重复**的断句实现抽成
+`asr/common.py`。顺序是先有护栏、再做提取（7.1 的对拍测试就是为这一步准备的）。
+
+### 10.1 抽了什么
+
+| 成员 | 说明 |
+| --- | --- |
+| `SENT_END / SOFT_END / PAUSE_SPLIT / MAX_LINE_SEC / MAX_LINE_WORDS / SAMPLE_RATE` | 断句阈值常量（原先两份，靠"与 asr.py 保持一致"的人肉注释同步） |
+| `group_words(words)` | 基础断句：句末标点 / 长停顿 / 行长兜底（纯分组，**不含置信度**） |
+| `seg_base(i, ws)` | 一段的公共字段（`id/start/end/text/words`） |
+| `clamp_overlap(segs)` | 相邻行不交叠 |
+| `frame_energies(samples, sr, …)` | 帧能量 RMS（原先是 `asr_npu.py` **反向依赖** `asr.py` 的一个函数，现归入公共层） |
+
+**刻意不进 common 的**：置信度（两个引擎能拿到的信号不同——sherpa 不给 token 概率、NPU 给，
+口径本来就各写各的，对拍测试把这项差异钉成"设计如此"）。
+
+### 10.2 两边现在怎么用
+
+```python
+# asr.py / asr_npu.py 都只剩：
+from common import (SAMPLE_RATE, SENT_END, SOFT_END, PAUSE_SPLIT,
+                    MAX_LINE_SEC, MAX_LINE_WORDS, group_words, seg_base, clamp_overlap,
+                    frame_energies)
+
+def words_to_segments(words, samples=None, sr=SAMPLE_RATE, stability=None):
+    out = []
+    for i, ws in enumerate(group_words(words)):      # ← 分组用同一份
+        seg = seg_base(i, ws)                        # ← 公共字段同一份
+        # …这里之后才是各引擎自己的置信度口径…
+    clamp_overlap(out)
+    return out
+```
+
+验证了"确实只留一份"：
+`asr.frame_energies is common.frame_energies` 与 `asr_npu.frame_energies is common.frame_energies`
+**都是 True**；分组循环与断句常量在两引擎文件里 `grep` 均为 0 处。
+
+### 10.3 顺带解掉的一处签名差异
+
+对拍测试 D 组记录的"`samples=None` 在 asr 可用、在 npu 会 TypeError"现在只剩**一个地方**要修
+（`common.seg_base` 不碰 samples；两引擎的置信度块各自判断）。提取后这类"分叉"不会再长出来。
+
+### 10.4 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `py_compile` 三个文件 | 通过 |
+| `tests/asr-segment-parity-test.py` | **24/0**（asr 改完、npu 未改时跑一次；两边都改完再跑一次，均通过） |
+| 6 个 Python 单测 | 全绿 |
+| ruff | All checks passed |
+| JS 全量测试 | 68 通过 / 0 失败 |
+
+> **刻意留到以后的**：`emit()/reconfigure()`、`serve_loop`、`read_wav_mono16k` 的提取。
+> 它们不在对拍护栏覆盖范围内，而且 `serve_loop` 涉及常驻进程的生命周期，值得单独一轮。

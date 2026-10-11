@@ -45,16 +45,14 @@ except Exception:
 # 所以只有「音频质量」与「稳定性」两个信号 —— 融合时按可用信号加权。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import confidence as C  # noqa: E402
+# 断句阈值与分组逻辑两个引擎共用一份（asr/common.py）。
+# 以前这里和 asr_npu.py 各写一份逐字重复的副本 —— 改了一处忘另一处就是行为漂移
+# （第二轮审查把它列为"收益最大单项"；2026-10-11 先补对拍护栏再提取）。
+from common import (SAMPLE_RATE, SENT_END, SOFT_END, PAUSE_SPLIT,  # noqa: E402
+                    MAX_LINE_SEC, MAX_LINE_WORDS, group_words, seg_base, clamp_overlap,
+                    frame_energies)
 
-SAMPLE_RATE = 16000
 FEATURE_DIM = 80
-
-# 基础断句阈值(纯本地规则, 不涉及 LLM)
-SENT_END = (".", "?", "!", "。", "？", "！", "…")
-SOFT_END = (",", ";", ":")      # 强制断行时优先回退到这里, 避免把句尾词甩成孤行
-PAUSE_SPLIT = 0.8     # 停顿超过这个秒数就断行
-MAX_LINE_SEC = 10.0   # 行长兜底: 说话不带标点时也不至于糊成一坨
-MAX_LINE_WORDS = 30
 
 
 # --------------------------------------------------------------------------
@@ -244,33 +242,6 @@ def read_wav_mono16k(path):
             np.arange(n, dtype=np.float32), data).astype(np.float32)
         sr = SAMPLE_RATE
     return data, sr
-
-
-def frame_energies(samples, sr, frame_ms=20.0, hop_ms=10.0):
-    """返回 (每帧 RMS, 每帧起始秒, hop秒)。
-
-    按块计算: 老实现一次性广播出 (n_frames, frame) 的 int64 索引矩阵,
-    1 小时音频 ≈ 1.15 亿索引(索引 + 浮点切片 + 平方临时量峰值约 1.8GB), 长片有 OOM 风险;
-    分块后内存占用只与块大小有关、与音频长度无关, 逐帧数值与老实现完全一致
-    (同一行内的 square/mean 归约顺序不变)。
-    """
-    import numpy as np
-
-    frame = max(1, int(sr * frame_ms / 1000.0))
-    hop = max(1, int(sr * hop_ms / 1000.0))
-    if len(samples) < frame:
-        e = float(np.sqrt(np.mean(np.square(samples)))) if len(samples) else 0.0
-        return np.array([e], dtype=np.float32), 0.0, float(hop) / sr
-
-    n_frames = 1 + (len(samples) - frame) // hop
-    energies = np.empty(n_frames, dtype=np.float32)
-    offs = np.arange(frame, dtype=np.int64)[None, :]              # 帧内偏移, 建一次复用
-    block = max(1, 2000000 // frame)                              # 每块索引元素 ≤200万(int64 约16MB)
-    for b0 in range(0, n_frames, block):
-        b1 = min(n_frames, b0 + block)
-        idx = offs + (hop * np.arange(b0, b1, dtype=np.int64))[:, None]
-        energies[b0:b1] = np.sqrt(np.mean(np.square(samples[idx]), axis=1)).astype(np.float32)
-    return energies, 0.0, float(hop) / sr
 
 
 def split_chunks(samples, sr, target_sec=26.0, search_sec=5.0, min_tail=3.0):
@@ -673,42 +644,14 @@ def refine_word_ends(words, samples, sr):
 
 
 def words_to_segments(words, samples=None, sr=SAMPLE_RATE, stability=None):
-    """基础断句: 句末标点 / 长停顿 / 行长兜底。纯本地规则, 不调用 LLM。"""
-    groups, cur = [], []
-    for w in words:
-        if cur:
-            prev = cur[-1]
-            too_long = (w["start"] - cur[0]["start"]) > MAX_LINE_SEC or len(cur) >= MAX_LINE_WORDS
-            if prev["word"].rstrip().endswith(SENT_END) or (w["start"] - prev["end"]) > PAUSE_SPLIT:
-                groups.append(cur)
-                cur = []
-            elif too_long:
-                # 被长度逼着断行时, 尽量在最近的软标点(逗号/分号/冒号)处断开 ——
-                # 否则会出现「with.」这种只剩一个句尾词的孤行。
-                cut = None
-                for j in range(len(cur) - 1, -1, -1):
-                    if cur[j]["word"].rstrip().endswith(SOFT_END) and (j + 1) >= 6:
-                        cut = j + 1
-                        break
-                if cut:
-                    groups.append(cur[:cut])
-                    cur = cur[cut:]
-                else:
-                    groups.append(cur)
-                    cur = []
-        cur.append(w)
-    if cur:
-        groups.append(cur)
+    """基础断句: 句末标点 / 长停顿 / 行长兜底。纯本地规则, 不调用 LLM。
 
+    分组与公共字段走 asr/common.py（与 asr_npu.py 同一份实现）；
+    置信度是本引擎自己的口径 —— sherpa 不给 token 概率，所以只有音频质量与稳定性。
+    """
     out = []
-    for i, ws in enumerate(groups):
-        seg = {
-            "id": i,
-            "start": ws[0]["start"],
-            "end": ws[-1]["end"],
-            "text": " ".join(w["word"] for w in ws).strip(),
-            "words": [{"word": w["word"], "start": round(w["start"], 3), "end": round(w["end"], 3)} for w in ws],
-        }
+    for i, ws in enumerate(group_words(words)):
+        seg = seg_base(i, ws)
         if samples is not None:
             # 句级置信度：本句音频质量打底，整体稳定性往下压。
             # 本引擎**没有** token 概率项（sherpa 不给），所以 parts 里不放 token，
@@ -725,9 +668,7 @@ def words_to_segments(words, samples=None, sr=SAMPLE_RATE, stability=None):
                           "stability": round(float(stability.get("stability", 1.0)), 3)},
             }
         out.append(seg)
-    for i in range(1, len(out)):              # 相邻行不交叠
-        if out[i]["start"] < out[i - 1]["end"]:
-            out[i]["start"] = out[i - 1]["end"]
+    clamp_overlap(out)                        # 相邻行不交叠（asr/common.py，与 npu 同一份）
     return out
 
 
