@@ -46,6 +46,8 @@ if (pairRows) {
     ((hi - lo) < 60 ? '✗ 被压扁了，问题在 pairRows' : '✓ 正常'));
 } else {
   console.log('\n退而求其次：检查 main.js 里 rows 是怎么来的');
+  // ⚠ mainSrc 原来没定义 —— 这条 else 分支一旦走到就抛 ReferenceError（2026-10-11 eslint no-undef 发现）
+  const mainSrc = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
   const k = mainSrc.indexOf('pairRows(');
   console.log(mainSrc.slice(Math.max(0, k - 400), k + 200));
 }

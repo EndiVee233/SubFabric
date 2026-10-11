@@ -294,11 +294,13 @@ def main() -> int:
             import threading
             errs = {}
 
-            def go(tag, script, model, extra, part):
+            # ⚠ go 定义在 for sec 循环**内部**：errs 是每轮新建的字典，闭包会晚绑定。
+            #   今天不出错（线程在同一轮内 join），但用默认参数绑死更稳（ruff B023）。
+            def go(tag, script, model, extra, part, _errs=errs):
                 try:
                     run_one_engine(tag, script, model, extra, args.python, part, tmpdir)
                 except Exception as exc:  # noqa: BLE001
-                    errs[tag] = str(exc)
+                    _errs[tag] = str(exc)
 
             ths = []
             if gs:

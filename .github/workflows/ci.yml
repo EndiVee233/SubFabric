@@ -1,0 +1,56 @@
+# SubFabric CI —— 把"能自动发现的错误"挡在 main 之外。
+#
+# 为什么加它（第二轮/第三轮审查的共同结论）：
+#   · 无 CI 时，"合并引入的回归""行尾符导致的假失败""ESLint 配置漏检"这类问题
+#     只能靠人偶然发现 —— 而它们全都能被机器秒查出来。
+#   · 本工作流刻意只跑**不需要 GPU / 模型 / 网络**的部分，保证在任何机器上都能通过。
+#
+# 三条防线：
+#   ① ESLint —— no-undef（用了不存在的变量）是本项目最容易出真 bug 的一类；
+#   ② 全量测试 —— tests/run-all.mjs（内部会先跑 gen-fixture 生成夹具）；
+#   ③ ruff —— Python 侧的同款静态检查。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一分支连续推送时取消旧的一次，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: JS · ESLint + 全量测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22 是硬要求：项目靠 require(esm) 让"一份 ESM 双端复用"的模块
+      # 既能被浏览器 import、又能被 server.js require。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # 项目没有 package.json（无构建步骤），所以用 npx 现拉 eslint@9；
+      # 仓库根的 eslint.config.js 是 flat config，会被自动读取。
+      - name: ESLint
+        run: npx --yes eslint@9 editor/ tools/ tests/
+
+      - name: 全量测试
+        run: node tests/run-all.mjs
+
+  py:
+    name: Python · ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安装 ruff
+        run: pip install ruff
+      - name: ruff check
+        run: ruff check .
