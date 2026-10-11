@@ -1,5 +1,10 @@
-// 几何台架验证：**非 16:9**（4:3）素材下，进度条悬浮时间的横向换算是否用对了"去黑边"矩形。
-// 这条逻辑只有在长宽比不匹配时才看得出错，所以必须用一个真 4:3 视频跑。
+// 几何台架验证（非 16:9 素材）：进度条悬浮提示的横向映射是否还准。
+//
+// 为什么单独测这条：16:9 素材下元素与画面重合，看不出"按元素还是按画面"；只有两侧有黑边时
+// 两种口径才差得出来。js/video-hover-tip.js 里 trackRect() 对"画面明显比元素窄"的情况
+// 是按**画面**贴边铺的（依据见该文件头），这里就用真 4:3 视频把这条假设验掉。
+//
+// 台架 = 安装目录里的 __tipgeom.html（同样的 DOM 结构 + 真 4:3 视频），跑完删。
 // 用法: node tools/verify_tip_letterbox.mjs
 import { spawn } from 'node:child_process';
 import { mkdtempSync, existsSync } from 'node:fs';
@@ -23,7 +28,7 @@ const edge = spawn(EDGE, [
   `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
   '--disable-gpu', '--disable-extensions', '--allow-file-access-from-files',
   '--autoplay-policy=no-user-gesture-required',
-  '--window-size=1280,900', url,
+  `--window-size=${process.env.WIN || '1400,860'}`, url,
 ], { stdio: 'ignore' });
 
 let target = null;
@@ -49,80 +54,78 @@ const evalJS = async (e) => {
   return r?.result?.value;
 };
 
-const meta = await evalJS(`(async () => {
+const meta = JSON.parse(await evalJS(`(async () => {
   const v = document.getElementById('video');
   if (v.readyState < 1) await new Promise(r => { v.addEventListener('loadedmetadata', r, { once: true }); setTimeout(r, 8000); });
-  return JSON.stringify({ vw: v.videoWidth, vh: v.videoHeight, dur: v.duration, rs: v.readyState });
-})()`);
-console.log('视频:', meta);
-const m = JSON.parse(meta);
-if (!m.vw) { console.log('视频没加载（file:// 被拒？）'); edge.kill(); process.exit(1); }
+  const r = v.getBoundingClientRect();
+  return JSON.stringify({ vw: v.videoWidth, vh: v.videoHeight, dur: v.duration,
+    x: r.x, y: r.y, w: r.width, h: r.height });
+})()`));
+if (!meta.vw) { console.log('视频没加载'); edge.kill(); process.exit(1); }
 
-const geo = await evalJS(`(() => {
-  const v = document.getElementById('video'); const r = v.getBoundingClientRect();
-  return JSON.stringify({ x: r.x, y: r.y, w: r.width, h: r.height });
-})()`);
-const g = JSON.parse(geo);
-console.log('元素几何:', geo);
+// 期望的"去黑边"画面矩形（与 pictureRect 同一算法，这里独立算一遍做对照）
+const vr = meta.vw / meta.vh, er = meta.w / meta.h;
+let picW = meta.w, picH = meta.h;
+if (er > vr) picW = Math.floor(meta.h * vr); else picH = Math.floor(meta.w / vr);
+const picLeft = meta.x + (meta.w - picW) / 2;
+const picTop = meta.y + (meta.h - picH) / 2;
+const barY = Math.round(picTop + picH - 14);
 
-// 期望的"去黑边"矩形（与 pictureRect 同一算法，这里独立算一遍做对照）
-const vr = m.vw / m.vh, er = g.w / g.h;
-let rw = g.w, rh = g.h;
-if (er > vr) rw = Math.floor(g.h * vr); else rh = Math.floor(g.w / vr);
-const picLeft = g.x + (g.w - rw) / 2, picTop = g.y + (g.h - rh) / 2;
-console.log(`素材 ${m.vw}x${m.vh}（${vr.toFixed(3)}）  元素 ${Math.round(g.w)}x${Math.round(g.h)}（${er.toFixed(3)}）`);
-console.log(`→ 去黑边后画面：${rw}x${rh}  左偏移 ${Math.round(picLeft - g.x)}  上偏移 ${Math.round(picTop - g.y)}`);
-ok(rw < g.w, '这条素材在元素里确实有左右黑边（否则本条测试没意义）', `画面宽 ${rw} vs 元素宽 ${Math.round(g.w)}`);
+console.log(`素材 ${meta.vw}x${meta.vh}（${vr.toFixed(3)}）  元素 ${Math.round(meta.w)}x${Math.round(meta.h)}（${er.toFixed(3)}）  时长 ${meta.dur.toFixed(0)}s`);
+console.log(`去黑边画面：${picW}x${picH}  左偏移 ${Math.round(picLeft - meta.x)}px  上偏移 ${Math.round(picTop - meta.y)}px`);
+ok(picW < meta.w - 10, '这条素材确实有左右黑边（否则本测试没意义）', `画面宽 ${picW} vs 元素宽 ${Math.round(meta.w)}`);
 
-const barY = Math.round(picTop + rh - 22);
-const readTip = async () => JSON.parse(await evalJS(`(() => {
+const readTip = () => evalJS(`(() => {
   const t = document.getElementById('video-hover-tip'); const r = t.getBoundingClientRect();
   return JSON.stringify({ hidden: t.hidden, text: t.textContent, cx: r.left + r.width / 2 });
-})()`));
+})()`);
 const hover = async (px, py) => {
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(px), y: Math.round(py), button: 'none', clickCount: 0 });
   await sleep(110);
-  return readTip();
+  return JSON.parse(await readTip());
 };
+const parseTip = (t) => { const p = String(t).split(':').map(Number); return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1]; };
 
-console.log('\n── 画面内的相对位置 → 时间，必须按**画面**宽度算（不是元素宽度）──');
-for (const frac of [0, 0.25, 0.5, 1]) {
-  const px = picLeft + rw * frac;
-  const tip = await hover(px, barY);
-  const expSec = frac * m.dur;
-  const exp = `${Math.floor(expSec / 60)}:${String(Math.floor(expSec % 60)).padStart(2, '0')}`;
-  ok(!tip.hidden && tip.text === exp, `画面 ${(frac * 100).toFixed(0)}% 处显示 ${tip.text}（期望 ${exp}）`, `hidden=${tip.hidden}`);
-  if (tip.hidden) {
-    // 失败的边界要靠数值定位，别靠猜：把"我们算的"和"模块内部算的"并排打出来
-    const dbg = await evalJS(`(() => {
-      const v = document.getElementById('video'); const s = document.getElementById('video-stage');
-      const vw = v.videoWidth, vh = v.videoHeight, w = v.clientWidth, h = v.clientHeight;
-      const vr = vw / vh, er = w / h;
-      let rwid = w, rhei = h;
-      if (er > vr) rwid = Math.floor(h * vr); else rhei = Math.floor(w / vr);
-      const st = s.getBoundingClientRect(), vb = v.getBoundingClientRect();
-      const pic = { left: (vb.left - st.left) + (w - rwid) / 2, top: (vb.top - st.top) + (h - rhei) / 2, width: rwid, height: rhei };
-      const py = ${Math.round(barY)} - vb.top;
-      const fromBottom = vb.height - py;
-      const px = ${Math.round(px)} - vb.left;
-      return JSON.stringify({ pic, vb: { l: vb.left, t: vb.top, w: vb.width, h: vb.height },
-        px, fromBottom, inX: (px >= pic.left - 1 && px <= pic.left + pic.width + 1),
-        inY: (fromBottom >= 1 && fromBottom <= Math.min(34, 72)), fromBottomRaw: fromBottom });
-    })()`);
-    console.log('     调试:', dbg);
-  }
+// 代码里的假设：画面明显比元素窄时，轨道贴画面铺
+const trackLeft = picLeft, trackW = picW;
+const tolSec = (meta.dur / trackW) * 3 + 0.9;
+
+console.log('\n── 1. 对拍：滑块真实位置处悬停，读数必须等于当前时间 ──');
+console.log('   （若代码错误地按"元素整宽"算，这里在靠两端处会差 5% 左右，必然被抓出来）');
+for (const f of [0.1, 0.5, 0.85]) {
+  const realTime = await evalJS(`(async () => {
+    const v = document.getElementById('video');
+    v.currentTime = ${f * meta.dur};
+    await new Promise(r => { v.addEventListener('seeked', r, { once: true }); setTimeout(r, 2000); });
+    await new Promise(r => setTimeout(r, 250));
+    return v.currentTime;
+  })()`);
+  const thumbX = trackLeft + trackW * (realTime / meta.dur);
+  const tip = await hover(thumbX, barY);
+  const got = parseTip(tip.text);
+  ok(Math.abs(got - realTime) <= tolSec,
+     `当前 ${realTime.toFixed(1)}s（滑块 x≈${Math.round(thumbX)}）→ 读数 ${tip.text}，偏差 ${(got - realTime).toFixed(1)}s（容差 ±${tolSec.toFixed(0)}s）`,
+     `hidden=${tip.hidden}`);
 }
 
-console.log('\n── 黑边里（元素内、画面外）不该显示时间 ──');
-const inBarLeft = await hover(g.x + 3, barY);
+console.log('\n── 2. 轨道位置 → 时间（画面 0/50/100%）──');
+for (const f of [0, 0.5, 1]) {
+  const tip = await hover(trackLeft + trackW * f, barY);
+  const got = parseTip(tip.text);
+  ok(!tip.hidden && Math.abs(got - f * meta.dur) <= tolSec,
+     `画面 ${(f * 100).toFixed(0)}% 处读数 ${tip.text}（期望 ${(f * meta.dur).toFixed(1)}s）`);
+}
+
+console.log('\n── 3. 黑边里（元素内、画面外）不该显示时间 ──');
+const inBarLeft = await hover(meta.x + 3, barY);
 ok(inBarLeft.hidden, '左侧黑边里悬停不显示提示', `hidden=${inBarLeft.hidden} text=${inBarLeft.text}`);
-const aboveLeft = await hover(g.x + 3, picTop + 10);
+const aboveLeft = await hover(meta.x + 3, picTop + 10);
 ok(aboveLeft.hidden, '左侧黑边上方不显示提示');
 
-console.log('\n── 提示块要横向对齐它所指的画面位置 ──');
-const mid = await hover(picLeft + rw * 0.5, barY);
-ok(Math.abs(mid.cx - (picLeft + rw * 0.5)) < 3, '提示块中心与所指位置对齐',
-   `tip中心 ${Math.round(mid.cx)} vs 位置 ${Math.round(picLeft + rw * 0.5)}`);
+console.log('\n── 4. 提示块横向指向正确（对准滑块，不是对准元素中心）──');
+const mid = await hover(trackLeft + trackW * 0.5, barY);
+ok(Math.abs(mid.cx - (trackLeft + trackW * 0.5)) < 4, '提示块中心与所指位置对齐',
+   `tip中心 ${Math.round(mid.cx)} vs 位置 ${Math.round(trackLeft + trackW * 0.5)}`);
 
 console.log(`\n通过 ${pass} · 失败 ${fail}`);
 ws.close(); edge.kill();

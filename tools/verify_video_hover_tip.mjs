@@ -83,7 +83,16 @@ console.log('几何:', JSON.stringify(geo));
 
 const picW = geo.w;                       // 16:9 素材正好铺满，黑边为 0
 const picLeft = geo.x;
-const barY = Math.round(geo.y + geo.h - 22);   // 实测进度条在距底约 22px
+const barY = Math.round(geo.y + geo.h - 14);   // 实测进度条在距底约 14px（8~20px 都会跳转）
+
+// 进度条**可拖动轨道**：约占元素宽 96%，左右对称内缩（实测拟合值，见 js/video-hover-tip.js 文件头）。
+// 旧版本这里按"铺满整宽"算，于是测试"通过"了一个错的实现（用户发现读数偏大）。
+// 测试必须用与被测代码同一口径的几何，否则它只是在验证自己的假设。
+const TRACK_FRAC = 0.96;
+const trackLeft = geo.x + geo.w * (1 - TRACK_FRAC) / 2;
+const trackW = geo.w * TRACK_FRAC;
+// 读数在靠两端约 2px 内会被钳住（实测），所以断言允许 2px 量级的偏差
+const TOL_PX = 3;
 
 const readTip = () => evalJS(`(() => {
   const t = document.getElementById('video-hover-tip');
@@ -99,21 +108,52 @@ async function hoverAt(px, py) {
   return JSON.parse(await readTip());
 }
 
-console.log('\n── 1. 悬在进度条上应显示时间，且与位置对应 ──');
-for (const frac of [0.0, 0.25, 0.5, 0.75]) {
-  const px = picLeft + picW * frac;
+const fmt = (sec) => {
+  const t = Math.floor(sec), h = Math.floor(t / 3600);
+  return h > 0
+    ? `${h}:${String(Math.floor((t % 3600) / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+    : `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+};
+/** 把提示文本解析回秒，便于按"像素容差"比较而不是要求字面相等。 */
+const parseTip = (text) => {
+  const p = String(text).split(':').map(Number);
+  if (p.some(n => !Number.isFinite(n))) return NaN;
+  return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+};
+/** 轨道像素 → 容差换算：允许 TOL_PX 像素的几何不确定度 */
+const tolSec = (geo.dur / trackW) * TOL_PX + 0.9;   // +0.9 覆盖提示只显示整秒
+
+console.log('\n── 1. 轨道位置 → 时间读数（按实测轨道几何：约占元素宽 96%）──');
+for (const frac of [0, 0.25, 0.5, 1]) {
+  const px = trackLeft + trackW * frac;
   const tip = await hoverAt(px, barY);
-  const expectSec = frac * geo.dur;
-  const em = Math.floor(expectSec / 60), es = Math.floor(expectSec % 60);
-  const expect = `${em}:${String(es).padStart(2, '0')}`;
-  ok(!tip.hidden && tip.text === expect,
-     `x=${Math.round(px)}（${(frac * 100).toFixed(0)}%）显示 ${tip.text}，期望 ${expect}`,
-     `hidden=${tip.hidden} text=${tip.text}`);
+  const got = parseTip(tip.text), want = frac * geo.dur;
+  ok(!tip.hidden && Math.abs(got - want) <= tolSec,
+     `轨道 ${(frac * 100).toFixed(0)}% 处显示 ${tip.text}（期望 ${fmt(want)}±${tolSec.toFixed(0)}s）`,
+     `hidden=${tip.hidden} text=${tip.text} got=${got} want=${want.toFixed(1)}`);
   if (frac === 0.5) {
     ok(tip.top + tip.h < barY, '提示块在进度条**上方**（不与进度条重叠）',
        `tip底=${tip.top + tip.h} 进度条=${barY}`);
     ok(tip.title.includes(':'), 'title 带精确时间', tip.title);
   }
+}
+
+console.log('\n── 2. 对拍：滑块真实位置处悬停，读数必须等于当前时间（最硬的一条）──');
+for (const target of [geo.dur * 0.1, geo.dur * 0.5, geo.dur * 0.8]) {
+  const realTime = await evalJS(`(async () => {
+    const v = document.getElementById('video');
+    v.currentTime = ${target};
+    await new Promise(r => { v.addEventListener('seeked', r, { once: true }); setTimeout(r, 2500); });
+    await new Promise(r => setTimeout(r, 300));
+    return v.currentTime;
+  })()`);
+  // 滑块应该在"时间占比 × 轨道宽 + 轨道左"处 —— 这个反推用的是被实测标定过的映射
+  const thumbX = trackLeft + trackW * (realTime / geo.dur);
+  const tip = await hoverAt(thumbX, barY);
+  const got = parseTip(tip.text);
+  ok(Math.abs(got - realTime) <= tolSec,
+     `当前时间 ${fmt(realTime)}（滑块 x≈${Math.round(thumbX)}）处悬停读数 ${tip.text} — 偏差 ${(got - realTime).toFixed(1)}s`,
+     `期望 ${fmt(realTime)}，实际 ${tip.text}`);
 }
 
 console.log('\n── 2. 不在进度条上时必须隐藏（不能到处乱弹）──');
@@ -126,11 +166,15 @@ for (const [label, px, py] of [
   ok(tip.hidden, `${label} 不显示提示`, `hidden=${tip.hidden} text=${tip.text}`);
 }
 
-console.log('\n── 3. 左右两端不越界 ──');
-const nearL = await hoverAt(picLeft + 1, barY);
-ok(!nearL.hidden && nearL.left >= geo.x - 1, `最左端提示不越界（left=${nearL.left}，画面 x=${Math.round(geo.x)}）`);
-const nearR = await hoverAt(picLeft + picW - 2, barY);
-ok(!nearR.hidden && nearR.left + nearR.w <= geo.x + geo.w + 1,
+console.log('\n── 3. 轨道两端：读数接近 0 / 时长，且提示块不越界 ──');
+const nearL = await hoverAt(trackLeft + 1, barY);
+const gotL = parseTip(nearL.text);
+ok(!nearL.hidden && gotL <= tolSec, `轨道最左端读数 ${nearL.text}（应接近 0:00）`, `got=${gotL}`);
+ok(nearL.left >= geo.x - 1, `最左端提示不越界（left=${nearL.left}，画面 x=${Math.round(geo.x)}）`);
+const nearR = await hoverAt(trackLeft + trackW - 1, barY);
+const gotR = parseTip(nearR.text);
+ok(!nearR.hidden && geo.dur - gotR <= tolSec, `轨道最右端读数 ${nearR.text}（应接近 ${fmt(geo.dur)}）`, `差 ${(geo.dur - gotR).toFixed(1)}s`);
+ok(nearR.left + nearR.w <= geo.x + geo.w + 1,
    `最右端提示不越界（右缘=${nearR.left + nearR.w}，画面右缘=${Math.round(geo.x + geo.w)}）`);
 
 console.log('\n── 4. 移出视频后收起 ──');

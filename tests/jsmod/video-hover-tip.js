@@ -16,21 +16,48 @@
  * 不需要自建控制条、也不需要往 shadow DOM 里塞东西。
  *
  * ── 几何 ────────────────────────────────────────────────────────────────
- * 进度条铺满**画面**宽度（不是 video 元素宽度）：长宽比不匹配时画面两侧有黑边，
- * 原生控件也跟着铺在画面上。所以横向换算要用去掉黑边后的矩形，算法与
- * main.js 的 pictureRect() / SrtOverlay.fitToVideo 完全一致（这里自带一份，
- * 因为 main.js 无 export，而横向铺满的 bug 只在非 16:9 素材上才看得见）。
+ * **横向**：进度条不是铺满 video 元素，而是左右对称内缩、约占元素宽 96%。
+ * 这是**实测**出来的 —— 一开始我按"铺满整宽"写，用户立刻发现对不上：
+ * 他鼠标在进度条上（播放器读数 10:22 / 3:59:54 ≈ 4.3%）时提示显示 14:38（≈ 6.1%），
+ * 越靠左边差得越多。用 tools/probe_bar_fit.mjs 拖动滑块到多个已知像素位置、
+ * 记下 (像素, currentTime) 做最小二乘拟合（采样点特意往两端挤，边界才定得准）：
  *
- * 纵向：进度条在距画面底约 BAR_HINT px 处。取实测值 22px（上探针里那个从 30 跳到
- * 1946.7 的点击就落在距底 8px，那是滑块/凹槽的命中带；悬停判定放宽到一条薄带，
- * 见 HOT_LO/HOT_HI），并用与 videoedit.js 的 CTRL_BAR=72 一致的口径做上限约束 ——
- * 超过它就进了字幕接管层的地盘（那边要处理"字幕压住控制条"的双击）。
+ *     元素宽 960 → 轨道 930.9（0.970）   元素宽 855 → 轨道 827.0（0.967）
+ *     元素宽 760 → 轨道 733.0（0.965）   元素宽 560 → 轨道 536.9（0.959）
+ *     → 按比例、不是固定像素，统一取 TRACK_FRAC = 0.96
+ *
+ * 另外实测到：元素明显比画面宽（长宽比不匹配、两侧有黑边）时，进度条会**贴画面**铺
+ * —— 元素 855×334 / 画面 827 宽那次，拟合出的轨道边界 14.0 与 841.0 正好是画面边界。
+ * 所以 trackRect() 分这两类处理，硬约束是"轨道不会比画面宽"。
+ *
+ * 残留不确定度：靠近两端时读数会被钳住（左右各约 2px 之内读数不变），
+ * 拟合边界有 ±2px 量级的不确定度（45 分钟的视频上约合 ±6 秒）。判定带只在
+ * 距底 34px 以内生效，所以这点误差不影响"悬停大致定位"的用途。
+ *
+ * **纵向**：进度条在距画面底 HOT_HI 以内（判定带见 HOT_LO/HOT_HI），
+ * 上限与 videoedit 的 CTRL_BAR=72 同口径收口 —— 再往上就是画面内容/接管层地盘。
+ *
+ * 提示块底边固定离画面底 TIP_ABOVE px（在进度条上方），左右夹在舞台内不越界。
+ * 时间文本：整段 <1 小时用 `m:ss`（与播放器自己的读数同口径），否则 `h:mm:ss`
+ * （避免 5 小时直播回放显示成 `312:03`）；`title` 另给毫秒精度。
+ *
+ * ── 与 videoedit 的"字幕接管层"的关系 ──────────────────────────────────
+ * 字幕行的下半截压到控制条上时，videoedit.js 会把 #cue-hit-shield 武装起来接管那一小块
+ * （否则那半截字幕点不动）。此时指针目标是 shield 而不是 video，本模块收不到事件、
+ * 提示不显示 —— 这是**有意的**：那一小块归字幕编辑管，不该再弹时间。
+ * 接管层默认 pointer-events:none，所以绝大多数位置（画面里有字幕行、但没压到控制条上）
+ * 提示照常。
  */
 import { fmtTime } from './util.js';
 
+/* 进度条横向几何（实测拟合值，见文件头）：轨道宽约为 video 元素宽的 TRACK_FRAC 倍，
+ * 左右对称内缩 (1−TRACK_FRAC)/2。**按比例**、不是固定像素 —— 四个元素宽下的拟合：
+ *     宽 960 → 轨道 930.9   宽 855 → 827.0   宽 760 → 733.0   宽 560 → 536.9
+ *     比例 0.970 / 0.967 / 0.965 / 0.959 → 取 0.96 作统一口径。 */
+const TRACK_FRAC = 0.96;
 /* 悬停判定带：距画面底 HOT_LO~HOT_HI px 内算"悬在进度条上"。
- * 上界 34 是"thumb 上沿 + 一点余量"，下界 1 是为了避开底边那 1px 边框噪声；
- * 再往上就是画面内容，不该弹时间。 */
+ * 实测：距底 8~20px 点击会跳转、26px 起不跳（控制条整条带子的事件目标仍是 video）。
+ * 上界取 34 是"thumb 上沿 + 一点余量"；再往上就是画面内容，不该弹时间。 */
 const HOT_LO = 1;
 const HOT_HI = 34;
 /* 提示块底边离画面底的距离：要落在进度条上方，且不遮住画面主体。 */
@@ -69,6 +96,34 @@ function init() {
     };
   }
 
+  /** 进度条**可拖动轨道**的横向范围，**相对 video 元素自身**（左偏移 + 宽度）。
+   *
+   * 两类情况（都有实测支撑，见文件头）：
+   *  · 元素与画面形状接近（16:9 素材的常态）：轨道占元素宽的 TRACK_FRAC，左右对称内缩。
+   *  · 元素明显比画面宽（长宽比不匹配、两侧有黑边）：实测进度条会**贴画面**两侧铺
+   *    （元素 855×334、画面 827 宽时，拟合出的轨道边界正好 14.0 与 841.0 = 画面边界）。
+   *    所以这时把轨道收进画面内。
+   * 两式都不会让轨道宽于画面 —— 这是硬约束：进度条不可能画到画面外面去。
+   */
+  function trackRect() {
+    const w = video.clientWidth;
+    const inset = w * (1 - TRACK_FRAC) / 2;
+    let left = inset, width = Math.max(1, w - inset * 2);
+    const pic = pictureRect();
+    if (pic) {
+      const picLeftInElement = pic.left - (video.getBoundingClientRect().left -
+        stage.getBoundingClientRect().left);
+      if (picLeftInElement > left + 2) {          // 左侧有黑边 → 贴画面
+        left = picLeftInElement;
+        width = Math.max(1, pic.width);
+      }
+      // 兜底：任何情况下都不超出画面
+      const maxW = pic.width;
+      if (width > maxW) { width = maxW; left = Math.max(left, picLeftInElement); }
+    }
+    return { leftInElement: left, width };
+  }
+
   function hide() {
     hot = false;
     lastPct = -1;
@@ -77,20 +132,21 @@ function init() {
   }
 
   function show(pt) {
-    // 指针位置 → 占比。用**相对 video 元素**的坐标，因为判定带是跟 video 对齐的。
+    // 指针位置 → 占比。判定带与轨道都跟 video 元素对齐，所以用元素坐标。
     const vb = video.getBoundingClientRect();
-    const pic = pictureRect();
-    if (!pic) return;
+    const stageBox = stage.getBoundingClientRect();
     const px = pt.x - vb.left;
     const py = pt.y - vb.top;
     const fromBottom = vb.height - py;
     if (fromBottom < HOT_LO || fromBottom > Math.min(HOT_HI, CTRL_BAR)) { hide(); return; }
-    if (px < pic.left - 1 || px > pic.left + pic.width + 1) { hide(); return; }
 
     const dur = video.duration;
     if (!isFinite(dur) || dur <= 0) { hide(); return; }
 
-    const ratio = Math.max(0, Math.min(1, (px - pic.left) / pic.width));
+    const tr = trackRect();
+    if (px < tr.leftInElement - 1 || px > tr.leftInElement + tr.width + 1) { hide(); return; }
+
+    const ratio = Math.max(0, Math.min(1, (px - tr.leftInElement) / tr.width));
     const sec = ratio * dur;
     // 只有占比真的变了才改 DOM / 动 class，避免每像素一次重排
     const pct = Math.round(ratio * 1000);
@@ -111,11 +167,14 @@ function init() {
 
     tip.textContent = text;
     tip.hidden = false;
-    const cx = pic.left + ratio * pic.width;
+    // 提示块横向对准它所指的**轨道**位置（不是画面位置）
+    const cx = (vb.left - stageBox.left) + tr.leftInElement + ratio * tr.width;
     const w = tip.offsetWidth || TIP_HALF * 2;
     const left = Math.max(2, Math.min(stage.clientWidth - w - 2, cx - w / 2));
     tip.style.left = left + 'px';
-    tip.style.bottom = Math.round(vb.height - (pic.top + pic.height) + TIP_ABOVE) + 'px';
+    const pic = pictureRect();
+    const picBottom = pic ? pic.top + pic.height : video.clientHeight;
+    tip.style.bottom = Math.round(vb.height - picBottom + TIP_ABOVE) + 'px';
     // 复活动效：hint 用 [hidden] 切显示，:not([hidden]) 上的 animation 只在插入时跑一次，
     // 所以离开判定带再回来时靠重挂 class 让它重播（缓存 offsetWidth 读值即可强制重排）。
     if (!wasHot) { tip.classList.remove(CLS_ON); void tip.offsetWidth; }
