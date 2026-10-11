@@ -271,6 +271,8 @@ export class AssDoc {
     return true;
   }
 
+
+
   /** [V4+ Styles] 里的样式声明顺序（名字数组）。
    *  ⚠ **这个顺序不影响画面上下** —— 实测过（最小 ASS × 四种组合）：
    *     样式[ZH,EN] 事件[ZH,EN] → 中文在下、英文在上
@@ -494,4 +496,163 @@ export function assPlainText(text) {
     out += c; i += 1;
   }
   return out.replace(/\s{2,}/g, ' ').trim();
+}
+
+/* ═══════════ ASS 双语样式预设：导出 / 导入 ═══════════
+ *
+ * 为什么要它：双语样式（中英两条 Style 轨的字体/字号/粗斜/颜色 + 逐词高亮色、
+ * 卡拉OK 未唱色与扫过形态）只能一条稿件一条稿件地手调，换稿件就得重来一遍。
+ *
+ * 为什么导出的是 **[V4+ Styles] 原始行 + 几个元数据**，而不是"面板上那 14 个控件值"：
+ *   · Style 行里还有 Alignment / MarginV / Outline / Shadow / Spacing 等面板没暴露的字段，
+ *     只存面板值会在导入时把它们丢掉（那是静默改坏观感）；
+ *   · 存 format+values 两份，导入时可以**按字段名**取值再写进目标样式的字段位 ——
+ *     两边 Format 声明顺序不同也不会错位（SSA 的 V4 与 ASS 的 V4+ 字段集就不一样）。
+ * 代价是预设文件里带 ASS 语法，但这份文件本来就是给 SubFabric 自己读的，可以接受。
+ */
+export const ASS_STYLE_PRESET_KIND = 'subfabric.ass-style-preset';
+
+/** 语言 → 样式名候选。预设文件里存的样式名可能与目标稿件不同（Default / 中文 / ZH…），
+ *  所以导入时先按名字精确匹配，匹配不到再按这些线索找。
+ *
+ *  ⚠ 这些正则必须用**单词边界**，不能用 `(^|[-_])…([-_]|$)` 那种两侧配对：
+ *    后者对 "English" 会把里面的 "zh" 当成中文线索命中（En-gli-**zh**），
+ *    于是英文样式被认成中文轨 —— 单测抓到的真 bug（tests/ass-style-preset-test.mjs ③）。
+ *    中文轨只认"独立成词的 zh/cn/chi"，别用子串。 */
+const _STYLE_HINTS = {
+  zh: [/chinese/i, /中文/, /mandarin/i, /\bzh\b/i, /\bcn\b/i, /\bchi\b/i],
+  en: [/^default$/i, /english/i, /英文/, /\ben\b/i, /\beng\b/i],
+};
+
+/** 在一个 AssDoc 里按语言线索找样式名（targets 没覆盖到的兜底）。 */
+export function findStyleForLang(doc, lang) {
+  const names = (doc && doc.styleNames) || [];
+  const hints = _STYLE_HINTS[lang] || [];
+  for (const re of hints) {
+    const hit = names.find(n => re.test(n));
+    if (hit) return hit;
+  }
+  return '';
+}
+
+/** 把一条样式导成可移植的轨道数据。 */
+function _trackOf(doc, name) {
+  const rec = doc.styles.get(String(name || '').toLowerCase());
+  if (!rec) return null;
+  return { track: null, styleName: rec.name, format: rec.format.slice(), values: rec.values.slice() };
+}
+
+/**
+ * 从稿件导出双语样式预设。
+ * @param {AssDoc} doc
+ * @param {{zh:string,en:string}} targets  双语目标样式名（见 main.js resolveAssStyleTargets）
+ * @param {{wordColor?:string, kBase?:string, kSweep?:boolean}} meta
+ * @returns {object|null} 预设对象；两条轨有一条缺失就返回 null（宁可报错也不导出半份）
+ */
+export function assStylePresetOf(doc, targets, meta = {}) {
+  if (!doc || !targets) return null;
+  const zh = _trackOf(doc, targets.zh), en = _trackOf(doc, targets.en);
+  if (!zh || !en) return null;
+  zh.track = 'zh'; en.track = 'en';
+  const preset = {
+    kind: ASS_STYLE_PRESET_KIND,
+    version: 1,
+    createdBy: 'SubFabric',
+    createdAt: new Date().toISOString(),
+    tracks: { zh, en },
+  };
+  if (/^#[0-9a-f]{6}$/i.test(meta.wordColor || '')) preset.wordColor = String(meta.wordColor).toLowerCase();
+  if (/^#[0-9a-f]{6}$/i.test(meta.kBase || '')) preset.kBase = String(meta.kBase).toLowerCase();
+  if (typeof meta.kSweep === 'boolean') preset.kSweep = meta.kSweep;
+  return preset;
+}
+
+/**
+ * 解析并校验预设 JSON（导入用）。**不抛异常**，一律返回 {ok, preset|error}，
+ * 因为导入的文件是用户给的，任何形状都可能出现。
+ */
+export function parseAssStylePreset(text) {
+  let obj = null;
+  try { obj = JSON.parse(String(text == null ? '' : text)); }
+  catch { return { ok: false, error: '不是合法的 JSON 文件' }; }
+  if (!obj || typeof obj !== 'object') return { ok: false, error: '文件内容不是对象' };
+  if (obj.kind !== ASS_STYLE_PRESET_KIND) {
+    return { ok: false, error: '不是 SubFabric 的样式预设文件（kind 不匹配）' };
+  }
+  const tr = obj.tracks;
+  if (!tr || typeof tr !== 'object') return { ok: false, error: '缺少 tracks' };
+  for (const lang of ['zh', 'en']) {
+    const t = tr[lang];
+    if (!t || !Array.isArray(t.format) || !Array.isArray(t.values)) {
+      return { ok: false, error: `tracks.${lang} 缺少 format/values` };
+    }
+    if (t.format.length !== t.values.length) {
+      return { ok: false, error: `tracks.${lang} 的 format 与 values 数量不一致` };
+    }
+    if (!t.format.some(f => String(f).toLowerCase() === 'fontname')) {
+      return { ok: false, error: `tracks.${lang} 里没有 fontname 字段` };
+    }
+  }
+  return { ok: true, preset: obj };
+}
+
+/** 目标样式名怎么定：先用传入的 targets，缺了就按语言线索在稿件里找。 */
+function _pickStyleName(doc, wanted, lang, used) {
+  const taken = (name) => !!(used && used.has(String(name).toLowerCase()));
+  if (wanted && doc.styles.has(String(wanted).toLowerCase()) && !taken(wanted)) return String(wanted);
+  const names = (doc && doc.styleNames) || [];
+  const hints = _STYLE_HINTS[lang] || [];
+  for (const re of hints) {
+    const hit = names.find(n => re.test(n) && !taken(n));
+    if (hit) return hit;
+  }
+  return '';
+}
+
+/**
+ * 把预设里的两条轨写进稿件（只改样式行，不动任何事件文本）。
+ * @returns {{ok:boolean,changed:number,applied:object,error?:string}}
+ *          applied 记录"预设的哪个轨落到了稿件的哪个样式名"，供界面回显。
+ */
+export function applyAssStylePreset(doc, preset, targets) {
+  if (!doc || !preset || !preset.tracks) return { ok: false, changed: 0, applied: {}, error: '预设为空' };
+  const plan = [];
+  // `used` 记已落轨的样式名：**两条轨绝不能落到同一个样式上**，否则后一条会静默
+  // 覆盖前一条还报成功（只有一条样式的稿件就会这样）。单测 ⑤ 钉的正是它。
+  const used = new Set();
+  for (const lang of ['zh', 'en']) {
+    const t = preset.tracks[lang];
+    if (!t) continue;
+    // 目标样式名：优先当前稿件的双语目标；没有再按预设里记的名字；再没有按语言线索
+    let dest = _pickStyleName(doc, targets && targets[lang], lang, used);
+    if (!dest) dest = _pickStyleName(doc, t.styleName, lang, used);
+    if (!dest) {
+      return {
+        ok: false, changed: 0, applied: {},
+        error: `稿件里找不到可用的${lang === 'zh' ? '中文' : '英文'}样式（两条轨不能落在同一个样式上）`,
+      };
+    }
+    used.add(dest.toLowerCase());
+    plan.push({ lang, dest, t });
+  }
+  if (plan.length < 2) return { ok: false, changed: 0, applied: {}, error: '预设里缺少中文或英文轨' };
+
+  const applied = {};
+  let changed = 0;
+  for (const { lang, dest, t } of plan) {
+    const rec = doc.styles.get(dest.toLowerCase());
+    // **按字段名搬运**：预设的 format 决定"哪个值是什么"，目标样式自己的 format 决定写到哪一位。
+    // 这样两边 Format 顺序/字段集不同也不会错位（V4 与 V4+ 的差别就在这里）。
+    const fields = {};
+    t.format.forEach((key, i) => {
+      const k = String(key).toLowerCase();
+      if (k === 'name') return;                 // 名字绝不覆盖：目标稿件的样式名要保持原样
+      const v = t.values[i];
+      if (v == null) return;
+      if (rec.format.includes(k)) fields[k] = String(v).trim();
+    });
+    if (Object.keys(fields).length && doc.setStyleFields(dest, fields)) changed++;
+    applied[lang] = dest;
+  }
+  return { ok: true, changed, applied };
 }

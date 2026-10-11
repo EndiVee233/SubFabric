@@ -85,6 +85,10 @@ export function popOrigin(el, cx, cy, left, top) {
   el.style.setProperty('--pop-oy', oy.toFixed(1) + '%');
 }
 
+/* ⚠ 这里曾经因为合并上游时 git 把两侧的同一段改动各放了一份，
+ *   出现**两个完全相同的 `export function popOrigin`**（重复声明 → 整个模块
+ *   直接 SyntaxError: Identifier 'popOrigin' has already been declared，
+ *   连带 25 个测试全挂）。删掉重复的那份。 */
 /** 二分查找: 在按 start 升序的数组中找 start <= t 的最后一项下标 */
 export function bisectStart(arr, t) {
   let lo = 0, hi = arr.length - 1, ans = -1;

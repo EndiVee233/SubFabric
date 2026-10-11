@@ -1,13 +1,13 @@
 /** 主逻辑: 状态管理 + 视频/字幕加载 + 各模块联动 */
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
-import { AssDoc, assPlainText, isAssSubtitle } from './ass.js';
+import { AssDoc, assPlainText, isAssSubtitle, assStylePresetOf, parseAssStylePreset, applyAssStylePreset, findStyleForLang } from './ass.js';
 import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, isKaraokeLine, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
   // ── 上游 2.1.13 新增的导出（角色换色串色修复 / 中文标点归一 / 中文行预览 / 角色排序）──
   // 这些纯函数放在 karaoke.js 里以便单测；main.js 必须**显式导入**，
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
   speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
-  buildAnchorText, recolorRoleInRows, setWordHighlightColor } from './karaoke.js';
+  buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
@@ -89,7 +89,11 @@ const assStyleEls = {
   zhFontMark: document.getElementById('ass-style-zh-font-mark'),
   enFontMark: document.getElementById('ass-style-en-font-mark'),
   zhFontFile: document.getElementById('ass-style-zh-font-file'),
-  enFontFile: document.getElementById('ass-style-en-font-file')
+  enFontFile: document.getElementById('ass-style-en-font-file'),
+  presetExport: document.getElementById('ass-style-preset-export'),
+  presetImport: document.getElementById('ass-style-preset-import'),
+  presetFile: document.getElementById('ass-style-preset-file'),
+  presetHint: document.getElementById('ass-style-preset-hint')
 };
 
 /* 双击视频默认会触发浏览器的原生全屏, 编辑字幕时很容易误触。这里禁掉：
@@ -881,7 +885,8 @@ function setAssStyleControls() {
     assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic, assStyleEls.wordColor,
     assStyleEls.kBase, assStyleEls.kSweep,
     assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2,
-    document.getElementById('ass-style-zh-font-file-btn'), document.getElementById('ass-style-en-font-file-btn')];
+    document.getElementById('ass-style-zh-font-file-btn'), document.getElementById('ass-style-en-font-file-btn'),
+    assStyleEls.presetExport, assStyleEls.presetImport];
   controls.forEach(el => { if (el) el.disabled = !enabled; });
   if (!enabled) {
     if (assStyleEls.zhName) assStyleEls.zhName.textContent = '';
@@ -1026,6 +1031,134 @@ function applyAssStyleSettings(forceFontReload = false) {
       : `样式已写入，ASS 渲染器就绪后同步预览；${saveHint}`;
   }
   return true;
+}
+
+/* ═══════════ ASS 双语样式的导入 / 导出（样式预设）═══════════
+ * 把「中英两条 Style 轨 + 逐词高亮色 + 卡拉OK 两项」存成一个 json，换稿件时一键套用。
+ * 纯逻辑（导出/校验/写回）在 ass.js 里，有单测（tests/ass-style-preset-test.mjs）；
+ * 这里只做"取界面上的值 / 弹下载 / 读文件 / 回显"。 */
+function assStylePresetMeta() {
+  const kSents = karaokeSentencesOf(state.assStyleTargets && state.assStyleTargets.en);
+  return {
+    wordColor: getWordHighlightColor(),
+    kBase: (assStyleEls.kBase && assStyleEls.kBase.value) || kBaseDefaultHex(),
+    // 以稿件里 k 行的实际标签为准（有 \kf 就是"扫过"），没有 k 行时用记住的偏好
+    kSweep: kSents.length ? kSents.some(s => s.kTag === '\\kf') : kSweepDefault(),
+  };
+}
+
+function exportAssStylePreset() {
+  if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) {
+    toast('请先打开一份 ASS/SSA 双语稿件'); return;
+  }
+  const preset = assStylePresetOf(state.assDoc, state.assStyleTargets, assStylePresetMeta());
+  if (!preset) { toast('当前稿件里没有可导出的中英两条样式'); return; }
+  const base = String(state.fileName || 'subtitle').replace(/\.(ass|ssa)$/i, '');
+  download(`${base}.style-preset.json`,
+    JSON.stringify(preset, null, 2) + '\n',
+    'application/json;charset=utf-8');
+  if (assStyleEls.presetHint) {
+    assStyleEls.presetHint.textContent =
+      `已导出：${preset.tracks.zh.styleName} + ${preset.tracks.en.styleName}` +
+      (preset.wordColor ? `，逐词高亮 ${preset.wordColor.toUpperCase()}` : '');
+  }
+}
+
+/** 导入并**立即套用**。走的是样式轨那条既有路径（写文档 → 刷新预览 → 自动保存），
+ *  所以时间轴块内字体、颜色、中英上下顺序都会跟着一起更新。 */
+async function importAssStylePreset(file) {
+  if (!file) return;
+  if (state.format !== 'ass' || !state.assDoc) { toast('请先打开一份 ASS/SSA 稿件再导入样式'); return; }
+  let text = '';
+  try { text = await file.text(); }
+  catch (e) { toast('读取文件失败：' + e.message); return; }
+  const parsed = parseAssStylePreset(text);
+  if (!parsed.ok) { toast('样式预设无法导入：' + parsed.error, 4200); return; }
+  const preset = parsed.preset;
+  // 先确认两条轨都有落点：no-op 要提前报，不能先**清掉**逐词色再失败
+  const zhDest = (state.assStyleTargets && state.assStyleTargets.zh) || findStyleForLang(state.assDoc, 'zh');
+  const enDest = (state.assStyleTargets && state.assStyleTargets.en) || findStyleForLang(state.assDoc, 'en');
+  if (!zhDest || !enDest) {
+    toast(state.format === 'srt'
+      ? '当前是 SRT 字幕；ASS 样式预设只适用于 ASS/SSA'
+      : '当前稿件里找不到可分别设置的中英两种样式，无法套用预设', 4200);
+    return;
+  }
+  const res = applyAssStylePreset(state.assDoc, preset, { zh: zhDest, en: enDest });
+  if (!res.ok) { toast('样式预设无法导入：' + res.error, 4200); return; }
+  // 元数据：与面板那条路径同一套常量与语义。
+  // ⚠ 未唱默认色只在稿件**确实有 k 卡拉OK行**时才写（面板那边也是这个条件，见
+  //   applyAssStyleSettings 的 `kSents.length ? setScriptInfoComment(...) : false`）——
+  //   否则导入一次就给没有 k 行的稿件塞一条用不上的 SubFabricKaraokeBaseColor 注释
+  //   （实测：验收脚本导入后稿件里凭空多出这一行）。
+  if (/^#[0-9a-f]{6}$/i.test(preset.wordColor || '')) {
+    state.assDoc.setScriptInfoComment(ASS_WORD_COLOR_META, preset.wordColor.toLowerCase());
+  }
+  const kSentsAtImport = karaokeSentencesOf(enDest);
+  if (/^#[0-9a-f]{6}$/i.test(preset.kBase || '') && kSentsAtImport.length) {
+    state.assDoc.setScriptInfoComment(ASS_K_BASE_META, preset.kBase.toLowerCase());
+  }
+
+  setAssStyleControls();                       // 文档 → 控件：整块面板跟着变成新样式
+  const text2 = state.assDoc.serialize();
+  // 字体名变了必须走 load()（内部重灌字体表），否则预览仍在用旧字体 ——
+  // 与 applyAssStyleSettings() 里那段判断同一个理由。
+  const zhFont = (assStyleEls.zhFont && assStyleEls.zhFont.value || '').trim();
+  const enFont = (assStyleEls.enFont && assStyleEls.enFont.value || '').trim();
+  if (zhFont || enFont) assPlayer.load(text2, [zhFont, enFont]);
+  else assPlayer.updateNow(text2);
+
+  // 逐词高亮色 / 未唱色：setAssStyleControls 已经同步给 karaoke 与控件；
+  // 这里再按稿件现有的逐词行与 k 行把**行内标签**也换成新颜色（只改行内标签，不动文本）。
+  const wordColor = (assStyleEls.wordColor && assStyleEls.wordColor.value || '').toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(wordColor)) {
+    const wordEvents = state.kar && state.kar.sentences
+      ? [...new Set(state.kar.sentences
+        .filter(s => s.words && s.words.length
+          && String(s.style).toLowerCase() === String(enDest).toLowerCase())
+        .flatMap(s => s.events || []))]
+      : [];
+    if (wordEvents.length) replaceWordHighlightColor(state.assDoc, enDest, wordColor, wordEvents);
+    if (state.kar && state.kar.sentences) {
+      const tag = assHexToTag(wordColor);
+      for (const s of state.kar.sentences) {
+        if (String(s.style).toLowerCase() === String(enDest).toLowerCase()) s.highlightTag = tag;
+      }
+    }
+  }
+  const kBaseHex = (assStyleEls.kBase && assStyleEls.kBase.value || '').toLowerCase();
+  const kSents = karaokeSentencesOf(enDest);
+  if (/^#[0-9a-f]{6}$/.test(kBaseHex) && kSents.length) {
+    const evs = [...new Set(kSents.filter(s => !speakerColorOf(s)).flatMap(s => s.events || []))];
+    if (evs.length) replaceKaraokeBaseColor(state.assDoc, enDest, kBaseHex, evs);
+    for (const s of kSents) if (!speakerColorOf(s)) s.kBaseHex = kBaseHex;
+  }
+  if (typeof preset.kSweep === 'boolean' && kSents.length) {
+    const kTag = preset.kSweep ? '\\kf' : '\\k';
+    const evs = [...new Set(kSents.flatMap(s => s.events || []))];
+    if (evs.length) replaceKaraokeTag(state.assDoc, enDest, kTag, evs);
+    for (const s of kSents) s.kTag = kTag;
+    if (assStyleEls.kSweep) assStyleEls.kSweep.checked = preset.kSweep;
+    if (assStyleEls.kSweepVal) assStyleEls.kSweepVal.textContent = preset.kSweep ? '开' : '关';
+    rememberKDefaults(kBaseHex, preset.kSweep);
+  }
+  // 行内标签改完之后再落盘 + 刷一次预览
+  if (wordColor || kBaseHex) assPlayer.updateNow(state.assDoc.serialize());
+  if (state.project) Projects.scheduleSave();
+  syncBlockFonts();                            // 时间轴块内字体跟着换（与设置页同款联动）
+  refreshFontNotes();
+  loadSystemFontList();
+  if (assStyleEls.presetHint) {
+    assStyleEls.presetHint.textContent =
+      `已导入：${res.applied.zh} + ${res.applied.en}` +
+      (preset.wordColor ? `，逐词高亮 ${String(preset.wordColor).toUpperCase()}` : '');
+  }
+  if (assStyleEls.status) {
+    assStyleEls.status.textContent = assPlayer.ready
+      ? '样式预设已套用，视频预览已刷新；项目字幕将自动保存。'
+      : '样式预设已写入；ASS 渲染器就绪后同步预览。';
+  }
+  toast('样式预设已套用');
 }
 
 async function loadAssStyleFont(language) {
@@ -1666,6 +1799,18 @@ for (const [language, buttonId] of [['zh', 'ass-style-zh-font-file-btn'], ['en',
   const input = language === 'zh' ? assStyleEls.zhFontFile : assStyleEls.enFontFile;
   if (button && input) button.addEventListener('click', () => input.click());
   if (input) input.addEventListener('change', () => loadAssStyleFont(language));
+}
+/* 样式预设：导出直接下载，导入走隐藏的 file input（与上面「载入字体」同一套路）。
+ * 选同一个文件两次也要能触发 change —— 所以处理前先把 value 取出来、随手清空。 */
+if (assStyleEls.presetExport) assStyleEls.presetExport.addEventListener('click', () => exportAssStylePreset());
+if (assStyleEls.presetImport && assStyleEls.presetFile) {
+  assStyleEls.presetImport.addEventListener('click', () => assStyleEls.presetFile.click());
+  assStyleEls.presetFile.addEventListener('change', async () => {
+    const file = assStyleEls.presetFile.files && assStyleEls.presetFile.files[0];
+    assStyleEls.presetFile.value = '';       // 先清空：await 回来时 files 可能已被浏览器回收
+    try { await importAssStylePreset(file); }
+    catch (e) { toast('样式预设导入失败：' + (e && e.message ? e.message : e), 4200); }
+  });
 }
 
 /* ─────────── 异常行 ─────────── */
@@ -5769,8 +5914,9 @@ timeline.onRetranslate = (ref) => {
 // 右下角「插入 / 删除」按钮已移除: 时间轴空白处拖动=新建, 右键块=删除, 不再重复提供。
 
 /* ═══════════ 导出 ═══════════ */
-function download(name, text) {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+/** @param {string} [mime] 省略时按纯文本下载（字幕、日志）；样式预设传 application/json */
+function download(name, text, mime = 'text/plain;charset=utf-8') {
+  const blob = new Blob([text], { type: mime });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
