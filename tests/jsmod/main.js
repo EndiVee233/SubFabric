@@ -1602,8 +1602,11 @@ function setAss(text, name) {
   /* 全片逐词重校对：同样要项目模式。**不**在这里判"有没有逐词行"——
    * 这段是热路径（每次重建列表都跑），而判重要遍历全部句子；
    * 真没有逐词行时点击后服务端会给出明确原因。
-   * 用 typeof 保护：realignEls 定义在文件更靠后（const 有 TDZ），
-   * 而 rebuildItemsAndLanes 可能在它初始化前就被调用（启动阶段）。 */
+   * 用 typeof 保护：realignEls 声明在文件更靠后（见下），而 rebuildItemsAndLanes 可能在
+   * 它初始化前就被调用（启动阶段）。
+   * ⚠ 必须是 var 而不是 const —— `typeof x` 对 **TDZ 里的 let/const 会抛 ReferenceError**，
+   *   起不到保护作用（这里原来写的就是 const，注释以为 typeof 能挡住，其实挡不住）。
+   *   var 会被提升并初始化为 undefined，typeof 才真的返回 'undefined'。 */
   if (typeof realignEls !== 'undefined' && realignEls.btn) realignEls.btn.disabled = !state.project;
   const hasKar = !!state.kar.wordStyle;
   btnExportClean.disabled = !hasKar;
@@ -5439,7 +5442,7 @@ timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref));
  * 为什么走后台作业 + 轮询：全片几百句、每句一次 TTS + 一次识别（实测 1~2 秒），
  * 整片要几分钟到十几分钟，同步请求必超时。
  */
-const realignEls = {
+var realignEls = {
   overlay: document.getElementById('realign-overlay'),
   msg: document.getElementById('realign-msg'),
   conf: document.getElementById('realign-conf'),
@@ -6608,7 +6611,9 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
-  state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog
+  state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
+  logOp,   // ⚠ 必须经 ctx 传入：logOp 是本模块的局部函数，project.js 里 typeof logOp 恒为
+           //   'undefined'（模块作用域互不相通），于是"加进热词表"那条操作日志从来没记上。
 });
 
 /* ═══════════ 主循环 ═══════════ */
@@ -6730,7 +6735,6 @@ requestAnimationFrame(tick);
             noteCount: (document.getElementById('note-view') || {}).childElementCount,
           };
         })(),
-        errors: errs.slice(-6),
         activeTab: act ? act.dataset.tab : null,
         tabs: [...document.querySelectorAll('#panel-tabs .ptab')].map(b => ({
           t: b.dataset.tab, active: b.classList.contains('active'), hidden: !!b.hidden })),

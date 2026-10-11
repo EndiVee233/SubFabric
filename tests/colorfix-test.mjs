@@ -14,7 +14,14 @@ const tag = (c) => '{\\c&H' + assColorFromRgb(c) + '&}[SPK1] ';
 console.log('new tag for #00b0f0:', tag('#00b0f0'));
 
 // 2) 编辑器 normalizeLeadColors 正则 vs 用户项目实际畸形数据
-const ass = fs.readFileSync('projects/p-mugzcab2-09f7z/subtitle.ass', 'utf8');
+/* ⚠ 这是**作者本机真实项目**的诊断脚本（无断言，只打印比对结果），夹具不入库。
+ * 新克隆里没有该目录 —— 直接跳过而不是抛 ENOENT 让整个测试套件变红。 */
+const FIXTURE = 'projects/p-mugzcab2-09f7z/subtitle.ass';
+if (!fs.existsSync(FIXTURE)) {
+  console.log('（跳过：缺少本地夹具 ' + FIXTURE + ' —— 作者机器的真实项目数据，不入库）');
+  process.exit(0);
+}
+const ass = fs.readFileSync(FIXTURE, 'utf8');
 const re = /\{\\c&H&H?([0-9A-Fa-f]{6})&&\}/g;
 console.log('malformed lead tags in file:', (ass.match(re) || []).length);
 const fixed = ass.replace(re, (all, hex) => '{\\c&H' + hex + '&}');
