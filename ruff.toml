@@ -1,0 +1,33 @@
+# ruff 配置 —— 只抓"真会出错"的问题，不做风格管制（与 eslint.config.js 同哲学）。
+#
+# 用法：pip install ruff && ruff check .
+#
+# 为什么忽略下面这几类（不是"不重要"，而是**纯清理**或**改了会变行为**，留作后续）：
+#   F401 未使用导入      13 处 —— 纯清理；但其中 torch / numpy 可能带初始化副作用，不宜盲删
+#   F841 未使用局部变量   6 处 —— 多为诊断脚本里算了一半的中间量
+#   F541 f-string 无占位符 2 处 —— 纯清理（去掉多余的 f 前缀即可）
+#   B905 zip() 未显式 strict 6 处 —— 补 strict=True 会**改变行为**（长度不等时抛错），
+#        现在的隐式截断可能正是调用方依赖的，不能盲改
+#   B007 循环变量未使用    3 处 —— 纯风格
+#   B904 except 里 raise 不带 from  3 处 —— 只影响异常链可读性，不影响正确性
+line-length = 120
+
+# 运行时下载的目录不在仓库里，但本机存在时别去扫（体积大且非本项目代码）
+extend-exclude = [
+  "asr/runtime-python", "asr/models", "asr/whisper.cpp", "asr/crispasr",
+  "asr/ytdlp", "asr/.venv", "editor/vendor", "build", "outputs", "projects",
+]
+
+[lint]
+select = [
+  "E9",                              # 语法 / 运行期真错误
+  "E711", "E712", "E713", "E714",    # 与 None/True/False 比较、not in / is not 写错 —— 真 bug
+  "F",                               # pyflakes 全套：未定义名(F821) / 未绑定局部变量(F823) / 重复定义(F811) 等
+  "B",                               # flake8-bugbear：可变默认值、循环内闭包晚绑定(B023) 等真隐患
+]
+# 刻意**不开**的规则组（都是风格，与"只抓真错"的定位冲突）：
+#   E4（重复导入/单行多导入）、E7 的 E701/E702/E703/E704（单行多语句、分号）、
+#   E741（变量名 l 有歧义）、E402（延迟导入 —— 本项目多处是**有意**把 import 放在环境变量设置之后）
+ignore = [
+  "F401", "F841", "F541", "B905", "B007", "B904",
+]

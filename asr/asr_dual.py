@@ -444,18 +444,21 @@ def main() -> int:
             got = {}
             threads = []
 
-            def go(name, _parts=parts):
+            # ⚠ go 定义在 for ri 循环**内部**，闭包会晚绑定循环变量。今天不出错
+            #   （线程在同一轮内 join），但很脆弱 —— 所以把本轮用到的变量都用默认参数
+            #   绑死（与上面 _parts=parts 同一手法，ruff B023 也要求这样）。
+            def go(name, _parts=parts, _ri=ri, _got=got):
                 script, model, extra = scripts[name]
                 if not _parts[name]:
                     return
                 try:
                     dt, data = run_engine(name, script, model, extra, py,
                                           _parts[name], tmpdir,
-                                          os.path.join(tmpdir, f"{name}-r{ri}.json"))
-                    got[name] = (dt, data)
+                                          os.path.join(tmpdir, f"{name}-r{_ri}.json"))
+                    _got[name] = (dt, data)
                 except Exception as exc:  # noqa: BLE001
                     error[name] = str(exc)
-                    log(f"[{name}] 第 {ri + 1} 轮失败：{exc}")
+                    log(f"[{name}] 第 {_ri + 1} 轮失败：{exc}")
 
             for name in ("gpu", "npu"):
                 t = threading.Thread(target=go, args=(name,), daemon=True)

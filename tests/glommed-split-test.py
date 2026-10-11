@@ -23,7 +23,9 @@ import io
 import os
 import sys
 
-REPO = r"D:\SubFabric-fork"
+# ⚠ 以前这里硬编码 r"D:\SubFabric-fork" —— 只有作者本机能跑，别人的克隆 / CI 上
+#   一律 FileNotFoundError（2026-10-11 发现）。改成从本文件位置推。
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO, "asr"))
 import confidence as C  # noqa: E402
 

@@ -23,10 +23,15 @@ const ok = (cond, name, extra) => {
 };
 
 // 从 server.js 抽函数（它依赖整个服务端环境，没法整体 import）
-const SRC = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
+/* ⚠ 行尾符必须先归一化：Windows 默认 core.autocrlf=true 克隆出来的是 CRLF，
+ *   而下面按 '\n  }\n' 定位函数结尾 —— CRLF 下 indexOf 返回 -1，会切出空代码，
+ *   表现为 "Export 'carryConfidence' is not defined"（默认 Windows 克隆必失败）。 */
+const SRC = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8')
+  .replace(/\r\n/g, '\n');
 const start = SRC.indexOf('  function carryConfidence(');
 if (start < 0) { console.error('抽不到 carryConfidence'); process.exit(1); }
 const end = SRC.indexOf('\n  }\n', start) + 4;
+if (end < start) { console.error('抽不到 carryConfidence 的函数体（结构变了？）'); process.exit(1); }
 const code = SRC.slice(start, end).replace(/^ {2}/gm, '')
   + '\nexport { carryConfidence };\n';
 const mod = path.join(HERE, '_carry.mjs');

@@ -16,9 +16,13 @@ import { normalizeRegion, filterCues, regionSummary } from '../region.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
 import { stripEffectTagsSafe } from './postprocess.js';
+// ⚠ 原来这里漏了 import：perfRenderApplied / perfRenderResult 直接调 escapeHtml，
+//   而它只从 util.js 导出给 editor.js —— 结果是每次渲染"双引擎/性能测试"结果都抛
+//   ReferenceError（被外层 catch 吞掉，界面只显示"读不到设置"）。2026-10-11 由 eslint no-undef 发现。
+import { escapeHtml } from './util.js';
 
 export function initProjects(ctx) {
-  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog } = ctx;
+  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
   const $ = (s) => document.querySelector(s);
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)

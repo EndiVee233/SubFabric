@@ -2723,6 +2723,19 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
   function metaPath(id) { return path.join(projDir(id), 'project.json'); }
   const validId = (id) => /^[A-Za-z0-9_-]{1,64}$/.test(id);
 
+  /* 把**项目内**的文件名安全解析成绝对路径；越界（.. / 绝对路径 / 逃出项目目录）返回 null。
+   * ⚠ 所有 `path.join(projDir(id), <来自 meta 的文件名>)` 都必须走这里 ——
+   *   meta 可能来自**别人给的项目包**（project.json 的 subtitle.file / audio.file /
+   *   peaks.file 都会被直接拼路径）。2026-10-11 实测：导入一个 file="../../x" 的包、
+   *   再触发一次字幕保存，内容就被写到了项目目录之外（任意文件写入）。
+   *   project-pack.js 的 remapMeta 已从入口做白名单，这里是**第二道**（纵深防御）：
+   *   即使 meta 被别的途径写坏，读写也出不了项目目录。 */
+  function safeProjectFile(id, name) {
+    const root = path.resolve(projDir(id));
+    const p = path.resolve(root, String(name == null ? '' : name));
+    return (p !== root && p.startsWith(root + path.sep)) ? p : null;
+  }
+
   /* ── 用户操作日志的读写 ────────────────────────────────────────────
    * 必须放在这里（handleRequest 内部），因为它要用上面的 projDir()。
    * ⚠ 早期放在模块作用域 → 每次调用都 `ReferenceError: projDir is not defined`，
@@ -2788,10 +2801,11 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
     // hasPeaks 必须**校验格式版本**: PEAK_VER 升级后老项目的 peaks.bin 是旧格式
     // (单通道 abs 峰值 + 固定增益削顶), 直接拿来画还是一坨实心带。
     // 判为 false → 走 prepare 兜底补跑重算(见 POST /api/projects/:id/prepare)。
-    v.hasPeaks = !!(meta.peaks && meta.peaks.file
-      && (meta.peaks.ver || 1) === PEAK_VER
-      && fs.existsSync(path.join(projDir(meta.id), meta.peaks.file)));
-    v.hasAudio = !!(meta.audio && meta.audio.file && fs.existsSync(path.join(projDir(meta.id), meta.audio.file)));
+    // 路径一律过 safeProjectFile：meta 可能来自导入的项目包，不能直接拼
+    const pkPath = (meta.peaks && meta.peaks.file) ? safeProjectFile(meta.id, meta.peaks.file) : null;
+    v.hasPeaks = !!(pkPath && (meta.peaks.ver || 1) === PEAK_VER && fs.existsSync(pkPath));
+    const auPath = (meta.audio && meta.audio.file) ? safeProjectFile(meta.id, meta.audio.file) : null;
+    v.hasAudio = !!(auPath && fs.existsSync(auPath));
     if (v.prepare && v.prepare.status === 'running' && !prepareJobs.has(meta.id)) {
       v.prepare.status = 'error';
       v.prepare.error = '服务已重启，提取被中断';
@@ -3617,7 +3631,9 @@ function startPrepare(id, videoPath, mode) {
     try {
       const file = meta && meta.subtitle && meta.subtitle.file;
       if (!file) return null;
-      const txt = fs.readFileSync(path.join(projDir(meta.id), file), 'utf8');
+      const fp = safeProjectFile(meta.id, file);
+      if (!fp) return null;                       // 路径越界：当作读不到（不抛）
+      const txt = fs.readFileSync(fp, 'utf8');
       const m = /^;\s*SubFabricWordHighlightColor\s*:\s*(#[0-9a-f]{6})\s*$/im.exec(txt);
       return m ? m[1].toLowerCase() : null;
     } catch { return null; }
@@ -3806,16 +3822,17 @@ function startPrepare(id, videoPath, mode) {
     try {
       const metaW = readMeta(id) || {};
       const wavName = (metaW.audio && metaW.audio.file) || 'audio.wav';
-      const wav = path.join(projDir(id), wavName);
-      if (fs.existsSync(wav)) {
+      const wav = safeProjectFile(id, wavName);
+      if (wav && fs.existsSync(wav)) {
         const dur = speechGapMod.readWavDuration(wav)
           || (rows.length ? Number(rows[rows.length - 1].end) + 2 : 0);
         // 字幕轨：优先用最终字幕文件（用户看到的），读不到才退回识别行
         let track = null;
         try {
           const sub = (metaW.subtitle && metaW.subtitle.file) || '';
-          if (sub && /\.ass$/i.test(sub)) {
-            const txt = fs.readFileSync(path.join(projDir(id), sub), 'utf8');
+          const subPath = sub ? safeProjectFile(id, sub) : null;
+          if (subPath && /\.ass$/i.test(sub)) {
+            const txt = fs.readFileSync(subPath, 'utf8');
             track = [];
             for (const line of txt.split('\n')) {
               if (!line.startsWith('Dialogue:')) continue;
@@ -4348,7 +4365,9 @@ function startPrepare(id, videoPath, mode) {
     if (!fs.existsSync(path.join(projDir(id), 'asr.json'))) {
       const subFile = meta.subtitle && meta.subtitle.file;
       if (!subFile) throw new Error('这个项目没有字幕文件，无法写回');
-      const r = assSentencesMod.applyWordsToFile(path.join(projDir(id), subFile),
+      const subPath = safeProjectFile(id, subFile);
+      if (!subPath) throw new Error('字幕文件路径不合法，已拒绝写入');
+      const r = assSentencesMod.applyWordsToFile(subPath,
         items.filter(it => it && Array.isArray(it.words) && it.words.length));
       if (!r.changed) throw new Error('没有匹配到可改写的句子（字幕可能已变动，重新校对一次）');
       return r.changed;
@@ -4464,8 +4483,9 @@ function startPrepare(id, videoPath, mode) {
        * 逐词样式优先用 meta.kar.wordStyle（编辑器解析出来的那个），
        * 取不到就让解析器自己挑"条数最多的样式"。 */
       const subFile = meta && meta.subtitle && meta.subtitle.file;
-      if (subFile) {
-        const parsed = assSentencesMod.sentencesFromFile(path.join(projDir(id), subFile), {
+      const subPath = subFile ? safeProjectFile(id, subFile) : null;
+      if (subPath) {
+        const parsed = assSentencesMod.sentencesFromFile(subPath, {
           wordStyle: kar && kar.wordStyle,
         });
         if (parsed && parsed.length) return parsed;
@@ -7685,10 +7705,11 @@ function handleProjectsRoutes(req, res, u) {
       const meta = readMeta(id);
       if (!meta) return sendJson(res, 404, { error: '项目不存在' });
       const subFile = meta.subtitle && meta.subtitle.file;
+      const subPath = subFile ? safeProjectFile(id, subFile) : null;
       let fromAsr = null;
       try { fromAsr = readSegments(id).length; } catch { fromAsr = null; }
-      const parsed = subFile
-        ? assSentencesMod.sentencesFromFile(path.join(projDir(id), subFile),
+      const parsed = subPath
+        ? assSentencesMod.sentencesFromFile(subPath,
           { wordStyle: (meta.kar || {}).wordStyle })
         : null;
       return sendJson(res, 200, {
@@ -8044,7 +8065,9 @@ function handleProjectsRoutes(req, res, u) {
       // 仍然 tmp + rename 原子替换, 打开方不会读到半截字幕(与 /api/upload-video 同款写法)。
       const file = meta.subtitle && meta.subtitle.file;
       if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
-      const subTmp = path.join(projDir(id), file) + '.tmp';
+      const subPath = safeProjectFile(id, file);
+      if (!subPath) return sendJson(res, 400, { error: '字幕文件路径不合法' });
+      const subTmp = subPath + '.tmp';
       const out = fs.createWriteStream(subTmp);
       let size = 0, done = false;
       const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
@@ -8055,7 +8078,7 @@ function handleProjectsRoutes(req, res, u) {
       req.on('error', () => { out.destroy(); try { fs.unlinkSync(subTmp); } catch {} finish(400, { error: '上传中断' }); });
       out.on('error', () => { try { fs.unlinkSync(subTmp); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
       out.on('finish', () => {
-        try { fs.renameSync(subTmp, path.join(projDir(id), file)); }
+        try { fs.renameSync(subTmp, subPath); }
         catch (e) { try { fs.unlinkSync(subTmp); } catch {} return finish(500, { error: '替换字幕文件失败: ' + String(e && e.message || e) }); }
         touchMeta(meta);
         return finish(200, { ok: true, savedAt: meta.modifiedAt });
@@ -8070,7 +8093,9 @@ function handleProjectsRoutes(req, res, u) {
     }
     if (action === 'subtitle' && req.method === 'GET') {
       const file = meta.subtitle && meta.subtitle.file;
-      return serveFile(req, res, path.join(projDir(id), file || 'subtitle.ass'));
+      const subPath = safeProjectFile(id, file || 'subtitle.ass');
+      if (!subPath) return sendJson(res, 400, { error: '字幕文件路径不合法' });
+      return serveFile(req, res, subPath);
     }
     if (action === 'relink' && req.method === 'POST') {
       return readBody(req, res, 64 * 1024, (err2, body) => {
@@ -8107,13 +8132,16 @@ function handleProjectsRoutes(req, res, u) {
     }
     if (action === 'peaks' && req.method === 'GET') {
       const f = meta.peaks && meta.peaks.file;
+      const fp = f ? safeProjectFile(id, f) : null;
       let buf = null;
-      try { buf = fs.readFileSync(path.join(projDir(id), f)); } catch {}
+      try { if (fp) buf = fs.readFileSync(fp); } catch {}
       if (!buf) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'peaks not ready');
       return sendPeaks(res, buf, (meta.peaks && meta.peaks.rate) || 100);
     }
     if (action === 'audio' && req.method === 'GET') {
-      return serveFile(req, res, path.join(projDir(id), (meta.audio && meta.audio.file) || 'audio.wav'));
+      const auPath = safeProjectFile(id, (meta.audio && meta.audio.file) || 'audio.wav');
+      if (!auPath) return sendJson(res, 400, { error: '音频文件路径不合法' });
+      return serveFile(req, res, auPath);
     }
   }
 

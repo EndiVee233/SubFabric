@@ -34,6 +34,7 @@ export default [
         Audio: 'readonly', AudioContext: 'readonly', Image: 'readonly',
         XMLHttpRequest: 'readonly', MutationObserver: 'readonly', ResizeObserver: 'readonly',
         IntersectionObserver: 'readonly', Worker: 'readonly', OffscreenCanvas: 'readonly',
+        Path2D: 'readonly',   // 画布路径（timeline.js 画圆角矩形用）；补上免得 no-undef 误报
         AbortSignal: 'readonly', EventSource: 'readonly', NodeFilter: 'readonly',
         File: 'readonly', FileList: 'readonly', FileReader: 'readonly', Blob: 'readonly',
         HTMLElement: 'readonly', HTMLInputElement: 'readonly', HTMLCanvasElement: 'readonly',
@@ -84,9 +85,18 @@ export default [
     },
   },
 
-  /* Node 侧服务端：server.js 用 require/CommonJS + node 内置模块 */
+  /* Node 侧服务端：server.js 用 require/CommonJS + node 内置模块。
+   * ⚠ 这里**必须逐个列文件名**，不能写 'editor/*.js' —— editor/ 下有一批"双端复用"模块
+   *   （浏览器 import + Node require(esm) 同一份）是 ESM，含 `export` 语句；被当 commonjs
+   *   解析会直接报 "import/export may appear only with sourceType: module"，
+   *   **整个文件等于没被 lint**（2026-10-11 发现：有 10 个文件一直没被检查过）。 */
   {
-    files: ['editor/server.js', 'editor/*.js'],
+    files: [
+      'editor/server.js', 'editor/asr-chunks.js', 'editor/ass-sentences.js', 'editor/audio-slice.js',
+      'editor/bcut-asr.js', 'editor/capcut-asr.js', 'editor/cast.js', 'editor/fonts.js',
+      'editor/glued-words.js', 'editor/k-line.js', 'editor/llm-text.js', 'editor/project-pack.js',
+      'editor/reseg.js', 'editor/secret-store.js', 'editor/speech-gap.js',
+    ],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
@@ -103,6 +113,26 @@ export default [
         structuredClone: 'readonly', performance: 'readonly', crypto: 'readonly',
         globalThis: 'readonly', Promise: 'readonly', Symbol: 'readonly',
         Map: 'readonly', Set: 'readonly', WeakMap: 'readonly', WeakSet: 'readonly',
+      },
+    },
+    rules: { 'no-undef': 'error', 'no-dupe-keys': 'error', 'no-unreachable': 'error' },
+  },
+
+  /* editor/ 下的"双端复用"模块：同一份文件既被浏览器 import，又被 Node require(esm)。
+   * 它们是 ESM（有 export），但也会用到 node 全局（process / Buffer 等），
+   * 所以单独给它们加 node 全局、并保持 sourceType: module（与第一块的浏览器全局合并）。 */
+  {
+    files: [
+      'editor/align.js', 'editor/asr-service.js', 'editor/ass-group.js', 'editor/danmaku.js',
+      'editor/hotwords.js', 'editor/mt-local.js', 'editor/reflect.js', 'editor/region-merge.js',
+      'editor/region.js', 'editor/repair-words.js',
+    ],
+    languageOptions: {
+      sourceType: 'module',
+      globals: {
+        require: 'readonly', module: 'writable', exports: 'writable',
+        __dirname: 'readonly', __filename: 'readonly', process: 'readonly', Buffer: 'readonly',
+        setImmediate: 'readonly', global: 'readonly',
       },
     },
     rules: { 'no-undef': 'error', 'no-dupe-keys': 'error', 'no-unreachable': 'error' },
