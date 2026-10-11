@@ -25,7 +25,10 @@ import sys
 
 WS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(WS, ".staging", "asr_npu.py")
-REPO_SRC = r"D:\SubFabric-fork\asr\asr_npu.py"
+# ⚠ 以前硬编码 r"D:\SubFabric-fork\asr\asr_npu.py" —— 只有作者本机能跑，
+#   别人的克隆 / CI 上 SRC 与 REPO_SRC 都不存在 → FileNotFoundError。
+#   改成从本文件位置推（WS 就是仓库根）。
+REPO_SRC = os.path.join(WS, "asr", "asr_npu.py")
 
 passed = 0
 failed = 0
