@@ -172,18 +172,37 @@ function planBatches(rows, size = BATCH_LINES, overlap = BATCH_OVERLAP) {
   return out;
 }
 
-/** 一批的 user 消息：全片规模 + 批次位置 + 行表（行号按全片编号，模型直接回全片行号）。 */
-function buildBatchPrompt(rows, lo, hi, total, batchIdx, nBatches) {
+/**
+ * 一批的 user 消息：全片规模 + 批次位置 + 行表（行号按全片编号，模型直接回全片行号）。
+ *
+ * @param gluedByRow 可选：`Map<行号, [{word,head,tail}]>` —— 由 glued-words.js 确定性扫出来的
+ *   "单词被粘住"候选。有的话**贴在对应行的后面**当提示。
+ *   为什么要把确定性结果告诉模型：实测 qwen3:8b 靠提示词抓不住 `weescape`
+ *   （判据写宽了它乱报、写严了它一个都不报）—— 但把"这一行的 X 像是 A+B"直接摆到眼前，
+ *   它就能确认并给出 reidentify。**提示只帮它定位，判断仍由它做。**
+ */
+function buildBatchPrompt(rows, lo, hi, total, batchIdx, nBatches, gluedByRow) {
   const head = `全片共 ${total} 行。这是第 ${batchIdx + 1}/${nBatches} 批，`
     + `本批包含第 ${lo}~${hi} 行。行号是**全片行号**，请直接用它回答。\n\n`;
   const lines = [];
+  let hinted = 0;
   for (let i = lo; i <= hi; i++) {
     const r = rows[i - 1] || {};
     const t0 = Number(r.start) || 0;
     const t1 = Number(r.end) || 0;
-    lines.push(`${i}\t[${t0.toFixed(2)}-${t1.toFixed(2)} ${Math.max(0, t1 - t0).toFixed(2)}s]\t${clip(r.text)}`);
+    const g = gluedByRow && gluedByRow.get ? gluedByRow.get(i) : null;
+    // 命中就贴一行提示（不动原文本，模型看到的仍是原文）
+    const tip = (g && g.length)
+      ? `\t← 疑似粘连：${g.map(x => `${x.word} 应为「${x.head} ${x.tail}」`).join('；')}`
+      : '';
+    if (tip) hinted++;
+    lines.push(`${i}\t[${t0.toFixed(2)}-${t1.toFixed(2)} ${Math.max(0, t1 - t0).toFixed(2)}s]\t${clip(r.text)}${tip}`);
   }
-  return head + lines.join('\n');
+  const tail = hinted
+    ? `\n\n注：上面 ${hinted} 行标了「疑似粘连」——那是**机器扫出来的候选**，`
+      + `请你自己判断是否确实粘错了（是就报 reidentify；不是就别报，比如它本来就是完整单词）。`
+    : '';
+  return head + lines.join('\n') + tail;
 }
 
 /**

@@ -434,8 +434,17 @@ export function initProjects(ctx) {
     el.className = 'save-state' + (cls ? ' ' + cls : '');
     el.textContent = text;
   }
+  /* 待保存的文本快照。为什么要存它：
+   *   scheduleSave() 会**无条件**把状态标成「有未保存更改」，而 saveNow() 发现
+   *   内容没变时直接 return —— 于是状态永远停在"未保存"。
+   *   实测：只要 scheduleSave() 被调用的间隔 < 1200ms（重建条目时会触发），
+   *   倒计时被反复重置、saveNow() 一次都不跑，顶栏就**一直**显示「● 有未保存更改」，
+   *   而文件其实早就是最新的（哈希比对过，内容没变）。用户就会以为没保存上。
+   *   现在：saveNow() 无论保存与否都给状态一个明确结论。 */
+  let pendingText = null;
   function scheduleSave() {
     if (!state.project) return;
+    pendingText = currentText();
     setSaveState('', '● 有未保存更改');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 1200);
@@ -444,7 +453,12 @@ export function initProjects(ctx) {
     if (!state.project) return;
     if (saving) { scheduleSave(); return; }       // 上一轮未完成, 稍后再存
     const text = currentText();
-    if (!text || text === lastSavedText) return;
+    /* 内容与已存盘的一致 → 没什么可存，但**必须把状态改回"已保存"**，
+     * 否则 scheduleSave 刚才标的"有未保存更改"会永远留着（这就是那个 bug）。 */
+    if (!text || text === lastSavedText) {
+      if (text) setSaveState('saved', '已保存 ' + new Date().toTimeString().slice(0, 5));
+      return;
+    }
     saving = true;
     setSaveState('saving', '保存中…');
     try {
@@ -461,6 +475,8 @@ export function initProjects(ctx) {
       setSaveState('', '⚠ 保存失败(稍后自动重试)');
     }
     saving = false;
+    /* 保存期间又改了（pendingText 与刚存的不一致）→ 立刻再存一轮，别等下一次触发 */
+    if (pendingText && pendingText !== lastSavedText) scheduleSave();
   }
   // 页面关闭/刷新兜底: 未保存的改动用 sendBeacon 补一刀(服务端 PUT/POST 都收)
   window.addEventListener('beforeunload', () => {
@@ -2118,16 +2134,31 @@ async function renderAsrModels() {
     set('st-correct-batch', v.batchLines);
     chk('st-correct-usetranslate', v.useTranslate);
     const box = document.getElementById('st-correct-custom');
-    if (box) box.hidden = !!v.useTranslate;
+    if (box) {
+      box.hidden = !!v.useTranslate;
+      /* 跟随翻译时把这些输入框**一起 disable**：
+       * 只 hidden 不 disable 的话，它们仍参与 Tab 焦点与表单语义，
+       * 而且用户会以为"填了就能生效"（其实服务端整段忽略，见 correctCfg 的 `f = follow ? {} : t`）。 */
+      box.querySelectorAll('input,select').forEach(el => { el.disabled = !!v.useTranslate; });
+    }
     set('st-correct-baseurl', v.baseUrl || '');
     set('st-correct-model', v.model || '');
     const prov = document.getElementById('st-correct-provider');
     if (prov) {
       if (!prov.options.length && v.presets) {
+        /* ⚠ 这里必须滤掉**不能做纠错**的本地引擎（NLLB）。
+         * NLLB 是翻译专用的编码器-解码器模型：它只会"把一句翻成另一种语言"，
+         * 不做自由文本生成，所以「通读全片找语句不通顺」这件事它根本干不了
+         * （服务端 correctCfg 也完全没为它分流，选了只会拿到一个空 baseUrl → 永远不可用）。
+         * 实测踩过：用户选了它，卡片就卡在"模型还不可用"且提示文案还是错的。 */
+        const usable = (v.presets || []).filter(p => !p.local);
         prov.innerHTML = '<option value="">（不指定，用下面的地址）</option>'
-          + v.presets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+          + usable.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+        // 旧配置里存着 local 预设时，下拉里没这个 option → 强制回到"不指定"，别显示成空白
+        prov._presets = usable;
       }
       prov.value = v.provider || '';
+      if (prov.value !== (v.provider || '')) prov.value = '';
     }
     const eff = document.getElementById('st-correct-eff');
     if (eff) {
@@ -2142,9 +2173,21 @@ async function renderAsrModels() {
     }
     const note = document.getElementById('st-correct-note');
     if (note) {
-      note.innerHTML = v.ready
-        ? '✓ 模型可用。纠错会消耗模型调用（长稿分批多次）；实际重识别的音频量由上面的「上下文」决定。'
-        : '<span style="color:var(--danger)">模型还不可用：非本机地址必须填 API Key</span>';
+      /* ⚠ 报错要指向**真正缺的那个东西**。
+       * 原来不管什么原因都写"非本机地址必须填 API Key" ——
+       * 地址明明是空的时候也这么说，把人往错方向引（实测踩过：
+       * 用户以为要补 Key，其实是要么跟翻译、要么填地址）。 */
+      if (v.ready) {
+        note.innerHTML = '✓ 模型可用。纠错会消耗模型调用（长稿分批多次）；实际重识别的音频量由上面的「上下文」决定。';
+      } else if (!v.effectiveBaseUrl || !v.effectiveModel) {
+        note.innerHTML = '<span style="color:var(--danger)">模型还不可用：还没填「接口地址」与「模型名」</span>'
+          + '<span class="gl-hint"> —— 想省事就勾上「用字幕翻译的模型」（跟着「翻译」页那套走）；'
+          + '想单独指定就填一个 OpenAI 兼容服务的地址，本机地址（127.0.0.1）免 Key。</span>';
+      } else if (!v.hasKey) {
+        note.innerHTML = '<span style="color:var(--danger)">模型还不可用：这是非本机地址，必须填 API Key</span>';
+      } else {
+        note.innerHTML = `<span style="color:var(--danger)">模型还不可用：${esc(v.effectiveBaseUrl)} 这套配置没通过检查</span>`;
+      }
     }
   }
   async function correctLoad() {
@@ -2241,11 +2284,32 @@ async function renderAsrModels() {
     bind('st-correct-baseurl', 'baseUrl');
     bind('st-correct-model', 'model');
     bind('st-correct-key', 'apiKey');
-    bind('st-correct-provider', 'provider');
+    /* 选服务商时**把该家的地址与模型名一起填上**（与「翻译」页同一行为）。
+     * 原来只发 provider、不填地址 —— 于是选了 DeepSeek 地址栏还是空的，
+     * 卡片继续报"还不可用"，用户以为选择没生效（实测踩过）。 */
+    {
+      const prov = document.getElementById('st-correct-provider');
+      if (prov) prov.addEventListener('change', () => {
+        const p = (prov._presets || []).find(x => x.id === prov.value);
+        const patch = { provider: prov.value };
+        if (p) {
+          const bu = document.getElementById('st-correct-baseurl');
+          const md = document.getElementById('st-correct-model');
+          if (bu) bu.value = p.baseUrl || '';
+          if (md) md.value = p.model || '';
+          patch.baseUrl = p.baseUrl || '';
+          patch.model = p.model || '';
+        }
+        correctSave(patch);
+      });
+    }
     const ut = document.getElementById('st-correct-usetranslate');
     if (ut) ut.addEventListener('change', async () => {
       const box = document.getElementById('st-correct-custom');
-      if (box) box.hidden = ut.checked;
+      if (box) {
+        box.hidden = ut.checked;
+        box.querySelectorAll('input,select').forEach(el => { el.disabled = ut.checked; });
+      }
       /* 明确把开关状态发给服务端（两个方向都发）。
        * 早期这里在取消勾选时发的是 `{ baseUrl: 当前值 }`，而服务端靠"地址为空 ⇒ 跟随翻译"
        * 推断 —— 取消勾选那一刻地址还是空的，服务端又算回"跟随翻译"，勾选框被回弹，

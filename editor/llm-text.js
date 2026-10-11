@@ -71,12 +71,56 @@ function parseJsonArray(text) {
 const CHATTY_RE = /^\s*(好的|当然|以下是|下面是|翻译如下|这是|注意|说明|所以|首先|Sure|Here|The |Output|Translations|OK\b)/i;
 
 /**
+ * 剥掉**误当正文存下来的 JSON 数组外壳**。只对"整串就是一个 JSON 字符串数组"生效，
+ * 普通译文一律原样返回。
+ *
+ * 为什么需要：用户报「新稿件的角色里出现台词」—— 查出 4 条译文的正文是
+ * `["译文1","译文2",…]` 这种**原样的 JSON 数组字符串**，被 walkSubtitle 写进了 ASS，
+ * 于是行首那个 `["…` 被 `speakerTextTagOf` 当成 `[角色名]` 读走了，角色栏里就列出台词。
+ * 顺带说明：**不要**只看"有没有方括号"就剥——译文本身可能合法地含 `[` `]`，
+ * 所以这里要求整串能被 JSON.parse 成"字符串数组"才动手。
+ */
+function unwrapJsonArrayString(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (s.length < 4 || s[0] !== '[' || s[s.length - 1] !== ']') return String(v == null ? '' : v);
+  let parsed;
+  try { parsed = JSON.parse(s); } catch { return String(v == null ? '' : v); }
+  if (!Array.isArray(parsed)) return String(v == null ? '' : v);
+  const parts = parsed.map(x => String(x == null ? '' : x).trim()).filter(Boolean);
+  // 空数组、或元素不是字符串（数字/对象/嵌套数组）→ 不是我们认识的那种外壳，不动
+  if (!parts.length || parsed.some(x => typeof x !== 'string')) return String(v == null ? '' : v);
+  return parts.join(' ');
+}
+
+/**
  * 解析模型回复 → 与输入等行数的字符串数组（解析不出来返回 null）。
  * 容忍三种常见形态：① 标准 JSON 数组 ② ```json 围栏 ③ **逐行纯文本**（模型无视 JSON 要求直接吐译文行）。
+ *
+ * ⚠ 两个必须"带上 n"来判断的点（踩过的坑）：
+ *  · 引号剥离不能无条件做 —— 模型按 ①②返回普通数组时，`JSON.parse` 已经把引号去掉了；
+ *    而 ③ 才是"字符串里带着 `"…"`"，那种情况下面用 `parseJsonArray(line)` 按**数组元素**处理。
+ *  · JSON 数组**是结构化回复**，绝不能落进"逐行兜底"按整行取。模型的数组元素数比输入行数多
+ *    是完全正常的（一条输入含 2~4 句 → 它给 2~4 条译文），此时应把元素**并入**结果并按 n 校验；
+ *    按整行取就会把 `["a","b","c","d"]` 原样当成一句译文存下去（本次的真实 bug）。
  */
 function parseLineArrayReply(text, n) {
   const arr = parseJsonArray(text);
-  if (arr && arr.length === n) return arr.map(v => String(v == null ? '' : v));
+  if (arr) {
+    // 元素数正好 → 直接用（最常见）
+    if (arr.length === n) return arr.map(v => unwrapJsonArrayString(v));
+    // 元素比输入行多 → 先把每个元素各自拆一次（元素本身也可能是数组串），再按 n 校验
+    if (arr.length > n) {
+      const flat = [];
+      for (const v of arr) {
+        for (const p of String(v == null ? '' : v).split('\n')) {
+          const t = p.trim();
+          if (t) flat.push(t);
+        }
+      }
+      if (flat.length === n) return flat.map(unwrapJsonArrayString);
+    }
+    // 元素比输入行少、或拆完仍对不齐 → 交给下面的逐行兜底再试
+  }
 
   let s = stripReasoning(text);
   const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
@@ -86,10 +130,21 @@ function parseLineArrayReply(text, n) {
     line = line.trim();
     if (!line || line === '[' || line === ']') continue;
     if (/^[\[\]{},]+$/.test(line)) continue;                      // 只有括号/逗号的碎片行
+    /* ⚠ 顺序很重要：**先**试 JSON 数组，**再**剥引号。
+     *  反过来会把 `["译文1","译文2"]` 的外层引号剥掉、露出非法 JSON，
+     *  于是数组元素取不出来、这行被当整句译文 —— 就是本次的 bug。 */
+    const lineArr = parseJsonArray(line);
+    if (lineArr && lineArr.length) {
+      for (const v of lineArr) {
+        const t = String(v == null ? '' : v).replace(/^\s*\d+\s*[.、):：]\s*/, '').trim();
+        if (t && !chattyLine(t)) out.push(unwrapJsonArrayString(t));
+      }
+      continue;
+    }
     line = line.replace(/^\s*\d+\s*[.、):：]\s*/, '');             // "1. " / "2)" 编号
     line = line.replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim();        // 行首尾引号
     if (!line || chattyLine(line)) continue;
-    out.push(line);
+    out.push(unwrapJsonArrayString(line));
   }
   return out.length === n ? out : null;
 }
@@ -174,6 +229,6 @@ function normalizeZhPunctuation(text) {
 
 module.exports = {
   stripReasoning, looksLikeReasoning, extractJsonArray, parseJsonArray,
-  parseLineArrayReply, punctPairsSane, chattyLine, LlmError,
+  parseLineArrayReply, unwrapJsonArrayString, punctPairsSane, chattyLine, LlmError,
   clampBatchSize, planChunks, normalizeZhPunctuation, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
 };

@@ -78,8 +78,6 @@ ok(nc === ncc, '注释配对', nc + ' vs ' + ncc);
 
 console.log('\n== 5. 更早的修复仍在（防回退）==');
 ok(/position:\s*fixed;\s*z-index:\s*65/.test(CSS), '异常筛选浮层仍是 fixed + z-index 65');
-ok(/padding-bottom:\s*8px/.test(CSS), '.ptab 双线修复仍在');
-ok(/padding-bottom:\s*9px/.test(CSS), '.st-tab 双线修复仍在');
 
 console.log('\n== 6. 卡片右边界不能被裁掉 ==');
 // 关键：relative 定位下 right 不生效（left 非 auto 时 right 被算成 -left），
@@ -105,9 +103,26 @@ ok(/overflow:\s*hidden/.test(cardBody || ''),
 const hovIdx = cssNoComment.lastIndexOf('.cue-card:hover');
 const hov = hovIdx < 0 ? null : cssNoComment.slice(hovIdx, cssNoComment.indexOf('}', hovIdx) + 1);
 ok(hov !== null, '能找到 .cue-card:hover（取最后一条，即生效的那条）');
-ok(/transform:\s*none/.test(hov || ''), '悬停不再位移（改用 inset 阴影）', hov && hov.trim().slice(0, 80));
-ok(/inset/.test(hov || ''), '悬停改用 inset 阴影做强调');
+ok(/transform:\s*none/.test(hov || ''), '悬停不再位移（几何完全不动）', hov && hov.trim().slice(0, 80));
+/* ⚠ 悬停**不能**再加 inset 左条：卡片本来就有 `border-left: 3px`，再叠一条 inset 阴影
+ *   就是**两条并排的竖线**（用户截图："可以明显看出是两个竖线"）。
+ *   这条断言以前是反的（要求有 inset），已按修复后的正确行为改写。 */
+ok(!/inset/.test(hov || ''), '悬停不加 inset 左条（那会和 border-left 叠成两条竖线）');
 ok(!/translateX/.test(hov || ''), '生效的悬停规则里没有 translateX');
+
+console.log('\n== 7. 标签栏下划线只有一条（防回退）==');
+/* 正确修法：`margin-bottom:-1px` 让标签的 2px 底边框**几何上真正压住**容器那 1px。
+ * 这里以前断言的是 `padding-bottom: 8px/9px`（配 box-shadow 盖住）—— 那是**旧**修法：
+ * 标签底边和容器边框差 1px、两条线从来没对齐过，而且 .ptab 还多叠了 ui.css 的 ::after
+ * 短条（用户截图："这里的两条横线能不能换成一条？把那个短的去掉"）。已废弃。 */
+ok(/\.ptab\s*\{[^}]*margin-bottom:\s*-1px/.test(CSS), '.ptab 用 margin-bottom:-1px 压住容器边框');
+ok(/\.st-tab\s*\{[^}]*margin-bottom:\s*-1px/.test(CSS), '.st-tab 同样（设置页标签）');
+/* ⚠ 必须去 ui.css 里查那条 ::after —— 它不在 style.css。
+ *   先确认文件读到了，否则"查一个不存在的字符串"会永远通过（假阳性）。 */
+const UICSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'ui.css'), 'utf8');
+ok(/\.ptab\s*\{/.test(UICSS), 'ui.css 已读到（防止查错文件导致断言永远通过）');
+ok(!/\.ptab\.active::after\s*\{/.test(UICSS.replace(/\/\*[\s\S]*?\*\//g, '')),
+  'ui.css 的 .ptab.active::after 短条已删除（那条"短的"）');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
