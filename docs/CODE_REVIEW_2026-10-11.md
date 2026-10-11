@@ -252,3 +252,63 @@ PASS=65  FAIL=3
 
 - **ESLint：17 error → 0 error**（剩余 15 个 warning 均为原有的未使用变量，非 error）。
 - **全量测试：68 通过 / 0 失败**（修复前 65 通过 / 3 失败）。
+
+---
+
+## 八、第七轮：无头浏览器实测（同日，抓到 2 个静态查不出的 bug）
+
+第七轮之前的所有结论都来自**静态分析**（读代码 / ESLint / ruff / 单测）。这一轮补上了**真实浏览器实测**：
+用 CDP 驱动无头 Edge 打开真实页面、读控制台、执行断言。
+
+**环境技巧**：本项目 `tools/cdp_probe.mjs` 是从 Node 里 `spawn` Edge 的，而当前沙箱禁止 node 派生子进程
+（`spawnSync` 连 `cmd.exe` 都 EBUSY）。所以把两步拆开：**bash 起服务与浏览器**，
+Node 只用内置 `WebSocket` 做 CDP 连接与求值 —— 零依赖。
+
+### 8.1 【真 bug·已修】`/api/asr/realign-settings` 一律 404 → 「逐词重对齐设置」读写全废
+
+探针在控制台抓到：
+
+```
+[HTTP 404] http://127.0.0.1:8399/api/asr/realign-settings
+```
+
+**根因**：这个处理块原先落在 `handleProjectsRoutes` 里，被
+`pm = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/([a-z][a-z-]*))?$/` 匹配 ——
+也就是只有 `/api/projects/<id>/realign-settings` 能命中。
+而前端 `project.js` 的 `realignLoad()` / `realignSave()` 调的是 `/api/asr/realign-settings`。
+
+**后果**（对用户）：面板读不到设置（`realignLoad` 的 catch 静默吞掉）；
+保存时 `realignSave` 抛错 → 弹「重排设置保存失败: not found」。**设置根本存不进去。**
+
+**修法**：处理块本身**完全不使用 project id**（是全局 ASR 设置，存 `asr/settings.json` 的 `realign` 段），
+所以搬到 `handleAsrRoutes`、改成 `pathname === '/api/asr/realign-settings'`，
+与其它全局 ASR 设置（`correct` / `confidence` / `set-dir` …）同处。
+
+**验证**：`GET` → 200（返回真实设置 + 本机语音列表）；`POST` → 200 `{ok:true}`；重跑探针 404 消失。
+
+**测试同步**：`tests/log-panel-test.mjs` 里那条断言原本钉的是 `action === 'realign-settings'`
+—— 它**钉住了错误的位置**。已改成断言"挂在 `/api/asr/` 下"，并新增一条**交叉核对**
+（前端 `project.js` 必须调同一个路径），防止再被搬回去。
+
+### 8.2 【可诊断性·已修】资源 404 被报成 `[JS错误]  @ :0:0`
+
+`editor/index.html` 的全局错误上报用 `capture: true` 监听 `error`，因此
+`<script>` / `<link>` 加载失败也会走到这里；而这类事件的 `message/filename/lineno` **全是空**，
+日志里只剩一行 `[JS错误]  @ :0:0` —— 完全看不出是哪个文件挂了。
+
+实测：没跑 `fetch-vendor.js` 时 `/editor/vendor/subtitles-octopus.js` 404，
+服务端日志里就只有这么一行（本项目本来就要求先跑 fetch-vendor，但报错信息不该这么无用）。
+
+**修法**：资源类错误改用出错元素自身的 `src`/`href` 来报。
+**验证**：日志现在输出
+`[JS错误] 资源加载失败 @ http://127.0.0.1:8399/editor/vendor/subtitles-octopus.js?v=…`。
+
+### 8.3 这一轮同时确认「没问题」的部分
+
+- 页面正常加载（`#app` 6 个子节点、标题正确）→ 第七轮改的 `project.js` 的 `import` 没破坏模块图；
+- 设置页打开正常，**双引擎分工区块渲染出了内容**（`dual-ratio-row` 有文本）；
+- `/api/asr/perf/state` → 200；
+- `window.__diag` 存在，且服务端日志确实收到诊断快照（3704 字节）→ 重复键修复后的路径真的在跑；
+- **全程没有任何 `[exception]`** —— 前端 ReferenceError 类问题确已消除。
+
+**仍受环境限制未验证**：ASR 完整链路（需 GPU/模型）、并发与长会话行为。
