@@ -49,11 +49,36 @@ def slices_of(audio, length_sec, count):
     return out
 
 
-def run_npu(segs, rounds, joint="GPU.0"):
+def bench_models(segs, rounds, joint="GPU.0", model_npu=None, model_gpu=None):
+    """两个引擎各测一轮，返回 {"npu": 秒, "sherpa": 秒}（缺模型/失败记 None）。
+
+    模型目录**必须逐引擎传全路径**，不要再从某个 "models 根" 拼：
+    本函数同时被 tools/bench_equal.py 和 asr/asr_dual.py --probe 调用，而后者
+    已经解析出了两个目录（可能来自设置里的自定义路径）。早先 probe 调 run_npu() 时
+    一个参数都不传，于是它退回"仓库/asr/models"—— 开发仓库里没有模型，
+    用户点「性能测试」永远看到"NPU 测速失败：模型目录缺少 encoder-model.onnx"（实测复现）。
+    """
+    res = {}
+    for name, fn, mdl in (("npu", run_npu, model_npu), ("sherpa", run_sherpa, model_gpu)):
+        if not mdl:
+            res[name] = None
+            continue
+        try:
+            per = fn(segs, rounds, joint, mdl) if name == "npu" else fn(segs, rounds, mdl)
+            res[name] = statistics.median(per)
+        except Exception:                     # noqa: BLE001
+            res[name] = None
+    return res
+
+
+def run_npu(segs, rounds, joint="GPU.0", model_dir=None):
     import asr_npu as W
     # 把预测/联合显式钉在 iGPU(GPU.0) 上：N 卡要留给 CUDA 引擎，两个引擎并行时不能抢。
+    # （实测这个选择是对的：joint 放 GPU.1/N 卡反而慢 2.6 倍 —— 它是逐帧微调用，
+    #   独显每次提交的开销吃掉了算力优势。数据见 docs/双引擎实测结论.md）
     W.PROVIDER_DEVICES["npu"] = ("NPU", joint)
-    rec = W.NpuRecognizer(os.path.join(MODELS, "parakeet-tdt-0.6b-v2-npu"), provider="npu")
+    rec = W.NpuRecognizer(model_dir or os.path.join(MODELS, "parakeet-tdt-0.6b-v2-npu"),
+                          provider="npu")
     print(f"  编码器={rec.enc_device}  预测/联合={rec.joint_device}")
     rec.recognize_words(segs[0], tta_runs=0)          # 热身
     per = []
@@ -65,9 +90,10 @@ def run_npu(segs, rounds, joint="GPU.0"):
     return per
 
 
-def run_sherpa(segs, rounds):
+def run_sherpa(segs, rounds, model_dir=None):
     import asr as A
-    rec = A.load_recognizer(os.path.join(MODELS, "parakeet-tdt-0.6b-v2"), 4, [], 3.0, provider="cuda")
+    rec = A.load_recognizer(model_dir or os.path.join(MODELS, "parakeet-tdt-0.6b-v2"),
+                            4, [], 3.0, provider="cuda")
     def one(seg):
         plan = A.split_chunks(seg, 16000)
         return A.recognize_words(rec, seg, 16000, plan)
@@ -90,7 +116,21 @@ def main() -> int:
     ap.add_argument("--engine", default="both", choices=["both", "npu", "sherpa"])
     ap.add_argument("--joint", default="GPU.0",
                     help="NPU 引擎里预测/联合网络的设备：GPU.0=Intel核显（默认，不占 N 卡）/ CPU")
+    ap.add_argument("--models", default=None,
+                    help="模型根目录（默认 <仓库>/asr/models）。开发仓库里没有模型 —— "
+                         "模型在安装目录，所以从 dev 仓库跑本脚本必须传这个参数，"
+                         "否则两个引擎都会报「模型目录缺少 …」。")
+    ap.add_argument("--model-npu", default=None, help="NPU 引擎模型目录全路径（优先于 --models）")
+    ap.add_argument("--model-gpu", default=None, help="GPU 引擎模型目录全路径（优先于 --models）")
     args = ap.parse_args()
+
+    def _mdir(sub, explicit):
+        if explicit:
+            return explicit
+        return os.path.join(args.models or MODELS, sub)
+
+    mdir_npu = _mdir("parakeet-tdt-0.6b-v2-npu", args.model_npu)
+    mdir_gpu = _mdir("parakeet-tdt-0.6b-v2", args.model_gpu)
 
     audio = read_wav(args.audio)
     segs = slices_of(audio, args.len, args.count)
@@ -102,7 +142,7 @@ def main() -> int:
     if args.engine in ("both", "npu"):
         print("=== NPU 引擎（OpenVINO）===")
         try:
-            per = run_npu(segs, args.rounds, args.joint)
+            per = run_npu(segs, args.rounds, args.joint, mdir_npu)
             med = statistics.median(per)
             res["npu"] = med
             print(f"    {args.count} 片共 {med:.2f}s  →  {total_sec/med:.1f}x 实时"
@@ -114,7 +154,7 @@ def main() -> int:
     if args.engine in ("both", "sherpa"):
         print("=== GPU 引擎（sherpa-onnx / CUDA，N 卡）===")
         try:
-            per = run_sherpa(segs, args.rounds)
+            per = run_sherpa(segs, args.rounds, mdir_gpu)
             med = statistics.median(per)
             res["sherpa"] = med
             print(f"    {args.count} 片共 {med:.2f}s  →  {total_sec/med:.1f}x 实时"
@@ -123,8 +163,8 @@ def main() -> int:
             print(f"    失败: {type(exc).__name__}: {exc}")
         print()
 
-    if len(res) == 2:
-        n, g = res["npu"], res["sherpa"]
+    n, g = res.get("npu"), res.get("sherpa")
+    if n and g:
         ratio = n / g            # GPU 比 NPU 快几倍（耗时比）
         share_g = ratio / (ratio + 1)
         print("=== 结论 ===")
@@ -141,6 +181,10 @@ def main() -> int:
             else:
                 continue
             break
+        print("\n⚠ 本脚本测的是**纯解码吞吐**（只调 recognize_words / 识别函数，不含"
+              "模型加载与--tta 加噪重跑），比真实初稿路径快数倍。分工**比例**仍然可用，"
+              "但别把它当成「整段音频要跑多久」的预期 —— 端到端数字用 "
+              "`asr/asr_dual.py --ratio 1:0|0:1|1:1` 各跑一遍来测。")
     return 0
 
 
