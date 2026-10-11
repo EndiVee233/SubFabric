@@ -1396,6 +1396,15 @@ export function initProjects(ctx) {
     loadConfidenceSettings();
     correctLoad();
     realignLoad();
+    /* ⚠ initPerfPanel / initDualRatio 必须**无条件**调用。
+     *   2026-10-11 无头浏览器实测发现：这两个以前只写在下面 catch 分支里
+     *   （翻译配置读失败时才跑），于是**正常启动时从不执行** ——
+     *   「性能测试」面板的按钮全没接线（点了没反应）、#perf-applied 永远停在"读取中…"、
+     *   双引擎分工下拉 change 也不发请求。
+     *   它们只依赖 DOM id（且各自有 dataset.bound 幂等保护），
+     *   与下面那次 /api/translate/config 无关，所以提到 try 之前无条件跑。 */
+    initPerfPanel();        // 性能测试页（独立于模型列表，自己管自己的状态）
+    initDualRatio();        // 双引擎分工下拉（事件委托，重渲染不失效）
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
@@ -1408,9 +1417,7 @@ export function initProjects(ctx) {
       msgEl.textContent = '✗ 读取设置失败：' + String((e && e.message) || e) + '。本地服务可能已退出，重开程序再试';
       msgEl.classList.add('err');
       renderAsrModels();      // 翻译配置读不到也要让模型列表自己报错/自己重试
-      initPerfPanel();        // 性能测试页（独立于模型列表，自己管自己的状态）
-      initDualRatio();        // 双引擎分工下拉（事件委托，重渲染不失效）
-      return;
+      return;                 // initPerfPanel / initDualRatio 已在上面无条件调用过
     }
     stPresets = data.presets || [];
     $('#st-provider').innerHTML = stPresets
@@ -1681,7 +1688,13 @@ async function refreshDualRatio() {
 }
 
 function initDualRatio() {
-  const box = $('#st-models');
+  /* ⚠ 委托容器必须是 **#st-panel-models**，不能是 #st-models。
+   *   HTML 里 #st-models 与 #dual-ratio-row 是**在 #st-panel-models 下的兄弟节点**，
+   *   change 事件从 #dual-ratio 冒泡**根本到不了** #st-models。
+   *   2026-10-11 无头浏览器实测：改下拉既不发 /api/asr/dual、note 也不变（等于整个交互死掉）。
+   *   #st-panel-models 才是同时包含两者的稳定容器 —— renderAsrModels 只重建
+   *   #st-models 的 innerHTML，不动本容器，所以"重渲染不失效"的初衷依然成立。 */
+  const box = $('#st-panel-models');
   if (!box || box.dataset.dualBound) return;
   box.dataset.dualBound = '1';
   // 事件委托：面板每次重建都不会丢
