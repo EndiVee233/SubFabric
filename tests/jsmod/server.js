@@ -28,6 +28,32 @@ const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有
 const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
 const hotwordsMod = require('./hotwords.js');       // 从操作日志挖 ASR 热词候选(纯逻辑, 有单测)
+const gluedWordsMod = require('./glued-words.js');  // 扫"单词被粘住"(toescape 这类), 有单测
+const assSentencesMod = require('./ass-sentences.js'); // 从 karaoke 式 ASS 还原"句子+逐词"(服务端, 无 DOM)
+
+/* 测试用页面：`/__test/<name>` 直接吐 tests/<name>。
+ * 为什么需要：`tests/*.html` 的验证页要用 fetch 调 /api/*，而 file:// 下是跨源、
+ * 拿不到数据（实测踩过：验证页里 fetch('/api/fonts') 静默失败 → 组件空转，
+ * 于是"定位对不对"这类断言测的其实是个空盒子）。
+ * ⚠ 只在测试目录里按文件名取，不做路径拼接 —— 不给任意文件读取留口子。 */
+function serveTestPage(req, res, pathname) {
+  const m = /^\/__test\/([A-Za-z0-9_.-]{1,64})$/.exec(pathname);
+  if (!m) return false;
+  const name = m[1];
+  const p = path.join(ROOT, 'tests', name);
+  if (!p.startsWith(path.join(ROOT, 'tests')) || !fs.existsSync(p) || !fs.statSync(p).isFile()) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('not found');
+    return true;
+  }
+  const ext = path.extname(name).toLowerCase();
+  const type = ext === '.html' ? 'text/html; charset=utf-8'
+    : ext === '.js' || ext === '.mjs' ? 'text/javascript; charset=utf-8'
+      : ext === '.css' ? 'text/css; charset=utf-8' : 'application/octet-stream';
+  res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
+  res.end(fs.readFileSync(p));
+  return true;
+}
 
 /* ── 本地翻译引擎（NLLB / CTranslate2）──
  * 惰性单例：第一次真正要翻的时候才起服务（起一次要载入 600MB 模型，十几秒）。
@@ -1545,7 +1571,17 @@ async function nvidiaGpu() {
 const asrProvider = () => { const s = readAsrSettings(); return s.asrProvider === 'cuda' ? 'cuda' : 'cpu'; };
 
 /** 该引擎该用哪个 Python 脚本 + provider 参数。
- *  sherpa-onnx → asr.py(CUDA provider; 官方不支持 CPU); openvino → asr_npu.py(NPU/核显/CPU)。 */
+ *
+ *  ⚠ 各脚本的 **CLI 契约并不相同**（实测逐个数出来的）：
+ *      asr.py          --tta ✓   --hotwords-file/score ✓   --threads ✓
+ *      asr_npu.py      --tta ✓   --hotwords-file/score ✓   --threads ✓
+ *      asr_dual.py     --tta ✗   --hotwords ✗              --threads ✗（它自己有 --ratio/--slice-sec）
+ *      multitalker.py  --tta ✗   --hotwords ✗              --threads ✓
+ *    早先这里只返回 script/provider/hotwords，而调用点**各自**去拼
+ *    `--threads/--provider/--tta/hotwords` —— 于是 nemo 被塞了 `--tta`，
+ *    argparse 直接报 "unrecognized arguments: --tta 2" 整个识别失败（实测复现）。
+ *    所以现在由这里统一给出 `asrArgs(model, mdir, audio, out, confMode)`，
+ *    调用点只管展开，不再各自拼参数 —— 契约差异只在这一个地方描述。 */
 const asrEngineArgs = (model) => {
   const eng = model && model.engine;
   if (eng === 'dual') {
@@ -1557,6 +1593,22 @@ const asrEngineArgs = (model) => {
       provider: 'dual',
       hotwords: [],                 // 两个后端里有一个不支持热词，统一不带
       extra: ['--ratio', d.ratio, '--slice-sec', String(d.sliceSec), '--joint', d.joint],
+      noThreads: true,              // asr_dual.py 没有 --threads
+      noTta: true,                  // 也没有 --tta
+    };
+  }
+  /* nemo(多说话人) 有**自己的脚本** multitalker.py，绝不能落到 asr.py。
+   *   这里踩过：早先只判了 dual 与 openvino，nemo 于是走 default 分支拿到 asr.py ——
+   *   而 asr.py 是 sherpa-onnx 的脚本、只认 encoder/decoder/joiner .onnx + tokens.txt，
+   *   在 .nemo 目录里必然报「模型文件不完整(...): 缺少 encoder*.onnx / decoder*.onnx /
+   *   joiner*.onnx / tokens.txt」。用户看到的就是「重排逐词时间」失败，
+   *   而报错里那句 onnx 清单与所选模型对不上，非常难自查（实测复现过）。 */
+  if (eng === 'nemo') {
+    return {
+      script: path.join(ASR_DIR, 'multitalker.py'),
+      provider: 'cuda',
+      hotwords: [],
+      noTta: true,                  // multitalker.py 不吃 --tta
     };
   }
   const openvino = eng === 'openvino';
@@ -1567,6 +1619,17 @@ const asrEngineArgs = (model) => {
     hotwords: openvino ? [] : parakeetHotwordArgs(),
   };
 };
+
+/** 按引擎契约拼出完整的 ASR 命令行参数（脚本名之后的部分）。
+ *  调用点一律用这个，**不要**自己拼 --tta/--threads —— 见 asrEngineArgs 的说明。 */
+const asrArgsFor = (ea, modelDir, audio, out, confMode) => [
+  '--model', modelDir, '--audio', audio, '--out', out,
+  ...(ea.noThreads ? [] : ['--threads', '4']),
+  '--provider', ea.provider,
+  ...(ea.extra || []),
+  ...(ea.hotwords || []),
+  ...(ea.noTta ? [] : ttaArgs(confMode)),
+];
 
 /** 子进程退出码 → 人话。经典坑: Windows 上「python」不存在时, Microsoft Store 的
  *  占位别名 python.exe 会启动并退出 9009(它打印的提示是纯文本, 不是 asr.py 的 JSON 日志,
@@ -2636,6 +2699,19 @@ const LOOPBACK_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 const LOOPBACK_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
+/* ⚠ 合并上游 2.3.0 时这里取的是**上游那侧**（本 fork 的旧 handleRequest 整个删掉）：
+ *   上游把 handleRequest 从"一个 90 行的大函数"重构成**薄分发器**（约 25 行），
+ *   路由按段拆进文件末尾的 API_SECTIONS / handleXxxRoutes。留旧的会把重构整个退回去。
+ *
+ *   旧实现里内联的路由已逐个核过，**没有丢功能**（都由上游的段函数覆盖）：
+ *     /api/waveform · /api/waveform-upload · /api/peaks · /api/peaks-upload · /api/upload-video
+ *     → handleWaveRoutes 全部处理（含 -upload 变体与上传落盘后的 MEDIA_ALLOW 登记）
+ *   兜底静态服务也一致：safeJoin(ROOT, pathname) → serveFile。
+ *
+ *   但上游那份**漏掉了本 fork 的 `/__test/` 测试页服务**（serveTestPage 在上游 0 次出现），
+ *   而 tests/*.html 的验证页必须从 http:// 打开才能 fetch /api/*（file:// 是跨源拿不到）——
+ *   所以下一段用一处小补丁把它接回上游的薄分发器里（见 handleRequest 内的 serveTestPage 调用）。
+ */
   /* ═══════════ 项目系统 ═══════════
    * 每个项目一个目录: projects/<id>/project.json + subtitle.{ass,srt} + audio.wav(16k单声道, 给后续 ASR) + peaks.bin(波形包络缓存)
    * 视频不复制: 元数据里记用户选择的本地路径, 播放走 /api/media 按路径 Range 流式; 文件消失 → 客户端要求重选 */
@@ -3641,10 +3717,30 @@ function startPrepare(id, videoPath, mode) {
       }
     };
 
+    /* 确定性扫一遍"单词被粘住"（toescape / weescape 这类）—— 两处用它：
+     *   ① 贴到对应行后面给模型当提示（它才有机会确认并报 reidentify）
+     *   ② 模型漏报时**确定性补条目**（下面按批补），保证召回不依赖模型的强弱
+     * 为什么需要确定性兜底：实测 qwen3:8b 光靠提示词抓不住这种粘连。
+     *
+     * ⚠ SUBFABRIC_NO_GLUE_HINT=1 **只关①（提示）**，不关扫描本身 ——
+     *   兜底②要照常工作。早先这里写成"关提示时连 scanGluedByRow 也不跑"，
+     *   于是 gluedByRow 是空的、兜底循环没东西可遍历，**两个都废了**（实测踩过：
+     *   关了提示后 toescape/weescape 两条全丢，notes 也是空的）。
+     *   这个开关只用于对照实验，判断"提示"相对"兜底"各自贡献多少。 */
+    const glueHintOn = process.env.SUBFABRIC_NO_GLUE_HINT !== '1';
+    const gluedByRow = gluedWordsMod.scanGluedByRow(rows);
+    if (gluedByRow.size) {
+      const n = Array.from(gluedByRow.values()).reduce((a, v) => a + v.length, 0);
+      console.log(`[reflect] 扫出 ${n} 处疑似"单词被粘住"（${gluedByRow.size} 行：`
+        + [...gluedByRow.keys()].join(',') + `）提示${glueHintOn ? '已开' : '已关·兜底仍生效'}`);
+    }
+
     for (let k = 0; k < batches.length; k++) {
       const [bi, lo, hi] = batches[k];
       if (onProgress) onProgress(k, batches.length, `反思中 … 第 ${k + 1}/${batches.length} 批（第 ${lo}~${hi} 行）`);
-      const user = reflectMod.buildBatchPrompt(rows, lo, hi, rows.length, bi, batches.length);
+      // 提示按开关传；**兜底不看这个开关**（见上面 glueHintOn 的说明）
+      const user = reflectMod.buildBatchPrompt(rows, lo, hi, rows.length, bi, batches.length,
+        glueHintOn ? gluedByRow : null);
       let raw = '';
       try {
         const out = await runBatch(user, cfg.maxTokens);
@@ -3655,11 +3751,27 @@ function startPrepare(id, videoPath, mode) {
       } catch (e) {
         // 单批失败不该让整个反思白跑：记下原因，用其余批次的结果继续
         notes.push(`第 ${k + 1} 批失败：${String((e && e.message) || e).slice(0, 120)}`);
-        continue;
       }
       const [fs, note] = reflectMod.parseFindings(raw, rows.length, rows);
       if (note) notes.push(`第 ${k + 1} 批：${note}`);
       all.push(...fs);
+
+      /* 本批里扫出粘连、而模型没报到的行 → 确定性地补一条 reidentify。
+       * 为什么必须补：漏一行的代价是"这句永远读不通"，而误补一行的代价只是
+       * "多听一遍那段音频"（用户还能在预览里取消勾选）。两者不对称，宁可多报。 */
+      let added = 0;
+      for (const [ln, hits] of gluedByRow) {
+        if (ln < lo || ln > hi) continue;
+        if (fs.some(f => Number(f.from) <= ln && ln <= Number(f.to))) continue;  // 模型已覆盖
+        const first = hits[0];
+        all.push({
+          kind: 'reidentify', from: ln, to: ln,
+          reason: `${first.word} 像是两个词粘在一起（应为「${first.head} ${first.tail}」），这段需要重听`,
+          confidence: 0.9,
+        });
+        added++;
+      }
+      if (added) notes.push(`第 ${k + 1} 批：另有 ${added} 行是机器扫出的粘连（模型没报到），已一并列入`);
     }
 
     /* 确定性补一条：扫时间轴找出"有一段音频没被识别出内容"的空档。
@@ -3996,10 +4108,10 @@ function startPrepare(id, videoPath, mode) {
     const wav = path.join(tmpDir, `a-${tag}.wav`);
     const outJson = path.join(tmpDir, `a-${tag}.json`);
     await ttsToWav(spoken, wav, prep.voice, prep.rate);
-    // 合成音频走同一套识别参数（含项目当前的逐句置信度档位）
-    const asrArgs = [prep.ea.script, '--model', prep.mdir, '--audio', wav,
-      '--out', outJson, '--threads', '4', '--provider', prep.ea.provider,
-      ...(prep.ea.extra || []), ...(prep.ea.hotwords || []), ...ttaArgs(prep.confMode)];
+    // 合成音频走同一套识别参数（含项目当前的逐句置信度档位）。
+    // 参数由 asrArgsFor 按**该引擎的 CLI 契约**生成 —— nemo 不吃 --tta，别再这里手拼。
+    const asrArgs = [prep.ea.script,
+      ...asrArgsFor(prep.ea, prep.mdir, wav, outJson, prep.confMode)];
     await new Promise((res, rej) => {
       const pr = spawn(ASR_PY, asrArgs, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       let err = '';
@@ -4229,6 +4341,19 @@ function startPrepare(id, videoPath, mode) {
   async function applyRealignToProject(id, items) {
     const meta = readMeta(id);
     if (!meta) throw new Error('项目不存在');
+
+    /* 没有 asr.json 的稿件（**导入 ASS 建的**）走另一条写回路径：
+     * 直接按行改字幕文件里那一句的时间戳 —— 不去猜 asr.json，也不重建整份 ASS
+     * （那份 ASS 里有用户自己的角色色标/说话人名/样式，重建必丢细节）。 */
+    if (!fs.existsSync(path.join(projDir(id), 'asr.json'))) {
+      const subFile = meta.subtitle && meta.subtitle.file;
+      if (!subFile) throw new Error('这个项目没有字幕文件，无法写回');
+      const r = assSentencesMod.applyWordsToFile(path.join(projDir(id), subFile),
+        items.filter(it => it && Array.isArray(it.words) && it.words.length));
+      if (!r.changed) throw new Error('没有匹配到可改写的句子（字幕可能已变动，重新校对一次）');
+      return r.changed;
+    }
+
     const segs = readSegments(id);
     if (!segs.length) throw new Error('这个项目还没有识别结果');
     const n = segs.length;
@@ -4324,8 +4449,29 @@ function startPrepare(id, videoPath, mode) {
 
   /** 取该项目的**英文逐词句**：只有逐词轨上的句子才谈得上"重校对逐词时间"。 */
   function realignTargets(id, meta) {
-    const segs = readSegments(id);
     const kar = meta && meta.kar;
+    /* 句子来源有两条路：
+     *   ① 有 asr.json（正常识别出来的稿件）→ 直接用它的 segments
+     *   ② 没有 asr.json（**导入 ASS 建的稿件**）→ 从字幕里还原 karaoke 结构
+     * 早先只走 ①，于是导入的稿件点「全片逐词重校对」直接报
+     *   ENOENT: ...\asr.json —— 用户看到的就是"这个功能对导入的稿件用不了"。 */
+    let segs;
+    try {
+      segs = readSegments(id);
+    } catch (e) {
+      segs = null;
+      /* 导入 ASS 建的稿件没有 asr.json —— 改成从字幕本身还原 karaoke 结构。
+       * 逐词样式优先用 meta.kar.wordStyle（编辑器解析出来的那个），
+       * 取不到就让解析器自己挑"条数最多的样式"。 */
+      const subFile = meta && meta.subtitle && meta.subtitle.file;
+      if (subFile) {
+        const parsed = assSentencesMod.sentencesFromFile(path.join(projDir(id), subFile), {
+          wordStyle: kar && kar.wordStyle,
+        });
+        if (parsed && parsed.length) return parsed;
+      }
+      throw e;                       // 两条路都走不通时，把原始原因抛出去
+    }
     /* 判断哪一轨是逐词轨：识别结果里带 words 的句子就是。
      * 不带 words 的是中文整句锚点句（翻译结果），它没有逐词时间可改。 */
     return segs.map((s, i) => ({ s, i }))
@@ -4566,10 +4712,14 @@ function startPrepare(id, videoPath, mode) {
   const parseTranslationReply = llmText.parseLineArrayReply;
 
 
-  /** 落盘译文（每批一次），服务重启/刷新后可续翻 */
+  /** 落盘译文（每批一次），服务重启/刷新后可续翻。
+   *  ⚠ 落盘前过一遍 unwrapJsonArrayString：实测有整句译文是**原样的 JSON 数组字符串**
+   *  （`["译文1","译文2"]`）被写了进来，然后行首那个 `["…` 被当成 `[角色名]` 读走
+   *  → 角色栏里列出一堆台词（用户报的 bug）。解析层已经修了根因，这里是最后一道闸。 */
   function saveTranslations(id, model, lines) {
     const tp = path.join(projDir(id), 'translation.json');
-    fs.writeFileSync(tp + '.tmp', JSON.stringify({ model, updatedAt: new Date().toISOString(), lines }));
+    const clean = (lines || []).map(v => llmText.unwrapJsonArrayString(v));
+    fs.writeFileSync(tp + '.tmp', JSON.stringify({ model, updatedAt: new Date().toISOString(), lines: clean }));
     fs.renameSync(tp + '.tmp', tp);
   }
 
@@ -4902,9 +5052,8 @@ function startPrepare(id, videoPath, mode) {
           }
           data = servedOk ? JSON.parse(fs.readFileSync(outJson, 'utf8'))
             : await new Promise((resolve, reject) => {
-            const asrArgs = [ea.script, '--model', mdir, '--audio', segWav,
-                             '--out', outJson, '--threads', '4', '--provider', ea.provider,
-                             ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
+            const asrArgs = [ea.script,
+                             ...asrArgsFor(ea, mdir, segWav, outJson, confMode)];
             const py = spawn(ASR_PY, asrArgs,
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
             trackProjProc(id, py);   // 删除项目时一起收掉, 别再空烧 GPU
@@ -5761,9 +5910,8 @@ function startPrepare(id, videoPath, mode) {
           const outP = path.join(projDir(id), 'asr.chunk' + c.index + '.json');
           let sliceErr = '', sbuf = '';
           const ea = asrEngineArgs(model);
-          const asrArgs = [ea.script, '--model', mdir, '--audio', slice,
-                           '--out', outP, '--threads', '4', '--provider', ea.provider,
-                           ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
+          const asrArgs = [ea.script,
+                           ...asrArgsFor(ea, mdir, slice, outP, confMode)];
           const pr = spawn(ASR_PY, asrArgs,
             { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
           draftProcs.set(id, pr);
@@ -5818,9 +5966,8 @@ function startPrepare(id, videoPath, mode) {
       }
       let lastErr = '', buf = '';
       const ea = asrEngineArgs(model);
-      const asrArgs = [ea.script, '--model', mdir, '--audio', wav,
-                       '--out', outJson, '--threads', '4', '--provider', ea.provider,
-                       ...(ea.extra || []), ...ea.hotwords, ...ttaArgs(confMode)];
+      const asrArgs = [ea.script,
+                       ...asrArgsFor(ea, mdir, wav, outJson, confMode)];
       const proc = spawn(ASR_PY, asrArgs,
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       draftProcs.set(id, proc);
@@ -7530,6 +7677,33 @@ function handleProjectsRoutes(req, res, u) {
      * GET  → { voice, rate, minAnchorRatio, voices }
      * POST → 局部更新（存 asr/settings.json 的 realign 段）
      * 这几个值只影响**以后**的重排，不碰已有字幕。 */
+    /* 只读诊断：把「从字幕还原出来的句子」列出来（导入 ASS 的稿件没有 asr.json）。
+     * 用途：① 排查"为什么这句没被重校对" ② 与前端 analyzeKaraoke 的结果对下标
+     * （全片重校对返回的 index 是这里的下标，前端拿它去索引 state.kar.sentences，
+     *   两边若不一致就会改错句 —— 必须能核对）。不写任何文件。 */
+    if (action === 'sentences' && req.method === 'GET') {
+      const meta = readMeta(id);
+      if (!meta) return sendJson(res, 404, { error: '项目不存在' });
+      const subFile = meta.subtitle && meta.subtitle.file;
+      let fromAsr = null;
+      try { fromAsr = readSegments(id).length; } catch { fromAsr = null; }
+      const parsed = subFile
+        ? assSentencesMod.sentencesFromFile(path.join(projDir(id), subFile),
+          { wordStyle: (meta.kar || {}).wordStyle })
+        : null;
+      return sendJson(res, 200, {
+        hasAsrJson: fromAsr !== null,
+        asrSegments: fromAsr,
+        source: fromAsr !== null ? 'asr.json' : (parsed ? 'subtitle(parsed)' : 'none'),
+        wordStyle: (meta.kar || {}).wordStyle || null,
+        count: parsed ? parsed.length : 0,
+        first: (parsed || []).slice(0, 8).map(s => ({
+          index: s.index, start: s.start, end: s.end,
+          words: s.words.length, text: String(s.text).slice(0, 70),
+        })),
+      });
+    }
+
     if (action === 'realign-settings' && (req.method === 'GET' || req.method === 'POST')) {
       const view = async () => {
         const raw = (readAsrSettings().realign) || {};
@@ -7971,6 +8145,10 @@ function handleRequest(req, res) {
   }
   const u = new URL(req.url, `http://${req.headers.host || HOST}`);
   const pathname = u.pathname;
+
+  /* 本 fork 专属：tests/*.html 的验证页必须从 http:// 打开才能 fetch /api/*（file:// 是跨源，
+   * 拿不到数据）。上游 2.3.0 没有这条（serveTestPage 在上游出现 0 次），合并时补回来的。 */
+  if (serveTestPage(req, res, pathname)) return;
 
   // 简单端点先查表(见上方 SIMPLE_ROUTES 注释: 只收同步无副作用的处理器)
   const simple = SIMPLE_ROUTE_MAP.get(pathname);

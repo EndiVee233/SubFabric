@@ -155,11 +155,18 @@ body::before {
   border-radius: var(--r-1);
   background: linear-gradient(180deg, rgba(255, 255, 255, .014), transparent 60%);
 }
+/* ⚠ 左侧那一条**只能用 `border-left` 画**（style.css 的 .cue-card 已经有一条 3px 的）。
+ *  早期这里又叠了一条 `inset 3px 0 0` 阴影 —— 那就是**两条并排的竖线**
+ *  （用户反馈："可以明显看出是两个竖线"）。选中/播放一律靠加粗+换色那条边框表达。 */
 .cue-card.selected {
   background: var(--accent-a10);
-  box-shadow: inset 3px 0 0 var(--accent), 0 2px 10px rgba(0, 0, 0, .22);
+  border-left-width: 4px;
+  border-left-color: var(--accent);
 }
-.cue-card.playing { box-shadow: inset 3px 0 0 var(--accent-2); }
+.cue-card.playing {
+  border-left-width: 4px;
+  border-left-color: var(--accent-2);
+}
 .cc-l1 { color: var(--text-0); }        /* 中文行：主信息，最亮 */
 .cc-l2 { color: var(--text-1); }        /* 英文行：退一档，双语层次更清楚 */
 .cc-no { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -278,11 +285,12 @@ body::before {
 .role-card:hover { box-shadow: var(--sh-1); }
 .export-grid .btn { border-radius: var(--r-1); }
 .ptab { position: relative; }
-.ptab.active::after {
-  content: ''; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px;
-  background: var(--accent); border-radius: 2px 2px 0 0;
-  animation: fade-in var(--dur-2) var(--ease-out) both;
-}
+/* ⚠ 这里原来有一条 `.ptab.active::after`：`left:10px; right:10px; bottom:-1px; height:2px`。
+ *  它是叠在 `.ptab.active` 自己的 `border-bottom: 2px` **之上**的第二条下划线，
+ *  而且左右各内缩 10px、比标签窄 —— 就是用户截图里那条**短的**线
+ *  （"这里的两条横线能不能换成一条？把那个短的去掉"）。
+ *  已删除：选中态统一由 `.ptab.active` 的 2px 底边框 + `margin-bottom:-1px` 表达，
+ *  相邻标签首尾相接，整条标签栏连成一条连续的线。 */
 
 /* ── 13. 首页列表：入场动画只在"进入首页"时播 + 进度条平滑增长 ───────────── */
 /* style.css 里 .proj-card 是全局播放 fade-up；轮询刷新每 1.5s 重建卡片, 会一直重播 → 这里收窄到 .anim-in */
@@ -468,8 +476,16 @@ body::before {
   border-right: 1px solid var(--hair-2); border-bottom: 0; padding: 14px 10px; overflow-y: auto;
   background: rgba(255, 255, 255, .012);
 }
-#st-view .st-tab { flex: none; min-width: 0; width: 100%; text-align: left; padding: 11px 14px; border: 0; border-radius: var(--r-2); }
-#st-view .st-tab.active { background: var(--accent-a12); box-shadow: inset 3px 0 0 var(--accent); }
+/* 宽屏时 .st-tabs 是**竖排侧栏**（border-bottom:0，只有右边一条竖线）。
+ * 所以标签要：① 去掉 style.css 带来的 2px 底边框（否则每个标签下面多一条线）
+ *           ② 选中态用 **border-left** 表达，而不是再叠一条 inset 阴影
+ *              —— 那是"同一件事用两种画法各画一遍"，叠起来就是两条线。 */
+#st-view .st-tab {
+  flex: none; min-width: 0; width: 100%; text-align: left;
+  padding: 11px 14px; border: 0; border-left: 3px solid transparent;
+  border-radius: var(--r-2);
+}
+#st-view .st-tab.active { background: var(--accent-a12); border-left-color: var(--accent); }
 #st-view .st-body { grid-column: 2; grid-row: 2; min-width: 0; padding: 22px 24px; }
 #st-view .st-panel { width: 100%; max-width: 740px; margin-inline: auto; }
 #st-view .st-card { padding: 16px 18px; }
@@ -500,9 +516,15 @@ body::before {
   .settings-inner { height: auto; min-height: 100%; }
   #st-view .st-box { flex: none; display: flex; flex-direction: column; min-height: 550px; overflow: visible; }
   #st-view .st-head { display: none; }
+  /* 窄屏时标签栏翻成横排（下面一条 1px 灰线），选中态用 border-bottom 表达。
+     同样不能再用 box-shadow —— 那会和 border 叠成两条。 */
   #st-view .st-tabs { flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--hair-2); padding: 8px; }
-  #st-view .st-tab { width: auto; white-space: nowrap; padding: 10px 12px; }
-  #st-view .st-tab.active { box-shadow: inset 0 -2px 0 var(--accent); }
+  #st-view .st-tab {
+    width: auto; white-space: nowrap; padding: 10px 12px;
+    border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    border-radius: 0;
+  }
+  #st-view .st-tab.active { border-bottom-color: var(--accent); }
   #st-view .st-body { overflow: visible; padding: 16px 14px; }
   #st-view .st-actions { flex-wrap: wrap; padding: 12px 14px; }
   #st-view .st-actions .st-msg { flex-basis: 100%; order: -1; }
@@ -520,6 +542,6 @@ body::before {
 
 /* ── 14. 减少动效：质感层里的动画同样关掉（与 style.css 的规则一致，双保险） ── */
 @media (prefers-reduced-motion: reduce) {
-  .skel-b, .save-state::before, .pc-badge, .ptab.active::after,
+  .skel-b, .save-state::before, .pc-badge,
   .proj-card, .pc-draft-bar-in { animation: none !important; }
 }

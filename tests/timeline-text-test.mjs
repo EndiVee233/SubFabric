@@ -98,8 +98,23 @@ console.log('\n== 源码接线：scrim 与文字色确实用上了 ==');
 ok(/readableTextOn\(base\)/.test(SRC), '_drawBlockText 里用 readableTextOn(base) 决定中文色');
 ok(/rgba\(8,8,12,\.45\)/.test(SRC), '中文字形后铺了淡深色底（scrim）');
 ok(/measureText\(zh\)\.width/.test(SRC), 'scrim 宽度按实测文本宽度算（不是整块铺满）');
-ok(/zhBase = band\.y \+ Math\.round\(band\.h \* 0\.30\)/.test(SRC),
-  'scrim 与文字基线用同一个 y（zhBase），不会错位');
+/* ⚠ 这条以前钉的是合并前的**内联**写法 `zhBase = band.y + Math.round(band.h*0.30)`。
+ *   后来分区逻辑改过 _wordGeom（中英上下分区、各自居中），两处副本会漂 ——
+ *   实测分隔线 89 压在中文 88~105 上。于是**统一到一处**：_wordGeom 算出 zhBase 并
+ *   作为 g.zhBase 暴露，_drawBlockText 只读不另算（timeline.js 1562 行的注释写了缘由）。
+ *   所以要防的回归是"**又出现第二份 zhBase 计算**"，而不是某个具体表达式。 */
+ok(/zhBase,\s*\/\/|zhBase,/.test(SRC), '_wordGeom 把 zhBase 放进几何对象');
+ok(/const zhBase = g\.zhBase;/.test(SRC), '_drawBlockText 从 g.zhBase 取（只有一处定义）');
+/* 要防的回归是"**又有人另算一份基线**"，而不是"zhBase 这个名字只出现一次" ——
+ * 正确结构本来就是两处：_wordGeom 里定义（唯一的算式）+ _drawBlockText 里 `= g.zhBase` 读取。
+ * 所以断言"那份算式只出现一次"，多了就是又漂了。 */
+const zhBaseCalc = (SRC.match(/Math\.round\(zhBandTop \+ \(zhBandBot - zhBandTop\)/g) || []).length;
+ok(zhBaseCalc === 1, `中文基线算式只出现一次（找到 ${zhBaseCalc}）—— 没有第二份副本`);
+// scrim 的 y 必须锚在同一处 zhBase 上（同一个函数作用域内，直接引用即对齐）
+const drawSeg = SRC.slice(SRC.indexOf('const zhBase = g.zhBase;'),
+  SRC.indexOf('const zhBase = g.zhBase;') + 900);
+ok(/bgTop = Math\.round\(zhBase - g\.mZh\.asc - bgPadY\)/.test(drawSeg),
+  'scrim 用同一个 zhBase 锚定（不会与文字错位）');
 ok(/c\.text2\.slice\(0, 60\)/.test(SRC), '中文文本仍截断到 60 字符（行为不变）');
 // 不能把整块铺成不透明 —— 那会盖掉逐词轴和边框色
 ok(!/ctx\.rect\(x1, band\.y, wpx, band\.h\)[\s\S]{0,80}fill\(\)/.test(SRC),

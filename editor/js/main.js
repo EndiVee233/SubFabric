@@ -29,6 +29,7 @@ import { initI18n, t } from './i18n.js';
 import { ico } from './icons.js';
 import { pickDanmaku, danmakuDuration, DUR_DEFAULT } from '../danmaku.js';
 import { bindModalDrags } from './modal.js';
+import { enhanceFontInput, loadFontNames } from './font-picker.js';
 import { VideoCueEditor, CueTextDialog } from './videoedit.js';
 import { splitSegments, replaceSegmentInRaw, escapeAssUser, leadPrefixLen, htmlPlainAndMap } from './segment.js';
 
@@ -81,8 +82,12 @@ const assStyleEls = {
   enColorVal: document.getElementById('ass-style-en-color-val'),
   enColor2: document.getElementById('ass-style-en-color2'),
   enColor2Val: document.getElementById('ass-style-en-color2-val'),
+  order: document.getElementById('ass-style-order'),
+  orderVal: document.getElementById('ass-style-order-val'),
   zhFontNote: document.getElementById('ass-style-zh-font-note'),
   enFontNote: document.getElementById('ass-style-en-font-note'),
+  zhFontMark: document.getElementById('ass-style-zh-font-mark'),
+  enFontMark: document.getElementById('ass-style-en-font-mark'),
   zhFontFile: document.getElementById('ass-style-zh-font-file'),
   enFontFile: document.getElementById('ass-style-en-font-file')
 };
@@ -572,8 +577,146 @@ function assStyleFields(name) {
     bold: Number(style.bold) < 0 || style.bold === '1',
     italic: Number(style.italic) < 0 || style.italic === '1',
     color: assBgrToHex(style.primarycolour, null),
-    color2: assBgrToHex(style.secondarycolour, null)
+    color2: assBgrToHex(style.secondarycolour, null),
+    marginv: style.marginv,          // 底部留白 —— 决定这一轨在画面上的高低
   };
+}
+
+/* ─── 中英哪一轨在上：靠 [Events] 里 **Dialogue 行的先后** ──────────────
+ *
+ * 两条样式都是「置底」（Alignment 2），落在同一位置；libass 从底部往上摆，
+ * **先写的事件贴 margin（渲染在下面）**，后写的被自动上推（渲染在上面）。
+ * 所以"谁在上"= "谁的事件在文件里靠后"。
+ *
+ * ⚠ 我为此返工两次，两次都想错：
+ *   ① 先用"交换两条样式的 MarginV" —— 错。两条本来就都置底，换完只是整体平移，
+ *      上下并没有对调（用户反馈"不生效"）。
+ *   ② 再用"重排 [V4+ Styles] 的样式声明顺序" —— 也错。
+ *      用最小 ASS 做了四组对照实测（就是预览用的那个 libass-wasm）：
+ *          样式[ZH,EN] 事件[ZH,EN] → 中文在下、英文在上
+ *          样式[EN,ZH] 事件[ZH,EN] → 中文在下、英文在上   ← 换样式顺序，结果没变
+ *          样式[任意]  事件[EN,ZH] → 中文在上、英文在下   ← 只有事件顺序起作用
+ *      项目里 videoedit.js 早就写下了正确的规则（"行号升序 = 由下到上"），
+ *      我一开始没去找这条笔记，白绕了两圈。
+ *
+ * 所以真正要做的是：把**要显示在下面**的那种样式的事件排到前面去。
+ */
+const ZH_ORDER_KEY = 'ss-zh-en-order';   // 'zh-top'（默认）| 'en-top'
+
+/** 读当前稿件的实际顺序（按对话事件的行序反推）：
+ *  取一对"时间重叠的中英事件"，谁的行号小谁在下面。 */
+function currentOrderInfo() {
+  if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return null;
+  const t = state.assStyleTargets;
+  const evs = state.assDoc.events;
+  const zh = String(t.zh).toLowerCase(), en = String(t.en).toLowerCase();
+  // 找第一对时间重叠的中英事件
+  for (let i = 0; i < evs.length; i++) {
+    const a = evs[i];
+    const as = String(a.style || '').toLowerCase();
+    if (as !== zh && as !== en) continue;
+    for (let j = 0; j < evs.length; j++) {
+      const b = evs[j];
+      const bs = String(b.style || '').toLowerCase();
+      if (bs === as || (bs !== zh && bs !== en)) continue;
+      if (b.start < a.end - 1e-6 && a.start < b.end - 1e-6) {
+        /* 行号小的**渲染在下面**（libass 从底部往上摆，先写的贴 margin）。
+         * 所以"中文在下"= 中文那条行号更小 → 顺序是 'en-top'（英文在上面）。 */
+        const zhBelow = (as === zh) === (a.lineIdx < b.lineIdx);
+        return { order: zhBelow ? 'en-top' : 'zh-top', pair: [a.lineIdx, b.lineIdx] };
+      }
+    }
+  }
+  return null;
+}
+
+/** 按「谁在上」重排 Dialogue 行序。@returns 是否改动过 */
+function applyZhEnOrder(order) {
+  if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return false;
+  const t = state.assStyleTargets;
+  const info = currentOrderInfo();
+  if (info && info.order === order) return false;         // 已经是这个顺序
+  // 要显示在下面的是谁：'zh-top' → 英文在下面 → 英文事件排前面
+  const bottomStyle = order === 'zh-top' ? t.en : t.zh;
+  const changed = state.assDoc.orderDialoguesByStyle(bottomStyle);
+  if (!changed) return false;
+  /* 顺序变了必须自己把新文本推给预览 —— 不能只靠调用方随后调 applyAssStyleSettings()：
+   * 那个函数开头有 `if (!anyChanged && !forceFontReload) return false;`，
+   * 此处样式字段都没变，它会直接返回、根本不通知 assPlayer 重绘。 */
+  assPlayer.updateNow(state.assDoc.serialize());
+  if (timeline && timeline.touch) timeline.touch();
+  if (state.project && Projects && Projects.scheduleSave) Projects.scheduleSave();
+  return true;
+}
+
+/** 把「中英上下顺序」下拉同步成**当前稿件实际的样子**（读两条样式的 MarginV 反推），
+ *  而不是读 localStorage 里的偏好 —— 打开别人的稿件时偏好不该覆盖人家的样式。
+ *  两条 MarginV 相同时 libass 按声明顺序排，无法判定 → 右侧写明原因，不硬猜。 */
+/** 把「中英上下顺序」下拉同步成**当前稿件实际的样子** —— 读 Dialogue 事件的行序反推
+ *  （不读 localStorage 里的偏好，打开别人的稿件不该覆盖人家的文件）。 */
+function refreshOrderControl() {
+  const el = assStyleEls.order, val = assStyleEls.orderVal;
+  if (!el) return;
+  const info = currentOrderInfo();
+  if (!info) { if (val) val.textContent = '未找到中英重叠的句子'; return; }
+  el.value = info.order;
+  if (val) val.textContent = '（按对话行序判定：先写的那行渲染在下面）';
+}
+
+/** 把稿件样式的字体名推给时间轴 —— 字幕块上的字要跟视频里真播出来的字一致。
+ *  用户用"猫啃什锦黑"时，块上的中文也应当是猫啃什锦黑，否则改字时对不上字宽。
+ *  样式取不到（非 ASS / 还没解析）就传空串，时间轴用回内置字体。
+ *  **缺字的判定是异步的**（要拉系统字体清单），所以本函数会先按"没缺"推一次
+ *  （打开稿件立刻有字形），拿到清单后再按真实情况推第二次 —— 缺字时第二次会
+ *  显式回退到微软雅黑，并把红感叹号挂上。 */
+function syncBlockFonts() {
+  if (!timeline || typeof timeline.setBlockFonts !== 'function') return;
+  const t = state.format === 'ass' && state.assDoc ? state.assStyleTargets : null;
+  if (!t) { timeline.setBlockFonts('', ''); return; }
+  const zh = (state.assDoc.getStyle(t.zh) || {}).fontname || '';
+  const en = (state.assDoc.getStyle(t.en) || {}).fontname || '';
+  timeline.setBlockFonts(zh, en);                 // 先按本机装着来（不阻塞）
+  const snapshot = `${zh}\u0000${en}`;
+  Promise.all([fontInstalled(zh), fontInstalled(en)]).then(([zm, em]) => {
+    // 期间换了稿件/改了字体 → 这次结果作废
+    if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return;
+    const now = `${(state.assDoc.getStyle(state.assStyleTargets.zh) || {}).fontname || ''}`
+      + `\u0000${(state.assDoc.getStyle(state.assStyleTargets.en) || {}).fontname || ''}`;
+    if (now !== snapshot) return;
+    /* 缺字 → zh/en 传空 + missing 标记：时间轴显式回退到微软雅黑（而不是靠 generics
+     * 撞一个默认字体），设置页也据此挂红感叹号。 */
+    timeline.setBlockFonts(zh, en, { zhMissing: zm === false, enMissing: em === false });
+  }).catch(() => { /* 判定失败就按"没缺"处理，不改动 */ });
+}
+
+/* ── 字体"本机装了没"的判定 ────────────────────────────────────────────
+ * 以 /api/fonts 返回的**系统字体清单**为唯一依据（与设置页的字体选择器同一份数据）。
+ * 为什么不换别的办法：
+ *   · document.fonts.check()  实测对 __no_such_font__ 这类不存在的名字也返回 true，判不出来
+ *   · 中文字形不能靠量字宽区分 —— CJK 的 advance width 恒为 1em/字（15px × 11 字 = 165），
+ *     跟字形无关（这条踩过，写下来免得以后又走一遍）
+ *   · assPlayer.isFontAvailable() 查的是"用户手动载入"的字体（IndexedDB），
+ *     对系统字体一律 false —— 拿它当"没装"会误报一片
+ * 另外把用户点过「载入字体」的名字也算已装（自载字体 libass 与 canvas 都能用）。 */
+const _loadedFontNames = new Set();      // 用户「载入字体」载进来的名字
+const _sysFontKeys = new Set();
+
+function rememberLoadedFont(name) {
+  const k = String(name || '').trim().toLowerCase();
+  if (k) _loadedFontNames.add(k);
+}
+
+/** 本机是否装了该字体（系统清单 ∪ 用户手动载入）。清单还没拉到时返回 null = 未知，
+ *  调用方据此**不要**乱报警（否则打开页面瞬间会闪一片红感叹号）。 */
+async function fontInstalled(name) {
+  const nm = String(name || '').trim();
+  if (!nm) return true;                                  // 空 = 用内置字体，不算缺
+  if (nm.toLowerCase() === 'noto sans cjk sc') return true;   // 内置兜底字体
+  if (_loadedFontNames.has(nm.toLowerCase())) return true;
+  const list = await loadFontNames();
+  if (!list || !list.length) return null;                // 清单不可用 → 未知
+  if (!_sysFontKeys.size) for (const n of list) _sysFontKeys.add(String(n).toLowerCase());
+  return _sysFontKeys.has(nm.toLowerCase());
 }
 
 /* ─────────── 本机字体库(服务端读系统字体, 见 editor/fonts.js) ───────────
@@ -626,18 +769,38 @@ async function ensureSystemFont(name) {
   } catch { return 'missing'; }
 }
 
-/** 改完字体名: 先把它从本机字体库备好, 再套用样式(只重载一次预览) */
+/** 改完字体名: 先把它从本机字体库备好, 再套用样式(只重载一次预览)。
+ *
+ * ⚠ 三种结果都要给**明确反馈**，不能只处理 'loaded'。
+ *   踩过的坑：这里先写「正在查找本机字体「X」…」，然后只在 `res === 'loaded'` 时
+ *   更新成"已载入"。而**打开稿件时 autoLoadSystemFonts 已经把样式里用到的字体
+ *   都载进内存了**，于是用户再手动改字体名时 ensureSystemFont 走的是
+ *   `isFontAvailable → true` 那条路、返回 `'present'`（不是 'loaded'）——
+ *   两个 if 都不成立，状态就**永远停在"正在查找…"**，看着像"改了没生效"。
+ *   （实测：改英文字体后状态卡 6 秒以上不动，而 ASS 里其实早就改好了。） */
 async function onFontNameChange(track) {
   const el = track === 'zh' ? assStyleEls.zhFont : assStyleEls.enFont;
   const name = (el.value || '').trim();
   if (!name) { applyAssStyleSettings(); return; }
+  const label = track === 'zh' ? '中文字幕' : '英文字幕';
   if (assStyleEls.status) assStyleEls.status.textContent = `正在查找本机字体「${name}」…`;
   const res = await ensureSystemFont(name);
   if (res === 'loaded') pendingFontNotice = `已从本机字体库载入「${name}」`;
   applyAssStyleSettings();
-  if (res === 'loaded' && !assPlayer.ready && assStyleEls.status) {
-    assStyleEls.status.textContent = `已从本机字体库载入「${name}」，预览重建中…`;
+  if (!assStyleEls.status) return;
+  if (res === 'loaded') {
+    assStyleEls.status.textContent = assPlayer.ready
+      ? `已从本机字体库载入「${name}」，并套用到${label}`
+      : `已从本机字体库载入「${name}」，预览重建中…`;
+  } else if (res === 'present') {
+    // 字体本来就在（多半是打开稿件时 autoLoadSystemFonts 载的）—— 也要说清楚，别让它停在"正在查找"
+    assStyleEls.status.textContent = `${label}字体已切换为「${name}」（该字体已在预览里可用）`;
+  } else {
+    // 'missing'：本机没装 → 预览会回退。这正是用户最容易误判成"改了没生效"的情况。
+    assStyleEls.status.textContent = `本机没装「${name}」：名字已写进样式，但预览会回退到内置字体；`
+      + `点「载入字体」手动挑一个 .ttf/.otf 也能用`;
   }
+  refreshFontNotes();
 }
 
 /** 打开稿件后自动补齐: 样式里写的字体若本机装了, 直接喂给预览(用户不必手动选文件) */
@@ -666,22 +829,46 @@ async function refreshFontNotes() {
   const targets = state.assStyleTargets;
   const zhName = (assStyleEls.zhFont.value || '').trim();
   const enName = (assStyleEls.enFont.value || '').trim();
-  const [zhOk, enOk] = await Promise.all([
-    assPlayer.isFontAvailable(zhName),
-    assPlayer.isFontAvailable(enName)
+  /* 两个来源都要看：
+   *   installed —— 本机系统字体清单里有（决定"会不会回退"）
+   *   ok        —— libass 预览那边真能取到字形（系统字体或手动载入的都算） */
+  const [zhInstalled, enInstalled, zhOk, enOk] = await Promise.all([
+    fontInstalled(zhName), fontInstalled(enName),
+    assPlayer.isFontAvailable(zhName), assPlayer.isFontAvailable(enName)
   ]);
   // 期间换了稿件/改了名字 → 这次结果作废
   if (state.assStyleTargets !== targets) return;
   if ((assStyleEls.zhFont.value || '').trim() !== zhName) return;
-  const paint = (el, ok, name) => {
+  const paint = (el, installed, ok, name) => {
     if (!el) return;
-    el.className = 'ass-style-font-note ' + (ok ? 'ok' : 'warn');
-    el.textContent = ok
-      ? (name.toLowerCase() === 'noto sans cjk sc' ? '预览已载入（内置字体）' : '预览已载入该字体')
-      : '本机没装这个字体 → 预览会回退到内置字体（画面看着不变）；点「载入字体」挑一个 .ttf/.otf 也能用';
+    el.className = 'ass-style-font-note ' + (installed === false ? 'warn' : (ok ? 'ok' : 'warn'));
+    if (installed === false) {
+      /* 缺字：说清两件事 —— 画面会回退到哪个字体、以及怎么补上。
+       *  原话只说"预览会回退到内置字体"，没说回退成什么，用户看到块上的字
+       *  跟设置里写的不一样会以为是 bug（实测反馈过）。 */
+      el.textContent = '本机没装这个字体 → 画面与时间轴都会回退到 微软雅黑；'
+        + '想用原字体请点「载入字体」挑一个 .ttf/.otf';
+    } else if (ok || installed === true) {
+      el.textContent = (name.toLowerCase() === 'noto sans cjk sc') ? '预览已载入（内置字体）' : '预览已载入该字体';
+    } else {
+      el.textContent = '预览暂未载入该字体（点「载入字体」可载入 .ttf/.otf）';
+    }
   };
-  paint(assStyleEls.zhFontNote, zhOk, zhName);
-  paint(assStyleEls.enFontNote, enOk, enName);
+  paint(assStyleEls.zhFontNote, zhInstalled, zhOk, zhName);
+  paint(assStyleEls.enFontNote, enInstalled, enOk, enName);
+  /* 缺字时在轨道标题旁挂一个红色感叹号 —— 用户要求"在设置页显示一个小红色感叹号"。
+   *  放在标题行而不是 note 里：标题行一眼可见，note 的文字容易看漏。 */
+  markFontMissing(assStyleEls.zhFontMark, zhInstalled, zhName);
+  markFontMissing(assStyleEls.enFontMark, enInstalled, enName);
+}
+
+/** 缺字时显示红感叹号（带 tooltip 说明），否则隐藏 */
+function markFontMissing(el, installed, name) {
+  if (!el) return;
+  const missing = installed === false;
+  el.hidden = !missing;
+  el.textContent = missing ? '\u2757' : '';
+  el.title = missing ? `本机没装「${name}」→ 画面与时间轴已回退到 微软雅黑` : '';
 }
 
 function setAssStyleControls() {
@@ -751,7 +938,9 @@ function setAssStyleControls() {
   if (assStyleEls.kSweepVal) assStyleEls.kSweepVal.textContent = sweep ? '开' : '关';
   if (assStyleEls.status) assStyleEls.status.textContent = '修改会立即预览并写入文稿；项目自动保存，普通字幕请导出保存。';
   loadSystemFontList();      // 顺手把本机字体填进候选, 用户打字就有补全
+  refreshOrderControl();     // 「中英上下顺序」按下稿件的实际 MarginV 显示
   refreshFontNotes();
+  syncBlockFonts();          // 块内字体跟稿件样式同步（改字体后时间轴立刻跟着变）
 }
 
 function applyAssStyleSettings(forceFontReload = false) {
@@ -825,6 +1014,11 @@ function applyAssStyleSettings(forceFontReload = false) {
   }
   if (state.project) Projects.scheduleSave();
   refreshFontNotes();
+  /* ⚠ 块内字体必须在这里也同步一次。
+   *  这个函数**不调 setAssStyleControls**（那是另一条路：打开稿件/初次装配时走），
+   *  所以只在那边调 syncBlockFonts 的话，用户在设置页改字体名就**不会**传到时间轴
+   *  （实测踩过：文档里的 fontname 改了，时间轴还是旧字体）。 */
+  syncBlockFonts();
   if (assStyleEls.status) {
     const saveHint = state.project ? '项目字幕将自动保存。' : '点击“导出字幕”保存到文件。';
     assStyleEls.status.textContent = assPlayer.ready
@@ -844,6 +1038,7 @@ async function loadAssStyleFont(language) {
   if (!/\.(?:ttf|otf)$/i.test(file.name)) { toast('字体文件仅支持 .ttf 或 .otf'); input.value = ''; return; }
   try {
     await assPlayer.cacheFont(family, file);
+    rememberLoadedFont(family);      // 登记为"已载入"，缺字红感叹号据此消失
     applyAssStyleSettings(true);
     toast(`已载入字体：${family}`);
   } catch (e) { toast('字体载入失败：' + (e && e.message || e)); }
@@ -1424,11 +1619,40 @@ function setAss(text, name) {
 for (const [el, track] of [[assStyleEls.zhFont, 'zh'], [assStyleEls.enFont, 'en']]) {
   if (el) el.addEventListener('change', () => onFontNameChange(track));
 }
+
+/* 字体名输入框加「带预览的下拉」（见 font-picker.js）：
+ * 每个字体名用它自己的字形渲染，选之前就能看到长什么样 —— 原生 datalist 只能显示纯文字。
+ * 输入框本身保留（仍可手打本机没装的字体名），只在右侧多一个 ▾ 按钮。
+ * 组件内部是"设 value + 派发 change"，所以上面那个 change 监听照常工作，这里不用重复接线。 */
+for (const el of [assStyleEls.zhFont, assStyleEls.enFont]) {
+  if (el) enhanceFontInput(el);
+}
 for (const el of [assStyleEls.zhSize, assStyleEls.enSize,
   assStyleEls.zhBold, assStyleEls.enBold, assStyleEls.zhItalic, assStyleEls.enItalic]) {
   if (el) el.addEventListener('change', () => applyAssStyleSettings());
 }
 if (assStyleEls.wordColor) assStyleEls.wordColor.addEventListener('input', () => applyAssStyleSettings());
+/* 块内字体变了 → 时间轴重画。
+ * 位置计算依赖字体度量（fontMetrics 按 font 字符串缓存，setBlockFonts 里已清），
+ * 所以这里要连**轨道一起重建**，不能只 touch 一下。 */
+if (timeline) timeline.onBlockFonts = () => { rebuildItemsAndLanes(false, true); };
+/* 中英上下顺序（**管的是 ASS 文件在视频里显示的上下**，不是时间轴块里的版面）：
+ * 切换即重排 [Events] 里 **Dialogue 行的先后** —— 两个样式都置底、落在同一位置，
+ * libass 从底部往上摆，先写的那行贴 margin（在下面）、后写的被上推（在上面）。
+ * 值本身存 localStorage（"我想怎么看"的偏好，不是稿件内容），
+ * 但真正生效的是稿件里的对话行序；打开别人的稿件时按该稿件的实际行序反推显示
+ * （见 refreshOrderControl），不会硬套这个偏好。 */
+if (assStyleEls.order) {
+  assStyleEls.order.addEventListener('change', () => {
+    const want = assStyleEls.order.value === 'en-top' ? 'en-top' : 'zh-top';
+    try { localStorage.setItem(ZH_ORDER_KEY, want); } catch { /* 隐私模式下写不了，忽略 */ }
+    // applyZhEnOrder 内部已经负责把新文本推给预览 / 存盘 —— 这里不再重复
+    const ok = applyZhEnOrder(want);
+    refreshOrderControl();
+    toast(ok ? (want === 'en-top' ? '已改为英文在上' : '已改为中文在上') : '顺序没有变化', 2600);
+  });
+}
+/* 上游 2.3.0 新增的卡拉OK两项（未唱默认色 / 逐词扫过）—— 与上面的顺序设置互不相干，各留各的 */
 if (assStyleEls.kBase) assStyleEls.kBase.addEventListener('input', () => applyAssStyleSettings());
 if (assStyleEls.kSweep) assStyleEls.kSweep.addEventListener('change', () => applyAssStyleSettings());
 for (const el of [assStyleEls.zhColor, assStyleEls.zhColor2, assStyleEls.enColor, assStyleEls.enColor2]) {
@@ -1617,7 +1841,12 @@ function buildTimelineLanes(rows, cues, label) {
   if (count <= 1) return one;
   const lanes = [];
   for (let i = 0; i < count; i++) lanes.push({
-    label: i === 0 ? label : ('重叠' + (i > 1 ? ' ' + (i + 1) : '')),
+    /* 溢出轨命名：**全部带序号**（重叠2 / 重叠3 / 重叠4…）。
+     * ⚠ 早先是 `'重叠' + (i > 1 ? ' ' + (i + 1) : '')` —— 第 2 条轨（i=1）不带号，
+     *   于是三条溢出轨显示成「重叠 / 重叠 3 / 重叠 4」，看起来像缺了个"重叠2"，
+     *   用户实测就问过"为什么没有重叠2"（标签在序号上自相矛盾）。
+     *   这里改成从 2 开始连续编号（1 号轨就是主轨，用 label）。 */
+    label: i === 0 ? label : ('重叠' + (i + 1)),
     merged: true, cues: [], color: '#5b6472'
   });
   for (const c of cues) {
@@ -5214,7 +5443,7 @@ const realignEls = {
   overlay: document.getElementById('realign-overlay'),
   msg: document.getElementById('realign-msg'),
   conf: document.getElementById('realign-conf'),
-  confVal: document.getElementById('realign-conf-val'),
+  confThr: document.getElementById('realign-conf-thr'),
   confNote: document.getElementById('realign-conf-note'),
   summary: document.getElementById('realign-summary'),
   allWrap: document.getElementById('realign-all-wrap'),
@@ -5228,6 +5457,9 @@ const realignEls = {
 };
 let realignData = null;          // { items, threshold, total, usable }
 let realignPicked = new Set();   // 勾选的 items 下标
+/* 用户**手动取消勾选**过的达标项 —— 改门槛重判时不要把它们的勾自动加回来。
+ * 每次开新一轮重校对会清空。 */
+let realignUnpicked = new Set();
 let realignRunning = false;
 let realignPollTimer = 0;
 
@@ -5328,23 +5560,65 @@ function showRealignResult(job) {
   realignData = { items, threshold: job.threshold || 0.7, total: job.total || items.length, usable: job.usable || 0 };
   // 默认只勾选**达标**的（不达标的本来就 disabled）
   realignPicked = new Set(items.map((it, k) => (it.ok ? k : -1)).filter(k => k >= 0));
-  const thr = Math.round((realignData.threshold || 0) * 100);
+  realignUnpicked = new Set();
   if (realignEls.conf) realignEls.conf.hidden = false;
-  if (realignEls.confVal) realignEls.confVal.textContent = `≥ ${thr}%`;
-  if (realignEls.confNote) {
-    realignEls.confNote.textContent = `低于这个分数的句子**原样保留**（可在「全局设置 → 重排逐词时间」里改）`;
-  }
-  if (realignEls.summary) {
-    realignEls.summary.hidden = false;
-    realignEls.summary.textContent = `共 ${realignData.total} 句：` +
-      `${realignData.usable} 句达标（会重排逐词时间）、${realignData.total - realignData.usable} 句未达标（保留原样）`;
-  }
+  if (realignEls.confThr) realignEls.confThr.value = String(Math.round((realignData.threshold || 0) * 100));
+  refreshRealignThresholdUI();
   if (realignEls.allWrap) realignEls.allWrap.hidden = false;
   if (realignEls.allNote) realignEls.allNote.textContent = '只改逐词时间戳，文本与整句时间不动';
   if (realignEls.list) realignEls.list.hidden = false;
   if (realignEls.msg) realignEls.msg.textContent = '校对完成，确认后应用（未达标的不可勾选）';
   renderRealignList();
   syncRealignApply();
+}
+
+/** 面板里的门槛输入 → 立即**原地重判**达标与否（不重跑识别）。
+ *  每个 item 都带服务端算好的 confidence，所以换个门槛只要重比一次大小。
+ *
+ *  选中集的维护：**本轮新达标的句子自动勾上**；原本达标、用户手动取消过的仍保持取消
+ *  （用 unpicked 记着）；掉出门槛的一律剔除，否则会带着"低于门槛"的结果被应用。 */
+function applyRealignThreshold(percent) {
+  if (!realignData) return;
+  const p = Math.max(30, Math.min(100, Math.round(Number(percent) || 70)));
+  realignData.threshold = p / 100;
+  const items = realignData.items || [];
+  let usable = 0;
+  items.forEach((it) => {
+    it.ok = (Number(it.confidence) || 0) >= realignData.threshold;
+    if (it.ok) usable++;
+  });
+  realignData.usable = usable;
+  const next = new Set();
+  items.forEach((it, k) => {
+    if (!it.ok) return;
+    if (realignUnpicked.has(k)) return;      // 用户手动取消过 → 不自动勾回
+    next.add(k);
+  });
+  realignPicked = next;
+  if (realignEls.all) {
+    realignEls.all.checked = usable > 0 && next.size === usable;
+  }
+  refreshRealignThresholdUI();
+  renderRealignList();
+  syncRealignApply();
+}
+
+/** 刷新门槛那一行的提示与统计（不含重判） */
+function refreshRealignThresholdUI() {
+  if (!realignData) return;
+  const thr = Math.round((realignData.threshold || 0) * 100);
+  if (realignEls.confThr && String(realignEls.confThr.value) !== String(thr)) realignEls.confThr.value = String(thr);
+  if (realignEls.confNote) {
+    /* 这里用 textContent（不是 innerHTML），所以文案里**不能写 markdown 的 `**`** ——
+     * 之前那句"低于这个分数的句子**原样保留**"里四个星号是原样显示出来的（用户反馈）。 */
+    realignEls.confNote.textContent = `低于这个分数的句子会保留原来的逐词时间；改动即时生效，不必重新校对`;
+  }
+  if (realignEls.summary) {
+    realignEls.summary.hidden = false;
+    realignEls.summary.textContent = `共 ${realignData.total} 句：`
+      + `${realignData.usable} 句达标（会重排逐词时间）、`
+      + `${realignData.total - realignData.usable} 句未达标（保留原样）`;
+  }
 }
 
 async function startRealignFull() {
@@ -5355,6 +5629,7 @@ async function startRealignFull() {
   if (realignEls.btn) realignEls.btn.disabled = true;
   realignData = null;
   realignPicked = new Set();
+  realignUnpicked = new Set();
   if (realignEls.list) { realignEls.list.hidden = true; realignEls.list.innerHTML = ''; }
   if (realignEls.summary) realignEls.summary.hidden = true;
   if (realignEls.allWrap) realignEls.allWrap.hidden = true;
@@ -5390,19 +5665,28 @@ async function applyRealignFull() {
   if (realignEls.apply) realignEls.apply.disabled = true;
   const pid = state.project.id;
   try {
-    /* 项目里的句子顺序 = state.kar.sentences 的顺序，服务端 readSegments 读的是同一份
-     * asr.json，所以 item.index 可以直接当 sentences 的下标用。
-     * 不放心的话再用**时间**校对一次：序号对不上就按时间找最接近的那句。 */
+    /* ⚠ **不能**拿 item.index 直接索引 state.kar.sentences：
+     *   服务端返回的 index 是它那边的句子序号，而它解析出的句子集合与前端
+     *   analyzeKaraoke 的**不一样** —— 实测导入 ASS 的稿件：
+     *     前端 11947 句（中英**交替**：英文、中文、英文、中文…）
+     *     服务端 4892 句（**只有英文** —— 中文整句锚点句不参与重校对）
+     *   两边下标从第 1 条起就错开了，按下标改会**改到别的句子**（实测核对过）。
+     *   所以这里一律按「开始时间 + 文本」定位 —— 这两个字段服务端都返回了。 */
     const sents = (state.kar && state.kar.sentences) || [];
     let n = 0, miss = 0;
     const detail = [];
     for (const k of picks) {
       const it = realignData.items[k];
-      let sent = sents[it.index];
-      if (!sent || !Array.isArray(sent.words) || !sent.words.length
-          || Math.abs(Number(sent.start) - Number(it.start)) > 0.05) {
+      const want = String(it.text || '').trim();
+      const at = Number(it.start);
+      /* 先按"文本 + 时间"同时匹配（最稳——同一文本可能在片中出现多次）；
+       * 文本对不上时退回"开始时间最近且带逐词"的那句。 */
+      let sent = sents.find(s2 => Array.isArray(s2.words) && s2.words.length
+        && String(s2.text || '').trim() === want
+        && Math.abs(Number(s2.start) - at) <= 0.5) || null;
+      if (!sent) {
         sent = sents.find(s2 => Array.isArray(s2.words) && s2.words.length
-          && Math.abs(Number(s2.start) - Number(it.start)) <= 0.05) || null;
+          && Math.abs(Number(s2.start) - at) <= 0.05) || null;
       }
       if (!sent) { miss++; continue; }
       sent.words = (it.words || []).map(w => ({ w: w.w, s: w.s, e: w.e }));
@@ -5440,10 +5724,21 @@ if (realignEls.list) {
     const lab = e.target.closest('.reflect-item');
     if (!lab) return;
     const k = Number(lab.dataset.k);
-    if (e.target.checked) realignPicked.add(k); else realignPicked.delete(k);
+    if (e.target.checked) { realignPicked.add(k); realignUnpicked.delete(k); }
+    else { realignPicked.delete(k); realignUnpicked.add(k); }
     lab.classList.toggle('is-on', e.target.checked);
     syncRealignApply();
   });
+}
+/* 面板里的置信度门槛：改完立即原地重判（不重跑识别）。
+ * 用 'change' 而不是 'input' —— 输入框清空/半途状态不该触发重判。 */
+if (realignEls.confThr) {
+  const commit = () => {
+    applyRealignThreshold(realignEls.confThr.value);
+    toast(`置信度门槛已改为 ≥ ${Math.round(realignData.threshold * 100)}%（已按新门槛重判，未重新识别）`, 3600);
+  };
+  realignEls.confThr.addEventListener('change', commit);
+  realignEls.confThr.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
 }
 if (realignEls.all) {
   realignEls.all.addEventListener('change', () => {
@@ -6309,7 +6604,7 @@ initFxControls();
 /* 调试钩子(测试用) */
 initBadCatFilter();
 
-window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText };
+window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, buildCleanAss, detectRowProblems, fixRow, openFixForRow, deleteItem, itemsInRange, refreshRangeBar, refreshDynamicSubtitles, buildWordSpecs, assPlainText, fontInstalled, syncBlockFonts, refreshFontNotes };
 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
