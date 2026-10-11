@@ -962,9 +962,32 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* ── 全片逐词重校对的预览条目（复用反思纠错的 .reflect-item 骨架）──
    · is-on  ：已勾选 → 左边一条强调色，一眼看出会改哪些
    · is-off ：置信度未达门槛 → 整条压暗且不可勾选（它会被原样保留） */
+/* 左侧色条统一用**伪元素**画，而不是 inset box-shadow。
+ *
+ * 原来 `box-shadow: inset 3px 0 0 accent` 是**直角**的，塞在 border-radius:8px 的
+ * 圆角框里、紧贴 1px 边框 —— 圆角处对不齐，看着像"两条竖直的线糊在一起"
+ * （用户反馈："左侧有两个竖着的线，能不能美观点"）。
+ * 现在：贴在边框内侧（left:1px）、自带 4px 圆角、上下各留 3px，跟卡片圆角对齐；
+ * 再配一层淡淡的同色渐变底，读起来是一条完整的强调边而不是一根孤立的棍子。
+ * 两种色条（选中=强调色 / 补漏识别=危险色）共用这套画法，只换颜色。 */
+.reflect-item.is-on,
+.reflect-item.is-gap { position: relative; overflow: hidden; }
+.reflect-item.is-on::before,
+.reflect-item.is-gap::before {
+  content: '';
+  position: absolute; left: 1px; top: 3px; bottom: 3px; width: 3px;
+  border-radius: 4px;
+}
+/* ⚠ 颜色**直接写在伪元素规则里**，不要用 `var(--reflect-bar, …)` 中转：
+ *  实测自定义属性在 `::before` 上取不到值，`background` 解析成 `none`、色条整个消失。 */
+.reflect-item.is-on::before { background: var(--accent); }
+.reflect-item.is-gap::before { background: var(--danger, #ff5f6b); }
 .reflect-item.is-on {
-  background: rgba(90, 130, 255, .10);
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: linear-gradient(90deg, rgba(90, 130, 255, .16), rgba(90, 130, 255, .07) 42%, transparent 78%);
+}
+/* 两个标记同时出现时（补漏识别 + 已选中）用双色：上面危险色、下面强调色 */
+.reflect-item.is-gap.is-on::before {
+  background: linear-gradient(180deg, var(--danger, #ff5f6b) 0 46%, transparent 46% 54%, var(--accent) 54% 100%);
 }
 .reflect-item.is-off { opacity: .55; }
 .reflect-item.is-off:hover { background: none; }
@@ -1885,8 +1908,8 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* gap（补漏识别）现在**参与执行**了，所以不再弱化、勾选框也不再禁用。
-   只保留一点左侧色条做区分，让人一眼看出这类是"补回漏掉的内容"而不是"改错词"。 */
-.reflect-item.is-gap { box-shadow: inset 2px 0 0 var(--danger, #ff5f6b); }
+   左侧色条由上面 `.reflect-item.is-gap::before` 统一画（危险色），
+   这里不再用 inset box-shadow —— 那是直角条，和卡片圆角对不齐。 */
 .reflect-item.is-gap:hover { background: var(--bg-3); }
 
 /* ── 右下角进度卡：反思 / 纠错重识别等后台长任务 ───────────────────
