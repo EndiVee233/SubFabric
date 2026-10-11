@@ -312,3 +312,69 @@ Node 只用内置 `WebSocket` 做 CDP 连接与求值 —— 零依赖。
 - **全程没有任何 `[exception]`** —— 前端 ReferenceError 类问题确已消除。
 
 **仍受环境限制未验证**：ASR 完整链路（需 GPU/模型）、并发与长会话行为。
+
+---
+
+## 九、第八轮：带项目上下文的界面走查（同日，抓到 2 个"面板是死的"级 bug）
+
+第七轮只打开了首页与设置页。这一轮**造了一个带逐词结构的真实项目**
+（用 `tests/gen-fixture.mjs` 生成的 `fixture.ass` 走 `import-pack` 导入），
+再用 CDP 打开 `#/project/<id>` 逐个走需要项目上下文的界面。
+
+### 9.1【真 bug·已修】`initPerfPanel` / `initDualRatio` 只在 catch 分支里被调用
+
+```js
+try { /* fetch /api/translate/config */ }
+catch {
+  renderAsrModels();
+  initPerfPanel();      // ← 只有"翻译配置读失败"时才跑
+  initDualRatio();      // ← 同上
+  return;
+}
+```
+
+也就是说 **正常启动时这两个函数从不执行**。无头浏览器实测证据：
+
+| 检查项 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `#perf-start` 的 `dataset.bound` | `null`（没绑） | `"1"` |
+| 点 `#perf-start` 后 `#perf-note` | `""`（毫无反应） | `"先选一份测试音频"` |
+| 是否发出 `/api/asr/perf/state` | **没有** | 有 |
+| `#perf-applied` | 永远停在 `"读取中…"` | `"分片 12 秒、配比 1:1（GPU:NPU 分片数）· 应用时间 …"` |
+
+后果：整个「性能测试」面板**按钮点了没反应、状态永远"读取中…"**。
+修法：这两个函数只依赖 DOM id（且各有 `dataset.bound` 幂等保护），
+与那次 fetch 无关 —— 提到 try 之前**无条件**调用。
+
+> 顺带：`#perf-applied` 渲染出真实配置，也**顺带验证了 7.2 那个 `escapeHtml` 修复**
+> （这段渲染正是当初抛 ReferenceError 的地方；此处 `dual` 非空才走到该分支）。
+
+### 9.2【真 bug·已修】双引擎下拉的委托容器挂错了 —— 挂在兄弟节点上
+
+```js
+function initDualRatio() {
+  const box = $('#st-models');   // ← 委托容器
+```
+
+HTML 结构是 `#st-panel-models` 下同时挂着 `#st-models` 与 `#dual-ratio-row` ——
+**它俩是兄弟，不是祖孙**。所以 `change` 事件从 `#dual-ratio` 冒泡**根本到不了**
+`#st-models`，改下拉既不发请求、note 也不变。
+
+修法：委托容器改成 `#st-panel-models`（同时包含两者，且 `renderAsrModels` 只重建
+`#st-models` 的 innerHTML、不动本容器，所以"重渲染不失效"的初衷依然成立）。
+实测验证：`noteAfter` 从 `""` 变成 `"已设为 1:1"`，且确实发出了 `POST /api/asr/dual`。
+
+### 9.3 走查中确认「没问题」的部分
+
+- 项目能真正打开：渲染出 10 个字幕块，`#btn-realign-full` 存在且可用；
+- **热词挖掘**：面板打开、给出合理解释（"操作日志里还没有编辑字幕的记录"），无报错
+  → 7.2 修的 `logOp` 相关路径没炸；
+- **逐词重对齐设置**：`#st-realign-rate` 显示 `"2"`、`#st-realign-minratio` 显示 `"0.55"`
+  （均等于我用 POST 写入的值；端点若还是坏的会显示默认 0 / 0.6）
+  → 8.1 的端点修复**在界面上得到确认**；语音下拉列出 2 个本机真实语音；
+- **导出**：各导出按钮存在且未禁用；
+- **诊断快照**：`window.__diag()` 调用成功；
+- 全程**仅** vendor 文件的 404（`fetch-vendor.js` 未跑），**没有任何 exception**。
+
+> 走查用到的临时项目与 `asr/settings.json`（POST 写入的测试配置）已全部清理，
+> 未污染工作树。
