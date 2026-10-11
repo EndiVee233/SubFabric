@@ -49,13 +49,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 置信度算法单独一个模块，便于单测（tests/confidence-test.py）
 import confidence as C  # noqa: E402
 
-# 能量逐帧 RMS 与 asr.py 共用同一份实现（asr.frame_energies，分块计算）。
-# ⚠ 不要在本文件里重新手写：refine_word_ends 曾复制过 asr.py 的老版全量广播索引
-# 矩阵，把 asr.py 后来补的 OOM 分块修复一起弄丢了（1 小时音频 ~0.9GB 索引，
-# NPU 后端会在 GPU 后端不崩的地方 OOM）。教训：跨引擎同算法只留一份实现。
-from asr import frame_energies  # noqa: E402  F401 (refine_word_ends 用)
+# 断句阈值、分组逻辑与帧能量 RMS：两个引擎共用一份（asr/common.py）。
+# ⚠ 不要在本文件里重新手写 frame_energies：refine_word_ends 曾复制过 asr.py 的
+#    老版全量广播索引矩阵，把 asr.py 后来补的 OOM 分块修复一起弄丢了
+#    （1 小时音频 ~0.9GB 索引，NPU 后端会在 GPU 后端不崩的地方 OOM）。
+#    教训：跨引擎同算法只留一份实现。
+from common import (SAMPLE_RATE, SENT_END, SOFT_END, PAUSE_SPLIT,  # noqa: E402
+                    MAX_LINE_SEC, MAX_LINE_WORDS, group_words, seg_base, clamp_overlap,
+                    frame_energies)
 
-SAMPLE_RATE = 16000
 MEL_BINS = 128
 BLANK_TOKEN_ID = 1024
 DURATION_BINS = (0, 1, 2, 3, 4)
@@ -79,12 +81,7 @@ LOG_GUARD = 2.0 ** -24
 NORM_EPS = 1e-5
 NORM_MAX = 4.0
 
-# 基础断句阈值(与 asr.py 保持一致, 纯本地规则, 不涉及 LLM)
-SENT_END = (".", "?", "!", "。", "？", "！", "…")
-SOFT_END = (",", ";", ":")
-PAUSE_SPLIT = 0.8
-MAX_LINE_SEC = 10.0
-MAX_LINE_WORDS = 30
+# 基础断句阈值已移到 asr/common.py（两个引擎同一份），本文件不再重复定义。
 
 
 # --------------------------------------------------------------------------
@@ -871,43 +868,16 @@ def _pick_stability(conf):
 
 
 def words_to_segments(words, samples=None, sr=SAMPLE_RATE, stability=None):
-    """基础断句: 句末标点 / 长停顿 / 行长兜底(纯本地规则, 不调用 LLM)。"""
-    groups, cur = [], []
-    for w in words:
-        if cur:
-            prev = cur[-1]
-            too_long = (w["start"] - cur[0]["start"]) > MAX_LINE_SEC or len(cur) >= MAX_LINE_WORDS
-            if prev["word"].rstrip().endswith(SENT_END) or (w["start"] - prev["end"]) > PAUSE_SPLIT:
-                groups.append(cur)
-                cur = []
-            elif too_long:
-                cut = None
-                for j in range(len(cur) - 1, -1, -1):
-                    if cur[j]["word"].rstrip().endswith(SOFT_END) and (j + 1) >= 6:
-                        cut = j + 1
-                        break
-                if cut:
-                    groups.append(cur[:cut])
-                    cur = cur[cut:]
-                else:
-                    groups.append(cur)
-                    cur = []
-        cur.append(w)
-    if cur:
-        groups.append(cur)
+    """基础断句: 句末标点 / 长停顿 / 行长兜底(纯本地规则, 不调用 LLM)。
 
+    分组与公共字段走 asr/common.py（与 asr.py 同一份实现）；
+    置信度是本引擎自己的口径 —— 拿得到 token 概率，所以比 asr.py 多一个 token 分项。
+    """
     # 每个词在样本数组里的下标区间（词边界来自 mel 帧率，与采样率无关，
     # 换算关系见 ENCODER_FRAME_RATE；这里只用来切出"这一句的音频"单独评估质量）
     out = []
-    for i, ws in enumerate(groups):
-        seg = {
-            "id": i,
-            "start": ws[0]["start"],
-            "end": ws[-1]["end"],
-            "text": " ".join(w["word"] for w in ws).strip(),
-            "words": [{"word": w["word"], "start": round(w["start"], 3), "end": round(w["end"], 3)}
-                      for w in ws],
-        }
+    for i, ws in enumerate(group_words(words)):
+        seg = seg_base(i, ws)
         seg_idx = (max(0, int(ws[0]["start"] * sr)), min(len(samples), int(ws[-1]["end"] * sr)))
         # 句级置信度：音频质量(**本句自己的**波形)打底, 最差的词往下压。
         #   乘数下限 0.7 —— 局部一个词不确定 ≠ 整句不可信; 但音频糊了就是整体上限低。
@@ -949,9 +919,7 @@ def words_to_segments(words, samples=None, sr=SAMPLE_RATE, stability=None):
         for sc, wout in zip(scores, seg["words"]):
             wout["confidence"] = None if sc is None else round(float(sc), 3)
         out.append(seg)
-    for i in range(1, len(out)):
-        if out[i]["start"] < out[i - 1]["end"]:
-            out[i]["start"] = out[i - 1]["end"]
+    clamp_overlap(out)                        # 相邻行不交叠（asr/common.py，与 asr.py 同一份）
     return out
 
 

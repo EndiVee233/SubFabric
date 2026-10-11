@@ -252,3 +252,188 @@ PASS=65  FAIL=3
 
 - **ESLint：17 error → 0 error**（剩余 15 个 warning 均为原有的未使用变量，非 error）。
 - **全量测试：68 通过 / 0 失败**（修复前 65 通过 / 3 失败）。
+
+---
+
+## 八、第七轮：无头浏览器实测（同日，抓到 2 个静态查不出的 bug）
+
+第七轮之前的所有结论都来自**静态分析**（读代码 / ESLint / ruff / 单测）。这一轮补上了**真实浏览器实测**：
+用 CDP 驱动无头 Edge 打开真实页面、读控制台、执行断言。
+
+**环境技巧**：本项目 `tools/cdp_probe.mjs` 是从 Node 里 `spawn` Edge 的，而当前沙箱禁止 node 派生子进程
+（`spawnSync` 连 `cmd.exe` 都 EBUSY）。所以把两步拆开：**bash 起服务与浏览器**，
+Node 只用内置 `WebSocket` 做 CDP 连接与求值 —— 零依赖。
+
+### 8.1 【真 bug·已修】`/api/asr/realign-settings` 一律 404 → 「逐词重对齐设置」读写全废
+
+探针在控制台抓到：
+
+```
+[HTTP 404] http://127.0.0.1:8399/api/asr/realign-settings
+```
+
+**根因**：这个处理块原先落在 `handleProjectsRoutes` 里，被
+`pm = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/([a-z][a-z-]*))?$/` 匹配 ——
+也就是只有 `/api/projects/<id>/realign-settings` 能命中。
+而前端 `project.js` 的 `realignLoad()` / `realignSave()` 调的是 `/api/asr/realign-settings`。
+
+**后果**（对用户）：面板读不到设置（`realignLoad` 的 catch 静默吞掉）；
+保存时 `realignSave` 抛错 → 弹「重排设置保存失败: not found」。**设置根本存不进去。**
+
+**修法**：处理块本身**完全不使用 project id**（是全局 ASR 设置，存 `asr/settings.json` 的 `realign` 段），
+所以搬到 `handleAsrRoutes`、改成 `pathname === '/api/asr/realign-settings'`，
+与其它全局 ASR 设置（`correct` / `confidence` / `set-dir` …）同处。
+
+**验证**：`GET` → 200（返回真实设置 + 本机语音列表）；`POST` → 200 `{ok:true}`；重跑探针 404 消失。
+
+**测试同步**：`tests/log-panel-test.mjs` 里那条断言原本钉的是 `action === 'realign-settings'`
+—— 它**钉住了错误的位置**。已改成断言"挂在 `/api/asr/` 下"，并新增一条**交叉核对**
+（前端 `project.js` 必须调同一个路径），防止再被搬回去。
+
+### 8.2 【可诊断性·已修】资源 404 被报成 `[JS错误]  @ :0:0`
+
+`editor/index.html` 的全局错误上报用 `capture: true` 监听 `error`，因此
+`<script>` / `<link>` 加载失败也会走到这里；而这类事件的 `message/filename/lineno` **全是空**，
+日志里只剩一行 `[JS错误]  @ :0:0` —— 完全看不出是哪个文件挂了。
+
+实测：没跑 `fetch-vendor.js` 时 `/editor/vendor/subtitles-octopus.js` 404，
+服务端日志里就只有这么一行（本项目本来就要求先跑 fetch-vendor，但报错信息不该这么无用）。
+
+**修法**：资源类错误改用出错元素自身的 `src`/`href` 来报。
+**验证**：日志现在输出
+`[JS错误] 资源加载失败 @ http://127.0.0.1:8399/editor/vendor/subtitles-octopus.js?v=…`。
+
+### 8.3 这一轮同时确认「没问题」的部分
+
+- 页面正常加载（`#app` 6 个子节点、标题正确）→ 第七轮改的 `project.js` 的 `import` 没破坏模块图；
+- 设置页打开正常，**双引擎分工区块渲染出了内容**（`dual-ratio-row` 有文本）；
+- `/api/asr/perf/state` → 200；
+- `window.__diag` 存在，且服务端日志确实收到诊断快照（3704 字节）→ 重复键修复后的路径真的在跑；
+- **全程没有任何 `[exception]`** —— 前端 ReferenceError 类问题确已消除。
+
+**仍受环境限制未验证**：ASR 完整链路（需 GPU/模型）、并发与长会话行为。
+
+---
+
+## 九、第八轮：带项目上下文的界面走查（同日，抓到 2 个"面板是死的"级 bug）
+
+第七轮只打开了首页与设置页。这一轮**造了一个带逐词结构的真实项目**
+（用 `tests/gen-fixture.mjs` 生成的 `fixture.ass` 走 `import-pack` 导入），
+再用 CDP 打开 `#/project/<id>` 逐个走需要项目上下文的界面。
+
+### 9.1【真 bug·已修】`initPerfPanel` / `initDualRatio` 只在 catch 分支里被调用
+
+```js
+try { /* fetch /api/translate/config */ }
+catch {
+  renderAsrModels();
+  initPerfPanel();      // ← 只有"翻译配置读失败"时才跑
+  initDualRatio();      // ← 同上
+  return;
+}
+```
+
+也就是说 **正常启动时这两个函数从不执行**。无头浏览器实测证据：
+
+| 检查项 | 修复前 | 修复后 |
+| --- | --- | --- |
+| `#perf-start` 的 `dataset.bound` | `null`（没绑） | `"1"` |
+| 点 `#perf-start` 后 `#perf-note` | `""`（毫无反应） | `"先选一份测试音频"` |
+| 是否发出 `/api/asr/perf/state` | **没有** | 有 |
+| `#perf-applied` | 永远停在 `"读取中…"` | `"分片 12 秒、配比 1:1（GPU:NPU 分片数）· 应用时间 …"` |
+
+后果：整个「性能测试」面板**按钮点了没反应、状态永远"读取中…"**。
+修法：这两个函数只依赖 DOM id（且各有 `dataset.bound` 幂等保护），
+与那次 fetch 无关 —— 提到 try 之前**无条件**调用。
+
+> 顺带：`#perf-applied` 渲染出真实配置，也**顺带验证了 7.2 那个 `escapeHtml` 修复**
+> （这段渲染正是当初抛 ReferenceError 的地方；此处 `dual` 非空才走到该分支）。
+
+### 9.2【真 bug·已修】双引擎下拉的委托容器挂错了 —— 挂在兄弟节点上
+
+```js
+function initDualRatio() {
+  const box = $('#st-models');   // ← 委托容器
+```
+
+HTML 结构是 `#st-panel-models` 下同时挂着 `#st-models` 与 `#dual-ratio-row` ——
+**它俩是兄弟，不是祖孙**。所以 `change` 事件从 `#dual-ratio` 冒泡**根本到不了**
+`#st-models`，改下拉既不发请求、note 也不变。
+
+修法：委托容器改成 `#st-panel-models`（同时包含两者，且 `renderAsrModels` 只重建
+`#st-models` 的 innerHTML、不动本容器，所以"重渲染不失效"的初衷依然成立）。
+实测验证：`noteAfter` 从 `""` 变成 `"已设为 1:1"`，且确实发出了 `POST /api/asr/dual`。
+
+### 9.3 走查中确认「没问题」的部分
+
+- 项目能真正打开：渲染出 10 个字幕块，`#btn-realign-full` 存在且可用；
+- **热词挖掘**：面板打开、给出合理解释（"操作日志里还没有编辑字幕的记录"），无报错
+  → 7.2 修的 `logOp` 相关路径没炸；
+- **逐词重对齐设置**：`#st-realign-rate` 显示 `"2"`、`#st-realign-minratio` 显示 `"0.55"`
+  （均等于我用 POST 写入的值；端点若还是坏的会显示默认 0 / 0.6）
+  → 8.1 的端点修复**在界面上得到确认**；语音下拉列出 2 个本机真实语音；
+- **导出**：各导出按钮存在且未禁用；
+- **诊断快照**：`window.__diag()` 调用成功；
+- 全程**仅** vendor 文件的 404（`fetch-vendor.js` 未跑），**没有任何 exception**。
+
+> 走查用到的临时项目与 `asr/settings.json`（POST 写入的测试配置）已全部清理，
+> 未污染工作树。
+
+---
+
+## 十、第九轮：`asr/common.py` 提取（同日完成，护栏先行）
+
+第九轮做了第二轮审查"阶段 2"里收益最大的单项：把两个引擎**逐字重复**的断句实现抽成
+`asr/common.py`。顺序是先有护栏、再做提取（7.1 的对拍测试就是为这一步准备的）。
+
+### 10.1 抽了什么
+
+| 成员 | 说明 |
+| --- | --- |
+| `SENT_END / SOFT_END / PAUSE_SPLIT / MAX_LINE_SEC / MAX_LINE_WORDS / SAMPLE_RATE` | 断句阈值常量（原先两份，靠"与 asr.py 保持一致"的人肉注释同步） |
+| `group_words(words)` | 基础断句：句末标点 / 长停顿 / 行长兜底（纯分组，**不含置信度**） |
+| `seg_base(i, ws)` | 一段的公共字段（`id/start/end/text/words`） |
+| `clamp_overlap(segs)` | 相邻行不交叠 |
+| `frame_energies(samples, sr, …)` | 帧能量 RMS（原先是 `asr_npu.py` **反向依赖** `asr.py` 的一个函数，现归入公共层） |
+
+**刻意不进 common 的**：置信度（两个引擎能拿到的信号不同——sherpa 不给 token 概率、NPU 给，
+口径本来就各写各的，对拍测试把这项差异钉成"设计如此"）。
+
+### 10.2 两边现在怎么用
+
+```python
+# asr.py / asr_npu.py 都只剩：
+from common import (SAMPLE_RATE, SENT_END, SOFT_END, PAUSE_SPLIT,
+                    MAX_LINE_SEC, MAX_LINE_WORDS, group_words, seg_base, clamp_overlap,
+                    frame_energies)
+
+def words_to_segments(words, samples=None, sr=SAMPLE_RATE, stability=None):
+    out = []
+    for i, ws in enumerate(group_words(words)):      # ← 分组用同一份
+        seg = seg_base(i, ws)                        # ← 公共字段同一份
+        # …这里之后才是各引擎自己的置信度口径…
+    clamp_overlap(out)
+    return out
+```
+
+验证了"确实只留一份"：
+`asr.frame_energies is common.frame_energies` 与 `asr_npu.frame_energies is common.frame_energies`
+**都是 True**；分组循环与断句常量在两引擎文件里 `grep` 均为 0 处。
+
+### 10.3 顺带解掉的一处签名差异
+
+对拍测试 D 组记录的"`samples=None` 在 asr 可用、在 npu 会 TypeError"现在只剩**一个地方**要修
+（`common.seg_base` 不碰 samples；两引擎的置信度块各自判断）。提取后这类"分叉"不会再长出来。
+
+### 10.4 验证
+
+| 项 | 结果 |
+| --- | --- |
+| `py_compile` 三个文件 | 通过 |
+| `tests/asr-segment-parity-test.py` | **24/0**（asr 改完、npu 未改时跑一次；两边都改完再跑一次，均通过） |
+| 6 个 Python 单测 | 全绿 |
+| ruff | All checks passed |
+| JS 全量测试 | 68 通过 / 0 失败 |
+
+> **刻意留到以后的**：`emit()/reconfigure()`、`serve_loop`、`read_wav_mono16k` 的提取。
+> 它们不在对拍护栏覆盖范围内，而且 `serve_loop` 涉及常驻进程的生命周期，值得单独一轮。

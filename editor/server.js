@@ -6964,6 +6964,55 @@ function handleAsrRoutes(req, res, u) {
     }
   }
 
+  /* 逐词重排（TTS 对齐）的设置：读 / 写。
+   * GET  → { voice, rate, minAnchorRatio, minConfidence, voices }
+   * POST → 局部更新（存 asr/settings.json 的 realign 段）
+   * 这几个值只影响**以后**的重排，不碰已有字幕。
+   *
+   * ⚠ 这是**全局** ASR 设置（不挂项目，处理块里根本用不到 project id）。
+   *   2026-10-11 无头浏览器探针实测发现：这个处理块原先落在 handleProjectsRoutes 里，
+   *   于是只有 `/api/projects/<id>/realign-settings` 能命中；而前端 project.js
+   *   （realignLoad / realignSave）调的是 `/api/asr/realign-settings` ——
+   *   **一律 404**：面板读不到设置（静默 catch），保存时弹「重排设置保存失败: not found」。
+   *   现搬到 asr 段，与其它全局 ASR 设置（correct / confidence / set-dir …）同处。 */
+  if (pathname === '/api/asr/realign-settings' && (req.method === 'GET' || req.method === 'POST')) {
+    const view = async () => {
+      const raw = (readAsrSettings().realign) || {};
+      const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+      return {
+        voice: String(raw.voice || ''),
+        rate: num(raw.rate, 0),
+        minAnchorRatio: num(raw.minAnchorRatio, alignMod.MIN_ANCHOR_RATIO),
+        // 全片重校对的置信度门槛（与锚点率门槛不同：那个是"能不能用"，这个是"值不值得改"）
+        minConfidence: num(raw.minConfidence, 0.7),
+        voices: await ttsVoices().catch(() => []),
+      };
+    };
+    if (req.method === 'GET') return view().then(v => sendJson(res, 200, v));
+    return readBody(req, res, 16 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let p;
+      try { p = JSON.parse(body.toString('utf8')) || {}; }
+      catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const s = readAsrSettings();
+      const cur = Object.assign({}, s.realign);
+      if (p.voice !== undefined) cur.voice = String(p.voice || '').trim().slice(0, 120);
+      if (p.rate !== undefined) cur.rate = Math.max(-3, Math.min(3, parseInt(p.rate, 10) || 0));
+      if (p.minAnchorRatio !== undefined) {
+        cur.minAnchorRatio = Math.max(0.3, Math.min(1, Number(p.minAnchorRatio) || 0.6));
+      }
+      if (p.minConfidence !== undefined) {
+        cur.minConfidence = Math.max(0.3, Math.min(1, Number(p.minConfidence) || 0.7));
+      }
+      s.realign = cur;
+      try { writeAsrSettings(s); } catch (e) { return sendJson(res, 500, { error: String(e.message || e) }); }
+      console.log('[align] 重排设置已更新：语音=' + (cur.voice || '(默认)')
+        + ' 语速=' + cur.rate + ' 最低锚点率=' + cur.minAnchorRatio
+        + ' 重校对置信度门槛=' + cur.minConfidence);
+      return view().then(v => sendJson(res, 200, Object.assign({ ok: true }, v)));
+    });
+  }
+
   // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
   sendJson(res, 404, { error: 'not found' });
 }
@@ -7711,10 +7760,6 @@ function handleProjectsRoutes(req, res, u) {
         .catch(() => sendJson(res, 200, { voices: [] }));
     }
 
-    /* 逐词重排（TTS 对齐）的设置：读 / 写。
-     * GET  → { voice, rate, minAnchorRatio, voices }
-     * POST → 局部更新（存 asr/settings.json 的 realign 段）
-     * 这几个值只影响**以后**的重排，不碰已有字幕。 */
     /* 只读诊断：把「从字幕还原出来的句子」列出来（导入 ASS 的稿件没有 asr.json）。
      * 用途：① 排查"为什么这句没被重校对" ② 与前端 analyzeKaraoke 的结果对下标
      * （全片重校对返回的 index 是这里的下标，前端拿它去索引 state.kar.sentences，
@@ -7742,45 +7787,6 @@ function handleProjectsRoutes(req, res, u) {
         })),
       });
     }
-
-    if (action === 'realign-settings' && (req.method === 'GET' || req.method === 'POST')) {
-      const view = async () => {
-        const raw = (readAsrSettings().realign) || {};
-        const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
-        return {
-          voice: String(raw.voice || ''),
-          rate: num(raw.rate, 0),
-          minAnchorRatio: num(raw.minAnchorRatio, alignMod.MIN_ANCHOR_RATIO),
-          // 全片重校对的置信度门槛（与锚点率门槛不同：那个是"能不能用"，这个是"值不值得改"）
-          minConfidence: num(raw.minConfidence, 0.7),
-          voices: await ttsVoices().catch(() => []),
-        };
-      };
-      if (req.method === 'GET') return view().then(v => sendJson(res, 200, v));
-      return readBody(req, res, 16 * 1024, (err, body) => {
-        if (err) return sendJson(res, 400, { error: String(err.message) });
-        let p;
-        try { p = JSON.parse(body.toString('utf8')) || {}; }
-        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-        const s = readAsrSettings();
-        const cur = Object.assign({}, s.realign);
-        if (p.voice !== undefined) cur.voice = String(p.voice || '').trim().slice(0, 120);
-        if (p.rate !== undefined) cur.rate = Math.max(-3, Math.min(3, parseInt(p.rate, 10) || 0));
-        if (p.minAnchorRatio !== undefined) {
-          cur.minAnchorRatio = Math.max(0.3, Math.min(1, Number(p.minAnchorRatio) || 0.6));
-        }
-        if (p.minConfidence !== undefined) {
-          cur.minConfidence = Math.max(0.3, Math.min(1, Number(p.minConfidence) || 0.7));
-        }
-        s.realign = cur;
-        try { writeAsrSettings(s); } catch (e) { return sendJson(res, 500, { error: String(e.message || e) }); }
-        console.log('[align] 重排设置已更新：语音=' + (cur.voice || '(默认)')
-          + ' 语速=' + cur.rate + ' 最低锚点率=' + cur.minAnchorRatio
-          + ' 重校对置信度门槛=' + cur.minConfidence);
-        return view().then(v => sendJson(res, 200, Object.assign({ ok: true }, v)));
-      });
-    }
-
 
     /* 备注（时间点留言）：读 / 新增 / 删除 / 全量替换。
      * GET    → { notes:[{id,at,text,danmaku,createdAt}], duration }

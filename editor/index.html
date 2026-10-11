@@ -16,8 +16,16 @@
     try { navigator.sendBeacon('/api/logs/client', String(text).slice(0, 4000)); } catch (e) {}
   }
   window.addEventListener('error', function (e) {
-    var where = (e.filename || '') + ':' + (e.lineno || 0) + ':' + (e.colno || 0);
-    report('[JS错误] ' + (e.message || '') + ' @ ' + where + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+    /* ⚠ 资源加载失败（<script>/<link> 404）也会以 error 事件走到这里，而这类事件的
+     *   e.message / e.filename / e.lineno 全是空 —— 只报一行 "[JS错误]  @ :0:0"，
+     *   完全看不出是哪个文件挂了。实测：没跑 fetch-vendor.js 时
+     *   /editor/vendor/subtitles-octopus.js 404，服务端日志里就只有这么一行。
+     *   所以资源类错误改用出错元素自身的 URL 来报。 */
+    var t = e.target;
+    var resUrl = (t && t !== window && (t.src || t.href)) || '';
+    var where = resUrl || ((e.filename || '') + ':' + (e.lineno || 0) + ':' + (e.colno || 0));
+    var what = e.message || (resUrl ? '资源加载失败' : '');
+    report('[JS错误] ' + what + ' @ ' + where + (e.error && e.error.stack ? '\n' + e.error.stack : ''));
   }, true);
   window.addEventListener('unhandledrejection', function (e) {
     var r = e.reason || {};
