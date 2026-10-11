@@ -20,6 +20,7 @@ const REPO = path.resolve(HERE, '..');
 const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
 const HTML = fs.readFileSync(path.join(REPO, 'editor', 'index.html'), 'utf8');
 const MJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
+const PJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
 const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'style.css'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -100,7 +101,15 @@ for (const id of ['st-realign-voice', 'st-realign-rate', 'st-realign-rate-val',
                   'st-realign-minratio', 'st-realign-note']) {
   ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
 }
-ok(/action === 'realign-settings'/.test(SRV), '有读写接口');
+/* ⚠ 这条以前断言的是 `action === 'realign-settings'` —— 即它**钉住了错误的挂载位置**：
+ *   服务端把处理块放在 handleProjectsRoutes 里（只能被 /api/projects/<id>/... 命中），
+ *   而前端 project.js 调的是 /api/asr/realign-settings → 一律 404（面板读不到、存不了）。
+ *   2026-10-11 无头浏览器探针实测抓到这个 404 后把处理块搬回 asr 段。
+ *   现在断言"挂在 /api/asr/ 下"，并**交叉核对前端调的是同一个路径** —— 防止再被搬回去。 */
+ok(/pathname === '\/api\/asr\/realign-settings'/.test(SRV),
+  '有读写接口（挂在 /api/asr/ 下）');
+ok(/\/api\/asr\/realign-settings/.test(PJ),
+  '★ 前端调的是同一个路径（否则又是一律 404）');
 ok(/readAsrSettings\(\)\.realign/.test(SRV), '设置存在 asr/settings.json 的 realign 段');
 /* ★ 关键：设置存进去还不够，**必须真的被用**。
  *   第一版就漏了这步 —— minAnchorRatio 存了却从没传给 planBlock，"最低锚点率"是个摆设。 */
