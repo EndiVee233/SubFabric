@@ -123,6 +123,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 ## 4. 前端地图（`editor/js/`）
 
 装配：`editor/index.html` → `<script type="module" src="js/main.js">`；hash 路由（`#/home`、`#/project/<id>`，见 `project.js` 的 `applyHash`）。
+另有第二个入口 `<script type="module" src="js/video-hover-tip.js">`（进度条悬浮时间提示，独立自初始化，不参与 main.js 的装配）。
 
 | 模块 | 职责 |
 | --- | --- |
@@ -138,6 +139,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `srt.js` | SRT 解析 / 序列化 / 双语合并 |
 | `overlay.js` | SRT 双语叠加渲染层（贴视频矩形的 HTML） |
 | `assplayer.js` | ASS 渲染器封装（SubtitlesOctopus / libass-wasm，含字体索引缓存） |
+| `video-hover-tip.js` | **进度条悬浮时间提示**：悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间。实测依据与几何口径写在文件头（控制条区域的事件目标就是 `<video>`，所以一个 mousemove 监听即可，不必自建控制条；横向按"去黑边"的画面矩形换算）。**唯一一个自初始化的模块**（不 import main.js，main.js 也无 export），由 index.html 里第二个 `<script type="module">` 加载 |
 | `util.js` | 时间格式化 / 转义 / 二分查找 / `popOrigin` 等工具 |
 | `i18n.js` | 文案词典（`lang/zh-CN.json`：键=原文，值可改；缺失回退原文） |
 | `modal.js` | 可拖动二级窗口（对齐 / 视口边界） |
@@ -272,6 +274,16 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **进度条悬浮时间提示（2026-10-11）**：新增 `editor/js/video-hover-tip.js`（+ `#video-hover-tip` 元素与 `ui.css` 样式，
+  index.html 里第二个 `<script type="module">`）。悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间
+  （整段 <1h 用 `m:ss`，否则 `h:mm:ss`；`title` 另给毫秒精度）。原生的控件在 UA shadow DOM 里、Chrome 不带 hover 时间预览也没法插元素，
+  所以自己做一个。
+  **实测依据**（`tools/probe_video_controls.mjs`，CDP 从视频底边每 6px 派发真事件）：距底 2~74px 的 `elementFromPoint` 就是 `video` 本身，
+  即控制条区域的事件目标就是 `<video>` —— 一个 `mousemove` 监听即可，**不必自建控制条**；距底 80px 以上归 `#cue-hit-shield`（字幕接管层）。
+  横向换算按"去黑边"的画面矩形（`object-fit: contain` 下非 16:9 素材有黑边，只有这种素材才看得出错），
+  纵向判定一条薄带（`HOT_LO`~`HOT_HI`，上限与 videoedit 的 `CTRL_BAR=72` 同口径）。
+  验收：`tools/verify_video_hover_tip.mjs`（真视频 19 项：位置↔时间、不越界、不在进度条上不弹、播放中不干扰播放、跳转后收起、无 JS 报错）+
+  `tools/verify_tip_letterbox.mjs`（4:3 素材 8 项：黑边换算、黑边里不显示、提示块对齐）。
 - **第二轮全面审查 + 修复（2026-10-10）**：审查报告在 `docs/CODE_REVIEW_2026-10-10.md`（10 高危/30+ 中危/分阶段计划）。本轮已修全部高危 + 安全资源类中危，共 24 处：
   - **server.js**：① autopost 失败兜底的 `stamp()` 是未定义符号（函数内局部 const）→ 改 `apStamp()`，此前该路径一失败就 ReferenceError 吞日志；② `probeDuration`/`buildPeaks` 补 settle 护栏接线（error+close 双触发曾致 `/api/peaks` 双响应崩溃与 `makeWaveform` 无限递归 spawn）；③ **批量重识别空区间**改为按"跳过"处理（`regionDone+1` + warning），此前每段空转等满 30 分钟；④ `startRerecognize` 的 `cleanup` 提到 try 外，失败/空区间路径也清 %TEMP% 切片（~45MB/次）；⑤ **Cookie 写 Netscape 文件失败改为终止任务**（删除 `--cookies <明文>` 的 argv 兜底 —— 明文进程列表可读，宁报错不泄密）；⑥ probe 用 cookie 改 `mkdtemp` 随机目录 + finally 整目录删除；⑦ `fetchPyPromise` 否定结果不再缓存（装好 Python 后无需重启）；⑧ `realignJobs` 完成/失败 10 分钟老化（照抄 rerecognize 套路，内存不再只增不减）；⑨ `rerecognize` POST 互斥改 `jobStillRunning`（与 reidentify 同口径，卡死任务不再挡按钮）。
   - **前端**：`project.js` 打开项目检查字幕 `r.ok`（**此前 500 的错误页会被当字幕解析并污染 lastSavedText，编辑即把坏内容写回 subtitle.ass**）；`refreshDualRatio` 自取 `/api/asr/status`（原来读不存在的 `state.asrStatus`，双引擎分工行永久隐藏）；`timeline.js` 刻度 `/\.0\$/` → `/\.0$/`；`overlay.js` setCues 预计算前缀 `_maxEnd` 修重叠 cue 漏显示（与 timeline 同款防御）；`main.js` rim 解析统计 `console.log` → `debug`。

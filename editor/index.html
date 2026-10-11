@@ -51,6 +51,12 @@
   <!-- ══════════ 左上: 视频播放区 ══════════ -->
   <main id="stage-wrap">    <div id="video-stage">
       <video id="video" controls preload="metadata"></video>
+      <!-- 进度条悬浮时间提示：悬在**原生**进度条上时，在上方显示这个位置对应的时间。
+           为什么要自己做一个：原生 <video controls> 的控件在 UA shadow DOM 里，
+           Chrome 不带 hover 时间预览，且没法插入自己的元素。
+           定位与判定逻辑见 js/video-hover-tip.js（含实测依据：命中测试把进度条
+           算作 video 本身，所以监听直接挂在 <video> 上就够，不必自建控制条）。 -->
+      <div id="video-hover-tip" hidden></div>
       <div id="srt-overlay"></div>
       <!-- 底部原生控制条（约 72px，见 main.js 里同一个 72 的判定）会把鼠标事件**全部吃掉**：
            落在这一条里的字幕行，双击连 <video> 都到不了，于是"字幕点不动"。
@@ -1802,5 +1808,8 @@
 
 <script src="vendor/subtitles-octopus.js"></script>
 <script type="module" src="js/main.js"></script>
+<!-- 进度条悬浮时间提示。挂在 main.js 之后加载：它只读 #video 的尺寸/时长，
+     不依赖 main.js 暴露什么（main.js 无 export），所以顺序无关，但放后面更稳。 -->
+<script type="module" src="js/video-hover-tip.js"></script>
 </body>
 </html>
