@@ -1111,10 +1111,13 @@ function buildWordSpecsK(sentence) {
   return [Object.assign({}, base, { start: sentence.start, end: sentence.end, text: txt })];
 }
 
-/** k 行的颜色头: {\1c已唱&\2c未唱&…}。已唱 ← highlightTag 解析(默认绿); 未唱 ← kBaseHex(没有则不写)。
- *  kHead 里的其它 tag 保留; 颜色位统一重写一份, 避免重复与顺序问题。 */
+/** k 行的颜色头: {\1c已唱&\2c未唱&…}。已唱 ← highlightTag 解析; 未唱 ← kBaseHex(没有则不写)。
+ *  kHead 里的其它 tag 保留; 颜色位统一重写一份, 避免重复与顺序问题。
+ *
+ *  ⚠ 已唱色在**行上没有 highlightTag** 时必须取**当前配置的高亮色**，不能写死绿 ——
+ *    与 highlightTagForRebuild 同一类问题：重建 k 行会把用户设的高亮色改回绿。 */
 function kHeadFor(sentence) {
-  let sung = '#00ff00';
+  let sung = WORD_HIGHLIGHT_COLOR;
   const m = /\\1?c&H([0-9A-Fa-f]{6})&/.exec(sentence.highlightTag || '');
   if (m) sung = assColorToHex(m[1].toUpperCase());
   const rest = String(sentence.kHead || '')

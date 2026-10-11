@@ -81,7 +81,33 @@ console.log('\n== 3. 端到端：模拟「修复字幕」重建后切片用的�
     '★ 一条绿色的都没有（这就是用户报的现象）');
 }
 
-console.log('\n== 4. 没设过配置色时默认仍是绿（默认行为不变）==');
+console.log('\n== 4. \\k 卡拉OK行：已唱色也不能写死绿 ==');
+{
+  /* 同一类问题的另一处：karaoke.js 的 kHeadFor() 以前 `let sung = '#00ff00'`，
+   * 行上没有 highlightTag 时已唱色会回退成绿，用户配置的高亮色失效。 */
+  setWordHighlightColor('#ff8800');
+  const kSent = {
+    style: '英文逐词', start: 20, end: 23, text: 'one two three',
+    words: [{ w: 'one', s: 20, e: 21 }, { w: 'two', s: 21, e: 22 }, { w: 'three', s: 22, e: 23 }],
+    events: [], proto: { layer: '0', name: '', effect: '', margins: { l: 0, r: 0, v: 0 }, style: '英文逐词' },
+    karStyle: 'k', kTag: '\\k', kHead: '', kBaseHex: '#ffffff',
+    highlightTag: null,                       // 行上没有高亮色 → 必须用配置色
+  };
+  const specs = buildWordSpecs(kSent);
+  ok(specs.length === 1, 'k 形态是单事件整行', specs.length);
+  const t = specs[0].text;
+  ok(/\\1c&H0088FF&/.test(t), '★ 已唱色用配置色（#ff8800 → 0088FF）', t.slice(0, 60));
+  ok(!/\\1c&H00FF00&/.test(t), '★ 已唱色不是写死的绿');
+  ok(/\\2c&HFFFFFF&/.test(t), '未唱色仍来自 kBaseHex', t.slice(0, 60));
+
+  // 行上**有** highlightTag 时必须沿用（kHeadFor 对 \1c 做 BGR↔RGB 往返 → 原样保留）
+  const kSent2 = { ...kSent, highlightTag: '{\\c&H112233&}' };
+  const t2 = buildWordSpecs(kSent2)[0].text;
+  ok(/\\1c&H112233&/.test(t2), '行上有高亮色时沿用（原样保留 112233）', t2.slice(0, 60));
+  ok(!/\\1c&H0088FF&/.test(t2), '★ 沿用行内色时**不**被配置色覆盖', t2.slice(0, 60));
+}
+
+console.log('\n== 5. 没设过配置色时默认仍是绿（默认行为不变）==');
 setWordHighlightColor('#00ff00');
 ok(wordHighlightTag() === '{\\c&H00FF00&}', '默认 tag 是绿');
 ok(highlightTagForRebuild(null) === '{\\c&H00FF00&}', '没有行内色时回退到默认绿');
