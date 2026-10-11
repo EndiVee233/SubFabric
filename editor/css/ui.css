@@ -82,8 +82,27 @@ body::before {
   content: ''; position: absolute; inset: 0; pointer-events: none;
   box-shadow: inset 0 0 90px rgba(0, 0, 0, .5);
 }
-#stage-hint { color: var(--text-2); }
-#stage-hint .sh-box, #stage-hint > div { border-radius: var(--r-2); }
+/* 进度条悬浮时间提示（逻辑见 js/video-hover-tip.js）。
+   z-index 取 7：要压在画面之上（#video 无 z-index）、又在 #cue-hit-shield(8) 之下 ——
+   接管层一旦武装就说明指针那条带子归字幕编辑管，别跟它抢。
+   left / bottom 由 JS 按画面矩形算（分辨率一变就要重算，不能写死在 CSS 里），
+   这里只管外观；pointer-events:none 是硬要求：绝不能挡住原生控件自己的手势。 */
+#video-hover-tip {
+  position: absolute; z-index: 7; left: 0; bottom: 40px;
+  pointer-events: none; white-space: nowrap;
+  padding: 3px 8px; border-radius: var(--r-2, 6px);
+  background: rgba(12, 12, 16, .90);
+  border: 1px solid var(--hair);
+  color: var(--text-0);
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11.5px; line-height: 1.25; letter-spacing: .3px;
+  box-shadow: var(--sh-2);
+}
+#video-hover-tip[hidden] { display: none; }
+/* pop-in 的关键帧在 style.css（@keyframes pop-in）；弹层动效规范见 PROJECT_MAP §6 */
+#video-hover-tip:not([hidden]) { animation: pop-in .13s var(--ease-out) both; }
+
+#stage-hint { color: var(--text-2); }#stage-hint .sh-box, #stage-hint > div { border-radius: var(--r-2); }
 /* 空视频区的提示卡：虚线圆角框 + 毛玻璃，比裸文字更像"这里可以放东西" */
 .hint-card {
   display: flex; flex-direction: column; align-items: center; gap: 8px;

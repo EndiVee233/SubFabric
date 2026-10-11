@@ -256,6 +256,11 @@ def probe(audio, args):
     """只测两个引擎在真实分片上的速度，用来决定分工比例。
 
     测速实现放在 tools/bench-equal.py（同一个仓库，避免两份基准代码漂移）。
+
+    ⚠ 模型目录必须**显式传下去**（args.model_npu / args.model_gpu，上面已解析好）。
+    早先这里一个参数都不传，于是 bench_equal 退回"仓库/asr/models"目录 —— 开发
+    仓库里没有模型，用户在「设置 → 性能测试」点一次永远得到
+    "NPU 测速失败：模型目录缺少 encoder-model.onnx"（实测复现）。
     """
     from bench_equal import run_npu, run_sherpa, slices_of, read_wav  # noqa: PLC0415
     samples = read_wav(audio)
@@ -264,19 +269,23 @@ def probe(audio, args):
     log("测速中（每个引擎 3 片）…")
     t_npu = t_gpu = None
     try:
-        t_npu = run_npu(segs, 1, joint=args.joint)
-        log(f"NPU 引擎：3 片 {t_npu[0]:.2f}s → {total / t_npu[0]:.1f}x 实时")
+        t_npu = run_npu(segs, 1, joint=args.joint, model_dir=args.model_npu)
+        log(f"NPU 引擎：3 片 {t_npu[0]:.2f}s → {total / t_npu[0]:.1f}x 实时（纯解码）")
     except Exception as exc:  # noqa: BLE001
         log(f"NPU 测速失败：{exc}")
     try:
-        t_gpu = run_sherpa(segs, 1)
-        log(f"GPU 引擎：3 片 {t_gpu[0]:.2f}s → {total / t_gpu[0]:.1f}x 实时")
+        t_gpu = run_sherpa(segs, 1, model_dir=args.model_gpu)
+        log(f"GPU 引擎：3 片 {t_gpu[0]:.2f}s → {total / t_gpu[0]:.1f}x 实时（纯解码）")
     except Exception as exc:  # noqa: BLE001
         log(f"GPU 测速失败：{exc}")
     if t_npu and t_gpu:
         ratio = t_npu[0] / t_gpu[0]          # GPU 比 NPU 快多少（耗时比）
         log(f"耗时比 GPU:NPU = {ratio:.2f} → 建议 --ratio {max(1, round(ratio))}:1"
             f"（GPU 承担 {ratio / (ratio + 1) * 100:.0f}% 的分片）")
+        # 上面测的是纯解码吞吐；真实路径还含模型加载与（full 档）加噪重跑，
+        # 两个引擎都会被拖慢，所以分工**比例**仍可用，但绝对值不能当预期。
+        log("提示：以上是纯解码吞吐（不含加载与加噪重跑），比真实初稿路径快数倍；"
+            "分工比例可用，绝对值请看识别日志里每片的「x 实时」")
     return 0
 
 
@@ -395,11 +404,8 @@ def main() -> int:
             by_engine[name].append({"index": idx, "start": start, "end": end, "wav": wav})
             by_engine["_byIndex"][idx] = {"index": idx, "start": start, "end": end, "wav": wav}
 
-        py = args.python
-        scripts = {"gpu": (os.path.join(HERE, "asr.py"), args.model_gpu,
-                           ["--threads", str(args.threads), "--provider", "cuda"]),
-                   "npu": (os.path.join(HERE, "asr_npu.py"), args.model_npu,
-                           ["--threads", str(args.threads), "--provider", "npu"])}
+        # 两个引擎的脚本 / 模型目录 / 固定参数。这里原本**整块重复了两遍**（逐字相同，
+        # 是某次打补丁留下的死副本）——已删掉第二份，行为完全不变。
         py = args.python
         scripts = {"gpu": (os.path.join(HERE, "asr.py"), args.model_gpu,
                            ["--threads", str(args.threads), "--provider", "cuda"]),
