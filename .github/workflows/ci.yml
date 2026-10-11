@@ -43,14 +43,30 @@ jobs:
         run: node tests/run-all.mjs
 
   py:
-    name: Python · ruff
+    name: Python · ruff + 单测
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: 安装 ruff
-        run: pip install ruff
+      - name: 安装依赖
+        # numpy 是 asr/confidence.py 的硬依赖（本测试组要 import 它）。
+        # 刻意**不装** sherpa-onnx / openvino：那两样是推理运行时，
+        # 本 job 只跑不需要模型与加速卡的纯逻辑测试。
+        run: pip install ruff numpy
       - name: ruff check
         run: ruff check .
+      - name: Python 单测
+        # 这里**逐个列名**而不是 `for t in tests/*-test.py`：
+        # tests/ 下还有一批需要本机样本 / CUDA / 生成器的脚本
+        # （cuda-confidence-smoke、diag-*、calibrate-confidence、make-noisy-samples…），
+        # 在 CI 上必然失败。下面这 6 个是"纯逻辑、任何机器都能过"的那批。
+        # 新增可移植测试时记得加进来。
+        run: |
+          set -e
+          for t in confidence-test draft-role-gap-test fetch-format-test \
+                   glommed-split-test frame-units-test asr-segment-parity-test; do
+            echo "───────── tests/$t.py ─────────"
+            python "tests/$t.py"
+          done
