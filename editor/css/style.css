@@ -499,6 +499,19 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .la-hint { margin-left: auto; font-size: 10.5px; color: var(--text-2); }
 
 /* ── 右侧 Tab 栏(字幕 / 角色 / 设置) ───────────── */
+/* 选中态**只用一条线**，而且整条标签栏连成一条。
+ *
+ * ⚠ 这里以前同时存在三套"下划线"画法，叠在一起就是用户看到的
+ *   "一条短的 + 一条长的"（截图反馈："这里的两条横线能不能换成一条？把那个短的去掉"）：
+ *     ① .ptab.active               { border-bottom: 2px accent }      → 标签宽 93px，底边 y=92
+ *     ② .ptab.active               { box-shadow: 0 1px 0 accent }     → 又一条 93px，y=93
+ *     ③ ui.css .ptab.active::after { left/right:10px; bottom:-1px }   → 73px，更短且左右错开
+ *   ①② 和容器自己的 1px 边框还差 1px —— 根本没对齐，所以看着是两层错开的线。
+ *
+ * 现在统一成：**只保留标签自己的 2px 底边框**，用 margin-bottom:-1px 让它压住
+ * 容器那条 1px 灰线。相邻标签的线首尾相接 → 选中段落是连续的一条，
+ * ui.css 里的 ::after 已删除。容器保留 1px 下边框：未选中的段落靠它显示灰线，
+ * 选中的段落被橙线盖住 —— 整条标签栏始终是**一条**线，只是选中那段换了颜色。 */
 #panel-tabs {
   flex: none;
   display: flex; gap: 4px;
@@ -509,7 +522,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ptab {
   flex: 1;
   padding: 7px 0;
-  border: 0; border-bottom: 2px solid transparent;
+  border: 0;
+  /* 每个标签都留 2px 透明底边框：选中时只换颜色，几何量不变，
+     不会因为线出现/消失让文字上下跳 1px。 */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;          /* 压住容器的 1px 下边框，两条合成一条 */
   background: transparent;
   color: var(--text-1);
   font-size: 13px; font-weight: 600;
@@ -520,13 +537,6 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ptab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
-  /* 选中时用一条橙色线**盖住** #panel-tabs 自己的 1px 灰线。
-     不这么做的话两条线是**上下相接**的（容器 padding-bottom 为 0，标签底边正好落在
-     容器 border 之上）：标签区内 2px 橙 + 标签之下 1px 灰 = 看起来"两条线重叠"。
-     做法：给标签多 1px 下内边距，把它推到容器 border 上，再用 0 1px 0 的同色阴影盖住。
-     这不是视觉 hack —— 下划线式分段指示器本来就该覆盖容器的那条线。 */
-  padding-bottom: 8px;
-  box-shadow: 0 1px 0 var(--accent);
 }
 
 .tab-body {
@@ -713,6 +723,10 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   flex:1 1 0; min-width:0; border:none; background:transparent;
   color:var(--text-2); border-bottom:2px solid transparent;
   border-radius:8px 8px 0 0; padding:9px 10px 8px;
+  /* 压住 .st-tabs 自己的 1px 下边框 —— 和 #panel-tabs 同一套做法（见那边 502 行的说明）。
+     原来靠"多 1px 下内边距 + box-shadow 盖住"，那会让标签底边和容器边框差 1px、
+     两条线没真正对齐；margin-bottom:-1px 是几何上真的重合。 */
+  margin-bottom:-1px;
   font-size:12.5px; cursor:pointer; font-family:inherit; white-space:nowrap;
   transition:background .12s, color .12s, border-color .12s;
 }
@@ -720,11 +734,6 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .st-tab.active {
   color:var(--accent); border-bottom-color:var(--accent);
   background:linear-gradient(180deg, var(--accent-a10), transparent);
-  /* 与右侧面板标签（.ptab.active）同一个问题：容器 .st-tabs 有自己的 1px border-bottom，
-     而标签底边正好压在它上面 → 选中时"2px 橙线 + 1px 灰线"上下相接，看着像两条线重叠。
-     多 1px 下内边距把标签推到容器线上，再用同色阴影盖住那 1px。 */
-  padding-bottom:9px;
-  box-shadow:0 1px 0 var(--accent);
 }
 .st-body {
   flex:1; min-height:0; overflow-y:auto; scrollbar-gutter:stable;
