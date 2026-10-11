@@ -368,13 +368,25 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .cue-card.playing { border-left-color: var(--accent); }
 .cue-card.playing .cc-no { color: var(--accent); }
 
+/* 三行时间：**标签在上、值在下**，统一左对齐。
+ *
+ * ⚠ 原来是一行 `标签 ……………… 值`（justify-content: space-between）。
+ *   但这一列可用宽度只有 77px，而 `00:00:00.030` 在 9.5px 等宽下就占 62.7px，
+ *   留给标签的只剩 ~14px —— 两个汉字要 18px，于是「开始/结束」被**挤成竖排**
+ *   （实测标签矩形 9×24，也就是"开"和"始"各占一行）。
+ *   值又不能换行（会拆成两行更难读），所以只能在版式上让步：
+ *   改成上下两行后，标签和值各自有整列宽度可用，谁都不会被压。
+ *   也顺便跟用户给的参考图一致（开始/结束/时长 各占一行，值在其下）。 */
 .cc-times {
   flex: none; width: 86px;
-  display: flex; flex-direction: column; gap: 2px;
+  display: flex; flex-direction: column; gap: 4px;
   padding-right: 8px;
   border-right: 1px solid #26262f;
 }
-.cc-t { display: flex; align-items: baseline; justify-content: space-between; gap: 3px; font-size: 9px; color: var(--text-2); }
+.cc-t {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  font-size: 9px; color: var(--text-2);
+}
 .cc-t b { font-family: Consolas, monospace; font-weight: 600; font-size: 9.5px; color: var(--accent-2); }
 
 /* 顶部对齐（原来是 center）：让右侧内容与左侧时间列齐平。
