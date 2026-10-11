@@ -76,28 +76,79 @@ function validateManifest(names) {
   return { ok: true, error: '', present, missing };
 }
 
+/** 项目目录内允许出现的**字幕文件名**白名单。
+ *  为什么必须白名单：project.json 来自**别人给的项目包**，其中 subtitle.file
+ *  会被 `path.join(projDir(id), ...)` 直接使用 —— 放行 "../../asr/settings.json"
+ *  就等于允许写到项目目录之外（2026-10-11 实测可复现的任意文件写入）。 */
+const SUBTITLE_FILES = ['subtitle.ass', 'subtitle.srt'];
+/** 音频提取模式的合法取值（与 server.js startPrepare 的取值一致） */
+const AUDIO_MODES = ['raw', 'denoise'];
+
+/** 从任意输入取一个**项目内合法文件名**：不含路径分隔符、不含 ..、且在白名单里。
+ *  取不到返回 null（调用方按"没有这个文件"处理）。 */
+function safeInnerFile(v, allowed) {
+  const n = String(v == null ? '' : v).replace(/\\/g, '/').trim();
+  if (!n || n.includes('/') || n.includes('..') || n.length > 64) return null;
+  return allowed.includes(n) ? n : null;
+}
+
 /**
  * 导入时该怎么处理包里的 `project.json`：
  * 生成一个新的项目 id / 时间戳，并把"视频待重选"标出来。
+ *
+ * ⚠ **按白名单重建，不再整体拷贝**。旧实现是 `Object.assign({}, meta)` 再覆写几个字段，
+ *    于是包里 project.json 的 `subtitle.file`（以及 audio.file / peaks.file）被**原样留下**，
+ *    随后字幕保存接口 `path.join(projDir(id), meta.subtitle.file)` 就把请求体写到了
+ *    项目目录之外 —— 实测可复现的任意文件写入（第三轮审查 新-1，2026-10-11）。
+ *    现在只搬运**已知且安全**的字段，路径类字段一律过白名单，未知字段一律丢弃。
  *
  * 为什么要新 id 而不是沿用包里的：同一个包可能被导入多次（或导入到已有同名项目的机器上），
  * 沿用 id 会覆盖已有项目。用户拿到的应该是一份**新副本**。
  */
 function remapMeta(meta, newId, nowIso) {
-  const m = Object.assign({}, meta || {});
-  m.id = newId;
-  m.createdAt = nowIso;
-  m.modifiedAt = nowIso;
-  // 视频与音频都还没生成 —— 导入端选好视频后跑 prepare 补上
-  m.video = { path: '', name: (meta && meta.video && meta.video.name) || '' };
-  m.prepare = { status: 'none' };
-  m.imported = { at: nowIso, from: String((meta && meta.name) || '') };
-  /* 逐词高亮色、逐句置信度档位这些**项目级设置原样保留** —— 它们是人做过的选择，
-   * 不属于"可从视频重新生成的派生数据"。 */
+  const src = (meta && typeof meta === 'object') ? meta : {};
+  const m = {
+    id: newId,
+    name: String(src.name || '').slice(0, 200),
+    nameCustomized: !!src.nameCustomized,
+    createdAt: nowIso,
+    modifiedAt: nowIso,
+    // 视频与音频都还没生成 —— 导入端选好视频后跑 prepare 补上
+    video: { path: '', name: String((src.video && src.video.name) || '').slice(0, 260) },
+    prepare: { status: 'none' },
+    imported: { at: nowIso, from: String(src.name || '').slice(0, 200) },
+  };
+  // 字幕文件：只接受项目目录内的合法文件名（越界 / 未知名一律忽略）
+  const sub = (src.subtitle && typeof src.subtitle === 'object') ? src.subtitle : {};
+  const sf = safeInnerFile(sub.file, SUBTITLE_FILES);
+  if (sf) m.subtitle = { format: sf.endsWith('.srt') ? 'srt' : 'ass', file: sf, name: sf };
+
+  /* 逐词高亮色、卡拉OK 形态、音频提取模式这些**项目级设置原样保留** ——
+   * 它们是人做过的选择，不属于"可从视频重新生成的派生数据"。（都不是路径字段） */
+  if (src.kar && typeof src.kar === 'object' && typeof src.kar.wordStyle === 'string') {
+    m.kar = { wordStyle: src.kar.wordStyle.slice(0, 120) };
+  }
+  if (src.audio && typeof src.audio === 'object' && AUDIO_MODES.includes(src.audio.mode)) {
+    m.audio = { mode: src.audio.mode };      // 只带"选择"，不带 file（audio.wav 不在包里）
+  }
+  if (src.region && typeof src.region === 'object') {
+    const rs = Number(src.region.start);
+    const re = src.region.end == null ? null : Number(src.region.end);
+    if (Number.isFinite(rs) && rs >= 0 && (re === null || (Number.isFinite(re) && re > rs))) {
+      m.region = { start: rs, end: re, importedAt: nowIso };
+    }
+  }
+  if (src.autoPost) m.autoPost = true;
+
+  /* ⚠ 有意**不带过来**的字段（不是遗漏）：
+   *   peaks —— 派生数据（波形包络），导入端从视频重建；且 peaks.file 同样是路径字段
+   *   draft —— 别的机器上的流水线中间态，带过来只会显示成"正在识别"
+   *   source—— 下载来源元信息，与导入的稿子无关
+   *   其余未知字段一律丢弃 —— 这正是本函数存在的意义：不信任包里的 project.json。 */
   return m;
 }
 
 module.exports = {
-  CORE_FILES, DERIVED_FILES,
-  shouldPack, isDerived, validateManifest, remapMeta,
+  CORE_FILES, DERIVED_FILES, SUBTITLE_FILES, AUDIO_MODES,
+  shouldPack, isDerived, validateManifest, remapMeta, safeInnerFile,
 };
