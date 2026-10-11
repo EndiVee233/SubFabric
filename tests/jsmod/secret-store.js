@@ -59,8 +59,14 @@ function psRun(script, inputB64) {
     try {
       return String(childProcess.execFileSync(exe,
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        { input: inputB64, encoding: 'utf8', timeout: 20000, windowsHide: true }) || '').trim();
-    } catch (e) { lastErr = e; }
+        { input: inputB64, encoding: 'utf8', timeout: 10000, windowsHide: true }) || '').trim();
+    } catch (e) {
+      lastErr = e;
+      // 只有"这台机器上根本没有这个 exe"(ENOENT)才值得换下一个候选; 其余错误(含 timeout)直接抛出,
+      // 免得 powershell 挂起时两个候选各阻塞一遍、把同步的主线程拖死。
+      // 抛出的错误由 encrypt() 捕获 → 标记 DPAPI 不可用并降级到 AES（有意为之，保留）。
+      if (!e || e.code !== 'ENOENT') throw e;
+    }
   }
   throw lastErr || new Error('powershell 不可用');
 }

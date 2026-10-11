@@ -14,17 +14,16 @@ const SRC = path.resolve(HERE, '..', 'editor');
 const JSMOD = path.join(HERE, 'jsmod');
 function ensureJsmod() {
   const marker = path.join(JSMOD, 'package.json');
-  let stale = !fs.existsSync(marker);
-  if (!stale) for (const f of fs.readdirSync(SRC)) {
+  /* 镜像同步: 只补齐/更新本族自己的文件, **绝不清空目录** —— jsmod 是两族共用镜像
+   * (上游族源 editor/js, fork 族源 editor/), 旧实现 rmSync 清空会顺手删掉另一族的文件,
+   * 于是"哪个测试先跑"决定别的测试能不能过(2026-10-10 修复)。内容比对保证镜像恒等于源。 */
+  fs.mkdirSync(JSMOD, { recursive: true });
+  for (const f of fs.readdirSync(SRC)) {
     if (!f.endsWith('.js')) continue;
     const a = path.join(JSMOD, f), b = path.join(SRC, f);
-    if (!fs.existsSync(a) || fs.statSync(a).mtimeMs < fs.statSync(b).mtimeMs) { stale = true; break; }
+    if (!fs.existsSync(a) || !fs.readFileSync(a).equals(fs.readFileSync(b))) fs.copyFileSync(b, a);
   }
-  if (stale) {
-    fs.rmSync(JSMOD, { recursive: true, force: true }); fs.mkdirSync(JSMOD, { recursive: true });
-    for (const f of fs.readdirSync(SRC)) if (f.endsWith('.js')) fs.copyFileSync(path.join(SRC, f), path.join(JSMOD, f));
-    fs.writeFileSync(marker, '{"type":"module"}\n');
-  }
+  fs.writeFileSync(marker, '{"type":"module"}\n');
 }
 ensureJsmod();
 
@@ -39,6 +38,12 @@ const ok = (c, n, extra) => {
 };
 
 const BASELINE = 'C:/Users/Terry/Documents/deepseek-harness/default-workspace/.staging/recover-tmp/subtitle.ass';
+// 这份基线是 fork 作者机器上的私有素材（.staging/，不入库）——别的机器上不存在。
+// 缺了就直接跳过（打印原因、按通过退出），避免在别人的机器上误报成"测试失败"。
+if (!fs.existsSync(BASELINE)) {
+  console.log('跳过 reload-pipeline-test：需要 fork 作者机器上的基线素材（' + BASELINE + '，未入库）');
+  process.exit(0);
+}
 
 /** 统计一组 row（pairRows 的产物）里的坏法 */
 function audit(rows, label) {

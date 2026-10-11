@@ -4,7 +4,7 @@
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-09（二次加固 + 删除项目加固）
+> 最后更新：2026-10-10（新增 Parakeet-Vulkan（CrispASR）引擎；路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`；**第二轮全面审查 + 24 处修复**，见 `docs/CODE_REVIEW_2026-10-10.md` 与 §11）
 
 ---
 
@@ -18,6 +18,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 - **发行形态**：Node SEA 打成单文件 `SubFabric.exe` + Inno Setup 安装包。
 - **开发方式**：项目由 AI 开发维护，作者不看代码 —— 注释写"为什么"并带实测数据，是给下一个 AI 的交接材料。
 - 设计参考 [Subforges](https://www.subforges.com/)（在线协作编辑器），但**无关联、无依赖**；本项目取舍是"单机、不卡顿、逐词高亮为核心"。
+- **2026-10-10 起并入 R2FtYml0 的 fork 功能**（PR #1）：分段导入（多人协作）/ 区域字幕导入 / 项目压缩包导出导入 / 逐词字幕自愈 / 全片逐词重校对 / 备注弹幕 / 句级置信度 / NPU 识别 / 本地 NLLB 翻译 / 热词挖掘 / 长稿反思纠错 等。
 
 **读法建议**：先 §1–§2 建立全貌；动手改哪块读哪块；**动手前务必读 §6、§7**。
 
@@ -43,18 +44,17 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 
 | 路径 | 职责 |
 | --- | --- |
-| `editor/server.js` | **后端全部**（约 5000 行单文件：安全守卫、路由、项目系统、下载/prepare/ASR/翻译流水线、托盘、退出） |
+| `editor/server.js` | **后端全部**（约 7900 行单文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘、退出） |
 | `editor/index.html`、`editor/css/` | 单页界面（`<script type="module" src="js/main.js">`） |
 | `editor/js/` | 前端模块（见 §4） |
-| `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr` |
+| `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr`；fork 并入：`align` `asr-service` `ass-group` `danmaku` `hotwords` `mt-local` `project-pack` `reflect` `region` `region-merge` `repair-words` `speech-gap` |
 | `asr/` | Python 侧：`asr.py`（本地识别）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（yt-dlp 自举、格式选择、Cookie、分P），细节见 `asr/fetch/README.md` |
 | `tests/` | Node / Python 测试（见 §8）；`tests/jsmod/` 是**前端模块自动同步镜像** |
 | `tools/` | 探针 / 诊断脚本（CDP 真机测试、布局探针、HTTP 层探针等） |
 | `build/`、`build_exe.py` | 打包（`build/installer/` 内图标与 `.iss` 入库，其余产物不入库） |
 | `main.py` | **历史遗留**的 Python GUI 工具（字体/颜色等默认值处理），与编辑器主线关系弱 |
-| `KARAOKE_DESIGN.md`、`KARAOKE_REFS.md` | 逐词高亮与 `\k` 的格式设计与调研记录（**改字幕格式前必读**） |
-| `CODE_REVIEW.md` | 第一轮代码审查报告（2026-10-04，条目已全部关闭，留作记录） |
+| `docs/` | 归档/设计文档（**不在根目录堆着**）：`docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`（逐词高亮与 `\k` 的格式设计与调研，**改字幕格式前必读**）；`docs/CODE_REVIEW.md`（第一轮审查记录）；`docs/双引擎实测结论.md`（NPU+GPU 双引擎实测：本机无收益） |
 | `eslint.config.js` | 只抓真错的规则（`no-undef` 等）；跑 lint 需自行 `npm i eslint`（项目无 `node_modules`） |
 
 ---
@@ -73,19 +73,13 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 2. **安全基线**：`safeJoin`（先解码再归一 + 路径分隔符边界，防穿越）、Host 回环校验（防 DNS rebinding）、写方法 Origin 校验（防 CSRF）、`MEDIA_ALLOW` 视频路径登记表。
 3. **简单路由表 `SIMPLE_ROUTE_MAP`**：`/` `/index.html` `/api/samples` `/api/version` `/api/fonts` `/api/font-file` `/favicon.ico|svg`；处理器签名 `(req,res,u) → boolean`。
 4. **主体（模块作用域）**：项目系统（`projDir/readMeta/writeMeta/metaView/readBody…`）＋ 下载/prepare/ASR/翻译流水线 ＋ 状态容器。
-5. **7 个路由段函数**，由 `API_SECTIONS` 表按前缀分发，段末统一 404 JSON 兜底：
-
-| 段函数 | 前缀 | 内容 |
-| --- | --- | --- |
-| `handleWaveRoutes` | `/api/(waveform\|peaks\|upload-video)` | 波形 PNG / 包络流、视频上传 |
-| `handleFetchRoutes` | `/api/(pick\|fetch)` | 文件选择、下载设置 / Cookie 检查 / probe |
-| `handleAsrRoutes` | `/api/asr` | 模型状态 / 下载 / 安装 / 目录 / 选择（含 hint） |
-| `handleLlmRoutes` | `/api/(translate\|cast)` | 翻译配置、测试、单条翻译、分角色配置 |
-| `handleLogsRoutes` | `/api/(logs\|lifecycle\|quit)` | 日志 SSE、生命周期 SSE、完全退出 |
-| `handleDiagRoutes` | `/api/(diag\|media)` | 前端诊断上报、视频 Range 流（白名单） |
-| `handleProjectsRoutes` | `/api/projects` | 项目 CRUD 与项目内全部操作 |
-
-6. `handleRequest`：守卫 → URL 解析 → SIMPLE 查表 → 段分发 → 静态回落（`serveFile`）。
+5. **路由分发**：`SIMPLE_ROUTE_MAP`（同步无副作用端点）查表 → `API_SECTIONS` 前缀表分发到 7 个路由段函数 → 静态回落（`serveFile`）。
+   段函数签名统一 `(req, res, u)`，段内保持原书写顺序的 if 链，段末 404 JSON 兜底（同码同义，见 §10）。
+   2026-10-09 首拆（f8be06a）→ PR #1 合并时被整体回退 → **2026-10-10 在合并后的树上重做**（纯逐字搬移；
+   行为等价由行多重集 + AST 路由字面量对照 + `route_smoke`/`http_layer_probe` 新旧对照证明）。
+6. 七个段：`handleWaveRoutes`(waveform/peaks/upload-video) · `handleFetchRoutes`(pick/fetch) · `handleAsrRoutes`(asr/analyze) ·
+   `handleLlmRoutes`(translate/cast/mt) · `handleLogsRoutes`(logs/lifecycle/quit) · `handleDiagRoutes`(diag/media) ·
+   `handleProjectsRoutes`(projects：含热词候选/压缩包/`if (pm)` 项目内操作)。`API_SECTIONS` 正则前缀互不相交（`\b` 防误匹配）。
 7. **退出**：`shutdown()`（`/api/quit` 或 SIGINT/SIGTERM 触发）：广播 lifecycle → 杀 `CHILDREN` → `close` + `closeAllConnections` → 超时强退；托盘由 `scripts/tray.ps1`（PowerShell WinForms）实现。
 
 ### 3.3 跨请求状态容器（**铁律：必须放模块作用域**）
@@ -106,7 +100,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 创建（本地视频 / 链接）
 → [下载] startFetchJob → runFetchCli → asr/fetch/fetch_cli.py（10 分钟无输出看门狗）
 → [prepare] startPrepare：ffprobe → ffmpeg 抽 audio.wav + peaks.bin（min/max 包络）
-→ [ASR] startDraftAsr：whisper.cpp / Parakeet / 必剪 / 剪映 / NeMo；长音频先静音分片
+→ [ASR] startDraftAsr：whisper.cpp / Parakeet（sherpa-onnx·CUDA / OpenVINO·NPU / CrispASR·Vulkan 三条） / 必剪 / 剪映 / NeMo；长音频先静音分片
 → [语义分句] reseg（LLM 补标点；所有引擎必经，没配 LLM 就停在这一步）
 → [说话人分离] diarize（可选） → [写字幕]（逐词 ASS 或 SRT）
 → [翻译] translate（LLM，可暂停后"重试"续跑）
@@ -150,6 +144,12 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `shortcuts.js` | 固定键盘快捷键表（刻意不可配置） |
 | `accent.js` | 主题强调色（经典脚本，`<head>` 内同步执行防首屏闪色） |
 | `icons.js` | 内联 SVG 图标集（不要塞进文本节点中间，会拆散 i18n 词典匹配） |
+| `align.js` | 逐词时间重对齐（TTS 合成 → 重识别 → 序列对齐；fork） |
+| `asr-service.js` / `mt-local.js` | 常驻识别服务；本地 NLLB 翻译（fork） |
+| `ass-group.js` / `region.js` / `region-merge.js` | 分段导入（多人协作·按句聚合）/ 区域字幕导入 / 合并（fork） |
+| `project-pack.js` | 项目压缩包导出/导入（字幕+置信度+操作日志，不含视频/音频本体；fork） |
+| `repair-words.js` | 逐词字幕自愈（导入/载入时修复被写坏的逐词文本；fork） |
+| `danmaku.js` / `hotwords.js` / `reflect.js` / `speech-gap.js` | 备注弹幕 / 热词挖掘 / 长稿反思纠错 / 波形漏字幕检测（fork） |
 
 ---
 
@@ -173,7 +173,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `video/` | 下载产物 |
 
 全局 / 本机（**全部不入库**，见 `.gitignore`）：`asr/settings.json`（含**密文**敏感值）、`asr/models/`、
-`asr/whisper.cpp/`、`asr/ytdlp/`、`asr/runtime-python/`（内置 Python）、`editor/vendor/`（libass，约 19MB）。
+`asr/whisper.cpp/`（whisper 运行时）、`asr/crispasr/`（CrispASR 运行时，Parakeet Vulkan 通用版用）、`asr/ytdlp/`、`asr/runtime-python/`（内置 Python）、`editor/vendor/`（libass，约 19MB）。
 
 **敏感数据**（bilibili Cookie / LLM API Key）统一走 `editor/secret-store.js`：Windows DPAPI 密文落盘
 （不可用时降级 AES，解密值仅存内存）。**新敏感字段必须走它**：不进命令行参数、不进日志、不回传前端；
@@ -184,7 +184,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 ## 6. 核心机制备忘（改相关代码前先读）
 
 - **逐词高亮**：不用 `\k`。中文整句一条事件；英文按词切多条事件，当前词用行内色标
-  `{\c&H..&}word{\c}` 标记。配对与时间映射全在 `karaoke.js`；格式设计见 `KARAOKE_DESIGN.md`。
+  `{\c&H..&}word{\c}` 标记。配对与时间映射全在 `karaoke.js`；格式设计见 `docs/KARAOKE_DESIGN.md`。
 - **`\k` 是另一条线**（`editor/k-line.js`）：初稿生成用 `\k` 行文本（每词亮到下一词起点）。
   生成端与编辑器端"同一格式、两个场景"，改动要两边对齐。
 - **就地编辑（`segment.js`）只做最小替换**：把被点中的那一段换成新文本，
@@ -218,10 +218,11 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 | 测试 | 覆盖 | 备注 |
 | --- | --- | --- |
-| `tests/karaoke-exhaustive.mjs` | 逐词高亮全链路（28183 断言） | 也负责同步 `tests/jsmod` 镜像 |
+| `tests/karaoke-exhaustive.mjs` | 逐词高亮全链路（28183 断言） | 也负责同步 `tests/jsmod` 镜像；报 `fixture.ass` ENOENT 时先跑 `node tests/gen-fixture.mjs`（夹具是生成物，`*.ass` 不入库） |
 | `tests/cue-segment-test.mjs` | 就地编辑分段 / 最小替换 | 17 项 |
 | `tests/secret-store-test.mjs` | 密文往返 / 篡改检测 | 17 项 |
 | `tests/audio-chunk-test.mjs` | 分片纯函数（静音解析 / 切点 / 合并） | 38 项 |
+| `tests/overlay-test.mjs` | SRT 叠加层活动 cue 检索（重叠/嵌套不漏显示，钉死 `_maxEnd` 回归） | 11 项，直接可跑 |
 | `tests/colorfix-test.mjs` | 颜色修复 | **需要真实用户项目**，新克隆必失败（非缺陷） |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
 | `tools/http_layer_probe.mjs` | HTTP 层 47 项（守卫 / 形状 / 设置往返 / 项目全生命周期 / **占用中删除重试**） | **自带服务启停**，直接 `node tools/http_layer_probe.mjs` |
@@ -230,6 +231,14 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `tools/videoedit_probe.mjs` 等 | 视频区就地编辑（CDP 真机） | 需 `editor/vendor/`（先 fetch-vendor） |
 | `tools/videoedit_live_check.mjs` | 有头窗口真机验收 | 同上 |
 | `tests/fetch-format-test.py` | 下载内核站点 / 档位 / Cookie | 用 Python 3.8+ 跑 |
+| fork 并入的测试 | 置信度 / 分段导入 / 区域导入 / 压缩包 / 备注弹幕 / 热词 / 反思纠错 / 自愈 等（`tests/*-test.mjs`） | 多为纯函数直测 |
+
+> ✅ **`tests/jsmod/` 镜像自举（2026-10-10 修复）**：两族自举（上游族源 `editor/js/`、fork 族源 `editor/`）+ `ensureJsmod()`
+> 现在**只按内容比对补齐/更新本族文件，绝不清空目录**（旧实现 `rmSync` 清空会顺手删掉另一族的文件，
+> 导致"哪个测试先跑"决定别的测试能不能过）。跑完测试镜像恒等于源，**无需再 `git checkout` 恢复**；
+> 改过源码后跑一次测试即自动同步镜像，**镜像要与源码一起提交**。
+> `reload-pipeline-test.mjs` 需要 fork 作者机器上的私有基线（未入库），缺失时**自动跳过**（正常，非跳过即异常）。
+> `colorfix-test.mjs` 需要真实用户项目 `projects/p-mugzcab2-09f7z/`，新克隆必然失败（既有基线，非缺陷）。
 
 ---
 
@@ -239,7 +248,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   否 → 归到对应 `handleXxxRoutes` 段内的 if 链（保持段内书写顺序，段末已有 404 兜底）。
 - **加一个前端弹层**：`[hidden]` 切 display + `:not([hidden]){animation:pop-in}` + JS 设 `--pop-ox/oy`（用 `popOrigin`）。
 - **改 UI 文案**：编辑 `editor/lang/zh-CN.json` 的值即可（键=原文）。
-- **改 ASS / 逐词相关**：先读 `KARAOKE_DESIGN.md`、`KARAOKE_REFS.md`、`karaoke.js` 与 `postprocess.js` 头注释。
+- **改 ASS / 逐词相关**：先读 `docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`、`karaoke.js` 与 `postprocess.js` 头注释。
 - **改下载内核**：`asr/fetch/`，先读 `asr/fetch/README.md`；站点判定必须**严格 hostname**（子串判站是历史漏洞）。
 - **改敏感字段**：走 `secret-store.js`；涉及 Cookie 的临时明文文件用完即删。
 - **排查"卡在运行中"**：找对应任务容器（`draftJobs` / `rerecogJobs` / 下载看门狗）与异常收尾路径；
@@ -256,11 +265,38 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **`secret-store` 不可用时降级 AES**：DPAPI 被策略拦截（如 powershell 不可用）时的有意取舍。
 - **`timeline.js` 的 `isPlay` / `textColor` 两个"死变量"**：为"播放头高亮"预留，别删。
 - **`detectSilences` 包装里显式传 `undefined`**：透传默认超时，别"顺手清理"。
+- **路由段末的 404 JSON**：`/api/*` 前缀命中但 method/路径不匹配时，由段函数回 `{error:'not found'}`（旧单体实现落到静态回落回 text）——
+  状态码同为 404，JSON 对 API 调用方更可用；`route_smoke` 里 `/api/diag` GET 的 404 body 是唯一可见差异（有意保留）。
 
 ---
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **第二轮全面审查 + 修复（2026-10-10）**：审查报告在 `docs/CODE_REVIEW_2026-10-10.md`（10 高危/30+ 中危/分阶段计划）。本轮已修全部高危 + 安全资源类中危，共 24 处：
+  - **server.js**：① autopost 失败兜底的 `stamp()` 是未定义符号（函数内局部 const）→ 改 `apStamp()`，此前该路径一失败就 ReferenceError 吞日志；② `probeDuration`/`buildPeaks` 补 settle 护栏接线（error+close 双触发曾致 `/api/peaks` 双响应崩溃与 `makeWaveform` 无限递归 spawn）；③ **批量重识别空区间**改为按"跳过"处理（`regionDone+1` + warning），此前每段空转等满 30 分钟；④ `startRerecognize` 的 `cleanup` 提到 try 外，失败/空区间路径也清 %TEMP% 切片（~45MB/次）；⑤ **Cookie 写 Netscape 文件失败改为终止任务**（删除 `--cookies <明文>` 的 argv 兜底 —— 明文进程列表可读，宁报错不泄密）；⑥ probe 用 cookie 改 `mkdtemp` 随机目录 + finally 整目录删除；⑦ `fetchPyPromise` 否定结果不再缓存（装好 Python 后无需重启）；⑧ `realignJobs` 完成/失败 10 分钟老化（照抄 rerecognize 套路，内存不再只增不减）；⑨ `rerecognize` POST 互斥改 `jobStillRunning`（与 reidentify 同口径，卡死任务不再挡按钮）。
+  - **前端**：`project.js` 打开项目检查字幕 `r.ok`（**此前 500 的错误页会被当字幕解析并污染 lastSavedText，编辑即把坏内容写回 subtitle.ass**）；`refreshDualRatio` 自取 `/api/asr/status`（原来读不存在的 `state.asrStatus`，双引擎分工行永久隐藏）；`timeline.js` 刻度 `/\.0\$/` → `/\.0$/`；`overlay.js` setCues 预计算前缀 `_maxEnd` 修重叠 cue 漏显示（与 timeline 同款防御）；`main.js` rim 解析统计 `console.log` → `debug`。
+  - **asr-service.js**：worker ready 前崩溃立即 reject 全部 `readyWaiters`（原来干等 180s）；`waitReady` 的 waiter 补 reject；识别失败路径也布置空闲回收（worker 不再永驻）。
+  - **Python**：`asr_npu.py` 复用 `asr.frame_energies`（refine_word_ends 曾复制旧版全量广播索引，1 小时音频 ~0.9GB —— **合并丢修复的 OOM 回归**）+ `log_mel` 分块；`asr_dual.py` `run_engine` 加 Timer 看门狗（加载 120s + 音频×10，至少 300s）；`asr_perf.py` 子进程 timeout + emit 补 UTF-8 reconfigure/try；`asr.py` 单文件模式 `--out` 缺失校验与热词临时文件清理未做（留在审查报告阶段 2）。
+  - **新增 `tests/overlay-test.mjs`**（11 断言，O1 用例钉死重叠漏显示回归）；`tests/fixture.ass` 是**生成物**（`node tests/gen-fixture.mjs`），缺失导致 karaoke-exhaustive 报 ENOENT 时先跑它。
+  - 验证：6 文件 `node --check` + 3 文件 `py_compile` + karaoke-exhaustive 28183 断言 + http_layer_probe 23 项（ffmpeg 生命周期用例因探针硬编码 D: 路径在本机跳过，先验问题）+ route_smoke 24 路由 + overlay-test 11 断言，全绿。
+- **Parakeet-Vulkan 引擎（CrispASR，2026-10-10）**：新增本地引擎 `crispasr`（ggml；CrispASR v0.8.42 Windows Vulkan 包，
+  含 ggml-vulkan.dll；MIT）。模型「Parakeet TDT 0.6B v2（英语·Vulkan 通用）」= `cstr/parakeet-tdt-0.6b-v2-GGUF` q4_k
+  （实测 379MB / sha256 287f8a46…）。**不需要 Python、不需要 N 卡**：A 卡/Intel 核显/N 卡通吃，无 Vulkan 时自动
+  `--no-gpu` 退 CPU（这是与 whisper.cpp "必须 GPU" 的刻意差异）。识别链镜像 whisper.cpp：`runCrispAsr` 用
+  `-ojf` 取 words[].offsets（ms）+ 同款分句规则；运行时下载走抽出来的通用 `startRuntimeDownload`（key=`runtime:crispasr`）。
+  本机实测：i5-12400 + RX550/UHD730 双 Vulkan 设备，11.6s 音频 2.7s 跑完（6.6x 实时）；端到端建初稿一次通过。
+- **文档整理（2026-10-10）**：根目录只留 `README.md` + `PROJECT_MAP.md`（入口与地图），历史/设计文档归入 `docs/`
+  （KARAOKE 设计/调研、第一轮审查记录、双引擎实测结论）；删除已完成文档 `CODE_REVIEW_2026-10-08.md`
+  （第二轮审查，内容在 git 历史 `git show 2a6dd23:CODE_REVIEW_2026-10-08.md`；曾被 PR 合并复活，再次删除）与
+  `UPSTREAM_MERGE_STATUS.md`（2.1.13 合并状态记录，要点已并入本章与 `editor/README.md` 更新日志）。
+- **路由重构恢复 + 测试基建修复（2026-10-10）**：`handleRequest` 拆回"薄分发器 + 7 段函数 + `API_SECTIONS`"
+  （f8be06a 的做法在合并树上重做；行多重集 + AST 路由字面量对照 + `http_layer_probe`/`route_smoke` 新旧对照
+  证明行为等价 —— 唯一差异：`/api/*` 前缀命中但 method 不匹配的 404 由 text 变 JSON，同码同义）；
+  `tests/jsmod` 自举 16 处改为"按需补齐 + 内容比对"、不再清空互删；log-panel 测试改为断言"模块级同域"；
+  `postprocess.js` 重删 fork 带回的死代码 `has`；server.js 清掉区域里重复的 `LlmError` 声明（模块作用域已有一份）。
+- **perf 死代码清理（2026-10-10）**：`/api/asr/perf/*` 在合并后有**成对重复**路由（第一组先命中，
+  第二组 state/apply/start 实际不可达，仅 auto-audio 独立可用）——已删除第二组死副本（与活块逐字相同，
+  净删 85 行），保留 auto-audio；7 条请求新旧逐字节一致 + `route_smoke`/`http_layer_probe` 双端一致。
 - 安全加固：`safeJoin` 边界、Host/Origin 守卫、`/api/media` 白名单、`secret-store` 密文。
 - 大拆分：`handleRequest` 3038 行 → 薄分发器 + 7 段函数（行为逐字等价，行多重集对照证明过）。
 - **二次加固（2026-10-09）**：`safeDraftStep` 收 async reject、下载看门狗、重识别卡死自愈、
@@ -269,6 +305,10 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **删除项目加固（2026-10-09）**：`projProcs` 登记项目内长任务，删除项目前先杀（`taskkill /T` 连孙进程）
   → 带重试删除 + `project.json` 最后删。修复用户报障"下载中删项目 → 500 失败、目录残留"
   （已用真实下载端到端复现与验证）。
+- **并入 PR #1（2026-10-10，提交 af04b08/0446ce2）**：接受 R2FtYml0 的 fork 全部功能，并**恢复被其合并
+  丢失的上游内容**——\k 卡拉OK全套（karaoke.js/main.js/project.js/index.html/server.js）、视频区就地编辑
+  接线（main.js/index.html/css/modal）、2.2.1 全部加固（projProcs/看门狗/自愈/SIGINT/流式字幕保存/前端
+  守卫/Python 修复等）。教训：**fork 类大 PR 不能只看"mergeable"，必须逐文件核对"上游内容有没有被合并回退"**。
 - UI 动效批；视频区就地编辑；`\k` 初稿线。
 
 ---

@@ -60,6 +60,7 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 打开项目后 可以一边播放视频一边校对字幕
 
 - 实时预览：在视频画面上查看 ASS 特效或 SRT 字幕效果
+- 视频区就地编辑：在画面上**双击**某条字幕即弹出小输入框 只改你点中的那一段（按空格分片段） 打字时画面实时跟着变 `Enter` 保存 / `Esc` 取消 / 点框外取消 中文行会保留行首角色标签与行内变色标签 右键字幕可整行改文本（不改时间与样式）
 - 字幕列表：查看中英双行 只看中文或只看英文 搜索 筛选并编辑字幕文本
 - 时间轴：按时间查看字幕块 拖动字幕或词级边界来调整时间 支持缩放和平移
 - 逐词字幕：英文逐词事件会在列表中合并显示为整句 编辑器仍保留词级时间映射 修改句子后会按原词时长重新分配词级时间并刷新预览
@@ -122,6 +123,7 @@ node editor/server.js
 | 模型 | 硬件要求 |
 | --- | --- |
 | Parakeet TDT 0.6B v2 | NVIDIA 显卡加速（sherpa-onnx / CUDA） |
+| Parakeet TDT 0.6B v2（Vulkan 通用） | Vulkan 加速（CrispASR/ggml）：A 卡 / Intel 核显 / N 卡都能用，**无 N 卡也能跑**；不需要 Python，没有 Vulkan 驱动时自动退 CPU |
 | Parakeet TDT 0.6B v2（Intel NPU） | Intel NPU 加速（OpenVINO）：编码器跑 NPU、预测/联合网络跑核显，**无 N 卡可用** |
 | Whisper large-v3-turbo | Vulkan 加速 这意味着只要支持 Vulkan 的显卡均可加速 |
 | Multitalker Parakeet Streaming 0.6B v1 | NVIDIA 显卡加速（但它仅用于重新识别） |

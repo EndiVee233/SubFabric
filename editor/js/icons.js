@@ -30,6 +30,10 @@ const P = {
   sliders: '<path d="M5 7h14M5 12h14M5 17h14"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/>',
   globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.4 2.4 3.6 5.3 3.6 8.5S14.4 18.1 12 20.5c-2.4-2.4-3.6-5.3-3.6-8.5S9.6 5.9 12 3.5z"/>',
   mic: '<rect x="9" y="3" width="6" height="10" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3M9 21h6"/>',
+  /* 音乐: 时间轴右键「切换为 \k 卡拉OK」菜单项用了 data-ico="music"。
+   * ⚠ 这套图标里以前**没有** music，ico() 对未知名字返回空串 → 那行菜单前一直空着
+   *   （与 wand 同一类"菜单写了图标但图标集缺定义"的问题）。 */
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
   palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.4 0 2-.9 2-1.8s-.6-1.7-.6-2.6c0-1 .8-1.8 1.9-1.8h1.4a3.8 3.8 0 0 0 3.8-3.8c0-3.9-3.8-7-8.5-7z"/><circle cx="8" cy="10" r="1.2"/><circle cx="12" cy="8" r="1.2"/><circle cx="15.8" cy="10.4" r="1.2"/>',
   activity: '<path d="M3.5 12.5h4l2-6 3.5 11 2.5-7 1.5 2h3.5"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',

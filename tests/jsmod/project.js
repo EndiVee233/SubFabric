@@ -88,6 +88,7 @@ export function initProjects(ctx) {
    * 「自动区分说话人」是项目级参数：新建时选定，详细信息里只读回显。 */
   const ENGINE_LABEL = {
     'whisper.cpp': '本地 · whisper.cpp',
+    'crispasr': '本地 · Parakeet（Vulkan）',
     'sherpa-onnx': '本地 · Parakeet',
     nemo: '本地 · NeMo（多说话人）',
     bcut: '云端 · 必剪 ASR',
@@ -576,11 +577,16 @@ export function initProjects(ctx) {
   if (regenBtn) regenBtn.addEventListener('click', regenAudio);
 
   /* ─────────── 打开项目 ─────────── */
+  // openProject 竞态守卫代次: applyHash 快速切换项目(A→B)会并发进入, 每次进入自增;
+  // 旧的响应晚回来时代次不符 → 直接丢弃, 避免旧数据覆盖新项目状态。
+  let _openGen = 0;
   async function openProject(pid) {
+    const gen = ++_openGen;
     let m;
     try {
       const r = await fetch('/api/projects/' + pid);
       m = await r.json();
+      if (gen !== _openGen) return;
       if (!r.ok || m.error) throw new Error(m.error || 'HTTP ' + r.status);
     } catch (e) {
       toast('项目加载失败: ' + e.message, 3600);
@@ -594,9 +600,18 @@ export function initProjects(ctx) {
 
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
-      const text = await (await fetch(`/api/projects/${pid}/subtitle`)).text();
-      lastSavedText = text;
-      routeSub(text, (m.subtitle && m.subtitle.name) || (m.subtitle && m.subtitle.file) || 'subtitle.ass');
+      // ⚠ 必须检查 r.ok: 服务端 500/404 时响应体是 HTML/JSON 错误页, 不挡的话会被
+      // 当字幕解析成空/坏文档, 且 lastSavedText 被污染 —— 用户随后任何一次编辑触发
+      // saveNow() 都会把坏内容 PUT 回写 subtitle.ass, 覆盖权威字幕文件(数据丢失)。
+      const r = await fetch(`/api/projects/${pid}/subtitle`);
+      if (gen !== _openGen) return;
+      if (!r.ok) { toast(`项目字幕读取失败（HTTP ${r.status}）`, 3600); }
+      else {
+        const text = await r.text();
+        if (gen !== _openGen) return;
+        lastSavedText = text;
+        routeSub(text, (m.subtitle && m.subtitle.name) || (m.subtitle && m.subtitle.file) || 'subtitle.ass');
+      }
     } catch {
       toast('项目字幕读取失败', 3600);
     }
@@ -1620,8 +1635,14 @@ async function refreshDualRatio() {
   if (!row || !sel) return;
   try {
     const s = await (await fetch('/api/asr/dual')).json();
-    const anyDual = state.asrStatus && (state.asrStatus.models || [])
-      .some((m) => m.engine === 'dual' && m.ready);
+    // ⚠ 这里原来读 state.asrStatus —— main.js 的 state 根本没有这个字段（恒 undefined）,
+    // anyDual 恒为 false, 双引擎分工行永久隐藏, initDualRatio 整套交互不可达。
+    // 设置页的模型面板(renderAsrModels)自己拉 /api/asr/status, 不会同步回本模块的
+    // asrStatus 局部变量, 所以这里干脆自取一份（调用频率低: 仅设置页交互触发）。
+    let st = null;
+    try { st = await (await fetch('/api/asr/status')).json(); } catch {}
+    const anyDual = !!(st && (st.models || [])
+      .some((m) => m.engine === 'dual' && m.ready));
     // 只有当机器上确实存在可用的双引擎模型时才显示这一行 —— 否则是噪音
     row.hidden = !anyDual;
     if (!anyDual) return;
@@ -1688,7 +1709,7 @@ async function renderAsrModels() {
     const dlOf = (key) => dlMap[key] || {};
     // 注: 下面各模型的下载状态提示都是就地手写的(见 pyState / state / nemoState 等),
     // 没有走统一模板 —— 各自要拼的按钮和文案差别太大, 抽象反而更绕。
-    // Python 环境(Parakeet 需要; whisper.cpp 不需要): 预检状态 + 一键安装
+    // Python 环境(Parakeet 需要; whisper.cpp 与 Vulkan 版 Parakeet/CrispASR 不需要): 预检状态 + 一键安装
     // pythonProbe 现在按引擎分键（{sherpa, openvino}）—— 直接读 .ok 会得到 undefined，
     // 于是把好环境误判成"不可用"（实测踩过）。这里挑**当前所选模型**对应的那一项；
     // 旧版扁平形状（{ok,msg}）仍然兼容。
@@ -1722,7 +1743,7 @@ async function renderAsrModels() {
     }
     let rows = `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">Python 环境</span></div>
-      <div class="sm-desc">Parakeet 识别要 Python 和 sherpa-onnx，还得有 N 卡（CUDA）。说话人分离只要基础 Python，没有 N 卡也能用；whisper.cpp 不需要 Python。点「安装」会装好 Python 和依赖，有 N 卡时一并换成 CUDA 版。不写注册表，删掉 asr\\runtime-python 目录就算卸载</div>
+      <div class="sm-desc">Parakeet 识别要 Python 和 sherpa-onnx，还得有 N 卡（CUDA）。说话人分离只要基础 Python，没有 N 卡也能用；whisper.cpp 与 Vulkan 版 Parakeet（CrispASR）都不需要 Python。点「安装」会装好 Python 和依赖，有 N 卡时一并换成 CUDA 版。不写注册表，删掉 asr\\runtime-python 目录就算卸载</div>
       ${pyState}
       <div class="sm-desc" style="margin-top:6px">当前解释器：<code>${esc(pyExe || '(未定)')}</code>
         <button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button>
@@ -1731,10 +1752,10 @@ async function renderAsrModels() {
       <div class="sm-desc">如果另一份安装里已经装好了 torch + NeMo，用上面「指定其他 Python…」指过去即可，不必重下几 GB</div>
       <div class="sm-pymsg" style="font-size:12px;margin-top:4px"></div>
     </div>`;
-    // 各任务 key: model:<id> / runtime / diarize
+    // 各任务 key: model:<id> / runtime / runtime:crispasr / diarize（运行时按 runtimeKey 取，服务端给）
     rows += (d.models || []).map((m) => {
       const st = dlOf('model:' + m.id);
-      const rtSt = m.needRuntime ? dlOf('runtime') : {};
+      const rtSt = m.needRuntime ? dlOf(m.runtimeKey || 'runtime') : {};
       const dlThis = st.running || (m.needRuntime && rtSt.running);
       /* 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户。
        * ⚠ `d.gpu` 为空还有第三种可能：**后台探测还没跑完**（服务端已改成等探测完再回，
@@ -1764,7 +1785,7 @@ async function renderAsrModels() {
       else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
       else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
       else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? '<div class="sm-runtime">需要 whisper.cpp 运行时（约 18MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>' : '';
+      const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>` : '';
       return `<div class="sm-model">
         <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
         <div class="sm-desc">${esc(m.desc || '')}</div>
@@ -1924,40 +1945,59 @@ async function renderAsrModels() {
           renderAsrModels();
         });
     }));
-    // whisper.cpp 运行时: 需要 ggml 模型但运行时缺失时自动开始下载(与其它下载并行, 不互斥)
+    // 引擎运行时(whisper.cpp / CrispASR): 需要 ggml 模型但运行时缺失时自动开始下载(与其它下载并行, 不互斥)。
+    // 运行时可能有多个 —— 按服务端给的 runtimeKey 逐个补（各自独立下载任务, 互不阻塞）。
     const note = $('#st-model-note');
-    const needRt = (d.models || []).some(m => m.needRuntime);
-    if (needRt && !dlOf('runtime').running) {
+    const rtKeys = [...new Set((d.models || []).filter(m => m.needRuntime).map(m => m.runtimeKey || 'runtime'))];
+    let rtStarted = false;
+    for (const key of rtKeys) {
+      if (dlOf(key).running) continue;                       // 已在下载: 交给既有轮询
       const r = await (await fetch('/api/asr/download', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'runtime' })
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: key })
       })).json().catch(() => ({}));
       if (r.started) {
-        note.textContent = '正在下载 whisper.cpp 运行时…';
-        pollModelDownload();
+        const mm = (d.models || []).find(x => (x.runtimeKey || 'runtime') === key);
+        note.textContent = '正在下载 ' + ((mm && mm.runtimeName) || key) + ' 运行时…';
+        rtStarted = true;
       }
-    } else if (note) note.textContent = '';
-  }
-  async function pollModelDownload() {
-    for (let i = 0; i < 900; i++) {
-      let d;
-      try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
-      const anyRunning = (d.downloads || []).some(x => x.running);
-      renderAsrModels();
-      if (!anyRunning) break;
-      await new Promise(r => setTimeout(r, 1000));
     }
+    if (rtStarted) pollModelDownload();
+    else if (note && !rtKeys.length) note.textContent = '';
+  }
+  // 下载轮询闸门: 多个下载/安装入口都会调用 pollModelDownload, 不加闸门会叠加多个
+  // 900 次循环、每秒重复 renderAsrModels。同一时刻只允许一个轮询在跑。
+  let _modelPolling = false;
+  async function pollModelDownload() {
+    if (_modelPolling) return;
+    _modelPolling = true;
+    try {
+      for (let i = 0; i < 900; i++) {
+        let d;
+        try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
+        const anyRunning = (d.downloads || []).some(x => x.running);
+        renderAsrModels();
+        if (!anyRunning) break;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    } finally { _modelPolling = false; }
   }
   async function downloadModel(id) {
     // 点下载立刻有反馈(按钮变「排队…」), 再发请求 —— 旧版静默发请求, 服务端忙时用户以为没点上
     const body = id === 'diarize' ? { kind: 'diarize' } : { modelId: id };
     const btn = document.querySelector('.sm-dl[data-id="' + id + '"]');
     if (btn) { btn.disabled = true; btn.textContent = '开始…'; }
-    const r = await fetch('/api/asr/download', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-    });
-    const m = await r.json().catch(() => ({}));
-    if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
-    pollModelDownload();
+    try {
+      const r = await fetch('/api/asr/download', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const m = await r.json().catch(() => ({}));
+      if (!r.ok && m.error) { toast(m.error, 5000); if (btn) { btn.disabled = false; btn.textContent = '下载'; } return; }
+      pollModelDownload();
+    } catch (e) {
+      // fetch reject(服务中断): 恢复按钮以便重试, 并提示失败原因(成功路径不在此处理)
+      if (btn) { btn.disabled = false; btn.textContent = '下载'; }
+      toast('下载失败：' + (e && e.message ? e.message : e));
+    }
   }
   /** 模型下载位置(设置面板): 指定目录 + 打开目录 */
   async function bindModelDirSettings() {
@@ -2568,6 +2608,8 @@ async function renderAsrModels() {
     $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
     $('#np-row-part').hidden = !draft;     // 分P 跟着链接走
     $('#np-row-word').hidden = !draft;
+    $('#np-row-kstyle').hidden = !draft || !$('#np-word').checked;   // 跟着「逐词」开关走
+    if (draft) npSyncKStyle();
     $('#np-row-conf').hidden = !draft;
     $('#np-row-spk').hidden = !draft;
     // 切进初稿模式时，把开关同步成**全局默认**（用户没动过就跟随；动过则以他刚选的为准）。
@@ -2614,7 +2656,7 @@ async function renderAsrModels() {
       return asrStatus.pythonProbeFlat || null;                  // 服务端按当前引擎挑好的
     })();
     if (hint && probeForUi && !probeForUi.ok) {
-      hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp 和「必剪 ASR」云端识别都不需要 Python';
+      hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp、Vulkan 版 Parakeet（CrispASR）和「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
     }
     npMaybeEnable();
@@ -2628,6 +2670,8 @@ async function renderAsrModels() {
     $('#np-name').value = '';
     $('#np-word').checked = true;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
+    const kSel = $('#np-kstyle');
+    if (kSel) { delete kSel.dataset.touched; npSyncKStyle(); }   // 逐词样式回到记住的选择
     $('#np-speakers').checked = false;
     $('#np-spk-count').value = '';
     $('#np-part').value = '1';
@@ -2710,9 +2754,26 @@ async function renderAsrModels() {
     root.classList.toggle('disabled', !wordOn);
     root.title = wordOn ? '' : 'SRT 模式没有角色（说话人）概念，需要开启逐词（生成 ASS）才能区分说话人';
   }
+  /** 逐词样式（颜色高亮 / \k 卡拉OK）：记住上次选择（main.js 的设置面板用同一组 localStorage 键）。
+   *  \kf 扫过 / 未唱默认色属于"打开稿件后"的设置（设置面板），这里只带默认值过去。 */
+  function npSyncKStyle() {
+    const sel = $('#np-kstyle');
+    if (!sel) return;
+    if (!sel.dataset.touched) {
+      let saved = '';
+      try { saved = localStorage.getItem('sf-k-style') || ''; } catch (e) {}
+      if (saved === 'k' || saved === 'color') sel.value = saved;   // 默认 color = 升级前行为
+    }
+  }
+  $('#np-kstyle') && $('#np-kstyle').addEventListener('change', () => {
+    const sel = $('#np-kstyle');
+    sel.dataset.touched = '1';
+    try { localStorage.setItem('sf-k-style', sel.value); } catch (e) {}
+  });
   $('#np-word').addEventListener('change', () => {
     $('#np-word-desc').textContent = $('#np-word').checked
       ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
+    $('#np-row-kstyle').hidden = !$('#np-word').checked;
     npSyncSpeakers();
   });
   const npSpk = $('#np-speakers');
@@ -2979,6 +3040,16 @@ async function renderAsrModels() {
           autoPost: !!($('#np-autopost') && $('#np-autopost').checked),
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
+        // 逐词样式与"本地视频初稿"同款(见下方 payload 的注释)
+        if (payload0.wordLevel) {
+          payload0.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
+          if (payload0.karaokeStyle === 'k') {
+            let sweep = '', base = '';
+            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
+            payload0.karaokeSweep = sweep === '1';
+            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload0.karaokeBase = base;
+          }
+        }
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
         const m0 = await r0.json();
@@ -3067,6 +3138,16 @@ async function renderAsrModels() {
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
+        // 逐词样式: 颜色高亮(默认) / \k 卡拉OK。扫过(\kf)与未唱默认色跟随设置面板记住的偏好。
+        if (payload.wordLevel) {
+          payload.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
+          if (payload.karaokeStyle === 'k') {
+            let sweep = '', base = '';
+            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
+            payload.karaokeSweep = sweep === '1';
+            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload.karaokeBase = base;
+          }
+        }
         // 逐句置信度档位（off/fast/full）：显式发给服务端，存进 project.json 的
         // draft.confidence。这是个**项目级**选择 —— 建稿时定了，重新识别也沿用。
         payload.confidence = ($('#np-confidence') || {}).value || 'full';

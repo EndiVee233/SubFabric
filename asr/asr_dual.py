@@ -190,13 +190,41 @@ def run_engine(name, script, model, extra, python_exe, slices, tmpdir, out_path)
     t0 = time.time()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, encoding="utf-8", errors="replace", bufsize=1)
-    for line in proc.stdout:                 # 把子进程日志透传出去（进度条靠它）
-        line = line.rstrip()
-        if line:
-            sys.stderr.write(line + "\n")
-            sys.stderr.flush()
-    proc.wait()
+    # 看门狗（红线: 后台任务必须有超时）: NPU 编译 / CUDA 原生层挂死是本项目注释里
+    # 反复出现的故障形态 —— 没有超时的话, 编排进程会永久卡在下面的管道读取循环上
+    # 变成僵尸。预算 = 模型加载 120s + 音频时长×10（正常远快于实时, 10 倍已很宽松）,
+    # 至少 300s。用 Timer 线程杀进程: 读取循环阻塞在管道上时只有 kill 能解救它。
+    total_audio = 0.0
+    for s in slices:
+        try:
+            total_audio += max(0.0, float(s.get("end", 0)) - float(s.get("start", 0)))
+        except Exception:
+            pass
+    budget = max(300.0, 120.0 + total_audio * 10.0)
+    killed = {"flag": False}
+
+    def _watchdog():
+        killed["flag"] = True
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    watchdog = threading.Timer(budget, _watchdog)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        for line in proc.stdout:                 # 把子进程日志透传出去（进度条靠它）
+            line = line.rstrip()
+            if line:
+                sys.stderr.write(line + "\n")
+                sys.stderr.flush()
+        proc.wait()
+    finally:
+        watchdog.cancel()
     dt = time.time() - t0
+    if killed["flag"]:
+        raise RuntimeError(f"{name} 引擎超过 {int(budget)}s 没跑完（疑似 NPU/CUDA 原生层挂死），已强制终止")
     if proc.returncode != 0:
         raise RuntimeError(f"{name} 引擎退出码 {proc.returncode}")
     with open(out_path, encoding="utf-8") as fh:
