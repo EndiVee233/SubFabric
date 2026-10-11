@@ -70,7 +70,8 @@ export function parseTimeAss(str) {
 }
 
 export function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /** 记录"弹出层是从哪里长出来的"：把触发点(点击坐标)换算成框内百分比，写进 --pop-ox/--pop-oy，
