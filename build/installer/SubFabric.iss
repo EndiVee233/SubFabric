@@ -18,7 +18,7 @@
 ;       例外：整代功能合并经确认可跳小版本 —— 2.3.0 即"并入 R2FtYml0 fork 全部功能"（2026-10-10）。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "2.3.0"
+#define MyAppVersion "2.4.0"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
