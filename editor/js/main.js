@@ -5025,7 +5025,7 @@ const realignEls = {
   overlay: document.getElementById('realign-overlay'),
   msg: document.getElementById('realign-msg'),
   conf: document.getElementById('realign-conf'),
-  confVal: document.getElementById('realign-conf-val'),
+  confThr: document.getElementById('realign-conf-thr'),
   confNote: document.getElementById('realign-conf-note'),
   summary: document.getElementById('realign-summary'),
   allWrap: document.getElementById('realign-all-wrap'),
@@ -5039,6 +5039,9 @@ const realignEls = {
 };
 let realignData = null;          // { items, threshold, total, usable }
 let realignPicked = new Set();   // 勾选的 items 下标
+/* 用户**手动取消勾选**过的达标项 —— 改门槛重判时不要把它们的勾自动加回来。
+ * 每次开新一轮重校对会清空。 */
+let realignUnpicked = new Set();
 let realignRunning = false;
 let realignPollTimer = 0;
 
@@ -5139,23 +5142,65 @@ function showRealignResult(job) {
   realignData = { items, threshold: job.threshold || 0.7, total: job.total || items.length, usable: job.usable || 0 };
   // 默认只勾选**达标**的（不达标的本来就 disabled）
   realignPicked = new Set(items.map((it, k) => (it.ok ? k : -1)).filter(k => k >= 0));
-  const thr = Math.round((realignData.threshold || 0) * 100);
+  realignUnpicked = new Set();
   if (realignEls.conf) realignEls.conf.hidden = false;
-  if (realignEls.confVal) realignEls.confVal.textContent = `≥ ${thr}%`;
-  if (realignEls.confNote) {
-    realignEls.confNote.textContent = `低于这个分数的句子**原样保留**（可在「全局设置 → 重排逐词时间」里改）`;
-  }
-  if (realignEls.summary) {
-    realignEls.summary.hidden = false;
-    realignEls.summary.textContent = `共 ${realignData.total} 句：` +
-      `${realignData.usable} 句达标（会重排逐词时间）、${realignData.total - realignData.usable} 句未达标（保留原样）`;
-  }
+  if (realignEls.confThr) realignEls.confThr.value = String(Math.round((realignData.threshold || 0) * 100));
+  refreshRealignThresholdUI();
   if (realignEls.allWrap) realignEls.allWrap.hidden = false;
   if (realignEls.allNote) realignEls.allNote.textContent = '只改逐词时间戳，文本与整句时间不动';
   if (realignEls.list) realignEls.list.hidden = false;
   if (realignEls.msg) realignEls.msg.textContent = '校对完成，确认后应用（未达标的不可勾选）';
   renderRealignList();
   syncRealignApply();
+}
+
+/** 面板里的门槛输入 → 立即**原地重判**达标与否（不重跑识别）。
+ *  每个 item 都带服务端算好的 confidence，所以换个门槛只要重比一次大小。
+ *
+ *  选中集的维护：**本轮新达标的句子自动勾上**；原本达标、用户手动取消过的仍保持取消
+ *  （用 unpicked 记着）；掉出门槛的一律剔除，否则会带着"低于门槛"的结果被应用。 */
+function applyRealignThreshold(percent) {
+  if (!realignData) return;
+  const p = Math.max(30, Math.min(100, Math.round(Number(percent) || 70)));
+  realignData.threshold = p / 100;
+  const items = realignData.items || [];
+  let usable = 0;
+  items.forEach((it) => {
+    it.ok = (Number(it.confidence) || 0) >= realignData.threshold;
+    if (it.ok) usable++;
+  });
+  realignData.usable = usable;
+  const next = new Set();
+  items.forEach((it, k) => {
+    if (!it.ok) return;
+    if (realignUnpicked.has(k)) return;      // 用户手动取消过 → 不自动勾回
+    next.add(k);
+  });
+  realignPicked = next;
+  if (realignEls.all) {
+    realignEls.all.checked = usable > 0 && next.size === usable;
+  }
+  refreshRealignThresholdUI();
+  renderRealignList();
+  syncRealignApply();
+}
+
+/** 刷新门槛那一行的提示与统计（不含重判） */
+function refreshRealignThresholdUI() {
+  if (!realignData) return;
+  const thr = Math.round((realignData.threshold || 0) * 100);
+  if (realignEls.confThr && String(realignEls.confThr.value) !== String(thr)) realignEls.confThr.value = String(thr);
+  if (realignEls.confNote) {
+    /* 这里用 textContent（不是 innerHTML），所以文案里**不能写 markdown 的 `**`** ——
+     * 之前那句"低于这个分数的句子**原样保留**"里四个星号是原样显示出来的（用户反馈）。 */
+    realignEls.confNote.textContent = `低于这个分数的句子会保留原来的逐词时间；改动即时生效，不必重新校对`;
+  }
+  if (realignEls.summary) {
+    realignEls.summary.hidden = false;
+    realignEls.summary.textContent = `共 ${realignData.total} 句：`
+      + `${realignData.usable} 句达标（会重排逐词时间）、`
+      + `${realignData.total - realignData.usable} 句未达标（保留原样）`;
+  }
 }
 
 async function startRealignFull() {
@@ -5166,6 +5211,7 @@ async function startRealignFull() {
   if (realignEls.btn) realignEls.btn.disabled = true;
   realignData = null;
   realignPicked = new Set();
+  realignUnpicked = new Set();
   if (realignEls.list) { realignEls.list.hidden = true; realignEls.list.innerHTML = ''; }
   if (realignEls.summary) realignEls.summary.hidden = true;
   if (realignEls.allWrap) realignEls.allWrap.hidden = true;
@@ -5260,10 +5306,21 @@ if (realignEls.list) {
     const lab = e.target.closest('.reflect-item');
     if (!lab) return;
     const k = Number(lab.dataset.k);
-    if (e.target.checked) realignPicked.add(k); else realignPicked.delete(k);
+    if (e.target.checked) { realignPicked.add(k); realignUnpicked.delete(k); }
+    else { realignPicked.delete(k); realignUnpicked.add(k); }
     lab.classList.toggle('is-on', e.target.checked);
     syncRealignApply();
   });
+}
+/* 面板里的置信度门槛：改完立即原地重判（不重跑识别）。
+ * 用 'change' 而不是 'input' —— 输入框清空/半途状态不该触发重判。 */
+if (realignEls.confThr) {
+  const commit = () => {
+    applyRealignThreshold(realignEls.confThr.value);
+    toast(`置信度门槛已改为 ≥ ${Math.round(realignData.threshold * 100)}%（已按新门槛重判，未重新识别）`, 3600);
+  };
+  realignEls.confThr.addEventListener('change', commit);
+  realignEls.confThr.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
 }
 if (realignEls.all) {
   realignEls.all.addEventListener('change', () => {

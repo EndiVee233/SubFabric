@@ -1980,6 +1980,16 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 .reflect-conf[hidden] { display: none; }
 .reflect-conf .rc-label { color: var(--text-2); }
 .reflect-conf .rc-value { font-weight: 700; color: var(--accent); }
+/* 置信度门槛的数字输入框（内嵌在 rc-value 里，跟随强调色） */
+.reflect-conf .rc-value input[type="number"] {
+  width: 54px; padding: 1px 4px; margin: 0 2px;
+  font: 700 13px Consolas, monospace; text-align: right;
+  color: var(--accent); background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.16); border-radius: 4px;
+}
+.reflect-conf .rc-value input[type="number"]:focus {
+  outline: none; border-color: var(--accent); background: rgba(255,255,255,.1);
+}
 .reflect-conf .rc-note { color: var(--text-2); font-size: 11.5px; }
 
 /* ── 日志页：两个板块（运行日志 / 操作日志）────────────────────────

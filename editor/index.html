@@ -866,10 +866,11 @@
     <div class="rn-title modal-drag-handle">全片逐词重校对 · 预览</div>
     <div class="rn-msg" id="realign-msg">正在逐句朗读并重新识别…</div>
 
-    <!-- 本次用的门槛：只有置信度 ≥ 它的句子会被选中（可在全局设置里改） -->
+    <!-- 置信度门槛：可在这里直接改。改完**原地按已算好的 confidence 重新判定**达标与否，
+         不会重跑 TTS+识别（那要几十分钟）；要换门槛重跑才有意义的场景才点「重新校对」 -->
     <div class="reflect-conf" id="realign-conf" hidden>
       <span class="rc-label">置信度门槛</span>
-      <span class="rc-value" id="realign-conf-val">—</span>
+      <span class="rc-value"><input type="number" id="realign-conf-thr" min="30" max="100" step="1" value="70"> %</span>
       <span class="rc-note" id="realign-conf-note"></span>
     </div>
 
