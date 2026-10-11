@@ -316,6 +316,18 @@
             <span class="setting-val" id="ass-style-k-sweep-val">关</span>
           </div>
           <p class="set-group-note">「未唱默认色 / 逐词扫过」只作用于卡拉OK(\k)形态的英文行：颜色切片形态用「逐词高亮色」逐词瞬时点亮，不受这两项影响。</p>
+          <!-- 样式预设导入/导出：把上面这一整套（中英两条 Style 轨的字体/字号/粗斜/颜色
+               + 逐词高亮色 + 卡拉OK 两项）存成一个 json，换稿件时一键套用。
+               导出的是 [V4+ Styles] 原始行 + 元数据，所以面板没暴露的字段（Alignment /
+               MarginV / Outline / Shadow…）也不会丢；导入按字段名搬运，两边 Format 顺序
+               不同也不错位。逻辑见 js/ass.js 的 assStylePresetOf / parseAssStylePreset /
+               applyAssStylePreset，界面接线见 js/main.js 的 exportAssStylePreset。 -->
+          <div class="ass-style-preset-row">
+            <button type="button" class="btn btn-mini" id="ass-style-preset-export">导出样式预设…</button>
+            <button type="button" class="btn btn-mini" id="ass-style-preset-import">导入样式预设…</button>
+            <input type="file" id="ass-style-preset-file" accept=".json,application/json" hidden>
+            <span class="ass-style-preset-hint" id="ass-style-preset-hint">把当前中英样式存成 json，换稿件时一键套用</span>
+          </div>
           <p id="ass-style-status" class="set-group-note">请先打开 ASS/SSA 字幕。设置写入当前稿件；项目自动保存，普通文件请导出。</p>
           <p class="set-group-note">直接填字体名即可（有补全）：本机装了的字体，预览会自动取来用，不用自己找文件。本机没装的字体，预览会回退到内置字体，「载入字体」可导入 .ttf/.otf 补上。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
         </div>

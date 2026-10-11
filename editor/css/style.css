@@ -722,6 +722,14 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .ass-style-color-row input[type="color"] { width:34px; height:24px; border:1px solid var(--border); border-radius:5px; padding:2px; background:#101015; cursor:pointer; }
 .ass-style-color-value { color:var(--text-1); font:11px Consolas,monospace; }
 .ass-style-status { color:var(--accent-2) !important; }
+/* 样式预设的导入/导出一行。两个 mini 按钮 + 一句说明；说明在窄面板里允许换行，
+   不挤按钮（编辑页右侧面板宽度可拖到很窄）。 */
+.ass-style-preset-row {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  margin-top:10px; padding-top:9px; border-top:1px dashed var(--border);
+}
+.ass-style-preset-row .btn-mini { flex:0 0 auto; }
+.ass-style-preset-hint { flex:1 1 140px; min-width:0; color:var(--text-2); font-size:11px; line-height:1.45; }
 .ass-style-font-note { margin-top:5px; font-size:11px; line-height:1.5; color:var(--text-2); }
 .ass-style-font-note.ok { color:#4fd1a5; }
 .ass-style-font-note.warn { color:#ffd54a; }

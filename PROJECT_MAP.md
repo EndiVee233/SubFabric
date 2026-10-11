@@ -226,6 +226,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `tests/audio-chunk-test.mjs` | 分片纯函数（静音解析 / 切点 / 合并） | 38 项 |
 | `tests/overlay-test.mjs` | SRT 叠加层活动 cue 检索（重叠/嵌套不漏显示，钉死 `_maxEnd` 回归） | 11 项，直接可跑 |
 | `tests/colorfix-test.mjs` | 颜色修复 | **需要真实用户项目**，新克隆必失败（非缺陷） |
+| `tests/ass-style-preset-test.mjs` | 双语样式预设的导出/导入纯逻辑（往返保真、跨稿件字段名搬运、坏文件拒绝、单样式稿件不乱改） | 纯函数直测，任何机器可跑；新测试文件会被 `run-all.mjs` 自动发现 |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
 | `tools/http_layer_probe.mjs` | HTTP 层 47 项（守卫 / 形状 / 设置往返 / 项目全生命周期 / **占用中删除重试**） | **自带服务启停**，直接 `node tools/http_layer_probe.mjs` |
 | `tools/route_smoke.mjs` | 24 路由冒烟 | 需先起服务：`PORT=8399 node editor/server.js` |
@@ -274,6 +275,20 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **ASS 双语样式预设：导入 / 导出（2026-10-11）**：稿件编辑页 → 设置 → 「ASS 双语样式」里新增两个按钮，
+  把「中英两条 Style 轨 + 逐词高亮色 + 卡拉OK 未唱色/扫过形态」存成一个 `*.style-preset.json`，换稿件一键套用。
+  纯逻辑在 `editor/js/ass.js`（`assStylePresetOf` / `parseAssStylePreset` / `applyAssStylePreset` / `findStyleForLang`），
+  界面接线在 `main.js`（`exportAssStylePreset` / `importAssStylePreset`）。
+  **导出的是 [V4+ Styles] 原始行 + 元数据，不是面板那 14 个控件值** —— 面板没暴露的
+  Alignment/MarginV/Outline/Shadow/Spacing 也得跟着走，否则导入会静默改坏观感；导入时**按字段名搬运**，
+  两边 Format 声明顺序不同也不错位；样式名永不覆盖。
+  单测 `tests/ass-style-preset-test.mjs`（6 组 40+ 断言；**抓到两个真 bug**：① 中文线索正则
+  `(^|[-_])zh([-_]|$)` 会命中 "English" 里的 "zh"，导致中英轨对调 —— 必须用单词边界；
+  ② 只有一条样式的稿件会让两条轨落到同一个样式上、后一条静默覆盖前一条还报成功；
+  另有一条"导入没 k 行的稿件时不写 SubFabricKaraokeBaseColor 注释"，避免给稿件塞用不上的元数据）。
+  界面验收 `tools/verify_style_preset.mjs`（17 项：按钮在不在 → 点导出截下 Blob 校验 JSON →
+  改乱样式后导入看面板与**服务端已保存的字幕**是否还原 → 坏文件不改动样式 → 无 JS 报错）。
+  ⚠ 这个验收会经界面真的改到项目字幕，跑之前先备份 `projects/<id>/subtitle.ass`；修好元数据那条之后**已是幂等**的。
 - **进度条悬浮时间提示（2026-10-11）**：新增 `editor/js/video-hover-tip.js`（+ `#video-hover-tip` 元素与 `ui.css` 样式，
   index.html 里第二个 `<script type="module">`）。悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间
   （整段 <1h 用 `m:ss`，否则 `h:mm:ss`；`title` 另给毫秒精度）。原生的控件在 UA shadow DOM 里、Chrome 不带 hover 时间预览也没法插元素，
