@@ -90,15 +90,27 @@ for (const act of ['realign', 'split', 'merge', 'delete', 'retranslate', 'reflec
   ok(new RegExp(`logOp\\('${act}'`).test(MJ), `接了 logOp('${act}')`);
 }
 /* why 里要带**依据**，否则事后没法复盘 —— 这是"为什么"这个需求的核心。
- * realign 尤其重要：锚点率决定这次对齐可不可信。 */
-ok(/锚点 \$\{b\.anchors\}\/\$\{b\.words\.length\}/.test(MJ), '重排记录了锚点率作为依据');
-ok(/发音人 \$\{b\.voice/.test(MJ), '重排记录了发音人/语速');
+ * realign 尤其重要：锚点率决定这次对齐可不可信。
+ * ⚠ 文案 2026-10-12 随新方案改：完成提示里原来是 `锚点 ${b.anchors}`（只有分子、没有分母），
+ *   看的人判断不了这次对齐可不可信；现在给全 `${b.anchors}/${b.words.length} 个词对上`
+ *   并带上**词吻合率**。断言跟着改，别改回单个数。 */
+ok(/\$\{b\.anchors\}\/\$\{b\.words\.length\} 个词对上/.test(MJ), '重排记录了锚点率作为依据');
+ok(/词吻合率 \$\{Math\.round/.test(MJ), '重排记录了词吻合率作为依据');
+/* ⚠ 这里原本还有一条 `重排记录了发音人/语速`（`/发音人 \$\{b\.voice/`）。
+ *   它钉的是 **TTS 朗读方案**的日志字段 —— 新方案改成"切出这句在原片音频里的那一段
+ *   重新识别"，没有"发音人/语速"可记，所以随那三个控件一起删掉。 */
 ok(/切点取第 \$\{k\}\/\$\{totW\} 个词的词间中点/.test(MJ), '分句记录了切点依据');
 ok(/两行本是同一句/.test(MJ), '合并说明了原因');
 
 console.log('\n== 6. 重排设置（全局设置里）==');
-for (const id of ['st-realign-voice', 'st-realign-rate', 'st-realign-rate-val',
-                  'st-realign-minratio', 'st-realign-note']) {
+/* ⚠ 2026-10-12 删掉过时断言：`#st-realign-voice` / `#st-realign-rate` / `#st-realign-rate-val`
+ *   属于**旧的 TTS 朗读方案** —— 把台词合成语音、再识别那段合成语音，逐词时间是按 TTS 节奏
+ *   **缩放**出来的，不是从原片量出来的。
+ *   该方案已改成"切出这句在**原片音频**里的那一段重新识别"，不再朗读，这三个控件随之移除
+ *   （它们的绑定与"只列英文语音"也一并没了），所以这里不能再要求它们存在。
+ *   新契约（切原片音频 / rawTimes / realignOne 里不得出现 TTS）由正在开发的那条改动
+ *   连同实现一起钉住 —— 本文件不重复钉，也不去钉别人的在制品。 */
+for (const id of ['st-realign-minratio', 'st-realign-note']) {
   ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
 }
 /* ⚠ 这条以前断言的是 `action === 'realign-settings'` —— 即它**钉住了错误的挂载位置**：
@@ -116,18 +128,13 @@ ok(/readAsrSettings\(\)\.realign/.test(SRV), '设置存在 asr/settings.json 的
 ok(/clamp\(rs\.minAnchorRatio, 0\.3, 1, alignMod\.MIN_ANCHOR_RATIO\)/.test(SRV),
   '服务端读取 minAnchorRatio（在 realignPrep 里统一解析）');
 ok(/minAnchorRatio: prep\.minAnchorRatio \}/.test(SRV), '**真的传给了 planBlock**（不是只存不用）');
-ok(/voice: String\(\(o\.voice !== undefined \? o\.voice : rs\.voice\)/.test(SRV),
-  '朗读语音默认取设置');
-ok(/rate: Number\.isFinite\(Number\(o\.rate\)\) \? Number\(o\.rate\) : clamp\(rs\.rate/.test(SRV),
-  '语速默认取设置');
+/* ⚠ 2026-10-12 一并删掉三条 TTS 相关断言：
+ *   · `朗读语音默认取设置`（看的是 `voice: … ? o.voice : rs.voice`）
+ *   · `语速默认取设置`（看的是 `rate: … : clamp(rs.rate …)`）
+ *   · 下面那组里的 `语音下拉只列英文语音` 与 `拖语速时先更新旁边的文字`
+ *   理由同上：新方案不朗读，这几个控件/绑定已移除。 */
 ok(/realignLoad\(\)/.test(fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8')),
   '设置页加载时读取');
-{
-  const PJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
-  // 语音下拉要只列英文：TTS 是拿英文台词去念的，中文/日文声音念英文会糊
-  ok(PJ.includes('/^en/i.test(String(vo.culture'), '语音下拉只列英文语音');
-  ok(/if \(rate\) rate\.addEventListener\('input'/.test(PJ), '拖语速时先更新旁边的文字');
-}
 
 console.log('\n== 7. ★ 字幕自动保存必须能成功（丢字幕的真凶）==');
 {

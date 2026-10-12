@@ -198,6 +198,26 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   可点元素要有 `:active` 反馈；时长 120~150ms、ease-out、不从 `scale(0)` 出发；`prefers-reduced-motion` 全局关闭；不用 `transition: all`。
 - **自动保存**：编辑即防抖保存；`beforeunload` 用 `sendBeacon` 补最后一笔。**无撤销/重做栈**，Esc=取消是安全边界。
 - **长音频分片**：静音优先切点（`audio-slice.js` 真 ffmpeg `silencedetect`；纯函数在 `asr-chunks.js`）。
+- **全局设置页的骨架是 CSS grid，别在外面再套 wrapper**（2026-10-12 实测踩过）：
+  `ui.css` 的 `#st-view .st-box` 是 `grid-template-columns: 192px minmax(0,1fr)` +
+  三行（head / body / actions），`.st-tabs`（竖排分类栏）、`.st-body`（右栏内容）、
+  `.st-actions` 必须是它的**直接子元素**并按 grid-area 定位。多包一层 `<div>` 会让 grid
+  拿不到它们 → **右栏被压成 0 宽**（rect.w = 0），整页看着空白。改版式前先读这条。
+- **设置页的层级**（设计稿 ①②③ 实装后）：左侧 5 个分类（模型设置 / 识别增强 / 性能测试 /
+  下载与登录 / 外观与主题）→ 模型设置里有 **ASR / LLM 二级 Tab**（`.st-subtab` +
+  `.st-subview[data-stsub]`）。「字幕翻译」不再是独立分类，它的内容已并入 LLM 子视图。
+- **LLM 方案面板（`.st-drawer`）用 `position: fixed` 从窗口右侧滑入**，不嵌在 `.st-body` 里
+  —— 这样不受设置页 grid 列宽约束。它**常驻 DOM**、靠 `.open` 类滑入：重建 HTML 会丢用户
+  正在输入的内容，而且表单 id（`st-provider` / `st-baseurl` / `st-key` / `st-model` /
+  `st-batch` / `st-prompt` / `gl-*`）必须稳定，`project.js` 的加载与保存链路直接按 id 取它们。
+- **设置页模型列表的两个易碎点**：① 分组折叠状态必须记在模块级 `GROUP_OPEN`（Map）里 ——
+  `renderAsrModels()` 整个重建 innerHTML，而下载进度轮询**每秒**重画一次，不记住的话
+  用户刚折叠的组下一拍又被展开；② 折叠交互必须**事件委托**绑在 `#st-models` 上，逐个绑会
+  在重画后全部失效。
+- **动态模板里的 `data-ico` 要自己补注入**：`applyIcons()` 只扫调用时已存在的节点，
+  启动时跑过一次就不再管新节点。project.js 渲染完模板后调 `window.__applyIcons(root)`。
+  另外图标名**必须存在于 `js/icons.js` 的注册表**：未知名字 `ico()` 返回空串、
+  `applyIcons()` 静默跳过，界面上只剩一个空方块（实测踩过 `layers` / `link`）。
 
 ---
 
@@ -275,6 +295,43 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **全局设置页按设计稿实装（2026-10-12，三阶段）**：三份设计稿（全局设置 / 模型设置 /
+  LLM 方案）落到 `#st-view` 的设置页上。**只动前端，后端接口一个没加**。
+  - ① 全局设置：左侧分类补齐 5 项（模型设置 / 识别增强 / 性能测试 / 下载与登录 / **外观与主题**）；
+    模型设置顶部两个**入口卡**（ASR / LLM，带进度条 + 引擎胶囊，数字由 `renderModelEntries()`
+    按 `/api/asr/status` 的真实状态算）；新增**运行时环境卡**（Python / NeMo / 说话人分离，
+    `renderRuntimeEnv()`，NeMo 缺失时给一键安装）；**外观与主题**分类里的主题色控件
+    与项目内设置侧栏那份**共用一份状态**（`renderThemeSwatches()` 往所有
+    `[data-theme-swatches]` 容器画，改一处两处同步）。
+  - ② 模型设置：**本机硬件条**（`renderHardwareBar()`，只显示探测到的 N 卡 / Intel NPU /
+    Vulkan，判定与模型可用性同源）；模型列表**按系列可折叠分组**（`MODEL_FAMILY()` 按
+    `engine` 分：Parakeet / Whisper / NeMo 多说话人 / 云端识别），行渲染抽成
+    `modelRowHtml()`。⚠ 折叠状态与事件委托的两个坑见 §6。
+  - ③ LLM 翻译方案：**ASR / LLM 二级 Tab**（`.st-subtab` / `.st-subview`）+ 方案列表
+    （`renderSchemes()` 按 presets 渲染，标「当前使用」、未配置变暗）+ **右侧滑入面板**
+    （`.st-drawer`，`position: fixed`；`openDrawer()` / `closeDrawer()`）。
+    **「字幕翻译」不再是独立分类**，其表单（保留全部原 id）搬进了滑入面板。
+  - **设计稿里那几项"看着像设置"的东西，接线口径**：
+    · 「采样温度」→ `cfg.temperature`，进请求体（**原来写死 0.3**），范围 0~2。
+    · 「上下文行数」→ `cfg.contextRows`，每批额外送前面 N 行「原文 + 已定译文」作参考；
+      纯函数 `planJobs()` / `buildTranslateUserMessage()` 在 `editor/llm-text.js`，
+      ⚠ **参考行不参与译文行数校验**（否则 `parseTranslationReply` 的等行数校验会失配），
+      且 `contextRows = 0` 时批次划分与旧的 `planChunks` **逐例一致**（有单测钉住，
+      见 `tests/llm-params-test.mjs` 的 ③）—— 老用户的翻译行为不能因为这次改动而变。
+      服务端在 `saveTranslateCfg()` 入口夹范围，不信任前端。
+    · 「中间 API」**有意不实装**：本项目的 LLM 请求由本地服务端发出，没有浏览器的同源策略，
+      不存在它要解决的 CORS/403 场景，多一层中转只会多一个失败点。面板里如实写明。
+    · 「多套方案各自独立存储」也**未做**：后端仍是"一套 cfg + 一份 presets 表"，
+      点方案行 = 切换当前那套（与既有模型一致）。要真支持多套得改 `asr/settings.json` 的结构。
+  - 验收：`tools/probe_settings_layout.mjs`（17 项骨架/分类/二级 Tab/主题双实例）、
+    `tools/verify_model_groups.mjs`（15 项硬件条/分组/折叠状态不丢）、
+    `tools/verify_scheme_drawer.mjs`（**34 项**二级 Tab/方案列表/滑入动画/字段齐全/新建/Key 可见性/
+    温度与上下文行数的**真实保存往返**与服务端夹取；**跑完会把 provider 切回初始值** ——
+    它一开始没切，实测把用户的 deepseek 改成了 openai，属于验收污染，已修 + 有断言钉住）、
+    `tools/probe_entry_card.mjs`（图标注入与进度填充）、`tools/probe_settings_content.mjs`（量 rect 定位 0 宽问题）。
+  - 单测：`tests/llm-params-test.mjs`（39 项：温度/上下文夹取、`planJobs` 的 refs 选取、
+    **`contextRows=0` 时与旧 `planChunks` 逐例一致**、提示词里"待翻译行数"不被参考行带偏、
+    服务端与浏览器镜像两侧输出逐字一致）。
 - **ASS 双语样式预设：导入 / 导出（2026-10-11）**：稿件编辑页 → 设置 → 「ASS 双语样式」里新增两个按钮，
   把「中英两条 Style 轨 + 逐词高亮色 + 卡拉OK 未唱色/扫过形态」存成一个 `*.style-preset.json`，换稿件一键套用。
   纯逻辑在 `editor/js/ass.js`（`assStylePresetOf` / `parseAssStylePreset` / `applyAssStylePreset` / `findStyleForLang`），

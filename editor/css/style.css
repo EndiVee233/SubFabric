@@ -1305,13 +1305,82 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .pc-retry { padding: 5px 12px; font-size: 12px; font-weight: 600; }
 .home-toolbar-btns { display: flex; gap: 8px; }
 
-/* ── 设置面板(识别模型 / 字幕翻译) ── */
+/* ── 设置面板(模型设置 / 识别增强 / 性能测试 / 下载与登录 / 外观与主题) ── */
+/* 宽度从 720 提到 1080：设计稿是"左侧分类 + 右侧内容"的两栏，720 放两栏太挤
+   （分类 176 + 内容 ~860）。窄屏仍按 calc 收，两栏在 <860px 时叠成一栏。 */
 .st-box {
-  width: 720px; max-width: calc(100vw - 40px); max-height: calc(100vh - 60px);
+  width: 1080px; max-width: calc(100vw - 40px); max-height: calc(100vh - 60px);
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, .5);
   display: flex; flex-direction: column; padding: 0; overflow: hidden;
 }
+
+/* ── 模型设置的两个入口卡（设计稿 ①）── */
+.st-entry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.st-entry {
+  display: flex; flex-direction: column; gap: 10px; text-align: left;
+  padding: 18px; border-radius: 12px; cursor: pointer; font-family: inherit;
+  background: var(--bg-2); border: .5px solid var(--border); color: var(--text-0);
+  transition: border-color var(--dur-1) var(--ease-1), background var(--dur-1) var(--ease-1);
+}
+.st-entry:hover { border-color: var(--accent-a55); background: var(--bg-3); }
+.st-entry-head { display: flex; align-items: center; gap: 10px; }
+.st-entry-ico {
+  width: 38px; height: 38px; border-radius: 9px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.st-entry-ico.accent { background: var(--accent-a12); color: var(--accent); }
+.st-entry-ico.violet { background: rgba(139, 124, 246, .12); color: var(--lane-word); }
+/* 图标是运行时注入的内联 SVG，本身没有宽高 attribute —— 不显式给尺寸就会撑满父块。
+   ⚠ 图标名必须存在于 js/icons.js 的注册表里：`ico()` 对未知名字返回空串、
+   `applyIcons()` 会**静默跳过**（不报错），于是这里只剩一个空方块。实测踩过：
+   data-ico="layers" / "link" 都不在表里 → 两个入口卡看着像没有图标。 */
+.st-entry-ico svg { width: 18px; height: 18px; }
+/* 分类栏里的图标同理（没有它图标会撑成整个按钮宽） */
+.st-tabs .st-tab svg { width: 14px; height: 14px; flex: none; }
+.st-entry-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.st-entry-title { font-size: 14px; font-weight: 500; }
+.st-entry-sub { font-size: 11px; color: var(--text-2); }
+.st-entry-bar {
+  height: 4px; border-radius: 2px; background: var(--border); overflow: hidden;
+}
+.st-entry-bar > i { display: block; height: 100%; border-radius: 2px; background: #4fd1a5; transition: width var(--dur-2) var(--ease-1); }
+.st-entry-chips { display: flex; gap: 6px; flex-wrap: wrap; min-height: 17px; }
+.st-entry-chips > span {
+  font-size: 10px; padding: 2px 7px; border-radius: 3px;
+  background: var(--bg-3); color: var(--text-2);
+}
+.st-entry-chips > span.ok { color: #4fd1a5; background: rgba(78, 205, 136, .1); }
+.st-entry-chips > span.blue { color: #6aa9ff; background: rgba(106, 169, 255, .1); }
+.st-entry-chips > span.warn { color: var(--sub-sub); background: rgba(255, 213, 74, .1); }
+.st-entry-chips > span.violet { color: var(--lane-word); background: rgba(139, 124, 246, .12); }
+.st-entry-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 4px; padding-top: 10px; border-top: .5px solid var(--border);
+  font-size: 11px; color: var(--text-2);
+}
+.st-entry-arrow svg { width: 14px; height: 14px; transform: rotate(-90deg); }
+
+/* ── 运行时环境（设计稿 ① 第三块 / ② 底部）── */
+.st-env-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.st-env {
+  padding: 11px 12px; border-radius: 8px; background: var(--bg-2); border: .5px solid var(--border);
+}
+.st-env-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.st-env-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--text-2); }
+.st-env-dot.ok { background: #4fd1a5; }
+.st-env-dot.bad { background: var(--danger); }
+.st-env-dot.warn { background: var(--sub-sub); }
+.st-env-name { font-size: 12px; font-weight: 500; }
+.st-env-line { font-size: 11px; color: var(--text-2); margin: 0; }
+.st-env-state { font-size: 10px; margin: 4px 0 0; color: #4fd1a5; }
+.st-env-state.bad { color: var(--danger); }
+.st-env-act {
+  margin-top: 8px; padding: 4px 10px; border-radius: 5px; font-size: 10px; cursor: pointer;
+  font-family: inherit; font-weight: 500; background: var(--accent); border: .5px solid var(--accent);
+  color: var(--accent-ink);
+}
+
 .st-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px 11px; }
 .st-title { font-size: 15px; font-weight: 700; letter-spacing: .2px; }
 .st-sec {
@@ -2316,3 +2385,110 @@ select.note-dur {
   font-size: 10.5px; font-weight: 400; color: var(--text-2);
 }
 .log-subtab-cnt[hidden] { display: none; }
+
+
+/* ── 本机硬件条（设计稿 ②）── */
+.st-hw {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--bg-2); border: .5px solid var(--border);
+}
+.st-hw .hw-cap { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }
+.st-hw .hw-cap svg { width: 12px; height: 12px; }
+.st-hw .hw-chip { font-size: 11px; color: var(--text-1); }
+.st-hw .hw-chip.ok { color: #4fd1a5; }
+.st-hw .hw-chip.none { color: var(--text-2); }
+.st-hw .hw-right { margin-left: auto; font-size: 11px; color: var(--text-2); }
+
+/* ── 模型列表：按系列可折叠（设计稿 ②）── */
+.sm-group { border: .5px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-1); }
+.sm-group + .sm-group { margin-top: 8px; }
+.sm-group-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 11px 14px; background: transparent; border: none; cursor: pointer;
+  font-family: inherit; color: var(--text-0);
+}
+.sm-group-head:hover { background: var(--bg-2); }
+.sm-group-head .sm-caret { display: inline-flex; transition: transform var(--dur-2) var(--ease-1); }
+.sm-group-head .sm-caret svg { width: 12px; height: 12px; color: var(--text-1); }
+/* 折叠箭头：展开时朝下（默认 chevronDown），收起时转 -90° 朝右 —— 与设计稿一致 */
+.sm-group-head .sm-caret:not(.open) { transform: rotate(-90deg); }
+.sm-group-name { font-size: 13px; font-weight: 500; }
+.sm-group-count { font-size: 11px; color: var(--text-2); }
+.sm-group-ready { margin-left: auto; font-size: 11px; color: #4fd1a5; }
+.sm-group-ready.none { color: var(--text-2); }
+.sm-group-body { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 6px; }
+.sm-group-body[hidden] { display: none; }
+
+/* ── 二级 Tab（设计稿 ②：ASR 识别模型 / LLM 语言模型）── */
+.st-subtabs {
+  display: flex; gap: 0; margin-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.st-subtab {
+  padding: 9px 18px; background: transparent; border: none; cursor: pointer;
+  border-bottom: 2px solid transparent; color: var(--text-2);
+  font-size: 13px; font-family: inherit;
+}
+.st-subtab:hover { color: var(--text-1); }
+.st-subtab.active { color: var(--text-0); font-weight: 500; border-bottom-color: var(--accent); }
+.st-subview[hidden] { display: none; }
+
+/* ── LLM 方案列表（设计稿 ③）── */
+.st-subhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.st-subtitle-strong { font-size: 14px; font-weight: 500; }
+.st-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.st-pick {
+  padding: 5px 12px; border-radius: 5px; cursor: pointer; font-family: inherit;
+  background: transparent; border: .5px solid var(--border); color: var(--text-1); font-size: 11px;
+}
+.st-pick:hover { border-color: var(--accent-a55); color: var(--text-0); }
+.st-pick.on { background: var(--accent-a10); border-color: var(--accent-a28); color: var(--accent); }
+.st-schemes { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.st-scheme {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  background: var(--bg-2); border: .5px solid var(--border); border-radius: 10px;
+}
+.st-scheme.cur { border-color: var(--accent-a28); }
+.st-scheme.off { opacity: .6; }
+.st-scheme-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-2); }
+.st-scheme-dot.ok { background: #4fd1a5; }
+.st-scheme-dot.warn { background: var(--sub-sub); }
+.st-scheme-main { flex: 1; min-width: 0; }
+.st-scheme-name { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; }
+.st-tag-cur { font-size: 10px; color: #4fd1a5; background: rgba(78, 205, 136, .1); padding: 1px 6px; border-radius: 3px; }
+.st-scheme-desc { font-size: 11px; color: var(--text-2); margin: 3px 0 0; }
+
+/* ── 右侧滑入的二级设置面板（设计稿 ③）──
+   用 position:fixed 而不是嵌在 .st-body 里：设计稿就是"从窗口右侧滑入、盖住列表"，
+   而且这样不受设置页 grid（192px + 1fr）的列宽约束。 */
+.st-drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(620px, 94vw); z-index: 90;
+  display: flex; flex-direction: column;
+  background: var(--bg-1); border-left: 1px solid var(--border);
+  box-shadow: -12px 0 40px rgba(0, 0, 0, .5);
+  transform: translateX(100%); opacity: .4;
+  transition: transform .3s cubic-bezier(.16, 1, .3, 1), opacity .3s;
+}
+.st-drawer.open { transform: none; opacity: 1; }
+.st-drawer[hidden] { display: none; }
+.st-drawer-head {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 13px 16px; border-bottom: 1px solid var(--border);
+}
+.st-drawer-x {
+  width: 26px; height: 26px; border-radius: 5px; flex: none; cursor: pointer;
+  background: transparent; border: .5px solid var(--border); color: var(--text-1);
+  display: flex; align-items: center; justify-content: center; font-family: inherit;
+}
+.st-drawer-x svg { width: 12px; height: 12px; }
+.st-drawer-title { font-size: 14px; font-weight: 500; }
+.st-scheme-cur { font-size: 10px; color: #4fd1a5; background: rgba(78, 205, 136, .1); padding: 2px 7px; border-radius: 3px; }
+.st-drawer-actions { margin-left: auto; display: flex; gap: 6px; }
+.st-drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px; }
+.st-drawer-body .st-card { background: var(--bg-2); }
+.st-drawer-foot {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; border-top: 1px solid var(--border);
+}
+.st-drawer-note { margin-top: 4px; color: var(--text-2); }
