@@ -5586,7 +5586,13 @@ async function realignRow(item) {
     rebuildItemsAndLanes(true, true);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
     const msec = Math.round((end - start) * 1000);
-    jobCardDone('重排逐词时间 · 完成', `${b.words.length} 个词已重排（锚点 ${b.anchors}，${msec}ms 区间）`, true);
+    /* 完成提示里带**依据**：锚点率（多少词真对上了）与词吻合率 —— 与下面写进操作日志的
+     * 是同一套字段（b.ratio / b.anchors / b.words.length），不另造字段。
+     * ⚠ 原来写的是 `锚点 ${b.anchors}`（只有分子没有分母），看的人判断不了这次对齐可不可信；
+     *   测试钉的是 `${b.anchors}/${b.words.length} 个词对上`，别再改回单个数。 */
+    jobCardDone('重排逐词时间 · 完成',
+      `${b.words.length} 个词已重排（词吻合率 ${Math.round((b.ratio || 0) * 100)}%`
+      + ` · ${b.anchors}/${b.words.length} 个词对上 · ${msec}ms 区间）`, true);
     toast(`已重排逐词时间：${b.words.length} 个词（文本未改动）`, 5200);
     /* 操作日志：记清"哪一条、多少词、依据是什么"。
      * why 里带**词吻合率**与第二级是否被采纳 —— 这是判断"这次重排可不可信"的关键依据，
