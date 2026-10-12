@@ -1435,6 +1435,8 @@ export function initProjects(ctx) {
     $('#st-model').value = c.model || '';
     if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
+    // 方案列表/胶囊用的是刚拿到的 stPresets 与当前 provider，必须在这之后画
+    if (typeof renderSchemes === 'function') renderSchemes();
     try {
       const h = await (await fetch('/api/asr/hint')).json();
       const hint = h.hint || {};
@@ -2280,17 +2282,161 @@ async function renderAsrModels() {
 
   /* 模型设置页的两个入口卡（设计稿 ①）：
    *   ASR 卡的"管理"就在本面板里（模型管理卡片紧随其后），所以点击只把内容滚到模型列表；
-   *   LLM 卡的设置就是「字幕翻译」面板，点击切到那个分类。 */
+   *   LLM 卡的设置就是二级 Tab 的「LLM 语言模型」子视图。 */
   const entryAsr = document.getElementById('st-entry-asr');
-  if (entryAsr) entryAsr.addEventListener('click', () => {
-    const list = document.getElementById('st-models');
-    if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
+  if (entryAsr) entryAsr.addEventListener('click', () => { showSubView('asr'); });
   const entryLlm = document.getElementById('st-entry-llm');
-  if (entryLlm) entryLlm.addEventListener('click', () => {
-    const tab = $('.st-tab[data-stp="translate"]');
-    if (tab) tab.click();
+  if (entryLlm) entryLlm.addEventListener('click', () => { showSubView('llm'); });
+
+  /* ── 二级 Tab（设计稿 ②：ASR 识别模型 / LLM 语言模型）── */
+  function showSubView(name) {
+    document.querySelectorAll('.st-subtab').forEach(t => {
+      const on = t.dataset.stsub === name;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', String(on));
+    });
+    document.querySelectorAll('.st-subview').forEach(v => { v.hidden = v.dataset.stsub !== name; });
+    // LLM 子视图里的方案列表要按最新的 stPresets 重画（首次进入时 stPresets 可能已就绪）
+    if (name === 'llm') renderSchemes();
+  }
+  document.querySelectorAll('.st-subtab').forEach(t => {
+    t.addEventListener('click', () => showSubView(t.dataset.stsub));
   });
+
+  /* ── LLM 翻译方案（设计稿 ③）──
+   * ── 与后端的关系：/api/translate/config 只有**一套** cfg + 一份 presets（服务商预置表）。
+   *    所以这里列出的是"服务商方案"：点某行的「设置」= 把表单切到该服务商并打开滑入面板，
+   *    保存走原路（POST /api/translate/config）→ 即"当前使用的那一套"。
+   *    「新建方案」= 清空表单、指向第一个未配置的服务商，让用户填新的一套。
+   *    多套方案各自独立存储需要后端支持，暂不做（见面板底部的说明）。 */
+  const schemeEls = {
+    list: document.getElementById('st-scheme-list'),
+    picks: document.getElementById('st-scheme-picks'),
+    drawer: document.getElementById('st-scheme-drawer'),
+    drawerPicks: document.getElementById('st-drawer-picks'),
+    drawerTitle: document.getElementById('st-scheme-title'),
+    drawerCur: document.getElementById('st-scheme-cur'),
+  };
+
+  /** 方案是否"已配置"：当前 provider 且已有 Key，或本地地址（本地模型不需要 Key） */
+  function schemeConfigured(p) {
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const hasKey = $('#st-key') && $('#st-key').placeholder && /已保存/.test($('#st-key').placeholder);
+    const local = /127\.0\.0\.1|localhost/.test(p.baseUrl || '');
+    return p.id === cur && (hasKey || local);
+  }
+
+  function renderSchemes() {
+    if (!schemeEls.list) return;
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const keySaved = $('#st-key') && $('#st-key').placeholder && /已保存/.test($('#st-key').placeholder);
+    // 服务选择胶囊：两个地方共用同一套（列表上方 + 滑入面板里）
+    const picksHtml = stPresets.map(p =>
+      `<button type="button" class="st-pick${p.id === cur ? ' on' : ''}" data-provider="${esc(p.id)}">${esc(p.name)}</button>`).join('');
+    if (schemeEls.picks) schemeEls.picks.innerHTML = picksHtml;
+    if (schemeEls.drawerPicks) schemeEls.drawerPicks.innerHTML = picksHtml;
+    for (const box of [schemeEls.picks, schemeEls.drawerPicks]) {
+      if (!box) continue;
+      box.querySelectorAll('.st-pick').forEach(b => b.addEventListener('click', () => {
+        const p = stPresets.find(x => x.id === b.dataset.provider);
+        if (!p) return;
+        // 与旧的 select 联动：改 select 的值会触发它自己的 change（那里会填 baseUrl/model）
+        const sel = $('#st-provider');
+        if (sel) { sel.value = p.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+        else { if ($('#st-baseurl')) $('#st-baseurl').value = p.baseUrl || ''; if ($('#st-model')) $('#st-model').value = p.model || ''; }
+        openDrawer(p.name, p.id === cur);
+        renderSchemes();
+      }));
+    }
+    // 方案列表
+    schemeEls.list.innerHTML = stPresets.map(p => {
+      const isCur = p.id === cur;
+      const conf = isCur && (keySaved || /127\.0\.0\.1|localhost/.test(p.baseUrl || ''));
+      const dot = conf ? 'ok' : (isCur ? 'warn' : '');
+      const local = /127\.0\.0\.1|localhost/.test(p.baseUrl || '');
+      const bits = [p.model || '', local ? '本地地址' : '', isCur && keySaved ? '已保存 Key' : ''].filter(Boolean);
+      return `<div class="st-scheme${isCur ? ' cur' : ''}${conf ? '' : ' off'}" data-provider="${esc(p.id)}">
+        <i class="st-scheme-dot ${dot}"></i>
+        <div class="st-scheme-main">
+          <div class="st-scheme-name">${esc(p.name)}${isCur ? '<span class="st-tag-cur">当前使用</span>' : ''}</div>
+          <p class="st-scheme-desc">${esc(bits.join(' · ') || p.baseUrl || '未配置')}</p>
+        </div>
+        <button type="button" class="btn btn-mini st-scheme-set" data-provider="${esc(p.id)}">设置</button>
+      </div>`;
+    }).join('');
+    schemeEls.list.querySelectorAll('.st-scheme-set').forEach(b => b.addEventListener('click', () => {
+      const p = stPresets.find(x => x.id === b.dataset.provider);
+      if (!p) return;
+      const sel = $('#st-provider');
+      if (sel) { sel.value = p.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      openDrawer(p.name, p.id === cur);
+      renderSchemes();
+    }));
+  }
+
+  function openDrawer(title, isCur) {
+    if (!schemeEls.drawer) return;
+    if (schemeEls.drawerTitle) schemeEls.drawerTitle.textContent = title || '翻译方案';
+    if (schemeEls.drawerCur) schemeEls.drawerCur.hidden = !isCur;
+    schemeEls.drawer.hidden = false;
+    schemeEls.drawer.setAttribute('aria-hidden', 'false');
+    // 下一帧再加 .open，让 transition 真的跑起来（同一帧加会直接跳到终态）
+    requestAnimationFrame(() => { if (schemeEls.drawer) schemeEls.drawer.classList.add('open'); });
+  }
+  function closeDrawer() {
+    if (!schemeEls.drawer) return;
+    schemeEls.drawer.classList.remove('open');
+    schemeEls.drawer.setAttribute('aria-hidden', 'true');
+    // 等动画结束再 hidden，否则"滑出"看不见
+    setTimeout(() => { if (schemeEls.drawer && !schemeEls.drawer.classList.contains('open')) schemeEls.drawer.hidden = true; }, 320);
+  }
+  const drawerClose = document.getElementById('st-scheme-close');
+  if (drawerClose) drawerClose.addEventListener('click', closeDrawer);
+  const drawerCancel = document.getElementById('st-drawer-cancel');
+  if (drawerCancel) drawerCancel.addEventListener('click', closeDrawer);
+  const drawerSave = document.getElementById('st-drawer-save');
+  if (drawerSave) drawerSave.addEventListener('click', () => {
+    const sb = document.getElementById('st-save');       // 复用既有的"保存设置"链路，不另写一份保存
+    if (sb) sb.click();
+    closeDrawer();
+  });
+  const schemeNew = document.getElementById('st-scheme-new');
+  if (schemeNew) schemeNew.addEventListener('click', () => {
+    // 找一个还没配的服务商作为起点（都没有就退回第一个）
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const target = stPresets.find(p => p.id !== cur) || stPresets[0];
+    if (!target) return;
+    const sel = $('#st-provider');
+    if (sel) { sel.value = target.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    if ($('#st-key')) $('#st-key').value = '';
+    openDrawer(target.name, false);
+    renderSchemes();
+  });
+  const drawerTest = document.getElementById('st-scheme-test');
+  if (drawerTest) drawerTest.addEventListener('click', () => {
+    const tb = document.getElementById('st-test');       // 复用既有的"测试连接"
+    if (tb) tb.click();
+  });
+  const drawerReset = document.getElementById('st-scheme-reset');
+  if (drawerReset) drawerReset.addEventListener('click', () => {
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const p = stPresets.find(x => x.id === cur);
+    if (!p) return;
+    if ($('#st-baseurl')) $('#st-baseurl').value = p.baseUrl || '';
+    if ($('#st-model')) $('#st-model').value = p.model || '';
+    if ($('#st-key')) $('#st-key').value = '';
+    const msg = document.getElementById('st-drawer-msg');
+    if (msg) msg.textContent = '已恢复该服务商的默认接口地址与模型名（Key 未改动）';
+  });
+  const keyEye = document.getElementById('st-key-eye');
+  if (keyEye) keyEye.addEventListener('click', () => {
+    const k = $('#st-key');
+    if (!k) return;
+    const show = k.type === 'password';
+    k.type = show ? 'text' : 'password';
+    keyEye.textContent = show ? '隐藏' : '显示';
+  });
+  if (window.__applyIcons) window.__applyIcons(document.getElementById('st-view') || document);
 
   /* ── 下载与登录（设置 → 下载与登录） ── */
   /** Cookie 备注：保存状态 + 登录检测结果（谁登录的、是不是大会员、密文还是明文存） */

@@ -64,6 +64,7 @@ const tree = await evalJS(`(() => {
     boxChildren: kid(box),
     boxKids: kid(box),
     navTabs: [...box.querySelectorAll('.st-tabs .st-tab')].map(t => t.dataset.stp + ':' + t.textContent.trim()),
+    subTabs: [...box.querySelectorAll('.st-subtab')].map(t => t.dataset.stsub),
     panelsInBody: panels.filter(p => body && body.contains(p)).map(p => p.dataset.stp),
     panelsOutside: panels.filter(p => !(body && body.contains(p))).map(p => p.dataset.stp),
     activePanel: (panels.find(p => !p.hidden) || {}).dataset ? panels.find(p => !p.hidden).dataset.stp : null,
@@ -77,13 +78,17 @@ if (T.err) { console.log('  ✗ ' + T.err); ws.close(); edge.kill(); process.exi
 
 /* grid 骨架（ui.css 的 #st-view .st-box）要求 head / st-tabs / st-body 是**直接子元素**，
    否则 grid 拿不到它们、右栏会被压成 0 宽（实测踩过：多套一层 wrapper 就中招）。
-   st-actions 排在第 3 行、也是直接子元素，所以这里只断言前三块的**存在与顺序**。 */
-ok(Array.isArray(T.boxChildren) && T.boxChildren.length === 3
-  && T.boxChildren[0].includes('st-head') && T.boxChildren[1].includes('st-tabs') && T.boxChildren[2].includes('st-body'),
-  `.st-box 直接子节点是 head / st-tabs / st-body（grid 骨架没被 wrapper 打断）`, JSON.stringify(T.boxChildren));
-ok(T.navTabs && T.navTabs.length === 6, `左侧分类共 6 项`, JSON.stringify(T.navTabs));
+   st-actions 排在第 3 行、也是直接子元素，所以直接子节点应当是这四块。 */
+ok(Array.isArray(T.boxChildren) && T.boxChildren.length === 4
+  && T.boxChildren[0].includes('st-head') && T.boxChildren[1].includes('st-tabs')
+  && T.boxChildren[2].includes('st-body') && T.boxChildren[3].includes('st-actions'),
+  `.st-box 直接子节点是 head / st-tabs / st-body / st-actions（grid 骨架完整）`, JSON.stringify(T.boxChildren));
+/* 分类数 = 5：设计稿 ② 把「字幕翻译」并成了模型设置里的二级 Tab（ASR / LLM），
+   所以左侧不再单列它 —— 这里断言它**有自己的二级 Tab 入口**，不是孤儿面板。 */
+ok(T.navTabs && T.navTabs.length === 5, `左侧分类共 5 项`, JSON.stringify(T.navTabs));
 ok(T.navTabs && T.navTabs.some(t => t.startsWith('theme:外观与主题')), '含「外观与主题」分类');
-ok(T.navTabs && T.navTabs.some(t => t.startsWith('translate:字幕翻译')), '「字幕翻译」面板有导航入口（不会成为孤儿面板）');
+ok(T.subTabs && T.subTabs.length === 2 && T.subTabs[0] === 'asr' && T.subTabs[1] === 'llm',
+  '模型设置里有 ASR / LLM 两个二级 Tab', JSON.stringify(T.subTabs));
 ok(T.panelsOutside && T.panelsOutside.length === 0, '所有面板都在 .st-body 里', JSON.stringify(T.panelsOutside));
 ok(T.panelsInBody && T.panelsInBody.length === 6, `.st-body 里有 6 个面板`, JSON.stringify(T.panelsInBody));
 ok(T.activePanel === 'models', `默认显示「模型设置」面板（实际 ${T.activePanel}）`);
