@@ -1,9 +1,11 @@
 # SubFabric 项目地图（PROJECT_MAP.md）
 
-> **⚠️ 本文件是"新接手的 AI / 开发者"的第一读本，也是必须随代码更新的活文档。**
+> **⚠️ 本文件是项目结构与开发约定入口，也是必须随代码更新的活文档。**
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
+> 新任务或恢复上下文先读唯一权威状态 [docs/STATUS.md](docs/STATUS.md) 与 [AGENTS.md](AGENTS.md)，
+> 再按需读本地图；阶段进度只维护在 STATUS，连续性要求与验收见 [docs/CONTINUITY.md](docs/CONTINUITY.md)。
 > 最后更新：2026-10-10（新增 Parakeet-Vulkan（CrispASR）引擎；路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`；**第二轮全面审查 + 24 处修复**，见 `docs/CODE_REVIEW_2026-10-10.md` 与 §11）
 
 ---
@@ -54,7 +56,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | `tools/` | 探针 / 诊断脚本（CDP 真机测试、布局探针、HTTP 层探针等） |
 | `build/`、`build_exe.py` | 打包（`build/installer/` 内图标与 `.iss` 入库，其余产物不入库） |
 | `main.py` | **历史遗留**的 Python GUI 工具（字体/颜色等默认值处理），与编辑器主线关系弱 |
-| `docs/` | 归档/设计文档（**不在根目录堆着**）：`docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`（逐词高亮与 `\k` 的格式设计与调研，**改字幕格式前必读**）；`docs/CODE_REVIEW.md`（第一轮审查记录）；`docs/双引擎实测结论.md`（NPU+GPU 双引擎实测：本机无收益） |
+| `docs/` | `docs/STATUS.md` 是唯一权威当前状态，`docs/CONTINUITY.md` 保存连续性要求与验收；另含归档/设计文档（**不在根目录堆着**）：`docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`（逐词高亮与 `\k` 的格式设计与调研，**改字幕格式前必读**）；`docs/CODE_REVIEW.md`（第一轮审查记录）；`docs/双引擎实测结论.md`（NPU+GPU 双引擎实测：本机无收益） |
 | `eslint.config.js` | 只抓真错的规则（`no-undef` 等）；跑 lint 需自行 `npm i eslint`（项目无 `node_modules`） |
 
 ---
