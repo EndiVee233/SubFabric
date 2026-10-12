@@ -56,6 +56,28 @@ const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参�
  */
 export function hasVisibleWordMark(index) { return Number(index) > 0; }
 
+/**
+ * 词文字该从哪个 x 起画 —— 必须落在**块内文字的裁剪区**里。
+ *
+ * 为什么需要它（用户第二次报的遮挡：块里 `Home` 显示成 `ome`）：
+ *   `_drawBlockText()` 把块内所有文字裁在 `ctx.rect(x1 + TEXT_PAD, …)`（左界比块左边缘
+ *   往里一个 TEXT_PAD=6px），而逐词文字是按**词的真实时间位置**画的。首词的起点就等于块起点时
+ *   （实测 fork 那份稿件：块 5.80 起、首词 `Home` 也是 5.80），文字起点 `x1` 落在裁剪左界
+ *   `x1 + 6` 的左侧 —— 词的左脚被裁掉，看着就是"首词被遮挡/少了半个字母"。
+ *
+ * 判据：取 `max(词起点, 裁剪左界)`。夹过去之后仍放不下（下一个词太近）就不画文字、只留标记，
+ * 由调用方按 `avail` 判断；不会把相邻两个词的字画到一起。
+ *
+ * @param {number} wx      词的真实起点(px)
+ * @param {number} x1      块左边缘(px)
+ * @param {number} pad     块内文字的左内边距（= TEXT_PAD）
+ * @returns {number} 建议的文字起点(px，未取整)
+ */
+export function wordTextX(wx, x1, pad) {
+  const clipLeft = Number(x1) + Number(pad);
+  return Math.max(Number(wx), clipLeft);
+}
+
 /* ── 块内字体：跟稿件样式同步 ──────────────────────────────────────────
  * 时间轴块上的字应当是"视频里真播出来的那套字" —— 否则改字时字宽对不上。
  * 从样式名拼出 CSS font 简写；名字里可能有引号/反斜杠，先清一遍防注入与串行
@@ -1663,9 +1685,11 @@ export class Timeline {
         ctx.fillRect(Math.round(wx - mw / 2), g.markTop, mw, g.markH);
       }
       // 首词不再为灰条让位，文字从词的实际起点开始；后续词留出标记宽度与间隙。
-      const textX = hasVisibleWordMark(i)
-        ? Math.round(wx + g.markW / 2 + 4)
-        : Math.round(wx);
+      // ⚠ 但不能越过块内文字的裁剪左界（x1 + TEXT_PAD）—— 否则首词（起点常 == 块起点）
+      //   的左脚会被裁掉，用户看到的就是"Home 显示成 ome"。见 wordTextX()。
+      const textX = Math.round(hasVisibleWordMark(i)
+        ? wordTextX(wx + g.markW / 2 + 4, x1, TEXT_PAD)
+        : wordTextX(wx, x1, TEXT_PAD));
       // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记。
       const nextX = (i + 1 < words.length) ? this.t2x(words[i + 1].s) : Math.min(this.t2x(blockEnd), x2);
       const avail = nextX - textX - 3;
