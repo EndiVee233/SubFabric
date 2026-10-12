@@ -243,6 +243,10 @@ function applyIcons(root = document) {
     if (svg) el.insertAdjacentHTML('afterbegin', svg);
   }
 }
+/* 动态模板（设置页入口卡、运行时环境卡等由 project.js 渲染）插完 HTML 后要能补图标 ——
+ * applyIcons 只扫**调用时已存在**的 [data-ico]，启动时跑过一次就再也不管新节点了。
+ * 挂到 window 供其它模块在渲染后调用（与 __refreshBadCat / __notesReload 同一套路）。 */
+window.__applyIcons = applyIcons;
 
 /* ─────────── 可拖动分割线: 视频/时间轴(横) 与 左区/字幕列表(竖) ─────────── */
 function bindSplit(el, onMove) {
@@ -961,6 +965,22 @@ function setAssStyleControls() {
   syncBlockFonts();          // 块内字体跟稿件样式同步（改字体后时间轴立刻跟着变）
 }
 
+/** 某条样式轨上的**全部**事件 —— 换色/换 \k 形态时的 scope 一律用这个，不要用
+ *  `state.kar.sentences[].events`。
+ *
+ *  为什么（用户报的 bug，实测）：逐词**切片**形态下一句 = N 条事件（每词一条），
+ *  而 kar 只把其中一部分挂进 `sentence.events` —— 拿它当 scope 会只改到那几条，
+ *  同一句里剩下的词保持旧色，画面上就是"同一句话有的词白、有的词绿"（叠上中英两轨
+ *  看着像两行重叠）。实测最小复现件（2 句 / 14 个切片）：改色后文档里同时存在
+ *  `&H00FF00&` 与 `&HFFFFFF&` 两个色标。
+ *  按整条样式轨取则一次性换净（replaceWordHighlightColor 内部还会按 style 过滤一次，
+ *  所以多传不会误伤别的轨）。 */
+function eventsOfStyle(style) {
+  const want = String(style || '').toLowerCase();
+  if (!want || !state.assDoc) return [];
+  return state.assDoc.events.filter(ev => String(ev.style || '').toLowerCase() === want);
+}
+
 function applyAssStyleSettings(forceFontReload = false) {
   if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return false;
   const el = assStyleEls, targets = state.assStyleTargets;
@@ -994,11 +1014,9 @@ function applyAssStyleSettings(forceFontReload = false) {
   }
   const color = (el.wordColor.value || '#00ff00').toLowerCase();
   setWordHighlightColor(color);      // 同步给 karaoke.js: 之后新建/重建的逐词 span 都用这个色
-  const wordEvents = state.kar && state.kar.sentences
-    ? [...new Set(state.kar.sentences
-      .filter(sentence => sentence.style.toLowerCase() === targets.en.toLowerCase() && sentence.words && sentence.words.length)
-      .flatMap(sentence => sentence.events || []))]
-    : [];
+  /* 换色要覆盖到**这条样式轨上的所有事件**，不能只用 `state.kar.sentences` 里挂着的那些。
+   * 原因见 eventsOfStyle() 的注释（逐词切片形态下 kar 只挂了一部分，会漏色）。 */
+  const wordEvents = eventsOfStyle(targets.en);
   const wordColorChanged = replaceWordHighlightColor(state.assDoc, targets.en, color, wordEvents);
   const colorMetaChanged = state.assDoc.setScriptInfoComment(ASS_WORD_COLOR_META, color);
   if (state.kar && state.kar.sentences) {
@@ -1123,14 +1141,10 @@ async function importAssStylePreset(file) {
 
   // 逐词高亮色 / 未唱色：setAssStyleControls 已经同步给 karaoke 与控件；
   // 这里再按稿件现有的逐词行与 k 行把**行内标签**也换成新颜色（只改行内标签，不动文本）。
+  // scope 用 eventsOfStyle（整条样式轨）—— 与设置面板那条路径同一口径，别用 kar 的子集。
   const wordColor = (assStyleEls.wordColor && assStyleEls.wordColor.value || '').toLowerCase();
   if (/^#[0-9a-f]{6}$/.test(wordColor)) {
-    const wordEvents = state.kar && state.kar.sentences
-      ? [...new Set(state.kar.sentences
-        .filter(s => s.words && s.words.length
-          && String(s.style).toLowerCase() === String(enDest).toLowerCase())
-        .flatMap(s => s.events || []))]
-      : [];
+    const wordEvents = eventsOfStyle(enDest);
     if (wordEvents.length) replaceWordHighlightColor(state.assDoc, enDest, wordColor, wordEvents);
     if (state.kar && state.kar.sentences) {
       const tag = assHexToTag(wordColor);
@@ -5500,7 +5514,7 @@ async function retranslateRow(item) {
     toast('翻译失败: ' + ((e && e.message) || e), 4600);
   }
 }
-/* ═══════════ 逐词时间重对齐（用 TTS 合成 + 重新识别得到的节奏） ═══════════
+/* ═══════════ 逐词时间重对齐（切原片音频重新识别，取实测逐词位置） ═══════════
  *
  * 场景：某条字幕的**逐词时间戳糊了**（拖动过、或识别时把词边界摊平了），但文本是对的。
  * 做法：让服务端把这条字幕念一遍、再识别那段合成语音，得到一份干净的参考节奏，
@@ -5575,13 +5589,18 @@ async function realignRow(item) {
     jobCardDone('重排逐词时间 · 完成', `${b.words.length} 个词已重排（锚点 ${b.anchors}，${msec}ms 区间）`, true);
     toast(`已重排逐词时间：${b.words.length} 个词（文本未改动）`, 5200);
     /* 操作日志：记清"哪一条、多少词、依据是什么"。
-     * why 里带上锚点率与 TTS 发音人 —— 这是判断"这次重排可不可信"的关键依据，
+     * why 里带**词吻合率**与第二级是否被采纳 —— 这是判断"这次重排可不可信"的关键依据，
      * 事后复盘时没有它就只能猜。 */
     logOp('realign', `第 ${(row && row.no) || '?'} 条 ${fmtTime(start)}~${fmtTime(end)}`,
       `重排 ${b.words.length} 个词的逐词时间（文本未改动）`
       + `；旧值 ${beforeWords.length} 词。识别听到：${String(b.heard || '').slice(0, 80)}`,
-      `TTS 朗读→重新识别→序列对齐：锚点 ${b.anchors}/${b.words.length}（${Math.round((b.ratio || 0) * 100)}%），`
-      + `发音人 ${b.voice || '系统默认'}${b.rate ? `，语速 ${b.rate > 0 ? '+' : ''}${b.rate}` : ''}`);
+      `切原片音频重新识别→序列对齐：词吻合率 ${Math.round((b.ratio || 0) * 100)}%`
+      + `（${b.anchors}/${b.words.length} 个词对上）`
+      + (b.level === 2
+        ? `；第二级热词偏置采纳（${(b.hotwords || []).join('、')}）`
+        : ((b.hotTried && b.hotTried.length)
+          ? `；热词偏置试过 ${b.hotTried.join('、')} 但没更吻合，未采纳`
+          : '')));
   } catch (e) {
     const msg = String((e && e.message) || e);
     jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
@@ -5600,13 +5619,15 @@ timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref));
  *
  * 与上面的「重排逐词时间」是一套东西，区别在**判定谁需要改**：
  *   · 单条重排：用户自己去发现"这句的词时间不对"，右键点名改。
- *   · 全片重校对：逐句 TTS 朗读 + 重新识别，给每句算一个**对齐置信度**，
- *     只对达标的句子改。几百句的稿子肉眼看不出来哪句糊了，让程序体检一遍。
+ *   · 全片重校对：逐句切出该句的**原片音频**重新识别，拿实测位置当逐词时间，
+ *     并按**词吻合率**决定采不采纳。几百句的稿子肉眼看不出来哪句糊了，让程序体检一遍。
+ *     不达标的句子再走第二级：用该句已有词里由模型挑出的专有名词做热词偏置重试，
+ *     **更吻合才采纳**。
  *
  * 硬约束同单条：**只改逐词时间戳**，不动文本、不动整句起止。
  *
- * 为什么走后台作业 + 轮询：全片几百句、每句一次 TTS + 一次识别（实测 1~2 秒），
- * 整片要几分钟到十几分钟，同步请求必超时。
+ * 为什么走后台作业 + 轮询：全片几千句、每句要切一次音频 + 识别一次
+ * （实测无热词句均 0.27s，但整片仍是几十分钟量级），同步请求必超时。
  */
 var realignEls = {
   overlay: document.getElementById('realign-overlay'),
@@ -5650,13 +5671,13 @@ function renderRealignList() {
   if (!box || !realignData) return;
   const its = realignData.items || [];
   box.innerHTML = its.map((it, k) => {
-    const c = Number(it.confidence) || 0;
+    const c = Number(it.ratio) || 0;
     const chip = confChip(c);
     const pc = Math.round(c * 100);
     const picked = realignPicked.has(k);
     const off = !it.ok;
     return `<label class="reflect-item${off ? ' is-off' : ''}${picked ? ' is-on' : ''}" data-k="${k}"`
-      + ` title="${off ? '置信度未达门槛，会保留原逐词时间' : '勾选后应用它的新逐词时间'}">`
+      + ` title="${off ? '词吻合率未达门槛，会保留原逐词时间' : '勾选后应用它的新逐词时间'}">`
       + `<input type="checkbox" data-k="${k}"${picked ? ' checked' : ''}${off ? ' disabled' : ''}>`
       + `<span class="ri-body">`
       + `<span class="ri-head">`
@@ -5684,6 +5705,31 @@ function syncRealignApply() {
   }
 }
 
+/** 切换稿件时把重校对浮层整个收掉并清空数据。
+ *
+ * 为什么要它：浮层里的清单与"应用选中项（N 句）"都是**按稿件**的，而轮询在发现
+ * `state.project.id` 变了时只是 `return`（见 pollRealignFull 的守卫）—— 什么都不会清。
+ * 于是从 A 稿切到 B 稿、浮层还开着时，界面上留着 A 的 3927 句数据（用户实测反馈）。
+ * 由 project.js 的 openProject() 调（与 __notesReload 同一套路）。 */
+function resetRealignForProjectSwitch() {
+  clearTimeout(realignPollTimer);
+  realignRunning = false;
+  realignData = null;
+  realignPicked = new Set();
+  realignUnpicked = new Set();
+  realignShow(false);
+  if (realignEls.list) { realignEls.list.hidden = true; realignEls.list.innerHTML = ''; }
+  if (realignEls.summary) realignEls.summary.hidden = true;
+  if (realignEls.allWrap) realignEls.allWrap.hidden = true;
+  if (realignEls.conf) realignEls.conf.hidden = true;
+  if (realignEls.reload) realignEls.reload.hidden = true;
+  if (realignEls.msg) realignEls.msg.textContent = '正在逐句朗读并重新识别…';
+  syncRealignApply();                       // 按钮回到"应用选中项"、禁用
+  if (realignEls.btn) realignEls.btn.disabled = !state.project;
+  jobCardHide();
+}
+window.__realignReset = resetRealignForProjectSwitch;
+
 function realignFinishUi() {
   realignRunning = false;
   clearTimeout(realignPollTimer);
@@ -5704,7 +5750,7 @@ function pollRealignFull(pid) {
       if (realignEls.msg) {
         realignEls.msg.textContent = `${job.msg || '处理中…'}（${job.pct || 0}%）`;
       }
-      jobCardShow('全片逐词重校对', job.msg || '处理中…', job.pct, '每句一次 TTS 朗读 + 重新识别，全片要几分钟');
+      jobCardShow('全片逐词重校对', job.msg || '处理中…', job.pct, '逐句切原片音频重新识别，全片要几十分钟（不达标句再走一次热词偏置）');
       if (job.status === 'running' || job.status === 'pending') {
         pollRealignFull(pid);
         return;
@@ -5753,7 +5799,10 @@ function applyRealignThreshold(percent) {
   const items = realignData.items || [];
   let usable = 0;
   items.forEach((it) => {
-    it.ok = (Number(it.confidence) || 0) >= realignData.threshold;
+    /* ⚠ 门槛判的是**词吻合率**（服务端 planBlock 的 ratio），不是旧的"对齐置信度" ——
+     *   重写后服务端按 ratio 决定 ok，前端若还按 confidence 重判，改一次门槛就会得到
+     *   与服务端不一致的结果（同一句一边算达标、一边算不达标）。 */
+    it.ok = (Number(it.ratio) || 0) >= realignData.threshold;
     if (it.ok) usable++;
   });
   realignData.usable = usable;
@@ -5805,9 +5854,15 @@ async function startRealignFull() {
   if (realignEls.conf) realignEls.conf.hidden = true;
   if (realignEls.reload) realignEls.reload.hidden = true;
   if (realignEls.apply) realignEls.apply.disabled = true;
+  /* ⚠ 这里必须**刷新按钮文案**，不能只 disabled。
+   *  syncRealignApply() 才是唯一改这句文案的地方（`应用选中项（N 句）`），而它只在
+   *  勾选变化/门槛变化/出结果时被调。上面虽然把 realignPicked 清空了，却没重画按钮，
+   *  于是上一轮的句数会留在按钮上 —— 用户实测："预览里是 1/45 句，右下角按钮还写着
+   *  （3927 句）"，那 3927 是**上一个稿件**的数字。 */
+  syncRealignApply();
   if (realignEls.msg) realignEls.msg.textContent = '正在启动…';
   realignShow(true);
-  jobCardShow('全片逐词重校对', '正在启动…', null, '每句一次 TTS 朗读 + 重新识别，全片要几分钟');
+  jobCardShow('全片逐词重校对', '正在启动…', null, '逐句切原片音频重新识别，全片要几十分钟（不达标句再走一次热词偏置）');
   try {
     const r = await fetch(`/api/projects/${pid}/realign-full`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -5861,7 +5916,7 @@ async function applyRealignFull() {
       sent.words = (it.words || []).map(w => ({ w: w.w, s: w.s, e: w.e }));
       sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
       n++;
-      detail.push(`${fmtTime(it.start)} 置信度 ${Math.round((it.confidence || 0) * 100)}%`);
+      detail.push(`${fmtTime(it.start)} 吻合率 ${Math.round((it.ratio || 0) * 100)}%`);
     }
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
@@ -5872,7 +5927,7 @@ async function applyRealignFull() {
     toast(`已重排 ${n} 句的逐词时间${miss ? `（${miss} 句没对上，已跳过）` : ''}（文本未改动）`, 6200);
     logOp('realign', `全片逐词重校对：应用 ${n} 句`,
       `重排了 ${n} 句的逐词时间（文本与整句时间未改动）`,
-      `TTS 朗读 → 重新识别 → 序列对齐；置信度门槛 ${Math.round((realignData.threshold || 0) * 100)}%，`
+      `切原片音频重新识别（两级）；采纳门槛 ${Math.round((realignData.threshold || 0) * 100)}%，`
       + `达标的 ${realignData.usable}/${realignData.total} 句。示例：${detail.slice(0, 3).join('、')}`);
     realignShow(false);
   } catch (e) {
@@ -5899,12 +5954,12 @@ if (realignEls.list) {
     syncRealignApply();
   });
 }
-/* 面板里的置信度门槛：改完立即原地重判（不重跑识别）。
+/* 面板里的采纳门槛（词吻合率）：改完立即原地重判（不重跑识别）。
  * 用 'change' 而不是 'input' —— 输入框清空/半途状态不该触发重判。 */
 if (realignEls.confThr) {
   const commit = () => {
     applyRealignThreshold(realignEls.confThr.value);
-    toast(`置信度门槛已改为 ≥ ${Math.round(realignData.threshold * 100)}%（已按新门槛重判，未重新识别）`, 3600);
+    toast(`采纳门槛已改为 ≥ ${Math.round(realignData.threshold * 100)}%（已按新门槛重判，未重新识别）`, 3600);
   };
   realignEls.confThr.addEventListener('change', commit);
   realignEls.confThr.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
@@ -6430,30 +6485,42 @@ if (setTracks) setTracks.addEventListener('change', () => {
  * 这里只做设置面板交互：点色块换色 / 拖色盘实时预览 / 一键恢复默认。
  * 自定义色用 input 事件做实时预览, change(松手) 时才重画选中态。 */
 const ACC = window.SSAccent;
-function renderThemeSwatches() {
-  const box = document.getElementById('theme-swatches');
-  if (!box || !ACC) return;
+/* 主题色控件现在有**两处实例**：项目内设置侧栏（#theme-swatches-side 那份）与
+ * 全局设置 → 外观与主题（st-panel-theme 里那份）。两处共用同一份状态：
+ *   · 色块容器一律带 `data-theme-swatches`，这里往**所有**容器里画；
+ *   · 自定义色输入 / 恢复默认按钮按"离触发点最近的那一组"取，
+ *     并在改完之后把**所有**实例的选中态与输入框值同步一遍。
+ * 这样在任一处改色，另一处立刻跟着变，不会出现两个面板各显示一个颜色。 */
+function themeSlots() {
+  return [...document.querySelectorAll('[data-theme-swatches]')];
+}
+function syncThemeInputs() {
+  if (!ACC) return;
   const cur = ACC.current();
-  box.innerHTML = ACC.PRESETS.map(p =>
-    `<button type="button" class="theme-sw${p.hex === cur ? ' active' : ''}" data-hex="${p.hex}" title="${escapeHtml(p.name)}" style="background:${p.hex}"></button>`).join('');
-  box.querySelectorAll('.theme-sw').forEach(b => {
-    b.addEventListener('click', () => { ACC.set(b.dataset.hex); renderThemeSwatches(); });
-  });
+  document.querySelectorAll('#theme-color, [data-theme-color]').forEach(ci => { ci.value = cur; });
+}
+function renderThemeSwatches() {
+  if (!ACC) return;
+  const cur = ACC.current();
+  for (const box of themeSlots()) {
+    box.innerHTML = ACC.PRESETS.map(p =>
+      `<button type="button" class="theme-sw${p.hex === cur ? ' active' : ''}" data-hex="${p.hex}" title="${escapeHtml(p.name)}" style="background:${p.hex}"></button>`).join('');
+    box.querySelectorAll('.theme-sw').forEach(b => {
+      b.addEventListener('click', () => { ACC.set(b.dataset.hex); renderThemeSwatches(); syncThemeInputs(); });
+    });
+  }
 }
 if (ACC) {
   renderThemeSwatches();
-  const ci = document.getElementById('theme-color');
-  if (ci) {
+  document.querySelectorAll('#theme-color, [data-theme-color]').forEach(ci => {
     ci.value = ACC.current();
     ci.addEventListener('input', () => { ACC.set(ci.value); });                  // 拖色盘即时预览
-    ci.addEventListener('change', () => { ACC.set(ci.value); renderThemeSwatches(); });
-  }
-  const rb = document.getElementById('theme-reset');
-  if (rb) rb.addEventListener('click', () => {
-    ACC.reset(); renderThemeSwatches();
-    if (ci) ci.value = ACC.DEFAULT;
-    toast('已恢复默认主题色');
+    ci.addEventListener('change', () => { ACC.set(ci.value); renderThemeSwatches(); syncThemeInputs(); });
   });
+  document.querySelectorAll('#theme-reset, [data-theme-reset]').forEach(rb => rb.addEventListener('click', () => {
+    ACC.reset(); renderThemeSwatches(); syncThemeInputs();
+    toast('已恢复默认主题色');
+  }));
 }
 
 /** 字幕块区域高度(时间轴占屏幕高度): 设置里可调, 也可拖视频/时间轴中间那根线; 记住用户的舒适值 */

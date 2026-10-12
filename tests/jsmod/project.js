@@ -617,6 +617,9 @@ export function initProjects(ctx) {
     setSaveState('', '自动保存已开启');
     // 备注是按项目存的 —— 切项目要重载（不重载会把上一个项目的备注当弹幕放出来）
     if (typeof window.__notesReload === 'function') window.__notesReload();
+    // 「全片逐词重校对」浮层里的清单与按钮句数也是按稿件的：切换时整个收掉，
+    // 否则会留着上一个稿件的 N 句（用户实测：预览里 45 句、按钮还写着 3927 句）。
+    if (typeof window.__realignReset === 'function') window.__realignReset();
 
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
@@ -1431,7 +1434,11 @@ export function initProjects(ctx) {
     refreshKeyHint(c);
     $('#st-model').value = c.model || '';
     if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
+    if ($('#st-temp')) $('#st-temp').value = (c.temperature == null ? 0.3 : c.temperature);   // 采样温度
+    if ($('#st-ctx')) $('#st-ctx').value = c.contextRows || 0;                                 // 上下文行数
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
+    // 方案列表/胶囊用的是刚拿到的 stPresets 与当前 provider，必须在这之后画
+    if (typeof renderSchemes === 'function') renderSchemes();
     try {
       const h = await (await fetch('/api/asr/hint')).json();
       const hint = h.hint || {};
@@ -1720,6 +1727,203 @@ function initDualRatio() {
   });
 }
 
+/* ── 设置页新增的两块（设计稿 ①）：入口卡的进度/胶囊 + 运行时环境卡 ──
+ * 都从 /api/asr/status 的**真实**数据算，不写死数字。renderAsrModels() 里已经拿到
+ * 同一份 d，所以由它调用，避免同一个接口请求两次。 */
+
+/** 引擎 → 胶囊标签（设计稿里 Parakeet×3 / Whisper×1 / 云端×2 那种） */
+const ENTRY_CHIP = {
+  'sherpa-onnx': { label: 'Parakeet', cls: 'ok' },
+  'openvino': { label: 'Parakeet', cls: 'ok' },
+  'crispasr': { label: 'Parakeet', cls: 'ok' },
+  'dual': { label: 'Parakeet', cls: 'ok' },
+  'whisper.cpp': { label: 'Whisper', cls: 'blue' },
+  'nemo': { label: 'NeMo', cls: 'violet' },
+  'bcut': { label: '云端', cls: 'warn' },
+  'capcut': { label: '云端', cls: 'warn' },
+};
+
+function renderModelEntries(d) {
+  const models = (d && d.models) || [];
+  // ── ASR 卡：N/M 已安装 + 按系列聚合的胶囊 ──
+  const installed = models.filter(m => m.ready).length;
+  const barA = document.getElementById('st-entry-asr-bar');
+  const subA = document.getElementById('st-entry-asr-sub');
+  const chipsA = document.getElementById('st-entry-asr-chips');
+  if (subA) subA.textContent = '语音识别 · ' + models.length + ' 个模型';
+  if (barA) barA.style.width = (models.length ? Math.round(installed / models.length * 100) : 0) + '%';
+  if (chipsA) {
+    const byLabel = {};
+    for (const m of models) {
+      const c = ENTRY_CHIP[m.engine] || { label: m.cloud ? '云端' : m.engine, cls: '' };
+      const k = c.label + '|' + c.cls;
+      byLabel[k] = (byLabel[k] || 0) + 1;
+    }
+    const chips = Object.entries(byLabel).map(([k, n]) => {
+      const [label, cls] = k.split('|');
+      return '<span class="' + cls + '">' + esc(label) + ' ×' + n + '</span>';
+    });
+    // 进度文案放在胶囊后面（设计稿是"N / M 已安装"挨着进度条，这里并在同一行更省地方）
+    chips.unshift('<span>' + installed + ' / ' + models.length + ' 已安装</span>');
+    chipsA.innerHTML = chips.join('');
+  }
+  // ── LLM 卡：预设方案数（服务端 /api/translate/config 的 presets）──
+  // stPresets 由设置页自己加载过；为空时按 0 显示，不谎报数字。
+  const presets = (typeof stPresets !== 'undefined' && stPresets) || [];
+  const subL = document.getElementById('st-entry-llm-sub');
+  const barL = document.getElementById('st-entry-llm-bar');
+  const chipsL = document.getElementById('st-entry-llm-chips');
+  if (presets.length) {
+    // 「已配置」= 该服务商有 baseUrl 或本地地址（本地模型不需要 Key）
+    const conf = presets.filter(p => p && (p.baseUrl || p.local)).length;
+    if (subL) subL.textContent = '翻译方案 · ' + presets.length + ' 套配置';
+    if (barL) barL.style.width = Math.round(conf / presets.length * 100) + '%';
+    if (chipsL) {
+      chipsL.innerHTML = '<span>' + conf + ' / ' + presets.length + ' 已配置</span>'
+        + presets.slice(0, 4).map(p => '<span class="' + (p.baseUrl || p.local ? 'ok' : '') + '">'
+          + esc(p.name || p.id || '未命名') + '</span>').join('');
+    }
+  } else {
+    if (subL) subL.textContent = '翻译方案';
+    if (chipsL) chipsL.innerHTML = '<span>读取中…</span>';
+  }
+}
+
+/** 运行时环境三卡（Python / NeMo / 说话人分离），照设计稿 ① 的第三块。
+ *  状态全部来自 d 里的真实探测：pythonProbe / nemo / diarize。 */
+function renderRuntimeEnv(d) {
+  const box = document.getElementById('st-runtime-env');
+  if (!box) return;
+  const py = d && d.pythonProbeFlat ? d.pythonProbeFlat : (d && d.pythonProbe ? (d.pythonProbe.openvino || null) : null);
+  const pyOk = !!(py && py.ok);
+  const pyState = !py ? { cls: 'warn', txt: '检测中…' }
+    : pyOk ? { cls: 'ok', txt: '✓ 可用' }
+      : { cls: 'bad', txt: '不可用' };
+  const nemo = (d && d.nemo) || {};
+  const diar = (d && d.diarize) || {};
+  const card = (dot, name, line, state, action) => `
+    <div class="st-env">
+      <div class="st-env-head"><i class="st-env-dot ${dot}"></i><span class="st-env-name">${esc(name)}</span></div>
+      <p class="st-env-line">${esc(line)}</p>
+      <p class="st-env-state ${state.cls}">${esc(state.txt)}</p>
+      ${action || ''}
+    </div>`;
+  const pyLine = pyOk
+    ? (py.msg || '') + (d.provider === 'cuda' && d.gpu ? ' · CUDA · ' + d.gpu : '')
+    : (py && py.msg ? py.msg : '未检测到 Python 环境');
+  const nemoCard = nemo.ok
+    ? card('ok', 'NeMo', nemo.msg || ('NeMo ' + (nemo.nemoVer || '')), { cls: 'ok', txt: '✓ 可用' })
+    : card('bad', 'NeMo', '未安装 · 约 5 GB（多说话人模型需要它）', { cls: 'bad', txt: '未安装' },
+      '<button type="button" class="st-env-act" id="st-env-nemo">安装</button>');
+  const diarN = Array.isArray(diar.models) ? diar.models.length : 0;
+  const diarLine = diar.ready
+    ? '已就绪 · ' + diarN + ' 个模型'
+    : '未下载 · ' + diarN + ' 个模型';
+  box.innerHTML = card(pyOk ? 'ok' : 'bad', 'Python', pyLine, pyState)
+    + nemoCard
+    + card(diar.ready ? 'ok' : 'bad', '说话人分离', diarLine,
+      diar.ready ? { cls: 'ok', txt: '✓ 可用' } : { cls: 'bad', txt: '未就绪' });
+  if (window.__applyIcons) window.__applyIcons(box);
+  const nb = document.getElementById('st-env-nemo');
+  if (nb) nb.addEventListener('click', () => { nb.disabled = true; nb.textContent = '安装中…'; startNemoInstallFromEnv(); });
+}
+
+/** 运行时环境卡里的「安装」按钮：与模型列表里那个 NeMo 安装按钮走同一个接口，
+ *  同样把进度交给 pollModelDownload()（进度显示在动作栏的 #st-msg 上）。 */
+async function startNemoInstallFromEnv() {
+  const msgEl = $('#st-msg');
+  try {
+    const r = await (await fetch('/api/asr/install-nemo', { method: 'POST' })).json();
+    if (msgEl) {
+      if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); }
+      else if (r.started || r.already) { msgEl.textContent = '正在安装 NeMo 运行时（约 5GB，进度见上方）…装完会自动测一次 CUDA'; msgEl.classList.remove('err'); pollModelDownload(); }
+    }
+  } catch (e) {
+    if (msgEl) { msgEl.textContent = '✗ 安装启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err'); }
+  }
+  renderAsrModels();
+}
+
+/** 本机硬件条（设计稿 ②）：只显示**探测到**的硬件，一条都不显示时给一句说明。
+ *  数据来源与模型可用性判定同源（d.gpu / d.provider / d.runtime / d.crispasrRuntime /
+ *  d.pythonProbe），所以"条上说有 N 卡、列表却说没有 N 卡"这种自相矛盾不会出现。 */
+function renderHardwareBar(d) {
+  const box = document.getElementById('st-hardware');
+  if (!box) return;
+  const chips = [];
+  // N 卡：provider === 'cuda' 才算真的能用（装了驱动但没装 CUDA 版 sherpa 不算）
+  if (d.gpu) chips.push(`<span class="hw-chip ok">N 卡 ${esc(d.gpu)}</span>`);
+  // Intel NPU：OpenVINO 环境探测通过即认为可用（openvino 那套跑在 NPU 上）
+  const ov = d.pythonProbe && d.pythonProbe.openvino;
+  if (ov && ov.ok) chips.push('<span class="hw-chip ok">Intel NPU</span>');
+  // Vulkan：whisper.cpp 运行时或 CrispASR 就位
+  if ((d.runtime && d.runtime.ok) || (d.crispasrRuntime && d.crispasrRuntime.ok)) {
+    chips.push('<span class="hw-chip ok">Vulkan</span>');
+  }
+  const models = d.models || [];
+  const installed = models.filter(m => m.ready).length;
+  const right = models.length ? `已安装 ${installed} / ${models.length}` : '';
+  box.innerHTML = '<span class="hw-cap" data-ico="gear">本机硬件：</span>'
+    + (chips.length ? chips.join('') : '<span class="hw-chip none">未检测到可用加速硬件（云端识别仍可用）</span>')
+    + (right ? `<span class="hw-right">${right}</span>` : '');
+  if (window.__applyIcons) window.__applyIcons(box);
+}
+
+/** 单个模型一行（设计稿 ② 的模型卡片：名称 + 状态 + 下载/删除按钮）。
+ *  从 renderAsrModels() 里抽出来，以便**按系列分组**逐组拼装 —— 判断逻辑一行没改，
+ *  只是把"映射一个模型 → 一段 HTML"变成具名函数，供分组循环调用。 */
+function modelRowHtml(m, d, dlOf) {
+  const st = dlOf('model:' + m.id);
+  const rtSt = m.needRuntime ? dlOf(m.runtimeKey || 'runtime') : {};
+  const dlThis = st.running || (m.needRuntime && rtSt.running);
+  /* 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户。
+   * ⚠ `d.gpu` 为空还有第三种可能：**后台探测还没跑完**（服务端已改成等探测完再回，
+   *   但旧实例/极端慢的 nvidia-smi 仍可能给空）。那种情况下不能说"没检测到 N 卡" —— 是误报。 */
+  const gpuUnknown = !d.gpu && !!d.gpuPending;
+  const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
+    || (m.engine === 'nemo' && !d.gpu && !gpuUnknown);
+  let state, btn = '';
+  if (m.cloud) {
+    // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
+    state = '<span class="sm-state ok">✓ 云端识别（免下载 · 免显卡 · 需要联网）</span>';
+  } else if (st.running || (m.needRuntime && rtSt.running)) {
+    state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
+  } else if (st.error) {
+    state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+  } else if (gpuUnknown && m.engine === 'nemo') {
+    state = '<span class="sm-state">检测中…（正在查显卡）</span>';
+  } else if (pyBlocked) {
+    state = m.engine === 'nemo'
+      ? '<span class="sm-state" style="color:var(--danger)">只支持 N 卡（NVIDIA 显卡）。当前没检测到 N 卡，不支持 CPU 推理，无法下载</span>'
+      : '<span class="sm-state" style="color:var(--danger)">需要 CUDA GPU（N 卡）才能下载使用，不支持 CPU。先在上面把 Python 环境装好</span>';
+  } else if (m.needNemo) {
+    state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
+  } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
+  else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
+  if (dlThis) btn = '';
+  else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
+  else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
+  else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
+  const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>` : '';
+  return `<div class="sm-model">
+    <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
+    <div class="sm-desc">${esc(m.desc || '')}</div>
+    ${state}${rt}
+  </div>`;
+}
+
+/** 模型 → 系列名（设计稿 ② 的分组口径）：Parakeet / Whisper / NeMo 多说话人 / 云端识别。
+ *  按 engine 分而不是按名字猜 —— 名字里带什么字都会变，engine 是服务端给的稳定字段。 */
+const MODEL_FAMILY = (m) => {
+  if (m.cloud || m.engine === 'bcut' || m.engine === 'capcut') return '云端识别';
+  if (m.engine === 'whisper.cpp') return 'Whisper 系列';
+  if (m.engine === 'nemo') return 'NeMo 多说话人';
+  return 'Parakeet 系列';
+};
+/** 分组的展开/收起状态：按系列名记。renderAsrModels() 会整个重建 innerHTML，
+ *  而下载进度轮询**每秒**重画一次 —— 不记住状态的话用户刚折叠的组立刻又被展开。 */
+const GROUP_OPEN = new Map();
+
 async function renderAsrModels() {
     const box = $('#st-models');
     if (!box) return;
@@ -1737,6 +1941,10 @@ async function renderAsrModels() {
       if (rb) rb.addEventListener('click', () => renderAsrModels());
       return;
     }
+    // 同一份状态顺便喂给设计稿新增的两块：入口卡（进度/胶囊）与运行时环境卡。
+    // 放在这里而不是各请求一次，是为了避免重复打 /api/asr/status（它要探测 Python/NeMo，不便宜）。
+    renderModelEntries(d);
+    renderRuntimeEnv(d);
     const dlMap = {};                    // key → 下载状态(服务端并行下载, 每个 key 独立)
     (d.downloads || []).forEach(x => { dlMap[x.key] = x; });
     const dlOf = (key) => dlMap[key] || {};
@@ -1786,45 +1994,30 @@ async function renderAsrModels() {
       <div class="sm-pymsg" style="font-size:12px;margin-top:4px"></div>
     </div>`;
     // 各任务 key: model:<id> / runtime / runtime:crispasr / diarize（运行时按 runtimeKey 取，服务端给）
-    rows += (d.models || []).map((m) => {
-      const st = dlOf('model:' + m.id);
-      const rtSt = m.needRuntime ? dlOf(m.runtimeKey || 'runtime') : {};
-      const dlThis = st.running || (m.needRuntime && rtSt.running);
-      /* 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户。
-       * ⚠ `d.gpu` 为空还有第三种可能：**后台探测还没跑完**（服务端已改成等探测完再回，
-       *   但旧实例/极端慢的 nvidia-smi 仍可能给空）。那种情况下不能说"没检测到 N 卡" —— 是误报。 */
-      const gpuUnknown = !d.gpu && !!d.gpuPending;
-      const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
-        || (m.engine === 'nemo' && !d.gpu && !gpuUnknown);
-      let state, btn = '';
-      if (m.cloud) {
-        // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
-        state = '<span class="sm-state ok">✓ 云端识别（免下载 · 免显卡 · 需要联网）</span>';
-      } else if (st.running || (m.needRuntime && rtSt.running)) {
-        state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
-      } else if (st.error) {
-        state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
-      } else if (gpuUnknown && m.engine === 'nemo') {
-        state = '<span class="sm-state">检测中…（正在查显卡）</span>';
-      } else if (pyBlocked) {
-        state = m.engine === 'nemo'
-          ? '<span class="sm-state" style="color:var(--danger)">只支持 N 卡（NVIDIA 显卡）。当前没检测到 N 卡，不支持 CPU 推理，无法下载</span>'
-          : '<span class="sm-state" style="color:var(--danger)">需要 CUDA GPU（N 卡）才能下载使用，不支持 CPU。先在上面把 Python 环境装好</span>';
-      } else if (m.needNemo) {
-        state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
-      } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
-      else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
-      if (dlThis) btn = '';
-      else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
-      else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
-      else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>` : '';
-      return `<div class="sm-model">
-        <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
-        <div class="sm-desc">${esc(m.desc || '')}</div>
-        ${state}${rt}
+    /* ── 按系列分组（设计稿 ②「可折叠 + 硬件感知」）──
+     * 每个系列一个可折叠块：标题行给「系列名 · N 个模型 · M 就绪」，点标题折叠/展开。
+     * ⚠ 折叠状态记在 GROUP_OPEN 里（模块级 Map，按系列名），因为 renderAsrModels() 会
+     *   整个重建 innerHTML —— 不记住的话每次重画（下载进度轮询 1 秒一次！）折叠状态都会被重置。 */
+    const groups = new Map();                     // 系列名 → { rows: [], ready: 0 }
+    for (const m of (d.models || [])) {
+      const fam = MODEL_FAMILY(m);
+      if (!groups.has(fam)) groups.set(fam, { rows: [], ready: 0 });
+      const g = groups.get(fam);
+      if (m.ready) g.ready++;
+      g.rows.push(modelRowHtml(m, d, dlOf));
+    }
+    for (const [fam, g] of groups) {
+      const open = GROUP_OPEN.get(fam) !== false;              // 默认展开
+      rows += `<div class="sm-group" data-family="${esc(fam)}">
+        <button type="button" class="sm-group-head" data-family="${esc(fam)}" aria-expanded="${open}">
+          <span class="sm-caret${open ? ' open' : ''}" data-ico="chevronDown"></span>
+          <span class="sm-group-name">${esc(fam)}</span>
+          <span class="sm-group-count">${g.rows.length} 个模型</span>
+          <span class="sm-group-ready${g.ready ? '' : ' none'}">${g.ready ? g.ready + ' 就绪' : '未就绪'}</span>
+        </button>
+        <div class="sm-group-body"${open ? '' : ' hidden'}>${g.rows.join('')}</div>
       </div>`;
-    }).join('');
+    }
     // 说话人分离模型(两个文件一组, ~32MB): 初稿勾选「区分说话人」时需要
     const dz = d.diarize || {};
     const dzSt = dlOf('diarize');
@@ -1895,6 +2088,28 @@ async function renderAsrModels() {
       ${dzState}
     </div>`;
     box.innerHTML = rows || '<div class="st-row">无可用模型</div>';
+    // 分组标题里的折叠箭头是 data-ico 声明的，图标注入只作用于 applyIcons() 跑过的节点 ——
+    // 这段 HTML 是刚拼出来的，得自己补一次（否则箭头位置是空的）。
+    if (window.__applyIcons) window.__applyIcons(box);
+    /* 折叠/展开：**事件委托**绑在 box 上（不给每个标题单独绑）。
+     * 为什么必须委托：renderAsrModels() 在下载进度轮询时可能每秒重画一次，
+     * 逐个绑会在重画后全部失效。 */
+    if (!box.dataset.groupBound) {
+      box.dataset.groupBound = '1';
+      box.addEventListener('click', (e) => {
+        const head = e.target.closest && e.target.closest('.sm-group-head');
+        if (!head) return;
+        const fam = head.dataset.family || '';
+        const open = !(GROUP_OPEN.get(fam) !== false);      // 取反当前状态
+        GROUP_OPEN.set(fam, open);
+        const body = head.nextElementSibling;
+        if (body) body.hidden = !open;
+        head.setAttribute('aria-expanded', String(open));
+        const caret = head.querySelector('.sm-caret');
+        if (caret) caret.classList.toggle('open', open);
+      });
+    }
+    renderHardwareBar(d);
     box.querySelectorAll('.sm-nemoinstall').forEach(b => b.addEventListener('click', async () => {
       b.disabled = true; b.textContent = '开始…';
       try {
@@ -2067,6 +2282,164 @@ async function renderAsrModels() {
   }
   $('#btn-settings').addEventListener('click', openSettings);
 
+  /* 模型设置页的两个入口卡（设计稿 ①）：
+   *   ASR 卡的"管理"就在本面板里（模型管理卡片紧随其后），所以点击只把内容滚到模型列表；
+   *   LLM 卡的设置就是二级 Tab 的「LLM 语言模型」子视图。 */
+  const entryAsr = document.getElementById('st-entry-asr');
+  if (entryAsr) entryAsr.addEventListener('click', () => { showSubView('asr'); });
+  const entryLlm = document.getElementById('st-entry-llm');
+  if (entryLlm) entryLlm.addEventListener('click', () => { showSubView('llm'); });
+
+  /* ── 二级 Tab（设计稿 ②：ASR 识别模型 / LLM 语言模型）── */
+  function showSubView(name) {
+    document.querySelectorAll('.st-subtab').forEach(t => {
+      const on = t.dataset.stsub === name;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', String(on));
+    });
+    document.querySelectorAll('.st-subview').forEach(v => { v.hidden = v.dataset.stsub !== name; });
+    // LLM 子视图里的方案列表要按最新的 stPresets 重画（首次进入时 stPresets 可能已就绪）
+    if (name === 'llm') renderSchemes();
+  }
+  document.querySelectorAll('.st-subtab').forEach(t => {
+    t.addEventListener('click', () => showSubView(t.dataset.stsub));
+  });
+
+  /* ── LLM 翻译方案（设计稿 ③）──
+   * ── 与后端的关系：/api/translate/config 只有**一套** cfg + 一份 presets（服务商预置表）。
+   *    所以这里列出的是"服务商方案"：点某行的「设置」= 把表单切到该服务商并打开滑入面板，
+   *    保存走原路（POST /api/translate/config）→ 即"当前使用的那一套"。
+   *    「新建方案」= 清空表单、指向第一个未配置的服务商，让用户填新的一套。
+   *    多套方案各自独立存储需要后端支持，暂不做（见面板底部的说明）。 */
+  const schemeEls = {
+    list: document.getElementById('st-scheme-list'),
+    picks: document.getElementById('st-scheme-picks'),
+    drawer: document.getElementById('st-scheme-drawer'),
+    drawerPicks: document.getElementById('st-drawer-picks'),
+    drawerTitle: document.getElementById('st-scheme-title'),
+    drawerCur: document.getElementById('st-scheme-cur'),
+  };
+
+  /** 方案是否"已配置"：当前 provider 且已有 Key，或本地地址（本地模型不需要 Key） */
+  function schemeConfigured(p) {
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const hasKey = $('#st-key') && $('#st-key').placeholder && /已保存/.test($('#st-key').placeholder);
+    const local = /127\.0\.0\.1|localhost/.test(p.baseUrl || '');
+    return p.id === cur && (hasKey || local);
+  }
+
+  function renderSchemes() {
+    if (!schemeEls.list) return;
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const keySaved = $('#st-key') && $('#st-key').placeholder && /已保存/.test($('#st-key').placeholder);
+    // 服务选择胶囊：两个地方共用同一套（列表上方 + 滑入面板里）
+    const picksHtml = stPresets.map(p =>
+      `<button type="button" class="st-pick${p.id === cur ? ' on' : ''}" data-provider="${esc(p.id)}">${esc(p.name)}</button>`).join('');
+    if (schemeEls.picks) schemeEls.picks.innerHTML = picksHtml;
+    if (schemeEls.drawerPicks) schemeEls.drawerPicks.innerHTML = picksHtml;
+    for (const box of [schemeEls.picks, schemeEls.drawerPicks]) {
+      if (!box) continue;
+      box.querySelectorAll('.st-pick').forEach(b => b.addEventListener('click', () => {
+        const p = stPresets.find(x => x.id === b.dataset.provider);
+        if (!p) return;
+        // 与旧的 select 联动：改 select 的值会触发它自己的 change（那里会填 baseUrl/model）
+        const sel = $('#st-provider');
+        if (sel) { sel.value = p.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+        else { if ($('#st-baseurl')) $('#st-baseurl').value = p.baseUrl || ''; if ($('#st-model')) $('#st-model').value = p.model || ''; }
+        openDrawer(p.name, p.id === cur);
+        renderSchemes();
+      }));
+    }
+    // 方案列表
+    schemeEls.list.innerHTML = stPresets.map(p => {
+      const isCur = p.id === cur;
+      const conf = isCur && (keySaved || /127\.0\.0\.1|localhost/.test(p.baseUrl || ''));
+      const dot = conf ? 'ok' : (isCur ? 'warn' : '');
+      const local = /127\.0\.0\.1|localhost/.test(p.baseUrl || '');
+      const bits = [p.model || '', local ? '本地地址' : '', isCur && keySaved ? '已保存 Key' : ''].filter(Boolean);
+      return `<div class="st-scheme${isCur ? ' cur' : ''}${conf ? '' : ' off'}" data-provider="${esc(p.id)}">
+        <i class="st-scheme-dot ${dot}"></i>
+        <div class="st-scheme-main">
+          <div class="st-scheme-name">${esc(p.name)}${isCur ? '<span class="st-tag-cur">当前使用</span>' : ''}</div>
+          <p class="st-scheme-desc">${esc(bits.join(' · ') || p.baseUrl || '未配置')}</p>
+        </div>
+        <button type="button" class="btn btn-mini st-scheme-set" data-provider="${esc(p.id)}">设置</button>
+      </div>`;
+    }).join('');
+    schemeEls.list.querySelectorAll('.st-scheme-set').forEach(b => b.addEventListener('click', () => {
+      const p = stPresets.find(x => x.id === b.dataset.provider);
+      if (!p) return;
+      const sel = $('#st-provider');
+      if (sel) { sel.value = p.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      openDrawer(p.name, p.id === cur);
+      renderSchemes();
+    }));
+  }
+
+  function openDrawer(title, isCur) {
+    if (!schemeEls.drawer) return;
+    if (schemeEls.drawerTitle) schemeEls.drawerTitle.textContent = title || '翻译方案';
+    if (schemeEls.drawerCur) schemeEls.drawerCur.hidden = !isCur;
+    schemeEls.drawer.hidden = false;
+    schemeEls.drawer.setAttribute('aria-hidden', 'false');
+    // 下一帧再加 .open，让 transition 真的跑起来（同一帧加会直接跳到终态）
+    requestAnimationFrame(() => { if (schemeEls.drawer) schemeEls.drawer.classList.add('open'); });
+  }
+  function closeDrawer() {
+    if (!schemeEls.drawer) return;
+    schemeEls.drawer.classList.remove('open');
+    schemeEls.drawer.setAttribute('aria-hidden', 'true');
+    // 等动画结束再 hidden，否则"滑出"看不见
+    setTimeout(() => { if (schemeEls.drawer && !schemeEls.drawer.classList.contains('open')) schemeEls.drawer.hidden = true; }, 320);
+  }
+  const drawerClose = document.getElementById('st-scheme-close');
+  if (drawerClose) drawerClose.addEventListener('click', closeDrawer);
+  const drawerCancel = document.getElementById('st-drawer-cancel');
+  if (drawerCancel) drawerCancel.addEventListener('click', closeDrawer);
+  const drawerSave = document.getElementById('st-drawer-save');
+  if (drawerSave) drawerSave.addEventListener('click', () => {
+    const sb = document.getElementById('st-save');       // 复用既有的"保存设置"链路，不另写一份保存
+    if (sb) sb.click();
+    closeDrawer();
+  });
+  const schemeNew = document.getElementById('st-scheme-new');
+  if (schemeNew) schemeNew.addEventListener('click', () => {
+    // 找一个还没配的服务商作为起点（都没有就退回第一个）
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const target = stPresets.find(p => p.id !== cur) || stPresets[0];
+    if (!target) return;
+    const sel = $('#st-provider');
+    if (sel) { sel.value = target.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    if ($('#st-key')) $('#st-key').value = '';
+    openDrawer(target.name, false);
+    renderSchemes();
+  });
+  const drawerTest = document.getElementById('st-scheme-test');
+  if (drawerTest) drawerTest.addEventListener('click', () => {
+    const tb = document.getElementById('st-test');       // 复用既有的"测试连接"
+    if (tb) tb.click();
+  });
+  const drawerReset = document.getElementById('st-scheme-reset');
+  if (drawerReset) drawerReset.addEventListener('click', () => {
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const p = stPresets.find(x => x.id === cur);
+    if (!p) return;
+    if ($('#st-baseurl')) $('#st-baseurl').value = p.baseUrl || '';
+    if ($('#st-model')) $('#st-model').value = p.model || '';
+    if ($('#st-key')) $('#st-key').value = '';
+    const msg = document.getElementById('st-drawer-msg');
+    if (msg) msg.textContent = '已恢复该服务商的默认接口地址与模型名（Key 未改动）';
+  });
+  const keyEye = document.getElementById('st-key-eye');
+  if (keyEye) keyEye.addEventListener('click', () => {
+    const k = $('#st-key');
+    if (!k) return;
+    const show = k.type === 'password';
+    k.type = show ? 'text' : 'password';
+    keyEye.textContent = show ? '隐藏' : '显示';
+  });
+  if (window.__applyIcons) window.__applyIcons(document.getElementById('st-view') || document);
+
   /* ── 下载与登录（设置 → 下载与登录） ── */
   /** Cookie 备注：保存状态 + 登录检测结果（谁登录的、是不是大会员、密文还是明文存） */
   function cookieNote(d, check) {
@@ -2213,41 +2586,16 @@ async function renderAsrModels() {
     } catch {}
   }
 
-  /* 重排逐词时间的设置（朗读语音 / 语速 / 最低锚点率）。
-     与上面几块同一模式：改了立刻存，存完用服务端返回值回填（服务端会做范围夹取）。 */
+  /* 重排逐词时间的设置（最低锚点率 / 采纳门槛）。
+     与上面几块同一模式：改了立刻存，存完用服务端返回值回填（服务端会做范围夹取）。
+     ⚠ 朗读语音 / 语速是**旧 TTS 方案**的设置：重校对改成"切原片音频重新识别"之后
+     它们不再参与任何判定，控件与绑定一并移除。设置项本身仍留在 asr/settings.json 里，
+     老配置读进来不会报错（服务端也不再读它们）。 */
   function realignFill(v) {
     if (!v) return;
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    set('st-realign-rate', v.rate);
     set('st-realign-minratio', v.minAnchorRatio);
     set('st-realign-minconf', v.minConfidence);
-    const rv = document.getElementById('st-realign-rate-val');
-    if (rv) {
-      const n = Number(v.rate) || 0;
-      rv.textContent = n === 0 ? '0（正常）' : (n > 0 ? `+${n}（快）` : `${n}（慢）`);
-    }
-    const sel = document.getElementById('st-realign-voice');
-    if (sel) {
-      const keep = sel.value;
-      sel.replaceChildren();
-      const mk = (val, label) => { const o = document.createElement('option'); o.value = val; o.textContent = label; return o; };
-      sel.append(mk('', '（系统默认英文语音）'));
-      // 只列**英文**语音：TTS 是拿英文台词去念的，中文/日文声音念英文会糊
-      for (const vo of (v.voices || [])) {
-        if (!/^en/i.test(String(vo.culture || ''))) continue;
-        sel.append(mk(vo.name, `${vo.name}（${vo.culture}）`));
-      }
-      sel.value = (v.voice && [...sel.options].some(o => o.value === v.voice)) ? v.voice
-        : (keep && [...sel.options].some(o => o.value === keep) ? keep : '');
-    }
-    const note = document.getElementById('st-realign-note');
-    if (note) {
-      const en = (v.voices || []).filter(vo => /^en/i.test(String(vo.culture || '')));
-      note.textContent = en.length
-        ? `本机可用的英文语音 ${en.length} 个。低于最低锚点率的对齐会被拒绝（不改动字幕），避免给出错的时间。`
-        : '本机没找到英文语音 —— 会退回系统默认，识别准确率可能下降。'
-          + '（Windows 设置 → 时间和语言 → 语音 里可以添加英文语音包）';
-    }
   }
   async function realignLoad() {
     try {
@@ -2269,17 +2617,8 @@ async function renderAsrModels() {
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', () => realignSave({ [key]: num ? Number(el.value) : el.value }));
     };
-    bind('st-realign-voice', 'voice');
-    bind('st-realign-rate', 'rate', true);
     bind('st-realign-minratio', 'minAnchorRatio', true);
     bind('st-realign-minconf', 'minConfidence', true);
-    // 拖动语速时先更新旁边的文字（松手才存）
-    const rate = document.getElementById('st-realign-rate');
-    if (rate) rate.addEventListener('input', () => {
-      const rv = document.getElementById('st-realign-rate-val');
-      const n = Number(rate.value) || 0;
-      if (rv) rv.textContent = n === 0 ? '0（正常）' : (n > 0 ? `+${n}（快）` : `${n}（慢）`);
-    });
   }
   async function correctSave(patch) {
     try {
@@ -2481,6 +2820,9 @@ async function renderAsrModels() {
       baseUrl: $('#st-baseurl').value.trim(),
       model: $('#st-model').value.trim(),
       batchSize: parseInt(($('#st-batch') || {}).value, 10) || 25,     // 每批行数(服务端还会夹到 5~100)
+      // 采样温度 / 上下文行数（设计稿 ③ 的两项，服务端同样会夹范围；解析失败时用默认值）
+      temperature: Number.isFinite(parseFloat(($('#st-temp') || {}).value)) ? parseFloat($('#st-temp').value) : 0.3,
+      contextRows: parseInt(($('#st-ctx') || {}).value, 10) || 0,
       prompt: $('#st-prompt').value,
       glossary: glSerialize(),
       glossaryLang: glState.lang,
