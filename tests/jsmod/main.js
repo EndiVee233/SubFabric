@@ -961,6 +961,22 @@ function setAssStyleControls() {
   syncBlockFonts();          // 块内字体跟稿件样式同步（改字体后时间轴立刻跟着变）
 }
 
+/** 某条样式轨上的**全部**事件 —— 换色/换 \k 形态时的 scope 一律用这个，不要用
+ *  `state.kar.sentences[].events`。
+ *
+ *  为什么（用户报的 bug，实测）：逐词**切片**形态下一句 = N 条事件（每词一条），
+ *  而 kar 只把其中一部分挂进 `sentence.events` —— 拿它当 scope 会只改到那几条，
+ *  同一句里剩下的词保持旧色，画面上就是"同一句话有的词白、有的词绿"（叠上中英两轨
+ *  看着像两行重叠）。实测最小复现件（2 句 / 14 个切片）：改色后文档里同时存在
+ *  `&H00FF00&` 与 `&HFFFFFF&` 两个色标。
+ *  按整条样式轨取则一次性换净（replaceWordHighlightColor 内部还会按 style 过滤一次，
+ *  所以多传不会误伤别的轨）。 */
+function eventsOfStyle(style) {
+  const want = String(style || '').toLowerCase();
+  if (!want || !state.assDoc) return [];
+  return state.assDoc.events.filter(ev => String(ev.style || '').toLowerCase() === want);
+}
+
 function applyAssStyleSettings(forceFontReload = false) {
   if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return false;
   const el = assStyleEls, targets = state.assStyleTargets;
@@ -994,11 +1010,9 @@ function applyAssStyleSettings(forceFontReload = false) {
   }
   const color = (el.wordColor.value || '#00ff00').toLowerCase();
   setWordHighlightColor(color);      // 同步给 karaoke.js: 之后新建/重建的逐词 span 都用这个色
-  const wordEvents = state.kar && state.kar.sentences
-    ? [...new Set(state.kar.sentences
-      .filter(sentence => sentence.style.toLowerCase() === targets.en.toLowerCase() && sentence.words && sentence.words.length)
-      .flatMap(sentence => sentence.events || []))]
-    : [];
+  /* 换色要覆盖到**这条样式轨上的所有事件**，不能只用 `state.kar.sentences` 里挂着的那些。
+   * 原因见 eventsOfStyle() 的注释（逐词切片形态下 kar 只挂了一部分，会漏色）。 */
+  const wordEvents = eventsOfStyle(targets.en);
   const wordColorChanged = replaceWordHighlightColor(state.assDoc, targets.en, color, wordEvents);
   const colorMetaChanged = state.assDoc.setScriptInfoComment(ASS_WORD_COLOR_META, color);
   if (state.kar && state.kar.sentences) {
@@ -1123,14 +1137,10 @@ async function importAssStylePreset(file) {
 
   // 逐词高亮色 / 未唱色：setAssStyleControls 已经同步给 karaoke 与控件；
   // 这里再按稿件现有的逐词行与 k 行把**行内标签**也换成新颜色（只改行内标签，不动文本）。
+  // scope 用 eventsOfStyle（整条样式轨）—— 与设置面板那条路径同一口径，别用 kar 的子集。
   const wordColor = (assStyleEls.wordColor && assStyleEls.wordColor.value || '').toLowerCase();
   if (/^#[0-9a-f]{6}$/.test(wordColor)) {
-    const wordEvents = state.kar && state.kar.sentences
-      ? [...new Set(state.kar.sentences
-        .filter(s => s.words && s.words.length
-          && String(s.style).toLowerCase() === String(enDest).toLowerCase())
-        .flatMap(s => s.events || []))]
-      : [];
+    const wordEvents = eventsOfStyle(enDest);
     if (wordEvents.length) replaceWordHighlightColor(state.assDoc, enDest, wordColor, wordEvents);
     if (state.kar && state.kar.sentences) {
       const tag = assHexToTag(wordColor);
