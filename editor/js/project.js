@@ -617,6 +617,9 @@ export function initProjects(ctx) {
     setSaveState('', '自动保存已开启');
     // 备注是按项目存的 —— 切项目要重载（不重载会把上一个项目的备注当弹幕放出来）
     if (typeof window.__notesReload === 'function') window.__notesReload();
+    // 「全片逐词重校对」浮层里的清单与按钮句数也是按稿件的：切换时整个收掉，
+    // 否则会留着上一个稿件的 N 句（用户实测：预览里 45 句、按钮还写着 3927 句）。
+    if (typeof window.__realignReset === 'function') window.__realignReset();
 
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
