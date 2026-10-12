@@ -1305,13 +1305,82 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .pc-retry { padding: 5px 12px; font-size: 12px; font-weight: 600; }
 .home-toolbar-btns { display: flex; gap: 8px; }
 
-/* ── 设置面板(识别模型 / 字幕翻译) ── */
+/* ── 设置面板(模型设置 / 识别增强 / 性能测试 / 下载与登录 / 外观与主题) ── */
+/* 宽度从 720 提到 1080：设计稿是"左侧分类 + 右侧内容"的两栏，720 放两栏太挤
+   （分类 176 + 内容 ~860）。窄屏仍按 calc 收，两栏在 <860px 时叠成一栏。 */
 .st-box {
-  width: 720px; max-width: calc(100vw - 40px); max-height: calc(100vh - 60px);
+  width: 1080px; max-width: calc(100vw - 40px); max-height: calc(100vh - 60px);
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 18px 60px rgba(0, 0, 0, .5);
   display: flex; flex-direction: column; padding: 0; overflow: hidden;
 }
+
+/* ── 模型设置的两个入口卡（设计稿 ①）── */
+.st-entry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.st-entry {
+  display: flex; flex-direction: column; gap: 10px; text-align: left;
+  padding: 18px; border-radius: 12px; cursor: pointer; font-family: inherit;
+  background: var(--bg-2); border: .5px solid var(--border); color: var(--text-0);
+  transition: border-color var(--dur-1) var(--ease-1), background var(--dur-1) var(--ease-1);
+}
+.st-entry:hover { border-color: var(--accent-a55); background: var(--bg-3); }
+.st-entry-head { display: flex; align-items: center; gap: 10px; }
+.st-entry-ico {
+  width: 38px; height: 38px; border-radius: 9px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.st-entry-ico.accent { background: var(--accent-a12); color: var(--accent); }
+.st-entry-ico.violet { background: rgba(139, 124, 246, .12); color: var(--lane-word); }
+/* 图标是运行时注入的内联 SVG，本身没有宽高 attribute —— 不显式给尺寸就会撑满父块。
+   ⚠ 图标名必须存在于 js/icons.js 的注册表里：`ico()` 对未知名字返回空串、
+   `applyIcons()` 会**静默跳过**（不报错），于是这里只剩一个空方块。实测踩过：
+   data-ico="layers" / "link" 都不在表里 → 两个入口卡看着像没有图标。 */
+.st-entry-ico svg { width: 18px; height: 18px; }
+/* 分类栏里的图标同理（没有它图标会撑成整个按钮宽） */
+.st-tabs .st-tab svg { width: 14px; height: 14px; flex: none; }
+.st-entry-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.st-entry-title { font-size: 14px; font-weight: 500; }
+.st-entry-sub { font-size: 11px; color: var(--text-2); }
+.st-entry-bar {
+  height: 4px; border-radius: 2px; background: var(--border); overflow: hidden;
+}
+.st-entry-bar > i { display: block; height: 100%; border-radius: 2px; background: #4fd1a5; transition: width var(--dur-2) var(--ease-1); }
+.st-entry-chips { display: flex; gap: 6px; flex-wrap: wrap; min-height: 17px; }
+.st-entry-chips > span {
+  font-size: 10px; padding: 2px 7px; border-radius: 3px;
+  background: var(--bg-3); color: var(--text-2);
+}
+.st-entry-chips > span.ok { color: #4fd1a5; background: rgba(78, 205, 136, .1); }
+.st-entry-chips > span.blue { color: #6aa9ff; background: rgba(106, 169, 255, .1); }
+.st-entry-chips > span.warn { color: var(--sub-sub); background: rgba(255, 213, 74, .1); }
+.st-entry-chips > span.violet { color: var(--lane-word); background: rgba(139, 124, 246, .12); }
+.st-entry-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 4px; padding-top: 10px; border-top: .5px solid var(--border);
+  font-size: 11px; color: var(--text-2);
+}
+.st-entry-arrow svg { width: 14px; height: 14px; transform: rotate(-90deg); }
+
+/* ── 运行时环境（设计稿 ① 第三块 / ② 底部）── */
+.st-env-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.st-env {
+  padding: 11px 12px; border-radius: 8px; background: var(--bg-2); border: .5px solid var(--border);
+}
+.st-env-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.st-env-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--text-2); }
+.st-env-dot.ok { background: #4fd1a5; }
+.st-env-dot.bad { background: var(--danger); }
+.st-env-dot.warn { background: var(--sub-sub); }
+.st-env-name { font-size: 12px; font-weight: 500; }
+.st-env-line { font-size: 11px; color: var(--text-2); margin: 0; }
+.st-env-state { font-size: 10px; margin: 4px 0 0; color: #4fd1a5; }
+.st-env-state.bad { color: var(--danger); }
+.st-env-act {
+  margin-top: 8px; padding: 4px 10px; border-radius: 5px; font-size: 10px; cursor: pointer;
+  font-family: inherit; font-weight: 500; background: var(--accent); border: .5px solid var(--accent);
+  color: var(--accent-ink);
+}
+
 .st-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px 11px; }
 .st-title { font-size: 15px; font-weight: 700; letter-spacing: .2px; }
 .st-sec {
@@ -2316,3 +2385,4 @@ select.note-dur {
   font-size: 10.5px; font-weight: 400; color: var(--text-2);
 }
 .log-subtab-cnt[hidden] { display: none; }
+

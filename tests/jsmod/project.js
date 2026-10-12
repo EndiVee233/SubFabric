@@ -1723,6 +1723,123 @@ function initDualRatio() {
   });
 }
 
+/* ── 设置页新增的两块（设计稿 ①）：入口卡的进度/胶囊 + 运行时环境卡 ──
+ * 都从 /api/asr/status 的**真实**数据算，不写死数字。renderAsrModels() 里已经拿到
+ * 同一份 d，所以由它调用，避免同一个接口请求两次。 */
+
+/** 引擎 → 胶囊标签（设计稿里 Parakeet×3 / Whisper×1 / 云端×2 那种） */
+const ENTRY_CHIP = {
+  'sherpa-onnx': { label: 'Parakeet', cls: 'ok' },
+  'openvino': { label: 'Parakeet', cls: 'ok' },
+  'crispasr': { label: 'Parakeet', cls: 'ok' },
+  'dual': { label: 'Parakeet', cls: 'ok' },
+  'whisper.cpp': { label: 'Whisper', cls: 'blue' },
+  'nemo': { label: 'NeMo', cls: 'violet' },
+  'bcut': { label: '云端', cls: 'warn' },
+  'capcut': { label: '云端', cls: 'warn' },
+};
+
+function renderModelEntries(d) {
+  const models = (d && d.models) || [];
+  // ── ASR 卡：N/M 已安装 + 按系列聚合的胶囊 ──
+  const installed = models.filter(m => m.ready).length;
+  const barA = document.getElementById('st-entry-asr-bar');
+  const subA = document.getElementById('st-entry-asr-sub');
+  const chipsA = document.getElementById('st-entry-asr-chips');
+  if (subA) subA.textContent = '语音识别 · ' + models.length + ' 个模型';
+  if (barA) barA.style.width = (models.length ? Math.round(installed / models.length * 100) : 0) + '%';
+  if (chipsA) {
+    const byLabel = {};
+    for (const m of models) {
+      const c = ENTRY_CHIP[m.engine] || { label: m.cloud ? '云端' : m.engine, cls: '' };
+      const k = c.label + '|' + c.cls;
+      byLabel[k] = (byLabel[k] || 0) + 1;
+    }
+    const chips = Object.entries(byLabel).map(([k, n]) => {
+      const [label, cls] = k.split('|');
+      return '<span class="' + cls + '">' + esc(label) + ' ×' + n + '</span>';
+    });
+    // 进度文案放在胶囊后面（设计稿是"N / M 已安装"挨着进度条，这里并在同一行更省地方）
+    chips.unshift('<span>' + installed + ' / ' + models.length + ' 已安装</span>');
+    chipsA.innerHTML = chips.join('');
+  }
+  // ── LLM 卡：预设方案数（服务端 /api/translate/config 的 presets）──
+  // stPresets 由设置页自己加载过；为空时按 0 显示，不谎报数字。
+  const presets = (typeof stPresets !== 'undefined' && stPresets) || [];
+  const subL = document.getElementById('st-entry-llm-sub');
+  const barL = document.getElementById('st-entry-llm-bar');
+  const chipsL = document.getElementById('st-entry-llm-chips');
+  if (presets.length) {
+    // 「已配置」= 该服务商有 baseUrl 或本地地址（本地模型不需要 Key）
+    const conf = presets.filter(p => p && (p.baseUrl || p.local)).length;
+    if (subL) subL.textContent = '翻译方案 · ' + presets.length + ' 套配置';
+    if (barL) barL.style.width = Math.round(conf / presets.length * 100) + '%';
+    if (chipsL) {
+      chipsL.innerHTML = '<span>' + conf + ' / ' + presets.length + ' 已配置</span>'
+        + presets.slice(0, 4).map(p => '<span class="' + (p.baseUrl || p.local ? 'ok' : '') + '">'
+          + esc(p.name || p.id || '未命名') + '</span>').join('');
+    }
+  } else {
+    if (subL) subL.textContent = '翻译方案';
+    if (chipsL) chipsL.innerHTML = '<span>读取中…</span>';
+  }
+}
+
+/** 运行时环境三卡（Python / NeMo / 说话人分离），照设计稿 ① 的第三块。
+ *  状态全部来自 d 里的真实探测：pythonProbe / nemo / diarize。 */
+function renderRuntimeEnv(d) {
+  const box = document.getElementById('st-runtime-env');
+  if (!box) return;
+  const py = d && d.pythonProbeFlat ? d.pythonProbeFlat : (d && d.pythonProbe ? (d.pythonProbe.openvino || null) : null);
+  const pyOk = !!(py && py.ok);
+  const pyState = !py ? { cls: 'warn', txt: '检测中…' }
+    : pyOk ? { cls: 'ok', txt: '✓ 可用' }
+      : { cls: 'bad', txt: '不可用' };
+  const nemo = (d && d.nemo) || {};
+  const diar = (d && d.diarize) || {};
+  const card = (dot, name, line, state, action) => `
+    <div class="st-env">
+      <div class="st-env-head"><i class="st-env-dot ${dot}"></i><span class="st-env-name">${esc(name)}</span></div>
+      <p class="st-env-line">${esc(line)}</p>
+      <p class="st-env-state ${state.cls}">${esc(state.txt)}</p>
+      ${action || ''}
+    </div>`;
+  const pyLine = pyOk
+    ? (py.msg || '') + (d.provider === 'cuda' && d.gpu ? ' · CUDA · ' + d.gpu : '')
+    : (py && py.msg ? py.msg : '未检测到 Python 环境');
+  const nemoCard = nemo.ok
+    ? card('ok', 'NeMo', nemo.msg || ('NeMo ' + (nemo.nemoVer || '')), { cls: 'ok', txt: '✓ 可用' })
+    : card('bad', 'NeMo', '未安装 · 约 5 GB（多说话人模型需要它）', { cls: 'bad', txt: '未安装' },
+      '<button type="button" class="st-env-act" id="st-env-nemo">安装</button>');
+  const diarN = Array.isArray(diar.models) ? diar.models.length : 0;
+  const diarLine = diar.ready
+    ? '已就绪 · ' + diarN + ' 个模型'
+    : '未下载 · ' + diarN + ' 个模型';
+  box.innerHTML = card(pyOk ? 'ok' : 'bad', 'Python', pyLine, pyState)
+    + nemoCard
+    + card(diar.ready ? 'ok' : 'bad', '说话人分离', diarLine,
+      diar.ready ? { cls: 'ok', txt: '✓ 可用' } : { cls: 'bad', txt: '未就绪' });
+  if (window.__applyIcons) window.__applyIcons(box);
+  const nb = document.getElementById('st-env-nemo');
+  if (nb) nb.addEventListener('click', () => { nb.disabled = true; nb.textContent = '安装中…'; startNemoInstallFromEnv(); });
+}
+
+/** 运行时环境卡里的「安装」按钮：与模型列表里那个 NeMo 安装按钮走同一个接口，
+ *  同样把进度交给 pollModelDownload()（进度显示在动作栏的 #st-msg 上）。 */
+async function startNemoInstallFromEnv() {
+  const msgEl = $('#st-msg');
+  try {
+    const r = await (await fetch('/api/asr/install-nemo', { method: 'POST' })).json();
+    if (msgEl) {
+      if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); }
+      else if (r.started || r.already) { msgEl.textContent = '正在安装 NeMo 运行时（约 5GB，进度见上方）…装完会自动测一次 CUDA'; msgEl.classList.remove('err'); pollModelDownload(); }
+    }
+  } catch (e) {
+    if (msgEl) { msgEl.textContent = '✗ 安装启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err'); }
+  }
+  renderAsrModels();
+}
+
 async function renderAsrModels() {
     const box = $('#st-models');
     if (!box) return;
@@ -1740,6 +1857,10 @@ async function renderAsrModels() {
       if (rb) rb.addEventListener('click', () => renderAsrModels());
       return;
     }
+    // 同一份状态顺便喂给设计稿新增的两块：入口卡（进度/胶囊）与运行时环境卡。
+    // 放在这里而不是各请求一次，是为了避免重复打 /api/asr/status（它要探测 Python/NeMo，不便宜）。
+    renderModelEntries(d);
+    renderRuntimeEnv(d);
     const dlMap = {};                    // key → 下载状态(服务端并行下载, 每个 key 独立)
     (d.downloads || []).forEach(x => { dlMap[x.key] = x; });
     const dlOf = (key) => dlMap[key] || {};
@@ -2070,6 +2191,20 @@ async function renderAsrModels() {
   }
   $('#btn-settings').addEventListener('click', openSettings);
 
+  /* 模型设置页的两个入口卡（设计稿 ①）：
+   *   ASR 卡的"管理"就在本面板里（模型管理卡片紧随其后），所以点击只把内容滚到模型列表；
+   *   LLM 卡的设置就是「字幕翻译」面板，点击切到那个分类。 */
+  const entryAsr = document.getElementById('st-entry-asr');
+  if (entryAsr) entryAsr.addEventListener('click', () => {
+    const list = document.getElementById('st-models');
+    if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  const entryLlm = document.getElementById('st-entry-llm');
+  if (entryLlm) entryLlm.addEventListener('click', () => {
+    const tab = $('.st-tab[data-stp="translate"]');
+    if (tab) tab.click();
+  });
+
   /* ── 下载与登录（设置 → 下载与登录） ── */
   /** Cookie 备注：保存状态 + 登录检测结果（谁登录的、是不是大会员、密文还是明文存） */
   function cookieNote(d, check) {
@@ -2216,41 +2351,16 @@ async function renderAsrModels() {
     } catch {}
   }
 
-  /* 重排逐词时间的设置（朗读语音 / 语速 / 最低锚点率）。
-     与上面几块同一模式：改了立刻存，存完用服务端返回值回填（服务端会做范围夹取）。 */
+  /* 重排逐词时间的设置（最低锚点率 / 采纳门槛）。
+     与上面几块同一模式：改了立刻存，存完用服务端返回值回填（服务端会做范围夹取）。
+     ⚠ 朗读语音 / 语速是**旧 TTS 方案**的设置：重校对改成"切原片音频重新识别"之后
+     它们不再参与任何判定，控件与绑定一并移除。设置项本身仍留在 asr/settings.json 里，
+     老配置读进来不会报错（服务端也不再读它们）。 */
   function realignFill(v) {
     if (!v) return;
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    set('st-realign-rate', v.rate);
     set('st-realign-minratio', v.minAnchorRatio);
     set('st-realign-minconf', v.minConfidence);
-    const rv = document.getElementById('st-realign-rate-val');
-    if (rv) {
-      const n = Number(v.rate) || 0;
-      rv.textContent = n === 0 ? '0（正常）' : (n > 0 ? `+${n}（快）` : `${n}（慢）`);
-    }
-    const sel = document.getElementById('st-realign-voice');
-    if (sel) {
-      const keep = sel.value;
-      sel.replaceChildren();
-      const mk = (val, label) => { const o = document.createElement('option'); o.value = val; o.textContent = label; return o; };
-      sel.append(mk('', '（系统默认英文语音）'));
-      // 只列**英文**语音：TTS 是拿英文台词去念的，中文/日文声音念英文会糊
-      for (const vo of (v.voices || [])) {
-        if (!/^en/i.test(String(vo.culture || ''))) continue;
-        sel.append(mk(vo.name, `${vo.name}（${vo.culture}）`));
-      }
-      sel.value = (v.voice && [...sel.options].some(o => o.value === v.voice)) ? v.voice
-        : (keep && [...sel.options].some(o => o.value === keep) ? keep : '');
-    }
-    const note = document.getElementById('st-realign-note');
-    if (note) {
-      const en = (v.voices || []).filter(vo => /^en/i.test(String(vo.culture || '')));
-      note.textContent = en.length
-        ? `本机可用的英文语音 ${en.length} 个。低于最低锚点率的对齐会被拒绝（不改动字幕），避免给出错的时间。`
-        : '本机没找到英文语音 —— 会退回系统默认，识别准确率可能下降。'
-          + '（Windows 设置 → 时间和语言 → 语音 里可以添加英文语音包）';
-    }
   }
   async function realignLoad() {
     try {
@@ -2272,17 +2382,8 @@ async function renderAsrModels() {
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', () => realignSave({ [key]: num ? Number(el.value) : el.value }));
     };
-    bind('st-realign-voice', 'voice');
-    bind('st-realign-rate', 'rate', true);
     bind('st-realign-minratio', 'minAnchorRatio', true);
     bind('st-realign-minconf', 'minConfidence', true);
-    // 拖动语速时先更新旁边的文字（松手才存）
-    const rate = document.getElementById('st-realign-rate');
-    if (rate) rate.addEventListener('input', () => {
-      const rv = document.getElementById('st-realign-rate-val');
-      const n = Number(rate.value) || 0;
-      if (rv) rv.textContent = n === 0 ? '0（正常）' : (n > 0 ? `+${n}（快）` : `${n}（慢）`);
-    });
   }
   async function correctSave(patch) {
     try {
