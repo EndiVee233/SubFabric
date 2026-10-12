@@ -1040,7 +1040,10 @@ function translateCfg() {
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
     glossaryLang: t.glossaryLang || '简体',
-    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 字幕翻译」)
+    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 模型设置 → LLM」)
+    // 采样温度 / 上下文行数（同上那两栏；由 llm-text.js 的纯函数夹范围 + 单测钉住）
+    temperature: llmText.clampTemperature(t.temperature),
+    contextRows: llmText.clampContextRows(t.contextRows),
     hasKey: !!apiKey,
   };
 }
@@ -1208,7 +1211,10 @@ async function llmChat(cfg, messages, opts) {
   /* 超时：优先 cfg.timeoutMs（按次覆盖，热词分析会用 —— 推理模型慢），
    * 其次 opts.timeoutMs，最后默认值。 */
   const timeoutMs = Number(cfg.timeoutMs || o.timeoutMs) || LLM_TIMEOUT_MS;
-  const reqBody = { model: cfg.model, messages, temperature: 0.3, max_tokens: maxTokens };
+  /* 采样温度：以前写死 0.3。现在可在「全局设置 → 模型设置 → LLM 语言模型 → 采样温度」里调，
+   * 走 cfg.temperature（saveTranslateCfg 已夹到 0~2）。没设过就还是旧值 —— 默认行为不变。 */
+  const temperature = (cfg && cfg.temperature != null) ? llmText.clampTemperature(cfg.temperature) : 0.3;
+  const reqBody = { model: cfg.model, messages, temperature, max_tokens: maxTokens };
   if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
   let resp = null, text = '', body = null;
   try {
@@ -1419,6 +1425,11 @@ function saveTranslateCfg(patch) {
     }
   }
   if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }   // 显式清除(设置里的「清除已存 Key」链接)
+  /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
+   * 负的上下文行数会让切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
+   * 有单测钉住（tests/llm-params-test.mjs）。 */
+  if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
+  if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
   delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
   s.translate = Object.assign(cur, p);
   writeAsrSettings(s);
@@ -4791,7 +4802,7 @@ function startPrepare(id, videoPath, mode) {
     const sys = systemPromptWithGlossary(cfg, strict);
     const r = await llmChat(cfg, [
       { role: 'system', content: sys },
-      { role: 'user', content: texts.join('\n') },
+      { role: 'user', content: llmText.buildTranslateUserMessage(texts, o.refs) },
     ], { maxTokens: o.maxTokens, debugFile: o.debugFile, kind: 'translate' });
     const arr = parseTranslationReply(r.content, texts.length);
     if (!arr) {
@@ -4808,12 +4819,12 @@ function startPrepare(id, videoPath, mode) {
    *  · `rate`/`net`/`timeout`：指数退避（尊重 Retry-After）—— 限流时递归拆半只会把请求数翻倍，所以退避更重要
    *  · `empty`（模型只吐思考过程）：换严格提示词再试一次，仍为空就带着明确原因失败
    *  成功返回与 texts 等长的译文数组；最终失败抛错（调用方决定怎么兜底）。 */
-  async function translateLines(cfg, texts, depth = 0, debugFile = null) {
+  async function translateLines(cfg, texts, depth = 0, debugFile = null, refs = null) {
     const maxTokens = Math.min(8192, Math.max(1024, texts.length * 220 + 512));
     let lastErr = null;
     for (const strict of [false, true]) {
       for (let attempt = 0; attempt < 2; attempt++) {
-        try { return await translateOnce(cfg, texts, strict, { maxTokens, debugFile }); }
+        try { return await translateOnce(cfg, texts, strict, { maxTokens, debugFile, refs }); }
         catch (e) {
           lastErr = e;
           const kind = e && e.kind;
@@ -4831,22 +4842,22 @@ function startPrepare(id, videoPath, mode) {
     // 单行仍然被截断 → 把 max_tokens 放大一倍再试（不能再拆了）
     if (texts.length === 1 && lastErr && lastErr.kind === 'truncated' && depth < 6) {
       try {
-        return await translateOnce(cfg, texts, 'strict', { maxTokens: Math.min(16384, maxTokens * 2), debugFile });
+        return await translateOnce(cfg, texts, 'strict', { maxTokens: Math.min(16384, maxTokens * 2), debugFile, refs });
       } catch (e) { lastErr = e; }
     }
     if (texts.length > 1 && depth < 5) {
       const mid = Math.ceil(texts.length / 2);
       try {
-        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile);
-        const b = await translateLines(cfg, texts.slice(mid), depth + 1, debugFile);
+        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile, refs);
+        const b = await translateLines(cfg, texts.slice(mid), depth + 1, debugFile, refs);
         return a.concat(b);
       } catch (e) { lastErr = e; }
     }
     throw new Error(String((lastErr && lastErr.message) || lastErr || '翻译失败'));
   }
 
-  async function translateBatch(cfg, segs, idxs, depth, debugFile) {
-    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth, debugFile) }; }
+  async function translateBatch(cfg, segs, idxs, depth, debugFile, refs) {
+    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth, debugFile, refs) }; }
     catch (e) { return { texts: null, err: String((e && e.message) || e) }; }
   }
 
@@ -5179,15 +5190,16 @@ function startPrepare(id, videoPath, mode) {
           setRr({ stage: '翻译中', progress: 76, message: '翻译中 …' });
           const translations = [];
           const bSize = transBatchSize(cfg);
-          const parts = llmText.planChunks(segs, bSize);
+          // planJobs 而不是 planChunks：多带"上文参考"（cfg.contextRows = 0 时行为与 planChunks 完全一致）
+          const parts = llmText.planJobs(segs, bSize, cfg.contextRows);
           const chunks = parts.length || 1;
           try {
             for (let bi = 0; bi < parts.length; bi++) {
-              const part = await translateLines(cfg, parts[bi].map(s => s.text), 0,
-                path.join(projDir(id), 'llm-debug.jsonl'));
+              const part = await translateLines(cfg, parts[bi].idxs.map(i => segs[i].text), 0,
+                path.join(projDir(id), 'llm-debug.jsonl'), parts[bi].refs);
               translations.push(...part);
               setRr({ progress: 76 + Math.round(((bi + 1) / chunks) * 21),
-                message: `翻译中 … ${bi + 1}/${chunks} 批（每批 ${bSize} 行）` });
+                message: `翻译中 … ${bi + 1}/${chunks} 批（每批 ${bSize} 行${cfg.contextRows ? ` · 上文 ${cfg.contextRows} 行` : ''}）` });
             }
             if (translations.length === segs.length) segs.forEach((s, i) => { s.zh = String(translations[i] == null ? '' : translations[i]); });
             else warning = '翻译行数不一致，已跳过译文';
@@ -5353,30 +5365,34 @@ function startPrepare(id, videoPath, mode) {
       return finishTranslate(id, segs, lines);
     }
     const batchSize = transBatchSize(cfg);
-    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行（每批 ${batchSize} 行）`);
+    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行（每批 ${batchSize} 行${cfg.contextRows ? ` · 上文 ${cfg.contextRows} 行` : ''}）`);
 
-    const batches = llmText.planChunks(todo, batchSize);
+    // planJobs：按 **todo（只含未翻的行）** 切批，并把 `lines` 里已有的译文当"上文参考"。
+    // ⚠ 必须传 todo 而不是全部 segs：原来就是 planChunks(todo)，只翻缺的行；
+    //    改成全部行会把已翻好的行重翻一遍（白花钱、还可能把好译文改坏）。
+    const jobs = llmText.planJobs(todo.map(i => ({ text: segs[i].text, zh: lines[i] })), batchSize, cfg.contextRows);
 
     let failedBatches = 0;
-    for (let bi = 0; bi < batches.length; bi++) {
-      const idxs = batches[bi];
+    for (let bi = 0; bi < jobs.length; bi++) {
+      // planJobs 给的是 **todo 内**的下标，translateBatch 要的是 segs 的下标 → 过一遍 todo 映射
+      const idxs = jobs[bi].idxs.map(k => todo[k]);
       const t0 = Date.now();
-      const r = await translateBatch(cfg, segs, idxs, 0, path.join(projDir(id), 'llm-debug.jsonl'));
+      const r = await translateBatch(cfg, segs, idxs, 0, path.join(projDir(id), 'llm-debug.jsonl'), jobs[bi].refs);
       if (r.texts) {
         idxs.forEach((gi, k) => { lines[gi] = String(r.texts[k] == null ? '' : r.texts[k]); });
         saveTranslations(id, cfg.model, lines);      // 每批立刻落盘, 可续翻
-        pushDraftLog(id, `第 ${bi + 1}/${batches.length} 批完成（${idxs.length} 行，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+        pushDraftLog(id, `第 ${bi + 1}/${jobs.length} 批完成（${idxs.length} 行，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
       } else {
         failedBatches++;
-        pushDraftLog(id, `[错误] 第 ${bi + 1}/${batches.length} 批失败（${idxs.length} 行）：${r.err}`);
+        pushDraftLog(id, `[错误] 第 ${bi + 1}/${jobs.length} 批失败（${idxs.length} 行）：${r.err}`);
       }
       saveTranslations(id, cfg.model, lines);
       setDraft(id, {
-        stage: STAGE.translate, progress: 86 + Math.round(((bi + 1) / batches.length) * 12),
-        message: `翻译中 … ${bi + 1}/${batches.length} 批${failedBatches ? `（${failedBatches} 批失败）` : ''}`,
+        stage: STAGE.translate, progress: 86 + Math.round(((bi + 1) / jobs.length) * 12),
+        message: `翻译中 … ${bi + 1}/${jobs.length} 批${failedBatches ? `（${failedBatches} 批失败）` : ''}`,
       });
     }
-    if (failedBatches) pushDraftLog(id, `本轮流式结束：${failedBatches}/${batches.length} 批未成功`);
+    if (failedBatches) pushDraftLog(id, `本轮流式结束：${failedBatches}/${jobs.length} 批未成功`);
     return finishTranslate(id, segs, lines);
   }
 
@@ -7033,7 +7049,7 @@ function handleLlmRoutes(req, res, u) {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize', 'temperature', 'contextRows']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);
