@@ -5663,6 +5663,31 @@ function syncRealignApply() {
   }
 }
 
+/** 切换稿件时把重校对浮层整个收掉并清空数据。
+ *
+ * 为什么要它：浮层里的清单与"应用选中项（N 句）"都是**按稿件**的，而轮询在发现
+ * `state.project.id` 变了时只是 `return`（见 pollRealignFull 的守卫）—— 什么都不会清。
+ * 于是从 A 稿切到 B 稿、浮层还开着时，界面上留着 A 的 3927 句数据（用户实测反馈）。
+ * 由 project.js 的 openProject() 调（与 __notesReload 同一套路）。 */
+function resetRealignForProjectSwitch() {
+  clearTimeout(realignPollTimer);
+  realignRunning = false;
+  realignData = null;
+  realignPicked = new Set();
+  realignUnpicked = new Set();
+  realignShow(false);
+  if (realignEls.list) { realignEls.list.hidden = true; realignEls.list.innerHTML = ''; }
+  if (realignEls.summary) realignEls.summary.hidden = true;
+  if (realignEls.allWrap) realignEls.allWrap.hidden = true;
+  if (realignEls.conf) realignEls.conf.hidden = true;
+  if (realignEls.reload) realignEls.reload.hidden = true;
+  if (realignEls.msg) realignEls.msg.textContent = '正在逐句朗读并重新识别…';
+  syncRealignApply();                       // 按钮回到"应用选中项"、禁用
+  if (realignEls.btn) realignEls.btn.disabled = !state.project;
+  jobCardHide();
+}
+window.__realignReset = resetRealignForProjectSwitch;
+
 function realignFinishUi() {
   realignRunning = false;
   clearTimeout(realignPollTimer);
@@ -5784,6 +5809,12 @@ async function startRealignFull() {
   if (realignEls.conf) realignEls.conf.hidden = true;
   if (realignEls.reload) realignEls.reload.hidden = true;
   if (realignEls.apply) realignEls.apply.disabled = true;
+  /* ⚠ 这里必须**刷新按钮文案**，不能只 disabled。
+   *  syncRealignApply() 才是唯一改这句文案的地方（`应用选中项（N 句）`），而它只在
+   *  勾选变化/门槛变化/出结果时被调。上面虽然把 realignPicked 清空了，却没重画按钮，
+   *  于是上一轮的句数会留在按钮上 —— 用户实测："预览里是 1/45 句，右下角按钮还写着
+   *  （3927 句）"，那 3927 是**上一个稿件**的数字。 */
+  syncRealignApply();
   if (realignEls.msg) realignEls.msg.textContent = '正在启动…';
   realignShow(true);
   jobCardShow('全片逐词重校对', '正在启动…', null, '每句一次 TTS 朗读 + 重新识别，全片要几分钟');

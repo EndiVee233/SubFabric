@@ -2032,6 +2032,16 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   border-radius: 8px;
   background: var(--bg-1);
   cursor: pointer;
+  /* ⚠ `flex: none` 不能省。列表（.reflect-list / .reflect-item 的容器）是
+   *   `display:flex; flex-direction:column`，行的默认 `flex-shrink:1` 会把它们压扁。
+   *   平时靠 flex 子项的 `min-height:auto`（= 内容高度）兜住，偏偏 `.reflect-item.is-on`
+   *   为了画左侧色条设了 `overflow:hidden` —— 一旦 overflow 不是 visible，`min-height:auto`
+   *   就失效，行能被压到内容高度以下。
+   *   实测（45 条、浮层 max-height:78vh、列表 417px）：
+   *       选中行 16px / 内容 72px   ← 文字挤在一起、还被裁掉
+   *       未选中行 74px             ← 正常
+   *   用户反馈"预览界面选中字幕时字幕框的 UI 被错误压缩"就是这个（is-on 才触发）。 */
+  flex: none;
 }
 .reflect-item:hover { background: var(--bg-3); }
 .reflect-item input[type="checkbox"] { margin-top: 2px; flex: none; }
