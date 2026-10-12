@@ -18,6 +18,7 @@ const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
+const realignWordsMod = require('./realign-words.js'); // 逐词重校对的纯逻辑(有单测)
 const kLine = require('./k-line.js');        // \k 卡拉OK行文本构造(初稿生成用; 与 karaoke.js 同一格式)
 const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
@@ -1040,7 +1041,10 @@ function translateCfg() {
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
     glossaryLang: t.glossaryLang || '简体',
-    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 字幕翻译」)
+    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 模型设置 → LLM」)
+    // 采样温度 / 上下文行数（同上那两栏；都由 llm-text.js 的纯函数夹范围 + 单测钉住）
+    temperature: llmText.clampTemperature(t.temperature),
+    contextRows: llmText.clampContextRows(t.contextRows),
     hasKey: !!apiKey,
   };
 }
@@ -1208,7 +1212,10 @@ async function llmChat(cfg, messages, opts) {
   /* 超时：优先 cfg.timeoutMs（按次覆盖，热词分析会用 —— 推理模型慢），
    * 其次 opts.timeoutMs，最后默认值。 */
   const timeoutMs = Number(cfg.timeoutMs || o.timeoutMs) || LLM_TIMEOUT_MS;
-  const reqBody = { model: cfg.model, messages, temperature: 0.3, max_tokens: maxTokens };
+  /* 采样温度：以前写死 0.3。现在可在「全局设置 → 模型设置 → LLM 语言模型 → 采样温度」里调，
+   * 走 cfg.temperature（saveTranslateCfg 已夹到 0~2）。没设过就还是旧值 —— 默认行为不变。 */
+  const temperature = (cfg && cfg.temperature != null) ? llmText.clampTemperature(cfg.temperature) : 0.3;
+  const reqBody = { model: cfg.model, messages, temperature, max_tokens: maxTokens };
   if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
   let resp = null, text = '', body = null;
   try {
@@ -1419,6 +1426,11 @@ function saveTranslateCfg(patch) {
     }
   }
   if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }   // 显式清除(设置里的「清除已存 Key」链接)
+  /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
+   * 负的上下文行数会让下面的切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
+   * 有单测钉住（tests/llm-params-test.mjs）。 */
+  if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
+  if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
   delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
   s.translate = Object.assign(cur, p);
   writeAsrSettings(s);
@@ -4016,54 +4028,20 @@ function startPrepare(id, videoPath, mode) {
     return { format, file, totalWords, hasTrans };
   }
 
-  /* ═══════════ 逐词时间重对齐（TTS 合成 → 重新识别 → 序列对齐） ═══════════
+  /* ═══════════ 逐词时间重对齐（切原片音频重新识别 → 序列对齐）═══════════
    *
    * 用途：某条字幕的**逐词时间戳糊了**（拖动过、或识别时把词边界摊平了），
-   * 但文本是对的。这时用 TTS 把这条字幕念一遍、再识别那段合成语音，
-   * 得到的逐词时间是一份**干净的参考节奏**；把它按比例铺回原字幕的时长即可。
+   * 但文本是对的。这里切出它在**原片音频**里的那一段重新识别，拿识别出来的
+   * 真实位置当逐词时间；没对上的词按字符数在两侧锚点之间插值补齐。
    *
    * **只改词级时间，绝不动文本** —— 这是这个功能的硬约束。
    *
-   * 为什么用 TTS 而不是直接对原音频做强制对齐：原音频里词边界只能靠识别结果反推，
-   * 而我们要修的恰恰就是那份糊掉的识别结果；合成语音的文本已知，节奏干净得多。
+   * 历史（为什么不再走这条路）：这里原本是"用 TTS 把文本念一遍 → 识别那段合成语音
+   * → 把合成语音里的相对节奏按比例缩放到原句区间"。那样得到的逐词时间**不是从原片
+   * 量出来的**，而是按 TTS 的语速推出来的 —— 实测与实测音频相差平均 0.295s、最大
+   * 0.715s，而且原音频里"这句到底念得准不准"它根本看不到。已整体废弃，
+   * 连同 SAPI 合成代码（ttsToWav）一起删除。
    */
-
-  /** 用 Windows 自带的 SAPI 把文本合成成 16k 单声道 WAV。
-   *  不引入任何外部依赖：SAPI 是系统组件，且能直接按目标格式输出
-   *  （SpeechAudioFormatInfo 指定 16kHz/16bit/单声道）—— 连重采样都省了。 */
-  function ttsToWav(text, wavPath, voice, rate) {
-    return new Promise((resolve, reject) => {
-      const safe = String(text || '').slice(0, 2000);
-      if (!safe.trim()) return reject(new Error('没有可合成的文本'));
-      // PowerShell 里用单引号字符串，文本内的单引号转义成两个
-      const lit = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-      const ps = [
-        'Add-Type -AssemblyName System.Speech',
-        '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer',
-        voice ? `try { $s.SelectVoice(${lit(voice)}) } catch {}` : '',
-        `$s.Rate = ${Number.isFinite(rate) ? Math.max(-10, Math.min(10, rate)) : 0}`,
-        '$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000,'
-          + ' [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen,'
-          + ' [System.Speech.AudioFormat.AudioChannel]::Mono)',
-        `$s.SetOutputToWaveFile(${lit(wavPath)}, $f)`,
-        `$s.Speak(${lit(safe)})`,
-        '$s.Dispose()',
-      ].filter(Boolean).join('; ');
-      const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
-        { windowsHide: true });
-      let err = '';
-      const t = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('TTS 超时（60s）')); }, 60000);
-      p.stderr.on('data', d => { if (err.length < 800) err += String(d); });
-      p.on('error', e => { clearTimeout(t); reject(new Error('无法启动 PowerShell：' + e.message)); });
-      p.on('close', (code) => {
-        clearTimeout(t);
-        if (code !== 0) return reject(new Error('TTS 合成失败：' + (err.trim().slice(-200) || ('退出码 ' + code))));
-        try { if (!fs.statSync(wavPath).size) throw new Error('空文件'); }
-        catch (e) { return reject(new Error('TTS 没产生音频：' + e.message)); }
-        resolve(wavPath);
-      });
-    });
-  }
 
   /** 列出本机可用的英文 SAPI 语音（前端下拉用；取不到就返回空数组，前端用系统默认） */
   function ttsVoices() {
@@ -4091,17 +4069,33 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
+  /* 重校对用的引擎 id：**sherpa-onnx 版的 parakeet**，必须是这一个 —— 逐句热词
+   * 只有 sherpa-onnx 后端支持（理由见 realignPrep 里的说明）。 */
+  const REALIGN_MODEL_ID = 'parakeet-tdt-0.6b-v2';
+  /* 切片的两侧 padding：句子的逐词边界与真实语音边界不会完全齐平，切太紧会把首尾词
+   * 的起音/收音削掉。实测 0.20s 够用；代价是边缘会带进相邻句的半个词 —— 那些词对不上
+   * 本句文本，会被 planBlock 的对齐判成落单丢掉，不会污染结果。 */
+  const REALIGN_PAD = 0.20;
+
   /** 对一批字幕块做重对齐。**只算不写** —— 返回提案，由前端确认后才应用。 */
-  /** 重对齐的共享准备：解析模型、设备门禁、TTS 参数、锚点率门槛。
+  /** 重对齐的共享准备：解析模型、设备门禁、原片音频、门槛。
    *  单条重排（realignBlocks）与全片重校对（runFullRealign）都用这一份，
    *  保证两条路径的判定标准完全一致（否则"单条能用、全片说不可信"会很怪）。 */
   function realignPrep(id, opt) {
     const o = (opt || {});
     const meta = readMeta(id);
     if (!meta) throw new Error('项目不存在');
-    const rr = resolveRerecogModel(meta);
-    if (rr.error) throw new Error(rr.error);
-    const model = rr.model;
+    /* ── 引擎必须是 **sherpa-onnx 版的 parakeet**，不能跟随设置里的 rerecogModel ──
+     * 第二级要拿"该句已有的词"做**逐句热词**（上下文偏置），而热词只有 sherpa-onnx
+     * 后端（asr.py）支持：asr_npu.py 里写死了「Intel NPU 后端暂不支持热词偏置,
+     * 本次忽略热词文件」（实测：参数被接受但热词文件被丢弃）。设置里的 rerecogModel
+     * 很可能指向 NPU 版，跟过去就会变成"热词静默不生效"—— 那比报错难查得多。 */
+    const model = modelById(REALIGN_MODEL_ID);
+    if (!model || !modelReady(model.id)) {
+      throw new Error('全片逐词重校对要用 GPU 版识别模型「' + REALIGN_MODEL_ID
+        + '」（逐句热词只有这个后端支持），当前没装好 —— '
+        + '到「设置 → 识别模型」把它下载下来再试');
+    }
     const ea = asrEngineArgs(model);
     const gate = asrGpuGateError(model);
     if (gate) throw new Error(gate);
@@ -4109,44 +4103,110 @@ function startPrepare(id, videoPath, mode) {
     if (!model.cloud && (!mdir || missingModelFiles(mdir, model).length)) {
       throw new Error('模型文件不完整（' + model.id + '）');
     }
-    /* 设置页里的 TTS 参数与门槛。
-     * ⚠ 这里踩过：设置存进了 asr/settings.json，但本函数从没读它、也没把
-     *   minAnchorRatio 传给 planBlock —— 于是"最低锚点率"是个**摆设**，
-     *   不管怎么调都按代码里的默认值判定。凡是存进设置的值，都要在这里真正用上。 */
+    /* 原片音频：新方案要**对真实音频**逐句重识别（旧方案是在 TTS 合成语音上识别，
+     * 时间戳是编的），所以这份文件从可选项变成了必需品。 */
+    const audioName = (meta.audio && meta.audio.file) || 'audio.wav';
+    const audioWav = safeProjectFile(id, audioName);
+    if (!audioWav || !fs.existsSync(audioWav)) {
+      throw new Error('这个稿件没有音频文件（' + audioName + '），没法对原片重识别');
+    }
+    /* 设置页里剩下的门槛。⚠ 这里踩过：设置存进了 asr/settings.json，但本函数从没读它、
+     *   也没把 minAnchorRatio 传给 planBlock —— 于是"最低锚点率"是个**摆设**，
+     *   不管怎么调都按代码里的默认值判定。凡是存进设置的值，都要在这里真正用上。
+     *   （voice/rate 是旧 TTS 方案的遗留，重校对不再用：现在的时间戳来自实测音频。） */
     const rs = (readAsrSettings().realign) || {};
     const clamp = (v, lo, hi, dflt) => {
       const n = Number(v);
       return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
     };
     return {
-      meta, model, ea, mdir, confMode: asrConfidenceFor(meta),
-      voice: String((o.voice !== undefined ? o.voice : rs.voice) || '').trim(),
-      rate: Number.isFinite(Number(o.rate)) ? Number(o.rate) : clamp(rs.rate, -10, 10, 0),
+      meta, model, ea, mdir, audioWav, confMode: asrConfidenceFor(meta),
+      // 热词强度沿用「设置 → 识别提示词」那个（实测 3.0 生效、≥6 开始复读热词）
+      hotwordsScore: asrHintCfg().hotwordsScore,
       minAnchorRatio: clamp(rs.minAnchorRatio, 0.3, 1, alignMod.MIN_ANCHOR_RATIO),
-      // 全片重校对的**置信度**门槛（与锚点率门槛不同：那个是"能不能用"，这个是"值不值得改"）
+      // 全片重校对的**采纳门槛**：第一级（无热词重识别）与该句已有文本的词吻合率
       threshold: clamp(o.threshold !== undefined ? o.threshold : rs.minConfidence, 0.3, 1, 0.7),
     };
   }
 
-  /** 对**一条**字幕做重对齐：TTS 朗读 → ASR 识别 → 序列对齐。
-   *  @returns 提案对象（含 words / confidence），**不写任何文件**。 */
-  async function realignOne(prep, block, tmpDir, tag) {
+  /** 对**一条**字幕做重校对：切该句的**原片音频** → 重新识别 → 按实测时间戳重排逐词时间。
+   *
+   *  与旧方案（TTS 朗读 → 对合成语音识别 → 把相对节奏整体缩放到原句区间）的区别：
+   *  旧方案的时间戳**从来不是从原片量出来的**，是"看 TTS 念得像不像"推出来的；
+   *  这里每个词的时间都来自它在本片音频里的真实位置（实测两者平均差 0.295s、最大 0.715s）。
+   *
+   *  @param hotwords 逐句热词（第二级用，**只作用于这一次识别**）；不传 = 第一级。
+   *  @returns 提案对象（含 words / ratio），**不写任何文件**。 */
+  async function realignOne(prep, block, tmpDir, tag, hotwords) {
     const text = String(block.text || '');
-    const spoken = alignMod.ttsText(text);
     const start = Number(block.start), end = Number(block.end);
     const item = {
       start, end, text, ok: false, words: [], anchors: 0, ratio: 0,
       confidence: 0, heard: '', note: '',
     };
-    if (!spoken) { item.note = '这条没有可念的文本（可能只有标签）'; return item; }
+    if (!text.trim()) { item.note = '这条没有可校对的文本（可能只有标签）'; return item; }
     if (!(end > start)) { item.note = '时间区间无效'; return item; }
-    const wav = path.join(tmpDir, `a-${tag}.wav`);
-    const outJson = path.join(tmpDir, `a-${tag}.json`);
-    await ttsToWav(spoken, wav, prep.voice, prep.rate);
-    // 合成音频走同一套识别参数（含项目当前的逐句置信度档位）。
-    // 参数由 asrArgsFor 按**该引擎的 CLI 契约**生成 —— nemo 不吃 --tta，别再这里手拼。
-    const asrArgs = [prep.ea.script,
-      ...asrArgsFor(prep.ea, prep.mdir, wav, outJson, prep.confMode)];
+    const { from, to } = realignWordsMod.sliceRange(
+      start, end, REALIGN_PAD, prep.meta && prep.meta.duration);
+    const wav = path.join(tmpDir, `r-${tag}.wav`);
+    const outJson = path.join(tmpDir, `r-${tag}.json`);
+    await audioSlice.sliceAudio(FFMPEG, prep.audioWav, from, to, wav, false);
+    const data = await realignRecognize(prep, wav, outJson, hotwords);
+    /* 识别词的时间是**切片内**的相对时间 —— 必须把切片起点加回去才是原片绝对时间。
+     * 这一步差一点，整句的逐词时间就会整体平移，而且在稿子上很难看出来。 */
+    const recWords = [];
+    for (const s of (data.segments || [])) {
+      for (const w of (s.words || [])) {
+        if (Number.isFinite(w.start) && Number.isFinite(w.end)) {
+          recWords.push({
+            word: w.word || w.text || '',
+            start: Number(w.start) + from, end: Number(w.end) + from,
+          });
+        }
+      }
+    }
+    /* rawTimes：时间戳是**实测值**，不做整体缩放。
+     * 缩放那一步是给合成语音准备的（TTS 的语速/停顿与被念原文无关，只能借相对节奏）；
+     * 现在识别的是原片音频，再缩放等于把测量结果按块长拉走。 */
+    const plan = alignMod.planBlock(text, { start, end }, recWords,
+      { minAnchorRatio: prep.minAnchorRatio, rawTimes: true });
+    Object.assign(item, {
+      ok: plan.ok, words: plan.words, anchors: plan.anchors, ratio: plan.ratio,
+      confidence: plan.confidence, note: plan.note,
+      heard: recWords.map(w => w.word).join(' ').slice(0, 200),
+      hotwords: (hotwords && hotwords.length) ? hotwords.slice(0, 12) : undefined,
+    });
+    return item;
+  }
+
+  /** 跑一次识别：优先**常驻服务**（省掉每次约 12s 的模型加载），失败退回 spawn。
+   *  hotwords 非空时由常驻 worker 按这组词重建识别器（实测 3.6s），且**只作用于本次**。 */
+  async function realignRecognize(prep, wav, outJson, hotwords) {
+    const ea = prep.ea;
+    const hw = (hotwords && hotwords.length) ? hotwords : undefined;
+    if (asrCanServe(ea.script)) {
+      try {
+        await asrSvc.transcribe({
+          script: ea.script, model: prep.mdir, provider: ea.provider,
+          extra: ea.extra || [], audio: wav,
+          // 重校对只认词的时间，不需要稳定性重跑（--tta 0 省掉两遍解码）
+          tta: 0, outPath: outJson,
+          hotwords: hw, hotwordsScore: prep.hotwordsScore,
+        });
+        return JSON.parse(fs.readFileSync(outJson, 'utf8'));
+      } catch (e) {
+        console.error('[realign] 常驻识别失败，退回 spawn：' + ((e && e.message) || e));
+      }
+    }
+    const asrArgs = [ea.script, ...asrArgsFor(ea, prep.mdir, wav, outJson, 'off')];
+    if (hw) {
+      /* spawn 路径没有逐句热词通道：写一份临时词表交给 asr.py（它自己转 BPE 片段并
+       * 预校验）。常驻服务那条路走的是 job 里的 hotwords 字段，不由这里拼 CLI。 */
+      const hf = path.join(path.dirname(outJson),
+        'hw-' + path.basename(outJson, '.json') + '.txt');
+      fs.writeFileSync(hf, hw.join('\n') + '\n', 'utf8');
+      asrArgs.push('--hotwords-file', hf, '--hotwords-score', String(prep.hotwordsScore));
+    }
     await new Promise((res, rej) => {
       const pr = spawn(ASR_PY, asrArgs, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       let err = '';
@@ -4159,29 +4219,107 @@ function startPrepare(id, videoPath, mode) {
         res();
       });
     });
-    const data = JSON.parse(fs.readFileSync(outJson, 'utf8'));
-    // 合成音频通常只有一句；多句时把它们按序摊平成一个词序列
-    const recWords = [];
-    for (const s of (data.segments || [])) {
-      for (const w of (s.words || [])) {
-        if (Number.isFinite(w.start) && Number.isFinite(w.end)) {
-          recWords.push({ word: w.word || w.text || '', start: w.start, end: w.end });
-        }
-      }
+    return JSON.parse(fs.readFileSync(outJson, 'utf8'));
+  }
+
+  /* ── 第二级的逐句热词：让 LLM 从「该句已有的词」里挑出**不常见 / 专有**的 ──
+   *
+   * 为什么不能"把每个词都做成热词"：实测过 —— 整句所有词都当热词是**净负效果**
+   * （14 句样本：好转 1、变差 3、无变化 10），而且能把一句本来完全正确的话退化成
+   * 数字复读：
+   *     `tens of thousands of players online at any given moment`
+   *     → `1 1 1 1 1 1 1 1 1 1 1 1 1 1 10 1`
+   * 常见虚词模型本来就认得，把它们塞进上下文图只会挤掉声学证据。真正值得偏置的是
+   * **专有名词**（人名 / 服务器名 / 术语）—— 实测 `saparata` 这类正是偏置能救回来的。
+   * "哪些词不常见"规则判不出来（分不清专名与常用词），所以交给 LLM。
+   *
+   * 失败 / 超时 / 没配模型一律**降级为空数组**：第二级是锦上添花，
+   * 绝不能因为它把整片作业拖垮 —— 第一级的结果本来就够用。
+   */
+  /* 抠不出热词时最多打几条原始回复（全片几千句，不能每句都刷屏） */
+  let rareEmptyLogs = 0;
+
+  async function pickRareHotwords(text, words) {
+    /* 候选来源：全片重校对拿到的句子带逐词数组；单条重排从前端拿到的块**只有文本**，
+     * 那种情况就现场分词，否则候选为空、第二级会被静默跳过。 */
+    const src = (words && words.length) ? words : alignMod.tokenize(text || '');
+    const cand = realignWordsMod.hotwordCandidates(src);
+    if (!cand.length) return [];
+    const cfg = analyzeCfg();
+    if (!analyzeReady(cfg)) {
+      console.error('[realign] 分析模型没配好，跳过第二级热词偏置');
+      return [];
     }
-    const plan = alignMod.planBlock(text, { start, end }, recWords,
-      { minAnchorRatio: prep.minAnchorRatio });   // ← 设置页里那个门槛真正生效的地方
-    Object.assign(item, {
-      ok: plan.ok, words: plan.words, anchors: plan.anchors, ratio: plan.ratio,
-      confidence: plan.confidence, note: plan.note,
-      heard: recWords.map(w => w.word).join(' ').slice(0, 200),
-    });
-    return item;
+    const sys = [
+      '你在帮一个字幕工具挑「ASR 热词」。热词会喂给语音识别模型做上下文偏置，',
+      '让它在重新识别这句话时更倾向吐出这些词。',
+      '',
+      '只挑**不常见 / 专有**的词：人名、地名、服务器名、组织名、作品名、专业术语、缩写。',
+      '以下一律不要：常见虚词与常用词（the / a / of / and / is / you / to 这类）、',
+      '纯数字、单个字母、以及任何"普通英语里很常见"的词。',
+      '',
+      '热词加错了会让识别模型**反复吐这个词**，所以拿不准就不要给 —— 宁可少给。',
+      '最多 6 个。只输出一个 JSON 数组，元素必须是候选词里原样出现的拼写，不要任何解释。',
+    ].join('\n');
+    const user = '句子：' + String(text || '').slice(0, 300)
+      + '\n候选词：' + JSON.stringify(cand.slice(0, 60));
+    let reply = '';
+    try {
+      const res = await llmChat(cfg, [
+        { role: 'system', content: sys }, { role: 'user', content: user },
+      ], { maxTokens: 1024, timeoutMs: analyzeTimeoutMs(), kind: 'realign-hotwords' });
+      reply = (res && res.content) || '';
+    } catch (e) {
+      console.error('[realign] 热词筛选失败（跳过第二级）：' + ((e && e.message) || e));
+      return [];
+    }
+    const picked = realignWordsMod.matchPickedWords(reply, cand);
+    /* 抠不出词时把原始回复打出来（只打前几条）—— 「模型回了但我解析不出来」
+     * 和「模型真的没给」在日志上看不出区别的话，这个问题没法自查。 */
+    if (!picked.length && rareEmptyLogs < 3) {
+      rareEmptyLogs++;
+      console.error('[realign] 热词筛选没抠出词（候选 ' + cand.length + ' 个）原始回复：'
+        + reply.slice(0, 300));
+    }
+    return picked;
+  }
+
+  /** 两级重校对**一条**句子：先无热词重识别；不达标再用 LLM 筛出的专有词做逐句热词重试。
+   *
+   *  单条重排（realignBlocks）与全片重校对（runFullRealign）**共用这一份** ——
+   *  两条路径的判定标准必须一致，否则"单条能用、全片说不可信"会很怪。
+   *
+   *  @param allowHotwords 是否允许走第二级（关掉就只跑第一级，实测用得上）。
+   *  @returns 提案对象，带 level = 1|2 标明结果来自哪一级。 */
+  async function realignTwoTier(prep, t, tmpDir, tag, allowHotwords) {
+    const r = await realignOne(prep, t, tmpDir, tag);
+    r.level = 1;
+    if (r.ratio >= prep.threshold || !allowHotwords) return r;
+    let picked = [];
+    try {
+      picked = await pickRareHotwords(t.text, t.words);
+    } catch (e) {
+      console.error('[realign] 热词筛选异常（跳过第二级）：' + ((e && e.message) || e));
+    }
+    if (!picked.length) { r.hotNote = '没挑出值得偏置的词，跳过第二级'; return r; }
+    try {
+      const r2 = await realignOne(prep, t, tmpDir, 'h' + tag, picked);
+      /* ★ 必须**更吻合**才采纳。实测热词偏置不稳定：同一句一次偏成正确的
+       *   `saparata`、另一次偏成 `Zaparata`；全词热词更是把正确的句子退化成
+       *   数字复读。没有这道闸门，第二级就是在引入风险而不是收益。 */
+      if (r2.ratio > r.ratio) { r2.level = 2; return r2; }
+      r.hotTried = picked; r.hotRatio = r2.ratio;
+      return r;
+    } catch (e) {
+      r.hotNote = String((e && e.message) || e).slice(0, 120);
+      return r;
+    }
   }
 
   /** 对一批字幕块做重对齐（右键「重排逐词时间」走这里）。**只算不写**。 */
   async function realignBlocks(id, blocks, opt) {
-    const prep = realignPrep(id, opt);
+    const o = (opt || {});
+    const prep = realignPrep(id, o);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-'));
     const out = [];
     try {
@@ -4189,11 +4327,12 @@ function startPrepare(id, videoPath, mode) {
         const b = blocks[i];
         let item;
         try {
-          item = await realignOne(prep, b, tmpDir, String(i));
+          // 与全片重校对走**同一个**两级实现（判定标准必须一致，见 realignTwoTier）
+          item = await realignTwoTier(prep, b, tmpDir, String(i), o.noHotwords !== true);
         } catch (e) {
           item = {
             start: Number(b.start), end: Number(b.end), text: String(b.text || ''),
-            ok: false, words: [], anchors: 0, ratio: 0, confidence: 0, heard: '',
+            ok: false, words: [], anchors: 0, ratio: 0, confidence: 0, heard: '', level: 0,
             note: String((e && e.message) || e).slice(0, 200),
           };
         }
@@ -4202,8 +4341,7 @@ function startPrepare(id, videoPath, mode) {
     } finally {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
-    // 带上本次用的 TTS 参数：操作日志里要能看出"是哪一次、用什么声音跑的"
-    return out.map(r => Object.assign(r, { voice: prep.voice || '(系统默认)', rate: prep.rate }));
+    return out;
   }
 
   /* ── 全片逐词重校对（TTS 朗读 → ASR 识别 → 对齐 → 逐句置信度）──────────
@@ -4517,12 +4655,22 @@ function startPrepare(id, videoPath, mode) {
         && Number.isFinite(Number(x.s.start)) && Number.isFinite(Number(x.s.end))
         && Number(x.s.end) > Number(x.s.start)
         && String(x.s.text || '').trim())
+      /* ⚠ 逐词的字段名**两条来源不一样**，必须在这里统一：
+       *   · 有 asr.json 的稿件：段来自识别结果，词是 {word, start, end}
+       *   · 从 ASS 还原的句子：词是 {w, s, e}（sentencesFromFile 的产出）
+       * 早先这里只按 {w,s,e} 取，于是"有 asr.json 的稿件"整条逐词数组全是 undefined。
+       * 因为旧方案只用到 text 与 words.length，这个 bug 一直没露头；逐句热词要拿这些
+       * 词当候选，才第一次真的踩上（候选词变成了 "[object Object]"）。 */
       .map(x => ({
         index: x.i,
         start: Number(x.s.start),
         end: Number(x.s.end),
         text: String(x.s.text || '').trim(),
-        words: x.s.words.map(w => ({ w: w.w, s: Number(w.s), e: Number(w.e) })),
+        words: x.s.words.map(w => ({
+          w: String(w.w !== undefined ? w.w : (w.word !== undefined ? w.word : '')),
+          s: Number(w.s !== undefined ? w.s : w.start),
+          e: Number(w.e !== undefined ? w.e : w.end),
+        })),
       }));
   }
 
@@ -4560,16 +4708,20 @@ function startPrepare(id, videoPath, mode) {
         let item = {
           index: t.index, target: `第 ${t.index + 1} 行`, start: t.start, end: t.end,
           text: t.text, ok: false, confidence: 0, ratio: 0, anchors: 0,
-          words: null, heard: '', note: '',
+          words: null, heard: '', note: '', level: 0,
         };
         try {
-          const r = await realignOne(prep, t, tmpDir, String(i));
-          /* ★ 达标判定用**置信度**，不是 planBlock 的 ok：
-           *   ok 只是"锚点率过了最低线"（能用），而这里要决定"值不值得改"，
-           *   门槛更高、还要看连续落单和压扁的词。 */
-          item = Object.assign(item, r, { ok: r.confidence >= prep.threshold });
+          /* 两级：第一级不带热词、对该句原片音频重新识别；不达标才用 LLM 从该句
+           * 已有的词里筛出的专有词做逐句热词重试，且**必须更吻合**才采纳。
+           * 详见 realignTwoTier 与 pickRareHotwords 的说明。 */
+          const r = await realignTwoTier(prep, t, tmpDir, String(i), o.noHotwords !== true);
+          /* ★ 采纳判定用**词吻合率**（planBlock 的 ratio），不是旧方案的对齐置信度：
+           *   它直接回答"这次从原片识别出来的词与该句已有文本对上了多少"。
+           *   对不上就说明模型这次没听清（或该句文本本身有问题），那种时间戳
+           *   不该覆盖原稿。实测全片 4821 句的平均吻合率 0.908、句均解码 0.27s。 */
+          item = Object.assign(item, r, { ok: r.ratio >= prep.threshold });
           if (!item.ok) {
-            item.note = item.note || `置信度 ${(r.confidence * 100).toFixed(0)}% 低于门槛 `
+            item.note = item.note || `词吻合率 ${(r.ratio * 100).toFixed(0)}% 低于门槛 `
               + `${(prep.threshold * 100).toFixed(0)}%，保留原逐词时间`;
           }
         } catch (e) {
@@ -4791,7 +4943,7 @@ function startPrepare(id, videoPath, mode) {
     const sys = systemPromptWithGlossary(cfg, strict);
     const r = await llmChat(cfg, [
       { role: 'system', content: sys },
-      { role: 'user', content: texts.join('\n') },
+      { role: 'user', content: llmText.buildTranslateUserMessage(texts, o.refs) },
     ], { maxTokens: o.maxTokens, debugFile: o.debugFile, kind: 'translate' });
     const arr = parseTranslationReply(r.content, texts.length);
     if (!arr) {
@@ -4808,12 +4960,12 @@ function startPrepare(id, videoPath, mode) {
    *  · `rate`/`net`/`timeout`：指数退避（尊重 Retry-After）—— 限流时递归拆半只会把请求数翻倍，所以退避更重要
    *  · `empty`（模型只吐思考过程）：换严格提示词再试一次，仍为空就带着明确原因失败
    *  成功返回与 texts 等长的译文数组；最终失败抛错（调用方决定怎么兜底）。 */
-  async function translateLines(cfg, texts, depth = 0, debugFile = null) {
+  async function translateLines(cfg, texts, depth = 0, debugFile = null, refs = null) {
     const maxTokens = Math.min(8192, Math.max(1024, texts.length * 220 + 512));
     let lastErr = null;
     for (const strict of [false, true]) {
       for (let attempt = 0; attempt < 2; attempt++) {
-        try { return await translateOnce(cfg, texts, strict, { maxTokens, debugFile }); }
+        try { return await translateOnce(cfg, texts, strict, { maxTokens, debugFile, refs }); }
         catch (e) {
           lastErr = e;
           const kind = e && e.kind;
@@ -4831,22 +4983,22 @@ function startPrepare(id, videoPath, mode) {
     // 单行仍然被截断 → 把 max_tokens 放大一倍再试（不能再拆了）
     if (texts.length === 1 && lastErr && lastErr.kind === 'truncated' && depth < 6) {
       try {
-        return await translateOnce(cfg, texts, 'strict', { maxTokens: Math.min(16384, maxTokens * 2), debugFile });
+        return await translateOnce(cfg, texts, 'strict', { maxTokens: Math.min(16384, maxTokens * 2), debugFile, refs });
       } catch (e) { lastErr = e; }
     }
     if (texts.length > 1 && depth < 5) {
       const mid = Math.ceil(texts.length / 2);
       try {
-        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile);
-        const b = await translateLines(cfg, texts.slice(mid), depth + 1, debugFile);
+        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile, refs);
+        const b = await translateLines(cfg, texts.slice(mid), depth + 1, debugFile, refs);
         return a.concat(b);
       } catch (e) { lastErr = e; }
     }
     throw new Error(String((lastErr && lastErr.message) || lastErr || '翻译失败'));
   }
 
-  async function translateBatch(cfg, segs, idxs, depth, debugFile) {
-    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth, debugFile) }; }
+  async function translateBatch(cfg, segs, idxs, depth, debugFile, refs) {
+    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth, debugFile, refs) }; }
     catch (e) { return { texts: null, err: String((e && e.message) || e) }; }
   }
 
@@ -5179,15 +5331,16 @@ function startPrepare(id, videoPath, mode) {
           setRr({ stage: '翻译中', progress: 76, message: '翻译中 …' });
           const translations = [];
           const bSize = transBatchSize(cfg);
-          const parts = llmText.planChunks(segs, bSize);
+          // planJobs 而不是 planChunks：多带"上文参考"（cfg.contextRows = 0 时行为与 planChunks 完全一致）
+          const parts = llmText.planJobs(segs, bSize, cfg.contextRows);
           const chunks = parts.length || 1;
           try {
             for (let bi = 0; bi < parts.length; bi++) {
-              const part = await translateLines(cfg, parts[bi].map(s => s.text), 0,
-                path.join(projDir(id), 'llm-debug.jsonl'));
+              const part = await translateLines(cfg, parts[bi].idxs.map(i => segs[i].text), 0,
+                path.join(projDir(id), 'llm-debug.jsonl'), parts[bi].refs);
               translations.push(...part);
               setRr({ progress: 76 + Math.round(((bi + 1) / chunks) * 21),
-                message: `翻译中 … ${bi + 1}/${chunks} 批（每批 ${bSize} 行）` });
+                message: `翻译中 … ${bi + 1}/${chunks} 批（每批 ${bSize} 行${cfg.contextRows ? ` · 上文 ${cfg.contextRows} 行` : ''}）` });
             }
             if (translations.length === segs.length) segs.forEach((s, i) => { s.zh = String(translations[i] == null ? '' : translations[i]); });
             else warning = '翻译行数不一致，已跳过译文';
@@ -5353,30 +5506,34 @@ function startPrepare(id, videoPath, mode) {
       return finishTranslate(id, segs, lines);
     }
     const batchSize = transBatchSize(cfg);
-    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行（每批 ${batchSize} 行）`);
+    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行（每批 ${batchSize} 行${cfg.contextRows ? ` · 上文 ${cfg.contextRows} 行` : ''}）`);
 
-    const batches = llmText.planChunks(todo, batchSize);
+    // planJobs：按 **todo（只含未翻的行）** 切批，并把 `lines` 里已有的译文当"上文参考"。
+    // ⚠ 必须传 todo 而不是全部 segs：原来就是 `planChunks(todo)`，只翻缺的行；
+    //    改成全部行会把已翻好的行重翻一遍（白花钱、还可能把好译文改坏）。
+    const jobs = llmText.planJobs(todo.map(i => ({ text: segs[i].text, zh: lines[i] })), batchSize, cfg.contextRows);
 
     let failedBatches = 0;
-    for (let bi = 0; bi < batches.length; bi++) {
-      const idxs = batches[bi];
+    for (let bi = 0; bi < jobs.length; bi++) {
+      // planJobs 给的是 **todo 内**的下标，translateBatch 要的是 segs 的下标 → 过一遍 todo 映射
+      const idxs = jobs[bi].idxs.map(k => todo[k]);
       const t0 = Date.now();
-      const r = await translateBatch(cfg, segs, idxs, 0, path.join(projDir(id), 'llm-debug.jsonl'));
+      const r = await translateBatch(cfg, segs, idxs, 0, path.join(projDir(id), 'llm-debug.jsonl'), jobs[bi].refs);
       if (r.texts) {
         idxs.forEach((gi, k) => { lines[gi] = String(r.texts[k] == null ? '' : r.texts[k]); });
         saveTranslations(id, cfg.model, lines);      // 每批立刻落盘, 可续翻
-        pushDraftLog(id, `第 ${bi + 1}/${batches.length} 批完成（${idxs.length} 行，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+        pushDraftLog(id, `第 ${bi + 1}/${jobs.length} 批完成（${idxs.length} 行，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
       } else {
         failedBatches++;
-        pushDraftLog(id, `[错误] 第 ${bi + 1}/${batches.length} 批失败（${idxs.length} 行）：${r.err}`);
+        pushDraftLog(id, `[错误] 第 ${bi + 1}/${jobs.length} 批失败（${idxs.length} 行）：${r.err}`);
       }
       saveTranslations(id, cfg.model, lines);
       setDraft(id, {
-        stage: STAGE.translate, progress: 86 + Math.round(((bi + 1) / batches.length) * 12),
-        message: `翻译中 … ${bi + 1}/${batches.length} 批${failedBatches ? `（${failedBatches} 批失败）` : ''}`,
+        stage: STAGE.translate, progress: 86 + Math.round(((bi + 1) / jobs.length) * 12),
+        message: `翻译中 … ${bi + 1}/${jobs.length} 批${failedBatches ? `（${failedBatches} 批失败）` : ''}`,
       });
     }
-    if (failedBatches) pushDraftLog(id, `本轮流式结束：${failedBatches}/${batches.length} 批未成功`);
+    if (failedBatches) pushDraftLog(id, `本轮流式结束：${failedBatches}/${jobs.length} 批未成功`);
     return finishTranslate(id, segs, lines);
   }
 
@@ -6964,10 +7121,14 @@ function handleAsrRoutes(req, res, u) {
     }
   }
 
-  /* 逐词重排（TTS 对齐）的设置：读 / 写。
-   * GET  → { voice, rate, minAnchorRatio, minConfidence, voices }
+  /* 逐词重排的设置：读 / 写。
+   * GET  → { minAnchorRatio, minConfidence }
    * POST → 局部更新（存 asr/settings.json 的 realign 段）
    * 这几个值只影响**以后**的重排，不碰已有字幕。
+   *
+   * ⚠ 朗读语音 / 语速 / voices 已随 TTS 方案一并从返回里去掉：新方案切**原片音频**
+   *   重新识别、不朗读，那两个值不参与任何判定。（老配置仍留在 settings.json 的
+   *   realign 段里，读进来不会报错；服务端只是不再读它们。）
    *
    * ⚠ 这是**全局** ASR 设置（不挂项目，处理块里根本用不到 project id）。
    *   2026-10-11 无头浏览器探针实测发现：这个处理块原先落在 handleProjectsRoutes 里，
@@ -6980,12 +7141,10 @@ function handleAsrRoutes(req, res, u) {
       const raw = (readAsrSettings().realign) || {};
       const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
       return {
-        voice: String(raw.voice || ''),
-        rate: num(raw.rate, 0),
         minAnchorRatio: num(raw.minAnchorRatio, alignMod.MIN_ANCHOR_RATIO),
-        // 全片重校对的置信度门槛（与锚点率门槛不同：那个是"能不能用"，这个是"值不值得改"）
+        // 全片重校对的**采纳门槛**（词吻合率）：低于它的句子保留原逐词时间。
+        // 与锚点率门槛不是一回事 —— 那个是"这次对齐能不能用"，这个是"值不值得改"。
         minConfidence: num(raw.minConfidence, 0.7),
-        voices: await ttsVoices().catch(() => []),
       };
     };
     if (req.method === 'GET') return view().then(v => sendJson(res, 200, v));
@@ -7033,7 +7192,7 @@ function handleLlmRoutes(req, res, u) {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize', 'temperature', 'contextRows']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);
@@ -7685,7 +7844,11 @@ function handleProjectsRoutes(req, res, u) {
       return sendJson(res, 200, { job: jobView(job) });
     }
 
-    /* 全片逐词重校对：逐句 TTS 朗读 → 重新识别 → 对齐，算出**每句的置信度**，
+    /* 全片逐词重校对：**两级、不用 TTS**。
+     *   ① 对该句的**原片音频**切片做无热词重识别 —— 时间戳来自真实语音
+     *      （旧方案是在 TTS 合成语音上识别，时间戳是推出来的，不是量出来的）；
+     *   ② 只对①不达标的句子，用 LLM 从该句已有的词里筛出的**不常见/专有**词
+     *      做逐句热词重试，且必须更吻合才采纳。
      * 只对达标的句子改逐词时间（不达标的原样保留）。
      *
      * POST → 启动后台作业，立即返回 { job }
@@ -7721,8 +7884,8 @@ function handleProjectsRoutes(req, res, u) {
     }
 
     /* 逐词时间重对齐：只算不写。
-     * body: { blocks:[{text,start,end}], voice?, rate? }
-     * → { blocks:[{index,start,end,text,ok,words:[{w,s,e}],anchors,ratio,note,heard}] }
+     * body: { blocks:[{text,start,end}], noHotwords? }
+     * → { blocks:[{index,start,end,text,ok,level,words:[{w,s,e}],anchors,ratio,note,heard}] }
      *
      * 前端拿到提案后自己决定应用哪些、并负责写回 —— 服务端不碰字幕文件，
      * 与"反思纠错只产出建议"是同一套约定（预览优先）。 */
@@ -7743,7 +7906,7 @@ function handleProjectsRoutes(req, res, u) {
         if (!blocks.length) return sendJson(res, 400, { error: '这些块都没有可念的文本' });
         try {
           const t0 = Date.now();
-          const result = await realignBlocks(id, blocks, { voice: data.voice, rate: data.rate });
+          const result = await realignBlocks(id, blocks, { noHotwords: data.noHotwords === true });
           const okN = result.filter(r => r.ok).length;
           console.log(`[align] 逐词重对齐：${blocks.length} 条 → 可用 ${okN} 条，`
             + `用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);

@@ -97,6 +97,7 @@ const list = await evalJS(`(() => {
 })()`);
 console.log('   ', list);
 const L = JSON.parse(list);
+const START_PROVIDER = L.cur[0];      // 记住用户原本用的是哪套，验收结束要切回去
 ok(L.n === 8, `方案数 = 服务商预置数（${L.n}）`, JSON.stringify(L.names.slice(0, 3)));
 ok(L.cur.length === 1, `恰好一行标为「当前使用」（${L.cur[0]}）`);
 ok(L.cur[0] === L.pickOn[0], `胶囊的选中态与当前服务商一致（${L.pickOn[0]}）`);
@@ -165,6 +166,23 @@ ok(C.afterNew.keyVal === '', '新建方案时 Key 输入框已清空');
 ok(C.afterNew.open === true, '新建后面板自动打开');
 ok(C.afterNew.curShown === false, '新建的方案不标「当前使用」');
 
+// ⚠ 上面「新建方案」那一步把 provider 换掉了（saveTranslateCfg 切换 provider 时会连带改
+//    baseUrl/model），而这是**用户的真实配置**。跑完必须切回去，否则验收会改坏用户设置
+//    （实测踩过：跑完一轮，provider 从 deepseek 变成 openai）。
+const restore = await evalJS(`(async () => {
+  const sel = document.getElementById('st-provider');
+  sel.value = ${JSON.stringify(START_PROVIDER)};
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 200));
+  document.getElementById('st-drawer-save').click();
+  await new Promise(r => setTimeout(r, 2500));
+  const r = await (await fetch('/api/translate/config')).json();
+  return JSON.stringify({ provider: r.cfg.provider, model: r.cfg.model });
+})()`);
+console.log('   恢复初始方案:', restore);
+const R0 = JSON.parse(restore);
+ok(R0.provider === START_PROVIDER, `验收结束后把 provider 切回初始值（${START_PROVIDER}）`);
+
 console.log('\n── ⑤ API Key 显示/隐藏 与 无 JS 报错 ──');
 const eye = await evalJS(`(() => {
   const k = document.getElementById('st-key');
@@ -177,6 +195,52 @@ const E = JSON.parse(eye);
 ok(E.t0 === 'password' && E.t1 === 'text' && E.t2 === 'password', '「显示/隐藏」能切换 Key 的明文可见性');
 ok(errors.length === 0, '控制台没有 error', errors.slice(0, 2).join(' | '));
 
+console.log('\n── ⑥ 采样温度 / 上下文行数（设计稿 ③ 的两项，已接线到后端）──');
+const params = await evalJS(`(async () => {
+  const t = document.getElementById('st-temp'), c = document.getElementById('st-ctx');
+  const present = { temp: !!t, ctx: !!c };
+  const initial = { temp: t ? t.value : null, ctx: c ? c.value : null };
+  const limits = { tMin: t && t.min, tMax: t && t.max, cMin: c && c.min, cMax: c && c.max };
+  // 改值 → 走「保存方案」（复用既有保存链路）
+  t.value = '0.8'; c.value = '30';
+  document.getElementById('st-drawer-save').click();
+  await new Promise(r => setTimeout(r, 2500));
+  const r = await (await fetch('/api/translate/config')).json();
+  return JSON.stringify({ present, initial, limits, saved: { temp: r.cfg.temperature, ctx: r.cfg.contextRows },
+                          uiAfter: { temp: t.value, ctx: c.value } });
+})()`);
+console.log('   ', params);
+const P = JSON.parse(params);
+ok(P.present.temp && P.present.ctx, '面板里有「采样温度」与「上下文行数」两个输入框');
+ok(Number(P.limits.tMin) === 0 && Number(P.limits.tMax) === 2, `温度输入框标了 0~2 的范围（${P.limits.tMin}~${P.limits.tMax}）`);
+ok(Number(P.limits.cMin) === 0 && Number(P.limits.cMax) === 200, `上下文输入框标了 0~200 的范围（${P.limits.cMin}~${P.limits.cMax}）`);
+ok(Number(P.saved.temp) === 0.8, `温度已存到服务端（${P.saved.temp}）`);
+ok(Number(P.saved.ctx) === 30, `上下文行数已存到服务端（${P.saved.ctx}）`);
+
+// 越界值必须被服务端夹回（不信任前端）
+const clamp = await evalJS(`(async () => {
+  await fetch('/api/translate/config', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ temperature: 99, contextRows: -5 }) });
+  const r = await (await fetch('/api/translate/config')).json();
+  return JSON.stringify({ temp: r.cfg.temperature, ctx: r.cfg.contextRows });
+})()`);
+console.log('   ', clamp);
+const CL = JSON.parse(clamp);
+ok(Number(CL.temp) === 2, `服务端把越界温度夹到上限（99 → ${CL.temp}）`);
+ok(Number(CL.ctx) === 0, `服务端把负数上下文夹到 0（-5 → ${CL.ctx}）`);
+// 恢复成默认，别把测试值留在用户机器上
+const restored = await evalJS(`(async () => {
+  document.getElementById('st-temp').value = '0.3';
+  document.getElementById('st-ctx').value = '0';
+  document.getElementById('st-drawer-save').click();
+  await new Promise(r => setTimeout(r, 2500));
+  const r = await (await fetch('/api/translate/config')).json();
+  return JSON.stringify({ temp: r.cfg.temperature, ctx: r.cfg.contextRows });
+})()`);
+console.log('   ', restored);
+const RS = JSON.parse(restored);
+ok(Number(RS.temp) === 0.3 && Number(RS.ctx) === 0, `已恢复默认（${RS.temp} / ${RS.ctx}）`);
+
 console.log('\n── ⑥ 截图 ──');
 const clip = await evalJS(`(() => { const b = document.querySelector('.st-body').getBoundingClientRect();
   return JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height, scale: 1 }); })()`);
@@ -188,3 +252,4 @@ if (typeof clip === 'string') {
 console.log(`\n通过 ${pass} · 失败 ${fail}`);
 ws.close(); edge.kill();
 process.exit(fail ? 1 : 0);
+

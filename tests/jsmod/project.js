@@ -1434,6 +1434,8 @@ export function initProjects(ctx) {
     refreshKeyHint(c);
     $('#st-model').value = c.model || '';
     if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
+    if ($('#st-temp')) $('#st-temp').value = (c.temperature == null ? 0.3 : c.temperature);   // 采样温度
+    if ($('#st-ctx')) $('#st-ctx').value = c.contextRows || 0;                                 // 上下文行数
     $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
     // 方案列表/胶囊用的是刚拿到的 stPresets 与当前 provider，必须在这之后画
     if (typeof renderSchemes === 'function') renderSchemes();
@@ -2818,6 +2820,9 @@ async function renderAsrModels() {
       baseUrl: $('#st-baseurl').value.trim(),
       model: $('#st-model').value.trim(),
       batchSize: parseInt(($('#st-batch') || {}).value, 10) || 25,     // 每批行数(服务端还会夹到 5~100)
+      // 采样温度 / 上下文行数（设计稿 ③ 的两项，服务端同样会夹范围；解析失败时用默认值）
+      temperature: Number.isFinite(parseFloat(($('#st-temp') || {}).value)) ? parseFloat($('#st-temp').value) : 0.3,
+      contextRows: parseInt(($('#st-ctx') || {}).value, 10) || 0,
       prompt: $('#st-prompt').value,
       glossary: glSerialize(),
       glossaryLang: glState.lang,

@@ -311,12 +311,27 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
     （`renderSchemes()` 按 presets 渲染，标「当前使用」、未配置变暗）+ **右侧滑入面板**
     （`.st-drawer`，`position: fixed`；`openDrawer()` / `closeDrawer()`）。
     **「字幕翻译」不再是独立分类**，其表单（保留全部原 id）搬进了滑入面板。
-    设计稿里的「采样温度」「上下文行数」「中间 API」**后端没有存储与实现**，面板底部如实说明、
-    不做成假开关；「多套方案各自独立存储」同样待后端支持（现在点方案行 = 切换当前那套）。
+  - **设计稿里那几项"看着像设置"的东西，接线口径**：
+    · 「采样温度」→ `cfg.temperature`，进请求体（**原来写死 0.3**），范围 0~2。
+    · 「上下文行数」→ `cfg.contextRows`，每批额外送前面 N 行「原文 + 已定译文」作参考；
+      纯函数 `planJobs()` / `buildTranslateUserMessage()` 在 `editor/llm-text.js`，
+      ⚠ **参考行不参与译文行数校验**（否则 `parseTranslationReply` 的等行数校验会失配），
+      且 `contextRows = 0` 时批次划分与旧的 `planChunks` **逐例一致**（有单测钉住，
+      见 `tests/llm-params-test.mjs` 的 ③）—— 老用户的翻译行为不能因为这次改动而变。
+      服务端在 `saveTranslateCfg()` 入口夹范围，不信任前端。
+    · 「中间 API」**有意不实装**：本项目的 LLM 请求由本地服务端发出，没有浏览器的同源策略，
+      不存在它要解决的 CORS/403 场景，多一层中转只会多一个失败点。面板里如实写明。
+    · 「多套方案各自独立存储」也**未做**：后端仍是"一套 cfg + 一份 presets 表"，
+      点方案行 = 切换当前那套（与既有模型一致）。要真支持多套得改 `asr/settings.json` 的结构。
   - 验收：`tools/probe_settings_layout.mjs`（17 项骨架/分类/二级 Tab/主题双实例）、
     `tools/verify_model_groups.mjs`（15 项硬件条/分组/折叠状态不丢）、
-    `tools/verify_scheme_drawer.mjs`（25 项二级 Tab/方案列表/滑入动画/字段齐全/新建/Key 可见性）、
+    `tools/verify_scheme_drawer.mjs`（**34 项**二级 Tab/方案列表/滑入动画/字段齐全/新建/Key 可见性/
+    温度与上下文行数的**真实保存往返**与服务端夹取；**跑完会把 provider 切回初始值** ——
+    它一开始没切，实测把用户的 deepseek 改成了 openai，属于验收污染，已修 + 有断言钉住）、
     `tools/probe_entry_card.mjs`（图标注入与进度填充）、`tools/probe_settings_content.mjs`（量 rect 定位 0 宽问题）。
+  - 单测：`tests/llm-params-test.mjs`（39 项：温度/上下文夹取、`planJobs` 的 refs 选取、
+    **`contextRows=0` 时与旧 `planChunks` 逐例一致**、提示词里"待翻译行数"不被参考行带偏、
+    服务端与浏览器镜像两侧输出逐字一致）。
 - **ASS 双语样式预设：导入 / 导出（2026-10-11）**：稿件编辑页 → 设置 → 「ASS 双语样式」里新增两个按钮，
   把「中英两条 Style 轨 + 逐词高亮色 + 卡拉OK 未唱色/扫过形态」存成一个 `*.style-preset.json`，换稿件一键套用。
   纯逻辑在 `editor/js/ass.js`（`assStylePresetOf` / `parseAssStylePreset` / `applyAssStylePreset` / `findStyleForLang`），

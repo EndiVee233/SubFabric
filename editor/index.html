@@ -1918,8 +1918,10 @@
             <div class="st-grid">
               <span class="st-lbl">LLM 模型</span>
               <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+              <span class="st-lbl">采样温度</span>
+              <input type="number" id="st-temp" class="st-input" min="0" max="2" step="0.1" value="0.3" style="max-width:120px">
             </div>
-            <p class="gl-hint">模型名称请参考对应服务商的 API 文档。</p>
+            <p class="gl-hint">模型名称请参考对应服务商的 API 文档。温度越低输出越确定、越高越随机，建议 0.2~0.8（原来写死 0.3，现在可调）。</p>
           </div>
 
           <div class="st-card">
@@ -1927,8 +1929,13 @@
             <div class="st-grid">
               <span class="st-lbl">每批行数</span>
               <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="25" style="max-width:120px">
+              <span class="st-lbl">上下文行数</span>
+              <input type="number" id="st-ctx" class="st-input" min="0" max="200" step="5" value="0" style="max-width:120px">
             </div>
-            <p class="gl-hint">一次请求最多带多少行给翻译模型（5~100）。批越大请求越少，但译文行数一旦和输入对不上，整批都要重来；批越小越稳，请求也越多。失败时程序会自动拆成两半重试。</p>
+            <p class="gl-hint">
+              每批行数：一次请求最多带多少行给翻译模型（5~100）。批越大请求越少，但译文行数一旦和输入对不上，整批都要重来；批越小越稳，请求也越多。失败时程序会自动拆成两半重试。
+              <br>上下文行数：每批额外把前面 N 行「原文 + 已定译文」当参考送给模型，让它接着上文译（0 = 不送，与旧行为一致）。参考行不参与译文行数校验。
+            </p>
           </div>
 
           <div class="st-card">
@@ -1950,13 +1957,14 @@
             <textarea id="st-prompt" class="st-area" spellcheck="false" rows="7"></textarea>
           </div>
 
-          <!-- ⚠ 设计稿 ③ 里还有「采样温度」「上下文行数」「中间 API」三个控件，
-               后端目前**没有**它们的存储与实现（/api/translate/config 只认
-               provider/baseUrl/model/batchSize/prompt/glossary/glossaryLang）。
-               做成能点却存不下的开关就是骗人，所以这里如实说明，等后端加了再接线。 -->
+          <!-- ⚠ 设计稿 ③ 里的「中间 API」**没有实装**，而且不是忘了：
+               它要的是"请求先经过中转再发给服务商"（设计稿原文：如遇 CORS 或 403 错误请开启）。
+               本项目的 LLM 请求全部由**本地 Node 服务端**发出（server.js 的 llmChat 直接 fetch），
+               服务端之间没有浏览器同源策略，CORS 这个问题**根本不存在**；
+               再加一层中转只会多一个要维护的失败点。所以这里如实说明，不摆一个空开关。 -->
           <p class="gl-hint st-drawer-note">
-            设计稿里的「采样温度」「上下文行数」「中间 API」暂未接线 —— 后端还没有这三项的存储与实现，
-            做成开关会看起来能存其实不生效，所以先不摆。
+            设计稿里的「中间 API」未实装：本项目的 LLM 请求由本地服务端直接发出，
+            不受浏览器同源策略限制，没有它要解决的 CORS/403 场景，多一层中转只会多一个失败点。
           </p>
         </div>
 

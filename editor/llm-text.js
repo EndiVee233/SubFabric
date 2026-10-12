@@ -209,6 +209,62 @@ function planChunks(items, size) {
   return out;
 }
 
+/* ── 采样温度 / 上下文行数（全局设置 → 模型设置 → LLM 子视图里的两项）──────────
+ * 设计稿把这两项摆在"模型"与"调用参数"两栏里。接线口径：
+ *   · temperature —— 直接进请求体（原来写死 0.3）。范围 0~2，越界夹回。
+ *   · contextRows —— 每批**额外**送前面 N 行"原文 + 已定译文"作参考，让模型接着上文译。
+ *     参考行**不参与译文行数校验**（回复仍然只对应待翻的行），所以它只影响提示词长度，
+ *     不会让 parseTranslationReply 的等行数校验失配 —— 这是这条功能最容易出错的地方。
+ *     0 = 不带上文（= 旧行为）。默认 0，只有用户显式设置才带上文。 */
+const TEMP_MIN = 0, TEMP_MAX = 2, TEMP_DEFAULT = 0.3;
+const CTX_MIN = 0, CTX_MAX = 200, CTX_DEFAULT = 0;
+
+function clampTemperature(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return TEMP_DEFAULT;
+  return Math.max(TEMP_MIN, Math.min(TEMP_MAX, n));
+}
+
+function clampContextRows(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n <= 0) return CTX_MIN;
+  return Math.max(CTX_MIN, Math.min(CTX_MAX, n));
+}
+
+/** 拼给模型的待翻译正文。带上下文时把参考行放在**同一个 user 消息**里、用显式标记隔开。
+ *  ⚠ 字符串里"待翻译的行数"必须仍然等于 texts.length —— 调用方按它校验译文行数。 */
+function buildTranslateUserMessage(texts, refs) {
+  const list = (Array.isArray(texts) ? texts : []).map(t => String(t == null ? '' : t));
+  const body = list.join('\n');
+  const r = (Array.isArray(refs) ? refs : []).filter(x => x && (x.text || x.zh));
+  if (!r.length) return body;
+  const ctx = r.map(x => `${String(x.text == null ? '' : x.text)}\t=> ${String(x.zh == null ? '' : x.zh)}`).join('\n');
+  return `[[前文参考（已有译文，不要翻译、不要输出）]]\n${ctx}\n[[以下 ${list.length} 行才是本次要翻译的内容]]\n${body}`;
+}
+
+/** 带上下文的批次切分：每批 = { idxs, refs }。
+ *  refs 是该批**前面**最多 ctx 行里"已有译文"的那些（原文 + 译文），供模型接上文。 */
+function planJobs(items, size, ctx) {
+  const list = Array.isArray(items) ? items : [];
+  const n = clampBatchSize(size);
+  const c = clampContextRows(ctx);
+  const out = [];
+  for (let i = 0; i < list.length; i += n) {
+    const idxs = [];
+    for (let k = i; k < Math.min(i + n, list.length); k++) idxs.push(k);
+    const refs = [];
+    if (c > 0 && i > 0) {
+      for (let k = Math.max(0, i - c); k < i; k++) {
+        const it = list[k];
+        const zh = it && (it.zh != null ? it.zh : it.translation);
+        if (zh) refs.push({ text: it && it.text, zh });
+      }
+    }
+    out.push({ idxs, refs });
+  }
+  return out;
+}
+
 /* ── 中文译文的标点归一化 ────────────────────────────────────────
  * 项目约定: 中文行用**空格**分词, 不出现 ，、。 (半角 , . 与 ! ? 保留不动)。
  * 这是"外部文本(LLM 译文 / ASR)入库前"的统一口径 —— 用户手动编辑不走这里。
@@ -231,4 +287,6 @@ module.exports = {
   stripReasoning, looksLikeReasoning, extractJsonArray, parseJsonArray,
   parseLineArrayReply, unwrapJsonArrayString, punctPairsSane, chattyLine, LlmError,
   clampBatchSize, planChunks, normalizeZhPunctuation, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
+  clampTemperature, clampContextRows, buildTranslateUserMessage, planJobs,
+  TEMP_MIN, TEMP_MAX, TEMP_DEFAULT, CTX_MIN, CTX_MAX, CTX_DEFAULT,
 };
