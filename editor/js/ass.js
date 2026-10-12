@@ -130,6 +130,17 @@ export class AssDoc {
     set('end', fmtTimeAss(ev.end));
     set('text', ev.text);
     this.lines[ev.lineIdx] = 'Dialogue: ' + parts.join(',');
+    /* ⚠ 必须把改好的列**写回 `_rawParts`**。
+     *
+     * 为什么不写回会出真 bug：`orderDialoguesByStyle()` 重排时是拿 `ev._rawParts`
+     * 重写行的（它只替换 style 列，其余列照抄）—— 若这里不同步，重排就会用**改动前**的
+     * 旧内容覆盖这一行，把改过的文本/时间/颜色统统回退。
+     *
+     * 实测（用户报的 bug，tests/order-color-stale-test.mjs 钉住）：
+     *   改逐词高亮色（走 setEventText）→ 文档里已是新色
+     *   再改一次「中英上下顺序」（走 orderDialoguesByStyle）→ 色标**整条变回旧色**
+     * 用户看到的表象就是"改完顺序颜色就不对/画面两行重叠，再改一次顺序又恢复正常"。 */
+    ev._rawParts = parts;
   }
 
   setEventTime(ev, start, end) {
