@@ -52,6 +52,20 @@ export function setWordHighlightColor(hex) {
 /** 当前逐词高亮色('#rrggbb') */
 export function getWordHighlightColor() { return WORD_HIGHLIGHT_COLOR; }
 
+/** 逐词**重建**时该用哪个高亮标签：能沿用行上原有的就沿用，否则退回当前配置色。
+ *
+ * 为什么不能直接在重建处写 `{\c&H00FF00&}`：那条路正是"点「修复字幕」后高亮色变成绿色、
+ * 重开稿件才恢复"的成因 —— 重建把整句切片换成绿的，而重开稿件时会从
+ * SubFabricWordColor 元数据读回配置色并 setWordHighlightColor，所以只有重开才恢复。
+ * 修复字幕的语义是"修坏掉的逐词/文本"，**不该顺手改颜色**。
+ *
+ * 与上面 WORD_HIGHLIGHT_COLOR 的注释是同一类问题（新增字幕 / 重新识别曾写死绿），
+ * 这里是第三个入口 —— 统一走这个函数，别再各写各的。 */
+export function highlightTagForRebuild(existingTag) {
+  const t = String(existingTag == null ? '' : existingTag);
+  return /^\{\\c&H[0-9A-Fa-f]{6}&\}$/.test(t) ? t : wordHighlightTag();
+}
+
 /** ASS &HBBGGRR → '#rrggbb'(供说话人颜色解析与全局换色复用) */
 export const assColorToHex = (h) => '#' + (h[4] + h[5] + h[2] + h[3] + h[0] + h[1]).toLowerCase();
 
@@ -1097,10 +1111,13 @@ function buildWordSpecsK(sentence) {
   return [Object.assign({}, base, { start: sentence.start, end: sentence.end, text: txt })];
 }
 
-/** k 行的颜色头: {\1c已唱&\2c未唱&…}。已唱 ← highlightTag 解析(默认绿); 未唱 ← kBaseHex(没有则不写)。
- *  kHead 里的其它 tag 保留; 颜色位统一重写一份, 避免重复与顺序问题。 */
+/** k 行的颜色头: {\1c已唱&\2c未唱&…}。已唱 ← highlightTag 解析; 未唱 ← kBaseHex(没有则不写)。
+ *  kHead 里的其它 tag 保留; 颜色位统一重写一份, 避免重复与顺序问题。
+ *
+ *  ⚠ 已唱色在**行上没有 highlightTag** 时必须取**当前配置的高亮色**，不能写死绿 ——
+ *    与 highlightTagForRebuild 同一类问题：重建 k 行会把用户设的高亮色改回绿。 */
 function kHeadFor(sentence) {
-  let sung = '#00ff00';
+  let sung = WORD_HIGHLIGHT_COLOR;
   const m = /\\1?c&H([0-9A-Fa-f]{6})&/.exec(sentence.highlightTag || '');
   if (m) sung = assColorToHex(m[1].toUpperCase());
   const rest = String(sentence.kHead || '')

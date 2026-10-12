@@ -260,12 +260,12 @@
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="中文字幕行的默认颜色">默认颜色</span>
-              <input id="ass-style-zh-color" type="color" value="#ffffff">
+              <input id="ass-style-zh-color" type="text" data-color-input="1" value="#ffffff">
               <span id="ass-style-zh-color-val" class="ass-style-color-value">#FFFFFF</span>
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="中文字幕的备用颜色，供卡拉OK渐变/二次填充使用，一般不用改">备用颜色</span>
-              <input id="ass-style-zh-color2" type="color" value="#ffffff">
+              <input id="ass-style-zh-color2" type="text" data-color-input="1" value="#ffffff">
               <span id="ass-style-zh-color2-val" class="ass-style-color-value">#FFFFFF</span>
             </div>
           </div>
@@ -284,12 +284,12 @@
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="英文字幕行的默认颜色">默认颜色</span>
-              <input id="ass-style-en-color" type="color" value="#ffffff">
+              <input id="ass-style-en-color" type="text" data-color-input="1" value="#ffffff">
               <span id="ass-style-en-color-val" class="ass-style-color-value">#FFFFFF</span>
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="英文字幕的备用颜色，供卡拉OK渐变/二次填充使用，一般不用改">备用颜色</span>
-              <input id="ass-style-en-color2" type="color" value="#ffff00">
+              <input id="ass-style-en-color2" type="text" data-color-input="1" value="#ffff00">
               <span id="ass-style-en-color2-val" class="ass-style-color-value">#FFFF00</span>
             </div>
           </div>
@@ -299,7 +299,7 @@
           </datalist>
           <div class="setting-row ass-style-color-row">
             <span class="setting-name" title="设置英文逐词高亮色，角色颜色和其它 ASS 色标不受影响">逐词高亮色</span>
-            <input id="ass-style-word-color" type="color" value="#00ff00">
+            <input id="ass-style-word-color" type="text" data-color-input="1" value="#00ff00">
             <span id="ass-style-word-color-val" class="ass-style-color-value">#00FF00</span>
           </div>
           <div class="setting-row">
@@ -312,7 +312,7 @@
           </div>
           <div class="setting-row ass-style-color-row">
             <span class="setting-name" title="卡拉OK(\k)形态里「未唱」部分的颜色；有角色台词的行仍显示该行角色色">未唱默认色</span>
-            <input id="ass-style-k-base" type="color" value="#ffffff">
+            <input id="ass-style-k-base" type="text" data-color-input="1" value="#ffffff">
             <span id="ass-style-k-base-val" class="ass-style-color-value">#FFFFFF</span>
           </div>
           <div class="setting-row">
@@ -394,7 +394,7 @@
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="中文字幕的微光颜色">微光颜色</span>
-              <input id="fx-zh-color" type="color" value="#00ff88">
+              <input id="fx-zh-color" type="text" data-color-input="1" value="#00ff88">
               <span id="fx-zh-color-val" class="ass-style-color-value">#00FF88</span>
             </div>
             <div class="setting-row">
@@ -432,7 +432,7 @@
             </div>
             <div class="setting-row ass-style-color-row">
               <span class="setting-name" title="英文字幕的微光颜色">微光颜色</span>
-              <input id="fx-en-color" type="color" value="#00ff88">
+              <input id="fx-en-color" type="text" data-color-input="1" value="#00ff88">
               <span id="fx-en-color-val" class="ass-style-color-value">#00FF88</span>
             </div>
             <div class="setting-row">
@@ -561,7 +561,7 @@
           <div class="set-group-head"><i class="set-dot" style="background:var(--accent)"></i><span class="set-group-title">外观</span><span class="set-group-note">主题色</span></div>
           <div class="theme-row">
             <div class="theme-swatches" id="theme-swatches"></div>
-            <label class="theme-custom" title="自定义主题色"><input type="color" id="theme-color" value="#ff7a45">自定义</label>
+            <label class="theme-custom" title="自定义主题色"><input type="text" data-color-input="1" id="theme-color" value="#ff7a45">自定义</label>
             <button type="button" class="btn btn-mini" id="theme-reset">恢复默认</button>
           </div>
           <div class="theme-preview">
@@ -815,7 +815,7 @@
     <input id="role-rename-input" type="text" spellcheck="false" maxlength="60" placeholder="新名称">
     <button type="button" class="btn btn-mini btn-accent" id="role-rename-ok">确定</button>
   </div>
-  <input type="color" id="role-color-input" value="#ff7a45" aria-hidden="true" tabindex="-1">
+  <input type="text" data-color-input="1" id="role-color-input" value="#ff7a45" aria-hidden="true" tabindex="-1">
 
 </div><!-- /#app -->
 
@@ -955,7 +955,7 @@
     <input id="role-new-name" type="text" spellcheck="false" maxlength="40" placeholder="角色名称，例如 译者注">
     <div class="rn-colors" id="role-new-colors"></div>
     <div class="rn-actions">
-      <label class="rn-custom" title="自定义颜色"><input type="color" id="role-new-color" value="#ff7a45">自定义</label>
+      <label class="rn-custom" title="自定义颜色"><input type="text" data-color-input="1" id="role-new-color" value="#ff7a45">自定义</label>
       <button type="button" class="btn" id="role-new-cancel">取消</button>
       <button type="button" class="btn btn-accent" id="role-new-ok">添加角色</button>
     </div>
@@ -1831,5 +1831,7 @@
 <!-- 进度条悬浮时间提示。挂在 main.js 之后加载：它只读 #video 的尺寸/时长，
      不依赖 main.js 暴露什么（main.js 无 export），所以顺序无关，但放后面更稳。 -->
 <script type="module" src="js/video-hover-tip.js"></script>
+<!-- 全应用统一取色器：所有 data-color-input 入口都由它接管，不触发浏览器原生颜色弹窗。 -->
+<script type="module" src="js/color-picker.js"></script>
 </body>
 </html>

@@ -70,8 +70,23 @@ if (!svc) {
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }
+/* ⚠ 光"有服务"还不够：`/__test/<name>` 是**开发用路由**，它从**仓库根**的 tests/ 读文件。
+ *   如果占着默认端口的是**已安装的版本**（安装目录里没有 tests/），这个路由会 404，
+ *   于是行为测试必然失败 —— 看着像产品坏了，其实只是连到了错误的实例。
+ *   实测：应用一开着就会稳定出现假失败。所以先探一下 harness 取不取得到。 */
+const HARNESS = BASE + '/__test/font-picker-harness.html';
 {
-  const HARNESS = BASE + '/__test/font-picker-harness.html';
+  let hr = null;
+  try { hr = await fetch(HARNESS, { signal: AbortSignal.timeout(4000) }); } catch { /* 连不上 */ }
+  if (!hr || !hr.ok) {
+    console.log(`  (跳过：${BASE} 上没有 /__test 开发路由${hr ? '（HTTP ' + hr.status + '）' : ''} ——`
+      + ' 多半是"已安装的版本"占着默认端口。要跑行为测试请在仓库根另起一个服务：'
+      + ' node editor/server.js --port 8399，再设 SUBFABRIC_BASE=http://127.0.0.1:8399)');
+    console.log(`\n${pass} passed, ${fail} failed`);
+    process.exit(fail ? 1 : 0);
+  }
+}
+{
   const PORT = 9841;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'edgefpt-'));
   const child = spawn(EDGE, [

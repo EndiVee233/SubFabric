@@ -7,7 +7,8 @@ import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, s
   // 这些纯函数放在 karaoke.js 里以便单测；main.js 必须**显式导入**，
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
   speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
-  buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor } from './karaoke.js';
+  buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
+  highlightTagForRebuild } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
@@ -549,6 +550,24 @@ function assHexToTag(hex) {
   return /^[0-9A-F]{6}$/.test(rgb) ? `{\\c&H${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}&}` : '{\\c&H00FF00&}';
 }
 
+/** 这份稿件该用的逐词高亮色（'#rrggbb'）。**唯一**的解析处：
+ *    ① 稿件元数据 SubFabricWordHighlightColor
+ *    ② 没有元数据 → 从已有的逐词 span 反推（老稿件/外部工具产出的文件常常没有元数据）
+ *    ③ 都没有 → 默认绿
+ *
+ *  ⚠ 以前两处各写一份、口径还不一样：设置面板那处会走 ②，**载入那处直接回默认绿**。
+ *    于是"没有元数据、但 span 是自定义色"的稿件，载入后新建/重建的 span 会变绿 ——
+ *    界面显示的是白、新加出来的却是绿，直到打开设置面板才被纠正。
+ *    与"修复字幕写死绿"是同一类问题：**把用户已有的值当成默认值**。现在只有这一份。 */
+function resolveWordHighlightColor() {
+  const meta = state.assDoc && state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
+  if (/^#[0-9a-f]{6}$/i.test(meta)) return meta.toLowerCase();
+  const sentence = ((state.kar && state.kar.sentences) || [])
+    .find(s => s.style === state.kar.wordStyle && s.words && s.words.length);
+  const m = sentence && /^\{\\c&H([0-9A-Fa-f]{6})&\}/.exec(sentence.highlightTag || '');
+  return m ? assColorToHex(m[1].toUpperCase()) : '#00ff00';
+}
+
 /** '#rrggbb' → ASS 的&HAABBGGRR(注意 BGR 顺序)。样式 Primary/SecondaryColour 直接吃这个值。 */
 function assHexToBgr(hex) {
   const rgb = String(hex || '').replace(/^#/, '').toUpperCase();
@@ -915,15 +934,9 @@ function setAssStyleControls() {
   setColorControl(assStyleEls.zhColor2, assStyleEls.zhColor2Val, zh.color2);
   setColorControl(assStyleEls.enColor, assStyleEls.enColorVal, en.color);
   setColorControl(assStyleEls.enColor2, assStyleEls.enColor2Val, en.color2);
-  let wordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
-  if (!/^#[0-9a-f]{6}$/i.test(wordColor)) {
-    const sentence = (state.kar && state.kar.sentences || []).find(s => s.style === state.kar.wordStyle && s.words.length);
-    const m = sentence && /^\{\\c&H([0-9A-Fa-f]{6})&\}/.exec(sentence.highlightTag || '');
-    wordColor = m ? assColorToHex(m[1].toUpperCase()) : '#00ff00';
-  }
-  wordColor = wordColor.toLowerCase();
-  // 让 karaoke.js 记住这份稿件的逐词高亮色 —— 新建字幕/重新识别写回的高亮 span 都要取它,
-  // 否则用户选了白色高亮, 新增出来的仍是绿的(用户报的 bug)。
+  let wordColor = resolveWordHighlightColor();
+  // 让 karaoke.js 记住这份稿件的逐词高亮色 —— 新建字幕/重新识别/修复字幕写回的高亮 span
+  // 都要取它，否则用户选了白色高亮、新加出来的仍是绿的（用户报过的 bug）。
   setWordHighlightColor(wordColor);
   if (assStyleEls.wordColor) assStyleEls.wordColor.value = wordColor;
   if (assStyleEls.wordColorVal) assStyleEls.wordColorVal.textContent = wordColor.toUpperCase();
@@ -1622,7 +1635,10 @@ function setAss(text, name) {
    *   放在后面的话，行已经按坏数据配好对了，修了也白修。 */
   healWordRows('载入字幕');
   const savedWordColor = state.assDoc.getScriptInfoComment(ASS_WORD_COLOR_META);
-  // 载入即确定本稿件的逐词高亮色(无元数据 → 回到默认绿, 不能沿用上一个文件的颜色)
+  // 载入即确定本稿件的逐词高亮色(无元数据 → 回到默认绿, 不能沿用上一个文件的颜色)。
+  // 注：这里不"从 span 反推"——`setAssStyleControls()` 随后会把颜色解析一遍
+  // （元数据 → 稿件里第一条逐词 span → 默认，见 resolveWordHighlightColor），
+  // 并把结果同步给 karaoke 与控件；在这里再推一次是重复代码。
   setWordHighlightColor(/^#[0-9a-f]{6}$/i.test(savedWordColor) ? savedWordColor : '#00ff00');
   const fixedColors = normalizeAssColorTags();   // 必须在分析/渲染之前
   // 双轨分析: 干净整句(编辑/列表/时间轴) + 词级映射; 原始逐词文档保留给视频渲染
@@ -4011,13 +4027,18 @@ function detectRowProblems(row) {
   return { issues, needConfirm, prefill };
 }
 
-/** 用目标文本重建英文逐词行: 逐词高亮回绿(用户 bug#1), 并整体替换该句全部切片。
+/** 用目标文本重建英文逐词行: 并整体替换该句全部切片。
  *  replaceEvents 会**换掉该句所有事件** → 重复/交叠的脏切片一并清除。
  *  clearName=true 时把角色名从 Name 栏也删掉(角色名在英文行时)。 */
 function rebuildEnglishFromText(en, text, clearName) {
   if (clearName && en.proto) en.proto.name = '';
   en.text = text;
-  en.highlightTag = '{\\c&H00FF00&}';
+  /* ⚠ 这里以前写死 `{\c&H00FF00&}`（注释还写着"逐词高亮回绿"）—— 用户报的正是这个：
+   *   点「修复字幕」后逐词高亮色变成绿色，**重开稿件才恢复**（重开时会从
+   *   SubFabricWordColor 元数据读回配置色并 setWordHighlightColor）。
+   *   修复字幕的语义是修坏掉的逐词/文本，**不该顺手改颜色** —— 优先沿用这一行原有的
+   *   高亮色，行上没有/非法才退回当前配置色。与"新增字幕 / 重新识别不得写死绿"同一类修复。 */
+  en.highlightTag = highlightTagForRebuild(en.highlightTag);
   en.words = recalcWords(en, en.text, en.start, en.end);
   en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
   en.bad = false;   // 重建后时间一律合法, 清掉分析时可能留下的时间异常标记

@@ -42,6 +42,9 @@ jobs:
       - name: 全量测试
         run: node tests/run-all.mjs
 
+      - name: 颜色数学测试
+        run: node tests/color-picker-test.mjs
+
   py:
     name: Python · ruff + 单测
     runs-on: ubuntu-latest

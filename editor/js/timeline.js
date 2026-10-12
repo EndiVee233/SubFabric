@@ -46,6 +46,16 @@ const WORD_MARK = 'rgba(214,214,228,.85)';    // 逐词标记块
 const WORD_MARK_HOT = 'rgba(255,255,255,.95)';// 拖动中的标记
 const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参考图一致)
 
+/**
+ * 首词已经是整块字幕的起点，不再额外画一根逐词灰色标记。
+ *
+ * 为什么不是只在"首词恰好贴块起点"时隐藏：用户读的是块内的视觉语义——第一段
+ * 英文文本本身已经告诉他"这是首词"，首词旁再放一根和后续词相同的抓手会像
+ * 多出来的装饰条（见用户反馈截图）。首词仍可通过字幕块左边缘的下半区拖动，
+ * 不会丢失调整首词开始时间的能力；后续词的标记继续保留，供逐词定位/拖动。
+ */
+export function hasVisibleWordMark(index) { return Number(index) > 0; }
+
 /* ── 块内字体：跟稿件样式同步 ──────────────────────────────────────────
  * 时间轴块上的字应当是"视频里真播出来的那套字" —— 否则改字时字宽对不上。
  * 从样式名拼出 CSS font 简写；名字里可能有引号/反斜杠，先清一遍防注入与串行
@@ -295,7 +305,16 @@ export class Timeline {
     /* 主题色：游标 / 选中环 / 波形都跟着界面主题走。
        换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
     this.accent = cssVar('--accent', C.accent);
-    try { window.addEventListener('ss-accent', () => { this.accent = cssVar('--accent', C.accent); this._dirty = true; }); } catch {}
+    /* 主题色上该用的前景色（accent.js 按主题色亮度算的 --accent-ink）。canvas 读不到 CSS
+     * 变量，和 accent 一起缓存、一起在 ss-accent 里刷新。 */
+    this.accentInk = cssVar('--accent-ink', '#22150e');
+    try {
+      window.addEventListener('ss-accent', () => {
+        this.accent = cssVar('--accent', C.accent);
+        this.accentInk = cssVar('--accent-ink', '#22150e');
+        this._dirty = true;
+      });
+    } catch {}
     this.ctx = canvas.getContext('2d');
     this.video = video || null;
     this.film = new Filmstrip(() => { /* 下一帧重绘 */ });
@@ -1160,9 +1179,11 @@ export class Timeline {
     const cx1 = Math.max(-1, x1), cx2 = Math.min(W + 1, x2);
     const w = Math.max(0.5, cx2 - cx1);
     ctx.save();
-    ctx.fillStyle = 'rgba(255,122,69,.13)';
+    /* 选区色跟主题色（以前写死 rgba(255,122,69,…) / C.accent —— 用户换主题后
+     * 选中环会变色、这两个选框却仍是橙的，同一屏里两种强调色）。 */
+    ctx.fillStyle = withAlpha(this.accent || C.accent, 0.13, 'rgba(255,122,69,.13)');
     ctx.fillRect(cx1, top, w, bottom - top);
-    ctx.strokeStyle = C.accent;
+    ctx.strokeStyle = this.accent || C.accent;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 3]);
     ctx.beginPath();
@@ -1184,11 +1205,12 @@ export class Timeline {
     ctx.textAlign = 'left';
     const tw = ctx.measureText(label).width;
     if (w > tw + 16) {
-      ctx.fillStyle = 'rgba(255,122,69,.92)';
+      // 提示条的底色/文字色都跟主题色（底色=主题色近实心，文字=--accent-ink 保证对比度）
+      ctx.fillStyle = withAlpha(this.accent || C.accent, 0.92, 'rgba(255,122,69,.92)');
       const lx = cx1 + 4, ly = top + 4;
       this._roundRect(ctx, lx, ly, tw + 8, 14, 3);
       ctx.fill();
-      ctx.fillStyle = '#22150e';
+      ctx.fillStyle = this.accentInk || '#22150e';
       ctx.fillText(label, lx + 4, ly + 10);
     }
     ctx.restore();
@@ -1209,8 +1231,8 @@ export class Timeline {
     const top = liY + 2;
     const bottom = Math.max(top + 18, liY + liH - 2);
     ctx.save();
-    ctx.fillStyle = 'rgba(255,122,69,.16)';
-    ctx.strokeStyle = C.accent;
+    ctx.fillStyle = withAlpha(this.accent || C.accent, 0.16, 'rgba(255,122,69,.16)');   // 同上：跟主题色
+    ctx.strokeStyle = this.accent || C.accent;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([4, 3]);
     this._roundRect(ctx, x1, top, Math.max(1.5, x2 - x1), bottom - top, 4);
@@ -1342,7 +1364,7 @@ export class Timeline {
         const tw = ctx.measureText(label).width;
         ctx.fillStyle = 'rgba(0,0,0,.62)';
         ctx.fillRect(c.x1 + 3, FILM_H - 13, tw + 6, 11);
-        ctx.fillStyle = C.accent;
+        ctx.fillStyle = this.accent || C.accent;   // 胶片时间标签也跟主题色（原写死 C.accent）
         ctx.textAlign = 'left';
         ctx.fillText(label, c.x1 + 6, FILM_H - 4);
       }
@@ -1613,7 +1635,8 @@ export class Timeline {
     ctx.restore();
   }
 
-  /** 英文逐词轴: 一条中性轴的线 + 每个词一个标记块(可拖动, 词太长则只留标记) */
+  /** 英文逐词轴: 一条中性轴的线 + 首词后的每个词一个标记块
+   * (可拖动, 词太长则只留标记；首词用字幕块左边缘下半区调整) */
   _drawWordAxis(ctx, words, g, x1, x2, blockEnd) {
     const ax0 = Math.max(x1 + 4, 0), ax1 = Math.min(x2 - 4, this._cssW());
     ctx.strokeStyle = AXIS_COLOR;                   // 轴
@@ -1631,14 +1654,19 @@ export class Timeline {
       const wx = this.t2x(w.s);
       if (wx < x1 - 30 || wx > x2 + 30) continue;
       const hot = this._wordDrag && this._wordDrag.cue === this._selCueRef && this._wordDrag.idx === i;
-      // 标记块(始终画, 拖动时的抓手) —— 贴块底, 与英文词文本同一行。
-      // 以词起点 wx 为**中心**画(而不是左边), 变宽后仍与词对齐。
-      ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
-      const mw = hot ? g.markWHot : g.markW;
-      ctx.fillRect(Math.round(wx - mw / 2), g.markTop, mw, g.markH);
+      // 首词已经是整个字幕块的第一段文字：不再额外画灰色逐词标记。
+      // 其余词的标记仍是拖动抓手；首词走字幕块左边缘下半区拖动（见 _hitWordHandle）。
+      if (hasVisibleWordMark(i)) {
+        // 标记块贴块底, 与英文词文本同一行；以词起点 wx 为中心画。
+        ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
+        const mw = hot ? g.markWHot : g.markW;
+        ctx.fillRect(Math.round(wx - mw / 2), g.markTop, mw, g.markH);
+      }
+      // 首词不再为灰条让位，文字从词的实际起点开始；后续词留出标记宽度与间隙。
+      const textX = hasVisibleWordMark(i)
+        ? Math.round(wx + g.markW / 2 + 4)
+        : Math.round(wx);
       // 词文本: 放不下(下一个词太近 / 与上一个词文字相撞)就隐藏, 只留标记。
-      // 起点随标记块半宽让位 —— 标记变宽后仍留 4px 间隙, 不压到字。
-      const textX = Math.round(wx + g.markW / 2 + 4);
       const nextX = (i + 1 < words.length) ? this.t2x(words[i + 1].s) : Math.min(this.t2x(blockEnd), x2);
       const avail = nextX - textX - 3;
       const tw = ctx.measureText(w.w).width;
@@ -1668,6 +1696,8 @@ export class Timeline {
         const wpx = this.t2x(Math.min(c.end, this.viewStart + this._cssW() / this.pxPerSec)) - this.t2x(Math.max(c.start, this.viewStart));
         if (wpx / c.words.length <= 8) continue;
         for (let i = 0; i < c.words.length; i++) {
+          // 首词没有可见标记，不给它留一块"看不见的抓手"；首词改时间走块左边缘下半区。
+          if (!hasVisibleWordMark(i)) continue;
           const wx = this.t2x(c.words[i].s);
           // 命中半宽跟标记块一致(再加 2px 余量), 看得见的宽度就能点中
           if (Math.abs(x - wx) <= g.markW / 2 + 2) return { lane, cue: c, idx: i };

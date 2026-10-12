@@ -38,6 +38,23 @@ let svc = null;
 try { svc = await (await fetch(BASE + '/api/version', { signal: AbortSignal.timeout(4000) })).json(); } catch {}
 if (!svc) { console.log('  (跳过：本地服务没在跑)'); done(); }
 
+/* ⚠ 光"有服务"还不够：这个测试要打开一个**真实存在的项目**（默认是作者本机那个 id）。
+ *   项目不在时会稳定报一串"字体提示文案不对"的假失败 —— 产品没问题，是数据没有。
+ *   实测：跑已安装版（它占着默认端口、项目在安装目录里）就会这样。
+ *   用 SUBFABRIC_FONT_PID=<项目 id> 指定你自己的项目再跑。 */
+{
+  let has = false;
+  try {
+    const list = await (await fetch(BASE + '/api/projects', { signal: AbortSignal.timeout(5000) })).json();
+    const arr = (list && list.projects) || [];
+    has = arr.some(p => p && p.id === PID);
+  } catch { has = true; }   // 列表取不到就不拦，让后面的断言自己报真实原因
+  if (!has) {
+    console.log(`  (跳过：项目 ${PID} 不在 ${BASE} 上。用 SUBFABRIC_FONT_PID=<项目 id> 指定一个真实项目再跑)`);
+    done();
+  }
+}
+
 const PORT = 9865;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'edgefst-'));
 const child = spawn(EDGE, [

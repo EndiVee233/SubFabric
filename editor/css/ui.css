@@ -564,3 +564,64 @@ body::before {
   .skel-b, .save-state::before, .pc-badge,
   .proj-card, .pc-draft-bar-in { animation: none !important; }
 }
+
+/* ── 15. Firefox 风格自绘取色器（禁止回退到 input[type=color] 原生弹窗） ── */
+.sscp-control {
+  display: inline-flex; align-items: center; gap: 6px; vertical-align: middle;
+  min-width: 0;
+}
+.sscp-value {
+  width: 86px !important; height: 28px; box-sizing: border-box;
+  padding: 4px 7px; border: 1px solid var(--border, #343440); border-radius: 5px;
+  color: var(--text, #e8e8ee); background: var(--input-bg, #17171e);
+  font: 12px var(--mono, "Cascadia Mono", Consolas, monospace);
+  text-transform: uppercase; cursor: pointer;
+}
+.sscp-value:focus { outline: 2px solid color-mix(in srgb, var(--accent, #ff7a45) 60%, transparent); outline-offset: 1px; }
+.sscp-trigger {
+  width: 30px; height: 26px; padding: 0; border: 1px solid rgba(255,255,255,.28);
+  border-radius: 5px; cursor: pointer; box-shadow: inset 0 0 0 2px rgba(0,0,0,.28);
+}
+.sscp-trigger:hover { border-color: var(--accent, #ff7a45); transform: translateY(-1px); }
+
+.sscp {
+  position: fixed; z-index: 100000; width: 390px; box-sizing: border-box;
+  color: #e9e9f0; background: #202027; border: 1px solid #4a4a58; border-radius: 7px;
+  box-shadow: 0 18px 52px rgba(0,0,0,.62), 0 2px 8px rgba(0,0,0,.4);
+  font: 13px "Segoe UI", "Microsoft YaHei", sans-serif; overflow: hidden;
+}
+.sscp[hidden] { display: none !important; }
+.sscp-head {
+  display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 10px;
+  background: linear-gradient(#292934, #23232b); border-bottom: 1px solid #484854; font-weight: 600;
+}
+.sscp-preview { width: 22px; height: 22px; margin-left: auto; border: 1px solid #777784; border-radius: 3px; box-shadow: inset 0 0 0 2px rgba(0,0,0,.22); }
+.sscp-x { width: 25px; height: 25px; margin-left: 3px; padding: 0; color: #d8d8df; border: 0; background: transparent; font-size: 20px; line-height: 20px; cursor: pointer; }
+.sscp-x:hover { color: #fff; background: #a83232; border-radius: 3px; }
+.sscp-body { padding: 11px 12px 10px; }
+.sscp-main { display: grid; grid-template-columns: 1fr 18px; gap: 10px; height: 194px; }
+.sscp-sv, .sscp-hue { position: relative; border-radius: 2px; cursor: crosshair; user-select: none; touch-action: none; }
+.sscp-sv { background: linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, hsl(var(--sscp-h), 100%, 50%)); }
+.sscp-hue { background: linear-gradient(to bottom, #f00 0%, #ff0 16.6%, #0f0 33.3%, #0ff 50%, #00f 66.6%, #f0f 83.3%, #f00 100%); }
+.sscp-sv-cursor, .sscp-hue-cursor { position: absolute; z-index: 1; pointer-events: none; box-sizing: border-box; }
+.sscp-sv-cursor { width: 13px; height: 13px; left: 0; top: 0; margin: -6px 0 0 -6px; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px #111, 0 1px 3px #000; }
+.sscp-hue-cursor { left: -4px; right: -4px; height: 5px; margin-top: -2px; border: 1px solid #fff; border-radius: 2px; box-shadow: 0 0 0 1px #111; }
+.sscp-label { margin: 9px 0 5px; color: #cfd0da; font-size: 12px; }
+.sscp-label span { color: #8c8c99; font-size: 11px; }
+.sscp-palette { display: grid; grid-template-columns: repeat(16, 1fr); gap: 3px; min-height: 27px; }
+.sscp-swatch { width: 100%; aspect-ratio: 1; min-width: 15px; padding: 0; border: 1px solid rgba(255,255,255,.38); border-radius: 2px; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0,0,0,.20); }
+.sscp-swatch:hover { transform: scale(1.12); z-index: 1; border-color: #fff; box-shadow: 0 0 0 1px var(--accent, #ff7a45); }
+.sscp-empty { grid-column: 1 / -1; color: #858591; font-size: 11px; line-height: 22px; }
+.sscp-fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 8px; margin-top: 10px; padding-top: 9px; border-top: 1px solid #3b3b47; }
+.sscp-fields label { display: flex; align-items: center; gap: 4px; color: #bfc0ca; font-size: 11px; white-space: nowrap; }
+.sscp-fields label:first-child { grid-column: 1 / -1; }
+.sscp-fields input { width: 100%; min-width: 0; box-sizing: border-box; height: 25px; padding: 3px 5px; color: #f2f2f6; background: #131319; border: 1px solid #484854; border-radius: 3px; font: 12px var(--mono, Consolas, monospace); }
+.sscp-fields label:first-child input { flex: 1; }
+.sscp-fields input:focus { border-color: var(--accent, #ff7a45); outline: none; }
+.sscp-actions { display: flex; align-items: center; gap: 7px; margin-top: 11px; }
+.sscp-spacer { flex: 1; }
+.sscp-actions .btn { min-width: 58px; }
+@media (max-width: 520px) {
+  .sscp { width: min(390px, calc(100vw - 16px)); }
+}
+
