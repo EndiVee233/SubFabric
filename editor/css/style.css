@@ -2386,3 +2386,36 @@ select.note-dur {
 }
 .log-subtab-cnt[hidden] { display: none; }
 
+
+/* ── 本机硬件条（设计稿 ②）── */
+.st-hw {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--bg-2); border: .5px solid var(--border);
+}
+.st-hw .hw-cap { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-2); }
+.st-hw .hw-cap svg { width: 12px; height: 12px; }
+.st-hw .hw-chip { font-size: 11px; color: var(--text-1); }
+.st-hw .hw-chip.ok { color: #4fd1a5; }
+.st-hw .hw-chip.none { color: var(--text-2); }
+.st-hw .hw-right { margin-left: auto; font-size: 11px; color: var(--text-2); }
+
+/* ── 模型列表：按系列可折叠（设计稿 ②）── */
+.sm-group { border: .5px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-1); }
+.sm-group + .sm-group { margin-top: 8px; }
+.sm-group-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 11px 14px; background: transparent; border: none; cursor: pointer;
+  font-family: inherit; color: var(--text-0);
+}
+.sm-group-head:hover { background: var(--bg-2); }
+.sm-group-head .sm-caret { display: inline-flex; transition: transform var(--dur-2) var(--ease-1); }
+.sm-group-head .sm-caret svg { width: 12px; height: 12px; color: var(--text-1); }
+/* 折叠箭头：展开时朝下（默认 chevronDown），收起时转 -90° 朝右 —— 与设计稿一致 */
+.sm-group-head .sm-caret:not(.open) { transform: rotate(-90deg); }
+.sm-group-name { font-size: 13px; font-weight: 500; }
+.sm-group-count { font-size: 11px; color: var(--text-2); }
+.sm-group-ready { margin-left: auto; font-size: 11px; color: #4fd1a5; }
+.sm-group-ready.none { color: var(--text-2); }
+.sm-group-body { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 6px; }
+.sm-group-body[hidden] { display: none; }

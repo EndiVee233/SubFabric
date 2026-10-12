@@ -1840,6 +1840,86 @@ async function startNemoInstallFromEnv() {
   renderAsrModels();
 }
 
+/** 本机硬件条（设计稿 ②）：只显示**探测到**的硬件，一条都不显示时给一句说明。
+ *  数据来源与模型可用性判定同源（d.gpu / d.provider / d.runtime / d.crispasrRuntime /
+ *  d.pythonProbe），所以"条上说有 N 卡、列表却说没有 N 卡"这种自相矛盾不会出现。 */
+function renderHardwareBar(d) {
+  const box = document.getElementById('st-hardware');
+  if (!box) return;
+  const chips = [];
+  // N 卡：provider === 'cuda' 才算真的能用（装了驱动但没装 CUDA 版 sherpa 不算）
+  if (d.gpu) chips.push(`<span class="hw-chip ok">N 卡 ${esc(d.gpu)}</span>`);
+  // Intel NPU：OpenVINO 环境探测通过即认为可用（openvino 那套跑在 NPU 上）
+  const ov = d.pythonProbe && d.pythonProbe.openvino;
+  if (ov && ov.ok) chips.push('<span class="hw-chip ok">Intel NPU</span>');
+  // Vulkan：whisper.cpp 运行时或 CrispASR 就位
+  if ((d.runtime && d.runtime.ok) || (d.crispasrRuntime && d.crispasrRuntime.ok)) {
+    chips.push('<span class="hw-chip ok">Vulkan</span>');
+  }
+  const models = d.models || [];
+  const installed = models.filter(m => m.ready).length;
+  const right = models.length ? `已安装 ${installed} / ${models.length}` : '';
+  box.innerHTML = '<span class="hw-cap" data-ico="gear">本机硬件：</span>'
+    + (chips.length ? chips.join('') : '<span class="hw-chip none">未检测到可用加速硬件（云端识别仍可用）</span>')
+    + (right ? `<span class="hw-right">${right}</span>` : '');
+  if (window.__applyIcons) window.__applyIcons(box);
+}
+
+/** 单个模型一行（设计稿 ② 的模型卡片：名称 + 状态 + 下载/删除按钮）。
+ *  从 renderAsrModels() 里抽出来，以便**按系列分组**逐组拼装 —— 判断逻辑一行没改，
+ *  只是把"映射一个模型 → 一段 HTML"变成具名函数，供分组循环调用。 */
+function modelRowHtml(m, d, dlOf) {
+  const st = dlOf('model:' + m.id);
+  const rtSt = m.needRuntime ? dlOf(m.runtimeKey || 'runtime') : {};
+  const dlThis = st.running || (m.needRuntime && rtSt.running);
+  /* 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户。
+   * ⚠ `d.gpu` 为空还有第三种可能：**后台探测还没跑完**（服务端已改成等探测完再回，
+   *   但旧实例/极端慢的 nvidia-smi 仍可能给空）。那种情况下不能说"没检测到 N 卡" —— 是误报。 */
+  const gpuUnknown = !d.gpu && !!d.gpuPending;
+  const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
+    || (m.engine === 'nemo' && !d.gpu && !gpuUnknown);
+  let state, btn = '';
+  if (m.cloud) {
+    // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
+    state = '<span class="sm-state ok">✓ 云端识别（免下载 · 免显卡 · 需要联网）</span>';
+  } else if (st.running || (m.needRuntime && rtSt.running)) {
+    state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
+  } else if (st.error) {
+    state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+  } else if (gpuUnknown && m.engine === 'nemo') {
+    state = '<span class="sm-state">检测中…（正在查显卡）</span>';
+  } else if (pyBlocked) {
+    state = m.engine === 'nemo'
+      ? '<span class="sm-state" style="color:var(--danger)">只支持 N 卡（NVIDIA 显卡）。当前没检测到 N 卡，不支持 CPU 推理，无法下载</span>'
+      : '<span class="sm-state" style="color:var(--danger)">需要 CUDA GPU（N 卡）才能下载使用，不支持 CPU。先在上面把 Python 环境装好</span>';
+  } else if (m.needNemo) {
+    state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
+  } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
+  else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
+  if (dlThis) btn = '';
+  else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
+  else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
+  else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
+  const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>` : '';
+  return `<div class="sm-model">
+    <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
+    <div class="sm-desc">${esc(m.desc || '')}</div>
+    ${state}${rt}
+  </div>`;
+}
+
+/** 模型 → 系列名（设计稿 ② 的分组口径）：Parakeet / Whisper / NeMo 多说话人 / 云端识别。
+ *  按 engine 分而不是按名字猜 —— 名字里带什么字都会变，engine 是服务端给的稳定字段。 */
+const MODEL_FAMILY = (m) => {
+  if (m.cloud || m.engine === 'bcut' || m.engine === 'capcut') return '云端识别';
+  if (m.engine === 'whisper.cpp') return 'Whisper 系列';
+  if (m.engine === 'nemo') return 'NeMo 多说话人';
+  return 'Parakeet 系列';
+};
+/** 分组的展开/收起状态：按系列名记。renderAsrModels() 会整个重建 innerHTML，
+ *  而下载进度轮询**每秒**重画一次 —— 不记住状态的话用户刚折叠的组立刻又被展开。 */
+const GROUP_OPEN = new Map();
+
 async function renderAsrModels() {
     const box = $('#st-models');
     if (!box) return;
@@ -1910,45 +1990,30 @@ async function renderAsrModels() {
       <div class="sm-pymsg" style="font-size:12px;margin-top:4px"></div>
     </div>`;
     // 各任务 key: model:<id> / runtime / runtime:crispasr / diarize（运行时按 runtimeKey 取，服务端给）
-    rows += (d.models || []).map((m) => {
-      const st = dlOf('model:' + m.id);
-      const rtSt = m.needRuntime ? dlOf(m.runtimeKey || 'runtime') : {};
-      const dlThis = st.running || (m.needRuntime && rtSt.running);
-      /* 无对应 GPU 环境连下载都拦: Parakeet 要 CUDA 版 sherpa-onnx; NeMo 多说话人模型只给 N 卡用户。
-       * ⚠ `d.gpu` 为空还有第三种可能：**后台探测还没跑完**（服务端已改成等探测完再回，
-       *   但旧实例/极端慢的 nvidia-smi 仍可能给空）。那种情况下不能说"没检测到 N 卡" —— 是误报。 */
-      const gpuUnknown = !d.gpu && !!d.gpuPending;
-      const pyBlocked = (m.engine === 'sherpa-onnx' && d.provider !== 'cuda')
-        || (m.engine === 'nemo' && !d.gpu && !gpuUnknown);
-      let state, btn = '';
-      if (m.cloud) {
-        // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
-        state = '<span class="sm-state ok">✓ 云端识别（免下载 · 免显卡 · 需要联网）</span>';
-      } else if (st.running || (m.needRuntime && rtSt.running)) {
-        state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
-      } else if (st.error) {
-        state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
-      } else if (gpuUnknown && m.engine === 'nemo') {
-        state = '<span class="sm-state">检测中…（正在查显卡）</span>';
-      } else if (pyBlocked) {
-        state = m.engine === 'nemo'
-          ? '<span class="sm-state" style="color:var(--danger)">只支持 N 卡（NVIDIA 显卡）。当前没检测到 N 卡，不支持 CPU 推理，无法下载</span>'
-          : '<span class="sm-state" style="color:var(--danger)">需要 CUDA GPU（N 卡）才能下载使用，不支持 CPU。先在上面把 Python 环境装好</span>';
-      } else if (m.needNemo) {
-        state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
-      } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
-      else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
-      if (dlThis) btn = '';
-      else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
-      else if (m.ready) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
-      else if (!pyBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-      const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速；点下载自动一并获取）</div>` : '';
-      return `<div class="sm-model">
-        <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
-        <div class="sm-desc">${esc(m.desc || '')}</div>
-        ${state}${rt}
+    /* ── 按系列分组（设计稿 ②「可折叠 + 硬件感知」）──
+     * 每个系列一个可折叠块：标题行给「系列名 · N 个模型 · M 就绪」，点标题折叠/展开。
+     * ⚠ 折叠状态记在 GROUP_OPEN 里（模块级 Map，按系列名），因为 renderAsrModels() 会
+     *   整个重建 innerHTML —— 不记住的话每次重画（下载进度轮询 1 秒一次！）折叠状态都会被重置。 */
+    const groups = new Map();                     // 系列名 → { rows: [], ready: 0 }
+    for (const m of (d.models || [])) {
+      const fam = MODEL_FAMILY(m);
+      if (!groups.has(fam)) groups.set(fam, { rows: [], ready: 0 });
+      const g = groups.get(fam);
+      if (m.ready) g.ready++;
+      g.rows.push(modelRowHtml(m, d, dlOf));
+    }
+    for (const [fam, g] of groups) {
+      const open = GROUP_OPEN.get(fam) !== false;              // 默认展开
+      rows += `<div class="sm-group" data-family="${esc(fam)}">
+        <button type="button" class="sm-group-head" data-family="${esc(fam)}" aria-expanded="${open}">
+          <span class="sm-caret${open ? ' open' : ''}" data-ico="chevronDown"></span>
+          <span class="sm-group-name">${esc(fam)}</span>
+          <span class="sm-group-count">${g.rows.length} 个模型</span>
+          <span class="sm-group-ready${g.ready ? '' : ' none'}">${g.ready ? g.ready + ' 就绪' : '未就绪'}</span>
+        </button>
+        <div class="sm-group-body"${open ? '' : ' hidden'}>${g.rows.join('')}</div>
       </div>`;
-    }).join('');
+    }
     // 说话人分离模型(两个文件一组, ~32MB): 初稿勾选「区分说话人」时需要
     const dz = d.diarize || {};
     const dzSt = dlOf('diarize');
@@ -2019,6 +2084,28 @@ async function renderAsrModels() {
       ${dzState}
     </div>`;
     box.innerHTML = rows || '<div class="st-row">无可用模型</div>';
+    // 分组标题里的折叠箭头是 data-ico 声明的，图标注入只作用于 applyIcons() 跑过的节点 ——
+    // 这段 HTML 是刚拼出来的，得自己补一次（否则箭头位置是空的）。
+    if (window.__applyIcons) window.__applyIcons(box);
+    /* 折叠/展开：**事件委托**绑在 box 上（不给每个标题单独绑）。
+     * 为什么必须委托：renderAsrModels() 在下载进度轮询时可能每秒重画一次，
+     * 逐个绑会在重画后全部失效。 */
+    if (!box.dataset.groupBound) {
+      box.dataset.groupBound = '1';
+      box.addEventListener('click', (e) => {
+        const head = e.target.closest && e.target.closest('.sm-group-head');
+        if (!head) return;
+        const fam = head.dataset.family || '';
+        const open = !(GROUP_OPEN.get(fam) !== false);      // 取反当前状态
+        GROUP_OPEN.set(fam, open);
+        const body = head.nextElementSibling;
+        if (body) body.hidden = !open;
+        head.setAttribute('aria-expanded', String(open));
+        const caret = head.querySelector('.sm-caret');
+        if (caret) caret.classList.toggle('open', open);
+      });
+    }
+    renderHardwareBar(d);
     box.querySelectorAll('.sm-nemoinstall').forEach(b => b.addEventListener('click', async () => {
       b.disabled = true; b.textContent = '开始…';
       try {

@@ -1503,6 +1503,10 @@
             <div class="st-entry-foot"><span>点击进入管理</span><span class="st-entry-arrow" data-ico="chevronDown"></span></div>
           </button>
         </div>
+        <!-- 本机硬件条（设计稿 ②）：N 卡 / NPU / Vulkan 各一枚胶囊 + 右侧"已安装 N / M"。
+             内容全由 project.js 的 renderHardwareBar() 按 /api/asr/status 的探测结果渲染 ——
+             没检测到的硬件不会显示（不谎报），右侧计数与模型列表同源。 -->
+        <div class="st-hw" id="st-hardware"></div>
         <div class="st-card">
           <div class="st-card-title">模型管理</div>
           <div id="st-models" class="st-models"><span class="spin"></span>读取中…</div>
