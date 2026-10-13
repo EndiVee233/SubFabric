@@ -9,7 +9,8 @@
 - 上一任务基线：[repair15-baseline.json](repair15-baseline.json)。此前实装只更新上述两个前端文件；本轮编辑器修改前哈希见原型 review/editor-layout-baseline.json，调整原型编辑器/数据/入口/必要测试与文档，新增两张桌面截图；真实源码及安装文件未修改。
 - 历史 PR #7 为上一任务文档工作，本轮不更新。此前 CI 成功不代表本轮验证。
 - 发布版本源：`editor/server.js` 与 `editor/README.md`、Inno `MyAppVersion` 为 `beta 1.0`；`APP_FILE_VERSION` / `MyAppFileVersion` 为 Windows 兼容的 `1.0.0.0`。
-- 云端状态：**提交失败或受到阻塞**；GitHub 连接器确认目标 `EndiVee233/SubFabric` / `main` HEAD 为 `5d0e91c66354414b7158f2e69a546fd9359de5cf` 且账号有 push 权限。其写入工具只支持整文件替换、无 expected-HEAD；自动审查拒绝覆盖与本地功能代码差异很大的 `server.js` 等文件。未写入云端；需改用支持基于该 HEAD 的细粒度 Git commit/tree API 后重试。用户在聊天中粘贴的 token 未使用，应立即吊销。
+- 云端状态：**云端提交成功且已核对**（2026-10-13）。上一轮"整文件替换、无 expected-HEAD"的阻塞已改用本地 Git 流程解决：先把工作树按主题拆成 7 个原子提交（`16bd6c8`…`fcce6b2`），再把上游 98 个提交合并进来做兼容（`6c74025`），最后**快进**推送。目标 `EndiVee233/SubFabric` / `main` 由 `5d0e91c66354414b7158f2e69a546fd9359de5cf` 前进到 `6c7402596262618337cedad1c30e4a9c500b869c`；原 HEAD `5d0e91c` 仍是新 HEAD 的祖先（历史无覆盖、无 force）。账号 `R2FtYml0` 对该仓库有 push 权限（`permissions.push=true`）。
+- 合并遗留：`repair09-pack-import-test`、`repair12-build-install-test` 在本机失败；已在**合并前的 `fcce6b2`** 用独立 worktree 复核，同样是这两个失败 → 属既有/环境问题，非本次合并引入，未改动其行为。
 
 ## 当前 UI 原型检查点
 
@@ -60,7 +61,7 @@
 ## 恢复入口
 
 先读本文件、AGENTS.md、PROJECT_MAP §6–§8，再按任务读取相关代码；上次 15 项需求与验收见 REPAIR_15.md / REPAIR_15_RESULTS.md。
-Node v24.21.0；没有 Git 可执行文件，不初始化 Git。保留已有代码/测试修改及连续性文档。
+Node v24.21.0；源码仓库自带 Git（`dev/` 下的 `main`），工作区与安装目录不初始化 Git。保留已有代码/测试修改及连续性文档。
 安全回归入口：`node tools/repair15-regression.mjs`；可附测试文件名只复核变化项。普通沙箱拒绝旧测试写生成模块/镜像，已使用获批的测试执行权限复核通过。
 后端必须保持单文件 SEA 入口；前端原生 ESM，无新增 npm 依赖。
 测试入口 `node tests/run-all.mjs` 会生成夹具并同步 tests/jsmod，执行前审计副作用。
