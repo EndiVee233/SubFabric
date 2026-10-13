@@ -1,0 +1,23 @@
+// 桌面验收服务：临时根目录、合成字幕/音视频，不访问用户项目与配置。
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { isolatedServer } from '../tests/helpers/isolated-server.mjs';
+import { makeSyntheticAss } from '../tests/ass-fixture.mjs';
+const s = await isolatedServer({ source: process.argv[2] ? path.resolve(process.argv[2]) : undefined });
+const installedVendor = path.resolve('..', 'editor/vendor');
+if (fs.existsSync(installedVendor)) fs.cpSync(installedVendor, path.join(s.root, 'editor/vendor'), { recursive: true });
+const put = (p, data) => { const f = path.join(s.root, p); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, data); return f; };
+const video = path.join(s.root, 'projects/p-studio/video/synthetic.mp4'); fs.mkdirSync(path.dirname(video), { recursive: true });
+const result = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=size=960x540:rate=24', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=16000', '-t', '12', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-y', video], { windowsHide: true, timeout: 30000, encoding: 'utf8' });
+if (result.status !== 0) throw Error(result.stderr || 'synthetic media generation failed');
+const wav = path.join(s.root, 'projects/p-studio/audio.wav');
+spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', video, '-vn', '-ar', '16000', '-ac', '1', '-y', wav], { windowsHide: true, timeout: 15000 });
+put('projects/p-studio/subtitle.ass', makeSyntheticAss());
+put('projects/p-studio/project.json', JSON.stringify({ id: 'p-studio', name: '接线验收 · 双语逐词', createdAt: '2026-10-13T00:00:00Z', modifiedAt: '2026-10-13T00:00:00Z', video: { path: video, name: 'synthetic.mp4' }, subtitle: { file: 'subtitle.ass', name: 'subtitle.ass', format: 'ass' }, prepare: { status: 'done' } }));
+put('projects/p-wait/project.json', JSON.stringify({ id: 'p-wait', name: '接线验收 · 等待翻译', video: { path: video, name: 'synthetic.mp4' }, draft: { status: 'paused', stage: '翻译中', progress: 86, lines: 20, pendingTranslate: 20 }, subtitle: { file: 'subtitle.srt', name: 'subtitle.srt', format: 'srt' }, prepare: { status: 'done' } }));
+put('projects/p-wait/subtitle.srt', '1\n00:00:00,000 --> 00:00:03,000\nSynthetic subtitle\n');
+console.log(JSON.stringify({ origin: s.origin, root: s.root, pid: s.child.pid, media: video }));
+fs.writeFileSync('docs/ui-preview-session.json', JSON.stringify({ origin: s.origin, root: s.root, pid: s.child.pid }));
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => { await s.close(); process.exit(); });
+setInterval(() => {}, 60000);
