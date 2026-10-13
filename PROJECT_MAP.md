@@ -76,7 +76,8 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 
 **当前与下一个版本（LLM 发版时直接照此取值）**：
 
-- **本次已发布**：显示 `beta 1.0` / 文件 `1.0.0.0` / tag `v1.0.0-beta.1`（2026-10-14，prerelease）。
+- **本次已发布**：显示 `beta 1.0` / 文件 `1.0.0.0` / tag `v1.0.0-beta.1`（2026-10-14，prerelease，
+  <https://github.com/EndiVee233/SubFabric/releases/tag/v1.0.0-beta.1>，资产 `SubFabric-beta 1.0-setup.exe` 34.3MB）。
 - **下一个待发版本：显示 `beta 1.1` / 文件 `1.1.0.0` / tag `v1.1.0-beta.1`**（默认推进）。
   例外：若只是对 `beta 1.0` 做修补重发，则显示版本仍是 `beta 1.0`（文件版本 `1.0.0.0` 不变），tag 用 `v1.0.0-beta.2`。
 

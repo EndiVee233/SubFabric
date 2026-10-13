@@ -16,6 +16,16 @@
 - 产物核对：`build/SubFabric.exe` 87,057,920 字节，含 SEA sentinel fuse 与 UTF-16 版本串（`SubFabric 字幕工作台` / `1.0.0.0` / `EndiVee233`）；安装包 35,925,258 字节（34.3MB），sha256 `bb0897c7b8e13aebf340afbfa891d971440ce6e3b2c0026336cb199a4541c7ec`；按 .iss 的 [Files]+Excludes 复算得 94 个待装文件 / 104.2MB（editor 71、asr 19、根 4），与 README 期望的 ~106MB 同量级，说明 vendor 已进包（未复现"掉到 22.7MB"的失败形态）。
 - **修复了一个既有隐患**：`SubFabric.iss` 的 `VersionInfoProductVersion` 原为 `{#MyAppVersion}`（显示版本 `beta 1.0` 非纯数字）→ ISCC 报 `Value of [Setup] section directive "VersionInfoProductVersion" is invalid` 并中止。上一轮只改版本标记、未真正编译，所以一直没暴露。现改为 `{#MyAppFileVersion}`，并把该文件里"远端补丁位 +1"的旧口径注释改为指向 PROJECT_MAP §1.1。
 - 未做（明确记录，不算已验证）：真实静默安装/卸载自检、装后启动与真实 GPU/ASR/LLM 验收。未在用户机器上安装或改动其现有 2.4.0 安装。
+- **云端状态（2026-10-14）：云端提交成功且已核对**。`EndiVee233/SubFabric` `main` 由 `c288c89a9557`（2026-10-13）前进到 `5a3ba25021fa`
+  （`docs(版本): 新增 PROJECT_MAP §1.1 版本号命名规则 + 修正 .iss 版本字段与发版口径`，改动 4 个文件：PROJECT_MAP.md / build/installer/SubFabric.iss / editor/README.md / docs/STATUS.md；`force=false` 快进，无历史改写）。
+  提交前逐文件核对：远端 416 个 blob 与本地仅这 4 个不同、无并发变化；提交后复查差异为 0、本地缺失为 0。
+  **Release 已发布**：`v1.0.0-beta.1`（name `SubFabric beta 1.0`，prerelease，tag 指向 `5a3ba25`），
+  资产 `SubFabric-beta.1.0-setup.exe` 35,925,258 字节，`digest = sha256:bb0897c7…` 与本地一致；
+  链接 <https://github.com/EndiVee233/SubFabric/releases/tag/v1.0.0-beta.1>。用连接器与 REST 两条路径分别核对通过。
+- 观察（未处理，非本次范围）：PROJECT_MAP §4/§11 与 STATUS 多处描述的 `prototypes/subfabric-ui/` 在当前工作区与远端仓库中**都不存在**
+  （`.gitignore` 也未忽略它）；`editor/lang/en-US.json` 只在已装的 2.4.0 里有、仓库中没有。两者均不影响本次安装包内容（`.iss` 按 `editor/**` 通配，不含这两个路径），未擅自改动文档或补文件。
+- 观察：本次安装包 34.3MB，而 v2.4.0 的资产为 53.9MB。两者 `SubFabric.exe` 体积几乎相同（87,057,920 vs 87,058,432）、vendor 与字体齐全、待装文件清单按 `.iss` 复算一致，
+  故判断差异来自压缩/输入而非内容缺失；但**最终内容比对需真实安装后 `find`+逐字节核对**（本次未做）。
 - 云端状态：**云端提交成功且已核对**（2026-10-13）。上一轮"整文件替换、无 expected-HEAD"的阻塞已改用本地 Git 流程解决：先把工作树按主题拆成 7 个原子提交（`16bd6c8`…`fcce6b2`），再把上游 98 个提交合并进来做兼容（`6c74025`），最后**快进**推送。目标 `EndiVee233/SubFabric` / `main` 由 `5d0e91c66354414b7158f2e69a546fd9359de5cf` 前进到 `6c7402596262618337cedad1c30e4a9c500b869c`；原 HEAD `5d0e91c` 仍是新 HEAD 的祖先（历史无覆盖、无 force）。账号 `R2FtYml0` 对该仓库有 push 权限（`permissions.push=true`）。
 - 合并遗留：`repair09-pack-import-test`、`repair12-build-install-test` 在本机失败；已在**合并前的 `fcce6b2`** 用独立 worktree 复核，同样是这两个失败 → 属既有/环境问题，非本次合并引入，未改动其行为。
 
