@@ -85,7 +85,7 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 
 ### Windows 安装版
 
-从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases/latest) 下载最新的安装包并安装
+从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases/tag/v2.4.0) 下载最新的安装包并安装
 
 ### 从源码运行
 

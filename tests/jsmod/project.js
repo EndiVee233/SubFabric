@@ -2479,6 +2479,14 @@ async function renderAsrModels() {
     drawerCur: document.getElementById('st-scheme-cur'),
   };
 
+  /** 方案是否"已配置"：当前 provider 且已有 Key，或本地地址（本地模型不需要 Key） */
+  function schemeConfigured(p) {
+    const cur = $('#st-provider') ? $('#st-provider').value : '';
+    const hasKey = $('#st-key') && $('#st-key').placeholder && /已保存/.test($('#st-key').placeholder);
+    const local = /127\.0\.0\.1|localhost/.test(p.baseUrl || '');
+    return p.id === cur && (hasKey || local);
+  }
+
   function renderSchemes() {
     if (!schemeEls.list) return;
     const cur = $('#st-provider') ? $('#st-provider').value : '';

@@ -79,6 +79,16 @@ const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili C
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 
+// 界面选择独立于识别/密钥配置。逐请求读取，改文件后刷新根入口即可回退旧 UI。
+function uiEntry() {
+  try {
+    const file = path.join(ROOT, 'ui-config.json');
+    if (fs.statSync(file).size <= 16384 && JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')).ui === 'legacy')
+      return '/editor/index.html';
+  } catch { /* 缺失或损坏配置仍能进入默认界面。 */ }
+  return '/editor/studio.html';
+}
+
 /* ── 控制台输出同时落一份到文件 ────────────────────────────────────────
  * 为什么需要: 无窗口启动器(启动SubFabric(无窗口).vbs)下 node **没有控制台**,
  * 光靠控制台的日志就全丢了 —— 启动失败时用户什么都看不到。
@@ -118,7 +128,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = '2.4.0'; // 与打版号一致; 改了就顺手同步这里
+const APP_VERSION = 'beta 1.0'; // 产品显示版本
+const APP_FILE_VERSION = '1.0.0.0'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -313,10 +324,12 @@ function safeJoin(root, urlPath) {
 
 // 明确列出浏览器入口、依赖和双端纯模块；editor 下的后端模块不随目录一并公开。
 const STATIC_RESOURCES = new Set([
-  '/editor/index.html', '/editor/css/style.css', '/editor/css/ui.css', '/editor/lang/zh-CN.json',
+  '/editor/index.html', '/editor/studio.html', '/editor/css/studio.css',
+  '/editor/css/style.css', '/editor/css/ui.css', '/editor/lang/zh-CN.json',
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
-    'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit'].map(n => '/editor/js/' + n + '.js'),
+    'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
+    'studio-themes', 'studio-progress'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
   '/editor/vendor/subtitles-octopus-worker.wasm', '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf',
@@ -1469,11 +1482,6 @@ function saveTranslateCfg(patch) {
   if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }   // 显式清除(设置里的「清除已存 Key」链接)
   /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
    * 负的上下文行数会让切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
-   * 有单测钉住（tests/llm-params-test.mjs）。 */
-  if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
-  if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
-  /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
-   * 负的上下文行数会让下面的切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
    * 有单测钉住（tests/llm-params-test.mjs）。 */
   if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
   if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
@@ -2759,8 +2767,8 @@ function runCrispAsr(modelGguf, wav, onProgress, opts) {
  */
 const SIMPLE_ROUTES = [
   // 首页: 302 到真正的编辑器页
-  ['/', (req, res) => { send(res, 302, { Location: '/editor/index.html' }, ''); return true; }],
-  ['/index.html', (req, res) => { send(res, 302, { Location: '/editor/index.html' }, ''); return true; }],
+  ['/', (req, res) => { send(res, 302, { Location: uiEntry(), 'Cache-Control': 'no-store' }, ''); return true; }],
+  ['/index.html', (req, res) => { send(res, 302, { Location: uiEntry(), 'Cache-Control': 'no-store' }, ''); return true; }],
 
   // 稿件样本清单
   ['/api/samples', (req, res) => {

@@ -1485,11 +1485,6 @@ function saveTranslateCfg(patch) {
    * 有单测钉住（tests/llm-params-test.mjs）。 */
   if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
   if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
-  /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
-   * 负的上下文行数会让下面的切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
-   * 有单测钉住（tests/llm-params-test.mjs）。 */
-  if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
-  if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
   delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
   s.translate = Object.assign(cur, p);
   writeAsrSettings(s);
