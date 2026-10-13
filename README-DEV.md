@@ -47,11 +47,11 @@ build_and_install.cmd --package      :: 额外打出安装包
 
 ### 版本号
 
-只在一处改：`dev\editor\server.js` 的 `APP_VERSION`。
-`build_exe.py` 从那里读，安装包的版本号同理。
-
-> `build\installer\SubFabric.iss` 里的 `MyAppVersion` / `MyAppFileVersion` 是**手写**的，
-> 发版时记得一起改（`MyAppFileVersion` 必须是四段纯数字，如 `2.2.1.0`）。
+产品显示版本维护在 `dev\editor\server.js` 的 `APP_VERSION`，并同步更新
+`editor\README.md` 标题和 `build\installer\SubFabric.iss` 的 `MyAppVersion`。
+Windows 文件版本使用独立的 `MyAppFileVersion`，必须为四段纯数字；本次产品版本
+`beta 1.0` 对应 `editor/server.js` 中的 `APP_FILE_VERSION`、安装脚本中的
+`MyAppFileVersion`，均设为 `1.0.0.0`。
 
 ## Git
 

@@ -1,10 +1,12 @@
 # SubFabric 项目地图（PROJECT_MAP.md）
 
-> **⚠️ 本文件是"新接手的 AI / 开发者"的第一读本，也是必须随代码更新的活文档。**
+> **⚠️ 本文件是项目结构与开发约定入口，也是必须随代码更新的活文档。**
 > 任何改动只要动了 **目录结构 / 模块职责 / 数据流 / 接口 / 约定**，
 > **必须在同一个提交里同步更新本文件**（"改代码 → 改地图"是一件事，不是两件事）。
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
-> 最后更新：2026-10-10（新增 Parakeet-Vulkan（CrispASR）引擎；路由层重构恢复：薄分发器 + 7 段函数 + `API_SECTIONS`；`tests/jsmod` 镜像自举修复，不再互删；根目录文档清理 → 历史/设计文档归入 `docs/`；**第二轮全面审查 + 24 处修复**，见 `docs/CODE_REVIEW_2026-10-10.md` 与 §11）
+> 新任务或恢复上下文先读唯一权威状态 [docs/STATUS.md](docs/STATUS.md) 与 [AGENTS.md](AGENTS.md)，
+> 再按需读本地图；阶段进度只维护在 STATUS，连续性要求与验收见 [docs/CONTINUITY.md](docs/CONTINUITY.md)。
+> 最后更新：2026-10-13（独立 UI 原型与单独字幕工作台入口；此前 15 项修复验收见 `docs/REPAIR_15_RESULTS.md`，当前状态见 STATUS）。历史演进见 §11。
 
 ---
 
@@ -32,11 +34,14 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | 启动服务 | `node editor/server.js`（支持 `PORT=xxxx`；`--no-tray` 或 `SUBFABRIC_TRAY=0` 可关托盘） |
 | 打开界面 | <http://127.0.0.1:8321/>（`/` 会 302 到 `/editor/index.html`） |
 | 打包 exe | `python build_exe.py` → `build/SubFabric.exe`（SEA，入口 `editor/scripts/sea-launcher.cjs`） |
+| 只构建 / 构建并打安装包 | 安装目录的 `build_and_install.cmd --no-install [--package]` → `dev/tools/build-install.mjs`；只构建不更新运行副本 |
 | 打安装包 | `"D:\Program Files\Inno Setup 7\ISCC.exe" build/installer/SubFabric.iss` |
 | 完整发版流程 | **见 `editor/README.md`「发版流程」节** |
 
 - 版本号唯一来源是 `editor/server.js` 的 `APP_VERSION`；**发版时还要同步** `build/installer/SubFabric.iss` 与 `editor/README.md`。
 - SEA 启动器把端口写死 8321（服务端本身认 `PORT` 环境变量，测试探针靠它跑隔离实例）。
+- 纯前端修复可在明确安装授权后仅更新对应外置资源，无需重建 SEA；先比对安装基线并保留文件范围外改动，备份、暂存替换，再核对当前服务返回资源。2026-10-13 首页修复仅更新当前 2.4.0 的 project.js 首页段与 ui.css，未整体安装其他待同步源码；实际安装与验证记录见 STATUS。
+- 构建入口支持 `SUBFABRIC_DEV/INST/PY/ISCC` 路径覆盖。先语法检查、构建、EXE 校验及可选打包，成功后才进入安装锁、暂存、备份与回滚；EXE 最后替换。模型/设置/项目/runtime/vendor 不进入源码安装清单。打包用临时树，可只读借用安装目录 vendor。真实 SEA/Inno 验收仍需单独执行；本轮没有安装程序。
 
 ---
 
@@ -51,10 +56,10 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | `asr/` | Python 侧：`asr.py`（本地识别）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（yt-dlp 自举、格式选择、Cookie、分P），细节见 `asr/fetch/README.md` |
 | `tests/` | Node / Python 测试（见 §8）；`tests/jsmod/` 是**前端模块自动同步镜像** |
-| `tools/` | 探针 / 诊断脚本（CDP 真机测试、布局探针、HTTP 层探针等） |
+| `tools/` | 探针 / 诊断脚本；`build-install.mjs` 是事务构建入口，`repair15-regression.mjs` 是本轮安全回归入口 |
 | `build/`、`build_exe.py` | 打包（`build/installer/` 内图标与 `.iss` 入库，其余产物不入库） |
 | `main.py` | **历史遗留**的 Python GUI 工具（字体/颜色等默认值处理），与编辑器主线关系弱 |
-| `docs/` | 归档/设计文档（**不在根目录堆着**）：`docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`（逐词高亮与 `\k` 的格式设计与调研，**改字幕格式前必读**）；`docs/CODE_REVIEW.md`（第一轮审查记录）；`docs/双引擎实测结论.md`（NPU+GPU 双引擎实测：本机无收益） |
+| `docs/` | `docs/STATUS.md` 是唯一权威当前状态，`docs/CONTINUITY.md` 保存连续性要求与验收；另含归档/设计文档（**不在根目录堆着**）：`docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`（逐词高亮与 `\k` 的格式设计与调研，**改字幕格式前必读**）；`docs/CODE_REVIEW.md`（第一轮审查记录）；`docs/双引擎实测结论.md`（NPU+GPU 双引擎实测：本机无收益） |
 | `eslint.config.js` | 只抓真错的规则（`no-undef` 等）；跑 lint 需自行 `npm i eslint`（项目无 `node_modules`） |
 
 ---
@@ -70,7 +75,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 ### 3.2 结构（自上而下）
 
 1. **头部基础设施**：`CHILDREN` 子进程登记（**包装过的 `spawn`**，20+ 调用点自动入册，退出时统一杀）、日志环形缓冲 + SSE 广播、`secret-store` 接入。
-2. **安全基线**：`safeJoin`（先解码再归一 + 路径分隔符边界，防穿越）、Host 回环校验（防 DNS rebinding）、写方法 Origin 校验（防 CSRF）、`MEDIA_ALLOW` 视频路径登记表。
+2. **安全基线**：Host 回环校验、实际监听端口的 HTTP Origin 明确集合；有 Origin 的读写请求均检查，无 Origin 的写入须带 `X-SubFabric-Token`。托盘 token 经环境传递，工具使用当前 Origin。静态服务走 `STATIC_RESOURCES/staticResource/publicResource`，只公开浏览器实际依赖和 `samples/` 顶层媒体/字幕，拒绝编码穿越及文件/祖先链接；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用。项目字幕、媒体、字体仍通过各自 API。
 3. **简单路由表 `SIMPLE_ROUTE_MAP`**：`/` `/index.html` `/api/samples` `/api/version` `/api/fonts` `/api/font-file` `/favicon.ico|svg`；处理器签名 `(req,res,u) → boolean`。
 4. **主体（模块作用域）**：项目系统（`projDir/readMeta/writeMeta/metaView/readBody…`）＋ 下载/prepare/ASR/翻译流水线 ＋ 状态容器。
 5. **路由分发**：`SIMPLE_ROUTE_MAP`（同步无副作用端点）查表 → `API_SECTIONS` 前缀表分发到 7 个路由段函数 → 静态回落（`serveFile`）。
@@ -80,12 +85,13 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 6. 七个段：`handleWaveRoutes`(waveform/peaks/upload-video) · `handleFetchRoutes`(pick/fetch) · `handleAsrRoutes`(asr/analyze) ·
    `handleLlmRoutes`(translate/cast/mt) · `handleLogsRoutes`(logs/lifecycle/quit) · `handleDiagRoutes`(diag/media) ·
    `handleProjectsRoutes`(projects：含热词候选/压缩包/`if (pm)` 项目内操作)。`API_SECTIONS` 正则前缀互不相交（`\b` 防误匹配）。
-7. **退出**：`shutdown()`（`/api/quit` 或 SIGINT/SIGTERM 触发）：广播 lifecycle → 杀 `CHILDREN` → `close` + `closeAllConnections` → 超时强退；托盘由 `scripts/tray.ps1`（PowerShell WinForms）实现。
+7. **退出**：`shutdown()`（`/api/quit` 或 SIGINT/SIGTERM 触发）：广播 lifecycle → await 常驻 ASR `stopAll(1500)` 有界退出 → 杀剩余 `CHILDREN` → `close` + `closeAllConnections` → 超时强退；托盘由保留 UTF-8 BOM 的 `scripts/tray.ps1`（PowerShell WinForms）实现。请求入口 `invokeRequest/requestError` 同时接住同步错误与 Promise 拒绝；readBody 回调使用同一入口。
 
 ### 3.3 跨请求状态容器（**铁律：必须放模块作用域**）
 
 `prepareJobs` `draftJobs` `pendingAsr` `draftProcs` `draftAborts` `rerecogJobs` `projProcs` `MEDIA_ALLOW`
 `mediaMetaCache` `logBuf` `logClients` `lifeClients` `dlState`（模型下载进度）`CHILDREN`
+`realignJobs` `subtitleCommits` `deletedProjects`；常驻 `asrSvc` 的 spawn 注入统一进程登记。
 
 > `projProcs`（项目 id → 进程集合）登记"项目目录里的长任务"（下载的 python、prepare 的 ffmpeg、
 > 说话人分离 / 选区重识别）—— **删除项目前必须杀掉它们**（否则 Windows 上 unlink 撞 EBUSY）。
@@ -111,6 +117,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - 选区重识别是独立后台任务 `rerecogJobs`，前端每秒轮询；**卡死自愈**：20 分钟无进展即判失败（否则按钮被"已有一个任务在运行"永久挡死）。
 - **删除项目**：先停该项目全部任务（`killDraftProc` + `killProjProcs`，Windows 上用 `taskkill /T /F` 连孙进程一起收）→ 再逐文件删；删除带重试（杀进程与系统释放文件句柄之间有窗口）；`project.json` **最后删**（失败时项目不消失、可再删一次，不会留"元数据没了但目录还在"的僵尸）。
 - 下载/重识别/准备等任务全部有超时或看门狗；新增后台任务时照此办理。
+- 常驻 ASR 按 owner 项目取消：结束该项目等待 Promise 并拒绝迟到写回，共享 worker 的其他项目继续。删除项目墓碑拦截元数据重建。只有 active/pending/ready waiters 全为空才调度空闲回收，新请求取消计时，触发时再检查 worker 身份与活动状态。
 
 ### 3.5 项目内操作（`/api/projects/:id/<action>`）
 
@@ -122,13 +129,39 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 4. 前端地图（`editor/js/`）
 
+### 独立设计原型（与真实 editor 隔离）
+
+`prototypes/subfabric-ui/` 为无构建、无依赖的模拟前端，使用经典脚本以兼容直接打开 HTML。
+`index.html` 是稿件库/任务/资源/设置/帮助入口；`editor.html` 是独立字幕工作台。
+打开稿件通过相对 URL 转到独立工作台，返回项目回到 index；两页共用浏览器原型命名空间，
+不与真实 `projects/`、设置、模型或 8321 服务共享数据。`?sandbox=1` 使用验收命名空间。
+
+| 文件 | 职责 |
+| --- | --- |
+| `app.js` | 原型状态、hash 路由、上下文筛选/空状态、新建校验、可暂停/取消/重试队列、资源、设置草稿离场保护、导入校验、模态、独立工作台顶栏；openWordDemo 创建或复用独立逐词稿件，切换稿件遵循手动保存保护 |
+| `editor.js` / `editor.css` / `workspace.css` | 模拟双语编辑、逐词播放高亮/边界、波形覆盖字幕/重叠分轨、时间轴四项设置、历史、角色单击分配与右键菜单、样式、审核建议、备注与字幕导出；独立页保持左预览/下时间轴/右四 Tab，字幕卡左时间/右双语 |
+| `data.js` / `icons.js` | SF_DEMO 通用合成数据、SF_WORD_DEMO 的非等分词时间/重叠角色示例和内联 SVG，无远程资产 |
+| `styles.css` | 纸白/石墨/苔绿 token、三种背景、主题、材质、交互反馈、减少动效 |
+| `themes.js` / `themes.css` / `material-you.theme.json` | 声明式主题包与导入校验、本地色调角色、Material You 首页形状/播放进度；两文档共用主题 |
+| `progress.js` | 两页共享的任务/播放进度 markup、数值/状态同步、单个可见性观察器与后台/减少动效门控；波形 CSS 固定图案位移，无额外帧循环 |
+| `serve.cjs` | 127.0.0.1:8347 静态白名单；CSP connect-src none；不提供 API |
+| `review/` | 合成夹具、隔离行为检查与可视验收记录，不由静态服务提供 |
+
+编辑器经 `window.SF_APP` 访问原型接口，入口为 `SF_EDITOR.render/mount/unmount`。
+顶栏命令经 `SF_EDITOR.command` 传递。详细流程和数据边界见原型 README；当前验收状态见 STATUS。
+编辑器 `prototypeEditor[id].timeline` 保存 double/height/pan/zoom，缺省为单行/188px/80px/1.05×；旧备份可缺此字段，新字段导入校验类型与范围。重叠字幕按时间贪心分轨，波形背后的局部轻微模糊在拖动期间关闭；滚轮方向沿用旧版，Ctrl+滚轮保持指针下时间锚点。词边界调整共用邻词起止、可撤销；移动/缩放句时同步词时间，英文改写使旧词时间失效。逐词模式选择新句时自动聚焦时间轴，按词高亮只随原有播放时钟更新。
+主设置以 `draftSettings` 即时预览，保存条显示变更状态；离场统一保存/放弃/取消。
+主题包列表以 `draftThemePacks` 一同预览/保存/回滚；旧备份缺少主题字段时使用 Studio。包导入不执行任意代码，主题色角色在本地计算。
+任务进度经 `SF_PROGRESS` 同步，运行完成段为波浪、剩余为直线，暂停/结束为直线。页面重建/编辑器卸载释放被观察节点；CSS 仅对可见且运行的 Material 条动画。编辑器的原有 80ms 模拟播放时钟只在前台播放时存在。
+新建向导只记录所选文件名并创建合成字幕，完整 JSON 工作区恢复由设置中的备份导入负责。
+
 装配：`editor/index.html` → `<script type="module" src="js/main.js">`；hash 路由（`#/home`、`#/project/<id>`，见 `project.js` 的 `applyHash`）。
 另有第二个入口 `<script type="module" src="js/video-hover-tip.js">`（进度条悬浮时间提示，独立自初始化，不参与 main.js 的装配）。
 
 | 模块 | 职责 |
 | --- | --- |
 | `main.js` | 应用主入口：装配各模块、视频/播放控制、波形加载、导出、设置面板、诊断上报 |
-| `project.js` | 项目列表/创建/详情、打开项目（含**竞态代次守卫**）、模型下载轮询（含并发闸门） |
+| `project.js` | 项目列表/创建/详情（活动稿件置顶、复用卡片独立同步顺序、仅运行中进度动画）、打开项目（含**竞态代次守卫**）、模型下载轮询（含并发闸门） |
 | `editor.js` | 右侧编辑面板：**虚拟滚动**卡片列表 + 行内编辑（5000 行量级性能靠它） |
 | `timeline.js` | 时间轴 canvas：波形 + 字幕块 + 词级边界拖拽 / 缩放 / 平移（鼠标交互自实现） |
 | `videoedit.js` | 视频区就地编辑框（双击字幕 → 点哪个片段改哪个；Enter 存 / Esc 取消） |
@@ -166,7 +199,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `audio.wav` | 16k 单声道（供 ASR 与播放音轨） |
 | `peaks.bin` | 波形包络缓存（min/max 分桶） |
 | `asr.json` | 识别结果（词级时间戳） |
-| `translation.json` | 译文 |
+| `translation.json` | 译文缓存，含 sourceKey；仅同一原文/时间/角色/样式/特效来源版本复用，当前稿件已有译文优先 |
 | `reseg.json` | 语义分句缓存 |
 | `asr-chunks.json` | 分片数据（用户要的"返回分片数据"） |
 | `source.json` | 下载来源元数据（标题/UP/时长等） |
@@ -196,7 +229,14 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   （包围盒变化带动整行位移）；③ 其余约束先读文件头注释再动手。
 - **弹层动效规范**：弹出层统一 `pop-in`（`--pop-ox/oy` 用 `util.popOrigin` 指向触发点；Modal 例外居中）；
   可点元素要有 `:active` 反馈；时长 120~150ms、ease-out、不从 `scale(0)` 出发；`prefers-reduced-motion` 全局关闭；不用 `transition: all`。
-- **自动保存**：编辑即防抖保存；`beforeunload` 用 `sendBeacon` 补最后一笔。**无撤销/重做栈**，Esc=取消是安全边界。
+- **自动保存**：GET 字幕的 ETag 为 SHA-256 版本，PUT/beacon POST 同传 revision 与窗口 client/seq。请求各有 UUID 临时文件，比较版本和 rename 在同一同步段；过期或跨窗口冲突回 409，无版本回 428。同窗口后续保存可衔接上一提交。成功回完整提交内容的新版本；失败只清理本请求临时文件。
+- **项目切换**：先 flush 旧稿保存，再完成元数据/字幕/解析，最后同时提交 ID 和文档。所有保存回调、视频/波形/备注/prepare 等异步结果捕获项目与代次；首页/detach 同样使旧加载失效。保存冲突保持不可自动覆盖状态。**无撤销/重做栈**，Esc=取消是安全边界。
+- **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换；`readMeta/writeMeta` 的兼容调用以 WeakMap 基线算递归字段差量，并入最新状态，禁止旧对象整体覆盖已有项目。跨 await 新增更新优先调用 updateMeta。
+- **首页列表**：`isCreating` 统一活动置顶与轮询判据，包含下载、提取、初稿及新建空窗，失败/暂停无字幕稿不冒充活动。`cardSig` 不含 progress/message/modifiedAt，三者就地更新；顺序同步独立于结构重建，只移动错位节点。首次直接显示进度，只有 running 的目标值变化才播放数字与 width 的 420ms 线性过渡；WeakMap 使旧动画失效，移除节点停止写入。ui.css 的流光和宽度过渡只属于 running，完成/暂停/失败无填充动画。
+- **翻译**：`subtitleSource` 从当前 ASS/SRT 取原文、对应译文和版本；只在没有稿件时回落 ASR。`patchSubtitleTranslations` 仅更新译文事件/行，保留人工原文、时间、角色、样式和特效；每批及落盘前检查当前稿件版本。`planJobs` 用完整稿件索引和 todo，每批由 `translationRefs` 从同版本已有/新译文刷新前文；拆批右半批接续左半批，参考行不计输出数量，contextRows=0 不带参考。
+- **全片重校对**：从当前稿件提取目标，共用 karaoke 的 `realignTargetKey/applyRealignItems`；结果需匹配项目、规范化稿件版本、句子事件位置、可见文本及完整词序列。只改词级时间，颜色切片与 `\\k` 都保留当前文本，不按相近时间强行套旧结果。
+- **模型删除**：只物理删除标准根下该模型的精确普通目录、普通所属文件；根目录、兄弟前缀、自定义/共享目录和祖先链接只解除关联并回 deleted:false。目录中的非所属文件保留。
+- **项目包**：导出 tar 显式 `-C` 目标目录并传 cwd，只打包 CORE_FILES 普通文件，失败回退 PowerShell，成功响应及失败均清临时目录。导入先预检 ZIP 目录（128 文件、单文件 64MB、总量 128MB），拒绝越界/链接/重复/不支持格式，只流式提取核心文件，并检查实际字节、CRC 与 30 秒时限；读取前 stat，字幕有效才建成项目，失败清理本次目录。支持单层包装；ZIP64/加密/分卷明确拒绝。
 - **长音频分片**：静音优先切点（`audio-slice.js` 真 ffmpeg `silencedetect`；纯函数在 `asr-chunks.js`）。
 - **全局设置页的骨架是 CSS grid，别在外面再套 wrapper**（2026-10-12 实测踩过）：
   `ui.css` 的 `#st-view .st-box` 是 `grid-template-columns: 192px minmax(0,1fr)` +
@@ -223,6 +263,14 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 7. 开发约定与红线
 
+### 生产 Studio 入口（2026-10-13）
+
+根入口逐请求读取程序根 `ui-config.json`：`{"ui":"new"}`（缺失/损坏时同样默认）进入 `editor/studio.html`，`{"ui":"legacy"}` 进入原 `editor/index.html`。配置不公开服务。旧 HTML/CSS/main 和独立设计原型保持；Studio 生成入口保留全部真实控件，继续使用原 main、project、ASS、Timeline、API。
+
+`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。themes/progress 与原型共享声明式主题与固定 CSS 波浪。ASS 控件为同一组 DOM，移动到全局设置后原监听器/文档保存仍在；无当前 ASS 项目时禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
+
+相关验收与安装范围见 `docs/UI_INTEGRATION.md`；`tools/studio-install.mjs --prepare` 产生安装候选和哈希清单，候选验收通过后 `--apply <backup-directory>` 才进入备份/锁/替换/失败回滚。仅合并本次 UI 增量，不整体安装先前源码修复，不改 EXE/运行时/设置/项目。
+
 1. **不要引入构建步骤 / npm 依赖**：前端是浏览器原生 ESM，后端零依赖；Python 依赖在 `asr/requirements.txt`。
 2. **不要拆 `server.js` 成多文件**（SEA 约束，见 §3.1）。
 3. **跨请求状态必须放模块作用域**（见 §3.3）。
@@ -240,6 +288,9 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 | 测试 | 覆盖 | 备注 |
 | --- | --- | --- |
+| `tests/home-project-list-test.mjs` | 首页活动排序、复用卡片重排、静态进度零改写、连续/过期动画、完成与暂停/失败、新建/提取/下载、改名/删除及轮询停止 | 运行真实 initProjects/路由/轮询，使用内存 DOM 与可控时钟，不连接实际服务 |
+| `tests/repair01-*` ～ `repair15-*` | 15 项修复的实际行为（内存 mocks / 临时目录 / 独立 HTTP 服务） | 第 12 项用微型 Python 构建与模拟 Inno；第 15 项本机真实 tar/PowerShell 已验证；不等于 GPU/ASR/LLM/GUI/SEA 真机验收 |
+| `tools/repair15-regression.mjs` | 本轮安全整体验证，结果在 `docs/repair15-regression-results.json` | 86 文件通过，其中 20 含明确跳过项；排除 4 个真实项目/设置/GUI 测试，`SUBFABRIC_TEST_ISOLATED=1` 屏蔽私有素材；可传文件名只复核变化项 |
 | `tests/karaoke-exhaustive.mjs` | 逐词高亮全链路（28183 断言） | 也负责同步 `tests/jsmod` 镜像；报 `fixture.ass` ENOENT 时先跑 `node tests/gen-fixture.mjs`（夹具是生成物，`*.ass` 不入库） |
 | `tests/cue-segment-test.mjs` | 就地编辑分段 / 最小替换 | 17 项 |
 | `tests/secret-store-test.mjs` | 密文往返 / 篡改检测 | 17 项 |
@@ -248,7 +299,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `tests/colorfix-test.mjs` | 颜色修复 | **需要真实用户项目**，新克隆必失败（非缺陷） |
 | `tests/ass-style-preset-test.mjs` | 双语样式预设的导出/导入纯逻辑（往返保真、跨稿件字段名搬运、坏文件拒绝、单样式稿件不乱改） | 纯函数直测，任何机器可跑；新测试文件会被 `run-all.mjs` 自动发现 |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
-| `tools/http_layer_probe.mjs` | HTTP 层 47 项（守卫 / 形状 / 设置往返 / 项目全生命周期 / **占用中删除重试**） | **自带服务启停**，直接 `node tools/http_layer_probe.mjs` |
+| `tools/http_layer_probe.mjs` | HTTP 层探针（守卫 / 形状 / 设置往返 / 项目全生命周期） | 自带服务启停，但会写同树设置/项目；只有隔离副本才可执行，旧字幕保存探针尚需适配 revision 协议；本轮以 repair 测试验证 |
 | `tools/route_smoke.mjs` | 24 路由冒烟 | 需先起服务：`PORT=8399 node editor/server.js` |
 | `tools/chunk_probe.mjs` | 静音检测 / 切片（真 ffmpeg） | |
 | `tools/videoedit_probe.mjs` 等 | 视频区就地编辑（CDP 真机） | 需 `editor/vendor/`（先 fetch-vendor） |

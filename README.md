@@ -132,7 +132,10 @@ node editor/server.js
   
 ## 给 AI 助手
 
-准备阅读或修改本项目的代码前 请看 **[PROJECT_MAP.md](PROJECT_MAP.md)** —— 里面有完整的目录地图 后端/前端结构 核心数据流与必须遵守的约定
+开始任务或恢复上下文时，先看 **[docs/STATUS.md](docs/STATUS.md)**（唯一权威当前状态）和
+**[AGENTS.md](AGENTS.md)**（长期工作规则）；连续性要求与验收见 [docs/CONTINUITY.md](docs/CONTINUITY.md)。
+
+准备阅读或修改本项目的代码前，再按任务阅读 **[PROJECT_MAP.md](PROJECT_MAP.md)** —— 里面有完整的目录地图 后端/前端结构 核心数据流与必须遵守的约定
 
 代码结构发生变化时 **请同步更新 PROJECT_MAP.md**
 
