@@ -134,7 +134,7 @@ console.log('\n== ⑥ 空行 / 空输入 ==');
 console.log('\n== ⑦ 用真实的 (5) 文件验证规模 ==');
 {
   const P = 'C:/Users/Terry/Downloads/subtitle_edited (5).ass';
-  if (fs.existsSync(P)) {
+  if (process.env.SUBFABRIC_TEST_ISOLATED !== '1' && fs.existsSync(P)) {
     const t = (x) => { const m = /(\d+):(\d+):(\d+)\.(\d+)/.exec(x); return m ? (+m[1])*3600+(+m[2])*60+(+m[3])+(+m[4])/100 : 0; };
     const rows = [];
     for (const l of fs.readFileSync(P, 'utf8').split(/\r?\n/)) {

@@ -713,7 +713,7 @@
         <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
         <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
         <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
-        <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="把这条字幕念一遍再识别，用得到的节奏重排每个词的时间。只改逐词时间，不动文本">重排逐词时间</button>
+        <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="切出这条字幕在原片音频里的那一段重新识别，用实测到的词位置重排逐词时间。只改逐词时间，不动文本">重排逐词时间</button>
         <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除字幕块</button>
       </div>
       <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消) -->
@@ -803,7 +803,7 @@
     <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
     <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
     <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
-    <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="把这条字幕念一遍再识别，用得到的节奏重排每个词的时间。只改逐词时间，不动文本">重排逐词时间</button>
+    <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="切出这条字幕在原片音频里的那一段重新识别，用实测到的词位置重排逐词时间。只改逐词时间，不动文本">重排逐词时间</button>
     <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除该条字幕</button>
   </div>
 
@@ -1263,7 +1263,7 @@
             <b>创建后自动处理</b>（全流程全自动）
             <span class="np-auto-note">
               出稿后自动接着跑：<b>反思纠错</b>（让模型通读全片，把"几行本该是一句 / 那段漏了字幕"
-              这类有硬依据的问题重识别一遍）+ <b>全片逐词重校对</b>（逐句朗读并重新识别，
+              这类有硬依据的问题重识别一遍）+ <b>全片逐词重校对</b>（逐句切出原片音频重新识别，
               只对置信度达标的句子重排逐词时间）。<br>
               全程<b>只改该改的</b>：达标的才动，不达标的原样保留。
               反思的重识别结果会留在「反思纠错」预览里等你复核；逐词重校对自动写回。

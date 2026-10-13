@@ -8,7 +8,7 @@ import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, s
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
   speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
-  highlightTagForRebuild } from './karaoke.js';
+  highlightTagForRebuild, applyRealignItems } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
@@ -305,6 +305,7 @@ function waitDuration(timeoutMs = 10000) {
 /* 波形加载的"代次"守卫: 切视频/换项目后, 旧请求回来不能再往新状态上挂波形。
  * (曾出现: 切视频的瞬间旧 peaks 返回 → 新视频的时间轴挂上旧视频的波形, 怎么都对不上) */
 let waveLoadGen = 0;
+window.__projectAsyncReset = () => { ++waveLoadGen; };
 
 async function loadWaveformFromServer() {
   const gen = ++waveLoadGen;
@@ -389,6 +390,7 @@ async function uploadWaveform(file) {
 
 /* ═══════════ 视频加载 ═══════════ */
 function loadVideoUrl(url, name) {
+  ++waveLoadGen;
   // 换视频源前, 释放上一个已确定不再使用的 blob URL(本地文件用完后防泄漏); 同一 URL 不重复 revoke
   const old = state.videoUrl;
   if (old && old !== url && String(old).startsWith('blob:')) URL.revokeObjectURL(old);
@@ -5517,8 +5519,14 @@ async function retranslateRow(item) {
 /* ═══════════ 逐词时间重对齐（切原片音频重新识别，取实测逐词位置） ═══════════
  *
  * 场景：某条字幕的**逐词时间戳糊了**（拖动过、或识别时把词边界摊平了），但文本是对的。
- * 做法：让服务端把这条字幕念一遍、再识别那段合成语音，得到一份干净的参考节奏，
- *       按比例铺回原字幕的时长。**只改逐词时间，绝不动文本。**
+ * 做法：让服务端把这条字幕在**原片音频**里的那一段切出来、**重新识别**，
+ *       用识别出来的**实测**词位置重排逐词时间。**只改逐词时间，绝不动文本。**
+ *
+ * ⚠ 历史（别再照旧文案理解）：这里原来是"把文本用 TTS 念一遍、再识别那段合成语音，
+ *   把相对节奏按比例铺回原句"。那条路的时间戳**从来不是从原片量出来的**，而是按 TTS 的
+ *   语速推出来的（实测与真实位置平均差 0.295s）；服务端已把 SAPI 合成连同 `ttsToWav`
+ *   一起删掉（见 server.js 里 realignSince 那段说明）。前端这几句提示曾长期没跟上，
+ *   用户看到的仍是"正在朗读并重新识别" —— 现在改掉了。
  *
  * 为什么值得单独做：逐词时间糊掉时，视频上的逐词高亮会跟读不对，
  * 但整句时间往往是对的 —— 重新识别整段代价大、还可能把正确的文本改坏。
@@ -5543,7 +5551,7 @@ async function realignRow(item) {
     return;
   }
   const text = String(en.text || '').trim();
-  if (!text) { toast('这条没有英文文本，没法合成朗读', 4200); return; }
+  if (!text) { toast('这条没有英文文本，没法重排逐词时间', 4200); return; }
   /* 用**句子**的时间而不是整行的时间：逐词时间必须落在句子自己的区间里。
    * （中英双行时整行区间可能比英文句略宽，用整行会把词铺出句子外。） */
   const start = Number(en.start), end = Number(en.end);
@@ -5555,8 +5563,8 @@ async function realignRow(item) {
   realignBusy = true;
   const pid = state.project.id;
   const secs = (end - start).toFixed(1);
-  jobCardShow('重排逐词时间', `正在朗读并重新识别这条字幕（${secs} 秒）…`, null,
-    '服务端要用系统语音念一遍、再用识别模型听一遍；通常几秒');
+  jobCardShow('重排逐词时间', `正在切出这段原片音频并重新识别（${secs} 秒）…`, null,
+    '切出这句在原片里的那一段、重新识别，用实测到的词位置重排；通常几秒');
   try {
     const r = await fetch(`/api/projects/${pid}/realign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5586,7 +5594,13 @@ async function realignRow(item) {
     rebuildItemsAndLanes(true, true);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
     const msec = Math.round((end - start) * 1000);
-    jobCardDone('重排逐词时间 · 完成', `${b.words.length} 个词已重排（锚点 ${b.anchors}，${msec}ms 区间）`, true);
+    /* 完成提示里带**依据**：锚点率（多少词真对上了）与词吻合率 —— 与下面写进操作日志的
+     * 是同一套字段（b.ratio / b.anchors / b.words.length），不另造字段。
+     * ⚠ 原来写的是 `锚点 ${b.anchors}`（只有分子没有分母），看的人判断不了这次对齐可不可信；
+     *   测试钉的是 `${b.anchors}/${b.words.length} 个词对上`，别再改回单个数。 */
+    jobCardDone('重排逐词时间 · 完成',
+      `${b.words.length} 个词已重排（词吻合率 ${Math.round((b.ratio || 0) * 100)}%`
+      + ` · ${b.anchors}/${b.words.length} 个词对上 · ${msec}ms 区间）`, true);
     toast(`已重排逐词时间：${b.words.length} 个词（文本未改动）`, 5200);
     /* 操作日志：记清"哪一条、多少词、依据是什么"。
      * why 里带**词吻合率**与第二级是否被采纳 —— 这是判断"这次重排可不可信"的关键依据，
@@ -5723,7 +5737,7 @@ function resetRealignForProjectSwitch() {
   if (realignEls.allWrap) realignEls.allWrap.hidden = true;
   if (realignEls.conf) realignEls.conf.hidden = true;
   if (realignEls.reload) realignEls.reload.hidden = true;
-  if (realignEls.msg) realignEls.msg.textContent = '正在逐句朗读并重新识别…';
+  if (realignEls.msg) realignEls.msg.textContent = '正在逐句切出原片音频并重新识别…';
   syncRealignApply();                       // 按钮回到"应用选中项"、禁用
   if (realignEls.btn) realignEls.btn.disabled = !state.project;
   jobCardHide();
@@ -5864,6 +5878,8 @@ async function startRealignFull() {
   realignShow(true);
   jobCardShow('全片逐词重校对', '正在启动…', null, '逐句切原片音频重新识别，全片要几十分钟（不达标句再走一次热词偏置）');
   try {
+    await Projects.flushSave();
+    if (!state.project || state.project.id !== pid) return;
     const r = await fetch(`/api/projects/${pid}/realign-full`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     });
@@ -5896,28 +5912,13 @@ async function applyRealignFull() {
      *     服务端 4892 句（**只有英文** —— 中文整句锚点句不参与重校对）
      *   两边下标从第 1 条起就错开了，按下标改会**改到别的句子**（实测核对过）。
      *   所以这里一律按「开始时间 + 文本」定位 —— 这两个字段服务端都返回了。 */
-    const sents = (state.kar && state.kar.sentences) || [];
-    let n = 0, miss = 0;
-    const detail = [];
-    for (const k of picks) {
-      const it = realignData.items[k];
-      const want = String(it.text || '').trim();
-      const at = Number(it.start);
-      /* 先按"文本 + 时间"同时匹配（最稳——同一文本可能在片中出现多次）；
-       * 文本对不上时退回"开始时间最近且带逐词"的那句。 */
-      let sent = sents.find(s2 => Array.isArray(s2.words) && s2.words.length
-        && String(s2.text || '').trim() === want
-        && Math.abs(Number(s2.start) - at) <= 0.5) || null;
-      if (!sent) {
-        sent = sents.find(s2 => Array.isArray(s2.words) && s2.words.length
-          && Math.abs(Number(s2.start) - at) <= 0.05) || null;
-      }
-      if (!sent) { miss++; continue; }
-      sent.words = (it.words || []).map(w => ({ w: w.w, s: w.s, e: w.e }));
-      sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
-      n++;
-      detail.push(`${fmtTime(it.start)} 吻合率 ${Math.round((it.ratio || 0) * 100)}%`);
-    }
+    const doc = state.assDoc, project = state.project, data = realignData;
+    const snapshot = doc.serialize();
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(snapshot));
+    const revision = [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('');
+    if (state.project !== project || state.assDoc !== doc || doc.serialize() !== snapshot) return;
+    const { changed: n, skipped: miss } = applyRealignItems(doc, state.kar, picks.map(k => data.items[k]), { projectId: pid, revision });
+    const detail = picks.map(k => `${fmtTime(data.items[k].start)} 吻合率 ${Math.round((data.items[k].ratio || 0) * 100)}%`);
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
@@ -6642,6 +6643,7 @@ video.addEventListener('timeupdate', () => {
 
   let notes = [];               // 当前项目的全部备注
   let loadedFor = null;         // 已加载的项目 id（切项目要重载）
+  let notesLoadGen = 0;
   let showing = null;           // 当前弹幕显示的那条（"闩住"而不是每次重算，见 danmaku.js）
   let flashId = null;           // 刚写下的那条 → 高亮
 
@@ -6729,6 +6731,8 @@ video.addEventListener('timeupdate', () => {
   }
 
   async function loadNotes(force) {
+    const gen = ++notesLoadGen;
+    const project = state.project;
     const pid = state.project && state.project.id;
     if (!pid) {
       notes = []; loadedFor = null; renderList(); hideDanmaku();
@@ -6740,11 +6744,12 @@ video.addEventListener('timeupdate', () => {
       const r = await fetch(`/api/projects/${pid}/notes`, { signal: AbortSignal.timeout(10000) });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
+      if (state.project !== project || gen !== notesLoadGen) return;
       notes = Array.isArray(j.notes) ? j.notes : [];
       loadedFor = pid;
       renderList();
     } catch (e) {
-      if (listBox) listBox.innerHTML = `<div class="note-empty-row">读取备注失败：${escapeHtml(String((e && e.message) || e))}</div>`;
+      if (state.project === project && listBox) listBox.innerHTML = `<div class="note-empty-row">读取备注失败：${escapeHtml(String((e && e.message) || e))}</div>`;
     }
   }
 

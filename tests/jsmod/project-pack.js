@@ -25,6 +25,39 @@ const CORE_FILES = [
   'oplog.json',        // 用户操作日志（谁改了什么、为什么）
   'draft.log',         // 建稿流水线日志
 ];
+const PACK_LIMITS = { entries: 128, fileBytes: 64 * 1024 * 1024, totalBytes: 128 * 1024 * 1024, directoryBytes: 256 * 1024 };
+function zipManifest(directory, count, archiveBytes, directoryOffset, limits = PACK_LIMITS) {
+  if (count > limits.entries || directory.length > limits.directoryBytes) throw new Error('项目包文件数量或目录超过上限');
+  const entries = [], seen = new Set(); let at = 0, total = 0;
+  for (let i = 0; i < count; i++) {
+    if (at + 46 > directory.length || directory.readUInt32LE(at) !== 0x02014b50) throw new Error('项目包目录损坏');
+    const flags = directory.readUInt16LE(at + 8), method = directory.readUInt16LE(at + 10);
+    const compressed = directory.readUInt32LE(at + 20), bytes = directory.readUInt32LE(at + 24);
+    const length = directory.readUInt16LE(at + 28), extra = directory.readUInt16LE(at + 30), comment = directory.readUInt16LE(at + 32);
+    const offset = directory.readUInt32LE(at + 42), attr = directory.readUInt32LE(at + 38);
+    if (at + 46 + length + extra + comment > directory.length || directory.readUInt16LE(at + 34)) throw new Error('项目包分卷或目录无效');
+    const name = directory.subarray(at + 46, at + 46 + length).toString('utf8');
+    if (!name || name.includes('\\') || name.includes('\0') || name.includes(':') || name.startsWith('/')
+      || name.split('/').some(n => n === '.' || n === '..' || /[. ]$/.test(n)) || name.split('/').filter(Boolean).length > 2) throw new Error('项目包路径不合法');
+    const key = name.toLowerCase(); if (seen.has(key)) throw new Error('项目包存在重复路径'); seen.add(key);
+    if (flags & 1 || ![0, 8].includes(method) || ((attr >>> 16) & 0xf000) === 0xa000 || attr & 0x400) throw new Error('项目包包含加密、链接或不支持的文件');
+    total += bytes;
+    if (bytes > limits.fileBytes || total > limits.totalBytes || offset + 30 + compressed > directoryOffset || directoryOffset > archiveBytes) throw new Error('项目包解压大小或文件范围超过上限');
+    entries.push({ name, bytes, compressed, offset, flags, method, crc: directory.readUInt32LE(at + 16), directory: name.endsWith('/') });
+    at += 46 + length + extra + comment;
+  }
+  if (at !== directory.length) throw new Error('项目包目录尾部异常');
+  const files = entries.filter(e => !e.directory);
+  const wrapped = files.some(e => e.name.includes('/'));
+  const wrapper = wrapped ? files[0].name.split('/')[0] : '';
+  if (wrapped && files.some(e => e.name.split('/').length !== 2 || !e.name.startsWith(wrapper + '/'))) throw new Error('项目包外层目录结构不一致');
+  const selected = files.map(e => ({ ...e, file: wrapped ? e.name.slice(wrapper.length + 1) : e.name })).filter(e => shouldPack(e.file));
+  const manifest = validateManifest(selected.map(e => e.file));
+  if (!manifest.ok) throw new Error(manifest.error);
+  return { entries: selected, manifest };
+}
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => { let c = n; for (let i = 0; i < 8; i++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+function crcChunk(crc, bytes) { for (const b of bytes) crc = CRC_TABLE[(crc ^ b) & 255] ^ (crc >>> 8); return crc >>> 0; }
 
 /**
  * 派生/媒体文件：**不进包**，导入端从视频重新生成。
@@ -149,6 +182,7 @@ function remapMeta(meta, newId, nowIso) {
 }
 
 module.exports = {
+  PACK_LIMITS, zipManifest, crcChunk,
   CORE_FILES, DERIVED_FILES, SUBTITLE_FILES, AUDIO_MODES,
   shouldPack, isDerived, validateManifest, remapMeta, safeInnerFile,
 };

@@ -244,22 +244,24 @@ function buildTranslateUserMessage(texts, refs) {
 
 /** 带上下文的批次切分：每批 = { idxs, refs }。
  *  refs 是该批**前面**最多 ctx 行里"已有译文"的那些（原文 + 译文），供模型接上文。 */
-function planJobs(items, size, ctx) {
+function translationRefs(items, start, ctx, lines = null) {
+  const c = clampContextRows(ctx), refs = [];
+  for (let k = Math.max(0, start - c); k < start; k++) {
+    const it = items[k];
+    const zh = lines ? lines[k] : it && (it.zh != null ? it.zh : it.translation);
+    if (zh) refs.push({ text: it && it.text, zh });
+  }
+  return refs;
+}
+
+function planJobs(items, size, ctx, pendingIdxs = null) {
   const list = Array.isArray(items) ? items : [];
   const n = clampBatchSize(size);
-  const c = clampContextRows(ctx);
+  const indices = pendingIdxs || list.map((_, i) => i);
   const out = [];
-  for (let i = 0; i < list.length; i += n) {
-    const idxs = [];
-    for (let k = i; k < Math.min(i + n, list.length); k++) idxs.push(k);
-    const refs = [];
-    if (c > 0 && i > 0) {
-      for (let k = Math.max(0, i - c); k < i; k++) {
-        const it = list[k];
-        const zh = it && (it.zh != null ? it.zh : it.translation);
-        if (zh) refs.push({ text: it && it.text, zh });
-      }
-    }
+  for (let i = 0; i < indices.length; i += n) {
+    const idxs = indices.slice(i, i + n);
+    const refs = translationRefs(list, idxs[0], ctx);
     out.push({ idxs, refs });
   }
   return out;
@@ -287,6 +289,6 @@ module.exports = {
   stripReasoning, looksLikeReasoning, extractJsonArray, parseJsonArray,
   parseLineArrayReply, unwrapJsonArrayString, punctPairsSane, chattyLine, LlmError,
   clampBatchSize, planChunks, normalizeZhPunctuation, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
-  clampTemperature, clampContextRows, buildTranslateUserMessage, planJobs,
+  clampTemperature, clampContextRows, buildTranslateUserMessage, planJobs, translationRefs,
   TEMP_MIN, TEMP_MAX, TEMP_DEFAULT, CTX_MIN, CTX_MAX, CTX_DEFAULT,
 };

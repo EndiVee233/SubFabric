@@ -327,6 +327,20 @@ export class Timeline {
     /* 主题色：游标 / 选中环 / 波形都跟着界面主题走。
        换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
     this.accent = cssVar('--accent', C.accent);
+    this.colors = { ...C, rulerBg0: '#16161c', rulerBg1: '#101015' };
+    const syncStudioColors = () => {
+      if (!document.body?.classList?.contains('sf-studio')) return;
+      Object.assign(this.colors, {
+        bg: cssVar('--bg-1', C.bg), waveBg: cssVar('--bg-2', C.waveBg),
+        filmBg: cssVar('--bg-2', C.filmBg), filmBorder: cssVar('--border', C.filmBorder),
+        laneBg: cssVar('--bg-1', C.laneBg), laneBorder: cssVar('--border', C.laneBorder),
+        ruler: cssVar('--text-1', C.ruler), rulerTick: cssVar('--border', C.rulerTick),
+        rulerBg0: cssVar('--bg-2', '#16161c'), rulerBg1: cssVar('--bg-1', '#101015')
+      });
+      this._dirty = true;
+    };
+    syncStudioColors();
+    window.addEventListener('sf-studio-theme', syncStudioColors);
     /* 主题色上该用的前景色（accent.js 按主题色亮度算的 --accent-ink）。canvas 读不到 CSS
      * 变量，和 accent 一起缓存、一起在 ss-accent 里刷新。 */
     this.accentInk = cssVar('--accent-ink', '#22150e');
@@ -1159,10 +1173,10 @@ export class Timeline {
     const ctx = this.ctx;
     const W = this._cssW(), H = this._cssH();
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = C.bg;
+    ctx.fillStyle = this.colors.bg;
     ctx.fillRect(0, 0, W, H);
     if (!this.duration) {
-      ctx.fillStyle = C.ruler;
+      ctx.fillStyle = this.colors.ruler;
       ctx.font = '13px "Microsoft YaHei", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('打开视频后，这里显示时间轴', W / 2, H / 2);
@@ -1343,7 +1357,7 @@ export class Timeline {
   _drawFilmstrip(ctx, W) {
     const step = this._thumbStep();
     const spanStart = this.viewStart, spanEnd = this.viewStart + W / this.pxPerSec;
-    ctx.fillStyle = C.filmBg;
+    ctx.fillStyle = this.colors.filmBg;
     ctx.fillRect(0, 0, W, FILM_H);
 
     const i0 = Math.max(0, Math.floor(spanStart / step));
@@ -1376,7 +1390,7 @@ export class Timeline {
         ctx.fillStyle = '#191922';
         ctx.fillRect(c.x1 + 0.5, 0.5, w - 1, FILM_H - 1);
       }
-      ctx.strokeStyle = C.filmBorder;
+      ctx.strokeStyle = this.colors.filmBorder;
       ctx.lineWidth = 1;
       ctx.strokeRect(c.x1 + 0.5, 0.5, w - 1, FILM_H - 1);
       // 时间标签(橙色小字, 参考图样式)
@@ -1391,7 +1405,7 @@ export class Timeline {
         ctx.fillText(label, c.x1 + 6, FILM_H - 4);
       }
     }
-    ctx.strokeStyle = C.filmBorder;
+    ctx.strokeStyle = this.colors.filmBorder;
     ctx.beginPath(); ctx.moveTo(0, FILM_H + 0.5); ctx.lineTo(W, FILM_H + 0.5); ctx.stroke();
   }
 
@@ -1404,18 +1418,18 @@ export class Timeline {
   _drawRuler(ctx, W) {
     const top = this._filmH();
     const g = ctx.createLinearGradient(0, top, 0, top + RULER_H);
-    g.addColorStop(0, '#16161c');
-    g.addColorStop(1, '#101015');
+    g.addColorStop(0, this.colors.rulerBg0);
+    g.addColorStop(1, this.colors.rulerBg1);
     ctx.fillStyle = g;
     ctx.fillRect(0, top, W, RULER_H);
-    ctx.strokeStyle = C.laneBorder;
+    ctx.strokeStyle = this.colors.laneBorder;
     ctx.beginPath(); ctx.moveTo(0, top + RULER_H + 0.5); ctx.lineTo(W, top + RULER_H + 0.5); ctx.stroke();
 
     const step = this._niceStep(80);
     const t0 = Math.max(0, Math.floor(this.viewStart / step) * step);
     const sub = step / 5;                       // 次刻度: 主刻度之间再分 5 格, 读数更好对位
     const end = this.viewStart + W / this.pxPerSec + step;
-    ctx.strokeStyle = C.rulerTick;
+    ctx.strokeStyle = this.colors.rulerTick;
     ctx.beginPath();
     for (let st = t0; st <= end; st += sub) {
       const x = Math.round(this.t2x(st)) + 0.5;
@@ -1430,7 +1444,7 @@ export class Timeline {
     for (let tt = t0; tt <= end; tt += step) {
       const x = Math.round(this.t2x(tt)) + 0.5;
       if (x < -60 || x > W + 10) continue;
-      ctx.fillStyle = C.ruler;
+      ctx.fillStyle = this.colors.ruler;
       ctx.fillText(fmtTime(tt, 1).replace(/\.0$/, ''), x + 4, top + RULER_H - 8);
     }
   }
@@ -1740,7 +1754,7 @@ export class Timeline {
     if (!h) return;
     const top = this._lanesTop();
     // 带底色(比轨道底略亮, 让波形所在区域一眼可辨)
-    ctx.fillStyle = C.waveBg;
+    ctx.fillStyle = this.colors.waveBg;
     ctx.fillRect(0, top, W, h);
     this._drawWaveLayer(ctx, W, top + 2, h - 4);
   }
@@ -1878,8 +1892,9 @@ export class Timeline {
     ctx.clip(path);
     /* 支持 filter 才重画波形做模糊；不支持就只压暗（老浏览器上仍能分出层次）。
      * 注意顺序：先设 filter 再画，画完必须复位，否则会影响后面的绘制。 */
-    const canBlur = typeof ctx.filter === 'string';
-    if (canBlur) ctx.filter = 'blur(3px)';
+    const studio = document.body?.classList?.contains('sf-studio');
+    const canBlur = typeof ctx.filter === 'string' && !(studio && this._drag);
+    if (canBlur) ctx.filter = studio ? 'blur(1.25px)' : 'blur(3px)';
     this._drawWaveLayer(ctx, W, top, h);         // 在裁剪区内重画一遍 → 这块被模糊
     if (canBlur) ctx.filter = 'none';
     ctx.fillStyle = 'rgba(8,8,12,.46)';          // 压暗：让块与波形分出层次
@@ -1894,10 +1909,10 @@ export class Timeline {
       // 轨道底**只在没有波形时**才铺不透明底色: 波形与轨道重叠, 用不透明底会把波形盖死,
       // 字幕块就"贴"不到波形上了(块间缝隙也看不到波形)。
       if (!this._waveH()) {
-        ctx.fillStyle = C.laneBg;
+        ctx.fillStyle = this.colors.laneBg;
         ctx.fillRect(0, yy, W, lh);
       }
-      ctx.strokeStyle = C.laneBorder;
+      ctx.strokeStyle = this.colors.laneBorder;
       ctx.beginPath(); ctx.moveTo(0, yy + lh + 0.5); ctx.lineTo(W, yy + lh + 0.5); ctx.stroke();
 
       // 波形由 _drawWaveBand 统一画在下面(只画一次), 不再每轨重画。

@@ -177,6 +177,7 @@ function Invoke-Quit {
     $req.Timeout = 3000
     $req.ReadWriteTimeout = 3000
     $req.Headers.Add('X-SubFabric-Quit', '1')
+    $req.Headers.Add('X-SubFabric-Token', $env:SUBFABRIC_CONTROL_TOKEN)
     $req.ContentLength = 0
     $req.GetResponse().Close()
     Write-TrayLog '服务已接受退出请求'

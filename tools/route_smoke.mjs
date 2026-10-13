@@ -51,7 +51,7 @@ const ROUTES = [
 
 function req(method, p) {
   return new Promise((resolve) => {
-    const r = http.request({ host: HOST, port: PORT, method, path: p, timeout: 8000 }, (res) => {
+    const r = http.request({ host: HOST, port: PORT, method, path: p, headers: { Origin: `http://${HOST}:${PORT}` }, timeout: 8000 }, (res) => {
       let n = 0;
       res.on('data', (c) => { n += c.length; });
       res.on('end', () => resolve({ status: res.statusCode, bytes: n }));

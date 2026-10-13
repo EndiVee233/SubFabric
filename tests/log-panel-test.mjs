@@ -91,16 +91,21 @@ for (const act of ['realign', 'split', 'merge', 'delete', 'retranslate', 'reflec
 }
 /* why 里要带**依据**，否则事后没法复盘 —— 这是"为什么"这个需求的核心。
  * realign 尤其重要：锚点率决定这次对齐可不可信。 */
-ok(/锚点 \$\{b\.anchors\}\/\$\{b\.words\.length\}/.test(MJ), '重排记录了锚点率作为依据');
-ok(/发音人 \$\{b\.voice/.test(MJ), '重排记录了发音人/语速');
+ok(/\$\{b\.anchors\}\/\$\{b\.words\.length\} 个词对上/.test(MJ), '重排记录了锚点率作为依据');
+ok(/词吻合率 \$\{Math\.round/.test(MJ), '重排记录了词吻合率作为依据');
 ok(/切点取第 \$\{k\}\/\$\{totW\} 个词的词间中点/.test(MJ), '分句记录了切点依据');
 ok(/两行本是同一句/.test(MJ), '合并说明了原因');
 
 console.log('\n== 6. 重排设置（全局设置里）==');
-for (const id of ['st-realign-voice', 'st-realign-rate', 'st-realign-rate-val',
-                  'st-realign-minratio', 'st-realign-note']) {
+/* ⚠ 2026-10-12 重写：重校对不再"用 TTS 朗读合成语音、再识别那段合成语音"
+ *   （那样得到的逐词时间是按 TTS 节奏**缩放**出来的，不是从原片量出来的），
+ *   改成切出该句在**原片音频**里的那一段重新识别。旧的"朗读语音 / 语速"控件与绑定
+ *   一并移除；这一节改成钉**新契约**，而且比原来钉得更严（见下面那组 ★）。 */
+for (const id of ['st-realign-minratio', 'st-realign-note']) {
   ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
 }
+ok(!/id="st-realign-voice"/.test(HTML) && !/id="st-realign-rate"/.test(HTML),
+  '★ TTS 专用的语音/语速控件已移除（新方案不朗读）');
 /* ⚠ 这条以前断言的是 `action === 'realign-settings'` —— 即它**钉住了错误的挂载位置**：
  *   服务端把处理块放在 handleProjectsRoutes 里（只能被 /api/projects/<id>/... 命中），
  *   而前端 project.js 调的是 /api/asr/realign-settings → 一律 404（面板读不到、存不了）。
@@ -115,51 +120,48 @@ ok(/readAsrSettings\(\)\.realign/.test(SRV), '设置存在 asr/settings.json 的
  *   第一版就漏了这步 —— minAnchorRatio 存了却从没传给 planBlock，"最低锚点率"是个摆设。 */
 ok(/clamp\(rs\.minAnchorRatio, 0\.3, 1, alignMod\.MIN_ANCHOR_RATIO\)/.test(SRV),
   '服务端读取 minAnchorRatio（在 realignPrep 里统一解析）');
-ok(/minAnchorRatio: prep\.minAnchorRatio \}/.test(SRV), '**真的传给了 planBlock**（不是只存不用）');
-ok(/voice: String\(\(o\.voice !== undefined \? o\.voice : rs\.voice\)/.test(SRV),
-  '朗读语音默认取设置');
-ok(/rate: Number\.isFinite\(Number\(o\.rate\)\) \? Number\(o\.rate\) : clamp\(rs\.rate/.test(SRV),
-  '语速默认取设置');
-ok(/realignLoad\(\)/.test(fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8')),
-  '设置页加载时读取');
+ok(/minAnchorRatio: prep\.minAnchorRatio, rawTimes: true \}/.test(SRV),
+  '**真的传给了 planBlock**，且 rawTimes=true（用实测时间，不做整体缩放）');
+ok(/realignLoad\(\)/.test(PJ), '设置页加载时读取');
+ok(!/st-realign-voice|st-realign-rate/.test(PJ), '前端不再绑定已移除的 TTS 控件');
+/* ★ 新方案的命门逐条钉住 —— 任何一条错了，逐词时间都会整体偏掉或回到"编的"老路。 */
 {
-  const PJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
-  // 语音下拉要只列英文：TTS 是拿英文台词去念的，中文/日文声音念英文会糊
-  ok(PJ.includes('/^en/i.test(String(vo.culture'), '语音下拉只列英文语音');
-  ok(/if \(rate\) rate\.addEventListener\('input'/.test(PJ), '拖语速时先更新旁边的文字');
+  const a = SRV.indexOf('async function realignOne');
+  const b = SRV.indexOf('async function realignRecognize');
+  const one = (a >= 0 && b > a) ? SRV.slice(a, b) : '';
+  ok(one.length > 0, '找得到 realignOne 的实现');
+  ok(/audioSlice\.sliceAudio\(FFMPEG, prep\.audioWav/.test(one),
+    '★ 切的是 prep.audioWav（原片音频），不是合成语音');
+  ok(!/ttsToWav|ttsText/.test(one), '★ realignOne 里不再出现 TTS');
+  ok(/Number\(w\.start\) \+ from/.test(one),
+    '★ 切片内的相对时间必须加回切片起点（否则整句平移，且在稿子上看不出来）');
+  ok(/if \(r2\.ratio > r\.ratio\)/.test(SRV),
+    '★ 第二级必须**更吻合才采纳**（实测热词偏置不稳定，没有闸门就是引入风险）');
+  ok(/REALIGN_MODEL_ID = 'parakeet-tdt-0\.6b-v2'/.test(SRV),
+    '★ 引擎定到 sherpa-onnx 版 parakeet（热词只有这个后端支持，NPU 会静默忽略）');
 }
 
 console.log('\n== 7. ★ 字幕自动保存必须能成功（丢字幕的真凶）==');
 {
-  /* 实测：PUT /api/projects/<id>/subtitle 每次保存都返回 500，
-   * 日志里累计 58 次 `[handler error] ... ReferenceError: finish is not defined`。
-   * 根因：那版实现引用了作用域里根本不存在的 finish()。
-   * 后果：文件其实被写进去了，但前端收到 500 会认为没存上；
-   * 用户那边的表现就是"改了半天，稿子莫名其妙缺内容"。
-   *
-   * 现在这段是**流式落盘**实现（上游版）: finish 在本段内就地定义、req.pipe(out)
-   * 是真实接线（out = createWriteStream）。断言按这个形态守，但保留原来的本意:
-   * 「不许引用未定义的符号」「成功必须回 200」「失败要明确报错」「原子替换」。
-   */
-  const i = SRV.indexOf("action === 'subtitle' && (req.method === 'PUT' || req.method === 'POST')");
-  ok(i > 0, '找到字幕保存路由');
-  // 只看这一段（到下一个 action 判断为止），并**剥掉注释** ——
-  // 注释里也会出现 `finish(...)` / `req.pipe(out)` 字样，不剥会误报（实测踩过）。
-  const raw = SRV.slice(i, SRV.indexOf("action === 'subtitle' && req.method === 'GET'", i));
-  const seg = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-  const defAt = seg.search(/const\s+finish\s*=\s*\(code, body\)\s*=>/);
-  ok(defAt >= 0, 'finish 在本段内有局部定义（不是引用外部符号）');
-  const calls = [];
-  { const re = /[^\w.$]finish\s*\(/g; let m; while ((m = re.exec(seg))) calls.push(m.index); }
-  ok(defAt >= 0 && calls.length > 0 && calls.every(ix => ix > defAt),
-    '所有 finish() 调用都在局部定义之后（不再有 "finish is not defined"）');
-  ok(/const out = fs\.createWriteStream\(subTmp\)/.test(seg) && /req\.pipe\(out\)/.test(seg),
-    '流式落盘接线完整（out 有定义 + req.pipe(out) 是真接线）');
-  ok(/finish\(200, \{ ok: true, savedAt: meta\.modifiedAt \}\)/.test(seg),
-    '成功时回应 200（sendJson 由 finish 收口）');
-  // 写盘失败必须报出来，而不是静默或抛到外层
-  ok(/写入失败\(磁盘\/权限\?\)/.test(seg), '写盘失败会返回明确的错误信息');
-  ok(/renameSync\(subTmp/.test(seg), '仍是原子替换（打开方读不到半截字幕）');
+  // 原断言绑定临时文件参数和旧响应形状，版本保存升级后改为实际 HTTP 行为。
+  const { isolatedServer } = await import('./helpers/isolated-server.mjs');
+  const s = await isolatedServer();
+  try {
+    const dir = path.join(s.root, 'projects/p-log-save'); fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'subtitle.srt');
+    fs.writeFileSync(file, '1\n00:00:01,000 --> 00:00:02,000\nold\n');
+    fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify({ id: 'p-log-save', subtitle: { file: 'subtitle.srt' } }));
+    const url = '/api/projects/p-log-save/subtitle';
+    const revision = (await s.call(url)).headers.get('etag').replaceAll('"', '');
+    const text = '1\n00:00:01,000 --> 00:00:02,000\nupdated\n';
+    const saved = await s.call(url + '?revision=' + revision, { method: 'PUT', body: text });
+    const body = await saved.json();
+    ok(saved.status === 200 && body.ok && /^[a-f0-9]{64}$/.test(body.revision), '完整提交后回应 200 与新稿件版本');
+    ok(fs.readFileSync(file, 'utf8') === text && await (await s.call(url)).text() === text, '响应成功时磁盘和重载内容都是完整新稿件');
+    const stale = await s.call(url + '?revision=' + revision, { method: 'POST', body: 'stale' });
+    ok(stale.status === 409 && !!(await stale.json()).error, '过期补存明确返回冲突');
+    ok(fs.readFileSync(file, 'utf8') === text, '冲突保留已经保存的新稿件');
+  } finally { await s.close(); }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

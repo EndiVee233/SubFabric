@@ -39,7 +39,7 @@ const section = (t) => console.log(`\n── ${t} ──`);
 /* ── HTTP 客户端 ── */
 function call(method, p, { headers = {}, body = null, timeout = 15000 } = {}) {
   return new Promise((resolve) => {
-    const r = http.request({ host: HOST, port: PORT, method, path: p, headers, timeout }, (res) => {
+    const r = http.request({ host: HOST, port: PORT, method, path: p, headers: { Origin: ORIGIN, ...headers }, timeout }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {

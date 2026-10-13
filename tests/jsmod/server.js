@@ -13,11 +13,16 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const childProcess = require('child_process');
+const crypto = require('crypto');
+const zlib = require('zlib');
+const { Transform } = require('stream');
+const { pipeline } = require('stream/promises');
 const resegMod = require('./reseg.js');   // 语义分句(LLM 补标点 → 按标点切句), 所有识别引擎共用
 const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型/免显卡, 只把音频传上去
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
+const realignWordsMod = require('./realign-words.js'); // 逐词重校对的纯逻辑(有单测)
 const kLine = require('./k-line.js');        // \k 卡拉OK行文本构造(初稿生成用; 与 karaoke.js 同一格式)
 const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
@@ -30,28 +35,26 @@ const asrServiceMod = require('./asr-service.js');
 const hotwordsMod = require('./hotwords.js');       // 从操作日志挖 ASR 热词候选(纯逻辑, 有单测)
 const gluedWordsMod = require('./glued-words.js');  // 扫"单词被粘住"(toescape 这类), 有单测
 const assSentencesMod = require('./ass-sentences.js'); // 从 karaoke 式 ASS 还原"句子+逐词"(服务端, 无 DOM)
+const { AssDoc } = require('./js/ass.js');
+const karaokeMod = require('./js/karaoke.js');
 
-/* 测试用页面：`/__test/<name>` 直接吐 tests/<name>。
+/* 测试用页面：仅 SUBFABRIC_TEST_MODE=1 时 `__test/<name>` 提供 tests 的普通前端文件。
  * 为什么需要：`tests/*.html` 的验证页要用 fetch 调 /api/*，而 file:// 下是跨源、
  * 拿不到数据（实测踩过：验证页里 fetch('/api/fonts') 静默失败 → 组件空转，
  * 于是"定位对不对"这类断言测的其实是个空盒子）。
- * ⚠ 只在测试目录里按文件名取，不做路径拼接 —— 不给任意文件读取留口子。 */
+ * ⚠ 文件名、扩展名与全部祖先链接都检查；运行模式不公开 tests 目录。 */
 function serveTestPage(req, res, pathname) {
+  if (process.env.SUBFABRIC_TEST_MODE !== '1' || !['GET', 'HEAD'].includes(req.method)) return false;
   const m = /^\/__test\/([A-Za-z0-9_.-]{1,64})$/.exec(pathname);
   if (!m) return false;
   const name = m[1];
-  const p = path.join(ROOT, 'tests', name);
-  if (!p.startsWith(path.join(ROOT, 'tests')) || !fs.existsSync(p) || !fs.statSync(p).isFile()) {
+  const p = /^(?!\.)[A-Za-z0-9_.-]+\.(?:html|js|mjs|css)$/.test(name) && publicResource('/tests/' + name);
+  if (!p || !fs.existsSync(p) || !fs.statSync(p).isFile()) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('not found');
     return true;
   }
-  const ext = path.extname(name).toLowerCase();
-  const type = ext === '.html' ? 'text/html; charset=utf-8'
-    : ext === '.js' || ext === '.mjs' ? 'text/javascript; charset=utf-8'
-      : ext === '.css' ? 'text/css; charset=utf-8' : 'application/octet-stream';
-  res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
-  res.end(fs.readFileSync(p));
+  serveFile(req, res, p);
   return true;
 }
 
@@ -308,6 +311,37 @@ function safeJoin(root, urlPath) {
   return p;
 }
 
+// 明确列出浏览器入口、依赖和双端纯模块；editor 下的后端模块不随目录一并公开。
+const STATIC_RESOURCES = new Set([
+  '/editor/index.html', '/editor/css/style.css', '/editor/css/ui.css', '/editor/lang/zh-CN.json',
+  ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
+    'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
+    'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit'].map(n => '/editor/js/' + n + '.js'),
+  ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
+  '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
+  '/editor/vendor/subtitles-octopus-worker.wasm', '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf',
+]);
+function publicResource(urlPath) {
+  const file = safeJoin(ROOT, urlPath);
+  if (!file) return null;
+  // 拒绝文件链接及祖先 junction，即使目标仍在 ROOT 内也不能把敏感文件挂到允许路径。
+  for (let p = file; ; p = path.dirname(p)) {
+    try { if (fs.lstatSync(p).isSymbolicLink()) return null; }
+    catch (e) { if (e.code !== 'ENOENT') return null; }
+    if (p === ROOT) break;
+  }
+  return file;
+}
+function staticResource(pathname) {
+  let decoded;
+  try { decoded = decodeURIComponent(pathname); } catch { return null; }
+  if (/[\\\x00:%]/.test(decoded) || decoded.split('/').some(p => p === '.' || p === '..')) return null;
+  const sample = /^\/samples\/[^/]+$/.test(decoded) && !path.basename(decoded).startsWith('.')
+    && [...VIDEO_EXTS, ...SUB_EXTS].includes(path.extname(decoded).toLowerCase());
+  if (!STATIC_RESOURCES.has(decoded) && !sample) return null;
+  return publicResource(decoded);
+}
+
 /* ── 波形图: ffmpeg 直读视频音轨生成 PNG; 视频不在服务端留任何副本 ──
  * 注: 本机 ffmpeg 构建对管道不流式输出进度(showwavespic 仅 1 个输出帧), 因此进度由客户端计时提示 */
 /** 工具解析: 环境变量 → 常见安装位置 → 交给 PATH */
@@ -541,19 +575,24 @@ function peaksFromTemp(req, res, duration, rate) {
 function listSamples() {
   const videos = [];
   const subs = [];
-  for (const name of fs.readdirSync(ROOT)) {
-    const full = path.join(ROOT, name);
+  const sampleDir = path.join(ROOT, 'samples');
+  let names = [];
+  try { names = fs.readdirSync(sampleDir); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  for (const name of names) {
+    const url = '/samples/' + encodeURIComponent(name), full = staticResource(url);
+    if (!full) continue;
     let st;
     try { st = fs.statSync(full); } catch { continue; }
     if (!st.isFile()) continue;
     const ext = path.extname(name).toLowerCase();
-    if (VIDEO_EXTS.includes(ext)) videos.push({ name, url: '/' + encodeURIComponent(name), size: st.size });
-    else if (SUB_EXTS.includes(ext)) subs.push({ name, url: '/' + encodeURIComponent(name), size: st.size, kind: ext.slice(1) });
+    if (VIDEO_EXTS.includes(ext)) videos.push({ name, url, size: st.size });
+    else if (SUB_EXTS.includes(ext)) subs.push({ name, url, size: st.size, kind: ext.slice(1) });
   }
   return { videos, subs };
 }
 
 function send(res, code, headers, body) {
+  if (res.destroyed || res.writableEnded) return;
   res.writeHead(code, headers);
   res.end(body);
 }
@@ -639,13 +678,16 @@ const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId
  *   就是本段注释说的"每个请求得到新的空容器"。
  *   教训：**凡是跨请求的作业状态，一律放这一段。** */
 const realignJobs = new Map();   // 全片逐词重校对: projectId -> job
+const subtitleCommits = new Map(); // 项目最后提交：同一窗口 PUT/beacon 有序衔接，其他窗口走版本冲突
+const deletedProjects = new Set();
+const subtitleRevision = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 
 const ASR_DIR = path.join(ROOT, 'asr');
 const modelsRoot = () => {
   // 用户可在设置里指定模型下载根目录(settings.json 的 modelsRoot 字段); 未指定 → 程序自带目录
   try {
     const mr = readAsrSettings().modelsRoot;
-    if (mr && typeof mr === 'string' && mr.trim()) return path.normalize(mr.trim());
+    if (mr && typeof mr === 'string' && mr.trim()) return path.resolve(mr.trim());
   } catch {}
   return path.join(ASR_DIR, 'models');
 };
@@ -1040,7 +1082,10 @@ function translateCfg() {
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
     glossary: t.glossary || '',
     glossaryLang: t.glossaryLang || '简体',
-    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 字幕翻译」)
+    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 模型设置 → LLM」)
+    // 采样温度 / 上下文行数（同上那两栏；都由 llm-text.js 的纯函数夹范围 + 单测钉住）
+    temperature: llmText.clampTemperature(t.temperature),
+    contextRows: llmText.clampContextRows(t.contextRows),
     hasKey: !!apiKey,
   };
 }
@@ -1208,7 +1253,10 @@ async function llmChat(cfg, messages, opts) {
   /* 超时：优先 cfg.timeoutMs（按次覆盖，热词分析会用 —— 推理模型慢），
    * 其次 opts.timeoutMs，最后默认值。 */
   const timeoutMs = Number(cfg.timeoutMs || o.timeoutMs) || LLM_TIMEOUT_MS;
-  const reqBody = { model: cfg.model, messages, temperature: 0.3, max_tokens: maxTokens };
+  /* 采样温度：以前写死 0.3。现在可在「全局设置 → 模型设置 → LLM 语言模型 → 采样温度」里调，
+   * 走 cfg.temperature（saveTranslateCfg 已夹到 0~2）。没设过就还是旧值 —— 默认行为不变。 */
+  const temperature = (cfg && cfg.temperature != null) ? llmText.clampTemperature(cfg.temperature) : 0.3;
+  const reqBody = { model: cfg.model, messages, temperature, max_tokens: maxTokens };
   if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
   let resp = null, text = '', body = null;
   try {
@@ -1419,6 +1467,16 @@ function saveTranslateCfg(patch) {
     }
   }
   if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }   // 显式清除(设置里的「清除已存 Key」链接)
+  /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
+   * 负的上下文行数会让切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
+   * 有单测钉住（tests/llm-params-test.mjs）。 */
+  if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
+  if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
+  /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
+   * 负的上下文行数会让下面的切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
+   * 有单测钉住（tests/llm-params-test.mjs）。 */
+  if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
+  if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
   delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
   s.translate = Object.assign(cur, p);
   writeAsrSettings(s);
@@ -1550,6 +1608,7 @@ let ASR_PY = resolvePython();
  * 走服务失败会原样退回 spawn 路径，所以它是纯加速、不改变输出契约。 */
 const asrSvc = new asrServiceMod.AsrService({
   python: ASR_PY,
+  spawnImpl: spawn,
   onLog: (m) => console.log(m),
 });
 const asrServeOff = () => process.env.SUBFABRIC_ASR_SERVE === '0';
@@ -1657,6 +1716,26 @@ function asrExitHint(code) {
   if (code === 3221225477) return '进程崩溃（0xC0000005 内存访问违例）：多半是显卡驱动/运行库冲突，先重试一次；持续出现请带上日志反馈';
   if (code === 1) return '进程报错退出（1）：通常是 Python 依赖缺失，详见日志';
   return '退出码 ' + code;
+}
+
+/** 从子进程 stderr 里截出**给人和给日志看**的尾巴。
+ *
+ * 为什么需要它（实测的排查困境）：spawn 路径一直把 stderr 收进 `pyErr`，
+ * 但只拿它去匹配 `{"type":"error","msg":"…"}` —— **匹配不到就整段丢掉**，
+ * 最后只报一句 `识别失败（进程报错退出（1）：通常是 Python 依赖缺失，详见日志）`。
+ * 而"详见日志"里的日志面板其实也没有这段（没写进去），于是用户和事后排查都无从下手：
+ * 明明环境是好的（同一时刻手工跑同一套参数能成功），却被告知"依赖缺失"。
+ *
+ * 只保留**有信息量**的行：跳过 asr 脚本自己的 JSON 进度行（那些不是错误）、
+ * 以及 traceback 里重复的源码行，优先留 Error/Traceback/最后的异常行。 */
+function pyErrTail(text, maxLines = 8) {
+  const lines = String(text || '').split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(s => s && !s.startsWith('{'));            // JSON 进度/日志行不是错误
+  if (!lines.length) return '';
+  const important = lines.filter(s => /Error|Exception|error|Traceback|No such|not found|不能|失败|缺少|无法/i.test(s));
+  const pick = (important.length ? important : lines).slice(-maxLines);
+  return pick.join(' | ').slice(0, 600);
 }
 
 /** 初稿预检: 解释器能启动 + sherpa-onnx/numpy 能导入。结果缓存 5 分钟。
@@ -1784,9 +1863,44 @@ function castPromptCfg() {
  * asrModelDir 是旧字段(仅 parakeet 兼容)。selectedModel = 创建初稿默认用的模型。 */
 function modelDirFor(modelId) {
   const s = readAsrSettings();
-  if (s.models && s.models[modelId]) return String(s.models[modelId]);
+  if (s.models && s.models[modelId]) return path.resolve(String(s.models[modelId]));
   const m = modelById(modelId);
   return m ? path.join(modelsRoot(), m.dirName) : '';
+}
+
+// 目录名和文件清单共同证明所有权；自定义目录只解除关联，不递归清理用户文件。
+function modelOwnsName(model, name) {
+  return model.files.some(f => [f, f + '.dl', f + '.tmp', f + '.part', f + '.crdownload']
+    .some(n => n.toLowerCase() === name.toLowerCase()));
+}
+function deleteModelFiles(model) {
+  const root = path.resolve(modelsRoot()), dir = path.resolve(modelDirFor(model.id));
+  const expected = path.join(root, model.dirName);
+  const same = (a, b) => process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const detached = reason => ({ deleted: false, detached: true, reason });
+  const rel = path.relative(root, dir);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel) || !same(dir, expected)) return detached('custom-directory');
+  if (!fs.existsSync(dir)) return detached('missing');
+  // 检查包括根目录在内的每一级，禁止 junction/symlink 把删除引向另一个目录。
+  for (let p = dir;; p = path.dirname(p)) {
+    if (fs.lstatSync(p).isSymbolicLink()) return detached('linked-directory');
+    if (path.dirname(p) === p) break;
+  }
+  const realRoot = fs.realpathSync(root), realDir = fs.realpathSync(dir);
+  const realRel = path.relative(realRoot, realDir);
+  if (!realRel || realRel.startsWith('..') || path.isAbsolute(realRel)) return detached('outside-root');
+  const settings = readAsrSettings();
+  if (Object.entries(settings.models || {}).some(([id, p]) => id !== model.id && same(path.resolve(String(p)), dir))) {
+    return detached('shared-directory');
+  }
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const owned = entries.filter(e => modelOwnsName(model, e.name));
+  // 文件也不能是链接或子目录。先完整预检，再删除清单内的普通文件。
+  if (owned.some(e => !e.isFile() || fs.lstatSync(path.join(dir, e.name)).isSymbolicLink())) return detached('linked-file');
+  for (const e of owned) fs.unlinkSync(path.join(dir, e.name));
+  const empty = fs.readdirSync(dir).length === 0;
+  if (empty) fs.rmdirSync(dir);
+  return { deleted: owned.length > 0, detached: true, removedFiles: owned.length, directoryRemoved: empty };
 }
 const selectedModelId = () => {
   const s = readAsrSettings();
@@ -2714,7 +2828,16 @@ const SIMPLE_ROUTE_MAP = new Map(SIMPLE_ROUTES);
  *   ① Host 必须是回环地址 —— rebinding 时浏览器发的是 evil.com, 这里直接 403;
  *   ② 写方法若带 Origin(浏览器必带), 必须同源; 无 Origin 的非浏览器调用(tray/脚本/测试)放行。 */
 const LOOPBACK_HOST_RE = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
-const LOOPBACK_ORIGIN_RE = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i;
+const CONTROL_TOKEN = process.env.SUBFABRIC_CONTROL_TOKEN || crypto.randomBytes(32).toString('hex');
+function allowedOrigin(origin) {
+  const port = server.address()?.port || PORT;
+  return ['127.0.0.1', 'localhost', '[::1]'].some(host => origin === `http://${host}:${port}`);
+}
+function nativeAuthorized(req) {
+  const supplied = String(req.headers['x-subfabric-token'] || '');
+  const a = Buffer.from(supplied), b = Buffer.from(CONTROL_TOKEN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
 /* ⚠ 合并上游 2.3.0 时这里取的是**上游那侧**（本 fork 的旧 handleRequest 整个删掉）：
@@ -2724,7 +2847,7 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
  *   旧实现里内联的路由已逐个核过，**没有丢功能**（都由上游的段函数覆盖）：
  *     /api/waveform · /api/waveform-upload · /api/peaks · /api/peaks-upload · /api/upload-video
  *     → handleWaveRoutes 全部处理（含 -upload 变体与上传落盘后的 MEDIA_ALLOW 登记）
- *   兜底静态服务也一致：safeJoin(ROOT, pathname) → serveFile。
+ *   静态回落现走 staticResource 白名单与 publicResource 链接检查，再调用 serveFile。
  *
  *   但上游那份**漏掉了本 fork 的 `/__test/` 测试页服务**（serveTestPage 在上游 0 次出现），
  *   而 tests/*.html 的验证页必须从 http:// 打开才能 fetch /api/*（file:// 是跨源拿不到）——
@@ -2791,22 +2914,59 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
     }
   }
 
+  const metaSnapshots = new WeakMap();
   function readMeta(id) {
     // 并发写(如 sendBeacon 保存与打开同时发生)可能读到写了一半的文件: 重试几次
     for (let i = 0; i < 3; i++) {
-      try { return JSON.parse(fs.readFileSync(metaPath(id), 'utf8')); }
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath(id), 'utf8'));
+        metaSnapshots.set(meta, JSON.parse(JSON.stringify(meta)));
+        return meta;
+      }
       catch { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30); } catch {} }
     }
     return null;
   }
   function writeMeta(meta) {
-    fs.mkdirSync(projDir(meta.id), { recursive: true });
-    const tmp = metaPath(meta.id) + '.tmp';     // 临时文件 + 原子改名: 并发请求永远读不到半截 JSON
-    fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
-    fs.renameSync(tmp, metaPath(meta.id));
+    if (deletedProjects.has(meta.id)) throw Object.assign(new Error('项目已删除'), { name: 'AbortError' });
+    const before = metaSnapshots.get(meta);
+    if (before) {
+      const merged = updateMeta(meta.id, latest => mergeMetaChanges(latest, before, meta));
+      for (const key of Object.keys(meta)) delete meta[key];
+      Object.assign(meta, merged);
+    } else {
+      if (fs.existsSync(metaPath(meta.id))) throw new Error('拒绝无来源快照覆盖已有项目');
+      fs.mkdirSync(projDir(meta.id), { recursive: true });
+      persistMeta(meta);
+    }
+    metaSnapshots.set(meta, JSON.parse(JSON.stringify(meta)));
     // 项目记录过的视频路径登记进 /api/media 白名单(meta 是本进程内唯一可信来源;
     // 新建/重连/下载完成后都会途经这里, 保证创建后立刻可播, 不用等 meta 扫描缓存过期)
     if (meta.video && meta.video.path) MEDIA_ALLOW.add(mediaKey(meta.video.path));
+  }
+  function mergeMetaChanges(latest, before, after) {
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
+      if (!Object.hasOwn(after, key)) { delete latest[key]; continue; }
+      if (before[key] && after[key] && latest[key] && typeof after[key] === 'object'
+          && !Array.isArray(after[key]) && !Array.isArray(before[key])) {
+        mergeMetaChanges(latest[key], before[key], after[key]);
+      } else latest[key] = after[key];
+    }
+  }
+  function persistMeta(meta) {
+    const tmp = metaPath(meta.id) + '.' + crypto.randomUUID() + '.tmp';
+    try { fs.writeFileSync(tmp, JSON.stringify(meta, null, 2), { flag: 'wx' }); fs.renameSync(tmp, metaPath(meta.id)); }
+    finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
+  }
+  // 同步读取最新状态并提交字段变更，无 await，因而在本服务中具备串行原子语义。
+  function updateMeta(id, change) {
+    const latest = readMeta(id);
+    if (!latest) throw new Error('项目不存在');
+    const result = change(latest);
+    if (result && typeof result.then === 'function') throw new Error('元数据更新不能跨异步等待');
+    persistMeta(latest);
+    return latest;
   }
   function touchMeta(meta) { meta.modifiedAt = new Date().toISOString(); writeMeta(meta); }
 
@@ -2845,18 +3005,20 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
     const done = (err, body) => {
       if (dead) return;
       dead = true;
-      try { cb(err, body); }
-      catch (e) {
-        const msg = String((e && e.message) || e);
-        console.error('[handler error]', req.method, req.url, '\n', (e && e.stack) || e);
-        try {
-          if (!res.headersSent) sendJson(res, 500, { error: '服务器内部错误：' + msg });
-          else res.end();
-        } catch {}
-      }
+      chunks.length = 0;
+      if (req.aborted || res.destroyed || res.writableEnded) return;
+      if (err) return sendJson(res, err.statusCode || 400, { error: err.message });
+      return invokeRequest(req, res, () => cb(null, body));
     };
-    req.on('data', c => { size += c.length; if (size > limit) { dead = true; req.destroy(); return; } chunks.push(c); });
+    req.on('data', c => {
+      if (dead) return;
+      size += c.length;
+      if (size > limit) { done(Object.assign(new Error('请求体超过上限'), { statusCode: 413 })); req.resume(); return; }
+      chunks.push(c);
+    });
     req.on('error', () => done(new Error('request body 读取失败')));
+    req.on('aborted', () => { dead = true; chunks.length = 0; });
+    res.on('close', () => { if (!res.writableEnded) { dead = true; chunks.length = 0; } });
     req.on('end', () => done(null, Buffer.concat(chunks)));
   }
   /** 后台提取: 一次 ffmpeg 同时产出 audio.wav 与 peaks 原始 PCM(asplit), 全部临时文件成功后原子改名
@@ -3363,7 +3525,8 @@ function startPrepare(id, videoPath, mode) {
               + ' 分钟）—— 长音频 + CPU 推理最容易触发。看上面日志确认是否回退了 CPU，'
               + '或在设置里关掉「区分说话人」先出稿' + tail)));
           }
-          return done(() => reject(new Error((m && m[1]) || ('分离失败（' + asrExitHint(c) + '）'))
+          return done(() => reject(new Error((m && m[1]) || ('分离失败（' + asrExitHint(c)
+            + (pyErrTail(pyErr) ? '｜' + pyErrTail(pyErr) : '') + '）'))
             + '（已跑 ' + mins + ' 分钟' + tail + '）'));
         }
         done(() => resolve(data));
@@ -3418,6 +3581,7 @@ function startPrepare(id, videoPath, mode) {
     proc.once('exit', forget);
   }
   function killProjProcs(id) {
+    asrSvc.cancelOwner(id);
     const set = projProcs.get(id);
     if (!set) return;
     projProcs.delete(id);
@@ -3667,10 +3831,11 @@ function startPrepare(id, videoPath, mode) {
     return segs;
   }
   /** 已有译文(行数对得上才算数, 否则视为无译文) */
-  function readTranslations(id, n) {
+  function readTranslations(id, n, sourceKey) {
     try {
+      if (!sourceKey) sourceKey = subtitleSource(id).sourceKey;
       const t = JSON.parse(fs.readFileSync(path.join(projDir(id), 'translation.json'), 'utf8'));
-      if (Array.isArray(t.lines) && t.lines.length === n) return t.lines;
+      if (t.sourceKey === sourceKey && Array.isArray(t.lines) && t.lines.length === n) return t.lines;
     } catch {}
     return null;
   }
@@ -4016,54 +4181,20 @@ function startPrepare(id, videoPath, mode) {
     return { format, file, totalWords, hasTrans };
   }
 
-  /* ═══════════ 逐词时间重对齐（TTS 合成 → 重新识别 → 序列对齐） ═══════════
+  /* ═══════════ 逐词时间重对齐（切原片音频重新识别 → 序列对齐）═══════════
    *
    * 用途：某条字幕的**逐词时间戳糊了**（拖动过、或识别时把词边界摊平了），
-   * 但文本是对的。这时用 TTS 把这条字幕念一遍、再识别那段合成语音，
-   * 得到的逐词时间是一份**干净的参考节奏**；把它按比例铺回原字幕的时长即可。
+   * 但文本是对的。这里切出它在**原片音频**里的那一段重新识别，拿识别出来的
+   * 真实位置当逐词时间；没对上的词按字符数在两侧锚点之间插值补齐。
    *
    * **只改词级时间，绝不动文本** —— 这是这个功能的硬约束。
    *
-   * 为什么用 TTS 而不是直接对原音频做强制对齐：原音频里词边界只能靠识别结果反推，
-   * 而我们要修的恰恰就是那份糊掉的识别结果；合成语音的文本已知，节奏干净得多。
+   * 历史（为什么不再走这条路）：这里原本是"用 TTS 把文本念一遍 → 识别那段合成语音
+   * → 把合成语音里的相对节奏按比例缩放到原句区间"。那样得到的逐词时间**不是从原片
+   * 量出来的**，而是按 TTS 的语速推出来的 —— 实测与实测音频相差平均 0.295s、最大
+   * 0.715s，而且原音频里"这句到底念得准不准"它根本看不到。已整体废弃，
+   * 连同 SAPI 合成代码（ttsToWav）一起删除。
    */
-
-  /** 用 Windows 自带的 SAPI 把文本合成成 16k 单声道 WAV。
-   *  不引入任何外部依赖：SAPI 是系统组件，且能直接按目标格式输出
-   *  （SpeechAudioFormatInfo 指定 16kHz/16bit/单声道）—— 连重采样都省了。 */
-  function ttsToWav(text, wavPath, voice, rate) {
-    return new Promise((resolve, reject) => {
-      const safe = String(text || '').slice(0, 2000);
-      if (!safe.trim()) return reject(new Error('没有可合成的文本'));
-      // PowerShell 里用单引号字符串，文本内的单引号转义成两个
-      const lit = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-      const ps = [
-        'Add-Type -AssemblyName System.Speech',
-        '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer',
-        voice ? `try { $s.SelectVoice(${lit(voice)}) } catch {}` : '',
-        `$s.Rate = ${Number.isFinite(rate) ? Math.max(-10, Math.min(10, rate)) : 0}`,
-        '$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000,'
-          + ' [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen,'
-          + ' [System.Speech.AudioFormat.AudioChannel]::Mono)',
-        `$s.SetOutputToWaveFile(${lit(wavPath)}, $f)`,
-        `$s.Speak(${lit(safe)})`,
-        '$s.Dispose()',
-      ].filter(Boolean).join('; ');
-      const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps],
-        { windowsHide: true });
-      let err = '';
-      const t = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('TTS 超时（60s）')); }, 60000);
-      p.stderr.on('data', d => { if (err.length < 800) err += String(d); });
-      p.on('error', e => { clearTimeout(t); reject(new Error('无法启动 PowerShell：' + e.message)); });
-      p.on('close', (code) => {
-        clearTimeout(t);
-        if (code !== 0) return reject(new Error('TTS 合成失败：' + (err.trim().slice(-200) || ('退出码 ' + code))));
-        try { if (!fs.statSync(wavPath).size) throw new Error('空文件'); }
-        catch (e) { return reject(new Error('TTS 没产生音频：' + e.message)); }
-        resolve(wavPath);
-      });
-    });
-  }
 
   /** 列出本机可用的英文 SAPI 语音（前端下拉用；取不到就返回空数组，前端用系统默认） */
   function ttsVoices() {
@@ -4091,17 +4222,33 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
+  /* 重校对用的引擎 id：**sherpa-onnx 版的 parakeet**，必须是这一个 —— 逐句热词
+   * 只有 sherpa-onnx 后端支持（理由见 realignPrep 里的说明）。 */
+  const REALIGN_MODEL_ID = 'parakeet-tdt-0.6b-v2';
+  /* 切片的两侧 padding：句子的逐词边界与真实语音边界不会完全齐平，切太紧会把首尾词
+   * 的起音/收音削掉。实测 0.20s 够用；代价是边缘会带进相邻句的半个词 —— 那些词对不上
+   * 本句文本，会被 planBlock 的对齐判成落单丢掉，不会污染结果。 */
+  const REALIGN_PAD = 0.20;
+
   /** 对一批字幕块做重对齐。**只算不写** —— 返回提案，由前端确认后才应用。 */
-  /** 重对齐的共享准备：解析模型、设备门禁、TTS 参数、锚点率门槛。
+  /** 重对齐的共享准备：解析模型、设备门禁、原片音频、门槛。
    *  单条重排（realignBlocks）与全片重校对（runFullRealign）都用这一份，
    *  保证两条路径的判定标准完全一致（否则"单条能用、全片说不可信"会很怪）。 */
   function realignPrep(id, opt) {
     const o = (opt || {});
     const meta = readMeta(id);
     if (!meta) throw new Error('项目不存在');
-    const rr = resolveRerecogModel(meta);
-    if (rr.error) throw new Error(rr.error);
-    const model = rr.model;
+    /* ── 引擎必须是 **sherpa-onnx 版的 parakeet**，不能跟随设置里的 rerecogModel ──
+     * 第二级要拿"该句已有的词"做**逐句热词**（上下文偏置），而热词只有 sherpa-onnx
+     * 后端（asr.py）支持：asr_npu.py 里写死了「Intel NPU 后端暂不支持热词偏置,
+     * 本次忽略热词文件」（实测：参数被接受但热词文件被丢弃）。设置里的 rerecogModel
+     * 很可能指向 NPU 版，跟过去就会变成"热词静默不生效"—— 那比报错难查得多。 */
+    const model = modelById(REALIGN_MODEL_ID);
+    if (!model || !modelReady(model.id)) {
+      throw new Error('全片逐词重校对要用 GPU 版识别模型「' + REALIGN_MODEL_ID
+        + '」（逐句热词只有这个后端支持），当前没装好 —— '
+        + '到「设置 → 识别模型」把它下载下来再试');
+    }
     const ea = asrEngineArgs(model);
     const gate = asrGpuGateError(model);
     if (gate) throw new Error(gate);
@@ -4109,44 +4256,112 @@ function startPrepare(id, videoPath, mode) {
     if (!model.cloud && (!mdir || missingModelFiles(mdir, model).length)) {
       throw new Error('模型文件不完整（' + model.id + '）');
     }
-    /* 设置页里的 TTS 参数与门槛。
-     * ⚠ 这里踩过：设置存进了 asr/settings.json，但本函数从没读它、也没把
-     *   minAnchorRatio 传给 planBlock —— 于是"最低锚点率"是个**摆设**，
-     *   不管怎么调都按代码里的默认值判定。凡是存进设置的值，都要在这里真正用上。 */
+    /* 原片音频：新方案要**对真实音频**逐句重识别（旧方案是在 TTS 合成语音上识别，
+     * 时间戳是编的），所以这份文件从可选项变成了必需品。 */
+    const audioName = (meta.audio && meta.audio.file) || 'audio.wav';
+    const audioWav = safeProjectFile(id, audioName);
+    if (!audioWav || !fs.existsSync(audioWav)) {
+      throw new Error('这个稿件没有音频文件（' + audioName + '），没法对原片重识别');
+    }
+    /* 设置页里剩下的门槛。⚠ 这里踩过：设置存进了 asr/settings.json，但本函数从没读它、
+     *   也没把 minAnchorRatio 传给 planBlock —— 于是"最低锚点率"是个**摆设**，
+     *   不管怎么调都按代码里的默认值判定。凡是存进设置的值，都要在这里真正用上。
+     *   （voice/rate 是旧 TTS 方案的遗留，重校对不再用：现在的时间戳来自实测音频。） */
     const rs = (readAsrSettings().realign) || {};
     const clamp = (v, lo, hi, dflt) => {
       const n = Number(v);
       return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
     };
     return {
-      meta, model, ea, mdir, confMode: asrConfidenceFor(meta),
-      voice: String((o.voice !== undefined ? o.voice : rs.voice) || '').trim(),
-      rate: Number.isFinite(Number(o.rate)) ? Number(o.rate) : clamp(rs.rate, -10, 10, 0),
+      meta, model, ea, mdir, audioWav, confMode: asrConfidenceFor(meta),
+      // 热词强度沿用「设置 → 识别提示词」那个（实测 3.0 生效、≥6 开始复读热词）
+      hotwordsScore: asrHintCfg().hotwordsScore,
       minAnchorRatio: clamp(rs.minAnchorRatio, 0.3, 1, alignMod.MIN_ANCHOR_RATIO),
-      // 全片重校对的**置信度**门槛（与锚点率门槛不同：那个是"能不能用"，这个是"值不值得改"）
+      // 全片重校对的**采纳门槛**：第一级（无热词重识别）与该句已有文本的词吻合率
       threshold: clamp(o.threshold !== undefined ? o.threshold : rs.minConfidence, 0.3, 1, 0.7),
     };
   }
 
-  /** 对**一条**字幕做重对齐：TTS 朗读 → ASR 识别 → 序列对齐。
-   *  @returns 提案对象（含 words / confidence），**不写任何文件**。 */
-  async function realignOne(prep, block, tmpDir, tag) {
+  /** 对**一条**字幕做重校对：切该句的**原片音频** → 重新识别 → 按实测时间戳重排逐词时间。
+   *
+   *  与旧方案（TTS 朗读 → 对合成语音识别 → 把相对节奏整体缩放到原句区间）的区别：
+   *  旧方案的时间戳**从来不是从原片量出来的**，是"看 TTS 念得像不像"推出来的；
+   *  这里每个词的时间都来自它在本片音频里的真实位置（实测两者平均差 0.295s、最大 0.715s）。
+   *
+   *  @param hotwords 逐句热词（第二级用，**只作用于这一次识别**）；不传 = 第一级。
+   *  @returns 提案对象（含 words / ratio），**不写任何文件**。 */
+  async function realignOne(prep, block, tmpDir, tag, hotwords) {
     const text = String(block.text || '');
-    const spoken = alignMod.ttsText(text);
     const start = Number(block.start), end = Number(block.end);
     const item = {
       start, end, text, ok: false, words: [], anchors: 0, ratio: 0,
       confidence: 0, heard: '', note: '',
     };
-    if (!spoken) { item.note = '这条没有可念的文本（可能只有标签）'; return item; }
+    if (!text.trim()) { item.note = '这条没有可校对的文本（可能只有标签）'; return item; }
     if (!(end > start)) { item.note = '时间区间无效'; return item; }
-    const wav = path.join(tmpDir, `a-${tag}.wav`);
-    const outJson = path.join(tmpDir, `a-${tag}.json`);
-    await ttsToWav(spoken, wav, prep.voice, prep.rate);
-    // 合成音频走同一套识别参数（含项目当前的逐句置信度档位）。
-    // 参数由 asrArgsFor 按**该引擎的 CLI 契约**生成 —— nemo 不吃 --tta，别再这里手拼。
-    const asrArgs = [prep.ea.script,
-      ...asrArgsFor(prep.ea, prep.mdir, wav, outJson, prep.confMode)];
+    const { from, to } = realignWordsMod.sliceRange(
+      start, end, REALIGN_PAD, prep.meta && prep.meta.duration);
+    const wav = path.join(tmpDir, `r-${tag}.wav`);
+    const outJson = path.join(tmpDir, `r-${tag}.json`);
+    await audioSlice.sliceAudio(FFMPEG, prep.audioWav, from, to, wav, false);
+    const data = await realignRecognize(prep, wav, outJson, hotwords);
+    /* 识别词的时间是**切片内**的相对时间 —— 必须把切片起点加回去才是原片绝对时间。
+     * 这一步差一点，整句的逐词时间就会整体平移，而且在稿子上很难看出来。 */
+    const recWords = [];
+    for (const s of (data.segments || [])) {
+      for (const w of (s.words || [])) {
+        if (Number.isFinite(w.start) && Number.isFinite(w.end)) {
+          recWords.push({
+            word: w.word || w.text || '',
+            start: Number(w.start) + from, end: Number(w.end) + from,
+          });
+        }
+      }
+    }
+    /* rawTimes：时间戳是**实测值**，不做整体缩放。
+     * 缩放那一步是给合成语音准备的（TTS 的语速/停顿与被念原文无关，只能借相对节奏）；
+     * 现在识别的是原片音频，再缩放等于把测量结果按块长拉走。 */
+    const plan = alignMod.planBlock(text, { start, end }, recWords,
+      { minAnchorRatio: prep.minAnchorRatio, rawTimes: true });
+    Object.assign(item, {
+      ok: plan.ok, words: plan.words, anchors: plan.anchors, ratio: plan.ratio,
+      confidence: plan.confidence, note: plan.note,
+      heard: recWords.map(w => w.word).join(' ').slice(0, 200),
+      hotwords: (hotwords && hotwords.length) ? hotwords.slice(0, 12) : undefined,
+    });
+    return item;
+  }
+
+  /** 跑一次识别：优先**常驻服务**（省掉每次约 12s 的模型加载），失败退回 spawn。
+   *  hotwords 非空时由常驻 worker 按这组词重建识别器（实测 3.6s），且**只作用于本次**。 */
+  async function realignRecognize(prep, wav, outJson, hotwords) {
+    const ea = prep.ea;
+    const hw = (hotwords && hotwords.length) ? hotwords : undefined;
+    if (asrCanServe(ea.script)) {
+      try {
+        await asrSvc.transcribe({
+          owner: prep.meta.id,
+          script: ea.script, model: prep.mdir, provider: ea.provider,
+          extra: ea.extra || [], audio: wav,
+          // 重校对只认词的时间，不需要稳定性重跑（--tta 0 省掉两遍解码）
+          tta: 0, outPath: outJson,
+          hotwords: hw, hotwordsScore: prep.hotwordsScore,
+        });
+        return JSON.parse(fs.readFileSync(outJson, 'utf8'));
+      } catch (e) {
+        if (e.name === 'AbortError' || deletedProjects.has(prep.meta.id) || shuttingDown) throw e;
+        console.error('[realign] 常驻识别失败，退回 spawn：' + ((e && e.message) || e));
+      }
+    }
+    const asrArgs = [ea.script, ...asrArgsFor(ea, prep.mdir, wav, outJson, 'off')];
+    if (hw) {
+      /* spawn 路径没有逐句热词通道：写一份临时词表交给 asr.py（它自己转 BPE 片段并
+       * 预校验）。常驻服务那条路走的是 job 里的 hotwords 字段，不由这里拼 CLI。 */
+      const hf = path.join(path.dirname(outJson),
+        'hw-' + path.basename(outJson, '.json') + '.txt');
+      fs.writeFileSync(hf, hw.join('\n') + '\n', 'utf8');
+      asrArgs.push('--hotwords-file', hf, '--hotwords-score', String(prep.hotwordsScore));
+    }
     await new Promise((res, rej) => {
       const pr = spawn(ASR_PY, asrArgs, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       let err = '';
@@ -4159,29 +4374,107 @@ function startPrepare(id, videoPath, mode) {
         res();
       });
     });
-    const data = JSON.parse(fs.readFileSync(outJson, 'utf8'));
-    // 合成音频通常只有一句；多句时把它们按序摊平成一个词序列
-    const recWords = [];
-    for (const s of (data.segments || [])) {
-      for (const w of (s.words || [])) {
-        if (Number.isFinite(w.start) && Number.isFinite(w.end)) {
-          recWords.push({ word: w.word || w.text || '', start: w.start, end: w.end });
-        }
-      }
+    return JSON.parse(fs.readFileSync(outJson, 'utf8'));
+  }
+
+  /* ── 第二级的逐句热词：让 LLM 从「该句已有的词」里挑出**不常见 / 专有**的 ──
+   *
+   * 为什么不能"把每个词都做成热词"：实测过 —— 整句所有词都当热词是**净负效果**
+   * （14 句样本：好转 1、变差 3、无变化 10），而且能把一句本来完全正确的话退化成
+   * 数字复读：
+   *     `tens of thousands of players online at any given moment`
+   *     → `1 1 1 1 1 1 1 1 1 1 1 1 1 1 10 1`
+   * 常见虚词模型本来就认得，把它们塞进上下文图只会挤掉声学证据。真正值得偏置的是
+   * **专有名词**（人名 / 服务器名 / 术语）—— 实测 `saparata` 这类正是偏置能救回来的。
+   * "哪些词不常见"规则判不出来（分不清专名与常用词），所以交给 LLM。
+   *
+   * 失败 / 超时 / 没配模型一律**降级为空数组**：第二级是锦上添花，
+   * 绝不能因为它把整片作业拖垮 —— 第一级的结果本来就够用。
+   */
+  /* 抠不出热词时最多打几条原始回复（全片几千句，不能每句都刷屏） */
+  let rareEmptyLogs = 0;
+
+  async function pickRareHotwords(text, words) {
+    /* 候选来源：全片重校对拿到的句子带逐词数组；单条重排从前端拿到的块**只有文本**，
+     * 那种情况就现场分词，否则候选为空、第二级会被静默跳过。 */
+    const src = (words && words.length) ? words : alignMod.tokenize(text || '');
+    const cand = realignWordsMod.hotwordCandidates(src);
+    if (!cand.length) return [];
+    const cfg = analyzeCfg();
+    if (!analyzeReady(cfg)) {
+      console.error('[realign] 分析模型没配好，跳过第二级热词偏置');
+      return [];
     }
-    const plan = alignMod.planBlock(text, { start, end }, recWords,
-      { minAnchorRatio: prep.minAnchorRatio });   // ← 设置页里那个门槛真正生效的地方
-    Object.assign(item, {
-      ok: plan.ok, words: plan.words, anchors: plan.anchors, ratio: plan.ratio,
-      confidence: plan.confidence, note: plan.note,
-      heard: recWords.map(w => w.word).join(' ').slice(0, 200),
-    });
-    return item;
+    const sys = [
+      '你在帮一个字幕工具挑「ASR 热词」。热词会喂给语音识别模型做上下文偏置，',
+      '让它在重新识别这句话时更倾向吐出这些词。',
+      '',
+      '只挑**不常见 / 专有**的词：人名、地名、服务器名、组织名、作品名、专业术语、缩写。',
+      '以下一律不要：常见虚词与常用词（the / a / of / and / is / you / to 这类）、',
+      '纯数字、单个字母、以及任何"普通英语里很常见"的词。',
+      '',
+      '热词加错了会让识别模型**反复吐这个词**，所以拿不准就不要给 —— 宁可少给。',
+      '最多 6 个。只输出一个 JSON 数组，元素必须是候选词里原样出现的拼写，不要任何解释。',
+    ].join('\n');
+    const user = '句子：' + String(text || '').slice(0, 300)
+      + '\n候选词：' + JSON.stringify(cand.slice(0, 60));
+    let reply = '';
+    try {
+      const res = await llmChat(cfg, [
+        { role: 'system', content: sys }, { role: 'user', content: user },
+      ], { maxTokens: 1024, timeoutMs: analyzeTimeoutMs(), kind: 'realign-hotwords' });
+      reply = (res && res.content) || '';
+    } catch (e) {
+      console.error('[realign] 热词筛选失败（跳过第二级）：' + ((e && e.message) || e));
+      return [];
+    }
+    const picked = realignWordsMod.matchPickedWords(reply, cand);
+    /* 抠不出词时把原始回复打出来（只打前几条）—— 「模型回了但我解析不出来」
+     * 和「模型真的没给」在日志上看不出区别的话，这个问题没法自查。 */
+    if (!picked.length && rareEmptyLogs < 3) {
+      rareEmptyLogs++;
+      console.error('[realign] 热词筛选没抠出词（候选 ' + cand.length + ' 个）原始回复：'
+        + reply.slice(0, 300));
+    }
+    return picked;
+  }
+
+  /** 两级重校对**一条**句子：先无热词重识别；不达标再用 LLM 筛出的专有词做逐句热词重试。
+   *
+   *  单条重排（realignBlocks）与全片重校对（runFullRealign）**共用这一份** ——
+   *  两条路径的判定标准必须一致，否则"单条能用、全片说不可信"会很怪。
+   *
+   *  @param allowHotwords 是否允许走第二级（关掉就只跑第一级，实测用得上）。
+   *  @returns 提案对象，带 level = 1|2 标明结果来自哪一级。 */
+  async function realignTwoTier(prep, t, tmpDir, tag, allowHotwords) {
+    const r = await realignOne(prep, t, tmpDir, tag);
+    r.level = 1;
+    if (r.ratio >= prep.threshold || !allowHotwords) return r;
+    let picked = [];
+    try {
+      picked = await pickRareHotwords(t.text, t.words);
+    } catch (e) {
+      console.error('[realign] 热词筛选异常（跳过第二级）：' + ((e && e.message) || e));
+    }
+    if (!picked.length) { r.hotNote = '没挑出值得偏置的词，跳过第二级'; return r; }
+    try {
+      const r2 = await realignOne(prep, t, tmpDir, 'h' + tag, picked);
+      /* ★ 必须**更吻合**才采纳。实测热词偏置不稳定：同一句一次偏成正确的
+       *   `saparata`、另一次偏成 `Zaparata`；全词热词更是把正确的句子退化成
+       *   数字复读。没有这道闸门，第二级就是在引入风险而不是收益。 */
+      if (r2.ratio > r.ratio) { r2.level = 2; return r2; }
+      r.hotTried = picked; r.hotRatio = r2.ratio;
+      return r;
+    } catch (e) {
+      r.hotNote = String((e && e.message) || e).slice(0, 120);
+      return r;
+    }
   }
 
   /** 对一批字幕块做重对齐（右键「重排逐词时间」走这里）。**只算不写**。 */
   async function realignBlocks(id, blocks, opt) {
-    const prep = realignPrep(id, opt);
+    const o = (opt || {});
+    const prep = realignPrep(id, o);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-'));
     const out = [];
     try {
@@ -4189,11 +4482,12 @@ function startPrepare(id, videoPath, mode) {
         const b = blocks[i];
         let item;
         try {
-          item = await realignOne(prep, b, tmpDir, String(i));
+          // 与全片重校对走**同一个**两级实现（判定标准必须一致，见 realignTwoTier）
+          item = await realignTwoTier(prep, b, tmpDir, String(i), o.noHotwords !== true);
         } catch (e) {
           item = {
             start: Number(b.start), end: Number(b.end), text: String(b.text || ''),
-            ok: false, words: [], anchors: 0, ratio: 0, confidence: 0, heard: '',
+            ok: false, words: [], anchors: 0, ratio: 0, confidence: 0, heard: '', level: 0,
             note: String((e && e.message) || e).slice(0, 200),
           };
         }
@@ -4202,21 +4496,24 @@ function startPrepare(id, videoPath, mode) {
     } finally {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
-    // 带上本次用的 TTS 参数：操作日志里要能看出"是哪一次、用什么声音跑的"
-    return out.map(r => Object.assign(r, { voice: prep.voice || '(系统默认)', rate: prep.rate }));
+    return out;
   }
 
-  /* ── 全片逐词重校对（TTS 朗读 → ASR 识别 → 对齐 → 逐句置信度）──────────
+  /* ── 全片逐词重校对（切原片音频 → ASR 重识别 → 对齐 → 逐句置信度）──────────
    *
    * 和「重排逐词时间」（右键单条）的区别：这里**逐句自动打分**，只对置信度
    * 达标的句子改逐词时间，不达标的原样保留。
+   *
+   * ⚠ 标题里原来写的是「TTS 朗读 → ASR 识别」——那是**旧方案**；现在切的是**原片音频**，
+   *   不朗读（SAPI 合成都删了）。留着旧说法会让读代码的人以为还有 TTS 这一环（实际踩过：
+   *   用户看到前端卡片写"正在朗读并重新识别"，以为方案没换）。
    *
    * 为什么要有这一步：单条重排需要用户先发现"这句的词时间不对"，而几百句的稿子
    * 根本看不出来哪句糊了。这里让它自己逐句体检一遍，把"可信的重排"批量做掉。
    *
    * **只改逐词时间戳**，不动文本、不动整句时间 —— 和单条重排同一约束。
    *
-   * 为什么必须逐句串行：TTS（SAPI）与 ASR 都是有状态的外部进程，
+   * 为什么必须逐句串行：切音频（ffmpeg）与重识别（ASR）都是有状态的外部进程，
    * 并发跑会互相抢设备（ASR 还占着 NPU/GPU），实测并行反而更慢且更不稳。
    */
   /* ═══════════ 建稿后的自动后处理（反思纠错 + 全片逐词重校对）═══════════
@@ -4282,7 +4579,7 @@ function startPrepare(id, videoPath, mode) {
 
     if (cfg.realign) {
       setDraft(id, { autoPost: { status: 'running', step: '全片逐词重校对' } });
-      pushDraftLog(id, apStamp() + '[自动后处理] ② 全片逐词重校对：逐句朗读 + 重新识别…');
+      pushDraftLog(id, apStamp() + '[自动后处理] ② 全片逐词重校对：逐句切出原片音频 + 重新识别…');
       try {
         realignRes = await runAutoRealign(id, (pct, msg) => {
           setDraft(id, { autoPost: { status: 'running', step: '全片逐词重校对', pct, msg } });
@@ -4344,10 +4641,18 @@ function startPrepare(id, videoPath, mode) {
     if (rr.error) throw new Error('重识别模型不可用：' + rr.error);
     const job = startReidentifyBatch(id, regions, rr.model);   // 同步返回 job
     await waitJob(job, 60 * 60 * 1000);                        // 等它跑完再往下（串行）
+    /* 有些区间**没有可识别语音**（尤其 gap 类空档），那段会被跳过而不是让整批失败
+     * （见 startReidentifyBatch 里的说明）。这里如实回报跳了几段，别让"跳过了"看着像"全成了"。 */
+    const failed = Array.isArray(job.failures) ? job.failures.length : 0;
+    if (failed) {
+      pushDraftLog(id, `[重识别] 共 ${regions.length} 段，跳过 ${failed} 段`
+        + `（那段没有可识别语音；例如 ${failed ? job.failures[0].start.toFixed(1) + '~' + job.failures[0].end.toFixed(1) + 's' : ''}）`);
+    }
     return {
       applied: use.length, skipped, findings: all.length, regions: regions.length,
       kinds: use.map(f => f.kind),
       rows: job.segments ? job.segments.length : 0,
+      failedRegions: failed,
       appliedNote: '重识别结果已就绪，在编辑器的「反思纠错」预览里复核应用',
     };
   }
@@ -4375,55 +4680,17 @@ function startPrepare(id, videoPath, mode) {
    *   · 改动只是把 asr.json 里对应句子的 words 换掉，再整体重写。 */
   async function applyRealignToProject(id, items) {
     const meta = readMeta(id);
-    if (!meta) throw new Error('项目不存在');
-
-    /* 没有 asr.json 的稿件（**导入 ASS 建的**）走另一条写回路径：
-     * 直接按行改字幕文件里那一句的时间戳 —— 不去猜 asr.json，也不重建整份 ASS
-     * （那份 ASS 里有用户自己的角色色标/说话人名/样式，重建必丢细节）。 */
-    if (!fs.existsSync(path.join(projDir(id), 'asr.json'))) {
-      const subFile = meta.subtitle && meta.subtitle.file;
-      if (!subFile) throw new Error('这个项目没有字幕文件，无法写回');
-      const subPath = safeProjectFile(id, subFile);
-      if (!subPath) throw new Error('字幕文件路径不合法，已拒绝写入');
-      const r = assSentencesMod.applyWordsToFile(subPath,
-        items.filter(it => it && Array.isArray(it.words) && it.words.length));
-      if (!r.changed) throw new Error('没有匹配到可改写的句子（字幕可能已变动，重新校对一次）');
-      return r.changed;
-    }
-
-    const segs = readSegments(id);
-    if (!segs.length) throw new Error('这个项目还没有识别结果');
-    const n = segs.length;
-    const trans = readTranslations(id, n);
-
-    let changed = 0;
-    for (const it of items) {
-      if (!Array.isArray(it.words) || !it.words.length) continue;
-      // 先按下标、再用**时间**兜底核对（序号可能因重建而漂移）
-      let k = Number(it.index);
-      let seg = (k >= 0 && k < n) ? segs[k] : null;
-      if (!seg || Math.abs(Number(seg.start) - Number(it.start)) > 0.05) {
-        seg = segs.find(s => Math.abs(Number(s.start) - Number(it.start)) <= 0.05) || null;
-      }
-      if (!seg) continue;
-      // 文本必须一致才敢改 —— 万一 ast.json 与传上来的不是同一版，宁可不改
-      if (String(seg.text || '').trim() !== String(it.text || '').trim()) continue;
-      seg.words = it.words.map(w => ({ word: w.w, start: w.s, end: w.e }));
-      changed++;
-    }
-    if (!changed) return 0;
-
-    // 把改过的 words 落回 asr.json（编辑器打开项目时读的就是它），再重建字幕
-    const tmp = path.join(projDir(id), 'asr.json.tmp');
-    fs.writeFileSync(tmp, JSON.stringify(
-      Object.assign({}, JSON.parse(fs.readFileSync(path.join(projDir(id), 'asr.json'), 'utf8')), { segments: segs })
-    ));
-    fs.renameSync(tmp, path.join(projDir(id), 'asr.json'));
-
-    const wordLevel = !!(meta.draft && meta.draft.wordLevel);
-    writeSubtitle(id, wordLevel, segs, trans);
-    touchMeta(readMeta(id) || meta);
-    return changed;
+    const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
+    if (!file) throw new Error('项目或字幕不存在');
+    const doc = new AssDoc(fs.readFileSync(file, 'utf8'));
+    const revision = subtitleRevision(doc.serialize());
+    const result = karaokeMod.applyRealignItems(doc, karaokeMod.analyzeKaraoke(doc), items, { projectId: id, revision });
+    if (!result.changed) return 0;
+    const tmp = file + '.' + crypto.randomUUID() + '.tmp';
+    try { fs.writeFileSync(tmp, doc.serialize(), { flag: 'wx' }); fs.renameSync(tmp, file); }
+    finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
+    touchMeta(readMeta(id));
+    return result.changed;
   }
 
   /* ── 全片逐词重校对的作业管理 ──────────────────────────────────────
@@ -4443,6 +4710,7 @@ function startPrepare(id, videoPath, mode) {
 
   function realignJobView(j) {
     return {
+      projectId: j.projectId, sourceRevision: j.sourceRevision,
       status: j.status, pct: j.pct, msg: j.msg, total: j.total, usable: j.usable,
       threshold: j.threshold, items: j.items, error: j.error || '',
     };
@@ -4466,6 +4734,7 @@ function startPrepare(id, videoPath, mode) {
     (async () => {
       try {
         const r = await runFullRealign(id, onProgress, opt);
+        job.projectId = id; job.sourceRevision = r.sourceRevision;
         job.items = r.items; job.threshold = r.threshold; job.total = r.total;
         job.usable = r.usable;
         job.status = 'done'; job.pct = 100;
@@ -4486,44 +4755,15 @@ function startPrepare(id, videoPath, mode) {
 
   /** 取该项目的**英文逐词句**：只有逐词轨上的句子才谈得上"重校对逐词时间"。 */
   function realignTargets(id, meta) {
-    const kar = meta && meta.kar;
-    /* 句子来源有两条路：
-     *   ① 有 asr.json（正常识别出来的稿件）→ 直接用它的 segments
-     *   ② 没有 asr.json（**导入 ASS 建的稿件**）→ 从字幕里还原 karaoke 结构
-     * 早先只走 ①，于是导入的稿件点「全片逐词重校对」直接报
-     *   ENOENT: ...\asr.json —— 用户看到的就是"这个功能对导入的稿件用不了"。 */
-    let segs;
-    try {
-      segs = readSegments(id);
-    } catch (e) {
-      segs = null;
-      /* 导入 ASS 建的稿件没有 asr.json —— 改成从字幕本身还原 karaoke 结构。
-       * 逐词样式优先用 meta.kar.wordStyle（编辑器解析出来的那个），
-       * 取不到就让解析器自己挑"条数最多的样式"。 */
-      const subFile = meta && meta.subtitle && meta.subtitle.file;
-      const subPath = subFile ? safeProjectFile(id, subFile) : null;
-      if (subPath) {
-        const parsed = assSentencesMod.sentencesFromFile(subPath, {
-          wordStyle: kar && kar.wordStyle,
-        });
-        if (parsed && parsed.length) return parsed;
-      }
-      throw e;                       // 两条路都走不通时，把原始原因抛出去
-    }
-    /* 判断哪一轨是逐词轨：识别结果里带 words 的句子就是。
-     * 不带 words 的是中文整句锚点句（翻译结果），它没有逐词时间可改。 */
-    return segs.map((s, i) => ({ s, i }))
-      .filter(x => Array.isArray(x.s.words) && x.s.words.length
-        && Number.isFinite(Number(x.s.start)) && Number.isFinite(Number(x.s.end))
-        && Number(x.s.end) > Number(x.s.start)
-        && String(x.s.text || '').trim())
-      .map(x => ({
-        index: x.i,
-        start: Number(x.s.start),
-        end: Number(x.s.end),
-        text: String(x.s.text || '').trim(),
-        words: x.s.words.map(w => ({ w: w.w, s: Number(w.s), e: Number(w.e) })),
-      }));
+    const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
+    if (!file || !/\.ass$/i.test(file)) throw new Error('逐词重校对需要当前 ASS 字幕');
+    const doc = new AssDoc(fs.readFileSync(file, 'utf8'));
+    const revision = subtitleRevision(doc.serialize());
+    return karaokeMod.analyzeKaraoke(doc).sentences
+      .map((s, index) => ({ ...s, index })).filter(s => s.words.length)
+      .map(s => ({ index: s.index, projectId: id, sourceRevision: revision,
+        targetKey: karaokeMod.realignTargetKey(s), start: s.start, end: s.end,
+        text: s.text, words: s.words.map(w => ({ w: w.w, s: w.s, e: w.e })) }));
   }
 
   /** 跑全片重校对。onProgress(pct, msg) 回报进度。 */
@@ -4531,6 +4771,7 @@ function startPrepare(id, videoPath, mode) {
     const o = opt || {};
     const prep = realignPrep(id, o);              // 与单条重排共用同一套参数与门槛
     const all = realignTargets(id, prep.meta);
+    const sourceRevision = all[0] && all[0].sourceRevision;
     if (!all.length) {
       throw new Error('这个稿件没有带逐词时间的英文行，没法重校对'
         + '（中文整句轨没有逐词时间；先在「设置 → 逐词转换」把英文转成逐词）');
@@ -4554,25 +4795,32 @@ function startPrepare(id, videoPath, mode) {
     const items = [];
     try {
       for (let i = 0; i < list.length; i++) {
+        if (deletedProjects.has(id) || shuttingDown) throw Object.assign(new Error('项目任务已取消'), { name: 'AbortError' });
         const t = list[i];
         onProgress(Math.round(2 + i / list.length * 96),
           `第 ${i + 1}/${list.length} 句：${t.text.slice(0, 34)}…`);
         let item = {
+          projectId: id, sourceRevision, targetKey: t.targetKey,
           index: t.index, target: `第 ${t.index + 1} 行`, start: t.start, end: t.end,
           text: t.text, ok: false, confidence: 0, ratio: 0, anchors: 0,
-          words: null, heard: '', note: '',
+          words: null, heard: '', note: '', level: 0,
         };
         try {
-          const r = await realignOne(prep, t, tmpDir, String(i));
-          /* ★ 达标判定用**置信度**，不是 planBlock 的 ok：
-           *   ok 只是"锚点率过了最低线"（能用），而这里要决定"值不值得改"，
-           *   门槛更高、还要看连续落单和压扁的词。 */
-          item = Object.assign(item, r, { ok: r.confidence >= prep.threshold });
+          /* 两级：第一级不带热词、对该句原片音频重新识别；不达标才用 LLM 从该句
+           * 已有的词里筛出的专有词做逐句热词重试，且**必须更吻合**才采纳。
+           * 详见 realignTwoTier 与 pickRareHotwords 的说明。 */
+          const r = await realignTwoTier(prep, t, tmpDir, String(i), o.noHotwords !== true);
+          /* ★ 采纳判定用**词吻合率**（planBlock 的 ratio），不是旧方案的对齐置信度：
+           *   它直接回答"这次从原片识别出来的词与该句已有文本对上了多少"。
+           *   对不上就说明模型这次没听清（或该句文本本身有问题），那种时间戳
+           *   不该覆盖原稿。实测全片 4821 句的平均吻合率 0.908、句均解码 0.27s。 */
+          item = Object.assign(item, r, { ok: r.ratio >= prep.threshold });
           if (!item.ok) {
-            item.note = item.note || `置信度 ${(r.confidence * 100).toFixed(0)}% 低于门槛 `
+            item.note = item.note || `词吻合率 ${(r.ratio * 100).toFixed(0)}% 低于门槛 `
               + `${(prep.threshold * 100).toFixed(0)}%，保留原逐词时间`;
           }
         } catch (e) {
+          if (e.name === 'AbortError') throw e;
           item.note = String((e && e.message) || e).slice(0, 200);
         }
         items.push(item);
@@ -4582,7 +4830,7 @@ function startPrepare(id, videoPath, mode) {
     }
     const usable = items.filter(i => i.ok).length;
     onProgress(100, `完成：${usable}/${items.length} 句达标`);
-    return { items, threshold: prep.threshold, total: items.length, usable };
+    return { items, threshold: prep.threshold, total: items.length, usable, sourceRevision };
   }
 
   /* ── 备注（时间点留言；播放时当置顶弹幕显示）────────────────────────
@@ -4641,20 +4889,28 @@ function startPrepare(id, videoPath, mode) {
    * 用 Windows 自带的 bsdtar 建包/解包（本机没有 zip 依赖，项目一直是零依赖；
    * 实测 bsdtar 建包与解包都正常，中文文件名也保留）。失败再退回 Compress-Archive。
    */
-  const SYS_TAR = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+  const SYS_TAR = process.env.SUBFABRIC_TAR || (process.platform === 'win32'
+    ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar');
 
   /** 跑一个外部命令，返回 { code, out }（与 prepare 里的实现同款：异步 spawn，不阻塞） */
-  function runTool(cmd, args, timeoutMs) {
+  function runTool(cmd, args, timeoutMs, cwd) {
     return new Promise((resolve) => {
       let p;
-      try { p = spawn(cmd, args, { windowsHide: true }); }
+      try { p = spawn(cmd, args, { windowsHide: true, cwd }); }
       catch (e) { return resolve({ code: -1, out: String((e && e.message) || e) }); }
-      let out = '';
-      const t = setTimeout(() => { try { p.kill(); } catch {} resolve({ code: -2, out: out + '\n(超时)' }); }, timeoutMs || 10 * 60 * 1000);
+      let out = '', settled = false, timedOut = false, forceTimer;
+      const finish = (code, message = out) => {
+        if (settled) return; settled = true; clearTimeout(t); clearTimeout(forceTimer);
+        resolve({ code: timedOut ? -2 : code, out: message + (timedOut ? '\n(超时)' : '') });
+      };
+      const t = setTimeout(() => {
+        timedOut = true; try { p.kill(); } catch {}
+        forceTimer = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} finish(-2); }, 2000);
+      }, timeoutMs || 10 * 60 * 1000);
       p.stdout.on('data', d => { if (out.length < 8000) out += d; });
       p.stderr.on('data', d => { if (out.length < 8000) out += d; });
-      p.on('error', e => { clearTimeout(t); resolve({ code: -1, out: String((e && e.message) || e) }); });
-      p.on('close', c => { clearTimeout(t); resolve({ code: c, out }); });
+      p.on('error', e => finish(-1, String((e && e.message) || e)));
+      p.on('close', c => finish(c));
     });
   }
 
@@ -4665,44 +4921,86 @@ function startPrepare(id, videoPath, mode) {
     if (!meta) throw new Error('项目不存在');
     const names = fs.readdirSync(dir).filter(f => packMod.shouldPack(f));
     if (!names.length) throw new Error('这个项目里没有可导出的内容');
+    for (const name of names) if (!fs.lstatSync(path.join(dir, name)).isFile()) throw new Error('项目核心文件不是普通文件：' + name);
     // 打包到临时目录，打完直接回给响应，磁盘上不留文件
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-pack-'));
     const zipPath = path.join(tmpDir, 'pack.zip');
-    let r = await runTool(SYS_TAR, ['-a', '-c', '-f', zipPath, ...names], 10 * 60 * 1000);
-    if (r.code !== 0 || !fs.existsSync(zipPath)) {
+    try {
+    let tool = 'tar';
+    let r = await runTool(SYS_TAR, ['-a', '-c', '-f', zipPath, '-C', dir, ...names], 10 * 60 * 1000, dir);
+    if (r.code !== 0 || !fs.existsSync(zipPath) || !fs.statSync(zipPath).size) {
+      if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
       // 退回 PowerShell 的 Compress-Archive（bsdtar 不可用/被拦截时）
       const list = names.map(n => path.join(dir, n));
-      const ps = 'Compress-Archive -LiteralPath ' + list.map(p => `'${String(p).replace(/'/g, "''")}'`).join(',')
+      const ps = "$ErrorActionPreference='Stop'; Compress-Archive -LiteralPath " + list.map(p => `'${String(p).replace(/'/g, "''")}'`).join(',')
         + ` -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`;
-      const r2 = await runTool('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], 10 * 60 * 1000);
-      if (r2.code !== 0 || !fs.existsSync(zipPath)) {
-        throw new Error('打包失败：bsdtar 与 Compress-Archive 都不可用（' + (r.out || r2.out || '').slice(-160) + '）');
+      const r2 = await runTool('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], 10 * 60 * 1000, dir);
+      if (r2.code !== 0 || !fs.existsSync(zipPath) || !fs.statSync(zipPath).size) {
+        throw new Error('打包失败：bsdtar 与 Compress-Archive 都不可用（' + [r.out, r2.out].filter(Boolean).join('; ').slice(-320) + '）');
       }
+      tool = 'PowerShell';
     }
-    return { zipPath, tmpDir, files: names, bytes: fs.statSync(zipPath).size };
+    return { zipPath, tmpDir, files: names, bytes: fs.statSync(zipPath).size, tool };
+    } catch (e) {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      throw e;
+    }
   }
 
   /** 解一个上传的项目包到临时目录，返回 { dir, files, manifest } */
-  async function unpackProject(zipPath) {
+  async function unpackProject(zipPath, signal) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-unpack-'));
-    const r = await runTool(SYS_TAR, ['-x', '-f', zipPath, '-C', tmpDir], 10 * 60 * 1000);
-    if (r.code !== 0) {
-      const ps = `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${tmpDir.replace(/'/g, "''")}' -Force`;
-      const r2 = await runTool('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], 10 * 60 * 1000);
-      if (r2.code !== 0) {
-        throw new Error('解包失败：不是有效的 zip，或解压工具不可用（' + (r.out || r2.out || '').slice(-160) + '）');
+    let fd;
+    try {
+      fd = fs.openSync(zipPath, 'r');
+      const size = fs.fstatSync(fd).size, tail = Buffer.alloc(Math.min(size, 65557));
+      fs.readSync(fd, tail, 0, tail.length, size - tail.length);
+      let end = -1;
+      for (let i = tail.length - 22; i >= 0; i--) {
+        if (tail.readUInt32LE(i) === 0x06054b50 && i + 22 + tail.readUInt16LE(i + 20) === tail.length) { end = i; break; }
       }
-    }
-    // 有些包会多套一层目录（比如压缩时选的是文件夹）—— 若顶层只有一个目录，就下沉一层
-    let base = tmpDir;
-    const top = fs.readdirSync(tmpDir);
-    if (top.length === 1 && fs.statSync(path.join(tmpDir, top[0])).isDirectory()) {
-      const inner = path.join(tmpDir, top[0]);
-      if (fs.readdirSync(inner).some(f => packMod.CORE_FILES.includes(f))) base = inner;
-    }
-    const files = fs.readdirSync(base).filter(f => fs.statSync(path.join(base, f)).isFile());
-    const manifest = packMod.validateManifest(files);
-    return { dir: base, tmpDir, files, manifest };
+      if (end < 0 || tail.readUInt16LE(end + 4) || tail.readUInt16LE(end + 6)
+          || tail.readUInt16LE(end + 8) !== tail.readUInt16LE(end + 10)) throw new Error('不是有效的单卷 ZIP 项目包');
+      const count = tail.readUInt16LE(end + 10), length = tail.readUInt32LE(end + 12), offset = tail.readUInt32LE(end + 16);
+      if (count > packMod.PACK_LIMITS.entries || length > packMod.PACK_LIMITS.directoryBytes
+          || offset + length !== size - tail.length + end) throw new Error('项目包目录超过上限或范围无效');
+      const directory = Buffer.alloc(length);
+      if (fs.readSync(fd, directory, 0, length, offset) !== length) throw new Error('项目包目录不完整');
+      const preflight = packMod.zipManifest(directory, count, size, offset);
+      const ranges = [];
+      let total = 0;
+      const abort = AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]);
+      for (const e of preflight.entries) {
+        const header = Buffer.alloc(30);
+        if (fs.readSync(fd, header, 0, 30, e.offset) !== 30 || header.readUInt32LE(0) !== 0x04034b50
+            || header.readUInt16LE(6) !== e.flags || header.readUInt16LE(8) !== e.method) throw new Error('项目包本地文件头不一致');
+        const nameBytes = header.readUInt16LE(26), extra = header.readUInt16LE(28);
+        const name = Buffer.alloc(nameBytes);
+        fs.readSync(fd, name, 0, nameBytes, e.offset + 30);
+        if (name.toString('utf8') !== e.name) throw new Error('项目包文件名不一致');
+        const start = e.offset + 30 + nameBytes + extra, end = start + e.compressed;
+        if (end > offset || ranges.some(r => start < r.end && end > r.start)) throw new Error('项目包数据范围无效');
+        ranges.push({ start, end });
+        let bytes = 0, crc = 0xffffffff;
+        const guard = new Transform({ transform(chunk, encoding, callback) {
+          bytes += chunk.length; total += chunk.length;
+          if (bytes > e.bytes || bytes > packMod.PACK_LIMITS.fileBytes || total > packMod.PACK_LIMITS.totalBytes) return callback(new Error('实际解压大小超过上限'));
+          crc = packMod.crcChunk(crc, chunk); callback(null, chunk);
+        } });
+        const dest = fs.createWriteStream(path.join(tmpDir, e.file), { flags: 'wx' });
+        if (!e.compressed) {
+          if (e.bytes) throw new Error('项目包压缩数据为空');
+          dest.end(); await new Promise((resolve, reject) => { dest.on('finish', resolve); dest.on('error', reject); });
+        } else {
+          const input = fs.createReadStream(zipPath, { start, end: end - 1 });
+          const stages = e.method === 8 ? [input, zlib.createInflateRaw(), guard, dest] : [input, guard, dest];
+          await pipeline(...stages, { signal: abort });
+        }
+        if (bytes !== e.bytes || ((crc ^ 0xffffffff) >>> 0) !== e.crc) throw new Error('项目包文件大小或 CRC 不一致');
+      }
+      return { dir: tmpDir, tmpDir, files: preflight.entries.map(e => e.file), manifest: preflight.manifest };
+    } catch (e) { fs.rmSync(tmpDir, { recursive: true, force: true }); throw e; }
+    finally { if (fd !== undefined) fs.closeSync(fd); }
   }
 
   /** 识别完成: 先落英文初稿, 再按设置决定要不要接着翻译 */
@@ -4736,6 +5034,92 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* ── 翻译 ── */
+  function subtitleSource(id) {
+    const meta = readMeta(id);
+    const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
+    if (!file || !fs.existsSync(file)) {
+      const segs = readSegments(id);
+      return { segs, sourceKey: subtitleRevision(JSON.stringify(segs)), revision: null, file: null };
+    }
+    const text = fs.readFileSync(file, 'utf8'), revision = subtitleRevision(Buffer.from(text));
+    const raw = text.split(/\r?\n/), eol = text.includes('\r\n') ? '\r\n' : '\n';
+    let rows = [], format = /\.srt$/i.test(file) ? 'srt' : 'ass', doc = null;
+    if (format === 'ass') {
+      doc = new AssDoc(text);
+      const isZh = e => /中文|翻译|translation|^zh$/i.test(e.style);
+      const targets = doc.events.filter(isZh);
+      const events = doc.sorted.filter(e => !isZh(e));
+      for (const ev of events) {
+        const plain = assSentencesMod.plainText(ev.text);
+        if (!plain) continue;
+        const last = rows[rows.length - 1];
+        const color = /\\c&H[\da-f]{6}&/i.test(ev.text);
+        if (last && (color || last.color) && last.text === plain && last.style === ev.style && last.name === ev.name
+            && ev.start >= last.start && ev.start - last.end <= 0.05) {
+          last.end = Math.max(last.end, ev.end); last.events.push(ev); last.color ||= color;
+        } else rows.push({ text: plain, start: ev.start, end: ev.end, style: ev.style, name: ev.name, color, events: [ev] });
+      }
+      const used = new Set();
+      for (const row of rows) {
+        const matches = targets.filter(e => !used.has(e) && Math.abs(e.start - row.start) < 0.02 && Math.abs(e.end - row.end) < 0.02);
+        if (matches.length > 1) throw new Error('译文轨匹配不唯一，请先整理字幕轨');
+        row.target = matches[0] || null;
+        if (row.target) used.add(row.target);
+        row.zh = row.target ? assSentencesMod.plainText(row.target.text).replace(/^\[[^\]]+\]\s*/, '') : '';
+      }
+    } else {
+      // 保留 SRT 的原始编号、时间、标签、空行；只替换/插入译文行。
+      for (let i = 0; i < raw.length; i++) {
+        const m = /^(\d+:\d+:\d+[,.]\d+)\s*-->\s*(\d+:\d+:\d+[,.]\d+)/.exec(raw[i]);
+        if (!m) continue;
+        let end = i + 1; while (end < raw.length && raw[end].trim()) end++;
+        const content = raw.slice(i + 1, end);
+        const bilingual = content.length > 1 && /[\u3400-\u9fff]/.test(content[0]);
+        const source = content.slice(bilingual ? 1 : 0);
+        rows.push({ text: source.join('\n'), start: assTimeToSec(m[1].replace(',', '.')), end: assTimeToSec(m[2].replace(',', '.')),
+          from: i + 1, to: end, source, zh: bilingual ? content[0] : '', target: bilingual });
+      }
+    }
+    if (!rows.length) throw new Error('当前字幕没有可翻译的原文');
+    const sourceKey = subtitleRevision(JSON.stringify(rows.map(r => ({ text: r.text, start: r.start, end: r.end,
+      style: r.style, name: r.name, raw: r.events ? r.events.map(e => e.text) : r.source }))));
+    return { segs: rows, rows, sourceKey, revision, file, text, raw, eol, format, doc };
+  }
+  function patchSubtitleTranslations(id, source, lines) {
+    if (!source.file) return writeSubtitle(id, !!((readMeta(id) || {}).draft || {}).wordLevel, source.segs, lines);
+    if (subtitleRevision(fs.readFileSync(source.file)) !== source.revision) throw new Error('翻译冲突：稿件在翻译期间已编辑，请重新翻译');
+    const raw = source.raw.slice(), inserts = new Map();
+    const zhStyle = '中文字幕';
+    source.rows.forEach((row, i) => {
+      if (!lines[i] || lines[i] === row.zh) return;
+      const zh = llmText.normalizeZhPunctuation(lines[i]);
+      if (source.format === 'srt') {
+        raw[row.from] = row.target ? zh : zh + source.eol + raw[row.from];
+      } else if (row.target) {
+        const ev = row.target, parts = ev._rawParts.slice();
+        const prefix = /^(?:\{[^}]*\})*(?:\[[^\]]+\]\s*)?/.exec(ev.text)[0];
+        const tags = ev.text.slice(prefix.length).match(/\{[^}]*\}/g) || [];
+        parts[source.doc.format.indexOf('text')] = prefix + escAss(zh) + tags.join('');
+        raw[ev.lineIdx] = 'Dialogue: ' + parts.join(',');
+      } else {
+        const ev = row.events[0], parts = ev._rawParts.slice(), fmt = source.doc.format;
+        parts[fmt.indexOf('start')] = fmtAssTime(row.start); parts[fmt.indexOf('end')] = fmtAssTime(row.end);
+        parts[fmt.indexOf('style')] = zhStyle; parts[fmt.indexOf('text')] = escAss(zh);
+        inserts.set(ev.lineIdx, 'Dialogue: ' + parts.join(','));
+      }
+    });
+    if (source.format === 'ass' && inserts.size && !source.doc.styles.has(zhStyle.toLowerCase())) {
+      const style = source.doc.styles.values().next().value;
+      if (!style) throw new Error('缺少 ASS 样式，无法添加译文轨');
+      const values = style.values.slice(); values[style.format.indexOf('name')] = zhStyle;
+      inserts.set(style.lineIdx, 'Style: ' + values.join(','));
+    }
+    const text = raw.flatMap((line, i) => inserts.has(i) ? [line, inserts.get(i)] : [line]).join(source.eol);
+    const tmp = source.file + '.' + crypto.randomUUID() + '.tmp';
+    try { fs.writeFileSync(tmp, text, { flag: 'wx' }); fs.renameSync(tmp, source.file); }
+    finally { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); }
+    return { totalWords: source.segs.reduce((n, s) => n + s.text.split(/\s+/).length, 0) };
+  }
   /* 翻译批量大小：**用户可调**（「全局设置 → 字幕翻译 → 每批行数」，5~100，默认 25）。
    * 过去是写死的 25：小模型希望更小（"返回行数必须等于输入行数"这条对齐越容易整批翻车），
    * 强模型希望更大（请求数更少）。夹取与切批都在 llm-text.js（纯函数，有单测），这里只取配置。 */
@@ -4754,10 +5138,10 @@ function startPrepare(id, videoPath, mode) {
    *  ⚠ 落盘前过一遍 unwrapJsonArrayString：实测有整句译文是**原样的 JSON 数组字符串**
    *  （`["译文1","译文2"]`）被写了进来，然后行首那个 `["…` 被当成 `[角色名]` 读走
    *  → 角色栏里列出一堆台词（用户报的 bug）。解析层已经修了根因，这里是最后一道闸。 */
-  function saveTranslations(id, model, lines) {
+  function saveTranslations(id, model, lines, sourceKey) {
     const tp = path.join(projDir(id), 'translation.json');
     const clean = (lines || []).map(v => llmText.unwrapJsonArrayString(v));
-    fs.writeFileSync(tp + '.tmp', JSON.stringify({ model, updatedAt: new Date().toISOString(), lines: clean }));
+    fs.writeFileSync(tp + '.tmp', JSON.stringify({ model, sourceKey, updatedAt: new Date().toISOString(), lines: clean }));
     fs.renameSync(tp + '.tmp', tp);
   }
 
@@ -4791,7 +5175,7 @@ function startPrepare(id, videoPath, mode) {
     const sys = systemPromptWithGlossary(cfg, strict);
     const r = await llmChat(cfg, [
       { role: 'system', content: sys },
-      { role: 'user', content: texts.join('\n') },
+      { role: 'user', content: llmText.buildTranslateUserMessage(texts, o.refs) },
     ], { maxTokens: o.maxTokens, debugFile: o.debugFile, kind: 'translate' });
     const arr = parseTranslationReply(r.content, texts.length);
     if (!arr) {
@@ -4808,12 +5192,13 @@ function startPrepare(id, videoPath, mode) {
    *  · `rate`/`net`/`timeout`：指数退避（尊重 Retry-After）—— 限流时递归拆半只会把请求数翻倍，所以退避更重要
    *  · `empty`（模型只吐思考过程）：换严格提示词再试一次，仍为空就带着明确原因失败
    *  成功返回与 texts 等长的译文数组；最终失败抛错（调用方决定怎么兜底）。 */
-  async function translateLines(cfg, texts, depth = 0, debugFile = null) {
+  async function translateLines(cfg, texts, depth = 0, debugFile = null, refs = null, context = null) {
+    if (context) refs = llmText.translationRefs(context.items, context.idxs[0], cfg.contextRows, context.lines);
     const maxTokens = Math.min(8192, Math.max(1024, texts.length * 220 + 512));
     let lastErr = null;
     for (const strict of [false, true]) {
       for (let attempt = 0; attempt < 2; attempt++) {
-        try { return await translateOnce(cfg, texts, strict, { maxTokens, debugFile }); }
+        try { return await translateOnce(cfg, texts, strict, { maxTokens, debugFile, refs }); }
         catch (e) {
           lastErr = e;
           const kind = e && e.kind;
@@ -4831,33 +5216,38 @@ function startPrepare(id, videoPath, mode) {
     // 单行仍然被截断 → 把 max_tokens 放大一倍再试（不能再拆了）
     if (texts.length === 1 && lastErr && lastErr.kind === 'truncated' && depth < 6) {
       try {
-        return await translateOnce(cfg, texts, 'strict', { maxTokens: Math.min(16384, maxTokens * 2), debugFile });
+        return await translateOnce(cfg, texts, 'strict', { maxTokens: Math.min(16384, maxTokens * 2), debugFile, refs });
       } catch (e) { lastErr = e; }
     }
     if (texts.length > 1 && depth < 5) {
       const mid = Math.ceil(texts.length / 2);
       try {
-        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile);
-        const b = await translateLines(cfg, texts.slice(mid), depth + 1, debugFile);
+        const left = context && { ...context, idxs: context.idxs.slice(0, mid) };
+        const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile, refs, left);
+        // 右半批参考左半批刚完成的译文；保留完整稿件索引以包含中间已译行。
+        const right = context && { ...context, idxs: context.idxs.slice(mid), lines: context.lines.slice() };
+        if (right) a.forEach((zh, k) => { right.lines[context.idxs[k]] = zh; });
+        const count = llmText.clampContextRows(cfg.contextRows);
+        const rightRefs = count ? [...(refs || []), ...a.map((zh, k) => ({ text: texts[k], zh }))].slice(-count) : null;
+        const b = await translateLines(cfg, texts.slice(mid), depth + 1, debugFile, rightRefs, right);
         return a.concat(b);
       } catch (e) { lastErr = e; }
     }
     throw new Error(String((lastErr && lastErr.message) || lastErr || '翻译失败'));
   }
 
-  async function translateBatch(cfg, segs, idxs, depth, debugFile) {
-    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth, debugFile) }; }
+  async function translateBatch(cfg, segs, idxs, depth, debugFile, refs, lines = null) {
+    const context = lines && { items: segs, idxs, lines };
+    try { return { texts: await translateLines(cfg, idxs.map(i => segs[i].text), depth, debugFile, refs, context) }; }
     catch (e) { return { texts: null, err: String((e && e.message) || e) }; }
   }
 
   /** 把当前已有译文写进字幕，并按完成度收尾。
    *  部分成功**不回滚**：已翻的行照常写入，只把未完成的记下来交给「重试」补。 */
-  function finishTranslate(id, segs, lines) {
-    const meta = readMeta(id);
-    const trans = lines.some(x => x) ? lines : null;
+  function finishTranslate(id, segs, lines, source) {
     let info;
     try {
-      info = writeSubtitle(id, !!(meta && meta.draft && meta.draft.wordLevel), segs, trans);
+      info = patchSubtitleTranslations(id, source, lines);
     } catch (e) { draftJobs.delete(id); return finishDraft(id, e); }
 
     const doneN = lines.filter(x => !!x).length;
@@ -5053,7 +5443,11 @@ function startPrepare(id, videoPath, mode) {
               try { out = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
               if (c !== 0 || !out || !Array.isArray(out.segments)) {
                 const m2 = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
-                return reject(new Error((m2 && m2[1]) || ('识别失败（' + asrExitHint(c) + '）')));
+                const tail2 = pyErrTail(pyErr);
+                const why2 = (m2 && m2[1]) || (asrExitHint(c) + (tail2 ? '｜' + tail2 : ''));
+                console.error('[rerecog/nemo] 识别失败（exit=' + c + '）：'
+                  + ((m2 && m2[1]) || tail2 || '(无 stderr 输出)'));
+                return reject(new Error('识别失败（' + why2 + '）'));
               }
               resolve(out);
             });
@@ -5076,6 +5470,7 @@ function startPrepare(id, videoPath, mode) {
             // 单行重识别是最典型的短任务：走常驻服务能省掉绝大部分固定开销
             try {
               await asrSvc.transcribe({
+                owner: id,
                 script: ea.script, model: mdir, provider: ea.provider,
                 extra: (ea.extra || []).concat(ea.hotwords || []),
                 // 常驻服务模式：按项目级→全局解析出的有效值传重跑遍数（关掉=0）。
@@ -5085,7 +5480,14 @@ function startPrepare(id, videoPath, mode) {
               });
               servedOk = true;
             } catch (e) {
-              console.error('[asr-serve] 失败，退回 spawn：' + ((e && e.message) || e));
+              if (e.name === 'AbortError' || deletedProjects.has(id) || shuttingDown) throw e;
+              /* 常驻服务失败会退回 spawn，所以这里不算最终失败 —— 但**原始信息不能只留在
+               * console**：日志面板看不到它，事后排查就只剩"退回 spawn"这一句。
+               * 实测踩过：常驻服务报「未识别到语音内容(模型输出为空)」，退回 spawn 后仍然失败，
+               * 用户拿到的却是"通常是 Python 依赖缺失"，与真实原因无关。 */
+              const em = (e && e.message) || String(e);
+              console.error('[asr-serve] 失败，退回 spawn：' + em);
+              try { pushDraftLog(id, `[重识别] 常驻识别失败，退回单次进程：${String(em).slice(0, 300)}`); } catch {}
             }
           }
           data = servedOk ? JSON.parse(fs.readFileSync(outJson, 'utf8'))
@@ -5115,7 +5517,14 @@ function startPrepare(id, videoPath, mode) {
               try { out = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
               if (c !== 0 || !out || !Array.isArray(out.segments)) {
                 const m = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
-                return reject(new Error((m && m[1]) || ('识别失败（' + asrExitHint(c) + '）')));
+                const tail = pyErrTail(pyErr);
+                /* 匹配不到 JSON 报错时，把 stderr 的尾巴**一起报出来**（原来整段丢弃，
+                 * 只剩"通常是 Python 依赖缺失"这种可能完全不对的猜测 —— 实测踩过：
+                 * 环境明明是好的，手工跑同一套参数能成功，用户却被指向"缺依赖"）。 */
+                const why = (m && m[1]) || (asrExitHint(c) + (tail ? '｜' + tail : ''));
+                console.error('[rerecog] 识别失败（exit=' + c + '）：'
+                  + ((m && m[1]) || pyErrTail(pyErr) || '(无 stderr 输出)'));
+                return reject(new Error('识别失败（' + why + '）'));
               }
               resolve(out);
             });
@@ -5179,15 +5588,16 @@ function startPrepare(id, videoPath, mode) {
           setRr({ stage: '翻译中', progress: 76, message: '翻译中 …' });
           const translations = [];
           const bSize = transBatchSize(cfg);
-          const parts = llmText.planChunks(segs, bSize);
+          // planJobs 而不是 planChunks：多带"上文参考"（cfg.contextRows = 0 时行为与 planChunks 完全一致）
+          const parts = llmText.planJobs(segs, bSize, cfg.contextRows);
           const chunks = parts.length || 1;
           try {
             for (let bi = 0; bi < parts.length; bi++) {
-              const part = await translateLines(cfg, parts[bi].map(s => s.text), 0,
-                path.join(projDir(id), 'llm-debug.jsonl'));
+              const part = await translateLines(cfg, parts[bi].idxs.map(i => segs[i].text), 0,
+                path.join(projDir(id), 'llm-debug.jsonl'), null, { items: segs, idxs: parts[bi].idxs, lines: translations });
               translations.push(...part);
               setRr({ progress: 76 + Math.round(((bi + 1) / chunks) * 21),
-                message: `翻译中 … ${bi + 1}/${chunks} 批（每批 ${bSize} 行）` });
+                message: `翻译中 … ${bi + 1}/${chunks} 批（每批 ${bSize} 行${cfg.contextRows ? ` · 上文 ${cfg.contextRows} 行` : ''}）` });
             }
             if (translations.length === segs.length) segs.forEach((s, i) => { s.zh = String(translations[i] == null ? '' : translations[i]); });
             else warning = '翻译行数不一致，已跳过译文';
@@ -5209,6 +5619,25 @@ function startPrepare(id, videoPath, mode) {
       } catch (e) {
         cleanup();                               // 失败路径同样清掉 wav 切片/结果 JSON, 别留 %TEMP%
         const msg = String((e && e.message) || e);
+        /* ⚠「这一段没有可识别语音」**不是任务失败**，而是正常结果 —— 批量重识别的区间里
+         *   （尤其 reflect 标出的 gap 空档）本来就会有静音/纯噪声片段。
+         *
+         *   这正是自动后处理「① 反思纠错」整步归零的真凶（实测复现）：Python 侧对空结果
+         *   抛 `未识别到语音内容(模型输出为空)`，常驻服务与单次进程两条路都抛 → 这里把整个
+         *   job 置成 error → 批量调度器把它交给 waitJob 抛出 → 用户看到
+         *   「① 失败：识别失败（进程报错退出（1）：通常是 Python 依赖缺失…）」，
+         *   而真相只是"有那么几段没内容"，其它几十段白跑了。
+         *
+         *   注意 5340 行那条路（识别器**不抛异常**、只是返回空片段）早就按"跳过"处理了；
+         *   这里补的是**同一个语义、另一条实现路径**（抛异常的那条）—— 两者必须一致，
+         *   否则同一件事会因为"模型这次是抛还是返回空"而表现完全不同。 */
+        if (o.batch && /未识别到语音|模型输出为空|no speech|empty/i.test(msg)) {
+          job.regionDone = (job.regionDone || 0) + 1;
+          job.warnings = (job.warnings || []).concat(['该区间没有识别到语音']);
+          job.message = '该区间没有识别到语音，已跳过';
+          job.updatedAt = new Date().toISOString();
+          return;
+        }
         setRr({ status: 'error', error: msg, message: msg });
       }
     })();
@@ -5269,6 +5698,10 @@ function startPrepare(id, videoPath, mode) {
     (async () => {
       try {
         for (let i = 0; i < regions.length; i++) {
+          /* ⚠ 段开头的这个早退**只在真的不可恢复时才该触发**。原来它是"上一段失败就整批停"，
+           *   而"上一段失败"里混着"该段没有语音"这种正常结果 —— 那会让整个第①步归零
+           *   （实测：26 段里 6 段是空档，全批被判失败）。现在单区间的空结果已被归为"跳过"
+           *   （见 startRerecognize 的 catch），能走到这里的 error 才是真问题。 */
           if (job.status === 'error') return;              // 中途失败：不再往下跑
           const r = regions[i];
           job.regionIndex = i;
@@ -5288,7 +5721,36 @@ function startPrepare(id, videoPath, mode) {
             // eslint-disable-next-line no-await-in-loop
             await new Promise(res => setTimeout(res, 250));
           }
-          if (job.status === 'error') return;
+          if (job.status === 'error') {
+            /* ⚠ 单段失败**不再整批中断**（原来这里直接 `return`，于是整个自动后处理的第①步归零）。
+             *
+             * 实测踩到的形状：反思纠错会标出「gap」类区间 —— 那是"波形里有说话、但没识别出字幕"
+             * 的空档，重新识别时**常常真的没有可识别语音**，Python 侧于是抛
+             * 「未识别到语音内容(模型输出为空)」退出码 1。这种"这一段没内容"是**正常结果**，
+             * 不是环境坏了；把它当致命错误，用户看到的就是
+             * 「① 失败：识别失败（进程报错退出（1）：通常是 Python 依赖缺失…）」
+             * —— 指向完全错误的方向，而且其它几十段白跑了。
+             *
+             * 现在的口径：记下这一段失败（带区间与原因），清掉 job 的错误态，继续下一段；
+             * 最后在完成提示里如实报出"跳过 N 段"。真正致命的情况（模型不可用、ffmpeg 挂了）
+             * 会在每一段上重复失败，最终由"一段都没成功"体现出来，不会被这里掩盖。 */
+            job.failures = (job.failures || []);
+            job.failures.push({ start: r.start, end: r.end, error: job.error || '未知原因' });
+            try {
+              /* 日志按用户口径写人话：**没识别到语音**是正常结果，不该把 Python 的
+               * traceback 整段糊在日志里（那是排查用信息，不是给用户读的）。
+               * 其它真错误仍带原因，方便定位。 */
+              const em = String(job.error || '');
+              const noSpeech = /未识别到语音|模型输出为空|no speech|empty/i.test(em);
+              pushDraftLog(id, `[重识别] 第 ${i + 1}/${regions.length} 段`
+                + `（${r.start.toFixed(1)}~${r.end.toFixed(1)}s）`
+                + (noSpeech ? '未识别到语音，已跳过' : `失败：${em.slice(0, 200)}`));
+            } catch { /* 日志失败不影响继续 */ }
+            job.regionDone = (job.regionDone || 0) + 1;
+            job.status = 'running'; job.error = null;
+            job.progress = Math.round(((i + 1) / regions.length) * 100);
+            continue;
+          }
           job.progress = Math.round(((i + 1) / regions.length) * 100);
           void n0;
         }
@@ -5299,6 +5761,7 @@ function startPrepare(id, videoPath, mode) {
         job.finishedAt = new Date().toISOString();
         job.warning = (job.warnings || [])[0] || null;
         job.message = `纠错重识别完成：${regions.length} 段 → ${segs.length} 行`
+          + ((job.failures && job.failures.length) ? `（跳过 ${job.failures.length} 段：那段没有可识别语音）` : '')
           + (job.warning ? `（${job.warning}）` : '');
       } catch (e) {
         const msg = String((e && e.message) || e);
@@ -5332,52 +5795,60 @@ function startPrepare(id, videoPath, mode) {
    *  否则两个任务会同时改同一份字幕。 */
   const jobRerecog = rerecogJobs;
 
-  async function startTranslate(id) {
+  async function startTranslate(id, opts = {}) {
     const cfg = translateCfg();
     if (!llmReady(cfg)) return finishDraft(id, new Error('还没配置翻译：在主界面右上角「设置」里填接口地址、API Key 和模型名'));
     if (draftJobs.has(id)) return;
 
-    let segs;
-    try { segs = readSegments(id); } catch (e) { return finishDraft(id, e); }
+    let source, segs;
+    try { source = subtitleSource(id); segs = source.segs; } catch (e) { return finishDraft(id, e); }
 
     draftJobs.add(id);
     setDraft(id, { status: 'running', stage: STAGE.translate, progress: 86, message: '准备翻译…' });
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始翻译（模型 ${cfg.model}）`);
 
     const n = segs.length;
-    const lines = readTranslations(id, n) || new Array(n).fill('');
+    const cached = readTranslations(id, n, source.sourceKey) || new Array(n).fill('');
+    const lines = opts.redo ? new Array(n).fill('') : segs.map((s, i) => s.zh || cached[i] || '');
     const todo = [];
     for (let i = 0; i < n; i++) if (!lines[i]) todo.push(i);
     if (!todo.length) {
       pushDraftLog(id, '每行都已有译文，不需要重翻');
-      return finishTranslate(id, segs, lines);
+      return finishTranslate(id, segs, lines, source);
     }
     const batchSize = transBatchSize(cfg);
-    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行（每批 ${batchSize} 行）`);
+    pushDraftLog(id, `共 ${n} 行，本次需要翻译 ${todo.length} 行（每批 ${batchSize} 行${cfg.contextRows ? ` · 上文 ${cfg.contextRows} 行` : ''}）`);
 
-    const batches = llmText.planChunks(todo, batchSize);
+    // 完整稿件决定前文位置，todo 只决定待翻行；参考译文在每批开始时刷新。
+    const jobs = llmText.planJobs(segs, batchSize, cfg.contextRows, todo);
 
     let failedBatches = 0;
-    for (let bi = 0; bi < batches.length; bi++) {
-      const idxs = batches[bi];
+    for (let bi = 0; bi < jobs.length; bi++) {
+      const idxs = jobs[bi].idxs;
+      if (source.file && subtitleRevision(fs.readFileSync(source.file)) !== source.revision) {
+        return finishDraft(id, new Error('翻译冲突：稿件在翻译期间已编辑，请重新翻译'));
+      }
       const t0 = Date.now();
-      const r = await translateBatch(cfg, segs, idxs, 0, path.join(projDir(id), 'llm-debug.jsonl'));
+      const r = await translateBatch(cfg, segs, idxs, 0, path.join(projDir(id), 'llm-debug.jsonl'), null, lines);
+      if (source.file && subtitleRevision(fs.readFileSync(source.file)) !== source.revision) {
+        return finishDraft(id, new Error('翻译冲突：稿件在翻译期间已编辑，请重新翻译'));
+      }
       if (r.texts) {
         idxs.forEach((gi, k) => { lines[gi] = String(r.texts[k] == null ? '' : r.texts[k]); });
-        saveTranslations(id, cfg.model, lines);      // 每批立刻落盘, 可续翻
-        pushDraftLog(id, `第 ${bi + 1}/${batches.length} 批完成（${idxs.length} 行，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+        saveTranslations(id, cfg.model, lines, source.sourceKey);      // 每批立刻落盘, 可续翻
+        pushDraftLog(id, `第 ${bi + 1}/${jobs.length} 批完成（${idxs.length} 行，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
       } else {
         failedBatches++;
-        pushDraftLog(id, `[错误] 第 ${bi + 1}/${batches.length} 批失败（${idxs.length} 行）：${r.err}`);
+        pushDraftLog(id, `[错误] 第 ${bi + 1}/${jobs.length} 批失败（${idxs.length} 行）：${r.err}`);
       }
-      saveTranslations(id, cfg.model, lines);
+      saveTranslations(id, cfg.model, lines, source.sourceKey);
       setDraft(id, {
-        stage: STAGE.translate, progress: 86 + Math.round(((bi + 1) / batches.length) * 12),
-        message: `翻译中 … ${bi + 1}/${batches.length} 批${failedBatches ? `（${failedBatches} 批失败）` : ''}`,
+        stage: STAGE.translate, progress: 86 + Math.round(((bi + 1) / jobs.length) * 12),
+        message: `翻译中 … ${bi + 1}/${jobs.length} 批${failedBatches ? `（${failedBatches} 批失败）` : ''}`,
       });
     }
-    if (failedBatches) pushDraftLog(id, `本轮流式结束：${failedBatches}/${batches.length} 批未成功`);
-    return finishTranslate(id, segs, lines);
+    if (failedBatches) pushDraftLog(id, `本轮流式结束：${failedBatches}/${jobs.length} 批未成功`);
+    return finishTranslate(id, segs, lines, source);
   }
 
   /** 语义分句(初稿, 所有引擎共用): 读 asr.json → LLM 补标点 → 按逗号/句号切句 → 写回。
@@ -6676,6 +7147,8 @@ function handleAsrRoutes(req, res, u) {
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
       if (!p) p = path.join(modelsRoot(), model.dirName);
+      p = path.resolve(p);
+      if (path.relative(modelsRoot(), p) === '') return sendJson(res, 400, { error: '模型目录不能是模型根目录' });
       // 目录里已经有完整模型(文件齐且大小达标) → 直接采纳, 不用重下
       if (modelFilesOk(p, model)) {
         const s = readAsrSettings();
@@ -6689,11 +7162,7 @@ function handleAsrRoutes(req, res, u) {
       // 「目录必须为空」曾挡死重试: 上次下载中途失败留下的不完整文件让重试永远 400。
       // 现在只拒绝**无关文件** —— 目录里是本模型的(可能不完整的)文件/临时文件就放行,
       // downloadFile 会按 Range 从断点续传, 不会重头下。
-      const foreign = names.filter(n =>
-        !model.files.some(f =>
-          n.toLowerCase() === f.toLowerCase() ||
-          n.toLowerCase() === (f + '.dl').toLowerCase() ||
-          /\.(dl|tmp|part|crdownload)$/i.test(n)));
+      const foreign = names.filter(n => !modelOwnsName(model, n));
       if (foreign.length) {
         return sendJson(res, 400, { error: `目录里有无关文件（${foreign.slice(0, 3).join('、')}${foreign.length > 3 ? ' 等' : ''}）。请换一个空目录，或删掉这些文件后重试` });
       }
@@ -6752,12 +7221,12 @@ function handleAsrRoutes(req, res, u) {
       if (!m) return sendJson(res, 400, { error: '未知模型' });
       // 云端模型没有本地文件 —— 而且 modelDirFor 会返回模型根目录本身, 真删下去会清空整个 models!
       if (m.cloud) return sendJson(res, 400, { error: '「' + m.name + '」是云端识别，本地没有模型文件可删' });
-      const dir = modelDirFor(m.id);
-      if (dir && dir.startsWith(modelsRoot()) && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+      if (dlState('model:' + m.id).running) return sendJson(res, 409, { error: '模型正在下载，请完成后再删除' });
+      const result = deleteModelFiles(m);
       const s = readAsrSettings();
       if (s.models) delete s.models[m.id];
       writeAsrSettings(s);
-      return sendJson(res, 200, { deleted: true, id: m.id });
+      return sendJson(res, 200, Object.assign({ id: m.id }, result));
     });
   }
 
@@ -6964,10 +7433,14 @@ function handleAsrRoutes(req, res, u) {
     }
   }
 
-  /* 逐词重排（TTS 对齐）的设置：读 / 写。
-   * GET  → { voice, rate, minAnchorRatio, minConfidence, voices }
+  /* 逐词重排的设置：读 / 写。
+   * GET  → { minAnchorRatio, minConfidence }
    * POST → 局部更新（存 asr/settings.json 的 realign 段）
    * 这几个值只影响**以后**的重排，不碰已有字幕。
+   *
+   * ⚠ 朗读语音 / 语速 / voices 已随 TTS 方案一并从返回里去掉：新方案切**原片音频**
+   *   重新识别、不朗读，那两个值不参与任何判定。（老配置仍留在 settings.json 的
+   *   realign 段里，读进来不会报错；服务端只是不再读它们。）
    *
    * ⚠ 这是**全局** ASR 设置（不挂项目，处理块里根本用不到 project id）。
    *   2026-10-11 无头浏览器探针实测发现：这个处理块原先落在 handleProjectsRoutes 里，
@@ -6980,12 +7453,10 @@ function handleAsrRoutes(req, res, u) {
       const raw = (readAsrSettings().realign) || {};
       const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
       return {
-        voice: String(raw.voice || ''),
-        rate: num(raw.rate, 0),
         minAnchorRatio: num(raw.minAnchorRatio, alignMod.MIN_ANCHOR_RATIO),
-        // 全片重校对的置信度门槛（与锚点率门槛不同：那个是"能不能用"，这个是"值不值得改"）
+        // 全片重校对的**采纳门槛**（词吻合率）：低于它的句子保留原逐词时间。
+        // 与锚点率门槛不是一回事 —— 那个是"这次对齐能不能用"，这个是"值不值得改"。
         minConfidence: num(raw.minConfidence, 0.7),
-        voices: await ttsVoices().catch(() => []),
       };
     };
     if (req.method === 'GET') return view().then(v => sendJson(res, 200, v));
@@ -7033,7 +7504,7 @@ function handleLlmRoutes(req, res, u) {
       let p = {};
       try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize']) {
+      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize', 'temperature', 'contextRows']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
       const c = saveTranslateCfg(keep);
@@ -7210,7 +7681,7 @@ function handleDiagRoutes(req, res, u) {
     return mediaMetaCache.set.has(key);
   }
 
-  if (pathname === '/api/media' && req.method === 'GET') {
+  if (pathname === '/api/media' && (req.method === 'GET' || req.method === 'HEAD')) {
     const p = u.searchParams.get('path') || '';
     const full = path.normalize(p);
     if (!mediaAllowed(full)) {
@@ -7511,7 +7982,7 @@ function handleProjectsRoutes(req, res, u) {
           const meta = readMeta(pid) || {};
           const safe = String(meta.name || pid).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || pid;
           const buf = fs.readFileSync(packed.zipPath);
-          console.log(`[pack] 导出 ${pid}：${packed.files.length} 个文件，${(buf.length / 1024).toFixed(0)} KB`);
+          console.log(`[pack] 导出 ${pid}：${packed.files.length} 个文件，${(buf.length / 1024).toFixed(0)} KB，${packed.tool}`);
           // 文件名走 RFC 5987，中文项目名也能正确落地
           return send(res, 200, {
             'Content-Type': 'application/zip',
@@ -7533,36 +8004,50 @@ function handleProjectsRoutes(req, res, u) {
    *  **不在这里跑 prepare** —— 视频要由用户在导入端选（本地或在线），
    *  选完再走现有的提取流程生成 audio.wav 与波形。 */
   if (pathname === '/api/projects/import-pack' && req.method === 'POST') {
+    const ctl = new AbortController();
     const tmpZip = path.join(os.tmpdir(), 'kass-import-' + Date.now().toString(36)
       + '-' + Math.random().toString(36).slice(2) + '.zip');
-    const out = fs.createWriteStream(tmpZip);
+    const out = fs.createWriteStream(tmpZip, { flags: 'wx' });
     let size = 0;
     let dead = false;
+    const failUpload = (code, message) => {
+      if (dead) return;
+      dead = true; ctl.abort(); req.unpipe(out); out.destroy();
+      if (!res.destroyed && !res.writableEnded) sendJson(res, code, { error: message });
+    };
+    out.on('close', () => { if (dead) fs.unlink(tmpZip, () => {}); });
+    req.on('aborted', () => failUpload(400, '上传中断'));
+    res.on('close', () => { if (!res.writableEnded) failUpload(400, '连接关闭'); });
     req.on('data', c => {
       size += c.length;
-      if (size > 512 * 1024 * 1024) { dead = true; req.destroy(); }   // 512MB 上限
+      if (size > 512 * 1024 * 1024) { failUpload(413, '项目包超过 512MB 上限'); req.resume(); }
     });
-    req.on('error', () => { dead = true; out.destroy(); });
-    req.on('end', () => { out.end(); });
-    out.on('error', () => { dead = true; });
+    req.on('error', () => failUpload(400, '上传中断'));
+    out.on('error', () => failUpload(500, '项目包上传写入失败'));
     out.on('finish', () => {
       if (dead) { fs.unlink(tmpZip, () => {}); return sendJson(res, 400, { error: '上传中断或文件过大（上限 512MB）' }); }
       (async () => {
-        let unpacked = null;
+        let unpacked = null, newId = null, completed = false;
         try {
-          unpacked = await unpackProject(tmpZip);
+          unpacked = await unpackProject(tmpZip, ctl.signal);
           const mf = unpacked.manifest;
           if (!mf.ok) return sendJson(res, 400, { error: mf.error });
           // 建新项目：新 id（同一个包可导入多次），不覆盖已有项目
-          const newId = 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+          newId = 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
           const now = new Date().toISOString();
           fs.mkdirSync(projDir(newId), { recursive: true });
           const copied = [];
           let meta = null;
           for (const f of unpacked.files) {
             if (!packMod.shouldPack(f)) continue;      // 派生文件与杂物一律不落盘
-            const buf = fs.readFileSync(path.join(unpacked.dir, f));
-            if (buf.length > 64 * 1024 * 1024) continue;   // 单个核心文件不该这么大
+            const fp = path.join(unpacked.dir, f);
+            if (fs.statSync(fp).size > packMod.PACK_LIMITS.fileBytes) throw new Error('核心文件超过 64MB 上限');
+            const buf = fs.readFileSync(fp);
+            if (packMod.SUBTITLE_FILES.includes(f)) {
+              const text = buf.toString('utf8');
+              const valid = f.endsWith('.ass') ? new AssDoc(text).events.length : /\d+:\d+:\d+[,.]\d+\s*-->\s*\d+:\d+:\d+[,.]\d+[^\n]*\r?\n\S/m.test(text);
+              if (!valid) throw new Error('项目包字幕无有效内容');
+            }
             if (f === 'project.json') {
               try { meta = JSON.parse(buf.toString('utf8')); } catch { meta = null; }
               continue;                                   // meta 要改写后再写
@@ -7571,13 +8056,16 @@ function handleProjectsRoutes(req, res, u) {
             copied.push(f);
           }
           const newMeta = packMod.remapMeta(meta, newId, now);
-          if (!newMeta.subtitle) {
+          if (!copied.some(f => packMod.SUBTITLE_FILES.includes(f))) throw new Error('项目包没有成功导入字幕');
+          if (!newMeta.subtitle || !copied.includes(newMeta.subtitle.file)) {
             // 包里的 project.json 没记字幕文件时按实际存在的补
             newMeta.subtitle = copied.includes('subtitle.ass')
               ? { format: 'ass', file: 'subtitle.ass', name: 'subtitle.ass' }
               : { format: 'srt', file: 'subtitle.srt', name: 'subtitle.srt' };
           }
           writeMeta(newMeta);
+          if (ctl.signal.aborted) throw new Error('导入已取消');
+          completed = true;
           if (fs.existsSync(path.join(projDir(newId), 'draft.log'))) {
             pushDraftLog(newId, '[' + new Date().toLocaleTimeString() + '] 从项目包导入'
               + (meta && meta.name ? '：' + meta.name : ''));
@@ -7591,8 +8079,9 @@ function handleProjectsRoutes(req, res, u) {
             missing: mf.missing,
           });
         } catch (e) {
-          return sendJson(res, 500, { error: String((e && e.message) || e) });
+          if (!res.destroyed && !res.writableEnded) return sendJson(res, 400, { error: String((e && e.message) || e) });
         } finally {
+          if (newId && !completed) fs.rmSync(projDir(newId), { recursive: true, force: true });
           try { fs.unlinkSync(tmpZip); } catch { /* ignore */ }
           if (unpacked) { try { fs.rmSync(unpacked.tmpDir, { recursive: true, force: true }); } catch { /* ignore */ } }
         }
@@ -7685,7 +8174,11 @@ function handleProjectsRoutes(req, res, u) {
       return sendJson(res, 200, { job: jobView(job) });
     }
 
-    /* 全片逐词重校对：逐句 TTS 朗读 → 重新识别 → 对齐，算出**每句的置信度**，
+    /* 全片逐词重校对：**两级、不用 TTS**。
+     *   ① 对该句的**原片音频**切片做无热词重识别 —— 时间戳来自真实语音
+     *      （旧方案是在 TTS 合成语音上识别，时间戳是推出来的，不是量出来的）；
+     *   ② 只对①不达标的句子，用 LLM 从该句已有的词里筛出的**不常见/专有**词
+     *      做逐句热词重试，且必须更吻合才采纳。
      * 只对达标的句子改逐词时间（不达标的原样保留）。
      *
      * POST → 启动后台作业，立即返回 { job }
@@ -7721,8 +8214,8 @@ function handleProjectsRoutes(req, res, u) {
     }
 
     /* 逐词时间重对齐：只算不写。
-     * body: { blocks:[{text,start,end}], voice?, rate? }
-     * → { blocks:[{index,start,end,text,ok,words:[{w,s,e}],anchors,ratio,note,heard}] }
+     * body: { blocks:[{text,start,end}], noHotwords? }
+     * → { blocks:[{index,start,end,text,ok,level,words:[{w,s,e}],anchors,ratio,note,heard}] }
      *
      * 前端拿到提案后自己决定应用哪些、并负责写回 —— 服务端不碰字幕文件，
      * 与"反思纠错只产出建议"是同一套约定（预览优先）。 */
@@ -7743,7 +8236,7 @@ function handleProjectsRoutes(req, res, u) {
         if (!blocks.length) return sendJson(res, 400, { error: '这些块都没有可念的文本' });
         try {
           const t0 = Date.now();
-          const result = await realignBlocks(id, blocks, { voice: data.voice, rate: data.rate });
+          const result = await realignBlocks(id, blocks, { noHotwords: data.noHotwords === true });
           const okN = result.filter(r => r.ok).length;
           console.log(`[align] 逐词重对齐：${blocks.length} 条 → 可用 ${okN} 条，`
             + `用时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
@@ -8054,7 +8547,7 @@ function handleProjectsRoutes(req, res, u) {
           retries: (((meta.draft || {}).retries) || 0) + 1,   // 手动续跑计数(见 SKIP_AFTER_RETRIES)
           status: 'running', stage: STAGE.translate, progress: 86, message: '准备翻译…', error: null,
         });
-        Promise.resolve(startTranslate(id)).catch(e => finishDraft(id, e));
+        Promise.resolve(startTranslate(id, { redo })).catch(e => finishDraft(id, e));
         return sendJson(res, 200, { started: true, draft: (metaView(readMeta(id)) || {}).draft || null });
       });
     }
@@ -8066,6 +8559,8 @@ function handleProjectsRoutes(req, res, u) {
       return sendJson(res, 200, { draft: metaView(meta).draft || null, log });
     }
     if (!action && req.method === 'DELETE') {
+      deletedProjects.add(id);
+      subtitleCommits.delete(id);
       // 先停掉该项目还在跑的所有任务, 再删文件 —— 顺序不能反:
       //   ① 识别进程(draftProcs/draftAborts, 精确跟踪, 不误伤别的 python);
       //   ② 项目目录里的长任务(下载的 python、提取音频的 ffmpeg、说话人分离/选区重识别) ——
@@ -8091,21 +8586,51 @@ function handleProjectsRoutes(req, res, u) {
       if (!file) return sendJson(res, 400, { error: '项目缺少字幕文件信息' });
       const subPath = safeProjectFile(id, file);
       if (!subPath) return sendJson(res, 400, { error: '字幕文件路径不合法' });
-      const subTmp = subPath + '.tmp';
-      const out = fs.createWriteStream(subTmp);
+      const base = String(u.searchParams.get('revision') || req.headers['if-match'] || '').replace(/^"|"$/g, '');
+      if (!/^[a-f0-9]{64}$/.test(base)) return sendJson(res, 428, { error: '保存需要稿件版本，请重新打开项目' });
+      const client = String(u.searchParams.get('client') || '');
+      const seq = Number(u.searchParams.get('seq'));
+      const identified = /^[a-zA-Z0-9_-]{8,80}$/.test(client) && Number.isSafeInteger(seq) && seq > 0;
+      const subTmp = subPath + '.' + crypto.randomUUID() + '.tmp';
+      const out = fs.createWriteStream(subTmp, { flags: 'wx' });
       let size = 0, done = false;
-      const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
+      const cleanup = () => { try { fs.unlinkSync(subTmp); } catch (e) { if (e.code !== 'ENOENT') console.error('[subtitle cleanup]', e.message); } };
+      out.on('close', cleanup);
+      const finish = (code, body) => {
+        if (done) return;
+        done = true;
+        req.unpipe(out);
+        if (!out.writableFinished) out.destroy();
+        if (!res.destroyed && !res.writableEnded) sendJson(res, code, body);
+      };
       req.on('data', (c) => {
         size += c.length;
-        if (size > 256 * 1024 * 1024) { req.destroy(); out.destroy(); try { fs.unlinkSync(subTmp); } catch {} finish(413, { error: '字幕超过 256MB 上限' }); }
+        if (size > 256 * 1024 * 1024) { finish(413, { error: '字幕超过 256MB 上限' }); req.resume(); }
       });
-      req.on('error', () => { out.destroy(); try { fs.unlinkSync(subTmp); } catch {} finish(400, { error: '上传中断' }); });
-      out.on('error', () => { try { fs.unlinkSync(subTmp); } catch {} finish(500, { error: '写入失败(磁盘/权限?)' }); });
+      req.on('error', () => finish(400, { error: '上传中断' }));
+      req.on('aborted', () => finish(400, { error: '上传中断' }));
+      res.on('close', () => { if (!res.writableEnded) finish(400, { error: '连接已关闭' }); });
+      out.on('error', () => finish(500, { error: '写入失败(磁盘/权限?)' }));
       out.on('finish', () => {
-        try { fs.renameSync(subTmp, subPath); }
-        catch (e) { try { fs.unlinkSync(subTmp); } catch {} return finish(500, { error: '替换字幕文件失败: ' + String(e && e.message || e) }); }
-        touchMeta(meta);
-        return finish(200, { ok: true, savedAt: meta.modifiedAt });
+        if (done) return;
+        try {
+          // 同一事件循环内完成比较和提交（无 await），项目间上传不互相等待。
+          const current = subtitleRevision(fs.readFileSync(subPath));
+          const revision = subtitleRevision(fs.readFileSync(subTmp));
+          const previous = subtitleCommits.get(id);
+          const continuation = identified && previous && previous.client === client && seq > previous.seq
+            && previous.revision === current && (base === previous.base || base === previous.revision);
+          if (identified && previous && previous.client === client && seq <= previous.seq && revision !== current) {
+            return finish(409, { error: '过期保存请求', revision: current });
+          }
+          if (revision !== current && base !== current && !continuation) return finish(409, { error: '稿件已更新', revision: current });
+          fs.renameSync(subTmp, subPath);
+          const latest = updateMeta(id, m => { m.modifiedAt = new Date().toISOString(); });
+          subtitleCommits.set(id, { client: identified ? client : '', seq, base, revision });
+          return finish(200, { ok: true, savedAt: latest.modifiedAt, revision });
+        } catch (e) {
+          return finish(500, { error: '替换字幕文件失败: ' + String(e && e.message || e) });
+        }
       });
       req.pipe(out);
       return;
@@ -8119,7 +8644,11 @@ function handleProjectsRoutes(req, res, u) {
       const file = meta.subtitle && meta.subtitle.file;
       const subPath = safeProjectFile(id, file || 'subtitle.ass');
       if (!subPath) return sendJson(res, 400, { error: '字幕文件路径不合法' });
-      return serveFile(req, res, subPath);
+      try {
+        const bytes = fs.readFileSync(subPath);
+        res.setHeader('ETag', '"' + subtitleRevision(bytes) + '"');
+        return send(res, 200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': bytes.length, 'Cache-Control': 'no-store' }, bytes);
+      } catch (e) { return sendJson(res, e.code === 'ENOENT' ? 404 : 500, { error: '字幕读取失败' }); }
     }
     if (action === 'relink' && req.method === 'POST') {
       return readBody(req, res, 64 * 1024, (err2, body) => {
@@ -8189,9 +8718,9 @@ function handleRequest(req, res) {
   if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
     return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
   }
-  if (UNSAFE_METHODS.has(req.method)) {
+  {
     const origin = String(req.headers.origin || '').trim();
-    if (origin && !LOOPBACK_ORIGIN_RE.test(origin)) {
+    if ((origin && !allowedOrigin(origin)) || (!origin && UNSAFE_METHODS.has(req.method) && !nativeAuthorized(req))) {
       return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: origin');
     }
   }
@@ -8208,27 +8737,31 @@ function handleRequest(req, res) {
 
   // API 段分发: 命中前缀即由该段全权处理(段内未匹配的 method/路径组合由段尾兜底回 404)
   for (const [re, h] of API_SECTIONS) {
-    if (re.test(pathname)) { h(req, res, u); return; }
+    if (re.test(pathname)) return h(req, res, u);
   }
 
-  const filePath = safeJoin(ROOT, pathname);
+  if (!['GET', 'HEAD'].includes(req.method)) return send(res, 405, { Allow: 'GET, HEAD' }, 'Method Not Allowed');
+  const filePath = staticResource(pathname);
   if (!filePath) return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, '403 Forbidden');
   serveFile(req, res, filePath);
 }
 
 /* 兜底: 处理器里抛异常绝不能让请求一直悬着 —— 前端会卡死在「读取中…」且没有任何提示。
  * (实测用户报过设置面板识别模型区永远显示"读取中") 这里统一回 500 JSON, 把原因带回前端。 */
-const server = http.createServer((req, res) => {
-  try { handleRequest(req, res); }
-  catch (e) {
+function requestError(req, res, e) {
     const msg = String((e && e.message) || e);
     console.error('[handler error]', req.method, req.url, '\n', (e && e.stack) || e);
     try {
-      if (!res.headersSent) sendJson(res, 500, { error: '服务器内部错误：' + msg });
+      if (res.destroyed || res.writableEnded) return;
+      if (!res.headersSent) sendJson(res, e.statusCode || 500, { error: '服务器内部错误：' + msg });
       else res.end();
     } catch {}
-  }
-});
+}
+function invokeRequest(req, res, handler) {
+  try { return Promise.resolve(handler()).catch(e => requestError(req, res, e)); }
+  catch (e) { requestError(req, res, e); return Promise.resolve(); }
+}
+const server = http.createServer((req, res) => { invokeRequest(req, res, () => handleRequest(req, res)); });
 process.on('uncaughtException', (e) => {
   console.error('[uncaught]', (e && e.stack) || e);      // 记日志但不让进程死掉(本地工具优先可用)
 });
@@ -8276,11 +8809,15 @@ function shutdown(reason) {
   broadcastLife('shutdown', { reason: String(reason || ''), pid: process.pid });
 
   // ② ~600ms 后动手: 给页面一点时间把最后一个防抖保存(sendBeacon)发出来
-  setTimeout(() => {
+  setTimeout(async () => {
+    await asrSvc.stopAll(1500);
     try { if (_localMt) _localMt.stop(); } catch {}
     for (const p of CHILDREN) {
       if (p === trayProc) continue;    // 托盘自己收图标(强杀会留下 Windows"幽灵图标")
-      try { p.kill(); } catch {}       // ffmpeg / Python 识别 / 文件选择器
+      try {
+        if (process.platform === 'win32' && p.pid) childProcess.spawn('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        else p.kill('SIGKILL');
+      } catch {}
     }
     try {
       server.close(() => {});
@@ -8316,7 +8853,8 @@ function startTray() {
   const ico = path.join(__dirname, 'scripts', 'tray.ico');
   if (fs.existsSync(ico)) args.push('-Icon', ico);
   try {
-    trayProc = spawn('powershell.exe', args, { windowsHide: true, stdio: 'ignore' });
+    trayProc = spawn('powershell.exe', args, { windowsHide: true, stdio: 'ignore',
+      env: { ...process.env, SUBFABRIC_CONTROL_TOKEN: CONTROL_TOKEN } });
     trayProc.on('error', (e) => {
       trayProc = null;
       console.error('[tray] 托盘图标启动失败：' + ((e && e.message) || e));

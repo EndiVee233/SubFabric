@@ -174,7 +174,7 @@ function editDistance1(a, b) {
  *
  * 锚点之外的落单词（识别里完全没配上）在两侧已定时间之间按字符数插值。
  */
-function mapTimes(origTokens, recWords, pairs, start, end) {
+function mapTimes(origTokens, recWords, pairs, start, end, rawTimes) {
   const n = origTokens.length;
   if (!n) return [];
   const lo = Number(start), hi = Number(end);
@@ -224,7 +224,12 @@ function mapTimes(origTokens, recWords, pairs, start, end) {
     raw[k] = { oi: k, s: t0, e: Math.max(t0, t1) };
   }
 
-  // ② 整体缩放到原块
+  /* ② 整体缩放到原块 —— **只有合成语音需要**这一步：TTS 的语速与停顿跟被念的原文
+   * 无关，能用的是词与词之间的相对节奏。重识别**真实音频**时，识别词的绝对时间本身
+   * 就是实测值，再缩放等于把测量结果拉走（实测按块缩放会带来约 10% 的人为拉伸），
+   * 所以 rawTimes 直接原样返回 —— 调用方传进来的已经是绝对时间。 */
+  if (rawTimes) return raw.map((r) => ({ oi: r.oi, s: r.s, e: r.e }));
+
   let refS = Infinity, refE = -Infinity;
   for (const r of raw) { refS = Math.min(refS, r.s); refE = Math.max(refE, r.e); }
   const span = Math.max(1e-6, refE - refS);
@@ -384,7 +389,7 @@ function planBlock(text, block, recWords, opts) {
   for (const p of pairs) {
     if (p.oi >= 0 && p.ri >= 0) anchorIdx[p.oi] = p.ri;
   }
-  const times = mapTimes(toks, rec, pairs, block.start, block.end);
+  const times = mapTimes(toks, rec, pairs, block.start, block.end, o.rawTimes === true);
   const words = toks.map((w, k) => ({ w, s: +times[k].s.toFixed(3), e: +times[k].e.toFixed(3) }));
 
   // 时间必须单调且不超出块范围（识别抖动可能把末词推出块尾）

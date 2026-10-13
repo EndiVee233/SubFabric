@@ -220,7 +220,7 @@ console.log('■ T3 ghostZhRows: 合成正例 + 误删防护反例');
 console.log('■ T4 端到端: 真实损坏文件(subtitle_edited.ass)重载 → 自愈后干净且往返稳定');
 {
   const BAD = 'C:/Users/Account/Downloads/subtitle_edited.ass';
-  if (!fs.existsSync(BAD)) { console.log('  (跳过: 找不到实测文件)'); }
+  if (process.env.SUBFABRIC_TEST_ISOLATED === '1' || !fs.existsSync(BAD)) { console.log('  (跳过: 隔离模式或找不到实测文件)'); }
   else {
     const T = makeT(fs.readFileSync(BAD, 'utf8'));
     ok(T.kar.wordStyle === 'Default', 'wordStyle 判定为 Default');

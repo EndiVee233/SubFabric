@@ -45,7 +45,8 @@ def ok(cond, name, extra=""):
 
 
 def main() -> int:
-    path = SRC if os.path.exists(SRC) else REPO_SRC
+    isolated = os.environ.get('SUBFABRIC_TEST_ISOLATED') == '1'
+    path = SRC if not isolated and os.path.exists(SRC) else REPO_SRC
     print(f"源码: {path}")
     text = io.open(path, encoding="utf-8").read()
 
@@ -88,6 +89,10 @@ def main() -> int:
        "_tokens_to_words 用 1/MEL_FRAME_RATE 把 frame 变成秒")
 
     print('\n== 6. 拿同一份音频的两个引擎结果对照（这是最有说服力的证据）==')
+    if isolated:
+        print('    （隔离模式跳过私有历史结果与真实识别结果）')
+        print(f"\n{passed} passed, {failed} failed")
+        return 1 if failed else 0
     # .staging 里留着一批历史结果。关键对照是**同一段音频**分别走
     #   sherpa/CUDA（asr.py，单位本来就对）与 OpenVINO/NPU（asr_npu.py）
     # 如果 GPU 正常、NPU 压缩 8 倍，就直接指向 asr_npu.py 的帧单位。

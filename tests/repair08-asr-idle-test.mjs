@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { AsrService } from '../editor/asr-service.js';
+import { fakeAsr, tick } from './helpers/fake-asr.mjs';
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'asr-idle-'));
+const timers = new Map(); let next = 0;
+const clock = { setTimeout(fn) { const id = { n: ++next, unref() {} }; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); } };
+const fire = () => { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach(fn => fn()); };
+const fake = fakeAsr(), svc = new AsrService({ python: 'mock', spawnImpl: fake.spawnImpl, clock, idleMs: 10 });
+const opts = owner => ({ owner, script: 'asr.py', model: 'mock', provider: 'cpu', audio: 'mock', outPath: path.join(root, owner + '.json') });
+try {
+  const a = svc.transcribe(opts('A')), b = svc.transcribe(opts('B'));
+  const p = fake.processes[0]; assert.equal(timers.size, 0);
+  p.reply({ type: 'ready' }); await tick();
+  p.reply({ type: 'ok', id: 1, segments: [] }); await a;
+  assert.equal(timers.size, 0); fire(); assert.equal(p.alive, true);
+  p.reply({ type: 'ok', id: 2, segments: [] }); await b;
+  assert.equal(timers.size, 1);
+  const stale = [...timers.values()][0];
+  const c = svc.transcribe(opts('C')); await tick(); assert.equal(timers.size, 0);
+  stale(); assert.equal(p.alive, true);
+  p.reply({ type: 'ok', id: 3, segments: [] }); await c;
+  fire(); assert.equal(svc.status().length, 0);
+  const d = svc.transcribe(opts('D')); const replacement = fake.processes[1]; replacement.reply({ type: 'ready' }); await tick();
+  p.emit('close', 0); stale(); assert.equal(svc.status().length, 1);
+  replacement.reply({ type: 'ok', id: 1, segments: [] }); await d;
+  await svc.stopAll(5); assert.equal(timers.size, 0);
+  console.log('repair08: controlled clock protects concurrent/ready tasks, new work, replacement worker and stop timer cleanup passed');
+} finally { await svc.stopAll(5); fs.rmSync(root, { recursive: true, force: true }); }

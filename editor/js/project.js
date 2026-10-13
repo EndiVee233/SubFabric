@@ -24,10 +24,14 @@ import { escapeHtml } from './util.js';
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
   const $ = (s) => document.querySelector(s);
+  const studioUI = document.body?.classList?.contains('sf-studio') === true;
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
   let saveTimer = 0;
   let saving = false;
+  let savePromise = null;
+  let saveRevision = '', saveSequence = 0, saveConflict = false;
+  const saveClient = crypto.randomUUID();
   let pollTimer = 0;
   let nemoPollTimer = 0;       // 盯 NeMo 预检（要导入 PyTorch，30 秒起步）
 
@@ -74,7 +78,8 @@ export function initProjects(ctx) {
     // 设置页里改了什么（翻译配置 / 分角色 / 下载或删了模型）这边都不知道，
     // 所以统一作废生成设置面板的缓存，下次进页面重新拉。
     genAsr = genTr = genCast = null;
-    if (settingsOpenedFromApp) history.back();
+    if (studioUI) replaceRoute(settingsReturnRoute);
+    else if (settingsOpenedFromApp) history.back();
     else replaceRoute(settingsReturnRoute === '#/settings' ? '#/home' : settingsReturnRoute);
   }
   function returnFromDetails() {
@@ -447,14 +452,29 @@ export function initProjects(ctx) {
    *   现在：saveNow() 无论保存与否都给状态一个明确结论。 */
   let pendingText = null;
   function scheduleSave() {
-    if (!state.project) return;
+    if (!state.project || saveConflict) return;
     pendingText = currentText();
     setSaveState('', '● 有未保存更改');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 1200);
   }
   async function saveNow() {
-    if (!state.project) return;
+    if (savePromise) return savePromise;
+    savePromise = saveOnce();
+    try { return await savePromise; } finally { savePromise = null; }
+  }
+  async function flushSave() {
+    const project = state.project;
+    clearTimeout(saveTimer);
+    if (!project) return;
+    if (savePromise) await savePromise;
+    if (state.project !== project) return;
+    if (currentText() !== lastSavedText) await saveNow();
+    clearTimeout(saveTimer);
+    if (state.project === project && currentText() !== lastSavedText) throw new Error('旧项目尚未保存成功，请先保留当前稿件');
+  }
+  async function saveOnce() {
+    if (!state.project || saveConflict) return;
     if (saving) { scheduleSave(); return; }       // 上一轮未完成, 稍后再存
     const text = currentText();
     /* 内容与已存盘的一致 → 没什么可存，但**必须把状态改回"已保存"**，
@@ -464,40 +484,50 @@ export function initProjects(ctx) {
       return;
     }
     saving = true;
+    const project = state.project;
+    const revision = saveRevision, sequence = ++saveSequence;
     setSaveState('saving', '保存中…');
     try {
-      const r = await fetch(`/api/projects/${state.project.id}/subtitle`, {
+      const r = await fetch(`/api/projects/${project.id}/subtitle?revision=${revision}&client=${saveClient}&seq=${sequence}`, {
         method: 'PUT', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: text
       });
       if (r.ok) {
-        lastSavedText = text;
         const d = await r.json().catch(() => ({}));
-        if (state.project && state.project.meta) state.project.meta.modifiedAt = d.savedAt;
+        if (state.project !== project) return;
+        lastSavedText = text;
+        saveRevision = d.revision;
+        if (project.meta) project.meta.modifiedAt = d.savedAt;
         setSaveState('saved', '已保存 ' + new Date().toTimeString().slice(0, 5));
-      } else setSaveState('', '⚠ 保存失败(稍后自动重试)');
+      } else if (state.project === project) {
+        saveConflict = r.status === 409 || r.status === 428;
+        setSaveState('', saveConflict ? t('save.conflict') : '⚠ 保存失败(稍后自动重试)');
+      }
     } catch {
-      setSaveState('', '⚠ 保存失败(稍后自动重试)');
-    }
-    saving = false;
+      if (state.project === project) setSaveState('', '⚠ 保存失败(稍后自动重试)');
+    } finally { saving = false; }
     /* 保存期间又改了（pendingText 与刚存的不一致）→ 立刻再存一轮，别等下一次触发 */
-    if (pendingText && pendingText !== lastSavedText) scheduleSave();
+    if (state.project === project && pendingText && pendingText !== lastSavedText) scheduleSave();
   }
   // 页面关闭/刷新兜底: 未保存的改动用 sendBeacon 补一刀(服务端 PUT/POST 都收)
   window.addEventListener('beforeunload', () => {
-    if (!state.project) return;
+    if (!state.project || saveConflict) return;
     clearTimeout(saveTimer);
     const text = currentText();
     if (text && text !== lastSavedText) {
-      navigator.sendBeacon(`/api/projects/${state.project.id}/subtitle`, new Blob([text], { type: 'text/plain' }));
+      navigator.sendBeacon(`/api/projects/${state.project.id}/subtitle?revision=${saveRevision}&client=${saveClient}&seq=${++saveSequence}`, new Blob([text], { type: 'text/plain' }));
     }
   });
 
   /* ─────────── 波形(项目缓存) ─────────── */
   async function loadPeaks() {
+    const project = state.project;
+    const gen = _openGen;
+    if (!project) return false;
     try {
-      const r = await fetch(`/api/projects/${state.project.id}/peaks`);
+      const r = await fetch(`/api/projects/${project.id}/peaks`);
       if (!r.ok) return false;                     // 未就绪: prepare 轮询完成后会再调
       const data = new Uint8Array(await r.arrayBuffer());
+      if (state.project !== project || gen !== _openGen) return false;
       timeline.setPeaks({ data, rate: parseFloat(r.headers.get('X-Peak-Rate') || '100'), ch: +(r.headers.get('X-Peak-Ch') || 2) });
       toast('波形已就绪(来自项目缓存)', 2000);
       return true;
@@ -506,7 +536,7 @@ export function initProjects(ctx) {
 
   /** prepare 状态处理: running→轮询 / done→直接读 / 缺失→自动补跑一次(无音轨的不重试) */
   function handlePrepare(m) {
-    clearInterval(pollTimer);
+    clearInterval(pollTimer); pollTimer = 0;
     const st = m.prepare && m.prepare.status;
     if (st === 'running') return pollPrepare();
     if (st === 'done' && m.hasPeaks) return loadPeaks();
@@ -518,20 +548,25 @@ export function initProjects(ctx) {
     if (!m.hasPeaks && m.videoExists) retryPrepare();
   }
   async function retryPrepare() {
+    const project = state.project;
+    if (!project) return;
     try {
-      const r = await fetch(`/api/projects/${state.project.id}/prepare`, { method: 'POST' });
+      const r = await fetch(`/api/projects/${project.id}/prepare`, { method: 'POST' });
       const m2 = await r.json();
+      if (state.project !== project) return;
       if (r.ok) { state.project.meta = m2; pollPrepare(); }
       else toast(m2.error || '波形提取启动失败', 3600);
     } catch { toast('波形提取启动失败', 3600); }
   }
   function pollPrepare(onDone) {
     if (pollTimer) return;
+    const project = state.project;
+    if (!project) return;
     toast('正在提取音频与波形…(完成后自动显示)', 4200);
     pollTimer = setInterval(async () => {
       let m;
-      try { m = await (await fetch(`/api/projects/${state.project.id}`)).json(); } catch { return; }
-      if (!state.project) return clearInterval(pollTimer), pollTimer = 0;
+      try { m = await (await fetch(`/api/projects/${project.id}`)).json(); } catch { return; }
+      if (state.project !== project) return;
       state.project.meta = m;
       const st = m.prepare && m.prepare.status;
       if (st === 'done') {
@@ -560,17 +595,19 @@ export function initProjects(ctx) {
   }
   async function regenAudio() {
     if (!state.project) return;
+    const project = state.project;
     const btn = $('#btn-regen-audio');
     const mode = ($('#audio-mode') && $('#audio-mode').value) || 'raw';
     btn.disabled = true;
     const old = btn.textContent;
     btn.textContent = '提取中…';
     try {
-      const r = await fetch(`/api/projects/${state.project.id}/prepare`, {
+      const r = await fetch(`/api/projects/${project.id}/prepare`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, force: true })
       });
       const m2 = await r.json();
+      if (state.project !== project) return;
       if (!r.ok) { toast(m2.error || '重新生成失败', 3600); return; }
       state.project.meta = m2;
       pollPrepare((m) => syncAudioModeUI(m, true));   // 完成后换新音频(时间戳破缓存)并刷新播放音轨
@@ -602,25 +639,21 @@ export function initProjects(ctx) {
   let _openGen = 0;
   async function openProject(pid) {
     const gen = ++_openGen;
+    clearInterval(pollTimer); pollTimer = 0;
     let m;
     try {
+      await flushSave();
+      if (gen !== _openGen) return;
       const r = await fetch('/api/projects/' + pid);
       m = await r.json();
       if (gen !== _openGen) return;
       if (!r.ok || m.error) throw new Error(m.error || 'HTTP ' + r.status);
     } catch (e) {
+      if (gen !== _openGen) return;
       toast('项目加载失败: ' + e.message, 3600);
       location.hash = '#/home';
       return;
     }
-    state.project = { id: pid, meta: m, loadPeaks };
-    setSaveState('', '自动保存已开启');
-    // 备注是按项目存的 —— 切项目要重载（不重载会把上一个项目的备注当弹幕放出来）
-    if (typeof window.__notesReload === 'function') window.__notesReload();
-    // 「全片逐词重校对」浮层里的清单与按钮句数也是按稿件的：切换时整个收掉，
-    // 否则会留着上一个稿件的 N 句（用户实测：预览里 45 句、按钮还写着 3927 句）。
-    if (typeof window.__realignReset === 'function') window.__realignReset();
-
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
       // ⚠ 必须检查 r.ok: 服务端 500/404 时响应体是 HTML/JSON 错误页, 不挡的话会被
@@ -628,16 +661,29 @@ export function initProjects(ctx) {
       // saveNow() 都会把坏内容 PUT 回写 subtitle.ass, 覆盖权威字幕文件(数据丢失)。
       const r = await fetch(`/api/projects/${pid}/subtitle`);
       if (gen !== _openGen) return;
-      if (!r.ok) { toast(`项目字幕读取失败（HTTP ${r.status}）`, 3600); }
-      else {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      {
         const text = await r.text();
         if (gen !== _openGen) return;
+        const name = (m.subtitle && (m.subtitle.name || m.subtitle.file)) || 'subtitle.ass';
+        const parsed = /\.(ass|ssa)$/i.test(name) ? new AssDoc(text).events : parseSRT(text);
+        if (!parsed.length) throw new Error('字幕没有有效事件');
+        // 所有网络读取和解析完成后，在同一同步阶段提交 ID 与文档。
+        routeSub(text, name);
+        state.project = { id: pid, meta: m, loadPeaks };
         lastSavedText = text;
-        routeSub(text, (m.subtitle && m.subtitle.name) || (m.subtitle && m.subtitle.file) || 'subtitle.ass');
+        saveRevision = (r.headers.get('ETag') || '').replace(/^"|"$/g, '');
+        saveConflict = false;
+        pendingText = null;
+        setSaveState('', '自动保存已开启');
       }
-    } catch {
-      toast('项目字幕读取失败', 3600);
+    } catch (e) {
+      if (gen !== _openGen) return;
+      toast('项目字幕读取失败: ' + e.message, 3600);
+      return;
     }
+    if (typeof window.__notesReload === 'function') window.__notesReload();
+    if (typeof window.__realignReset === 'function') window.__realignReset();
 
     // 2) 视频: 按保存的路径经服务端 Range 流式播放; 失效则要求重选
     if (m.videoExists && m.video && m.video.path) {
@@ -658,6 +704,8 @@ export function initProjects(ctx) {
       '重新选择视频', '暂不', () => pickVideoForProject());
   }
   async function pickVideoForProject() {
+    const project = state.project;
+    if (!project) return;
     // 双通道: 原生对话框优先, 超时/失败自动降级浏览器选择(上传成服务端文件再 relink)
     // 立即提示: 系统对话框开在系统层, 可能被浏览器挡住 —— 用户得知道它已经弹了
     toast('正在打开文件选择窗口…没看到的话看任务栏图标', 2600);
@@ -687,11 +735,13 @@ export function initProjects(ctx) {
       if (pick.error) toast(pick.error, 3200);
       return;
     }
-    const r = await fetch(`/api/projects/${state.project.id}/relink`, {
+    if (state.project !== project) return;
+    const r = await fetch(`/api/projects/${project.id}/relink`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ videoPath: pick.path })
     });
     const m2 = await r.json();
+    if (state.project !== project) return;
     if (!r.ok) { toast(m2.error || '重新关联失败', 3600); return; }
     state.project.meta = m2;
     loadVideoUrl('/api/media?path=' + encodeURIComponent(pick.path), pick.name || 'video');
@@ -701,18 +751,85 @@ export function initProjects(ctx) {
 
   /* ─────────── 主界面(项目列表) ─────────── */
   async function showHome() {
+    const gen = ++_openGen;
+    clearInterval(pollTimer); pollTimer = 0;
+    if (typeof window.__projectAsyncReset === 'function') window.__projectAsyncReset();
     video.pause();
-    if (state.project) { saveNow(); }               // 离开编辑器: 把未保存的立刻写掉
+    if (state.project) {
+      try { await flushSave(); } catch (e) { toast(e.message, 5000); }
+      if (gen !== _openGen) return;
+      detachProject();
+    }
     listAnim = true;                                // 只在"进入首页"这一帧播放卡片入场动画
     renderList();
   }
   let listPoll = 0;
   let listAnim = false;                             // 入场动画开关(轮询刷新时不重播, 否则每 1.5s 抖一次)
-  const lastPct = new Map();                        // 项目 id → 上次渲染的进度百分比(给平滑增长/数字滚动用)
+  const lastSig = new Map();                        // 项目 id → 上次渲染内容的签名(定点更新用)
+  const pctAnimations = new WeakMap();              // 新进度使旧动画失效，避免快速轮询时两个动画互相写数字
+  /** 结构字段变化才重建卡片；进度、消息与修改时间就地更新，避免每次 touchMeta 重建动画。 */
+  function cardSig(p) {
+    const dr = p.draft || null;
+    return [p.name, p.format, p.videoExists ? 1 : 0, p.fetching ? 1 : 0,
+      (p.prepare && p.prepare.status) || '', p.video && p.video.name, p.subName || '',
+      dr ? [dr.status, dr.stage, dr.pendingTranslate, dr.lines,
+        dr.translated ? 1 : 0, dr.skippedTranslate ? 1 : 0].join('|') : '',
+    ].join('\u0001');
+  }
+  function cardMeta(p) {
+    return `${p.fetching ? '正在下载…' : (p.video && p.video.name || '无视频')} · ${p.subName || (p.draft ? '初稿处理中…' : '还没字幕')} · 修改于 ${fmtDate(p.modifiedAt)}`;
+  }
+  /** 下载、提取、识别等真实活动置顶；失败/暂停的无字幕稿件不能一直占据活动区。 */
+  function isCreating(p) {
+    const dr = p.draft || null;
+    if (p.fetching || (p.prepare && p.prepare.status === 'running') || (dr && dr.status === 'running')) return true;
+    // 新建项目在 prepare / draft 建立前的短暂空窗期仍视为活动。
+    return !p.format && !(dr && dr.status)
+      && (!p.prepare || !p.prepare.status || p.prepare.status === 'none');
+  }
+  /** 进度、消息与显示时间就地更新；任务进度会 touchMeta，时间不属于卡片结构签名。 */
+  function syncCardProgress(card, p) {
+    const metaEl = card.querySelector('.pc-meta');
+    const meta = cardMeta(p);
+    if (metaEl && metaEl.textContent !== meta) metaEl.textContent = meta;
+    const dr = (p && p.draft) || null;
+    const bar = card.querySelector('.pc-draft-bar-in');
+    const pctEl = card.querySelector('.pc-draft-txt .pct');
+    const msgEl = card.querySelector('.pc-draft-txt span');
+    if (!dr || !bar || !pctEl) return;
+    const pct = Math.max(0, Math.min(100, dr.progress || 0));
+    // 目标值没变时只核对消息，不改进度 DOM，也不重启仍在进行的数字动画。
+    const shown = Number(pctEl.dataset.pct);
+    if (Number.isFinite(shown) && shown === pct) {
+      if (msgEl) {
+        const txt = String(dr.message || '');
+        if (msgEl.textContent !== txt) msgEl.textContent = txt;
+      }
+      return;
+    }
+    const displayed = Number.parseFloat(pctEl.textContent);
+    const from = Number.isFinite(displayed) ? displayed : pct;
+    bar.style.width = pct + '%';
+    pctEl.dataset.pct = String(pct);
+    // 只在活动稿件的目标值改变时启动动画；已完成/暂停/失败的百分比直接显示最终值。
+    countTo(pctEl, dr.status === 'running' ? from : pct, pct, 420);
+    if (msgEl) {
+      const txt = String(dr.message || '');
+      if (msgEl.textContent !== txt) msgEl.textContent = txt;
+    }
+    const cls = dr.status === 'done' ? 'done'
+      : dr.status === 'error' ? 'error' : dr.status === 'paused' ? 'paused' : 'running';
+    if (card.querySelector('.pc-draft') && !card.querySelector('.pc-draft').classList.contains(cls)) {
+      card.querySelector('.pc-draft').className = 'pc-draft ' + cls;
+    }
+  }
   async function renderList() {
-    // 骨架屏：形状和真实卡片一致, 比"读取中…"那行字少一次布局跳动
-    elList.innerHTML = Array.from({ length: 3 }, () =>
-      '<div class="skel-row"><div class="skel-b b1"></div><div class="skel-b b2"></div><div class="skel-b b3"></div><div class="skel-b b4"></div></div>').join('');
+    // 骨架屏（只在**首绘**时铺）：形状和真实卡片一致, 比"读取中…"那行字少一次布局跳动
+    const firstPaint = !elList.querySelector('.proj-card');
+    if (firstPaint) {
+      elList.innerHTML = Array.from({ length: 3 }, () =>
+        '<div class="skel-row"><div class="skel-b b1"></div><div class="skel-b b2"></div><div class="skel-b b3"></div><div class="skel-b b4"></div></div>').join('');
+    }
     elEmpty.hidden = true;
     elList.classList.toggle('anim-in', listAnim);      // 只有"进入首页"那一帧播放入场动画
     listAnim = false;
@@ -720,16 +837,39 @@ export function initProjects(ctx) {
     try { data = await (await fetch('/api/projects')).json(); }
     catch { elList.innerHTML = '<div class="home-loading">读取失败，本地服务可能没启动</div>'; return; }
     const ps = data.projects || [];
-    elList.innerHTML = '';
+    if (firstPaint) { elList.innerHTML = ''; lastSig.clear(); }
     elEmpty.hidden = ps.length > 0;
+    // 稳定排序保留服务端的组内顺序，不在响应对象上写临时索引。
+    ps.sort((a, b) => Number(isCreating(b)) - Number(isCreating(a)));
+    const seenIds = new Set();
+    const cards = [];
     const ST = { running: '提取中', none: '待提取', error: '提取失败' };
-    const pctTweens = [];                              // 渲染完统一跑百分比数字滚动
     let cardIdx = 0;
     for (const p of ps) {
-      const card = document.createElement('div');
+      seenIds.add(p.id);
+      /* 定点更新：签名没变 → 连 innerHTML 都不碰（这是"不闪"的关键） */
+      const sig = cardSig(p);
+      /* 找已有卡片**用遍历而不是选择器**：项目 id 里可能有需要转义的字符，
+       * 而 CSS.escape 在 lint 里是未声明的全局（本项目跑 ESLint 的 no-undef）。
+       * 卡片数量是"几十"量级，遍历比拼选择器更稳也更省心。 */
+      let card = null;
+      for (const el of elList.querySelectorAll('.proj-card')) {
+        if (el.dataset.id === p.id) { card = el; break; }
+      }
+      // 内容复用与顺序同步分开：未重建的卡片同样必须参加最后的排序。
+      if (card && lastSig.get(p.id) === sig) {
+        cards.push(card);
+        syncCardProgress(card, p);
+        continue;
+      }
+      if (!card) { card = document.createElement('div'); card.dataset.id = p.id; }
+      cards.push(card);
       card.className = 'proj-card' + (p.videoExists || p.fetching ? '' : ' proj-missing');
       // 入场错峰: CSS 用 --i 算 animation-delay（上限 12 档, 项目多了也不会等太久）
       card.style.setProperty('--i', String(Math.min(cardIdx++, 12)));
+      /* 事件绑定：重建过的卡片要重新绑（innerHTML 换代会把监听一起清掉）。
+       * ⚠ 不能只绑一次就依赖复用 —— 内容变化的卡片是**真的重建**的。 */
+      card.replaceChildren();
       const st = p.prepare && ST[p.prepare.status];
       const dr = p.draft || null;
       const hasSub = !!p.format;
@@ -754,15 +894,12 @@ export function initProjects(ctx) {
         else label = stageTxt;
         const cls = dr.status === 'done' ? 'done' : failed ? 'error' : paused ? 'paused' : 'running';
         stChip = ` <span class="pc-st st-${cls}">${esc(running ? label + '...' : label)}</span>`;
-        // 进度条：从"上次渲染到的百分比"平滑长到新值（CSS 用 --from 做起点, 终点就是元素自身 width）
-        const from = lastPct.has(p.id) ? lastPct.get(p.id) : 0;
-        lastPct.set(p.id, pct);
+        // 首次显示或结构变更直接展示当前值；只有活动稿件后续进度变化才平滑过渡。
         draftBar = `
           <div class="pc-draft ${esc(dr.status)}">
-            <div class="pc-draft-bar"><div class="pc-draft-bar-in" style="width:${pct}%;--from:${from}%"></div></div>
-            <div class="pc-draft-txt"><span>${esc(dr.message || label)}</span><span class="pct" data-pct="${pct}" data-from="${from}">${from}%</span></div>
+            <div class="pc-draft-bar"><div class="pc-draft-bar-in" style="width:${pct}%"></div></div>
+            <div class="pc-draft-txt"><span>${esc(dr.message || label)}</span><span class="pct" data-pct="${pct}">${pct}%</span></div>
           </div>`;
-        pctTweens.push(pct);
         // 可重试/可开始翻译：彻底失败、等待翻译、或翻译只完成了一部分（已跳过的不算）
         const canRetry = (failed || paused
           || (dr.status === 'done' && !dr.translated && !!dr.needTranslate)) && !dr.skippedTranslate;
@@ -782,7 +919,7 @@ export function initProjects(ctx) {
         <span class="pc-badge ${fmt === 'srt' ? 'srt' : ''}">${badge}</span>
         <div class="pc-main">
           <div class="pc-name">${esc(p.name)}${missingTag}${stChip}</div>
-          <div class="pc-meta">${esc(p.fetching ? '正在下载…' : (p.video && p.video.name || '无视频'))} · ${esc(p.subName || (dr ? '初稿处理中…' : '还没字幕'))} · 修改于 ${fmtDate(p.modifiedAt)}</div>
+          <div class="pc-meta">${esc(cardMeta(p))}</div>
           ${draftBar}
         </div>
         <div class="pc-actions">
@@ -817,19 +954,28 @@ export function initProjects(ctx) {
             } else toast('删除失败：' + (m.error || '未知原因'), 6000);
           });
       });
-      elList.appendChild(card);
+      lastSig.set(p.id, sig);
     }
-
-    // 进度百分比数字滚动：从上次的值数到新值（列表每 1.5s 重建一次, 这样看起来是"在走"而不是"跳"）
-    // 420ms 必须与 ui.css 里 .pc-draft-bar-in 的 bar-from 动画时长一致 —— 否则动画期间
-    // "条的百分比"和"这个数字"会对不上（用户报的"进度条不一致"）。改这里就一起改那边。
-    for (const el of elList.querySelectorAll('.pct[data-pct]')) {
-      countTo(el, Number(el.dataset.from) || 0, Number(el.dataset.pct) || 0, 420);
+    /* 列表里已经不存在（被删掉）的卡片：连签名记录一起清掉 ——
+     * 不清的话，同名 id 复用时会被误判成"内容没变"，卡片就再也不更新了。 */
+    for (const el of [...elList.querySelectorAll('.proj-card')]) {
+      if (!seenIds.has(el.dataset.id)) { el.remove(); lastSig.delete(el.dataset.id); }
     }
+    // 仅移动位置不对的节点；顺序不变时不产生插入/移除操作，也不会重播旧卡片动画。
+    for (let i = 0; i < cards.length; i++) {
+      if (elList.children[i] !== cards[i]) elList.insertBefore(cards[i], elList.children[i] || null);
+    }
+    // 新界面只消费服务端快照和现有卡片，不接管项目状态、按钮和保存协议。
+    if (studioUI) window.__sfStudio?.projects(ps);
 
     // 有任务在跑就自动刷新, 让列表上的进度自己往前走
+    /* ⚠ 只在**主页真的可见**时轮询。
+     * 原来无条件 setTimeout 下去：用户离开主页（去详情/编辑器）后仍在后台每 1.5 秒
+     * 重渲染一遍列表 —— 白烧 CPU，而且只要那页还挂在那儿，任何列表刷新都可能在屏幕上
+     * 表现为"卡片在动"。回到主页时 applyHash() 会重新 renderList()，不会漏更新。 */
     clearTimeout(listPoll);
-    if (ps.some(p => (p.prepare && p.prepare.status === 'running') || (p.draft && p.draft.status === 'running'))) {
+    const active = ps.some(isCreating);
+    if (active && elHome && !elHome.hidden) {
       listPoll = setTimeout(() => renderList(), 1500);
     }
   }
@@ -837,12 +983,15 @@ export function initProjects(ctx) {
   /** 数字滚动：把 el 的文本从 a 数到 b（含 % 后缀），rAF 驱动, 只用于很短的过渡 */
   function countTo(el, a, b, ms) {
     if (!el) return;
+    const animation = {};
+    pctAnimations.set(el, animation);
     if (a === b || Math.abs(b - a) < 1) { el.textContent = b + '%'; return; }
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = b + '%'; return; }
     const t0 = performance.now();
     const step = (now) => {
+      if (!el.isConnected || pctAnimations.get(el) !== animation) return;
       const k = Math.min(1, (now - t0) / ms);
-      // 必须与 ui.css 的 bar-from 动画**同时长(420ms)同缓动(线性)**: 两边不一致时,
+      // 必须与 ui.css 的 width transition 同时长(420ms)、同缓动(线性): 两边不一致时,
       // 动画期间"条的百分比"与这个数字会明显对不上（用户报的"进度条不一致"；
       // 旧版条是 cubic-bezier(.16,1,.3,1)、数字是三次缓出, 实测最大差 18~40 个百分点）。
       const e = k;
@@ -982,7 +1131,14 @@ export function initProjects(ctx) {
         l.replace(/^(\[\d{2}:\d{2}:\d{2}\]\s*)([\s\S]*)$/, (all, pre, rest) => pre + t(rest))).join('\n');
       logEl.scrollTop = logEl.scrollHeight;
     }
-    if (!dpRunning) { stopDp(); renderList(); }
+    /* 任务结束收尾时才刷新主页列表 —— 而且**只在主页真的可见时**刷。
+     * 这个 tick 每 1.2 秒跑一次（详情页/进度浮层在用），原来无条件调 renderList()：
+     * 用户在详情页盯着进度时，下面的主页列表被反复重渲染（配合 countTo 的数字动画，
+     * 观感就是"所有稿件的进度条都在动"）。列表数据本来就由它自己的轮询管。 */
+    if (!dpRunning) {
+      stopDp();
+      if (elHome && !elHome.hidden) renderList();
+    }
   }
 
   /* ─────────── 手动触发翻译 ─────────── */
@@ -2187,9 +2343,12 @@ async function renderAsrModels() {
       panel.showConfirm('删除模型',
         '删除该模型的文件？已生成的字幕不受影响，之后可以重新下载',
         '删除', '取消', async () => {
-          await fetch('/api/asr/delete', {
+          const response = await fetch('/api/asr/delete', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: b.dataset.id })
           });
+          const result = await response.json();
+          if (!response.ok) toast(result.error || t('model.deleteFailed'), 4500);
+          else if (!result.deleted) toast(t('model.detached'), 4500);
           renderAsrModels();
         });
     }));
@@ -2319,14 +2478,6 @@ async function renderAsrModels() {
     drawerTitle: document.getElementById('st-scheme-title'),
     drawerCur: document.getElementById('st-scheme-cur'),
   };
-
-  /** 方案是否"已配置"：当前 provider 且已有 Key，或本地地址（本地模型不需要 Key） */
-  function schemeConfigured(p) {
-    const cur = $('#st-provider') ? $('#st-provider').value : '';
-    const hasKey = $('#st-key') && $('#st-key').placeholder && /已保存/.test($('#st-key').placeholder);
-    const local = /127\.0\.0\.1|localhost/.test(p.baseUrl || '');
-    return p.id === cur && (hasKey || local);
-  }
 
   function renderSchemes() {
     if (!schemeEls.list) return;
@@ -2867,8 +3018,9 @@ async function renderAsrModels() {
       const m = await postSettings();
       msgEl.textContent = m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译';
       msgEl.classList.remove('err');
-      if (location.hash === '#/settings' && settingsVisit === visit) setTimeout(() => {
-        if (location.hash === '#/settings' && settingsVisit === visit) returnFromSettings();
+      const settingsRoute = location.hash;
+      if ((settingsRoute === '#/settings' || studioUI && settingsRoute === '#/resources') && settingsVisit === visit) setTimeout(() => {
+        if (location.hash === settingsRoute && settingsVisit === visit) returnFromSettings();
       }, 600);
     } catch (e) {
       msgEl.textContent = '✗ ' + e.message;
@@ -2899,9 +3051,13 @@ async function renderAsrModels() {
   });
 
   function detachProject() {
+    ++_openGen;
     clearTimeout(saveTimer);
     clearInterval(pollTimer); pollTimer = 0;
     state.project = null;
+    pendingText = null; saveRevision = ''; saveConflict = false;
+    if (typeof window.__notesReload === 'function') window.__notesReload();
+    if (typeof window.__projectAsyncReset === 'function') window.__projectAsyncReset();
     setPlaybackAudioMode(null, false);          // 脱离项目: 播放恢复视频原声
     const el = $('#save-state');
     if (el) el.hidden = true;
@@ -3109,7 +3265,7 @@ async function renderAsrModels() {
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.defaultPrevented || !$('#confirm-overlay').hidden) return;
     if (location.hash === '#/new') leaveNew();
-    else if (location.hash === '#/settings' && !$('#st-save').disabled) returnFromSettings();
+    else if ((location.hash === '#/settings' || studioUI && location.hash === '#/resources') && !$('#st-save').disabled) returnFromSettings();
     else if (location.hash.startsWith('#/details/') && !detailSave.disabled) returnFromDetails();
   });
 
@@ -3576,15 +3732,27 @@ async function renderAsrModels() {
   }
   function applyHash() {
     let h = location.hash || '#/home';
+    // 新侧栏及浏览器后退也要遵守创建互斥；上传期间离场会重置仍在使用的材料。
+    if (studioUI && npSubmitting && h !== '#/new') {
+      history.replaceState(null, '', '#/new');
+      toast('正在提交稿件，请等待上传完成。', 3200);
+      return;
+    }
+    const studioPages = studioUI ? ['#/tasks', '#/resources', '#/help'] : [];
+    if (studioUI && ['#/settings', '#/resources'].includes(h)
+      && !['#/settings', '#/resources'].includes(previousRoute)) {
+      settingsReturnRoute = previousRoute || '#/home';
+      settingsOpenedFromApp = !!previousRoute;
+    }
     const detailsMatch = /^#\/details\/([A-Za-z0-9_-]{1,64})$/.exec(h);
-    if (!location.hash || !['#/home', '#/new', '#/settings', '#/editor'].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
+    if (!location.hash || !['#/home', '#/new', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
       h = '#/home';
       history.replaceState(null, '', h);
     }
-    $('#app').inert = h === '#/home' || h === '#/new' || h === '#/settings' || !!detailsMatch;
-    setPageVisible(elHome, h === '#/home');
+    $('#app').inert = h === '#/home' || h === '#/new' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
+    setPageVisible(elHome, h === '#/home' || h === '#/tasks');
     setPageVisible(npView, h === '#/new');
-    setPageVisible(stView, h === '#/settings');
+    setPageVisible(stView, h === '#/settings' || h === '#/resources');
     setPageVisible(detailView, !!detailsMatch);
     if (!detailsMatch && previousRoute.startsWith('#/details/')) {
       stopDp(); dpId = ''; detailLoadToken++;
@@ -3609,18 +3777,18 @@ async function renderAsrModels() {
       setAudioControlsVisible(false);
       setPlaybackAudioMode(null, false);
       if (state.project) { saveNow(); detachProject(); }
-    } else if (h === '#/home') {
+    } else if (h === '#/home' || h === '#/tasks') {
       setAudioControlsVisible(false);
       if (previousRoute !== h) showHome();
       if (previousRoute === '#/new' || previousRoute === '#/settings')
         requestAnimationFrame(() => $('#btn-new-project').focus({ preventScroll: true }));
     } else if (h === '#/new') {
-      const fromSettings = previousRoute === '#/settings';
+      const fromSettings = previousRoute === '#/settings' || studioUI && previousRoute === '#/resources';
       if (!fromSettings && previousRoute !== '#/new') npReset();
       // 生成设置面板：从设置页回来时强制刷新（模型/接口/Key 刚改过），其余情况走缓存
       genLoad('np', fromSettings).then(() => { if (fromSettings) refreshAsrStatus(); });
       if (previousRoute !== h) focusPage(npView);
-    } else if (h === '#/settings') {
+    } else if (h === '#/settings' || h === '#/resources') {
       if (previousRoute !== h) {
         settingsVisit++;
         if (previousRoute.startsWith('#/project/') || previousRoute === '#/editor') {
@@ -3635,13 +3803,18 @@ async function renderAsrModels() {
         loadSettings();
         focusPage(stView);
       }
+    } else if (h === '#/help') {
+      video.pause();
+      if (state.project) saveNow();
     }
+    if (studioUI) window.__sfStudio?.route(h, state.project, state.format);
     previousRoute = h;
   }
   window.addEventListener('hashchange', applyHash);
   $('#btn-home').addEventListener('click', () => { location.hash = '#/home'; });
 
   return {
+    openProject, detachProject, flushSave, saveNow,
     applyHash,
     scheduleSave,                                    // main.js 在数据变化后调
     getProject: () => state.project

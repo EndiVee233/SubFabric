@@ -6,6 +6,35 @@
  */
 import { assPlainText } from './ass.js';
 
+// 服务端与浏览器共用同一句身份：重复台词也必须匹配原始事件位置和完整词序。
+export function realignTargetKey(sentence) {
+  return JSON.stringify([sentence.style, sentence.proto && sentence.proto.name, sentence.start, sentence.end,
+    sentence.text, sentence.events.map(e => e.lineIdx), sentence.words.map(w => w.w)]);
+}
+export function applyRealignItems(doc, kar, items, context) {
+  const plans = [], used = new Set();
+  let skipped = 0;
+  for (const it of items) {
+    if (!it || it.projectId !== context.projectId || it.sourceRevision !== context.revision) { skipped++; continue; }
+    const candidates = kar.sentences.filter(s => s.words.length && realignTargetKey(s) === it.targetKey);
+    const sent = candidates.length === 1 ? candidates[0] : null;
+    if (!sent || used.has(sent) || sent.text !== it.text || !Array.isArray(it.words) || it.words.length !== sent.words.length
+        || it.words.some((w, i) => w.w !== sent.words[i].w || !Number.isFinite(w.s) || !Number.isFinite(w.e)
+          || w.e <= w.s || w.s < sent.start - 0.01 || w.e > sent.end + 0.01
+          || (i > 0 && w.s < it.words[i - 1].s))) { skipped++; continue; }
+    const words = sent.words.map((w, i) => ({ ...w, s: it.words[i].s, e: it.words[i].e }));
+    const specs = buildWordSpecs({ ...sent, words });
+    const visible = assPlainText(sent.events[0].text);
+    if (specs.some(s => assPlainText(s.text) !== visible)) { skipped++; continue; }
+    plans.push({ sent, words, specs }); used.add(sent);
+  }
+  // 完整预检后才修改文档，保留原词对象中的 k 分段位置及颜色等信息。
+  for (const { sent, words, specs } of plans) {
+    sent.words = words; sent.events = doc.replaceEvents(sent.events, specs);
+  }
+  return { changed: plans.length, skipped };
+}
+
 /** 逐词高亮切片: {\c&H00FF00&}word{\c} */
 const HL_RE = /\{\\c&H[0-9A-Fa-f]{6}&\}([^{}]+?)\{\\c\}/;
 

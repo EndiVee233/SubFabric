@@ -66,6 +66,7 @@ export function makeSyntheticAss() {
  * 返回 { text, real, name }。
  */
 export function resolveAssFixture() {
+  if (process.env.SUBFABRIC_TEST_ISOLATED === '1') return { text: makeSyntheticAss(), real: false, name: '(合成素材)' };
   const pdir = path.join(REPO, 'projects');
   try {
     for (const d of fs.readdirSync(pdir)) {

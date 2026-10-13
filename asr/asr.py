@@ -79,17 +79,38 @@ def _manifest_save(out_path, done):
 
 
 
-def serve_loop(args, build_recognizer, recognize, log_fn):
+def serve_loop(args, build_recognizer, recognize, log_fn,
+               base_hotwords=None, base_score=3.0):
     """常驻服务循环：模型加载一次，之后反复从 stdin 读任务。
 
     `recognize(rec, args, job)` 由各脚本提供，返回
     (duration, segments, confidence)；confidence 为 None 表示该引擎没有这个信号。
+
+    `build_recognizer(hotwords, score)` 按热词重建识别器 —— 逐句热词（全片逐词重校对）
+    要求每句都能换一份热词表，而热词是在 recognizer 构造时固化的，只能重建。
     """
     import json as _json
     import sys as _sys
+    import time as _time
+
+    # 热词集合缓存：集合没变就复用同一个 recognizer。
+    # 实测重建一次 3.6s（int8 encoder 652MB + CUDA 会话），而解码只要 0.23s ——
+    # 重建是这条路唯一的开销大头，能省一次是一次（同句重试、连续几句筛出同一组热词）。
+    base = [str(x) for x in (base_hotwords or [])]
+    state = {"key": None, "rec": None}
+
+    def ensure(hw, sc):
+        key = (tuple(hw), round(float(sc), 3))
+        if state["rec"] is not None and state["key"] == key:
+            return state["rec"], False
+        t0 = _time.time()
+        rec = build_recognizer(list(hw), float(sc))
+        state["rec"], state["key"] = rec, key
+        log_fn("识别器就绪(按请求热词 %d 条重建, 耗时 %.1fs)" % (len(hw), _time.time() - t0))
+        return rec, True
 
     log_fn("常驻模式：加载模型一次 …")
-    rec = build_recognizer()
+    rec, _ = ensure(base, base_score)
     _sys.stdout.write(_json.dumps({"type": "ready", "device": getattr(rec, "enc_device", "")},
                                   ensure_ascii=False) + "\n")
     _sys.stdout.flush()
@@ -109,9 +130,16 @@ def serve_loop(args, build_recognizer, recognize, log_fn):
             return 0
         jid = job.get("id")
         try:
+            # 逐句热词：job 带了就用它（**仅作用于本次识别**），没带就沿用启动参数
+            hw = job.get("hotwords")
+            hw = base if hw is None else [str(x) for x in hw]
+            sc = job.get("hotwords_score")
+            sc = base_score if sc is None else float(sc)
+            rec, rebuilt = ensure(hw, sc)
             duration, segments, conf = recognize(rec, args, job)
             out = {"type": "ok", "id": jid, "duration": duration,
-                   "language": job.get("language", "en"), "segments": segments}
+                   "language": job.get("language", "en"), "segments": segments,
+                   "hotwords": len(hw), "rebuilt": rebuilt}
             if conf is not None:
                 out["confidence"] = conf
         except Exception as exc:  # noqa: BLE001
@@ -325,6 +353,42 @@ def bpe_encode(word, vocab):
     return out
 
 
+def hotword_pieces(hotwords, tokens_path, max_pieces=4):
+    """候选热词 → sherpa-onnx 认得的 BPE 片段行（**逐词预校验**，不合格的整条丢掉）。
+
+    为什么必须预校验：热词只认 tokens.txt 里逐个存在的片段，认不出的会被
+    InitHotwords 丢弃并**污染上下文图** —— 实测把整句所有词都当热词时，
+    一句本来 100% 正确的话会退化成数字复读
+    （`tens of thousands of players online at any given moment`
+     → `1 1 1 1 1 1 1 1 1 1 1 1 1 1 10 1`）。碎片越多越容易触发，
+    所以片段数超过 max_pieces 的长专名也一并丢掉。
+
+    @returns (kept: [片段行], dropped: [(词, 原因)])
+    """
+    vocab = load_vocab(tokens_path)
+    if not vocab:
+        return [], [(str(w), "词表读取失败") for w in (hotwords or [])]
+    kept, dropped, seen = [], [], set()
+    for w in (hotwords or []):
+        s = str(w).strip()
+        if not s or s.lower() in seen:
+            continue
+        seen.add(s.lower())
+        pieces = bpe_encode(s, vocab)
+        if not pieces:
+            dropped.append((s, "无法编码"))
+            continue
+        missing = [p for p in pieces if p not in vocab]
+        if missing:
+            dropped.append((s, "片段不在词表: " + " ".join(missing)))
+            continue
+        if len(pieces) > max_pieces:
+            dropped.append((s, "片段过多(%d)" % len(pieces)))
+            continue
+        kept.append(" ".join(pieces))
+    return kept, dropped
+
+
 def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provider="cuda"):
     import glob
     import tempfile
@@ -377,17 +441,10 @@ def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provi
     #      → 因此默认给 3.0, 并在文档里写清安全区间。
     hw_path = None
     if hotwords:
-        pieces_all = []
-        skipped = []
-        vocab = load_vocab(tokens)
-        for w in hotwords:
-            enc_pieces = bpe_encode(w, vocab)
-            if enc_pieces:
-                pieces_all.append(" ".join(enc_pieces))
-            else:
-                skipped.append(w)
+        pieces_all, skipped = hotword_pieces(hotwords, tokens)
         if skipped:
-            log("热词无法编码(词表缺片段), 已跳过: %s" % ", ".join(skipped))
+            log("热词预校验丢弃 %d 条: %s" % (len(skipped),
+                ", ".join("%s(%s)" % (w, r) for w, r in skipped[:6])))
         if pieces_all:
             hw_path = os.path.join(tempfile.gettempdir(),
                                    "kass-hotwords-%d.txt" % os.getpid())
@@ -396,7 +453,7 @@ def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provi
             log("启用热词 %d 条(score=%s): %s" % (len(pieces_all), hotwords_score,
                                                  ", ".join(hotwords[:8]) + ("…" if len(hotwords) > 8 else "")))
         else:
-            log("没有可用的热词(全部无法编码), 按无热词识别")
+            log("没有可用的热词(全部未通过预校验), 按无热词识别")
 
     log("加载 Parakeet 模型 …")
     t0 = time.time()
@@ -708,10 +765,13 @@ def main():
     try:
         if args.serve:
             return serve_loop(args,
-                              lambda: load_recognizer(
-                                  args.model, args.threads, hotwords, args.hotwords_score,
+                              lambda hw=None, sc=None: load_recognizer(
+                                  args.model, args.threads,
+                                  hotwords if hw is None else hw,
+                                  args.hotwords_score if sc is None else sc,
                                   provider=getattr(args, "provider", "cuda")),
-                              _serve_recognize, log)
+                              _serve_recognize, log,
+                              base_hotwords=hotwords, base_score=args.hotwords_score)
         if args.manifest:
             return run_manifest(args, lambda: load_recognizer(
                 args.model, args.threads, hotwords, args.hotwords_score,
