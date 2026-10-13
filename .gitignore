@@ -54,6 +54,8 @@ asr/whisper.cpp/
 asr/crispasr/
 asr/ytdlp/
 config.json
+ui-config.json
+docs/ui-preview-session.json
 desktop.ini
 editor/vendor/
 node_modules/
