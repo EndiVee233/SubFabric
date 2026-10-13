@@ -6,7 +6,8 @@
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
 > 新任务或恢复上下文先读唯一权威状态 [docs/STATUS.md](docs/STATUS.md) 与 [AGENTS.md](AGENTS.md)，
 > 再按需读本地图；阶段进度只维护在 STATUS，连续性要求与验收见 [docs/CONTINUITY.md](docs/CONTINUITY.md)。
-> 最后更新：2026-10-13（独立 UI 原型与单独字幕工作台入口；此前 15 项修复验收见 `docs/REPAIR_15_RESULTS.md`，当前状态见 STATUS）。历史演进见 §11。
+> 最后更新：2026-10-14（新增 §1.1「版本号命名规则」并发布 `beta 1.0` 安装包；此前独立 UI 原型与单独字幕工作台入口，
+> 15 项修复验收见 `docs/REPAIR_15_RESULTS.md`，当前状态见 STATUS）。历史演进见 §11。
 
 ---
 
@@ -39,9 +40,45 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | 完整发版流程 | **见 `editor/README.md`「发版流程」节** |
 
 - 版本号唯一来源是 `editor/server.js` 的 `APP_VERSION`；**发版时还要同步** `build/installer/SubFabric.iss` 与 `editor/README.md`。
+  **版本怎么编号、下一版发多少 → 见 §1.1「版本号命名规则」（发版前必读）。**
 - SEA 启动器把端口写死 8321（服务端本身认 `PORT` 环境变量，测试探针靠它跑隔离实例）。
 - 纯前端修复可在明确安装授权后仅更新对应外置资源，无需重建 SEA；先比对安装基线并保留文件范围外改动，备份、暂存替换，再核对当前服务返回资源。2026-10-13 首页修复仅更新当前 2.4.0 的 project.js 首页段与 ui.css，未整体安装其他待同步源码；实际安装与验证记录见 STATUS。
-- 构建入口支持 `SUBFABRIC_DEV/INST/PY/ISCC` 路径覆盖。先语法检查、构建、EXE 校验及可选打包，成功后才进入安装锁、暂存、备份与回滚；EXE 最后替换。模型/设置/项目/runtime/vendor 不进入源码安装清单。打包用临时树，可只读借用安装目录 vendor。真实 SEA/Inno 验收仍需单独执行；本轮没有安装程序。
+- 构建入口支持 `SUBFABRIC_DEV/INST/PY/ISCC` 路径覆盖。先语法检查、构建、EXE 校验及可选打包，成功后才进入安装锁、暂存、备份与回滚；EXE 最后替换。模型/设置/项目/runtime/vendor 不进入源码安装清单。打包用临时树，可只读借用安装目录 vendor。真实 SEA/Inno 验收仍需单独执行。
+- **本轮（beta 1.0）已实际构建安装包**：`fetch-vendor.js` → `build_exe.py` → `ISCC` 全链路跑通，产物
+  `build/installer/SubFabric-beta 1.0-setup.exe`（34.3MB，解包 94 文件 / 104.2MB）。**未执行真实静默安装自检**
+  （见下方「/DIR 会被 UsePreviousAppDir 顶掉」：那一步会原地覆盖用户已装的 2.4.0），因此"装完能不能跑"仍属未验证。
+- **踩过的坑（2026-10-14）**：`SubFabric.iss` 的 `VersionInfoProductVersion` 曾写成 `{#MyAppVersion}`（= 显示版本
+  `beta 1.0`）。该字段**只接受纯数字**，ISCC 直接 `Value ... is invalid` 编译中止；因为上一轮把版本改成 `beta 1.0`
+  后从未真正编过安装包，这个错一直没暴露。**凡是 `VersionInfo*` 字段一律用 `MyAppFileVersion`**，显示版本只走
+  `AppVersion` / `AppVerName` / `VersionInfoProductName`。
+
+### 1.1 版本号命名规则（发版前必读）
+
+**三段各司其职，"改一处 = 三处同改"**（`editor/server.js` / `build/installer/SubFabric.iss` / `editor/README.md` 标题）：
+
+| 用途 | 字段 | 格式 | 本轮值 |
+| --- | --- | --- | --- |
+| 产品显示版本（给人看：界面、安装向导、Release 名） | `editor/server.js` 的 `APP_VERSION`、`.iss` 的 `MyAppVersion` | beta 期 `beta <主>.<次>`；转正后 `<主>.<次>` | `beta 1.0` |
+| Windows 文件版本（PE 资源，**只能四段纯数字**） | `APP_FILE_VERSION` / `MyAppFileVersion` | `<主>.<次>.<补丁>.0`；beta 期补丁段固定 0 | `1.0.0.0` |
+| Git tag / GitHub Release tag | Release 的 tag | beta 期 `v<主>.<次>.0-beta.<序号>`；转正 `v<主>.<次>.0` | `v1.0.0-beta.1` |
+
+**`beta 1.0` 的读法是"1.0 的 beta"** —— 显示版本的 `<主>.<次>` 与 tag 的 `<主>.<次>` 是同一个数，不是两套编号。
+
+推进规则：
+
+1. **同一版本再裁剪**（`beta 1.0` 的修补重发）：显示版本与文件版本**不变**，只把 tag 的 beta 序号 +1 → `v1.0.0-beta.2`。
+2. **开新 beta 版本（默认推进）**：次位 +1 → 显示 `beta 1.1`、文件 `1.1.0.0`、tag `v1.1.0-beta.1`。
+3. **转正**：功能定型后显示版本去掉 `beta ` 前缀（`1.0`），tag 去掉 `-beta.<序号>`（`v1.0.0`），Release 取消 prerelease 勾选。
+4. **稳定版之后**：修复/小改抬补丁位（`1.0.1`）；新增模块抬次位（`1.1.0`）；架构级改动须用户确认才动主位
+   （历史：`2.3.0` 是"并入 R2FtYml0 fork 全部功能"经确认才跳的次位）。
+5. 发版前先核对远端最新 tag（`git ls-remote --tags` 或 Releases 页），确认不与已发布号冲突；**不要**用"远端补丁位 +1"
+   的老口径（2.4.0 之前的做法），beta 线按上面第 1~2 条走。
+
+**当前与下一个版本（LLM 发版时直接照此取值）**：
+
+- **本次已发布**：显示 `beta 1.0` / 文件 `1.0.0.0` / tag `v1.0.0-beta.1`（2026-10-14，prerelease）。
+- **下一个待发版本：显示 `beta 1.1` / 文件 `1.1.0.0` / tag `v1.1.0-beta.1`**（默认推进）。
+  例外：若只是对 `beta 1.0` 做修补重发，则显示版本仍是 `beta 1.0`（文件版本 `1.0.0.0` 不变），tag 用 `v1.0.0-beta.2`。
 
 ---
 
@@ -346,6 +383,13 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ## 11. 变更锚点（近期重点，全量用 `git log`）
 
+- **beta 1.0 发版 + 版本号命名规则（2026-10-14）**：首次真正跑通"构建安装包 → 发 Release"全链路。
+  - 新增 **§1.1「版本号命名规则」**：显示版本 / Windows 文件版本 / Git tag 三段口径 + 推进规则 + **下一待发版本**
+    （`beta 1.1` / `v1.1.0-beta.1`），供后续 LLM 发版直接取值。
+  - 修复 `SubFabric.iss` 的 `VersionInfoProductVersion={#MyAppVersion}`（显示版本 `beta 1.0` 不是纯数字 → ISCC 编译中止）；
+    同时把该文件里"远端补丁位 +1"的老口径注释改成指向 §1.1。
+  - 产物：`build/installer/SubFabric-beta 1.0-setup.exe`（34.3MB）；`build/SubFabric.exe` 文件版本 `1.0.0.0`。
+    真实静默安装自检未执行（会原地覆盖用户已装版本），"装完能跑"仍属未验证。
 - **全局设置页按设计稿实装（2026-10-12，三阶段）**：三份设计稿（全局设置 / 模型设置 /
   LLM 方案）落到 `#st-view` 的设置页上。**只动前端，后端接口一个没加**。
   - ① 全局设置：左侧分类补齐 5 项（模型设置 / 识别增强 / 性能测试 / 下载与登录 / **外观与主题**）；

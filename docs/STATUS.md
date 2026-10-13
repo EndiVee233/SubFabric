@@ -1,14 +1,21 @@
 # 项目当前状态（唯一权威入口）
 
-- 最后更新：2026-10-13（Asia/Shanghai）。
+- 最后更新：2026-10-14（Asia/Shanghai）。
 - 当前目标：将已完成原型接入真实 SubFabric，默认新 UI，保留旧 UI 并支持配置文件切换；完整保留功能，尤其 ASS 双语样式设置。需求与计划见 [UI_INTEGRATION.md](UI_INTEGRATION.md)。
-- 整体状态：UI 接线已完成且已验证；本轮发布标记已改为产品版本 `beta 1.0`，Windows 文件版本 `1.0.0.0`；版本标记静态核对通过，未构建安装包。
+- 整体状态：UI 接线已完成且已验证；**beta 1.0 安装包已实际构建完成（2026-10-14）**：`build/SubFabric.exe`（文件版本 `1.0.0.0`）与 `build/installer/SubFabric-beta 1.0-setup.exe`（34.3MB，解包 94 文件 / 104.2MB）均已产出并通过构建后核对。**未执行真实静默安装自检**（该步会原地覆盖用户已装的 2.4.0），故"装完能跑"属未验证。
 - 上一任务：15 项修复已完成且已验证，完整验收记录：[REPAIR_15_RESULTS.md](REPAIR_15_RESULTS.md)。
-- 最新范围：用户已授权真实 UI 接线并要求本轮将版本改为 beta 1.0 推送至 EndiVee233/SubFabric；原型、旧界面、安装数据与已有修改全部保留。新界面已安装；本轮只改版本标记/发布说明/状态。
+- 最新范围：用户要求"构建安装包 beta1.0 → 推送 Release → 制定版本号命名规则写进项目地图 → 把 MAP 更新至 GitHub"。原型、旧界面、安装数据与已有修改全部保留；未安装、未改动用户运行环境。
 - 此前真实首页修复的安装范围：安装版 project.js 的首页代码段与 ui.css。保留其他已安装代码、项目/设置/模型与用户已有修改；旧文件及哈希清单备份在工作区 `update-backups/home-list-20261013-TM05xm/`。当前原型调整没有安装操作。
 - 上一任务基线：[repair15-baseline.json](repair15-baseline.json)。此前实装只更新上述两个前端文件；本轮编辑器修改前哈希见原型 review/editor-layout-baseline.json，调整原型编辑器/数据/入口/必要测试与文档，新增两张桌面截图；真实源码及安装文件未修改。
 - 历史 PR #7 为上一任务文档工作，本轮不更新。此前 CI 成功不代表本轮验证。
-- 发布版本源：`editor/server.js` 与 `editor/README.md`、Inno `MyAppVersion` 为 `beta 1.0`；`APP_FILE_VERSION` / `MyAppFileVersion` 为 Windows 兼容的 `1.0.0.0`。
+- 发布版本源：`editor/server.js` 与 `editor/README.md`、Inno `MyAppVersion` 为 `beta 1.0`；`APP_FILE_VERSION` / `MyAppFileVersion` 为 Windows 兼容的 `1.0.0.0`。**版本号推进规则与"下一个待发版本"已写入 PROJECT_MAP.md §1.1（本次默认下一版：显示 `beta 1.1` / 文件 `1.1.0.0` / tag `v1.1.0-beta.1`；若为 beta 1.0 修补重发则 tag 用 `v1.0.0-beta.2`）。**
+
+## 本轮 beta 1.0 构建与发版（2026-10-14）
+
+- 构建链路（全部实际执行成功）：`node editor/scripts/fetch-vendor.js`（libass worker + wasm + Noto CJK，18.4MB）→ `python build_exe.py`（SEA blob 注入 + rcedit 图标/版本 + GUI 子系统）→ `ISCC.exe build/installer/SubFabric.iss`。
+- 产物核对：`build/SubFabric.exe` 87,057,920 字节，含 SEA sentinel fuse 与 UTF-16 版本串（`SubFabric 字幕工作台` / `1.0.0.0` / `EndiVee233`）；安装包 35,925,258 字节（34.3MB），sha256 `bb0897c7b8e13aebf340afbfa891d971440ce6e3b2c0026336cb199a4541c7ec`；按 .iss 的 [Files]+Excludes 复算得 94 个待装文件 / 104.2MB（editor 71、asr 19、根 4），与 README 期望的 ~106MB 同量级，说明 vendor 已进包（未复现"掉到 22.7MB"的失败形态）。
+- **修复了一个既有隐患**：`SubFabric.iss` 的 `VersionInfoProductVersion` 原为 `{#MyAppVersion}`（显示版本 `beta 1.0` 非纯数字）→ ISCC 报 `Value of [Setup] section directive "VersionInfoProductVersion" is invalid` 并中止。上一轮只改版本标记、未真正编译，所以一直没暴露。现改为 `{#MyAppFileVersion}`，并把该文件里"远端补丁位 +1"的旧口径注释改为指向 PROJECT_MAP §1.1。
+- 未做（明确记录，不算已验证）：真实静默安装/卸载自检、装后启动与真实 GPU/ASR/LLM 验收。未在用户机器上安装或改动其现有 2.4.0 安装。
 - 云端状态：**云端提交成功且已核对**（2026-10-13）。上一轮"整文件替换、无 expected-HEAD"的阻塞已改用本地 Git 流程解决：先把工作树按主题拆成 7 个原子提交（`16bd6c8`…`fcce6b2`），再把上游 98 个提交合并进来做兼容（`6c74025`），最后**快进**推送。目标 `EndiVee233/SubFabric` / `main` 由 `5d0e91c66354414b7158f2e69a546fd9359de5cf` 前进到 `6c7402596262618337cedad1c30e4a9c500b869c`；原 HEAD `5d0e91c` 仍是新 HEAD 的祖先（历史无覆盖、无 force）。账号 `R2FtYml0` 对该仓库有 push 权限（`permissions.push=true`）。
 - 合并遗留：`repair09-pack-import-test`、`repair12-build-install-test` 在本机失败；已在**合并前的 `fcce6b2`** 用独立 worktree 复核，同样是这两个失败 → 属既有/环境问题，非本次合并引入，未改动其行为。
 

@@ -1165,9 +1165,12 @@ node editor/scripts/fetch-vendor.js          # 拉 editor/vendor/: libass worker
 #    logo.png / logo.ico 都已入库, 所以新克隆也能直接编安装包
 
 # 1) 三处版本号一起改(漏一处就会出现"装完版本还是旧的")
-#    · editor/server.js          const APP_VERSION = 'x.y.z'
-#    · build/installer/SubFabric.iss   #define MyAppVersion "x.y.z"
+#    · editor/server.js          const APP_VERSION = 'x.y.z'   (+ APP_FILE_VERSION 四段纯数字)
+#    · build/installer/SubFabric.iss   #define MyAppVersion / MyAppFileVersion
 #    · editor/README.md          标题里的版本号
+#    ⚠ 版本号怎么编、下一版该发多少 → **PROJECT_MAP.md §1.1「版本号命名规则」**(发版前必读)。
+#    ⚠ .iss 里 VersionInfoVersion / VersionInfoProductVersion 只接受**纯数字**,
+#      绝不能填带 "beta" 的显示版本(2026-10-14 实测: 填了直接编译中止) —— 一律用 MyAppFileVersion。
 
 # 2) 编译安装包(输出到 build/installer/)
 #    ISCC 路径随机器而变(本机实测: "Y:\Program Files\Inno Setup 7\ISCC.exe"), 先找到再跑
@@ -1175,9 +1178,11 @@ node editor/scripts/fetch-vendor.js          # 拉 editor/vendor/: libass worker
 
 # 3) 静默安装自检 —— ⚠ 见下方「/DIR 会被 UsePreviousAppDir 顶掉」, 这一步会真的覆盖已安装目录
 SubFabric-x.y.z-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="" /DIR=D:\tmp\inst
-#    期望: 45 个文件 / 约 106MB, 含 editor/vendor/*、SubFabric.exe、main.py、asr/
-#    自检内容: find <安装目录>/editor -type f | wc -l 应约 41;
+#    期望: 94 个文件 / 约 104MB, 含 editor/vendor/*、SubFabric.exe、main.py、asr/
+#    自检内容: find <安装目录>/editor -type f | wc -l 应约 71;
 #              逐字节比对 editor/js/*.js 与源码; 确认 asr/.venv、asr/models、projects/ 仍在
+#    注: 这两个数会随 editor/ 增文件而变(Studio 入口、prototypes/subfabric-ui 都算在内),
+#        别把它当硬断言 —— 只要没掉 vendor(libass/CJK 字体) 就说明没打到"少一块"的老毛病。
 
 # 4) 发 Release: 只上传 setup.exe 这一个资产
 #    本机没有 gh CLI。两条可用路径:

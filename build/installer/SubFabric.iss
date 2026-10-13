@@ -13,10 +13,12 @@
 ;
 ; 产品版本要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改；
 ; Windows PE 文件版本另用四段纯数字的 APP_FILE_VERSION / MyAppFileVersion。
-; 口径：**只看远端最新 tag，补丁位 +1**（远端 https://github.com/EndiVee233/SubFabric/tags ）。
-;       功能再多也走补丁位（2.1.8 加微光特效、2.1.9 加词生长都是这么发的），不要自己跳小版本。
-;       嫌麻烦可以先 `git ls-remote --tags` 或直接看 Releases 页确认最新号再 +1。
-;       例外：整代功能合并经确认可跳小版本 —— 2.3.0 即"并入 R2FtYml0 fork 全部功能"（2026-10-10）。
+; ⚠ VersionInfo* 三个字段（VersionInfoVersion / VersionInfoProductVersion / VersionInfoFileVersion）
+;   只接受**纯数字**，绝不能填带 "beta" 的显示版本 —— 2026-10-14 实测：上一轮把显示版本改成
+;   "beta 1.0" 时漏改这里，ISCC 直接 "Value ... is invalid" 编译中止（此前从未真正编过安装包，
+;   所以一直没暴露）。显示版本走 AppVersion / AppVerName / VersionInfoProductName，数字版本走 MyAppFileVersion。
+; 版本口径（显示版本 / 文件版本 / tag 三段如何推进、下一个该发多少）：见 PROJECT_MAP.md §1.1「版本号命名规则」。
+;   beta 期：显示 `beta <主>.<次>`、文件 `<主>.<次>.0.0`、tag `v<主>.<次>.0-beta.<序号>`；转正后去掉 beta 前缀。
 
 #define MyAppName "SubFabric"
 #define MyAppVersion "beta 1.0"
@@ -41,7 +43,7 @@ VersionInfoVersion={#MyAppFileVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppFileVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=.
