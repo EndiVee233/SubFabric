@@ -61,6 +61,11 @@ ok(/loadSystemFontList/.test(MAIN), '/api/fonts 的读取仍保留（组件用�
 
 /* ── ② 行为：用验证页在浏览器里跑 ──────────────────────────── */
 console.log('\n== ② 浏览器行为 ==');
+if (process.env.SUBFABRIC_TEST_ISOLATED === '1') {
+  console.log('SKIP font picker browser interaction: isolated suite does not start Edge or connect to a live service');
+  console.log(`${pass} passed, ${fail} failed`);
+  process.exit(fail ? 1 : 0);
+}
 let svc = null;
 try {
   svc = await (await fetch(BASE + '/api/version', { signal: AbortSignal.timeout(4000) })).json();

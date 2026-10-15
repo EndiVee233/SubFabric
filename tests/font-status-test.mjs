@@ -34,6 +34,11 @@ const ok = (c, n, extra) => {
 };
 const done = () => { console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0); };
 
+if (process.env.SUBFABRIC_TEST_ISOLATED === '1') {
+  console.log('SKIP font status browser interaction: requires a real project and GUI');
+  done();
+}
+
 let svc = null;
 try { svc = await (await fetch(BASE + '/api/version', { signal: AbortSignal.timeout(4000) })).json(); } catch {}
 if (!svc) { console.log('  (跳过：本地服务没在跑)'); done(); }

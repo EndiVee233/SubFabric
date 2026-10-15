@@ -50,13 +50,18 @@ function applyTheme() {
   st.colorScheme = dark ? 'dark' : 'light';
   st.setProperty('--sf-glass-dim', prefs.glassDim + '%');
   st.setProperty('--sf-glass-blur', prefs.glassBlur + 'px');
+  st.setProperty('--sf-glass-opacity', prefs.glassOpacity + '%');
   // 纯黑基底配浅色正文，即使背后是纯白图片也保留足够对比度。
-  st.setProperty('--sf-glass-surface', `rgb(8 11 10 / ${prefs.glassDim / 100})`);
-  st.setProperty('--sf-glass-raised', `rgb(12 16 14 / ${Math.min(.96, prefs.glassDim / 100 + .06)})`);
+  // 压暗控制黑色基底强度，透明度单独控制实际 alpha；默认 80/100 保持此前视觉。
+  const glassAlpha = prefs.glassDim * prefs.glassOpacity / 10000;
+  st.setProperty('--sf-glass-surface', `rgb(8 11 10 / ${glassAlpha})`);
+  st.setProperty('--sf-glass-raised', `rgb(12 16 14 / ${Math.min(.96, glassAlpha + .06)})`);
   $('sf-glass-dim').value = String(prefs.glassDim);
   $('sf-glass-blur').value = String(prefs.glassBlur);
+  $('sf-glass-opacity').value = String(prefs.glassOpacity);
   $('sf-glass-dim-value').textContent = prefs.glassDim + '%';
   $('sf-glass-blur-value').textContent = prefs.glassBlur + 'px';
+  $('sf-glass-opacity-value').textContent = prefs.glassOpacity + '%';
   const auroraColors = prefs.auroraColors.length ? prefs.auroraColors : [tokens['--accent-soft'], tokens['--secondary-container'], tokens['--tertiary-container']];
   auroraColors.forEach((color, i) => {
     st.setProperty('--sf-aurora-' + (i + 1), color);
@@ -108,8 +113,9 @@ window.SSAccent.set = hex => {
 window.SSAccent.reset = () => { const seed = themes.get(prefs.themePack, prefs.custom).seed; if (commit({ accent: seed })) applyTheme(); return seed; };
 function renderPacks() {
   $('sf-theme-packs').innerHTML = themes.list(prefs.custom).map(pack => {
-    // 缩略图固定展示浅色工作区，深色设置页也能看清包的形状与色彩。
-    const palette = themes.palette(pack.seed);
+    // 示意卡片的工作区预览跟随当前明暗模式，避免深色设置页内仍显示浅色工作区。
+    const dark = document.body.dataset.theme === 'dark';
+    const palette = themes.palette(pack.seed, dark);
     const glyph = pack.design === 'material'
       ? '<path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3ZM20 2v4m-2-2h4M4 18v4m-2-2h4"/>'
       : '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11M8 4.8l8 3.5"/>';
@@ -123,7 +129,7 @@ $('sf-theme-packs').addEventListener('click', e => {
   if (commit({ themePack: pack.id, accent: pack.seed })) { applyTheme(); themeStatus(); }
 });
 function themeStatus() { $('sf-theme-status').textContent = t('外观已保存，刷新后保留。'); }
-for (const [id, key] of [['sf-glass-dim', 'glassDim'], ['sf-glass-blur', 'glassBlur']]) $(id).addEventListener('input', () => {
+for (const [id, key] of [['sf-glass-dim', 'glassDim'], ['sf-glass-blur', 'glassBlur'], ['sf-glass-opacity', 'glassOpacity']]) $(id).addEventListener('input', () => {
   if (commit({ [key]: Number($(id).value) })) { applyTheme(); themeStatus(); }
 });
 for (const [id, key] of [['sf-mode', 'mode'], ['sf-background', 'background'], ['sf-motion', 'motion'], ['sf-aurora-motion', 'auroraMotion']]) $(id).addEventListener('change', () => {

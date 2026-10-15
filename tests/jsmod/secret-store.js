@@ -24,7 +24,16 @@ const isEncrypted = (s) => typeof s === 'string' && (s.startsWith(DPAPI_PREFIX) 
 
 /* ── AES 兜底（纯内置 crypto，跨平台） ─────────────────────────────── */
 function aesKey() {
-  const material = [os.hostname(), os.userInfo().username || '', 'SubFabric', 'bili-cookie-v1'].join('|');
+  // Restricted Windows sandboxes can make uv_os_get_passwd fail even though
+  // USERNAME is available. Keep the normal key material unchanged when it works.
+  let username = '';
+  try {
+    username = os.userInfo().username || '';
+  } catch (err) {
+    if (err?.code !== 'ERR_SYSTEM_ERROR') throw err;
+    username = process.env.USERNAME || process.env.USER || '';
+  }
+  const material = [os.hostname(), username, 'SubFabric', 'bili-cookie-v1'].join('|');
   return crypto.scryptSync(material, 'subfabric-secret-salt', 32);
 }
 function aesEncrypt(plain) {

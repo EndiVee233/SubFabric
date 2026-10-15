@@ -5,12 +5,7 @@
 // 手法：拦掉 /api/projects，喂**自己构造的两轮数据**（同一批项目，其中一个的进度变了），
 // 用 MutationObserver 数"卡片元素被替换"与"百分比被重写"的次数。
 //
-// ⚠ 状态（2026-10-12）：①② 已验证通过（见下面的输出），但**脚本本身目前跑不起来** ——
-//   我在修"第三轮（完成后回落）"那段时把内层正则里的反引号字符类破坏了，嵌套模板字符串
-//   因此断裂（SyntaxError）。功能本身由 tests/run-all.mjs 全量与
-//   tools/verify_home_no_flicker.mjs 覆盖着，所以没有因此漏测；
-//   下次要跑这个脚本时，先把假 fetch 里那两处正则改成不含反引号的写法（如 [^"] 之外的等价类），
-//   或把内层代码拆成独立文件用 page.addScriptToEvaluateOnNewDocument 注入。
+// This probe needs Edge and a running app; keep its source syntax-checkable everywhere.
 //
 // 用法: node tools/verify_home_only_running.mjs
 import { spawn } from 'node:child_process';
@@ -94,7 +89,7 @@ const setup = await evalJS(`(() => {
     }
   }).observe(list, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style'] });
   // 触发一次重绘（进首页 → renderList；假 fetch 已就位）
-  // ⚠ 不能 `#/other` → `#/home` 来回切：那会**让页面重新加载**，假 fetch 被重置，
+  // ⚠ 不能 #/other → #/home 来回切：那会**让页面重新加载**，假 fetch 被重置，
   //   后面几轮读到的就是真实项目（实测踩过：第三轮出现 3 张真卡、状态全是"语音识别"）。
   //   直接再进一次首页即可（setPageVisible/renderList 都会跑，且不刷新页面）。
   location.hash = '#/home';
@@ -110,7 +105,7 @@ const first = await evalJS(`(() => {
     titles: cards.map(c => (c.querySelector('.pc-name') || {}).textContent.trim()),
     pcts: cards.map(c => { const e = c.querySelector('.pct'); return e ? e.textContent : null; }),
   });
-})()``);
+})()`);
 console.log('   第一轮:', first);
 const F = JSON.parse(first);
 ok(F.order.length === 3, `渲染出 3 张卡（实际 ${F.order.length}）`);
@@ -127,7 +122,7 @@ const second = await evalJS(`(async () => {
   const cards = [...document.querySelectorAll('#home-list .proj-card')];
   return JSON.stringify({ cnt: window.__cnt, order: cards.map(c => c.dataset.id),
     pcts: cards.map(c => { const e = c.querySelector('.pct'); return e ? e.textContent : null; }) });
-})()``);
+})()`);
 console.log('   ', second);
 const S = JSON.parse(second);
 ok(S.cnt.replaced === 0, `没有任何卡片被整体替换（实际 ${S.cnt.replaced}）`, JSON.stringify(S.cnt));
@@ -153,7 +148,7 @@ const third = await evalJS(`(async () => {
     order: cards.map(c => c.dataset.id),
     stats: cards.map(c => { const e = c.querySelector('.pc-st'); return e ? e.textContent.trim() : null; }),
   });
-})()``);
+})()`);
 console.log('   ', third);
 const T = JSON.parse(third);
 ok(T.order.indexOf('pb') === 2, `B 完成后回到原顺序末尾（${JSON.stringify(T.order)}）`);

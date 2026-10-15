@@ -5,9 +5,10 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const py = path.join(root, '..', 'asr', 'runtime-python', 'python.exe');
+const bundledPy = path.join(root, '..', 'asr', 'runtime-python', 'python.exe');
+const py = process.env.SUBFABRIC_PYTHON || bundledPy;
 if (!fs.existsSync(py)) {
-  console.log('vibevoice-worker-behavior: skipped (bundled CUDA Python unavailable)');
+  console.log('SKIP VibeVoice Python behavior: set SUBFABRIC_PYTHON or install the bundled runtime');
   process.exit(0);
 }
 const script = String.raw`
@@ -30,11 +31,12 @@ else:
     raise AssertionError("missing timestamps must be rejected")
 `;
   const result = spawnSync(py, ['-c', script], { cwd: root, encoding: 'utf8', windowsHide: true,
-    env: { ...process.env, PYTHONPATH: root } });
+  env: { ...process.env, PYTHONPATH: root, PYTHONDONTWRITEBYTECODE: '1' } });
 assert.equal(result.status, 0, result.stderr || result.stdout);
 console.log('vibevoice-worker-behavior: strict timestamp validation and overlapping speakers passed');
 const deviceResult = spawnSync(py, ['-B', path.join(root, 'tests/vibevoice-worker-test.py')], {
   cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000,
+  env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
 });
 assert.equal(deviceResult.status, 0, deviceResult.stderr || deviceResult.stdout);
 console.log('vibevoice-worker-behavior: CUDA-only loading, NF4 state, CPU/offload rejection and decode shape passed');

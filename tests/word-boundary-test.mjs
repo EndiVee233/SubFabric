@@ -73,7 +73,7 @@ const SRCPY = fs.readFileSync(path.join(ASR, 'asr.py'), 'utf8');
 
 /* ── 行为断言：直接调 align_word_starts 与拼词逻辑 ──────────── */
 console.log('\n== ② 行为：用 Python 直接跑 align_word_starts + 拼词 ==');
-const PY = path.join(ASR, 'runtime-python', 'python.exe');
+const PY = process.env.SUBFABRIC_PYTHON || path.join(ASR, 'runtime-python', 'python.exe');
 const PROBE = `
 import json, sys
 sys.path.insert(0, r'${ASR.replace(/\\/g, '\\\\')}')
@@ -150,19 +150,12 @@ print(json.dumps(out, ensure_ascii=False))
 /* 内嵌 Python 是「一键安装」时下载的（约 60MB，不入库）—— 新克隆里没有它。
  * 没有就**跳过行为段**而不是报失败：上面的静态断言已经跑完，且缺的是运行时不是被测代码。 */
 if (!fs.existsSync(PY)) {
-  console.log('  （跳过：未安装内嵌 Python —— ' + path.relative(REPO, PY) + '）');
-  console.log('   在设置里点「一键安装」后本段才会跑；上面的静态断言已完成。');
+  console.log('  （跳过：未配置 Python；设置 SUBFABRIC_PYTHON 可运行行为探针）');
 } else {
-  let raw = null;
-  try {
-    raw = execFileSync(PY, ['-c', PROBE], { encoding: 'utf8', timeout: 120000 });
-  } catch (e) {
-    console.log('  （跳过：内嵌 Python 跑不起来 —— ' + String((e && e.message) || e).slice(0, 140) + '）');
-  }
-  if (raw) {
-    const results = JSON.parse(raw.trim().split('\n').pop());
-    for (const r of results) ok(r.ok, `★ ${r.name}`, { got: r.got, want: r.want });
-  }
+  const raw = execFileSync(PY, ['-B', '-c', PROBE], { cwd: REPO, encoding: 'utf8', timeout: 120000,
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+  const results = JSON.parse(raw.trim().split('\n').pop());
+  for (const r of results) ok(r.ok, `★ ${r.name}`, { got: r.got, want: r.want });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

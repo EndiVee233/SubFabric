@@ -6,7 +6,7 @@
 > 若发现本文件与代码不一致：**以代码为准**，顺手把本文件改对。
 > 新任务或恢复上下文先读唯一权威状态 [docs/STATUS.md](docs/STATUS.md) 与 [AGENTS.md](AGENTS.md)，
 > 再按需读本地图；阶段进度只维护在 STATUS，连续性要求与验收见 [docs/CONTINUITY.md](docs/CONTINUITY.md)。
-> 最后更新：2026-10-14（新增 §1.1「版本号命名规则」并发布 `beta 1.0` 安装包；此前独立 UI 原型与单独字幕工作台入口，
+> 最后更新：2026-10-15（统一隔离 JS 测试入口及本轮维护整理；新增 §1.1「版本号命名规则」并发布 `beta 1.0` 安装包；此前独立 UI 原型与单独字幕工作台入口，
 > 15 项修复验收见 `docs/REPAIR_15_RESULTS.md`，当前状态见 STATUS）。历史演进见 §11。
 
 ---
@@ -94,11 +94,11 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | `asr/` | Python 侧：`asr.py`（本地识别）`vibevoice.py`（VibeVoice NF4·CUDA 4bit，拒绝 CPU/NPU/offload）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（yt-dlp 自举、格式选择、Cookie、分P），细节见 `asr/fetch/README.md` |
 | `tests/` | Node / Python 测试（见 §8）；`tests/jsmod/` 是**前端模块自动同步镜像** |
-| `tools/` | 探针 / 诊断脚本；`build-install.mjs` 是事务构建入口，`repair15-regression.mjs` 是本轮安全回归入口 |
+| `tools/` | 探针 / 诊断脚本；`build-install.mjs` 是事务构建入口，`repair15-regression.mjs` 兼容转发至统一 JS 回归入口 |
 | `build/`、`build_exe.py` | 打包（`build/installer/` 内图标与 `.iss` 入库，其余产物不入库） |
 | `main.py` | **历史遗留**的 Python GUI 工具（字体/颜色等默认值处理），与编辑器主线关系弱 |
 | `docs/` | `docs/STATUS.md` 是唯一权威当前状态，`docs/CONTINUITY.md` 保存连续性要求与验收；另含归档/设计文档（**不在根目录堆着**）：`docs/KARAOKE_DESIGN.md`、`docs/KARAOKE_REFS.md`（逐词高亮与 `\k` 的格式设计与调研，**改字幕格式前必读**）；`docs/CODE_REVIEW.md`（第一轮审查记录）；`docs/双引擎实测结论.md`（NPU+GPU 双引擎实测：本机无收益） |
-| `eslint.config.js` | 只抓真错的规则（`no-undef` 等）；跑 lint 需自行 `npm i eslint`（项目无 `node_modules`） |
+| `eslint.config.js` | ESLint 9 开发期静态检查配置；它不是运行时依赖，CI 用临时 npx 执行 |
 
 ---
 
@@ -330,13 +330,15 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | --- | --- | --- |
 | `tests/home-project-list-test.mjs` | 首页活动排序、复用卡片重排、静态进度零改写、连续/过期动画、完成与暂停/失败、新建/提取/下载、改名/删除及轮询停止 | 运行真实 initProjects/路由/轮询，使用内存 DOM 与可控时钟，不连接实际服务 |
 | `tests/repair01-*` ～ `repair15-*` | 15 项修复的实际行为（内存 mocks / 临时目录 / 独立 HTTP 服务） | 第 12 项用微型 Python 构建与模拟 Inno；第 15 项本机真实 tar/PowerShell 已验证；不等于 GPU/ASR/LLM/GUI/SEA 真机验收 |
-| `tools/repair15-regression.mjs` | 本轮安全整体验证，结果在 `docs/repair15-regression-results.json` | 86 文件通过，其中 20 含明确跳过项；排除 4 个真实项目/设置/GUI 测试，`SUBFABRIC_TEST_ISOLATED=1` 屏蔽私有素材；可传文件名只复核变化项 |
+| `tests/run-all.mjs` | 唯一 JS 全量入口；隔离运行、文件筛选、逐项 JSON 报告 | `node tests/run-all.mjs --report _test/maintenance/js-results.json`；不连接默认服务；报告不合并旧结果 |
+| `tools/repair15-regression.mjs` | 旧命令兼容别名 | 转发至 `tests/run-all.mjs`，不再维护第二套发现/汇总逻辑 |
+| `docs/MAINTENANCE.md` | 本轮完整维护需求、计划、验收与结果边界 | 本任务的范围和本次证据入口 |
 | `tests/karaoke-exhaustive.mjs` | 逐词高亮全链路（28183 断言） | 也负责同步 `tests/jsmod` 镜像；报 `fixture.ass` ENOENT 时先跑 `node tests/gen-fixture.mjs`（夹具是生成物，`*.ass` 不入库） |
 | `tests/cue-segment-test.mjs` | 就地编辑分段 / 最小替换 | 17 项 |
 | `tests/secret-store-test.mjs` | 密文往返 / 篡改检测 | 17 项 |
 | `tests/audio-chunk-test.mjs` | 分片纯函数（静音解析 / 切点 / 合并） | 38 项 |
 | `tests/overlay-test.mjs` | SRT 叠加层活动 cue 检索（重叠/嵌套不漏显示，钉死 `_maxEnd` 回归） | 11 项，直接可跑 |
-| `tests/colorfix-test.mjs` | 颜色修复 | **需要真实用户项目**，新克隆必失败（非缺陷） |
+| `tests/colorfix-test.mjs` | 颜色修复 | 依赖用户项目，统一入口明确排除；不要为了测试改写个人稿件 |
 | `tests/ass-style-preset-test.mjs` | 双语样式预设的导出/导入纯逻辑（往返保真、跨稿件字段名搬运、坏文件拒绝、单样式稿件不乱改） | 纯函数直测，任何机器可跑；新测试文件会被 `run-all.mjs` 自动发现 |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
 | `tools/http_layer_probe.mjs` | HTTP 层探针（守卫 / 形状 / 设置往返 / 项目全生命周期） | 自带服务启停，但会写同树设置/项目；只有隔离副本才可执行，旧字幕保存探针尚需适配 revision 协议；本轮以 repair 测试验证 |
@@ -352,7 +354,8 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 > 导致"哪个测试先跑"决定别的测试能不能过）。跑完测试镜像恒等于源，**无需再 `git checkout` 恢复**；
 > 改过源码后跑一次测试即自动同步镜像，**镜像要与源码一起提交**。
 > `reload-pipeline-test.mjs` 需要 fork 作者机器上的私有基线（未入库），缺失时**自动跳过**（正常，非跳过即异常）。
-> `colorfix-test.mjs` 需要真实用户项目 `projects/p-mugzcab2-09f7z/`，新克隆必然失败（既有基线，非缺陷）。
+> 统一 JS 入口把服务行为测试改为临时服务和临时配置；真实项目 / Edge GUI / GPU / 模型测试不会自动启动。
+> 明确缺数据或设备的测试记为部分执行，业务断言中的“跳过”文字不影响分类。
 
 ---
 

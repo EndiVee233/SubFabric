@@ -42,9 +42,6 @@ jobs:
       - name: 全量测试
         run: node tests/run-all.mjs
 
-      - name: 颜色数学测试
-        run: node tests/color-picker-test.mjs
-
   py:
     name: Python · ruff + 单测
     runs-on: ubuntu-latest
@@ -64,12 +61,12 @@ jobs:
         # 这里**逐个列名**而不是 `for t in tests/*-test.py`：
         # tests/ 下还有一批需要本机样本 / CUDA / 生成器的脚本
         # （cuda-confidence-smoke、diag-*、calibrate-confidence、make-noisy-samples…），
-        # 在 CI 上必然失败。下面这 6 个是"纯逻辑、任何机器都能过"的那批。
-        # 新增可移植测试时记得加进来。
+        # 在 CI 上必然失败。下面是可移植测试全集；新增纯逻辑测试时同步补入。
         run: |
           set -e
           for t in confidence-test draft-role-gap-test fetch-format-test \
-                   glommed-split-test frame-units-test asr-segment-parity-test; do
+                   glommed-split-test frame-units-test asr-segment-parity-test \
+                   vibevoice-worker-test diarize-wav-test; do
             echo "───────── tests/$t.py ─────────"
             python "tests/$t.py"
           done
