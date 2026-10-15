@@ -38,7 +38,7 @@ export default [
         AbortSignal: 'readonly', EventSource: 'readonly', NodeFilter: 'readonly',
         File: 'readonly', FileList: 'readonly', FileReader: 'readonly', Blob: 'readonly',
         HTMLElement: 'readonly', HTMLInputElement: 'readonly', HTMLCanvasElement: 'readonly',
-        HTMLVideoElement: 'readonly', Element: 'readonly', Node: 'readonly', Event: 'readonly',
+        HTMLVideoElement: 'readonly', HTMLSelectElement: 'readonly', Element: 'readonly', Node: 'readonly', Event: 'readonly',
         CustomEvent: 'readonly', DOMParser: 'readonly', XMLSerializer: 'readonly',
         history: 'readonly', location: 'readonly', screen: 'readonly', getComputedStyle: 'readonly',
         matchMedia: 'readonly', requestIdleCallback: 'readonly', SpeechSynthesisUtterance: 'readonly',

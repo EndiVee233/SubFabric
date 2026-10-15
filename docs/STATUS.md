@@ -17,6 +17,7 @@
 - 历史 `docs/repair15-regression-results.json` 已恢复为开始 SHA-256 `86fdbe98737403e8aeaeb38df4d244b8ee24c4d0ff45802de62cbafefe572d10`；测试生成的 `tests/jsmod/` 差异是测试镜像同步，已保留。
 - 最后复核：兼容入口定向运行 `secret-store-test.mjs` 与隔离 `correct-switch-test.mjs` 均通过；随后完整 JS 回归再次得到 88/7/1/0（排除 2）。
 - 云端保存：本轮增量 18 个文件（16 个改动 + 新增 `docs/MAINTENANCE.md`、`docs/STATUS-before-maintenance-20261015.md`）经 GitHub 连接器以**单次原子多文件提交**写入 main。提交前核对：远程 HEAD 与开始基线一致（无并发变化）；本地与远端逐目录 git blob 比对（editor/、editor/js/、asr/、tools/、docs/、tests/jsmod/ 共 249 文件），差异仅限上述文件；敏感信息扫描无命中；全部改动 JS 通过语法检查。`tests/fixture.ass` 等生成物按 `.gitignore` 排除；`启动SubFabric(无窗口).vbs` 在远端为符号链接且与本任务无关，未纳入；`ui-config.example.json` 与远端逐字节一致，无需提交。
+- CI 修复（2026-10-15 续）：`eslint.config.js` 浏览器侧 globals 补 `HTMLSelectElement` —— `editor/js/studio.js:739` 的自定义选择器用 `typeof HTMLSelectElement` 透传 `value/selectedIndex/disabled` 访问器，该全局自 8cb07bac 起缺失，导致 2026-10-13 以来每次推送的 `CI / JS · ESLint + 全量测试` 均失败（ESLint 步骤 1 error，测试步骤被跳过）；上一提交已修复 `tools/verify_home_only_running.mjs:97` 的解析错误（同类历史故障）。本地 eslint@9 对 `editor/ tools/ tests/` 复现 0 error（余 19 条历史 warning，不阻断 CI）。
 
 ## 历史已验证成果（不代表本次重验）
 
@@ -30,5 +31,5 @@
 
 ## GitHub 与恢复
 
-- GitHub：本轮增量已提交至 `EndiVee233/SubFabric` main，父提交 `8cb07bac42e3f6a85c9c6cbb966d5419887e67ef`；提交标识与链接见最终报告。提交后核对父提交与变更文件范围（18 个文件，无范围外改动）；连接器的单次多文件提交本身即原子操作，但不提供 expected HEAD 参数，故以"提交前核对 HEAD + 提交后核对父提交"代替并发校验。
+- GitHub：本轮增量已提交至 `EndiVee233/SubFabric` main，父提交 `8cb07bac42e3f6a85c9c6cbb966d5419887e67ef`；提交标识与链接见最终报告。提交后核对父提交与变更文件范围（18 个文件，无范围外改动）；连接器的单次多文件提交本身即原子操作，但不提供 expected HEAD 参数，故以"提交前核对 HEAD + 提交后核对父提交"代替并发校验。CI 修复提交（`eslint.config.js` + 本文件）在同一 main 上续接，标识见最终报告。
 - 恢复时先读本文件，再读 MAINTENANCE 与本次结果；不清理用户数据、不再本地暂存/提交/推送、不创建或调查 Hook。
