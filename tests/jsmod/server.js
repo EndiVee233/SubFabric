@@ -770,6 +770,33 @@ const ASR_MODELS = [
     draftAllowed: false,
   },
   {
+    // VibeVoice 的 Windows 路径固定使用预量化 4bit checkpoint + CUDA。
+    // 目前没有经过验证的 OpenVINO/NPU VibeVoice 后端；不要把它接到 asr_npu.py，
+    // 也不要因为 CUDA 不可用而改跑其它设备。
+    id: 'vibevoice-asr-4bit',
+    name: 'VibeVoice ASR 4bit（多语·CUDA）',
+    engine: 'vibevoice',
+    repo: 'Dubedo/VibeVoice-ASR-HF-NF4',
+    revision: '289d51eeddb2f089f6478da4c0ace7d078a69596',
+    files: [
+      'config.json', 'generation_config.json',
+      'model.safetensors', 'chat_template.jinja', 'processor_config.json',
+      'quantization_metadata.json', 'tokenizer.json', 'tokenizer_config.json',
+    ],
+    fileSizes: { 'model.safetensors': 6937627281, 'tokenizer.json': 11421892 },
+    fileHashes: { 'model.safetensors': 'c92baffa9129f22508a43dcfc746e44879aecd1743ce3918d5cfc91cdb4619c8',
+      'tokenizer.json': '3fd169731d2cbde95e10bf356d66d5997fd885dd8dbb6fb4684da3f23b2585d8' },
+    sizeMB: 6628,
+    minVramMB: 7600,
+    needRuntime: true,
+    runtimeKey: 'vibevoice',
+    runtimeName: 'VibeVoice CUDA 4bit',
+    runtimeSizeMB: 2200,
+    desc: 'CUDA · NF4 4bit；支持多语、句级时间戳与说话人，不提供逐词时间。至少约 8GB 显存，长音频可能需要更多显存；显存不足直接停止。NPU 尚无已验证后端，CPU 推理与 offload 已禁用。',
+    dirName: 'vibevoice-asr-4bit',
+    draftAllowed: true,
+  },
+  {
     // 与上面 sherpa-onnx 那条**同一份权重、同一套后处理**, 只换推理后端: 走 OpenVINO,
     // 编码器吃 Intel NPU、预测/联合网络吃核显 —— 于是**没有 N 卡也能用 Parakeet**
     // (sherpa-onnx 那条是 CUDA provider, 官方明确不支持 CPU, 核显/NPU 机器完全用不了)。
@@ -893,6 +920,25 @@ const crispasrCli = () => path.join(CRISPASR_RUNTIME.dir, 'crispasr.exe');
 const crispasrRuntimeOk = () => { try { return fs.statSync(crispasrCli()).isFile(); } catch { return false; } };
 const crispasrVulkanOk = () => { try { return fs.statSync(path.join(CRISPASR_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
 
+/* VibeVoice 使用独立 Python/依赖目录，避免升级 Transformers/PyTorch
+ * 破坏已安装的 NeMo 或其它识别引擎。 */
+const VIBEVOICE_RUNTIME = {
+  key: 'vibevoice',
+  name: 'VibeVoice CUDA 4bit',
+  sizeMB: 2200,
+  minVramMB: 7600,
+  torchIndex: 'https://download.pytorch.org/whl/cu126',
+  dir: path.join(ASR_DIR, 'runtime-vibevoice'),
+};
+const vibevoicePython = () => process.env.SUBFABRIC_VIBEVOICE_PYTHON
+  || path.join(VIBEVOICE_RUNTIME.dir, 'python.exe');
+let vibevoiceProbeCache = null;
+let vibevoiceProbeInflight = null;
+const vibevoiceRuntimeOk = () => !!(vibevoiceProbeCache && vibevoiceProbeCache.ok
+  && vibevoiceProbeCache.cuda && vibevoiceProbeCache.transformers
+  && vibevoiceProbeCache.nativeModel && vibevoiceProbeCache.nativeProcessor
+  && vibevoiceProbeCache.bitsandbytes && vibevoiceProbeCache.bnbCudaKernel);
+
 /** ASR 必须 GPU: 不做 CPU 兜底。三个引擎各查各的 GPU 依赖, 不满足返回报错文案(null = 通过)。
  *  whisper.cpp → 必须有 Vulkan 运行库(ggml-vulkan.dll); sherpa-onnx → 必须是 CUDA 版(安装器实测后写入 settings);
  *  nemo(multitalker) → 必须有 PyTorch + NeMo, 且 torch 认到 CUDA —— 它**只认 N 卡**, 别的 GPU 也不行。
@@ -914,6 +960,18 @@ function asrGpuGateError(model) {
     // 与 whisper.cpp 相反: 这一条**允许 CPU 兜底**（识别失败会自动 --no-gpu 重试），
     // 所以只查运行时装没装、不硬拦 Vulkan —— 没有独显的机器也能用（慢），这正是它存在的意义。
     if (!crispasrRuntimeOk()) return 'CrispASR 运行时没装好，到「设置 → 识别模型」下载（约 34MB）';
+    return null;
+  }
+  if (model && model.engine === 'vibevoice') {
+    const v = vibevoiceProbeCache;
+    if (!v || !v.ok || !v.cuda || !v.transformers || !v.nativeModel || !v.nativeProcessor
+      || !v.bitsandbytes || !v.bnbCudaKernel) {
+      return 'VibeVoice 4bit 只支持 CUDA GPU。到「设置 → 识别模型 → VibeVoice 系列」安装 CUDA 4bit 运行时；CPU、NPU 与 offload 已禁用。'
+        + (v && v.msg ? '（' + v.msg + '）' : '');
+    }
+    if (Number(v.vramMB || 0) < VIBEVOICE_RUNTIME.minVramMB) {
+      return 'VibeVoice 4bit 需要约 7.6GB 显存，当前显存不足；不会改用 CPU 或 NPU。';
+    }
     return null;
   }
   if (model && model.engine === 'nemo') {
@@ -978,6 +1036,46 @@ function probeNemo(force) {
   });
   nemoProbeInflight = p.finally(() => { nemoProbeInflight = null; });
   return p;
+}
+
+/** 独立环境的真实 CUDA/NF4 运算探测，后台缓存与在途复用。 */
+function probeVibeVoice(force) {
+  if (!force && vibevoiceProbeCache && Date.now() - vibevoiceProbeCache.at < 5 * 60 * 1000) return Promise.resolve(vibevoiceProbeCache);
+  if (vibevoiceProbeInflight) return vibevoiceProbeInflight;
+  const py = vibevoicePython();
+  const promise = new Promise(resolve => {
+    let child;
+    try { child = spawn(py, [path.join(ASR_DIR, 'vibevoice.py'), '--probe'], { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() }); }
+    catch (error) { return resolve({ ok: false, cuda: false, msg: error.message, at: Date.now() }); }
+    let out = '', err = '', settled = false;
+    const finish = record => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      vibevoiceProbeCache = Object.assign({ at: Date.now() }, record);
+      resolve(vibevoiceProbeCache);
+    };
+    const timer = setTimeout(() => { try { child.kill(); } catch {} finish({ ok: false, cuda: false, msg: 'VibeVoice 预检超时（90s）' }); }, 90000);
+    child.stdout.on('data', chunk => { if (out.length < 16384) out += chunk; });
+    child.stderr.on('data', chunk => { err = (err + chunk).slice(-4096); });
+    child.on('error', error => finish({ ok: false, cuda: false, msg: '请安装 VibeVoice 运行时：' + error.message }));
+    child.on('close', code => {
+      let info; try { info = JSON.parse(out.trim().split('\n').pop()); } catch {}
+      // ``--probe`` deliberately returns exit 1 when an optional dependency
+      // is missing.  Preserve the hardware fields from its JSON in that case
+      // so the UI can say "CUDA found, install bitsandbytes" instead of
+      // incorrectly claiming that no NVIDIA GPU exists.
+      if (info) {
+        return finish(Object.assign({}, info, {
+          ok: code === 0 && !!info.ok && !!info.cuda,
+          cuda: !!info.cuda,
+          msg: info.msg || (code === 0 ? '' : pyErrTail(err) || 'VibeVoice CUDA 4bit 运行时未就绪'),
+        }));
+      }
+      finish({ ok: false, cuda: false, msg: pyErrTail(err) || 'VibeVoice CUDA 4bit 运行时未就绪' });
+    });
+  });
+  vibevoiceProbeInflight = promise.finally(() => { vibevoiceProbeInflight = null; });
+  return vibevoiceProbeInflight;
 }
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
@@ -1487,9 +1585,117 @@ function saveTranslateCfg(patch) {
   if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
   delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
   s.translate = Object.assign(cur, p);
+  s.translateSchemeId = '';
   writeAsrSettings(s);
   return translateCfg();
 }
+// 命名翻译方案只在服务端保存；凭证不回传、不写入浏览器存储。
+const TRANSLATE_FIELDS = ['provider', 'baseUrl', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize', 'temperature', 'contextRows'];
+function schemeConfig(raw = {}) {
+  const preset = LLM_PRESETS.find(p => p.id === raw.provider);
+  return {
+    provider: raw.provider || '', baseUrl: raw.baseUrl || (preset && preset.baseUrl) || '',
+    model: raw.model || (preset && preset.model) || '', autoTranslate: raw.autoTranslate !== false,
+    prompt: raw.prompt || DEFAULT_TRANSLATE_PROMPT, glossary: raw.glossary || '',
+    glossaryLang: raw.glossaryLang || '简体', batchSize: llmText.clampBatchSize(raw.batchSize),
+    temperature: llmText.clampTemperature(raw.temperature), contextRows: llmText.clampContextRows(raw.contextRows),
+  };
+}
+function schemesPublic(settings = readAsrSettings()) {
+  return {
+    activeSchemeId: settings.translateSchemeId || '',
+    schemes: (settings.translateSchemes || []).map(item => ({
+      id: item.id, name: item.name, ...schemeConfig(item), hasKey: !!item.apiKeyEnc,
+    })),
+  };
+}
+function schemePatch(input, previous = {}, requireName = true) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error('方案格式无效');
+  const name = String(input.name ?? previous.name ?? '').trim();
+  if (requireName && (!name || name.length > 80)) throw Error('请填写 1–80 字的方案名称');
+  const provider = String(input.provider ?? previous.provider ?? '');
+  if (!LLM_PRESETS.some(p => p.id === provider)) throw Error('请选择服务商');
+  const merged = { ...previous, provider };
+  for (const field of TRANSLATE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+    merged[field] = field === 'autoTranslate' ? input[field] !== false : input[field];
+  }
+  for (const field of ['baseUrl', 'model', 'prompt', 'glossary', 'glossaryLang']) {
+    if (merged[field] !== undefined && typeof merged[field] !== 'string') throw Error('配置字段格式无效');
+  }
+  if (String(merged.glossary || '').length > 100000 || String(merged.prompt || '').length > 32000) throw Error('术语表或提示词过长');
+  const cfg = schemeConfig(merged);
+  if (cfg.provider !== 'nllb-local') {
+    let url;
+    try { url = new URL(cfg.baseUrl); } catch { throw Error('请填写有效的 API 接口地址'); }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw Error('API 地址只支持 HTTP/HTTPS，凭证请填入 API Key');
+    if (!cfg.model.trim()) throw Error('请填写模型名称');
+  }
+  let apiKeyEnc = previous.apiKeyEnc || '';
+  if (input.apiKeyClear === true) apiKeyEnc = '';
+  if (typeof input.apiKey === 'string' && input.apiKey.trim()) {
+    if (input.apiKey.length > 8192) throw Error('API Key 过长');
+    // 加密失败则整个保存失败，绝不退回明文落盘。
+    apiKeyEnc = secretStore.encrypt(input.apiKey.trim());
+    if (!apiKeyEnc) throw Error('凭证加密失败，方案未保存');
+  }
+  return { id: previous.id || crypto.randomUUID(), name, ...cfg, apiKeyEnc };
+}
+function activateScheme(settings, item) {
+  settings.translateSchemeId = item.id;
+  settings.translate = Object.fromEntries(TRANSLATE_FIELDS.map(field => [field, item[field]]));
+  settings.translate.apiKeyEnc = item.apiKeyEnc || '';
+}
+function handleSchemeRoutes(req, res, pathname) {
+  const match = /^\/api\/translate\/schemes(?:\/([a-zA-Z0-9-]+)(?:\/(activate))?)?$/.exec(pathname);
+  if (!match) return sendJson(res, 404, { error: 'not found' });
+  const id = match[1] || '', action = match[2] || '';
+  if (!id && req.method === 'GET') return sendJson(res, 200, schemesPublic());
+  if (id && id !== 'test' && !action && req.method === 'DELETE') {
+    const settings = readAsrSettings(), items = settings.translateSchemes || [];
+    if (!items.some(item => item.id === id)) return sendJson(res, 404, { error: '方案不存在' });
+    settings.translateSchemes = items.filter(item => item.id !== id);
+    if (settings.translateSchemeId === id) { settings.translateSchemeId = ''; settings.translate = {}; }
+    try { writeAsrSettings(settings); } catch { return sendJson(res, 500, { error: '保存失败' }); }
+    return sendJson(res, 200, schemesPublic(settings));
+  }
+  if (!(req.method === 'POST' && (!id || id === 'test' || action === 'activate') || req.method === 'PUT' && id && !action)) return sendJson(res, 405, { error: 'method not allowed' });
+  return readBody(req, res, 256 * 1024, (err, body) => {
+    if (err) return sendJson(res, 400, { error: '方案内容过大或读取失败' });
+    let input;
+    try { input = JSON.parse(body.toString('utf8') || '{}'); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return sendJson(res, 400, { error: '方案格式无效' });
+    const settings = readAsrSettings(), items = settings.translateSchemes || [];
+    const previous = items.find(item => item.id === (id === 'test' ? input.id : id));
+    if (id && id !== 'test' && !previous) return sendJson(res, 404, { error: '方案不存在' });
+    if (id === 'test' && input.id && !previous) return sendJson(res, 404, { error: '方案不存在' });
+    let item;
+    try {
+      if (action === 'activate') {
+        activateScheme(settings, previous); writeAsrSettings(settings);
+        return sendJson(res, 200, schemesPublic(settings));
+      }
+      item = schemePatch(input, previous, id !== 'test');
+    } catch (e) { return sendJson(res, 400, { error: e.message }); }
+    if (id === 'test') {
+      let apiKey = '';
+      try { apiKey = item.apiKeyEnc ? secretStore.decrypt(item.apiKeyEnc) : ''; } catch { return sendJson(res, 400, { error: '已存 Key 无法解密，请重新填写' }); }
+      const cfg = { ...schemeConfig(item), apiKey };
+      if (!llmReady(cfg)) return sendJson(res, 400, { error: '请填写 API Key 与模型配置' });
+      return llmChat(cfg, [{ role: 'user', content: '只回复一个单词：ok' }], { maxTokens: 512 })
+        .then(reply => sendJson(res, 200, { ok: true, reply: String(reply.content).slice(0, 200) }))
+        .catch(() => sendJson(res, 200, { ok: false, error: '连接失败，请检查接口地址、Key、模型和网络' }));
+    }
+    if (!id && items.length >= 100) return sendJson(res, 400, { error: '最多保存 100 个方案' });
+    if (items.some(other => other.id !== item.id && other.name === item.name)) return sendJson(res, 409, { error: '已存在同名方案' });
+    settings.translateSchemes = id ? items.map(other => other.id === id ? item : other) : [...items, item];
+    if (input.activate === true || settings.translateSchemeId === item.id) activateScheme(settings, item);
+    try { writeAsrSettings(settings); } catch { return sendJson(res, 500, { error: '保存失败，方案未写入' }); }
+    return sendJson(res, 200, { ...schemesPublic(settings), savedId: item.id });
+  });
+}
+
+
 const llmReady = (cfg) => {
   if (!cfg) return false;
   // 本地引擎不需要接口地址与 Key，只要求模型目录就位（见 mt-local.js 的 probe）
@@ -1694,6 +1900,15 @@ const asrEngineArgs = (model) => {
       provider: 'cuda',
       hotwords: [],
       noTta: true,                  // multitalker.py 不吃 --tta
+    };
+  }
+  if (eng === 'vibevoice') {
+    return {
+      script: path.join(ASR_DIR, 'vibevoice.py'),
+      provider: 'cuda',
+      hotwords: [],
+      noThreads: true,
+      noTta: true,
     };
   }
   const openvino = eng === 'openvino';
@@ -1935,6 +2150,10 @@ function missingModelFiles(dir, model) {
  *  只查名字不够 —— 半截/0 字节的残留文件会让模型"看起来就绪", 加载时才炸(实测踩过)。 */
 function modelFilesOk(dir, model) {
   if (!model || missingModelFiles(dir, model).length) return false;
+  for (const [file, expected] of Object.entries(model.fileSizes || {})) {
+    try { if (fs.statSync(path.join(dir, file)).size !== expected) return false; }
+    catch { return false; }
+  }
   if (!model.sizeMB) return true;
   let total = 0;
   try {
@@ -1943,6 +2162,33 @@ function modelFilesOk(dir, model) {
     }
   } catch { return false; }
   return total >= model.sizeMB * 1048576 * 0.9;
+}
+/** Validate pinned model file sizes/hashes after downloading.  The VibeVoice
+ * safetensors file is several gigabytes, so this is asynchronous and only
+ * checks manifest entries declared by the model. */
+async function verifyDownloadedModelFiles(dir, model) {
+  const sizes = model && model.fileSizes || {};
+  const hashes = model && model.fileHashes || {};
+  for (const [file, expected] of Object.entries(sizes)) {
+    const p = path.join(dir, file);
+    let actual = 0;
+    try { actual = fs.statSync(p).size; } catch { throw new Error('下载后缺少文件：' + file); }
+    if (Number(expected) > 0 && actual !== Number(expected)) {
+      throw new Error(`${file} 大小校验失败（${actual} / ${expected} 字节）`);
+    }
+  }
+  for (const [file, expected] of Object.entries(hashes)) {
+    const p = path.join(dir, file);
+    const hash = crypto.createHash('sha256');
+    try {
+      for await (const chunk of fs.createReadStream(p)) hash.update(chunk);
+    } catch (e) {
+      throw new Error(`${file} 哈希校验失败：${e.message || e}`);
+    }
+    if (hash.digest('hex').toLowerCase() !== String(expected).toLowerCase()) {
+      throw new Error(`${file} SHA-256 校验失败`);
+    }
+  }
 }
 /** 模型是否可用(文件齐全且大小达标); whisper.cpp 引擎还要求运行时就位 */
 function modelReady(modelId) {
@@ -1953,6 +2199,7 @@ function modelReady(modelId) {
   if (!dir || !modelFilesOk(dir, m)) return false;
   if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return false;
   if (m.engine === 'crispasr' && !crispasrRuntimeOk()) return false;
+  if (m.engine === 'vibevoice' && !vibevoiceRuntimeOk()) return false;
   // dual 引擎要两套模型都在（NPU 那套 + sherpa int8 那套）。不这么判的话，
   // 缺一套时会在识别跑到一半才炸，用户看到的是莫名其妙的失败。
   if (m.alsoNeeds) {
@@ -1966,6 +2213,9 @@ function modelReady(modelId) {
  *  注意: 这是「创建初稿」用的默认模型 —— 只挑 draftAllowed 的, multitalker 那种只能重新识别的模型不参与。 */
 function resolveAsrModel() {
   const s = readAsrSettings();
+  // VibeVoice 的显式选择不能因 CUDA 或文件缺失而改跑其它模型。
+  const selected = modelById(s.selectedModel);
+  if (selected?.engine === 'vibevoice') return modelReady(selected.id) ? selected : null;
   for (const id of [s.selectedModel, ASR_MODELS[0].id]) {
     const m = modelById(id);
     if (m && draftAllowedOf(m) && modelReady(m.id)) return m;
@@ -2007,9 +2257,16 @@ function resolveRerecogModel(meta) {
   }
   const dm = resolveDraftModel(meta);
   if (dm) return { model: dm };
+  if (modelById(meta?.draft?.modelId)?.engine === 'vibevoice') {
+    return { error: '稿件使用的 VibeVoice CUDA 4bit 模型或运行时未就绪，请先安装；不会切换其它模型。' };
+  }
   const fallback = resolveAsrModel();
   if (fallback) return { model: fallback };
   return { error: '语音识别模型不可用，先到设置里下载' };
+}
+async function prepareVibeVoiceSelection(meta, modelId) {
+  const id = modelId || rerecogModelId() || meta?.draft?.modelId || selectedModelId();
+  if (modelById(id)?.engine === 'vibevoice') await probeVibeVoice();
 }
 
 /* 模型/运行时下载: Node 内置 fetch + Range 断点续传(保持本项目零 npm 依赖)。
@@ -2123,15 +2380,32 @@ function startModelDownload(model, dir) {
         const f = model.files[i];
         // 少数模型的主权重与配套模型分属不同仓库(如 multitalker 的流式分离权重) —— 按文件覆盖仓库
         const repo = (model.fileRepos && model.fileRepos[f]) || model.repo;
-        const base = `${HF_ENDPOINT}/${repo}/resolve/main`;
-        await downloadAny(candidateUrls(`${base}/${f}`), path.join(dir, f), (done, total) => {
+        const base = `${HF_ENDPOINT}/${repo}/resolve/${model.revision || 'main'}`;
+        const finalFile = path.join(dir, f);
+        const pinnedSize = model.fileSizes && model.fileSizes[f];
+        const destination = model.revision ? finalFile + '.dl' : finalFile;
+        // 已完成文件在重试时保留，临时文件续传，避免完整文件触发 Range 416。
+        if (model.revision && fs.existsSync(finalFile)) {
+          await verifyDownloadedModelFiles(dir, { fileSizes: pinnedSize ? { [f]: pinnedSize } : {},
+            fileHashes: model.fileHashes?.[f] ? { [f]: model.fileHashes[f] } : {} });
+          continue;
+        }
+        if (!(pinnedSize && fs.existsSync(destination) && fs.statSync(destination).size === pinnedSize)) {
+        await downloadAny(candidateUrls(`${base}/${f}`), destination, (done, total) => {
           if (done < 0) return;                       // 重试开始的通知, 进度不回退
           const part = total ? done / total : 0;
           const st = dlState(key);
           st.pct = Math.min(99, Math.round(((i + part) / model.files.length) * 100));
           st.msg = `下载 ${f}：${(done / 1048576).toFixed(0)} / ${(total / 1048576).toFixed(0)} MB`;
         });
+        }
+        if (model.revision) {
+          await verifyDownloadedModelFiles(dir, { fileSizes: pinnedSize ? { [f + '.dl']: pinnedSize } : {},
+            fileHashes: model.fileHashes?.[f] ? { [f + '.dl']: model.fileHashes[f] } : {} });
+          fs.renameSync(destination, finalFile);
+        }
       }
+      if (!model.revision) await verifyDownloadedModelFiles(dir, model);
       if (!modelFilesOk(dir, model)) throw new Error('下载后模型仍不完整');
       const s = readAsrSettings();
       s.models = Object.assign({}, s.models || {}, { [model.id]: dir });
@@ -2243,6 +2517,79 @@ function startNemoInstall() {
       const msg = String((e && e.message) || e).slice(0, 300);
       set({ running: false, pct: 0, msg: '安装失败: ' + msg, error: msg });
       console.error('[asr] NeMo 运行时安装失败:', msg);
+    }
+  })();
+}
+
+/* ═══════════ VibeVoice CUDA 4bit 运行时安装 ═══════════
+ * 只在已经存在 NVIDIA GPU 的 ASR Python 环境里安装 Transformers、Accelerate
+ * 与 CUDA bitsandbytes。绝不安装 CPU torch，也不改变其它 ASR 引擎的选择。 */
+function startVibeVoiceInstall() {
+  const key = 'vibevoice';
+  if (dlState(key).running) return;
+  dlState(key, { running: true, kind: 'vibevoice', modelId: 'vibevoice', pct: 1, msg: '准备安装 VibeVoice CUDA 4bit 运行时…', error: null });
+  const prog = (pct, msg) => dlState(key, { running: true, kind: 'vibevoice', modelId: 'vibevoice', pct: Math.max(1, Math.min(99, Math.round(pct))), msg, error: null });
+  (async () => {
+    try {
+      const gpu = await nvidiaGpu();
+      if (!gpu) throw new Error('未检测到 NVIDIA CUDA GPU；VibeVoice 不支持 CPU/NPU');
+      const py = vibevoicePython();
+      if (!fs.existsSync(py)) {
+        if (process.env.SUBFABRIC_VIBEVOICE_PYTHON) throw new Error('指定的 VibeVoice Python 不存在');
+        if (process.platform !== 'win32') throw new Error('请通过 SUBFABRIC_VIBEVOICE_PYTHON 指定独立 CUDA Python 环境');
+        prog(3, '准备 VibeVoice 独立 Python 环境…');
+        fs.mkdirSync(VIBEVOICE_RUNTIME.dir, { recursive: true });
+        const zip = path.join(VIBEVOICE_RUNTIME.dir, 'python-embed.zip');
+        await downloadAny(EMBEDDED_PY.zipUrls, zip, () => {});
+        const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+        await runCapture(tar, ['-xf', zip, '-C', VIBEVOICE_RUNTIME.dir], 300000);
+        fs.unlinkSync(zip);
+      }
+      if (!process.env.SUBFABRIC_VIBEVOICE_PYTHON) {
+        const pth = fs.readdirSync(VIBEVOICE_RUNTIME.dir).find(n => /^python\d+\._pth$/i.test(n));
+        if (!pth) throw new Error('VibeVoice 独立 Python 缺少 _pth 配置');
+        fs.writeFileSync(path.join(VIBEVOICE_RUNTIME.dir, pth), 'python312.zip\n.\nLib/site-packages\nimport site\n');
+      }
+      try { await runCapture(py, ['-m', 'pip', '--version'], 30000); }
+      catch {
+        const getpip = path.join(VIBEVOICE_RUNTIME.dir, 'get-pip.py');
+        await downloadAny([EMBEDDED_PY.getPipUrl], getpip, () => {});
+        await runCapture(py, [getpip, '--no-warn-script-location', '-i', NEMO_PIP_INDEX], 300000);
+        fs.unlinkSync(getpip);
+      }
+      prog(8, '检查 CUDA PyTorch…');
+      let torchReady = false;
+      try {
+        const torchProbe = await runCapture(py, ['-c', 'import torch; assert torch.cuda.is_available(); print(torch.__version__)'], 120000);
+        torchReady = !!torchProbe.stdout.trim();
+      } catch {}
+      if (!torchReady) {
+        // A CPU-only torch build is not an acceptable fallback. Replace it
+        // with the CUDA wheel selected for this runtime, then probe again.
+        prog(12, '安装 CUDA PyTorch（不安装 CPU 版）…');
+        await pipInstallRetry(py,
+          ['-m', 'pip', 'install', '--upgrade', 'torch', '--index-url', VIBEVOICE_RUNTIME.torchIndex],
+          3600000, line => prog(12 + Math.min(10, String(line).length / 4), '安装 CUDA PyTorch…'));
+        const torchProbe = await runCapture(py, ['-c', 'import torch; assert torch.cuda.is_available(); print(torch.__version__)'], 120000);
+        if (!torchProbe.stdout.trim()) throw new Error('CUDA PyTorch 安装后仍不可用；不会改用 CPU');
+      }
+      prog(18, '安装 Transformers、Accelerate 与 bitsandbytes…');
+      // Pin the already verified CUDA build so a dependency resolver cannot
+      // replace it with an incompatible wheel from another package index.
+      const torchVer = (await runCapture(py, ['-c', 'import torch; print(torch.__version__)'], 120000)).stdout.trim();
+      await pipInstallRetry(py, ['-m', 'pip', 'install', 'torch==' + torchVer,
+        'transformers==5.17.0', 'accelerate==1.15.0', 'bitsandbytes==0.50.2',
+        'soundfile', 'soxr', '-i', NEMO_PIP_INDEX], 3600000,
+        line => prog(18 + Math.min(62, String(line).length / 2), '安装 CUDA 4bit 依赖（PyTorch ' + torchVer + '）…'));
+      prog(86, '验证 VibeVoice CUDA 4bit 运行时…');
+      await probeVibeVoice(true);
+      const v = vibevoiceProbeCache;
+      if (!v || !v.ok || !v.cuda || !v.transformers || !v.bitsandbytes) throw new Error(v?.msg || 'VibeVoice CUDA 4bit 预检失败');
+      dlState(key, { running: false, kind: 'vibevoice', modelId: 'vibevoice', pct: 100, msg: '运行时就绪：' + v.gpu + ' · ' + v.vramMB + 'MB CUDA', error: null });
+    } catch (error) {
+      const msg = String((error && error.message) || error).slice(0, 320);
+      dlState(key, { running: false, kind: 'vibevoice', modelId: 'vibevoice', pct: 0, msg: '安装失败：' + msg, error: msg });
+      vibevoiceProbeCache = null;
     }
   })();
 }
@@ -4125,7 +4472,18 @@ function startPrepare(id, videoPath, mode) {
     })();
 
     let format, file, text;
-    if (!wordLevel) {
+    if (modelById(((readMeta(id) || {}).draft || {}).modelId)?.engine === 'vibevoice') {
+      // VibeVoice 只有句级时间；用普通 ASS 行保留角色，不伪造逐词切片。
+      format = 'ass'; file = 'subtitle.ass';
+      let out = assHeader(engineLabel, styleColors);
+      segs.forEach((s, i) => {
+        const role = roleOf(s), name = role ? spkName(role.n) : '';
+        const tag = role ? `{\\c&H${role.color}&}` : '';
+        if (zhText(i)) out += zhLine(s, zhText(i), role);
+        out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,${name},0,0,0,,${tag}${escAss(s.text)}\n`;
+      });
+      text = out;
+    } else if (!wordLevel) {
       format = 'srt';
       file = 'subtitle.srt';
       // SRT 双语约定: 第 1 行主语言(中文), 其余为副语言
@@ -4645,6 +5003,7 @@ function startPrepare(id, videoPath, mode) {
       { padSec: reflectMod.PAD_SEC, maxSec: reflectMod.MAX_REGION_SEC });
     if (!regions.length) return { applied: 0, skipped, findings: all.length, regions: 0 };
     const meta = readMeta(id);
+    await prepareVibeVoiceSelection(meta);
     const rr = resolveRerecogModel(meta);
     if (rr.error) throw new Error('重识别模型不可用：' + rr.error);
     const job = startReidentifyBatch(id, regions, rr.model);   // 同步返回 job
@@ -5307,6 +5666,11 @@ function startPrepare(id, videoPath, mode) {
     const hasAsr = fs.existsSync(path.join(projDir(id), 'asr.json'));
     const wordLevel = !!meta.draft.wordLevel;
     const wavOk = fs.existsSync(path.join(projDir(id), 'audio.wav'));
+    if (hasAsr && modelById(meta.draft.modelId)?.engine === 'vibevoice' && !meta.subtitle) {
+      draftJobs.add(id);
+      safeDraftStep(id, () => continueDraftAfterAsr(id, false));
+      return { ok: true, from: 'subtitle' };
+    }
     // 先做校验再计数：配置不全、点了也不会真正跑的情况，不该消耗重试次数
     if (hasAsr && !llmReady(translateCfg())) {
       return { error: '还没配置 LLM（语义分句和翻译都要用）：在右上角「设置」里填接口地址、API Key 和模型名' };
@@ -5424,6 +5788,37 @@ function startPrepare(id, videoPath, mode) {
           const bin = path.join(mdir, model.files[0]);
           data = await runCrispAsr(bin, segWav, pct =>
             setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（Parakeet·Vulkan）… ${pct}%` }));
+        } else if (model.engine === 'vibevoice') {
+          const ea = asrEngineArgs(model);
+          data = await new Promise((resolve, reject) => {
+            const args = [ea.script, ...asrArgsFor(ea, mdir, segWav, outJson, confMode)];
+            const py = spawn(vibevoicePython(), args, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            trackProjProc(id, py);
+            let pyErr = '', buffer = '';
+            const t = setTimeout(() => { try { py.kill(); } catch {} }, 45 * 60 * 1000);
+            const feed = chunk => {
+              buffer += String(chunk);
+              let at;
+              while ((at = buffer.indexOf('\n')) >= 0) {
+                const line = buffer.slice(0, at).trim(); buffer = buffer.slice(at + 1);
+                if (!line.startsWith('{')) { pyErr = (pyErr + line).slice(-3000); continue; }
+                try {
+                  const event = JSON.parse(line);
+                  if (event.type === 'progress') setRr({ stage: '识别中', progress: 10 + Math.round(event.pct * 0.62), message: event.msg });
+                  else if (event.type === 'log') setRr({ message: event.msg });
+                  else if (event.type === 'error') pyErr = event.msg || pyErr;
+                } catch {}
+              }
+            };
+            py.stdout.on('data', feed); py.stderr.on('data', feed);
+            py.on('error', error => { clearTimeout(t); reject(new Error('无法启动 VibeVoice CUDA 进程: ' + error.message)); });
+            py.on('close', code => {
+              clearTimeout(t); let out = null;
+              try { out = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
+              if (code !== 0 || !out || !Array.isArray(out.segments)) return reject(new Error('VibeVoice 识别失败（' + (pyErr || asrExitHint(code)) + '）'));
+              resolve(out);
+            });
+          });
         } else if (model.engine === 'nemo') {
           // NeMo 多说话人: 走 multitalker.py(PyTorch + NeMo, CUDA 专属)。单说话人模式 —— 选区重识别按单人处理
           data = await new Promise((resolve, reject) => {
@@ -5573,6 +5968,7 @@ function startPrepare(id, videoPath, mode) {
         // 3.5) 语义分句(所有引擎都做, 与初稿同一条规则) —— LLM 补标点 → 按逗号/句号切句。
         //      语义分句是必经步骤: 没配 LLM 就直接报错, 不许静默降级成引擎自带的断句;
         //      LLM 真跑失败时才是"小区域不致命", 回退到原断句继续走(见下面 catch)。
+        if (model.engine !== 'vibevoice') {
         if (!llmReady(translateCfg())) {
           throw new Error('没配置 LLM：语义分句走不了，先在右上角「设置」里填接口地址、API Key 和模型名，再重新识别这一段');
         }
@@ -5587,6 +5983,7 @@ function startPrepare(id, videoPath, mode) {
           setRr({ message: `语义分句完成：${before} 行 → ${segs.length} 行` });
         } catch (e) {
           setRr({ message: '语义分句失败，按标点/停顿兜底：' + String((e && e.message) || e).slice(0, 80) });
+        }
         }
 
         // 4) 用设置里的 LLM 翻译（没配 Key 的情况在上面 3.5 就被拦下了, 这里只兜"跑到一半配置被清掉"）
@@ -5928,6 +6325,14 @@ function startPrepare(id, videoPath, mode) {
   function continueDraftAfterAsr(id, wordLevel) {
     const meta0 = readMeta(id);
     const d0 = (meta0 && meta0.draft) || {};
+    if (modelById(d0.modelId)?.engine === 'vibevoice') {
+      // 原生句级时间与说话人已在 CUDA 上得到，不再调用独立分离模型。
+      meta0.draft.wordLevel = false;
+      meta0.draft.resegDone = true;
+      meta0.draft.diarizeDone = true;
+      writeMeta(meta0);
+      return buildDraftSubtitle(id, false);
+    }
     const wantSpk = !!d0.speakers && diarizeReady() && !d0.diarizeSkipped;
 
     /** 分角色开关（默认开; 关掉就完全不动, 行为与以前一致） */
@@ -6170,6 +6575,11 @@ function startPrepare(id, videoPath, mode) {
     const meta0 = readMeta(id) || {};
     const wantId = meta0.draft && meta0.draft.modelId;
     const want = wantId ? modelById(wantId) : null;
+    if (want?.engine === 'vibevoice') {
+      draftJobs.add(id); // 预检期间也要登记，避免列表误判任务已中断。
+      await probeVibeVoice();
+      if (!readMeta(id) || !draftJobs.has(id)) return;
+    }
     // 硬拦: 只能重新识别的模型(如 multitalker)不许拿来创建初稿
     if (want && !draftAllowedOf(want)) {
       return finishDraft(id, new Error('「' + want.name + '」只能用于重新识别，不能创建初稿。到「设置 → 识别模型」给初稿换一个模型'));
@@ -6205,6 +6615,12 @@ function startPrepare(id, videoPath, mode) {
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 找到 ' + chunkSilences.length + ' 段静音 → '
         + (chunkPlan ? chunkPlan.length + ' 片' : '不需要分片'));
     }
+    if (model.engine === 'vibevoice' && chunkPlan) {
+      // VibeVoice 官方路径支持长音频；在显存允许的前提下保留整段上下文，
+      // 避免通用分片破坏其说话人和时间轴解析。
+      pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [提示] VibeVoice 保留整段音频上下文，不使用通用分片');
+      chunkPlan = null;
+    }
     pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语音识别（模型：${model.name}，逐词：${wordLevel ? '开' : '关'}）`);
     if (model.engine === 'whisper.cpp') {
       // GPU 校验已在上面的 asrGpuGateError 通过: 走到这里必然有 Vulkan 运行库
@@ -6214,12 +6630,19 @@ function startPrepare(id, videoPath, mode) {
       // 这条不硬要求 GPU: 有 Vulkan 就走 GPU, 起不来 runCrispAsr 会自动退 CPU（见那里的注释）
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] CrispASR/Parakeet 推理：${crispasrVulkanOk() ? '检测到 Vulkan，走 GPU' : '未检测到 Vulkan，将走 CPU（较慢）'}`);
     }
+    if (model.engine === 'vibevoice') {
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] VibeVoice NF4 4bit · CUDA 推理（CPU/NPU/offload 已禁用）`);
+    }
 
     // 识别完成后的收尾三段式: reseg(语义分句) → diarize(区分说话人) → 生成字幕 ——
     // 顺序就是这样: **先把行切开, 再往这些行上标说话人**（进度浮层的步骤条同一顺序）。
     // 三步都与识别引擎无关: 分离跑在音频上, 任何引擎都能配;
     // 语义分句**所有引擎都做**, 没配 LLM 就直接失败停在这里, 不会跳过它往下走。
     const finishAsr = () => {
+      if (model.engine === 'vibevoice') {
+        pushDraftLog(id, '[VibeVoice] 保留原生句级时间戳与说话人；该模型不提供逐词时间戳');
+        return continueDraftAfterAsr(id, false);
+      }
       // off 档：在往下走之前把逐句置信度摘掉。
       // 这里是所有识别路径的汇合点（本地/分片/整段/whisper.cpp/云端），
       // 而且**在语义分句之前** —— 于是 ASS 里不会写 SubFabricConfidence 注释，
@@ -6250,6 +6673,40 @@ function startPrepare(id, videoPath, mode) {
         .then(() => continueDraftAfterAsr(id, wordLevel))
         .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
     };
+
+    // ── VibeVoice 引擎: Transformers + 4bit bitsandbytes，整段 CUDA 识别 ──
+    if (model.engine === 'vibevoice') {
+      const ea = asrEngineArgs(model);
+      const args = [ea.script, ...asrArgsFor(ea, mdir, wav, outJson, confMode)];
+      const proc = spawn(vibevoicePython(), args, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+      draftProcs.set(id, proc);
+      let pyErr = '', buffer = '', settled = false;
+      const timer = setTimeout(() => { try { proc.kill(); } catch {} }, 60 * 60 * 1000);
+      const sink = chunk => {
+        buffer += String(chunk);
+        let at;
+        while ((at = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, at).trim(); buffer = buffer.slice(at + 1);
+          if (!line.startsWith('{')) { if (line) pushDraftLog(id, '[vibevoice] ' + line.slice(0, 300)); continue; }
+          let event; try { event = JSON.parse(line); } catch { continue; }
+          if (event.type === 'progress') setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(Number(event.pct || 0) * 0.45), message: event.msg || 'VibeVoice CUDA 识别中…' });
+          else if (event.type === 'log') pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] ' + event.msg);
+          else if (event.type === 'error') { pyErr = event.msg || ''; pushDraftLog(id, '[错误] ' + pyErr); }
+        }
+      };
+      proc.stdout.on('data', sink); proc.stderr.on('data', sink);
+      proc.on('error', error => { if (settled) return; settled = true; clearTimeout(timer); draftJobs.delete(id); finishDraft(id, new Error('无法启动 VibeVoice CUDA 进程: ' + error.message)); });
+      proc.on('close', code => {
+        if (settled) return; settled = true;
+        clearTimeout(timer);
+        let parsed = null; try { parsed = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
+        if (code !== 0 || !parsed || !Array.isArray(parsed.segments)) {
+          draftJobs.delete(id); return finishDraft(id, new Error('VibeVoice 识别失败（' + (pyErr || asrExitHint(code)) + '）'));
+        }
+        finishAsr();
+      });
+      return;
+    }
 
     // ── whisper.cpp 引擎: whisper-cli(词级用 -ml 1 -sow), 结果转成 asr.json ──
     if (model.engine === 'whisper.cpp') {
@@ -6857,6 +7314,7 @@ function handleAsrRoutes(req, res, u) {
     probePython(_selForProbe && _selForProbe.engine).catch(() => {});
     nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
     probeNemo().catch(() => {});            // 后台预检 NeMo 运行时(仅 multitalker 需要; 缓存 5 分钟)
+    probeVibeVoice().catch(() => {});       // 后台预检 CUDA/Transformers/bitsandbytes
     let pythonOk = false;
     try { pythonOk = fs.statSync(ASR_PY).isFile(); } catch {}
     const nemo = nemoProbeCache || { ok: false, cuda: false, msg: '预检中…' };
@@ -6871,18 +7329,23 @@ function handleAsrRoutes(req, res, u) {
         ? { key: 'runtime', name: 'whisper.cpp', sizeMB: WHISPER_RUNTIME.sizeMB, ok: whisperRuntimeOk() }
         : (m.engine === 'crispasr'
           ? { key: 'runtime:crispasr', name: 'CrispASR', sizeMB: CRISPASR_RUNTIME.sizeMB, ok: crispasrRuntimeOk() }
-          : null);
+          : (m.engine === 'vibevoice'
+            ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
+            : null));
       const ready = filesOk && (!rt || rt.ok);
       // usable: 文件齐 + 该引擎的运行时都就位(NeMo 模型还要 torch/NeMo + CUDA) —— 重新识别下拉按它标记"可用"
-      const usable = ready && (m.engine !== 'nemo' || (nemo.ok && nemo.cuda));
+      const usable = ready
+        && (m.engine !== 'nemo' || (nemo.ok && nemo.cuda))
+        && (m.engine !== 'vibevoice' || (vibevoiceProbeCache && vibevoiceProbeCache.ok && vibevoiceProbeCache.cuda && Number(vibevoiceProbeCache.vramMB || 0) >= VIBEVOICE_RUNTIME.minVramMB));
       return {
         id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
-        dir, missing, ready, usable, cloud: !!m.cloud,
+        dir, missing, filesOk, ready, usable, cloud: !!m.cloud,
         draftAllowed: draftAllowedOf(m),
         needRuntime: !!rt && !rt.ok,
         runtimeKey: rt ? rt.key : '', runtimeName: rt ? rt.name : '',
         runtimeSizeMB: rt ? rt.sizeMB : 0, runtimeReady: rt ? rt.ok : false,
         needNemo: m.engine === 'nemo' && !(nemo.ok && nemo.cuda),
+        needVibeVoice: m.engine === 'vibevoice' && !vibevoiceRuntimeOk(),
       };
     });
     /* ⚠ 下面整段包在 async IIFE 里，只为了 `await nvidiaGpu()` 一个字段。
@@ -6905,6 +7368,8 @@ function handleAsrRoutes(req, res, u) {
       // CrispASR 运行时(Parakeet Vulkan 通用版用): 与 whisper 分开报 —— vulkan 只用于状态提示(它允许 CPU 兜底)
       crispasrRuntime: { ok: crispasrRuntimeOk(), dir: CRISPASR_RUNTIME.dir, url: CRISPASR_RUNTIME.url,
                          sizeMB: CRISPASR_RUNTIME.sizeMB, vulkan: crispasrVulkanOk() },
+      vibevoice: Object.assign({ ok: false, cuda: false, vramMB: 0, msg: '预检中…' }, vibevoiceProbeCache || {}),
+      vibevoiceRuntime: { ok: vibevoiceRuntimeOk(), name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB },
       diarize: { ready: diarizeReady(), models: DIARIZE_MODELS },
       // 兼容旧前端字段
       ready: models.some(m => m.ready),
@@ -7124,6 +7589,14 @@ function handleAsrRoutes(req, res, u) {
         startCrispasrRuntimeDownload();
         return sendJson(res, 200, { started: true, kind: 'runtime:crispasr' });
       }
+      if (kind === 'runtime:vibevoice' || kind === 'vibevoice') {
+        const gpuName = await nvidiaGpu().catch(() => null);
+        if (!gpuName) return sendJson(res, 400, { error: 'VibeVoice 4bit 需要 NVIDIA CUDA GPU；不支持 CPU 或 NPU。' });
+        if (vibevoiceRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
+        if (dlState('vibevoice').running) return sendJson(res, 200, { started: true, kind: 'runtime:vibevoice', already: true });
+        startVibeVoiceInstall();
+        return sendJson(res, 200, { started: true, kind: 'runtime:vibevoice' });
+      }
       if (kind === 'diarize') {
         if (diarizeReady()) return sendJson(res, 200, { started: false, ready: true });
         if (dlState('diarize').running) return sendJson(res, 200, { started: true, kind: 'diarize', already: true });
@@ -7152,6 +7625,9 @@ function handleAsrRoutes(req, res, u) {
       if (model.engine === 'nemo' && !gpuNameForDl) {
         return sendJson(res, 400, { error: '「' + model.name + '」只支持 N 卡（NVIDIA 显卡）。这台机器没检测到 NVIDIA 显卡，该模型不支持 CPU，不能下载' });
       }
+      if (model.engine === 'vibevoice' && !gpuNameForDl) {
+        return sendJson(res, 400, { error: 'VibeVoice 4bit 只支持 NVIDIA CUDA GPU；不支持 CPU 或 NPU，不能下载' });
+      }
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
       if (!p) p = path.join(modelsRoot(), model.dirName);
@@ -7159,6 +7635,10 @@ function handleAsrRoutes(req, res, u) {
       if (path.relative(modelsRoot(), p) === '') return sendJson(res, 400, { error: '模型目录不能是模型根目录' });
       // 目录里已经有完整模型(文件齐且大小达标) → 直接采纳, 不用重下
       if (modelFilesOk(p, model)) {
+        if (model.engine === 'vibevoice') {
+          try { await verifyDownloadedModelFiles(p, model); }
+          catch (error) { return sendJson(res, 400, { error: error.message }); }
+        }
         const s = readAsrSettings();
         s.models = Object.assign({}, s.models || {}, { [model.id]: p });
         writeAsrSettings(s);
@@ -7499,11 +7979,12 @@ function handleAsrRoutes(req, res, u) {
 /* 路由段: 翻译/LLM 分角色/本地翻译(translate/cast/mt) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleLlmRoutes(req, res, u) {
   const pathname = u.pathname;
+  if (pathname.startsWith('/api/translate/schemes')) return handleSchemeRoutes(req, res, pathname);
   /* ═══════════ 翻译(LLM) 配置 ═══════════ */
   if (pathname === '/api/translate/config' && req.method === 'GET') {
     const c = translateCfg();
     return sendJson(res, 200, {
-      presets: LLM_PRESETS, cfg: translateCfgPublic(c), ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT,
+      presets: LLM_PRESETS, cfg: translateCfgPublic(c), ready: llmReady(c), defaultPrompt: DEFAULT_TRANSLATE_PROMPT, ...schemesPublic(),
     });
   }
 
@@ -7831,9 +8312,18 @@ function handleProjectsRoutes(req, res, u) {
   }
 
   if (pathname === '/api/projects' && req.method === 'POST') {
-    return readBody(req, res, 256 * 1024 * 1024, (err, body) => {
+    return readBody(req, res, 256 * 1024 * 1024, async (err, body) => {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let data; try { data = JSON.parse(body.toString('utf8')); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      if (data?.draft || data?.fetch?.url) {
+        const selected = String(data.modelId || '') || selectedModelId();
+        await prepareVibeVoiceSelection(null, selected);
+        const model = modelById(selected);
+        if (model?.engine === 'vibevoice') {
+          const gate = asrGpuGateError(model);
+          if (gate) return sendJson(res, 400, { error: gate });
+        }
+      }
       // 再规整一次: 客户端送来的路径若带杂物, 这里同样能从"存在的最长前缀"里救回来
 /* 创建接口里的"链接模式"分支: data.fetch.url 非空时不要求本地视频文件,
  * 先建项目(卡片立刻出现, 阶段=下载中)再后台下载, 下完接现有 prepare/ASR 流水线。 */
@@ -7911,7 +8401,7 @@ function handleProjectsRoutes(req, res, u) {
         if (!m.cloud && missingModelFiles(mdir, m).length) return sendJson(res, 400, { error: `模型 ${m.name} 不完整，到设置里重新下载` });
         if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return sendJson(res, 400, { error: 'whisper.cpp 运行时没装好，到设置里下载' });
         if (m.engine === 'crispasr' && !crispasrRuntimeOk()) return sendJson(res, 400, { error: 'CrispASR 运行时没装好，到设置里下载（约 34MB）' });
-        if (wantSpeakers && !diarizeReady()) return sendJson(res, 400, { error: '说话人分离模型没装好，先到设置里下载（约 32MB）' });
+        if (m.engine !== 'vibevoice' && wantSpeakers && !diarizeReady()) return sendJson(res, 400, { error: '说话人分离模型没装好，先到设置里下载（约 32MB）' });
       } else {
         subName = String((data.subtitle && data.subtitle.name) || '');
         subText = String((data.subtitle && data.subtitle.text) || '');
@@ -8137,7 +8627,7 @@ function handleProjectsRoutes(req, res, u) {
      * 前端轮询同一个地址的 GET 拿进度。
      */
     if (action === 'reidentify' && req.method === 'POST') {
-      return readBody(req, res, 256 * 1024, (err, body) => {
+      return readBody(req, res, 256 * 1024, async (err, body) => {
         if (err) return sendJson(res, 400, { error: String(err.message) });
         let list = [];
         try {
@@ -8161,6 +8651,8 @@ function handleProjectsRoutes(req, res, u) {
         }
         const wav = path.join(projDir(id), 'audio.wav');
         if (!fs.existsSync(wav)) return sendJson(res, 400, { error: '该项目没有已保存的音频（audio.wav），无法重新识别' });
+        await prepareVibeVoiceSelection(meta);
+        if (!readMeta(id)) return sendJson(res, 404, { error: '项目不存在' });
         const rr = resolveRerecogModel(meta);
         if (rr.error) return sendJson(res, 400, { error: rr.error });
         const gpuGate = asrGpuGateError(rr.model);
@@ -8482,7 +8974,7 @@ function handleProjectsRoutes(req, res, u) {
      *  做成后台任务而不是同步接口: 识别+翻译可能要几分钟, 期间用户要能继续播放/编辑,
      *  区域进度常驻画在时间轴上。 */
     if (action === 'rerecognize' && req.method === 'POST') {
-      return readBody(req, res, 64 * 1024, (err, body) => {
+      return readBody(req, res, 64 * 1024, async (err, body) => {
         let start = NaN, end = NaN;
         try {
           const p = JSON.parse(body.toString('utf8')) || {};
@@ -8492,6 +8984,8 @@ function handleProjectsRoutes(req, res, u) {
         const wav = path.join(projDir(id), 'audio.wav');
         if (!fs.existsSync(wav)) return sendJson(res, 400, { error: '该项目没有已保存的音频（audio.wav），无法重新识别' });
         // 模型: 设置里的「重新识别模型」优先(可指定只做重新识别的 multitalker), 否则沿用项目初稿模型
+        await prepareVibeVoiceSelection(meta);
+        if (!readMeta(id)) return sendJson(res, 404, { error: '项目不存在' });
         const rr = resolveRerecogModel(meta);
         if (rr.error) return sendJson(res, 400, { error: rr.error });
         const model = rr.model;

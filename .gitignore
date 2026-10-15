@@ -49,6 +49,7 @@ asr/__pycache__/
 asr/logs/
 asr/models/
 asr/runtime-python/
+asr/runtime-vibevoice/
 asr/settings.json
 asr/whisper.cpp/
 asr/crispasr/

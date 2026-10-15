@@ -663,8 +663,6 @@ function currentOrderInfo() {
 function applyZhEnOrder(order) {
   if (state.format !== 'ass' || !state.assDoc || !state.assStyleTargets) return false;
   const t = state.assStyleTargets;
-  const info = currentOrderInfo();
-  if (info && info.order === order) return false;         // 已经是这个顺序
   // 要显示在下面的是谁：'zh-top' → 英文在下面 → 英文事件排前面
   const bottomStyle = order === 'zh-top' ? t.en : t.zh;
   const changed = state.assDoc.orderDialoguesByStyle(bottomStyle);
@@ -5348,6 +5346,9 @@ function splitRowAt(item, enPlainText, caret) {
 
   const t0 = row.start, t1 = row.end;
   const enS = row.en;
+  // 修改前保存完整词时序与本稿顺序，不能从已缩短的前半句再次读取。
+  const originalWords = (enS?.words || []).map(w => ({ w: w.w, s: w.s, e: w.e }));
+  const originalOrder = currentOrderInfo()?.order;
   let st = null;                           // 切点时间
   if (enS && enS.words && enS.words.length === totW && totW > k) {
     st = (enS.words[k - 1].e + enS.words[k].s) / 2;
@@ -5396,7 +5397,7 @@ function splitRowAt(item, enPlainText, caret) {
   // 词级时间: 原样分给两半(用原来的词, 不重算) —— 逐词效果得以保留。
   // 注意: applyWordSentence 已经重建过一次切片(用的是它自己重排出来的时间), 事件数早已不是 1,
   // 所以这里**不能**再拿 events.length === 1 当守卫(那会让覆盖白做、所有词被重排 —— 合并那边踩过同一个坑)。
-  const allW = (enS && enS.words) ? enS.words : [];
+  const allW = originalWords;
   const hasWords = allW.length === totW && totW > k;
   if (row.en) {
     row.en.words = hasWords ? allW.slice(0, k).map(w => ({ w: w.w, s: w.s, e: w.e }))
@@ -5414,6 +5415,9 @@ function splitRowAt(item, enPlainText, caret) {
   state.kar.rows.sort((a, b) => a.start - b.start || a.end - b.end);
   state.kar.sentences.sort((a, b) => a.start - b.start || a.end - b.end);
   state.selected = null;
+  if (originalOrder && state.assStyleTargets) {
+    state.assDoc.orderDialoguesByStyle(originalOrder === 'zh-top' ? state.assStyleTargets.en : state.assStyleTargets.zh);
+  }
   reconcileKaraoke();
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);

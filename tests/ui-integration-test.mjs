@@ -12,6 +12,25 @@ const { normalizeStudio, projectPhase, matchesProject, imageData } = await impor
 assert.equal(normalizeStudio(null, themes).themePack, 'studio');
 assert.equal(normalizeStudio({ themePack: 'bad', accent: 'url(evil)', mode: 'bad', image: '<svg>', motion: 'bad', custom: [{}] }, themes).accent, '#5c7560');
 assert.equal(imageData('data:image/svg+xml;base64,AAAA'), false);
+assert.deepEqual(normalizeStudio({},themes).auroraColors,[],'old preferences inherit theme colors');
+assert.equal(normalizeStudio({},themes).auroraMotion,'dynamic');
+assert.equal(normalizeStudio({},themes).glassDim,80);
+assert.equal(normalizeStudio({},themes).glassBlur,18);
+assert.equal(normalizeStudio({},themes).glassOpacity,100);
+for (const invalid of [NaN,Infinity,null,'18',{}]) {
+  assert.equal(normalizeStudio({glassDim:invalid,glassBlur:invalid},themes).glassDim,80);
+  assert.equal(normalizeStudio({glassDim:invalid,glassBlur:invalid},themes).glassBlur,18);
+  assert.equal(normalizeStudio({glassOpacity:invalid},themes).glassOpacity,100);
+}
+assert.equal(normalizeStudio({glassDim:0,glassBlur:99},themes).glassDim,72);
+assert.equal(normalizeStudio({glassDim:0,glassBlur:99},themes).glassBlur,32);
+assert.equal(normalizeStudio({glassOpacity:0},themes).glassOpacity,20);
+assert.equal(normalizeStudio({glassOpacity:101},themes).glassOpacity,100);
+const colors=['#123456','#abcdef','#789abc'];
+const normalized=normalizeStudio({auroraColors:colors,auroraMotion:'static'},themes);
+assert.deepEqual(normalized.auroraColors,colors); colors[0]='#000000'; assert.equal(normalized.auroraColors[0],'#123456','colors copied');
+for(const invalid of [['url(evil)','#123456','#123456'],['#123456'],[1,2,3],null,'#123456'])assert.deepEqual(normalizeStudio({auroraColors:invalid},themes).auroraColors,[]);
+assert.equal(normalizeStudio({auroraMotion:'bad'},themes).auroraMotion,'dynamic');
 const prefs = normalizeStudio({ folders: [{ id: 'f-one', name: 'Folder' }, { id: 'f-one', name: 'duplicate' }, { id: '../x', name: 'bad' }], assignments: { 'p-one': 'f-one', 'p-bad': 'f-no' } }, themes);
 assert.equal(prefs.folders.length, 1); assert.deepEqual(prefs.assignments, { 'p-one': 'f-one' });
 const active = { id: 'p-one', name: 'Movie', draft: { status: 'running', progress: 30 } };
@@ -29,7 +48,28 @@ for (const id of new Set(ids(old))) assert.ok(ids(fresh).includes(id), 'missing 
 const duplicates = ids(fresh).filter((id, i, all) => all.indexOf(id) !== i);
 assert.deepEqual(duplicates, [], 'new UI IDs must be unique');
 for (const option of [...old.matchAll(/<option\b[^>]*>[^<]*<\/option>/g)].map(m => m[0])) assert.ok(fresh.includes(option), 'missing option ' + option);
-assert.ok(fresh.includes('data-stp="ass"')); assert.ok(fresh.includes('id="ass-style-preset-import"'));
+assert.ok(!fresh.includes('data-stp="ass"')); assert.ok(!fresh.includes('data-setting="ass"')); assert.ok(fresh.includes('id="ass-style-preset-import"'));
+// Regeneration must preserve the redesigned settings, without writing any output or assets.
+const generated = new Map();
+const generatorContext = {
+  fs: { readFileSync: fs.readFileSync, writeFileSync: (file, contents) => generated.set(file, contents), copyFileSync() {} },
+  path, fileURLToPath: () => path.join(root, 'tools/generate-studio.mjs'), console: { log() {} }
+};
+vm.createContext(generatorContext);
+const generator = fs.readFileSync(path.join(root, 'tools/generate-studio.mjs'), 'utf8')
+  .replace(/^import .*;\r?\n/gm, '').replaceAll('import.meta.url', "'generator'");
+vm.runInContext(generator, generatorContext);
+const regenerated = generated.get(path.join(root, 'editor/studio.html'));
+for (const id of new Set(ids(fresh))) assert.ok(ids(regenerated).includes(id), 'regenerator missing control ' + id);
+assert.deepEqual(ids(regenerated).filter((id, i, all) => all.indexOf(id) !== i), [], 'regenerated IDs remain unique');
+assert.ok(regenerated.includes('id="sf-settings-tab-translate"'));
+assert.ok(!regenerated.includes('id="sf-settings-tab-general"'));
+assert.ok(regenerated.includes('id="sf-asr-families"'));
+assert.ok(regenerated.includes('id="st-scheme-name"'));
+for (const [id, icon] of [...fresh.matchAll(/id="sf-settings-tab-([^\"]+)"[^>]*data-ico="([^\"]+)"/g)].map(m => [m[1], m[2]])) {
+  const { ico } = await import('../editor/js/icons.js');
+  assert.ok(ico(icon), 'registered settings icon ' + id);
+}
 assert.equal(/SF_DEMO|data\.js|prototypes\/|localStorage/.test(fresh), false);
 const baseline = JSON.parse(fs.readFileSync(path.join(root, 'docs/ui-integration-baseline.json')));
 const crypto = await import('node:crypto');

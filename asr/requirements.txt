@@ -6,6 +6,8 @@
 #   diarize.py      说话人分离。同样只用 sherpa-onnx + numpy。
 #   multitalker.py  NeMo 多说话人模型（torch + nemo_toolkit）。**重依赖，数 GB**，
 #                   不要装进日常环境；见下方「可选：NeMo 多说话人」。
+#   vibevoice.py    VibeVoice ASR 4bit（CUDA + Transformers + bitsandbytes）。
+#                   由设置页单独安装，禁止 CPU/NPU/offload，不随基础环境自动安装。
 #   fetch/*.py      下载初稿（bilibili / YouTube）。只用标准库 + yt-dlp。
 #
 # ── 建环境（Python 3.10~3.12；3.13 尚未验证，nemo_toolkit 可能不兼容）──
@@ -41,4 +43,13 @@ numpy>=1.24
 #
 #   torch>=2.2
 #   nemo_toolkit[asr]>=1.23    # 自带 omegaconf，不用单独列
+
+# ── 可选：VibeVoice ASR 4bit（仅 NVIDIA CUDA）──
+# 由「设置 → 语音识别 → VibeVoice 系列」单独安装，避免基础环境被大依赖污染：
+#   torch（仅 CUDA wheel，由设置页按 cu126 索引安装；不会安装 CPU 版）
+#   transformers==5.17.0
+#   accelerate==1.15.0
+#   bitsandbytes==0.50.2
+# 安装到独立 asr/runtime-vibevoice；需要 soundfile/soxr 读取与重采样音频。
+# 已禁用 VibeVoice CPU 推理与 CPU offload，NPU 暂无已验证后端；安装后实测 CUDA NF4 kernel。
 

@@ -1,8 +1,8 @@
-// 验收设计稿 ③「LLM 方案列表 + 二级滑入设置面板」：
+// 验收设计稿 ③「LLM 方案列表 + 卡片内展开设置区」：
 //   · 二级 Tab 能切到 LLM 子视图，切回 ASR 也不坏
 //   · 方案列表按真实 presets 渲染，标出「当前使用」，未配置的行变暗
-//   · 服务选择胶囊两处（列表上方 + 面板里）都能点，点了会打开滑入面板
-//   · 滑入面板：按下「设置」时从右侧滑入（transform 从 100% → 0），关闭动画后 hidden
+//   · 服务选择胶囊两处（列表上方 + 卡片内）都能点，点了会展开设置区
+//   · 卡片内设置区：按下「设置」后插入当前卡片下方，连续展开并在关闭动画后 hidden
 //   · 面板里的字段与后端**真有的**字段一一对应（province/baseUrl/model/batch/prompt/glossary 都在）
 //   · 「新建方案」会清空 Key 并切到另一个服务商
 //
@@ -105,15 +105,17 @@ ok(L.hasSetBtn, '每行都有「设置」按钮');
 ok(L.picks.length === 8, '服务选择胶囊与服务商一一对应');
 ok(L.descs.every(d => !/undefined/.test(d)), '描述里没有 undefined', JSON.stringify(L.descs));
 
-console.log('\n── ③ 滑入面板 ──');
+console.log('\n── ③ 卡片内展开设置区 ──');
 const draw = await evalJS(`(async () => {
   const d = document.getElementById('st-scheme-drawer');
   const before = { hidden: d.hidden, open: d.classList.contains('open'), x: Math.round(d.getBoundingClientRect().x) };
   document.querySelector('#st-scheme-list .st-scheme-set').click();
   await new Promise(r => setTimeout(r, 500));
   const cs = getComputedStyle(d);
+  const first = document.querySelector('#st-scheme-list .st-scheme');
   const after = { hidden: d.hidden, open: d.classList.contains('open'), x: Math.round(d.getBoundingClientRect().x),
                   w: Math.round(d.getBoundingClientRect().width), transform: cs.transform,
+                  belowCard: d.parentElement === document.getElementById('st-scheme-list') && first.nextElementSibling === d,
                   title: document.getElementById('st-scheme-title').textContent,
                   curShown: !document.getElementById('st-scheme-cur').hidden,
                   picksInside: document.querySelectorAll('#st-drawer-picks .st-pick').length };
@@ -132,9 +134,9 @@ console.log('   ', draw);
 const D = JSON.parse(draw);
 ok(D.before.hidden === true || D.before.open === false, '初始时面板是收起/隐藏的');
 ok(D.after.open === true && D.after.hidden === false, '点「设置」后面板已打开');
-ok(D.after.x > D.vw * 0.3 && D.after.x + D.after.w >= D.vw - 2, `面板贴在窗口右侧（x=${D.after.x}, w=${D.after.w}）`);
-ok(Math.abs(Number((D.after.transform || '').replace(/[^0-9.,-]/g, '').split(',')[4] || 0)) < 1, '滑入动画结束（transform 已归零）');
-ok(D.after.w > 400 && D.after.w < D.vw, `面板宽度约 620px（实际 ${D.after.w}）`);
+ok(D.after.belowCard, '设置区插入当前方案卡片下方');
+ok(D.after.transform === 'none' || D.after.transform === 'matrix(1, 0, 0, 1, 0, 0)', '展开动画结束（位移已归零）');
+ok(D.after.w > 400 && D.after.w <= D.vw, `设置区与列表同宽（实际 ${D.after.w}）`);
 ok(D.after.curShown === true, '标题旁标出了「当前使用」');
 ok(D.after.picksInside === 8, '面板里也有服务选择胶囊');
 ok(Object.values(D.fields).every(Boolean), '凭证/模型/调用参数/术语表/提示词 字段齐全',

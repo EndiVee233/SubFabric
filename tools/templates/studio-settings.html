@@ -1,0 +1,560 @@
+<div id="st-view" class="workspace-page" hidden>
+  <div class="page-inner settings-inner">
+    <header class="page-head">
+      <button type="button" class="btn page-back" id="st-close" data-ico="chevronDown"><span id="st-close-label">返回项目</span></button>
+      <span class="page-brand" data-ico="film">SubFabric <span>/ 全局设置</span></span>
+    </header>
+    <div class="page-intro">
+      <div class="page-eyebrow">MAKE IT FEEL LIKE YOU</div>
+      <h1>设置</h1>
+      <p>让工作空间更贴近你的习惯。按用途配置，按作用范围保存。</p>
+    </div>
+    <div class="st-box page-surface" id="st-box">
+      <div class="st-head">
+        <div class="st-title-wrap">
+          <span class="st-title">设置分类</span>
+          <span class="st-subtitle">选择左侧分类进行配置</span>
+        </div>
+      </div>
+
+    <!-- 左侧分类栏。这里**必须**用 .st-tabs（不能另套一层 wrapper）：
+         ui.css 的 `#st-view .st-box` 是 grid（192px + 1fr，三行 head/body/actions），
+         `.st-tabs` / `.st-body` / `.st-actions` 都是它的**直接子元素**并按 grid-area 定位。
+         套一层 wrapper 会让 grid 拿不到这些子元素 → 右栏被压成 0 宽（实测踩过）。
+         JS 侧沿用 `.st-tab` + `data-stp`，切换逻辑不用改。 -->
+    <div class="st-tabs" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+      <span class="sf-settings-nav-label">工作空间</span>
+      <button type="button" id="sf-settings-tab-theme" class="st-tab active" role="tab" tabindex="0" aria-selected="true" aria-controls="st-panel-theme" data-stp="theme" data-ico="palette">外观与体验</button>
+      <span class="sf-settings-nav-label">生成与处理</span>
+      <button type="button" id="sf-settings-tab-models" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-models" data-stp="models" data-ico="film">语音识别</button>
+      <button type="button" id="sf-settings-tab-translate" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-translate" data-stp="translate" data-ico="globe">翻译与术语</button>
+      <button type="button" id="sf-settings-tab-enhance" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-enhance" data-stp="enhance" data-ico="wand">识别与校对</button>
+      <button type="button" id="sf-settings-tab-fetch" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-fetch" data-stp="fetch" data-ico="download">下载与登录</button>
+      <button type="button" id="sf-settings-tab-perf" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-perf" data-stp="perf" data-ico="activity">性能与调度</button>
+    </div>
+
+    <div class="st-body">
+      <div id="sf-resource-links" class="sf-resource-links" hidden><button type="button" data-setting="models">识别模型</button><button type="button" data-resource="llm">翻译方案与术语</button><button type="button" data-setting="enhance">热词与识别增强</button></div>
+      <div class="st-panel" id="st-panel-models" role="tabpanel" data-stp="models" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-models">语音识别</h2><p>准备识别引擎、模型文件和本机运行环境。</p><p class="sf-settings-save-note">模型操作和下载位置即时保存；已有模型不会随目录移动。</p></div>
+        <!-- 隐藏旧二级入口供业务刷新兼容；新界面使用独立一级分类。 -->
+        <div class="st-subtabs" hidden role="tablist" aria-label="模型设置">
+          <button type="button" class="st-subtab active" role="tab" aria-selected="true" data-stsub="asr">ASR 识别模型</button>
+          <button type="button" class="st-subtab" role="tab" aria-selected="false" data-stsub="llm">LLM 语言模型</button>
+        </div>
+
+        <div class="st-subview" data-stsub="asr">
+        <!-- 模型设置的两个入口（设计稿 ①）：
+             ASR 走本页的「模型管理」（同分类内），LLM 切到「字幕翻译」。
+             进度条/胶囊的数字由 project.js 的 renderModelEntries() 按真实状态填。 -->
+        <div class="st-entry-grid" hidden>
+          <button type="button" class="st-entry" id="st-entry-asr">
+            <div class="st-entry-head">
+              <span class="st-entry-ico accent" data-ico="film"></span>
+              <span class="st-entry-txt">
+                <span class="st-entry-title">ASR 识别模型</span>
+                <span class="st-entry-sub" id="st-entry-asr-sub">语音识别</span>
+              </span>
+            </div>
+            <div class="st-entry-bar"><i id="st-entry-asr-bar" style="width:0%"></i></div>
+            <div class="st-entry-chips" id="st-entry-asr-chips"></div>
+            <div class="st-entry-foot"><span>点击进入管理</span><span class="st-entry-arrow" data-ico="chevronDown"></span></div>
+          </button>
+          <button type="button" class="st-entry" id="st-entry-llm">
+            <div class="st-entry-head">
+              <span class="st-entry-ico violet" data-ico="globe"></span>
+              <span class="st-entry-txt">
+                <span class="st-entry-title">LLM 语言模型</span>
+                <span class="st-entry-sub" id="st-entry-llm-sub">翻译方案</span>
+              </span>
+            </div>
+            <div class="st-entry-bar"><i id="st-entry-llm-bar" style="width:0%"></i></div>
+            <div class="st-entry-chips" id="st-entry-llm-chips"></div>
+            <div class="st-entry-foot"><span>点击进入管理</span><span class="st-entry-arrow" data-ico="chevronDown"></span></div>
+          </button>
+        </div>
+        <!-- 本机硬件条（设计稿 ②）：N 卡 / NPU / Vulkan 各一枚胶囊 + 右侧"已安装 N / M"。
+             内容全由 project.js 的 renderHardwareBar() 按 /api/asr/status 的探测结果渲染 ——
+             没检测到的硬件不会显示（不谎报），右侧计数与模型列表同源。 -->
+        <div class="st-hw" id="st-hardware"></div>
+        <div id="sf-asr-families" class="sf-asr-families">
+          <button type="button" class="sf-asr-family" data-asr-family="Whisper 系列"><span class="sf-asr-family-name">Whisper 系列</span><span class="sf-asr-family-desc">本地识别 · whisper.cpp</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="Parakeet 系列"><span class="sf-asr-family-name">Parakeet 系列</span><span class="sf-asr-family-desc">GPU / NPU / Vulkan · 多说话人</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="云端识别"><span class="sf-asr-family-name">云端系列</span><span class="sf-asr-family-desc">必剪 / 剪映 · 免下载模型</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="前置"><span class="sf-asr-family-name">前置</span><span class="sf-asr-family-desc">运行环境、模型目录与说话人分离</span><span class="sf-asr-count">配置与依赖</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="VibeVoice 系列"><span class="sf-asr-family-name">VibeVoice 系列</span><span class="sf-asr-family-desc">多语 · CUDA 4bit · 说话人时间轴</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+        </div>
+        <div id="sf-asr-detail" class="sf-asr-detail" hidden><button type="button" class="btn" id="sf-asr-back">← 返回系列</button><h3 id="sf-asr-detail-title"></h3></div>
+        <div class="st-card">
+          <div class="st-card-title">模型与配置</div>
+          <div id="st-models" class="st-models"><span class="spin"></span>读取中…</div>
+          <div class="st-msg" id="st-model-note"></div>
+        </div>
+        <div id="dual-ratio-row" class="st-row" hidden>
+          <label class="st-label">双引擎分工</label>
+          <select id="dual-ratio" class="select" style="max-width:230px">
+            <option value="auto">自动（用性能测试测出的比例）</option>
+            <option value="1:1">手动 1:1（GPU 1 片 : NPU 1 片）</option>
+            <option value="2:1">手动 2:1（GPU 2 片 : NPU 1 片）</option>
+            <option value="1:2">手动 1:2（GPU 1 片 : NPU 2 片）</option>
+            <option value="3:1">手动 3:1（GPU 3 片 : NPU 1 片）</option>
+            <option value="1:3">手动 1:3（GPU 1 片 : NPU 3 片）</option>
+            <option value="1:0">只用 GPU（不并行）</option>
+            <option value="0:1">只用 NPU（不并行）</option>
+          </select>
+          <span class="st-help" id="dual-ratio-note" style="margin-left:8px"></span>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">下载位置</div>
+          <div class="st-row">
+            <span class="st-lbl">目录</span>
+            <input type="text" id="st-model-dir" class="st-input" spellcheck="false"
+              placeholder="留空 = 程序目录\asr\models（改完点别处即保存）">
+            <button type="button" class="btn btn-mini" id="st-model-dir-open" title="在资源管理器中打开模型目录">打开目录</button>
+          </div>
+          <p class="gl-hint">识别模型和说话人模型都下到这里，可以同时下载。已有模型不会被移动，重新下载时才会用新位置。</p>
+        </div>
+
+        <!-- 运行时环境（设计稿 ① 的第三块卡片）：Python / NeMo / 说话人分离
+             三项状态 + 缺失时一键安装。状态由 project.js 的 renderRuntimeEnv() 按
+             /api/asr/status 的真实探测结果渲染（绝不写死）。 -->
+        <div class="st-card" hidden>
+          <div class="st-card-title" data-ico="monitor">运行时环境</div>
+          <div class="st-env-grid" id="st-runtime-env"><span class="spin"></span>检测中…</div>
+        </div>
+        <div id="sf-asr-rerecog-mount" class="st-card"></div>
+        </div><!-- /st-subview asr -->
+      </div>
+
+      <div class="st-panel" id="st-panel-perf" role="tabpanel" data-stp="perf" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机硬件</span><h2 id="sf-settings-heading-perf">性能与调度</h2><p>用实际测试选择适合本机的分片长度与双引擎配比。</p><p class="sf-settings-save-note">测试由你手动启动，会运行识别引擎；当前页面不会自动开始。</p></div>
+        <div class="st-section">
+          <div class="st-section-title">双引擎分工性能测试</div>
+          <div class="st-help">
+            本机同时有 Intel NPU 与 N 卡，两个识别引擎<b>落在不同硬件上</b>，可以并行工作、各认一部分分片。
+            但速度取决于机型、散热与驱动，<b>没法靠猜</b> —— 这里在你的机器上实测，给出该用多长的分片、以及最佳配比。
+            <br>测法：每个分片长度先各跑一次“只用 GPU”“只用 NPU”作基线，据此推算其余配比的预期耗时，
+            再<b>只把最优的那一个真跑一次</b>验证。于是 9 次真跑覆盖全部配比，推荐值有实测背书。
+          </div>
+          <div class="st-help" style="margin-top:6px">
+            测试素材：<code id="perf-audio-path">（未选择）</code>
+            <button type="button" class="btn btn-mini" id="perf-audio-pick">选择音频…</button>
+            <button type="button" class="btn btn-mini" id="perf-audio-auto">自动找一份</button>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <label class="st-label">分片长度（秒）</label>
+            <input type="text" id="perf-slices" class="st-input" value="8,15.01,28" spellcheck="false" style="max-width:200px">
+          </div>
+          <div class="st-row">
+            <label class="st-label">每个长度的素材</label>
+            <input type="number" id="perf-audio-sec" class="st-input" value="60" min="30" max="600" step="10" style="max-width:120px">
+            <span class="st-help" style="margin-left:8px">秒（越大越准、越慢）</span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <button type="button" class="btn btn-mini btn-accent" id="perf-start">开始测试</button>
+            <span class="st-msg" id="perf-note"></span>
+          </div>
+          <div id="perf-progress" hidden style="margin-top:8px">
+            <div class="st-progress"><div id="perf-bar" style="width:0%"></div></div>
+            <div class="st-help" id="perf-stage" style="margin-top:4px"></div>
+          </div>
+          <div id="perf-result" style="margin-top:12px"></div>
+        </div>
+        <div class="st-section">
+          <div class="st-section-title">当前已应用的配置</div>
+          <div class="st-help" id="perf-applied">读取中…</div>
+        </div>
+      </div>
+      <div class="st-panel" id="st-panel-fetch" role="tabpanel" data-stp="fetch" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-fetch">下载与登录</h2><p>设置链接素材的画质、网络和账号来源。</p><p class="sf-settings-save-note">画质、代理和浏览器来源即时保存；bilibili Cookie 需单独保存。</p></div>
+        <div class="st-card">
+          <div class="st-card-title">下载</div>
+          <div class="st-grid">
+            <span class="st-lbl">默认画质</span>
+            <select id="st-fetch-quality" class="select">
+              <option value="best">1080P 优先（大会员先试 60 帧；只降不升）</option>
+              <option value="2160">4K 及以下</option>
+              <option value="1080">1080P 及以下</option>
+              <option value="720">720P 及以下</option>
+              <option value="480">480P 及以下</option>
+              <option value="360">360P（最省流量）</option>
+              <option value="audio">仅音频</option>
+            </select>
+          </div>
+          <div class="st-grid">
+            <span class="st-lbl">代理</span>
+            <input type="text" id="st-fetch-proxy" class="st-input" spellcheck="false" placeholder="留空 = 不用代理（YouTube 一般需要，如 http://127.0.0.1:7890）">
+          </div>
+          <p class="gl-hint">只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。</p>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">bilibili 登录 <span class="st-card-note">有大会员 Cookie 才能下 1080P 60帧 / 高码率 / 4K</span></div>
+          <div class="st-grid">
+            <span class="st-lbl">Cookie</span>
+            <textarea id="st-fetch-cookie" class="st-input" rows="3" spellcheck="false" placeholder="粘贴浏览器里的 Cookie：SESSDATA=…; bili_jct=…; DedeUserID=…（整段复制最好；只复制到值也认，会按 SESSDATA 存）。保存后加密落到本地、不回显，并立即验证登录是否成功"></textarea>
+          </div>
+          <div class="st-row">
+            <button type="button" class="btn btn-mini btn-accent" id="st-fetch-cookie-save">保存 Cookie</button>
+            <button type="button" class="btn btn-mini" id="st-fetch-cookie-clear">清除</button>
+            <span class="st-msg" id="st-fetch-cookie-note"></span>
+          </div>
+          <p class="gl-hint">Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。</p>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">YouTube 登录</div>
+          <div class="st-grid">
+            <span class="st-lbl">从浏览器读</span>
+            <select id="st-fetch-browser" class="select">
+              <option value="">（不用）</option>
+              <option value="chrome">Chrome</option>
+              <option value="edge">Edge</option>
+              <option value="firefox">Firefox</option>
+            </select>
+          </div>
+          <p class="gl-hint">需要先在该浏览器里登录 YouTube；程序用 yt-dlp 的 --cookies-from-browser 读取。</p>
+        </div>
+      </div>
+      <!-- LLM 真实配置在下面独立翻译分类中，保存链路与旧UI共用。 -->
+      <!-- 翻译常驻表单成为独立分类，保留原子视图与控件 ID。 -->
+      <div class="st-panel" id="st-panel-translate" role="tabpanel" data-stp="translate" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局方案</span><h2 id="sf-settings-heading-translate">翻译与术语</h2></div>
+      <div class="st-subview" data-stsub="llm" hidden>
+        <div class="st-subhead">
+          <div>
+            <div class="st-subtitle-strong">翻译方案</div>
+            
+          </div>
+          <button type="button" class="btn btn-mini" id="st-scheme-new">＋ 添加方案</button>
+        </div>
+
+        <!-- 服务选择胶囊：点一枚 = 把该服务商预置写进卡片下方的设置区 -->
+        <div class="st-picks" id="st-scheme-picks" hidden></div>
+
+        <!-- 方案列表（按 /api/translate/config 的 presets 渲染，状态点表示是否已配置） -->
+        <div class="st-schemes" id="st-scheme-list"></div>
+
+<section class="st-scheme-inline" id="st-scheme-drawer" hidden inert aria-hidden="true"><div class="sf-scheme-content">
+        <div class="st-drawer-head">
+          <button type="button" class="st-drawer-x" id="st-scheme-close" title="关闭" data-ico="x"></button>
+          <span class="st-drawer-title" id="st-scheme-title">翻译方案</span>
+          <span class="st-scheme-cur" id="st-scheme-cur" hidden>当前使用</span>
+          <span class="st-drawer-actions">
+            <button type="button" class="btn btn-mini" id="st-scheme-test">测试 API</button>
+            <button type="button" class="btn btn-mini" id="st-scheme-reset">恢复默认</button>
+          </span>
+        </div>
+
+        <div class="st-drawer-body">
+          <div class="st-picks" id="st-drawer-picks" hidden></div>
+
+          <div class="st-card">
+            <div class="st-card-title">方案与服务商</div>
+            <div class="st-grid">
+              <label class="st-lbl" for="st-scheme-name">方案名称</label><input id="st-scheme-name" class="st-input" maxlength="80" required placeholder="为这个方案命名">
+              <span class="st-lbl">服务商</span>
+              <select id="st-provider" class="st-select"></select>
+              <span class="st-lbl">API 接口地址</span>
+              <input type="text" id="st-baseurl" class="st-input" spellcheck="false" placeholder="https://api.deepseek.com/v1">
+              <span class="st-lbl">API Key</span>
+              <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
+            </div>
+            <p class="gl-hint" id="st-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="st-key-clear" class="st-key-clear">清除已存 Key</a></p>
+            <button type="button" class="btn btn-mini" id="st-key-eye" style="margin-top:6px">显示</button>
+            <p class="gl-hint">接口地址可选，留空使用默认接口地址。Key 只存在此机器，不会同步到服务器。</p>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">模型</div>
+            <div class="st-grid">
+              <span class="st-lbl">LLM 模型</span>
+              <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+              <span class="st-lbl">采样温度</span>
+              <input type="number" id="st-temp" class="st-input" min="0" max="2" step="0.1" value="0.3" style="max-width:120px">
+            </div>
+            <p class="gl-hint">模型名称请参考对应服务商的 API 文档。温度越低输出越确定、越高越随机，建议 0.2~0.8（原来写死 0.3，现在可调）。</p>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">调用参数</div>
+            <div class="st-grid">
+              <span class="st-lbl">每批行数</span>
+              <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="25" style="max-width:120px">
+              <span class="st-lbl">上下文行数</span>
+              <input type="number" id="st-ctx" class="st-input" min="0" max="200" step="5" value="0" style="max-width:120px">
+            </div>
+            <p class="gl-hint">
+              每批行数：一次请求最多带多少行给翻译模型（5~100）。批越大请求越少，但译文行数一旦和输入对不上，整批都要重来；批越小越稳，请求也越多。失败时程序会自动拆成两半重试。
+              <br>上下文行数：每批额外把前面 N 行「原文 + 已定译文」当参考送给模型，让它接着上文译（0 = 不送，与旧行为一致）。参考行不参与译文行数校验。
+            </p>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">术语表 <span class="st-card-note">按目标语言分组 · 翻译时只应用当前组</span></div>
+            <div class="gl-wrap">
+              <div class="gl-tabs" id="gl-tabs"></div>
+              <button type="button" class="gl-add" id="gl-add">＋ 添加词条</button>
+              <div class="gl-head">
+                <span>原文</span>
+                <span>译法 · <b id="gl-langname">简体</b></span>
+                <span></span>
+              </div>
+              <div class="gl-rows" id="gl-rows"></div>
+            </div>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">LLM 提示词 <span class="st-card-note">随此方案保存</span></div>
+            <textarea id="st-prompt" class="st-area" spellcheck="false" rows="7"></textarea>
+          </div>
+
+          <!-- ⚠ 设计稿 ③ 里的「中间 API」**没有实装**，而且不是忘了：
+               它要的是"请求先经过中转再发给服务商"（设计稿原文：如遇 CORS 或 403 错误请开启）。
+               本项目的 LLM 请求全部由**本地 Node 服务端**发出（server.js 的 llmChat 直接 fetch），
+               服务端之间没有浏览器同源策略，CORS 这个问题**根本不存在**；
+               再加一层中转只会多一个要维护的失败点。所以这里如实说明，不摆一个空开关。 -->
+<div class="sf-scheme-options"><label><input type="checkbox" id="st-scheme-activate" checked> 保存后使用此方案</label><label><input type="checkbox" id="st-scheme-auto" checked> 创建稿件后自动翻译</label></div>
+        </div>
+
+        <div class="st-drawer-foot">
+          <span class="st-msg" id="st-drawer-msg"></span>
+          <span class="st-spacer"></span>
+          <button type="button" class="btn" id="st-drawer-cancel">取消</button>
+          <button type="button" class="btn btn-accent" id="st-drawer-save">保存方案</button>
+        </div>
+      </div></section>
+
+        <div class="st-card" hidden>
+          <div class="st-card-title">模型、术语与提示词 <span class="st-card-note">点上面任意方案的「设置」展开</span></div>
+          <p class="gl-hint" id="st-scheme-hint">点击方案卡片或右侧「设置」，在卡片下方编辑凭证、模型、分批参数、术语表和提示词。</p>
+        </div>
+      </div>
+      </div>
+
+      <div class="st-panel" id="st-panel-enhance" role="tabpanel" data-stp="enhance" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局默认</span><h2 id="sf-settings-heading-enhance">识别与校对</h2><p>从专有名词到逐词时间，逐步提高稿件的可靠性。</p><p class="sf-settings-save-note">热词列表与强度需手动保存；其余增强选项修改后即时保存。</p></div>
+        <div class="st-card">
+          <div class="st-card-title">热词 <span class="st-card-note">一格一个单词 · ＋ 添加 · − 删除</span></div>
+          <div id="ah-terms-list" class="hotword-list"></div>
+          <button type="button" class="btn btn-mini" id="ah-add">＋ 添加热词</button>
+          <p class="gl-hint">whisper 用作初始提示词，Parakeet 用作热词加权。术语表的「原文」列会自动并进来。</p>
+
+          <!-- 从操作日志挖热词：用户把 A 改成 B，就是"B 才是对的词"的弱标注。
+               把 B 喂回 ASR 当热词，下一份稿子就不会再听错（越用越准的闭环）。
+               ⚠ 只挖不给：**必须用户勾选**才写进热词表，绝不自动加。 -->
+          <div class="hw-mine">
+            <div class="hw-mine-head">
+              <button type="button" class="btn btn-mini btn-accent" id="ah-mine">🔍 从操作日志挖掘</button>
+              <span class="hw-mine-hint" id="ah-mine-hint">
+                你在字幕里改对过的专有名词，就是 ASR 听错的词 —— 挖出来加进热词，下次就不会再错
+              </span>
+            </div>
+            <div class="hw-mine-list" id="ah-mine-list" hidden></div>
+            <div class="hw-mine-foot" id="ah-mine-foot" hidden>
+              <button type="button" class="btn btn-mini" id="ah-mine-all">全选</button>
+              <button type="button" class="btn btn-mini" id="ah-mine-none">全不选</button>
+              <button type="button" class="btn btn-mini btn-accent" id="ah-mine-apply">加入选中的热词</button>
+              <span class="hw-mine-count" id="ah-mine-count"></span>
+            </div>
+            <!-- 交给 LLM 再筛一遍：规则只看单条编辑，看不出"同一个词被改成了好几种写法"，
+                 也分不清哪是专名、哪只是语气词。默认不开（要花 token / 等模型）。 -->
+            <label class="hw-llm-toggle">
+              <input type="checkbox" id="ah-use-llm">
+              <span>交给 LLM 再分析一遍</span>
+              <span class="hw-llm-note" id="ah-llm-note">用模型判断哪些真是专有名词（模型在下面「用于分析热词的模型」里选）</span>
+            </label>
+          </div>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">LLM 分角色 <span class="st-card-note">用视频简介推断人物，再把说话人对应到角色名</span></div>
+          <div class="st-row">
+            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
+              <input type="checkbox" id="st-cast-enabled"> 启用
+            </label>
+            <span class="gl-hint" style="flex:1" id="st-cast-note">先用视频标题/简介让模型判断有几个人物，按这个人数做说话人分离；分离后把说话人换成真实角色名，没对应上的保留说话人编号。模型用「字幕翻译」里配的那份。</span>
+          </div>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">逐句置信度 <span class="st-card-note">标注每句的可信程度，供复核</span></div>
+          <div class="st-row">
+            <select id="st-conf-mode" class="st-input" style="max-width:230px">
+              <option value="full">完整（含稳定性判定）</option>
+              <option value="fast">快速（不重跑稳定性）</option>
+              <option value="off">关闭（不生成）</option>
+            </select>
+            <span class="gl-hint" style="flex:1" id="st-conf-note">置信度由三个信号融合：<b>词级概率</b>与<b>音频质量</b>在解码时白送、不花时间；<b>稳定性</b>要把音频加噪<b>重跑 2 遍</b> —— 实测 236 秒音频 10.7s → 20.8s，<b>约慢一倍</b>。默认「完整」。</span>
+          </div>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">自动纠错 <span class="st-card-note">让 LLM 通读全片找"语句不通顺"</span></div>
+          <div class="st-row">
+            <select id="st-correct-mode" class="st-input" style="max-width:230px">
+              <option value="preview">预览优先（默认）</option>
+              <option value="off">关闭</option>
+              <option value="auto">建稿后自动跑一次（仍需确认才改）</option>
+            </select>
+            <span class="gl-hint" style="flex:1">在稿件页点「🧠 反思纠错」触发。它会找出<b>没说完 / 被硬切 / 拼接痕迹 / 疑似听错</b>的地方，先给预览清单，你勾选后才重识别那几段。</span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <span class="st-lbl" style="min-width:auto">上下文</span>
+            <input type="number" id="st-correct-pad" class="st-input" min="0" max="15" step="1" value="2" style="max-width:74px" title="每段建议前后各取多少秒音频一起重听">
+            <span class="gl-hint">秒／前后各取；单段上限</span>
+            <input type="number" id="st-correct-max" class="st-input" min="3" max="120" step="1" value="30" style="max-width:74px" title="单段重识别区间的时长上限，避免一段吞掉全片">
+            <span class="gl-hint">秒；每批</span>
+            <input type="number" id="st-correct-batch" class="st-input" min="20" max="200" step="10" value="60" style="max-width:74px" title="每次送给模型的字幕行数（长稿会分多批）">
+            <span class="gl-hint">行（长稿会分批通读）</span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
+              <input type="checkbox" id="st-correct-usetranslate" checked> 用字幕翻译的模型
+            </label>
+            <span class="gl-hint" style="flex:1" id="st-correct-eff"></span>
+          </div>
+          <div id="st-correct-custom" hidden>
+            <div class="st-row" style="margin-top:6px">
+              <select id="st-correct-provider" class="st-input" style="max-width:230px"></select>
+            </div>
+            <div class="st-row" style="margin-top:6px">
+              <input type="text" id="st-correct-baseurl" class="st-input" spellcheck="false" placeholder="接口地址，例如 http://127.0.0.1:8000/v1">
+            </div>
+            <div class="st-row" style="margin-top:6px">
+              <input type="text" id="st-correct-model" class="st-input" spellcheck="false" placeholder="模型名，例如 Qwen3-8B">
+            </div>
+            <div class="st-row" style="margin-top:6px">
+              <input type="password" id="st-correct-key" class="st-input" spellcheck="false" placeholder="API Key（本机地址可留空）">
+            </div>
+            <p class="gl-hint">想用<b>本地部署</b>的模型（如 Qwen3 量化版）：起一个 OpenAI 兼容服务后，把地址填成 <code>http://127.0.0.1:端口/v1</code>、模型名填服务暴露的名字，<b>Key 可留空</b>。</p>
+          </div>
+          <p class="gl-hint" id="st-correct-note"></p>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">重排逐词时间 <span class="st-card-note">原片音频重识别 → 实测逐词时间</span></div>
+          <p class="gl-hint">
+            右键字幕块选「重排逐词时间」，或点「🎯 全片逐词重校对」时用这里的设置。
+            直接切出这条字幕在<b>原片音频</b>里的那一段重新识别，拿识别出来的真实位置当逐词时间
+            —— <b>只改逐词时间，不动文本</b>。
+          </p>
+          <p class="gl-hint">
+            不达标的句子会再走一级：让模型从该句已有的词里挑出<b>不常见 / 专有</b>的词
+            （人名、服务器名、术语）做成**只作用于该句**的热词表，重建识别器再识别一次，
+            <b>更吻合才采纳</b>。实测把整句所有词都当热词是净负效果，
+            所以只挑专名、且必须有这道闸门。
+          </p>
+          <div class="st-row" style="margin-top:8px">
+            <span class="st-lbl" style="min-width:auto">最低锚点率</span>
+            <input type="number" id="st-realign-minratio" class="st-input" min="0.3" max="1" step="0.05" value="0.6" style="max-width:84px">
+            <span class="gl-hint" style="flex:1">
+              识别出的词与原文对得上的比例低于这个值就判为「不可信」并拒绝改动（而不是给一个错的时间）
+            </span>
+          </div>
+          <div class="st-row" style="margin-top:8px">
+            <span class="st-lbl" style="min-width:auto">重校对置信度门槛</span>
+            <input type="number" id="st-realign-minconf" class="st-input" min="0.3" max="1" step="0.05" value="0.7" style="max-width:84px">
+            <span class="gl-hint" style="flex:1">
+              「全片逐词重校对」用它决定**哪些句子值得改**：置信度 ≥ 门槛的才重排逐词时间，
+              低于门槛的原样保留。它比「最低锚点率」更严 —— 那个只判"能不能用"，
+              这个还要看有没有整段落单、有没有词被压扁
+            </span>
+          </div>
+          <p class="gl-hint" id="st-realign-note"></p>
+        </div>
+        <!-- 逐词字幕自愈开关（默认开）。
+             它只修一种特定损坏：**逐词行被清空、文本跑到同时间戳的另一行上**
+             （旧版导入 bug 的遗留；一旦写进文件，界面上看不出来）。
+             实测在 140 多个 .ass 里只命中过 1 个真坏的 —— 正常稿件上是空转。
+             给开关是因为它会**改动稿件**，用户应当能关掉。 -->
+        <div class="st-card">
+          <div class="st-card-title">逐词字幕自愈
+            <label class="switch switch-mini" style="margin-left:8px" title="开启后，载入字幕或分段导入时自动修复「逐词行被清空」的损坏">
+              <input type="checkbox" id="cb-heal-words" checked>
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <p class="gl-hint">
+            载入或导入时，若发现「逐词行的文本被清空、文本跑到了**同时间戳**的另一行上」
+            （旧版导入 bug 的遗留），自动把文本搬回来。<b>正常稿件上是空转，不会误改</b>。
+            关掉之后只会在控制台提示，不动稿件。
+          </p>
+        </div>
+        <div class="st-card">
+          <div class="st-card-title">热词强度 <span class="st-card-note">仅 Parakeet</span></div>
+          <div class="st-row">
+            <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" style="max-width:120px">
+            <span class="gl-hint" style="flex:1">实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6</span>
+          </div>
+        </div>
+        <!-- 热词分析用的模型：默认跟随「翻译」那套配置，不必配两遍。
+             想单独用别的模型（典型：翻译用在线 API，分析用**本地 Qwen**，不联网不花钱、
+             可以反复跑）就关掉「跟随翻译」，自己填地址与模型名。
+             本地 OpenAI 兼容服务（Ollama）地址形如 http://127.0.0.1:11434/v1，本机地址免 Key。 -->
+        <div class="st-card">
+          <div class="st-card-title">用于分析热词的模型
+            <span class="st-card-note">从操作日志挖热词时，用哪个模型判断"这词是不是专有名词"</span>
+          </div>
+          <div class="st-row" style="margin-bottom:8px">
+            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
+              <input type="checkbox" id="an-use-translate" checked> 跟随字幕翻译的模型
+            </label>
+            <span class="gl-hint" style="flex:1" id="an-follow-note">跟着「翻译」页里配的那套走</span>
+          </div>
+          <div class="st-grid" id="an-fields">
+            <span class="st-lbl">服务商</span>
+            <select id="an-provider" class="st-select"></select>
+            <span class="st-lbl">接口地址</span>
+            <input type="text" id="an-baseurl" class="st-input" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
+            <span class="st-lbl">API Key</span>
+            <input type="password" id="an-key" class="st-input" spellcheck="false" placeholder="本地地址免填">
+            <span class="st-lbl">模型名</span>
+            <input type="text" id="an-model" class="st-input" spellcheck="false" placeholder="qwen3:8b">
+            <span class="st-lbl">最多送几条编辑</span>
+            <input type="number" id="an-maxedits" class="st-input" min="5" max="80" step="5" value="40" style="max-width:120px">
+          </div>
+          <p class="gl-hint" id="an-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="an-key-clear" class="st-key-clear">清除已存 Key</a></p>
+          <p class="gl-hint" id="an-status"></p>
+          <p class="gl-hint">
+            <b>本地 Qwen</b>：起一个 OpenAI 兼容服务（Ollama 装好后地址填
+            <code>http://127.0.0.1:11434/v1</code>、模型名填 <code>qwen3:8b</code>），本机地址免 API Key。
+            <b>在线</b>：选 DeepSeek 等，填 Key 即可（要花钱，但一次只送几十条编辑、很便宜）。
+            跟随翻译时这里留空也不会报错，直接用翻译那套。
+          </p>
+        </div>
+      </div>
+
+      <!-- 外观与主题（设计稿 ① 的最后一个分类）。
+           ⚠ 这里的 #theme-swatches / #theme-color / #theme-reset 是**项目内设置侧栏那份的镜像**：
+           两处共用同一份主题状态（main.js 里 renderThemeSwatches() 会往所有 [data-theme-swatches]
+           容器里画），所以在这边改色，项目侧栏那份也会跟着变，反之亦然。
+           放在全局设置里是因为侧栏只在打开项目时才在，首页进不来。 -->
+      <div class="st-panel active" id="st-panel-theme" role="tabpanel" data-stp="theme">
+        <div class="sf-settings-heading"><span class="sf-settings-scope">此浏览器</span><h2 id="sf-settings-heading-theme">外观与体验</h2><p>安静的背景、恰好的层次，以及自然的反馈。</p><p class="sf-settings-save-note">外观更改即时保存，稿件库与编辑器同步使用。</p></div>
+        <div class="st-card sf-appearance-card"><h3>让工作空间，成为你的空间。</h3><p class="gl-hint">背景留在内容之下，清晰阅读始终优先。</p>
+          <div class="sf-settings-backgrounds" role="group" aria-label="背景材质"><button type="button" class="sf-background-choice" data-appearance-background="solid" aria-pressed="false"><span class="sf-background-thumb solid"><i></i></span><span>纯色<span class="sf-background-check" aria-hidden="true">✓</span></span></button><button type="button" class="sf-background-choice" data-appearance-background="aurora" aria-pressed="false"><span class="sf-background-thumb aurora"><i></i></span><span>模糊流光<span class="sf-background-check" aria-hidden="true">✓</span></span></button><button type="button" class="sf-background-choice" data-appearance-background="image" aria-pressed="false"><span class="sf-background-thumb image"><i></i></span><span>自定义图片<span class="sf-background-check" aria-hidden="true">✓</span></span></button></div>
+          <div hidden><select id="sf-background" aria-label="背景材质"><option value="solid">纯色</option><option value="aurora">模糊流光</option><option value="image">自定义图片</option></select></div>
+          <div id="sf-aurora-options" hidden>
+            <div class="sf-settings-line"><div><label for="sf-aurora-palette">流光色彩</label><p>流光独立于主题强调色，可使用配色或分别自定义。</p></div><select id="sf-aurora-palette"><option value="theme">跟随主题</option><option value="sage">苔绿</option><option value="ocean">海蓝</option><option value="sunset">暮霞</option><option value="custom">自定义</option></select></div>
+            <div class="sf-aurora-colors"><div class="sf-aurora-color"><label for="sf-aurora-color-1">流光色 1</label><input type="text" data-color-input="1" id="sf-aurora-color-1" aria-label="流光色 1"></div><div class="sf-aurora-color"><label for="sf-aurora-color-2">流光色 2</label><input type="text" data-color-input="1" id="sf-aurora-color-2" aria-label="流光色 2"></div><div class="sf-aurora-color"><label for="sf-aurora-color-3">流光色 3</label><input type="text" data-color-input="1" id="sf-aurora-color-3" aria-label="流光色 3"></div></div>
+            <div class="sf-settings-line"><div><label for="sf-aurora-motion">流光效果</label><p>静态保留柔和色彩；动态缓慢流动，减少动效时自动停止。</p></div><select id="sf-aurora-motion"><option value="dynamic">动态流光</option><option value="static">静态流光</option></select></div>
+          </div>
+          <div class="sf-settings-image-tools"><button type="button" class="btn" id="sf-image-pick">选择图片</button><button type="button" class="btn" id="sf-image-clear">清除图片</button><input type="file" id="sf-image-file" accept="image/png,image/jpeg,image/webp" hidden><span class="gl-hint">PNG、JPEG 或 WebP · 2MB 以内</span></div>
+          <div class="sf-settings-line"><div><b>明暗模式</b><p>随系统变化，或保持喜欢的明暗。</p></div><div class="sf-settings-segments" role="group" aria-label="明暗模式"><button type="button" data-appearance-mode="light" aria-pressed="false">浅色</button><button type="button" data-appearance-mode="dark" aria-pressed="false">深色</button><button type="button" data-appearance-mode="system" aria-pressed="false">跟随系统</button></div><div hidden><select id="sf-mode" aria-label="明暗模式"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div></div>
+          <div class="sf-settings-line"><div><label for="sf-motion">界面动效</label><p>页面转场、轻回弹与流光；系统减少动效偏好优先。</p></div><select id="sf-motion"><option value="on">开启</option><option value="off">减少动效</option></select></div>
+          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-dim">深色毛玻璃压暗</label><p>提高压暗可增强文字可读性，浅色模式保持原有材质。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-dim" min="72" max="92" step="1" value="80"><output id="sf-glass-dim-value" for="sf-glass-dim">80%</output></div></div>
+          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-blur">深色毛玻璃模糊度</label><p>仅模糊卡片后方背景，文字与视频保持清晰。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-blur" min="0" max="32" step="1" value="18"><output id="sf-glass-blur-value" for="sf-glass-blur">18px</output></div></div>
+          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-opacity">毛玻璃透明度</label><p>降低数值可让背景更透；设置为 100% 时保持当前卡片的遮罩强度。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-opacity" min="20" max="100" step="1" value="100"><output id="sf-glass-opacity-value" for="sf-glass-opacity">100%</output></div></div>
+          <p id="sf-theme-status" class="gl-hint" role="status">外观更改立即保存。</p>
+        </div>
+        <div class="st-card sf-theme-card"><h3>主题包与色彩</h3><p class="gl-hint">选择界面的轮廓与材质，再调整你的强调色。</p><div id="sf-theme-packs" class="sf-theme-packs"></div><div class="sf-theme-tools"><button type="button" class="btn" id="sf-theme-import">导入主题包</button><button type="button" class="btn" id="sf-theme-export">导出主题包</button><input type="file" id="sf-theme-file" accept=".json,application/json" hidden></div>
+          <div class="sf-settings-line setting-row sf-settings-color"><div><label for="sf-color">自定义主题色</label><p>只改界面强调色，不影响字幕颜色与角色色。</p></div><input type="text" id="sf-color" data-color-input="1" value="#5c7560" aria-label="自定义主题色"></div>
+          <div class="theme-row sf-settings-swatches"><div class="theme-swatches" data-theme-swatches="1"></div><label class="theme-custom" hidden><input type="text" data-color-input="1" id="theme-color-global" data-theme-color="1" value="#ff7a45">自定义</label><button type="button" class="btn btn-mini" id="theme-reset-global" data-theme-reset="1">恢复默认</button></div>
+        </div>
+      </div>
+
+
+    </div>
+
+      <!-- 动作栏是 grid 的第 3 行（`#st-view .st-actions` 里定的 grid-row:3 且跨两列），
+           必须是 .st-box 的直接子元素 —— 放进 .st-body 会横跨不到整宽、也丢了那一行。 -->
+      <div class="st-actions">
+        <span id="sf-settings-footer-note" class="sf-settings-footer-note">外观更改即时保存。</span><button type="button" class="btn" id="st-test" hidden>测试连接</button>
+        <span class="st-msg" id="st-msg"></span>
+        <span class="st-spacer"></span>
+        <button type="button" class="btn" id="st-cancel">返回</button>
+        <button type="button" class="btn btn-accent" id="st-save" hidden>保存并返回</button>
+      </div>
+    </div>
+  </div>
+</div>

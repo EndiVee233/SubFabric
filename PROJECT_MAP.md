@@ -91,7 +91,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | `editor/index.html`、`editor/css/` | 单页界面（`<script type="module" src="js/main.js">`） |
 | `editor/js/` | 前端模块（见 §4） |
 | `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr`；fork 并入：`align` `asr-service` `ass-group` `danmaku` `hotwords` `mt-local` `project-pack` `reflect` `region` `region-merge` `repair-words` `speech-gap` |
-| `asr/` | Python 侧：`asr.py`（本地识别）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
+| `asr/` | Python 侧：`asr.py`（本地识别）`vibevoice.py`（VibeVoice NF4·CUDA 4bit，拒绝 CPU/NPU/offload）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（yt-dlp 自举、格式选择、Cookie、分P），细节见 `asr/fetch/README.md` |
 | `tests/` | Node / Python 测试（见 §8）；`tests/jsmod/` 是**前端模块自动同步镜像** |
 | `tools/` | 探针 / 诊断脚本；`build-install.mjs` 是事务构建入口，`repair15-regression.mjs` 是本轮安全回归入口 |
@@ -144,7 +144,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 创建（本地视频 / 链接）
 → [下载] startFetchJob → runFetchCli → asr/fetch/fetch_cli.py（10 分钟无输出看门狗）
 → [prepare] startPrepare：ffprobe → ffmpeg 抽 audio.wav + peaks.bin（min/max 包络）
-→ [ASR] startDraftAsr：whisper.cpp / Parakeet（sherpa-onnx·CUDA / OpenVINO·NPU / CrispASR·Vulkan 三条） / 必剪 / 剪映 / NeMo；长音频先静音分片
+→ [ASR] startDraftAsr：whisper.cpp / Parakeet（sherpa-onnx·CUDA / OpenVINO·NPU / CrispASR·Vulkan 三条） / VibeVoice（Transformers·NF4·CUDA） / 必剪 / 剪映 / NeMo；长音频先静音分片，VibeVoice 保留整段声学上下文
 → [语义分句] reseg（LLM 补标点；所有引擎必经，没配 LLM 就停在这一步）
 → [说话人分离] diarize（可选） → [写字幕]（逐词 ASS 或 SRT）
 → [翻译] translate（LLM，可暂停后"重试"续跑）
@@ -279,15 +279,17 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **全局设置页的骨架是 CSS grid，别在外面再套 wrapper**（2026-10-12 实测踩过）：
   `ui.css` 的 `#st-view .st-box` 是 `grid-template-columns: 192px minmax(0,1fr)` +
   三行（head / body / actions），`.st-tabs`（竖排分类栏）、`.st-body`（右栏内容）、
-  `.st-actions` 必须是它的**直接子元素**并按 grid-area 定位。多包一层 `<div>` 会让 grid
+  `.st-actions` 必须是它的**直接子元素**。旧 UI 按 grid-area 定位；Studio 动作栏绝对定位到
+  `.settings-inner` 标题右侧，`#st-view` 为唯一页滚动区，`.st-body` 不单独滚动。多包一层 `<div>` 会让 grid
   拿不到它们 → **右栏被压成 0 宽**（rect.w = 0），整页看着空白。改版式前先读这条。
-- **设置页的层级**（设计稿 ①②③ 实装后）：左侧 5 个分类（模型设置 / 识别增强 / 性能测试 /
-  下载与登录 / 外观与主题）→ 模型设置里有 **ASR / LLM 二级 Tab**（`.st-subtab` +
-  `.st-subview[data-stsub]`）。「字幕翻译」不再是独立分类，它的内容已并入 LLM 子视图。
-- **LLM 方案面板（`.st-drawer`）用 `position: fixed` 从窗口右侧滑入**，不嵌在 `.st-body` 里
-  —— 这样不受设置页 grid 列宽约束。它**常驻 DOM**、靠 `.open` 类滑入：重建 HTML 会丢用户
-  正在输入的内容，而且表单 id（`st-provider` / `st-baseurl` / `st-key` / `st-model` /
-  `st-batch` / `st-prompt` / `gl-*`）必须稳定，`project.js` 的加载与保存链路直接按 id 取它们。
+- **Studio 设置页的层级（2026-10-14）**：六个一级分类（外观与体验 / 语音识别 / 翻译与术语 / 识别与校对 / 下载与登录 / 性能与调度）。时间轴/显示/角色/文件/导出、自愈与 ASS 完整控件固定在编辑器 #tab-settings；全局不再显示“编辑与工作台”。语音识别先展示 Whisper / Parakeet / 云端 / 前置大卡片；VibeVoice 作为可进入的 CUDA 4bit 系列卡，缺少运行时只显示显式安装按钮，不绑定 CPU/NPU 回退。Parakeet 内展示三种硬件模型，额外多说话人/双引擎在 details 中保留，展开状态使用 GROUP_OPEN。模型与环境下载/删除操作仍在 #st-panel-models 祖先中；Studio 进入页面只探测，缺失运行时通过显式按钮安装，避免导航触发下载。旧 UI 保留原分组与自动运行时链路。
+- **VibeVoice CUDA 4bit（2026-10-14）**：`ASR_MODELS` 的 `vibevoice-asr-4bit` 固定使用 `Dubedo/VibeVoice-ASR-HF-NF4` revision `289d51eeddb2f089f6478da4c0ace7d078a69596`。模型文件清单包含 `quantization_metadata.json`；`asr/vibevoice.py` 只走 Transformers 原生 VibeVoice 模型类、NF4 元数据校验与 `cuda:0` 映射，拒绝 CPU/NPU/disk offload/通用 Seq2Seq 回退。服务端的 `vibevoice` 运行时安装在检测到 NVIDIA GPU 后按 cu126 索引安装 CUDA PyTorch（必要时替换 CPU 版），再安装 Transformers/bitsandbytes；初稿和选区重识别均不回退其它设备；未验证的 OpenVINO/NPU 后端不得接入。
+- **识别前置与流光（2026-10-14）**：Studio 前置仅 Python/NeMo/说话人三列小卡，Python自定义路径details的开合由 GROUP_OPEN保存；#st-runtime-env只保留隐藏兼容节点，不重复探测/显示。重新识别select移到#sf-asr-rerecog-mount，主页底部显示，仍在#st-panel-models内使用原change API。所有下载按钮显式触发原后端。studio-state的auroraColors为空时跟随主题，否则必须三项#RRGGBB；auroraMotion为dynamic/static；studio.js同步三个CSS变量和body属性，只有流光+dynamic+页面可见才添加CSS动画，减少动效优先，无新时钟。设置子视图必须自己承接flex gap，父panel gap不能穿过普通wrapper。
+- **设置重排使用同一份真实表单**：571旧控件保持稳定，编辑器组不再移动到全局；翻译表单仍是常驻 DOM，分类切换不会重建术语输入。命名方案主页面只显示已保存列表与添加入口，保存/测试位于展开表单内，识别与校对的全局保存只写热词配置，不能误覆盖翻译草稿。背景预览卡/明暗分段按钮同步原select的change。
+- **入口生成器**：tools/templates/studio-settings.html 为设置常驻表单模板（包含页面尾部闭合）；tools/generate-studio.mjs 用此模板及编辑器组ID再生新入口，ui-integration 在内存运行生成器检查真实控件完整/唯一及图标注册，禁止生成回旧设置布局。
+- **品牌版本与焦点（2026-10-14）**：Studio 启动将唯一 `#app-version` 节点移到 `.sf-brand-title`，版本仍由 main 的原服务响应更新；列表标题不另造版本。设置/导航/日志焦点 outline 向内绘制，避免滚动容器裁切；品牌底部留白使用 margin，不能包进链接焦点框。
+- **命名翻译方案（2026-10-14）**：`asr/settings.json` 的 `translateSchemes` 存独立名称/厂商/API/模型/参数/术语/提示词及加密 apiKeyEnc；`translateSchemeId` 表示当前方案，选用时原子复制到 `translate`，真实翻译/语义分句/跟随翻译的纠错继续读原配置。默认列表为空，不自动制造方案也不删除旧配置。`GET/POST /api/translate/schemes`、`PUT/DELETE /:id`、`POST /:id/activate` 管理方案；`POST /schemes/test` 仅测试草稿，Key 留空只复用该 id 的密文，不回落其它方案，不保存或切换。加密失败拒绝写入，无明文降级；响应只含 hasKey，不含明文或密文。旧 UI 的 `/api/translate/config` POST 解除命名方案关联，保存列表仍保留。
+- **LLM 方案展开区**：Studio 常驻 DOM 插入当前命名方案卡片下方，CSS grid 0fr→1fr 自适应术语表高度，关闭期间 inert；动画回调使用代次避免快速开关串入。旧 UI 保留右侧抽屉。重建列表前先移出表单，避免 innerHTML 删除原控件；`st-provider` / `st-baseurl` / `st-key` / `st-model` / `st-batch` / `st-prompt` / `gl-*` ID 稳定，新增 `st-scheme-name`、选用与自动翻译开关。术语分节先识别 ## 再忽略 # 注释，确保多语言独立恢复。
 - **设置页模型列表的两个易碎点**：① 分组折叠状态必须记在模块级 `GROUP_OPEN`（Map）里 ——
   `renderAsrModels()` 整个重建 innerHTML，而下载进度轮询**每秒**重画一次，不记住的话
   用户刚折叠的组下一拍又被展开；② 折叠交互必须**事件委托**绑在 `#st-models` 上，逐个绑会
@@ -305,7 +307,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 根入口逐请求读取程序根 `ui-config.json`：`{"ui":"new"}`（缺失/损坏时同样默认）进入 `editor/studio.html`，`{"ui":"legacy"}` 进入原 `editor/index.html`。配置不公开服务。旧 HTML/CSS/main 和独立设计原型保持；Studio 生成入口保留全部真实控件，继续使用原 main、project、ASS、Timeline、API。
 
-`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。themes/progress 与原型共享声明式主题与固定 CSS 波浪。ASS 控件为同一组 DOM，移动到全局设置后原监听器/文档保存仍在；无当前 ASS 项目时禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
+`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。themes/progress 与原型共享声明式主题与固定 CSS 波浪。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
 
 相关验收与安装范围见 `docs/UI_INTEGRATION.md`；`tools/studio-install.mjs --prepare` 产生安装候选和哈希清单，候选验收通过后 `--apply <backup-directory>` 才进入备份/锁/替换/失败回滚。仅合并本次 UI 增量，不整体安装先前源码修复，不改 EXE/运行时/设置/项目。
 
@@ -404,9 +406,9 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
     `engine` 分：Parakeet / Whisper / NeMo 多说话人 / 云端识别），行渲染抽成
     `modelRowHtml()`。⚠ 折叠状态与事件委托的两个坑见 §6。
   - ③ LLM 翻译方案：**ASR / LLM 二级 Tab**（`.st-subtab` / `.st-subview`）+ 方案列表
-    （`renderSchemes()` 按 presets 渲染，标「当前使用」、未配置变暗）+ **右侧滑入面板**
-    （`.st-drawer`，`position: fixed`；`openDrawer()` / `closeDrawer()`）。
-    **「字幕翻译」不再是独立分类**，其表单（保留全部原 id）搬进了滑入面板。
+    （`renderSchemes()` 按 presets 渲染，标「当前使用」、未配置变暗）+ **卡片内展开设置区**
+    （`.st-scheme-inline`；`openDrawer()` / `closeDrawer()` 保留旧接口名以兼容保存链路）。
+    **「字幕翻译」不再是独立分类**，其表单（保留全部原 id）插入当前方案卡片下方。
   - **设计稿里那几项"看着像设置"的东西，接线口径**：
     · 「采样温度」→ `cfg.temperature`，进请求体（**原来写死 0.3**），范围 0~2。
     · 「上下文行数」→ `cfg.contextRows`，每批额外送前面 N 行「原文 + 已定译文」作参考；
@@ -421,7 +423,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
       点方案行 = 切换当前那套（与既有模型一致）。要真支持多套得改 `asr/settings.json` 的结构。
   - 验收：`tools/probe_settings_layout.mjs`（17 项骨架/分类/二级 Tab/主题双实例）、
     `tools/verify_model_groups.mjs`（15 项硬件条/分组/折叠状态不丢）、
-    `tools/verify_scheme_drawer.mjs`（**34 项**二级 Tab/方案列表/滑入动画/字段齐全/新建/Key 可见性/
+    `tools/verify_scheme_drawer.mjs`（**34 项**二级 Tab/方案列表/卡片展开动画/字段齐全/新建/Key 可见性/
     温度与上下文行数的**真实保存往返**与服务端夹取；**跑完会把 provider 切回初始值** ——
     它一开始没切，实测把用户的 deepseek 改成了 openai，属于验收污染，已修 + 有断言钉住）、
     `tools/probe_entry_card.mjs`（图标注入与进度填充）、`tools/probe_settings_content.mjs`（量 rect 定位 0 宽问题）。

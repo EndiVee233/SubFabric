@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const PROTECTED = new Set(['vendor', 'models', 'runtime-python', 'whisper.cpp', 'crispasr', 'ytdlp', 'projects', 'logs', 'node_modules', '__pycache__', '.venv']);
+const PROTECTED = new Set(['vendor', 'models', 'runtime-python', 'runtime-vibevoice', 'whisper.cpp', 'crispasr', 'ytdlp', 'projects', 'logs', 'node_modules', '__pycache__', '.venv']);
 const SOURCE_EXT = new Set(['.js', '.mjs', '.cjs', '.json', '.css', '.html', '.py', '.ps1', '.cmd', '.bat', '.command', '.svg', '.ico', '.png', '.md']);
 export function sourceFiles(dev) {
   const result = [];

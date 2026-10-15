@@ -28,9 +28,7 @@ export class AssDoc {
   }
 
   _parse() {
-    /* ⚠ 必须先清空再解析 —— 这个函数原来只在构造函数里跑一次，所以是"累加"写法。
-     *  现在 orderDialoguesByStyle() 会**再跑一次**（行序/行号变了要重新对齐），
-     *  不清就会把样式和事件重复一份（styles 后写覆盖、events 直接翻倍）。 */
+    // 重解析必须先清空；调整行序则原地维护事件身份，不经过这里。
     this.events = [];
     this.styleNames = [];
     this.styles = new Map();
@@ -124,6 +122,7 @@ export class AssDoc {
 
   /** 重建某一 Dialogue 行 */
   _rebuildLine(ev) {
+    this._assertLiveEvents([ev]);
     const parts = ev._rawParts.slice();
     const set = (col, val) => { const i = this.format.indexOf(col); if (i !== -1) parts[i] = val; };
     set('start', fmtTimeAss(ev.start));
@@ -144,6 +143,7 @@ export class AssDoc {
   }
 
   setEventTime(ev, start, end) {
+    this._assertLiveEvents([ev]);
     ev.start = Math.max(0, start);
     ev.end = Math.max(ev.start + 0.01, end);
     this._rebuildLine(ev);
@@ -151,12 +151,14 @@ export class AssDoc {
   }
 
   setEventText(ev, text) {
+    this._assertLiveEvents([ev]);
     ev.text = text;
     this._rebuildLine(ev);
   }
 
   /** 修改事件的 Name(说话人)栏, 如 '[Spoke]' → '[___]'; 同步 _rawParts 供重建 */
   setEventName(ev, name) {
+    this._assertLiveEvents([ev]);
     ev.name = name != null ? String(name) : '';
     if (ev._rawParts) {
       const i = this.format.indexOf('name');
@@ -167,6 +169,7 @@ export class AssDoc {
 
   /** 在指定事件后插入新 Dialogue(复制其样式/说话人) → 返回新事件 */
   insertAfterEvent(ev) {
+    this._assertLiveEvents([ev]);
     const start = ev.end + 0.05;
     const end = start + 2;
     const parts = this.format.map(col => {
@@ -192,6 +195,7 @@ export class AssDoc {
   }
 
   deleteEvent(ev) {
+    this._assertLiveEvents([ev]);
     this.lines[ev.lineIdx] = null; // 序列化时剔除
     const i = this.events.indexOf(ev);
     if (i !== -1) this.events.splice(i, 1);
@@ -200,6 +204,7 @@ export class AssDoc {
 
   /** 批量删除事件(不位移其他行) */
   deleteEvents(oldEvents) {
+    this._assertLiveEvents(oldEvents);
     for (const ev of oldEvents) this.lines[ev.lineIdx] = null;
     const set = new Set(oldEvents);
     this.events = this.events.filter(e => !set.has(e));
@@ -229,6 +234,7 @@ export class AssDoc {
    */
   replaceEvents(oldEvents, newSpecs) {
     if (!oldEvents.length) return [];
+    this._assertLiveEvents(oldEvents);
     const idxs = oldEvents.map(e => e.lineIdx).sort((a, b) => a - b);
     const first = idxs[0], last = idxs[idxs.length - 1];
     const newLines = newSpecs.map(s => this._buildDialogueLine(s));
@@ -252,6 +258,22 @@ export class AssDoc {
     this.events.push(...newEvents);
     this.sorted = this.events.slice().sort((a, b) => a.start - b.start || a.end - b.end);
     return newEvents;
+  }
+
+  /** 过期引用不能写回旧行号，否则会覆盖样式/文件头或其它字幕。先完整校验，再修改。 */
+  _assertLiveEvents(events) {
+    // 连续改色/改时间时复用集合，避免每个切片都分配整个文档的集合。
+    if (this._liveEventsSource !== this.events || this._liveEventsCount !== this.events.length) {
+      this._liveEventsSource = this.events;
+      this._liveEventsCount = this.events.length;
+      this._liveEvents = new Set(this.events);
+    }
+    const live = this._liveEvents;
+    for (const ev of events) {
+      if (!ev || !live.has(ev) || !/^Dialogue\s*:/i.test(this.lines[ev.lineIdx] || '')) {
+        throw new Error('字幕事件已失效，请刷新字幕后重试');
+      }
+    }
   }
 
   getStyle(name) {
@@ -345,8 +367,13 @@ export class AssDoc {
       const parts = (ev._rawParts || []).slice();
       if (styleCol !== -1) parts[styleCol] = ev.style;
       this.lines[slots[i]] = 'Dialogue: ' + parts.join(',');
+      ev.lineIdx = slots[i];
+      ev._rawParts = parts;
     });
-    this._parse();          // 行号/顺序都变了 → 重新对齐
+    // 行序调整必须保留事件身份。列表/时间轴/逐词句仍引用这些对象，重解析会让
+    // 它们的行号永久停在旧位置；随后分句会把 Dialogue 写进文件头。
+    this.events = ordered;
+    this.sorted = ordered.slice().sort((a, b) => a.start - b.start || a.end - b.end);
     return true;
   }
 
