@@ -1,4 +1,4 @@
-/* 波形带集成验证: 加载真实 index.html + timeline.js, 造带波形的中英配对轨,
+/* 波形带集成验证: 加载真实 studio.html + timeline.js, 造带波形的中英配对轨,
  * 调真实 draw(), 检查: 波形带/字幕轨不重叠、所有轨道都在面板内、波形有起伏。
  * 跑法: node tools/waveband_check.mjs
  * 产出: outputs/waveband-check.png + 退出码
@@ -61,7 +61,7 @@ const srv = createServer(async (req, res) => {
   let f = null;
   try {
     let p = decodeURIComponent(req.url.split('?')[0]);
-    if (p === '/' || p === '') p = '/index.html';
+    if (p === '/' || p === '') p = '/studio.html';
     f = join(EDITOR, normalize(p).replace(/^(\.\.[/\\])+/, ''));
   } catch {}
   if (!f || !f.startsWith(EDITOR)) { res.writeHead(404).end('nf'); return; }
@@ -76,7 +76,7 @@ const BASE = 'http://127.0.0.1:' + srv.address().port;
 
 const b = await launch({ port: 9441, width: 1400, height: 900 });
 try {
-  await b.goto(BASE + '/index.html');
+  await b.goto(BASE + '/studio.html');
 
   await sleep(1200);
 

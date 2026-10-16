@@ -38,9 +38,9 @@ const ROUTES = [
   ['GET', '/api/cast/config'],
   ['GET', '/api/diag'],
   /* 静态资源(经safeJoin) */
-  ['GET', '/editor/index.html'],
+  ['GET', '/editor/studio.html'],
   ['GET', '/editor/js/main.js'],
-  ['GET', '/editor/css/style.css'],
+  ['GET', '/editor/css/studio.css'],
   /* 目录穿越: 必须是 403/404, 绝不能 200 */
   ['GET', '/..%2f..%2fetc%2fhosts'],
   ['GET', '/../SubFabric-secret/secret.txt'],

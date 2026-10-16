@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
-const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'style.css'), 'utf8');
+const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'studio.css'), 'utf8');
 const JS = fs.readFileSync(path.join(REPO, 'editor', 'js', 'editor.js'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -119,7 +119,7 @@ ok(/\.ptab\s*\{[^}]*margin-bottom:\s*-1px/.test(CSS), '.ptab 用 margin-bottom:-
 ok(/\.st-tab\s*\{[^}]*margin-bottom:\s*-1px/.test(CSS), '.st-tab 同样（设置页标签）');
 /* ⚠ 必须去 ui.css 里查那条 ::after —— 它不在 style.css。
  *   先确认文件读到了，否则"查一个不存在的字符串"会永远通过（假阳性）。 */
-const UICSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'ui.css'), 'utf8');
+const UICSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'studio.css'), 'utf8');
 ok(/\.ptab\s*\{/.test(UICSS), 'ui.css 已读到（防止查错文件导致断言永远通过）');
 ok(!/\.ptab\.active::after\s*\{/.test(UICSS.replace(/\/\*[\s\S]*?\*\//g, '')),
   'ui.css 的 .ptab.active::after 短条已删除（那条"短的"）');

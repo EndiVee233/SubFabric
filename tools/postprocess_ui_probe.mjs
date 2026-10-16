@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const PORT = Number(process.env.PROBE_PORT || 8366);
-const TARGET_URL = `http://127.0.0.1:${PORT}/editor/index.html`;
+const TARGET_URL = `http://127.0.0.1:${PORT}/editor/studio.html`;
 const CDP_PORT = Number(process.env.PROBE_CDP_PORT || 9422);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 

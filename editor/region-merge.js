@@ -82,7 +82,7 @@ function planRegionMerge(cues, existing, start, end) {
     const main = (c.lines && c.lines.length) ? String(c.lines[0] || '') : '';
     const sub = (c.lines && c.lines.length > 1) ? c.lines.slice(1).join(' ').trim() : '';
     // ★ words 必须带下去：导入时要用**原文件的真实词级时间**，
-    //   丢了它 addRecognizedRow 就只能在句内均匀铺开（节奏变成假的）。
+    //   丢了它 addRecognizedRow 就只能按字母数自动铺开（节奏仍只是估算）。
     const row = { start: cs, end: ce, zh: main.trim(), en: sub, stretched: fix,
       words: Array.isArray(c.words) ? c.words : [] };
     if (!row.zh && !row.en) continue;                // 空行丢弃（没有内容可放）

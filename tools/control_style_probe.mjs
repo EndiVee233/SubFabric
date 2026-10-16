@@ -43,10 +43,10 @@ const PAIRS = [
 makeProbeProject();
 process.on('exit', () => removeProbeProject());
 
-const page = await launch({ url: BASE + '/editor/index.html', port: 9342, width: 1440, height: 1000 });
+const page = await launch({ url: BASE + '/editor/studio.html', port: 9342, width: 1440, height: 1000 });
 await sleep(2600);
 // 路由靠 hash 切，先确保落在首页再逐个 goto（深链需要 app 已初始化）
-await page.goto(BASE + '/editor/index.html');
+await page.goto(BASE + '/editor/studio.html');
 await sleep(1800);
 
 /* ⚠ 读 computed style 之前必须先把焦点挪开。

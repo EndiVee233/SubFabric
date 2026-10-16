@@ -43,7 +43,7 @@ ok(/const CHUNK = \d+/.test(SRC), '有渐进渲染的 CHUNK');
 ok(/scrollIntoView/.test(SRC), '键盘高亮会滚进视野');
 ok(/Escape/.test(SRC) && /ArrowDown/.test(SRC) && /ArrowUp/.test(SRC), '支持 Esc / ↑ / ↓');
 
-const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'style.css'), 'utf8');
+const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'studio.css'), 'utf8');
 ok(/\.fp-panel\s*\{[^}]*position:\s*fixed/.test(CSS), '★ .fp-panel 是 position:fixed（否则贴在文档流里）');
 ok(/\.fp-panel\s*\{[^}]*max-height:\s*320px/.test(CSS), '★ .fp-panel 有 max-height（否则 390 项撑到几千 px）');
 ok(/\.fp-list\s*\{[^}]*overflow-y:\s*auto/.test(CSS), '.fp-list 可滚动');
@@ -155,8 +155,17 @@ const HARNESS = BASE + '/__test/font-picker-harness.html';
       await js('window.__fpTest.close()');
       await sleep(300);
       await js("window.__fpTest.open('second')");
-      await sleep(1800);
-      const g2 = JSON.parse(await js("JSON.stringify(window.__fpTest.gap('second'))"));
+      // Edge 在首次字体清单请求完成后偶尔会把第二个面板的绘制推迟一个帧；
+      // 等待真实几何出现，避免把浏览器调度抖动误报成组件回归。
+      let g2 = null;
+      for (let i = 0; i < 12; i++) {
+        await sleep(180);
+        const probe = JSON.parse(await js("JSON.stringify(window.__fpTest.gap('second'))"));
+        if (probe && probe.panel && probe.wrap) { g2 = probe; break; }
+        if (i === 5) await js("window.__fpTest.open('second')");
+      }
+      ok(!!g2, '第二个字体面板完成挂载');
+      if (!g2) g2 = { panel: { t: 0, h: 0 }, wrap: { t: 0, h: 0 } };
       const flipped = (g2.panel.t + g2.panel.h) <= (g2.wrap.t + 1);
       const gap = flipped ? (g2.wrap.t - (g2.panel.t + g2.panel.h))
         : (g2.panel.t - (g2.wrap.t + g2.wrap.h));

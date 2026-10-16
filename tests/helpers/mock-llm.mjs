@@ -7,7 +7,8 @@ export async function mockLlm(handler) {
       const body = JSON.parse(Buffer.concat(chunks)); requests.push(body);
       const result = await handler(body, requests.length);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(result) } }] }));
+      const content = result && result.__rawContent ? String(result.content || '') : JSON.stringify(result);
+      res.end(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content } }] }));
     } catch (e) { res.writeHead(500); res.end(String(e)); }
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));

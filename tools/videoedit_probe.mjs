@@ -118,7 +118,7 @@ async function waitHttp(url, ms = 15000) {
   }
   return false;
 }
-if (!await waitHttp(BASE + '/editor/index.html')) { console.error('服务没起来'); srv.kill(); process.exit(1); }
+if (!await waitHttp(BASE + '/editor/studio.html')) { console.error('服务没起来'); srv.kill(); process.exit(1); }
 const pr = await fetch(BASE + '/api/projects', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ name: '【探针】视频区就地编辑', video: { path: VIDEO }, subtitle: { name: 'sample.ass', text: ASS_TEXT } })
@@ -208,7 +208,7 @@ function inkStats(g, x0, x1, y0, y1, thr = 60) {
 }
 
 /* ── 4. 浏览器 ── */
-const b = await launch({ url: `${BASE}/editor/index.html#/project/${proj.id}`, width: 1600, height: 1000 });
+const b = await launch({ url: `${BASE}/editor/studio.html#/project/${proj.id}`, width: 1600, height: 1000 });
 let exitCode = 1;
 try {
   const key = async (keyName, vk) => {
@@ -579,7 +579,7 @@ try {
   const proj2 = await pr2.json();
   ok(pr2.ok && !!proj2.id, '建了第二个项目（重叠行夹具）', pr2.status);
   if (pr2.ok) {
-    await b.goto(`${BASE}/editor/index.html#/project/${proj2.id}`);
+    await b.goto(`${BASE}/editor/studio.html#/project/${proj2.id}`);
     await b.waitFor('!!window.__videoEditor', { timeout: 20000 });
     await b.waitFor('document.querySelectorAll("#cue-list .cue-card").length > 0', { timeout: 20000, label: '字幕列表2' });
     await sleep(4500);

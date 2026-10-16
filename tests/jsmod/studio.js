@@ -31,6 +31,9 @@ function applyTheme() {
   applying = true;
   const dark = prefs.mode === 'dark' || prefs.mode === 'system' && systemDark.matches;
   const pack = themes.get(prefs.themePack, prefs.custom);
+  // Windows UWP owns its accent: custom theme colors belong to Studio/Material
+  // and must not bleed into the fixed Windows 10 control language.
+  const accent = pack.design === 'uwp' ? pack.seed : prefs.accent;
   document.body.dataset.theme = dark ? 'dark' : 'light';
   document.body.dataset.design = pack.design;
   document.body.dataset.themePack = pack.id;
@@ -38,7 +41,11 @@ function applyTheme() {
   document.body.dataset.motion = prefs.motion;
   document.body.dataset.auroraMotion = prefs.auroraMotion;
   document.body.dataset.pageVisible = String(!document.hidden);
-  const tokens = pack.design === 'material' ? themes.palette(prefs.accent, dark) : {
+  const tokens = pack.design === 'material' ? themes.palette(accent, dark) : pack.design === 'uwp' ? {
+    ...themes.palette(accent, dark), '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
+    '--surface-2': dark ? '#333333' : '#EDEDED', '--text': dark ? '#F3F3F3' : '#202020', '--muted': dark ? '#C5C5C5' : '#606060',
+    '--line': dark ? '#666666' : '#B8B8B8', '--accent-soft': dark ? '#153A5A' : '#CCE4F7', '--accent-hover': dark ? '#383838' : '#E5F1FB', '--outline': dark ? '#C8C8C8' : '#666666'
+  } : {
     ...themes.palette(prefs.accent, dark), '--bg': dark ? '#1c221e' : '#f6f7f2', '--surface': dark ? '#252d27' : '#fffefa',
     '--surface-2': dark ? '#2c352e' : '#eef1e8', '--text': dark ? '#e0e6da' : '#28372b', '--muted': dark ? '#b2bdae' : '#647161', '--line': dark ? '#465244' : '#dce2d5'
   };
@@ -56,6 +63,11 @@ function applyTheme() {
   const glassAlpha = prefs.glassDim * prefs.glassOpacity / 10000;
   st.setProperty('--sf-glass-surface', `rgb(8 11 10 / ${glassAlpha})`);
   st.setProperty('--sf-glass-raised', `rgb(12 16 14 / ${Math.min(.96, glassAlpha + .06)})`);
+  // 浅色模式使用独立的黑色半透明层：压暗值控制底色深度，透明度控制材质透出量。
+  // 这样同一组设置在 Studio、Material、UWP、Classic 主题中都能工作，且默认值不会把浅色面板压成深色。
+  const lightGlassAlpha = Math.max(.06, Math.min(.42, (prefs.glassDim - 60) / 100 * prefs.glassOpacity / 100));
+  st.setProperty('--sf-glass-light-surface', `rgb(0 0 0 / ${lightGlassAlpha})`);
+  st.setProperty('--sf-glass-light-raised', `rgb(0 0 0 / ${Math.min(.5, lightGlassAlpha + .06)})`);
   $('sf-glass-dim').value = String(prefs.glassDim);
   $('sf-glass-blur').value = String(prefs.glassBlur);
   $('sf-glass-opacity').value = String(prefs.glassOpacity);
@@ -71,17 +83,20 @@ function applyTheme() {
   $('sf-aurora-options').hidden = prefs.background !== 'aurora';
   $('sf-aurora-motion').value = prefs.auroraMotion;
   $('sf-aurora-palette').value = !prefs.auroraColors.length ? 'theme' : Object.keys(auroraPalettes).find(key => auroraPalettes[key].every((color, i) => color === prefs.auroraColors[i])) || 'custom';
-  $('sf-background').value = prefs.background; $('sf-mode').value = prefs.mode; $('sf-motion').value = prefs.motion; $('sf-color').value = prefs.accent;
+  $('sf-background').value = prefs.background; $('sf-mode').value = prefs.mode; $('sf-motion').value = prefs.motion; $('sf-color').value = accent;
+  $('sf-color').disabled = pack.design === 'uwp';
+  $('sf-color').title = pack.design === 'uwp' ? 'Windows UWP 使用固定的 Windows 10 蓝色' : '';
   $('sf-image-pick').disabled = prefs.background !== 'image';
   $('sf-image-clear').disabled = !prefs.image;
   for (const input of document.querySelectorAll('#sf-color, #theme-color, [data-theme-color]')) {
-    input.value = prefs.accent;
+    input.value = accent;
+    input.disabled = pack.design === 'uwp';
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  document.querySelectorAll('.theme-sw[data-hex]').forEach(b => b.classList.toggle('active', b.dataset.hex === prefs.accent));
+  document.querySelectorAll('.theme-sw[data-hex]').forEach(b => { b.classList.toggle('active', b.dataset.hex === accent); b.disabled = pack.design === 'uwp'; });
   document.querySelector('.sf-backdrop').style.backgroundImage = prefs.background === 'image' && imageData(prefs.image) ? `url("${prefs.image}")` : 'none';
   window.SF_PROGRESS.sync();
-  window.dispatchEvent(new CustomEvent('ss-accent', { detail: { hex: prefs.accent } }));
+  window.dispatchEvent(new CustomEvent('ss-accent', { detail: { hex: accent } }));
   window.dispatchEvent(new Event('sf-studio-theme'));
   applying = false;
   renderPacks();
@@ -103,10 +118,14 @@ for (const kind of ['background', 'mode']) {
     select.dispatchEvent(new Event('change', { bubbles: true }));
   }));
 }
-// 侧栏取色控件写入新界面独立偏好，不改变旧界面配置。
-window.SSAccent.current = () => prefs.accent;
+// 侧栏取色控件写入 Studio 独立偏好，不改变项目业务配置。
+window.SSAccent.current = () => {
+  const pack = themes.get(prefs.themePack, prefs.custom);
+  return pack.design === 'uwp' ? pack.seed : prefs.accent;
+};
 window.SSAccent.set = hex => {
   if (applying) return false;
+  if (themes.get(prefs.themePack, prefs.custom).design === 'uwp') return false;
   if (!themes.hex(hex) || !commit({ accent: hex })) return false;
   applyTheme(); return true;
 };
@@ -115,9 +134,13 @@ function renderPacks() {
   $('sf-theme-packs').innerHTML = themes.list(prefs.custom).map(pack => {
     // 示意卡片的工作区预览跟随当前明暗模式，避免深色设置页内仍显示浅色工作区。
     const dark = document.body.dataset.theme === 'dark';
-    const palette = themes.palette(pack.seed, dark);
+    const palette = pack.design === 'uwp'
+      ? { '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--accent': pack.seed, '--on-accent': '#FFFFFF' }
+      : themes.palette(pack.seed, dark);
     const glyph = pack.design === 'material'
       ? '<path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3ZM20 2v4m-2-2h4M4 18v4m-2-2h4"/>'
+      : pack.design === 'uwp'
+        ? '<path d="M4 4h16v16H4z"/><path d="M8 8h8v8H8z"/>'
       : '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11M8 4.8l8 3.5"/>';
     const selected = prefs.themePack === pack.id;
     return `<button type="button" class="sf-pack" data-pack="${esc(pack.id)}" aria-pressed="${selected}"><span class="sf-pack-art ${pack.design}" aria-hidden="true" style="--preview-bg:${palette['--bg']};--preview-accent:${palette['--accent']};--preview-ink:${palette['--on-accent']}"><span class="sf-pack-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${glyph}</svg></span><span class="sf-pack-lines"><i></i><i></i><i></i></span></span><b>${esc(pack.name)}${selected ? ico('checkCircle') : ''}</b><small>${esc(pack.description)}</small></button>`;
@@ -293,21 +316,19 @@ settingTabs.forEach((tab, index) => {
 $('st-entry-asr').addEventListener('click', () => document.querySelector('.st-tab[data-stp="models"]').click());
 $('st-entry-llm').addEventListener('click', () => document.querySelector('.st-tab[data-stp="translate"]').click());
 for (const id of ['btn-open-video', 'btn-open-sub']) $(id).addEventListener('click', () => {
-  if (route === '#/settings' || route === '#/resources') location.hash = '#/editor';
+  if (route === '#/settings') location.hash = '#/editor';
 });
 settingPresentation('theme');
-function setting(name, resource = false) {
+function setting(name) {
   pendingSetting = name;
-  const next = resource ? '#/resources' : '#/settings';
-  if (location.hash === next) selectSetting(name); else location.hash = next;
+  if (location.hash === '#/settings') selectSetting(name); else location.hash = '#/settings';
 }
 function selectSetting(name) {
   document.querySelector(`.st-tab[data-stp="${name === 'llm' ? 'translate' : name}"]`)?.click();
   if (name === 'llm') $('st-entry-llm').click();
   pendingSetting = '';
 }
-document.querySelectorAll('[data-setting]').forEach(b => b.addEventListener('click', () => setting(b.dataset.setting, route === '#/resources')));
-document.querySelectorAll('[data-resource]').forEach(b => b.addEventListener('click', () => setting(b.dataset.resource, true)));
+document.querySelectorAll('[data-setting]').forEach(b => b.addEventListener('click', () => setting(b.dataset.setting)));
 document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.go; }));
 for (const id of ['sf-create', 'sf-hero-create']) $(id).addEventListener('click', () => $('btn-new-project').click());
 $('sf-direct-editor').addEventListener('click', () => { location.hash = '#/editor'; });
@@ -566,27 +587,26 @@ syncPlayerSound();
 window.__sfStudio = {
   projects(snapshot) { projects = snapshot; renderFolders(); refreshLibrary(); },
   route(h, project, format) {
+    if (h === '#/resources') h = '#/settings';
     const previous = route; route = h;
     const editor = h === '#/editor' || h.startsWith('#/project/');
     document.body.dataset.workspace = editor ? 'editor' : h.slice(2).split('/')[0];
     $('sf-nav').hidden = editor; $('sf-topbar').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
-    const global = h === '#/settings' || h === '#/resources';
+    const global = h === '#/settings';
     moveStyles(global);
-    $('sf-resource-links').hidden = h !== '#/resources';
-    const titles = { home: '稿件库', tasks: '任务中心', resources: '资源管理', settings: '设置', help: '帮助与快捷键', new: '新建稿件', details: '稿件详情' };
+    const titles = { home: '稿件库', tasks: '任务中心', settings: '设置', help: '帮助与快捷键', new: '新建稿件', details: '稿件详情' };
     $('sf-breadcrumb').textContent = t(titles[h.slice(2).split('/')[0]] || '字幕工作台');
     document.querySelectorAll('[data-route]').forEach(a => { const active = h === '#/' + a.dataset.route; a.classList.toggle('active', active); if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     if (global) {
-      $('st-view').querySelector('.page-intro h1').textContent = t(h === '#/resources' ? '资源管理' : '设置');
+      $('st-view').querySelector('.page-intro h1').textContent = t('设置');
       if (pendingSetting) selectSetting(pendingSetting);
-      else if (h === '#/resources' && previous !== h) selectSetting('models');
     }
     if (editor && h.startsWith('#/project/') && prefs.recent !== h.slice(10)) commit({ recent: h.slice(10) });
     if (h === '#/tasks' && previous !== h) { filter = 'all'; folder = ''; $('sf-search').value = ''; }
     refreshLibrary();
   }
 };
-// 两个主题共用菜单行为，各自用 CSS 定义材质；原 select 保留业务链路。
+// 三个主题共用菜单行为，各自用 CSS 定义材质；原 select 保留业务链路。
 function installThemeChoices() {
   // 覆盖动态稿件卡片、新建与资源页；倍速已有独立菜单，避免重复接管。
   const selector = 'select';
@@ -596,7 +616,7 @@ function installThemeChoices() {
   menu.setAttribute('role', 'listbox'); menu.setAttribute('data-sf-choice-control', ''); menu.hidden = true;
   document.body.appendChild(menu);
   let active = null, cursor = -1, fingerprint = '', typed = '', typedAt = 0;
-  const themed = () => ['studio', 'material'].includes(document.body.dataset.design);
+  const themed = () => ['studio', 'material', 'uwp'].includes(document.body.dataset.design);
   const options = record => [...record.select.options];
   const unavailable = option => option.disabled || option.parentElement?.tagName === 'OPTGROUP' && option.parentElement.disabled;
   function name(select) {

@@ -80,7 +80,7 @@ const edge = spawn(EDGE, [
   `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
   '--disable-gpu', '--disable-extensions', '--window-size=1440,1000',
   '--proxy-server=direct://', '--proxy-bypass-list=*',
-  BASE + '/editor/index.html'
+  BASE + '/editor/studio.html'
 ], { stdio: 'ignore', env: cleanEnv });
 
 let target = null;

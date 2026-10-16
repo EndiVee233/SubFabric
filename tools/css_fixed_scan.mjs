@@ -1,6 +1,6 @@
-// 列出 style.css 中所有 position:fixed 规则块及选择器（含所在行号）
+// 列出 Studio 生产 CSS 中所有 position:fixed 规则块及选择器（含所在行号）
 import { readFileSync } from 'node:fs';
-const s = readFileSync(new URL('../editor/css/style.css', import.meta.url), 'utf8');
+const s = readFileSync(new URL('../editor/css/studio.css', import.meta.url), 'utf8');
 const re = /([^{}]+)\{([^{}]*)\}/g;
 let m;
 while ((m = re.exec(s))) {

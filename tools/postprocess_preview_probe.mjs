@@ -21,7 +21,7 @@ import { join } from 'node:path';
 
 const PORT = Number(process.env.PROBE_PORT || 8367);
 const CDP_PORT = Number(process.env.PROBE_CDP_PORT || 9423);
-const TARGET_URL = `http://127.0.0.1:${PORT}/editor/index.html`;
+const TARGET_URL = `http://127.0.0.1:${PORT}/editor/studio.html`;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 /* 两条字幕都铺满整段：中文整句 + 英文逐词。活动词是行首的 ALWAYS。 */

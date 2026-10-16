@@ -9,7 +9,7 @@ const installed = path.resolve(source, '..');
 const backups = path.resolve(installed, '..', 'update-backups');
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const read = (root, rel) => fs.readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
-const added = ['editor/studio.html', 'editor/css/studio.css', ...['studio', 'studio-state', 'studio-themes', 'studio-progress'].map(n => `editor/js/${n}.js`), 'ui-config.example.json'];
+const added = ['editor/studio.html', 'editor/css/studio.css', 'editor/themes/windows-uwp.theme.json', ...['studio', 'studio-state', 'studio-themes', 'studio-progress'].map(n => `editor/js/${n}.js`), 'ui-config.example.json'];
 const changed = ['editor/server.js', 'editor/js/project.js', 'editor/js/timeline.js', 'editor/lang/zh-CN.json'];
 function replace(text, before, after, count = 1) {
   if (text.split(before).length - 1 !== count) throw Error('Installation baseline mismatch: ' + before.slice(0, 80));

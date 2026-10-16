@@ -6,7 +6,7 @@
 <!-- ⚠ 必须引入真实样式表：.fp-panel 的 position:fixed / max-height 都在里面。
      少了它，面板会退化成 static、高度不受限，定位断言测的就不是真实观感
      （实测踩过：只加了页内样式 → position=static、高 1581px）。 -->
-<link rel="stylesheet" href="/editor/css/style.css">
+<link rel="stylesheet" href="/editor/css/studio.css">
 <style>
   :root{
     --border:#2a2a34; --accent:#ff7a45; --accent-a28:rgba(255,122,69,.28);
@@ -63,7 +63,11 @@ const second = document.getElementById('second-font');
 enhanceFontInput(zh);
 enhanceFontInput(second);
 
-const panelOf = () => document.querySelector('.fp-panel:not([hidden])');
+const panelOf = (which) => {
+  const owner = which === 'second' ? second : which === 'zh' ? zh : null;
+  return [...document.querySelectorAll('.fp-panel:not([hidden])')]
+    .find(p => !owner || p.__fontPickerInput === owner) || null;
+};
 const R = (el) => { const r = el.getBoundingClientRect(); return { t: Math.round(r.top), l: Math.round(r.left), w: Math.round(r.width), h: Math.round(r.height) }; };
 
 /** 检查当前打开的面板是否贴合它的输入框 */
@@ -80,8 +84,9 @@ function check() {
 window.__fpTest = {
   open(which) {
     const el = which === 'second' ? second : zh;
-    el.closest('.fp-wrap').querySelector('.fp-btn').click();
-    return 1;
+    // 直接等待真实组件的异步 open，避免字体清单请求尚未完成时
+    // 下一步切换输入框导致偶发的“面板尚未挂载”竞态。
+    return el.__fontPicker ? el.__fontPicker.open() : 0;
   },
   close() {
     const p = panelOf();
@@ -91,7 +96,7 @@ window.__fpTest = {
   /** 面板与指定输入框的几何关系 */
   gap(which) {
     const el = which === 'second' ? second : zh;
-    const p = panelOf();
+    const p = panelOf(which);
     if (!p) return { err: '面板没开' };
     const w = el.closest('.fp-wrap').getBoundingClientRect();
     const pr = p.getBoundingClientRect();

@@ -11,7 +11,7 @@
  *      必须在表里记录选了哪个方向。
  *   ③ 一个识别词可能对应原文多个词（TTS 把 `with velocity` 连读成 `withvelocity`）。
  *      若直接按识别词时间赋值，`with` 独吞 2.2 秒、`velocity` 只剩 0.02 秒；
- *      要按字符数在那个识别词的跨度内分摊。
+ *      要按英文字母数在那个识别词的跨度内分摊。
  */
 
 import fs from 'node:fs';
@@ -100,16 +100,16 @@ console.log('\n== 3. 时间映射：块范围与单调性 ==');
   }
   ok(Math.abs(t[0].e - 105) < 1e-6, '参考节奏被等比放大（4s → 20s，每词 5s）', t[0].e);
 
-  // 完全没有识别结果 → 按字符数摊分（退路，不该崩）
+  // 完全没有识别结果 → 按英文字母数摊分（退路，不该崩）
   const ev = A.mapTimes(toks, [], [], 0, 8);
-  ok(ev.length === 4 && ev.every(x => x.e > x.s), '无锚点时按字符数摊分', ev);
+  ok(ev.length === 4 && ev.every(x => x.e > x.s), '无锚点时按英文字母数摊分', ev);
   ok(Math.abs(ev[3].e - 8) < 1e-6, '无锚点时仍铺满块', ev[3].e);
 }
 
 console.log('\n== 4. ★ 坑③：一个识别词对应原文多个词时要分摊 ==');
 {
   /* 实测形态：原文 `with velocity` 被 TTS 念成 `withvelocity`，
-   * 识别里只有一个词。若不按字符数分摊，`with` 会独吞整段。 */
+   * 识别里只有一个词。若不按英文字母数分摊，`with` 会独吞整段。 */
   const orig = 'This damage scaling with velocity, should make the ice ball useful.';
   const toks = A.tokenize(orig);
   const rec = ['This', 'damage', 'scaling', 'withvelocity', 'should', 'make', 'the', 'ice', 'ball', 'useful.']
@@ -127,8 +127,8 @@ console.log('\n== 4. ★ 坑③：一个识别词对应原文多个词时要分�
   const dw = withW.e - withW.s, dv = velW.e - velW.s;
   ok(dv > 0.05, `velocity 不再被挤成零宽（实得 ${dv.toFixed(3)}s）`, dv);
   ok(dw > 0.05, `with 也有合理时长（实得 ${dw.toFixed(3)}s）`, dw);
-  // 字符数 4 : 8 → 后者约为前者两倍（允许参考节奏带来的浮动）
-  ok(dv / dw > 1.2 && dv / dw < 5, '两词时长比例接近字符数之比', { dw, dv, ratio: dv / dw });
+  // 字母数 4 : 8 → 后者约为前者两倍（允许参考节奏带来的浮动）
+  ok(dv / dw > 1.2 && dv / dw < 5, '两词时长比例接近字母数之比', { dw, dv, ratio: dv / dw });
   // 块范围与单调性
   ok(Math.abs(plan.words[0].s) < 1e-6, '首词贴块首', plan.words[0].s);
   ok(Math.abs(plan.words[plan.words.length - 1].e - 10) < 1e-6, '末词贴块尾', plan.words[plan.words.length - 1].e);

@@ -5,7 +5,7 @@
  * 根因：`addRecognizedRow` 只在 ASR 给了 `seg.words`（真实词级时间）时才铺逐词 span。
  * 分段导入进来的行**没有词级时间**（字幕文件里只有整句起止），于是：
  *   · 原来的行为 = 不铺 → 英文行成了**纯整句**，在逐词稿里那一行格式就是坏的
- *   · 现在的行为 = 调 recalcWords 在**句内均匀铺满**（karaoke.js 里对
+ *   · 现在的行为 = 调 recalcWords 按**字母数加权铺满**（karaoke.js 里对
  *     "原本不是逐词句（如刚插入的新行）"就是这么处理的）
  *
  * 这里直接在 karaoke.js 的纯函数上验证"没有词级时间也能得到合法的逐词切片"，
@@ -71,10 +71,10 @@ console.log('== 没有词级时间也能铺出逐词（这是修的那个 bug）
   let cover = true;
   for (let i = 1; i < words.length; i++) if (Math.abs(words[i].s - words[i - 1].e) > 1e-6) cover = false;
   ok(cover, '词片首尾相接（中间没有空档 → 高亮不会闪断）', words);
-  // 句内均分：每片时长应当相等（这就是"均匀铺满"）
+  // 按字母数加权：first(5) : imported(8) : line(4)
   const durs = words.map(w => w.e - w.s);
-  const spread = Math.max(...durs) - Math.min(...durs);
-  ok(spread < 0.02, '时长基本均分（均匀铺满）', durs);
+  ok(Math.abs(durs[0] / durs[1] - 5 / 8) < 0.02 && Math.abs(durs[2] / durs[1] - 4 / 8) < 0.02,
+    '时长按字母数加权铺满', durs);
 }
 
 console.log('\n== 铺出来的切片能生成合法的逐词事件 ==');
@@ -120,7 +120,7 @@ console.log('\n== 边界：不能把整句弄丢 ==');
   // 极短句（时长 0.05s）不该塌掉
   const s3 = newSentence('英文逐词', 0, 0.05, 'a b c');
   s3.words = recalcWords(s3, s3.text, s3.start, s3.end);
-  eq(s3.words.length, 3, '极短句仍给出 3 片（normalizeWords 会均匀铺满）');
+  eq(s3.words.length, 3, '极短句仍给出 3 片（normalizeWords 会按字母数铺满）');
   const specs3 = buildWordSpecs(s3);
   ok(specs3.every(sp => sp.end > sp.start), '极短句的 spec 时间仍然合法', specs3.map(sp => [sp.start, sp.end]));
 }

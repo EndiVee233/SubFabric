@@ -17,7 +17,7 @@ const PORT = 9433;
 const APP = process.env.APP_URL || 'http://127.0.0.1:8321';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-// 容器 → 行类名（都从 index.html / js 里核对过）
+// 容器 → 行类名（都从 studio.html / js 里核对过）
 const CASES = [
   { list: 'realign-list', row: 'reflect-item', label: '全片逐词重校对预览', synth: 'realign' },
   { list: 'reflect-list', row: 'reflect-item', label: '反思纠错条目', synth: 'reflect' },
@@ -31,7 +31,7 @@ const edge = spawn(EDGE, [
   '--headless=new', `--remote-debugging-port=${PORT}`,
   `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
   '--disable-gpu', '--disable-extensions', '--window-size=1400,1000',
-  `${APP}/editor/index.html#/home`,
+  `${APP}/editor/studio.html#/home`,
 ], { stdio: 'ignore' });
 
 let target = null;

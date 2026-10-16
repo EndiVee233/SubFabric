@@ -22,7 +22,17 @@ try {
     Array.from({ length: 129 }, (_, i) => ({ name: i ? `file${i}.txt` : 'subtitle.srt', body: sub }))
   ]) {
     const result = await importPack(files); assert.equal(result.status, 400, JSON.stringify(result));
-    assert.deepEqual(fs.existsSync(path.join(s.root, 'projects')) ? fs.readdirSync(path.join(s.root, 'projects')) : [], []);
+    /* 失败响应先于清理落盘：服务端在 finally 里删除刚建的项目目录，与客户端收到 400
+     * 之间存在毫秒级竞态（实测本机稳定复现：响应到达时目录仍在，几百毫秒内消失）。
+     * 轮询等待真实的“无残留”，不把异步清理的时序抖动误报成回归。 */
+    const projectsDir = path.join(s.root, 'projects');
+    let leftovers = null;
+    for (let i = 0; i < 30; i++) {
+      leftovers = fs.existsSync(projectsDir) ? fs.readdirSync(projectsDir) : [];
+      if (!leftovers.length) break;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    assert.deepEqual(leftovers, [], '失败导入不得留下项目目录');
   }
   const result = await importPack([{ name: '合法包装/subtitle.srt', body: sub }, { name: '合法包装/project.json', body: '{"name":"合法"}' },
     { name: '合法包装/unrelated.txt', body: 'do not import' }]);
@@ -31,7 +41,13 @@ try {
   assert.equal(fs.readFileSync(path.join(dir, 'subtitle.srt'), 'utf8'), sub);
   assert.equal(fs.existsSync(path.join(dir, 'unrelated.txt')), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'project.json'))).name, '合法');
-  const leftovers = fs.readdirSync(os.tmpdir()).filter(n => /^kass-(import|unpack)-/.test(n) && !before.has(n));
-  assert.deepEqual(leftovers, []);
+  // 临时上传/解压目录同样在响应之后清理；轮询等待它们真实消失，再断言无残留。
+  let tmpLeftovers = null;
+  for (let i = 0; i < 30; i++) {
+    tmpLeftovers = fs.readdirSync(os.tmpdir()).filter(n => /^kass-(import|unpack)-/.test(n) && !before.has(n));
+    if (!tmpLeftovers.length) break;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  assert.deepEqual(tmpLeftovers, [], '导入不得留下临时上传/解压目录');
   console.log('repair09: preflight size/count/path/link, actual output bound, invalid subtitle cleanup and wrapped core-only import passed');
 } finally { await s.close(); }

@@ -876,13 +876,9 @@ function normalizeWords(words, start, end) {
   const n = words.length;
   if (!n) return [];
   const span = Math.max(0.01, end - start);
-  // 句长容不下 n 个厘秒片 → 直接均匀铺满, 不再逐片夹取
+  // 句长容不下 n 个厘秒片 → 仍按字母权重铺满（这里只能牺牲最小厘秒约束）。
   if (span < n * 0.01) {
-    return words.map((w, i) => ({
-      w: w.w,
-      s: start + span * (i / n),
-      e: start + span * ((i + 1) / n)
-    }));
+    return weightedWordBoundaries(words.map(w => w.w), start, end);
   }
   const out = [];
   let cursor = start;
@@ -896,6 +892,33 @@ function normalizeWords(words, start, end) {
     cursor = e;
   }
   return out;
+}
+
+/** 一个词在自动分配时间时占用的权重：只数英文字母，纯数字/标点至少占 1。 */
+function wordLetterWeight(word) {
+  const n = (String(word == null ? '' : word).match(/[A-Za-z]/g) || []).length;
+  return Math.max(1, n);
+}
+
+function weightedWordBoundaries(tokens, start, end) {
+  const words = tokens.map(w => String(w == null ? '' : w));
+  const span = Math.max(0.01, Number(end) - Number(start));
+  const weights = words.map(wordLetterWeight);
+  const total = weights.reduce((sum, w) => sum + w, 0) || 1;
+  let acc = 0;
+  return words.map((w, i) => {
+    const s = Number(start) + span * (acc / total);
+    acc += weights[i];
+    const e = i === words.length - 1 ? Number(end) : Number(start) + span * (acc / total);
+    return { w, s, e };
+  });
+}
+
+/** 在句子时间范围内按英文字母数分配词级时间，并统一做单调/厘秒归一化。 */
+export function allocateWordTimes(tokens, start, end) {
+  const words = (tokens || []).map(w => String(w == null ? '' : w));
+  if (!words.length) return [];
+  return normalizeWords(weightedWordBoundaries(words, start, end), start, end);
 }
 
 /**
@@ -977,23 +1000,22 @@ export function recalcWords(sentence, newText, newStart, newEnd) {
   const tokens = splitEnglishWords(newText);
   const n = sentence.words.length, m = tokens.length;
   if (m === 0) return [];
-  // 原本不是逐词句(如刚插入的新行): 没有原始时长可加权, 在句内均匀铺满
+  // 原本不是逐词句(如刚插入的新行): 按新文本的字母数铺满。
   if (n === 0) {
-    const span0 = Math.max(0.01, newEnd - newStart);
-    return normalizeWords(tokens.map((t, i) => ({
-      w: t,
-      s: newStart + span0 * (i / m),
-      e: newStart + span0 * ((i + 1) / m)
-    })), newStart, newEnd);
+    return allocateWordTimes(tokens, newStart, newEnd);
   }
   const oldSpan = Math.max(0.001, sentence.end - sentence.start);
   const span = Math.max(0.05, newEnd - newStart);
 
   let words;
   if (m === n) {
+    const textChanged = tokens.some((t, i) => String(sentence.words[i].w || '') !== t);
     const sameTime = Math.abs(newStart - sentence.start) < 1e-6 && Math.abs(newEnd - sentence.end) < 1e-6;
-    if (sameTime) {
+    if (sameTime && !textChanged) {
       words = tokens.map((t, i) => ({ w: t, s: sentence.words[i].s, e: sentence.words[i].e }));
+    } else if (textChanged || !sameTime) {
+      // 改了字幕文本或句子时间范围就重新按字母数分配。
+      return allocateWordTimes(tokens, newStart, newEnd);
     } else {
       words = tokens.map((t, i) => {
         const r1 = (sentence.words[i].s - sentence.start) / oldSpan;
@@ -1004,24 +1026,8 @@ export function recalcWords(sentence, newText, newStart, newEnd) {
     return normalizeWords(words, newStart, newEnd);
   }
 
-  // 词数变化: 以原词时长为权重采样再归一化
-  const oldDurs = sentence.words.map(w => Math.max(0.02, w.e - w.s));
-  const weights = [];
-  for (let j = 0; j < m; j++) {
-    const p = (j + 0.5) / m;
-    const oi = Math.min(n - 1, Math.floor(p * n));
-    weights.push(n > 0 ? oldDurs[oi] : 1);
-  }
-  const sum = weights.reduce((a, b) => a + b, 0) || 1;
-  words = [];
-  let acc = 0;
-  for (let j = 0; j < m; j++) {
-    const s = newStart + span * (acc / sum);
-    acc += weights[j];
-    const e = (j === m - 1) ? newEnd : newStart + span * (acc / sum);
-    words.push({ w: tokens[j], s, e });
-  }
-  return normalizeWords(words, newStart, newEnd);
+  // 词数变化：不再按旧词时长采样，直接按新文本的字母数分配。
+  return allocateWordTimes(tokens, newStart, newEnd);
 }
 
 /** 依据干净文本 + 词级映射重建逐词 Dialogue spec 列表 —— 按句子形态分派:
@@ -1041,16 +1047,10 @@ function buildWordSpecsColor(sentence) {
   const spans = splitEnglishWordsWithSpans(sentence.text);   // 与 recalcWords / 词数检查同一口径
 
   // 文本与词数不一致(理论上先经过 recalcWords 不会走到这里):
-  // 不放弃逐词效果 —— 按实际词数在句时长内均匀铺满, 而不是塌成单条干净行。
+  // 不放弃逐词效果 —— 按实际词的字母数在句时长内铺满, 而不是塌成单条干净行。
   let words = sentence.words;
   if (spans.length !== words.length) {
-    const n2 = spans.length || 1;
-    const s0 = sentence.start, span = Math.max(0.01, sentence.end - s0);
-    words = spans.map((sp, k) => ({
-      w: sp.w,
-      s: s0 + span * (k / n2),
-      e: s0 + span * ((k + 1) / n2)
-    }));
+    words = allocateWordTimes(spans.map(sp => sp.w), sentence.start, sentence.end);
   }
 
   const tag = sentence.highlightTag;

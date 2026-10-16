@@ -20,7 +20,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const srv = createServer(async (req, res) => {
   try {
     let p = decodeURIComponent(req.url.split('?')[0]);
-    if (p === '/' || p === '') p = '/index.html';
+    if (p === '/' || p === '') p = '/studio.html';
     const file = join(EDITOR, normalize(p).replace(/^(\.\.[/\\])+/, ''));
     if (!file.startsWith(EDITOR)) { res.writeHead(403).end(); return; }
     const buf = await readFile(file);
@@ -35,7 +35,7 @@ console.log('临时静态服务:', BASE);
 
 const b = await launch({ port: 9413, width: 1280, height: 820 });
 try {
-  await b.goto(BASE + '/index.html');
+  await b.goto(BASE + '/studio.html');
   await sleep(1500);
 
   /* 直接调 timeline 的绘制: 造一条合并轨(高 74) + 带 words 的块,

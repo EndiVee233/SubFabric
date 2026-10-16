@@ -33,7 +33,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | --- | --- |
 | 准备渲染依赖（libass，首次） | `node editor/scripts/fetch-vendor.js` |
 | 启动服务 | `node editor/server.js`（支持 `PORT=xxxx`；`--no-tray` 或 `SUBFABRIC_TRAY=0` 可关托盘） |
-| 打开界面 | <http://127.0.0.1:8321/>（`/` 会 302 到 `/editor/index.html`） |
+| 打开界面 | <http://127.0.0.1:8321/>（`/` 会 302 到 `/editor/studio.html`） |
 | 打包 exe | `python build_exe.py` → `build/SubFabric.exe`（SEA，入口 `editor/scripts/sea-launcher.cjs`） |
 | 只构建 / 构建并打安装包 | 安装目录的 `build_and_install.cmd --no-install [--package]` → `dev/tools/build-install.mjs`；只构建不更新运行副本 |
 | 打安装包 | `"D:\Program Files\Inno Setup 7\ISCC.exe" build/installer/SubFabric.iss` |
@@ -42,7 +42,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 - 版本号唯一来源是 `editor/server.js` 的 `APP_VERSION`；**发版时还要同步** `build/installer/SubFabric.iss` 与 `editor/README.md`。
   **版本怎么编号、下一版发多少 → 见 §1.1「版本号命名规则」（发版前必读）。**
 - SEA 启动器把端口写死 8321（服务端本身认 `PORT` 环境变量，测试探针靠它跑隔离实例）。
-- 纯前端修复可在明确安装授权后仅更新对应外置资源，无需重建 SEA；先比对安装基线并保留文件范围外改动，备份、暂存替换，再核对当前服务返回资源。2026-10-13 首页修复仅更新当前 2.4.0 的 project.js 首页段与 ui.css，未整体安装其他待同步源码；实际安装与验证记录见 STATUS。
+- 纯前端修复可在明确安装授权后仅更新对应外置资源，无需重建 SEA；先比对安装基线并保留文件范围外改动，备份、暂存替换，再核对当前服务返回资源。2026-10-13 首页修复仅更新当前 2.4.0 的 project.js 首页段与 studio.css，未整体安装其他待同步源码；实际安装与验证记录见 STATUS。
 - 构建入口支持 `SUBFABRIC_DEV/INST/PY/ISCC` 路径覆盖。先语法检查、构建、EXE 校验及可选打包，成功后才进入安装锁、暂存、备份与回滚；EXE 最后替换。模型/设置/项目/runtime/vendor 不进入源码安装清单。打包用临时树，可只读借用安装目录 vendor。真实 SEA/Inno 验收仍需单独执行。
 - **本轮（beta 1.0）已实际构建安装包**：`fetch-vendor.js` → `build_exe.py` → `ISCC` 全链路跑通，产物
   `build/installer/SubFabric-beta 1.0-setup.exe`（34.3MB，解包 94 文件 / 104.2MB）。**未执行真实静默安装自检**
@@ -88,7 +88,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | 路径 | 职责 |
 | --- | --- |
 | `editor/server.js` | **后端全部**（约 7900 行单文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘、退出） |
-| `editor/index.html`、`editor/css/` | 单页界面（`<script type="module" src="js/main.js">`） |
+| `editor/studio.html`、`editor/css/` | 单页界面（`<script type="module" src="js/main.js">`） |
 | `editor/js/` | 前端模块（见 §4） |
 | `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr`；fork 并入：`align` `asr-service` `ass-group` `danmaku` `hotwords` `mt-local` `project-pack` `reflect` `region` `region-merge` `repair-words` `speech-gap` |
 | `asr/` | Python 侧：`asr.py`（本地识别）`vibevoice.py`（VibeVoice NF4·CUDA 4bit，拒绝 CPU/NPU/offload）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
@@ -170,7 +170,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 ### 独立设计原型（与真实 editor 隔离）
 
 `prototypes/subfabric-ui/` 为无构建、无依赖的模拟前端，使用经典脚本以兼容直接打开 HTML。
-`index.html` 是稿件库/任务/资源/设置/帮助入口；`editor.html` 是独立字幕工作台。
+`studio.html` 是稿件库/任务/设置/帮助与字幕工作台的唯一生产入口；根路径与 `/index.html` 仅作为兼容重定向。
 打开稿件通过相对 URL 转到独立工作台，返回项目回到 index；两页共用浏览器原型命名空间，
 不与真实 `projects/`、设置、模型或 8321 服务共享数据。`?sandbox=1` 使用验收命名空间。
 
@@ -193,7 +193,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 任务进度经 `SF_PROGRESS` 同步，运行完成段为波浪、剩余为直线，暂停/结束为直线。页面重建/编辑器卸载释放被观察节点；CSS 仅对可见且运行的 Material 条动画。编辑器的原有 80ms 模拟播放时钟只在前台播放时存在。
 新建向导只记录所选文件名并创建合成字幕，完整 JSON 工作区恢复由设置中的备份导入负责。
 
-装配：`editor/index.html` → `<script type="module" src="js/main.js">`；hash 路由（`#/home`、`#/project/<id>`，见 `project.js` 的 `applyHash`）。
+装配：`editor/studio.html` → `<script type="module" src="js/main.js">`；hash 路由（`#/home`、`#/project/<id>`，见 `project.js` 的 `applyHash`）。
 另有第二个入口 `<script type="module" src="js/video-hover-tip.js">`（进度条悬浮时间提示，独立自初始化，不参与 main.js 的装配）。
 
 | 模块 | 职责 |
@@ -210,7 +210,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `srt.js` | SRT 解析 / 序列化 / 双语合并 |
 | `overlay.js` | SRT 双语叠加渲染层（贴视频矩形的 HTML） |
 | `assplayer.js` | ASS 渲染器封装（SubtitlesOctopus / libass-wasm，含字体索引缓存） |
-| `video-hover-tip.js` | **进度条悬浮时间提示**：悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间。实测依据与几何口径写在文件头（控制条区域的事件目标就是 `<video>`，所以一个 mousemove 监听即可，不必自建控制条；横向按"去黑边"的画面矩形换算）。**唯一一个自初始化的模块**（不 import main.js，main.js 也无 export），由 index.html 里第二个 `<script type="module">` 加载 |
+| `video-hover-tip.js` | **进度条悬浮时间提示**：悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间。实测依据与几何口径写在文件头（控制条区域的事件目标就是 `<video>`，所以一个 mousemove 监听即可，不必自建控制条；横向按"去黑边"的画面矩形换算）。**唯一一个自初始化的模块**（不 import main.js，main.js 也无 export），由 studio.html 里第二个 `<script type="module">` 加载 |
 | `util.js` | 时间格式化 / 转义 / 二分查找 / `popOrigin` 等工具 |
 | `i18n.js` | 文案词典（`lang/zh-CN.json`：键=原文，值可改；缺失回退原文） |
 | `modal.js` | 可拖动二级窗口（对齐 / 视口边界） |
@@ -270,14 +270,15 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **自动保存**：GET 字幕的 ETag 为 SHA-256 版本，PUT/beacon POST 同传 revision 与窗口 client/seq。请求各有 UUID 临时文件，比较版本和 rename 在同一同步段；过期或跨窗口冲突回 409，无版本回 428。同窗口后续保存可衔接上一提交。成功回完整提交内容的新版本；失败只清理本请求临时文件。
 - **项目切换**：先 flush 旧稿保存，再完成元数据/字幕/解析，最后同时提交 ID 和文档。所有保存回调、视频/波形/备注/prepare 等异步结果捕获项目与代次；首页/detach 同样使旧加载失效。保存冲突保持不可自动覆盖状态。**无撤销/重做栈**，Esc=取消是安全边界。
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换；`readMeta/writeMeta` 的兼容调用以 WeakMap 基线算递归字段差量，并入最新状态，禁止旧对象整体覆盖已有项目。跨 await 新增更新优先调用 updateMeta。
-- **首页列表**：`isCreating` 统一活动置顶与轮询判据，包含下载、提取、初稿及新建空窗，失败/暂停无字幕稿不冒充活动。`cardSig` 不含 progress/message/modifiedAt，三者就地更新；顺序同步独立于结构重建，只移动错位节点。首次直接显示进度，只有 running 的目标值变化才播放数字与 width 的 420ms 线性过渡；WeakMap 使旧动画失效，移除节点停止写入。ui.css 的流光和宽度过渡只属于 running，完成/暂停/失败无填充动画。
-- **翻译**：`subtitleSource` 从当前 ASS/SRT 取原文、对应译文和版本；只在没有稿件时回落 ASR。`patchSubtitleTranslations` 仅更新译文事件/行，保留人工原文、时间、角色、样式和特效；每批及落盘前检查当前稿件版本。`planJobs` 用完整稿件索引和 todo，每批由 `translationRefs` 从同版本已有/新译文刷新前文；拆批右半批接续左半批，参考行不计输出数量，contextRows=0 不带参考。
+- **首页列表**：`isCreating` 统一活动置顶与轮询判据，包含下载、提取、初稿及新建空窗，失败/暂停无字幕稿不冒充活动。`cardSig` 不含 progress/message/modifiedAt，三者就地更新；顺序同步独立于结构重建，只移动错位节点。首次直接显示进度，只有 running 的目标值变化才播放数字与 width 的 420ms 线性过渡；WeakMap 使旧动画失效，移除节点停止写入。studio.css 的流光和宽度过渡只属于 running，完成/暂停/失败无填充动画。
+- **翻译**：`subtitleSource` 从当前 ASS/SRT 取原文、对应译文和版本；只在没有稿件时回落 ASR。`patchSubtitleTranslations` 仅更新译文事件/行，保留人工原文、时间、角色、样式和特效；每批及落盘前检查当前稿件版本。`planJobs` 用完整稿件索引和 todo，每批由 `translationRefs` 从同版本已有/新译文刷新前文；拆批右半批接续左半批，参考行不计输出数量，contextRows=0 不带参考。LLM 默认只输出逐行纯文本，`llm-text.parseLineArrayReply` 按输入行数解析；旧 JSON 数组仍兼容，解析失败继续拆批/重试，不把 JSON 原文落盘。
+- **语义分句**：`reseg.js` 默认要求模型复述原词并直接在词尾补标点，`parsePunctTextReply` 校验词序/词数后映射为标点对并保留逐词时间；旧 JSON 标点对仍兼容解析。模型不能保持原词时拒绝该批并按既有拆批/停顿兜底，避免改写造成时间轴错位。
 - **全片重校对**：从当前稿件提取目标，共用 karaoke 的 `realignTargetKey/applyRealignItems`；结果需匹配项目、规范化稿件版本、句子事件位置、可见文本及完整词序列。只改词级时间，颜色切片与 `\\k` 都保留当前文本，不按相近时间强行套旧结果。
 - **模型删除**：只物理删除标准根下该模型的精确普通目录、普通所属文件；根目录、兄弟前缀、自定义/共享目录和祖先链接只解除关联并回 deleted:false。目录中的非所属文件保留。
 - **项目包**：导出 tar 显式 `-C` 目标目录并传 cwd，只打包 CORE_FILES 普通文件，失败回退 PowerShell，成功响应及失败均清临时目录。导入先预检 ZIP 目录（128 文件、单文件 64MB、总量 128MB），拒绝越界/链接/重复/不支持格式，只流式提取核心文件，并检查实际字节、CRC 与 30 秒时限；读取前 stat，字幕有效才建成项目，失败清理本次目录。支持单层包装；ZIP64/加密/分卷明确拒绝。
 - **长音频分片**：静音优先切点（`audio-slice.js` 真 ffmpeg `silencedetect`；纯函数在 `asr-chunks.js`）。
 - **全局设置页的骨架是 CSS grid，别在外面再套 wrapper**（2026-10-12 实测踩过）：
-  `ui.css` 的 `#st-view .st-box` 是 `grid-template-columns: 192px minmax(0,1fr)` +
+  `studio.css` 的 `#st-view .st-box` 是 `grid-template-columns: 192px minmax(0,1fr)` +
   三行（head / body / actions），`.st-tabs`（竖排分类栏）、`.st-body`（右栏内容）、
   `.st-actions` 必须是它的**直接子元素**。旧 UI 按 grid-area 定位；Studio 动作栏绝对定位到
   `.settings-inner` 标题右侧，`#st-view` 为唯一页滚动区，`.st-body` 不单独滚动。多包一层 `<div>` 会让 grid
@@ -305,9 +306,11 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 ### 生产 Studio 入口（2026-10-13）
 
-根入口逐请求读取程序根 `ui-config.json`：`{"ui":"new"}`（缺失/损坏时同样默认）进入 `editor/studio.html`，`{"ui":"legacy"}` 进入原 `editor/index.html`。配置不公开服务。旧 HTML/CSS/main 和独立设计原型保持；Studio 生成入口保留全部真实控件，继续使用原 main、project、ASS、Timeline、API。
+根入口逐请求读取程序根 `ui-config.json`，无论配置缺失、损坏或历史上写有 `{"ui":"legacy"}`，都进入唯一生产入口 `editor/studio.html`。配置不公开服务。旧界面 HTML/CSS 已删除；旧视觉迁移为 `subfabric-classic` 主题包。Studio 模板保留全部真实控件，继续使用 `main`、`project`、ASS、Timeline 与 API。
 
-`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。themes/progress 与原型共享声明式主题与固定 CSS 波浪。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
+Studio 的毛玻璃压暗、模糊度、透明度保存在 `studio-state.js` 的界面偏好中；`studio.js` 同时计算深色与浅色材质令牌，`studio.css` 末端对所有主题包的导航、项目卡、编辑器表面、设置卡、弹层和菜单统一应用。主题包只改变视觉令牌与几何，不能绕开这组材质参数。
+
+`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。`studio-themes.js` 提供声明式 Studio、Material You 与 Windows UWP 主题包（`editor/themes/windows-uwp.theme.json` 为可导入/分发的同源 JSON），`studio-progress.js` 提供固定 CSS 波浪。全局模型、翻译与识别设置共用唯一“设置”入口；旧 `#/resources` 仅重定向至 `#/settings`。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
 
 相关验收与安装范围见 `docs/UI_INTEGRATION.md`；`tools/studio-install.mjs --prepare` 产生安装候选和哈希清单，候选验收通过后 `--apply <backup-directory>` 才进入备份/锁/替换/失败回滚。仅合并本次 UI 增量，不整体安装先前源码修复，不改 EXE/运行时/设置/项目。
 
@@ -447,8 +450,8 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   界面验收 `tools/verify_style_preset.mjs`（17 项：按钮在不在 → 点导出截下 Blob 校验 JSON →
   改乱样式后导入看面板与**服务端已保存的字幕**是否还原 → 坏文件不改动样式 → 无 JS 报错）。
   ⚠ 这个验收会经界面真的改到项目字幕，跑之前先备份 `projects/<id>/subtitle.ass`；修好元数据那条之后**已是幂等**的。
-- **进度条悬浮时间提示（2026-10-11）**：新增 `editor/js/video-hover-tip.js`（+ `#video-hover-tip` 元素与 `ui.css` 样式，
-  index.html 里第二个 `<script type="module">`）。悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间
+- **进度条悬浮时间提示（2026-10-11）**：新增 `editor/js/video-hover-tip.js`（+ `#video-hover-tip` 元素与 `studio.css` 样式，
+  studio.html 里第二个 `<script type="module">`）。悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间
   （整段 <1h 用 `m:ss`，否则 `h:mm:ss`；`title` 另给毫秒精度）。原生的控件在 UA shadow DOM 里、Chrome 不带 hover 时间预览也没法插元素，
   所以自己做一个。
   **实测依据**（`tools/probe_video_controls.mjs`，CDP 从视频底边每 6px 派发真事件）：距底 2~74px 的 `elementFromPoint` 就是 `video` 本身，
@@ -497,8 +500,8 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   → 带重试删除 + `project.json` 最后删。修复用户报障"下载中删项目 → 500 失败、目录残留"
   （已用真实下载端到端复现与验证）。
 - **并入 PR #1（2026-10-10，提交 af04b08/0446ce2）**：接受 R2FtYml0 的 fork 全部功能，并**恢复被其合并
-  丢失的上游内容**——\k 卡拉OK全套（karaoke.js/main.js/project.js/index.html/server.js）、视频区就地编辑
-  接线（main.js/index.html/css/modal）、2.2.1 全部加固（projProcs/看门狗/自愈/SIGINT/流式字幕保存/前端
+  丢失的上游内容**——\k 卡拉OK全套（karaoke.js/main.js/project.js/studio.html/server.js）、视频区就地编辑
+  接线（main.js/studio.html/css/modal）、2.2.1 全部加固（projProcs/看门狗/自愈/SIGINT/流式字幕保存/前端
   守卫/Python 修复等）。教训：**fork 类大 PR 不能只看"mergeable"，必须逐文件核对"上游内容有没有被合并回退"**。
 - UI 动效批；视频区就地编辑；`\k` 初稿线。
 

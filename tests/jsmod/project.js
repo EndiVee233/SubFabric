@@ -994,7 +994,7 @@ export function initProjects(ctx) {
     const step = (now) => {
       if (!el.isConnected || pctAnimations.get(el) !== animation) return;
       const k = Math.min(1, (now - t0) / ms);
-      // 必须与 ui.css 的 width transition 同时长(420ms)、同缓动(线性): 两边不一致时,
+      // 必须与 Studio CSS 的 width transition 同时长(420ms)、同缓动(线性): 两边不一致时,
       // 动画期间"条的百分比"与这个数字会明显对不上（用户报的"进度条不一致"；
       // 旧版条是 cubic-bezier(.16,1,.3,1)、数字是三次缓出, 实测最大差 18~40 个百分点）。
       const e = k;
@@ -3232,7 +3232,7 @@ async function renderAsrModels() {
       msgEl.textContent = m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译';
       msgEl.classList.remove('err');
       const settingsRoute = location.hash;
-      if ((settingsRoute === '#/settings' || studioUI && settingsRoute === '#/resources') && settingsVisit === visit) setTimeout(() => {
+      if (settingsRoute === '#/settings' && settingsVisit === visit) setTimeout(() => {
         if (location.hash === settingsRoute && settingsVisit === visit) returnFromSettings();
       }, 600);
     } catch (e) {
@@ -3479,7 +3479,7 @@ async function renderAsrModels() {
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.defaultPrevented || !$('#confirm-overlay').hidden) return;
     if (location.hash === '#/new') leaveNew();
-    else if ((location.hash === '#/settings' || studioUI && location.hash === '#/resources') && !$('#st-save').disabled) returnFromSettings();
+    else if (location.hash === '#/settings' && !$('#st-save').disabled) returnFromSettings();
     else if (location.hash.startsWith('#/details/') && !detailSave.disabled) returnFromDetails();
   });
 
@@ -3970,9 +3970,10 @@ async function renderAsrModels() {
       toast('正在提交稿件，请等待上传完成。', 3200);
       return;
     }
-    const studioPages = studioUI ? ['#/tasks', '#/resources', '#/help'] : [];
-    if (studioUI && ['#/settings', '#/resources'].includes(h)
-      && !['#/settings', '#/resources'].includes(previousRoute)) {
+    // 资源管理曾是设置的重复别名；保留旧书签可用，但统一落到设置页。
+    if (studioUI && h === '#/resources') { h = '#/settings'; history.replaceState(null, '', h); }
+    const studioPages = studioUI ? ['#/tasks', '#/help'] : [];
+    if (studioUI && h === '#/settings' && previousRoute !== '#/settings') {
       settingsReturnRoute = previousRoute || '#/home';
       settingsOpenedFromApp = !!previousRoute;
     }
@@ -3984,7 +3985,7 @@ async function renderAsrModels() {
     $('#app').inert = h === '#/home' || h === '#/new' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
     setPageVisible(elHome, h === '#/home' || h === '#/tasks');
     setPageVisible(npView, h === '#/new');
-    setPageVisible(stView, h === '#/settings' || h === '#/resources');
+    setPageVisible(stView, h === '#/settings');
     setPageVisible(detailView, !!detailsMatch);
     if (!detailsMatch && previousRoute.startsWith('#/details/')) {
       stopDp(); dpId = ''; detailLoadToken++;
@@ -4015,12 +4016,12 @@ async function renderAsrModels() {
       if (previousRoute === '#/new' || previousRoute === '#/settings')
         requestAnimationFrame(() => $('#btn-new-project').focus({ preventScroll: true }));
     } else if (h === '#/new') {
-      const fromSettings = previousRoute === '#/settings' || studioUI && previousRoute === '#/resources';
+      const fromSettings = previousRoute === '#/settings';
       if (!fromSettings && previousRoute !== '#/new') npReset();
       // 生成设置面板：从设置页回来时强制刷新（模型/接口/Key 刚改过），其余情况走缓存
       genLoad('np', fromSettings).then(() => { if (fromSettings) refreshAsrStatus(); });
       if (previousRoute !== h) focusPage(npView);
-    } else if (h === '#/settings' || h === '#/resources') {
+    } else if (h === '#/settings') {
       if (previousRoute !== h) {
         settingsVisit++;
         if (previousRoute.startsWith('#/project/') || previousRoute === '#/editor') {

@@ -1,6 +1,6 @@
 /* 文案清单提取（开发用）：把用户可见的中文文案按文件+行号列出来，供文案审评。
  * 用法: node tools/copy_inventory.mjs   → 写 _t/copy_inventory.md
- * 覆盖: index.html(文本/title/placeholder) · editor/js/*.js 与 editor/*.js 的字符串字面量
+ * 覆盖: studio.html(文本/title/placeholder) · editor/js/*.js 与 editor/*.js 的字符串字面量
  *       · editor/server.js 的返回消息 · 托盘脚本 editor/scripts/tray.ps1
  * 不覆盖: 代码注释(不可见) —— 评论里出现的中文不参与审评。
  */

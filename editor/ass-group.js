@@ -111,7 +111,7 @@ function groupAssRows(rows) {
   if (cur) sentences.push(cur);
 
   // ②b 每句收集**真实的词级时间**：逐词行自己的 start/end 就是那个词的时间。
-  //     用真实时间，别在导入时用 recalcWords 均匀铺开 —— 那样词序看着对、节奏是假的。
+  //     用真实时间，别在导入时用 recalcWords 自动铺开 —— 那样词序看着对、节奏是假的。
   for (const s of sentences) {
     const words = [];
     for (const r of (s.rows || [])) {

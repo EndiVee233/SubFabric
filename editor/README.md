@@ -737,7 +737,7 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链�
 
 实现要点（改这块前先看这四条）：
 
-- **强调色只有一个来源** = `style.css` `:root` 里那一族变量：`--accent` / `--accent-2`（hover 亮一档）/ `--accent-ink`（压在主题色块上的文字色）/ `--accent-aNN`（同色透明度档 —— 组件里原先写死的 `rgba(255,122,69,α)` 已全部换成这些变量）/ `--accent-glow`。
+- **强调色只有一个来源** = `studio.css` `:root` 里那一族变量：`--accent` / `--accent-2`（hover 亮一档）/ `--accent-ink`（压在主题色块上的文字色）/ `--accent-aNN`（同色透明度档 —— 组件里原先写死的 `rgba(255,122,69,α)` 已全部换成这些变量）/ `--accent-glow`。
 - **`js/accent.js` 是经典脚本（不是 ES 模块）**，在 `<head>` 里**同步**执行 —— ES 模块是延迟的，首屏会先画默认橙再变紫（闪一下）。它按用户颜色重算上面那一族写到 `:root` 内联样式上；**没设过就完全不写内联样式**，「恢复默认」= 清掉内联值，不留半套残留。配色逻辑只改这一个文件。
 - **`--accent-ink` 按亮度自动选深字/白字**（阈值 `lum > 0.18` 用深色 `#1a1206`，否则白字）。所有"压在主题色上"的元素（`.btn-accent`、`.btn.toggle.active`、开关滑块、`.fr-tab.active`、`.gl-tab.active`、`.badge.ass`、`.chip-l1`、占位文字）都必须用它，**不要再写死 `#1a1206`**，否则换深色主题文字就糊了。
 - **主题色只管界面强调色**：字幕色（`--zh`/`--en`）、角色色、轨道色、金色警示（`.warn-toggle`/`.chip-bad`）都不跟着走 —— 那些是**语义色**，不属于主题。
@@ -758,9 +758,9 @@ node tools/capcut_asr_probe.mjs 测试视频.mp4    # 同上，走剪映云链�
 
 回归探针：`node tools/ui_theme_probe.mjs`（先起服务，默认 8399 端口，可用 `--` 无参直接跑）—— 真机 CDP 截图 + 断言：内联覆盖数、色块/自定义/恢复默认、按钮渐变与文字色是否跟着变、卡片错峰延迟、弹窗与面板动画名、缩放缓动有没有独立中间帧、reduced-motion 是否生效、有无 JS 报错。
 
-### 质感层（`css/ui.css`）
+### Studio 质感层（`css/studio.css`）
 
-`style.css` 是功能样式，**`ui.css` 是"看得见的提升"层**（在它之后加载，同选择器靠后生效）。放进去的东西：
+`studio.css` 同时承载 Studio 基础布局、Classic 主题迁移样式与 UWP 末端覆盖。旧界面的 `style.css`、`ui.css` 已删除；共享业务脚本继续由 Studio 模板加载。放进去的东西：
 
 - **设计令牌**：圆角 `--r-1..4`、投影 `--sh-1..3`、细线 `--hair/--hair-2`、面板高光 `--panel-top`、等宽字体 `--mono`。新组件优先用令牌，别再造 6px/8px/10px 混着来。
 - **Chromium 滚动条**：`::-webkit-scrollbar` 系列（原来只写了 Firefox 的 `scrollbar-width`，在应用内嵌的 Chromium 里等于没写，一直是系统浅色滚动条）。
@@ -1004,8 +1004,8 @@ editor/
 ├── server.js            # 静态服务器(支持 Range / /api/samples / 项目系统 API / 初稿流水线 / 模型下载)
 ├── bcut-asr.js          # 必剪(bcut)云端识别客户端(免模型/免显卡; 协议移植自 MIT 的 SocialSisterYi/bcut-asr)
 ├── capcut-asr.js        # 剪映(CapCut)云端识别客户端(无 MIT 实现可移植 → 按协议事实自写, 不含第三方代码)
-├── index.html
-├── css/style.css        # 深色主题三栏布局 + 主界面/新建项目对话框/初稿进度浮层
+├── studio.html          # 唯一生产模板，承载 Studio/Classic/UWP 主题
+├── css/studio.css       # Studio 基础布局 + Classic 迁移样式 + UWP 覆盖
 ├── js/
 │   ├── main.js          # 主逻辑(状态/联动/导入导出)
 │   ├── project.js       # 项目系统: 主界面路由(#/home·#/project/<id>·#/editor)/自动保存/波形音频项目缓存/新建对话框/初稿进度浮层
@@ -1034,7 +1034,7 @@ editor/
 
 | 来源 | 怎么过词典 |
 | --- | --- |
-| `index.html` 的静态文本 / `title` / `placeholder` / `aria-label` | 启动时 `applyDom()` 扫一遍 |
+| `studio.html` 的静态文本 / `title` / `placeholder` / `aria-label` | 启动时 `applyDom()` 扫一遍 |
 | toast / 确认框 / 徽标 / 时间轴标签 / 查找替换状态 | 显示出口（`toast()`、`showConfirm()` 等）里已调 `t()` |
 | **JS 拼出来的 HTML**（模型卡片说明、字幕卡角标、进度浮层…） | `MutationObserver` 在节点落地后过一遍（幂等，不会自我循环） |
 | **`server.js` 的服务端消息**（草稿阶段、错误、警告） | 客户端显示时过词典（日志页逐行剥掉时间戳前缀后翻译） |

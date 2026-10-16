@@ -7,7 +7,7 @@
  * 之类）就直接改那个文件的值，不用碰代码。键缺失一律回退原文，界面永不缺字。
  *
  * 覆盖范围（**所有用户可见文案**都能改，改完刷新页面即生效）：
- *   ① 静态 DOM：index.html 的文本 / title / placeholder / aria-label
+ *   ① 静态 DOM：studio.html 的文本 / title / placeholder / aria-label
  *   ② 显示出口：toast / 确认框 / 徽标 / 时间轴标签（这些函数里已调 t()）
  *   ③ **动态插入的 DOM**：JS 拼出来的 HTML（模型卡片说明、字幕卡角标、进度浮层日志…）
  *      由 MutationObserver 在节点落地后过一遍词典

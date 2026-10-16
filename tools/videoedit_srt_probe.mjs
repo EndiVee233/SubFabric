@@ -57,7 +57,7 @@ async function waitHttp(url, ms = 15000) {
   }
   return false;
 }
-if (!await waitHttp(BASE + '/editor/index.html')) { console.error('服务没起来'); srv.kill(); process.exit(1); }
+if (!await waitHttp(BASE + '/editor/studio.html')) { console.error('服务没起来'); srv.kill(); process.exit(1); }
 const pr = await fetch(BASE + '/api/projects', {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ name: '【探针】SRT 就地编辑', video: { path: VIDEO }, subtitle: { name: 'sample.srt', text: SRT_TEXT } })
@@ -70,7 +70,7 @@ const subFile = resolve(ROOT, 'projects', proj.id, 'subtitle.srt');
 const readSub = () => (existsSync(subFile) ? readFileSync(subFile, 'utf8') : '');
 
 /* ── 3. 浏览器 ── */
-const b = await launch({ url: `${BASE}/editor/index.html#/project/${proj.id}`, port: 9334, width: 1600, height: 1000 });
+const b = await launch({ url: `${BASE}/editor/studio.html#/project/${proj.id}`, port: 9334, width: 1600, height: 1000 });
 let exitCode = 1;
 try {
   const key = async (keyName, vk, modifiers = 0) => {

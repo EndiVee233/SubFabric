@@ -25,7 +25,7 @@ const edge = spawn(EDGE, [
   `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
   '--disable-gpu', '--disable-extensions', '--window-size=1500,1000',
   '--force-device-scale-factor=1',
-  `${APP}/editor/index.html?debug#/project/${PROJ}`,
+  `${APP}/editor/studio.html?debug#/project/${PROJ}`,
 ], { stdio: 'ignore' });
 
 let target = null;

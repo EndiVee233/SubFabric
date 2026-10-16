@@ -1,5 +1,5 @@
 /* 共享的"用户可见中文文案"扫描器（tools/copy_inventory.mjs 与 tools/copy_lint.mjs 共用）
- * 只扫用户能看到的字符串：index.html 的文本/title/placeholder/value、js/ps1/cjs 里的字符串字面量。
+ * 只扫用户能看到的字符串：studio.html 的文本/title/placeholder/value、js/ps1/cjs 里的字符串字面量。
  * 代码注释不算（注释里的中文不参与文案审评）。
  */
 import { readFileSync, readdirSync } from 'fs';
@@ -104,9 +104,9 @@ export function scanCopy(root) {
     out.push({ file, line, kind, text: t });
   };
 
-  // index.html
+  // studio.html
   {
-    const file = 'editor/index.html';
+    const file = 'editor/studio.html';
     let html = '';
     try { html = readFileSync(path.join(root, file), 'utf8'); } catch { return out; }
     html.split('\n').forEach((raw, i) => {

@@ -15,10 +15,10 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
-const HTML = fs.readFileSync(path.join(REPO, 'editor', 'index.html'), 'utf8');
+const HTML = fs.readFileSync(path.join(REPO, 'editor', 'studio.html'), 'utf8');
 const MJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
 const PJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
-const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'style.css'), 'utf8');
+const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'studio.css'), 'utf8');
 const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
 
 let pass = 0, fail = 0;

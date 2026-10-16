@@ -23,6 +23,7 @@
 const CHUNK = 80;          // 一次建多少个 <li>
 
 let fsCache = null;        // 系统字体名数组（同一个 promise 复用）
+let closeActive = null;    // 页面内只保留一个可见字体面板，避免多个输入框互相遮挡
 
 /** 拿系统字体名清单；失败返回空数组（此时组件静默不装，输入框照旧可用）
  *  **导出**给别处复用 —— "这个字体本机装了没"就以这份清单为唯一依据
@@ -83,6 +84,7 @@ export function enhanceFontInput(input, opts) {
   // 浮层：过滤框 + 列表
   const panel = document.createElement('div');
   panel.className = 'fp-panel';
+  panel.__fontPickerInput = input;
   panel.hidden = true;
   panel.innerHTML = '<input type="text" class="fp-filter" placeholder="搜索字体…" spellcheck="false">'
     + '<div class="fp-list" role="listbox"></div>';
@@ -170,7 +172,15 @@ export function enhanceFontInput(input, opts) {
   }
 
   async function open() {
-    if (opened) return;
+    if (opened) {
+      // 外部布局重排或浏览器恢复页面时，状态可能仍标记为打开但面板暂时被隐藏；
+      // 重新定位并显式恢复可见，保证再次触发打开始终得到可交互面板。
+      panel.hidden = false;
+      place();
+      return;
+    }
+    if (closeActive && closeActive !== close) closeActive();
+    closeActive = close;
     opened = true;
     panel.hidden = false;
     btn.classList.add('on');
@@ -192,6 +202,7 @@ export function enhanceFontInput(input, opts) {
     opened = false;
     panel.hidden = true;
     btn.classList.remove('on');
+    if (closeActive === close) closeActive = null;
   }
 
   /* ── 事件 ─────────────────────────────────────────── */

@@ -18,7 +18,7 @@ const edge = spawn(EDGE, [
   '--headless=new', `--remote-debugging-port=${PORT}`,
   `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
   '--disable-gpu', '--disable-extensions', '--window-size=1400,1000',
-  `${APP}/editor/index.html#/project/${PROJ}`,
+  `${APP}/editor/studio.html#/project/${PROJ}`,
 ], { stdio: 'ignore' });
 
 let target = null;

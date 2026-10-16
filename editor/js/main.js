@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle, assStylePresetOf, parseAssStylePreset, applyAssStylePreset, findStyleForLang } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, isKaraokeLine, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
+import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, isKaraokeLine, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
   // ── 上游 2.1.13 新增的导出（角色换色串色修复 / 中文标点归一 / 中文行预览 / 角色排序）──
   // 这些纯函数放在 karaoke.js 里以便单测；main.js 必须**显式导入**，
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
@@ -197,13 +197,13 @@ const EDIT_SETTLE_MS = 260;
 
 /* ─────────── Toast ───────────
  * 分四级(成功/警告/失败/信息)：按文案里的关键词自动判级, 所以 100+ 个调用点不用改；
- * 想强制某级就把第 2 参传成 'ok'|'warn'|'err'|'info'。图标 + 左侧色条见 ui.css 的 #toast。 */
+ * 想强制某级就把第 2 参传成 'ok'|'warn'|'err'|'info'。图标 + 左侧色条见 studio.css 的 #toast。 */
 let toastTimer = null;
 function toast(msg, ms = 2600, forceKind) {
   let el = document.getElementById('toast');
   if (!el) {
     el = document.createElement('div');
-    el.id = 'toast';                 // 定位/动画/分级样式都在 style.css + ui.css 的 #toast 里
+    el.id = 'toast';                 // 定位/动画/分级样式都在 studio.css 的 #toast 里
     el.setAttribute('role', 'status');
     el.setAttribute('aria-live', 'polite');
     document.body.appendChild(el);
@@ -232,7 +232,7 @@ function toast(msg, ms = 2600, forceKind) {
 }
 
 /* ─────────── 图标注入 ───────────
- * index.html / 动态模板里用 data-ico="名字" 声明图标（见 js/icons.js），运行时统一插成内联 SVG。
+ * studio.html / 动态模板里用 data-ico="名字" 声明图标（见 js/icons.js），运行时统一插成内联 SVG。
  * 为什么插在**最前面**：SVG 与文案是两个节点，i18n 按文本节点查词典不受影响；
  * 千万别把图标塞进文案中间（会拆散文本，词典匹配不上）。重复调用是安全的（已注入会跳过）。 */
 function applyIcons(root = document) {
@@ -2463,7 +2463,7 @@ function rimApply(force) {
   for (const r of add) {
     try {
       /* ★ 传**原文件的真实词级时间**（ass-group 从逐词行里提取的：那一行的起止就是那个词的时间）。
-       * 不传的话 addRecognizedRow 会调 recalcWords 在句内均匀铺开 ——
+       * 不传的话 addRecognizedRow 会调 recalcWords 按字母数铺开 ——
        * 词序看着对，但节奏是假的（用户实测："逐词不准确，这不是原字幕里的逐词顺序吧"）。 */
       const row = addRecognizedRow({
         start: r.start, end: r.end, zh: r.zh, text: r.en,
@@ -3149,7 +3149,7 @@ function restoreKaraokeRow(row) {
   const bk = row._karaokeBackup;
   if (!en || !bk || !bk.words.length) return false;
   // 把备份词级时间放回, 再按当前句时间加权重算(时间若变了按比例缩放);
-  // 文本若被改过, recalcWords 会按词数变化加权重新分配。
+  // 文本若被改过, recalcWords 会按字母数重新分配。
   en.words = bk.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
   en.words = recalcWords(en, en.text, en.start, en.end);
   en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
@@ -3907,9 +3907,9 @@ function alignEnSpanToZh(row) {
   const n = en.words.length;
   const span = ee - es;
   if (span <= WORD_MIN_GAP * n) {
-    // 退化成一根线（几乎所有词都挤在一点上）→ 按词数把中文行时长均匀铺开
-    const dur = (ze - zs) / n;
-    en.words.forEach((w, i) => { w.s = +(zs + i * dur).toFixed(3); w.e = +(zs + (i + 1) * dur).toFixed(3); });
+    // 退化成一根线（几乎所有词都挤在一点上）→ 按字母数把中文行时长铺开
+    const allocated = allocateWordTimes(en.words.map(w => w.w), zs, ze);
+    en.words.forEach((w, i) => { w.s = allocated[i].s; w.e = allocated[i].e; });
   } else {
     // 按比例映射：首词晚 40ms 这种，前段微调、后段几乎不动
     const k = (ze - zs) / span;
@@ -4406,7 +4406,7 @@ function addRecognizedRow(seg) {
        * 这里以前直接跳过 —— 于是"分段导入"进来的英文行成了**纯整句**，
        * 在逐词稿里那一行的逐词格式就是坏的（用户报"导入后逐词字幕格式损坏"）。
        * karaoke.js 的 recalcWords 对"原本不是逐词句（如刚插入的新行）"的处理
-       * 正是**在句内均匀铺满**（见那里的注释），直接调它，不另写一套分摊逻辑。 */
+       * 正是**按字母数铺满**（见那里的注释），直接调它，不另写一套分摊逻辑。 */
       en.words = recalcWords(en, en.text, s, e);
       en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
     }
@@ -5311,7 +5311,7 @@ function stripLeadSpeakerTag(text) {
 }
 
 
-/** 中文按英文词数比例切: 中英本来就是同一句的两种语言(或同一句的译文), 按词数比例最稳。 */
+/** 中文按英文词数比例切：这是文本分句边界，不是逐词时间分配。 */
 function splitZhText(zhText, k, nEn) {
   const zh = stripLeadSpeakerTag(zhText).trim();
   if (!zh || nEn < 1 || k <= 0 || k >= nEn) return [zh, ''];

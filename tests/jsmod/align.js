@@ -167,12 +167,12 @@ function editDistance1(a, b) {
  *     这样处理"一个识别词对应多个原文词"的情况 —— 实测 TTS 把 `with velocity`
  *     连读成 `withvelocity`，对齐后是「`with`→该词, `velocity`→落单」。
  *     若直接按识别词时间赋值，`with` 独吞 2.2 秒、`velocity` 只剩 0.02 秒；
- *     按字符数分摊则两词各得一份。
+ *     按英文字母数分摊则两词各得一份。
  *
  *  ② **整体缩放**到原块时长：合成语音的绝对时长与被念原文无关（TTS 语速、停顿都不同），
  *     能用的是**词与词之间的相对节奏**。把参考时间轴线性映到 [start, end]。
  *
- * 锚点之外的落单词（识别里完全没配上）在两侧已定时间之间按字符数插值。
+ * 锚点之外的落单词（识别里完全没配上）在两侧已定时间之间按英文字母数插值。
  */
 function mapTimes(origTokens, recWords, pairs, start, end, rawTimes) {
   const n = origTokens.length;
@@ -199,7 +199,7 @@ function mapTimes(origTokens, recWords, pairs, start, end, rawTimes) {
   if (!mono.length) return evenSplit(origTokens, lo, dur);
 
   /* 每个锚点负责的原文下标区间：[该锚点, 下一个锚点-1]。
-   * 第 ① 步在这段区间内按字符数分摊该识别词的参考时间。 */
+   * 第 ① 步在这段区间内按英文字母数分摊该识别词的参考时间。 */
   const raw = new Array(n).fill(null);
   for (let k = 0; k < mono.length; k++) {
     const from = mono[k].oi;
@@ -241,12 +241,15 @@ function mapTimes(origTokens, recWords, pairs, start, end, rawTimes) {
   }));
 }
 
-/** 全无锚点时：按字符数把 [start, start+dur] 铺满 */
+/** 自动分配时按英文字母数把 [start, start+dur] 铺满。 */
+function wordWeight(token) {
+  return Math.max(1, (normWord(token).match(/[a-z]/g) || []).length);
+}
 function evenSplit(tokens, start, dur) {
-  const total = tokens.reduce((s, t) => s + Math.max(1, normWord(t).length), 0) || 1;
+  const total = tokens.reduce((s, t) => s + wordWeight(t), 0) || 1;
   let t = Number(start);
   return tokens.map((tok, k) => {
-    const w = Math.max(1, normWord(tok).length);
+    const w = wordWeight(tok);
     const d = dur * (w / total);
     const seg = { oi: k, s: t, e: t + d };
     t += d;
@@ -254,14 +257,14 @@ function evenSplit(tokens, start, dur) {
   });
 }
 
-/** 按各词的字符数把一段时长分摊开 */
+/** 按各词的英文字母数把一段时长分摊开 */
 function splitByChars(tokens, from, to, tStart, tEnd) {
   const out = new Array(to - from + 1);
   const total = tokens.slice(from, to + 1)
-    .reduce((s, t) => s + Math.max(1, normWord(t).length), 0) || 1;
+    .reduce((s, t) => s + wordWeight(t), 0) || 1;
   let t = tStart;
   for (let k = from; k <= to; k++) {
-    const w = Math.max(1, normWord(tokens[k]).length);
+    const w = wordWeight(tokens[k]);
     const d = (tEnd - tStart) * (w / total);
     out[k - from] = { oi: k, s: t, e: t + d };
     t += d;

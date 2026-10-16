@@ -382,7 +382,7 @@ const edge = spawn(EDGE, [
   // 必须用桌面宽度: 窄屏(<900px)是纵向堆叠布局, 那时 #cue-list 不受高度约束(整页滚),
   // 滚动窗口的验证会失真 —— 无头浏览器默认窗口约 745px 宽, 正好落在窄屏分支里。
   `--window-size=${process.env.WIN || '1600,1000'}`,
-  `http://127.0.0.1:${PORT}/editor/index.html`
+  `http://127.0.0.1:${PORT}/editor/studio.html`
 ], { stdio: 'ignore' });
 
 const cleanup = () => { try { edge.kill(); } catch {} try { server.kill(); } catch {} };

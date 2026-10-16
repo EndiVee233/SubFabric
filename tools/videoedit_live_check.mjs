@@ -71,7 +71,7 @@ if (!proj) { console.error('没有可用的本地工程（需要 project.json + 
 console.log(`模式: ${HEADED ? '真实窗口(有头)' : '无头'}  窗口 ${SIZE[0]}x${SIZE[1]}  服务 ${BASE}`);
 console.log(`工程: ${proj.id}  ${proj.name}  字幕 ${proj.sub}  视频 ${proj.video}`);
 
-const b = await launch({ url: `${BASE}/editor/index.html#/home`, port: 9341, width: SIZE[0], height: SIZE[1] });
+const b = await launch({ url: `${BASE}/editor/studio.html#/home`, port: 9341, width: SIZE[0], height: SIZE[1] });
 try {
   await b.waitFor('!!window.__videoEditor', { timeout: 20000, label: '编辑器就绪' });
   const ver = await b.eval(`(() => ({ stamp: String(window.__BUILD_STAMP || ''), ver: '' }))()`);
@@ -95,7 +95,7 @@ try {
     await b.mouse('mousePressed', card.x, card.y); await b.mouse('mouseReleased', card.x, card.y);
   } else {
     console.log('  首页没定位到卡片（卡片数 ' + (card && card.n) + '）→ 直接跳项目页');
-    await b.goto(`${BASE}/editor/index.html#/project/${proj.id}`);
+    await b.goto(`${BASE}/editor/studio.html#/project/${proj.id}`);
   }
   await sleep(1500);
   await b.waitFor('document.querySelectorAll("#cue-list .cue-card").length > 0', { timeout: 25000, label: '字幕列表' });

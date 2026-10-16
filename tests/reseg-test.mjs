@@ -69,6 +69,16 @@ ok(R.parsePunctReply('not json', n) === null, 'parsePunctReply 非JSON→null');
 ok(R.parsePunctReply('[]', n) === null, 'parsePunctReply 空数组→null');
 ok(R.parsePunctReply('思考里的示例 [["0", "."]] 结束', n) === null || true, 'parsePunctReply 不因思考崩');
 
+/* ── parsePunctTextReply: 默认纯文本格式 ── */
+const plainWords = [w('Hello', 0, 0.3), w('world', 0.3, 0.6), w('How', 0.6, 0.9), w('are', 0.9, 1.2), w('you', 1.2, 1.5)];
+r = R.parsePunctTextReply('Hello, world. How are you?', plainWords, 0, plainWords.length);
+ok(r && JSON.stringify(r) === JSON.stringify([[0, ','], [1, '.'], [4, '?']]),
+  'parsePunctTextReply 纯文本复述映射为标点对', JSON.stringify(r));
+r = R.parsePunctTextReply('0 Hello,\n1 world.\n2 How\n3 are\n4 you?', plainWords, 0, plainWords.length);
+ok(r && r.length === 3 && r[2][0] === 4, 'parsePunctTextReply 兼容逐行编号文本', JSON.stringify(r));
+ok(R.parsePunctTextReply('Hello, other.', plainWords, 0, plainWords.length) === null,
+  'parsePunctTextReply 改词/漏词时拒绝');
+
 /* ── groupResegWords: 新规则 —— 只按句末标点切, 逗号不切 ── */
 const g1 = R.groupResegWords([
   w('okay', 0, 0.3), w('ken,', 0.3, 0.5), w('take', 0.5, 0.8), w('us.', 0.8, 1.0), w('go', 1.0, 1.3),
@@ -142,6 +152,18 @@ const mockChat = async () => '[[5, ","],[16, "."],[22, ","],[34, "."],[44, ","]]
   ok(out[2].text === "the attention of literally everyone bad so we should probably, leave okay wait wait okay we're going to the pearl thing", '第3句文本', out[2].text);
   ok(out.reduce((n, s) => n + s.words.length, 0) === N, '词数守恒（一个不少）', String(out.reduce((n, s) => n + s.words.length, 0)));
   ok(out[0].start === 0 && Math.abs(out[out.length - 1].end - ((N - 1) * 0.3 + 0.25)) < 0.01, '时间戳首尾不变');
+
+  /* 默认路径：模型直接复述带标点的词，程序映射回标点对。 */
+  const plainChat = async (messages) => messages[1].content.split('\n').map((line) => {
+    const m = /^(\d+)\s+(.+)$/.exec(line);
+    if (!m) return line;
+    const i = Number(m[1]);
+    const p = ({ 5: ',', 16: '.', 22: ',', 34: '.', 44: ',' })[i] || '';
+    return m[2] + p;
+  }).join(' ');
+  const plainOut = await R.resegWithLLM(plainChat, mockSegs, () => {});
+  ok(plainOut.length === 3 && plainOut[0].text === out[0].text,
+    'resegWithLLM 默认接受纯文本分句结果', JSON.stringify(plainOut.map(s => s.text)));
 
   /* LLM 坏回复 → 重试后成功（逗号不再切句, 但长行会软折） */
   let bad = 0;

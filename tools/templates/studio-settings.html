@@ -18,7 +18,7 @@
       </div>
 
     <!-- 左侧分类栏。这里**必须**用 .st-tabs（不能另套一层 wrapper）：
-         ui.css 的 `#st-view .st-box` 是 grid（192px + 1fr，三行 head/body/actions），
+         studio.css 的 `#st-view .st-box` 是 grid（192px + 1fr，三行 head/body/actions），
          `.st-tabs` / `.st-body` / `.st-actions` 都是它的**直接子元素**并按 grid-area 定位。
          套一层 wrapper 会让 grid 拿不到这些子元素 → 右栏被压成 0 宽（实测踩过）。
          JS 侧沿用 `.st-tab` + `data-stp`，切换逻辑不用改。 -->
@@ -34,7 +34,6 @@
     </div>
 
     <div class="st-body">
-      <div id="sf-resource-links" class="sf-resource-links" hidden><button type="button" data-setting="models">识别模型</button><button type="button" data-resource="llm">翻译方案与术语</button><button type="button" data-setting="enhance">热词与识别增强</button></div>
       <div class="st-panel" id="st-panel-models" role="tabpanel" data-stp="models" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-models">语音识别</h2><p>准备识别引擎、模型文件和本机运行环境。</p><p class="sf-settings-save-note">模型操作和下载位置即时保存；已有模型不会随目录移动。</p></div>
         <!-- 隐藏旧二级入口供业务刷新兼容；新界面使用独立一级分类。 -->
         <div class="st-subtabs" hidden role="tablist" aria-label="模型设置">
@@ -387,7 +386,7 @@
               <option value="off">关闭</option>
               <option value="auto">建稿后自动跑一次（仍需确认才改）</option>
             </select>
-            <span class="gl-hint" style="flex:1">在稿件页点「🧠 反思纠错」触发。它会找出<b>没说完 / 被硬切 / 拼接痕迹 / 疑似听错</b>的地方，先给预览清单，你勾选后才重识别那几段。</span>
+            <span class="gl-hint" style="flex:1">在稿件页点「反思纠错」触发。它会找出<b>没说完 / 被硬切 / 拼接痕迹 / 疑似听错</b>的地方，先给预览清单，你勾选后才重识别那几段。</span>
           </div>
           <div class="st-row" style="margin-top:8px">
             <span class="st-lbl" style="min-width:auto">上下文</span>
@@ -424,7 +423,7 @@
         <div class="st-card">
           <div class="st-card-title">重排逐词时间 <span class="st-card-note">原片音频重识别 → 实测逐词时间</span></div>
           <p class="gl-hint">
-            右键字幕块选「重排逐词时间」，或点「🎯 全片逐词重校对」时用这里的设置。
+            右键字幕块选「重排逐词时间」，或点「全片逐词重校对」时用这里的设置。
             直接切出这条字幕在<b>原片音频</b>里的那一段重新识别，拿识别出来的真实位置当逐词时间
             —— <b>只改逐词时间，不动文本</b>。
           </p>
@@ -532,8 +531,8 @@
           <div class="sf-settings-image-tools"><button type="button" class="btn" id="sf-image-pick">选择图片</button><button type="button" class="btn" id="sf-image-clear">清除图片</button><input type="file" id="sf-image-file" accept="image/png,image/jpeg,image/webp" hidden><span class="gl-hint">PNG、JPEG 或 WebP · 2MB 以内</span></div>
           <div class="sf-settings-line"><div><b>明暗模式</b><p>随系统变化，或保持喜欢的明暗。</p></div><div class="sf-settings-segments" role="group" aria-label="明暗模式"><button type="button" data-appearance-mode="light" aria-pressed="false">浅色</button><button type="button" data-appearance-mode="dark" aria-pressed="false">深色</button><button type="button" data-appearance-mode="system" aria-pressed="false">跟随系统</button></div><div hidden><select id="sf-mode" aria-label="明暗模式"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div></div>
           <div class="sf-settings-line"><div><label for="sf-motion">界面动效</label><p>页面转场、轻回弹与流光；系统减少动效偏好优先。</p></div><select id="sf-motion"><option value="on">开启</option><option value="off">减少动效</option></select></div>
-          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-dim">深色毛玻璃压暗</label><p>提高压暗可增强文字可读性，浅色模式保持原有材质。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-dim" min="72" max="92" step="1" value="80"><output id="sf-glass-dim-value" for="sf-glass-dim">80%</output></div></div>
-          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-blur">深色毛玻璃模糊度</label><p>仅模糊卡片后方背景，文字与视频保持清晰。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-blur" min="0" max="32" step="1" value="18"><output id="sf-glass-blur-value" for="sf-glass-blur">18px</output></div></div>
+          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-dim">毛玻璃压暗</label><p>控制浅色与深色模式卡片底色的压暗程度，数值越高文字越清晰。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-dim" min="72" max="92" step="1" value="80"><output id="sf-glass-dim-value" for="sf-glass-dim">80%</output></div></div>
+          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-blur">毛玻璃模糊度</label><p>仅模糊卡片后方背景，文字与视频保持清晰，所有主题包通用。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-blur" min="0" max="32" step="1" value="18"><output id="sf-glass-blur-value" for="sf-glass-blur">18px</output></div></div>
           <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-opacity">毛玻璃透明度</label><p>降低数值可让背景更透；设置为 100% 时保持当前卡片的遮罩强度。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-opacity" min="20" max="100" step="1" value="100"><output id="sf-glass-opacity-value" for="sf-glass-opacity">100%</output></div></div>
           <p id="sf-theme-status" class="gl-hint" role="status">外观更改立即保存。</p>
         </div>

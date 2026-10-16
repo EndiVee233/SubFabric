@@ -128,7 +128,7 @@ const edge = spawn(EDGE, [
   '--user-data-dir=' + join(process.env.TEMP || '.', 'edge-jank-probe-' + Date.now()),
   '--no-first-run', '--no-default-browser-check', '--disable-extensions',
   '--window-size=1600,1000',    // 桌面布局(窄屏 <900px 是纵向堆叠, 列表不受高度约束)
-  `http://127.0.0.1:${PORT}/editor/index.html`
+  `http://127.0.0.1:${PORT}/editor/studio.html`
 ], { stdio: 'ignore' });
 
 const cleanup = () => { try { edge.kill(); } catch {} try { server.kill(); } catch {} };

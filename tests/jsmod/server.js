@@ -79,15 +79,8 @@ const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili C
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 
-// 界面选择独立于识别/密钥配置。逐请求读取，改文件后刷新根入口即可回退旧 UI。
-function uiEntry() {
-  try {
-    const file = path.join(ROOT, 'ui-config.json');
-    if (fs.statSync(file).size <= 16384 && JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')).ui === 'legacy')
-      return '/editor/index.html';
-  } catch { /* 缺失或损坏配置仍能进入默认界面。 */ }
-  return '/editor/studio.html';
-}
+// Studio 是唯一生产入口；旧界面已迁移为主题包，不再由配置切换。
+function uiEntry() { return '/editor/studio.html'; }
 
 /* ── 控制台输出同时落一份到文件 ────────────────────────────────────────
  * 为什么需要: 无窗口启动器(启动SubFabric(无窗口).vbs)下 node **没有控制台**,
@@ -222,7 +215,7 @@ const LIBASS_HINT = '视频区不显示字幕：缺少 libass 渲染器。'
   + '请在本项目根目录运行  node editor/scripts/fetch-vendor.js  '
   + '（约 18MB；生成后本提示会自动消失，不用重启）';
 /* 代码版本戳: 取 editor 下静态资源的最新修改时间。
- * 用途: ① index.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
+ * 用途: ① studio.html 里的 js/css 引用带上 ?v=<戳>, 改了代码刷新必定拿到新的;
  *      ② /api/version 让**已经开着的页面**发现自己过期了 → 提示用户刷新。
  * (用户报过"改了代码但界面还是老的": 单页应用开着不刷新就一直跑旧 JS)
  * 注意: 版本戳**每 10 秒重算一次** —— 以前是启动时算一次, 结果"改了前端文件但
@@ -324,8 +317,7 @@ function safeJoin(root, urlPath) {
 
 // 明确列出浏览器入口、依赖和双端纯模块；editor 下的后端模块不随目录一并公开。
 const STATIC_RESOURCES = new Set([
-  '/editor/index.html', '/editor/studio.html', '/editor/css/studio.css',
-  '/editor/css/style.css', '/editor/css/ui.css', '/editor/lang/zh-CN.json',
+  '/editor/studio.html', '/editor/css/studio.css', '/editor/lang/zh-CN.json', '/editor/themes/subfabric-classic.theme.json',
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
@@ -1136,11 +1128,11 @@ const LLM_PRESETS = [
 const DEFAULT_TRANSLATE_PROMPT = [
   '你是字幕翻译专家。把用户给出的英文字幕逐行翻译成简体中文。',
   '严格要求：',
-  '1) 只输出一个 JSON 数组，形如 ["译文1","译文2"]，不要任何解释或代码块；',
-  '2) 数组元素个数必须与输入行数完全相同、顺序一一对应，禁止合并或拆分行；',
+  '1) 直接输出译文，每个输入行对应一行，按原顺序逐行返回；不要输出 JSON、编号、解释或代码块；',
+  '2) 输出行数必须与输入行数完全相同，禁止合并或拆分行；',
   '3) 人名、地名、组织名、作品名、缩写与 [方括号] 内的内容保留原文不译；',
   '4) 译文简洁自然，符合口语，不要逐字直译，不要加引号；',
-  '5) 原文为空的行输出空字符串。',
+  '5) 原文为空的行输出空行。',
 ].join('\n');
 
 /** 双引擎的分工配置。ratio='auto' 用性能测试测出来的值（settings.dual），没测过退 1:1
@@ -1549,10 +1541,11 @@ function parseGlossary(text, lang) {
 
 /** 系统提示词 = 用户提示词 + 术语表块(有术语表时才追加) */
 function systemPromptWithGlossary(cfg, strict) {
-  const sys = strict
-    ? cfg.prompt + '\n\n【极其重要】上一次的回复不是合法 JSON 数组。这一次必须**只输出 JSON 数组本身**：'
-      + '以 [ 开头、以 ] 结尾，元素个数等于输入行数，不要任何解释、不要 markdown 代码块、不要编号。'
-    : cfg.prompt;
+  const sys = (cfg.prompt || DEFAULT_TRANSLATE_PROMPT) + '\n\n'
+    + (strict
+      ? '【极其重要】上一次的回复没有按输入逐行返回。这一次只输出纯文本译文：每个输入行对应一行，'
+        + '保持顺序，不要 JSON、不要 markdown 代码块、不要编号、不要解释。'
+      : '【输出格式】只输出纯文本译文，每个输入行对应一行并保持顺序；不要 JSON、不要 markdown 代码块、不要编号、不要解释。');
   const g = parseGlossary(cfg.glossary, cfg.glossaryLang);
   if (!g.length) return sys;
   return sys + '\n\n【术语表】下面的词必须按给定译法翻译，不要音译、不要另译（未列出的按常规翻译）：\n'
@@ -3736,7 +3729,7 @@ async function startFetchJob(id, opts) {
 
 /* 画质档位的取值契约(与 asr/fetch 的两张站点表保持一致, 值就是 selector.py 认识的档位名):
  * best / 2160 / 1080 / 720 / 480 / 360 / audio。
- * 界面上的选项硬编码在 index.html 的 #st-fetch-quality 里(那份还多了 UI 需要的顺序),
+ * 界面上的选项硬编码在 studio.html 的 #st-fetch-quality 里(那份还多了 UI 需要的顺序),
  * 改档位时要同时改 HTML —— 以前这里还有一份 FETCH_QUALITY_CHOICES 数组, 无人引用已删。 */
 
 function startPrepare(id, videoPath, mode) {
@@ -4551,7 +4544,7 @@ function startPrepare(id, videoPath, mode) {
    *
    * 用途：某条字幕的**逐词时间戳糊了**（拖动过、或识别时把词边界摊平了），
    * 但文本是对的。这里切出它在**原片音频**里的那一段重新识别，拿识别出来的
-   * 真实位置当逐词时间；没对上的词按字符数在两侧锚点之间插值补齐。
+   * 真实位置当逐词时间；没对上的词按英文字母数在两侧锚点之间插值补齐。
    *
    * **只改词级时间，绝不动文本** —— 这是这个功能的硬约束。
    *
@@ -5512,7 +5505,7 @@ function startPrepare(id, videoPath, mode) {
     fs.renameSync(tp + '.tmp', tp);
   }
 
-  /** 请求一次译文。strict=true 时追加"必须只输出 JSON 数组"的强化指令。 */
+  /** 请求一次译文。strict=true 时追加"必须逐行输出纯文本"的强化指令；JSON 仅作兼容输入。 */
   /** 本地引擎的翻译入口。目标语言取自「术语表语言」设置（简体/繁體）。 */
   async function translateLocal(cfg, texts) {
     const lang = String((cfg && cfg.glossaryLang) || '简体');
@@ -5548,7 +5541,7 @@ function startPrepare(id, videoPath, mode) {
     if (!arr) {
       const head = String(r.content).slice(0, 300);
       console.error(`[llm] 译文回复不合规（${texts.length} 行, finish_reason=${r.finishReason || '?'}）：${head}`);
-      throw new LlmError('返回既不是 JSON 数组、也不是与输入等行数的逐行文本：' + String(r.content).slice(0, 300), 'format', { rawHead: head });
+      throw new LlmError('返回既不是与输入等行数的逐行文本、也不是兼容的 JSON 数组：' + String(r.content).slice(0, 300), 'format', { rawHead: head });
     }
     return arr;
   }

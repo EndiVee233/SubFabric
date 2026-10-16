@@ -323,7 +323,7 @@ const edge = spawn(EDGE, [
   '--user-data-dir=' + join(process.env.TEMP || '.', 'edge-ass-style-probe-' + Date.now()),
   '--no-first-run', '--no-default-browser-check', '--disable-extensions',
   '--autoplay-policy=no-user-gesture-required',
-  `http://127.0.0.1:${PORT}/editor/index.html`
+  `http://127.0.0.1:${PORT}/editor/studio.html`
 ], { stdio: 'ignore' });
 
 const cleanup = () => { try { edge.kill(); } catch {} try { server.kill(); } catch {} cleanupFiles(); };

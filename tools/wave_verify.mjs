@@ -97,7 +97,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const srv = createServer(async (req, res) => {
   try {
     let p = decodeURIComponent(req.url.split('?')[0]);
-    if (p === '/' || p === '') p = '/index.html';
+    if (p === '/' || p === '') p = '/studio.html';
     const f = join(EDITOR, normalize(p).replace(/^(\.\.[/\\])+/, ''));
     if (!f.startsWith(EDITOR)) { res.writeHead(403).end(); return; }
     const buf = await readFile(f);
@@ -111,7 +111,7 @@ const BASE = 'http://127.0.0.1:' + srv.address().port;
 /* ── 3. 页面里真实渲染 + 量测 ── */
 const b = await launch({ port: 9421, width: 1280, height: 900 });
 try {
-  await b.goto(BASE + '/index.html');
+  await b.goto(BASE + '/studio.html');
   await sleep(1200);
 
   const res = await b.eval(`(async () => {

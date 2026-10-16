@@ -25,7 +25,7 @@ const out = (k, v) => console.log(`${k}: ${typeof v === 'string' ? v : JSON.stri
 if (!EDGE) { console.error('找不到 msedge.exe'); process.exit(1); }
 const profile = mkdtempSync(join(tmpdir(), 'subfab-quit-'));
 const edge = spawn(EDGE, [
-  `--app=${BASE}/editor/index.html`, `--remote-debugging-port=${CDP_PORT}`,
+  `--app=${BASE}/editor/studio.html`, `--remote-debugging-port=${CDP_PORT}`,
   `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
   '--disable-extensions', '--window-size=1200,800',
 ], { stdio: 'ignore' });

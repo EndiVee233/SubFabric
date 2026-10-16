@@ -14,7 +14,7 @@ const raw = url => new Promise((resolve, reject) => {
 try {
   for (const name of ['subtitles-octopus.js', 'subtitles-octopus-worker.js', 'subtitles-octopus-worker.wasm', 'fonts/NotoSansCJKsc-Regular.otf']) put('editor/vendor/' + name, 'isolated resource');
   // 按真实 HTTP 响应递归加载浏览器 script/style/import 图，新增依赖遗漏会直接失败。
-  const seen = new Set(), queue = ['/editor/index.html'];
+  const seen = new Set(), queue = ['/editor/studio.html'];
   while (queue.length) {
     const url = queue.shift(); if (seen.has(url)) continue; seen.add(url);
     const response = await s.call(url); assert.equal(response.status, 200, url);
@@ -33,6 +33,7 @@ try {
     const r = await raw(url); assert.ok([403, 404].includes(r.status), url + ': ' + r.status); assert.ok(!r.body.includes('private-data'));
   }
   assert.equal((await s.call('/editor/js/main.js', { method: 'POST' })).status, 405);
+  assert.ok([403,404].includes((await s.call('/editor/index.html')).status));
   // 明确样例目录仍可提供中文文件；其他根目录同名文件不公开。
   put('samples/示例.srt', 'sample-subtitle'); put('示例.srt', 'private-data');
   const samples = await (await s.call('/api/samples')).json(); assert.equal(samples.subs.length, 1);

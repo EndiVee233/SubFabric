@@ -9,7 +9,7 @@ import { parseSRT, serializeSRT } from '../editor/js/srt.js';
 // detects the prior behavior. Production files and import dependencies are untouched.
 const probe = process.argv.find(arg => arg.startsWith('--probe='))?.slice(8) || '';
 if (probe) {
-  assert.ok(['initial-editor', 'resources-return', 'upload-lock'].includes(probe), 'known regression probe');
+  assert.ok(['initial-editor', 'upload-lock'].includes(probe), 'known regression probe');
   process.on('uncaughtException', error => { console.error('studio-navigation probe ' + probe + ': ' + error.message.split('\n')[0]); process.exit(1); });
 }
 async function loadProduction(name, transform = null) {
@@ -493,9 +493,7 @@ assert.equal(frames.size, playerFrames, 'select controls add no animation-frame 
 await settle();
 
 const state = { project: null, format: null, srtCues: [] };
-const { initProjects } = await loadProduction('project.js', probe === 'resources-return'
-  ? source => source.replace(/const fromSettings = previousRoute === '#\/settings' \|\| studioUI && previousRoute === '#\/resources';/, "const fromSettings = previousRoute === '#/settings';")
-  : probe === 'upload-lock'
+const { initProjects } = await loadProduction('project.js', probe === 'upload-lock'
     ? source => source.replace(/if \(studioUI && npSubmitting && h !== '#\/new'\) \{[\s\S]*?\n    \}/, '') : null);
 const api = initProjects({ state, video: $('video'), timeline: { setPeaks() {} }, panel: { showConfirm() {} },
   toast: text => toasts.push(text), setPlaybackAudioMode() {}, loadVideoUrl() {},
@@ -565,8 +563,12 @@ assert.equal(stableInput.value, '260');
 assertAssInEditor('return'); assInput.dispatchEvent(new Event('input')); assert.equal(assChanges, 1, 'ASS listener remains attached');
 assertMaterials('settings reclassification');
 
-// Direct sidebar entry must retain the new-project return context and File/subtitle data.
-for (const route of ['settings', 'resources']) {
+// Settings is the only global sidebar entry; the old resources alias is no longer rendered.
+assert.equal($('sf-nav').querySelector('[data-route="resources"]'), null, 'resource management is removed from the sidebar');
+assert.equal(document.getElementById('sf-resource-links'), null, 'resource shortcut strip is removed from settings');
+
+// Direct settings entry retains the new-project return context and File/subtitle data.
+for (const route of ['settings']) {
   const link = $('sf-nav').querySelector(`[data-route="${route}"]`);
   assert.ok(link, 'sidebar route exists'); link.click(); await settle();
   assert.equal(location.hash, '#/' + route);
@@ -580,20 +582,23 @@ for (const route of ['settings', 'resources']) {
   assert.equal($('np-set-model').value, model, route + ': global configuration reloads');
 }
 
-// Switching between resource/settings pages must retain the initial caller.
-await navigate('#/resources'); await navigate('#/settings'); await click('st-close');
-assert.equal(location.hash, '#/new', 'resource/settings cross-navigation returns to original caller');
-assertMaterials('cross-navigation');
+// Old resource bookmarks remain safe aliases, but resolve to the single settings page.
+await navigate('#/resources');
+assert.equal(location.hash, '#/settings', 'legacy resource bookmark redirects to settings');
+assert.equal($('st-view').hidden, false, 'legacy resource bookmark shows settings');
+await click('st-close');
+assert.equal(location.hash, '#/new', 'legacy resource alias preserves the original caller');
+assertMaterials('legacy resource alias');
 assert.equal(historyBacks, 0, 'Studio return uses its recorded caller rather than stale browser history');
 
-// Save-and-return is the same real save chain in the new resource route.
-await navigate('#/resources'); await click('st-save');
+// Save-and-return stays on the single settings route.
+await navigate('#/settings'); await click('st-save');
 assert.ok(requests.some(request => request.url === '/api/asr/hint' && request.method === 'POST'), 'global enhancement save calls its own API');
 assert.equal(requests.some(request => request.url === '/api/translate/config' && request.method === 'POST'),false,'global save does not silently overwrite named translation schemes');
-assert.equal(location.hash, '#/resources', 'save waits for the feedback timer');
+assert.equal(location.hash, '#/settings', 'save waits for the feedback timer');
 await runTimer(600);
 assert.equal(location.hash, '#/new', 'resource save-and-return exits after successful save');
-assertMaterials('resource save');
+assertMaterials('settings save');
 
 // Named schemes start empty, validate names, retain failed drafts and never write keys to storage.
 await navigate('#/settings'); await click('sf-settings-tab-translate');
@@ -732,4 +737,4 @@ assert.equal(location.hash, '#/home', 'navigation unlocks after completion');
 assert.deepEqual(unexpected, [], 'all fetches stay in the explicit in-memory API map');
 assert.deepEqual(asyncErrors, []);
 assert.equal(eventJobs.size, 0, 'no event handler remains pending');
-console.log('studio-navigation: immediate scrub/late-media/keyboard/hover/reset, direct editor, settings/resources return+reload, resource save, stale ASS guard, deferred upload navigation lock and original submission payload passed');
+console.log('studio-navigation: immediate scrub/late-media/keyboard/hover/reset, direct editor, settings return, legacy resources alias, settings save, stale ASS guard, deferred upload navigation lock and original submission payload passed');

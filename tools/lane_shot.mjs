@@ -53,7 +53,7 @@ const srv = createServer(async (req, res) => {
   let f = null;
   try {
     let p = decodeURIComponent(req.url.split('?')[0]);
-    if (p === '/' || p === '') p = '/index.html';
+    if (p === '/' || p === '') p = '/studio.html';
     f = join(EDITOR, normalize(p).replace(/^(\.\.[/\\])+/, ''));
   } catch {}
   if (!f || !f.startsWith(EDITOR)) { res.writeHead(404).end('nf'); return; }
@@ -68,7 +68,7 @@ const BASE = 'http://127.0.0.1:' + srv.address().port;
 
 const b = await launch({ port: 9451, width: 1180, height: 760 });
 try {
-  await b.goto(BASE + '/index.html');
+  await b.goto(BASE + '/studio.html');
   await sleep(1200);
 
   /* 两种面板高度: 矮(100px, 修复前字幕块消失) 与 正常(300px) */

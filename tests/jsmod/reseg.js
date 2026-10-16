@@ -8,8 +8,8 @@
  *
  * 设计要点（防止 LLM 破坏时间轴对齐）:
  *  - **不让 LLM 改写/重排单词** —— 它会丢词、换词，词一时间戳立刻错位。
- *    只把「编号 词」的清单发给它，让它返回 [[词序号, 标点], …]，
- *    单词由程序原样拼回，词一个不丢，时间戳天然对齐。
+ *    只把「编号 词」的清单发给它，让它按原顺序复述并在词尾补标点；
+ *    程序校验词序后再映射为标点对，词一个不丢，时间戳天然对齐。
  *  - 【用户报"切在半句上"的根治】**按静音边界切批**（见 planBatches）：
  *    旧实现每 400 词盲切一刀，模型拿到的是**从半句开始、到半句结束**的词表 ——
  *    它看不到后文，必然给最后一个词收个句读，于是每个批次边界附近都多出一个断点。
@@ -138,9 +138,8 @@ function flattenWords(segs) {
   return words;
 }
 
-/** 解析 LLM 回复 → 合法的 [[idx, punct], …]（升序、去重、范围校验）。
- *  解不出 JSON 数组 / 一个合法对都没有 → 返回 null（调用方重试）。
- *  注意: 思维链已在 llm-text.js 里剥掉, 这里只做 JSON 提取与字段校验。 */
+/** 兼容解析旧版 JSON 标点对 → 合法的 [[idx, punct], …]（升序、去重、范围校验）。
+ *  默认纯文本格式由 parsePunctTextReply 解析；这里保留 JSON 仅用于旧模型/缓存兼容。 */
 function parsePunctReply(content, n) {
   const { parseJsonArray } = require('./llm-text.js');
   const arr = parseJsonArray(content);
@@ -155,6 +154,60 @@ function parsePunctReply(content, n) {
     if (!seen.has(i)) seen.set(i, p === '…' ? '.' : p);   // 省略号按句号切
   }
   if (!seen.size) return null;
+  return [...seen.entries()].sort((a, b) => a[0] - b[0]);
+}
+
+/**
+ * 解析模型直接返回的「原词 + 标点」纯文本。
+ *
+ * 这是分句的首选格式：模型只需把输入词按原顺序复述一遍，并在词后补
+ * `, . ? !`，程序再按词序映射回逐词时间轴。JSON 标点对仍由
+ * parsePunctReply 兼容解析，便于旧模型/缓存平滑过渡。
+ */
+function parsePunctTextReply(content, words, lo, hi) {
+  const { stripReasoning } = require('./llm-text.js');
+  let text = stripReasoning(content);
+  text = text.replace(/```(?:text|plaintext|markdown)?/gi, '').replace(/```/g, '').trim();
+  if (!text) return null;
+  const src = (words || []).slice(lo, hi);
+  if (!src.length) return null;
+
+  const clean = (token) => String(token || '')
+    .replace(/^[.,!?;:…—–\-"'“”‘’(){}\[\]«»]+/, '')
+    .replace(/[.,!?;:…—–\-"'“”‘’(){}\[\]«»]+$/, '')
+    .toLowerCase();
+  const trailingPunct = (token) => {
+    const m = String(token || '').match(/([,.?!…]+)(?:["'”’»\])}]*)$/);
+    if (!m) return '';
+    const marks = m[1];
+    const end = [...marks].reverse().find(p => SENT_PUNCT.has(p));
+    return end === '…' ? '.' : (end || '');
+  };
+
+  const tokens = text.match(/\S+/g) || [];
+  const pairs = [];
+  let si = 0;
+  for (let oi = 0; oi < tokens.length; oi++) {
+    let token = tokens[oi];
+    // 容忍模型顺手保留输入编号："12. word" / "12 word"。
+    token = token.replace(/^\d+[.):、：-](?=\S)/, '');
+    if ((/^\d+$/.test(token) || /^\d+[.):、：-]$/.test(token))
+      && si < src.length && Number(token.replace(/[.):、：-]$/, '')) === lo + si) continue;
+    // 独立标点 token 贴回前一个词；模型偶尔会把句号单独换行。
+    if (/^[,.?!…]+$/.test(token)) {
+      const p = [...token].reverse().find(x => SENT_PUNCT.has(x));
+      if (p && si > 0) pairs.push([lo + si - 1, p === '…' ? '.' : p]);
+      continue;
+    }
+    if (si >= src.length || clean(token) !== clean(src[si].word)) return null;
+    const p = trailingPunct(token);
+    if (p) pairs.push([lo + si, p]);
+    si++;
+  }
+  if (si !== src.length || !pairs.length) return null;
+  // 同一个词若同时出现尾随和独立标点，保留第一次出现的标点。
+  const seen = new Map();
+  for (const [i, p] of pairs) if (!seen.has(i)) seen.set(i, p);
   return [...seen.entries()].sort((a, b) => a[0] - b[0]);
 }
 
@@ -280,16 +333,16 @@ function groupsToSegments(groups) {
 /** 系统提示词：明确"这是连续语音的中段"，并要求别在首尾强行断句 */
 const SYS_PROMPT = [
   'You receive a numbered list of English words from a speech-to-text transcript, in order.',
-  'Insert punctuation (commas at short pauses, and . ? ! at real sentence ends) so the text reads naturally.',
+  'Return the same words in the same order as plain text, inserting punctuation (commas at short pauses, and . ? ! at real sentence ends) so the text reads naturally.',
   'IMPORTANT: this list is a MIDDLE SLICE of a continuous transcript — its first and last words may be in the middle of a sentence.',
   'Do NOT force a sentence boundary at the very first or very last word unless the speech clearly ends there.',
-  'Reply ONLY a JSON array of pairs [wordIndex, punctuation], where wordIndex is the index of the word AFTER WHICH the punctuation goes, and punctuation is one of , . ? !',
-  'Do NOT put a comma after every word. Do NOT rewrite, add, drop, or reorder any word. Do not output the words back. No explanations.',
+  'Reply ONLY the punctuated words as plain text. Do not output JSON, indexes, numbering, markdown, or explanations.',
+  'Do NOT put a comma after every word. Do NOT rewrite, add, drop, or reorder any word.',
 ].join(' ');
 
-const STRICT_PROMPT = '【极其重要】上一次的回复不是合法的 JSON 标点对数组。这一次必须只输出 JSON 数组，'
-  + '每个元素是 [词序号, 标点]，标点仅限 , . ? ! ，不要输出任何别的内容。'
-  + '也不要给每个词都加逗号 —— 只在真正需要停顿或断句的地方加。';
+const STRICT_PROMPT = '【极其重要】上一次的回复没有按原词逐字返回。这一次必须只输出纯文本：'
+  + '把输入词按原顺序完整复述一遍，只在需要的位置给词尾加 , . ? !；不要 JSON、编号、markdown 或解释。'
+  + '不要给每个词都加逗号，只在真正需要停顿或断句的地方加。';
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -309,7 +362,7 @@ async function askBatch(chat, words, lo, hi, onProgress, label) {
   const list = words.slice(lo, hi).map((w, k) => (lo + k) + ' ' + w.word).join('\n');
   // 输出长度按"每个词都可能被标点"估：模型在大喊大叫的段落会给出很密的标点对，
   // 低估就会被 max_tokens 截断，整批白白重来一次（实测 261 词的批 825 tokens 不够用）。
-  const maxTokens = Math.min(4096, Math.max(768, Math.round((hi - lo) * 2) + 768));
+  const maxTokens = Math.min(8192, Math.max(1024, Math.round((hi - lo) * 3) + 512));
   let lastErr = '';
   let dense = null;                                  // 解析出来但密度异常的最后一版, 留着抢救
   for (const s of ['', STRICT_PROMPT]) {
@@ -317,7 +370,8 @@ async function askBatch(chat, words, lo, hi, onProgress, label) {
       try {
         const content = await chat([{ role: 'system', content: s || SYS_PROMPT }, { role: 'user', content: list }],
           { maxTokens, kind: 'reseg' });
-        const pairs = parsePunctReply(content, n);
+        // 首选纯文本解析；JSON 标点对作为兼容输入保留。
+        const pairs = parsePunctTextReply(content, words, lo, hi) || parsePunctReply(content, n);
         if (!pairs) { lastErr = '未返回合法标点对: ' + String(content || '').slice(0, 160); }
         else if (!punctPairsSane(pairs, hi - lo)) {
           lastErr = `标点密度异常（${pairs.length} 个标点 / ${hi - lo} 词）—— 疑似"每词都加逗号"，已丢弃`;
@@ -472,6 +526,6 @@ async function resegWithLLM(chat, segs, onProgress, opts) {
 
 module.exports = {
   SENT_PUNCT, cleanWordText, flattenWords, fusedEnglishNumberParts, repairFusedEnglishNumbers,
-  parsePunctReply, applyPunct, groupResegWords, mergeTinyFrags, groupsToSegments, resegWithLLM,
+  parsePunctReply, parsePunctTextReply, applyPunct, groupResegWords, mergeTinyFrags, groupsToSegments, resegWithLLM,
   planBatches, softFold, wordsSig,
 };

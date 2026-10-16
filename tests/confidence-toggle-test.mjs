@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 const SRC = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
-const HTML = fs.readFileSync(path.join(REPO, 'editor', 'index.html'), 'utf8');
+const HTML = fs.readFileSync(path.join(REPO, 'editor', 'studio.html'), 'utf8');
 const PJS = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
 
 let pass = 0, fail = 0;

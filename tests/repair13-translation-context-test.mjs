@@ -11,7 +11,9 @@ const messageParts = body => {
   const marker = /\[\[以下 \d+ 行才是本次要翻译的内容\]\]\n/;
   return { msg, texts: msg.split(marker).at(-1).split('\n') };
 };
-const llm = await mockLlm(body => messageParts(body).texts.map(t => '译文' + t.match(/\d+/)[0]));
+// 模型直接返回逐行纯文本；生产解析器仍兼容旧 JSON 数组，但本测试固定走新默认路径。
+const llm = await mockLlm(body => ({ __rawContent: true,
+  content: messageParts(body).texts.map(t => '译文' + t.match(/\d+/)[0]).join('\n') }));
 const s = await isolatedServer();
 try {
   const dir = path.join(s.root, 'projects/p-context'); fs.mkdirSync(dir, { recursive: true });
@@ -32,6 +34,8 @@ try {
   };
   configure(2);
   let calls = await start([]);
+  assert.match(llm.requests[0].messages[0].content, /直接输出译文|纯文本译文/);
+  assert.doesNotMatch(llm.requests[0].messages[0].content, /只输出一个 JSON 数组/);
   assert.deepEqual(calls.map(c => c.texts.length), [5, 5, 1]);
   assert.equal(calls[0].msg, 'line0\nline1\nline2\nline3\nline4');
   assert.match(calls[1].msg, /line3\t=> 译文3\nline4\t=> 译文4/);

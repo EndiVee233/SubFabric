@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SubFabric · 字幕工作台</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="css/style.css">
-<link rel="stylesheet" href="css/ui.css">
 <script src="js/accent.js"></script>
 <link rel="stylesheet" href="css/studio.css">
 <script>
@@ -42,14 +40,13 @@
   <span class="sf-nav-label">工作空间</span>
   <a href="#/home" data-route="home" data-ico="folder">稿件库</a>
   <a href="#/tasks" data-route="tasks" data-ico="activity">任务中心 <span id="sf-task-count"></span></a>
-  <a href="#/resources" data-route="resources" data-ico="inbox">资源管理</a>
   <div class="sf-folder-head"><span>文件夹</span><button type="button" id="sf-folder-add" aria-label="新建文件夹">＋</button></div>
   <div id="sf-folders"></div>
   <div class="sf-nav-bottom"><a href="#/settings" data-route="settings" data-ico="sliders">设置</a><a href="#/help" data-route="help" data-ico="info">帮助与快捷键</a><p>本地工作空间 · 自动保存</p></div>
 </aside>
 <header id="sf-topbar" class="sf-topbar"><span>工作空间 <i>/</i> <b id="sf-breadcrumb">稿件库</b></span><div><button type="button" class="btn" id="sf-direct-editor">打开编辑器</button><button type="button" class="btn btn-accent" id="sf-create">新建稿件</button></div></header>
 <div id="sf-notice" role="status" hidden></div>
-<section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在任务中心查看处理 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件，可导出样式预设；后处理特效保存在本机，导出时应用。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article><article><h2>界面切换</h2><p>在程序根目录的 ui-config.json 中设 ui 为 legacy，然后刷新根入口，即可启用旧界面；new 为默认新界面。</p><a class="btn" href="index.html#/home">打开旧界面</a></article></div></div></section>
+<section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在任务中心查看处理 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件，可导出样式预设；后处理特效保存在本机，导出时应用。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article></div></div></section>
 <div id="app">
 
   <!-- ══════════ 工具栏 ══════════ -->
@@ -149,23 +146,23 @@
             <input type="checkbox" id="cb-follow-toolbar" checked>
             <span class="switch-slider"></span>
           </label>
-          <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示异常行" disabled>⚠ <span id="bad-count">0</span></button>
+          <button class="btn btn-mini warn-toggle" id="btn-bad-rows" title="只显示异常行" disabled><span data-ico="alert"></span> <span id="bad-count">0</span></button>
   <button class="btn btn-mini conf-toggle" id="btn-low-conf" title="只显示 ASR 置信度偏低的行" disabled>◔ <span id="low-conf-count">0</span></button>
   <div class="badcat-wrap" id="badcat-wrap" hidden>
     <button class="btn btn-mini" id="btn-badcat" title="按异常**类别**筛选（可多选）：时间异常、字幕重叠、缺语言行、角色问题、逐词缺词">▾ 异常筛选<span id="badcat-count"></span></button>
     <div class="badcat-panel" id="badcat-panel" hidden></div>
   </div>
   <!-- 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，先出预览、确认后再重识别 -->
-  <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处（没说完 / 被硬切 / 拼接痕迹 / 疑似听错），先给预览，确认后再重识别那几段" disabled>🧠 反思纠错</button>
+  <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处（没说完 / 被硬切 / 拼接痕迹 / 疑似听错），先给预览，确认后再重识别那几段" disabled><span data-ico="wand"></span> 反思纠错</button>
   <!-- 全片逐词重校对：两级、不用 TTS。① 对该句**原片音频**切片做无热词重识别，
        取实测逐词时间；② 只对①不达标的句子，用 LLM 从该句已有词里筛出的不常见/专有词
        做逐句热词重试，且必须更吻合才采纳。**只改逐词时间戳**，不动文本。 -->
   <button class="btn btn-mini" id="btn-realign-full"
-          title="两级：先对该句原片音频重新识别取实测逐词时间；不达标的句子再用该句已有词里挑出的专有名词做一次热词偏置重试，更吻合才采纳。只改逐词时间（不动文本）。全片要几十分钟，先出预览再确认" disabled>🎯 全片逐词重校对</button>
+          title="两级：先对该句原片音频重新识别取实测逐词时间；不达标的句子再用该句已有词里挑出的专有名词做一次热词偏置重试，更吻合才采纳。只改逐词时间（不动文本）。全片要几十分钟，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
   <!-- 分段导入（多人协作）：把别人做的那一段字幕并进本稿。
        默认只填空档；撞到已有字幕会列出来问，不会静默覆盖。 -->
           <button class="btn btn-mini" id="btn-region-import"
-                  title="多人协作：把别人做的这一段字幕并进当前稿件。要先说明「我这份的 0:00 对应本稿的第几秒」；默认只填空档，碰到已有字幕会先问" disabled>📥 分段导入</button>
+                  title="多人协作：把别人做的这一段字幕并进当前稿件。要先说明「我这份的 0:00 对应本稿的第几秒」；默认只填空档，碰到已有字幕会先问" disabled><span data-ico="upload"></span> 分段导入</button>
         </div>
         <!-- ⚠ 上面这个 </div> 是 .ph-row 的闭合。**它曾经缺失**，于是紧随其后的
              </div> 被它吃掉，#tab-subs 少闭合一层 —— 浏览器只好把 #tab-roles /
@@ -917,7 +914,7 @@
       <button type="button" class="btn btn-mini" id="rim-from-sel" title="用时间轴上已拖出的选区填这两个框（选区 = Ctrl+左键在轨道上拖）">用选区</button>
     </div>
     <div class="np-region-note" id="rim-range-note"></div>
-    <!-- 这个对话框**不挡时间轴**（见 style.css 里 #rim-overlay 的注释），
+    <!-- 这个对话框**不挡时间轴**（见 studio.css 里 #rim-overlay 的注释），
          所以可以直接去下面拖一段选区 —— 但选区手势是 Ctrl+拖，不写出来没人知道。 -->
     <div class="rim-hintbar">在下面的<b>时间轴</b>上按住 <b>Ctrl</b> 用左键拖一段选区，
       这里会自动填好（也可以直接手输时间）。</div>
@@ -1476,7 +1473,7 @@
       </div>
 
     <!-- 左侧分类栏。这里**必须**用 .st-tabs（不能另套一层 wrapper）：
-         ui.css 的 `#st-view .st-box` 是 grid（192px + 1fr，三行 head/body/actions），
+         studio.css 的 `#st-view .st-box` 是 grid（192px + 1fr，三行 head/body/actions），
          `.st-tabs` / `.st-body` / `.st-actions` 都是它的**直接子元素**并按 grid-area 定位。
          套一层 wrapper 会让 grid 拿不到这些子元素 → 右栏被压成 0 宽（实测踩过）。
          JS 侧沿用 `.st-tab` + `data-stp`，切换逻辑不用改。 -->
@@ -1492,7 +1489,6 @@
     </div>
 
     <div class="st-body">
-      <div id="sf-resource-links" class="sf-resource-links" hidden><button type="button" data-setting="models">识别模型</button><button type="button" data-resource="llm">翻译方案与术语</button><button type="button" data-setting="enhance">热词与识别增强</button></div>
       <div class="st-panel" id="st-panel-models" role="tabpanel" data-stp="models" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-models">语音识别</h2><p>准备识别引擎、模型文件和本机运行环境。</p><p class="sf-settings-save-note">模型操作和下载位置即时保存；已有模型不会随目录移动。</p></div>
         <!-- 隐藏旧二级入口供业务刷新兼容；新界面使用独立一级分类。 -->
         <div class="st-subtabs" hidden role="tablist" aria-label="模型设置">
@@ -1845,7 +1841,7 @@
               <option value="off">关闭</option>
               <option value="auto">建稿后自动跑一次（仍需确认才改）</option>
             </select>
-            <span class="gl-hint" style="flex:1">在稿件页点「🧠 反思纠错」触发。它会找出<b>没说完 / 被硬切 / 拼接痕迹 / 疑似听错</b>的地方，先给预览清单，你勾选后才重识别那几段。</span>
+            <span class="gl-hint" style="flex:1">在稿件页点「反思纠错」触发。它会找出<b>没说完 / 被硬切 / 拼接痕迹 / 疑似听错</b>的地方，先给预览清单，你勾选后才重识别那几段。</span>
           </div>
           <div class="st-row" style="margin-top:8px">
             <span class="st-lbl" style="min-width:auto">上下文</span>
@@ -1882,7 +1878,7 @@
         <div class="st-card">
           <div class="st-card-title">重排逐词时间 <span class="st-card-note">原片音频重识别 → 实测逐词时间</span></div>
           <p class="gl-hint">
-            右键字幕块选「重排逐词时间」，或点「🎯 全片逐词重校对」时用这里的设置。
+            右键字幕块选「重排逐词时间」，或点「全片逐词重校对」时用这里的设置。
             直接切出这条字幕在<b>原片音频</b>里的那一段重新识别，拿识别出来的真实位置当逐词时间
             —— <b>只改逐词时间，不动文本</b>。
           </p>
@@ -1990,8 +1986,8 @@
           <div class="sf-settings-image-tools"><button type="button" class="btn" id="sf-image-pick">选择图片</button><button type="button" class="btn" id="sf-image-clear">清除图片</button><input type="file" id="sf-image-file" accept="image/png,image/jpeg,image/webp" hidden><span class="gl-hint">PNG、JPEG 或 WebP · 2MB 以内</span></div>
           <div class="sf-settings-line"><div><b>明暗模式</b><p>随系统变化，或保持喜欢的明暗。</p></div><div class="sf-settings-segments" role="group" aria-label="明暗模式"><button type="button" data-appearance-mode="light" aria-pressed="false">浅色</button><button type="button" data-appearance-mode="dark" aria-pressed="false">深色</button><button type="button" data-appearance-mode="system" aria-pressed="false">跟随系统</button></div><div hidden><select id="sf-mode" aria-label="明暗模式"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div></div>
           <div class="sf-settings-line"><div><label for="sf-motion">界面动效</label><p>页面转场、轻回弹与流光；系统减少动效偏好优先。</p></div><select id="sf-motion"><option value="on">开启</option><option value="off">减少动效</option></select></div>
-          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-dim">深色毛玻璃压暗</label><p>提高压暗可增强文字可读性，浅色模式保持原有材质。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-dim" min="72" max="92" step="1" value="80"><output id="sf-glass-dim-value" for="sf-glass-dim">80%</output></div></div>
-          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-blur">深色毛玻璃模糊度</label><p>仅模糊卡片后方背景，文字与视频保持清晰。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-blur" min="0" max="32" step="1" value="18"><output id="sf-glass-blur-value" for="sf-glass-blur">18px</output></div></div>
+          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-dim">毛玻璃压暗</label><p>控制浅色与深色模式卡片底色的压暗程度，数值越高文字越清晰。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-dim" min="72" max="92" step="1" value="80"><output id="sf-glass-dim-value" for="sf-glass-dim">80%</output></div></div>
+          <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-blur">毛玻璃模糊度</label><p>仅模糊卡片后方背景，文字与视频保持清晰，所有主题包通用。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-blur" min="0" max="32" step="1" value="18"><output id="sf-glass-blur-value" for="sf-glass-blur">18px</output></div></div>
           <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-opacity">毛玻璃透明度</label><p>降低数值可让背景更透；设置为 100% 时保持当前卡片的遮罩强度。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-opacity" min="20" max="100" step="1" value="100"><output id="sf-glass-opacity-value" for="sf-glass-opacity">100%</output></div></div>
           <p id="sf-theme-status" class="gl-hint" role="status">外观更改立即保存。</p>
         </div>

@@ -24,7 +24,7 @@ const edge = spawn(EDGE, [
   '--headless=new', `--remote-debugging-port=${PORT}`,
   `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
   '--disable-gpu', '--disable-extensions', '--window-size=1500,1000',
-  '--force-device-scale-factor=1', `${APP}/editor/index.html#/settings`,
+  '--force-device-scale-factor=1', `${APP}/editor/studio.html#/settings`,
 ], { stdio: 'ignore' });
 
 let target = null;
@@ -76,7 +76,7 @@ let T = {};
 try { T = JSON.parse(tree); } catch { T = { err: String(tree) }; }
 if (T.err) { console.log('  ✗ ' + T.err); ws.close(); edge.kill(); process.exit(1); }
 
-/* grid 骨架（ui.css 的 #st-view .st-box）要求 head / st-tabs / st-body 是**直接子元素**，
+/* grid 骨架（studio.css 的 #st-view .st-box）要求 head / st-tabs / st-body 是**直接子元素**，
    否则 grid 拿不到它们、右栏会被压成 0 宽（实测踩过：多套一层 wrapper 就中招）。
    st-actions 排在第 3 行、也是直接子元素，所以直接子节点应当是这四块。 */
 ok(Array.isArray(T.boxChildren) && T.boxChildren.length === 4

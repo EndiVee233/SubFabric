@@ -13,6 +13,7 @@ const ok = (cond, name, extra) => {
 };
 const j = (a) => JSON.stringify(a);
 const S = K.splitEnglishWords;
+const A = K.allocateWordTimes;
 
 /* 基本: 空白分隔仍然管用 */
 ok(j(S('hello world')) === j(['hello', 'world']), '空白分词', j(S('hello world')));
@@ -48,6 +49,24 @@ const sent = { words: [], start: 0, end: 3, text: '' };
 const w = K.recalcWords(sent, 'SMP,I plan.to', 0, 3);
 ok(w.length === 4 && j(w.map(x => x.w)) === j(['SMP,', 'I', 'plan.', 'to']), 'recalcWords 同口径', j(w.map(x => x.w)));
 
+/* 新增/重算逐词时间按字母数加权："i can do it" = 1:3:2:2。 */
+{
+  const weighted = A(['i', 'can', 'do', 'it'], 0, 8);
+  ok(weighted.map(x => x.s) .every((v, i) => Math.abs(v - [0, 1, 4, 6][i]) < 1e-6),
+    '新增逐词按字母数计算起点', j(weighted));
+  ok(weighted.map(x => x.e).every((v, i) => Math.abs(v - [1, 4, 6, 8][i]) < 1e-6),
+    '新增逐词按字母数计算终点', j(weighted));
+  const changedText = K.recalcWords({ words: weighted, start: 0, end: 8 }, 'i can do it', 0, 8);
+  ok(j(changedText) === j(weighted), '同文本重算保持已确认词级时间');
+  const changedWord = K.recalcWords({ words: weighted, start: 0, end: 8 }, 'i longer do it', 0, 8);
+  ok(changedWord.length === 4
+    && Math.abs(changedWord[0].e - 8 / 11) < 1e-6
+    && Math.abs(changedWord[1].e - 56 / 11) < 1e-6
+    && Math.abs(changedWord[2].e - 72 / 11) < 1e-6
+    && changedWord[3].e === 8,
+    '改字幕即使词数不变也按新字母数重分配', j(changedWord));
+}
+
 /* 边界: 纯标点 */
 ok(j(S('...')) === j(['...']), '纯标点文本(单块)', j(S('...')));
 ok(j(S('a . b')) === j(['a.', 'b']), '空格+标点混合', j(S('a . b')));
@@ -82,9 +101,12 @@ ok(j(S('a . b')) === j(['a.', 'b']), '空格+标点混合', j(S('a . b')));
   const words = K.recalcWords(base, base.text, base.start, base.end);
   ok(j(words.map(x => x.w)) === j(['I', 'just', 'got', '24', 'iron'])
     && words[0].s === 1 && words.at(-1).e === 3, '普通 ASS 转换复用英数保护和整句时长');
-  const same = K.recalcWords({ ...base, words, text: base.text }, 'We just got24 iron', 1, 3);
+  const same = K.recalcWords({ ...base, words, text: base.text }, base.text, 1, 3);
   ok(same.every((w, i) => Math.abs(w.s - words[i].s) < 1e-6 && Math.abs(w.e - words[i].e) < 1e-6),
-    '词数不变优先保持原词时间');
+    '文本不变时保持原词时间');
+  const renamed = K.recalcWords({ ...base, words, text: base.text }, 'We just got24 iron', 1, 3);
+  ok(renamed.length === words.length && renamed.some((w, i) => Math.abs(w.e - words[i].e) > 1e-6),
+    '词数不变但文本改变时按新字母数重分配');
   const changed = K.recalcWords({ ...base, words, text: base.text }, 'We got 24 iron today now', 1, 3);
   ok(changed.length === 6 && changed[0].s === 1 && changed.at(-1).e === 3,
     '词数变化后仍按现有分配策略铺满句时长');

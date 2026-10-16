@@ -1,0 +1,9 @@
+{
+  "schema": "subfabric-theme-v1",
+  "id": "windows-uwp",
+  "name": "Windows UWP",
+  "version": "1.0.0",
+  "description": "Windows 10 Fluent：紧凑控件、细描边与规整工作区",
+  "design": "uwp",
+  "seed": "#0078D7"
+}

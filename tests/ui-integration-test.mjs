@@ -10,6 +10,8 @@ const themes = themesContext.window.SF_THEMES;
 const stateSource = fs.readFileSync(path.join(root, 'editor/js/studio-state.js'), 'utf8');
 const { normalizeStudio, projectPhase, matchesProject, imageData } = await import('data:text/javascript;base64,' + Buffer.from(stateSource).toString('base64'));
 assert.equal(normalizeStudio(null, themes).themePack, 'studio');
+assert.ok(themes.get('windows-uwp').design === 'uwp', 'Windows UWP theme is built in');
+assert.equal(themes.valid({ schema: 'subfabric-theme-v1', id: 'windows-uwp-copy', name: 'Windows UWP Copy', version: '1.0.0', description: 'test', design: 'uwp', seed: '#0078d4' }), true);
 assert.equal(normalizeStudio({ themePack: 'bad', accent: 'url(evil)', mode: 'bad', image: '<svg>', motion: 'bad', custom: [{}] }, themes).accent, '#5c7560');
 assert.equal(imageData('data:image/svg+xml;base64,AAAA'), false);
 assert.deepEqual(normalizeStudio({},themes).auroraColors,[],'old preferences inherit theme colors');
@@ -41,14 +43,25 @@ assert.ok(matchesProject(active, { route: '#/tasks', filter: 'active', folder: '
 assert.equal(matchesProject(ready, { route: '#/tasks' }), false);
 assert.equal(matchesProject(error, { filter: 'ready' }), false);
 assert.ok(matchesProject({ id: 'p-window', name: 'Creating', prepare: {} }, { route: '#/tasks' }), 'new prepare window remains in task center');
-const old = fs.readFileSync(path.join(root, 'editor/index.html'), 'utf8'), fresh = fs.readFileSync(path.join(root, 'editor/studio.html'), 'utf8');
-// 不仅 ASS：所有旧 id 和选项都保留；两个历史重复外观 id 在新入口规范化。
+const fresh = fs.readFileSync(path.join(root, 'editor/studio.html'), 'utf8');
+const studioCss = fs.readFileSync(path.join(root, 'editor/css/studio.css'), 'utf8');
+const studioJs = fs.readFileSync(path.join(root, 'editor/js/studio.js'), 'utf8');
+assert.doesNotMatch(fresh, /data-route="resources"|id="sf-resource-links"|data-resource=/, 'Studio exposes one global settings entry without duplicate resource shortcuts');
+assert.doesNotMatch(fresh, /🧠|🎯|📥/, 'Studio action buttons use the shared SVG icon registry instead of emoji glyphs');
+const generatorSource = fs.readFileSync(path.join(root, 'tools/generate-studio.mjs'), 'utf8');
+assert.doesNotMatch(generatorSource, /data-route="resources"/, 'Studio generator keeps the resource route out of the sidebar');
+// Studio now owns the production markup; the former legacy entry is intentionally absent.
+assert.equal(fs.existsSync(path.join(root, 'editor/index.html')), false);
+assert.equal(fs.existsSync(path.join(root, 'editor/css/style.css')), false);
+assert.equal(fs.existsSync(path.join(root, 'editor/css/ui.css')), false);
+assert.ok(fresh.includes('id="sf-settings-tab-theme"'));
+assert.match(fresh, /毛玻璃压暗/);
+assert.match(fresh, /毛玻璃模糊度/);
+assert.match(studioCss, /data-theme=light[\s\S]*sf-glass-light-surface[\s\S]*backdrop-filter:blur\(var\(--sf-glass-blur\)\)/, 'light mode uses the shared glass settings');
+assert.match(studioCss, /data-theme=dark[\s\S]*sf-glass-surface[\s\S]*backdrop-filter:blur\(var\(--sf-glass-blur\)\)/, 'dark mode keeps the shared glass settings');
+assert.match(studioJs, /--sf-glass-light-surface/);
+assert.match(studioJs, /--sf-glass-light-raised/);
 const ids = text => [...text.replace(/<!--[\s\S]*?-->/g, '').matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
-for (const id of new Set(ids(old))) assert.ok(ids(fresh).includes(id), 'missing real control ' + id);
-const duplicates = ids(fresh).filter((id, i, all) => all.indexOf(id) !== i);
-assert.deepEqual(duplicates, [], 'new UI IDs must be unique');
-for (const option of [...old.matchAll(/<option\b[^>]*>[^<]*<\/option>/g)].map(m => m[0])) assert.ok(fresh.includes(option), 'missing option ' + option);
-assert.ok(!fresh.includes('data-stp="ass"')); assert.ok(!fresh.includes('data-setting="ass"')); assert.ok(fresh.includes('id="ass-style-preset-import"'));
 // Regeneration must preserve the redesigned settings, without writing any output or assets.
 const generated = new Map();
 const generatorContext = {
@@ -73,7 +86,8 @@ for (const [id, icon] of [...fresh.matchAll(/id="sf-settings-tab-([^\"]+)"[^>]*d
 assert.equal(/SF_DEMO|data\.js|prototypes\/|localStorage/.test(fresh), false);
 const baseline = JSON.parse(fs.readFileSync(path.join(root, 'docs/ui-integration-baseline.json')));
 const crypto = await import('node:crypto');
-for (const file of ['editor/index.html', 'editor/css/style.css', 'editor/css/ui.css', 'editor/js/main.js']) assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root, file))).digest('hex'), baseline.files[file], 'legacy preserved ' + file);
+assert.equal(fs.existsSync(path.join(root, 'editor/index.html')), false, 'legacy entry removed');
+assert.match(fs.readFileSync(path.join(root, 'editor/js/main.js'), 'utf8'), /allocateWordTimes/, 'legacy editor keeps the shared letter-weighted word allocator');
 const server = await isolatedServer({ source: process.argv[2] ? path.resolve(process.argv[2]) : undefined });
 try {
   async function entry(value) {
@@ -84,11 +98,11 @@ try {
   }
   assert.equal(await entry(null), '/editor/studio.html');
   for (const value of ['{"ui":"new"}', '{}', 'bad-json', '{"ui":"../private"}', 'x'.repeat(17000)]) assert.equal(await entry(value), '/editor/studio.html');
-  assert.equal(await entry('{"ui":"legacy"}'), '/editor/index.html');
-  assert.equal(await entry('\uFEFF{"ui":"legacy"}'), '/editor/index.html');
-  assert.equal((await server.call('/index.html', { redirect: 'manual' })).headers.get('location'), '/editor/index.html');
+  assert.equal(await entry('{"ui":"legacy"}'), '/editor/studio.html');
+  assert.equal(await entry('\uFEFF{"ui":"legacy"}'), '/editor/studio.html');
+  assert.equal((await server.call('/index.html', { redirect: 'manual' })).headers.get('location'), '/editor/studio.html');
   for (const name of ['subtitles-octopus.js', 'subtitles-octopus-worker.js', 'subtitles-octopus-worker.wasm', 'fonts/NotoSansCJKsc-Regular.otf']) { const f = path.join(server.root, 'editor/vendor', name); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, 'test resource'); }
-  const seen = new Set(), queue = ['/editor/studio.html', '/editor/index.html'];
+  const seen = new Set(), queue = ['/editor/studio.html'];
   while (queue.length) {
     const url = queue.shift(); if (seen.has(url)) continue; seen.add(url);
     const r = await server.call(url); assert.equal(r.status, 200, url);
@@ -98,5 +112,5 @@ try {
   }
   for (const ref of ['/editor/js/studio.js', '/editor/js/studio-state.js', '/editor/js/studio-themes.js', '/editor/js/studio-progress.js', '/editor/css/studio.css']) assert.ok(seen.has(ref), ref);
   assert.equal((await server.call('/ui-config.json')).status, 403);
-  console.log(`Studio parity: ${new Set(ids(old)).size} real control IDs, ${seen.size} resources, default/legacy/invalid/BOM/config privacy and real-state filters passed`);
+  console.log(`Studio parity: ${new Set(ids(fresh)).size} controls, ${seen.size} resources, single-entry/config privacy and real-state filters passed`);
 } finally { await server.close(); }

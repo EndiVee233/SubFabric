@@ -535,7 +535,7 @@ export class EditorPanel {
     const okBtn = document.getElementById('fix-ok');
     titleEl.textContent = `修复字幕 #${no}`;
     const labels = {
-      karaokeMissing: '这句没有逐词效果，也不和其他字幕重叠，会自动补上逐词（均匀铺满整句时长）',
+      karaokeMissing: '这句没有逐词效果，也不和其他字幕重叠，会自动补上逐词（按字母数铺满整句时长）',
       overlapNoKaraoke: '这句和其他字幕重叠，重叠时不加逐词，免得两句高亮糊在一起',
       roleName: '英文行里带了角色名 [..]，会删掉它，并让逐词颜色保持绿色',
       wordsMismatch: '英文行的逐词和文本对不上，缺词或多词',

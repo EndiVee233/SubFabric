@@ -1,0 +1,9 @@
+{
+  "schema": "subfabric-theme-v1",
+  "id": "subfabric-classic",
+  "name": "SubFabric Classic",
+  "version": "1.0.0",
+  "description": "经典 SubFabric：深色工作台、橙色强调与紧凑编辑器",
+  "design": "classic",
+  "seed": "#ff7a45"
+}

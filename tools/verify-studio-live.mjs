@@ -23,7 +23,7 @@ const entry = async () => {
 };
 assert.equal(await entry(), '/editor/studio.html');
 const strip = text => text.replace(/\?v=\d+/g, '').replace(/<meta name="build-stamp" content="\d+"><script>window\.__BUILD_STAMP="\d+";<\/script>/g, '');
-const seen = new Set(), queue = ['/editor/studio.html', '/editor/index.html'];
+const seen = new Set(), queue = ['/editor/studio.html'];
 while (queue.length) {
   const url = queue.shift(); if (seen.has(url)) continue; seen.add(url);
   const r = await fetch(origin + url); assert.equal(r.status, 200, url);
@@ -36,11 +36,11 @@ assert.equal((await fetch(origin + '/ui-config.json')).status, 403);
 if (process.argv.includes('--toggle-config')) {
   const file = path.join(root, 'ui-config.json'), before = fs.readFileSync(file);
   try {
-    fs.writeFileSync(file, '{"ui":"legacy"}\n'); assert.equal(await entry(), '/editor/index.html');
+    fs.writeFileSync(file, '{"ui":"legacy"}\n'); assert.equal(await entry(), '/editor/studio.html');
     fs.writeFileSync(file, '{"ui":"new"}\n'); assert.equal(await entry(), '/editor/studio.html');
   } finally { fs.writeFileSync(file, before); }
   assert.equal(hash(fs.readFileSync(file)), hash(before));
 }
 const version = await (await fetch(origin + '/api/version')).json();
 const projects = await (await fetch(origin + '/api/projects')).json();
-console.log(JSON.stringify({ version: version.version, vendorOk: version.vendorOk, projects: projects.projects.length, resources: seen.size, entry: await entry(), installedHashes: 'passed', configPrivacy: 'passed', laterDataChanges, legacyToggle: process.argv.includes('--toggle-config') ? 'passed and restored' : 'not tested' }));
+console.log(JSON.stringify({ version: version.version, vendorOk: version.vendorOk, projects: projects.projects.length, resources: seen.size, entry: await entry(), installedHashes: 'passed', configPrivacy: 'passed', laterDataChanges, historyConfigIgnored: process.argv.includes('--toggle-config') ? 'passed and restored' : 'not tested' }));

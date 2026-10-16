@@ -19,7 +19,7 @@ mkdirSync(OUT, { recursive: true });
 const server = spawn(process.execPath, [join(ROOT, 'editor', 'server.js')], { cwd: ROOT, env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' });
 for (let i = 0; i < 60; i++) { await sleep(250); try { if ((await fetch(`http://127.0.0.1:${PORT}/api/version`)).ok) break; } catch {} }
 
-const edge = spawn(EDGE, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, '--user-data-dir=' + join(process.env.TEMP || '.', 'edge-vis-' + Date.now()), '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--window-size=1600,1000', `http://127.0.0.1:${PORT}/editor/index.html`], { stdio: 'ignore' });
+const edge = spawn(EDGE, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, '--user-data-dir=' + join(process.env.TEMP || '.', 'edge-vis-' + Date.now()), '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--window-size=1600,1000', `http://127.0.0.1:${PORT}/editor/studio.html`], { stdio: 'ignore' });
 const cleanup = () => { try { edge.kill(); } catch {} try { server.kill(); } catch {} };
 process.on('exit', cleanup);
 
