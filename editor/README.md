@@ -1168,7 +1168,7 @@ node editor/scripts/fetch-vendor.js          # 拉 editor/vendor/: libass worker
 #    · editor/server.js          const APP_VERSION = 'x.y.z'   (+ APP_FILE_VERSION 四段纯数字)
 #    · build/installer/SubFabric.iss   #define MyAppVersion / MyAppFileVersion
 #    · editor/README.md          标题里的版本号
-#    ⚠ 版本号怎么编、下一版该发多少 → **PROJECT_MAP.md §1.1「版本号命名规则」**(发版前必读)。
+#    ⚠ 版本号怎么编、下一版怎么推（看上一个已发布版本再迭代）→ **PROJECT_MAP.md §1.1「版本号命名规则」**(发版前必读)。
 #    ⚠ .iss 里 VersionInfoVersion / VersionInfoProductVersion 只接受**纯数字**,
 #      绝不能填带 "beta" 的显示版本(2026-10-14 实测: 填了直接编译中止) —— 一律用 MyAppFileVersion。
 
