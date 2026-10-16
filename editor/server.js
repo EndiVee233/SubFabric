@@ -3156,16 +3156,29 @@ const SIMPLE_ROUTES = [
     return true;
   }],
 
-  // 站点图标(内联 SVG, 省得浏览器请求 /favicon.ico 报 404 污染控制台)
+  // 站点图标(浏览器页签/窗口图标) = 应用图标 —— 与托盘、程序本体、安装向导同一张图
   ['/favicon.ico', sendFavicon],
-  ['/favicon.svg', sendFavicon],
+  ['/favicon.svg', sendFavicon],   // 兼容旧页面缓存里的引用, 同图不同名
 ];
 
 function sendFavicon(req, res) {
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#6d5efc"/>'
-    + '<text x="16" y="24" font-size="20" text-anchor="middle">🎬</text></svg>';
-  send(res, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' }, svg);
-  return true;
+  // 运行时直接读托盘用的那份多尺寸 .ico(editor/scripts/tray.ico 随程序一起安装),
+  // 保证「页签/窗口图标」与「托盘/任务栏/快捷方式」永远是同一张图, 不再单独维护一份 SVG。
+  try {
+    const buf = fs.readFileSync(path.join(__dirname, 'scripts', 'tray.ico'));
+    send(res, 200, {
+      'Content-Type': 'image/x-icon',
+      'Cache-Control': 'no-cache',
+      'Content-Length': buf.length
+    }, buf);
+    return true;
+  } catch (e) {
+    // 兜底: 图标文件缺失也不能让页签请求 404 污染控制台, 退回一块同色底
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+      + '<rect width="32" height="32" rx="7" fill="#b79b7d"/></svg>';
+    send(res, 200, { 'Content-Type': 'image/svg+xml', 'Cache-Control': 'no-cache' }, svg);
+    return true;
+  }
 }
 
 const SIMPLE_ROUTE_MAP = new Map(SIMPLE_ROUTES);
