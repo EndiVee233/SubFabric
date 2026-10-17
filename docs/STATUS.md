@@ -1,5 +1,7 @@
 # 项目当前状态（唯一权威入口）
 
+- 当前任务（2026-10-18）：构建 **beta 1.2 修补重发** 安装包并发布 GitHub Release，**已完成且已验证**。同步远端 `7c0decf` 的 4 个版本文件（`editor/server.js`、`editor/README.md`、`build/installer/SubFabric.iss`、`tests/jsmod/server.js`）后，本地 434 个文件与远端逐字节一致；用 Node v24.21.0 生成 `build/SubFabric.exe`（93,613,568 字节，文件版本 `1.2.0.0`，GUI 子系统、SEA blob 正常）；`editor/vendor` 4 文件（worker 补丁已确认）；`ISCC 6.7.3` 编译 `SubFabric-beta 1.2-setup.exe`（37,547,475 字节，sha256 `8200bbf9404660e665c8557986f401ca668e0162bb4b8488b78be074ae5d6b3b`，解包 97 个文件 / 约 110.8MiB）。在隔离临时目录用独立 AppId 的烟雾安装包完成静默安装/卸载自检：exe 版本 `1.2.0.0`、`APP_VERSION='beta 1.2'`、`main.js`/`editor.js`/`studio.css` 与源码逐字节一致、vendor 字体存在、未带入 `projects/` 与 `asr/settings.json`。远端 CI（JS ESLint+全量测试、Python ruff+单测）在 `7c0decf` 上均成功。已创建 tag `v1.2.0-beta.2`（annotated `2f907f8c` → commit `7c0decf`）与 Release `SubFabric beta 1.2（六项界面修复重发）`（id `415924488`，prerelease）；资产 `SubFabric-beta.1.2-setup.exe` 37,547,475 字节，服务端 digest 与本地一致，重新下载后 SHA-256 复核一致。状态：**已完成且已验证**（构建与发布）；真实用户覆盖安装未执行。
+
 - 当前任务（2026-10-17）：修复用户反馈的 6 项编辑器界面问题，**已完成且已验证**。① 在角色/设置/日志页通过时间轴空白拖动新增字幕后，`createRowAt()` 自动 `panel.showTab('subs')` 再选中/进入编辑；② Ctrl+左键拖动后的批量浮条从 `#tl-canvas-wrap` 移到 `#app` 之外——深色主题给 `#timeline-panel` 加了 `backdrop-filter`，会建立 fixed 包含块，原先按视口算出的坐标被二次偏移，浮条实际落到视口下方（实测 y=1421 / 视口 900）；③ 失败任务卡补 `#job-card.jc-err .jc-spin { display:none }`，不再转圈；④ 时间轴块文本用 `timelineBlockBody()` 去掉行首 `[角色名]`，块颜色仍取 `row.color`；⑤ 字幕页隐藏时 `setPlayingByTime()` 只记 `playingItem/_playingT`、不重置 scrollTop，`showTab('subs')` 从其它页返回时调用 `syncPlaying()` 强制回到当前播放句；⑥ 查找替换遮罩改为透明并把 `#fr-overlay` 从统一黑玻璃遮罩组移出，弹窗自身保持 `--bg-2` 实底，同时去掉 `.fr-head/.fr-actions` 与 flex gap 叠加的 margin/padding。新增 `tests/ui-feedback-20261017-test.mjs`（38 项）；定向 12 项、完整 JS 回归 `node tests/run-all.mjs --report _test/ui-feedback-full3-20261017.json`：90 通过、9 部分执行、0 失败、2 排除。真实鼠标 CDP 验收（源码服务 + 临时项目）已通过并删除临时项目。状态：**已完成且已验证**。
 
 - GitHub 保存（6 项 UI 修复）：已随 2026-10-17 晚增量提交（父提交 `faa0c229`，见「GitHub 与恢复」）。原记录"未登录/无 `.git`"只说明 gh CLI 与本地仓库不可用；实际可用的写入通道是 Windows 凭据管理器内 `R2FtYml0` 的 PAT（repo scope）走 REST，本次即用它完成提交。
@@ -18,7 +20,7 @@
 
 - 当前任务（2026-10-17）：编辑器与主题体验增量已**完成且已验证**。时间轴项目载入默认 30 秒；按项目保存/恢复视频播放进度；任务中心尊重卡片/列表视图；无在线来源的本地视频异步抽帧生成项目封面；统一使用安装包高分辨率 Logo（Studio 品牌、编辑器左上角、托盘图标）；UWP 增大标题与卡片间距；设置页工作区去除整页灰色遮罩；胶囊样式限制为 Material You 并将倾斜角增至 26°。相关源码、模板、`tests/jsmod/` 镜像和 `PROJECT_MAP.md` 已同步。专项验证：时间轴 16/16、Studio 导航、首页项目列表、UWP 主题、UI 集成、Logo 静态资源与项目 API 冒烟、JS 语法均通过；完整回归 `node tests/run-all.mjs --report _test/current-ui-feature-full-20261017.json` 为 87 通过、9 部分、1 诊断、0 失败、2 排除；封面进程收尾补丁后的重点回归 7/7 通过。GitHub 保存：已随 2026-10-17 增量提交（见「GitHub 与恢复」）。
 
-- 最后更新：2026-10-16（Asia/Tokyo）。
+- 最后更新：2026-10-18（Asia/Shanghai）。
 - 当前任务（2026-10-16）：将设置中的三项毛玻璃参数统一扩展到浅色模式，并让压暗、模糊度、透明度对 Studio、Material、Windows UWP、SubFabric Classic 全部主题包生效；状态：**已完成且已验证**。
 - 当前任务：降低翻译/语义分句对 LLM JSON 输出格式的依赖，改为模型优先直接输出纯文本、程序负责严格解析为译文行或标点对；已**完成且已验证**。
 - 历史任务（2026-10-16）：按 Windows 10 Fluent 设计规范继续收紧 Studio 生产界面，**已完成且已验证**。规范原文保存在用户粘贴附件；本轮重点是移除首页营销式 Hero、统一 Windows 10 中性色令牌、替换操作 Emoji 为 SVG 图标，并补齐 UWP 动态控件覆盖。
