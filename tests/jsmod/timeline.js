@@ -520,14 +520,8 @@ export class Timeline {
     this._dirty = true;
     this._viewReady = false;
     this._viewFromLanes = false;
-    // 载入稿件时**铺满整个视频**，而不是只显示前 30 秒。
-    //
-    // 为什么改：原来一律用默认 30s 跨度，于是打开一个几十分钟的稿子时，时间轴上
-    // 只有开头 30 秒内那几条字幕落在视野里、其余全在视野右侧之外 ——
-    // 用户看到的是"字幕全挤在前几秒"，会以为识别坏了（实测有人因此报 bug）。
-    // 数据一直是好的，坏的只是初始视图。
-    // DEFAULT_SPAN 仍然保留，用于"视频时长未知"的情况（见 _applyDefaultView）。
-    this._fitOnLoad = true;
+    // 载入稿件时默认只显示 30 秒；视频不足 30 秒时显示完整视频。
+    // 用户可以用“适应全片”或缩放控件主动查看完整时间轴。
     this.subStart = 0;
     this.subEnd = 0;
     this._hideMenu();
@@ -566,16 +560,11 @@ export class Timeline {
     return { min, max: Math.max(w / 0.4, min) };
   }
 
-  /** 默认视图: 跨度 = min(30s, 视频时长), 起点固定在 0(视频开头)。
-   *  但 resetView() 之后的第一次调用改用 fit() 铺满全片（见那里的说明）。 */
+  /** 默认视图: 跨度 = min(30s, 视频时长), 起点固定在 0(视频开头)。 */
   _applyDefaultView() {
     const r = this._contentRange();
     const w = this._cssW();
     if (!r || w <= 0) return;
-    if (this._fitOnLoad) {
-      this._fitOnLoad = false;
-      if (r.span > DEFAULT_SPAN) { this.fit(); return; }
-    }
     this.pxPerSec = w / Math.max(0.2, Math.min(DEFAULT_SPAN, r.span));
     this.viewStart = r.a;
     this._clampView();
@@ -765,6 +754,10 @@ export class Timeline {
     const cv = this.canvas;
     this.menuEl = document.getElementById('tl-menu');
     if (this.menuEl) {
+      // 菜单必须脱离时间轴的 overflow:hidden 裁剪容器。
+      // 在 UWP 主题下尺寸较规整时问题不明显，Classic/Material/Studio
+      // 的阴影与边界会把菜单裁掉，表现为“右键没有反应”。
+      if (this.menuEl.parentElement !== document.body) document.body.appendChild(this.menuEl);
       this.menuEl.addEventListener('click', (e) => {
         const item = e.target.closest('[data-act]');
         if (!item) return;
@@ -783,7 +776,14 @@ export class Timeline {
     // 右键字幕块 → 二级菜单(目前只有"删除")
     cv.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      const hit = this._laneIndexAtY(e.offsetY) === -1 ? null : this._hitTest(e.offsetX, e.offsetY, true);
+      // offsetX/offsetY 在 canvas 被 CSS 缩放、或事件由内部绘制层转发时不稳定。
+      // 用 client 坐标按实际 CSS 尺寸换算，所有主题和 DPI 下命中同一字幕块。
+      const rect = cv.getBoundingClientRect();
+      const sx = rect.width > 0 ? this._cssW() / rect.width : 1;
+      const sy = rect.height > 0 ? this._cssH() / rect.height : 1;
+      const x = (e.clientX - rect.left) * sx;
+      const y = (e.clientY - rect.top) * sy;
+      const hit = this._laneIndexAtY(y) === -1 ? null : this._hitTest(x, y, true);
       if (!hit) { this._hideMenu(); return; }
       if (this.onSelect) this.onSelect(hit.cue.ref, { seek: false });
       this._showMenu(e.clientX, e.clientY, hit.cue);

@@ -1072,6 +1072,9 @@ export class EditorPanel {
           const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
           if (top < st || top > st + vh - h) {
             this._progScroll = true;
+            this.listEl.classList.add('follow-focus');
+            clearTimeout(this._followFocusTimer);
+            this._followFocusTimer = setTimeout(() => this.listEl.classList.remove('follow-focus'), 900);
             this.listEl.scrollTop = Math.max(0, top + h / 2 - vh / 2);
             this._render();
           }

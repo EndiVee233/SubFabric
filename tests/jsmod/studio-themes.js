@@ -1,29 +1,65 @@
 /* Declarative theme packs. JSON only: no scripts, CSS, URLs or remote assets. */
 (function () {
   'use strict';
-  const builtins = Object.freeze([
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'studio', name: 'Studio', version: '1.0.0', description: '纸白、细描边与安静的创作空间', design: 'studio', seed: '#5c7560' }),
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'material-you', name: 'Material You', version: '1.0.0', description: '动态色、柔软轮廓与波浪播放进度', design: 'material', seed: '#5789dc' }),
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'subfabric-classic', name: 'SubFabric Classic', version: '1.0.0', description: '经典 SubFabric：深色工作台、橙色强调与紧凑编辑器', design: 'classic', seed: '#ff7a45' }),
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'windows-uwp', name: 'Windows UWP', version: '1.0.0', description: 'Windows 10 Fluent：紧凑控件、细描边与规整工作区', design: 'uwp', seed: '#0078D7' })
-  ]);
+  const tokenKeys = Object.freeze({ bg: '--bg', surface: '--surface', surface2: '--surface-2', text: '--text', muted: '--muted', line: '--line', accent: '--accent', accentSoft: '--accent-soft', onAccent: '--on-accent', outline: '--outline', accentHover: '--accent-hover' });
+  const dataImage = value => typeof value === 'string' && value.length <= 700000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(value);
   const hex = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+  const allowedKeys = new Set(['schema', 'id', 'name', 'version', 'description', 'author', 'design', 'seed', 'tokens', 'assets', 'builtin']);
+  const designNames = new Set(['studio', 'material', 'uwp', 'classic']);
+  const tokenNames = new Set(Object.keys(tokenKeys));
+  const builtins = Object.freeze([
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'studio', name: 'Studio', version: '1.0.0', description: '纸白、细描边与安静的创作空间', design: 'studio', seed: '#5c7560', builtin: true }),
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'material-you', name: 'Material You', version: '1.0.0', description: '动态色、柔软轮廓与波浪播放进度', design: 'material', seed: '#5789dc', builtin: true }),
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'subfabric-classic', name: 'SubFabric Classic', version: '1.0.0', description: '经典 SubFabric：深色工作台、橙色强调与紧凑编辑器', design: 'classic', seed: '#ff7a45', builtin: true }),
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'windows-uwp', name: 'Windows UWP', version: '1.0.0', description: 'Windows 10 Fluent：紧凑控件、细描边与规整工作区', design: 'uwp', seed: '#0078D7', builtin: true })
+  ]);
+  const builtinIds = new Set(builtins.map(pack => pack.id));
+  function validTokens(tokens) {
+    if (tokens === undefined) return true;
+    if (!tokens || typeof tokens !== 'object' || Array.isArray(tokens)) return false;
+    return Object.keys(tokens).every(mode => ['light', 'dark'].includes(mode) && tokens[mode] && typeof tokens[mode] === 'object' && !Array.isArray(tokens[mode])
+      && Object.keys(tokens[mode]).every(key => tokenNames.has(key) && hex(tokens[mode][key])));
+  }
+  function validAssets(assets) {
+    if (assets === undefined) return true;
+    if (!assets || typeof assets !== 'object' || Array.isArray(assets)) return false;
+    return Object.keys(assets).every(key => key === 'preview' && dataImage(assets[key]));
+  }
   function valid(pack) {
     return Boolean(pack) && typeof pack === 'object' && !Array.isArray(pack)
-      && Object.keys(pack).every(k => ['schema', 'id', 'name', 'version', 'description', 'design', 'seed'].includes(k))
+      && Object.keys(pack).every(k => allowedKeys.has(k))
       && pack.schema === 'subfabric-theme-v1' && typeof pack.id === 'string' && /^[a-z][a-z0-9-]{1,47}$/.test(pack.id)
       && typeof pack.name === 'string' && pack.name.trim().length > 0 && pack.name.length <= 48
       && typeof pack.description === 'string' && pack.description.length <= 160
+      && (pack.author === undefined || typeof pack.author === 'string' && pack.author.length <= 80)
       && typeof pack.version === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(pack.version)
-      && ['studio', 'material', 'uwp', 'classic'].includes(pack.design) && hex(pack.seed);
+      && designNames.has(pack.design) && hex(pack.seed) && (pack.builtin === undefined || typeof pack.builtin === 'boolean')
+      && validTokens(pack.tokens) && validAssets(pack.assets);
   }
   function validList(list) {
     return Array.isArray(list) && list.length <= 24 && list.every(valid)
       && new Set(list.map(p => p.id)).size === list.length
-      && list.every(p => !builtins.some(b => b.id === p.id));
+      && list.every(p => !builtinIds.has(p.id) && p.builtin !== true);
   }
-  const list = custom => [...builtins, ...(validList(custom) ? custom : [])];
+  function clone(pack, builtin = false) {
+    const out = { schema: pack.schema, id: pack.id, name: pack.name.trim(), version: pack.version, description: pack.description.trim(), design: pack.design, seed: pack.seed.toUpperCase() };
+    if (pack.author?.trim()) out.author = pack.author.trim();
+    if (pack.tokens) out.tokens = Object.fromEntries(Object.entries(pack.tokens).map(([mode, values]) => [mode, Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.toUpperCase()]))]));
+    if (pack.assets?.preview) out.assets = { preview: pack.assets.preview };
+    if (builtin) out.builtin = true;
+    return out;
+  }
+  function customPack(pack, id = pack.id, name = pack.name) { return clone({ ...pack, id, name, builtin: false }); }
+  const list = custom => [...builtins, ...(validList(custom) ? custom.map(p => clone(p)) : [])];
   const get = (id, custom) => list(custom).find(p => p.id === id) || builtins[0];
+  const isBuiltin = packOrId => builtinIds.has(typeof packOrId === 'string' ? packOrId : packOrId?.id);
+  const canDelete = packOrId => !isBuiltin(packOrId);
+  const remove = (custom, id) => validList(custom) ? custom.filter(pack => pack.id !== id).map(pack => clone(pack)) : [];
+  const asCustom = pack => valid(pack) && !isBuiltin(pack) ? customPack(pack) : null;
+  const tokenOverrides = (pack, dark) => {
+    const values = pack?.tokens?.[dark ? 'dark' : 'light'] || {};
+    return Object.fromEntries(Object.entries(values).filter(([key]) => tokenKeys[key]).map(([key, value]) => [tokenKeys[key], value]));
+  };
   function rgb(color) { return [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16) / 255); }
   function hueSeed(color) {
     const [r, g, b] = rgb(color), max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
@@ -89,5 +125,5 @@
       root.style.setProperty('--on-accent', contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318');
     }
   }
-  window.SF_THEMES = Object.freeze({ builtins, hex, valid, validList, list, get, palette, contrast, apply });
+  window.SF_THEMES = Object.freeze({ builtins, hex, valid, validList, list, get, isBuiltin, canDelete, remove, asCustom, tokenOverrides, palette, contrast, apply });
 }());

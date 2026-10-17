@@ -89,6 +89,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 | --- | --- |
 | `editor/server.js` | **后端全部**（约 7900 行单文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘、退出） |
 | `editor/studio.html`、`editor/css/` | 单页界面（`<script type="module" src="js/main.js">`） |
+| `editor/assets/app-logo.png`、`editor/scripts/tray.ico` | 安装包同源的高分辨率应用 Logo；Studio 品牌、编辑器工具栏与 Windows 托盘共用 |
 | `editor/js/` | 前端模块（见 §4） |
 | `editor/*.js`（顶层） | 后端辅助模块（CJS）：`cast` `llm-text` `reseg` `k-line` `fonts` `secret-store` `asr-chunks` `audio-slice` `bcut-asr` `capcut-asr`；fork 并入：`align` `asr-service` `ass-group` `danmaku` `hotwords` `mt-local` `project-pack` `reflect` `region` `region-merge` `repair-words` `speech-gap` |
 | `asr/` | Python 侧：`asr.py`（本地识别）`vibevoice.py`（VibeVoice NF4·CUDA 4bit，拒绝 CPU/NPU/offload）`diarize.py`（说话人分离）`multitalker.py`（NeMo 多说话人）`fetch/`（下载内核）`settings.json`（本机设置，含密文，不入库） |
@@ -177,17 +178,17 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | 文件 | 职责 |
 | --- | --- |
 | `app.js` | 原型状态、hash 路由、上下文筛选/空状态、新建校验、可暂停/取消/重试队列、资源、设置草稿离场保护、导入校验、模态、独立工作台顶栏；openWordDemo 创建或复用独立逐词稿件，切换稿件遵循手动保存保护 |
-| `editor.js` / `editor.css` / `workspace.css` | 模拟双语编辑、逐词播放高亮/边界、波形覆盖字幕/重叠分轨、时间轴四项设置、历史、角色单击分配与右键菜单、样式、审核建议、备注与字幕导出；独立页保持左预览/下时间轴/右四 Tab，字幕卡左时间/右双语 |
+| `editor.js` / `editor.css` / `workspace.css` | 模拟双语编辑、逐词播放高亮/边界、波形覆盖字幕/重叠分轨、时间轴四项设置、历史、角色单击分配与右键菜单、样式、审核建议、备注与字幕导出；独立页保持左预览/下时间轴/右四 Tab，字幕卡左时间/右双语。播放中的卡片使用统一高亮与自动跟随提示；低频刷新、异常分类、反思纠错、全片逐词重校对、分段导入放入编辑器设置，高频筛选/搜索/显示模式/跟随播放留在顶部。 |
 | `data.js` / `icons.js` | SF_DEMO 通用合成数据、SF_WORD_DEMO 的非等分词时间/重叠角色示例和内联 SVG，无远程资产 |
 | `styles.css` | 纸白/石墨/苔绿 token、三种背景、主题、材质、交互反馈、减少动效 |
-| `themes.js` / `themes.css` / `material-you.theme.json` | 声明式主题包与导入校验、本地色调角色、Material You 首页形状/播放进度；两文档共用主题 |
+| `studio-themes.js` / `studio.css` / `editor/themes/*.theme.json` | 声明式内置主题包与自定义主题包导入校验、本地色调角色、受限颜色令牌和本地预览图；主题包不执行脚本、不注入 CSS、不访问远程资源 |
 | `progress.js` | 两页共享的任务/播放进度 markup、数值/状态同步、单个可见性观察器与后台/减少动效门控；波形 CSS 固定图案位移，无额外帧循环 |
 | `serve.cjs` | 127.0.0.1:8347 静态白名单；CSP connect-src none；不提供 API |
 | `review/` | 合成夹具、隔离行为检查与可视验收记录，不由静态服务提供 |
 
 编辑器经 `window.SF_APP` 访问原型接口，入口为 `SF_EDITOR.render/mount/unmount`。
 顶栏命令经 `SF_EDITOR.command` 传递。详细流程和数据边界见原型 README；当前验收状态见 STATUS。
-编辑器 `prototypeEditor[id].timeline` 保存 double/height/pan/zoom，缺省为单行/188px/80px/1.05×；旧备份可缺此字段，新字段导入校验类型与范围。重叠字幕按时间贪心分轨，波形背后的局部轻微模糊在拖动期间关闭；滚轮方向沿用旧版，Ctrl+滚轮保持指针下时间锚点。词边界调整共用邻词起止、可撤销；移动/缩放句时同步词时间，英文改写使旧词时间失效。逐词模式选择新句时自动聚焦时间轴，按词高亮只随原有播放时钟更新。
+编辑器 `prototypeEditor[id].timeline` 保存 double/height/pan/zoom，缺省为单行/188px/80px/1.05×；旧备份可缺此字段，新字段导入校验类型与范围。生产时间轴载入项目时默认显示 30 秒（短视频按实际时长钳制），用户仍可主动适应全片。重叠字幕按时间贪心分轨，波形背后的局部轻微模糊在拖动期间关闭；滚轮方向沿用旧版，Ctrl+滚轮保持指针下时间锚点。词边界调整共用邻词起止、可撤销；移动/缩放句时同步词时间，英文改写使旧词时间失效。逐词模式选择新句时自动聚焦时间轴，按词高亮只随原有播放时钟更新。
 主设置以 `draftSettings` 即时预览，保存条显示变更状态；离场统一保存/放弃/取消。
 主题包列表以 `draftThemePacks` 一同预览/保存/回滚；旧备份缺少主题字段时使用 Studio。包导入不执行任意代码，主题色角色在本地计算。
 任务进度经 `SF_PROGRESS` 同步，运行完成段为波浪、剩余为直线，暂停/结束为直线。页面重建/编辑器卸载释放被观察节点；CSS 仅对可见且运行的 Material 条动画。编辑器的原有 80ms 模拟播放时钟只在前台播放时存在。
@@ -199,16 +200,16 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | 模块 | 职责 |
 | --- | --- |
 | `main.js` | 应用主入口：装配各模块、视频/播放控制、波形加载、导出、设置面板、诊断上报 |
-| `project.js` | 项目列表/创建/详情（活动稿件置顶、复用卡片独立同步顺序、仅运行中进度动画）、打开项目（含**竞态代次守卫**）、模型下载轮询（含并发闸门） |
+| `project.js` | 项目列表/创建/详情（活动稿件置顶、复用卡片独立同步顺序、仅运行中进度动画）、打开项目（含**竞态代次守卫**）、按项目保存/恢复视频播放进度、模型下载轮询（含并发闸门） |
 | `editor.js` | 右侧编辑面板：**虚拟滚动**卡片列表 + 行内编辑（5000 行量级性能靠它） |
-| `timeline.js` | 时间轴 canvas：波形 + 字幕块 + 词级边界拖拽 / 缩放 / 平移（鼠标交互自实现） |
-| `videoedit.js` | 视频区就地编辑框（双击字幕 → 点哪个片段改哪个；Enter 存 / Esc 取消） |
+| `timeline.js` | 时间轴 canvas：波形 + 字幕块 + 词级边界拖拽 / 缩放 / 平移（鼠标交互自实现）；右键菜单脱离画布裁剪层并按画布矩形换算命中坐标，保证各主题与 DPI 下可用 |
+| `videoedit.js` | 视频区就地编辑框（双击字幕 → 点哪个片段改哪个；Enter 存 / Esc 取消）；命中框使用真实视频矩形、SRT 字符 Range、ASS libass 墨迹和字幕样式字体/字号/粗斜体/缩放/字距计算 |
 | `segment.js` | 就地编辑的**纯函数**：可见文本分段 + 最小替换（见 §6） |
 | `karaoke.js` | 逐词高亮核心：词切片↔整句合并、词级时间映射、编辑后按词时长重算 |
 | `postprocess.js` | 字幕后处理特效（Glow / Grow / Fade）——纯文本变换，**铁律见 §6** |
 | `ass.js` | ASS 文档模型：保留原文行，事件级编辑后整体序列化 |
 | `srt.js` | SRT 解析 / 序列化 / 双语合并 |
-| `overlay.js` | SRT 双语叠加渲染层（贴视频矩形的 HTML） |
+| `overlay.js` | SRT 双语叠加渲染层（按视频 `getBoundingClientRect()` 与父舞台真实偏移贴合 HTML） |
 | `assplayer.js` | ASS 渲染器封装（SubtitlesOctopus / libass-wasm，含字体索引缓存） |
 | `video-hover-tip.js` | **进度条悬浮时间提示**：悬在**原生** `<video controls>` 的进度条上时，在画面上方显示该位置的时间。实测依据与几何口径写在文件头（控制条区域的事件目标就是 `<video>`，所以一个 mousemove 监听即可，不必自建控制条；横向按"去黑边"的画面矩形换算）。**唯一一个自初始化的模块**（不 import main.js，main.js 也无 export），由 studio.html 里第二个 `<script type="module">` 加载 |
 | `util.js` | 时间格式化 / 转义 / 二分查找 / `popOrigin` 等工具 |
@@ -271,6 +272,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **项目切换**：先 flush 旧稿保存，再完成元数据/字幕/解析，最后同时提交 ID 和文档。所有保存回调、视频/波形/备注/prepare 等异步结果捕获项目与代次；首页/detach 同样使旧加载失效。保存冲突保持不可自动覆盖状态。**无撤销/重做栈**，Esc=取消是安全边界。
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换；`readMeta/writeMeta` 的兼容调用以 WeakMap 基线算递归字段差量，并入最新状态，禁止旧对象整体覆盖已有项目。跨 await 新增更新优先调用 updateMeta。
 - **首页列表**：`isCreating` 统一活动置顶与轮询判据，包含下载、提取、初稿及新建空窗，失败/暂停无字幕稿不冒充活动。`cardSig` 不含 progress/message/modifiedAt，三者就地更新；顺序同步独立于结构重建，只移动错位节点。首次直接显示进度，只有 running 的目标值变化才播放数字与 width 的 420ms 线性过渡；WeakMap 使旧动画失效，移除节点停止写入。studio.css 的流光和宽度过渡只属于 running，完成/暂停/失败无填充动画。
+- **项目封面与视图**：`server.js` 在项目列表/详情读取时为没有在线来源缩略图的本地视频异步抽取 `cover.jpg`，通过受保护的 `/api/projects/:id/cover` 提供；Studio 的稿件库与任务中心共用 `prefs.view`，卡片视图不再被任务路由强制改成列表。
 - **翻译**：`subtitleSource` 从当前 ASS/SRT 取原文、对应译文和版本；只在没有稿件时回落 ASR。`patchSubtitleTranslations` 仅更新译文事件/行，保留人工原文、时间、角色、样式和特效；每批及落盘前检查当前稿件版本。`planJobs` 用完整稿件索引和 todo，每批由 `translationRefs` 从同版本已有/新译文刷新前文；拆批右半批接续左半批，参考行不计输出数量，contextRows=0 不带参考。LLM 默认只输出逐行纯文本，`llm-text.parseLineArrayReply` 按输入行数解析；旧 JSON 数组仍兼容，解析失败继续拆批/重试，不把 JSON 原文落盘。
 - **语义分句**：`reseg.js` 默认要求模型复述原词并直接在词尾补标点，`parsePunctTextReply` 校验词序/词数后映射为标点对并保留逐词时间；旧 JSON 标点对仍兼容解析。模型不能保持原词时拒绝该批并按既有拆批/停顿兜底，避免改写造成时间轴错位。
 - **全片重校对**：从当前稿件提取目标，共用 karaoke 的 `realignTargetKey/applyRealignItems`；结果需匹配项目、规范化稿件版本、句子事件位置、可见文本及完整词序列。只改词级时间，颜色切片与 `\\k` 都保留当前文本，不按相近时间强行套旧结果。
@@ -310,7 +312,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 Studio 的毛玻璃压暗、模糊度、透明度保存在 `studio-state.js` 的界面偏好中；`studio.js` 同时计算深色与浅色材质令牌，`studio.css` 末端对所有主题包的导航、项目卡、编辑器表面、设置卡、弹层和菜单统一应用。主题包只改变视觉令牌与几何，不能绕开这组材质参数。
 
-`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。`studio-themes.js` 提供声明式 Studio、Material You 与 Windows UWP 主题包（`editor/themes/windows-uwp.theme.json` 为可导入/分发的同源 JSON），`studio-progress.js` 提供固定 CSS 波浪。全局模型、翻译与识别设置共用唯一“设置”入口；旧 `#/resources` 仅重定向至 `#/settings`。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
+`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。`studio-themes.js` 提供四个内置主题包（Studio、Material You、SubFabric Classic、Windows UWP）及“我的主题包”存储；`editor/themes/*.theme.json` 是可分发的同源 JSON，导入包只能使用白名单设计、颜色令牌和本地 PNG/JPEG/WebP 预览图，不能执行脚本、注入 CSS 或引用远程资源。设置页按内置/自定义分组，内置包不可删除，自定义包可导出、替换和删除；格式与制作说明见 `docs/THEME_PACKS.md`。`studio-progress.js` 提供固定 CSS 波浪。全局模型、翻译与识别设置共用唯一“设置”入口；旧 `#/resources` 仅重定向至 `#/settings`。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
 
 相关验收与安装范围见 `docs/UI_INTEGRATION.md`；`tools/studio-install.mjs --prepare` 产生安装候选和哈希清单，候选验收通过后 `--apply <backup-directory>` 才进入备份/锁/替换/失败回滚。仅合并本次 UI 增量，不整体安装先前源码修复，不改 EXE/运行时/设置/项目。
 

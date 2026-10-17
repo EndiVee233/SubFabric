@@ -1,0 +1,10 @@
+{
+  "schema": "subfabric-theme-v1",
+  "id": "material-you",
+  "name": "Material You",
+  "version": "1.0.0",
+  "description": "动态色、柔软轮廓与波浪播放进度",
+  "design": "material",
+  "seed": "#5789dc",
+  "builtin": true
+}

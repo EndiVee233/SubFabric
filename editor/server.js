@@ -317,7 +317,7 @@ function safeJoin(root, urlPath) {
 
 // 明确列出浏览器入口、依赖和双端纯模块；editor 下的后端模块不随目录一并公开。
 const STATIC_RESOURCES = new Set([
-  '/editor/studio.html', '/editor/css/studio.css', '/editor/lang/zh-CN.json', '/editor/themes/subfabric-classic.theme.json',
+  '/editor/studio.html', '/editor/css/studio.css', '/editor/lang/zh-CN.json', '/editor/themes/subfabric-classic.theme.json', '/editor/assets/app-logo.png',
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
@@ -662,6 +662,8 @@ function serveFile(req, res, filePath) {
   if (req.method === 'HEAD') return res.end();
   fs.createReadStream(filePath).pipe(res);
 }
+
+const coverJobs = new Set();
 
 /* ═══════════ 项目系统 · 跨请求状态 ═══════════
  * prepareJobs 必须放模块作用域: 若放进下方请求回调, 每个请求都会得到新的空 Set,
@@ -3331,6 +3333,47 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
   }
   function touchMeta(meta) { meta.modifiedAt = new Date().toISOString(); writeMeta(meta); }
 
+  /* 本地视频没有在线来源封面时，后台抽取一帧缓存到项目目录。 */
+  function ensureProjectCover(meta) {
+    if (!meta || !validId(meta.id) || meta.source?.thumbnail) return;
+    const videoPath = meta.video && meta.video.path;
+    if (!videoPath) return;
+    let st;
+    try { st = fs.statSync(videoPath); } catch { return; }
+    if (!st.isFile() || !VIDEO_EXTS.includes(path.extname(videoPath).toLowerCase())) return;
+    const existing = meta.cover && meta.cover.file ? safeProjectFile(meta.id, meta.cover.file) : null;
+    if (existing && fs.existsSync(existing)) return;
+    if (coverJobs.has(meta.id)) return;
+    coverJobs.add(meta.id);
+    const tmp = path.join(projDir(meta.id), 'cover.jpg.tmp-' + process.pid + '-' + Date.now());
+    const out = path.join(projDir(meta.id), 'cover.jpg');
+    let settled = false;
+    const finish = () => { if (settled) return; settled = true; coverJobs.delete(meta.id); };
+    let proc;
+    try {
+      proc = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-ss', '0', '-i', videoPath,
+        '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', '-y', tmp], { windowsHide: true });
+    } catch { finish(); return; }
+    // 封面同样握着视频/项目目录句柄；删除项目或完全退出时必须能收掉它。
+    trackProjProc(meta.id, proc);
+    const timer = setTimeout(() => { try { proc.kill(); } catch {} }, 45000);
+    proc.on('error', () => { clearTimeout(timer); try { fs.unlinkSync(tmp); } catch {} finish(); });
+    proc.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0) {
+        try {
+          fs.renameSync(tmp, out);
+          const latest = readMeta(meta.id);
+          if (latest && !latest.source?.thumbnail) {
+            latest.cover = { file: 'cover.jpg', generatedAt: new Date().toISOString() };
+            touchMeta(latest);
+          }
+        } catch { try { fs.unlinkSync(tmp); } catch {} }
+      } else { try { fs.unlinkSync(tmp); } catch {} }
+      finish();
+    });
+  }
+
   /** 对外视图: 元数据 + 派生状态(视频是否还在/资产是否就绪/中断修正) */
   function metaView(meta) {
     const v = Object.assign({}, meta);
@@ -3345,6 +3388,10 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
     v.hasPeaks = !!(pkPath && (meta.peaks.ver || 1) === PEAK_VER && fs.existsSync(pkPath));
     const auPath = (meta.audio && meta.audio.file) ? safeProjectFile(meta.id, meta.audio.file) : null;
     v.hasAudio = !!(auPath && fs.existsSync(auPath));
+    ensureProjectCover(meta);
+    const coverPath = (meta.cover && meta.cover.file) ? safeProjectFile(meta.id, meta.cover.file) : null;
+    v.cover = coverPath && fs.existsSync(coverPath)
+      ? `/api/projects/${encodeURIComponent(meta.id)}/cover?v=${encodeURIComponent(String(meta.cover.generatedAt || ''))}` : '';
     if (v.prepare && v.prepare.status === 'running' && !prepareJobs.has(meta.id)) {
       v.prepare.status = 'error';
       v.prepare.error = '服务已重启，提取被中断';
@@ -8309,7 +8356,7 @@ function handleProjectsRoutes(req, res, u) {
       if (!meta) continue;
       const v = metaView(meta);
       items.push({ id, name: meta.name, modifiedAt: meta.modifiedAt, createdAt: meta.createdAt,
-        video: meta.video, videoExists: v.videoExists,
+        video: meta.video, videoExists: v.videoExists, source: meta.source || null, cover: v.cover,
         fetching: !!v.fetching, format: meta.subtitle && meta.subtitle.format,
         subName: meta.subtitle && meta.subtitle.name, prepare: meta.prepare, draft: v.draft });
     }
@@ -8599,6 +8646,12 @@ function handleProjectsRoutes(req, res, u) {
     const id = pm[1], action = pm[2] || '';
     const meta = readMeta(id);
     if (!meta) return sendJson(res, 404, { error: '项目不存在' });
+
+    if (action === 'cover' && ['GET', 'HEAD'].includes(req.method)) {
+      const file = meta.cover && meta.cover.file ? safeProjectFile(id, meta.cover.file) : null;
+      if (!file || !fs.existsSync(file)) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'cover not ready');
+      return serveFile(req, res, file);
+    }
 
     if (!action && req.method === 'GET') return sendJson(res, 200, metaView(meta));
 

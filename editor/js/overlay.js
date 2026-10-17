@@ -35,12 +35,16 @@ export class SrtOverlay {
   fitToVideo() {
     const vw = this.video.videoWidth, vh = this.video.videoHeight;
     if (!vw || !vh) return;
-    const w = this.video.clientWidth, h = this.video.clientHeight;
-    const vr = vw / vh, er = w / h;
+    const videoRect = this.video.getBoundingClientRect ? this.video.getBoundingClientRect() : null;
+    const parent = this.el.offsetParent || this.el.parentElement;
+    const pr = parent && parent.getBoundingClientRect ? parent.getBoundingClientRect() : { left: 0, top: 0 };
+    const w = videoRect && videoRect.width || this.video.clientWidth, h = videoRect && videoRect.height || this.video.clientHeight;
+    const baseLeft = videoRect ? videoRect.left - pr.left : 0, baseTop = videoRect ? videoRect.top - pr.top : 0;
+    const aspect = vw / vh, er = w / h;
     let rw = w, rh = h;
-    if (er > vr) rw = Math.floor(h * vr); else rh = Math.floor(w / vr);
-    this.el.style.left = (w - rw) / 2 + 'px';
-    this.el.style.top = (h - rh) / 2 + 'px';
+    if (er > aspect) rw = h * aspect; else rh = w / aspect;
+    this.el.style.left = baseLeft + (w - rw) / 2 + 'px';
+    this.el.style.top = baseTop + (h - rh) / 2 + 'px';
     this.el.style.width = rw + 'px';
     this.el.style.height = rh + 'px';
     this._rectH = rh;

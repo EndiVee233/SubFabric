@@ -41,7 +41,7 @@ function applyTheme() {
   document.body.dataset.motion = prefs.motion;
   document.body.dataset.auroraMotion = prefs.auroraMotion;
   document.body.dataset.pageVisible = String(!document.hidden);
-  const tokens = pack.design === 'material' ? themes.palette(accent, dark) : pack.design === 'uwp' ? {
+  let tokens = pack.design === 'material' ? themes.palette(accent, dark) : pack.design === 'uwp' ? {
     ...themes.palette(accent, dark), '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
     '--surface-2': dark ? '#333333' : '#EDEDED', '--text': dark ? '#F3F3F3' : '#202020', '--muted': dark ? '#C5C5C5' : '#606060',
     '--line': dark ? '#666666' : '#B8B8B8', '--accent-soft': dark ? '#153A5A' : '#CCE4F7', '--accent-hover': dark ? '#383838' : '#E5F1FB', '--outline': dark ? '#C8C8C8' : '#666666'
@@ -49,6 +49,13 @@ function applyTheme() {
     ...themes.palette(prefs.accent, dark), '--bg': dark ? '#1c221e' : '#f6f7f2', '--surface': dark ? '#252d27' : '#fffefa',
     '--surface-2': dark ? '#2c352e' : '#eef1e8', '--text': dark ? '#e0e6da' : '#28372b', '--muted': dark ? '#b2bdae' : '#647161', '--line': dark ? '#465244' : '#dce2d5'
   };
+  // 自定义包只能覆盖白名单令牌；UWP 继续使用固定 Windows 10 中性色和蓝色。
+  if (pack.design !== 'uwp') {
+    tokens = { ...tokens, ...themes.tokenOverrides(pack, dark) };
+    // 包的调色板可以自绘，但设置中的强调色仍是最终用户偏好。
+    tokens['--accent'] = prefs.accent;
+    tokens['--on-accent'] = themes.contrast(prefs.accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318';
+  }
   // 原控件和 canvas 都从 root 读变量，统一映射为原程序的令牌名。
   window.SSAccent.apply(tokens['--accent']);
   const st = document.documentElement.style;
@@ -131,23 +138,37 @@ window.SSAccent.set = hex => {
 };
 window.SSAccent.reset = () => { const seed = themes.get(prefs.themePack, prefs.custom).seed; if (commit({ accent: seed })) applyTheme(); return seed; };
 function renderPacks() {
-  $('sf-theme-packs').innerHTML = themes.list(prefs.custom).map(pack => {
+  const render = pack => {
     // 示意卡片的工作区预览跟随当前明暗模式，避免深色设置页内仍显示浅色工作区。
     const dark = document.body.dataset.theme === 'dark';
     const palette = pack.design === 'uwp'
       ? { '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--accent': pack.seed, '--on-accent': '#FFFFFF' }
-      : themes.palette(pack.seed, dark);
+      : { ...themes.palette(pack.seed, dark), ...themes.tokenOverrides(pack, dark) };
     const glyph = pack.design === 'material'
       ? '<path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3ZM20 2v4m-2-2h4M4 18v4m-2-2h4"/>'
       : pack.design === 'uwp'
         ? '<path d="M4 4h16v16H4z"/><path d="M8 8h8v8H8z"/>'
       : '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11M8 4.8l8 3.5"/>';
     const selected = prefs.themePack === pack.id;
-    return `<button type="button" class="sf-pack" data-pack="${esc(pack.id)}" aria-pressed="${selected}"><span class="sf-pack-art ${pack.design}" aria-hidden="true" style="--preview-bg:${palette['--bg']};--preview-accent:${palette['--accent']};--preview-ink:${palette['--on-accent']}"><span class="sf-pack-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${glyph}</svg></span><span class="sf-pack-lines"><i></i><i></i><i></i></span></span><b>${esc(pack.name)}${selected ? ico('checkCircle') : ''}</b><small>${esc(pack.description)}</small></button>`;
-  }).join('');
+    const builtin = themes.isBuiltin(pack);
+    const preview = pack.assets?.preview ? `--preview-image:url("${pack.assets.preview}");` : '';
+    return `<article class="sf-pack" data-pack="${esc(pack.id)}" data-builtin="${builtin}" aria-current="${selected ? 'true' : 'false'}"><button type="button" class="sf-pack-select" data-pack-select="${esc(pack.id)}" aria-pressed="${selected}"><span class="sf-pack-art ${pack.design}" aria-hidden="true" style="--preview-bg:${palette['--bg']};--preview-accent:${palette['--accent']};--preview-ink:${palette['--on-accent']};${preview}"><span class="sf-pack-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${glyph}</svg></span><span class="sf-pack-lines"><i></i><i></i><i></i></span></span><span class="sf-pack-name"><b>${esc(pack.name)}</b>${selected ? ico('checkCircle') : ''}</span><small>${esc(pack.description)}</small><em>${builtin ? '内置主题包' : '我的主题包'}</em></button>${builtin ? '' : `<button type="button" class="sf-pack-delete" data-delete-pack="${esc(pack.id)}" title="删除主题包" aria-label="删除 ${esc(pack.name)}">${ico('trash')}</button>`}</article>`;
+  };
+  const builtin = themes.list([]).map(render).join('');
+  const custom = prefs.custom.map(render).join('');
+  $('sf-theme-packs').innerHTML = `<section class="sf-pack-group"><h4>内置主题包</h4><div class="sf-theme-pack-grid">${builtin}</div></section><section class="sf-pack-group"><h4>我的主题包</h4><div class="sf-theme-pack-grid">${custom || '<p class="sf-pack-empty">导入你绘制的 JSON 主题包，它会显示在这里。</p>'}</div></section>`;
 }
 $('sf-theme-packs').addEventListener('click', e => {
-  const b = e.target.closest('[data-pack]'); if (!b) return;
+  const del = e.target.closest('[data-delete-pack]');
+  if (del) {
+    const id = del.dataset.deletePack;
+    if (!themes.canDelete(id)) return;
+    const next = themes.remove(prefs.custom, id);
+    const selected = prefs.themePack === id;
+    if (commit(selected ? { custom: next, themePack: 'studio', accent: themes.get('studio').seed } : { custom: next })) { applyTheme(); themeStatus(); }
+    return;
+  }
+  const b = e.target.closest('[data-pack-select]'); if (!b) return;
   const pack = themes.get(b.dataset.pack, prefs.custom);
   if (commit({ themePack: pack.id, accent: pack.seed })) { applyTheme(); themeStatus(); }
 });
@@ -188,15 +209,26 @@ function download(name, data) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
   const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-$('sf-theme-export').addEventListener('click', () => download(`${prefs.themePack}.theme.json`, { ...themes.get(prefs.themePack, prefs.custom), seed: prefs.accent }));
+$('sf-theme-export').addEventListener('click', () => {
+  const pack = themes.get(prefs.themePack, prefs.custom);
+  download(`${pack.id}.theme.json`, { ...pack, seed: pack.design === 'uwp' ? pack.seed : prefs.accent });
+});
 $('sf-theme-import').addEventListener('click', () => $('sf-theme-file').click());
 $('sf-theme-file').addEventListener('change', async () => {
   const f = $('sf-theme-file').files[0]; $('sf-theme-file').value = ''; if (!f) return;
   try {
-    if (f.size > 131072) throw Error('主题包过大。');
-    const pack = JSON.parse(await f.text()); if (!themes.valid(pack)) throw Error('主题包格式无效，只支持声明式主题 JSON。');
+    if (f.size > 800000) throw Error('主题包过大，最大支持 800KB。');
+    const imported = JSON.parse(await f.text()); if (!themes.valid(imported)) throw Error('主题包格式无效，只支持声明式主题 JSON。');
+    let pack = imported;
+    if (themes.isBuiltin(pack)) {
+      const base = pack.id + '-custom';
+      let id = base, n = 2;
+      while (themes.get(id, prefs.custom).id === id) id = `${base}-${n++}`;
+      pack = { ...pack, id, name: `${pack.name}（自定义）`, builtin: false };
+    }
+    pack = themes.asCustom(pack); if (!pack) throw Error('内置主题包不能直接覆盖，请使用新的主题包 ID。');
     let custom = prefs.custom;
-    if (!themes.builtins.some(p => p.id === pack.id)) custom = [...custom.filter(p => p.id !== pack.id), pack];
+    custom = [...custom.filter(p => p.id !== pack.id), pack];
     if (!themes.validList(custom)) throw Error('主题包数量已达上限。');
     if (commit({ custom, themePack: pack.id, accent: pack.seed })) { applyTheme(); themeStatus(); }
   } catch (e) { notice(e.message); }
@@ -377,7 +409,8 @@ function refreshLibrary() {
   let visible = 0;
   const current = prefs.folders.find(f => f.id === folder);
   $('sf-library-title').textContent = t(route === '#/tasks' ? '任务中心' : current?.name || '稿件库');
-  $('home-view').dataset.list = route === '#/tasks' ? 'list' : prefs.view;
+  // 任务中心与稿件库共用同一组卡片，必须尊重用户选择的列表/卡片视图。
+  $('home-view').dataset.list = prefs.view;
   $('sf-list-mode').setAttribute('aria-pressed', String(prefs.view === 'list'));
   $('sf-list-mode').textContent = t(prefs.view === 'list' ? '卡片视图' : '列表视图');
   document.querySelectorAll('[data-filter]').forEach(b => b.classList.toggle('active', b.dataset.filter === filter));
@@ -388,8 +421,6 @@ function refreshLibrary() {
     card.dataset.phase = projectPhase(p);
     if (!card.querySelector('.sf-cover')) {
       const cover = document.createElement('div'); cover.className = 'sf-cover'; cover.innerHTML = ico('film') + '<span>SUBFABRIC</span>';
-      // 在线来源有封面才使用真实封面；本地媒体用图标，不伪造视频画面。
-      if (/^https?:\/\//.test(p.source?.thumbnail || '')) { const img = document.createElement('img'); img.src = p.source.thumbnail; img.alt = ''; img.referrerPolicy = 'no-referrer'; img.addEventListener('error', () => img.remove()); cover.prepend(img); }
       card.prepend(cover);
       card.draggable = true; card.addEventListener('dragstart', e => { if (e.target.closest('button,select,input')) { e.preventDefault(); return; } e.dataTransfer.setData('application/x-subfabric-project', p.id); });
       const assign = document.createElement('select'); assign.className = 'sf-assign'; assign.setAttribute('aria-label', t('移动到文件夹'));
@@ -397,6 +428,17 @@ function refreshLibrary() {
       assign.addEventListener('change', e => { e.stopPropagation(); if (commit({ assignments: { ...prefs.assignments, [p.id]: assign.value } })) { renderFolders(); refreshLibrary(); } });
       card.querySelector('.pc-actions').appendChild(assign);
     }
+    // 在线来源优先使用来源缩略图；没有绑定来源时使用服务端从本地视频抽取的封面。
+    const cover = card.querySelector('.sf-cover');
+    const coverUrl = /^https?:\/\//.test(p.source?.thumbnail || '') ? p.source.thumbnail : (p.cover || '');
+    let coverImg = cover.querySelector('img');
+    if (coverUrl) {
+      if (!coverImg) {
+        coverImg = document.createElement('img'); coverImg.alt = ''; coverImg.referrerPolicy = 'no-referrer';
+        coverImg.addEventListener('error', () => coverImg.remove()); cover.prepend(coverImg);
+      }
+      if (coverImg.getAttribute('src') !== coverUrl) coverImg.src = coverUrl;
+    } else if (coverImg) coverImg.remove();
     const assign = card.querySelector('.sf-assign');
     const options = `<option value="">${t('全部稿件')}</option>` + prefs.folders.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('');
     if (assign.innerHTML !== options) assign.innerHTML = options;

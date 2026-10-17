@@ -7,7 +7,7 @@ export function imageData(s) {
 }
 export function normalizeStudio(value, themes) {
   const v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const custom = themes.validList(v.custom) ? v.custom.map(p => ({ ...p })) : [];
+  const custom = themes.validList(v.custom) ? v.custom.map(pack => themes.asCustom(pack)).filter(Boolean) : [];
   const folders = Array.isArray(v.folders) ? v.folders.filter(f => f && id(f.id) && typeof f.name === 'string' && f.name.trim() && f.name.length <= 60).slice(0, 40).map(f => ({ id: f.id, name: f.name.trim() })) : [];
   const unique = folders.filter((f, i) => folders.findIndex(x => x.id === f.id) === i);
   const assignments = Object.fromEntries(Object.entries(v.assignments && typeof v.assignments === 'object' ? v.assignments : {}).filter(([p, f]) => id(p) && unique.some(x => x.id === f)).slice(0, 5000));

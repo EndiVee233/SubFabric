@@ -335,6 +335,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   gap: 8px; min-width: 0;
 }
 .ph-row > .select-dark { flex: 0 1 auto; min-width: 0; }
+.ph-row .switch-mini { flex: 0 0 auto; gap: 5px; }
+.follow-label { font-size: 11px; color: var(--text-1); white-space: nowrap; }
 .ph-lbl { font-size: 11px; color: var(--text-2); flex: none; }
 .badge {
   flex: none;
@@ -3274,13 +3276,25 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-studio[data-motion=off] #st-view .st-panel.active { animation:none; }
 .sf-studio .ass-style-track { background:var(--surface-2); }.sf-studio .sscp-control:has(#role-color-input) { position:fixed; left:-1000px; top:-1000px; visibility:hidden; }.sf-studio .sscp-control { background:var(--surface); border-color:var(--line); }.sf-studio .sscp,.sf-studio .font-picker,.sf-studio #role-menu,.sf-studio #card-menu,.sf-studio #tl-menu { background:var(--surface); color:var(--text); border-color:var(--line); box-shadow:0 14px 40px #15221930; }.sf-studio .sscp-head,.sf-studio .sscp-actions { background:var(--surface-2); }.sf-studio .sscp label,.sf-studio .sscp-label { color:var(--muted); }
 .sf-studio #search-box,.sf-studio .select-dark { background:var(--surface-2); color:var(--text); border:1px solid var(--line); }.sf-studio .select-dark option { background:var(--surface); color:var(--text); }
-.sf-theme-packs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin:20px 0; }
-.sf-pack { min-width:0; background:var(--surface-2); border:1px solid var(--line); border-radius:20px; padding:12px; color:var(--text); text-align:left; cursor:pointer; }
-.sf-pack[aria-pressed=true] { outline:2px solid var(--accent); outline-offset:2px; }
-.sf-pack b { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:14px; margin:12px 5px 4px; }
-.sf-pack b svg { width:16px; height:16px; flex-shrink:0; }
+.sf-theme-packs { display:grid; gap:22px; margin:20px 0; }
+.sf-pack-group { display:grid; gap:10px; }
+.sf-pack-group h4 { margin:0; color:var(--text); font-size:12px; font-weight:650; }
+.sf-theme-pack-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.sf-pack { position:relative; min-width:0; background:var(--surface-2); border:1px solid var(--line); border-radius:20px; color:var(--text); }
+.sf-pack[aria-current=true] { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 24%,transparent); }
+.sf-pack-select { display:block; width:100%; min-width:0; padding:12px 42px 12px 12px; background:transparent; border:0; color:inherit; text-align:left; cursor:pointer; }
+.sf-pack-select:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; border-radius:18px; }
+.sf-pack-name { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:12px 5px 4px; }
+.sf-pack-name b { font-size:14px; }
+.sf-pack-name svg { width:16px; height:16px; flex-shrink:0; color:var(--accent); }
 .sf-pack small { display:block; margin:0 5px; color:var(--muted); font-size:10px; line-height:1.7; }
-.sf-pack-art { height:85px; display:flex; align-items:center; padding:13px; gap:13px; background:var(--preview-bg); color:var(--preview-ink); border-radius:12px; }
+.sf-pack em { display:block; margin:8px 5px 0; color:var(--muted); font-size:10px; font-style:normal; }
+.sf-pack-delete { position:absolute; top:9px; right:9px; display:grid; place-items:center; width:28px; height:28px; padding:0; border:1px solid var(--line); border-radius:50%; background:var(--surface); color:var(--muted); cursor:pointer; }
+.sf-pack-delete:hover { color:var(--text); border-color:var(--accent); }
+.sf-pack-delete svg { width:15px; height:15px; }
+.sf-pack-empty { margin:0; padding:18px 10px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); font-size:11px; }
+.sf-pack-art { height:85px; display:flex; align-items:center; padding:13px; gap:13px; background-color:var(--preview-bg); background-image:var(--preview-image); background-size:cover; background-position:center; color:var(--preview-ink); border-radius:12px; overflow:hidden; }
+.sf-pack-art[style*="--preview-image"] .sf-pack-symbol,.sf-pack-art[style*="--preview-image"] .sf-pack-lines { opacity:.88; }
 .sf-pack-symbol { width:57px; height:57px; flex-shrink:0; display:grid; place-items:center; background:var(--preview-accent); border-radius:12px; }
 .sf-pack-symbol svg { width:24px; height:24px; }
 .sf-pack-art.material .sf-pack-symbol { border-radius:0; clip-path:polygon(50% 0%,61% 7%,75% 5%,82% 18%,95% 25%,93% 39%,100% 50%,93% 61%,95% 75%,82% 82%,75% 95%,61% 93%,50% 100%,39% 93%,25% 95%,18% 82%,5% 75%,7% 61%,0% 50%,7% 39%,5% 25%,18% 18%,25% 5%,39% 7%); }
@@ -3887,3 +3901,77 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-workspace=settings] :is(.sf-nav,.sf-topbar,#st-view .st-box,#st-view .st-actions) {
   background:transparent!important; backdrop-filter:none!important; -webkit-backdrop-filter:none!important; box-shadow:none!important;
 }
+
+/* 品牌图标使用与安装包/任务栏相同的高分辨率源图，避免 16px 描边图标在 Dock 中发糊。 */
+.sf-brand-mark { overflow:hidden; display:grid; place-items:center; background:transparent!important; }
+.sf-brand-mark img { display:block; width:100%; height:100%; object-fit:cover; }
+.sf-studio .app-logo { display:inline-flex; align-items:center; gap:7px; color:var(--text); background:none; }
+.sf-studio .app-logo img { width:22px; height:22px; object-fit:cover; border-radius:5px; flex:none; }
+
+/* Windows UWP 卡片视图：标题/筛选区与卡片、卡片与卡片之间留出明确的 Fluent 空间。 */
+.sf-studio[data-design=uwp] .home-toolbar { margin-bottom:24px; }
+.sf-studio[data-design=uwp] .sf-library-tools { margin-bottom:22px; }
+.sf-studio[data-design=uwp] .home-list { row-gap:18px; column-gap:14px; }
+
+/* 设置页的工作区保持透明，材质只落在实际设置卡片上；避免整页出现灰色遮罩。 */
+.sf-studio[data-workspace=settings] #st-view,
+.sf-studio[data-workspace=settings] #st-view .settings-inner,
+.sf-studio[data-workspace=settings] #st-view .st-box,
+.sf-studio[data-workspace=settings] #st-view .st-body { background:transparent!important; }
+.sf-studio[data-workspace=settings] :is(.sf-backdrop,.sf-ambient) { display:none!important; }
+.sf-studio[data-workspace=settings] #st-view .st-card,
+.sf-studio[data-workspace=settings] #st-view .set-group,
+.sf-studio[data-workspace=settings] #st-view .st-section,
+.sf-studio[data-workspace=settings] #st-view .sf-asr-family { background:var(--sf-glass-light-surface); }
+
+/* 胶囊形只属于 Material You；其它主题使用小圆角矩形。Material You 的倾斜胶囊
+ * 保留原有品牌动势，但把角度提高到更明显的 26°。 */
+.sf-studio[data-design]:not([data-design=material]) :is(.sf-orbit,.sf-settings-scope,.st-tag-cur,.log-subtab-cnt,.pc-badge) {
+  border-radius:4px!important; transform:none!important;
+}
+.sf-studio[data-design=material] .sf-orbit { border-radius:999px; transform:rotate(26deg); }
+.sf-studio[data-design=material] .sf-orbit:hover { transform:rotate(26deg) scale(1.04); }
+.sf-studio[data-design=material] .sf-orbit:active { transform:rotate(26deg) scale(.96); }
+
+/* 字幕列表与自动跟随：所有主题共用明确的播放状态，主题层只改变底色令牌。 */
+.cue-card.playing {
+  background: color-mix(in srgb, var(--accent-soft) 58%, var(--surface, #1a1a21));
+  border-left-width: 4px;
+  border-left-color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 68%, transparent),
+              0 2px 12px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.cue-card.playing .cc-no,
+.cue-card.playing .cc-times b { color: var(--accent); }
+.cue-card.playing::after {
+  content: '播放中';
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface, #1a1a21));
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 14px;
+  pointer-events: none;
+}
+#cue-list.follow-focus {
+  scroll-behavior: smooth;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.cc-l2-sep { width: 100%; min-width: 0; }
+
+/* 低频字幕操作进入编辑器设置，顶部只保留浏览和跟随播放所需控件。 */
+.editor-advanced-group { margin-top: 4px; }
+.editor-advanced-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 4px;
+}
+.editor-advanced-actions-grid .btn,
+.editor-advanced-actions-grid .badcat-wrap { min-width: 0; }
+.editor-advanced-actions-grid .badcat-wrap { display: block; }
+.editor-advanced-actions-grid .badcat-wrap > .btn { width: 100%; }

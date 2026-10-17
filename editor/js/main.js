@@ -3283,7 +3283,11 @@ timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
       wordPreviewFrame = 0;
       if (state.format === 'ass' && state.assDoc === doc && row.en && editRowVisible(row)) {
         wordPreviewTrackRow = row;
-        assPlayer.updateNow(doc.previewEvents(row.en, buildWordSpecs(row.en)));
+        // 词级边界拖动也走增量防抖刷新。整块边界使用同一策略；此前这里
+        // 每个 pointermove 都 updateNow() 重建 libass 轨道，UWP 下尤其容易
+        // 把主线程和 worker 调度压满，表现为“只改首/末词时”拖拽发涩。
+        // 松手分支仍会 updateNow()，所以最终位置不会延迟或丢失。
+        assPlayer.update(doc.previewEvents(row.en, buildWordSpecs(row.en)));
         pendingPlaybackRows.clear();
       }
     });
@@ -3621,13 +3625,14 @@ let cueEditOpen = false;
 /** 画面矩形（去掉黑边），与 SrtOverlay.fitToVideo 同一套算法；坐标相对 #video-stage */
 function pictureRect() {
   const vw = video.videoWidth, vh = video.videoHeight;
-  const w = video.clientWidth, h = video.clientHeight;
+  const vr2 = video.getBoundingClientRect();
+  const w = vr2.width, h = vr2.height;
   if (!vw || !vh || !w || !h) return null;
   const vr = vw / vh, er = w / h;
   let rw = w, rh = h;
-  if (er > vr) rw = Math.floor(h * vr); else rh = Math.floor(w / vr);
+  if (er > vr) rw = h * vr; else rh = w / vr;
   // video 在 stage 里通常压在 (0,0)，但不写死：拿真实偏移补齐，返回值才真的"相对 #video-stage"
-  const st = stage.getBoundingClientRect(), vr2 = video.getBoundingClientRect();
+  const st = stage.getBoundingClientRect();
   const ox = vr2.left - st.left, oy = vr2.top - st.top;
   return { left: ox + (w - rw) / 2, top: oy + (h - rh) / 2, width: rw, height: rh };
 }

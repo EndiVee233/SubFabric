@@ -1,5 +1,11 @@
 # 项目当前状态（唯一权威入口）
 
+- 当前任务（2026-10-17）：已修复视频区单击字幕后编辑框与片段高亮框的几何偏移。`main.js` 与 `overlay.js` 统一使用视频 `getBoundingClientRect()`、真实舞台偏移和未取整的画面矩形；`videoedit.js` 的 ASS 回退测量使用样式声明的字体、字号、粗斜体、横/纵向缩放、字距与 Canvas 字体指标，ASS 可用时继续以 libass 实际墨迹校准，SRT 使用字符级 `Range`。新增 `video-geometry-test.mjs`；完整回归 `node tests/run-all.mjs --report _test/video-subtitle-geometry-20261017.json` 为 89 通过、9 部分执行、0 失败、2 排除。`tests/jsmod/` 镜像已同步。状态：**已完成且已验证**。已随 2026-10-17 增量提交 GitHub（见「GitHub 与恢复」）。
+
+- 当前任务（2026-10-17）：主题包已拆分为四个独立内置 JSON 包（Studio、Material You、SubFabric Classic、Windows UWP），并补齐类似材质包的自定义主题包导入、导出、内置/自定义分组、删除、替换和安全校验。自定义包支持白名单颜色令牌与本地 PNG/JPEG/WebP 预览图，导入上限 800KB，拒绝脚本、CSS 注入、SVG 和远程资源；UWP 仍保持固定 Windows 10 蓝色规则。状态：**已完成且已验证**。专项 `theme-packs-test.mjs`、`ui-integration-test.mjs`、`uwp-theme-test.mjs` 与 JS 语法检查通过；完整回归 `node tests/run-all.mjs --report _test/theme-packs-final2-20261017.json` 为 88 通过、9 部分执行、0 失败、2 排除。`tests/jsmod/` 三个主题相关镜像与生产源码逐字节一致。已随 2026-10-17 增量提交 GitHub（见「GitHub 与恢复」）。
+
+- 当前任务（2026-10-17）：编辑器与主题体验增量已**完成且已验证**。时间轴项目载入默认 30 秒；按项目保存/恢复视频播放进度；任务中心尊重卡片/列表视图；无在线来源的本地视频异步抽帧生成项目封面；统一使用安装包高分辨率 Logo（Studio 品牌、编辑器左上角、托盘图标）；UWP 增大标题与卡片间距；设置页工作区去除整页灰色遮罩；胶囊样式限制为 Material You 并将倾斜角增至 26°。相关源码、模板、`tests/jsmod/` 镜像和 `PROJECT_MAP.md` 已同步。专项验证：时间轴 16/16、Studio 导航、首页项目列表、UWP 主题、UI 集成、Logo 静态资源与项目 API 冒烟、JS 语法均通过；完整回归 `node tests/run-all.mjs --report _test/current-ui-feature-full-20261017.json` 为 87 通过、9 部分、1 诊断、0 失败、2 排除；封面进程收尾补丁后的重点回归 7/7 通过。GitHub 保存：已随 2026-10-17 增量提交（见「GitHub 与恢复」）。
+
 - 最后更新：2026-10-16（Asia/Tokyo）。
 - 当前任务（2026-10-16）：将设置中的三项毛玻璃参数统一扩展到浅色模式，并让压暗、模糊度、透明度对 Studio、Material、Windows UWP、SubFabric Classic 全部主题包生效；状态：**已完成且已验证**。
 - 当前任务：降低翻译/语义分句对 LLM JSON 输出格式的依赖，改为模型优先直接输出纯文本、程序负责严格解析为译文行或标点对；已**完成且已验证**。
@@ -15,10 +21,12 @@
 - 初版主题浏览器检查（历史）：隔离端口 `8332` 曾确认选择器和基础浅/深色令牌；因用户反馈整体风格不够 UWP，该次结果不作为最终验收，现由下方完整覆盖复核取代。初版报告见 `_test/uwp-theme-results.json`。
 - 浏览器验收（2026-10-16）：此前 Chrome headless/CDP 实际加载 Studio；Windows UWP 选择器、浅/深色切换和 `#/resources` 重定向生效，侧栏无资源管理且设置无重复资源入口。历史计算样式确认 Segoe UI、浅色 `#f3f3f3/#ffffff`、深色 `#202020/#2b2b2b`、按钮/字段/页签/播放器/进度条 2px、设置卡 4px、UWP 页面与卡片无 `backdrop-filter`；本轮按规范将生产令牌收紧为深色 `#1F1F1F/#2B2B2B`、浅色 `#F3F3F3/#FFFFFF`，未重新取得截图。当前回合再次启动独立 CDP 页面时目标崩溃；此前预先存在的 8334 服务未停止，避免影响来源不明的进程。真实安装器/SEA 仍未验收。
 - 连续性规则：[CONTINUITY.md](CONTINUITY.md)；结构与红线：[../PROJECT_MAP.md](../PROJECT_MAP.md) §6–§8。
-- 开始基线：当前目录为源码快照，无 `.git`，不初始化。Node v24.21.0；本机无 PATH Python/gh，已发现应用提供的 Python 3.12.14（有 numpy，无 ruff）；未发现 ESLint。
+- 开始基线：当前目录为源码快照，无 `.git`，不初始化。Node v24.21.0（系统）/ v22.22.2（托管）；`gh` 已安装但未登录，Windows 凭据管理器内有账号 `R2FtYml0` 的 PAT；eslint@9 已装入托管 Node 工作区，可用于复现 CI 检查。
 - 维护记录称曾将 417 个文件的 SHA-256 保存至 `_test/maintenance/baseline.json`；该文件在当前源码快照中不存在，未重建基线，也未据此覆盖文件。
-- 远程开始基线：`EndiVee233/SubFabric` 默认分支解析至 main，HEAD `8cb07bac42e3f6a85c9c6cbb966d5419887e67ef`，main 未保护；连接器登录账号 R2FtYml0。
+- 远程开始基线：`EndiVee233/SubFabric` main；2026-10-15 为 `8cb07bac`，10-16 提交后为 `8cc76d84`，本次（2026-10-17）为 `085fcd7f`（含图标换新、beta 1.1 发版与版本文档提交）；main 未保护；连接器账号 R2FtYml0。
 
+- 本轮用户反馈（2026-10-17）：修复非 UWP 主题时间轴字幕块右键菜单无反应。`timeline.js` 将右键菜单提升到 `body` 以避开 `#tl-canvas-wrap` 的 `overflow:hidden` 裁剪，并用 `getBoundingClientRect()` 按 CSS 尺寸换算命中坐标；字幕卡片播放中状态统一增强为背景、边框、阴影与“播放中”标识，自动跟随滚动增加短暂焦点反馈；中英分隔线统一为内容区全宽；字幕列表顶部保留角色、搜索、显示模式、跟随播放和异常快速筛选，高级刷新/修复/异常分类/反思纠错/全片逐词重校对/分段导入移入编辑器设置。状态：**已完成且已验证**。`node --check`、时间轴专项、卡片样式、异常筛选、Studio 导航、UI 集成与 UWP 主题专项均通过；完整回归 `node tests/run-all.mjs --report _test/uwp-context-follow-20261017.json` 为 87 通过、9 部分、0 失败、2 排除。
+- 本轮用户反馈（2026-10-17）：修复 UWP 下首词开头/末词结尾拖拽略卡的问题。根因是词级拖拽每个动画帧调用 `assPlayer.updateNow()` 重建 libass 轨道，而整块边界使用防抖 `update()`；现统一词级预览走防抖刷新，松手仍立即 `updateNow()` 提交最终位置。源码与 `tests/jsmod/main.js` 已同步；状态：**已完成且已验证**。专项与完整回归 `node tests/run-all.mjs --report _test/word-edge-drag-smoothness-20261017.json` 为 87 通过、9 部分、0 失败、2 排除。
 ## 本次执行
 
 - JS：`node tests/run-all.mjs --report _test/maintenance/js-results.json`，Node v24.21.0；96 项执行，88 通过、7 部分执行、1 个诊断、0 失败，2 项因真实项目数据排除。通过 `SUBFABRIC_PYTHON` 使词边界与 VibeVoice 行为用例完整执行。逐项结果在 gitignore 下 `_test/maintenance/js-results.json`。
@@ -33,6 +41,8 @@
 - CI 修复（2026-10-15 续）：`eslint.config.js` 浏览器侧 globals 补 `HTMLSelectElement` —— `editor/js/studio.js:739` 的自定义选择器用 `typeof HTMLSelectElement` 透传 `value/selectedIndex/disabled` 访问器，该全局自 8cb07bac 起缺失，导致 2026-10-13 以来每次推送的 `CI / JS · ESLint + 全量测试` 均失败（ESLint 步骤 1 error，测试步骤被跳过）；上一提交已修复 `tools/verify_home_only_running.mjs:97` 的解析错误（同类历史故障）。本地 eslint@9 对 `editor/ tools/ tests/` 复现 0 error（余 19 条历史 warning，不阻断 CI）。
 - 提交前验证（2026-10-16 提交时重跑）：Node v24.21.0 完整回归 `node tests/run-all.mjs --report _test/oct16-verify-v24.json` 为 **87 通过、9 部分执行、1 诊断、0 失败、2 排除**；ESLint 0 error（19 历史 warning）；105 个改动 JS `node --check` 通过。Node v22.22.2（本机托管运行时）下仅 `repair12-build-install-test` 失败：该版本在 Windows 对**非 ASCII 路径**执行 `fs.cpSync` 会**原生崩溃**（已最小复现；v24 与 CI 的 Node 22/Linux 均通过；`repair12` 与 `tools/build-install.mjs` 本次均未改动，属运行时缺陷）。
 - repair09 时序竞态修复（测试，随本次提交）：失败导入的项目目录与临时目录在 400 响应之后才清理完毕（实测本机稳定复现：响应到达时目录仍在、数百毫秒内消失），原测试收到响应后立即断言会误报；改为轮询等待真实“无残留”后再断言（意图与严格性不变），v22/v24 下均通过。A/B 对照远端版本行为一致，非本次增量引入。
+- 提交（2026-10-17）：本轮 UI/主题/几何增量 36 个文件（30 改动 + 6 新增）经已认证 REST 通道单次原子提交写入 main；提交前复核远程 HEAD 为 `085fcd7f`（10-17 凌晨的图标换新、beta 1.1 发版与版本文档三条提交已在远程并包含于本地快照），提交后核对父提交与变更文件集合（30 改 + 6 增，无删除、无范围外改动）。新增文件：`docs/THEME_PACKS.md`、`editor/assets/app-logo.png`（512×512）、`editor/themes/{studio,material-you}.theme.json`、`tests/{theme-packs,video-geometry}-test.mjs`。
+- 提交前验证（2026-10-17 重跑）：Node v24.21.0 完整回归 `node tests/run-all.mjs --report _test/oct17-verify-v24.json` 为 **89 通过、9 部分执行、1 诊断、0 失败、2 排除**（99 项执行）；ESLint 0 error（19 历史 warning）；24 个改动/新增 JS `node --check` 通过；51 个 `tests/jsmod/` 镜像与源码逐字节一致；`theme-packs`、`video-geometry`、`timeline-fit`（16/16）专项通过。
 
 ## 历史已验证成果（不代表本次重验）
 
@@ -46,6 +56,10 @@
 
 ## GitHub 与恢复
 
+- GitHub：2026-10-17 增量已提交至 `EndiVee233/SubFabric` main，父提交 `085fcd7f84074c3e1dd51a6ae1d0c33da16bcd12`（在图标换新、beta 1.1 发版与版本文档三条提交之上续接）；提交标识与链接见最终报告。写入通道同 10-16（凭据管理器内 R2FtYml0 PAT → REST blob → tree(base_tree) → commit(parents=[期望 HEAD]) → refs PATCH `force=false`），提交前核对远程 HEAD、提交后核对父提交与变更文件集合（30 改动 + 6 新增，无删除、无范围外改动）。`tests/fixture.ass`、`_test/`、`logs/`、`.diag.json` 等生成物按 `.gitignore` 排除。
 - GitHub：2026-10-16 增量已提交至 `EndiVee233/SubFabric` main，父提交 `829f2204fd48cea3601d64cd71fe321473d236d6`（10-15 的 CI 修复提交）；提交标识与链接见最终报告。写入通道：连接器 tree/contents 接口对本仓库返回 403，改用本机 Windows 凭据管理器内账号 `R2FtYml0` 的 PAT 走 REST（blob → tree(base_tree) → commit(parents=[期望 HEAD]) → refs PATCH `force=false`），提交前核对远程 HEAD、提交后核对父提交与变更文件集合（113 改动 + 4 新增 + 3 删除，无范围外改动）。`tests/fixture.ass`、`_test/`、`logs/`、`.diag.json` 等生成物按 `.gitignore` 排除。
 - 10-15 提交（同通道）：维护增量 18 文件、父提交 `8cb07bac`；CI 修复 2 文件、父提交 `43d04941`。
 - 恢复时先读本文件，再读 MAINTENANCE 与本次结果；不清理用户数据、不再本地暂存/提交/推送、不创建或调查 Hook。
+
+
+

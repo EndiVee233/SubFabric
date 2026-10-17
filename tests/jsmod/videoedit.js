@@ -40,6 +40,23 @@ const INK_MISS_MAX = 3;
  * 240 与 main.js 里"单击视频 = 播放/暂停"的等待同值（同一个交互语言）。 */
 const CUE_CLICK_DELAY = 240;
 
+function styleNumber(style, ...keys) {
+  for (const key of keys) {
+    const n = Number(style && style[key]);
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
+}
+
+function styleFlag(style, ...keys) {
+  return keys.some(key => style && (Number(style[key]) < 0 || style[key] === '1' || style[key] === true));
+}
+
+function safeFontName(value) {
+  const name = String(value || '').trim().replace(/["\\]/g, '');
+  return name ? `"${name}"` : '';
+}
+
 /** 这条字幕在 ASS 文件里的行号（events 段的下标）。
  *  libass 的摆放规则是**按事件在文件里的先后从底部往上摆、后面的往上顶**（先写的贴着 margin），
  *  所以"行号升序 = 由下到上"。中英两行的估算中心可能只差 2px，靠最近邻/靠"谁叫中文"都会错，
@@ -324,10 +341,11 @@ export class VideoCueEditor {
 
   /* ─────────── 画面几何（估算） ─────────── */
 
-  _measure(text, fontCss) {
+  _measure(text, fontCss, scaleX = 1, spacing = 0) {
     if (!this._mctx) this._mctx = document.createElement('canvas').getContext('2d');
     this._mctx.font = fontCss;
-    return this._mctx.measureText(String(text == null ? '' : text)).width;
+    const value = String(text == null ? '' : text);
+    return this._mctx.measureText(value).width * scaleX + Math.max(0, value.length - 1) * spacing;
   }
 
   /** 把 main.js 报上来的候选行算成"画面上的一条带子 + 每个片段的 x 区间" */
@@ -580,24 +598,33 @@ export class VideoCueEditor {
     const mv = (Number(st.marginv) || 0) * scale;
     const ml = (Number(st.marginl) || 0) * scale;
     const mr = (Number(st.marginr) || 0) * scale;
-    const lineH = fontPx * 1.28;
-    const fontCss = `600 ${fontPx.toFixed(1)}px ${FONT_STACK}`;
-    const w = this._measure(it.plain, fontCss);
+    const scaleX = Math.max(.01, styleNumber(st, 'scalex', 'scaleX') / 100 || 1);
+    const scaleY = Math.max(.01, styleNumber(st, 'scaley', 'scaleY') / 100 || 1);
+    const spacing = styleNumber(st, 'spacing', 'letterspacing') * scale;
+    const italic = styleFlag(st, 'italic') ? 'italic ' : '';
+    const weight = styleFlag(st, 'bold') ? 700 : 400;
+    const family = safeFontName(st.fontname) || FONT_STACK;
+    const fontCss = `${italic}${weight} ${fontPx.toFixed(2)}px ${family}${family === FONT_STACK ? '' : ', ' + FONT_STACK}`;
+    const metrics = this._mctx ? (this._mctx.font = fontCss, this._mctx.measureText('Mg')) : null;
+    const measuredLine = metrics && Number.isFinite(metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent)
+      ? metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent : fontPx * 1.2;
+    const lineH = Math.max(fontPx * 1.05, measuredLine * 1.16 * scaleY);
+    const w = this._measure(it.plain, fontCss, scaleX, spacing);
     const left = pic.left + ml, right = pic.left + pic.width - mr;
     const col = align % 3;                              // 1=左 2=中 0=右（小键盘对齐）
     const x0 = col === 1 ? left : col === 0 ? right - w : (left + right) / 2 - w / 2;
     const bottom = align >= 7 ? pic.top + mv + lineH
       : align >= 4 ? pic.top + pic.height / 2 + lineH / 2
         : pic.top + pic.height - mv;
-    return { fontPx, lineH, x0, bottom, adv: this._advances(it.plain, x0, fontCss) };
+    return { fontPx, lineH, x0, bottom, adv: this._advances(it.plain, x0, fontCss, scaleX, spacing) };
   }
 
   /** 逐字符累计宽度：adv[i] = 纯文本前 i 个字符的总宽（片段区间直接查表） */
-  _advances(plain, x0, fontCss) {
+  _advances(plain, x0, fontCss, scaleX = 1, spacing = 0) {
     const s = String(plain || '');
     const adv = new Array(s.length + 1);
     adv[0] = 0;
-    for (let i = 0; i < s.length; i++) adv[i + 1] = adv[i] + this._measure(s[i], fontCss);
+    for (let i = 0; i < s.length; i++) adv[i + 1] = adv[i] + this._measure(s[i], fontCss, scaleX) + (i ? spacing : 0);
     return adv;
   }
 

@@ -49,6 +49,42 @@ export function initProjects(ctx) {
   let detailsOpenedFromApp = false;
   let detailLoadToken = 0;
 
+  // 播放进度按项目隔离，保存在浏览器本地；视频文件本身仍由项目元数据管理。
+  // 这样关闭编辑器、切换到设置或视频暂时失联时，都不会把进度写进字幕或覆盖用户文件。
+  const playbackKey = (id) => `subfabric-playback-v1:${id}`;
+  let pendingPlayback = null;
+  let lastPlaybackWrite = 0;
+  function readPlayback(id) {
+    try {
+      const n = Number(localStorage.getItem(playbackKey(id)));
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    } catch { return 0; }
+  }
+  function savePlaybackPosition() {
+    const p = state.project;
+    const t = Number(video.currentTime);
+    if (!p || !Number.isFinite(t) || t < 0) return;
+    try { localStorage.setItem(playbackKey(p.id), String(Math.max(0, t))); } catch {}
+    lastPlaybackWrite = Date.now();
+  }
+  function restorePlaybackPosition() {
+    const p = state.project, target = pendingPlayback;
+    if (!p || !target || target.id !== p.id) return;
+    const duration = Number(video.duration);
+    const t = Number(target.time);
+    if (!(t > 0) || !(duration > 0)) return;
+    try { video.currentTime = Math.min(t, Math.max(0, duration - 0.05)); } catch {}
+    pendingPlayback = null;
+  }
+  if (video && typeof video.addEventListener === 'function') {
+    video.addEventListener('loadedmetadata', restorePlaybackPosition);
+    video.addEventListener('timeupdate', () => {
+      // 写入节流到约 1 秒一次，暂停/离开时再立即补写一次。
+      if (Date.now() - lastPlaybackWrite >= 900) savePlaybackPosition();
+    });
+    video.addEventListener('pause', savePlaybackPosition);
+  }
+
   // 离场视图短暂保留以完成淡出；快速往返时取消旧定时器，避免误隐藏新页面。
   function setPageVisible(page, visible) {
     clearTimeout(pageTimers.get(page));
@@ -513,6 +549,7 @@ export function initProjects(ctx) {
   }
   // 页面关闭/刷新兜底: 未保存的改动用 sendBeacon 补一刀(服务端 PUT/POST 都收)
   window.addEventListener('beforeunload', () => {
+    savePlaybackPosition();
     if (!state.project || saveConflict) return;
     clearTimeout(saveTimer);
     const text = currentText();
@@ -690,8 +727,10 @@ export function initProjects(ctx) {
 
     // 2) 视频: 按保存的路径经服务端 Range 流式播放; 失效则要求重选
     if (m.videoExists && m.video && m.video.path) {
+      pendingPlayback = { id: pid, time: readPlayback(pid) };
       loadVideoUrl('/api/media?path=' + encodeURIComponent(m.video.path), m.video.name);
     } else {
+      pendingPlayback = { id: pid, time: readPlayback(pid) };
       promptRelink(m);
     }
 
@@ -3265,6 +3304,8 @@ async function renderAsrModels() {
   });
 
   function detachProject() {
+    savePlaybackPosition();
+    pendingPlayback = null;
     ++_openGen;
     clearTimeout(saveTimer);
     clearInterval(pollTimer); pollTimer = 0;
