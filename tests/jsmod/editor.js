@@ -58,6 +58,7 @@ export class EditorPanel {
     this.filtered = [];       // 过滤后
     this.selected = null;
     this.playingItem = null;
+    this._playingT = null;        // 最近一次播放时间: 从别的 Tab 切回字幕页时用它强制同步高亮/滚动
     this._filterText = '';
     this._badOnly = false;    // 只看异常行
     this._lowOnly = false;    // 只看低置信度行（ASR 置信度来自 ASS 元数据）
@@ -329,6 +330,7 @@ export class EditorPanel {
     this.items = items;
     this.selected = null;
     this.playingItem = null;
+    this._playingT = null;    // 条目集/项目换了 → 旧播放时间不再可信，等下一次 tick 重新写入
     this._speaker = '';       // 新数据 → 重置角色筛选(避免跨文件残留)
     if (this.roleFilterSel) this.roleFilterSel.value = '__all__';
     this._applyFilter(keepView ? keepTop : 0);
@@ -347,6 +349,7 @@ export class EditorPanel {
   showTab(name) {
     if (!['subs', 'roles', 'settings', 'logs'].includes(name)) name = 'subs';
     if (name === 'roles' && !this._rolesEnabled) name = 'subs';
+    const prevTab = this._tab;
     this._tab = name;
     const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings', logs: 'tab-logs' };
     for (const [k, id] of Object.entries(bodies)) {
@@ -355,7 +358,14 @@ export class EditorPanel {
     }
     for (const btn of this._tabBtns) btn.classList.toggle('active', btn.dataset.tab === name);
     if (this.onTabChange) this.onTabChange(name);      // 离开角色栏 → 主逻辑会清掉没用过的新角色
-    if (name === 'subs') this._render();
+    if (name === 'subs') {
+      this._render();
+      /* 其它 Tab 是隐藏的：字幕列表量不到可见高度，播放高亮虽然记在 playingItem 上，
+       * 但不会滚到当前句。切回来时必须按最近播放时间强制重定位一次，否则列表停在切走前的
+       * 位置、而且因为 playingItem 早已等于当前句，tick 的 setPlayingByTime 不会再做任何事
+       * （用户反馈"切到字幕列表后进度不会和播放进度同步"）。 */
+      if (prevTab !== 'subs') this.syncPlaying();
+    }
     else if (name === 'roles') this._renderRoles();
   }
 
@@ -1047,8 +1057,10 @@ export class EditorPanel {
     }
   }
 
-  /** 播放高亮: 由主循环以当前时间驱动 */
-  setPlayingByTime(t) {
+  /** 播放高亮: 由主循环以当前时间驱动。
+   *  force=true 用于「从别的 Tab 切回字幕页」：即使 playingItem 没变也要重新滚动/落位。 */
+  setPlayingByTime(t, force = false) {
+    this._playingT = t;
     if (!this.items.length) return;
     const arr = this._filterText || this._mode !== 'bi' ? this.filtered : this.items;
     let found = null;
@@ -1056,9 +1068,12 @@ export class EditorPanel {
     for (let k = i; k >= 0 && arr[k].end > t; k--) {
       if (arr[k].start <= t) { found = arr[k]; break; }
     }
-    if (found === this.playingItem) return;
+    if (found === this.playingItem && !force) return;
     const prevPlaying = this.playingItem;
     this.playingItem = found;
+    /* 字幕页隐藏时列表高度为 0：这里如果继续走滚动逻辑，会把 scrollTop 重置成 0，
+     * 切回来就停在稿子开头。隐藏期间只记录 playingItem，位置留给 showTab → syncPlaying。 */
+    if (this._tab !== 'subs' || !this.listEl.clientHeight) return;
     // 轻量高亮: 只切 class
     const pe = this._cardElAt(prevPlaying ? this.filtered.indexOf(prevPlaying) : -1);
     if (pe) pe.classList.remove('playing');
@@ -1067,7 +1082,8 @@ export class EditorPanel {
       if (idx >= 0) {
         const el = this._cardElAt(idx);
         if (el) el.classList.add('playing');
-        if (performance.now() - (this._userScrollAt || 0) > 5000) {
+        // 正常跟随受"用户刚手动滚动"保护；切回字幕页的强制同步不受它影响。
+        if (force || performance.now() - (this._userScrollAt || 0) > 5000) {
           const top = this._cardTop(idx), h = this._cardH(idx);
           const st = this.listEl.scrollTop, vh = this.listEl.clientHeight;
           if (top < st || top > st + vh - h) {
@@ -1081,6 +1097,12 @@ export class EditorPanel {
         }
       }
     }
+  }
+
+  /** 切回字幕页时强制按最近播放时间重定位高亮与滚动（不依赖 timeupdate 时机）。 */
+  syncPlaying() {
+    if (this._playingT == null) return;
+    this.setPlayingByTime(this._playingT, true);
   }
 
   /* ─────────── 行内编辑 ─────────── */

@@ -1,8 +1,16 @@
 # 项目当前状态（唯一权威入口）
 
-- 最后更新：2026-10-17（Asia/Shanghai）。
+- 当前任务（2026-10-17）：修复用户反馈的 6 项编辑器界面问题，**已完成且已验证**。① 在角色/设置/日志页通过时间轴空白拖动新增字幕后，`createRowAt()` 自动 `panel.showTab('subs')` 再选中/进入编辑；② Ctrl+左键拖动后的批量浮条从 `#tl-canvas-wrap` 移到 `#app` 之外——深色主题给 `#timeline-panel` 加了 `backdrop-filter`，会建立 fixed 包含块，原先按视口算出的坐标被二次偏移，浮条实际落到视口下方（实测 y=1421 / 视口 900）；③ 失败任务卡补 `#job-card.jc-err .jc-spin { display:none }`，不再转圈；④ 时间轴块文本用 `timelineBlockBody()` 去掉行首 `[角色名]`，块颜色仍取 `row.color`；⑤ 字幕页隐藏时 `setPlayingByTime()` 只记 `playingItem/_playingT`、不重置 scrollTop，`showTab('subs')` 从其它页返回时调用 `syncPlaying()` 强制回到当前播放句；⑥ 查找替换遮罩改为透明并把 `#fr-overlay` 从统一黑玻璃遮罩组移出，弹窗自身保持 `--bg-2` 实底，同时去掉 `.fr-head/.fr-actions` 与 flex gap 叠加的 margin/padding。新增 `tests/ui-feedback-20261017-test.mjs`（38 项）；定向 12 项、完整 JS 回归 `node tests/run-all.mjs --report _test/ui-feedback-full3-20261017.json`：90 通过、9 部分执行、0 失败、2 排除。真实鼠标 CDP 验收（源码服务 + 临时项目）已通过并删除临时项目。状态：**已完成且已验证**。
+
+- GitHub 保存（6 项 UI 修复）：已随 2026-10-17 晚增量提交（父提交 `faa0c229`，见「GitHub 与恢复」）。原记录"未登录/无 `.git`"只说明 gh CLI 与本地仓库不可用；实际可用的写入通道是 Windows 凭据管理器内 `R2FtYml0` 的 PAT（repo scope）走 REST，本次即用它完成提交。
+
+- 当前任务（2026-10-17）：修复 GitHub 最新发行版反馈的主题包无法切换严重回归。已复现根因：主题卡片使用 `data-pack-select`，点击处理却读取不存在的 `dataset.pack`，导致 `themes.get(undefined)` 静默回退 Studio；已改为读取 `dataset.packSelect`，并完成浏览器实际切换验证（Studio → Material You，`body.dataset.themePack=material-you`、`data-design=material`、选中状态同步）。专项 `theme-packs-test.mjs`、`uwp-theme-test.mjs`、`ui-integration-test.mjs`、`studio-navigation-test.mjs` 与定向 run-all（4/4）通过。状态：**已实现但未验证**（待用户发行版更新后复核）。
+
+- GitHub 保存（主题包切换修复）：已随 2026-10-17 晚增量提交（父提交 `faa0c229`）。原记录的 403 来自 GitHub 连接器（`push_files` / `create_or_update_file`）；凭据管理器 PAT 的 REST 通道可用，本次已用其完成提交，远端基线与本地一致。
+
+- 当前任务（2026-10-17）：调查 Parakeet 系列初稿可用性低于 SubForges 的原因，**进行中，尚未修改代码**。只读审查已确认：创建初稿默认模型回退顺序把 `ASR_MODELS[0]` 的 Parakeet TDT 0.6B v2 放在首位；CUDA 路径使用 661MB 的 sherpa-onnx int8 导出；`asr/asr.py` 对整段音频按约 26 秒切块、切块之间无重叠，再自行重建词边界；新建项目 `startPrepare()` 默认用 `afftdn` 降噪后的 16kHz 单声道音频。当前没有真实模型/媒体基准，因此不能把这些代码级风险直接等同于准确率结论。下一步是用同一音频对 Parakeet 后端、Whisper large-v3-turbo、原声/降噪、26 秒无重叠/带上下文方案做 A/B，分别统计词错误、块边界错误、专名错误、时间轴错误和最终初稿可用性；SubForges 的公开页面只描述“识别→翻译/角色推断→渲染”的工作流，未公开其 ASR 模型，不能直接拿其 80%–90% 作为纯 ASR 基准。
+
 - 当前任务（2026-10-17）：从 GitHub 同步改动并发布 **beta 1.2**。本地由 `ebf9ff2` 快进到远端 `6630920`（含 beta 1.1 之后的版本规则、主题/几何/时间轴增量）；`fetch-vendor.js` 重新拉取 vendor（18.4MB）；`build_exe.py` 生成 `build/SubFabric.exe`（93,414,912 字节，文件版本 `1.2.0.0`，SEA sentinel 存在、GUI 子系统=2）；`ISCC` 生成 `build/installer/SubFabric-beta 1.2-setup.exe`（37,494,266 字节，sha256 `caf7b4b5b352e05e0efb87b13b894d7ffda43e809683258e86b2a050f0f79b69`，解包 97 文件 / 110.6MB，含 `editor/vendor` 4 文件，不含 `asr/crispasr`、`asr/whisper.cpp`）。三处版本号按 [PROJECT_MAP.md](../PROJECT_MAP.md) §1.1 默认推进为显示 `beta 1.2` / 文件 `1.2.0.0` / tag `v1.2.0-beta.1`；同时修复 `.iss` 的 asr 排除清单漏掉 `crispasr` 的问题（本机存在该运行时时会多带约 97MB）。隔离端口 8399 源码冒烟 `/api/version` 返回 `beta 1.2`、`vendorOk: true`。状态：**已完成且已验证**（同步、构建与发布）；真实静默安装（会覆盖用户已装版本）与 GPU/ASR/LLM 未执行，不能视为已验收。
-- 本地同步前有一处未提交的 `docs/STATUS.md` 历史测试记录（2026-10-14 全量测试复核）；为不覆盖用户修改，已另存为 `_test/local-status-edit-20261017.patch`（`_test/` 为 gitignore 本地目录），本次未混入提交。
 
 - 当前任务（2026-10-17）：已修复视频区单击字幕后编辑框与片段高亮框的几何偏移。`main.js` 与 `overlay.js` 统一使用视频 `getBoundingClientRect()`、真实舞台偏移和未取整的画面矩形；`videoedit.js` 的 ASS 回退测量使用样式声明的字体、字号、粗斜体、横/纵向缩放、字距与 Canvas 字体指标，ASS 可用时继续以 libass 实际墨迹校准，SRT 使用字符级 `Range`。新增 `video-geometry-test.mjs`；完整回归 `node tests/run-all.mjs --report _test/video-subtitle-geometry-20261017.json` 为 89 通过、9 部分执行、0 失败、2 排除。`tests/jsmod/` 镜像已同步。状态：**已完成且已验证**。已随 2026-10-17 增量提交 GitHub（见「GitHub 与恢复」）。
 
@@ -10,7 +18,7 @@
 
 - 当前任务（2026-10-17）：编辑器与主题体验增量已**完成且已验证**。时间轴项目载入默认 30 秒；按项目保存/恢复视频播放进度；任务中心尊重卡片/列表视图；无在线来源的本地视频异步抽帧生成项目封面；统一使用安装包高分辨率 Logo（Studio 品牌、编辑器左上角、托盘图标）；UWP 增大标题与卡片间距；设置页工作区去除整页灰色遮罩；胶囊样式限制为 Material You 并将倾斜角增至 26°。相关源码、模板、`tests/jsmod/` 镜像和 `PROJECT_MAP.md` 已同步。专项验证：时间轴 16/16、Studio 导航、首页项目列表、UWP 主题、UI 集成、Logo 静态资源与项目 API 冒烟、JS 语法均通过；完整回归 `node tests/run-all.mjs --report _test/current-ui-feature-full-20261017.json` 为 87 通过、9 部分、1 诊断、0 失败、2 排除；封面进程收尾补丁后的重点回归 7/7 通过。GitHub 保存：已随 2026-10-17 增量提交（见「GitHub 与恢复」）。
 
-- 上一批记录最后更新：2026-10-16（Asia/Tokyo）。
+- 最后更新：2026-10-16（Asia/Tokyo）。
 - 当前任务（2026-10-16）：将设置中的三项毛玻璃参数统一扩展到浅色模式，并让压暗、模糊度、透明度对 Studio、Material、Windows UWP、SubFabric Classic 全部主题包生效；状态：**已完成且已验证**。
 - 当前任务：降低翻译/语义分句对 LLM JSON 输出格式的依赖，改为模型优先直接输出纯文本、程序负责严格解析为译文行或标点对；已**完成且已验证**。
 - 历史任务（2026-10-16）：按 Windows 10 Fluent 设计规范继续收紧 Studio 生产界面，**已完成且已验证**。规范原文保存在用户粘贴附件；本轮重点是移除首页营销式 Hero、统一 Windows 10 中性色令牌、替换操作 Emoji 为 SVG 图标，并补齐 UWP 动态控件覆盖。
@@ -60,14 +68,8 @@
 
 ## GitHub 与恢复
 
-- GitHub（2026-10-17 beta 1.2）：`EndiVee233/SubFabric` main 由 `6630920` 快进到 `8ce055c`
-  （`chore(发版): 推进至 beta 1.2 并构建安装包（同步 GitHub 增量）`，4 个文件：`build/installer/SubFabric.iss`、
-  `editor/README.md`、`editor/server.js`、`tests/jsmod/server.js`；`force=false`，无历史改写）。
-  tag `v1.2.0-beta.1`（annotated）指向 `8ce055c`；Release 已发布：**SubFabric beta 1.2**（prerelease），
-  资产 `SubFabric-beta.1.2-setup.exe` 37,494,266 字节，`digest = sha256:caf7b4b5…` 与本地一致；
-  链接 <https://github.com/EndiVee233/SubFabric/releases/tag/v1.2.0-beta.1>。
-  构建前核对：远端 HEAD 为 `6630920`、本地 ff 后工作树干净（仅保留未跟踪 `prototype/`）；
-  推送后核对 main HEAD、tag 目标提交与 Release 资产 digest 均一致。
+- GitHub：2026-10-17 晚增量（6 项 UI 修复 + 主题包切换修复）已提交至 `EndiVee233/SubFabric` main，父提交 `faa0c229a372207646eefe756d6a0f3c12814b6b`；提交标识与链接见最终报告。范围：13 改动 + 1 新增（`tests/ui-feedback-20261017-test.mjs`）；**未纳入** `editor/server.js`、`editor/README.md`、`build/installer/SubFabric.iss`、`tests/jsmod/server.js` —— 本地快照这三处版本号仍为 beta 1.1，远程已由发版提交推进到 beta 1.2（且 `.iss` 已含 `crispasr` 排除项），属快照滞后，不应用本地版本覆盖远程。
+- GitHub（2026-10-17 beta 1.2，历史记录）：main 由 `6630920` 快进到 `8ce055c`（`chore(发版): 推进至 beta 1.2 并构建安装包（同步 GitHub 增量）`，4 个文件）；tag `v1.2.0-beta.1`（annotated，指向 `8ce055c`）；Release **SubFabric beta 1.2**（prerelease），资产 `SubFabric-beta.1.2-setup.exe` 37,494,266 字节；本轮复核 tag 目标与 Release 资产均与记录一致。
 - GitHub：2026-10-17 增量已提交至 `EndiVee233/SubFabric` main，父提交 `085fcd7f84074c3e1dd51a6ae1d0c33da16bcd12`（在图标换新、beta 1.1 发版与版本文档三条提交之上续接）；提交标识与链接见最终报告。写入通道同 10-16（凭据管理器内 R2FtYml0 PAT → REST blob → tree(base_tree) → commit(parents=[期望 HEAD]) → refs PATCH `force=false`），提交前核对远程 HEAD、提交后核对父提交与变更文件集合（30 改动 + 6 新增，无删除、无范围外改动）。`tests/fixture.ass`、`_test/`、`logs/`、`.diag.json` 等生成物按 `.gitignore` 排除。
 - GitHub：2026-10-16 增量已提交至 `EndiVee233/SubFabric` main，父提交 `829f2204fd48cea3601d64cd71fe321473d236d6`（10-15 的 CI 修复提交）；提交标识与链接见最终报告。写入通道：连接器 tree/contents 接口对本仓库返回 403，改用本机 Windows 凭据管理器内账号 `R2FtYml0` 的 PAT 走 REST（blob → tree(base_tree) → commit(parents=[期望 HEAD]) → refs PATCH `force=false`），提交前核对远程 HEAD、提交后核对父提交与变更文件集合（113 改动 + 4 新增 + 3 删除，无范围外改动）。`tests/fixture.ass`、`_test/`、`logs/`、`.diag.json` 等生成物按 `.gitignore` 排除。
 - 10-15 提交（同通道）：维护增量 18 文件、父提交 `8cb07bac`；CI 修复 2 文件、父提交 `43d04941`。

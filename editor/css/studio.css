@@ -1594,7 +1594,10 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* ── 查找与批量替换 ─────────────────────────── */
 #fr-overlay {
   position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 86;
-  background: rgba(6, 6, 9, .62);
+  /* 用户要求这个弹窗**不压暗背景**：查找替换经常需要对着后面的字幕核对，
+     遮一层黑会把正在找的行一起压暗。弹层自身仍有实底与边框，可读性不受影响。
+     注意：别再给这里加 background/backdrop-filter，否则会重新出现压暗。 */
+  background: transparent;
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
@@ -1602,14 +1605,28 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .fr-box {
   width: min(720px, 94vw);
   max-height: 84vh; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 14px;
-  padding: 18px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 20px;
   background: var(--bg-2); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 18px 48px rgba(0,0,0,.6);
 }
-.fr-head { display: flex; align-items: center; justify-content: space-between; }
+.fr-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; }
+.fr-head .btn { padding: 5px 12px; font-size: 12.5px; }
+/* 弹窗自身必须是不透明表面：遮罩不压暗后，深色主题的玻璃材质会把背后的视频透进表单，
+   查找时反而看不清输入框。这里退回主题表面实底，仍保留圆角/阴影。 */
+#fr-overlay .fr-box {
+  /* 主题末端的玻璃规则用 :is(... #toolbar ...) 这类列表，:is() 取最具体项后能压过普通 ID 选择器，
+     且 backdrop-filter 带 !important；这里必须同样 !important 才能让查找弹窗保持实底。 */
+  background: var(--bg-2) !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+}
+/* 旧规则在 .fr-head / .fr-actions 上分别加了 margin+padding，而 .fr-box 本身还有 flex gap，
+   两套间距叠加后头部与按钮区都空出一大截（用户要求优化垂直间隔）。这里只保留一条分隔线。 */
+#fr-overlay .fr-head { padding-bottom: 8px; margin-bottom: 0; }
+#fr-overlay .fr-actions { padding-top: 8px; margin-top: 0; }
+#fr-pane-text, #fr-pane-role { display: flex; flex-direction: column; gap: 8px; }
 .fr-title { font-size: 16px; font-weight: 800; color: var(--accent); }
-.fr-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.fr-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .fr-tabs {
   display: inline-flex; gap: 4px; padding: 4px;
   background: #131318; border: 1px solid var(--border); border-radius: 999px;
@@ -1617,7 +1634,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .fr-tab {
   border: none; background: transparent; color: var(--text-1);
   font: inherit; font-size: 13px; font-weight: 700;
-  padding: 6px 20px; border-radius: 999px; cursor: pointer;
+  padding: 5px 18px; border-radius: 999px; cursor: pointer;
   transition: background .12s, color .12s;
 }
 .fr-tab:hover { color: var(--text-0); }
@@ -1630,8 +1647,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .fr-lbl { font-size: 12.5px; color: var(--text-1); }
 .fr-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-1); cursor: pointer; white-space: nowrap; }
 .fr-chk input { accent-color: var(--accent); cursor: pointer; }
-.fr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.fr-cell { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.fr-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .fr-input {
   background: #101015; color: var(--text-0);
   border: 1px solid var(--border); border-radius: 9px;
@@ -1661,14 +1678,14 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .fr-menu-n { margin-left: auto; color: var(--text-2); font-size: 11.5px; }
 .fr-menu-empty { padding: 8px 9px; color: var(--text-2); font-size: 12.5px; }
 .fr-hint {
-  font-size: 12.5px; line-height: 1.65; color: var(--text-1);
+  font-size: 12.5px; line-height: 1.55; color: var(--text-1);
   background: #17171d; border: 1px solid var(--border); border-radius: 9px;
-  padding: 9px 12px;
+  padding: 7px 10px;
 }
-.fr-status { font-size: 12.5px; color: var(--text-2); min-height: 18px; }
+.fr-status { font-size: 12.5px; color: var(--text-2); min-height: 16px; }
 .fr-status.has-match { color: var(--text-0); }
-.fr-actions { display: flex; gap: 9px; flex-wrap: wrap; }
-.fr-actions .btn { min-width: 84px; }
+.fr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.fr-actions .btn { min-width: 80px; padding: 5px 12px; }
 
 /* ── 设置: 术语表词条编辑器 ─────────────────── */
 .gl-wrap { display: flex; flex-direction: column; gap: 9px; width: 100%; min-width: 0; }
@@ -2153,6 +2170,8 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 #job-card.jc-done { border-left-color: var(--ok, #34d399); }
 #job-card.jc-done .jc-bar-in { background: var(--ok, #34d399); }
 #job-card.jc-done .jc-spin { display: none; }
+/* 失败也要停：jc-err 之前只换了红色边条，转圈仍在跑，看起来像"还在处理"（用户截图反馈）。 */
+#job-card.jc-err .jc-spin { display: none; }
 
 @keyframes jobcard-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -2708,8 +2727,9 @@ body::before {
 
 /* ── 8. 弹窗统一：圆角/投影/黑玻璃遮罩/标题与按钮栏节奏 ────────────────────
  * 遮罩**不要模糊**：它盖住的正是字幕列表/时间轴这类"要边看边改"的内容，糊掉就没法对照了。
- * 玻璃感靠更深的半透明黑 + 对话框自身的高光与投影（用户明确要求：黑玻璃、不要模糊）。 */
-#fr-overlay, #confirm-overlay, #role-new, #pick-overlay, #fix-overlay, #cue-text-overlay {
+ * 玻璃感靠更深的半透明黑 + 对话框自身的高光与投影（用户明确要求：黑玻璃、不要模糊）。
+ * 查找替换例外：用户要求不压暗背景，所以它不在这组里（见上方 #fr-overlay 的说明）。 */
+#confirm-overlay, #role-new, #pick-overlay, #fix-overlay, #cue-text-overlay {
   background: linear-gradient(180deg, rgba(5, 5, 8, .78), rgba(2, 2, 4, .86));
 }
 .np-box, .st-box, .fr-box, .rn-box, .pick-box, .fix-box, .ctd-box {

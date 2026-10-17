@@ -2011,6 +2011,13 @@ function packTracks(rows) {
   return { laneOf, count: Math.max(1, ends.length) };
 }
 
+/** 时间轴块正文：只去掉行首的 [角色名]。
+ *  这里的文本已经过 assPlainText（不含 ASS 覆盖标签），所以不能直接复用 stripLeadSpeakerTag ——
+ *  后者会把行首的 {...} 一并剥掉，而正文里的 {音效} 是用户可见文字。颜色由 cue.color 保留。 */
+function timelineBlockBody(text) {
+  return String(text == null ? '' : text).replace(/^\s*\[[^\]]+\]\s*/, '');
+}
+
 /** 按当前「字幕轨模式」把 cue 装到 1 条(或 N 条)轨上; label = 单行轨时用的轨道名 */
 function buildTimelineLanes(rows, cues, label) {
   const one = [{ label, merged: true, cues, color: '#5b6472' }];
@@ -2153,15 +2160,19 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
         hasFull = true;
         cues.push({
           start: row.start, end: row.end, ref: row, row,
-          text: (enText || '').slice(0, 60), text2: (zhText || '').slice(0, 60),
+          /* 时间轴块只显示正文：行首 [角色名] 是列表/角色筛选用的标签，画在块里既占位置
+           * 又和「谁在说话」的颜色表达重复（用户要求"字幕块不显示名字、但保留颜色"）。
+           * 颜色仍来自 row.color，块边框/底色不变；列表卡片仍保留名字，不影响检索。 */
+          text: timelineBlockBody((enText || '').slice(0, 60)),
+          text2: timelineBlockBody((zhText || '').slice(0, 60)),
           words: (en && en.words && en.words.length) ? en.words : null,   // 词级时间: 时间轴块内逐词平铺
           color, speaker: row.speaker || '', bad, badReason
         });
       } else {
-        if (zh) { hasTop = true; cues.push({ start: zh.start, end: zh.end, ref: row, row, text: zhText.slice(0, 60), color, half: 'top', bad, badReason }); }
+        if (zh) { hasTop = true; cues.push({ start: zh.start, end: zh.end, ref: row, row, text: timelineBlockBody(zhText.slice(0, 60)), color, half: 'top', bad, badReason }); }
         if (en) cues.push({
           start: en.start, end: en.end, ref: row, row,
-          text: enText.slice(0, 60), color: en.color || color, half: 'bottom',
+          text: timelineBlockBody(enText.slice(0, 60)), color: en.color || color, half: 'bottom',
           words: (en.words && en.words.length) ? en.words : null,
           bad, badReason
         });
@@ -5277,6 +5288,10 @@ function createRowAt(start, end) {
     state.srtCues.forEach((c, i) => c.id = i + 1);
     overlay.setCues(state.srtCues);
     rebuildItemsAndLanes(true, true);
+    /* 新建字幕的入口在时间轴上，但用户此时可能停在「角色 / 设置 / 日志」页。
+     * 新行只存在于字幕列表里，不切回去就看不到输入框（用户反馈"新增后像没反应"）。
+     * 先切页再选中/进入编辑，保证新行立刻可见。 */
+    panel.showTab('subs');
     const ni = state.itemByRef.get(cue);
     if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
     toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，在列表里输入内容`);
@@ -5298,6 +5313,7 @@ function createRowAt(start, end) {
   const cleared = deKaraokeOverlaps(newRow);
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
+  panel.showTab('subs');          // 与 SRT 分支同理：新建后必须回到字幕页才能看到输入框
   const ni = state.itemByRef.get(newRow);
   if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
   toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，在列表里输入内容`

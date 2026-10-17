@@ -169,7 +169,9 @@ $('sf-theme-packs').addEventListener('click', e => {
     return;
   }
   const b = e.target.closest('[data-pack-select]'); if (!b) return;
-  const pack = themes.get(b.dataset.pack, prefs.custom);
+  // 卡片把主题 ID 放在 data-pack-select；读取错误的 dataset.pack 会让
+  // themes.get(undefined) 静默回退到 Studio，造成“点击没有任何反应”。
+  const pack = themes.get(b.dataset.packSelect, prefs.custom);
   if (commit({ themePack: pack.id, accent: pack.seed })) { applyTheme(); themeStatus(); }
 });
 function themeStatus() { $('sf-theme-status').textContent = t('外观已保存，刷新后保留。'); }

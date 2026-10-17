@@ -532,6 +532,20 @@ stableInput.value = '260';
 await navigate('#/settings');
 assert.equal($('sf-settings-tab-theme').getAttribute('aria-selected'), 'true', 'settings starts with common appearance preferences');
 assert.equal($('st-save').hidden, true, 'instant preference category does not imply a global manual save');
+// Theme pack cards are delegated controls: exercise every built-in pack through
+// the same click path users take in the released Studio UI, including the
+// rerender that happens after applyTheme().
+for (const id of ['studio', 'material-you', 'subfabric-classic', 'windows-uwp']) {
+  const packButton = document.querySelector(`[data-pack-select="${id}"]`);
+  assert.ok(packButton, 'built-in theme pack is rendered: ' + id);
+  // The in-memory DOM does not synthesize event bubbling; dispatch at the
+  // delegated container with the same target a browser click would provide.
+  const packClick = new Event('click'); Object.defineProperty(packClick, 'target', { value: packButton });
+  $('sf-theme-packs').dispatchEvent(packClick); await settle();
+  assert.equal(document.body.dataset.themePack, id, 'theme pack click applies ' + id);
+  assert.equal(document.body.dataset.design, id === 'material-you' ? 'material' : id === 'subfabric-classic' ? 'classic' : id === 'windows-uwp' ? 'uwp' : 'studio', 'theme design follows ' + id);
+  assert.equal(document.querySelector(`[data-pack-select="${id}"]`).getAttribute('aria-pressed'), 'true', 'theme pack selection is retained for ' + id);
+}
 for (const [name, input] of [['models', 'st-model-dir'], ['translate', 'st-scheme-list'], ['enhance', 'st-conf-mode'], ['fetch', 'st-fetch-quality'], ['perf', 'perf-start'], ['theme', 'sf-color']]) {
   await click('sf-settings-tab-' + name);
   assertAssInEditor(name);

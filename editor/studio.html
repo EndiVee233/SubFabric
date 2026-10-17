@@ -728,12 +728,6 @@
         <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="切出这条字幕在原片音频里的那一段重新识别，用实测到的词位置重排逐词时间。只改逐词时间，不动文本">重排逐词时间</button>
         <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除字幕块</button>
       </div>
-      <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消) -->
-      <div id="range-bar" hidden>
-        <span class="rb-count" id="rb-count">已选 0 条</span>
-        <button type="button" class="rb-btn" id="rb-rerecog" data-ico="mic" title="用项目里保存的音频重新识别并翻译这段区间，选区内现有字幕会被替换">重新识别</button>
-        <button type="button" class="rb-btn danger" id="rb-delete" data-ico="trash">批量删除</button>
-      </div>
     </div>
   </section>
 
@@ -741,6 +735,16 @@
   <div id="hsplit" title="拖动调整视频与时间轴的屏幕比例"></div>
   <div id="vsplit" title="拖动调整字幕列表宽度"></div>
 </div>
+
+  <!-- 批量选区浮条: Ctrl+左键在时间轴上拖动框出一段时间后出现(点别处取消)。
+       ⚠ 必须挂在 #app 之外：它用 position:fixed 按视口定位，而深色主题给 #timeline-panel
+       加了 backdrop-filter，会为该面板建立"固定定位包含块"。留在时间轴里时 JS 按视口算出的
+       top 会被再叠加面板自身偏移，浮条实际跑到视口下方（用户反馈 Ctrl+拖动后看不到选项）。 -->
+  <div id="range-bar" hidden>
+    <span class="rb-count" id="rb-count">已选 0 条</span>
+    <button type="button" class="rb-btn" id="rb-rerecog" data-ico="mic" title="用项目里保存的音频重新识别并翻译这段区间，选区内现有字幕会被替换">重新识别</button>
+    <button type="button" class="rb-btn danger" id="rb-delete" data-ico="trash">批量删除</button>
+  </div>
 
   <!-- 查找与批量替换 -->
   <div id="fr-overlay" hidden>

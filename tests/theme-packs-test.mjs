@@ -4,6 +4,10 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 const root = path.resolve(import.meta.dirname, '..');
+const studioSource = fs.readFileSync(path.join(root, 'editor/js/studio.js'), 'utf8');
+assert.match(studioSource, /data-pack-select=\"\$\{esc\(pack\.id\)\}\"/, 'theme cards expose the pack id through data-pack-select');
+assert.match(studioSource, /themes\.get\(b\.dataset\.packSelect, prefs\.custom\)/, 'theme picker reads the data-pack-select value when switching packs');
+assert.doesNotMatch(studioSource, /themes\.get\(b\.dataset\.pack, prefs\.custom\)/, 'theme picker does not read the stale dataset.pack key');
 const context = { window: {} };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(root, 'editor/js/studio-themes.js'), 'utf8'), context);

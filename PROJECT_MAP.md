@@ -268,6 +268,10 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
   （包围盒变化带动整行位移）；③ 其余约束先读文件头注释再动手。
 - **弹层动效规范**：弹出层统一 `pop-in`（`--pop-ox/oy` 用 `util.popOrigin` 指向触发点；Modal 例外居中）；
   可点元素要有 `:active` 反馈；时长 120~150ms、ease-out、不从 `scale(0)` 出发；`prefers-reduced-motion` 全局关闭；不用 `transition: all`。
+- **批量选区浮条必须挂在 `#app` 外**：`#timeline-panel` 在主题末端带 `backdrop-filter`，会建立 fixed 定位包含块。
+  `#range-bar` 若留在 `#tl-canvas-wrap` 里，`refreshRangeBar()` 按视口算出的 left/top 会被面板自身偏移再叠加一次，
+  浮条实际落到视口外（实测 y=1421 / 视口 900，用户反馈“Ctrl+左键拖动没选项”）。当前 HTML 把它放在 `#app` 之后；
+  改时间轴布局时不要把它塞回 `#tl-canvas-wrap` / `#timeline-panel`。
 - **自动保存**：GET 字幕的 ETag 为 SHA-256 版本，PUT/beacon POST 同传 revision 与窗口 client/seq。请求各有 UUID 临时文件，比较版本和 rename 在同一同步段；过期或跨窗口冲突回 409，无版本回 428。同窗口后续保存可衔接上一提交。成功回完整提交内容的新版本；失败只清理本请求临时文件。
 - **项目切换**：先 flush 旧稿保存，再完成元数据/字幕/解析，最后同时提交 ID 和文档。所有保存回调、视频/波形/备注/prepare 等异步结果捕获项目与代次；首页/detach 同样使旧加载失效。保存冲突保持不可自动覆盖状态。**无撤销/重做栈**，Esc=取消是安全边界。
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换；`readMeta/writeMeta` 的兼容调用以 WeakMap 基线算递归字段差量，并入最新状态，禁止旧对象整体覆盖已有项目。跨 await 新增更新优先调用 updateMeta。
@@ -345,6 +349,8 @@ Studio 的毛玻璃压暗、模糊度、透明度保存在 `studio-state.js` 的
 | `tests/overlay-test.mjs` | SRT 叠加层活动 cue 检索（重叠/嵌套不漏显示，钉死 `_maxEnd` 回归） | 11 项，直接可跑 |
 | `tests/colorfix-test.mjs` | 颜色修复 | 依赖用户项目，统一入口明确排除；不要为了测试改写个人稿件 |
 | `tests/ass-style-preset-test.mjs` | 双语样式预设的导出/导入纯逻辑（往返保真、跨稿件字段名搬运、坏文件拒绝、单样式稿件不乱改） | 纯函数直测，任何机器可跑；新测试文件会被 `run-all.mjs` 自动发现 |
+| `tests/timeline-text-test.mjs` | 时间轴块中文行可读性 / 角色色亮度阈值 | 纯函数抽取直测 |
+| `tests/ui-feedback-20261017-test.mjs` | 新增字幕自动切回字幕页 / 批量浮条不能落进 fixed 包含块 / 失败任务卡停转 / 时间轴块去角色名保留颜色 / 切 Tab 同步播放位置 / 查找替换不压暗与间距 | 源码与 DOM 断言；真实鼠标验收另见本轮 CDP 探针 |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
 | `tools/http_layer_probe.mjs` | HTTP 层探针（守卫 / 形状 / 设置往返 / 项目全生命周期） | 自带服务启停，但会写同树设置/项目；只有隔离副本才可执行，旧字幕保存探针尚需适配 revision 协议；本轮以 repair 测试验证 |
 | `tools/route_smoke.mjs` | 24 路由冒烟 | 需先起服务：`PORT=8399 node editor/server.js` |
