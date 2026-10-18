@@ -4004,6 +4004,279 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 }
 .cc-l2-sep { width: 100%; min-width: 0; }
 
+/* ═══════════════════════════════════════════════════════════════════
+   字幕列表 Quiet Card（生产实装）
+   只改右侧列表卡片；用 :is(#editor-panel #cue-list, .cue-measure) 限定，避免影响其它
+   使用 .cue-card 的调试页/原型。暗色/浅色各自一套变量，主题包沿用。
+   ═══════════════════════════════════════════════════════════════════ */
+:is(#editor-panel #cue-list, .cue-measure) {
+  --cc-bg: #12171e;
+  --cc-bg-hover: #171d26;
+  --cc-bg-selected: #1a212b;
+  --cc-line: rgba(255, 255, 255, .07);
+  --cc-line-strong: rgba(255, 255, 255, .16);
+  --cc-text: #eef2f7;
+  --cc-text-2: #a7b1bf;
+  --cc-text-3: #6d7887;
+  --cc-warn: #f6c453;
+  --cc-ok: #4ade80;
+  --cc-shadow: 0 1px 1px rgba(0, 0, 0, .1);
+}
+body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
+  --cc-bg: #fbfcfc;
+  --cc-bg-hover: #f7f9f9;
+  --cc-bg-selected: #f1f5f3;
+  --cc-line: #d6dbdd;
+  --cc-line-strong: #aab7b0;
+  --cc-text: #202930;
+  --cc-text-2: #5f6b73;
+  --cc-text-3: #8a949c;
+  --cc-warn: #a9761b;
+  --cc-ok: #3d7b54;
+  --cc-shadow: 0 1px 1px rgba(30, 45, 40, .035);
+}
+
+:is(#editor-panel #cue-list, .cue-measure) .cue-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  column-gap: 9px;
+  margin: 0 8px 6px;
+  padding: 9px 10px 9px 13px;
+  background: var(--cc-bg);
+  border: 1px solid var(--cc-line);
+  border-left: 3px solid var(--role, var(--accent));
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: var(--cc-shadow);
+  transition: background .15s var(--ease), border-color .15s var(--ease), box-shadow .15s var(--ease);
+  transform: none;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cue-card:hover {
+  background: var(--cc-bg-hover);
+  border-color: var(--cc-line-strong);
+  transform: none;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cue-card.selected {
+  background: var(--cc-bg-selected);
+  border-color: var(--cc-line-strong);
+  border-left-width: 3px;
+  border-left-color: var(--role, var(--accent));
+  outline: none;
+  box-shadow: var(--cc-shadow);
+}
+:is(#editor-panel #cue-list, .cue-measure) .cue-card.playing {
+  background: color-mix(in srgb, var(--role, var(--accent)) 5%, var(--cc-bg));
+  border-color: color-mix(in srgb, var(--role, var(--accent)) 20%, var(--cc-line));
+  border-left-width: 3px;
+  border-left-color: var(--role, var(--accent));
+  box-shadow: none;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cue-card.playing::after { content: none; display: none; }
+
+/* 左列：只留低对比时间值；标签隐藏（顺序即开始/结束/时长，title 仍保留） */
+:is(#editor-panel #cue-list, .cue-measure) .cc-times {
+  width: 76px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-right: 0;
+  border-right: 0;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-t {
+  display: block;
+  font-size: 0;
+  color: var(--cc-text-3);
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-t > span { display: none; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-t b {
+  font: 8.6px/1.65 var(--mono);
+  font-weight: 400;
+  color: var(--cc-text-3);
+  letter-spacing: -.03em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-t:nth-child(2) b { color: var(--cc-text-2); }
+:is(#editor-panel #cue-list, .cue-measure) .cc-t:nth-child(3) b { font-size: 7.8px; color: var(--cc-text-3); opacity: .85; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 0;
+  white-space: nowrap;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .cc-chip {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cc-text-3);
+  font-size: 7.8px;
+  line-height: 1.4;
+  text-align: left;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .chip-conf-low { color: var(--cc-warn); font-weight: 700; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .chip-conf { color: var(--cc-text-3); }
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .cc-rerecog {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  margin-left: auto;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cc-line);
+  border-radius: 4px;
+  background: transparent !important;
+  color: var(--cc-text-3) !important;
+  border-color: var(--cc-line) !important;
+  font-size: 0;
+  opacity: .6;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .cc-rerecog::before { content: "↻"; font-size: 10px; line-height: 1; }
+:is(#editor-panel #cue-list, .cue-measure) .cue-card:hover .cc-rerecog,
+:is(#editor-panel #cue-list, .cue-measure) .cue-card.selected .cc-rerecog,
+:is(#editor-panel #cue-list, .cue-measure) .cc-rerecog:focus-visible { opacity: 1; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .cc-rerecog:hover { background: var(--cc-bg-hover) !important; color: var(--cc-text) !important; }
+
+/* 右列：角色 + 常驻样式 + 播放态 + 异常图标 */
+:is(#editor-panel #cue-list, .cue-measure) .cc-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  justify-content: flex-start;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 15px;
+  height: auto;
+  margin-bottom: 2px;
+  overflow: hidden;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 104px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: color-mix(in srgb, var(--role, var(--accent)) 72%, var(--cc-text));
+  font-size: 9.2px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-role-dot {
+  width: 4px;
+  height: 4px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--role, var(--accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--role, var(--accent)) 14%, transparent);
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-style {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--cc-text-3);
+  font-size: 8.2px;
+  white-space: nowrap;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-playing {
+  display: none;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  flex: none;
+  color: var(--cc-ok);
+  font-size: 7.8px;
+  white-space: nowrap;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cue-card.playing .cc-playing { display: inline-flex; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-playing i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--cc-ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cc-ok) 12%, transparent);
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin-left: 1px;
+  color: var(--cc-warn);
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-warn svg { width: 10px; height: 10px; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-l1 {
+  margin: 0;
+  color: var(--cc-text);
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 500;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-l2 {
+  margin: 2px 0 0;
+  color: var(--cc-text-2);
+  font-size: 10.4px;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-l2-sep {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 2px;
+  width: auto;
+  min-width: 0;
+}
+:is(#editor-panel #cue-list, .cue-measure) .cc-ph1 { color: var(--accent); opacity: .75; font-weight: 500; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-ph2 { color: var(--cc-text-3); font-weight: 400; }
+
+/* 行内编辑框跟随新卡片的左列宽度和主题表面 */
+:is(#editor-panel #cue-list, .cue-measure) .inline-editor {
+  left: 106px;
+  right: 14px;
+  background: var(--cc-bg);
+  border-color: color-mix(in srgb, var(--role, var(--accent)) 42%, var(--cc-line-strong));
+  box-shadow: 0 10px 28px -18px rgba(0, 0, 0, .45), 0 0 0 1px var(--cc-line);
+}
+:is(#editor-panel #cue-list, .cue-measure) .ie-l1 { font-size: 12.5px; font-weight: 500; color: var(--cc-text); }
+:is(#editor-panel #cue-list, .cue-measure) .ie-l2 { font-size: 10.8px; color: var(--cc-text-2); }
+:is(#editor-panel #cue-list, .cue-measure) .ie-line:focus { background: color-mix(in srgb, var(--role, var(--accent)) 7%, transparent); box-shadow: 0 -1px 0 var(--cc-line-strong) inset; }
+:is(#editor-panel #cue-list, .cue-measure) .ie-hint { color: var(--cc-text-3); }
+:is(#editor-panel #cue-list, .cue-measure) .ie-line:empty::before { color: var(--cc-text-3); }
+
+/* UWP 仍保持小圆角/无大阴影（这里用两个 ID 保证压过基础卡片的 10px 圆角） */
+.sf-studio[data-design=uwp] #editor-panel #cue-list .cue-card {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+
 /* 低频字幕操作进入编辑器设置，顶部只保留浏览和跟随播放所需控件。 */
 .editor-advanced-group { margin-top: 4px; }
 .editor-advanced-actions-grid {

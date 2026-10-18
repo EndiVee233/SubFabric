@@ -1,11 +1,14 @@
 /**
- * 三项显示调整的回归：
- *   1. 每句置信度换亮色（原来 var(--text-2) 灰字，可读性差）
- *   2. 中英字幕之间加淡灰分隔行（**只在两行都有时**出现）
- *   3. 字幕块右侧内容顶部对齐（原来是垂直居中，与左侧时间列不齐）
+ * 右侧字幕列表 Quiet Card 的生产实装回归。
  *
- * 断言策略：既要"新值在"，也要"旧值不在" —— 只查新值的话，
- * 旧规则残留（两条规则同时命中、后者覆盖前者）会静默失效。
+ * 这次改版的目标：
+ *   · 卡片只保留「角色 + 常驻样式 + 中文/英文」三层信息；
+ *   · 样式标签常驻，不再依赖 hover；
+ *   · 时间/置信度降为低对比的参照信息，重识别仍在左列（兼容原有交互）；
+ *   · 分隔线、样式胶囊、播放中 pseudo 标签都不再出现。
+ *
+ * 断言直接读生产源码；同时保留结构类名（.cc-times/.cc-body/.cc-l1/
+ * .cc-l2/.cc-left-stack/.cc-rerecog），避免破坏既有事件委托与虚拟滚动。
  */
 
 import fs from 'node:fs';
@@ -22,107 +25,60 @@ const ok = (cond, name, extra) => {
   if (cond) { pass++; console.log('  ok  ' + name); }
   else { fail++; console.log('FAIL  ' + name + (extra === undefined ? '' : ' :: ' + extra)); }
 };
-
-/** 取某条规则的属性体（第一条匹配） */
 const ruleBody = (sel) => {
   const i = CSS.indexOf(sel + ' {');
   if (i < 0) return null;
-  const j = CSS.indexOf('}', i);
-  return CSS.slice(i + sel.length + 3, j);
+  return CSS.slice(i + sel.length + 3, CSS.indexOf('}', i));
 };
+const CARD = ':is(#editor-panel #cue-list, .cue-measure)';
 
-console.log('== 1. 置信度徽标换成亮色 ==');
-const conf = ruleBody('.chip-conf');
-ok(conf !== null, '能找到 .chip-conf 规则');
-ok(/color:\s*#7fd8e8/.test(conf || ''), '用亮色 #7fd8e8（浅青）', conf);
-ok(!/color:\s*var\(--text-2\)/.test(conf || ''),
-  '不再用 var(--text-2) 灰字（旧值必须消失，否则可能被覆盖）');
-// 低置信度仍要更显眼：与正常档不同色，且加粗
-const low = ruleBody('.chip-conf-low');
-ok(/color:\s*#ffd54a/.test(low || ''), '低置信度仍是琥珀 #ffd54a');
-ok(/font-weight:\s*700/.test(low || ''), '低置信度加粗（比正常档更显眼）');
-ok(conf !== low, '两档样式不同（不靠"灰一点/亮一点"区分）');
+console.log('== 结构：新卡片仍在旧结构类名上 ==');
+for (const token of ['cc-times', 'cc-body', 'cc-head', 'cc-l1', 'cc-l2', 'cc-left-stack', 'cc-rerecog', 'cc-role', 'cc-style', 'cc-playing']) {
+  ok(JS.includes(token), `_cardHtml 含 ${token}`);
+}
+ok(/<div class="cc-times">/.test(JS), '.cc-times 仍是左列容器（重识别/置信度事件依赖）');
+ok(/<div class="cc-body">/.test(JS), '.cc-body 仍存在');
+ok(/cc-l1/.test(JS) && /cc-l2/.test(JS), '中文/英文行仍用 cc-l1 / cc-l2');
+ok(!/cc-l2-sep/.test(JS), '不再输出旧的中英分隔线 class');
+ok(/cc-style/.test(JS) && /\.join\(' · '\)/.test(JS), '样式名合并为常驻的「中文字幕 · Default」文本');
+ok(/cc-role/.test(JS) && /cardDisplayL1/.test(JS), '角色名进入独立的 .cc-role，正文用 cardDisplayL1 去掉行首 [角色]');
+ok(/cc-playing/.test(JS), '播放中状态由 .cc-playing 元素承担，不再用 ::after 伪元素');
 
-console.log('\n== 2. 中英分隔行 ==');
-const sep = ruleBody('.cc-l2-sep');
-ok(sep !== null, '定义了 .cc-l2-sep');
-ok(/border-top:\s*1px solid rgba\(255,255,255,?\.14\)/.test(sep || ''),
-  '是 1px 淡灰线（不是彩色，避免抢注意力）', sep && sep.slice(0, 90));
-// 只跟英文行一样长，不横贯整块
-ok(/width:\s*fit-content/.test(sep || ''), 'width: fit-content（线长跟随文本）');
-ok(/padding-top/.test(sep || '') && /margin-top/.test(sep || ''), '有上下间距，不贴着文字');
+console.log('\n== 视觉：单容器 + 角色色左条 + 常驻样式 ==');
+const card = ruleBody(CARD + ' .cue-card');
+ok(card !== null, '存在生产卡片的 Quiet Card 规则');
+ok(/border-left:\s*3px solid var\(--role/.test(card || ''), '左侧 3px 角色色条');
+ok(/grid-template-columns:\s*76px minmax\(0,\s*1fr\)/.test(card || ''), '左列 76px + 内容列');
+ok(CSS.includes(':is(#editor-panel #cue-list, .cue-measure) .cue-card'), '隐藏测量容器复用同一套卡片样式（虚拟滚动高度一致）');
+ok(/background:\s*var\(--cc-bg\)/.test(card || ''), '卡片使用主题卡片底色');
+ok(/overflow:\s*hidden/.test(card || ''), '仍保留 overflow:hidden（逐词溢出裁切）');
+const styleRule = ruleBody(CARD + ' .cc-style');
+ok(styleRule !== null, '存在 .cc-style 规则');
+ok(!/opacity:\s*0/.test(styleRule || ''), '样式标签没有隐藏（常驻）');
+ok(/font-size:\s*8\.2px/.test(styleRule || ''), '样式标签是低对比小字号');
+ok(/\.cue-card\.playing::after\s*\{\s*content:\s*none/.test(CSS), '旧的 playing ::after 文本已关闭');
+const l2sep = ruleBody(CARD + ' .cc-l2-sep');
+ok(/border-top:\s*0/.test(l2sep || ''), '新卡片不画中英分隔线');
+const times = ruleBody(CARD + ' .cc-times');
+ok(times !== null && /border-right:\s*0/.test(times), '时间栏不再有竖分隔线');
+const tspan = CSS.match(/:is\(#editor-panel #cue-list, \.cue-measure\) \.cc-t > span \{ display: none; \}/);
+ok(!!tspan, '时间标签隐藏，只留低对比时间值');
+const l1 = ruleBody(CARD + ' .cc-l1');
+ok(/font-size:\s*12\.5px/.test(l1 || '') && /font-weight:\s*500/.test(l1 || ''), '中文行 12.5px / 500');
+const l2 = ruleBody(CARD + ' .cc-l2');
+ok(/font-size:\s*10\.4px/.test(l2 || ''), '英文行 10.4px（比中文退一档）');
 
-// 关键：只在**两行都有**时加这个类
-ok(/cc-l2\$\{l1 \? ' cc-l2-sep' : ''\}/.test(JS),
-  'editor.js 只在中文行存在时才加 cc-l2-sep');
-// 占位行不该有分隔线
-ok(!/cc-ph2[^`]*cc-l2-sep/.test(JS), '新建占位行（cc-ph2）不带分隔线');
-
-console.log('\n== 3. 右侧内容顶部对齐 ==');
-const body = ruleBody('.cc-body');
-ok(body !== null, '能找到 .cc-body 规则');
-ok(/justify-content:\s*flex-start/.test(body || ''), '改成 flex-start（顶部对齐）', body);
-ok(!/justify-content:\s*center/.test(body || ''),
-  '不再是 center（旧值必须消失 —— 否则两条规则打架）');
-
-console.log('\n== 4. 三处改动不能破坏已有结构 ==');
-ok(CSS.includes('.cc-l1 {'), '.cc-l1 规则仍在（我改这几项时误删过一次）');
-ok(CSS.includes('.cc-l2 {'), '.cc-l2 规则仍在');
-ok(CSS.includes('.cc-left-stack'), '左列容器样式仍在（置信度+重识别按钮）');
-ok(ruleBody('.cc-left-stack') !== null, '.cc-left-stack 规则完好');
-// 括号与注释配对
+console.log('\n== 主题与兼容 ==');
+ok(/body\[data-theme="light"\] :is\(#editor-panel #cue-list, \.cue-measure\)/.test(CSS), '浅色主题有独立卡片变量');
+ok(/--cc-bg:\s*#fbfcfc/.test(CSS) && /--cc-text:\s*#202930/.test(CSS), '浅色卡片底色/正文色已定义');
+ok(/@media/.test(CSS), '媒体查询结构仍在（未误删）');
+ok(/\.sf-studio\[data-design=uwp\] #editor-panel #cue-list \.cue-card/.test(CSS), 'UWP 仍保留 4px 小圆角覆盖');
+ok(/\.cc-left-stack \.cc-rerecog/.test(CSS), '重识别按钮仍在左列样式内');
+ok(/chip-conf-low/.test(CSS) && /--cc-warn/.test(CSS), '低置信度仍使用警示色');
 const nb = (CSS.match(/\{/g) || []).length, ncb = (CSS.match(/\}/g) || []).length;
 ok(nb === ncb, '花括号配对', nb + ' vs ' + ncb);
 const nc = (CSS.match(/\/\*/g) || []).length, ncc = (CSS.match(/\*\//g) || []).length;
 ok(nc === ncc, '注释配对', nc + ' vs ' + ncc);
-
-console.log('\n== 5. 更早的修复仍在（防回退）==');
-ok(/position:\s*fixed;\s*z-index:\s*65/.test(CSS), '异常筛选浮层仍是 fixed + z-index 65');
-
-console.log('\n== 6. 卡片右边界不能被裁掉 ==');
-// 关键：relative 定位下 right 不生效（left 非 auto 时 right 被算成 -left），
-// 于是卡片只是整体右移 → 超出 #cue-list 内容框 → 被 overflow 裁掉。
-// 必须用 margin 留边距。（注意：不能直接查 `left: 8px` 字符串 —— 规则上方的注释里
-// 就提到了这个错误写法，会误判；要把注释剥掉再查。）
-const cssNoComment = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-const cardBody = (() => {
-  const i = cssNoComment.indexOf('.cue-card {');
-  return i < 0 ? null : cssNoComment.slice(i + 11, cssNoComment.indexOf('}', i));
-})();
-ok(cardBody !== null, '能找到 .cue-card 规则（已剥注释）');
-ok(/margin:\s*0 8px 6px/.test(cardBody || ''), '用 margin 留出左右 8px 边距', cardBody && cardBody.slice(0, 60));
-ok(!/(^|[;{\s])left:\s*8px/.test(cardBody || ''),
-  '规则体内没有 left: 8px（那会整体右移、把右边界推出容器）');
-ok(!/(^|[;{\s])right:\s*8px/.test(cardBody || ''),
-  '规则体内没有 right: 8px（relative 下它本就不生效，留着只会误导）');
-ok(/overflow:\s*hidden/.test(cardBody || ''),
-  'overflow: hidden 保留（不能靠去掉裁切来"露出"边界，那会让逐词高亮溢出卡片）');
-// 悬停也不能位移，否则悬停瞬间右边又被切。
-// ⚠ 取**最后一条** .cue-card:hover —— 文件里前面还有一条旧的（只改背景色），
-// 真正生效的是后面那条（CSS 后者覆盖前者）。用 search 会匹配到错的那条。
-const hovIdx = cssNoComment.lastIndexOf('.cue-card:hover');
-const hov = hovIdx < 0 ? null : cssNoComment.slice(hovIdx, cssNoComment.indexOf('}', hovIdx) + 1);
-ok(hov !== null, '能找到 .cue-card:hover（取最后一条，即生效的那条）');
-ok(/transform:\s*none/.test(hov || ''), '悬停不再位移（几何完全不动）', hov && hov.trim().slice(0, 80));
-/* ⚠ 悬停**不能**再加 inset 左条：卡片本来就有 `border-left: 3px`，再叠一条 inset 阴影
- *   就是**两条并排的竖线**（用户截图："可以明显看出是两个竖线"）。
- *   这条断言以前是反的（要求有 inset），已按修复后的正确行为改写。 */
-ok(!/inset/.test(hov || ''), '悬停不加 inset 左条（那会和 border-left 叠成两条竖线）');
-ok(!/translateX/.test(hov || ''), '生效的悬停规则里没有 translateX');
-
-console.log('\n== 7. 标签栏下划线只有一条（防回退）==');
-/* 正确修法：`margin-bottom:-1px` 让标签的 2px 底边框**几何上真正压住**容器那 1px。
- * 这里以前断言的是 `padding-bottom: 8px/9px`（配 box-shadow 盖住）—— 那是**旧**修法：
- * 标签底边和容器边框差 1px、两条线从来没对齐过，而且 .ptab 还多叠了 ui.css 的 ::after
- * 短条（用户截图："这里的两条横线能不能换成一条？把那个短的去掉"）。已废弃。 */
-ok(/\.ptab\s*\{[^}]*margin-bottom:\s*-1px/.test(CSS), '.ptab 用 margin-bottom:-1px 压住容器边框');
-ok(/\.st-tab\s*\{[^}]*margin-bottom:\s*-1px/.test(CSS), '.st-tab 同样（设置页标签）');
-/* ⚠ 必须去 ui.css 里查那条 ::after —— 它不在 style.css。
- *   先确认文件读到了，否则"查一个不存在的字符串"会永远通过（假阳性）。 */
-const UICSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'studio.css'), 'utf8');
-ok(/\.ptab\s*\{/.test(UICSS), 'ui.css 已读到（防止查错文件导致断言永远通过）');
-ok(!/\.ptab\.active::after\s*\{/.test(UICSS.replace(/\/\*[\s\S]*?\*\//g, '')),
-  'ui.css 的 .ptab.active::after 短条已删除（那条"短的"）');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

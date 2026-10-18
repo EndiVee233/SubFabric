@@ -43,6 +43,12 @@ function roleTone(hex) {
   return { r, g, b, css: `rgb(${r},${g},${b})` };
 }
 
+/** 卡片正文用的中文：去掉行首 [角色名]（角色已经提升为卡片元信息）。
+ *  行内编辑器仍读 item.l1（完整文本）并在提交时补回角色标签，所以这里只影响显示。 */
+function cardDisplayL1(text) {
+  return String(text == null ? '' : text).replace(/^(\s*\{[^}]*\})*\s*\[[^\]]+\]\s*/, '');
+}
+
 export class EditorPanel {
   constructor() {
     this.listEl = document.getElementById('cue-list');
@@ -772,25 +778,15 @@ export class EditorPanel {
     if (it === this.playingItem) cls.push('playing');
     if (it === this.editItem) cls.push('editing');
 
-    // 角色(说话人)色: 卡片左标、中文行、两个样式徽标、三个时间值全部跟着它走
-    const tone = it.color ? roleTone(it.color) : null;
-    const cardStyle = [];
-    let chipAttr = '', timeAttr = '', l1Attr = '';
-    if (tone) {
-      const { r, g, b, css } = tone;
-      cardStyle.push(`border-left-color:rgba(${r},${g},${b},.85)`);
-      chipAttr = ` style="color:${css};border-color:rgba(${r},${g},${b},.45);background:rgba(${r},${g},${b},.12)"`;
-      timeAttr = ` style="color:${css}"`;
-      l1Attr = ` style="color:${css}"`;
-    }
+    const roleColor = /^#[0-9a-f]{6}$/i.test(String(it.color || '')) ? it.color : '';
+    const speakerRaw = String(it.speaker || '').trim();
+    const roleFromSpeaker = (speakerRaw.match(/\[([^\]]+)\]/) || [])[1] || speakerRaw.replace(/^\[|\]$/g, '').trim();
+    const roleFromText = (String(it.l1 || '').match(/^\s*\[([^\]]+)\]/) || [])[1] || '';
+    const roleName = roleFromSpeaker || roleFromText;
+    const l1Text = cardDisplayL1(it.l1);
+    const styleText = [showFirst ? it.badge1 : '', showSecond ? it.badge2 : ''].filter(Boolean).join(' · ');
 
-    const chips = [];
-    if (it.bad) chips.push(`<span class="cc-chip chip-bad" title="异常行：${escapeHtml(it.badReason || '')}">⚠ 异常行</span>`);
-    if (it.badge1) chips.push(`<span class="cc-chip chip-l1"${chipAttr}>${escapeHtml(it.badge1)}</span>`);
-    if (it.badge2 && showSecond) chips.push(`<span class="cc-chip chip-l2"${chipAttr}>${escapeHtml(it.badge2)}</span>`);
-    // 置信度徽标 + 「↻ 重识别」都放在**左侧时间列的下方**（用户要求的位置）。
-    // 两者是同一类操作（看质量 → 决定要不要重识别），放一起最顺；右侧那行徽标留给
-    // 样式/异常这类"描述性"标记，不再混操作按钮。
+    // 置信度徽标 + 「↻ 重识别」放在左侧时间列下方；样式/角色是描述信息，放右侧首行。
     const cf = it.confidence;
     const leftBits = [];
     if (cf && typeof cf.score === 'number') {
@@ -801,24 +797,28 @@ export class EditorPanel {
         ? `<span class="cc-chip chip-conf-low" title="${escapeHtml(tip)}">◔ ${pct}%</span>`
         : `<span class="cc-chip chip-conf" title="${escapeHtml(tip)}">${pct}%</span>`);
     }
-    // 重识别按钮：只在区间合法时给 —— 没有 start/end 的行切不出音频
     if (Number.isFinite(it.start) && Number.isFinite(it.end) && it.end > it.start) {
       leftBits.push(`<button type="button" class="cc-chip cc-rerecog" data-act="rerecog"`
         + ` title="重新识别这一句（切出该句音频 → ASR → 翻译 → 写回）">↻ 重识别</button>`);
     }
-    const leftStack = leftBits.length
-      ? `<div class="cc-left-stack">${leftBits.join('')}</div>` : '';
-    const head = chips.length ? `<div class="cc-head">${chips.join('')}</div>` : '';
+    const leftStack = leftBits.length ? `<div class="cc-left-stack">${leftBits.join('')}</div>` : '';
+
+    const head = `<div class="cc-head">
+      ${roleName ? `<span class="cc-role" title="${escapeHtml(roleName)}"><i class="cc-role-dot"></i>${escapeHtml(roleName)}</span>` : ''}
+      ${styleText ? `<span class="cc-style">${escapeHtml(styleText)}</span>` : ''}
+      ${it.bad ? `<span class="cc-warn" title="异常行：${escapeHtml(it.badReason || '')}" aria-label="异常行"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5v.1"/></svg></span>` : ''}
+      <span class="cc-playing"><i></i>播放中</span>
+    </div>`;
     // 新建但还没输入的字幕 → 显示占位提示(用户不输入就离开则这条会被撤销)
-    const l1 = showFirst && it.l1 ? `<div class="cc-l1"${l1Attr}>${escapeHtml(it.l1)}</div>`
+    const l1 = showFirst && l1Text ? `<div class="cc-l1">${escapeHtml(l1Text)}</div>`
       : (showFirst && it.isNew ? `<div class="cc-l1 cc-ph1">（输入中文）</div>` : '');
-    const l2 = showSecond && it.l2 ? `<div class="cc-l2${l1 ? ' cc-l2-sep' : ''}">${escapeHtml(it.l2)}</div>`
+    const l2 = showSecond && it.l2 ? `<div class="cc-l2">${escapeHtml(it.l2)}</div>`
       : (showSecond && it.isNew ? `<div class="cc-l2 cc-ph2">（输入英文）</div>` : '');
-    return `<div class="${cls.join(' ')}" data-idx="${i}" style="${cardStyle.join(';')}">
+    return `<div class="${cls.join(' ')}" data-idx="${i}"${roleColor ? ` style="--role:${roleColor}"` : ''}>
       <div class="cc-times">
-        <div class="cc-t"><span>开始</span><b${timeAttr}>${fmtTime(it.start)}</b></div>
-        <div class="cc-t"><span>结束</span><b${timeAttr}>${fmtTime(it.end)}</b></div>
-        <div class="cc-t"><span>时长</span><b${timeAttr}>${(it.end - it.start).toFixed(3)}s</b></div>
+        <div class="cc-t" title="开始"><b>${fmtTime(it.start)}</b></div>
+        <div class="cc-t" title="结束"><b>${fmtTime(it.end)}</b></div>
+        <div class="cc-t" title="时长"><b>${(it.end - it.start).toFixed(3)}s</b></div>
         ${leftStack}
       </div>
       <div class="cc-body">
@@ -852,6 +852,7 @@ export class EditorPanel {
     return this._mode + '\u0001' +
       (showFirst ? (it.l1 || '') : '') + '\u0001' +
       (showSecond ? (it.l2 || '') : '') + '\u0001' +
+      (it.speaker || '') + '\u0001' +
       (it.badge1 || '') + '\u0001' + (showSecond ? (it.badge2 || '') : '') + '\u0001' +
       (it.bad ? (it.badReason || '1') : '') + '\u0001' +
       (showFirst && it.isNew && !it.l1 ? '1' : '') + (showSecond && it.isNew && !it.l2 ? '1' : '');
@@ -1144,15 +1145,9 @@ export class EditorPanel {
     const tagM = /^\s*\[[^\]]+\]\s*/.exec(item.l1 || '');
     this._editTag = tagM ? tagM[0] : '';
     div.querySelector('.ie-line.ie-l1').textContent = tagM ? (item.l1 || '').slice(tagM[0].length) : (item.l1 || '');
-    // 编辑器沿用卡片的口角色, 避免"卡片是红的、点开变橙的"割裂感
-    const editTone = item.color ? roleTone(item.color) : null;
-    if (editTone) {
-      const { r, g, b, css } = editTone;
-      div.style.borderColor = css;
-      div.style.boxShadow = `0 0 0 1px rgba(${r},${g},${b},.4), 0 4px 16px rgba(0,0,0,.5)`;
-      const el1 = div.querySelector('.ie-l1');
-      if (el1) el1.style.color = css;
-    }
+    // 编辑器沿用卡片的角色色作为边框/焦点强调；正文本身跟卡片一样用主题文字色
+    // （旧版把中文行直接染成角色色，浅色主题下亮角色色会糊在白底上）。
+    if (item.color) div.style.setProperty('--role', item.color);
 
     const lines = div.querySelectorAll('.ie-line');
     const [l1, l2] = lines;          // l1 = 中文行(.ie-l1) · l2 = 英文行(.ie-l2)

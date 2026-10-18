@@ -191,6 +191,20 @@ function withAlpha(hex, a, fallback) {
   return `rgba(${c.r},${c.g},${c.b},${a})`;
 }
 /**
+ * 把角色色往中性灰混，降低**块背景**的饱和度（用户反馈：时间轴块太艳，
+ * 抢字幕内容）。只用于背景填充；边框/文字仍用原角色色，保留"谁在说话"。
+ * @param {string} hex  #rrggbb
+ * @param {number} amount 0~1，往灰色混的比例；默认 0.62
+ */
+function mutedHex(hex, amount = 0.62) {
+  const c = parseHex(hex);
+  if (!c) return hex;
+  const t = Math.max(0, Math.min(1, amount));
+  const gray = 0x8a;
+  const mix = (v) => Math.round(v * (1 - t) + gray * t);
+  return '#' + [mix(c.r), mix(c.g), mix(c.b)].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+/**
  * 半透明色叠在深色轨道底(#111116)上的"实际观感底色", 据此选文字颜色:
  * 直接按原色亮度判断会误判(45% 透明后整体已明显变暗)。
  */
@@ -1927,7 +1941,7 @@ export class Timeline {
       const flushRun = () => {
         if (runStart === null) return;
         const b = runBand || { y: yy + 4, h: lh - 8 };
-        ctx.fillStyle = withAlpha(lane.color, 0.12, lane.color + '1f');
+        ctx.fillStyle = withAlpha(mutedHex(lane.color, 0.62), 0.24, lane.color + '1f');
         this._roundRect(ctx, runStart, b.y, Math.max(1.5, runEnd - runStart), b.h, 3);
         ctx.fill();
         runStart = runEnd = runBand = null;
@@ -1957,15 +1971,17 @@ export class Timeline {
         // 说话人颜色优先(半透明底), 否则用轨道色
         const base = c.color || lane.color;
         const isSel = this.selected && c.row === this.selected;
-        // 下面两个是「播放头所在块高亮」功能预留的变量, 目前绘制逻辑还没用上。
-        // textColor 由 textOnTranslucent() 算出, 若要接上: 把字幕块文本的 fillStyle
-        // 从 C.chipText 换成 textColor, 并在 isPlay 时叠加描边或加深边框。
-        // **先别删** —— 删了要连带删 textOnTranslucent()。
-        // (下面两行因此触发 no-unused-vars 警告, 属预期, 已在 eslint 里标了说明)
+        // 下面是「播放头所在块高亮」功能预留的变量, 目前绘制逻辑还没用上。
+        // (它会触发 no-unused-vars 警告, 属预期。)
+        // textOnTranslucent() 现在没有生产调用点，仅由 timeline-text-test 覆盖；
+        // 保留它作为历史行为参照，不要顺手删。
         const isPlay = c.start <= t && t < c.end;
-        const alpha = 0.12;                       // 填充 12% 不透明(清晰可见的描边 + 极淡底色)
-        const textColor = textOnTranslucent(base, alpha, '#ffffff');
-        ctx.fillStyle = withAlpha(base, alpha, base);
+        /* 背景用降饱和的混灰角色色；边框/文字仍保留原角色色。
+         * 用户反馈原 12% 角色色底色太艳，时间轴上整排色块抢字幕内容；
+         * 混灰后提高一点透明度，保证在深色波形上仍看得出块的范围。 */
+        const alpha = 0.24;
+        const bgBase = mutedHex(base, 0.62);
+        ctx.fillStyle = withAlpha(bgBase, alpha, withAlpha(base, 0.12, base));
         this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
         ctx.fill();
         ctx.strokeStyle = withAlpha(base, 1, base); // 边框 100% 不透明

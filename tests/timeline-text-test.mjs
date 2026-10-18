@@ -142,5 +142,14 @@ const before = (textL + 0.05) / (0.899 + 0.05);
 const after = (textL + 0.05) / (maxWaveL + 0.05);
 ok(after > before, `文字/波形对比提升（${before.toFixed(2)} → ${after.toFixed(2)}）`);
 
+console.log('\n== 时间轴块背景降饱和（角色色只留在边框/文字）==');
+ok(/function mutedHex\(hex, amount = 0\.62\)/.test(SRC), '存在 mutedHex（角色色向中性灰混合）');
+const mutedBody = SRC.slice(SRC.indexOf('function mutedHex'), SRC.indexOf('\n}', SRC.indexOf('function mutedHex')) + 2);
+ok(/gray = 0x8a/.test(mutedBody) && /v \* \(1 - t\) \+ gray \* t/.test(mutedBody),
+  'mutedHex 按比例混入中性灰，降低饱和度');
+ok(/const bgBase = mutedHex\(base, 0\.62\)/.test(SRC) && /withAlpha\(bgBase, alpha/.test(SRC), '实心块背景使用 mutedHex(base, 0.62)');
+ok(/withAlpha\(mutedHex\(lane\.color, 0\.62\), 0\.24/.test(SRC), '窄块（run）背景同样降饱和');
+ok(/ctx\.strokeStyle = withAlpha\(base, 1/.test(SRC), '边框仍使用原角色色（保留说话人识别）');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
