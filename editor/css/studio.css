@@ -3196,7 +3196,7 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-flower:hover>span { transform:rotate(8deg); }.sf-flower:active>span { transform:scale(.95); }.sf-flower b { font-size:12px; font-weight:500; }.sf-flower small { font-size:10px; color:var(--muted); }
 .sf-resume { border-radius:24px; background:var(--accent-soft); color:var(--on-container); padding:26px; min-height:165px; }
 .sf-eyebrow { font-size:9px; letter-spacing:.12em; opacity:.75; margin-bottom:12px; }.sf-resume h2 { font-size:21px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.sf-resume p:not(.sf-eyebrow) { font-size:11px; margin:10px 0 16px; }.sf-resume .btn { font-size:11px; }
-.sf-orbit { width:110px; height:148px; justify-self:center; align-self:center; border:0; border-radius:999px; background:var(--tertiary-container); color:var(--text); transform:rotate(45deg); cursor:pointer; transition:transform .3s var(--sf-spring); }.sf-orbit>span { display:flex; flex-direction:column; align-items:center; transform:translate(-3px,-4px) rotate(-45deg); }.sf-orbit b { font-size:38px; font-weight:400; }.sf-orbit small { font-size:11px; }.sf-orbit:hover { transform:rotate(45deg) scale(1.04); }.sf-orbit:hover>span { transform:translate(-3px,-4px) rotate(-45deg); }.sf-orbit:active { transform:rotate(45deg) scale(.96); }.sf-orbit:active>span { transform:translate(-3px,-4px) rotate(-45deg); }
+.sf-orbit { width:110px; height:148px; justify-self:center; align-self:center; border:0; border-radius:999px; background:var(--tertiary-container); color:var(--text); transform:rotate(40deg); cursor:pointer; transition:transform .3s var(--sf-spring); }.sf-orbit>span { display:flex; flex-direction:column; align-items:center; transform:translate(-3px,-4px) rotate(-40deg); }.sf-orbit b { font-size:38px; font-weight:400; }.sf-orbit small { font-size:11px; }.sf-orbit:hover { transform:rotate(40deg) scale(1.04); }.sf-orbit:hover>span { transform:translate(-3px,-4px) rotate(-40deg); }.sf-orbit:active { transform:rotate(40deg) scale(.96); }.sf-orbit:active>span { transform:translate(-3px,-4px) rotate(-40deg); }
 .sf-studio .home-toolbar { margin:18px 0; }.sf-studio .home-toolbar .home-toolbar-btns { display:none; }.sf-studio .home-list-title { font-size:13px; font-weight:500; }
 .sf-library-tools { display:flex; gap:12px; align-items:center; margin-bottom:20px; }.sf-library-tools input { margin-left:auto; width:200px; padding:9px 12px; font-size:11px; }#sf-filters { display:flex; gap:5px; }#sf-filters button { background:none; border:0; color:var(--muted); padding:9px 12px; border-radius:10px; cursor:pointer; font-size:11px; }#sf-filters button.active { background:var(--accent-soft); color:var(--accent); }
 .sf-studio .home-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
@@ -3945,11 +3945,11 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-workspace=settings] #st-view .sf-asr-family { background:var(--sf-glass-light-surface); }
 
 /* 胶囊形只属于 Material You；其它主题使用小圆角矩形。Material You 的倾斜胶囊
- * 保留原有品牌动势；用户要求把角度提高到 45°，文字反向旋转 -45° 保持水平。 */
+ * 保留原有品牌动势；用户要求把角度收到 40°，文字反向旋转 -40° 保持水平。 */
 .sf-studio[data-design]:not([data-design=material]) :is(.sf-orbit,.sf-settings-scope,.st-tag-cur,.log-subtab-cnt,.pc-badge) {
   border-radius:4px!important; transform:none!important;
 }
-/* 其它主题没有胶囊倾斜，文字也不该被底座的 -45° 带歪（UWP 已有自己的 transform:none）。 */
+/* 其它主题没有胶囊倾斜，文字也不该被底座的 -40° 带歪（UWP 已有自己的 transform:none）。 */
 .sf-studio[data-design]:not([data-design=material]):not([data-design=uwp]) .sf-orbit>span {
   transform:translate(-3px,-4px);
 }
@@ -3957,15 +3957,15 @@ body.sf-studio .sf-unavailable { opacity: .5; }
   --orbit-x: 8px;
   border-radius:999px;
   width:92px; height:140px;
-  transform:translateX(var(--orbit-x)) rotate(45deg);
+  transform:translateX(var(--orbit-x)) rotate(40deg);
 }
-.sf-studio[data-design=material] .sf-orbit:hover { transform:translateX(var(--orbit-x)) rotate(45deg) scale(1.04); }
-.sf-studio[data-design=material] .sf-orbit:active { transform:translateX(var(--orbit-x)) rotate(45deg) scale(.96); }
+.sf-studio[data-design=material] .sf-orbit:hover { transform:translateX(var(--orbit-x)) rotate(40deg) scale(1.04); }
+.sf-studio[data-design=material] .sf-orbit:active { transform:translateX(var(--orbit-x)) rotate(40deg) scale(.96); }
 .sf-studio[data-design=material] .sf-orbit>span,
 .sf-studio[data-design=material] .sf-orbit:hover>span,
-.sf-studio[data-design=material] .sf-orbit:active>span { transform:translate(-3px,-4px) rotate(-45deg); }
+.sf-studio[data-design=material] .sf-orbit:active>span { transform:translate(-3px,-4px) rotate(-40deg); }
 
-/* 45° 胶囊的包围盒比原 26° 宽，按可用宽度分档缩小并右移，避免压到左侧稿件卡或撑出视口。
+/* 40° 胶囊的包围盒比原 26° 宽，按可用宽度分档缩小并右移，避免压到左侧稿件卡或撑出视口。
    只改 Material You；其它主题仍是 4px 圆角矩形。 */
 @media (min-width:1000px) and (max-height:800px) {
   .sf-studio[data-design=material] .sf-orbit { --orbit-x: 7px; width:88px; height:132px; }

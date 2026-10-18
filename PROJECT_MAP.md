@@ -351,7 +351,7 @@ Studio 的毛玻璃压暗、模糊度、透明度保存在 `studio-state.js` 的
 | `tests/ass-style-preset-test.mjs` | 双语样式预设的导出/导入纯逻辑（往返保真、跨稿件字段名搬运、坏文件拒绝、单样式稿件不乱改） | 纯函数直测，任何机器可跑；新测试文件会被 `run-all.mjs` 自动发现 |
 | `tests/timeline-text-test.mjs` | 时间轴块中文行可读性 / 角色色亮度阈值 | 纯函数抽取直测 |
 | `tests/ui-feedback-20261017-test.mjs` | 新增字幕自动切回字幕页 / 批量浮条不能落进 fixed 包含块 / 失败任务卡停转 / 时间轴块去角色名保留颜色 / 切 Tab 同步播放位置 / 查找替换不压暗与间距 | 源码与 DOM 断言；真实鼠标验收另见本轮 CDP 探针 |
-| `tests/orbit-capsule-test.mjs` | 首页统计胶囊 45° / 内部文字水平 / 非 Material 主题不旋转 / 分档尺寸与 45° 包围盒 | 源码 CSS 断言 + 几何粗算 |
+| `tests/orbit-capsule-test.mjs` | 首页统计胶囊 40° / 内部文字水平 / 非 Material 主题不旋转 / 分档尺寸与 40° 包围盒 | 源码 CSS 断言 + 几何粗算 |
 | 其余 `tests/*-test.mjs` | ass / srt / role / postprocess / reseg / zh-* 等 | 多数独立可跑 |
 | `tools/http_layer_probe.mjs` | HTTP 层探针（守卫 / 形状 / 设置往返 / 项目全生命周期） | 自带服务启停，但会写同树设置/项目；只有隔离副本才可执行，旧字幕保存探针尚需适配 revision 协议；本轮以 repair 测试验证 |
 | `tools/route_smoke.mjs` | 24 路由冒烟 | 需先起服务：`PORT=8399 node editor/server.js` |
