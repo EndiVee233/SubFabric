@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubFabric · 编辑器原型（仅改右侧字幕卡）</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════
+     编辑器原型：保持当前编辑器的浅色布局与信息结构，
+     只替换右侧字幕列表里的字幕块样式（Quiet Card）。
+     ═══════════════════════════════════════════════════════════════════ */
+  :root {
+    --bg: #e7e8e8;
+    --bar: #d2d4d5;
+    --surface: #f6f7f7;
+    --panel: #f1f2f2;
+    --card: #fbfcfc;
+    --card-2: #f4f6f6;
+    --line: #d3d8da;
+    --line-2: #bfc6c9;
+    --text: #2a333a;
+    --text-2: #616d76;
+    --text-3: #8a949c;
+    --accent: #5c7560;
+    --accent-2: #45604c;
+    --accent-soft: #e3ebe4;
+    --warn: #a9761b;
+    --danger: #bd4d4d;
+    --ok: #3d7b54;
+    --r: 12px;
+    --font: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 12px; -webkit-font-smoothing: antialiased; }
+  button, input, select { font: inherit; color: inherit; }
+  button { border: 0; background: none; cursor: pointer; }
+  [hidden] { display: none !important; }
+  button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #b8c0c3; border: 2px solid transparent; border-radius: 99px; background-clip: content-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  .app { height: 100vh; display: flex; flex-direction: column; }
+  .appbar {
+    flex: none; height: 62px; display: flex; align-items: center; gap: 12px;
+    padding: 0 14px; background: var(--bar); border-bottom: 1px solid #bdc3c5;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; flex: none; min-width: 170px; }
+  .logo { width: 25px; height: 25px; border-radius: 6px; display: grid; place-items: center; color: #fff; background: var(--accent); }
+  .logo svg { width: 15px; height: 15px; }
+  .brand b { font-size: 13px; font-weight: 700; letter-spacing: .01em; }
+  .project-btn { display: inline-flex; align-items: center; gap: 5px; height: 27px; padding: 0 9px; border: 1px solid #b7bec1; border-radius: 7px; background: #f4f5f5; color: var(--text-2); font-size: 10px; white-space: nowrap; }
+  .project-btn:hover { background: #fff; color: var(--text); }
+  .project-btn svg { width: 12px; height: 12px; }
+  .status { flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; color: var(--text-2); font-size: 10px; white-space: nowrap; }
+  .status .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); flex: none; }
+  .status .meta { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+  .top-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 29px; padding: 0 10px; border: 1px solid #b9c0c3; border-radius: 7px; background: #f5f6f6; color: var(--text-2); font-size: 10px; white-space: nowrap; }
+  .btn:hover { background: #fff; color: var(--text); border-color: #aeb7ba; }
+  .btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.accent:hover { background: var(--accent-2); border-color: var(--accent-2); }
+  .btn svg { width: 12px; height: 12px; }
+
+  /* ── 工作区 ─────────────────────────────────────────────────────── */
+  .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 10px; padding: 12px; }
+  .left { min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto 210px; gap: 8px; }
+  .stage-card { min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+  .video {
+    position: relative; flex: 1; min-height: 0; border-radius: 14px; overflow: hidden;
+    background: #141a16; box-shadow: inset 0 0 0 1px rgba(0,0,0,.24), 0 5px 16px -12px rgba(0,0,0,.45);
+  }
+  .scene { position: absolute; inset: 0; background:
+      radial-gradient(ellipse at 50% 22%, rgba(134, 158, 142, .24), transparent 42%),
+      linear-gradient(180deg, #5e685f 0%, #3f4a42 29%, #29332c 55%, #151b17 100%);
+  }
+  .scene::before {
+    content: ""; position: absolute; inset: 0;
+    background:
+      repeating-linear-gradient(90deg, rgba(255,255,255,.035) 0 1px, transparent 1px 56px),
+      repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 44px);
+    opacity: .7;
+  }
+  .scene::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 110px 35px rgba(0,0,0,.48); }
+  .cave { position: absolute; background: #1b241d; border: 1px solid rgba(255,255,255,.04); }
+  .cave.c1 { left: 8%; bottom: 0; width: 15%; height: 46%; transform: skewX(-6deg); }
+  .cave.c2 { right: 9%; bottom: 0; width: 18%; height: 53%; transform: skewX(5deg); background: #18211b; }
+  .cave.c3 { left: 30%; bottom: 7%; width: 9%; height: 18%; background: #202b22; }
+  .cave.c4 { right: 31%; bottom: 11%; width: 7%; height: 14%; background: #202b22; }
+  .glow { position: absolute; left: 47%; top: 17%; width: 10%; height: 12%; border-radius: 50%; background: rgba(178, 205, 183, .11); filter: blur(12px); }
+  .subtitle { position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%); width: min(82%, 900px); text-align: center; pointer-events: none; transition: opacity .15s; }
+  .subtitle.empty { opacity: 0; }
+  .sub-zh { color: #ff5bd3; font-size: clamp(18px, 1.85vw, 28px); line-height: 1.35; font-weight: 600; text-shadow: 0 2px 8px rgba(0,0,0,.8); text-wrap: balance; }
+  .sub-en { margin-top: 3px; color: #f1f3f3; font-size: clamp(12px, 1.05vw, 17px); line-height: 1.4; text-shadow: 0 2px 7px rgba(0,0,0,.85); text-wrap: balance; }
+  .sub-zh:empty, .sub-en:empty { display: none; }
+  .controls { flex: none; height: 37px; display: flex; align-items: center; gap: 8px; padding: 0 3px; color: var(--text-3); }
+  .play-btn { width: 27px; height: 27px; border-radius: 50%; display: grid; place-items: center; background: #eef0f0; border: 1px solid #c5cbcd; color: var(--text); }
+  .play-btn:hover { background: #fff; }
+  .play-btn svg { width: 12px; height: 12px; }
+  .time { font: 9px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+  .time.muted { color: var(--text-3); }
+  .seek { position: relative; flex: 1; height: 18px; cursor: pointer; }
+  .seek::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 2px; border-radius: 99px; background: #c7ced0; }
+  .seek-fill { position: absolute; left: 0; top: 8px; height: 2px; border-radius: 99px; background: var(--accent); }
+  .seek-thumb { position: absolute; top: 5px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(92,117,96,.14); }
+  .icon-btn { width: 25px; height: 25px; border-radius: 5px; display: grid; place-items: center; color: var(--text-3); }
+  .icon-btn:hover { background: #e5e8e8; color: var(--text); }
+  .icon-btn svg { width: 13px; height: 13px; }
+  .speed { height: 23px; padding: 0 7px; border: 1px solid #c3cacc; border-radius: 5px; color: var(--text-2); background: #f0f2f2; font-size: 9px; }
+
+  /* ── 备注条 ─────────────────────────────────────────────────────── */
+  .note-bar { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border: 1px solid #c9ced0; border-radius: 7px; background: #dfe1e2; color: var(--text-3); font-size: 9.5px; }
+  .note-bar .note-time { font: 9px/1 var(--mono); color: var(--text-2); }
+  .note-bar input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; color: var(--text); font-size: 10px; }
+  .note-bar input::placeholder { color: #8d979e; }
+  .note-bar select { height: 22px; border: 1px solid #c5cbcd; border-radius: 5px; background: #f1f3f3; color: var(--text-2); font-size: 9px; }
+  .note-bar .send { height: 23px; padding: 0 11px; border-radius: 5px; background: var(--accent); color: #fff; font-size: 9.5px; }
+  .switch { width: 28px; height: 15px; border-radius: 99px; background: #c5cbcd; position: relative; flex: none; }
+  .switch::after { content: ""; position: absolute; left: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.15); transition: transform .15s; }
+  .switch.on { background: var(--accent); }
+  .switch.on::after { transform: translateX(13px); }
+
+  /* ── 时间轴 ─────────────────────────────────────────────────────── */
+  .timeline { min-height: 0; display: flex; flex-direction: column; border: 1px solid #c9cfd1; border-radius: 10px; overflow: hidden; background: #d8dbdc; }
+  .tl-head { flex: none; height: 29px; display: flex; align-items: center; gap: 10px; padding: 0 9px; color: var(--text-2); font-size: 8.5px; }
+  .tl-time { font: 9px/1 var(--mono); color: var(--text-2); white-space: nowrap; }
+  .tl-time .sep { color: var(--text-3); margin: 0 4px; }
+  .tl-hint { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+  .tl-fit { height: 20px; padding: 0 7px; border: 1px solid #bec6c8; border-radius: 4px; color: var(--text-2); background: #e6e8e8; font-size: 8.5px; }
+  .tl-body { flex: 1; min-height: 0; position: relative; background: #dfe1e2; overflow: hidden; }
+  .ruler { position: absolute; left: 0; right: 0; top: 0; height: 20px; border-bottom: 1px solid #cbd1d2; background: #d9dcdd; }
+  .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: #c7cdcf; }
+  .tick-label { position: absolute; top: 5px; transform: translateX(-50%); color: #7f8a91; font: 8px/1 var(--mono); white-space: nowrap; }
+  .wave { position: absolute; left: 8px; right: 8px; top: 22px; height: 48px; display: flex; align-items: center; gap: 1px; opacity: .78; pointer-events: none; }
+  .wave i { flex: 1; min-width: 1px; border-radius: 1px; background: linear-gradient(180deg, #7e8a89, #aeb6b5); }
+  .lane { position: absolute; left: 8px; right: 8px; top: 76px; height: 78px; border-radius: 6px; background: rgba(255,255,255,.24); border: 1px solid rgba(160,170,172,.35); }
+  .tl-block { position: absolute; top: 7px; height: 63px; min-width: 4px; padding: 7px 6px; border-radius: 5px; border: 1px solid color-mix(in srgb, var(--role) 28%, #c4cbcd); background: color-mix(in srgb, var(--role) 8%, #e4e7e7); color: color-mix(in srgb, var(--role) 55%, #3f4a51); font-size: 9.5px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; transition: background .14s, box-shadow .14s; }
+  .tl-block:hover { background: color-mix(in srgb, var(--role) 12%, #e4e7e7); }
+  .tl-block.is-selected { box-shadow: 0 0 0 1px color-mix(in srgb, var(--role) 65%, #8f999d), 0 3px 9px -6px rgba(0,0,0,.45); }
+  .tl-block.is-playing { background: color-mix(in srgb, var(--role) 15%, #e4e7e7); }
+  .tl-block .blk-dot { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--role); margin-right: 4px; vertical-align: 1px; }
+  .playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent); pointer-events: none; box-shadow: 0 0 5px rgba(92,117,96,.35); }
+  .playhead::before { content: ""; position: absolute; left: -3px; top: 0; width: 7px; height: 8px; border-radius: 2px 2px 4px 4px; background: var(--accent); }
+
+  /* ── 右侧面板 ───────────────────────────────────────────────────── */
+  .panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; border: 1px solid #cbd1d3; border-radius: 12px; background: var(--panel); overflow: hidden; }
+  .tabs { flex: none; height: 47px; display: flex; align-items: center; gap: 3px; padding: 0 10px; border-bottom: 1px solid #d0d5d7; }
+  .tab { height: 29px; padding: 0 17px; border-radius: 999px; color: var(--text-2); font-size: 10.5px; }
+  .tab:hover { background: rgba(255,255,255,.5); color: var(--text); }
+  .tab.active { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.09); font-weight: 600; }
+  .panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .panel-head { flex: none; padding: 10px 11px 8px; display: flex; flex-direction: column; gap: 8px; }
+  .fileline { display: flex; align-items: center; gap: 7px; }
+  .fileline strong { font-size: 11.5px; font-weight: 700; }
+  .badge { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border: 1px solid #cbd2d3; border-radius: 5px; color: var(--text-3); font-size: 8px; background: #f5f6f6; }
+  .toolrow { display: flex; align-items: center; gap: 5px; }
+  .select { height: 25px; max-width: 96px; padding: 0 5px; border: 1px solid #c6cccf; border-radius: 5px; background: #fff; color: var(--text-2); font-size: 9px; outline: none; }
+  .search-wrap { position: relative; flex: 1; min-width: 0; }
+  .search-wrap svg { position: absolute; left: 7px; top: 7px; width: 11px; height: 11px; color: var(--text-3); }
+  .search { width: 100%; height: 25px; padding: 0 7px 0 22px; border: 1px solid #c6cccf; border-radius: 5px; background: #fff; color: var(--text); font-size: 9.5px; outline: none; }
+  .search::placeholder { color: #9aa3a9; }
+  .search:focus { border-color: var(--accent); }
+  .toolbtn { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 7px; border: 1px solid #c6cccf; border-radius: 5px; background: #f7f8f8; color: var(--text-2); font-size: 8.5px; white-space: nowrap; }
+  .toolbtn:hover { background: #fff; color: var(--text); }
+  .toolbtn svg { width: 10px; height: 10px; }
+  .toolrow .icon-btn { width: 25px; height: 25px; border: 1px solid #c6cccf; border-radius: 5px; background: #f7f8f8; }
+  .toolrow.second { justify-content: space-between; }
+  .mode-label { color: var(--text-3); font-size: 8.5px; }
+  .switch-line { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 8.5px; }
+  .toolrow.third { gap: 4px; flex-wrap: wrap; }
+  .tiny { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 6px; border: 1px solid #c9cfd1; border-radius: 4px; background: #f7f8f8; color: var(--text-2); font-size: 8px; }
+  .tiny.warn { color: var(--warn); border-color: #ddcda8; background: #fbf7ec; }
+  .tiny:hover { background: #fff; }
+  .tiny svg { width: 9px; height: 9px; }
+  .toolrow.fourth { gap: 5px; }
+  .cue-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 9px 8px; display: flex; flex-direction: column; gap: 6px; }
+  .panel-foot { flex: none; height: 27px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-top: 1px solid #d4d8da; color: var(--text-3); font-size: 8px; }
+  .panel-foot .spacer { flex: 1; }
+
+  /* ── 新字幕卡：浅色 Quiet Card，样式常驻 ─────────────────────────── */
+  .cue { position: relative; display: grid; grid-template-columns: 70px minmax(0, 1fr); column-gap: 8px; padding: 9px 9px 9px 12px; background: var(--card); border: 1px solid #d6dbdd; border-radius: 9px; cursor: pointer; isolation: isolate; box-shadow: 0 1px 1px rgba(30,40,45,.025); transition: background .14s, border-color .14s, box-shadow .14s; }
+  .cue::before { content: ""; position: absolute; left: 0; top: 9px; bottom: 9px; width: 3px; border-radius: 0 2px 2px 0; background: var(--role); opacity: .9; }
+  .cue:hover { background: #f7f9f9; border-color: #c3cacc; }
+  .cue.is-selected { background: #f2f6f4; border-color: #aab9b0; box-shadow: 0 1px 2px rgba(40,60,50,.09); }
+  .cue.is-selected::before { top: 7px; bottom: 7px; }
+  .cue.is-playing { background: color-mix(in srgb, var(--role) 4%, var(--card)); border-color: color-mix(in srgb, var(--role) 22%, #d6dbdd); }
+  .cue.is-abnormal { border-color: #ddcda8; }
+  .cue[hidden] { display: none !important; }
+  .cue-rail { display: flex; flex-direction: column; min-width: 0; padding-top: 1px; }
+  .cue-time { color: #8c969d; font: 8.6px/1.65 var(--mono); letter-spacing: -.03em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cue-time.end { color: #6c7880; }
+  .cue-dur { color: #9aa3a9; font: 7.8px/1.5 var(--mono); }
+  .cue-signal { display: flex; align-items: center; gap: 3px; margin-top: auto; padding-top: 4px; color: var(--warn); font-size: 7.8px; line-height: 1; white-space: nowrap; }
+  .cue-signal .bar { width: 22px; height: 2px; border-radius: 99px; background: #e8e2d2; overflow: hidden; }
+  .cue-signal .bar i { display: block; width: var(--v, 0%); height: 100%; border-radius: inherit; background: var(--warn); }
+  .cue-main { min-width: 0; }
+  .cue-head { display: flex; align-items: center; gap: 5px; min-height: 15px; margin-bottom: 2px; padding-right: 40px; }
+  .cue-role { display: inline-flex; align-items: center; gap: 4px; color: var(--role); font-size: 9.2px; font-weight: 700; white-space: nowrap; }
+  .cue-role .dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+  .cue-style { color: #8b959c; font-size: 8.2px; white-space: nowrap; max-width: 98px; overflow: hidden; text-overflow: ellipsis; opacity: 1; }
+  .cue-status { display: none; align-items: center; gap: 3px; color: #3f7b55; font-size: 7.8px; white-space: nowrap; }
+  .cue.is-playing .cue-status { display: inline-flex; }
+  .cue-status .pulse { width: 4px; height: 4px; border-radius: 50%; background: #4a9b68; box-shadow: 0 0 0 2px rgba(74,155,104,.12); }
+  .cue-warn { width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; border-radius: 4px; color: var(--warn); flex: none; }
+  .cue-warn:hover { background: #f6efdd; }
+  .cue-warn svg { width: 10px; height: 10px; }
+  .cue-actions { position: absolute; right: 7px; top: 6px; display: flex; gap: 1px; opacity: 0; transition: opacity .13s; }
+  .cue:hover .cue-actions, .cue:focus-within .cue-actions, .cue.is-selected .cue-actions { opacity: 1; }
+  .cue-actions .icon-btn { width: 20px; height: 20px; border-radius: 4px; }
+  .cue-actions .icon-btn svg { width: 10px; height: 10px; }
+  .cue-actions .icon-btn[data-action="more"] svg { width: 12px; height: 12px; }
+  .cue-zh { margin: 0; color: #202930; font-size: 12.5px; line-height: 1.5; font-weight: 500; text-wrap: pretty; }
+  .cue-en { margin: 2px 0 0; color: #5f6b73; font-size: 10.4px; line-height: 1.5; text-wrap: pretty; }
+  .cue.is-editing .cue-zh, .cue.is-editing .cue-en { outline: none; border-bottom: 1px solid rgba(92,117,96,.55); }
+  .cue-detail { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .16s, opacity .13s, margin-top .16s; }
+  .cue-detail > div { overflow: hidden; }
+  .cue.is-expanded .cue-detail { grid-template-rows: 1fr; opacity: 1; margin-top: 6px; }
+  .cue-detail-inner { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-top: 6px; border-top: 1px solid #e3e6e7; color: #7d888f; font-size: 8px; }
+  .cue-detail-inner b { color: #4f5b63; font-weight: 500; }
+  .cue-detail-inner .reason { color: var(--warn); }
+  .detail-actions { display: flex; gap: 3px; margin-left: auto; }
+  .detail-btn { height: 19px; padding: 0 6px; border: 1px solid #d3d8da; border-radius: 4px; background: #f7f8f8; color: #5f6b73; font-size: 7.8px; }
+  .detail-btn:hover { background: #fff; color: var(--text); }
+  .detail-btn.warn { color: var(--warn); border-color: #ddcda8; }
+  .edit-footer { display: none; align-items: center; gap: 6px; margin-top: 5px; color: #8a949b; font-size: 7.8px; }
+  .cue.is-editing .edit-footer { display: flex; }
+  .cue.is-editing .cue-detail { display: none; }
+  .edit-footer kbd { padding: 1px 3px; border: 1px solid #d3d8da; border-radius: 3px; font: 7.5px/1.3 var(--mono); }
+
+  /* ── 角色 / 设置 / 日志 ─────────────────────────────────────────── */
+  .pane { flex: 1; min-height: 0; overflow-y: auto; padding: 11px; }
+  .pane h3 { margin: 0 0 8px; color: #7d888f; font-size: 9px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  .role-card { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border: 1px solid #d4d9db; border-radius: 7px; background: #fafbfb; margin-bottom: 5px; }
+  .role-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .role-name { font-size: 10.5px; }
+  .role-count { margin-left: auto; color: #8b959c; font-size: 8.5px; }
+  .role-add { width: 100%; height: 28px; border: 1px dashed #c3cacc; border-radius: 6px; color: #7e898f; font-size: 8.5px; }
+  .set-group { border: 1px solid #d4d9db; border-radius: 7px; background: #fafbfb; margin-bottom: 7px; overflow: hidden; }
+  .set-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 9px; border-top: 1px solid #e3e6e7; color: #5f6b73; font-size: 9px; }
+  .set-row:first-child { border-top: 0; }
+  .log-row { display: grid; grid-template-columns: 38px 1fr; gap: 7px; padding: 7px 0; border-bottom: 1px solid #e1e5e6; color: #7e898f; font-size: 8.8px; line-height: 1.5; }
+  .log-row b { color: #4f5b63; font-weight: 500; }
+  .log-row time { font: 8px/1.5 var(--mono); color: #96a0a6; }
+
+  /* ── 菜单 / toast ───────────────────────────────────────────────── */
+  .menu { position: fixed; z-index: 80; min-width: 165px; padding: 4px; background: #fff; border: 1px solid #cbd1d3; border-radius: 8px; box-shadow: 0 12px 28px rgba(30,45,40,.18); animation: pop .12s ease-out both; transform-origin: top right; }
+  @keyframes pop { from { opacity: 0; transform: scale(.97) translateY(-2px); } to { opacity: 1; transform: none; } }
+  .menu button { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 7px; border-radius: 4px; color: #57636b; font-size: 9px; text-align: left; }
+  .menu button:hover { background: #eef3ef; color: #263039; }
+  .menu button.danger { color: #b05252; }
+  .menu .sep { height: 1px; margin: 3px 5px; background: #e1e5e6; }
+  .menu svg { width: 11px; height: 11px; }
+  .toast { position: fixed; left: 50%; bottom: 22px; z-index: 90; transform: translateX(-50%) translateY(8px); padding: 7px 12px; border: 1px solid #cbd1d3; border-radius: 7px; background: #fff; color: #4f5b63; font-size: 9px; box-shadow: 0 10px 24px rgba(30,45,40,.15); opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+
+  @media (max-width: 1200px) {
+    .workspace { grid-template-columns: minmax(0, 1fr) 370px; }
+    .brand { min-width: 140px; }
+    .status .meta { display: none; }
+  }
+  @media (max-width: 940px) {
+    body { overflow: auto; }
+    .app { height: auto; min-height: 100vh; }
+    .workspace { grid-template-columns: 1fr; }
+    .left { grid-template-rows: auto auto 190px; }
+    .video { min-height: 330px; }
+    .panel { min-height: 620px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header class="appbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 6.5h14M5 12h9M5 17.5h11"/></svg></span>
+        <b>SubFabric</b>
+        <button class="project-btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/></svg>项目</button>
+      </div>
+      <div class="status"><i class="dot"></i><span>已保存 22:04</span><span class="meta">Minecraft.ass · 9 条 / 9 句（逐词特效）</span></div>
+      <div class="top-actions">
+        <button class="btn">全局设置</button>
+        <button class="btn accent" id="btnExport"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>导出字幕</button>
+        <button class="btn">导出项目包</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <div class="left">
+        <div class="stage-card">
+          <div class="video" id="video">
+            <div class="scene">
+              <div class="glow"></div>
+              <div class="cave c1"></div><div class="cave c2"></div><div class="cave c3"></div><div class="cave c4"></div>
+            </div>
+            <div class="subtitle" id="subtitle">
+              <div class="sub-zh" id="subZh"></div>
+              <div class="sub-en" id="subEn"></div>
+            </div>
+          </div>
+          <div class="controls">
+            <button class="play-btn" id="playBtn" aria-label="播放"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg></button>
+            <span class="time" id="curTime">00:00:06.200</span>
+            <div class="seek" id="seek"><div class="seek-fill" id="seekFill"></div><div class="seek-thumb" id="seekThumb"></div></div>
+            <span class="time muted" id="durTime">00:00:45.000</span>
+            <button class="icon-btn" id="muteBtn" aria-label="静音"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9v6h4l5 4V5L8 9H4Z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg></button>
+            <button class="speed" id="speedBtn">1×</button>
+          </div>
+        </div>
+
+        <div class="note-bar">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg>
+          <span class="note-time">00:00:06.200</span>
+          <input placeholder="在这儿写一句备注，回车发送（会记下当前播放位置，播放时当弹幕显示）" />
+          <span>停留</span>
+          <select><option>2 秒</option><option selected>2.5 秒</option><option>3 秒</option></select>
+          <span class="switch on"></span>
+          <button class="send">发送</button>
+        </div>
+
+        <section class="timeline">
+          <div class="tl-head">
+            <div class="tl-time"><span id="tlCur">00:00:06.200</span><span class="sep">/</span><span id="tlDur">00:00:45.000</span></div>
+            <div class="tl-hint">滚轮=平移 · Ctrl+滚轮=缩放 · 点一下=跳转 · Ctrl+拖动=框选 · 拖块=移动 · 拖边缘=改时长 · 空白拖动=新建 · 右键=修复/翻译/删除</div>
+            <button class="tl-fit">适应全片</button>
+          </div>
+          <div class="tl-body" id="tlBody">
+            <div class="ruler" id="ruler"></div>
+            <div class="wave" id="wave"></div>
+            <div class="lane" id="lane"></div>
+            <div class="playhead" id="playhead"></div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="panel">
+        <div class="tabs" id="tabs">
+          <button class="tab active" data-tab="subs">字幕</button>
+          <button class="tab" data-tab="roles">角色</button>
+          <button class="tab" data-tab="settings">设置</button>
+          <button class="tab" data-tab="logs">日志</button>
+        </div>
+
+        <div class="panel-body" id="panelSubs">
+          <div class="panel-head">
+            <div class="fileline"><strong>Minecraft.ass</strong><span class="badge">ASS 特效</span></div>
+            <div class="toolrow">
+              <select class="select" id="roleFilter"><option value="">全部角色</option></select>
+              <div class="search-wrap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg><input class="search" id="search" placeholder="输入内容过滤"></div>
+              <button class="icon-btn" title="搜索"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg></button>
+            </div>
+            <div class="toolrow second">
+              <span class="mode-label">显示模式</span>
+              <select class="select"><option>中英双行</option><option>仅中文</option><option>仅英文</option></select>
+              <button class="toolbtn" data-toast="原型：刷新字幕"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>刷新字幕</button>
+              <button class="toolbtn" data-toast="原型：修复字幕"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z"/><path d="m13.5 7.5 3 3"/></svg>修复字幕</button>
+              <span class="switch on" style="margin-left:auto"></span>
+            </div>
+            <div class="toolrow third">
+              <button class="tiny warn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5v.1"/></svg>3</button>
+              <button class="tiny"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/></svg>0</button>
+              <button class="tiny">异常筛选</button>
+              <button class="tiny" data-toast="原型：反思纠错"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3Z"/><path d="M9 22h6"/></svg>反思纠错</button>
+            </div>
+            <div class="toolrow fourth">
+              <button class="tiny" data-toast="原型：全片逐词重校对"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z"/><path d="m13.5 7.5 3 3"/></svg>全片逐词重校对</button>
+              <button class="tiny" data-toast="原型：分段导入"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg>分段导入</button>
+            </div>
+          </div>
+          <div class="cue-list" id="cueList"></div>
+          <div class="panel-foot"><span>点文字就能编辑 · 双击空白跳转 · 点其他位置自动保存</span></div>
+        </div>
+
+        <div class="pane" id="panelRoles" hidden>
+          <h3>角色</h3>
+          <div id="roleList"></div>
+          <button class="role-add">＋ 添加角色</button>
+        </div>
+        <div class="pane" id="panelSettings" hidden>
+          <h3>编辑器设置</h3>
+          <div class="set-group">
+            <div class="set-row"><span>显示模式</span><select class="select"><option>中英双行</option><option>仅中文</option><option>仅英文</option></select></div>
+            <div class="set-row"><span>跟随播放</span><span class="switch on"></span></div>
+            <div class="set-row"><span>显示异常行</span><span class="switch on"></span></div>
+          </div>
+          <h3>诊断</h3>
+          <div class="set-group">
+            <div class="set-row"><span>显示样式与置信度</span><span class="switch"></span></div>
+            <div class="set-row"><span>逐词预览</span><span class="switch on"></span></div>
+          </div>
+        </div>
+        <div class="pane" id="panelLogs" hidden>
+          <h3>操作日志</h3>
+          <div class="log-row"><time>22:04</time><span><b>保存字幕</b> · Minecraft.ass</span></div>
+          <div class="log-row"><time>21:58</time><span><b>重排逐词时间</b> · 第 12 条 · 8 个词</span></div>
+          <div class="log-row"><time>21:52</time><span><b>重新识别</b> · 00:00:05.200 → 00:00:10.400</span></div>
+          <div class="log-row"><time>21:47</time><span><b>应用选中项</b> · 3 句</span></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="menu" id="menu" hidden role="menu">
+    <button data-command="realign"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z"/><path d="m13.5 7.5 3 3"/></svg>重排逐词时间</button>
+    <button data-command="retranslate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>重新翻译</button>
+    <button data-command="karaoke"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>切换为 \k 卡拉OK</button>
+    <div class="sep"></div>
+    <button class="danger" data-command="delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4.5 6.5h15M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5"/><path d="M6.5 6.5 7.5 19a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5-1.4l1-12.5"/></svg>删除字幕</button>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      const ROLES = { Wemmbu: '#c026d3', Gav: '#2563eb', Minute: '#0f8a78', eggchan: '#d23f5c' };
+      const OVERLAY_ROLES = { Wemmbu: '#ff5bd3', Gav: '#7fb4ff', Minute: '#5eead4', eggchan: '#ff8aa0' };
+      const CUES = [
+        { id: 'c1', start: 0, end: 4.6, role: 'Gav', style: '中文字幕 · Default', zh: '这就是USMP 世界上最大的Minecraft服务器', en: "This is the Unstable SMP, the world's largest Minecraft server.", conf: 96 },
+        { id: 'c2', start: 5.2, end: 10.4, role: 'Wemmbu', style: '中文字幕 · Default', zh: '这就是废弃Minecraft文明的模样', en: 'This is what an abandoned Minecraft civilization looks like.', conf: 96 },
+        { id: 'c3', start: 11, end: 15.2, role: 'eggchan', style: '中文字幕 · Default', zh: '我玩Skyblock越多 就越感到一种日益增长的不满', en: "The more I play Skyblock the more I'm faced with the growing sense of dissatisfaction.", conf: 81, abnormal: '与下一句时间重叠 0.9s' },
+        { id: 'c4', start: 16, end: 20.2, role: 'Minute', style: '中文字幕 · Default', zh: '他亲手封禁了我们服务器的几百名玩家 自己却从未接近过死亡', en: "He's personally banned hundreds of players off our server, without ever coming close to death himself once.", conf: 97 },
+        { id: 'c5', start: 20.8, end: 25.4, role: 'Gav', style: '中文字幕 · Default', zh: '如果我现在倒下 服务器会变成什么样', en: 'If I fall now, what happens to the server?', conf: 95 },
+        { id: 'c6', start: 26, end: 30, role: 'Wemmbu', style: '中文字幕 · Default', zh: '我们得在天亮之前把这里修好', en: 'We need to fix this place before sunrise.', conf: 92 },
+        { id: 'c7', start: 30.8, end: 35, role: 'Minute', style: '中文字幕 · Default', zh: '这不是结束 只是另一场开始', en: "This isn't the end, just the start of another game.", conf: 98 },
+        { id: 'c8', start: 35.6, end: 40, role: 'eggchan', style: '英文孤行 · Default', zh: '', en: 'I also really like the new server spawn.', conf: 88 },
+        { id: 'c9', start: 40.5, end: 44.5, role: 'Wemmbu', style: '中文字幕 · Default', zh: '他从来没有真正离开过这座岛', en: 'He never really left this island.', conf: 93 },
+      ];
+      const DURATION = 45;
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const fmt = (t) => {
+        t = Math.max(0, Math.min(DURATION, Number(t) || 0));
+        const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = Math.floor(t % 60);
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(Math.floor((t % 1) * 1000)).padStart(3, '0')}`;
+      };
+      const fmtShort = (t) => `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+      let t = 6.2, playing = false, selectedId = 'c2', playingId = null, editing = null;
+      let lastFrame = 0, speed = 1, muted = false, toastTimer = 0, showDiag = false;
+
+      /* 时间轴骨架 */
+      const ruler = $('ruler'), wave = $('wave'), lane = $('lane');
+      for (let i = 0; i < 170; i++) {
+        const b = document.createElement('i');
+        b.style.height = Math.min(43, 11 + Math.abs(Math.sin(i * .47) * Math.cos(i * .19)) * 30 + ((i * 17) % 7)) + 'px';
+        b.style.opacity = String(.45 + (i % 5) * .08);
+        wave.appendChild(b);
+      }
+      for (let s = 0; s <= DURATION; s += 5) {
+        const pct = s / DURATION * 100;
+        const tick = document.createElement('div'); tick.className = 'tick'; tick.style.left = pct + '%'; ruler.appendChild(tick);
+        const lab = document.createElement('span'); lab.className = 'tick-label'; lab.textContent = fmtShort(s); lab.style.left = pct + '%';
+        if (s === DURATION) lab.style.transform = 'translateX(-100%)';
+        if (s === 0) lab.style.transform = 'translateX(0)';
+        ruler.appendChild(lab);
+      }
+
+      /* 卡片 */
+      const list = $('cueList');
+      function cardHtml(c) {
+        const role = ROLES[c.role] || '#7d888f';
+        const low = c.conf < 85;
+        return `<article class="cue${c.abnormal ? ' is-abnormal' : ''}" data-id="${c.id}" tabindex="0" style="--role:${role}" aria-label="${esc(c.role)} 的字幕">
+          <div class="cue-rail">
+            <span class="cue-time">${fmt(c.start)}</span>
+            <span class="cue-time end">${fmt(c.end)}</span>
+            <span class="cue-dur">${(c.end - c.start).toFixed(3)}s</span>
+            ${low ? `<span class="cue-signal" title="置信度 ${c.conf}%"><span class="bar"><i style="--v:${c.conf}%"></i></span><span>${c.conf}%</span></span>` : ''}
+          </div>
+          <div class="cue-main">
+            <div class="cue-head">
+              <span class="cue-role"><i class="dot"></i>${esc(c.role)}</span>
+              <span class="cue-style">${esc(c.style)}</span>
+              <span class="cue-status"><i class="pulse"></i>播放中</span>
+              ${c.abnormal ? `<button class="cue-warn" data-action="expand" title="${esc(c.abnormal)}" aria-label="查看异常原因"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5v.1"/></svg></button>` : ''}
+              <div class="cue-actions">
+                <button class="icon-btn" data-action="rerecog" title="重新识别" aria-label="重新识别"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                <button class="icon-btn" data-action="more" title="更多" aria-label="更多"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+              </div>
+            </div>
+            ${c.zh ? `<p class="cue-zh" data-edit data-lang="zh">${esc(c.zh)}</p>` : ''}
+            ${c.en ? `<p class="cue-en" data-edit data-lang="en">${esc(c.en)}</p>` : ''}
+            <div class="cue-detail"><div><div class="cue-detail-inner">
+              ${c.abnormal ? `<span class="reason">异常：${esc(c.abnormal)}</span>` : ''}
+              <span>样式 <b>${esc(c.style)}</b></span>
+              <span>置信度 <b>${c.conf}%</b></span>
+              <span class="detail-actions"><button class="detail-btn" data-command="realign">重排逐词</button>${c.abnormal ? '<button class="detail-btn warn" data-command="rerecog">重新识别</button>' : ''}</span>
+            </div></div></div>
+          </div>
+        </article>`;
+      }
+      list.innerHTML = CUES.map(cardHtml).join('');
+      const cardEls = new Map([...list.querySelectorAll('.cue')].map((el) => [el.dataset.id, el]));
+      const blockEls = new Map();
+      CUES.forEach((c) => {
+        const b = document.createElement('div');
+        b.className = 'tl-block'; b.dataset.id = c.id;
+        b.style.left = (c.start / DURATION * 100) + '%';
+        b.style.width = ((c.end - c.start) / DURATION * 100) + '%';
+        b.style.setProperty('--role', ROLES[c.role]);
+        b.innerHTML = `<span class="blk-dot"></span>${esc(c.zh || c.en)}`;
+        b.title = `${fmt(c.start)} → ${fmt(c.end)} · ${c.role}`;
+        lane.appendChild(b);
+        blockEls.set(c.id, b);
+      });
+      const roleFilter = $('roleFilter');
+      [...new Set(CUES.map((c) => c.role))].forEach((r) => { const o = document.createElement('option'); o.value = r; o.textContent = r; roleFilter.appendChild(o); });
+      $('roleList').innerHTML = [...new Set(CUES.map((c) => c.role))].map((r) => `<div class="role-card"><span class="role-dot" style="background:${ROLES[r]}"></span><span class="role-name">${esc(r)}</span><span class="role-count">${CUES.filter((c) => c.role === r).length} 条</span></div>`).join('');
+
+      /* 播放 / 叠加 */
+      const sub = $('subtitle'), subZh = $('subZh'), subEn = $('subEn');
+      const cueAt = (time) => CUES.find((c) => time >= c.start && time < c.end) || null;
+      function updateOverlay() {
+        const c = cueAt(t);
+        if (!c) { sub.classList.add('empty'); subZh.textContent = ''; subEn.textContent = ''; return; }
+        sub.classList.remove('empty');
+        subZh.style.color = OVERLAY_ROLES[c.role] || '#ff5bd3';
+        subZh.textContent = (c.role ? `[${c.role}] ` : '') + (c.zh || '');
+        subEn.textContent = c.en || '';
+      }
+      function markPlaying(id) {
+        if (playingId === id) return;
+        if (playingId) {
+          cardEls.get(playingId)?.classList.remove('is-playing');
+          blockEls.get(playingId)?.classList.remove('is-playing');
+        }
+        playingId = id;
+        if (!id) return;
+        cardEls.get(id)?.classList.add('is-playing');
+        blockEls.get(id)?.classList.add('is-playing');
+        const card = cardEls.get(id);
+        if (card) {
+          const lr = list.getBoundingClientRect(), cr = card.getBoundingClientRect();
+          if (cr.top < lr.top || cr.bottom > lr.bottom) list.scrollTo({ top: list.scrollTop + (cr.top - lr.top) - 6, behavior: 'smooth' });
+        }
+      }
+      function updateUI() {
+        t = Math.max(0, Math.min(DURATION, t));
+        $('curTime').textContent = fmt(t); $('tlCur').textContent = fmt(t);
+        $('durTime').textContent = fmt(DURATION); $('tlDur').textContent = fmt(DURATION);
+        const pct = t / DURATION * 100;
+        $('seekFill').style.width = pct + '%'; $('seekThumb').style.left = pct + '%'; $('playhead').style.left = pct + '%';
+        updateOverlay();
+        const c = cueAt(t); markPlaying(c ? c.id : null);
+      }
+      function updatePlayButton() {
+        $('playBtn').innerHTML = playing
+          ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.4" height="14" rx="1"/><rect x="13.6" y="5" width="3.4" height="14" rx="1"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5-11-6.5Z"/></svg>';
+      }
+      function tick(now) {
+        if (playing) {
+          if (!lastFrame) lastFrame = now;
+          t += Math.min(.25, (now - lastFrame) / 1000) * speed;
+          lastFrame = now;
+          if (t >= DURATION) { t = DURATION; playing = false; updatePlayButton(); }
+          updateUI();
+        } else lastFrame = 0;
+        requestAnimationFrame(tick);
+      }
+      function setPlaying(on) { playing = !!on; lastFrame = 0; updatePlayButton(); }
+
+      function selectCard(id, seek) {
+        selectedId = id;
+        for (const [cid, el] of cardEls) {
+          el.classList.toggle('is-selected', cid === id);
+          if (cid === id) el.setAttribute('aria-selected', 'true'); else el.removeAttribute('aria-selected');
+        }
+        for (const [bid, el] of blockEls) el.classList.toggle('is-selected', bid === id);
+        if (seek) { const c = CUES.find((x) => x.id === id); if (c) { t = c.start; updateUI(); } }
+      }
+      function markSaving() {
+        const status = document.querySelector('.status');
+        const txt = status.querySelector('span');
+        txt.textContent = '保存中…';
+        clearTimeout(markSaving.timer);
+        markSaving.timer = setTimeout(() => { txt.textContent = '已保存 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }); }, 500);
+      }
+
+      /* 编辑 */
+      function startEdit(line) {
+        if (editing) finishEdit(false);
+        const card = line.closest('.cue'), cue = CUES.find((c) => c.id === card.dataset.id);
+        if (!cue) return;
+        editing = { line, card, cue, lang: line.dataset.lang, original: line.textContent };
+        let footer = card.querySelector('.edit-footer');
+        if (!footer) {
+          footer = document.createElement('div'); footer.className = 'edit-footer';
+          footer.innerHTML = '<span>编辑中</span><span><kbd>Enter</kbd> 保存 <kbd>Esc</kbd> 取消</span>';
+          card.querySelector('.cue-main').appendChild(footer);
+        }
+        line.setAttribute('contenteditable', 'true'); card.classList.add('is-editing'); line.focus();
+        const r = document.createRange(); r.selectNodeContents(line); r.collapse(false);
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      }
+      function finishEdit(cancel) {
+        if (!editing) return;
+        const { line, card, cue, lang, original } = editing;
+        if (cancel) line.textContent = original;
+        else {
+          cue[lang] = line.textContent.trim();
+          const b = blockEls.get(cue.id); if (b) b.innerHTML = `<span class="blk-dot"></span>${esc(cue.zh || cue.en)}`;
+          markSaving(); updateOverlay();
+        }
+        line.removeAttribute('contenteditable'); card.classList.remove('is-editing'); editing = null;
+      }
+
+      /* 菜单 / toast / 事件 */
+      const menu = $('menu');
+      function closeMenu() { menu.hidden = true; }
+      function openMenu(anchor) {
+        const r = anchor.getBoundingClientRect();
+        menu.hidden = false;
+        menu.style.left = Math.min(Math.max(8, r.right - menu.offsetWidth), innerWidth - menu.offsetWidth - 8) + 'px';
+        menu.style.top = Math.min(r.bottom + 5, innerHeight - menu.offsetHeight - 8) + 'px';
+      }
+      function toast(text) {
+        const el = $('toast'); el.textContent = text; el.classList.add('show');
+        clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1900);
+      }
+      document.addEventListener('click', (e) => {
+        if (!menu.hidden && !menu.contains(e.target)) closeMenu();
+        const action = e.target.closest('[data-action]');
+        if (action) {
+          const card = action.closest('.cue');
+          if (action.dataset.action === 'more') { openMenu(action); return; }
+          if (action.dataset.action === 'expand' && card) { card.classList.toggle('is-expanded'); return; }
+          if (action.dataset.action === 'rerecog') { toast('原型：重新识别这一句'); return; }
+        }
+        const cmd = e.target.closest('[data-command]');
+        if (cmd) { toast('原型：' + ({ realign: '重排逐词时间', retranslate: '重新翻译', karaoke: '切换为 \\k 卡拉OK', delete: '删除字幕', rerecog: '重新识别' }[cmd.dataset.command] || cmd.dataset.command)); closeMenu(); return; }
+        if (editing && !editing.card.contains(e.target)) finishEdit(false);
+        const block = e.target.closest('.tl-block');
+        if (block) { const c = CUES.find((x) => x.id === block.dataset.id); if (c) selectCard(c.id, true); return; }
+        const card = e.target.closest('.cue');
+        if (card && !e.target.closest('button, .cue-detail')) selectCard(card.dataset.id, true);
+      });
+      list.addEventListener('dblclick', (e) => { const line = e.target.closest('[data-edit]'); if (line) { e.preventDefault(); startEdit(line); } });
+      list.addEventListener('keydown', (e) => {
+        if (editing && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finishEdit(false); }
+        if (editing && e.key === 'Escape') { e.preventDefault(); finishEdit(true); }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') { closeMenu(); if (editing) finishEdit(true); }
+        if (e.target.closest('input, select, textarea, button, [contenteditable="true"]')) return;
+        if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); t -= 1; updateUI(); }
+        if (e.key === 'ArrowRight') { e.preventDefault(); t += 1; updateUI(); }
+      });
+      $('tlBody').addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.tl-block')) return;
+        const r = lane.getBoundingClientRect();
+        t = Math.max(0, Math.min(DURATION, (e.clientX - r.left) / r.width * DURATION));
+        updateUI(); const c = cueAt(t); if (c) selectCard(c.id, false);
+      });
+      const seek = $('seek'); let seeking = false;
+      function seekTo(e) { const r = seek.getBoundingClientRect(); t = Math.max(0, Math.min(DURATION, (e.clientX - r.left) / r.width * DURATION)); updateUI(); }
+      seek.addEventListener('pointerdown', (e) => { seeking = true; seek.setPointerCapture(e.pointerId); seekTo(e); });
+      seek.addEventListener('pointermove', (e) => { if (seeking) seekTo(e); });
+      seek.addEventListener('pointerup', () => { seeking = false; });
+      seek.addEventListener('pointercancel', () => { seeking = false; });
+      $('playBtn').addEventListener('click', () => setPlaying(!playing));
+      $('muteBtn').addEventListener('click', () => { muted = !muted; $('muteBtn').style.color = muted ? 'var(--danger)' : ''; toast(muted ? '已静音（原型）' : '已取消静音（原型）'); });
+      $('speedBtn').addEventListener('click', () => { const a = [1, 1.25, 1.5, 2]; speed = a[(a.indexOf(speed) + 1) % a.length]; $('speedBtn').textContent = speed + '×'; toast('播放速度 ' + speed + '×（原型）'); });
+      $('btnExport').addEventListener('click', () => toast('原型：导出字幕'));
+
+      /* 筛选 / 页签 / 设置 */
+      const filters = { q: '', role: '' };
+      function applyFilter() {
+        let n = 0;
+        for (const c of CUES) {
+          const el = cardEls.get(c.id);
+          const ok = (!filters.q || `${c.zh} ${c.en} ${c.role}`.toLowerCase().includes(filters.q)) && (!filters.role || c.role === filters.role);
+          el.hidden = !ok; if (ok) n++;
+        }
+        const fc = $('filteredCount'); if (fc) fc.textContent = n + ' / ' + CUES.length;
+      }
+      $('search').addEventListener('input', (e) => { filters.q = e.target.value.trim().toLowerCase(); applyFilter(); });
+      roleFilter.addEventListener('change', (e) => { filters.role = e.target.value; applyFilter(); });
+      function switchTab(name) {
+        for (const b of document.querySelectorAll('.tab')) { b.classList.toggle('active', b.dataset.tab === name); }
+        for (const [id, el] of [['subs', $('panelSubs')], ['roles', $('panelRoles')], ['settings', $('panelSettings')], ['logs', $('panelLogs')]]) el.hidden = id !== name;
+      }
+      document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+      document.querySelectorAll('[data-toast]').forEach((b) => b.addEventListener('click', () => toast(b.dataset.toast)));
+      document.querySelectorAll('.set-row .switch, .toolrow .switch').forEach((s) => s.addEventListener('click', () => s.classList.toggle('on')));
+
+      selectCard('c2', false); updatePlayButton(); updateUI(); requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>

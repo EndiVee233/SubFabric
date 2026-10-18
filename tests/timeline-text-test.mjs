@@ -94,10 +94,10 @@ ok(fake('#ffff00') === '#ffffff' && fake('#000033') === '#ffffff',
 ok(R('#ffff00') !== R('#000033'),
   'confirm: readableTextOn 能区分亮角色色与暗角色色');
 
-console.log('\n== 源码接线：scrim 与文字色确实用上了 ==');
+console.log('\n== 源码接线：中文文字色，且不再铺黑底 ==');
 ok(/readableTextOn\(base\)/.test(SRC), '_drawBlockText 里用 readableTextOn(base) 决定中文色');
-ok(/rgba\(8,8,12,\.45\)/.test(SRC), '中文字形后铺了淡深色底（scrim）');
-ok(/measureText\(zh\)\.width/.test(SRC), 'scrim 宽度按实测文本宽度算（不是整块铺满）');
+ok(!/rgba\(8,8,12,\.45\)/.test(SRC), '中文行不再铺黑色底条');
+ok(!/bgTop = Math\.round\(zhBase - g\.mZh\.asc - bgPadY\)/.test(SRC), '不再计算中文底条');
 /* ⚠ 这条以前钉的是合并前的**内联**写法 `zhBase = band.y + Math.round(band.h*0.30)`。
  *   后来分区逻辑改过 _wordGeom（中英上下分区、各自居中），两处副本会漂 ——
  *   实测分隔线 89 压在中文 88~105 上。于是**统一到一处**：_wordGeom 算出 zhBase 并
@@ -110,11 +110,7 @@ ok(/const zhBase = g\.zhBase;/.test(SRC), '_drawBlockText 从 g.zhBase 取（只
  * 所以断言"那份算式只出现一次"，多了就是又漂了。 */
 const zhBaseCalc = (SRC.match(/Math\.round\(zhBandTop \+ \(zhBandBot - zhBandTop\)/g) || []).length;
 ok(zhBaseCalc === 1, `中文基线算式只出现一次（找到 ${zhBaseCalc}）—— 没有第二份副本`);
-// scrim 的 y 必须锚在同一处 zhBase 上（同一个函数作用域内，直接引用即对齐）
-const drawSeg = SRC.slice(SRC.indexOf('const zhBase = g.zhBase;'),
-  SRC.indexOf('const zhBase = g.zhBase;') + 900);
-ok(/bgTop = Math\.round\(zhBase - g\.mZh\.asc - bgPadY\)/.test(drawSeg),
-  'scrim 用同一个 zhBase 锚定（不会与文字错位）');
+ok(/ctx\.fillText\(zh, x1 \+ TEXT_PAD, zhBase\)/.test(SRC), '中文文字仍绘制');
 ok(/c\.text2\.slice\(0, 60\)/.test(SRC), '中文文本仍截断到 60 字符（行为不变）');
 // 不能把整块铺成不透明 —— 那会盖掉逐词轴和边框色
 ok(!/ctx\.rect\(x1, band\.y, wpx, band\.h\)[\s\S]{0,80}fill\(\)/.test(SRC),
@@ -150,6 +146,13 @@ ok(/gray = 0x8a/.test(mutedBody) && /v \* \(1 - t\) \+ gray \* t/.test(mutedBody
 ok(/const bgBase = mutedHex\(base, 0\.62\)/.test(SRC) && /withAlpha\(bgBase, alpha/.test(SRC), '实心块背景使用 mutedHex(base, 0.62)');
 ok(/withAlpha\(mutedHex\(lane\.color, 0\.62\), 0\.24/.test(SRC), '窄块（run）背景同样降饱和');
 ok(/ctx\.strokeStyle = withAlpha\(base, 1/.test(SRC), '边框仍使用原角色色（保留说话人识别）');
+
+console.log('\n== 时间轴逐词标记已恢复 ==');
+ok(/WORD_MARK/.test(SRC), '逐词灰条常量保留');
+const axisStart = SRC.indexOf('  _drawWordAxis(ctx');
+const axisSrc = SRC.slice(axisStart, SRC.indexOf('  _hitWordHandle(x', axisStart));
+ok(axisSrc.length > 0 && /ctx\.fillRect/.test(axisSrc), '逐词轴仍画标记块');
+ok(/ctx\.fillText/.test(axisSrc), '英文词文本仍绘制');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

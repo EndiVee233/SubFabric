@@ -1,0 +1,1434 @@
+<!doctype html>
+<html lang="zh-CN" data-scene="aurora" data-mode="dark" data-theme="studio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubFabric · 环境自适应选择框原型</title>
+<!--
+  环境自适应选择框（Ambient-Adaptive Selection Rim）原型
+  ─────────────────────────────────────────────────────────────
+  目的：把上一轮从消息弹窗里拆出的“边框随背景取色”规则，落到 SubFabric 的
+  所有可选表面上：主题包、背景材质、明暗分段、识别模型、字幕卡、下拉、复选、
+  单选、开关、色板。
+
+  核心做法（不需要 canvas，不需要逐像素 JS 取色）：
+  1. 每个 .agx 的 ::before 复制一份整页壁纸，用 background-position 把它平移到
+     元素在视口里的位置，于是这条 1px 环拿到的就是“它背后那块壁纸”。
+  2. 对这条环做 blur + saturate + brightness，模拟玻璃薄边的透射增益；
+  3. ::after 叠一条顶部更亮的白色高光，负责暗背景下的轮廓保底与“顶光”；
+  4. 两者都通过 content-box 遮罩裁成描边环，中间留给实体内容。
+  这不是“给边框填渐变”，而是让边框成为背景的提亮切片。
+-->
+<style>
+  /* ══ 0. 基础与令牌 ══════════════════════════════════════════════ */
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  :root {
+    --font: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+    --ink: #eef3f8;
+    --muted: #9aa7b5;
+    --faint: #6f7c8b;
+    --line: rgba(255, 255, 255, .10);
+    --line-strong: rgba(255, 255, 255, .18);
+    --win: rgba(7, 10, 15, .60);
+    --card: rgba(15, 20, 27, .78);
+    --card-strong: rgba(25, 32, 41, .88);
+    --card-2: rgba(255, 255, 255, .045);
+    --nav-active: rgba(255, 255, 255, .06);
+    --accent: #8fe3c0;
+    --accent-ink: #07130e;
+    --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+    --spec-op: .70;
+    --rim-bri: 1.65;
+    --rim-sat: 1.0;
+    --rim-blur: 3px;
+    --rim-w: 1.3px;
+
+    /* 默认壁纸：流光 · 极光。body 与 .agx::before 共用这一份。 */
+    --wp:
+      radial-gradient(1100px 780px at 12% 16%, rgba(45, 135, 160, .72) 0%, rgba(30, 92, 112, .28) 42%, transparent 72%),
+      radial-gradient(1000px 760px at 88% 10%, rgba(175, 70, 115, .62) 0%, rgba(110, 48, 78, .24) 42%, transparent 72%),
+      radial-gradient(1000px 760px at 84% 88%, rgba(190, 135, 55, .54) 0%, rgba(122, 88, 38, .20) 44%, transparent 74%),
+      radial-gradient(900px 700px at 10% 92%, rgba(48, 140, 110, .48) 0%, rgba(26, 88, 70, .17) 44%, transparent 74%),
+      radial-gradient(900px 700px at 50% 55%, rgba(90, 80, 165, .38) 0%, rgba(52, 44, 108, .15) 46%, transparent 76%),
+      radial-gradient(820px 560px at 34% 46%, rgba(42, 112, 128, .32) 0%, transparent 72%),
+      radial-gradient(760px 560px at 70% 40%, rgba(132, 62, 96, .28) 0%, transparent 72%),
+      linear-gradient(135deg, #06080d 0%, #0a0e16 55%, #05070a 100%);
+  }
+  html[data-scene="ink"] {
+    --wp:
+      radial-gradient(1000px 720px at 22% 26%, #1a3a4a 0%, rgba(12, 40, 55, .55) 42%, transparent 72%),
+      radial-gradient(900px 700px at 78% 72%, #2a2440 0%, rgba(30, 20, 55, .45) 42%, transparent 72%),
+      radial-gradient(800px 600px at 60% 20%, #24303a 0%, transparent 70%),
+      linear-gradient(135deg, #05070a 0%, #0a0e14 55%, #040608 100%);
+  }
+  html[data-scene="dusk"] {
+    --wp:
+      radial-gradient(1000px 760px at 14% 18%, rgba(150, 88, 52, .52) 0%, rgba(100, 58, 38, .20) 42%, transparent 72%),
+      radial-gradient(980px 760px at 86% 14%, rgba(140, 72, 96, .46) 0%, rgba(90, 42, 62, .18) 42%, transparent 72%),
+      radial-gradient(1000px 780px at 82% 86%, rgba(92, 76, 140, .40) 0%, rgba(56, 46, 100, .16) 44%, transparent 74%),
+      radial-gradient(900px 700px at 16% 88%, rgba(150, 122, 58, .38) 0%, rgba(96, 78, 34, .15) 44%, transparent 74%),
+      linear-gradient(135deg, #0b080c 0%, #120c12 55%, #070509 100%);
+  }
+  html[data-mode="light"] {
+    --ink: #0f1720;
+    --muted: #53606e;
+    --faint: #7a8794;
+    --line: rgba(12, 22, 34, .12);
+    --line-strong: rgba(12, 22, 34, .22);
+    --win: rgba(247, 249, 252, .72);
+    --card: rgba(255, 255, 255, .66);
+    --card-strong: rgba(255, 255, 255, .88);
+    --card-2: rgba(10, 20, 30, .035);
+    --nav-active: rgba(10, 20, 30, .05);
+    --accent-ink: #06130d;
+  }
+  body {
+    background-image: var(--wp);
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 12px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 46%, transparent 38%, rgba(0, 0, 0, .42) 100%);
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { border: 0; background: none; cursor: pointer; }
+  [hidden] { display: none !important; }
+  .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+  .ic { width: 14px; height: 14px; display: block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  :is(button, select, input, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  /* ══ 1. 自适应描边组件 ══════════════════════════════════════════ */
+  /*
+     .agx 负责三件事：保留自身底色、画背景切片环、画顶部高光。
+     内容统一放进 .agx-in，保证压在高光之上。
+  */
+  .agx { position: relative; isolation: isolate; border-radius: 14px; }
+  .agx::before,
+  .agx::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+  .agx::before {
+    padding: var(--rim-w);
+    z-index: 1;
+    background-image: var(--wp);
+    background-size: 100vw 100vh;
+    background-position: var(--bgpos, 0 0);
+    background-repeat: no-repeat;
+    filter: blur(var(--rim-blur)) saturate(var(--rim-sat)) brightness(var(--rim-bri)) contrast(1.04);
+    opacity: var(--rim-op, 1);
+    transition: filter .18s ease, opacity .18s ease;
+  }
+  .agx::after {
+    padding: 1px;
+    z-index: 2;
+    background: linear-gradient(148deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .22) 16%, rgba(255, 255, 255, 0) 44%, rgba(255, 255, 255, .14) 100%);
+    mix-blend-mode: screen;
+    opacity: var(--spec-op);
+    transition: opacity .18s ease;
+  }
+  .agx-in { position: relative; z-index: 3; display: block; min-width: 0; }
+  html.plain .agx { box-shadow: inset 0 0 0 1px var(--line-strong); }
+  html.plain .agx::before, html.plain .agx::after { display: none; }
+  @media (hover: hover) {
+    .agx:hover::before { filter: blur(var(--rim-blur)) saturate(var(--rim-sat)) brightness(calc(var(--rim-bri) + .12)) contrast(1.04); }
+    .agx:hover::after { opacity: calc(var(--spec-op) + .10); }
+  }
+  .agx[aria-pressed="true"]::before,
+  .agx[aria-checked="true"]::before,
+  .agx[aria-expanded="true"]::before {
+    filter: blur(var(--rim-blur)) saturate(var(--rim-sat)) brightness(calc(var(--rim-bri) + .18)) contrast(1.05);
+  }
+  .agx[aria-pressed="true"]::after,
+  .agx[aria-checked="true"]::after { opacity: calc(var(--spec-op) + .12); }
+
+  /* ══ 2. 应用窗口 ════════════════════════════════════════════════ */
+  .appwin {
+    position: relative;
+    z-index: 2;
+    width: calc(100vw - 56px);
+    height: calc(100vh - 56px);
+    margin: 28px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 26px;
+    overflow: hidden;
+    background: var(--win);
+    -webkit-backdrop-filter: blur(46px) saturate(1.18);
+    backdrop-filter: blur(46px) saturate(1.18);
+    box-shadow:
+      0 42px 120px rgba(0, 0, 0, .58),
+      0 8px 30px rgba(0, 0, 0, .35),
+      inset 0 1px 0 rgba(255, 255, 255, .09),
+      inset 0 0 0 1px rgba(255, 255, 255, .055);
+  }
+  .winbar {
+    flex: none;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(255, 255, 255, .018);
+  }
+  .brand { display: flex; align-items: center; gap: 9px; flex: none; }
+  .logo {
+    width: 24px; height: 24px; border-radius: 8px;
+    display: grid; place-items: center;
+    background: linear-gradient(140deg, #b9f5dc, #62b89a 60%, #3d8d72);
+    color: #081611;
+    box-shadow: 0 4px 14px rgba(90, 200, 160, .22);
+  }
+  .logo .ic { width: 14px; height: 14px; stroke-width: 2; }
+  .brand b { font-size: 13px; font-weight: 650; letter-spacing: .01em; }
+  .brand .crumb { display: flex; align-items: center; gap: 7px; margin-left: 4px; color: var(--faint); font-size: 10.5px; }
+  .brand .crumb i { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+  .winbar .grow { flex: 1; }
+  .winbar .save { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10.5px; }
+  .winbar .save i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .winbar .vsep { width: 1px; height: 18px; background: var(--line); }
+  .winbar .mode-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 9px; border-radius: 8px;
+    border: 1px solid var(--line);
+    color: var(--muted); font-size: 10px;
+    background: var(--card-2);
+  }
+  .avatar {
+    width: 25px; height: 25px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: linear-gradient(140deg, #35445a, #1b2431);
+    border: 1px solid var(--line-strong);
+    color: #cfe0f0; font-size: 9px; font-weight: 700;
+  }
+
+  .winbody { flex: 1; min-height: 0; display: grid; grid-template-columns: 196px minmax(0, 1fr) 292px; }
+
+  /* ══ 3. 左侧导航 ════════════════════════════════════════════════ */
+  .side {
+    min-height: 0;
+    padding: 14px 12px 12px;
+    border-right: 1px solid var(--line);
+    background: rgba(255, 255, 255, .018);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .nav-label { margin: 13px 8px 6px; color: var(--faint); font-size: 9px; letter-spacing: .10em; text-transform: uppercase; }
+  .nav-label:first-child { margin-top: 2px; }
+  .nav-item {
+    position: relative;
+    display: flex; align-items: center; gap: 9px;
+    height: 32px; padding: 0 10px;
+    border-radius: 9px;
+    color: var(--muted);
+    font-size: 11.5px;
+    text-align: left;
+    transition: background .14s, color .14s;
+  }
+  .nav-item .ic { width: 14px; height: 14px; opacity: .9; }
+  .nav-item:hover { background: var(--card-2); color: var(--ink); }
+  .nav-item.active { background: var(--nav-active); color: var(--ink); }
+  .nav-item.active::before {
+    content: ""; position: absolute; left: 0; top: 9px; bottom: 9px;
+    width: 2px; border-radius: 99px; background: var(--accent);
+    box-shadow: 0 0 10px var(--accent-soft);
+  }
+  .nav-item .badge { margin-left: auto; font-size: 8.5px; color: var(--faint); font-family: var(--mono); }
+  .side-foot { margin-top: auto; padding: 8px 6px 2px; border-top: 1px solid var(--line); }
+  .back-editor {
+    width: 100%; display: flex; align-items: center; justify-content: space-between;
+    height: 32px; padding: 0 10px; border-radius: 9px;
+    color: var(--muted); font-size: 10.5px;
+    background: var(--card-2); border: 1px solid var(--line);
+  }
+  .back-editor:hover { color: var(--ink); border-color: var(--line-strong); }
+  .side-foot small { display: block; margin: 9px 4px 0; color: var(--faint); font-size: 8.5px; font-family: var(--mono); }
+
+  /* ══ 4. 主内容 ══════════════════════════════════════════════════ */
+  .content { min-height: 0; overflow: auto; padding: 22px 28px 26px; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  .content::-webkit-scrollbar { width: 8px; }
+  .content::-webkit-scrollbar-thumb { background: var(--line-strong); border: 2px solid transparent; border-radius: 99px; background-clip: content-box; }
+  .content-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 19px; }
+  .eyebrow { display: flex; align-items: center; gap: 7px; color: var(--faint); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; }
+  .eyebrow i { width: 12px; height: 1px; background: var(--faint); }
+  .content-head h1 { margin: 7px 0 5px; font-size: 23px; line-height: 1.1; font-weight: 620; letter-spacing: -.015em; }
+  .content-head .sub { max-width: 600px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+  .autosave {
+    flex: none; display: flex; align-items: center; gap: 6px;
+    margin-top: 4px; padding: 5px 9px; border-radius: 99px;
+    border: 1px solid var(--line); background: var(--card-2);
+    color: var(--muted); font-size: 9.5px; white-space: nowrap;
+  }
+  .autosave i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
+  .sec { margin-top: 19px; }
+  .sec:first-of-type { margin-top: 0; }
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+  .sec-head h2 { margin: 0; color: var(--muted); font-size: 10.5px; font-weight: 650; letter-spacing: .09em; text-transform: uppercase; }
+  .sec-head p { margin: 0; color: var(--faint); font-size: 9.5px; }
+  .sec-head p b { color: var(--muted); font-weight: 500; }
+
+  /* 主题包 */
+  .theme-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .theme-card {
+    display: flex; flex-direction: column;
+    min-height: 148px; padding: 8px;
+    border-radius: 16px;
+    background: var(--card);
+    color: var(--ink);
+    text-align: left;
+    --rim-w: 1.35px;
+  }
+  .theme-card .agx-in { display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .theme-card[aria-pressed="true"] { background: var(--card-strong); }
+  .theme-card, .material-card, .model-card, .cue, .dd-trigger, .form-box { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035), inset 0 -14px 28px rgba(0, 0, 0, .10); }
+  .theme-card[aria-pressed="true"], .model-card[aria-checked="true"], .cue[aria-pressed="true"], .material-card[aria-pressed="true"] {
+    box-shadow: 0 16px 38px -28px color-mix(in srgb, var(--accent) 90%, transparent), inset 0 1px 0 rgba(255, 255, 255, .05), inset 0 -14px 28px rgba(0, 0, 0, .10);
+  }
+  .theme-card .check {
+    position: absolute; top: 8px; right: 8px; z-index: 4;
+    width: 17px; height: 17px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent); color: var(--accent-ink);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .30), 0 0 0 3px var(--accent-soft);
+    opacity: 0; transform: scale(.7);
+    transition: opacity .16s, transform .2s cubic-bezier(.2, .9, .3, 1.3);
+  }
+  .theme-card[aria-pressed="true"] .check { opacity: 1; transform: none; }
+  .theme-card .check .ic { width: 10px; height: 10px; stroke-width: 2.6; }
+  .thumb {
+    position: relative; height: 64px; border-radius: 10px; overflow: hidden;
+    border: 1px solid rgba(0, 0, 0, .10);
+    background: #e9ece7;
+  }
+  .thumb .t-side { position: absolute; inset: 0 auto 0 0; width: 25%; background: rgba(20, 30, 24, .06); }
+  .thumb .t-bar { position: absolute; left: 32%; top: 12%; width: 52%; height: 7%; border-radius: 99px; background: rgba(20, 30, 24, .18); }
+  .thumb .t-card { position: absolute; left: 32%; width: 52%; height: 27%; border-radius: 5px; background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, .08); }
+  .thumb .t-card.c1 { top: 25%; }
+  .thumb .t-card.c2 { top: 57%; }
+  .thumb .t-dot { position: absolute; right: 7%; bottom: 8%; width: 13%; aspect-ratio: 1; border-radius: 50%; background: var(--thumb-accent); }
+  .thumb .t-ring { position: absolute; left: 32%; top: 8%; width: 52%; height: 82%; border-radius: 6px; border: 1px solid var(--thumb-accent); opacity: .25; }
+  .thumb.studio { background: #e9ece7; --thumb-accent: #5c7560; }
+  .thumb.material { background: linear-gradient(135deg, #17121f, #2c2040); --thumb-accent: #d0a6ff; }
+  .thumb.material .t-side { background: rgba(255, 255, 255, .035); }
+  .thumb.material .t-bar { background: rgba(255, 255, 255, .16); }
+  .thumb.material .t-card { background: rgba(255, 255, 255, .10); box-shadow: none; }
+  .thumb.classic { background: #eef1f5; --thumb-accent: #3f6ea8; }
+  .thumb.uwp { background: #f3f3f3; --thumb-accent: #0078d7; }
+  .thumb.uwp .t-card, .thumb.uwp .t-bar, .thumb.uwp .t-side { border-radius: 2px; }
+  .thumb.uwp .t-card { background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .08); }
+  .theme-name { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; }
+  .theme-name .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--theme-accent, var(--accent)); flex: none; }
+  .theme-desc { margin: 0; color: var(--muted); font-size: 9.5px; line-height: 1.5; min-height: 28px; }
+  .theme-tag { margin-top: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--faint); font-size: 8.5px; letter-spacing: .04em; }
+  .theme-tag i { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+
+  /* 背景 + 明暗 + 强调色 */
+  .look-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 22px; }
+  .materials { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+  .material-card {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 6px; min-width: 0;
+    border-radius: 13px; background: var(--card); color: var(--ink);
+    text-align: left; --rim-w: 1.3px;
+  }
+  .material-card .agx-in { display: flex; flex-direction: column; gap: 6px; }
+  .material-card[aria-pressed="true"] { background: var(--card-strong); }
+  .mat-thumb { position: relative; height: 54px; border-radius: 8px; overflow: hidden; border: 1px solid rgba(0, 0, 0, .12); }
+  .mat-thumb.solid { background: linear-gradient(135deg, #12161d, #232c38); }
+  .mat-thumb.solid::after { content: ""; position: absolute; inset: 12px 18px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, .16); }
+  .mat-thumb.aurora {
+    background:
+      radial-gradient(40px 34px at 22% 30%, #12a6c8, transparent 70%),
+      radial-gradient(44px 38px at 78% 26%, #c743a0, transparent 70%),
+      radial-gradient(46px 38px at 72% 80%, #d99425, transparent 70%),
+      #0a1018;
+  }
+  .mat-thumb.image {
+    background:
+      linear-gradient(160deg, rgba(10, 8, 14, .10), rgba(10, 8, 14, .55)),
+      radial-gradient(80px 60px at 25% 25%, #d47a44, transparent 75%),
+      linear-gradient(140deg, #46233f, #8a4a3a 55%, #1a1420);
+  }
+  .mat-name { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 2px 1px; font-size: 10px; color: var(--muted); }
+  .material-card[aria-pressed="true"] .mat-name { color: var(--ink); }
+  .mat-name .ic { width: 10px; height: 10px; opacity: 0; color: var(--accent); }
+  .material-card[aria-pressed="true"] .mat-name .ic { opacity: 1; }
+
+  .look-controls { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+  .field-label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; color: var(--faint); font-size: 9.5px; }
+  .field-label b { color: var(--muted); font-weight: 500; font-family: var(--mono); font-size: 9px; }
+  .seg {
+    display: flex; gap: 3px; padding: 3px;
+    border-radius: 10px; background: var(--card-2);
+    --rim-w: 1px;
+  }
+  .seg .agx-in { display: grid; grid-auto-flow: column; gap: 3px; }
+  .seg button {
+    height: 28px; padding: 0 8px; border-radius: 7px;
+    color: var(--muted); font-size: 10px; white-space: nowrap;
+    transition: background .14s, color .14s;
+  }
+  .seg button:hover { color: var(--ink); }
+  .seg button[aria-pressed="true"] { background: var(--card-strong); color: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
+  .swatches { display: flex; align-items: center; gap: 8px; }
+  .swatch {
+    position: relative; width: 23px; height: 23px; padding: 0;
+    border-radius: 50%;
+    background: var(--sw);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22), 0 2px 7px rgba(0, 0, 0, .20);
+    transition: transform .16s, box-shadow .16s;
+  }
+  .swatch:hover { transform: translateY(-1px); }
+  .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--win), 0 0 0 3.5px var(--accent), 0 3px 10px rgba(0, 0, 0, .24); }
+  .swatch .ic { position: absolute; inset: 0; margin: auto; width: 11px; height: 11px; color: #08120d; opacity: 0; stroke-width: 2.8; }
+  .swatch[aria-pressed="true"] .ic { opacity: 1; }
+  .hex { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .02em; }
+
+  /* 映射曲线 */
+  .map-panel { display: grid; grid-template-columns: minmax(0, 1.55fr) 218px; gap: 18px; padding: 12px 14px 10px; border-radius: 16px; border: 1px solid var(--line); background: var(--card); }
+  .map-chart-wrap { min-width: 0; }
+  .map-chart { display: block; width: 100%; height: 160px; overflow: visible; }
+  .map-chart text { font-family: var(--font); }
+  .map-grid-line { stroke: var(--line); stroke-width: 1; }
+  .map-axis-label { fill: var(--faint); font-size: 8px; }
+  .map-axis-title { font-size: 8.5px; font-weight: 600; letter-spacing: .04em; }
+  .map-hot { fill: rgba(216, 179, 122, .05); }
+  .map-hot-label { fill: rgba(216, 179, 122, .72); font-size: 7.5px; letter-spacing: .04em; }
+  .map-curve-sat { fill: none; stroke: #8fb9c9; stroke-width: 1.7; stroke-linecap: round; }
+  .map-curve-bri { fill: none; stroke: #d8b37a; stroke-width: 1.7; stroke-linecap: round; }
+  .map-legend { display: flex; align-items: center; gap: 14px; margin-top: 1px; color: var(--faint); font-size: 8px; }
+  .map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .map-legend .dot { width: 5px; height: 5px; border-radius: 50%; }
+  .map-legend .dot.sat { background: #8fb9c9; }
+  .map-legend .dot.bri { background: #d8b37a; }
+  .map-side { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding-left: 16px; border-left: 1px solid var(--line); }
+  .map-kicker { color: var(--faint); font-family: var(--mono); font-size: 7.5px; letter-spacing: .08em; }
+  .map-name { color: var(--muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .map-big { display: flex; align-items: baseline; gap: 7px; margin: 1px 0 2px; }
+  .map-big b { color: var(--ink); font-family: var(--mono); font-size: 25px; font-weight: 600; line-height: 1; letter-spacing: -.02em; }
+  .map-big span { color: var(--faint); font-size: 8.5px; }
+  .map-v { color: var(--faint); font-size: 8px; }
+  .map-v b { color: var(--muted); font-family: var(--mono); font-weight: 500; }
+  .map-pair { display: flex; flex-direction: column; gap: 3px; }
+  .map-pair div { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 8.5px; }
+  .map-pair code { color: var(--ink); font-family: var(--mono); font-size: 8.5px; }
+  .map-note { margin: 3px 0 0; color: var(--faint); font-size: 8px; line-height: 1.6; }
+  .map-formula { margin-top: 6px; color: var(--faint); font-family: var(--mono); font-size: 8px; line-height: 1.65; letter-spacing: .01em; }
+  html[data-mode="light"] .map-curve-sat { stroke: #4f7f90; }
+  html[data-mode="light"] .map-curve-bri { stroke: #a87634; }
+  html[data-mode="light"] .map-legend .dot.sat { background: #4f7f90; }
+  html[data-mode="light"] .map-legend .dot.bri { background: #a87634; }
+  html[data-mode="light"] #map-dot-sat { fill: #4f7f90; }
+  html[data-mode="light"] #map-dot-bri { fill: #a87634; }
+  html[data-mode="light"] #map-marker-line { stroke: rgba(15, 25, 35, .35); }
+  html[data-mode="light"] .map-hot-label { fill: rgba(120, 85, 35, .90); }
+  html[data-mode="light"] .map-hot { fill: rgba(168, 118, 52, .06); }
+
+  /* 识别模型 */
+  .model-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .model-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 11px; min-width: 0;
+    border-radius: 13px; background: var(--card); color: var(--ink);
+    text-align: left; --rim-w: 1.3px;
+  }
+  .model-card .agx-in { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }
+  .model-card[aria-checked="true"] { background: var(--card-strong); }
+  .radio-dot {
+    width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 1px solid var(--line-strong);
+    display: grid; place-items: center;
+    transition: border-color .15s, background .15s;
+  }
+  .radio-dot::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform .16s cubic-bezier(.2, .9, .3, 1.3); }
+  .model-card[aria-checked="true"] .radio-dot { border-color: var(--accent); background: var(--accent-soft); }
+  .model-card[aria-checked="true"] .radio-dot::after { transform: scale(1); }
+  .model-txt { min-width: 0; }
+  .model-name { display: flex; align-items: center; gap: 6px; font-size: 10.8px; font-weight: 600; white-space: nowrap; }
+  .model-meta { margin-top: 3px; color: var(--muted); font-size: 8.8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .model-chip { margin-left: auto; flex: none; padding: 2px 5px; border-radius: 5px; background: var(--card-2); color: var(--faint); font-family: var(--mono); font-size: 8px; }
+
+  /* 交互选项 */
+  .form-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 10px; }
+  .form-box {
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 10px 12px 11px;
+    border-radius: 13px; background: var(--card);
+  }
+  .form-box-title { color: var(--faint); font-size: 8.8px; letter-spacing: .08em; text-transform: uppercase; }
+  .check-row, .switch-row, .field-row {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 22px; color: var(--ink); font-size: 10.5px;
+    cursor: pointer;
+  }
+  .check-row input, .switch-row input { position: absolute; opacity: 0; pointer-events: none; }
+  .check-box {
+    position: relative; width: 16px; height: 16px; border-radius: 5px; flex: none;
+    display: grid; place-items: center;
+    background: var(--card-2); border-radius: 5px;
+    --rim-w: 1px;
+  }
+  .check-box .ic { width: 9px; height: 9px; color: var(--accent-ink); opacity: 0; stroke-width: 3; transform: scale(.6); transition: opacity .14s, transform .16s; position: relative; z-index: 3; }
+  .check-row input:focus-visible + .check-box { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .check-row input:checked + .check-box { background: var(--accent); }
+  .check-row input:checked + .check-box .ic { opacity: 1; transform: none; }
+  .switch-row { justify-content: space-between; }
+  .switch-row .switch-label { display: flex; flex-direction: column; gap: 2px; }
+  .switch-row .switch-label small { color: var(--faint); font-size: 8.8px; }
+  .switch {
+    position: relative; width: 30px; height: 17px; border-radius: 99px; flex: none;
+    background: var(--card-2);
+    transition: background .16s;
+    --rim-w: 1px;
+  }
+  .switch .knob {
+    position: absolute; z-index: 3; top: 3px; left: 3px;
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--muted);
+    transition: transform .18s cubic-bezier(.2, .9, .3, 1.2), background .16s;
+  }
+  .switch-row input:focus-visible + .switch { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .switch-row input:checked + .switch { background: var(--accent-soft); }
+  .switch-row input:checked + .switch .knob { transform: translateX(13px); background: var(--accent); }
+  .field-row { justify-content: space-between; }
+  .select-wrap {
+    position: relative; display: block; width: 126px; border-radius: 8px;
+    background: var(--card-2); --rim-w: 1px;
+  }
+  .select-wrap select {
+    width: 100%; height: 27px; padding: 0 24px 0 8px;
+    border: 0; outline: 0; appearance: none;
+    background: transparent; color: var(--ink); font-size: 10px; cursor: pointer;
+  }
+  .select-wrap .sel-chev { position: absolute; z-index: 3; right: 7px; top: 50%; margin-top: -6px; width: 12px; height: 12px; color: var(--faint); pointer-events: none; }
+
+  /* ══ 5. 右侧编辑器预览 ══════════════════════════════════════════ */
+  .rail {
+    min-height: 0; display: flex; flex-direction: column; gap: 11px;
+    padding: 17px 15px 14px;
+    border-left: 1px solid var(--line);
+    background: rgba(0, 0, 0, .055);
+  }
+  html[data-mode="light"] .rail { background: rgba(255, 255, 255, .12); }
+  .rail-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .rail-head h2 { margin: 0; font-size: 11.5px; font-weight: 620; }
+  .live { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 8.5px; font-family: var(--mono); }
+  .live i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 7px var(--accent); }
+  .dd { position: relative; }
+  .dd-trigger {
+    width: 100%; height: 31px; padding: 0 9px;
+    border-radius: 9px; background: var(--card);
+    color: var(--ink); font-size: 10.5px; text-align: left;
+    --rim-w: 1px;
+  }
+  .dd-trigger .agx-in { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .dd-trigger .left { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .dd-trigger .left .ic { color: var(--muted); }
+  .dd-trigger .chev { width: 12px; height: 12px; color: var(--faint); transition: transform .16s; }
+  .dd-trigger[aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .dd-menu {
+    position: absolute; z-index: 80; top: calc(100% + 5px); left: 0; right: 0;
+    padding: 4px; border-radius: 10px;
+    background: var(--card-strong);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 16px 44px rgba(0, 0, 0, .38);
+    -webkit-backdrop-filter: blur(22px);
+    backdrop-filter: blur(22px);
+    animation: dd-in .13s ease-out;
+  }
+  @keyframes dd-in { from { opacity: 0; transform: translateY(-4px); } }
+  .dd-opt {
+    width: 100%; height: 28px; padding: 0 7px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    border-radius: 6px; color: var(--muted); font-size: 10px; text-align: left;
+  }
+  .dd-opt:hover { background: var(--card-2); color: var(--ink); }
+  .dd-opt[aria-selected="true"] { color: var(--ink); background: var(--accent-soft); }
+  .dd-opt .ic { width: 11px; height: 11px; color: var(--accent); opacity: 0; }
+  .dd-opt[aria-selected="true"] .ic { opacity: 1; }
+
+  .cue-list { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding-right: 2px; }
+  .cue-list::-webkit-scrollbar { width: 5px; }
+  .cue-list::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 99px; }
+  .cue {
+    display: block; padding: 8px 9px;
+    border-radius: 11px; background: var(--card); color: var(--ink);
+    text-align: left; --rim-w: 1px;
+  }
+  .cue .agx-in { display: grid; grid-template-columns: 57px minmax(0, 1fr); gap: 8px; }
+  .cue[aria-pressed="true"] { background: var(--card-strong); }
+  .cue-time { padding-top: 1px; color: var(--faint); font-family: var(--mono); font-size: 7.8px; line-height: 1.55; }
+  .cue-body { min-width: 0; }
+  .cue-meta { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--muted); font-size: 7.8px; }
+  .role-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--role, var(--accent)); box-shadow: 0 0 5px color-mix(in srgb, var(--role, var(--accent)) 60%, transparent); }
+  .cue-style { margin-left: auto; color: var(--faint); font-size: 7.2px; }
+  .cue-zh { display: block; overflow: hidden; color: var(--ink); font-size: 10.2px; line-height: 1.45; white-space: nowrap; text-overflow: ellipsis; }
+  .cue-en { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 8.2px; line-height: 1.4; white-space: nowrap; text-overflow: ellipsis; }
+  .cue .play-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); opacity: 0; }
+  .cue[data-playing="true"] .play-dot { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  .mini-tl {
+    position: relative; height: 49px; flex: none; overflow: hidden;
+    border-radius: 10px; border: 1px solid var(--line);
+    background: var(--card-2);
+  }
+  .mini-tl .wave {
+    position: absolute; inset: 7px 6px; opacity: .30;
+    background: repeating-linear-gradient(90deg, var(--ink) 0 1px, transparent 1px 4px);
+    -webkit-mask: linear-gradient(180deg, transparent, #000 26%, #000 74%, transparent);
+    mask: linear-gradient(180deg, transparent, #000 26%, #000 74%, transparent);
+  }
+  .mini-tl .blk { position: absolute; top: 17px; height: 15px; border-radius: 3px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 20%, transparent); }
+  .mini-tl .blk.b1 { left: 5%; width: 31%; }
+  .mini-tl .blk.b2 { left: 40%; width: 25%; border-color: #e79ac0; background: rgba(231, 154, 192, .16); }
+  .mini-tl .blk.b3 { left: 69%; width: 20%; border-color: #e6c07a; background: rgba(230, 192, 122, .14); }
+  .mini-tl .head { position: absolute; top: 0; bottom: 0; left: 6%; width: 1px; background: var(--accent); opacity: .6; }
+
+  .sample { flex: 0 0 84px; min-height: 84px; border-radius: 11px; overflow: hidden; background-image: var(--wp); background-size: 100vw 100vh; background-position: var(--bgpos, 0 0); background-repeat: no-repeat; --rim-w: 1px; }
+  .sample-in { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 8px 9px; background: linear-gradient(180deg, rgba(3, 6, 10, .10), rgba(3, 6, 10, .62)); }
+  .sample-top, .sample-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: rgba(255, 255, 255, .82); font-family: var(--mono); font-size: 7.8px; letter-spacing: .06em; }
+  .sample-top span:last-child { color: rgba(255, 255, 255, .55); letter-spacing: 0; }
+  .sample-bottom { color: rgba(255, 255, 255, .56); font-family: var(--font); font-size: 8px; letter-spacing: 0; }
+  .rail-note { margin: 1px 0 0; color: var(--faint); font-size: 8.5px; line-height: 1.65; }
+
+  /* ══ 6. 底栏 ════════════════════════════════════════════════════ */
+  .content-hint { margin: 20px 0 0; padding-top: 13px; border-top: 1px solid var(--line); color: var(--faint); font-size: 9px; line-height: 1.7; }
+  .content-hint code { color: var(--muted); font-family: var(--mono); font-size: 8.5px; }
+
+  .winfoot {
+    flex: none; height: 40px;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 16px;
+    border-top: 1px solid var(--line);
+    background: rgba(0, 0, 0, .10);
+    color: var(--faint); font-size: 9px;
+  }
+  html[data-mode="light"] .winfoot { background: rgba(255, 255, 255, .16); }
+  .rim-chip {
+    display: inline-flex; align-items: center; gap: 5px; flex: none;
+    padding: 3px 6px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--card-2);
+    color: var(--muted); font-family: var(--mono); font-size: 8px; letter-spacing: .04em;
+  }
+  .rim-chip i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .formula { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 8.6px; color: var(--faint); }
+  .formula b { color: var(--muted); font-weight: 500; }
+  .winfoot .grow { flex: 1; }
+  .compare {
+    display: flex; align-items: center; gap: 7px; flex: none;
+    color: var(--muted); font-size: 9px; cursor: pointer; user-select: none;
+  }
+  .compare input { position: absolute; opacity: 0; pointer-events: none; }
+  .compare .track { position: relative; width: 26px; height: 15px; border-radius: 99px; background: var(--card-2); border: 1px solid var(--line-strong); transition: background .16s; }
+  .compare .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); transition: transform .18s, background .16s; }
+  .compare input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .compare input:checked + .track { background: var(--accent-soft); }
+  .compare input:checked + .track::after { transform: translateX(11px); background: var(--accent); }
+  .scene-label { flex: none; color: var(--faint); font-family: var(--mono); font-size: 8.2px; white-space: nowrap; }
+  .scene-label b { color: var(--muted); font-weight: 500; }
+
+  /* ══ 7. 窄屏与减少动效 ══════════════════════════════════════════ */
+  @media (max-width: 1180px) {
+    .winbody { grid-template-columns: 176px minmax(0, 1fr) 264px; }
+    .content { padding: 20px 20px 22px; }
+    .theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .theme-card { min-height: 138px; }
+    .look-grid { grid-template-columns: 1fr; gap: 14px; }
+    .model-grid { grid-template-columns: 1fr; }
+    .form-grid { grid-template-columns: 1fr; }
+    .map-panel { grid-template-columns: 1fr; }
+    .map-side { border-left: 0; border-top: 1px solid var(--line); padding-left: 0; padding-top: 9px; }
+    .winbar .save, .winbar .vsep, .winbar .mode-pill { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 16 9 5 9-5"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1.4a2.4 2.4 0 0 0 .3-4.8h-.5a1.9 1.9 0 0 1 0-3.8H18a3 3 0 0 0 3-3c0-3.4-4-6.4-9-6.4Z"/><circle cx="7.6" cy="10.4" r=".9"/><circle cx="10" cy="7.2" r=".9"/><circle cx="14.4" cy="7.4" r=".9"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.5 3.6 5.5 3.6 9s-1.2 6.5-3.6 9c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3Z"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="m4 20 10.5-10.5M14 4l.8 2.2L17 7l-2.2.8L14 10l-.8-2.2L11 7l2.2-.8L14 4ZM19 13l.6 1.6 1.6.6-1.6.6L19 18l-.6-1.6-1.6-.6 1.6-.6L19 13Z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-7 5 14 2.5-7h4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 6.5"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7Z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5.2l3.4 2"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 18 5-5 4 4 3-3 4 4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m0 0-5-5m5 5-5 5"/></symbol>
+</svg>
+
+<div class="appwin" id="appwin">
+  <header class="winbar">
+    <div class="brand">
+      <span class="logo"><svg class="ic"><use href="#i-layers"/></svg></span>
+      <b>SubFabric</b>
+      <span class="crumb"><i></i>设置<i></i><span>外观与体验</span></span>
+    </div>
+    <div class="grow"></div>
+    <div class="save"><i></i>已自动保存</div>
+    <span class="vsep"></span>
+    <span class="mode-pill" id="mode-pill"><svg class="ic" style="width:12px;height:12px"><use href="#i-palette"/></svg><span>深色玻璃</span></span>
+    <span class="avatar">SF</span>
+  </header>
+
+  <div class="winbody">
+    <nav class="side" aria-label="设置分类">
+      <span class="nav-label">工作空间</span>
+      <button type="button" class="nav-item active"><svg class="ic"><use href="#i-palette"/></svg>外观与体验<span class="badge">01</span></button>
+      <span class="nav-label">生成与处理</span>
+      <button type="button" class="nav-item"><svg class="ic"><use href="#i-mic"/></svg>语音识别</button>
+      <button type="button" class="nav-item"><svg class="ic"><use href="#i-globe"/></svg>翻译与术语</button>
+      <button type="button" class="nav-item"><svg class="ic"><use href="#i-wand"/></svg>识别与校对</button>
+      <button type="button" class="nav-item"><svg class="ic"><use href="#i-download"/></svg>下载与登录</button>
+      <button type="button" class="nav-item"><svg class="ic"><use href="#i-activity"/></svg>性能与调度</button>
+      <div class="side-foot">
+        <button type="button" class="back-editor"><span>返回编辑器</span><svg class="ic" style="width:12px;height:12px"><use href="#i-arrow"/></svg></button>
+        <small>prototype · rim 01</small>
+      </div>
+    </nav>
+
+    <main class="content" id="content">
+      <div class="content-head">
+        <div>
+          <div class="eyebrow"><i></i>Workspace / Appearance</div>
+          <h1>外观与体验</h1>
+          <p class="sub">所有选择框共用一套「环境自适应边框」：颜色来自背后的壁纸，再叠模糊、提亮与顶部高光；背景越艳，边框越亮而不是越艳。</p>
+        </div>
+        <div class="autosave"><i></i>实时预览</div>
+      </div>
+
+      <section class="sec" aria-labelledby="sec-theme">
+        <div class="sec-head"><h2 id="sec-theme">主题包</h2><p><b>4</b> 个内置 · 点击切换强调色</p></div>
+        <div class="theme-grid" role="group" aria-label="主题包">
+          <button type="button" class="theme-card agx" data-theme-choice="studio" aria-pressed="true" style="--theme-accent:#5c7560">
+            <span class="agx-in">
+              <span class="thumb studio" aria-hidden="true"><span class="t-side"></span><span class="t-bar"></span><span class="t-card c1"></span><span class="t-card c2"></span><span class="t-ring"></span><span class="t-dot"></span></span>
+              <span class="theme-name"><span class="dot"></span>Studio</span>
+              <span class="theme-desc">鼠尾草绿、纸感表面。默认工作台，轻、静、低对比。</span>
+              <span class="theme-tag"><i></i>当前使用</span>
+            </span>
+            <span class="check"><svg class="ic"><use href="#i-check"/></svg></span>
+          </button>
+          <button type="button" class="theme-card agx" data-theme-choice="material" aria-pressed="false" style="--theme-accent:#d0a6ff">
+            <span class="agx-in">
+              <span class="thumb material" aria-hidden="true"><span class="t-side"></span><span class="t-bar"></span><span class="t-card c1"></span><span class="t-card c2"></span><span class="t-ring"></span><span class="t-dot"></span></span>
+              <span class="theme-name"><span class="dot"></span>Material You</span>
+              <span class="theme-desc">动态取色、圆润几何。适合大屏与触控，强调色随壁纸。</span>
+              <span class="theme-tag"><i></i>动态取色</span>
+            </span>
+            <span class="check"><svg class="ic"><use href="#i-check"/></svg></span>
+          </button>
+          <button type="button" class="theme-card agx" data-theme-choice="classic" aria-pressed="false" style="--theme-accent:#3f6ea8">
+            <span class="agx-in">
+              <span class="thumb classic" aria-hidden="true"><span class="t-side"></span><span class="t-bar"></span><span class="t-card c1"></span><span class="t-card c2"></span><span class="t-ring"></span><span class="t-dot"></span></span>
+              <span class="theme-name"><span class="dot"></span>SubFabric Classic</span>
+              <span class="theme-desc">高对比、紧凑行高。信息密度优先，适合长稿校对。</span>
+              <span class="theme-tag"><i></i>高密度</span>
+            </span>
+            <span class="check"><svg class="ic"><use href="#i-check"/></svg></span>
+          </button>
+          <button type="button" class="theme-card agx" data-theme-choice="uwp" aria-pressed="false" style="--theme-accent:#0078d7">
+            <span class="agx-in">
+              <span class="thumb uwp" aria-hidden="true"><span class="t-side"></span><span class="t-bar"></span><span class="t-card c1"></span><span class="t-card c2"></span><span class="t-ring"></span><span class="t-dot"></span></span>
+              <span class="theme-name"><span class="dot"></span>Windows UWP</span>
+              <span class="theme-desc">Fluent 直角与中性灰。固定 Windows 蓝强调色。</span>
+              <span class="theme-tag"><i></i>固定蓝</span>
+            </span>
+            <span class="check"><svg class="ic"><use href="#i-check"/></svg></span>
+          </button>
+        </div>
+      </section>
+
+      <section class="sec" aria-labelledby="sec-map">
+        <div class="sec-head"><h2 id="sec-map">描边映射曲线</h2><p>S ↑ → kSat ↓ / kBri ↑</p></div>
+        <div class="map-panel">
+          <div class="map-chart-wrap">
+            <svg class="map-chart" id="map-chart" viewBox="0 0 520 170" role="img" aria-label="背景饱和度到框线饱和倍率与亮度倍率的映射曲线">
+              <g id="map-grid"></g>
+              <g id="map-curves"></g>
+              <g id="map-axis"></g>
+              <g id="map-marker" style="opacity:0">
+                <line id="map-marker-line" x1="0" y1="22" x2="0" y2="140" stroke="rgba(255,255,255,.28)" stroke-width="1" stroke-dasharray="3 3"></line>
+                <circle id="map-dot-sat" r="3.4" fill="#8fb9c9" stroke="#0a1018" stroke-width="1.5"></circle>
+                <circle id="map-dot-bri" r="3.4" fill="#d8b37a" stroke="#0a1018" stroke-width="1.5"></circle>
+              </g>
+            </svg>
+            <div class="map-legend">
+              <span><i class="dot sat"></i>框线饱和倍率 kSat</span>
+              <span><i class="dot bri"></i>框线亮度倍率 kBri</span>
+            </div>
+            <div class="map-formula">kSat = 1.10 − 0.25·S^1.5 · kBri = 1.40 + 0.58·S^1.2 + 0.10·(1−V)<br>kSpec = 0.60 + 0.18·S · output = S × kSat</div>
+          </div>
+          <div class="map-side">
+            <div class="map-kicker">LIVE SAMPLE</div>
+            <div class="map-name" id="map-name">Studio · 主题包</div>
+            <div class="map-big"><b id="map-s">—</b><span>背景饱和度 S</span></div>
+            <div class="map-v">局部明度 V <b id="map-v">—</b></div>
+            <div class="map-pair">
+              <div><span>饱和倍率</span><code id="map-sat">—</code></div>
+              <div><span>亮度倍率</span><code id="map-bri">—</code></div>
+              <div><span>白高光</span><code id="map-spec">—</code></div>
+              <div><span>映射输出</span><code id="map-out">—</code></div>
+            </div>
+            <p class="map-note">高饱和背景不再加饱和；改用亮度与白光把边缘提出来。曲线按 V=50% 绘制，实际会随局部明度微调。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec" aria-labelledby="sec-look">
+        <div class="sec-head"><h2 id="sec-look">背景、明暗与强调色</h2><p>换背景，看边框如何跟着换色</p></div>
+        <div class="look-grid">
+          <div>
+            <div class="field-label"><span>背景材质</span><b id="scene-label">流光 · 极光</b></div>
+            <div class="materials" role="group" aria-label="背景材质">
+              <button type="button" class="material-card agx" data-scene-choice="ink" aria-pressed="false">
+                <span class="agx-in"><span class="mat-thumb solid" aria-hidden="true"></span><span class="mat-name">纯色<svg class="ic"><use href="#i-check"/></svg></span></span>
+              </button>
+              <button type="button" class="material-card agx" data-scene-choice="aurora" aria-pressed="true">
+                <span class="agx-in"><span class="mat-thumb aurora" aria-hidden="true"></span><span class="mat-name">流光<svg class="ic"><use href="#i-check"/></svg></span></span>
+              </button>
+              <button type="button" class="material-card agx" data-scene-choice="dusk" aria-pressed="false">
+                <span class="agx-in"><span class="mat-thumb image" aria-hidden="true"></span><span class="mat-name">图片<svg class="ic"><use href="#i-check"/></svg></span></span>
+              </button>
+            </div>
+          </div>
+          <div class="look-controls">
+            <div>
+              <div class="field-label"><span>明暗模式</span><b id="mode-label">深色</b></div>
+              <div class="seg agx" role="group" aria-label="明暗模式">
+                <span class="agx-in">
+                  <button type="button" data-mode-choice="light" aria-pressed="false">浅色</button>
+                  <button type="button" data-mode-choice="dark" aria-pressed="true">深色</button>
+                  <button type="button" data-mode-choice="system" aria-pressed="false">跟随系统</button>
+                </span>
+              </div>
+            </div>
+            <div>
+              <div class="field-label"><span>强调色</span><b id="accent-hex">#8FE3C0</b></div>
+              <div class="swatches" role="group" aria-label="强调色">
+                <button type="button" class="swatch" data-accent="#8fe3c0" style="--sw:#8fe3c0" aria-pressed="true" aria-label="薄荷"><svg class="ic"><use href="#i-check"/></svg></button>
+                <button type="button" class="swatch" data-accent="#c9a7ff" style="--sw:#c9a7ff" aria-pressed="false" aria-label="薰衣草"><svg class="ic"><use href="#i-check"/></svg></button>
+                <button type="button" class="swatch" data-accent="#9db8ff" style="--sw:#9db8ff" aria-pressed="false" aria-label="雾蓝"><svg class="ic"><use href="#i-check"/></svg></button>
+                <button type="button" class="swatch" data-accent="#f3c98b" style="--sw:#f3c98b" aria-pressed="false" aria-label="琥珀"><svg class="ic"><use href="#i-check"/></svg></button>
+                <button type="button" class="swatch" data-accent="#f2a6b8" style="--sw:#f2a6b8" aria-pressed="false" aria-label="玫瑰"><svg class="ic"><use href="#i-check"/></svg></button>
+                <span class="hex">accent / 6</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="sec" aria-labelledby="sec-model">
+        <div class="sec-head"><h2 id="sec-model">识别模型</h2><p>单选卡片 · 选中态只提亮描边</p></div>
+        <div class="model-grid" role="radiogroup" aria-label="识别模型">
+          <button type="button" class="model-card agx" data-model="whisper" role="radio" aria-checked="true">
+            <span class="agx-in"><span class="radio-dot"></span><span class="model-txt"><span class="model-name">Whisper 系列<span class="model-chip">LOCAL</span></span><span class="model-meta">whisper.cpp · 中英混排稳定</span></span></span>
+          </button>
+          <button type="button" class="model-card agx" data-model="parakeet" role="radio" aria-checked="false">
+            <span class="agx-in"><span class="radio-dot"></span><span class="model-txt"><span class="model-name">Parakeet 系列<span class="model-chip">GPU</span></span><span class="model-meta">sherpa-onnx · 多说话人</span></span></span>
+          </button>
+          <button type="button" class="model-card agx" data-model="vibevoice" role="radio" aria-checked="false">
+            <span class="agx-in"><span class="radio-dot"></span><span class="model-txt"><span class="model-name">VibeVoice<span class="model-chip">CUDA</span></span><span class="model-meta">NF4 4bit · 长段上下文</span></span></span>
+          </button>
+        </div>
+      </section>
+
+      <section class="sec" aria-labelledby="sec-form">
+        <div class="sec-head"><h2 id="sec-form">交互选项</h2><p>复选、开关、下拉也共用同一层描边</p></div>
+        <div class="form-grid">
+          <div class="form-box">
+            <span class="form-box-title">编辑器行为</span>
+            <label class="check-row"><input type="checkbox" checked><span class="check-box agx"><svg class="ic"><use href="#i-check"/></svg></span>显示时间码</label>
+            <label class="check-row"><input type="checkbox"><span class="check-box agx"><svg class="ic"><use href="#i-check"/></svg></span>跟随播放自动滚动</label>
+            <label class="switch-row"><span class="switch-label">自动保存<small>离开设置时写入本地</small></span><input type="checkbox" checked><span class="switch agx"><span class="knob"></span></span></label>
+          </div>
+          <div class="form-box">
+            <span class="form-box-title">显示</span>
+            <div class="field-row"><span>显示模式</span><span class="select-wrap agx"><select aria-label="显示模式"><option>中英双行</option><option>中英三行</option><option>仅中文</option></select><svg class="ic sel-chev"><use href="#i-chevron"/></svg></span></div>
+            <div class="field-row"><span>界面密度</span><span class="select-wrap agx"><select aria-label="界面密度"><option>舒适</option><option>紧凑</option></select><svg class="ic sel-chev"><use href="#i-chevron"/></svg></span></div>
+            <div class="field-row"><span>界面语言</span><span class="select-wrap agx"><select aria-label="界面语言"><option>简体中文</option><option>English</option></select><svg class="ic sel-chev"><use href="#i-chevron"/></svg></span></div>
+          </div>
+        </div>
+      </section>
+
+      <p class="content-hint">主题卡、模型卡、字幕卡、下拉与复选都挂了 <code>.agx</code>；色板保留强调色语义。切换「背景材质」是验证取色是否生效最快的方式；底栏「对比模式」可查看无描边的版本。</p>
+    </main>
+
+    <aside class="rail" aria-label="编辑器预览">
+      <div class="rail-head"><h2>编辑器预览</h2><span class="live"><i></i>LIVE</span></div>
+
+      <div class="dd" id="role-dd">
+        <button type="button" class="dd-trigger agx" id="role-trigger" aria-haspopup="listbox" aria-expanded="false">
+          <span class="agx-in">
+            <span class="left"><svg class="ic"><use href="#i-user"/></svg><span id="role-value">全部角色</span></span>
+            <svg class="ic chev"><use href="#i-chevron"/></svg>
+          </span>
+        </button>
+        <div class="dd-menu" id="role-menu" role="listbox" aria-label="角色筛选" hidden>
+          <button type="button" class="dd-opt" role="option" aria-selected="true" data-role="全部角色"><span>全部角色</span><svg class="ic"><use href="#i-check"/></svg></button>
+          <button type="button" class="dd-opt" role="option" aria-selected="false" data-role="Gav"><span>Gav</span><svg class="ic"><use href="#i-check"/></svg></button>
+          <button type="button" class="dd-opt" role="option" aria-selected="false" data-role="Wemmbu"><span>Wemmbu</span><svg class="ic"><use href="#i-check"/></svg></button>
+          <button type="button" class="dd-opt" role="option" aria-selected="false" data-role="eggchan"><span>eggchan</span><svg class="ic"><use href="#i-check"/></svg></button>
+        </div>
+      </div>
+
+      <div class="cue-list">
+        <button type="button" class="cue agx" data-cue aria-pressed="false" data-playing="true" style="--role:#8fe3c0">
+          <span class="agx-in">
+            <span class="cue-time">00:00:10.000<br>00:00:15.000</span>
+            <span class="cue-body"><span class="cue-meta"><i class="role-dot"></i>Gav<span class="play-dot"></span><span class="cue-style">Default</span></span><span class="cue-zh">第1句中文内容，用来验证时间轴只显示正文</span><span class="cue-en">row1 alpha beta gamma delta epsilon</span></span>
+          </span>
+        </button>
+        <button type="button" class="cue agx" data-cue aria-pressed="true" style="--role:#f2a6b8">
+          <span class="agx-in">
+            <span class="cue-time">00:00:25.000<br>00:00:30.000</span>
+            <span class="cue-body"><span class="cue-meta"><i class="role-dot"></i>Wemmbu<span class="cue-style">Default</span></span><span class="cue-zh">第2句中文内容，锚点跳转后保持选中</span><span class="cue-en">row2 alpha beta gamma delta epsilon</span></span>
+          </span>
+        </button>
+        <button type="button" class="cue agx" data-cue aria-pressed="false" style="--role:#9db8ff">
+          <span class="agx-in">
+            <span class="cue-time">00:00:40.000<br>00:00:45.000</span>
+            <span class="cue-body"><span class="cue-meta"><i class="role-dot"></i>eggchan<span class="cue-style">Default</span></span><span class="cue-zh">第3句中文内容，异常行只留琥珀图标</span><span class="cue-en">row3 alpha beta gamma delta epsilon</span></span>
+          </span>
+        </button>
+        <button type="button" class="cue agx" data-cue aria-pressed="false" style="--role:#f3c98b">
+          <span class="agx-in">
+            <span class="cue-time">00:00:55.000<br>00:01:00.000</span>
+            <span class="cue-body"><span class="cue-meta"><i class="role-dot"></i>Gav<span class="cue-style">Default</span></span><span class="cue-zh">第4句中文内容，低置信度只留一条细线</span><span class="cue-en">row4 alpha beta gamma delta epsilon</span></span>
+          </span>
+        </button>
+        <button type="button" class="cue agx" data-cue aria-pressed="false" style="--role:#8fe3c0">
+          <span class="agx-in">
+            <span class="cue-time">00:01:05.000<br>00:01:11.000</span>
+            <span class="cue-body"><span class="cue-meta"><i class="role-dot"></i>Gav<span class="cue-style">Default</span></span><span class="cue-zh">第5句中文内容，长句用省略号收束</span><span class="cue-en">row5 alpha beta gamma delta epsilon</span></span>
+          </span>
+        </button>
+        <button type="button" class="cue agx" data-cue aria-pressed="false" style="--role:#f2a6b8">
+          <span class="agx-in">
+            <span class="cue-time">00:01:15.000<br>00:01:21.000</span>
+            <span class="cue-body"><span class="cue-meta"><i class="role-dot"></i>Wemmbu<span class="cue-style">Default</span></span><span class="cue-zh">第6句中文内容，角色色只保留小圆点</span><span class="cue-en">row6 alpha beta gamma delta epsilon</span></span>
+          </span>
+        </button>
+      </div>
+
+      <div class="mini-tl" aria-hidden="true">
+        <span class="wave"></span>
+        <span class="blk b1"></span><span class="blk b2"></span><span class="blk b3"></span>
+        <span class="head"></span>
+      </div>
+
+      <div class="sample agx" id="sample" aria-label="壁纸取样窗口">
+        <span class="agx-in sample-in">
+          <span class="sample-top"><span>SAMPLING WINDOW</span><span id="sample-xy">x 0 · y 0</span></span>
+          <span class="sample-bottom">同一坐标的壁纸原件 · 外圈即取色结果</span>
+        </span>
+      </div>
+
+      <p class="rail-note">悬停任一选择框查看它的 S → kSat / kBri；同一张卡沿周长连续，不同位置的卡片取不同背景。</p>
+    </aside>
+  </div>
+
+  <footer class="winfoot">
+    <span class="rim-chip"><i></i>RIM 01</span>
+    <span class="formula">border = sample(<b>wallpaper</b>) · kSat(S) ↓ · kBri(S) ↑ · spec(S) ↑ · blur 3px</span>
+    <span class="grow"></span>
+    <span class="scene-label">场景 <b id="scene-name">流光 · 极光</b></span>
+    <label class="compare"><span id="compare-label">对比：关</span><input type="checkbox" id="compare"><span class="track"></span></label>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const root = document.documentElement;
+  const $ = (sel, el = document) => el.querySelector(sel);
+  const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+
+  window.__errs = [];
+  addEventListener("error", e => window.__errs.push(String(e.message || e)));
+
+
+  /* ── 1.5 背景饱和度 → 描边映射 ───────────────────────────────
+     先解析当前 --wp 的渐变层，按元素边缘取 5 个点得到局部 S/V；
+     再走一条“饱和倍率随 S 下降、亮度倍率随 S 上升”的曲线。
+     高饱和背景不再加饱和，改用亮度和白光把边缘提出来。 */
+  const RIM_CURVE = {
+    satHigh: 1.10, satLow: 0.85,
+    briBase: 1.40, briGain: 0.58,
+    specBase: 0.60, specGain: 0.18
+  };
+  const clamp01 = n => Math.max(0, Math.min(1, n));
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+  function rimMap(s, v = 0.5) {
+    s = clamp01(s); v = clamp01(v);
+    const kSat = RIM_CURVE.satHigh - (RIM_CURVE.satHigh - RIM_CURVE.satLow) * Math.pow(s, 1.5);
+    const kBri = clamp(RIM_CURVE.briBase + RIM_CURVE.briGain * Math.pow(s, 1.2) + 0.10 * (1 - v), 1.32, 2.0);
+    const kSpec = clamp(RIM_CURVE.specBase + RIM_CURVE.specGain * s, 0.55, 0.82);
+    return { kSat, kBri, kSpec };
+  }
+  window.__rimMap = rimMap;
+
+  /* 当前 --wp 是“首层在最上、基础线性渐变在最下”的 CSS 多层背景。
+     下面只解析本原型用到的 radial-gradient(<px> <px> at <x>% <y>%, …)
+     和 linear-gradient(<deg>, …)，解析结果缓存到 --wp 字符串变化为止。 */
+  function splitTop(str) {
+    const out = []; let depth = 0, start = 0;
+    for (let i = 0; i < str.length; i++) {
+      const c = str[i];
+      if (c === "(") depth++;
+      else if (c === ")") depth = Math.max(0, depth - 1);
+      else if (c === "," && depth === 0) { out.push(str.slice(start, i).trim()); start = i + 1; }
+    }
+    out.push(str.slice(start).trim());
+    return out.filter(Boolean);
+  }
+
+  function parseColor(token) {
+    token = token.trim().toLowerCase();
+    if (token === "transparent") return [0, 0, 0, 0];
+    if (token[0] === "#") {
+      let hex = token.slice(1);
+      if (hex.length === 3) hex = hex.split("").map(c => c + c).join("");
+      if (hex.length === 6) {
+        return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16), 1];
+      }
+    }
+    const m = token.match(/^rgba?\(([^)]+)\)$/);
+    if (m) {
+      const q = m[1].split(",").map(Number);
+      return [q[0], q[1], q[2], q.length > 3 ? q[3] : 1];
+    }
+    return [0, 0, 0, 0];
+  }
+
+  function parseStops(parts) {
+    return parts.map(part => {
+      const m = part.trim().match(/^(.*?)\s+([\d.]+)%$/);
+      return m ? { offset: parseFloat(m[2]) / 100, color: parseColor(m[1]) } : null;
+    }).filter(Boolean);
+  }
+
+  function parseGradient(layer) {
+    let m = layer.match(/^radial-gradient\(([\d.]+)px\s+([\d.]+)px\s+at\s+([\d.]+)%\s+([\d.]+)%,([\s\S]*)\)$/);
+    if (m) {
+      return {
+        type: "radial", rx: +m[1], ry: +m[2],
+        cx: +m[3] / 100, cy: +m[4] / 100,
+        stops: parseStops(splitTop(m[5]))
+      };
+    }
+    m = layer.match(/^linear-gradient\(([\d.]+)deg,([\s\S]*)\)$/);
+    if (m) return { type: "linear", angle: +m[1], stops: parseStops(splitTop(m[2])) };
+    return null;
+  }
+
+  function mixRGBA(a, b, t) {
+    const alpha = a[3] + (b[3] - a[3]) * t;
+    if (alpha <= 0) return [0, 0, 0, 0];
+    return [
+      (a[0] * a[3] * (1 - t) + b[0] * b[3] * t) / alpha,
+      (a[1] * a[3] * (1 - t) + b[1] * b[3] * t) / alpha,
+      (a[2] * a[3] * (1 - t) + b[2] * b[3] * t) / alpha,
+      alpha
+    ];
+  }
+
+  function overRGBA(src, dst) {
+    const sa = src[3], da = dst[3], oa = sa + da * (1 - sa);
+    if (oa <= 0) return [0, 0, 0, 0];
+    return [
+      (src[0] * sa + dst[0] * da * (1 - sa)) / oa,
+      (src[1] * sa + dst[1] * da * (1 - sa)) / oa,
+      (src[2] * sa + dst[2] * da * (1 - sa)) / oa,
+      oa
+    ];
+  }
+
+  function stopColor(stops, t, clampEnd) {
+    if (!stops.length) return [0, 0, 0, 0];
+    if (t <= stops[0].offset) return stops[0].color;
+    const last = stops[stops.length - 1];
+    if (t >= last.offset) return clampEnd ? last.color : [0, 0, 0, 0];
+    for (let i = 1; i < stops.length; i++) {
+      if (t <= stops[i].offset) {
+        const a = stops[i - 1], b = stops[i];
+        const u = (t - a.offset) / (b.offset - a.offset || 1);
+        return mixRGBA(a.color, b.color, u);
+      }
+    }
+    return [0, 0, 0, 0];
+  }
+
+  function colorAt(layers, x, y, w, h) {
+    let out = [0, 0, 0, 0];
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const layer = layers[i];
+      let c;
+      if (layer.type === "linear") {
+        const rad = layer.angle * Math.PI / 180;
+        const dx = Math.sin(rad), dy = -Math.cos(rad);
+        const len = Math.abs(w * dx) + Math.abs(h * dy);
+        const t = clamp01(0.5 + ((x - w / 2) * dx + (y - h / 2) * dy) / (len || 1));
+        c = stopColor(layer.stops, t, true);
+      } else {
+        const dx = (x - layer.cx * w) / layer.rx;
+        const dy = (y - layer.cy * h) / layer.ry;
+        c = stopColor(layer.stops, Math.sqrt(dx * dx + dy * dy), false);
+      }
+      out = overRGBA(c, out);
+    }
+    return out;
+  }
+
+  function rgbHsv(c) {
+    const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d > 0) {
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60; if (h < 0) h += 360;
+    }
+    return { h, s: max ? d / max : 0, v: max };
+  }
+
+  let wallpaperCache = null;
+  function wallpaperLayers() {
+    const css = getComputedStyle(root).getPropertyValue("--wp").trim();
+    if (!css) return [];
+    if (wallpaperCache && wallpaperCache.css === css) return wallpaperCache.layers;
+    const layers = splitTop(css).map(parseGradient).filter(Boolean);
+    wallpaperCache = { css, layers };
+    return layers;
+  }
+
+  function sampleRect(r, layers = wallpaperLayers()) {
+    if (!layers.length || r.width < 2 || r.height < 2) return { s: 0, v: 0 };
+    const w = innerWidth, h = innerHeight;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const pts = [
+      [cx, r.top + 2], [cx, r.bottom - 2],
+      [r.left + 2, cy], [r.right - 2, cy], [cx, cy]
+    ];
+    let ss = 0, vv = 0;
+    for (const [x, y] of pts) {
+      const hsv = rgbHsv(colorAt(layers, x, y, w, h));
+      ss += hsv.s; vv += hsv.v;
+    }
+    return { s: ss / pts.length, v: vv / pts.length };
+  }
+
+  function applyRim(el, r, layers) {
+    const { s, v } = sampleRect(r, layers);
+    const m = rimMap(s, v);
+    el.style.setProperty("--rim-sat", m.kSat.toFixed(3));
+    el.style.setProperty("--rim-bri", m.kBri.toFixed(3));
+    el.style.setProperty("--spec-op", m.kSpec.toFixed(3));
+    el.dataset.sbg = String(Math.round(s * 100));
+    el.dataset.vbg = String(Math.round(v * 100));
+    el.dataset.ksat = m.kSat.toFixed(2);
+    el.dataset.kbri = m.kBri.toFixed(2);
+    el.dataset.kspec = String(Math.round(m.kSpec * 100));
+    return m;
+  }
+
+  /* 映射曲线：左轴 kSat（0.85–1.20），右轴 kBri（1.30–2.00）。 */
+  const CH = { l: 40, r: 486, t: 22, b: 140 };
+  const xAt = s => CH.l + clamp01(s) * (CH.r - CH.l);
+  /* 单轴：kSat 0.85–1.10 与 kBri 1.40–1.95 放同一条倍率轴，避免双轴交叉点被误读。 */
+  const yAt = k => CH.b - (k - 0.80) / (2.00 - 0.80) * (CH.b - CH.t);
+  const satY = yAt;
+  const briY = yAt;
+  const SVGNS = "http://www.w3.org/2000/svg";
+
+  function svgAdd(parent, tag, attrs, text) {
+    const node = document.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+    if (text != null) node.textContent = text;
+    parent.appendChild(node);
+    return node;
+  }
+
+  function buildChart() {
+    const grid = $("#map-grid"), curves = $("#map-curves"), axis = $("#map-axis");
+    if (!grid || !curves || !axis) return;
+
+    for (let i = 0; i <= 4; i++) {
+      const x = xAt(i / 4);
+      svgAdd(grid, "line", { x1: x, y1: CH.t, x2: x, y2: CH.b, class: "map-grid-line" });
+    }
+    for (let i = 0; i <= 4; i++) {
+      const y = CH.t + i * (CH.b - CH.t) / 4;
+      svgAdd(grid, "line", { x1: CH.l, y1: y, x2: CH.r, y2: y, class: "map-grid-line" });
+      const val = 2.00 - i * (2.00 - 0.80) / 4;
+      svgAdd(axis, "text", { x: CH.l - 7, y: y + 3, "text-anchor": "end", class: "map-axis-label" }, "×" + val.toFixed(2));
+    }
+    for (const s of [0, 0.5, 1]) {
+      svgAdd(axis, "text", { x: xAt(s), y: CH.b + 12, "text-anchor": "middle", class: "map-axis-label" }, Math.round(s * 100) + "%");
+    }
+    svgAdd(axis, "text", { x: CH.l, y: 13, class: "map-axis-title", fill: "var(--muted)" }, "倍率 ×");
+    svgAdd(axis, "text", { x: CH.r, y: 13, "text-anchor": "end", class: "map-hot-label" }, "S 高 → 只提亮");
+    svgAdd(axis, "text", { x: (CH.l + CH.r) / 2, y: 166, "text-anchor": "middle", class: "map-axis-label" }, "背景饱和度 S");
+
+    svgAdd(curves, "rect", { x: xAt(0.6), y: CH.t, width: xAt(1) - xAt(0.6), height: CH.b - CH.t, class: "map-hot" });
+
+    let ds = "", db = "";
+    for (let i = 0; i <= 100; i++) {
+      const s = i / 100;
+      const m = rimMap(s, 0.5);
+      ds += (i ? "L" : "M") + xAt(s).toFixed(1) + "," + satY(m.kSat).toFixed(1) + " ";
+      db += (i ? "L" : "M") + xAt(s).toFixed(1) + "," + briY(m.kBri).toFixed(1) + " ";
+    }
+    svgAdd(curves, "path", { d: ds, class: "map-curve-sat" });
+    svgAdd(curves, "path", { d: db, class: "map-curve-bri" });
+  }
+
+  function updateMarker(s, kSat, kBri) {
+    const g = $("#map-marker"), line = $("#map-marker-line");
+    const ds = $("#map-dot-sat"), db = $("#map-dot-bri");
+    if (!g || !line || !ds || !db) return;
+    const x = xAt(s);
+    line.setAttribute("x1", x); line.setAttribute("x2", x);
+    ds.setAttribute("cx", x); ds.setAttribute("cy", satY(kSat));
+    db.setAttribute("cx", x); db.setAttribute("cy", briY(kBri));
+    g.style.opacity = 1;
+  }
+
+  let sampleEl = null;
+  function labelFor(el) {
+    if (el.dataset.rimName) return el.dataset.rimName;
+    if (el.classList.contains("theme-card")) {
+      const n = el.querySelector(".theme-name");
+      return (n ? n.textContent.trim() : "主题包") + " · 主题包";
+    }
+    if (el.classList.contains("material-card")) {
+      const n = el.querySelector(".mat-name");
+      return (n ? n.textContent.trim() : "背景") + " · 背景材质";
+    }
+    if (el.classList.contains("model-card")) {
+      const n = el.querySelector(".model-name");
+      return ((n ? n.textContent.trim() : "模型").replace(/\s+/g, " ")) + " · 模型";
+    }
+    if (el.classList.contains("cue")) {
+      const n = el.querySelector(".cue-zh");
+      return (n ? n.textContent.trim().slice(0, 12) : "字幕") + " · 字幕卡";
+    }
+    if (el.classList.contains("check-box") || el.classList.contains("switch")) {
+      const lab = el.closest("label");
+      return lab ? lab.textContent.trim().replace(/\s+/g, " ").slice(0, 14) : "交互控件";
+    }
+    if (el.classList.contains("select-wrap")) {
+      const sel = el.querySelector("select");
+      return (sel && sel.getAttribute("aria-label") || "下拉框") + " · 下拉";
+    }
+    if (el.id === "role-trigger") return "角色筛选 · 下拉";
+    if (el.id === "sample") return "取样窗口";
+    if (el.classList.contains("seg")) return "明暗模式 · 分段";
+    return "选择框";
+  }
+
+  function setSample(el) {
+    if (!el || el.dataset.sbg == null) return;
+    sampleEl = el;
+    const s = Number(el.dataset.sbg) / 100;
+    const kSat = Number(el.dataset.ksat);
+    const kBri = Number(el.dataset.kbri);
+    $("#map-name").textContent = labelFor(el);
+    $("#map-s").textContent = el.dataset.sbg + "%";
+    $("#map-sat").textContent = "×" + kSat.toFixed(2);
+    $("#map-bri").textContent = "×" + kBri.toFixed(2);
+    $("#map-spec").textContent = el.dataset.kspec + "%";
+    $("#map-v").textContent = el.dataset.vbg + "%";
+    $("#map-out").textContent = Math.round(clamp01(s * kSat) * 100) + "%";
+    updateMarker(s, kSat, kBri);
+  }
+
+  function defaultSample() {
+    return $(".theme-card[aria-pressed='true']") || $(".theme-card") || $(".agx");
+  }
+
+  buildChart();
+  document.addEventListener("pointerover", e => {
+    const el = e.target.closest(".agx");
+    if (el) setSample(el);
+  });
+  document.addEventListener("focusin", e => {
+    const el = e.target.closest(".agx");
+    if (el) setSample(el);
+  });
+
+  /* ── 1. 让每一条描边取到“自己背后”的壁纸 ─────────────────────
+     壁纸是 viewport 尺寸的渐变层。把 ::before 的背景平移 -left/-top，
+     它就在元素位置采样到同一块壁纸。不能用 background-attachment: fixed：
+     祖先的 backdrop-filter 会改变 fixed 的参照，导致所有卡片都取到左上角。 */
+  let raf = 0;
+  function placeRims() {
+    raf = 0;
+    const layers = wallpaperLayers();
+    for (const el of $$(".agx")) {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--bgpos", `${-r.left}px ${-r.top}px`);
+      applyRim(el, r, layers);
+    }
+    const sample = $("#sample");
+    if (sample) {
+      const r = sample.getBoundingClientRect();
+      $("#sample-xy").textContent = `x ${Math.round(r.left)} · y ${Math.round(r.top)}`;
+    }
+    if (!sampleEl || !sampleEl.isConnected) sampleEl = defaultSample();
+    setSample(sampleEl);
+  }
+  function scheduleRims() {
+    if (raf) return;
+    raf = requestAnimationFrame(placeRims);
+  }
+  addEventListener("resize", scheduleRims);
+  addEventListener("load", scheduleRims);
+  document.addEventListener("scroll", scheduleRims, true);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleRims);
+  if ("ResizeObserver" in window) new ResizeObserver(scheduleRims).observe($("#appwin"));
+  scheduleRims();
+
+  /* ── 2. 场景 ───────────────────────────────────────────────── */
+  const sceneNames = { ink: "纯色 · 石墨", aurora: "流光 · 极光", dusk: "图片 · 暮色" };
+  function setScene(scene) {
+    root.dataset.scene = scene;
+    $$("[data-scene-choice]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.sceneChoice === scene)));
+    $("#scene-label").textContent = sceneNames[scene];
+    $("#scene-name").textContent = sceneNames[scene];
+    scheduleRims();
+  }
+  $$("[data-scene-choice]").forEach(b => b.addEventListener("click", () => setScene(b.dataset.sceneChoice)));
+
+  /* ── 3. 明暗 ───────────────────────────────────────────────── */
+  const darkMQ = matchMedia("(prefers-color-scheme: dark)");
+  function resolvedMode(choice) {
+    if (choice === "system") return darkMQ.matches ? "dark" : "light";
+    return choice;
+  }
+  function setMode(choice) {
+    const mode = resolvedMode(choice);
+    root.dataset.mode = mode;
+    root.dataset.modeChoice = choice;
+    $$("[data-mode-choice]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.modeChoice === choice)));
+    $("#mode-label").textContent = choice === "system" ? `跟随系统（${mode === "dark" ? "深色" : "浅色"}）` : (mode === "dark" ? "深色" : "浅色");
+    $("#mode-pill span").textContent = mode === "dark" ? "深色玻璃" : "浅色玻璃";
+    requestAnimationFrame(scheduleRims);
+  }
+  $$("[data-mode-choice]").forEach(b => b.addEventListener("click", () => setMode(b.dataset.modeChoice)));
+  darkMQ.addEventListener("change", () => { if (root.dataset.modeChoice === "system") setMode("system"); });
+
+  /* ── 4. 强调色与主题 ───────────────────────────────────────── */
+  const themeAccents = { studio: "#8fe3c0", material: "#c9a7ff", classic: "#9db8ff", uwp: "#7cc4ff" };
+  function setAccent(hex, syncSwatch = true) {
+    root.style.setProperty("--accent", hex);
+    root.style.setProperty("--accent-soft", `color-mix(in srgb, ${hex} 16%, transparent)`);
+    $("#accent-hex").textContent = hex.toUpperCase();
+    if (syncSwatch) {
+      let matched = false;
+      $$("[data-accent]").forEach(b => {
+        const on = b.dataset.accent.toLowerCase() === hex.toLowerCase();
+        matched ||= on;
+        b.setAttribute("aria-pressed", String(on));
+      });
+      if (!matched) $$("[data-accent]").forEach(b => b.setAttribute("aria-pressed", "false"));
+    }
+  }
+  $$("[data-accent]").forEach(b => b.addEventListener("click", () => setAccent(b.dataset.accent)));
+
+  function setTheme(id) {
+    $$("[data-theme-choice]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.themeChoice === id)));
+    setAccent(themeAccents[id]);
+    $("#mode-pill span").textContent = root.dataset.mode === "dark" ? "深色玻璃" : "浅色玻璃";
+    scheduleRims();
+  }
+  $$("[data-theme-choice]").forEach(b => b.addEventListener("click", () => setTheme(b.dataset.themeChoice)));
+
+  /* ── 5. 模型单选与字幕卡选择 ───────────────────────────────── */
+  $$("[data-model]").forEach(card => card.addEventListener("click", () => {
+    $$("[data-model]").forEach(c => c.setAttribute("aria-checked", String(c === card)));
+    scheduleRims();
+  }));
+  $$("[data-cue]").forEach(card => card.addEventListener("click", () => {
+    $$("[data-cue]").forEach(c => c.setAttribute("aria-pressed", String(c === card)));
+    scheduleRims();
+  }));
+
+  /* ── 6. 角色下拉 ───────────────────────────────────────────── */
+  const dd = $("#role-dd");
+  const trigger = $("#role-trigger");
+  const menu = $("#role-menu");
+  const roleValue = $("#role-value");
+  function closeMenu(focus = false) {
+    menu.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    if (focus) trigger.focus();
+  }
+  trigger.addEventListener("click", () => {
+    const open = menu.hidden;
+    menu.hidden = !open;
+    trigger.setAttribute("aria-expanded", String(open));
+    if (open) scheduleRims();
+  });
+  menu.addEventListener("click", e => {
+    const opt = e.target.closest("[role='option']");
+    if (!opt) return;
+    $$("[role='option']", menu).forEach(o => o.setAttribute("aria-selected", String(o === opt)));
+    roleValue.textContent = opt.dataset.role;
+    closeMenu(true);
+  });
+  document.addEventListener("click", e => { if (!dd.contains(e.target)) closeMenu(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !menu.hidden) closeMenu(true); });
+
+  /* ── 7. 对比模式 ───────────────────────────────────────────── */
+  $("#compare").addEventListener("change", e => {
+    root.classList.toggle("plain", e.target.checked);
+    $("#compare-label").textContent = e.target.checked ? "对比：开" : "对比：关";
+    scheduleRims();
+  });
+
+  /* 初始状态 */
+  setAccent(themeAccents.studio);
+  setMode(root.dataset.modeChoice || "dark");
+  scheduleRims();
+  setTimeout(scheduleRims, 120);
+  setTimeout(scheduleRims, 600);
+})();
+</script>
+</body>
+</html>

@@ -5,7 +5,7 @@
  *   subtitle.ass|srt  字幕权威内容(自动保存写这里)
  *   audio.wav      16kHz 单声道(给后续"重新识别"铺路)
  *   peaks.bin      波形包络(打开时直接读, 不再重新生成)
- * 路由: #/home 项目列表 · #/new 新建项目 · #/settings 全局设置
+ * 路由: #/dashboard 主页 · #/home 项目列表 · #/new 新建项目 · #/settings 全局设置
  *       #/project/<id> 编辑器 · #/editor 无项目直开(兼容旧用法/测试)
  */
 import { serializeSRT } from './srt.js';
@@ -36,6 +36,7 @@ export function initProjects(ctx) {
   let nemoPollTimer = 0;       // 盯 NeMo 预检（要导入 PyTorch，30 秒起步）
 
   const elHome = $('#home-view');
+  const dashboardView = $('#dashboard-view');
   const elList = $('#home-list');
   const elEmpty = $('#home-empty');
   const detailView = $('#detail-view');
@@ -85,20 +86,13 @@ export function initProjects(ctx) {
     video.addEventListener('pause', savePlaybackPosition);
   }
 
-  // 离场视图短暂保留以完成淡出；快速往返时取消旧定时器，避免误隐藏新页面。
+  // 离场立即隐藏。旧版保留 200ms 做淡出，但首页/稿件库都是透明浮层，
+  // 离场页会在新页背后透出来，形成切换 Tab 的短暂残影；只保留新页的入场动画即可。
   function setPageVisible(page, visible) {
     clearTimeout(pageTimers.get(page));
     page.inert = !visible;
-    if (visible) {
-      page.classList.remove('is-leaving');
-      page.hidden = false;
-    } else if (!page.hidden) {
-      page.classList.add('is-leaving');
-      pageTimers.set(page, setTimeout(() => {
-        page.hidden = true;
-        page.classList.remove('is-leaving');
-      }, 200));
-    }
+    page.classList.remove('is-leaving');
+    page.hidden = !visible;
   }
   function focusPage(page) {
     requestAnimationFrame(() => {
@@ -3321,6 +3315,8 @@ async function renderAsrModels() {
   /* ─────────── 新建项目页面 ─────────── */
   const npView = $('#np-view');
   let npSubmitting = false;
+  let npSchemesLoaded = false, npSchemeBusy = false;
+  let npProviders = new Map();
   const npVideo = { path: '', name: '' };
   const npSub = { name: '', text: '' };
   // 项目压缩包导入：选中包后先只记文件名，点「创建项目」时才上传（几十 MB 不该选完就传）
@@ -3432,7 +3428,8 @@ async function renderAsrModels() {
     }
     asrStatus = genAsr;
     genRender('np');
-    genSetState('np', (genTr && genTr.ready) ? '已配置' : '翻译未配置');
+    if (npSchemesLoaded) setNpSchemeBadge();
+    else genSetState('np', (genTr && genTr.ready) ? '已配置' : '读取方案…');
     // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
     const hint = $('#np-hint');
     const probeForUi = (() => {
@@ -3500,6 +3497,99 @@ async function renderAsrModels() {
     const draftReady = npMode !== 'draft' || !!asrStatus.ready;
     $('#np-create').disabled = !hasSubOrPack || !hasModel || !regionOk || !draftReady;
   }
+  /** 自定义方案选择：读取全局命名方案，激活后新稿件沿用同一套翻译配置。 */
+  function npSchemeProviderName(id) {
+    return npProviders.get(id) || (id ? String(id) : '未设置服务商');
+  }
+  function setNpSchemeBadge() {
+    const el = $('#np-set-state');
+    if (!el) return;
+    const active = savedSchemes.find(item => item.id === activeSchemeId);
+    el.textContent = active ? '方案 · ' + active.name : (savedSchemes.length ? '未选择方案' : '未创建方案');
+    el.classList.toggle('is-muted', !active);
+    el.classList.toggle('is-ok', !!active);
+  }
+  function renderNpSchemes() {
+    const list = $('#np-scheme-list');
+    if (!list) return;
+    setNpSchemeBadge();
+    if (!savedSchemes.length) {
+      list.innerHTML = `<div class="np-scheme-empty"><b>还没有保存的翻译方案</b><p>创建一套方案后，新稿件会自动使用它翻译。</p><button type="button" class="btn btn-accent" id="np-scheme-create">创建方案</button></div>`;
+      return;
+    }
+    list.innerHTML = savedSchemes.map(item => {
+      const active = item.id === activeSchemeId;
+      let host = '';
+      try { host = new URL(item.baseUrl).host; } catch { /* 本地/空地址 */ }
+      return `<div class="np-scheme-card${active ? ' is-active' : ''}">
+        <div class="np-scheme-main"><b>${escapeHtml(item.name)}</b><small>${escapeHtml(npSchemeProviderName(item.provider))}${item.model ? ' · ' + escapeHtml(item.model) : ''}${host ? ' · ' + escapeHtml(host) : ''}</small></div>
+        <span class="np-scheme-state">${active ? '当前使用' : '可用'}</span>
+        <button type="button" class="btn btn-mini${active ? '' : ' btn-accent'}" data-np-scheme="${escapeHtml(item.id)}"${active ? ' disabled' : ''}>${active ? '已选择' : '使用'}</button>
+      </div>`;
+    }).join('');
+  }
+  async function loadNpSchemes(force = false) {
+    if (npSchemeBusy || (npSchemesLoaded && !force)) { renderNpSchemes(); return; }
+    npSchemeBusy = true;
+    try {
+      const [sr, cr] = await Promise.all([fetch('/api/translate/schemes'), fetch('/api/translate/config')]);
+      const sd = await sr.json();
+      if (!sr.ok) throw new Error(sd.error || '读取方案失败');
+      const cd = await cr.json().catch(() => ({}));
+      savedSchemes = Array.isArray(sd.schemes) ? sd.schemes : [];
+      activeSchemeId = sd.activeSchemeId || '';
+      npProviders = new Map((cd.presets || []).map(p => [p.id, p.name]));
+      npSchemesLoaded = true;
+      renderNpSchemes();
+      genTr = await (await fetch('/api/translate/config')).json();
+      genRender('np');
+      setNpSchemeBadge();
+    } catch (e) {
+      const list = $('#np-scheme-list');
+      if (list) list.innerHTML = `<div class="np-scheme-empty">读取翻译方案失败：${escapeHtml((e && e.message) || e)}<br><button type="button" class="btn btn-mini" id="np-scheme-retry">重试</button></div>`;
+      setNpSchemeBadge();
+    } finally {
+      npSchemeBusy = false;
+    }
+  }
+  async function useNpScheme(id) {
+    if (npSchemeBusy) return;
+    npSchemeBusy = true;
+    try {
+      const r = await fetch('/api/translate/schemes/' + encodeURIComponent(id) + '/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || '切换失败');
+      savedSchemes = d.schemes || savedSchemes;
+      activeSchemeId = d.activeSchemeId || '';
+      renderNpSchemes();
+      genTr = await (await fetch('/api/translate/config')).json();
+      genRender('np');
+      toast('已选择翻译方案', 2400);
+    } catch (e) {
+      toast('切换翻译方案失败：' + ((e && e.message) || e), 4200);
+    } finally {
+      npSchemeBusy = false;
+    }
+  }
+  function openSchemeSettings() {
+    settingsReturnRoute = '#/new';
+    settingsOpenedFromApp = true;
+    location.hash = '#/settings';
+    setTimeout(() => {
+      document.querySelector('.st-tab[data-stp="translate"]')?.click();
+      document.querySelector('.st-subtab[data-stsub="llm"]')?.click();
+      document.querySelector('#st-scheme-new')?.click();
+    }, 140);
+  }
+
+  $('#np-scheme-refresh').addEventListener('click', () => loadNpSchemes(true));
+  $('#np-scheme-manage').addEventListener('click', openSchemeSettings);
+  $('#np-scheme-list').addEventListener('click', (e) => {
+    if (e.target.closest('#np-scheme-create')) { openSchemeSettings(); return; }
+    if (e.target.closest('#np-scheme-retry')) { loadNpSchemes(true); return; }
+    const use = e.target.closest('[data-np-scheme]');
+    if (use && !use.disabled) useNpScheme(use.dataset.npScheme);
+  });
   $('#btn-new-project').addEventListener('click', () => {
     newOpenedFromApp = true;
     location.hash = '#/new';
@@ -4004,7 +4094,7 @@ async function renderAsrModels() {
     if (r2) r2.hidden = !on;
   }
   function applyHash() {
-    let h = location.hash || '#/home';
+    let h = location.hash || '#/dashboard';
     // 新侧栏及浏览器后退也要遵守创建互斥；上传期间离场会重置仍在使用的材料。
     if (studioUI && npSubmitting && h !== '#/new') {
       history.replaceState(null, '', '#/new');
@@ -4013,18 +4103,21 @@ async function renderAsrModels() {
     }
     // 资源管理曾是设置的重复别名；保留旧书签可用，但统一落到设置页。
     if (studioUI && h === '#/resources') { h = '#/settings'; history.replaceState(null, '', h); }
-    const studioPages = studioUI ? ['#/tasks', '#/help'] : [];
+    // 任务中心已移除，旧书签统一回稿件库；任务视图与稿件库本就是同一组项目卡。
+    if (studioUI && h === '#/tasks') { h = '#/home'; history.replaceState(null, '', h); }
+    const studioPages = studioUI ? ['#/help'] : [];
     if (studioUI && h === '#/settings' && previousRoute !== '#/settings') {
       settingsReturnRoute = previousRoute || '#/home';
       settingsOpenedFromApp = !!previousRoute;
     }
     const detailsMatch = /^#\/details\/([A-Za-z0-9_-]{1,64})$/.exec(h);
-    if (!location.hash || !['#/home', '#/new', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
-      h = '#/home';
+    if (!location.hash || !['#/dashboard', '#/home', '#/new', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
+      h = '#/dashboard';
       history.replaceState(null, '', h);
     }
-    $('#app').inert = h === '#/home' || h === '#/new' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
-    setPageVisible(elHome, h === '#/home' || h === '#/tasks');
+    $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/new' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
+    setPageVisible(dashboardView, h === '#/dashboard');
+    setPageVisible(elHome, h === '#/home');
     setPageVisible(npView, h === '#/new');
     setPageVisible(stView, h === '#/settings');
     setPageVisible(detailView, !!detailsMatch);
@@ -4051,7 +4144,11 @@ async function renderAsrModels() {
       setAudioControlsVisible(false);
       setPlaybackAudioMode(null, false);
       if (state.project) { saveNow(); detachProject(); }
-    } else if (h === '#/home' || h === '#/tasks') {
+    } else if (h === '#/dashboard') {
+      setAudioControlsVisible(false);
+      if (previousRoute !== h) showHome();
+      if (previousRoute !== h) focusPage(dashboardView);
+    } else if (h === '#/home') {
       setAudioControlsVisible(false);
       if (previousRoute !== h) showHome();
       if (previousRoute === '#/new' || previousRoute === '#/settings')
@@ -4060,7 +4157,8 @@ async function renderAsrModels() {
       const fromSettings = previousRoute === '#/settings';
       if (!fromSettings && previousRoute !== '#/new') npReset();
       // 生成设置面板：从设置页回来时强制刷新（模型/接口/Key 刚改过），其余情况走缓存
-      genLoad('np', fromSettings).then(() => { if (fromSettings) refreshAsrStatus(); });
+      genLoad('np', fromSettings).then(() => { if (fromSettings) refreshAsrStatus(); if (npSchemesLoaded) setNpSchemeBadge(); });
+      loadNpSchemes(true);
       if (previousRoute !== h) focusPage(npView);
     } else if (h === '#/settings') {
       if (previousRoute !== h) {

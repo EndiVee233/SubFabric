@@ -47,6 +47,11 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
 - **本轮（beta 1.0）已实际构建安装包**：`fetch-vendor.js` → `build_exe.py` → `ISCC` 全链路跑通，产物
   `build/installer/SubFabric-beta 1.0-setup.exe`（34.3MB，解包 94 文件 / 104.2MB）。**未执行真实静默安装自检**
   （见下方「/DIR 会被 UsePreviousAppDir 顶掉」：那一步会原地覆盖用户已装的 2.4.0），因此"装完能不能跑"仍属未验证。
+- **beta 1.3 构建（2026-10-18）**：`build_exe.py` → `build/SubFabric.exe`（93,613,568 字节，FileVersion/ProductVersion
+  `1.3.0.0`，SEA sentinel 与 blob 均在，子系统 2=GUI）；`ISCC` → `build/installer/SubFabric-beta 1.3-setup.exe`
+  （37,563,214 字节）。构建时刚写出的 90MB exe 会被杀毒/索引短暂占用，rcedit 报
+  `Fatal error: Unable to commit changes`；`build_exe.py` 已对这一步做短重试（0.4–2.0s，最多 5 次），
+  真失败仍退出。安装包/Release 未做真实安装与发布。
 - **踩过的坑（2026-10-14）**：`SubFabric.iss` 的 `VersionInfoProductVersion` 曾写成 `{#MyAppVersion}`（= 显示版本
   `beta 1.0`）。该字段**只接受纯数字**，ISCC 直接 `Value ... is invalid` 编译中止；因为上一轮把版本改成 `beta 1.0`
   后从未真正编过安装包，这个错一直没暴露。**凡是 `VersionInfo*` 字段一律用 `MyAppFileVersion`**，显示版本只走
@@ -188,6 +193,9 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 编辑器经 `window.SF_APP` 访问原型接口，入口为 `SF_EDITOR.render/mount/unmount`。
 顶栏命令经 `SF_EDITOR.command` 传递。详细流程和数据边界见原型 README；当前验收状态见 STATUS。
+
+`prototypes/adaptive-selection/`（2026-10-18）是无构建、无依赖的「环境自适应选择框」原型：单文件覆盖设置页与右侧字幕栏的可选表面。`.agx::before` 复制整页壁纸并按元素位置设置 `--bgpos` 采样，遮罩成描边环后 `blur/saturate/brightness`；按局部背景 S/V 逐元素计算 `kSat/kBri/kSpec`（高 S 只提亮/轻去饱和），页面内附单轴映射曲线与实时读数；`::after` 提供顶部白高光。仅用于设计评审，不接入生产 editor。
+
 编辑器 `prototypeEditor[id].timeline` 保存 double/height/pan/zoom，缺省为单行/188px/80px/1.05×；旧备份可缺此字段，新字段导入校验类型与范围。生产时间轴载入项目时默认显示 30 秒（短视频按实际时长钳制），用户仍可主动适应全片。重叠字幕按时间贪心分轨，波形背后的局部轻微模糊在拖动期间关闭；滚轮方向沿用旧版，Ctrl+滚轮保持指针下时间锚点。词边界调整共用邻词起止、可撤销；移动/缩放句时同步词时间，英文改写使旧词时间失效。逐词模式选择新句时自动聚焦时间轴，按词高亮只随原有播放时钟更新。
 主设置以 `draftSettings` 即时预览，保存条显示变更状态；离场统一保存/放弃/取消。
 主题包列表以 `draftThemePacks` 一同预览/保存/回滚；旧备份缺少主题字段时使用 Studio。包导入不执行任意代码，主题色角色在本地计算。
@@ -276,7 +284,13 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **项目切换**：先 flush 旧稿保存，再完成元数据/字幕/解析，最后同时提交 ID 和文档。所有保存回调、视频/波形/备注/prepare 等异步结果捕获项目与代次；首页/detach 同样使旧加载失效。保存冲突保持不可自动覆盖状态。**无撤销/重做栈**，Esc=取消是安全边界。
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换；`readMeta/writeMeta` 的兼容调用以 WeakMap 基线算递归字段差量，并入最新状态，禁止旧对象整体覆盖已有项目。跨 await 新增更新优先调用 updateMeta。
 - **首页列表**：`isCreating` 统一活动置顶与轮询判据，包含下载、提取、初稿及新建空窗，失败/暂停无字幕稿不冒充活动。`cardSig` 不含 progress/message/modifiedAt，三者就地更新；顺序同步独立于结构重建，只移动错位节点。首次直接显示进度，只有 running 的目标值变化才播放数字与 width 的 420ms 线性过渡；WeakMap 使旧动画失效，移除节点停止写入。studio.css 的流光和宽度过渡只属于 running，完成/暂停/失败无填充动画。
-- **项目封面与视图**：`server.js` 在项目列表/详情读取时为没有在线来源缩略图的本地视频异步抽取 `cover.jpg`，通过受保护的 `/api/projects/:id/cover` 提供；Studio 的稿件库与任务中心共用 `prefs.view`，卡片视图不再被任务路由强制改成列表。
+- **主页 Tab（2026-10-18）**：`#/dashboard` 独立主页（`#dashboard-view.workspace-page`）由 `refreshLibrary` 按 `projectPhase` 渲染 7 个小组件（继续编辑 / 处理中 / 可编辑 / 需处理 / 全部 / 新建 / 设置）；计数卡切 `filter` 并跳 `#/home`，动作卡复用 `#btn-new-project` 与设置路由。UWP 主题层把 `.sf-widget` 转成 2px 直角主题色磁贴；非 UWP 保持卡片。`#/home` 是稿件库，不再有 hero/小组件；无 hash 默认 `#/dashboard`。
+- **Material You 主页（2026-10-18）**：依据 GitHub `f0f1bb9391a0` 的旧版稿件库 hero 重做；`#dashboard-view` 内 `#sf-mu-home` 只在 `data-theme-pack="material-you"` 时显示；`syncDashboardMode` 按主题切换 `#sf-mu-home` 与通用 `#sf-widgets`（`data-home-mode=material/widgets`）。Material You 主页按历史稿件库截图使用三段式 `.sf-hero`：左侧 `.sf-flower` 118px SVG 花瓣时钟（上一版单一路径花瓣随秒针同角度旋转；胶囊形时分针两档浅蓝 + 小圆点秒针；文案“点击开始新的创作”；悬浮 1.04 不旋转）、中间 `.sf-resume` 最近稿件/继续编辑卡、右侧 `.sf-orbit` 100×148 的 40° 倾斜可编辑统计胶囊（左移 30px（平板 12px、手机 0）、文字居中）；下方 6 个 MY 小组件（处理中/可编辑/需处理/全部 + 新建/设置），其中处理卡占两列：最新稿件标题 + 全宽进度条（完成 100%）+ 时长/识别设备两枚胶囊；resume 卡 650×180（左边缘偏移 21px，左右留白近似）；搜索与筛选保留在 `#/home` 稿件库，避免 New Tab 控件混入旧版构图。Material You 专属 CSS 仍保留深浅色令牌与 900px/560px 响应式布局；非 Material 主题保持 7 个小组件，UWP 磁贴不变。
+- **设置页侧栏（2026-10-18）**：设置专用的透明覆盖不再作用于 `.sf-nav`；左栏和其他页面一样使用全局玻璃表面（`color-mix(surface 88%,transparent)` + blur + shadow）。顶部栏/内容仍按设置页透明处理。
+- **设置页背景（2026-10-18）**：设置工作区本身透明；旧规则在 `[data-workspace=settings]` 下强制隐藏 `.sf-ambient/.sf-backdrop`，导致「模糊流光 / 自定义图片」只在设置页不生效。已移除该隐藏，让背景层在设置页可见；卡片仍使用毛玻璃表面。
+- **页面切换（2026-10-18）**：`setPageVisible` 离场立即 `hidden`（不再保留 200ms 淡出），避免透明首页/稿件库浮层背后的旧页残影；只保留新页入场动画。`#dashboard-view` 已纳入 `is-leaving`/z-index 兼容规则。
+- **任务中心移除（2026-10-18）**：侧栏不再有 `#/tasks`；旧书签在 `applyHash` 里重定向 `#/home`，`matchesProject` 的 tasks 分支保留给历史测试/旧语义。顶栏 `#sf-direct-editor`、`#sf-create` 删除，页面内入口保留。
+- **项目封面与视图**：`server.js` 在项目列表/详情读取时为没有在线来源缩略图的本地视频异步抽取 `cover.jpg`，通过受保护的 `/api/projects/:id/cover` 提供；Studio 的稿件库卡片视图使用 `prefs.view`，卡片视图不再被任务路由强制改成列表。
 - **翻译**：`subtitleSource` 从当前 ASS/SRT 取原文、对应译文和版本；只在没有稿件时回落 ASR。`patchSubtitleTranslations` 仅更新译文事件/行，保留人工原文、时间、角色、样式和特效；每批及落盘前检查当前稿件版本。`planJobs` 用完整稿件索引和 todo，每批由 `translationRefs` 从同版本已有/新译文刷新前文；拆批右半批接续左半批，参考行不计输出数量，contextRows=0 不带参考。LLM 默认只输出逐行纯文本，`llm-text.parseLineArrayReply` 按输入行数解析；旧 JSON 数组仍兼容，解析失败继续拆批/重试，不把 JSON 原文落盘。
 - **语义分句**：`reseg.js` 默认要求模型复述原词并直接在词尾补标点，`parsePunctTextReply` 校验词序/词数后映射为标点对并保留逐词时间；旧 JSON 标点对仍兼容解析。模型不能保持原词时拒绝该批并按既有拆批/停顿兜底，避免改写造成时间轴错位。
 - **全片重校对**：从当前稿件提取目标，共用 karaoke 的 `realignTargetKey/applyRealignItems`；结果需匹配项目、规范化稿件版本、句子事件位置、可见文本及完整词序列。只改词级时间，颜色切片与 `\\k` 都保留当前文本，不按相近时间强行套旧结果。
@@ -295,6 +309,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **设置重排使用同一份真实表单**：571旧控件保持稳定，编辑器组不再移动到全局；翻译表单仍是常驻 DOM，分类切换不会重建术语输入。命名方案主页面只显示已保存列表与添加入口，保存/测试位于展开表单内，识别与校对的全局保存只写热词配置，不能误覆盖翻译草稿。背景预览卡/明暗分段按钮同步原select的change。
 - **入口生成器**：tools/templates/studio-settings.html 为设置常驻表单模板（包含页面尾部闭合）；tools/generate-studio.mjs 用此模板及编辑器组ID再生新入口，ui-integration 在内存运行生成器检查真实控件完整/唯一及图标注册，禁止生成回旧设置布局。
 - **品牌版本与焦点（2026-10-14）**：Studio 启动将唯一 `#app-version` 节点移到 `.sf-brand-title`，版本仍由 main 的原服务响应更新；列表标题不另造版本。设置/导航/日志焦点 outline 向内绘制，避免滚动容器裁切；品牌底部留白使用 margin，不能包进链接焦点框。
+- **新建项目翻译方案（2026-10-18）**：`#np-settings-panel` 隐藏原来的服务商/模型/提示词输入，改为 `#np-scheme-list` 读取 `/api/translate/schemes`；卡片选用走 `/api/translate/schemes/:id/activate` 并刷新 `/api/translate/config`，无方案时显示空态和直达设置 translate/llm 新建方案抽屉的入口。旧 `np-set-provider/model/prompt` 仍保留隐藏，兼容 gen/render 与测试。
 - **命名翻译方案（2026-10-14）**：`asr/settings.json` 的 `translateSchemes` 存独立名称/厂商/API/模型/参数/术语/提示词及加密 apiKeyEnc；`translateSchemeId` 表示当前方案，选用时原子复制到 `translate`，真实翻译/语义分句/跟随翻译的纠错继续读原配置。默认列表为空，不自动制造方案也不删除旧配置。`GET/POST /api/translate/schemes`、`PUT/DELETE /:id`、`POST /:id/activate` 管理方案；`POST /schemes/test` 仅测试草稿，Key 留空只复用该 id 的密文，不回落其它方案，不保存或切换。加密失败拒绝写入，无明文降级；响应只含 hasKey，不含明文或密文。旧 UI 的 `/api/translate/config` POST 解除命名方案关联，保存列表仍保留。
 - **LLM 方案展开区**：Studio 常驻 DOM 插入当前命名方案卡片下方，CSS grid 0fr→1fr 自适应术语表高度，关闭期间 inert；动画回调使用代次避免快速开关串入。旧 UI 保留右侧抽屉。重建列表前先移出表单，避免 innerHTML 删除原控件；`st-provider` / `st-baseurl` / `st-key` / `st-model` / `st-batch` / `st-prompt` / `gl-*` ID 稳定，新增 `st-scheme-name`、选用与自动翻译开关。术语分节先识别 ## 再忽略 # 注释，确保多语言独立恢复。
 - **设置页模型列表的两个易碎点**：① 分组折叠状态必须记在模块级 `GROUP_OPEN`（Map）里 ——
@@ -318,6 +333,10 @@ Studio 的毛玻璃压暗、模糊度、透明度保存在 `studio-state.js` 的
 
 `editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。`studio-themes.js` 提供四个内置主题包（Studio、Material You、SubFabric Classic、Windows UWP）及“我的主题包”存储；`editor/themes/*.theme.json` 是可分发的同源 JSON，导入包只能使用白名单设计、颜色令牌和本地 PNG/JPEG/WebP 预览图，不能执行脚本、注入 CSS 或引用远程资源。设置页按内置/自定义分组，内置包不可删除，自定义包可导出、替换和删除；格式与制作说明见 `docs/THEME_PACKS.md`。`studio-progress.js` 提供固定 CSS 波浪。全局模型、翻译与识别设置共用唯一“设置”入口；旧 `#/resources` 仅重定向至 `#/settings`。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
 
+UWP 设置页只保留交互控件等必要的 surface；设置路由下的 `.st-panel`、`.st-card`/表单行/说明条背景透明，避免灰块与黑底冲突，边框和内边距保留。 编辑器 `#tab-settings` 的分组头不吸顶，标题回到卡片顶部并加分隔线，滚动时不再遮住上一组内容。 词生长 Grow 暂停：`#fx-grow-block` 在模板/入口整段注释，`main.js` 强制关闭旧配置；`postprocess.js` 引擎保留以兼容旧特效标签与测试。 微光 `glow.followRole`：从中文行可见 `[角色]` + 行首角色色，按时间跨度映射英文活动词；同 Name 不同角色各用自己的颜色，找不到回退手动色。载入自愈不再把带 `[角色]` 的绿色行首色标当逐词高亮剥掉，并在同角色其它行有颜色时补回丢失色标。 「逐词字幕自愈」卡必须放在 `#tab-settings .settings-list` 内、`#editor-advanced-actions` 之后，不能直接挂到 `#tab-settings` 外层，否则会变成固定浮窗遮挡设置内容。
+
+`editor/js/rim-curve.js` 是 Material You 专属的环境描边层：从 Material 角色色生成局部色场，按目标位置采样 S/V，计算 kSat/kBri/kSpec 并把 `--sf-rim-field`、`--sf-rim-pos` 等写入 DOM；设置页 `#sf-rim-card` 的 SVG 曲线、实时读数与四个滑杆也由该模块渲染，参数保存在 `studio-state.js` 的界面偏好。仅在 `themePack=material-you` 且 `data-rim=on` 时挂载二级 `.sf-choice-menu` 与曲线卡实时预览 `.sf-rim-sample`；一级主题包/背景/模型/角色/方案卡、下拉触发器、字幕卡不挂。`.sf-choice-menu` 自身保持 `position:fixed`（只给 static 目标加 `.sf-rim-anchor`），环宽 1.25px；Material You 下目标边框归零，由取色环覆盖外缘，避免双层。fixed 弹层的环提升为 body 级 `.sf-rim-floating` fixed overlay，按菜单外框定位，菜单内部滚动时边框不随选项滚动；示例卡仍用子环。时间轴块里中文字幕后的黑色 scrim 已移除；英文逐词灰条保留（8px，含拖动热态），轴线与词文本也保留。
+
 相关验收与安装范围见 `docs/UI_INTEGRATION.md`；`tools/studio-install.mjs --prepare` 产生安装候选和哈希清单，候选验收通过后 `--apply <backup-directory>` 才进入备份/锁/替换/失败回滚。仅合并本次 UI 增量，不整体安装先前源码修复，不改 EXE/运行时/设置/项目。
 
 1. **不要引入构建步骤 / npm 依赖**：前端是浏览器原生 ESM，后端零依赖；Python 依赖在 `asr/requirements.txt`。
@@ -338,6 +357,7 @@ Studio 的毛玻璃压暗、模糊度、透明度保存在 `studio-state.js` 的
 | 测试 | 覆盖 | 备注 |
 | --- | --- | --- |
 | `tests/home-project-list-test.mjs` | 首页活动排序、复用卡片重排、静态进度零改写、连续/过期动画、完成与暂停/失败、新建/提取/下载、改名/删除及轮询停止 | 运行真实 initProjects/路由/轮询，使用内存 DOM 与可控时钟，不连接实际服务 |
+| `tests/material-home-test.mjs` | Material You 主页模板/生产镜像、旧版三段式 hero、花瓣时钟、主题门控、动态计数入口与响应式 CSS | 源码静态断言；已配合 Chromium 深色 Material 主页核对真实几何与交互 |
 | `tests/repair01-*` ～ `repair15-*` | 15 项修复的实际行为（内存 mocks / 临时目录 / 独立 HTTP 服务） | 第 12 项用微型 Python 构建与模拟 Inno；第 15 项本机真实 tar/PowerShell 已验证；不等于 GPU/ASR/LLM/GUI/SEA 真机验收 |
 | `tests/run-all.mjs` | 唯一 JS 全量入口；隔离运行、文件筛选、逐项 JSON 报告 | `node tests/run-all.mjs --report _test/maintenance/js-results.json`；不连接默认服务；报告不合并旧结果 |
 | `tools/repair15-regression.mjs` | 旧命令兼容别名 | 转发至 `tests/run-all.mjs`，不再维护第二套发现/汇总逻辑 |

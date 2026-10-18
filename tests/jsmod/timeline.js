@@ -65,7 +65,7 @@ export function hasVisibleWordMark(index) { return Number(index) > 0; }
  *   （实测 fork 那份稿件：块 5.80 起、首词 `Home` 也是 5.80），文字起点 `x1` 落在裁剪左界
  *   `x1 + 6` 的左侧 —— 词的左脚被裁掉，看着就是"首词被遮挡/少了半个字母"。
  *
- * 判据：取 `max(词起点, 裁剪左界)`。夹过去之后仍放不下（下一个词太近）就不画文字、只留标记，
+ * 判据：取 `max(词起点, 裁剪左界)`。夹过去之后仍放不下（下一个词太近）就不画文字，
  * 由调用方按 `avail` 判断；不会把相邻两个词的字画到一起。
  *
  * @param {number} wx      词的真实起点(px)
@@ -1599,7 +1599,7 @@ export class Timeline {
   }
 
   /** 块内文字: 中文整句一行在上、英文逐词一行在下，中间是分隔线（版面固定）。
-   *  样式对齐参考图: 分隔线与标记用中性浅灰, 词文本浅色; 词太长/太挤则只留标记不画文字 */
+   *  样式对齐参考图: 分隔线用中性浅灰, 词文本浅色; 词太长/太挤则不画词，避免压字 */
   _drawBlockText(ctx, c, band, x1, x2, wpx, base) {
     const g = this._wordGeom(band);
     const words = (c.words && c.words.length) ? c.words : null;
@@ -1618,17 +1618,9 @@ export class Timeline {
     ctx.clip();
     ctx.textAlign = 'left';
     if (c.text2) {
-      /* 中文行原来直接用 base（角色色原色）当填充色，而英文行用的是 WORD_TEXT（#e9e9f0 浅色）。
-         两行不一致，且角色色里只要有低饱和/偏暗的，压在波形与半透明块底上就很难认
-         （用户反馈"中文字幕可读性较低"）。这里做两件事：
-
-         ① 先给中文字形后面铺一层很淡的深色底（压在波形上，波形会把字糊掉）；
-            范围**只比字形大一点点**（实测文本宽度 + 3px 内边距），不是整块铺满 ——
-            铺满会把逐词轴和块的半透明边框色都盖掉。
-         ② 文字色按角色色的感知亮度决定：够亮就保留角色色（保住"谁在说话"的可辨识度），
-            偏暗就换成近白，保证对比度。
-
-         文本色**不改**块自己的边框/底色 —— 角色色在别处（边框、轨道、列表）仍然可见。 */
+      /* 中文行不再铺深色底条（用户反馈中文字幕后面的黑条压在波形上太抢）。
+         可读性只靠两点：文字色按角色色的感知亮度决定（亮角色色保留，暗的换近白），
+         以及此前已压暗的波形。文本色**不改**块自己的边框/底色，角色色在别处仍可见。 */
       ctx.font = this.zhFont();      // 与稿件样式的中文字体同步
       const zh = c.text2.slice(0, 60);
       /* ⚠ 中文基线**必须用 g.zhBase**（_wordGeom 算好的那个），不能在这里另算一份。
@@ -1636,22 +1628,12 @@ export class Timeline {
        *   这里的副本没跟着改，于是中文行的实际位置与分隔线的位置对不上
        *   （实测分隔线 89 压在中文 88~105 上）。统一到一处就不会再漂。 */
       const zhBase = g.zhBase;
-      const tw = ctx.measureText(zh).width;
-      /* 深色底的尺寸跟**实际字形**走（原来写死 -11 / 高 14，那是按 12px 字号配的）。
-       * 用 g.mZh（15px 中文的真实 ascent/descent）再加 1px 余量，
-       * 换字体/换字号都不用改这里。 */
-      const bgPadY = 1;
-      const bgTop = Math.round(zhBase - g.mZh.asc - bgPadY);
-      const bgH = Math.round(g.mZh.asc + g.mZh.desc + bgPadY * 2);
-      ctx.fillStyle = 'rgba(8,8,12,.45)';                 // 极淡的深色底：压住波形，又不糊掉块
-      this._roundRect(ctx, x1 + TEXT_PAD - 3, bgTop, tw + 6, bgH, 3);
-      ctx.fill();
       ctx.fillStyle = readableTextOn(base);                // 亮角色色保留，暗的换近白
       ctx.fillText(zh, x1 + TEXT_PAD, zhBase);
       if (showWords && fitWords) {
         this._drawWordAxis(ctx, words, g, x1, x2, c.end);
       } else if (showWords) {
-        /* 有逐词但竖直空间不够 → **只画分隔线**，标记与词都不画（免得糊在中文字上）。
+        /* 有逐词但竖直空间不够 → **只画分隔线**，词不画（免得糊在中文字上）。
          *  这是"块太矮"的兜底，正常字号下不会走到这里；也别退化去画整句英文 ——
          *  那同样会溢出块外。 */
         ctx.strokeStyle = AXIS_COLOR;
@@ -1751,7 +1733,7 @@ export class Timeline {
           // 首词没有可见标记，不给它留一块"看不见的抓手"；首词改时间走块左边缘下半区。
           if (!hasVisibleWordMark(i)) continue;
           const wx = this.t2x(c.words[i].s);
-          // 命中半宽跟标记块一致(再加 2px 余量), 看得见的宽度就能点中
+          // 命中半宽跟隐藏命中区一致(再加 2px 余量), 无需可见标记也能点中
           if (Math.abs(x - wx) <= g.markW / 2 + 2) return { lane, cue: c, idx: i };
         }
       }

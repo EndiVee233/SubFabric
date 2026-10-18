@@ -121,8 +121,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.2'; // 产品显示版本
-const APP_FILE_VERSION = '1.2.0.0'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.3'; // 产品显示版本
+const APP_FILE_VERSION = '1.3.0.0'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -321,7 +321,7 @@ const STATIC_RESOURCES = new Set([
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
-    'studio-themes', 'studio-progress'].map(n => '/editor/js/' + n + '.js'),
+    'studio-themes', 'studio-progress', 'rim-curve'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
   '/editor/vendor/subtitles-octopus-worker.wasm', '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf',

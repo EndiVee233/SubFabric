@@ -36,17 +36,17 @@
 <body class="sf-studio" data-theme="light" data-design="studio" data-bg="solid">
 <div class="sf-ambient" aria-hidden="true"><i></i><i></i><i></i></div><div class="sf-backdrop" aria-hidden="true"></div>
 <aside id="sf-nav" class="sf-nav" aria-label="主导航">
-  <a href="#/home" class="sf-brand"><span class="sf-brand-mark"><img src="/editor/assets/app-logo.png" alt=""></span><b><span class="sf-brand-title">SubFabric</span><small>字幕创作工作室</small></b></a>
+  <a href="#/dashboard" class="sf-brand"><span class="sf-brand-mark"><img src="/editor/assets/app-logo.png" alt=""></span><b><span class="sf-brand-title">SubFabric</span><small>字幕创作工作室</small></b></a>
   <span class="sf-nav-label">工作空间</span>
+  <a href="#/dashboard" data-route="dashboard" data-ico="home">主页</a>
   <a href="#/home" data-route="home" data-ico="folder">稿件库</a>
-  <a href="#/tasks" data-route="tasks" data-ico="activity">任务中心 <span id="sf-task-count"></span></a>
   <div class="sf-folder-head"><span>文件夹</span><button type="button" id="sf-folder-add" aria-label="新建文件夹">＋</button></div>
   <div id="sf-folders"></div>
   <div class="sf-nav-bottom"><a href="#/settings" data-route="settings" data-ico="sliders">设置</a><a href="#/help" data-route="help" data-ico="info">帮助与快捷键</a><p>本地工作空间 · 自动保存</p></div>
 </aside>
-<header id="sf-topbar" class="sf-topbar"><span>工作空间 <i>/</i> <b id="sf-breadcrumb">稿件库</b></span><div><button type="button" class="btn" id="sf-direct-editor">打开编辑器</button><button type="button" class="btn btn-accent" id="sf-create">新建稿件</button></div></header>
+<header id="sf-topbar" class="sf-topbar"><span>工作空间 <i>/</i> <b id="sf-breadcrumb">稿件库</b></span></header>
 <div id="sf-notice" role="status" hidden></div>
-<section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在任务中心查看处理 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件，可导出样式预设；后处理特效保存在本机，导出时应用。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article></div></div></section>
+<section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在稿件库看处理进度 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件，可导出样式预设；后处理特效保存在本机，导出时应用。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article></div></div></section>
 <div id="app">
 
   <!-- ══════════ 工具栏 ══════════ -->
@@ -383,6 +383,14 @@
                 <option value="all">中英文全部</option>
               </select>
             </div>
+            <div class="setting-row">
+              <span class="setting-name" title="开启后，微光颜色跟随当前中文字幕的角色色；例如 Spoke 红色、Wemmbu 紫色。未识别到角色色时回退到手动微光颜色。">随角色颜色变化</span>
+              <label class="switch">
+                <input type="checkbox" id="fx-glow-follow-role">
+                <span class="switch-slider"></span>
+              </label>
+              <span class="setting-val" id="fx-glow-follow-role-val">关</span>
+            </div>
 
             <div class="fx-lang-group" id="fx-zh-group">
             <div class="fx-lang-head" id="fx-zh-head">
@@ -461,6 +469,8 @@
             </div>
             </div>
 
+            <!-- 词生长（Grow）暂不符合预期，功能注释掉；保留引擎与旧存档配置解析。
+                 需要恢复时取消本段注释，并移除 main.js 中 grow.enabled=false 的强制关闭。
             <div class="fx-effect-block" id="fx-grow-block">
             <div class="setting-row">
               <span class="setting-name" title="词生长：把逐词高亮的活动词放大一圈，更有「逐字蹦出来」的节奏感。这里用静态放大 —— 实测 ASS 的 \t 变换动画会让 libass 关掉该行碰撞避让，导致中英两行叠压，所以不能用渐变缩放">词生长（Grow）</span>
@@ -478,6 +488,8 @@
             </div>
             </div>
             </div>
+
+            -->
 
             <div class="fx-effect-block" id="fx-fadein-block">
             <div class="setting-row">
@@ -622,10 +634,10 @@
            ══════════════════════════════════════════════════════════════════ -->
       <div id="tab-logs" class="tab-body">
         <div class="log-subtabs">
-          <button type="button" class="log-subtab" data-log="op" id="log-sub-op">
+          <button type="button" class="log-subtab active" data-log="op" id="log-sub-op">
             操作日志<span class="log-subtab-cnt" id="oplog-cnt" hidden></span>
           </button>
-          <button type="button" class="log-subtab active" data-log="app" id="log-sub-app">
+          <button type="button" class="log-subtab" data-log="app" id="log-sub-app">
             运行日志<span class="log-subtab-cnt" id="log-cnt" hidden></span>
           </button>
           <button type="button" class="log-subtab" data-log="note" id="log-sub-note">
@@ -1019,6 +1031,56 @@
   </div>
 </div>
 
+<!-- ══════════ 自定义主页：与稿件库分开的两个 Tab ══════════ -->
+<div id="dashboard-view" class="dashboard-view workspace-page" hidden>
+  <div id="sf-mu-home" class="sf-mu" hidden>
+    <div class="sf-mu-shell">
+      <section class="sf-hero">
+        <button type="button" class="sf-flower" id="sf-mu-new" title="新建稿件">
+          <span aria-hidden="true"><svg viewBox="0 0 100 100">
+            <g id="sf-mu-flower-face"><path d="M50 0 L61 7 L75 5 L82 18 L95 25 L93 39 L100 50 L93 61 L95 75 L82 82 L75 95 L61 93 L50 100 L39 93 L25 95 L18 82 L5 75 L7 61 L0 50 L7 39 L5 25 L18 18 L25 5 L39 7 Z"/></g>
+            <line class="sf-mu-clock-hand sf-mu-clock-hour" id="sf-mu-clock-hour" x1="50" y1="50" x2="50" y2="31"/>
+            <line class="sf-mu-clock-hand sf-mu-clock-minute" id="sf-mu-clock-minute" x1="50" y1="50" x2="50" y2="17"/>
+            <circle class="sf-mu-clock-second" id="sf-mu-clock-second" cx="50" cy="14" r="3.2"/>
+          </svg></span>
+          <b>点击开始新的创作</b><small id="sf-mu-date">10月18日 星期六</small>
+        </button>
+        <button type="button" class="sf-resume" id="sf-mu-resume">
+          <p class="sf-eyebrow">YOUR NEXT STORY</p>
+          <strong id="sf-mu-next-title">为每一句话，留出呼吸的空间。</strong>
+          <small id="sf-mu-next-meta">从视频开始，把灵感变成字幕。</small>
+          <span class="btn" id="sf-mu-resume-cta">新建稿件 →</span>
+        </button>
+        <button type="button" class="sf-orbit" id="sf-mu-temp" title="查看可编辑稿件">
+          <span><b id="sf-mu-status-num">0</b><small>可编辑稿件</small></span>
+        </button>
+      </section>
+      <div class="sf-mu-widgets" id="sf-mu-widgets">
+        <button type="button" class="sf-mu-widget sf-mu-processing" id="sf-mu-processing" data-kind="processing" aria-label="最新处理稿件">
+          <span class="sf-mu-widget-kicker" id="sf-mu-processing-kicker">处理中</span>
+          <strong class="sf-mu-processing-name" id="sf-mu-processing-name">还没有处理中的稿件</strong>
+          <span class="sf-mu-processing-progress"><span class="sf-mu-processing-fill" id="sf-mu-processing-fill"></span><b class="sf-mu-processing-pct" id="sf-mu-processing-pct">0%</b></span>
+          <span class="sf-mu-processing-pills"><span class="sf-mu-processing-pill"><span data-ico="film"></span><b id="sf-mu-processing-duration">—</b></span><span class="sf-mu-processing-pill"><span data-ico="activity"></span><b id="sf-mu-processing-device">—</b></span></span>
+        </button>
+        <button type="button" class="sf-mu-widget" data-mu-filter="ready"><span class="sf-mu-widget-kicker">可编辑</span><strong id="sf-mu-ready-widget">0</strong><small>已经可以改字幕</small></button>
+        <button type="button" class="sf-mu-widget" data-mu-filter="attention" data-tone="warn"><span class="sf-mu-widget-kicker">需处理</span><strong id="sf-mu-attention-count">0</strong><small>失败 / 待重试</small></button>
+        <button type="button" class="sf-mu-widget" data-kind="all" data-mu-filter="all"><span class="sf-mu-widget-kicker">全部稿件</span><strong id="sf-mu-all-count">0</strong><small>本地工作空间</small></button>
+        <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="new" data-tone="accent"><span class="sf-mu-widget-kicker">NEW</span><strong class="sf-mu-widget-title">新建稿件</strong><small>视频、链接或字幕</small><span class="sf-mu-widget-arrow">→</span></button>
+        <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="settings" data-tone="surface"><span class="sf-mu-widget-kicker">SETTINGS</span><strong class="sf-mu-widget-title">全局设置</strong><small>模型、翻译与外观</small><span class="sf-mu-widget-arrow">→</span></button>
+      </div>
+    </div>
+  </div>
+  <div class="dashboard-inner">
+    <header class="dashboard-head">
+      <p class="sf-eyebrow">YOUR WORKSPACE</p>
+      <h1>主页</h1>
+      <p>处理进度、继续编辑和全局入口都在这里；稿件列表在另一个 Tab。</p>
+    </header>
+    <section id="sf-widgets" class="sf-widgets" aria-label="工作台小组件"></section>
+    <div class="dashboard-foot"><a class="btn" href="#/home" data-ico="folder">打开稿件库</a></div>
+  </div>
+</div>
+
 <!-- ══════════ 项目主界面(全屏覆盖, 有项目/主页两种 hash 状态) ══════════ -->
 <div id="home-view" hidden>
   <div class="home-inner">
@@ -1028,7 +1090,6 @@
       <span class="home-sub ver" id="app-version"></span>
     </header>
 
-    <section class="sf-hero" id="sf-hero"><button type="button" class="sf-flower" id="sf-hero-create"><span>＋</span><b>开始新的创作</b><small>视频、链接或字幕</small></button><div class="sf-resume"><p class="sf-eyebrow">YOUR NEXT STORY</p><h2 id="sf-resume-name">为每一句话，留出呼吸的空间。</h2><p id="sf-resume-meta">从视频开始，把灵感变成字幕。</p><button type="button" class="btn btn-accent" id="sf-resume-open">新建稿件</button></div><button class="sf-orbit" id="sf-show-ready"><span><b id="sf-ready-count">0</b><small>可编辑稿件</small></span></button></section>
     <div class="home-toolbar">
       <h2 class="home-list-title">我的项目</h2>
       <div class="home-toolbar-btns">
@@ -1042,7 +1103,7 @@
     <div id="home-empty" class="home-empty" hidden>
       <div class="he-icon" data-ico="inbox"></div>
       <div class="he-name">还没有项目</div>
-      <div class="he-sub">点右上角「新建项目」，选好视频和字幕。音频和波形会自动存进项目，下次打开直接用</div>
+      <div class="he-sub">点上方「新建项目」，选好视频和字幕。音频和波形会自动存进项目，下次打开直接用</div>
     </div>
   </div>
 
@@ -1372,9 +1433,9 @@
             <div class="ws-kicker">GENERATE</div>
             <h2 id="np-set-title">生成设置</h2>
           </div>
-          <span class="ws-badge" id="np-set-state">—</span>
+          <span class="ws-badge" id="np-set-state">读取方案…</span>
         </div>
-        <p class="ws-sub">语音识别、翻译与分角色的参数；改完点下面的保存。</p>
+        <p class="ws-sub">语音识别、翻译方案与分角色；翻译方案在全局设置里管理。</p>
 
         <!-- 语音识别 / 识别来源 / 分角色：只有「创建初稿」用得上，导入字幕模式下整组收起 -->
         <div class="np-draft-only" id="np-voice-group">
@@ -1388,11 +1449,18 @@
           </div>
         </div>
 
-        <div class="ws-group-title">翻译模型</div>
-        <div class="ws-row"><select id="np-set-provider" class="np-select ws-fld"></select></div>
+        <div id="np-scheme-block" class="np-scheme-block">
+          <div class="ws-group-title">翻译方案</div>
+          <p class="ws-sub">选一套已保存的方案；创建后按它翻译，方案本身在全局设置里管理。</p>
+          <div id="np-scheme-list" class="np-scheme-list"><div class="np-scheme-empty">读取方案…</div></div>
+          <div class="np-scheme-actions"><button type="button" class="btn btn-mini" id="np-scheme-refresh">刷新</button><button type="button" class="btn btn-mini" id="np-scheme-manage">管理方案</button></div>
+        </div>
 
-        <div class="ws-group-title">模型名称</div>
-        <div class="ws-row"><input type="text" id="np-set-model" class="np-input ws-fld" spellcheck="false" placeholder="deepseek-chat"></div>
+        <div class="ws-group-title" hidden>翻译模型</div>
+        <div class="ws-row" hidden><select id="np-set-provider" class="np-select ws-fld"></select></div>
+
+        <div class="ws-group-title" hidden>模型名称</div>
+        <div class="ws-row" hidden><input type="text" id="np-set-model" class="np-input ws-fld" spellcheck="false" placeholder="deepseek-chat"></div>
 
         <div class="np-draft-only" id="np-cast-group">
           <div class="ws-group-title">识别后处理 · 分角色识别</div>
@@ -1440,13 +1508,13 @@
           <div class="ws-row"><select id="np-set-source" class="np-select ws-fld"></select></div>
         </div>
 
-        <div class="ws-group-title">翻译提示词</div>
-        <textarea id="np-set-prompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+        <div class="ws-group-title" hidden>翻译提示词</div>
+        <textarea id="np-set-prompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词" hidden></textarea>
 
-        <div class="ws-group-title">角色分析提示词</div>
-        <textarea id="np-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+        <div class="ws-group-title" hidden>角色分析提示词</div>
+        <textarea id="np-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词" hidden></textarea>
 
-        <div class="ws-actions">
+        <div class="ws-actions" hidden>
           <button type="button" class="btn btn-accent" id="np-set-save">保存设置</button>
         </div>
       </section>
@@ -1999,9 +2067,54 @@
           <div class="sf-settings-line setting-row sf-settings-color"><div><label for="sf-color">自定义主题色</label><p>只改界面强调色，不影响字幕颜色与角色色。</p></div><input type="text" id="sf-color" data-color-input="1" value="#5c7560" aria-label="自定义主题色"></div>
           <div class="theme-row sf-settings-swatches"><div class="theme-swatches" data-theme-swatches="1"></div><label class="theme-custom" hidden><input type="text" data-color-input="1" id="theme-color-global" data-theme-color="1" value="#ff7a45">自定义</label><button type="button" class="btn btn-mini" id="theme-reset-global" data-theme-reset="1">恢复默认</button></div>
         </div>
+        <div class="st-card sf-rim-card" id="sf-rim-card" hidden>
+          <div class="sf-rim-head">
+            <div>
+              <h3>描边映射曲线 <span class="sf-rim-badge">Material You</span></h3>
+              <p class="gl-hint">背景饱和度越高，框线越亮而不是越艳；只作用于当前主题包。</p>
+            </div>
+            <label class="sf-rim-toggle"><input type="checkbox" id="sf-rim-enabled" checked><span>启用</span></label>
+          </div>
+          <div class="sf-rim-panel">
+            <div class="sf-rim-chart-wrap">
+              <svg class="sf-rim-chart" id="sf-rim-chart" viewBox="0 0 520 170" role="img" aria-label="背景饱和度到框线饱和度与亮度的映射曲线">
+                <g id="sf-rim-grid"></g>
+                <g id="sf-rim-curves"></g>
+                <g id="sf-rim-axis"></g>
+                <g id="sf-rim-marker" style="opacity:0">
+                  <line id="sf-rim-marker-line" x1="0" y1="22" x2="0" y2="140" class="sf-rim-marker-line"></line>
+                  <circle id="sf-rim-dot-sat" r="3.4" class="sf-rim-dot-sat"></circle>
+                  <circle id="sf-rim-dot-bri" r="3.4" class="sf-rim-dot-bri"></circle>
+                </g>
+              </svg>
+              <div class="sf-rim-legend"><span><i class="sat"></i>框线饱和倍率 kSat</span><span><i class="bri"></i>框线亮度倍率 kBri</span></div>
+            </div>
+            <div class="sf-rim-side">
+              <div class="sf-rim-kicker">LIVE SAMPLE</div>
+              <div class="sf-rim-name" id="sf-rim-name">示例选择框</div>
+              <div class="sf-rim-big"><b id="sf-rim-s">—</b><span>背景饱和度 S</span></div>
+              <div class="sf-rim-v" id="sf-rim-v">V —</div>
+              <div class="sf-rim-rows">
+                <div><span>饱和倍率</span><code id="sf-rim-sat">—</code></div>
+                <div><span>亮度倍率</span><code id="sf-rim-bri">—</code></div>
+                <div><span>白高光</span><code id="sf-rim-spec">—</code></div>
+                <div><span>映射输出</span><code id="sf-rim-out">—</code></div>
+              </div>
+              <div class="sf-rim-sample" id="sf-rim-sample" data-rim-name="示例选择框">
+                <span class="sf-rim-sample-title">示例选择框</span>
+                <span class="sf-rim-sample-sub">外圈来自 Material 色场</span>
+              </div>
+            </div>
+          </div>
+          <div class="sf-rim-controls">
+            <label class="sf-rim-control"><span>高饱和饱和倍率</span><input type="range" id="sf-rim-sat-low" min="0.70" max="1.00" step="0.01" value="0.85"><output id="sf-rim-sat-low-value" for="sf-rim-sat-low">×0.85</output></label>
+            <label class="sf-rim-control"><span>高饱和提亮</span><input type="range" id="sf-rim-bri-gain" min="0.30" max="0.80" step="0.01" value="0.58"><output id="sf-rim-bri-gain-value" for="sf-rim-bri-gain">+0.58</output></label>
+            <label class="sf-rim-control"><span>白高光</span><input type="range" id="sf-rim-spec-base" min="0.45" max="0.75" step="0.01" value="0.60"><output id="sf-rim-spec-base-value" for="sf-rim-spec-base">60%</output></label>
+            <label class="sf-rim-control"><span>饱和曲线弯曲</span><input type="range" id="sf-rim-power" min="1.00" max="2.20" step="0.01" value="1.50"><output id="sf-rim-power-value" for="sf-rim-power">1.50</output></label>
+          </div>
+          <p class="gl-hint sf-rim-note">kSat = 1.10 − (1.10 − 高饱和饱和倍率)·S^弯曲；kBri = 1.40 + 提亮·S^1.2 + 0.10·(1−V)。仅 Material You 生效，设置随浏览器保存。浅色表面使用更深色场、白高光按 0.45 压缩；曲线显示映射值。色场由 Material 强调色与容器色生成，自定义图片/流光不参与取色。</p>
+        </div>
       </div>
-
-
     </div>
 
       <!-- 动作栏是 grid 的第 3 行（`#st-view .st-actions` 里定的 grid-row:3 且跨两列），

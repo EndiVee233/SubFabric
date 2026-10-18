@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubFabric · 字幕卡片重塑原型</title>
+<style>
+  /* ═══════════════════════════════════════════════════════════════════
+     字幕卡片「Quiet Card」原型
+     目标：把图二那种"框套框 + 胶囊组"的卡片，收成一张内容优先、
+     状态按需出现的安静卡片。纯静态单文件，无外部依赖。
+     ═══════════════════════════════════════════════════════════════════ */
+  :root {
+    --bg: #090b0f;
+    --bg-2: #0d1117;
+    --surface: #12171e;
+    --surface-2: #171d26;
+    --surface-3: #1c2430;
+    --line: rgba(255, 255, 255, .07);
+    --line-2: rgba(255, 255, 255, .12);
+    --text: #f1f4f8;
+    --text-2: #a7b1bf;
+    --text-3: #6d7887;
+    --accent: #ff7a45;
+    --accent-2: #ff9d6b;
+    --warn: #f6c453;
+    --danger: #ff6b7a;
+    --ok: #4ade80;
+    --r-lg: 18px;
+    --r-md: 14px;
+    --r-sm: 9px;
+    --ease: cubic-bezier(.2, .8, .2, 1);
+    --ease-out: cubic-bezier(.16, 1, .3, 1);
+    --font: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+
+  /* 角色色只作为 --role 注入，页面其它地方不直接写角色色 */
+  .role-wemmbu { --role: #e879f9; }
+  .role-gav { --role: #60a5fa; }
+  .role-minute { --role: #5eead4; }
+  .role-egg { --role: #fb7185; }
+
+  body {
+    background:
+      radial-gradient(1100px 620px at 72% -12%, rgba(255, 122, 69, .075), transparent 58%),
+      radial-gradient(900px 560px at 8% 8%, rgba(94, 234, 212, .035), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input { font: inherit; }
+  button { color: inherit; }
+  button:focus-visible, [tabindex]:focus-visible, [contenteditable="true"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  [hidden] { display: none !important; }
+
+  ::selection { background: rgba(255, 122, 69, .28); }
+
+  /* ── 页面外壳 ───────────────────────────────────────────────────── */
+  .page {
+    width: min(1420px, calc(100vw - 56px));
+    margin: 0 auto;
+    padding: 34px 0 64px;
+  }
+  .masthead { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; }
+  .brandline { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+  .brand-mark {
+    width: 28px; height: 28px; display: grid; place-items: center;
+    border: 1px solid var(--line-2); border-radius: 8px;
+    background: linear-gradient(145deg, rgba(255,255,255,.055), transparent);
+    color: var(--accent);
+  }
+  .brandline em { font-style: normal; color: var(--text-3); letter-spacing: .14em; }
+  .title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-top: 14px; }
+  h1 { margin: 0; font-size: clamp(28px, 3.2vw, 42px); line-height: 1.08; letter-spacing: -.035em; font-weight: 650; }
+  h1 span { color: var(--text-3); font-weight: 400; }
+  .lede { max-width: 640px; margin: 12px 0 0; color: var(--text-2); font-size: 13.5px; line-height: 1.65; }
+  .view-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; padding-bottom: 2px; }
+
+  .ctl {
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 32px; padding: 0 11px;
+    border: 1px solid var(--line); border-radius: 9px;
+    background: rgba(255,255,255,.018); color: var(--text-2);
+    font-size: 11.5px; cursor: pointer;
+    transition: background .16s var(--ease), border-color .16s var(--ease), color .16s var(--ease);
+  }
+  .ctl:hover { background: rgba(255,255,255,.045); color: var(--text); border-color: var(--line-2); }
+  .ctl[aria-pressed="true"] { color: var(--accent-2); border-color: rgba(255,122,69,.32); background: rgba(255,122,69,.08); }
+  .ctl svg { width: 13px; height: 13px; }
+  .ctl .sw { width: 22px; height: 13px; border-radius: 99px; background: rgba(255,255,255,.1); position: relative; transition: background .16s; }
+  .ctl .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 9px; height: 9px; border-radius: 50%; background: var(--text-2); transition: transform .16s var(--ease), background .16s; }
+  .ctl[aria-pressed="true"] .sw { background: rgba(255,122,69,.34); }
+  .ctl[aria-pressed="true"] .sw::after { transform: translateX(9px); background: var(--accent); }
+
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 342px;
+    gap: 26px;
+    align-items: start;
+    width: 100%;
+    max-width: 1100px;
+    margin: 32px auto 0;
+  }
+
+  /* ── 对比区 ─────────────────────────────────────────────────────── */
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
+  .compare-col { min-width: 0; }
+  .col-head { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; }
+  .col-head .num { color: var(--text-3); font: 10px/1 var(--mono); letter-spacing: .08em; }
+  .col-head h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+  .col-head .tag { margin-left: auto; color: var(--text-3); font-size: 10.5px; }
+  .col-head .tag-warm { color: var(--warn); }
+  .col-head .tag-accent { color: var(--accent-2); }
+  .caption { margin: 10px 2px 0; color: var(--text-3); font-size: 11px; line-height: 1.65; }
+  .caption b { color: var(--text-2); font-weight: 500; }
+
+  /* ── 旧版卡片：尽量复刻图二的信息密度 ─────────────────────────────── */
+  .legacy-card {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px;
+    background: #0d1117;
+    border: 1px solid #3f5574;
+    border-left: 3px solid #5b8dee;
+    border-radius: 10px;
+    box-shadow: 0 0 0 1px rgba(91,141,238,.1) inset;
+  }
+  .lg-rail { border-right: 1px solid #293341; padding: 2px 8px 2px 2px; display: flex; flex-direction: column; min-width: 0; }
+  .lg-label { margin-top: 6px; color: #5f6b7a; font-size: 8.5px; line-height: 1.2; }
+  .lg-label:first-child { margin-top: 0; }
+  .lg-time { color: #5b8dee; font: 600 9.5px/1.45 var(--mono); letter-spacing: -.01em; white-space: nowrap; }
+  .lg-time.dur { color: #8f6fd5; }
+  .lg-dash { margin: 9px 0 7px; border-top: 1px dashed #334052; }
+  .lg-rail-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+  .lg-chip {
+    display: inline-flex; align-items: center; gap: 3px;
+    min-height: 17px; padding: 1px 6px;
+    border: 1px solid #34445b; border-radius: 99px;
+    background: rgba(91,141,238,.06);
+    color: #8aa7cf; font-size: 8.5px; line-height: 1; white-space: nowrap;
+  }
+  .lg-chip.warn { border-color: rgba(246,196,83,.4); color: #dfb95e; background: rgba(246,196,83,.06); }
+  .lg-chip.style { border-color: #3b4759; color: #7d8da3; background: transparent; }
+  .lg-chip.playing { border-color: rgba(74,222,128,.38); color: #7fdd9d; background: rgba(74,222,128,.055); }
+  .lg-main { min-width: 0; padding: 2px 2px 2px 0; }
+  .lg-head { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 7px; }
+  .lg-head .spacer { flex: 1; }
+  .lg-zh { margin: 0; color: #f0f3f7; font-size: 12.5px; font-weight: 700; line-height: 1.45; }
+  .lg-rule { height: 1px; margin: 9px 0 8px; background: #384554; }
+  .lg-en { margin: 0; color: #b7c0cd; font-size: 11.5px; line-height: 1.55; }
+
+  /* ── 新卡片：Quiet Card ─────────────────────────────────────────── */
+  .cue {
+    position: relative;
+    display: grid;
+    grid-template-columns: 86px minmax(0, 1fr);
+    column-gap: 14px;
+    padding: 14px 14px 14px 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    transition: background .18s var(--ease), border-color .18s var(--ease), box-shadow .18s var(--ease), padding .18s var(--ease);
+    isolation: isolate;
+  }
+  .cue::before {
+    content: "";
+    position: absolute; left: 0; top: 13px; bottom: 13px;
+    width: 2px; border-radius: 0 2px 2px 0;
+    background: var(--role, var(--text-3));
+    opacity: .78;
+    transition: top .18s var(--ease), bottom .18s var(--ease), width .18s var(--ease), opacity .18s var(--ease);
+  }
+  .cue:hover { background: var(--surface-2); border-color: var(--line-2); }
+  .cue.is-selected {
+    background: var(--surface-2);
+    border-color: rgba(255,255,255,.17);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.035), 0 14px 34px -26px rgba(0,0,0,.8);
+  }
+  .cue.is-selected::before { width: 3px; top: 9px; bottom: 9px; opacity: 1; }
+  .cue.is-playing {
+    background: color-mix(in srgb, var(--role, var(--accent)) 5%, var(--surface));
+    border-color: color-mix(in srgb, var(--role, var(--accent)) 18%, var(--line));
+  }
+  .cue.is-playing::before {
+    top: 8px; bottom: 8px; width: 3px;
+    background: linear-gradient(180deg, var(--role, var(--accent)), var(--accent));
+    box-shadow: 0 0 14px color-mix(in srgb, var(--role, var(--accent)) 35%, transparent);
+    opacity: 1;
+  }
+  .cue.is-abnormal { border-color: color-mix(in srgb, var(--warn) 16%, var(--line)); }
+
+  .cue-rail { display: flex; flex-direction: column; min-width: 0; padding-top: 1px; }
+  .cue-time {
+    color: var(--text-3);
+    font: 10.5px/1.65 var(--mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.01em;
+    white-space: nowrap;
+    transition: color .16s var(--ease);
+  }
+  .cue-time.end { color: var(--text-2); }
+  .cue:hover .cue-time.end, .cue.is-selected .cue-time.end { color: var(--text); }
+  .cue-dur { margin-top: 1px; color: var(--text-3); font: 9.5px/1.5 var(--mono); opacity: .78; }
+  .cue-signal {
+    display: flex; align-items: center; gap: 4px;
+    margin-top: auto; padding-top: 8px;
+    color: var(--text-3); font-size: 9.5px; line-height: 1;
+  }
+  .cue-signal .bar { width: 28px; height: 2px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .cue-signal .bar i { display: block; height: 100%; width: var(--v, 0%); border-radius: inherit; background: var(--warn); }
+  .cue-signal.low { color: var(--warn); }
+  .cue-signal.ok { color: var(--text-3); }
+  .cue-signal .pct { font-variant-numeric: tabular-nums; }
+
+  .cue-main { min-width: 0; }
+  .cue-head { display: flex; align-items: center; gap: 7px; min-height: 18px; margin-bottom: 4px; }
+  .cue-role {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: var(--role, var(--text-2));
+    font-size: 10.5px; font-weight: 600; letter-spacing: .015em;
+    white-space: nowrap;
+  }
+  .cue-role .dot { width: 4px; height: 4px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent); }
+  .cue-style {
+    color: var(--text-3); font-size: 9.5px; white-space: nowrap;
+    max-width: 124px; overflow: hidden; text-overflow: ellipsis;
+    opacity: 1; transform: none;
+  }
+  .cue-status { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 9.5px; white-space: nowrap; }
+  .cue-status .pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(74,222,128,.1); }
+  .cue-status.playing { color: #86e0a6; }
+  .cue-status.playing .pulse { animation: pulse 2.1s var(--ease) infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 2px rgba(74,222,128,.08) } 50% { box-shadow: 0 0 0 5px rgba(74,222,128,.02) } }
+  .cue-warn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 17px; height: 17px; margin-left: 1px;
+    border: none; border-radius: 5px;
+    background: transparent; color: var(--warn); cursor: pointer;
+    transition: background .16s var(--ease);
+  }
+  .cue-warn:hover { background: rgba(246,196,83,.1); }
+  .cue-warn svg { width: 12px; height: 12px; }
+
+  .cue-actions { display: flex; align-items: center; gap: 2px; margin-left: auto; opacity: 0; transform: translateY(-2px); transition: opacity .16s var(--ease), transform .16s var(--ease); }
+  .cue:hover .cue-actions, .cue:focus-within .cue-actions, .cue.is-selected .cue-actions, .show-diagnostics .cue-actions { opacity: 1; transform: none; }
+  .icon-btn {
+    width: 25px; height: 25px; display: grid; place-items: center;
+    padding: 0; border: none; border-radius: 7px;
+    background: transparent; color: var(--text-3); cursor: pointer;
+    transition: background .14s var(--ease), color .14s var(--ease);
+  }
+  .icon-btn:hover { background: rgba(255,255,255,.06); color: var(--text); }
+  .icon-btn svg { width: 13px; height: 13px; }
+  .icon-btn[data-action="more"] svg { width: 15px; height: 15px; }
+
+  .cue-zh {
+    margin: 0; color: var(--text);
+    font-size: 15px; line-height: 1.58; font-weight: 500;
+    letter-spacing: .005em;
+    text-wrap: pretty;
+  }
+  .cue-en {
+    margin: 6px 0 0; color: var(--text-2);
+    font-size: 12.5px; line-height: 1.62; font-weight: 400;
+    letter-spacing: .002em;
+    text-wrap: pretty;
+  }
+  .cue-zh .inline-role { color: var(--role, var(--text)); font-weight: 600; }
+
+  .cue-detail {
+    display: grid; grid-template-rows: 0fr;
+    margin-top: 0;
+    opacity: 0;
+    transition: grid-template-rows .2s var(--ease), opacity .16s var(--ease), margin-top .2s var(--ease);
+  }
+  .cue-detail > div { overflow: hidden; }
+  .cue.is-expanded .cue-detail, .show-diagnostics .cue-detail {
+    grid-template-rows: 1fr; margin-top: 9px; opacity: 1;
+  }
+  .cue-detail-inner {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding-top: 9px; border-top: 1px solid var(--line);
+    color: var(--text-3); font-size: 10px;
+  }
+  .cue-detail-inner .kv { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .cue-detail-inner .kv b { color: var(--text-2); font-weight: 500; }
+  .cue-detail-inner .reason { color: var(--warn); }
+  .cue-detail-inner .detail-actions { display: flex; gap: 4px; margin-left: auto; }
+  .detail-btn {
+    height: 23px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px;
+    background: rgba(255,255,255,.025); color: var(--text-2); font-size: 9.5px; cursor: pointer;
+    transition: background .14s, border-color .14s, color .14s;
+  }
+  .detail-btn:hover { background: rgba(255,255,255,.06); border-color: var(--line-2); color: var(--text); }
+  .detail-btn.warn { color: var(--warn); border-color: rgba(246,196,83,.22); }
+
+  .edit-footer { display: none; align-items: center; gap: 8px; margin-top: 8px; color: var(--text-3); font-size: 9.5px; }
+  .cue.is-editing .edit-footer { display: flex; }
+  .cue.is-editing .cue-detail { display: none; }
+  .cue.is-editing [contenteditable="true"] {
+    outline: none;
+    border-bottom: 1px solid rgba(255,122,69,.55);
+    box-shadow: 0 1px 0 rgba(255,122,69,.12);
+  }
+  .edit-hint { margin-left: auto; }
+  .edit-hint kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; font: 9px/1.4 var(--mono); color: var(--text-2); }
+
+  /* 新卡片在对比区稍宽一点，但保持同一组件 */
+  .compare .cue { min-height: 124px; }
+  .compare .cue-zh { font-size: 15.5px; }
+  .compare .cue-en { font-size: 12.5px; }
+
+  /* ── 实时列表面板 ───────────────────────────────────────────────── */
+  .demo { margin-top: 0; }
+  .demo-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 12px; }
+  .eyebrow { color: var(--text-3); font: 9.5px/1.2 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .demo-head h2 { margin: 3px 0 0; font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
+  .demo-hint { color: var(--text-3); font-size: 10.5px; text-align: right; line-height: 1.6; }
+  .panel {
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    background: rgba(18,23,30,.72);
+    box-shadow: 0 28px 80px -48px rgba(0,0,0,.9);
+    overflow: hidden;
+  }
+  .panel-top {
+    display: flex; align-items: center; gap: 14px; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--line);
+    background: rgba(255,255,255,.012);
+  }
+  .tabs { display: flex; align-items: center; gap: 2px; }
+  .tab { padding: 5px 10px; border-radius: 7px; color: var(--text-3); font-size: 11px; }
+  .tab.active { background: rgba(255,255,255,.055); color: var(--text); }
+  .panel-tools { display: flex; align-items: center; gap: 10px; color: var(--text-3); font-size: 10px; }
+  .search { padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--text-3); }
+  .count { font-variant-numeric: tabular-nums; }
+  .cue-list { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+  .cue-list .cue { cursor: default; }
+  .cue-list .cue:focus-visible { outline-offset: 3px; }
+
+  /* 紧凑密度 */
+  .density-compact .cue-list { gap: 5px; padding: 9px; }
+  .density-compact .cue { grid-template-columns: 76px minmax(0,1fr); column-gap: 10px; padding: 10px 11px 10px 15px; border-radius: 11px; }
+  .density-compact .cue::before { top: 9px; bottom: 9px; }
+  .density-compact .cue-zh { font-size: 13.5px; line-height: 1.5; }
+  .density-compact .cue-en { margin-top: 3px; font-size: 11.5px; line-height: 1.5; }
+  .density-compact .cue-time { font-size: 9.5px; line-height: 1.55; }
+  .density-compact .cue-dur { font-size: 8.5px; }
+  .density-compact .cue-head { margin-bottom: 2px; }
+  .density-compact .cue-detail { margin-top: 6px; }
+  .density-compact .cue.is-expanded .cue-detail, .density-compact.show-diagnostics .cue-detail { margin-top: 6px; }
+  .density-compact .cue-detail-inner { padding-top: 6px; }
+
+  /* ── 右侧说明 ───────────────────────────────────────────────────── */
+  .notes { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 12px; }
+  .note-card {
+    padding: 16px 16px 15px; border: 1px solid var(--line); border-radius: var(--r-md);
+    background: rgba(18,23,30,.62);
+  }
+  .note-card h3 { margin: 0 0 9px; font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+  .note-card h3 span { color: var(--text-3); font-weight: 400; margin-left: 5px; }
+  .note-card p { margin: 0; color: var(--text-3); font-size: 10.5px; line-height: 1.65; }
+  .rule-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .rule-list li { display: grid; grid-template-columns: 16px 1fr; gap: 7px; color: var(--text-2); font-size: 10.5px; line-height: 1.55; }
+  .rule-list .idx { color: var(--accent-2); font: 9px/1.6 var(--mono); }
+  .rule-list b { color: var(--text); font-weight: 500; }
+  .legend { display: flex; flex-direction: column; gap: 7px; }
+  .legend-row { display: flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 10px; }
+  .legend-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
+  .legend-dot.ok { background: var(--ok); }
+  .legend-dot.warn { background: var(--warn); }
+  .legend-dot.accent { background: var(--accent); }
+  .legend-bar { width: 2px; height: 14px; border-radius: 2px; background: var(--role, var(--text-3)); flex: none; }
+  .note-sub { margin-top: 8px !important; color: var(--text-3); font-size: 9.5px !important; }
+  .kbd-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .kbd-row kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--text-2); font: 9px/1.4 var(--mono); }
+
+  /* ── 更多菜单 ───────────────────────────────────────────────────── */
+  .menu {
+    position: fixed; z-index: 50; min-width: 178px; padding: 5px;
+    background: #1a2029; border: 1px solid var(--line-2); border-radius: 10px;
+    box-shadow: 0 18px 44px rgba(0,0,0,.55);
+    animation: pop .14s var(--ease-out) both;
+    transform-origin: top right;
+  }
+  @keyframes pop { from { opacity: 0; transform: scale(.97) translateY(-3px) } to { opacity: 1; transform: none } }
+  .menu button {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 7px 8px; border: none; border-radius: 6px;
+    background: transparent; color: var(--text-2); font-size: 10.5px; text-align: left; cursor: pointer;
+  }
+  .menu button:hover { background: rgba(255,255,255,.055); color: var(--text); }
+  .menu button.danger { color: #ff9ba5; }
+  .menu button.danger:hover { background: rgba(255,107,122,.1); color: #ffc2c8; }
+  .menu svg { width: 12px; height: 12px; flex: none; }
+  .menu .sep { height: 1px; margin: 4px 6px; background: var(--line); }
+
+  /* ── Toast ──────────────────────────────────────────────────────── */
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; z-index: 60;
+    transform: translateX(-50%) translateY(8px);
+    padding: 8px 13px; border: 1px solid var(--line-2); border-radius: 9px;
+    background: #1b222c; color: var(--text-2); font-size: 10.5px;
+    box-shadow: 0 12px 30px rgba(0,0,0,.4);
+    opacity: 0; pointer-events: none;
+    transition: opacity .18s var(--ease), transform .18s var(--ease);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+
+  /* ── 响应式 ─────────────────────────────────────────────────────── */
+  @media (max-width: 1180px) {
+    .stage { grid-template-columns: 1fr; }
+    .notes { position: static; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .notes .note-card:last-child { grid-column: 1 / -1; }
+  }
+  @media (max-width: 860px) {
+    .page { width: min(100% - 30px, 760px); padding-top: 24px; }
+    .masthead, .title-row { flex-direction: column; align-items: flex-start; }
+    .view-controls { justify-content: flex-start; }
+    .compare { grid-template-columns: 1fr; }
+    .notes { grid-template-columns: 1fr; }
+    .cue { grid-template-columns: 1fr; row-gap: 8px; padding-left: 16px; }
+    .cue-rail { flex-direction: row; align-items: baseline; gap: 9px; }
+    .cue-dur { margin: 0; }
+    .cue-signal { margin: 0 0 0 auto; padding: 0; }
+    .cue::before { top: 12px; bottom: 12px; }
+    .demo-head { flex-direction: column; align-items: flex-start; gap: 5px; }
+    .demo-hint { text-align: left; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <header class="masthead">
+      <div class="brandline">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6.5h14M5 12h9M5 17.5h11"/></svg>
+        </span>
+        SubFabric <em>Prototype</em>
+      </div>
+      <div class="view-controls" aria-label="原型控制">
+        <button class="ctl" id="toggle-diag" aria-pressed="false"><span class="sw"></span>显示诊断</button>
+        <button class="ctl" id="toggle-density" aria-pressed="false"><span class="sw"></span>紧凑密度</button>
+        <button class="ctl" id="toggle-compare" aria-pressed="true"><span class="sw"></span>对比旧版</button>
+      </div>
+    </header>
+
+    <div class="title-row">
+      <div>
+        <h1>字幕卡片 <span>/ Quiet Card</span></h1>
+        <p class="lede">同一份信息，不靠更多边框和胶囊来分组。让中文与英文先被读到，时间、样式、状态在需要时再出现。</p>
+      </div>
+    </div>
+
+    <main>
+      <section class="compare" id="compare">
+          <div class="compare-col">
+            <div class="col-head">
+              <span class="num">01</span><h2>当前 · 图二</h2><span class="tag tag-warm">信息争夺</span>
+            </div>
+            <article class="legacy-card" aria-label="当前版本字幕卡片">
+              <div class="lg-rail">
+                <div class="lg-label">开始</div><div class="lg-time">00:00:05.200</div>
+                <div class="lg-label">结束</div><div class="lg-time">00:00:10.400</div>
+                <div class="lg-label">时长</div><div class="lg-time dur">5.200s</div>
+                <div class="lg-dash"></div>
+                <div class="lg-rail-actions">
+                  <span class="lg-chip">81%</span>
+                  <span class="lg-chip">↻ 重识别</span>
+                </div>
+              </div>
+              <div class="lg-main">
+                <div class="lg-head">
+                  <span class="lg-chip warn">⚠ 异常行</span>
+                  <span class="lg-chip style">中文字幕</span>
+                  <span class="lg-chip style">Default</span>
+                  <span class="spacer"></span>
+                  <span class="lg-chip playing">播放中</span>
+                </div>
+                <p class="lg-zh">我玩Skyblock越多 就越感到一种日益增长的不满</p>
+                <div class="lg-rule"></div>
+                <p class="lg-en">The more I play Skyblock the more I'm faced with the growing sense of dissatisfaction.</p>
+              </div>
+            </article>
+            <p class="caption"><b>4 层边界</b>（外框 / 时间栏竖线 / 中英分隔线 / 虚线）和 <b>6 个胶囊</b>同时出现；时间、置信度、播放态和异常都在跟正文抢对比度。</p>
+          </div>
+
+          <div class="compare-col">
+            <div class="col-head">
+              <span class="num">02</span><h2>建议 · 安静卡片</h2><span class="tag tag-accent">内容优先</span>
+            </div>
+            <article class="cue is-playing role-wemmbu cue-demo" tabindex="0" aria-label="建议版本字幕卡片">
+              <div class="cue-rail">
+                <span class="cue-time" title="开始">00:00:00.030</span>
+                <span class="cue-time end" title="结束">00:00:04.940</span>
+                <span class="cue-dur" title="时长">4.910s</span>
+                <span class="cue-signal" title="置信度 96%"><span class="bar"><i style="--v:96%"></i></span><span class="pct">96%</span></span>
+              </div>
+              <div class="cue-main">
+                <div class="cue-head">
+                  <span class="cue-role"><i class="dot"></i>Wemmbu</span>
+                  <span class="cue-style">中文字幕 · Default</span>
+                  <span class="cue-status playing"><i class="pulse"></i>播放中</span>
+                  <div class="cue-actions">
+                    <button class="icon-btn" data-action="rerecog" title="重新识别这一句" aria-label="重新识别这一句"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                    <button class="icon-btn" data-action="more" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+                  </div>
+                </div>
+                <p class="cue-zh" data-edit>这就是USMP 世界上最大的Minecraft服务器</p>
+                <p class="cue-en" data-edit>This is the Unstable SMP, the world's largest Minecraft server.</p>
+                <div class="cue-detail">
+                  <div>
+                    <div class="cue-detail-inner">
+                      <span class="kv">样式 <b>中文字幕 · Default</b></span>
+                      <span class="kv">置信度 <b>96%</b></span>
+                      <span class="detail-actions">
+                        <button class="detail-btn" data-command="realign">重排逐词</button>
+                        <button class="detail-btn" data-command="retranslate">重新翻译</button>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </article>
+            <p class="caption"><b>1 个容器</b>、<b>1 条角色色</b>、3 种状态信号；样式常驻，置信度和操作在悬停/展开时才出现。中文比英文高一级，时间只做参照。</p>
+          </div>
+        </section>
+
+        <div class="stage">
+        <section class="demo">
+          <div class="demo-head">
+            <div>
+              <span class="eyebrow">Live list</span>
+              <h2>状态与密度</h2>
+            </div>
+            <div class="demo-hint">点卡片选中 · 双击文字编辑 · 悬停出操作 · 右上角可切换诊断/密度</div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-top">
+              <div class="tabs" role="tablist" aria-label="面板页签">
+                <span class="tab active" role="tab" aria-selected="true">字幕</span>
+                <span class="tab" role="tab" aria-selected="false">角色</span>
+                <span class="tab" role="tab" aria-selected="false">设置</span>
+                <span class="tab" role="tab" aria-selected="false">日志</span>
+              </div>
+              <div class="panel-tools">
+                <span class="search">过滤字幕…</span>
+                <span class="count">4 条</span>
+              </div>
+            </div>
+
+            <div class="cue-list" id="list">
+              <!-- 1. 普通行 -->
+              <article class="cue role-gav" data-id="gav" tabindex="0" aria-label="Gav 的字幕">
+                <div class="cue-rail">
+                  <span class="cue-time" title="开始">00:00:10.000</span>
+                  <span class="cue-time end" title="结束">00:00:14.600</span>
+                  <span class="cue-dur" title="时长">4.600s</span>
+                </div>
+                <div class="cue-main">
+                  <div class="cue-head">
+                    <span class="cue-role"><i class="dot"></i>Gav</span>
+                    <span class="cue-style">中文字幕 · Default</span>
+                    <div class="cue-actions">
+                      <button class="icon-btn" data-action="rerecog" title="重新识别这一句" aria-label="重新识别这一句"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                      <button class="icon-btn" data-action="more" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+                    </div>
+                  </div>
+                  <p class="cue-zh" data-edit>一路打到决赛 才有机会击败Flame</p>
+                  <p class="cue-en" data-edit>battling my way to the finale to even have a chance at defeating Flame.</p>
+                  <div class="cue-detail"><div><div class="cue-detail-inner">
+                    <span class="kv">样式 <b>中文字幕 · Default</b></span>
+                    <span class="kv">置信度 <b>94%</b></span>
+                    <span class="detail-actions">
+                      <button class="detail-btn" data-command="realign">重排逐词</button>
+                      <button class="detail-btn" data-command="retranslate">重新翻译</button>
+                    </span>
+                  </div></div></div>
+                </div>
+              </article>
+
+              <!-- 2. 异常 + 低置信度 -->
+              <article class="cue role-egg is-abnormal" data-id="egg" tabindex="0" aria-label="eggchan 的字幕，有异常">
+                <div class="cue-rail">
+                  <span class="cue-time" title="开始">00:00:05.200</span>
+                  <span class="cue-time end" title="结束">00:00:10.400</span>
+                  <span class="cue-dur" title="时长">5.200s</span>
+                  <span class="cue-signal low" title="置信度 81%，偏低"><span class="bar"><i style="--v:81%"></i></span><span class="pct">81%</span></span>
+                </div>
+                <div class="cue-main">
+                  <div class="cue-head">
+                    <span class="cue-role"><i class="dot"></i>eggchan</span>
+                    <span class="cue-style">中文字幕 · Default</span>
+                    <button class="cue-warn" data-action="expand" title="异常行：与下一句时间重叠 0.9 秒" aria-label="查看异常原因"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5M12 17.5v.1"/></svg></button>
+                    <div class="cue-actions">
+                      <button class="icon-btn" data-action="rerecog" title="重新识别这一句" aria-label="重新识别这一句"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                      <button class="icon-btn" data-action="more" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+                    </div>
+                  </div>
+                  <p class="cue-zh" data-edit>我玩Skyblock越多 就越感到一种日益增长的不满</p>
+                  <p class="cue-en" data-edit>The more I play Skyblock the more I'm faced with the growing sense of dissatisfaction.</p>
+                  <div class="cue-detail"><div><div class="cue-detail-inner">
+                    <span class="kv reason">异常：与下一句时间重叠 0.9s</span>
+                    <span class="kv">置信度 <b>81%</b> · 建议复核</span>
+                    <span class="detail-actions">
+                      <button class="detail-btn warn" data-command="rerecog">重新识别</button>
+                      <button class="detail-btn" data-command="realign">重排逐词</button>
+                    </span>
+                  </div></div></div>
+                </div>
+              </article>
+
+              <!-- 3. 选中 -->
+              <article class="cue role-minute is-selected" data-id="minute" tabindex="0" aria-selected="true" aria-label="Minute 的字幕，已选中">
+                <div class="cue-rail">
+                  <span class="cue-time" title="开始">00:00:15.000</span>
+                  <span class="cue-time end" title="结束">00:00:20.200</span>
+                  <span class="cue-dur" title="时长">5.200s</span>
+                </div>
+                <div class="cue-main">
+                  <div class="cue-head">
+                    <span class="cue-role"><i class="dot"></i>Minute</span>
+                    <span class="cue-style">中文字幕 · Default</span>
+                    <div class="cue-actions">
+                      <button class="icon-btn" data-action="rerecog" title="重新识别这一句" aria-label="重新识别这一句"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                      <button class="icon-btn" data-action="more" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+                    </div>
+                  </div>
+                  <p class="cue-zh" data-edit>他亲手封禁了我们服务器的几百名玩家 自己却从未接近过死亡</p>
+                  <p class="cue-en" data-edit>He's personally banned hundreds of players off our server, without ever coming close to death himself once.</p>
+                  <div class="cue-detail"><div><div class="cue-detail-inner">
+                    <span class="kv">样式 <b>中文字幕 · Default</b></span>
+                    <span class="kv">置信度 <b>97%</b></span>
+                    <span class="detail-actions">
+                      <button class="detail-btn" data-command="realign">重排逐词</button>
+                      <button class="detail-btn" data-command="retranslate">重新翻译</button>
+                    </span>
+                  </div></div></div>
+                </div>
+              </article>
+
+              <!-- 4. 英文孤行 / 短句 -->
+              <article class="cue role-wemmbu" data-id="short" tabindex="0" aria-label="Wemmbu 的短句">
+                <div class="cue-rail">
+                  <span class="cue-time" title="开始">00:00:22.400</span>
+                  <span class="cue-time end" title="结束">00:00:24.000</span>
+                  <span class="cue-dur" title="时长">1.600s</span>
+                </div>
+                <div class="cue-main">
+                  <div class="cue-head">
+                    <span class="cue-role"><i class="dot"></i>Wemmbu</span>
+                    <span class="cue-style">英文孤行 · Default</span>
+                    <div class="cue-actions">
+                      <button class="icon-btn" data-action="rerecog" title="重新识别这一句" aria-label="重新识别这一句"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+                      <button class="icon-btn" data-action="more" title="更多操作" aria-label="更多操作"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+                    </div>
+                  </div>
+                  <p class="cue-en" data-edit>I also really like the new server spawn.</p>
+                  <div class="cue-detail"><div><div class="cue-detail-inner">
+                    <span class="kv">英文孤行</span>
+                    <span class="kv">置信度 <b>92%</b></span>
+                    <span class="detail-actions">
+                      <button class="detail-btn" data-command="realign">重排逐词</button>
+                    </span>
+                  </div></div></div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+      <aside class="notes" aria-label="设计说明">
+        <div class="note-card">
+          <h3>为什么图一右侧更舒服 <span>眼睛先看到字</span></h3>
+          <ul class="rule-list">
+            <li><span class="idx">01</span><span><b>少一层容器。</b>右侧没有时间栏竖线和中英分隔线，文字不是被“装进格子”，而是在留白里自然分组。</span></li>
+            <li><span class="idx">02</span><span><b>时间是参照，不是主角。</b>右侧把时间压到低对比、同一字号层级；左侧用高饱和色写时间，眼睛会先被时间拉走。</span></li>
+            <li><span class="idx">03</span><span><b>颜色只表达一件事。</b>右侧把高饱和留给角色/内容；左侧让时间、角色、样式、异常、播放都用彩色，强调就失效了。</span></li>
+            <li><span class="idx">04</span><span><b>内容有更宽的跑道。</b>去掉内栏和胶囊后，中文少折一行，英文的换行也更接近语义停顿。</span></li>
+          </ul>
+        </div>
+
+        <div class="note-card">
+          <h3>改良规则 <span>Quiet Card</span></h3>
+          <ul class="rule-list">
+            <li><span class="idx">A</span><span><b>一个容器。</b>只保留卡片表面 + 左侧 2px 角色色，不再套时间栏和分隔线。</span></li>
+            <li><span class="idx">B</span><span><b>三级字号。</b>中文 15/1.6、英文 12.5/1.62、元信息 9.5–10.5；时间用等宽数字。</span></li>
+            <li><span class="idx">C</span><span><b>状态按需出现。</b>播放中=呼吸点；异常=琥珀图标；低置信=小百分比；选中=表面抬升 + 细边。</span></li>
+            <li><span class="idx">D</span><span><b>操作渐进披露。</b>悬停/聚焦出现重识别与更多；样式常驻；诊断、异常原因在展开区。</span></li>
+          </ul>
+        </div>
+
+        <div class="note-card">
+          <h3>状态语义 <span>一眼可读，不靠颜色堆叠</span></h3>
+          <div class="legend">
+            <div class="legend-row"><span class="legend-dot ok"></span><span>播放中：小绿点 + 文案；左侧角色条轻微发光</span></div>
+            <div class="legend-row"><span class="legend-dot warn"></span><span>异常/低置信：琥珀图标 + 数字；原因在展开区</span></div>
+            <div class="legend-row"><span class="legend-dot accent"></span><span>选中：背景抬升 + 1px 亮边；不使用粗描边</span></div>
+            <div class="legend-row"><span class="legend-bar"></span><span>角色色：只占左侧 2px，不染正文</span></div>
+          </div>
+          <p class="note-sub">原型可交互：点卡片选中、双击文字编辑、悬停出现操作、右上角切换诊断/紧凑密度。</p>
+          <div class="kbd-row"><kbd>Enter</kbd> 保存 <kbd>Esc</kbd> 取消 <kbd>Shift+Enter</kbd> 换行</div>
+        </div>
+      </aside>
+      </div>
+    </main>
+  </div>
+
+  <div class="menu" id="menu" hidden role="menu" aria-label="更多操作">
+    <button data-command="realign" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z"/><path d="m13.5 7.5 3 3"/></svg>重排逐词时间</button>
+    <button data-command="retranslate" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>重新翻译</button>
+    <button data-command="karaoke" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>切换为 \k 卡拉OK</button>
+    <div class="sep"></div>
+    <button class="danger" data-command="delete" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4.5 6.5h15M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5"/><path d="M6.5 6.5 7.5 19a1.5 1.5 0 0 0 1.5 1.4h6a1.5 1.5 0 0 0 1.5-1.4l1-12.5"/></svg>删除字幕</button>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      const list = document.getElementById('list');
+      const menu = document.getElementById('menu');
+      const toastEl = document.getElementById('toast');
+      const toggleDiag = document.getElementById('toggle-diag');
+      const toggleDensity = document.getElementById('toggle-density');
+      const toggleCompare = document.getElementById('toggle-compare');
+      const compare = document.getElementById('compare');
+      let toastTimer = 0;
+      let editing = null;
+
+      function toast(text) {
+        toastEl.textContent = text;
+        toastEl.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+      }
+
+      function closeMenu() { menu.hidden = true; }
+
+      function openMenu(anchor) {
+        const r = anchor.getBoundingClientRect();
+        menu.hidden = false;
+        const w = menu.offsetWidth;
+        const h = menu.offsetHeight;
+        const left = Math.min(Math.max(12, r.right - w), innerWidth - w - 12);
+        const top = Math.min(r.bottom + 6, innerHeight - h - 12);
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+      }
+
+      function setSelected(card) {
+        document.querySelectorAll('.cue[data-id]').forEach((c) => {
+          const on = c === card;
+          c.classList.toggle('is-selected', on);
+          if (on) c.setAttribute('aria-selected', 'true');
+          else c.removeAttribute('aria-selected');
+        });
+      }
+
+      function startEdit(line) {
+        if (editing) return;
+        const card = line.closest('.cue');
+        if (!card) return;
+        editing = { line, card, original: line.textContent };
+        let footer = card.querySelector('.edit-footer');
+        if (!footer) {
+          footer = document.createElement('div');
+          footer.className = 'edit-footer';
+          footer.innerHTML = '<span>编辑中</span><span class="edit-hint"><kbd>Enter</kbd> 保存 <kbd>Esc</kbd> 取消</span>';
+          card.querySelector('.cue-main').appendChild(footer);
+        }
+        line.setAttribute('contenteditable', 'true');
+        card.classList.add('is-editing');
+        line.focus();
+        const range = document.createRange();
+        range.selectNodeContents(line);
+        range.collapse(false);
+        const sel = getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+
+      function finishEdit(cancel) {
+        if (!editing) return;
+        const { line, card, original } = editing;
+        if (cancel) line.textContent = original;
+        line.removeAttribute('contenteditable');
+        card.classList.remove('is-editing');
+        editing = null;
+        if (!cancel) toast('原型：已保存这一行（未写入真实项目）');
+      }
+
+      document.addEventListener('click', (e) => {
+        if (!menu.hidden && !menu.contains(e.target)) closeMenu();
+
+        const action = e.target.closest('[data-action]');
+        if (action) {
+          const card = action.closest('.cue');
+          if (action.dataset.action === 'more') {
+            e.stopPropagation();
+            openMenu(action);
+            return;
+          }
+          if (action.dataset.action === 'expand' && card) {
+            card.classList.toggle('is-expanded');
+            return;
+          }
+          if (action.dataset.action === 'rerecog') {
+            toast('原型：重新识别这一句');
+            return;
+          }
+        }
+
+        const cmd = e.target.closest('[data-command]');
+        if (cmd) {
+          const map = { realign: '重排逐词时间', retranslate: '重新翻译', karaoke: '切换为 \\k 卡拉OK', delete: '删除该条字幕', rerecog: '重新识别' };
+          toast('原型：' + (map[cmd.dataset.command] || cmd.dataset.command));
+          closeMenu();
+          return;
+        }
+
+        if (editing && !editing.card.contains(e.target)) finishEdit(false);
+
+        const card = e.target.closest('.cue[data-id]');
+        if (card && !e.target.closest('button, .cue-detail, .edit-footer')) setSelected(card);
+      });
+
+      document.addEventListener('dblclick', (e) => {
+        const line = e.target.closest('.cue-zh, .cue-en');
+        if (line) startEdit(line);
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeMenu();
+          finishEdit(true);
+        }
+        if (editing && e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          finishEdit(false);
+        }
+        if (e.key === 'Enter' && e.target.closest('.cue[data-id]') && !editing) {
+          setSelected(e.target.closest('.cue[data-id]'));
+        }
+      });
+
+      window.addEventListener('resize', closeMenu);
+      list.addEventListener('scroll', closeMenu, { passive: true });
+
+      toggleDiag.addEventListener('click', () => {
+        const on = toggleDiag.getAttribute('aria-pressed') !== 'true';
+        toggleDiag.setAttribute('aria-pressed', String(on));
+        document.documentElement.classList.toggle('show-diagnostics', on);
+      });
+
+      toggleDensity.addEventListener('click', () => {
+        const on = toggleDensity.getAttribute('aria-pressed') !== 'true';
+        toggleDensity.setAttribute('aria-pressed', String(on));
+        document.documentElement.classList.toggle('density-compact', on);
+      });
+
+      toggleCompare.addEventListener('click', () => {
+        const on = toggleCompare.getAttribute('aria-pressed') !== 'true';
+        toggleCompare.setAttribute('aria-pressed', String(on));
+        compare.hidden = !on;
+      });
+    })();
+  </script>
+</body>
+</html>

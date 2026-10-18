@@ -76,6 +76,7 @@ export const DEFAULT_POSTPROCESS_CONFIG = {
   glow: {
     enabled: true,            // 微光分开关
     target: 'active_word',    // 生效范围: 'zh' | 'en' | 'all' | 'active_word'
+    followRole: false,        // true: 微光颜色跟随该句中文字幕的角色色
     zh: {                // 中文字幕行的微光参数
       enabled: true,
       channel: 'shadow',      // 'shadow'(保留黑描边) | 'outline'(顶替描边) | 'both'(最强)
@@ -191,6 +192,7 @@ export function cloneConfig(cfg) {
     glow: {
       enabled: g.enabled !== false,
       target: GLOW_TARGETS.includes(g.target) ? g.target : (g.target === 'all' ? 'all' : 'active_word'),
+      followRole: g.followRole === true,
       zh,
       en
     },
@@ -322,6 +324,79 @@ const HL_SPAN_ALL = new RegExp(HL_SPAN_SRC, 'g');
 /** 行首覆盖标签块（{\...}{\...}…），用于「整行特效」时把标签插在它后面 */
 const LEADING_TAGS_RE = /^(?:\s*\{[^}]*\})+/;
 
+/** 中文字幕行行首的第一个 \c / \1c 就是角色色（Spoke 红、Wemmbu 紫…）。 */
+function leadingRoleColor(text) {
+  const lead = LEADING_TAGS_RE.exec(text);
+  if (!lead) return null;
+  const m = /\\1?c&H([0-9A-Fa-f]{6})&/.exec(lead[0]);
+  return m ? assBgrToHex(m[1]) : null;
+}
+
+/** 中文字幕行行首覆盖标签之后的 [角色名]；这是身份，不是 Name 栏（Name 是说话人/演员）。 */
+function roleLabelOf(text) {
+  const lead = LEADING_TAGS_RE.exec(text);
+  const rest = String(text || '').slice(lead ? lead[0].length : 0);
+  const m = /^\s*\[([^\]\n]{1,64})\]/.exec(rest);
+  return m ? m[1].trim() : '';
+}
+
+/**
+ * 预扫 [Events]：从中文行提取「角色名 → 角色色」和时间跨度。
+ * 英文逐词行自身只有活动词高亮色，不能拿来当角色色；因此按 Name 或时间回查中文行。
+ */
+function collectRoleInfo(assText, targets) {
+  if (!targets) return null;
+  const byRole = new Map();
+  const entries = [];
+  let inEvents = false, formatCols = null;
+  const zhName = String(targets.zh).toLowerCase();
+  for (const line of assText.split(/\r\n|\n/)) {
+    const sec = /^\s*\[(.+)\]\s*$/.exec(line);
+    if (sec) { inEvents = sec[1].trim().toLowerCase() === 'events'; formatCols = null; continue; }
+    if (!inEvents) continue;
+    const fmt = /^\s*Format\s*:\s*(.+)$/i.exec(line);
+    if (fmt) { formatCols = fmt[1].split(',').map(s => s.trim().toLowerCase()); continue; }
+    const dm = /^\s*Dialogue\s*:\s*(.*)$/i.exec(line);
+    if (!dm || !formatCols) continue;
+    const parts = [];
+    let rest = dm[1];
+    for (let k = 0; k < formatCols.length - 1; k++) {
+      const idx = rest.indexOf(',');
+      if (idx === -1) break;
+      parts.push(rest.slice(0, idx).trim());
+      rest = rest.slice(idx + 1);
+    }
+    parts.push(rest);
+    const styleIdx = formatCols.indexOf('style');
+    const textIdx = formatCols.indexOf('text');
+    const style = styleIdx === -1 ? '' : parts[styleIdx];
+    if (String(style).toLowerCase() !== zhName) continue;
+    const text = parts[textIdx === -1 ? parts.length - 1 : textIdx] || '';
+    const color = leadingRoleColor(text);
+    const role = roleLabelOf(text);
+    if (color && role) byRole.set(role.toLowerCase(), color);
+    const startIdx = formatCols.indexOf('start'), endIdx = formatCols.indexOf('end');
+    const start = startIdx === -1 ? null : assTimeToMs(parts[startIdx]);
+    const end = endIdx === -1 ? null : assTimeToMs(parts[endIdx]);
+    if (start != null && end != null) entries.push({ start, end, color, role });
+  }
+  const spans = entries.filter(e => e.color).map(e => ({ start: e.start, end: e.end, color: e.color, role: e.role }))
+    .concat(entries.filter(e => !e.color && e.role && byRole.has(e.role.toLowerCase()))
+      .map(e => ({ start: e.start, end: e.end, color: byRole.get(e.role.toLowerCase()), role: e.role })));
+  if (!byRole.size && !spans.length) return null;
+  return {
+    colorFor(start, role) {
+      const key = String(role || '').trim().toLowerCase();
+      if (key && byRole.has(key)) return byRole.get(key);
+      if (start != null) {
+        const hit = spans.find(s => start >= s.start && start < s.end);
+        if (hit) return hit.color;
+      }
+      return null;
+    }
+  };
+}
+
 /** 拼装发光起始标签的命令串 */
 function glowOpenCommands(channel, bgr, alpha, radius) {
   const outline = `\\3c&H${bgr}&\\3a&H${alpha}&`;
@@ -438,6 +513,8 @@ export function applyPostProcess(assText, config, styleTargets) {
     en: !glowOn || enBlock.enabled === false ? null : buildGlowTags(enBlock)
   };
   const growTags = growOn ? buildGrowTags(grow) : null;
+  const targets = styleTargets || resolveStyleTargets(assText);
+  const roleInfo = glowOn && glow.followRole === true ? collectRoleInfo(assText, targets) : null;
 
   // 只有微光生效时，若它自己无事可做才能整体直通（保住要点1 的零改动语义）
   if (glowOn && !growOn && !fadeOn) {
@@ -445,7 +522,6 @@ export function applyPostProcess(assText, config, styleTargets) {
     if (glowTarget === 'active_word' && !glowTags.en) return assText;
   }
 
-  const targets = styleTargets || resolveStyleTargets(assText);
   const isZh = (style) => !!targets && String(style).toLowerCase() === targets.zh.toLowerCase();
   const isEn = (style) => !!targets && String(style).toLowerCase() === targets.en.toLowerCase();
 
@@ -500,6 +576,12 @@ export function applyPostProcess(assText, config, styleTargets) {
     const textIdx = textColIdx === -1 ? parts.length - 1 : textColIdx;
     const style = styleColIdx === -1 ? '' : parts[styleColIdx];
     const rawText = parts[textIdx] || '';
+    const startMs = startIdx === -1 ? null : assTimeToMs(parts[startIdx]);
+    const roleColor = roleInfo
+      ? roleInfo.colorFor(startMs, isZh(style) ? roleLabelOf(rawText) : '')
+      : null;
+    const zhTags = roleColor && glowTags.zh ? buildGlowTags({ ...zhBlock, color: roleColor }) : glowTags.zh;
+    const enTags = roleColor && glowTags.en ? buildGlowTags({ ...enBlock, color: roleColor }) : glowTags.en;
 
     // 淡入时长要按事件自身长度钳制。只在需要时才解析时间，省掉纯微光时的开销。
     let evMs = null;
@@ -514,9 +596,9 @@ export function applyPostProcess(assText, config, styleTargets) {
     // ── ① 逐词 pass：微光(仅活动词) + 词生长，命令合并进同一个覆盖块 ──
     const wordOpens = [];
     const wordCloses = [];
-    if (glowTarget === 'active_word' && glowTags.en) {
-      wordOpens.push(glowTags.en.openCmd);
-      wordCloses.push(glowTags.en.closeCmd);
+    if (glowTarget === 'active_word' && enTags) {
+      wordOpens.push(enTags.openCmd);
+      wordCloses.push(enTags.closeCmd);
     }
     if (growTags) {
       wordOpens.push(growTags.openCmd);
@@ -531,12 +613,12 @@ export function applyPostProcess(assText, config, styleTargets) {
     const lineCmds = [];
     if (glowOn && glowTarget !== 'active_word') {
       let block = null;
-      if (glowTarget === 'zh') block = isZh(style) ? glowTags.zh : null;
-      else if (glowTarget === 'en') block = isEn(style) ? glowTags.en : null;
+      if (glowTarget === 'zh') block = isZh(style) ? zhTags : null;
+      else if (glowTarget === 'en') block = isEn(style) ? enTags : null;
       else { // all
-        if (isZh(style)) block = glowTags.zh;
-        else if (isEn(style)) block = glowTags.en;
-        else if (!targets) block = glowTags.en;   // 样式识别不出来时兜底：整篇按英文参数发光
+        if (isZh(style)) block = zhTags;
+        else if (isEn(style)) block = enTags;
+        else if (!targets) block = enTags;   // 样式识别不出来时兜底：整篇按英文参数发光
       }
       if (block) lineCmds.push(block.openCmd);
     }

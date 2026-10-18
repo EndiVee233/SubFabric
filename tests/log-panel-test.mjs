@@ -49,6 +49,9 @@ ok(/id="log-pane-op">/.test(HTML) && !/id="log-pane-op" hidden/.test(HTML),
   '★ 操作日志默认显示（它记的是"我改了什么"，用户最想看）');
 ok(/id="log-pane-app" hidden/.test(HTML), '运行日志默认隐藏');
 ok(/id="log-pane-note" hidden/.test(HTML), '备注默认隐藏');
+// 高亮必须跟默认内容一致：操作日志显示时，子标签高亮也必须在操作日志上。
+ok(/class="log-subtab active"[^>]*id="log-sub-op"/.test(HTML), '★ 默认高亮操作日志');
+ok(!/class="log-subtab active"[^>]*id="log-sub-app"/.test(HTML), '运行日志默认不高亮');
 ok(/data-log="app"/.test(HTML) && /data-log="op"/.test(HTML) && /data-log="note"/.test(HTML),
   '三个子标签都在');
 ok(/\.log-subtab\.active/.test(CSS), '子标签有选中态样式');

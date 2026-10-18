@@ -229,6 +229,8 @@ globalThis.fetch = async (url, options = {}) => {
     presets: [{ id: 'fixture', name: 'Fixture', model, baseUrl:'http://localhost:1234/v1' }], defaultPrompt: 'Fixture prompt' });
   if (url.startsWith('/api/translate/schemes')) {
     if (schemeFailure) return new Response(JSON.stringify({error:'Fixture save failure'}),{status:500});
+    // GET 只读，绝不能走下面的"新建方案"分支；创建页进入时会读一次方案列表。
+    if ((options.method || 'GET') === 'GET') return json({ schemes, activeSchemeId: schemeActive });
     if (url.endsWith('/test')) return json({ok:true,reply:'ok'});
     const payload = options.body ? JSON.parse(options.body) : {}, id=url.split('/')[4];
     if (url.endsWith('/activate')) schemeActive=id;
@@ -500,7 +502,7 @@ const api = initProjects({ state, video: $('video'), timeline: { setPeaks() {} }
   routeSub(text) { state.format = 'srt'; state.srtCues = parseSRT(text); } });
 api.applyHash(); await settle();
 assert.equal($('app').inert, false, 'editor routing enables actual editor interactions');
-await click('sf-create');
+await click('btn-new-project');
 assert.equal(location.hash, '#/new');
 fileDialog = new File(['fixture video bytes'], 'original.webm', { type: 'video/webm' });
 await click('np-pick-video');
@@ -733,7 +735,7 @@ for (const route of ['#/home', '#/resources', '#/settings', '#/tasks', '#/help',
   assert.equal(location.hash, '#/new', 'upload blocks hash navigation to ' + route);
   assert.equal($('np-view').hidden, false, 'upload keeps creation page visible');
   assertMaterials('blocked ' + route);
-  await click('sf-create');
+  await click('btn-new-project');
   assertMaterials('create after blocked ' + route + ' does not npReset');
 }
 await click('np-cancel');
@@ -752,3 +754,4 @@ assert.deepEqual(unexpected, [], 'all fetches stay in the explicit in-memory API
 assert.deepEqual(asyncErrors, []);
 assert.equal(eventJobs.size, 0, 'no event handler remains pending');
 console.log('studio-navigation: immediate scrub/late-media/keyboard/hover/reset, direct editor, settings return, legacy resources alias, settings save, stale ASS guard, deferred upload navigation lock and original submission payload passed');
+

@@ -171,7 +171,12 @@ const state = {
   srtCues: [],
   assDoc: null,
   assStyleTargets: null,
-  postProcessConfig: loadPostProcessConfig(),
+  postProcessConfig: (() => {
+    const cfg = loadPostProcessConfig();
+    /* 词生长（Grow）暂不符合预期：UI 已注释，旧存档里的 grow 配置也强制关闭。 */
+    if (cfg.grow) cfg.grow.enabled = false;
+    return cfg;
+  })(),
   items: [],             // 编辑面板视图模型
   itemByRef: new Map(),  // ref(cue|event) → item
   newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
@@ -1250,6 +1255,8 @@ const fxEls = {
   glowEnable: document.getElementById('fx-glow-enable'),
   glowEnableVal: document.getElementById('fx-glow-enable-val'),
   glowTarget: document.getElementById('fx-glow-target'),
+  followRole: document.getElementById('fx-glow-follow-role'),
+  followRoleVal: document.getElementById('fx-glow-follow-role-val'),
   statusNote: document.getElementById('fx-status-note'),
   lang: { zh: fxLangEls('zh'), en: fxLangEls('en') },
   glow: {
@@ -1332,6 +1339,9 @@ function syncFxUi() {
   const target = FX_TARGETS.includes(glow.target) ? glow.target : 'active_word';
   if (fxEls.glowTarget) fxEls.glowTarget.value = target;
   const scope = FX_SCOPE[target];
+  const followRole = !!(cfg.glow && cfg.glow.followRole);
+  if (fxEls.followRole) fxEls.followRole.checked = followRole;
+  if (fxEls.followRoleVal) fxEls.followRoleVal.textContent = followRole ? '开' : '关';
 
   for (const lang of FX_LANGS) {
     const els = fxEls.lang[lang];
@@ -1340,8 +1350,8 @@ function syncFxUi() {
     if (els.enable) els.enable.checked = b.enabled;
     if (els.enableVal) els.enableVal.textContent = b.enabled ? '开' : '关';
     if (els.channel) els.channel.value = b.channel;
-    if (els.color) els.color.value = b.color;
-    if (els.colorVal) els.colorVal.textContent = b.color.toUpperCase();
+    if (els.color) { els.color.value = b.color; els.color.disabled = followRole; }
+    if (els.colorVal) els.colorVal.textContent = followRole ? '跟随角色' : b.color.toUpperCase();
     if (els.radius) els.radius.value = b.radius;
     if (els.radiusVal) els.radiusVal.textContent = `${b.radius.toFixed(1)} px`;
     if (els.intensity) els.intensity.value = b.intensity;
@@ -1426,6 +1436,14 @@ function initFxControls() {
       updateFxConfig(cfg => {
         if (!cfg.glow) cfg.glow = {};
         cfg.glow.target = fxEls.glowTarget.value;
+      });
+    });
+  }
+  if (fxEls.followRole) {
+    fxEls.followRole.addEventListener('change', () => {
+      updateFxConfig(cfg => {
+        if (!cfg.glow) cfg.glow = {};
+        cfg.glow.followRole = fxEls.followRole.checked;
       });
     });
   }
@@ -1692,21 +1710,72 @@ function setAss(text, name) {
   }
   if (ghosts.length) state.kar.rows.forEach((r, i) => r.no = i + 1);
   // 同源病灶: 1 号切片被改写成整句时继承了行首逐词绿标 → 整行中文被染成高亮绿。
-  // 说话人色永不可能是逐词绿(speakerColorOf 已排除), 双语行的中文行首见绿即剥。
-  let leadFixed = 0;
+  // 但说话人色**也可能就是绿色**（用户明确点名 JamatoP 本应是绿色），不能再"见绿即剥"。
+  // 先收集每个角色已知的**非逐词绿**角色色：绿色只有在角色没有其它颜色证据时才按角色色保留；
+  // 若角色已有其它颜色，则这份绿是切片泄漏，替换回角色色。无角色标签的绿仍按泄漏剥掉。
+  const leadColorOf = (text) => {
+    const m = /^\s*\{\\c&H([0-9A-Fa-f]{6})&\}/.exec(text || '');
+    return m ? assColorToHex(m[1].toUpperCase()) : null;
+  };
+  const roleColorMap = new Map();
+  const roleColorAll = new Map();
+  for (const r of state.kar.rows) {
+    const role = r.zh ? speakerTextTagOf(r.zh) : '';
+    if (!role) continue;
+    for (const ev of (r.zh && r.zh.events) || []) {
+      const hex = leadColorOf(ev.text);
+      if (!hex) continue;
+      const key = role.toLowerCase();
+      if (!roleColorAll.has(key)) roleColorAll.set(key, hex);
+      if (!HIGHLIGHT_COLORS.has(hex)) { roleColorMap.set(key, hex); break; }
+    }
+  }
+  let leadFixed = 0, leadRestored = 0, leadKept = 0;
   for (const r of state.kar.rows) {
     if (!r.zh || !r.en || !r.zh.events || !r.zh.events.length) continue;
     const ev = r.zh.events[0];
     const m = /^\s*(\{\\c&H([0-9A-Fa-f]{6})&\})/.exec(ev.text || '');
-    if (m && HIGHLIGHT_COLORS.has(assColorToHex(m[2].toUpperCase()))) {
-      state.assDoc.setEventText(ev, (ev.text || '').slice(m[1].length));   // 只剥行首那一个标签
+    const hex = m ? assColorToHex(m[2].toUpperCase()) : null;
+    if (!m || !HIGHLIGHT_COLORS.has(hex)) continue;
+    const role = speakerTextTagOf(r.zh);
+    if (!role) {
+      state.assDoc.setEventText(ev, (ev.text || '').slice(m[1].length));   // 无角色标签 → 切片泄漏
       leadFixed++;
+      continue;
+    }
+    const known = roleColorMap.get(role.toLowerCase());
+    if (known) {
+      // 角色另有已知颜色 → 绿色是逐词高亮泄漏，替换成真正的角色色
+      state.assDoc.setEventText(ev, assHexToTag(known) + (ev.text || '').slice(m[1].length));
+      leadRestored++;
+    } else {
+      // 没有其它颜色证据 → 很可能角色本身就是绿色（JamatoP），保留
+      leadKept++;
     }
   }
-  if (ghosts.length || leadFixed) {
+  // 已被旧版"见绿即剥"或编辑路径弄丢角色色标的行：若同角色在别处有颜色，补回。
+  let leadRepaired = 0;
+  for (const r of state.kar.rows) {
+    if (!r.zh || !r.zh.events) continue;
+    const role = speakerTextTagOf(r.zh);
+    if (!role) continue;
+    const key = role.toLowerCase();
+    const color = roleColorMap.get(key) || roleColorAll.get(key);
+    if (!color) continue;
+    for (const ev of r.zh.events) {
+      const text = ev.text || '';
+      if (leadColorOf(text)) continue;          // 已有行首色标
+      state.assDoc.setEventText(ev, assHexToTag(color) + text);
+      leadRepaired++;
+    }
+  }
+  if (ghosts.length || leadFixed || leadRestored || leadRepaired) {
     const msg = [];
     if (ghosts.length) msg.push(`清理 ${ghosts.length} 条重复的中文切片残留行`);
-    if (leadFixed) msg.push(`剥掉 ${leadFixed} 行的逐词绿标(整行发绿的病灶)`);
+    if (leadFixed) msg.push(`剥掉 ${leadFixed} 行无角色绿标`);
+    if (leadRestored) msg.push(`按角色色修正 ${leadRestored} 行绿标`);
+    if (leadKept) msg.push(`保留 ${leadKept} 行角色本身为绿色`);
+    if (leadRepaired) msg.push(`补回 ${leadRepaired} 行丢失的角色色标`);
     toast('已修复旧版逐词切片脏数据：' + msg.join('，'), 6000);
   }
 
@@ -3358,10 +3427,12 @@ function applyAnchorSentence(sent, s, e, text) {
   if ((sent.words && sent.words.length) || sent.events.length > 1) {
     const keep = sent.events[0];
     let keepText = keep.text || '';
-    // 切片行首的逐词绿标({\c&H00FF00&})不能被下面的"继承前置标签"逻辑捡走 ——
-    // 否则整句被染成高亮绿。说话人色永不可能是逐词绿(speakerColorOf 已排除), 见绿即剥。
+    // 切片行首的逐词绿标不能被下面的"继承前置标签"逻辑捡走；但角色色本身也可能是绿色
+    // （JamatoP）。有可见 [角色] 时保留绿标，只有无角色行才当作切片泄漏剥掉。
     const mLead = /^\s*(\{\\c&H([0-9A-Fa-f]{6})&\})/.exec(keepText);
-    if (mLead && HIGHLIGHT_COLORS.has(assColorToHex(mLead[2].toUpperCase()))) keepText = keepText.slice(mLead[1].length);
+    if (mLead && HIGHLIGHT_COLORS.has(assColorToHex(mLead[2].toUpperCase())) && !speakerTextTagOf(sent)) {
+      keepText = keepText.slice(mLead[1].length);
+    }
     const p = sent.proto || { layer: keep.layer, name: keep.name, effect: keep.effect, margins: keep.margins };
     sent.events = state.assDoc.replaceEvents(sent.events, [{
       layer: p.layer, style: sent.style, name: p.name,

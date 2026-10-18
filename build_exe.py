@@ -114,14 +114,27 @@ def embed_icon_and_version(exe_path, ico):
     rcedit = ensure_rcedit()
     ver = app_file_version() or '0.0.0'
     display = app_version() or ver
-    run([rcedit, exe_path,
-         '--set-icon', ico,
-         '--set-file-version', ver,
-         '--set-product-version', ver,
-         '--set-version-string', 'ProductName', 'SubFabric',
-         '--set-version-string', 'FileDescription', 'SubFabric 字幕工作台',
-         '--set-version-string', 'CompanyName', 'EndiVee233',
-         '--set-version-string', 'LegalCopyright', 'EndiVee233'])
+    cmd = [rcedit, exe_path,
+           '--set-icon', ico,
+           '--set-file-version', ver,
+           '--set-product-version', ver,
+           '--set-version-string', 'ProductName', 'SubFabric',
+           '--set-version-string', 'FileDescription', 'SubFabric 字幕工作台',
+           '--set-version-string', 'CompanyName', 'EndiVee233',
+           '--set-version-string', 'LegalCopyright', 'EndiVee233']
+    # 刚写出的 90MB exe 会被杀毒/索引服务短暂持有句柄，rcedit 此时报
+    # "Fatal error: Unable to commit changes"（同一命令稍后再跑就成功）。
+    # 构建应当可重复，这里做短重试；真失败（非占用）仍会退出。
+    import time
+    for attempt in range(6):
+        print('>', ' '.join(cmd))
+        r = subprocess.run(cmd)
+        if r.returncode == 0:
+            break
+        if attempt == 5:
+            sys.exit(f'命令失败: {cmd}')
+        print('  rcedit 暂时无法写入（可能被杀毒/索引占用），%.1fs 后重试 %d/5…' % (0.4 * (attempt + 1), attempt + 1))
+        time.sleep(0.4 * (attempt + 1))
     print('已嵌入图标与版本信息: v%s（文件版本 %s）' % (display, ver))
 
 

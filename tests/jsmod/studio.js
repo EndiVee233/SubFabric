@@ -1,4 +1,5 @@
 import { STUDIO_KEY, normalizeStudio, projectPhase, matchesProject, imageData } from './studio-state.js';
+import { configure as configureRim } from './rim-curve.js';
 import { escapeHtml as esc, fmtTime, popOrigin } from './util.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
@@ -12,7 +13,7 @@ document.querySelector('.sf-brand-title').appendChild($('app-version'));
 let saved;
 try { saved = JSON.parse(localStorage.getItem(STUDIO_KEY) || '{}'); } catch { saved = {}; }
 let prefs = normalizeStudio(saved, themes);
-let projects = [], filter = 'all', folder = '', route = location.hash || '#/home';
+let projects = [], filter = 'all', folder = '', route = location.hash || '#/dashboard';
 let applying = false, pendingSetting = '';
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 const auroraPalettes = { sage: ['#90b99c', '#bacb91', '#9ac2b8'], ocean: ['#74adc8', '#9eaccf', '#95c5be'], sunset: ['#d69caa', '#cfb693', '#aca3cf'] };
@@ -108,6 +109,7 @@ function applyTheme() {
   applying = false;
   renderPacks();
   syncAppearanceChoices();
+  configureRim({ material: pack.id === 'material-you', enabled: prefs.rimEnabled, prefs, tokens, dark });
 }
 function syncAppearanceChoices() {
   for (const kind of ['background', 'mode']) {
@@ -178,6 +180,16 @@ function themeStatus() { $('sf-theme-status').textContent = t('外观已保存�
 for (const [id, key] of [['sf-glass-dim', 'glassDim'], ['sf-glass-blur', 'glassBlur'], ['sf-glass-opacity', 'glassOpacity']]) $(id).addEventListener('input', () => {
   if (commit({ [key]: Number($(id).value) })) { applyTheme(); themeStatus(); }
 });
+const rimEnabled = $('sf-rim-enabled');
+if (rimEnabled) rimEnabled.addEventListener('change', () => {
+  if (commit({ rimEnabled: rimEnabled.checked })) { applyTheme(); themeStatus(); }
+});
+for (const [id, key] of [['sf-rim-sat-low', 'rimSatLow'], ['sf-rim-bri-gain', 'rimBriGain'], ['sf-rim-spec-base', 'rimSpecBase'], ['sf-rim-power', 'rimPower']]) {
+  const input = $(id);
+  if (input) input.addEventListener('input', () => {
+    if (commit({ [key]: Number(input.value) })) { applyTheme(); themeStatus(); }
+  });
+}
 for (const [id, key] of [['sf-mode', 'mode'], ['sf-background', 'background'], ['sf-motion', 'motion'], ['sf-aurora-motion', 'auroraMotion']]) $(id).addEventListener('change', () => {
   if (commit({ [key]: $(id).value })) { applyTheme(); themeStatus(); }
 });
@@ -262,7 +274,13 @@ function moveStyles() {}
 const enhance = $('st-panel-enhance');
 const cardOf = id => $(id).closest('.st-card');
 const heal = cardOf('cb-heal-words');
-$('tab-settings').appendChild(heal);
+// 必须放回 .settings-list（滚动区）内部；直接挂到 #tab-settings 会落在滚动区外，
+// 在编辑器设置底部形成一张固定/遮挡内容的浮窗。优先放在「高级字幕操作」组后面，
+// 与它的语义位置一致；找不到时退化为设置列表末尾。
+const settingsList = $('tab-settings').querySelector('.settings-list') || $('tab-settings');
+const advanced = $('editor-advanced-actions');
+if (advanced && advanced.parentElement === settingsList) advanced.after(heal);
+else settingsList.appendChild(heal);
 for (const [title, ids] of [
   ['识别结果', ['st-conf-mode', 'st-cast-enabled']],
   ['热词与专有名词', ['ah-terms-list', 'ah-score', 'an-use-translate']],
@@ -364,12 +382,24 @@ function selectSetting(name) {
 }
 document.querySelectorAll('[data-setting]').forEach(b => b.addEventListener('click', () => setting(b.dataset.setting)));
 document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.go; }));
-for (const id of ['sf-create', 'sf-hero-create']) $(id).addEventListener('click', () => $('btn-new-project').click());
-$('sf-direct-editor').addEventListener('click', () => { location.hash = '#/editor'; });
-$('sf-show-ready').addEventListener('click', () => { filter = 'ready'; folder = ''; refreshLibrary(); });
-$('sf-resume-open').addEventListener('click', () => {
-  const p = projects.find(p => p.id === prefs.recent && p.format);
-  if (p) location.hash = '#/project/' + p.id; else $('btn-new-project').click();
+// 自定义主页小组件：计数卡片只切筛选，动作卡片走现有入口，不复制业务逻辑。
+$('sf-widgets').addEventListener('click', (e) => {
+  const w = e.target.closest('[data-widget],[data-widget-filter]');
+  if (!w) return;
+  if (w.dataset.widgetFilter) {
+    filter = w.dataset.widgetFilter;
+    folder = '';
+    if (location.hash === '#/home') refreshLibrary();
+    else location.hash = '#/home';
+    requestAnimationFrame(() => $('home-list')?.scrollIntoView({ block: 'start' }));
+    return;
+  }
+  if (w.dataset.widget === 'new') { $('btn-new-project').click(); return; }
+  if (w.dataset.widget === 'settings') { location.hash = '#/settings'; return; }
+  if (w.dataset.widget === 'resume') {
+    const p = projects.find(p => p.id === prefs.recent && p.format) || projects.find(p => p.format);
+    if (p) location.hash = '#/project/' + p.id; else $('btn-new-project').click();
+  }
 });
 // 真实快捷键目前固定；帮助页准确显示当前映射，不承诺不存在的自定义能力。
 $('sf-shortcuts').addEventListener('click', () => {
@@ -407,11 +437,183 @@ $('sf-filters').addEventListener('click', e => { const b = e.target.closest('[da
 $('sf-search').addEventListener('input', refreshLibrary);
 $('sf-list-mode').addEventListener('click', () => { if (commit({ view: prefs.view === 'grid' ? 'list' : 'grid' })) refreshLibrary(); });
 $('sf-clear-filter').addEventListener('click', () => { filter = 'all'; folder = ''; $('sf-search').value = ''; renderFolders(); refreshLibrary(); });
+/** 自定义主页：按项目真实阶段渲染小组件；UWP 下 CSS 会转成磁贴。 */
+function renderWidgets() {
+  const el = $('sf-widgets');
+  if (!el) return;
+  const count = phase => projects.filter(p => projectPhase(p) === phase).length;
+  const recent = projects.find(p => p.id === prefs.recent && p.format) || projects.find(p => p.format);
+  const active = count('active'), ready = count('ready'), attention = count('attention');
+  const all = projects.length;
+  const recentMeta = recent
+    ? `${String(recent.format).toUpperCase()}${recent.subName ? ' · ' + recent.subName : ''}`
+    : t('从视频或字幕开始');
+  el.innerHTML = `
+    <button type="button" class="sf-widget sf-widget-wide sf-widget-resume" data-widget="resume" data-tone="accent">
+      <span class="sf-widget-kicker">YOUR NEXT STORY</span>
+      <strong class="sf-widget-title">${esc(recent?.name || t('开始新的创作'))}</strong>
+      <small>${esc(recentMeta)}</small>
+      <span class="sf-widget-cta">${t(recent ? '继续编辑' : '新建稿件')} <b aria-hidden="true">→</b></span>
+    </button>
+    <button type="button" class="sf-widget" data-widget-filter="active">
+      <span class="sf-widget-kicker">${t('处理中')}</span>
+      <strong class="sf-widget-num">${active}</strong>
+      <small>${t('正在识别 / 翻译')}</small>
+    </button>
+    <button type="button" class="sf-widget" data-widget-filter="ready">
+      <span class="sf-widget-kicker">${t('可编辑')}</span>
+      <strong class="sf-widget-num">${ready}</strong>
+      <small>${t('已经可以改字幕')}</small>
+    </button>
+    <button type="button" class="sf-widget" data-widget-filter="attention" data-tone="warn">
+      <span class="sf-widget-kicker">${t('需处理')}</span>
+      <strong class="sf-widget-num">${attention}</strong>
+      <small>${t('失败 / 待重试')}</small>
+    </button>
+    <button type="button" class="sf-widget" data-widget-filter="all">
+      <span class="sf-widget-kicker">${t('全部稿件')}</span>
+      <strong class="sf-widget-num">${all}</strong>
+      <small>${t('本地工作空间')}</small>
+    </button>
+    <button type="button" class="sf-widget" data-widget="new" data-tone="accent">
+      <span class="sf-widget-kicker">NEW</span>
+      <strong class="sf-widget-title">${t('新建稿件')}</strong>
+      <small>${t('视频、链接或字幕')}</small>
+    </button>
+    <button type="button" class="sf-widget" data-widget="settings">
+      <span class="sf-widget-kicker">SETTINGS</span>
+      <strong class="sf-widget-title">${t('全局设置')}</strong>
+      <small>${t('模型、翻译与外观')}</small>
+    </button>`;
+}
+
+/** Material You 主页：复刻旧版稿件库的三段式 hero；只在 material-you 主题启用。 */
+function isMaterialHome() { return document.body.dataset.themePack === 'material-you'; }
+function muCounts() {
+  const counts = { all: projects.length, active: 0, ready: 0, attention: 0 };
+  for (const p of projects) {
+    const phase = projectPhase(p);
+    if (Object.prototype.hasOwnProperty.call(counts, phase)) counts[phase]++;
+  }
+  return counts;
+}
+function updateMuClock() {
+  const now = new Date();
+  const date = $('sf-mu-date');
+  if (date) date.textContent = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(now);
+  const hourHand = $('sf-mu-clock-hour'), minuteHand = $('sf-mu-clock-minute'), secondHand = $('sf-mu-clock-second'), flowerFace = $('sf-mu-flower-face');
+  const hourDeg = ((now.getHours() % 12) + now.getMinutes() / 60) * 30;
+  const minuteDeg = now.getMinutes() * 6;
+  const secondDeg = now.getSeconds() * 6;
+  if (hourHand) hourHand.setAttribute('transform', `rotate(${hourDeg} 50 50)`);
+  if (minuteHand) minuteHand.setAttribute('transform', `rotate(${minuteDeg} 50 50)`);
+  if (secondHand) secondHand.setAttribute('transform', `rotate(${secondDeg} 50 50)`);
+  if (flowerFace) flowerFace.setAttribute('transform', `rotate(${secondDeg} 50 50)`);
+}
+function fmtMuDuration(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (!total) return '—';
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+function muDeviceOf(project) {
+  const engine = String(project?.draft?.engine || '').toLowerCase();
+  const model = String(project?.draft?.modelId || '').toLowerCase();
+  if (!engine) return '—';
+  if (engine === 'dual') return 'NPU+GPU';
+  if (engine === 'openvino' || model.includes('npu')) return 'NPU';
+  if (engine === 'bcut' || engine === 'capcut' || engine.includes('cloud')) return '云端';
+  return 'GPU';
+}
+function renderMuProcessing() {
+  const latest = projects.find(p => projectPhase(p) === 'active') || projects.find(p => p.draft) || projects[0] || null;
+  const active = !!latest && projectPhase(latest) === 'active';
+  const draftStatus = latest?.draft?.status || '';
+  const done = !!latest && (!!latest.format || draftStatus === 'done' || draftStatus === 'ready');
+  let progress = Number(latest?.draft?.progress) || 0;
+  if (done) progress = 100;
+  else if (active && latest?.prepare?.status === 'running' && progress < 5) progress = 5;
+  progress = Math.max(0, Math.min(100, Math.round(progress)));
+  const name = $('sf-mu-processing-name'), kicker = $('sf-mu-processing-kicker'), fill = $('sf-mu-processing-fill'), pct = $('sf-mu-processing-pct');
+  const card = $('sf-mu-processing');
+  if (name) name.textContent = latest?.name || '还没有处理中的稿件';
+  if (kicker) kicker.textContent = !latest ? '处理中' : active ? '处理中' : done ? '已完成' : draftStatus === 'error' ? '处理中断' : '最近处理';
+  if (fill) fill.style.width = progress + '%';
+  if (pct) pct.textContent = progress + '%';
+  if (card) card.dataset.processing = latest?.id || '';
+  const dur = Number(latest?.prepare?.duration || latest?.source?.duration || latest?.duration || 0);
+  const durEl = $('sf-mu-processing-duration'), devEl = $('sf-mu-processing-device');
+  if (durEl) durEl.textContent = fmtMuDuration(dur);
+  if (devEl) devEl.textContent = muDeviceOf(latest);
+}
+function renderMaterialHome() {
+  const root = $('sf-mu-home');
+  if (!root || root.hidden) return;
+  updateMuClock();
+  const counts = muCounts();
+  const recent = projects.find(p => p.id === prefs.recent && p.format) || projects.find(p => p.format);
+  const write = (id, value) => { const el = $(id); if (el) el.textContent = String(value); };
+  write('sf-mu-status-num', counts.ready);
+  renderMuProcessing();
+  write('sf-mu-ready-widget', counts.ready);
+  write('sf-mu-attention-count', counts.attention);
+  write('sf-mu-all-count', counts.all);
+  write('sf-mu-next-title', recent?.name || '开始新的创作');
+  write('sf-mu-next-meta', recent
+    ? `${String(recent.format).toUpperCase()}${recent.subName ? ' · ' + recent.subName : ''}`
+    : '从视频或字幕开始');
+  write('sf-mu-resume-cta', recent ? '继续编辑 →' : '新建稿件 →');
+  const resume = $('sf-mu-resume');
+  if (resume) resume.dataset.projectId = recent?.id || '';
+
+}
+function syncDashboardMode() {
+  const dashboard = $('dashboard-view'), material = $('sf-mu-home'), widgets = $('sf-widgets');
+  if (!dashboard || !material || !widgets) return;
+  const on = isMaterialHome();
+  dashboard.dataset.homeMode = on ? 'material' : 'widgets';
+  material.hidden = !on;
+  widgets.hidden = on;
+  if (on) renderMaterialHome();
+}
+function goLibraryFilter(nextFilter, clearSearch = true) {
+  filter = nextFilter;
+  folder = '';
+  if (clearSearch && $('sf-search')) $('sf-search').value = '';
+  if (location.hash === '#/home') refreshLibrary(); else location.hash = '#/home';
+  requestAnimationFrame(() => $('home-list')?.scrollIntoView({ block: 'start' }));
+}
+$('sf-mu-new').addEventListener('click', () => $('btn-new-project').click());
+$('sf-mu-temp').addEventListener('click', () => goLibraryFilter('ready'));
+$('sf-mu-resume').addEventListener('click', () => {
+  const id = $('sf-mu-resume').dataset.projectId;
+  if (id) location.hash = '#/project/' + encodeURIComponent(id); else $('btn-new-project').click();
+});
+$('sf-mu-widgets').addEventListener('click', (e) => {
+  const processing = e.target.closest('#sf-mu-processing');
+  if (processing) {
+    const id = processing.dataset.processing;
+    if (id) location.hash = '#/project/' + encodeURIComponent(id);
+    else goLibraryFilter('active');
+    return;
+  }
+  const b = e.target.closest('[data-mu-filter],[data-mu-action]');
+  if (!b) return;
+  if (b.dataset.muFilter) { goLibraryFilter(b.dataset.muFilter); return; }
+  if (b.dataset.muAction === 'new') { $('btn-new-project').click(); return; }
+  if (b.dataset.muAction === 'settings') { location.hash = '#/settings'; }
+});
+window.addEventListener('sf-studio-theme', syncDashboardMode);
+const muClockTimer = setInterval(updateMuClock, 1000);
+if (muClockTimer && typeof muClockTimer.unref === 'function') muClockTimer.unref();
+updateMuClock();
+syncDashboardMode();
+
 function refreshLibrary() {
   let visible = 0;
   const current = prefs.folders.find(f => f.id === folder);
-  $('sf-library-title').textContent = t(route === '#/tasks' ? '任务中心' : current?.name || '稿件库');
-  // 任务中心与稿件库共用同一组卡片，必须尊重用户选择的列表/卡片视图。
+  $('sf-library-title').textContent = t(current?.name || '稿件库');
+  // 小组件与稿件库共用同一组卡片，必须尊重用户选择的列表/卡片视图。
   $('home-view').dataset.list = prefs.view;
   $('sf-list-mode').setAttribute('aria-pressed', String(prefs.view === 'list'));
   $('sf-list-mode').textContent = t(prefs.view === 'list' ? '卡片视图' : '列表视图');
@@ -454,15 +656,10 @@ function refreshLibrary() {
       window.SF_PROGRESS.set(bar, p.draft?.progress, p.draft?.status);
     }
   }
-  $('home-empty').hidden = projects.length > 0 || route === '#/tasks';
-  $('sf-filter-empty').hidden = visible > 0 || projects.length === 0 && route !== '#/tasks';
-  $('sf-hero').hidden = route === '#/tasks' || !!folder;
-  $('sf-ready-count').textContent = projects.filter(p => projectPhase(p) === 'ready').length;
-  $('sf-task-count').textContent = projects.filter(p => projectPhase(p) === 'active').length || '';
-  const recent = projects.find(p => p.id === prefs.recent && p.format);
-  $('sf-resume-name').textContent = recent?.name || t('为每一句话，留出呼吸的空间。');
-  $('sf-resume-meta').textContent = recent ? `${String(recent.format).toUpperCase()} · ${recent.subName || ''}` : t('从视频开始，把灵感变成字幕。');
-  $('sf-resume-open').textContent = t(recent ? '继续编辑' : '新建稿件');
+  $('home-empty').hidden = projects.length > 0;
+  $('sf-filter-empty').hidden = visible > 0 || projects.length === 0;
+  renderWidgets();
+  syncDashboardMode();
   window.SF_PROGRESS.mount($('home-list'));
 }
 
@@ -638,7 +835,7 @@ window.__sfStudio = {
     $('sf-nav').hidden = editor; $('sf-topbar').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
     const global = h === '#/settings';
     moveStyles(global);
-    const titles = { home: '稿件库', tasks: '任务中心', settings: '设置', help: '帮助与快捷键', new: '新建稿件', details: '稿件详情' };
+    const titles = { dashboard: '主页', home: '稿件库', settings: '设置', help: '帮助与快捷键', new: '新建稿件', details: '稿件详情' };
     $('sf-breadcrumb').textContent = t(titles[h.slice(2).split('/')[0]] || '字幕工作台');
     document.querySelectorAll('[data-route]').forEach(a => { const active = h === '#/' + a.dataset.route; a.classList.toggle('active', active); if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     if (global) {
@@ -646,7 +843,6 @@ window.__sfStudio = {
       if (pendingSetting) selectSetting(pendingSetting);
     }
     if (editor && h.startsWith('#/project/') && prefs.recent !== h.slice(10)) commit({ recent: h.slice(10) });
-    if (h === '#/tasks' && previous !== h) { filter = 'all'; folder = ''; $('sf-search').value = ''; }
     refreshLibrary();
   }
 };
