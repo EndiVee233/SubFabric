@@ -12,7 +12,7 @@ const tokens = {
   '--accent-soft': '#d3dded'
 };
 
-check(() => assert.equal(RIM_SELECTOR, '.sf-choice-menu,.sf-rim-sample', '只有二级弹层和实时预览挂环'));
+check(() => assert.equal(RIM_SELECTOR, '.sf-choice-menu,.sf-rim-sample,.sscp', '二级弹层、取色器与实时预览挂环'));
 check(() => assert.equal(rimActive('material-you'), true));
 check(() => assert.equal(rimActive('material-you', false), false));
 check(() => assert.equal(rimActive('studio'), false));

@@ -21,6 +21,7 @@ export default [
       sourceType: 'module',
       globals: {
         window: 'readonly', document: 'readonly', navigator: 'readonly',
+        innerWidth: 'readonly', innerHeight: 'readonly',   // 取色器/弹窗夹取视口边界用（浏览器全局，非 window. 前缀写法）
         console: 'readonly', fetch: 'readonly', setTimeout: 'readonly',
         clearTimeout: 'readonly', setInterval: 'readonly', clearInterval: 'readonly',
         requestAnimationFrame: 'readonly', cancelAnimationFrame: 'readonly',

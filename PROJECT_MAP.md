@@ -49,7 +49,7 @@ SubFabric 是一个**本地动态字幕编辑器**：给视频做「中文整句
   （见下方「/DIR 会被 UsePreviousAppDir 顶掉」：那一步会原地覆盖用户已装的 2.4.0），因此"装完能不能跑"仍属未验证。
 - **beta 1.3 构建（2026-10-18）**：`build_exe.py` → `build/SubFabric.exe`（93,613,568 字节，FileVersion/ProductVersion
   `1.3.0.0`，SEA sentinel 与 blob 均在，子系统 2=GUI）；`ISCC` → `build/installer/SubFabric-beta 1.3-setup.exe`
-  （37,563,214 字节）。构建时刚写出的 90MB exe 会被杀毒/索引短暂占用，rcedit 报
+  （37,565,546 字节；取色器重做后于 21:17 重建）。构建时刚写出的 90MB exe 会被杀毒/索引短暂占用，rcedit 报
   `Fatal error: Unable to commit changes`；`build_exe.py` 已对这一步做短重试（0.4–2.0s，最多 5 次），
   真失败仍退出。安装包/Release 未做真实安装与发布。
 - **踩过的坑（2026-10-14）**：`SubFabric.iss` 的 `VersionInfoProductVersion` 曾写成 `{#MyAppVersion}`（= 显示版本
@@ -285,7 +285,11 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换；`readMeta/writeMeta` 的兼容调用以 WeakMap 基线算递归字段差量，并入最新状态，禁止旧对象整体覆盖已有项目。跨 await 新增更新优先调用 updateMeta。
 - **首页列表**：`isCreating` 统一活动置顶与轮询判据，包含下载、提取、初稿及新建空窗，失败/暂停无字幕稿不冒充活动。`cardSig` 不含 progress/message/modifiedAt，三者就地更新；顺序同步独立于结构重建，只移动错位节点。首次直接显示进度，只有 running 的目标值变化才播放数字与 width 的 420ms 线性过渡；WeakMap 使旧动画失效，移除节点停止写入。studio.css 的流光和宽度过渡只属于 running，完成/暂停/失败无填充动画。
 - **主页 Tab（2026-10-18）**：`#/dashboard` 独立主页（`#dashboard-view.workspace-page`）由 `refreshLibrary` 按 `projectPhase` 渲染 7 个小组件（继续编辑 / 处理中 / 可编辑 / 需处理 / 全部 / 新建 / 设置）；计数卡切 `filter` 并跳 `#/home`，动作卡复用 `#btn-new-project` 与设置路由。UWP 主题层把 `.sf-widget` 转成 2px 直角主题色磁贴；非 UWP 保持卡片。`#/home` 是稿件库，不再有 hero/小组件；无 hash 默认 `#/dashboard`。
-- **Material You 主页（2026-10-18）**：依据 GitHub `f0f1bb9391a0` 的旧版稿件库 hero 重做；`#dashboard-view` 内 `#sf-mu-home` 只在 `data-theme-pack="material-you"` 时显示；`syncDashboardMode` 按主题切换 `#sf-mu-home` 与通用 `#sf-widgets`（`data-home-mode=material/widgets`）。Material You 主页按历史稿件库截图使用三段式 `.sf-hero`：左侧 `.sf-flower` 118px SVG 花瓣时钟（上一版单一路径花瓣随秒针同角度旋转；胶囊形时分针两档浅蓝 + 小圆点秒针；文案“点击开始新的创作”；悬浮 1.04 不旋转）、中间 `.sf-resume` 最近稿件/继续编辑卡、右侧 `.sf-orbit` 100×148 的 40° 倾斜可编辑统计胶囊（左移 30px（平板 12px、手机 0）、文字居中）；下方 6 个 MY 小组件（处理中/可编辑/需处理/全部 + 新建/设置），其中处理卡占两列：最新稿件标题 + 全宽进度条（完成 100%）+ 时长/识别设备两枚胶囊；resume 卡 650×180（左边缘偏移 21px，左右留白近似）；搜索与筛选保留在 `#/home` 稿件库，避免 New Tab 控件混入旧版构图。Material You 专属 CSS 仍保留深浅色令牌与 900px/560px 响应式布局；非 Material 主题保持 7 个小组件，UWP 磁贴不变。
+- **Material You 主页（2026-10-18）**：依据 GitHub `f0f1bb9391a0` 的旧版稿件库 hero 重做；`#dashboard-view` 内 `#sf-mu-home` 只在 `data-theme-pack="material-you"` 时显示；`syncDashboardMode` 按主题切换 `#sf-mu-home` 与通用 `#sf-widgets`（`data-home-mode=material/widgets`）。Material You 主页按历史稿件库截图使用三段式 `.sf-hero`：左侧 `.sf-flower` 118px SVG 花瓣时钟（上一版单一路径花瓣随秒针同角度旋转；胶囊形时分针两档浅蓝 + 小圆点秒针；文案“点击开始新的创作”；悬浮 1.04 不旋转）、中间 `.sf-resume` 当前正在编辑卡（当前 `prefs.recent`，标题/副标题/按钮已放大）、右侧 `.sf-orbit` 100×148 的 40° 倾斜可编辑统计胶囊（桌面左移 30px；≤1200px 84×124/left 4，≤560px 80×116/left 0，避免遮挡 resume）；下方 6 个 MY 小组件（处理中/可编辑/需处理/全部 + 新建/设置），其中处理卡占两列：最新稿件标题 + 全宽进度条（完成 100%）+ 时长/识别设备两枚胶囊；resume 卡 650×180（左边缘偏移 21px，宽度 `calc(100% - 21px)` 防右列溢出）；搜索与筛选保留在 `#/home` 稿件库，避免 New Tab 控件混入旧版构图。Material You 专属 CSS 仍保留深浅色令牌与 900px/560px 响应式布局；非 Material 主题保持 7 个小组件，UWP 磁贴不变。
+- **取色器交互（2026-10-18）**：`SSColorPicker.open(input, point)` 支持鼠标落点定位；角色菜单「修改颜色」传递菜单项坐标；标题栏可拖动（pointer capture + 视口夹取），打开/拖动位置均在 `placePopup` 统一处理。
+- **取色器（2026-10-18）**：`color-picker.js` 改为 Windows 经典双栏：左 250px 基础色/自定义色板，右 HSV + Hex/RGB/HSV 字段；`studio.css` 末段用主题变量和 Material 28px 玻璃表面覆盖旧暗色样式。`.sscp` 纳入 `RIM_SELECTOR`，自适应 rim 环 z-index 100001，边框由采样色场生成。
+- **背景工具显隐（2026-10-18）**：`#sf-image-tools` 默认 `hidden`，`applyTheme` 按 `prefs.background === 'image'` 切换；`选择图片/清除图片`只在自定义图片模式出现，aurora 模式仍只显示流光选项。
+- **MY 明暗转场（2026-10-18）**：Material You 的明暗按钮通过 View Transitions API 做圆形 reveal；从按钮中心设置 `--sf-mode-x/y/r`，`::view-transition-new(root)` 用 `clip-path: circle()` 从 0 扩到全屏。非 Material、减少动效、motion=off 或无 API 时退回即时切换。
 - **设置页侧栏（2026-10-18）**：设置专用的透明覆盖不再作用于 `.sf-nav`；左栏和其他页面一样使用全局玻璃表面（`color-mix(surface 88%,transparent)` + blur + shadow）。顶部栏/内容仍按设置页透明处理。
 - **设置页背景（2026-10-18）**：设置工作区本身透明；旧规则在 `[data-workspace=settings]` 下强制隐藏 `.sf-ambient/.sf-backdrop`，导致「模糊流光 / 自定义图片」只在设置页不生效。已移除该隐藏，让背景层在设置页可见；卡片仍使用毛玻璃表面。
 - **页面切换（2026-10-18）**：`setPageVisible` 离场立即 `hidden`（不再保留 200ms 淡出），避免透明首页/稿件库浮层背后的旧页残影；只保留新页入场动画。`#dashboard-view` 已纳入 `is-leaving`/z-index 兼容规则。

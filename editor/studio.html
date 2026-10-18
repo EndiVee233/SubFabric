@@ -1039,14 +1039,14 @@
         <button type="button" class="sf-flower" id="sf-mu-new" title="新建稿件">
           <span aria-hidden="true"><svg viewBox="0 0 100 100">
             <g id="sf-mu-flower-face"><path d="M50 0 L61 7 L75 5 L82 18 L95 25 L93 39 L100 50 L93 61 L95 75 L82 82 L75 95 L61 93 L50 100 L39 93 L25 95 L18 82 L5 75 L7 61 L0 50 L7 39 L5 25 L18 18 L25 5 L39 7 Z"/></g>
-            <line class="sf-mu-clock-hand sf-mu-clock-hour" id="sf-mu-clock-hour" x1="50" y1="50" x2="50" y2="31"/>
             <line class="sf-mu-clock-hand sf-mu-clock-minute" id="sf-mu-clock-minute" x1="50" y1="50" x2="50" y2="17"/>
+            <line class="sf-mu-clock-hand sf-mu-clock-hour" id="sf-mu-clock-hour" x1="50" y1="50" x2="50" y2="31"/>
             <circle class="sf-mu-clock-second" id="sf-mu-clock-second" cx="50" cy="14" r="3.2"/>
           </svg></span>
           <b>点击开始新的创作</b><small id="sf-mu-date">10月18日 星期六</small>
         </button>
         <button type="button" class="sf-resume" id="sf-mu-resume">
-          <p class="sf-eyebrow">YOUR NEXT STORY</p>
+          <p class="sf-eyebrow" id="sf-mu-resume-eyebrow">当前正在编辑</p>
           <strong id="sf-mu-next-title">为每一句话，留出呼吸的空间。</strong>
           <small id="sf-mu-next-meta">从视频开始，把灵感变成字幕。</small>
           <span class="btn" id="sf-mu-resume-cta">新建稿件 →</span>
@@ -2055,7 +2055,7 @@
             <div class="sf-aurora-colors"><div class="sf-aurora-color"><label for="sf-aurora-color-1">流光色 1</label><input type="text" data-color-input="1" id="sf-aurora-color-1" aria-label="流光色 1"></div><div class="sf-aurora-color"><label for="sf-aurora-color-2">流光色 2</label><input type="text" data-color-input="1" id="sf-aurora-color-2" aria-label="流光色 2"></div><div class="sf-aurora-color"><label for="sf-aurora-color-3">流光色 3</label><input type="text" data-color-input="1" id="sf-aurora-color-3" aria-label="流光色 3"></div></div>
             <div class="sf-settings-line"><div><label for="sf-aurora-motion">流光效果</label><p>静态保留柔和色彩；动态缓慢流动，减少动效时自动停止。</p></div><select id="sf-aurora-motion"><option value="dynamic">动态流光</option><option value="static">静态流光</option></select></div>
           </div>
-          <div class="sf-settings-image-tools"><button type="button" class="btn" id="sf-image-pick">选择图片</button><button type="button" class="btn" id="sf-image-clear">清除图片</button><input type="file" id="sf-image-file" accept="image/png,image/jpeg,image/webp" hidden><span class="gl-hint">PNG、JPEG 或 WebP · 2MB 以内</span></div>
+          <div class="sf-settings-image-tools" id="sf-image-tools" hidden><button type="button" class="btn" id="sf-image-pick">选择图片</button><button type="button" class="btn" id="sf-image-clear">清除图片</button><input type="file" id="sf-image-file" accept="image/png,image/jpeg,image/webp" hidden><span class="gl-hint">PNG、JPEG 或 WebP · 2MB 以内</span></div>
           <div class="sf-settings-line"><div><b>明暗模式</b><p>随系统变化，或保持喜欢的明暗。</p></div><div class="sf-settings-segments" role="group" aria-label="明暗模式"><button type="button" data-appearance-mode="light" aria-pressed="false">浅色</button><button type="button" data-appearance-mode="dark" aria-pressed="false">深色</button><button type="button" data-appearance-mode="system" aria-pressed="false">跟随系统</button></div><div hidden><select id="sf-mode" aria-label="明暗模式"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div></div>
           <div class="sf-settings-line"><div><label for="sf-motion">界面动效</label><p>页面转场、轻回弹与流光；系统减少动效偏好优先。</p></div><select id="sf-motion"><option value="on">开启</option><option value="off">减少动效</option></select></div>
           <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-dim">毛玻璃压暗</label><p>控制浅色与深色模式卡片底色的压暗程度，数值越高文字越清晰。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-dim" min="72" max="92" step="1" value="80"><output id="sf-glass-dim-value" for="sf-glass-dim">80%</output></div></div>

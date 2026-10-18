@@ -668,7 +668,7 @@ export class EditorPanel {
         this._hideRoleMenu();
         if (!role) return;
         if (act === 'rename') this._showRenameBox(role, pos.x, pos.y);
-        else if (act === 'recolor') this._openColorPicker(role);
+        else if (act === 'recolor') this._openColorPicker(role, { x: e.clientX, y: e.clientY });
       });
     }
     if (this.renameBox) {
@@ -732,11 +732,12 @@ export class EditorPanel {
     this._renameRole = null;
   }
 
-  _openColorPicker(role) {
+  _openColorPicker(role, point = null) {
     if (!this.colorInput) return;
     this._colorRole = role;
     this.colorInput.value = role.color || '#ff7a45';
-    this.colorInput.click();
+    if (window.SSColorPicker?.open) window.SSColorPicker.open(this.colorInput, point);
+    else this.colorInput.click();
   }
 
   _matchMode(it) {

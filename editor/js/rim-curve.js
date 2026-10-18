@@ -16,11 +16,12 @@ export const RIM_DEFAULTS = Object.freeze({
   rimPower: 1.5
 });
 
-/* 只给二级弹层与曲线卡的实时预览挂环。一级界面（主题包/背景/模型/角色/
+/* 只给二级弹层、取色器与曲线卡的实时预览挂环。一级界面（主题包/背景/模型/角色/
    方案卡、下拉触发器、字幕卡）不挂，避免把环境环扩散到整个界面。 */
 export const RIM_SELECTOR = [
   '.sf-choice-menu',
-  '.sf-rim-sample'
+  '.sf-rim-sample',
+  '.sscp'
 ].join(',');
 
 const $ = id => document.getElementById(id);

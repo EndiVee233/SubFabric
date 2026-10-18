@@ -89,6 +89,7 @@ function applyTheme() {
     input.value = color; input.dispatchEvent(new Event('input', { bubbles: true }));
   });
   $('sf-aurora-options').hidden = prefs.background !== 'aurora';
+  $('sf-image-tools').hidden = prefs.background !== 'image';
   $('sf-aurora-motion').value = prefs.auroraMotion;
   $('sf-aurora-palette').value = !prefs.auroraColors.length ? 'theme' : Object.keys(auroraPalettes).find(key => auroraPalettes[key].every((color, i) => color === prefs.auroraColors[i])) || 'custom';
   $('sf-background').value = prefs.background; $('sf-mode').value = prefs.mode; $('sf-motion').value = prefs.motion; $('sf-color').value = accent;
@@ -190,9 +191,52 @@ for (const [id, key] of [['sf-rim-sat-low', 'rimSatLow'], ['sf-rim-bri-gain', 'r
     if (commit({ [key]: Number(input.value) })) { applyTheme(); themeStatus(); }
   });
 }
-for (const [id, key] of [['sf-mode', 'mode'], ['sf-background', 'background'], ['sf-motion', 'motion'], ['sf-aurora-motion', 'auroraMotion']]) $(id).addEventListener('change', () => {
+for (const [id, key] of [['sf-background', 'background'], ['sf-motion', 'motion'], ['sf-aurora-motion', 'auroraMotion']]) $(id).addEventListener('change', () => {
   if (commit({ [key]: $(id).value })) { applyTheme(); themeStatus(); }
 });
+$('sf-mode').addEventListener('change', () => {
+  if (commit({ mode: $('sf-mode').value })) applyModeWithReveal();
+});
+/** Material You 明暗切换：从被点击的浅色/深色按钮处用圆形遮罩扩散到全屏。 */
+let modeRevealSeq = 0;
+function applyModeWithReveal() {
+  const value = prefs.mode;
+  const button = document.querySelector(`[data-appearance-mode="${value}"]`);
+  const rect = button?.getBoundingClientRect();
+  const x = rect ? rect.left + rect.width / 2 : innerWidth / 2;
+  const y = rect ? rect.top + rect.height / 2 : innerHeight / 2;
+  const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y)) + 2;
+  const root = document.documentElement;
+  const seq = ++modeRevealSeq;
+  root.style.setProperty('--sf-mode-x', `${x}px`);
+  root.style.setProperty('--sf-mode-y', `${y}px`);
+  root.style.setProperty('--sf-mode-r', `${radius}px`);
+  const cleanup = () => {
+    if (seq !== modeRevealSeq) return;
+    root.style.removeProperty('--sf-mode-x');
+    root.style.removeProperty('--sf-mode-y');
+    root.style.removeProperty('--sf-mode-r');
+  };
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    || document.body.dataset.motion === 'off';
+  const material = document.body.dataset.design === 'material';
+  if (!material || reduced || typeof document.startViewTransition !== 'function') {
+    applyTheme();
+    themeStatus();
+    cleanup();
+    return;
+  }
+  try {
+    const transition = document.startViewTransition(() => { applyTheme(); });
+    themeStatus();
+    transition.finished.finally(cleanup);
+  } catch {
+    applyTheme();
+    themeStatus();
+    cleanup();
+  }
+}
+
 // 只有可见的动态背景运行动画；静态/后台/减少动效不启动 JS 时钟。
 document.addEventListener('visibilitychange', () => { document.body.dataset.pageVisible = String(!document.hidden); });
 $('sf-aurora-palette').addEventListener('change', () => {
@@ -551,20 +595,21 @@ function renderMaterialHome() {
   if (!root || root.hidden) return;
   updateMuClock();
   const counts = muCounts();
-  const recent = projects.find(p => p.id === prefs.recent && p.format) || projects.find(p => p.format);
+  const current = projects.find(p => p.id === prefs.recent) || null;
   const write = (id, value) => { const el = $(id); if (el) el.textContent = String(value); };
   write('sf-mu-status-num', counts.ready);
   renderMuProcessing();
   write('sf-mu-ready-widget', counts.ready);
   write('sf-mu-attention-count', counts.attention);
   write('sf-mu-all-count', counts.all);
-  write('sf-mu-next-title', recent?.name || '开始新的创作');
-  write('sf-mu-next-meta', recent
-    ? `${String(recent.format).toUpperCase()}${recent.subName ? ' · ' + recent.subName : ''}`
+  write('sf-mu-resume-eyebrow', current ? '当前正在编辑' : '开始新的创作');
+  write('sf-mu-next-title', current?.name || '还没有正在编辑的稿件');
+  write('sf-mu-next-meta', current
+    ? `${String(current.format || 'ASS').toUpperCase()}${current.subName ? ' · ' + current.subName : ''}`
     : '从视频或字幕开始');
-  write('sf-mu-resume-cta', recent ? '继续编辑 →' : '新建稿件 →');
+  write('sf-mu-resume-cta', current ? '继续编辑 →' : '新建稿件 →');
   const resume = $('sf-mu-resume');
-  if (resume) resume.dataset.projectId = recent?.id || '';
+  if (resume) resume.dataset.projectId = current?.id || '';
 
 }
 function syncDashboardMode() {
