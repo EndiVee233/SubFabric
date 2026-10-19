@@ -405,8 +405,8 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 - 文档收敛为 `README.md` / `docs/PROJECT.md` / `AGENTS.md` 三份（原 23 份已删除，见 §13 索引）。
 - 版本推进至 **beta 1.4**：显示 `beta 1.4` / 文件 `1.4.0.0`；**未创建 tag 与 Release**。
 - 构建已核对：`build/SubFabric.exe`（89.1 MB，FileVersion/ProductVersion `1.4.0.0`，`NODE_SEA_BLOB` 在）、
-  `build/installer/SubFabric-beta 1.4-setup.exe`（37,580,702 字节，sha256 `E2DDF7B7…90236091`，
-  含 `hardsub.js` / `ffmpeg-tool.js` / `export-video.js`）。
+  `build/installer/SubFabric-beta 1.4-setup.exe`（约 35.8 MB，含 `hardsub.js` / `ffmpeg-tool.js` /
+  `export-video.js`）。**sha256 每次构建都会变（打包了会变的文档与源码），不写进文档，以实际文件为准。**
 - 测试：全量 JS 回归 **96 通过 / 9 部分执行 / 0 失败 / 2 排除**；ESLint **0 error**。
 - 已通过 GitHub REST API 提交到 `main`（`63eb463`，父 `9a738c3`），提交后核对远端文件与删除项一致。
 
