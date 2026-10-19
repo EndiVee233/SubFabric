@@ -395,11 +395,27 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `asr/fetch/README.md` | 下载内核的目录内容、设计要点、验证 | 已并入本文 §8 |
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
-### 最近状态（2026-10-18 历史快照，非本次验证）
+### 最近状态
 
-- 版本推进至 **beta 1.3**：显示 `beta 1.3` / 文件 `1.3.0.0` / 待发 tag `v1.3.0-beta.1`（未创建 tag 与 Release）。
-- 构建与产物已核对：`build/SubFabric.exe` 与 `build/installer/SubFabric-beta 1.3-setup.exe`；真实静默安装、
-  GPU/ASR/LLM 与 Release 发布未执行。
+**2026-10-19（本次，已完成且已验证）**
+
+- 新增 **视频导出**（双语硬字幕 / 生肉 / ASS 字幕，可多选），§11。
+- 压制**GPU 优先**（NVIDIA → AMD → Intel → CPU），按「厂商 × 编码格式」逐项判断。
+- 新增 `editor/ffmpeg-tool.js`：ffmpeg 定位与按需自动下载；「前置」新增状态卡与下载入口。
+- 文档收敛为 `README.md` / `docs/PROJECT.md` / `AGENTS.md` 三份（原 23 份已删除，见 §13 索引）。
+- 版本推进至 **beta 1.4**：显示 `beta 1.4` / 文件 `1.4.0.0`；**未创建 tag 与 Release**。
+- 构建已核对：`build/SubFabric.exe`（89.1 MB，FileVersion/ProductVersion `1.4.0.0`，`NODE_SEA_BLOB` 在）、
+  `build/installer/SubFabric-beta 1.4-setup.exe`（37,580,702 字节，sha256 `E2DDF7B7…90236091`，
+  含 `hardsub.js` / `ffmpeg-tool.js` / `export-video.js`）。
+- 测试：全量 JS 回归 **96 通过 / 9 部分执行 / 0 失败 / 2 排除**；ESLint **0 error**。
+- 已通过 GitHub REST API 提交到 `main`（`63eb463`，父 `9a738c3`），提交后核对远端文件与删除项一致。
+
+**未验证 / 未执行**：打包后的 exe 未做运行时冒烟（SEA 启动器把端口写死 8321，而本机 8321 已被
+beta 1.3 实例占用；启动器本轮未改动，其链路由该实例间接证明）；真实静默安装、GPU/ASR/LLM 实测未执行。
+
+**2026-10-18 历史快照（非本次验证）**
+
+- 版本推进至 beta 1.3：显示 `beta 1.3` / 文件 `1.3.0.0`（未创建 tag 与 Release）。
 - 取色器重做为 Windows 经典双栏布局，并支持标题栏拖动、在鼠标点击处打开。
 - Material You 明暗切换加入圆形扩散转场（View Transitions API，`prefers-reduced-motion` 时即时切换）。
-- 统一设置页左侧栏压暗、修复设置页不显示自定义背景；2026-10-18 晚增量已经认证 REST 通道原子提交写入 main。
+- 统一设置页左侧栏压暗、修复设置页不显示自定义背景。

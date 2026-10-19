@@ -70,36 +70,51 @@ function runnable(bin) {
  */
 async function downloadOne(url, dest, report, via) {
   if (via === 'node') {
-    const resp = await fetch(url, {
-      redirect: 'follow', headers: { 'User-Agent': 'SubFabric/1.0' },
-      signal: AbortSignal.timeout(30 * 60 * 1000),
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const total = Number(resp.headers.get('content-length') || 0);
-    const ws = fs.createWriteStream(dest);
-    let done = 0;
-    let lastTick = 0;
+    /* 卡死检测：实测遇到过连接建立后只下到 19MB 就不再出数据、也不报错的死连接。
+     * 只靠一个"总超时"会干等 30 分钟，所以这里用"无数据 60 秒即中止"的看门狗：
+     * 每收到一块数据就把计时器重置。 */
+    const ctl = new AbortController();
+    const STALL_MS = 60 * 1000;
+    let stallTimer = setTimeout(() => ctl.abort(new Error('下载卡住（60 秒没有收到数据）')), STALL_MS);
+    const bump = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => ctl.abort(new Error('下载卡住（60 秒没有收到数据）')), STALL_MS);
+    };
     try {
-      const reader = resp.body.getReader();
-      for (;;) {
-        const { done: fin, value } = await reader.read();
-        if (fin) break;
-        const buf = Buffer.from(value);
-        done += buf.length;
-        if (!ws.write(buf)) await new Promise(r => ws.once('drain', r));
-        const now = Date.now();
-        if (now - lastTick > 200) {          // 节流，别把前端刷爆
-          lastTick = now;
-          report(total ? 3 + (done / total) * 80 : 10,
-            `下载中 ${(done / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB`);
+      const resp = await fetch(url, {
+        redirect: 'follow', headers: { 'User-Agent': 'SubFabric/1.0' },
+        signal: ctl.signal,
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const total = Number(resp.headers.get('content-length') || 0);
+      const ws = fs.createWriteStream(dest);
+      let done = 0;
+      let lastTick = 0;
+      try {
+        const reader = resp.body.getReader();
+        for (;;) {
+          const { done: fin, value } = await reader.read();
+          if (fin) break;
+          bump();
+          const buf = Buffer.from(value);
+          done += buf.length;
+          if (!ws.write(buf)) await new Promise(r => ws.once('drain', r));
+          const now = Date.now();
+          if (now - lastTick > 200) {          // 节流，别把前端刷爆
+            lastTick = now;
+            report(total ? 3 + (done / total) * 80 : 10,
+              `下载中 ${(done / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB`);
+          }
         }
+        await new Promise((res, rej) => ws.end(e => (e ? rej(e) : res())));
+      } catch (e) {
+        try { ws.destroy(); } catch { /* ignore */ }
+        throw e;
       }
-      await new Promise((res, rej) => ws.end(e => (e ? rej(e) : res())));
-    } catch (e) {
-      try { ws.destroy(); } catch { /* ignore */ }
-      throw e;
+      return;
+    } finally {
+      clearTimeout(stallTimer);
     }
-    return;
   }
 
   // PowerShell：拿不到总大小（Invoke-WebRequest 不回报），靠轮询文件大小显示已下载量
