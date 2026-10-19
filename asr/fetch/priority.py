@@ -1,4 +1,4 @@
-# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见本目录 README.md
+# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见 docs/PROJECT.md §8
 """优先级列表的通用处理。
 
 画质 / 音质 / 编码三张优先级表都会存进配置，而内置表会随站点变化

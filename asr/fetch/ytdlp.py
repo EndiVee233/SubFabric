@@ -1,4 +1,4 @@
-# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见本目录 README.md
+# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见 docs/PROJECT.md §8
 """yt-dlp 的唯一入口：确保它在、并把它交给其它模块。
 
 为什么要单独一层：

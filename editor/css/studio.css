@@ -2617,7 +2617,7 @@ body::before {
   box-shadow: var(--sh-2);
 }
 #video-hover-tip[hidden] { display: none; }
-/* pop-in 的关键帧在 studio.css（@keyframes pop-in）；弹层动效规范见 PROJECT_MAP §6 */
+/* pop-in 的关键帧在 studio.css（@keyframes pop-in）；弹层动效规范见 docs/PROJECT.md §4 */
 #video-hover-tip:not([hidden]) { animation: pop-in .13s var(--ease-out) both; }
 
 #stage-hint { color: var(--text-2); }#stage-hint .sh-box, #stage-hint > div { border-radius: var(--r-2); }
@@ -4649,3 +4649,112 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio .sscp .sscp-head { cursor:grab; user-select:none; touch-action:none; }
 .sf-studio .sscp.is-dragging .sscp-head { cursor:grabbing; }
 .sf-studio .sscp .sscp-head .sscp-x { cursor:pointer; }
+
+/* ══════════════════════════════════════════════════════════════════════
+ * 导出视频对话框（js/export-video.js 动态创建，模板里只有一个触发按钮）
+ * 全部走主题令牌，四个主题包共用同一套结构；Material You / UWP 只改圆角。
+ * ══════════════════════════════════════════════════════════════════════ */
+.sf-ev-backdrop {
+  position: fixed; inset: 0; z-index: 100002;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #0b0d0c 58%, transparent);
+  backdrop-filter: blur(6px);
+}
+.sf-ev-backdrop[hidden] { display: none; }
+body.sf-ev-open { overflow: hidden; }
+
+.sf-ev-panel {
+  width: min(620px, 100%); max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column;
+  background: var(--surface, #fff); color: var(--text, #1b201c);
+  border: 1px solid var(--line, #d8ddd9);
+  border-radius: 18px;
+  box-shadow: 0 24px 70px -30px #00000080;
+  overflow: hidden;
+}
+.sf-ev-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 18px 22px 12px;
+}
+.sf-ev-head h2 { font-size: 17px; font-weight: 600; margin: 0; }
+.sf-ev-x {
+  border: 0; background: transparent; color: var(--muted, #6b756e);
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 2px 8px; border-radius: 8px;
+}
+.sf-ev-x:hover { background: var(--surface-2, #eef1ee); color: var(--text, #1b201c); }
+
+.sf-ev-body { padding: 0 22px 8px; overflow-y: auto; display: grid; gap: 16px; }
+.sf-ev-row { display: grid; gap: 8px; }
+.sf-ev-label { font-size: 12px; font-weight: 600; color: var(--muted, #6b756e); letter-spacing: .02em; }
+.sf-ev-dirrow { display: flex; gap: 8px; }
+.sf-ev-input {
+  flex: 1; min-width: 0; padding: 9px 12px; font-size: 12.5px;
+  font-family: inherit; color: var(--text, #1b201c);
+  background: var(--surface-2, #f3f5f3);
+  border: 1px solid var(--line, #d8ddd9); border-radius: 10px;
+}
+.sf-ev-input:focus { outline: 2px solid var(--accent, #ff7a45); outline-offset: 1px; }
+
+.sf-ev-kinds { border: 1px solid var(--line, #d8ddd9); border-radius: 12px; padding: 6px 12px 10px; margin: 0; }
+.sf-ev-kinds legend { padding: 0 6px; }
+.sf-ev-kind {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 9px 4px; border-radius: 9px; cursor: pointer;
+}
+.sf-ev-kind:hover { background: var(--surface-2, #f3f5f3); }
+.sf-ev-kind input { margin-top: 3px; accent-color: var(--accent, #ff7a45); }
+.sf-ev-kind span { display: grid; gap: 2px; }
+.sf-ev-kind b { font-size: 12.5px; font-weight: 600; }
+.sf-ev-kind em { font-style: normal; font-size: 11px; color: var(--muted, #6b756e); line-height: 1.6; }
+
+.sf-ev-adv { border-top: 1px dashed var(--line, #d8ddd9); padding-top: 12px; }
+.sf-ev-adv summary {
+  cursor: pointer; font-size: 12px; color: var(--muted, #6b756e);
+  padding: 4px 0; user-select: none;
+}
+.sf-ev-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; margin-top: 10px; }
+.sf-ev-field { display: grid; gap: 5px; font-size: 11.5px; color: var(--muted, #6b756e); }
+.sf-ev-field select, .sf-ev-field input {
+  padding: 7px 9px; font-size: 12px; font-family: inherit;
+  color: var(--text, #1b201c); background: var(--surface-2, #f3f5f3);
+  border: 1px solid var(--line, #d8ddd9); border-radius: 9px;
+}
+.sf-ev-check { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-top: 10px; cursor: pointer; }
+.sf-ev-check input { accent-color: var(--accent, #ff7a45); }
+.sf-ev-hint { font-size: 11px; line-height: 1.7; color: var(--muted, #6b756e); margin: 10px 0 0; }
+
+.sf-ev-progress { display: grid; gap: 12px; padding: 4px 0 8px; }
+.sf-ev-step { display: grid; gap: 6px; }
+.sf-ev-stephead { display: flex; justify-content: space-between; gap: 12px; font-size: 11.5px; }
+.sf-ev-stepmsg { color: var(--muted, #6b756e); text-align: right; flex: 1; min-width: 0; }
+.sf-ev-step[data-status="done"] .sf-ev-stephead > span:first-child { color: var(--accent, #ff7a45); }
+.sf-ev-step[data-status="error"] .sf-ev-stepmsg { color: #d94a3d; }
+.sf-ev-bar { height: 5px; border-radius: 999px; background: var(--surface-2, #e8ebe8); overflow: hidden; }
+.sf-ev-bar > i { display: block; height: 100%; width: 0; background: var(--accent, #ff7a45); transition: width .3s ease; }
+.sf-ev-step[data-status="error"] .sf-ev-bar > i { background: #d94a3d; }
+.sf-ev-notes {
+  margin: 0; padding: 10px 14px 10px 28px; font-size: 11px; line-height: 1.75;
+  color: var(--muted, #6b756e); background: var(--surface-2, #f3f5f3); border-radius: 10px;
+}
+
+.sf-ev-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 22px 18px; border-top: 1px solid var(--line, #d8ddd9);
+}
+.sf-ev-status { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted, #6b756e); }
+
+/* Material You：更圆的角 */
+.sf-studio[data-theme-pack="material-you"] .sf-ev-panel { border-radius: 28px; }
+.sf-studio[data-theme-pack="material-you"] .sf-ev-input,
+.sf-studio[data-theme-pack="material-you"] .sf-ev-field select,
+.sf-studio[data-theme-pack="material-you"] .sf-ev-field input { border-radius: 999px; }
+/* Windows UWP：近直角、无模糊 */
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ev-panel { border-radius: 4px; }
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ev-backdrop { backdrop-filter: none; }
+
+@media (max-width: 640px) {
+  .sf-ev-backdrop { padding: 0; align-items: flex-end; }
+  .sf-ev-panel { width: 100%; max-height: 92vh; border-radius: 18px 18px 0 0; }
+  .sf-ev-grid { grid-template-columns: minmax(0, 1fr); }
+}

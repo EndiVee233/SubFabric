@@ -76,6 +76,8 @@ function localMt() {
 const fonts = require('./fonts.js');          // 本机字体库: 让 ASS 样式面板直接用系统字体
 const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容推断 + SPK→角色名)  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
 const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie / LLM API Key 走密文, 不明文进 settings.json
+const hardsub = require('./hardsub.js');     // 视频导出: 硬字幕压制 / 生肉复制 / 字幕导出（逻辑取自 hardsub-py）
+const ffmpegTool = require('./ffmpeg-tool.js'); // ffmpeg/ffprobe 定位与按需自动下载
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
 
@@ -121,8 +123,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.3'; // 产品显示版本
-const APP_FILE_VERSION = '1.3.0.0'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.0.0'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -321,7 +323,7 @@ const STATIC_RESOURCES = new Set([
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
-    'studio-themes', 'studio-progress', 'rim-curve'].map(n => '/editor/js/' + n + '.js'),
+    'studio-themes', 'studio-progress', 'rim-curve', 'export-video'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
   '/editor/vendor/subtitles-octopus-worker.wasm', '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf',
@@ -349,14 +351,22 @@ function staticResource(pathname) {
 
 /* ── 波形图: ffmpeg 直读视频音轨生成 PNG; 视频不在服务端留任何副本 ──
  * 注: 本机 ffmpeg 构建对管道不流式输出进度(showwavespic 仅 1 个输出帧), 因此进度由客户端计时提示 */
-/** 工具解析: 环境变量 → 常见安装位置 → 交给 PATH */
-function resolveTool(envKey, common) {
-  if (process.env[envKey]) return process.env[envKey];
-  for (const c of common) { try { fs.accessSync(c); return c; } catch {} }
-  return null;
+
+/* ffmpeg / ffprobe 的定位交给 editor/ffmpeg-tool.js（环境变量 → 自带副本 → 常见路径 → PATH），
+ * 并支持缺失时自动下载一份到 tools/ffmpeg/。
+ *
+ * ⚠ 这里必须是 **let 而不是 const**：用户可以在「前置」里点"下载 ffmpeg"，下载完成后
+ *   要立刻生效。const 在启动时就固定了值，下载完还得重启服务才认，体验很差。
+ *   全部 65 处调用都在用到时读变量，所以改成 let + 一个刷新函数即可。 */
+let FFMPEG = 'ffmpeg';
+let FFPROBE = 'ffprobe';
+function refreshFfmpegBinaries() {
+  const loc = ffmpegTool.locate();
+  FFMPEG = loc.ffmpeg.bin || 'ffmpeg';
+  FFPROBE = loc.ffprobe.bin || 'ffprobe';
+  return loc;
 }
-const FFMPEG = resolveTool('FFMPEG_PATH', ['D:/Program Files/ffmpeg/bin/ffmpeg.exe', 'C:/ffmpeg/bin/ffmpeg.exe']) || 'ffmpeg';
-const FFPROBE = resolveTool('FFPROBE_PATH', ['D:/Program Files/ffmpeg/bin/ffprobe.exe', 'C:/ffmpeg/bin/ffprobe.exe']) || 'ffprobe';
+refreshFfmpegBinaries();
 
 /** 波形 PNG 宽度: 按时长自适应(约 0.25s/像素), 上限 32000(浏览器单边安全上限)。
  *  固定 2400px 时 2.4h 视频每像素 3.5s, 3 秒的字幕块只切到不到 1 个源像素 →
@@ -7424,6 +7434,19 @@ function handleAsrRoutes(req, res, u) {
       vibevoice: Object.assign({ ok: false, cuda: false, vramMB: 0, msg: '预检中…' }, vibevoiceProbeCache || {}),
       vibevoiceRuntime: { ok: vibevoiceRuntimeOk(), name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB },
       diarize: { ready: diarizeReady(), models: DIARIZE_MODELS },
+      /* ffmpeg / ffprobe：波形、抽音频、压制都靠它。前端在「前置」里显示状态，
+       * 缺失时可以点一下让服务端自动下载一份到 tools/ffmpeg/（不污染系统 PATH）。 */
+      ffmpeg: (() => {
+        const loc = ffmpegTool.locate();
+        return {
+          ok: loc.ok,
+          ffmpeg: { bin: loc.ffmpeg.bin, source: loc.ffmpeg.source, ok: loc.ffmpeg.ok },
+          ffprobe: { bin: loc.ffprobe.bin, source: loc.ffprobe.source, ok: loc.ffprobe.ok },
+          canAutoDownload: loc.canAutoDownload,
+          toolDir: loc.toolDir,
+          download: ffmpegTool.state(),
+        };
+      })(),
       // 兼容旧前端字段
       ready: models.some(m => m.ready),
       // pythonProbe 现在按引擎分键（{sherpa:{…}, openvino:{…}}）。旧前端读的是 .ok/.msg，
@@ -7490,6 +7513,47 @@ function handleAsrRoutes(req, res, u) {
       probeNemo(true).catch(() => {});      // probeNemo 只接受 force 一个参数
       return sendJson(res, 200, { ok: true, python: ASR_PY });
     });
+  }
+
+  /* ── ffmpeg / ffprobe：状态轮询 + 自动下载 ──
+   * 放在 /api/asr/* 段里是因为它属于「前置依赖」，与 Python/模型同一块界面。
+   * 下载落点是 <仓库>/tools/ffmpeg/（不入库），不会动系统 PATH，也不会覆盖用户自带的版本：
+   *   · 环境变量 FFMPEG_PATH / FFPROBE_PATH 永远优先，且不会被自动下载改写
+   *   · 已能从常见路径/PATH 找到时不会重复下载 */
+  if (pathname === '/api/asr/ffmpeg/status' && req.method === 'GET') {
+    const loc = ffmpegTool.locate();
+    return sendJson(res, 200, {
+      ok: loc.ok,
+      ffmpeg: { bin: loc.ffmpeg.bin, source: loc.ffmpeg.source, ok: loc.ffmpeg.ok, error: loc.ffmpeg.error || '' },
+      ffprobe: { bin: loc.ffprobe.bin, source: loc.ffprobe.source, ok: loc.ffprobe.ok, error: loc.ffprobe.error || '' },
+      canAutoDownload: loc.canAutoDownload,
+      toolDir: loc.toolDir,
+      download: ffmpegTool.state(),
+    });
+  }
+
+  if (pathname === '/api/asr/ffmpeg/download' && req.method === 'POST') {
+    return void (async () => {
+      const loc = ffmpegTool.locate();
+      if (loc.ok) return sendJson(res, 200, { started: false, already: true, ok: true });
+      if (!loc.canAutoDownload) {
+        return sendJson(res, 400, {
+          error: loc.ffmpeg.source === 'env' || loc.ffprobe.source === 'env'
+            ? '已通过环境变量指定 ffmpeg，但它无法运行。请修正 FFMPEG_PATH / FFPROBE_PATH，或清掉环境变量改用自动下载'
+            : '当前系统不支持自动下载 ffmpeg，请手动安装并加入 PATH，或用 FFMPEG_PATH / FFPROBE_PATH 指定路径',
+        });
+      }
+      if (ffmpegTool.state().running) return sendJson(res, 200, { started: true, already: true });
+      // 后台跑：立即返回，前端轮询 /ffmpeg/status 看进度（30MB 级下载不能占着请求不放）
+      ffmpegTool.ensureFfmpeg().then(() => {
+        refreshFfmpegBinaries();          // 下载完成立刻生效，不用重启
+        hardsub.resetProbe();             // 编码器探测结果也作废（原来一个都探测不到）
+        console.log('[ffmpeg] 自动安装完成：' + FFMPEG);
+      }).catch((e) => {
+        console.warn('[ffmpeg] 自动安装失败：' + ((e && e.message) || e));
+      });
+      return sendJson(res, 200, { started: true });
+    })();
   }
 
   if (pathname === '/api/asr/install-nemo' && req.method === 'POST') {
@@ -8493,7 +8557,7 @@ function handleProjectsRoutes(req, res, u) {
       if (draftOn) {
         const draftModel = (draftModelId && modelById(draftModelId)) || resolveAsrModel() || null;
         // 逐词形态: 'color'(颜色高亮, 默认=升级前行为) | 'k'(\k 卡拉OK)。只在逐词开时有意义。
-        //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 docs/KARAOKE_DESIGN.md §5。
+        //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 docs/PROJECT.md §7「颜色设计」。
         const karaokeStyle = (wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
         const karaokeSweep = karaokeStyle === 'k' && !!data.karaokeSweep;
         const karaokeBase = /^#[0-9a-fA-F]{6}$/.test(String(data.karaokeBase || ''))
@@ -8548,6 +8612,360 @@ function handleProjectsRoutes(req, res, u) {
           if (packed) { try { fs.rmSync(packed.tmpDir, { recursive: true, force: true }); } catch { /* ignore */ } }
         }
       })();
+    }
+  }
+
+  /* ═══ 视频导出（硬字幕压制 / 生肉复制 / 字幕文件）═══
+   *
+   * 需求：让用户选导出目录，勾选「双语 / 生肉 / 字幕」中的一种或几种一起导出。
+   *   · 双语言 = 把稿件字幕烧进画面（硬字幕视频）
+   *   · 生肉   = 原视频（若稿件是由链接下载的，视频在本项目目录里，复制一份到目标目录即可）
+   *   · 字幕   = 当前稿件的 ASS 字幕文件
+   *
+   * 压制效果**默认继承稿件里的 ASS 样式**：我们不重新生成样式，而是直接把项目目录里的
+   * subtitle.ass 拿来烧 —— 用户在设置里调过的字体/字号/颜色/特效全都在那份文件里。
+   * 所以这里的参数只有"怎么编码"，不碰"长什么样"。
+   *
+   * 路由：
+   *   GET  /api/projects/:id/export-video/capabilities  → 本机可用的加速方案与编码器
+   *   POST /api/projects/:id/export-video                → 开始导出（可多选种类）
+   *   GET  /api/projects/:id/export-video/status         → 轮询进度
+   *   POST /api/projects/:id/export-video/cancel         → 取消
+   *
+   * 跨请求状态（exportJobs）在 editor/hardsub.js 的模块作用域里，不在这里。
+   */
+  {
+    const mCap = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/export-video\/capabilities$/.exec(pathname);
+    const mStatus = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/export-video\/status$/.exec(pathname);
+    const mCancel = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/export-video\/cancel$/.exec(pathname);
+    const mStart = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})\/export-video$/.exec(pathname);
+
+    /** 能力探测：告诉前端这台机器能选哪些加速/编码，避免用户选了个跑不动的组合。 */
+    if (mCap && req.method === 'GET') {
+      const meta = readMeta(mCap[1]) || {};
+      return (async () => {
+        let p;
+        try { p = hardsub.probe(FFMPEG, FFPROBE); }
+        catch (e) { return sendJson(res, 500, { error: '探测 ffmpeg 失败：' + ((e && e.message) || e) }); }
+        const hasVideo = !!(meta.video && meta.video.path);
+        const subFile = meta.subtitle && meta.subtitle.file;
+        return sendJson(res, 200, {
+          ffmpeg: p.version,
+          // 工具是否真的能跑：前端据此整块禁用导出，并给出"去装 ffmpeg"的指引，
+          // 而不是显示"未检测到硬件编码，将用 CPU"（那会让人以为只是慢，其实必然失败）
+          tools: p.tools,
+          gpus: p.gpus,
+          vendors: p.vendors,
+          accelerators: p.accelerators,
+          // 每个"厂商 × 编码格式"的真实可用性（前端据此提示"某格式只能用 GPU/要用 CPU"）
+          encoders: p.encoders,
+          cpu: p.cpu,
+          // 三个编码格式各自会自动选到哪个方案：GPU 优先，压不了才落 CPU
+          autoChoice: {
+            h264: hardsub.pickAccel(p, 'h264', 'auto'),
+            h265: hardsub.pickAccel(p, 'h265', 'auto'),
+            av1: hardsub.pickAccel(p, 'av1', 'auto'),
+          },
+          hasVideo,
+          videoName: (meta.video && meta.video.name) || '',
+          // 生肉能否复制：链接下载的视频落在项目目录里，本地引用的原片也能直接复制
+          canCopyRaw: hasVideo,
+          subtitleFile: subFile || '',
+          defaults: {
+            accel: 'auto',
+            codec: 'h264',
+            quality: hardsub.DEFAULT_QUALITY.h264,
+            threads: 0,
+          },
+        });
+      })();
+    }
+
+    /** 进度轮询。没有任务时返回 idle，前端据此判断按钮状态。 */
+    if (mStatus && req.method === 'GET') {
+      const st = hardsub.jobState(mStatus[1]);
+      return sendJson(res, 200, st || { status: 'idle' });
+    }
+
+    if (mCancel && req.method === 'POST') {
+      const id = mCancel[1];
+      const st = hardsub.jobState(id);
+      if (!st || st.status !== 'running') return sendJson(res, 200, { ok: true, status: 'idle' });
+      if (st.abort) { try { st.abort.abort(); } catch { /* ignore */ } }
+      hardsub.setJob(id, { cancelRequested: true });
+      return sendJson(res, 200, { ok: true, status: 'cancelling' });
+    }
+
+    if (mStart && req.method === 'POST') {
+      const id = mStart[1];
+      return readBody(req, res, 64 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let d = {};
+        try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch {
+          return sendJson(res, 400, { error: '请求格式错误' });
+        }
+        const meta = readMeta(id);
+        if (!meta) return sendJson(res, 404, { error: '项目不存在' });
+
+        /* ——— 参数校验 ——— */
+        const kinds = Array.isArray(d.kinds) ? d.kinds.filter(k => ['bilingual', 'raw', 'subtitle'].includes(k)) : [];
+        if (!kinds.length) return sendJson(res, 400, { error: '请至少选择一种导出内容' });
+
+        const outDir = String(d.outDir || '').trim();
+        if (!outDir) return sendJson(res, 400, { error: '请先选择导出目录' });
+        if (!path.isAbsolute(outDir)) return sendJson(res, 400, { error: '导出目录必须是绝对路径' });
+        try {
+          if (!fs.statSync(outDir).isDirectory()) return sendJson(res, 400, { error: '导出目录不可用' });
+        } catch {
+          // 目录不存在就建 —— 系统对话框允许"新建文件夹"，但用户也可能手输一个不存在的路径
+          try { fs.mkdirSync(outDir, { recursive: true }); }
+          catch { return sendJson(res, 400, { error: '导出目录不可用: ' + outDir }); }
+        }
+
+        // 已有任务在跑就别再起一个（同一项目同时压两遍会互相拖慢、还会写重名文件）
+        const running = hardsub.jobState(id);
+        if (running && running.status === 'running') {
+          return sendJson(res, 409, { error: '这个项目已经在导出中，请先等待或取消' });
+        }
+
+        const accel = ['auto', 'cpu', 'nvidia', 'amd', 'intel'].includes(d.accel) ? d.accel : 'auto';
+        const codec = ['h264', 'h265', 'av1'].includes(d.codec) ? d.codec : 'h264';
+        const quality = hardsub.clampQuality(codec, d.quality);
+        const threads = Math.max(0, Math.min(64, Number(d.threads) || 0));
+        const overwrite = !!d.overwrite;
+
+        // 需要视频的几种先检查视频在不在（生肉与硬字幕都要）
+        const needVideo = kinds.includes('bilingual') || kinds.includes('raw');
+        const videoPath = (meta.video && meta.video.path) || '';
+        if (needVideo) {
+          if (!videoPath) return sendJson(res, 400, { error: '这个项目还没有关联视频' });
+          let ok = false;
+          try { ok = fs.statSync(videoPath).isFile(); } catch { /* 不存在 */ }
+          if (!ok) return sendJson(res, 400, { error: '原视频找不到了，请先在编辑器里重新选择视频' });
+        }
+
+        const subFile = (meta.subtitle && meta.subtitle.file) || 'subtitle.ass';
+        const subPath = safeProjectFile(id, subFile);
+        if (kinds.includes('subtitle') && !subPath) {
+          return sendJson(res, 400, { error: '字幕文件路径不合法' });
+        }
+        if (kinds.includes('bilingual')) {
+          if (!subPath || !fs.existsSync(subPath)) {
+            return sendJson(res, 400, { error: '这个项目还没有字幕，无法压制硬字幕视频' });
+          }
+          /* 只有"压字幕进画面"才需要 ffmpeg；纯复制生肉/字幕不需要。
+           * 提前拦截：否则用户会等到任务跑起来才看到一句底层 stderr，
+           * 而且探测结果会表现成"没有编码器"，看起来像显卡问题。 */
+          const tools = hardsub.checkTools(FFMPEG, FFPROBE);
+          if (!tools.ok) {
+            return sendJson(res, 400, {
+              error: `压制需要 ffmpeg 与 ffprobe，当前无法运行（找不到 ${tools.missing.join(' 与 ')}）。`
+                + '请安装 ffmpeg 并加入 PATH，或用环境变量 FFMPEG_PATH / FFPROBE_PATH 指定完整路径。',
+              missing: tools.missing,
+            });
+          }
+          if (path.extname(subPath).toLowerCase() === '.srt'
+              || path.extname(subPath).toLowerCase() === '.vtt') {
+            // srt/vtt 也能烧，但没有 ASS 样式可继承 —— 照烧，不拦
+          }
+        }
+
+        /* ——— 起任务 ——— */
+        const abort = new AbortController();
+        const projectName = String(meta.name || id).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || id;
+        const job = hardsub.setJob(id, {
+          status: 'running', aborted: false, cancelRequested: false, abort,
+          kinds: kinds.slice(), outDir, codec, accel, quality,
+          startedAt: Date.now(), finishedAt: 0,
+          steps: kinds.map(k => ({ kind: k, status: 'pending', pct: 0, message: '', file: '' })),
+          error: '', notes: [],
+        });
+        void job;
+
+        (async () => {
+          const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-export-'));
+
+          /* 字幕来源的优先级：
+           *   ① 前端传来的字幕正文（已把微光/淡入等后处理特效烘进去 —— 那份配置存在浏览器
+           *      localStorage 里，服务端根本读不到，只有这条路径能保证"压制效果 == 编辑器预览"）
+           *   ② 项目目录里磁盘上的字幕文件（没开项目时直连接口、或前端没带正文时的回退）
+           * 两条都不改写用户的稿件文件：① 落到临时目录，② 只读取。 */
+          let subSourcePath = subPath;
+          const inlineText = typeof d.subtitleText === 'string' ? d.subtitleText : '';
+          let inlineNote = '';
+          if ((kinds.includes('bilingual') || kinds.includes('subtitle')) && inlineText.trim()) {
+            const subExt = (path.extname(subFile).toLowerCase() || '.ass');
+            const inlinePath = path.join(workDir, 'inline' + subExt);
+            fs.writeFileSync(inlinePath, inlineText, 'utf8');
+            subSourcePath = inlinePath;
+            inlineNote = '字幕取自编辑器当前内容（含你在设置里启用的特效）';
+          }
+          const outputs = [];
+          try {
+            /* 生肉：直接复制原片。链接下载的视频就落在项目目录 video/ 里，
+             * 复制一份到目标目录即可；本地引用的原片同理（不移动、不改名原文件）。 */
+            if (kinds.includes('raw')) {
+              hardsub.setJob(id, { current: 'raw' });
+              const stepOf = (k) => hardsub.jobState(id).steps.find(s => s.kind === k);
+              const step = stepOf('raw');
+              if (step) { step.status = 'running'; step.message = '复制原视频…'; }
+              const ext = path.extname(videoPath) || '.mp4';
+              const dest = path.join(outDir, `${projectName}_生肉${ext}`);
+              if (fs.existsSync(dest) && !overwrite) throw new Error('目标文件已存在：' + path.basename(dest));
+              const srcSize = fs.statSync(videoPath).size;
+              await new Promise((resolve, reject) => {
+                const rs = fs.createReadStream(videoPath);
+                const ws = fs.createWriteStream(dest);
+                let copied = 0;
+                rs.on('data', (c) => {
+                  copied += c.length;
+                  if (step) step.pct = Math.max(0, Math.min(99, Math.round((copied / srcSize) * 100)));
+                  if (abort.signal.aborted) { rs.destroy(); ws.destroy(); }
+                });
+                rs.on('error', reject);
+                ws.on('error', reject);
+                ws.on('finish', resolve);
+                rs.pipe(ws);
+              });
+              if (abort.signal.aborted) throw new Error('已取消');
+              if (step) { step.status = 'done'; step.pct = 100; step.message = '已复制'; step.file = dest; }
+              outputs.push({ kind: 'raw', path: dest });
+            }
+
+            /* 字幕：当前稿件的字幕文件（已经是应用过样式的成品，直接拷走） */
+            if (kinds.includes('subtitle')) {
+              hardsub.setJob(id, { current: 'subtitle' });
+              const step = hardsub.jobState(id).steps.find(s => s.kind === 'subtitle');
+              if (step) { step.status = 'running'; step.message = '复制字幕文件…'; }
+              const ext = path.extname(subFile).toLowerCase() || '.ass';
+              const dest = path.join(outDir, `${projectName}_字幕${ext}`);
+              if (fs.existsSync(dest) && !overwrite) throw new Error('目标文件已存在：' + path.basename(dest));
+              fs.copyFileSync(subSourcePath, dest);
+              if (step) { step.status = 'done'; step.pct = 100; step.message = '已导出'; step.file = dest; }
+              outputs.push({ kind: 'subtitle', path: dest });
+            }
+
+            /* 双语言：把字幕烧进画面 */
+            if (kinds.includes('bilingual')) {
+              hardsub.setJob(id, { current: 'bilingual' });
+              const step = hardsub.jobState(id).steps.find(s => s.kind === 'bilingual');
+              // 必须显式进 running：否则进度界面一直显示 pending，取消时也不会被标成已取消
+              if (step) { step.status = 'running'; step.pct = 0; }
+              const note = (m) => { if (step) step.message = m; };
+              note('读取视频信息…');
+
+              const media = hardsub.probeMedia(FFPROBE, videoPath);
+              const prep = hardsub.prepareSubtitle(subSourcePath, workDir);
+              {
+                const j = hardsub.jobState(id);
+                const extra = prep.notes.concat(inlineNote ? [inlineNote] : []);
+                if (extra.length) hardsub.setJob(id, { notes: (j.notes || []).concat(extra) });
+              }
+
+              /* 加速方案：**GPU 优先于 CPU**（用户明确要求），且按"这个编码格式"逐项判断。
+               * 不能只看厂商是否可用 —— 实测 RX550 能跑 h264_amf/hevc_amf 但 av1_amf 不行，
+               * 只按厂商挑会白跑一次试压再掉回 CPU，而 Intel QSV 本来就能压 AV1。 */
+              const capability = hardsub.probe(FFMPEG, FFPROBE);
+              const picked = hardsub.pickAccel(capability, codec, accel);
+              let planAccel = picked.accel;
+              if (accel === 'auto') {
+                note(planAccel === 'cpu'
+                  ? '没有可用的 GPU 编码器，使用 CPU 软编码'
+                  : `自动选择加速：${planAccel}（GPU 优先）`);
+              } else if (picked.fallback) {
+                note(`${accel} 压不了 ${codec}，已改用 ${planAccel === 'cpu' ? 'CPU 软编码' : planAccel}`);
+              }
+
+              const makePlan = (a) => hardsub.buildPlan(FFMPEG, a, codec, quality);
+              let plan = makePlan(planAccel);
+
+              const ext = hardsub.pickOutputExt(videoPath);
+              const dest = path.join(outDir, `${projectName}_双语${ext}`);
+              if (fs.existsSync(dest) && !overwrite) throw new Error('目标文件已存在：' + path.basename(dest));
+              // 取消/失败时删掉写了一半的成片：留着会让用户以为导出成功了
+              const cleanupPartial = () => {
+                if (!fs.existsSync(dest)) return;
+                if (abort.signal.aborted) { try { fs.unlinkSync(dest); } catch { /* ignore */ } }
+              };
+
+              const fontsDir = hardsub.findFontsDir(path.dirname(videoPath), subPath ? path.dirname(subPath) : '');
+              if (planAccel !== 'cpu') {
+                note(`校验 ${planAccel} 硬件链路…`);
+                const val = hardsub.validateChain(FFMPEG, plan, media, prep.path, fontsDir);
+                if (!val.ok) {
+                  // 硬件"能列出编码器但跑不动"是常态 —— 自动回退，并把原因告诉用户
+                  const j = hardsub.jobState(id);
+                  hardsub.setJob(id, {
+                    notes: (j.notes || []).concat([
+                      `${planAccel} 硬件编码不可用（${val.error.slice(0, 160)}），已回退 CPU 软编码`,
+                    ]),
+                  });
+                  planAccel = 'cpu';
+                  plan = makePlan('cpu');
+                }
+              }
+
+              if (abort.signal.aborted) throw new Error('已取消');
+              note('开始压制…');
+              const cmd = hardsub.buildFfmpegCmd(FFMPEG, plan, media, prep.path, dest, fontsDir, threads);
+              const r = await hardsub.runEncode(cmd, media.duration, (p) => {
+                if (step) { step.pct = p.pct; step.message = `压制中 ${p.pct}%（${p.time} / ${p.duration}）`; }
+              }, abort.signal);
+              if (r.code !== 0) {
+                // 取消时不要把"已取消"包装成失败原因 —— 外层靠 abort 信号判定终态
+                if (r.cancelled) { cleanupPartial(); const err = new Error('已取消'); err.cancelled = true; throw err; }
+                cleanupPartial();
+                throw new Error('ffmpeg 压制失败：' + String(r.error || '').slice(0, 400));
+              }
+
+              // 压制后自检：时长/分辨率/音轨数与源一致，防止"压完才发现不对"
+              const check = hardsub.probeMedia(FFPROBE, dest);
+              const problems = [];
+              if (Math.abs(check.duration - media.duration) > 2) {
+                problems.push(`时长不一致（${media.duration.toFixed(1)}s → ${check.duration.toFixed(1)}s）`);
+              }
+              if (check.width !== media.width || check.height !== media.height) {
+                problems.push(`分辨率变了（${media.width}x${media.height} → ${check.width}x${check.height}）`);
+              }
+              if (media.audio.length && !check.audio.length) problems.push('成片没有音轨');
+              if (step) {
+                step.status = 'done'; step.pct = 100; step.file = dest;
+                step.message = problems.length ? '已压制（自检提示：' + problems.join('；') + '）' : `已压制 · ${planAccel}`;
+              }
+              outputs.push({ kind: 'bilingual', path: dest, accel: planAccel, problems });
+            }
+
+            const j = hardsub.jobState(id);
+            hardsub.setJob(id, {
+              status: 'done', aborted: false, finishedAt: Date.now(),
+              outputs, notes: (j.notes || []),
+            });
+            console.log(`[export-video] ${id} 完成：${outputs.map(o => path.basename(o.path)).join(', ')}`);
+          } catch (e) {
+            const msg = String((e && e.message) || e);
+            const cancelled = abort.signal.aborted;
+            const j = hardsub.jobState(id) || {};
+            // 取消不该显示成"失败"：用户主动终止是正常操作，把当前步骤标成 cancelled 而不是 error
+            const steps = (j.steps || []).map(s => (s.status === 'running' ? Object.assign({}, s, {
+              status: cancelled ? 'cancelled' : 'error',
+              message: cancelled ? '已取消' : msg.slice(0, 300),
+            }) : s));
+            hardsub.setJob(id, {
+              status: cancelled ? 'cancelled' : 'error',
+              // 取消时 error 留空，前端据此显示"已取消"而不是一条红色报错
+              error: cancelled ? '' : msg.slice(0, 600), steps,
+              aborted: cancelled, finishedAt: Date.now(), outputs,
+            });
+            if (!cancelled) console.warn('[export-video] ' + id + ' 失败：' + msg);
+          } finally {
+            try { fs.rmSync(workDir, { recursive: true, force: true }); } catch { /* ignore */ }
+            const j2 = hardsub.jobState(id);
+            if (j2) { delete j2.abort; }
+          }
+        })();
+
+        return sendJson(res, 202, { ok: true, status: 'running' });
+      });
     }
   }
 

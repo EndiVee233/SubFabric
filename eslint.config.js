@@ -97,6 +97,10 @@ export default [
       'editor/bcut-asr.js', 'editor/capcut-asr.js', 'editor/cast.js', 'editor/fonts.js',
       'editor/glued-words.js', 'editor/k-line.js', 'editor/llm-text.js', 'editor/project-pack.js',
       'editor/reseg.js', 'editor/secret-store.js', 'editor/speech-gap.js',
+      // 视频导出（硬字幕压制/生肉/字幕）：纯 Node 模块，只用 require + node 内置模块
+      'editor/hardsub.js',
+      // ffmpeg/ffprobe 定位与按需自动下载
+      'editor/ffmpeg-tool.js',
     ],
     languageOptions: {
       ecmaVersion: 2022,

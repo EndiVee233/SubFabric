@@ -705,6 +705,9 @@ export function initProjects(ctx) {
         // 所有网络读取和解析完成后，在同一同步阶段提交 ID 与文档。
         routeSub(text, name);
         state.project = { id: pid, meta: m, loadPeaks };
+        // 「导出视频」对话框要拿当前稿件 id，但它与 project.js 不属于同一个模块作用域。
+        // 只暴露这一个窄接口（不是整个 state）—— 挂了什么就只给什么，避免变成事实上的全局状态。
+        window.__sfCurrentProjectId = () => pid;
         lastSavedText = text;
         saveRevision = (r.headers.get('ETag') || '').replace(/^"|"$/g, '');
         saveConflict = false;
@@ -2227,7 +2230,30 @@ async function renderAsrModels() {
     if (studioUI) {
       const pyStatus = pySt.running ? (pySt.msg || '安装中…') + ' ' + (pySt.pct || 0) + '%' : pySt.error ? (pySt.msg || '安装失败') : !py ? '检测中…' : py.ok ? (d.provider === 'cuda' ? '可用 · CUDA' : '可用 · 基础环境') : '未安装';
       const pyButton = pySt.running || !py ? '' : !py.ok || d.provider !== 'cuda' ? '<button type="button" class="btn btn-mini sm-pyinstall">' + (py.ok ? '安装 CUDA' : '下载') + '</button>' : '';
-      rows = `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">Python</span><span class="sm-state${py?.ok ? ' ok' : ''}">${esc(pyStatus)}</span>${pyButton}</div><details class="sf-settings-details"${GROUP_OPEN.get('python-options') ? ' open' : ''}><summary>Python 路径设置</summary><code>${esc(pyExe || '(未定)')}</code><div class="sf-prerequisite-actions"><button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button><button type="button" class="btn btn-mini sm-pyreset">用回默认</button></div><div class="sm-pymsg" role="status"></div></details></div>`;
+      /* ffmpeg 前置：波形、抽音频、视频压制都依赖它。
+       * 找不到时给「下载」按钮，服务端会装到项目自带的 tools/ffmpeg/（不动系统 PATH）。 */
+      const ff = d.ffmpeg || null;
+      let ffState, ffBtn = '', ffDesc = '';
+      if (ff) {
+        const dl = ff.download || {};
+        if (dl.running) {
+          ffState = `<span class="sm-state running">下载中 ${dl.pct || 0}%${dl.message ? ' · ' + esc(dl.message) : ''}</span>`;
+        } else if (dl.error) {
+          ffState = `<span class="sm-state" style="color:var(--danger)">下载失败：${esc(dl.error)}</span>`;
+          ffBtn = '<button type="button" class="btn btn-mini sm-ffinstall">重试</button>';
+        } else if (ff.ok) {
+          const src = { env: '环境变量', bundled: '程序自带', common: '常见路径', path: 'PATH' }[ff.ffmpeg.source] || ff.ffmpeg.source;
+          ffState = `<span class="sm-state ok">✓ 可用 · ${esc(src)}</span>`;
+        } else {
+          ffState = '<span class="sm-state" style="color:var(--danger)">未安装</span>';
+          if (ff.canAutoDownload) ffBtn = '<button type="button" class="btn btn-mini sm-ffinstall">下载</button>';
+          ffDesc = '<div class="sm-desc" style="margin-top:6px">视频压制、波形与抽音频都用它。<b>下载后放在项目自带的 tools/ffmpeg/</b>，不改系统 PATH；若你已装过，也可以用环境变量 FFMPEG_PATH / FFPROBE_PATH 指定路径</div>';
+        }
+      } else {
+        ffState = '<span class="sm-state">检测中…</span>';
+      }
+      const ffmpegCard = ff ? `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">ffmpeg</span>${ffState}${ffBtn}</div>${ffDesc}</div>` : '';
+      rows = ffmpegCard + `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">Python</span><span class="sm-state${py?.ok ? ' ok' : ''}">${esc(pyStatus)}</span>${pyButton}</div><details class="sf-settings-details"${GROUP_OPEN.get('python-options') ? ' open' : ''}><summary>Python 路径设置</summary><code>${esc(pyExe || '(未定)')}</code><div class="sf-prerequisite-actions"><button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button><button type="button" class="btn btn-mini sm-pyreset">用回默认</button></div><div class="sm-pymsg" role="status"></div></details></div>`;
     }
     // 各任务 key: model:<id> / runtime / runtime:crispasr / diarize（运行时按 runtimeKey 取，服务端给）
     /* ── 按系列分组（设计稿 ②「可折叠 + 硬件感知」）──
@@ -2366,6 +2392,23 @@ async function renderAsrModels() {
       });
     }
     renderHardwareBar(d);
+    box.querySelectorAll('.sm-ffinstall').forEach(b => b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = '开始…';
+      try {
+        const r = await (await fetch('/api/asr/ffmpeg/download', { method: 'POST' })).json();
+        const msgEl = $('#st-msg');
+        if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); }
+        else {
+          msgEl.textContent = '正在下载 ffmpeg（约 30MB），装到项目自带的 tools/ffmpeg/；进度见上方';
+          msgEl.classList.remove('err');
+          pollModelDownload();
+        }
+      } catch (e) {
+        const msgEl = $('#st-msg'); msgEl.textContent = '✗ 下载启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err');
+      }
+      // 轮询靠 renderAsrModels 的既有循环（它每秒重画一次，会读到新的 ffmpeg.download 状态）
+      renderAsrModels();
+    }));
     box.querySelectorAll('.sm-nemoinstall').forEach(b => b.addEventListener('click', async () => {
       b.disabled = true; b.textContent = '开始…';
       try {
@@ -2488,7 +2531,8 @@ async function renderAsrModels() {
       for (let i = 0; i < 900; i++) {
         let d;
         try { d = await (await fetch('/api/asr/status')).json(); } catch { break; }
-        const anyRunning = (d.downloads || []).some(x => x.running);
+        const anyRunning = (d.downloads || []).some(x => x.running)
+          || !!(d.ffmpeg && d.ffmpeg.download && d.ffmpeg.download.running);
         renderAsrModels();
         if (!anyRunning) break;
         await new Promise(r => setTimeout(r, 1000));
@@ -3304,6 +3348,7 @@ async function renderAsrModels() {
     clearTimeout(saveTimer);
     clearInterval(pollTimer); pollTimer = 0;
     state.project = null;
+    window.__sfCurrentProjectId = null;   // 脱离项目后「导出视频」没有可导出的对象
     pendingText = null; saveRevision = ''; saveConflict = false;
     if (typeof window.__notesReload === 'function') window.__notesReload();
     if (typeof window.__projectAsyncReset === 'function') window.__projectAsyncReset();

@@ -1,4 +1,4 @@
-# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见本目录 README.md
+# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见 docs/PROJECT.md §8
 """哔哩哔哩画质 / 音质 / 编码体系。
 
 yt-dlp 的哔哩哔哩解析器会把接口返回的 qn（quality）写进格式的

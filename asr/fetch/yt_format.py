@@ -1,4 +1,4 @@
-# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见本目录 README.md
+# 取自 FlowFetch (github.com/EndiVee233/flowfetch) 的无 Qt 子集, 说明见 docs/PROJECT.md §8
 """YouTube 的画质 / 音质 / 编码体系。
 
 思路和 bili_format.py 一致：把「分辨率」「音轨」「编码」拆成三个互相独立的

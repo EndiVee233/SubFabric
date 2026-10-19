@@ -96,3 +96,6 @@ tests/_*.mjs
 
 # 本地临时脚本/素材(不入库; 与 /_test/ 同性质)
 /tmp-test/
+
+# 自动下载的 ffmpeg（约 30MB，按需生成，不入库）
+/tools/ffmpeg/

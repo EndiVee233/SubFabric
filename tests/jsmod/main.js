@@ -33,6 +33,7 @@ import { bindModalDrags } from './modal.js';
 import { enhanceFontInput, loadFontNames } from './font-picker.js';
 import { VideoCueEditor, CueTextDialog } from './videoedit.js';
 import { splitSegments, replaceSegmentInRaw, escapeAssUser, leadPrefixLen, htmlPlainAndMap } from './segment.js';
+import { initExportVideoButton } from './export-video.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -50,6 +51,8 @@ const btnExportJson = document.getElementById('btn-export-json');
 const btnExportZh = document.getElementById('btn-export-zh');
 const btnExportEn = document.getElementById('btn-export-en');
 const btnExportFull = document.getElementById('btn-export-full');
+// 导出视频（硬字幕压制 / 生肉 / 字幕）—— 见 js/export-video.js
+const btnExportVideo = document.getElementById('btn-export-video');
 const btnFix = document.getElementById('btn-fix-subs');
 const wordConvertStyle = document.getElementById('word-convert-style');
 const wordConvertScope = document.getElementById('word-convert-scope');
@@ -1576,6 +1579,7 @@ function setSrt(text, name) {
   rebuildItemsAndLanes(true);
   btnExport.disabled = false;
   if (btnExportPack) btnExportPack.disabled = false;
+  if (btnExportVideo) btnExportVideo.disabled = false;
   btnExportClean.disabled = true;
   btnExportJson.disabled = true;
   statusFile.textContent = t(`${name} · ${state.srtCues.length} 条`);
@@ -1827,6 +1831,7 @@ function setAss(text, name) {
   btnExport.disabled = false;
   if (btnExportPack) btnExportPack.disabled = false;
   if (btnExportFull) btnExportFull.disabled = false;
+  if (btnExportVideo) btnExportVideo.disabled = false;
   // 反思纠错：只在项目模式可用（要用项目里保存的 audio.wav 重识别那几段）
   if (reflectEls.btn) reflectEls.btn.disabled = !state.project;
   // 分段导入：只要有稿件就能用（它不依赖音频，纯字幕合并）
@@ -6208,6 +6213,20 @@ btnExportEn.addEventListener('click', () => {
 
 /* 导出逐词字幕(设置面板里的入口, 与顶部「导出字幕」同一逻辑) */
 if (btnExportFull) btnExportFull.addEventListener('click', () => btnExport.click());
+
+/* 导出视频：选目录 + 勾选「双语硬字幕 / 生肉 / 字幕」，压制沿用稿件里的 ASS 样式。
+ * 对话框的 DOM 与逻辑都在 js/export-video.js（那边自己建元素，模板里只有一个按钮）。
+ *
+ * 为什么要交这三个函数过去：后处理特效（微光/淡入）的配置存在浏览器 localStorage，
+ * 服务端读不到。要让"压出来的画面 == 编辑器预览"，就得先把特效烘进字幕正文再送过去。
+ * 只暴露这三个窄接口，不把整个 state 交出去。 */
+window.__sfExportContext = {
+  getAssDoc: () => (state.format === 'ass' ? state.assDoc : null),
+  getPostProcessConfig: () => state.postProcessConfig,
+  getStyleTargets: () => state.assStyleTargets,
+  applyPostProcess,
+};
+initExportVideoButton();
 
 /* ═══════════ 工具栏 / 文件 / 拖放 ═══════════ */
 document.getElementById('btn-open-video').addEventListener('click', () => document.getElementById('file-video').click());

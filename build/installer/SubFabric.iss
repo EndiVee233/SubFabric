@@ -1,6 +1,6 @@
 ; SubFabric 安装包脚本（Inno Setup 6）
 ;
-; 本文件入库（build/ 其余内容是 .gitignore 的），构建步骤见 editor/README.md「发版流程」：
+; 本文件入库（build/ 其余内容是 .gitignore 的），构建步骤见 docs/PROJECT.md §6「打包与发版」：
 ;   1) node editor/scripts/fetch-vendor.js      ; 拉 editor/vendor（约 19MB，缺了安装包会小一截）
 ;   2) python build_exe.py                     ; 生成 build/SubFabric.exe（Node SEA，含图标与版本信息）
 ;   3) "D:\Program Files (x86)\Inno Setup 6\ISCC.exe" build/installer/SubFabric.iss
@@ -11,18 +11,18 @@
 ;       build_exe.py 会顺带把 logo.ico 嵌进 SubFabric.exe，所以程序本体、快捷方式、
 ;       安装/卸载向导、控制面板「应用和功能」里显示的都是同一张图。
 ;
-; 产品版本要和 editor/server.js 的 APP_VERSION、editor/README.md 标题一起改；
+; 产品版本要和 editor/server.js 的 APP_VERSION 一起改；
 ; Windows PE 文件版本另用四段纯数字的 APP_FILE_VERSION / MyAppFileVersion。
 ; ⚠ VersionInfo* 三个字段（VersionInfoVersion / VersionInfoProductVersion / VersionInfoFileVersion）
 ;   只接受**纯数字**，绝不能填带 "beta" 的显示版本 —— 2026-10-14 实测：上一轮把显示版本改成
 ;   "beta 1.0" 时漏改这里，ISCC 直接 "Value ... is invalid" 编译中止（此前从未真正编过安装包，
 ;   所以一直没暴露）。显示版本走 AppVersion / AppVerName / VersionInfoProductName，数字版本走 MyAppFileVersion。
-; 版本口径（显示版本 / 文件版本 / tag 三段如何推进、下一个该发多少）：见 PROJECT_MAP.md §1.1「版本号命名规则」。
+; 版本口径（显示版本 / 文件版本 / tag 三段如何推进、下一个该发多少）：见 docs/PROJECT.md §6「打包与发版」。
 ;   beta 期：显示 `beta <主>.<次>`、文件 `<主>.<次>.0.0`、tag `v<主>.<次>.0-beta.<序号>`；转正后去掉 beta 前缀。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "beta 1.3"
-#define MyAppFileVersion "1.3.0.0"
+#define MyAppVersion "beta 1.4"
+#define MyAppFileVersion "1.4.0.0"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
