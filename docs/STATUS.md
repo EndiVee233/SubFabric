@@ -6,6 +6,7 @@
   版本：远程已推进 `beta 1.4` / `1.4.0.0`（`editor/server.js` 与 `SubFabric.iss` 两处；`editor/README.md` 随文档重构删除），本次沿用不重复推进；`python build_exe.py` → `build/SubFabric.exe`（**93,613,568 字节**，FileVersion/ProductVersion `1.4.0.0`，SEA sentinel 与 `NODE_SEA_BLOB` 均在，子系统 2=GUI；rcedit 重试第 2 次成功）；`ISCC` → `build/installer/SubFabric-beta 1.4-setup.exe`（**37,567,810 字节**）。
   验证：Node v24.21.0 全量回归 `_test/oct19-merge-verify-v24.json` 为 **98 通过 / 9 部分 / 1 诊断 / 0 失败**（2 排除；新增 `export-video-test`、`hardsub-accel-test` 均 PASS）；ESLint 0 error（20 warning，`eslint.config.js` 浏览器 globals 补 `createImageBitmap`）；关键 JS `node --check` 通过；55 对 jsmod 镜像与模板逐字节一致。
   后续：远程 `63eb463f` 带回的 `editor/themes/studio.theme.json` 已删除——本地 10-19 主题选择改造早已移除 Studio 内置主题（`studio-themes.js` 只保留 windows-uwp / material-you / subfabric-classic，旧 `themePack:'studio'` 回退 UWP），该 JSON 无代码引用且不在 `server.js` 静态白名单；`theme-packs` / `uwp-theme` / `studio-navigation` / `ui-integration` 四个测试复跑通过，安装包随之重打（37,568,201 字节），提交 `dbb92094`。
+  发版（2026-10-19）：创建 annotated tag `v1.4.0-beta.1`（→ `2c04f73c`）与 Release「SubFabric beta 1.4」（prerelease，id 417225883），资产 `SubFabric-beta.1.4-setup.exe` 37,568,201 字节，`digest` 与本地 sha256 `6ecd85c0…` 一致；**补发** `v1.3.0-beta.1`（→ `9a738c36`，即 beta 1.3 的代码状态）与 Release「SubFabric beta 1.3」（id 417227028），资产 37,565,546 字节，`digest` `79a02a49…` 一致。三处版本对齐：`server.js` `beta 1.4` / `1.4.0.0`、`.iss` 同、tag `v1.4.0-beta.1`。**命名说明**：仓库另有 2026-09 旧产品线的 `v1.3.0` / `v1.4.0` / `v1.9.x` 等正式 tag（只有 tag、无 Release），与本次带 `-beta.N` 的 tag 名称不同、互不覆盖；beta 1.3 当时只构建未发版，新增视频导出按规则抬次位到 1.4。
 
 - 当前任务（2026-10-19）：纯色 / 流光 / 自定义图片背景切换渐变动画，**已完成且已验证**。新增 `applyBackgroundWithFade()`：背景 mode 变更、选择图片、清除图片都走 `document.startViewTransition`，根节点临时 `data-bg-transition="fade"`；CSS 旧画面 `sf-bg-fade-out`、新画面 `sf-bg-fade-in` 交叉淡变 `.38s`，UWP 与 Material You 都生效，且覆盖 Material 的圆形揭示。
   验证：`#sf-background` 切到 `aurora` 时实测 `data-bg-transition="fade"` 出现并在过渡后清理，`body.dataset.bg=aurora`；`uwp-theme-test`/`material-home-test` 增加背景 crossfade 断言；完整 JS 回归 `_test/bg-fade-full-20261019.json` 为 **96 通过、9 部分、0 失败、2 排除**。
@@ -253,6 +254,7 @@
 
 ## GitHub 与恢复
 
+- 发版（2026-10-19）：`v1.4.0-beta.1`（annotated tag `3e4be90b` → 提交 `2c04f73c`，Release 417225883）与补发 `v1.3.0-beta.1`（`65ce832b` → `9a738c36`，Release 417227028）；两者均 prerelease，资产 `digest` 与本地 sha256 核对一致，未改动其他 tag/Release。
 - GitHub：2026-10-19 与远程合并（视频导出 + 文档重构）后提交至 main，父提交 `9982814369f73f142663364c1bae388706ff8399`；提交标识与链接见最终报告。范围：51 改动 + 27 新增；版本沿用远程 `beta 1.4`，未创建 tag/Release，构建产物按 `.gitignore` 排除。合并期间远程删除的 19 个旧文档随本次提交生效。
 - GitHub：2026-10-18 晚增量（取色器重做、点击点定位与拖动、Material 明暗圆形过渡等）已提交至 main，父提交 `c9b180cc586947062197bc5a85ef6059d3be233b`；提交标识与链接见最终报告。范围 15 文件（14 改动 + `eslint.config.js`）；版本保持 beta 1.3，未创建 tag/Release，构建产物按 `.gitignore` 排除。
 - GitHub：2026-10-18 增量（beta 1.3 构建 + 我的主页/描边曲线/设置等改动）已提交至 main，父提交 `f0f1bb9391a0ca7c910e08a589ccc4782a677a7d`；提交标识与链接见最终报告。范围：26 改动 + 18 新增（含三处版本号与 `build_exe.py` 的 rcedit 重试）；`build/` 产物按 `.gitignore` 排除，未创建 tag/Release。
