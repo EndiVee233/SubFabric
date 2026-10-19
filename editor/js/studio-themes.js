@@ -7,11 +7,12 @@
   const allowedKeys = new Set(['schema', 'id', 'name', 'version', 'description', 'author', 'design', 'seed', 'tokens', 'assets', 'builtin']);
   const designNames = new Set(['studio', 'material', 'uwp', 'classic']);
   const tokenNames = new Set(Object.keys(tokenKeys));
+  /* 2026-10-19：Studio 主题已从内置选择器移除；保留 design:'studio' 供旧自定义包使用。
+     顺序即默认回退顺序，Windows UWP 作为新的第一内置主题。 */
   const builtins = Object.freeze([
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'studio', name: 'Studio', version: '1.0.0', description: '纸白、细描边与安静的创作空间', design: 'studio', seed: '#5c7560', builtin: true }),
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'windows-uwp', name: 'Windows 10', version: '1.0.0', description: 'Fluent：紧凑控件、细描边与规整工作区', design: 'uwp', seed: '#0078D7', builtin: true }),
     Object.freeze({ schema: 'subfabric-theme-v1', id: 'material-you', name: 'Material You', version: '1.0.0', description: '动态色、柔软轮廓与波浪播放进度', design: 'material', seed: '#5789dc', builtin: true }),
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'subfabric-classic', name: 'SubFabric Classic', version: '1.0.0', description: '经典 SubFabric：深色工作台、橙色强调与紧凑编辑器', design: 'classic', seed: '#ff7a45', builtin: true }),
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'windows-uwp', name: 'Windows UWP', version: '1.0.0', description: 'Windows 10 Fluent：紧凑控件、细描边与规整工作区', design: 'uwp', seed: '#0078D7', builtin: true })
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'subfabric-classic', name: 'SubFabric Classic', version: '1.0.0', description: '经典 SubFabric：深色工作台、橙色强调与紧凑编辑器', design: 'classic', seed: '#ff7a45', builtin: true })
   ]);
   const builtinIds = new Set(builtins.map(pack => pack.id));
   function validTokens(tokens) {
@@ -93,22 +94,24 @@
     const pack = get(settings.themePack, custom), root = document.body;
     document.body.dataset.themePack = pack.id;
     document.body.dataset.design = pack.design;
-    const tokens = palette(settings.accent || pack.seed, dark);
+    const accent = settings.accent || pack.seed;
+    const tokens = palette(accent, dark);
     Object.keys(tokens).forEach(key => root.style.removeProperty(key));
     if (pack.design === 'material') Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value));
     else if (pack.design === 'uwp') {
       Object.entries({ ...tokens,
-        '--accent': settings.accent || pack.seed,
-        '--on-accent': contrast(settings.accent || pack.seed, '#ffffff') >= 4.5 ? '#ffffff' : '#101318',
+        '--accent': accent,
+        '--on-accent': contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318',
         '--bg': dark ? '#1F1F1F' : '#F3F3F3',
         '--surface': dark ? '#2B2B2B' : '#FFFFFF',
         '--surface-2': dark ? '#333333' : '#EDEDED',
+        '--surface-3': dark ? '#3A3A3A' : '#E5E5E5',
         '--text': dark ? '#F3F3F3' : '#202020',
         '--muted': dark ? '#C5C5C5' : '#606060',
-        '--line': dark ? '#454545' : '#D1D1D1',
-        '--accent-soft': dark ? '#153A5A' : '#CCE4F7',
+        '--line': dark ? '#666666' : '#B8B8B8',
+        '--accent-soft': tokens['--accent-soft'],
         '--accent-hover': dark ? '#383838' : '#E5F1FB',
-        '--outline': dark ? '#A6A6A6' : '#767676'
+        '--outline': dark ? '#C8C8C8' : '#666666'
       }).forEach(([key, value]) => root.style.setProperty(key, value));
     } else if (pack.design === 'classic') {
       const accent = settings.accent || pack.seed;

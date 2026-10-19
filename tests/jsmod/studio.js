@@ -1,4 +1,4 @@
-import { STUDIO_KEY, normalizeStudio, projectPhase, matchesProject, imageData } from './studio-state.js';
+import { STUDIO_KEY, defaults, normalizeStudio, projectPhase, matchesProject, imageData } from './studio-state.js';
 import { configure as configureRim } from './rim-curve.js';
 import { escapeHtml as esc, fmtTime, popOrigin } from './util.js';
 import { t } from './i18n.js';
@@ -17,10 +17,17 @@ let projects = [], filter = 'all', folder = '', route = location.hash || '#/dash
 let applying = false, pendingSetting = '';
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 const auroraPalettes = { sage: ['#90b99c', '#bacb91', '#9ac2b8'], ocean: ['#74adc8', '#9eaccf', '#95c5be'], sunset: ['#d69caa', '#cfb693', '#aca3cf'] };
-let noticeTimer;
+let noticeTimer, noticeHideTimer;
 function notice(message) {
-  $('sf-notice').textContent = t(message); $('sf-notice').hidden = false;
-  clearTimeout(noticeTimer); noticeTimer = setTimeout(() => { $('sf-notice').hidden = true; }, 4500);
+  const el = $('sf-notice');
+  el.textContent = t(message); el.hidden = false; el.classList.remove('is-uwp-out');
+  clearTimeout(noticeTimer); clearTimeout(noticeHideTimer);
+  noticeTimer = setTimeout(() => {
+    /* UWP 按设计稿 4s 后 160ms 淡出；其余主题保持原来的直接隐藏。 */
+    if (document.body.dataset.design !== 'uwp') { el.hidden = true; return; }
+    el.classList.add('is-uwp-out');
+    noticeHideTimer = setTimeout(() => { el.hidden = true; el.classList.remove('is-uwp-out'); }, 160);
+  }, 4000);
 }
 function commit(change) {
   const next = normalizeStudio({ ...prefs, ...change }, themes);
@@ -32,9 +39,10 @@ function applyTheme() {
   applying = true;
   const dark = prefs.mode === 'dark' || prefs.mode === 'system' && systemDark.matches;
   const pack = themes.get(prefs.themePack, prefs.custom);
-  // Windows UWP owns its accent: custom theme colors belong to Studio/Material
-  // and must not bleed into the fixed Windows 10 control language.
-  const accent = pack.design === 'uwp' ? pack.seed : prefs.accent;
+  // UWP 的默认蓝仍取 pack.seed；一旦用户改过主题色，就用 prefs.accent。
+  // 旧默认 accent 是 Studio 的鼠尾草绿，不能让它把首次 UWP 染绿。
+  const accent = pack.design === 'uwp' && prefs.accent === defaults.accent ? pack.seed : prefs.accent;
+  const palette = themes.palette(accent, dark);
   document.body.dataset.theme = dark ? 'dark' : 'light';
   document.body.dataset.design = pack.design;
   document.body.dataset.themePack = pack.id;
@@ -42,15 +50,15 @@ function applyTheme() {
   document.body.dataset.motion = prefs.motion;
   document.body.dataset.auroraMotion = prefs.auroraMotion;
   document.body.dataset.pageVisible = String(!document.hidden);
-  let tokens = pack.design === 'material' ? themes.palette(accent, dark) : pack.design === 'uwp' ? {
-    ...themes.palette(accent, dark), '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
-    '--surface-2': dark ? '#333333' : '#EDEDED', '--text': dark ? '#F3F3F3' : '#202020', '--muted': dark ? '#C5C5C5' : '#606060',
-    '--line': dark ? '#666666' : '#B8B8B8', '--accent-soft': dark ? '#153A5A' : '#CCE4F7', '--accent-hover': dark ? '#383838' : '#E5F1FB', '--outline': dark ? '#C8C8C8' : '#666666'
+  let tokens = pack.design === 'material' ? palette : pack.design === 'uwp' ? {
+    ...palette, '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
+    '--surface-2': dark ? '#333333' : '#EDEDED', '--surface-3': dark ? '#3A3A3A' : '#E5E5E5', '--text': dark ? '#F3F3F3' : '#202020', '--muted': dark ? '#C5C5C5' : '#606060',
+    '--line': dark ? '#666666' : '#B8B8B8', '--accent-soft': palette['--accent-soft'], '--accent-hover': dark ? '#383838' : '#E5F1FB', '--outline': dark ? '#C8C8C8' : '#666666'
   } : {
     ...themes.palette(prefs.accent, dark), '--bg': dark ? '#1c221e' : '#f6f7f2', '--surface': dark ? '#252d27' : '#fffefa',
     '--surface-2': dark ? '#2c352e' : '#eef1e8', '--text': dark ? '#e0e6da' : '#28372b', '--muted': dark ? '#b2bdae' : '#647161', '--line': dark ? '#465244' : '#dce2d5'
   };
-  // 自定义包只能覆盖白名单令牌；UWP 继续使用固定 Windows 10 中性色和蓝色。
+  // 自定义包只能覆盖白名单令牌；UWP 的中性色固定，但强调色跟随用户选择。
   if (pack.design !== 'uwp') {
     tokens = { ...tokens, ...themes.tokenOverrides(pack, dark) };
     // 包的调色板可以自绘，但设置中的强调色仍是最终用户偏好。
@@ -82,7 +90,12 @@ function applyTheme() {
   $('sf-glass-dim-value').textContent = prefs.glassDim + '%';
   $('sf-glass-blur-value').textContent = prefs.glassBlur + 'px';
   $('sf-glass-opacity-value').textContent = prefs.glassOpacity + '%';
-  const auroraColors = prefs.auroraColors.length ? prefs.auroraColors : [tokens['--accent-soft'], tokens['--secondary-container'], tokens['--tertiary-container']];
+  /* UWP 的流光只从中性色与固定蓝里取；Material 的 secondary/tertiary 是紫/粉，
+     直接继承会把 Windows 主题染成 Material 色。 */
+  const auroraColors = prefs.auroraColors.length ? prefs.auroraColors
+    : pack.design === 'uwp'
+      ? [tokens['--accent-soft'], tokens['--surface-2'], tokens['--line']]
+      : [tokens['--accent-soft'], tokens['--secondary-container'], tokens['--tertiary-container']];
   auroraColors.forEach((color, i) => {
     st.setProperty('--sf-aurora-' + (i + 1), color);
     const input = $('sf-aurora-color-' + (i + 1));
@@ -93,20 +106,46 @@ function applyTheme() {
   $('sf-aurora-motion').value = prefs.auroraMotion;
   $('sf-aurora-palette').value = !prefs.auroraColors.length ? 'theme' : Object.keys(auroraPalettes).find(key => auroraPalettes[key].every((color, i) => color === prefs.auroraColors[i])) || 'custom';
   $('sf-background').value = prefs.background; $('sf-mode').value = prefs.mode; $('sf-motion').value = prefs.motion; $('sf-color').value = accent;
-  $('sf-color').disabled = pack.design === 'uwp';
-  $('sf-color').title = pack.design === 'uwp' ? 'Windows UWP 使用固定的 Windows 10 蓝色' : '';
+  $('sf-color').disabled = false;
+  $('sf-color').title = '';
   $('sf-image-pick').disabled = prefs.background !== 'image';
   $('sf-image-clear').disabled = !prefs.image;
   for (const input of document.querySelectorAll('#sf-color, #theme-color, [data-theme-color]')) {
     input.value = accent;
-    input.disabled = pack.design === 'uwp';
+    input.disabled = false;
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  document.querySelectorAll('.theme-sw[data-hex]').forEach(b => { b.classList.toggle('active', b.dataset.hex === accent); b.disabled = pack.design === 'uwp'; });
+  document.querySelectorAll('.theme-sw[data-hex]').forEach(b => { b.classList.toggle('active', b.dataset.hex === accent); b.disabled = false; });
   document.querySelector('.sf-backdrop').style.backgroundImage = prefs.background === 'image' && imageData(prefs.image) ? `url("${prefs.image}")` : 'none';
+  st.setProperty('--sf-image-blur', prefs.imageBlur + 'px');
+  st.setProperty('--sf-image-dim', (prefs.imageDim / 100).toFixed(2));
+  $('sf-image-blur').value = String(prefs.imageBlur);
+  $('sf-image-dim').value = String(prefs.imageDim);
+  $('sf-image-blur-value').textContent = prefs.imageBlur + 'px';
+  $('sf-image-dim-value').textContent = prefs.imageDim + '%';
   window.SF_PROGRESS.sync();
   window.dispatchEvent(new CustomEvent('ss-accent', { detail: { hex: accent } }));
   window.dispatchEvent(new Event('sf-studio-theme'));
+  syncUwpTiles();
+  syncUwpRanges();
+  /* 主题切换/首屏应用时 route 可能早于 data-design 写入；这里按当前可见页补一次
+     Material 卡片入场，避免稿件库首屏停在 .proj-card 的 fade-up。 */
+  if (pack.design === 'material') {
+    requestAnimationFrame(() => {
+      if (document.body.dataset.design !== 'material') return;
+      const h = location.hash || '#/dashboard';
+      if (h === '#/home') animateMaterialPage($('home-view'));
+      else if (h === '#/settings') {
+        const panel = [...$('st-view').querySelectorAll('.st-panel:not([hidden])')][0];
+        if (panel) animateMaterialPage(panel);
+      } else if (h === '#/help') animateMaterialPage($('sf-help'));
+      else if (h === '#/editor' || h.startsWith('#/project/')) {
+        animateMaterialEditorShell();
+        animateMaterialCueList();
+      }
+      animateMaterialPage($('sf-folders'));
+    });
+  }
   applying = false;
   renderPacks();
   syncAppearanceChoices();
@@ -131,11 +170,10 @@ for (const kind of ['background', 'mode']) {
 // 侧栏取色控件写入 Studio 独立偏好，不改变项目业务配置。
 window.SSAccent.current = () => {
   const pack = themes.get(prefs.themePack, prefs.custom);
-  return pack.design === 'uwp' ? pack.seed : prefs.accent;
+  return pack.design === 'uwp' && prefs.accent === defaults.accent ? pack.seed : prefs.accent;
 };
 window.SSAccent.set = hex => {
   if (applying) return false;
-  if (themes.get(prefs.themePack, prefs.custom).design === 'uwp') return false;
   if (!themes.hex(hex) || !commit({ accent: hex })) return false;
   applyTheme(); return true;
 };
@@ -144,14 +182,21 @@ function renderPacks() {
   const render = pack => {
     // 示意卡片的工作区预览跟随当前明暗模式，避免深色设置页内仍显示浅色工作区。
     const dark = document.body.dataset.theme === 'dark';
+    const previewAccent = pack.id === prefs.themePack && pack.design === 'uwp' && prefs.accent !== defaults.accent
+      ? prefs.accent : pack.seed;
     const palette = pack.design === 'uwp'
-      ? { '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--accent': pack.seed, '--on-accent': '#FFFFFF' }
+      ? { '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--accent': previewAccent, '--on-accent': '#FFFFFF' }
       : { ...themes.palette(pack.seed, dark), ...themes.tokenOverrides(pack, dark) };
-    const glyph = pack.design === 'material'
-      ? '<path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3ZM20 2v4m-2-2h4M4 18v4m-2-2h4"/>'
-      : pack.design === 'uwp'
-        ? '<path d="M4 4h16v16H4z"/><path d="M8 8h8v8H8z"/>'
-      : '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11M8 4.8l8 3.5"/>';
+    /* 自定义主题包统一用 Windows 10 的斜向四格窗户图标；内置包保留各自标识。 */
+    const customGlyph = '<path d="M4 6.3 11 4.4v7.1H4zM12.6 4.1 20 2.1v9.4h-7.4zM4 12.6h7v7.1l-7-1.9zM12.6 12.6H20v9.3l-7.4-1.9z" fill="currentColor" stroke="none"/>';
+    const glyph = !pack.builtin
+      ? customGlyph
+      : pack.design === 'material'
+        ? '<path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4L12 3ZM20 2v4m-2-2h4M4 18v4m-2-2h4"/>'
+        : pack.design === 'uwp'
+          /* Windows 10 开始菜单四格徽标：斜向四窗、实心；不再是嵌套方框。 */
+          ? '<path d="M3 4.4 11 3.1v8.4H3zM12 2.9 21 1.6v10.2h-9zM3 12.3h8v8.4l-8-1.3zM12 12.3h9v10.2l-9-1.3z" fill="currentColor" stroke="none"/>'
+          : '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11M8 4.8l8 3.5"/>';
     const selected = prefs.themePack === pack.id;
     const builtin = themes.isBuiltin(pack);
     const preview = pack.assets?.preview ? `--preview-image:url("${pack.assets.preview}");` : '';
@@ -168,7 +213,7 @@ $('sf-theme-packs').addEventListener('click', e => {
     if (!themes.canDelete(id)) return;
     const next = themes.remove(prefs.custom, id);
     const selected = prefs.themePack === id;
-    if (commit(selected ? { custom: next, themePack: 'studio', accent: themes.get('studio').seed } : { custom: next })) { applyTheme(); themeStatus(); }
+    if (commit(selected ? { custom: next, themePack: 'windows-uwp', accent: themes.get('windows-uwp').seed } : { custom: next })) { applyTheme(); themeStatus(); }
     return;
   }
   const b = e.target.closest('[data-pack-select]'); if (!b) return;
@@ -191,12 +236,38 @@ for (const [id, key] of [['sf-rim-sat-low', 'rimSatLow'], ['sf-rim-bri-gain', 'r
     if (commit({ [key]: Number(input.value) })) { applyTheme(); themeStatus(); }
   });
 }
-for (const [id, key] of [['sf-background', 'background'], ['sf-motion', 'motion'], ['sf-aurora-motion', 'auroraMotion']]) $(id).addEventListener('change', () => {
+$('sf-background').addEventListener('change', () => {
+  if (commit({ background: $('sf-background').value })) applyBackgroundWithFade();
+});
+for (const [id, key] of [['sf-motion', 'motion'], ['sf-aurora-motion', 'auroraMotion']]) $(id).addEventListener('change', () => {
   if (commit({ [key]: $(id).value })) { applyTheme(); themeStatus(); }
 });
 $('sf-mode').addEventListener('change', () => {
   if (commit({ mode: $('sf-mode').value })) applyModeWithReveal();
 });
+/** 纯色 / 流光 / 自定义图片切换：两种主题都用整屏交叉淡变，背景不会硬切。 */
+let bgFadeSeq = 0;
+function applyBackgroundWithFade() {
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
+    || document.body.dataset.motion === 'off';
+  if (reduced || typeof document.startViewTransition !== 'function') {
+    applyTheme(); themeStatus(); return;
+  }
+  const root = document.documentElement;
+  const seq = ++bgFadeSeq;
+  root.dataset.bgTransition = 'fade';
+  const done = () => {
+    if (seq !== bgFadeSeq) return;
+    delete root.dataset.bgTransition;
+  };
+  try {
+    const transition = document.startViewTransition(() => { applyTheme(); });
+    themeStatus();
+    transition.finished.finally(done);
+  } catch {
+    applyTheme(); themeStatus(); done();
+  }
+}
 /** Material You 明暗切换：从被点击的浅色/深色按钮处用圆形遮罩扩散到全屏。 */
 let modeRevealSeq = 0;
 function applyModeWithReveal() {
@@ -220,10 +291,30 @@ function applyModeWithReveal() {
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches
     || document.body.dataset.motion === 'off';
   const material = document.body.dataset.design === 'material';
-  if (!material || reduced || typeof document.startViewTransition !== 'function') {
+  const uwp = document.body.dataset.design === 'uwp';
+  if ((!material && !uwp) || reduced || typeof document.startViewTransition !== 'function') {
     applyTheme();
     themeStatus();
     cleanup();
+    return;
+  }
+  if (uwp) {
+    /* Windows 10：不用 Material 的圆形揭示，直接旧主题褪出、新主题淡入。 */
+    root.dataset.modeTransition = 'uwp-fade';
+    const done = () => {
+      if (seq !== modeRevealSeq) return;
+      delete root.dataset.modeTransition;
+      cleanup();
+    };
+    try {
+      const transition = document.startViewTransition(() => { applyTheme(); });
+      themeStatus();
+      transition.finished.finally(done);
+    } catch {
+      applyTheme();
+      themeStatus();
+      done();
+    }
     return;
   }
   try {
@@ -292,16 +383,77 @@ $('sf-theme-file').addEventListener('change', async () => {
   } catch (e) { notice(e.message); }
 });
 $('sf-image-pick').addEventListener('click', () => $('sf-image-file').click());
-$('sf-image-clear').addEventListener('click', () => { if (commit({ image: '', background: 'solid' })) applyTheme(); });
+$('sf-image-clear').addEventListener('click', () => { if (commit({ image: '', background: 'solid' })) applyBackgroundWithFade(); });
+/* 背景图不再限制 2MB 输入：先 decode，再压到长边 2560 的 WebP/JPEG。
+   HEIC/HEIF 走浏览器/系统解码器；Windows 装了 HEIF 图像扩展的 Edge 可直接读。
+   这样既支持大图，也不会把 localStorage 撑爆。 */
+const BG_IMAGE_TYPES = /^image\/(?:png|jpe?g|webp|heic|heif)$/i;
+const BG_IMAGE_EXT = /\.(?:png|jpe?g|webp|heic|heif)$/i;
+const isHeicFile = f => /^image\/hei[cf]/i.test(f.type || '') || /\.(?:heic|heif)$/i.test(f.name || '');
+async function decodeBackgroundImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    try { return await createImageBitmap(file); } catch { /* 再给 <img> 一次机会 */ }
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+    img.src = url;
+  });
+}
+async function prepareBackgroundImage(file) {
+  let bitmap;
+  try { bitmap = await decodeBackgroundImage(file); }
+  catch (error) {
+    /* 浏览器没有 HEVC 解码器时，让本地服务端用 ffmpeg 解一帧；
+       ffmpeg 本来就是本项目音频/波形的依赖。 */
+    if (!isHeicFile(file)) throw error;
+    const response = await fetch('/api/image/convert', { method: 'POST', body: file });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !imageData(payload.data || '')) {
+      throw new Error(payload.error || 'HEIF/HEIC 转换失败');
+    }
+    return payload.data;
+  }
+  const sourceW = bitmap.width || bitmap.naturalWidth, sourceH = bitmap.height || bitmap.naturalHeight;
+  if (!sourceW || !sourceH) throw new Error('decode');
+  const scale = Math.min(1, 2560 / Math.max(sourceW, sourceH));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(sourceW * scale));
+  canvas.height = Math.max(1, Math.round(sourceH * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  if (typeof bitmap.close === 'function') bitmap.close();
+  const webp = canvas.toDataURL('image/webp', 0.9);
+  return /^data:image\/webp;base64,/.test(webp) ? webp : canvas.toDataURL('image/jpeg', 0.9);
+}
 $('sf-image-file').addEventListener('change', async () => {
   const f = $('sf-image-file').files[0]; $('sf-image-file').value = ''; if (!f) return;
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(f.type) || f.size > 2000000) { notice('请选择 2MB 以内的 PNG、JPEG 或 WebP 图片。'); return; }
+  if (!(BG_IMAGE_TYPES.test(f.type || '') || BG_IMAGE_EXT.test(f.name || '')) || f.size > 64 * 1024 * 1024) {
+    notice('请选择 PNG、JPEG、WebP、HEIC 或 HEIF 图片（单文件不超过 64MB）。'); return;
+  }
   try {
-    const data = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(f); });
+    const data = await prepareBackgroundImage(f);
     if (!imageData(data)) throw Error('图片格式无效。');
-    if (commit({ image: data, background: 'image' })) applyTheme();
-  } catch { notice('图片读取失败。'); }
+    if (commit({ image: data, background: 'image' })) applyBackgroundWithFade();
+  } catch (error) {
+    notice(isHeicFile(f)
+      ? (/HEIF|HEIC|ffmpeg|转换/i.test(error?.message || '')
+        ? String(error.message || 'HEIF/HEIC 转换失败')
+        : '当前浏览器无法解码 HEIF/HEIC，且服务端转换不可用；请安装 HEIF 图像扩展或可用的 ffmpeg。')
+      : '图片读取失败。');
+  }
 });
+for (const [id, key, unit] of [['sf-image-blur', 'imageBlur', 'px'], ['sf-image-dim', 'imageDim', '%']]) {
+  const input = $(id), output = $(id + '-value');
+  input.addEventListener('input', () => {
+    const value = Math.max(0, Math.min(Number(input.max) || 100, Number(input.value) || 0));
+    prefs[key] = value;
+    document.documentElement.style.setProperty(key === 'imageBlur' ? '--sf-image-blur' : '--sf-image-dim', key === 'imageBlur' ? value + 'px' : (value / 100).toFixed(2));
+    if (output) output.textContent = value + unit;
+  });
+  input.addEventListener('change', () => { commit({ [key]: prefs[key] }); });
+}
 
 // 工作台偏好在全局设置与编辑器之间移动；ASS 样式始终留在编辑器。
 // 旧 HTML 的特效组少一个闭合层，浏览器将后续五张卡解析进特效组；
@@ -427,23 +579,27 @@ function selectSetting(name) {
 document.querySelectorAll('[data-setting]').forEach(b => b.addEventListener('click', () => setting(b.dataset.setting)));
 document.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { location.hash = '#/' + b.dataset.go; }));
 // 自定义主页小组件：计数卡片只切筛选，动作卡片走现有入口，不复制业务逻辑。
+// UWP 下先让磁贴整组飞出，再执行真实导航/弹窗；其余主题立即执行。
 $('sf-widgets').addEventListener('click', (e) => {
   const w = e.target.closest('[data-widget],[data-widget-filter]');
   if (!w) return;
-  if (w.dataset.widgetFilter) {
-    filter = w.dataset.widgetFilter;
-    folder = '';
-    if (location.hash === '#/home') refreshLibrary();
-    else location.hash = '#/home';
-    requestAnimationFrame(() => $('home-list')?.scrollIntoView({ block: 'start' }));
-    return;
-  }
-  if (w.dataset.widget === 'new') { $('btn-new-project').click(); return; }
-  if (w.dataset.widget === 'settings') { location.hash = '#/settings'; return; }
-  if (w.dataset.widget === 'resume') {
-    const p = projects.find(p => p.id === prefs.recent && p.format) || projects.find(p => p.format);
-    if (p) location.hash = '#/project/' + p.id; else $('btn-new-project').click();
-  }
+  uwpTileExit(() => {
+    if (w.dataset.widgetFilter) {
+      filter = w.dataset.widgetFilter;
+      folder = '';
+      if (location.hash === '#/home') refreshLibrary();
+      else location.hash = '#/home';
+      requestAnimationFrame(() => $('home-list')?.scrollIntoView({ block: 'start' }));
+      return;
+    }
+    if (w.dataset.widget === 'new') { $('btn-new-project').click(); return; }
+    if (w.dataset.widget === 'settings') { location.hash = '#/settings'; return; }
+    if (w.dataset.widget === 'library') { goLibraryFilter('all'); return; }
+    if (w.dataset.widget === 'resume') {
+      const p = projects.find(p => p.id === prefs.recent && p.format) || projects.find(p => p.format);
+      if (p) location.hash = '#/project/' + p.id; else $('btn-new-project').click();
+    }
+  });
 });
 // 真实快捷键目前固定；帮助页准确显示当前映射，不承诺不存在的自定义能力。
 $('sf-shortcuts').addEventListener('click', () => {
@@ -452,23 +608,91 @@ $('sf-shortcuts').addEventListener('click', () => {
   const dl = document.createElement('dl');
   const list = [['Space / K', '播放 / 暂停'], ['← / →', '前后跳转 2 秒'], ['Shift + ← / →', '前后跳转 5 秒'], [', / .', '逐帧移动'], ['Home / End', '开头 / 末尾'], ['= / − / 0', '放大 / 缩小 / 适应全片'], ['F', '跟随播放'], ['Alt + ↑ / ↓', '上一句 / 下一句'], ['Alt + P', '选中播放句'], ['Ctrl + Enter', '提交编辑'], ['Ctrl + F', '搜索字幕'], ['Ctrl + S', '导出字幕'], ['F8', '逐词 JSON 导出入口']];
   dl.innerHTML = list.map(([key, value]) => `<div><dt><kbd>${key}</kbd></dt><dd>${t(value)}</dd></div>`).join(''); box.appendChild(dl);
+  if (document.body.dataset.design === 'material') animateMaterialPage(box, 'dl > div');
 });
 
 function renderFolders() {
   $('sf-folders').innerHTML = prefs.folders.map(f => `<div class="sf-folder"><button type="button" class="${folder === f.id ? 'active' : ''}" data-folder="${f.id}">${ico('folder')}<span>${esc(f.name)}</span><small>${projects.filter(p => prefs.assignments[p.id] === f.id).length}</small></button><button type="button" data-remove-folder="${f.id}" aria-label="移除文件夹">×</button></div>`).join('');
+  animateMaterialPage($('sf-folders'));
 }
-$('sf-folder-add').addEventListener('click', () => {
-  const name = prompt(t('文件夹名称')); if (!name?.trim()) return;
-  if (name.trim().length > 60 || prefs.folders.length >= 40) { notice('文件夹名称最多 60 字，最多 40 个文件夹。'); return; }
-  if (commit({ folders: [...prefs.folders, { id: 'f-' + crypto.randomUUID(), name: name.trim() }] })) renderFolders();
+/* 文件夹的新建/移除都用页面内 Dialog，不再调用浏览器 prompt()/confirm()。
+   UWP 走 2px 直角 + 150ms，Material You 走 28px 圆角 + 大输入框。 */
+const folderDialog = document.createElement('div');
+folderDialog.id = 'sf-folder-dialog'; folderDialog.className = 'sf-folder-dialog'; folderDialog.hidden = true;
+folderDialog.innerHTML = `<div class="sf-folder-box" role="dialog" aria-modal="true" aria-labelledby="sf-folder-title">
+  <h3 id="sf-folder-title">新建文件夹</h3>
+  <p class="sf-folder-desc" id="sf-folder-desc"></p>
+  <label class="sf-folder-field">文件夹名称<input id="sf-folder-name" maxlength="60" autocomplete="off" spellcheck="false"></label>
+  <small class="sf-folder-error" id="sf-folder-error" aria-live="polite"></small>
+  <div class="sf-folder-actions"><button type="button" class="btn" data-folder-cancel>取消</button><button type="button" class="btn btn-accent" data-folder-ok>创建</button></div>
+</div>`;
+document.body.appendChild(folderDialog);
+let folderDialogMode = 'create', folderDialogId = '', folderDialogTrigger = null;
+function setFolderDialogButtons(uwp) {
+  folderDialog.querySelectorAll('button').forEach(button => {
+    if (uwp) button.classList.add('uwp-tile'); else button.classList.remove('uwp-tile');
+  });
+}
+function closeFolderDialog() {
+  if (folderDialog.hidden) return;
+  folderDialog.hidden = true;
+  folderDialog.removeAttribute('data-mode');
+  folderDialogTrigger?.focus?.();
+  folderDialogTrigger = null;
+}
+function openFolderDialog(mode, id = '', trigger = null) {
+  folderDialogMode = mode; folderDialogId = id; folderDialogTrigger = trigger || document.activeElement;
+  folderDialog.dataset.mode = mode; folderDialog.hidden = false;
+  const title = folderDialog.querySelector('#sf-folder-title');
+  const desc = folderDialog.querySelector('#sf-folder-desc');
+  const input = folderDialog.querySelector('#sf-folder-name');
+  const error = folderDialog.querySelector('#sf-folder-error');
+  const ok = folderDialog.querySelector('[data-folder-ok]');
+  if (mode === 'create') {
+    title.textContent = t('新建文件夹');
+    desc.textContent = t('文件夹只影响稿件库分组，不会移动磁盘文件。');
+    input.value = ''; input.disabled = false; error.textContent = ''; ok.textContent = t('创建');
+  } else {
+    title.textContent = t('移除文件夹？');
+    desc.textContent = t('稿件会回到全部稿件，文件不会删除。');
+    input.value = ''; error.textContent = ''; ok.textContent = t('移除');
+  }
+  setFolderDialogButtons(document.body.dataset.design === 'uwp');
+  requestAnimationFrame(() => {
+    if (mode === 'create') input.focus();
+    else ok.focus();
+  });
+}
+function submitFolderDialog() {
+  const input = folderDialog.querySelector('#sf-folder-name');
+  const error = folderDialog.querySelector('#sf-folder-error');
+  if (folderDialogMode === 'create') {
+    const name = input.value.trim();
+    if (!name) { error.textContent = t('请输入文件夹名称。'); input.focus(); return; }
+    if (name.length > 60 || prefs.folders.length >= 40) { error.textContent = t('文件夹名称最多 60 字，最多 40 个文件夹。'); input.focus(); return; }
+    if (prefs.folders.some(f => f.name === name)) { error.textContent = t('已经有同名文件夹。'); input.focus(); return; }
+    if (!commit({ folders: [...prefs.folders, { id: 'f-' + crypto.randomUUID(), name }] })) { error.textContent = t('保存失败，浏览器存储空间可能不足。'); return; }
+    renderFolders(); closeFolderDialog(); return;
+  }
+  if (commit({ folders: prefs.folders.filter(f => f.id !== folderDialogId) })) {
+    if (folder === folderDialogId) folder = '';
+    renderFolders(); refreshLibrary(); closeFolderDialog();
+  }
+}
+folderDialog.addEventListener('click', e => {
+  if (e.target === folderDialog || e.target.closest('[data-folder-cancel]')) closeFolderDialog();
+  else if (e.target.closest('[data-folder-ok]')) submitFolderDialog();
 });
+folderDialog.querySelector('#sf-folder-name').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); submitFolderDialog(); }
+  if (e.key === 'Escape') { e.preventDefault(); closeFolderDialog(); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !folderDialog.hidden) closeFolderDialog(); });
+$('sf-folder-add').addEventListener('click', e => openFolderDialog('create', '', e.currentTarget));
 $('sf-folders').addEventListener('click', e => {
   const f = e.target.closest('[data-folder]'), del = e.target.closest('[data-remove-folder]');
-  if (f) { folder = f.dataset.folder; filter = 'all'; location.hash = '#/home'; renderFolders(); refreshLibrary(); }
-  if (del && confirm(t('移除文件夹？稿件会回到全部稿件，文件不会删除。'))) {
-    const id = del.dataset.removeFolder;
-    if (commit({ folders: prefs.folders.filter(f => f.id !== id) })) { if (folder === id) folder = ''; renderFolders(); refreshLibrary(); }
-  }
+  if (f) { folder = f.dataset.folder; filter = 'all'; location.hash = '#/home'; renderFolders(); refreshLibrary(); if (document.body.dataset.design === 'material') animateMaterialPage($('home-view')); }
+  if (del) openFolderDialog('remove', del.dataset.removeFolder, del);
 });
 $('sf-folders').addEventListener('dragover', e => { if (e.target.closest('[data-folder]')) e.preventDefault(); });
 $('sf-folders').addEventListener('drop', e => {
@@ -476,7 +700,7 @@ $('sf-folders').addEventListener('drop', e => {
   const id = e.dataTransfer.getData('application/x-subfabric-project'); if (!projects.some(p => p.id === id)) return;
   if (commit({ assignments: { ...prefs.assignments, [id]: f.dataset.folder } })) { renderFolders(); refreshLibrary(); notice('稿件已移入文件夹。'); }
 });
-$('sf-nav').querySelector('[data-route="home"]').addEventListener('click', () => { folder = ''; filter = 'all'; renderFolders(); refreshLibrary(); });
+$('sf-nav').querySelector('[data-route="home"]').addEventListener('click', () => { folder = ''; filter = 'all'; renderFolders(); refreshLibrary(); if (document.body.dataset.design === 'material') animateMaterialPage($('home-view')); });
 $('sf-filters').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { filter = b.dataset.filter; refreshLibrary(); } });
 $('sf-search').addEventListener('input', refreshLibrary);
 $('sf-list-mode').addEventListener('click', () => { if (commit({ view: prefs.view === 'grid' ? 'list' : 'grid' })) refreshLibrary(); });
@@ -493,41 +717,61 @@ function renderWidgets() {
     ? `${String(recent.format).toUpperCase()}${recent.subName ? ' · ' + recent.subName : ''}`
     : t('从视频或字幕开始');
   el.innerHTML = `
-    <button type="button" class="sf-widget sf-widget-wide sf-widget-resume" data-widget="resume" data-tone="accent">
+    <button type="button" class="sf-widget sf-widget-wide sf-widget-resume uwp-tile" data-widget="resume" data-tone="accent">
       <span class="sf-widget-kicker">YOUR NEXT STORY</span>
       <strong class="sf-widget-title">${esc(recent?.name || t('开始新的创作'))}</strong>
       <small>${esc(recentMeta)}</small>
       <span class="sf-widget-cta">${t(recent ? '继续编辑' : '新建稿件')} <b aria-hidden="true">→</b></span>
+      <span class="sf-widget-wm" aria-hidden="true">${ico('play')}</span>
     </button>
-    <button type="button" class="sf-widget" data-widget-filter="active">
-      <span class="sf-widget-kicker">${t('处理中')}</span>
+    <button type="button" class="sf-widget uwp-tile" data-widget-filter="active">
+      <span class="sf-widget-kicker">IN PROGRESS</span>
+      <span class="sf-widget-ico" aria-hidden="true">${ico('activity')}</span>
       <strong class="sf-widget-num">${active}</strong>
+      <span class="sf-widget-label">${t('处理中')}</span>
       <small>${t('正在识别 / 翻译')}</small>
     </button>
-    <button type="button" class="sf-widget" data-widget-filter="ready">
-      <span class="sf-widget-kicker">${t('可编辑')}</span>
+    <button type="button" class="sf-widget uwp-tile" data-widget-filter="ready">
+      <span class="sf-widget-kicker">READY</span>
+      <span class="sf-widget-ico" aria-hidden="true">${ico('check')}</span>
       <strong class="sf-widget-num">${ready}</strong>
+      <span class="sf-widget-label">${t('可编辑')}</span>
       <small>${t('已经可以改字幕')}</small>
     </button>
-    <button type="button" class="sf-widget" data-widget-filter="attention" data-tone="warn">
-      <span class="sf-widget-kicker">${t('需处理')}</span>
+    <button type="button" class="sf-widget uwp-tile" data-widget-filter="attention" data-tone="warn">
+      <span class="sf-widget-kicker">ATTENTION</span>
+      <span class="sf-widget-ico" aria-hidden="true">${ico('alert')}</span>
       <strong class="sf-widget-num">${attention}</strong>
+      <span class="sf-widget-label">${t('需处理')}</span>
       <small>${t('失败 / 待重试')}</small>
     </button>
-    <button type="button" class="sf-widget" data-widget-filter="all">
-      <span class="sf-widget-kicker">${t('全部稿件')}</span>
+    <button type="button" class="sf-widget uwp-tile" data-widget-filter="all">
+      <span class="sf-widget-kicker">ALL</span>
+      <span class="sf-widget-ico" aria-hidden="true">${ico('folder')}</span>
       <strong class="sf-widget-num">${all}</strong>
+      <span class="sf-widget-label">${t('全部稿件')}</span>
       <small>${t('本地工作空间')}</small>
     </button>
-    <button type="button" class="sf-widget" data-widget="new" data-tone="accent">
-      <span class="sf-widget-kicker">NEW</span>
-      <strong class="sf-widget-title">${t('新建稿件')}</strong>
-      <small>${t('视频、链接或字幕')}</small>
+    <button type="button" class="sf-widget sf-widget-wide uwp-tile" data-widget="new" data-tone="accent">
+      <span class="sf-widget-plus" aria-hidden="true">${ico('plus')}</span>
+      <span class="sf-widget-text">
+        <span class="sf-widget-kicker">NEW</span>
+        <strong class="sf-widget-title">${t('新建稿件')}</strong>
+        <small>${t('视频、链接或字幕')}</small>
+      </span>
+      <span class="sf-widget-arrow" aria-hidden="true">→</span>
     </button>
-    <button type="button" class="sf-widget" data-widget="settings">
+    <button type="button" class="sf-widget uwp-tile" data-widget="settings">
+      <span class="sf-widget-ico" aria-hidden="true">${ico('sliders')}</span>
       <span class="sf-widget-kicker">SETTINGS</span>
       <strong class="sf-widget-title">${t('全局设置')}</strong>
       <small>${t('模型、翻译与外观')}</small>
+    </button>
+    <button type="button" class="sf-widget sf-widget-library uwp-tile" data-widget="library">
+      <span class="sf-widget-ico" aria-hidden="true">${ico('folder')}</span>
+      <span class="sf-widget-kicker">BROWSE</span>
+      <strong class="sf-widget-title">${t('稿件库')}</strong>
+      <small>${all} ${t('个项目')}</small>
     </button>`;
 }
 
@@ -612,6 +856,285 @@ function renderMaterialHome() {
   if (resume) resume.dataset.projectId = current?.id || '';
 
 }
+const uwpReduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+/* 系统减少动效或界面偏好 data-motion=off 都必须停掉 JS 3D/整页退场；
+   放在页面入场函数之前，模块初始化时 syncDashboardMode() 就能安全调用。 */
+const uwpMotionOff = () => uwpReduceMotion.matches || document.body.dataset.motion === 'off';
+let dashboardEnterTimer = 0;
+let libraryEnterTimer = 0;
+/* UWP 页面入场：页面整体 .92→1 淡入；元素按可视位置“下→上、右→左”依次
+   scale(.94→1)+淡入。所有 UWP 页面共用同一套 keyframes/easing，和主页 Tab 一致。 */
+const SETTINGS_ENTER_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .st-entry, .sf-prerequisite, .ws-panel, .st-hw, .st-subhead, .sf-scheme-empty';
+const UWP_ENTER_ITEM_SELECTORS = {
+  'dashboard-view': '#sf-widgets > .sf-widget',
+  'home-view': '.home-list > .proj-card',
+  'np-view': ':scope > .page-intro, .ws-grid > .ws-panel',
+  'detail-view': ':scope > .page-intro, .ws-grid > .ws-panel',
+  'sf-help': '.sf-page-content > .sf-eyebrow, .sf-page-content > h1, .sf-page-content > p, .sf-help-grid > article, .sf-help-grid article dl > div'
+};
+function uwpSettingsItems(panel) {
+  const visible = el => el.getClientRects().length > 0;
+  const content = [...panel.querySelectorAll(SETTINGS_ENTER_ITEMS)].filter(visible);
+  const heading = [...panel.querySelectorAll(':scope > .sf-settings-heading')].filter(visible);
+  /* 性能页没有 .st-card/.st-scheme，只有标题和两个 .st-section；
+     标题始终补入，内容为空时再把 section 拉进来，避免 heading 被漏掉。 */
+  if (!content.length) {
+    return [...heading, ...panel.querySelectorAll(':scope > .st-section')].filter(visible);
+  }
+  return [...content, ...heading];
+}
+function uwpEnterCandidates(root) {
+  if (!root) return [];
+  if (root.classList?.contains('st-panel')) return uwpSettingsItems(root);
+  if (root.id === 'st-view') {
+    const panel = [...root.querySelectorAll('.st-panel:not([hidden])')][0];
+    return panel ? uwpSettingsItems(panel) : [];
+  }
+  const selector = UWP_ENTER_ITEM_SELECTORS[root.id];
+  return selector ? [...root.querySelectorAll(selector)] : [];
+}
+function uwpOrderByGeometry(items) {
+  const entries = items.map(el => ({ el, r: el.getBoundingClientRect() }))
+    .filter(({ r }) => r.width > 0 && r.height > 0);
+  return entries.sort((a, b) =>
+    Math.abs(a.r.bottom - b.r.bottom) > 8 ? b.r.bottom - a.r.bottom : b.r.right - a.r.right
+  ).map(({ el }) => el);
+}
+function animateUwpPage(root, itemsOnly = false) {
+  if (document.body.dataset.design !== 'uwp' || !root || root.hidden || uwpMotionOff()) return;
+  let items = uwpEnterCandidates(root).filter(el => el.getClientRects().length);
+  /* 页面刚显示时卡片可能还没渲染完；不要先占用节流时间片，否则后面补渲染不会动。 */
+  if (!items.length && !itemsOnly) return;
+  const now = performance.now();
+  /* 同一批 DOM 的重复调用要节流；但项目数据刷新会换掉卡片节点，新节点没有
+     data-uwp-enter，必须允许立即补一次动画，否则首屏/刷新后元素静止。 */
+  if (!itemsOnly && root._uwpEnterAt && now - root._uwpEnterAt < 80
+    && items.every(el => el.hasAttribute('data-uwp-enter'))) return;
+  if (!itemsOnly) root._uwpEnterAt = now;
+  root.querySelectorAll('[data-uwp-enter]').forEach(el => {
+    if (!items.includes(el)) { el.removeAttribute('data-uwp-enter'); el.style.removeProperty('--uwp-enter-delay'); }
+  });
+  items.forEach(el => el.setAttribute('data-uwp-enter', ''));
+  uwpOrderByGeometry(items).forEach((el, i) => {
+    el.style.setProperty('--uwp-enter-delay', (i * 24) + 'ms');
+  });
+  const cls = itemsOnly ? 'is-uwp-items-entering' : 'is-uwp-page-entering';
+  root.classList.remove(cls);
+  void root.offsetWidth;
+  root.classList.add(cls);
+  /* 面板类只用于本次重播；动画结束后摘掉，避免 3991 的 :not() 永久失效、
+     也避免 next 次切回时依赖残留类。页面类保留，用来压住 .workspace-page 基础动画。 */
+  if (itemsOnly) {
+    clearTimeout(root._uwpItemsTimer);
+    const maxDelay = Math.max(0, (items.length - 1) * 24);
+    root._uwpItemsTimer = setTimeout(() => {
+      root.classList.remove(cls);
+      root._uwpItemsTimer = 0;
+    }, 180 + maxDelay + 100);
+  }
+}
+/* Material You 页面卡片：与主页同一套 .42s 上浮，按可视位置 top→bottom、left→right
+   依次错峰；只作用于稿件库/文件夹/设置/帮助，不接管主页本身。 */
+const MY_SETTINGS_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .st-entry, .sf-prerequisite, .sf-settings-heading';
+const MY_ENTER_ITEMS = {
+  'home-view': '.home-list > .proj-card',
+  'st-view': `.st-panel:not([hidden]) :is(${MY_SETTINGS_ITEMS})`,
+  'sf-help': '.sf-help-grid > article',
+  'sf-folders': '.sf-folder'
+};
+function animateMaterialPage(root, selector = '') {
+  if (document.body.dataset.design !== 'material' || !root || root.hidden || uwpMotionOff()) return;
+  const sel = selector || (root.classList?.contains('st-panel') ? MY_SETTINGS_ITEMS : MY_ENTER_ITEMS[root.id]);
+  if (!sel) return;
+  const items = [...root.querySelectorAll(sel)].filter(el => el.getClientRects().length);
+  if (!items.length) return;
+  const now = performance.now();
+  if (root._myEnterAt && now - root._myEnterAt < 80
+    && items.every(el => el.hasAttribute('data-my-enter'))) return;
+  root._myEnterAt = now;
+  root.querySelectorAll('[data-my-enter]').forEach(el => {
+    if (!items.includes(el)) { el.removeAttribute('data-my-enter'); el.style.removeProperty('--my-enter-delay'); }
+  });
+  items.forEach(el => el.setAttribute('data-my-enter', ''));
+  const ordered = items.map(el => ({ el, r: el.getBoundingClientRect() }))
+    .filter(({ r }) => r.width > 0 && r.height > 0)
+    .sort((a, b) => Math.abs(a.r.top - b.r.top) > 8 ? a.r.top - b.r.top : a.r.left - b.r.left);
+  ordered.forEach(({ el }, i) => el.style.setProperty('--my-enter-delay', (i * 45) + 'ms'));
+  root.classList.remove('is-my-page-entering');
+  void root.offsetWidth;
+  root.classList.add('is-my-page-entering');
+}
+let uwpEditorPending = false;
+let uwpEditorTimer = 0;
+let uwpCueTimer = 0;
+let materialEditorPending = false;
+let materialEditorTimer = 0;
+let materialCueTimer = 0;
+function animateMaterialEditorShell() {
+  if (document.body.dataset.design !== 'material' || uwpMotionOff()) return;
+  const app = $('app');
+  if (!app) return;
+  app.classList.remove('is-material-editor-entering');
+  void app.offsetWidth;
+  app.classList.add('is-material-editor-entering');
+  clearTimeout(materialEditorTimer);
+  materialEditorTimer = setTimeout(() => app.classList.remove('is-material-editor-entering'), 420);
+}
+let materialCueSeen = new Set();
+let materialCueRaf = 0;
+/** 只给真正进入视口的卡片播放入场；预渲染/overscan 的卡片等滚到眼前再播。 */
+function animateMaterialCueList(added = null, retry = true) {
+  if (document.body.dataset.design !== 'material') return false;
+  if (uwpMotionOff()) { materialEditorPending = false; return false; }
+  const list = $('cue-list');
+  if (!list) return false;
+  const all = [...list.querySelectorAll('.cue-card')];
+  const wanted = Array.isArray(added) ? new Set(added.map(Number)) : null;
+  const pool = wanted ? all.filter(card => wanted.has(Number(card.dataset.idx))) : all;
+  if (!pool.length) return false;
+
+  const run = () => {
+    const lr = list.getBoundingClientRect();
+    const visible = pool
+      .filter(card => {
+        const key = `${location.hash}|${card.dataset.idx}`;
+        if (materialCueSeen.has(key)) return false;
+        const r = card.getBoundingClientRect();
+        return r.height > 0 && r.bottom > lr.top + 8 && r.top < lr.bottom - 8;
+      })
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    if (!visible.length) return;
+    visible.forEach((card, i) => {
+      const key = `${location.hash}|${card.dataset.idx}`;
+      materialCueSeen.add(key);
+      /* 重新赋属性，确保虚拟列表复用同一 DOM 节点换了新下标时也会重新起播。 */
+      card.removeAttribute('data-my-cue');
+      void card.offsetWidth;
+      card.setAttribute('data-my-cue', '');
+      card.style.setProperty('--my-cue-delay', (i * 55) + 'ms');
+    });
+    if (!list.classList.contains('is-my-cue-entering')) list.classList.add('is-my-cue-entering');
+    materialEditorPending = false;
+    clearTimeout(materialCueTimer);
+    materialCueTimer = setTimeout(() => {
+      list.classList.remove('is-my-cue-entering');
+      list.querySelectorAll('.cue-card[data-my-cue]').forEach(card => {
+        card.removeAttribute('data-my-cue');
+        card.style.removeProperty('--my-cue-delay');
+      });
+    }, 420 + Math.max(0, visible.length - 1) * 55 + 120);
+  };
+  run();
+  /* 路由刚切换时列表可能还没布局，下一帧再按真实视口补一次（只补一次，避免递归空转）。 */
+  if (retry && !materialCueRaf) materialCueRaf = requestAnimationFrame(() => {
+    materialCueRaf = 0;
+    if (document.body.dataset.design === 'material') animateMaterialCueList(added, false);
+  });
+  return true;
+}
+$('cue-list')?.addEventListener('scroll', () => {
+  if (document.body.dataset.design !== 'material' || document.body.dataset.workspace !== 'editor') return;
+  if (materialCueRaf) return;
+  materialCueRaf = requestAnimationFrame(() => {
+    materialCueRaf = 0;
+    animateMaterialCueList();
+  });
+}, { passive: true });
+function animateUwpEditorShell() {
+  if (document.body.dataset.design !== 'uwp' || uwpMotionOff()) return;
+  const app = $('app');
+  if (!app) return;
+  app.classList.remove('is-uwp-editor-entering');
+  void app.offsetWidth;
+  app.classList.add('is-uwp-editor-entering');
+  clearTimeout(uwpEditorTimer);
+  uwpEditorTimer = setTimeout(() => app.classList.remove('is-uwp-editor-entering'), 420);
+}
+function animateUwpCueList(added = null) {
+  if (document.body.dataset.design !== 'uwp') return false;
+  if (uwpMotionOff()) { uwpEditorPending = false; return false; }
+  const list = $('cue-list');
+  if (!list) return false;
+  const all = [...list.querySelectorAll('.cue-card')];
+  const wanted = Array.isArray(added) ? new Set(added.map(Number)) : null;
+  const cards = wanted ? all.filter(card => wanted.has(Number(card.dataset.idx))) : all;
+  if (!cards.length) return false;
+  /* 只保留本批卡片的入场标记；上一批已播完的卡片不能因为 class 重加而重播。 */
+  list.querySelectorAll('.cue-card[data-uwp-cue]').forEach(card => {
+    if (!cards.includes(card)) {
+      card.removeAttribute('data-uwp-cue');
+      card.style.removeProperty('--uwp-cue-delay');
+    }
+  });
+  cards.forEach((card, i) => {
+    card.setAttribute('data-uwp-cue', '');
+    card.style.setProperty('--uwp-cue-delay', (i * 14) + 'ms');
+  });
+  list.classList.remove('is-uwp-cue-entering');
+  void list.offsetWidth;
+  list.classList.add('is-uwp-cue-entering');
+  uwpEditorPending = false;
+  clearTimeout(uwpCueTimer);
+  uwpCueTimer = setTimeout(() => {
+    list.classList.remove('is-uwp-cue-entering');
+    cards.forEach(card => {
+      card.removeAttribute('data-uwp-cue');
+      card.style.removeProperty('--uwp-cue-delay');
+    });
+  }, 120 + Math.max(0, cards.length - 1) * 14 + 100);
+  return true;
+}
+$('cue-list')?.addEventListener('sf-cue-rendered', e => {
+  if (document.body.dataset.workspace !== 'editor') return;
+  const added = e.detail?.added;
+  if (document.body.dataset.design === 'uwp') {
+    if (Array.isArray(added) && added.length) animateUwpCueList(added);
+    else if (uwpEditorPending) animateUwpCueList();
+  } else if (document.body.dataset.design === 'material') {
+    if (Array.isArray(added) && added.length) animateMaterialCueList(added);
+    else if (materialEditorPending) animateMaterialCueList();
+  }
+});
+function animateDashboardCards() {
+  const view = $('dashboard-view');
+  if (!view || view.hidden) return;
+  if (document.body.dataset.design === 'uwp') {
+    view.classList.remove('is-entering');
+    clearTimeout(dashboardEnterTimer);
+    animateUwpPage(view);
+    return;
+  }
+  view.classList.remove('is-entering');
+  void view.offsetWidth;
+  view.classList.add('is-entering');
+  clearTimeout(dashboardEnterTimer);
+  dashboardEnterTimer = setTimeout(() => view.classList.remove('is-entering'), 1100);
+}
+function animateLibraryCards() {
+  const view = $('home-view');
+  if (!view || view.hidden) return;
+  if (document.body.dataset.design === 'uwp') {
+    view.classList.remove('is-entering');
+    clearTimeout(libraryEnterTimer);
+    animateUwpPage(view);
+    return;
+  }
+  if (document.body.dataset.design === 'material') {
+    view.classList.remove('is-entering');
+    clearTimeout(libraryEnterTimer);
+    animateMaterialPage(view);
+    return;
+  }
+  view.classList.remove('is-entering');
+  void view.offsetWidth;
+  view.classList.add('is-entering');
+  clearTimeout(libraryEnterTimer);
+  libraryEnterTimer = setTimeout(() => view.classList.remove('is-entering'), 1100);
+}
+window.addEventListener('sf-settings-panel-shown', e => {
+  if (document.body.dataset.design === 'uwp') animateUwpPage(e.detail?.panel, true);
+  else if (document.body.dataset.design === 'material') animateMaterialPage(e.detail?.panel);
+});
 function syncDashboardMode() {
   const dashboard = $('dashboard-view'), material = $('sf-mu-home'), widgets = $('sf-widgets');
   if (!dashboard || !material || !widgets) return;
@@ -620,6 +1143,7 @@ function syncDashboardMode() {
   material.hidden = !on;
   widgets.hidden = on;
   if (on) renderMaterialHome();
+  if (!dashboard.hidden) animateDashboardCards();
 }
 function goLibraryFilter(nextFilter, clearSearch = true) {
   filter = nextFilter;
@@ -653,6 +1177,308 @@ const muClockTimer = setInterval(updateMuClock, 1000);
 if (muClockTimer && typeof muClockTimer.unref === 'function') muClockTimer.unref();
 updateMuClock();
 syncDashboardMode();
+// Replay the card stagger whenever the dashboard page becomes visible again.
+const dashboardViewEl = $('dashboard-view');
+if (dashboardViewEl) {
+  if (typeof MutationObserver === 'function') {
+    let dashboardWasHidden = dashboardViewEl.hidden;
+    new MutationObserver(() => {
+      const hidden = dashboardViewEl.hidden;
+      if (dashboardWasHidden && !hidden) animateDashboardCards();
+      dashboardWasHidden = hidden;
+    }).observe(dashboardViewEl, { attributes: true, attributeFilter: ['hidden'] });
+  }
+  if (!dashboardViewEl.hidden) animateDashboardCards();
+}
+const libraryViewEl = $('home-view');
+if (libraryViewEl) {
+  if (typeof MutationObserver === 'function') {
+    let libraryWasHidden = libraryViewEl.hidden;
+    new MutationObserver(() => {
+      const hidden = libraryViewEl.hidden;
+      if (libraryWasHidden && !hidden) animateLibraryCards();
+      libraryWasHidden = hidden;
+    }).observe(libraryViewEl, { attributes: true, attributeFilter: ['hidden'] });
+  }
+  if (!libraryViewEl.hidden) animateLibraryCards();
+}
+
+/* UWP 磁贴：鼠标靠近（不必在卡片内）时，卡片与相邻卡片边框逐渐点亮。 */
+let uwpGlowFrame = 0;
+let uwpGlowPoint = null;
+function uwpGlowCards() {
+  return [...document.querySelectorAll('.home-list > .proj-card, .sf-widgets > .sf-widget')]
+    .filter(el => typeof el.getBoundingClientRect === 'function');
+}
+function setUwpGlow(el, glow, edge, face, mx, my, faceR) {
+  if (!el?.style) return;
+  el.style.setProperty('--uwp-glow', glow.toFixed(3));
+  el.style.setProperty('--uwp-edge', edge.toFixed(3));
+  if (face !== undefined) el.style.setProperty('--uwp-face', face ? '1' : '0');
+  if (mx !== undefined) el.style.setProperty('--uwp-mx', mx + '%');
+  if (my !== undefined) el.style.setProperty('--uwp-my', my + '%');
+  if (faceR !== undefined) el.style.setProperty('--uwp-face-r', faceR + 'px');
+}
+function resetUwpGlow() {
+  uwpGlowPoint = null;
+  if (uwpGlowFrame && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(uwpGlowFrame);
+  uwpGlowFrame = 0;
+  for (const el of uwpGlowCards()) setUwpGlow(el, 0, 0, 0);
+  resetUwpTileHover();
+}
+function updateUwpGlow() {
+  uwpGlowFrame = 0;
+  if (document.body.dataset.design !== 'uwp' || !uwpGlowPoint) return;
+  const px = uwpGlowPoint.x, py = uwpGlowPoint.y;
+  const radius = 46;
+  const cards = uwpGlowCards();
+  const rects = new Map();
+  let activeEl = null;
+  for (const el of cards) {
+    const r = el.getBoundingClientRect();
+    rects.set(el, r);
+    if (r.width <= 0 || r.height <= 0) { setUwpGlow(el, 0, 0, 0); continue; }
+    const dx = Math.max(r.left - px, 0, px - r.right);
+    const dy = Math.max(r.top - py, 0, py - r.bottom);
+    const dist = Math.hypot(dx, dy);
+    let glow = 0, edge = 0;
+    if (dist < 0.5) {
+      glow = 1; edge = 1; activeEl = el;
+      setUwpGlow(el, 1, 1, 1,
+        ((px - r.left) / r.width * 100).toFixed(1),
+        ((py - r.top) / r.height * 100).toFixed(1),
+        (Math.min(r.width, r.height) * 1.2).toFixed(1));
+    }
+    else if (dist < radius) {
+      const t = 1 - dist / radius;
+      glow = t * t * 0.32;
+      edge = t * 0.55;
+      setUwpGlow(el, glow, edge, 0);
+    } else setUwpGlow(el, 0, 0, 0);
+  }
+  if (!activeEl) return;
+  // 指针在卡片内部时，紧邻的上下左右卡片边框也略微发亮。
+  const active = rects.get(activeEl);
+  for (const el of cards) {
+    if (el === activeEl) continue;
+    const r = rects.get(el);
+    if (!r || r.width <= 0 || r.height <= 0) continue;
+    const gapX = Math.max(0, active.left - r.right, r.left - active.right);
+    const gapY = Math.max(0, active.top - r.bottom, r.top - active.bottom);
+    if (Math.max(gapX, gapY) > 8) continue;
+    const glow = parseFloat(el.style.getPropertyValue('--uwp-glow')) || 0;
+    const edge = parseFloat(el.style.getPropertyValue('--uwp-edge')) || 0;
+    setUwpGlow(el, Math.max(glow, 0.10), Math.max(edge, 0.34), 0);
+  }
+}
+function scheduleUwpGlow(e) {
+  if (document.body.dataset.design !== 'uwp') return;
+  uwpGlowPoint = { x: e.clientX, y: e.clientY };
+  if (uwpGlowFrame) return;
+  if (typeof requestAnimationFrame === 'function') uwpGlowFrame = requestAnimationFrame(updateUwpGlow);
+  else updateUwpGlow();
+}
+document.addEventListener('pointermove', scheduleUwpGlow, { passive: true });
+document.addEventListener('pointerleave', resetUwpGlow);
+document.addEventListener('scroll', resetUwpGlow, true);
+window.addEventListener('blur', resetUwpGlow);
+window.addEventListener('sf-studio-theme', resetUwpGlow);
+
+/* ── UWP 磁贴化：所有 button/.btn 共用 Reveal 面光与 3D 按压 ─────────── */
+function syncUwpTiles() {
+  if (document.body.dataset.design !== 'uwp') return;
+  document.querySelectorAll('button, .btn, [role=button]').forEach(el => el.classList.add('uwp-tile'));
+}
+/* UWP range 轨道用 accent 填到当前值；原生 range 没有 CSS 可读 value 的钩子，
+   所以由 JS 写 --uwp-range。只写自定义属性，不碰 value/布局，其它主题零影响。 */
+function syncUwpRange(input) {
+  if (!input || input.type !== 'range') return;
+  const min = Number(input.min || 0), max = Number(input.max || 100), value = Number(input.value || 0);
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  input.style.setProperty('--uwp-range', Math.max(0, Math.min(100, pct)).toFixed(2) + '%');
+}
+function syncUwpRanges(root = document) {
+  if (document.body.dataset.design !== 'uwp') return;
+  root.querySelectorAll('input[type=range]').forEach(syncUwpRange);
+}
+document.addEventListener('input', e => {
+  if (document.body.dataset.design === 'uwp' && e.target?.matches?.('input[type=range]')) syncUwpRange(e.target);
+}, true);
+let uwpHoverTile = null;
+function resetUwpTileHover() {
+  if (!uwpHoverTile) return;
+  uwpHoverTile.style.setProperty('--uwp-face', '0');
+  uwpHoverTile.style.setProperty('--uwp-edge', '0');
+  uwpHoverTile = null;
+}
+function uwpTilesTarget(e) {
+  const t = e.target && e.target.closest ? e.target.closest('button, .btn, [role=button]') : null;
+  return t && !t.disabled && t.getAttribute('aria-disabled') !== 'true' ? t : null;
+}
+function uwpTileHover(e) {
+  if (document.body.dataset.design !== 'uwp') { resetUwpTileHover(); return; }
+  const t = uwpTilesTarget(e);
+  if (t !== uwpHoverTile) {
+    resetUwpTileHover();
+    if (!t) return;
+    t.classList.add('uwp-tile');
+    uwpHoverTile = t;
+  }
+  if (!t) return;
+  const r = t.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  const y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+  t.style.setProperty('--uwp-face', '1');
+  t.style.setProperty('--uwp-edge', '1');
+  t.style.setProperty('--uwp-mx', (x * 100).toFixed(1) + '%');
+  t.style.setProperty('--uwp-my', (y * 100).toFixed(1) + '%');
+  t.style.setProperty('--uwp-face-r', (Math.min(r.width, r.height) * 1.2).toFixed(1) + 'px');
+}
+document.addEventListener('pointermove', uwpTileHover, { passive: true });
+document.addEventListener('pointerleave', resetUwpTileHover);
+
+let uwpPress = null;
+function uwpPressTile(tile, x, y) {
+  if (!tile || uwpMotionOff()) return;
+  const r = tile.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const fx = Math.min(1, Math.max(0, (x - r.left) / r.width));
+  const fy = Math.min(1, Math.max(0, (y - r.top) / r.height));
+  const local = Math.max(Math.abs(fx - .5), Math.abs(fy - .5)) * 2;
+  const span = Math.max(r.width, r.height);
+  // 168px 以上沿用原型的 2.6°·168/max；更小的按钮按尺寸等比收小。
+  const maxTilt = 2.6 * Math.min(span, 168) / Math.max(span, 168);
+  const rx = (0.5 - fy) * 2 * maxTilt;
+  const ry = (fx - 0.5) * 2 * maxTilt;
+  const pressed = `perspective(760px) rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) translateZ(-3px) scale(.99)`;
+  const overshoot = `perspective(760px) rotateX(${(-rx * .20).toFixed(2)}deg) rotateY(${(-ry * .20).toFixed(2)}deg) translateZ(.6px) scale(1.002)`;
+  cancelUwpPress();
+  tile.getAnimations().forEach(a => {
+    if (a.id === 'uwp-tile-press' || a.id === 'uwp-tile-rebound') { try { a.cancel(); } catch { /* 已结束 */ } }
+  });
+  tile.style.transform = '';
+  tile.style.transformOrigin = `${((1 - fx) * 100).toFixed(2)}% ${((1 - fy) * 100).toFixed(2)}%`;
+  tile.style.setProperty('--uwp-px', (fx * r.width).toFixed(1) + 'px');
+  tile.style.setProperty('--uwp-py', (fy * r.height).toFixed(1) + 'px');
+  tile.style.setProperty('--uwp-press-r', (Math.min(r.width, r.height) * 1.15).toFixed(1) + 'px');
+  tile.style.setProperty('--uwp-press-local', local.toFixed(3));
+  tile.classList.remove('is-uwp-rebounding');
+  tile.classList.add('is-uwp-pressing');
+  uwpPress = { tile, pressed, overshoot, anim: null, startX: x, startY: y };
+  const anim = tile.animate([{ transform: 'none' }, { transform: pressed }], { duration: 105, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' });
+  anim.id = 'uwp-tile-press';
+  uwpPress.anim = anim;
+}
+function releaseUwpPress() {
+  if (!uwpPress) return;
+  const p = uwpPress;
+  uwpPress = null;
+  const tile = p.tile;
+  if (!tile || !tile.isConnected) return;
+  tile.classList.remove('is-uwp-pressing');
+  tile.classList.add('is-uwp-rebounding');
+  if (uwpMotionOff() || !p.anim) {
+    tile.style.transform = ''; tile.style.transformOrigin = '';
+    setTimeout(() => tile.classList.remove('is-uwp-rebounding'), 60);
+    return;
+  }
+  tile.style.transform = p.pressed;
+  try { p.anim.cancel(); } catch { /* 已结束 */ }
+  const reb = tile.animate([
+    { transform: p.pressed, offset: 0 },
+    { transform: p.overshoot, offset: .42 },
+    { transform: 'none', offset: 1 }
+  ], { duration: 420, easing: 'cubic-bezier(.22,.8,.24,1)' });
+  reb.id = 'uwp-tile-rebound';
+  reb.onfinish = () => {
+    if (uwpPress && uwpPress.tile === tile) return;
+    tile.style.transform = ''; tile.style.transformOrigin = '';
+    tile.classList.remove('is-uwp-rebounding');
+  };
+}
+function cancelUwpPress() {
+  if (uwpPress) {
+    const p = uwpPress;
+    uwpPress = null;
+    if (p.anim) { try { p.anim.cancel(); } catch { /* 已结束 */ } }
+    if (p.tile) {
+      p.tile.classList.remove('is-uwp-pressing', 'is-uwp-rebounding');
+      p.tile.style.transform = ''; p.tile.style.transformOrigin = '';
+    }
+  }
+  document.querySelectorAll('.uwp-tile.is-uwp-pressing, .uwp-tile.is-uwp-rebounding').forEach(tile => {
+    tile.classList.remove('is-uwp-pressing', 'is-uwp-rebounding');
+    tile.style.transform = ''; tile.style.transformOrigin = '';
+    tile.getAnimations().forEach(a => {
+      if (a.id === 'uwp-tile-press' || a.id === 'uwp-tile-rebound') { try { a.cancel(); } catch { /* 已结束 */ } }
+    });
+  });
+}
+document.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || document.body.dataset.design !== 'uwp') return;
+  const tile = uwpTilesTarget(e);
+  if (!tile) return;
+  tile.classList.add('uwp-tile');
+  uwpPressTile(tile, e.clientX, e.clientY);
+}, { passive: true });
+window.addEventListener('pointerup', releaseUwpPress);
+window.addEventListener('pointercancel', releaseUwpPress);
+window.addEventListener('blur', releaseUwpPress);
+document.addEventListener('pointermove', e => {
+  if (!uwpPress) return;
+  if (Math.hypot(e.clientX - uwpPress.startX, e.clientY - uwpPress.startY) > 12) releaseUwpPress();
+}, { passive: true });
+
+/* 主页磁贴整组飞出后再执行真实导航；退出期间锁住重复点击。 */
+let uwpExiting = false;
+function uwpTileExit(run) {
+  const dash = $('dashboard-view');
+  if (uwpExiting) return;
+  if (document.body.dataset.design !== 'uwp' || !dash || dash.hidden || uwpMotionOff()) { run(); return; }
+  uwpExiting = true;
+  cancelUwpPress();
+  dash.classList.remove('is-entering');
+  const tiles = [...$('sf-widgets').querySelectorAll(':scope > .sf-widget')];
+  const rects = tiles.map(t => t.getBoundingClientRect());
+  const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+  const ordered = tiles.map((t, i) => ({ t, r: rects[i] })).sort((a, b) =>
+    Math.abs(a.r.top - b.r.top) > 2 ? a.r.top - b.r.top : a.r.left - b.r.left);
+  ordered.forEach(({ t, r }, i) => {
+    t.style.setProperty('--uwp-exit-ox', (cx - r.left).toFixed(1) + 'px');
+    t.style.setProperty('--uwp-exit-oy', (cy - r.top).toFixed(1) + 'px');
+    t.style.setProperty('--uwp-exit-delay', (i * 16) + 'ms');
+  });
+  dash.classList.add('is-uwp-tile-leaving');
+  setTimeout(() => {
+    dash.classList.remove('is-uwp-tile-leaving');
+    tiles.forEach(t => {
+      t.style.removeProperty('--uwp-exit-ox');
+      t.style.removeProperty('--uwp-exit-oy');
+      t.style.removeProperty('--uwp-exit-delay');
+    });
+    uwpExiting = false;
+    run();
+  }, 300);
+}
+
+/* 返回主页：当前二级页 1.18 前向淡出，主页 .94→1 + 底部行先亮。 */
+let uwpPageOutTimer = 0;
+document.addEventListener('click', e => {
+  if (document.body.dataset.design !== 'uwp' || uwpMotionOff()) return;
+  const a = e.target.closest?.('#sf-nav a[href="#/dashboard"]');
+  if (!a || location.hash === '#/dashboard') return;
+  const current = [...document.querySelectorAll('.workspace-page:not([hidden]), #home-view:not([hidden]), .sf-page:not([hidden])')].find(el => el.id !== 'dashboard-view');
+  if (!current) return;
+  e.preventDefault();
+  if (uwpPageOutTimer) return;
+  current.classList.add('is-uwp-page-leaving');
+  uwpPageOutTimer = setTimeout(() => {
+    current.classList.remove('is-uwp-page-leaving');
+    uwpPageOutTimer = 0;
+    location.hash = '#/dashboard';
+  }, 190);
+});
 
 function refreshLibrary() {
   let visible = 0;
@@ -705,6 +1531,10 @@ function refreshLibrary() {
   $('sf-filter-empty').hidden = visible > 0 || projects.length === 0;
   renderWidgets();
   syncDashboardMode();
+  /* 首次项目数据晚于 applyTheme 到达时，卡片此前还不存在；渲染完后补一次
+     Material 入场。类已存在说明本次已播过，轮询重绘不重复触发。 */
+  if (document.body.dataset.design === 'material' && !$('home-view').hidden
+    && !$('home-view').classList.contains('is-my-page-entering')) animateMaterialPage($('home-view'));
   window.SF_PROGRESS.mount($('home-list'));
 }
 
@@ -852,6 +1682,8 @@ function syncPlayerSound() {
   const muted = video.muted || video.volume === 0;
   $('sf-volume').value = video.muted ? 0 : video.volume;
   $('sf-volume').style.setProperty('--sf-volume', `${Math.max(0, Math.min(1, Number($('sf-volume').value) || 0)) * 100}%`);
+  /* 静音/恢复也会改 value，但不发 input；UWP 的 accent 填充要同步重算。 */
+  syncUwpRange($('sf-volume'));
   $('sf-mute').setAttribute('aria-pressed', String(muted));
   $('sf-mute').setAttribute('aria-label', t(muted ? '取消静音' : '静音'));
   player.querySelector('.sf-sound-waves').toggleAttribute('hidden', muted);
@@ -876,6 +1708,7 @@ window.__sfStudio = {
     if (h === '#/resources') h = '#/settings';
     const previous = route; route = h;
     const editor = h === '#/editor' || h.startsWith('#/project/');
+    const wasEditor = previous === '#/editor' || previous.startsWith('#/project/');
     document.body.dataset.workspace = editor ? 'editor' : h.slice(2).split('/')[0];
     $('sf-nav').hidden = editor; $('sf-topbar').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
     const global = h === '#/settings';
@@ -889,6 +1722,40 @@ window.__sfStudio = {
     }
     if (editor && h.startsWith('#/project/') && prefs.recent !== h.slice(10)) commit({ recent: h.slice(10) });
     refreshLibrary();
+    /* 所有 UWP 非编辑器页面共用同一套入场：页面 .92→1，元素按几何位置错峰。 */
+    if (!editor && document.body.dataset.design === 'uwp') {
+      const page = h === '#/dashboard' ? $('dashboard-view') : h === '#/home' ? $('home-view')
+        : h === '#/settings' ? $('st-view') : h === '#/new' ? $('np-view')
+          : h === '#/help' ? $('sf-help') : h.startsWith('#/details/') ? $('detail-view') : null;
+      if (page && !page.hidden) animateUwpPage(page);
+    }
+    /* Material You：稿件库/文件夹/设置/帮助各自按几何顺序上浮，主页保持原卡片节奏。
+       延后一帧，兼容 project.js 路由早于 applyTheme 写入 data-design 的首屏顺序。 */
+    if (!editor) requestAnimationFrame(() => {
+      if (document.body.dataset.design !== 'material') return;
+      if (h === '#/home') { animateMaterialPage($('home-view')); animateMaterialPage($('sf-folders')); }
+      else if (h === '#/settings') {
+        const panel = [...$('st-view').querySelectorAll('.st-panel:not([hidden])')][0];
+        if (panel) animateMaterialPage(panel);
+      } else if (h === '#/help') animateMaterialPage($('sf-help'));
+    });
+    /* UWP 编辑器：外壳轻微 scale(.97→1) 淡入；字幕卡在 cue 渲染后自上而下 120ms/14ms 淡入上移。 */
+    if (editor) {
+      uwpEditorPending = true;
+      materialEditorPending = true;
+      if (!wasEditor) {
+        if (document.body.dataset.design === 'uwp') animateUwpEditorShell();
+        else if (document.body.dataset.design === 'material') animateMaterialEditorShell();
+      }
+      /* 已有卡片（从稿件库直接进项目）可立即播放；新项目则在 editor.js 的
+         sf-cue-rendered 事件到达后播放，不额外占用动画帧。 */
+      animateUwpCueList();
+      animateMaterialCueList();
+    } else {
+      uwpEditorPending = false;
+      materialEditorPending = false;
+      materialCueSeen.clear();
+    }
   }
 };
 // 三个主题共用菜单行为，各自用 CSS 定义材质；原 select 保留业务链路。

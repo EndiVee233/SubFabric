@@ -78,6 +78,8 @@ export function enhanceFontInput(input, opts) {
   btn.className = 'fp-btn';
   btn.title = '从系统字体里选（带预览）';
   btn.setAttribute('aria-label', '选择字体');
+  btn.setAttribute('aria-haspopup', 'listbox');
+  btn.setAttribute('aria-expanded', 'false');
   btn.textContent = '▾';
   wrap.appendChild(btn);
 
@@ -147,17 +149,19 @@ export function enhanceFontInput(input, opts) {
   }
 
   function place() {
-    // 面板贴着输入框下方；下方空间不够就翻到上方
+    // 面板贴着输入框下方；按真实高度决定翻转，并夹在视口内（窄屏/底部设置行）。
     const r = wrap.getBoundingClientRect();
-    const h = 320;
     const below = window.innerHeight - r.bottom;
+    const maxH = Math.max(180, Math.min(320, Math.max(below, r.top) - 16));
+    panel.style.maxHeight = maxH + 'px';
     panel.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 340)) + 'px';
     panel.style.width = Math.max(260, Math.min(340, window.innerWidth - 24)) + 'px';
-    if (below < h + 12 && r.top > h + 12) {
-      panel.style.top = (r.top - h - 6) + 'px';
-    } else {
-      panel.style.top = (r.bottom + 4) + 'px';
-    }
+    const h = Math.min(panel.offsetHeight || maxH, maxH);
+    let top;
+    if (below >= h + 12) top = r.bottom + 4;
+    else if (r.top >= h + 12) top = r.top - h - 6;
+    else top = Math.max(8, Math.min(r.bottom + 4, window.innerHeight - h - 8));
+    panel.style.top = Math.max(8, top) + 'px';
   }
 
   function pick(name) {
@@ -184,6 +188,7 @@ export function enhanceFontInput(input, opts) {
     opened = true;
     panel.hidden = false;
     btn.classList.add('on');
+    btn.setAttribute('aria-expanded', 'true');
     filterEl.value = '';
     listEl.innerHTML = '<div class="fp-empty">读取系统字体…</div>';
     place();
@@ -199,10 +204,13 @@ export function enhanceFontInput(input, opts) {
 
   function close() {
     if (!opened) return;
+    const hadFocus = panel.contains(document.activeElement);
     opened = false;
     panel.hidden = true;
     btn.classList.remove('on');
+    btn.setAttribute('aria-expanded', 'false');
     if (closeActive === close) closeActive = null;
+    if (hadFocus) btn.focus();
   }
 
   /* ── 事件 ─────────────────────────────────────────── */

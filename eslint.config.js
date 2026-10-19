@@ -36,6 +36,7 @@ export default [
         XMLHttpRequest: 'readonly', MutationObserver: 'readonly', ResizeObserver: 'readonly',
         IntersectionObserver: 'readonly', Worker: 'readonly', OffscreenCanvas: 'readonly',
         Path2D: 'readonly',   // 画布路径（timeline.js 画圆角矩形用）；补上免得 no-undef 误报
+        createImageBitmap: 'readonly',   // 背景图取尺寸/裁剪用（浏览器全局）
         AbortSignal: 'readonly', EventSource: 'readonly', NodeFilter: 'readonly',
         File: 'readonly', FileList: 'readonly', FileReader: 'readonly', Blob: 'readonly',
         HTMLElement: 'readonly', HTMLInputElement: 'readonly', HTMLCanvasElement: 'readonly',

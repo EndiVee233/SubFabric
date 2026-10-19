@@ -1,10 +1,12 @@
 // 只保存界面偏好/文件夹关系；字幕、任务、模型、凭据不进入浏览器演示状态。
 export const STUDIO_KEY = 'subfabric-studio-v1';
-export const defaults = Object.freeze({ themePack: 'studio', accent: '#5c7560', mode: 'light', background: 'solid', image: '', motion: 'on', auroraColors: [], auroraMotion: 'dynamic', glassDim: 80, glassBlur: 18, glassOpacity: 100, rimEnabled: true, rimSatLow: 0.85, rimBriGain: 0.58, rimSpecBase: 0.60, rimPower: 1.5, custom: [], folders: [], assignments: {}, recent: '', view: 'grid' });
+export const defaults = Object.freeze({ themePack: 'windows-uwp', accent: '#5c7560', mode: 'light', background: 'solid', image: '', imageBlur: 0, imageDim: 0, motion: 'on', auroraColors: [], auroraMotion: 'dynamic', glassDim: 80, glassBlur: 18, glassOpacity: 100, rimEnabled: true, rimSatLow: 0.85, rimBriGain: 0.58, rimSpecBase: 0.60, rimPower: 1.5, custom: [], folders: [], assignments: {}, recent: '', view: 'grid' });
 const id = s => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
 const number = (v, lo, hi, fallback) => typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
+/* 背景图在保存前会压到长边 2560 的 JPEG；这里只防超大数据把 localStorage 撑爆，
+   不再沿用旧版 2MB 的输入上限。 */
 export function imageData(s) {
-  return typeof s === 'string' && s.length <= 2800000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(s);
+  return typeof s === 'string' && s.length <= 16000000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(s);
 }
 export function normalizeStudio(value, themes) {
   const v = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -24,7 +26,10 @@ export function normalizeStudio(value, themes) {
     rimBriGain: number(v.rimBriGain, 0.30, 0.80, defaults.rimBriGain),
     rimSpecBase: number(v.rimSpecBase, 0.45, 0.75, defaults.rimSpecBase),
     rimPower: number(v.rimPower, 1.00, 2.20, defaults.rimPower),
-    image: imageData(v.image) ? v.image : '', motion: v.motion === 'off' ? 'off' : 'on', custom, folders: unique, assignments, recent: id(v.recent) ? v.recent : '', view: v.view === 'list' ? 'list' : 'grid' };
+    image: imageData(v.image) ? v.image : '',
+    imageBlur: number(v.imageBlur, 0, 40, defaults.imageBlur),
+    imageDim: number(v.imageDim, 0, 80, defaults.imageDim),
+    motion: v.motion === 'off' ? 'off' : 'on', custom, folders: unique, assignments, recent: id(v.recent) ? v.recent : '', view: v.view === 'list' ? 'list' : 'grid' };
 }
 export function projectPhase(project) {
   if (project.fetching || project.prepare?.status === 'running' || project.draft?.status === 'running') return 'active';

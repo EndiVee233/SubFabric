@@ -3,6 +3,8 @@
   'use strict';
   const values = new Set(['running', 'queued', 'paused', 'error', 'canceled', 'done', 'ready']);
   const amount = value => Math.min(100, Math.max(0, Number(value) || 0));
+  /* null/undefined/空串/NaN = 进度未知；UWP 用 32% 块循环，其它主题保留原样。 */
+  const unknown = value => value === null || value === undefined || value === '' || !Number.isFinite(Number(value));
   const phase = value => values.has(value) ? value : 'paused';
   const tracked = new Map();
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -15,8 +17,9 @@
     return `<span class="sf-progress-rest"></span><i class="sf-progress-fill" ${attributes} style="width:${amount(value)}%"><span class="sf-progress-line"></span><span class="sf-progress-wave"><span class="sf-wave-shift"></span></span></i><span class="sf-progress-thumb"></span>`;
   }
   function html(value, status, attributes = '') {
-    const n = amount(value);
-    return `<div class="progress sf-progress" role="progressbar" aria-label="任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.floor(n)}" data-progress-state="${phase(status)}" style="--sf-progress:${n}%">${visual(n, attributes)}</div>`;
+    const indet = unknown(value);
+    const n = indet ? 0 : amount(value);
+    return `<div class="progress sf-progress" role="progressbar" aria-label="任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.floor(n)}" data-indeterminate="${indet}" data-progress-state="${phase(status)}" style="--sf-progress:${n}%">${visual(n, attributes)}</div>`;
   }
   function syncOne(el) {
     const n = Number(el.dataset.progressValue ?? parseFloat(el.style.getPropertyValue('--sf-progress')));
@@ -43,7 +46,9 @@
   function set(el, value, status) {
     const root = el?.classList?.contains('sf-progress') ? el : el?.closest('.sf-progress');
     if (!root) return;
-    const n = amount(value), text = String(n);
+    const indet = unknown(value);
+    if (root.dataset.indeterminate !== String(indet)) root.dataset.indeterminate = String(indet);
+    const n = indet ? 0 : amount(value), text = String(n);
     if (root.dataset.progressValue !== text) {
       root.dataset.progressValue = text;
       root.style.setProperty('--sf-progress', `${n}%`);

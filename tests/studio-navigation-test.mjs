@@ -497,7 +497,7 @@ await settle();
 const state = { project: null, format: null, srtCues: [] };
 const { initProjects } = await loadProduction('project.js', probe === 'upload-lock'
     ? source => source.replace(/if \(studioUI && npSubmitting && h !== '#\/new'\) \{[\s\S]*?\n    \}/, '') : null);
-const api = initProjects({ state, video: $('video'), timeline: { setPeaks() {} }, panel: { showConfirm() {} },
+const api = initProjects({ state, video: $('video'), timeline: { setPeaks() {} }, panel: { showConfirm(_title, _msg, _yes, _no, onYes) { if (schemeConfirm) return onYes(); } },
   toast: text => toasts.push(text), setPlaybackAudioMode() {}, loadVideoUrl() {},
   routeSub(text) { state.format = 'srt'; state.srtCues = parseSRT(text); } });
 api.applyHash(); await settle();
@@ -537,7 +537,7 @@ assert.equal($('st-save').hidden, true, 'instant preference category does not im
 // Theme pack cards are delegated controls: exercise every built-in pack through
 // the same click path users take in the released Studio UI, including the
 // rerender that happens after applyTheme().
-for (const id of ['studio', 'material-you', 'subfabric-classic', 'windows-uwp']) {
+for (const id of ['windows-uwp', 'material-you', 'subfabric-classic']) {
   const packButton = document.querySelector(`[data-pack-select="${id}"]`);
   assert.ok(packButton, 'built-in theme pack is rendered: ' + id);
   // The in-memory DOM does not synthesize event bubbling; dispatch at the
@@ -602,18 +602,18 @@ for (const route of ['settings']) {
 await navigate('#/resources');
 assert.equal(location.hash, '#/settings', 'legacy resource bookmark redirects to settings');
 assert.equal($('st-view').hidden, false, 'legacy resource bookmark shows settings');
-await click('st-close');
+assert.equal(document.getElementById('st-close'), null, 'settings header no longer has the top back button');
+await click('st-cancel');
 assert.equal(location.hash, '#/new', 'legacy resource alias preserves the original caller');
 assertMaterials('legacy resource alias');
 assert.equal(historyBacks, 0, 'Studio return uses its recorded caller rather than stale browser history');
 
-// Save-and-return stays on the single settings route.
+// Save no longer implies navigation; leaving settings is the sidebar's job.
 await navigate('#/settings'); await click('st-save');
 assert.ok(requests.some(request => request.url === '/api/asr/hint' && request.method === 'POST'), 'global enhancement save calls its own API');
 assert.equal(requests.some(request => request.url === '/api/translate/config' && request.method === 'POST'),false,'global save does not silently overwrite named translation schemes');
-assert.equal(location.hash, '#/settings', 'save waits for the feedback timer');
-await runTimer(600);
-assert.equal(location.hash, '#/new', 'resource save-and-return exits after successful save');
+await settle();
+assert.equal(location.hash, '#/settings', 'save stays in settings; sidebar handles navigation');
 assertMaterials('settings save');
 
 // Named schemes start empty, validate names, retain failed drafts and never write keys to storage.
@@ -650,6 +650,11 @@ const secondCard=$('st-scheme-list').querySelectorAll('.st-scheme')[1]; secondCa
 assert.equal(schemeActive,'scheme-2');
 schemeConfirm=false; $('st-scheme-list').querySelector('.sf-scheme-delete').click(); await settle(); assert.equal(schemes.length,2);
 schemeConfirm=true; $('st-scheme-list').querySelector('.sf-scheme-delete').click(); await settle(); assert.equal(schemes.length,1);
+$('st-scheme-list').querySelector('.sf-scheme-open').click(); await settle();
+assert.equal($('st-scheme-drawer').hidden,false);
+$('st-scheme-list').querySelector('.sf-scheme-delete').click(); await settle(); await runTimer(320);
+assert.equal(schemes.length,0);
+assert.equal($('st-scheme-drawer').hidden,true,'deleting the edited scheme closes its drawer');
 assert.ok(![...storage.values()].some(value=>value.includes('fake-secret')),'keys never enter localStorage');
 assert.equal(requests.some(request=>request.url==='/api/translate/config'&&request.method==='POST'),false);
 

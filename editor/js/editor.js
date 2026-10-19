@@ -336,6 +336,7 @@ export class EditorPanel {
     this.items = items;
     this.selected = null;
     this.playingItem = null;
+    this._syncActiveRole();
     this._playingT = null;    // 条目集/项目换了 → 旧播放时间不再可信，等下一次 tick 重新写入
     this._speaker = '';       // 新数据 → 重置角色筛选(避免跨文件残留)
     if (this.roleFilterSel) this.roleFilterSel.value = '__all__';
@@ -352,12 +353,20 @@ export class EditorPanel {
     if (!on && this._tab === 'roles') this.showTab('subs');
   }
 
-  showTab(name) {
+  showTab(name, opts = {}) {
     if (!['subs', 'roles', 'settings', 'logs'].includes(name)) name = 'subs';
     if (name === 'roles' && !this._rolesEnabled) name = 'subs';
     const prevTab = this._tab;
     this._tab = name;
     const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings', logs: 'tab-logs' };
+    /* 新建字幕必须立刻看到输入框：跳过 .tab-body 的 260ms 入场，
+       否则会表现为“已经切过去了但卡住零点几秒”。 */
+    const targetBody = document.getElementById(bodies[name]);
+    /* 该类要一直留到下次切页：提前移除会让 .tab-body 的 260ms 动画在之后重新启动。 */
+    for (const el of document.querySelectorAll('.tab-body.is-instant-reveal')) {
+      if (!opts.instant || el !== targetBody) el.classList.remove('is-instant-reveal');
+    }
+    if (opts.instant && targetBody) targetBody.classList.add('is-instant-reveal');
     for (const [k, id] of Object.entries(bodies)) {
       const el = document.getElementById(id);
       if (el) el.classList.toggle('active', k === name);
@@ -370,7 +379,7 @@ export class EditorPanel {
        * 但不会滚到当前句。切回来时必须按最近播放时间强制重定位一次，否则列表停在切走前的
        * 位置、而且因为 playingItem 早已等于当前句，tick 的 setPlayingByTime 不会再做任何事
        * （用户反馈"切到字幕列表后进度不会和播放进度同步"）。 */
-      if (prevTab !== 'subs') this.syncPlaying();
+      if (prevTab !== 'subs' && !opts.skipSync) this.syncPlaying();
     }
     else if (name === 'roles') this._renderRoles();
   }
@@ -405,13 +414,32 @@ export class EditorPanel {
     return names.includes(this._speaker.toLowerCase());
   }
 
+  /** 当前播放句的说话人（角色 Tab 的磁贴用它描边）。 */
+  _activeRoleName() {
+    const it = this.playingItem;
+    if (!it) return '';
+    const raw = String(it.speaker || '');
+    const fromSpeaker = [...raw.matchAll(/\[([^\]]+)\]/g)].map(m => m[1].trim());
+    const fromText = (String(it.l1 || '').match(/^\s*\[([^\]]+)\]/) || [])[1];
+    const names = [...fromSpeaker, fromText].filter(Boolean).map(n => n.toLowerCase());
+    return this._roles.find(r => names.includes(r.name.toLowerCase()))?.name || '';
+  }
+  _syncActiveRole() {
+    const el = document.getElementById('role-list');
+    if (!el) return;
+    const active = this._activeRoleName().toLowerCase();
+    el.querySelectorAll('.role-card[data-name]').forEach(card => {
+      card.classList.toggle('is-speaking', !!active && card.dataset.name.toLowerCase() === active);
+    });
+  }
   _renderRoles() {
     const el = document.getElementById('role-list');
     if (!el) return;
+    const activeRole = this._activeRoleName();
     const cards = this._roles.map(r => {
       const c = r.color ? hexRgb(r.color) : null;
       const dot = c ? `style="background:rgb(${c.r},${c.g},${c.b})"` : 'style="background:#5b6472"';
-      return `<div class="role-card" data-name="${escapeHtml(r.name)}" title="点一下=设为播放头所在块的角色 · 右键=重命名 / 改色">
+      return `<div class="role-card${r.name === activeRole ? ' is-speaking' : ''}" data-name="${escapeHtml(r.name)}" title="点一下=设为播放头所在块的角色 · 右键=重命名 / 改色">
         <span class="role-dot" ${dot}></span>
         <span class="role-name">${escapeHtml(r.name)}</span>
         <span class="role-count">${r.count} 条</span>
@@ -995,6 +1023,7 @@ export class EditorPanel {
       this._offsets = null;
       this._totalH = 0;
       this._winStart = this._winEnd = 0;
+      this._lastWindow = [];
       return;
     }
     if (this._metricsDirty || !this._offsets || this._offsets.length !== n + 1) this._rebuildMetrics(n);
@@ -1005,8 +1034,15 @@ export class EditorPanel {
     this._winStart = win.start;
     this._winEnd = win.end;
     let html = `<div class="cue-pad" style="height:${this._offsets[win.start]}px"></div>`;
-    for (let i = win.start; i < win.end; i++) html += this._cardHtml(this.filtered[i], i);
+    const winIdx = [];
+    for (let i = win.start; i < win.end; i++) { winIdx.push(i); html += this._cardHtml(this.filtered[i], i); }
     spacer.innerHTML = html;     // 撑出完整滚动条的高度已在上面设好
+    /* 只把“本次新进入窗口”的条目交给入场动画；滚动时重叠窗口不重播。 */
+    const previous = this._lastWindow || [];
+    const previousSet = new Set(previous);
+    const added = winIdx.filter(i => !previousSet.has(i));
+    this._lastWindow = winIdx;
+    this.listEl.dispatchEvent(new CustomEvent('sf-cue-rendered', { detail: { start: win.start, end: win.end, added } }));
   }
 
   refreshItem() { this._metricsDirty = true; this._render(); }
@@ -1073,6 +1109,7 @@ export class EditorPanel {
     if (found === this.playingItem && !force) return;
     const prevPlaying = this.playingItem;
     this.playingItem = found;
+    this._syncActiveRole();
     /* 字幕页隐藏时列表高度为 0：这里如果继续走滚动逻辑，会把 scrollTop 重置成 0，
      * 切回来就停在稿子开头。隐藏期间只记录 playingItem，位置留给 showTab → syncPlaying。 */
     if (this._tab !== 'subs' || !this.listEl.clientHeight) return;

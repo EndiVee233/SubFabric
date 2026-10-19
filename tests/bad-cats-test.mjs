@@ -38,7 +38,7 @@ const { BAD_CATS, classifyBadReason, badCatsOf } =
 fs.unlinkSync(mod);
 
 // ── 用例：与 markBadRows() 里 push 的文案逐条对应 ──
-console.log('== 11 种真实原因 → 类别 ==');
+console.log('== 真实原因 → 类别 ==');
 const cases = [
   ['句时长≤0', 'time'],
   ['开始时间 "abc" 无法解析', 'time'],
@@ -52,6 +52,9 @@ const cases = [
   ['英文行含方括号', 'role'],
   ['未标注角色', 'role'],
   ['英文行缺词（逐词 8 个 / 文本 9 词）', 'words'],
+  ['逐词高亮不连续（第 5 个高亮切片指向第 6 词，应为第 5 词）', 'words'],
+  ['逐词高亮数量异常（4 个高亮 / 5 词）', 'words'],
+  ['逐词高亮重复（同一逐词切片含多个高亮词）', 'words'],
 ];
 for (const [reason, want] of cases) {
   const got = classifyBadReason(reason);

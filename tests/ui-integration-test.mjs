@@ -9,8 +9,8 @@ vm.runInContext(fs.readFileSync(path.join(root, 'editor/js/studio-themes.js'), '
 const themes = themesContext.window.SF_THEMES;
 const stateSource = fs.readFileSync(path.join(root, 'editor/js/studio-state.js'), 'utf8');
 const { normalizeStudio, projectPhase, matchesProject, imageData } = await import('data:text/javascript;base64,' + Buffer.from(stateSource).toString('base64'));
-assert.equal(normalizeStudio(null, themes).themePack, 'studio');
-assert.ok(themes.get('windows-uwp').design === 'uwp', 'Windows UWP theme is built in');
+assert.equal(normalizeStudio(null, themes).themePack, 'windows-uwp');
+assert.ok(themes.get('windows-uwp').design === 'uwp', 'Windows 10 theme is built in');
 assert.equal(themes.valid({ schema: 'subfabric-theme-v1', id: 'windows-uwp-copy', name: 'Windows UWP Copy', version: '1.0.0', description: 'test', design: 'uwp', seed: '#0078d4' }), true);
 assert.equal(normalizeStudio({ themePack: 'bad', accent: 'url(evil)', mode: 'bad', image: '<svg>', motion: 'bad', custom: [{}] }, themes).accent, '#5c7560');
 assert.equal(imageData('data:image/svg+xml;base64,AAAA'), false);

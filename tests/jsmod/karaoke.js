@@ -501,19 +501,26 @@ export function analyzeKaraoke(doc) {
     // 以前是"往前最多看 4 条、第一条包含就返回" —— 双行字幕轨允许行重叠,
     // 新建行与现有行起点相同/相近时, 二分命中的是**跨度更大**的那条(排序按 start 再 end),
     // 切片就被它抢走: 重载后新行英文丢失、另一行词数暴涨(实测复现)。
-    // 现在与 pairRows.ownerOf 同一策略: 在能包住的候选里取跨度最小(最贴合)的。
+    // 现在优先比起止误差、再比跨度；不能只比跨度 —— 相邻短句会把下一句的首个切片
+    // 吞进上一句（例如 "Ooh." 的尾部容差吃掉了下一句的 "I don't know…"）。
     let lo = 0, hi = anchors.length - 1, ans = -1;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
       if (anchors[mid].start <= sl.start + 0.02) { ans = mid; lo = mid + 1; } else hi = mid - 1;
     }
-    let best = null, bestSpan = Infinity;
+    let best = null, bestStartErr = Infinity, bestEndErr = Infinity, bestSpan = Infinity;
     for (let i = ans; i >= 0; i--) {
       const a = anchors[i];
       if (a.start < sl.start - 300) break;          // 5 分钟以上的行属于病态, 不再往前找
       if (sl.start >= a.start - 0.05 && sl.end <= a.end + 0.05) {
+        const startErr = Math.abs(a.start - sl.start);
+        const endErr = Math.abs(a.end - sl.end);
         const span = a.end - a.start;
-        if (span < bestSpan) { bestSpan = span; best = a; }
+        if (!best || startErr < bestStartErr - 1e-9
+          || (Math.abs(startErr - bestStartErr) <= 1e-9 && endErr < bestEndErr - 1e-9)
+          || (Math.abs(startErr - bestStartErr) <= 1e-9 && Math.abs(endErr - bestEndErr) <= 1e-9 && span < bestSpan - 1e-9)) {
+          best = a; bestStartErr = startErr; bestEndErr = endErr; bestSpan = span;
+        }
       }
     }
     return best;

@@ -13,7 +13,7 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(root, 'editor/js/studio-themes.js'), 'utf8'), context);
 const themes = context.window.SF_THEMES;
 
-assert.equal(themes.builtins.length, 4, 'all four built-in theme packs are registered');
+assert.equal(themes.builtins.length, 3, 'all three built-in theme packs are registered (Studio removed)');
 for (const pack of themes.builtins) {
   assert.equal(pack.builtin, true, `${pack.id} is marked built-in`);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'editor/themes', `${pack.id}.theme.json`), 'utf8')), JSON.parse(JSON.stringify(pack)), `${pack.id} has a distributable JSON package`);

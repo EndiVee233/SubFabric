@@ -107,7 +107,7 @@ for (const [stp, name, desc] of [
   await sleep(600);
   await shot(b, name, desc);
 }
-await b.eval("document.getElementById('st-close').click()");
+await b.eval("document.getElementById('st-cancel').click()");
 await sleep(400);
 
 /* ── 5. 查找与批量替换（两个页签） ── */

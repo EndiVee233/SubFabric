@@ -342,8 +342,13 @@ export class Timeline {
        换色时 accent.js 派发 ss-accent 事件（canvas 里读不到 CSS 变量，只能缓存一份）。 */
     this.accent = cssVar('--accent', C.accent);
     this.colors = { ...C, rulerBg0: '#16161c', rulerBg1: '#101015' };
+    /* Windows UWP 的 canvas 走更硬的 Fluent 几何：2px 播放头、1px 选中框、
+       无光晕、2px 块圆角。canvas 读不到 CSS 的圆角/线宽，只能缓存设计。 */
+    this.uwp = document.body?.dataset.design === 'uwp';
+    this._hoverCue = null;
     const syncStudioColors = () => {
       if (!document.body?.classList?.contains('sf-studio')) return;
+      this.uwp = document.body?.dataset.design === 'uwp';
       Object.assign(this.colors, {
         bg: cssVar('--bg-1', C.bg), waveBg: cssVar('--bg-2', C.waveBg),
         filmBg: cssVar('--bg-2', C.filmBg), filmBorder: cssVar('--border', C.filmBorder),
@@ -908,6 +913,7 @@ export class Timeline {
           }
           const hit = this._hitTest(x, y, true);
           if (hit && (!this.isEditable || this.isEditable(hit.cue.ref))) {
+            if (this.uwp && this._hoverCue !== hit.cue) { this._hoverCue = hit.cue; this._dirty = true; }
             const c = hit.cue;
             const csx = this.t2x(c.start), cex = this.t2x(c.end);
             const onL = cex - csx >= 8 && Math.abs(x - csx) <= EDGE_TOL;
@@ -927,9 +933,13 @@ export class Timeline {
             }
             this._hideEdgeHint();
             cursor = 'move';
-          } else { this._hideEdgeHint(); cursor = 'crosshair'; }
+          } else {
+            this._hideEdgeHint(); cursor = 'crosshair';
+            if (this.uwp && this._hoverCue) { this._hoverCue = null; this._dirty = true; }
+          }
         } else {
           this._hideEdgeHint();
+          if (this.uwp && this._hoverCue) { this._hoverCue = null; this._dirty = true; }
         }
         cv.style.cursor = cursor;
         return;
@@ -1013,7 +1023,10 @@ export class Timeline {
       if (this.onSeek) this.onSeek(t);
     };
     cv.addEventListener('pointerup', finishDrag);
-    cv.addEventListener('pointerleave', () => this._hideEdgeHint());
+    cv.addEventListener('pointerleave', () => {
+      this._hideEdgeHint();
+      if (this.uwp && this._hoverCue) { this._hoverCue = null; this._dirty = true; }
+    });
     cv.addEventListener('pointercancel', () => {
       const d = this._drag;
       this._drag = null;
@@ -1924,7 +1937,7 @@ export class Timeline {
         if (runStart === null) return;
         const b = runBand || { y: yy + 4, h: lh - 8 };
         ctx.fillStyle = withAlpha(mutedHex(lane.color, 0.62), 0.24, lane.color + '1f');
-        this._roundRect(ctx, runStart, b.y, Math.max(1.5, runEnd - runStart), b.h, 3);
+        this._roundRect(ctx, runStart, b.y, Math.max(1.5, runEnd - runStart), b.h, this.uwp ? 2 : 3);
         ctx.fill();
         runStart = runEnd = runBand = null;
       };
@@ -1963,23 +1976,36 @@ export class Timeline {
          * 混灰后提高一点透明度，保证在深色波形上仍看得出块的范围。 */
         const alpha = 0.24;
         const bgBase = mutedHex(base, 0.62);
+        const blockRadius = this.uwp ? 2 : 3;
         ctx.fillStyle = withAlpha(bgBase, alpha, withAlpha(base, 0.12, base));
-        this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, 3);
+        this._roundRect(ctx, x1 + 0.5, band.y, Math.max(1.5, wpx - 1), band.h, blockRadius);
         ctx.fill();
         ctx.strokeStyle = withAlpha(base, 1, base); // 边框 100% 不透明
         /* 边框加粗到 2px（原 1px）——用户要求"字幕块边框加粗"。
          * 1px 在高分屏 + 波形底上偏虚，2px 才能把块的边界立住。
          * 描边要往内收 1px（0.5 → 1），否则 2px 线会有一半画在块外、把相邻块连起来。 */
         ctx.lineWidth = 2;
-        this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), 3);
+        this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), blockRadius);
         ctx.stroke();
+        if (this.uwp && this._hoverCue === c && !isSel) {
+          ctx.save();
+          ctx.strokeStyle = this.accent || C.accent;
+          ctx.lineWidth = 1;
+          ctx.shadowBlur = 0;
+          this._roundRect(ctx, x1 + 0.5, band.y + 0.5, Math.max(1.5, wpx - 1), Math.max(1, band.h - 1), blockRadius);
+          ctx.stroke();
+          ctx.restore();
+        }
         if (isSel) {
           ctx.save();
-          ctx.shadowColor = withAlpha(this.accent || C.accent, 0.5, 'rgba(255,122,69,.5)');
-          ctx.shadowBlur = 7;
+          /* UWP：1px accent 选中框、无光晕；其它主题保留 2.5px + 7px 光晕。 */
+          if (!this.uwp) {
+            ctx.shadowColor = withAlpha(this.accent || C.accent, 0.5, 'rgba(255,122,69,.5)');
+            ctx.shadowBlur = 7;
+          } else ctx.shadowBlur = 0;
           ctx.strokeStyle = this.accent || C.accent;   // 选中环跟主题色(原为白色)
-          ctx.lineWidth = 2.5;                          // 比块边框再粗一档, 选中才压得住
-          this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), 4);
+          ctx.lineWidth = this.uwp ? 1 : 2.5;          // UWP 1px；其它主题比块边框再粗一档
+          this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), this.uwp ? 2 : 4);
           ctx.stroke();
           ctx.restore();
         }
@@ -2010,17 +2036,20 @@ export class Timeline {
     if (x < -2 || x > this._cssW() + 2) return;
     const acc = this.accent || C.playhead;
     ctx.save();
-    ctx.shadowColor = withAlpha(acc, 0.55, 'rgba(255,122,69,.55)');   // 游标光晕: 一眼找到当前时间
-    ctx.shadowBlur = 8;
+    if (!this.uwp) {
+      ctx.shadowColor = withAlpha(acc, 0.55, 'rgba(255,122,69,.55)');   // 游标光晕: 一眼找到当前时间
+      ctx.shadowBlur = 8;
+    }
     ctx.strokeStyle = acc;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = this.uwp ? 2 : 1.5;   // UWP：2px 细线、无光晕
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
     ctx.restore();
     ctx.fillStyle = acc;
-    this._roundRect(ctx, x - 5, 0, 10, 9, 2.5);
+    this._roundRect(ctx, x - (this.uwp ? 2 : 5), 0, this.uwp ? 4 : 10, 9, this.uwp ? 1 : 2.5);
     ctx.fill();
     ctx.beginPath();
-    ctx.moveTo(x - 4, 8); ctx.lineTo(x + 4, 8); ctx.lineTo(x, 13);
+    const tip = this.uwp ? 3 : 4;
+    ctx.moveTo(x - tip, 8); ctx.lineTo(x + tip, 8); ctx.lineTo(x, this.uwp ? 11 : 13);
     ctx.closePath(); ctx.fill();
   }
 

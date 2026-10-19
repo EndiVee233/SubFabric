@@ -115,6 +115,12 @@ function updateUi(emit = true) {
   if (sv) { sv.style.left = (state.s * 100) + '%'; sv.style.top = ((1 - state.v) * 100) + '%'; }
   if (hue) hue.style.top = (state.h / 360 * 100) + '%';
   popup.querySelectorAll('.sscp-preview').forEach(el => { el.style.backgroundColor = hex; });
+  /* 当前颜色对应的色板要有选中态（UWP 用 2px 外框；读屏用 aria-pressed）。 */
+  const norm = hex.toUpperCase();
+  popup.querySelectorAll('.sscp-swatch[data-color]').forEach(el => {
+    const on = String(el.dataset.color || '').toUpperCase() === norm;
+    el.classList.toggle('active', on); el.setAttribute('aria-pressed', String(on));
+  });
   const hexEl = field('hex'); if (hexEl && document.activeElement !== hexEl) hexEl.value = hex.toUpperCase();
   for (const [id, value] of [['r', rgb.r], ['g', rgb.g], ['b', rgb.b], ['h', Math.round(state.h)],
     ['s', Math.round(state.s * 240)], ['v', Math.round(state.v * 240)]]) {

@@ -1942,7 +1942,7 @@ const BAD_CATS = [
   { k: 'overlap', t: '字幕重叠',  hint: '与其它字幕时间相交，或英文行内部有重复切片' },
   { k: 'lang',   t: '缺语言行',   hint: '只有中文没有英文，或只有英文没有中文' },
   { k: 'role',   t: '角色问题',   hint: '英文行含 [方括号]，或中文字幕行首没标 [人物]' },
-  { k: 'words',  t: '逐词缺词',   hint: '英文行逐词数量少于文本单词数（导出后会有词不高亮）' },
+  { k: 'words',  t: '逐词异常',   hint: '逐词数量不足，或逐词高亮不是 0→1→2… 的对角线顺序' },
 ];
 
 /** 原因文本 → 类别键。返回 null 表示认不出来（会归入「其它」，仍可被「只看异常行」筛到）。 */
@@ -1962,8 +1962,8 @@ function classifyBadReason(reason) {
   // 角色 / 方括号
   if (/英文行含方括号/.test(s)) return 'role';
   if (/未标注角色/.test(s)) return 'role';
-  // 逐词缺词
-  if (/英文行缺词/.test(s)) return 'words';
+  // 逐词缺词 / 逐词高亮顺序
+  if (/英文行缺词|逐词高亮/.test(s)) return 'words';
   return null;
 }
 
@@ -1987,6 +1987,54 @@ function enSlicesOverlap(sent) {
   const evs = sent.events.slice().sort((a, b) => a.start - b.start || a.end - b.end);
   for (let i = 1; i < evs.length; i++) if (evs[i].start < evs[i - 1].end - 1e-3) return true;
   return false;
+}
+
+/**
+ * 逐词切片是否符合“对角线”：
+ *   0: 1 0 0 … / 1: 0 1 0 … / 2: 0 0 1 …
+ * 每个高亮切片必须只亮一个词，且高亮词下标从 0 连续递增到 W-1；
+ * 词间无高亮的 gap 事件忽略，不参与计数。
+ */
+function wordHighlightIssue(sent) {
+  if (!sent || sent.karStyle === 'k' || !(sent.words && sent.words.length) || !(sent.events && sent.events.length)) return '';
+  const color = (String(sent.highlightTag || '').match(/\\c&H([0-9A-Fa-f]{6})&/) || [])[1];
+  /* 高亮块不只含 \c，常叠 \3c/\3a/\blur；关闭块也可能带这些标签。
+     匹配开头的 \c 色标 + 任意标签，直到以 \c 重置开始的关闭块。 */
+  const open = color
+    ? String.raw`\{\\c&H${color}&[^}]*\}`
+    : String.raw`\{\\c&H[0-9A-Fa-f]{6}&[^}]*\}`;
+  const close = String.raw`\{\\c(?:&H[0-9A-Fa-f]{6}&)?[^}]*\}`;
+  const re = new RegExp(open + String.raw`([^{}]*?)` + close, 'g');
+  const total = splitEnglishWords(String(sent.text || '').replace(/\[[^\]]+\]/g, '')).length;
+  if (!total) return '';
+  const indices = [];
+  let multi = false;
+  for (const ev of sent.events) {
+    const text = String(ev.text || '');
+    const spans = [...text.matchAll(re)];
+    if (!spans.length) continue;                    // 词间 gap：无高亮，正常
+    if (spans.length > 1) { multi = true; continue; }
+    const m = spans[0];
+    const highlighted = splitEnglishWords(assPlainText(m[1] || '').replace(/\[[^\]]+\]/g, ''));
+    if (highlighted.length !== 1) { multi = true; continue; }
+    const before = splitEnglishWords(assPlainText(text.slice(0, m.index)).replace(/\[[^\]]+\]/g, '')).length;
+    indices.push(before);
+  }
+  if (multi) return '逐词高亮重复（同一逐词切片含多个高亮词）';
+  if (!indices.length) return '';
+  const duplicated = indices.find((v, i) => indices.indexOf(v) !== i);
+  if (duplicated !== undefined) return `逐词高亮重复（第 ${duplicated + 1} 词被高亮多次）`;
+  if (indices.length > total) {
+    const sequential = indices.slice(0, total).every((v, i) => v === i);
+    return sequential
+      ? `逐词高亮重复（多出 ${indices.length - total} 个高亮切片）`
+      : `逐词高亮数量异常（${indices.length} 个高亮 / ${total} 词）`;
+  }
+  if (indices.length !== total) return `逐词高亮数量异常（${indices.length} 个高亮 / ${total} 词）`;
+  for (let i = 0; i < indices.length; i++) {
+    if (indices[i] !== i) return `逐词高亮不连续（第 ${i + 1} 个高亮切片指向第 ${indices[i] + 1} 词，应为第 ${i + 1} 词）`;
+  }
+  return '';
 }
 
 /**
@@ -2016,6 +2064,7 @@ function markBadRows(items) {
       //   （1.9.2 初版把它写在用到之后 → const 的暂时性死区抛 ReferenceError
       //     → 整个列表渲染中断, ASS 项目一条字幕都不显示, 而且不报错。已修。）
       const zhS = it.ref && it.ref.zh;
+      const enS = it.ref && it.ref.en;
       if (it.badReason) reasons.push(it.badReason);
       if (/[[\]]/.test(it.l2 || '')) reasons.push('英文行含方括号');
       const hasL1 = !!it.l1, hasL2 = !!it.l2;
@@ -2050,6 +2099,11 @@ function markBadRows(items) {
       //     全量点亮会淹掉 ⚠ 徽标, 因此不并入坏行; 交给「修复字幕」按需深度检测。
       if (it.enWordCount && it.enTokenCount && it.enWordCount < it.enTokenCount) {
         reasons.push(`英文行缺词（逐词 ${it.enWordCount} 个 / 文本 ${it.enTokenCount} 词）`);
+      }
+      // 数量齐或多词时再校验高亮顺序；少词已单独报“缺词”，避免同一条重复刷屏。
+      if (enS && it.enWordCount && it.enWordCount >= it.enTokenCount) {
+        const wordIssue = wordHighlightIssue(enS);
+        if (wordIssue) reasons.push(wordIssue);
       }
       // 英文行内部切片交叠(同一条字幕有两份事件互相压住 → 画面叠字)
       if (it.enOverlap) reasons.push('英文行重叠(重复字幕)');
@@ -5367,7 +5421,7 @@ function createRowAt(start, end) {
     /* 新建字幕的入口在时间轴上，但用户此时可能停在「角色 / 设置 / 日志」页。
      * 新行只存在于字幕列表里，不切回去就看不到输入框（用户反馈"新增后像没反应"）。
      * 先切页再选中/进入编辑，保证新行立刻可见。 */
-    panel.showTab('subs');
+    panel.showTab('subs', { instant: true, skipSync: true });
     const ni = state.itemByRef.get(cue);
     if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
     toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，在列表里输入内容`);
@@ -5389,7 +5443,7 @@ function createRowAt(start, end) {
   const cleared = deKaraokeOverlaps(newRow);
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
-  panel.showTab('subs');          // 与 SRT 分支同理：新建后必须回到字幕页才能看到输入框
+  panel.showTab('subs', { instant: true, skipSync: true });   // 与 SRT 分支同理：立即回到字幕页
   const ni = state.itemByRef.get(newRow);
   if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }   // 直接进编辑并落到**英文区**(2=英文行); 按 Tab 回中文区
   toast(`已新建字幕 ${fmtTime(start)} → ${fmtTime(end)}，在列表里输入内容`

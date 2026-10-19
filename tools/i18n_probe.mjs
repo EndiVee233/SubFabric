@@ -106,7 +106,7 @@ try {
     const seen = await b.eval("document.body.innerText.includes('【探针改过】')");
     ok(seen === true || seen === 'true', '动态 DOM 文案按词典生效（改 json → 界面变了）');
     // ③ 编辑框不被改写：进入行内编辑后写入一段"词典里也可能有"的文字，观察是否被换掉
-    await b.eval("document.getElementById('st-close').click()");
+    await b.eval("document.getElementById('st-cancel').click()");
     await sleep(400);
     const pos = await b.eval("(() => { const c = document.querySelector('.cue-card'); if (!c) return 'null'; const r = c.getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.left + 200), y: Math.round(r.top + 30) }); })()");
     let editSafe = 'no-card';

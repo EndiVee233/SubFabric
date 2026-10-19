@@ -54,11 +54,11 @@ ok(/color, speaker: row\.speaker/.test(main) || /color, speaker:/.test(main),
   '块的角色色字段仍在下传（颜色没有跟着名字一起删）');
 
 console.log('\n== 1. 新增字幕后自动切回字幕页 ==');
-ok((main.match(/panel\.showTab\('subs'\)/g) || []).length >= 2,
+ok((main.match(/panel\.showTab\('subs'(?:, \{[^}]*\})?\)/g) || []).length >= 2,
   'SRT 与 ASS 两条 createRowAt 分支都切回字幕页');
 const createSeg = main.slice(main.indexOf('function createRowAt('),
   main.indexOf('timeline.onCreate'));
-ok(/rebuildItemsAndLanes\(true, true\);[\s\S]{0,500}panel\.showTab\('subs'\);[\s\S]{0,300}panel\.startEdit/.test(createSeg),
+ok(/rebuildItemsAndLanes\(true, true\);[\s\S]{0,500}panel\.showTab\('subs'(?:, \{[^}]*\})?\);[\s\S]{0,300}panel\.startEdit/.test(createSeg),
   '切页发生在重建列表之后、进入行内编辑之前（新行可见并可输入）');
 
 console.log('\n== 2. Ctrl 拖动浮条不能被时间轴的固定定位包含块吃掉 ==');
@@ -96,10 +96,11 @@ ok(/if \(found === this\.playingItem && !force\) return;/.test(editor),
   '非强制时仍保留原来的轻量短路');
 ok(/syncPlaying\(\) \{[\s\S]{0,200}setPlayingByTime\(this\._playingT, true\)/.test(editor),
   'syncPlaying 用最近播放时间强制重定位');
-const showTabSeg = editor.slice(editor.indexOf('showTab(name) {'), editor.indexOf('/** 角色(说话人)列表'));
+const showTabSeg = editor.slice(editor.indexOf('showTab(name, opts = {}) {'), editor.indexOf('/** 角色(说话人)列表'));
 ok(/const prevTab = this\._tab;/.test(showTabSeg), 'showTab 记录切换前的页签');
-ok(/if \(prevTab !== 'subs'\) this\.syncPlaying\(\);/.test(showTabSeg),
-  '从别的页切回字幕页时触发同步');
+ok(/if \(prevTab !== 'subs' && !opts\.skipSync\) this\.syncPlaying\(\);/.test(showTabSeg),
+  '从别的页切回字幕页时触发同步（新建路径可跳过）');
+ok(/is-instant-reveal/.test(showTabSeg), '新建路径可跳过面板入场动画');
 
 console.log('\n== 6. 查找替换：不压暗背景 + 收紧纵向间距 ==');
 ok(/#fr-overlay\s*\{[\s\S]{0,500}?background: transparent;/.test(css),

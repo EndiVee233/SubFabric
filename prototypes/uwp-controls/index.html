@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark" data-motion="on">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubFabric · Windows UWP 控件补充</title>
+<style>
+  :root[data-theme=dark] {
+    --bg:#1f1f1f; --surface:#2b2b2b; --surface2:#333333; --surface3:#3a3a3a;
+    --text:#f3f3f3; --muted:#c5c5c5; --dim:#8f8f8f;
+    --line:#666666; --line-soft:#4d4d4d; --hair:#3d3d3d;
+    --accent:#0078d7; --accent-hover:#106ebe; --accent-press:#005a9e; --accent-soft:#153a5a; --on-accent:#ffffff;
+    --danger:#ff99a4; --danger-bg:#442726; --warning:#ffd35c; --success:#6ccb5f;
+    --light-rgb:255 255 255; --face-alpha:.12; --edge-alpha:.5; --shade:0 0 0;
+    color-scheme:dark;
+  }
+  :root[data-theme=light] {
+    --bg:#f3f3f3; --surface:#ffffff; --surface2:#ededed; --surface3:#e5e5e5;
+    --text:#202020; --muted:#606060; --dim:#767676;
+    --line:#b8b8b8; --line-soft:#d6d6d6; --hair:#e3e3e3;
+    --accent:#0078d7; --accent-hover:#106ebe; --accent-press:#005a9e; --accent-soft:#cce4f7; --on-accent:#ffffff;
+    --danger:#c42b1c; --danger-bg:#fde7e9; --warning:#9d5d00; --success:#0f7b0f;
+    --light-rgb:0 0 0; --face-alpha:.06; --edge-alpha:.26; --shade:0 0 0;
+    color-scheme:light;
+  }
+  * { box-sizing:border-box; }
+  :root { --mono:"Cascadia Mono","Consolas",monospace; }
+  html { scroll-behavior:smooth; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.55 "Segoe UI","Microsoft YaHei UI",sans-serif; letter-spacing:0; }
+  button, input, select, textarea { font:inherit; color:inherit; letter-spacing:0; }
+  button { cursor:pointer; }
+  a { color:inherit; text-decoration:none; }
+  ::selection { background:var(--accent); color:var(--on-accent); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:var(--line); border:2px solid var(--bg); border-radius:2px; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--muted); }
+  ::-webkit-scrollbar-track { background:transparent; }
+  .app { display:grid; grid-template-columns:236px minmax(0,1fr); min-height:100vh; }
+  .nav { position:sticky; top:0; height:100vh; display:flex; flex-direction:column; padding:18px 12px 14px; background:var(--surface); border-right:1px solid var(--line); z-index:5; }
+  .brand { display:flex; align-items:center; gap:10px; padding:6px 8px 18px; border-bottom:1px solid var(--line); }
+  .brand-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:2px; background:var(--accent); color:var(--on-accent); font-weight:700; font-size:16px; }
+  .brand strong { display:block; font-size:14px; }
+  .brand small { display:block; color:var(--muted); font-size:10px; }
+  .nav-links { display:flex; flex-direction:column; gap:2px; margin-top:14px; }
+  .nav-links a { position:relative; display:flex; align-items:center; gap:10px; min-height:40px; padding:9px 10px 9px 14px; border-radius:2px; color:var(--muted); font-size:12px; transition:background .12s,color .12s; }
+  .nav-links a::before { content:""; position:absolute; left:0; top:8px; bottom:8px; width:3px; background:var(--accent); opacity:0; transition:opacity .12s; }
+  .nav-links a:hover { background:var(--accent-hover); color:var(--text); }
+  .nav-links a.active { background:var(--surface2); color:var(--text); }
+  .nav-links a.active svg { color:var(--accent); }
+  .nav-links a.active::before { opacity:1; }
+  .nav-links a svg { width:16px; height:16px; flex:none; }
+  .nav-foot { margin-top:auto; padding:14px 8px 0; border-top:1px solid var(--line); color:var(--dim); font-size:10px; display:flex; flex-direction:column; gap:7px; }
+  .nav-foot .dotline { display:flex; align-items:center; gap:7px; }
+  .nav-foot i { width:5px; height:5px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .main { min-width:0; }
+  .topbar { position:sticky; top:0; z-index:4; display:flex; align-items:center; justify-content:space-between; gap:16px; height:56px; padding:0 26px; background:var(--surface); border-bottom:1px solid var(--line); }
+  .crumbs { display:flex; align-items:center; gap:8px; font-size:11px; color:var(--muted); }
+  .crumbs b { color:var(--line); font-weight:400; }
+  .crumbs strong { color:var(--text); font-weight:600; }
+  .top-actions { display:flex; align-items:center; gap:8px; }
+  .page { max-width:1120px; margin:0 auto; padding:30px 28px 80px; }
+  .hero { padding:2px 0 26px; }
+  .eyebrow { margin:0 0 8px; color:var(--accent); font:600 9px/1.2 var(--mono,"Cascadia Mono",Consolas,monospace); letter-spacing:.16em; text-transform:uppercase; }
+  h1 { margin:0 0 10px; font-size:30px; line-height:1.2; font-weight:600; letter-spacing:-.02em; }
+  .hero p.lede { max-width:720px; margin:0; color:var(--muted); font-size:13px; line-height:1.8; }
+  .hero p.shell-note { max-width:720px; margin:12px 0 0; padding:9px 11px; border-left:2px solid var(--accent); background:var(--accent-soft); color:var(--text); font-size:11px; }
+  .meta-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; min-height:24px; padding:3px 8px; border:1px solid var(--line); border-radius:2px; color:var(--muted); font-size:10px; }
+  .chip b { color:var(--text); font-weight:600; }
+  .principles { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:11px; margin:20px 0 0; }
+  .principle { padding:14px 15px; border:1px solid var(--line); border-radius:2px; background:var(--surface); }
+  .principle strong { display:block; margin-bottom:5px; font-size:12px; }
+  .principle p { margin:0; color:var(--muted); font-size:10.5px; line-height:1.7; }
+  .tile-demo { margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:2px; background:var(--surface); }
+  .tile-demo-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+  .tile-demo-head strong { font-size:12px; }
+  .tile-demo-head span { color:var(--dim); font-size:10px; }
+  .tile-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:11px; }
+  .tile { position:relative; overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; min-height:112px; padding:14px; border:1px solid var(--line); border-radius:2px; background-color:var(--surface); color:var(--text); text-align:left; transition:border-color .1s,background-color .1s; }
+  .tile .k { color:var(--muted); font:600 8px/1.2 var(--mono,"Cascadia Mono",Consolas,monospace); letter-spacing:.14em; }
+  .tile .t { margin-top:8px; font-size:16px; font-weight:600; line-height:1.3; }
+  .tile .n { margin-top:8px; font:300 34px/1 var(--mono,"Cascadia Mono",Consolas,monospace); }
+  .tile .s { margin-top:6px; color:var(--muted); font-size:10px; }
+  .tile .arrow { align-self:flex-end; color:var(--accent); font-size:15px; }
+  .tile.accent { --uwp-tile-base:radial-gradient(120% 110% at 0% 100%, color-mix(in srgb,var(--accent) 15%,transparent), transparent 58%); }
+  .section { margin-top:34px; padding:20px; border:1px solid var(--line); border-radius:2px; background:var(--surface); }
+  .section-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding-bottom:14px; margin-bottom:18px; border-bottom:1px solid var(--line); }
+  .section-head .k { display:block; margin-bottom:5px; color:var(--dim); font:600 8px/1.2 var(--mono,"Cascadia Mono",Consolas,monospace); letter-spacing:.16em; }
+  .section-head h2 { margin:0; font-size:19px; font-weight:600; letter-spacing:-.01em; }
+  .section-head p { max-width:520px; margin:7px 0 0; color:var(--muted); font-size:11px; line-height:1.7; }
+  .section-head .count { color:var(--dim); font:10px/1 var(--mono,"Cascadia Mono",Consolas,monospace); white-space:nowrap; }
+  .spec { margin:18px 0 0; padding-top:12px; border-top:1px solid var(--line); color:var(--dim); font-size:10px; line-height:1.8; }
+  .spec b { color:var(--muted); font-weight:600; }
+  .field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .field { display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .field > span { color:var(--muted); font-size:10.5px; }
+  .input-shell { position:relative; display:flex; align-items:center; min-height:32px; border:1px solid var(--line); border-radius:2px; background-color:var(--surface); transition:border-color .12s,background-color .12s,box-shadow .12s; }
+  .input-shell:hover { border-color:var(--line-soft); background-color:var(--surface2); }
+  .input-shell:focus-within { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+  .input-shell input, .input-shell textarea { width:100%; min-width:0; border:0; outline:0; background:transparent; padding:7px 9px; font-size:12px; }
+  .input-shell textarea { min-height:76px; resize:vertical; line-height:1.6; }
+  .input-shell.has-icon input { padding-left:32px; }
+  .input-shell .lead { position:absolute; left:9px; display:flex; width:15px; height:15px; color:var(--dim); pointer-events:none; }
+  .input-shell .lead svg { width:100%; height:100%; }
+  .input-shell .trail { display:flex; gap:2px; padding-right:4px; }
+  .field.error .input-shell { border-color:var(--danger); box-shadow:inset 0 0 0 1px var(--danger); }
+  .field.error > small { color:var(--danger); }
+  .field small { color:var(--dim); font-size:10px; line-height:1.5; }
+  .field.disabled { opacity:.55; }
+  .field.disabled .input-shell { background:var(--surface2); }
+  .field-wide { grid-column:1/-1; }
+  .icon-btn { display:inline-grid; place-items:center; width:28px; height:26px; padding:0; border:1px solid transparent; border-radius:2px; background:transparent; color:var(--muted); }
+  .icon-btn:hover { background:var(--surface3); color:var(--text); }
+  .icon-btn svg { width:14px; height:14px; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:32px; padding:6px 12px; border:1px solid var(--line); border-radius:2px; background-color:var(--surface); color:var(--text); font-size:11px; font-weight:600; }
+  .btn svg { width:14px; height:14px; }
+  .btn:hover { background-color:var(--surface2); border-color:var(--accent); }
+  .btn-accent { border-color:var(--accent); background-color:var(--accent); color:var(--on-accent); }
+  .btn-accent:hover { background-color:var(--accent-hover); border-color:var(--accent-hover); }
+  .btn-danger { border-color:var(--danger); color:var(--danger); background:transparent; }
+  .btn-danger:hover { background:var(--danger-bg); }
+  .stepper { display:flex; align-items:center; gap:2px; }
+  .select { position:relative; display:flex; flex-direction:column; gap:6px; }
+  .select-trigger { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; min-height:32px; padding:6px 9px; border:1px solid var(--line); border-radius:2px; background-color:var(--surface); color:var(--text); text-align:left; font-size:12px; }
+  .select-trigger:hover { background-color:var(--surface2); }
+  .select-trigger[aria-expanded=true] { border-color:var(--accent); }
+  .select-trigger svg { width:12px; height:12px; color:var(--muted); transform:rotate(0); transition:transform .12s; }
+  .select-trigger[aria-expanded=true] svg { transform:rotate(180deg); }
+  .menu { position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:30; min-width:190px; padding:4px; border:1px solid var(--line); border-radius:2px; background:var(--surface2); box-shadow:0 6px 18px #00000040; opacity:0; transform:translateY(-4px) scale(.985); pointer-events:none; transition:opacity .12s,transform .12s cubic-bezier(.2,.8,.2,1); }
+  .menu.open { opacity:1; transform:none; pointer-events:auto; }
+  .menu-item { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-height:32px; padding:6px 9px; border:0; border-radius:2px; background:transparent; color:var(--text); text-align:left; font-size:11.5px; }
+  .menu-item:hover, .menu-item:focus-visible { background:var(--surface3); outline:2px solid var(--accent); outline-offset:-2px; }
+  .menu-item .mi-left { display:flex; align-items:center; gap:8px; min-width:0; }
+  .menu-item svg { width:14px; height:14px; color:var(--muted); }
+  .menu-item .mi-check { width:12px; height:12px; color:var(--accent); opacity:0; }
+  .menu-item[aria-selected=true] .mi-check { opacity:1; }
+  .menu-item .shortcut { color:var(--dim); font:9px var(--mono,"Cascadia Mono",Consolas,monospace); }
+  .menu-sep { height:1px; margin:4px 2px; background:var(--line); }
+  .menu-label { padding:6px 9px 4px; color:var(--dim); font:600 8px var(--mono,"Cascadia Mono",Consolas,monospace); letter-spacing:.12em; }
+  .file-drop { display:flex; align-items:center; gap:14px; min-height:84px; padding:14px; border:1px dashed var(--line); border-radius:2px; background:var(--surface); transition:border-color .12s,background-color .12s; }
+  .file-drop:hover, .file-drop.dragover { border-color:var(--accent); background:var(--surface2); }
+  .file-drop .file-ico { display:grid; place-items:center; width:38px; height:38px; flex:none; border:1px solid var(--line); border-radius:2px; color:var(--accent); }
+  .file-drop .file-ico svg { width:19px; height:19px; }
+  .file-drop .file-copy { min-width:0; flex:1; }
+  .file-drop .file-copy strong { display:block; font-size:11.5px; }
+  .file-drop .file-copy small { display:block; margin-top:4px; color:var(--dim); font-size:10px; }
+  .file-name { margin-top:8px; color:var(--accent); font-size:10px; }
+  .check-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .check-group { display:flex; flex-direction:column; gap:2px; }
+  .check, .radio, .switch { display:flex; align-items:flex-start; gap:10px; padding:7px 8px; border-radius:2px; cursor:pointer; }
+  .check:hover, .radio:hover, .switch:hover { background:var(--surface2); }
+  .check input, .radio input, .switch input { position:absolute; opacity:0; pointer-events:none; }
+  .box { position:relative; width:18px; height:18px; flex:none; margin-top:1px; border:1px solid var(--line); border-radius:2px; background:var(--surface); transition:background-color .12s,border-color .12s,transform .1s; }
+  .box::after { content:""; position:absolute; left:5px; top:1px; width:5px; height:10px; border:solid var(--on-accent); border-width:0 2px 2px 0; transform:rotate(45deg) scale(0); transition:transform .12s cubic-bezier(.2,.8,.2,1); }
+  .check input:checked + .box, .check input:indeterminate + .box { border-color:var(--accent); background:var(--accent); }
+  .check input:checked + .box::after { transform:rotate(45deg) scale(1); }
+  .check input:indeterminate + .box::after { left:4px; top:8px; width:8px; height:0; border-width:0 0 2px 0; transform:none; }
+  .check:active .box, .radio:active .dot { transform:scale(.92); }
+  .check input:focus-visible + .box, .radio input:focus-visible + .dot, .switch input:focus-visible + .track { outline:2px solid var(--accent); outline-offset:2px; }
+  .radio .dot { position:relative; width:18px; height:18px; flex:none; margin-top:1px; border:1px solid var(--line); border-radius:50%; background:var(--surface); transition:background-color .12s,border-color .12s,transform .1s; }
+  .radio .dot::after { content:""; position:absolute; inset:5px; border-radius:50%; background:var(--on-accent); transform:scale(0); transition:transform .14s cubic-bezier(.2,.8,.2,1); }
+  .radio input:checked + .dot { border-color:var(--accent); background:var(--accent); }
+  .radio input:checked + .dot::after { transform:scale(1); }
+  .check .txt, .radio .txt, .switch .txt { display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .check .txt strong, .radio .txt strong, .switch .txt strong { font-size:11.5px; font-weight:500; }
+  .check .txt small, .radio .txt small, .switch .txt small { color:var(--dim); font-size:10px; }
+  .check.disabled, .radio.disabled, .switch.disabled { opacity:.5; cursor:not-allowed; }
+  .switch .track { position:relative; width:40px; height:20px; flex:none; margin-top:1px; border:1px solid var(--line); border-radius:10px; background:var(--surface2); transition:background-color .14s,border-color .14s; }
+  .switch .thumb { position:absolute; left:4px; top:4px; width:12px; height:10px; border-radius:5px; background:var(--muted); transition:left .14s cubic-bezier(.2,.8,.2,1),background-color .14s,width .14s; }
+  .switch input:checked + .track { border-color:var(--accent); background:var(--accent); }
+  .switch input:checked + .track .thumb { left:22px; width:12px; background:var(--on-accent); }
+  .seg { display:inline-flex; padding:2px; border:1px solid var(--line); border-radius:2px; background:var(--surface2); }
+  .seg button { min-height:28px; padding:4px 11px; border:0; border-radius:1px; background:transparent; color:var(--muted); font-size:10.5px; }
+  .seg button:hover { background:var(--surface3); color:var(--text); }
+  .seg button.active { background:var(--accent-soft); color:var(--accent); }
+  .range-field { display:flex; flex-direction:column; gap:9px; }
+  .range-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+  .range-head span { color:var(--muted); font-size:10.5px; }
+  .range-head output { color:var(--text); font:11px var(--mono,"Cascadia Mono",Consolas,monospace); }
+  .range { width:100%; height:24px; margin:0; appearance:none; background:transparent; }
+  .range::-webkit-slider-runnable-track { height:4px; border-radius:1px; background:linear-gradient(90deg,var(--accent) var(--v,50%),var(--line) var(--v,50%)); }
+  .range::-webkit-slider-thumb { appearance:none; width:12px; height:24px; margin-top:-10px; border:1px solid var(--accent); border-radius:2px; background:var(--accent); transition:transform .12s,width .12s; }
+  .range:hover::-webkit-slider-thumb { width:14px; }
+  .range:active::-webkit-slider-thumb { transform:scaleY(1.08); }
+  .range:focus-visible { outline:0; }
+  .range:focus-visible::-webkit-slider-thumb { outline:2px solid var(--accent); outline-offset:2px; }
+  .range-ticks { display:flex; justify-content:space-between; color:var(--dim); font:9px var(--mono,"Cascadia Mono",Consolas,monospace); }
+  .timeline { margin-top:16px; padding:12px; border:1px solid var(--line); border-radius:2px; background:var(--surface); }
+  .tl-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:9px; }
+  .tl-head strong { font-size:11px; }
+  .tl-head output { color:var(--dim); font:10px var(--mono,"Cascadia Mono",Consolas,monospace); }
+  .tl-ruler { display:flex; justify-content:space-between; padding:0 2px 5px; color:var(--dim); font:8px var(--mono,"Cascadia Mono",Consolas,monospace); }
+  .tl-track { position:relative; height:26px; border-top:1px solid var(--line-soft); }
+  .tl-track:last-child { border-bottom:1px solid var(--line-soft); }
+  .tl-block { position:absolute; top:5px; height:16px; border-left:2px solid var(--accent); background:var(--accent-soft); color:var(--text); font-size:8px; line-height:16px; padding:0 4px; overflow:hidden; white-space:nowrap; }
+  .tl-block.hot, .tl-block:hover { outline:1px solid var(--accent); }
+  .tl-playhead { position:absolute; top:0; bottom:0; width:2px; background:var(--accent); pointer-events:none; }
+  .tl-playhead::before { content:""; position:absolute; top:-4px; left:-3px; width:8px; height:8px; border-radius:1px; background:var(--accent); }
+  .tl-hit { position:absolute; inset:0; cursor:crosshair; }
+  .card-demo { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .proj-card { position:relative; overflow:hidden; border:1px solid var(--line); border-radius:2px; background-color:var(--surface); transition:border-color .1s; }
+  .proj-cover { position:relative; display:flex; align-items:flex-end; justify-content:space-between; height:126px; padding:12px; background:linear-gradient(145deg,#1c2a33,#24333d 55%,#18232a); color:#cfdde5; }
+  .proj-cover::after { content:""; position:absolute; inset:0; background:radial-gradient(80% 100% at 85% 0%,rgb(0 120 215 / .28),transparent 60%); }
+  .proj-cover .pc-play { position:relative; z-index:1; display:grid; place-items:center; width:38px; height:38px; border:1px solid rgb(255 255 255 / .22); border-radius:2px; background:rgb(255 255 255 / .05); color:#fff; }
+  .proj-cover .pc-play svg { width:17px; height:17px; }
+  .proj-cover .pc-brand { position:relative; z-index:1; font:600 8px var(--mono,"Cascadia Mono",Consolas,monospace); letter-spacing:.16em; opacity:.6; }
+  .proj-body { padding:11px 12px 12px; }
+  .proj-title { margin:0; font-size:13px; font-weight:600; line-height:1.45; }
+  .proj-meta { margin-top:5px; color:var(--dim); font-size:9.5px; }
+  .proj-badges { display:flex; gap:5px; margin-top:9px; }
+  .proj-actions { display:flex; gap:5px; margin-top:10px; }
+  .proj-actions .btn { flex:1; min-height:27px; padding:4px 7px; font-size:10px; }
+  .rows { display:flex; flex-direction:column; gap:2px; margin-top:16px; }
+  .row { position:relative; display:flex; align-items:center; gap:11px; min-height:48px; padding:7px 10px 7px 13px; border:1px solid transparent; border-radius:2px; background:var(--surface); cursor:pointer; }
+  .row::before { content:""; position:absolute; left:0; top:9px; bottom:9px; width:3px; background:var(--accent); opacity:0; }
+  .row:hover { background:var(--surface2); border-color:var(--line); }
+  .row.selected { background:var(--accent-soft); border-color:var(--accent); }
+  .row.selected::before { opacity:1; }
+  .row .r-cover { display:grid; place-items:center; width:34px; height:34px; flex:none; border:1px solid var(--line); border-radius:2px; background:var(--surface2); color:var(--muted); }
+  .row .r-cover svg { width:15px; height:15px; }
+  .row .r-main { min-width:0; flex:1; }
+  .row .r-main strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; font-weight:500; }
+  .row .r-main small { display:block; margin-top:2px; color:var(--dim); font-size:9.5px; }
+  .row .r-check { color:var(--accent); opacity:0; }
+  .row.selected .r-check { opacity:1; }
+  details.acc { margin-top:16px; border:1px solid var(--line); border-radius:2px; background:var(--surface); }
+  details.acc + details.acc { margin-top:4px; }
+  details.acc summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:38px; padding:8px 11px; cursor:pointer; list-style:none; font-size:11.5px; }
+  details.acc summary::-webkit-details-marker { display:none; }
+  details.acc summary:hover { background:var(--surface2); }
+  details.acc summary .chev { width:12px; height:12px; color:var(--muted); transition:transform .16s; }
+  details.acc[open] summary .chev { transform:rotate(180deg); }
+  details.acc .acc-body { padding:0 11px 12px; border-top:1px solid var(--line); }
+  details.acc[open] .acc-body { animation:accIn .18s cubic-bezier(.2,.8,.2,1); }
+  details.acc .acc-body p { margin:10px 0; color:var(--muted); font-size:10.5px; line-height:1.7; }
+  .tabs { display:flex; gap:1px; margin-top:16px; border-bottom:1px solid var(--line); }
+  .tab { position:relative; min-height:34px; padding:7px 12px; border:1px solid transparent; border-bottom:0; background:transparent; color:var(--muted); font-size:10.5px; }
+  .tab:hover { background:var(--surface2); color:var(--text); }
+  .tab.active { color:var(--accent); border-color:var(--line); background:var(--surface); }
+  .tab.active::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--accent); }
+  .progress-card { display:flex; flex-direction:column; gap:12px; }
+  .progress-row { display:grid; grid-template-columns:110px minmax(0,1fr) 44px; align-items:center; gap:10px; }
+  .progress-row span { color:var(--muted); font-size:10.5px; }
+  .progress { height:4px; border-radius:1px; background:var(--line-soft); overflow:hidden; }
+  .progress .fill { height:100%; width:var(--v,0%); background:var(--accent); transition:width .3s linear; }
+  .progress.indeterminate .fill { width:32%; animation:ind 1.4s cubic-bezier(.4,0,.2,1) infinite; }
+  .progress.paused .fill { background:var(--muted); }
+  .progress.error .fill { background:var(--danger); }
+  .progress-row output { color:var(--text); font:10px var(--mono,"Cascadia Mono",Consolas,monospace); text-align:right; }
+  .badges { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; }
+  .badge { display:inline-flex; align-items:center; gap:5px; min-height:22px; padding:2px 7px; border:1px solid var(--line); border-radius:2px; color:var(--muted); font-size:9.5px; }
+  .badge i { width:5px; height:5px; border-radius:50%; background:var(--muted); }
+  .badge.blue { color:var(--accent); border-color:var(--accent); background:var(--accent-soft); }
+  .badge.blue i { background:var(--accent); }
+  .badge.green { color:var(--success); border-color:var(--success); }
+  .badge.green i { background:var(--success); }
+  .badge.red { color:var(--danger); border-color:var(--danger); }
+  .badge.red i { background:var(--danger); }
+  .badge.amber { color:var(--warning); border-color:var(--warning); }
+  .badge.amber i { background:var(--warning); }
+  .badge.running i { animation:pulse 1.4s ease-in-out infinite; }
+  .tooltip-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+  .tip { position:relative; }
+  .tip::before { content:attr(data-tip); position:absolute; left:50%; bottom:calc(100% + 7px); z-index:40; width:max-content; max-width:220px; padding:5px 7px; border:1px solid var(--line); border-radius:2px; background:var(--surface2); box-shadow:0 4px 12px #00000033; color:var(--text); font-size:9.5px; line-height:1.4; white-space:normal; opacity:0; transform:translate(-50%,3px); pointer-events:none; transition:opacity .12s,transform .12s; }
+  .tip:hover::before, .tip:focus-visible::before { opacity:1; transform:translate(-50%,0); transition-delay:.25s; }
+  .tip.below::before { top:calc(100% + 7px); bottom:auto; }
+  section, #overview { scroll-margin-top:70px; }
+  .loading-row { display:flex; align-items:center; gap:12px; margin-top:16px; padding:11px; border:1px solid var(--line); border-radius:2px; }
+  .spinner { width:18px; height:18px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  .loading-row span { color:var(--muted); font-size:10.5px; }
+  .overlay { position:fixed; inset:0; z-index:80; display:grid; place-items:center; padding:20px; background:rgb(0 0 0 / .45); opacity:0; pointer-events:none; transition:opacity .15s; }
+  .overlay.open { opacity:1; pointer-events:auto; }
+  .dialog { width:min(420px,100%); padding:18px; border:1px solid var(--line); border-radius:2px; background:var(--surface); box-shadow:0 16px 44px #00000055; transform:scale(.96); transition:transform .15s cubic-bezier(.2,.8,.2,1); }
+  .overlay.open .dialog { transform:none; }
+  .dialog h3 { margin:0 0 7px; font-size:16px; font-weight:600; }
+  .dialog p { margin:0; color:var(--muted); font-size:11px; line-height:1.7; }
+  .dialog-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:18px; }
+  .drawer-wrap { position:fixed; inset:0; z-index:80; pointer-events:none; }
+  .drawer-wrap .scrim { position:absolute; inset:0; background:rgb(0 0 0 / .42); opacity:0; transition:opacity .18s; }
+  .drawer { position:absolute; top:0; right:0; bottom:0; width:min(380px,92vw); display:flex; flex-direction:column; padding:18px; border-left:1px solid var(--line); background:var(--surface); box-shadow:-12px 0 30px #00000033; transform:translateX(100%); transition:transform .22s cubic-bezier(.2,.8,.2,1); }
+  .drawer-wrap.open { pointer-events:auto; }
+  .drawer-wrap.open .scrim { opacity:1; }
+  .drawer-wrap.open .drawer { transform:none; }
+  .drawer h3 { margin:0 0 4px; font-size:17px; }
+  .drawer .drawer-sub { margin:0 0 16px; color:var(--dim); font-size:10.5px; }
+  .drawer .drawer-body { display:flex; flex-direction:column; gap:14px; overflow:auto; }
+  .drawer .drawer-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:auto; padding-top:16px; border-top:1px solid var(--line); }
+  .color-pop { display:none; margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:2px; background:var(--surface2); }
+  .color-pop.open { display:block; animation:pop .14s cubic-bezier(.2,.8,.2,1); }
+  .swatches { display:grid; grid-template-columns:repeat(8,1fr); gap:4px; }
+  .swatch { width:100%; aspect-ratio:1; border:1px solid var(--line); border-radius:1px; }
+  .swatch:hover { outline:2px solid var(--accent); outline-offset:1px; }
+  .swatch.active { border-color:var(--text); outline:2px solid var(--accent); outline-offset:1px; }
+  .color-row { display:flex; align-items:center; gap:8px; margin-top:9px; }
+  .color-row .preview { width:34px; height:30px; border:1px solid var(--line); border-radius:2px; }
+  .color-row .hex { flex:1; }
+  @keyframes ind { 0% { transform:translateX(-110%); } 100% { transform:translateX(330%); } }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  @keyframes pop { from { opacity:0; transform:translateY(-3px); } to { opacity:1; transform:none; } }
+  @keyframes accIn { from { opacity:0; transform:translateY(-3px); } to { opacity:1; transform:none; } }
+  .toast-host { position:fixed; right:20px; bottom:20px; z-index:90; display:flex; flex-direction:column; gap:7px; width:min(330px,calc(100vw - 40px)); pointer-events:none; }
+  .toast { position:relative; display:flex; align-items:flex-start; gap:10px; padding:10px 10px 10px 12px; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:2px; background:var(--surface); box-shadow:0 8px 24px #00000040; pointer-events:auto; animation:toastIn .18s cubic-bezier(.2,.8,.2,1) both; }
+  .toast.out { animation:toastOut .16s ease both; }
+  .toast .t-main { min-width:0; flex:1; }
+  .toast .t-main strong { display:block; font-size:11px; }
+  .toast .t-main small { display:block; margin-top:3px; color:var(--muted); font-size:10px; line-height:1.5; }
+  @keyframes toastIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+  @keyframes toastOut { to { opacity:0; transform:translateY(6px); } }
+  .footer { margin-top:38px; padding-top:14px; border-top:1px solid var(--line); color:var(--dim); font-size:10px; display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+  /* Reveal：只给可点表面，与磁贴同源，不做外发光 */
+  .reveal { --face:0; --edge:0; --mx:50%; --my:50%; --fr:240px; position:relative; background-image:radial-gradient(circle var(--fr) at var(--mx) var(--my), rgb(var(--light-rgb)/calc(var(--face)*var(--face-alpha))) 0%, rgb(var(--light-rgb)/calc(var(--face)*var(--face-alpha)*.7)) 32%, rgb(var(--light-rgb)/calc(var(--face)*var(--face-alpha)*.32)) 62%, rgb(var(--light-rgb)/0) 100%), var(--uwp-tile-base, linear-gradient(transparent,transparent)); border-color:color-mix(in srgb, rgb(var(--light-rgb)) calc(2% + var(--edge)*var(--edge-alpha)*100%), var(--line)); }
+  .reveal:hover { border-color:color-mix(in srgb, rgb(var(--light-rgb)) calc(2% + var(--edge)*var(--edge-alpha)*100%), var(--line)); }
+  .btn-accent.reveal { --light-rgb:255 255 255; border-color:var(--accent); }
+  .btn-danger.reveal { border-color:var(--danger); }
+  .uwp-tile { position:relative; transform:none; }
+  .uwp-tile::after { content:""; position:absolute; inset:0; z-index:5; pointer-events:none; border-radius:inherit; opacity:0; background:radial-gradient(circle var(--pr,160px) at var(--px,50%) var(--py,50%), rgb(var(--shade)/calc(var(--pl,0)*.18)) 0%, rgb(var(--shade)/calc(var(--pl,0)*.07)) 45%, transparent 75%); background-color:rgb(var(--shade)/.025); transition:opacity .12s; }
+  .uwp-tile.is-pressing::after { opacity:1; }
+  .uwp-tile.is-pressing, .uwp-tile.is-rebounding { z-index:6; will-change:transform; }
+  @media (max-width:1050px) { .principles { grid-template-columns:1fr; } .tile-grid { grid-template-columns:1fr; } }
+  @media (max-width:880px) {
+    .app { grid-template-columns:1fr; }
+    .nav { position:relative; height:auto; padding:12px; border-right:0; border-bottom:1px solid var(--line); }
+    .nav-links { flex-direction:row; overflow:auto; padding-bottom:4px; }
+    .nav-links a { white-space:nowrap; border-bottom:2px solid transparent; padding:8px 10px; }
+    .nav-links a::before { display:none; }
+    .nav-links a.active { border-bottom-color:var(--accent); }
+    .nav-foot { display:none; }
+    .topbar { top:0; }
+    .page { padding:22px 16px 60px; }
+    .field-grid, .check-grid, .card-demo { grid-template-columns:1fr; }
+    .field-wide { grid-column:auto; }
+  }
+  @media (max-width:560px) { h1 { font-size:23px; } .section { padding:14px; } .topbar { padding:0 14px; } .crumbs span { display:none; } .progress-row { grid-template-columns:84px minmax(0,1fr) 38px; } }
+  @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
+  :root[data-motion=off] *, :root[data-motion=off] *::before, :root[data-motion=off] *::after { animation-duration:.01ms!important; transition-duration:.01ms!important; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="nav">
+    <a class="brand" href="#overview"><span class="brand-mark">S</span><span><strong>SubFabric</strong><small>Windows UWP · 控件补充</small></span></a>
+    <nav class="nav-links" aria-label="章节">
+      <a href="#overview" class="reveal active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>概览</a>
+      <a href="#inputs" class="reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M12 6v13M8 19h8"/></svg>输入</a>
+      <a href="#selection" class="reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8 12 3 3 5-6"/></svg>选择</a>
+      <a href="#range" class="reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12h16"/><circle cx="9" cy="12" r="2.4"/></svg>范围</a>
+      <a href="#collections" class="reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="5"/><rect x="3" y="14" width="18" height="5"/></svg>列表与卡片</a>
+      <a href="#feedback" class="reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l2.5-6L14 18l2.5-6H21"/></svg>反馈</a>
+      <a href="#overlays" class="reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="14" rx="1.5"/><path d="M3 8h18"/></svg>浮层</a>
+    </nav>
+    <div class="nav-foot"><span class="dotline"><i></i>2px 直角 · #0078D7 · 120–180ms</span><span>beta 1.3 · 设计空壳</span></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs"><span>Windows UWP</span><b>/</b><strong>控件补充</strong></div>
+      <div class="top-actions">
+        <div class="seg" role="group" aria-label="明暗模式"><button class="theme-btn uwp-tile reveal active" data-theme="dark">深色</button><button class="theme-btn uwp-tile reveal" data-theme="light">浅色</button></div>
+        <button class="icon-btn tip below uwp-tile reveal" id="motion-btn" data-tip="减少动效：关闭缩放/位移动画，保留状态变化" aria-pressed="true" aria-label="减少动效">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3 2"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="page">
+      <section id="overview" class="hero">
+        <p class="eyebrow">WINDOWS UWP · CONTROL SUPPLEMENT</p>
+        <h1>剩下的控件，也按磁贴语言补完</h1>
+        <p class="lede">按钮在 UWP 下已经是磁贴。这一层补齐输入、选择、范围、列表、反馈与浮层：同源 Reveal、同一条 2px 直角、同一组 120–180ms。输入不做 3D，磁贴才下陷。</p>
+        <p class="shell-note">这是设计空壳：只演示控件语言与动效，不接入生产 editor；所有交互可点。</p>
+        <div class="meta-row"><span class="chip"><b>2px</b> 直角</span><span class="chip"><b>#0078D7</b> 固定蓝</span><span class="chip"><b>120–180ms</b> 直线</span><span class="chip"><b>Reveal</b> 只给可点表面</span></div>
+        <div class="principles">
+          <div class="principle"><strong>可点表面才有 Reveal</strong><p>磁贴、卡片、行、菜单项、导航点亮面光与 2%+50% 描边；输入框只做四边等宽的 2px 焦点框，避免“输入框像按钮”。</p></div>
+          <div class="principle"><strong>2px / 1px / 12px</strong><p>控件 1px 描边、2px 直角；Flyout 才用 12px 阴影；不做大圆角、不做外发光。</p></div>
+          <div class="principle"><strong>状态先变，位置少动</strong><p>勾选/开关 120ms，焦点底线 160ms，抽屉 220ms；只动 opacity、transform、背景和宽度。</p></div>
+        </div>
+        <div class="tile-demo">
+          <div class="tile-demo-head"><strong>已实装：按钮 = 磁贴</strong><span>按住看 3D 下陷/回弹 · 悬停看面光</span></div>
+          <div class="tile-grid">
+            <button class="tile accent uwp-tile reveal" data-tile="resume"><span class="k">YOUR NEXT STORY</span><span class="t">继续编辑</span><span class="s">My Best Friend Died on the Unstable SMP</span><span class="arrow">→</span></button>
+            <button class="tile accent uwp-tile reveal" data-tile="new"><span class="k">NEW</span><span class="t">新建稿件</span><span class="s">视频、链接或字幕</span><span class="arrow">＋</span></button>
+            <button class="tile uwp-tile reveal" data-tile="settings"><span class="k">SETTINGS</span><span class="t">全局设置</span><span class="s">模型、翻译与外观</span><span class="arrow">›</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section id="inputs" class="section">
+        <div class="section-head"><div><span class="k">01 / INPUTS</span><h2>输入</h2><p>焦点是四边等宽的 2px（1px border + 1px inset ring），不做下边加粗；悬停只抬 2% 面光；错误态用 2px danger，不用抖动。搜索/清除、密码/眼睛、数字/步进都复用同一套。</p></div><span class="count">8 controls</span></div>
+        <div class="field-grid">
+          <label class="field"><span>稿件标题</span><div class="input-shell"><input type="text" value="My Best Friend Died on the Unstable SMP"></div><small>回车保存；Esc 取消。</small></label>
+          <label class="field"><span>搜索稿件</span><div class="input-shell has-icon"><span class="lead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg></span><input type="search" id="search-input" placeholder="标题、格式或角色"><span class="trail"><button type="button" class="icon-btn uwp-tile reveal" id="search-clear" aria-label="清除">×</button></span></div><small>输入即筛；清除按钮是 tile 图标。</small></label>
+          <label class="field"><span>API Key</span><div class="input-shell"><input type="password" id="secret-input" value="sk-subfabric-uwp-demo"><span class="trail"><button type="button" class="icon-btn uwp-tile reveal" id="secret-eye" aria-label="显示/隐藏"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.5"/></svg></button></span></div><small>眼睛按钮不改变字段的焦点顺序。</small></label>
+          <div class="field"><span>批处理数量</span><div class="input-shell"><input type="number" id="batch-num" value="8" min="1" max="32"><span class="trail stepper"><button type="button" class="icon-btn uwp-tile reveal" data-step="-1" aria-label="减少">−</button><button type="button" class="icon-btn uwp-tile reveal" data-step="1" aria-label="增加">＋</button></span></div><small>步进按钮和字段同一行，不额外占高。</small></div>
+          <label class="field field-wide"><span>翻译提示词</span><div class="input-shell"><textarea id="prompt" maxlength="240">保持角色口吻，先意译再校对；不要增加原文没有的信息。</textarea></div><small><span id="prompt-count">37</span>/240 · 失焦自动保存</small></label>
+          <div class="field"><span>识别模型</span><div class="select" data-select><button type="button" class="select-trigger uwp-tile reveal" aria-expanded="false" aria-haspopup="listbox"><span data-select-value>Whisper large-v3</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button><div class="menu" role="listbox"><button type="button" class="menu-item reveal" role="option" aria-selected="true" data-value="Whisper large-v3"><span class="mi-left">Whisper large-v3</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button><button type="button" class="menu-item reveal" role="option" aria-selected="false" data-value="Parakeet TDT 0.6B"><span class="mi-left">Parakeet TDT 0.6B</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button><button type="button" class="menu-item reveal" role="option" aria-selected="false" data-value="VibeVoice ASR 4bit"><span class="mi-left">VibeVoice ASR 4bit</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button><div class="menu-sep"></div><div class="menu-label">本机</div><button type="button" class="menu-item reveal" role="option" aria-selected="false" data-value="必剪云端"><span class="mi-left">必剪云端</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button></div></div><small>Flyout 120ms 从触发器下方出现。</small></div>
+          <div class="field error"><span>方案名称</span><div class="input-shell"><input type="text" placeholder="例如：SubFabric 默认" aria-invalid="true"></div><small>名称不能为空。</small></div>
+          <div class="field disabled"><span>固定值</span><div class="input-shell"><input type="text" value="beta 1.3" disabled></div><small>禁用态只降透明度，不改布局。</small></div>
+          <div class="field field-wide"><span>导入文件</span><div class="file-drop" id="file-drop"><span class="file-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg></span><span class="file-copy"><strong>拖入 .ass / .srt / .mp4</strong><small>或从本机选择；单文件上限 2GB</small><span class="file-name" id="file-name"></span></span><button type="button" class="btn uwp-tile reveal" id="file-browse">选择文件</button><input type="file" id="file-input" hidden></div><small>拖拽经过时虚线变成 accent 蓝，不放大。</small></div>
+        </div>
+        <p class="spec"><b>Focus</b> 2px accent 四边等宽 / 120ms · <b>Hover</b> 2% 面光 / 120ms · <b>Error</b> 2px danger + 说明 · <b>Disabled</b> .55 · <b>Height</b> 32px</p>
+      </section>
+
+      <section id="selection" class="section">
+        <div class="section-head"><div><span class="k">02 / SELECTION</span><h2>选择</h2><p>勾选/单选/开关不做磁贴 3D；按下只做 1px 的 scale(.92)，勾画和圆点用 120–140ms 出现。键盘焦点用 2px 外框。</p></div><span class="count">4 groups</span></div>
+        <div class="check-grid">
+          <div class="check-group">
+            <div class="menu-label">复选</div>
+            <label class="check"><input type="checkbox" checked><span class="box"></span><span class="txt"><strong>自动保存</strong><small>每 30 秒写入一次</small></span></label>
+            <label class="check"><input type="checkbox" id="partial-check"><span class="box"></span><span class="txt"><strong>部分选中</strong><small>indeterminate 显示短横</small></span></label>
+            <label class="check disabled"><input type="checkbox" disabled><span class="box"></span><span class="txt"><strong>锁定</strong><small>禁用态</small></span></label>
+          </div>
+          <div class="check-group">
+            <div class="menu-label">单选</div>
+            <label class="radio"><input type="radio" name="after" checked><span class="dot"></span><span class="txt"><strong>识别完成后立即翻译</strong><small>默认，占用一次 LLM</small></span></label>
+            <label class="radio"><input type="radio" name="after"><span class="dot"></span><span class="txt"><strong>仅生成初稿</strong><small>稍后手动翻译</small></span></label>
+            <label class="radio"><input type="radio" name="after"><span class="dot"></span><span class="txt"><strong>询问我</strong><small>每次弹出确认</small></span></label>
+          </div>
+          <div class="check-group">
+            <div class="menu-label">开关</div>
+            <label class="switch"><input type="checkbox" role="switch" checked><span class="track"><span class="thumb"></span></span><span class="txt"><strong>跟随播放</strong><small>字幕卡自动跟随当前句</small></span></label>
+            <label class="switch"><input type="checkbox" role="switch"><span class="track"><span class="thumb"></span></span><span class="txt"><strong>自动翻译</strong><small>新稿件完成后直接翻译</small></span></label>
+            <label class="switch disabled"><input type="checkbox" role="switch" checked disabled><span class="track"><span class="thumb"></span></span><span class="txt"><strong>硬件加速</strong><small>UWP 模式下由模型决定</small></span></label>
+          </div>
+          <div class="check-group">
+            <div class="menu-label">分段</div>
+            <div class="seg" role="group" aria-label="显示模式"><button class="uwp-tile reveal active" data-seg="列表">列表</button><button class="uwp-tile reveal" data-seg="卡片">卡片</button><button class="uwp-tile reveal" data-seg="紧凑">紧凑</button></div>
+            <p style="margin:9px 0 0;color:var(--dim);font-size:10px;line-height:1.7">分段组是同一块 surface；选中用 accent-soft + 2px 底线，不把整块涂成蓝色。</p>
+          </div>
+        </div>
+        <p class="spec"><b>Check</b> 勾画 120ms · <b>Radio</b> 圆点 140ms · <b>Switch</b> 滑块 140ms · <b>Press</b> scale(.92) · <b>Focus</b> 2px 外框</p>
+      </section>
+
+      <section id="range" class="section">
+        <div class="section-head"><div><span class="k">03 / RANGE</span><h2>范围</h2><p>轨道 4px、滑块 12×24 的 2px 矩形；悬停加宽 2px，拖动只加高 8%，不做圆形放大。播放进度用同一根轨道，时间由输出字段承担。</p></div><span class="count">3 controls</span></div>
+        <div class="field-grid">
+          <div class="range-field field-wide"><div class="range-head"><span>播放进度</span><output id="seek-out">00:12.4 / 00:48.0</output></div><input type="range" class="range" id="seek" min="0" max="48" step="0.1" value="12.4"><div class="range-ticks"><span>00:00</span><span>00:12</span><span>00:24</span><span>00:36</span><span>00:48</span></div></div>
+          <div class="range-field"><div class="range-head"><span>音量</span><output id="vol-out">72%</output></div><input type="range" class="range" id="vol" min="0" max="100" value="72"><div class="range-ticks"><span>0</span><span>50</span><span>100</span></div></div>
+          <div class="range-field"><div class="range-head"><span>界面缩放</span><output id="zoom-out">125%</output></div><input type="range" class="range" id="zoom" min="80" max="150" step="5" value="125"><div class="range-ticks"><span>80</span><span>100</span><span>125</span><span>150</span></div></div>
+        </div>
+        <div class="timeline">
+          <div class="tl-head"><strong>时间轴（缩略）</strong><output id="tl-clock">00:12.4</output></div>
+          <div class="tl-ruler"><span>00:00</span><span>00:12</span><span>00:24</span><span>00:36</span><span>00:48</span></div>
+          <div class="tl-track" id="tl-cn"><div class="tl-block" style="left:2%;width:22%">雨夜电台 · 第 03 期</div><div class="tl-block" style="left:27%;width:18%">城市观察 · 第 12 期</div><div class="tl-block" style="left:52%;width:26%">访谈：声音的边界</div><div class="tl-playhead" style="left:25.8%"></div><div class="tl-hit"></div></div>
+          <div class="tl-track" id="tl-en"><div class="tl-block" style="left:2%;width:22%">EN · karaoke</div><div class="tl-block" style="left:27%;width:18%">EN · word timing</div><div class="tl-block" style="left:52%;width:26%">EN · translate</div><div class="tl-hit"></div></div>
+          <div class="tl-track" id="tl-role"><div class="tl-block" style="left:2%;width:22%">SPEAKER 01</div><div class="tl-block" style="left:27%;width:18%">SPEAKER 02</div><div class="tl-block" style="left:52%;width:26%">SPEAKER 01</div><div class="tl-hit"></div></div>
+          <p class="spec" style="margin-top:10px;padding-top:9px">Click/拖动 轨道 → 播放头；悬停块只加 1px accent 外框，不放大。</p>
+        </div>
+        <p class="spec"><b>Track</b> 4px / 1px 圆角 · <b>Thumb</b> 12×24 / 2px · <b>Hover</b> +2px 宽 · <b>Drag</b> 高度 ×1.08 · <b>Seek</b> 0.1s step</p>
+      </section>
+
+      <section id="collections" class="section">
+        <div class="section-head"><div><span class="k">04 / COLLECTIONS</span><h2>列表与卡片</h2><p>卡片/行/菜单项都是“可点表面”：Reveal 面光 + 1px 描边；选中用左侧 3px accent 竖条，不是整块高亮。卡片操作按钮仍是磁贴。</p></div><span class="count">4 patterns</span></div>
+        <div class="card-demo">
+          <article class="proj-card reveal uwp-tile" tabindex="0">
+            <div class="proj-cover"><span class="pc-play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10-6.5z"/></svg></span><span class="pc-brand">SUBFABRIC · MP4</span></div>
+            <div class="proj-body"><h3 class="proj-title">My Best Friend Died on the Unstable SMP</h3><div class="proj-meta">ASS · 中文 / 英文 · 00:48 · 12 分钟前</div><div class="proj-badges"><span class="badge blue"><i></i>可编辑</span><span class="badge"><i></i>逐词</span></div><div class="proj-actions"><button class="btn uwp-tile reveal">编辑</button><button class="btn uwp-tile reveal">导出</button><button class="btn uwp-tile reveal">更多</button></div></div>
+          </article>
+          <div>
+            <div class="rows">
+              <div class="row selected reveal" tabindex="0"><span class="r-cover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="m10 9 5 3-5 3z" fill="currentColor"/></svg></span><span class="r-main"><strong>雨夜电台 · 第 03 期</strong><small>MP4 · 中文/英文 · 00:48 · 处理中 62%</small></span><span class="badge blue"><i></i>处理中</span><span class="r-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></span></div>
+              <div class="row reveal" tabindex="0"><span class="r-cover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="m10 9 5 3-5 3z" fill="currentColor"/></svg></span><span class="r-main"><strong>城市观察 · 第 12 期</strong><small>ASS · 中文/英文 · 12:48 · 可编辑</small></span><span class="badge green"><i></i>可编辑</span><span class="r-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></span></div>
+              <div class="row reveal" tabindex="0"><span class="r-cover"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="m10 9 5 3-5 3z" fill="currentColor"/></svg></span><span class="r-main"><strong>访谈：声音的边界</strong><small>MP4 · 失败 / 待重试 · 00:32</small></span><span class="badge red"><i></i>需处理</span><span class="r-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></span></div>
+            </div>
+          </div>
+        </div>
+        <details class="acc" open><summary><span>高级字幕操作</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary><div class="acc-body"><p>展开/收起用 1fr 高度动画 180ms；箭头只旋转，不位移。展开区里的开关/字段沿用同一套焦点。</p><label class="switch"><input type="checkbox" role="switch" checked><span class="track"><span class="thumb"></span></span><span class="txt"><strong>逐词重校对</strong><small>只改词级时间，保留角色色</small></span></label></div></details>
+        <details class="acc"><summary><span>时间轴与导出</span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary><div class="acc-body"><p>默认收起；打开不改变外层卡片宽度。</p></div></details>
+        <div class="tabs" role="tablist"><button class="tab uwp-tile reveal active" role="tab" aria-selected="true">字幕</button><button class="tab uwp-tile reveal" role="tab" aria-selected="false">角色</button><button class="tab uwp-tile reveal" role="tab" aria-selected="false">设置</button><button class="tab uwp-tile reveal" role="tab" aria-selected="false">日志</button></div>
+        <p class="spec"><b>Card/Row</b> Reveal + 1px · <b>Selected</b> 3px 左竖条 + accent-soft · <b>Accordion</b> 180ms 高度/180° 箭头 · <b>Tab</b> 2px 底线 + 1px 连接</p>
+      </section>
+
+      <section id="feedback" class="section">
+        <div class="section-head"><div><span class="k">05 / FEEDBACK</span><h2>反馈</h2><p>进度条 4px，确定态用 width，不确定态用 32% 块平移；暂停/失败只换颜色。Badge 的圆点随状态呼吸，Toast 从右下 8px 滑入。</p></div><span class="count">5 patterns</span></div>
+        <div class="progress-card">
+          <div class="progress-row"><span>识别中</span><div class="progress" id="p1"><div class="fill" style="--v:62%"></div></div><output>62%</output></div>
+          <div class="progress-row"><span>翻译中</span><div class="progress indeterminate" id="p2"><div class="fill"></div></div><output>—</output></div>
+          <div class="progress-row"><span>已暂停</span><div class="progress paused" id="p3"><div class="fill" style="--v:38%"></div></div><output>38%</output></div>
+          <div class="progress-row"><span>失败</span><div class="progress error" id="p4"><div class="fill" style="--v:100%"></div></div><output>!</output></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"><button class="btn uwp-tile reveal" id="progress-run">运行</button><button class="btn uwp-tile reveal" id="progress-pause">暂停</button><button class="btn uwp-tile reveal" id="progress-done">完成</button><button class="btn uwp-tile reveal" id="progress-toast">保存成功 Toast</button><button class="btn uwp-tile reveal" id="progress-error">错误 Toast</button></div>
+        </div>
+        <div class="badges"><span class="badge blue running"><i></i>处理中</span><span class="badge green"><i></i>可编辑</span><span class="badge red"><i></i>需处理</span><span class="badge amber"><i></i>等待重试</span><span class="badge"><i></i>草稿</span><span class="badge blue"><i></i>逐词</span></div>
+        <div class="tooltip-row"><button class="btn uwp-tile reveal tip" data-tip="重新执行当前步骤；不会覆盖已确认的字幕">重试</button><span class="tip" data-tip="悬停 250ms 后出现；只做 3px 位移和淡入" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--line);border-radius:50%;color:var(--muted);font-size:11px">?</span><button class="btn uwp-tile reveal" id="toast-info">显示信息 Toast</button></div>
+        <div class="loading-row"><span class="spinner"></span><span>正在加载 Parakeet TDT 0.6B · 42% · 只转圈，不铺满页面</span></div>
+        <p class="spec"><b>Progress</b> 4px · <b>Indeterminate</b> 1.4s 32% 块 · <b>Badge</b> 2px / 圆点呼吸 1.4s · <b>Tooltip</b> 120ms + 250ms 延迟 · <b>Toast</b> 180ms / 4s</p>
+      </section>
+
+      <section id="overlays" class="section">
+        <div class="section-head"><div><span class="k">06 / OVERLAYS</span><h2>浮层</h2><p>Flyout 120ms 从触发点下方出现；Dialog 只做 scale(.96→1)+淡入；Drawer 从右 220ms 滑入。按钮沿用磁贴按压，浮层自身不做 3D。</p></div><span class="count">4 patterns</span></div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <div class="select" style="position:relative" data-select><button class="select-trigger uwp-tile reveal" aria-expanded="false" aria-haspopup="listbox" style="width:auto;min-width:150px"><span data-select-value>更多操作</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button><div class="menu" style="left:0;right:auto;min-width:210px" role="listbox"><div class="menu-label">稿件</div><button class="menu-item reveal" role="option" aria-selected="true"><span class="mi-left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20h4L20 8l-4-4L4 16z"/></svg>重命名</span><span class="shortcut">F2</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button><button class="menu-item reveal" role="option" aria-selected="false"><span class="mi-left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="8" y="8" width="12" height="12"/><path d="M16 8V4H4v12h4"/></svg>复制</span><span class="shortcut">Ctrl D</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button><button class="menu-item reveal" role="option" aria-selected="false"><span class="mi-left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12m0 0 4-4m-4 4-4-4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>导出</span><span class="shortcut">Ctrl S</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button><div class="menu-sep"></div><button class="menu-item reveal" role="option" aria-selected="false" style="color:var(--danger)"><span class="mi-left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13"/></svg>删除稿件</span><span class="shortcut">Del</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button></div></div>
+          <button class="btn uwp-tile reveal" id="open-dialog">打开 Dialog</button>
+          <button class="btn uwp-tile reveal" id="open-drawer">打开 Drawer</button>
+          <button class="btn uwp-tile reveal" id="open-color">颜色选择</button>
+        </div>
+        <div class="color-pop" id="color-pop">
+          <div class="swatches" id="swatches"></div>
+          <div class="color-row"><span class="preview" id="color-preview"></span><div class="input-shell hex"><input id="color-hex" value="#0078D7" spellcheck="false"></div><button class="btn uwp-tile reveal" id="color-apply">应用</button></div>
+          <div class="range-field" style="margin-top:10px"><div class="range-head"><span>色相</span><output id="hue-out">205°</output></div><input type="range" class="range" id="hue" min="0" max="360" value="205"></div>
+        </div>
+        <p class="spec"><b>Menu</b> 120ms translateY(-4px)+scale(.985) · <b>Dialog</b> 150ms scale(.96→1) · <b>Drawer</b> 220ms translateX · <b>Scrim</b> .45/180ms</p>
+      </section>
+
+      <div class="footer"><span>设计空壳 · Windows UWP 控件补充 · 2026-10-19</span><span>2px 直角 / 1px 描边 / #0078D7 / 120–220ms · 未接入生产 editor</span></div>
+    </main>
+  </div>
+</div>
+
+<div class="overlay" id="dialog-overlay" role="presentation">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+    <h3 id="dialog-title">删除《雨夜电台 · 第 03 期》？</h3>
+    <p>字幕、角色色与逐词时间会一起删除；视频文件保留在项目目录里。操作不可撤销。</p>
+    <div class="dialog-actions"><button class="btn uwp-tile reveal" data-close-dialog>取消</button><button class="btn btn-danger uwp-tile reveal" data-close-dialog>删除</button></div>
+  </div>
+</div>
+<div class="drawer-wrap" id="drawer-wrap">
+  <div class="scrim" data-close-drawer></div>
+  <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+    <h3 id="drawer-title">导出设置</h3><p class="drawer-sub">只影响本次导出；保存为预设会写入项目。</p>
+    <div class="drawer-body">
+      <div class="field"><span>格式</span><div class="select" data-select><button class="select-trigger uwp-tile reveal" aria-expanded="false" aria-haspopup="listbox"><span data-select-value>ASS · 逐词高亮</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button><div class="menu" role="listbox"><button class="menu-item reveal" role="option" aria-selected="true" data-value="ASS · 逐词高亮"><span class="mi-left">ASS · 逐词高亮</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button><button class="menu-item reveal" role="option" aria-selected="false" data-value="SRT · 双语"><span class="mi-left">SRT · 双语</span><svg class="mi-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m5 12 4 4 10-10"/></svg></button></div></div></div>
+      <label class="check"><input type="checkbox" checked><span class="box"></span><span class="txt"><strong>包含逐词时间</strong><small>写入 karaoke 标签</small></span></label>
+      <label class="switch"><input type="checkbox" role="switch" checked><span class="track"><span class="thumb"></span></span><span class="txt"><strong>包含样式</strong><small>保留角色色与字号</small></span></label>
+      <label class="field"><span>文件名</span><div class="input-shell"><input type="text" value="雨夜电台-第03期-uwp"></div></label>
+    </div>
+    <div class="drawer-actions"><button class="btn uwp-tile reveal" data-close-drawer>取消</button><button class="btn btn-accent uwp-tile reveal" data-close-drawer>导出</button></div>
+  </aside>
+</div>
+<div class="toast-host" id="toast-host"></div>
+
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+  const motionOff = () => document.documentElement.dataset.motion === 'off' || reduce.matches;
+
+  /* 主题 / 动效开关 */
+  $$('.theme-btn').forEach(b => b.addEventListener('click', () => {
+    document.documentElement.dataset.theme = b.dataset.theme;
+    $$('.theme-btn').forEach(x => x.classList.toggle('active', x === b));
+    try { localStorage.setItem('uwp-controls-theme', b.dataset.theme); } catch {}
+  }));
+  try { const th = localStorage.getItem('uwp-controls-theme'); if (th === 'light') $('.theme-btn[data-theme=light]').click(); } catch {}
+  const motionBtn = $('#motion-btn');
+  motionBtn.addEventListener('click', () => {
+    const off = document.documentElement.dataset.motion !== 'off';
+    document.documentElement.dataset.motion = off ? 'off' : 'on';
+    motionBtn.setAttribute('aria-pressed', String(!off));
+    motionBtn.dataset.tip = off ? '已关闭动效；再点恢复' : '减少动效：关闭缩放/位移动画，保留状态变化';
+  });
+
+  /* 导航：滚动同步 */
+  const navLinks = $$('.nav-links a');
+  const sections = navLinks.map(a => $(a.getAttribute('href'))).filter(Boolean);
+  const setActive = id => navLinks.forEach(a => a.classList.toggle('active', a.getAttribute('href') === '#' + id));
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver(entries => {
+      const hit = entries.filter(e => e.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (hit) setActive(hit.target.id);
+    }, { rootMargin: '-15% 0px -70% 0px', threshold: [0, .2, .5] });
+    sections.forEach(s => io.observe(s));
+  }
+  navLinks.forEach(a => a.addEventListener('click', () => setActive(a.getAttribute('href').slice(1))));
+
+  /* 字段：清除 / 眼睛 / 步进 / 字数 */
+  const search = $('#search-input');
+  $('#search-clear').addEventListener('click', () => { search.value = ''; search.focus(); });
+  $('#search-clear').addEventListener('pointerdown', e => e.preventDefault());
+  const secret = $('#secret-input');
+  $('#secret-eye').addEventListener('click', () => { secret.type = secret.type === 'password' ? 'text' : 'password'; });
+  $('#secret-eye').addEventListener('pointerdown', e => e.preventDefault());
+  $$('[data-step]').forEach(b => b.addEventListener('click', () => {
+    const n = $('#batch-num'); n.value = Math.min(32, Math.max(1, Number(n.value || 1) + Number(b.dataset.step)));
+  }));
+  const prompt = $('#prompt'), promptCount = $('#prompt-count');
+  const syncCount = () => promptCount.textContent = prompt.value.length;
+  prompt.addEventListener('input', syncCount); syncCount();
+  $$('.input-shell input, .input-shell textarea').forEach(inp => {
+    inp.addEventListener('keydown', e => { if (e.key === 'Escape') inp.blur(); });
+  });
+
+  /* 自定义 Select / 菜单：120ms flyout + 方向键 + 外点关闭 */
+  let openSelect = null;
+  function closeSelect() {
+    if (!openSelect) return;
+    openSelect.trigger.setAttribute('aria-expanded', 'false');
+    openSelect.menu.classList.remove('open');
+    openSelect = null;
+  }
+  function openMenu(trigger, menu) {
+    if (openSelect && openSelect.menu === menu) { closeSelect(); return; }
+    closeSelect();
+    trigger.setAttribute('aria-expanded', 'true');
+    menu.classList.add('open');
+    openSelect = { trigger, menu };
+    const first = menu.querySelector('.menu-item');
+    if (first) requestAnimationFrame(() => first.focus());
+  }
+  $$('[data-select]').forEach(sel => {
+    const trigger = sel.querySelector('.select-trigger');
+    const menu = sel.querySelector('.menu');
+    const value = sel.querySelector('[data-select-value]');
+    trigger.addEventListener('click', e => { e.stopPropagation(); openMenu(trigger, menu); });
+    trigger.addEventListener('keydown', e => { if (e.key === 'ArrowDown') { e.preventDefault(); openMenu(trigger, menu); } });
+    menu.addEventListener('keydown', e => {
+      const items = $$('.menu-item', menu);
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); (items[i + 1] || items[0]).focus(); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); (items[i - 1] || items[items.length - 1]).focus(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeSelect(); trigger.focus(); }
+    });
+    menu.addEventListener('click', e => {
+      const item = e.target.closest('.menu-item');
+      if (!item) return;
+      e.stopPropagation();
+      $$('.menu-item', menu).forEach(x => x.setAttribute('aria-selected', String(x === item)));
+      if (item.dataset.value && value) value.textContent = item.dataset.value;
+      closeSelect(); trigger.focus();
+    });
+  });
+  document.addEventListener('click', closeSelect);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSelect(); });
+
+  /* 文件拖放 */
+  const drop = $('#file-drop'), fileInput = $('#file-input'), fileName = $('#file-name');
+  const showFile = name => fileName.textContent = name ? '已选择：' + name : '';
+  $('#file-browse').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => showFile(fileInput.files[0]?.name));
+  ['dragenter', 'dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('dragover'); }));
+  drop.addEventListener('drop', e => showFile(e.dataTransfer?.files?.[0]?.name));
+
+  /* 分段 / Tabs / 行选择 */
+  $$('.seg button').forEach(b => b.addEventListener('click', () => {
+    const group = b.parentElement;
+    $$('button', group).forEach(x => x.classList.toggle('active', x === b));
+  }));
+  $$('.tabs .tab').forEach(b => b.addEventListener('click', () => {
+    $$('.tabs .tab').forEach(x => { x.classList.toggle('active', x === b); x.setAttribute('aria-selected', String(x === b)); });
+  }));
+  $$('.row').forEach(r => {
+    r.addEventListener('click', () => { $$('.row').forEach(x => x.classList.toggle('selected', x === r)); });
+    r.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); r.click(); } });
+  });
+
+  /* 进度：确定/不确定/暂停/完成 */
+  let progressTimer = 0, progressValue = 62, progressRun = false;
+  const p1 = $('#p1'), p1fill = p1?.querySelector('.fill'), p1out = p1?.parentElement.querySelector('output');
+  function paintProgress() { if (p1fill) p1fill.style.setProperty('--v', progressValue + '%'); if (p1out) p1out.textContent = Math.round(progressValue) + '%'; }
+  function stopProgress() { progressRun = false; clearInterval(progressTimer); }
+  $('#progress-run').addEventListener('click', () => {
+    if (progressRun) return;
+    progressRun = true; p1.classList.remove('indeterminate', 'paused', 'error');
+    progressTimer = setInterval(() => {
+      progressValue = Math.min(100, progressValue + 2);
+      paintProgress();
+      if (progressValue >= 100) { stopProgress(); p1.classList.remove('indeterminate'); }
+    }, 180);
+  });
+  $('#progress-pause').addEventListener('click', () => { stopProgress(); p1.classList.add('paused'); p1.classList.remove('indeterminate'); });
+  $('#progress-done').addEventListener('click', () => { stopProgress(); progressValue = 100; paintProgress(); p1.classList.remove('indeterminate', 'paused', 'error'); });
+  $('#progress-error').addEventListener('click', () => { stopProgress(); p1.classList.add('error'); p1.classList.remove('indeterminate', 'paused'); showToast('error', '翻译失败', '模型返回了空响应；已保留原文，可单独重试。'); });
+  document.querySelector('#progress-toast')?.addEventListener('click', () => showToast('success', '已保存', '字幕与角色色已写入项目。'));
+  // 不确定态示例在 HTML 里保持运行
+
+  /* Toast */
+  const toastHost = $('#toast-host');
+  function showToast(kind, title, text) {
+    const t = document.createElement('div'); t.className = 'toast';
+    t.innerHTML = `<div class="t-main"><strong>${title}</strong><small>${text}</small></div><button class="icon-btn uwp-tile reveal" aria-label="关闭">×</button>`;
+    if (kind === 'error') t.style.borderLeftColor = 'var(--danger)';
+    if (kind === 'success') t.style.borderLeftColor = 'var(--success)';
+    toastHost.appendChild(t);
+    const close = () => { t.classList.add('out'); setTimeout(() => t.remove(), 180); };
+    t.querySelector('button').addEventListener('click', close);
+    setTimeout(close, 4000);
+  }
+  $('#toast-info')?.addEventListener('click', () => showToast('info', '提示', '这是设计空壳里的 Toast；4s 自动收起。'));
+
+  /* Dialog / Drawer */
+  const dialog = $('#dialog-overlay');
+  const openDialog = () => { dialog.classList.add('open'); $('[data-close-dialog]', dialog)?.focus(); };
+  const closeDialog = () => dialog.classList.remove('open');
+  $('#open-dialog').addEventListener('click', openDialog);
+  $$('[data-close-dialog]').forEach(b => b.addEventListener('click', closeDialog));
+  dialog.addEventListener('click', e => { if (e.target === dialog) closeDialog(); });
+  const drawer = $('#drawer-wrap');
+  const openDrawer = () => { drawer.classList.add('open'); $('.drawer .btn', drawer)?.focus(); };
+  const closeDrawer = () => drawer.classList.remove('open');
+  $('#open-drawer').addEventListener('click', openDrawer);
+  $$('[data-close-drawer]').forEach(b => b.addEventListener('click', closeDrawer));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeDialog(); closeDrawer(); } });
+
+  /* 颜色：色板 / Hex / 色相 */
+  const swatches = $('#swatches'), hex = $('#color-hex'), preview = $('#color-preview'), hue = $('#hue'), hueOut = $('#hue-out');
+  const colors = ['#0078D7','#106EBE','#005A9E','#00B7C3','#498205','#107C10','#8764B8','#B146C2','#C42B1C','#E3008C','#FF8C00','#FFB900','#605E5C','#8A8886','#D2D0CE','#FFFFFF'];
+  colors.forEach((c, i) => {
+    const b = document.createElement('button'); b.className = 'swatch uwp-tile reveal' + (i === 0 ? ' active' : ''); b.style.background = c; b.setAttribute('aria-label', c);
+    b.addEventListener('click', () => { $$('.swatch', swatches).forEach(x => x.classList.toggle('active', x === b)); setColor(c); });
+    swatches.appendChild(b);
+  });
+  function setColor(c) { if (!/^#[0-9a-f]{6}$/i.test(c)) return; hex.value = c.toUpperCase(); preview.style.background = c; }
+  hex.addEventListener('change', () => setColor(hex.value.trim()));
+  $('#color-apply').addEventListener('click', () => { $('#open-color').textContent = '颜色 · ' + hex.value; $('#color-pop').classList.remove('open'); showToast('success', '已应用', '仅作为控件演示；UWP 固定使用 #0078D7。'); });
+  $('#open-color').addEventListener('click', () => $('#color-pop').classList.toggle('open'));
+  hue.addEventListener('input', () => { hueOut.textContent = hue.value + '°'; const c = hslToHex(Number(hue.value), 65, 42); setColor(c); });
+  function hslToHex(h, s, l) { s /= 100; l /= 100; const a = s * Math.min(l, 1 - l); const f = n => { const k = (n + h / 30) % 12; const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1); return Math.round(255 * c).toString(16).padStart(2, '0'); }; return '#' + f(0) + f(8) + f(4); }
+  setColor('#0078D7');
+
+  /* Range：--v + 输出 + 时间轴播放头 */
+  function bindRange(input, out, fmt) {
+    const draw = () => { const v = (input.value - input.min) / (input.max - input.min) * 100; input.style.setProperty('--v', v + '%'); if (out) out.textContent = fmt ? fmt(input.value) : input.value; };
+    input.addEventListener('input', draw); draw();
+  }
+  const time = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${(s % 60).toFixed(1).padStart(4, '0')}`;
+  bindRange($('#seek'), $('#seek-out'), v => `${time(v)} / 00:48.0`);
+  bindRange($('#vol'), $('#vol-out'), v => v + '%');
+  bindRange($('#zoom'), $('#zoom-out'), v => v + '%');
+  bindRange($('#hue'), $('#hue-out'), v => v + '°');
+  const tlPlayhead = $('.tl-playhead');
+  const syncTimeline = () => { const v = Number($('#seek').value); tlPlayhead.style.left = (v / 48 * 100) + '%'; $('#tl-clock').textContent = time(v); };
+  $('#seek').addEventListener('input', syncTimeline); syncTimeline();
+  $$('.tl-hit').forEach(hit => hit.addEventListener('click', e => {
+    const r = hit.parentElement.getBoundingClientRect();
+    const v = Math.max(0, Math.min(48, (e.clientX - r.left) / r.width * 48));
+    $('#seek').value = v.toFixed(1); $('#seek').dispatchEvent(new Event('input'));
+  }));
+
+  /* Reveal + 磁贴按压（与原型同参数，缩小到 2° 上限） */
+  let hover = null;
+ document.addEventListener('pointermove', e => {
+    const el = e.target.closest?.('.reveal');
+    if (hover && hover !== el) { hover.style.setProperty('--face', '0'); hover.style.setProperty('--edge', '0'); hover = null; }
+    if (!el || el.closest('.tip')) return;
+    const r = el.getBoundingClientRect(); if (!r.width || !r.height) return;
+    hover = el;
+    el.style.setProperty('--face', '1'); el.style.setProperty('--edge', '1');
+    el.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%');
+    el.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%');
+    el.style.setProperty('--fr', (Math.min(r.width, r.height) * 1.2).toFixed(0) + 'px');
+  }, { passive: true });
+  document.addEventListener('pointerleave', () => { if (hover) { hover.style.setProperty('--face', '0'); hover.style.setProperty('--edge', '0'); hover = null; } });
+
+  let press = null;
+  function cancelPress() {
+    if (press) { const p = press; press = null; try { p.anim?.cancel(); } catch {} if (p.tile) { p.tile.classList.remove('is-pressing', 'is-rebounding'); p.tile.style.transform = ''; p.tile.style.transformOrigin = ''; } }
+  }
+  function pressTile(tile, x, y) {
+    if (motionOff()) return;
+    const r = tile.getBoundingClientRect(); if (!r.width || !r.height) return;
+    const fx = Math.min(1, Math.max(0, (x - r.left) / r.width)), fy = Math.min(1, Math.max(0, (y - r.top) / r.height));
+    const local = Math.max(Math.abs(fx - .5), Math.abs(fy - .5)) * 2;
+    const span = Math.max(r.width, r.height);
+    const tilt = 2.4 * Math.min(span, 180) / Math.max(span, 180);
+    const rx = (0.5 - fy) * 2 * tilt, ry = (fx - 0.5) * 2 * tilt;
+    const down = `perspective(760px) rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) translateZ(-2px) scale(.992)`;
+    const over = `perspective(760px) rotateX(${(-rx * .18).toFixed(2)}deg) rotateY(${(-ry * .18).toFixed(2)}deg) translateZ(.5px) scale(1.001)`;
+    cancelPress();
+    tile.style.transform = ''; tile.style.transformOrigin = `${((1 - fx) * 100).toFixed(1)}% ${((1 - fy) * 100).toFixed(1)}%`;
+    tile.style.setProperty('--px', (fx * r.width).toFixed(0) + 'px'); tile.style.setProperty('--py', (fy * r.height).toFixed(0) + 'px');
+    tile.style.setProperty('--pr', (Math.min(r.width, r.height) * 1.15).toFixed(0) + 'px'); tile.style.setProperty('--pl', local.toFixed(2));
+    tile.classList.add('is-pressing');
+    press = { tile, down, over, anim: null, startX: x, startY: y };
+    const anim = tile.animate([{ transform: 'none' }, { transform: down }], { duration: 100, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'forwards' }); anim.id = 'uwp-press'; press.anim = anim;
+  }
+  function releasePress() {
+    if (!press) return;
+    const p = press; press = null; const tile = p.tile;
+    tile.classList.remove('is-pressing'); tile.classList.add('is-rebounding');
+    tile.style.transform = p.down;
+    try { p.anim?.cancel(); } catch {}
+    const reb = tile.animate([{ transform: p.down, offset: 0 }, { transform: p.over, offset: .42 }, { transform: 'none', offset: 1 }], { duration: 400, easing: 'cubic-bezier(.22,.8,.24,1)' });
+    reb.id = 'uwp-rebound';
+    reb.onfinish = () => { if (press && press.tile === tile) return; tile.style.transform = ''; tile.style.transformOrigin = ''; tile.classList.remove('is-rebounding'); };
+  }
+  document.addEventListener('pointerdown', e => { if (e.button !== 0) return; const t = e.target.closest?.('.uwp-tile'); if (t && !t.disabled) pressTile(t, e.clientX, e.clientY); }, { passive: true });
+  window.addEventListener('pointerup', releasePress);
+  window.addEventListener('pointercancel', releasePress);
+  window.addEventListener('blur', releasePress);
+  document.addEventListener('pointermove', e => { if (press && Math.hypot(e.clientX - press.startX, e.clientY - press.startY) > 12) releasePress(); }, { passive: true });
+
+  /* 不确定复选 */
+  const partial = $('#partial-check'); if (partial) partial.indeterminate = true;
+})();
+</script>
+</body>
+</html>

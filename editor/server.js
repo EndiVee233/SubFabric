@@ -7215,6 +7215,43 @@ function handleWaveRoutes(req, res, u) {
     const rate = Math.max(20, Math.min(200, parseFloat(u.searchParams.get('rate')) || 100));
     return peaksFromTemp(req, res, parseFloat(u.searchParams.get('dur')) || 0, rate);
   }
+  /** HEIC/HEIF 背景图转换：浏览器（尤其 Edge/Chrome）不保证带 HEVC 解码器，
+   *  但本程序本来就需要 ffmpeg 抽音频/波形。这里把上传的图片临时落盘，
+   *  用 ffmpeg 解出首帧并压到长边 2560 的 JPEG，再以 data URL 回传；
+   *  临时文件在 finally 清理，不写项目目录、不进入静态白名单。 */
+  if (pathname === '/api/image/convert' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024 * 1024, async (err, body) => {
+      if (err) return;
+      if (!body || !body.length) return sendJson(res, 400, { error: '空图片' });
+      const token = crypto.randomBytes(8).toString('hex');
+      const input = path.join(os.tmpdir(), `sf-image-${token}.heic`);
+      const output = path.join(os.tmpdir(), `sf-image-${token}.jpg`);
+      try {
+        fs.writeFileSync(input, body);
+        /* HEIC 常带 gain map / fragment map 多个视频流；直接 -vf 会触发
+           "simple and complex filtering" 冲突。先让 ffprobe 选 default 或面积最大的流，
+           再显式 -map；老版本/单流文件回退 0:v:0。 */
+        let map = '0:v:0';
+        try {
+          const probe = JSON.parse((await runCapture(FFPROBE, ['-v', 'error', '-select_streams', 'v',
+            '-show_entries', 'stream=index,width,height:stream_disposition=default', '-of', 'json', input], 20000)).stdout || '{}');
+          const streams = Array.isArray(probe.streams) ? probe.streams : [];
+          const best = streams.find(s => s.disposition?.default) || streams[streams.length - 1];
+          if (best && Number.isInteger(best.index)) map = '0:v:' + best.index;
+        } catch { /* ffprobe 不可用就按第一路 */ }
+        await runCapture(FFMPEG, ['-hide_banner', '-y', '-i', input, '-map', map, '-frames:v', '1',
+          '-vf', 'scale=min(2560\\,iw):-2', '-q:v', '3', output], 60000);
+        const jpg = fs.readFileSync(output);
+        if (!jpg.length) throw new Error('转换结果为空');
+        return sendJson(res, 200, { data: 'data:image/jpeg;base64,' + jpg.toString('base64') });
+      } catch (e) {
+        return sendJson(res, 500, { error: 'HEIF/HEIC 转换失败（需要可用的 ffmpeg）：' + String(e.message || e).slice(0, 200) });
+      } finally {
+        try { fs.unlinkSync(input); } catch {}
+        try { fs.unlinkSync(output); } catch {}
+      }
+    });
+  }
   /** 浏览器选视频的兜底通道: 把上传的视频存成服务端**持久**文件并返回真实路径,
    *  之后与本地路径选视频完全同构(/api/media Range 流式播放、prepare 提取音频波形)。
    *  为什么存持久文件: 项目要"下次打开还在", 而浏览器 File 对象只在本次会话有效。
@@ -9684,7 +9721,7 @@ function handleProjectsRoutes(req, res, u) {
 /* 路由段表: 前缀互不相交, 顺序即原 handleRequest 的书写顺序。
  * 命中前缀即由该段全权处理(未匹配的 method/路径组合由段内兜底回 404)。 */
 const API_SECTIONS = [
-  [/^\/api\/(waveform|peaks|upload-video)\b/, handleWaveRoutes],
+  [/^\/api\/(waveform|peaks|upload-video|image)\b/, handleWaveRoutes],
   [/^\/api\/(pick|fetch)\b/, handleFetchRoutes],
   [/^\/api\/(asr|analyze)\b/, handleAsrRoutes],
   [/^\/api\/(translate|cast|mt)\b/, handleLlmRoutes],

@@ -1102,7 +1102,7 @@
     </div>
 
     <div class="sf-library-tools"><div id="sf-filters" role="group" aria-label="稿件筛选"><button class="active" data-filter="all">全部</button><button data-filter="active">处理中</button><button data-filter="ready">可编辑</button><button data-filter="attention">需处理</button></div><input id="sf-search" type="search" placeholder="搜索稿件名称"><button type="button" class="btn" id="sf-list-mode" aria-pressed="false">列表视图</button></div>
-    <div id="home-list" class="home-list"></div><div id="sf-filter-empty" class="home-empty" hidden>没有符合条件的稿件<button type="button" class="btn" id="sf-clear-filter">清除筛选</button></div>
+    <div id="home-list" class="home-list"></div><div id="sf-filter-empty" class="home-empty" hidden><p class="sf-filter-empty-title">没有符合条件的稿件</p><button type="button" class="btn" id="sf-clear-filter">清除筛选</button></div>
     <div id="home-empty" class="home-empty" hidden>
       <div class="he-icon" data-ico="inbox"></div>
       <div class="he-name">还没有项目</div>
@@ -1531,7 +1531,6 @@
 <div id="st-view" class="workspace-page" hidden>
   <div class="page-inner settings-inner">
     <header class="page-head">
-      <button type="button" class="btn page-back" id="st-close" data-ico="chevronDown"><span id="st-close-label">返回项目</span></button>
       <span class="page-brand" data-ico="film">SubFabric <span>/ 全局设置</span></span>
     </header>
     <div class="page-intro">
@@ -1775,7 +1774,7 @@
           <div class="st-card">
             <div class="st-card-title">方案与服务商</div>
             <div class="st-grid">
-              <label class="st-lbl" for="st-scheme-name">方案名称</label><input id="st-scheme-name" class="st-input" maxlength="80" required placeholder="为这个方案命名">
+              <label class="st-lbl" for="st-scheme-name">方案名称</label><input id="st-scheme-name" class="st-input" maxlength="80" required placeholder="为这个方案命名"><small class="st-field-error" id="st-scheme-name-error" aria-live="polite"></small>
               <span class="st-lbl">服务商</span>
               <select id="st-provider" class="st-select"></select>
               <span class="st-lbl">API 接口地址</span>
@@ -2058,7 +2057,7 @@
             <div class="sf-aurora-colors"><div class="sf-aurora-color"><label for="sf-aurora-color-1">流光色 1</label><input type="text" data-color-input="1" id="sf-aurora-color-1" aria-label="流光色 1"></div><div class="sf-aurora-color"><label for="sf-aurora-color-2">流光色 2</label><input type="text" data-color-input="1" id="sf-aurora-color-2" aria-label="流光色 2"></div><div class="sf-aurora-color"><label for="sf-aurora-color-3">流光色 3</label><input type="text" data-color-input="1" id="sf-aurora-color-3" aria-label="流光色 3"></div></div>
             <div class="sf-settings-line"><div><label for="sf-aurora-motion">流光效果</label><p>静态保留柔和色彩；动态缓慢流动，减少动效时自动停止。</p></div><select id="sf-aurora-motion"><option value="dynamic">动态流光</option><option value="static">静态流光</option></select></div>
           </div>
-          <div class="sf-settings-image-tools" id="sf-image-tools" hidden><button type="button" class="btn" id="sf-image-pick">选择图片</button><button type="button" class="btn" id="sf-image-clear">清除图片</button><input type="file" id="sf-image-file" accept="image/png,image/jpeg,image/webp" hidden><span class="gl-hint">PNG、JPEG 或 WebP · 2MB 以内</span></div>
+          <div class="sf-settings-image-tools" id="sf-image-tools" hidden><button type="button" class="btn" id="sf-image-pick">选择图片</button><button type="button" class="btn" id="sf-image-clear">清除图片</button><input type="file" id="sf-image-file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" hidden><label class="sf-image-range">模糊 <input type="range" id="sf-image-blur" min="0" max="40" step="1" value="0"><output id="sf-image-blur-value">0px</output></label><label class="sf-image-range">压暗 <input type="range" id="sf-image-dim" min="0" max="80" step="1" value="0"><output id="sf-image-dim-value">0%</output></label><span class="gl-hint">PNG / JPEG / WebP / HEIC · 自动压缩后保存</span></div>
           <div class="sf-settings-line"><div><b>明暗模式</b><p>随系统变化，或保持喜欢的明暗。</p></div><div class="sf-settings-segments" role="group" aria-label="明暗模式"><button type="button" data-appearance-mode="light" aria-pressed="false">浅色</button><button type="button" data-appearance-mode="dark" aria-pressed="false">深色</button><button type="button" data-appearance-mode="system" aria-pressed="false">跟随系统</button></div><div hidden><select id="sf-mode" aria-label="明暗模式"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></div></div>
           <div class="sf-settings-line"><div><label for="sf-motion">界面动效</label><p>页面转场、轻回弹与流光；系统减少动效偏好优先。</p></div><select id="sf-motion"><option value="on">开启</option><option value="off">减少动效</option></select></div>
           <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-dim">毛玻璃压暗</label><p>控制浅色与深色模式卡片底色的压暗程度，数值越高文字越清晰。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-dim" min="72" max="92" step="1" value="80"><output id="sf-glass-dim-value" for="sf-glass-dim">80%</output></div></div>
@@ -2127,7 +2126,7 @@
         <span class="st-msg" id="st-msg"></span>
         <span class="st-spacer"></span>
         <button type="button" class="btn" id="st-cancel">返回</button>
-        <button type="button" class="btn btn-accent" id="st-save" hidden>保存并返回</button>
+        <button type="button" class="btn btn-accent" id="st-save" hidden>保存</button>
       </div>
     </div>
   </div>

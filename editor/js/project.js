@@ -904,6 +904,7 @@ export function initProjects(ctx) {
       if (!card) { card = document.createElement('div'); card.dataset.id = p.id; }
       cards.push(card);
       card.className = 'proj-card' + (p.videoExists || p.fetching ? '' : ' proj-missing');
+      card.tabIndex = 0; card.setAttribute('role', 'link'); card.setAttribute('aria-label', p.name);
       // 入场错峰: CSS 用 --i 算 animation-delay（上限 12 档, 项目多了也不会等太久）
       card.style.setProperty('--i', String(Math.min(cardIdx++, 12)));
       /* 事件绑定：重建过的卡片要重新绑（innerHTML 换代会把监听一起清掉）。
@@ -914,7 +915,7 @@ export function initProjects(ctx) {
       const hasSub = !!p.format;
 
       // 有初稿任务时以初稿进度为准(它是 prepare 之后的后半段)
-      let stChip = '', draftBar = '', progBtn = '<button type="button" class="btn pc-details">详细信息</button>';
+      let stChip = '', draftBar = '', progBtn = '<button type="button" class="btn pc-details">更多</button>';
       if (dr && dr.status) {
         const pct = Math.max(0, Math.min(100, dr.progress || 0));
         const running = dr.status === 'running';
@@ -943,7 +944,7 @@ export function initProjects(ctx) {
         const canRetry = (failed || paused
           || (dr.status === 'done' && !dr.translated && !!dr.needTranslate)) && !dr.skippedTranslate;
         const retryLabel = paused ? (dr.pendingTranslate ? '重试' : '开始翻译') : '重试';
-        progBtn = '<button type="button" class="btn pc-details">详细信息</button>';
+        progBtn = '<button type="button" class="btn pc-details">更多</button>';
         if (canRetry) progBtn += `<button type="button" class="btn btn-accent pc-retry">${esc(retryLabel)}</button>`;
         else if (dr.skippedTranslate) progBtn += '<button type="button" class="btn pc-trans">翻译</button>';
       } else if (st) {
@@ -954,17 +955,21 @@ export function initProjects(ctx) {
       const badge = fmt === 'srt' ? 'SRT' : (fmt === 'ass' ? 'ASS' : (dr ? '初稿' : 'ASS'));
       const locked = !!dr && !hasSub;           // 还没有字幕文件时进去也没内容可读（失败在识别阶段就是这种）
       const missingTag = (p.videoExists || p.fetching) ? '' : ` <span class="pc-missing">${ico('alert')}找不到这个视频</span>`;
+      /* UWP 设计稿的 cover/body/badges/actions：状态与“可编辑”放在独立 badges 行，
+         标题只保留项目名，避免徽标挤进标题造成换行。 */
+      const badges = `${stChip}${hasSub && !locked ? `<span class="pc-st st-done">${t('可编辑')}</span>` : ''}`;
       card.innerHTML = `
         <span class="pc-badge ${fmt === 'srt' ? 'srt' : ''}">${badge}</span>
         <div class="pc-main">
-          <div class="pc-name">${esc(p.name)}${missingTag}${stChip}</div>
+          <div class="pc-name">${esc(p.name)}${missingTag}</div>
           <div class="pc-meta">${esc(cardMeta(p))}</div>
+          <div class="pc-badges">${badges}</div>
           ${draftBar}
         </div>
         <div class="pc-actions">
           ${progBtn}
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
-          <button type="button" class="btn pc-del ico-only" title="删除项目（音频、波形、字幕副本一起删）">${ico('trash')}</button>
+          <button type="button" class="btn pc-del ico-only" title="删除项目（音频、波形、字幕副本一起删）" aria-label="删除项目">${ico('trash')}</button>
         </div>`;
       card.querySelector('.pc-details').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -975,6 +980,11 @@ export function initProjects(ctx) {
         if (!locked) location.hash = '#/project/' + p.id;
       });
       card.addEventListener('click', () => { if (!locked) location.hash = '#/project/' + p.id; });
+      card.onkeydown = (e) => {
+        if (e.target !== card || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        if (!locked) location.hash = '#/project/' + p.id;
+      };
       const tb = card.querySelector('.pc-trans');
       if (tb) tb.addEventListener('click', (e) => { e.stopPropagation(); requestTranslate(p.id); });
       const rb = card.querySelector('.pc-retry');
@@ -1214,6 +1224,9 @@ export function initProjects(ctx) {
 
   /* ── 全局设置: 页签切换 + 热词块状编辑(一格一个单词) ── */
   document.querySelectorAll('.st-tab').forEach(tab => tab.addEventListener('click', () => {
+    /* selectSetting('llm') 会先点 translate 再点 LLM 入口，已激活时直接跳过，
+       避免同一面板重复 dispatch 重启动画。 */
+    if (tab.classList.contains('active')) return;
     document.querySelectorAll('.st-tab').forEach(t => {
       const active = t === tab;
       t.classList.toggle('active', active);
@@ -1223,7 +1236,12 @@ export function initProjects(ctx) {
       const active = p.dataset.stp === tab.dataset.stp;
       p.classList.toggle('active', active);
       p.hidden = !active;
+      if (active) window.dispatchEvent(new CustomEvent('sf-settings-panel-shown', { detail: { panel: p } }));
     });
+    /* 长面板滚到底再切短面板会停在空白处，看起来像没切换；统一回到顶部。 */
+    stView.scrollTop = 0;
+    const stBody = $('#st-body');
+    if (stBody) stBody.scrollTop = 0;
   }));
   function hotwordRow(val) {
     const row = document.createElement('div');
@@ -1655,6 +1673,7 @@ export function initProjects(ctx) {
  * 同步请求会超时，而且看不到中间进度。
  * ────────────────────────────────────────────────────────────────────────── */
 let perfTimer = null;
+let perfPollFails = 0;
 
 function perfSetBusy(on, msg) {
   const btn = $('#perf-start');
@@ -1756,7 +1775,17 @@ function perfRenderResult(r) {
 
 async function perfPoll() {
   let s = null;
-  try { s = await (await fetch('/api/asr/perf/state')).json(); } catch { return; }
+  try {
+    s = await (await fetch('/api/asr/perf/state')).json();
+    perfPollFails = 0;
+  } catch {
+    /* 服务重启/断网时不能永久停在“测试中…”：连续 3 次失败就收掉轮询和按钮。 */
+    if (++perfPollFails >= 3) {
+      clearInterval(perfTimer); perfTimer = null;
+      perfSetBusy(false, '无法读取测试状态，请重试');
+    }
+    return;
+  }
   const prog = $('#perf-progress');
   const bar = $('#perf-bar');
   const stage = $('#perf-stage');
@@ -1777,6 +1806,7 @@ async function perfPoll() {
 
 function startPerfPolling() {
   if (perfTimer) return;
+  perfPollFails = 0;
   perfTimer = setInterval(perfPoll, 1500);
   perfPoll();
 }
@@ -1792,6 +1822,8 @@ function initPerfPanel() {
   const setAudio = (p) => {
     audioPath = p || '';
     if (pathEl) pathEl.textContent = audioPath || '（未选择）';
+    /* 选到音频后清掉上一次“先选一份测试音频”的残留提示。 */
+    if (audioPath) { const note = $('#perf-note'); if (note) note.textContent = ''; }
   };
   setAudio('');
 
@@ -1827,7 +1859,11 @@ function initPerfPanel() {
 
   btn.addEventListener('click', async () => {
     const note = $('#perf-note');
-    if (!audioPath) { if (note) note.textContent = '先选一份测试音频'; return; }
+    if (!audioPath) {
+      if (note) note.textContent = '先选一份测试音频';
+      if (typeof toast === 'function') toast('先选择测试音频，或点「自动找一份」', 3200);
+      return;
+    }
     perfSetBusy(true, '启动中…');
     const box = $('#perf-result');
     if (box) box.innerHTML = '';
@@ -1865,13 +1901,9 @@ async function refreshDualRatio() {
   if (!row || !sel) return;
   try {
     const s = await (await fetch('/api/asr/dual')).json();
-    // ⚠ 这里原来读 state.asrStatus —— main.js 的 state 根本没有这个字段（恒 undefined）,
-    // anyDual 恒为 false, 双引擎分工行永久隐藏, initDualRatio 整套交互不可达。
-    // 设置页的模型面板(renderAsrModels)自己拉 /api/asr/status, 不会同步回本模块的
-    // asrStatus 局部变量, 所以这里干脆自取一份（调用频率低: 仅设置页交互触发）。
-    let st = null;
-    try { st = await (await fetch('/api/asr/status')).json(); } catch {}
-    const anyDual = !!(st && (st.models || [])
+    /* 复用 renderAsrModels 刚拿到的 latestAsrStatus，避免每次刷新再打一遍 status；
+       显示条件必须和这里一致：dual 模型 ready 才显示。 */
+    const anyDual = !!(latestAsrStatus && (latestAsrStatus.models || [])
       .some((m) => m.engine === 'dual' && m.ready));
     // 只有当机器上确实存在可用的双引擎模型时才显示这一行 —— 否则是噪音
     row.hidden = !anyDual;
@@ -2136,6 +2168,7 @@ const GROUP_OPEN = new Map();
 let selectedAsrFamily = '';
 let latestAsrStatus = null;
 function showAsrFamily(family) {
+  const changedFamily = selectedAsrFamily !== family;
   selectedAsrFamily = family;
   const box = $('#st-models');
   box.dataset.family = family;
@@ -2148,7 +2181,9 @@ function showAsrFamily(family) {
   $('#st-model-dir').closest('.st-card').hidden = family !== '前置';
   $('#st-runtime-env').closest('.st-card').hidden = true;
   $('#sf-asr-rerecog-mount').hidden = !!family;
-  $('#dual-ratio-row').hidden = family !== 'Parakeet 系列' || !latestAsrStatus?.models?.some(model => model.engine === 'dual');
+  $('#dual-ratio-row').hidden = family !== 'Parakeet 系列' || !latestAsrStatus?.models?.some(model => model.engine === 'dual' && model.ready);
+  /* 进入 Parakeet 时真正读一次 /api/asr/dual 回填已保存比例；轮询重绘同一家族时不重复请求。 */
+  if (changedFamily && family === 'Parakeet 系列') refreshDualRatio();
 }
 
 
@@ -2577,9 +2612,15 @@ async function renderAsrModels() {
     };
     inp.addEventListener('change', save);
     if (openBtn) openBtn.addEventListener('click', async () => {
-      await fetch('/api/asr/open-dir', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'models' })
-      });
+      try {
+        const r = await fetch('/api/asr/open-dir', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'models' })
+        });
+        const m = await r.json().catch(() => ({}));
+        if (!r.ok) toast(m.error || '打开目录失败', 4200);
+      } catch (e) {
+        toast('打开目录失败：' + e.message, 4200);
+      }
     });
   }
   function openSettings(tabName) {
@@ -2659,6 +2700,11 @@ async function renderAsrModels() {
   function renderSavedSchemes() {
     const list = schemeEls.list, drawer = schemeEls.drawer;
     if (!list) return;
+    /* 删除/替换后编辑态不能再指向不存在的方案；强制关闭残留抽屉。 */
+    if (editingSchemeId && !savedSchemes.some(item => item.id === editingSchemeId)) {
+      schemeSaving = false;
+      closeDrawer();
+    }
     list.hidden = !savedSchemes.length && !drawer.hidden && !drawer.inert;
     if (drawer?.parentElement === list) list.after(drawer);
     list.innerHTML = savedSchemes.length ? savedSchemes.map(item => `<div class="st-scheme${item.id === activeSchemeId ? ' cur' : ''}" data-scheme="${esc(item.id)}">
@@ -2678,21 +2724,27 @@ async function renderAsrModels() {
       if (schemeSaving) return; schemeSaving = true; button.disabled = true;
       try {
         acceptSchemes(await schemeRequest('/api/translate/schemes/' + button.dataset.id + '/activate', 'POST', {}));
+        /* closeDrawer() 会因 schemeSaving 直接 return；成功后先解锁，再关闭/重绘。 */
+        schemeSaving = false;
         closeDrawer(); renderSavedSchemes(); toast('已切换翻译方案', 2400);
-      } catch (error) { $('#st-msg').textContent = error.message; button.disabled = false; }
-      finally { schemeSaving = false; }
+      } catch (error) { $('#st-msg').textContent = error.message; }
+      finally { schemeSaving = false; button.disabled = false; }
     }));
-    list.querySelectorAll('.sf-scheme-delete').forEach(button => button.addEventListener('click', async () => {
+    list.querySelectorAll('.sf-scheme-delete').forEach(button => button.addEventListener('click', () => {
       if (schemeSaving) return;
       const item = savedSchemes.find(item => item.id === button.dataset.id);
-      if (!window.confirm('删除方案“' + item.name + '”？')) return;
-      schemeSaving = true; button.disabled = true;
-      try {
-        acceptSchemes(await schemeRequest('/api/translate/schemes/' + item.id, 'DELETE'));
-        if (editingSchemeId === item.id) closeDrawer();
-        renderSavedSchemes(); toast('方案已删除', 2400);
-      } catch (error) { $('#st-msg').textContent = error.message; button.disabled = false; }
-      finally { schemeSaving = false; }
+      if (!item) return;
+      panel.showConfirm('删除翻译方案', '删除方案“' + item.name + '”？', '删除', '取消', async () => {
+        schemeSaving = true; button.disabled = true;
+        try {
+          acceptSchemes(await schemeRequest('/api/translate/schemes/' + item.id, 'DELETE'));
+          /* 同上：删除成功后必须解锁，否则抽屉会停在已删除的方案上。 */
+          schemeSaving = false;
+          if (editingSchemeId === item.id) closeDrawer();
+          renderSavedSchemes(); toast('方案已删除', 2400);
+        } catch (error) { $('#st-msg').textContent = error.message; }
+        finally { schemeSaving = false; button.disabled = false; }
+      });
     }));
     if (editingSchemeId && !drawer.hidden) {
       const card = [...list.querySelectorAll('[data-scheme]')].find(card => card.dataset.scheme === editingSchemeId);
@@ -2719,7 +2771,16 @@ async function renderAsrModels() {
   async function saveNamedScheme() {
     if (schemeSaving) return;
     const payload = schemeForm(), message = $('#st-drawer-msg');
-    if (!payload.name) { message.textContent = '请填写方案名称'; $('#st-scheme-name').focus(); return; }
+    if (!payload.name) {
+      const nameInput = $('#st-scheme-name');
+      nameInput.classList.add('is-invalid');
+      nameInput.setAttribute('aria-invalid', 'true');
+      const nameError = $('#st-scheme-name-error');
+      if (nameError) nameError.textContent = '名称不能为空。';
+      message.textContent = '请填写方案名称';
+      nameInput.focus();
+      return;
+    }
     if (!payload.provider) { message.textContent = '请选择服务商'; $('#st-provider').focus(); return; }
     schemeSaving = true; drawerSave.disabled = true;
     try {
@@ -3148,7 +3209,6 @@ async function renderAsrModels() {
   // 编辑器工具栏也有一个设置入口(同一套面板)
   const edSettingsBtn = document.getElementById('btn-settings-ed');
   if (edSettingsBtn) edSettingsBtn.addEventListener('click', openSettings);
-  $('#st-close').addEventListener('click', returnFromSettings);
   $('#st-cancel').addEventListener('click', returnFromSettings);
 
   $('#st-provider').addEventListener('change', () => {
@@ -3303,15 +3363,11 @@ async function renderAsrModels() {
   });
   $('#st-save').addEventListener('click', async () => {
     const msgEl = $('#st-msg');
-    const visit = settingsVisit;
     try {
       const m = await postSettings();
       msgEl.textContent = m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译';
       msgEl.classList.remove('err');
-      const settingsRoute = location.hash;
-      if (settingsRoute === '#/settings' && settingsVisit === visit) setTimeout(() => {
-        if (location.hash === settingsRoute && settingsVisit === visit) returnFromSettings();
-      }, 600);
+      /* 保存后留在设置页；返回由侧边栏负责，不再重复一个“保存并返回”。 */
     } catch (e) {
       msgEl.textContent = '✗ ' + e.message;
       msgEl.classList.add('err');
@@ -4215,7 +4271,6 @@ async function renderAsrModels() {
         const label = settingsReturnRoute === '#/new' ? '返回新建项目'
           : settingsReturnRoute.startsWith('#/details/') ? '返回详细信息'
           : settingsReturnRoute.startsWith('#/project/') || settingsReturnRoute === '#/editor' ? '返回编辑器' : '返回项目';
-        $('#st-close-label').textContent = label;
         $('#st-cancel').textContent = label;
         loadSettings();
         focusPage(stView);

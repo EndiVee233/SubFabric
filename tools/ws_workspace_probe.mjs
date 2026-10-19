@@ -356,7 +356,7 @@ result.dt_cfg_readback = await evalJs(`(async () => {
 result.dt_open_settings = await evalJs(`(async () => {
   document.getElementById('dt-open-settings').click();
   await new Promise(r => setTimeout(r, 900));
-  const o = { hash: location.hash, closeLabel: document.getElementById('st-close-label').textContent };
+  const o = { hash: location.hash, closeLabel: document.getElementById('st-cancel').textContent };
   document.getElementById('st-cancel').click();
   await new Promise(r => setTimeout(r, 900));
   o.backHash = location.hash;

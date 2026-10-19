@@ -40,5 +40,22 @@ assert.match(css, /\.sf-mu \.sf-flower>span svg/, 'the flower is a single SVG si
 assert.match(css, /\.sf-mu \.sf-orbit\s*\{[\s\S]*background:var\(--tertiary-container\)/, 'the right capsule uses the tertiary container');
 assert.match(css, /@media \(max-width:900px\)/, 'homepage has a tablet layout');
 assert.match(css, /@media \(max-width:560px\)/, 'homepage has a phone layout');
+assert.match(studio, /function animateMaterialPage/, 'Material You has a shared page-card entrance');
+assert.match(studio, /a\.r\.top - b\.r\.top[\s\S]*?a\.r\.left - b\.r\.left/, 'Material cards animate top-to-bottom then left-to-right');
+assert.match(studio, /animateMaterialPage\(\$\('sf-folders'\)\)/, 'folder rows use the Material entrance');
+assert.match(studio, /animateMaterialPage\(\$\('sf-help'\)\)/, 'help cards use the Material entrance');
+assert.match(studio, /animateMaterialPage\(e\.detail\?\.panel\)/, 'settings panels use the Material entrance');
+assert.match(css, /\.sf-studio\[data-design=material\] \.is-my-page-entering \[data-my-enter\]/, 'Material page cards use data-my-enter');
+assert.match(css, /sf-home-card-in var\(--sf-card-duration,\.42s\)/, 'Material page cards reuse the homepage float-up curve');
+assert.match(studio, /function animateMaterialCueList/, 'Material editor cues have their own entrance');
+assert.match(studio, /\(i \* 55\)/, 'Material cue cards enter one by one every 55ms');
+assert.match(studio, /addEventListener\('scroll'[\s\S]*?animateMaterialCueList\(\)/, 'Material cue list animates cards revealed by scrolling');
+assert.match(studio, /function applyBackgroundWithFade/, 'Material background mode changes crossfade');
+assert.match(css, /@keyframes sf-bg-fade-in/, 'Material background crossfade uses the shared CSS fade');
+assert.match(studio, /materialCueSeen/, 'Material cue entries are not replayed for already-seen cards');
+assert.match(studio, /is-material-editor-entering/, 'Material editor shell animates in');
+assert.match(css, /@keyframes my-editor-in/, 'Material editor has the upward fade keyframes');
+assert.match(css, /@keyframes my-cue-in \{[\s\S]*?translate3d\(0,-64px,60px\) scale\(1\.07\)[\s\S]*?translate3d\(0,0,-1px\) scale\(\.994\)[\s\S]*?transform:none/, 'Material cue flies and rebounds in one continuous curve with a small overshoot');
+assert.match(css, /my-cue-in 420ms[\s\S]*?--my-cue-delay/, 'Material cue duration overlaps the next card delay');
 
 console.log('material-home: template/mirror parity, flower clock, theme gating, live counts, controls and responsive CSS passed');
