@@ -1,0 +1,266 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   SubFabric Classic · 重制方言层（2026-10-20）
+   ──────────────────────────────────────────────────────────────────────────
+   加载顺序：studio.css → classic.css。只作用于 body.sf-studio[data-design="classic"]，
+   另两套方言（uwp / material）完全不受影响。
+
+   设计目标（详见 docs/design-language/）：
+     · 暖石墨：surface 带 24° 暖色相，而不是中性灰
+     · 分层：bg→surface 1.15、surface→line 1.94（旧值 1.06 / 1.30）
+     · 橙色只做三件事：主按钮、3px 左线、等宽数字
+     · 圆角收敛：控件 8 / 卡片 12 / 大面板 16（旧版有 18 种取值）
+     · 动效：340ms / 5px / 24ms 错峰，不回弹；恢复被旧版关掉的按压反馈
+
+   ⚠ theme.js 会把颜色令牌写在 body 的内联样式上，所以令牌覆盖必须 !important；
+     强调色（--accent）不覆盖，保留用户在设置里选的颜色。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. 令牌 ─────────────────────────────────────────────────────────────── */
+body.sf-studio[data-design="classic"][data-theme="dark"] {
+  --bg: #0C0B0A !important;
+  --surface: #1E1B19 !important;
+  --surface-2: #272320 !important;
+  --surface-3: #302B27 !important;
+  --line: #514942 !important;
+  --line-soft: #3C3631 !important;
+  --text: #F0EDEA !important;
+  --muted: #B0A9A2 !important;
+  --dim: #8C857E !important;
+  --accent-soft: color-mix(in srgb, var(--accent) 20%, var(--surface)) !important;
+  --danger: #FF6B6B;
+  --ok: #4FC98A;
+
+  /* 圆角三档 + 动效四档 */
+  --r-1: 8px; --r-2: 10px; --r-3: 12px; --r-4: 16px;
+  --sf-radius: 12px;
+  --dur-1: 90ms; --dur-2: 150ms; --dur-3: 240ms; --dur-4: 340ms;
+  --ease: cubic-bezier(.2,.7,.25,1);
+  --ease-out: cubic-bezier(.16,.84,.28,1);
+  --ease-exit: cubic-bezier(.4,0,.6,1);
+  --stagger: 24ms;
+}
+body.sf-studio[data-design="classic"][data-theme="light"] {
+  --bg: #F4F1EE !important;
+  --surface: #FFFFFF !important;
+  --surface-2: #FAF7F4 !important;
+  --surface-3: #F1ECE7 !important;
+  --line: #C9C0B8 !important;
+  --line-soft: #DED6CE !important;
+  --text: #1A1714 !important;
+  --muted: #615A53 !important;
+  --dim: #6E665F !important;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--surface)) !important;
+
+  --r-1: 8px; --r-2: 10px; --r-3: 12px; --r-4: 16px;
+  --sf-radius: 12px;
+  --dur-1: 90ms; --dur-2: 150ms; --dur-3: 240ms; --dur-4: 340ms;
+  --ease: cubic-bezier(.2,.7,.25,1);
+  --ease-out: cubic-bezier(.16,.84,.28,1);
+  --ease-exit: cubic-bezier(.4,0,.6,1);
+  --stagger: 24ms;
+}
+
+/* 旧版给所有面板加的投影 —— 在近黑底上不可见，只会糊一层灰 */
+body.sf-studio[data-design="classic"] :is(.sf-nav, .sf-topbar, #toolbar, #stage-wrap,
+  #editor-panel, #timeline-panel, .page-surface, .proj-card, .sf-resume,
+  .st-card, .set-group, .st-section) { box-shadow: none; }
+
+/* ── 2. 外壳 ─────────────────────────────────────────────────────────────── */
+/* 外壳是实心的：旧版给的是 rgba(8,11,10,.8) 玻璃底，浅色下会变成脏灰 */
+body.sf-studio[data-design="classic"] :is(.sf-nav, .sf-topbar) {
+  background: var(--surface) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body.sf-studio[data-design="classic"] .sf-nav { border-right: 1px solid var(--line-soft); }
+body.sf-studio[data-design="classic"] .sf-topbar { border-bottom: 1px solid var(--line-soft); }
+
+/* 选中：中性抬升 + 3px 左线（线即边框，圆角自然跟随） */
+body.sf-studio[data-design="classic"] .sf-nav a { transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease); }
+body.sf-studio[data-design="classic"] .sf-nav a:hover { background: var(--surface-3); color: var(--text); }
+body.sf-studio[data-design="classic"] .sf-nav a.active,
+body.sf-studio[data-design="classic"] .sf-folder>button.active {
+  background: var(--surface-3); color: var(--text); font-weight: 550;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+body.sf-studio[data-design="classic"] .sf-brand>span { background: var(--accent-soft); color: var(--accent); }
+
+/* ── 3. 仪表盘 ───────────────────────────────────────────────────────────── */
+body.sf-studio[data-design="classic"] .sf-widget {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3);
+  box-shadow: none;
+  transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease),
+              transform var(--dur-2) var(--ease-out);
+}
+body.sf-studio[data-design="classic"] .sf-widget:hover {
+  background: var(--surface-2); border-color: var(--line); transform: translateY(-2px);
+}
+body.sf-studio[data-design="classic"] .sf-widget:active { transform: translateY(0) scale(.995); }
+/* 强调卡不再整块铺橙：只留左侧一条边 + 橙色 CTA */
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] {
+  background: var(--surface); color: var(--text);
+  border-color: var(--line-soft); border-left: 3px solid var(--accent);
+  padding-left: 17px;
+}
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"]:hover {
+  background: var(--surface-2); border-color: var(--line); border-left-color: var(--accent);
+}
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] :is(.sf-widget-kicker, small) { color: var(--muted); }
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] .sf-widget-title { color: var(--text); }
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] .sf-widget-cta { color: var(--accent); font-weight: 600; }
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] :is(.sf-widget-plus, .sf-widget-arrow) {
+  color: var(--accent); background: transparent;
+}
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="warn"] {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--line-soft));
+}
+body.sf-studio[data-design="classic"] .sf-widget-num { color: var(--text); font-variant-numeric: tabular-nums; }
+body.sf-studio[data-design="classic"] .sf-widget-kicker { color: var(--dim); letter-spacing: .13em; }
+body.sf-studio[data-design="classic"] .sf-widget small { color: var(--muted); }
+body.sf-studio[data-design="classic"] .sf-widget-ico { color: var(--muted); }
+
+/* 仪表盘标题：眉标别用强调色铺满 */
+body.sf-studio[data-design="classic"] .dashboard-head .sf-eyebrow { color: var(--accent); letter-spacing: .16em; }
+body.sf-studio[data-design="classic"] .dashboard-head h1 { letter-spacing: -.04em; }
+
+/* ── 4. 稿件卡 ───────────────────────────────────────────────────────────── */
+body.sf-studio[data-design="classic"] .proj-card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3);
+  box-shadow: none;
+  transition: border-color var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-out),
+              background var(--dur-2) var(--ease);
+}
+body.sf-studio[data-design="classic"] .proj-card:hover {
+  background: var(--surface-2); border-color: var(--line);
+  border-left-color: var(--accent); transform: translateY(-2px);
+}
+body.sf-studio[data-design="classic"] .sf-cover {
+  border-radius: calc(var(--r-3) - 4px);
+  background: linear-gradient(150deg, var(--surface-3), var(--surface-2));
+  color: var(--dim);
+}
+body.sf-studio[data-design="classic"] .proj-card:hover .sf-cover { color: var(--accent); }
+body.sf-studio[data-design="classic"] .pc-badge {
+  background: var(--surface); border: 1px solid var(--line); color: var(--muted);
+}
+body.sf-studio[data-design="classic"] .pc-draft-bar-in { background: var(--accent); }
+
+/* ── 5. 控件 ─────────────────────────────────────────────────────────────── */
+body.sf-studio[data-design="classic"] .btn {
+  border-radius: var(--r-1); border: 1px solid var(--line-soft);
+  background: var(--surface); color: var(--text); box-shadow: none;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease),
+              color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease-out);
+}
+/* hover 只抬 1px + 边线着色，不填强调色 —— 否则次级按钮会抢主按钮 */
+body.sf-studio[data-design="classic"] .btn:hover {
+  background: var(--surface-2); border-color: var(--accent); color: var(--text);
+  transform: translateY(-1px) !important;
+}
+body.sf-studio[data-design="classic"] .btn:active { transform: translateY(0) scale(.985) !important; }
+body.sf-studio[data-design="classic"] .btn-accent {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+body.sf-studio[data-design="classic"] .btn-accent:hover {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+  filter: brightness(1.06); transform: translateY(-1px) !important;
+}
+body.sf-studio[data-design="classic"] .btn-danger:hover { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); border-color: var(--danger); color: var(--danger); }
+
+body.sf-studio[data-design="classic"] :is(input:not([type=range]):not([type=checkbox]):not([type=file]), select, textarea) {
+  border-radius: var(--r-1); background: var(--surface); border: 1px solid var(--line-soft); color: var(--text);
+  transition: border-color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
+}
+body.sf-studio[data-design="classic"] :is(input, select, textarea):focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+body.sf-studio[data-design="classic"] :is(input, button, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+body.sf-studio[data-design="classic"] #sf-filters button { border-radius: var(--r-1); color: var(--muted); }
+body.sf-studio[data-design="classic"] #sf-filters button:hover { background: var(--surface-3); color: var(--text); }
+body.sf-studio[data-design="classic"] #sf-filters button.active { background: var(--surface-3); color: var(--text); font-weight: 550; }
+
+/* ── 6. 设置页 ───────────────────────────────────────────────────────────── */
+body.sf-studio[data-design="classic"] #st-view :is(.st-card, .set-group, .st-section, .st-entry, .st-scheme, .sm-model) {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-3);
+  box-shadow: none;
+}
+body.sf-studio[data-design="classic"] #st-view .st-tab { border-radius: var(--r-1); color: var(--muted); }
+body.sf-studio[data-design="classic"] #st-view .st-tab:hover { background: var(--surface-3); color: var(--text); }
+body.sf-studio[data-design="classic"] #st-view .st-tab.active {
+  background: var(--surface-3); color: var(--text); font-weight: 550;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+body.sf-studio[data-design="classic"] .st-drawer { background: var(--surface); border-color: var(--line-soft); }
+body.sf-studio[data-design="classic"] .st-drawer-head,
+body.sf-studio[data-design="classic"] .st-drawer-foot { background: var(--surface-2); }
+
+/* ── 7. 编辑器 ───────────────────────────────────────────────────────────── */
+body.sf-studio[data-design="classic"] :is(#toolbar, #editor-panel, #timeline-panel) {
+  background: var(--surface); border-color: var(--line-soft);
+}
+body.sf-studio[data-design="classic"] :is(.panel-head, .tl-toolbar, .tab-head) {
+  background: var(--surface); border-color: var(--line-soft);
+}
+body.sf-studio[data-design="classic"] #stage-wrap { background: var(--bg); }
+
+/* 字幕卡：角色色走 3px 左边框，选中只抬中性底 */
+body.sf-studio[data-design="classic"] #editor-panel .cue-card {
+  --cc-bg: var(--surface); --cc-bg-hover: var(--surface-2); --cc-bg-selected: var(--surface-3);
+  --cc-line: var(--line-soft); --cc-line-strong: var(--line);
+  --cc-text: var(--text); --cc-text-2: var(--muted); --cc-text-3: var(--dim);
+  border-radius: var(--r-1); border-left-width: 3px;
+  transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
+}
+body.sf-studio[data-design="classic"] #editor-panel .cue-card:hover { transform: none; }
+body.sf-studio[data-design="classic"] #editor-panel .cue-card.selected {
+  border-left-width: 3px; border-left-color: var(--role, var(--accent));
+  box-shadow: none;
+}
+body.sf-studio[data-design="classic"] #editor-panel .cue-card.playing {
+  background: color-mix(in srgb, var(--role, var(--accent)) 6%, var(--surface));
+}
+body.sf-studio[data-design="classic"] .tl-block,
+body.sf-studio[data-design="classic"] #tl-tracks .blk { border-radius: 6px; }
+
+/* ── 8. 动效：入场错峰 + 按压反馈 ─────────────────────────────────────────── */
+/* 入场不自建触发器，只接管应用已有的三个开关：
+     · .dashboard-view.is-entering       首页磁贴（refreshLibrary 不会加这个类）
+     · #home-view.is-entering            进入稿件库那一轮
+     · #home-view.is-view-switching      列表/卡片视图切换（studio.js 写 data-view-enter）
+   这样卡片被轮询重建时不会重播，也不会和 2901 行「收窄到 .anim-in」的修法冲突。 */
+@keyframes sf-classic-in {
+  0%   { opacity: 0; transform: translateY(5px); }
+  62%  { opacity: 1; }
+  100% { opacity: 1; transform: none; }
+}
+body.sf-studio[data-design="classic"] #home-view.is-entering .home-list > .proj-card,
+body.sf-studio[data-design="classic"] .dashboard-view.is-entering #sf-widgets > .sf-widget {
+  /* 保持应用给的 --sf-card-delay 错峰，只换曲线与位移 */
+  animation-name: sf-classic-in !important;
+  animation-duration: var(--dur-4) !important;
+  animation-timing-function: var(--ease-out) !important;
+}
+body.sf-studio[data-design="classic"] #home-view.is-view-switching .proj-card[data-view-enter] {
+  animation: sf-classic-in var(--dur-4) var(--ease-out) both !important;
+  animation-delay: var(--view-enter-delay, 0ms) !important;
+}
+
+/* 旧版在这里用 transform:none!important 杀掉全部按压反馈；用更高优先级 + !important 恢复 */
+body.sf-studio[data-design="classic"] .sf-nav a:active { transform: scale(.99) !important; }
+
+/* ── 9. 降级 ─────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  body.sf-studio[data-design="classic"] *,
+  body.sf-studio[data-design="classic"] *::before,
+  body.sf-studio[data-design="classic"] *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+body[data-motion="off"][data-design="classic"] :is(
+  .dashboard-view.is-entering #sf-widgets > .sf-widget,
+  #home-view.is-entering .home-list > .proj-card,
+  #home-view.is-view-switching .proj-card[data-view-enter]
+) { animation: none !important; }

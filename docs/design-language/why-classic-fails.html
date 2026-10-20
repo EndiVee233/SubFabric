@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>为什么 SubFabric Classic 看起来最丑</title>
+<style>
+/* ── 中性框架：本页刻意不用橙色，避免用被批评的颜色去讲它 ── */
+:root{
+  --bg:#15161a; --panel:#1b1d22; --panel2:#21242a; --line:#2b2e35; --line2:#3a3e47;
+  --text:#e9eaee; --muted:#9aa0ab; --dim:#6b717c;
+  --anno:#5eb0e5; --bad:#ff6b6b; --good:#59c98a;
+  --sans:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --mono:"Cascadia Mono","Consolas","SFMono-Regular",ui-monospace,monospace;
+  --nav:196px; --top:64px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased}
+::selection{background:rgba(94,176,229,.3)}
+::-webkit-scrollbar{width:10px}
+::-webkit-scrollbar-thumb{background:#333740;border-radius:99px;border:3px solid transparent;background-clip:content-box}
+
+.nav{position:fixed;inset:0 auto 0 0;width:var(--nav);padding:24px 16px;border-right:1px solid var(--line);background:#17181d;z-index:50;display:flex;flex-direction:column;gap:2px}
+.nav .b{font-size:15px;font-weight:600;letter-spacing:-.02em;padding:0 10px 4px}
+.nav .b span{display:block;font-family:var(--mono);font-size:8.5px;letter-spacing:.16em;color:var(--dim);margin-top:5px;font-weight:400}
+.nav .lab{font-family:var(--mono);font-size:9px;letter-spacing:.12em;color:var(--dim);padding:22px 10px 7px}
+.nav a{display:block;padding:8px 10px;border-radius:7px;color:var(--muted);text-decoration:none;font-size:11.5px;transition:background .15s,color .15s}
+.nav a:hover{background:var(--panel2);color:var(--text)}
+.nav a.on{background:rgba(94,176,229,.1);color:var(--anno)}
+.nav .foot{margin-top:auto;font-family:var(--mono);font-size:8.5px;color:var(--dim);line-height:1.9;padding:12px 10px 0;border-top:1px solid var(--line)}
+
+.top{position:fixed;left:var(--nav);right:0;top:0;height:var(--top);display:flex;align-items:center;justify-content:space-between;padding:0 30px;border-bottom:1px solid var(--line);background:rgba(23,24,29,.86);backdrop-filter:blur(12px);z-index:40;font-size:10.5px;color:var(--dim)}
+.top b{color:var(--text);font-weight:500}
+.top .tag{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--anno);border:1px solid rgba(94,176,229,.3);padding:3px 8px;border-radius:99px}
+
+main{margin-left:var(--nav);padding-top:var(--top)}
+.inner{max-width:1040px;margin:0 auto;padding:44px 32px 90px}
+
+.hero{padding-bottom:36px;border-bottom:1px solid var(--line);margin-bottom:40px}
+.hero .eb{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;color:var(--bad);margin-bottom:16px}
+.hero h1{font-size:36px;line-height:1.22;letter-spacing:-.04em;font-weight:600;margin-bottom:16px}
+.hero h1 em{font-style:normal;color:var(--bad)}
+.hero p{font-size:13px;line-height:2;color:var(--muted);max-width:720px}
+.hero p b{color:var(--text);font-weight:600}
+.hero p code{font-family:var(--mono);font-size:11.5px;color:var(--anno)}
+
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:26px}
+.stat{background:var(--panel);padding:16px 18px}
+.stat b{display:block;font-family:var(--mono);font-size:26px;font-weight:500;letter-spacing:-.03em;color:var(--bad)}
+.stat span{display:block;font-size:10.5px;color:var(--dim);margin-top:6px;line-height:1.7}
+
+section{margin-bottom:60px;scroll-margin-top:88px}
+.sechead{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+.sechead .n{font-family:var(--mono);font-size:10px;color:var(--anno);letter-spacing:.08em}
+.sechead h2{font-size:19px;font-weight:600;letter-spacing:-.02em}
+.sechead .en{margin-left:auto;font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--dim)}
+.lead{font-size:12.5px;line-height:2;color:var(--muted);max-width:740px;margin:10px 0 22px}
+.lead b{color:var(--text)}
+.lead code{font-family:var(--mono);font-size:11.5px;color:var(--anno)}
+
+/* ── 条形对比 ── */
+.bars{padding:22px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.bar{display:grid;grid-template-columns:118px 1fr 62px;align-items:center;gap:14px;margin-bottom:12px;font-size:11px}
+.bar:last-child{margin-bottom:0}
+.bar .nm{color:var(--muted)}
+.bar .tk{display:block;height:9px;background:#262a31;border-radius:99px;overflow:hidden}
+.bar .fl{display:block;height:100%;border-radius:99px;background:var(--line2)}
+.bar.cl .fl{background:var(--bad);width:3.2%}
+.bar.mu .fl{background:var(--anno);width:15%}
+.bar.uw .fl{background:var(--good);width:100%}
+.bar .vl{font-family:var(--mono);font-size:10px;color:var(--text);text-align:right}
+.bars .note{font-size:10.5px;color:var(--dim);margin-top:16px;padding-top:14px;border-top:1px solid var(--line);line-height:1.8}
+
+/* ── 三方言同构组件 ── */
+.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.tcol{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#101115}
+.tcol .h{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+.tcol .h b{font-size:11.5px;font-weight:600}
+.tcol .h code{font-family:var(--mono);font-size:8.5px;color:var(--dim)}
+.tcol .stage{padding:16px;min-height:330px}
+
+/* 统一组件骨架，靠 --t-* 变量方言化 */
+.sp{--t-bg:#0b0b0e;--t-surface:#131318;--t-surface2:#1f1f27;--t-text:#eceef2;--t-muted:#a8a8b4;
+    --t-line:#2a2a34;--t-accent:#ff7a45;--t-soft:rgba(255,122,69,.16);--t-on:#1a1206;
+    --t-rc:8px;--t-rb:6px;--t-sh:0 2px 10px rgba(0,0,0,.19);--t-ff:var(--sans);--t-ls:0}
+.theme-cl .sp{--t-bg:#0b0b0e;--t-surface:#131318;--t-surface2:#1f1f27;--t-text:#eceef2;--t-muted:#a8a8b4;
+  --t-line:#2a2a34;--t-accent:#ff7a45;--t-soft:rgba(255,122,69,.16);--t-on:#1a1206;
+  --t-rc:8px;--t-rb:6px;--t-sh:0 2px 10px rgba(0,0,0,.19)}
+.theme-uw .sp{--t-bg:#1f1f1f;--t-surface:#2b2b2b;--t-surface2:#333333;--t-text:#f3f3f3;--t-muted:#c5c5c5;
+  --t-line:#666666;--t-accent:#0078d7;--t-soft:rgba(0,120,215,.16);--t-on:#ffffff;
+  --t-rc:4px;--t-rb:2px;--t-sh:0 1px 3px rgba(0,0,0,.09);--t-ls:0}
+.theme-mu .sp{--t-bg:#14161a;--t-surface:#1d2025;--t-surface2:#282d33;--t-text:#e8eaed;--t-muted:#b4b9c0;
+  --t-line:#464d59;--t-accent:#abc4ed;--t-soft:#223454;--t-on:#101318;
+  --t-rc:24px;--t-rb:999px;--t-sh:none}
+
+.sp{background:var(--t-bg);border-radius:8px;padding:14px;font-family:var(--t-ff);letter-spacing:var(--t-ls);color:var(--t-text)}
+.sp .card{background:var(--t-surface);border:1px solid var(--t-line);border-radius:var(--t-rc);box-shadow:var(--t-sh);padding:14px;margin-bottom:10px}
+.theme-mu .sp .card{border-color:transparent}
+.sp .ct{font-size:11.5px;font-weight:600;margin-bottom:3px}
+.sp .cs{font-size:9.5px;color:var(--t-muted);line-height:1.7}
+.sp .row{display:flex;gap:7px;margin-top:11px}
+.sp .btn{flex:1;min-height:28px;padding:5px 9px;font-size:10.5px;font-family:inherit;letter-spacing:inherit;
+  background:var(--t-surface2);color:var(--t-text);border:1px solid var(--t-line);border-radius:var(--t-rb);
+  cursor:pointer;transition:none;display:inline-flex;align-items:center;justify-content:center;gap:4px}
+.sp .btn.pri{background:var(--t-accent);color:var(--t-on);border-color:var(--t-accent);font-weight:600}
+.theme-mu .sp .btn.pri{border-color:transparent}
+.theme-mu .sp .btn{border-color:transparent}
+.theme-cl .sp .btn.hov{background:var(--t-soft);color:var(--t-accent);border-color:var(--t-accent)}
+.theme-uw .sp .btn.hov{background:var(--t-surface2);border-color:var(--t-accent)}
+.theme-mu .sp .btn.hov{background:#282d33;border-color:#abc4ed;color:#e8eaed}
+
+.sp .cue{display:grid;grid-template-columns:52px 1fr;gap:7px;padding:8px 9px;margin-top:9px;
+  background:var(--t-surface);border:1px solid var(--t-line);border-left:3px solid var(--t-accent);border-radius:var(--t-rb)}
+.theme-mu .sp .cue{border-radius:12px;border-color:transparent;border-left:3px solid var(--t-accent)}
+.sp .cue .tt{font-family:var(--mono);font-size:8px;color:var(--t-muted);line-height:1.9}
+.sp .cue .zz{font-size:10.5px;line-height:1.6}
+.sp .cue .ee{font-size:9px;color:var(--t-muted);line-height:1.6}
+.sp .cue .hl{color:var(--t-accent)}
+.sp .sw{display:flex;align-items:center;gap:6px;margin-top:11px;font-size:9px;color:var(--t-muted);font-family:var(--mono)}
+.sp .sw i{width:16px;height:16px;border-radius:50%;display:block}
+.sp .lbl{font-family:var(--mono);font-size:8px;color:var(--t-muted);letter-spacing:.08em;margin-top:12px}
+
+.cap{font-size:10.5px;color:var(--dim);line-height:1.8;margin-top:12px;padding-left:2px}
+
+/* ── 分层实验 ── */
+.strata{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.stratum{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.stratum .sh{padding:9px 13px;font-size:10.5px;color:var(--muted);border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+.stratum .sh b{color:var(--text)}
+.stratum .sh code{font-family:var(--mono);font-size:8.5px;color:var(--dim)}
+.canvas{height:150px;padding:14px;position:relative}
+.canvas .p{position:absolute;top:16px;left:16px;right:16px;height:52px;border-radius:4px}
+.canvas .p2{position:absolute;top:80px;left:16px;right:16px;height:46px;border-radius:4px}
+.c-cl{background:#0b0b0e}
+.c-cl .p{background:#131318;border:1px solid #2a2a34;box-shadow:0 2px 10px rgba(0,0,0,.19)}
+.c-cl .p2{background:rgba(255,122,69,.16);border:1px solid #2a2a34}
+.c-uw{background:#1f1f1f}
+.c-uw .p{background:#2b2b2b;border:1px solid #666666}
+.c-uw .p2{background:#333333;border:1px solid #666666}
+.c-mu{background:#14161a}
+.c-mu .p{background:#1d2025}
+.c-mu .p2{background:#223454}
+.metric{display:flex;justify-content:space-between;padding:7px 13px;border-top:1px solid var(--line);font-size:10px;color:var(--dim)}
+.metric b{font-family:var(--mono);color:var(--text);font-weight:500}
+.metric b.bad{color:var(--bad)}
+.metric b.ok{color:var(--good)}
+
+/* ── 病灶卡 ── */
+.issue{border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden;background:var(--panel)}
+.issue .ih{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line);background:var(--panel2)}
+.issue .ih .k{font-family:var(--mono);font-size:9px;color:var(--bad);letter-spacing:.1em}
+.issue .ih b{font-size:12.5px;font-weight:600}
+.issue .ih .num{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--bad);text-align:right;line-height:1.5}
+.issue .ib{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.issue .ib>div{padding:14px 16px}
+.issue .ib>div:first-child{border-right:1px solid var(--line)}
+.issue p{font-size:11.5px;line-height:1.95;color:var(--muted)}
+.issue p+p{margin-top:8px}
+.issue p b{color:var(--text)}
+.issue p em{font-style:normal;color:var(--bad)}
+.issue .code{font-family:var(--mono);font-size:9.5px;line-height:1.9;color:#b9c0cc;background:#0f1013;border:1px solid var(--line);border-radius:6px;padding:10px 11px;overflow-x:auto;white-space:pre}
+.issue .code .c{color:#6b717c}
+.issue .code .hl{color:var(--bad)}
+.issue .fix{margin-top:10px;font-size:10.5px;color:var(--good);line-height:1.8}
+.issue .fix b{color:var(--good)}
+
+/* ── 结论 ── */
+.why{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.why>div{padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.why .t{font-size:11px;font-weight:600;margin-bottom:3px}
+.why .k{font-family:var(--mono);font-size:8.5px;letter-spacing:.1em;color:var(--dim);margin-bottom:12px}
+.why p{font-size:11px;line-height:1.95;color:var(--muted)}
+.why .last{border-color:rgba(255,107,107,.35);background:linear-gradient(180deg,rgba(255,107,107,.06),transparent)}
+.why .last .t{color:var(--bad)}
+
+/* ── 抢救清单 ── */
+.todo{counter-reset:t;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.todo .it{display:grid;grid-template-columns:30px 1.3fr 1.5fr 108px;gap:14px;padding:12px 16px;border-bottom:1px solid var(--line);font-size:11.5px;align-items:baseline}
+.todo .it:last-child{border-bottom:0}
+.todo .it::before{counter-increment:t;content:counter(t);font-family:var(--mono);font-size:10px;color:var(--anno)}
+.todo .it .a{color:var(--text);font-weight:500}
+.todo .it .b{color:var(--muted);font-size:10.5px;line-height:1.7}
+.todo .it .c{font-family:var(--mono);font-size:9.5px;color:var(--good);text-align:right}
+.todo .hd{background:var(--panel2);padding:9px 16px;font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--dim);display:grid;grid-template-columns:30px 1.3fr 1.5fr 108px;gap:14px}
+
+footer{border-top:1px solid var(--line);padding-top:18px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--dim)}
+
+@media (max-width:1000px){
+  :root{--nav:0px}
+  .nav{display:none}
+  .top{left:0}
+  .trio,.strata,.why{grid-template-columns:1fr}
+  .issue .ib{grid-template-columns:1fr}
+  .issue .ib>div:first-child{border-right:0;border-bottom:1px solid var(--line)}
+  .stats{grid-template-columns:1fr}
+  .todo .it,.todo .hd{grid-template-columns:24px 1fr}
+  .todo .it .c{text-align:left}
+}
+</style>
+</head>
+<body>
+
+<aside class="nav">
+  <div class="b">Classic 解剖<span>TEARDOWN / 2026-10-20</span></div>
+  <div class="lab">证据</div>
+  <a href="#volume" class="on">规则体量</a>
+  <a href="#trio">同一组件的三方对比</a>
+  <a href="#strata">分层策略实测</a>
+  <div class="lab">诊断</div>
+  <a href="#issues">五个病灶</a>
+  <a href="#why">为什么另两套成立</a>
+  <a href="#todo">最小抢救清单</a>
+  <div class="foot">
+    依据 studio.css 6127 行<br>
+    studio-themes.js<br>
+    对比度由 WCAG 2.x 公式实算
+  </div>
+</aside>
+
+<header class="top">
+  <span>设计语言<i style="font-style:normal;opacity:.5;padding:0 8px">/</i><b>Classic 为什么不行</b></span>
+  <span class="tag">EVIDENCE-BASED</span>
+</header>
+
+<main>
+<div class="inner">
+
+<div class="hero">
+  <div class="eb">CORRECTION · 上一份文档写的是"自我叙事"，这一份是实测</div>
+  <h1>Classic 不是一种风格，<br>它是一层<em>没做完的换色</em></h1>
+  <p>
+    把三套主题的独占规则行数放在一起就明白了：<b>Classic 22 行，Material You 104 行，Windows 10 694 行</b>。
+    Classic 用 22 条规则去改颜色、去模糊、加阴影——它<b>没有自己的形状、动效、版式母题</b>，
+    只是把为 Studio 设计的骨架染成了橙灰。
+    它不是"丑在设计选择上"，而是<b>丑在根本没被设计</b>。
+  </p>
+  <div class="stats">
+    <div class="stat"><b>22</b><span>Classic 独占规则行<br>（UWP 694 / Material 104）</span></div>
+    <div class="stat"><b>1.06:1</b><span>应用底 → 面板的对比度<br>等于看不见的分层</span></div>
+    <div class="stat"><b>438</b><span>强调色被引用次数<br>它已经不是"指针"了</span></div>
+  </div>
+</div>
+
+<!-- ═══ 1 体量 ═══ -->
+<section id="volume">
+  <div class="sechead"><span class="n">01</span><h2>先看体量：22 / 104 / 694</h2><span class="en">RULE COVERAGE</span></div>
+  <p class="lead">
+    同一份 6127 行的样式表里，<code>data-design=classic</code> 出现 27 次（22 行），
+    <code>material</code> 120 次，<code>uwp</code> 700 次。数量不代表质量，但它能说明一件事：
+    <b>另两套是"重写"，Classic 是"打补丁"</b>。
+  </p>
+  <div class="bars">
+    <div class="bar cl"><span class="nm">SubFabric Classic</span><span class="tk"><span class="fl"></span></span><span class="vl">22</span></div>
+    <div class="bar mu"><span class="nm">Material You</span><span class="tk"><span class="fl"></span></span><span class="vl">104</span></div>
+    <div class="bar uw"><span class="nm">Windows 10 (UWP)</span><span class="tk"><span class="fl"></span></span><span class="vl">694</span></div>
+    <div class="note">
+      Classic 的 22 行里有 6 行在做同一件事：把所有容器改成 <code>background:var(--surface)</code>、
+      去掉 <code>backdrop-filter</code>、加一层 <code>0 2px 10px #00000030</code>。
+      也就是说它的"设计动作"集中在<b>取消</b>上——取消模糊、取消位移、取消渐变。
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 2 同构对比 ═══ -->
+<section id="trio">
+  <div class="sechead"><span class="n">02</span><h2>同一组组件，三种方言</h2><span class="en">SAME DOM, 3 DIALECTS</span></div>
+  <p class="lead">
+    下面是完全相同的结构（标题 + 说明 + 主次按钮 + 一张字幕卡），只用各主题的<b>真实令牌</b>渲染。
+    注意看三件事：<b>面板和底能不能分开</b>、<b>主次按钮是否还分得清</b>、<b>悬停时谁抢了谁的语义</b>。
+  </p>
+
+  <div class="trio">
+    <div class="tcol theme-cl">
+      <div class="h"><b>SubFabric Classic</b><code>classic</code></div>
+      <div class="stage">
+        <div class="sp">
+          <div class="card">
+            <div class="ct">字幕样式</div>
+            <div class="cs">中文整句与英文逐词按时间配对</div>
+            <div class="row">
+              <button class="btn hov">取消</button>
+              <button class="btn pri">应用</button>
+            </div>
+          </div>
+          <div class="cue">
+            <div class="tt">00:01:29.334<br>00:01:30.990</div>
+            <div><div class="zz">每位选手将拥有三个不死图腾</div><div class="ee">Each fighter will have three <span class="hl">Totem</span> of Undying</div></div>
+          </div>
+          <div class="lbl">CARD 8px · BTN 6px · SHADOW 0 2px 10px</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tcol theme-uw">
+      <div class="h"><b>Windows 10</b><code>uwp</code></div>
+      <div class="stage">
+        <div class="sp">
+          <div class="card">
+            <div class="ct">字幕样式</div>
+            <div class="cs">中文整句与英文逐词按时间配对</div>
+            <div class="row">
+              <button class="btn hov">取消</button>
+              <button class="btn pri">应用</button>
+            </div>
+          </div>
+          <div class="cue">
+            <div class="tt">00:01:29.334<br>00:01:30.990</div>
+            <div><div class="zz">每位选手将拥有三个不死图腾</div><div class="ee">Each fighter will have three <span class="hl">Totem</span> of Undying</div></div>
+          </div>
+          <div class="lbl">CARD 4px · BTN 2px · 1px #666 描边</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tcol theme-mu">
+      <div class="h"><b>Material You</b><code>material</code></div>
+      <div class="stage">
+        <div class="sp">
+          <div class="card">
+            <div class="ct">字幕样式</div>
+            <div class="cs">中文整句与英文逐词按时间配对</div>
+            <div class="row">
+              <button class="btn hov">取消</button>
+              <button class="btn pri">应用</button>
+            </div>
+          </div>
+          <div class="cue">
+            <div class="tt">00:01:29.334<br>00:01:30.990</div>
+            <div><div class="zz">每位选手将拥有三个不死图腾</div><div class="ee">Each fighter will have three <span class="hl">Totem</span> of Undying</div></div>
+          </div>
+          <div class="lbl">CARD 24px · BTN 999px · 无描边</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="cap">
+    左中右三列在同一亮度环境下并排。Classic 那一列的面板、字幕卡、背景几乎融成一整块；
+    它的"取消"按钮已经是<b>悬停态</b>（填了 accent-soft + 橙字），和右边的"应用"主按钮在争夺注意力。
+    UWP 的悬停只换边框；Material 的悬停只在浅色容器上抬一档明度。
+  </div>
+</section>
+
+<!-- ═══ 3 分层 ═══ -->
+<section id="strata">
+  <div class="sechead"><span class="n">03</span><h2>分层策略实测：三套方案，Classic 三样都没有</h2><span class="en">ELEVATION</span></div>
+  <p class="lead">
+    深色界面要靠三样东西分层：<b>明度差</b>、<b>描边</b>、<b>色相差</b>（或阴影/光）。
+    把三个主题的真实值代进去，结论很难看：
+  </p>
+
+  <div class="strata">
+    <div class="stratum">
+      <div class="sh"><span><b>Classic</b> · 靠明度</span><code>fill-based</code></div>
+      <div class="canvas c-cl"><div class="p"></div><div class="p2"></div></div>
+      <div class="metric"><span>底 → 面板</span><b class="bad">1.06 : 1</b></div>
+      <div class="metric"><span>面板 → 描边</span><b class="bad">1.30 : 1</b></div>
+      <div class="metric"><span>面板 → 容器</span><b class="bad">1.11 : 1</b></div>
+      <div class="metric"><span>色相偏移</span><b class="bad">0°</b></div>
+    </div>
+
+    <div class="stratum">
+      <div class="sh"><span><b>Windows 10</b> · 靠线</span><code>line-based</code></div>
+      <div class="canvas c-uw"><div class="p"></div><div class="p2"></div></div>
+      <div class="metric"><span>底 → 面板</span><b>1.16 : 1</b></div>
+      <div class="metric"><span>面板 → 描边</span><b class="ok">2.47 : 1</b></div>
+      <div class="metric"><span>面板 → 容器</span><b>1.12 : 1</b></div>
+      <div class="metric"><span>色相偏移</span><b>0°（但线足够）</b></div>
+    </div>
+
+    <div class="stratum">
+      <div class="sh"><span><b>Material You</b> · 靠色</span><code>tone-based</code></div>
+      <div class="canvas c-mu"><div class="p"></div><div class="p2"></div></div>
+      <div class="metric"><span>底 → 面板</span><b>1.11 : 1</b></div>
+      <div class="metric"><span>面板 → 描边</span><b class="ok">1.92 : 1</b></div>
+      <div class="metric"><span>面板 → 容器</span><b>1.31 : 1（带色相）</b></div>
+      <div class="metric"><span>色相偏移</span><b class="ok">surface 带 seed 色相</b></div>
+    </div>
+  </div>
+
+  <div class="cap">
+    左边那组数字连起来读就是问题：<b>1.06 + 1.30 + 0°</b>。
+    明度差不到 2%（人眼在低亮度下的可辨阈值大约 2–3%），描边只有 1.3:1（几乎和底色同灰），
+    色相零偏移。于是面板不是"浮在底上"，而是"底上有一块更黑的洞"。
+    它唯一的补充手段是阴影——但 <code>#00000030</code> 打在 <code>#0b0b0e</code> 上，等于没有。
+  </div>
+</section>
+
+<!-- ═══ 4 病灶 ═══ -->
+<section id="issues">
+  <div class="sechead"><span class="n">04</span><h2>五个病灶</h2><span class="en">FIVE DEFECTS</span></div>
+  <p class="lead">每一条都能指到具体行号，不是感觉。</p>
+
+  <div class="issue">
+    <div class="ih"><span class="k">01</span><b>明度分层失效，又没有替代方案</b><span class="num">1.06:1<br>1.30:1</span></div>
+    <div class="ib">
+      <div>
+        <p>深色下用"填充明度"分层，前提是每一级至少差 <b>3%</b>。Classic 的 <code>bg-0 #0b0b0e</code> 到 <code>surface #131318</code> 只差 <b>1.06:1</b>，<code>#2a2a34</code> 描边只有 1.30:1。</p>
+        <p>如果它像 UWP 那样有 <b>2.47:1 的线</b>，或者像 Material 那样让 surface 带一点 seed 色相，都能救。它两样都没有。</p>
+      </div>
+      <div>
+        <div class="code"><span class="c">/* studio.css:3152 + JS classic 令牌 */</span>
+--bg:      #0b0b0e
+--surface: #131318   <span class="hl">→ 1.06:1</span>
+--line:    #2a2a34   <span class="hl">→ 1.30:1</span>
+
+<span class="c">/* 唯一的补充：打在近黑上的阴影 */</span>
+box-shadow: 0 2px 10px #00000030   <span class="hl">≈ 不可见</span></div>
+        <div class="fix"><b>改法：</b>surface 抬到 <code>#181a20</code>（≈1.2:1），描边抬到 <code>#3a3a46</code>（≈2.0:1）。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="issue">
+    <div class="ih"><span class="k">02</span><b>强调色通胀：438 次引用，橙色从"指针"变成"墙纸"</b><span class="num">438<br>of 611</span></div>
+    <div class="ib">
+      <div>
+        <p>全表 <code>var(--accent*)</code> 共 <b>611</b> 次，其中纯 <code>var(--accent)</code> <b>438</b> 次。它同时是：主按钮填充、悬停文字、边框、播放头、进度条、徽标、版本号、字标渐变、光晕。</p>
+        <p>同一个颜色承担 9 种语义，结果就是<b>没有一种语义成立</b>——用户看到橙色时无法判断"这是当前状态、可点、还是品牌装饰"。</p>
+      </div>
+      <div>
+        <div class="code"><span class="c">/* 橙色同时出现在： */</span>
+.btn-accent      background: var(--accent)
+.btn:hover       color: var(--accent)
+.sf-nav a.active background: var(--accent-soft)
+.cue-card        border-left: 3px var(--accent)
+#tl-cursor       background: var(--accent)
+.pc-badge        color: var(--accent)
+.app-logo        gradient(accent → accent-2)
+<span class="hl">... 共 438 处</span></div>
+        <div class="fix"><b>改法：</b>把橙色限定到 3 类（主操作 / 当前态 / 数据高亮），目标 ≤120 处。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="issue">
+    <div class="ih"><span class="k">03</span><b>淡橙叠加在近黑上会变"棕"</b><span class="num">#39241F<br>H20 S29 L17</span></div>
+    <div class="ib">
+      <div>
+        <p>Classic 的容器色是 <code>rgba(255,122,69,.16)</code> 直接叠在 <code>#131318</code> 上，实际得到 <b>#39241F</b>——一个饱和度和明度都很低的<b>棕色</b>。</p>
+        <p>棕在灰黑底上天然读作"脏/锈/旧皮革"。Material 做同一件事用的是 <b>#223454</b>（navy）——蓝降明度仍然是蓝，不进入"脏"的联想区。这就是为什么两块淡色容器，一块看着高级、一块看着土。</p>
+      </div>
+      <div>
+        <div class="code"><span class="c">/* 同一个"低透明强调色容器"，两种结果 */</span>
+Classic   rgba(255,122,69,.16) on #131318
+          <span class="hl">→ #39241F  棕 · 脏</span>
+
+Material  #223454  (seed #5789dc 推导)
+          <span class="hl">→ navy · 干净</span>
+
+<span class="c">/* 橙色在深底上还会"膨胀"：高彩度暖色 */</span>
+<span class="c">/* 在低亮度场里显得更亮更大，视觉上外扩 */</span></div>
+        <div class="fix"><b>改法：</b>容器色改用"降亮保彩"的实色（如 <code>#2E1B12</code> 再压饱和），不要用透明橙叠加。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="issue">
+    <div class="ih"><span class="k">04</span><b>18 种圆角，没有级差</b><span class="num">18 values<br>111 decls</span></div>
+    <div class="ib">
+      <div>
+        <p>只统计"生产 Studio 外壳"这一段（3150–3650 行），就出现 <b>18 种</b> <code>border-radius</code>：4 / 6 / 7 / 8 / 10 / 12 / 13 / 14 / 16 / 18 / 19 / 20 / 22 / 24 / 26 / 28 / 50% / 999px。</p>
+        <p>而 <code>--sf-radius</code> 这个"统一圆角令牌"在全表只被引用 <b>1 次</b>。所以"圆角跟语义走"是文档里的说法，代码里是<b>逐组件手写</b>。同屏出现 8px 卡片 + 24px 续作卡 + 28px 花朵 + 999px 胶囊 + 直角输入框，读起来就是"随机圆角"。</p>
+      </div>
+      <div>
+        <div class="code"><span class="c">/* 同一屏（首页）实际生效 */</span>
+.sf-flower>span  28px
+.sf-resume       24px
+.sf-orbit        999px
+.sf-widget       18px  <span class="hl">→ classic 覆盖 8px</span>
+.proj-card       20px  <span class="hl">→ classic 覆盖 8px</span>
+.sf-cover        13px  <span class="hl">→ classic 覆盖 6px</span>
+.btn             10px  <span class="hl">→ classic 覆盖 6px</span>
+
+<span class="c">/* --sf-radius 全表引用次数 */</span>
+var(--sf-radius)  <span class="hl">× 1</span></div>
+        <div class="fix"><b>改法：</b>收敛到 3 档（卡片 12 / 控件 8 / 胶囊 999），删掉 7/13/14/19/22/26 这些"顺手值"。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="issue">
+    <div class="ih"><span class="k">05</span><b>它把位移动效显式关掉了，按下去没有回执</b><span class="num">transform:<br>none !important</span></div>
+    <div class="ib">
+      <div>
+        <p>Classic 不是"没做动效"，是<b>主动删掉</b>：一条规则给按钮、导航、页签统统压上 <code>transform:none!important</code>，并把过渡锁成 120ms。</p>
+        <p>UWP 也关位移，但它补了 Fluent 的按压内阴影（<code>inset 0 1px 2px</code>）；Material 用 spring 驱动的 scale（播放键低到 <code>.92</code>）。Classic 两者都没有——<b>它是三套里唯一"按下什么都不发生"的方言</b>。而且它把 <code>transform</code> 从 <code>transition</code> 列表里也删了，即便不加 <code>!important</code> 也不会动。</p>
+      </div>
+      <div>
+        <div class="code"><span class="c">/* studio.css:4067 —— 一行杀掉全部按压反馈 */</span>
+.sf-studio[data-design=classic] :is(
+  .btn, .sf-nav a, .st-tab, .ptab, ...
+) {
+  border-radius: 6px;
+  <span class="hl">transform: none !important;</span>
+  transition: background .12s, color .12s ...;
+}
+
+<span class="c">/* 且 Classic 没有任何 :active 规则 */</span></div>
+        <div class="fix"><b>改法：</b>删掉 <code>transform:none</code>，或用 <code>box-shadow: inset 0 1px 2px</code> 换一种按压表达。</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 5 为什么 ═══ -->
+<section id="why">
+  <div class="sechead"><span class="n">05</span><h2>为什么另两套能成立</h2><span class="en">WHY THE OTHERS WORK</span></div>
+  <p class="lead">
+    不是"UWP 和 Material 更好看"，而是它们各自有一套<b>可执行的一致性机制</b>；Classic 没有机制，只有一张色卡。
+  </p>
+  <div class="why">
+    <div>
+      <div class="t">Windows 10</div>
+      <div class="k">一致性 = 强制归一</div>
+      <p>用 694 条规则把所有表面压到 2–4px 直角、统一 1px <code>#666</code> 描边（2.47:1）、关掉毛玻璃、关掉位移动效、悬停只用中性色。<br><br>系统蓝被<b>锁死</b>，用户改不了——所以它永远不会被用户搞坏。首页磁贴给了它一个可识别的版式母题。</p>
+    </div>
+    <div>
+      <div class="t">Material You</div>
+      <div class="k">一致性 = 算法生成</div>
+      <p>一个 seed 推出 13 个令牌 + 5 个角色容器，surface 带 seed 色相，<code>readable()</code> 把对比度顶到 4.6。<br><br>形状也只有两档：24px 卡片 / 999px 胶囊，加上一个会 morph 的播放键。所以它<b>不可能出现"随机圆角"</b>——值不是人挑的。</p>
+    </div>
+    <div class="last">
+      <div class="t">SubFabric Classic</div>
+      <div class="k">一致性 = 没有实现</div>
+      <p>22 条规则，全部在改颜色和取消材质。它继承了为 Studio 设计的骨架（218px 侧栏、18px 圆角、28px 花朵、999px 胶囊），只把颜色换成橙灰、圆角改成 6/8。<br><br><b>结果：骨架是别人的，皮是旧的，中间没有"设计"这一层。</b></p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 6 抢救 ═══ -->
+<section id="todo">
+  <div class="sechead"><span class="n">06</span><h2>最小抢救清单</h2><span class="en">MINIMAL FIX</span></div>
+  <p class="lead">
+    不需要重做，七条改动就能让它从"没做完的换色"变成一套能站住的深色方言。每条都给了目标值。
+  </p>
+  <div class="todo">
+    <div class="hd"><span></span><span>动作</span><span>为什么 / 具体做法</span><span>目标</span></div>
+    <div class="it"><span class="a">拉开明度或补描边</span><span class="b">surface 抬到 #181a20，line 抬到 #3a3a46；二选一必须做，不能都不做</span><span class="c">≥1.2 / ≥2.0</span></div>
+    <div class="it"><span class="a">容器色改成实色降彩</span><span class="b">不要 rgba(橙,.16) 叠黑（会变棕），用 #2E1B12 这类"压过饱和度的深棕"</span><span class="c">去脏</span></div>
+    <div class="it"><span class="a">收回强调色</span><span class="b">只留给主操作、当前选中、数据高亮；hover / 边框 / 图标一律中性</span><span class="c">438 → ≤120</span></div>
+    <div class="it"><span class="a">hover 不许动主色</span><span class="b">次级按钮 hover = surface-2 + 1px accent 边框，不填 accent-soft、不变橙字</span><span class="c">主次不塌</span></div>
+    <div class="it"><span class="a">恢复按压反馈</span><span class="b">删掉 transform:none!important；用 scale(.97) 或 inset 内阴影</span><span class="c">有回执</span></div>
+    <div class="it"><span class="a">圆角收敛到 3 档</span><span class="b">卡片 12 / 控件 8 / 胶囊 999；花朵、续作卡、封面全部归到 12</span><span class="c">18 → 3</span></div>
+    <div class="it"><span class="a">给它一个母题</span><span class="b">现在唯一可识别的橙色被稀释了。把"3px 左线 + 等宽时间列"做成贯穿所有容器的规则（并且别再在 .proj-card 上关掉它）</span><span class="c">可被认出</span></div>
+  </div>
+  <div class="cap">
+    第七条是根因：<code>.sf-studio .proj-card::before{display:none}</code>（3327 行）把 Classic 唯一的结构签名在首页关掉了。
+    一个主题如果只剩颜色，那它被评价为"只有颜色"就是必然的。
+  </div>
+</section>
+
+<footer>
+  <span>SUBFABRIC · CLASSIC TEARDOWN · 2026-10-20</span>
+  <span>22 规则 / 1.06:1 / 18 种圆角 / transform:none</span>
+</footer>
+
+</div>
+</main>
+
+<script>
+(function(){
+  var links=[].slice.call(document.querySelectorAll('.nav a[href^="#"]'));
+  var secs=links.map(function(a){return document.getElementById(a.getAttribute('href').slice(1));}).filter(Boolean);
+  function on(id){links.forEach(function(a){a.classList.toggle('on',a.getAttribute('href')==='#'+id);});}
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){
+      var v=es.filter(function(e){return e.isIntersecting;}).sort(function(a,b){return b.intersectionRatio-a.intersectionRatio;});
+      if(v.length) on(v[0].target.id);
+    },{rootMargin:'-15% 0px -65% 0px',threshold:[0,.2,.6]});
+    secs.forEach(function(s){io.observe(s);});
+  }
+})();
+</script>
+</body>
+</html>

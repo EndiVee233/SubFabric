@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SubFabric Classic · 动效语言</title>
+<!--
+  动效语言：排版落定（Typesetting settle）
+  ────────────────────────────────────────────
+  与另两套方言的分工：
+    Windows 10  180ms · 0px 位移 · 24ms 从下往上 · 按压内阴影（Fluent：状态瞬变，质感在光）
+    Material    420ms · 10px 上浮 · 45ms 从上往下 · 带回弹（Expressive：空间与形变）
+    Classic     340ms ·  5px 落定 · 24ms 阅读序 · 零回弹（排版：像活字落到版面上）
+
+  原则：
+    1. 只动 transform / opacity / color / box-shadow
+    2. 位移一律 ≤6px，不缩放容器（只有可点元素按压才缩 1.5%）
+    3. 入场淡出比位移先结束：opacity 在前 60% 完成，位移走完整条尾
+    4. 不回弹。唯一"弹性"是数字落定的 1px 过冲，肉眼几乎不可见
+    5. 线从上方/左方生长（阅读方向），永不从中间展开
+    6. prefers-reduced-motion 全部关闭，改为一帧到位
+-->
+<style>
+:root{
+  --bg:#0C0B0A; --surface:#1E1B19; --surface-2:#272320; --surface-3:#302B27;
+  --line:#514942; --line-soft:#3C3631;
+  --text:#F0EDEA; --muted:#B0A9A2; --dim:#8C857E;
+  --accent:#FF7A45; --accent-2:#FF9866; --accent-ink:#1A1206;
+  --container:#402B21;
+  --sans:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei","PingFang SC",sans-serif;
+  --mono:"Cascadia Mono","Consolas","SFMono-Regular",ui-monospace,monospace;
+
+  /* 动效令牌 */
+  --m-1:90ms; --m-2:150ms; --m-3:240ms; --m-4:340ms;
+  --m-ease:cubic-bezier(.2,.7,.25,1);
+  --m-settle:cubic-bezier(.16,.84,.28,1);
+  --m-exit:cubic-bezier(.4,0,.6,1);
+  --m-stagger:24ms;
+  --m-rise:5px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+html{color-scheme:dark;scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased}
+::selection{background:rgba(255,122,69,.3)}
+::-webkit-scrollbar{width:10px}
+::-webkit-scrollbar-thumb{background:var(--line-soft);border-radius:99px;border:3px solid transparent;background-clip:content-box}
+
+.wrap{max-width:1080px;margin:0 auto;padding:52px 32px 90px}
+.hero{border-bottom:1px solid var(--line-soft);padding-bottom:34px;margin-bottom:44px}
+.eb{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;color:var(--accent);margin-bottom:16px}
+h1{font-size:34px;font-weight:600;letter-spacing:-.04em;line-height:1.24;margin-bottom:14px}
+h1 em{font-style:normal;color:var(--accent-2)}
+.hero p{font-size:13px;line-height:2;color:var(--muted);max-width:740px}
+.hero p b{color:var(--text)}
+.tokens{display:flex;gap:8px;flex-wrap:wrap;margin-top:22px}
+.tok{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border:1px solid var(--line-soft);border-radius:99px;background:var(--surface);font-size:10.5px;color:var(--muted)}
+.tok b{font-family:var(--mono);font-size:10px;color:var(--accent)}
+
+section{margin-bottom:62px}
+.sechead{display:flex;align-items:baseline;gap:12px;margin-bottom:8px}
+.sechead .n{font-family:var(--mono);font-size:10px;color:var(--accent);letter-spacing:.08em}
+.sechead h2{font-size:19px;font-weight:600;letter-spacing:-.02em}
+.sechead .en{margin-left:auto;font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--dim)}
+.lead{font-size:12.5px;line-height:2;color:var(--muted);max-width:760px;margin:8px 0 22px}
+.lead b{color:var(--text)}
+.lead code{font-family:var(--mono);font-size:11.5px;color:var(--accent-2)}
+
+/* ── 参数表 ── */
+.table{border:1px solid var(--line-soft);border-radius:12px;overflow:hidden}
+.tr{display:grid;grid-template-columns:132px 1fr 1fr 1fr;gap:0;border-bottom:1px solid var(--line-soft)}
+.tr:last-child{border-bottom:0}
+.tr>div{padding:11px 14px;font-size:11.5px;border-right:1px solid var(--line-soft)}
+.tr>div:last-child{border-right:0}
+.tr.hd{background:var(--surface-2)}
+.tr.hd>div{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase}
+.tr .k{color:var(--muted);font-size:10.5px}
+.tr .cl{color:var(--text);font-weight:550}
+.tr .uw,.tr .mu{color:var(--muted);font-family:var(--mono);font-size:10.5px}
+.tr .cl b{color:var(--accent);font-weight:600}
+
+/* ── 三方言并排 ── */
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.col{border:1px solid var(--line-soft);border-radius:12px;overflow:hidden;background:var(--surface)}
+.colhead{display:flex;align-items:baseline;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line-soft);background:var(--surface-2)}
+.colhead b{font-size:11.5px;font-weight:600}
+.colhead span{font-family:var(--mono);font-size:8.5px;color:var(--dim)}
+.stage{padding:16px;min-height:176px}
+.demo-list{display:flex;flex-direction:column;gap:7px}
+.ditem{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:8px;border:1px solid var(--line-soft);background:var(--surface-2);font-size:10.5px;color:var(--muted)}
+.ditem b{width:18px;height:18px;flex:none;border-radius:4px;background:var(--container);color:var(--accent);display:grid;place-items:center;font-family:var(--mono);font-size:8px}
+.ditem.lead-row{border-left:3px solid var(--accent)}
+.foot{padding:10px 14px;border-top:1px solid var(--line-soft);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.note{font-size:9.5px;color:var(--dim);line-height:1.6}
+.replay{height:26px;padding:0 11px;border-radius:7px;border:1px solid var(--line-soft);background:var(--surface-2);color:var(--text);font-size:10px;cursor:pointer;transition:background var(--m-2) var(--m-ease),border-color var(--m-2) var(--m-ease),transform var(--m-1)}
+.replay:hover{background:var(--surface-3);border-color:var(--accent)}
+.replay:active{transform:scale(.96)}
+
+/* 入场：三套曲线 */
+.d-cl .ditem{opacity:1}
+.d-cl.run .ditem{animation:cl-in var(--m-4) var(--m-settle) both;animation-delay:calc(var(--i) * var(--m-stagger))}
+@keyframes cl-in{
+  0%{opacity:0;transform:translateY(var(--m-rise))}
+  62%{opacity:1}
+  100%{opacity:1;transform:none}
+}
+.d-uw .ditem{opacity:1}
+.d-uw.run .ditem{animation:uw-in 180ms linear both;animation-delay:calc(var(--i) * 24ms)}
+@keyframes uw-in{from{opacity:0}to{opacity:1}}
+.d-mu .ditem{opacity:1}
+.d-mu.run .ditem{animation:mu-in 420ms cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i) * 45ms)}
+@keyframes mu-in{
+  0%{opacity:0;transform:translateY(12px) scale(.985)}
+  100%{opacity:1;transform:none}
+}
+
+/* ── 缓动样本 ── */
+.easings{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+.ease-card{padding:16px;border:1px solid var(--line-soft);border-radius:12px;background:var(--surface)}
+.ease-card b{display:block;font-size:11.5px;margin-bottom:2px}
+.ease-card code{font-family:var(--mono);font-size:9px;color:var(--dim)}
+.ease-card svg{width:100%;height:72px;margin:10px 0 4px;overflow:visible}
+.ease-track{position:relative;height:18px;margin-top:10px;border-radius:99px;background:var(--surface-3)}
+.ease-dot{position:absolute;top:5px;left:2px;width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.ease-card.run .ease-dot{animation:ease-run 900ms var(--e) both}
+@keyframes ease-run{from{left:2px}to{left:calc(100% - 10px)}}
+.ease-card .tip{font-size:9.5px;color:var(--dim);margin-top:8px;line-height:1.6}
+
+/* ── 签名动作 ── */
+.sigs{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.sig{border:1px solid var(--line-soft);border-radius:12px;background:var(--surface);overflow:hidden;display:flex;flex-direction:column}
+.sighead{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line-soft)}
+.sighead b{font-size:11.5px;font-weight:600}
+.sighead .num{font-family:var(--mono);font-size:8.5px;color:var(--accent)}
+.sigstage{padding:20px 16px;flex:1;display:flex;align-items:center;justify-content:center;min-height:132px}
+.sig .foot{padding:9px 14px}
+.sigcode{font-family:var(--mono);font-size:8.5px;color:var(--dim);line-height:1.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 1 左线点亮 */
+.rulecard{position:relative;width:100%;max-width:230px;padding:13px 14px 13px 15px;border-radius:12px;border:1px solid var(--line-soft);border-left:3px solid var(--line);background:var(--surface-2);transition:border-left-color var(--m-3) var(--m-settle),background var(--m-3) var(--m-settle)}
+.rulecard .t{font-size:11.5px;font-weight:550;margin-bottom:5px}
+.rulecard .s{font-size:9.5px;color:var(--dim);font-family:var(--mono)}
+.rulecard .u{position:relative;height:2px;margin-top:9px;background:var(--line-soft);border-radius:2px;overflow:hidden}
+.rulecard .u i{position:absolute;inset:0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--m-4) var(--m-settle)}
+.rulecard.on{border-left-color:var(--accent);background:var(--surface-3)}
+.rulecard.on .u i{transform:scaleX(1)}
+
+/* 2 数字落定 */
+.numstage{text-align:center}
+.numstage .n{font-family:var(--mono);font-size:38px;font-weight:500;letter-spacing:-.04em;font-variant-numeric:tabular-nums;line-height:1}
+.numstage .n span{display:inline-block}
+.numstage .n span.tick{animation:tick var(--m-3) var(--m-settle) both}
+@keyframes tick{
+  0%{opacity:0;transform:translateY(4px)}
+  55%{opacity:1}
+  100%{opacity:1;transform:none}
+}
+.numstage .lbl{font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;color:var(--dim);margin-top:8px}
+
+/* 3 导航滑动 */
+.mininav{position:relative;width:100%;max-width:220px;padding:5px;border-radius:10px;border:1px solid var(--line-soft);background:var(--surface-2)}
+.mininav .items{position:relative;display:flex;flex-direction:column;gap:1px}
+.mininav button{position:relative;z-index:1;text-align:left;padding:8px 11px;border-radius:7px;font-size:10.5px;color:var(--muted);transition:color var(--m-2) var(--m-ease)}
+.mininav button.on{color:var(--text)}
+.mininav .bullet{position:absolute;left:0;width:3px;height:20px;border-radius:0 2px 2px 0;background:var(--accent);top:5px;transition:transform var(--m-3) var(--m-settle),height var(--m-3) var(--m-settle)}
+.mininav .pill{position:absolute;left:3px;right:3px;top:5px;height:30px;border-radius:7px;background:var(--surface-3);transition:transform var(--m-3) var(--m-settle)}
+.mininav .items{position:relative}
+.mininav .items>.pill,.mininav .items>.bullet{pointer-events:none}
+
+/* 4 页签下划线 */
+.minitabs{width:100%;max-width:260px}
+.minitabs .row{position:relative;display:flex;border-bottom:1px solid var(--line-soft)}
+.minitabs button{flex:1;padding:9px 4px;font-size:10.5px;color:var(--muted);transition:color var(--m-2) var(--m-ease)}
+.minitabs button.on{color:var(--text);font-weight:550}
+.minitabs .bar{position:absolute;bottom:-1px;left:0;height:2px;width:calc(100% / 3);background:var(--accent);border-radius:2px 2px 0 0;transition:transform var(--m-3) var(--m-settle)}
+.minitabs .body{margin-top:12px;font-size:9.5px;color:var(--dim);font-family:var(--mono);height:16px}
+
+/* 5 字幕落定 */
+.cuelist{width:100%;max-width:330px;display:flex;flex-direction:column;gap:5px}
+.minicue{display:grid;grid-template-columns:62px minmax(0,1fr);gap:8px;padding:7px 9px;border-radius:8px;border:1px solid var(--line-soft);border-left:3px solid var(--line);background:var(--surface-2)}
+.minicue .tt{font-family:var(--mono);font-size:7px;color:var(--dim);line-height:1.9;letter-spacing:-.1px;white-space:nowrap}
+.minicue .zz{font-size:9.5px;line-height:1.5}
+.minicue .ee{font-size:8px;color:var(--dim);line-height:1.5}
+.cuelist.run .minicue{animation:cl-in var(--m-4) var(--m-settle) both;animation-delay:calc(var(--i) * var(--m-stagger))}
+
+/* ── 时序阶梯 ── */
+.ladder{padding:20px;border:1px solid var(--line-soft);border-radius:12px;background:var(--surface)}
+.lrow{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:14px;margin-bottom:8px;font-family:var(--mono);font-size:9px;color:var(--dim)}
+.lrow:last-child{margin-bottom:0}
+.ltrack{position:relative;height:10px;border-radius:99px;background:var(--surface-3);overflow:hidden}
+.lbar{position:absolute;top:0;bottom:0;left:var(--d);right:0;border-radius:99px;background:linear-gradient(90deg,rgba(255,122,69,.18),var(--accent));opacity:.9}
+.ladder .cap{font-size:10px;color:var(--dim);margin-top:14px;line-height:1.8}
+
+/* ── 减少动效 ── */
+.rm{display:flex;align-items:center;gap:12px;padding:16px 18px;border:1px solid var(--line-soft);border-radius:12px;background:var(--surface)}
+.rm .sw{position:relative;width:38px;height:21px;flex:none;cursor:pointer}
+.rm .sw input{position:absolute;opacity:0;width:0;height:0}
+.rm .sw i{position:absolute;inset:0;border-radius:99px;background:var(--surface-3);border:1px solid var(--line-soft);transition:background var(--m-2),border-color var(--m-2)}
+.rm .sw i::after{content:"";position:absolute;left:2px;top:2px;width:15px;height:15px;border-radius:50%;background:var(--muted);transition:transform var(--m-2) var(--m-settle),background var(--m-2)}
+.rm .sw input:checked+i{background:var(--container);border-color:var(--accent)}
+.rm .sw input:checked+i::after{transform:translateX(17px);background:var(--accent)}
+.rm p{font-size:10.5px;color:var(--muted);line-height:1.7}
+.rm p b{color:var(--text)}
+body.rm-on *{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
+
+.foot2{border-top:1px solid var(--line-soft);padding-top:20px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--dim)}
+@media (max-width:860px){
+  .cols,.easings,.sigs{grid-template-columns:1fr}
+  .tr{grid-template-columns:90px 1fr}
+  .tr>div:nth-child(4){display:none}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hero">
+  <div class="eb">MOTION LANGUAGE · 2026-10-20</div>
+  <h1>排版落定：<em>让界面像活字落到版面上</em></h1>
+  <p>
+    Windows 10 的动效是<b>状态瞬变</b>——180ms 只改透明度，质感交给指针跟随的光；
+    Material You 的动效是<b>空间与形变</b>——420ms 上浮 12px，带回弹和形状 morph。
+    Classic 两者都不是：它是<b>排字</b>。位移只有 5px，340ms 走完，<b>不回弹</b>，
+    入场按阅读顺序一行行落定，左边那条 3px 线在状态变化时"点亮"并生长。
+  </p>
+  <div class="tokens">
+    <span class="tok"><b>340ms</b> 入场</span>
+    <span class="tok"><b>5px</b> 位移</span>
+    <span class="tok"><b>24ms</b> 错峰</span>
+    <span class="tok"><b>0</b> 回弹</span>
+    <span class="tok"><b>90ms</b> 按压</span>
+  </div>
+</div>
+
+<!-- ═══ 01 参数对照 ═══ -->
+<section id="matrix">
+  <div class="sechead"><span class="n">01</span><h2>三套方言的参数对照</h2><span class="en">SIDE BY SIDE</span></div>
+  <p class="lead">
+    同一件事——"内容出现"——三家给出了完全不同的答案。看懂这张表，就知道为什么 Classic 不该照抄任何一个。
+  </p>
+  <div class="table">
+    <div class="tr hd"><div>维度</div><div>Classic</div><div>Windows 10</div><div>Material You</div></div>
+    <div class="tr"><div class="k">入场时长</div><div class="cl"><b>340ms</b></div><div class="uw">180ms</div><div class="mu">420ms</div></div>
+    <div class="tr"><div class="k">位移距离</div><div class="cl"><b>5px 上落</b></div><div class="uw">0px（只淡入）</div><div class="mu">12px 上浮 + scale(.985)</div></div>
+    <div class="tr"><div class="k">错峰步长</div><div class="cl"><b>24ms</b></div><div class="uw">24ms</div><div class="mu">45ms</div></div>
+    <div class="tr"><div class="k">错峰顺序</div><div class="cl"><b>阅读序（左上→右下）</b></div><div class="uw">从下往上、从右往左</div><div class="mu">从上往下、从左往右</div></div>
+    <div class="tr"><div class="k">缓动</div><div class="cl"><b>settle .16/.84/.28/1</b></div><div class="uw">linear</div><div class="mu">.2/.8/.2/1（带回弹）</div></div>
+    <div class="tr"><div class="k">按压</div><div class="cl"><b>scale .985 · 90ms</b></div><div class="uw">不位移，内阴影</div><div class="mu">scale .92，形状 morph</div></div>
+    <div class="tr"><div class="k">悬停</div><div class="cl"><b>抬 1px + 边线着色</b></div><div class="uw">只换底色</div><div class="mu">抬 2px + 明度</div></div>
+    <div class="tr"><div class="k">弹性</div><div class="cl"><b>不用（除数字 1px 过冲）</b></div><div class="uw">不用</div><div class="mu">强（68% 处过冲）</div></div>
+  </div>
+</section>
+
+<!-- ═══ 02 同一交互 ═══ -->
+<section id="compare">
+  <div class="sechead"><span class="n">02</span><h2>同一次入场，三种手感</h2><span class="en">SAME ENTRANCE</span></div>
+  <p class="lead">三张卡片、同一份 DOM。点「重播」同时开始，注意看<b>落定的位置</b>和<b>先后关系</b>。</p>
+
+  <div class="cols">
+    <div class="col d-cl">
+      <div class="colhead"><b>Classic</b><span>340 · 5px · 24ms</span></div>
+      <div class="stage">
+        <div class="demo-list">
+          <div class="ditem lead-row" style="--i:0"><b>01</b>上一行先落到版面上</div>
+          <div class="ditem" style="--i:1"><b>02</b>下一行紧随其后</div>
+          <div class="ditem" style="--i:2"><b>03</b>落定即停，不回弹</div>
+        </div>
+      </div>
+      <div class="foot"><span class="note">快起长尾，最后 40% 几乎静止</span><button class="replay" data-play=".d-cl">重播</button></div>
+    </div>
+
+    <div class="col d-uw">
+      <div class="colhead"><b>Windows 10</b><span>180 · 0px · 24ms</span></div>
+      <div class="stage">
+        <div class="demo-list">
+          <div class="ditem" style="--i:2"><b>01</b>最后 24ms 才出现</div>
+          <div class="ditem" style="--i:1"><b>02</b>从下往上收拢</div>
+          <div class="ditem" style="--i:0"><b>03</b>最先出现的是底部</div>
+        </div>
+      </div>
+      <div class="foot"><span class="note">瞬变，无位移，像断电后重新点亮</span><button class="replay" data-play=".d-uw">重播</button></div>
+    </div>
+
+    <div class="col d-mu">
+      <div class="colhead"><b>Material You</b><span>420 · 12px · 45ms</span></div>
+      <div class="stage">
+        <div class="demo-list">
+          <div class="ditem" style="--i:0"><b>01</b>浮上来，带一点放大</div>
+          <div class="ditem" style="--i:1"><b>02</b>水波一样依次推后</div>
+          <div class="ditem" style="--i:2"><b>03</b>落定前有轻微回弹</div>
+        </div>
+      </div>
+      <div class="foot"><span class="note">慢、浮、软，像卡片从桌面抬起</span><button class="replay" data-play=".d-mu">重播</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 03 缓动 ═══ -->
+<section id="easing">
+  <div class="sechead"><span class="n">03</span><h2>三条曲线，三种性格</h2><span class="en">EASING</span></div>
+  <p class="lead">
+    Classic 只用两条：<code>--m-settle</code> 负责"落定"（快起长尾，前 60% 走完 90% 的路），
+    <code>--m-exit</code> 负责"离开"（加速离去，绝不拖尾）。第三条是 Material 的回弹，Classic 不采用。
+  </p>
+
+  <div class="easings">
+    <div class="ease-card" style="--e:cubic-bezier(.16,.84,.28,1)">
+      <b>settle · 落定</b><code>cubic-bezier(.16,.84,.28,1)</code>
+      <svg viewBox="0 0 100 60" preserveAspectRatio="none">
+        <path d="M0 60 L100 0" stroke="var(--line-soft)" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+        <path d="M0 60 C16 9.6,28 0,100 0" stroke="var(--accent)" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>
+      <div class="ease-track"><span class="ease-dot"></span></div>
+      <div class="tip">入场 / 展开 / 线生长。肉眼看是"很快就位，然后停住"。</div>
+    </div>
+    <div class="ease-card" style="--e:cubic-bezier(.4,0,.6,1)">
+      <b>exit · 离开</b><code>cubic-bezier(.4,0,.6,1)</code>
+      <svg viewBox="0 0 100 60" preserveAspectRatio="none">
+        <path d="M0 60 L100 0" stroke="var(--line-soft)" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+        <path d="M0 60 C40 60,60 0,100 0" stroke="var(--accent)" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>
+      <div class="ease-track"><span class="ease-dot"></span></div>
+      <div class="tip">退出。先慢后快，走的时候不留在原地。</div>
+    </div>
+    <div class="ease-card" style="--e:cubic-bezier(.34,1.4,.64,1)">
+      <b>back · 回弹（不采用）</b><code>cubic-bezier(.34,1.4,.64,1)</code>
+      <svg viewBox="0 0 100 60" preserveAspectRatio="none">
+        <path d="M0 60 L100 0" stroke="var(--line-soft)" stroke-width="1" stroke-dasharray="3 3" fill="none"/>
+        <path d="M0 60 C34 -24,64 0,100 0" stroke="var(--dim)" stroke-width="2" fill="none" stroke-linecap="round" stroke-dasharray="2 2"/>
+      </svg>
+      <div class="ease-track"><span class="ease-dot"></span></div>
+      <div class="tip">Material 的弹性。Classic 不用——回弹会让"排版"变成"玩具"。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 04 签名动作 ═══ -->
+<section id="signature">
+  <div class="sechead"><span class="n">04</span><h2>五个签名动作</h2><span class="en">SIGNATURE MOVES</span></div>
+  <p class="lead">
+    前三个（左线点亮、数字落定、字幕落定）回答"这套主题怎么动"；
+    后两个（导航规则滑移、页签下划线滑移）是整个界面里唯一允许"连续移动"的元素——
+    因为它们是<b>同一条线</b>在换位置，而不是内容在飞。
+  </p>
+
+  <div class="sigs">
+    <div class="sig">
+      <div class="sighead"><b>左线点亮</b><span class="num">01</span></div>
+      <div class="sigstage">
+        <button class="rulecard" id="rc">
+          <div class="t">EP07 · 决赛解说</div>
+          <div class="s">1,284 条 · 42:16</div>
+          <div class="u"><i></i></div>
+        </button>
+      </div>
+      <div class="foot"><span class="sigcode">border-left-color 240ms · underline scaleX 340ms</span><button class="replay" data-act="rc">切换</button></div>
+    </div>
+
+    <div class="sig">
+      <div class="sighead"><b>数字落定</b><span class="num">02</span></div>
+      <div class="sigstage">
+        <div class="numstage">
+          <div class="n"><span id="num">18.4</span></div>
+          <div class="lbl">字幕总量 / 万条</div>
+        </div>
+      </div>
+      <div class="foot"><span class="sigcode">translateY 4px + fade 240ms · 等宽不抖</span><button class="replay" data-act="num">+0.1</button></div>
+    </div>
+
+    <div class="sig">
+      <div class="sighead"><b>导航规则滑移</b><span class="num">03</span></div>
+      <div class="sigstage">
+        <div class="mininav" id="navdemo">
+          <div class="items">
+            <span class="pill"></span>
+            <span class="bullet"></span>
+            <button class="on">稿件库</button>
+            <button>编辑器</button>
+            <button>任务队列</button>
+          </div>
+        </div>
+      </div>
+      <div class="foot"><span class="sigcode">同一条 3px 线平移 220ms · 内容不缩放</span><button class="replay" data-act="nav">下一个</button></div>
+    </div>
+
+    <div class="sig">
+      <div class="sighead"><b>页签下划线</b><span class="num">04</span></div>
+      <div class="sigstage">
+        <div class="minitabs" id="tabdemo">
+          <div class="row">
+            <button class="on">字幕</button>
+            <button>样式</button>
+            <button>角色</button>
+            <span class="bar"></span>
+          </div>
+          <div class="body" id="tabbody">1,284 条 · 中英双轨</div>
+        </div>
+      </div>
+      <div class="foot"><span class="sigcode">width + translateX 240ms · 只动一条线</span><button class="replay" data-act="tab">下一个</button></div>
+    </div>
+
+    <div class="sig" style="grid-column:1/-1">
+      <div class="sighead"><b>字幕卡错峰落定</b><span class="num">05</span></div>
+      <div class="sigstage">
+        <div class="cuelist" id="cuedemo">
+          <div class="minicue" style="--i:0">
+            <div class="tt">00:01:29.334<br>00:01:30.990</div>
+            <div><div class="zz">每位选手将拥有三个不死图腾</div><div class="ee">Each fighter will have three <b style="color:var(--accent)">Totem</b> of Undying</div></div>
+          </div>
+          <div class="minicue" style="--i:1">
+            <div class="tt">00:01:31.000<br>00:01:32.480</div>
+            <div><div class="zz">它们会在最后一刻救你一命</div><div class="ee">They will <b style="color:var(--accent)">save</b> you at the very last second</div></div>
+          </div>
+          <div class="minicue" style="--i:2">
+            <div class="tt">00:01:32.500<br>00:01:34.120</div>
+            <div><div class="zz">但这并不是免费的</div><div class="ee">But this is <b style="color:var(--accent)">not</b> for free</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="foot"><span class="sigcode">每条 +24ms · 5px 上落 · 只在进入视口时播放一次</span><button class="replay" data-act="cue">重播</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 05 时序 ═══ -->
+<section id="ladder">
+  <div class="sechead"><span class="n">05</span><h2>错峰阶梯与"一帧到位"降级</h2><span class="en">STAGGER &amp; FALLBACK</span></div>
+  <p class="lead">
+    24ms 是刻意的：再密一点就听不出层次，再疏一点就变成"排队进场"。
+    6 张卡片的最后一张在 <b>120ms</b> 才开始动，整组仍在 460ms 内结束——一次呼吸的长度。
+  </p>
+  <div class="ladder">
+    <div class="lrow"><span>#01 · 0ms</span><span class="ltrack"><i class="lbar" style="--d:0%"></i></span></div>
+    <div class="lrow"><span>#02 · 24ms</span><span class="ltrack"><i class="lbar" style="--d:2.5%"></i></span></div>
+    <div class="lrow"><span>#03 · 48ms</span><span class="ltrack"><i class="lbar" style="--d:5%"></i></span></div>
+    <div class="lrow"><span>#04 · 72ms</span><span class="ltrack"><i class="lbar" style="--d:7.5%"></i></span></div>
+    <div class="lrow"><span>#05 · 96ms</span><span class="ltrack"><i class="lbar" style="--d:10%"></i></span></div>
+    <div class="lrow"><span>#06 · 120ms</span><span class="ltrack"><i class="lbar" style="--d:12.5%"></i></span></div>
+    <div class="cap">每行长度表示该元素剩余动画时间；起点依次右移 24ms，终点几乎同时收束。</div>
+  </div>
+</section>
+
+<!-- ═══ 06 降级 ═══ -->
+<section id="rm">
+  <div class="sechead"><span class="n">06</span><h2>动效必须可关</h2><span class="en">REDUCED MOTION</span></div>
+  <p class="lead">
+    跟随系统 <code>prefers-reduced-motion</code>，另提供应用内开关（设置 → 外观 → 减少动效）。
+    关闭后不是"变快"，而是<b>一帧到位</b>：所有入场直接呈现终态，只保留颜色与边框过渡。
+  </p>
+  <div class="rm">
+    <label class="sw"><input type="checkbox" id="rmToggle"><i></i></label>
+    <p><b>减少动效</b>　　打开这个开关，本页所有动画与过渡都会压到 1ms，用来验证终态是否可读。</p>
+  </div>
+</section>
+
+<p class="lead" style="margin-top:26px;margin-bottom:0">
+  这套动效已实装在 <code>classic-shell.html</code>：首页与编辑器的入场错峰、侧栏规则线滑移、
+  页签下划线、Toast 下落，都是同一组令牌驱动的。切换「旧 Classic / Classic / Windows 10」可以看到
+  旧版几乎没有动效（且被 <code>transform:none!important</code> 关掉），Windows 10 则是纯淡入。
+</p>
+
+<div class="foot2" style="margin-top:40px">
+  <span>SUBFABRIC · MOTION SPEC · 2026-10-20</span>
+  <span>340ms / 5px / 24ms / 0 bounce</span>
+</div>
+
+</div>
+
+<script>
+(function(){
+  /* 通用重播：移除 class → 强制重排 → 加回 */
+  function replay(el, cls){
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+  }
+  document.querySelectorAll('.replay').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var target = btn.dataset.play && document.querySelector(btn.dataset.play);
+      if (target) { replay(target, 'run'); return; }
+      if (btn.dataset.act) act(btn.dataset.act);
+    });
+  });
+
+  /* 缓动卡：各自重播 */
+  document.querySelectorAll('.ease-card').forEach(function(card){
+    card.addEventListener('click', function(){ replay(card, 'run'); });
+  });
+
+  /* 01 左线点亮 */
+  var rc = document.getElementById('rc');
+  rc.addEventListener('click', function(){ rc.classList.toggle('on'); });
+
+  /* 02 数字落定 */
+  var num = document.getElementById('num');
+  var v = 18.4;
+  function tickNum(){
+    v = Math.round((v + 0.1) * 10) / 10;
+    num.textContent = v.toFixed(1);
+    num.classList.remove('tick');
+    void num.offsetWidth;
+    num.classList.add('tick');
+  }
+  num.addEventListener('animationend', function(){ num.classList.remove('tick'); });
+
+  /* 03 导航规则滑移 */
+  var nav = document.getElementById('navdemo');
+  var navBtns = [].slice.call(nav.querySelectorAll('button'));
+  var bullet = nav.querySelector('.bullet');
+  var pill = nav.querySelector('.pill');
+  var navIdx = 0;
+  function placeNav(i){
+    navIdx = i;
+    navBtns.forEach(function(b,n){ b.classList.toggle('on', n === i); });
+    var b = navBtns[i];
+    bullet.style.height = (b.offsetHeight - 16) + 'px';
+    bullet.style.transform = 'translateY(' + (b.offsetTop + 8) + 'px)';
+    pill.style.height = b.offsetHeight + 'px';
+    pill.style.transform = 'translateY(' + b.offsetTop + 'px)';
+  }
+  navBtns.forEach(function(b,i){ b.addEventListener('click', function(){ placeNav(i); }); });
+  placeNav(0);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function(){ placeNav(navIdx); });
+  window.addEventListener('resize', function(){ placeNav(navIdx); });
+
+  /* 04 页签下划线 */
+  var tabs = document.getElementById('tabdemo');
+  var tabBtns = [].slice.call(tabs.querySelectorAll('button'));
+  var bar = tabs.querySelector('.bar');
+  var body = document.getElementById('tabbody');
+  var labels = ['1,284 条 · 中英双轨', '微软雅黑 · 64px · 主色 #FF7A45', '3 个角色 · 主角 / 旁白 / 嘉宾'];
+  var tabIdx = 0;
+  function placeTab(i){
+    tabIdx = i;
+    tabBtns.forEach(function(b,n){ b.classList.toggle('on', n === i); });
+    bar.style.transform = 'translateX(' + (i * 100) + '%)';
+    body.textContent = labels[i];
+  }
+  tabBtns.forEach(function(b,i){ b.addEventListener('click', function(){ placeTab(i); }); });
+  placeTab(0);
+
+  /* 05 字幕卡 */
+  var cue = document.getElementById('cuedemo');
+
+  function act(name){
+    if (name === 'rc') { rc.classList.toggle('on'); return; }
+    if (name === 'num') { tickNum(); return; }
+    if (name === 'nav') { placeNav((navIdx + 1) % navBtns.length); return; }
+    if (name === 'tab') { placeTab((tabIdx + 1) % tabBtns.length); return; }
+    if (name === 'cue') { replay(cue, 'run'); return; }
+  }
+
+  /* 首屏自动播放一次 */
+  window.addEventListener('load', function(){
+    replay(document.querySelector('.d-cl'), 'run');
+    replay(document.querySelector('.d-uw'), 'run');
+    replay(document.querySelector('.d-mu'), 'run');
+    replay(cue, 'run');
+    setTimeout(function(){ rc.classList.add('on'); }, 420);
+  });
+
+  /* 减少动效 */
+  document.getElementById('rmToggle').addEventListener('change', function(e){
+    document.body.classList.toggle('rm-on', e.target.checked);
+    if (e.target.checked) {
+      document.querySelectorAll('.run').forEach(function(el){ el.classList.remove('run'); });
+    }
+  });
+})();
+</script>
+</body>
+</html>

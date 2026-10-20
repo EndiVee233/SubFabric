@@ -891,6 +891,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .st-card-note { margin-left:auto; font-size:11px; color:var(--text-2); font-weight:400; text-align:right; }
 .st-grid { display:grid; grid-template-columns:76px minmax(0, 1fr); gap:9px; align-items:center; }
 .st-grid .st-lbl { width:auto; }
+/* 空错误提示不能占栅格单元：.st-grid 是「标签｜控件」两列，空的 <small> 夹在中间会把
+   后面所有 label/控件整体错位一格（表现为「服务商」标签跑到输入列、下拉框跑到标签列）。
+   以前只有 UWP 方言补了兜底（见 5111 行），这里补通用规则。 */
+.st-field-error { display:none; grid-column:1/-1; }
+.st-field-error:not(:empty) { display:block; margin-top:5px; color:var(--danger); font-size:10px; line-height:1.5; }
 .st-actions .st-msg { flex:1; min-width:0; }
 .st-actions #st-save { min-width:68px; }
 .st-panel .st-row { margin-bottom:0; }
@@ -1740,7 +1745,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .gl-hint { font-size: 12px; line-height: 1.6; color: var(--text-2); }
 .st-key-clear { margin-left: 6px; color: var(--accent); text-decoration: underline; cursor: pointer; }
 .st-key-clear:hover { color: var(--accent-2, var(--accent)); }
-.gl-tabs { display: inline-flex; gap: 4px; padding: 3px; background: #131318; border: 1px solid var(--border); border-radius: 999px; align-self: flex-start; }
+.gl-tabs { display: inline-flex; gap: 4px; padding: 3px; background: var(--surface-2, var(--bg-3)); border: 1px solid var(--line-soft, var(--border)); border-radius: 999px; align-self: flex-start; }
+.gl-tabs:empty { display: none; }
 .gl-tab {
   border: none; background: transparent; color: var(--text-1);
   font: inherit; font-size: 12px; font-weight: 700;
@@ -1759,15 +1765,16 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .gl-head {
   display: grid; grid-template-columns: 1fr 1fr 30px; gap: 9px;
   font-size: 12px; font-weight: 700; color: var(--text-0);
-  padding: 0 2px;
+  /* 行容器有滚动条，表头要留同样的沟槽，否则第三列（删除）与行错位 */
+  padding: 0 calc(2px + 11px) 0 2px;
 }
 .gl-head b { color: var(--text-1); font-weight: 700; }
-.gl-rows { display: flex; flex-direction: column; gap: 7px; max-height: 260px; overflow-y: auto; }
+.gl-rows { display: flex; flex-direction: column; gap: 7px; max-height: 260px; overflow-y: auto; scrollbar-gutter: stable; }
 .gl-empty { font-size: 12.5px; color: var(--text-2); padding: 6px 2px; }
 .gl-row { display: grid; grid-template-columns: 1fr 1fr 30px; gap: 9px; align-items: center; }
 .gl-input {
-  background: #101015; color: var(--text-0);
-  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2, var(--bg-3)); color: var(--text);
+  border: 1px solid var(--line-soft, var(--border)); border-radius: 8px;
   padding: 8px 10px; font-size: 12.5px; outline: none; width: 100%; min-width: 0;
 }
 .gl-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-a16); }
@@ -2469,6 +2476,7 @@ select.note-dur {
 
 
 /* ── 本机硬件条（设计稿 ②）── */
+.st-hw:empty { display: none; }
 .st-hw {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 8px 12px; border-radius: 8px;
@@ -3123,6 +3131,10 @@ body::before {
   #st-view .st-actions { flex-wrap: wrap; padding: 12px 14px; }
   #st-view .st-actions .st-msg { flex-basis: 100%; order: -1; }
 }
+@media (max-width: 560px) {
+  /* 与上方 .sf-studio #st-view .st-grid（100px 1fr）同权重，否则窄屏仍是两列、字段被挤成一条 */
+  .sf-studio #st-view .st-grid { grid-template-columns: 1fr; gap: 6px; }
+}
 @media (max-width: 430px) {
   .page-brand { font-size: 12px; }
   #np-view .np-actions { flex-wrap: wrap; }
@@ -3367,6 +3379,9 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-widget:hover { border-color:var(--accent); transform:translateY(-2px); }
 .sf-widget:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .sf-widget-wide { grid-column:span 2; }
+/* 8 个磁贴 = 2+1+1+1+1+2+1+1 = 10 格，4 列下末行只填 2 格会留一块空；
+   让末尾两个入口各占 2 格，宽屏正好 3 整行（2 列断点下则是各自整行）。 */
+.sf-widget[data-widget="settings"], .sf-widget[data-widget="library"] { grid-column:span 2; }
 .sf-widget[data-tone=accent] { border-color:transparent; background:linear-gradient(135deg,var(--accent),color-mix(in srgb,var(--accent) 72%,var(--tertiary-container))); color:var(--on-accent); }
 .sf-widget[data-tone=warn] { border-color:color-mix(in srgb,var(--danger,#ff6b6b) 38%,var(--line)); }
 .sf-widget-kicker { font-family:var(--mono); font-size:9px; letter-spacing:.12em; opacity:.62; }

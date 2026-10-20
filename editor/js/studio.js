@@ -725,14 +725,15 @@ function animateLibraryViewChange() {
   void view.offsetWidth;
   /* 保留 Material 页面的 is-my-page-entering，让 refreshLibrary 的自动补动画不再触发。 */
   if (design === 'material') view.classList.add('is-my-page-entering');
-  const step = design === 'uwp' ? 24 : 45;
+  /* Classic 与 UWP 同为 24ms 步长、但落定更慢（340ms）；Material 仍是 45ms / 420ms。 */
+  const step = design === 'classic' || design === 'uwp' ? 24 : 45;
   cards.forEach((card, i) => {
     card.setAttribute('data-view-enter', '');
     card.style.setProperty('--view-enter-delay', (i * step) + 'ms');
   });
   view.classList.add('is-view-switching');
   const maxDelay = (cards.length - 1) * step;
-  const duration = design === 'uwp' ? 180 : 420;
+  const duration = design === 'uwp' ? 180 : design === 'classic' ? 340 : 420;
   view._viewSwitchTimer = setTimeout(() => {
     view.classList.remove('is-view-switching');
     view.querySelectorAll('.proj-card[data-view-enter]').forEach(card => {
