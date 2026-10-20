@@ -58,7 +58,8 @@ const out = await evalJS(`(() => {
   for (const id of views) res[id] = info(document.getElementById(id));
   res['.st-nav'] = info(document.querySelector('.st-nav'));
   res['.st-body'] = info(body);
-  res['.st-actions'] = info(document.querySelector('.st-actions'));
+  res['.sf-settings-status'] = info(document.querySelector('.sf-settings-status'));
+  res['.st-panel-actions'] = info(document.querySelector('#st-panel-enhance .st-panel-actions'));
   res['#app'] = info(document.getElementById('app'));
   res['body.scrollHeight'] = body ? body.scrollHeight : null;
   res['body.clientHeight'] = body ? body.clientHeight : null;

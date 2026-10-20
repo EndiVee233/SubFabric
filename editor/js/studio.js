@@ -527,17 +527,9 @@ document.querySelectorAll('#st-view .st-grid').forEach(grid => {
 });
 
 const settingTabs = [...document.querySelectorAll('#st-view .st-tab')];
-const footerNotes = {
-  theme: '外观更改即时保存。',
-  models: '模型操作、目录与分工设置即时保存。',
-  translate: '',
-  enhance: '热词列表与强度需保存，其余选项即时保存。',
-  fetch: '下载偏好即时保存；Cookie 请使用卡片内的保存按钮。',
-  perf: '测试需手动启动；此页显示本机结果。'
-};
 function settingPresentation(name) {
-  $('sf-settings-footer-note').textContent = t(footerNotes[name] || '');
   $('st-test').hidden = true;
+  /* 手动保存只属于「识别与校对」；按钮已在该面板底部，不再占用全局动作栏。 */
   $('st-save').hidden = name !== 'enhance';
   for (const tab of settingTabs) {
     tab.setAttribute('tabindex', tab.dataset.stp === name ? '0' : '-1');
@@ -703,7 +695,58 @@ $('sf-folders').addEventListener('drop', e => {
 $('sf-nav').querySelector('[data-route="home"]').addEventListener('click', () => { folder = ''; filter = 'all'; renderFolders(); refreshLibrary(); if (document.body.dataset.design === 'material') animateMaterialPage($('home-view')); });
 $('sf-filters').addEventListener('click', e => { const b = e.target.closest('[data-filter]'); if (b) { filter = b.dataset.filter; refreshLibrary(); } });
 $('sf-search').addEventListener('input', refreshLibrary);
-$('sf-list-mode').addEventListener('click', () => { if (commit({ view: prefs.view === 'grid' ? 'list' : 'grid' })) refreshLibrary(); });
+/** 列表/卡片视图切换后，按“刚进入稿件库/文件夹”的同一套元素入场重播。
+ *  只使用独立的 data-view-enter / is-view-switching，绝不挂 data-my-enter /
+ *  data-uwp-enter；否则动画结束摘掉切换类时，旧入场选择器会重新接管并闪一下。 */
+function animateLibraryViewChange() {
+  const view = $('home-view');
+  if (!view || view.hidden) return;
+  const design = document.body.dataset.design;
+  const list = view.querySelector('.home-list');
+  const cards = [...view.querySelectorAll('.proj-card')]
+    .filter(card => card.getClientRects().length)
+    .sort((a, b) => {
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      return Math.abs(ra.top - rb.top) > 8 ? ra.top - rb.top : ra.left - rb.left;
+    });
+  if (!cards.length) return;
+  /* 连点切换：先彻底清掉上一轮，再强制一次布局，保证每轮都能重新起播。 */
+  clearTimeout(view._viewSwitchTimer);
+  view.classList.remove('is-view-switching');
+  list?.classList.remove('anim-in');
+  view.querySelectorAll('.proj-card').forEach(card => {
+    card.removeAttribute('data-view-enter');
+    card.removeAttribute('data-my-enter');
+    card.removeAttribute('data-uwp-enter');
+    card.style.removeProperty('--view-enter-delay');
+    card.style.removeProperty('--my-enter-delay');
+    card.style.removeProperty('--uwp-enter-delay');
+  });
+  void view.offsetWidth;
+  /* 保留 Material 页面的 is-my-page-entering，让 refreshLibrary 的自动补动画不再触发。 */
+  if (design === 'material') view.classList.add('is-my-page-entering');
+  const step = design === 'uwp' ? 24 : 45;
+  cards.forEach((card, i) => {
+    card.setAttribute('data-view-enter', '');
+    card.style.setProperty('--view-enter-delay', (i * step) + 'ms');
+  });
+  view.classList.add('is-view-switching');
+  const maxDelay = (cards.length - 1) * step;
+  const duration = design === 'uwp' ? 180 : 420;
+  view._viewSwitchTimer = setTimeout(() => {
+    view.classList.remove('is-view-switching');
+    view.querySelectorAll('.proj-card[data-view-enter]').forEach(card => {
+      card.removeAttribute('data-view-enter');
+      card.style.removeProperty('--view-enter-delay');
+    });
+  }, duration + maxDelay + 80);
+}
+$('sf-list-mode').addEventListener('click', () => {
+  if (commit({ view: prefs.view === 'grid' ? 'list' : 'grid' })) {
+    refreshLibrary();
+    animateLibraryViewChange();
+  }
+});
 $('sf-clear-filter').addEventListener('click', () => { filter = 'all'; folder = ''; $('sf-search').value = ''; renderFolders(); refreshLibrary(); });
 /** 自定义主页：按项目真实阶段渲染小组件；UWP 下 CSS 会转成磁贴。 */
 function renderWidgets() {
@@ -942,14 +985,14 @@ const MY_ENTER_ITEMS = {
   'sf-help': '.sf-help-grid > article',
   'sf-folders': '.sf-folder'
 };
-function animateMaterialPage(root, selector = '') {
+function animateMaterialPage(root, selector = '', force = false) {
   if (document.body.dataset.design !== 'material' || !root || root.hidden || uwpMotionOff()) return;
   const sel = selector || (root.classList?.contains('st-panel') ? MY_SETTINGS_ITEMS : MY_ENTER_ITEMS[root.id]);
   if (!sel) return;
   const items = [...root.querySelectorAll(sel)].filter(el => el.getClientRects().length);
   if (!items.length) return;
   const now = performance.now();
-  if (root._myEnterAt && now - root._myEnterAt < 80
+  if (!force && root._myEnterAt && now - root._myEnterAt < 80
     && items.every(el => el.hasAttribute('data-my-enter'))) return;
   root._myEnterAt = now;
   root.querySelectorAll('[data-my-enter]').forEach(el => {
@@ -1011,7 +1054,7 @@ function animateMaterialCueList(added = null, retry = true) {
       card.removeAttribute('data-my-cue');
       void card.offsetWidth;
       card.setAttribute('data-my-cue', '');
-      card.style.setProperty('--my-cue-delay', (i * 55) + 'ms');
+      card.style.setProperty('--my-cue-delay', (i * 22) + 'ms');
     });
     if (!list.classList.contains('is-my-cue-entering')) list.classList.add('is-my-cue-entering');
     materialEditorPending = false;
@@ -1022,7 +1065,7 @@ function animateMaterialCueList(added = null, retry = true) {
         card.removeAttribute('data-my-cue');
         card.style.removeProperty('--my-cue-delay');
       });
-    }, 420 + Math.max(0, visible.length - 1) * 55 + 120);
+    }, 420 + Math.max(0, visible.length - 1) * 22 + 120);
   };
   run();
   /* 路由刚切换时列表可能还没布局，下一帧再按真实视口补一次（只补一次，避免递归空转）。 */
@@ -1032,14 +1075,7 @@ function animateMaterialCueList(added = null, retry = true) {
   });
   return true;
 }
-$('cue-list')?.addEventListener('scroll', () => {
-  if (document.body.dataset.design !== 'material' || document.body.dataset.workspace !== 'editor') return;
-  if (materialCueRaf) return;
-  materialCueRaf = requestAnimationFrame(() => {
-    materialCueRaf = 0;
-    animateMaterialCueList();
-  });
-}, { passive: true });
+
 function animateUwpEditorShell() {
   if (document.body.dataset.design !== 'uwp' || uwpMotionOff()) return;
   const app = $('app');
@@ -1068,7 +1104,7 @@ function animateUwpCueList(added = null) {
   });
   cards.forEach((card, i) => {
     card.setAttribute('data-uwp-cue', '');
-    card.style.setProperty('--uwp-cue-delay', (i * 14) + 'ms');
+    card.style.setProperty('--uwp-cue-delay', (i * 8) + 'ms');
   });
   list.classList.remove('is-uwp-cue-entering');
   void list.offsetWidth;
@@ -1081,7 +1117,7 @@ function animateUwpCueList(added = null) {
       card.removeAttribute('data-uwp-cue');
       card.style.removeProperty('--uwp-cue-delay');
     });
-  }, 120 + Math.max(0, cards.length - 1) * 14 + 100);
+  }, 120 + Math.max(0, cards.length - 1) * 8 + 100);
   return true;
 }
 $('cue-list')?.addEventListener('sf-cue-rendered', e => {
@@ -1091,8 +1127,8 @@ $('cue-list')?.addEventListener('sf-cue-rendered', e => {
     if (Array.isArray(added) && added.length) animateUwpCueList(added);
     else if (uwpEditorPending) animateUwpCueList();
   } else if (document.body.dataset.design === 'material') {
-    if (Array.isArray(added) && added.length) animateMaterialCueList(added);
-    else if (materialEditorPending) animateMaterialCueList();
+    /* 只在进入编辑器时播放入场；之后虚拟列表/下拉滚动不再补动画。 */
+    if (materialEditorPending) animateMaterialCueList(added);
   }
 });
 function animateDashboardCards() {
@@ -1744,6 +1780,8 @@ window.__sfStudio = {
       uwpEditorPending = true;
       materialEditorPending = true;
       if (!wasEditor) {
+        /* 每次进入编辑器是新的会话：角色/设置页入场只在该会话第一次点开时播放。 */
+        window.__panel?.resetEntranceAnimations?.();
         if (document.body.dataset.design === 'uwp') animateUwpEditorShell();
         else if (document.body.dataset.design === 'material') animateMaterialEditorShell();
       }

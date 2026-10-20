@@ -8,6 +8,7 @@ const studioSource = fs.readFileSync(path.join(root, 'editor/js/studio.js'), 'ut
 assert.match(studioSource, /data-pack-select=\"\$\{esc\(pack\.id\)\}\"/, 'theme cards expose the pack id through data-pack-select');
 assert.match(studioSource, /themes\.get\(b\.dataset\.packSelect, prefs\.custom\)/, 'theme picker reads the data-pack-select value when switching packs');
 assert.doesNotMatch(studioSource, /themes\.get\(b\.dataset\.pack, prefs\.custom\)/, 'theme picker does not read the stale dataset.pack key');
+assert.match(studioSource, /class="sf-pack-art \$\{pack\.design\}"/, 'preview art carries the design of its own pack');
 const context = { window: {} };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(root, 'editor/js/studio-themes.js'), 'utf8'), context);
@@ -18,6 +19,14 @@ for (const pack of themes.builtins) {
   assert.equal(pack.builtin, true, `${pack.id} is marked built-in`);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'editor/themes', `${pack.id}.theme.json`), 'utf8')), JSON.parse(JSON.stringify(pack)), `${pack.id} has a distributable JSON package`);
 }
+
+/* 示意图圆角跟随卡片自身的 design，而不是当前启用主题的 body[data-design]。 */
+const css = fs.readFileSync(path.join(root, 'editor/css/studio.css'), 'utf8');
+assert.match(css, /\.sf-pack-art \{[^}]*--pack-art-radius:12px[^}]*border-radius:var\(--pack-art-radius\)!important/, 'preview art defaults to the Studio radius through its own token');
+assert.match(css, /\.sf-pack-art\.uwp \{[^}]*--pack-art-radius:2px[^}]*--pack-symbol-radius:2px[^}]*--pack-line-radius:0/, 'Windows 10 previews keep compact 2px corners under any active theme');
+assert.match(css, /\.sf-pack-art\.material \{[^}]*--pack-art-radius:24px/, 'Material You previews keep the large rounded corner under any active theme');
+assert.match(css, /\.sf-pack-art\.classic \{[^}]*--pack-art-radius:8px/, 'Classic previews keep the classic corner under any active theme');
+assert.match(css, /\[data-design=material\] \.sf-pack:not\(\[aria-current=true\]\):hover \{[^}]*border-color:var\(--accent\)/, 'Material You lights the hovered theme card border without competing with the selected ring');
 
 const custom = {
   schema: 'subfabric-theme-v1', id: 'painted-studio', name: 'Painted Studio', version: '1.2.0', description: 'Local palette', author: 'Tester', design: 'studio', seed: '#112233',

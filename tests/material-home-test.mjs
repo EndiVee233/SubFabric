@@ -48,11 +48,21 @@ assert.match(studio, /animateMaterialPage\(e\.detail\?\.panel\)/, 'settings pane
 assert.match(css, /\.sf-studio\[data-design=material\] \.is-my-page-entering \[data-my-enter\]/, 'Material page cards use data-my-enter');
 assert.match(css, /sf-home-card-in var\(--sf-card-duration,\.42s\)/, 'Material page cards reuse the homepage float-up curve');
 assert.match(studio, /function animateMaterialCueList/, 'Material editor cues have their own entrance');
-assert.match(studio, /\(i \* 55\)/, 'Material cue cards enter one by one every 55ms');
-assert.match(studio, /addEventListener\('scroll'[\s\S]*?animateMaterialCueList\(\)/, 'Material cue list animates cards revealed by scrolling');
+assert.match(studio, /\(i \* 22\)/, 'Material cue cards appear one by one every 22ms (bounce duration unchanged)');
+assert.doesNotMatch(
+  studio.slice(studio.indexOf('function animateMaterialCueList'), studio.indexOf('function animateUwpEditorShell')),
+  /addEventListener\('scroll'/,
+  'Material cue list stays still while scrolling');
 assert.match(studio, /function applyBackgroundWithFade/, 'Material background mode changes crossfade');
+assert.match(studio, /function animateLibraryViewChange/, 'library grid/list switches replay the page entrance');
+assert.match(studio, /is-view-switching/, 'grid/list switches use a non-flashing visible-card animation');
+assert.match(studio, /data-view-enter/, 'grid/list switches use a dedicated marker, not page-entrance markers');
+assert.match(css, /@keyframes my-view-in \{ from \{ opacity:1;/, 'Material view switch keeps cards visible');
+assert.match(css, /\.sf-studio\[data-design=material\] \.home-list > \.proj-card \.pc-badges \{ margin-top:2px; \}/, 'Material project status pill keeps its vertical offset');
+assert.match(css, /\.sf-studio\[data-design=material\] \.home-list > \.proj-card \.pc-st \{[\s\S]*?padding:3px 8px;[\s\S]*?margin-left:0/, 'Material project status pill has symmetric padding and aligns left');
+assert.match(css, /\.sf-studio\[data-design=material\] \.home-list > \.proj-card \.pc-actions \{[\s\S]*?padding-left:8px/, 'Material project actions align with the title and status pill');
 assert.match(css, /@keyframes sf-bg-fade-in/, 'Material background crossfade uses the shared CSS fade');
-assert.match(studio, /materialCueSeen/, 'Material cue entries are not replayed for already-seen cards');
+assert.match(studio, /materialEditorPending\) animateMaterialCueList\(added\)/, 'Material cue animation is limited to editor entry');
 assert.match(studio, /is-material-editor-entering/, 'Material editor shell animates in');
 assert.match(css, /@keyframes my-editor-in/, 'Material editor has the upward fade keyframes');
 assert.match(css, /@keyframes my-cue-in \{[\s\S]*?translate3d\(0,-64px,60px\) scale\(1\.07\)[\s\S]*?translate3d\(0,0,-1px\) scale\(\.994\)[\s\S]*?transform:none/, 'Material cue flies and rebounds in one continuous curve with a small overshoot');

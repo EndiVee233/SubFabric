@@ -534,6 +534,23 @@ stableInput.value = '260';
 await navigate('#/settings');
 assert.equal($('sf-settings-tab-theme').getAttribute('aria-selected'), 'true', 'settings starts with common appearance preferences');
 assert.equal($('st-save').hidden, true, 'instant preference category does not imply a global manual save');
+assert.equal(document.querySelector('#st-view .st-actions'), null, 'settings page no longer renders a global action bar');
+assert.equal($('st-save').closest('.st-panel')?.id, 'st-panel-enhance', 'manual save belongs to the enhance panel');
+assert.ok($('st-msg').closest('.sf-settings-status'), 'settings status has a non-frame home');
+const rimToggle = $('sf-rim-enabled').closest('label');
+assert.ok(rimToggle.classList.contains('switch'), 'rim curve toggle reuses the shared switch component');
+assert.ok(rimToggle.classList.contains('sf-rim-toggle'), 'rim curve toggle keeps its right-aligned header wrapper');
+assert.ok(rimToggle.querySelector('.switch-slider'), 'rim curve toggle uses the shared switch slider');
+const settingsList = document.querySelector('#tab-settings .settings-list');
+assert.equal($('ass-fx-group').contains($('sf-editor-display')), false, 'postprocess group does not swallow later settings');
+assert.equal(settingsList.contains($('sf-editor-display')), true, 'later settings stay direct children of the settings list');
+assert.equal($('ass-fx-group').contains($('fx-status-note')), true, 'postprocess note stays inside its own group');
+assert.equal($('timeline-panel').parentNode.id, 'app', 'timeline panel stays inside the editor grid');
+assert.equal($('tab-logs').parentNode.id, 'editor-panel', 'logs tab stays inside the editor panel');
+const themeColorPanel = document.querySelector('.sf-theme-color-panel');
+assert.ok(themeColorPanel, 'custom theme color and swatches share one panel');
+assert.ok(themeColorPanel.querySelector('.sf-settings-color'), 'theme color panel owns the custom color row');
+assert.ok(themeColorPanel.querySelector('.sf-settings-swatches'), 'theme color panel owns the reset swatches');
 // Theme pack cards are delegated controls: exercise every built-in pack through
 // the same click path users take in the released Studio UI, including the
 // rerender that happens after applyTheme().

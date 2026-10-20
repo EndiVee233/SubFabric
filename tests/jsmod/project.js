@@ -22,7 +22,7 @@ import { stripEffectTagsSafe } from './postprocess.js';
 import { escapeHtml } from './util.js';
 
 export function initProjects(ctx) {
-  const { state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
+  const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
   const $ = (s) => document.querySelector(s);
   const studioUI = document.body?.classList?.contains('sf-studio') === true;
 
@@ -563,7 +563,7 @@ export function initProjects(ctx) {
       const data = new Uint8Array(await r.arrayBuffer());
       if (state.project !== project || gen !== _openGen) return false;
       timeline.setPeaks({ data, rate: parseFloat(r.headers.get('X-Peak-Rate') || '100'), ch: +(r.headers.get('X-Peak-Ch') || 2) });
-      toast('波形已就绪(来自项目缓存)', 2000);
+      toastAfterCueIntro('波形已就绪(来自项目缓存)', 2000);
       return true;
     } catch { return false; }
   }
@@ -2058,7 +2058,7 @@ function renderRuntimeEnv(d) {
 }
 
 /** 运行时环境卡里的「安装」按钮：与模型列表里那个 NeMo 安装按钮走同一个接口，
- *  同样把进度交给 pollModelDownload()（进度显示在动作栏的 #st-msg 上）。 */
+ *  同样把进度交给 pollModelDownload()（进度显示在设置页浮动状态 #st-msg 上）。 */
 async function startNemoInstallFromEnv() {
   const msgEl = $('#st-msg');
   try {
@@ -3362,15 +3362,19 @@ async function renderAsrModels() {
     } finally { btn.disabled = false; btn.textContent = '测试连接'; }
   });
   $('#st-save').addEventListener('click', async () => {
-    const msgEl = $('#st-msg');
+    const msgEl = $('#st-msg'), btn = $('#st-save');
+    btn.disabled = true; btn.textContent = '保存中…';
     try {
       const m = await postSettings();
-      msgEl.textContent = m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译';
+      /* Studio 的保存只写热词与强度；旧入口仍会写翻译配置。 */
+      msgEl.textContent = studioUI ? '✓ 已保存' : (m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译');
       msgEl.classList.remove('err');
       /* 保存后留在设置页；返回由侧边栏负责，不再重复一个“保存并返回”。 */
     } catch (e) {
       msgEl.textContent = '✗ ' + e.message;
       msgEl.classList.add('err');
+    } finally {
+      btn.disabled = false; btn.textContent = '保存';
     }
   });
   /* 「清除已存 Key」: 立即生效(独立于普通保存), 避免"留空=不修改"之后没有办法删 Key */

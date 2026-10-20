@@ -92,18 +92,52 @@
   逐级拒绝符号链接与祖先 junction。项目字幕、媒体、字体走各自 API。
 - **UI 单入口**：旧 `editor/index.html` 与旧 CSS 已删除，旧视觉迁移为 `subfabric-classic` 主题包；
   根入口无论 `ui-config.json` 缺失、损坏还是 `{"ui":"legacy"}` 都只进 Studio，且该配置不对外服务。
-- **主题包**：内置四个——Studio(`studio`)、Material You(`material`)、SubFabric Classic(`classic`)、
-  Windows UWP(`uwp`)；同源 JSON 在 `editor/themes/*.theme.json`，运行期定义在
+- **主题包**：内置三个——Windows 10(`uwp`)、Material You(`material`)、SubFabric Classic(`classic`)；
+  `design:"studio"` 仅保留给旧自定义包。同源 JSON 在 `editor/themes/*.theme.json`，运行期定义在
   `editor/js/studio-themes.js`。自定义包只接受白名单键（`schema` `id` `name` `version` `description`
   `author` `design` `seed` `tokens` `assets` `builtin`）、`#RRGGBB` 颜色令牌与内嵌 PNG/JPEG/WebP 预览；
   **不能**含脚本、CSS、HTML、SVG 或远程 URL。导入同名自定义包替换旧版，导入内置包生成 `-custom` 副本，
   内置包不可删除。
+- **主题示意图几何**：主题卡内的预览示意图按卡片自身 `design` 取圆角（Windows 10 2px / Material You 24px /
+  Classic 8px / Studio 12px），不随当前启用主题的 `body[data-design]` 切换；UWP 的三条内容横条保持直角。
+- **主题卡悬浮**：Material You 下悬浮非当前主题卡时，1px 边框以 160ms 过渡点亮为 `--accent`；当前卡继续
+  使用 2px 选中环，UWP 保留其中性 `--muted` 悬浮边框。
+- **描边映射开关**：`#sf-rim-enabled` 复用共享 `.switch` 组件（默认 38×20 / 14px，UWP 40×20 / 12px），
+  不再使用 26×15 的自绘双伪元素开关；`configureRim()` 继续同步 `checked`。
+- **文件夹滚动条**：Material You 下隐藏 `#sf-folders` 的右侧滚动条（`scrollbar-width:none` 与 0 宽
+  WebKit 滚动条），列表仍可用滚轮/触控板滚动；其它主题保留原滚动条。
+- **主题色遮罩**：`自定义主题色` 行与色板/恢复默认按钮同处 `.sf-theme-color-panel` 一块遮罩；
+  MY 圆角 24px、UWP 2px、其它 8px，避免色板落在遮罩外。
+- **角色列表入场**：每次进入编辑器后**第一次**切到角色页时 `#role-list` 加 `is-role-entering`，
+  每张 `.role-card` 按 `--role-i` 以 32ms 阶梯执行 260ms 淡入 + `translateY(10px→0)` + `scale(.96→1)`；
+  后续切回、数据刷新不重播；进入编辑器路由或载入/切换字幕文件时重置；减少动效或 `data-motion=off` 时关闭。
+- **编辑器设置入场**：每次进入编辑器后第一次切到「设置」页时，`.settings-list` 加 `is-settings-entering`，
+  直接子级 `.set-group` / `.st-card` 按 `--settings-i` 以 36ms 阶梯执行 260ms 淡入 + `translateY(8px→0)`；
+  后续切回不重播，重置时机与角色列表相同。
+- **字幕列表滚动条**：`#cue-list` 的 thumb 使用 `color-mix(--muted 70%, transparent)`，比全局 25%
+  更亮；hover 变为 `--accent`，Firefox 的 `scrollbar-color` 同步覆盖。
+- **编辑器设置结构**：`#ass-fx-group` 必须在 `#fx-controls` 后正确闭合，后续「字幕显示 / 角色 /
+  导入与音频 / 外观 / 导出」组保持为 `.settings-list` 的直接子级；否则整张后处理卡会吞并后续卡片，
+  在窄面板里表现为内容显示不全。设置末尾只闭合 `.settings-list` 与 `#tab-settings`，不能再多一个
+  `</div>` 提前关闭 `#app`——否则 `#timeline-panel` / `#hsplit` / `#vsplit` 会被挤出编辑器网格，
+  时间轴整块消失。
+- **编辑器设置窄宽**：`#tab-settings` 的 range 使用 `flex:1 1 0; min-width:44px` 先收缩，标签
+  `min-width:56px`、row gap 8px，右侧 `.setting-val` 保留 `min-width:52px` 与 `white-space:nowrap`；
+  拖窄右侧列表时数值不越界。
+- **中英上下顺序说明**：`#ass-style-order-val` 通过 `ass-order-row` 独占一行（`flex:0 0 100%`），
+  10.5px、左对齐，避免和下拉框挤在同一行折成两行。
+- **Material 时钟**：时针与分针统一 `stroke-width:7`；SVG 中先画时针、后画分针，重叠时分针在上。
+- **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；输入框基础圆角 8px，Material You
+  下为 12px，与全局输入设计一致。
 - **材质偏好**：毛玻璃压暗、模糊度、透明度由 `editor/js/studio-state.js` 保存、`studio.js` 同时算
   深浅色令牌、`studio.css` 末端统一应用，主题包不能绕开。
-- **UWP 特例**：固定 Windows 10 蓝 `#0078D7`，`window.SSAccent.set()` 在 UWP 下拒绝自定义强调色，
-  设置页取色控件同步禁用；形状走 2–4px 近直角、无 `backdrop-filter`。
+- **UWP 特例**：默认 Windows 10 蓝 `#0078D7`；仅在未自定义强调色时使用该默认值，`SSAccent.set()`
+  允许覆盖，设置页取色控件保持可用；形状走 2–4px 近直角、无 `backdrop-filter`。
 - **设置分类**：全局设置六个一级分类为「外观与体验 / 语音识别 / 翻译与术语 / 识别与校对 / 下载与登录 /
   性能与调度」；ASS 双语样式与后处理固定在稿件的 `#tab-settings`，不进全局设置。
+- **设置保存位置**：设置页不再渲染底部全局动作栏，改由「识别与校对」面板末尾的 `.st-panel-actions`
+  手动保存热词与强度；其它分类即时保存。`#st-msg` 作为设置页浮动状态（`.sf-settings-status`），
+  无消息时不占位，不再留下空框线；`#st-cancel` / `#st-test` 仅保留隐藏的 DOM 兼容节点。
 - **设置作用域**：字体/字号/颜色等 ASS 设置写入当前项目稿件，后处理特效属本机偏好；文件夹只在浏览器
   本地记录分组，不移动 `projects/` 实际文件。
 - **原型隔离**：`prototypes/` 各原型只用合成数据与独立命名空间，不连接真实 API、设置或 `projects/`；
@@ -399,6 +433,7 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 
 **2026-10-19（本次，已完成且已验证）**
 
+- 本轮 UI 增量：Material You 编辑器移除下拉字幕列表的补播动画（仅进入编辑器时播放入场）；`#sf-list-mode` 切换卡片/列表后只重播卡片入场，页头/筛选/搜索工具栏不参与动画也不刷新；专用 `home-view.is-view-switching` + 卡片 `data-view-enter` 使用 `uwp-view-in`/`my-view-in`（透明度始终 1、仅轻微位移），不再复用 `data-my-enter`/`data-uwp-enter`，动画结束不会掉回旧入场选择器导致二次闪烁；连点会清空上一轮并强制 reflow，每一轮都能重新起播。UWP 列表视图垂直 gap 从 2px 调到 6px；设置页动作栏移出右上角；UWP/MY 背景模式切换与 UWP 明暗切换使用 View Transition 交叉淡变。图标视觉微调：UWP 项目封面播放三角 `left:28.5px → 30px`，新建小组件加号 `translateY(-1px)`；MY 项目卡状态胶囊：`.pc-badges { margin-top:2px }`、`.pc-st { display:inline-flex; align-items:center; line-height:1; padding:3px 8px; margin-left:0 }`，上下留白对称；`.pc-actions { padding-left:8px }` 让标题、状态胶囊、按钮共用 x=271 左边界。全量回归 `_test/my-badge-align-full-20261019.json` 为 **98 通过 / 9 部分 / 0 失败 / 2 排除**。编辑器首屏波形/ASS 就绪提示改为 `toastAfterCueIntro()` 排队，等字幕卡入场类摘掉后再显示，避免弹窗打断列表动画；字幕卡出现间隔 MY `55→22ms`、UWP `14→8ms`，飞入/回弹单卡时长保持 420/180ms。UWP 首页动画已回退到本轮修改前的版本（不再使用 600ms 页面锁/首页专用排序），文件夹“＋”改为居中的内联 SVG。全量回归 `_test/home-anim-revert-full-20261019.json` 为 **98 通过 / 9 部分 / 0 失败 / 2 排除**。
 - 新增 **视频导出**（双语硬字幕 / 生肉 / ASS 字幕，可多选），§11。
 - 压制**GPU 优先**（NVIDIA → AMD → Intel → CPU），按「厂商 × 编码格式」逐项判断。
 - 新增 `editor/ffmpeg-tool.js`：ffmpeg 定位与按需自动下载；「前置」新增状态卡与下载入口。

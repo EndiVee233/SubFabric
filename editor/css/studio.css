@@ -408,6 +408,13 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   scrollbar-width: thin;
   scrollbar-color: var(--bg-3) transparent;
 }
+/* 字幕列表滚动条比全局 25% 更亮，深色主题下也能看清当前位置。 */
+#cue-list { scrollbar-color: color-mix(in srgb, var(--muted) 70%, transparent) transparent; }
+#cue-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+  background-clip: content-box;
+}
+#cue-list::-webkit-scrollbar-thumb:hover { background: var(--accent); background-clip: content-box; }
 #cue-spacer { position: relative; width: 100%; }
 /* 虚拟滚动: 顶部占位把"可视窗口"顶到正确的滚动位置(高度由 JS 按实测行高算出) */
 .cue-pad { width: 100%; }
@@ -647,6 +654,18 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   padding: 8px;
   display: flex; flex-direction: column; gap: 6px;
 }
+@keyframes role-card-in {
+  from { opacity: 0; transform: translateY(10px) scale(.96); }
+  to { opacity: 1; transform: none; }
+}
+/* 进入角色页时，卡片按 DOM 顺序逐个淡入、轻微放大并上移到位。 */
+.sf-studio .role-list.is-role-entering .role-card {
+  animation: role-card-in 260ms cubic-bezier(.2,.8,.2,1) both;
+  animation-delay: calc(var(--role-i, 0) * 32ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sf-studio .role-list.is-role-entering .role-card { animation: none; }
+}
 .role-card {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 12px;
@@ -676,6 +695,20 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   padding: 12px;
   display: flex; flex-direction: column; gap: 14px;
 }
+@keyframes settings-group-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+/* 进入编辑器设置页时，分组卡片按 DOM 顺序逐个淡入并轻微上浮。 */
+.sf-studio #tab-settings .settings-list.is-settings-entering > .set-group,
+.sf-studio #tab-settings .settings-list.is-settings-entering > .st-card {
+  animation: settings-group-in 260ms cubic-bezier(.2,.8,.2,1) both;
+  animation-delay: calc(var(--settings-i, 0) * 36ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sf-studio #tab-settings .settings-list.is-settings-entering > .set-group,
+  .sf-studio #tab-settings .settings-list.is-settings-entering > .st-card { animation: none; }
+}
 .setting-row {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px;
@@ -702,6 +735,21 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .set-group .setting-row { background:transparent; border:none; border-radius:0; padding:4px 0; }
 .set-group .setting-name { width:92px; }
 .set-group .export-grid { margin-top:2px; }
+/* 列表宽度可拖动：滑块先收缩，右侧数值保持在自己的列内。 */
+#tab-settings .settings-list .setting-row { min-width:0; gap:8px; }
+#tab-settings .settings-list .setting-row .setting-name { flex:0 1 92px; width:auto; min-width:56px; }
+#tab-settings .settings-list .setting-row .range { flex:1 1 0; width:auto; min-width:44px; }
+#tab-settings .settings-list .setting-row .setting-val { flex:0 0 auto; width:auto; min-width:52px; white-space:nowrap; }
+/* 中英上下顺序的判定说明独占一行，避免和下拉框挤在同一行被折成两行。 */
+#tab-settings .ass-order-row { flex-wrap:wrap; }
+#tab-settings #ass-style-order-val {
+  flex:0 0 100%;
+  width:auto; min-width:0;
+  margin:2px 0 0;
+  text-align:left;
+  white-space:normal;
+  font-size:10.5px; line-height:1.6;
+}
 #word-convert-group .setting-row { flex-wrap: wrap; }
 #word-convert-group .setting-row .select { flex: 1; min-width: 130px; }
 #word-convert-hint { line-height: 1.5; }
@@ -2339,6 +2387,14 @@ select.note-dur {
   border: 1px solid var(--border); border-radius: 5px;
   font-size: 11.5px; padding: 2px 4px;
 }
+/* 备注条三件套统一高度；MY 的输入框圆角跟卡片/输入设计一致。 */
+#note-bar #note-input,
+#note-bar select.note-dur,
+#note-bar #btn-note-send { height:34px; min-height:34px; box-sizing:border-box; }
+#note-bar #note-input { padding:0 10px; border-radius:8px; }
+#note-bar select.note-dur { padding:0 24px 0 9px; }
+#note-bar #btn-note-send { padding:0 16px; display:inline-flex; align-items:center; justify-content:center; line-height:1; }
+.sf-studio[data-design=material] #note-bar #note-input { border-radius:12px; }
 
 /* ── 备注弹幕层（置顶弹幕）──────────────────────────────────────── */
 #danmaku-layer {
@@ -3176,6 +3232,9 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-folder-head { display:flex; justify-content:space-between; align-items:center; padding:24px 14px 8px; font-size:10px; color:var(--muted); }
 .sf-folder-head button { background:none; border:0; color:var(--muted); font-size:20px; cursor:pointer; }
 #sf-folders { overflow-y:auto; min-height:0; }
+/* MY：文件夹列表不显示右侧滚动条，仍可用滚轮/触控板滚动。 */
+.sf-studio[data-design=material] #sf-folders { scrollbar-width:none; }
+.sf-studio[data-design=material] #sf-folders::-webkit-scrollbar { width:0; height:0; display:none; }
 .sf-folder { display:flex; align-items:center; }
 .sf-folder>button:first-child { border:0; background:none; color:var(--muted); display:flex; gap:10px; align-items:center; padding:10px 13px; border-radius:12px; min-width:0; flex:1; text-align:left; cursor:pointer; }
 .sf-folder>button:first-child.active { background:var(--accent-soft); color:var(--accent); }
@@ -3214,8 +3273,8 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-mu .sf-flower>span svg { width: 100%; height: 100%; overflow: visible; filter: drop-shadow(0 8px 12px color-mix(in srgb, var(--accent) 16%, transparent)); }
 .sf-mu .sf-flower>span path { fill: currentColor; }
 .sf-mu .sf-flower>span .sf-mu-clock-hand { stroke:var(--accent); stroke-linecap:round; }
-.sf-mu .sf-flower>span .sf-mu-clock-hour { stroke:color-mix(in srgb, var(--accent) 70%, #fff); stroke-width:8; }
-.sf-mu .sf-flower>span .sf-mu-clock-minute { stroke:color-mix(in srgb, var(--accent) 92%, #fff); stroke-width:6; }
+.sf-mu .sf-flower>span .sf-mu-clock-hour { stroke:color-mix(in srgb, var(--accent) 70%, #fff); stroke-width:7; }
+.sf-mu .sf-flower>span .sf-mu-clock-minute { stroke:color-mix(in srgb, var(--accent) 92%, #fff); stroke-width:7; }
 .sf-mu .sf-flower>span .sf-mu-clock-second { fill:color-mix(in srgb, var(--accent) 86%, #fff); }
 .sf-mu .sf-flower:hover > span { transform:scale(1.04); filter:brightness(1.05); }
 .sf-mu .sf-flower:active > span { transform:scale(.97); }
@@ -3355,6 +3414,16 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-studio .sf-settings-heading p { color:var(--muted); font-size:12px; line-height:1.8; margin:0; }
 .sf-studio .sf-settings-scope { display:inline-block; padding:4px 9px; border-radius:999px; background:var(--accent-soft); color:var(--accent); font-size:10px; }
 .sf-studio .sf-settings-heading p.sf-settings-save-note { margin-top:8px; font-size:11px; }
+/* 设置页状态：不占布局，只有出现消息时才以浮动提示显示；空态不留下任何框线。 */
+body.sf-studio .sf-settings-status { position:fixed; left:50%; bottom:24px; z-index:6000; width:max-content; max-width:min(640px,calc(100vw - 48px)); margin:0; padding:0; transform:translateX(-50%); background:transparent; pointer-events:none; }
+body.sf-studio:not([data-workspace=settings]) .sf-settings-status { display:none; }
+body.sf-studio .sf-settings-status .st-msg { display:block; margin:0; padding:9px 14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:var(--text); font-size:11px; line-height:1.6; box-shadow:0 8px 24px #0006; pointer-events:auto; }
+body.sf-studio .sf-settings-status .st-msg:empty { display:none; }
+body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 48%,var(--line)); }
+/* 识别与校对的手动保存留在面板末尾，随内容滚动，不再占用全局动作栏。 */
+.sf-studio #st-view .st-panel-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin:0; padding:16px 2px 2px; border-top:1px solid var(--line); }
+.sf-studio #st-view .st-panel-actions .sf-settings-save-note { margin-right:auto; color:var(--muted); font-size:11px; line-height:1.7; }
+.sf-studio #st-view .st-panel-actions #st-save { min-width:76px; }
 .sf-studio #st-view .st-card,.sf-studio #st-view .set-group,.sf-studio #st-view .st-section { background:color-mix(in srgb,var(--surface) 97%,transparent); border:1px solid var(--line); border-radius:18px; padding:22px; margin:0; box-shadow:0 4px 20px -16px #14221b40; }
 .sf-studio #st-view .st-card-title,.sf-studio #st-view .set-group-title,.sf-studio #st-view .st-section-title { font-size:14px; font-weight:550; }
 .sf-studio #st-view h3 { font-size:15px; font-weight:550; color:var(--text); margin:0 0 6px; }
@@ -3376,11 +3445,6 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-studio .sf-settings-details { margin-top:16px; border-top:1px solid var(--line); padding-top:12px; color:var(--muted); font-size:12px; line-height:1.8; }
 .sf-studio .sf-settings-details summary { cursor:pointer; color:var(--accent); padding:2px 0; }
 .sf-studio .sf-settings-details[open] summary { margin-bottom:10px; }
-.sf-studio #st-view .st-actions { grid-column:2; padding:13px 16px; border:1px solid var(--line); border-radius:14px; gap:8px; background:color-mix(in srgb,var(--surface) 96%,transparent); box-shadow:0 4px 20px -16px #14221b40; flex-wrap:wrap; }
-.sf-studio .sf-settings-footer-note { flex:1 1 170px; font-size:10px; line-height:1.7; color:var(--muted); }
-.sf-studio #st-view .st-actions .st-msg:empty,.sf-studio #st-view .st-actions .st-spacer { display:none; }
-.sf-studio #st-view .st-actions .st-msg:not(:empty) { flex:1 1 100%; font-size:11px; order:2; }
-.sf-studio #st-view .st-actions .btn { flex-shrink:0; font-size:11px; min-height:34px; }
 .sf-studio .sf-settings-backgrounds { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:22px 0 14px; }
 .sf-studio .sf-background-choice { min-width:0; text-align:left; padding:7px; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:var(--text); cursor:pointer; transition:transform .2s var(--sf-spring),border-color .2s; }
 .sf-studio .sf-background-choice:hover { transform:translateY(-2px); border-color:var(--accent); }
@@ -3414,6 +3478,12 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-studio #st-view .sf-settings-color { flex-wrap:nowrap; }
 .sf-studio #st-view .sf-settings-color .sscp-control { flex:0 0 auto; }
 .sf-studio .sf-settings-swatches { flex-wrap:wrap; gap:12px; }
+/* 自定义主题色与色板共用一块遮罩；圆角随主题（MY 24px / UWP 2px）。 */
+.sf-studio .sf-theme-color-panel { margin-top:16px; padding:16px 18px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+.sf-studio .sf-theme-color-panel .sf-settings-line { padding:0; border-top:0; }
+.sf-studio .sf-theme-color-panel .sf-settings-swatches { margin-top:14px; padding:14px 0 0; border-top:1px solid var(--line); }
+.sf-studio[data-design=material] .sf-theme-color-panel { border-radius:24px; }
+.sf-studio[data-design=uwp] .sf-theme-color-panel { border-radius:2px; }
 .sf-studio #st-view .st-hw { background:var(--surface-2); border-color:var(--line); border-radius:12px; color:var(--muted); }
 .sf-studio #st-view .st-subhead { align-items:center; gap:12px; flex-wrap:wrap; }
 .sf-studio #st-view .st-subtitle-strong { font-size:14px; color:var(--text); }
@@ -3435,6 +3505,9 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-theme-pack-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
 .sf-pack { position:relative; min-width:0; background:var(--surface-2); border:1px solid var(--line); border-radius:20px; color:var(--text); }
 .sf-pack[aria-current=true] { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 24%,transparent); }
+/* MY：悬浮到其它主题卡时点亮 1px 强调色边框；当前卡已有 2px 选中环。 */
+.sf-studio[data-design=material] .sf-pack { transition:border-color .16s ease; }
+.sf-studio[data-design=material] .sf-pack:not([aria-current=true]):hover { border-color:var(--accent); }
 .sf-pack-select { display:block; width:100%; min-width:0; padding:12px 42px 12px 12px; background:transparent; border:0; color:inherit; text-align:left; cursor:pointer; }
 .sf-pack-select:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; border-radius:18px; }
 .sf-pack-name { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:12px 5px 4px; }
@@ -3453,6 +3526,13 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-pack-art.material .sf-pack-symbol { border-radius:0; clip-path:polygon(50% 0%,61% 7%,75% 5%,82% 18%,95% 25%,93% 39%,100% 50%,93% 61%,95% 75%,82% 82%,75% 95%,61% 93%,50% 100%,39% 93%,25% 95%,18% 82%,5% 75%,7% 61%,0% 50%,7% 39%,5% 25%,18% 18%,25% 5%,39% 7%); }
 .sf-pack-lines { min-width:0; flex:1; display:grid; gap:8px; }
 .sf-pack-lines i { height:8px; background:var(--preview-accent); border-radius:20px; width:65%; opacity:.6; }
+/* 示意图按卡片自身的 design 取圆角，不随当前启用主题切换（MY 下 Windows 10 仍是小圆角）。 */
+.sf-pack-art { --pack-art-radius:12px; --pack-symbol-radius:12px; --pack-line-radius:20px; border-radius:var(--pack-art-radius)!important; }
+.sf-pack-art .sf-pack-symbol { border-radius:var(--pack-symbol-radius)!important; }
+.sf-pack-art .sf-pack-lines i { border-radius:var(--pack-line-radius)!important; }
+.sf-pack-art.uwp { --pack-art-radius:2px; --pack-symbol-radius:2px; --pack-line-radius:0; }
+.sf-pack-art.material { --pack-art-radius:24px; --pack-symbol-radius:0; --pack-line-radius:20px; }
+.sf-pack-art.classic { --pack-art-radius:8px; --pack-symbol-radius:8px; --pack-line-radius:8px; }
 .sf-pack-lines i:first-child { height:24px; width:100%; opacity:.35; }
 .sf-theme-tools { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
 /* 外观行在分组之外，不能沿用旧设置行写死的深色背景。 */
@@ -3704,9 +3784,6 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio .sf-scheme-open .st-scheme-desc { font-size:12px; line-height:1.6; }
 .sf-studio .st-tag-cur { color:var(--accent); background:var(--accent-soft); border-radius:999px; padding:3px 8px; }
 .sf-studio[data-design=material] #st-view .sf-scheme-open { border-radius:20px; }
-.sf-studio #st-view .st-actions { background:transparent; border:0; box-shadow:none; padding:6px 0; }
-.sf-studio .sf-settings-footer-note { display:none; }
-.sf-studio #st-view .st-actions #st-cancel { margin-left:auto; }
 .sf-studio .pc-draft-bar { height:8px; }
 .sf-studio[data-design=material] .pc-draft-bar.sf-progress { height:24px; --sf-thumb:14px; }
 .sf-studio[data-design=material] .pc-draft-bar :is(.sf-progress-rest,.sf-progress-line) { height:8px; top:calc(50% - 4px); border-radius:8px; }
@@ -3759,6 +3836,7 @@ body.sf-studio .sf-unavailable { opacity: .5; }
   color:var(--text);
   transition:background .16s, border-color .16s, transform .22s var(--sf-spring);
 }
+.sf-studio #sf-folder-add .ico { width:18px; height:18px; vertical-align:0; }
 .sf-studio .sf-folder-head button:hover { background:var(--surface-2); border-color:var(--line); transform:translateY(-1px); }
 .sf-studio .sf-folder-head button:active { transform:scale(.94); }
 .sf-studio .sf-folder>button:first-child:focus-visible { border-radius:12px; }
@@ -4477,14 +4555,10 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio .sf-rim-head h3 { margin: 0; color: var(--text); font-size: 14px; font-weight: 600; }
 .sf-studio .sf-rim-head .gl-hint { max-width: 560px; margin: 5px 0 0; }
 .sf-studio .sf-rim-badge { display: inline-flex; align-items: center; height: 17px; padding: 0 6px; border-radius: 999px; background: var(--accent-soft); color: var(--on-container, var(--accent)); font-size: 9px; font-weight: 500; vertical-align: 1px; }
-.sf-studio .sf-rim-toggle { display: flex; align-items: center; gap: 7px; flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; cursor: pointer; }
-.sf-studio .sf-rim-toggle input { position: absolute; opacity: 0; pointer-events: none; }
-.sf-studio .sf-rim-toggle span { position: relative; padding-left: 34px; }
-.sf-studio .sf-rim-toggle span::before { content: ""; position: absolute; left: 0; top: 50%; width: 26px; height: 15px; margin-top: -8px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface-2); }
-.sf-studio .sf-rim-toggle span::after { content: ""; position: absolute; left: 3px; top: 50%; width: 9px; height: 9px; margin-top: -5px; border-radius: 50%; background: var(--muted); transition: transform .16s, background .16s; }
-.sf-studio .sf-rim-toggle input:checked + span::before { background: var(--accent-soft); border-color: var(--accent); }
-.sf-studio .sf-rim-toggle input:checked + span::after { transform: translateX(11px); background: var(--accent); }
-.sf-studio .sf-rim-toggle input:focus-visible + span::before { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sf-studio .sf-rim-toggle { flex: none; gap: 7px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.sf-studio .sf-rim-toggle .switch-slider { flex: none; }
+.sf-studio .sf-rim-toggle-label { padding: 0; }
+.sf-studio .switch.sf-rim-toggle input:focus-visible + .switch-slider { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .sf-studio .sf-rim-panel { display: grid; grid-template-columns: minmax(0, 1.45fr) 244px; gap: 18px; align-items: center; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--surface-2) 62%, transparent); }
 .sf-studio .sf-rim-chart-wrap { min-width: 0; }
@@ -4854,7 +4928,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=uwp] .sf-widget-resume .sf-widget-title { font-size:24px; line-height:1.28; letter-spacing:-.015em; max-width:300px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
 .sf-studio[data-design=uwp] .sf-widget-resume .sf-widget-cta { color:var(--accent); font-size:13px; }
 .sf-studio[data-design=uwp] .sf-widget[data-widget=new] .sf-widget-plus { display:grid; place-items:center; width:48px; height:48px; flex:none; border:1px solid color-mix(in srgb, var(--accent) 28%, transparent); border-radius:2px; background:color-mix(in srgb, var(--accent) 10%, transparent); color:var(--accent); }
-.sf-studio[data-design=uwp] .sf-widget[data-widget=new] .sf-widget-plus svg { width:24px; height:24px; }
+.sf-studio[data-design=uwp] .sf-widget[data-widget=new] .sf-widget-plus svg { width:24px; height:24px; transform:translateY(-1px); }
 .sf-studio[data-design=uwp] .sf-widget[data-widget=new] .sf-widget-text { display:flex; flex-direction:column; gap:5px; min-width:0; }
 .sf-studio[data-design=uwp] .sf-widget[data-widget=new] .sf-widget-title { font-size:18px; }
 .sf-studio[data-design=uwp] .sf-widget[data-widget=new] .sf-widget-arrow { display:block; margin-left:auto; color:var(--accent); font-size:18px; line-height:1; }
@@ -4902,6 +4976,21 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 /* UWP 页面整体从后往前放大淡入；元素由 JS 按“下→上、右→左”写 --uwp-enter-delay。 */
 @keyframes uwp-page-back-in { from { opacity:0; transform:scale(.92); } to { opacity:1; transform:none; } }
 @keyframes uwp-enter-item { from { opacity:0; transform:scale(.94); } to { opacity:1; transform:none; } }
+/* Grid/list switch: keep cards visible, only a small transform settle. */
+@keyframes uwp-view-in { from { opacity:1; transform:scale(.96); } to { opacity:1; transform:none; } }
+@keyframes my-view-in { from { opacity:1; translate:0 10px; } to { opacity:1; translate:0 0; } }
+.sf-studio[data-design=uwp] #home-view.is-view-switching .proj-card[data-view-enter] {
+  animation:uwp-view-in var(--uwp-enter-duration,180ms) cubic-bezier(.2,.8,.2,1) both!important;
+  animation-delay:var(--view-enter-delay,0ms);
+}
+.sf-studio[data-design=material] #home-view.is-view-switching .proj-card[data-view-enter] {
+  animation:my-view-in var(--sf-card-duration,.42s) cubic-bezier(.2,.8,.2,1) both!important;
+  animation-delay:var(--view-enter-delay,0ms);
+}
+@media (prefers-reduced-motion:reduce) {
+  .sf-studio[data-design=uwp] #home-view.is-view-switching .proj-card[data-view-enter],
+  .sf-studio[data-design=material] #home-view.is-view-switching .proj-card[data-view-enter] { animation:none; }
+}
 @keyframes uwp-panel-in { from { opacity:0; transform:scale(.96); } to { opacity:1; transform:none; } }
 /* 编辑器打开：整页轻微放大淡入；右侧字幕卡自上而下快速错峰上浮。 */
 @keyframes uwp-editor-in { from { opacity:0; transform:scale(.97); } to { opacity:1; transform:none; } }
@@ -5117,7 +5206,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=uwp] .home-list > .proj-card .sf-cover > svg { display:none; }
 .sf-studio[data-design=uwp] .home-list > .proj-card .sf-cover > span { color:#cfdde5; font:600 8px/1 "Cascadia Mono",Consolas,monospace; letter-spacing:.16em; }
 .sf-studio[data-design=uwp] .home-list > .proj-card .sf-cover::before { content:""; position:absolute; left:14px; bottom:14px; width:38px; height:38px; border:1px solid rgb(255 255 255/.22); border-radius:2px; background:rgb(255 255 255/.05); }
-.sf-studio[data-design=uwp] .home-list > .proj-card .sf-cover::after { content:""; position:absolute; left:28.5px; bottom:27px; border-left:9px solid #fff; border-top:6px solid transparent; border-bottom:6px solid transparent; }
+.sf-studio[data-design=uwp] .home-list > .proj-card .sf-cover::after { content:""; position:absolute; left:30px; bottom:27px; border-left:9px solid #fff; border-top:6px solid transparent; border-bottom:6px solid transparent; }
 /* 右下角“打开稿件库”是其它主题的入口；UWP 主页已有底部稿件库磁贴，不再重复。 */
 .sf-studio[data-design=uwp] #dashboard-view .dashboard-foot { display:none; }
 .sf-studio[data-design=uwp] .home-list > .proj-card .pc-badge { top:12px; left:12px; z-index:2; }
@@ -5811,7 +5900,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=uwp] .pc-badges:empty { display:none; }
 .sf-studio[data-design=uwp] .pc-badges .pc-st { margin-left:0; }
 /* 列表视图：34px 封面 + 标题/元信息 + 动作，而不是压缩卡片。 */
-.sf-studio[data-design=uwp] #home-view[data-list=list] .home-list { gap:2px; }
+.sf-studio[data-design=uwp] #home-view[data-list=list] .home-list { gap:6px; }
 .sf-studio[data-design=uwp] #home-view[data-list=list] .proj-card {
   display:grid; grid-template-columns:34px minmax(0,1fr) auto; grid-template-areas:"cover main actions";
   align-items:center; gap:10px; min-height:52px; padding:7px 10px 7px 13px;
@@ -6006,17 +6095,6 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   background:var(--accent); border-radius:1px;
 }
 
-/* 设置页动作栏：回到内容底部，右上角不再浮按钮；返回交给侧边栏。
-   保存仍留在 enhance 面板底部，st-cancel 仅保留 DOM 兼容测试/旧路由。 */
-.sf-studio #st-view .st-actions {
-  position:static; top:auto; right:auto; width:auto; max-width:none;
-  grid-column:1 / -1; grid-row:3; justify-content:flex-end;
-  margin:0; padding:12px 20px; border-top:1px solid var(--line);
-}
-.sf-studio #st-view .st-actions #st-cancel { display:none; }
-.sf-studio[data-design=uwp] #st-view .st-actions { padding:10px 12px; background:var(--surface); border:1px solid var(--line); border-radius:2px; }
-||||||| D:/tmp/base/editor/css/studio.css
-
 /* ══════════════════════════════════════════════════════════════════════
  * 导出视频对话框（js/export-video.js 动态创建，模板里只有一个触发按钮）
  * 全部走主题令牌，四个主题包共用同一套结构；Material You / UWP 只改圆角。
@@ -6124,4 +6202,14 @@ body.sf-ev-open { overflow: hidden; }
   .sf-ev-backdrop { padding: 0; align-items: flex-end; }
   .sf-ev-panel { width: 100%; max-height: 92vh; border-radius: 18px 18px 0 0; }
   .sf-ev-grid { grid-template-columns: minmax(0, 1fr); }
+}
+/* MY 项目卡状态胶囊：与标题、按钮同一条左边线；上下留白对称。 */
+.sf-studio[data-design=material] .home-list > .proj-card .pc-badges { margin-top:2px; }
+.sf-studio[data-design=material] .home-list > .proj-card .pc-st {
+  display:inline-flex; align-items:center; line-height:1;
+  padding:3px 8px;
+  margin-left:0;
+}
+.sf-studio[data-design=material] .home-list > .proj-card .pc-actions {
+  padding-left:8px;
 }

@@ -116,6 +116,10 @@ export class EditorPanel {
     this._menuPos = { x: 0, y: 0 };
     this._renameRole = null;
     this._colorRole = null;
+    this._roleEnterTimer = 0;
+    this._roleEnterPlayed = false;   // 本次进入编辑器后，角色列表入场动画是否已播放
+    this._settingsEnterTimer = 0;
+    this._settingsEnterPlayed = false; // 同上，设置页逐个卡片入场
 
     this._bind();
   }
@@ -271,8 +275,15 @@ export class EditorPanel {
     this.badgeEl.className = 'badge' + (cls ? ' ' + cls : '');
   }
 
-  /** 面板标题显示当前字幕文件名 */
+  /** 标记一次新的编辑器会话，让角色/设置页的入场动画各只播一次。 */
+  resetEntranceAnimations() {
+    this._roleEnterPlayed = false;
+    this._settingsEnterPlayed = false;
+  }
+
+  /** 面板标题显示当前字幕文件名；载入/切换文件即视为重新进入编辑器。 */
   setFileName(name) {
+    this.resetEntranceAnimations();
     if (!this.phName) return;
     this.phName.textContent = name || '字幕总览';
     this.phName.title = name || '';
@@ -381,7 +392,17 @@ export class EditorPanel {
        * （用户反馈"切到字幕列表后进度不会和播放进度同步"）。 */
       if (prevTab !== 'subs' && !opts.skipSync) this.syncPlaying();
     }
-    else if (name === 'roles') this._renderRoles();
+    else if (name === 'roles') {
+      /* 每次进入编辑器只让第一次点开角色列表播放入场；之后切回/切走都不再重播。 */
+      const animate = !this._roleEnterPlayed;
+      this._roleEnterPlayed = true;
+      this._renderRoles(animate);
+    }
+    else if (name === 'settings') {
+      const animate = !this._settingsEnterPlayed;
+      this._settingsEnterPlayed = true;
+      if (animate) this._animateSettings();
+    }
   }
 
   /** 角色(说话人)列表, 由主逻辑解析后灌入; 仅在角色 Tab 可见时渲染 */
@@ -432,20 +453,21 @@ export class EditorPanel {
       card.classList.toggle('is-speaking', !!active && card.dataset.name.toLowerCase() === active);
     });
   }
-  _renderRoles() {
+  _renderRoles(animate = false) {
     const el = document.getElementById('role-list');
     if (!el) return;
+    el.classList.remove('is-role-entering');
     const activeRole = this._activeRoleName();
-    const cards = this._roles.map(r => {
+    const cards = this._roles.map((r, i) => {
       const c = r.color ? hexRgb(r.color) : null;
       const dot = c ? `style="background:rgb(${c.r},${c.g},${c.b})"` : 'style="background:#5b6472"';
-      return `<div class="role-card${r.name === activeRole ? ' is-speaking' : ''}" data-name="${escapeHtml(r.name)}" title="点一下=设为播放头所在块的角色 · 右键=重命名 / 改色">
+      return `<div class="role-card${r.name === activeRole ? ' is-speaking' : ''}" style="--role-i:${i}" data-name="${escapeHtml(r.name)}" title="点一下=设为播放头所在块的角色 · 右键=重命名 / 改色">
         <span class="role-dot" ${dot}></span>
         <span class="role-name">${escapeHtml(r.name)}</span>
         <span class="role-count">${r.count} 条</span>
       </div>`;
     });
-    cards.push(`<div class="role-card role-add" data-act="add" title="添加一个新角色(如 译者注)">＋ 添加角色</div>`);
+    cards.push(`<div class="role-card role-add" style="--role-i:${this._roles.length}" data-act="add" title="添加一个新角色(如 译者注)">＋ 添加角色</div>`);
     el.innerHTML = cards.join('');
     el.querySelectorAll('.role-card').forEach(card => {
       if (card.dataset.act === 'add') {
@@ -461,6 +483,32 @@ export class EditorPanel {
         if (role) this._showRoleMenu(e.clientX, e.clientY, role);
       });
     });
+    if (animate && cards.length) {
+      /* 强制一次布局让新节点从起始态开始；结束后摘类，后续数据刷新不再重播。 */
+      void el.offsetWidth;
+      el.classList.add('is-role-entering');
+      clearTimeout(this._roleEnterTimer);
+      this._roleEnterTimer = setTimeout(() => el.classList.remove('is-role-entering'), 260 + (cards.length - 1) * 32 + 80);
+    }
+  }
+
+  /** 首次打开设置页：分组卡片逐个淡入并轻微上浮。 */
+  _animateSettings() {
+    const list = document.querySelector('#tab-settings .settings-list');
+    if (!list) return;
+    const items = [...list.children].filter(el =>
+      (el.classList.contains('set-group') || el.classList.contains('st-card'))
+      && !el.hidden && getComputedStyle(el).display !== 'none');
+    if (!items.length) return;
+    list.classList.remove('is-settings-entering');
+    items.forEach((el, i) => el.style.setProperty('--settings-i', i));
+    void list.offsetWidth;
+    list.classList.add('is-settings-entering');
+    clearTimeout(this._settingsEnterTimer);
+    this._settingsEnterTimer = setTimeout(() => {
+      list.classList.remove('is-settings-entering');
+      items.forEach(el => el.style.removeProperty('--settings-i'));
+    }, 260 + (items.length - 1) * 36 + 80);
   }
 
   /* ─────────── 通用确认弹窗 ─────────── */

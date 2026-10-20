@@ -16,9 +16,7 @@
   验证：8321 实测切换时 `data-mode-transition="uwp-fade"` 出现并在过渡后清理；`uwp-theme-test` 新增分支与 CSS 断言；完整 JS 回归 `_test/uwp-fade-full-20261019.json` 为 **96 通过、9 部分、0 失败、2 排除**。
   改动：`editor/js/studio.js`、`editor/css/studio.css`、`tests/uwp-theme-test.mjs`、`tests/jsmod/studio.js`、STATUS。
 
-- 当前任务（2026-10-19）：Material You 下滑时的字幕块入场动画，**已完成且已验证**。`animateMaterialCueList` 不再只按 `sf-cue-rendered` 的 added 批次立刻播放，而是用 `getBoundingClientRect()` 只挑真正进入 `#cue-list` 视口的卡片；`#cue-list` 滚动时通过 `requestAnimationFrame` 调用 `animateMaterialCueList()`，虚拟列表预渲染/overscan 的卡片等滚到眼前才播放；`materialCueSeen` 按 `hash|idx` 去重，旧卡/重叠窗口不重播，离开编辑器/换项目后重置。
-  验证：8321 实测初始只标记 6 张可见卡，下滑到 1200 后新进入视口的卡片重新从 0/55/110…ms 起播；完整 JS 回归 `_test/my-scroll-full-20261019.json` 为 **96 通过、9 部分、0 失败、2 排除**；`material-home-test` 增加滚动监听与去重断言。截图 `_tmp/uwp-batch/settings-no-top-buttons.png` 仅作为上一任务参考。
-  改动：`editor/js/studio.js`、`tests/material-home-test.mjs`、`tests/jsmod/studio.js`、STATUS/UI_INTEGRATION/PROJECT_MAP。
+- 已撤销（2026-10-19）：Material You 下滑字幕列表的补播动画。用户随后要求去掉下拉滚动时的动效，现已移除 `#cue-list` 的 scroll 监听，`sf-cue-rendered` 仅在 `materialEditorPending`（进入编辑器）时播放；滚动新渲染的卡片保持静止。
 
 - 当前任务（2026-10-19）：设置页右上角不再出现任何按钮，**已完成且已验证**。`.st-actions` 从 `position:absolute; top:28px; right:34px` 的右上浮层改回 `grid-row:3` 的底部动作栏；`#st-cancel` 隐藏，返回完全交给侧边栏；`#st-save` 改为“保存”且保存后不跳转（侧边栏负责离开），不再有“保存并返回”的重复导航。
   验证：1300×828 实测右上角为空，动作栏位于设置内容底部（y≈1945），`#st-cancel` computed `display:none`，`#st-save` 文本为“保存”；`studio-navigation-test` 改为断言保存后仍停在 `#/settings`；`uwp-theme-test` 新增动作栏静态/隐藏断言；完整 JS 回归 `_test/settings-actions-bottom-full-20261019.json` 为 **96 通过、9 部分、0 失败、2 排除**。

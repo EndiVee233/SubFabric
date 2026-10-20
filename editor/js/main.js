@@ -150,7 +150,8 @@ video.addEventListener('click', (e) => {
 /* ─────────── 模块实例 ─────────── */
 const overlay = new SrtOverlay(document.getElementById('srt-overlay'), video);
 const assPlayer = new AssPlayer(video, (msg) => {
-  toast(msg);
+  if (msg === 'ASS 渲染就绪') toastAfterCueIntro(msg);
+  else toast(msg);
   if (msg === 'ASS 渲染就绪' && state.format === 'ass' && assStyleEls.status) {
     assStyleEls.status.textContent = pendingFontNotice
       ? `ASS 预览已就绪；${pendingFontNotice}。`
@@ -237,6 +238,34 @@ function toast(msg, ms = 2600, forceKind) {
     el.classList.remove('toast-in');
     el.classList.add('toast-out');            // 动画结束后不用手动隐藏: 停在最后一帧(opacity 0)
   }, ms);
+}
+
+/* 进入编辑器时，波形/ASS 就绪提示如果在字幕卡入场期间弹出，会打断列表动画。
+   先把这类提示排队，等 cue-list 的入场类摘掉后再依次显示。 */
+const cueToastQueue = [];
+let cueToastTimer = 0, cueToastSince = 0;
+function flushCueToasts() {
+  if (!cueToastQueue.length) return;
+  const list = document.getElementById('cue-list');
+  const busy = !!list && (list.classList.contains('is-my-cue-entering') || list.classList.contains('is-uwp-cue-entering'));
+  if (busy && performance.now() - cueToastSince < 1600) {
+    clearTimeout(cueToastTimer);
+    cueToastTimer = setTimeout(flushCueToasts, 50);
+    return;
+  }
+  const item = cueToastQueue.shift();
+  toast(item.msg, item.ms);
+  if (cueToastQueue.length) {
+    clearTimeout(cueToastTimer);
+    cueToastTimer = setTimeout(flushCueToasts, 650);
+  } else {
+    cueToastSince = 0;
+  }
+}
+function toastAfterCueIntro(msg, ms) {
+  cueToastQueue.push({ msg, ms });
+  if (!cueToastSince) cueToastSince = performance.now();
+  flushCueToasts();
 }
 
 /* ─────────── 图标注入 ───────────
@@ -7019,7 +7048,7 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
-  state, video, timeline, panel, toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
+  state, video, timeline, panel, toast, toastAfterCueIntro, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
   logOp,   // ⚠ 必须经 ctx 传入：logOp 是本模块的局部函数，project.js 里 typeof logOp 恒为
            //   'undefined'（模块作用域互不相通），于是"加进热词表"那条操作日志从来没记上。
 });

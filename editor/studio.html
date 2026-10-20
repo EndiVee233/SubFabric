@@ -40,7 +40,7 @@
   <span class="sf-nav-label">工作空间</span>
   <a href="#/dashboard" data-route="dashboard" data-ico="home">主页</a>
   <a href="#/home" data-route="home" data-ico="folder">稿件库</a>
-  <div class="sf-folder-head"><span>文件夹</span><button type="button" id="sf-folder-add" aria-label="新建文件夹">＋</button></div>
+  <div class="sf-folder-head"><span>文件夹</span><button type="button" id="sf-folder-add" data-ico="plus" aria-label="新建文件夹"></button></div>
   <div id="sf-folders"></div>
   <div class="sf-nav-bottom"><a href="#/settings" data-route="settings" data-ico="sliders">设置</a><a href="#/help" data-route="help" data-ico="info">帮助与快捷键</a><p>本地工作空间 · 自动保存</p></div>
 </aside>
@@ -315,7 +315,7 @@
             <input id="ass-style-word-color" type="text" data-color-input="1" value="#00ff00">
             <span id="ass-style-word-color-val" class="ass-style-color-value">#00FF00</span>
           </div>
-          <div class="setting-row">
+          <div class="setting-row ass-order-row">
             <span class="setting-name" title="两轨都是底部对齐，谁在上由**对话行序**决定（先写的渲染在下面）。切换即重排 Dialogue 行序，预览与导出立刻生效；不动文本与时间">中英上下顺序</span>
             <select id="ass-style-order" class="btn">
               <option value="zh-top">中文在上</option>
@@ -468,6 +468,7 @@
             </div>
             </div>
             </div>
+            </div>
 
             <!-- 词生长（Grow）暂不符合预期，功能注释掉；保留引擎与旧存档配置解析。
                  需要恢复时取消本段注释，并移除 main.js 中 grow.enabled=false 的强制关闭。
@@ -611,8 +612,8 @@
         <div class="setting-note">设置存在本机浏览器里。</div>
       </div>
       </div>
-    </div>
-    <!-- ⚠ 上面三个 </div> 依次闭合：最后一张设置卡片 / .settings-list / #tab-settings。
+    <!-- ⚠ 上面两个 </div> 依次闭合 .settings-list / #tab-settings；#editor-panel 与 #app
+         由后面的 </aside>、时间轴之后的 </div> 闭合，不能在这里提前关掉 #app。
          **#tab-settings 的闭合曾经缺失**，于是浏览器把紧随其后的 <div id="tab-logs">
          解析成了 #tab-settings 的**子元素** —— 切到「日志」页时 #tab-settings 是
          display:none，整块日志跟着被收缩成 0×0（数据其实都在，实测 15 条运行日志 + 4 条备注）。
@@ -1042,8 +1043,8 @@
         <button type="button" class="sf-flower" id="sf-mu-new" title="新建稿件">
           <span aria-hidden="true"><svg viewBox="0 0 100 100">
             <g id="sf-mu-flower-face"><path d="M50 0 L61 7 L75 5 L82 18 L95 25 L93 39 L100 50 L93 61 L95 75 L82 82 L75 95 L61 93 L50 100 L39 93 L25 95 L18 82 L5 75 L7 61 L0 50 L7 39 L5 25 L18 18 L25 5 L39 7 Z"/></g>
-            <line class="sf-mu-clock-hand sf-mu-clock-minute" id="sf-mu-clock-minute" x1="50" y1="50" x2="50" y2="17"/>
             <line class="sf-mu-clock-hand sf-mu-clock-hour" id="sf-mu-clock-hour" x1="50" y1="50" x2="50" y2="31"/>
+            <line class="sf-mu-clock-hand sf-mu-clock-minute" id="sf-mu-clock-minute" x1="50" y1="50" x2="50" y2="17"/>
             <circle class="sf-mu-clock-second" id="sf-mu-clock-second" cx="50" cy="14" r="3.2"/>
           </svg></span>
           <b>点击开始新的创作</b><small id="sf-mu-date">10月18日 星期六</small>
@@ -1547,9 +1548,10 @@
       </div>
 
     <!-- 左侧分类栏。这里**必须**用 .st-tabs（不能另套一层 wrapper）：
-         studio.css 的 `#st-view .st-box` 是 grid（192px + 1fr，三行 head/body/actions），
-         `.st-tabs` / `.st-body` / `.st-actions` 都是它的**直接子元素**并按 grid-area 定位。
+         studio.css 的 `#st-view .st-box` 是 grid（192px + 1fr），
+         `.st-tabs` / `.st-body` 都是它的**直接子元素**并按 grid-area 定位。
          套一层 wrapper 会让 grid 拿不到这些子元素 → 右栏被压成 0 宽（实测踩过）。
+         底部全局动作栏已移除；保存按钮在识别与校对面板末尾。
          JS 侧沿用 `.st-tab` + `data-stp`，切换逻辑不用改。 -->
     <div class="st-tabs" role="tablist" aria-label="设置分类" aria-orientation="vertical">
       <span class="sf-settings-nav-label">工作空间</span>
@@ -1854,7 +1856,7 @@
       </div>
       </div>
 
-      <div class="st-panel" id="st-panel-enhance" role="tabpanel" data-stp="enhance" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局默认</span><h2 id="sf-settings-heading-enhance">识别与校对</h2><p>从专有名词到逐词时间，逐步提高稿件的可靠性。</p><p class="sf-settings-save-note">热词列表与强度需手动保存；其余增强选项修改后即时保存。</p></div>
+      <div class="st-panel" id="st-panel-enhance" role="tabpanel" data-stp="enhance" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局默认</span><h2 id="sf-settings-heading-enhance">识别与校对</h2><p>从专有名词到逐词时间，逐步提高稿件的可靠性。</p><p class="sf-settings-save-note">其余增强选项修改后即时保存。</p></div>
         <div class="st-card">
           <div class="st-card-title">热词 <span class="st-card-note">一格一个单词 · ＋ 添加 · − 删除</span></div>
           <div id="ah-terms-list" class="hotword-list"></div>
@@ -2040,6 +2042,10 @@
             跟随翻译时这里留空也不会报错，直接用翻译那套。
           </p>
         </div>
+        <div class="st-panel-actions">
+          <span class="sf-settings-save-note">热词列表与强度需手动保存</span>
+          <button type="button" class="btn btn-accent" id="st-save" hidden>保存</button>
+        </div>
       </div>
 
       <!-- 外观与主题（设计稿 ① 的最后一个分类）。
@@ -2066,8 +2072,10 @@
           <p id="sf-theme-status" class="gl-hint" role="status">外观更改立即保存。</p>
         </div>
         <div class="st-card sf-theme-card"><h3>主题包与色彩</h3><p class="gl-hint">选择界面的轮廓与材质，再调整你的强调色。</p><div id="sf-theme-packs" class="sf-theme-packs"></div><div class="sf-theme-tools"><button type="button" class="btn" id="sf-theme-import">导入主题包</button><button type="button" class="btn" id="sf-theme-export">导出主题包</button><input type="file" id="sf-theme-file" accept=".json,application/json" hidden></div>
-          <div class="sf-settings-line setting-row sf-settings-color"><div><label for="sf-color">自定义主题色</label><p>只改界面强调色，不影响字幕颜色与角色色。</p></div><input type="text" id="sf-color" data-color-input="1" value="#5c7560" aria-label="自定义主题色"></div>
-          <div class="theme-row sf-settings-swatches"><div class="theme-swatches" data-theme-swatches="1"></div><label class="theme-custom" hidden><input type="text" data-color-input="1" id="theme-color-global" data-theme-color="1" value="#ff7a45">自定义</label><button type="button" class="btn btn-mini" id="theme-reset-global" data-theme-reset="1">恢复默认</button></div>
+          <div class="sf-theme-color-panel">
+            <div class="sf-settings-line sf-settings-color"><div><label for="sf-color">自定义主题色</label><p>只改界面强调色，不影响字幕颜色与角色色。</p></div><input type="text" id="sf-color" data-color-input="1" value="#5c7560" aria-label="自定义主题色"></div>
+            <div class="theme-row sf-settings-swatches"><div class="theme-swatches" data-theme-swatches="1"></div><label class="theme-custom" hidden><input type="text" data-color-input="1" id="theme-color-global" data-theme-color="1" value="#ff7a45">自定义</label><button type="button" class="btn btn-mini" id="theme-reset-global" data-theme-reset="1">恢复默认</button></div>
+          </div>
         </div>
         <div class="st-card sf-rim-card" id="sf-rim-card" hidden>
           <div class="sf-rim-head">
@@ -2075,7 +2083,7 @@
               <h3>描边映射曲线 <span class="sf-rim-badge">Material You</span></h3>
               <p class="gl-hint">背景饱和度越高，框线越亮而不是越艳；只作用于当前主题包。</p>
             </div>
-            <label class="sf-rim-toggle"><input type="checkbox" id="sf-rim-enabled" checked><span>启用</span></label>
+            <label class="switch sf-rim-toggle"><input type="checkbox" id="sf-rim-enabled" checked><span class="switch-slider"></span><span class="sf-rim-toggle-label">启用</span></label>
           </div>
           <div class="sf-rim-panel">
             <div class="sf-rim-chart-wrap">
@@ -2117,20 +2125,18 @@
           <p class="gl-hint sf-rim-note">kSat = 1.10 − (1.10 − 高饱和饱和倍率)·S^弯曲；kBri = 1.40 + 提亮·S^1.2 + 0.10·(1−V)。仅 Material You 生效，设置随浏览器保存。浅色表面使用更深色场、白高光按 0.45 压缩；曲线显示映射值。色场由 Material 强调色与容器色生成，自定义图片/流光不参与取色。</p>
         </div>
       </div>
-    </div>
-
-      <!-- 动作栏是 grid 的第 3 行（`#st-view .st-actions` 里定的 grid-row:3 且跨两列），
-           必须是 .st-box 的直接子元素 —— 放进 .st-body 会横跨不到整宽、也丢了那一行。 -->
-      <div class="st-actions">
-        <span id="sf-settings-footer-note" class="sf-settings-footer-note">外观更改即时保存。</span><button type="button" class="btn" id="st-test" hidden>测试连接</button>
-        <span class="st-msg" id="st-msg"></span>
-        <span class="st-spacer"></span>
+      <!-- 旧的全局动作栏已移除；仅保留隐藏的兼容节点，避免旧路由/探针找不到 #st-test / #st-cancel。 -->
+      <div class="sf-settings-legacy-actions" hidden>
+        <button type="button" class="btn" id="st-test" hidden>测试连接</button>
         <button type="button" class="btn" id="st-cancel">返回</button>
-        <button type="button" class="btn btn-accent" id="st-save" hidden>保存</button>
       </div>
     </div>
   </div>
 </div>
+</div>
+
+<!-- 设置页状态提示：不占设置面板布局，只有出现消息时才以浮动提示显示；空态完全隐藏。 -->
+<div class="sf-settings-status" aria-live="polite"><span class="st-msg" id="st-msg" role="status"></span></div>
 
 <script src="js/studio-themes.js"></script>
 <script src="js/studio-progress.js"></script>

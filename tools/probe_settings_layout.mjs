@@ -78,11 +78,11 @@ if (T.err) { console.log('  ✗ ' + T.err); ws.close(); edge.kill(); process.exi
 
 /* grid 骨架（studio.css 的 #st-view .st-box）要求 head / st-tabs / st-body 是**直接子元素**，
    否则 grid 拿不到它们、右栏会被压成 0 宽（实测踩过：多套一层 wrapper 就中招）。
-   st-actions 排在第 3 行、也是直接子元素，所以直接子节点应当是这四块。 */
-ok(Array.isArray(T.boxChildren) && T.boxChildren.length === 4
+   全局动作栏已移除，保存按钮在 #st-panel-enhance 末尾，所以直接子节点应当是这三块。 */
+ok(Array.isArray(T.boxChildren) && T.boxChildren.length === 3
   && T.boxChildren[0].includes('st-head') && T.boxChildren[1].includes('st-tabs')
-  && T.boxChildren[2].includes('st-body') && T.boxChildren[3].includes('st-actions'),
-  `.st-box 直接子节点是 head / st-tabs / st-body / st-actions（grid 骨架完整）`, JSON.stringify(T.boxChildren));
+  && T.boxChildren[2].includes('st-body'),
+  `.st-box 直接子节点是 head / st-tabs / st-body（grid 骨架完整）`, JSON.stringify(T.boxChildren));
 /* 分类数 = 5：设计稿 ② 把「字幕翻译」并成了模型设置里的二级 Tab（ASR / LLM），
    所以左侧不再单列它 —— 这里断言它**有自己的二级 Tab 入口**，不是孤儿面板。 */
 ok(T.navTabs && T.navTabs.length === 5, `左侧分类共 5 项`, JSON.stringify(T.navTabs));
