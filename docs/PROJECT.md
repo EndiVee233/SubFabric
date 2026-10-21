@@ -597,7 +597,9 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
   `_test/js-results-final-i18n.json`。
 - 「卡卡的 bin」临时目录已删除；需要的 XXL 运行时、`7z.exe` 与 MIT 许可证已迁入 `asr/faster-whisper-xxl/`
   与 `editor/scripts/`。
-- **尚未做**：1.4GB 运行时下载实测、完整 4 小时音频回归、打包后的 exe 冒烟、GitHub 提交（尚未提交 GitHub）。
+- **GitHub：云端提交成功且已核对**。已同步到 `EndiVee233/SubFabric` 的 `main`，本次提交 46 个文件；
+  已核对远程 ref、提交父级、关键文件内容与本地一致，远程已有的 Claude 主题和翻译修复保留。
+- **尚未做**：1.4GB 运行时下载实测、完整 4 小时音频回归、打包后的 exe 冒烟。
 
 **2026-10-19（历史快照，非本次验证）**
 
