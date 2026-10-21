@@ -1673,6 +1673,7 @@ export function initProjects(ctx) {
      *   与下面那次 /api/translate/config 无关，所以提到 try 之前无条件跑。 */
     initPerfPanel();        // 性能测试页（独立于模型列表，自己管自己的状态）
     initDualRatio();        // 双引擎分工下拉（事件委托，重渲染不失效）
+    initAsrParams();        // 模型参数面板（事件委托，下载轮询重渲染不失效）
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
@@ -2007,6 +2008,274 @@ function initDualRatio() {
   });
 }
 
+/* ── ASR 模型参数面板 ───────────────────────────────────────────────
+ * 模型行每秒随下载进度重渲染，参数编辑不能放进行内（输入框会丢焦点，折叠状态也会重置）。
+ * 所以做成独立的模态面板：行上只留「参数」入口和当前值摘要，编辑时 DOM 不受轮询影响。
+ * 参数 schema 由服务端 editor/asr-params.js 给出；这里只负责展示、校验和提交。 */
+let asrParamDialog = null;
+let asrParamLastFocus = null;
+let asrParamState = { model: null, schema: [], values: {}, defaults: {}, isDefault: true };
+let asrParamClosing = false;
+let asrParamCloseTimer = 0;
+let asrParamCloseHandler = null;
+const ASR_PARAM_ENGINE_LABEL = {
+  'faster-whisper': 'Faster-Whisper-XXL',
+  'whisper.cpp': 'whisper.cpp',
+  'crispasr': 'CrispASR',
+};
+
+function ensureAsrParamsDialog() {
+  if (asrParamDialog) return asrParamDialog;
+  const el = document.createElement('div');
+  el.id = 'sf-asr-params';
+  el.className = 'sf-ap-backdrop';
+  el.hidden = true;
+  el.innerHTML = `
+    <div class="sf-ap-panel" role="dialog" aria-modal="true" aria-labelledby="sf-ap-title">
+      <div class="sf-ap-head">
+        <div class="sf-ap-heading">
+          <h2 id="sf-ap-title">识别参数</h2>
+          <p class="sf-ap-model" id="sf-ap-model"></p>
+        </div>
+        <button type="button" class="sf-ap-x" id="sf-ap-close" aria-label="关闭">×</button>
+      </div>
+      <div class="sf-ap-body">
+        <div class="sf-ap-state" id="sf-ap-state"></div>
+        <p class="sf-ap-note">保存后对下一次识别任务生效；正在运行的任务不会改变。</p>
+        <div class="sf-ap-fields" id="sf-ap-fields"></div>
+      </div>
+      <div class="sf-ap-foot">
+        <button type="button" class="btn btn-mini" id="sf-ap-reset">恢复默认</button>
+        <span class="sf-ap-msg" id="sf-ap-msg" role="status"></span>
+        <button type="button" class="btn" id="sf-ap-cancel">取消</button>
+        <button type="button" class="btn btn-accent" id="sf-ap-save">保存</button>
+      </div>
+    </div>`;
+  document.body.appendChild(el);
+  // 用 el.querySelector 而不是全局 $：模态是刚 append 的子树，按子树取最稳，
+  // 也避免页面上存在同名旧节点时拿到别的元素。
+  const q = (s) => el.querySelector(s);
+  q('#sf-ap-close').addEventListener('click', closeAsrParamsDialog);
+  q('#sf-ap-cancel').addEventListener('click', closeAsrParamsDialog);
+  q('#sf-ap-save').addEventListener('click', saveAsrParams);
+  q('#sf-ap-reset').addEventListener('click', resetAsrParams);
+  el.addEventListener('click', (e) => { if (e.target === el) closeAsrParamsDialog(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && asrParamDialog && !asrParamDialog.hidden) closeAsrParamsDialog();
+  });
+  return (asrParamDialog = el);
+}
+
+function asrParamDefaultText(field) {
+  if (field.type === 'bool') return field.default ? '开' : '关';
+  if (field.type === 'select') {
+    const opt = (field.options || []).find(o => o.value === field.default);
+    return opt ? opt.label : String(field.default);
+  }
+  if (field.type === 'number') return String(field.default);
+  return String(field.default || '') || '留空';
+}
+
+function asrParamFieldHtml(field, value) {
+  const id = 'sf-ap-f-' + field.key;
+  const key = esc(field.key);
+  let control = '';
+  if (field.type === 'bool') {
+    control = `<label class="sf-ap-switch" for="${id}"><input type="checkbox" id="${id}" data-param="${key}"${value ? ' checked' : ''}><span>${esc(field.label)}</span><span class="sf-ap-default">默认 ${esc(asrParamDefaultText(field))}</span></label>`;
+  } else if (field.type === 'select') {
+    control = `<select id="${id}" data-param="${key}">${(field.options || []).map(o => `<option value="${esc(o.value)}"${String(o.value) === String(value) ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+  } else if (field.type === 'number') {
+    control = `<input type="number" id="${id}" data-param="${key}" value="${esc(value)}" min="${esc(field.min)}" max="${esc(field.max)}" step="${esc(field.step || 1)}" inputmode="decimal" required>`;
+  } else {
+    control = `<textarea id="${id}" data-param="${key}" rows="3" maxlength="${esc(field.maxLength || 300)}" placeholder="留空使用自动提示词">${esc(value || '')}</textarea>`;
+  }
+  return `<div class="sf-ap-field" data-field="${key}">
+    ${field.type === 'bool' ? '' : `<div class="sf-ap-fieldhead"><label for="${id}">${esc(field.label)}</label><span class="sf-ap-default">默认 ${esc(asrParamDefaultText(field))}</span></div>`}
+    ${control}
+    ${field.help ? `<p class="sf-ap-help">${esc(field.help)}</p>` : ''}
+  </div>`;
+}
+
+function renderAsrParams() {
+  const box = $('#sf-ap-fields');
+  if (!box) return;
+  box.innerHTML = asrParamState.schema.map(f => asrParamFieldHtml(f, asrParamState.values[f.key])).join('');
+  const stateEl = $('#sf-ap-state');
+  if (stateEl) {
+    stateEl.textContent = asrParamState.isDefault ? '当前使用默认参数' : '已自定义参数';
+    stateEl.classList.toggle('custom', !asrParamState.isDefault);
+  }
+  const msg = $('#sf-ap-msg');
+  if (msg) msg.textContent = '';
+  const reset = $('#sf-ap-reset');
+  if (reset) reset.disabled = asrParamState.isDefault;
+  for (const f of asrParamState.schema) {
+    const ctl = $(`#sf-ap-f-${f.key}`);
+    if (!ctl) continue;
+    const dirty = () => {
+      if (msg) msg.textContent = '';
+      $('#sf-ap-reset').disabled = false;
+      const stateEl = $('#sf-ap-state');
+      if (stateEl) { stateEl.textContent = '已修改（未保存）'; stateEl.classList.add('custom'); }
+    };
+    ctl.addEventListener('input', dirty);
+    ctl.addEventListener('change', dirty);
+  }
+}
+
+async function openAsrParamsDialog(modelId) {
+  const el = ensureAsrParamsDialog();
+  // 关闭动画还没播完就再次打开：取消退场并直接回到打开状态，不要让旧定时器把新面板收起。
+  cancelAsrParamsClose();
+  if (el.hidden) asrParamLastFocus = document.activeElement;
+  el.hidden = false;
+  document.body.classList.add('sf-ap-open');
+  $('#sf-ap-model').textContent = '读取中…';
+  $('#sf-ap-state').textContent = '';
+  $('#sf-ap-fields').innerHTML = '<p class="sf-ap-loading">正在读取当前参数…</p>';
+  $('#sf-ap-msg').textContent = '';
+  $('#sf-ap-save').disabled = true;
+  $('#sf-ap-reset').disabled = true;
+  try {
+    const r = await fetch('/api/asr/params?model=' + encodeURIComponent(modelId), { signal: AbortSignal.timeout(10000) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    asrParamState = { model: d.model, schema: d.schema || [], values: d.values || {}, defaults: d.defaults || {}, isDefault: !!d.isDefault };
+    $('#sf-ap-model').textContent = d.model.name + (d.model.engine
+      ? ' · ' + (ASR_PARAM_ENGINE_LABEL[d.model.engine] || d.model.engine) : '');
+    $('#sf-ap-save').disabled = false;
+    renderAsrParams();
+    requestAnimationFrame(() => {
+      const first = $('#sf-ap-fields').querySelector('input,select,textarea');
+      if (first) first.focus({ preventScroll: true });
+    });
+  } catch (e) {
+    $('#sf-ap-model').textContent = '参数读取失败';
+    $('#sf-ap-fields').innerHTML = `<p class="sf-ap-error">${esc(String((e && e.message) || e))}</p>`;
+  }
+}
+
+function cancelAsrParamsClose() {
+  if (asrParamCloseTimer) { clearTimeout(asrParamCloseTimer); asrParamCloseTimer = 0; }
+  if (asrParamCloseHandler && asrParamDialog) {
+    const panel = asrParamDialog.querySelector('.sf-ap-panel');
+    if (panel) panel.removeEventListener('animationend', asrParamCloseHandler);
+  }
+  asrParamCloseHandler = null;
+  asrParamClosing = false;
+  if (asrParamDialog) asrParamDialog.classList.remove('is-closing');
+}
+
+function closeAsrParamsDialog() {
+  if (!asrParamDialog || asrParamDialog.hidden || asrParamClosing) return;
+  asrParamClosing = true;
+  const dialog = asrParamDialog;
+  const panel = dialog.querySelector('.sf-ap-panel');
+  const finish = () => {
+    if (!asrParamClosing) return;
+    asrParamClosing = false;
+    if (asrParamCloseTimer) { clearTimeout(asrParamCloseTimer); asrParamCloseTimer = 0; }
+    if (asrParamCloseHandler && panel) panel.removeEventListener('animationend', asrParamCloseHandler);
+    asrParamCloseHandler = null;
+    dialog.classList.remove('is-closing');
+    dialog.hidden = true;
+    document.body.classList.remove('sf-ap-open');
+    if (asrParamLastFocus && typeof asrParamLastFocus.focus === 'function') asrParamLastFocus.focus({ preventScroll: true });
+    asrParamLastFocus = null;
+  };
+  const noMotion = (typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+    || document.body.dataset.motion === 'off';
+  if (!panel || noMotion) { finish(); return; }
+  dialog.classList.add('is-closing');
+  asrParamCloseHandler = (e) => { if (e.animationName === 'sf-ap-panel-out') finish(); };
+  panel.addEventListener('animationend', asrParamCloseHandler);
+  // animationend 在后台标签页/极端情况下可能不派发，留一个略大于动画时长的兜底。
+  asrParamCloseTimer = setTimeout(finish, 260);
+}
+
+function collectAsrParamValues() {
+  const out = {};
+  for (const f of asrParamState.schema) {
+    const el = $(`#sf-ap-f-${f.key}`);
+    if (!el) continue;
+    if (f.type === 'bool') out[f.key] = !!el.checked;
+    else if (f.type === 'number') {
+      if (el.value.trim() === '' || !el.checkValidity()) {
+        $('#sf-ap-msg').textContent = '请检查「' + f.label + '」的数值范围';
+        el.focus({ preventScroll: true });
+        return null;
+      }
+      out[f.key] = Number(el.value);
+    } else out[f.key] = el.value;
+  }
+  return out;
+}
+
+async function saveAsrParams() {
+  if (!asrParamState.model) return;
+  const values = collectAsrParamValues();
+  if (!values) return;
+  const save = $('#sf-ap-save');
+  save.disabled = true;
+  $('#sf-ap-msg').textContent = '保存中…';
+  try {
+    const r = await fetch('/api/asr/params', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: asrParamState.model.id, values }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    asrParamState.values = d.values || values;
+    asrParamState.isDefault = !!d.isDefault;
+    renderAsrParams();
+    $('#sf-ap-msg').textContent = '已保存';
+    if (typeof toast === 'function') toast('识别参数已保存');
+    renderAsrModels();
+  } catch (e) {
+    $('#sf-ap-msg').textContent = '保存失败：' + String((e && e.message) || e);
+  } finally {
+    save.disabled = false;
+  }
+}
+
+async function resetAsrParams() {
+  if (!asrParamState.model) return;
+  const reset = $('#sf-ap-reset');
+  reset.disabled = true;
+  $('#sf-ap-msg').textContent = '恢复中…';
+  try {
+    const r = await fetch('/api/asr/params', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: asrParamState.model.id, reset: true }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    asrParamState.values = d.values || {};
+    asrParamState.isDefault = true;
+    renderAsrParams();
+    $('#sf-ap-msg').textContent = '已恢复默认参数';
+    if (typeof toast === 'function') toast('已恢复默认识别参数');
+    renderAsrModels();
+  } catch (e) {
+    $('#sf-ap-msg').textContent = '恢复失败：' + String((e && e.message) || e);
+  } finally {
+    reset.disabled = asrParamState.isDefault;
+  }
+}
+
+function initAsrParams() {
+  const box = $('#st-panel-models');
+  if (!box || box.dataset.asrParamsBound) return;
+  box.dataset.asrParamsBound = '1';
+  box.addEventListener('click', (e) => {
+    const btn = e.target.closest('.sm-params');
+    if (!btn || !btn.dataset.id) return;
+    e.preventDefault();
+    openAsrParamsDialog(btn.dataset.id);
+  });
+}
+
 /* ── 设置页新增的两块（设计稿 ①）：入口卡的进度/胶囊 + 运行时环境卡 ──
  * 都从 /api/asr/status 的**真实**数据算，不写死数字。renderAsrModels() 里已经拿到
  * 同一份 d，所以由它调用，避免同一个接口请求两次。 */
@@ -2202,14 +2471,21 @@ function modelRowHtml(m, d, dlOf) {
   else if (m.ready || m.engine === 'vibevoice' && m.filesOk) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
   else if (!pyBlocked && !vibeBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
   if ((studioUI || m.engine === 'vibevoice' || m.engine === 'faster-whisper') && m.needRuntime && !dlThis && !vibeBlocked) btn += `<button type="button" class="btn btn-mini sf-runtime-download" data-runtime="${esc(m.runtimeKey || 'runtime')}">安装运行时</button>`;
+  const paramBtn = m.params
+    ? `<button type="button" class="btn btn-mini sm-params" data-id="${esc(m.id)}" title="调整 ${esc(m.params.summary || '识别参数')}">参数</button>`
+    : '';
+  const paramSummary = m.params
+    ? `<div class="sm-params-summary">${esc(m.params.summary || '')}${m.params.isDefault ? ' · 默认' : ' · 已自定义'}</div>`
+    : '';
   const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">${m.engine === 'vibevoice'
     ? '独立 CUDA 4bit 运行时 · 通过“安装运行时”获取 · 不支持 CPU/NPU'
     : (m.engine === 'faster-whisper'
       ? `需要 ${esc(m.runtimeName || 'Faster-Whisper-XXL')} 运行时（下载约 ${m.runtimeSizeMB || 1450}MB / 解压约 4.4GB，含 CUDA/cuDNN）`
       : `需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速）`)}</div>` : '';
   return `<div class="sm-model">
-    <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
+    <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span><span class="sm-actions">${paramBtn}${btn}</span></div>
     <div class="sm-desc">${esc(m.desc || '')}</div>
+    ${paramSummary}
     ${state}${rt}
   </div>`;
 }
@@ -2270,6 +2546,7 @@ const MODEL_FAMILY = (m) => {
 const GROUP_OPEN = new Map();
 let selectedAsrFamily = '';
 let latestAsrStatus = null;
+let modelEnterTimer = 0;
 function showAsrFamily(family) {
   const changedFamily = selectedAsrFamily !== family;
   selectedAsrFamily = family;
@@ -2285,6 +2562,17 @@ function showAsrFamily(family) {
   $('#st-runtime-env').closest('.st-card').hidden = true;
   $('#sf-asr-rerecog-mount').hidden = !!family;
   $('#dual-ratio-row').hidden = family !== 'Parakeet 系列' || !latestAsrStatus?.models?.some(model => model.engine === 'dual' && model.ready);
+  /* 入场动画只在用户切换系列时播一次。下载进度每秒重建 #st-models，若把动画挂在
+   * .sf-asr-model 自身，每次重画都会从头播一遍；这里改用父级的一次性 class。 */
+  if (changedFamily) {
+    clearTimeout(modelEnterTimer);
+    box.classList.remove('is-model-entering');
+    if (family) {
+      void box.offsetWidth;
+      box.classList.add('is-model-entering');
+      modelEnterTimer = setTimeout(() => box.classList.remove('is-model-entering'), 260);
+    }
+  }
   /* 进入 Parakeet 时真正读一次 /api/asr/dual 回填已保存比例；轮询重绘同一家族时不重复请求。 */
   if (changedFamily && family === 'Parakeet 系列') refreshDualRatio();
 }
@@ -4479,7 +4767,9 @@ async function renderAsrModels() {
   const welcomeRetry = $('#welcome-retry');
   const welcomeCancel = $('#welcome-cancel');
   const welcomeAlert = $('#welcome-alert');
+  const welcomeAlertSlot = $('#welcome-alert-slot');
   let welcomeError = '';
+  let welcomeAlertClearTimer = 0;
 
   function clearWelcomePending() {
     try { document.documentElement?.classList?.remove('sf-welcome-pending'); } catch { /* 旧测试 DOM 没有 documentElement */ }
@@ -4491,8 +4781,27 @@ async function renderAsrModels() {
   });
   function welcomeAlertText(msg) {
     if (!welcomeAlert) return;
-    welcomeAlert.textContent = msg || '';
-    welcomeAlert.hidden = !msg;
+    clearTimeout(welcomeAlertClearTimer);
+    const text = msg || '';
+    if (!welcomeAlertSlot) {
+      // 旧模板没有 slot 时退回原来的 display:none 切换。
+      welcomeAlert.textContent = text;
+      welcomeAlert.hidden = !text;
+      return;
+    }
+    if (text) {
+      welcomeAlert.textContent = text;
+      welcomeAlert.hidden = false;
+      welcomeAlertSlot.classList.add('is-open');
+      welcomeAlertSlot.setAttribute('aria-hidden', 'false');
+      return;
+    }
+    welcomeAlertSlot.classList.remove('is-open');
+    welcomeAlertSlot.setAttribute('aria-hidden', 'true');
+    // 先收起再清文字：高度动画期间内容不突然消失；480ms 与 CSS 的 .44s 对齐。
+    welcomeAlertClearTimer = setTimeout(() => {
+      if (!welcomeAlertSlot.classList.contains('is-open')) welcomeAlert.textContent = '';
+    }, 480);
   }
   function welcomePaintCard(card, input, stateEl, available, detail) {
     if (!card || !input) return;

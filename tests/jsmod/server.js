@@ -79,6 +79,7 @@ const fonts = require('./fonts.js');          // 本机字体库: 让 ASS 样式
 const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容推断 + SPK→角色名)  // LLM 回复卫生+解析(剥思维链/平衡取JSON/密度校验)
 const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie / LLM API Key 走密文, 不明文进 settings.json
 const hardsub = require('./hardsub.js');     // 视频导出: 硬字幕压制 / 生肉复制 / 字幕导出（逻辑取自 hardsub-py）
+const asrParams = require('./asr-params.js'); // ASR 模型参数 schema / 默认值 / 校验（Whisper 等）
 const ffmpegTool = require('./ffmpeg-tool.js'); // ffmpeg/ffprobe 定位与按需自动下载
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
@@ -325,7 +326,7 @@ const STATIC_RESOURCES = new Set([
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
-    'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot'].map(n => '/editor/js/' + n + '.js'),
+    'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
   '/editor/vendor/subtitles-octopus-worker.wasm', '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf',
@@ -2218,6 +2219,13 @@ function writeAsrSettings(obj) {
   fs.renameSync(tmp, ASR_SETTINGS);
 }
 
+/** 某个模型实际生效的参数：保存值 + 当前 schema 的默认值；非法/过期的键会被忽略。 */
+function modelParamsFor(model) {
+  if (!model || !asrParams.schemaFor(model).length) return {};
+  const all = readAsrSettings().modelParams;
+  return asrParams.resolveFor(model, all && all[model.id]);
+}
+
 /* ── 逐句置信度：三档 ──────────────────────────────────────────
  * 置信度由三个信号融合（见 asr/confidence.py）：token 概率、音频质量、稳定性。
  *   · token 概率    —— 解码时本来就算，**零额外开销**
@@ -3217,11 +3225,18 @@ function startPyEnvSetup() {
 /** whisper.cpp 引擎: 跑 whisper-cli, 词级时间戳用 -ml 1 -sow(每词一段)。
  *  返回 {segments:[{start,end,text,words:[{word,start,end}]}]} —— 与 asr.py 输出同构。 */
 function runWhisperCpp(modelBin, wav, onProgress, opts) {
+  const o = opts || {};
   const exe = whisperCli();
   const outPrefix = wav + '.cpp';
-  const cmd = [exe, '-m', modelBin, '-f', wav, '-oj', '-of', outPrefix, '-ml', '1', '-sow', '-t', '4', '-l', 'en'];
-  // 识别提示词: 专有名词给解码器做上下文, 实测能显著修正人名/术语拼写(限长防复读幻觉)
-  const wp = whisperPrompt(asrTerms().terms);
+  const threads = Math.max(1, Math.min(32, Number(o.threads) || 4));
+  const wordThreshold = Math.max(0.01, Math.min(0.99, Number(o.wordThreshold) || 0.01));
+  const language = ['en', 'zh', 'auto'].includes(o.language) ? o.language : 'en';
+  const cmd = [exe, '-m', modelBin, '-f', wav, '-oj', '-of', outPrefix, '-ml', '1', '-sow',
+    '-t', String(threads), '-l', language, '-wt', String(wordThreshold)];
+  // 识别提示词: 用户显式填了就用用户的；留空沿用热词表自动拼的提示词。
+  // 专有名词给解码器做上下文, 实测能显著修正人名/术语拼写(限长防复读幻觉)。
+  const userPrompt = o.prompt != null ? String(o.prompt).trim() : '';
+  const wp = userPrompt ? userPrompt.slice(0, 300) : whisperPrompt(asrTerms().terms);
   if (wp) cmd.push('--prompt', wp);
   return new Promise((resolve, reject) => {
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: WHISPER_RUNTIME.dir });
@@ -3305,11 +3320,14 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
  *  ⚠ 必须显式传 -l en: 不传它会去下载 LID 语言检测小模型（本机实测下载失败还白等 9 秒）。
  *  ⚠ Vulkan 版**不自动回落 CPU**（上游设计），所以这里自己兜底: GPU 起不来/显存不足 → --no-gpu 重试一次。 */
 function runCrispAsr(modelGguf, wav, onProgress, opts) {
+  const o = opts || {};
   const exe = crispasrCli();
   const outPrefix = wav + '.crisp';
+  const threads = Math.max(1, Math.min(32, Number(o.threads) || 6));
+  const wordThreshold = Math.max(0.01, Math.min(0.99, Number(o.wordThreshold) || 0.01));
   const runOnce = (noGpu) => new Promise((resolve, reject) => {
     const cmd = [exe, '--backend', 'parakeet', '-m', modelGguf, '-f', wav,
-                 '-ojf', '-of', outPrefix, '-t', '6', '-l', 'en'];
+                 '-ojf', '-of', outPrefix, '-t', String(threads), '-l', 'en', '-wt', String(wordThreshold)];
     if (noGpu) cmd.push('--no-gpu');
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: CRISPASR_RUNTIME.dir });
     if (opts && opts.register) { try { opts.register(p); } catch {} }
@@ -3428,6 +3446,7 @@ async function runFasterWhisper(wav, modelDir, onProgress, opts) {
   const prompt = (o.prompt != null) ? String(o.prompt) : '';
   const args = fasterWhisper.buildArgs({
     audio: wav, modelDir: parent, outputDir: outDir, helpText: help,
+    language: o.language || 'en',
     prompt, vocalExtract: o.vocalExtract !== false,
     vad: o.vad === true, vadThreshold: o.vadThreshold || 0.05,
     vadMethod: o.vadMethod || 'pyannote_v3', wordTimestamps: o.wordTimestamps !== false,
@@ -6202,6 +6221,7 @@ function startPrepare(id, videoPath, mode) {
       try {
         const wav = path.join(projDir(id), 'audio.wav');
         const mdir = model.cloud ? '' : modelDirFor(model.id);
+        const mp = modelParamsFor(model);
         if (!model.cloud && (!mdir || missingModelFiles(mdir, model).length)) throw new Error('模型文件不完整（' + model.id + '）');
         // GPU 硬校验: ASR 必须跑在 GPU 上, 不做 CPU 兜底
         const gpuGate = asrGpuGateError(model);
@@ -6229,16 +6249,18 @@ function startPrepare(id, videoPath, mode) {
         if (model.engine === 'whisper.cpp') {
           const bin = path.join(mdir, model.files[0]);
           data = await runWhisperCpp(bin, segWav, pct =>
-            setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（whisper.cpp）… ${pct}%` }));
+            setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（whisper.cpp）… ${pct}%` }),
+            Object.assign({}, mp, { register: p => trackProjProc(id, p) }));
         } else if (model.engine === 'faster-whisper') {
           data = await runFasterWhisper(segWav, mdir, (pct) => {
             const p = Number.isFinite(Number(pct)) && Number(pct) >= 0 ? Number(pct) : 0;
             setRr({ progress: 10 + Math.round(p * 0.62), message: `识别中（Whisper large-v2·CUDA）… ${p}%` });
-          }, { register: p => trackProjProc(id, p), outRoot: projDir(id) });
+          }, Object.assign({}, mp, { register: p => trackProjProc(id, p), outRoot: projDir(id) }));
         } else if (model.engine === 'crispasr') {
           const bin = path.join(mdir, model.files[0]);
           data = await runCrispAsr(bin, segWav, pct =>
-            setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（Parakeet·Vulkan）… ${pct}%` }));
+            setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（Parakeet·Vulkan）… ${pct}%` }),
+            Object.assign({}, mp, { register: p => trackProjProc(id, p) }));
         } else if (model.engine === 'vibevoice') {
           const ea = asrEngineArgs(model);
           data = await new Promise((resolve, reject) => {
@@ -7044,6 +7066,7 @@ function startPrepare(id, videoPath, mode) {
       return finishDraft(id, new Error(gpuGate));
     }
     const mdir = modelDirFor(model.id);
+    const mp = modelParamsFor(model);
     // 逐句置信度：项目级设置优先，没表态就跟随全局。算一次，三处 spawn 与常驻服务共用。
     const confMode = asrConfidenceFor(meta0);   // off | fast | full
     draftJobs.add(id);
@@ -7085,7 +7108,9 @@ function startPrepare(id, videoPath, mode) {
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] VibeVoice NF4 4bit · CUDA 推理（CPU/NPU/offload 已禁用）`);
     }
     if (model.engine === 'faster-whisper') {
-      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] Faster-Whisper-XXL · CUDA · MDX 人声分离（关闭 VAD，实测比 VAD 多保留 31 词且 WER 更低）· 逐词时间戳`);
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] Faster-Whisper-XXL · CUDA · MDX 人声分离 ${mp.vocalExtract ? '开' : '关'}`
+        + ` · VAD ${mp.vad ? '开（' + mp.vadMethod + ' / 阈值 ' + mp.vadThreshold + '）' : '关'}`
+        + ` · 逐词时间戳 ${mp.wordTimestamps ? '开' : '关'}`);
     }
 
     // 识别完成后的收尾三段式: reseg(语义分句) → diarize(区分说话人) → 生成字幕 ——
@@ -7198,7 +7223,7 @@ function startPrepare(id, videoPath, mode) {
               progress: 30 + Math.round(((c.index + p / 100) / chunkPlan.length) * 45),
               message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：Whisper large-v2·CUDA·人声分离 … ' + p + '% ' + t,
             });
-          }, { register: p => draftProcs.set(id, p), outRoot: projDir(id) }),
+          }, Object.assign({}, mp, { register: p => draftProcs.set(id, p), outRoot: projDir(id) })),
         }).then((r) => {
           try {
             fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
@@ -7213,7 +7238,7 @@ function startPrepare(id, videoPath, mode) {
       runFasterWhisper(wav, mdir, (pct, secs) => {
         const { p, t } = fwMsg(pct, secs);
         setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(p * 0.45), message: `识别中（Whisper large-v2·CUDA·人声分离）… ${p}% ${t}` });
-      }, { register: p => draftProcs.set(id, p), outRoot: projDir(id) }).then(r => {
+      }, Object.assign({}, mp, { register: p => draftProcs.set(id, p), outRoot: projDir(id) })).then(r => {
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
           fs.renameSync(outJson + '.tmp', outJson);
@@ -7238,7 +7263,7 @@ function startPrepare(id, videoPath, mode) {
               progress: 30 + Math.round(((c.index + (Number(pct) || 0) / 100) / chunkPlan.length) * 45),
               message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：whisper.cpp·GPU·Vulkan … ' + pct + '% ' + t,
             });
-          }, { register: p => draftProcs.set(id, p) }),
+          }, Object.assign({}, mp, { register: p => draftProcs.set(id, p) })),
         }).then((r) => {
           try {
             fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
@@ -7253,7 +7278,7 @@ function startPrepare(id, videoPath, mode) {
       runWhisperCpp(bin, wav, (pct, secs) => {
         const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
         setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（whisper.cpp·GPU·Vulkan）… ${pct}% ${t}` });
-      }, { register: p => draftProcs.set(id, p) }).then(r => {
+      }, Object.assign({}, mp, { register: p => draftProcs.set(id, p) })).then(r => {
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
           fs.renameSync(outJson + '.tmp', outJson);
@@ -7279,7 +7304,7 @@ function startPrepare(id, videoPath, mode) {
               progress: 30 + Math.round(((c.index + (Number(pct) || 0) / 100) / chunkPlan.length) * 45),
               message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：Parakeet·Vulkan … ' + pct + '% ' + t,
             });
-          }, { register: p => draftProcs.set(id, p), onLog }),
+          }, Object.assign({}, mp, { register: p => draftProcs.set(id, p), onLog })),
         }).then((r) => {
           try {
             fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
@@ -7294,7 +7319,7 @@ function startPrepare(id, videoPath, mode) {
       runCrispAsr(bin, wav, (pct, secs) => {
         const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
         setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（Parakeet·Vulkan）… ${pct}% ${t}` });
-      }, { register: p => draftProcs.set(id, p), onLog }).then(r => {
+      }, Object.assign({}, mp, { register: p => draftProcs.set(id, p), onLog })).then(r => {
         if (r.cpuFallback) pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] 已改用 CPU 模式完成识别（未启用 GPU 加速）`);
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
@@ -7921,6 +7946,7 @@ function handleAsrRoutes(req, res, u) {
     // 硬件探测放后台刷新；本次先用缓存（首次为空 → 前端把 null 当“未知”，不误藏 NPU）
     const hw = hardwareCache.data;
     probeHardware().catch(() => {});
+    const savedModelParams = readAsrSettings().modelParams || {};
     const models = ASR_MODELS.map(m => {
       // 云端模型没有本地文件: dir/missing/ready 都得走另一套判定, 否则会被显示成"未下载"
       const dir = m.cloud ? '' : modelDirFor(m.id);
@@ -7954,6 +7980,17 @@ function handleAsrRoutes(req, res, u) {
         runtimeSizeMB: rt ? rt.sizeMB : 0, runtimeReady: rt ? rt.ok : false,
         needNemo: m.engine === 'nemo' && !(nemo.ok && nemo.cuda),
         needVibeVoice: m.engine === 'vibevoice' && !vibevoiceRuntimeOk(),
+        // 有可调参数的模型才带这个字段；前端据此决定是否显示「参数」入口。
+        params: (() => {
+          const schema = asrParams.schemaFor(m);
+          if (!schema.length) return null;
+          const saved = savedModelParams[m.id];
+          return {
+            count: schema.length,
+            summary: asrParams.summaryFor(m, asrParams.resolveFor(m, saved)),
+            isDefault: asrParams.isDefaultFor(m, saved),
+          };
+        })(),
       };
     });
     /* ⚠ 下面整段包在 async IIFE 里，只为了 `await nvidiaGpu()` 一个字段。
@@ -8396,6 +8433,62 @@ function handleAsrRoutes(req, res, u) {
       if (s.models) delete s.models[m.id];
       writeAsrSettings(s);
       return sendJson(res, 200, Object.assign({ id: m.id }, result));
+    });
+  }
+
+  /** 读取 / 保存某个模型的识别参数（VAD、阈值、线程等）。
+   *  GET  /api/asr/params?model=<id> → { schema, values, defaults, isDefault }
+   *  POST /api/asr/params { model, values } / { model, reset:true }
+   *
+   *  参数存在 asr/settings.json 的 modelParams[modelId] 下，不写进项目；
+   *  新建初稿与选区重识别都读当前值。只接受 asr-params.js 里登记过的键。 */
+  if (pathname === '/api/asr/params' && (req.method === 'GET' || req.method === 'POST')) {
+    const respond = (m) => {
+      const saved = readAsrSettings().modelParams || {};
+      const values = asrParams.resolveFor(m, saved[m.id]);
+      return {
+        ok: true,
+        model: { id: m.id, name: m.name, engine: m.engine },
+        schema: asrParams.schemaFor(m),
+        values,
+        defaults: asrParams.defaultsFor(m),
+        isDefault: asrParams.isDefaultFor(m, saved[m.id]),
+      };
+    };
+    if (req.method === 'GET') {
+      const id = String(u.searchParams.get('model') || '');
+      const m = modelById(id);
+      if (!m) return sendJson(res, 400, { error: '未知模型' });
+      if (!asrParams.schemaFor(m).length) return sendJson(res, 400, { error: '「' + m.name + '」没有可调参数' });
+      return sendJson(res, 200, respond(m));
+    }
+    return readBody(req, res, 64 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let j = {};
+      try { j = JSON.parse(body.toString('utf8') || '{}') || {}; } catch {
+        return sendJson(res, 400, { error: '请求格式错误' });
+      }
+      const m = modelById(String(j.model || ''));
+      if (!m) return sendJson(res, 400, { error: '未知模型' });
+      if (!asrParams.schemaFor(m).length) return sendJson(res, 400, { error: '「' + m.name + '」没有可调参数' });
+      const s = readAsrSettings();
+      if (!s.modelParams || typeof s.modelParams !== 'object') s.modelParams = {};
+      if (j.reset === true) {
+        delete s.modelParams[m.id];
+        if (!Object.keys(s.modelParams).length) delete s.modelParams;
+        writeAsrSettings(s);
+        return sendJson(res, 200, respond(m));
+      }
+      const norm = asrParams.normalizeFor(m, j.values);
+      if (!norm.ok) {
+        return sendJson(res, 400, {
+          error: norm.errors[0] ? norm.errors[0].message : '参数无效',
+          errors: norm.errors,
+        });
+      }
+      s.modelParams[m.id] = norm.values;
+      writeAsrSettings(s);
+      return sendJson(res, 200, respond(m));
     });
   }
 
@@ -9267,7 +9360,10 @@ function handleProjectsRoutes(req, res, u) {
 
     if (mStart && req.method === 'POST') {
       const id = mStart[1];
-      return readBody(req, res, 64 * 1024, (err, body) => {
+      /* 字幕正文随请求一起送（含后处理后的 ASS），整份稿件可以到几百 KB 甚至几 MB；
+       * 原来 64KB 的上限会让真实项目在请求体阶段就失败，界面只看到一句模棱两可的错误。
+       * 只放宽这一条导出路由，其它 API 的请求体上限保持原样。 */
+      return readBody(req, res, 32 * 1024 * 1024, (err, body) => {
         if (err) return sendJson(res, 400, { error: String(err.message) });
         let d = {};
         try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch {
@@ -9395,8 +9491,15 @@ function handleProjectsRoutes(req, res, u) {
                 ws.on('error', reject);
                 ws.on('finish', resolve);
                 rs.pipe(ws);
+              }).catch((e) => {
+                // 复制失败/取消时不要留下半截“生肉”，否则用户会把它当成完整原片。
+                try { fs.unlinkSync(dest); } catch { /* 文件可能还没创建 */ }
+                throw e;
               });
-              if (abort.signal.aborted) throw new Error('已取消');
+              if (abort.signal.aborted) {
+                try { fs.unlinkSync(dest); } catch { /* ignore */ }
+                throw new Error('已取消');
+              }
               if (step) { step.status = 'done'; step.pct = 100; step.message = '已复制'; step.file = dest; }
               outputs.push({ kind: 'raw', path: dest });
             }
@@ -9453,8 +9556,10 @@ function handleProjectsRoutes(req, res, u) {
               if (fs.existsSync(dest) && !overwrite) throw new Error('目标文件已存在：' + path.basename(dest));
               // 取消/失败时删掉写了一半的成片：留着会让用户以为导出成功了
               const cleanupPartial = () => {
+                // ffmpeg 失败和用户取消都会留下写了一半的成片；两种情况都删掉，
+                // 只在成功走完自检后才保留（overwrite=true 时也一样，避免半成品冒充成片）。
                 if (!fs.existsSync(dest)) return;
-                if (abort.signal.aborted) { try { fs.unlinkSync(dest); } catch { /* ignore */ } }
+                try { fs.unlinkSync(dest); } catch { /* ignore */ }
               };
 
               const fontsDir = hardsub.findFontsDir(path.dirname(videoPath), subPath ? path.dirname(subPath) : '');

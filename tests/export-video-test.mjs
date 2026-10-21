@@ -277,11 +277,42 @@ try {
     assert.equal(diskNow, diskAss, '导出不得改写用户稿件');
     console.log('  ok  前端正文优先：导出内容来自编辑器（含特效），磁盘稿件未被改写');
 
+    /* ——— 10) 大字幕正文（>64KB）不能被请求体上限误杀 ———
+     * 真实 4 小时稿件的 ASS 可以到几百 KB；这条只走字幕复制，不需要再压视频。 */
+    {
+      const outDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-export-big-'));
+      const padding = '; padding ' + 'x'.repeat(80 * 1024) + '\n';
+      const bigAss = makeAssText(2).replace('\n[Events]', '\n' + padding + '\n[Events]');
+      assert.ok(bigAss.length > 64 * 1024, '前置条件：正文应大于旧 64KB 上限');
+      const r3 = await server.call(`/api/projects/${id2}/export-video`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kinds: ['subtitle'], outDir: outDir3, codec: 'h264', accel: 'cpu', quality: 30,
+          subtitleText: bigAss,
+        }),
+      });
+      assert.equal(r3.status, 202, '大字幕导出应被接受: ' + r3.status + ' ' + (await r3.text()));
+      let job5 = null;
+      for (let i = 0; i < 100; i++) {
+        const r = await server.call(`/api/projects/${id2}/export-video/status`);
+        job5 = await r.json();
+        if (job5.status !== 'running') break;
+        await new Promise(res => setTimeout(res, 100));
+      }
+      assert.equal(job5.status, 'done', '大字幕导出应成功: ' + JSON.stringify(job5).slice(0, 300));
+      const out = (job5.outputs || []).find(o => o.kind === 'subtitle');
+      assert.ok(out, '应导出大字幕');
+      const body = fs.readFileSync(out.path, 'utf8');
+      assert.ok(body.length > 64 * 1024 && body.includes('padding'), '大字幕正文应完整落盘');
+      console.log('  ok  大于 64KB 的字幕正文可正常导出');
+      fs.rmSync(outDir3, { recursive: true, force: true });
+    }
+
     fs.rmSync(outDir2, { recursive: true, force: true });
     fs.rmSync(videoPath2, { force: true });
   }
 
-  console.log('Export video: 9 组断言全部通过');
+  console.log('Export video: 10 组断言全部通过');
 } finally {
   await server.close();
 }

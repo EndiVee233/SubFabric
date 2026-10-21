@@ -130,6 +130,7 @@ export function scanCopy(root) {
   const jsDir = path.join(root, 'editor', 'js');
   try { for (const f of readdirSync(jsDir)) if (f.endsWith('.js')) scanJs('editor/js/' + f); } catch {}
   scanJs('editor/server.js');
+  scanJs('editor/asr-params.js');
   const scDir = path.join(root, 'editor', 'scripts');
   try {
     for (const f of readdirSync(scDir)) if (f.endsWith('.ps1') || f.endsWith('.cjs')) scanJs('editor/scripts/' + f);

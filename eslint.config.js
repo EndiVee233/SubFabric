@@ -104,6 +104,8 @@ export default [
       'editor/ffmpeg-tool.js',
       // Whisper large-v2（Faster-Whisper-XXL）参数/JSON 适配 + 术语表拼写修复
       'editor/faster-whisper.js', 'editor/glossary-repair.js',
+      // 识别模型参数 schema / 默认值 / 范围校验（Whisper 等）
+      'editor/asr-params.js',
     ],
     languageOptions: {
       ecmaVersion: 2022,

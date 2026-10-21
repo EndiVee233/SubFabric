@@ -69,8 +69,9 @@ const CODEC_LABEL = { h264: 'H.264', h265: 'H.265', av1: 'AV1' };
 let dialogEl = null;
 let pollTimer = null;
 let currentProjectId = null;
+let lastFocus = null;
 /** 最近一次能力探测的结果（toolsOk 用于在没 ffmpeg 时禁用"开始导出"）。 */
-const capabilities = { toolsOk: true, loaded: false };
+const capabilities = { toolsOk: true, loaded: false, error: '' };
 
 function ensureDialog() {
   if (dialogEl) return dialogEl;
@@ -138,6 +139,11 @@ function ensureDialog() {
           </div>
           <ul class="sf-ev-notes" id="sf-ev-notes" hidden></ul>
         </div>
+
+        <div class="sf-ev-outputs" id="sf-ev-outputs" hidden>
+          <div class="sf-ev-out-title">导出文件</div>
+          <ul class="sf-ev-out-list" id="sf-ev-out-list"></ul>
+        </div>
       </div>
       <div class="sf-ev-foot">
         <span class="sf-ev-status" id="sf-ev-status"></span>
@@ -176,6 +182,8 @@ async function loadCapabilities(pid) {
 
     const sel = $('sf-ev-accel');
     const keep = sel.value;
+    // 上一次打开时可能因 ffmpeg 缺失被禁用；此时已确认工具可用，必须恢复。
+    sel.disabled = false;
     sel.innerHTML = '';
     const order = ['auto'];
     for (const k of ['nvidia', 'amd', 'intel']) if (d.accelerators && d.accelerators[k]) order.push(k);
@@ -210,7 +218,8 @@ async function loadCapabilities(pid) {
     $('sf-ev-cap').textContent = bits.join(' · ');
     return d;
   } catch (e) {
-    $('sf-ev-cap').textContent = '能力探测失败：' + e.message;
+    capabilities.error = String((e && e.message) || e);
+    $('sf-ev-cap').textContent = '能力探测失败：' + capabilities.error;
     return null;
   }
 }
@@ -235,10 +244,12 @@ function updateStartState(job) {
   // 没装 ffmpeg 时只有"双语硬字幕"压不了；生肉/字幕是纯文件操作，仍可用
   const blockedByTools = !capabilities.toolsOk && kinds.includes('bilingual');
   let why = '';
-  if (!kinds.length) why = '请至少选择一种导出内容';
+  if (!running && !capabilities.loaded) why = '正在检测本机的编码器…';
+  else if (capabilities.error) why = '编码器检测失败：' + capabilities.error + '（仍可尝试导出）';
+  else if (!kinds.length) why = '请至少选择一种导出内容';
   else if (!dir) why = '请先选择导出目录';
   else if (blockedByTools) why = '压制字幕需要 ffmpeg，当前不可用（生肉与字幕仍可导出）';
-  $('sf-ev-start').disabled = running || !kinds.length || !dir || blockedByTools;
+  $('sf-ev-start').disabled = running || !capabilities.loaded || !kinds.length || !dir || blockedByTools;
   $('sf-ev-status').textContent = running ? '正在导出…' : why;
   $('sf-ev-start').textContent = running ? '导出中…' : (job && job.status === 'done' ? '再次导出' : '开始导出');
   $('sf-ev-cancel').hidden = !running;
@@ -265,6 +276,15 @@ function renderSteps(job) {
   const list = (job.notes || []).filter(Boolean);
   notes.hidden = !list.length;
   notes.innerHTML = list.map(n => `<li>${esc(n)}</li>`).join('');
+
+  const outBox = $('sf-ev-outputs');
+  const outList = $('sf-ev-out-list');
+  const outputs = (job.outputs || []).filter(o => o && o.path);
+  outBox.hidden = !outputs.length;
+  outList.innerHTML = outputs.map((o) => {
+    const name = o.path.split(/[\\/]/).pop();
+    return `<li><b>${esc(name)}</b><code title="${esc(o.path)}">${esc(o.path)}</code></li>`;
+  }).join('');
 }
 
 function stopPolling() {
@@ -290,7 +310,11 @@ function startPolling(pid) {
         }
         $('sf-ev-status').textContent = job.status === 'done' ? '已完成' : (job.error || '');
       }
-    } catch { stopPolling(); }
+    } catch {
+      stopPolling();
+      const status = $('sf-ev-status');
+      if (status) status.textContent = '进度读取失败，请关闭后重新打开导出窗口确认结果';
+    }
   };
   tick();
   pollTimer = setInterval(tick, 1000);
@@ -300,8 +324,13 @@ function startPolling(pid) {
 export async function openExportVideoDialog(projectId) {
   currentProjectId = projectId || null;
   const el = ensureDialog();
+  if (el.hidden) lastFocus = document.activeElement;
   el.hidden = false;
   document.body.classList.add('sf-ev-open');
+  requestAnimationFrame(() => {
+    const target = currentProjectId ? $('sf-ev-dir') : $('sf-ev-close');
+    if (target) target.focus({ preventScroll: true });
+  });
 
   const prefs = loadPrefs();
   if (prefs.outDir) $('sf-ev-dir').value = prefs.outDir;
@@ -315,7 +344,14 @@ export async function openExportVideoDialog(projectId) {
   }
   $('sf-ev-progress').hidden = true;
   $('sf-ev-notes').hidden = true;
-  $('sf-ev-status').textContent = '';
+  $('sf-ev-outputs').hidden = true;
+  $('sf-ev-out-list').innerHTML = '';
+  $('sf-ev-cap').textContent = '正在检测本机的编码器…';
+  capabilities.loaded = false;
+  capabilities.error = '';
+  capabilities.toolsOk = true;
+  $('sf-ev-start').disabled = true;
+  $('sf-ev-status').textContent = '正在检测本机的编码器…';
 
   if (!currentProjectId) {
     $('sf-ev-start').disabled = true;
@@ -324,6 +360,7 @@ export async function openExportVideoDialog(projectId) {
   }
 
   const cap = await loadCapabilities(currentProjectId);
+  capabilities.loaded = true;
   if (cap) {
     $('sf-ev-k-bilingual').dataset.hasVideo = cap.hasVideo ? '1' : '';
     $('sf-ev-k-raw').dataset.hasVideo = cap.hasVideo ? '1' : '';
@@ -356,6 +393,8 @@ function closeDialog() {
   dialogEl.hidden = true;
   document.body.classList.remove('sf-ev-open');
   stopPolling();
+  if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus({ preventScroll: true });
+  lastFocus = null;
 }
 
 async function browseFolder() {
@@ -420,15 +459,18 @@ async function startExport() {
     });
     const d = await r.json();
     if (!r.ok) {
+      const msg = d.error || ('导出失败：' + r.status);
       $('sf-ev-start').disabled = false;
-      $('sf-ev-status').textContent = '';
-      toast(d.error || ('导出失败：' + r.status), 6000);
+      $('sf-ev-status').textContent = msg;
+      toast(msg, 6000);
       return;
     }
     startPolling(pid);
   } catch (e) {
+    const msg = '导出请求失败：' + ((e && e.message) || e);
     $('sf-ev-start').disabled = false;
-    toast('导出请求失败：' + e.message, 5000);
+    $('sf-ev-status').textContent = msg;
+    toast(msg, 5000);
   }
 }
 

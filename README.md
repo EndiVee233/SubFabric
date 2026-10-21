@@ -159,7 +159,10 @@ node editor/server.js
 | Multitalker Parakeet Streaming 0.6B v1 | NVIDIA 显卡加速（但它仅用于重新识别） |
 | 必剪 ASR | 会上传至 bilibili 服务器进行语音识别 无硬件要求 |
 | 剪映 ASR | 会上传至字节跳动服务器进行语音识别 无硬件要求 |
-  
+
+Whisper 与 CrispASR 模型行上有「参数」入口：可调识别语言、VAD 开关/阈值/方法、MDX 人声分离、
+逐词时间戳、线程数等；面板显示当前值和默认值，支持保存与恢复默认。
+
 ## 开发与文档
 
 开始任务或恢复上下文时，先看 **[docs/PROJECT.md](docs/PROJECT.md)**（唯一技术文档：目录地图 后端/前端结构

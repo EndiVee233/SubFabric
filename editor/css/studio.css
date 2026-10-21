@@ -1475,11 +1475,19 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 
 /* ── 模型管理(设置里列出识别模型) ── */
 .st-models { display: flex; flex-direction: column; gap: 9px; margin-bottom: 8px; }
+/* 「模型与配置」卡：模型列表下移 16px，同时把卡片底部内边距从 22px 收到 3px，
+   让标题下留白和最后一张卡到卡片底边的距离都约为 25px；不使用 margin-top
+   （会和标题的 margin-bottom 折叠，等于没动）。列表和底部提示之间留 4px。 */
+.sf-studio #st-view .st-card:has(> #st-models) { padding-bottom: 3px; }
+.sf-studio #st-models { margin-top: 0; margin-bottom: 4px; padding-top: 16px; }
 .sm-model {
   background:linear-gradient(180deg, rgba(255,255,255,.018), transparent 70%), var(--bg-2);
   border:1px solid var(--border); border-radius:9px; padding:11px 12px;
 }
 .sm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.sm-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.sm-params-summary { margin-top: 5px; font-size: 10.5px; line-height: 1.6; color: var(--muted); }
+.sf-studio .sm-params { white-space: nowrap; }
 .sm-name { font-size: 13px; font-weight: 650; line-height: 1.4; color: var(--text-0); }
 .sm-desc { font-size: 11.5px; color: var(--text-2); margin-top: 4px; line-height: 1.55; }
 .sm-state {
@@ -3553,6 +3561,15 @@ body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-col
 .sf-pack-art.material { --pack-art-radius:24px; --pack-symbol-radius:0; --pack-line-radius:20px; }
 .sf-pack-art.classic { --pack-art-radius:8px; --pack-symbol-radius:8px; --pack-line-radius:8px; }
 .sf-pack-lines i:first-child { height:24px; width:100%; opacity:.35; }
+/* 浅色模式 + 高毛玻璃压暗：JS 合成背景亮度后给面板加这个类，局部换浅色前景。
+   不改背景，只覆盖文字/次要文字/描边 token，避免深灰字压在深灰玻璃上。 */
+.sf-studio .sf-fg-on-dark {
+  --text: #f8f8f3;
+  --muted: #d8dcd5;
+  --line: rgb(255 255 255 / .28);
+  --outline: rgb(255 255 255 / .5);
+  color: var(--text);
+}
 .sf-theme-tools { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
 /* 外观行在分组之外，不能沿用旧设置行写死的深色背景。 */
 .sf-studio #st-panel-theme .setting-row { background:var(--surface-2); color:var(--text); border-color:var(--line); flex-wrap:wrap; margin-bottom:8px; padding:10px 14px; }
@@ -3744,7 +3761,8 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio .sf-asr-family:disabled { opacity:.55; cursor:default; }
 .sf-studio .sf-asr-detail { display:flex; align-items:center; gap:16px; margin:16px 0; }
 .sf-studio .sf-asr-detail h3 { margin:0; font-size:18px; font-weight:550; }
-.sf-studio .sf-asr-model { animation:sf-settings-enter .18s ease-out; }
+/* 只在用户切换系列时播一次入场；下载进度每秒重建 DOM，不能按新节点重新触发动画。 */
+.sf-studio #st-models.is-model-entering .sf-asr-model { animation:sf-settings-enter .18s ease-out; }
 .sf-studio .sf-asr-model .sm-model:last-child { margin-bottom:0; }
 /* 新建稿件：翻译方案卡（不再把服务商/模型/提示词全摊在创建页） */
 .np-scheme-block { margin-top: 10px; }
@@ -5055,8 +5073,9 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   animation:uwp-enter-item var(--uwp-enter-duration,180ms) cubic-bezier(.2,.8,.2,1) both;
   animation-delay:var(--uwp-enter-delay,0ms);
 }
-/* 模型行是动态重建的，不能再走基础 .sf-settings-enter ease-out；与页面元素同一条 180ms 曲线。 */
-.sf-studio[data-design=uwp] .sf-asr-model {
+/* 模型行是动态重建的，不能再走基础 .sf-settings-enter ease-out；与页面元素同一条 180ms 曲线。
+   和基础规则一样，只在切换系列时由 #st-models.is-model-entering 触发一次。 */
+.sf-studio[data-design=uwp] #st-models.is-model-entering .sf-asr-model {
   animation:uwp-enter-item var(--uwp-enter-duration,180ms) cubic-bezier(.2,.8,.2,1) both;
 }
 .sf-studio[data-design=uwp] :is(.workspace-page,#home-view,.sf-page).is-uwp-page-leaving { animation:uwp-page-out var(--uwp-enter-duration,180ms) cubic-bezier(.3,0,.2,1) both!important; pointer-events:none; }
@@ -6152,6 +6171,113 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
+ * ASR 模型识别参数（js/project.js 动态创建，模型行只留「参数」入口）
+ * 独立模态而不是行内展开：模型列表每秒随下载进度重建，行内输入会丢焦点。
+ * ══════════════════════════════════════════════════════════════════════ */
+.sf-ap-backdrop {
+  position: fixed; inset: 0; z-index: 100001;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: color-mix(in srgb, #0b0d0c 58%, transparent);
+  backdrop-filter: blur(6px);
+}
+.sf-ap-backdrop[hidden] { display: none; }
+body.sf-ap-open { overflow: hidden; }
+/* 打开时从略小、略低的位置放大上移；display:none → flex 会自然重启动画。 */
+.sf-ap-backdrop:not([hidden]) .sf-ap-panel {
+  animation: sf-ap-panel-in .22s cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes sf-ap-panel-in {
+  from { opacity: 0; transform: translateY(10px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* 关闭：向后缩小、微微上飞并淡出；比打开略快，避免拖沓。 */
+.sf-ap-backdrop.is-closing .sf-ap-panel {
+  animation: sf-ap-panel-out .18s cubic-bezier(.4,0,.2,1) both;
+}
+@keyframes sf-ap-panel-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-10px) scale(.94); }
+}
+.sf-ap-panel {
+  width: min(560px, 100%); max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--surface, #fff); color: var(--text, #1b201c);
+  border: 1px solid var(--line, #d8ddd9); border-radius: 18px;
+  box-shadow: 0 24px 70px -30px #00000080;
+}
+.sf-ap-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 18px 22px 10px;
+}
+.sf-ap-heading { min-width: 0; }
+.sf-ap-heading h2 { margin: 0; font-size: 17px; font-weight: 600; }
+.sf-ap-model {
+  margin: 4px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--muted, #6b756e);
+  overflow-wrap: anywhere;
+}
+.sf-ap-x {
+  border: 0; background: transparent; color: var(--muted, #6b756e);
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 2px 8px; border-radius: 8px;
+}
+.sf-ap-x:hover { background: var(--surface-2, #eef1ee); color: var(--text, #1b201c); }
+.sf-ap-body { min-height: 0; overflow-y: auto; padding: 4px 22px 10px; display: grid; gap: 12px; }
+.sf-ap-state {
+  justify-self: start; padding: 3px 9px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; color: var(--muted, #6b756e);
+  background: var(--surface-2, #f3f5f3); border: 1px solid var(--line, #d8ddd9);
+}
+.sf-ap-state.custom { color: var(--accent, #ff7a45); border-color: color-mix(in srgb, var(--accent, #ff7a45) 42%, var(--line, #d8ddd9)); }
+.sf-ap-note { margin: -2px 0 0; font-size: 10.5px; line-height: 1.6; color: var(--muted, #6b756e); }
+.sf-ap-fields { display: grid; gap: 10px; }
+.sf-ap-field {
+  display: grid; gap: 6px; min-width: 0;
+  padding: 10px 12px; border: 1px solid var(--line, #d8ddd9); border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2, #f3f5f3) 55%, transparent);
+}
+.sf-ap-fieldhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.sf-ap-fieldhead label { font-size: 12px; font-weight: 600; }
+.sf-ap-default { font-size: 10px; color: var(--muted, #6b756e); white-space: nowrap; }
+.sf-ap-field input[type="number"], .sf-ap-field select, .sf-ap-field textarea {
+  width: 100%; box-sizing: border-box; padding: 7px 9px; font: inherit; font-size: 12px;
+  color: var(--text, #1b201c); background: var(--surface, #fff);
+  border: 1px solid var(--line, #d8ddd9); border-radius: 8px;
+}
+.sf-ap-field textarea { resize: vertical; min-height: 58px; line-height: 1.6; }
+.sf-ap-field input:focus, .sf-ap-field select:focus, .sf-ap-field textarea:focus {
+  outline: 2px solid var(--accent, #ff7a45); outline-offset: 1px;
+}
+.sf-ap-switch {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  font-size: 12px; font-weight: 600;
+}
+.sf-ap-switch input { width: 15px; height: 15px; accent-color: var(--accent, #ff7a45); }
+.sf-ap-switch .sf-ap-default { margin-left: auto; }
+.sf-ap-help { margin: 0; font-size: 10.5px; line-height: 1.65; color: var(--muted, #6b756e); }
+.sf-ap-loading, .sf-ap-error { margin: 0; padding: 14px 4px; font-size: 11.5px; color: var(--muted, #6b756e); }
+.sf-ap-error { color: var(--danger, #d94a3d); }
+.sf-ap-foot {
+  display: flex; align-items: center; gap: 9px;
+  padding: 12px 22px 16px; border-top: 1px solid var(--line, #d8ddd9);
+}
+.sf-ap-msg { flex: 1; min-width: 0; font-size: 10.5px; line-height: 1.5; color: var(--muted, #6b756e); }
+.sf-studio[data-theme-pack="material-you"] .sf-ap-panel { border-radius: 26px; }
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ap-panel { border-radius: 4px; }
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ap-backdrop { backdrop-filter: none; }
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ap-field,
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ap-field input[type="number"],
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ap-field select,
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ap-field textarea { border-radius: 2px; }
+@media (max-width: 640px) {
+  .sf-ap-backdrop { padding: 0; align-items: flex-end; }
+  .sf-ap-panel { width: 100%; max-height: 92vh; border-radius: 18px 18px 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sf-ap-backdrop:not([hidden]) .sf-ap-panel,
+  .sf-ap-backdrop.is-closing .sf-ap-panel { animation: none; }
+}
+.sf-studio[data-motion="off"] .sf-ap-panel { animation: none !important; }
+
+/* ══════════════════════════════════════════════════════════════════════
  * 导出视频对话框（js/export-video.js 动态创建，模板里只有一个触发按钮）
  * 全部走主题令牌，四个主题包共用同一套结构；Material You / UWP 只改圆角。
  * ══════════════════════════════════════════════════════════════════════ */
@@ -6185,7 +6311,7 @@ body.sf-ev-open { overflow: hidden; }
 }
 .sf-ev-x:hover { background: var(--surface-2, #eef1ee); color: var(--text, #1b201c); }
 
-.sf-ev-body { padding: 0 22px 8px; overflow-y: auto; display: grid; gap: 16px; }
+.sf-ev-body { min-height: 0; padding: 0 22px 8px; overflow-y: auto; display: grid; gap: 16px; }
 .sf-ev-row { display: grid; gap: 8px; }
 .sf-ev-label { font-size: 12px; font-weight: 600; color: var(--muted, #6b756e); letter-spacing: .02em; }
 .sf-ev-dirrow { display: flex; gap: 8px; }
@@ -6239,6 +6365,20 @@ body.sf-ev-open { overflow: hidden; }
   color: var(--muted, #6b756e); background: var(--surface-2, #f3f5f3); border-radius: 10px;
 }
 
+.sf-ev-outputs { display: grid; gap: 6px; }
+.sf-ev-out-title { font-size: 11.5px; font-weight: 650; color: var(--text, #1b201c); }
+.sf-ev-out-list { list-style: none; display: grid; gap: 6px; margin: 0; padding: 0; }
+.sf-ev-out-list li {
+  display: grid; gap: 2px; min-width: 0; padding: 8px 10px;
+  border: 1px solid var(--line, #d8ddd9); border-radius: 8px;
+  background: var(--surface-2, #f3f5f3);
+}
+.sf-ev-out-list b { font-size: 11.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-ev-out-list code {
+  font: 10.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--muted, #6b756e); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .sf-ev-foot {
   display: flex; align-items: center; gap: 10px;
   padding: 14px 22px 18px; border-top: 1px solid var(--line, #d8ddd9);
@@ -6250,6 +6390,8 @@ body.sf-ev-open { overflow: hidden; }
 .sf-studio[data-theme-pack="material-you"] .sf-ev-input,
 .sf-studio[data-theme-pack="material-you"] .sf-ev-field select,
 .sf-studio[data-theme-pack="material-you"] .sf-ev-field input { border-radius: 999px; }
+.sf-studio[data-theme-pack="material-you"] .sf-ev-out-list li { border-radius: 12px; }
+.sf-studio[data-theme-pack="windows-uwp"] .sf-ev-out-list li { border-radius: 2px; }
 /* Windows UWP：近直角、无模糊 */
 .sf-studio[data-theme-pack="windows-uwp"] .sf-ev-panel { border-radius: 4px; }
 .sf-studio[data-theme-pack="windows-uwp"] .sf-ev-backdrop { backdrop-filter: none; }
@@ -6305,7 +6447,11 @@ body.sf-welcome-open #app { visibility: hidden; }
   --bg-0: var(--bg, #0b0b0e);
   --bg-1: var(--surface, #131318);
   --bg-2: var(--surface-2, #17171d);
-  --bg-3: var(--surface-3, #1f1f27);
+  /* 未选中卡片也必须落在当前主题的浅色表面上。Studio/Material 没有
+     --surface-3，以前会落到深色 #1f1f27，截图里就是两块深灰。 */
+  --bg-3: var(--surface-3, var(--surface-2, #eef0f3));
+  --welcome-card-bg: color-mix(in srgb, var(--surface-2, var(--bg-2)) 82%, var(--surface, transparent));
+  --welcome-card-checked: color-mix(in srgb, var(--accent) 9%, var(--surface-2, var(--bg-2)));
   --border: var(--line, #2a2a34);
   --text-0: var(--text, #eceef2);
   --text-1: var(--muted, #a8a8b4);
@@ -6342,7 +6488,8 @@ body.sf-welcome-open #app { visibility: hidden; }
 .welcome-shell {
   position: relative;
   width: min(980px, 100%);
-  display: grid; gap: clamp(20px, 3vw, 34px);
+  --welcome-gap: clamp(20px, 3vw, 34px);
+  display: grid; gap: var(--welcome-gap);
   padding: clamp(24px, 4vw, 48px);
   border: 1px solid var(--border);
   border-radius: 24px;
@@ -6388,19 +6535,27 @@ body.sf-welcome-open #app { visibility: hidden; }
   align-items: center; gap: 14px;
   padding: 20px 20px 20px 18px;
   border: 1px solid var(--border); border-radius: 16px;
-  background: color-mix(in srgb, var(--bg-3) 64%, transparent);
+  background: var(--welcome-card-bg);
   cursor: pointer; user-select: none;
-  transition: transform .22s cubic-bezier(.2,.8,.2,1), border-color .22s ease,
-              background-color .22s ease, box-shadow .22s ease, opacity .22s ease;
+  transition: transform .44s cubic-bezier(.22, 1, .36, 1),
+              border-color .4s cubic-bezier(.22, 1, .36, 1),
+              background-color .4s cubic-bezier(.22, 1, .36, 1),
+              box-shadow .44s cubic-bezier(.22, 1, .36, 1),
+              opacity .28s ease;
+}
+.welcome-card::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; opacity: 0;
+  background: linear-gradient(135deg, var(--accent-a14), transparent 62%);
+  transition: opacity .44s cubic-bezier(.22, 1, .36, 1);
 }
 .welcome-card:not(.is-disabled):hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .welcome-card.is-checked {
   border-color: var(--accent);
-  background:
-    linear-gradient(135deg, var(--accent-a14), transparent 62%),
-    color-mix(in srgb, var(--bg-2) 94%, transparent);
+  background: var(--welcome-card-checked);
   box-shadow: 0 16px 44px var(--accent-a16), inset 0 0 0 1px var(--accent-a28);
 }
+.welcome-card.is-checked::before { opacity: 1; }
 .welcome-card.is-disabled { opacity: .48; cursor: not-allowed; }
 /* 全局 input[type=checkbox] 有 18px 宽高/relative 规则（特异性 0,1,1），
    会压过单类选择器。这里用 .welcome-card input.welcome-native + !important
@@ -6420,7 +6575,7 @@ body.sf-welcome-open #app { visibility: hidden; }
   width: 56px; height: 56px; display: grid; place-items: center;
   border-radius: 16px; color: var(--accent);
   background: var(--accent-a12); border: 1px solid var(--accent-a18);
-  transition: transform .22s ease, background-color .22s ease;
+  transition: transform .4s cubic-bezier(.22, 1, .36, 1), background-color .4s ease;
 }
 .welcome-card-icon svg { width: 26px; height: 26px; }
 .welcome-card.is-checked .welcome-card-icon { background: var(--accent-a18); transform: scale(1.04); }
@@ -6433,14 +6588,17 @@ body.sf-welcome-open #app { visibility: hidden; }
 .welcome-card-check {
   width: 23px; height: 23px; border-radius: 50%;
   border: 1.5px solid color-mix(in srgb, var(--text-2) 55%, var(--border));
-  position: relative; transition: background-color .2s ease, border-color .2s ease, transform .2s ease;
+  position: relative;
+  transition: background-color .34s cubic-bezier(.22, 1, .36, 1),
+              border-color .34s cubic-bezier(.22, 1, .36, 1),
+              transform .4s cubic-bezier(.22, 1, .36, 1);
 }
 .welcome-card.is-checked .welcome-card-check { background: var(--accent); border-color: var(--accent); transform: scale(1.05); }
 .welcome-card-check::after {
   content: ""; position: absolute; left: 7px; top: 3px; width: 6px; height: 11px;
   border: 2px solid var(--accent-ink); border-top: 0; border-left: 0;
   transform: rotate(45deg) scale(.35); opacity: 0;
-  transition: transform .2s cubic-bezier(.2,.9,.2,1.2), opacity .15s ease;
+  transition: transform .36s cubic-bezier(.22, 1, .36, 1), opacity .25s ease;
 }
 .welcome-card.is-checked .welcome-card-check::after { opacity: 1; transform: rotate(45deg) scale(1); }
 
@@ -6455,12 +6613,33 @@ body.sf-welcome-open #app { visibility: hidden; }
 .welcome-npu-ico svg { width: 18px; height: 18px; }
 .welcome-npu b { display: block; color: var(--text-0); font-size: 12.5px; }
 .welcome-npu small { display: block; color: var(--text-2); font-size: 11px; margin-top: 2px; }
+/* 告警不是 display:none 切换，而是一个可展开的网格行：
+   0fr → 1fr 让高度连续变化，负 margin 抵消关闭时多出来的那一个 shell gap；
+   同时淡入/位移，和卡片选中态的 440ms 曲线对齐，展开收起不会跳一下。 */
+.welcome-alert-slot {
+  display: grid; grid-template-rows: minmax(0, 0fr);
+  min-height: 0; overflow: hidden;
+  /* 作为 shell 的 grid item 不能再被 stretch：否则 0fr 行会被拉成一行行高，
+     关闭态仍占 18~34px。start 后高度完全由 0fr/1fr 行决定。 */
+  align-self: start;
+  margin-top: calc(-1 * var(--welcome-gap));
+  opacity: 0; transform: translateY(-6px);
+  transition: grid-template-rows .44s cubic-bezier(.22, 1, .36, 1),
+              margin-top .44s cubic-bezier(.22, 1, .36, 1),
+              opacity .28s ease,
+              transform .44s cubic-bezier(.22, 1, .36, 1);
+}
+.welcome-alert-slot.is-open {
+  grid-template-rows: minmax(0, 1fr);
+  margin-top: 0;
+  opacity: 1; transform: translateY(0);
+}
+.welcome-alert-inner { min-height: 0; overflow: hidden; }
 .welcome-alert {
   margin: 0; padding: 11px 13px; border-radius: 10px; font-size: 12px; line-height: 1.65;
   color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger) 26%, transparent);
 }
-.welcome-alert[hidden] { display: none; }
 .welcome-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .welcome-go {
   min-height: 44px; padding: 0 22px; border-radius: 12px; font-size: 13.5px; font-weight: 700;
@@ -6534,16 +6713,16 @@ body.sf-welcome-open #app { visibility: hidden; }
 .sf-studio[data-motion=off] .welcome-view *::after { animation: none !important; transition: none !important; }
 
 @media (max-width: 760px) {
-  .welcome-shell { padding: 22px; gap: 18px; }
+  .welcome-shell { padding: 22px; --welcome-gap: 18px; gap: var(--welcome-gap); }
   .welcome-cards { grid-template-columns: minmax(0, 1fr); }
   .welcome-copy h1 { font-size: clamp(30px, 9vw, 44px); }
   .welcome-brand small { display: none; }
   .welcome-actions { align-items: stretch; }
   .welcome-go { width: 100%; justify-content: center; }
 }
-body.sf-welcome-open .sf-version-banner { display: none; }
+/* 横幅是 JS 动态插到 body 的，inline style 带 display:flex；必须 !important 才压得住。 */
 body.sf-welcome-open .sf-version-banner,
-body.sf-welcome-open .sf-vendor-banner { display: none; }
+body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 
 /* ═══════════════════════════════════════════════════════════════════════
    Claude 设计族 —— 暖纸底、陶土强调、衬线标题、柔和圆角。

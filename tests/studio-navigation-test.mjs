@@ -734,6 +734,9 @@ assert.ok(otherModels && otherModels.hidden, 'no downloaded disabled models → 
 const vibevoice=familyButtons.find(button=>button.dataset.asrFamily==='VibeVoice 系列');
 assert.ok(vibevoice && !vibevoice.disabled); vibevoice.click(); await settle();
 assert.equal($('sf-asr-detail-title').textContent,'VibeVoice 系列');
+assert.ok($('st-models').classList.contains('is-model-entering'), 'series switch starts one entrance pass');
+await runTimer(260);
+assert.ok(!$('st-models').classList.contains('is-model-entering'), 'entrance class is removed after one pass');
 await click('sf-asr-back'); assert.equal($('sf-asr-families').hidden,false);
 familyButtons.find(button=>button.dataset.asrFamily==='云端识别').click(); await settle();
 assert.equal($('sf-asr-families').hidden,true); assert.equal($('sf-asr-detail-title').textContent,'云端识别');

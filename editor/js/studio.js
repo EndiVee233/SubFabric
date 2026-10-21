@@ -4,6 +4,7 @@ import { escapeHtml as esc, fmtTime, popOrigin } from './util.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
+import { parseCssColor, compositeColor, shouldUseLightText } from './glass-contrast.js';
 
 // 所有编辑、导出、识别与保存仍由 main/project.js 负责。此层只接导航和外观。
 const $ = id => document.getElementById(id);
@@ -14,6 +15,7 @@ let saved;
 try { saved = JSON.parse(localStorage.getItem(STUDIO_KEY) || '{}'); } catch { saved = {}; }
 let prefs = normalizeStudio(saved, themes);
 let projects = [], filter = 'all', folder = '', route = location.hash || '#/dashboard';
+let folderSnapshotSig = '';
 let applying = false, pendingSetting = '';
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 const auroraPalettes = { sage: ['#90b99c', '#bacb91', '#9ac2b8'], ocean: ['#74adc8', '#9eaccf', '#95c5be'], sunset: ['#d69caa', '#cfb693', '#aca3cf'] };
@@ -237,7 +239,138 @@ function renderPacks() {
   const builtin = themes.list([]).map(render).join('');
   const custom = prefs.custom.map(render).join('');
   $('sf-theme-packs').innerHTML = `<section class="sf-pack-group"><h4>内置主题包</h4><div class="sf-theme-pack-grid">${builtin}</div></section><section class="sf-pack-group"><h4>我的主题包</h4><div class="sf-theme-pack-grid">${custom || '<p class="sf-pack-empty">导入你绘制的 JSON 主题包，它会显示在这里。</p>'}</div></section>`;
+  scheduleGlassForeground();
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   玻璃面板前景色自动检测
+   -----------------------------------------------------------------------
+   浅色模式下玻璃基底是 rgb(0 0 0 / alpha)。压暗/透明度调高、或者背后是深色
+   背景图时，合成后的卡片会变深，而 --text 仍是深色。这里把卡片背景逐层与
+   页面底色（图片背景取平均色）做 alpha 合成，算相对亮度后给面板加
+   .sf-fg-on-dark，局部把 --text/--muted/--line 换成浅色。
+   只作用于浅色模式；深色模式本来就用浅色字，不需要也不应该重复覆盖。
+   ═══════════════════════════════════════════════════════════════════════ */
+const GLASS_FG_SELECTOR = [
+  '.sf-pack', '.st-card', '.set-group', '.st-section', '.sf-asr-family',
+  '.proj-card', '.page-surface', '.cue-card', '.role-card', '.sm-model',
+  '.st-entry', '.st-scheme', '.panel-head', '.tl-toolbar', '.tab-head',
+  '.sf-pack-group h4',
+].join(',');
+let glassFgFrame = 0;
+let glassBackdropImage = { src: '', color: null, loading: false };
+
+function cssVarColor(name, fallback = null) {
+  try {
+    return parseCssColor(getComputedStyle(document.documentElement).getPropertyValue(name)) || fallback;
+  } catch { return fallback; }
+}
+
+function pageBaseColor() {
+  const bg = cssVarColor('--bg');
+  if (bg) return { ...bg, a: 1 };
+  const body = parseCssColor(getComputedStyle(document.body).backgroundColor);
+  if (body && body.a >= 0.999) return body;
+  return { r: 255, g: 255, b: 255, a: 1 };
+}
+
+function loadGlassBackdropImage(src) {
+  glassBackdropImage = { src, color: null, loading: true };
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 16;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const base = pageBaseColor();
+      ctx.fillStyle = `rgb(${base.r} ${base.g} ${base.b})`;
+      ctx.fillRect(0, 0, 16, 16);
+      ctx.drawImage(img, 0, 0, 16, 16);
+      const data = ctx.getImageData(0, 0, 16, 16).data;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+      }
+      glassBackdropImage = { src, color: n ? { r: r / n, g: g / n, b: b / n, a: 1 } : null, loading: false };
+    } catch {
+      glassBackdropImage = { src, color: null, loading: false };
+    }
+    scheduleGlassForeground();
+  };
+  img.onerror = () => { glassBackdropImage = { src, color: null, loading: false }; };
+  img.src = src;
+}
+
+/** 页面底色 +（若当前背景是图片）图片平均色 × 透明度/亮度。 */
+function glassBackdropColor() {
+  const base = pageBaseColor();
+  if (prefs.background === 'image' && imageData(prefs.image)) {
+    if (!glassBackdropImage.loading && glassBackdropImage.src !== prefs.image) loadGlassBackdropImage(prefs.image);
+    if (glassBackdropImage.src === prefs.image && glassBackdropImage.color) {
+      const backdrop = document.querySelector('.sf-backdrop');
+      const cs = backdrop ? getComputedStyle(backdrop) : null;
+      if (cs && cs.display !== 'none') {
+        const opacity = Number.parseFloat(cs.opacity);
+        if (Number.isFinite(opacity) && opacity > 0) {
+          const bright = Math.max(0, 1 - (Number(prefs.imageDim) || 0) / 100);
+          const img = {
+            r: glassBackdropImage.color.r * bright,
+            g: glassBackdropImage.color.g * bright,
+            b: glassBackdropImage.color.b * bright,
+            a: 1,
+          };
+          return compositeColor({ ...img, a: opacity }, base);
+        }
+      }
+    }
+    return base;
+  }
+  if (prefs.background === 'aurora') {
+    const colors = [1, 2, 3].map(i => cssVarColor('--sf-aurora-' + i)).filter(Boolean);
+    if (colors.length) {
+      const avg = colors.reduce((acc, c) => ({ r: acc.r + c.r / colors.length, g: acc.g + c.g / colors.length, b: acc.b + c.b / colors.length }), { r: 0, g: 0, b: 0 });
+      return compositeColor({ ...avg, a: 0.55 }, base);
+    }
+  }
+  return base;
+}
+
+/** 把元素自身的半透明背景逐层压到 backdrop 上，得到真实合成色。 */
+function glassElementBackground(el) {
+  const layers = [];
+  for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+    const color = parseCssColor(getComputedStyle(node).backgroundColor);
+    if (color && color.a > 0.001) {
+      layers.push(color);
+      if (color.a >= 0.999) break;
+    }
+  }
+  let out = glassBackdropColor();
+  for (let i = layers.length - 1; i >= 0; i--) out = compositeColor(layers[i], out);
+  return out;
+}
+
+function syncGlassForeground() {
+  glassFgFrame = 0;
+  if (!document.body || typeof getComputedStyle !== 'function') return;
+  const light = document.body.dataset.theme === 'light';
+  for (const el of document.querySelectorAll(GLASS_FG_SELECTOR)) {
+    el.classList.toggle('sf-fg-on-dark', light && shouldUseLightText({ background: glassElementBackground(el) }));
+  }
+  /* 分组标题本身是透明背景，合成值可能落在阈值边缘；只要同组主题卡已经被判定为
+     深底，就跟着切浅色，避免“卡片白字、上面的‘内置主题包’仍是深灰字”。 */
+  const packOnDark = !!document.querySelector('.sf-pack.sf-fg-on-dark');
+  for (const heading of document.querySelectorAll('.sf-pack-group h4, .sf-pack-empty')) {
+    heading.classList.toggle('sf-fg-on-dark', light && packOnDark);
+  }
+}
+
+function scheduleGlassForeground() {
+  if (glassFgFrame || typeof getComputedStyle !== 'function') return;
+  glassFgFrame = requestAnimationFrame(syncGlassForeground);
+}
+window.addEventListener('hashchange', scheduleGlassForeground);
+window.addEventListener('resize', scheduleGlassForeground);
 $('sf-theme-packs').addEventListener('click', e => {
   const del = e.target.closest('[data-delete-pack]');
   if (del) {
@@ -635,8 +768,12 @@ $('sf-shortcuts').addEventListener('click', () => {
   if (document.body.dataset.design === 'material') animateMaterialPage(box, 'dl > div');
 });
 
+function folderSnapshotSignature() {
+  return prefs.folders.map(f => f.id + ':' + projects.filter(p => prefs.assignments[p.id] === f.id).length).join('|');
+}
 function renderFolders() {
   $('sf-folders').innerHTML = prefs.folders.map(f => `<div class="sf-folder"><button type="button" class="${folder === f.id ? 'active' : ''}" data-folder="${f.id}">${ico('folder')}<span>${esc(f.name)}</span><small>${projects.filter(p => prefs.assignments[p.id] === f.id).length}</small></button><button type="button" data-remove-folder="${f.id}" aria-label="移除文件夹">×</button></div>`).join('');
+  folderSnapshotSig = folderSnapshotSignature();
   animateMaterialPage($('sf-folders'));
 }
 /* 文件夹的新建/移除都用页面内 Dialog，不再调用浏览器 prompt()/confirm()。
@@ -1786,7 +1923,13 @@ $('sf-rate').addEventListener('change', () => { video.playbackRate = Number($('s
 syncPlayerSound();
 
 window.__sfStudio = {
-  projects(snapshot) { projects = snapshot; renderFolders(); refreshLibrary(); },
+  projects(snapshot) {
+    projects = snapshot;
+    /* 识别进度每 1.5 秒推一次快照；文件夹名称和归属计数没变就不要重建
+       #sf-folders，否则左侧「文件夹」会跟着识别进度反复闪。 */
+    if (folderSnapshotSignature() !== folderSnapshotSig) renderFolders();
+    refreshLibrary();
+  },
   route(h, project, format) {
     if (h === '#/resources') h = '#/settings';
     const previous = route; route = h;

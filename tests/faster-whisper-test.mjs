@@ -31,6 +31,18 @@ assert.ok(args2.includes('--vad_threshold') && args2.includes('0.2'));
 assert.ok(args2.includes('--ff_vocal_extract') && args2.includes('mdx_kim2'));
 assert.ok(args2.includes('--initial_prompt') && args2.includes('Wemmbu'));
 
+// 参数字段真正进入命令行：语言 / VAD 方法 / 关人声分离 / 关逐词
+const args3 = buildArgs({
+  audio: 'a.wav', modelDir: 'm', outputDir: 'o', language: 'zh', vad: true,
+  vadThreshold: 0.3, vadMethod: 'silero_v5', vocalExtract: false, wordTimestamps: false,
+  helpText: '--ff_vocal_extract',
+});
+assert.ok(args3.includes('--language') && args3.includes('zh'));
+assert.ok(args3.includes('--vad_method') && args3.includes('silero_v5'));
+assert.ok(args3.includes('--vad_threshold') && args3.includes('0.3'));
+assert.ok(args3.includes('--word_timestamps') && args3.includes('False'));
+assert.ok(!args3.includes('--ff_vocal_extract'));
+
 // ── 进度解析 ──
 assert.equal(parseProgress('  4% |  26/600 | ...'), 4);
 assert.equal(parseProgress('100% | 600/600'), 100);
