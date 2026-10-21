@@ -92,9 +92,9 @@
   逐级拒绝符号链接与祖先 junction。项目字幕、媒体、字体走各自 API。
 - **UI 单入口**：旧 `editor/index.html` 与旧 CSS 已删除，旧视觉迁移为 `subfabric-classic` 主题包；
   根入口无论 `ui-config.json` 缺失、损坏还是 `{"ui":"legacy"}` 都只进 Studio，且该配置不对外服务。
-- **主题包**：内置三个——Windows 10(`uwp`)、Material You(`material`)、SubFabric Classic(`classic`)；
-  `design:"studio"` 仅保留给旧自定义包。同源 JSON 在 `editor/themes/*.theme.json`，运行期定义在
-  `editor/js/studio-themes.js`。自定义包只接受白名单键（`schema` `id` `name` `version` `description`
+- **主题包**：内置四个——Windows 10(`uwp`)、Material You(`material`)、SubFabric Classic(`classic`)、
+  Claude(`claude`)；`design:"studio"` 仅保留给旧自定义包。同源 JSON 在 `editor/themes/*.theme.json`，
+  运行期定义在 `editor/js/studio-themes.js`。自定义包只接受白名单键（`schema` `id` `name` `version` `description`
   `author` `design` `seed` `tokens` `assets` `builtin`）、`#RRGGBB` 颜色令牌与内嵌 PNG/JPEG/WebP 预览；
   **不能**含脚本、CSS、HTML、SVG 或远程 URL。导入同名自定义包替换旧版，导入内置包生成 `-custom` 副本，
   内置包不可删除。
@@ -133,6 +133,35 @@
   深浅色令牌、`studio.css` 末端统一应用，主题包不能绕开。
 - **UWP 特例**：默认 Windows 10 蓝 `#0078D7`；仅在未自定义强调色时使用该默认值，`SSAccent.set()`
   允许覆盖，设置页取色控件保持可用；形状走 2–4px 近直角、无 `backdrop-filter`。
+- **Claude 特例**：暖纸底 `#F6F4EE` / 墨色文字 / 陶土强调 `#B0512F`（用户改色时用 `readable()` 兜底），
+  容器圆角 14px、控件 10px、胶囊与进度 999px；控件描边走 `--outline`（比 `--line` 深，保证 1px 边界仍可辨识）；
+  标题与统计数字用「拉丁衬线 + 中文无衬线」的同一字体栈。三处必须注意的层级：
+  ① 共享层的浅色玻璃规则用 `:is()` 里带 ID 的选择器（特异性 1,2,0），会盖掉设计层的 `background`，
+  因此 Claude 直接改写 `--sf-glass-*-surface` 为纸色，让压暗/模糊参数在纸面主题下自然失效；
+  ② 编辑器的文本输入框（`#note-input`、`#search-box`、`.fr-input` 等）是 ID 级旧规则，设计层用同一份
+  `:is()` 清单补 ID 级覆盖，否则圆角与描边会回到旧值；
+  ③ `.switch` 是 `label.switch > input + span.switch-slider` 三段结构，基底的 `.switch-slider` 写死深色
+  `#2a2a34`，必须整体换掉滑块本体而不是外层 label（label 是 `flex:1` 容器）。
+  另外 `palette()` 派生出的 `--secondary-container` / `--tertiary-container` 在 Claude 下会收回到陶土家族，
+  避免装饰性残留色。
+- **Claude 深色强调色**：内置 seed `#B0512F` 是为浅色纸面调的，直接用于深色只有 2.6:1，
+  箭头/计数/链接会糊在深底上，因此深色下换用提亮变体 `#DE8A64`（6.1:1）；不用 `palette()` 的
+  `readable()`，因为它会把陶土一路洗成 `#EABEAE` 三文鱼粉。用户自选颜色时仍走 `readable()` 兜底。
+- **设计层与共享层的特异性战争**（Claude 踩过三个坑，都已用注释标在 CSS 里）：
+  ① 共享玻璃层 `studio.css:4190` 的 `:is()` 里带 ID 选择器，特异性 1,2,0，会盖掉设计层的
+  `background`——Claude 的解法是把 `--sf-glass-*-surface` 本身改写成纸/墨色，并给必须可见的
+  选中态（`.cue-card.selected` 等）加 `!important`；
+  ② 设计层自己的「深色表面扫描」与 `.sf-widget[data-tone=accent]`、`.cue-card.selected` 特异性
+  同为 (0,4,0)，**谁在后面谁赢**——所以深色归一化必须排在所有状态/色调规则之前；
+  ③ 编辑器的文本输入框是 ID 级旧规则，需用同一份 `:is()` 清单补 ID 级覆盖。
+- **`--on-accent` 深色兜底按 design 分流**：Claude 用暖褐 `#241B14`，其它主题保持 `#101318`，
+  避免波及 Material/Classic/Studio 的自定义强调色。
+- **仪表盘网格：跨行与跨列必须成对考虑**（2026-10-20 修）：`.sf-widget[data-widget=settings]`
+  与 `[data-widget=library]` 基础层各写 `grid-column: span 2`，这套账只有「主卡只占 1 行」的
+  基础布局（Studio / Material / Classic）才配得平：`2+1+1` 与 `2+2` 都能凑满 4 列。
+  **UWP 的主卡 `.sf-widget-resume` 跨 2 行**，网格少一行可用空间，第 3 行 `2+2` 会把稿件库挤到
+  第 4 行、独占两列并空出右半边；因此 UWP 下这两个磁贴必须退回 `grid-column:auto`（`2+1+1=4`）。
+  改这条规则前先数一遍「主卡占几行 × 后面还有几个 span 2」。
 - **设置分类**：全局设置六个一级分类为「外观与体验 / 语音识别 / 翻译与术语 / 识别与校对 / 下载与登录 /
   性能与调度」；ASS 双语样式与后处理固定在稿件的 `#tab-settings`，不进全局设置。
 - **设置保存位置**：设置页不再渲染底部全局动作栏，改由「识别与校对」面板末尾的 `.st-panel-actions`

@@ -41,7 +41,15 @@ function applyTheme() {
   const pack = themes.get(prefs.themePack, prefs.custom);
   // UWP 的默认蓝仍取 pack.seed；一旦用户改过主题色，就用 prefs.accent。
   // 旧默认 accent 是 Studio 的鼠尾草绿，不能让它把首次 UWP 染绿。
-  const accent = pack.design === 'uwp' && prefs.accent === defaults.accent ? pack.seed : prefs.accent;
+  /* UWP / Claude 的默认强调色取主题包 seed；用户一旦改过就跟随 prefs。 */
+  const seedAccent = (pack.design === 'uwp' || pack.design === 'claude') && prefs.accent === defaults.accent ? pack.seed : prefs.accent;
+  /* Claude 的 seed（#B0512F）是为浅色纸面调的，深色下直接用只有 2.6:1，
+     箭头、计数、链接会全部糊在深底上。这里换成提亮变体 #DE8A64（6.1:1）。
+     不用 palette() 的 readable()：它会把陶土一路洗到 #EABEAE（三文鱼粉），丢掉色相。
+     用户自选颜色时仍交给 palette() 做可读性兜底。 */
+  const accent = pack.design === 'claude' && dark
+    ? (seedAccent === pack.seed ? '#DE8A64' : themes.palette(seedAccent, true)['--accent'])
+    : seedAccent;
   const palette = themes.palette(accent, dark);
   document.body.dataset.theme = dark ? 'dark' : 'light';
   document.body.dataset.design = pack.design;
@@ -54,6 +62,20 @@ function applyTheme() {
     ...palette, '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
     '--surface-2': dark ? '#333333' : '#EDEDED', '--surface-3': dark ? '#3A3A3A' : '#E5E5E5', '--text': dark ? '#F3F3F3' : '#202020', '--muted': dark ? '#C5C5C5' : '#606060',
     '--line': dark ? '#666666' : '#B8B8B8', '--accent-soft': palette['--accent-soft'], '--accent-hover': dark ? '#383838' : '#E5F1FB', '--outline': dark ? '#C8C8C8' : '#666666'
+  } : pack.design === 'claude' ? {
+    /* Claude：暖纸底 + 陶土强调。中性色固定为纸/墨两套，强调色仍取用户偏好；
+       --outline 专供控件描边（比 --line 深，保证 1px 边仍能看清控件轮廓）。 */
+    ...palette,
+    '--bg': dark ? '#1A1916' : '#F6F4EE',
+    '--surface': dark ? '#24221B' : '#FCFBF7',
+    '--surface-2': dark ? '#2C2A23' : '#EFECE3',
+    '--surface-3': dark ? '#35322A' : '#E7E3D7',
+    '--text': dark ? '#EDE9DE' : '#1C1B18',
+    '--muted': dark ? '#A5A091' : '#6B675C',
+    '--line': dark ? '#37342C' : '#E1DDD1',
+    '--accent-soft': dark ? '#3A2A20' : '#F3E2D7',
+    '--accent-hover': dark ? '#2E2620' : '#F7ECE4',
+    '--outline': dark ? '#78715C' : '#8C8571'
   } : {
     ...themes.palette(prefs.accent, dark), '--bg': dark ? '#1c221e' : '#f6f7f2', '--surface': dark ? '#252d27' : '#fffefa',
     '--surface-2': dark ? '#2c352e' : '#eef1e8', '--text': dark ? '#e0e6da' : '#28372b', '--muted': dark ? '#b2bdae' : '#647161', '--line': dark ? '#465244' : '#dce2d5'
@@ -62,8 +84,12 @@ function applyTheme() {
   if (pack.design !== 'uwp') {
     tokens = { ...tokens, ...themes.tokenOverrides(pack, dark) };
     // 包的调色板可以自绘，但设置中的强调色仍是最终用户偏好。
-    tokens['--accent'] = prefs.accent;
-    tokens['--on-accent'] = themes.contrast(prefs.accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318';
+    // 用 accent 而不是 prefs.accent：Claude/UWP 在用户没改过颜色时要落在主题包 seed 上。
+    tokens['--accent'] = accent.toUpperCase();
+    /* 深色兜底按 design 分流：Claude 用暖褐 #241B14 与纸面基调一致；
+       其它主题保持原有的近黑蓝 #101318，避免波及 Material/Classic/Studio。 */
+    tokens['--on-accent'] = themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff'
+      : (dark && pack.design === 'claude' ? '#241B14' : '#101318');
   }
   // 原控件和 canvas 都从 root 读变量，统一映射为原程序的令牌名。
   window.SSAccent.apply(tokens['--accent']);
@@ -93,7 +119,7 @@ function applyTheme() {
   /* UWP 的流光只从中性色与固定蓝里取；Material 的 secondary/tertiary 是紫/粉，
      直接继承会把 Windows 主题染成 Material 色。 */
   const auroraColors = prefs.auroraColors.length ? prefs.auroraColors
-    : pack.design === 'uwp'
+    : pack.design === 'uwp' || pack.design === 'claude'
       ? [tokens['--accent-soft'], tokens['--surface-2'], tokens['--line']]
       : [tokens['--accent-soft'], tokens['--secondary-container'], tokens['--tertiary-container']];
   auroraColors.forEach((color, i) => {
@@ -186,7 +212,10 @@ function renderPacks() {
       ? prefs.accent : pack.seed;
     const palette = pack.design === 'uwp'
       ? { '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--accent': previewAccent, '--on-accent': '#FFFFFF' }
-      : { ...themes.palette(pack.seed, dark), ...themes.tokenOverrides(pack, dark) };
+      : pack.design === 'claude'
+        /* Claude 示意图必须显示纸感底色，不能落回 Material 的色调推导。 */
+        ? { '--bg': dark ? '#1A1916' : '#F6F4EE', '--accent': pack.seed, '--on-accent': dark ? '#241B14' : '#FDFBF6' }
+        : { ...themes.palette(pack.seed, dark), ...themes.tokenOverrides(pack, dark) };
     /* 自定义主题包统一用 Windows 10 的斜向四格窗户图标；内置包保留各自标识。 */
     const customGlyph = '<path d="M4 6.3 11 4.4v7.1H4zM12.6 4.1 20 2.1v9.4h-7.4zM4 12.6h7v7.1l-7-1.9zM12.6 12.6H20v9.3l-7.4-1.9z" fill="currentColor" stroke="none"/>';
     const glyph = !pack.builtin
@@ -196,7 +225,10 @@ function renderPacks() {
         : pack.design === 'uwp'
           /* Windows 10 开始菜单四格徽标：斜向四窗、实心；不再是嵌套方框。 */
           ? '<path d="M3 4.4 11 3.1v8.4H3zM12 2.9 21 1.6v10.2h-9zM3 12.3h8v8.4l-8-1.3zM12 12.3h9v10.2l-9-1.3z" fill="currentColor" stroke="none"/>'
-          : '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11M8 4.8l8 3.5"/>';
+          : pack.design === 'claude'
+            /* Claude 的星芒标识：八向发光，圆头描边。 */
+            ? '<path d="M12 2.8v18.4M2.8 12h18.4M5.5 5.5l13 13M18.5 5.5l-13 13"/>'
+            : '<path d="M4 6.5 12 3l8 3.5v11L12 21l-8-3.5z"/><path d="m4 6.5 8 3.5 8-3.5M12 10v11M8 4.8l8 3.5"/>';
     const selected = prefs.themePack === pack.id;
     const builtin = themes.isBuiltin(pack);
     const preview = pack.assets?.preview ? `--preview-image:url("${pack.assets.preview}");` : '';

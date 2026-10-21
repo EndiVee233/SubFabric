@@ -1,0 +1,10 @@
+{
+  "schema": "subfabric-theme-v1",
+  "id": "claude",
+  "name": "Claude",
+  "version": "1.0.0",
+  "description": "暖纸底、陶土强调、衬线标题与柔和圆角",
+  "design": "claude",
+  "seed": "#B0512F",
+  "builtin": true
+}

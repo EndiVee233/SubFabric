@@ -4924,6 +4924,10 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 }
 .sf-studio[data-design=uwp] .sf-widget-resume { grid-column:span 2; grid-row:span 2; padding:22px; gap:10px; }
 .sf-studio[data-design=uwp] .sf-widget[data-widget=new] { grid-column:span 2; flex-direction:row; align-items:center; gap:14px; }
+/* UWP 的磁贴布局里主卡跨 2 行（.sf-widget-resume），整张网格比其它设计族少一行可用空间。
+   此时「全局设置 / 稿件库」若仍 span 2，第 3 行的 2+2 就会把稿件库挤到第 4 行、
+   独占两列并空出右半边 —— 实测就是这么「突出来」的。这里让它们各占 1 列：2+1+1=4。 */
+.sf-studio[data-design=uwp] :is(.sf-widget[data-widget=settings],.sf-widget[data-widget=library]) { grid-column:auto; }
 .sf-studio[data-design=uwp] .sf-widget[data-widget-filter] { justify-content:space-between; }
 .sf-studio[data-design=uwp] .sf-widget[data-tone=accent] {
   --uwp-tile-base:radial-gradient(120% 110% at 0% 100%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 58%), linear-gradient(180deg, rgb(var(--uwp-tile-rgb) / .04), rgb(var(--uwp-tile-rgb) / .01));
@@ -6227,4 +6231,277 @@ body.sf-ev-open { overflow: hidden; }
 }
 .sf-studio[data-design=material] .home-list > .proj-card .pc-actions {
   padding-left:8px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Claude 设计族 —— 暖纸底、陶土强调、衬线标题、柔和圆角。
+
+   放在文件最末：共享层与 UWP/Material 的残留规则都在前面，这里只做覆盖，
+   不改动其它 design 的既有表现。约定：
+   · 容器圆角 14px，控件 10px，胶囊/进度 999px；
+   · 控件描边用 --outline（比 --line 深，1px 边界仍可辨识）；
+   · 阴影一律暖色调、极轻，悬停才抬升；
+   · 拉丁字形走衬线，中文回落到无衬线（同一个 font-family 栈内完成）。
+   ═══════════════════════════════════════════════════════════════════════ */
+.sf-studio[data-design=claude] {
+  --sf-radius: 14px;
+  --sf-claude-display: "Tiempos Headline","Copernicus","Cambria","Iowan Old Style",Georgia,"Songti SC","Microsoft YaHei",serif;
+  --sf-claude-shadow: 0 1px 2px rgb(58 46 34 / .05);
+  --sf-claude-lift: 0 14px 34px -20px rgb(58 46 34 / .38);
+  /* 材质层：Claude 的「毛玻璃」是纸而非黑色蒙版。
+     共享层的玻璃规则用 :is() 里带 ID 的选择器（特异性 1,2,0），会盖掉设计层的
+     background；这里改写玻璃变量本身，让压暗/模糊参数在纸面主题下自然失效。 */
+  --sf-glass-light-surface: rgb(252 251 247 / .97);
+  --sf-glass-light-raised: rgb(252 251 247 / .99);
+  /* 软强调底跟随当前强调色：用户在设置里自选颜色时，--accent-soft 也要一起变，
+     否则会出现「紫色按钮 + 陶土底色」的割裂感。 */
+  --accent-soft: color-mix(in srgb, var(--accent) 11%, var(--surface));
+  /* 强调色当文字用时必须更深：--accent 是给填充用的，压在浅底上只有 4.3:1。
+     需要「强调色文字」的地方一律用 --accent-text。 */
+  --accent-text: #AC4E2B;
+  --sf-glass-surface: rgb(36 34 27 / .97);
+  --sf-glass-raised: rgb(44 42 35 / .99);
+  /* palette() 派生出来的 secondary/tertiary 是色相偏移色（可能是绿/紫），
+     在 Claude 的单一色调纪律下要把它们收回到陶土家族，避免残留装饰色。 */
+  --secondary-container: color-mix(in srgb, var(--accent) 8%, var(--surface-2));
+  --tertiary-container: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  font-family: "Segoe UI Variable Text","Segoe UI","Microsoft YaHei",sans-serif;
+  letter-spacing: -.002em;
+  -webkit-font-smoothing: antialiased;
+}
+.sf-studio[data-design=claude] :is(button,input,select,textarea) { font-family: inherit; letter-spacing: inherit; }
+/* 标题与数字：拉丁衬线 + 中文无衬线的双语对照。 */
+.sf-studio[data-design=claude] :is(h1,h2,h3,h4,.home-title,.ws-title,.sf-pack-name b,.sf-widget-title,.st-card h3) {
+  font-family: var(--sf-claude-display); font-weight: 600; letter-spacing: -.012em;
+}
+.sf-studio[data-design=claude] :is(.sf-widget-num,.sf-widget-title) { font-family: var(--sf-claude-display); }
+
+/* ── 1. 形状：容器 14px，控件 10px ───────────────────────────────────── */
+.sf-studio[data-design=claude] :is(.sf-nav,.sf-topbar,#toolbar,#stage-wrap,#editor-panel,#timeline-panel,.page-surface,.proj-card,.sf-resume,.sf-orbit,.st-card,.set-group,.st-section,.st-actions,.sf-help-grid article,.st-entry,.st-scheme,.sf-asr-family,.sf-prerequisite,.sm-model,.panel-head,.tl-toolbar,.tab-head,.cue-card,.role-card,.sf-pack,.st-drawer,.modal-surface,.sscp,.font-picker,.fp-panel,.sf-choice-menu,.sf-rate-menu,.menu,.rn-box,.pick-box,.fix-box,.ctd-box,.sf-widget,.sf-ev-panel,.ws-panel,.sf-settings-line,.sf-settings-details,.st-scheme-inline,.st-scheme-inline .st-drawer-head,.st-scheme-inline .st-drawer-body,.st-scheme-inline .st-drawer-foot,.st-scheme-inline .st-card) { border-radius:14px; }
+.sf-studio[data-design=claude] :is(.btn,.sf-choice-toggle,.sf-choice-option,.fp-btn,.fp-item,.log-subtab,.st-tab,.ptab,.sf-background-choice,.sf-background-thumb,#sf-filters button,.sf-folder>button,.sf-folder-head button,.sf-nav a,.sf-brand>span,.sf-settings-segments,.sf-settings-segments button,.sscp-control,.sscp-trigger,.sf-scheme-open,.sf-settings-scope,.st-tag-cur,.log-subtab-cnt,.sf-settings-segments button,.sf-cover,.sf-pack-art,.sf-pack-symbol,.sf-widget-ico,.sf-widget-wm,.badge,.pc-st,.sf-scheme-empty,#sf-search) { border-radius:10px; }
+.sf-studio[data-design=claude] :is(.sf-progress,.sf-progress-line,.sf-progress-rest,#sf-seek,.sf-progress-thumb,input[type=range]) { border-radius:999px; }
+
+/* ── 2. 表面：纸底上的卡片与面板 ────────────────────────────────────── */
+.sf-studio[data-design=claude] :is(.page-surface,.proj-card,.sf-resume,.st-card,.set-group,.st-section,.st-actions,.sf-help-grid article,.st-entry,.st-scheme,.sf-asr-family,.sf-prerequisite,.sm-model,.panel-head,.tl-toolbar,.tab-head,.cue-card,.role-card,.sf-pack,.st-drawer,.modal-surface,.sscp,.font-picker,.fp-panel,.sf-choice-menu,.sf-rate-menu,.menu,.rn-box,.pick-box,.fix-box,.ctd-box,.sf-widget,.sf-ev-panel,.ws-panel,.sf-settings-line,.sf-settings-details,.sf-asr-family,.sf-scheme-empty) {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--line);
+  box-shadow: var(--sf-claude-shadow);
+}
+.sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card,.role-card,.sf-asr-family,.sf-scheme-open,.st-entry):is(:hover,:focus-visible) {
+  border-color: var(--outline); box-shadow: var(--sf-claude-lift); transform: translateY(-2px);
+}
+.sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card,.role-card) { transition: border-color .16s var(--ease), box-shadow .2s var(--ease), transform .2s var(--ease), background .16s var(--ease); }
+/* 深色归一化必须放在所有“状态/色调”规则之前：它和 .sf-widget[data-tone=accent]、
+   .cue-card.selected、.sf-pack[aria-current=true] 的特异性同为 (0,4,0)，
+   谁在后面谁赢。放在这里，后面的状态规则才能覆盖它。 */
+.sf-studio[data-theme=dark][data-design=claude] :is(.page-surface,.proj-card,.sf-resume,.st-card,.set-group,.st-section,.st-actions,.st-entry,.st-scheme,.sf-asr-family,.panel-head,.tl-toolbar,.tab-head,.cue-card,.role-card,.sf-pack,.st-drawer,.modal-surface,.sf-widget,.sf-ev-panel,.ws-panel) {
+  background: var(--surface); border-color: var(--line);
+}
+
+.sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card):active { transform: translateY(0) scale(.995); }
+
+/* ── 3. 侧栏 / 顶栏 ─────────────────────────────────────────────────── */
+/* 侧栏要用 surface-2 与内容区分层次；同样会被玻璃层盖掉，故 !important。 */
+.sf-studio[data-design=claude] .sf-nav { background: var(--surface-2) !important; border-right: 1px solid var(--line); padding: 16px 12px 12px; gap: 2px; }
+.sf-studio[data-design=claude] .sf-nav a { min-height: 38px; padding: 9px 12px; gap: 10px; color: var(--text); border: 1px solid transparent; transition: background .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease); }
+.sf-studio[data-design=claude] .sf-nav a:hover { background: var(--accent-hover); color: var(--text); }
+.sf-studio[data-design=claude] .sf-nav a.active { background: var(--surface); color: var(--text); border-color: var(--line); box-shadow: var(--sf-claude-shadow); }
+.sf-studio[data-design=claude] .sf-nav a.active::before { display: none; }
+.sf-studio[data-design=claude] .sf-nav a.active svg { color: var(--accent); }
+.sf-studio[data-design=claude] .sf-nav .sf-brand { border-radius: 10px; }
+.sf-studio[data-design=claude] .sf-brand>span { background: var(--accent); color: var(--on-accent); border-radius: 8px; }
+.sf-studio[data-design=claude] .sf-topbar { background: var(--bg); border-bottom: 1px solid var(--line); box-shadow: none; }
+.sf-studio[data-design=claude] .sf-topbar .btn { background: transparent; border-color: transparent; }
+.sf-studio[data-design=claude] .sf-topbar .btn:hover { background: var(--surface); border-color: var(--line); }
+
+/* ── 4. 按钮 ────────────────────────────────────────────────────────── */
+.sf-studio[data-design=claude] .btn { min-height: 34px; padding: 7px 14px; border-radius: 10px; background: var(--surface); color: var(--text); border: 1px solid color-mix(in srgb, var(--outline) 62%, var(--line)); box-shadow: none; font-size: 13px; font-weight: 500; transition: background .16s var(--ease), border-color .16s var(--ease), transform .16s var(--ease), box-shadow .16s var(--ease); }
+.sf-studio[data-design=claude] .btn:hover { background: var(--surface-2); border-color: var(--outline); transform: translateY(-1px); box-shadow: var(--sf-claude-shadow); }
+.sf-studio[data-design=claude] .btn:active { transform: translateY(0) scale(.985); }
+.sf-studio[data-design=claude] .btn-accent { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.sf-studio[data-design=claude] .btn-accent:hover { background: var(--accent); border-color: var(--accent); filter: brightness(1.06); }
+.sf-studio[data-design=claude] .btn-mini { min-height: 28px; padding: 4px 10px; font-size: 12px; border-radius: 8px; }
+.sf-studio[data-design=claude] .btn[disabled],.sf-studio[data-design=claude] .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* ── 5. 输入类控件 ──────────────────────────────────────────────────── */
+.sf-studio[data-design=claude] :is(input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea,.st-input,.st-area,.gl-input,.sscp-value) {
+  min-height: 34px; padding: 7px 10px; border-radius: 10px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--outline); box-shadow: none;
+}
+.sf-studio[data-design=claude] :is(input:not([type=range]),select,textarea):hover { border-color: var(--muted); }
+.sf-studio[data-design=claude] :is(input,select,textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sf-studio[data-design=claude] :is(input,textarea)::placeholder { color: var(--muted); opacity: 1; }
+.sf-studio[data-design=claude] :is(input[type=range],input[type=checkbox],input[type=radio],progress) { accent-color: var(--accent); }
+/* 原生 range 在深色主题下会露出一条白底（appearance:auto + 白色背景），必须自己画轨道。 */
+.sf-studio[data-design=claude] input[type=range] { background: transparent; }
+.sf-studio[data-design=claude] input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 32%, transparent); }
+.sf-studio[data-design=claude] input[type=range]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--accent); box-shadow: 0 1px 2px rgb(58 46 34 / .22); transition: transform .14s var(--ease), box-shadow .14s var(--ease); }
+.sf-studio[data-design=claude] input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.1); }
+.sf-studio[data-design=claude] input[type=range]:active::-webkit-slider-thumb { transform: scale(1.18); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent); }
+.sf-studio[data-design=claude] input[type=range]::-moz-range-track { height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 32%, transparent); }
+.sf-studio[data-design=claude] input[type=range]::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--accent); }
+.sf-studio[data-design=claude] input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--accent); }
+.sf-studio[data-design=claude] :is(input[type=checkbox],input[type=radio]) { width: 15px; height: 15px; }
+.sf-studio[data-design=claude] #sf-search { background: var(--surface); border: 1px solid var(--outline); border-radius: 10px; }
+/* 编辑器里有一批 ID 级输入框（#note-input、#search-box 等），共享层的 :is() 类选择器
+   压不住它们（1,0,0 vs 0,3,0）。这里用同一份清单补 ID 级覆盖，确保形态统一。 */
+.sf-studio[data-design=claude] :is(#note-input,#search-box,#detail-name,#role-new-name,#role-rename-input,.fr-input,.hotword-input,.ctd-input,#cie-input,.sscp-fields input,.fp-filter,.st-input,.st-area,.gl-input,.st-select,.np-input,.np-select,.np-area,#np-view .np-time) {
+  min-height: 34px; padding: 7px 10px; border-radius: 10px; background: var(--surface); color: var(--text);
+  border: 1px solid var(--outline); box-shadow: none;
+}
+.sf-studio[data-design=claude] :is(#note-input,#search-box,#detail-name,.fr-input,.hotword-input,.ctd-input,.sscp-fields input,.fp-filter):hover { border-color: var(--muted); }
+/* 开关是 label.switch > input + span.switch-slider 三段结构；该改的是滑块本体，
+   不是外层 label（label 是 flex:1 的容器，改它会把整行染成强调色）。
+   基底的 .switch-slider 写死了深色 #2a2a34，纸面主题下必须整体换掉。 */
+.sf-studio[data-design=claude] .switch { flex: none; width: auto; height: auto; background: transparent; border: 0; }
+.sf-studio[data-design=claude] .switch-slider { width: 38px; height: 22px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 40%, var(--surface)); border: 1px solid var(--outline); }
+.sf-studio[data-design=claude] .switch-slider::after { width: 14px; height: 14px; top: 2px; left: 2px; background: var(--surface); box-shadow: 0 1px 2px rgb(58 46 34 / .3); }
+.sf-studio[data-design=claude] .switch input:checked + .switch-slider { background: var(--accent); border-color: var(--accent); }
+.sf-studio[data-design=claude] .switch input:checked + .switch-slider::after { transform: translateX(16px); background: var(--on-accent); }
+.sf-studio[data-design=claude] .switch-mini .switch-slider { width: 34px; height: 20px; border-radius: 999px; }
+.sf-studio[data-design=claude] .switch-mini .switch-slider::after { width: 13px; height: 13px; top: 2px; left: 2px; }
+.sf-studio[data-design=claude] .switch-mini input:checked + .switch-slider::after { transform: translateX(14px); }
+
+/* ── 6. 标签页 / 分段 / 筛选 ────────────────────────────────────────── */
+.sf-studio[data-design=claude] :is(.st-tabs,.sf-settings-segments,.log-subtabs,#panel-tabs) { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 2px; }
+.sf-studio[data-design=claude] :is(.st-tab,.sf-settings-segments button,.log-subtab,.ptab) { min-height: 32px; padding: 7px 12px; border-radius: 8px; background: transparent; color: var(--muted); border: 1px solid transparent; box-shadow: none; }
+.sf-studio[data-design=claude] :is(.st-tab,.sf-settings-segments button,.log-subtab,.ptab):hover { background: var(--accent-hover); color: var(--text); }
+.sf-studio[data-design=claude] :is(.st-tab.active,.sf-settings-segments button.active,.sf-settings-segments button[aria-pressed=true],.log-subtab.active,.ptab.active) { background: var(--surface); color: var(--text); border-color: var(--line); box-shadow: var(--sf-claude-shadow); }
+/* 共享层 studio.css:3410 的 `.sf-studio #st-view .st-tab.active` 特异性 1,3,0，
+   强制「软底 + 强调色文字」。Claude 的软底偏浅，陶土文字压上去只有 4.04:1，不达标。
+   这里用同样带 #st-view 的选择器（1,4,0）改回「浅陶土底 + 墨色字」。 */
+.sf-studio[data-design=claude] #st-view :is(.st-tab.active,.ptab.active,.log-subtab.active) {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+  color: var(--text);
+  border-color: var(--line);
+}
+.sf-studio[data-theme=dark][data-design=claude] #st-view :is(.st-tab.active,.ptab.active,.log-subtab.active) {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--text);
+}
+.sf-studio[data-design=claude] :is(#sf-filters button,.sf-background-choice,.sf-choice-toggle,.sf-choice-option,.fp-btn,.fp-item,.sf-scheme-open,.sf-folder>button,.sf-folder-head button) { border-radius: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--line); box-shadow: none; }
+.sf-studio[data-design=claude] :is(#sf-filters button,.sf-background-choice,.sf-choice-toggle,.sf-choice-option,.fp-btn,.fp-item,.sf-scheme-open):hover { background: var(--surface-2); border-color: var(--outline); }
+.sf-studio[data-design=claude] :is(#sf-filters button.active,.sf-background-choice[aria-pressed=true],.sf-choice-toggle[aria-expanded=true],.sf-scheme-open[aria-expanded=true]) { background: var(--accent-soft); color: var(--accent-text, var(--accent)); border-color: var(--accent); }
+.sf-studio[data-design=claude] .sf-background-thumb { border-radius: 8px; border: 1px solid var(--line); }
+.sf-studio[data-design=claude] .st-tag-cur,.sf-studio[data-design=claude] .log-subtab-cnt,.sf-studio[data-design=claude] .sf-settings-scope,.sf-studio[data-design=claude] .badge,.sf-studio[data-design=claude] .pc-st { border-radius: 6px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+
+/* ── 7. 主题包卡（含 Claude 自己的示意图几何）────────────────────────── */
+.sf-studio[data-design=claude] .sf-pack { border-radius: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: none; padding: 10px; }
+.sf-studio[data-design=claude] .sf-pack[aria-current=true] { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 26%, transparent); }
+.sf-studio[data-design=claude] .sf-pack:not([aria-current=true]):hover { border-color: var(--outline); }
+.sf-studio[data-design=claude] .sf-pack-name b { font-size: 14px; }
+.sf-studio[data-design=claude] .sf-pack-name svg { color: var(--accent); }
+.sf-pack-art.claude { --pack-art-radius: 14px; --pack-symbol-radius: 10px; --pack-line-radius: 6px; }
+
+/* ── 8. 仪表盘磁贴 / 主页 / 稿件卡 ──────────────────────────────────── */
+.sf-studio[data-design=claude] .sf-widget { min-height: 142px; padding: 16px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--sf-claude-shadow); }
+/* 强调磁贴不用整块平涂陶土：Claude 的界面是纸面卡片 + 小面积强调，
+   一大片实色会变成「色块炸弹」，也盖掉标题的衬线层级。
+   用 --accent-soft 做软强调底，CTA 与水印图标才用实色陶土。 */
+.sf-studio[data-design=claude] .sf-widget[data-tone=accent] { background: color-mix(in srgb, var(--accent) 5%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 26%, var(--line)); color: var(--text); }
+.sf-studio[data-design=claude] .sf-widget[data-tone=accent] :is(small,.sf-widget-kicker) { color: var(--text); }
+.sf-studio[data-design=claude] .sf-widget[data-tone=accent] .sf-widget-cta { color: var(--accent-text); }
+.sf-studio[data-design=claude] .sf-widget[data-tone=accent] .sf-widget-wm { color: var(--accent); opacity: .5; }
+.sf-studio[data-design=claude] .sf-widget[data-tone=warn] { border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); }
+.sf-studio[data-design=claude] .sf-widget[data-tone=warn] .sf-widget-num { color: var(--accent); }
+.sf-studio[data-design=claude] .sf-widget-num { font-size: 36px; font-weight: 600; letter-spacing: -.02em; line-height: 1.05; font-variant-numeric: lining-nums tabular-nums; }
+.sf-studio[data-design=claude] .sf-widget-kicker { font-size: 9.5px; letter-spacing: .14em; opacity: .72; }
+.sf-studio[data-design=claude] .sf-widget-title { font-size: 17px; font-weight: 600; }
+.sf-studio[data-design=claude] .sf-widget-cta { font-size: 12px; font-weight: 500; }
+.sf-studio[data-design=claude] .sf-widget:hover { border-color: var(--outline); }
+.sf-studio[data-design=claude] .sf-widget[data-tone=accent]:hover { border-color: var(--accent); }
+.sf-studio[data-design=claude] .sf-cover { border-radius: 10px; background: var(--surface-2); }
+.sf-studio[data-design=claude] .proj-card { padding: 10px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+.sf-studio[data-design=claude] .proj-card:hover { border-color: var(--outline); box-shadow: var(--sf-claude-lift); }
+.sf-studio[data-design=claude] :is(.home-toolbar,.sf-library-tools) { border-color: var(--line); }
+.sf-studio[data-design=claude] :is(.home-title,.ws-title) { font-size: 26px; }
+.sf-studio[data-design=claude] .home-sub { color: var(--muted); }
+
+/* ── 9. 设置页 ──────────────────────────────────────────────────────── */
+.sf-studio[data-design=claude] #st-view :is(.st-card,.set-group,.st-section) { padding: 20px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); box-shadow: none; }
+.sf-studio[data-design=claude] #st-view .st-actions { border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
+.sf-studio[data-design=claude] .sf-settings-heading h2 { font-family: var(--sf-claude-display); font-size: 22px; }
+.sf-studio[data-design=claude] .sf-settings-line { border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.sf-studio[data-design=claude] .sf-theme-color-panel { border-radius: 14px; }
+.sf-studio[data-design=claude] .sf-background-thumb.aurora { background: linear-gradient(130deg, var(--accent-soft), var(--surface-2) 58%, var(--line)); }
+.sf-studio[data-design=claude] .sf-background-thumb.image:not([style*="url"])::after { background: var(--accent); opacity: .92; }
+.sf-studio[data-design=claude] .theme-sw { border-radius: 8px; border: 1px solid var(--line); }
+.sf-studio[data-design=claude] .theme-sw[aria-pressed=true],.sf-studio[data-design=claude] .theme-sw.active { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent); }
+.sf-studio[data-design=claude] .sscp { border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.sf-studio[data-design=claude] .sscp-trigger,.sf-studio[data-design=claude] .sscp-value { border-radius: 8px; }
+
+/* ── 10. 浮层：菜单 / 弹窗 / 提示 ───────────────────────────────────── */
+.sf-studio[data-design=claude] :is(.sf-choice-menu:not([hidden]),.sf-rate-menu:not([hidden]),.fp-panel,.menu,#role-menu,#card-menu,#tl-menu,.pick-box,.fix-box,.rn-box,.ctd-box) {
+  background: var(--surface); color: var(--text); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: 0 20px 44px -26px rgb(58 46 34 / .5);
+}
+.sf-studio[data-design=claude] :is(.modal-surface,.sf-ev-panel,.st-drawer) { border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 30px 70px -40px rgb(40 30 20 / .55); }
+.sf-studio[data-design=claude] .sf-ev-panel { border-radius: 16px; }
+.sf-studio[data-design=claude] :is(.sf-ev-input,.sf-ev-field select,.sf-ev-field input) { border-radius: 10px; border: 1px solid var(--outline); background: var(--surface); }
+.sf-studio[data-design=claude] #sf-notice { border-radius: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--outline); box-shadow: var(--sf-claude-lift); }
+.sf-studio[data-design=claude] [style*="z-index: 9999"] {
+  background: var(--ink-strong, #1C1B18) !important; color: #FDFBF6 !important; border: 1px solid #1C1B18 !important;
+  border-radius: 10px !important; box-shadow: 0 18px 40px -24px rgb(40 30 20 / .6) !important;
+  font-family: "Segoe UI Variable Text","Segoe UI","Microsoft YaHei",sans-serif !important; font-size: 13px !important;
+}
+.sf-studio[data-design=claude] [style*="z-index: 9998"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface)) !important; color: var(--text) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line)) !important;
+  border-radius: 10px !important; box-shadow: var(--sf-claude-lift) !important;
+  font-family: "Segoe UI Variable Text","Segoe UI","Microsoft YaHei",sans-serif !important; font-size: 13px !important; line-height: 1.5 !important;
+}
+.sf-studio[data-design=claude] [style*="z-index: 9998"]>button {
+  background: var(--accent) !important; color: var(--on-accent) !important; border: 1px solid var(--accent) !important;
+  border-radius: 8px !important; padding: 3px 10px !important; font-size: 12px !important;
+}
+
+/* ── 11. 播放器 / 时间轴 ────────────────────────────────────────────── */
+.sf-studio[data-design=claude] #sf-player #sf-play { background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); border-radius: 10px; }
+.sf-studio[data-design=claude] #sf-player #sf-play:hover { filter: brightness(1.07); transform: none; border-radius: 10px; }
+.sf-studio[data-design=claude] #sf-player #sf-mute { border-radius: 10px; }
+/* 时间码用强调色，浅色下压在 surface-2 上只有 4.37:1，换成 --accent-text。 */
+.sf-studio[data-design=claude] #note-bar .note-at { color: var(--accent-text); }
+/* 视频区提示卡是压在黑色视频上的深色浮层，浅色主题下也保持深色；
+   弱化文字 #6B675C 在它上面只有 3.59:1，提到近白。 */
+/* 视频区提示卡是压在黑色视频上的深色浮层，浅色主题下也保持深色。
+   共享层 studio.css:2701 的 `.hint-card b { color: var(--text-0) }` 会把它锁成深色字
+   （浅色主题下 --text-0 是深墨，压在深色卡上只有 1.18:1，等于隐形），必须一并改掉。 */
+.sf-studio[data-design=claude] .hint-card { color: #E8E4DC; }
+.sf-studio[data-design=claude] .hint-card :is(.hint-sub,small) { color: #C9C5BD; }
+.sf-studio[data-design=claude] .hint-card :is(b,strong) { color: #F4F0E8; }
+.sf-studio[data-design=claude] :is(#sf-volume,.sf-image-range input[type=range]) { accent-color: var(--accent); }
+.sf-studio[data-design=claude] .sf-progress { background: color-mix(in srgb, var(--muted) 28%, transparent); border-radius: 999px; }
+.sf-studio[data-design=claude] .sf-progress-thumb { background: var(--accent); border: 2px solid var(--surface); border-radius: 999px; box-shadow: 0 1px 3px rgb(58 46 34 / .3); }
+.sf-studio[data-design=claude] :is(.cue-card,.role-card) { border: 1px solid var(--line); background: var(--surface); }
+/* 共享玻璃层（studio.css:4190）的 :is() 里带 ID 选择器，特异性 1,2,0，
+   会盖掉设计层的 background。选中态必须可见，这里用 !important 抢回来。 */
+.sf-studio[data-design=claude] :is(.cue-card.selected,.cue-card.playing,.role-card.active) { background: var(--accent-soft) !important; border-color: var(--accent); box-shadow: none; }
+.sf-studio[data-design=claude] :is(.tl-toolbar,.tab-head,#panel-tabs) { background: var(--surface); border-color: var(--line); }
+
+/* ── 12. 滚动条 ─────────────────────────────────────────────────────── */
+.sf-studio[data-design=claude] ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 32%, transparent); border-radius: 999px; }
+.sf-studio[data-design=claude] ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.sf-studio[data-design=claude] { scrollbar-color: color-mix(in srgb, var(--muted) 32%, transparent) transparent; }
+
+/* ── 13. 深色：纸变成墨，阴影加深 ───────────────────────────────────── */
+.sf-studio[data-theme=dark][data-design=claude] {
+  --sf-claude-shadow: 0 1px 2px rgb(0 0 0 / .3);
+  --sf-claude-lift: 0 16px 38px -22px rgb(0 0 0 / .75);
+  --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  --accent-text: #EDA98A;
+  /* 共享层里有一条未限定明暗的规则（studio.css:4216，
+     `.sf-studio[data-workspace=settings] #st-view .sf-asr-family`）直接用
+     `--sf-glass-light-surface`。其它主题里那个变量是 20% 黑，深色下无害；
+     Claude 把它定义成了纸色，于是深色会刷出一张白卡片。
+     这里把「浅色玻璃」变量在深色下一并定义成墨色，未限定作用域的消费者也能拿到正确颜色。 */
+  --sf-glass-light-surface: rgb(36 34 27 / .97);
+  --sf-glass-light-raised: rgb(44 42 35 / .99);
+}
+.sf-studio[data-theme=dark][data-design=claude] .sf-nav { background: var(--surface-2); }
+.sf-studio[data-theme=dark][data-design=claude] .sf-nav a.active { background: var(--surface); }
+
+/* ── 14. 动效偏好：Claude 的抬升不做位移 ────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card,.role-card,.btn) { transition: none; }
+  .sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card,.role-card,.btn):hover { transform: none; }
 }

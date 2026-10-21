@@ -193,7 +193,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 | `editor.js` / `editor.css` / `workspace.css` | 模拟双语编辑、逐词播放高亮/边界、波形覆盖字幕/重叠分轨、时间轴四项设置、历史、角色单击分配与右键菜单、样式、审核建议、备注与字幕导出；独立页保持左预览/下时间轴/右四 Tab，字幕卡左时间/右角色·常驻样式·双语（Quiet Card：角色色左条、时间/置信度低对比、动作渐进披露）。播放中的卡片使用统一高亮与自动跟随提示；低频刷新、异常分类、反思纠错、全片逐词重校对、分段导入放入编辑器设置，高频筛选/搜索/显示模式/跟随播放留在顶部。 |
 | `data.js` / `icons.js` | SF_DEMO 通用合成数据、SF_WORD_DEMO 的非等分词时间/重叠角色示例和内联 SVG，无远程资产 |
 | `styles.css` | 纸白/石墨/苔绿 token、三种背景、主题、材质、交互反馈、减少动效 |
-| `studio-themes.js` / `studio.css` / `editor/themes/*.theme.json` | 声明式内置主题包与自定义主题包导入校验、本地色调角色、受限颜色令牌和本地预览图；主题包不执行脚本、不注入 CSS、不访问远程资源 |
+| `studio-themes.js` / `studio.js` / `studio.css` / `editor/themes/*.theme.json` | 声明式内置主题包与自定义主题包导入校验、本地色调角色、受限颜色令牌和本地预览图；主题包不执行脚本、不注入 CSS、不访问远程资源 |
 | `progress.js` | 两页共享的任务/播放进度 markup、数值/状态同步、单个可见性观察器与后台/减少动效门控；波形 CSS 固定图案位移，无额外帧循环 |
 | `serve.cjs` | 127.0.0.1:8347 静态白名单；CSP connect-src none；不提供 API |
 | `review/` | 合成夹具、隔离行为检查与可视验收记录，不由静态服务提供 |
@@ -374,7 +374,7 @@ SEA 打包入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁�
 
 Studio 的毛玻璃压暗、模糊度、透明度保存在 `studio-state.js` 的界面偏好中；`studio.js` 同时计算深色与浅色材质令牌，`studio.css` 末端对所有主题包的导航、项目卡、编辑器表面、设置卡、弹层和菜单统一应用。主题包只改变视觉令牌与几何，不能绕开这组材质参数。
 
-`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。`studio-themes.js` 提供三个内置主题包（Windows 10、Material You、SubFabric Classic；Studio 已从选择器移除，`design: studio` 保留给旧自定义包）及“我的主题包”存储；`editor/themes/*.theme.json` 是可分发的同源 JSON，导入包只能使用白名单设计、颜色令牌和本地 PNG/JPEG/WebP 预览图，不能执行脚本、注入 CSS 或引用远程资源。设置页按内置/自定义分组，内置包不可删除，自定义包可导出、替换和删除；格式与制作说明见 `docs/THEME_PACKS.md`。`studio-progress.js` 提供固定 CSS 波浪。全局模型、翻译与识别设置共用唯一“设置”入口；旧 `#/resources` 仅重定向至 `#/settings`。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
+`editor/js/studio.js` 只适配页面导航、外观、真实项目快照和播放器事件；`studio-state.js` 校验浏览器外观/文件夹关系（不储存字幕/模型/凭据）。`studio-themes.js` 提供四个内置主题包（Windows 10、Material You、SubFabric Classic、Claude；Studio 已从选择器移除，`design: studio` 保留给旧自定义包）及“我的主题包”存储；`editor/themes/*.theme.json` 是可分发的同源 JSON，导入包只能使用白名单设计、颜色令牌和本地 PNG/JPEG/WebP 预览图，不能执行脚本、注入 CSS 或引用远程资源。设置页按内置/自定义分组，内置包不可删除，自定义包可导出、替换和删除；格式与制作说明见 `docs/THEME_PACKS.md`。`studio-progress.js` 提供固定 CSS 波浪。全局模型、翻译与识别设置共用唯一“设置”入口；旧 `#/resources` 仅重定向至 `#/settings`。ASS 控件为同一组 DOM，始终停留在稿件编辑器的 #tab-settings，保留原监听器/文档保存链路；无当前 ASS 项目时由编辑器业务自身禁用文档操作，后处理为本机偏好。创建提交期间 Studio 路由统一互斥，避免上传回调读取被重置的材料。
 
 UWP 设置页只保留交互控件等必要的 surface；设置路由下的 `.st-panel`、`.st-card`/表单行/说明条背景透明，避免灰块与黑底冲突，边框和内边距保留。 编辑器 `#tab-settings` 的分组头不吸顶，标题回到卡片顶部并加分隔线，滚动时不再遮住上一组内容。 词生长 Grow 暂停：`#fx-grow-block` 在模板/入口整段注释，`main.js` 强制关闭旧配置；`postprocess.js` 引擎保留以兼容旧特效标签与测试。 微光 `glow.followRole`：从中文行可见 `[角色]` + 行首角色色，按时间跨度映射英文活动词；同 Name 不同角色各用自己的颜色，找不到回退手动色。载入自愈不再把带 `[角色]` 的绿色行首色标当逐词高亮剥掉，并在同角色其它行有颜色时补回丢失色标。 「逐词字幕自愈」卡必须放在 `#tab-settings .settings-list` 内、`#editor-advanced-actions` 之后，不能直接挂到 `#tab-settings` 外层，否则会变成固定浮窗遮挡设置内容。
 

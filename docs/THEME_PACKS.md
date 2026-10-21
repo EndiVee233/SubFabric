@@ -1,6 +1,6 @@
 # SubFabric 主题包
 
-SubFabric 内置三个主题包：Windows 10（默认，内部设计标识仍为 `uwp`）、Material You、SubFabric Classic。Studio 主题已从内置选择器移除（`design: "studio"` 仍保留给旧自定义包）；设置 → 外观与主题会把三个内置包与“我的主题包”分组显示。
+SubFabric 内置四个主题包：Windows 10（默认，内部设计标识仍为 `uwp`）、Material You、SubFabric Classic、Claude。Studio 主题已从内置选择器移除（`design: "studio"` 仍保留给旧自定义包）；设置 → 外观与主题会把四个内置包与“我的主题包”分组显示。
 
 自定义主题包是一个 JSON 文件。最简单的做法是在设置页导出当前主题包，修改 `id`、名称、描述和颜色，再重新导入：
 

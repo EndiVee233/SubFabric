@@ -61,7 +61,9 @@ assert.match(studioSource, /'--accent-hover': dark \? '#383838' : '#E5F1FB'/, 'U
 assert.match(studioSource, /'--line': dark \? '#666666' : '#B8B8B8'/, 'UWP uses bright neutral control outlines');
 assert.match(studioSource, /'--outline': dark \? '#C8C8C8' : '#666666'/, 'UWP focus outlines remain bright and neutral');
 assert.match(studioSource, /pack\.design === 'uwp'[\s\S]*'#1F1F1F' : '#F3F3F3'/, 'UWP picker preview uses the exact Windows 10 background surface');
-assert.match(studioSource, /const accent = pack\.design === 'uwp' && prefs\.accent === defaults\.accent \? pack\.seed : prefs\.accent/, 'UWP keeps blue as its untouched default and accepts a custom accent');
+assert.match(studioSource, /const seedAccent = \(pack\.design === 'uwp' \|\| pack\.design === 'claude'\) && prefs\.accent === defaults\.accent \? pack\.seed : prefs\.accent/, 'UWP keeps blue as its untouched default and accepts a custom accent; Claude falls back to its own seed');
+assert.match(studioSource, /pack\.design === 'claude' && dark/, 'Claude recomputes its accent for dark mode');
+assert.match(studioSource, /#DE8A64/, 'Claude dark uses the lightened terracotta instead of the paper seed');
 assert.match(studioSource, /sf-color'\)\.disabled = false/, 'UWP custom color input is enabled');
 assert.doesNotMatch(studioSource, /Windows UWP 使用固定的 Windows 10 蓝色/, 'UWP no longer claims its accent is fixed');
 assert.match(css.slice(finalThemeLayer), /\.theme-sw \{ pointer-events:auto; cursor:pointer; opacity:1; \}/, 'UWP accent swatches remain interactive');
@@ -70,6 +72,7 @@ assert.match(css, /\.sf-studio\[data-design=uwp\] \.sscp-control \{ background:t
 assert.match(css.slice(finalThemeLayer), /\.sf-widgets \{ grid-template-columns:repeat\(4,minmax\(0,1fr\)\); gap:11px;/, 'UWP dashboard uses the 4-column tile grid and 11px gaps');
 assert.match(css.slice(finalThemeLayer), /\.sf-widget-resume \{ grid-column:span 2; grid-row:span 2;/, 'UWP resume tile spans 2x2 like the prototype');
 assert.match(css.slice(finalThemeLayer), /\.sf-widget\[data-widget=new\] \{ grid-column:span 2;/, 'UWP new tile spans the 2x1 slot');
+assert.match(css.slice(finalThemeLayer), /\.sf-widget\[data-widget=settings\],\.sf-widget\[data-widget=library\]\) \{ grid-column:auto; \}/, 'UWP settings/library tiles drop to one column so the last row fills 2+1+1 and does not wrap');
 assert.match(css.slice(finalThemeLayer), /\.uwp-tile \{/, 'UWP button controls share the tile reveal layer');
 assert.match(css.slice(finalThemeLayer), /@keyframes uwp-tile-out/, 'UWP dashboard tiles have the forward fly-out');
 assert.match(css.slice(finalThemeLayer), /@keyframes uwp-page-in/, 'UWP target pages fade/scale in');
