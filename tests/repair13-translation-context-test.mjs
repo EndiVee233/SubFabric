@@ -9,7 +9,10 @@ import { serverFunctions } from './helpers/server-functions.mjs';
 const messageParts = body => {
   const msg = body.messages.at(-1).content;
   const marker = /\[\[以下 \d+ 行才是本次要翻译的内容\]\]\n/;
-  return { msg, texts: msg.split(marker).at(-1).split('\n') };
+  /* 待翻正文已改成「序号. 原文」（编号输入，便于逐行对齐）。
+     断言只关心原文内容与顺序，所以这里把序号剥掉；msg 保留原文用于钉格式。 */
+  const texts = msg.split(marker).at(-1).split('\n').map(t => t.replace(/^\d+\.\s?/, ''));
+  return { msg, texts };
 };
 // 模型直接返回逐行纯文本；生产解析器仍兼容旧 JSON 数组，但本测试固定走新默认路径。
 const llm = await mockLlm(body => ({ __rawContent: true,
@@ -34,10 +37,10 @@ try {
   };
   configure(2);
   let calls = await start([]);
-  assert.match(llm.requests[0].messages[0].content, /直接输出译文|纯文本译文/);
+  assert.match(llm.requests[0].messages[0].content, /序号.*输出|输出.*序号/);
   assert.doesNotMatch(llm.requests[0].messages[0].content, /只输出一个 JSON 数组/);
   assert.deepEqual(calls.map(c => c.texts.length), [5, 5, 1]);
-  assert.equal(calls[0].msg, 'line0\nline1\nline2\nline3\nline4');
+  assert.equal(calls[0].msg, '1. line0\n2. line1\n3. line2\n4. line3\n5. line4');
   assert.match(calls[1].msg, /line3\t=> 译文3\nline4\t=> 译文4/);
   assert.match(calls[2].msg, /line8\t=> 译文8\nline9\t=> 译文9/);
   // 模拟中断后，仅前 5 行已保存到同版本缓存。

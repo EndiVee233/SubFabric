@@ -1140,8 +1140,8 @@ const LLM_PRESETS = [
 const DEFAULT_TRANSLATE_PROMPT = [
   '你是字幕翻译专家。把用户给出的英文字幕逐行翻译成简体中文。',
   '严格要求：',
-  '1) 直接输出译文，每个输入行对应一行，按原顺序逐行返回；不要输出 JSON、编号、解释或代码块；',
-  '2) 输出行数必须与输入行数完全相同，禁止合并或拆分行；',
+  '1) 每个输入行都以「序号. 」开头，输出也要以**同样的序号**开头，例如「3. 译文」；',
+  '2) 输出行数必须与输入行数完全相同，禁止合并或拆分行；序号必须连续且与输入一一对应；',
   '3) 人名、地名、组织名、作品名、缩写与 [方括号] 内的内容保留原文不译；',
   '4) 译文简洁自然，符合口语，不要逐字直译，不要加引号；',
   '5) 原文为空的行输出空行。',
@@ -1555,9 +1555,9 @@ function parseGlossary(text, lang) {
 function systemPromptWithGlossary(cfg, strict) {
   const sys = (cfg.prompt || DEFAULT_TRANSLATE_PROMPT) + '\n\n'
     + (strict
-      ? '【极其重要】上一次的回复没有按输入逐行返回。这一次只输出纯文本译文：每个输入行对应一行，'
-        + '保持顺序，不要 JSON、不要 markdown 代码块、不要编号、不要解释。'
-      : '【输出格式】只输出纯文本译文，每个输入行对应一行并保持顺序；不要 JSON、不要 markdown 代码块、不要编号、不要解释。');
+      ? '【极其重要】上一次的回复没有按输入逐行返回。这一次严格按「序号. 译文」输出：'
+        + '序号与输入完全一致、连续不缺号，不要 JSON、不要 markdown 代码块、不要解释。'
+      : '【输出格式】每行输出「序号. 译文」，序号与输入行号一致且连续；不要 JSON、不要 markdown 代码块、不要解释。');
   const g = parseGlossary(cfg.glossary, cfg.glossaryLang);
   if (!g.length) return sys;
   return sys + '\n\n【术语表】下面的词必须按给定译法翻译，不要音译、不要另译（未列出的按常规翻译）：\n'
@@ -5650,7 +5650,9 @@ function startPrepare(id, videoPath, mode) {
       } catch (e) { lastErr = e; }
     }
     if (texts.length > 1 && depth < 5) {
-      const mid = Math.ceil(texts.length / 2);
+      /* 降批走阶梯（一次砍到 1/3 左右），而不是死板折半：
+         每档失败都要付一次完整请求（100 行约 90 秒），少一层无效请求就是省时间。 */
+      const mid = Math.min(llmText.nextBatchSize(texts.length), texts.length - 1);
       try {
         const left = context && { ...context, idxs: context.idxs.slice(0, mid) };
         const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile, refs, left);

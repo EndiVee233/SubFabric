@@ -87,17 +87,19 @@ console.log('\n── ⑤ 提示词拼装：参考行不能算进"待翻译行�
 {
   const texts = ['a', 'b', 'c'];
   const plain = L.buildTranslateUserMessage(texts, null);
-  check('无参考时就是纯文本（与旧行为一致）', plain === 'a\nb\nc', JSON.stringify(plain));
+  /* 输入已改为「序号. 原文」编号格式（逐行对齐靠它），不再是裸行拼接；
+     这里同时钉住「仍然是一行一条、不多不少」。 */
+  check('无参考时就是编号纯文本', plain === '1. a\n2. b\n3. c', JSON.stringify(plain));
 
   const withRefs = L.buildTranslateUserMessage(texts, [{ text: 'x', zh: 'X' }, { text: 'y', zh: 'Y' }]);
   check('有参考时含参考标记', /前文参考/.test(withRefs) && /不要翻译/.test(withRefs));
   check('含"以下 3 行"的准确计数', /以下 3 行/.test(withRefs), withRefs.slice(0, 80));
   const tail = withRefs.split('本次要翻译的内容]]\n')[1];
-  check('标记之后正好是待翻的 3 行', tail === 'a\nb\nc', JSON.stringify(tail));
-  check('参考行在最前面（模型的阅读顺序对）', withRefs.indexOf('x\t=> X') < withRefs.indexOf('a\nb\nc'));
+  check('标记之后正好是待翻的 3 行', tail === '1. a\n2. b\n3. c', JSON.stringify(tail));
+  check('参考行在最前面（模型的阅读顺序对）', withRefs.indexOf('x\t=> X') < withRefs.indexOf('1. a'));
 
   const empty = L.buildTranslateUserMessage(texts, [{ text: '', zh: '' }]);
-  check('空白参考被忽略', empty === 'a\nb\nc', JSON.stringify(empty));
+  check('空白参考被忽略', empty === '1. a\n2. b\n3. c', JSON.stringify(empty));
   const onlyZh = L.buildTranslateUserMessage(['z'], [{ text: '', zh: '有译文' }]);
   check('只有译文的参考仍然带上', /有译文/.test(onlyZh));
   check('单行 + 参考 → 计数写 1', /以下 1 行/.test(onlyZh));
