@@ -392,6 +392,8 @@ export function initProjects(ctx) {
       }
     }
     genLoad('dt');
+    // 详情页的「翻译方案」与新建页共用缓存；首次进来会一并拉取
+    loadNpSchemes().then(renderDtSchemes).catch(() => renderDtSchemes());
     // 处理进度：有初稿任务才给日志与操作按钮，否则换成一句空态说明（别留个空洞）
     const live = !!project.draft;
     const idleEl = $('#dp-idle'), bodyEl = $('#dp-body');
@@ -3633,6 +3635,27 @@ async function renderAsrModels() {
       </div>`;
     }).join('');
   }
+  /** 详情页的翻译方案列表：与新建页同一份数据、同一种卡片，只换容器。
+   *  详情页以前直接摊开「翻译模型 / 模型名称 / 提示词」，同一个 2×2 骨架在两处长得不一样，
+   *  用户会以为详情页是旧版界面 —— 这里把两处统一成「方案 + 高级折叠」。 */
+  function renderDtSchemes() {
+    const list = $('#dt-scheme-list');
+    if (!list) return;
+    if (!savedSchemes.length) {
+      list.innerHTML = '<div class="np-scheme-empty"><b>还没有保存的翻译方案</b><p>到「全局设置 → 翻译」里创建一套，项目会沿用它翻译。</p></div>';
+      return;
+    }
+    list.innerHTML = savedSchemes.map(item => {
+      const active = item.id === activeSchemeId;
+      let host = '';
+      try { host = new URL(item.baseUrl).host; } catch { /* 本地/空地址 */ }
+      return `<div class="np-scheme-card${active ? ' is-active' : ''}">
+        <div class="np-scheme-main"><b>${escapeHtml(item.name)}</b><small>${escapeHtml(npSchemeProviderName(item.provider))}${item.model ? ' · ' + escapeHtml(item.model) : ''}${host ? ' · ' + escapeHtml(host) : ''}</small></div>
+        <span class="np-scheme-state">${active ? '当前使用' : '可用'}</span>
+        <button type="button" class="btn btn-mini${active ? '' : ' btn-accent'}" data-dt-scheme="${escapeHtml(item.id)}"${active ? ' disabled' : ''}>${active ? '已选择' : '使用'}</button>
+      </div>`;
+    }).join('');
+  }
   async function loadNpSchemes(force = false) {
     if (npSchemeBusy || (npSchemesLoaded && !force)) { renderNpSchemes(); return; }
     npSchemeBusy = true;
@@ -3689,6 +3712,12 @@ async function renderAsrModels() {
 
   $('#np-scheme-refresh').addEventListener('click', () => loadNpSchemes(true));
   $('#np-scheme-manage').addEventListener('click', openSchemeSettings);
+  $('#dt-scheme-refresh').addEventListener('click', () => loadNpSchemes(true).then(renderDtSchemes));
+  $('#dt-scheme-manage').addEventListener('click', openSchemeSettings);
+  $('#dt-scheme-list').addEventListener('click', (e) => {
+    const use = e.target.closest('[data-dt-scheme]');
+    if (use && !use.disabled) useNpScheme(use.dataset.dtScheme).then(renderDtSchemes);
+  });
   $('#np-scheme-list').addEventListener('click', (e) => {
     if (e.target.closest('#np-scheme-create')) { openSchemeSettings(); return; }
     if (e.target.closest('#np-scheme-retry')) { loadNpSchemes(true); return; }

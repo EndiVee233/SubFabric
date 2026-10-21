@@ -3049,7 +3049,9 @@ body::before {
 .ws-panel .np-draft-only:not([hidden]) { animation: fade-up var(--dur-3) var(--ease-out) both; }
 .np-draft-only[hidden] { display: none; }
 .ws-panel .np-area { min-height: 84px; }   /* 外观与设置页一致，见 studio.css 的 .np-input/.np-select/.np-area */
-.ws-panel .dp-log { min-height: 150px; max-height: none; flex: 1 1 auto; }
+/* 面板内的日志：内容少时撑满面板，内容多时**自己滚**，不把整页顶长。
+   原规则是 max-height:none + flex:1，日志一长就把 2×2 网格整体拉伸（用户截图里的问题）。 */
+.ws-panel .dp-log { min-height: 150px; max-height: clamp(160px, 38vh, 420px); flex: 1 1 auto; overflow: auto; overscroll-behavior: contain; }
 .ws-panel #dp-body > .dp-actions { margin-top: auto; }
 
 @media (max-width: 1080px) {
@@ -5232,7 +5234,16 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=uwp] .home-list > .proj-card .pc-main { padding:12px; }
 .sf-studio[data-design=uwp] .home-list > .proj-card .pc-name { font-size:13px; font-weight:600; line-height:1.45; white-space:normal; }
 .sf-studio[data-design=uwp] .home-list > .proj-card .pc-meta { margin-top:5px; font-size:9.5px; color:var(--muted); }
-.sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; padding:0 12px 12px; }
+/* 卡片操作区的按钮个数是 3 或 4（更多 / 可选的 重试·翻译 / 打开 / 删除）。
+   固定 3 列网格在 4 个按钮时会把「删除」挤到第二行、只剩 1/3 宽 —— 就是那块突兀的方块。
+   改成等宽 flex：文字按钮平分宽度，图标按钮定宽，无论 3 个还是 4 个都只占一行。 */
+.sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions { display:flex; gap:6px; padding:0 12px 12px; }
+.sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions > .btn { flex:1 1 0; min-width:0; }
+.sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions > .btn.ico-only { flex:0 0 30px; min-width:30px; padding:0; background:transparent; border-color:transparent; color:var(--muted); }
+.sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions > .btn.ico-only:hover { background:var(--surface-2); border-color:var(--line); color:var(--text); }
+/* 「重试」是次级动作：和「打开」同为实心强调色会变成两个主按钮打架，退成描边。 */
+.sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions > .btn-accent.pc-retry { background:transparent; color:var(--accent); border-color:var(--accent); }
+.sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions > .btn-accent.pc-retry:hover { background:var(--accent-soft); }
 .sf-studio[data-design=uwp] .home-list > .proj-card .pc-actions .btn { width:100%; min-height:30px; padding:5px 8px; font-size:10px; }
 .sf-studio[data-design=uwp] .home-list > .proj-card .sf-assign { display:none; }
 

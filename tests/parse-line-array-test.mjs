@@ -49,5 +49,18 @@ eq('思考块被剥掉 n=2', parseLineArrayReply('<think>想一下</think>\n甲\
 eq('行数不符时返回 null', parseLineArrayReply('甲\n乙\n丙', 2), null);
 eq('译文含方括号不被误当角色标签', parseLineArrayReply('["[译者注] 甲"]', 1), ['[译者注] 甲']);
 
+console.log('\n【5】回归：空原文行必须占位（提示词第 5 条「原文为空的行输出空行」）');
+/* 旧实现无条件丢弃空行 → 行数少 1 → 整批判「格式错误」→ 严格重试与拆半都救不回来，
+   现象是「含空行的批次必挂、不含的必过」（用户两篇稿件都复现过）。 */
+eq('中间空行占位 n=5', parseLineArrayReply('译文一\n译文二\n\n译文四\n译文五', 5),
+  ['译文一', '译文二', '', '译文四', '译文五']);
+eq('两个连续空行占位 n=4', parseLineArrayReply('甲\n\n\n丁', 4), ['甲', '', '', '丁']);
+eq('首尾多余空行被裁掉 n=2', parseLineArrayReply('\n甲\n乙\n\n', 2), ['甲', '乙']);
+/* 已知边界：整段都是空白的回包拿不到行数（stripReasoning 会 trim 掉整段）。
+ * 现实里不会出现「一批全是空原文行」——待翻译行本来就是筛过非空的，
+ * 所以这里不做特判，避免把「模型只吐了空白」误判成成功。 */
+eq('空行 + 不足行数仍判失败', parseLineArrayReply('甲\n\n', 3), null);
+eq('空行不影响编号剥离 n=3', parseLineArrayReply('1. 甲\n\n3. 丙', 3), ['甲', '', '丙']);
+
 console.log('\n  通过 ' + pass + ' 项，失败 ' + fail + ' 项\n');
 process.exit(fail ? 1 : 0);

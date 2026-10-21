@@ -156,6 +156,31 @@
   ③ 编辑器的文本输入框是 ID 级旧规则，需用同一份 `:is()` 清单补 ID 级覆盖。
 - **`--on-accent` 深色兜底按 design 分流**：Claude 用暖褐 `#241B14`，其它主题保持 `#101318`，
   避免波及 Material/Classic/Studio 的自定义强调色。
+- **译文解析必须接受「空行」**（2026-10-21 修）：`DEFAULT_TRANSLATE_PROMPT` 第 5 条要求
+  「原文为空的行输出空行」，但 `llm-text.js` 的逐行兜底原先无条件 `if (!line) continue` 把空行丢掉，
+  行数少 1 → 整批抛 `format` → 严格提示词重试（还是丢）→ 拆半（空行仍在某一半）→ 一路失败。
+  现象是**含空行的批次必挂、不含的必过**，与模型随机性无关（用户两篇稿件都复现）。
+  现改为保留空行占位、只裁到「刚好 n 行」为止；裁不动再回退到旧口径。回归见
+  `tests/parse-line-array-test.mjs` 的【5】。
+- **打包不要用 `fs.cpSync`**（2026-10-21 修）：Windows 上源路径含非 ASCII 字符（中文项目目录很常见）时，
+  `cpSync` 会让进程 **fast-fail（0xC0000409，无任何错误输出）**，`buildAndInstall` 的打包步骤会静默崩掉。
+  已改为 `copyDir()`（mkdir + readdir + copyFileSync，同路径下 copyFileSync 正常）。
+  `repair12-build-install-test.mjs` 之前一直「失败但无输出」就是踩的这个 —— 它的临时目录叫「源码」「安装」。
+- **处理日志必须有上限**（2026-10-21 修）：`#dp-log` 的基础规则本来就有 `max-height:320px`，
+  但 `studio.css` 里 `.ws-panel .dp-log { max-height:none; flex:1 1 auto }` 在 2×2 工作台里把它抹掉了：
+  日志一长就把整个网格往下顶、整页变长（用户截图）。现改为
+  `max-height: clamp(160px, 38vh, 420px)` + `overflow:auto` + `overscroll-behavior:contain`：
+  内容少时撑满面板，内容多时自己滚，页面高度不再随日志增长（实测 200 行日志：日志框 306px / 可滚内容 3814px / 页面高度 = 视口）。
+- **「生成设置」两处同形**（2026-10-21 修）：新建项目页 (`#np-view`) 与详情页 (`#details/:id`) 共用同一套
+  2×2 工作台骨架，但右侧 GENERATE 面板长期是两套 UI——新建页是「翻译方案」卡片，详情页直接摊开
+  「翻译模型 / 模型名称 / 翻译提示词 / 角色分析提示词」。用户在同一位置看到两种形态，会以为详情页是
+  「回退到了老版本」。现统一为：两处都给「翻译方案」列表（同一份 `savedSchemes`，渲染函数 `renderDtSchemes`
+  与 `renderNpSchemes` 共用卡片样式），手改参数收进 `details#dt-advanced`「高级 · 自定义翻译参数」。
+  改模板要跑 `node tools/generate-studio.mjs` 重新生成 `editor/studio.html`，不能只改生成物。
+- **卡片操作区按钮个数是 3 或 4**：`#home` 的 `.pc-actions` 里「更多」恒在、「重试/翻译」按状态出现、
+  「打开」「删除」恒在。UWP 曾用固定三列网格，4 个按钮时会把「删除」挤到第二行、只剩 1/3 宽
+  （用户截图报的「突出来一块」）。已改为等宽 flex：文字按钮 `flex:1 1 0`、图标按钮定宽 30px，
+  3 个和 4 个都只占一行；「重试」在卡片内退成描边按钮，避免和「打开」两个实心强调色打架。
 - **仪表盘网格：跨行与跨列必须成对考虑**（2026-10-20 修）：`.sf-widget[data-widget=settings]`
   与 `[data-widget=library]` 基础层各写 `grid-column: span 2`，这套账只有「主卡只占 1 行」的
   基础布局（Studio / Material / Classic）才配得平：`2+1+1` 与 `2+2` 都能凑满 4 列。

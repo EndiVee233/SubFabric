@@ -1231,12 +1231,6 @@
           <button type="button" class="btn btn-mini" id="dt-open-settings">管理模型</button>
         </div>
 
-        <div class="ws-group-title">翻译模型</div>
-        <div class="ws-row"><select id="dt-set-provider" class="np-select ws-fld"></select></div>
-
-        <div class="ws-group-title">模型名称</div>
-        <div class="ws-row"><input type="text" id="dt-set-model" class="np-input ws-fld" spellcheck="false" placeholder="deepseek-chat"></div>
-
         <div class="ws-group-title">识别后处理 · 分角色识别</div>
         <div class="ws-checks">
           <label class="ws-check"><input type="checkbox" id="dt-set-cast"> 开启</label>
@@ -1255,15 +1249,37 @@
         <div class="ws-group-title">识别来源</div>
         <div class="ws-row"><select id="dt-set-source" class="np-select ws-fld"></select></div>
 
-        <div class="ws-group-title">翻译提示词</div>
-        <textarea id="dt-set-prompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
-
-        <div class="ws-group-title">角色分析提示词</div>
-        <textarea id="dt-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
-
-        <div class="ws-actions">
-          <button type="button" class="btn btn-accent" id="dt-set-save">保存设置</button>
+        <!-- 翻译方案：与「新建项目」共用同一套选择器。
+             以前这里直接摊开「翻译模型 / 模型名称 / 提示词」，同一个 2×2 骨架在新建页是方案、
+             到详情页又变成字段，用户会以为回退成了旧版界面。默认只给方案，手改参数收进「高级」。 -->
+        <div class="ws-group-title">翻译方案</div>
+        <p class="ws-sub">选一套已保存的方案；方案本身在全局设置里管理。</p>
+        <div id="dt-scheme-list" class="np-scheme-list"><div class="np-scheme-empty">读取方案…</div></div>
+        <div class="np-scheme-actions">
+          <button type="button" class="btn btn-mini" id="dt-scheme-refresh">刷新</button>
+          <button type="button" class="btn btn-mini" id="dt-scheme-manage">管理方案</button>
         </div>
+
+        <details class="sf-settings-details" id="dt-advanced">
+          <summary>高级 · 自定义翻译参数</summary>
+          <p class="ws-hint">改这里的参数会让本项目脱离方案，只影响后续翻译。</p>
+
+          <div class="ws-group-title">翻译模型</div>
+          <div class="ws-row"><select id="dt-set-provider" class="np-select ws-fld"></select></div>
+
+          <div class="ws-group-title">模型名称</div>
+          <div class="ws-row"><input type="text" id="dt-set-model" class="np-input ws-fld" spellcheck="false" placeholder="deepseek-chat"></div>
+
+          <div class="ws-group-title">翻译提示词</div>
+          <textarea id="dt-set-prompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+
+          <div class="ws-group-title">角色分析提示词</div>
+          <textarea id="dt-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+
+          <div class="ws-actions">
+            <button type="button" class="btn btn-accent" id="dt-set-save">保存自定义参数</button>
+          </div>
+        </details>
       </section>
     </div>
   </div>

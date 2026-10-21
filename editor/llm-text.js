@@ -125,28 +125,49 @@ function parseLineArrayReply(text, n) {
   let s = stripReasoning(text);
   const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
   if (fence) s = fence[1];
-  const out = [];
-  for (let line of s.split(/\r?\n/)) {
-    line = line.trim();
-    if (!line || line === '[' || line === ']') continue;
-    if (/^[\[\]{},]+$/.test(line)) continue;                      // 只有括号/逗号的碎片行
-    /* ⚠ 顺序很重要：**先**试 JSON 数组，**再**剥引号。
-     *  反过来会把 `["译文1","译文2"]` 的外层引号剥掉、露出非法 JSON，
-     *  于是数组元素取不出来、这行被当整句译文 —— 就是本次的 bug。 */
-    const lineArr = parseJsonArray(line);
-    if (lineArr && lineArr.length) {
-      for (const v of lineArr) {
-        const t = String(v == null ? '' : v).replace(/^\s*\d+\s*[.、):：]\s*/, '').trim();
-        if (t && !chattyLine(t)) out.push(unwrapJsonArrayString(t));
+
+  /* keepBlank = 空行是否算作一行译文。
+   * 提示词第 5 条要求「原文为空的行输出空行」，合规回包里就会出现空行；
+   * 旧实现在这里无条件 `if (!line) continue` 把空行丢掉，于是行数少 1 → 整批判 format
+   * → 严格提示词重试（还是丢）→ 拆半（空行仍在某一半）→ 一路失败。
+   * 现象就是「含空行的批次必挂、不含的必过」，用户两篇稿件都复现过。 */
+  const walk = (keepBlank) => {
+    const out = [];
+    for (let line of s.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) { if (keepBlank) out.push(''); continue; }        // ← 空行占位，别丢
+      if (line === '[' || line === ']') continue;
+      if (/^[\[\]{},]+$/.test(line)) continue;                    // 只有括号/逗号的碎片行
+      /* ⚠ 顺序很重要：**先**试 JSON 数组，**再**剥引号。
+       *  反过来会把 `["译文1","译文2"]` 的外层引号剥掉、露出非法 JSON，
+       *  于是数组元素取不出来、这行被当整句译文 —— 就是本次的 bug。 */
+      const lineArr = parseJsonArray(line);
+      if (lineArr && lineArr.length) {
+        for (const v of lineArr) {
+          const t = String(v == null ? '' : v).replace(/^\s*\d+\s*[.、):：]\s*/, '').trim();
+          if (t && !chattyLine(t)) out.push(unwrapJsonArrayString(t));
+        }
+        continue;
       }
-      continue;
+      line = line.replace(/^\s*\d+\s*[.、):：]\s*/, '');           // "1. " / "2)" 编号
+      line = line.replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim();      // 行首尾引号
+      if (!line || chattyLine(line)) continue;
+      out.push(unwrapJsonArrayString(line));
     }
-    line = line.replace(/^\s*\d+\s*[.、):：]\s*/, '');             // "1. " / "2)" 编号
-    line = line.replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim();        // 行首尾引号
-    if (!line || chattyLine(line)) continue;
-    out.push(unwrapJsonArrayString(line));
-  }
-  return out.length === n ? out : null;
+    return out;
+  };
+
+  /* 先按「空行也算一行」解析；只裁到**刚好够 n 行**为止 ——
+     从尾部裁、再从头部裁，中间的空行一律保留（那正是空原文行对应的占位）。
+     这样 `\na\nb\n\n`(n=2) 能裁成 [a,b]，而全空回包 `\n\n\n`(n=3) 也能得到 3 个空串。 */
+  const keep = walk(true);
+  while (keep.length > n && !keep[keep.length - 1]) keep.pop();
+  while (keep.length > n && !keep[0]) keep.shift();
+  if (keep.length === n) return keep;
+
+  // 回退到「不保留空行」的旧口径：多数回包本来就没有空行，两条路结果相同
+  const dropped = walk(false);
+  return dropped.length === n ? dropped : null;
 }
 
 function chattyLine(line) {

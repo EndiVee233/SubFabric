@@ -6,6 +6,20 @@ import { fileURLToPath } from 'node:url';
 
 const PROTECTED = new Set(['vendor', 'models', 'runtime-python', 'runtime-vibevoice', 'whisper.cpp', 'crispasr', 'ytdlp', 'projects', 'logs', 'node_modules', '__pycache__', '.venv']);
 const SOURCE_EXT = new Set(['.js', '.mjs', '.cjs', '.json', '.css', '.html', '.py', '.ps1', '.cmd', '.bat', '.command', '.svg', '.ico', '.png', '.md']);
+/** 递归复制目录：**不要用 fs.cpSync**。
+ *  Windows + 非 ASCII 源路径（中文项目目录很常见）时，cpSync 会让整个进程 fast-fail
+ *  （0xC0000409，没有任何错误输出），打包步骤会静默崩掉 —— repair12 那条测试就是被它
+ *  卡在 0xC0000409 上的（测试的临时目录叫「源码」「安装」）。copyFileSync 走同样的路径完全正常，
+ *  所以这里自己递归一遍，代价只有几行。 */
+function copyDir(from, to) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    const src = path.join(from, e.name), dst = path.join(to, e.name);
+    if (e.isDirectory()) copyDir(src, dst);
+    else if (e.isFile()) fs.copyFileSync(src, dst);
+  }
+}
+
 export function sourceFiles(dev) {
   const result = [];
   function walk(dir, relative) {
@@ -110,11 +124,11 @@ export async function buildAndInstall(config, hooks = {}) {
     const packageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'subfabric-package-'));
     try {
       for (const rel of files) { const dest = path.join(packageRoot, rel); fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(path.join(dev, rel), dest); }
-      fs.cpSync(path.join(dev, 'build/installer'), path.join(packageRoot, 'build/installer'), { recursive: true });
+      copyDir(path.join(dev, 'build/installer'), path.join(packageRoot, 'build/installer'));
       fs.copyFileSync(exe, path.join(packageRoot, 'build/SubFabric.exe'));
       const vendor = fs.existsSync(path.join(dev, 'editor/vendor')) ? path.join(dev, 'editor/vendor') : path.join(inst, 'editor/vendor');
       if (!fs.existsSync(vendor)) throw Error('Package requires editor/vendor');
-      fs.cpSync(vendor, path.join(packageRoot, 'editor/vendor'), { recursive: true });
+      copyDir(vendor, path.join(packageRoot, 'editor/vendor'));
       const iss = path.join(packageRoot, 'build/installer/SubFabric.iss');
       run(config.iscc, [iss], packageRoot, env);
       const name = `SubFabric-${version}-setup.exe`, packaged = path.join(packageRoot, 'build/installer', name);
