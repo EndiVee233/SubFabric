@@ -123,9 +123,9 @@ export function applyDom(root = document) {
   let n = walker.currentNode;
   while (n) { trTextNode(n); n = walker.nextNode(); }
   if (root.querySelectorAll) {
-    for (const el of root.querySelectorAll('[title],[placeholder],[aria-label]')) {
+    for (const el of root.querySelectorAll('[title],[placeholder],[aria-label],[alt]')) {
       if (inSkipped(el)) continue;
-      for (const attr of ['title', 'placeholder', 'aria-label']) {
+      for (const attr of ['title', 'placeholder', 'aria-label', 'alt']) {
         const v = el.getAttribute(attr);
         if (!v || !HAN.test(v)) continue;
         const tv = t(v.trim());
@@ -165,6 +165,6 @@ export function watchDom() {
   });
   mo.observe(document.documentElement, {
     childList: true, subtree: true, characterData: true,
-    attributes: true, attributeFilter: ['title', 'placeholder', 'aria-label'],
+    attributes: true, attributeFilter: ['title', 'placeholder', 'aria-label', 'alt'],
   });
 }

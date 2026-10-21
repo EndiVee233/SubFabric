@@ -192,6 +192,9 @@ globalThis.location = { get hash() { return hash; }, set hash(next) {
 } };
 globalThis.history = { replaceState(_state, _unused, route) { hash = route; }, back() { historyBacks++; } };
 const storage = new Map();
+// 返回用户：欢迎页已完成，否则 initProjects 会按首次启动拦截 applyHash。
+storage.set('sf-welcome-v1', JSON.stringify({ done: true, cuda: true, vulkan: true }));
+storage.set('sf-welcome-synced', '1');
 globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)) };
 let timerSequence = 0;
 const timers = new Map(), frames = new Map();
@@ -223,7 +226,11 @@ globalThis.fetch = async (url, options = {}) => {
     return json({ revision, savedAt: '2026-10-13T00:00:00Z' });
   }
   if (url === '/api/asr/select-rerecog') return json({ok:true});
-  if (url === '/api/asr/status') return json({ pythonProbe: {ok:false,msg:'Missing fixture Python'}, nemo: {ok:false,msg:'Missing fixture NeMo'}, vibevoice: {ok:false,cuda:true,vramMB:8188,msg:'Missing fixture bitsandbytes'}, diarize:{ready:false}, ready: true, selectedModel: 'cloud', models: [{ id: 'cloud', name: 'Fixture cloud', engine: 'bcut', ready: true, cloud: true }, { id:'vibevoice-asr-4bit', name:'Fixture VibeVoice', engine:'vibevoice', ready:false, usable:false, cloud:false, needRuntime:true, runtimeKey:'vibevoice', runtimeName:'VibeVoice CUDA 4bit', runtimeSizeMB:2200 }], downloads: [] });
+  if (url === '/api/asr/status') return json({ pythonProbe: {ok:false,msg:'Missing fixture Python'}, nemo: {ok:false,msg:'Missing fixture NeMo'}, vibevoice: {ok:false,cuda:true,vramMB:8188,msg:'Missing fixture bitsandbytes'}, diarize:{ready:false}, ready: true,
+    // 返回用户：加速方式已配置，且硬件探测已在 status 里，避免 renderAsrModels 再打 /api/asr/hardware
+    hardware: { cuda: { available: true, device: 'Fixture RTX' }, vulkan: { available: true, devices: ['Fixture RTX'] }, npu: { available: true, devices: ['Fixture NPU'] } },
+    backends: { cuda: true, vulkan: true },
+    selectedModel: 'cloud', models: [{ id: 'cloud', name: 'Fixture cloud', engine: 'bcut', ready: true, cloud: true }, { id:'vibevoice-asr-4bit', name:'Fixture VibeVoice', engine:'vibevoice', ready:false, usable:false, cloud:false, needRuntime:true, runtimeKey:'vibevoice', runtimeName:'VibeVoice CUDA 4bit', runtimeSizeMB:2200 }], downloads: [] });
   if (url === '/api/translate/config') return json({ ready: true, cfg: { provider: 'fixture', model },
     schemes, activeSchemeId:schemeActive,
     presets: [{ id: 'fixture', name: 'Fixture', model, baseUrl:'http://localhost:1234/v1' }], defaultPrompt: 'Fixture prompt' });
@@ -721,7 +728,9 @@ assert.equal($('sf-asr-rerecog-mount').hidden,false);
 $('st-rerecog-sel').value='cloud'; $('st-rerecog-sel').dispatchEvent(new Event('change')); await settle();
 assert.deepEqual(JSON.parse(requests.find(request=>request.url==='/api/asr/select-rerecog').body),{modelId:'cloud'});
 const familyButtons=$('sf-asr-families').querySelectorAll('[data-asr-family]');
-assert.equal(familyButtons.length,5);
+assert.equal(familyButtons.length,6);
+const otherModels=familyButtons.find(button=>button.dataset.asrFamily==='其它模型');
+assert.ok(otherModels && otherModels.hidden, 'no downloaded disabled models → no 其它模型 entry');
 const vibevoice=familyButtons.find(button=>button.dataset.asrFamily==='VibeVoice 系列');
 assert.ok(vibevoice && !vibevoice.disabled); vibevoice.click(); await settle();
 assert.equal($('sf-asr-detail-title').textContent,'VibeVoice 系列');

@@ -91,7 +91,15 @@ globalThis.document = { querySelector: getElement, getElementById: id => getElem
   querySelectorAll: () => [], createElement: tag => new Element(tag), body: new Element(), addEventListener() {} };
 globalThis.window = { addEventListener() {}, matchMedia: () => ({ matches: reducedMotion }) };
 globalThis.location = { hash: '#/home' };
-globalThis.localStorage = { getItem() { return null; }, setItem() {} };
+// 返回用户：首次启动欢迎页已完成，避免它拦截 applyHash（首次逻辑由 welcome-model-test 覆盖）
+globalThis.localStorage = {
+  getItem(key) {
+    if (key === 'sf-welcome-v1') return JSON.stringify({ done: true, cuda: true, vulkan: true });
+    if (key === 'sf-welcome-synced') return '1';
+    return null;
+  },
+  setItem() {},
+};
 globalThis.history = { replaceState() {}, back() {} };
 globalThis.performance = { now: () => now };
 globalThis.setTimeout = (fn, ms) => { const id = ++sequence; timers.set(id, { fn, ms }); return id; };

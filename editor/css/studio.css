@@ -3243,7 +3243,8 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-brand small { display:block; font-size:9px; margin-top:4px; font-weight:400; color:var(--muted); letter-spacing:.06em; }
 .sf-nav-label { font-size:10px; color:var(--muted); padding:0 14px 8px; }
 #sf-task-count { margin-left:auto; font-variant-numeric:tabular-nums; }
-.sf-folder-head { display:flex; justify-content:space-between; align-items:center; padding:24px 14px 8px; font-size:10px; color:var(--muted); }
+/* 右侧不留内边距：加号与下方每行的删除 X 共用同一条右基线，两列才对齐。 */
+.sf-folder-head { display:flex; justify-content:space-between; align-items:center; padding:24px 0 8px 14px; font-size:10px; color:var(--muted); }
 .sf-folder-head button { background:none; border:0; color:var(--muted); font-size:20px; cursor:pointer; }
 #sf-folders { overflow-y:auto; min-height:0; }
 /* MY：文件夹列表不显示右侧滚动条，仍可用滚轮/触控板滚动。 */
@@ -3260,8 +3261,9 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-topbar i { padding:0 12px; font-style:normal; opacity:.5; }.sf-topbar b { color:var(--text); font-weight:500; }.sf-topbar>div { display:flex; gap:8px; }
 .sf-ambient,.sf-backdrop { position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:0; }
 .sf-ambient { display:none; opacity:0; }.sf-studio[data-bg=aurora] .sf-ambient { display:block; opacity:.65; }
-.sf-ambient i { position:absolute; width:50vw; height:65vh; left:8%; top:10%; border-radius:50%; filter:blur(100px); background:var(--sf-aurora-1,var(--accent-soft)); }
-.sf-ambient i:nth-child(2) { left:60%; top:-10%; background:var(--sf-aurora-2,var(--secondary-container)); animation-delay:-7s; }.sf-ambient i:nth-child(3) { top:60%; left:35%; background:var(--sf-aurora-3,var(--tertiary-container)); animation-delay:-13s; }
+/* 流光色走 --sf-aurora-N；换配色/换明暗时让 background-color 过渡，避免整屏硬切颜色。 */
+.sf-ambient i { position:absolute; width:50vw; height:65vh; left:8%; top:10%; border-radius:50%; filter:blur(100px); background-color:var(--sf-aurora-1,var(--accent-soft)); transition:background-color .42s ease; }
+.sf-ambient i:nth-child(2) { left:60%; top:-10%; background-color:var(--sf-aurora-2,var(--secondary-container)); animation-delay:-7s; }.sf-ambient i:nth-child(3) { top:60%; left:35%; background-color:var(--sf-aurora-3,var(--tertiary-container)); animation-delay:-13s; }
 .sf-backdrop { background-size:cover; background-position:center; opacity:.32; filter:blur(var(--sf-image-blur,0px)) brightness(calc(1 - var(--sf-image-dim,0))); }
 .sf-studio #home-view,.sf-studio .workspace-page,.sf-page { left:var(--sf-nav-w); top:var(--sf-top-h); right:0; bottom:0; position:fixed; background:transparent; z-index:52; overflow:auto; }
 .sf-studio #home-view { background:transparent; }
@@ -3781,6 +3783,16 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio .sf-asr-model { display:flex; flex-direction:column; gap:14px; }
 .sf-studio .sf-asr-model>.sm-model,.sf-studio .sf-asr-model details>.sm-model { margin:0; }
 .sf-studio .sf-asr-model details>.sm-model { margin-top:14px; }
+/* 「其它模型」：旧版本下错后端的已下载模型。压暗一档，强调只能删除、不能选用。 */
+.sf-studio .sm-model.sf-asr-extra {
+  border-left: 3px solid color-mix(in srgb, var(--muted) 55%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+.sf-studio .sm-model.sf-asr-extra .sm-name { color: var(--muted); }
+.sf-studio .sm-model.sf-asr-extra .sm-state.extra { color: var(--muted); font-size: 11.5px; }
+.sf-studio .sm-model.sf-asr-extra .sm-desc { opacity: .82; }
+.sf-studio[data-design=uwp] .sm-model.sf-asr-extra { border-left-width: 3px; }
+.sf-studio[data-design=material] .sm-model.sf-asr-extra { border-radius: 20px; }
 .sf-studio #st-view :is(.st-row,.setting-row)+:is(.st-row,.setting-row) { margin-top:12px; }
 .sf-studio #st-view .sf-prerequisite { padding:16px 18px; background:var(--surface-2); }
 .sf-studio .sf-prerequisite .sm-head { align-items:center; gap:14px; flex-wrap:wrap; }
@@ -3805,7 +3817,10 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-design=material] .pc-draft-bar.sf-progress { height:24px; --sf-thumb:14px; }
 .sf-studio[data-design=material] .pc-draft-bar :is(.sf-progress-rest,.sf-progress-line) { height:8px; top:calc(50% - 4px); border-radius:8px; }
 .sf-studio[data-design=material] .pc-draft-bar .sf-wave-shift { top:calc(50% - 10px); height:20px; mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='20' viewBox='0 0 48 20'%3E%3Cpath d='M-24 10Q-18 5 -12 10Q-6 15 0 10Q6 5 12 10Q18 15 24 10Q30 5 36 10Q42 15 48 10Q54 5 60 10Q66 15 72 10' fill='none' stroke='black' stroke-width='8'/%3E%3C/svg%3E"); }
-.sf-studio[data-bg=aurora][data-aurora-motion=dynamic][data-page-visible=true] .sf-ambient i { animation-name:sf-drift; animation-duration:20s; animation-timing-function:ease-in-out; animation-iteration-count:infinite; animation-direction:alternate; }
+/* 动态/静态流光只用 play-state 切换：静态时停住当前帧，切回动态继续漂移，
+   不会因为 animation-name 归零而瞬间跳回原点（2026-10-20 反馈：切换生硬）。 */
+.sf-studio .sf-ambient i { animation-name:sf-drift; animation-duration:20s; animation-timing-function:ease-in-out; animation-iteration-count:infinite; animation-direction:alternate; animation-play-state:paused; }
+.sf-studio[data-bg=aurora][data-aurora-motion=dynamic][data-page-visible=true] .sf-ambient i { animation-play-state:running; }
 .sf-studio .sf-aurora-colors { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; padding:16px 0; }
 .sf-studio .sf-aurora-color { display:flex; align-items:center; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
 .sf-studio .sf-aurora-color input { width:105px; }
@@ -3841,19 +3856,19 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio .sf-folder-head button {
   display:grid;
   place-items:center;
-  width:38px;
-  height:38px;
-  flex:0 0 38px;
+  width:34px;
+  height:34px;
+  flex:0 0 34px;
   padding:0;
   border:1px solid transparent;
   border-radius:10px;
   line-height:1;
-  font-size:24px;
+  font-size:19px;
   font-weight:300;
   color:var(--text);
   transition:background .16s, border-color .16s, transform .22s var(--sf-spring);
 }
-.sf-studio #sf-folder-add .ico { width:18px; height:18px; vertical-align:0; }
+.sf-studio #sf-folder-add .ico { width:16px; height:16px; vertical-align:0; }
 .sf-studio .sf-folder-head button:hover { background:var(--surface-2); border-color:var(--line); transform:translateY(-1px); }
 .sf-studio .sf-folder-head button:active { transform:scale(.94); }
 .sf-studio .sf-folder>button:first-child:focus-visible { border-radius:12px; }
@@ -6009,16 +6024,24 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=material] .switch input:checked + .switch-slider::after { transform: translateX(18px); }
 .sf-studio[data-design=material] .switch-mini input:checked + .switch-slider::after { transform: translateX(16px); }
 
-/* 自定义文件夹 Dialog：默认 Studio 风格；UWP 2px/150ms，MY 28px 大圆角。 */
+/* 自定义文件夹 Dialog：默认 Studio 风格；UWP 2px/150ms，MY 28px 大圆角。
+   入场/退场遮罩与面板同时过渡：Windows 10 走 150ms 淡变 + 轻缩放，退场 120ms 反向。
+   退场由 studio.js 等 is-closing 动画结束后再摘 hidden，来回点也不会闪。 */
+@keyframes sf-dialog-veil-in { from { opacity:0; } to { opacity:1; } }
+@keyframes sf-dialog-veil-out { from { opacity:1; } to { opacity:0; } }
+@keyframes sf-dialog-box-in { from { opacity:0; transform:scale(.96) translateY(6px); } to { opacity:1; transform:none; } }
+@keyframes sf-dialog-box-out { from { opacity:1; transform:none; } to { opacity:0; transform:scale(1.02); } }
 .sf-folder-dialog {
   position:fixed; inset:0; z-index:120; display:grid; place-items:center; padding:20px;
   background:rgb(0 0 0 / .45);
+  animation:sf-dialog-veil-in .16s cubic-bezier(.2,.8,.2,1) both;
 }
 .sf-folder-dialog[hidden] { display:none!important; }
 .sf-folder-box {
   width:min(380px,94vw); display:flex; flex-direction:column; gap:10px; padding:18px;
   border:1px solid var(--line); border-radius:16px; background:var(--surface); color:var(--text);
   box-shadow:0 18px 48px #00000055;
+  animation:sf-dialog-box-in .18s cubic-bezier(.2,.8,.2,1) both;
 }
 .sf-folder-box h3 { margin:0; font-size:16px; font-weight:600; }
 .sf-folder-desc { margin:0; color:var(--muted); font-size:12px; line-height:1.7; }
@@ -6057,6 +6080,9 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=material] .sf-folder-dialog .sf-folder-field input:focus { box-shadow:inset 0 0 0 2px var(--accent); }
 .sf-studio[data-design=material] .sf-folder-actions .btn { min-height:40px; padding:0 18px; border-radius:999px; }
 .sf-studio[data-design=material] .sf-folder-dialog { background:rgb(0 0 0 / .32); }
+/* 退场规则放最后并多带一层 .sf-studio：要盖住各设计自己的入场 animation。 */
+.sf-studio .sf-folder-dialog.is-closing { animation:sf-dialog-veil-out .12s ease-in both; }
+.sf-studio .sf-folder-dialog.is-closing .sf-folder-box { animation:sf-dialog-box-out .12s ease-in both; }
 
 /* T. 用户反馈收口（2026-10-19）：术语表、热词模型行、主题卡遮罩、编辑器设置卡、开关。 */
 /* 术语表：分段/虚线/表格全部走 UWP 的 2px、surface-2、accent-soft + 2px 底线。 */
@@ -6243,6 +6269,281 @@ body.sf-ev-open { overflow: hidden; }
 .sf-studio[data-design=material] .home-list > .proj-card .pc-actions {
   padding-left:8px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   首次启动 / 加速方式欢迎界面
+   -------------------------------------------------------------------
+   只在 localStorage 没有 sf-welcome-v1 时出现；设置 → 性能与调度可再次打开。
+   主题适配：沿用 var(--bg-*) / var(--text-*) / var(--accent*)；Material 大圆角、
+   UWP 近直角且不用 backdrop-filter、Classic 走默认 8–16px。
+   ═══════════════════════════════════════════════════════════════════ */
+/* welcome-boot.js 在首帧前挂的类：避免首次启动闪一下主页。 */
+html.sf-welcome-pending body { overflow: hidden; }
+html.sf-welcome-pending #sf-nav,
+html.sf-welcome-pending #sf-topbar,
+html.sf-welcome-pending #sf-help,
+html.sf-welcome-pending #sf-notice,
+html.sf-welcome-pending #app { visibility: hidden; }
+
+body.sf-welcome-open { overflow: hidden; }
+body.sf-welcome-open #sf-nav,
+body.sf-welcome-open #sf-topbar,
+body.sf-welcome-open #sf-help,
+body.sf-welcome-open #sf-notice,
+body.sf-welcome-open #app { visibility: hidden; }
+
+.welcome-view {
+  position: fixed; inset: 0; z-index: 400;
+  display: grid; place-items: center;
+  /* safe：内容比视口高时从顶部开始并可滚动，不会被居中裁掉标题。 */
+  align-items: safe center;
+  padding: clamp(18px, 4vw, 56px);
+  overflow: auto;
+  /* 主题令牌适配：Classic / Material / UWP 都把自己的 --bg / --surface / --text
+     写在 body（或内联 style）上；这里在欢迎层内把旧 --bg-* / --text-* 重映射到
+     新令牌，未定义时再退回原来的深色值。 */
+  --bg-0: var(--bg, #0b0b0e);
+  --bg-1: var(--surface, #131318);
+  --bg-2: var(--surface-2, #17171d);
+  --bg-3: var(--surface-3, #1f1f27);
+  --border: var(--line, #2a2a34);
+  --text-0: var(--text, #eceef2);
+  --text-1: var(--muted, #a8a8b4);
+  --text-2: var(--dim, #6f6f7c);
+  color: var(--text-0);
+  background: var(--bg-0);
+  isolation: isolate;
+}
+.welcome-view[hidden] { display: none; }
+
+.welcome-aurora { position: fixed; inset: -18%; z-index: -1; pointer-events: none; overflow: hidden; }
+.welcome-aurora i {
+  position: absolute; width: 52vmax; height: 52vmax; border-radius: 50%;
+  background: radial-gradient(circle, var(--accent-a40), transparent 66%);
+  filter: blur(70px); opacity: .55;
+  animation: welcome-drift 18s ease-in-out infinite alternate;
+}
+.welcome-aurora i:nth-child(1) { left: -6%; top: -16%; }
+.welcome-aurora i:nth-child(2) {
+  right: -14%; top: 8%; width: 44vmax; height: 44vmax;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 42%, #4f8cff), transparent 68%);
+  animation-delay: -7s; opacity: .38;
+}
+.welcome-aurora i:nth-child(3) {
+  left: 26%; bottom: -30%; width: 46vmax; height: 46vmax;
+  background: radial-gradient(circle, var(--accent-a28), transparent 68%);
+  animation-delay: -12s; opacity: .45;
+}
+@keyframes welcome-drift {
+  from { transform: translate3d(-2%, -1%, 0) scale(.96); }
+  to   { transform: translate3d(3%, 2%, 0) scale(1.06); }
+}
+
+.welcome-shell {
+  position: relative;
+  width: min(980px, 100%);
+  display: grid; gap: clamp(20px, 3vw, 34px);
+  padding: clamp(24px, 4vw, 48px);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--bg-2) 78%, transparent), transparent 55%),
+    color-mix(in srgb, var(--bg-1) 90%, transparent);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(255, 255, 255, .04);
+  backdrop-filter: blur(22px);
+}
+.welcome-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.welcome-brand { display: inline-flex; align-items: center; gap: 12px; min-width: 0; }
+.welcome-brand img { width: 34px; height: 34px; border-radius: 10px; box-shadow: 0 6px 18px var(--accent-a28); }
+.welcome-brand b { font-size: 16px; letter-spacing: .01em; }
+.welcome-brand small { font-size: 10.5px; color: var(--text-2); margin-left: 2px; }
+.welcome-step {
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--text-1); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  background: color-mix(in srgb, var(--bg-3) 72%, transparent);
+}
+
+.welcome-copy { display: grid; gap: 10px; max-width: 660px; }
+.welcome-eyebrow {
+  margin: 0; font-size: 10.5px; letter-spacing: .22em; text-transform: uppercase;
+  color: var(--accent); font-weight: 700;
+}
+.welcome-copy h1 {
+  margin: 0;
+  font-size: clamp(34px, 5.4vw, 66px);
+  line-height: 1.02; letter-spacing: -.035em;
+  font-weight: 800;
+}
+.welcome-copy h1 em {
+  font-style: normal;
+  background: linear-gradient(100deg, var(--accent), var(--accent-2) 62%, color-mix(in srgb, var(--accent) 45%, #4f8cff));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.welcome-copy #welcome-sub { margin: 0; max-width: 560px; color: var(--text-1); font-size: 13.5px; line-height: 1.8; }
+
+.welcome-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.welcome-card {
+  position: relative; display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 24px;
+  align-items: center; gap: 14px;
+  padding: 20px 20px 20px 18px;
+  border: 1px solid var(--border); border-radius: 16px;
+  background: color-mix(in srgb, var(--bg-3) 64%, transparent);
+  cursor: pointer; user-select: none;
+  transition: transform .22s cubic-bezier(.2,.8,.2,1), border-color .22s ease,
+              background-color .22s ease, box-shadow .22s ease, opacity .22s ease;
+}
+.welcome-card:not(.is-disabled):hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.welcome-card.is-checked {
+  border-color: var(--accent);
+  background:
+    linear-gradient(135deg, var(--accent-a14), transparent 62%),
+    color-mix(in srgb, var(--bg-2) 94%, transparent);
+  box-shadow: 0 16px 44px var(--accent-a16), inset 0 0 0 1px var(--accent-a28);
+}
+.welcome-card.is-disabled { opacity: .48; cursor: not-allowed; }
+/* 全局 input[type=checkbox] 有 18px 宽高/relative 规则（特异性 0,1,1），
+   会压过单类选择器。这里用 .welcome-card input.welcome-native + !important
+   把它彻底移出 grid，否则第一个格子被 input 占掉，图标/文字/勾选全部错位。 */
+.welcome-card input.welcome-native {
+  position: absolute !important; width: 1px !important; height: 1px !important;
+  margin: 0 !important; opacity: 0 !important; pointer-events: none;
+}
+.welcome-card:has(.welcome-native:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
+.welcome-card-glow {
+  position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; opacity: 0;
+  background: radial-gradient(420px circle at 22% 0%, var(--accent-a18), transparent 58%);
+  transition: opacity .3s ease;
+}
+.welcome-card.is-checked .welcome-card-glow { opacity: 1; }
+.welcome-card-icon {
+  width: 56px; height: 56px; display: grid; place-items: center;
+  border-radius: 16px; color: var(--accent);
+  background: var(--accent-a12); border: 1px solid var(--accent-a18);
+  transition: transform .22s ease, background-color .22s ease;
+}
+.welcome-card-icon svg { width: 26px; height: 26px; }
+.welcome-card.is-checked .welcome-card-icon { background: var(--accent-a18); transform: scale(1.04); }
+.welcome-card-text { display: grid; gap: 4px; min-width: 0; }
+.welcome-card-text b { font-size: 18px; letter-spacing: .01em; }
+.welcome-card-text small { color: var(--text-1); font-size: 11.5px; }
+.welcome-card-text em { font-style: normal; color: var(--text-2); font-size: 11px; line-height: 1.45; }
+.welcome-card.is-checked .welcome-card-text em { color: var(--accent); }
+.welcome-card.is-disabled .welcome-card-text em { color: var(--danger); }
+.welcome-card-check {
+  width: 23px; height: 23px; border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--text-2) 55%, var(--border));
+  position: relative; transition: background-color .2s ease, border-color .2s ease, transform .2s ease;
+}
+.welcome-card.is-checked .welcome-card-check { background: var(--accent); border-color: var(--accent); transform: scale(1.05); }
+.welcome-card-check::after {
+  content: ""; position: absolute; left: 7px; top: 3px; width: 6px; height: 11px;
+  border: 2px solid var(--accent-ink); border-top: 0; border-left: 0;
+  transform: rotate(45deg) scale(.35); opacity: 0;
+  transition: transform .2s cubic-bezier(.2,.9,.2,1.2), opacity .15s ease;
+}
+.welcome-card.is-checked .welcome-card-check::after { opacity: 1; transform: rotate(45deg) scale(1); }
+
+.welcome-npu {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border: 1px dashed color-mix(in srgb, var(--text-2) 40%, var(--border));
+  border-radius: 12px; background: color-mix(in srgb, var(--bg-3) 38%, transparent);
+  color: var(--text-1); font-size: 12px;
+}
+.welcome-npu[hidden] { display: none; }
+.welcome-npu-ico { color: var(--accent); display: inline-flex; }
+.welcome-npu-ico svg { width: 18px; height: 18px; }
+.welcome-npu b { display: block; color: var(--text-0); font-size: 12.5px; }
+.welcome-npu small { display: block; color: var(--text-2); font-size: 11px; margin-top: 2px; }
+.welcome-alert {
+  margin: 0; padding: 11px 13px; border-radius: 10px; font-size: 12px; line-height: 1.65;
+  color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 26%, transparent);
+}
+.welcome-alert[hidden] { display: none; }
+.welcome-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.welcome-go {
+  min-height: 44px; padding: 0 22px; border-radius: 12px; font-size: 13.5px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 10px;
+}
+.welcome-go:not(:disabled) span { transition: transform .2s ease; }
+.welcome-go:not(:disabled):hover span { transform: translateX(4px); }
+.welcome-go:disabled { opacity: .45; }
+.welcome-retry, .welcome-cancel { min-height: 40px; }
+.welcome-foot { margin: 0; color: var(--text-2); font-size: 10.5px; line-height: 1.7; }
+
+.welcome-view.is-open .welcome-shell { animation: welcome-rise .55s cubic-bezier(.2,.8,.2,1) both; }
+.welcome-view.is-open .welcome-copy > * { animation: welcome-rise .5s cubic-bezier(.2,.8,.2,1) both; }
+.welcome-view.is-open .welcome-copy > *:nth-child(2) { animation-delay: .06s; }
+.welcome-view.is-open .welcome-copy > *:nth-child(3) { animation-delay: .12s; }
+.welcome-view.is-open .welcome-card { animation: welcome-card-in .5s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(.12s + var(--i, 0) * .1s); }
+.welcome-view.is-open .welcome-npu,
+.welcome-view.is-open .welcome-actions,
+.welcome-view.is-open .welcome-foot { animation: welcome-rise .5s cubic-bezier(.2,.8,.2,1) both; animation-delay: .3s; }
+@keyframes welcome-rise {
+  from { opacity: 0; transform: translateY(16px); filter: blur(5px); }
+  to   { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+@keyframes welcome-card-in {
+  from { opacity: 0; transform: translateY(18px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Material You：更大的圆角与胶囊按钮 */
+.sf-studio[data-design=material] .welcome-shell { border-radius: 28px; }
+.sf-studio[data-design=material] .welcome-card { border-radius: 24px; }
+.sf-studio[data-design=material] .welcome-card-icon { border-radius: 20px; }
+.sf-studio[data-design=material] .welcome-go { border-radius: 999px; }
+.sf-studio[data-design=material] .welcome-step { border-radius: 999px; }
+/* Windows UWP：近直角、实色（不用毛玻璃） */
+.sf-studio[data-design=uwp] .welcome-shell {
+  border-radius: 2px; backdrop-filter: none;
+  background: var(--bg-1); box-shadow: 0 22px 60px rgba(0, 0, 0, .34);
+}
+.sf-studio[data-design=uwp] .welcome-card { border-radius: 2px; }
+.sf-studio[data-design=uwp] .welcome-card-icon { border-radius: 2px; }
+.sf-studio[data-design=uwp] .welcome-go { border-radius: 2px; }
+.sf-studio[data-design=uwp] .welcome-step { border-radius: 2px; }
+.sf-studio[data-design=uwp] .welcome-npu { border-radius: 2px; }
+/* Classic / Studio：更紧凑的圆角 */
+.sf-studio[data-design=studio] .welcome-shell { border-radius: 18px; }
+.sf-studio[data-design=studio] .welcome-card { border-radius: 14px; }
+
+/* 设置页“加速方式”卡 */
+.sf-accel-card .sf-accel-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 14px; }
+.sf-accel-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line, var(--border));
+  color: var(--muted, var(--text-1)); font-size: 11.5px;
+  background: color-mix(in srgb, var(--surface-2, var(--bg-3)) 72%, transparent);
+}
+.sf-accel-chip b { color: var(--text, var(--text-0)); font-weight: 700; }
+.sf-accel-chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-a10); }
+.sf-accel-chip.on b { color: var(--accent); }
+.sf-accel-chip.off { opacity: .65; }
+.sf-accel-chip.warn { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.sf-accel-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.sf-studio[data-design=uwp] .sf-accel-chip { border-radius: 2px; }
+
+/* 减少动效 / 关闭动效：所有欢迎动画即时完成 */
+@media (prefers-reduced-motion: reduce) {
+  .welcome-view *, .welcome-view *::before, .welcome-view *::after { animation: none !important; transition: none !important; }
+}
+.sf-studio[data-motion=off] .welcome-view *,
+.sf-studio[data-motion=off] .welcome-view *::before,
+.sf-studio[data-motion=off] .welcome-view *::after { animation: none !important; transition: none !important; }
+
+@media (max-width: 760px) {
+  .welcome-shell { padding: 22px; gap: 18px; }
+  .welcome-cards { grid-template-columns: minmax(0, 1fr); }
+  .welcome-copy h1 { font-size: clamp(30px, 9vw, 44px); }
+  .welcome-brand small { display: none; }
+  .welcome-actions { align-items: stretch; }
+  .welcome-go { width: 100%; justify-content: center; }
+}
+body.sf-welcome-open .sf-version-banner { display: none; }
+body.sf-welcome-open .sf-version-banner,
+body.sf-welcome-open .sf-vendor-banner { display: none; }
 
 /* ═══════════════════════════════════════════════════════════════════════
    Claude 设计族 —— 暖纸底、陶土强调、衬线标题、柔和圆角。
@@ -6516,3 +6817,4 @@ body.sf-ev-open { overflow: hidden; }
   .sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card,.role-card,.btn) { transition: none; }
   .sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card,.role-card,.btn):hover { transform: none; }
 }
+

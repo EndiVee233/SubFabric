@@ -612,11 +612,6 @@ class NpuRecognizer:
         total_windows = 1 if frames <= ENCODER_WINDOW_FRAMES else \
             1 + (frames - ENCODER_WINDOW_FRAMES + stride - 1) // stride
 
-        state = {
-            "hidden": np.zeros((2, 1, self.dec_hidden), dtype=np.float32),
-            "cell": np.zeros((2, 1, self.dec_hidden), dtype=np.float32),
-            "last_token": BLANK_TOKEN_ID,
-        }
         all_tokens, all_timings, all_probs = [], [], []
         offset, win_idx = 0, 0
         last_global, have_last = 0, False
@@ -629,6 +624,15 @@ class NpuRecognizer:
             cache.clear()                    # 换了音频（窗口数对不上）→ 不跨音频复用
 
         while offset < frames:
+            # 每个窗口都重置解码器状态：跨窗携带 LSTM hidden/cell + last_token 时，
+            # 一旦某个窗口在重叠区边界判错，错误状态会污染后续所有窗口，
+            # 表现为成片漏词（实测同一段 10 分钟素材 WER 27.06%）。
+            # 重置后靠窗口重叠 + 后缀去重保持连贯，WER 降到 22.99%。
+            state = {
+                "hidden": np.zeros((2, 1, self.dec_hidden), dtype=np.float32),
+                "cell": np.zeros((2, 1, self.dec_hidden), dtype=np.float32),
+                "last_token": BLANK_TOKEN_ID,
+            }
             size = min(ENCODER_WINDOW_FRAMES, frames - offset)
             is_last = (offset + size) >= frames
             chunk = mel[:, offset:offset + size]

@@ -29,10 +29,10 @@
 | --- | --- |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘与退出 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
-| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
-| `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`speech-gap.js` |
-| `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py` |
-| `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`；`asr/settings.json` 为含密文本机设置（不入库） |
+| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`speech-gap.js` |
+| `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
+| `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（见 §9） |
 | `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端模块自动同步镜像（入库） |
 | `tools/` | 探针与验收脚本：`build-install.mjs`（事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs` |
@@ -59,9 +59,10 @@
   `X-SubFabric-Token`；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用；`safeJoin` 解码后归一化并补路径
   分隔符边界，拒绝编码穿越。
 - **初稿流水线**：创建 → 下载（`startFetchJob` → `asr/fetch/fetch_cli.py`，10 分钟无输出看门狗）→
-  prepare（ffprobe → ffmpeg 抽 `audio.wav` + `peaks.bin`）→ ASR（whisper.cpp / Parakeet / VibeVoice /
-  必剪 / 剪映 / NeMo）→ 语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）
-  → LLM `translate`。
+  prepare（ffprobe → ffmpeg 抽 `audio.wav` + `peaks.bin`；**ASR 默认用原声 `mode='raw'`**，降噪版实测会让
+  Whisper large-v2 的 WER 从 8.70% 升到 11.02%）→ ASR（Faster-Whisper-XXL / whisper.cpp / Parakeet /
+  VibeVoice / 必剪 / 剪映 / NeMo）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
+  语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
 - **流水线状态**写 `meta.draft`（`running` / `paused` / `error` / `done`），前端轮询
   `GET /api/projects/:id/draft`；防重入用 `draftJobs.has(id)`，每步统一走 `safeDraftStep`
   （同步异常与 async reject 都收）。
@@ -81,6 +82,27 @@
   `js/color-picker.js` 等）。主 hash 路由：`#/dashboard`、`#/home`、`#/new`、`#/settings`、
   `#/project/<id>`、`#/editor`；无 hash 默认 `#/dashboard`，旧 `#/resources` 转 `#/settings`、
   旧 `#/tasks` 转 `#/home`。
+- **首次启动（加速方式）**：浏览器没有 `localStorage.sf-welcome-v1` 时先显示 `#welcome-view`，
+  `#app` 置 `inert` 并隐藏；只提供 **CUDA / Vulkan** 两个勾选，至少勾一个才能进入（不支持 CPU 推理）。
+  NPU 不在欢迎页出现：`GET /api/asr/hardware` 探到 Intel AI Boost / Ryzen AI 才在设置页显示。
+  硬件探测：CUDA 走 `nvidia-smi`；Vulkan 用 `System32\vulkan-1.dll` + 非虚拟显卡列表；NPU 用
+  `Win32_PnPEntity` 匹配 `AI Boost|Ryzen AI|NPU|IPU`（排除 Input/HID）。结果缓存 5 分钟，
+  `?refresh=1` 强制重探。勾选写入 `asr/settings.json` 的 `backends`（`POST /api/asr/backends`），
+  服务端 `modelAllowedByBackends` / `modelAllowedByHardware` 过滤 `resolveAsrModel` /
+  `resolveDraftModel` / `resolveRerecogModel`；前端 `editor/js/welcome-model.js` 同步过滤
+  `/api/asr/status` 的 `models`，系列没有模型时隐藏入口。已下载但不属于当前勾选/硬件的模型
+  不删除也不混进正常列表，前端 `extraModels()` 把它们放进「其它模型」，只保留删除，不参与默认选择；
+  NPU 没有硬件时连这里也不显示。云端识别不依赖本机加速，仍显示在「云端识别」。
+  设置 → 性能与调度 → 「重新进入欢迎界面」
+  可再次打开；主题沿用现有令牌（Material 大圆角、UWP 近直角/无毛玻璃、Classic 默认），
+  入场/勾选/极光背景动画在 `prefers-reduced-motion` 或 `data-motion=off` 时关闭。首帧由
+  `editor/js/welcome-boot.js`（同步脚本）先挂 `sf-welcome-pending` 隐藏 App，避免闪一下主页再弹欢迎。
+- **文案层（i18n）**：`editor/js/i18n.js` 是显示出口；`editor/lang/zh-CN.json` 是「原文 → 可润色译文」
+  词典，键缺失回退原文。`tests/gen-lang.mjs` 用共享 `tools/lib/copy_scan.mjs` 扫描
+  `editor/studio.html`（文本/title/placeholder/aria-label/alt/value）、`editor/js/*.js`、
+  `editor/server.js`、`editor/scripts/*`，跳过注释，保留已有译文和旧键；`tests/i18n-coverage-test.mjs`
+  在回归里保证没有漏进词典的用户可见中文。新增动态 DOM 由 MutationObserver 落地后过词典，
+  所以欢迎页、模型卡片、进度日志和提示框都不需要手写 `t()` 才能翻译。
 - **入口生成**：`node tools/generate-studio.mjs` 把 `tools/templates/studio.html` 逐字节写到
   `editor/studio.html`（另从 `prototypes/subfabric-ui/` 拷贝 `themes.js`→`editor/js/studio-themes.js`、
   `progress.js`→`editor/js/studio-progress.js`，源不存在时保留现文件）。
@@ -106,6 +128,12 @@
   不再使用 26×15 的自绘双伪元素开关；`configureRim()` 继续同步 `checked`。
 - **文件夹滚动条**：Material You 下隐藏 `#sf-folders` 的右侧滚动条（`scrollbar-width:none` 与 0 宽
   WebKit 滚动条），列表仍可用滚轮/触控板滚动；其它主题保留原滚动条。
+- **文件夹头与弹窗**：`.sf-folder-head` 右侧不留内边距，`#sf-folder-add` 与每行删除 X 同为 34×34
+  （图标 16px），两个按钮共用同一条右基线；新建/移除文件夹的页内弹窗用 `sf-dialog-veil-*` /
+  `sf-dialog-box-*` 入场（UWP 150ms 淡变 + `scale(.96)`）、退场 120ms 反向，`closeFolderDialog()`
+  等 `is-closing` 动画结束后再摘 `hidden`；减少动效或 `data-motion=off` 时动画时长为 0，立即收起。
+- **流光过渡**：`.sf-ambient i` 用 `background-color` 承接 `--sf-aurora-1..3` 并做 420ms 过渡，换配色或
+  切换明暗都不硬切；动态/静态只切 `animation-play-state`，静态停在当前帧、切回继续漂移，不跳回原点。
 - **主题色遮罩**：`自定义主题色` 行与色板/恢复默认按钮同处 `.sf-theme-color-panel` 一块遮罩；
   MY 圆角 24px、UWP 2px、其它 8px，避免色板落在遮罩外。
 - **角色列表入场**：每次进入编辑器后**第一次**切到角色页时 `#role-list` 加 `is-role-entering`，
@@ -217,6 +245,12 @@
   （缺素材、私有夹具或 GUI/硬件限制），不算完整通过；`diagnostic`（`rows-timeline-test.mjs`）是诊断脚本，
   不计入断言通过数；`EXCLUDED` 固定排除 `colorfix-test.mjs`（需真实用户项目）与
   `font-status-test.mjs`（需真实 GUI 与项目）。单项超时 180s；有 `failed` 时退出码 1。
+- **ASR 纯逻辑单测**：`tests/faster-whisper-test.mjs`（XXL 参数跨版本、JSON → segments、进度解析）、
+  `tests/glossary-repair-test.mjs`（术语表修复的命中与误伤边界）、`tests/welcome-model-test.mjs`
+  （CUDA/Vulkan/NPU/云端模型的可见性、双引擎依赖、其它模型、过滤后默认选择）。三者不加载模型、不需要 GPU。
+- **文案覆盖**：`tests/i18n-coverage-test.mjs` 用 `tools/lib/copy_scan.mjs` 重扫
+  `editor/studio.html`、`editor/js/*.js`、`editor/server.js`、`editor/scripts/*`，要求每条
+  用户可见中文都能在 `editor/lang/zh-CN.json` 找到键；`node tests/gen-lang.mjs` 负责补齐/保留用户润色。
 - **兼容别名**：`node tools/repair15-regression.mjs` 内部转发到同一实现，参数相同。
 - **Python 隔离回归**：先设 `$env:SUBFABRIC_TEST_ISOLATED='1'; $env:PYTHONDONTWRITEBYTECODE='1'`，
   再对 `confidence-test`、`draft-role-gap-test`、`fetch-format-test`、`glommed-split-test`、
@@ -247,7 +281,7 @@
   之前）。Node 依次取 `SUBFABRIC_NODE` → PATH → 托管 Node → 常见安装路径，首次需联网下载 node.exe。
 - `build/installer/SubFabric.iss` 把 `build/SubFabric.exe`、`main.py`、`start-editor.*`、`editor\*`、
   `asr\*` 等收进安装包，并排除 `projects/`、`asr\.venv`、`asr\models`、`settings.json`、`whisper.cpp`、
-  `crispasr`、`runtime-python`、`ytdlp`、`logs` 等用户数据与运行时。入库的只有
+  `crispasr`、`faster-whisper-xxl`、`runtime-python`、`ytdlp`、`logs` 等用户数据与运行时。入库的只有
   `build/installer/{SubFabric.iss, logo.png, logo.ico, start-editor.*}`。
 - **三处版本号必须同步**（漏一处会出现"装完版本还是旧的"）：`editor/server.js` 的 `APP_VERSION`
   （显示版本，如 `beta 1.3`）与 `APP_FILE_VERSION`（Windows 文件版本，四段纯数字，如 `1.3.0.0`）；
@@ -327,6 +361,47 @@
   词表与置信度逐位不变。窗口重叠合并逻辑逐字保留。
 - 尚未做：三遍解码仍串行（`InferRequest` 非线程安全，OpenVINO 异步实测更慢）；`_tdt_loop` 的
   reshape + softmax 固定开销值得优化；双引擎没走常驻识别服务，短音频因重载模型不划算。
+
+### ASR 准确率（Whisper large-v2 与 Parakeet 实测）
+
+**口径**：`How I Saved the World's Largest Minecraft Server.webm` 前 10 分钟；参考文本由
+`人工精校的字幕（前两小时）.ass` 还原（去掉颜色标签、按相同文本合并逐词事件）；WER 比较前做
+大小写、标点、撇号与数字统一，不比较时间轴。数字只对本机/本段素材有效，换素材必须重跑。
+
+| 引擎/配置 | WER | 说明 |
+| --- | ---: | --- |
+| Whisper large-v2（无 MDX，无 VAD） | 19.38% | 只有 VAD 时实测；人声分离是分水岭 |
+| Whisper large-v2（MDX + VAD 0.05） | 8.70% | 「卡卡」参考设置；VAD 会切掉 31 词 |
+| **Whisper large-v2（MDX + 关 VAD）** | **7.74%** | 当前默认；逐词 1740 |
+| + 术语表拼写修复 | **7.23%** | 只修专名；不动时间轴 |
+| Whisper 后接语义分句（完整初稿） | 8.36% | 分句会重拼词/标点，口径与原始转写略有差异 |
+| Parakeet TDT 0.6B v2（greedy） | 11.02% | 原默认 |
+| + `blank_penalty=0.5` | 10.68% | 减少漏短词；0.7 为 10.62，取 0.5 更稳 |
+| + 术语表拼写修复 | **10.34%** | 当前默认 |
+| Parakeet NPU（滑窗，携带 LSTM 状态） | 27.06% | 成片漏词 |
+| Parakeet NPU（每窗口重置状态） | **22.99%** | 当前默认；重叠 400 帧无进一步收益 |
+| Parakeet NPU（dual 固定 15s 分片） | 19.66% | `asr_dual.py --ratio 0:1`，分片边界仍丢词 |
+
+**结论（必须如实记录）**：本段素材上 **Whisper large-v2 仍比 Parakeet 准**。参考 ASS 本身由
+WhisperX（Whisper large-v2 + 对齐）+ 人工修正生成，Whisper 在专名/上下文上有先天优势；Parakeet
+的强项是速度（10 分钟约 33 秒 vs Whisper 约 2 分钟）与不需要 MDX。**没有**把「Parakeet 准确率
+高于 Whisper」写成结论，也没有用双引擎拼接去伪造这个数字：Parakeet+Whisper 交叉校验实测
+8.08%~9.2%，反而比 Whisper 单引擎差，所以未启用。
+
+**Whisper large-v2 的实现约定**：
+- 运行时 `Faster-Whisper-XXL`（`asr/faster-whisper-xxl/`，约 4.4GB 解压 / 1.4GB 下载，服务端按需
+  下载并用 `editor/scripts/7z.exe` 解包）；模型 `Systran/faster-whisper-large-v2` 放
+  `asr/models/faster-whisper-large-v2`（CTranslate2，3.09GB），XXL 用
+  `--model large-v2 --model_dir <父目录>` 加载。
+- 默认参数：`--ff_mdx_kim2`（r245.3+ 自动换 `--ff_vocal_extract mdx_kim2`）、`--vad_filter False`、
+  `--word_timestamps True`、`--language en`、**不给 `--initial_prompt`**。实测把专名表当 prompt 会
+  让 1740 词的转写塌到 1528 词、WER 17.34%，专名改由识别后的术语表修复处理。
+- 输出 JSON → `{segments:[{start,end,text,words,confidence}]}`，与 `asr.py`/whisper.cpp 同构，
+  后面复用同一套 reseg / 置信度 / ASS 生成。
+
+**音频预处理约定**：新项目 ASR 默认用原声 `mode='raw'`。项目里原本默认 `afftdn` 降噪，实测
+Whisper large-v2 的 WER 8.70% → 11.02%、Parakeet 11.02% → 11.19%；降噪版仍保留给「降噪模式播放」
+和用户显式「重新生成音频」。
 
 ## 8. 下载内核（`asr/fetch/`）
 
@@ -493,7 +568,38 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 
 ### 最近状态
 
-**2026-10-19（本次，已完成且已验证）**
+**2026-10-21（本次，已完成且已验证）**
+
+- 新增 **Whisper large-v2** 引擎（`faster-whisper`）：Faster-Whisper-XXL 运行时 + `Systran/faster-whisper-large-v2`
+  CTranslate2 权重；设置页「Whisper 系列」可见、可下载、可创建初稿、可选区重识别；模型下载走现有 HF 镜像
+  链路，运行时可从 GitHub 下载 `.7z` 并用 `editor/scripts/7z.exe` 解包（下载链路代码已完成，**本轮未实际联网
+  跑一次 1.4GB 下载**；本机用的是从「卡卡的 bin」拷入的 r245.2 运行时，已实测识别）。
+- 音频预处理改为 ASR 默认原声；新增术语表拼写修复并接入所有引擎；Parakeet 默认 `blank_penalty=0.5`；
+  NPU 滑窗每窗口重置解码状态。
+- 准确率实测见 §7「ASR 准确率」：Whisper large-v2 7.23%（术语表后）/ 8.36%（完整初稿），Parakeet 10.34% /
+  完整初稿约 11.7%，NPU 27.06%→22.99%。**Parakeet 未超过 Whisper large-v2**，原因与取舍已原样记录。
+- 新增**首次启动加速方式界面**：CUDA/Vulkan 勾选（无 N 卡时 CUDA 不可选）、至少一项才能进入；
+  NPU 只在设置页按硬件显示；`POST /api/asr/backends` 持久化并过滤模型，设置 → 性能与调度可重新打开。
+  硬件探测、主题适配与动画见 §4；新增 `tests/welcome-model-test.mjs`。
+- 模型可见性进一步收紧：只勾选的后端出现在正常列表（NPU 按硬件、云端免显卡）；旧版本下错后端的
+  已下载模型收进「其它模型」，保留删除入口，避免占磁盘却找不到。`welcome-model-test` 覆盖
+  “只勾 Vulkan / 只勾 CUDA / 两个都选 / 无 NPU / 已下载未启用模型”等边界。
+- **所有用户可见文案进入 i18n**：修复 `gen-lang` 扫描已删除 `editor/index.html` 导致生成器不可用的问题；
+  改为扫描 `editor/studio.html` + 共享 `copy_scan`（含 `aria-label`/`alt`/`value`，剥掉 HTML 注释），
+  词典从 1608 条补到 2817 条，并保留旧键和用户改过的 50 条译文。把 4 个遗留语义键
+  （`save.conflict` / `model.deleteFailed` / `model.detached` / `vibevoice.*`）改成中文原文，
+  避免 `t()` 对英文键直接原样返回。新增 `tests/i18n-coverage-test.mjs` 防止以后漏文案。
+- 新增 `tests/faster-whisper-test.mjs`、`tests/glossary-repair-test.mjs`（纯逻辑，不加载模型）；顺带修了
+  `badcat-layer-test` / `pair-anchor-test` / `word-highlight-test` 在**中文路径**下把 `%E5%B7%A5…`
+  当成真实目录的旧问题（改用 `decodeURIComponent(fileURLToPath)`）。
+- 全量 JS 回归 **105 通过 / 8 部分执行 / 0 失败 / 2 排除**；新增 i18n 覆盖测试通过；全仓 ESLint
+  **0 error**（既有 warning）；8 个隔离 Python 回归全过（本机 `ruff` 未安装，未跑）。校验报告
+  `_test/js-results-final-i18n.json`。
+- 「卡卡的 bin」临时目录已删除；需要的 XXL 运行时、`7z.exe` 与 MIT 许可证已迁入 `asr/faster-whisper-xxl/`
+  与 `editor/scripts/`。
+- **尚未做**：1.4GB 运行时下载实测、完整 4 小时音频回归、打包后的 exe 冒烟、GitHub 提交（尚未提交 GitHub）。
+
+**2026-10-19（历史快照，非本次验证）**
 
 - 本轮 UI 增量：Material You 编辑器移除下拉字幕列表的补播动画（仅进入编辑器时播放入场）；`#sf-list-mode` 切换卡片/列表后只重播卡片入场，页头/筛选/搜索工具栏不参与动画也不刷新；专用 `home-view.is-view-switching` + 卡片 `data-view-enter` 使用 `uwp-view-in`/`my-view-in`（透明度始终 1、仅轻微位移），不再复用 `data-my-enter`/`data-uwp-enter`，动画结束不会掉回旧入场选择器导致二次闪烁；连点会清空上一轮并强制 reflow，每一轮都能重新起播。UWP 列表视图垂直 gap 从 2px 调到 6px；设置页动作栏移出右上角；UWP/MY 背景模式切换与 UWP 明暗切换使用 View Transition 交叉淡变。图标视觉微调：UWP 项目封面播放三角 `left:28.5px → 30px`，新建小组件加号 `translateY(-1px)`；MY 项目卡状态胶囊：`.pc-badges { margin-top:2px }`、`.pc-st { display:inline-flex; align-items:center; line-height:1; padding:3px 8px; margin-left:0 }`，上下留白对称；`.pc-actions { padding-left:8px }` 让标题、状态胶囊、按钮共用 x=271 左边界。全量回归 `_test/my-badge-align-full-20261019.json` 为 **98 通过 / 9 部分 / 0 失败 / 2 排除**。编辑器首屏波形/ASS 就绪提示改为 `toastAfterCueIntro()` 排队，等字幕卡入场类摘掉后再显示，避免弹窗打断列表动画；字幕卡出现间隔 MY `55→22ms`、UWP `14→8ms`，飞入/回弹单卡时长保持 420/180ms。UWP 首页动画已回退到本轮修改前的版本（不再使用 600ms 页面锁/首页专用排序），文件夹“＋”改为居中的内联 SVG。全量回归 `_test/home-anim-revert-full-20261019.json` 为 **98 通过 / 9 部分 / 0 失败 / 2 排除**。
 - 新增 **视频导出**（双语硬字幕 / 生肉 / ASS 字幕，可多选），§11。

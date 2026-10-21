@@ -53,6 +53,7 @@ asr/runtime-vibevoice/
 asr/settings.json
 asr/whisper.cpp/
 asr/crispasr/
+asr/faster-whisper-xxl/
 asr/ytdlp/
 config.json
 ui-config.json

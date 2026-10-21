@@ -5,14 +5,16 @@
   const dataImage = value => typeof value === 'string' && value.length <= 700000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(value);
   const hex = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
   const allowedKeys = new Set(['schema', 'id', 'name', 'version', 'description', 'author', 'design', 'seed', 'tokens', 'assets', 'builtin']);
-  const designNames = new Set(['studio', 'material', 'uwp', 'classic']);
+  const designNames = new Set(['studio', 'material', 'uwp', 'classic', 'claude']);
   const tokenNames = new Set(Object.keys(tokenKeys));
   /* 2026-10-19：Studio 主题已从内置选择器移除；保留 design:'studio' 供旧自定义包使用。
      顺序即默认回退顺序，Windows UWP 作为新的第一内置主题。 */
   const builtins = Object.freeze([
     Object.freeze({ schema: 'subfabric-theme-v1', id: 'windows-uwp', name: 'Windows 10', version: '1.0.0', description: 'Fluent：紧凑控件、细描边与规整工作区', design: 'uwp', seed: '#0078D7', builtin: true }),
     Object.freeze({ schema: 'subfabric-theme-v1', id: 'material-you', name: 'Material You', version: '1.0.0', description: '动态色、柔软轮廓与波浪播放进度', design: 'material', seed: '#5789dc', builtin: true }),
-    Object.freeze({ schema: 'subfabric-theme-v1', id: 'subfabric-classic', name: 'SubFabric Classic', version: '1.0.0', description: '经典 SubFabric：深色工作台、橙色强调与紧凑编辑器', design: 'classic', seed: '#ff7a45', builtin: true })
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'subfabric-classic', name: 'SubFabric Classic', version: '1.0.0', description: '经典 SubFabric：深色工作台、橙色强调与紧凑编辑器', design: 'classic', seed: '#ff7a45', builtin: true }),
+    /* 追加在末尾：builtins[0] 仍是未知 id 的回退主题，不改变旧行为。 */
+    Object.freeze({ schema: 'subfabric-theme-v1', id: 'claude', name: 'Claude', version: '1.0.0', description: '暖纸底、陶土强调、衬线标题与柔和圆角', design: 'claude', seed: '#B0512F', builtin: true })
   ]);
   const builtinIds = new Set(builtins.map(pack => pack.id));
   function validTokens(tokens) {
@@ -120,6 +122,22 @@
         '--text': dark ? '#eceef2' : '#202124', '--muted': dark ? '#a8a8b4' : '#60656d', '--line': dark ? '#2a2a34' : '#d4d8df',
         '--accent': accent, '--accent-soft': dark ? 'rgba(255,122,69,.16)' : 'rgba(255,122,69,.12)',
         '--on-accent': contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#1a1206', '--outline': dark ? '#777b86' : '#7c828d'
+      }).forEach(([key, value]) => root.style.setProperty(key, value));
+    } else if (pack.design === 'claude') {
+      /* 与 studio.js 的 applyTheme() 保持同一套值：这里供原型/测试直接调用。 */
+      Object.entries({ ...tokens,
+        '--bg': dark ? '#1A1916' : '#F6F4EE',
+        '--surface': dark ? '#24221B' : '#FCFBF7',
+        '--surface-2': dark ? '#2C2A23' : '#EFECE3',
+        '--surface-3': dark ? '#35322A' : '#E7E3D7',
+        '--text': dark ? '#EDE9DE' : '#1C1B18',
+        '--muted': dark ? '#A5A091' : '#6B675C',
+        '--line': dark ? '#37342C' : '#E1DDD1',
+        '--accent': settings.accent || pack.seed,
+        '--accent-soft': dark ? '#3A2A20' : '#F3E2D7',
+        '--accent-hover': dark ? '#2E2620' : '#F7ECE4',
+        '--on-accent': contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : (dark ? '#241B14' : '#FDFBF6'),
+        '--outline': dark ? '#78715C' : '#8C8571'
       }).forEach(([key, value]) => root.style.setProperty(key, value));
     } else {
       const accent = readable(settings.accent, dark ? '#252d27' : '#fffefa', ...hueSeed(settings.accent), dark);

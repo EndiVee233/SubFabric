@@ -74,7 +74,8 @@ const j = (x) => JSON.stringify(x);
 {
   const parts = [
     { offset: 0, segments: [
-      { start: 1, end: 2, text: 'A', words: [{ word: 'a', start: 1, end: 2 }] },
+      { start: 1, end: 2, text: 'A', confidence: { score: 0.75, parts: { token: 0.75 } },
+        words: [{ word: 'a', start: 1, end: 2 }] },
       { start: 3, end: 4, text: 'B', words: [] },
     ] },
     { offset: 100, segments: [
@@ -88,6 +89,7 @@ const j = (x) => JSON.stringify(x);
   ok(m[0].text === 'A' && m[1].text === 'B' && m[2].text === 'C', '按起点排序');
   ok(Math.abs(m[2].start - 100.5) < 1e-6 && Math.abs(m[2].end - 101.5) < 1e-6, '第二片时间戳加回偏移', j(m[2]));
   ok(Math.abs(m[2].words[0].start - 100.5) < 1e-6, '逐词时间戳也加偏移', j(m[2].words));
+  ok(m[0].confidence && m[0].confidence.score === 0.75, '逐句置信度随分片合并保留');
   ok(C.mergeChunkSegments([]).length === 0 && C.mergeChunkSegments(null).length === 0, '空输入安全');
   // 边界重复（同一句两片都识别到）→ 只留一句
   const dup = C.mergeChunkSegments([

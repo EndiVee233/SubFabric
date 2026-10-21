@@ -104,6 +104,9 @@ function mergeChunkSegments(parts) {
         start: +(st + off).toFixed(3),
         end: +(en + off).toFixed(3),
         text,
+        // 分片合并不能丢逐句置信度：Whisper/Faster-Whisper 的 confidence 是解码时白送的，
+        // 丢了之后长音频在界面上全是“—”，而短音频有分数，看起来像随机的。
+        confidence: s.confidence || undefined,
         words: (Array.isArray(s.words) ? s.words : []).map(w => ({
           word: String(w.word == null ? '' : w.word).trim(),
           start: +(Number(w.start) + off).toFixed(3),

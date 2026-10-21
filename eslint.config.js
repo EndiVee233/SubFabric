@@ -102,6 +102,8 @@ export default [
       'editor/hardsub.js',
       // ffmpeg/ffprobe 定位与按需自动下载
       'editor/ffmpeg-tool.js',
+      // Whisper large-v2（Faster-Whisper-XXL）参数/JSON 适配 + 术语表拼写修复
+      'editor/faster-whisper.js', 'editor/glossary-repair.js',
     ],
     languageOptions: {
       ecmaVersion: 2022,

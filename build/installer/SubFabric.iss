@@ -83,11 +83,11 @@ Source: "{#Root}\editor\*"; DestDir: "{app}\editor"; \
 
 ; ── Python 侧（asr.py / diarize.py / multitalker.py / fetch\*）──
 ; 用户数据与运行时一律不进安装包，也绝不被安装/卸载碰到：asr\.venv、asr\models、asr\settings.json、
-; asr\whisper.cpp、asr\crispasr、asr\runtime-python、asr\ytdlp、asr\logs、projects\
-; （whisper.cpp / crispasr 运行时由服务端首次使用时自动下载，所以本机存在时也不能被顺带打包）
+; asr\whisper.cpp、asr\crispasr、asr\faster-whisper-xxl、asr\runtime-python、asr\ytdlp、asr\logs、projects\
+; （whisper.cpp / crispasr / Faster-Whisper-XXL 运行时由服务端首次使用时自动下载，所以本机存在时也不能被顺带打包）
 Source: "{#Root}\asr\*"; DestDir: "{app}\asr"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\crispasr\*,\runtime-python\*,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*"
+    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\crispasr\*,\faster-whisper-xxl\*,\runtime-python\*,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*"
 
 [Icons]
 ; 显式写 IconFilename 指向程序本体（而不是 .iss 里的 SetupIconFile），

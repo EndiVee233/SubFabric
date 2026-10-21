@@ -22,6 +22,8 @@ const bcutAsr = require('./bcut-asr.js'); // 必剪(bcut)云端识别: 免模型
 const capcutAsr = require('./capcut-asr.js'); // 剪映(CapCut)云端识别: 同上, 与必剪互为备份
 const asrChunks = require('./asr-chunks.js'); // 长音频分片: 静音优先切片 + 时间戳偏移合并 + 片间节流
 const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffmpeg; 与离线探针共用同一份实现)
+const fasterWhisper = require('./faster-whisper.js'); // Faster-Whisper-XXL(Whisper large-v2) 参数与 JSON 适配(纯逻辑)
+const glossaryRepair = require('./glossary-repair.js'); // 术语表拼写修复(所有 ASR 引擎共用, 纯逻辑)
 const realignWordsMod = require('./realign-words.js'); // 逐词重校对的纯逻辑(有单测)
 const kLine = require('./k-line.js');        // \k 卡拉OK行文本构造(初稿生成用; 与 karaoke.js 同一格式)
 const llmText = require('./llm-text.js');
@@ -319,11 +321,11 @@ function safeJoin(root, urlPath) {
 
 // 明确列出浏览器入口、依赖和双端纯模块；editor 下的后端模块不随目录一并公开。
 const STATIC_RESOURCES = new Set([
-  '/editor/studio.html', '/editor/css/studio.css', '/editor/css/classic.css', '/editor/lang/zh-CN.json', '/editor/themes/subfabric-classic.theme.json', '/editor/assets/app-logo.png',
+  '/editor/studio.html', '/editor/css/studio.css', '/editor/css/classic.css', '/editor/lang/zh-CN.json', '/editor/themes/subfabric-classic.theme.json', '/editor/themes/claude.theme.json', '/editor/assets/app-logo.png',
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
-    'studio-themes', 'studio-progress', 'rim-curve', 'export-video'].map(n => '/editor/js/' + n + '.js'),
+    'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
   '/editor/vendor/subtitles-octopus-worker.wasm', '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf',
@@ -742,6 +744,30 @@ const ASR_MODELS = [
     draftAllowed: true,
   },
   {
+    /* Whisper large-v2：走 Faster-Whisper-XXL（独立 exe + CTranslate2 权重），
+     * 复刻「卡卡的 whisper large v2 设置」：VAD pyannote_v3、阈值 0.05、
+     * MDX-Net 人声分离、逐词时间戳、提示词留空。
+     * 与 whisper.cpp 那条是**两套运行时**：这个不需要 Vulkan/Python，但需要 CUDA；
+     * 人声分离对带 BGM 的素材提升极大（同一段 10 分钟素材实测 WER 19.4% → 8.7%）。 */
+    id: 'faster-whisper-large-v2',
+    name: 'Whisper large-v2（英语·人声分离精校）',
+    engine: 'faster-whisper',
+    repo: 'Systran/faster-whisper-large-v2',
+    files: ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt'],
+    // 只钉主权重；config/tokenizer 的字节数随上游提交可能浮动，钉死会造成“文件明明在却判未下载”
+    fileSizes: { 'model.bin': 3086912962 },
+    sizeMB: 3090,
+    desc: 'Faster-Whisper-XXL + CUDA；按「卡卡」的 large-v2 设置：VAD（pyannote_v3 / 0.05）'
+      + ' + MDX-Net 人声分离 + 逐词时间戳。人声分离对带 BGM 的素材提升明显，但显存/耗时也更高；'
+      + '需要 NVIDIA CUDA GPU，首次使用要在设置里安装约 1.5GB 的 XXL 运行时。',
+    dirName: 'faster-whisper-large-v2',
+    draftAllowed: true,
+    needRuntime: true,
+    runtimeKey: 'runtime:faster-whisper',
+    runtimeName: 'Faster-Whisper-XXL',
+    runtimeSizeMB: 1450,
+  },
+  {
     // Vulkan 通用版 Parakeet：走 CrispASR（ggml、whisper.cpp 的 fork，单二进制多模型）——
     // **不需要 Python、不需要 N 卡**：只要机器有 Vulkan 驱动（A 卡 / Intel 核显 / N 卡通吃）就能 GPU 加速。
     // 补的正是本机这类"无 CUDA、无 NPU"机器的空档（sherpa 那条要 CUDA、OpenVINO 那条要 NPU）。
@@ -924,6 +950,42 @@ const crispasrCli = () => path.join(CRISPASR_RUNTIME.dir, 'crispasr.exe');
 const crispasrRuntimeOk = () => { try { return fs.statSync(crispasrCli()).isFile(); } catch { return false; } };
 const crispasrVulkanOk = () => { try { return fs.statSync(path.join(CRISPASR_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
 
+/* Faster-Whisper-XXL 运行时（约 1.5GB 压缩 / 4.4GB 解压）: 给 Whisper large-v2 用。
+ * 与 whisper.cpp 完全不同的一套：自包含 CUDA/cuDNN/PyTorch，不需要 Vulkan、不需要 Python，
+ * 但**需要 N 卡**（CUDA）。启动后 `--model large-v2 --model_dir <父目录>` 读取
+ * Systran/faster-whisper-large-v2 的 CTranslate2 权重。
+ * 下载包是 .7z（GitHub 只提供 7z），解包用随程序附带的 7zr（editor/scripts/7z.exe）。 */
+const FASTER_WHISPER_RUNTIME = {
+  key: 'runtime:faster-whisper',
+  url: 'https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z',
+  dir: path.join(ASR_DIR, 'faster-whisper-xxl'),
+  sizeMB: 1450,
+};
+const fasterWhisperCli = () => path.join(FASTER_WHISPER_RUNTIME.dir, 'faster-whisper-xxl.exe');
+const fasterWhisperRuntimeOk = () => {
+  try {
+    return fs.statSync(fasterWhisperCli()).isFile()
+      && fs.statSync(path.join(FASTER_WHISPER_RUNTIME.dir, '_xxl_data')).isDirectory();
+  } catch { return false; }
+};
+/* r245.3 把 --ff_mdx_kim2 改成 --ff_vocal_extract；--help 只跑一次并缓存。 */
+let fwHelpCache = null;
+let fwHelpInflight = null;
+function fasterWhisperHelp() {
+  if (fwHelpCache != null) return Promise.resolve(fwHelpCache);
+  if (fwHelpInflight) return fwHelpInflight;
+  fwHelpInflight = new Promise((resolve) => {
+    const p = spawn(fasterWhisperCli(), ['--help'], { windowsHide: true, cwd: FASTER_WHISPER_RUNTIME.dir });
+    let out = '';
+    const t = setTimeout(() => { try { p.kill(); } catch {} resolve(''); }, 15000);
+    p.stdout.on('data', d => { out += String(d); });
+    p.stderr.on('data', d => { out += String(d); });
+    p.on('error', () => { clearTimeout(t); resolve(''); });
+    p.on('close', () => { clearTimeout(t); fwHelpCache = out; fwHelpInflight = null; resolve(out); });
+  });
+  return fwHelpInflight;
+}
+
 /* VibeVoice 使用独立 Python/依赖目录，避免升级 Transformers/PyTorch
  * 破坏已安装的 NeMo 或其它识别引擎。 */
 const VIBEVOICE_RUNTIME = {
@@ -964,6 +1026,14 @@ function asrGpuGateError(model) {
     // 与 whisper.cpp 相反: 这一条**允许 CPU 兜底**（识别失败会自动 --no-gpu 重试），
     // 所以只查运行时装没装、不硬拦 Vulkan —— 没有独显的机器也能用（慢），这正是它存在的意义。
     if (!crispasrRuntimeOk()) return 'CrispASR 运行时没装好，到「设置 → 识别模型」下载（约 34MB）';
+    return null;
+  }
+  if (model && model.engine === 'faster-whisper') {
+    // XXL 自带 CUDA/cuDNN；这里只查运行时，CUDA 是否真的可用来不及在同步门禁里查，
+    // 由 exe 自己报详细错（首次启动会打印 "running on: CUDA" / 设备错误）。
+    if (!fasterWhisperRuntimeOk()) {
+      return 'Faster-Whisper-XXL 运行时没装好，到「设置 → 识别模型 → Whisper 系列」点「安装运行时」（约 1.5GB，需要 N 卡 CUDA）';
+    }
     return null;
   }
   if (model && model.engine === 'vibevoice') {
@@ -1140,8 +1210,8 @@ const LLM_PRESETS = [
 const DEFAULT_TRANSLATE_PROMPT = [
   '你是字幕翻译专家。把用户给出的英文字幕逐行翻译成简体中文。',
   '严格要求：',
-  '1) 直接输出译文，每个输入行对应一行，按原顺序逐行返回；不要输出 JSON、编号、解释或代码块；',
-  '2) 输出行数必须与输入行数完全相同，禁止合并或拆分行；',
+  '1) 每个输入行都以「序号. 」开头，输出也要以**同样的序号**开头，例如「3. 译文」；',
+  '2) 输出行数必须与输入行数完全相同，禁止合并或拆分行；序号必须连续且与输入一一对应；',
   '3) 人名、地名、组织名、作品名、缩写与 [方括号] 内的内容保留原文不译；',
   '4) 译文简洁自然，符合口语，不要逐字直译，不要加引号；',
   '5) 原文为空的行输出空行。',
@@ -1555,9 +1625,9 @@ function parseGlossary(text, lang) {
 function systemPromptWithGlossary(cfg, strict) {
   const sys = (cfg.prompt || DEFAULT_TRANSLATE_PROMPT) + '\n\n'
     + (strict
-      ? '【极其重要】上一次的回复没有按输入逐行返回。这一次只输出纯文本译文：每个输入行对应一行，'
-        + '保持顺序，不要 JSON、不要 markdown 代码块、不要编号、不要解释。'
-      : '【输出格式】只输出纯文本译文，每个输入行对应一行并保持顺序；不要 JSON、不要 markdown 代码块、不要编号、不要解释。');
+      ? '【极其重要】上一次的回复没有按输入逐行返回。这一次严格按「序号. 译文」输出：'
+        + '序号与输入完全一致、连续不缺号，不要 JSON、不要 markdown 代码块、不要解释。'
+      : '【输出格式】每行输出「序号. 译文」，序号与输入行号一致且连续；不要 JSON、不要 markdown 代码块、不要解释。');
   const g = parseGlossary(cfg.glossary, cfg.glossaryLang);
   if (!g.length) return sys;
   return sys + '\n\n【术语表】下面的词必须按给定译法翻译，不要音译、不要另译（未列出的按常规翻译）：\n'
@@ -1862,6 +1932,129 @@ async function nvidiaGpu() {
   nvidiaCache = { at: Date.now(), name: await detectNvidia() };
   return nvidiaCache.name;
 }
+
+/* ═══════════ 硬件能力探测（欢迎界面 / 设置页的加速方式） ═══════════
+ * 三个后端：CUDA（N 卡，nvidia-smi）、Vulkan（A 卡 / Intel 核显 / N 卡通吃）、
+ * NPU（Intel AI Boost / Ryzen AI，只在设置里出现，欢迎页不提供勾选）。
+ * **不提供 CPU 推理** —— 没有 CUDA/Vulkan 时欢迎页不允许进入主页。
+ *
+ * Vulkan 的判定刻意保守：`vulkan-1.dll` 存在 + 至少一块非虚拟显卡。没有 Vulkan SDK
+ * 时无法真正枚举设备，这个组合足以覆盖“显卡驱动正常”；真正能不能跑由 whisper.cpp /
+ * CrispASR 在识别时报错。不要把虚拟显示器/远程桌面适配器算进来。 */
+function runCmdLines(cmd, args, timeoutMs = 8000) {
+  return new Promise((resolve) => {
+    let p;
+    try { p = spawn(cmd, args, { windowsHide: true }); } catch { return resolve([]); }
+    let out = '';
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      clearTimeout(t);
+      resolve(String(out || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean));
+    };
+    const t = setTimeout(() => { try { p.kill(); } catch {} finish(); }, timeoutMs);
+    p.stdout.on('data', (d) => { out += String(d); if (out.length > 65536) out = out.slice(-65536); });
+    p.stderr.on('data', () => {});
+    p.on('error', finish);
+    p.on('close', finish);
+  });
+}
+async function detectVideoControllers() {
+  let names = await runCmdLines('powershell.exe', ['-NoProfile', '-Command',
+    'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'], 8000);
+  if (!names.length) {
+    // 老系统兜底：wmic 已弃用，但 Win10 上通常还在
+    const w = await runCmdLines('wmic', ['path', 'win32_VideoController', 'get', 'name'], 8000);
+    names = w.filter(n => !/^name$/i.test(n));
+  }
+  const seen = new Set();
+  return names.filter((n) => {
+    if (!n || /^(name|microsoft basic|microsoft remote|virtual|remote)/i.test(n)) return false;
+    const k = n.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+}
+async function detectNpuDevices() {
+  const names = await runCmdLines('powershell.exe', ['-NoProfile', '-Command',
+    "Get-CimInstance Win32_PnPEntity | Where-Object { ($_.Name -match 'AI Boost|Ryzen AI|NPU|IPU') -and ($_.Name -notmatch 'Input|HID') } | Select-Object -ExpandProperty Name"], 8000);
+  return names.filter(n => n && !/Input|HID/i.test(n));
+}
+const hardwareCache = { at: 0, data: null, inflight: null };
+function probeHardware(force = false) {
+  const fresh = hardwareCache.data && (Date.now() - hardwareCache.at < 5 * 60 * 1000);
+  if (!force && fresh) return Promise.resolve(hardwareCache.data);
+  if (hardwareCache.inflight) return hardwareCache.inflight;
+  hardwareCache.inflight = (async () => {
+    const [cuda, controllers, npuDevices] = await Promise.all([
+      nvidiaGpu().catch(() => null), detectVideoControllers(), detectNpuDevices(),
+    ]);
+    const vulkanLoader = (() => {
+      try { return fs.statSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'vulkan-1.dll')).isFile(); }
+      catch { return false; }
+    })();
+    const physical = controllers.filter(n => !/virtual|remote|basic|gameviewer|honor/i.test(n));
+    const vulkanDevices = physical;
+    const data = {
+      cuda: { available: !!cuda, device: cuda || '' },
+      vulkan: { available: vulkanLoader && vulkanDevices.length > 0, devices: vulkanDevices, loader: vulkanLoader },
+      npu: { available: npuDevices.length > 0, devices: npuDevices },
+      cpu: false,
+      at: new Date().toISOString(),
+    };
+    hardwareCache.at = Date.now();
+    hardwareCache.data = data;
+    hardwareCache.inflight = null;
+    return data;
+  })().catch((e) => {
+    hardwareCache.inflight = null;
+    const data = {
+      cuda: { available: false, device: '' }, vulkan: { available: false, devices: [], loader: false },
+      npu: { available: false, devices: [] }, cpu: false, error: String((e && e.message) || e),
+      at: new Date().toISOString(),
+    };
+    hardwareCache.at = Date.now();
+    hardwareCache.data = data;
+    return data;
+  });
+  return hardwareCache.inflight;
+}
+/** 用户在欢迎页/设置里勾选的加速后端。null = 还没配置过（旧用户/首次启动），
+ *  此时后端不做限制，等欢迎页写入后再过滤。 */
+function asrBackends() {
+  const b = readAsrSettings().backends;
+  if (!b || typeof b !== 'object') return null;
+  return { cuda: !!b.cuda, vulkan: !!b.vulkan };
+}
+/** 模型属于哪个后端；云端独立，永远可用。 */
+function modelBackendOf(m) {
+  if (!m || m.cloud) return 'cloud';
+  if (m.engine === 'openvino') return 'npu';
+  if (m.engine === 'dual') return 'dual';
+  if (m.engine === 'whisper.cpp' || m.engine === 'crispasr') return 'vulkan';
+  return 'cuda';                       // sherpa / faster-whisper / nemo / vibevoice
+}
+function modelAllowedByBackends(m) {
+  const b = asrBackends();
+  if (!b || !m || m.cloud) return true;
+  const kind = modelBackendOf(m);
+  if (kind === 'npu') return true;     // NPU 不在欢迎页勾选，只按硬件显示
+  if (kind === 'dual') return b.cuda;  // 还要 NPU 硬件，见 modelAllowedByHardware
+  if (kind === 'vulkan') return b.vulkan;
+  return b.cuda;
+}
+function modelAllowedByHardware(m, hw) {
+  if (!hw || !m || m.cloud) return true;
+  const kind = modelBackendOf(m);
+  if (kind === 'npu') return !!hw.npu?.available;
+  if (kind === 'dual') return !!hw.cuda?.available && !!hw.npu?.available;
+  if (kind === 'vulkan') return !!hw.vulkan?.available;
+  if (kind === 'cuda') return !!hw.cuda?.available;
+  return true;
+}
+function modelAllowedForUser(m) {
+  return modelAllowedByBackends(m) && modelAllowedByHardware(m, hardwareCache.data);
+}
 /** Parakeet 推理设备('cuda' = 安装器实测 CUDA 环境通过后写入 settings)。
  *  返回 'cpu' 表示 GPU 环境未就绪 —— ASR 会在创建初稿/选区重识别的 GPU 校验处直接报错, 不做 CPU 兜底 */
 const asrProvider = () => { const s = readAsrSettings(); return s.asrProvider === 'cuda' ? 'cuda' : 'cpu'; };
@@ -1915,6 +2108,11 @@ const asrEngineArgs = (model) => {
       noThreads: true,
       noTta: true,
     };
+  }
+  if (eng === 'faster-whisper') {
+    // 这个引擎跑的是独立 exe，不是 Python worker；走到这里说明调用点漏了分支。
+    // 明确报错，别让 asr.py 拿着 CTranslate2 权重目录去报「缺少 encoder*.onnx」。
+    throw new Error('Whisper large-v2（Faster-Whisper-XXL）走独立可执行文件，不能按 Python 引擎调用');
   }
   const openvino = eng === 'openvino';
   return {
@@ -2137,6 +2335,7 @@ const selectedModelId = () => {
 function setSelectedModel(id) {
   const m0 = modelById(id);
   if (!m0 || !draftAllowedOf(m0)) return;      // 只能重新识别的模型不能当"创建初稿默认模型"
+  if (!modelAllowedForUser(m0)) return;        // 当前加速方式没启用的后端不选中
 
   const s = readAsrSettings();
   s.selectedModel = id;
@@ -2204,6 +2403,7 @@ function modelReady(modelId) {
   if (!dir || !modelFilesOk(dir, m)) return false;
   if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return false;
   if (m.engine === 'crispasr' && !crispasrRuntimeOk()) return false;
+  if (m.engine === 'faster-whisper' && !fasterWhisperRuntimeOk()) return false;
   if (m.engine === 'vibevoice' && !vibevoiceRuntimeOk()) return false;
   // dual 引擎要两套模型都在（NPU 那套 + sherpa int8 那套）。不这么判的话，
   // 缺一套时会在识别跑到一半才炸，用户看到的是莫名其妙的失败。
@@ -2220,13 +2420,17 @@ function resolveAsrModel() {
   const s = readAsrSettings();
   // VibeVoice 的显式选择不能因 CUDA 或文件缺失而改跑其它模型。
   const selected = modelById(s.selectedModel);
-  if (selected?.engine === 'vibevoice') return modelReady(selected.id) ? selected : null;
+  if (selected?.engine === 'vibevoice') {
+    return modelReady(selected.id) && modelAllowedForUser(selected) ? selected : null;
+  }
   for (const id of [s.selectedModel, ASR_MODELS[0].id]) {
     const m = modelById(id);
-    if (m && draftAllowedOf(m) && modelReady(m.id)) return m;
+    if (m && draftAllowedOf(m) && modelReady(m.id) && modelAllowedForUser(m)) return m;
   }
   // 兜底只在**本地模型**里挑: 云端识别会把音频传到第三方服务器, 不能因为"本地没装模型"就默认替用户上传
-  for (const m of ASR_MODELS) if (draftAllowedOf(m) && !m.cloud && modelReady(m.id)) return m;
+  for (const m of ASR_MODELS) {
+    if (draftAllowedOf(m) && !m.cloud && modelReady(m.id) && modelAllowedForUser(m)) return m;
+  }
   return null;
 }
 
@@ -2237,7 +2441,7 @@ function resolveAsrModel() {
 function resolveDraftModel(meta) {
   const mid = meta && meta.draft && meta.draft.modelId;
   const m = mid ? modelById(mid) : null;
-  return m && draftAllowedOf(m) && modelReady(m.id) ? m : null;
+  return m && draftAllowedOf(m) && modelReady(m.id) && modelAllowedForUser(m) ? m : null;
 }
 
 /** 用户在设置里指定的「重新识别模型」(空 = 没指定, 沿用项目原来的模型)。
@@ -2258,6 +2462,7 @@ function resolveRerecogModel(meta) {
   if (sel) {
     const m = modelById(sel);
     if (!modelReady(m.id)) return { error: '「重新识别模型」选中的「' + m.name + '」还没装好，先到设置里下载模型' };
+    if (!modelAllowedForUser(m)) return { error: '「重新识别模型」选中的「' + m.name + '」不属于当前启用的加速方式，请到设置 → 性能与调度重新配置加速方式' };
     return { model: m };
   }
   const dm = resolveDraftModel(meta);
@@ -2688,6 +2893,88 @@ function startCrispasrRuntimeDownload() {
     name: 'CrispASR', exeOk: crispasrRuntimeOk, vulkanOk: crispasrVulkanOk, vulkanHardFail: false });
 }
 
+/** Faster-Whisper-XXL 运行时（key='runtime:faster-whisper'）。
+ *  GitHub 只发 .7z，所以不能复用 zip 那条 `startRuntimeDownload`；用随程序附带的
+ *  7zr（editor/scripts/7z.exe，约 580KB，7-Zip 官方 standalone）解包。
+ *  解压后目录层级不固定（r245.x 的包根就是 `Faster-Whisper-XXL_r245.4_windows/`），
+ *  所以先递归找 `faster-whisper-xxl.exe`，再把**它所在目录**整体搬进运行时目录。 */
+function findFileDeep(root, name) {
+  let hit = null;
+  const walk = (d) => {
+    if (hit) return;
+    let ents = [];
+    try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.toLowerCase() === String(name).toLowerCase()) { hit = p; return; }
+    }
+  };
+  walk(root);
+  return hit;
+}
+function startFasterWhisperRuntimeDownload() {
+  const key = FASTER_WHISPER_RUNTIME.key;
+  if (dlState(key).running) return;
+  dlState(key, { running: true, kind: key, pct: 0, msg: '准备下载 Faster-Whisper-XXL 运行时…', error: null, modelId: '', dir: FASTER_WHISPER_RUNTIME.dir });
+  (async () => {
+    const archive = path.join(os.tmpdir(), `kass-fw-${process.pid}-${Date.now().toString(36)}.7z`);
+    const tmpEx = path.join(os.tmpdir(), `kass-fw-ex-${process.pid}-${Date.now().toString(36)}`);
+    const cleanup = () => {
+      for (const p of [archive, tmpEx]) { try { fs.rmSync(p, { recursive: true, force: true }); } catch {} }
+    };
+    try {
+      fs.mkdirSync(tmpEx, { recursive: true });
+      await downloadAny(candidateUrls(FASTER_WHISPER_RUNTIME.url), archive, (done, total) => {
+        if (done < 0) return;
+        const st = dlState(key);
+        st.pct = total ? Math.min(88, Math.round(done / total * 88)) : 0;
+        st.msg = `下载 Faster-Whisper-XXL：${(done / 1048576).toFixed(1)} / ${(total / 1048576).toFixed(0)} MB`;
+      });
+      const st = dlState(key);
+      st.msg = '下载完成，正在解压（约 4.4GB，首次需要几分钟）…';
+      st.pct = 90;
+      const seven = path.join(ROOT, 'editor', 'scripts', '7z.exe');
+      await new Promise((resolve, reject) => {
+        const p = spawn(seven, ['x', '-y', '-o' + tmpEx, archive], { windowsHide: true, cwd: tmpEx });
+        let tail = '';
+        const t = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('解压超时（30 分钟）')); }, 30 * 60 * 1000);
+        const sink = d => { tail = (tail + String(d)).slice(-2000); };
+        p.stdout.on('data', sink);
+        p.stderr.on('data', sink);
+        p.on('error', e => { clearTimeout(t); reject(new Error('无法启动 7z.exe: ' + e.message)); });
+        p.on('close', code => {
+          clearTimeout(t);
+          if (code === 0) resolve();
+          else reject(new Error('解压失败（7z 退出码 ' + code + '）：' + tail.replace(/\s+/g, ' ').slice(-300)));
+        });
+      });
+      const exe = findFileDeep(tmpEx, 'faster-whisper-xxl.exe');
+      if (!exe) throw new Error('解压后没找到 faster-whisper-xxl.exe');
+      const srcDir = path.dirname(exe);
+      fs.mkdirSync(FASTER_WHISPER_RUNTIME.dir, { recursive: true });
+      // 运行时目录是程序自己的缓存目录（已 gitignore），整目录替换不会碰到用户数据。
+      for (const e of fs.readdirSync(srcDir, { withFileTypes: true })) {
+        const src = path.join(srcDir, e.name), dst = path.join(FASTER_WHISPER_RUNTIME.dir, e.name);
+        fs.rmSync(dst, { recursive: true, force: true });
+        fs.cpSync(src, dst, { recursive: true, force: true });
+      }
+      cleanup();
+      if (!fasterWhisperRuntimeOk()) throw new Error('解压后运行时仍不完整（缺 faster-whisper-xxl.exe 或 _xxl_data）');
+      fwHelpCache = null;   // 换版本后 --ff_mdx_kim2 / --ff_vocal_extract 可能不同，重新探测
+      dlState(key, { running: false, kind: key, pct: 100, msg: 'Faster-Whisper-XXL 运行时就绪（CUDA）',
+        error: null, modelId: '', dir: FASTER_WHISPER_RUNTIME.dir });
+    } catch (e) {
+      cleanup();
+      const st = dlState(key);
+      st.running = false;
+      st.error = String((e && e.message) || e);
+      st.msg = '运行时下载失败: ' + st.error;
+    }
+  })();
+}
+
+
 /* ═══════════ Python 环境一键安装 ═══════════
  * Parakeet(sherpa-onnx) 依赖 Python, 但发行包不带 venv(体积), 用户机器可能没有 Python
  * 或只有 Microsoft Store 占位程序(退出码 9009)。一键安装两条路线:
@@ -3103,6 +3390,100 @@ function runCrispAsr(modelGguf, wav, onProgress, opts) {
     if (!/vulkan|device|memory|alloc|init/i.test(msg)) throw e;
     if (opts && opts.onLog) opts.onLog('GPU 不可用（' + msg.slice(0, 120) + '），自动改用 CPU 模式重试…');
     return runOnce(true).then((r) => { r.cpuFallback = true; return r; });
+  });
+}
+
+/** Faster-Whisper-XXL 引擎: 跑 faster-whisper-xxl.exe（Whisper large-v2 + VAD + 可选 MDX 人声分离），
+ *  把 XXL 的 JSON 转成与其它本地引擎同构的 `{segments:[{start,end,text,words}]}`。
+ *
+ *  - `--model_dir` 必须传**父目录**：XXL 用 `--model large-v2` 拼出 `faster-whisper-large-v2`；
+ *    用户若把模型放在自定义名字的目录，这里在临时目录建一个 junction 再传，避免为了改目录名去复制 3GB。
+ *  - 人声分离默认开（Kaka 的设置）；XXL 会在内部把分离后的音频直接喂给 Whisper，不落盘。
+ *  - 词级时间戳由 `--word_timestamps True` 给出；分句统一交给 faster-whisper.js 的 toSegments()。 */
+async function runFasterWhisper(wav, modelDir, onProgress, opts) {
+  if (!fasterWhisperRuntimeOk()) throw new Error('Faster-Whisper-XXL 运行时没装好');
+  if (!modelDir) throw new Error('缺少 Whisper large-v2 模型目录');
+  const o = opts || {};
+  const help = await fasterWhisperHelp();
+  let parent = path.dirname(modelDir);
+  let linkRoot = '';
+  if (path.basename(modelDir).toLowerCase() !== 'faster-whisper-large-v2') {
+    // 自定义目录名：建 junction 让 XXL 仍能按 <model_dir>/faster-whisper-large-v2 找到权重
+    linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-fw-model-'));
+    fs.symlinkSync(modelDir, path.join(linkRoot, 'faster-whisper-large-v2'), 'junction');
+    parent = linkRoot;
+  }
+  /* 输出目录必须跟着**输入音频**所在的目录走（通常是 projects/<id>/）。
+   * 实测：XXL 的 PyInstaller 子进程在 %TEMP% 与 asr/logs 下写 audio.json 会报
+   * PermissionError，而写项目目录（同一用户/完整性级别创建）正常。服务端进程可能
+   * 运行在受限完整性级别，%TEMP%/asr/logs 的 ACL 不允许它落盘。o.outRoot 由调用方
+   * 显式给（重识别时输入在 %TEMP%，但输出仍应回项目目录）。 */
+  const outRoot = o.outRoot || path.dirname(wav);
+  fs.mkdirSync(outRoot, { recursive: true });
+  const outDir = fs.mkdtempSync(path.join(outRoot, '.fw-out-'));
+  const base = path.basename(wav, path.extname(wav));
+  const outPath = path.join(outDir, base + '.json');
+  /* 不给 initial_prompt：实测把专名表当 prompt 会让 large-v2 从 1740 词掉到 1528 词、
+   * WER 17.34%（复读/提前收尾）。专名交给识别后的术语表拼写修复（glossary-repair.js）。 */
+  const prompt = (o.prompt != null) ? String(o.prompt) : '';
+  const args = fasterWhisper.buildArgs({
+    audio: wav, modelDir: parent, outputDir: outDir, helpText: help,
+    prompt, vocalExtract: o.vocalExtract !== false,
+    vad: o.vad === true, vadThreshold: o.vadThreshold || 0.05,
+    vadMethod: o.vadMethod || 'pyannote_v3', wordTimestamps: o.wordTimestamps !== false,
+  });
+  const exe = fasterWhisperCli();
+  return new Promise((resolve, reject) => {
+    const p = spawn(exe, args, { windowsHide: true, cwd: FASTER_WHISPER_RUNTIME.dir });
+    if (o.register) { try { o.register(p); } catch {} }
+    const started = Date.now();
+    let tail = '';
+    let killedByTimeout = false;
+    const timer = setTimeout(() => {
+      killedByTimeout = true;
+      try { p.kill(); } catch {}
+    }, 120 * 60 * 1000);
+    const sink = (d) => {
+      const s = String(d);
+      tail = (tail + s).slice(-8000);
+      for (const line of s.split(/[\r\n]+/)) {
+        const pct = fasterWhisper.parseProgress(line);
+        if (pct != null && onProgress) onProgress(pct);
+      }
+    };
+    p.stdout.on('data', sink);
+    p.stderr.on('data', sink);
+    const beat = setInterval(() => {
+      if (onProgress) onProgress(-1, Math.round((Date.now() - started) / 1000));
+    }, 20000);
+    const cleanup = () => {
+      clearTimeout(timer); clearInterval(beat);
+      try { fs.rmSync(outDir, { recursive: true, force: true }); } catch {}
+      if (linkRoot) { try { fs.rmSync(linkRoot, { recursive: true, force: true }); } catch {} }
+    };
+    p.on('error', e => { cleanup(); reject(new Error('无法启动 faster-whisper-xxl: ' + e.message)); });
+    p.on('close', (code) => {
+      // 先读结果再 cleanup：cleanup 会删掉整个 outDir（第一版顺序写反了，
+      // 每次都是「退出码 0 但结果读不出来」）。
+      let raw = null;
+      try { raw = fs.readFileSync(outPath, 'utf8'); } catch {}
+      if (process.env.SUBFABRIC_FW_KEEP_RAW === '1' && raw) {
+        try { fs.copyFileSync(outPath, path.join(outRoot, 'fw-raw.json')); } catch {}
+      }
+      cleanup();
+      if (killedByTimeout) return reject(new Error('Faster-Whisper 识别超时（2 小时）'));
+      if (code !== 0 || !raw) {
+        const lines = tail.split(/[\r\n]+/).map(x => x.trim()).filter(Boolean);
+        const meaningful = lines.filter(x => !/^\s*\d+%/.test(x)).slice(-6).join(' | ');
+        return reject(new Error('Faster-Whisper 识别失败（退出码 ' + code + '）'
+          + (meaningful ? '：' + meaningful.slice(-300) : '')));
+      }
+      let parsed;
+      try { parsed = fasterWhisper.toSegments(raw); }
+      catch (e) { return reject(new Error('Faster-Whisper 输出解析失败：' + ((e && e.message) || e))); }
+      if (!parsed.segments.length) return reject(new Error('未识别到语音内容（Faster-Whisper 输出为空）'));
+      resolve(parsed);
+    });
   });
 }
 
@@ -5650,7 +6031,9 @@ function startPrepare(id, videoPath, mode) {
       } catch (e) { lastErr = e; }
     }
     if (texts.length > 1 && depth < 5) {
-      const mid = Math.ceil(texts.length / 2);
+      /* 降批走阶梯（一次砍到 1/3 左右），而不是死板折半：
+         每档失败都要付一次完整请求（100 行约 90 秒），少一层无效请求就是省时间。 */
+      const mid = Math.min(llmText.nextBatchSize(texts.length), texts.length - 1);
       try {
         const left = context && { ...context, idxs: context.idxs.slice(0, mid) };
         const a = await translateLines(cfg, texts.slice(0, mid), depth + 1, debugFile, refs, left);
@@ -5847,6 +6230,11 @@ function startPrepare(id, videoPath, mode) {
           const bin = path.join(mdir, model.files[0]);
           data = await runWhisperCpp(bin, segWav, pct =>
             setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（whisper.cpp）… ${pct}%` }));
+        } else if (model.engine === 'faster-whisper') {
+          data = await runFasterWhisper(segWav, mdir, (pct) => {
+            const p = Number.isFinite(Number(pct)) && Number(pct) >= 0 ? Number(pct) : 0;
+            setRr({ progress: 10 + Math.round(p * 0.62), message: `识别中（Whisper large-v2·CUDA）… ${p}%` });
+          }, { register: p => trackProjProc(id, p), outRoot: projDir(id) });
         } else if (model.engine === 'crispasr') {
           const bin = path.join(mdir, model.files[0]);
           data = await runCrispAsr(bin, segWav, pct =>
@@ -6696,6 +7084,9 @@ function startPrepare(id, videoPath, mode) {
     if (model.engine === 'vibevoice') {
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] VibeVoice NF4 4bit · CUDA 推理（CPU/NPU/offload 已禁用）`);
     }
+    if (model.engine === 'faster-whisper') {
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] Faster-Whisper-XXL · CUDA · MDX 人声分离（关闭 VAD，实测比 VAD 多保留 31 词且 WER 更低）· 逐词时间戳`);
+    }
 
     // 识别完成后的收尾三段式: reseg(语义分句) → diarize(区分说话人) → 生成字幕 ——
     // 顺序就是这样: **先把行切开, 再往这些行上标说话人**（进度浮层的步骤条同一顺序）。
@@ -6705,6 +7096,24 @@ function startPrepare(id, videoPath, mode) {
       if (model.engine === 'vibevoice') {
         pushDraftLog(id, '[VibeVoice] 保留原生句级时间戳与说话人；该模型不提供逐词时间戳');
         return continueDraftAfterAsr(id, false);
+      }
+      /* 术语表拼写修复（所有本地/云端引擎共用）：只按用户术语表做**受限**编辑距离替换，
+       * 不动时间轴、不增删词。实测 10 分钟素材：Parakeet 11.02% → 10.62%，
+       * Whisper large-v2 7.74% → 7.23%。没有术语表时什么都不做。 */
+      try {
+        const terms = asrTerms().terms;
+        if (terms.length) {
+          const p0 = outJson;
+          const d0 = JSON.parse(fs.readFileSync(p0, 'utf8'));
+          const n0 = glossaryRepair.repairSegments(d0.segments || [], terms);
+          if (n0) {
+            fs.writeFileSync(p0 + '.tmp', JSON.stringify(d0));
+            fs.renameSync(p0 + '.tmp', p0);
+            pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [术语] 按术语表修正 ${n0} 个词`);
+          }
+        }
+      } catch (e) {
+        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [术语] 修复失败（不影响识别）：${(e && e.message) || e}`);
       }
       // off 档：在往下走之前把逐句置信度摘掉。
       // 这里是所有识别路径的汇合点（本地/分片/整段/whisper.cpp/云端），
@@ -6768,6 +7177,50 @@ function startPrepare(id, videoPath, mode) {
         }
         finishAsr();
       });
+      return;
+    }
+
+    // ── Faster-Whisper-XXL 引擎: Whisper large-v2 + VAD + MDX 人声分离, 结果转成 asr.json ──
+    if (model.engine === 'faster-whisper') {
+      const fwMsg = (pct, secs) => {
+        const p = Number.isFinite(Number(pct)) && Number(pct) >= 0 ? Number(pct) : 0;
+        const t = (secs != null) ? '（本片已运行 ' + Math.floor(secs / 60) + ' 分 ' + (secs % 60) + ' 秒）' : '';
+        return { p, t };
+      };
+      if (chunkPlan) {
+        transcribeLocalChunked({
+          id, wav, plan: chunkPlan, duration: durSec, engine: model.engine,
+          silenceCount: chunkSilences.length, source: chunkSilences.length ? 'silence' : 'nominal',
+          runOne: (slice, c) => runFasterWhisper(slice, mdir, (pct, secs) => {
+            const { p, t } = fwMsg(pct, secs);
+            setDraft(id, {
+              stage: STAGE.asr,
+              progress: 30 + Math.round(((c.index + p / 100) / chunkPlan.length) * 45),
+              message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：Whisper large-v2·CUDA·人声分离 … ' + p + '% ' + t,
+            });
+          }, { register: p => draftProcs.set(id, p), outRoot: projDir(id) }),
+        }).then((r) => {
+          try {
+            fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
+            fs.renameSync(outJson + '.tmp', outJson);
+          } catch (e) { return finishDraft(id, e); }
+          pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] 识别完成 ' + r.segments.length
+            + ' 行（' + chunkPlan.length + ' 片合并）');
+          finishAsr();
+        }).catch((e) => { draftJobs.delete(id); finishDraft(id, e); });
+        return;
+      }
+      runFasterWhisper(wav, mdir, (pct, secs) => {
+        const { p, t } = fwMsg(pct, secs);
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(p * 0.45), message: `识别中（Whisper large-v2·CUDA·人声分离）… ${p}% ${t}` });
+      }, { register: p => draftProcs.set(id, p), outRoot: projDir(id) }).then(r => {
+        try {
+          fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
+          fs.renameSync(outJson + '.tmp', outJson);
+        } catch (e) { return finishDraft(id, e); }
+        pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 识别完成 ${r.segments.length} 行`);
+        finishAsr();
+      }).catch(e => { draftJobs.delete(id); finishDraft(id, e); });
       return;
     }
 
@@ -7407,6 +7860,53 @@ function handleFetchRoutes(req, res, u) {
 /* 路由段: 语音识别模型管理 + 语义/热词分析(asr/analyze) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleAsrRoutes(req, res, u) {
   const pathname = u.pathname;
+  /* 欢迎界面 / 设置页的硬件能力。缓存 5 分钟；?refresh=1 强制重探（用户装完驱动后点“重新检测”）。
+   * 返回 cuda / vulkan / npu 三项 + 已保存的后端勾选。 */
+  if (pathname === '/api/asr/hardware' && req.method === 'GET') {
+    return probeHardware(u.searchParams.get('refresh') === '1')
+      .then(hw => sendJson(res, 200, Object.assign({ ok: true }, hw, { backends: asrBackends() })))
+      .catch(e => sendJson(res, 500, { ok: false, error: String((e && e.message) || e) }));
+  }
+  /* 保存欢迎页勾选的加速后端。至少一种；写入后把当前/重识别模型里不属于所选后端的换掉。 */
+  if (pathname === '/api/asr/backends' && req.method === 'POST') {
+    return readBody(req, res, 16 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let cuda, vulkan;
+      try {
+        const j = JSON.parse(body.toString('utf8')) || {};
+        cuda = j.cuda; vulkan = j.vulkan;
+      } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      if (typeof cuda !== 'boolean' || typeof vulkan !== 'boolean') {
+        return sendJson(res, 400, { error: 'cuda / vulkan 必须是布尔值' });
+      }
+      if (!cuda && !vulkan) return sendJson(res, 400, { error: '至少选择 CUDA 或 Vulkan 其中一种（本工具不支持 CPU 推理）' });
+      const s = readAsrSettings();
+      s.backends = { cuda, vulkan, updatedAt: new Date().toISOString() };
+      const allowedNow = (m) => {
+        if (!m || m.cloud) return true;
+        const kind = modelBackendOf(m);
+        if (kind === 'npu') return true;
+        if (kind === 'dual') return cuda;
+        if (kind === 'vulkan') return vulkan;
+        return cuda;
+      };
+      const hw = hardwareCache.data || {};
+      const readyAllowed = (m) => modelReady(m.id) && allowedNow(m)
+        // 硬件未知（刚启动、缓存还没回来）时不要误删 NPU/双引擎选择；
+        // 只有明确探到没有 NPU 才视为不可用，和 modelAllowedByHardware 的约定一致。
+        && (m.engine !== 'openvino' && m.engine !== 'dual' || hw.npu?.available !== false);
+      const sel = modelById(s.selectedModel);
+      if (sel && !readyAllowed(sel)) {
+        const next = ASR_MODELS.find(m => draftAllowedOf(m) && !m.cloud && readyAllowed(m));
+        if (next) s.selectedModel = next.id; else delete s.selectedModel;
+      }
+      const rr = s.rerecogModel && modelById(s.rerecogModel);
+      if (rr && !readyAllowed(rr)) delete s.rerecogModel;
+      writeAsrSettings(s);
+      return sendJson(res, 200, { ok: true, backends: { cuda, vulkan },
+        selectedModel: selectedModelId(), rerecogModel: rerecogModelId() });
+    });
+  }
   if (pathname === '/api/asr/status' && req.method === 'GET') {
     // 预热预检缓存。**必须按当前所选引擎探** —— 写死 probePython()（=sherpa）时，
     // 选的是 NPU 引擎就永远拿不到 openvino 的探测结果，界面会一直停在检测中…（实测踩过）。
@@ -7418,6 +7918,9 @@ function handleAsrRoutes(req, res, u) {
     let pythonOk = false;
     try { pythonOk = fs.statSync(ASR_PY).isFile(); } catch {}
     const nemo = nemoProbeCache || { ok: false, cuda: false, msg: '预检中…' };
+    // 硬件探测放后台刷新；本次先用缓存（首次为空 → 前端把 null 当“未知”，不误藏 NPU）
+    const hw = hardwareCache.data;
+    probeHardware().catch(() => {});
     const models = ASR_MODELS.map(m => {
       // 云端模型没有本地文件: dir/missing/ready 都得走另一套判定, 否则会被显示成"未下载"
       const dir = m.cloud ? '' : modelDirFor(m.id);
@@ -7429,17 +7932,22 @@ function handleAsrRoutes(req, res, u) {
         ? { key: 'runtime', name: 'whisper.cpp', sizeMB: WHISPER_RUNTIME.sizeMB, ok: whisperRuntimeOk() }
         : (m.engine === 'crispasr'
           ? { key: 'runtime:crispasr', name: 'CrispASR', sizeMB: CRISPASR_RUNTIME.sizeMB, ok: crispasrRuntimeOk() }
-          : (m.engine === 'vibevoice'
-            ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
-            : null));
+          : (m.engine === 'faster-whisper'
+            ? { key: FASTER_WHISPER_RUNTIME.key, name: 'Faster-Whisper-XXL', sizeMB: FASTER_WHISPER_RUNTIME.sizeMB, ok: fasterWhisperRuntimeOk() }
+            : (m.engine === 'vibevoice'
+              ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
+              : null)));
       const ready = filesOk && (!rt || rt.ok);
-      // usable: 文件齐 + 该引擎的运行时都就位(NeMo 模型还要 torch/NeMo + CUDA) —— 重新识别下拉按它标记"可用"
-      const usable = ready
+      const backendAllowed = modelAllowedByBackends(m) && modelAllowedByHardware(m, hw);
+      // usable: 文件齐 + 该引擎的运行时都就位 + 当前加速后端允许(NeMo 模型还要 torch/NeMo + CUDA)
+      const usable = ready && backendAllowed
         && (m.engine !== 'nemo' || (nemo.ok && nemo.cuda))
         && (m.engine !== 'vibevoice' || (vibevoiceProbeCache && vibevoiceProbeCache.ok && vibevoiceProbeCache.cuda && Number(vibevoiceProbeCache.vramMB || 0) >= VIBEVOICE_RUNTIME.minVramMB));
       return {
         id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
         dir, missing, filesOk, ready, usable, cloud: !!m.cloud,
+        backend: modelBackendOf(m), backendAllowed,
+        npuAvailable: hw ? !!hw.npu?.available : null,
         draftAllowed: draftAllowedOf(m),
         needRuntime: !!rt && !rt.ok,
         runtimeKey: rt ? rt.key : '', runtimeName: rt ? rt.name : '',
@@ -7456,6 +7964,8 @@ function handleAsrRoutes(req, res, u) {
      *   现在 gpu:null 只有一种含义了：真的没有 N 卡。 */
     return (async () => sendJson(res, 200, {
       models,
+      hardware: hw,                          // 缓存；首次可能为 null，/api/hardware 会立即探测
+      backends: asrBackends(),
       selectedModel: selectedModelId(),
       rerecogModel: rerecogModelId(),        // 「重新识别模型」设置(空 = 沿用项目原有模型)
       // 逐句置信度的全局默认（设置页开关用；项目级覆盖见 project.json 的 draft.confidence）
@@ -7468,6 +7978,8 @@ function handleAsrRoutes(req, res, u) {
       // CrispASR 运行时(Parakeet Vulkan 通用版用): 与 whisper 分开报 —— vulkan 只用于状态提示(它允许 CPU 兜底)
       crispasrRuntime: { ok: crispasrRuntimeOk(), dir: CRISPASR_RUNTIME.dir, url: CRISPASR_RUNTIME.url,
                          sizeMB: CRISPASR_RUNTIME.sizeMB, vulkan: crispasrVulkanOk() },
+      fasterWhisperRuntime: { ok: fasterWhisperRuntimeOk(), dir: FASTER_WHISPER_RUNTIME.dir,
+                              url: FASTER_WHISPER_RUNTIME.url, sizeMB: FASTER_WHISPER_RUNTIME.sizeMB },
       vibevoice: Object.assign({ ok: false, cuda: false, vramMB: 0, msg: '预检中…' }, vibevoiceProbeCache || {}),
       vibevoiceRuntime: { ok: vibevoiceRuntimeOk(), name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB },
       diarize: { ready: diarizeReady(), models: DIARIZE_MODELS },
@@ -7743,6 +8255,18 @@ function handleAsrRoutes(req, res, u) {
         startCrispasrRuntimeDownload();
         return sendJson(res, 200, { started: true, kind: 'runtime:crispasr' });
       }
+      if (kind === 'runtime:faster-whisper' || kind === 'runtime:fw') {
+        if (fasterWhisperRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
+        if (dlState(FASTER_WHISPER_RUNTIME.key).running) {
+          return sendJson(res, 200, { started: true, kind: FASTER_WHISPER_RUNTIME.key, already: true });
+        }
+        const gpuName = await nvidiaGpu().catch(() => null);
+        if (!gpuName) {
+          return sendJson(res, 400, { error: 'Faster-Whisper-XXL 需要 NVIDIA CUDA GPU（内置 CUDA/cuDNN，但不支持纯 CPU 的 large-v2 精校模式）' });
+        }
+        startFasterWhisperRuntimeDownload();
+        return sendJson(res, 200, { started: true, kind: FASTER_WHISPER_RUNTIME.key });
+      }
       if (kind === 'runtime:vibevoice' || kind === 'vibevoice') {
         const gpuName = await nvidiaGpu().catch(() => null);
         if (!gpuName) return sendJson(res, 400, { error: 'VibeVoice 4bit 需要 NVIDIA CUDA GPU；不支持 CPU 或 NPU。' });
@@ -7781,6 +8305,9 @@ function handleAsrRoutes(req, res, u) {
       }
       if (model.engine === 'vibevoice' && !gpuNameForDl) {
         return sendJson(res, 400, { error: 'VibeVoice 4bit 只支持 NVIDIA CUDA GPU；不支持 CPU 或 NPU，不能下载' });
+      }
+      if (model.engine === 'faster-whisper' && !gpuNameForDl) {
+        return sendJson(res, 400, { error: 'Whisper large-v2（Faster-Whisper-XXL）需要 NVIDIA CUDA GPU；这台机器没检测到 N 卡，不能下载' });
       }
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
@@ -8614,7 +9141,12 @@ function handleProjectsRoutes(req, res, u) {
       }
       writeMeta(meta);
       if (draftOn) pendingAsr.set(id, { wordLevel });   // prepare 完成后由 finishPrepare 接手识别
-      startPrepare(id, vp);       // 后台提取音频 + 波形
+      /* ASR 用**原声**（mode='raw'）而不是默认的 afftdn 降噪版：
+       * 同一段 10 分钟素材实测，Whisper large-v2（已内置 MDX 人声分离）在
+       * 降噪版上 WER 11.02%，原声版 8.70%；Parakeet 也是原声略好（11.02% vs 11.19%）。
+       * 降噪是给"播放/降噪模式"用的，对 ASR 反而是二次失真；需要时可在项目里
+       * 「重新生成音频」显式换回降噪版。 */
+      startPrepare(id, vp, 'raw');       // 后台提取音频 + 波形
       return sendJson(res, 200, metaView(readMeta(id)));   // 重读: startPrepare 已把 prepare 置为 running
     });
   }

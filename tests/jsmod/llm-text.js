@@ -103,6 +103,30 @@ function unwrapJsonArrayString(v) {
  *    是完全正常的（一条输入含 2~4 句 → 它给 2~4 条译文），此时应把元素**并入**结果并按 n 校验；
  *    按整行取就会把 `["a","b","c","d"]` 原样当成一句译文存下去（本次的真实 bug）。
  */
+/* ── 编号输入 ────────────────────────────────────────────────
+ * 给每行加「序号. 」再送给模型。只靠换行分隔时，模型很容易把两行合成一句
+ * （尤其是连续的叙述性台词），行数一少整批就判失败 —— 提示词再怎么写都压不住。
+ * 有显式序号后，「第 3 行」成了可锚定的位置，模型漏一行/并一行都能被我们按序号补回来。
+ * 同一思路见 Cerlancism/chatgpt-subtitle-translator 的 prefixNumber。 */
+function numberLines(texts) {
+  const list = Array.isArray(texts) ? texts : [];
+  return list.map((t, i) => `${i + 1}. ${String(t == null ? '' : t)}`);
+}
+
+/* ── 降批阶梯 ────────────────────────────────────────────────
+ * 一批失败后要缩小批次重来。旧实现是死板折半（100→50→25→13→7→4→2→1），
+ * 每档都要付一次完整请求时间（实测 100 行约 90 秒），失败时特别亏。
+ * 这里一次跳到 1/3 左右的一档：100→25→6→1，用更少的失败请求换更小的批次，
+ * 而小批次本来就更容易守住逐行对齐。档位取自上面那个项目的 batchSizes 思路。 */
+const BATCH_LADDER = [100, 50, 25, 12, 6, 3, 1];
+function nextBatchSize(n) {
+  const v = Math.floor(Number(n) || 0);
+  if (v <= 1) return 1;
+  const target = Math.floor(v / 3);            // 至少砍到 1/3，比折半更狠
+  for (const s of BATCH_LADDER) if (s <= target) return s;
+  return Math.max(1, target);
+}
+
 function parseLineArrayReply(text, n) {
   const arr = parseJsonArray(text);
   if (arr) {
@@ -125,28 +149,72 @@ function parseLineArrayReply(text, n) {
   let s = stripReasoning(text);
   const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
   if (fence) s = fence[1];
-  const out = [];
-  for (let line of s.split(/\r?\n/)) {
-    line = line.trim();
-    if (!line || line === '[' || line === ']') continue;
-    if (/^[\[\]{},]+$/.test(line)) continue;                      // 只有括号/逗号的碎片行
-    /* ⚠ 顺序很重要：**先**试 JSON 数组，**再**剥引号。
-     *  反过来会把 `["译文1","译文2"]` 的外层引号剥掉、露出非法 JSON，
-     *  于是数组元素取不出来、这行被当整句译文 —— 就是本次的 bug。 */
-    const lineArr = parseJsonArray(line);
-    if (lineArr && lineArr.length) {
-      for (const v of lineArr) {
-        const t = String(v == null ? '' : v).replace(/^\s*\d+\s*[.、):：]\s*/, '').trim();
-        if (t && !chattyLine(t)) out.push(unwrapJsonArrayString(t));
+
+  /* 按序号取回：输入是「1. …」编号的，模型多半也照着编号输出。
+     只要有 1..n 的完整编号，就**按序号归位** —— 即使模型顺序有偏移也能对齐，
+     这是编号输入带来的额外好处。缺号则落到下面的逐行兜底。 */
+  const numbered = parseNumberedReply(s, n);
+  if (numbered) return numbered;
+
+  /* keepBlank = 空行是否算作一行译文。
+   * 提示词第 5 条要求「原文为空的行输出空行」，合规回包里就会出现空行；
+   * 旧实现在这里无条件 `if (!line) continue` 把空行丢掉，于是行数少 1 → 整批判 format
+   * → 严格提示词重试（还是丢）→ 拆半（空行仍在某一半）→ 一路失败。
+   * 现象就是「含空行的批次必挂、不含的必过」，用户两篇稿件都复现过。 */
+  const walk = (keepBlank) => {
+    const out = [];
+    for (let line of s.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) { if (keepBlank) out.push(''); continue; }        // ← 空行占位，别丢
+      if (line === '[' || line === ']') continue;
+      if (/^[\[\]{},]+$/.test(line)) continue;                    // 只有括号/逗号的碎片行
+      /* ⚠ 顺序很重要：**先**试 JSON 数组，**再**剥引号。
+       *  反过来会把 `["译文1","译文2"]` 的外层引号剥掉、露出非法 JSON，
+       *  于是数组元素取不出来、这行被当整句译文 —— 就是本次的 bug。 */
+      const lineArr = parseJsonArray(line);
+      if (lineArr && lineArr.length) {
+        for (const v of lineArr) {
+          const t = String(v == null ? '' : v).replace(/^\s*\d+\s*[.、):：]\s*/, '').trim();
+          if (t && !chattyLine(t)) out.push(unwrapJsonArrayString(t));
+        }
+        continue;
       }
-      continue;
+      line = line.replace(/^\s*\d+\s*[.、):：]\s*/, '');           // "1. " / "2)" 编号
+      line = line.replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim();      // 行首尾引号
+      if (!line || chattyLine(line)) continue;
+      out.push(unwrapJsonArrayString(line));
     }
-    line = line.replace(/^\s*\d+\s*[.、):：]\s*/, '');             // "1. " / "2)" 编号
-    line = line.replace(/^["'“”‘’]|["'“”‘’]$/g, '').trim();        // 行首尾引号
-    if (!line || chattyLine(line)) continue;
-    out.push(unwrapJsonArrayString(line));
+    return out;
+  };
+
+  /* 先按「空行也算一行」解析；只裁到**刚好够 n 行**为止 ——
+     从尾部裁、再从头部裁，中间的空行一律保留（那正是空原文行对应的占位）。
+     这样 `\na\nb\n\n`(n=2) 能裁成 [a,b]，而全空回包 `\n\n\n`(n=3) 也能得到 3 个空串。 */
+  const keep = walk(true);
+  while (keep.length > n && !keep[keep.length - 1]) keep.pop();
+  while (keep.length > n && !keep[0]) keep.shift();
+  if (keep.length === n) return keep;
+
+  // 回退到「不保留空行」的旧口径：多数回包本来就没有空行，两条路结果相同
+  const dropped = walk(false);
+  return dropped.length === n ? dropped : null;
+}
+
+/** 从「1. 译文」这种带序号的回包里按序号归位。要求 1..n 全部出现且非空判断交给上层。
+ *  序号只认行首、且必须在 1..n 范围内（避免把台词里的「3. 」当成序号）。 */
+function parseNumberedReply(text, n) {
+  const map = new Map();
+  for (const raw of String(text == null ? '' : text).split(/\r?\n/)) {
+    const m = /^\s*(\d{1,4})\s*[.、):：]\s*(.*)$/.exec(raw);
+    if (!m) continue;
+    const idx = Number(m[1]);
+    if (!(idx >= 1 && idx <= n) || map.has(idx)) continue;
+    map.set(idx, unwrapJsonArrayString(String(m[2]).trim()));
   }
-  return out.length === n ? out : null;
+  if (map.size !== n) return null;
+  const out = [];
+  for (let i = 1; i <= n; i++) out.push(map.get(i));
+  return out;
 }
 
 function chattyLine(line) {
@@ -235,7 +303,7 @@ function clampContextRows(v) {
  *  ⚠ 字符串里"待翻译的行数"必须仍然等于 texts.length —— 调用方按它校验译文行数。 */
 function buildTranslateUserMessage(texts, refs) {
   const list = (Array.isArray(texts) ? texts : []).map(t => String(t == null ? '' : t));
-  const body = list.join('\n');
+  const body = numberLines(list).join('\n');   // 编号输入：每行带「序号. 」，便于逐行对齐
   const r = (Array.isArray(refs) ? refs : []).filter(x => x && (x.text || x.zh));
   if (!r.length) return body;
   const ctx = r.map(x => `${String(x.text == null ? '' : x.text)}\t=> ${String(x.zh == null ? '' : x.zh)}`).join('\n');
@@ -291,4 +359,5 @@ module.exports = {
   clampBatchSize, planChunks, normalizeZhPunctuation, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
   clampTemperature, clampContextRows, buildTranslateUserMessage, planJobs, translationRefs,
   TEMP_MIN, TEMP_MAX, TEMP_DEFAULT, CTX_MIN, CTX_MAX, CTX_DEFAULT,
+  numberLines, nextBatchSize, parseNumberedReply, BATCH_LADDER,
 };

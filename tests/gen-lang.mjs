@@ -1,15 +1,16 @@
 // 扫描全部用户可见中文文案，生成 lang/zh-CN.json（键=原文, 值=原文, 供用户直接改值润色）。
-// 覆盖: index.html（文本/title/placeholder/aria-label）· js/*.js · server.js · scripts/*
+// 覆盖: studio.html（文本/title/placeholder/aria-label/alt/value）· js/*.js · server.js · scripts/*
 // 带变量的模板串把变量归一成 ◇（运行时 i18n.js 按位置回填实际值）；
 // JS 里的 HTML 模板只收「屏幕上真正出现的那段文字」，不收整段标签。
 // 用法: node tests/gen-lang.mjs
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { extractVisible, jsLiterals } from '../tools/lib/copy_scan.mjs';
+import { scanCopy } from '../tools/lib/copy_scan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ED = path.resolve(HERE, '..', 'editor');
+const ROOT = path.resolve(HERE, '..');
+const ED = path.join(ROOT, 'editor');
 const OUT = path.join(ED, 'lang', 'zh-CN.json');
 
 const strings = new Set();
@@ -18,29 +19,9 @@ const add = (s) => {
   if (/[\u4e00-\u9fa5]/.test(k) && k.length >= 2) strings.add(k);
 };
 
-// ── index.html ──（静态文本允许 1 个字：开/关/把 这类切换标签用户也可能想改）
-const html = fs.readFileSync(path.join(ED, 'index.html'), 'utf8');
-for (const m of html.matchAll(/>([^<>{}]*[\u4e00-\u9fa5][^<>{}]*)</g)) {
-  const v = m[1].trim();
-  if (v) strings.add(v);
-}
-for (const m of html.matchAll(/(title|placeholder|aria-label)="([^"]*[\u4e00-\u9fa5][^"]*)"/g)) add(m[2]);
-
-// ── JS（逐行剥离注释后扫字面量；HTML 模板只收屏幕上真正出现的文字）──
-function scanJs(file) {
-  let src = '';
-  try { src = fs.readFileSync(file, 'utf8'); } catch { return; }
-  for (const { text } of jsLiterals(src)) {
-    const pieces = extractVisible(text);
-    if (pieces.length) pieces.forEach(add);
-    else add(text);
-  }
-}
-for (const f of fs.readdirSync(path.join(ED, 'js'))) if (f.endsWith('.js')) scanJs(path.join(ED, 'js', f));
-scanJs(path.join(ED, 'server.js'));
-for (const f of fs.readdirSync(path.join(ED, 'scripts'))) {
-  if (f.endsWith('.ps1') || f.endsWith('.cjs')) scanJs(path.join(ED, 'scripts', f));
-}
+// 统一走共享扫描器：studio.html（文本/属性）+ js/*.js + server.js + scripts/*，
+// 自动跳过 JS 注释和 HTML 注释；这样 gen-lang 与文案盘点/覆盖率测试口径一致。
+for (const { text } of scanCopy(ROOT)) add(text);
 
 // ⚠ 生成时**必须保留你已经改过的值**：词典是「键=原文，值=你润色后的话」，
 //    天真地 out[s]=s 会把用户的润色全部冲回原文（踩过，害用户重改一遍）。
@@ -54,6 +35,12 @@ for (const s of [...strings].sort()) {
   if (!RESET && prev[s] != null) { out[s] = prev[s]; if (prev[s] !== s) kept++; }
   else out[s] = s;
 }
+// 旧版本有、当前源码不再出现的键也保留：词典是用户可编辑文件，不能因为重构
+// 就静默删掉用户已经润色过的措辞。要清理用 --reset。
+let preserved = 0;
+if (!RESET) for (const [k, v] of Object.entries(prev)) if (!(k in out)) { out[k] = v; preserved++; }
+const sorted = {};
+for (const k of Object.keys(out).sort()) sorted[k] = out[k];
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
-fs.writeFileSync(OUT, JSON.stringify(out, null, 2) + '\n');
-console.log('zh-CN.json 已更新:', Object.keys(out).length, '条文案（保留了你改过的', kept, '条）');
+fs.writeFileSync(OUT, JSON.stringify(sorted, null, 2) + '\n');
+console.log('zh-CN.json 已更新:', Object.keys(sorted).length, '条文案（保留改过的', kept, '条，保留旧键', preserved, '条）');

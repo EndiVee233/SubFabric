@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+const HERE = path.dirname(decodeURIComponent(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1'));
 const SRC = fs.readFileSync(path.join(HERE, '..', 'editor', 'js', 'main.js'), 'utf8');
 const start = SRC.indexOf('function wordHighlightIssue(');
 const end = SRC.lastIndexOf('/**', SRC.indexOf('汇总坏行原因', start));

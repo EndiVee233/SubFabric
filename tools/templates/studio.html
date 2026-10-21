@@ -6,6 +6,7 @@
 <title>SubFabric · 字幕工作台</title>
 <link rel="icon" href="/favicon.ico" sizes="any">
 <script src="js/accent.js"></script>
+<script src="js/welcome-boot.js"></script>
 <link rel="stylesheet" href="css/studio.css">
 <link rel="stylesheet" href="css/classic.css">
 <script>
@@ -48,6 +49,47 @@
 <header id="sf-topbar" class="sf-topbar"><span>工作空间 <i>/</i> <b id="sf-breadcrumb">稿件库</b></span></header>
 <div id="sf-notice" role="status" hidden></div>
 <section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在稿件库看处理进度 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件，可导出样式预设；后处理特效保存在本机，导出时应用。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article></div></div></section>
+
+<!-- ══════════ 首次启动：硬件欢迎界面 ══════════
+     只在首次打开的浏览器里出现（见 project.js 的 sf-welcome-v1）；设置 → 性能与调度可以再次打开。
+     不提供 CPU 推理；至少勾选 CUDA / Vulkan 之一才能进入工作台。NPU 只在设置里按硬件显示。 -->
+<section id="welcome-view" class="welcome-view" hidden aria-labelledby="welcome-title" aria-describedby="welcome-sub">
+  <div class="welcome-aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="welcome-shell">
+    <header class="welcome-head">
+      <span class="welcome-brand"><img src="/editor/assets/app-logo.png" alt=""><b>SubFabric</b><small>字幕创作工作室</small></span>
+      <span class="welcome-step" id="welcome-step">首次设置</span>
+    </header>
+    <div class="welcome-copy">
+      <p class="welcome-eyebrow">WELCOME TO SUBFABRIC</p>
+      <h1 id="welcome-title">先让这台电脑<br><em>跑起来。</em></h1>
+      <p id="welcome-sub">检测本机的加速能力。选择至少一种 GPU 后端，语音识别只会显示可用的模型。</p>
+    </div>
+    <div class="welcome-cards" id="welcome-cards">
+      <label class="welcome-card" data-backend="cuda" id="welcome-cuda-card" style="--i:0">
+        <input type="checkbox" id="welcome-cuda" class="welcome-native">
+        <span class="welcome-card-glow" aria-hidden="true"></span>
+        <span class="welcome-card-icon" data-ico="activity" aria-hidden="true"></span>
+        <span class="welcome-card-text"><b>CUDA</b><small>NVIDIA 显卡 · 最快</small><em id="welcome-cuda-state">检测中…</em></span>
+        <span class="welcome-card-check" aria-hidden="true"></span>
+      </label>
+      <label class="welcome-card" data-backend="vulkan" id="welcome-vulkan-card" style="--i:1">
+        <input type="checkbox" id="welcome-vulkan" class="welcome-native">
+        <span class="welcome-card-glow" aria-hidden="true"></span>
+        <span class="welcome-card-icon" data-ico="globe" aria-hidden="true"></span>
+        <span class="welcome-card-text"><b>Vulkan</b><small>AMD / Intel / NVIDIA 通用</small><em id="welcome-vulkan-state">检测中…</em></span>
+        <span class="welcome-card-check" aria-hidden="true"></span>
+      </label>
+    </div>
+    <p class="welcome-alert" id="welcome-alert" role="status" hidden></p>
+    <footer class="welcome-actions">
+      <button type="button" class="btn btn-accent welcome-go" id="welcome-go" disabled>进入工作台 <span aria-hidden="true">→</span></button>
+      <button type="button" class="btn welcome-retry" id="welcome-retry">重新检测</button>
+      <button type="button" class="btn welcome-cancel" id="welcome-cancel" hidden>取消</button>
+    </footer>
+    <p class="welcome-foot">CPU 推理不受支持 · 至少选择一种 GPU 后端；更多硬件信息在「设置 → 性能与调度」</p>
+  </div>
+</section>
 <div id="app">
 
   <!-- ══════════ 工具栏 ══════════ -->
@@ -1629,6 +1671,7 @@
           <button type="button" class="sf-asr-family" data-asr-family="云端识别"><span class="sf-asr-family-name">云端系列</span><span class="sf-asr-family-desc">必剪 / 剪映 · 免下载模型</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
           <button type="button" class="sf-asr-family" data-asr-family="前置"><span class="sf-asr-family-name">前置</span><span class="sf-asr-family-desc">运行环境、模型目录与说话人分离</span><span class="sf-asr-count">配置与依赖</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
           <button type="button" class="sf-asr-family" data-asr-family="VibeVoice 系列"><span class="sf-asr-family-name">VibeVoice 系列</span><span class="sf-asr-family-desc">多语 · CUDA 4bit · 说话人时间轴</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="其它模型" hidden><span class="sf-asr-family-name">其它模型</span><span class="sf-asr-family-desc">旧版本下载 · 当前加速方式未启用</span><span class="sf-asr-count"></span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
         </div>
         <div id="sf-asr-detail" class="sf-asr-detail" hidden><button type="button" class="btn" id="sf-asr-back">← 返回系列</button><h3 id="sf-asr-detail-title"></h3></div>
         <div class="st-card">
@@ -1673,6 +1716,15 @@
       </div>
 
       <div class="st-panel" id="st-panel-perf" role="tabpanel" data-stp="perf" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机硬件</span><h2 id="sf-settings-heading-perf">性能与调度</h2><p>用实际测试选择适合本机的分片长度与双引擎配比。</p><p class="sf-settings-save-note">测试由你手动启动，会运行识别引擎；当前页面不会自动开始。</p></div>
+        <div class="st-card sf-accel-card" id="sf-accel-card">
+          <div class="st-card-title" data-ico="activity">加速方式</div>
+          <p class="gl-hint">决定语音识别里显示哪些模型。CUDA 需要 NVIDIA 显卡；Vulkan 适用于 AMD / Intel / NVIDIA。不提供 CPU 推理。</p>
+          <div class="sf-accel-chips" id="st-accel-chips"><span class="spin"></span>检测中…</div>
+          <div class="sf-accel-actions">
+            <button type="button" class="btn" id="st-accel-open" data-ico="refresh">重新进入欢迎界面</button>
+            <span class="st-help" id="st-accel-note"></span>
+          </div>
+        </div>
         <div class="st-section">
           <div class="st-section-title">双引擎分工性能测试</div>
           <div class="st-help">

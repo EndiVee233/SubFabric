@@ -651,21 +651,35 @@ folderDialog.innerHTML = `<div class="sf-folder-box" role="dialog" aria-modal="t
   <div class="sf-folder-actions"><button type="button" class="btn" data-folder-cancel>取消</button><button type="button" class="btn btn-accent" data-folder-ok>创建</button></div>
 </div>`;
 document.body.appendChild(folderDialog);
-let folderDialogMode = 'create', folderDialogId = '', folderDialogTrigger = null;
+let folderDialogMode = 'create', folderDialogId = '', folderDialogTrigger = null, folderDialogCloseTimer = 0;
 function setFolderDialogButtons(uwp) {
   folderDialog.querySelectorAll('button').forEach(button => {
     if (uwp) button.classList.add('uwp-tile'); else button.classList.remove('uwp-tile');
   });
 }
+/** 退场：先加 is-closing 播 120ms 淡出，动画结束再摘 hidden。
+ *  减少动效/关闭动画时 CSS 把 animation-duration 算成 0s，这里随之直接收起，不留延迟。 */
 function closeFolderDialog() {
   if (folderDialog.hidden) return;
-  folderDialog.hidden = true;
-  folderDialog.removeAttribute('data-mode');
-  folderDialogTrigger?.focus?.();
-  folderDialogTrigger = null;
+  folderDialog.classList.add('is-closing');
+  const duration = parseFloat(getComputedStyle(folderDialog).animationDuration) || 0;
+  const finish = () => {
+    clearTimeout(folderDialogCloseTimer); folderDialogCloseTimer = 0;
+    folderDialog.hidden = true;
+    folderDialog.classList.remove('is-closing');
+    folderDialog.removeAttribute('data-mode');
+    folderDialogTrigger?.focus?.();
+    folderDialogTrigger = null;
+  };
+  if (!duration) { finish(); return; }
+  clearTimeout(folderDialogCloseTimer);
+  folderDialogCloseTimer = setTimeout(finish, duration * 1000 + 40);
 }
 function openFolderDialog(mode, id = '', trigger = null) {
   folderDialogMode = mode; folderDialogId = id; folderDialogTrigger = trigger || document.activeElement;
+  /* 退场途中再次打开：撤掉 is-closing 让入场动画从头来过，并取消待隐藏的计时。 */
+  clearTimeout(folderDialogCloseTimer); folderDialogCloseTimer = 0;
+  folderDialog.classList.remove('is-closing');
   folderDialog.dataset.mode = mode; folderDialog.hidden = false;
   const title = folderDialog.querySelector('#sf-folder-title');
   const desc = folderDialog.querySelector('#sf-folder-desc');

@@ -22,7 +22,9 @@ try{
 
 let selection='vibe';const vibe={id:'vibe',engine:'vibevoice'},other={id:'other',engine:'sherpa-onnx'};
 const ctx=vm.createContext({readAsrSettings:()=>({selectedModel:selection}),modelById:id=>id==='vibe'?vibe:id==='other'?other:null,
-  modelReady:id=>id==='other',draftAllowedOf:()=>true,ASR_MODELS:[other,vibe]});
+  modelReady:id=>id==='other',draftAllowedOf:()=>true,ASR_MODELS:[other,vibe],
+  // 新增的加速后端/硬件过滤依赖；本测试只关心 VibeVoice 的显式选择，不模拟真实硬件
+  modelAllowedForUser:()=>true});
 vm.runInContext(block('function resolveAsrModel()', '/** 项目初稿用的模型'),ctx);
 assert.equal(ctx.resolveAsrModel(),null,'Unavailable VibeVoice must never select another engine');
 selection='other';assert.equal(ctx.resolveAsrModel().id,'other');

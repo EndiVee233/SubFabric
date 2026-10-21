@@ -7231,6 +7231,7 @@ requestAnimationFrame(tick);
   const showBanner = () => {
     if (banner) return;
     banner = document.createElement('div');
+    banner.className = 'sf-version-banner';
     banner.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9999;'
       + 'background:#2563eb;color:#fff;padding:8px 14px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.3);'
       + 'font:13px/1.4 system-ui,sans-serif;display:flex;gap:10px;align-items:center;cursor:pointer;';
@@ -7244,6 +7245,7 @@ requestAnimationFrame(tick);
   const showVendorBanner = (hint) => {
     if (vendorBanner || vendorDismissed) return;
     vendorBanner = document.createElement('div');
+    vendorBanner.className = 'sf-vendor-banner';
     vendorBanner.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:9998;'
       + 'max-width:min(760px,92vw);background:#b45309;color:#fff;padding:10px 14px;border-radius:8px;'
       + 'box-shadow:0 4px 16px rgba(0,0,0,.35);font:13px/1.5 system-ui,sans-serif;display:flex;'

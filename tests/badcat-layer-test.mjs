@@ -61,7 +61,7 @@ ok(r.left >= 6, '左侧下限仍是 6（不出现负 left）', r.left);
 console.log('\n== z-index 取值：必须高于列表，低于弹窗 ==');
 import fs from 'node:fs';
 import path from 'node:path';
-const HERE = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'));
+const HERE = path.dirname(decodeURIComponent(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1'));
 const css = fs.readFileSync(path.join(HERE, '..', 'editor', 'css', 'studio.css'), 'utf8');
 const m = /\.badcat-panel\s*\{[^}]*z-index:\s*(\d+)/.exec(css);
 const z = m ? Number(m[1]) : NaN;

@@ -389,7 +389,8 @@ def hotword_pieces(hotwords, tokens_path, max_pieces=4):
     return kept, dropped
 
 
-def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provider="cuda"):
+def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provider="cuda",
+                    blank_penalty=0.5):
     import glob
     import tempfile
     # CUDA 运行库搜索: pip 装的 nvidia-cublas-cu12 / nvidia-cudnn-cu12 / nvidia-cuda-runtime-cu12
@@ -463,6 +464,11 @@ def load_recognizer(model_dir, threads, hotwords=None, hotwords_score=3.0, provi
         decoding_method=("modified_beam_search" if hw_path else "greedy_search"),
         model_type="nemo_transducer",
     )
+    # TDT 的 blank 惩罚：0 是默认。实测同一段 10 分钟素材（人工精校字幕）：
+    # 0 → WER 11.02%，0.5 → 10.68%，0.7 → 10.62%，1.0 → 10.90%，2.0 → 11.64%。
+    # 取 0.5 作为稳定中点；它对“漏掉短词”比提高 beam 更有效，且不改变解码框架。
+    if blank_penalty:
+        kw["blank_penalty"] = float(blank_penalty)
     if hw_path:
         kw["hotwords_file"] = hw_path
         kw["hotwords_score"] = float(hotwords_score)
@@ -751,6 +757,9 @@ def main():
     ap.add_argument("--tta", type=int, default=2,
                     help="稳定性重跑的遍数(默认 2): 给音频加微小噪声重跑, 看有多少 token 变了 "
                          "—— 置信度的一个信号。设 0 关掉(更快, 但没有稳定性项)")
+    ap.add_argument("--blank-penalty", type=float, default=0.5,
+                    help="TDT blank 惩罚(默认 0.5): 提高会让解码更不容易停在 blank, "
+                         "实测对漏短词有帮助; 0 是模型默认")
     args = ap.parse_args()
 
     hotwords = []
@@ -769,13 +778,15 @@ def main():
                                   args.model, args.threads,
                                   hotwords if hw is None else hw,
                                   args.hotwords_score if sc is None else sc,
-                                  provider=getattr(args, "provider", "cuda")),
+                                  provider=getattr(args, "provider", "cuda"),
+                                  blank_penalty=args.blank_penalty),
                               _serve_recognize, log,
                               base_hotwords=hotwords, base_score=args.hotwords_score)
         if args.manifest:
             return run_manifest(args, lambda: load_recognizer(
                 args.model, args.threads, hotwords, args.hotwords_score,
-                provider=getattr(args, "provider", "cuda")))
+                provider=getattr(args, "provider", "cuda"),
+                blank_penalty=args.blank_penalty))
         log("读取音频 …")
         samples, sr = read_wav_mono16k(args.audio)
         dur = len(samples) / float(sr)
@@ -789,7 +800,8 @@ def main():
         progress(22, "asr", "开始识别(%d 段)" % len(chunks))
 
         rec = load_recognizer(args.model, args.threads, hotwords, args.hotwords_score,
-                              provider=getattr(args, "provider", "cuda"))
+                              provider=getattr(args, "provider", "cuda"),
+                              blank_penalty=args.blank_penalty)
         t0 = time.time()
         words = recognize_words(rec, samples, sr, chunks,
                                 )

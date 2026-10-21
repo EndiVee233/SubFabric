@@ -36,6 +36,21 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 实测后果是中英两行直接叠压 而且**哪怕 `\t()` 里什么都没动也一样**
 所以全部特效都只用静态标签或 `\fade` / `\k` 这类不碰避让的标签实现
 
+## 首次启动
+
+第一次打开会先检测本机加速能力：
+
+- **CUDA**（NVIDIA 显卡）与 **Vulkan**（AMD / Intel / NVIDIA 通用）至少勾选一项才能进入工作台；没有 N 卡时 CUDA 不可选。
+- 不提供 CPU 推理；没有可用 GPU 后端时无法进入。
+- **NPU** 不在欢迎界面出现，有 Intel AI Boost / Ryzen AI 等硬件时会在「设置 → 性能与调度」里显示。
+- 选择结果会决定语音识别里显示哪些模型：只勾 Vulkan 就只显示 Vulkan，只勾 CUDA 就只显示 CUDA，两个都勾才都显示；NPU 按硬件显示，云端识别免显卡、始终保留。
+- 以前下载过但当前后端未勾选/硬件不匹配的模型不会丢，会收进「其它模型」，可以删除释放空间，但不会参与识别。
+- 之后可在「设置 → 性能与调度 → 重新进入欢迎界面」重新配置。
+
+## 改界面文案
+
+所有界面文案集中在 `editor/lang/zh-CN.json`，键是原文，值是实际显示内容。想换一种说法直接改值，刷新页面即可；新增文案由 `node tests/gen-lang.mjs` 补齐，`tests/i18n-coverage-test.mjs` 会检查是否有漏掉的用户可见文字。
+
 ## 创建稿件
 
 在主界面点击 **「新建项目」**，选择一种方式开始：
@@ -140,6 +155,7 @@ node editor/server.js
 | Parakeet TDT 0.6B v2（Vulkan 通用） | Vulkan 加速（CrispASR/ggml）：A 卡 / Intel 核显 / N 卡都能用，**无 N 卡也能跑**；不需要 Python，没有 Vulkan 驱动时自动退 CPU |
 | Parakeet TDT 0.6B v2（Intel NPU） | Intel NPU 加速（OpenVINO）：编码器跑 NPU、预测/联合网络跑核显，**无 N 卡可用** |
 | Whisper large-v3-turbo | Vulkan 加速 这意味着只要支持 Vulkan 的显卡均可加速 |
+| **Whisper large-v2（人声分离精校）** | NVIDIA 显卡 + 约 1.5GB Faster-Whisper-XXL 运行时；内置 MDX 人声分离，带 BGM 的素材准确率最高（本机实测比 Parakeet 更准，但更慢） |
 | Multitalker Parakeet Streaming 0.6B v1 | NVIDIA 显卡加速（但它仅用于重新识别） |
 | 必剪 ASR | 会上传至 bilibili 服务器进行语音识别 无硬件要求 |
 | 剪映 ASR | 会上传至字节跳动服务器进行语音识别 无硬件要求 |

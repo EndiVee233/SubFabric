@@ -20,6 +20,7 @@ import { stripEffectTagsSafe } from './postprocess.js';
 //   而它只从 util.js 导出给 editor.js —— 结果是每次渲染"双引擎/性能测试"结果都抛
 //   ReferenceError（被外层 catch 吞掉，界面只显示"读不到设置"）。2026-10-11 由 eslint no-undef 发现。
 import { escapeHtml } from './util.js';
+import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL } from './welcome-model.js';
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
@@ -42,6 +43,11 @@ export function initProjects(ctx) {
   const detailView = $('#detail-view');
   const pageTimers = new WeakMap();
   let previousRoute = '';
+  let welcomeBlocking = false;      // 欢迎界面打开时拦截路由，App 不可交互
+  let welcomeReturnHash = '';       // 从设置手动打开时，保存后回到这里
+  let welcomeFirstRun = false;
+  let welcomeHardware = null;
+  let welcomeBusy = false;
   let settingsReturnRoute = '#/home';
   let settingsVisit = 0;
   let settingsOpenedFromApp = false;
@@ -153,6 +159,50 @@ export function initProjects(ctx) {
   };
   let genAsr = null, genTr = null, genCast = null;    // 三份缓存，两个面板共用
 
+  /* ── 加速后端（欢迎界面写入）──
+   * 服务端 asr/settings.json 的 backends 是准绳；浏览器 localStorage 只负责“是否已看过欢迎页”
+   * 与上次勾选。status 里带 backends/hardware，渲染前统一过滤模型。 */
+  const WELCOME_KEY = 'sf-welcome-v1';
+  function storedWelcome() {
+    try {
+      const v = JSON.parse(localStorage.getItem(WELCOME_KEY) || 'null');
+      return v && typeof v === 'object' ? v : null;
+    } catch { return null; }
+  }
+  function activeBackends(d) {
+    if (d && d.backends && typeof d.backends === 'object') return d.backends;
+    const s = storedWelcome();
+    if (s && s.done) return { cuda: !!s.cuda, vulkan: !!s.vulkan };
+    return null;
+  }
+  function statusContext(d) {
+    return { backends: activeBackends(d), hardware: (d && d.hardware) || null };
+  }
+  /** `/api/asr/status` 首次返回时 hardware 可能还没探测完（服务端先回缓存）；
+   *  在筛模型前补一次 `/api/asr/hardware`（有 5 分钟缓存，通常几毫秒），
+   *  避免没有 NPU 的机器先闪一下 NPU 模型。 */
+  async function ensureHardware(d) {
+    if (d && !d.hardware) {
+      try {
+        const r = await fetch('/api/asr/hardware', { signal: AbortSignal.timeout(15000) });
+        if (r.ok) d.hardware = await r.json();
+      } catch { /* 探测失败就按未知处理，不阻塞模型列表 */ }
+    }
+    return d;
+  }
+  /** 过滤 status.models：隐藏当前勾选/硬件不支持的模型，并把隐藏的默认模型换成可见的。 */
+  function filterStatusModels(d) {
+    if (!d || !Array.isArray(d.models)) return d;
+    const ctx = statusContext(d);
+    const all = d.models;
+    /* 正常列表严格按勾选：只勾 Vulkan 就只有 Vulkan（NPU 按硬件）。
+     * 旧版本下错后端的已下载模型不能丢掉，单独放进 extraModels →「其它模型」。 */
+    d.models = visibleModels(all, ctx);
+    d.extraModels = extraModels(all, ctx);
+    d.selectedModel = pickVisibleModel(all, d.selectedModel, ctx);
+    return d;
+  }
+
   function genSetState(scope, text) {
     const el = $(GEN_IDS[scope].state);
     if (el) el.textContent = text;
@@ -216,7 +266,7 @@ export function initProjects(ctx) {
   /** 拉三份配置；有缓存就不重复拉（force=true 时强制刷新） */
   async function genLoad(scope, force) {
     try {
-      if (force || !genAsr) genAsr = await (await fetch('/api/asr/status')).json();
+      if (force || !genAsr) genAsr = filterStatusModels(await ensureHardware(await (await fetch('/api/asr/status')).json()));
       if (force || !genTr) genTr = await (await fetch('/api/translate/config')).json();
       if (force || !genCast) genCast = await (await fetch('/api/cast/config')).json();
     } catch { /* 拉不到就保持旧值，别打断页面 */ }
@@ -535,7 +585,7 @@ export function initProjects(ctx) {
         setSaveState('saved', '已保存 ' + new Date().toTimeString().slice(0, 5));
       } else if (state.project === project) {
         saveConflict = r.status === 409 || r.status === 428;
-        setSaveState('', saveConflict ? t('save.conflict') : '⚠ 保存失败(稍后自动重试)');
+        setSaveState('', saveConflict ? t('⚠ 稿件已在其他窗口更新；请备份当前内容并重新打开项目') : '⚠ 保存失败(稍后自动重试)');
       }
     } catch {
       if (state.project === project) setSaveState('', '⚠ 保存失败(稍后自动重试)');
@@ -1968,6 +2018,7 @@ const ENTRY_CHIP = {
   'crispasr': { label: 'Parakeet', cls: 'ok' },
   'dual': { label: 'Parakeet', cls: 'ok' },
   'whisper.cpp': { label: 'Whisper', cls: 'blue' },
+  'faster-whisper': { label: 'Whisper', cls: 'blue' },
   'vibevoice': { label: 'VibeVoice', cls: 'violet' },
   'nemo': { label: 'NeMo', cls: 'violet' },
   'bcut': { label: '云端', cls: 'warn' },
@@ -2082,18 +2133,24 @@ function renderHardwareBar(d) {
   const box = document.getElementById('st-hardware');
   if (!box) return;
   const chips = [];
-  // N 卡：provider === 'cuda' 才算真的能用（装了驱动但没装 CUDA 版 sherpa 不算）
+  // N 卡：硬件探测优先；旧服务端没有 hardware 时退回 provider/gpu 文案
   if (d.gpu) chips.push(`<span class="hw-chip ok">N 卡 ${esc(d.gpu)}</span>`);
-  // Intel NPU：OpenVINO 环境探测通过即认为可用（openvino 那套跑在 NPU 上）
+  // Intel NPU：有硬件才显示；OpenVINO 没装时仍显示硬件（模型行会提示安装环境）
+  const hw = d.hardware || null;
   const ov = d.pythonProbe && d.pythonProbe.openvino;
-  if (ov && ov.ok) chips.push('<span class="hw-chip ok">Intel NPU</span>');
-  // Vulkan：whisper.cpp 运行时或 CrispASR 就位
-  if ((d.runtime && d.runtime.ok) || (d.crispasrRuntime && d.crispasrRuntime.ok)) {
+  if (hw?.npu?.available === true) {
+    chips.push(`<span class="hw-chip ok">NPU ${esc((hw.npu.devices || [])[0] || '')}</span>`);
+  } else if (!hw && ov && ov.ok) chips.push('<span class="hw-chip ok">Intel NPU</span>');
+  // Vulkan：硬件探测优先（运行时装没装是模型行的事）
+  if (hw?.vulkan?.available === true) chips.push('<span class="hw-chip ok">Vulkan</span>');
+  else if (!hw && ((d.runtime && d.runtime.ok) || (d.crispasrRuntime && d.crispasrRuntime.ok))) {
     chips.push('<span class="hw-chip ok">Vulkan</span>');
   }
   const models = d.models || [];
   const installed = models.filter(m => m.ready).length;
-  const right = models.length ? `已安装 ${installed} / ${models.length}` : '';
+  const extraCount = (d.extraModels || []).length;
+  const right = (models.length ? `已安装 ${installed} / ${models.length}` : '')
+    + (extraCount ? ` · 其它模型 ${extraCount}` : '');
   box.innerHTML = '<span class="hw-cap" data-ico="gear">本机硬件：</span>'
     + (chips.length ? chips.join('') : '<span class="hw-chip none">未检测到可用加速硬件（云端识别仍可用）</span>')
     + (right ? `<span class="hw-right">${right}</span>` : '');
@@ -2144,10 +2201,12 @@ function modelRowHtml(m, d, dlOf) {
   else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
   else if (m.ready || m.engine === 'vibevoice' && m.filesOk) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
   else if (!pyBlocked && !vibeBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-  if ((studioUI || m.engine === 'vibevoice') && m.needRuntime && !dlThis && !vibeBlocked) btn += `<button type="button" class="btn btn-mini sf-runtime-download" data-runtime="${esc(m.runtimeKey || 'runtime')}">安装运行时</button>`;
+  if ((studioUI || m.engine === 'vibevoice' || m.engine === 'faster-whisper') && m.needRuntime && !dlThis && !vibeBlocked) btn += `<button type="button" class="btn btn-mini sf-runtime-download" data-runtime="${esc(m.runtimeKey || 'runtime')}">安装运行时</button>`;
   const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">${m.engine === 'vibevoice'
     ? '独立 CUDA 4bit 运行时 · 通过“安装运行时”获取 · 不支持 CPU/NPU'
-    : `需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速）`}</div>` : '';
+    : (m.engine === 'faster-whisper'
+      ? `需要 ${esc(m.runtimeName || 'Faster-Whisper-XXL')} 运行时（下载约 ${m.runtimeSizeMB || 1450}MB / 解压约 4.4GB，含 CUDA/cuDNN）`
+      : `需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速）`)}</div>` : '';
   return `<div class="sm-model">
     <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span>${btn}</div>
     <div class="sm-desc">${esc(m.desc || '')}</div>
@@ -2155,11 +2214,53 @@ function modelRowHtml(m, d, dlOf) {
   </div>`;
 }
 
+/** 已下载但当前后端未勾选/硬件不可用的模型（「其它模型」）。
+ *  只保留“删除”，不提供下载/安装运行时/参与默认选择，避免绕过后端门禁。 */
+function extraModelRowHtml(m, d, dlOf) {
+  const st = dlOf('model:' + m.id);
+  const rtSt = m.needRuntime ? dlOf(m.runtimeKey || 'runtime') : {};
+  const dlThis = st.running || (m.needRuntime && rtSt.running);
+  const kind = m.backend || backendOf(m);
+  const label = BACKEND_LABEL[kind] || String(kind || 'CUDA').toUpperCase();
+  const hw = d.hardware || {};
+  const b = activeBackends(d);
+  let reason = '当前未启用';
+  if (kind === 'cuda' && hw.cuda && hw.cuda.available === false) {
+    reason = '未检测到 NVIDIA 显卡，勾选 CUDA 也无法启用';
+  } else if (kind === 'vulkan' && hw.vulkan && hw.vulkan.available === false) {
+    reason = '未检测到 Vulkan 显卡/驱动，勾选 Vulkan 也无法启用';
+  } else if (kind === 'dual' && ((hw.cuda && hw.cuda.available === false) || (hw.npu && hw.npu.available === false))) {
+    reason = '当前缺少 CUDA 或 NPU 硬件';
+  } else if (b && kind === 'cuda' && !b.cuda) {
+    reason = '未勾选 CUDA；勾选后会回到正常列表';
+  } else if (b && kind === 'vulkan' && !b.vulkan) {
+    reason = '未勾选 Vulkan；勾选后会回到正常列表';
+  } else if (b && kind === 'dual' && !b.cuda) {
+    reason = '未勾选 CUDA；勾选后会回到正常列表';
+  }
+  let state;
+  if (dlThis) {
+    state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
+  } else if (st.error) {
+    state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+  } else if (m.ready) {
+    state = '<span class="sm-state extra">✓ 已下载，运行时也齐 · 当前未启用</span>';
+  } else {
+    state = '<span class="sm-state extra">✓ 已下载，运行时未就绪 · 当前未启用</span>';
+  }
+  const btn = dlThis ? '' : `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
+  return `<div class="sm-model sf-asr-extra">
+    <div class="sm-head"><span class="sm-name">${esc(m.name)}</span>${btn}</div>
+    <div class="sm-desc">${esc(m.desc || '')}</div>
+    ${state} <span class="sm-state extra">属于 ${esc(label)}：${esc(reason)}</span>
+  </div>`;
+}
+
 /** 模型 → 系列名（设计稿 ② 的分组口径）：Parakeet / Whisper / NeMo 多说话人 / 云端识别。
  *  按 engine 分而不是按名字猜 —— 名字里带什么字都会变，engine 是服务端给的稳定字段。 */
 const MODEL_FAMILY = (m) => {
   if (m.cloud || m.engine === 'bcut' || m.engine === 'capcut') return '云端识别';
-  if (m.engine === 'whisper.cpp') return 'Whisper 系列';
+  if (m.engine === 'whisper.cpp' || m.engine === 'faster-whisper') return 'Whisper 系列';
   if (m.engine === 'vibevoice') return 'VibeVoice 系列';
   if (m.engine === 'nemo') return 'NeMo 多说话人';
   return 'Parakeet 系列';
@@ -2195,8 +2296,8 @@ async function renderAsrModels() {
     let d;
     try {
       // 加超时: 服务端异常时请求可能一直不返回, 不能让界面永远停在「读取中…」
-      const resp = await fetch('/api/asr/status', { signal: AbortSignal.timeout(8000) });
-      d = await resp.json();
+      const resp = await fetch('/api/asr/status', { signal: AbortSignal.timeout(15000) });
+      d = filterStatusModels(await ensureHardware(await resp.json()));
       if (!resp.ok) throw new Error(d.error || ('HTTP ' + resp.status));
     } catch (e) {
       const why = String((e && e.message) || e);
@@ -2209,6 +2310,7 @@ async function renderAsrModels() {
     // 同一份状态顺便喂给设计稿新增的两块：入口卡（进度/胶囊）与运行时环境卡。
     // 放在这里而不是各请求一次，是为了避免重复打 /api/asr/status（它要探测 Python/NeMo，不便宜）。
     renderModelEntries(d);
+    renderAccelCard(d);
     if (!studioUI) renderRuntimeEnv(d);
     latestAsrStatus = d;
     if (studioUI && !$('#sf-asr-families').dataset.bound) {
@@ -2319,6 +2421,26 @@ async function renderAsrModels() {
         <div class="sm-group-body"${open ? '' : ' hidden'}>${g.rows.join('')}</div>
       </div>`;
     }
+    /* 旧版本下错后端、或先下载后取消勾选的模型：不混进正常列表，收进「其它模型」。
+     * 只有文件和运行时都不再被选中时才来这里；删除按钮复用 .sm-del 的确认链路。 */
+    const extras = d.extraModels || [];
+    if (extras.length) {
+      const extraRows = extras.map(m => extraModelRowHtml(m, d, dlOf)).join('');
+      if (studioUI) {
+        rows += `<section class="sf-asr-model" data-family="其它模型">${extraRows}</section>`;
+      } else {
+        const open = GROUP_OPEN.get('其它模型') !== false;
+        rows += `<div class="sm-group" data-family="其它模型">
+          <button type="button" class="sm-group-head" data-family="其它模型" aria-expanded="${open}">
+            <span class="sm-caret${open ? ' open' : ''}" data-ico="chevronDown"></span>
+            <span class="sm-group-name">其它模型</span>
+            <span class="sm-group-count">${extras.length} 个模型</span>
+            <span class="sm-group-ready">已下载</span>
+          </button>
+          <div class="sm-group-body"${open ? '' : ' hidden'}>${extraRows}</div>
+        </div>`;
+      }
+    }
     // 说话人分离模型(两个文件一组, ~32MB): 初稿勾选「区分说话人」时需要
     const dz = d.diarize || {};
     const dzSt = dlOf('diarize');
@@ -2400,9 +2522,22 @@ async function renderAsrModels() {
       [...box.children].filter(row => !row.classList.contains('sf-asr-model')).forEach(row => row.classList.add('sf-asr-setup'));
       for (const button of $('#sf-asr-families').querySelectorAll('[data-asr-family]')) {
         const family = button.dataset.asrFamily;
+        if (family === '其它模型') {
+          const n = (d.extraModels || []).length;
+          const count = button.querySelector('.sf-asr-count');
+          if (count) count.textContent = n ? `${n} 个已下载 · 当前未启用` : '';
+          button.hidden = n === 0;
+          continue;
+        }
         const models = (d.models || []).filter(model => (model.engine === 'nemo' ? 'Parakeet 系列' : MODEL_FAMILY(model)) === family);
         const count = button.querySelector('.sf-asr-count');
         if (count && family !== '前置') count.textContent = `${models.length} 个模型 · ${models.filter(model => model.ready || model.cloud).length} 就绪`;
+        // 当前加速方式下整个系列都没有模型 → 隐藏入口，避免点进去空白
+        if (family !== '前置') button.hidden = models.length === 0;
+      }
+      if (selectedAsrFamily) {
+        const cur = $('#sf-asr-families').querySelector(`[data-asr-family="${selectedAsrFamily}"]`);
+        if (!cur || cur.hidden) showAsrFamily('');
       }
       box.querySelectorAll('.sf-asr-model details').forEach(details => details.addEventListener('toggle', () => GROUP_OPEN.set('extra:' + details.closest('.sf-asr-model').dataset.family, details.open)));
       showAsrFamily(selectedAsrFamily);
@@ -2534,8 +2669,8 @@ async function renderAsrModels() {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: b.dataset.id })
           });
           const result = await response.json();
-          if (!response.ok) toast(result.error || t('model.deleteFailed'), 4500);
-          else if (!result.deleted) toast(t('model.detached'), 4500);
+          if (!response.ok) toast(result.error || t('删除模型失败'), 4500);
+          else if (!result.deleted) toast(t('已解除模型关联；原目录及用户文件保留'), 4500);
           renderAsrModels();
         });
     }));
@@ -3530,7 +3665,7 @@ async function renderAsrModels() {
    *  —— 走 genRender 的统一通道，避免和生成设置面板抢同一个 select。 */
   async function refreshAsrStatus(force) {
     if (force || !genAsr) {
-      try { genAsr = await (await fetch('/api/asr/status')).json(); }
+      try { genAsr = filterStatusModels(await ensureHardware(await (await fetch('/api/asr/status')).json())); }
       catch { genAsr = { ready: false, models: [] }; }
     }
     asrStatus = genAsr;
@@ -3757,7 +3892,7 @@ async function renderAsrModels() {
       $('#np-speakers').checked = true;
       $('#np-speakers').disabled = true;
       $('#np-spk-count').disabled = true;
-      $('#np-row-spk').title = t('vibevoice.nativeSpeakers');
+      $('#np-row-spk').title = t('VibeVoice 自动识别说话人，无需额外的说话人分离模型');
       return;
     }
     const wordOn = !!($('#np-word') && $('#np-word').checked);
@@ -3777,7 +3912,7 @@ async function renderAsrModels() {
     const vibe = $('#np-model-sel')?.value === 'vibevoice-asr-4bit';
     word.disabled = vibe;
     if (vibe) word.checked = false;
-    $('#np-word-desc').textContent = vibe ? t('vibevoice.sentenceAss')
+    $('#np-word-desc').textContent = vibe ? t('VibeVoice 生成带角色的 ASS 句级字幕，不提供逐词时间戳')
       : word.checked ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
     $('#np-row-kstyle').hidden = vibe || !word.checked;
     npSyncSpeakers();
@@ -4228,6 +4363,13 @@ async function renderAsrModels() {
     if (r2) r2.hidden = !on;
   }
   function applyHash() {
+    /* 首次启动 / 手动重开欢迎界面：不让底下的路由跑起来，也不让 App 可交互。
+     * 保存后 hideWelcome() 会把 welcomeBlocking 置回 false 并重新调用 applyHash()。 */
+    if (welcomeBlocking) {
+      document.body.dataset.workspace = 'welcome';
+      const appEl = $('#app'); if (appEl) appEl.inert = true;
+      return;
+    }
     let h = location.hash || '#/dashboard';
     // 新侧栏及浏览器后退也要遵守创建互斥；上传期间离场会重置仍在使用的材料。
     if (studioUI && npSubmitting && h !== '#/new') {
@@ -4317,6 +4459,265 @@ async function renderAsrModels() {
   }
   window.addEventListener('hashchange', applyHash);
   $('#btn-home').addEventListener('click', () => { location.hash = '#/home'; });
+
+  /* ═══════════════════════════════════════════════════════════════
+     欢迎界面 / 加速方式
+     ---------------------------------------------------------------
+     · 首次打开（localStorage 没有 sf-welcome-v1）先显示，App inert。
+     · CUDA / Vulkan 两个勾选；NPU 不在欢迎页出现，设置里按硬件显示。
+     · 至少勾一个才能进入；不提供 CPU 推理。
+     · 设置 → 性能与调度 → 「重新进入欢迎界面」可再次打开。
+     ═══════════════════════════════════════════════════════════════ */
+  const welcomeView = $('#welcome-view');
+  const welcomeCuda = $('#welcome-cuda');
+  const welcomeVulkan = $('#welcome-vulkan');
+  const welcomeCudaCard = $('#welcome-cuda-card');
+  const welcomeVulkanCard = $('#welcome-vulkan-card');
+  const welcomeCudaState = $('#welcome-cuda-state');
+  const welcomeVulkanState = $('#welcome-vulkan-state');
+  const welcomeGo = $('#welcome-go');
+  const welcomeRetry = $('#welcome-retry');
+  const welcomeCancel = $('#welcome-cancel');
+  const welcomeAlert = $('#welcome-alert');
+  let welcomeError = '';
+
+  function clearWelcomePending() {
+    try { document.documentElement?.classList?.remove('sf-welcome-pending'); } catch { /* 旧测试 DOM 没有 documentElement */ }
+  }
+
+  const welcomeSelected = () => ({
+    cuda: !!(welcomeCuda && welcomeCuda.checked && welcomeCuda.disabled === false),
+    vulkan: !!(welcomeVulkan && welcomeVulkan.checked && welcomeVulkan.disabled === false),
+  });
+  function welcomeAlertText(msg) {
+    if (!welcomeAlert) return;
+    welcomeAlert.textContent = msg || '';
+    welcomeAlert.hidden = !msg;
+  }
+  function welcomePaintCard(card, input, stateEl, available, detail) {
+    if (!card || !input) return;
+    input.disabled = !available;
+    card.classList.toggle('is-disabled', !available);
+    card.setAttribute('aria-disabled', String(!available));
+    if (!available) input.checked = false;
+    if (stateEl) stateEl.textContent = available ? (detail || '可用') : (detail || '未检测到');
+  }
+  function welcomeSyncSelection() {
+    const sel = welcomeSelected();
+    if (welcomeCudaCard) welcomeCudaCard.classList.toggle('is-checked', sel.cuda);
+    if (welcomeVulkanCard) welcomeVulkanCard.classList.toggle('is-checked', sel.vulkan);
+    if (welcomeGo) welcomeGo.disabled = welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan);
+    if (!welcomeHardware) {
+      welcomeAlertText(welcomeError || '');
+      return;
+    }
+    const anyGpu = !!(welcomeHardware.cuda?.available || welcomeHardware.vulkan?.available);
+    if (!anyGpu) {
+      welcomeAlertText('未检测到可用的 CUDA / Vulkan 显卡或驱动。本工具不支持 CPU 推理，请安装显卡驱动后点「重新检测」。');
+    } else if (!sel.cuda && !sel.vulkan) {
+      welcomeAlertText('至少选择 CUDA 或 Vulkan 其中一种。本工具不支持 CPU 推理。');
+    } else {
+      welcomeAlertText(welcomeError || '');
+    }
+  }
+  function welcomeRender() {
+    const hw = welcomeHardware;
+    if (!hw) {
+      const wait = welcomeError ? '检测失败' : '检测中…';
+      welcomePaintCard(welcomeCudaCard, welcomeCuda, welcomeCudaState, false, wait);
+      welcomePaintCard(welcomeVulkanCard, welcomeVulkan, welcomeVulkanState, false, wait);
+      welcomeSyncSelection();
+      return;
+    }
+    const cudaOk = !!(hw.cuda && hw.cuda.available);
+    const vulkanOk = !!(hw.vulkan && hw.vulkan.available);
+    welcomePaintCard(welcomeCudaCard, welcomeCuda, welcomeCudaState, cudaOk,
+      cudaOk ? (hw.cuda.device || 'NVIDIA 显卡') : '未检测到 NVIDIA 显卡');
+    const vkDevices = (hw.vulkan && hw.vulkan.devices) || [];
+    welcomePaintCard(welcomeVulkanCard, welcomeVulkan, welcomeVulkanState, vulkanOk,
+      vulkanOk ? (vkDevices[0] || 'Vulkan 可用') : '未检测到 Vulkan 显卡/驱动');
+    welcomeSyncSelection();
+  }
+  function welcomePreselect() {
+    const hw = welcomeHardware;
+    if (!hw) return;
+    const saved = storedWelcome();
+    const server = hw.backends || null;
+    const source = (server && (server.cuda || server.vulkan)) ? server : (saved && saved.done ? saved : null);
+    const cudaOk = !!(hw.cuda && hw.cuda.available);
+    const vulkanOk = !!(hw.vulkan && hw.vulkan.available);
+    if (welcomeCuda) welcomeCuda.checked = cudaOk && (source ? !!source.cuda : cudaOk);
+    if (welcomeVulkan) welcomeVulkan.checked = vulkanOk && (source ? !!source.vulkan : vulkanOk);
+  }
+  async function welcomeLoad(force) {
+    if (!welcomeView) return;
+    welcomeHardware = null;
+    welcomeError = '';
+    welcomeBusy = true;
+    if (welcomeGo) welcomeGo.disabled = true;
+    if (welcomeRetry) welcomeRetry.disabled = true;
+    if (welcomeCudaState) welcomeCudaState.textContent = '检测中…';
+    if (welcomeVulkanState) welcomeVulkanState.textContent = '检测中…';
+    welcomeAlertText('');
+    try {
+      const r = await fetch('/api/asr/hardware' + (force ? '?refresh=1' : ''), { signal: AbortSignal.timeout(15000) });
+      const j = await r.json();
+      if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+      welcomeHardware = j;
+      welcomePreselect();
+    } catch (e) {
+      welcomeError = '硬件检测失败：' + ((e && e.message) || e) + '。请点「重新检测」再试。';
+    } finally {
+      welcomeBusy = false;
+      if (welcomeRetry) welcomeRetry.disabled = false;
+      welcomeRender();
+      if (welcomeError) welcomeAlertText(welcomeError);
+    }
+  }
+  function welcomeShow(opts) {
+    if (!welcomeView) return;
+    clearWelcomePending();
+    const o = opts || {};
+    welcomeFirstRun = !!o.firstRun;
+    welcomeReturnHash = o.returnHash || '';
+    welcomeBlocking = true;
+    document.body.classList.add('sf-welcome-open');
+    document.body.dataset.workspace = 'welcome';
+    const app = $('#app'); if (app) app.inert = true;
+    welcomeView.hidden = false;
+    welcomeView.classList.remove('is-open');
+    void welcomeView.offsetWidth;
+    welcomeView.classList.add('is-open');
+    if (welcomeCancel) welcomeCancel.hidden = welcomeFirstRun;
+    const step = $('#welcome-step');
+    if (step) step.textContent = welcomeFirstRun ? '首次设置' : '加速方式';
+    welcomeCuda.checked = false; welcomeVulkan.checked = false;
+    welcomeHardware = null;
+    welcomeRender();
+    welcomeLoad(true).then(() => {
+      const target = welcomeCuda && !welcomeCuda.disabled ? welcomeCuda
+        : welcomeVulkan && !welcomeVulkan.disabled ? welcomeVulkan
+        : (welcomeRetry || welcomeGo);
+      if (target) target.focus({ preventScroll: true });
+    });
+  }
+  function welcomeHide() {
+    if (!welcomeView) return;
+    clearWelcomePending();
+    welcomeBlocking = false;
+    document.body.classList.remove('sf-welcome-open');
+    const app = $('#app'); if (app) app.inert = false;
+    welcomeView.hidden = true;
+    welcomeView.classList.remove('is-open');
+    welcomeAlertText('');
+  }
+  async function welcomeContinue() {
+    const sel = welcomeSelected();
+    if (welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan)) return;
+    const label = welcomeGo ? welcomeGo.textContent : '';
+    welcomeBusy = true;
+    if (welcomeGo) { welcomeGo.disabled = true; welcomeGo.textContent = '保存中…'; }
+    const target = welcomeReturnHash || (['#/dashboard', '#/home', '#/settings', '#/new'].includes(location.hash) ? location.hash : '#/dashboard');
+    try {
+      const r = await fetch('/api/asr/backends', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cuda: sel.cuda, vulkan: sel.vulkan }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      try {
+        localStorage.setItem(WELCOME_KEY, JSON.stringify({ done: true, cuda: sel.cuda, vulkan: sel.vulkan, at: Date.now() }));
+        localStorage.setItem('sf-welcome-synced', '1');
+      } catch { /* 隐私模式/禁用存储：服务端已保存，本次照常进入 */ }
+      welcomeHide();
+      genAsr = null;
+      latestAsrStatus = null;
+      welcomeReturnHash = '';
+      if (location.hash === target) applyHash();
+      else location.hash = target;
+      // 设置页原地打开欢迎界面时，previousRoute 已经是 #/settings，applyHash 不会重载；
+      // 这里显式刷新一次模型/加速卡，保证返回后立刻看到过滤结果。
+      if (target === '#/settings') { loadSettings(); renderAsrModels(); }
+      else refreshAsrStatus(true);
+      if (typeof toast === 'function') toast(sel.cuda && sel.vulkan ? '已启用 CUDA + Vulkan' : sel.cuda ? '已启用 CUDA' : '已启用 Vulkan', 2600);
+    } catch (e) {
+      welcomeError = '保存失败：' + ((e && e.message) || e);
+      welcomeAlertText(welcomeError);
+    } finally {
+      welcomeBusy = false;
+      if (welcomeGo) { welcomeGo.textContent = label; welcomeSyncSelection(); }
+    }
+  }
+
+  /** 设置页的「加速方式」卡：显示当前勾选 / 硬件，并提供回到欢迎界面的入口。 */
+  function renderAccelCard(d) {
+    const box = $('#st-accel-chips');
+    if (!box) return;
+    const hw = (d && d.hardware) || welcomeHardware;
+    const b = activeBackends(d);
+    if (!hw) {
+      box.innerHTML = '<span class="spin"></span>检测中…';
+      const note = $('#st-accel-note');
+      if (note) note.textContent = '';
+      return;
+    }
+    const chips = [];
+    const chip = (label, on, detail, warn) => `<span class="sf-accel-chip ${warn ? 'warn' : on ? 'on' : 'off'}"><b>${esc(label)}</b>${detail ? ' · ' + esc(detail) : ''}</span>`;
+    const cudaHw = !!(hw.cuda && hw.cuda.available);
+    const vkHw = !!(hw.vulkan && hw.vulkan.available);
+    const npuHw = !!(hw.npu && hw.npu.available);
+    chips.push(chip('CUDA', !!(b && b.cuda) && cudaHw,
+      b && b.cuda && !cudaHw ? '已勾选，未检测到 N 卡' : (cudaHw ? (hw.cuda.device || '可用') : '未检测到'),
+      !!(b && b.cuda) && !cudaHw));
+    chips.push(chip('Vulkan', !!(b && b.vulkan) && vkHw,
+      b && b.vulkan && !vkHw ? '已勾选，未检测到 Vulkan' : (vkHw ? ((hw.vulkan.devices || [])[0] || '可用') : '未检测到'),
+      !!(b && b.vulkan) && !vkHw));
+    if (npuHw) chips.push(chip('NPU', true, (hw.npu.devices || [])[0] || '可用'));
+    box.innerHTML = chips.join('');
+    const note = $('#st-accel-note');
+    if (note) {
+      if (!b) note.textContent = '还没完成首次设置，点右侧重新进入欢迎界面。';
+      else if ((b.cuda && !cudaHw) || (b.vulkan && !vkHw)) note.textContent = '当前勾选与硬件不一致，请重新配置。';
+      else note.textContent = '只显示已勾选的后端；NPU 按硬件显示；旧版本下错的模型收进「其它模型」。';
+    }
+  }
+
+  function initWelcome() {
+    if (!welcomeView) { clearWelcomePending(); return; }
+    const st = storedWelcome();
+    if (st && st.done && (st.cuda || st.vulkan)) {
+      clearWelcomePending();
+      // 旧版本 localStorage 里已有勾选、服务端还没有 backends：静默同步一次。
+      let synced = true;
+      try { synced = !!localStorage.getItem('sf-welcome-synced'); } catch {}
+      if (!synced) {
+        fetch('/api/asr/backends', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cuda: !!st.cuda, vulkan: !!st.vulkan }),
+        }).then((r) => { if (r.ok) { try { localStorage.setItem('sf-welcome-synced', '1'); } catch {} } }).catch(() => {});
+      }
+    } else {
+      welcomeShow({ firstRun: true });
+    }
+    welcomeCuda?.addEventListener('change', welcomeSyncSelection);
+    welcomeVulkan?.addEventListener('change', welcomeSyncSelection);
+    welcomeGo?.addEventListener('click', welcomeContinue);
+    welcomeRetry?.addEventListener('click', () => welcomeLoad(true));
+    welcomeCancel?.addEventListener('click', () => { welcomeHide(); applyHash(); renderAsrModels(); });
+    document.addEventListener('keydown', (e) => {
+      if (!welcomeBlocking) return;
+      if (e.key === 'Escape' && !welcomeFirstRun) { e.preventDefault(); welcomeHide(); applyHash(); }
+      if (e.key === 'Enter' && e.target === welcomeView) { e.preventDefault(); if (!welcomeGo?.disabled) welcomeContinue(); }
+    });
+    $('#st-accel-open')?.addEventListener('click', () => welcomeShow({ returnHash: location.hash || '#/settings' }));
+    window.__sfWelcome = {
+      open: (opts) => welcomeShow(opts || {}),
+      state: () => ({ blocking: welcomeBlocking, hardware: welcomeHardware, selected: welcomeSelected() }),
+      close: () => { welcomeHide(); applyHash(); },
+    };
+  }
+  initWelcome();
 
   return {
     openProject, detachProject, flushSave, saveNow,
