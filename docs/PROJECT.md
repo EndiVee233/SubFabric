@@ -733,7 +733,15 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
   更新断言后复跑 0 失败）。收尾又调整了 Qwen3-ASR「对齐」只认 CUDA 对齐器（前端不再用 Vulkan 兜底）
   与错误文案分支，改动后复跑 `draft-align-test` 49 项、`studio-navigation-test`、
   `asr-aligner-status-test`、`hotwords-test` 90 项、`i18n-coverage-test` 全绿。
-- **状态**：**已实现且已验证（源码）；安装版需重新打包（或同步 `editor/server.js`、`editor/js/project.js`、`editor/lang/zh-CN.json`）后生效**。GitHub：尚未提交（工作副本无 `.git`）。
+- **发行版**：`v1.4.1-beta.2`（同版本修补重发；显示版本仍 `beta 1.4.1`、文件版本仍 `1.4.1.0`）。
+  资产 `SubFabric-beta.1.4.1-setup.exe`：36,548,229 字节，
+  SHA-256 `f474df06e7c6fad99db37c29ac15d655a38f5609aeaacc6ac455e8d8aa574b98`；
+  构建用 Node 22.22.2 SEA + Inno Setup 6。CI（ESLint + 全量测试、ruff + 单测）通过；
+  为避免覆盖本机已装版本，本轮未执行静默安装自检。
+  Release：<https://github.com/EndiVee233/SubFabric/releases/tag/v1.4.1-beta.2>
+- **状态**：**已实现且已验证（源码）**；安装版需重新打包（或同步 `editor/server.js`、`editor/js/project.js`、`editor/lang/zh-CN.json`）后生效。
+  GitHub：**云端提交成功且已核对**（commit `89f142e1e0ec9879437902858b54de57fc073d81`，
+  <https://github.com/EndiVee233/SubFabric/commit/89f142e1e0ec9879437902858b54de57fc073d81>）。
 
 **2026-10-22（Whisper/Qwen Vulkan 兜底接入）**
 
