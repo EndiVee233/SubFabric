@@ -3208,7 +3208,9 @@ async function renderAsrModels() {
     const dzState = dzSt.running ? `<span class="sm-state running">${esc(dzSt.msg || '下载中…')} ${dzSt.pct || 0}%</span>`
       : (dzSt.error ? `<span class="sm-state" style="color:var(--danger)">${esc(dzSt.msg || dzSt.error)}</span>`
       : (dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>' : '<span class="sm-state">未下载 · 32 MB</span>'));
-    /* 停用：NeMo 运行时入口（Multitalker Parakeet 已从模型列表移除） */
+    /* 停用：NeMo 运行时入口（Multitalker Parakeet 已从模型列表移除）。
+     * 保留整段实现以便随时恢复；常量条件是有意为之，故对本行关掉规则。 */
+    // eslint-disable-next-line no-constant-condition
     if (false) {
     // NeMo 运行时(只有 multitalker 多说话人模型用得到): PyTorch + NeMo, 约 5GB, 仅 N 卡
     const nemo = d.nemo || {};
