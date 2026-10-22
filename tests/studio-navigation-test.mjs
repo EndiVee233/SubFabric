@@ -230,7 +230,8 @@ globalThis.fetch = async (url, options = {}) => {
     // 返回用户：加速方式已配置，且硬件探测已在 status 里，避免 renderAsrModels 再打 /api/asr/hardware
     hardware: { cuda: { available: true, device: 'Fixture RTX' }, vulkan: { available: true, devices: ['Fixture RTX'] }, npu: { available: true, devices: ['Fixture NPU'] } },
     backends: { cuda: true, vulkan: true },
-    selectedModel: 'cloud', models: [{ id: 'cloud', name: 'Fixture cloud', engine: 'bcut', ready: true, cloud: true }, { id:'vibevoice-asr-4bit', name:'Fixture VibeVoice', engine:'vibevoice', ready:false, usable:false, cloud:false, needRuntime:true, runtimeKey:'vibevoice', runtimeName:'VibeVoice CUDA 4bit', runtimeSizeMB:2200 }], downloads: [] });
+    selectedModel: 'cloud', models: [{ id: 'cloud', name: 'Fixture cloud', engine: 'bcut', ready: true, cloud: true }, { id:'vibevoice-asr-4bit', name:'Fixture VibeVoice', engine:'vibevoice', ready:false, usable:false, cloud:false, needRuntime:true, runtimeKey:'vibevoice', runtimeName:'VibeVoice CUDA 4bit', runtimeSizeMB:2200 }], downloads: [],
+    aligners: [{ id:'qwen3-forced-aligner-0.6b-cuda', name:'Qwen3-ForcedAligner 0.6B（CUDA）', backend:'cuda', ready:true, source:'随 Qwen3-ASR CUDA 提供', desc:'fixture' }] });
   if (url === '/api/translate/config') return json({ ready: true, cfg: { provider: 'fixture', model },
     schemes, activeSchemeId:schemeActive,
     presets: [{ id: 'fixture', name: 'Fixture', model, baseUrl:'http://localhost:1234/v1' }], defaultPrompt: 'Fixture prompt' });
@@ -252,7 +253,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (url === '/api/cast/config') return json({ enabled: true, prompt: 'Fixture cast' });
   if (url === '/api/asr/confidence') return json({ mode: 'full' });
   if (url === '/api/pick') return json({ fallback: true });
-  const settingReads = new Set(['/api/fetch/settings', '/api/asr/correct', '/api/asr/realign-settings', '/api/asr/perf/state', '/api/asr/hint', '/api/analyze/config', '/api/asr/dual']);
+  const settingReads = new Set(['/api/fetch/settings', '/api/asr/correct', '/api/asr/perf/state', '/api/asr/hint', '/api/analyze/config', '/api/asr/dual']);
   if (settingReads.has(url)) return json({ cfg: {}, hint: {}, presets: [], ok: true });
   unexpected.push(url); throw Error('Unexpected mock API: ' + url);
 };
@@ -585,6 +586,12 @@ for (const [name, input] of [['models', 'st-model-dir'], ['translate', 'st-schem
   assert.equal(document.querySelector('.st-subview[data-stsub="llm"]').closest('.st-panel').hidden, name !== 'translate', 'translation subtree cannot leak into other categories');
 }
 assert.equal(document.getElementById('st-panel-general'),null,'removed global workbench category');
+// 全模型速度：测试条件控件与创建页一致；分角色识别以说话人区分为前提。
+assert.ok($('bench-word') && $('bench-confidence') && $('bench-cast') && $('bench-speakers'), 'bench condition controls are present');
+$('bench-cast').checked = true; $('bench-cast').dispatchEvent(new Event('change'));
+assert.equal($('bench-speakers').checked, true, '分角色识别自动开启说话人区分');
+$('bench-speakers').checked = false; $('bench-speakers').dispatchEvent(new Event('change'));
+assert.equal($('bench-cast').checked, false, '关闭说话人区分时同时关闭分角色识别');
 assert.ok($('tab-settings').contains($('cb-heal-words')), 'load repair stays in editor preferences');
 assert.ok($('st-panel-models').contains($('dual-ratio')), 'ratio retains original delegated ancestor');
 const keyboardTab = $('sf-settings-tab-theme');
@@ -728,12 +735,18 @@ assert.equal($('sf-asr-rerecog-mount').hidden,false);
 $('st-rerecog-sel').value='cloud'; $('st-rerecog-sel').dispatchEvent(new Event('change')); await settle();
 assert.deepEqual(JSON.parse(requests.find(request=>request.url==='/api/asr/select-rerecog').body),{modelId:'cloud'});
 const familyButtons=$('sf-asr-families').querySelectorAll('[data-asr-family]');
-assert.equal(familyButtons.length,6);
+assert.equal(familyButtons.length,7);
 const otherModels=familyButtons.find(button=>button.dataset.asrFamily==='其它模型');
 assert.ok(otherModels && otherModels.hidden, 'no downloaded disabled models → no 其它模型 entry');
-const vibevoice=familyButtons.find(button=>button.dataset.asrFamily==='VibeVoice 系列');
-assert.ok(vibevoice && !vibevoice.disabled); vibevoice.click(); await settle();
-assert.equal($('sf-asr-detail-title').textContent,'VibeVoice 系列');
+assert.ok(familyButtons.find(button=>button.dataset.asrFamily==='Qwen 系列'), 'Qwen 系列入口存在');
+assert.ok(familyButtons.find(button=>button.dataset.asrFamily==='对齐模型'), '对齐模型入口存在');
+assert.equal(familyButtons.find(button=>button.dataset.asrFamily==='对齐模型').hidden,false,
+  '有对齐器时对齐模型入口可见');
+assert.equal(familyButtons.find(button=>button.dataset.asrFamily==='VibeVoice 系列'),undefined,
+  'VibeVoice 系列入口已停用');
+const parakeet=familyButtons.find(button=>button.dataset.asrFamily==='Parakeet 系列');
+assert.ok(parakeet && !parakeet.disabled); parakeet.click(); await settle();
+assert.equal($('sf-asr-detail-title').textContent,'Parakeet 系列');
 assert.ok($('st-models').classList.contains('is-model-entering'), 'series switch starts one entrance pass');
 await runTimer(260);
 assert.ok(!$('st-models').classList.contains('is-model-entering'), 'entrance class is removed after one pass');
@@ -747,9 +760,9 @@ familyButtons.find(button=>button.dataset.asrFamily==='前置').click(); await s
 assert.equal($('st-model-dir').closest('.st-card').hidden,false);
 assert.equal($('st-runtime-env').closest('.st-card').hidden,true,'duplicate environment card stays hidden');
 assert.equal($('sf-asr-rerecog-mount').hidden,true,'re-recognition belongs to overview');
-assert.equal($('st-models').querySelectorAll('.sf-prerequisite').length,3);
+assert.equal($('st-models').querySelectorAll('.sf-prerequisite').length,2);
 assert.equal($('st-models').querySelectorAll('.sm-pyinstall').length,1);
-assert.equal($('st-models').querySelectorAll('.sm-nemoinstall').length,1);
+assert.equal($('st-models').querySelectorAll('.sm-nemoinstall').length,0);
 assert.equal($('st-models').querySelectorAll('.sm-dl').length,1);
 assert.ok(!$('st-models').querySelector('.sf-prerequisite').textContent.includes('不写注册表'));
 assert.ok($('st-models').querySelector('.sm-pyset')); assert.ok($('st-models').querySelector('.sm-pyreset'));
@@ -787,5 +800,31 @@ assert.equal(location.hash, '#/home', 'navigation unlocks after completion');
 assert.deepEqual(unexpected, [], 'all fetches stay in the explicit in-memory API map');
 assert.deepEqual(asyncErrors, []);
 assert.equal(eventJobs.size, 0, 'no event handler remains pending');
-console.log('studio-navigation: immediate scrub/late-media/keyboard/hover/reset, direct editor, settings return, legacy resources alias, settings save, stale ASS guard, deferred upload navigation lock and original submission payload passed');
+
+// 主页入场：主题切换先播一次动画；随后晚到的项目快照只能就地更新文字，
+// 不能重播入场，也不能替换磁贴节点（用户报的「动画播完过一会又刷新一下」）。
+await navigate('#/dashboard');
+const dashboard = $('dashboard-view');
+assert.equal(dashboard.hidden, false, 'dashboard shows after navigation');
+let dashboardEntranceReads = 0;
+Object.defineProperty(dashboard, 'offsetWidth', {
+  configurable: true,
+  get() { dashboardEntranceReads++; return 1200; },
+});
+window.dispatchEvent(new Event('sf-studio-theme')); await settle();
+assert.ok(dashboard.classList.contains('is-entering'), 'theme switch starts the dashboard entrance');
+assert.ok(dashboardEntranceReads > 0, 'dashboard entrance forces a layout');
+const entranceReadsAfterTheme = dashboardEntranceReads;
+const widgetNodes = [...$('sf-widgets').children];
+assert.ok(widgetNodes.length >= 7, 'dashboard widgets are built');
+window.__sfStudio.projects([{ id: 'late', name: 'Late project', format: 'ass', subName: 'late.ass', videoExists: true, draft: null }]);
+await settle();
+const widgetNodesAfter = [...$('sf-widgets').children];
+assert.equal(widgetNodesAfter.length, widgetNodes.length, 'late snapshot does not rebuild the widget set');
+widgetNodes.forEach((node, index) => assert.equal(widgetNodesAfter[index], node, 'late snapshot keeps widget node ' + index));
+assert.equal($('sf-widgets').querySelector('[data-widget="resume"] .sf-widget-title').textContent, 'Late project', 'late snapshot updates widget text in place');
+assert.equal($('sf-widgets').querySelector('[data-widget-filter="all"] .sf-widget-num').textContent, '1', 'late snapshot updates live counts in place');
+assert.equal(dashboardEntranceReads, entranceReadsAfterTheme, 'late project snapshot does not replay the dashboard entrance');
+
+console.log('studio-navigation: immediate scrub/late-media/keyboard/hover/reset, direct editor, settings return, legacy resources alias, settings save, stale ASS guard, deferred upload navigation lock, original submission payload and in-place dashboard refresh passed');
 

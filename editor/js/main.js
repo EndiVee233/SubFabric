@@ -5747,8 +5747,8 @@ async function realignRow(item) {
   realignBusy = true;
   const pid = state.project.id;
   const secs = (end - start).toFixed(1);
-  jobCardShow('重排逐词时间', `正在切出这段原片音频并重新识别（${secs} 秒）…`, null,
-    '切出这句在原片里的那一段、重新识别，用实测到的词位置重排；通常几秒');
+  jobCardShow('重排逐词时间', `正在用 Qwen3 对齐器重算（${secs} 秒）…`, null,
+    '文本已确认，只重新量逐词时间；不跑 ASR、不改文本');
   try {
     const r = await fetch(`/api/projects/${pid}/realign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -5778,27 +5778,13 @@ async function realignRow(item) {
     rebuildItemsAndLanes(true, true);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
     const msec = Math.round((end - start) * 1000);
-    /* 完成提示里带**依据**：锚点率（多少词真对上了）与词吻合率 —— 与下面写进操作日志的
-     * 是同一套字段（b.ratio / b.anchors / b.words.length），不另造字段。
-     * ⚠ 原来写的是 `锚点 ${b.anchors}`（只有分子没有分母），看的人判断不了这次对齐可不可信；
-     *   测试钉的是 `${b.anchors}/${b.words.length} 个词对上`，别再改回单个数。 */
     jobCardDone('重排逐词时间 · 完成',
-      `${b.words.length} 个词已重排（词吻合率 ${Math.round((b.ratio || 0) * 100)}%`
-      + ` · ${b.anchors}/${b.words.length} 个词对上 · ${msec}ms 区间）`, true);
+      `${b.words.length} 个词已重排 · ${msec}ms 区间 · Qwen3 对齐器`, true);
     toast(`已重排逐词时间：${b.words.length} 个词（文本未改动）`, 5200);
-    /* 操作日志：记清"哪一条、多少词、依据是什么"。
-     * why 里带**词吻合率**与第二级是否被采纳 —— 这是判断"这次重排可不可信"的关键依据，
-     * 事后复盘时没有它就只能猜。 */
     logOp('realign', `第 ${(row && row.no) || '?'} 条 ${fmtTime(start)}~${fmtTime(end)}`,
       `重排 ${b.words.length} 个词的逐词时间（文本未改动）`
-      + `；旧值 ${beforeWords.length} 词。识别听到：${String(b.heard || '').slice(0, 80)}`,
-      `切原片音频重新识别→序列对齐：词吻合率 ${Math.round((b.ratio || 0) * 100)}%`
-      + `（${b.anchors}/${b.words.length} 个词对上）`
-      + (b.level === 2
-        ? `；第二级热词偏置采纳（${(b.hotwords || []).join('、')}）`
-        : ((b.hotTried && b.hotTried.length)
-          ? `；热词偏置试过 ${b.hotTried.join('、')} 但没更吻合，未采纳`
-          : '')));
+      + `；旧值 ${beforeWords.length} 词`,
+      `Qwen3-ForcedAligner：用已确认文本对原片音频做纯对齐（不跑 ASR、不改文本）`);
   } catch (e) {
     const msg = String((e && e.message) || e);
     jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
@@ -5815,24 +5801,17 @@ timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref));
 
 /* ═══════════ 全片逐词重校对 ═══════════
  *
- * 与上面的「重排逐词时间」是一套东西，区别在**判定谁需要改**：
- *   · 单条重排：用户自己去发现"这句的词时间不对"，右键点名改。
- *   · 全片重校对：逐句切出该句的**原片音频**重新识别，拿实测位置当逐词时间，
- *     并按**词吻合率**决定采不采纳。几百句的稿子肉眼看不出来哪句糊了，让程序体检一遍。
- *     不达标的句子再走第二级：用该句已有词里由模型挑出的专有名词做热词偏置重试，
- *     **更吻合才采纳**。
+ * 与上面的「重排逐词时间」是一套东西，区别只在于**批量**：
+ *   · 单条重排：用户自己发现"这句的词时间不对"，右键点名改。
+ *   · 全片重校对：用 Qwen3-ForcedAligner 把全片已确认文本逐句重新量时间，出预览供勾选。
  *
  * 硬约束同单条：**只改逐词时间戳**，不动文本、不动整句起止。
  *
- * 为什么走后台作业 + 轮询：全片几千句、每句要切一次音频 + 识别一次
- * （实测无热词句均 0.27s，但整片仍是几十分钟量级），同步请求必超时。
+ * 为什么走后台作业 + 轮询：全片几千句对齐，同步请求必超时。
  */
 var realignEls = {
   overlay: document.getElementById('realign-overlay'),
   msg: document.getElementById('realign-msg'),
-  conf: document.getElementById('realign-conf'),
-  confThr: document.getElementById('realign-conf-thr'),
-  confNote: document.getElementById('realign-conf-note'),
   summary: document.getElementById('realign-summary'),
   allWrap: document.getElementById('realign-all-wrap'),
   all: document.getElementById('realign-all'),
@@ -5855,38 +5834,24 @@ function realignShow(show) {
   if (realignEls.overlay) realignEls.overlay.hidden = !show;
 }
 
-/** 置信度分档：复用反思页既有的 chip 配色（chip-l1 绿 / chip-conf 黄 / chip-conf-low 红），
- *  别为这一处另造一套颜色。 */
-function confChip(c) {
-  const n = Number(c) || 0;
-  if (n >= 0.85) return { cls: 'chip-l1', word: '高' };
-  if (n >= 0.7) return { cls: 'chip-conf', word: '中' };
-  return { cls: 'chip-conf-low', word: '低' };
-}
-
 function renderRealignList() {
   const box = realignEls.list;
   if (!box || !realignData) return;
   const its = realignData.items || [];
   box.innerHTML = its.map((it, k) => {
-    const c = Number(it.ratio) || 0;
-    const chip = confChip(c);
-    const pc = Math.round(c * 100);
     const picked = realignPicked.has(k);
     const off = !it.ok;
     return `<label class="reflect-item${off ? ' is-off' : ''}${picked ? ' is-on' : ''}" data-k="${k}"`
-      + ` title="${off ? '词吻合率未达门槛，会保留原逐词时间' : '勾选后应用它的新逐词时间'}">`
+      + ` title="${off ? '对齐器没有给出有效时间，会保留原逐词时间' : '勾选后应用它的新逐词时间'}">`
       + `<input type="checkbox" data-k="${k}"${picked ? ' checked' : ''}${off ? ' disabled' : ''}>`
       + `<span class="ri-body">`
       + `<span class="ri-head">`
-      + `<span class="cc-chip ${chip.cls}">置信度${chip.word} ${pc}%</span>`
+      + `<span class="cc-chip ${off ? 'chip-conf-low' : 'chip-l1'}">${off ? '对齐失败' : 'Qwen3 已对齐'}</span>`
       + `<span class="ri-range">${escapeHtml(it.target || '')} · ${fmtTime(it.start)} ~ ${fmtTime(it.end)}</span>`
-      + `<span class="ri-range">锚点 ${it.anchors}/${(it.words || []).length} 词</span>`
+      + `<span class="ri-range">${(it.words || []).length} 词</span>`
       + `</span>`
       + `<span class="ri-text">${escapeHtml(String(it.text || '').slice(0, 140))}</span>`
-      + (it.note
-        ? `<span class="ri-reason">${escapeHtml(it.note)}</span>`
-        : (it.heard ? `<span class="ri-reason">识别听到：${escapeHtml(String(it.heard).slice(0, 90))}</span>` : ''))
+      + (it.note ? `<span class="ri-reason">${escapeHtml(it.note)}</span>` : '')
       + `</span></label>`;
   }).join('');
 }
@@ -5919,9 +5884,8 @@ function resetRealignForProjectSwitch() {
   if (realignEls.list) { realignEls.list.hidden = true; realignEls.list.innerHTML = ''; }
   if (realignEls.summary) realignEls.summary.hidden = true;
   if (realignEls.allWrap) realignEls.allWrap.hidden = true;
-  if (realignEls.conf) realignEls.conf.hidden = true;
   if (realignEls.reload) realignEls.reload.hidden = true;
-  if (realignEls.msg) realignEls.msg.textContent = '正在逐句切出原片音频并重新识别…';
+  if (realignEls.msg) realignEls.msg.textContent = '正在用 Qwen3 对齐器逐句重算时间…';
   syncRealignApply();                       // 按钮回到"应用选中项"、禁用
   if (realignEls.btn) realignEls.btn.disabled = !state.project;
   jobCardHide();
@@ -5948,7 +5912,7 @@ function pollRealignFull(pid) {
       if (realignEls.msg) {
         realignEls.msg.textContent = `${job.msg || '处理中…'}（${job.pct || 0}%）`;
       }
-      jobCardShow('全片逐词重校对', job.msg || '处理中…', job.pct, '逐句切原片音频重新识别，全片要几十分钟（不达标句再走一次热词偏置）');
+      jobCardShow('全片逐词重校对', job.msg || '处理中…', job.pct, 'Qwen3 对齐器逐句重算；不跑 ASR、不改文本');
       if (job.status === 'running' || job.status === 'pending') {
         pollRealignFull(pid);
         return;
@@ -5970,71 +5934,20 @@ function pollRealignFull(pid) {
 
 function showRealignResult(job) {
   const items = job.items || [];
-  realignData = { items, threshold: job.threshold || 0.7, total: job.total || items.length, usable: job.usable || 0 };
-  // 默认只勾选**达标**的（不达标的本来就 disabled）
+  realignData = { items, total: job.total || items.length, usable: job.usable || 0 };
   realignPicked = new Set(items.map((it, k) => (it.ok ? k : -1)).filter(k => k >= 0));
   realignUnpicked = new Set();
-  if (realignEls.conf) realignEls.conf.hidden = false;
-  if (realignEls.confThr) realignEls.confThr.value = String(Math.round((realignData.threshold || 0) * 100));
-  refreshRealignThresholdUI();
   if (realignEls.allWrap) realignEls.allWrap.hidden = false;
   if (realignEls.allNote) realignEls.allNote.textContent = '只改逐词时间戳，文本与整句时间不动';
   if (realignEls.list) realignEls.list.hidden = false;
-  if (realignEls.msg) realignEls.msg.textContent = '校对完成，确认后应用（未达标的不可勾选）';
-  renderRealignList();
-  syncRealignApply();
-}
-
-/** 面板里的门槛输入 → 立即**原地重判**达标与否（不重跑识别）。
- *  每个 item 都带服务端算好的 confidence，所以换个门槛只要重比一次大小。
- *
- *  选中集的维护：**本轮新达标的句子自动勾上**；原本达标、用户手动取消过的仍保持取消
- *  （用 unpicked 记着）；掉出门槛的一律剔除，否则会带着"低于门槛"的结果被应用。 */
-function applyRealignThreshold(percent) {
-  if (!realignData) return;
-  const p = Math.max(30, Math.min(100, Math.round(Number(percent) || 70)));
-  realignData.threshold = p / 100;
-  const items = realignData.items || [];
-  let usable = 0;
-  items.forEach((it) => {
-    /* ⚠ 门槛判的是**词吻合率**（服务端 planBlock 的 ratio），不是旧的"对齐置信度" ——
-     *   重写后服务端按 ratio 决定 ok，前端若还按 confidence 重判，改一次门槛就会得到
-     *   与服务端不一致的结果（同一句一边算达标、一边算不达标）。 */
-    it.ok = (Number(it.ratio) || 0) >= realignData.threshold;
-    if (it.ok) usable++;
-  });
-  realignData.usable = usable;
-  const next = new Set();
-  items.forEach((it, k) => {
-    if (!it.ok) return;
-    if (realignUnpicked.has(k)) return;      // 用户手动取消过 → 不自动勾回
-    next.add(k);
-  });
-  realignPicked = next;
-  if (realignEls.all) {
-    realignEls.all.checked = usable > 0 && next.size === usable;
-  }
-  refreshRealignThresholdUI();
-  renderRealignList();
-  syncRealignApply();
-}
-
-/** 刷新门槛那一行的提示与统计（不含重判） */
-function refreshRealignThresholdUI() {
-  if (!realignData) return;
-  const thr = Math.round((realignData.threshold || 0) * 100);
-  if (realignEls.confThr && String(realignEls.confThr.value) !== String(thr)) realignEls.confThr.value = String(thr);
-  if (realignEls.confNote) {
-    /* 这里用 textContent（不是 innerHTML），所以文案里**不能写 markdown 的 `**`** ——
-     * 之前那句"低于这个分数的句子**原样保留**"里四个星号是原样显示出来的（用户反馈）。 */
-    realignEls.confNote.textContent = `低于这个分数的句子会保留原来的逐词时间；改动即时生效，不必重新校对`;
-  }
+  if (realignEls.msg) realignEls.msg.textContent = '对齐完成，确认后应用（失败项保留原时间）';
   if (realignEls.summary) {
     realignEls.summary.hidden = false;
     realignEls.summary.textContent = `共 ${realignData.total} 句：`
-      + `${realignData.usable} 句达标（会重排逐词时间）、`
-      + `${realignData.total - realignData.usable} 句未达标（保留原样）`;
+      + `${realignData.usable} 句已对齐、${realignData.total - realignData.usable} 句失败（保留原样）`;
   }
+  renderRealignList();
+  syncRealignApply();
 }
 
 async function startRealignFull() {
@@ -6049,7 +5962,6 @@ async function startRealignFull() {
   if (realignEls.list) { realignEls.list.hidden = true; realignEls.list.innerHTML = ''; }
   if (realignEls.summary) realignEls.summary.hidden = true;
   if (realignEls.allWrap) realignEls.allWrap.hidden = true;
-  if (realignEls.conf) realignEls.conf.hidden = true;
   if (realignEls.reload) realignEls.reload.hidden = true;
   if (realignEls.apply) realignEls.apply.disabled = true;
   /* ⚠ 这里必须**刷新按钮文案**，不能只 disabled。
@@ -6060,7 +5972,7 @@ async function startRealignFull() {
   syncRealignApply();
   if (realignEls.msg) realignEls.msg.textContent = '正在启动…';
   realignShow(true);
-  jobCardShow('全片逐词重校对', '正在启动…', null, '逐句切原片音频重新识别，全片要几十分钟（不达标句再走一次热词偏置）');
+  jobCardShow('全片逐词重校对', '正在启动…', null, 'Qwen3 对齐器逐句重算；不跑 ASR、不改文本');
   try {
     await Projects.flushSave();
     if (!state.project || state.project.id !== pid) return;
@@ -6102,7 +6014,7 @@ async function applyRealignFull() {
     const revision = [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('');
     if (state.project !== project || state.assDoc !== doc || doc.serialize() !== snapshot) return;
     const { changed: n, skipped: miss } = applyRealignItems(doc, state.kar, picks.map(k => data.items[k]), { projectId: pid, revision });
-    const detail = picks.map(k => `${fmtTime(data.items[k].start)} 吻合率 ${Math.round((data.items[k].ratio || 0) * 100)}%`);
+    const detail = picks.map(k => `${fmtTime(data.items[k].start)} · ${(data.items[k].words || []).length} 词`).join('、');
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
@@ -6112,8 +6024,7 @@ async function applyRealignFull() {
     toast(`已重排 ${n} 句的逐词时间${miss ? `（${miss} 句没对上，已跳过）` : ''}（文本未改动）`, 6200);
     logOp('realign', `全片逐词重校对：应用 ${n} 句`,
       `重排了 ${n} 句的逐词时间（文本与整句时间未改动）`,
-      `切原片音频重新识别（两级）；采纳门槛 ${Math.round((realignData.threshold || 0) * 100)}%，`
-      + `达标的 ${realignData.usable}/${realignData.total} 句。示例：${detail.slice(0, 3).join('、')}`);
+      `Qwen3-ForcedAligner 纯对齐（不跑 ASR）；成功 ${realignData.usable}/${realignData.total} 句。示例：${detail}`);
     realignShow(false);
   } catch (e) {
     toast('应用失败：' + ((e && e.message) || e), 6600);
@@ -6138,16 +6049,6 @@ if (realignEls.list) {
     lab.classList.toggle('is-on', e.target.checked);
     syncRealignApply();
   });
-}
-/* 面板里的采纳门槛（词吻合率）：改完立即原地重判（不重跑识别）。
- * 用 'change' 而不是 'input' —— 输入框清空/半途状态不该触发重判。 */
-if (realignEls.confThr) {
-  const commit = () => {
-    applyRealignThreshold(realignEls.confThr.value);
-    toast(`采纳门槛已改为 ≥ ${Math.round(realignData.threshold * 100)}%（已按新门槛重判，未重新识别）`, 3600);
-  };
-  realignEls.confThr.addEventListener('change', commit);
-  realignEls.confThr.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); });
 }
 if (realignEls.all) {
   realignEls.all.addEventListener('change', () => {

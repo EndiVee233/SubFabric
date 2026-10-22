@@ -1,16 +1,13 @@
 /**
- * 逐词时间重对齐：用「TTS 合成 + 重新识别」得到的**参考节奏**，重算某条字幕里每个词的
- * 起止时间。**只改词级时间，绝不动文本** —— 这是用户明确要求的。
+ * 逐词时间重对齐：把 Qwen3-ForcedAligner 输出的实测词时间映射回字幕原文。
+ * **只改词级时间，绝不动文本** —— 这是用户明确要求的。
  *
- * 为什么走这条路（而不是直接对原音频做强制对齐）：
- *   原音频里的词边界只能靠识别结果反推，而 ASR 在快语速/连读处给的时间戳本来就糊。
- *   合成语音的**文本是已知的**，识别它得到的逐词时间是一份干净的"节奏参考"；
- *   把这份节奏按比例铺回原字幕的时长，就能把糊掉的词边界重新摊开。
+ * 文本已由用户确认；对齐器只需要给这份已知文本量时间，不再跑 ASR。
  *
  * 纯逻辑，不碰文件/网络：便于离线单测（这一步最容易出错，见下面 alignSequences 的说明）。
  */
 
-/* ─────────── 1. 分词与 TTS 文本准备 ─────────── */
+/* ─────────── 1. 分词与对齐文本准备 ─────────── */
 
 /** 词 = 一段连续的非空白；保留标点（对齐时要剥掉再比） */
 function tokenize(text) {
@@ -41,14 +38,14 @@ function normWord(w) {
 }
 
 /**
- * 交给 TTS 去念的文本。
+ * 交给强制对齐器（Qwen3-ForcedAligner）前的纯文本。
  *
  * 目的是让合成结果**尽量与识别结果一致**，减少对齐噪声：
  *   · ASS 的样式/换行标签（`{\...}`、`\N`）要剥掉，否则会被念出来
  *   · `[角色名]` 这类方括号标记不念（它是编辑器自己的约定，不是台词）
  *   · 下划线连缀的词拆成空格（TTS 会把 `ice_ball` 念成怪音）
  */
-function ttsText(text) {
+function alignText(text) {
   return String(text == null ? '' : text)
     .replace(/\{[^}]*\}/g, ' ')          // ASS 覆盖标签
     .replace(/\\[Nnh]/g, ' ')            // 硬换行
@@ -401,7 +398,7 @@ function planBlock(text, block, recWords, opts) {
   const out = {
     words: fixed, anchors, anchorIdx, ratio: +ratio.toFixed(3), ok,
     note: ok ? '' : `只有 ${(ratio * 100).toFixed(0)}% 的词对上了（低于 ${(minRatio * 100).toFixed(0)}%），`
-      + '这次对齐不可信 —— 多半是文本里有 TTS 念不对的内容（缩写、符号、专有名词）',
+      + '这次对齐不可信 —— 文本可能与音频不一致（缩写、符号、专有名词）',
   };
   out.confidence = alignmentConfidence(out);
   return out;
@@ -427,7 +424,7 @@ function enforceMonotonic(words, lo, hi) {
 }
 
 export {
-  tokenize, normWord, ttsText, alignSequences, editDistance1, mapTimes, evenSplit,
+  tokenize, normWord, alignText, alignSequences, editDistance1, mapTimes, evenSplit,
   splitByChars, shareMergedWords, planBlock, enforceMonotonic,
   alignmentConfidence, longestOrphanRun,
   MIN_ANCHOR_RATIO, MIN_REF_SEC,

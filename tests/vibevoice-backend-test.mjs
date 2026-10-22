@@ -32,9 +32,16 @@ selection='other';assert.equal(ctx.resolveAsrModel().id,'other');
 const server=await isolatedServer({env:{SUBFABRIC_VIBEVOICE_PYTHON:path.join(os.tmpdir(),'missing-vibe-runtime.exe')}});
 try{
   server.settings({selectedModel:'vibevoice-asr-4bit'});
-  const response=await server.call('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft:true,modelId:'vibevoice-asr-4bit',video:{path:'missing.mp4'}})});
-  assert.equal(response.status,400);
-  assert.match((await response.json()).error,/VibeVoice.*CUDA/);
-  assert.equal((await(await server.call('/api/projects')).json()).projects.length,0,'No project created when runtime is missing');
+  const status=await(await server.call('/api/asr/status')).json();
+  assert.equal((status.models||[]).some(m=>m.id==='vibevoice-asr-4bit'),false,'VibeVoice 不应出现在模型列表');
+  assert.notEqual(status.selectedModel,'vibevoice-asr-4bit','旧的 selectedModel 不应继续生效');
+  assert.equal(status.rerecogModel,'','旧的 rerecogModel 不应继续生效');
+  assert.equal(status.vibevoice,null,'VibeVoice 运行时状态应停用');
+  const dl=await server.call('/api/asr/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'runtime:vibevoice'})});
+  assert.equal(dl.status,410);
+  assert.match((await dl.json()).error,/VibeVoice 运行时已停用/);
+  const install=await server.call('/api/asr/install-nemo',{method:'POST'});
+  assert.equal(install.status,410);
+  assert.match((await install.json()).error,/NeMo 运行时已停用/);
 }finally{await server.close();}
-console.log('vibevoice-backend: hash/size validation, no model fallback, cold-start missing runtime gate passed');
+console.log('vibevoice-backend: hash/size validation, removed model gating passed');

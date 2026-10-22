@@ -60,12 +60,24 @@ try {
   const after = JSON.parse(fs.readFileSync(path.join(server.root, 'asr/settings.json'), 'utf8'));
   assert.equal(after.modelParams, undefined, '恢复默认后应删掉该模型的覆盖值');
 
-  const cpp = await (await server.call('/api/asr/params?model=ggml-large-v3-turbo')).json();
-  assert.equal(cpp.ok, true);
-  assert.equal(cpp.values.threads, 4);
-  assert.ok(cpp.schema.some(f => f.key === 'language'));
+  // 已停用模型：状态里不出现，参数接口也不接受
+  for (const id of ['ggml-large-v3-turbo', 'parakeet-tdt-0.6b-v2', 'vibevoice-asr-4bit',
+    'multitalker-parakeet-streaming-0.6b-v1', 'parakeet-tdt-0.6b-v2-dual']) {
+    assert.equal((status.models || []).some(m => m.id === id), false, id + ' 不应出现在状态里');
+    const gone = await server.call('/api/asr/params?model=' + encodeURIComponent(id));
+    assert.equal(gone.status, 400, id + ' 的参数接口应返回 400');
+  }
 
-  const none = await server.call('/api/asr/params?model=parakeet-tdt-0.6b-v2');
+  const qwen = (status.models || []).find(m => m.id === 'qwen3-asr-1.7b');
+  assert.ok(qwen, '状态里应有 Qwen3-ASR');
+  assert.equal(qwen.params.count, 2);
+  assert.match(qwen.params.summary, /分块 150s/);
+  const qp = await (await server.call('/api/asr/params?model=qwen3-asr-1.7b')).json();
+  assert.equal(qp.ok, true);
+  assert.equal(qp.values.chunkSec, 150);
+  assert.equal(qp.values.maxNewTokens, 4096);
+
+  const none = await server.call('/api/asr/params?model=bcut-asr');
   assert.equal(none.status, 400, '未登记参数的模型不能凭空返回 schema');
   console.log('asr-params-api-test: ok');
 } finally {

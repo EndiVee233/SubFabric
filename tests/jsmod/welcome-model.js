@@ -27,9 +27,12 @@ export function backendOf(model) {
     case 'openvino': return 'npu';
     case 'dual': return 'dual';
     case 'whisper.cpp':
-    case 'crispasr': return 'vulkan';
+    case 'crispasr':
+    case 'crispasr-whisper':
+    case 'crispasr-qwen': return 'vulkan';
     case 'sherpa-onnx':
     case 'faster-whisper':
+    case 'qwen':
     case 'nemo':
     case 'vibevoice':
     case 'bcut':

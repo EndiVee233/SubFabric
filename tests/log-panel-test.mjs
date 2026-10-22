@@ -93,56 +93,43 @@ for (const act of ['realign', 'split', 'merge', 'delete', 'retranslate', 'reflec
   ok(new RegExp(`logOp\\('${act}'`).test(MJ), `接了 logOp('${act}')`);
 }
 /* why 里要带**依据**，否则事后没法复盘 —— 这是"为什么"这个需求的核心。
- * realign 尤其重要：锚点率决定这次对齐可不可信。 */
-ok(/\$\{b\.anchors\}\/\$\{b\.words\.length\} 个词对上/.test(MJ), '重排记录了锚点率作为依据');
-ok(/词吻合率 \$\{Math\.round/.test(MJ), '重排记录了词吻合率作为依据');
+ * realign 的依据现在是 Qwen3-ForcedAligner（文本已确认，不需要锚点率）。 */
 ok(/切点取第 \$\{k\}\/\$\{totW\} 个词的词间中点/.test(MJ), '分句记录了切点依据');
 ok(/两行本是同一句/.test(MJ), '合并说明了原因');
 
-console.log('\n== 6. 重排设置（全局设置里）==');
-/* ⚠ 2026-10-12 重写：重校对不再"用 TTS 朗读合成语音、再识别那段合成语音"
- *   （那样得到的逐词时间是按 TTS 节奏**缩放**出来的，不是从原片量出来的），
- *   改成切出该句在**原片音频**里的那一段重新识别。旧的"朗读语音 / 语速"控件与绑定
- *   一并移除；这一节改成钉**新契约**，而且比原来钉得更严（见下面那组 ★）。 */
-for (const id of ['st-realign-minratio', 'st-realign-note']) {
-  ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
-}
-ok(!/id="st-realign-voice"/.test(HTML) && !/id="st-realign-rate"/.test(HTML),
-  '★ TTS 专用的语音/语速控件已移除（新方案不朗读）');
-/* ⚠ 这条以前断言的是 `action === 'realign-settings'` —— 即它**钉住了错误的挂载位置**：
- *   服务端把处理块放在 handleProjectsRoutes 里（只能被 /api/projects/<id>/... 命中），
- *   而前端 project.js 调的是 /api/asr/realign-settings → 一律 404（面板读不到、存不了）。
- *   2026-10-11 无头浏览器探针实测抓到这个 404 后把处理块搬回 asr 段。
- *   现在断言"挂在 /api/asr/ 下"，并**交叉核对前端调的是同一个路径** —— 防止再被搬回去。 */
-ok(/pathname === '\/api\/asr\/realign-settings'/.test(SRV),
-  '有读写接口（挂在 /api/asr/ 下）');
-ok(/\/api\/asr\/realign-settings/.test(PJ),
-  '★ 前端调的是同一个路径（否则又是一律 404）');
-ok(/readAsrSettings\(\)\.realign/.test(SRV), '设置存在 asr/settings.json 的 realign 段');
-/* ★ 关键：设置存进去还不够，**必须真的被用**。
- *   第一版就漏了这步 —— minAnchorRatio 存了却从没传给 planBlock，"最低锚点率"是个摆设。 */
-ok(/clamp\(rs\.minAnchorRatio, 0\.3, 1, alignMod\.MIN_ANCHOR_RATIO\)/.test(SRV),
-  '服务端读取 minAnchorRatio（在 realignPrep 里统一解析）');
-ok(/minAnchorRatio: prep\.minAnchorRatio, rawTimes: true \}/.test(SRV),
-  '**真的传给了 planBlock**，且 rawTimes=true（用实测时间，不做整体缩放）');
-ok(/realignLoad\(\)/.test(PJ), '设置页加载时读取');
-ok(!/st-realign-voice|st-realign-rate/.test(PJ), '前端不再绑定已移除的 TTS 控件');
-/* ★ 新方案的命门逐条钉住 —— 任何一条错了，逐词时间都会整体偏掉或回到"编的"老路。 */
-{
-  const a = SRV.indexOf('async function realignOne');
-  const b = SRV.indexOf('async function realignRecognize');
-  const one = (a >= 0 && b > a) ? SRV.slice(a, b) : '';
-  ok(one.length > 0, '找得到 realignOne 的实现');
-  ok(/audioSlice\.sliceAudio\(FFMPEG, prep\.audioWav/.test(one),
-    '★ 切的是 prep.audioWav（原片音频），不是合成语音');
-  ok(!/ttsToWav|ttsText/.test(one), '★ realignOne 里不再出现 TTS');
-  ok(/Number\(w\.start\) \+ from/.test(one),
-    '★ 切片内的相对时间必须加回切片起点（否则整句平移，且在稿子上看不出来）');
-  ok(/if \(r2\.ratio > r\.ratio\)/.test(SRV),
-    '★ 第二级必须**更吻合才采纳**（实测热词偏置不稳定，没有闸门就是引入风险）');
-  ok(/REALIGN_MODEL_ID = 'parakeet-tdt-0\.6b-v2'/.test(SRV),
-    '★ 引擎定到 sherpa-onnx 版 parakeet（热词只有这个后端支持，NPU 会静默忽略）');
-}
+console.log('\n== 6. 重排设置（Qwen3 纯对齐）==');
+/* 2026-10-22 产品定义：realign 的前提是文本已确认正确，只需要精确时间。
+ * 因此不再跑 ASR、不再用锚点率/置信度决定“文本对不对”，只调用 Qwen3-ForcedAligner。
+ * 文本不确定的情况交给独立的「重新识别」。 */
+ok(!/id="st-realign-minratio"/.test(HTML) && !/id="st-realign-minconf"/.test(HTML),
+  '★ 设置页不再有 ASR 重排的锚点率/置信度输入');
+ok(!/id="st-realign-note"/.test(HTML), '★ 不再有 ASR 重排的设置说明节点');
+ok(!/id="realign-conf"|id="realign-conf-thr"/.test(HTML),
+  '★ 全片预览不再有置信度门槛');
+ok(/Qwen3-ForcedAligner/.test(HTML), '设置页说明使用 Qwen3 对齐器');
+ok(!/pathname === '\/api\/asr\/realign-settings'/.test(SRV),
+  '★ 已删除 realign-settings 接口（不再有阈值设置）');
+ok(!/\/api\/asr\/realign-settings/.test(PJ), '★ 前端不再请求 realign-settings');
+ok(!/st-realign-minratio|st-realign-minconf|st-realign-voice|st-realign-rate/.test(PJ),
+  '★ 前端不再绑定旧 realign 设置/TTS 控件');
+
+/* 新契约：只走 Qwen3 对齐器；ASR 重识别只属于「重新识别」功能。 */
+ok(/function realignPrep\(/.test(SRV), '有 realignPrep');
+ok(/qwen3-forced-aligner-0\.6b-q8_0\.gguf/.test(SRV), '★ Vulkan 对齐器文件已接');
+ok(/qwen3-asr-1\.7b.*aligner|aligner.*qwen3-asr-1\.7b/s.test(SRV), '★ CUDA 对齐器目录已接');
+ok(/realignAlignBatch/.test(SRV), '有批量对齐入口');
+ok(/qwen_align\.py/.test(SRV), '★ CUDA 走独立 qwen_align.py');
+ok(/--align-only/.test(SRV) && /crispAlignOnly/.test(SRV), '★ Vulkan 走 CrispASR --align-only');
+ok(!/async function realignOne/.test(SRV), '★ 已删除 realignOne（不再逐句 ASR）');
+ok(!/async function realignRecognize/.test(SRV), '★ 已删除 realignRecognize');
+ok(!/async function realignTwoTier/.test(SRV), '★ 已删除热词第二级');
+ok(!/REALIGN_MODEL_ID/.test(SRV), '★ 不再固定 NPU ASR 模型');
+ok(/minAnchorRatio: 0, rawTimes: true/.test(SRV),
+  '★ 只做序列映射，不再用锚点率拒绝；rawTimes=true 保留实测绝对时间');
+ok(!/threshold: 0|job\.threshold|r\.threshold/.test(SRV), '★ 作业不再返回采纳门槛');
+ok(/const cudaReady = qwenRuntimeOk\(\)/.test(SRV), 'CUDA 对齐器有运行时门禁');
+ok(/const plan = alignMod\.planBlock\(t\.text, \{ start: t\.start, end: t\.end \}, recWords/.test(SRV),
+  '对齐器结果仍经过 planBlock 做 token 映射/单调性修正');
 
 console.log('\n== 7. ★ 字幕自动保存必须能成功（丢字幕的真凶）==');
 {

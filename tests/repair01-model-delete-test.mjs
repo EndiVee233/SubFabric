@@ -5,7 +5,7 @@ import { isolatedServer } from './helpers/isolated-server.mjs';
 
 const s = await isolatedServer();
 try {
-  const id = 'ggml-large-v3-turbo', file = 'ggml-large-v3-turbo.bin';
+  const id = 'parakeet-tdt-0.6b-v2-npu', file = 'encoder-model.onnx';
   const root = path.join(s.root, 'models');
   const dir = path.join(root, id);
   const make = p => { fs.mkdirSync(p, { recursive: true }); fs.writeFileSync(path.join(p, file), 'model'); };

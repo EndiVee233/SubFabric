@@ -420,35 +420,16 @@
           <p class="gl-hint" id="st-correct-note"></p>
         </div>
         <div class="st-card">
-          <div class="st-card-title">重排逐词时间 <span class="st-card-note">原片音频重识别 → 实测逐词时间</span></div>
+          <div class="st-card-title">重排逐词时间 <span class="st-card-note">Qwen3 对齐 · 文本不改</span></div>
           <p class="gl-hint">
-            右键字幕块选「重排逐词时间」，或点「全片逐词重校对」时用这里的设置。
-            直接切出这条字幕在<b>原片音频</b>里的那一段重新识别，拿识别出来的真实位置当逐词时间
-            —— <b>只改逐词时间，不动文本</b>。
+            右键字幕块选「重排逐词时间」，或点「全片逐词重校对」时使用。
+            前提是这句文本<b>已经确认正确</b>：只把已有文本和原片音频交给 <b>Qwen3-ForcedAligner</b>
+            重新量时间，<b>不跑 ASR、不改文本、不改整句起止</b>。
           </p>
           <p class="gl-hint">
-            不达标的句子会再走一级：让模型从该句已有的词里挑出<b>不常见 / 专有</b>的词
-            （人名、服务器名、术语）做成**只作用于该句**的热词表，重建识别器再识别一次，
-            <b>更吻合才采纳</b>。实测把整句所有词都当热词是净负效果，
-            所以只挑专名、且必须有这道闸门。
+            对齐器只负责时间。如果这句话本身还不确定，请用独立的「重新识别」功能，
+            不要让对齐器去猜文本。
           </p>
-          <div class="st-row" style="margin-top:8px">
-            <span class="st-lbl" style="min-width:auto">最低锚点率</span>
-            <input type="number" id="st-realign-minratio" class="st-input" min="0.3" max="1" step="0.05" value="0.6" style="max-width:84px">
-            <span class="gl-hint" style="flex:1">
-              识别出的词与原文对得上的比例低于这个值就判为「不可信」并拒绝改动（而不是给一个错的时间）
-            </span>
-          </div>
-          <div class="st-row" style="margin-top:8px">
-            <span class="st-lbl" style="min-width:auto">重校对置信度门槛</span>
-            <input type="number" id="st-realign-minconf" class="st-input" min="0.3" max="1" step="0.05" value="0.7" style="max-width:84px">
-            <span class="gl-hint" style="flex:1">
-              「全片逐词重校对」用它决定**哪些句子值得改**：置信度 ≥ 门槛的才重排逐词时间，
-              低于门槛的原样保留。它比「最低锚点率」更严 —— 那个只判"能不能用"，
-              这个还要看有没有整段落单、有没有词被压扁
-            </span>
-          </div>
-          <p class="gl-hint" id="st-realign-note"></p>
         </div>
         <!-- 逐词字幕自愈开关（默认开）。
              它只修一种特定损坏：**逐词行被清空、文本跑到同时间戳的另一行上**

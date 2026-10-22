@@ -34,9 +34,11 @@ const raceAbort = (promise, signal) => {
   });
 };
 
-/** 能跑常驻服务的引擎（脚本名 → 是否支持）。whisper.cpp/cloud 走自己的路径。 */
-export function serviceKey(script, model, provider) {
-  return `${path.basename(script)}|${model}|${provider}`;
+/** 能跑常驻服务的引擎（脚本名 → 是否支持）。whisper.cpp/cloud 走自己的路径。
+ *  variant 用来区分识别器构造期参数（线程数 / blank 惩罚等）：worker 启动后这些值
+ *  固化在模型会话里，参数一变就必须另起一个进程，否则常驻实例会静默沿用旧设置。 */
+export function serviceKey(script, model, provider, variant = '') {
+  return `${path.basename(script)}|${model}|${provider}|${variant}`;
 }
 
 class Worker {
@@ -46,6 +48,7 @@ class Worker {
     this.script = opts.script;
     this.model = opts.model;
     this.provider = opts.provider;
+    this.threads = Number(opts.threads) || 0;
     this.extra = opts.extra || [];
     this.onLog = opts.onLog || (() => {});
     this.proc = null;
@@ -66,7 +69,10 @@ class Worker {
     if (this.closed) throw aborted();
     if (this.proc) return;
     const args = [this.script, '--model', this.model, '--serve',
-                  '--provider', this.provider, ...this.extra];
+                  '--provider', this.provider];
+    // 线程数是识别器构造期参数（sherpa-onnx 的 num_threads），和模型一起只在启动时生效。
+    if (this.threads > 0) args.push('--threads', String(this.threads));
+    args.push(...this.extra);
     this.onLog(`[asr-serve] 启动常驻识别进程：${path.basename(this.script)} (${this.provider})`);
     this.proc = this.spawn(this.python, args, {
       windowsHide: true, cwd: path.dirname(this.script), stdio: ['pipe', 'pipe', 'pipe'],
@@ -239,7 +245,7 @@ export class AsrService {
    * 失败时抛错，调用方可以退回原来的 spawn 路径。
    */
   async transcribe({ script, model, provider, extra, audio, tta, outPath, language,
-                     hotwords, hotwordsScore, owner, signal }) {
+                     hotwords, hotwordsScore, variant, threads, owner, signal }) {
     if (this.stopped || signal?.aborted) throw aborted();
     const ctl = new AbortController();
     const relay = () => ctl.abort();
@@ -247,10 +253,11 @@ export class AsrService {
     let tasks = this.owners.get(owner);
     if (!tasks) { tasks = new Set(); this.owners.set(owner, tasks); }
     tasks.add(ctl);
-    const key = serviceKey(script, model, provider);
+    const key = serviceKey(script, model, provider,
+      `${variant || ''}|threads=${Number(threads) || 0}`);
     let w = this.workers.get(key);
     if (!w) {
-      w = new Worker({ key, python: this.python, script, model, provider, extra, onLog: this.onLog, spawnImpl: this.spawnImpl,
+      w = new Worker({ key, python: this.python, script, model, provider, extra, threads, onLog: this.onLog, spawnImpl: this.spawnImpl,
         clearIdle: t => this.clock.clearTimeout(t),
         onExit: old => { if (this.workers.get(key) === old) this.workers.delete(key); } });
       this.workers.set(key, w);

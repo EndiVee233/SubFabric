@@ -22,13 +22,26 @@ assert.match(template, /class="sf-flower"/, 'new-work entry uses the Material fl
 assert.match(template, /class="sf-resume"/, 'resume card is present');
 assert.match(template, /class="sf-orbit"/, 'editable count uses the tilted Material capsule');
 assert.equal((template.match(/sf-mu-search-form/g) || []).length, 0, 'New Tab search is removed from the Material homepage');
+assert.match(template, /id="sf-mu-attention"[\s\S]*?data-mu-attn="resume"[\s\S]*?data-mu-attn="details"/,
+  'attention card exposes continue and details overlay actions');
+assert.match(studio, /dataset\.muAttn === 'resume'[\s\S]*?#\/project\//,
+  'continue action opens the attention project');
 
 assert.match(studio, /let projects = \[\], filter = 'all', folder = '', route = location\.hash \|\| '#\/dashboard'/,
   'dashboard is the default route');
 assert.match(studio, /function isMaterialHome\(\) \{ return document\.body\.dataset\.themePack === 'material-you'; \}/,
   'Material You detection is scoped to the theme pack');
-assert.match(studio, /dashboard\.dataset\.homeMode = on \? 'material' : 'widgets'/,
-  'theme switching selects exactly one homepage presentation');
+assert.match(studio, /const mode = on \? 'material' : 'widgets';/,
+  'theme switching selects exactly one homepage presentation');assert.match(studio, /dashboard\.dataset\.homeMode = mode;/,
+  'theme switching writes the selected homepage presentation');
+assert.match(studio, /material\.hidden = !on;\n  widgets\.hidden = on;/,
+  'only one homepage presentation stays visible');
+assert.match(studio, /const modeChanged = !!dashboardHomeMode && dashboardHomeMode !== mode;/,
+  'data refreshes must not count as a homepage mode switch');
+assert.match(studio, /if \(!dashboard\.hidden && \(modeChanged \|\| replay\)\) animateDashboardCards\(\);/,
+  'the homepage entrance replay is limited to real mode/theme switches');
+assert.match(studio, /if \(!el\.querySelector\('\.sf-widget'\)\) \{\n    el\.innerHTML = `[\s\S]*?\n    return;\n  \}\n  setWidgetText\(/,
+  'homepage widgets are built once, then updated in place without replacing their nodes');
 for (const handler of ['sf-mu-new', 'sf-mu-temp', 'sf-mu-resume']) {
   assert.match(studio, new RegExp(`\\$\\('${handler}'\\)\\.addEventListener`), `${handler} has an event handler`);
 }

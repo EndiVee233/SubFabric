@@ -30,7 +30,7 @@ const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
 const reflectMod = require('./reflect.js');
 const packMod = require('./project-pack.js');      // 项目压缩包: 文件分类与校验(纯逻辑)
-const alignMod = require('./align.js');           // 逐词时间重对齐(TTS 合成 → 重识别 → 序列对齐)
+const alignMod = require('./align.js');           // 逐词时间映射/对齐纯逻辑（realign 用 Qwen3 对齐器）
 const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有说话、没字幕覆盖的区间
 const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
@@ -126,8 +126,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.4'; // 产品显示版本
-const APP_FILE_VERSION = '1.4.0.0'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.1.0'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -722,6 +722,11 @@ const HF_ENDPOINT = (process.env.HF_ENDPOINT || 'https://hf-mirror.com').replace
  * 各引擎的 GPU 要求由 asrGpuGateError 逐个校验 —— 都只在 GPU 上推理, 不做 CPU 兜底。
  * draftAllowed:false 的模型**不能创建初稿**, 只能在「选区重新识别」里用。 */
 const ASR_MODELS = [
+  /* ⛔ 2026-10-21 停用（原样保留，勿取消注释）：
+   *   Parakeet TDT 0.6B v2（英语·快 / sherpa-onnx CUDA）、Whisper large-v3-turbo、
+   *   Multitalker Parakeet Streaming 0.6B v1、Parakeet TDT 0.6B v2 双引擎、VibeVoice ASR 4bit。
+   *   它们不再出现在模型列表/下载/设置/速度测试里，后台也不会选中或启动它们。 */
+  /* 停用：Parakeet TDT 0.6B v2（英语·快 / sherpa-onnx CUDA）
   {
     id: 'parakeet-tdt-0.6b-v2',
     name: 'Parakeet TDT 0.6B v2（英语·快）',
@@ -733,6 +738,8 @@ const ASR_MODELS = [
     dirName: 'parakeet-tdt-0.6b-v2',
     draftAllowed: true,
   },
+  */
+  /* 停用：Whisper large-v3-turbo
   {
     id: 'ggml-large-v3-turbo',
     name: 'Whisper large-v3-turbo（英语·质量优先）',
@@ -744,6 +751,7 @@ const ASR_MODELS = [
     dirName: 'ggml-large-v3-turbo',
     draftAllowed: true,
   },
+  */
   {
     /* Whisper large-v2：走 Faster-Whisper-XXL（独立 exe + CTranslate2 权重），
      * 复刻「卡卡的 whisper large v2 设置」：VAD pyannote_v3、阈值 0.05、
@@ -769,6 +777,81 @@ const ASR_MODELS = [
     runtimeSizeMB: 1450,
   },
   {
+    /* Qwen3：ASR 只生成文本，配套对齐器再把这段文本变成逐词时间。
+     * 对齐器已拆成独立模型（ALIGNER_MODELS / 对齐模型下载项），这里只下载 ASR 权重。 */
+    id: 'qwen3-asr-1.7b',
+    name: 'Qwen3-ASR 1.7B（多语·CUDA）',
+    engine: 'qwen',
+    repo: 'Qwen/Qwen3-ASR-1.7B-hf',
+    files: [
+      'config.json', 'generation_config.json', 'model.safetensors', 'processor_config.json',
+      'tokenizer.json', 'tokenizer_config.json', 'chat_template.jinja',
+    ],
+    fileSizes: { 'model.safetensors': 4076193080 },
+    sizeMB: 3880,
+    desc: 'Qwen3-ASR 1.7B 多语文本识别；CUDA bf16，ASR 权重约 4.0GB（对齐器单独下载）。逐词时间由「对齐模型」提供。'
+      + ' 30s 单次，5/10min 按 150s 分块。仅 NVIDIA CUDA，不支持 CPU/NPU。',
+    dirName: 'qwen3-asr-1.7b',
+    draftAllowed: true,
+    nativeWordLevel: false,
+    needRuntime: true,
+    runtimeKey: 'runtime:qwen',
+    runtimeName: 'Qwen3 CUDA 运行时',
+    runtimeSizeMB: 0,
+  },
+  {
+    /* 无 N 卡兜底：Whisper 质量档。GGML large-v2 + CrispASR Vulkan；
+     * 原生词时间戳明显不如 CUDA（实测中位 170–210ms），所以强制用 Qwen 对齐器重算。 */
+    id: 'whisper-large-v2-vulkan',
+    name: 'Whisper large-v2（Vulkan 通用·无N卡质量档）',
+    engine: 'crispasr-whisper',
+    backend: 'vulkan',
+    crispBackend: 'whisper',
+    crispModelFile: 'ggml-large-v2.bin',
+    crispChunkSec: 150,
+    crispLanguage: 'en',
+    repo: 'ggerganov/whisper.cpp',
+    files: ['ggml-large-v2.bin'],
+    fileSizes: { 'ggml-large-v2.bin': 3094623691 },
+    sizeMB: 3095,
+    desc: 'CrispASR（ggml）+ Vulkan，无 N 卡也能用的质量档；不需要 Python/CUDA，需要 Vulkan 驱动。'
+      + ' 有 N 卡请优先选上面的 CUDA 版（CUDA + MDX 人声分离质量更好）。'
+      + ' 没有原生逐词；需要逐词时在初稿勾「对齐」，使用独立下载的对齐模型；模型约 3.1GB。',
+    dirName: 'whisper-large-v2-vulkan',
+    draftAllowed: true,
+    nativeWordLevel: false,
+    needRuntime: true,
+    runtimeKey: 'runtime:crispasr',
+    runtimeName: 'CrispASR',
+    runtimeSizeMB: 34,
+  },
+  {
+    /* 无 N 卡兜底：Qwen 中档。Q4_K GGUF + CrispASR Vulkan；
+     * Q8 在 CrispASR 0.8.42 缺 audio tensor，不能加载；长音频质量明显低于 CUDA bf16。 */
+    id: 'qwen3-asr-1.7b-vulkan',
+    name: 'Qwen3-ASR 1.7B（Vulkan 通用·无N卡中档）',
+    engine: 'crispasr-qwen',
+    backend: 'vulkan',
+    crispBackend: 'qwen3',
+    crispModelFile: 'qwen3-asr-1.7b-q4_k.gguf',
+    crispChunkSec: 150,
+    crispLanguage: 'en',
+    repo: 'cstr/qwen3-asr-1.7b-GGUF',
+    files: ['qwen3-asr-1.7b-q4_k.gguf'],
+    fileSizes: { 'qwen3-asr-1.7b-q4_k.gguf': 1490915200 },
+    sizeMB: 1491,
+    desc: 'CrispASR（ggml）+ Vulkan，无 N 卡时的中档；Q4_K 量化，模型约 1.5GB。'
+      + ' 逐词时间由「对齐模型」统一提供。有 N 卡请优先选 CUDA bf16 版：Vulkan Q4 的 5/10min WER 明显更差、长音频也更慢。'
+      + ' 需要 Vulkan 驱动，不需要 Python/CUDA。',
+    dirName: 'qwen3-asr-1.7b-vulkan',
+    draftAllowed: true,
+    nativeWordLevel: false,
+    needRuntime: true,
+    runtimeKey: 'runtime:crispasr',
+    runtimeName: 'CrispASR',
+    runtimeSizeMB: 34,
+  },
+  {
     // Vulkan 通用版 Parakeet：走 CrispASR（ggml、whisper.cpp 的 fork，单二进制多模型）——
     // **不需要 Python、不需要 N 卡**：只要机器有 Vulkan 驱动（A 卡 / Intel 核显 / N 卡通吃）就能 GPU 加速。
     // 补的正是本机这类"无 CUDA、无 NPU"机器的空档（sherpa 那条要 CUDA、OpenVINO 那条要 NPU）。
@@ -784,6 +867,7 @@ const ASR_MODELS = [
     dirName: 'parakeet-tdt-0.6b-v2',
     draftAllowed: true,
   },
+  /* 停用：Multitalker Parakeet Streaming 0.6B v1（NeMo，仅重新识别）
   {
     id: 'multitalker-parakeet-streaming-0.6b-v1',
     name: 'Multitalker Parakeet Streaming 0.6B v1（多说话人·仅重新识别）',
@@ -800,10 +884,9 @@ const ASR_MODELS = [
     dirName: 'multitalker-parakeet-streaming-0.6b-v1',
     draftAllowed: false,
   },
+  */
+  /* 停用：VibeVoice ASR 4bit（CUDA）
   {
-    // VibeVoice 的 Windows 路径固定使用预量化 4bit checkpoint + CUDA。
-    // 目前没有经过验证的 OpenVINO/NPU VibeVoice 后端；不要把它接到 asr_npu.py，
-    // 也不要因为 CUDA 不可用而改跑其它设备。
     id: 'vibevoice-asr-4bit',
     name: 'VibeVoice ASR 4bit（多语·CUDA）',
     engine: 'vibevoice',
@@ -827,6 +910,7 @@ const ASR_MODELS = [
     dirName: 'vibevoice-asr-4bit',
     draftAllowed: true,
   },
+  */
   {
     // 与上面 sherpa-onnx 那条**同一份权重、同一套后处理**, 只换推理后端: 走 OpenVINO,
     // 编码器吃 Intel NPU、预测/联合网络吃核显 —— 于是**没有 N 卡也能用 Parakeet**
@@ -842,6 +926,7 @@ const ASR_MODELS = [
     dirName: 'parakeet-tdt-0.6b-v2-npu',
     draftAllowed: true,
   },
+    /* 停用：Parakeet TDT 0.6B v2（英语·NPU+GPU 双引擎）
     {
       // 双引擎：把音频切成多个分片，**同时**交给 NPU 引擎与 GPU(N 卡) 引擎识别，再按时间合并。
       // 两边落在不同硬件上（NPU + Intel 核显 vs N 卡），但仍会互相拖慢（见下），所以收益有限。
@@ -877,6 +962,7 @@ const ASR_MODELS = [
       draftAllowed: true,
       alsoNeeds: 'parakeet-tdt-0.6b-v2',
     },
+    */
   {
     // 云端识别: 没有本地模型文件、不需要显卡, 只要联网。音频会上传到第三方服务器 —— 由用户在模型下拉里
     // **显式选择**, 绝不作为"本地没装模型"时的兜底（见 resolveAsrModel）。
@@ -903,9 +989,72 @@ const ASR_MODELS = [
     draftAllowed: true,
   },
 ];
+/* 对齐模型独立于 ASR：下载 Qwen3-ASR 时不再夹带对齐器；realign / 初稿「对齐」都从这里取。 */
+const ALIGNER_MODELS = [
+  {
+    id: 'qwen3-forced-aligner-0.6b',
+    name: 'Qwen3-ForcedAligner 0.6B（CUDA）',
+    engine: 'aligner', kind: 'aligner', backend: 'cuda',
+    repo: 'Qwen/Qwen3-ForcedAligner-0.6B-hf',
+    files: ['config.json', 'model.safetensors', 'processor_config.json',
+            'tokenizer.json', 'tokenizer_config.json', 'chat_template.jinja'],
+    fileSizes: { 'model.safetensors': 1835545960 },
+    sizeMB: 1751,
+    desc: 'Qwen3-ForcedAligner 0.6B：给已确认文本量逐词时间。CUDA 专用，需要 Qwen CUDA 运行时；不再随 Qwen3-ASR 下载。',
+    dirName: 'qwen3-forced-aligner-0.6b',
+    needRuntime: true,
+    runtimeKey: 'runtime:qwen',
+    runtimeName: 'Qwen3 CUDA 运行时',
+    runtimeSizeMB: 0,
+    draftAllowed: false,
+  },
+  {
+    id: 'qwen3-forced-aligner-0.6b-vulkan',
+    name: 'Qwen3-ForcedAligner 0.6B（Vulkan）',
+    engine: 'aligner', kind: 'aligner', backend: 'vulkan',
+    repo: 'cstr/qwen3-forced-aligner-0.6b-GGUF',
+    files: ['qwen3-forced-aligner-0.6b-q8_0.gguf'],
+    fileSizes: { 'qwen3-forced-aligner-0.6b-q8_0.gguf': 985594624 },
+    sizeMB: 940,
+    desc: 'Qwen3-ForcedAligner 0.6B GGUF：无 N 卡时给 Qwen/Whisper 等转写结果量逐词时间；需要 CrispASR + Vulkan。',
+    dirName: 'qwen3-forced-aligner-0.6b-vulkan',
+    needRuntime: true,
+    runtimeKey: 'runtime:crispasr',
+    runtimeName: 'CrispASR',
+    runtimeSizeMB: 34,
+    draftAllowed: false,
+  },
+];
+const alignerById = (id) => ALIGNER_MODELS.find(m => m.id === id) || null;
+const anyModelById = (id) => modelById(id) || alignerById(id) || null;
 const modelById = (id) => ASR_MODELS.find(m => m.id === id) || null;
+/** 已停用引擎：模型条目已注释，这里再兜一层，防止旧缓存/旧前端/直接调用把进程拉起来。 */
+const RETIRED_ENGINES = new Set(['sherpa-onnx', 'whisper.cpp', 'nemo', 'dual', 'vibevoice']);
+const isRetiredEngine = (engine) => RETIRED_ENGINES.has(String(engine || ''));
 /** 能否用于创建初稿(默认可以; draftAllowed===false 的模型只给「重新识别」用) */
 const draftAllowedOf = (m) => !!m && m.draftAllowed !== false;
+const nativeWordLevelOf = (m) => !!m && m.nativeWordLevel !== false;
+/** 当前可用的 Qwen 对齐器路径（draft 的「对齐」与 realign 共用；独立下载后这里会指向独立模型目录）。 */
+function draftAlignerReady(m) {
+  // 对齐器与 ASR 解耦：NPU/云端也能用 CUDA/Vulkan 对齐器；realignPrep 会选可用后端。
+  if (qwenRuntimeOk() && nvidiaCache.name && fs.existsSync(path.join(modelDirFor('qwen3-forced-aligner-0.6b'), 'model.safetensors'))) return true;
+  const f = 'qwen3-forced-aligner-0.6b-q8_0.gguf';
+  return crispasrRuntimeOk() && fs.existsSync(path.join(modelDirFor('qwen3-forced-aligner-0.6b-vulkan'), f));
+}
+/** 初稿输出计划：原生逐词 / 对齐 / SRT 三者互斥。
+ *  没有原生逐词的模型（Qwen ASR、Whisper Vulkan）禁止 wordLevel=true，只能 align=true 生成 ASS。 */
+function draftOutputPlan(m, data) {
+  const native = nativeWordLevelOf(m);
+  const nativeWanted = !!data.wordLevel;
+  if (nativeWanted && !native) {
+    throw new Error('「' + m.name + '」没有原生逐词时间；请取消「逐词」，改勾「对齐」用对齐模型生成逐词');
+  }
+  const align = !nativeWanted && !!data.align;
+  if (align && !draftAlignerReady(m)) {
+    throw new Error('没有可用的对齐模型；先到「设置 → 语音识别 → 对齐模型」下载');
+  }
+  return { native, nativeWanted, align, wordLevel: nativeWanted || align };
+}
 
 /* 说话人分离模型(两个文件一组): 跑在音频上, 与识别引擎无关 —— 两个 ASR 模型都能用 */
 const DIARIZE_MODELS = [
@@ -950,6 +1099,8 @@ const CRISPASR_RUNTIME = {
 const crispasrCli = () => path.join(CRISPASR_RUNTIME.dir, 'crispasr.exe');
 const crispasrRuntimeOk = () => { try { return fs.statSync(crispasrCli()).isFile(); } catch { return false; } };
 const crispasrVulkanOk = () => { try { return fs.statSync(path.join(CRISPASR_RUNTIME.dir, 'ggml-vulkan.dll')).isFile(); } catch { return false; } };
+/** CrispASR 家族：Parakeet Vulkan（crispasr）以及无 N 卡时的 Whisper/Qwen Vulkan 兜底。 */
+const isCrispEngine = (eng) => eng === 'crispasr' || eng === 'crispasr-whisper' || eng === 'crispasr-qwen';
 
 /* Faster-Whisper-XXL 运行时（约 1.5GB 压缩 / 4.4GB 解压）: 给 Whisper large-v2 用。
  * 与 whisper.cpp 完全不同的一套：自包含 CUDA/cuDNN/PyTorch，不需要 Vulkan、不需要 Python，
@@ -1006,11 +1157,52 @@ const vibevoiceRuntimeOk = () => !!(vibevoiceProbeCache && vibevoiceProbeCache.o
   && vibevoiceProbeCache.nativeModel && vibevoiceProbeCache.nativeProcessor
   && vibevoiceProbeCache.bitsandbytes && vibevoiceProbeCache.bnbCudaKernel);
 
+/* Qwen3 复用 runtime-vibevoice 的 CUDA PyTorch，但要求 Transformers 5.20+。
+ * 装好后写一个标记文件；不再让每个状态轮询都 import torch。 */
+const QWEN_RUNTIME_MARK = path.join(ASR_DIR, '.qwen-runtime-ok.json');
+const qwenPython = () => process.env.SUBFABRIC_QWEN_PYTHON || ASR_PY;
+function qwenRuntimeOk() {
+  try {
+    const j = JSON.parse(fs.readFileSync(QWEN_RUNTIME_MARK, 'utf8'));
+    return fs.existsSync(qwenPython()) && String(j.transformers || '').startsWith('5.20');
+  } catch { return false; }
+}
+function startQwenRuntimeInstall() {
+  const key = 'runtime:qwen';
+  if (dlState(key).running) return;
+  dlState(key, { running: true, kind: 'runtime:qwen', pct: 1, msg: '检查 Qwen CUDA 运行环境…', error: null, modelId: 'qwen3-asr-1.7b' });
+  (async () => {
+    try {
+      const py = qwenPython();
+      if (!fs.existsSync(py)) {
+        throw new Error('缺少 CUDA Python 运行时（asr/runtime-python）。先用「Python 环境」或完整安装包准备好，再装 Qwen 运行时');
+      }
+      const prog = (pct, msg) => dlState(key, { running: true, kind: 'runtime:qwen', pct, msg, error: null });
+      prog(10, '安装 Transformers 5.20 / Accelerate…');
+      await pipInstallRetry(py, ['-m', 'pip', 'install', '--upgrade',
+        'transformers==5.20.2', 'accelerate',
+        '-i', NEMO_PIP_INDEX, '--extra-index-url', 'https://pypi.org/simple'], 1800000,
+        line => prog(15 + Math.min(70, String(line).length / 4), '安装 Qwen 运行依赖…'));
+      prog(92, '验证 Qwen 运行时…');
+      const out = await runCapture(py, ['-c', 'import torch, transformers; print(torch.cuda.is_available()); print(transformers.__version__)'], 180000);
+      const lines = String(out.stdout || '').trim().split(/\r?\n/);
+      if (!/^true$/i.test(lines[0] || '')) throw new Error('Qwen 运行时没有可用的 CUDA');
+      if (!/^5\.20/.test(lines[1] || '')) throw new Error('Transformers 版本不是 5.20：' + (lines[1] || '?'));
+      fs.writeFileSync(QWEN_RUNTIME_MARK, JSON.stringify({ transformers: lines[1].trim(), at: new Date().toISOString() }, null, 2));
+      dlState(key, { running: false, kind: 'runtime:qwen', pct: 100, msg: 'Qwen CUDA 运行时就绪', error: null });
+    } catch (e) {
+      const msg = String((e && e.message) || e).slice(0, 400);
+      dlState(key, { running: false, kind: 'runtime:qwen', pct: 0, msg: '安装失败：' + msg, error: msg });
+    }
+  })();
+}
+
 /** ASR 必须 GPU: 不做 CPU 兜底。三个引擎各查各的 GPU 依赖, 不满足返回报错文案(null = 通过)。
  *  whisper.cpp → 必须有 Vulkan 运行库(ggml-vulkan.dll); sherpa-onnx → 必须是 CUDA 版(安装器实测后写入 settings);
  *  nemo(multitalker) → 必须有 PyTorch + NeMo, 且 torch 认到 CUDA —— 它**只认 N 卡**, 别的 GPU 也不行。
  *  provider==='cuda' 本身不保证运行时能起来, 但那是安装器 import 实测过的结果 —— 运行时问题交给脚本报详细错。 */
 function asrGpuGateError(model) {
+  if (model && isRetiredEngine(model.engine)) return '该识别模型已停用，不会运行';
   // 云端识别在本机不做任何推理 —— 它不需要 GPU(与三个本地引擎的要求正好相反)
   if (model && model.cloud) return null;
   // OpenVINO(NPU) 后端与 sherpa-onnx 正好相反: 它**不**要求 CUDA —— 编码器跑 Intel NPU、
@@ -1023,10 +1215,17 @@ function asrGpuGateError(model) {
     if (!whisperVulkanOk()) return '未检测到 Vulkan 运行库（ggml-vulkan.dll）。语音识别不支持纯 CPU，要装/更新支持 Vulkan 的显卡驱动，或在设置里重新下载 whisper.cpp 运行时';
     return null;
   }
-  if (model && model.engine === 'crispasr') {
+  if (model && isCrispEngine(model.engine)) {
     // 与 whisper.cpp 相反: 这一条**允许 CPU 兜底**（识别失败会自动 --no-gpu 重试），
     // 所以只查运行时装没装、不硬拦 Vulkan —— 没有独显的机器也能用（慢），这正是它存在的意义。
     if (!crispasrRuntimeOk()) return 'CrispASR 运行时没装好，到「设置 → 识别模型」下载（约 34MB）';
+    return null;
+  }
+  if (model && model.engine === 'qwen') {
+    if (!qwenRuntimeOk()) {
+      return 'Qwen3 需要先安装 CUDA 运行时（Transformers 5.20 + Accelerate）。到「设置 → 识别模型 → Qwen」点「安装运行时」。';
+    }
+    if (!nvidiaCache.name) return 'Qwen3-ASR 只支持 NVIDIA CUDA GPU，当前没有检测到可用 N 卡；不支持 CPU/NPU。';
     return null;
   }
   if (model && model.engine === 'faster-whisper') {
@@ -1080,6 +1279,9 @@ let nemoProbeInflight = null;    // 在途探测(见下)
  *  **在途复用**: 设置面板每秒轮询状态页, 若每次都新起一个进程, 几十秒的导入期里会并发几十个 python;
  *  所以同一时刻只允许一个探测在跑, 其余调用共享它的结果。 */
 function probeNemo(force) {
+  // 停用：NeMo 运行时不再探测；保留函数只为旧调用点不报 ReferenceError。
+  return Promise.resolve({ ok: false, cuda: false, msg: 'NeMo 运行时已停用' });
+  /* 原实现：
   if (!force && nemoProbeCache && Date.now() - nemoProbeCache.at < 5 * 60 * 1000) return Promise.resolve(nemoProbeCache);
   if (!force && nemoProbeInflight) return nemoProbeInflight;
   const p = new Promise((resolve) => {
@@ -1111,10 +1313,14 @@ function probeNemo(force) {
   });
   nemoProbeInflight = p.finally(() => { nemoProbeInflight = null; });
   return p;
+  */
 }
 
 /** 独立环境的真实 CUDA/NF4 运算探测，后台缓存与在途复用。 */
 function probeVibeVoice(force) {
+  // 停用：VibeVoice 运行时不再探测。
+  return Promise.resolve({ ok: false, cuda: false, msg: 'VibeVoice 运行时已停用' });
+  /* 原实现：
   if (!force && vibevoiceProbeCache && Date.now() - vibevoiceProbeCache.at < 5 * 60 * 1000) return Promise.resolve(vibevoiceProbeCache);
   if (vibevoiceProbeInflight) return vibevoiceProbeInflight;
   const py = vibevoicePython();
@@ -1151,6 +1357,7 @@ function probeVibeVoice(force) {
   });
   vibevoiceProbeInflight = promise.finally(() => { vibevoiceProbeInflight = null; });
   return vibevoiceProbeInflight;
+  */
 }
 
 /* 初稿流水线阶段名(项目列表上直接显示这个文案)。
@@ -2032,7 +2239,7 @@ function modelBackendOf(m) {
   if (!m || m.cloud) return 'cloud';
   if (m.engine === 'openvino') return 'npu';
   if (m.engine === 'dual') return 'dual';
-  if (m.engine === 'whisper.cpp' || m.engine === 'crispasr') return 'vulkan';
+  if (m.engine === 'whisper.cpp' || isCrispEngine(m.engine)) return 'vulkan';
   return 'cuda';                       // sherpa / faster-whisper / nemo / vibevoice
 }
 function modelAllowedByBackends(m) {
@@ -2063,17 +2270,23 @@ const asrProvider = () => { const s = readAsrSettings(); return s.asrProvider ==
 /** 该引擎该用哪个 Python 脚本 + provider 参数。
  *
  *  ⚠ 各脚本的 **CLI 契约并不相同**（实测逐个数出来的）：
- *      asr.py          --tta ✓   --hotwords-file/score ✓   --threads ✓
- *      asr_npu.py      --tta ✓   --hotwords-file/score ✓   --threads ✓
+ *      asr.py          --tta ✓   --hotwords-file/score ✓   --threads ✓   --blank-penalty ✓
+ *      asr_npu.py      --tta ✓   --hotwords-file/score ✓   --threads ✓（接受但忽略）
+ *      vibevoice.py    --tta ✗   --hotwords ✗   --acoustic-tokenizer-chunk-size ✓   --max-new-tokens ✓
  *      asr_dual.py     --tta ✗   --hotwords ✗              --threads ✗（它自己有 --ratio/--slice-sec）
  *      multitalker.py  --tta ✗   --hotwords ✗              --threads ✓
  *    早先这里只返回 script/provider/hotwords，而调用点**各自**去拼
  *    `--threads/--provider/--tta/hotwords` —— 于是 nemo 被塞了 `--tta`，
  *    argparse 直接报 "unrecognized arguments: --tta 2" 整个识别失败（实测复现）。
- *    所以现在由这里统一给出 `asrArgs(model, mdir, audio, out, confMode)`，
- *    调用点只管展开，不再各自拼参数 —— 契约差异只在这一个地方描述。 */
+ *    所以现在由这里统一给出引擎参数，再由 `asrArgsFor(ea, mdir, audio, out, confMode)` 展开，
+ *    调用点不再各自拼参数 —— 契约差异只在这一个地方描述。
+ *    模型参数（asr-params.js 的 schema）也在这里落到命令行，保证初稿、分片、
+ *    选区重识别、全模型速度测试与常驻服务用的是同一份当前值。 */
 const asrEngineArgs = (model) => {
   const eng = model && model.engine;
+  if (isRetiredEngine(eng)) {
+    throw new Error('该识别引擎已停用（' + eng + '），不会启动');
+  }
   if (eng === 'dual') {
     // 双引擎：脚本自己管两个后端与设备，所以 provider 只作为"非 cuda"的标记，
     // 让它绕过「必须 cuda」的校验 —— 它既用 NPU 也用 N 卡，不该被 GPU 门槛拦住。
@@ -2101,6 +2314,20 @@ const asrEngineArgs = (model) => {
       noTta: true,                  // multitalker.py 不吃 --tta
     };
   }
+  const mp = modelParamsFor(model);
+  if (eng === 'qwen') {
+    const q = modelParamsFor(model);
+    return {
+      script: path.join(ASR_DIR, 'qwen_asr.py'),
+      provider: 'cuda',
+      hotwords: [],
+      noThreads: true,
+      noTta: true,
+      python: qwenPython(),
+      extra: ['--chunk-sec', String(q.chunkSec || 150),
+              '--max-new-tokens', String(q.maxNewTokens || 4096)],
+    };
+  }
   if (eng === 'vibevoice') {
     return {
       script: path.join(ASR_DIR, 'vibevoice.py'),
@@ -2108,6 +2335,9 @@ const asrEngineArgs = (model) => {
       hotwords: [],
       noThreads: true,
       noTta: true,
+      // 参数面板里的两项运行时开关；vibevoice.py 只接受这两个可调项。
+      extra: ['--acoustic-tokenizer-chunk-size', String(mp.acousticChunkSize),
+              '--max-new-tokens', String(mp.maxNewTokens)],
     };
   }
   if (eng === 'faster-whisper') {
@@ -2115,12 +2345,21 @@ const asrEngineArgs = (model) => {
     // 明确报错，别让 asr.py 拿着 CTranslate2 权重目录去报「缺少 encoder*.onnx」。
     throw new Error('Whisper large-v2（Faster-Whisper-XXL）走独立可执行文件，不能按 Python 引擎调用');
   }
+  if (eng === 'crispasr-whisper' || eng === 'crispasr-qwen') {
+    throw new Error('Vulkan Whisper/Qwen 走 CrispASR 独立可执行文件，不能按 Python 引擎调用');
+  }
   const openvino = eng === 'openvino';
+  const threads = Number(mp.threads) || 4;
   return {
     script: openvino ? path.join(ASR_DIR, 'asr_npu.py') : ASR_SCRIPT,
     provider: openvino ? 'npu' : 'cuda',
+    // NPU 后端由 OpenVINO 自管线程（asr_npu.py 接受 --threads 但会忽略），
+    // 所以 Parakeet CUDA 的线程数与 blank 惩罚只对 sherpa-onnx 生效。
+    threads: openvino ? 4 : threads,
+    variant: openvino ? '' : `threads=${threads};blank=${mp.blankPenalty}`,
     // 热词只对 sherpa-onnx 后端有效(asr_npu.py 会接受参数并在日志里说明忽略)
     hotwords: openvino ? [] : parakeetHotwordArgs(),
+    extra: openvino ? [] : ['--blank-penalty', String(mp.blankPenalty)],
   };
 };
 
@@ -2128,7 +2367,7 @@ const asrEngineArgs = (model) => {
  *  调用点一律用这个，**不要**自己拼 --tta/--threads —— 见 asrEngineArgs 的说明。 */
 const asrArgsFor = (ea, modelDir, audio, out, confMode) => [
   '--model', modelDir, '--audio', audio, '--out', out,
-  ...(ea.noThreads ? [] : ['--threads', '4']),
+  ...(ea.noThreads ? [] : ['--threads', String(ea.threads || 4)]),
   '--provider', ea.provider,
   ...(ea.extra || []),
   ...(ea.hotwords || []),
@@ -2293,12 +2532,16 @@ function stripConfidence(segs) {
 function castPromptCfg() {
   try { return String((readAsrSettings().cast || {}).prompt || ''); } catch { return ''; }
 }
+/** 分角色总开关（settings.cast.enabled 默认开）。速度测试的分角色后处理也走它。 */
+const castEnabled = () => {
+  try { return (readAsrSettings().cast || {}).enabled !== false; } catch { return true; }
+};
 /* 每个模型一个目录: asr/models/<dirName>。settings.models 记录各模型目录,
  * asrModelDir 是旧字段(仅 parakeet 兼容)。selectedModel = 创建初稿默认用的模型。 */
 function modelDirFor(modelId) {
   const s = readAsrSettings();
   if (s.models && s.models[modelId]) return path.resolve(String(s.models[modelId]));
-  const m = modelById(modelId);
+  const m = anyModelById(modelId);
   return m ? path.join(modelsRoot(), m.dirName) : '';
 }
 
@@ -2323,6 +2566,13 @@ function deleteModelFiles(model) {
   const realRoot = fs.realpathSync(root), realDir = fs.realpathSync(dir);
   const realRel = path.relative(realRoot, realDir);
   if (!realRel || realRel.startsWith('..') || path.isAbsolute(realRel)) return detached('outside-root');
+  // 子目录（Qwen 的 aligner/）也属于模型本身；只删 allowlist 里的名字，拒绝链接。
+  for (const sub of (model.ownedDirs || [])) {
+    const p = path.join(dir, sub);
+    if (!fs.existsSync(p)) continue;
+    if (fs.lstatSync(p).isSymbolicLink()) return detached('linked-directory');
+    fs.rmSync(p, { recursive: true, force: true });
+  }
   const settings = readAsrSettings();
   if (Object.entries(settings.models || {}).some(([id, p]) => id !== model.id && same(path.resolve(String(p)), dir))) {
     return detached('shared-directory');
@@ -2352,11 +2602,12 @@ function setSelectedModel(id) {
 
 /** 检查某模型目录是否完整(按该模型自己的文件清单); 返回缺失项数组(空 = 可用) */
 function missingModelFiles(dir, model) {
-  let names;
-  try { names = fs.readdirSync(dir); } catch { return ['目录不存在']; }
   const list = (model && model.files) ? model.files : null;
   if (!list) return ['未知模型'];
-  return list.filter(f => !names.some(n => n.toLowerCase() === f.toLowerCase()));
+  // 支持 aligner/xxx 这类子目录文件；不能只看顶层 readdir 的名字。
+  return list.filter(f => {
+    try { return !fs.statSync(path.join(dir, f)).isFile(); } catch { return true; }
+  });
 }
 /** 模型文件是否完整: 文件都在 + 总大小 ≥ 标称值的 90%。
  *  只查名字不够 —— 半截/0 字节的残留文件会让模型"看起来就绪", 加载时才炸(实测踩过)。 */
@@ -2404,14 +2655,19 @@ async function verifyDownloadedModelFiles(dir, model) {
 }
 /** 模型是否可用(文件齐全且大小达标); whisper.cpp 引擎还要求运行时就位 */
 function modelReady(modelId) {
-  const m = modelById(modelId);
+  const m = anyModelById(modelId);
   if (!m) return false;
   if (m.cloud) return true;        // 云端识别: 没有本地文件可查(能不能用取决于联网, 由识别时报错说清)
   const dir = modelDirFor(modelId);
   if (!dir || !modelFilesOk(dir, m)) return false;
   if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return false;
-  if (m.engine === 'crispasr' && !crispasrRuntimeOk()) return false;
+  if (isCrispEngine(m.engine) && !crispasrRuntimeOk()) return false;
   if (m.engine === 'faster-whisper' && !fasterWhisperRuntimeOk()) return false;
+  if (m.engine === 'qwen' && !qwenRuntimeOk()) return false;
+  if (m.engine === 'aligner') {
+    if (m.runtimeKey === 'runtime:qwen' && !qwenRuntimeOk()) return false;
+    if (m.runtimeKey === 'runtime:crispasr' && !crispasrRuntimeOk()) return false;
+  }
   if (m.engine === 'vibevoice' && !vibevoiceRuntimeOk()) return false;
   // dual 引擎要两套模型都在（NPU 那套 + sherpa int8 那套）。不这么判的话，
   // 缺一套时会在识别跑到一半才炸，用户看到的是莫名其妙的失败。
@@ -2483,8 +2739,9 @@ function resolveRerecogModel(meta) {
   return { error: '语音识别模型不可用，先到设置里下载' };
 }
 async function prepareVibeVoiceSelection(meta, modelId) {
-  const id = modelId || rerecogModelId() || meta?.draft?.modelId || selectedModelId();
-  if (modelById(id)?.engine === 'vibevoice') await probeVibeVoice();
+  // 停用：VibeVoice 已从模型列表移除，不再触发运行时预检。
+  // const id = modelId || rerecogModelId() || meta?.draft?.modelId || selectedModelId();
+  // if (modelById(id)?.engine === 'vibevoice') await probeVibeVoice();
 }
 
 /* 模型/运行时下载: Node 内置 fetch + Range 断点续传(保持本项目零 npm 依赖)。
@@ -2498,6 +2755,10 @@ const downloads = new Map();   // key: 'model:<id>' | 'runtime' | 'diarize'
  * 耗时以分钟计，所以做成"启动 + 轮询"而不是同步请求。 */
 let perfState = { running: false, pct: 0, msg: '', error: null, result: null, startedAt: 0 };
 let perfProc = null;
+/* 全模型速度测试：与双引擎测试分开状态，避免两个测试互相覆盖进度。 */
+let benchState = { running: false, pct: 0, msg: '', error: null, results: [], total: 0, done: 0, current: '', startedAt: 0, cancelled: false };
+let benchProc = null;
+let benchCancel = false;
 const dlState = (key, init) => {
   if (init) downloads.set(key, init);
   return downloads.get(key) || { running: false, pct: 0, msg: '', error: null };
@@ -2598,8 +2859,10 @@ function startModelDownload(model, dir) {
         const f = model.files[i];
         // 少数模型的主权重与配套模型分属不同仓库(如 multitalker 的流式分离权重) —— 按文件覆盖仓库
         const repo = (model.fileRepos && model.fileRepos[f]) || model.repo;
+        const source = (model.fileSources && model.fileSources[f]) || f;
         const base = `${HF_ENDPOINT}/${repo}/resolve/${model.revision || 'main'}`;
         const finalFile = path.join(dir, f);
+        fs.mkdirSync(path.dirname(finalFile), { recursive: true });
         const pinnedSize = model.fileSizes && model.fileSizes[f];
         const destination = model.revision ? finalFile + '.dl' : finalFile;
         // 已完成文件在重试时保留，临时文件续传，避免完整文件触发 Range 416。
@@ -2609,7 +2872,7 @@ function startModelDownload(model, dir) {
           continue;
         }
         if (!(pinnedSize && fs.existsSync(destination) && fs.statSync(destination).size === pinnedSize)) {
-        await downloadAny(candidateUrls(`${base}/${f}`), destination, (done, total) => {
+        await downloadAny(candidateUrls(`${base}/${source}`), destination, (done, total) => {
           if (done < 0) return;                       // 重试开始的通知, 进度不回退
           const part = total ? done / total : 0;
           const st = dlState(key);
@@ -2692,6 +2955,8 @@ function startDiarizeDownload() {
  * 装到 CPU 版 torch 上等于白装（multitalker 只认 CUDA, 拒绝 CPU 推理）。
  * 进度走 downloads key='nemo', 与其它下载共用设置面板的进度 UI。 */
 function startNemoInstall() {
+  throw new Error('NeMo 运行时已停用');
+  /* 原实现保留：
   const key = 'nemo';
   const set = (patch) => dlState(key, Object.assign({ kind: 'nemo', modelId: 'nemo' }, patch));
   set({ running: true, pct: 1, msg: '准备安装 NeMo 运行时…', error: null });
@@ -2737,12 +3002,15 @@ function startNemoInstall() {
       console.error('[asr] NeMo 运行时安装失败:', msg);
     }
   })();
+  */
 }
 
 /* ═══════════ VibeVoice CUDA 4bit 运行时安装 ═══════════
  * 只在已经存在 NVIDIA GPU 的 ASR Python 环境里安装 Transformers、Accelerate
  * 与 CUDA bitsandbytes。绝不安装 CPU torch，也不改变其它 ASR 引擎的选择。 */
 function startVibeVoiceInstall() {
+  throw new Error('VibeVoice 运行时已停用');
+  /* 原实现保留：
   const key = 'vibevoice';
   if (dlState(key).running) return;
   dlState(key, { running: true, kind: 'vibevoice', modelId: 'vibevoice', pct: 1, msg: '准备安装 VibeVoice CUDA 4bit 运行时…', error: null });
@@ -2791,14 +3059,24 @@ function startVibeVoiceInstall() {
         const torchProbe = await runCapture(py, ['-c', 'import torch; assert torch.cuda.is_available(); print(torch.__version__)'], 120000);
         if (!torchProbe.stdout.trim()) throw new Error('CUDA PyTorch 安装后仍不可用；不会改用 CPU');
       }
-      prog(18, '安装 Transformers、Accelerate 与 bitsandbytes…');
+      prog(18, '安装 Transformers、Accelerate、soundfile 与 soxr…');
       // Pin the already verified CUDA build so a dependency resolver cannot
       // replace it with an incompatible wheel from another package index.
+      // 分成两段装：bitsandbytes 要 CUDA NF4 kernel，某些镜像缺这个版本时只让这一段失败，
+      // Transformers/Accelerate 已经装好，下次点「修复运行时」只补 bitsandbytes，不用重下。
       const torchVer = (await runCapture(py, ['-c', 'import torch; print(torch.__version__)'], 120000)).stdout.trim();
       await pipInstallRetry(py, ['-m', 'pip', 'install', 'torch==' + torchVer,
-        'transformers==5.17.0', 'accelerate==1.15.0', 'bitsandbytes==0.50.2',
-        'soundfile', 'soxr', '-i', NEMO_PIP_INDEX], 3600000,
-        line => prog(18 + Math.min(62, String(line).length / 2), '安装 CUDA 4bit 依赖（PyTorch ' + torchVer + '）…'));
+        'transformers==5.17.0', 'accelerate==1.15.0', 'soundfile', 'soxr',
+        '-i', NEMO_PIP_INDEX, '--extra-index-url', 'https://pypi.org/simple'], 3600000,
+        line => prog(18 + Math.min(46, String(line).length / 3), '安装 VibeVoice 依赖（PyTorch ' + torchVer + '）…'));
+      prog(64, '安装 CUDA bitsandbytes…');
+      try {
+        await pipInstallRetry(py, ['-m', 'pip', 'install', 'bitsandbytes==0.50.2',
+          '-i', NEMO_PIP_INDEX, '--extra-index-url', 'https://pypi.org/simple'], 1800000,
+          line => prog(64 + Math.min(20, String(line).length / 4), '安装 CUDA bitsandbytes…'));
+      } catch (e) {
+        throw new Error('CUDA bitsandbytes 安装失败：' + String((e && e.message) || e).slice(0, 200));
+      }
       prog(86, '验证 VibeVoice CUDA 4bit 运行时…');
       await probeVibeVoice(true);
       const v = vibevoiceProbeCache;
@@ -2810,6 +3088,7 @@ function startVibeVoiceInstall() {
       vibevoiceProbeCache = null;
     }
   })();
+  */
 }
 
 /** 运行时下载（zip → 解压 → 展平）：whisper.cpp 与 CrispASR 共用一套实现。
@@ -2892,8 +3171,11 @@ function startRuntimeDownload(cfg) {
 }
 /** whisper.cpp 运行时（key='runtime'，重构前后行为一致） */
 function startWhisperRuntimeDownload() {
+  throw new Error('whisper.cpp 运行时已停用');
+  /*
   startRuntimeDownload({ key: 'runtime', url: WHISPER_RUNTIME.url, dir: WHISPER_RUNTIME.dir,
     name: 'whisper.cpp', exeOk: whisperRuntimeOk, vulkanOk: whisperVulkanOk, vulkanHardFail: true });
+  */
 }
 /** CrispASR 运行时（key='runtime:crispasr'；缺 Vulkan 不判失败，识别时自动退 CPU） */
 function startCrispasrRuntimeDownload() {
@@ -3314,6 +3596,108 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
   });
 }
 
+/** CrispASR 的 Qwen/部分 GGUF 路径对非 ASCII 路径不友好（实测中文目录下载入失败），
+ *  模型和音频在调用前镜像到同盘的 ASCII 缓存目录；同盘优先硬链接，失败再复制。 */
+const VULKAN_CACHE_DIR = path.join(path.dirname(ROOT), 'SubFabricVulkanCache');
+function crispAsciiFile(file) {
+  if (!file || !/[^\x00-\x7F]/.test(file)) return file;
+  try {
+    fs.mkdirSync(VULKAN_CACHE_DIR, { recursive: true });
+    const dst = path.join(VULKAN_CACHE_DIR, path.basename(file));
+    if (fs.existsSync(dst) && fs.statSync(dst).size === fs.statSync(file).size) return dst;
+    try { fs.linkSync(file, dst); } catch { fs.copyFileSync(file, dst); }
+    return dst;
+  } catch { return file; }
+}
+function crispAsciiAudio(file, tag) {
+  if (!file || !/[^\x00-\x7F]/.test(file)) return { path: file, temp: false };
+  try {
+    fs.mkdirSync(VULKAN_CACHE_DIR, { recursive: true });
+    const dst = path.join(VULKAN_CACHE_DIR, 'audio-' + process.pid + '-' + Date.now() + '-' + (tag || 'in') + '.wav');
+    fs.copyFileSync(file, dst);
+    return { path: dst, temp: true };
+  } catch { return { path: file, temp: false }; }
+}
+function crispSliceWav(src, dst, start, end) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(Math.max(0.1, end - start)), '-i', src, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', dst], { windowsHide: true });
+    let err = '';
+    p.stderr.on('data', d => { if (err.length < 2000) err += String(d); });
+    p.on('error', reject);
+    p.on('close', code => code === 0 ? resolve() : reject(new Error('音频切片失败（' + code + '）' + (err ? '：' + err.slice(0, 200) : ''))));
+  });
+}
+function crispAlignOnly(aligner, wav, text, outPrefix, onProgress) {
+  return new Promise((resolve, reject) => {
+    const out = outPrefix + '.json';
+    const p = spawn(crispasrCli(), ['--align-only', '-am', aligner, '-f', wav,
+      '--ref-text', text, '--align-format', 'json', '--align-output', out, '-np'],
+      { windowsHide: true, cwd: CRISPASR_RUNTIME.dir });
+    let err = '';
+    const timer = setTimeout(() => { try { p.kill(); } catch {} }, 10 * 60 * 1000);
+    p.stderr.on('data', d => { if (err.length < 3000) err += String(d); });
+    p.on('error', e => { clearTimeout(timer); reject(new Error('无法启动 CrispASR 对齐器: ' + e.message)); });
+    p.on('close', code => {
+      clearTimeout(timer);
+      let data = null;
+      try { data = JSON.parse(fs.readFileSync(out, 'utf8')); } catch {}
+      try { fs.unlinkSync(out); } catch {}
+      if (code !== 0 || !Array.isArray(data)) return reject(new Error('CrispASR 对齐失败（' + code + '）' + (err ? '：' + err.replace(/\s+/g, ' ').slice(0, 220) : '')));
+      resolve(data.map(x => ({ text: String(x.word || x.text || '').trim(), start_time: Number(x.start) || 0, end_time: Number(x.end) || 0 })).filter(x => x.text));
+    });
+  });
+}
+
+async function crispPostAlignWords(wav, transcription, aligner, onProgress) {
+  const segs = [];
+  for (const s of (transcription || [])) {
+    const text = String(s.text || '').trim();
+    if (!text) continue;
+    const off = s.offsets || {};
+    const start = Number(off.from != null ? off.from : 0) / 1000;
+    const end = Number(off.to != null ? off.to : start + 1) / 1000;
+    segs.push({ start, end: Math.max(start + 0.05, end), text });
+  }
+  if (!segs.length) throw new Error('CrispASR 没有可对齐的转写文本');
+  segs.sort((a, b) => a.start - b.start);
+  // 对齐器建议单段 ≤5min；按 ASR 自带的段边界聚合，避免把一个词切在窗口中间。
+  const groups = [];
+  let cur = [], start = 0, end = 0;
+  for (const s of segs) {
+    if (!cur.length) { cur = [s]; start = s.start; end = s.end; continue; }
+    if (s.end - start > 150) { groups.push({ cur, start, end }); cur = [s]; start = s.start; end = s.end; }
+    else { cur.push(s); end = s.end; }
+  }
+  if (cur.length) groups.push({ cur, start, end });
+  const alignerAscii = crispAsciiFile(aligner);
+  const words = [];
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    const slice = path.join(VULKAN_CACHE_DIR, 'align-' + process.pid + '-' + Date.now() + '-' + i + '.wav');
+    try {
+      fs.mkdirSync(VULKAN_CACHE_DIR, { recursive: true });
+      await crispSliceWav(wav, slice, g.start, g.end);
+      if (onProgress) onProgress(i, groups.length);
+      const got = await crispAlignOnly(alignerAscii, slice, g.cur.map(x => x.text).join(' '), slice + '.out');
+      for (const w of got) {
+        w.start_time += g.start; w.end_time += g.start;
+        if (w.text) words.push(w);
+      }
+    } finally { try { fs.unlinkSync(slice); } catch {} }
+  }
+  return words;
+}
+
+function crispOptionsFor(model, mdir, extra) {
+  const o = Object.assign({}, extra || {});
+  o.backend = model.crispBackend || 'parakeet';
+  o.postAlign = !!model.crispPostAlign;
+  o.chunkSec = model.crispChunkSec || 0;
+  o.language = model.crispLanguage || 'en';
+  if (model.crispAlignerFile) o.aligner = path.join(mdir, model.crispAlignerFile);
+  return o;
+}
+
 /** CrispASR 引擎（ggml；Parakeet 走 Vulkan，机器没驱动就退 CPU）: 跑 crispasr.exe。
  *  词级时间戳取 -ojf 的 words[].offsets（毫秒，实测 v0.8.42 与 t0/t1 厘秒一致）；
  *  与 runWhisperCpp 同构: 词数组 → 按句末标点/停顿>0.8s/行长 分句 → {segments:[{start,end,text,words}]}。
@@ -3322,12 +3706,18 @@ function runWhisperCpp(modelBin, wav, onProgress, opts) {
 function runCrispAsr(modelGguf, wav, onProgress, opts) {
   const o = opts || {};
   const exe = crispasrCli();
-  const outPrefix = wav + '.crisp';
+  const backend = o.backend || 'parakeet';
+  const lang = o.language || 'en';
+  const modelAscii = crispAsciiFile(modelGguf);
+  const audio = crispAsciiAudio(wav, 'asr');
+  const wavAscii = audio.path;
+  const outPrefix = wavAscii + '.crisp';
   const threads = Math.max(1, Math.min(32, Number(o.threads) || 6));
   const wordThreshold = Math.max(0.01, Math.min(0.99, Number(o.wordThreshold) || 0.01));
   const runOnce = (noGpu) => new Promise((resolve, reject) => {
-    const cmd = [exe, '--backend', 'parakeet', '-m', modelGguf, '-f', wav,
-                 '-ojf', '-of', outPrefix, '-t', String(threads), '-l', 'en', '-wt', String(wordThreshold)];
+    const cmd = [exe, '--backend', backend, '-m', modelAscii, '-f', wavAscii,
+                 '-ojf', '-of', outPrefix, '-t', String(threads), '-l', lang, '-wt', String(wordThreshold)];
+    if (o.chunkSec) cmd.push('-ck', String(o.chunkSec));
     if (noGpu) cmd.push('--no-gpu');
     const p = spawn(cmd[0], cmd.slice(1), { windowsHide: true, cwd: CRISPASR_RUNTIME.dir });
     if (opts && opts.register) { try { opts.register(p); } catch {} }
@@ -3354,7 +3744,7 @@ function runCrispAsr(modelGguf, wav, onProgress, opts) {
       if (onProgress) onProgress(Math.max(0, lastPct), Math.round((Date.now() - started) / 1000));
     }, 20000);
     p.on('error', e => { clearTimeout(timer); clearInterval(beat); reject(new Error('无法启动 crispasr: ' + e.message)); });
-    p.on('close', (code) => {
+    p.on('close', async (code) => {
       clearTimeout(timer); clearInterval(beat);
       const jsonPath = outPrefix + '.json';
       let data = null;
@@ -3366,9 +3756,8 @@ function runCrispAsr(modelGguf, wav, onProgress, opts) {
         const hint = lastErrLine ? '：' + lastErrLine.slice(0, 200) : (rawHead ? '：输出异常 ' + rawHead.replace(/\s+/g, ' ').slice(0, 200) : '');
         return reject(new Error('crispasr 识别失败（退出码 ' + code + '，运行 ' + mins + ' 分钟' + (noGpu ? '，CPU 模式' : '') + '）' + hint));
       }
-      // 词数组: offsets 是毫秒（主）, t0/t1 是厘秒（退化兜底）。
-      // 不用分段自带的 offsets —— 短音频它常整段返回一条, 分句统一交给下面与 whisper 同款的规则。
-      const words = [];
+      // 原生词数组: offsets 是毫秒（主）, t0/t1 是厘秒（退化兜底）。
+      const nativeWords = [];
       for (const seg of (data.transcription || [])) {
         for (const w of (seg.words || [])) {
           const text = String(w.text || '').trim();
@@ -3377,7 +3766,17 @@ function runCrispAsr(modelGguf, wav, onProgress, opts) {
           const st = (off.from != null ? Number(off.from) : Number(w.t0 || 0) * 10) / 1000;
           let en = (off.to != null ? Number(off.to) : Number(w.t1 || 0) * 10) / 1000;
           if (!(en > st)) en = st + 0.2;
-          words.push({ word: text, start: st, end: en });
+          nativeWords.push({ word: text, start: st, end: en });
+        }
+      }
+      let words = nativeWords;
+      if (o.postAlign) {
+        try {
+          const aligned = await crispPostAlignWords(wavAscii, data.transcription, o.aligner,
+            (i, n) => { if (onProgress) onProgress(Math.min(99, 90 + Math.round((i + 1) / n * 9))); });
+          words = aligned.map(w => ({ word: w.text, start: w.start_time, end: w.end_time }));
+        } catch (e) {
+          return reject(new Error('CrispASR 已完成转写，但逐词对齐失败：' + String(e.message || e).slice(0, 300)));
         }
       }
       if (!words.length) return reject(new Error('未识别到语音内容（crispasr 输出为空）'));
@@ -3399,6 +3798,7 @@ function runCrispAsr(modelGguf, wav, onProgress, opts) {
         words: ws.map(w => ({ word: w.word, start: +w.start.toFixed(3), end: +w.end.toFixed(3) })),
       }));
       for (let i = 1; i < segments.length; i++) if (segments[i].start < segments[i - 1].end) segments[i].start = segments[i - 1].end;
+      if (audio.temp) { try { fs.unlinkSync(wavAscii); } catch {} }
       resolve({ segments, language: 'en' });
     });
   });
@@ -3504,6 +3904,274 @@ async function runFasterWhisper(wav, modelDir, onProgress, opts) {
       resolve(parsed);
     });
   });
+}
+
+/* ── 全模型速度测试 ───────────────────────────────────────────────
+ * 用同一段音频把用户勾选的已安装模型各跑一次，倍率 = 音频秒数 / 墙钟秒数。
+ * 串行执行避免多模型同时抢 GPU；结果包含模型加载时间，反映真实“点下去等多久”。 */
+const BENCH_ENGINES = new Set(['openvino', 'faster-whisper', 'crispasr', 'crispasr-whisper', 'crispasr-qwen', 'qwen']);
+
+function benchSupported(model) {
+  return !!model && !model.cloud && !isRetiredEngine(model.engine)
+    && model.engine !== 'dual' && BENCH_ENGINES.has(model.engine);
+}
+
+/** 速度测试的工作目录。
+ *
+ *  ⚠ **不能放 %TEMP%**：这台机器上 Faster-Whisper-XXL 的 PyInstaller 子进程写
+ *  %TEMP% 会 `PermissionError: [Errno 13] ... input.json`（实测：同一段音频只换
+ *  输出目录，%TEMP% 必失败、projects/ 下必成功），而写项目目录正常 —— 见
+ *  runFasterWhisper 的 outRoot 说明。所有测试引擎共用这个目录，统一避开该限制。
+ *  目录名以 `.` 开头：/api/projects 的 validId 不接受点号，所以不会被当成项目；
+ *  测完删掉本次 run 目录，父目录空了也一并收掉。 */
+function benchWorkRoot() {
+  const base = path.join(ROOT, 'projects', '.bench');
+  fs.mkdirSync(base, { recursive: true });
+  return base;
+}
+function benchClip(audio, seconds) {
+  const dir = fs.mkdtempSync(path.join(benchWorkRoot(), 'run-'));
+  const wav = path.join(dir, 'input.wav');
+  try {
+    const r = childProcess.spawnSync(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-i', audio,
+      '-t', String(seconds), '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav],
+      { windowsHide: true, timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+    if (r.error || r.status !== 0 || !fs.existsSync(wav)) {
+      throw new Error('测试音频截取失败：' + String((r.error && r.error.message) || (r.stderr || '') || 'ffmpeg 不可用').trim().slice(0, 300));
+    }
+    const probe = childProcess.spawnSync(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', wav],
+      { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+    const dur = parseFloat(String(probe.stdout || '').trim());
+    return { dir, wav, duration: Number.isFinite(dur) && dur > 0 ? dur : seconds };
+  } catch (e) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    throw e;
+  }
+}
+
+function benchSpawn(cmd, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let p;
+    try { p = spawn(cmd, args, { windowsHide: true, cwd: ROOT, env: pySpawnEnv() }); }
+    catch (e) { return reject(e); }
+    benchProc = p;
+    let err = '', settled = false;
+    const finish = (fn, value) => {
+      if (settled) return; settled = true;
+      clearTimeout(timer);
+      if (benchProc === p) benchProc = null;
+      fn(value);
+    };
+    const timer = setTimeout(() => {
+      try { p.kill(); } catch {}
+      finish(reject, new Error('模型测试超时（' + Math.round(timeoutMs / 1000) + 's）'));
+    }, timeoutMs);
+    p.stdout.on('data', d => { err = (err + String(d)).slice(-4000); });
+    p.stderr.on('data', d => { err = (err + String(d)).slice(-4000); });
+    p.on('error', e => finish(reject, e));
+    p.on('close', code => {
+      if (benchCancel) return finish(reject, new Error('已取消测试'));
+      if (code !== 0) {
+        const tail = err.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean).slice(-3).join(' | ');
+        return finish(reject, new Error('退出码 ' + code + (tail ? '：' + tail.slice(-300) : '')));
+      }
+      finish(resolve);
+    });
+  });
+}
+
+/** 速度测试的「测试条件」：与创建稿件页的识别开关对齐。
+ *  逐词/置信度作用于识别本身；分角色识别依赖说话人区分（创建页也是这个前提），
+ *  两者作为后处理单独计时并计入「实际总耗时」。 */
+function normalizeBenchConditions(raw) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  const confidence = CONFIDENCE_MODES.includes(c.confidence) ? c.confidence : asrConfidenceDefault();
+  const cast = c.cast === true;
+  return {
+    word: c.word !== false,
+    confidence,
+    cast,
+    speakers: c.speakers === true || cast,   // 创建页的分角色识别以说话人区分为前提
+    speakerCount: Math.max(0, Math.min(20, Math.round(Number(c.speakerCount) || 0))),
+  };
+}
+
+/** 速度测试里跑一次说话人分离（独立于项目目录，不写 meta）。 */
+function benchDiarize(wav, speakerCount, onProgress) {
+  const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
+  const embModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[1].file);
+  const outJson = wav + '.bench-diarize.json';
+  return new Promise((resolve, reject) => {
+    const p = spawn(ASR_PY, [path.join(ASR_DIR, 'diarize.py'),
+      '--segmentation', segModel, '--embedding', embModel, '--audio', wav, '--out', outJson,
+      '--speakers', String(Math.max(0, Math.min(20, Number(speakerCount) || 0)))],
+      { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+    benchProc = p;
+    let pyErr = '', done = false, timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, 30 * 60 * 1000);
+    const finish = (fn, value) => {
+      if (done) return; done = true; clearTimeout(timer);
+      try { fs.unlinkSync(outJson); } catch {}
+      if (benchProc === p) benchProc = null;
+      fn(value);
+    };
+    p.stderr.on('data', d => {
+      const s = String(d);
+      if (pyErr.length < 3000) pyErr += s;
+      for (const line of s.split('\n')) {
+        const t = line.trim();
+        if (!t.startsWith('{')) continue;
+        let o; try { o = JSON.parse(t); } catch { continue; }
+        if (o.type === 'progress' && onProgress) onProgress(o.pct, o.msg);
+      }
+    });
+    p.on('error', e => finish(reject, new Error('无法启动说话人分离: ' + e.message)));
+    p.on('close', c => {
+      let data = null;
+      try { data = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
+      if (c !== 0 || !data || !Array.isArray(data.regions)) {
+        if (timedOut) return finish(reject, new Error('说话人分离超时（30 分钟）'));
+        const m = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
+        return finish(reject, new Error((m && m[1]) || ('说话人分离失败（' + asrExitHint(c)
+          + (pyErrTail(pyErr) ? '｜' + pyErrTail(pyErr) : '') + '）')));
+      }
+      finish(resolve, data.regions);
+    });
+  });
+}
+
+/** 速度测试里的分角色识别计时：用第一份成功识别结果跑与创建流程相同的两步 LLM。
+ *  会产生一次真实的模型调用；未配置 LLM 时跳过并说明原因。 */
+async function benchCast(segments, speakerCount) {
+  if (!castEnabled()) return { sec: 0, note: '分角色识别已在设置中关闭' };
+  const cfg = translateCfg();
+  if (!llmReady(cfg)) return { sec: 0, note: '未配置 LLM，已跳过分角色识别（不影响识别耗时）' };
+  const call = (msgs) => llmChat(cfg, msgs, { jsonMode: true, maxTokens: 1200 }).then(r => r.content);
+  const source = { title: '速度测试音频' };
+  const started = Date.now();
+  const a = await cast.inferCast({
+    source, userCount: speakerCount, systemPrompt: castPromptCfg(), call, log: () => {},
+  }).catch(e => ({ characters: [], speakerCount, error: String((e && e.message) || e) }));
+  if (!a || !Array.isArray(a.characters) || !a.characters.length) {
+    return { sec: (Date.now() - started) / 1000, note: '分角色识别未推断出人物：' + ((a && a.error) || '') };
+  }
+  const b = await cast.mapSpeakers({
+    source, characters: a.characters, segments, call, log: () => {},
+  }).catch(e => ({ error: String((e && e.message) || e) }));
+  return { sec: (Date.now() - started) / 1000, note: (b && b.error) || '' };
+}
+
+/** 识别后的可选步骤：说话人分离（本地）+ 分角色识别（LLM）。返回总耗时与说明。 */
+async function benchPostProcess(wav, segments, cond) {
+  const out = { sec: 0, diarizeSec: 0, castSec: 0, note: '' };
+  if (!cond.speakers) return out;
+  if (!diarizeReady()) {
+    out.note = '说话人模型未安装，已跳过说话人区分（不影响识别耗时）';
+    return out;
+  }
+  benchState.msg = '后处理：说话人分离…';
+  const t0 = Date.now();
+  try {
+    const regions = await benchDiarize(wav, cond.speakerCount,
+      (pct, msg) => { benchState.msg = '说话人分离… ' + (msg || (pct + '%')); });
+    assignSpeakers(segments || [], regions);
+    out.diarizeSec = (Date.now() - t0) / 1000;
+    out.sec += out.diarizeSec;
+  } catch (e) {
+    out.note = '说话人分离失败，已跳过：' + String((e && e.message) || e).slice(0, 160);
+    return out;
+  }
+  if (cond.cast) {
+    benchState.msg = '后处理：分角色识别…';
+    const c = await benchCast(segments, cond.speakerCount);
+    out.castSec = c.sec;
+    out.sec += c.sec;
+    if (c.note) out.note = (out.note ? out.note + ' ' : '') + c.note;
+  }
+  return out;
+}
+
+/** 速度测试的置信度摘要：不同引擎的 confidence 形态一致（score/low），取平均与低置信度占比。
+ *  VibeVoice 没有逐句 confidence，返回 null 字段而不是伪造 0。 */
+function benchConfidenceSummary(segments) {
+  const list = Array.isArray(segments) ? segments : [];
+  const scores = [];
+  let low = 0;
+  for (const s of list) {
+    const c = s && s.confidence;
+    if (!c) continue;
+    const n = Number(c.score);
+    if (Number.isFinite(n)) scores.push(n);
+    if (c.low) low++;
+  }
+  return {
+    segments: list.length,
+    scored: scores.length,
+    avg: scores.length ? +(scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(3) : null,
+    lowRate: scores.length ? +(low / scores.length).toFixed(3) : null,
+  };
+}
+
+async function benchRunModel(model, wav, tempDir, seconds, cond) {
+  const mdir = modelDirFor(model.id);
+  if (!mdir) throw new Error('找不到模型目录');
+  const mp = modelParamsFor(model);
+  // VibeVoice 是自回归生成，30 秒素材也可能跑十几分钟；单独给足超时，别用通用公式误杀。
+  const timeoutMs = Math.max(180000, Math.round((seconds || 20) * 10000) + 120000,
+    model.engine === 'vibevoice' ? 900000 : 0);
+  const started = Date.now();
+  const confMode = cond && CONFIDENCE_MODES.includes(cond.confidence) ? cond.confidence : 'off';
+  const word = !cond || cond.word !== false;
+  let task = null, outPath = '', data = null;
+  if (model.engine === 'whisper.cpp') {
+    // whisper-cli 固定 -ml 1 -sow，词级输出不可关；这个开关对它是只读条件。
+    task = runWhisperCpp(path.join(mdir, model.files[0]), wav, () => {},
+      Object.assign({}, mp, { register: p => { benchProc = p; } }));
+  } else if (model.engine === 'faster-whisper') {
+    task = runFasterWhisper(wav, mdir, () => {},
+      Object.assign({}, mp, {
+        wordTimestamps: word && mp.wordTimestamps !== false,
+        outRoot: tempDir, register: p => { benchProc = p; },
+      }));
+  } else if (isCrispEngine(model.engine)) {
+    const bin = path.join(mdir, model.crispModelFile || model.files[0]);
+    task = runCrispAsr(bin, wav, () => {}, crispOptionsFor(model, mdir, { register: p => { benchProc = p; } }));
+  } else if (BENCH_ENGINES.has(model.engine)) {
+    const ea = asrEngineArgs(model);
+    outPath = path.join(tempDir, 'bench-' + model.id.replace(/[^\w.-]+/g, '_') + '.json');
+    /* ⚠ VibeVoice 有自己的独立 Python（asr/runtime-vibevoice，装 torch 4bit/bitsandbytes）；
+     * 共享的 ASR_PY 里没有这些包。旧速度测试统一用 ASR_PY 跑 vibevoice.py，于是即使探针
+     * 显示运行时 OK，bench 仍报「No module named 'bitsandbytes'」——实测就是这条。 */
+    const python = model.engine === 'vibevoice' ? vibevoicePython()
+      : (model.engine === 'qwen' ? qwenPython() : ASR_PY);
+    task = benchSpawn(python, [ea.script, ...asrArgsFor(ea, mdir, wav, outPath, confMode)], timeoutMs);
+  } else {
+    throw new Error('该模型不支持速度测试');
+  }
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      try { benchProc?.kill(); } catch {}
+      reject(new Error('模型测试超时（' + Math.round(timeoutMs / 1000) + 's）'));
+    }, timeoutMs + 2000);
+  });
+  try {
+    if (task) {
+      const r = await Promise.race([Promise.resolve(task), timeout]);
+      if (r && Array.isArray(r.segments)) data = r;
+    } else {
+      await Promise.race([Promise.resolve(task), timeout]);
+    }
+    if (!data && outPath) {
+      try { data = JSON.parse(fs.readFileSync(outPath, 'utf8')); } catch {}
+    }
+    const elapsedSec = Math.max(0.001, (Date.now() - started) / 1000);
+    return { elapsedSec: +elapsedSec.toFixed(3), speed: +(seconds / elapsedSec).toFixed(2),
+      segments: (data && Array.isArray(data.segments)) ? data.segments : [] };
+  } finally {
+    clearTimeout(timer);
+    benchProc = null;
+  }
 }
 
 /* ═══════════ 简单路由表 ═══════════
@@ -4191,7 +4859,7 @@ async function startFetchJob(id, opts) {
   pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] 完成: ' + path.basename(file)
     + '（' + (Number(sm.fileSize || 0) / 1048576).toFixed(1) + ' MB）');
   setDraft(id, { stage: STAGE.extract, progress: 26, message: '下载完成，开始提取音频与波形…' });
-  pendingAsr.set(id, { wordLevel: !!opts.wordLevel });
+  pendingAsr.set(id, { wordLevel: !!opts.wordLevel, align: !!opts.align });
   startPrepare(id, file);
   draftJobs.delete(id);        // 交棒完成: 之后由 pendingAsr(→识别) / draftJobs(识别中) 接手
 }
@@ -4283,7 +4951,7 @@ function startPrepare(id, videoPath, mode) {
       const w = pendingAsr.get(id);
       pendingAsr.delete(id);
       if (err) finishDraft(id, new Error('音频提取失败: ' + String(err.message || err)));
-      else safeDraftStep(id, () => startDraftAsr(id, !!w.wordLevel));
+      else safeDraftStep(id, () => startDraftAsr(id, !!w.wordLevel, !!w.align));
     }
   }
 
@@ -5051,313 +5719,190 @@ function startPrepare(id, videoPath, mode) {
     });
   }
 
-  /* 重校对用的引擎 id：**sherpa-onnx 版的 parakeet**，必须是这一个 —— 逐句热词
-   * 只有 sherpa-onnx 后端支持（理由见 realignPrep 里的说明）。 */
-  const REALIGN_MODEL_ID = 'parakeet-tdt-0.6b-v2';
+  /* 重校对用的引擎 id：CUDA 版 Parakeet 已停用，改用 **NPU 版 Parakeet**。
+   * 注意：asr_npu.py 会接受但忽略逐句热词，所以第二级热词偏置在本机不再生效；
+   * 逐词时间仍来自真实音频，保留该功能，但不再声称有热词增强。 */
   /* 切片的两侧 padding：句子的逐词边界与真实语音边界不会完全齐平，切太紧会把首尾词
    * 的起音/收音削掉。实测 0.20s 够用；代价是边缘会带进相邻句的半个词 —— 那些词对不上
    * 本句文本，会被 planBlock 的对齐判成落单丢掉，不会污染结果。 */
   const REALIGN_PAD = 0.20;
 
   /** 对一批字幕块做重对齐。**只算不写** —— 返回提案，由前端确认后才应用。 */
-  /** 重对齐的共享准备：解析模型、设备门禁、原片音频、门槛。
-   *  单条重排（realignBlocks）与全片重校对（runFullRealign）都用这一份，
-   *  保证两条路径的判定标准完全一致（否则"单条能用、全片说不可信"会很怪）。 */
+  /** 重对齐的共享准备：只检查原片音频与 Qwen3-ForcedAligner，不再加载 ASR。
+   *  文本由用户确认，realign 的职责只有“给已确认文本量时间”。
+   *  对齐器优先 CUDA（独立 qwen3-forced-aligner-0.6b），无 N 卡时用独立 Vulkan GGUF。 */
   function realignPrep(id, opt) {
     const o = (opt || {});
     const meta = readMeta(id);
     if (!meta) throw new Error('项目不存在');
-    /* ── 引擎必须是 **sherpa-onnx 版的 parakeet**，不能跟随设置里的 rerecogModel ──
-     * 第二级要拿"该句已有的词"做**逐句热词**（上下文偏置），而热词只有 sherpa-onnx
-     * 后端（asr.py）支持：asr_npu.py 里写死了「Intel NPU 后端暂不支持热词偏置,
-     * 本次忽略热词文件」（实测：参数被接受但热词文件被丢弃）。设置里的 rerecogModel
-     * 很可能指向 NPU 版，跟过去就会变成"热词静默不生效"—— 那比报错难查得多。 */
-    const model = modelById(REALIGN_MODEL_ID);
-    if (!model || !modelReady(model.id)) {
-      throw new Error('全片逐词重校对要用 GPU 版识别模型「' + REALIGN_MODEL_ID
-        + '」（逐句热词只有这个后端支持），当前没装好 —— '
-        + '到「设置 → 识别模型」把它下载下来再试');
-    }
-    const ea = asrEngineArgs(model);
-    const gate = asrGpuGateError(model);
-    if (gate) throw new Error(gate);
-    const mdir = model.cloud ? '' : modelDirFor(model.id);
-    if (!model.cloud && (!mdir || missingModelFiles(mdir, model).length)) {
-      throw new Error('模型文件不完整（' + model.id + '）');
-    }
-    /* 原片音频：新方案要**对真实音频**逐句重识别（旧方案是在 TTS 合成语音上识别，
-     * 时间戳是编的），所以这份文件从可选项变成了必需品。 */
     const audioName = (meta.audio && meta.audio.file) || 'audio.wav';
     const audioWav = safeProjectFile(id, audioName);
     if (!audioWav || !fs.existsSync(audioWav)) {
-      throw new Error('这个稿件没有音频文件（' + audioName + '），没法对原片重识别');
+      throw new Error('这个稿件没有音频文件（' + audioName + '），没法重排逐词时间');
     }
-    /* 设置页里剩下的门槛。⚠ 这里踩过：设置存进了 asr/settings.json，但本函数从没读它、
-     *   也没把 minAnchorRatio 传给 planBlock —— 于是"最低锚点率"是个**摆设**，
-     *   不管怎么调都按代码里的默认值判定。凡是存进设置的值，都要在这里真正用上。
-     *   （voice/rate 是旧 TTS 方案的遗留，重校对不再用：现在的时间戳来自实测音频。） */
-    const rs = (readAsrSettings().realign) || {};
-    const clamp = (v, lo, hi, dflt) => {
-      const n = Number(v);
-      return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : dflt;
-    };
-    return {
-      meta, model, ea, mdir, audioWav, confMode: asrConfidenceFor(meta),
-      // 热词强度沿用「设置 → 识别提示词」那个（实测 3.0 生效、≥6 开始复读热词）
-      hotwordsScore: asrHintCfg().hotwordsScore,
-      minAnchorRatio: clamp(rs.minAnchorRatio, 0.3, 1, alignMod.MIN_ANCHOR_RATIO),
-      // 全片重校对的**采纳门槛**：第一级（无热词重识别）与该句已有文本的词吻合率
-      threshold: clamp(o.threshold !== undefined ? o.threshold : rs.minConfidence, 0.3, 1, 0.7),
-    };
+    const cudaAligner = modelDirFor('qwen3-forced-aligner-0.6b');
+    const cudaReady = qwenRuntimeOk() && !!nvidiaCache.name
+      && fs.existsSync(path.join(cudaAligner, 'model.safetensors'));
+    const forceBackend = String(process.env.SUBFABRIC_REALIGN_BACKEND || '').toLowerCase();
+    let backend = '', aligner = '';
+    if (cudaReady && forceBackend !== 'vulkan') {
+      backend = 'cuda'; aligner = cudaAligner;
+    } else {
+      const f = 'qwen3-forced-aligner-0.6b-q8_0.gguf';
+      const p = path.join(modelDirFor('qwen3-forced-aligner-0.6b-vulkan'), f);
+      if (crispasrRuntimeOk() && fs.existsSync(p)) { backend = 'vulkan'; aligner = crispAsciiFile(p); }
+    }
+    if (!backend) {
+      throw new Error('没有可用的 Qwen3-ForcedAligner。请先安装 Qwen3-ASR（自带对齐器），或安装 Qwen/Whisper Vulkan 版（自带 Vulkan 对齐器）后再试');
+    }
+    return { meta, audioWav, backend, aligner, language: 'English', offset: o.offset };
   }
 
-  /** 对**一条**字幕做重校对：切该句的**原片音频** → 重新识别 → 按实测时间戳重排逐词时间。
-   *
-   *  与旧方案（TTS 朗读 → 对合成语音识别 → 把相对节奏整体缩放到原句区间）的区别：
-   *  旧方案的时间戳**从来不是从原片量出来的**，是"看 TTS 念得像不像"推出来的；
-   *  这里每个词的时间都来自它在本片音频里的真实位置（实测两者平均差 0.295s、最大 0.715s）。
-   *
-   *  @param hotwords 逐句热词（第二级用，**只作用于这一次识别**）；不传 = 第一级。
-   *  @returns 提案对象（含 words / ratio），**不写任何文件**。 */
-  async function realignOne(prep, block, tmpDir, tag, hotwords) {
-    const text = String(block.text || '');
-    const start = Number(block.start), end = Number(block.end);
-    const item = {
-      start, end, text, ok: false, words: [], anchors: 0, ratio: 0,
-      confidence: 0, heard: '', note: '',
-    };
-    if (!text.trim()) { item.note = '这条没有可校对的文本（可能只有标签）'; return item; }
-    if (!(end > start)) { item.note = '时间区间无效'; return item; }
-    const { from, to } = realignWordsMod.sliceRange(
-      start, end, REALIGN_PAD, prep.meta && prep.meta.duration);
-    const wav = path.join(tmpDir, `r-${tag}.wav`);
-    const outJson = path.join(tmpDir, `r-${tag}.json`);
-    await audioSlice.sliceAudio(FFMPEG, prep.audioWav, from, to, wav, false);
-    const data = await realignRecognize(prep, wav, outJson, hotwords);
-    /* 识别词的时间是**切片内**的相对时间 —— 必须把切片起点加回去才是原片绝对时间。
-     * 这一步差一点，整句的逐词时间就会整体平移，而且在稿子上很难看出来。 */
-    const recWords = [];
-    for (const s of (data.segments || [])) {
-      for (const w of (s.words || [])) {
-        if (Number.isFinite(w.start) && Number.isFinite(w.end)) {
-          recWords.push({
-            word: w.word || w.text || '',
-            start: Number(w.start) + from, end: Number(w.end) + from,
-          });
-        }
-      }
-    }
-    /* rawTimes：时间戳是**实测值**，不做整体缩放。
-     * 缩放那一步是给合成语音准备的（TTS 的语速/停顿与被念原文无关，只能借相对节奏）；
-     * 现在识别的是原片音频，再缩放等于把测量结果按块长拉走。 */
-    const plan = alignMod.planBlock(text, { start, end }, recWords,
-      { minAnchorRatio: prep.minAnchorRatio, rawTimes: true });
-    Object.assign(item, {
-      ok: plan.ok, words: plan.words, anchors: plan.anchors, ratio: plan.ratio,
-      confidence: plan.confidence, note: plan.note,
-      heard: recWords.map(w => w.word).join(' ').slice(0, 200),
-      hotwords: (hotwords && hotwords.length) ? hotwords.slice(0, 12) : undefined,
-    });
-    return item;
-  }
-
-  /** 跑一次识别：优先**常驻服务**（省掉每次约 12s 的模型加载），失败退回 spawn。
-   *  hotwords 非空时由常驻 worker 按这组词重建识别器（实测 3.6s），且**只作用于本次**。 */
-  async function realignRecognize(prep, wav, outJson, hotwords) {
-    const ea = prep.ea;
-    const hw = (hotwords && hotwords.length) ? hotwords : undefined;
-    if (asrCanServe(ea.script)) {
-      try {
-        await asrSvc.transcribe({
-          owner: prep.meta.id,
-          script: ea.script, model: prep.mdir, provider: ea.provider,
-          extra: ea.extra || [], audio: wav,
-          // 重校对只认词的时间，不需要稳定性重跑（--tta 0 省掉两遍解码）
-          tta: 0, outPath: outJson,
-          hotwords: hw, hotwordsScore: prep.hotwordsScore,
-        });
-        return JSON.parse(fs.readFileSync(outJson, 'utf8'));
-      } catch (e) {
-        if (e.name === 'AbortError' || deletedProjects.has(prep.meta.id) || shuttingDown) throw e;
-        console.error('[realign] 常驻识别失败，退回 spawn：' + ((e && e.message) || e));
-      }
-    }
-    const asrArgs = [ea.script, ...asrArgsFor(ea, prep.mdir, wav, outJson, 'off')];
-    if (hw) {
-      /* spawn 路径没有逐句热词通道：写一份临时词表交给 asr.py（它自己转 BPE 片段并
-       * 预校验）。常驻服务那条路走的是 job 里的 hotwords 字段，不由这里拼 CLI。 */
-      const hf = path.join(path.dirname(outJson),
-        'hw-' + path.basename(outJson, '.json') + '.txt');
-      fs.writeFileSync(hf, hw.join('\n') + '\n', 'utf8');
-      asrArgs.push('--hotwords-file', hf, '--hotwords-score', String(prep.hotwordsScore));
-    }
-    await new Promise((res, rej) => {
-      const pr = spawn(ASR_PY, asrArgs, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
-      let err = '';
-      const t = setTimeout(() => { try { pr.kill(); } catch {} rej(new Error('识别超时（5 分钟）')); }, 5 * 60 * 1000);
-      pr.stderr.on('data', d => { if (err.length < 4000) err += String(d); });
-      pr.on('error', e => { clearTimeout(t); rej(new Error('无法启动识别进程：' + e.message)); });
-      pr.on('close', (code) => {
-        clearTimeout(t);
-        if (code !== 0) return rej(new Error('识别失败：' + (err.trim().slice(-200) || ('退出码 ' + code))));
-        res();
+  /** 用 Qwen3-ForcedAligner 对一批已确认文本做纯对齐；不跑 ASR、不改文本。
+   *  CUDA 一次加载模型处理整批；Vulkan 没有批量接口，逐块调用 --align-only。 */
+  async function realignAlignBatch(prep, tasks, onProgress) {
+    const t0 = Date.now();
+    const items = [];
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      const start = Math.max(0, Number(t.start) || 0);
+      const end = Math.max(start + 0.05, Number(t.end) || 0);
+      const { from, to } = realignWordsMod.sliceRange(start, end, REALIGN_PAD, prep.meta && prep.meta.duration);
+      items.push({
+        id: i, start, end, from: Math.max(0, from), to: Math.max(from + 0.05, to),
+        text: String(t.text || ''), clean: alignMod.alignText(t.text),
       });
-    });
-    return JSON.parse(fs.readFileSync(outJson, 'utf8'));
-  }
-
-  /* ── 第二级的逐句热词：让 LLM 从「该句已有的词」里挑出**不常见 / 专有**的 ──
-   *
-   * 为什么不能"把每个词都做成热词"：实测过 —— 整句所有词都当热词是**净负效果**
-   * （14 句样本：好转 1、变差 3、无变化 10），而且能把一句本来完全正确的话退化成
-   * 数字复读：
-   *     `tens of thousands of players online at any given moment`
-   *     → `1 1 1 1 1 1 1 1 1 1 1 1 1 1 10 1`
-   * 常见虚词模型本来就认得，把它们塞进上下文图只会挤掉声学证据。真正值得偏置的是
-   * **专有名词**（人名 / 服务器名 / 术语）—— 实测 `saparata` 这类正是偏置能救回来的。
-   * "哪些词不常见"规则判不出来（分不清专名与常用词），所以交给 LLM。
-   *
-   * 失败 / 超时 / 没配模型一律**降级为空数组**：第二级是锦上添花，
-   * 绝不能因为它把整片作业拖垮 —— 第一级的结果本来就够用。
-   */
-  /* 抠不出热词时最多打几条原始回复（全片几千句，不能每句都刷屏） */
-  let rareEmptyLogs = 0;
-
-  async function pickRareHotwords(text, words) {
-    /* 候选来源：全片重校对拿到的句子带逐词数组；单条重排从前端拿到的块**只有文本**，
-     * 那种情况就现场分词，否则候选为空、第二级会被静默跳过。 */
-    const src = (words && words.length) ? words : alignMod.tokenize(text || '');
-    const cand = realignWordsMod.hotwordCandidates(src);
-    if (!cand.length) return [];
-    const cfg = analyzeCfg();
-    if (!analyzeReady(cfg)) {
-      console.error('[realign] 分析模型没配好，跳过第二级热词偏置');
-      return [];
     }
-    const sys = [
-      '你在帮一个字幕工具挑「ASR 热词」。热词会喂给语音识别模型做上下文偏置，',
-      '让它在重新识别这句话时更倾向吐出这些词。',
-      '',
-      '只挑**不常见 / 专有**的词：人名、地名、服务器名、组织名、作品名、专业术语、缩写。',
-      '以下一律不要：常见虚词与常用词（the / a / of / and / is / you / to 这类）、',
-      '纯数字、单个字母、以及任何"普通英语里很常见"的词。',
-      '',
-      '热词加错了会让识别模型**反复吐这个词**，所以拿不准就不要给 —— 宁可少给。',
-      '最多 6 个。只输出一个 JSON 数组，元素必须是候选词里原样出现的拼写，不要任何解释。',
-    ].join('\n');
-    const user = '句子：' + String(text || '').slice(0, 300)
-      + '\n候选词：' + JSON.stringify(cand.slice(0, 60));
-    let reply = '';
-    try {
-      const res = await llmChat(cfg, [
-        { role: 'system', content: sys }, { role: 'user', content: user },
-      ], { maxTokens: 1024, timeoutMs: analyzeTimeoutMs(), kind: 'realign-hotwords' });
-      reply = (res && res.content) || '';
-    } catch (e) {
-      console.error('[realign] 热词筛选失败（跳过第二级）：' + ((e && e.message) || e));
-      return [];
-    }
-    const picked = realignWordsMod.matchPickedWords(reply, cand);
-    /* 抠不出词时把原始回复打出来（只打前几条）—— 「模型回了但我解析不出来」
-     * 和「模型真的没给」在日志上看不出区别的话，这个问题没法自查。 */
-    if (!picked.length && rareEmptyLogs < 3) {
-      rareEmptyLogs++;
-      console.error('[realign] 热词筛选没抠出词（候选 ' + cand.length + ' 个）原始回复：'
-        + reply.slice(0, 300));
-    }
-    return picked;
-  }
-
-  /** 两级重校对**一条**句子：先无热词重识别；不达标再用 LLM 筛出的专有词做逐句热词重试。
-   *
-   *  单条重排（realignBlocks）与全片重校对（runFullRealign）**共用这一份** ——
-   *  两条路径的判定标准必须一致，否则"单条能用、全片说不可信"会很怪。
-   *
-   *  @param allowHotwords 是否允许走第二级（关掉就只跑第一级，实测用得上）。
-   *  @returns 提案对象，带 level = 1|2 标明结果来自哪一级。 */
-  async function realignTwoTier(prep, t, tmpDir, tag, allowHotwords) {
-    const r = await realignOne(prep, t, tmpDir, tag);
-    r.level = 1;
-    if (r.ratio >= prep.threshold || !allowHotwords) return r;
-    let picked = [];
-    try {
-      picked = await pickRareHotwords(t.text, t.words);
-    } catch (e) {
-      console.error('[realign] 热词筛选异常（跳过第二级）：' + ((e && e.message) || e));
-    }
-    if (!picked.length) { r.hotNote = '没挑出值得偏置的词，跳过第二级'; return r; }
-    try {
-      const r2 = await realignOne(prep, t, tmpDir, 'h' + tag, picked);
-      /* ★ 必须**更吻合**才采纳。实测热词偏置不稳定：同一句一次偏成正确的
-       *   `saparata`、另一次偏成 `Zaparata`；全词热词更是把正确的句子退化成
-       *   数字复读。没有这道闸门，第二级就是在引入风险而不是收益。 */
-      if (r2.ratio > r.ratio) { r2.level = 2; return r2; }
-      r.hotTried = picked; r.hotRatio = r2.ratio;
-      return r;
-    } catch (e) {
-      r.hotNote = String((e && e.message) || e).slice(0, 120);
-      return r;
-    }
-  }
-
-  /** 对一批字幕块做重对齐（右键「重排逐词时间」走这里）。**只算不写**。 */
-  async function realignBlocks(id, blocks, opt) {
-    const o = (opt || {});
-    const prep = realignPrep(id, o);
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-'));
-    const out = [];
-    try {
-      for (let i = 0; i < blocks.length; i++) {
-        const b = blocks[i];
-        let item;
-        try {
-          // 与全片重校对走**同一个**两级实现（判定标准必须一致，见 realignTwoTier）
-          item = await realignTwoTier(prep, b, tmpDir, String(i), o.noHotwords !== true);
-        } catch (e) {
-          item = {
-            start: Number(b.start), end: Number(b.end), text: String(b.text || ''),
-            ok: false, words: [], anchors: 0, ratio: 0, confidence: 0, heard: '', level: 0,
-            note: String((e && e.message) || e).slice(0, 200),
-          };
+    const aligned = new Map();
+    if (prep.backend === 'cuda') {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-'));
+      try {
+        const manifest = path.join(tmp, 'manifest.json');
+        const out = path.join(tmp, 'out.json');
+        fs.writeFileSync(manifest, JSON.stringify({
+          audio: prep.audioWav, language: prep.language,
+          items: items.map(x => ({ id: x.id, start: x.from, end: x.to, text: x.clean })),
+        }), 'utf8');
+        if (onProgress) onProgress(2, `加载 Qwen 对齐器，准备对齐 ${items.length} 句…`);
+        await new Promise((resolve, reject) => {
+          const p = spawn(qwenPython(), [path.join(ASR_DIR, 'qwen_align.py'),
+            '--model', prep.aligner, '--manifest', manifest, '--out', out],
+            { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+          let err = '';
+          const timer = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('Qwen 对齐超时')); }, 2 * 60 * 60 * 1000);
+          p.stderr.on('data', d => { err = (err + String(d)).slice(-4000); });
+          p.on('error', e => { clearTimeout(timer); reject(new Error('无法启动 Qwen 对齐器: ' + e.message)); });
+          p.on('close', code => {
+            clearTimeout(timer);
+            if (code !== 0) return reject(new Error('Qwen 对齐失败（' + code + '）' + (err ? '：' + err.replace(/\s+/g, ' ').slice(-300) : '')));
+            resolve();
+          });
+        });
+        const data = JSON.parse(fs.readFileSync(out, 'utf8'));
+        for (const x of (data.items || [])) aligned.set(x.id, x);
+      } finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} }
+    } else {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-vk-'));
+      try {
+        for (const x of items) {
+          if (onProgress) onProgress(Math.round(2 + (x.id / Math.max(1, items.length)) * 92),
+            `Vulkan 对齐 ${x.id + 1}/${items.length} 句…`);
+          const slice = path.join(tmp, 'a' + x.id + '.wav');
+          try {
+            await crispSliceWav(prep.audioWav, slice, x.from, x.to);
+            const got = await crispAlignOnly(prep.aligner, slice, x.clean, slice + '.out');
+            aligned.set(x.id, {
+              id: x.id,
+              words: got.map(w => ({
+                word: w.text, start: w.start_time + x.from, end: w.end_time + x.from,
+              })),
+            });
+          } catch (e) {
+            aligned.set(x.id, { id: x.id, words: [], error: String(e.message || e).slice(0, 300) });
+          } finally { try { fs.unlinkSync(slice); } catch {} }
         }
-        out.push(Object.assign({ index: i }, item));
-      }
-    } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      } finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} }
     }
-    return out;
+    const out = [];
+    for (const t of items) {
+      const a = aligned.get(t.id);
+      let item = { start: t.start, end: t.end, text: t.text, ok: false, words: [], note: '' };
+      if (!a || a.error) {
+        item.note = (a && a.error) || '对齐器没有返回结果';
+        out.push(item); continue;
+      }
+      const recWords = (a.words || []).map(w => ({
+        word: String(w.word || ''), start: Number(w.start), end: Number(w.end),
+      })).filter(w => w.word && Number.isFinite(w.start) && Number.isFinite(w.end));
+      const plan = alignMod.planBlock(t.text, { start: t.start, end: t.end }, recWords,
+        { minAnchorRatio: 0, rawTimes: true });
+      const words = plan.words || [];
+      const valid = words.length > 0 && words.every((w) => Number.isFinite(w.s) && Number.isFinite(w.e) && w.e > w.s);
+      item = {
+        start: t.start, end: t.end, text: t.text, ok: valid, words,
+        note: valid ? '' : '对齐器没有给出有效的逐词时间，保留原时间',
+      };
+      out.push(item);
+    }
+    if (onProgress) onProgress(100, `对齐完成：${out.filter(x => x.ok).length}/${out.length} 句`);
+    return { items: out, elapsedSec: Math.round((Date.now() - t0) / 100) / 10 };
   }
 
-  /* ── 全片逐词重校对（切原片音频 → ASR 重识别 → 对齐 → 逐句置信度）──────────
+
+  /** 初稿勾了「对齐」但不是 Qwen 引擎：ASR 可能已给原生词，也可能没给。
+   *  统一用对齐器按 ASR 的句级文本重算，再写回 asr.json（只改词时间，不动文本）。 */
+  async function alignDraftAsrJson(id) {
+    const p = path.join(projDir(id), 'asr.json');
+    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const segs = (d.segments || []).filter(s => String(s.text || '').trim());
+    if (!segs.length) throw new Error('没有可对齐的字幕段');
+    const prep = realignPrep(id, {});
+    const r = await realignAlignBatch(prep, segs, () => {});
+    let changed = 0;
+    for (let i = 0; i < segs.length; i++) {
+      const item = r.items[i];
+      if (item && item.ok && item.words && item.words.length) {
+        segs[i].words = item.words.map(w => ({ word: w.w, start: w.s, end: w.e }));
+        changed++;
+      }
+    }
+    if (!changed) throw new Error('对齐器没有给出有效的逐词时间');
+    fs.writeFileSync(p + '.tmp', JSON.stringify(d));
+    fs.renameSync(p + '.tmp', p);
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [对齐] 已用 Qwen3 对齐器补齐 ${changed}/${segs.length} 段逐词时间`);
+    return changed;
+  }
+
+  /** 对一批字幕块做重对齐（右键「重排逐词时间」走这里）。**只算不写**。
+   *  只调用 Qwen3-ForcedAligner，不再跑 ASR；文本由用户确认，时间由对齐器生成。 */
+  async function realignBlocks(id, blocks, opt) {
+    const prep = realignPrep(id, opt);
+    const r = await realignAlignBatch(prep, blocks, () => {});
+    return r.items.map((item, index) => Object.assign({ index }, item));
+  }
+
+  /* ── 全片逐词重校对（Qwen3-ForcedAligner 纯对齐）──────────
    *
-   * 和「重排逐词时间」（右键单条）的区别：这里**逐句自动打分**，只对置信度
-   * 达标的句子改逐词时间，不达标的原样保留。
-   *
-   * ⚠ 标题里原来写的是「TTS 朗读 → ASR 识别」——那是**旧方案**；现在切的是**原片音频**，
-   *   不朗读（SAPI 合成都删了）。留着旧说法会让读代码的人以为还有 TTS 这一环（实际踩过：
-   *   用户看到前端卡片写"正在朗读并重新识别"，以为方案没换）。
+   * 和「重排逐词时间」（右键单条）是同一套实现：文本已确认，只量逐词时间；
+   * 不跑 ASR、不改文本、不改整句起止。
    *
    * 为什么要有这一步：单条重排需要用户先发现"这句的词时间不对"，而几百句的稿子
-   * 根本看不出来哪句糊了。这里让它自己逐句体检一遍，把"可信的重排"批量做掉。
+   * 根本看不出来哪句糊了。这里用对齐器把全片批量重算一遍，供用户勾选应用。
    *
-   * **只改逐词时间戳**，不动文本、不动整句时间 —— 和单条重排同一约束。
-   *
-   * 为什么必须逐句串行：切音频（ffmpeg）与重识别（ASR）都是有状态的外部进程，
-   * 并发跑会互相抢设备（ASR 还占着 NPU/GPU），实测并行反而更慢且更不稳。
+   * **只改逐词时间戳**。
    */
   /* ═══════════ 建稿后的自动后处理（反思纠错 + 全片逐词重校对）═══════════
    *
    * 用户在「创建稿稿 → 生成方式」里勾了"创建后自动处理"，则 buildDraftSubtitle
    * 出稿、finishDraft 落盘之后，立刻接着跑这两步：
    *   ① 反思纠错：LLM 通读全片，把**达到置信度门槛**的建议直接应用（重识别那几段）
-   *   ② 全片逐词重校对：逐句 TTS+识别算置信度，只对达标的句子改逐词时间
+   *   ② 全片逐词重校对：Qwen3 对齐器给已确认文本重算逐词时间
    *
    * 为什么放在 finishDraft **之后**而不是插进流水线中间：
    *   这两步都读"已落盘的字幕 + asr.json"，插在中间等于让它们依赖内存里还没写盘的中间态。
    *   而"稿件已经生成好"本身也是个有用的中间状态 —— 后处理失败时用户手上仍有完整初稿。
    *
-   * 自动 ≠ 无脑：两步都**只应用达标的**（反思用 confMode 对应的门槛、逐词用 minConfidence），
-   *   不达标的原样保留。这样"全自动"不会把关掉的质量问题引进稿子。
+   * 自动 ≠ 无脑：反思只应用达标的；对齐器失败/无有效时间的句子保持原样。
    */
   function autoPostConfig() {
     const s = readAsrSettings();
@@ -5494,9 +6039,9 @@ function startPrepare(id, videoPath, mode) {
   async function runAutoRealign(id, onProgress) {
     const r = await runFullRealign(id, onProgress || (() => {}), {});
     const okItems = r.items.filter(i => i.ok && Array.isArray(i.words) && i.words.length);
-    if (!okItems.length) return { applied: 0, total: r.total, threshold: r.threshold };
+    if (!okItems.length) return { applied: 0, total: r.total };
     const n = await applyRealignToProject(id, okItems);
-    return { applied: n, total: r.total, threshold: r.threshold };
+    return { applied: n, total: r.total };
   }
 
   /** 把重校对结果写回字幕（**只改逐词时间戳**）。
@@ -5542,7 +6087,7 @@ function startPrepare(id, videoPath, mode) {
     return {
       projectId: j.projectId, sourceRevision: j.sourceRevision,
       status: j.status, pct: j.pct, msg: j.msg, total: j.total, usable: j.usable,
-      threshold: j.threshold, items: j.items, error: j.error || '',
+      items: j.items, error: j.error || '',
     };
   }
 
@@ -5553,7 +6098,7 @@ function startPrepare(id, videoPath, mode) {
     }
     const job = {
       status: 'running', pct: 0, msg: '准备中…', total: 0, usable: 0,
-      threshold: 0, items: [], error: '',
+      items: [], error: '',
     };
     realignJobs.set(id, job);
     const onProgress = (pct, msg) => {
@@ -5565,13 +6110,12 @@ function startPrepare(id, videoPath, mode) {
       try {
         const r = await runFullRealign(id, onProgress, opt);
         job.projectId = id; job.sourceRevision = r.sourceRevision;
-        job.items = r.items; job.threshold = r.threshold; job.total = r.total;
+        job.items = r.items; job.total = r.total;
         job.usable = r.usable;
         job.status = 'done'; job.pct = 100;
-        job.msg = `完成：${r.usable}/${r.total} 句达标`;
+        job.msg = `完成：${r.usable}/${r.total} 句已对齐`;
         job.finishedAt = new Date().toISOString();   // GET 路由的老化清理靠它（与重识别同套路）
-        console.log(`[realign-full] ${id}：${r.usable}/${r.total} 句达到置信度门槛 `
-          + `${(r.threshold * 100).toFixed(0)}%`);
+        console.log(`[realign-full] ${id}：${r.usable}/${r.total} 句已对齐`);
       } catch (e) {
         job.status = 'error';
         job.error = String((e && e.message) || e);
@@ -5599,68 +6143,25 @@ function startPrepare(id, videoPath, mode) {
   /** 跑全片重校对。onProgress(pct, msg) 回报进度。 */
   async function runFullRealign(id, onProgress, opt) {
     const o = opt || {};
-    const prep = realignPrep(id, o);              // 与单条重排共用同一套参数与门槛
+    const prep = realignPrep(id, o);
     const all = realignTargets(id, prep.meta);
     const sourceRevision = all[0] && all[0].sourceRevision;
     if (!all.length) {
-      throw new Error('这个稿件没有带逐词时间的英文行，没法重校对'
+      throw new Error('这个稿件没有带逐词时间的英文行，没法重排'
         + '（中文整句轨没有逐词时间；先在「设置 → 逐词转换」把英文转成逐词）');
     }
-    /* 单句最小词数：一个词的句子（"Yes."）对齐结果没有意义 ——
-     * 起点终点就是句子起止，改不改都一样，还会白跑一次 TTS。 */
-    const minWords = Number.isFinite(Number(o.minWords)) ? Math.max(1, Number(o.minWords)) : 2;
-    const longEnough = all.filter(t => t.words.length >= minWords);
-    /* maxItems：只体检前 N 句。留着有两个用处 ——
-     *  ① 用户想先拿一小段试试效果（全片几百句要十几分钟，先看 20 句值不值得跑）
-     *  ② 自动化测试不可能等整片跑完
-     * 不传 = 全片。 */
     const cap = Number.isFinite(Number(o.maxItems)) && Number(o.maxItems) > 0
-      ? Math.floor(Number(o.maxItems)) : longEnough.length;
-    const list = longEnough.slice(0, cap);
-    const skippedShort = all.length - longEnough.length;
-
-    onProgress(2, `共 ${list.length} 句待体检（跳过 ${skippedShort} 句单词句`
-      + (cap < longEnough.length ? `，本次只跑前 ${cap} 句` : '') + '）');
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-full-'));
-    const items = [];
-    try {
-      for (let i = 0; i < list.length; i++) {
-        if (deletedProjects.has(id) || shuttingDown) throw Object.assign(new Error('项目任务已取消'), { name: 'AbortError' });
-        const t = list[i];
-        onProgress(Math.round(2 + i / list.length * 96),
-          `第 ${i + 1}/${list.length} 句：${t.text.slice(0, 34)}…`);
-        let item = {
-          projectId: id, sourceRevision, targetKey: t.targetKey,
-          index: t.index, target: `第 ${t.index + 1} 行`, start: t.start, end: t.end,
-          text: t.text, ok: false, confidence: 0, ratio: 0, anchors: 0,
-          words: null, heard: '', note: '', level: 0,
-        };
-        try {
-          /* 两级：第一级不带热词、对该句原片音频重新识别；不达标才用 LLM 从该句
-           * 已有的词里筛出的专有词做逐句热词重试，且**必须更吻合**才采纳。
-           * 详见 realignTwoTier 与 pickRareHotwords 的说明。 */
-          const r = await realignTwoTier(prep, t, tmpDir, String(i), o.noHotwords !== true);
-          /* ★ 采纳判定用**词吻合率**（planBlock 的 ratio），不是旧方案的对齐置信度：
-           *   它直接回答"这次从原片识别出来的词与该句已有文本对上了多少"。
-           *   对不上就说明模型这次没听清（或该句文本本身有问题），那种时间戳
-           *   不该覆盖原稿。实测全片 4821 句的平均吻合率 0.908、句均解码 0.27s。 */
-          item = Object.assign(item, r, { ok: r.ratio >= prep.threshold });
-          if (!item.ok) {
-            item.note = item.note || `词吻合率 ${(r.ratio * 100).toFixed(0)}% 低于门槛 `
-              + `${(prep.threshold * 100).toFixed(0)}%，保留原逐词时间`;
-          }
-        } catch (e) {
-          if (e.name === 'AbortError') throw e;
-          item.note = String((e && e.message) || e).slice(0, 200);
-        }
-        items.push(item);
-      }
-    } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
+      ? Math.floor(Number(o.maxItems)) : all.length;
+    const list = all.slice(0, cap);
+    onProgress(2, `共 ${list.length} 句待对齐（Qwen3-ForcedAligner，不跑 ASR）`);
+    const batch = await realignAlignBatch(prep, list, onProgress);
+    const items = batch.items.map((item, i) => Object.assign({}, item, {
+      projectId: id, sourceRevision, targetKey: list[i].targetKey,
+      index: list[i].index, target: `第 ${list[i].index + 1} 行`,
+    }));
     const usable = items.filter(i => i.ok).length;
-    onProgress(100, `完成：${usable}/${items.length} 句达标`);
-    return { items, threshold: prep.threshold, total: items.length, usable, sourceRevision };
+    onProgress(100, `完成：${usable}/${items.length} 句已对齐`);
+    return { items, total: items.length, usable, sourceRevision };
   }
 
   /* ── 备注（时间点留言；播放时当置顶弹幕显示）────────────────────────
@@ -6166,10 +6667,10 @@ function startPrepare(id, videoPath, mode) {
     if (wavOk) {
       try { fs.unlinkSync(path.join(projDir(id), 'draft.log')); } catch {}
       setDraft(id, { status: 'running', stage: STAGE.asr, progress: 28, message: '重新识别语音…', error: null, failedStage: '' });
-      safeDraftStep(id, () => startDraftAsr(id, wordLevel));
+      safeDraftStep(id, () => startDraftAsr(id, wordLevel, !!(meta.draft && meta.draft.align)));
       return { ok: true, from: 'asr' };
     }
-    pendingAsr.set(id, { wordLevel });
+    pendingAsr.set(id, { wordLevel, align: !!(meta.draft && meta.draft.align) });
     setDraft(id, { status: 'running', stage: STAGE.extract, progress: 3, message: '重新提取音频与波形…', error: null, failedStage: '' });
     startPrepare(id, meta.video && meta.video.path, (meta.audio && meta.audio.mode) || 'raw');
     return { ok: true, from: 'extract' };
@@ -6256,11 +6757,12 @@ function startPrepare(id, videoPath, mode) {
             const p = Number.isFinite(Number(pct)) && Number(pct) >= 0 ? Number(pct) : 0;
             setRr({ progress: 10 + Math.round(p * 0.62), message: `识别中（Whisper large-v2·CUDA）… ${p}%` });
           }, Object.assign({}, mp, { register: p => trackProjProc(id, p), outRoot: projDir(id) }));
-        } else if (model.engine === 'crispasr') {
-          const bin = path.join(mdir, model.files[0]);
+        } else if (isCrispEngine(model.engine)) {
+          const bin = path.join(mdir, model.crispModelFile || model.files[0]);
+          const label = model.crispBackend === 'qwen3' ? 'Qwen3·Vulkan' : (model.crispBackend === 'whisper' ? 'Whisper·Vulkan' : 'Parakeet·Vulkan');
           data = await runCrispAsr(bin, segWav, pct =>
-            setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（Parakeet·Vulkan）… ${pct}%` }),
-            Object.assign({}, mp, { register: p => trackProjProc(id, p) }));
+            setRr({ progress: 10 + Math.round(pct * 0.62), message: `识别中（${label}）… ${pct}%` }),
+            crispOptionsFor(model, mdir, { register: p => trackProjProc(id, p) }));
         } else if (model.engine === 'vibevoice') {
           const ea = asrEngineArgs(model);
           data = await new Promise((resolve, reject) => {
@@ -6348,6 +6850,9 @@ function startPrepare(id, videoPath, mode) {
               await asrSvc.transcribe({
                 owner: id,
                 script: ea.script, model: mdir, provider: ea.provider,
+                // 线程数 / blank 惩罚是识别器构造期参数，换值必须换一个常驻 worker。
+                variant: ea.variant || '',
+                threads: ea.threads || 0,
                 extra: (ea.extra || []).concat(ea.hotwords || []),
                 // 常驻服务模式：按项目级→全局解析出的有效值传重跑遍数（关掉=0）。
                 // 原来读 readAsrSettings().confidenceTta —— 那个字段从没被写入过，
@@ -6370,7 +6875,7 @@ function startPrepare(id, videoPath, mode) {
             : await new Promise((resolve, reject) => {
             const asrArgs = [ea.script,
                              ...asrArgsFor(ea, mdir, segWav, outJson, confMode)];
-            const py = spawn(ASR_PY, asrArgs,
+            const py = spawn(ea.python || ASR_PY, asrArgs,
               { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
             trackProjProc(id, py);   // 删除项目时一起收掉, 别再空烧 GPU
             let pyErr = '';
@@ -7044,15 +7549,16 @@ function startPrepare(id, videoPath, mode) {
     throw lastErr || new Error('云端识别失败（两个引擎都没成功）');
   }
 
-  async function startDraftAsr(id, wordLevel) {
+  async function startDraftAsr(id, wordLevel, align) {
     const meta0 = readMeta(id) || {};
     const wantId = meta0.draft && meta0.draft.modelId;
     const want = wantId ? modelById(wantId) : null;
-    if (want?.engine === 'vibevoice') {
-      draftJobs.add(id); // 预检期间也要登记，避免列表误判任务已中断。
-      await probeVibeVoice();
-      if (!readMeta(id) || !draftJobs.has(id)) return;
-    }
+    // 停用：VibeVoice 不再预检；旧稿件里的 vibevoice modelId 会走 resolveDraftModel 的可用模型回退。
+    // if (want?.engine === 'vibevoice') {
+    //   draftJobs.add(id);
+    //   await probeVibeVoice();
+    //   if (!readMeta(id) || !draftJobs.has(id)) return;
+    // }
     // 硬拦: 只能重新识别的模型(如 multitalker)不许拿来创建初稿
     if (want && !draftAllowedOf(want)) {
       return finishDraft(id, new Error('「' + want.name + '」只能用于重新识别，不能创建初稿。到「设置 → 识别模型」给初稿换一个模型'));
@@ -7100,9 +7606,10 @@ function startPrepare(id, videoPath, mode) {
       // GPU 校验已在上面的 asrGpuGateError 通过: 走到这里必然有 Vulkan 运行库
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] whisper.cpp GPU·Vulkan 推理`);
     }
-    if (model.engine === 'crispasr') {
+    if (isCrispEngine(model.engine)) {
       // 这条不硬要求 GPU: 有 Vulkan 就走 GPU, 起不来 runCrispAsr 会自动退 CPU（见那里的注释）
-      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] CrispASR/Parakeet 推理：${crispasrVulkanOk() ? '检测到 Vulkan，走 GPU' : '未检测到 Vulkan，将走 CPU（较慢）'}`);
+      const tip = model.crispBackend === 'qwen3' ? 'Qwen3·Vulkan' : (model.crispBackend === 'whisper' ? 'Whisper·Vulkan' : 'Parakeet');
+      pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] CrispASR/${tip} 推理：${crispasrVulkanOk() ? '检测到 Vulkan，走 GPU' : '未检测到 Vulkan，将走 CPU（较慢）'}`);
     }
     if (model.engine === 'vibevoice') {
       pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] VibeVoice NF4 4bit · CUDA 推理（CPU/NPU/offload 已禁用）`);
@@ -7117,7 +7624,11 @@ function startPrepare(id, videoPath, mode) {
     // 顺序就是这样: **先把行切开, 再往这些行上标说话人**（进度浮层的步骤条同一顺序）。
     // 三步都与识别引擎无关: 分离跑在音频上, 任何引擎都能配;
     // 语义分句**所有引擎都做**, 没配 LLM 就直接失败停在这里, 不会跳过它往下走。
-    const finishAsr = () => {
+    const finishAsr = async () => {
+      if (meta0.draft && meta0.draft.align && model.engine !== 'qwen') {
+        try { await alignDraftAsrJson(id); }
+        catch (e) { draftJobs.delete(id); return finishDraft(id, new Error('对齐失败：' + ((e && e.message) || e))); }
+      }
       if (model.engine === 'vibevoice') {
         pushDraftLog(id, '[VibeVoice] 保留原生句级时间戳与说话人；该模型不提供逐词时间戳');
         return continueDraftAfterAsr(id, false);
@@ -7249,6 +7760,53 @@ function startPrepare(id, videoPath, mode) {
       return;
     }
 
+    // ── Qwen3-ASR + ForceAligner: 独立 CUDA worker（内部 150s 分块） ──
+    if (model.engine === 'qwen') {
+      const ea = asrEngineArgs(model);
+      if (align) ea.extra.push('--aligner', modelDirFor('qwen3-forced-aligner-0.6b'));
+      const args = [ea.script, ...asrArgsFor(ea, mdir, wav, outJson, confMode)];
+      const proc = spawn(qwenPython(), args, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+      draftProcs.set(id, proc);
+      let err = '', buf = '', settled = false;
+      const timer = setTimeout(() => { try { proc.kill(); } catch {} }, 2 * 60 * 60 * 1000);
+      const sink = (chunk) => {
+        buf += String(chunk);
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          pushDraftLog(id, '[qwen] ' + line.slice(0, 300));
+          const m = line.match(/^分块\s+(\d+)\s*\/\s*(\d+)/);
+          if (m) {
+            setDraft(id, { stage: STAGE.asr,
+              progress: 30 + Math.round((Number(m[1]) / Math.max(1, Number(m[2]))) * 45),
+              message: 'Qwen3 识别分块 ' + m[1] + '/' + m[2] + '…' });
+          }
+        }
+      };
+      proc.stdout.on('data', sink); proc.stderr.on('data', sink);
+      proc.on('error', (error) => {
+        if (settled) return; settled = true; clearTimeout(timer); draftJobs.delete(id);
+        finishDraft(id, new Error('无法启动 Qwen3 CUDA 进程: ' + error.message));
+      });
+      proc.on('close', (code) => {
+        if (settled) return; settled = true; clearTimeout(timer);
+        if (code !== 0) {
+          draftJobs.delete(id);
+          return finishDraft(id, new Error(err || ('Qwen3 识别进程异常退出（' + asrExitHint(code) + '）')));
+        }
+        let parsed = null;
+        try { parsed = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
+        if (!parsed || !Array.isArray(parsed.segments) || !parsed.segments.length) {
+          draftJobs.delete(id);
+          return finishDraft(id, new Error('Qwen3 结果读不出来或没有字幕段'));
+        }
+        finishAsr();
+      });
+      return;
+    }
+
     // ── whisper.cpp 引擎: whisper-cli(词级用 -ml 1 -sow), 结果转成 asr.json ──
     if (model.engine === 'whisper.cpp') {
       const bin = path.join(mdir, model.files[0]);
@@ -7289,9 +7847,10 @@ function startPrepare(id, videoPath, mode) {
       return;
     }
 
-    // ── crispasr 引擎: Parakeet（Vulkan/CPU）—— 与 whisper.cpp 同构: 长音频分片, 短片单次 ──
-    if (model.engine === 'crispasr') {
-      const bin = path.join(mdir, model.files[0]);
+    // ── crispasr 引擎: Parakeet / Whisper / Qwen（Vulkan/CPU）—— 长音频分片, 短片单次 ──
+    if (isCrispEngine(model.engine)) {
+      const bin = path.join(mdir, model.crispModelFile || model.files[0]);
+      const label = model.crispBackend === 'qwen3' ? 'Qwen3·Vulkan' : (model.crispBackend === 'whisper' ? 'Whisper·Vulkan' : 'Parakeet·Vulkan');
       const onLog = (m) => pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [提示] ' + m);
       if (chunkPlan) {
         transcribeLocalChunked({
@@ -7302,9 +7861,9 @@ function startPrepare(id, videoPath, mode) {
             setDraft(id, {
               stage: STAGE.asr,
               progress: 30 + Math.round(((c.index + (Number(pct) || 0) / 100) / chunkPlan.length) * 45),
-              message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：Parakeet·Vulkan … ' + pct + '% ' + t,
+              message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：' + label + ' … ' + pct + '% ' + t,
             });
-          }, Object.assign({}, mp, { register: p => draftProcs.set(id, p), onLog })),
+          }, crispOptionsFor(model, mdir, { register: p => draftProcs.set(id, p), onLog })),
         }).then((r) => {
           try {
             fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: r.segments }));
@@ -7318,8 +7877,8 @@ function startPrepare(id, videoPath, mode) {
       }
       runCrispAsr(bin, wav, (pct, secs) => {
         const t = (secs != null) ? `（已运行 ${Math.floor(secs / 60)} 分 ${secs % 60} 秒）` : '';
-        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（Parakeet·Vulkan）… ${pct}% ${t}` });
-      }, Object.assign({}, mp, { register: p => draftProcs.set(id, p), onLog })).then(r => {
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: `识别中（${label}）… ${pct}% ${t}` });
+      }, crispOptionsFor(model, mdir, { register: p => draftProcs.set(id, p), onLog })).then(r => {
         if (r.cpuFallback) pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [提示] 已改用 CPU 模式完成识别（未启用 GPU 加速）`);
         try {
           fs.writeFileSync(outJson + '.tmp', JSON.stringify(r));
@@ -7404,10 +7963,14 @@ function startPrepare(id, videoPath, mode) {
       return;
     }
 
-    // ── sherpa-onnx 引擎: asr.py ──
+    // ── sherpa-onnx / Qwen3 引擎: 通用 Python worker ──
     // 预检通过才 spawn: 给远程用户可操作的修复指引, 而不是一句「异常退出(9009)」
-    probePython(model.engine).then(pre => {
+    const precheck = model.engine === 'qwen'
+      ? Promise.resolve({ ok: true, msg: 'Qwen3 CUDA 运行时（已通过设置页标记校验）' })
+      : probePython(model.engine);
+    precheck.then(pre => {
       const ts = () => new Date().toLocaleTimeString();
+      const pyExe = model.engine === 'qwen' ? qwenPython() : ASR_PY;
       if (!pre.ok) {
         pushDraftLog(id, `[${ts()}] [预检失败] ${pre.msg}`);
         pushDraftLog(id, `[${ts()}] [修复方法] ① 安装 Python 3.10~3.12（python.org，安装时勾选 Add python.exe to PATH）`);
@@ -7416,8 +7979,8 @@ function startPrepare(id, videoPath, mode) {
         draftJobs.delete(id);
         return finishDraft(id, new Error('语音识别需要 Python 环境。到「设置 → 识别模型 → Python 环境」点「安装」（详见日志：' + pre.msg + '）'));
       }
-      pushDraftLog(id, `[${ts()}] Python: ${ASR_PY}${pre.msg ? '（' + pre.msg + '）' : ''}`);
-      pushDraftLog(id, `[${ts()}] [提示] Parakeet 推理设备：GPU·CUDA（已通过 GPU 校验；运行时报 CUDA 错误就重新安装一次）`);
+      pushDraftLog(id, `[${ts()}] Python: ${pyExe}${pre.msg ? '（' + pre.msg + '）' : ''}`);
+      pushDraftLog(id, `[${ts()}] [提示] ${model.engine === 'qwen' ? 'Qwen3 推理设备：GPU·CUDA' : 'Parakeet 推理设备：GPU·CUDA'}（已通过 GPU 校验）`);
 
       if (chunkPlan) {
         // 本地 sherpa: 逐片切片 → 逐片跑 asr.py → 合并。片间不等候（本地没有限流问题）。
@@ -7427,7 +7990,7 @@ function startPrepare(id, videoPath, mode) {
           const ea = asrEngineArgs(model);
           const asrArgs = [ea.script,
                            ...asrArgsFor(ea, mdir, slice, outP, confMode)];
-          const pr = spawn(ASR_PY, asrArgs,
+          const pr = spawn(pyExe, asrArgs,
             { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
           draftProcs.set(id, pr);
           const sink2 = (chunk) => {
@@ -7456,7 +8019,7 @@ function startPrepare(id, videoPath, mode) {
           };
           pr.stderr.on('data', sink2);
           pr.stdout.on('data', sink2);
-          pr.on('error', e => reject(new Error('无法启动识别进程（Python: ' + ASR_PY + '）: ' + e.message)));
+          pr.on('error', e => reject(new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + e.message)));
           pr.on('close', (code) => {
             let parsed = null;
             try { parsed = JSON.parse(fs.readFileSync(outP, 'utf8')); } catch {}
@@ -7483,7 +8046,7 @@ function startPrepare(id, videoPath, mode) {
       const ea = asrEngineArgs(model);
       const asrArgs = [ea.script,
                        ...asrArgsFor(ea, mdir, wav, outJson, confMode)];
-      const proc = spawn(ASR_PY, asrArgs,
+      const proc = spawn(pyExe, asrArgs,
         { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
       draftProcs.set(id, proc);
 
@@ -7885,6 +8448,11 @@ function handleFetchRoutes(req, res, u) {
 /* 路由段: 语音识别模型管理 + 语义/热词分析(asr/analyze) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleAsrRoutes(req, res, u) {
   const pathname = u.pathname;
+  // 停用：双引擎与「双引擎分工」性能测试。模型条目已注释，接口也直接封死，
+  // 防止旧前端/旧脚本继续启动 asr_dual.py / asr_perf.py。
+  if (pathname === '/api/asr/dual' || pathname.startsWith('/api/asr/perf/')) {
+    return sendJson(res, 410, { error: '双引擎与双引擎性能测试已停用' });
+  }
   /* 欢迎界面 / 设置页的硬件能力。缓存 5 分钟；?refresh=1 强制重探（用户装完驱动后点“重新检测”）。
    * 返回 cuda / vulkan / npu 三项 + 已保存的后端勾选。 */
   if (pathname === '/api/asr/hardware' && req.method === 'GET') {
@@ -7936,10 +8504,11 @@ function handleAsrRoutes(req, res, u) {
     // 预热预检缓存。**必须按当前所选引擎探** —— 写死 probePython()（=sherpa）时，
     // 选的是 NPU 引擎就永远拿不到 openvino 的探测结果，界面会一直停在检测中…（实测踩过）。
     const _selForProbe = modelById(selectedModelId()) || resolveAsrModel();
-    probePython(_selForProbe && _selForProbe.engine).catch(() => {});
+    if (!_selForProbe || _selForProbe.engine !== 'qwen') probePython(_selForProbe && _selForProbe.engine).catch(() => {});
     nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
-    probeNemo().catch(() => {});            // 后台预检 NeMo 运行时(仅 multitalker 需要; 缓存 5 分钟)
-    probeVibeVoice().catch(() => {});       // 后台预检 CUDA/Transformers/bitsandbytes
+    // 停用：NeMo / VibeVoice 的后台预检不再启动；对应模型条目已注释。
+    // probeNemo().catch(() => {});
+    // probeVibeVoice().catch(() => {});
     let pythonOk = false;
     try { pythonOk = fs.statSync(ASR_PY).isFile(); } catch {}
     const nemo = nemoProbeCache || { ok: false, cuda: false, msg: '预检中…' };
@@ -7956,13 +8525,15 @@ function handleAsrRoutes(req, res, u) {
       // 注意两个键的差异是刻意的: 'runtime' 是 whisper 的老键, 动它会打断前端既有轮询逻辑。
       const rt = m.engine === 'whisper.cpp'
         ? { key: 'runtime', name: 'whisper.cpp', sizeMB: WHISPER_RUNTIME.sizeMB, ok: whisperRuntimeOk() }
-        : (m.engine === 'crispasr'
+        : (isCrispEngine(m.engine)
           ? { key: 'runtime:crispasr', name: 'CrispASR', sizeMB: CRISPASR_RUNTIME.sizeMB, ok: crispasrRuntimeOk() }
           : (m.engine === 'faster-whisper'
             ? { key: FASTER_WHISPER_RUNTIME.key, name: 'Faster-Whisper-XXL', sizeMB: FASTER_WHISPER_RUNTIME.sizeMB, ok: fasterWhisperRuntimeOk() }
-            : (m.engine === 'vibevoice'
-              ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
-              : null)));
+            : (m.engine === 'qwen'
+              ? { key: 'runtime:qwen', name: 'Qwen3 CUDA 运行时', sizeMB: 0, ok: qwenRuntimeOk() }
+              : (m.engine === 'vibevoice'
+                ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
+                : null))));
       const ready = filesOk && (!rt || rt.ok);
       const backendAllowed = modelAllowedByBackends(m) && modelAllowedByHardware(m, hw);
       // usable: 文件齐 + 该引擎的运行时都就位 + 当前加速后端允许(NeMo 模型还要 torch/NeMo + CUDA)
@@ -7973,6 +8544,7 @@ function handleAsrRoutes(req, res, u) {
         id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
         dir, missing, filesOk, ready, usable, cloud: !!m.cloud,
         backend: modelBackendOf(m), backendAllowed,
+        nativeWordLevel: m.nativeWordLevel !== false,
         npuAvailable: hw ? !!hw.npu?.available : null,
         draftAllowed: draftAllowedOf(m),
         needRuntime: !!rt && !rt.ok,
@@ -8001,24 +8573,33 @@ function handleAsrRoutes(req, res, u) {
      *   现在 gpu:null 只有一种含义了：真的没有 N 卡。 */
     return (async () => sendJson(res, 200, {
       models,
+      // 对齐模型单独列出：Qwen 的 ASR 只负责文本，逐词时间由这里的对齐器提供。
+      aligners: ALIGNER_MODELS.map(a => {
+        const dir = modelDirFor(a.id);
+        const missing = dir ? missingModelFiles(dir, a) : a.files.slice();
+        return {
+          id: a.id, name: a.name, backend: a.backend, kind: 'aligner',
+          ready: modelReady(a.id), sizeMB: a.sizeMB, dir, missing,
+          desc: a.desc, source: '独立对齐模型',
+          runtimeKey: a.runtimeKey || '', runtimeName: a.runtimeName || '',
+        };
+      }),
       hardware: hw,                          // 缓存；首次可能为 null，/api/hardware 会立即探测
       backends: asrBackends(),
       selectedModel: selectedModelId(),
       rerecogModel: rerecogModelId(),        // 「重新识别模型」设置(空 = 沿用项目原有模型)
       // 逐句置信度的全局默认（设置页开关用；项目级覆盖见 project.json 的 draft.confidence）
       confidence: { mode: asrConfidenceDefault(), tta: CONFIDENCE_TTA, modes: CONFIDENCE_MODES },
-      nemo: {                                // NeMo 运行时(仅 multitalker 模型需要)
-        ok: !!nemo.ok, cuda: !!nemo.cuda, gpu: nemo.gpu || '', torch: nemo.torch || '', nemoVer: nemo.nemo || '',
-        msg: nemo.msg || '', script: NEMO_SCRIPT, install: NEMO_NOTE,
-      },
-      runtime: { ok: whisperRuntimeOk(), dir: WHISPER_RUNTIME.dir, url: WHISPER_RUNTIME.url, sizeMB: WHISPER_RUNTIME.sizeMB },
+      // 停用：NeMo / VibeVoice / whisper.cpp 的运行时状态不再返回（模型条目已注释）。
+      nemo: null,
+      runtime: null,
       // CrispASR 运行时(Parakeet Vulkan 通用版用): 与 whisper 分开报 —— vulkan 只用于状态提示(它允许 CPU 兜底)
       crispasrRuntime: { ok: crispasrRuntimeOk(), dir: CRISPASR_RUNTIME.dir, url: CRISPASR_RUNTIME.url,
                          sizeMB: CRISPASR_RUNTIME.sizeMB, vulkan: crispasrVulkanOk() },
       fasterWhisperRuntime: { ok: fasterWhisperRuntimeOk(), dir: FASTER_WHISPER_RUNTIME.dir,
                               url: FASTER_WHISPER_RUNTIME.url, sizeMB: FASTER_WHISPER_RUNTIME.sizeMB },
-      vibevoice: Object.assign({ ok: false, cuda: false, vramMB: 0, msg: '预检中…' }, vibevoiceProbeCache || {}),
-      vibevoiceRuntime: { ok: vibevoiceRuntimeOk(), name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB },
+      vibevoice: null,
+      vibevoiceRuntime: null,
       diarize: { ready: diarizeReady(), models: DIARIZE_MODELS },
       /* ffmpeg / ffprobe：波形、抽音频、压制都靠它。前端在「前置」里显示状态，
        * 缺失时可以点一下让服务端自动下载一份到 tools/ffmpeg/（不污染系统 PATH）。 */
@@ -8040,6 +8621,10 @@ function handleAsrRoutes(req, res, u) {
       // 结果同时扁平暴露，新旧前端都能正确显示。
       pythonProbeFlat: (() => {
         const sel = modelById(selectedModelId()) || resolveAsrModel();
+        if (sel && sel.engine === 'qwen') {
+          const ok = qwenRuntimeOk();
+          return { ok, msg: ok ? 'Qwen3 CUDA 运行时（Transformers 5.20）' : 'Qwen3 CUDA 运行时未安装', engine: 'qwen', at: Date.now() };
+        }
         const key = (sel && sel.engine === 'openvino') ? 'openvino' : 'sherpa';
         const r = pyProbeCache && pyProbeCache[key];
         return r ? { ok: !!r.ok, msg: r.msg || '', engine: key, at: r.at } : null;
@@ -8091,12 +8676,15 @@ function handleAsrRoutes(req, res, u) {
       // 解释器换了 → 所有预检结果作废
       pyProbeCache = null;
       pyProbeInflight = null;
-      nemoProbeCache = null;
-      nemoProbeInflight = null;
+      // 换 Python 解释器后 Qwen 运行时标记作废（新解释器未必有 Transformers 5.20/accelerate）。
+      try { fs.unlinkSync(QWEN_RUNTIME_MARK); } catch {}
+      // 停用：NeMo / VibeVoice 不再随 Python 解释器切换而重新预检。
+      // nemoProbeCache = null;
+      // nemoProbeInflight = null;
       // 同样按所选引擎探：否则换完解释器界面还停在检测中…
       const _sel2 = modelById(selectedModelId()) || resolveAsrModel();
       probePython(_sel2 && _sel2.engine).catch(() => {});
-      probeNemo(true).catch(() => {});      // probeNemo 只接受 force 一个参数
+      // probeNemo(true).catch(() => {});
       return sendJson(res, 200, { ok: true, python: ASR_PY });
     });
   }
@@ -8143,17 +8731,8 @@ function handleAsrRoutes(req, res, u) {
   }
 
   if (pathname === '/api/asr/install-nemo' && req.method === 'POST') {
-    return void (async () => {
-      const pyOk = (() => { try { return fs.statSync(ASR_PY).isFile(); } catch { return false; } })();
-      if (!pyOk) {
-        return sendJson(res, 400, { error: '还没有 Python 环境。先在上面「Python 环境」点「安装」，NeMo 运行时是在它之上再加 PyTorch 和 NeMo' });
-      }
-      const gpu = await nvidiaGpu().catch(() => null);      // 探测带 5 分钟缓存, 没有缓存时现测一次
-      if (!gpu) return sendJson(res, 400, { error: 'NeMo 多说话人模型只能在 NVIDIA 显卡（N 卡）上跑，这台机器没检测到 NVIDIA 显卡，不支持 CPU，装不了也用不了' });
-      if (dlState('nemo').running) return sendJson(res, 200, { started: true, already: true });
-      startNemoInstall();
-      return sendJson(res, 200, { started: true });
-    })();
+    // 停用：Multitalker Parakeet Streaming 0.6B v1 已从模型列表移除，NeMo 运行时不再安装。
+    return sendJson(res, 410, { error: 'NeMo 运行时已停用' });
   }
 
   /* 长稿反思纠错：配置读写（全局设置页用）。
@@ -8275,16 +8854,21 @@ function handleAsrRoutes(req, res, u) {
   if (pathname === '/api/asr/download' && req.method === 'POST') {
     /* 回调改成 **async** —— 只为了下面能 `await nvidiaGpu()`（见那里的注释：读缓存会误拦下载）。 */
     return readBody(req, res, 64 * 1024, async (err, body) => {
-      let p = {}, modelId = '', kind = 'model';
+      let p = {}, modelId = '', kind = 'model', force = false;
       try {
         const j = JSON.parse(body.toString('utf8')) || {};
         p = String(j.dir || '').trim(); modelId = String(j.modelId || '').trim(); kind = j.kind || 'model';
+        force = j.force === true;
       } catch {}
       if (kind === 'runtime') {
-        if (whisperRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
-        if (dlState('runtime').running) return sendJson(res, 200, { started: true, kind: 'runtime', already: true });
-        startWhisperRuntimeDownload();
-        return sendJson(res, 200, { started: true, kind: 'runtime' });
+        // 停用：whisper.cpp（Whisper large-v3-turbo）运行时不再提供下载。
+        return sendJson(res, 410, { error: 'whisper.cpp 运行时已随 Whisper large-v3-turbo 一起停用' });
+      }
+      if (kind === 'runtime:qwen') {
+        if (qwenRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
+        if (dlState('runtime:qwen').running) return sendJson(res, 200, { started: true, kind: 'runtime:qwen', already: true });
+        startQwenRuntimeInstall();
+        return sendJson(res, 202, { started: true, kind: 'runtime:qwen' });
       }
       if (kind === 'runtime:crispasr') {
         if (crispasrRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
@@ -8305,12 +8889,8 @@ function handleAsrRoutes(req, res, u) {
         return sendJson(res, 200, { started: true, kind: FASTER_WHISPER_RUNTIME.key });
       }
       if (kind === 'runtime:vibevoice' || kind === 'vibevoice') {
-        const gpuName = await nvidiaGpu().catch(() => null);
-        if (!gpuName) return sendJson(res, 400, { error: 'VibeVoice 4bit 需要 NVIDIA CUDA GPU；不支持 CPU 或 NPU。' });
-        if (vibevoiceRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
-        if (dlState('vibevoice').running) return sendJson(res, 200, { started: true, kind: 'runtime:vibevoice', already: true });
-        startVibeVoiceInstall();
-        return sendJson(res, 200, { started: true, kind: 'runtime:vibevoice' });
+        // 停用：VibeVoice ASR 4bit 已从模型列表移除，运行时不再安装。
+        return sendJson(res, 410, { error: 'VibeVoice 运行时已停用' });
       }
       if (kind === 'diarize') {
         if (diarizeReady()) return sendJson(res, 200, { started: false, ready: true });
@@ -8323,8 +8903,9 @@ function handleAsrRoutes(req, res, u) {
         startPyEnvSetup();
         return sendJson(res, 200, { started: true, kind: 'pyenv' });
       }
-      const model = modelById(modelId) || resolveAsrModel() || ASR_MODELS[0];
-      if (!model) return sendJson(res, 400, { error: '未知模型' });
+      const model = modelId ? anyModelById(modelId) : (resolveAsrModel() || ASR_MODELS[0]);
+      if (!model) return sendJson(res, 400, { error: '未知模型或该模型已停用：' + modelId });
+      if (isRetiredEngine(model.engine)) return sendJson(res, 410, { error: '该识别模型已停用，不能下载' });
       // 云端模型没有文件可下(它的 dirName 是空串, 不拦的话会把模型根目录当成本模型目录"采纳")
       if (model.cloud) return sendJson(res, 400, { error: '「' + model.name + '」是云端识别，不用下载模型，直接用' });
       // Parakeet 连下载都拦: 它只能 CUDA GPU 推理, 无 N 卡机器下了也用不了, 不浪费 661MB。
@@ -8423,7 +9004,7 @@ function handleAsrRoutes(req, res, u) {
     return readBody(req, res, 64 * 1024, (err, body) => {
       let modelId = '';
       try { modelId = String((JSON.parse(body.toString('utf8')) || {}).modelId || ''); } catch {}
-      const m = modelById(modelId);
+      const m = anyModelById(modelId);
       if (!m) return sendJson(res, 400, { error: '未知模型' });
       // 云端模型没有本地文件 —— 而且 modelDirFor 会返回模型根目录本身, 真删下去会清空整个 models!
       if (m.cloud) return sendJson(res, 400, { error: '「' + m.name + '」是云端识别，本地没有模型文件可删' });
@@ -8614,6 +9195,7 @@ function handleAsrRoutes(req, res, u) {
 
   if (pathname === '/api/asr/perf/start' && req.method === 'POST') {
     if (perfState.running) return sendJson(res, 200, { started: false, already: true, state: perfState });
+    if (benchState.running) return sendJson(res, 409, { error: '全模型速度测试正在运行，请完成后再测双引擎分工' });
     return readBody(req, res, 32 * 1024, (err, body) => {
       let b = {};
       try { b = JSON.parse(body.toString('utf8')) || {}; } catch {}
@@ -8695,56 +9277,117 @@ function handleAsrRoutes(req, res, u) {
     }
   }
 
-  /* 逐词重排的设置：读 / 写。
-   * GET  → { minAnchorRatio, minConfidence }
-   * POST → 局部更新（存 asr/settings.json 的 realign 段）
-   * 这几个值只影响**以后**的重排，不碰已有字幕。
-   *
-   * ⚠ 朗读语音 / 语速 / voices 已随 TTS 方案一并从返回里去掉：新方案切**原片音频**
-   *   重新识别、不朗读，那两个值不参与任何判定。（老配置仍留在 settings.json 的
-   *   realign 段里，读进来不会报错；服务端只是不再读它们。）
-   *
-   * ⚠ 这是**全局** ASR 设置（不挂项目，处理块里根本用不到 project id）。
-   *   2026-10-11 无头浏览器探针实测发现：这个处理块原先落在 handleProjectsRoutes 里，
-   *   于是只有 `/api/projects/<id>/realign-settings` 能命中；而前端 project.js
-   *   （realignLoad / realignSave）调的是 `/api/asr/realign-settings` ——
-   *   **一律 404**：面板读不到设置（静默 catch），保存时弹「重排设置保存失败: not found」。
-   *   现搬到 asr 段，与其它全局 ASR 设置（correct / confidence / set-dir …）同处。 */
-  if (pathname === '/api/asr/realign-settings' && (req.method === 'GET' || req.method === 'POST')) {
-    const view = async () => {
-      const raw = (readAsrSettings().realign) || {};
-      const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
-      return {
-        minAnchorRatio: num(raw.minAnchorRatio, alignMod.MIN_ANCHOR_RATIO),
-        // 全片重校对的**采纳门槛**（词吻合率）：低于它的句子保留原逐词时间。
-        // 与锚点率门槛不是一回事 —— 那个是"这次对齐能不能用"，这个是"值不值得改"。
-        minConfidence: num(raw.minConfidence, 0.7),
-      };
-    };
-    if (req.method === 'GET') return view().then(v => sendJson(res, 200, v));
-    return readBody(req, res, 16 * 1024, (err, body) => {
+  /* ── 全模型速度测试：读状态 / 启动 / 取消 ── */
+  if (pathname === '/api/asr/bench/state' && req.method === 'GET') {
+    return sendJson(res, 200, Object.assign({}, benchState, { results: benchState.results.slice() }));
+  }
+
+  if (pathname === '/api/asr/bench/cancel' && req.method === 'POST') {
+    if (!benchState.running) return sendJson(res, 200, { ok: true, running: false });
+    benchCancel = true;
+    benchState.cancelled = true;
+    benchState.msg = '正在取消…';
+    try { benchProc?.kill(); } catch {}
+    return sendJson(res, 200, { ok: true, cancelling: true });
+  }
+
+  if (pathname === '/api/asr/bench/start' && req.method === 'POST') {
+    if (benchState.running) return sendJson(res, 200, { started: false, already: true, state: benchState });
+    if (perfState.running) return sendJson(res, 409, { error: '双引擎分工测试正在运行，请完成后再测全模型' });
+    return readBody(req, res, 64 * 1024, (err, body) => {
       if (err) return sendJson(res, 400, { error: String(err.message) });
-      let p;
-      try { p = JSON.parse(body.toString('utf8')) || {}; }
-      catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-      const s = readAsrSettings();
-      const cur = Object.assign({}, s.realign);
-      if (p.voice !== undefined) cur.voice = String(p.voice || '').trim().slice(0, 120);
-      if (p.rate !== undefined) cur.rate = Math.max(-3, Math.min(3, parseInt(p.rate, 10) || 0));
-      if (p.minAnchorRatio !== undefined) {
-        cur.minAnchorRatio = Math.max(0.3, Math.min(1, Number(p.minAnchorRatio) || 0.6));
+      let b = {};
+      try { b = JSON.parse(body.toString('utf8')) || {}; } catch {
+        return sendJson(res, 400, { error: '请求格式错误' });
       }
-      if (p.minConfidence !== undefined) {
-        cur.minConfidence = Math.max(0.3, Math.min(1, Number(p.minConfidence) || 0.7));
+      const audio = String(b.audio || '').trim();
+      if (!audio || !fs.existsSync(audio)) return sendJson(res, 400, { error: '请先选择一份测试音频' });
+      // 5–600 秒：30 秒/5 分钟/10 分钟都能测；默认仍 20 秒。
+      const seconds = Math.max(5, Math.min(600, Number(b.seconds) || 20));
+      const details = b.details === true;   // 横评脚本要拿识别文本算 WER；普通 UI 不传
+      const conditions = normalizeBenchConditions(b.conditions);
+      const ids = [...new Set((Array.isArray(b.models) ? b.models : []).map(String))];
+      if (!ids.length) return sendJson(res, 400, { error: '请至少选择一个已安装模型' });
+      const models = [];
+      for (const id of ids) {
+        const m = modelById(id);
+        if (!m) return sendJson(res, 400, { error: '未知模型：' + id });
+        if (!benchSupported(m)) return sendJson(res, 400, { error: '「' + m.name + '」不支持全模型速度测试' });
+        if (!modelReady(id)) return sendJson(res, 400, { error: '「' + m.name + '」还没有安装完整（模型文件或运行时缺失）' });
+        models.push(m);
       }
-      s.realign = cur;
-      try { writeAsrSettings(s); } catch (e) { return sendJson(res, 500, { error: String(e.message || e) }); }
-      console.log('[align] 重排设置已更新：语音=' + (cur.voice || '(默认)')
-        + ' 语速=' + cur.rate + ' 最低锚点率=' + cur.minAnchorRatio
-        + ' 重校对置信度门槛=' + cur.minConfidence);
-      return view().then(v => sendJson(res, 200, Object.assign({ ok: true }, v)));
+      benchCancel = false;
+      benchState = {
+        running: true, pct: 0, msg: '准备测试音频…', error: null, results: [],
+        total: models.length, done: 0, current: '', startedAt: Date.now(), cancelled: false,
+        conditions, post: null,
+      };
+      // 先把状态立起来再回 202；截音频/跑模型都在后台，前端轮询看进度。
+      sendJson(res, 202, { started: true, state: benchState });
+      (async () => {
+        let clip = null;
+        try {
+          clip = benchClip(audio, seconds);
+          if (benchCancel) throw new Error('已取消测试');
+          const total = models.length;
+          let postSegments = null;
+          for (let i = 0; i < total; i++) {
+            if (benchCancel) break;
+            const m = models[i];
+            benchState.current = m.id;
+            benchState.msg = '正在测试 ' + (i + 1) + '/' + total + '：' + m.name;
+            benchState.pct = Math.round((i / total) * 100);
+            try {
+              const r = await benchRunModel(m, clip.wav, clip.dir, clip.duration, conditions);
+              if (!postSegments && Array.isArray(r.segments) && r.segments.length) postSegments = r.segments;
+              const segments = Array.isArray(r.segments) ? r.segments : [];
+              benchState.results.push(Object.assign({
+                id: m.id, name: m.name, engine: m.engine, backend: modelBackendOf(m),
+                elapsedSec: r.elapsedSec, audioSec: +clip.duration.toFixed(3),
+                speed: r.speed, asrSpeed: r.speed, postSec: 0,
+                totalSec: r.elapsedSec,
+                confidence: benchConfidenceSummary(segments),
+              }, details ? { text: segments.map(s => String((s && s.text) || '')).join(' ').trim() } : {}));
+            } catch (e) {
+              if (benchCancel) break;
+              benchState.results.push({
+                id: m.id, name: m.name, engine: m.engine, backend: modelBackendOf(m),
+                audioSec: +clip.duration.toFixed(3), error: String((e && e.message) || e).slice(0, 400),
+              });
+            }
+            benchState.done = i + 1;
+            benchState.pct = Math.round(((i + 1) / total) * 100);
+          }
+          // 后处理与模型无关：同一段音频只测一次，时间加到每个模型的实际总耗时里。
+          if (!benchCancel && postSegments && conditions.speakers) {
+            benchState.pct = 99;
+            const post = await benchPostProcess(clip.wav, postSegments, conditions);
+            benchState.post = post;
+            for (const r of benchState.results) {
+              if (r.error) continue;
+              r.postSec = +Number(post.sec || 0).toFixed(3);
+              r.totalSec = +(Number(r.elapsedSec) + Number(post.sec || 0)).toFixed(3);
+              r.speed = +(Number(r.audioSec) / Math.max(0.001, r.totalSec)).toFixed(2);
+            }
+          }
+          if (!benchCancel) benchState.pct = 100;
+        } catch (e) {
+          benchState.error = String((e && e.message) || e).slice(0, 500);
+        } finally {
+          if (clip) {
+            try { fs.rmSync(clip.dir, { recursive: true, force: true }); } catch {}
+            // 父目录空了就收掉；非空（并发/残留）时 rmdir 会失败，忽略即可。
+            try { fs.rmdirSync(path.join(ROOT, 'projects', '.bench')); } catch {}
+          }
+          benchState.running = false;
+          benchState.current = '';
+          if (benchCancel) { benchState.cancelled = true; benchState.msg = '已取消测试'; }
+          else if (!benchState.error) benchState.msg = '测试完成';
+        }
+      })();
     });
   }
+
 
   // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
   sendJson(res, 404, { error: 'not found' });
@@ -9114,7 +9757,10 @@ function handleProjectsRoutes(req, res, u) {
         const nowF = new Date().toISOString();
         const bv = (fetchUrl.match(/\/(BV[0-9A-Za-z]+)/) || [])[1];
         const nameF = String(data.name || '').trim() || bv || '下载的视频';
-        const wordLevelF = !!data.wordLevel;
+        let planF;
+        try { planF = draftOutputPlan(mF, data); }
+        catch (e) { return sendJson(res, 400, { error: e.message }); }
+        const wordLevelF = planF.wordLevel;
         const wantSpkF = !!data.speakers && wordLevelF;
         const spkCountF = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
         const metaF = {
@@ -9123,7 +9769,7 @@ function handleProjectsRoutes(req, res, u) {
           prepare: { status: 'none' },
           draft: {
             status: 'running', stage: FETCH_STAGE, progress: 1, message: '准备下载…', error: null,
-            wordLevel: wordLevelF, lines: 0, words: 0, translated: false, needTranslate: false,
+            wordLevel: wordLevelF, align: planF.align, lines: 0, words: 0, translated: false, needTranslate: false,
             modelId: mF.id, engine: mF.engine || '',
             speakers: wantSpkF, speakerCount: wantSpkF ? spkCountF : 0,
             fetch: { url: fetchUrl, site: site, quality: String((data.fetch && data.fetch.quality) || ''),
@@ -9139,7 +9785,7 @@ function handleProjectsRoutes(req, res, u) {
             url: fetchUrl,
             quality: String((data.fetch && data.fetch.quality) || ''),
             part: normalizePart(data.fetch && data.fetch.part),
-            wordLevel: wordLevelF,
+            wordLevel: wordLevelF, align: planF.align,
           }))
           .catch((e) => finishDraft(idF, e, { failedStage: FETCH_STAGE }));
         return sendJson(res, 200, metaView(readMeta(idF)));
@@ -9152,12 +9798,12 @@ function handleProjectsRoutes(req, res, u) {
       if (!ok) return sendJson(res, 400, { error: '视频文件不存在或格式不支持: ' + vp });
       // 初稿模式: 不要求字幕文件, 由服务端识别后生成
       const draftOn = !!data.draft;
-      const wordLevel = !!data.wordLevel;
       const draftModelId = String((data.modelId || '')).trim();
+      let draftPlan = null;
       // 说话人分离: 用户勾选 + 告知的说话人数量(没填默认 6, 交给聚类模型)
       // SRT(逐词关) 没有角色概念 —— 前端会禁用开关, 这里再兜一层: 关掉逐词就不做说话人分离,
       // 否则会白跑一遍分离、生成的角色标注在 SRT 里也无处安放
-      const wantSpeakers = !!data.speakers && !!data.wordLevel;
+      let wantSpeakers = false;
       const speakerCount = Math.max(1, Math.min(12, parseInt(data.speakerCount, 10) || 6));
       // 逐句置信度：三档。off/fast/full = 用户显式选过；**没给就存 null**（跟随全局设置），
       // 这样以后改全局设置，这个项目重新识别时会跟着变，而不是把当时的默认值冻住。
@@ -9171,10 +9817,13 @@ function handleProjectsRoutes(req, res, u) {
         if (!draftAllowedOf(m)) {
           return sendJson(res, 400, { error: '「' + m.name + '」只能用于重新识别，不能创建初稿。改选 Parakeet TDT 或 Whisper large-v3-turbo' });
         }
+        try { draftPlan = draftOutputPlan(m, data); }
+        catch (e) { return sendJson(res, 400, { error: e.message }); }
+        wantSpeakers = !!data.speakers && !!draftPlan.wordLevel;
         const mdir = m.cloud ? '' : modelDirFor(m.id);
         if (!m.cloud && missingModelFiles(mdir, m).length) return sendJson(res, 400, { error: `模型 ${m.name} 不完整，到设置里重新下载` });
         if (m.engine === 'whisper.cpp' && !whisperRuntimeOk()) return sendJson(res, 400, { error: 'whisper.cpp 运行时没装好，到设置里下载' });
-        if (m.engine === 'crispasr' && !crispasrRuntimeOk()) return sendJson(res, 400, { error: 'CrispASR 运行时没装好，到设置里下载（约 34MB）' });
+        if (isCrispEngine(m.engine) && !crispasrRuntimeOk()) return sendJson(res, 400, { error: 'CrispASR 运行时没装好，到设置里下载（约 34MB）' });
         if (m.engine !== 'vibevoice' && wantSpeakers && !diarizeReady()) return sendJson(res, 400, { error: '说话人分离模型没装好，先到设置里下载（约 32MB）' });
       } else {
         subName = String((data.subtitle && data.subtitle.name) || '');
@@ -9215,13 +9864,13 @@ function handleProjectsRoutes(req, res, u) {
         const draftModel = (draftModelId && modelById(draftModelId)) || resolveAsrModel() || null;
         // 逐词形态: 'color'(颜色高亮, 默认=升级前行为) | 'k'(\k 卡拉OK)。只在逐词开时有意义。
         //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 docs/PROJECT.md §7「颜色设计」。
-        const karaokeStyle = (wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
+        const karaokeStyle = (draftPlan.wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
         const karaokeSweep = karaokeStyle === 'k' && !!data.karaokeSweep;
         const karaokeBase = /^#[0-9a-fA-F]{6}$/.test(String(data.karaokeBase || ''))
           ? String(data.karaokeBase).toUpperCase() : '#FFFFFF';
         meta.draft = {
           status: 'running', stage: STAGE.extract, progress: 3,
-          message: '提取音频与波形…', wordLevel, lines: 0, words: 0,
+          message: '提取音频与波形…', wordLevel: draftPlan ? draftPlan.wordLevel : false, align: draftPlan ? draftPlan.align : false, lines: 0, words: 0,
           translated: false, needTranslate: false,
           karaokeStyle, karaokeSweep, karaokeBase,
           modelId: draftModel ? draftModel.id : null,
@@ -9233,7 +9882,7 @@ function handleProjectsRoutes(req, res, u) {
         };
       }
       writeMeta(meta);
-      if (draftOn) pendingAsr.set(id, { wordLevel });   // prepare 完成后由 finishPrepare 接手识别
+      if (draftOn) pendingAsr.set(id, { wordLevel: draftPlan.wordLevel, align: draftPlan.align });   // prepare 完成后由 finishPrepare 接手识别
       /* ASR 用**原声**（mode='raw'）而不是默认的 afftdn 降噪版：
        * 同一段 10 分钟素材实测，Whisper large-v2（已内置 MDX 人声分离）在
        * 降噪版上 WER 11.02%，原声版 8.70%；Parakeet 也是原声略好（11.02% vs 11.19%）。
@@ -9825,12 +10474,9 @@ function handleProjectsRoutes(req, res, u) {
       return sendJson(res, 200, { job: jobView(job) });
     }
 
-    /* 全片逐词重校对：**两级、不用 TTS**。
-     *   ① 对该句的**原片音频**切片做无热词重识别 —— 时间戳来自真实语音
-     *      （旧方案是在 TTS 合成语音上识别，时间戳是推出来的，不是量出来的）；
-     *   ② 只对①不达标的句子，用 LLM 从该句已有的词里筛出的**不常见/专有**词
-     *      做逐句热词重试，且必须更吻合才采纳。
-     * 只对达标的句子改逐词时间（不达标的原样保留）。
+    /* 全片逐词重校对：Qwen3-ForcedAligner 纯对齐。
+     *   文本已确认，只把已有文本 + 原片音频交给对齐器重算逐词时间；
+     *   不跑 ASR、不改文本、不改整句起止。对齐失败/无有效时间的句子保持原样。
      *
      * POST → 启动后台作业，立即返回 { job }
      * GET  → 轮询 { job }

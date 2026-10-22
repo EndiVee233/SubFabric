@@ -144,7 +144,7 @@ ok(/tta: \(confMode === 'full' \? CONFIDENCE_TTA : 0\)/.test(SRC), '常驻服务
 ok(/if \(confMode === 'off'\)/.test(SRC), 'off 档有专门分支');
 ok(/const n = stripConfidence\(d\.segments\)/.test(SRC), 'off 档调用 stripConfidence');
 // 必须在 finishAsr（= 所有识别路径的汇合点）里，且早于语义分句
-const iFinish = SRC.indexOf('const finishAsr = () =>');
+const iFinish = SRC.indexOf('const finishAsr = async () =>');
 const iStrip = SRC.indexOf('if (confMode === \'off\')');
 const iResegCall = SRC.indexOf('runDraftReseg(id)', iFinish);
 ok(iFinish > 0 && iStrip > iFinish, 'strip 在 finishAsr 内部');

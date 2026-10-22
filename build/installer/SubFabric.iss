@@ -21,8 +21,8 @@
 ;   beta 期：显示 `beta <主>.<次>`、文件 `<主>.<次>.0.0`、tag `v<主>.<次>.0-beta.<序号>`；转正后去掉 beta 前缀。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "beta 1.4"
-#define MyAppFileVersion "1.4.0.0"
+#define MyAppVersion "beta 1.4.1"
+#define MyAppFileVersion "1.4.1.0"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
@@ -81,13 +81,15 @@ Source: "{#Root}\editor\*"; DestDir: "{app}\editor"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; \
     Excludes: "\.*,\node_modules\*,\__pycache__\*,*\__pycache__\*"
 
-; ── Python 侧（asr.py / diarize.py / multitalker.py / fetch\*）──
+; ── Python 侧（asr.py / diarize.py / fetch\*）──
 ; 用户数据与运行时一律不进安装包，也绝不被安装/卸载碰到：asr\.venv、asr\models、asr\settings.json、
-; asr\whisper.cpp、asr\crispasr、asr\faster-whisper-xxl、asr\runtime-python、asr\ytdlp、asr\logs、projects\
+; asr\whisper.cpp、asr\crispasr、asr\faster-whisper-xxl、asr\runtime-python、asr\runtime-vibevoice、
+; asr\ytdlp、asr\logs、projects\
 ; （whisper.cpp / crispasr / Faster-Whisper-XXL 运行时由服务端首次使用时自动下载，所以本机存在时也不能被顺带打包）
+; 2026-10-21 起 VibeVoice / NeMo / 双引擎模型已停用，对应脚本与 runtime-vibevoice 也不再打包。
 Source: "{#Root}\asr\*"; DestDir: "{app}\asr"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\crispasr\*,\faster-whisper-xxl\*,\runtime-python\*,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*"
+    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\crispasr\*,\faster-whisper-xxl\*,\runtime-python\*,\runtime-vibevoice\*,\multitalker.py,\vibevoice.py,\asr_dual.py,\asr_perf.py,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*,.qwen-runtime-ok.json"
 
 [Icons]
 ; 显式写 IconFilename 指向程序本体（而不是 .iss 里的 SetupIconFile），

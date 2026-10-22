@@ -298,7 +298,7 @@
               <div class="badcat-panel" id="badcat-panel" hidden></div>
             </div>
             <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处，先给预览，确认后再重识别那几段" disabled><span data-ico="wand"></span> 反思纠错</button>
-            <button class="btn btn-mini" id="btn-realign-full" title="重新识别原片音频，按实测逐词时间重排；全片操作会耗时，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
+            <button class="btn btn-mini" id="btn-realign-full" title="用 Qwen3 对齐器重算全片逐词时间；只改时间、不改文本，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
             <button class="btn btn-mini" id="btn-region-import" title="把协作字幕的指定区间并入当前稿件；撞到已有字幕会先询问" disabled><span data-ico="upload"></span> 分段导入</button>
           </div>
         </div>
@@ -788,7 +788,7 @@
         <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
         <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
         <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
-        <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="切出这条字幕在原片音频里的那一段重新识别，用实测到的词位置重排逐词时间。只改逐词时间，不动文本">重排逐词时间</button>
+        <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="用 Qwen3 对齐器按已确认文本重算逐词时间。只改逐词时间，不跑 ASR、不动文本">重排逐词时间</button>
         <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除字幕块</button>
       </div>
     </div>
@@ -882,7 +882,7 @@
     <button type="button" class="tl-menu-item" data-act="fix" data-ico="wrench">修复字幕</button>
     <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
     <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
-    <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="切出这条字幕在原片音频里的那一段重新识别，用实测到的词位置重排逐词时间。只改逐词时间，不动文本">重排逐词时间</button>
+    <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="用 Qwen3 对齐器按已确认文本重算逐词时间。只改逐词时间，不跑 ASR、不动文本">重排逐词时间</button>
     <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除该条字幕</button>
   </div>
 
@@ -999,23 +999,15 @@
 </div>
 <input type="file" id="rim-file" accept=".srt,.ass,.ssa" hidden>
 
-<!-- 全片逐词重校对：预览清单（逐句置信度 + 勾选应用，只写逐词时间） -->
+<!-- 全片逐词重校对：Qwen3 对齐预览（勾选应用，只写逐词时间） -->
 <div id="realign-overlay" hidden>
   <div class="rn-box modal-surface reflect-box">
     <div class="rn-title modal-drag-handle">全片逐词重校对 · 预览</div>
-    <div class="rn-msg" id="realign-msg">正在逐句切原片音频并重新识别…</div>
-
-    <!-- 采纳门槛：可在这里直接改。改完**原地按已算好的 ratio 重新判定**达标与否，
-         不会重跑切片+识别（那要几十分钟）；要换门槛重跑才有意义的场景才点「重新校对」 -->
-    <div class="reflect-conf" id="realign-conf" hidden>
-      <span class="rc-label">采纳门槛（词吻合率）</span>
-      <span class="rc-value"><input type="number" id="realign-conf-thr" min="30" max="100" step="1" value="70"> %</span>
-      <span class="rc-note" id="realign-conf-note"></span>
-    </div>
+    <div class="rn-msg" id="realign-msg">正在用 Qwen3 对齐器逐句重算时间…</div>
 
     <div class="reflect-summary" id="realign-summary" hidden></div>
     <label class="reflect-all" id="realign-all-wrap" hidden>
-      <input type="checkbox" id="realign-all" checked> 全选达标项
+      <input type="checkbox" id="realign-all" checked> 全选已对齐项
       <span class="reflect-all-note" id="realign-all-note"></span>
     </label>
     <div class="reflect-list" id="realign-list" hidden></div>
@@ -1089,7 +1081,7 @@
       <section class="sf-hero">
         <button type="button" class="sf-flower" id="sf-mu-new" title="新建稿件">
           <span aria-hidden="true"><svg viewBox="0 0 100 100">
-            <g id="sf-mu-flower-face"><path d="M50 0 L61 7 L75 5 L82 18 L95 25 L93 39 L100 50 L93 61 L95 75 L82 82 L75 95 L61 93 L50 100 L39 93 L25 95 L18 82 L5 75 L7 61 L0 50 L7 39 L5 25 L18 18 L25 5 L39 7 Z"/></g>
+            <g id="sf-mu-flower-face"><!-- 13 瓣波浪花形：r = 48 × (1 + .042 cos(13θ + π/2)) --><path d="M98.0 50.0 L97.0 51.9 L96.1 53.7 L95.6 55.5 L95.7 57.4 L96.0 59.4 L96.6 61.5 L97.1 63.6 L97.2 65.8 L96.8 67.7 L95.8 69.5 L94.3 71.0 L92.5 72.3 L90.7 73.5 L89.1 74.7 L87.8 76.1 L87.0 77.8 L86.4 79.7 L85.9 81.8 L85.3 83.9 L84.5 85.9 L83.2 87.4 L81.5 88.5 L79.4 89.2 L77.3 89.5 L75.1 89.7 L73.1 90.1 L71.4 90.7 L69.8 91.8 L68.4 93.2 L67.0 94.9 L65.5 96.5 L63.8 97.8 L62.0 98.6 L60.0 98.7 L57.9 98.4 L55.8 97.7 L53.8 96.8 L51.9 96.2 L50.0 96.0 L48.1 96.2 L46.2 96.8 L44.2 97.7 L42.1 98.4 L40.0 98.7 L38.0 98.6 L36.2 97.8 L34.5 96.5 L33.0 94.9 L31.6 93.2 L30.2 91.8 L28.6 90.7 L26.9 90.1 L24.9 89.7 L22.7 89.5 L20.6 89.2 L18.5 88.5 L16.8 87.4 L15.5 85.9 L14.7 83.9 L14.1 81.8 L13.6 79.7 L13.0 77.8 L12.2 76.1 L10.9 74.7 L9.3 73.5 L7.5 72.3 L5.7 71.0 L4.2 69.5 L3.2 67.7 L2.8 65.8 L2.9 63.6 L3.4 61.5 L4.0 59.4 L4.3 57.4 L4.4 55.5 L3.9 53.7 L3.0 51.9 L2.0 50.0 L1.0 48.0 L0.4 46.0 L0.3 44.0 L0.9 42.0 L2.0 40.2 L3.4 38.5 L4.9 36.9 L6.1 35.4 L7.0 33.7 L7.4 31.9 L7.5 29.9 L7.5 27.7 L7.6 25.5 L8.0 23.4 L8.8 21.6 L10.2 20.1 L12.0 19.0 L14.1 18.2 L16.1 17.4 L18.0 16.6 L19.5 15.6 L20.7 14.2 L21.8 12.4 L22.7 10.5 L23.8 8.6 L25.1 6.9 L26.8 5.7 L28.7 5.1 L30.8 4.9 L33.0 5.1 L35.1 5.4 L37.1 5.6 L39.0 5.4 L40.7 4.7 L42.5 3.6 L44.2 2.3 L46.1 1.2 L48.0 0.3 L50.0 0.0 L52.0 0.3 L53.9 1.2 L55.8 2.3 L57.5 3.6 L59.3 4.7 L61.0 5.4 L62.9 5.6 L64.9 5.4 L67.0 5.1 L69.2 4.9 L71.3 5.1 L73.2 5.7 L74.9 6.9 L76.2 8.6 L77.3 10.5 L78.2 12.4 L79.3 14.2 L80.5 15.6 L82.0 16.6 L83.9 17.4 L85.9 18.2 L88.0 19.0 L89.8 20.1 L91.2 21.6 L92.0 23.4 L92.4 25.5 L92.5 27.7 L92.5 29.9 L92.6 31.9 L93.0 33.7 L93.9 35.4 L95.1 36.9 L96.6 38.5 L98.0 40.2 L99.1 42.0 L99.7 44.0 L99.6 46.0 L99.0 48.0 Z"/></g>
             <line class="sf-mu-clock-hand sf-mu-clock-hour" id="sf-mu-clock-hour" x1="50" y1="50" x2="50" y2="31"/>
             <line class="sf-mu-clock-hand sf-mu-clock-minute" id="sf-mu-clock-minute" x1="50" y1="50" x2="50" y2="17"/>
             <circle class="sf-mu-clock-second" id="sf-mu-clock-second" cx="50" cy="14" r="3.2"/>
@@ -1114,7 +1106,18 @@
           <span class="sf-mu-processing-pills"><span class="sf-mu-processing-pill"><span data-ico="film"></span><b id="sf-mu-processing-duration">—</b></span><span class="sf-mu-processing-pill"><span data-ico="activity"></span><b id="sf-mu-processing-device">—</b></span></span>
         </button>
         <button type="button" class="sf-mu-widget" data-mu-filter="ready"><span class="sf-mu-widget-kicker">可编辑</span><strong id="sf-mu-ready-widget">0</strong><small>已经可以改字幕</small></button>
-        <button type="button" class="sf-mu-widget" data-mu-filter="attention" data-tone="warn"><span class="sf-mu-widget-kicker">需处理</span><strong id="sf-mu-attention-count">0</strong><small>失败 / 待重试</small></button>
+        <div class="sf-mu-widget sf-mu-attention" id="sf-mu-attention" role="group" aria-label="需处理">
+          <svg class="sf-mu-attention-shape" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+            <path d="M95.9 50.0 L96.0 51.9 L96.2 53.7 L96.5 55.6 L96.9 57.6 L97.3 59.7 L97.8 61.8 L98.4 64.0 L98.9 66.3 L99.3 68.7 L99.7 71.2 L99.9 73.7 L100.0 76.2 L99.9 78.8 L99.5 81.3 L99.0 83.8 L98.2 86.2 L97.1 88.5 L95.9 90.6 L94.3 92.6 L92.6 94.3 L90.6 95.9 L88.5 97.1 L86.2 98.2 L83.8 99.0 L81.3 99.5 L78.8 99.9 L76.2 100.0 L73.7 99.9 L71.2 99.7 L68.7 99.3 L66.3 98.9 L64.0 98.4 L61.8 97.8 L59.7 97.3 L57.6 96.9 L55.6 96.5 L53.7 96.2 L51.9 96.0 L50.0 95.9 L48.1 96.0 L46.3 96.2 L44.4 96.5 L42.4 96.9 L40.3 97.3 L38.2 97.8 L36.0 98.4 L33.7 98.9 L31.3 99.3 L28.8 99.7 L26.3 99.9 L23.8 100.0 L21.2 99.9 L18.7 99.5 L16.2 99.0 L13.8 98.2 L11.5 97.1 L9.4 95.9 L7.4 94.3 L5.7 92.6 L4.1 90.6 L2.9 88.5 L1.8 86.2 L1.0 83.8 L0.5 81.3 L0.1 78.8 L0.0 76.2 L0.1 73.7 L0.3 71.2 L0.7 68.7 L1.1 66.3 L1.6 64.0 L2.2 61.8 L2.7 59.7 L3.1 57.6 L3.5 55.6 L3.8 53.7 L4.0 51.9 L4.1 50.0 L4.0 48.1 L3.8 46.3 L3.5 44.4 L3.1 42.4 L2.7 40.3 L2.2 38.2 L1.6 36.0 L1.1 33.7 L0.7 31.3 L0.3 28.8 L0.1 26.3 L0.0 23.8 L0.1 21.2 L0.5 18.7 L1.0 16.2 L1.8 13.8 L2.9 11.5 L4.1 9.4 L5.7 7.4 L7.4 5.7 L9.4 4.1 L11.5 2.9 L13.8 1.8 L16.2 1.0 L18.7 0.5 L21.2 0.1 L23.8 0.0 L26.3 0.1 L28.8 0.3 L31.3 0.7 L33.7 1.1 L36.0 1.6 L38.2 2.2 L40.3 2.7 L42.4 3.1 L44.4 3.5 L46.3 3.8 L48.1 4.0 L50.0 4.1 L51.9 4.0 L53.7 3.8 L55.6 3.5 L57.6 3.1 L59.7 2.7 L61.8 2.2 L64.0 1.6 L66.3 1.1 L68.7 0.7 L71.2 0.3 L73.7 0.1 L76.2 0.0 L78.8 0.1 L81.3 0.5 L83.8 1.0 L86.2 1.8 L88.5 2.9 L90.6 4.1 L92.6 5.7 L94.3 7.4 L95.9 9.4 L97.1 11.5 L98.2 13.8 L99.0 16.2 L99.5 18.7 L99.9 21.2 L100.0 23.8 L99.9 26.3 L99.7 28.8 L99.3 31.3 L98.9 33.7 L98.4 36.0 L97.8 38.2 L97.3 40.3 L96.9 42.4 L96.5 44.4 L96.2 46.3 L96.0 48.1 Z"/>
+          </svg>
+          <div class="sf-mu-attention-body">
+            <span class="sf-mu-widget-kicker">需处理</span>
+            <strong id="sf-mu-attention-count">0</strong>
+            <small>失败 / 待重试</small>
+          </div>
+          <button type="button" class="sf-mu-attn-btn sf-mu-attn-resume" id="sf-mu-attention-resume" data-mu-attn="resume" aria-label="继续处理" title="继续处理"><span data-ico="play"></span></button>
+          <button type="button" class="sf-mu-attn-btn sf-mu-attn-details" data-mu-attn="details" aria-label="详情页" title="详情页"><span data-ico="info"></span></button>
+        </div>
         <button type="button" class="sf-mu-widget" data-kind="all" data-mu-filter="all"><span class="sf-mu-widget-kicker">全部稿件</span><strong id="sf-mu-all-count">0</strong><small>本地工作空间</small></button>
         <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="new" data-tone="accent"><span class="sf-mu-widget-kicker">NEW</span><strong class="sf-mu-widget-title">新建稿件</strong><small>视频、链接或字幕</small><span class="sf-mu-widget-arrow">→</span></button>
         <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="settings" data-tone="surface"><span class="sf-mu-widget-kicker">SETTINGS</span><strong class="sf-mu-widget-title">全局设置</strong><small>模型、翻译与外观</small><span class="sf-mu-widget-arrow">→</span></button>
@@ -1345,8 +1348,9 @@
     </div>
 
     <div class="ws-grid">
-      <!-- ① 稿件预览 -->
-      <section class="ws-panel page-surface" aria-labelledby="np-preview-title">
+      <div class="ws-col ws-col-preview">
+        <!-- ① 稿件预览 -->
+      <section class="ws-panel page-surface np-preview-panel" aria-labelledby="np-preview-title">
         <div class="ws-head">
           <div>
             <div class="ws-kicker">PREVIEW</div>
@@ -1370,9 +1374,36 @@
           <div class="ws-meta-row ws-meta-row-desc"><span>简介</span><strong id="np-m-desc">—</strong></div>
         </div>
       </section>
-
-      <!-- ② 输入与配置 -->
-      <section class="ws-panel page-surface" aria-labelledby="np-input-title">
+        <!-- ③ 处理进度（创建前是静态预览，创建后进度看项目列表） -->
+      <section class="ws-panel page-surface np-progress-panel" aria-labelledby="np-progress-title">
+        <div class="ws-head">
+          <div>
+            <div class="ws-kicker">PROCESS</div>
+            <h2 id="np-progress-title">处理进度</h2>
+          </div>
+          <span class="ws-badge ws-badge-live"><i></i>实时进度</span>
+        </div>
+        <p class="ws-sub">各环节状态依次点亮，用状态流转和处理记录。</p>
+        <div class="dp-steps" id="np-steps"></div>
+        <div class="dp-bar"><div class="dp-bar-in" id="np-bar-in"></div></div>
+        <div class="np-progress-box" aria-live="polite">
+          <div class="np-progress-box-head">进度内容</div>
+          <div class="dp-line">
+            <span id="np-pct">0%</span>
+            <span class="dp-msg" id="np-msg">尚未开始</span>
+          </div>
+          <p class="np-progress-box-note">创建项目后，这里会显示每一步的处理状态和记录。</p>
+        </div>
+        <div class="ws-idle">
+          <p class="ws-idle-title">尚未开始</p>
+          <p>先完成上面的配置，再开始生成。</p>
+          <p>建议先确认左侧「稿件预览」里的标题和作者，再点右下角的按钮。</p>
+        </div>
+      </section>
+      </div>
+      <div class="ws-col ws-col-input">
+        <!-- ② 输入与配置 -->
+      <section class="ws-panel page-surface np-input-panel" aria-labelledby="np-input-title">
         <div class="ws-head">
           <div>
             <div class="ws-kicker">INPUT</div>
@@ -1409,8 +1440,8 @@
             <b>创建后自动处理</b>（全流程全自动）
             <span class="np-auto-note">
               出稿后自动接着跑：<b>反思纠错</b>（让模型通读全片，把"几行本该是一句 / 那段漏了字幕"
-              这类有硬依据的问题重识别一遍）+ <b>全片逐词重校对</b>（逐句切出原片音频重新识别，
-              只对置信度达标的句子重排逐词时间）。<br>
+              这类有硬依据的问题重识别一遍）+ <b>全片逐词重校对</b>（用 Qwen3 对齐器
+              按已确认文本重算逐词时间，不跑 ASR、不改文本）。<br>
               全程<b>只改该改的</b>：达标的才动，不达标的原样保留。
               反思的重识别结果会留在「反思纠错」预览里等你复核；逐词重校对自动写回。
               已出稿的字幕不受影响 —— 这两步都只读已落盘的稿件。
@@ -1469,32 +1500,8 @@
           <button type="button" class="btn btn-accent" id="np-create" disabled>创建项目</button>
         </div>
       </section>
-
-      <!-- ③ 处理进度（创建前是静态预览，创建后进度看项目列表） -->
-      <section class="ws-panel page-surface" aria-labelledby="np-progress-title">
-        <div class="ws-head">
-          <div>
-            <div class="ws-kicker">PROCESS</div>
-            <h2 id="np-progress-title">处理进度</h2>
-          </div>
-          <span class="ws-badge ws-badge-live"><i></i>实时进度</span>
-        </div>
-        <p class="ws-sub">各环节状态依次点亮，用状态流转和处理记录。</p>
-        <div class="dp-steps" id="np-steps"></div>
-        <div class="dp-bar"><div class="dp-bar-in" id="np-bar-in"></div></div>
-        <div class="dp-line">
-          <span id="np-pct">0%</span>
-          <span class="dp-msg" id="np-msg">尚未开始</span>
-        </div>
-        <div class="ws-idle">
-          <p class="ws-idle-title">尚未开始</p>
-          <p>先完成上面的配置，再开始生成。</p>
-          <p>建议先确认左侧「稿件预览」里的标题和作者，再点右下角的按钮。</p>
-        </div>
-      </section>
-
-      <!-- ④ 生成设置 -->
-      <section class="ws-panel page-surface" id="np-settings-panel" aria-labelledby="np-set-title">
+        <!-- ④ 生成设置 -->
+      <section class="ws-panel page-surface np-settings-panel" id="np-settings-panel" aria-labelledby="np-set-title">
         <div class="ws-head">
           <div>
             <div class="ws-kicker">GENERATE</div>
@@ -1530,9 +1537,11 @@
         <div class="ws-row" hidden><input type="text" id="np-set-model" class="np-input ws-fld" spellcheck="false" placeholder="deepseek-chat"></div>
 
         <div class="np-draft-only" id="np-cast-group">
-          <div class="ws-group-title">识别后处理 · 分角色识别</div>
-          <div class="ws-checks">
-            <label class="ws-check"><input type="checkbox" id="np-set-cast"> 开启</label>
+          <div class="np-cast-head">
+            <div class="ws-group-title">识别后处理 · 分角色识别</div>
+            <div class="ws-checks">
+              <label class="ws-check"><input type="checkbox" id="np-set-cast"> 开启</label>
+            </div>
           </div>
           <div class="np-file-row" id="np-row-word" hidden>
             <span class="np-lbl">逐词</span>
@@ -1541,12 +1550,19 @@
               <span id="np-word-desc">开启 → 生成 ASS 逐词字幕</span>
             </label>
           </div>
+          <div class="np-file-row" id="np-row-align" hidden>
+            <span class="np-lbl">对齐</span>
+            <label class="np-switch">
+              <input type="checkbox" id="np-align">
+              <span id="np-align-desc">不勾选逐词时可用；勾选 → 用对齐模型生成逐词 ASS</span>
+            </label>
+          </div>
           <div class="np-file-row" id="np-row-kstyle" hidden>
             <span class="np-lbl">逐词样式</span>
             <label class="np-switch">
               <select id="np-kstyle" class="np-select">
-                <option value="color">颜色高亮（当前词瞬时点亮）</option>
-                <option value="k">\k 卡拉OK（唱过不灭，视频区观感不同）</option>
+                <option value="color">颜色高亮</option>
+                <option value="k">\k 卡拉OK</option>
               </select>
             </label>
           </div>
@@ -1557,7 +1573,7 @@
               <option value="fast">快速（不重跑稳定性）</option>
               <option value="off">关闭（不生成）</option>
             </select>
-            <span class="gl-hint" id="np-confidence-desc" style="flex:1">「完整」会把音频加噪重跑 2 遍做稳定性判定，识别约慢一倍</span>
+            <span class="gl-hint np-conf-desc" id="np-confidence-desc">「完整」会把音频加噪重跑 2 遍做稳定性判定，识别约慢一倍</span>
           </div>
           <div class="np-file-row" id="np-row-spk" hidden>
             <span class="np-lbl">说话人</span>
@@ -1585,6 +1601,7 @@
           <button type="button" class="btn btn-accent" id="np-set-save">保存设置</button>
         </div>
       </section>
+      </div>
     </div>
   </div>
 </div>
@@ -1670,11 +1687,15 @@
              没检测到的硬件不会显示（不谎报），右侧计数与模型列表同源。 -->
         <div class="st-hw" id="st-hardware"></div>
         <div id="sf-asr-families" class="sf-asr-families">
-          <button type="button" class="sf-asr-family" data-asr-family="Whisper 系列"><span class="sf-asr-family-name">Whisper 系列</span><span class="sf-asr-family-desc">本地识别 · whisper.cpp</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
-          <button type="button" class="sf-asr-family" data-asr-family="Parakeet 系列"><span class="sf-asr-family-name">Parakeet 系列</span><span class="sf-asr-family-desc">GPU / NPU / Vulkan · 多说话人</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="Whisper 系列"><span class="sf-asr-family-name">Whisper 系列</span><span class="sf-asr-family-desc">Faster-Whisper · 本地识别</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="Parakeet 系列"><span class="sf-asr-family-name">Parakeet 系列</span><span class="sf-asr-family-desc">NPU / Vulkan</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="Qwen 系列"><span class="sf-asr-family-name">Qwen 系列</span><span class="sf-asr-family-desc">ASR · CUDA / Vulkan</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="对齐模型"><span class="sf-asr-family-name">对齐模型</span><span class="sf-asr-family-desc">Qwen3-ForcedAligner · 词级时间</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
           <button type="button" class="sf-asr-family" data-asr-family="云端识别"><span class="sf-asr-family-name">云端系列</span><span class="sf-asr-family-desc">必剪 / 剪映 · 免下载模型</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
           <button type="button" class="sf-asr-family" data-asr-family="前置"><span class="sf-asr-family-name">前置</span><span class="sf-asr-family-desc">运行环境、模型目录与说话人分离</span><span class="sf-asr-count">配置与依赖</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <!-- 停用：VibeVoice 系列入口
           <button type="button" class="sf-asr-family" data-asr-family="VibeVoice 系列"><span class="sf-asr-family-name">VibeVoice 系列</span><span class="sf-asr-family-desc">多语 · CUDA 4bit · 说话人时间轴</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          -->
           <button type="button" class="sf-asr-family" data-asr-family="其它模型" hidden><span class="sf-asr-family-name">其它模型</span><span class="sf-asr-family-desc">旧版本下载 · 当前加速方式未启用</span><span class="sf-asr-count"></span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
         </div>
         <div id="sf-asr-detail" class="sf-asr-detail" hidden><button type="button" class="btn" id="sf-asr-back">← 返回系列</button><h3 id="sf-asr-detail-title"></h3></div>
@@ -1719,7 +1740,7 @@
         </div><!-- /st-subview asr -->
       </div>
 
-      <div class="st-panel" id="st-panel-perf" role="tabpanel" data-stp="perf" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机硬件</span><h2 id="sf-settings-heading-perf">性能与调度</h2><p>用实际测试选择适合本机的分片长度与双引擎配比。</p><p class="sf-settings-save-note">测试由你手动启动，会运行识别引擎；当前页面不会自动开始。</p></div>
+      <div class="st-panel" id="st-panel-perf" role="tabpanel" data-stp="perf" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机硬件</span><h2 id="sf-settings-heading-perf">性能与调度</h2><p>用实际测试选择适合本机的全模型速度配置。</p><p class="sf-settings-save-note">测试由你手动启动，会运行识别引擎；当前页面不会自动开始。</p></div>
         <div class="st-card sf-accel-card" id="sf-accel-card">
           <div class="st-card-title" data-ico="activity">加速方式</div>
           <p class="gl-hint">决定语音识别里显示哪些模型。CUDA 需要 NVIDIA 显卡；Vulkan 适用于 AMD / Intel / NVIDIA。不提供 CPU 推理。</p>
@@ -1729,6 +1750,11 @@
             <span class="st-help" id="st-accel-note"></span>
           </div>
         </div>
+        <div class="perf-tabs" role="tablist" aria-label="性能测试类型">
+          <button type="button" class="perf-tab" id="perf-tab-dual" data-perf-tab="dual" role="tab" aria-selected="false" aria-controls="perf-dual-view" hidden>双引擎分工</button>
+          <button type="button" class="perf-tab active" id="perf-tab-models" data-perf-tab="models" role="tab" aria-selected="true" aria-controls="perf-models-view">全模型速度</button>
+        </div>
+        <div id="perf-dual-view" class="perf-view" role="tabpanel" aria-labelledby="perf-tab-dual" hidden>
         <div class="st-section">
           <div class="st-section-title">双引擎分工性能测试</div>
           <div class="st-help">
@@ -1764,6 +1790,60 @@
         <div class="st-section">
           <div class="st-section-title">当前已应用的配置</div>
           <div class="st-help" id="perf-applied">读取中…</div>
+        </div>
+        </div>
+        <div id="perf-models-view" class="perf-view" role="tabpanel" aria-labelledby="perf-tab-models">
+          <div class="st-section">
+            <div class="st-section-title">全模型速度测试</div>
+            <div class="st-help">
+              勾选已安装的本地模型，用同一段音频逐个跑一次，结果按<b>倍率 = 音频秒数 / 识别实际耗时</b>列出。
+              耗时包含模型加载，倍率越高越快；不同模型适合的素材不同，速度只代表本机这次测得的吞吐。
+            </div>
+            <div class="st-help" style="margin-top:6px">
+              测试素材：<code id="bench-audio-path">（未选择）</code>
+              <button type="button" class="btn btn-mini" id="bench-audio-pick">选择音频…</button>
+              <button type="button" class="btn btn-mini" id="bench-audio-auto">自动找一份</button>
+            </div>
+            <div class="st-row" style="margin-top:8px">
+              <label class="st-label">测试时长</label>
+              <input type="number" id="bench-seconds" class="st-input" value="20" min="5" max="600" step="5" style="max-width:120px">
+              <span class="st-help" style="margin-left:8px">秒（截取音频开头 5–600 秒；越长越接近真实负载）</span>
+            </div>
+            <div class="bench-conditions" id="bench-conditions">
+              <div class="bench-cond-title">测试条件 <span class="gl-hint">与创建稿件页对齐</span></div>
+              <div class="bench-cond-row">
+                <label class="bench-check"><input type="checkbox" id="bench-word" checked> 逐词</label>
+                <label class="bench-check">置信度
+                  <select id="bench-confidence" class="st-input">
+                    <option value="full">完整（含稳定性判定）</option>
+                    <option value="fast">快速（不重跑稳定性）</option>
+                    <option value="off">关闭</option>
+                  </select>
+                </label>
+                <label class="bench-check"><input type="checkbox" id="bench-cast"> 分角色识别</label>
+                <label class="bench-check"><input type="checkbox" id="bench-speakers"> 说话人区分</label>
+                <input type="number" id="bench-speaker-count" class="st-input" min="1" max="12" placeholder="6" style="max-width:74px" title="说话人数；留空默认 6">
+              </div>
+              <div class="gl-hint bench-cond-note" id="bench-cond-note">逐词只影响可关闭词时间戳的引擎（如 Whisper large-v2）；置信度「完整」会给 Parakeet 增加 2 遍稳定性重跑；分角色识别与说话人区分是后处理，按实际耗时计入总倍率（分角色识别会调用已配置的 LLM，可能产生少量费用）。</div>
+            </div>
+            <div class="st-row" style="margin-top:8px">
+              <button type="button" class="btn btn-mini" id="bench-refresh">刷新模型</button>
+              <button type="button" class="btn btn-mini" id="bench-all">全选可用</button>
+              <button type="button" class="btn btn-mini" id="bench-none">清空</button>
+              <span class="st-msg" id="bench-models-note"></span>
+            </div>
+            <div id="bench-models" class="bench-models"><span class="spin"></span>读取中…</div>
+            <div class="st-row" style="margin-top:10px">
+              <button type="button" class="btn btn-accent" id="bench-start">开始测试</button>
+              <button type="button" class="btn" id="bench-cancel" hidden>取消测试</button>
+              <span class="st-msg" id="bench-note"></span>
+            </div>
+            <div id="bench-progress" hidden style="margin-top:8px">
+              <div class="st-progress"><div id="bench-bar" style="width:0%"></div></div>
+              <div class="st-help" id="bench-stage" style="margin-top:4px"></div>
+            </div>
+            <div id="bench-result" style="margin-top:12px"></div>
+          </div>
         </div>
       </div>
       <div class="st-panel" id="st-panel-fetch" role="tabpanel" data-stp="fetch" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-fetch">下载与登录</h2><p>设置链接素材的画质、网络和账号来源。</p><p class="sf-settings-save-note">画质、代理和浏览器来源即时保存；bilibili Cookie 需单独保存。</p></div>
@@ -2025,35 +2105,16 @@
           <p class="gl-hint" id="st-correct-note"></p>
         </div>
         <div class="st-card">
-          <div class="st-card-title">重排逐词时间 <span class="st-card-note">原片音频重识别 → 实测逐词时间</span></div>
+          <div class="st-card-title">重排逐词时间 <span class="st-card-note">Qwen3 对齐 · 文本不改</span></div>
           <p class="gl-hint">
-            右键字幕块选「重排逐词时间」，或点「全片逐词重校对」时用这里的设置。
-            直接切出这条字幕在<b>原片音频</b>里的那一段重新识别，拿识别出来的真实位置当逐词时间
-            —— <b>只改逐词时间，不动文本</b>。
+            右键字幕块选「重排逐词时间」，或点「全片逐词重校对」时使用。
+            前提是这句文本<b>已经确认正确</b>：只把已有文本和原片音频交给 <b>Qwen3-ForcedAligner</b>
+            重新量时间，<b>不跑 ASR、不改文本、不改整句起止</b>。
           </p>
           <p class="gl-hint">
-            不达标的句子会再走一级：让模型从该句已有的词里挑出<b>不常见 / 专有</b>的词
-            （人名、服务器名、术语）做成**只作用于该句**的热词表，重建识别器再识别一次，
-            <b>更吻合才采纳</b>。实测把整句所有词都当热词是净负效果，
-            所以只挑专名、且必须有这道闸门。
+            对齐器只负责时间。如果这句话本身还不确定，请用独立的「重新识别」功能，
+            不要让对齐器去猜文本。
           </p>
-          <div class="st-row" style="margin-top:8px">
-            <span class="st-lbl" style="min-width:auto">最低锚点率</span>
-            <input type="number" id="st-realign-minratio" class="st-input" min="0.3" max="1" step="0.05" value="0.6" style="max-width:84px">
-            <span class="gl-hint" style="flex:1">
-              识别出的词与原文对得上的比例低于这个值就判为「不可信」并拒绝改动（而不是给一个错的时间）
-            </span>
-          </div>
-          <div class="st-row" style="margin-top:8px">
-            <span class="st-lbl" style="min-width:auto">重校对置信度门槛</span>
-            <input type="number" id="st-realign-minconf" class="st-input" min="0.3" max="1" step="0.05" value="0.7" style="max-width:84px">
-            <span class="gl-hint" style="flex:1">
-              「全片逐词重校对」用它决定**哪些句子值得改**：置信度 ≥ 门槛的才重排逐词时间，
-              低于门槛的原样保留。它比「最低锚点率」更严 —— 那个只判"能不能用"，
-              这个还要看有没有整段落单、有没有词被压扁
-            </span>
-          </div>
-          <p class="gl-hint" id="st-realign-note"></p>
         </div>
         <!-- 逐词字幕自愈开关（默认开）。
              它只修一种特定损坏：**逐词行被清空、文本跑到同时间戳的另一行上**

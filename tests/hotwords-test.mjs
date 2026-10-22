@@ -208,17 +208,19 @@ console.log('\n== ⑨ 「模型管理」状态卡不能误报（三个实测撞�
   ok(/gpuUnknown/.test(PJS) && /正在查显卡/.test(PJS),
     '★ Multitalker 卡探测期间显示「检测中」，不说"没检测到 N 卡"');
 
-  /* ③ nvidiaCache.name 在**业务代码**里只该剩三处，且都说得通：
+  /* ③ nvidiaCache.name 在**业务代码**里只该剩四处，且都说得通：
    *      · nvidiaGpu() 内部两处（读缓存 / 写回后返回）
    *      · gpuPending 一处（它就在 `gpu: await nvidiaGpu()` **之后**，用来判断探测结果空不空）
+   *      · Qwen3 GPU 门禁一处（创建前已走完硬件探测；未探测到 N 卡时明确拒绝）
+   *      · 对齐器 GPU 门禁两处（独立对齐器只在有 N 卡时走 CUDA）
    *    任何"打后台 + 立刻读缓存"的写法都会在冷启动时读到 null → 误报。 */
   const bizCacheReads = SRV.split('\n')
     .map(l => l.trim())
     .filter(t => /nvidiaCache\.name/.test(t) && !t.startsWith('*') && !t.startsWith('/*') && !t.startsWith('//'));
-  ok(bizCacheReads.length === 3,
-    `★ 业务代码里读缓存只剩 3 处（实际 ${bizCacheReads.length}）`, bizCacheReads);
-  ok(bizCacheReads.filter(t => !/gpuPending|return nvidiaCache\.name|nvidiaCache\.at/.test(t)).length === 0,
-    '★ 那 3 处都说得通（nvidiaGpu 内部 ×2 + gpuPending ×1）', bizCacheReads);
+  ok(bizCacheReads.length === 6,
+    `★ 业务代码里读缓存只剩 6 处（实际 ${bizCacheReads.length}）`, bizCacheReads);
+  ok(bizCacheReads.filter(t => !/gpuPending|return nvidiaCache.name|nvidiaCache.at|Qwen3|cudaReady|qwen3-forced/.test(t)).length === 0,
+    '★ 那 6 处都说得通（nvidiaGpu 内部 ×2 + gpuPending ×1 + Qwen3 门禁 ×1 + 对齐器 GPU 门禁 ×2）', bizCacheReads);
 }
 
 console.log('\n== ⑩ 「自动纠错」卡：不能选做不了纠错的模型、报错要指向真原因 ==');

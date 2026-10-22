@@ -645,7 +645,7 @@ else settingsList.appendChild(heal);
 for (const [title, ids] of [
   ['识别结果', ['st-conf-mode', 'st-cast-enabled']],
   ['热词与专有名词', ['ah-terms-list', 'ah-score', 'an-use-translate']],
-  ['纠错与逐词时间', ['st-correct-mode', 'st-realign-minratio']]
+  ['纠错', ['st-correct-mode']]
 ]) {
   const group = document.createElement('section'); group.className = 'sf-settings-cluster';
   const heading = document.createElement('h3'); heading.className = 'sf-settings-group-title'; heading.textContent = t(title);
@@ -658,7 +658,7 @@ function explain(card, summary, nodes) {
   const label = document.createElement('summary'); label.textContent = t(summary); details.appendChild(label);
   nodes.forEach(node => details.appendChild(node)); card.appendChild(details);
 }
-for (const id of ['st-realign-minratio', 'an-use-translate', 'ass-style-group']) {
+for (const id of ['an-use-translate', 'ass-style-group']) {
   const card = id === 'ass-style-group' ? $(id) : cardOf(id);
   const notes = [...card.children].filter(el => el.tagName === 'P' && !el.id);
   explain(card, '工作方式与使用说明', notes);
@@ -681,7 +681,6 @@ for (const [id, label] of Object.entries({
   'st-conf-mode': '置信度模式', 'st-correct-mode': '自动纠错', 'ah-score': '热词强度',
   'st-correct-provider': '纠错服务商', 'st-correct-pad': '前后上下文秒数',
   'st-correct-max': '单段时长上限', 'st-correct-batch': '每批字幕行数',
-  'st-realign-minratio': '最低锚点率', 'st-realign-minconf': '重校对置信度门槛'
 })) $(id).setAttribute('aria-label', t(label));
 document.querySelectorAll('#st-view .st-grid').forEach(grid => {
   let label = '';
@@ -932,7 +931,17 @@ $('sf-list-mode').addEventListener('click', () => {
   }
 });
 $('sf-clear-filter').addEventListener('click', () => { filter = 'all'; folder = ''; $('sf-search').value = ''; renderFolders(); refreshLibrary(); });
-/** 自定义主页：按项目真实阶段渲染小组件；UWP 下 CSS 会转成磁贴。 */
+/** 自定义主页：按项目真实阶段渲染小组件；UWP 下 CSS 会转成磁贴。
+ *  ⚠ 只在第一次建节点；之后**只改文字**。整块 innerHTML 重建会在
+ *  `#dashboard-view.is-entering` 的错峰入场还没播完时换掉所有磁贴，新节点会把
+ *  动画从头再播一遍 —— 用户看到的就是「动画播完过一会又刷新一下」。
+ *  进入主页后项目快照还会异步到一次，这条路径必须保持幂等。 */
+function setWidgetText(root, selector, value) {
+  const node = root.querySelector(selector);
+  if (!node) return;
+  const text = String(value);
+  if (node.textContent !== text) node.textContent = text;
+}
 function renderWidgets() {
   const el = $('sf-widgets');
   if (!el) return;
@@ -943,12 +952,13 @@ function renderWidgets() {
   const recentMeta = recent
     ? `${String(recent.format).toUpperCase()}${recent.subName ? ' · ' + recent.subName : ''}`
     : t('从视频或字幕开始');
-  el.innerHTML = `
+  if (!el.querySelector('.sf-widget')) {
+    el.innerHTML = `
     <button type="button" class="sf-widget sf-widget-wide sf-widget-resume uwp-tile" data-widget="resume" data-tone="accent">
       <span class="sf-widget-kicker">YOUR NEXT STORY</span>
       <strong class="sf-widget-title">${esc(recent?.name || t('开始新的创作'))}</strong>
       <small>${esc(recentMeta)}</small>
-      <span class="sf-widget-cta">${t(recent ? '继续编辑' : '新建稿件')} <b aria-hidden="true">→</b></span>
+      <span class="sf-widget-cta"><span class="sf-widget-cta-label">${t(recent ? '继续编辑' : '新建稿件')}</span> <b aria-hidden="true">→</b></span>
       <span class="sf-widget-wm" aria-hidden="true">${ico('play')}</span>
     </button>
     <button type="button" class="sf-widget uwp-tile" data-widget-filter="active">
@@ -1000,6 +1010,16 @@ function renderWidgets() {
       <strong class="sf-widget-title">${t('稿件库')}</strong>
       <small>${all} ${t('个项目')}</small>
     </button>`;
+    return;
+  }
+  setWidgetText(el, '[data-widget="resume"] .sf-widget-title', recent?.name || t('开始新的创作'));
+  setWidgetText(el, '[data-widget="resume"] small', recentMeta);
+  setWidgetText(el, '[data-widget="resume"] .sf-widget-cta-label', t(recent ? '继续编辑' : '新建稿件'));
+  setWidgetText(el, '[data-widget-filter="active"] .sf-widget-num', active);
+  setWidgetText(el, '[data-widget-filter="ready"] .sf-widget-num', ready);
+  setWidgetText(el, '[data-widget-filter="attention"] .sf-widget-num', attention);
+  setWidgetText(el, '[data-widget-filter="all"] .sf-widget-num', all);
+  setWidgetText(el, '[data-widget="library"] small', all + ' ' + t('个项目'));
 }
 
 /** Material You 主页：复刻旧版稿件库的三段式 hero；只在 material-you 主题启用。 */
@@ -1072,6 +1092,9 @@ function renderMaterialHome() {
   renderMuProcessing();
   write('sf-mu-ready-widget', counts.ready);
   write('sf-mu-attention-count', counts.attention);
+  const attentionProject = projects.find(p => projectPhase(p) === 'attention') || null;
+  const attentionCard = $('sf-mu-attention');
+  if (attentionCard) attentionCard.dataset.projectId = attentionProject?.id || '';
   write('sf-mu-all-count', counts.all);
   write('sf-mu-resume-eyebrow', current ? '当前正在编辑' : '开始新的创作');
   write('sf-mu-next-title', current?.name || '还没有正在编辑的稿件');
@@ -1095,7 +1118,7 @@ const SETTINGS_ENTER_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .
 const UWP_ENTER_ITEM_SELECTORS = {
   'dashboard-view': '#sf-widgets > .sf-widget',
   'home-view': '.home-list > .proj-card',
-  'np-view': ':scope > .page-intro, .ws-grid > .ws-panel',
+  'np-view': ':scope > .page-intro, .ws-grid .ws-panel',
   'detail-view': ':scope > .page-intro, .ws-grid > .ws-panel',
   'sf-help': '.sf-page-content > .sf-eyebrow, .sf-page-content > h1, .sf-page-content > p, .sf-help-grid > article, .sf-help-grid article dl > div'
 };
@@ -1355,15 +1378,21 @@ window.addEventListener('sf-settings-panel-shown', e => {
   if (document.body.dataset.design === 'uwp') animateUwpPage(e.detail?.panel, true);
   else if (document.body.dataset.design === 'material') animateMaterialPage(e.detail?.panel);
 });
-function syncDashboardMode() {
+let dashboardHomeMode = '';
+function syncDashboardMode(replay = false) {
   const dashboard = $('dashboard-view'), material = $('sf-mu-home'), widgets = $('sf-widgets');
   if (!dashboard || !material || !widgets) return;
   const on = isMaterialHome();
-  dashboard.dataset.homeMode = on ? 'material' : 'widgets';
+  const mode = on ? 'material' : 'widgets';
+  /* 只有模式真的切换（Material 主页 ↔ 磁贴）或主题切换才重播入场。
+     项目快照刷新也走这里，每次都重播就是「动画播完过一会又刷新一下」。 */
+  const modeChanged = !!dashboardHomeMode && dashboardHomeMode !== mode;
+  dashboardHomeMode = mode;
+  dashboard.dataset.homeMode = mode;
   material.hidden = !on;
   widgets.hidden = on;
   if (on) renderMaterialHome();
-  if (!dashboard.hidden) animateDashboardCards();
+  if (!dashboard.hidden && (modeChanged || replay)) animateDashboardCards();
 }
 function goLibraryFilter(nextFilter, clearSearch = true) {
   filter = nextFilter;
@@ -1379,6 +1408,17 @@ $('sf-mu-resume').addEventListener('click', () => {
   if (id) location.hash = '#/project/' + encodeURIComponent(id); else $('btn-new-project').click();
 });
 $('sf-mu-widgets').addEventListener('click', (e) => {
+  const attentionAction = e.target.closest('[data-mu-attn]');
+  if (attentionAction) {
+    if (attentionAction.dataset.muAttn === 'resume') {
+      const id = $('sf-mu-attention')?.dataset.projectId;
+      if (id) location.hash = '#/project/' + encodeURIComponent(id);
+      else goLibraryFilter('attention');
+    } else if (attentionAction.dataset.muAttn === 'details') {
+      goLibraryFilter('attention');
+    }
+    return;
+  }
   const processing = e.target.closest('#sf-mu-processing');
   if (processing) {
     const id = processing.dataset.processing;
@@ -1392,7 +1432,7 @@ $('sf-mu-widgets').addEventListener('click', (e) => {
   if (b.dataset.muAction === 'new') { $('btn-new-project').click(); return; }
   if (b.dataset.muAction === 'settings') { location.hash = '#/settings'; }
 });
-window.addEventListener('sf-studio-theme', syncDashboardMode);
+window.addEventListener('sf-studio-theme', () => syncDashboardMode(true));
 const muClockTimer = setInterval(updateMuClock, 1000);
 if (muClockTimer && typeof muClockTimer.unref === 'function') muClockTimer.unref();
 updateMuClock();
@@ -1507,7 +1547,9 @@ window.addEventListener('sf-studio-theme', resetUwpGlow);
 /* ── UWP 磁贴化：所有 button/.btn 共用 Reveal 面光与 3D 按压 ─────────── */
 function syncUwpTiles() {
   if (document.body.dataset.design !== 'uwp') return;
-  document.querySelectorAll('button, .btn, [role=button]').forEach(el => el.classList.add('uwp-tile'));
+  // 欢迎页 CUDA / Vulkan 选择卡是 label 不是 button；显式纳入磁贴，保持和
+  // 工作台 .sf-widget 同一套 Reveal 面光/边缘，而不是另做一套圆角卡。
+  document.querySelectorAll('button, .btn, [role=button], .welcome-card').forEach(el => el.classList.add('uwp-tile'));
 }
 /* UWP range 轨道用 accent 填到当前值；原生 range 没有 CSS 可读 value 的钩子，
    所以由 JS 写 --uwp-range。只写自定义属性，不碰 value/布局，其它主题零影响。 */
@@ -1532,7 +1574,7 @@ function resetUwpTileHover() {
   uwpHoverTile = null;
 }
 function uwpTilesTarget(e) {
-  const t = e.target && e.target.closest ? e.target.closest('button, .btn, [role=button]') : null;
+  const t = e.target && e.target.closest ? e.target.closest('button, .btn, [role=button], .welcome-card') : null;
   return t && !t.disabled && t.getAttribute('aria-disabled') !== 'true' ? t : null;
 }
 function uwpTileHover(e) {

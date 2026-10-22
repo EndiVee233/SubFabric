@@ -44,10 +44,10 @@ console.log('== 1. 分词与 TTS 文本准备 ==');
   ok(A.normWord(null) === '', 'null → 空');
 
   // TTS 文本：剥掉标签，否则会被念出来
-  ok(!/\{/.test(A.ttsText('{\\c&HFFFFFF&}Hello{\\c} world')), '剥掉 ASS 覆盖标签');
-  ok(A.ttsText('Hello\\Nworld').trim() === 'Hello world', '硬换行变空格');
-  ok(A.ttsText('[Alice] Hello').trim() === 'Hello', '剥掉 [角色名]（不是台词）');
-  ok(A.ttsText('ice_ball').trim() === 'ice ball', '下划线拆成空格（否则念成怪音）');
+  ok(!/\{/.test(A.alignText('{\\c&HFFFFFF&}Hello{\\c} world')), '剥掉 ASS 覆盖标签');
+  ok(A.alignText('Hello\\Nworld').trim() === 'Hello world', '硬换行变空格');
+  ok(A.alignText('[Alice] Hello').trim() === 'Hello', '剥掉 [角色名]（不是台词）');
+  ok(A.alignText('ice_ball').trim() === 'ice ball', '下划线拆成空格（否则念成怪音）');
 }
 
 console.log('\n== 2. 序列对齐 ==');

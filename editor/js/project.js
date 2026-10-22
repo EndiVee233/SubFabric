@@ -133,8 +133,13 @@ export function initProjects(ctx) {
    * 「自动区分说话人」是项目级参数：新建时选定，详细信息里只读回显。 */
   const ENGINE_LABEL = {
     'whisper.cpp': '本地 · whisper.cpp',
+    'faster-whisper': '本地 · Whisper large-v2',
+    'qwen': '本地 · Qwen3（CUDA）',
     'crispasr': '本地 · Parakeet（Vulkan）',
+    'crispasr-whisper': '本地 · Whisper large-v2（Vulkan）',
+    'crispasr-qwen': '本地 · Qwen3（Vulkan）',
     'sherpa-onnx': '本地 · Parakeet',
+    openvino: '本机 Parakeet TDT V2（Intel NPU）',
     nemo: '本地 · NeMo（多说话人）',
     vibevoice: '本地 · VibeVoice（CUDA 4bit）',
     bcut: '云端 · 必剪 ASR',
@@ -213,13 +218,20 @@ export function initProjects(ctx) {
     if (!e.asr) return;
     const pool = ((genAsr && genAsr.models) || []).filter(m => m.ready && m.draftAllowed !== false);
     const want = e.source ? e.source.value : '';
-    const list = want ? pool.filter(m => (m.engine || '') === want) : pool;
+    // 新建页把「识别来源」折进模型下拉：Whisper V2 / Qwen / Parakeet 直接同一列表可见，
+    // 选哪个模型就把来源同步到它的引擎；设置页仍保留按来源过滤。
+    const flat = scope === 'np';
+    const list = flat ? pool : (want ? pool.filter(m => (m.engine || '') === want) : pool);
     const keep = e.asr.value;
     e.asr.innerHTML = list.length
       ? list.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
       : '<option value="">（该来源下没有可用模型，去设置里下载）</option>';
     if (keep && list.some(m => m.id === keep)) e.asr.value = keep;
     else if (genAsr && genAsr.selectedModel && list.some(m => m.id === genAsr.selectedModel)) e.asr.value = genAsr.selectedModel;
+    if (flat && e.source) {
+      const sel = list.find(m => m.id === e.asr.value);
+      if (sel) e.source.value = sel.engine || '';
+    }
     if (scope === 'np') npSyncVibeVoice();
   }
   /** 把三份配置铺到某个面板上 */
@@ -320,9 +332,21 @@ export function initProjects(ctx) {
   }
   for (const scope of ['np', 'dt']) {
     const e = genEls(scope);
-    if (scope === 'np' && e.asr) e.asr.addEventListener('change', npSyncVibeVoice);
+    if (scope === 'np' && e.asr) e.asr.addEventListener('change', () => {
+      const m = (genAsr && genAsr.models || []).find(x => x.id === e.asr.value);
+      if (m && e.source) e.source.value = m.engine || '';
+      npSyncVibeVoice();
+    });
     if (e.save) e.save.addEventListener('click', () => genSave(scope));
-    if (e.source) e.source.addEventListener('change', () => { genFillModels(scope); genSetState(scope, '未保存'); });
+    if (e.source) e.source.addEventListener('change', () => {
+      // 新建页：切来源时把模型下拉切到该来源的第一个可用模型；列表仍保持扁平。
+      if (scope === 'np' && e.asr && genAsr) {
+        const first = (genAsr.models || []).find(m => m.ready && m.draftAllowed !== false
+          && (m.engine || '') === e.source.value);
+        if (first) e.asr.value = first.id;
+      }
+      genFillModels(scope); genSetState(scope, '未保存');
+    });
     for (const k of ['provider', 'model', 'prompt', 'castPrompt', 'cast']) {
       const el = e[k];
       if (!el) continue;
@@ -1663,7 +1687,6 @@ export function initProjects(ctx) {
     loadCastSettings();
     loadConfidenceSettings();
     correctLoad();
-    realignLoad();
     /* ⚠ initPerfPanel / initDualRatio 必须**无条件**调用。
      *   2026-10-11 无头浏览器实测发现：这两个以前只写在下面 catch 分支里
      *   （翻译配置读失败时才跑），于是**正常启动时从不执行** ——
@@ -1672,7 +1695,8 @@ export function initProjects(ctx) {
      *   它们只依赖 DOM id（且各自有 dataset.bound 幂等保护），
      *   与下面那次 /api/translate/config 无关，所以提到 try 之前无条件跑。 */
     initPerfPanel();        // 性能测试页（独立于模型列表，自己管自己的状态）
-    initDualRatio();        // 双引擎分工下拉（事件委托，重渲染不失效）
+    // 停用：双引擎分工下拉
+    // initDualRatio();
     initAsrParams();        // 模型参数面板（事件委托，下载轮询重渲染不失效）
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
@@ -1943,6 +1967,348 @@ function initPerfPanel() {
     if (s && s.error) perfSetBusy(false, '上次失败：' + s.error);
   }).catch(() => {});
   perfRenderApplied();
+  initBenchPanel();
+}
+
+/* ── 全模型速度测试 ───────────────────────────────────────────────
+ * 性能页的第二个页签：勾选已安装模型 → 同一段音频逐个跑 → 按倍率排序。
+ * 与双引擎测试完全独立（状态、轮询、结果），互不覆盖。 */
+let benchModelsLoaded = false;
+let benchLoading = false;
+let benchTimer = null;
+let benchStateLoaded = false;
+let benchAudio = '';
+
+function benchSetBusy(on, msg) {
+  const start = $('#bench-start');
+  const cancel = $('#bench-cancel');
+  if (start) { start.disabled = !!on; start.textContent = on ? '测试中…' : '开始测试'; }
+  if (cancel) cancel.hidden = !on;
+  document.querySelectorAll('#bench-conditions input, #bench-conditions select').forEach(el => {
+    el.disabled = !!on;
+  });
+  const note = $('#bench-note');
+  if (note && msg !== undefined) note.textContent = msg || '';
+}
+
+function selectPerfTab(name) {
+  const dual = $('#perf-dual-view'), models = $('#perf-models-view');
+  if (!dual || !models) return;
+  const isModels = name === 'models';
+  dual.hidden = isModels;
+  models.hidden = !isModels;
+  document.querySelectorAll('[data-perf-tab]').forEach((b) => {
+    const active = b.dataset.perfTab === name;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+  if (isModels) {
+    if (!benchModelsLoaded) benchLoadModels();
+    benchRestoreState();
+  }
+}
+
+function benchApplyConditions(c) {
+  if (!c) return;
+  const set = (id, prop, value) => { const el = $(id); if (el) el[prop] = value; };
+  set('#bench-word', 'checked', c.word !== false);
+  set('#bench-confidence', 'value', c.confidence || 'full');
+  set('#bench-cast', 'checked', c.cast === true);
+  set('#bench-speakers', 'checked', c.speakers === true || c.cast === true);
+  set('#bench-speaker-count', 'value', c.speakerCount ? String(c.speakerCount) : '');
+  const conf = $('#bench-confidence');
+  if (conf) conf.dataset.init = '1';
+}
+
+function benchRestoreState() {
+  if (benchStateLoaded) return;
+  benchStateLoaded = true;
+  fetch('/api/asr/bench/state').then(r => r.json()).then((s) => {
+    if (s && s.conditions) benchApplyConditions(s.conditions);
+    if (s && s.running) {
+      selectPerfTab('models');
+      const progress = $('#bench-progress');
+      if (progress) progress.hidden = false;
+      benchStartPolling();
+    } else if (s && s.results?.length) benchRenderResult(s);
+  }).catch(() => {});
+}
+
+function benchSetAudio(p) {
+  benchAudio = p || '';
+  const el = $('#bench-audio-path');
+  if (el) el.textContent = benchAudio || '（未选择）';
+}
+
+async function benchLoadModels(force) {
+  const box = $('#bench-models');
+  if (!box) return;
+  if (benchLoading && !force) return;
+  benchLoading = true;
+  const previous = new Set([...box.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value));
+  const firstLoad = !benchModelsLoaded;
+  if (firstLoad) box.innerHTML = '<span class="spin"></span>读取模型…';
+  try {
+    const d = await (await fetch('/api/asr/status')).json();
+    // 置信度默认跟随全局设置（与创建稿件页一致），只在首次加载时写一次，别覆盖用户选择。
+    const confEl = $('#bench-confidence');
+    if (confEl && !confEl.dataset.init) {
+      confEl.value = (d.confidence && d.confidence.mode) || 'full';
+      confEl.dataset.init = '1';
+    }
+    const models = (d.models || []).filter(m => m && m.ready && !m.cloud
+      && m.engine !== 'dual' && ['openvino', 'faster-whisper', 'crispasr', 'qwen'].includes(m.engine));
+    benchModelsLoaded = true;
+    if (!models.length) {
+      box.innerHTML = '<div class="bench-empty">没有已安装完成的本地模型。先在「语音识别」里下载模型和运行时。</div>';
+      return;
+    }
+    const checked = firstLoad ? new Set(models.filter(m => m.usable).map(m => m.id)) : previous;
+    box.innerHTML = models.map((m) => {
+      const label = BACKEND_LABEL[m.backend] || m.backend || '';
+      const state = m.usable ? '' : '当前后端未启用或硬件不满足，测试可能失败';
+      return `<label class="bench-model${m.usable ? '' : ' is-unavailable'}">
+        <input type="checkbox" value="${esc(m.id)}"${checked.has(m.id) ? ' checked' : ''}>
+        <span><b>${esc(m.name)}</b><small>${esc(m.engine)}${label ? ' · ' + esc(label) : ''}${state ? ' · <span class="warn">' + esc(state) + '</span>' : ''}</small></span>
+      </label>`;
+    }).join('');
+    const note = $('#bench-models-note');
+    if (note) note.textContent = models.length + ' 个已安装模型';
+  } catch (e) {
+    if (firstLoad) box.innerHTML = '<div class="bench-empty">模型读取失败：' + esc(String((e && e.message) || e)) + '</div>';
+    const note = $('#bench-models-note');
+    if (note) note.textContent = '读取失败';
+  } finally {
+    benchLoading = false;
+  }
+}
+
+/** 速度测试失败时的就地修复入口：只有确实需要安装/修复运行时的情况才给按钮。
+ *  VibeVoice 的「No module named bitsandbytes」正是典型：运行时目录存在，但依赖没装全。 */
+function benchFixButton(r) {
+  const err = String(r.error || '');
+  if (!err) return '';
+  // 停用：VibeVoice 修复入口
+  // if (r.engine === 'vibevoice' && /bitsandbytes|VibeVoice|CUDA|运行时|module/i.test(err)) {
+  //   return '<div class="bench-fix-row"><span class="bench-fix-status" data-status></span><button type="button" class="btn btn-mini bench-fix" data-fix="runtime:vibevoice" data-force="1">安装 / 修复 VibeVoice 运行时</button></div>';
+  // }
+  if (r.engine === 'faster-whisper' && /faster-whisper-xxl|运行时/i.test(err)
+    && /没装|缺失|未就绪|not found|Unable to launch|没有找到/i.test(err)) {
+    return '<div class="bench-fix-row"><span class="bench-fix-status" data-status></span><button type="button" class="btn btn-mini bench-fix" data-fix="runtime:faster-whisper">安装 Faster-Whisper 运行时</button></div>';
+  }
+  return '';
+}
+
+/** 安装运行时后，在失败行里持续显示真实进度；装好/失败都给出明确下一步。
+ *  旧版只 toast 一下就结束，用户站在「全模型速度」页签上根本看不到安装进展。 */
+async function benchInstallRuntime(btn) {
+  const row = btn.closest('.bench-fix-row');
+  const status = row && row.querySelector('.bench-fix-status');
+  const label = btn.textContent;
+  const setStatus = (text) => { if (status) status.textContent = text || ''; };
+  btn.disabled = true;
+  btn.textContent = '正在启动…';
+  try {
+    const r = await (await fetch('/api/asr/download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: btn.dataset.fix, force: btn.dataset.force === '1' }),
+    })).json();
+    if (r.error) throw new Error(r.error);
+    if (r.ready) {
+      btn.textContent = '运行时已就绪';
+      setStatus('✓ 运行时已就绪，点「开始测试」重新跑一次');
+      return;
+    }
+    btn.textContent = '安装中…';
+    setStatus('正在安装运行时…');
+    toast('已开始安装运行时，进度会显示在这一行', 4200);
+    // 在页面上看进度，而不是让用户去别的页签猜：2 秒一轮，最多 40 分钟。
+    const fix = String(btn.dataset.fix || '');
+    const dlKey = fix.includes('vibevoice') ? 'vibevoice' : 'runtime:faster-whisper';
+    const deadline = Date.now() + 40 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (!btn.isConnected) return;   // 行被重绘/切页后停止轮询，别更新已脱离文档的节点
+      let d = null;
+      try { d = await (await fetch('/api/asr/status')).json(); } catch { continue; }
+      const dl = (d.downloads || []).find(x => x && x.key === dlKey);
+      const ready = fix.includes('vibevoice')
+        ? !!(d.vibevoice && d.vibevoice.ok && d.vibevoice.cuda && d.vibevoice.bitsandbytes
+          && d.vibevoice.bnbCudaKernel)
+        : !!(d.fasterWhisperRuntime && d.fasterWhisperRuntime.ok);
+      if (ready) {
+        setStatus('✓ 运行时已就绪，点「开始测试」重新跑一次');
+        btn.textContent = '已就绪';
+        toast('运行时已就绪，重新开始测试即可', 4200);
+        return;
+      }
+      if (dl && dl.error) {
+        setStatus('安装失败：' + String(dl.error).slice(0, 160));
+        btn.disabled = false;
+        btn.textContent = '重试修复';
+        return;
+      }
+      if (dl && dl.running) {
+        setStatus('安装中 ' + (Number(dl.pct) || 0) + '%' + (dl.msg ? ' · ' + String(dl.msg).slice(0, 60) : ''));
+      }
+    }
+    setStatus('安装仍未完成，可到「语音识别」页查看进度');
+    btn.disabled = false;
+    btn.textContent = label;
+  } catch (e) {
+    setStatus('启动安装失败：' + String((e && e.message) || e).slice(0, 160));
+    toast('启动安装失败：' + String((e && e.message) || e), 5000);
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function benchRenderResult(s) {
+  const box = $('#bench-result');
+  if (!box) return;
+  const results = Array.isArray(s && s.results) ? s.results.slice() : [];
+  if (!results.length) { box.innerHTML = ''; return; }
+  results.sort((a, b) => {
+    if (!!a.error !== !!b.error) return a.error ? 1 : -1;
+    return (b.speed || 0) - (a.speed || 0);
+  });
+  const audioSec = results.find(r => r.audioSec != null)?.audioSec;
+  const rows = results.map((r) => {
+    if (r.error) {
+      return `<tr><td>${esc(r.name)}<br><small>${esc(r.engine || '')}</small></td><td colspan="5" class="err">${esc(r.error)}${benchFixButton(r)}</td></tr>`;
+    }
+    const asrSec = Number(r.elapsedSec) || 0;
+    const postSec = Number(r.postSec) || 0;
+    const totalSec = r.totalSec != null ? Number(r.totalSec) : asrSec + postSec;
+    const speed = r.speed != null ? Number(r.speed) : (Number(r.audioSec) || 0) / Math.max(0.001, totalSec);
+    return `<tr><td>${esc(r.name)}<br><small>${esc(r.engine || '')}</small></td>`
+      + `<td>${asrSec.toFixed(2)}s</td>`
+      + `<td>${postSec > 0 ? postSec.toFixed(2) + 's' : '—'}</td>`
+      + `<td>${totalSec.toFixed(2)}s</td>`
+      + `<td class="speed">${speed.toFixed(2)}×</td>`
+      + `<td class="conf" title="${r.confidence?.lowRate != null ? '低置信度占比 ' + Math.round(Number(r.confidence.lowRate) * 100) + '%' : '该引擎不提供逐句置信度'}">${r.confidence?.avg != null ? Number(r.confidence.avg).toFixed(2) : '—'}</td></tr>`;
+  }).join('');
+  const post = s && s.post;
+  const postParts = [];
+  if (post) {
+    if (post.diarizeSec > 0) postParts.push('说话人分离 ' + Number(post.diarizeSec).toFixed(2) + 's');
+    if (post.castSec > 0) postParts.push('分角色识别 ' + Number(post.castSec).toFixed(2) + 's');
+    if (post.note) postParts.push(String(post.note));
+  }
+  box.innerHTML = `<div class="st-section-title" style="margin-top:4px">测试结果</div>
+    <table class="bench-table"><thead><tr><th>模型</th><th>识别</th><th>后处理</th><th>总耗时</th><th>倍率</th><th>置信度</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="bench-result-note">倍率 = 音频秒数 / 实际总耗时（识别 + 已开启的后处理，含模型加载），越高越快${audioSec ? '；本次音频 ' + Number(audioSec).toFixed(1) + 's' : ''}。置信度是模型逐句自评的平均值（VibeVoice 不提供），不代表准确率。</div>
+    ${postParts.length ? `<div class="bench-result-note">后处理：${esc(postParts.join(' · '))}</div>` : ''}`;
+  box.querySelectorAll('.bench-fix').forEach(btn => btn.addEventListener('click', () => benchInstallRuntime(btn)));
+}
+
+function benchStopPolling() {
+  if (benchTimer) { clearInterval(benchTimer); benchTimer = null; }
+}
+
+function benchPoll() {
+  fetch('/api/asr/bench/state').then(r => r.json()).then((s) => {
+    if (!s) return;
+    const bar = $('#bench-bar');
+    const stage = $('#bench-stage');
+    if (bar) bar.style.width = Math.max(0, Math.min(100, Number(s.pct) || 0)) + '%';
+    if (stage) stage.textContent = s.msg || '';
+    const progress = $('#bench-progress');
+    if (progress) progress.hidden = !s.running;
+    if (s.running) {
+      benchSetBusy(true);
+      return;
+    }
+    benchStopPolling();
+    benchSetBusy(false, s.cancelled ? '已取消测试' : (s.error ? '失败：' + s.error : '测试完成'));
+    benchRenderResult(s);
+  }).catch(() => {}).finally(() => {});
+}
+
+function benchStartPolling() {
+  benchStopPolling();
+  benchPoll();
+  benchTimer = setInterval(benchPoll, 1200);
+}
+
+async function benchStart() {
+  const ids = [...document.querySelectorAll('#bench-models input[type=checkbox]:checked')].map(c => c.value);
+  if (!ids.length) { benchSetBusy(false, '请至少选择一个已安装模型'); return; }
+  if (!benchAudio) { benchSetBusy(false, '请先选择测试音频'); return; }
+  const seconds = Math.max(5, Math.min(600, Number(($('#bench-seconds') || {}).value) || 20));
+  const conditions = {
+    word: $('#bench-word') ? !!$('#bench-word').checked : true,
+    confidence: ($('#bench-confidence') && $('#bench-confidence').value) || 'full',
+    cast: !!($('#bench-cast') && $('#bench-cast').checked),
+    speakers: !!($('#bench-speakers') && $('#bench-speakers').checked),
+    speakerCount: Number(($('#bench-speaker-count') || {}).value) || 0,
+  };
+  const box = $('#bench-result');
+  if (box) box.innerHTML = '';
+  const progress = $('#bench-progress');
+  if (progress) progress.hidden = false;
+  benchSetBusy(true, '启动中…');
+  try {
+    const r = await (await fetch('/api/asr/bench/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: benchAudio, models: ids, seconds, conditions }),
+    })).json();
+    if (r && r.error) { benchSetBusy(false, '失败：' + r.error); return; }
+    benchStartPolling();
+  } catch (e) {
+    benchSetBusy(false, '失败：' + ((e && e.message) || e));
+  }
+}
+
+function initBenchPanel() {
+  const modelsView = $('#perf-models-view');
+  if (!modelsView || modelsView.dataset.bound) return;
+  modelsView.dataset.bound = '1';
+  document.querySelectorAll('[data-perf-tab]').forEach((b) => {
+    b.addEventListener('click', () => selectPerfTab(b.dataset.perfTab));
+  });
+  const pick = $('#bench-audio-pick');
+  if (pick) pick.addEventListener('click', async () => {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 40000);
+      const r = await fetch('/api/pick', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'audio' }), signal: ctl.signal });
+      clearTimeout(timer);
+      const d = await r.json();
+      if (d && d.path) benchSetAudio(d.path);
+    } catch (e) { benchSetBusy(false, '选择音频失败：' + ((e && e.message) || e)); }
+  });
+  const auto = $('#bench-audio-auto');
+  if (auto) auto.addEventListener('click', async () => {
+    try {
+      const d = await (await fetch('/api/asr/perf/auto-audio')).json();
+      if (d && d.path) benchSetAudio(d.path);
+      else benchSetBusy(false, (d && d.error) || '没找到现成音频');
+    } catch (e) { benchSetBusy(false, '查找失败：' + ((e && e.message) || e)); }
+  });
+  const refresh = $('#bench-refresh');
+  if (refresh) refresh.addEventListener('click', () => benchLoadModels(true));
+  const all = $('#bench-all');
+  if (all) all.addEventListener('click', () => {
+    document.querySelectorAll('#bench-models input[type=checkbox]').forEach(c => { c.checked = true; });
+  });
+  const none = $('#bench-none');
+  if (none) none.addEventListener('click', () => {
+    document.querySelectorAll('#bench-models input[type=checkbox]').forEach(c => { c.checked = false; });
+  });
+  const start = $('#bench-start');
+  if (start) start.addEventListener('click', benchStart);
+  const cancel = $('#bench-cancel');
+  if (cancel) cancel.addEventListener('click', async () => {
+    try { await fetch('/api/asr/bench/cancel', { method: 'POST' }); } catch {}
+  });
+  // 与创建页一致：分角色识别以说话人区分为前提；关掉说话人时一并关掉分角色。
+  const cast = $('#bench-cast'), speakers = $('#bench-speakers');
+  if (cast && speakers) {
+    cast.addEventListener('change', () => { if (cast.checked) speakers.checked = true; });
+    speakers.addEventListener('change', () => { if (!speakers.checked) cast.checked = false; });
+  }
 }
 
 /* 双引擎分工下拉。为什么挂在 renderAsrModels 之后：那个面板是整体重建的，
@@ -2022,6 +2388,11 @@ const ASR_PARAM_ENGINE_LABEL = {
   'faster-whisper': 'Faster-Whisper-XXL',
   'whisper.cpp': 'whisper.cpp',
   'crispasr': 'CrispASR',
+  'crispasr-whisper': 'CrispASR · Whisper Vulkan',
+  'crispasr-qwen': 'CrispASR · Qwen3 Vulkan',
+  'qwen': 'Qwen3-ASR',
+  'sherpa-onnx': 'sherpa-onnx · CUDA',
+  'vibevoice': 'VibeVoice 4bit · CUDA',
 };
 
 function ensureAsrParamsDialog() {
@@ -2285,9 +2656,12 @@ const ENTRY_CHIP = {
   'sherpa-onnx': { label: 'Parakeet', cls: 'ok' },
   'openvino': { label: 'Parakeet', cls: 'ok' },
   'crispasr': { label: 'Parakeet', cls: 'ok' },
+  'crispasr-whisper': { label: 'Whisper', cls: 'blue' },
+  'crispasr-qwen': { label: 'Qwen3', cls: 'violet' },
   'dual': { label: 'Parakeet', cls: 'ok' },
   'whisper.cpp': { label: 'Whisper', cls: 'blue' },
   'faster-whisper': { label: 'Whisper', cls: 'blue' },
+  'qwen': { label: 'Qwen3', cls: 'violet' },
   'vibevoice': { label: 'VibeVoice', cls: 'violet' },
   'nemo': { label: 'NeMo', cls: 'violet' },
   'bcut': { label: '云端', cls: 'warn' },
@@ -2464,24 +2838,36 @@ function modelRowHtml(m, d, dlOf) {
     state = `<span class="sm-state">${m.filesOk ? '模型已下载 · ' : ''}${esc(d.vibevoice?.msg || '需要安装独立 CUDA 4bit 运行时')}</span>`;
   } else if (m.needNemo) {
     state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
+  } else if (m.needRuntime && m.filesOk) {
+    state = '<span class="sm-state">模型已下载 · 还差 ' + esc(m.runtimeName || '运行时') + '</span>';
   } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
   else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
   if (dlThis) btn = '';
   else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
-  else if (m.ready || m.engine === 'vibevoice' && m.filesOk) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
+  else if (m.ready || m.filesOk) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
   else if (!pyBlocked && !vibeBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-  if ((studioUI || m.engine === 'vibevoice' || m.engine === 'faster-whisper') && m.needRuntime && !dlThis && !vibeBlocked) btn += `<button type="button" class="btn btn-mini sf-runtime-download" data-runtime="${esc(m.runtimeKey || 'runtime')}">安装运行时</button>`;
+  if ((studioUI || m.engine === 'vibevoice' || m.engine === 'faster-whisper') && m.needRuntime && !dlThis && !vibeBlocked) {
+    // 已经装了一部分（例如 torch/transformers 在、bitsandbytes 缺）时叫「修复运行时」，
+    // 点进去仍然是同一个安装接口：已满足的包 pip 会跳过，只补缺的。
+    const partialVibe = m.engine === 'vibevoice' && d.vibevoice
+      && (d.vibevoice.cuda || d.vibevoice.transformers || d.vibevoice.bitsandbytes);
+    btn += `<button type="button" class="btn btn-mini sf-runtime-download" data-runtime="${esc(m.runtimeKey || 'runtime')}">${partialVibe ? '修复运行时' : '安装运行时'}</button>`;
+  }
   const paramBtn = m.params
     ? `<button type="button" class="btn btn-mini sm-params" data-id="${esc(m.id)}" title="调整 ${esc(m.params.summary || '识别参数')}">参数</button>`
     : '';
   const paramSummary = m.params
     ? `<div class="sm-params-summary">${esc(m.params.summary || '')}${m.params.isDefault ? ' · 默认' : ' · 已自定义'}</div>`
     : '';
-  const rt = (m.needRuntime && !dlThis) ? `<div class="sm-runtime">${m.engine === 'vibevoice'
-    ? '独立 CUDA 4bit 运行时 · 通过“安装运行时”获取 · 不支持 CPU/NPU'
-    : (m.engine === 'faster-whisper'
-      ? `需要 ${esc(m.runtimeName || 'Faster-Whisper-XXL')} 运行时（下载约 ${m.runtimeSizeMB || 1450}MB / 解压约 4.4GB，含 CUDA/cuDNN）`
-      : `需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速）`)}</div>` : '';
+  let rtText = '';
+  if (m.needRuntime && !dlThis) {
+    if (m.engine === 'vibevoice') rtText = '独立 CUDA 4bit 运行时 · 通过“安装运行时”获取 · 不支持 CPU/NPU';
+    else if (m.engine === 'qwen') rtText = '需要 Qwen3 CUDA 运行时（Transformers 5.20 + Accelerate，复用 CUDA Python 环境）';
+    else if (m.engine && m.engine.indexOf('crispasr') === 0) rtText = `需要 CrispASR 运行时（约 ${m.runtimeSizeMB || 34}MB，含 Vulkan；无 N 卡时使用）`;
+    else if (m.engine === 'faster-whisper') rtText = `需要 ${esc(m.runtimeName || 'Faster-Whisper-XXL')} 运行时（下载约 ${m.runtimeSizeMB || 1450}MB / 解压约 4.4GB，含 CUDA/cuDNN）`;
+    else rtText = `需要 ${esc(m.runtimeName || 'whisper.cpp')} 运行时（约 ${m.runtimeSizeMB || 18}MB，含 Vulkan GPU 加速）`;
+  }
+  const rt = rtText ? `<div class="sm-runtime">${rtText}</div>` : '';
   return `<div class="sm-model">
     <div class="sm-head"><span class="sm-name">${esc(m.name)}${m.draftAllowed === false ? ' <span class="sm-badge">仅重新识别</span>' : ''}</span><span class="sm-actions">${paramBtn}${btn}</span></div>
     <div class="sm-desc">${esc(m.desc || '')}</div>
@@ -2536,7 +2922,8 @@ function extraModelRowHtml(m, d, dlOf) {
  *  按 engine 分而不是按名字猜 —— 名字里带什么字都会变，engine 是服务端给的稳定字段。 */
 const MODEL_FAMILY = (m) => {
   if (m.cloud || m.engine === 'bcut' || m.engine === 'capcut') return '云端识别';
-  if (m.engine === 'whisper.cpp' || m.engine === 'faster-whisper') return 'Whisper 系列';
+  if (m.engine === 'whisper.cpp' || m.engine === 'faster-whisper' || m.engine === 'crispasr-whisper') return 'Whisper 系列';
+  if (m.engine === 'qwen' || m.engine === 'crispasr-qwen') return 'Qwen 系列';
   if (m.engine === 'vibevoice') return 'VibeVoice 系列';
   if (m.engine === 'nemo') return 'NeMo 多说话人';
   return 'Parakeet 系列';
@@ -2574,9 +2961,88 @@ function showAsrFamily(family) {
     }
   }
   /* 进入 Parakeet 时真正读一次 /api/asr/dual 回填已保存比例；轮询重绘同一家族时不重复请求。 */
-  if (changedFamily && family === 'Parakeet 系列') refreshDualRatio();
+  // 停用：双引擎配置刷新
+  // if (changedFamily && family === 'Parakeet 系列') refreshDualRatio();
 }
 
+
+function alignerRowHtml(a) {
+  const ready = !!a.ready;
+  const backend = a.backend === 'vulkan' ? 'Vulkan' : (a.backend === 'cuda' ? 'CUDA' : '');
+  const btn = ready
+    ? `<button type="button" class="btn btn-mini sm-del" data-id="${esc(a.id)}" title="删除对齐模型文件">删除</button>`
+    : `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(a.id)}">下载 · ${Number(a.sizeMB || 0)} MB</button>`;
+  return `<div class="sm-model sf-aligner">
+    <div class="sm-head"><span class="sm-name">${esc(a.name || 'Qwen3-ForcedAligner')}</span>
+      <span class="sm-state${ready ? ' ok' : ''}">${ready ? '✓ 已就绪' : '未下载'}</span>${btn}</div>
+    <div class="sm-desc">${esc(a.desc || '')}</div>
+    <div class="sm-params-summary">${backend ? backend + ' · ' : ''}${esc(a.source || '独立对齐模型')} · 自动匹配，无需手动选择</div>
+  </div>`;
+}
+
+/** 给 <details> 做高度+透明度动画；原生 details 只能瞬间切换。
+ *  只绑定带 .sf-details-anim 的 details，且要求内容在 .sf-details-body 里。
+ *  非线性：展开 cubic-bezier(.16,1,.3,1)（先快后慢），收起 cubic-bezier(.4,0,.2,1)。 */
+function enhanceDetailsAnimations(root) {
+  const host = root || document;
+  const doc = host.ownerDocument || document;
+  const win = doc.defaultView || window;
+  const raf = win.requestAnimationFrame ? win.requestAnimationFrame.bind(win) : (cb => setTimeout(cb, 16));
+  const reduced = !!(win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  host.querySelectorAll('details.sf-details-anim').forEach(details => {
+    if (details.dataset.animBound) return;
+    const summary = details.querySelector(':scope > summary');
+    const body = details.querySelector(':scope > .sf-details-body');
+    if (!summary || !body) return;
+    details.dataset.animBound = '1';
+    let animating = false;
+    let timer = 0;
+    let targetOpen = false;
+    const finish = (opening) => {
+      clearTimeout(timer);
+      if (opening) {
+        body.style.height = 'auto';
+        body.style.opacity = '';
+      } else {
+        details.open = false;
+        details.classList.remove('is-closing');
+        body.style.height = '';
+        body.style.opacity = '';
+      }
+      animating = false;
+    };
+    summary.addEventListener('click', (event) => {
+      event.preventDefault();
+      if (animating) return;
+      if (reduced) { details.open = !details.open; return; }
+      const opening = !details.open;
+      targetOpen = opening;
+      body.style.transition = '';
+      if (opening) {
+        details.open = true;
+        body.style.height = '0px';
+        body.style.opacity = '0';
+        details.classList.remove('is-closing');
+        void body.offsetHeight;
+        animating = true;
+        raf(() => { body.style.height = body.scrollHeight + 'px'; body.style.opacity = '1'; });
+        timer = setTimeout(() => finish(targetOpen), 420);
+      } else {
+        body.style.height = body.scrollHeight + 'px';
+        body.style.opacity = '1';
+        details.classList.add('is-closing');
+        void body.offsetHeight;
+        animating = true;
+        raf(() => { body.style.height = '0px'; body.style.opacity = '0'; });
+        timer = setTimeout(() => finish(targetOpen), 420);
+      }
+    });
+    body.addEventListener('transitionend', (event) => {
+      if (event.target !== body || event.propertyName !== 'height' || !animating) return;
+      finish(targetOpen);
+    });
+  });
+}
 
 async function renderAsrModels() {
     const box = $('#st-models');
@@ -2645,18 +3111,17 @@ async function renderAsrModels() {
     }
     let rows = `<div class="sm-model">
       <div class="sm-head"><span class="sm-name">Python 环境</span></div>
-      <div class="sm-desc">Parakeet 识别要 Python 和 sherpa-onnx，还得有 N 卡（CUDA）。说话人分离只要基础 Python，没有 N 卡也能用；whisper.cpp 与 Vulkan 版 Parakeet（CrispASR）都不需要 Python。点「安装」会装好 Python 和依赖，有 N 卡时一并换成 CUDA 版。不写注册表，删掉 asr\\runtime-python 目录就算卸载</div>
+      <div class="sm-desc">Parakeet NPU 识别要 Python 和 OpenVINO；说话人分离只要基础 Python，没有 N 卡也能用。CUDA/sherpa 版 Parakeet 与 whisper.cpp 已停用；Vulkan 版 Parakeet（CrispASR）和云端识别不需要 Python。点「下载」会装好 Python 和基础依赖。不写注册表，删掉 asr/runtime-python 目录就算卸载</div>
       ${pyState}
       <div class="sm-desc" style="margin-top:6px">当前解释器：<code>${esc(pyExe || '(未定)')}</code>
         <button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button>
         <button type="button" class="btn btn-mini sm-pyreset">用回默认</button>
       </div>
-      <div class="sm-desc">如果另一份安装里已经装好了 torch + NeMo，用上面「指定其他 Python…」指过去即可，不必重下几 GB</div>
       <div class="sm-pymsg" style="font-size:12px;margin-top:4px"></div>
     </div>`;
     if (studioUI) {
       const pyStatus = pySt.running ? (pySt.msg || '安装中…') + ' ' + (pySt.pct || 0) + '%' : pySt.error ? (pySt.msg || '安装失败') : !py ? '检测中…' : py.ok ? (d.provider === 'cuda' ? '可用 · CUDA' : '可用 · 基础环境') : '未安装';
-      const pyButton = pySt.running || !py ? '' : !py.ok || d.provider !== 'cuda' ? '<button type="button" class="btn btn-mini sm-pyinstall">' + (py.ok ? '安装 CUDA' : '下载') + '</button>' : '';
+      const pyButton = pySt.running || !py ? '' : !py.ok ? '<button type="button" class="btn btn-mini sm-pyinstall">下载</button>' : '';
       /* ffmpeg 前置：波形、抽音频、视频压制都依赖它。
        * 找不到时给「下载」按钮，服务端会装到项目自带的 tools/ffmpeg/（不动系统 PATH）。 */
       const ff = d.ffmpeg || null;
@@ -2680,7 +3145,7 @@ async function renderAsrModels() {
         ffState = '<span class="sm-state">检测中…</span>';
       }
       const ffmpegCard = ff ? `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">ffmpeg</span>${ffState}${ffBtn}</div>${ffDesc}</div>` : '';
-      rows = ffmpegCard + `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">Python</span><span class="sm-state${py?.ok ? ' ok' : ''}">${esc(pyStatus)}</span>${pyButton}</div><details class="sf-settings-details"${GROUP_OPEN.get('python-options') ? ' open' : ''}><summary>Python 路径设置</summary><code>${esc(pyExe || '(未定)')}</code><div class="sf-prerequisite-actions"><button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button><button type="button" class="btn btn-mini sm-pyreset">用回默认</button></div><div class="sm-pymsg" role="status"></div></details></div>`;
+      rows = ffmpegCard + `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">Python</span><span class="sm-state${py?.ok ? ' ok' : ''}">${esc(pyStatus)}</span>${pyButton}</div><details class="sf-settings-details sf-details-anim"${GROUP_OPEN.get('python-options') ? ' open' : ''}><summary>Python 路径设置</summary><div class="sf-details-body"><code>${esc(pyExe || '(未定)')}</code><div class="sf-prerequisite-actions"><button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button><button type="button" class="btn btn-mini sm-pyreset">用回默认</button></div><div class="sm-pymsg" role="status"></div></div></details></div>`;
     }
     // 各任务 key: model:<id> / runtime / runtime:crispasr / diarize（运行时按 runtimeKey 取，服务端给）
     /* ── 按系列分组（设计稿 ②「可折叠 + 硬件感知」）──
@@ -2708,6 +3173,11 @@ async function renderAsrModels() {
         </button>
         <div class="sm-group-body"${open ? '' : ' hidden'}>${g.rows.join('')}</div>
       </div>`;
+    }
+    // 对齐模型单独一个系列：不混在 Qwen ASR 的标题/描述里。
+    const aligners = d.aligners || [];
+    if (studioUI && aligners.length) {
+      rows += `<section class="sf-asr-model sf-aligner-section" data-family="对齐模型">${aligners.map(alignerRowHtml).join('')}</section>`;
     }
     /* 旧版本下错后端、或先下载后取消勾选的模型：不混进正常列表，收进「其它模型」。
      * 只有文件和运行时都不再被选中时才来这里；删除按钮复用 .sm-del 的确认链路。 */
@@ -2738,6 +3208,8 @@ async function renderAsrModels() {
     const dzState = dzSt.running ? `<span class="sm-state running">${esc(dzSt.msg || '下载中…')} ${dzSt.pct || 0}%</span>`
       : (dzSt.error ? `<span class="sm-state" style="color:var(--danger)">${esc(dzSt.msg || dzSt.error)}</span>`
       : (dz.ready ? '<span class="sm-state ok">✓ 已就绪</span>' : '<span class="sm-state">未下载 · 32 MB</span>'));
+    /* 停用：NeMo 运行时入口（Multitalker Parakeet 已从模型列表移除） */
+    if (false) {
     // NeMo 运行时(只有 multitalker 多说话人模型用得到): PyTorch + NeMo, 约 5GB, 仅 N 卡
     const nemo = d.nemo || {};
     const nemoSt = dlOf('nemo');
@@ -2781,6 +3253,7 @@ async function renderAsrModels() {
       <div class="sm-desc">「Multitalker Parakeet Streaming 0.6B v1」专用：PyTorch + NeMo（约 5GB）。与上面的 Python 环境是两套依赖，装在本项目的 Python 环境里；<b>只有 N 卡可用</b>（该模型不支持 CPU 推理）。装完会自动实测「加载 + CUDA」才算成功</div>
       ${nemoState}
     </div>`;
+    }
     // 「重新识别模型」: 可指向任意模型(含只能重新识别的 multitalker)
     const rrCur = d.rerecogModel || '';
     const rrOpts = ['<option value="">沿用项目原有模型（默认）</option>'].concat(
@@ -2819,6 +3292,12 @@ async function renderAsrModels() {
         }
         const models = (d.models || []).filter(model => (model.engine === 'nemo' ? 'Parakeet 系列' : MODEL_FAMILY(model)) === family);
         const count = button.querySelector('.sf-asr-count');
+        if (family === '对齐模型') {
+          const list = d.aligners || [];
+          if (count) count.textContent = `${list.length} 个对齐器 · ${list.filter(a => a.ready).length} 就绪`;
+          button.hidden = list.length === 0;
+          continue;
+        }
         if (count && family !== '前置') count.textContent = `${models.length} 个模型 · ${models.filter(model => model.ready || model.cloud).length} 就绪`;
         // 当前加速方式下整个系列都没有模型 → 隐藏入口，避免点进去空白
         if (family !== '前置') button.hidden = models.length === 0;
@@ -2833,6 +3312,7 @@ async function renderAsrModels() {
     // 分组标题里的折叠箭头是 data-ico 声明的，图标注入只作用于 applyIcons() 跑过的节点 ——
     // 这段 HTML 是刚拼出来的，得自己补一次（否则箭头位置是空的）。
     if (window.__applyIcons) window.__applyIcons(box);
+    enhanceDetailsAnimations(box);
     /* 折叠/展开：**事件委托**绑在 box 上（不给每个标题单独绑）。
      * 为什么必须委托：renderAsrModels() 在下载进度轮询时可能每秒重画一次，
      * 逐个绑会在重画后全部失效。 */
@@ -3506,40 +3986,6 @@ async function renderAsrModels() {
     } catch {}
   }
 
-  /* 重排逐词时间的设置（最低锚点率 / 采纳门槛）。
-     与上面几块同一模式：改了立刻存，存完用服务端返回值回填（服务端会做范围夹取）。
-     ⚠ 朗读语音 / 语速是**旧 TTS 方案**的设置：重校对改成"切原片音频重新识别"之后
-     它们不再参与任何判定，控件与绑定一并移除。设置项本身仍留在 asr/settings.json 里，
-     老配置读进来不会报错（服务端也不再读它们）。 */
-  function realignFill(v) {
-    if (!v) return;
-    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    set('st-realign-minratio', v.minAnchorRatio);
-    set('st-realign-minconf', v.minConfidence);
-  }
-  async function realignLoad() {
-    try {
-      realignFill(await (await fetch('/api/asr/realign-settings', { signal: AbortSignal.timeout(10000) })).json());
-    } catch {}
-  }
-  async function realignSave(patch) {
-    try {
-      const r = await fetch('/api/asr/realign-settings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
-      });
-      const v = await r.json().catch(() => null);
-      if (!r.ok) throw new Error((v && v.error) || ('HTTP ' + r.status));
-      realignFill(v);
-    } catch (e) { toast('重排设置保存失败: ' + e.message, 4200); }
-  }
-  {
-    const bind = (id, key, num) => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('change', () => realignSave({ [key]: num ? Number(el.value) : el.value }));
-    };
-    bind('st-realign-minratio', 'minAnchorRatio', true);
-    bind('st-realign-minconf', 'minConfidence', true);
-  }
   async function correctSave(patch) {
     try {
       const r = await fetch('/api/asr/correct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
@@ -3902,40 +4348,45 @@ async function renderAsrModels() {
     });
   })();
 
-  function npSetMode(mode) {
+  function npApplyLayout(mode) {
     npMode = mode;
+    npView.classList.toggle('is-draft', mode === 'draft');
     $('#np-mode-import').classList.toggle('active', mode === 'import');
     $('#np-mode-import').setAttribute('aria-pressed', String(mode === 'import'));
     $('#np-mode-draft').classList.toggle('active', mode === 'draft');
     $('#np-mode-draft').setAttribute('aria-pressed', String(mode === 'draft'));
+  }
+
+  function npFieldPlan(mode) {
     const draft = mode === 'draft';
-    $('#np-row-sub').hidden = draft;
+    const word = $('#np-word');
+    const align = $('#np-align');
+    const entries = [];
+    const add = (sel, hidden) => { const el = $(sel); if (el) entries.push({ el, hidden }); };
+    add('#np-row-sub', draft);
     // 项目包导入也是"导入模式"的事（初稿模式是从视频识别，用不上包）
-    const rowPack = $('#np-row-pack');
-    if (rowPack) rowPack.hidden = draft;
+    add('#np-row-pack', draft);
     // 区域裁剪两种模式都可能有意义：导入模式裁字幕/包；初稿模式暂时用不上（识别本来就全片）
-    const rowRegion = $('#np-row-region');
-    if (rowRegion) rowRegion.hidden = draft;
-    // 从初稿切回导入模式时，若之前选过包，得让"字幕"行也可见（两者互斥但都显示）
-    $('#np-row-url').hidden = !draft;      // 链接只在初稿模式有意义（导入模式是本地文件）
-    $('#np-row-part').hidden = !draft;     // 分P 跟着链接走
-    $('#np-row-word').hidden = !draft;
-    $('#np-row-kstyle').hidden = !draft || !$('#np-word').checked;   // 跟着「逐词」开关走
-    if (draft) npSyncKStyle();
-    $('#np-row-conf').hidden = !draft;
-    $('#np-row-spk').hidden = !draft;
+    add('#np-row-region', draft);
+    add('#np-row-url', !draft);
+    add('#np-row-part', !draft);
+    add('#np-row-word', !draft);
+    add('#np-row-align', !draft || !!(word && word.checked));
+    add('#np-row-kstyle', !draft || !((word && word.checked) || (align && align.checked)));
+    add('#np-row-conf', !draft);
+    add('#np-row-spk', !draft);
+    add('#np-auto-wrap', !draft);
+    for (const sel of ['#np-voice-group', '#np-cast-group', '#np-source-group']) add(sel, !draft);
+    return entries;
+  }
+
+  function npApplyFields(mode) {
+    const draft = mode === 'draft';
+    for (const { el, hidden } of npFieldPlan(mode)) el.hidden = hidden;
+    if (draft) { npSyncVibeVoice(); npSyncKStyle(); }
     // 切进初稿模式时，把开关同步成**全局默认**（用户没动过就跟随；动过则以他刚选的为准）。
     // 只在第一次进入时拉一次，避免每次切模式都把用户的改动冲掉。
     if (draft && !npConfSynced) { npConfSynced = true; syncConfidenceFromGlobal(); }
-    // 语音识别 / 识别来源 / 分角色识别：整组跟着模式收起
-    // （这三组只有「创建初稿」用得上；翻译模型/提示词是全局项，两种模式都留着）
-    for (const sel of ['#np-voice-group', '#np-cast-group', '#np-source-group']) {
-      const g = $(sel);
-      if (g) g.hidden = !draft;
-    }
-    // 「创建后自动处理」只在初稿模式有意义（导入模式的字幕是用户自己的，不该被自动改）
-    const autoWrap = $('#np-auto-wrap');
-    if (autoWrap) autoWrap.hidden = !draft;
     $('#np-hint').textContent = draft
       ? '创建后在后台识别，进度看项目列表'
       : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
@@ -3947,6 +4398,41 @@ async function renderAsrModels() {
     if (u && !u.dataset.bound) { u.dataset.bound = '1'; u.addEventListener('input', npMaybeEnable); u.addEventListener('change', npMaybeEnable); }
   }
     npMaybeEnable();
+  }
+
+  function npApplyMode(mode) {
+    npApplyLayout(mode);
+    npApplyFields(mode);
+  }
+
+  /** 模式切换入口：四张卡在同一个 View Transition 里整体移动/缩放。 */
+  function npSetMode(mode) {
+    const draft = mode === 'draft';
+    const layoutChanges = npView.classList.contains('is-draft') !== draft;
+    if (!layoutChanges) { npApplyMode(mode); return; }
+    const reduceQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
+    const reduced = reduceQuery || (!!document.body && document.body.dataset.motion === 'off');
+    if (reduced || typeof document.startViewTransition !== 'function') {
+      npApplyMode(mode);
+      return;
+    }
+    const root = document.documentElement;
+    root.dataset.npTransition = 'layout';
+    let transition = null;
+    try {
+      transition = document.startViewTransition(() => npApplyMode(mode));
+    } catch {
+      delete root.dataset.npTransition;
+      npApplyMode(mode);
+      return;
+    }
+    const clear = () => { delete root.dataset.npTransition; };
+    if (transition.finished && typeof transition.finished.finally === 'function') {
+      transition.finished.finally(clear);
+    } else {
+      clear();
+    }
   }
 
   /** 拉取识别模型状态: 填「识别来源」+「语音识别」两个下拉
@@ -3969,7 +4455,7 @@ async function renderAsrModels() {
       return asrStatus.pythonProbeFlat || null;                  // 服务端按当前引擎挑好的
     })();
     if (hint && probeForUi && !probeForUi.ok) {
-      hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet 模型需要 Python（修复方法见创建后的日志）；whisper.cpp、Vulkan 版 Parakeet（CrispASR）和「必剪 ASR」云端识别都不需要 Python';
+      hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet NPU 需要 Python + OpenVINO（修复方法见创建后的日志）；Vulkan 版 Parakeet（CrispASR）和「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
     }
     npMaybeEnable();
@@ -3983,6 +4469,8 @@ async function renderAsrModels() {
     $('#np-name').value = '';
     $('#np-word').checked = true;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
+    if ($('#np-align')) { $('#np-align').checked = false; delete $('#np-align').dataset.touched; }
+    delete $('#np-word').dataset.touched;
     const kSel = $('#np-kstyle');
     if (kSel) { delete kSel.dataset.touched; npSyncKStyle(); }   // 逐词样式回到记住的选择
     $('#np-speakers').checked = false;
@@ -4183,7 +4671,8 @@ async function renderAsrModels() {
       $('#np-row-spk').title = t('VibeVoice 自动识别说话人，无需额外的说话人分离模型');
       return;
     }
-    const wordOn = !!($('#np-word') && $('#np-word').checked);
+    const wordOn = !!($('#np-word') && $('#np-word').checked)
+      || !!($('#np-align') && $('#np-align').checked);
     const root = $('#np-row-spk');
     const box = $('#np-speakers');
     const cnt = $('#np-spk-count');
@@ -4192,17 +4681,56 @@ async function renderAsrModels() {
     if (cnt) cnt.disabled = !wordOn || !box.checked;
     if (!wordOn && box.checked) box.checked = false;      // SRT 用不上 → 自动取消
     root.classList.toggle('disabled', !wordOn);
-    root.title = wordOn ? '' : 'SRT 模式没有角色（说话人）概念，需要开启逐词（生成 ASS）才能区分说话人';
+    root.title = wordOn ? '' : 'SRT 模式没有角色（说话人）概念，需要逐词或对齐（生成 ASS）才能区分说话人';
+  }
+  function npSelectedModel() {
+    const id = $('#np-model-sel') ? $('#np-model-sel').value : '';
+    return (genAsr && genAsr.models || []).find(m => m.id === id) || null;
+  }
+  /** 当前模型/后端可用的对齐器（对齐模型独立下载，不再跟 ASR 混在一起）。 */
+  function npAlignerReady(m) {
+    const list = (genAsr && genAsr.aligners) || [];
+    const backend = m && m.backend;
+    return list.some(a => a.ready && (!backend || a.backend === backend))
+      || list.some(a => a.ready);
   }
   function npSyncVibeVoice() {
     const word = $('#np-word');
+    const align = $('#np-align');
+    const rowAlign = $('#np-row-align');
     if (!word) return;
-    const vibe = $('#np-model-sel')?.value === 'vibevoice-asr-4bit';
-    word.disabled = vibe;
-    if (vibe) word.checked = false;
-    $('#np-word-desc').textContent = vibe ? t('VibeVoice 生成带角色的 ASS 句级字幕，不提供逐词时间戳')
-      : word.checked ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
-    $('#np-row-kstyle').hidden = vibe || !word.checked;
+    const m = npSelectedModel();
+    const vibe = (m && m.id === 'vibevoice-asr-4bit') || $('#np-model-sel')?.value === 'vibevoice-asr-4bit';
+    const native = !m || m.nativeWordLevel !== false;
+    if (vibe) {
+      word.disabled = true; word.checked = false;
+    } else if (!native) {
+      /* Qwen ASR 这类没有原生逐词的模型：禁止勾「逐词」，只能勾「对齐」。 */
+      word.disabled = true; word.checked = false;
+    } else {
+      word.disabled = false;
+    }
+    const canAlign = !vibe && npAlignerReady(m);
+    if (!canAlign) {
+      align.checked = false;
+      align.disabled = true;
+    } else {
+      align.disabled = false;
+      if (!native && !align.dataset.touched) align.checked = true;
+    }
+    if (word.checked) { align.checked = false; rowAlign.hidden = true; }
+    else rowAlign.hidden = false;
+    $('#np-word-desc').textContent = vibe
+      ? t('VibeVoice 生成带角色的 ASS 句级字幕，不提供逐词时间戳')
+      : (!native
+        ? t('该模型没有原生逐词，已禁用；请勾「对齐」用对齐模型生成逐词')
+        : (word.checked ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕'));
+    $('#np-align-desc').textContent = !canAlign
+      ? t('没有可用的对齐模型；先到「设置 → 语音识别 → 对齐模型」下载')
+      : (align.checked
+        ? t('勾选 → 不跑原生逐词，改用对齐模型生成逐词 ASS')
+        : t('不勾选 → 输出 SRT；勾选 → 用对齐模型生成逐词 ASS'));
+    $('#np-row-kstyle').hidden = vibe || !(word.checked || align.checked);
     npSyncSpeakers();
   }
   /** 逐词样式（颜色高亮 / \k 卡拉OK）：记住上次选择（main.js 的设置面板用同一组 localStorage 键）。
@@ -4222,10 +4750,13 @@ async function renderAsrModels() {
     try { localStorage.setItem('sf-k-style', sel.value); } catch (e) {}
   });
   $('#np-word').addEventListener('change', () => {
-    $('#np-word-desc').textContent = $('#np-word').checked
-      ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕';
-    $('#np-row-kstyle').hidden = !$('#np-word').checked;
-    npSyncSpeakers();
+    $('#np-word').dataset.touched = '1';
+    $('#np-align').dataset.touched = '1';
+    npSyncVibeVoice();
+  });
+  $('#np-align') && $('#np-align').addEventListener('change', () => {
+    $('#np-align').dataset.touched = '1';
+    npSyncVibeVoice();
   });
   const npSpk = $('#np-speakers');
   if (npSpk) npSpk.addEventListener('change', npSyncSpeakers);
@@ -4483,6 +5014,7 @@ async function renderAsrModels() {
           name: $('#np-name').value.trim(),
           draft: true,
           wordLevel: !!$('#np-word').checked,
+          align: !!($('#np-align') && $('#np-align').checked),
           modelId: $('#np-model-sel') ? $('#np-model-sel').value : '',
           speakers: !!($('#np-speakers') && $('#np-speakers').checked),
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
@@ -4492,7 +5024,7 @@ async function renderAsrModels() {
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
         // 逐词样式与"本地视频初稿"同款(见下方 payload 的注释)
-        if (payload0.wordLevel) {
+        if (payload0.wordLevel || payload0.align) {
           payload0.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
           if (payload0.karaokeStyle === 'k') {
             let sweep = '', base = '';
@@ -4586,11 +5118,12 @@ async function renderAsrModels() {
       if (isDraft) {
         payload.draft = true;
         payload.wordLevel = !!$('#np-word').checked;
+        payload.align = !!($('#np-align') && $('#np-align').checked);
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
         // 逐词样式: 颜色高亮(默认) / \k 卡拉OK。扫过(\kf)与未唱默认色跟随设置面板记住的偏好。
-        if (payload.wordLevel) {
+        if (payload.wordLevel || payload.align) {
           payload.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
           if (payload.karaokeStyle === 'k') {
             let sweep = '', base = '';

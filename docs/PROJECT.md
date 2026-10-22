@@ -31,7 +31,7 @@
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
-`asr-params.js`（Whisper/whisper.cpp/CrispASR 的参数 schema、默认值与校验），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`speech-gap.js` |
+`asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
 | `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（见 §9） |
@@ -61,14 +61,20 @@
   分隔符边界，拒绝编码穿越。
 - **初稿流水线**：创建 → 下载（`startFetchJob` → `asr/fetch/fetch_cli.py`，10 分钟无输出看门狗）→
   prepare（ffprobe → ffmpeg 抽 `audio.wav` + `peaks.bin`；**ASR 默认用原声 `mode='raw'`**，降噪版实测会让
-  Whisper large-v2 的 WER 从 8.70% 升到 11.02%）→ ASR（Faster-Whisper-XXL / whisper.cpp / Parakeet /
-  VibeVoice / 必剪 / 剪映 / NeMo）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
+  Whisper large-v2 的 WER 从 8.70% 升到 11.02%）→ ASR（Faster-Whisper-XXL / Parakeet NPU /
+  Parakeet Vulkan / Qwen3-ASR + 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
+  Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
 - **流水线状态**写 `meta.draft`（`running` / `paused` / `error` / `done`），前端轮询
   `GET /api/projects/:id/draft`；防重入用 `draftJobs.has(id)`，每步统一走 `safeDraftStep`
   （同步异常与 async reject 都收）。
 - **项目内操作**统一为 `/api/projects/:id/<action>`：`info`(PUT 改名)、`retry`、`skip`、`rerecognize`、
   `translate`、`draft`、`subtitle`、`relink`、`prepare`、`peaks`、`audio`；`DELETE` 无 action 即删项目。
+- **逐词时间重排**（单条 `/realign` + 全片 `/realign-full`）：语义是“文本已确认，只量时间”。
+  只调用 **Qwen3-ForcedAligner**：CUDA 用 `asr/qwen_align.py` 批量 worker（一次加载、按切片对齐），
+  Vulkan 用 `CrispASR --align-only`；结果经 `align.js` 做 token 映射/单调性修正。**不跑 ASR、
+  不改文本、不改整句起止**；对齐失败保持原时间，不回退 ASR。文本不确定走独立的 `rerecognize`。
+  已删除 `/api/asr/realign-settings` 与锚点率/置信度门槛。
 - **删除项目**：先 `killDraftProc` + `killProjProcs`（Windows 用 `taskkill /T /F`），再带重试逐文件删，
   `project.json` 最后删；新增读写 `projects/<id>/` 的子进程必须 `trackProjProc(id, proc)`。
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换，
@@ -101,6 +107,10 @@
   未选中卡片使用主题 `surface-2` 的浅色底（不再回落到深色 `--bg-3`）；提示条用
   `grid-template-rows: 0fr → 1fr` 展开/收起，配合负 gap 抵消与 440ms 非线性曲线，
   选择状态切换时卡片、按钮、提示条连续移动，不跳帧。
+- **UWP 欢迎页磁贴**：CUDA / Vulkan 两张选择卡加 `uwp-tile`，与工作台磁贴共用 Reveal 面光、
+  2px 直角和实色底；`data-theme-pack="windows-uwp"` 同时兜底圆角，避免首帧 `data-design`
+  尚未写入时出现大圆角。红色错误条也固定 2px 直角。欢迎卡、UWP 原生 checkbox、下拉选择
+  的勾选图标统一用 `inset:0 + margin:auto` 居中；UWP 复选/单选的下拉选择勾也走同一规则。
 - **文案层（i18n）**：`editor/js/i18n.js` 是显示出口；`editor/lang/zh-CN.json` 是「原文 → 可润色译文」
   词典，键缺失回退原文。`tests/gen-lang.mjs` 用共享 `tools/lib/copy_scan.mjs` 扫描
   `editor/studio.html`（文本/title/placeholder/aria-label/alt/value）、`editor/js/*.js`、
@@ -139,6 +149,13 @@
 - **文件夹不在识别时反复重建**：稿件识别进度会让主页每 1.5 秒推一次项目快照；`__sfStudio.projects()`
   先比对 `folders + assignments` 的计数签名，只有文件夹名称/数量或归属计数真的变化才 `renderFolders()`。
   单纯进度变化只更新卡片，不重建 `#sf-folders`，也不会重播 Material 文件夹入场动画。
+- **主页入场后不再二次刷新**：进入 `#/dashboard` 时磁贴有最长 330ms 错峰 + 420ms 的入场动画，
+  而项目快照是异步到的，`refreshLibrary()` 还会再走一次 `renderWidgets()` / `syncDashboardMode()`。
+  旧实现里 `renderWidgets()` 整块 `innerHTML` 重建、`syncDashboardMode()` 无条件调
+  `animateDashboardCards()`，于是数据晚到会把磁贴节点全换掉、动画从头再播一遍 —— 看起来就是
+  「动画播完过一会刷新一下」。现在磁贴只在第一次建节点，之后只改文字（`setWidgetText`）；
+  `syncDashboardMode()` 只在 Material 主页 ↔ 磁贴模式真的切换、或显式切换主题时重播入场，
+  项目数据刷新不再触发动画。`sf-studio-theme` 仍显式传入重播标记。
 - **流光过渡**：`.sf-ambient i` 用 `background-color` 承接 `--sf-aurora-1..3` 并做 420ms 过渡，换配色或
   切换明暗都不硬切；动态/静态只切 `animation-play-state`，静态停在当前帧、切回继续漂移，不跳回原点。
 - **主题色遮罩**：`自定义主题色` 行与色板/恢复默认按钮同处 `.sf-theme-color-panel` 一块遮罩；
@@ -172,7 +189,10 @@
   拖窄右侧列表时数值不越界。
 - **中英上下顺序说明**：`#ass-style-order-val` 通过 `ass-order-row` 独占一行（`flex:0 0 100%`），
   10.5px、左对齐，避免和下拉框挤在同一行折成两行。
-- **Material 时钟**：时针与分针统一 `stroke-width:7`；SVG 中先画时针、后画分针，重叠时分针在上。
+- **Material 时钟**：外轮廓为 13 瓣波浪花形（SVG path，`r = 48 × (1 + .042 cos(13θ + π/2))`），外层 `span` 不再用星形 clip-path，轮廓只由 path 承担；时针与分针统一 `stroke-width:7`；SVG 中先画时针、后画分针，重叠时分针在上。
+- **Material 需处理卡**：四瓣花形底做成 1:1 方形（宽 ≤190px，与处理中卡同高，避免抬高整行；SVG path，`r = 53.7 × (1 − .145 cos 4θ)`，`preserveAspectRatio="xMidYMid meet"`），底色为 8% danger 混 `--surface`；底形与两个按钮三部分都加 1px `--line` 框线；文字块水平垂直居中；右上 62px 圆形「继续处理」（play，accent 72% 混 surface 的低饱和底），左下 62×62 圆角方形「详情页」（info），两个按钮外移 5px 并压出轮廓。卡片与按钮的阴影只在鼠标悬浮时出现。继续优先打开第一个 attention 项目，没有项目时进入需处理筛选；详情始终进入模板里的需处理筛选。
+- **Material 主页悬浮**：除时钟外，`sf-resume` / `sf-orbit` / `sf-mu-widget` / 注意力卡 / 项目卡统一为 1px `--accent` 边框提亮 + `--sf-hover-shadow` + `brightness(1.04)` + `translateY(-2px)`；时钟没有边框，只做 drop-shadow + brightness + 上浮。注意力卡在卡片悬浮时同时提亮四瓣描边和两个按钮边框。
+- **新建项目页布局**：`#np-view` 导入模式为左右两列：左列「稿件预览 + 处理进度」，右列「输入与配置 + 生成设置」；两列等高（`align-items:stretch`），上卡顶边同线、下卡底边同线，中段因预览/输入高度不同自然错开，底部卡片 `flex:1` 填满列高。切到**创建初稿**时加 `is-draft`，变成三列：左列仍是预览+进度，中间输入，右下角的生成设置移到第三列并展开；三列按内容高度，底部不再 flex 拉伸，处理进度保持 `min-height:340px`。模式切换只用一个 View Transition：四张卡（输入、生成设置、稿件预览、处理进度）在同一个 `.46s cubic-bezier(.2,.8,.2,1)` 里整体移动/缩放，模式字段在同一次切换中完成；右侧两张不再单独做垂直 height 动画、100ms 停顿或分段展开/收起。`view-transition-name` 为 `np-input` / `np-generate` / `np-preview` / `np-process`。View Transition 处于 top layer；顶栏单独命名 `np-topbar` 并置于 `z-index:999`，卡片动画不覆盖顶栏，同时顶栏与侧栏文字不会被裁掉。减少动效或不支持时直接切换。稿件预览区固定 16:9、封面 `object-fit:cover`。置信度档位说明 `#np-confidence-desc` 用 `.np-conf-desc` 独占一行显示在置信度选项下方，长文案不再挤在选项右侧；「只导入一段」的 checkbox 标签 `.np-lbl-check` 用 auto 宽度 + nowrap，避免在时间范围行折成两行。处理进度卡内加 `.np-progress-box` 小框，`min-height:170px` 向下延伸到 idle 上方，显示当前百分比/状态和处理记录占位；卡片按内容自然增高，不再用固定高度或 flex 拉伸小框。分角色识别标题与「开启」同一行，开启在标题右侧。导入模式下语音识别组整体隐藏时，生成设置卡片说明与「翻译方案」标题之间不再保留空档。识别来源的 `openvino` 显示为「本机 Parakeet TDT V2（Intel NPU）」；说话人数字紧跟标签，与逐词样式/置信度控件左对齐，「区分说话人（中文行标 [SPKn]，按颜色区分）」独占下一行并保持单行。逐词样式下拉 `#np-kstyle` 与置信度下拉同宽（`max-width:230px`），不再撑满整行；选项文案只保留「颜色高亮」「\k 卡拉OK」，去掉括号解释。≤1080px 单列恢复预览 → 输入 → 进度 → 设置的顺序；详细信息页仍用原来的 2×2 网格。
 - **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；输入框基础圆角 8px，Material You
   下为 12px，与全局输入设计一致。
 - **材质偏好**：毛玻璃压暗、模糊度、透明度由 `editor/js/studio-state.js` 保存、`studio.js` 同时算
@@ -198,6 +218,9 @@
 - **Claude 深色强调色**：内置 seed `#B0512F` 是为浅色纸面调的，直接用于深色只有 2.6:1，
   箭头/计数/链接会糊在深底上，因此深色下换用提亮变体 `#DE8A64`（6.1:1）；不用 `palette()` 的
   `readable()`，因为它会把陶土一路洗成 `#EABEAE` 三文鱼粉。用户自选颜色时仍走 `readable()` 兜底。
+- **Classic / Claude 主页**：隐藏右下角重复的「打开稿件库」`.dashboard-foot` 浮钮；`sf-widget-library` 作为第 8 张卡纳入错峰入场（延迟 385ms），与其余卡片同节奏出现。
+- **MY 主题包缩略图**：`.sf-pack-art.material .sf-pack-symbol` 改用主页时钟同一 13 瓣路径，缩放到 49px 并在 57px 符号内留 4px 边距，避免左瓣贴边被看成裁切；不再用 24 点星形。
+- **Windows 10 / UWP MY 图标**：UWP 把 `.sf-pack-symbol` 缩到 48px，material 花形单独用 42px 路径（3px 内边距），避免 57px 路径被裁掉右/下两瓣。
 - **设计层与共享层的特异性战争**（Claude 踩过三个坑，都已用注释标在 CSS 里）：
   ① 共享玻璃层 `studio.css:4190` 的 `:is()` 里带 ID 选择器，特异性 1,2,0，会盖掉设计层的
   `background`——Claude 的解法是把 `--sf-glass-*-surface` 本身改写成纸/墨色，并给必须可见的
@@ -248,6 +271,11 @@
   改这条规则前先数一遍「主卡占几行 × 后面还有几个 span 2」。
 - **设置分类**：全局设置六个一级分类为「外观与体验 / 语音识别 / 翻译与术语 / 识别与校对 / 下载与登录 /
   性能与调度」；ASS 双语样式与后处理固定在稿件的 `#tab-settings`，不进全局设置。
+- **性能页卡片间距**：`#perf-dual-view` 里「双引擎分工性能测试」与「当前已应用的配置」是两张直接相邻的
+  `.st-section`；`.st-panel` 的 flex `gap` 只作用到 `.perf-view` 这一层，两张卡片之间因此没有间距。
+  现由 `.perf-view { display:flex; flex-direction:column; gap:16px }` 提供垂直间距（与其它设置面板一致），
+  `.perf-view[hidden]` 仍保持 `display:none`。不要改成给 `.st-section` 加 margin —— 设置页卡片规则带
+  `#st-view` ID 且写死 `margin:0`，普通选择器会被覆盖。
 - **设置保存位置**：设置页不再渲染底部全局动作栏，改由「识别与校对」面板末尾的 `.st-panel-actions`
   手动保存热词与强度；其它分类即时保存。`#st-msg` 作为设置页浮动状态（`.sf-settings-status`），
   无消息时不占位，不再留下空框线；`#st-cancel` / `#st-test` 仅保留隐藏的 DOM 兼容节点。
@@ -272,8 +300,12 @@
   `tests/glossary-repair-test.mjs`（术语表修复的命中与误伤边界）、`tests/welcome-model-test.mjs`
   （CUDA/Vulkan/NPU/云端模型的可见性、双引擎依赖、其它模型、过滤后默认选择）、
   `tests/glass-contrast-test.mjs`（玻璃背景 alpha 合成、相对亮度、对比度与浅色前景阈值）、
-  `tests/asr-params-test.mjs`（模型参数 schema/默认值/范围校验/重置语义）、
-  `tests/asr-params-api-test.mjs`（隔离服务上的 GET/POST 保存、状态摘要与恢复默认）。
+  `tests/asr-params-test.mjs`（模型参数 schema/默认值/范围校验/`multipleOf` 吸附/重置语义；
+  已停用引擎的旧 schema 保留但模型不可达）、
+  `tests/asr-params-api-test.mjs`（隔离服务上的 GET/POST 保存、状态摘要、恢复默认，退役模型返回 400）、
+  `tests/asr-model-args-test.mjs`（参数 → 命令行 → worker argparse 的静态契约；含已停用引擎的旧分支，
+  只验证静态拼接，不代表模型仍可运行）、
+  `tests/asr-bench-repair-test.mjs`（速度测试工作目录不得落 `%TEMP%`、退役引擎统一兜底与安装接口拒绝）。
   这些测试不加载模型、不需要 GPU。
 - **文案覆盖**：`tests/i18n-coverage-test.mjs` 用 `tools/lib/copy_scan.mjs` 重扫
   `editor/studio.html`、`editor/js/*.js`、`editor/server.js`、`editor/asr-params.js`、`editor/scripts/*`，要求每条
@@ -330,6 +362,11 @@
   （0.4–2.0s，最多 5 次），真失败仍退出。
 - **升级原地覆盖**：`SubFabric.iss` 三路检测已有安装目录（Inno 的 `UsePreviousAppDir` → 注册表 AppId →
   扫盘），结果预填到目录页；不要把 `DefaultDirName` 写成 `{code:...}`（会顶掉命令行 `/DIR`）。
+- **安装包与已停用运行时**：`SubFabric.iss` 现在排除 `asr/runtime-vibevoice` 以及
+  `multitalker.py` / `vibevoice.py` / `asr_dual.py` / `asr_perf.py`，不会再打包约 2.2GB 的
+  VibeVoice 运行时；用户已下载的旧目录不会被安装/卸载碰到。
+- **改了后端 / 前端代码后正式版必须重打包**：源码运行重启即生效；已安装版是 SEA 单文件
+  `SubFabric.exe`，不重跑 `python build_exe.py` 与 ISCC 不会带上修复；版本号仍按上面的三处同步规则推进。
 
 ## 7. 功能与设计结论
 
@@ -375,7 +412,10 @@
 
 ### 双引擎（NPU + GPU）
 
-- **最终结论：双引擎有效**，比最快的单引擎再快，NPU 与 N 卡分工并行是净收益。
+> **2026-10-21 起已停用**：`parakeet-tdt-0.6b-v2-dual` 模型、`/api/asr/dual`、`/api/asr/perf/*`
+> 和设置页的双引擎页签均已关闭；以下保留为历史设计记录，不能再作为当前行为依据。
+
+- **最终结论（历史）：双引擎有效**，比最快的单引擎再快，NPU 与 N 卡分工并行是净收益。
   2026-10-08 那份「双引擎在本机没有收益、用 GPU 单引擎就够」的判断**已被 2026-10-11 复测推翻**，只作历史记录。
 - 反转原因是代码变了而非测量噪声：旧版走 8 秒分片 + 每片重载模型，且 NPU 侧时间戳单位有错；当前版本
   单窗口 15.01s、时间戳覆盖整段。结论有时效性——**复测要重跑，不能引用旧数字**。
@@ -423,7 +463,7 @@ WhisperX（Whisper large-v2 + 对齐）+ 人工修正生成，Whisper 在专名/
 - 默认参数：`--ff_mdx_kim2`（r245.3+ 自动换 `--ff_vocal_extract mdx_kim2`）、`--vad_filter False`、
   `--word_timestamps True`、`--language en`、**不给 `--initial_prompt`**。实测把专名表当 prompt 会
   让 1740 词的转写塌到 1528 词、WER 17.34%，专名改由识别后的术语表修复处理。
-- 输出 JSON → `{segments:[{start,end,text,words,confidence}]}`，与 `asr.py`/whisper.cpp 同构，
+- 输出 JSON → `{segments:[{start,end,text,words,confidence}]}`，与 `asr.py` 同构，
   后面复用同一套 reseg / 置信度 / ASS 生成。
 
 **模型参数设置（Whisper 等）**：设置 → 语音识别 → 模型行上的「参数」打开独立模态面板，
@@ -431,11 +471,55 @@ WhisperX（Whisper large-v2 + 对齐）+ 人工修正生成，Whisper 在专名/
   的 `modelParams[modelId]`，不写进项目；新建初稿、长音频分片和选区重新识别都读当前值。
   - Faster-Whisper-XXL：识别语言、VAD 开关 / 阈值 / 方法（pyannote v3、Silero v3–v5、WebRTC）、
     MDX 人声分离、逐词时间戳、识别提示词。
-  - whisper.cpp：识别语言（en/zh/auto）、CPU 线程数、词时间戳阈值、提示词。
-  - CrispASR/Parakeet：CPU 线程数、词时间戳阈值。
-  - schema / 默认值 / 范围校验集中在 `editor/asr-params.js`；`GET/POST /api/asr/params` 读写。
-    参数面板使用独立模态而不是行内展开，因为下载轮询每秒重建模型列表，行内输入会丢焦点。
+  - CrispASR/Parakeet（Vulkan）：CPU 线程数、词时间戳阈值。
+  - Qwen3-ASR：分块长度（默认 150s，30–240）、ASR 最大生成 token（默认 4096，1024–8192）。
+  - Parakeet NPU 没有可安全暴露的参数：稳定性重跑遍数由置信度档位统一控制，线程数由 OpenVINO
+    自管，所以不显示「参数」按钮。
+  - **已停用**：whisper.cpp、Parakeet CUDA（sherpa-onnx）、VibeVoice 的 schema 保留在
+    `editor/asr-params.js` 作为回滚参考，但模型条目已注释，`GET/POST /api/asr/params` 对它们返回 400。
+  - schema / 默认值 / 范围校验集中在 `editor/asr-params.js`（支持 `multipleOf` 吸附）；
+    `GET/POST /api/asr/params` 读写。参数面板使用独立模态而不是行内展开，因为下载轮询每秒重建
+    模型列表，行内输入会丢焦点。
+  - 参数在命令行只由 `asrEngineArgs` / `asrArgsFor` 落一次，初稿、分片、选区重新识别、
+    全模型速度测试共用；常驻识别服务把线程数与 blank 惩罚计入 worker 键，改参数会另起进程，
+    不会静默沿用旧设置。
   - 默认值保持现有实测口径：VAD 默认关（避免漏掉轻词）、MDX 开、逐词开、Whisper 提示词默认空。
+
+**全模型速度测试**：设置 → 性能与调度 →「全模型速度」（双引擎页签已于 2026-10-21 停用）。
+  - 从 `/api/asr/status` 读取 `ready` 的本地模型（排除云端与退役引擎），勾选后逐个测试；
+    默认勾选当前 `usable` 的模型，可刷新、全选、清空。当前只有 Faster-Whisper、Parakeet Vulkan、
+    Parakeet NPU 三类本地模型。
+  - 测试音频可复用项目 `audio.wav`（自动查找）或手动选择；截取开头 5–600 秒，
+    每个模型串行跑一次，避免多模型同时抢 GPU。
+  - 结果表列出模型、**识别耗时 / 后处理耗时 / 总耗时 / 倍率 / 平均置信度**：倍率 = 音频秒数 /
+    实际总耗时（识别 + 已开启的后处理，含模型加载），按实际倍率从高到低排列；失败模型单列错误原因。
+  - `details:true` 时结果额外返回每个模型的识别文本（横评脚本据此算 WER）；普通 UI 不传，避免状态膨胀。
+  - **测试条件**（与创建稿件页对齐）：逐词、置信度（完整 / 快速 / 关闭）、分角色识别、说话人区分 +
+    说话人数。逐词只对可关闭词时间戳的引擎生效（Faster-Whisper-XXL）；置信度「完整」会给
+    Parakeet NPU 加 2 遍稳定性重跑；分角色识别以说话人区分为前提（勾选分角色会自动勾上说话人）。
+  - 后处理与模型无关：同一段音频只测一次，时间加到每个模型的 `postSec`/`totalSec`。
+    说话人分离用 `diarize.py` 实测；分角色识别用第一份成功结果跑与创建流程相同的两步 LLM
+    （会调用用户已配置的 LLM，可能产生费用；未配置/已关闭时跳过并在结果下方说明）。
+  - `POST /api/asr/bench/start`、`GET /api/asr/bench/state`、`POST /api/asr/bench/cancel`
+    使用独立模块状态；`conditions` 随状态返回，刷新页面可恢复。
+  - 支持引擎：OpenVINO NPU、Faster-Whisper-XXL、CrispASR、Qwen3-ASR + 对齐。已停用的 sherpa-onnx /
+    whisper.cpp / NeMo / VibeVoice / dual 即使被旧前端点名，也会被 `RETIRED_ENGINES` 和
+    `benchSupported` 拒绝。
+  - **测试工作目录固定为 `projects/.bench/run-*`**，测完删除；**不能放 `%TEMP%`**：
+    Faster-Whisper-XXL 的 PyInstaller 子进程写 `%TEMP%` 下的 `input.json` 会报
+    `PermissionError: [Errno 13]`（同一段音频只换输出目录即可复现；写项目目录正常，见
+    `runFasterWhisper` 的 `outRoot` 约定）。`.bench` 以点开头，`validId` 不接受，不会被当成项目。
+  - 失败行只保留 Faster-Whisper 运行时的应用内修复入口；VibeVoice 修复入口已随模型停用。
+  - 倍率只代表本机这次测得的吞吐，不代表准确率；不同模型适合的素材不同。
+
+**运行时修复（历史：VibeVoice / Faster-Whisper；VibeVoice 已停用）**：
+  - 以下 VibeVoice 记录只作历史参考；模型与运行时安装接口已于 2026-10-21 停用。
+  - VibeVoice 的 `bitsandbytes` 单独补装（`bitsandbytes==0.50.2`），与
+    `transformers==5.17.0` / `accelerate` / `soundfile` / `soxr` 分两段执行：镜像源缺 wheel 时
+    用 `--extra-index-url https://pypi.org/simple` 兜底；bitsandbytes 失败会明确报错，
+    其它依赖已装好，下次只需补缺的那一段。
+  - 模型行在「运行时只装了一部分」时把按钮显示为「修复运行时」；已满足的包 pip 会跳过，
+    不会重下 2.2GB。安装结束仍以 `probeVibeVoice(true)` 的真实 CUDA/NF4 预检为准。
 
 **音频预处理约定**：新项目 ASR 默认用原声 `mode='raw'`。项目里原本默认 `afftdn` 降噪，实测
 Whisper large-v2 的 WER 8.70% → 11.02%、Parakeet 11.02% → 11.19%；降噪版仍保留给「降噪模式播放」
@@ -610,6 +694,335 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 
 ### 最近状态
 
+**2026-10-22（Whisper/Qwen Vulkan 兜底接入）**
+
+- **产品分层**：快速档 Parakeet（Vulkan/NPU），中档 Qwen3-ASR，质量档 Whisper large-v2。
+  有 N 卡时 CUDA 版优先；没有 N 卡时新增的 Vulkan 版必须可用，不再出现“中档/质量档都不可用”。
+- **新增模型**（均 engine `crispasr-whisper` / `crispasr-qwen`，backend `vulkan`）：
+  - `whisper-large-v2-vulkan`：GGML large-v2 3.09GB；CrispASR + Vulkan，**Vulkan 原生词时间太差
+    （中位 170–210ms）**，初稿勾「对齐」时用独立对齐器重算。
+  - `qwen3-asr-1.7b-vulkan`：Qwen3-ASR Q4_K 1.49GB；CrispASR + Vulkan。Q4 是唯一能在
+    CrispASR 0.8.42 跑通的版本；
+    Q8 GGUF 缺 audio tensor 无法加载。**5/10min 质量明显低于 CUDA bf16**，desc 明确要求
+    有 N 卡优先 CUDA。
+- **运行时**：CrispASR 0.8.42 已随应用；新模型只下载 GGUF，不需要 Python/CUDA。
+  `needRuntime: runtime:crispasr`；模型文件仍由设置页下载，安装包不内置。
+- **CrispASR 执行层**：`runCrispAsr` 支持 backend、语言、`-ck` 分块、post-align；
+  新增 ASCII 模型/音频缓存（Qwen/部分 GGUF 对中文路径不友好），并新增
+  `crispPostAlignWords`：按 ASR 段边界切 ≤150s，再逐段 `--align-only`，避免
+  whisper/Qwen 长音频原生词缺失或时间塌缩。
+- **UI**：模型分到 Whisper/Qwen 系列；新增引擎标签“Whisper large-v2（Vulkan）”、
+  “Qwen3（Vulkan）”；运行时提示显示 CrispASR；创建/重新识别/速度测试三条路径都支持
+  新引擎。N 卡用户同时看到 CUDA 与 Vulkan，CUDA 排在前面并推荐；无 N 卡时 CUDA
+  模型由 backend 过滤隐藏，Vulkan 模型可见。
+- **对齐模型彻底独立**：`ALIGNER_MODELS` 两个独立条目
+  （`qwen3-forced-aligner-0.6b` / `...-vulkan`），设置页「语音识别 → 对齐模型」有
+  独立下载/删除；下载 Qwen3-ASR 只拿 ASR 权重，不再夹带对齐器。初稿新增「对齐」：
+  未勾「逐词」时显示；勾选 → 对齐器生成逐词 ASS，否则 SRT；Qwen ASR / Whisper Vulkan
+  没有原生逐词，禁止勾「逐词」，只能勾「对齐」。
+- **前置动画**：「语音识别 → 前置 → Python 路径设置」加了高度+透明度展开/收起动画；
+  展开 `cubic-bezier(.16,1,.3,1)`（先快后慢），收起 `cubic-bezier(.4,0,.2,1)`；
+  支持 `prefers-reduced-motion`，不改变原生 `<details>` 语义。
+- **realign 改为 Qwen3 纯对齐**：「逐词时间重排」的前提是文本已确认，因此删掉了
+  `realignOne`/`realignRecognize`/热词第二级/锚点率/置信度门槛；realign 现在只做
+  **切原片切片 → Qwen3-ForcedAligner → token 映射**，不跑 ASR、不改文本。
+  - CUDA：新 `asr/qwen_align.py` 批量 worker，一次加载对齐器处理整批（30s 测试项目
+    单句与全片 4 句均成功）。
+  - Vulkan：逐块 `CrispASR --align-only`，10s 测试成功，1 句约 2.8s（含加载）。
+  - 移除 `/api/asr/realign-settings`、`st-realign-minratio/minconf`、全片预览的
+    采纳门槛；对齐失败/无有效词时保持原时间，不回退 ASR。
+  - 文本不确定的情况继续走独立的「重新识别」，与 realign 职责分开。
+- **验证**：手动 30s 项目单句 + 全片 realign 均成功；Vulkan 强制路径成功；
+  30s 项目 realign 成功；10s Qwen ASR 勾「对齐」生成 ASS（23 词）成功；
+  10s 原生 Parakeet 模型勾「对齐」成功（对齐后写 ASS）；10s Qwen ASR 不勾对齐输出 SRT 成功；全量 JS 回归
+  **114 通过 / 8 部分执行 / 0 失败 / 2 排除**；i18n **3122 keys**。
+- **实测**：Whisper Vulkan 10s 草稿成功（2 行、23 词）；Qwen Vulkan 10s 草稿成功；
+  Qwen Vulkan 5min 草稿成功（93 行、808 词，逐词重算正常）。全量 JS 回归
+  **114 通过 / 8 部分执行 / 0 失败 / 2 排除**；8321 已重启，两个 Vulkan 模型
+  `ready/usable=true`。
+- **状态**：**已实现并验证（本机 Vulkan + CUDA；下载/无 N 卡切换需目标机复验）**。
+  GitHub：尚未提交（工作副本无 `.git`）。
+
+**2026-10-22（非 Qwen 候选模型 CUDA 横评）**
+
+- **范围**：Canary-1B-Flash、Canary-1B-v2、Whisper large-v3、Parakeet-TDT-1.1B、
+  Paraformer-en、Granite Speech 2B；全部只用 CUDA，未接入 SubFabric，脚本与原始输出在
+  `_test/maintenance/candidates/`。Qwen 系列不重复测试。
+- **结果（总耗时含模型加载 / WER）**：
+  - 30s：Canary-1B-Flash 34.173s / 3.66%；Canary-1B-v2 7.571s / 4.88%；
+    Parakeet-TDT-1.1B 14.6s / 3.66%；Whisper large-v3 24s / 3.66%；
+    Paraformer-en 9.073s / 8.54%；Granite Speech 2B 12.129s / 3.66%。
+  - 5min：Parakeet-TDT-1.1B 115.963s / 12.21%；Whisper large-v3 74s / 10.19%；
+    其余 Canary-Flash、Canary-v2、Paraformer、Granite 2B 均为 `-`。
+  - 10min：Parakeet-TDT-1.1B 643.768s / 16.95%；Whisper large-v3 182s / 12.99%；
+    其余为 `-`。
+- **失败/跳过**：Canary-1B-Flash 5/10min 900s 内未完成；Canary-1B-v2 300s 触发
+  CUDA device-side assert、600s 未跑；Granite 2B 5/10min 900s 内未完成；
+  Paraformer-en 300s ONNX `Mul` 广播错误、600s 未跑；**Granite Speech 8B 明确 8GB 显存不足，
+  未测试并记 `-`**。这些不是应用功能，未改 `ASR_MODELS`/流水线。
+- **报告**：总表新增 42 行（14 模型 × 3 时长），`-` 项在表后逐条标注；PDF **10 页**，
+  桌面 `SubFabric-ASR-横评报告-2026-10-21.pdf`。原始数据
+  `_test/maintenance/asr-benchmark/results.csv` 与 `_test/maintenance/candidates/summary.json`。
+- **GLM-ASR-Nano-2512（补充调研）**：`zai-org/GLM-ASR-Nano-2512`，2.3B dense / 1.5B active，
+  8K context，4.5GB safetensors，Transformers `GlmAsrForConditionalGeneration`。CUDA bf16，
+  加载 4.37s + 30s 推理 4.394s，总 8.764s（3.42×），WER 6.10%；300s 输出错乱（WER 77.38%）、
+  600s 只输出 379 字符，长音频不可用。**30s 有效，长片段记 `-`**。
+- **Fun-ASR-Nano-2512（补充调研）**：`FunAudioLLM/Fun-ASR-Nano-2512`，0.8B，1.97GB `model.pt`，
+  FunASR 1.4.16。CUDA，加载 14.17s + 30s 推理 4.844s，总 19.014s（1.58×），WER 3.66%；
+  300s 只输出 120 字、600s 出现 `there, there...` 复读，整段长音频需要它自己的 streaming/cache
+  分块，未按当前流程通过。**30s 有效，长片段记 `-`**。两者均未接入 SubFabric。
+- **Index-Echo-S2TT-2B-GGUF Q8_0（调研，未测试）**：`IndexTeam/Index-Echo-S2TT-2B-GGUF` 的
+  Q8_0 只有 2.08GB **文本 LLM backbone**，audio tower/connector 不在 GGUF 里，llama.cpp 无法跑
+  完整语音；`mmproj` 是视觉投影，不是音频。完整 `IndexTeam/Index-Echo-S2TT-2B` 为 bf16
+  Qwen3-Omni AuT 1.3GB + LLM 4.55GB + connector，官方卡片标注约 **10GB VRAM**，本机 8GB
+  明确不足，按规则不测试、30/300/600s 全记 `-`。它是**中→英/日/西 S2TT**，不是英语 ASR；
+  输出只有句级时间戳。逐词调研应使用完整包的源语言转写再喂 Qwen3-ForcedAligner（按源语言），
+  但 Q8_0 无音频能力、完整包在本机跑不起来，所以本次没有可对齐转写，也没有逐词数值。
+  FP8 完整包（约 3.05GB LLM + 音频塔）理论上有机会进 8GB，但不是 Q8_0，未测试。未接入 SubFabric。
+- **结论**：30s 里 Canary-1B-v2 最快，Granite 2B/Paraformer 可用；5/10min 只有 Whisper large-v3
+  与 Parakeet 1.1B 跑完，但 large-v3 WER 更差，Parakeet 1.1B 比 0.6B 更慢且 WER 更高。
+  未发现比现有 Parakeet 0.6B/Whisper large-v2 更适合本机的候选。
+- **2026-10-22 追加候选**：Granite Speech 5.0 470M、Parakeet-TDT-0.6B-v3、
+  Nemotron 3.5 ASR 0.6B、MOSS-Transcribe-Diarize 0.9B、Canary-Qwen 2.5B，均 CUDA-only、
+  未接入应用。
+  - Parakeet v3：4.146 / 11.348 / 45.482s，WER 2.44 / 10.64 / 11.30%，**本轮最强新候选**；
+    30s 比 v2 好，5/10min 略差但快 1.8–2 倍。
+  - Granite 470M：2.215 / 1.922 / 2.03s（156–296×），WER 6.10 / 12.77 / 11.86%；
+    速度极端，适合粗剪，不适合终稿。
+  - Nemotron 3.5：4.868 / 18.737s，WER 8.54 / 15.23%；600s 未完成，记 `-`。
+  - MOSS 0.9B：18.274 / 185.161s，WER 3.66 / 9.18%；600s 只输出 1053 词、WER 44.63% 无效。
+    它有说话人标签/段级时间戳，适合多说话人，但普通 ASR 太慢。
+  - **MOSS vs Whisper 长音频补充（10/30min）**：Whisper large-v2 10min 148s / WER 9.55%，
+    30min 422s / WER 10.97%；MOSS 10min 单次 452.8s / WER 10.40%，30min 单次在 8GB 上
+    超过 30 分钟未完成，改用 3×10min 分块，总 1022.6s / WER 11.79%。MOSS 10min 有 7 个
+    匿名 speaker 标签、250 段；30min 分块 549 段、15 个局部标签（每块重置，不能直接合并）。
+    逐词：MOSS 用 Qwen3-ForcedAligner 按 ≤5min 分块，10/30min 覆盖率 90.45/91.49%、
+    起始中位 80/100ms、≤200ms 82.56/84.53%；Whisper 原生词 90.45/91.38%、80/100ms、
+    88.13/84.26%。**MOSS 不是 Whisper 替代；多说话人需先做 speaker 真值和跨块 stitching 验证。**
+    单独 PDF：`SubFabric-MOSS-vs-Whisper-长音频多说话人对比-2026-10-22.pdf`。
+- **2026-10-22 Vulkan vs CUDA（Whisper large-v2 / Qwen3-ASR / Qwen 对齐器）**：
+  独立用 CrispASR 0.8.42 的 Vulkan 后端测试，**未修改 SubFabric 的模型后端**；现有 app 仍是
+  Whisper CUDA / Qwen CUDA。素材仍为 30s/5/10min 英语片段。
+  - **Whisper**：CUDA 29.41 / 81.99 / 192.37s，WER 1.22 / 8.73 / 8.92%；
+    Vulkan 5 / 32 / 76s（30s 冷启动 18s），WER 1.22 / 8.17 / 11.24%。Vulkan 快 2–2.5 倍，
+    但 10min WER 更差；且 Vulkan 原生词时间中位 170–210ms、≤200ms 只有 48–68%，
+    必须再用 Qwen 对齐器才能到约 70ms / 92%。
+  - **Qwen3-ASR**：CUDA（PyTorch bf16，150s 块）12.325 / 61.257 / 121.987s，
+    WER 2.44 / 9.07 / 10.17%；Vulkan（CrispASR Q4_K）10 / 76 / 125s，
+    WER 3.66 / 18.03 / 23.11%，长音频明显退化。Q8 Vulkan GGUF 在 CrispASR 0.8.42 缺
+    audio tensor，无法加载；Q4 是唯一跑通的版本，不能当作等质量对比。
+  - **Qwen3-ForcedAligner**：Vulkan `--align-only` 30s 2.52s（含加载），
+    词覆盖率 97.5%、起始中位 70ms、≤200ms 92.4%；与 CUDA 对齐器接近。
+    Qwen Vulkan 300/600 的 words 是 ASR 后按 150s 块单独 align-only 得到的。
+  - **结论**：Vulkan 对 Whisper 的吞吐收益真实，但原生词时间不可用；Qwen Vulkan 的 Q4
+    长音频质量明显下降。**不建议现在把 app 的 Whisper/Qwen 默认后端切到 Vulkan；
+    若切，必须同时上 Vulkan 对齐器并重新验收 WER。**
+    数据：`_test/maintenance/vulkan/vulkan-compare.json` / `.csv`。
+  - **Whisper 原生逐词 vs Whisper 文本 + Qwen 对齐（20–50min）**：Whisper large-v2 开
+    `word_timestamps=True` 墙钟 366s；关闭逐词生成字幕 346s，再把字幕按 ≤120s 切块用
+    Qwen3-ForcedAligner 对齐 8.93s（含加载约 357.8s）。两套输出 3,726 / 3,698 词；
+    匹配参考词 1,169 / 1,183，覆盖率 90.97% / 92.06%。原生：起始中位 70ms、P90 290ms、
+    ≤200ms 85.29%，结束中位 40ms、P90 160ms、≤200ms 92.47%。Qwen：起始中位 70ms、
+    P90 150ms、≤200ms 92.73%，结束中位 40ms、P90 190ms、≤200ms 90.28%。
+    **Qwen 的起始边界更稳，Whisper 原生结束边界更好；总耗时只差约 8s，Qwen 多一套 1.8GB
+    对齐器与分块逻辑，不值得替换原生逐词。** 5min 大块会让 Qwen 尾部词卡在同一时间，
+    实测 P90 结束误差 340ms；≤120s 分块才正常。20–50min 的 ASS 原始有 2,518 条
+    Dialogue / 21,167 个英文 token（含卡拉OK重复行），去重后只有 216 个完整句块 /
+    1,332 个句内 token、1,285 个高亮词；ASR 输出约 3,700 词，ASS 不是全量转写，
+    所以 WER 193% 不是有效 WER，只比较匹配的高亮词边界。
+    数据：`_test/maintenance/asr-benchmark/timestamp-ab/compare.json`。
+  - Canary-Qwen 2.5B：30s 46.088s、WER 3.66%；300s 输出错乱、600s 未跑；**已淘汰并删除权重**。
+  - 逐词统一用 Qwen3-ForcedAligner：30s 起始中位 70–80ms、≤200ms 92–96%；
+    5min 中位 80–90ms、≤200ms 79–83%；10min 未做（aligner 单段 ≤5min）。
+- **存储清理**：删除已淘汰候选权重：Canary-Flash、Canary-v2、Parakeet 1.1B、Granite 3.3 2B、
+  Paraformer、Fun-ASR、GLM-ASR、Whisper large-v3、Canary-Qwen；保留 Qwen3/Whisper large-v2/
+  Parakeet 0.6B 应用模型，以及本轮 Parakeet v3/Granite 470M/Nemotron 3.5/MOSS 候选。
+  释放约 31GB，`asr/models` 仍保留应用模型。
+
+**2026-10-21（Qwen3 实装 + 创建稿件模型列表）**
+
+- **Qwen3-ASR 1.7B + Qwen3-ForcedAligner 0.6B 已接入应用**：单个模型条目
+  `qwen3-asr-1.7b`（engine `qwen`，约 5.6GB）；ASR 权重在模型根目录、对齐器在 `aligner/` 子目录，
+  下载/校验/删除都按相对路径处理。CUDA bf16，仅 N 卡；CPU/NPU 直接拒绝。
+- **worker**：`asr/qwen_asr.py` 内部按 150s 分块（30s 单次），每块先 ASR 出文本，再用 ASR 文本做
+  强制对齐出词级时间；输出与 `asr.py` 同构的 `{segments:[{start,end,text,words}]}`。参数：
+  分块长度、ASR 最大 token（`editor/asr-params.js`）。
+- **运行时**：复用 app 的 `asr/runtime-python`（CUDA torch 2.14），安装
+  Transformers 5.20.2 + Accelerate；装好后写 `asr/.qwen-runtime-ok.json`，状态页只读标记，
+  不再每次轮询 import torch。设置页 Qwen 行可直接「安装运行时」；换 Python 解释器会作废标记。
+- **UI**：新增「Qwen 系列」入口；创建稿件的「语音识别」下拉改为**扁平列表**，Whisper V2 / Qwen /
+  Parakeet 直接可选（不再必须先切「识别来源」），选模型时自动同步来源。全模型速度测试支持
+  `qwen` 引擎。
+- **实测**：Qwen worker 30s -> 4 段 / 80 词；创建 12s 测试稿件（Qwen）成功出稿；创建 8s 测试稿件
+  （Whisper V2）成功出稿。两者项目已删除，未留测试数据。
+- **验证**：全量 JS 回归 **113 通过 / 8 部分执行 / 0 失败 / 2 排除**；i18n **3028 条**；
+  本机 8321 已重启，状态里 Qwen `ready/usable=true`，Whisper V2 `ready/usable=true`。
+  **状态：已实现并验证（本机 CUDA；安装包内模型需用户下载）**。
+- **发布注意**：安装包仍排除 `asr/models` 与 `runtime-python`，Qwen 模型要在应用内下载；
+  Qwen 运行依赖需在设置页点「安装运行时」（标记文件也被安装包排除，避免误判）。
+  GitHub：**尚未提交**（工作副本无 `.git`）。
+
+**2026-10-21（停用五个识别模型及关联运行时）**
+
+- **停用清单**（`ASR_MODELS` 条目已原样注释，保留回滚入口）：
+  `parakeet-tdt-0.6b-v2`（sherpa-onnx CUDA）、`ggml-large-v3-turbo`（whisper.cpp）、
+  `multitalker-parakeet-streaming-0.6b-v1`（NeMo）、`parakeet-tdt-0.6b-v2-dual`（双引擎）、
+  `vibevoice-asr-4bit`（VibeVoice CUDA 4bit）。
+- **后台兜底**：新增 `RETIRED_ENGINES = {sherpa-onnx, whisper.cpp, nemo, dual, vibevoice}`；
+  `modelById` 不再命中这些条目，`asrEngineArgs` / `asrGpuGateError` / `benchSupported` 遇到退役引擎
+  直接报错；NeMo/VibeVoice 探针被短路，不再后台 import torch；双引擎 `asr_dual.py` /
+  `asr_perf.py` 的接口已封死。
+- **接口**：`/api/asr/download` 的 whisper/ VibeVoice 运行时与退役模型返回 410/400；
+  `/api/asr/install-nemo`、`/api/asr/dual`、`/api/asr/perf/*` 返回 410；`select`/`params`/`bench`
+  对退役 ID 返回 400。状态里只返回 5 个在用模型（Faster-Whisper large-v2、Parakeet Vulkan、
+  Parakeet NPU、必剪、剪映），`nemo`/`runtime`/`vibevoice` 字段为 `null`。
+- **界面**：VibeVoice 系列入口注释；双引擎分工页签/视图隐藏，全模型速度成为默认页；
+  NeMo 运行时行和 VibeVoice 修复入口停用；Python 环境卡保留（NPU/说话人分离仍需要）。
+- **realign**：固定模型从 CUDA Parakeet 改为 `parakeet-tdt-0.6b-v2-npu`；NPU 不支持热词偏置，
+  第二级退化为无热词复核，界面文案已同步。
+- **旧设置/旧稿件**：`selectedModel`/`rerecogModel` 指向退役 ID 时按“未知模型”处理并回退到可用模型；
+  不删除已下载的模型文件，也不自动清理用户目录。
+- **验证**：全量 JS 回归 **113 通过 / 8 部分执行 / 0 失败 / 2 排除**；i18n **2992 条**；
+  隔离服务实测状态只列 5 个模型，退役模型下载/安装/双引擎/测速接口均被拒绝，
+  后台无 python/NeMo/VibeVoice 子进程。**状态：已实现并验证（源码与隔离服务）**；
+  真实 GPU 上的手动点按验收未重复做。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+**2026-10-21（历史：ASR 三长度横评）**
+
+- **口径**：用 `How I Saved the World's Largest Minecraft Server.webm` 的前 30s / 300s / 600s，
+  参考 `人工精校的字幕（前两小时）.ass`（只取 Default 英文行，剥离颜色标签、合并逐词重复行）；
+  WER 忽略大小写/标点/连字符、数字转英文词；不做术语表修复与语义分句。片段都从 0 秒开始。
+  机器：RTX 4060 Laptop 8GB + Intel Arc 核显 + Intel AI Boost NPU。
+- **结果（关键行，WER / 识别倍率 / 含说话人总倍率）**：
+
+  | 片段 | 模型+配置 | WER | 识别× | 总×（含分离） | 置信度 |
+  | --- | --- | ---: | ---: | ---: | ---: |
+  | 300s | Whisper large-v2 · 置信度完整 | 8.73% | 3.66 | 1.51 | 0.740 |
+  | 300s | Parakeet CUDA · 完整 | 9.07% | 4.00 | 1.57 | 0.789 |
+  | 300s | Parakeet CUDA · 关闭 | 9.07% | 14.18 | 2.19 | 0.806 |
+  | 300s | Parakeet NPU · 关闭 | 22.84% | 25.11 | 2.34 | 0.733 |
+  | 600s | Whisper large-v2 · 完整 | 8.92% | 3.12 | 1.53 | 0.747 |
+  | 600s | Parakeet CUDA · 关闭 | 10.67% | 13.25 | 2.44 | 0.837 |
+  | 600s | Parakeet NPU · 关闭 | 22.98% | 27.32 | 2.69 | 0.760 |
+
+  - 置信度「完整」对 Parakeet CUDA 的代价是 2.1×（30s）/ 3.6×（5–10min），对 NPU 是 1.5–1.9×；
+    WER 完全不变（同一段解码文本），完整档只增加稳定性标记与更保守的置信度。
+  - 说话人分离实测 7.19s / 116.08s / 200.98s（30s / 5min / 10min），与模型无关；开启后
+    5/10min 总倍率分别降到约 1.5–2.3× / 1.5–2.7×。
+  - Faster-Whisper 关闭逐词后 WER 变差（6.1% / 10.19% / 9.94%），速度没有稳定收益。
+  - **Multitalker Parakeet 0.6B**（应用实际用法：单说话人重识别）：30s/5min/10min 分别
+    34.42s / 281.31s / 736.19s，WER 3.66% / 13.44% / 14.57%；没有逐词时间戳与置信度，
+    比 Whisper/Parakeet 都慢，只适合「选区重新识别」，不适合批量转写。
+  - **Qwen3-ASR-1.7B + Qwen3-ForcedAligner-0.6B（独立部署，不接入 SubFabric）**：
+    `Qwen/Qwen3-ASR-1.7B-hf`（4.08GB）+ `Qwen/Qwen3-ForcedAligner-0.6B-hf`（1.84GB），CUDA bf16；
+    独立目录 `_test/maintenance/qwen-asr/`，ASR 加载 4.24s、对齐加载 2.63s，ASR 峰值显存约 3.8GB。
+    流程：ASR 只出文本 → 用该文本做强制对齐出词级时间；30s 单次，5/10min 都按 150s 分块。
+    30s/5min/10min **端到端（含加载）12.325s / 61.257s / 121.987s（2.43× / 4.90× / 4.92×）**，
+    WER **2.44% / 9.07% / 10.17%**；起始边界中位 80/80/70ms，200ms 内 92.4% / 94.7% / 93.8%。
+    300s 单次对齐会把尾部约 20s 的词挤到最后一个时间戳，必须分块；ASR 本身也随分块运行。
+  - **Whisper large-v2（无逐词）+ 同一个 Qwen3-ForcedAligner（独立部署）**：
+    Faster-Whisper-XXL `word_timestamps=False` 只出文本；用它自己的 segment 边界在约 150/300/450s
+    切音频，文本随 segment 分配，再交给对齐器。30/5/10min 端到端 **33.558s / 96.013s / 181.520s
+    （0.89× / 3.12× / 3.31×）**，WER **1.22% / 10.08% / 8.64%**；起始中位 70/80/70ms，
+    200ms 内 92.5% / 91.3% / 92.3%。Whisper 30s 被 XXL 约 26s 加载拖慢；5/10min Qwen 方案
+    仍快约 1.3–1.6 倍，WER 两者各有胜负。主表保留两套组合行，纯对齐器行已移除。
+  - **VibeVoice**：5s 实测 27.4s；30s 在 900s 上限仍未完成，5/10min 未跑——当前 8GB 显存机器
+    不适合 30s 以上整段识别。
+- **产品改动**：全模型速度测试上限从 120s 提到 600s；结果增加「平均置信度」列；`details:true`
+  返回识别文本供横评算 WER。真实 5/10min 片段的 bench 均跑通（`projects/.bench` 自动清理）。
+- **未纳入**：双引擎（独立页）、云端必剪/剪映（非本地）、whisper.cpp large-v3-turbo 与
+  Parakeet Vulkan（未安装）；NeMo 已按单说话人模式纳入。
+- **验证**：全量 JS 回归 **113 通过 / 8 部分执行 / 0 失败 / 2 排除**；ESLint **0 error**
+  （6 条既有 warning）；i18n 2975 条。横评原始数据与报告：
+  `_test/maintenance/asr-benchmark/{results*.json,results.csv,横评报告.md}` 与
+  `_test/maintenance/qwen-asr/results/{pipeline,whisper_align}.json`、
+  `_test/maintenance/qwen-aligner/results/result.json`（本地分析产物，不入库）；
+  桌面另有导出的 4 页 PDF。
+  **限制**：每档只跑一次、无误差棒；30s 含模型加载；WER 不是强制对齐级评测；置信度是各引擎
+  自评分，不能跨引擎直接比。GitHub：**尚未提交 GitHub**（工作副本无 `.git`）。
+
+**2026-10-21（本轮增量：速度测试条件 + 运行时修复反馈）**
+
+- **速度测试条件**：全模型页新增与创建稿件页一致的逐词 / 置信度 / 分角色识别 / 说话人区分
+  （+ 说话人数）。逐词下发到 Faster-Whisper-XXL；置信度进入 `asrArgsFor`（Parakeet 的
+  `--tta`）；分角色以说话人为前提。后处理只测一次：说话人分离跑 `diarize.py`，分角色识别用
+  第一份成功结果跑 `inferCast` + `mapSpeakers`，时间加到每个模型的总耗时；结果表改为
+  识别 / 后处理 / 总耗时 / 倍率，状态里带 `conditions` 与 `post`。
+- **修复按钮可见进度**：VibeVoice / Faster-Whisper 的安装按钮点击后在同一行轮询
+  `/api/asr/status`，显示百分比与失败原因，装好显示「✓ 运行时已就绪，点「开始测试」重新跑一次」；
+  不再只弹一个 toast 让用户去别的页签猜。
+- **VibeVoice bench 真正根因（本轮定位并修复）**：`benchRunModel` 对所有 Python 引擎统一用
+  `ASR_PY`，但 VibeVoice 的 torch/bitsandbytes 只装在独立运行时 `asr/runtime-vibevoice` 里。
+  因此探针（用独立 Python）显示运行时 OK，bench（用共享 Python）必然报
+  `No module named 'bitsandbytes'`。现已改为 `model.engine === 'vibevoice' ? vibevoicePython() : ASR_PY`；
+  真实 5s 音频 bench 成功：27.39s、倍率 0.18×。
+- **验证（本次，已完成且已验证）**：临时在 8398 端口起源码服务（用真实模型/运行时，
+  结束后关闭并清理），真实跑通 Faster-Whisper 10s 音频：
+  `word:false / confidence:full / speakers:false` → 识别 27.57s；
+  `speakers:true` → 识别 25.72s + 说话人分离 2.48s = 总 28.20s，`post` 与倍率按总耗时重算；
+  VibeVoice 5s 音频 → 27.39s、倍率 0.18×，`projects/.bench` 测完已删除。另在同一临时服务上
+  POST `{kind:'runtime:vibevoice', force:true}`：约 12s 完成，过程 8→18→64→86→100%，
+  最终 `probe ok:true`、CUDA/NF4/bitsandbytes 全绿 —— 强制修复链路本身可用。
+  全量 JS 回归 **113 通过 / 8 部分执行 / 0 失败 / 2 排除**
+  （报告 `_test/maintenance/js-results-bench-conditions.json`），新增
+  `tests/asr-bench-conditions-test.mjs`；ESLint **0 error**（6 条既有 warning）；i18n 2973 条。
+  **未执行**：分角色识别真实 LLM 调用（会消耗用户额度，只做了静态契约与跳过分支）、
+  真实浏览器点击验收。
+  注意：用户当时运行的 8321 实例是 10:09 启动的旧进程，**必须重启服务**后新条件与本轮修复才生效。
+  GitHub：**尚未提交 GitHub**（工作副本无 `.git`）。
+
+**2026-10-21（本轮增量：速度测试写盘 + VibeVoice 运行时修复）**
+
+- **速度测试 PermissionError 修复**：Faster-Whisper-XXL 在 `%TEMP%\sf-bench-*\...\input.json` 写结果报
+  `PermissionError: [Errno 13]`。实测复现：同一段音频、同一套参数，只把 `--output_dir` 从
+  `%TEMP%` 换到 `projects/.bench/...` 就成功。`benchClip` 现在固定使用
+  `projects/.bench/run-*`（点开头，`validId` 不认，不会被当成项目），测完删除并回收空父目录；
+  所有测试引擎（含 asr.py / whisper.cpp / CrispASR 的 JSON）共用该目录。
+- **VibeVoice 运行时修复**：`startVibeVoiceInstall` 拆成「Transformers/Accelerate/soundfile/soxr」
+  与「CUDA bitsandbytes」两段，后者单独安装并加 `--extra-index-url https://pypi.org/simple`
+  兜底；缺 `bitsandbytes` 时错误明确指向该包。`/api/asr/download` 支持 `force:true`，绕过旧探针
+  缓存强制重装；模型行在部分运行时存在时按钮显示「修复运行时」；速度测试失败行新增
+  「安装 / 修复 VibeVoice 运行时」按钮（VibeVoice）与「安装 Faster-Whisper 运行时」（缺运行时），
+  直接调用同一安装接口并在应用内显示进度。
+- **性能页卡片间距**：双引擎页签的两张 `.st-section` 之间补 16px 垂直间距（`.perf-view` 改 flex 列 +
+  gap），见 §4；新增 `tests/perf-view-spacing-test.mjs` 钉住布局与「生产 HTML 等于模板」。
+- **验证（本次，已完成且已验证）**：用真实 `faster-whisper-xxl.exe` + `large-v2` 在同一段 5s 音频上
+  复现了 `%TEMP%` 的 PermissionError，并在 `projects/.bench` 下成功产出 `input.json`（退出码 0）；
+  本机 VibeVoice 运行时 `--probe` 为 `ok:true`（CUDA/NF4/bitsandbytes 全绿），pip 解析
+  `bitsandbytes==0.50.2` 在「镜像 + 官方源」组合下正常。全量 JS 回归 **112 通过 / 8 部分执行 /
+  0 失败 / 2 排除**（报告 `_test/maintenance/js-results-perf-spacing.json`），新增
+  `tests/asr-bench-repair-test.mjs`、`tests/perf-view-spacing-test.mjs`；ESLint **0 error**
+  （6 条既有 warning）；i18n 词条 2941 条。
+  **未执行**：从零安装 bitsandbytes（只验证了 pip 解析与现有环境）、真实 UI 里点按钮装运行时、
+  真实 VibeVoice 全模型测速（需加载 6.6GB 模型）。GitHub：**尚未提交 GitHub**（工作副本无 `.git`）。
+
+**2026-10-21（本轮增量：Parakeet / VibeVoice 参数 + 主页二次刷新）**
+
+- **Parakeet 参数**：sherpa-onnx / CUDA 那条新增「CPU 线程数」（默认 4）与「TDT blank 惩罚」
+  （`--blank-penalty`，默认 0.5，范围 0–2）；CrispASR/Vulkan 原本已有线程数与词阈值。
+  参数在 `asrEngineArgs` 统一落到命令行，初稿、长音频分片、选区重识别、全模型速度测试共用；
+  常驻识别服务的 worker 键包含线程数与 blank 惩罚，改参数会另起进程，不会沿用旧识别器。
+  Parakeet NPU / 双引擎仍不提供参数：NPU 的 `--threads` 被 OpenVINO 忽略、稳定性重跑由置信度档位控制，
+  双引擎分工在「性能与调度」。
+- **VibeVoice 参数**：新增「音频编码分块」（`--acoustic-tokenizer-chunk-size`，默认 32000，
+  必须为 3200 的倍数；`asr-params.js` 新增 `multipleOf`，越界先夹取再吸附）与「最大生成 token」
+  （`--max-new-tokens`，默认 8192，1024–32768）。两项在初稿与选区重识别两条 spawn 路径都已下发。
+- **主页入场后二次刷新修复**：`renderWidgets()` 改为首次建节点、之后只改文字；
+  `syncDashboardMode()` 只在 Material 主页 ↔ 磁贴模式切换或显式主题切换时重播入场动画。
+  项目快照晚到不再替换磁贴 DOM、也不再重播 330ms 错峰的入场，消除「动画播完过一会刷新一下」。
+- **验证（本次，已完成且已验证）**：`node --check` 覆盖 `editor/asr-params.js`、`editor/asr-service.js`、
+  `editor/server.js`、`editor/js/studio.js`、`editor/js/project.js` 与两个参数测试；
+  `node tests/asr-params-test.mjs`、`tests/asr-params-api-test.mjs`、`tests/i18n-coverage-test.mjs`
+  通过；用项目自带 Python 轮询子命令确认 `--blank-penalty`、`--acoustic-tokenizer-chunk-size`、
+  `--max-new-tokens` 均被对应 worker 接受。新增 `tests/asr-model-args-test.mjs` 静态守住
+  「参数 → 命令行 → worker argparse」与常驻 worker 键。全量 JS 回归
+  **110 通过 / 8 部分执行 / 0 失败 / 2 排除**
+  （报告 `_test/maintenance/js-results-asr-params-home-fix.json`）；`tests/studio-navigation-test.mjs`
+  新增「晚到项目快照不重播主页入场、不替换磁贴节点」的行为断言，`tests/material-home-test.mjs`
+  更新为新的模式判断源码断言。ESLint **0 error**（20 条既有 warning）。`node tests/gen-lang.mjs`
+  补齐词条到 2930 条。**真实浏览器里的动画观感与参数面板交互未做人工验收**；Parakeet / VibeVoice
+  真机识别未重跑（无新增模型文件，参数只影响命令行）。GitHub：**尚未提交 GitHub**（工作副本无 `.git`）。
+
 **2026-10-21（本次，已完成且已验证）**
 
 - 新增 **Whisper large-v2** 引擎（`faster-whisper`）：Faster-Whisper-XXL 运行时 + `Systran/faster-whisper-large-v2`
@@ -631,9 +1044,12 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
   逐词时间戳 / 提示词；whisper.cpp 暴露语言、线程、词阈值、提示词；CrispASR 暴露线程与词阈值。
   参数存 `asr/settings.json` 的 `modelParams`，新建初稿、分片与选区重识别都使用当前值。
   新增 `editor/asr-params.js`、`tests/asr-params-test.mjs`、`tests/asr-params-api-test.mjs`。
+- **全模型速度测试**：性能与调度新增「全模型速度」页签，勾选已安装本地模型后串行实测，
+  结果按倍率（音频秒数 / 含加载墙钟）排序；支持音频自动查找、进度、取消，与双引擎测试互斥。
+  API 见 §7，新增 `tests/asr-bench-api-test.mjs`；真实 Parakeet 5 秒音频实测倍率 1.04×。
 - **所有用户可见文案进入 i18n**：修复 `gen-lang` 扫描已删除 `editor/index.html` 导致生成器不可用的问题；
   改为扫描 `editor/studio.html` + 共享 `copy_scan`（含 `aria-label`/`alt`/`value`，剥掉 HTML 注释），
-  词典从 1608 条补到 2881 条，并保留旧键和用户改过的 50 条译文。把 4 个遗留语义键
+  词典从 1608 条补到 2920 条，并保留旧键和用户改过的 50 条译文。把 4 个遗留语义键
   （`save.conflict` / `model.deleteFailed` / `model.detached` / `vibevoice.*`）改成中文原文，
   避免 `t()` 对英文键直接原样返回。新增 `tests/i18n-coverage-test.mjs` 防止以后漏文案。
 - **视频导出修复**：`subtitleText` 请求体上限从 64KB 放宽到 32MB（大字幕不再在请求阶段失败）；
@@ -647,16 +1063,19 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 - 新增 `tests/faster-whisper-test.mjs`、`tests/glossary-repair-test.mjs`（纯逻辑，不加载模型）；顺带修了
   `badcat-layer-test` / `pair-anchor-test` / `word-highlight-test` 在**中文路径**下把 `%E5%B7%A5…`
   当成真实目录的旧问题（改用 `decodeURIComponent(fileURLToPath)`）。
-- 全量 JS 回归 **108 通过 / 8 部分执行 / 0 失败 / 2 排除**；新增 i18n 覆盖、玻璃前景与 ASR 参数测试通过；
+- 全量 JS 回归 **109 通过 / 8 部分执行 / 0 失败 / 2 排除**；新增 i18n 覆盖、玻璃前景、ASR 参数与全模型测试通过；
   全仓 ESLint **0 error**（既有 warning）；8 个隔离 Python 回归全过（本机 `ruff` 未安装，未跑）。
-  校验报告 `_test/js-results-asr-params.json`。
+  校验报告 `_test/js-results-all-model-bench.json`。
 - 「卡卡的 bin」临时目录已删除；需要的 XXL 运行时、`7z.exe` 与 MIT 许可证已迁入 `asr/faster-whisper-xxl/`
   与 `editor/scripts/`。
-- **GitHub：上一轮云端提交成功且已核对**。上一轮已同步到 `EndiVee233/SubFabric` 的 `main`
-  （46 个文件），并核对远程 ref、父级与关键文件内容；远程已有的 Claude 主题和翻译修复保留。
-  **本轮欢迎动画、玻璃前景、视频导出修复、模型动画与 ASR 参数改动随本次提交同步到 `main`**；
-  提交后按远程 ref、提交父级和关键文件内容核对。
-- **尚未做**：1.4GB 运行时下载实测、完整 4 小时音频回归、打包后的 exe 冒烟。
+- **版本推进至 beta 1.4.1**：`editor/server.js` 的显示版本 `beta 1.4.1`、文件版本 `1.4.1.0`，
+  `build/installer/SubFabric.iss` 同步；`build/SubFabric.exe` 为 1.4.1.0（89.3 MB），
+  `build/installer/SubFabric-beta 1.4.1-setup.exe` 约 1.78 GB（历史构建含 VibeVoice 运行时；
+  2026-10-21 起安装包脚本已排除 `runtime-vibevoice` 与相关脚本）。
+  **未创建 tag 与 Release**。
+- **GitHub：上一轮云端提交成功且已核对**。`main` 上一轮为 `d62f0e9`（28 个文件，父 `852c882`）；
+  **本轮 UWP 欢迎页、全模型速度测试与 1.4.1 版本改动尚未提交 GitHub**，需要重新授权设备码。
+- **尚未做**：1.4GB 运行时下载实测、完整 4 小时音频回归、打包后的 exe 运行时冒烟。
 
 **2026-10-19（历史快照，非本次验证）**
 

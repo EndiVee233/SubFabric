@@ -151,14 +151,19 @@ node editor/server.js
 ## 受支持的模型
 | 模型 | 硬件要求 |
 | --- | --- |
-| Parakeet TDT 0.6B v2 | NVIDIA 显卡加速（sherpa-onnx / CUDA） |
 | Parakeet TDT 0.6B v2（Vulkan 通用） | Vulkan 加速（CrispASR/ggml）：A 卡 / Intel 核显 / N 卡都能用，**无 N 卡也能跑**；不需要 Python，没有 Vulkan 驱动时自动退 CPU |
 | Parakeet TDT 0.6B v2（Intel NPU） | Intel NPU 加速（OpenVINO）：编码器跑 NPU、预测/联合网络跑核显，**无 N 卡可用** |
-| Whisper large-v3-turbo | Vulkan 加速 这意味着只要支持 Vulkan 的显卡均可加速 |
+| Qwen3-ASR 1.7B | NVIDIA CUDA；只下载 ASR 权重（约 4.0GB）；逐词时间由「对齐模型」中的 Qwen3-ForcedAligner 单独提供，5/10 分钟按 150s 分块 |
+| Qwen3-ForcedAligner 0.6B | 独立对齐模型；CUDA / Vulkan 两个版本，只在需要逐词或「对齐」时使用 |
+| Qwen3-ASR 1.7B（Vulkan 通用） | 无 N 卡时的中档兜底：CrispASR + Vulkan，Q4 约 1.5GB；逐词需另下对齐模型；有 N 卡请优先 CUDA 版 |
 | **Whisper large-v2（人声分离精校）** | NVIDIA 显卡 + 约 1.5GB Faster-Whisper-XXL 运行时；内置 MDX 人声分离，带 BGM 的素材准确率最高（本机实测比 Parakeet 更准，但更慢） |
-| Multitalker Parakeet Streaming 0.6B v1 | NVIDIA 显卡加速（但它仅用于重新识别） |
+| Whisper large-v2（Vulkan 通用） | 无 N 卡时的质量档兜底：CrispASR + Vulkan，约 3.1GB；逐词需另下对齐模型；有 N 卡请优先 CUDA 版 |
 | 必剪 ASR | 会上传至 bilibili 服务器进行语音识别 无硬件要求 |
 | 剪映 ASR | 会上传至字节跳动服务器进行语音识别 无硬件要求 |
+
+> 2026-10-21 起停用：Parakeet CUDA（sherpa-onnx）、Whisper large-v3-turbo（whisper.cpp）、
+> Multitalker Parakeet Streaming 0.6B v1（NeMo）、NPU+GPU 双引擎、VibeVoice ASR 4bit。
+> 对应模型、运行时安装、设置入口与速度测试均已关闭；已下载的文件不会自动删除。
 
 Whisper 与 CrispASR 模型行上有「参数」入口：可调识别语言、VAD 开关/阈值/方法、MDX 人声分离、
 逐词时间戳、线程数等；面板显示当前值和默认值，支持保存与恢复默认。
