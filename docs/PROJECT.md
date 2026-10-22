@@ -1068,13 +1068,22 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
   校验报告 `_test/js-results-all-model-bench.json`。
 - 「卡卡的 bin」临时目录已删除；需要的 XXL 运行时、`7z.exe` 与 MIT 许可证已迁入 `asr/faster-whisper-xxl/`
   与 `editor/scripts/`。
-- **版本推进至 beta 1.4.1**：`editor/server.js` 的显示版本 `beta 1.4.1`、文件版本 `1.4.1.0`，
-  `build/installer/SubFabric.iss` 同步；`build/SubFabric.exe` 为 1.4.1.0（89.3 MB），
-  `build/installer/SubFabric-beta 1.4.1-setup.exe` 约 1.78 GB（历史构建含 VibeVoice 运行时；
-  2026-10-21 起安装包脚本已排除 `runtime-vibevoice` 与相关脚本）。
-  **未创建 tag 与 Release**。
-- **GitHub：上一轮云端提交成功且已核对**。`main` 上一轮为 `d62f0e9`（28 个文件，父 `852c882`）；
-  **本轮 UWP 欢迎页、全模型速度测试与 1.4.1 版本改动尚未提交 GitHub**，需要重新授权设备码。
+- **beta 1.4.1 已发布**：`editor/server.js` 显示版本 `beta 1.4.1`、文件版本 `1.4.1.0`，
+  `build/installer/SubFabric.iss` 同步；2026-10-22 由 `3d621bca` 重新构建，
+  `build/SubFabric.exe` 87,108,096 字节（FileVersion/ProductVersion `1.4.1.0`），
+  `SubFabric-beta 1.4.1-setup.exe` 36,546,461 字节（旧的 1.78GB 构建已作废；现行 `.iss` 排除
+  `runtime-vibevoice` 与相关脚本）。
+- **Release `v1.4.1-beta.1` 已发布并核对**（prerelease，tag 指向 `3d621bca`）：唯一资产
+  `SubFabric-beta.1.4.1-setup.exe`，36,546,461 字节，`assets[].digest` 与本地 sha256 一致；
+  安装包清单 109 文件 / 约 110MB，含 `editor/vendor` 的 libass worker 与 Noto CJK 字体，
+  不含 `projects/`、`asr/settings.json`、模型与按需运行时。
+- **GitHub：云端提交成功且已核对**。`main` 已推进到 `3d621bca`（Vulkan 兜底 / 独立对齐器 /
+  参数与素材页 `7790bfcd`、ESLint 停用块 `099db7ca`、Qwen3 worker `3d621bca`）；
+  CI 在该提交上通过（JS + Python）。
+- **本次验证**：本机隔离 JS 回归 **113 通过 / 9 部分 / 0 失败 / 2 排除**；安装包用
+  `PrivilegesRequired=lowest` 临时副本在临时目录静默安装 / 卸载通过（109 文件、exe 哈希与
+  `build/SubFabric.exe` 一致、vendor 与 `asr/qwen_align.py` 在、无用户数据）；发布包本体仍为
+  管理员权限安装，未在本机原地安装。
 - **尚未做**：1.4GB 运行时下载实测、完整 4 小时音频回归、打包后的 exe 运行时冒烟。
 
 **2026-10-19（历史快照，非本次验证）**
