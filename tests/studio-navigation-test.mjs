@@ -206,6 +206,7 @@ globalThis.requestAnimationFrame = fn => { const id = ++timerSequence; frames.se
 globalThis.cancelAnimationFrame = id => frames.delete(id);
 const requests = [], unexpected = [], toasts = [], created = [];
 let schemes = [], schemeActive = '', schemeFailure = false, schemeConfirm = true;
+let pythonProbeReady = false;
 window.confirm = () => schemeConfirm;
 const subtitle = serializeSRT([{ start: 0, end: 2, lines: ['Original subtitle'] }]);
 const revision = 'a'.repeat(64);
@@ -226,7 +227,7 @@ globalThis.fetch = async (url, options = {}) => {
     return json({ revision, savedAt: '2026-10-13T00:00:00Z' });
   }
   if (url === '/api/asr/select-rerecog') return json({ok:true});
-  if (url === '/api/asr/status') return json({ pythonProbe: {ok:false,msg:'Missing fixture Python'}, nemo: {ok:false,msg:'Missing fixture NeMo'}, vibevoice: {ok:false,cuda:true,vramMB:8188,msg:'Missing fixture bitsandbytes'}, diarize:{ready:false}, ready: true,
+  if (url === '/api/asr/status') return json({ pythonProbe: pythonProbeReady ? {ok:false,msg:'Missing fixture Python'} : null, nemo: {ok:false,msg:'Missing fixture NeMo'}, vibevoice: {ok:false,cuda:true,vramMB:8188,msg:'Missing fixture bitsandbytes'}, diarize:{ready:false}, ready: true,
     // 返回用户：加速方式已配置，且硬件探测已在 status 里，避免 renderAsrModels 再打 /api/asr/hardware
     hardware: { cuda: { available: true, device: 'Fixture RTX' }, vulkan: { available: true, devices: ['Fixture RTX'] }, npu: { available: true, devices: ['Fixture NPU'] } },
     backends: { cuda: true, vulkan: true },
@@ -777,6 +778,11 @@ assert.equal($('st-models').querySelector('.sf-asr-model').hidden,false);
 assert.ok($('st-models').querySelectorAll('.sf-asr-setup').every(row=>row.hidden));
 await click('sf-asr-back'); assert.equal($('sf-asr-families').hidden,false);
 familyButtons.find(button=>button.dataset.asrFamily==='前置').click(); await settle();
+assert.ok($('st-models').textContent.includes('检测中'), 'Python 预检未返回时先显示检测中');
+pythonProbeReady = true;
+await runTimer(1500);
+assert.ok(!$('st-models').textContent.includes('检测中'),
+  'Python 预检完成后卡片自动重画，不会永远卡在检测中');
 assert.equal($('st-model-dir').closest('.st-card').hidden,false);
 assert.equal($('st-runtime-env').closest('.st-card').hidden,true,'duplicate environment card stays hidden');
 assert.equal($('sf-asr-rerecog-mount').hidden,true,'re-recognition belongs to overview');

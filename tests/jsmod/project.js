@@ -35,6 +35,7 @@ export function initProjects(ctx) {
   const saveClient = crypto.randomUUID();
   let pollTimer = 0;
   let nemoPollTimer = 0;       // 盯 NeMo 预检（要导入 PyTorch，30 秒起步）
+  let pythonPollTimer = 0;     // 盯 Python 预检（import sherpa/openvino 可能几秒，首帧会先回空）
 
   const elHome = $('#home-view');
   const dashboardView = $('#dashboard-view');
@@ -3140,6 +3141,29 @@ async function renderAsrModels() {
     // 探测里带上用的哪个解释器，界面上能看到（多份安装时这点很重要）
     const pyExe = d.python || '';
     const pySt = dlOf('pyenv');
+    /* ⚠ Python 预检是后台异步跑的：首次查询 /api/asr/status 时 probe 往往还没结束，
+     *   pythonProbe/pythonProbeFlat 都是 null，卡片就停在「检测中…」。而这个页面只在
+     *   下载轮询/切页时重画，没有下载时永远不会自己刷新 —— 用户会以为卡死（实测截图）。
+     *   所以这里盯一小会儿，出结果就重画一次；失败/超时也算出结果（ok:false）。 */
+    if (!py && !pySt.running && !pythonPollTimer) {
+      let tries = 0;
+      const tick = async () => {
+        if (++tries > 30 || !document.getElementById('st-models')) {
+          pythonPollTimer = 0; return;
+        }
+        try {
+          const r = await fetch('/api/asr/status', { signal: AbortSignal.timeout(8000) });
+          const dd = await r.json();
+          if (dd.pythonProbe || dd.pythonProbeFlat) {
+            pythonPollTimer = 0;
+            renderAsrModels();
+            return;
+          }
+        } catch { /* 下一轮再试 */ }
+        pythonPollTimer = setTimeout(tick, 1500);
+      };
+      pythonPollTimer = setTimeout(tick, 1500);
+    }
     let pyState;
     if (pySt.running) {
       pyState = `<span class="sm-state running">${esc(pySt.msg || '安装中…')} ${pySt.pct || 0}%</span>`;
