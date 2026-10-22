@@ -200,7 +200,8 @@ console.log('\n== ⑨ 「模型管理」状态卡不能误报（三个实测撞�
   /* ② GPU 探测是异步的（spawn nvidia-smi）。状态接口原来直接读缓存 nvidiaCache.name，
    *    服务器刚起来的第一次查询就回 gpu:null —— 前端当成"没有 N 卡"，
    *    给 Multitalker 卡打上「当前没检测到 N 卡，无法下载」的误报。 */
-  ok(/gpu: await nvidiaGpu\(\)/.test(SRV), '★ 状态接口等 GPU 探测完再回（原来读缓存 → 首查是 null）');
+  ok(/const gpuName = await nvidiaGpu\(\)/.test(SRV) && /gpu: gpuName/.test(SRV),
+    '★ 状态接口等 GPU 探测完再回（原来读缓存 → 首查是 null）');
   ok(/gpuNameForDl = await nvidiaGpu\(\)/.test(SRV),
     '★ 下载接口也 await（原来"打后台 + 立刻读缓存"会误拦下载）');
   ok(/gpuPending/.test(SRV) && /gpuPending/.test(PJS),
@@ -208,19 +209,21 @@ console.log('\n== ⑨ 「模型管理」状态卡不能误报（三个实测撞�
   ok(/gpuUnknown/.test(PJS) && /正在查显卡/.test(PJS),
     '★ Multitalker 卡探测期间显示「检测中」，不说"没检测到 N 卡"');
 
-  /* ③ nvidiaCache.name 在**业务代码**里只该剩四处，且都说得通：
+  /* ③ nvidiaCache.name 在**业务代码**里只该剩少数几处，且都说得通：
    *      · nvidiaGpu() 内部两处（读缓存 / 写回后返回）
-   *      · gpuPending 一处（它就在 `gpu: await nvidiaGpu()` **之后**，用来判断探测结果空不空）
+   *      · gpuPending 一处（它就在 `gpu: gpuName` **之后**，用来判断探测结果空不空）
    *      · Qwen3 GPU 门禁一处（创建前已走完硬件探测；未探测到 N 卡时明确拒绝）
-   *      · 对齐器 GPU 门禁两处（独立对齐器只在有 N 卡时走 CUDA）
-   *    任何"打后台 + 立刻读缓存"的写法都会在冷启动时读到 null → 误报。 */
+   *      · 对齐器 GPU 门禁两处（draftAlignerReady / realignPrep，冷启动时补 `await nvidiaGpu()`）
+   *      · 对齐器缺 N 卡的错误文案一处（只在前两处 await 之后被调用，缓存已热身）
+   *    任何"打后台 + 立刻读缓存"的写法都会在冷启动时读到 null → 误报；
+   *    这里只接受带 `await nvidiaGpu()` 兜底、或在 await 之后才执行的读取。 */
   const bizCacheReads = SRV.split('\n')
     .map(l => l.trim())
     .filter(t => /nvidiaCache\.name/.test(t) && !t.startsWith('*') && !t.startsWith('/*') && !t.startsWith('//'));
-  ok(bizCacheReads.length === 6,
-    `★ 业务代码里读缓存只剩 6 处（实际 ${bizCacheReads.length}）`, bizCacheReads);
-  ok(bizCacheReads.filter(t => !/gpuPending|return nvidiaCache.name|nvidiaCache.at|Qwen3|cudaReady|qwen3-forced/.test(t)).length === 0,
-    '★ 那 6 处都说得通（nvidiaGpu 内部 ×2 + gpuPending ×1 + Qwen3 门禁 ×1 + 对齐器 GPU 门禁 ×2）', bizCacheReads);
+  ok(bizCacheReads.length === 7,
+    `★ 业务代码里读缓存只剩 7 处（实际 ${bizCacheReads.length}）`, bizCacheReads);
+  ok(bizCacheReads.filter(t => !/gpuPending|return nvidiaCache\.name|nvidiaCache\.at|Qwen3|cudaReady|qwen3-forced|await nvidiaGpu|对齐模型已下载/.test(t)).length === 0,
+    '★ 那 7 处都说得通（nvidiaGpu 内部 ×2 + gpuPending ×1 + Qwen3 门禁 ×1 + 对齐器门禁 ×2 + 错误文案 ×1）', bizCacheReads);
 }
 
 console.log('\n== ⑩ 「自动纠错」卡：不能选做不了纠错的模型、报错要指向真原因 ==');

@@ -58,7 +58,7 @@ ok(pj.includes("align: !!($('#np-align')"), '链接下载建稿 payload 带 alig
 ok(/wordLevel: nativeWanted \|\| align/.test(srv) || /wordLevel: nativeWanted \|\| align/.test(srv),
   '后端生成有效 wordLevel = 原生逐词或对齐');
 ok(/nativeWanted && !native/.test(srv), '★ 后端拒绝无原生逐词模型的 wordLevel=true');
-ok(/align && !draftAlignerReady\(m\)/.test(srv), '★ 勾选对齐但无对齐器时拒绝创建');
+ok(/align && !\(await draftAlignerReady\(m\)\)/.test(srv), '★ 勾选对齐但无对齐器时拒绝创建');
 ok(/alignDraftAsrJson/.test(srv), '★ 原生模型勾对齐时有统一后对齐');
 ok(/segs\[i\]\.words = item\.words\.map\(w => \(\{ word: w\.w, start: w\.s, end: w\.e \}\)\)/.test(srv),
   '对齐结果转换成 asr.json 的 word/start/end 形态');
@@ -78,6 +78,29 @@ console.log('\n== 4. 设置页对齐模型下载 ==');
 ok(/function alignerRowHtml/.test(pj), '有对齐模型卡片');
 ok(/sm-dl" data-id="\$\{esc\(a\.id\)\}/.test(pj), '对齐模型卡片有下载按钮');
 ok(/sm-del" data-id="\$\{esc\(a\.id\)\}/.test(pj), '对齐模型卡片有删除按钮');
+ok(/alignerRowHtml\(a, dlOf\)/.test(pj), '★ 对齐模型卡片拿到下载/运行时进度');
+const alignerStatus = srv.slice(srv.indexOf('aligners: ALIGNER_MODELS.map'), srv.indexOf('hardware:', srv.indexOf('aligners: ALIGNER_MODELS.map')));
+ok(/const filesOk = !!dir && !missing\.length/.test(alignerStatus), '★ 对齐模型状态分开报「文件是否齐全」');
+ok(/runtimeReady/.test(alignerStatus) && /needRuntime/.test(alignerStatus), '★ 对齐模型状态分开报「运行时是否就绪」');
+ok(/ready: filesOk && !needRuntime && !blockedReason/.test(alignerStatus), 'ready = 文件齐 + 运行时齐 + 硬件可用');
+ok(/filesOk && a\.needRuntime/.test(pj), '★ 已下载但缺运行时 → 显示“还差运行时”，不再谎报未下载');
+ok(/sf-runtime-download/.test(pj.slice(pj.indexOf('function alignerRowHtml'), pj.indexOf('function enhanceDetailsAnimations'))),
+  '★ 对齐模型卡片提供「安装运行时」入口');
+ok(/if \(filesOk \|\| partial\) btn =/.test(pj), '文件齐全/不完整时都保留删除');
+ok(/const partial = a\.partial === true/.test(pj) && /m\.partial/.test(pj),
+  '★ 文件不完整时同时给「删除」与「下载」，避免坏文件只能卡在 416');
+ok(/const partial = !m\.cloud && !filesOk/.test(srv) && /const partial = !!dir && !filesOk/.test(srv),
+  '★ 状态接口把“有文件但校验不过”单独报成 partial');
+ok(/draftAlignerMissingHint/.test(srv) && /对齐模型已下载，但 Qwen3 CUDA 运行时未就绪/.test(srv),
+  '★ 后端错误区分“已下载但缺运行时”');
+ok(/npAlignerHint\(m\)/.test(pj), '建稿页也区分缺运行时');
+ok(/Qwen3-ASR 的「对齐」只使用 CUDA 对齐器/.test(pj),
+  '★ 建稿页对 Qwen ASR 不会拿 Vulkan 对齐器兜底');
+const draftAlignerBlock = srv.slice(srv.indexOf('async function draftAlignerReady'), srv.indexOf('function draftAlignerMissingHint'));
+ok(/m && m\.engine === 'qwen'/.test(draftAlignerBlock),
+  '★ Qwen ASR 内部对齐只认 CUDA 对齐器（Vulkan GGUF 不能喂给 qwen_asr.py）');
+ok(/Qwen3-ASR 的「对齐」只使用 CUDA 对齐器/.test(srv),
+  '★ Qwen ASR 缺 CUDA 对齐器时给明确指引');
 ok(!/st-realign-minratio|st-realign-minconf|realign-conf/.test(html), '旧 realign 阈值没有回潮');
 
 console.log(`\n${pass} passed, ${fail} failed`);

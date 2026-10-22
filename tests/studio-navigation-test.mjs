@@ -231,7 +231,12 @@ globalThis.fetch = async (url, options = {}) => {
     hardware: { cuda: { available: true, device: 'Fixture RTX' }, vulkan: { available: true, devices: ['Fixture RTX'] }, npu: { available: true, devices: ['Fixture NPU'] } },
     backends: { cuda: true, vulkan: true },
     selectedModel: 'cloud', models: [{ id: 'cloud', name: 'Fixture cloud', engine: 'bcut', ready: true, cloud: true }, { id:'vibevoice-asr-4bit', name:'Fixture VibeVoice', engine:'vibevoice', ready:false, usable:false, cloud:false, needRuntime:true, runtimeKey:'vibevoice', runtimeName:'VibeVoice CUDA 4bit', runtimeSizeMB:2200 }], downloads: [],
-    aligners: [{ id:'qwen3-forced-aligner-0.6b-cuda', name:'Qwen3-ForcedAligner 0.6B（CUDA）', backend:'cuda', ready:true, source:'随 Qwen3-ASR CUDA 提供', desc:'fixture' }] });
+    aligners: [{ id:'qwen3-forced-aligner-0.6b-cuda', name:'Qwen3-ForcedAligner 0.6B（CUDA）', backend:'cuda', ready:false,
+      filesOk:true, runtimeReady:false, needRuntime:true, runtimeKey:'runtime:qwen', runtimeName:'Qwen3 CUDA 运行时',
+      missing:[], source:'独立对齐模型', desc:'fixture' },
+    { id:'qwen3-forced-aligner-0.6b-vulkan', name:'Qwen3-ForcedAligner 0.6B（Vulkan）', backend:'vulkan', ready:false,
+      filesOk:false, partial:true, missing:['qwen3-forced-aligner-0.6b-q8_0.gguf'], runtimeKey:'runtime:crispasr',
+      runtimeName:'CrispASR', source:'独立对齐模型', desc:'fixture partial' }] });
   if (url === '/api/translate/config') return json({ ready: true, cfg: { provider: 'fixture', model },
     schemes, activeSchemeId:schemeActive,
     presets: [{ id: 'fixture', name: 'Fixture', model, baseUrl:'http://localhost:1234/v1' }], defaultPrompt: 'Fixture prompt' });
@@ -742,6 +747,21 @@ assert.ok(familyButtons.find(button=>button.dataset.asrFamily==='Qwen 系列'), 
 assert.ok(familyButtons.find(button=>button.dataset.asrFamily==='对齐模型'), '对齐模型入口存在');
 assert.equal(familyButtons.find(button=>button.dataset.asrFamily==='对齐模型').hidden,false,
   '有对齐器时对齐模型入口可见');
+// Downloaded aligner without its runtime must offer install/delete, never a dead download button.
+familyButtons.find(button=>button.dataset.asrFamily==='对齐模型').click(); await settle();
+assert.equal($('sf-asr-detail-title').textContent,'对齐模型');
+const alignerRow=$('st-models').querySelector('.sf-aligner');
+assert.ok(alignerRow, 'aligner row is rendered');
+assert.ok(alignerRow.textContent.includes('模型已下载 · 还差 Qwen3 CUDA 运行时'),
+  'downloaded aligner says the runtime is missing instead of 未下载');
+assert.equal(alignerRow.querySelectorAll('.sm-dl').length,0, 'complete files do not show a download button');
+assert.ok(alignerRow.querySelector('.sf-runtime-download'), 'missing runtime offers 安装运行时');
+assert.ok(alignerRow.querySelector('.sm-del'), 'downloaded aligner keeps the delete action');
+const partialAligner=[...$('st-models').querySelectorAll('.sf-aligner')].find(row=>row.textContent.includes('模型文件不完整'));
+assert.ok(partialAligner, 'incomplete aligner files are reported as 不完整');
+assert.ok(partialAligner.querySelector('.sm-del'), 'incomplete aligner keeps the delete action');
+assert.ok(partialAligner.querySelector('.sm-dl'), 'incomplete aligner can resume download');
+await click('sf-asr-back'); assert.equal($('sf-asr-families').hidden,false);
 assert.equal(familyButtons.find(button=>button.dataset.asrFamily==='VibeVoice 系列'),undefined,
   'VibeVoice 系列入口已停用');
 const parakeet=familyButtons.find(button=>button.dataset.asrFamily==='Parakeet 系列');
@@ -763,7 +783,7 @@ assert.equal($('sf-asr-rerecog-mount').hidden,true,'re-recognition belongs to ov
 assert.equal($('st-models').querySelectorAll('.sf-prerequisite').length,2);
 assert.equal($('st-models').querySelectorAll('.sm-pyinstall').length,1);
 assert.equal($('st-models').querySelectorAll('.sm-nemoinstall').length,0);
-assert.equal($('st-models').querySelectorAll('.sm-dl').length,1);
+assert.equal($('st-models').querySelectorAll('.sf-prerequisite .sm-dl').length,1);
 assert.ok(!$('st-models').querySelector('.sf-prerequisite').textContent.includes('不写注册表'));
 assert.ok($('st-models').querySelector('.sm-pyset')); assert.ok($('st-models').querySelector('.sm-pyreset'));
 assert.ok($('st-models').querySelectorAll('.sf-asr-setup').every(row=>!row.hidden));

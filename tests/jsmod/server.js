@@ -1034,24 +1034,54 @@ const isRetiredEngine = (engine) => RETIRED_ENGINES.has(String(engine || ''));
 /** 能否用于创建初稿(默认可以; draftAllowed===false 的模型只给「重新识别」用) */
 const draftAllowedOf = (m) => !!m && m.draftAllowed !== false;
 const nativeWordLevelOf = (m) => !!m && m.nativeWordLevel !== false;
-/** 当前可用的 Qwen 对齐器路径（draft 的「对齐」与 realign 共用；独立下载后这里会指向独立模型目录）。 */
-function draftAlignerReady(m) {
+/** 当前可用的 Qwen 对齐器路径（draft 的「对齐」与 realign 共用；独立下载后这里会指向独立模型目录）。
+ *  ⚠ Qwen3-ASR 的 `--aligner` 只接受 HF 目录（`qwen_asr.py` 内加载），所以它必须用 CUDA 对齐器；
+ *    Vulkan GGUF 只适合非 Qwen 引擎的后对齐。 */
+async function draftAlignerReady(m) {
+  const cudaFiles = fs.existsSync(path.join(modelDirFor('qwen3-forced-aligner-0.6b'), 'model.safetensors'));
+  if (qwenRuntimeOk() && cudaFiles) {
+    // nvidiaCache 在服务器刚起、还没人查过设置时会话是空的 —— 这里补一次探测，
+    // 否则「模型和运行时都齐、只是缓存没热身」会被误判成没有对齐器（与状态接口那次误报同源）。
+    if (nvidiaCache.name || await nvidiaGpu().catch(() => null)) return true;
+  }
+  // Qwen3-ASR 只会把 CUDA 对齐器目录交给 worker；Vulkan GGUF 不能替代。
+  if (m && m.engine === 'qwen') return false;
   // 对齐器与 ASR 解耦：NPU/云端也能用 CUDA/Vulkan 对齐器；realignPrep 会选可用后端。
-  if (qwenRuntimeOk() && nvidiaCache.name && fs.existsSync(path.join(modelDirFor('qwen3-forced-aligner-0.6b'), 'model.safetensors'))) return true;
   const f = 'qwen3-forced-aligner-0.6b-q8_0.gguf';
   return crispasrRuntimeOk() && fs.existsSync(path.join(modelDirFor('qwen3-forced-aligner-0.6b-vulkan'), f));
 }
+/** 对齐器不可用时的可操作原因：区分「没下载」「下载了但运行时缺失」「有模型没 N 卡」。
+ *  以前统一报「先下载」，模型明明已经在盘上会让人以为下载坏了（用户实测反馈）。 */
+function draftAlignerMissingHint(m) {
+  const cuda = alignerById('qwen3-forced-aligner-0.6b');
+  const vulkan = alignerById('qwen3-forced-aligner-0.6b-vulkan');
+  const cudaFiles = !!cuda && modelFilesOk(modelDirFor(cuda.id), cuda);
+  const vkFiles = !!vulkan && modelFilesOk(modelDirFor(vulkan.id), vulkan);
+  const qwenEngine = !!(m && m.engine === 'qwen');
+  if (cudaFiles) {
+    if (!qwenRuntimeOk()) return '对齐模型已下载，但 Qwen3 CUDA 运行时未就绪；到「设置 → 语音识别 → 对齐模型」点「安装运行时」';
+    if (!nvidiaCache.name) return '对齐模型已下载，但当前没有检测到 NVIDIA 显卡；CUDA 对齐器无法使用';
+  }
+  // Qwen3-ASR 只认 CUDA 对齐器目录；只有 Vulkan GGUF 时装了也帮不上它的内部对齐。
+  if (qwenEngine) {
+    return 'Qwen3-ASR 的「对齐」只使用 CUDA 对齐器；先到「设置 → 语音识别 → 对齐模型」下载 Qwen3-ForcedAligner 0.6B（CUDA）';
+  }
+  if (vkFiles && !crispasrRuntimeOk()) {
+    return '对齐模型已下载，但 CrispASR 运行时未就绪；到「设置 → 语音识别 → 对齐模型」点「安装运行时」';
+  }
+  return '没有可用的对齐模型；先到「设置 → 语音识别 → 对齐模型」下载并安装对应运行时';
+}
 /** 初稿输出计划：原生逐词 / 对齐 / SRT 三者互斥。
  *  没有原生逐词的模型（Qwen ASR、Whisper Vulkan）禁止 wordLevel=true，只能 align=true 生成 ASS。 */
-function draftOutputPlan(m, data) {
+async function draftOutputPlan(m, data) {
   const native = nativeWordLevelOf(m);
   const nativeWanted = !!data.wordLevel;
   if (nativeWanted && !native) {
     throw new Error('「' + m.name + '」没有原生逐词时间；请取消「逐词」，改勾「对齐」用对齐模型生成逐词');
   }
   const align = !nativeWanted && !!data.align;
-  if (align && !draftAlignerReady(m)) {
-    throw new Error('没有可用的对齐模型；先到「设置 → 语音识别 → 对齐模型」下载');
+  if (align && !(await draftAlignerReady(m))) {
+    throw new Error(draftAlignerMissingHint(m));
   }
   return { native, nativeWanted, align, wordLevel: nativeWanted || align };
 }
@@ -2538,11 +2568,26 @@ const castEnabled = () => {
 };
 /* 每个模型一个目录: asr/models/<dirName>。settings.models 记录各模型目录,
  * asrModelDir 是旧字段(仅 parakeet 兼容)。selectedModel = 创建初稿默认用的模型。 */
+/** 目录里是否已经有该模型的任一文件（不管大小对不对）。给 modelDirFor 判断“注册目录是否还有效”。 */
+function dirHasModelFile(dir, model) {
+  if (!dir || !model || !Array.isArray(model.files)) return false;
+  return model.files.some(f => {
+    try { return fs.statSync(path.join(dir, f)).isFile(); } catch { return false; }
+  });
+}
 function modelDirFor(modelId) {
   const s = readAsrSettings();
-  if (s.models && s.models[modelId]) return path.resolve(String(s.models[modelId]));
   const m = anyModelById(modelId);
-  return m ? path.join(modelsRoot(), m.dirName) : '';
+  const def = m ? path.join(modelsRoot(), m.dirName) : '';
+  const registered = s.models && s.models[modelId] ? path.resolve(String(s.models[modelId])) : '';
+  if (!registered) return def;
+  if (registered === def) return registered;
+  /* 注册目录不存在 / 已经空了（换了盘符、手工挪了文件夹、旧安装残留）时，
+   * 如果默认模型目录里确实有这份模型，就回落到默认目录。
+   * 否则“模型明明在 asr/models 下，程序却说未下载”，只能靠手工改 settings.json 才能救。 */
+  if (fs.existsSync(registered) && dirHasModelFile(registered, m)) return registered;
+  if (def && fs.existsSync(def) && dirHasModelFile(def, m)) return def;
+  return registered;
 }
 
 // 目录名和文件清单共同证明所有权；自定义目录只解除关联，不递归清理用户文件。
@@ -5731,7 +5776,7 @@ function startPrepare(id, videoPath, mode) {
   /** 重对齐的共享准备：只检查原片音频与 Qwen3-ForcedAligner，不再加载 ASR。
    *  文本由用户确认，realign 的职责只有“给已确认文本量时间”。
    *  对齐器优先 CUDA（独立 qwen3-forced-aligner-0.6b），无 N 卡时用独立 Vulkan GGUF。 */
-  function realignPrep(id, opt) {
+  async function realignPrep(id, opt) {
     const o = (opt || {});
     const meta = readMeta(id);
     if (!meta) throw new Error('项目不存在');
@@ -5741,8 +5786,11 @@ function startPrepare(id, videoPath, mode) {
       throw new Error('这个稿件没有音频文件（' + audioName + '），没法重排逐词时间');
     }
     const cudaAligner = modelDirFor('qwen3-forced-aligner-0.6b');
-    const cudaReady = qwenRuntimeOk() && !!nvidiaCache.name
-      && fs.existsSync(path.join(cudaAligner, 'model.safetensors'));
+    // 冷启动时 nvidiaCache 还没热身；CUDA 运行时在、模型也在就先补一次 N 卡探测，
+    // 否则会误判成“没有对齐器”而退回 Vulkan（没有 Vulkan 对齐器时直接报错）。
+    const cudaReady = qwenRuntimeOk()
+      && fs.existsSync(path.join(cudaAligner, 'model.safetensors'))
+      && !!(nvidiaCache.name || await nvidiaGpu().catch(() => null));
     const forceBackend = String(process.env.SUBFABRIC_REALIGN_BACKEND || '').toLowerCase();
     let backend = '', aligner = '';
     if (cudaReady && forceBackend !== 'vulkan') {
@@ -5753,7 +5801,7 @@ function startPrepare(id, videoPath, mode) {
       if (crispasrRuntimeOk() && fs.existsSync(p)) { backend = 'vulkan'; aligner = crispAsciiFile(p); }
     }
     if (!backend) {
-      throw new Error('没有可用的 Qwen3-ForcedAligner。请先安装 Qwen3-ASR（自带对齐器），或安装 Qwen/Whisper Vulkan 版（自带 Vulkan 对齐器）后再试');
+      throw new Error(draftAlignerMissingHint());
     }
     return { meta, audioWav, backend, aligner, language: 'English', offset: o.offset };
   }
@@ -5856,7 +5904,7 @@ function startPrepare(id, videoPath, mode) {
     const d = JSON.parse(fs.readFileSync(p, 'utf8'));
     const segs = (d.segments || []).filter(s => String(s.text || '').trim());
     if (!segs.length) throw new Error('没有可对齐的字幕段');
-    const prep = realignPrep(id, {});
+    const prep = await realignPrep(id, {});
     const r = await realignAlignBatch(prep, segs, () => {});
     let changed = 0;
     for (let i = 0; i < segs.length; i++) {
@@ -5876,7 +5924,7 @@ function startPrepare(id, videoPath, mode) {
   /** 对一批字幕块做重对齐（右键「重排逐词时间」走这里）。**只算不写**。
    *  只调用 Qwen3-ForcedAligner，不再跑 ASR；文本由用户确认，时间由对齐器生成。 */
   async function realignBlocks(id, blocks, opt) {
-    const prep = realignPrep(id, opt);
+    const prep = await realignPrep(id, opt);
     const r = await realignAlignBatch(prep, blocks, () => {});
     return r.items.map((item, index) => Object.assign({ index }, item));
   }
@@ -6143,7 +6191,7 @@ function startPrepare(id, videoPath, mode) {
   /** 跑全片重校对。onProgress(pct, msg) 回报进度。 */
   async function runFullRealign(id, onProgress, opt) {
     const o = opt || {};
-    const prep = realignPrep(id, o);
+    const prep = await realignPrep(id, o);
     const all = realignTargets(id, prep.meta);
     const sourceRevision = all[0] && all[0].sourceRevision;
     if (!all.length) {
@@ -8521,6 +8569,9 @@ function handleAsrRoutes(req, res, u) {
       const dir = m.cloud ? '' : modelDirFor(m.id);
       const missing = m.cloud ? [] : missingModelFiles(dir, m);
       const filesOk = m.cloud ? true : (!missing.length && modelFilesOk(dir, m));
+      // 有文件但没通过完整性校验（中断的下载、被替换/截断的文件）：界面要给“下载续传 + 删除”，
+      // 只有下载没有删除时，尺寸偏大/内容坏掉的文件会一直卡在 Range 416，用户只能去资源管理器清。
+      const partial = !m.cloud && !filesOk && !!dir && missing.length < m.files.length;
       // 引擎级运行时: whisper.cpp→'runtime'、crispasr→'runtime:crispasr'（key 也是前端的下载/轮询键）。
       // 注意两个键的差异是刻意的: 'runtime' 是 whisper 的老键, 动它会打断前端既有轮询逻辑。
       const rt = m.engine === 'whisper.cpp'
@@ -8542,7 +8593,7 @@ function handleAsrRoutes(req, res, u) {
         && (m.engine !== 'vibevoice' || (vibevoiceProbeCache && vibevoiceProbeCache.ok && vibevoiceProbeCache.cuda && Number(vibevoiceProbeCache.vramMB || 0) >= VIBEVOICE_RUNTIME.minVramMB));
       return {
         id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
-        dir, missing, filesOk, ready, usable, cloud: !!m.cloud,
+        dir, missing, filesOk, partial, ready, usable, cloud: !!m.cloud,
         backend: modelBackendOf(m), backendAllowed,
         nativeWordLevel: m.nativeWordLevel !== false,
         npuAvailable: hw ? !!hw.npu?.available : null,
@@ -8571,17 +8622,33 @@ function handleAsrRoutes(req, res, u) {
      *   「只支持 N 卡。当前没检测到 N 卡，无法下载」的**误报**（用户实测撞到过）。
      *   改成等这次探测完再回：nvidia-smi 毫秒级 + 8 秒超时，比 NeMo 那种要导入 torch 的 30 秒轻得多。
      *   现在 gpu:null 只有一种含义了：真的没有 N 卡。 */
-    return (async () => sendJson(res, 200, {
+    return (async () => {
+      const gpuName = await nvidiaGpu().catch(() => null);
+      return sendJson(res, 200, {
       models,
-      // 对齐模型单独列出：Qwen 的 ASR 只负责文本，逐词时间由这里的对齐器提供。
+      /* 对齐模型单独列出：Qwen 的 ASR 只负责文本，逐词时间由这里的对齐器提供。
+       * ⚠ 这里必须把「模型文件」和「运行时」分开报：以前 ready 直接取 modelReady()，
+       *   只装了运行时缺失也会返回 false，前端拿到 false 就把「已下载」显示成「未下载」并
+       *   留一个下载按钮 —— 点下去服务端发现文件已齐只回 ready:true，界面什么都不变（用户实测撞到）。
+       *   filesOk / needRuntime / runtimeReady 分开后，前端才能显示「模型已下载 · 还差运行时」。 */
       aligners: ALIGNER_MODELS.map(a => {
         const dir = modelDirFor(a.id);
         const missing = dir ? missingModelFiles(dir, a) : a.files.slice();
+        const filesOk = !!dir && !missing.length && modelFilesOk(dir, a);
+        const partial = !!dir && !filesOk && missing.length < a.files.length;
+        const runtimeKey = a.runtimeKey || (a.backend === 'cuda' ? 'runtime:qwen' : 'runtime:crispasr');
+        const runtimeReady = runtimeKey === 'runtime:qwen' ? qwenRuntimeOk()
+          : (runtimeKey === 'runtime:crispasr' ? crispasrRuntimeOk() : true);
+        const needRuntime = !!a.needRuntime && !runtimeReady;
+        // CUDA 对齐器还要求 N 卡（Qwen CUDA 运行时本身也只装 N 卡版）；Vulkan 走 CrispASR，可 CPU 兜底。
+        const blockedReason = a.backend === 'cuda' && !gpuName
+          ? '未检测到 NVIDIA 显卡，CUDA 对齐器无法使用' : '';
         return {
           id: a.id, name: a.name, backend: a.backend, kind: 'aligner',
-          ready: modelReady(a.id), sizeMB: a.sizeMB, dir, missing,
+          ready: filesOk && !needRuntime && !blockedReason,
+          sizeMB: a.sizeMB, dir, missing, filesOk, partial, runtimeReady, needRuntime, blockedReason,
           desc: a.desc, source: '独立对齐模型',
-          runtimeKey: a.runtimeKey || '', runtimeName: a.runtimeName || '',
+          runtimeKey, runtimeName: a.runtimeName || '', runtimeSizeMB: a.runtimeSizeMB || 0,
         };
       }),
       hardware: hw,                          // 缓存；首次可能为 null，/api/hardware 会立即探测
@@ -8640,7 +8707,7 @@ function handleAsrRoutes(req, res, u) {
        *   改成**等这次探测完**再回：nvidia-smi 是毫秒级 + 8 秒超时，
        *   比 NeMo 那种要导入 torch 的 30 秒轻得多，等得起。
        *   现在 gpu:null 只有一种含义了：真的没有 N 卡。 */
-      gpu: await nvidiaGpu().catch(() => null),
+      gpu: gpuName,
       /* gpu 为空到底是"没 N 卡"还是"还没探测"—— 告诉前端这个信号，
        * 免得它在探测期间误报"没检测到 N 卡"。
        * 走到这里时 nvidiaGpu() 已经 await 过了；只有它超时/null 才会是空，
@@ -8652,7 +8719,8 @@ function handleAsrRoutes(req, res, u) {
       download: (() => { for (const v of downloads.values()) if (v.running) return v; return { running: false, kind: '', pct: 0, msg: '', error: null }; })(),
       modelsRoot: modelsRoot(),
       settingsDir: ASR_DIR,
-    }))();
+      });
+    })();
   }
 
   /** 安装 NeMo 运行时（仅 multitalker 模型需要）: 在 ASR Python 环境里追加 PyTorch + NeMo。
@@ -8918,6 +8986,11 @@ function handleAsrRoutes(req, res, u) {
        *   「这台机器没检测到 NVIDIA 显卡…不能下载」拦下来（与列表卡那次误报同源）。
        *   改成 await：nvidia-smi 毫秒级 + 8 秒超时，在用户点「下载」这个节骨眼上等得起。 */
       const gpuNameForDl = await nvidiaGpu().catch(() => null);
+      // CUDA 对齐器只在 N 卡机器上可用（realignPrep / draftAlignerReady 都要求 N 卡 + Qwen CUDA 运行时）；
+      // 没 N 卡时下 1.75GB 完全用不上，和 Faster-Whisper / NeMo 一样提前拦住。
+      if (model.engine === 'aligner' && model.backend === 'cuda' && !gpuNameForDl) {
+        return sendJson(res, 400, { error: '「' + model.name + '」需要 NVIDIA CUDA 显卡（Qwen 对齐运行时只支持 N 卡）；这台机器没检测到 N 卡，不能下载。无 N 卡请用 Vulkan 对齐器' });
+      }
       if (model.engine === 'nemo' && !gpuNameForDl) {
         return sendJson(res, 400, { error: '「' + model.name + '」只支持 N 卡（NVIDIA 显卡）。这台机器没检测到 NVIDIA 显卡，该模型不支持 CPU，不能下载' });
       }
@@ -9758,7 +9831,7 @@ function handleProjectsRoutes(req, res, u) {
         const bv = (fetchUrl.match(/\/(BV[0-9A-Za-z]+)/) || [])[1];
         const nameF = String(data.name || '').trim() || bv || '下载的视频';
         let planF;
-        try { planF = draftOutputPlan(mF, data); }
+        try { planF = await draftOutputPlan(mF, data); }
         catch (e) { return sendJson(res, 400, { error: e.message }); }
         const wordLevelF = planF.wordLevel;
         const wantSpkF = !!data.speakers && wordLevelF;
@@ -9817,7 +9890,7 @@ function handleProjectsRoutes(req, res, u) {
         if (!draftAllowedOf(m)) {
           return sendJson(res, 400, { error: '「' + m.name + '」只能用于重新识别，不能创建初稿。改选 Parakeet TDT 或 Whisper large-v3-turbo' });
         }
-        try { draftPlan = draftOutputPlan(m, data); }
+        try { draftPlan = await draftOutputPlan(m, data); }
         catch (e) { return sendJson(res, 400, { error: e.message }); }
         wantSpeakers = !!data.speakers && !!draftPlan.wordLevel;
         const mdir = m.cloud ? '' : modelDirFor(m.id);

@@ -75,6 +75,16 @@
   Vulkan 用 `CrispASR --align-only`；结果经 `align.js` 做 token 映射/单调性修正。**不跑 ASR、
   不改文本、不改整句起止**；对齐失败保持原时间，不回退 ASR。文本不确定走独立的 `rerecognize`。
   已删除 `/api/asr/realign-settings` 与锚点率/置信度门槛。
+- **对齐模型状态与下载**（`ALIGNER_MODELS`）：`/api/asr/status.aligners` 分开返回
+  `filesOk` / `missing` / `partial` / `runtimeReady` / `needRuntime` / `blockedReason`，
+  `ready = filesOk && runtimeReady && !blockedReason`。设置页「语音识别 → 对齐模型」据此显示
+  「模型已下载 · 还差 <运行时>」并给「安装运行时」；文件齐全时只给「删除」，不完整时同时给
+  「删除」和「下载」，不再把“缺运行时”谎报成“未下载”并留一个点击无反馈的下载按钮。
+  CUDA 对齐器下载要求 N 卡（无 N 卡直接 400）；Qwen3-ASR 的「对齐」在 worker 内加载 HF
+  对齐器目录，只接受 CUDA 对齐器，Vulkan GGUF 只用于非 Qwen 引擎的后对齐（前端/后端都会
+  拒绝把 Vulkan 对齐器当 Qwen 的内部对齐）。`modelDirFor` 在 `settings.models` 失效/为空时
+  回落到默认 `asr/models/<dirName>`；`draftOutputPlan` / `realignPrep` 在 `nvidiaCache`
+  冷启动时补一次 `nvidiaGpu()` 探测，运行时缺失的错误文案指向「安装运行时」。
 - **删除项目**：先 `killDraftProc` + `killProjProcs`（Windows 用 `taskkill /T /F`），再带重试逐文件删，
   `project.json` 最后删；新增读写 `projects/<id>/` 的子进程必须 `trackProjProc(id, proc)`。
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换，
@@ -693,6 +703,37 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
 ### 最近状态
+
+**2026-10-22（对齐模型状态/下载误报修复）**
+
+- **问题**：模型文件已完整下载，但 `qwen3-forced-aligner-0.6b` 在设置页仍显示「未下载」，
+  下载按钮点击后没有任何变化；建稿勾「对齐」也报「没有可用的对齐模型」。根因是
+  `/api/asr/status.aligners[].ready` 直接复用 `modelReady()`（文件 + 运行时一起判），
+  运行时缺失时 `ready=false`，前端把“缺运行时”渲染成“未下载”；而下载接口发现文件已齐
+  只回 `{started:false, ready:true}`，不再下载，界面因此停在原地。
+- **修复**：状态接口分开返回 `filesOk / missing / runtimeReady / needRuntime / blockedReason`；
+  `ready` 只在文件、运行时、硬件（CUDA 需 N 卡）都满足时为真。设置页「对齐模型」在文件齐全
+  但缺运行时显示「模型已下载 · 还差 <运行时>」并给「安装运行时」/「删除」，下载只在文件缺失时出现，
+  下载与运行时安装都显示进度；无 N 卡时 CUDA 对齐器不再显示下载，接口也返回 400。
+  建稿对齐与单条/全片 realign 的错误文案区分“没下载 / 缺运行时 / 没 N 卡”，
+  Qwen3-ASR 的「对齐」只接受 CUDA 对齐器（前端不再拿 Vulkan 对齐器兜底），
+  `draftAlignerReady` 与 `realignPrep` 在缓存冷启动时补一次 `nvidiaGpu()` 探测。
+- **同一轮补的两个边界**：① 状态接口新增 `partial`（有文件但完整性校验不过），设置页对
+  不完整模型同时给「删除」和「下载」—— 只有下载时，尺寸偏大/内容坏掉的文件会一直卡在
+  Range 416，只能去资源管理器清；② `modelDirFor` 在 `settings.models` 指向的目录已不存在
+  或已经空了时，若默认 `asr/models/<dirName>` 里确实有该模型，回落到默认目录，不再因为
+  旧安装残留/手工挪目录而误报未下载（自定义目录仍优先）。
+- **验证（本次）**：新增 `tests/asr-aligner-status-test.mjs`（隔离服务：稀疏权重文件 +
+  无/有运行时两组，覆盖 `filesOk`/`partial`/`needRuntime`/`ready`、下载接口幂等与无 N 卡拦截、
+  文件截断后重新读取、`settings.models` 失效回落）；`draft-align-test` 49 项、
+  `studio-navigation-test`（对齐模型行「已下载但缺运行时」显示「安装运行时」且无下载按钮；
+  不完整行同时有删除与下载）、`asr-aligner-status-test`、
+  `i18n-coverage-test`（3139 keys）通过；全量 JS 回归 **114 通过 / 9 部分执行 / 0 失败 / 2 排除**
+  （首轮曾因 `hotwords-test` 的“nvidiaCache 读取处数”旧断言未随新的冷启动兜底更新而 1 失败，
+  更新断言后复跑 0 失败）。收尾又调整了 Qwen3-ASR「对齐」只认 CUDA 对齐器（前端不再用 Vulkan 兜底）
+  与错误文案分支，改动后复跑 `draft-align-test` 49 项、`studio-navigation-test`、
+  `asr-aligner-status-test`、`hotwords-test` 90 项、`i18n-coverage-test` 全绿。
+- **状态**：**已实现且已验证（源码）；安装版需重新打包（或同步 `editor/server.js`、`editor/js/project.js`、`editor/lang/zh-CN.json`）后生效**。GitHub：尚未提交（工作副本无 `.git`）。
 
 **2026-10-22（Whisper/Qwen Vulkan 兜底接入）**
 

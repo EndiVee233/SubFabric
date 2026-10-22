@@ -2840,11 +2840,17 @@ function modelRowHtml(m, d, dlOf) {
     state = '<span class="sm-state ok">✓ 已下载</span> <span class="sm-state" style="color:var(--danger)">还差 NeMo 运行时（见下方「NeMo 运行时」）</span>';
   } else if (m.needRuntime && m.filesOk) {
     state = '<span class="sm-state">模型已下载 · 还差 ' + esc(m.runtimeName || '运行时') + '</span>';
+  } else if (m.partial) {
+    // 有文件但完整性校验没过（中断的下载 / 被改动的大文件）：下载可续传，删除给一条退路。
+    state = `<span class="sm-state" style="color:var(--danger)">模型文件不完整 · ${m.sizeMB} MB · 可下载续传，或删除后重下</span>`;
   } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
   else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
   if (dlThis) btn = '';
   else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
-  else if (m.ready || m.filesOk) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
+  else if (m.partial) {
+    btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
+    if (!pyBlocked && !vibeBlocked) btn += `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
+  } else if (m.ready || m.filesOk) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
   else if (!pyBlocked && !vibeBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
   if ((studioUI || m.engine === 'vibevoice' || m.engine === 'faster-whisper') && m.needRuntime && !dlThis && !vibeBlocked) {
     // 已经装了一部分（例如 torch/transformers 在、bitsandbytes 缺）时叫「修复运行时」，
@@ -2966,17 +2972,56 @@ function showAsrFamily(family) {
 }
 
 
-function alignerRowHtml(a) {
-  const ready = !!a.ready;
+function alignerRowHtml(a, dlOf) {
+  const st = dlOf('model:' + a.id);
+  const rtKey = a.runtimeKey || '';
+  const rtSt = rtKey ? dlOf(rtKey) : {};
+  const running = st.running || (a.needRuntime && rtSt.running);
+  // 旧服务端/旧状态没有 filesOk：ready 为真时按“已下载”处理，别退化成下载按钮。
+  const filesOk = a.filesOk !== undefined ? a.filesOk : !!a.ready;
+  const partial = a.partial === true;
   const backend = a.backend === 'vulkan' ? 'Vulkan' : (a.backend === 'cuda' ? 'CUDA' : '');
-  const btn = ready
-    ? `<button type="button" class="btn btn-mini sm-del" data-id="${esc(a.id)}" title="删除对齐模型文件">删除</button>`
-    : `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(a.id)}">下载 · ${Number(a.sizeMB || 0)} MB</button>`;
+  const blocked = a.blockedReason || '';
+  /* ⚠ 状态必须按「文件 / 运行时」两层显示：
+   *   ready=false 可能是「没下载」也可能是「已下载但运行时缺失」—— 以前统一写「未下载」并给下载按钮，
+   *   点下去服务端发现文件已齐只回 ready:true，界面毫无变化，看起来就是按钮点不动（用户实测）。 */
+  let state;
+  if (running) {
+    state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
+  } else if (st.error) {
+    state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+  } else if (blocked) {
+    // 硬件不可用优先于“还差运行时”：没 N 卡时装了运行时也用不了。
+    state = `<span class="sm-state" style="color:var(--danger)">${esc(blocked)}</span>`;
+  } else if (a.needRuntime && rtSt.error) {
+    // 运行时安装失败（例如缺 CUDA Python）：显示原因，同时保留下面的“重新安装”入口。
+    state = `<span class="sm-state" style="color:var(--danger)">${esc(rtSt.msg || rtSt.error)}</span>`;
+  } else if (filesOk && a.needRuntime) {
+    state = `<span class="sm-state">模型已下载 · 还差 ${esc(a.runtimeName || '运行时')}</span>`;
+  } else if (partial) {
+    state = `<span class="sm-state" style="color:var(--danger)">模型文件不完整 · ${Number(a.sizeMB || 0)} MB · 可下载续传，或删除后重下</span>`;
+  } else if (a.ready) {
+    state = '<span class="sm-state ok">✓ 已就绪</span>';
+  } else {
+    state = `<span class="sm-state">未下载 · ${Number(a.sizeMB || 0)} MB</span>`;
+  }
+  let btn = '';
+  if (!running) {
+    if (filesOk || partial) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(a.id)}" title="删除对齐模型文件">删除</button>`;
+    if (!filesOk && !blocked) {
+      btn += `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(a.id)}">下载 · ${Number(a.sizeMB || 0)} MB</button>`;
+    }
+    // 运行时缺失时给安装入口：以前只有 ASR 模型行能装，用户在「对齐模型」里找不到按钮，模型永远不可用。
+    if (filesOk && a.needRuntime && rtKey && !blocked) {
+      btn += `<button type="button" class="btn btn-mini sf-runtime-download" data-runtime="${esc(rtKey)}">安装运行时</button>`;
+    }
+  }
   return `<div class="sm-model sf-aligner">
     <div class="sm-head"><span class="sm-name">${esc(a.name || 'Qwen3-ForcedAligner')}</span>
-      <span class="sm-state${ready ? ' ok' : ''}">${ready ? '✓ 已就绪' : '未下载'}</span>${btn}</div>
+      <span class="sm-state${a.ready ? ' ok' : ''}">${a.ready ? '✓ 已就绪' : '未就绪'}</span>${btn}</div>
     <div class="sm-desc">${esc(a.desc || '')}</div>
     <div class="sm-params-summary">${backend ? backend + ' · ' : ''}${esc(a.source || '独立对齐模型')} · 自动匹配，无需手动选择</div>
+    ${state}
   </div>`;
 }
 
@@ -3177,7 +3222,7 @@ async function renderAsrModels() {
     // 对齐模型单独一个系列：不混在 Qwen ASR 的标题/描述里。
     const aligners = d.aligners || [];
     if (studioUI && aligners.length) {
-      rows += `<section class="sf-asr-model sf-aligner-section" data-family="对齐模型">${aligners.map(alignerRowHtml).join('')}</section>`;
+      rows += `<section class="sf-asr-model sf-aligner-section" data-family="对齐模型">${aligners.map(a => alignerRowHtml(a, dlOf)).join('')}</section>`;
     }
     /* 旧版本下错后端、或先下载后取消勾选的模型：不混进正常列表，收进「其它模型」。
      * 只有文件和运行时都不再被选中时才来这里；删除按钮复用 .sm-del 的确认链路。 */
@@ -3296,7 +3341,10 @@ async function renderAsrModels() {
         const count = button.querySelector('.sf-asr-count');
         if (family === '对齐模型') {
           const list = d.aligners || [];
-          if (count) count.textContent = `${list.length} 个对齐器 · ${list.filter(a => a.ready).length} 就绪`;
+          const readyN = list.filter(a => a.ready).length;
+          const waiting = list.some(a => a.filesOk && !a.ready);
+          if (count) count.textContent = `${list.length} 个对齐器 · ${readyN} 就绪`
+            + (waiting ? ' · 有已下载但缺运行时' : '');
           button.hidden = list.length === 0;
           continue;
         }
@@ -4692,9 +4740,32 @@ async function renderAsrModels() {
   /** 当前模型/后端可用的对齐器（对齐模型独立下载，不再跟 ASR 混在一起）。 */
   function npAlignerReady(m) {
     const list = (genAsr && genAsr.aligners) || [];
+    // Qwen3-ASR 的内部对齐把 CUDA 对齐器目录交给 worker；Vulkan GGUF 不能兜底。
+    if (m && m.engine === 'qwen') return list.some(a => a.ready && a.backend === 'cuda');
     const backend = m && m.backend;
     return list.some(a => a.ready && (!backend || a.backend === backend))
       || list.some(a => a.ready);
+  }
+  /** 对齐不可用时的原因：区分「没下载」与「已下载但运行时缺失」，
+   *  否则用户明明已经下好模型却被告知“去下载”（用户实测反馈）。 */
+  function npAlignerHint(m) {
+    const list = (genAsr && genAsr.aligners) || [];
+    // Qwen3-ASR 只认 CUDA 对齐器：不要把用户引去装 CrispASR / 下载 Vulkan GGUF。
+    if (m && m.engine === 'qwen') {
+      const cuda = list.find(a => a.backend === 'cuda');
+      if (cuda && cuda.filesOk) {
+        if (cuda.needRuntime) return `对齐模型已下载，但还差 ${cuda.runtimeName || '运行时'}；到「设置 → 语音识别 → 对齐模型」点「安装运行时」`;
+        if (cuda.blockedReason) return cuda.blockedReason;
+      }
+      return 'Qwen3-ASR 的「对齐」只使用 CUDA 对齐器；到「设置 → 语音识别 → 对齐模型」下载 Qwen3-ForcedAligner 0.6B（CUDA）';
+    }
+    const held = list.filter(a => a.filesOk);
+    // 没 N 卡的 CUDA 对齐器即使补运行时也用不了，不能把用户引去装运行时。
+    const noRuntime = held.find(a => a.needRuntime && !a.blockedReason);
+    if (noRuntime) return `对齐模型已下载，但还差 ${noRuntime.runtimeName || '运行时'}；到「设置 → 语音识别 → 对齐模型」点「安装运行时」`;
+    const blocked = list.find(a => a.blockedReason);
+    if (blocked) return blocked.blockedReason;
+    return '没有可用的对齐模型；先到「设置 → 语音识别 → 对齐模型」下载并安装对应运行时';
   }
   function npSyncVibeVoice() {
     const word = $('#np-word');
@@ -4728,7 +4799,7 @@ async function renderAsrModels() {
         ? t('该模型没有原生逐词，已禁用；请勾「对齐」用对齐模型生成逐词')
         : (word.checked ? '开启 → 生成 ASS 逐词字幕' : '关闭 → 生成 SRT 纯文本字幕'));
     $('#np-align-desc').textContent = !canAlign
-      ? t('没有可用的对齐模型；先到「设置 → 语音识别 → 对齐模型」下载')
+      ? t(npAlignerHint(m))
       : (align.checked
         ? t('勾选 → 不跑原生逐词，改用对齐模型生成逐词 ASS')
         : t('不勾选 → 输出 SRT；勾选 → 用对齐模型生成逐词 ASS'));
