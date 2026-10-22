@@ -714,7 +714,14 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
   出结果，不会再停在「检测中」。接口与预检逻辑不变。
 - **验证（本次）**：`studio-navigation-test` 夹具先返回 `pythonProbe:null`、随后返回失败结果，
   断言卡片从「检测中」自动变为「未安装」；`draft-align-test` 49 项、`i18n` 3139 keys 通过。
-- **状态**：**已实现且已验证（源码）**；发行版 `v1.4.1-beta.3`（待发布）。
+- **发行版**：`v1.4.1-beta.3`（同版本修补重发；显示版本仍 `beta 1.4.1`、文件版本仍 `1.4.1.0`）。
+  资产 `SubFabric-beta.1.4.1-setup.exe`：36,548,649 字节，
+  SHA-256 `880a4041d70b57174fc358da9150b3379345ec3373e3dc428a31d6b8be8ad110`；
+  Release：<https://github.com/EndiVee233/SubFabric/releases/tag/v1.4.1-beta.3>
+- **状态**：**已实现且已验证（源码 + 发行版）**；GitHub：**云端提交成功且已核对**
+  （commit `9ef2b06636e0619eae70560fe9bf9aacc2a098e3`，
+  <https://github.com/EndiVee233/SubFabric/commit/9ef2b06636e0619eae70560fe9bf9aacc2a098e3>；
+  CI JS + Python 通过）。
 
 **2026-10-22（对齐模型状态/下载误报修复）**
 
