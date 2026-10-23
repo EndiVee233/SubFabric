@@ -29,7 +29,7 @@ function ensureJsmod() {
   fs.writeFileSync(marker, '{"type":"module"}\n');
 }
 ensureJsmod();
-const { hotwordCandidates, matchPickedWords, sliceRange } =
+const { hotwordCandidates, matchPickedWords, sliceRange, wordSpanRange } =
   await import('./jsmod/realign-words.js');
 
 let pass = 0, fail = 0;
@@ -87,6 +87,19 @@ eq(sliceRange(3, 4, 0), { from: 3, to: 4 }, 'padding=0 时就是原区间');
 eq(sliceRange(3, 4, undefined), { from: 3, to: 4 }, 'padding 未给 → 按 0');
 ok(sliceRange(9, 1, 0.2).to >= sliceRange(9, 1, 0.2).from,
   'end < start 时不会切出负长度区间');
+
+console.log('\n== 5. 初稿句块取实测词跨度（首词/末词不再被硬贴句首句尾）==');
+eq(wordSpanRange({ start: 10, end: 14, words: [{ start: 10.04, end: 10.4 }, { start: 13.5, end: 14.06 }] }),
+  { start: 10.04, end: 14.06 }, '词比句晚/长 → 句块跟词走（首词不再提前、末词不再被截短）');
+eq(wordSpanRange({ start: 10, end: 14, words: [{ start: 10, end: 10.4 }, { start: 13.5, end: 13.8 }] }),
+  { start: 10, end: 13.8 }, '词比句短 → 句尾收到末词实测终点');
+eq(wordSpanRange({ start: 10, end: 14, words: [{ w: 'a', s: 10.2, e: 10.6 }, { w: 'b', s: 13.2, e: 13.9 }] }),
+  { start: 10.2, end: 13.9 }, 'ASS 还原的 {w,s,e} 形态同样认');
+eq(wordSpanRange({ start: 10, end: 14, words: [{ start: 0, end: 1 }] }),
+  { start: 10, end: 14 }, '词时间差 >1s 视为脏数据，整行不动');
+eq(wordSpanRange({ start: 10, end: 14, words: [{ start: 12, end: 12 }] }),
+  { start: 10, end: 14 }, '零长/倒序词不参与归一');
+eq(wordSpanRange({ start: 10, end: 14 }), { start: 10, end: 14 }, '没有词 → 原样返回');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

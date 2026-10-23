@@ -1,0 +1,136 @@
+{
+  "report": "SubFabric-WhisperX-补充评测-2026-10-23.pdf",
+  "date": "2026-10-23",
+  "scope": "在《SubFabric ASR 三长度横评（2026-10-21）》同一素材、同一 30s / 5min / 10min 切片上补测 WhisperX；不接入生产。",
+  "environment": {
+    "whisperx": "3.4.2",
+    "faster_whisper": "1.2.0",
+    "ctranslate2": "4.4.0",
+    "torch": "2.7.1+cu126",
+    "torchaudio": "2.7.1",
+    "transformers": "4.56.1",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU 8GB",
+    "asr_model": "Systran/faster-whisper-large-v2 (local CTranslate2)",
+    "align_model": "WAV2VEC2_ASR_BASE_960H (torchaudio, ~360MB)",
+    "vad": "Silero, onset 0.5 / offset 0.363 / chunk 30s",
+    "batch_size": 8,
+    "compute_type": "float16",
+    "language": "en"
+  },
+  "reference": {
+    "file": "精校过前两小时的字幕.ass",
+    "method": "Default English events, strip override tags, de-duplicate word-highlight events",
+    "normalized_words": {
+      "30s": 84,
+      "300s": 943,
+      "600s": 1875
+    }
+  },
+  "wer": {
+    "30s": {
+      "wer_pct": 1.19,
+      "sub": 0,
+      "del": 1,
+      "ins": 0,
+      "ref_words": 84,
+      "hyp_words": 83
+    },
+    "300s": {
+      "wer_pct": 19.51,
+      "sub": 21,
+      "del": 162,
+      "ins": 1,
+      "ref_words": 943,
+      "hyp_words": 782
+    },
+    "600s": {
+      "wer_pct": 14.03,
+      "sub": 48,
+      "del": 195,
+      "ins": 20,
+      "ref_words": 1875,
+      "hyp_words": 1700
+    }
+  },
+  "timing": {
+    "30s": {
+      "asr_sec": 17.26,
+      "align_sec": 4.52,
+      "total_sec": 21.78,
+      "total_x": 1.38
+    },
+    "300s": {
+      "asr_sec": 31.84,
+      "align_sec": 7.73,
+      "total_sec": 39.57,
+      "total_x": 7.58
+    },
+    "600s": {
+      "asr_sec": 55.56,
+      "align_sec": 7.24,
+      "total_sec": 62.8,
+      "total_x": 9.55
+    }
+  },
+  "word_timing": {
+    "30s": {
+      "median_ms": 45,
+      "within_200ms_pct": 100.0,
+      "matched_words": 78
+    },
+    "300s": {
+      "median_ms": 41,
+      "within_200ms_pct": 95.3,
+      "matched_words": 682
+    },
+    "600s": {
+      "median_ms": 40,
+      "within_200ms_pct": 93.8,
+      "matched_words": 1456
+    }
+  },
+  "comparison": {
+    "faster_whisper_large_v2": {
+      "wer_pct": {
+        "30s": 1.22,
+        "300s": 8.73,
+        "600s": 8.92
+      },
+      "total_sec": {
+        "30s": 36.6,
+        "300s": 198.07,
+        "600s": 393.35
+      },
+      "mdx": true
+    },
+    "whisper_large_v2_vulkan": {
+      "wer_pct": {
+        "30s": 1.22,
+        "300s": 8.17,
+        "600s": 11.24
+      },
+      "asr_sec": {
+        "30s": 5,
+        "300s": 32,
+        "600s": 76
+      },
+      "mdx": false
+    }
+  },
+  "limitations": [
+    "WhisperX 默认 pyannote VAD 在本机 torch 2.7.1 / pyannote 3.3.2 下无法加载（torch.load weights_only + SpeechBrain 递归），本轮改用 Silero；5min 片段在 40–160s 有重叠对白漏段。",
+    "本轮没有 MDX 人声分离；Faster-Whisper-XXL 的 8.73% / 8.92% 是在 MDX 开的情况下得到的。",
+    "单次运行、单机 RTX 4060 Laptop 8GB；未做多次取均值。",
+    "未接入 SubFabric，也未替换现有对齐器。"
+  ],
+  "files": {
+    "hyp_30s": "hyp-30s.json",
+    "hyp_300s": "hyp-300s.json",
+    "hyp_600s": "hyp-600s.json",
+    "ref_30s": "ref-30s.json",
+    "ref_300s": "ref-300s.json",
+    "ref_600s": "ref-600s.json"
+  },
+  "mdx_diar": "mdx-diar/results.json",
+  "mdx_diar_note": "最终结果：WhisperX + MDX + pyannote，WER 1.19/8.59/9.23；SubFabric 1.19/9.44/11.31；说话人 64.5/62.9 vs 73.2/65.1。"
+}

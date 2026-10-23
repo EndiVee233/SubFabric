@@ -106,6 +106,10 @@ export default [
       'editor/faster-whisper.js', 'editor/glossary-repair.js',
       // 识别模型参数 schema / 默认值 / 范围校验（Whisper 等）
       'editor/asr-params.js',
+      // SRT → 逐词 ASS 的纯逻辑（Node require；测试也直接 require 同一份）
+      'editor/srt-ass.js',
+      // 全片逐词重校对的批量分段纯逻辑
+      'editor/realign-batch.js',
     ],
     languageOptions: {
       ecmaVersion: 2022,

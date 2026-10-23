@@ -25,6 +25,8 @@ const audioSlice = require('./audio-slice.js'); // 静音检测与切片(真 ffm
 const fasterWhisper = require('./faster-whisper.js'); // Faster-Whisper-XXL(Whisper large-v2) 参数与 JSON 适配(纯逻辑)
 const glossaryRepair = require('./glossary-repair.js'); // 术语表拼写修复(所有 ASR 引擎共用, 纯逻辑)
 const realignWordsMod = require('./realign-words.js'); // 逐词重校对的纯逻辑(有单测)
+const srtAssMod = require('./srt-ass.js');   // SRT → 逐词 ASS 的纯逻辑(有单测)
+const realignBatchMod = require('./realign-batch.js'); // 全片重校对的批量分段(有单测)
 const kLine = require('./k-line.js');        // \k 卡拉OK行文本构造(初稿生成用; 与 karaoke.js 同一格式)
 const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
@@ -126,8 +128,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.4.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.4.1.0'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4.5'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.5.0'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -698,6 +700,7 @@ const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId
  *   就是本段注释说的"每个请求得到新的空容器"。
  *   教训：**凡是跨请求的作业状态，一律放这一段。** */
 const realignJobs = new Map();   // 全片逐词重校对: projectId -> job
+const diarizeJobs = new Map();   // 高级字幕操作里的说话人分离: projectId -> job
 const subtitleCommits = new Map(); // 项目最后提交：同一窗口 PUT/beacon 有序衔接，其他窗口走版本冲突
 const deletedProjects = new Set();
 const subtitleRevision = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -1405,8 +1408,9 @@ const STAGE = {
 // 用户手动续跑满这么多次仍不成功, 就放开「跳过此步」(LLM 偶发怎么重试都不对, 得留条出路)
 const SKIP_AFTER_RETRIES = 3;
 
-/* 说话人角色色板(轮转使用): #RRGGBB, 写进中文行行首色标 —— 编辑器的角色色来源 */
-const ROLE_PALETTE = ['#ff00d0', '#00b0f0', '#ffb400', '#00d26a', '#b066ff', '#ff5f6b', '#00e0b0', '#c2c2c2'];
+/* 说话人角色色板(轮转使用): #RRGGBB, 写进中文行行首色标 —— 编辑器的角色色来源。
+ * 与编辑器的角色色板共用 karaoke.js 那一份，避免初稿与手动说话人分离给出两套颜色。 */
+const ROLE_PALETTE = karaokeMod.ROLE_PALETTE;
 /** '#RRGGBB' → ASS 的 'BBGGRR'(裸 6 位 hex) —— 与编辑器 hexToAss 一致, 用法 {\c&HBBGGRR&} */
 function assColorFromRgb(hex) {
   const n = String(hex || '').replace('#', '');
@@ -3663,21 +3667,23 @@ function crispAsciiAudio(file, tag) {
     return { path: dst, temp: true };
   } catch { return { path: file, temp: false }; }
 }
-function crispSliceWav(src, dst, start, end) {
+function crispSliceWav(src, dst, start, end, register) {
   return new Promise((resolve, reject) => {
     const p = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', String(start), '-t', String(Math.max(0.1, end - start)), '-i', src, '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', dst], { windowsHide: true });
+    if (typeof register === 'function') register(p);
     let err = '';
     p.stderr.on('data', d => { if (err.length < 2000) err += String(d); });
     p.on('error', reject);
     p.on('close', code => code === 0 ? resolve() : reject(new Error('音频切片失败（' + code + '）' + (err ? '：' + err.slice(0, 200) : ''))));
   });
 }
-function crispAlignOnly(aligner, wav, text, outPrefix, onProgress) {
+function crispAlignOnly(aligner, wav, text, outPrefix, onProgress, register) {
   return new Promise((resolve, reject) => {
     const out = outPrefix + '.json';
     const p = spawn(crispasrCli(), ['--align-only', '-am', aligner, '-f', wav,
       '--ref-text', text, '--align-format', 'json', '--align-output', out, '-np'],
       { windowsHide: true, cwd: CRISPASR_RUNTIME.dir });
+    if (typeof register === 'function') register(p);
     let err = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} }, 10 * 60 * 1000);
     p.stderr.on('data', d => { if (err.length < 3000) err += String(d); });
@@ -5001,7 +5007,7 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /* ═══════════ 说话人分离（后台, 跑在音频上与引擎无关） ═══════════ */
-  function runDiarize(id, wav, onProgress, speakerCount, log) {
+  function runDiarize(id, wav, onProgress, speakerCount, log, ctl) {
     const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
     const embModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[1].file);
     const outJson = wav + '.diarize.json';
@@ -5021,12 +5027,19 @@ function startPrepare(id, videoPath, mode) {
         '--segmentation', segModel, '--embedding', embModel, '--audio', wav, '--out', outJson,
       // 0 = 让聚类自己定人数（threshold 生效）; 正数 = 强制聚类数
       '--speakers', String(Number.isFinite(speakerCount) ? Math.max(0, Math.min(20, Math.round(speakerCount))) : 0)],
-        { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+        { windowsHide: true, cwd: ASR_DIR, env: Object.assign({}, pySpawnEnv(), { SUBFABRIC_PARENT_WATCH: '1' }) });
       trackProjProc(id, p);   // 分离进程读项目 audio.wav 且可能跑很久, 删除项目前必须能停掉它
+      if (ctl) ctl.child = p;
+      if (ctl && ctl.canceled) { try { killProc(p); } catch {} }
       let pyErr = '', timedOut = false, lastLogs = [];
       const startedAt = Date.now();
-      const timer = setTimeout(() => { timedOut = true; try { p.kill(); } catch {} }, budgetMs);
-      const done = (fn) => { clearTimeout(timer); try { fs.unlinkSync(outJson); } catch {} fn(); };
+      const timer = setTimeout(() => { timedOut = true; killProc(p); }, budgetMs);
+      const done = (fn) => {
+        clearTimeout(timer);
+        if (ctl && ctl.child === p) ctl.child = null;
+        try { fs.unlinkSync(outJson); } catch {}
+        fn();
+      };
       p.stderr.on('data', d => {
         const s = String(d);
         if (pyErr.length < 2000) pyErr += s;
@@ -5045,6 +5058,9 @@ function startPrepare(id, videoPath, mode) {
       });
       p.on('error', e => done(() => reject(new Error('无法启动分离进程: ' + e.message))));
       p.on('close', c => {
+        if (ctl && ctl.canceled) {
+          return done(() => reject(Object.assign(new Error('已停止'), { name: 'AbortError' })));
+        }
         let data = null;
         try { data = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
         if (c !== 0 || !data || !Array.isArray(data.regions)) {
@@ -5103,6 +5119,20 @@ function startPrepare(id, videoPath, mode) {
    * 文件被占用时 unlink 直接 EBUSY, 整个删除会失败(实测: 下载中删项目 → 500 + 目录残留)。
    * 与 draftProcs/draftAborts 分开: 识别链有自己的收尾语义(要往 draft 状态写结果、走 abort 信号)。 */
   const projProcs = new Map();            // 项目 id -> Set<proc>
+  /** 杀掉一个子进程及其子孙。Windows 必须用 taskkill /T —— 只 p.kill() 会留下
+   *  下载时的 ffmpeg、对齐器内部的子进程等孤儿；用户实测退出应用后 Python 还在跑。 */
+  function killProc(proc) {
+    if (!proc) return;
+    try {
+      if (process.platform === 'win32' && proc.pid) {
+        // 刻意用原生 childProcess.spawn：kill 本身不要再进 CHILDREN，否则退出时的
+        // CHILDREN 遍历会把刚启动的 taskkill 一起杀掉，worker 反而留成孤儿。
+        childProcess.spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      } else if (proc.pid) {
+        proc.kill('SIGKILL');
+      }
+    } catch {}
+  }
   function trackProjProc(id, proc) {
     let set = projProcs.get(id);
     if (!set) { set = new Set(); projProcs.set(id, set); }
@@ -5116,16 +5146,13 @@ function startPrepare(id, videoPath, mode) {
     const set = projProcs.get(id);
     if (!set) return;
     projProcs.delete(id);
-    for (const p of set) {
-      try {
-        if (process.platform === 'win32' && p.pid) {
-          // taskkill /T: 连子孙一起收 —— 下载时 yt-dlp 会拉起 ffmpeg 合并音视频,
-          // 只杀 python 会把 ffmpeg 留成孤儿: 它继续握着(甚至继续写)项目目录里的文件
-          spawn('taskkill', ['/PID', String(p.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-        } else {
-          p.kill('SIGKILL');
-        }
-      } catch {}
+    for (const p of set) killProc(p);
+  }
+  /** 应用退出时收掉**所有**项目的长任务（不只是 CHILDREN）。
+   *  对齐/说话人分离/下载/重识别都可能跑很久，退出后不能留孤儿烧 GPU。 */
+  function killAllProjProcs() {
+    for (const id of [...projProcs.keys()]) {
+      try { killProjProcs(id); } catch {}
     }
   }
   function finishDraft(id, err, extra) {
@@ -5688,9 +5715,19 @@ function startPrepare(id, videoPath, mode) {
       file = 'subtitle.ass';
       let out = withConfidence(assHeader(engineLabel, styleColors, kOpt ? kOpt.base : null), segs);
       segs.forEach((s, i) => {
+        const ws = s.words || [];
+        /* 句块时间取**实测词跨度**（±1s 容差，防止脏数据把整行拉飞）。
+         * 旧实现把首片硬贴 s.start、末片硬收 s.end：当 ASR 的句时间比词时间早一截时
+         * （分段含句前静音 / 句尾被截短），首词高亮和末词收音就都比真实语音早 ——
+         * 用户实测「首词开始、末词结束略微偏早」。现在首词=首词实测起点、末词=末词实测终点，
+         * 中文行仍与英文行共用同一组时间，中英一致性不变。 */
+        if (ws.length) {
+          // 纯逻辑在 realign-words.js 的 wordSpanRange（有单测）：首词实测起点 / 末词实测终点。
+          const span = realignWordsMod.wordSpanRange(s);
+          s.start = span.start; s.end = span.end;
+        }
         const zh = zhText(i);
         if (zh) out += zhLine(s, zh, roleOf(s));
-        const ws = s.words || [];
         const role = roleOf(s);
         if (kOpt) {
           // \k 卡拉OK形态: 整行单事件。有角色的行未唱位用角色色, 没有就用「未唱默认色」。
@@ -5700,13 +5737,9 @@ function startPrepare(id, videoPath, mode) {
           return;
         }
         for (let k = 0; k < ws.length; k++) {
-          // 首片起点**必须贴齐句首 s.start**, 不能直接用第一个词的时间:
-          //   云端识别(必剪/剪映)给的首词起点常常比句首晚几十毫秒(句前静音不算进词),
-          //   以前照抄 ws[0].start 会让英文逐词句整体比中文行晚一截 ——
-          //   中英双行时间不一致, 时间轴切不出整块、列表也该记坏行(见 main.js markBadRows)。
-          //   现在首片从 s.start 起高亮, 末片收在 s.end, 英文句 == 中文行 == [s.start, s.end]。
-          const st = (k === 0) ? s.start : ws[k].start;
-          // 每片一直高亮到下一词起点(最后一片到句尾), 与 main.py 生成的结果一致
+          // 每片从**该词实测起点**开始（s.start 已归一为首词起点），一直高亮到下一词起点
+          // （最后一片到句尾 s.end，即末词实测终点）。
+          const st = Math.max(s.start, ws[k].start);
           const en = (k + 1 < ws.length) ? Math.max(ws[k + 1].start, st + 0.01) : Math.max(s.end, st + 0.01);
           out += wordSliceLine(ws, k, st, en, role ? `${spkName(role.n)}` : '', wordAss);
         }
@@ -5807,8 +5840,12 @@ function startPrepare(id, videoPath, mode) {
   }
 
   /** 用 Qwen3-ForcedAligner 对一批已确认文本做纯对齐；不跑 ASR、不改文本。
-   *  CUDA 一次加载模型处理整批；Vulkan 没有批量接口，逐块调用 --align-only。 */
-  async function realignAlignBatch(prep, tasks, onProgress) {
+   *
+   *  性能关键：**按 ≤120s 合并相邻行再对齐**（realign-batch.js）。逐行调用时每行都有
+   *  固定开销，4 小时稿件 4254 行实测要近半小时；合并成约 120 段后正常 1~2 分钟。
+   *  CUDA 一次加载模型处理整批；Vulkan 也按同样的段逐段调用 --align-only。
+   *  ctl = { canceled, child }：支持取消，并把 worker 登记进 projProcs（退出应用时一并收掉）。 */
+  async function realignAlignBatch(prep, tasks, onProgress, ctl) {
     const t0 = Date.now();
     const items = [];
     for (let i = 0; i < tasks.length; i++) {
@@ -5821,7 +5858,13 @@ function startPrepare(id, videoPath, mode) {
         text: String(t.text || ''), clean: alignMod.alignText(t.text),
       });
     }
-    const aligned = new Map();
+    const batches = realignBatchMod.planBatches(items);
+    const abort = () => Object.assign(new Error('已停止'), { name: 'AbortError' });
+    const report = (pct, msg) => { if (onProgress) onProgress(Math.max(0, Math.min(100, pct)), msg); };
+    if (ctl && ctl.canceled) throw abort();
+    report(2, `共 ${items.length} 句，合并为 ${batches.length} 段对齐…`);
+
+    const aligned = new Map();   // batchId -> [{word,start,end}]（绝对时间）
     if (prep.backend === 'cuda') {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-'));
       try {
@@ -5829,68 +5872,99 @@ function startPrepare(id, videoPath, mode) {
         const out = path.join(tmp, 'out.json');
         fs.writeFileSync(manifest, JSON.stringify({
           audio: prep.audioWav, language: prep.language,
-          items: items.map(x => ({ id: x.id, start: x.from, end: x.to, text: x.clean })),
+          items: batches.map(b => ({ id: b.id, start: b.start, end: b.end, text: alignMod.alignText(b.text) })),
         }), 'utf8');
-        if (onProgress) onProgress(2, `加载 Qwen 对齐器，准备对齐 ${items.length} 句…`);
+        report(3, `加载 Qwen 对齐器，准备对齐 ${batches.length} 段（${items.length} 句）…`);
         await new Promise((resolve, reject) => {
           const p = spawn(qwenPython(), [path.join(ASR_DIR, 'qwen_align.py'),
             '--model', prep.aligner, '--manifest', manifest, '--out', out],
-            { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
-          let err = '';
-          const timer = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('Qwen 对齐超时')); }, 2 * 60 * 60 * 1000);
-          p.stderr.on('data', d => { err = (err + String(d)).slice(-4000); });
-          p.on('error', e => { clearTimeout(timer); reject(new Error('无法启动 Qwen 对齐器: ' + e.message)); });
-          p.on('close', code => {
+            { windowsHide: true, cwd: ASR_DIR, env: Object.assign({}, pySpawnEnv(), { SUBFABRIC_PARENT_WATCH: '1' }) });
+          if (ctl) ctl.child = p;
+          if (prep.meta && prep.meta.id) trackProjProc(prep.meta.id, p);
+          let err = '', buf = '', last = Date.now(), settled = false;
+          const finish = (fn) => {
+            if (settled) return;
+            settled = true;
             clearTimeout(timer);
+            clearInterval(stall);
+            if (ctl && ctl.child === p) ctl.child = null;
+            fn();
+          };
+          const timer = setTimeout(() => {
+            killProc(p);
+            finish(() => reject(new Error('Qwen 对齐超时')));
+          }, 2 * 60 * 60 * 1000);
+          /* 看门狗：worker 每完成一段会发一行 progress；5 分钟没有任何 stderr 输出
+           * 说明卡在加载/死锁，主动杀掉并给出可读原因（不要让界面永远停在 2%）。 */
+          const stall = setInterval(() => {
+            if (Date.now() - last > 5 * 60 * 1000) {
+              killProc(p);
+              finish(() => reject(new Error('Qwen 对齐 5 分钟没有进展，已停止；请看「日志」页确认显卡/显存状态')));
+            }
+          }, 30 * 1000);
+          p.stderr.on('data', d => {
+            const s = String(d);
+            last = Date.now();
+            err = (err + s).slice(-4000);
+            buf += s;
+            const lines = buf.split('\n');
+            buf = lines.pop();
+            for (const line of lines) {
+              const t = line.trim();
+              if (!t.startsWith('{')) continue;
+              try {
+                const o = JSON.parse(t);
+                if (o && o.type === 'progress' && Number.isFinite(Number(o.pct))) {
+                  report(3 + Math.max(0, Math.min(100, Number(o.pct))) * 0.95, String(o.msg || '对齐中…'));
+                }
+              } catch { /* 普通日志行，忽略 */ }
+            }
+          });
+          p.on('error', e => finish(() => reject(new Error('无法启动 Qwen 对齐器: ' + e.message))));
+          p.on('close', code => finish(() => {
+            if (ctl && ctl.canceled) return reject(abort());
             if (code !== 0) return reject(new Error('Qwen 对齐失败（' + code + '）' + (err ? '：' + err.replace(/\s+/g, ' ').slice(-300) : '')));
             resolve();
-          });
+          }));
         });
         const data = JSON.parse(fs.readFileSync(out, 'utf8'));
-        for (const x of (data.items || [])) aligned.set(x.id, x);
+        for (const x of (data.items || [])) aligned.set(x.id, Array.isArray(x.words) ? x.words : []);
       } finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} }
     } else {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kass-align-vk-'));
+      const register = p => { if (prep.meta && prep.meta.id) trackProjProc(prep.meta.id, p); };
       try {
-        for (const x of items) {
-          if (onProgress) onProgress(Math.round(2 + (x.id / Math.max(1, items.length)) * 92),
-            `Vulkan 对齐 ${x.id + 1}/${items.length} 句…`);
-          const slice = path.join(tmp, 'a' + x.id + '.wav');
+        for (let i = 0; i < batches.length; i++) {
+          if (ctl && ctl.canceled) throw abort();
+          const b = batches[i];
+          report(3 + Math.round((i / Math.max(1, batches.length)) * 95),
+            `Vulkan 对齐 ${i + 1}/${batches.length} 段（${items.length} 句）…`);
+          const slice = path.join(tmp, 'a' + b.id + '.wav');
           try {
-            await crispSliceWav(prep.audioWav, slice, x.from, x.to);
-            const got = await crispAlignOnly(prep.aligner, slice, x.clean, slice + '.out');
-            aligned.set(x.id, {
-              id: x.id,
-              words: got.map(w => ({
-                word: w.text, start: w.start_time + x.from, end: w.end_time + x.from,
-              })),
-            });
+            await crispSliceWav(prep.audioWav, slice, b.start, b.end, register);
+            const got = await crispAlignOnly(prep.aligner, slice, alignMod.alignText(b.text),
+              slice + '.out', null, register);
+            aligned.set(b.id, got.map(w => ({
+              word: w.text, start: w.start_time + b.start, end: w.end_time + b.start,
+            })));
           } catch (e) {
-            aligned.set(x.id, { id: x.id, words: [], error: String(e.message || e).slice(0, 300) });
+            aligned.set(b.id, []);
+            console.error('[realign] Vulkan 段 ' + (i + 1) + ' 失败：' + ((e && e.message) || e));
           } finally { try { fs.unlinkSync(slice); } catch {} }
         }
       } finally { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} }
     }
+    if (ctl && ctl.canceled) throw abort();
+    report(99, '正在把逐词时间映射回每一句…');
+    const assigned = realignBatchMod.assignChunkWords(batches, aligned);
     const out = [];
     for (const t of items) {
-      const a = aligned.get(t.id);
-      let item = { start: t.start, end: t.end, text: t.text, ok: false, words: [], note: '' };
-      if (!a || a.error) {
-        item.note = (a && a.error) || '对齐器没有返回结果';
-        out.push(item); continue;
-      }
-      const recWords = (a.words || []).map(w => ({
-        word: String(w.word || ''), start: Number(w.start), end: Number(w.end),
-      })).filter(w => w.word && Number.isFinite(w.start) && Number.isFinite(w.end));
-      const plan = alignMod.planBlock(t.text, { start: t.start, end: t.end }, recWords,
-        { minAnchorRatio: 0, rawTimes: true });
-      const words = plan.words || [];
-      const valid = words.length > 0 && words.every((w) => Number.isFinite(w.s) && Number.isFinite(w.e) && w.e > w.s);
-      item = {
-        start: t.start, end: t.end, text: t.text, ok: valid, words,
-        note: valid ? '' : '对齐器没有给出有效的逐词时间，保留原时间',
-      };
-      out.push(item);
+      const r = assigned.get(t.id) || { ok: false, words: [], note: '对齐器没有返回结果' };
+      out.push({
+        start: t.start, end: t.end, text: t.text,
+        ok: !!r.ok, words: Array.isArray(r.words) ? r.words : [],
+        note: r.note || (r.ok ? '' : '对齐器没有给出有效的逐词时间，保留原时间'),
+      });
     }
     if (onProgress) onProgress(100, `对齐完成：${out.filter(x => x.ok).length}/${out.length} 句`);
     return { items: out, elapsedSec: Math.round((Date.now() - t0) / 100) / 10 };
@@ -6133,7 +6207,7 @@ function startPrepare(id, videoPath, mode) {
 
   function realignJobView(j) {
     return {
-      projectId: j.projectId, sourceRevision: j.sourceRevision,
+      projectId: j.projectId, sourceRevision: j.sourceRevision, sourceFormat: j.sourceFormat || '',
       status: j.status, pct: j.pct, msg: j.msg, total: j.total, usable: j.usable,
       items: j.items, error: j.error || '',
     };
@@ -6144,20 +6218,23 @@ function startPrepare(id, videoPath, mode) {
     if (realignJobRunning(id)) {
       throw new Error('这个稿件已经有一个全片重校对在跑了');
     }
+    const ctl = { canceled: false, child: null };
     const job = {
       status: 'running', pct: 0, msg: '准备中…', total: 0, usable: 0,
-      items: [], error: '',
+      items: [], error: '', ctl,
     };
     realignJobs.set(id, job);
     const onProgress = (pct, msg) => {
+      if (job.canceled) return;
       job.pct = Math.max(0, Math.min(100, Math.round(pct)));
       job.msg = String(msg || '');
     };
     // 刻意不 await：POST 要立刻返回，进度靠轮询
     (async () => {
       try {
-        const r = await runFullRealign(id, onProgress, opt);
+        const r = await runFullRealign(id, onProgress, Object.assign({}, opt, { ctl }));
         job.projectId = id; job.sourceRevision = r.sourceRevision;
+        job.sourceFormat = r.sourceFormat;
         job.items = r.items; job.total = r.total;
         job.usable = r.usable;
         job.status = 'done'; job.pct = 100;
@@ -6165,35 +6242,61 @@ function startPrepare(id, videoPath, mode) {
         job.finishedAt = new Date().toISOString();   // GET 路由的老化清理靠它（与重识别同套路）
         console.log(`[realign-full] ${id}：${r.usable}/${r.total} 句已对齐`);
       } catch (e) {
-        job.status = 'error';
-        job.error = String((e && e.message) || e);
-        job.msg = '失败：' + job.error.slice(0, 120);
         job.finishedAt = new Date().toISOString();
-        console.error('[realign-full] 失败：' + job.error);
+        if (job.canceled) {
+          job.status = 'canceled'; job.error = ''; job.msg = '已停止';
+          console.log('[realign-full] ' + id + ' 已停止');
+        } else {
+          job.status = 'error';
+          job.error = String((e && e.message) || e);
+          job.msg = '失败：' + job.error.slice(0, 120);
+          console.error('[realign-full] 失败：' + job.error);
+        }
+      } finally {
+        if (ctl.child) ctl.child = null;
       }
     })();
     return job;
   }
 
-  /** 取该项目的**英文逐词句**：只有逐词轨上的句子才谈得上"重校对逐词时间"。 */
-  function realignTargets(id, meta) {
+  /** 取该项目的重校对目标。两种来源：
+   *  · ASS：只有逐词轨上的句子才谈得上"重校对逐词时间"；
+   *  · SRT：没有逐词时间，逐行英文原文交给对齐器，之后整份转成逐词 ASS
+   *    （allowSrt 由前端在确认框里点过之后才传；自动后处理不传，避免悄悄改格式）。 */
+  function realignSource(id, meta, allowSrt) {
     const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
-    if (!file || !/\.ass$/i.test(file)) throw new Error('逐词重校对需要当前 ASS 字幕');
+    if (!file || !fs.existsSync(file)) throw new Error('项目或字幕不存在');
+    if (/\.srt$/i.test(file)) {
+      if (!allowSrt) {
+        throw new Error('当前字幕是没有逐词时间的 SRT；点「全片逐词重校对」并确认后可直接转成逐词 ASS');
+      }
+      const src = subtitleSource(id);
+      const targets = srtAssMod.planSrtTargets(src.rows);
+      if (!targets.length) {
+        throw new Error('这个 SRT 没有可对齐的英文原文行（逐词对齐器按英文运行）');
+      }
+      return { sourceFormat: 'srt', file, revision: subtitleRevision(fs.readFileSync(file)), targets };
+    }
+    if (!/\.ass$/i.test(file)) throw new Error('逐词重校对需要 ASS 或 SRT 字幕');
     const doc = new AssDoc(fs.readFileSync(file, 'utf8'));
     const revision = subtitleRevision(doc.serialize());
-    return karaokeMod.analyzeKaraoke(doc).sentences
+    const targets = karaokeMod.analyzeKaraoke(doc).sentences
       .map((s, index) => ({ ...s, index })).filter(s => s.words.length)
       .map(s => ({ index: s.index, projectId: id, sourceRevision: revision,
         targetKey: karaokeMod.realignTargetKey(s), start: s.start, end: s.end,
         text: s.text, words: s.words.map(w => ({ w: w.w, s: w.s, e: w.e })) }));
+    return { sourceFormat: 'ass', file, revision, targets };
   }
 
   /** 跑全片重校对。onProgress(pct, msg) 回报进度。 */
   async function runFullRealign(id, onProgress, opt) {
     const o = opt || {};
+    /* 先看字幕格式/目标，再看音频与对齐器：
+     * SRT 没确认过就直接给出"点按钮并确认"的明确原因，而不是先报缺对齐模型。 */
+    const src = realignSource(id, readMeta(id), o.allowSrtToAss === true);
     const prep = await realignPrep(id, o);
-    const all = realignTargets(id, prep.meta);
-    const sourceRevision = all[0] && all[0].sourceRevision;
+    const all = src.targets;
+    const sourceRevision = src.revision;
     if (!all.length) {
       throw new Error('这个稿件没有带逐词时间的英文行，没法重排'
         + '（中文整句轨没有逐词时间；先在「设置 → 逐词转换」把英文转成逐词）');
@@ -6202,15 +6305,141 @@ function startPrepare(id, videoPath, mode) {
       ? Math.floor(Number(o.maxItems)) : all.length;
     const list = all.slice(0, cap);
     onProgress(2, `共 ${list.length} 句待对齐（Qwen3-ForcedAligner，不跑 ASR）`);
-    const batch = await realignAlignBatch(prep, list, onProgress);
+    const batch = await realignAlignBatch(prep, list, onProgress, o.ctl);
     const items = batch.items.map((item, i) => Object.assign({}, item, {
       projectId: id, sourceRevision, targetKey: list[i].targetKey,
       index: list[i].index, target: `第 ${list[i].index + 1} 行`,
     }));
     const usable = items.filter(i => i.ok).length;
     onProgress(100, `完成：${usable}/${items.length} 句已对齐`);
-    return { items, total: items.length, usable, sourceRevision };
+    return { items, total: items.length, usable, sourceRevision, sourceFormat: src.sourceFormat };
   }
+
+  /** 把 SRT 重校对结果写成逐词 ASS（**只适用于 SRT 项目**）。
+   *
+   *  这是"SRT → 逐词 ASS"的落盘端：前端预览勾选后才调它。整份字幕按当前 SRT 内容重建，
+   *  勾选且对齐成功的行用对齐器时间，其余行在句内平均分配；中文行原样进译文轨。
+   *  写入复用 writeSubtitle（初稿同一个生成器），再把 meta.subtitle 指向新的 ASS。 */
+  function applySrtRealignToProject(id, job, pickedKeys) {
+    const meta = readMeta(id);
+    const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
+    if (!file || !/\.srt$/i.test(file)) throw new Error('当前字幕已不是 SRT，无法按 SRT 方式转换');
+    if (job.sourceRevision && subtitleRevision(fs.readFileSync(file)) !== job.sourceRevision) {
+      throw new Error('稿件在重校对期间被修改，请重新校对');
+    }
+    const src = subtitleSource(id);
+    const targets = srtAssMod.planSrtTargets(src.rows);
+    const built = srtAssMod.buildSrtSegments(src.rows, targets, job.items || [], pickedKeys);
+    if (!built.segs.length) throw new Error('这份 SRT 没有可写入的字幕行');
+    const info = writeSubtitle(id, true, built.segs, built.trans);
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [逐词] 已把 ${built.total} 行 SRT 转成逐词 ASS`
+      + `（${built.aligned} 行由 Qwen3 对齐，其余按句内时长分配）`);
+    return Object.assign({ applied: built.aligned, total: built.total }, info);
+  }
+
+  /* ── 高级字幕操作：给已有稿件补做说话人分离 ────────────────────────
+   *
+   * 初稿在创建页勾了「区分说话人」时，流水线会在识别后直接分离并写角色标注。
+   * 没勾的稿件事后想补角色，以前只能重跑整条初稿（会覆盖字幕）。这里只跑分离模型，
+   * 把"每句属于哪个说话人"返回给编辑器；字幕文件由编辑器沿用现有的角色标注逻辑写入
+   * （保留文本、时间、逐词标签与用户手改），服务端不直接改字幕。
+   *
+   * 做成后台作业是因为整段音频一次处理，长音频要跑几十分钟，同步请求必超时。
+   */
+  function diarizeJobView(j) {
+    return {
+      status: j.status, pct: j.pct, msg: j.msg, estSec: j.estSec || 0,
+      speakers: j.speakers || 0, regions: j.regions || [], error: j.error || '',
+    };
+  }
+  function diarizeJobRunning(id) {
+    const j = diarizeJobs.get(id);
+    return !!(j && (j.status === 'running' || j.status === 'pending'));
+  }
+
+  /** 启动补做说话人分离（后台跑）。同一项目同一时刻只允许一个。 */
+  function startProjectDiarize(id, opt) {
+    if (diarizeJobRunning(id)) throw new Error('这个稿件已经有一个说话人分离在跑了');
+    const ctl = { canceled: false, child: null };
+    const job = {
+      status: 'running', pct: 0, msg: '准备中…', speakers: 0, regions: [], error: '',
+      ctl, startedAt: Date.now(), estSec: 0,
+    };
+    diarizeJobs.set(id, job);
+    const stamp = () => '[' + new Date().toLocaleTimeString() + '] ';
+    const log = (m) => pushDraftLog(id, stamp() + '[说话人分离] ' + m);
+    const fmtMin = (sec) => Math.max(1, Math.round(Number(sec) / 60)) + ' 分钟';
+    (async () => {
+      let hb = 0;
+      try {
+        const meta = readMeta(id);
+        if (!meta) throw new Error('项目不存在');
+        const audioName = (meta.audio && meta.audio.file) || 'audio.wav';
+        const wav = safeProjectFile(id, audioName);
+        if (!wav || !fs.existsSync(wav)) {
+          throw new Error('这个稿件没有已保存的音频（' + audioName + '），没法做说话人分离');
+        }
+        if (!diarizeReady()) {
+          throw new Error('说话人分离模型没装好：到「全局设置 → 语音识别 → 前置」里下载（约 32MB）');
+        }
+        /* 分离整段一次处理、不做分片；本机实测约 20s/音频分钟（10min≈201s）。
+         * 先把预计时长告诉用户（4h 约 80min），并用心跳更新"已用/预计"。 */
+        let durSec = 0;
+        try { durSec = fs.statSync(wav).size / (16000 * 2); } catch {}
+        job.estSec = Math.max(60, Math.round(durSec * 0.335));
+        const d = meta.draft || {};
+        // 创建时填过人数就沿用；没填（=0）交给聚类按 threshold 自动判断。
+        const want = Number(opt && opt.speakerCount);
+        const spk = Number.isFinite(want) && want > 0
+          ? Math.max(1, Math.min(20, Math.round(want)))
+          : (Number(d.speakerCount) > 0 ? Math.max(1, Math.min(20, Math.round(Number(d.speakerCount)))) : 0);
+        log('开始，' + (spk ? '按 ' + spk + ' 人聚类' : '自动判断说话人数')
+          + '；音频约 ' + Math.round(durSec / 60) + ' 分钟，预计约 ' + fmtMin(job.estSec));
+        const onProg = (pct, msg) => {
+          if (ctl.canceled) return;
+          job.pct = Math.max(0, Math.min(99, Math.round(Number(pct) || 0)));
+          job.msg = String(msg || '区分说话人中 …');
+        };
+        /* sherpa 的进度回调很稀疏（长音频可能在 30% 停很久），用心跳补一个
+         * "已用/预计"的估算进度；真实回调更高时不会被压回去。 */
+        hb = setInterval(() => {
+          if (job.status !== 'running') return;
+          const elapsed = (Date.now() - job.startedAt) / 1000;
+          const estPct = 30 + Math.min(54, Math.floor((elapsed / Math.max(1, job.estSec)) * 54));
+          if (Number(job.pct) < estPct) job.pct = Math.min(84, estPct);
+          job.msg = '区分说话人中…（已用 ' + fmtMin(elapsed) + '，预计约 ' + fmtMin(job.estSec) + '）';
+        }, 15000);
+        const r = await runDiarize(id, wav, onProg, spk, log, ctl);
+        if (ctl.canceled) throw Object.assign(new Error('已停止'), { name: 'AbortError' });
+        const regions = (r.regions || [])
+          .map(x => ({ start: Number(x.start), end: Number(x.end), speaker: Number(x.speaker) }))
+          .filter(x => Number.isFinite(x.start) && Number.isFinite(x.end) && x.end > x.start && Number.isFinite(x.speaker));
+        if (!regions.length) throw new Error('分离模型没有返回任何说话人片段');
+        job.regions = regions;
+        job.speakers = Number(r.speakers) || new Set(regions.map(x => x.speaker)).size;
+        job.status = 'done'; job.pct = 100;
+        job.msg = '完成：识别到 ' + job.speakers + ' 位说话人、' + regions.length + ' 个片段';
+        job.finishedAt = new Date().toISOString();
+        log(job.msg + '（角色标注由编辑器写入字幕）');
+      } catch (e) {
+        job.finishedAt = new Date().toISOString();
+        if (ctl.canceled || (e && e.name === 'AbortError')) {
+          job.status = 'canceled'; job.error = ''; job.msg = '已停止';
+          log('已停止');
+        } else {
+          job.status = 'error';
+          job.error = String((e && e.message) || e);
+          job.msg = '失败：' + job.error.slice(0, 140);
+          log(job.msg);
+        }
+      } finally {
+        clearInterval(hb);
+        if (ctl.child) ctl.child = null;
+      }
+    })();
+    return job;
+  }
+
 
   /* ── 备注（时间点留言；播放时当置顶弹幕显示）────────────────────────
    *
@@ -8206,26 +8435,66 @@ function startPrepare(id, videoPath, mode) {
         : (kind === 'video' ? 'Select video file' : 'Select subtitle file'));
     const tmp = path.join(os.tmpdir(), `kass-pick-${process.pid}-${Date.now().toString(36)}.txt`);
     const tmpPs = tmp.replace(/'/g, "''");
+    /* 对话框层级（2026-10-24 第二版）：
+     *   ① 不能让对话框 **TopMost** —— 上一版把属主设成 TopMost，owned 对话框跟着置顶，
+     *      结果压在所有应用之上、像全屏一样挡住别的工作（用户实测）。
+     *   ② 也不能让属主**隐藏** —— 隐藏窗口当不了前台窗口，后台进程又被前台锁拦住，
+     *      对话框会开在浏览器后面（最初的问题）。
+     *   所以：属主是真实 Show() 的 1×1、近乎透明、屏幕中心、**普通（非 topmost）** 窗口，
+     *   先把本线程挂到前台线程抢一次激活；对话框出现后再由 Timer 找到它（#32770 + 标题 +
+     *   本进程 PID）补一次 SetForegroundWindow，必要时把上次遗留的最大化状态还原成普通窗口
+     *   （最大化时不能拖动）。这样它只像浏览器自己的文件框那样浮在应用上层，不会压住别的 app。 */
+    const fgMembers = [
+      '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
+      '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+      '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);',
+      '[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);',
+      '[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();',
+      '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);',
+      '[DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);',
+      '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);',
+    ].join(' ');
     const ps = [
       '$ErrorActionPreference = "Stop"',
       'Add-Type -AssemblyName System.Windows.Forms | Out-Null',
-      // 只有 TopMost 不够: Windows 前台锁会阻止后台进程的窗口获得焦点/激活,
-      // 实测对话框开在浏览器后面, 用户根本不知道已经弹出来了 —— 必须显式抢前台
-      "Add-Type -Namespace Kass -Name FG -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);' | Out-Null",
+      'Add-Type -AssemblyName System.Drawing | Out-Null',
+      `Add-Type -Namespace Kass -Name FG -MemberDefinition '${fgMembers}' | Out-Null`,
       '$form = New-Object System.Windows.Forms.Form',
-      '$form.TopMost = $true',
-      '$form.Opacity = 0',
+      '$form.TopMost = $false',
+      '$form.Opacity = 0.01',
       '$form.ShowInTaskbar = $false',
+      '$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None',
+      '$wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
+      '$form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual',
+      '$form.Location = [System.Drawing.Point]::new([int]($wa.Left + $wa.Width / 2), [int]($wa.Top + $wa.Height / 2))',
+      '$form.Size = [System.Drawing.Size]::new(1, 1)',
       isFolder ? '$d = New-Object System.Windows.Forms.FolderBrowserDialog'
                : '$d = New-Object System.Windows.Forms.OpenFileDialog',
       isFolder ? "$d.Description = '选择语音识别模型存放目录(必须为空目录)'"
                : `$d.Title = '${title}'`,
       isFolder ? '$d.ShowNewFolderButton = $true' : `$d.Filter = '${filter}'`,
       ...(isFolder ? [] : ['$d.CheckFileExists = $true']),
-      '$null = $form.CreateControl()',                       // 确保句柄已创建, 否则 SetForegroundWindow 拿不到 Handle
+      '$form.Show()',
+      '$null = $form.CreateControl()',                       // 确保句柄已创建
+      '$fg = [Kass.FG]::GetForegroundWindow()',
+      '$fgPid = [uint32]0',
+      '$fgTid = [uint32]0',
+      'if ($fg -ne [IntPtr]::Zero) { $fgTid = [Kass.FG]::GetWindowThreadProcessId($fg, [ref]$fgPid) }',
+      '$myTid = [Kass.FG]::GetCurrentThreadId()',
+      'if ($fgTid -ne 0 -and $fgTid -ne $myTid) { $null = [Kass.FG]::AttachThreadInput($myTid, $fgTid, $true) }',
       '$null = [Kass.FG]::SetForegroundWindow($form.Handle)',
+      'if ($fgTid -ne 0 -and $fgTid -ne $myTid) { $null = [Kass.FG]::AttachThreadInput($myTid, $fgTid, $false) }',
       '$null = $form.Activate()',
+      // 对话框出现后补前台激活；它会在打开后 ~150ms 套用"上次最大化"的状态，所以 Timer
+      // 持续 ~2.4s：每次发现被最大化就还原成普通窗口（最大化时拖不动），并补一次前台激活。
+      '$tick = 0',
+      '$timer = New-Object System.Windows.Forms.Timer',
+      '$timer.Interval = 60',
+      `$timer.Add_Tick({ try { $script:tick++; $dlg = [Kass.FG]::FindWindow('#32770', '${title}'); if ($dlg -ne [IntPtr]::Zero) { $dlgPid = [uint32]0; $null = [Kass.FG]::GetWindowThreadProcessId($dlg, [ref]$dlgPid); if ($dlgPid -eq $PID) { if ([Kass.FG]::IsZoomed($dlg)) { $null = [Kass.FG]::ShowWindow($dlg, 9) }; $fg2 = [Kass.FG]::GetForegroundWindow(); $fg2Pid = [uint32]0; $fg2Tid = [uint32]0; if ($fg2 -ne [IntPtr]::Zero) { $fg2Tid = [Kass.FG]::GetWindowThreadProcessId($fg2, [ref]$fg2Pid) }; $myTid2 = [Kass.FG]::GetCurrentThreadId(); if ($fg2Tid -ne 0 -and $fg2Tid -ne $myTid2) { $null = [Kass.FG]::AttachThreadInput($myTid2, $fg2Tid, $true) }; $null = [Kass.FG]::SetForegroundWindow($dlg); if ($fg2Tid -ne 0 -and $fg2Tid -ne $myTid2) { $null = [Kass.FG]::AttachThreadInput($myTid2, $fg2Tid, $false) } } }; if ($script:tick -ge 40) { $timer.Stop() } } catch { } })`,
+      '$timer.Start()',
       '$r = $d.ShowDialog($form)',
+      '$timer.Stop()',
+      '$form.Close()',
       `$p = if ($r -eq [System.Windows.Forms.DialogResult]::OK) { ${isFolder ? '$d.SelectedPath' : '$d.FileName'} } else { '' }`,
       // 显式 UTF-8 无 BOM 写盘, 与 Node 侧的读取编码对齐
       `[System.IO.File]::WriteAllText('${tmpPs}', $p, (New-Object System.Text.UTF8Encoding($false)))`,
@@ -10547,6 +10816,89 @@ function handleProjectsRoutes(req, res, u) {
       return sendJson(res, 200, { job: jobView(job) });
     }
 
+    /* 停止全片逐词重校对：杀掉当前 worker（taskkill /T），作业状态由后台 catch 收成 canceled。 */
+    if (action === 'realign-full-cancel' && req.method === 'POST') {
+      const job = realignJobs.get(id);
+      if (!job || (job.status !== 'running' && job.status !== 'pending')) {
+        return sendJson(res, 200, { ok: false, error: '没有在运行的全片重校对' });
+      }
+      job.canceled = true;
+      if (job.ctl) job.ctl.canceled = true;
+      if (job.ctl && job.ctl.child) killProc(job.ctl.child);
+      job.msg = '正在停止…';
+      return sendJson(res, 200, { ok: true });
+    }
+
+    /* SRT → 逐词 ASS 的写入端（只用于 SRT 稿件）。
+     * 预览在 realign-full 的 GET 里，用户勾选后前端把选中的 targetKey 送回来；
+     * 写入前重新核对稿件版本，期间被编辑过就拒绝，避免覆盖用户的改动。 */
+    if (action === 'realign-full-apply' && req.method === 'POST') {
+      // 全片可能几千行：每行一个 targetKey（含文本），512KB 会不够用 —— 放宽到 8MB。
+      return readBody(req, res, 8 * 1024 * 1024, async (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let p = {};
+        try { p = body && body.length ? JSON.parse(body.toString('utf8')) : {}; }
+        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const job = realignJobs.get(id);
+        if (!job || job.status !== 'done') {
+          return sendJson(res, 409, { error: '没有可应用的重校对结果，请先跑一次全片逐词重校对' });
+        }
+        if (job.sourceFormat !== 'srt') {
+          return sendJson(res, 400, { error: '这个接口只用于把 SRT 转成逐词 ASS' });
+        }
+        const keys = Array.isArray(p.keys) ? p.keys.filter(k => typeof k === 'string') : [];
+        if (!keys.length) return sendJson(res, 400, { error: '没有勾选任何已对齐的行' });
+        try {
+          const r = applySrtRealignToProject(id, job, new Set(keys));
+          return sendJson(res, 200, r);
+        } catch (e) {
+          return sendJson(res, 400, { error: String((e && e.message) || e) });
+        }
+      });
+    }
+
+    /* 高级字幕操作：给已有稿件补做说话人分离。
+     * POST → 启动后台作业，立即返回 { job }；GET → 轮询 { job }。
+     * 只算不写：返回 regions（speaker 组号 + 时间段），由编辑器按重叠写角色标注。 */
+    if (action === 'diarize' && req.method === 'POST') {
+      return readBody(req, res, 64 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let o = {};
+        if (body && body.length) {
+          try { o = JSON.parse(body.toString('utf8')) || {}; }
+          catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        }
+        try {
+          const job = startProjectDiarize(id, o);
+          return sendJson(res, 200, { job: diarizeJobView(job) });
+        } catch (e) {
+          return sendJson(res, 409, { error: String((e && e.message) || e) });
+        }
+      });
+    }
+    if (action === 'diarize' && req.method === 'GET') {
+      const job = diarizeJobs.get(id);
+      // 完成/失败的结果留 10 分钟给前端取，之后清掉（与 realign-full 同一套路）。
+      if (job && job.status !== 'running' && job.status !== 'pending' && job.finishedAt
+          && Date.now() - Date.parse(job.finishedAt) > 10 * 60 * 1000) {
+        diarizeJobs.delete(id);
+        return sendJson(res, 200, { job: null });
+      }
+      return sendJson(res, 200, { job: job ? diarizeJobView(job) : null });
+    }
+    /* 停止说话人分离：长音频可能跑很久，用户必须能中途停下。 */
+    if (action === 'diarize-cancel' && req.method === 'POST') {
+      const job = diarizeJobs.get(id);
+      if (!job || (job.status !== 'running' && job.status !== 'pending')) {
+        return sendJson(res, 200, { ok: false, error: '没有在运行的说话人分离' });
+      }
+      job.canceled = true;
+      if (job.ctl) job.ctl.canceled = true;
+      if (job.ctl && job.ctl.child) killProc(job.ctl.child);
+      job.msg = '正在停止…';
+      return sendJson(res, 200, { ok: true });
+    }
+
     /* 全片逐词重校对：Qwen3-ForcedAligner 纯对齐。
      *   文本已确认，只把已有文本 + 原片音频交给对齐器重算逐词时间；
      *   不跑 ASR、不改文本、不改整句起止。对齐失败/无有效时间的句子保持原样。
@@ -11184,6 +11536,9 @@ function shutdown(reason) {
   setTimeout(async () => {
     await asrSvc.stopAll(1500);
     try { if (_localMt) _localMt.stop(); } catch {}
+    /* 项目级长任务（对齐/分离/下载/重识别）有一部分不在 CHILDREN 的常规路径里，
+     * 退出时必须显式收掉；用户实测退出应用后 Python 对齐器还在后台跑。 */
+    try { killAllProjProcs(); } catch {}
     for (const p of CHILDREN) {
       if (p === trayProc) continue;    // 托盘自己收图标(强杀会留下 Windows"幽灵图标")
       try {
@@ -11196,7 +11551,9 @@ function shutdown(reason) {
       // SSE 与媒体流是长连接, 不主动销毁的话 close() 会一直等它们自己断
       if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
     } catch {}
-    setTimeout(() => process.exit(0), 250);
+    // 给刚发出的 taskkill 一点时间落地；Python worker 另有 stdin-EOF 看护，
+    // 这里主要是下载/ffmpeg 等不读 stdin 的子进程。
+    setTimeout(() => process.exit(0), 700);
   }, 600);
 
   // 兜底: 无论如何 4 秒内进程必须消失(端口随之释放)

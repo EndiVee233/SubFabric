@@ -124,9 +124,11 @@ console.log('\n== 6. 接线（前端/服务端/样式/菜单图标）==');
   const iBar = HTML.indexOf('id="note-bar"');
   const iHead = HTML.indexOf('class="tl-head"', iTl);
   ok(iTl > 0 && iBar > iTl && iBar < iHead, '备注输入条在 #timeline-panel 内、时间轴头部之前');
-  for (const id of ['note-input', 'note-at', 'note-dur', 'btn-note-send', 'cb-danmaku']) {
+  for (const id of ['note-input', 'note-dur', 'btn-note-send', 'cb-danmaku']) {
     ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
   }
+  // 输入条不再显示"当前播放位置"：时间轴底部状态已经有同一个时间，重复显示（用户要求删掉）
+  ok(!/id="note-at"/.test(HTML), '输入条不再重复显示当前播放位置');
   // 弹幕层贴在 #video-stage 里，且不吃指针事件（绝不能挡视频控件）
   const iStage = HTML.indexOf('id="video-stage"');
   const iDmk = HTML.indexOf('id="danmaku-layer"');

@@ -1020,15 +1020,18 @@ export function recalcWords(sentence, newText, newStart, newEnd) {
     const sameTime = Math.abs(newStart - sentence.start) < 1e-6 && Math.abs(newEnd - sentence.end) < 1e-6;
     if (sameTime && !textChanged) {
       words = tokens.map((t, i) => ({ w: t, s: sentence.words[i].s, e: sentence.words[i].e }));
-    } else if (textChanged || !sameTime) {
-      // 改了字幕文本或句子时间范围就重新按字母数分配。
-      return allocateWordTimes(tokens, newStart, newEnd);
-    } else {
+    } else if (!textChanged) {
+      /* **只动了块时间**（拖动整块或拖左右边缘）：按原相对位置缩放，保住每个词的真实时长。
+       * 以前这里与"改了文本"走同一分支、直接按字母数重铺 —— 用户拖动字幕块后
+       * 每个词分到的时长全乱（整块后移 0.3s，词时长却被按字母数重新分配）。 */
       words = tokens.map((t, i) => {
         const r1 = (sentence.words[i].s - sentence.start) / oldSpan;
         const r2 = (sentence.words[i].e - sentence.start) / oldSpan;
         return { w: t, s: newStart + r1 * span, e: newStart + r2 * span };
       });
+    } else {
+      // 文本改了（换词/改拼写）→ 以新文本的字母数在块内重铺。
+      return allocateWordTimes(tokens, newStart, newEnd);
     }
     return normalizeWords(words, newStart, newEnd);
   }
@@ -1291,6 +1294,45 @@ export function stripSpeakerTag(text) {
   const m = /^\s*\[[^\]]*\]/.exec(rest);
   if (!m) return { text: t, removed: false };
   return { text: head + rest.slice(m[0].length).replace(/^\s+/, ''), removed: true };
+}
+
+/** 说话人角色色板（新角色轮转使用）: #RRGGBB。
+ *  服务端初稿生成与编辑器「说话人分离」共用这一份，避免两边给同一个 SPK 不同的颜色。 */
+export const ROLE_PALETTE = ['#ff00d0', '#00b0f0', '#ffb400', '#00d26a', '#b066ff', '#ff5f6b', '#00e0b0', '#c2c2c2'];
+
+/**
+ * 按"行的时长区间"给每条字幕找主要说话人，并按**首次出现**重新编号（0 起始）。
+ *
+ * 为什么按首次出现编号：diarize.py 的 speaker 是聚类组号（不按时间顺序），
+ * 直接拿来当 SPK1..N 会让同一份稿子重跑一次编号就换一套。
+ *
+ * 纯函数（不碰 DOM/文件），供编辑器写入角色标注，见 tests/speaker-map-test.mjs。
+ *
+ * @param rows    [{ start, end, ... }]
+ * @param regions diarize.py 的 [{ start, end, speaker }]
+ * @returns { picks:[{ row, speaker }], order:[speaker] } —— order 按首次出现排序；
+ *          重叠不足 MIN_OVERLAP 秒的行不指派（宁可留空，也不要标到别人身上）。
+ */
+export function speakerSpansForRows(rows, regions) {
+  const MIN_OVERLAP = 0.05;
+  const list = Array.isArray(regions) ? regions : [];
+  const order = [], picks = [];
+  for (const row of (Array.isArray(rows) ? rows : [])) {
+    if (!row) continue;
+    const rs = Number(row.start), re = Number(row.end);
+    if (!(Number.isFinite(rs) && Number.isFinite(re) && re > rs)) continue;
+    let best = null, bestOv = 0;
+    for (const r of list) {
+      const a = Number(r && r.start), b = Number(r && r.end), spk = Number(r && r.speaker);
+      if (!(Number.isFinite(a) && Number.isFinite(b) && Number.isFinite(spk))) continue;
+      const ov = Math.min(re, b) - Math.max(rs, a);
+      if (ov > bestOv) { bestOv = ov; best = spk; }
+    }
+    if (best === null || bestOv < MIN_OVERLAP) continue;
+    if (!order.includes(best)) order.push(best);
+    picks.push({ row, speaker: best });
+  }
+  return { picks, order };
 }
 
 /** 取 Name 栏/说话人原始串里的人物名列表: '[Spoke]' → ['Spoke'], '[A][B]' → ['A','B']。

@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
 const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
+const RB = fs.readFileSync(path.join(REPO, 'editor', 'realign-batch.js'), 'utf8');
 const HTML = fs.readFileSync(path.join(REPO, 'editor', 'studio.html'), 'utf8');
 const MJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
 const PJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
@@ -124,11 +125,15 @@ ok(!/async function realignOne/.test(SRV), '★ 已删除 realignOne（不再逐
 ok(!/async function realignRecognize/.test(SRV), '★ 已删除 realignRecognize');
 ok(!/async function realignTwoTier/.test(SRV), '★ 已删除热词第二级');
 ok(!/REALIGN_MODEL_ID/.test(SRV), '★ 不再固定 NPU ASR 模型');
-ok(/minAnchorRatio: 0, rawTimes: true/.test(SRV),
+ok(/realignBatchMod\.planBatches/.test(SRV), '服务端用批量分段模块');
+ok(/minAnchorRatio: 0, rawTimes: true/.test(RB),
   '★ 只做序列映射，不再用锚点率拒绝；rawTimes=true 保留实测绝对时间');
 ok(!/threshold: 0|job\.threshold|r\.threshold/.test(SRV), '★ 作业不再返回采纳门槛');
 ok(/const cudaReady = qwenRuntimeOk\(\)/.test(SRV), 'CUDA 对齐器有运行时门禁');
-ok(/const plan = alignMod\.planBlock\(t\.text, \{ start: t\.start, end: t\.end \}, recWords/.test(SRV),
+/* 逐词映射随批量对齐抽到 editor/realign-batch.js；整段和逐行都走 planBlock，
+ * 防止以后重构退回"直接把模型词时间写进字幕"。 */
+ok(/const whole = align\.planBlock\(b\.text/.test(RB)
+  && /const plan = align\.planBlock\(m\.text/.test(RB),
   '对齐器结果仍经过 planBlock 做 token 映射/单调性修正');
 
 console.log('\n== 7. ★ 字幕自动保存必须能成功（丢字幕的真凶）==');

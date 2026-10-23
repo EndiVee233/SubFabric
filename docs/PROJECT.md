@@ -31,7 +31,7 @@
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
-`asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`speech-gap.js` |
+`asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
 | `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（见 §9） |
@@ -51,7 +51,7 @@
   `server.js`，SEA 里相对 `require` 不可用，因此 `server.js` 必须保持单文件；"拆分"只能是函数体内重排。
 - **铁律：跨请求状态必须放模块作用域**——`prepareJobs`、`draftJobs`、`pendingAsr`、`draftProcs`、
   `draftAborts`、`rerecogJobs`、`projProcs`、`MEDIA_ALLOW`、`mediaMetaCache`、`logBuf`、`logClients`、
-  `lifeClients`、`dlState`、`CHILDREN`、`realignJobs`、`subtitleCommits`、`deletedProjects`。
+  `lifeClients`、`dlState`、`CHILDREN`、`realignJobs`、`diarizeJobs`、`subtitleCommits`、`deletedProjects`。
   放进路由段函数等于每请求重置。
 - **路由结构**：`SIMPLE_ROUTE_MAP` 承接同步无副作用端点，`API_SECTIONS` 前缀表分发到 7 个段函数
   `handleWaveRoutes` / `handleFetchRoutes` / `handleAsrRoutes` / `handleLlmRoutes` / `handleLogsRoutes` /
@@ -65,16 +65,62 @@
   Parakeet Vulkan / Qwen3-ASR + 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
   Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
+- **语义分句的短碎片（2026-10-23 修）**：`groupResegWords` 只按句末标点 / >0.8s 停顿断句，
+  之后 `mergeTinyFrags` 处理 <2 词且 <1s 的碎片：按**前后空档**决定并入哪一侧
+  （句内词间停短、句间停长），离上一句更近就并回上一句；首组只能并进下一句、末组并回上一句。
+  旧实现一律并进下一句，实测把问句后面的「,Spoke」推给下一句，改了下一句的文本和时长。
 - **流水线状态**写 `meta.draft`（`running` / `paused` / `error` / `done`），前端轮询
   `GET /api/projects/:id/draft`；防重入用 `draftJobs.has(id)`，每步统一走 `safeDraftStep`
   （同步异常与 async reject 都收）。
 - **项目内操作**统一为 `/api/projects/:id/<action>`：`info`(PUT 改名)、`retry`、`skip`、`rerecognize`、
-  `translate`、`draft`、`subtitle`、`relink`、`prepare`、`peaks`、`audio`；`DELETE` 无 action 即删项目。
+  `translate`、`draft`、`subtitle`、`relink`、`prepare`、`peaks`、`audio`、`realign-full-apply`、
+  `diarize`；`DELETE` 无 action 即删项目。
+- **本机原生选取（`/api/pick`）**：`nativePick()` 用 PowerShell + WinForms 打开系统文件/文件夹对话框
+  （现服务**音频 / 目录**选择），结果经临时文件回传。属性窗体是**真实显示**的 1×1、近乎透明、
+  屏幕中心、**非 topmost** 窗口；对话框出现后由 Timer（60ms，约 2.4s）找到它（`#32770` + 标题 +
+  本进程 PID）：若被上次遗留的“最大化”状态套用就 `SW_RESTORE` 还原成普通窗口（最大化时拖不动），
+  并用 `AttachThreadInput + SetForegroundWindow` 补一次前台激活。这样它只像浏览器自己的选择框那样
+  浮在应用上层，切到别的 app 会让位，不会一直压在所有窗口之上。35s 超时/异常返回 `fallback:true`，
+  前端改用浏览器 `<input type=file>`。
+- **视频选择走浏览器文件框**：新建项目选视频、重新关联视频都用 `<input type=file>` +
+  `/api/upload-video` 落盘（与选择字幕/导入项目包**同一个窗口**），不再调用 `/api/pick`。
+  代价是视频会复制一份进程序目录；落盘后与本地路径同构，`video`/`relink` 逻辑不变。
 - **逐词时间重排**（单条 `/realign` + 全片 `/realign-full`）：语义是“文本已确认，只量时间”。
   只调用 **Qwen3-ForcedAligner**：CUDA 用 `asr/qwen_align.py` 批量 worker（一次加载、按切片对齐），
   Vulkan 用 `CrispASR --align-only`；结果经 `align.js` 做 token 映射/单调性修正。**不跑 ASR、
   不改文本、不改整句起止**；对齐失败保持原时间，不回退 ASR。文本不确定走独立的 `rerecognize`。
   已删除 `/api/asr/realign-settings` 与锚点率/置信度门槛。
+  - **单条排队（2026-10-23 修）**：正在重排 A 句时右键 B 句不再被
+    「正在重排另一条，请稍等」挡掉，而是把 `realignTargetKey + 文本 + 句时间` 压进
+    `realignQueue`，当前这条结束后自动接着跑（重复目标会被去重）。执行时按 targetKey
+    重新定位句子 —— 前一条重排会重建条目对象，写回旧对象会把结果写丢；切稿件时队列整体作废。
+  - **初稿首末词时间（2026-10-23 修）**：`writeSubtitle` 生成逐词 ASS 时，句块时间取
+    「句时间 ∪ 实测词跨度」（`realign-words.js` 的 `wordSpanRange`，±1s 容差防脏数据），
+    首片从首词实测起点开始、末片收在末词实测终点；中文行与英文行共用同一组时间。
+    旧实现把首片硬贴 `s.start`、末片硬收 `s.end`，当 ASR 句时间比词时间早一截时，
+    首词高亮与末词收音都会比真实语音早。
+  - **批量化与可停止（2026-10-23 修）**：`realign-batch.js` 把相邻行合并成 ≤60s / ≤24 行、
+    行间空档 >4s 断开的对齐段；CUDA/Vulkan 都按段调用，4 小时 4254 行从约 4254 次调用降到 321 段（60s 段）。
+    `qwen_align.py` 每段往 stderr 写 `{"type":"progress"}`，`realignAlignBatch` 解析后映射到
+    `job.pct`（3–98）；加载/死锁 5 分钟无输出会主动杀掉并报可读原因。
+    `POST /realign-full-cancel` 取消作业（`taskkill /T` 收 worker），前端运行中「关闭」按钮显示
+    「停止」；切稿/退出应用也会停掉。worker 同时登记 `projProcs`，并带
+    `SUBFABRIC_PARENT_WATCH=1`（每秒轮询父进程句柄，**不阻塞 stdin**），避免父进程被硬杀后留孤儿 Python。
+  - **SRT 稿件直接转逐词 ASS**：`/realign-full` 带 `{allowSrtToAss:true}`（只由前端在二次确认后发）
+    时，`realignSource` 用 `subtitleSource` 的 SRT 行（归一标点空格后）做目标；预览内容不变。
+    `POST /realign-full-apply`（只接受 `status=done` 的作业、并核对稿件版本）用 `srt-ass.js`
+    把勾选/失败行合成为 segments（勾选行用对齐时间，其余按句内时长分配；纯中文行只进中文轨），
+    复用 `writeSubtitle` 生成 `subtitle.ass` 并切换 `meta.subtitle`；**原 SRT 文件保留**。
+  - **事后说话人分离**：`POST /api/projects/:id/diarize` 启动后台作业（`diarizeJobs`，10 分钟老化），
+    `GET` 轮询。只跑 `runDiarize` 返回 `regions`/`speakers`，**服务端不直接改字幕**；编辑器按每行
+    最大重叠写 `[SPKn]` + 角色色后保存。`meta.draft.speakerCount>0` 时沿用该人数，否则传 0
+    （`diarize.py` 按 threshold 自动判断，`max(0, args.speakers)`）。
+  - **长音频分离（4h 约 80 分钟）**：`diarize.py` 整段一次处理、不做分片；本机实测约
+    20s / 音频分钟，4h ≈ 80min。`startProjectDiarize` 用 `0.335 × 秒` 预估时长：
+    前端确认框显示「这段音频约 240 分钟，预计约 80 分钟」，超 30 分钟时按钮变成「仍要分离」；
+    作业每 15s 用心跳更新「已用 X / 预计 Y」并按时间估算进度（真实回调更高时不回退）。
+    `POST /diarize-cancel` + 进度卡右上角 ×（title「停止任务」）可中途停止；切稿/退出应用
+    也会停掉。同一项目只允许一个分离作业。
 - **对齐模型状态与下载**（`ALIGNER_MODELS`）：`/api/asr/status.aligners` 分开返回
   `filesOk` / `missing` / `partial` / `runtimeReady` / `needRuntime` / `blockedReason`，
   `ready = filesOk && runtimeReady && !blockedReason`。设置页「语音识别 → 对齐模型」据此显示
@@ -150,6 +196,9 @@
   使用 2px 选中环，UWP 保留其中性 `--muted` 悬浮边框。
 - **描边映射开关**：`#sf-rim-enabled` 复用共享 `.switch` 组件（默认 38×20 / 14px，UWP 40×20 / 12px），
   不再使用 26×15 的自绘双伪元素开关；`configureRim()` 继续同步 `checked`。
+- **开关关态配色**：`.switch-slider` 的关态轨道用 `color-mix(in srgb, var(--text) 14%, var(--surface))`，
+  浅色模式是浅灰胶囊、深色模式仍是深灰；旧实现写死 `#2a2a34`，浅色主题下开关仍是深色的。
+  开态仍走 `--accent` 渐变，UWP 的 `--surface-2` 轨道单独覆盖。
 - **文件夹滚动条**：Material You 下隐藏 `#sf-folders` 的右侧滚动条（`scrollbar-width:none` 与 0 宽
   WebKit 滚动条），列表仍可用滚轮/触控板滚动；其它主题保留原滚动条。
 - **文件夹头与弹窗**：`.sf-folder-head` 右侧不留内边距，`#sf-folder-add` 与每行删除 X 同为 34×34
@@ -168,6 +217,30 @@
   项目数据刷新不再触发动画。`sf-studio-theme` 仍显式传入重播标记。
 - **流光过渡**：`.sf-ambient i` 用 `background-color` 承接 `--sf-aurora-1..3` 并做 420ms 过渡，换配色或
   切换明暗都不硬切；动态/静态只切 `animation-play-state`，静态停在当前帧、切回继续漂移，不跳回原点。
+- **提示条配色**：`#toast` 的底色/文字/描边改用 `--surface` / `--text` / `--line`（旧实现写死深色
+  `rgba(22,24,31,.97)`），浅色模式下不再出现"深底 + 深字"看不清的提示；UWP 仍走右下 3px 色条那套。
+- **空视频提示卡**：`#stage-hint .hint-card` 的底色改成 `color-mix(in srgb, var(--surface) 84%, transparent)`、
+  文字用 `--text` / `--muted`。视频区本身是黑的，浅色模式需要一层浅色遮罩配深色字；旧实现只有
+  2.2% 白叠加，浅色下等于一块黑卡片配灰字（实测底色 #060606），几乎看不清。深色模式仍是深色遮罩。
+- **页签切回字幕页**：从角色/设置/日志回到字幕页时给 `.tab-body` 加 `is-instant-reveal`，不再播
+  260ms 面板淡入 —— 字幕列表是工作区，改完角色切回来要能立刻点条目；新建字幕的 `opts.instant`
+  走同一条路径。
+- **字幕列表高度缓存（2026-10-23 修）**：`editor.js` 的 `_rebuildMetrics` 只在拿到**真实宽度**
+  （`w > 0`）时更新测量宽度并清空高度缓存。面板隐藏（角色/设置/日志页）时 `clientWidth` 是 0，
+  旧实现会把 0 记成新宽度，于是在隐藏页里重建条目（改角色、改文本…）就清空了整张缓存，
+  切回字幕页要按真实宽度重测所有卡片 —— 实测 1200 行约 500ms，表现是「点完人物立刻点字幕列表
+  卡一下」。现在隐藏期间保留缓存与 `_metricsDirty`，列表可见后再校正，实测回落到约 19ms。
+- **字幕卡字号**：`.cc-l1` 提到 **13.5px**、`.cc-l2` 提到 **11.2px**（原 12.5 / 10.4），行内编辑同步
+  `13.5 / 11.5`；卡片其它元素同步一档：时间 **9.4px**（时长 8.6px）、角色 **10px**、样式 **9px**、
+  播放态 **8.6px**、置信度 chip 8.6px、重识别按钮 18px，正文仍最大以保持层次。
+  行内编辑的英文行改用 `--cc-text`（与中文同色，原 `--cc-text-2` 灰字在深色卡上难读），
+  字号差保留主/副层次。卡片高度由测量容器实时量（`_measure`），不需要写死行高。
+- **拖动字幕块后的词时长**：`karaoke.js` 的 `recalcWords` 在"只改时间、不改文本"时按原相对位置缩放
+  （整块平移＝等长平移，拉长/压缩＝按比例），不再按字母数重铺；只有文本变了才重新分配。
+- **手动分句（Ctrl+Enter）的切点**：英文走 `_splitPoint` 的**词边界**（与规范分词、词级时间同口径）；
+  中文没有词边界，`splitZhText` 先按英文词数比例得到目标位置，再就近吸附到
+  「标点之后 → 英文/数字串边界 → 字间（不拆代理对）」。旧实现直接按字数比例切，
+  实测把「ABCDE FGHIJ」切成「ABCD」/「E FGHIJ」。
 - **主题色遮罩**：`自定义主题色` 行与色板/恢复默认按钮同处 `.sf-theme-color-panel` 一块遮罩；
   MY 圆角 24px、UWP 2px、其它 8px，避免色板落在遮罩外。
 - **角色列表入场**：每次进入编辑器后**第一次**切到角色页时 `#role-list` 加 `is-role-entering`，
@@ -189,6 +262,16 @@
   不会被旧定时器收起。
 - **字幕列表滚动条**：`#cue-list` 的 thumb 使用 `color-mix(--muted 70%, transparent)`，比全局 25%
   更亮；hover 变为 `--accent`，Firefox 的 `scrollbar-color` 同步覆盖。
+- **高级字幕操作（两个入口都要二次确认）**：`#btn-realign-full` 点击走 `beginRealignFull`
+  → `panel.showConfirm`；SRT 稿件说明「会生成逐词 ASS、原 SRT 保留」，ASS 稿件说明「只改逐词时间」，
+  确认后才启动。`#btn-diarize` 点击走 `beginDiarize` → `panel.showConfirm`，确认后才 POST
+  `/api/projects/:id/diarize`；SRT 稿件不直接跑，提示先用全片逐词重校对转 ASS。
+  两个入口都在 `#editor-advanced-actions` 的网格里，模板改动后必须重新生成 `editor/studio.html`。
+- **右下角进度卡跟随主题**：`#job-card` 背景使用 `var(--surface)` / `var(--line)`，不再写死
+  `rgba(22,24,31,.97)`；浅色主题下与页面一致（之前是一块突兀的黑卡）。运行中的重校对浮层里
+  「关闭」按钮文案变为「停止」，点击会先调 `realign-full-cancel` 再收起。
+  说话人分离是长任务：进度卡右上角 × 的 title 变为「停止任务」，点击调 `diarize-cancel`；
+  确认框对长音频显示预计耗时，按钮在 >30 分钟时变成「仍要分离」。
 - **编辑器设置结构**：`#ass-fx-group` 必须在 `#fx-controls` 后正确闭合，后续「字幕显示 / 角色 /
   导入与音频 / 外观 / 导出」组保持为 `.settings-list` 的直接子级；否则整张后处理卡会吞并后续卡片，
   在窄面板里表现为内容显示不全。设置末尾只闭合 `.settings-list` 与 `#tab-settings`，不能再多一个
@@ -204,7 +287,9 @@
 - **Material 主页悬浮**：除时钟外，`sf-resume` / `sf-orbit` / `sf-mu-widget` / 注意力卡 / 项目卡统一为 1px `--accent` 边框提亮 + `--sf-hover-shadow` + `brightness(1.04)` + `translateY(-2px)`；时钟没有边框，只做 drop-shadow + brightness + 上浮。注意力卡在卡片悬浮时同时提亮四瓣描边和两个按钮边框。
 - **新建项目页布局**：`#np-view` 导入模式为左右两列：左列「稿件预览 + 处理进度」，右列「输入与配置 + 生成设置」；两列等高（`align-items:stretch`），上卡顶边同线、下卡底边同线，中段因预览/输入高度不同自然错开，底部卡片 `flex:1` 填满列高。切到**创建初稿**时加 `is-draft`，变成三列：左列仍是预览+进度，中间输入，右下角的生成设置移到第三列并展开；三列按内容高度，底部不再 flex 拉伸，处理进度保持 `min-height:340px`。模式切换只用一个 View Transition：四张卡（输入、生成设置、稿件预览、处理进度）在同一个 `.46s cubic-bezier(.2,.8,.2,1)` 里整体移动/缩放，模式字段在同一次切换中完成；右侧两张不再单独做垂直 height 动画、100ms 停顿或分段展开/收起。`view-transition-name` 为 `np-input` / `np-generate` / `np-preview` / `np-process`。View Transition 处于 top layer；顶栏单独命名 `np-topbar` 并置于 `z-index:999`，卡片动画不覆盖顶栏，同时顶栏与侧栏文字不会被裁掉。减少动效或不支持时直接切换。稿件预览区固定 16:9、封面 `object-fit:cover`。置信度档位说明 `#np-confidence-desc` 用 `.np-conf-desc` 独占一行显示在置信度选项下方，长文案不再挤在选项右侧；「只导入一段」的 checkbox 标签 `.np-lbl-check` 用 auto 宽度 + nowrap，避免在时间范围行折成两行。处理进度卡内加 `.np-progress-box` 小框，`min-height:170px` 向下延伸到 idle 上方，显示当前百分比/状态和处理记录占位；卡片按内容自然增高，不再用固定高度或 flex 拉伸小框。分角色识别标题与「开启」同一行，开启在标题右侧。导入模式下语音识别组整体隐藏时，生成设置卡片说明与「翻译方案」标题之间不再保留空档。识别来源的 `openvino` 显示为「本机 Parakeet TDT V2（Intel NPU）」；说话人数字紧跟标签，与逐词样式/置信度控件左对齐，「区分说话人（中文行标 [SPKn]，按颜色区分）」独占下一行并保持单行。逐词样式下拉 `#np-kstyle` 与置信度下拉同宽（`max-width:230px`），不再撑满整行；选项文案只保留「颜色高亮」「\k 卡拉OK」，去掉括号解释。≤1080px 单列恢复预览 → 输入 → 进度 → 设置的顺序；详细信息页仍用原来的 2×2 网格。
 - **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；输入框基础圆角 8px，Material You
-  下为 12px，与全局输入设计一致。
+  下为 12px，与全局输入设计一致。输入框占位文案为「输入备注/弹幕」；左侧**不再显示**
+  「当前播放位置」（原 `#note-at`）：时间轴底部状态栏已经有同一个时间，两处重复且会误导；
+  备注仍按发送时的 `video.currentTime` 记录。
 - **材质偏好**：毛玻璃压暗、模糊度、透明度由 `editor/js/studio-state.js` 保存、`studio.js` 同时算
   深浅色令牌、`studio.css` 末端统一应用，主题包不能绕开。
 - **浅色玻璃自动浅色字**：`editor/js/glass-contrast.js` 把卡片自身的半透明背景逐层压到页面底色上
@@ -325,6 +410,14 @@
   再对 `confidence-test`、`draft-role-gap-test`、`fetch-format-test`、`glommed-split-test`、
   `frame-units-test`、`asr-segment-parity-test`、`vibevoice-worker-test`、`diarize-wav-test` 逐个执行
   `python -B tests/<名>.py`。
+- **SRT→逐词 ASS / 事后说话人分离**：`tests/srt-ass-test.mjs`、`tests/speaker-map-test.mjs`、
+  `tests/realign-batch-test.mjs`（批量分段 / 按行切回词时间）、`tests/srt-realign-api-test.mjs`、
+  `tests/srt-ass-e2e-test.mjs`（假 `qwen_align.py` + 真 Python，跑通 realign→apply→writeSubtitle）、
+  `tests/realign-cancel-api-test.mjs`（长任务取消后作业 canceled、Python 进程已结束）、
+  `tests/diarize-api-test.mjs`（隔离服务 + 假 `diarize.py`：regions / 人数 0 与 3 / 取消后
+  worker PID 已结束）、
+  `tests/advanced-actions-test.mjs`（二次确认入口 / 路由接线 / 模板一致 / 进度卡主题）。缺 Python
+  或 CUDA 时相关用例输出 `SKIP` 记 partial，不加载真实对齐器/分离模型。
 - **静态检查**：全仓 JS 用 `node --check` 遍历 `editor/`、`tools/`、`tests/`（跳过 `vendor/`、`jsmod/`
   镜像与依赖目录）；Python 用 `ast.parse`。开发期另跑 ESLint、Ruff：`npx --yes eslint@9 editor/ tools/ tests/`
   与 `ruff check .`（配置见 `eslint.config.js`、`ruff.toml`），二者都不是运行时依赖。
@@ -402,6 +495,32 @@
 - 中英时间自愈对齐对 k 行必须走 `replaceEvents(events, buildWordSpecs(en))` 重建，不能逐条 `setEventTime`。
 - 新建初稿由**服务端直接产出 `\k`**（初稿在后台跑、用户可能已关闭页面）；`editor/k-line.js` 与编辑器
   `buildWordSpecsK` 同格式，二者一致性由交叉单测守着。
+
+### SRT → 逐词 ASS / 事后说话人分离
+
+- **SRT 转逐词 ASS 的前提**：对齐器按英文运行，所以只把**含英文原文**的行作为目标；
+  纯中文行不送对齐，但不会被丢掉 —— 转换时作为中文轨写入（`srt-ass.js`）。
+- **文本口径**：`normalizeSrtText` 合并空白并在 `, . ? !` 后补空格，使词划分与编辑器的
+  `splitEnglishWords` 一致；大小写/缩写/数字原样保留。词数对不上（标点并进词里）时退回按句内
+  时长平均分配，不写"半对半错"的时间。
+- **预览与写入**：与 ASS 重校对共用预览；勾选行用对齐时间，未勾选/失败行按句内时长分配。
+  `realign-full-apply` 重新核对稿件版本后才写 `subtitle.ass`，原 SRT 保留，项目字幕切换为 ASS。
+- **批量对齐**：逐行调用 Qwen 的固定开销很大（4h/4254 行实测约 0.4s/行）；`realign-batch.js`
+  把相邻行合并成 ≤60s / ≤24 行、空档 >4s 断开的段，每段一次模型调用，再把段内词时间按行
+  token 数切回并逐行走 `planBlock`。180s 样本（39 行 → 3 段）与逐行结果对比：38/39 行成功，
+  起始时间中位差 20ms、P90 60ms；600s 音频按 10×60s 段对齐约 15s（含模型加载与首次 CUDA 预热）。
+  4h 实测（321 段、8GB 显存）约 462s，4184/4254 行对齐；进度按段上报。**8GB 显存上 120s 段会逼近
+  CUDA 内存上限、偶发卡顿，故上限取 60s。**
+- **事后说话人分离**：只跑 `diarize.py`，服务端**不直接改字幕**；编辑器用
+  `speakerSpansForRows` 取每行最大重叠的说话人、按首次出现编号 SPK1..N，复用
+  `applyRoleToRowWith` 写 `[SPKn]`/Name/角色色（`\k` 行的 `\2c` 由 `recolorRoleInRows` 跟进），
+  然后自动保存。已有角色会被覆盖，确认框里明说。
+- **人数口径**：创建时填过就沿用；没填（0）让聚类按 threshold 自动判断（`diarize.py` 的
+  `num_clusters=max(0, args.speakers)`，`>0` 时 threshold 被忽略）。
+- **长音频分离很慢**：`diarize.py` 不分片，4h 实测约 80 分钟（约 20s / 音频分钟）。确认框会
+  显示预计时长（>30min 按钮变「仍要分离」），服务端每 15s 用心跳更新「已用/预计」并按时间
+  估算进度；`diarize-cancel` / 进度卡 × 可随时停止，切稿/退出应用也会收掉 worker。
+- **二次确认**：两个入口都先 `panel.showConfirm`；SRT 的确认文案会明确"生成逐词 ASS、原 SRT 保留"。
 
 ### 颜色设计
 
@@ -703,6 +822,160 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
 ### 最近状态
+
+**2026-10-23（4h 说话人分离 30% 长时间不动：预计时长/心跳/可停止，安装版 1.4.5）**
+
+- **现象（用户实测 4h 稿件）**：说话人分离卡在 30% 超过半小时；任务管理器看到两个 Python，
+  各约 2.5GB、GPU 一个 77.7%、一个 4.7%。
+- **核实**：其中只有一个是 SubFabric 的 `diarize.py`；另一个是无关的 Subforge/WhisperX 进程。
+  SubFabric 侧确认只有一个分离作业、一个 worker。进程 GPU 77.7% 说明它在算，不是死锁。
+- **根因**：`diarize.py` 把 4h 音频整段一次过模型（不分片），本机约 20s / 音频分钟 → 4h 约
+  80 分钟；sherpa 的 `process` 进度回调很稀疏，`区分说话人中…` 在 30% 停很久；而 UI 的
+  进度卡 × 只是“收起”，没有取消接口，用户无法停。
+- **修复**：
+  - 确认框按 `0.335 × 音频秒` 预估时长：4h 显示约 240 分钟音频 / 预计约 80 分钟；超过 30 分钟
+    时按钮变成「仍要分离」。
+  - 作业每 15s 心跳更新「已用 X / 预计 Y」，并按时间估算进度（真实回调更高时不回退）。
+  - 新增 `POST /api/projects/:id/diarize-cancel`；进度卡右上角 × 的 title 变为「停止任务」，
+    点击调取消；切稿/回首页/退出应用都会停掉 worker。`runDiarize` 接收 `ctl`，worker 仍登记
+    `projProcs`，取消走 `taskkill /T`。
+- **验证（本次）**：
+  - `tests/diarize-api-test.mjs` 增加慢 worker：取消后作业 `canceled`，worker PID 确实结束；
+    原有 regions / 人数 0 与 3 / 不改字幕断言保留。
+  - 全量 JS 回归 **123 通过 / 8 部分执行 / 0 失败 / 2 排除**
+    （报告 `_test/maintenance/js-results-145-diarize.json`）；ESLint 0 error；Python `ast.parse`。
+  - 安装版 `beta 1.4.5` / `1.4.5.0`；`build/installer/SubFabric-beta.1.4.5-setup.exe`
+    **36,559,060 字节**，SHA-256 `3fca687288c16bd8795dd1a6bae73e0c3df73ac8964ed2972aea99edb31fe2a5`。
+    程序已覆盖到 `D:\SubFabric\SubFabric`，`/api/version` 返回 `beta 1.4.5`、`vendorOk:true`，
+    `/api/quit` 后无 SubFabric Python 残留。
+  - **未跑完真实 4h 分离全流程**（预计约 80 分钟）：本轮只验证了预计时长/心跳/取消/退出收进程；
+    用户在安装版重试时可按预计时间决定是否继续，或随时点 × 停止。
+- **安装说明（重要）**：正常安装包已生成；本轮安装时 Windows UAC 被取消，改为把
+  `build/SubFabric.exe`、`editor/` 和改动的 `asr/qwen_align.py`、`asr/diarize.py` 覆盖到
+  `D:\SubFabric\SubFabric`。程序本身是 1.4.5；控制面板卸载项仍显示 1.4.4（`unins000` 未更新）。
+  需要同步卸载项时，以管理员身份再运行一次 `SubFabric-beta.1.4.5-setup.exe`。
+- **状态**：**已实现且已验证（取消/心跳/预计/退出收进程/安装版启动）**；真实 4h 分离完成时间
+  仍需用户按预计时长复验。GitHub：**尚未提交**（工作副本无 `.git`，本轮未上传）。
+
+**2026-10-23（4h SRT 对齐卡住 / 孤儿 Python / 浅色进度卡修复，安装版 1.4.4）**
+
+- **现象（用户实测 4 小时 SRT，4254 行）**：点「全片逐词重校对」后停在
+  「加载 Qwen 对齐器，准备对齐 4254 句…」（2%）五分钟没有结果；浅色主题下右下角进度卡是
+  一块写死深色的黑卡；退出 SubFabric 后 Python 对齐进程仍在后台。
+- **根因**：① 逐行调用 Qwen，每行约 0.4s（4254 行近半小时），且 CUDA 批量路径只在开始/结束
+  报进度，中间完全静默；② `#job-card` 背景写死 `rgba(22,24,31,.97)`；③ realign worker 没有
+  登记进 `projProcs`，退出只遍历 `CHILDREN`，且硬杀服务进程时子进程没有自保；
+  ④ 父进程看护最初用阻塞读 stdin，实测会和 `import torch` 死锁（任务卡在 3% 的第二个根因）。
+- **修复**：
+  - 新增 `editor/realign-batch.js`：相邻行合并为 ≤60s / ≤24 行、空档 >4s 断开的段；
+    CUDA/Vulkan 都按段调用，段内词时间按行 token 数切回并逐行走 `planBlock`。
+    4h 从约 4254 次调用降到 **321 段**。60s（而非 120s）是因为 8GB 显存上 120s 段会逼近
+    CUDA 内存上限、偶发卡顿。
+  - `qwen_align.py` 每段发 `{"type":"progress"}`；服务端解析后更新 `job.pct`（3–98），
+    并加 5 分钟无输出看门狗（主动杀 worker 并报原因）。
+  - `POST /api/projects/:id/realign-full-cancel` + 前端运行中「停止」按钮；切稿/退出应用同样停止。
+  - 对齐 worker（CUDA/Vulkan）登记 `projProcs`；`shutdown` 调 `killAllProjProcs()`；
+    `qwen_align.py` / `diarize.py` 支持 `SUBFABRIC_PARENT_WATCH=1`（每秒轮询父进程句柄，
+    不阻塞 stdin），父进程被硬杀也能在 1s 内自行收尾。
+    ⚠ 不要改回“阻塞读 stdin 等 EOF”：实测该运行时里 stdin 读线程会和 `import torch` 死锁。
+  - `#job-card` 改用 `var(--surface)` / `var(--line)`，浅色主题不再突兀。
+- **验证（本次）**：
+  - 全量 JS 回归 **123 通过 / 8 部分执行 / 0 失败 / 2 排除**
+    （报告 `_test/maintenance/js-results-144-clean.json`）；新增 `realign-batch-test`（15 项）、
+    `realign-cancel-api-test`（取消后作业 canceled、worker PID 已消失）、
+    `advanced-actions-test` 增加进度卡主题/取消接线断言；ESLint **0 error**；
+    `qwen_align.py` / `diarize.py` 通过 `ast.parse`。
+  - 真实模型抽样：180s（39 行 → 3 段）与逐行结果对比 38/39 行成功，起始时间中位差 **20ms**、
+    P90 **60ms**；600s 按 10×60s 段对齐约 15s（含模型加载与首次 CUDA 预热）。
+  - **4h 全量实测（安装版 1.4.4，测试副本）**：321 段，**462s（约 7.7 分钟）** 完成，
+    **4184/4254 行对齐（98.4%）**，进度持续上报；apply 生成 `subtitle.ass`
+    （30,065 词，3.8MB），原 SRT 保留、项目字幕切 ASS。测试副本随后删除；
+    用户原 4h 项目（`p-mvkapdta-pninp`）仍是 SRT、未被改动。
+  - 安装版：`beta 1.4.4` / `1.4.4.0`；`build/installer/SubFabric-beta.1.4.4-setup.exe`
+    **36,559,030 字节**，SHA-256 `cde235a5a9c5dbcd5b3e01c7d7713901fe7877cc50be0707e576f0517e0d226c`。
+    已安装到 `D:\SubFabric\SubFabric`：23 个项目、`asr/settings.json`、模型与运行时均保留；
+    启动后 `/api/version` 返回 `beta 1.4.4`、`vendorOk:true`，`/api/quit` 后无 SubFabric
+    Python/子进程残留。
+- **状态**：**已完成且已验证（源码/隔离服务/真实模型抽样/真实 4h 全量/安装版启动）**。
+  GitHub：**尚未提交**（工作副本无 `.git`，本轮未上传）。
+
+**2026-10-23（SRT 转逐词 ASS / 高级字幕操作补做说话人分离）**
+
+- **SRT 稿件上的「全片逐词重校对」**：以前 `realignTargets` 只接受 `.ass` 且要求已有逐词行，
+  SRT 稿件点了只会报错。现在：
+  - 点击按钮先二次确认（SRT 文案说明会生成逐词 ASS、原 SRT 保留）；确认后 POST 带
+    `{allowSrtToAss:true}`，服务端才允许 SRT 进入对齐流程，未带标记时明确拒绝，避免自动后处理等
+    路径悄悄改格式；
+  - `editor/srt-ass.js`（新增，纯逻辑）从 `subtitleSource` 的 SRT 行生成对齐目标
+    （只含有英文原文的行，`normalizeSrtText` 统一标点空格），并把勾选/失败行合成为
+    `writeSubtitle` 需要的 `{word,start,end}` segments（未勾选按句内时长分配，纯中文行只进中文轨）；
+  - 预览勾选后 POST `realign-full-apply`：只接受 `status=done` 的作业、核对稿件版本，复用
+    `writeSubtitle` 写 `subtitle.ass` 并切换 `meta.subtitle`；原 `subtitle.srt` 保留。
+    前端写完后 `Projects.openProject()` 重新载入为 ASS。
+- **高级字幕操作 → 说话人分离**：新增 `#btn-diarize`。点击先 `panel.showConfirm`，确认后
+  POST `/api/projects/:id/diarize` 启动后台作业（`diarizeJobs` 模块作用域、GET 轮询、10 分钟老化）。
+  服务端只返回 `regions`/`speakers`，**不直接改字幕**；编辑器按每行最大重叠映射为 SPK1..N，
+  复用 `applyRoleToRowWith` 写 `[SPKn]`/Name/角色色，`\k` 行的 `\2c` 由 `recolorRoleInRows`
+  跟进，随后自动保存并自动打开角色标注。创建时填过人数就沿用（`meta.draft.speakerCount`），
+  没填传 0；`asr/diarize.py` 改为 `num_clusters=max(0, ...)`，0 表示按 threshold 自动判断
+  （此前被 `max(1,...)` 强制成 1 人）。SRT 稿件点该按钮提示先用全片逐词重校对转 ASS。
+- **验证（本次）**：新增
+  `tests/srt-ass-test.mjs`（22 项：目标筛选/标点归一/未勾选分配/中文行保留/失败回退）、
+  `tests/speaker-map-test.mjs`（9 项：最大重叠/首次出现编号/短重叠跳过）、
+  `tests/srt-realign-api-test.mjs`（隔离服务：未确认的 SRT 被拒、确认后才进对齐准备、
+  无 done 结果拒绝 apply）、`tests/diarize-api-test.mjs`（隔离服务 + 假 `diarize.py`：
+  job done / regions / 0 与 3 人下发 / 服务端不改字幕）、
+  `tests/srt-ass-e2e-test.mjs`（隔离服务 + 假 `qwen_align.py` + 真 Python：4 行 SRT →
+  12 条中英逐词 ASS，原 SRT 保留、meta 切 ASS）、
+  `tests/advanced-actions-test.mjs`（两个入口都走 `showConfirm`、SRT 标记/apply 接线、
+  模板与生产 HTML 一致）。全量 JS 回归 **121 通过 / 8 部分执行 / 0 失败 / 2 排除**
+  （报告 `_test/maintenance/js-results-srt-diarize.json`；8 个 partial 均为缺真实素材/GUI 的既有跳过）；
+  ESLint **0 error**（21 条既有 warning）；`asr/diarize.py` 通过 `ast.parse`。
+- **未验证 / 未执行**：真实 Qwen3 对齐器权重与真实说话人分离模型上的质量/耗时（端到端用的是
+  只分配词时间的假 worker，不加载模型）；真实浏览器点击与 `Projects.openProject` 重载观感；
+  SRT 稿件同时含大量纯中文行/非标准双语顺序的边界；安装版需重新打包。
+- **状态**：**已实现但未验证（真实模型与浏览器人工验收未做）**；
+  GitHub：**尚未提交**（工作副本无 `.git`）。
+
+**2026-10-23（WhisperX + MDX + 说话人分离补充评测）**
+
+- **范围**：在《SubFabric ASR 三长度横评（2026-10-21）》同一素材（Minecraft 视频前
+  30s / 5min / 10min）、同一参考 ASS 上补测 WhisperX，**开 MDX 人声分离 + pyannote VAD +
+  说话人分离**，并与 SubFabric 当前 Whisper large-v2 + MDX + sherpa 说话人分离对比。
+  不改应用模型列表、不接入生产。
+- **环境**：WhisperX 3.4.2、faster-whisper 1.2.0、CTranslate2 4.4.0、PyTorch 2.7.1+cu126、
+  wav2vec2 base 960h 对齐；Whisper large-v2 CT2 float16，batch_size=8，language=en；
+  pyannote segmentation-3.0 VAD + speaker-diarization-3.1（6 speakers）。
+  SubFabric 一侧：Faster-Whisper-XXL large-v2 + MDX（`--vad_filter False`）+
+  `asr/diarize.py`（sherpa-onnx，6 speakers）。
+- **结果（本机同参考复跑）**：
+
+  | 方案 | 30s WER | 5min WER | 10min WER | 总耗时 30s / 5 / 10min | 说话人准确率 5 / 10min |
+  | --- | --- | --- | --- | --- | --- |
+  | WhisperX + MDX + pyannote | 1.19% | 8.59% | 9.23% | 47.4 / 497 / 997s | 64.5% / 62.9% |
+  | SubFabric XXL + MDX + sherpa | 1.19% | 9.44% | 11.31% | 16.1 / 141 / 299s | 73.2% / 65.1% |
+  | 2026-10-21 报告（XXL + MDX，无说话人分离） | 1.22% | 8.73% | 8.92% | 36.6 / 198 / 393s | — |
+
+- **结论**：MDX 后 WhisperX 的 ASR 与 SubFabric 打平甚至略好（30s 相同，5/10min 分别低
+  0.85 / 2.08pp）；但总耗时约为 SubFabric 的 3.3×，主要慢在 pyannote 说话人分离
+  （35.7 / 455 / 926s vs sherpa 5.5 / 93.4 / 178.1s）。说话人分离 SubFabric 更准
+  （5min 73.2% vs 64.5%，10min 65.1% vs 62.9%；句级最优标签映射，非 DER）。
+- **此前无 MDX 的 19.51% / 14.03% 保留为对照**，不能代表 WhisperX 的真实水平；
+  SubFabric 复跑的 9.44% / 11.31% 与报告值 8.73% / 8.92% 有 0.7 / 2.4pp 差异，原因尚未完全
+  定位（报告可能含额外分句/清洗），相对比较统一用本轮同参考、同 MDX 人声。
+- **pyannote VAD 修复**：根因是 SpeechBrain `LazyModule.__getattr__` 在 Lightning 的
+  `inspect.stack()` / `inspect.getmodule()` 中递归；在 import `whisperx.diarize` 前让 dunder
+  属性直接 `AttributeError`，并设 `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1`。30/300s 通过；
+  600s 单次 VAD >40min 未返回，改为 2×300s 后 WER 9.23%。补丁：
+  `docs/whisperx-2026-10-23/mdx-diar/pyannote_fix.py`。
+- **报告**：[docs/SubFabric-WhisperX-补充评测-2026-10-23.pdf](SubFabric-WhisperX-补充评测-2026-10-23.pdf)
+  （4 页）；合并版
+  [docs/SubFabric-ASR-横评报告-2026-10-21（含WhisperX补充）.pdf](<docs/SubFabric-ASR-横评报告-2026-10-21（含WhisperX补充）.pdf>)
+  （原 10 页 + 补充 4 页）。数据与复现：
+  `docs/whisperx-2026-10-23/mdx-diar/`（results.json、hyp-*.json、whisperx-diar-*.json、
+  subfabric-diar-*.json、speaker-eval-*.json、pyannote_fix.py）。
+- **状态**：**评测已完成且已验证（本机单次，RTX 4060 Laptop 8GB）**；**未接入生产**；
+  GitHub：**尚未提交**（本轮只新增评测报告与数据文件）。
 
 **2026-10-22（Python 环境卡“检测中”卡死修复）**
 

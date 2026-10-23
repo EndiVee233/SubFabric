@@ -12,6 +12,9 @@ export async function isolatedServer(options = {}) {
   fs.cpSync(path.join(options.source || SOURCE, 'editor'), editor, { recursive: true,
     filter: p => !/[\\/](vendor|node_modules)([\\/]|$)/.test(p) });
   fs.mkdirSync(path.join(root, 'asr'), { recursive: true });
+  /* 个别测试需要在服务启动**之前**写隔离副本里的 asr/settings.json（例如指定 Python
+   * 解释器，ASR_PY 在启动时就解析好了，后写不生效）。回调只拿到隔离副本的 root。 */
+  if (typeof options.prepare === 'function') await options.prepare(root, editor);
   const listener = net.createServer();
   await new Promise(r => listener.listen(0, '127.0.0.1', r));
   const port = listener.address().port;

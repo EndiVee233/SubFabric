@@ -79,4 +79,33 @@ function sliceRange(start, end, pad, duration) {
   return { from, to: Math.max(from, to) };
 }
 
-export { hotwordCandidates, matchPickedWords, sliceRange };
+/**
+ * 初稿逐词 ASS 的句块时间：取「句时间 ∪ 实测词跨度」——首词起点、末词终点以**实测词**为准。
+ *
+ * 为什么需要：ASR 给的句级 start/end 常常比词级时间宽（句前静音算进了句子）或窄
+ * （句尾被截短）。旧实现把首片硬贴 s.start、末片硬收 s.end，于是首词高亮比真实语音早、
+ * 末词收音也比真实语音早（用户实测「首词开始、末词结束略微偏早」）。
+ *
+ * 容差：词时间与句时间相差超过 tolerance（默认 1s）时视为脏数据，保留原句时间，
+ * 不拿它去拉整行 —— 宁可不动，也不要把一行字幕整体挪走。
+ *
+ * @param seg  { start, end, words?: [{start,end}] | [{s,e}] }
+ * @returns {{ start:number, end:number }}  时间不可用时原样返回
+ */
+function wordSpanRange(seg, tolerance) {
+  const s = seg || {};
+  const a = Number(s.start), b = Number(s.end);
+  const words = Array.isArray(s.words) ? s.words : [];
+  if (!words.length) return { start: a, end: b };
+  const pick = (w, k) => Number(w && (w[k] != null ? w[k] : (k === 'start' ? w.s : w.e)));
+  const first = pick(words[0], 'start');
+  const last = pick(words[words.length - 1], 'end');
+  if (!Number.isFinite(first) || !Number.isFinite(last) || !(last > first)) return { start: a, end: b };
+  const tol = Number.isFinite(Number(tolerance)) ? Math.abs(Number(tolerance)) : 1;
+  return {
+    start: Math.abs(first - a) <= tol ? first : a,
+    end: Math.abs(last - b) <= tol ? last : b,
+  };
+}
+
+export { hotwordCandidates, matchPickedWords, sliceRange, wordSpanRange };

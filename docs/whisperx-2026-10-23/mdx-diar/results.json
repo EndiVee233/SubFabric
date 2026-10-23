@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-23",
+  "report": "SubFabric-WhisperX-补充评测-2026-10-23.pdf",
+  "scope": "WhisperX + MDX 人声分离 + pyannote VAD + pyannote diarization，对比 SubFabric 当前 Whisper large-v2 + MDX + sherpa 说话人分离；同一素材、同一 30s/5min/10min 切片、同一参考。",
+  "environment": {
+    "whisperx": "3.4.2",
+    "faster_whisper": "1.2.0",
+    "ctranslate2": "4.4.0",
+    "torch": "2.7.1+cu126",
+    "asr_model": "Whisper large-v2 (CTranslate2, float16)",
+    "asr_audio": "Faster-Whisper-XXL --ff_vocal_extract mdx_kim2 --ff_dump 输出的人声 wav",
+    "vad": "pyannote segmentation-3.0 (WhisperX Pyannote), onset 0.5 / offset 0.363 / chunk 30s",
+    "diarization": "pyannote/speaker-diarization-3.1, num_speakers=6",
+    "align": "wav2vec2 base 960h (torchaudio)",
+    "subfabric": "Whisper large-v2 + MDX; diarize.py sherpa-onnx pyannote segmentation + speaker embedding, --speakers 6"
+  },
+  "reference": {
+    "file": "精校过前两小时的字幕.ass",
+    "method": "Default English events, strip tags, de-duplicate word-highlight events",
+    "normalized_words": { "30s": 84, "300s": 943, "600s": 1875 }
+  },
+  "whisperx_mdx_diar": {
+    "wer_pct": { "30s": 1.19, "300s": 8.59, "600s": 9.23 },
+    "sdi": {
+      "30s": { "sub": 0, "del": 1, "ins": 0, "hyp_words": 83 },
+      "300s": { "sub": 36, "del": 43, "ins": 2, "hyp_words": 902 },
+      "600s": { "sub": 68, "del": 90, "ins": 15, "hyp_words": 1800 }
+    },
+    "timing_sec": {
+      "30s": { "asr_align": 11.73, "diarize": 35.7, "total": 47.4 },
+      "300s": { "asr_align": 42.18, "diarize": 454.8, "total": 497.0 },
+      "600s": { "asr_align": 71.12, "diarize": 925.7, "total": 996.8 }
+    },
+    "speaker_accuracy_pct": { "300s": 64.5, "600s": 62.9 },
+    "speaker_count": { "300s": 4, "600s": 6 },
+    "notes": [
+      "30s 参考只有 1 个说话人，6 簇说话人分离的 22.2% 准确率不具比较意义。",
+      "300/600 的准确率是句级最优标签映射后的正确率；参考说话人来自中文字幕的 [name] 标记，不是帧级 DER。",
+      "600s 单次 pyannote VAD 在本机超时（>40min），此处按 2×300s 切分后拼接；ASR 时间 58.6s + 对齐 12.5s。"
+    ]
+  },
+  "subfabric_mdx_diar": {
+    "wer_pct": { "30s": 1.19, "300s": 9.44, "600s": 11.31 },
+    "timing_sec": {
+      "30s": { "asr": 10.58, "diarize": 5.5, "total": 16.1 },
+      "300s": { "asr": 47.83, "diarize": 93.4, "total": 141.2 },
+      "600s": { "asr": 120.92, "diarize": 178.1, "total": 299.0 }
+    },
+    "speaker_accuracy_pct": { "300s": 73.2, "600s": 65.1 },
+    "speaker_count": { "300s": 4, "600s": 6 },
+    "notes": [
+      "ASR 为 Faster-Whisper-XXL 在 MDX 人声上、--vad_filter False 的复跑；WER 与 2026-10-21 报告值 8.73/8.92 有 0.7/2.4pp 差异，原因未完全定位（报告可能有额外清洗/分句），本对比统一用本轮同口径。",
+      "说话人分离为 asr/diarize.py + 已安装 sherpa-onnx 模型，--speakers 6。"
+    ]
+  },
+  "published_2026_10_21": {
+    "wer_pct": { "30s": 1.22, "300s": 8.73, "600s": 8.92 },
+    "total_sec": { "30s": 36.6, "300s": 198.07, "600s": 393.35 },
+    "note": "含 MDX 人声分离，未含说话人分离；表格总耗时来自 2026-10-21 报告。"
+  },
+  "no_mdx_whisperx": {
+    "wer_pct": { "30s": 1.19, "300s": 19.51, "600s": 14.03 },
+    "note": "旧口径：WhisperX + Silero VAD，无 MDX，无 diarization；保留用于说明人声分离的影响。"
+  },
+  "pyannote_fix": {
+    "file": "pyannote_fix.py",
+    "root_cause": "SpeechBrain LazyModule.__getattr__ 在 Lightning 的 inspect.stack()/inspect.getmodule() 中被递归解析；同时 torch>=2.6 的 weights_only 需要 TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1。",
+    "fix": "在 import whisperx.diarize 前，把 LazyModule 的 __file__/__spec__ 等 dunder 属性直接抛 AttributeError；保留原 __getattr__ 处理普通属性。",
+    "verified": "30s/300s pyannote VAD + diarization 通过；600s 单次 VAD 超时，2×300s 通过。"
+  },
+  "files": {
+    "hyp_30s": "hyp-30s.json",
+    "hyp_300s": "hyp-300s.json",
+    "hyp_600s": "hyp-600s.json",
+    "whisperx_diar_30s": "whisperx-diar-30s.json",
+    "whisperx_diar_300s": "whisperx-diar-300s.json",
+    "whisperx_diar_600s": "whisperx-diar-600s.json",
+    "subfabric_diar_30s": "subfabric-diar-30s.json",
+    "subfabric_diar_300s": "subfabric-diar-300s.json",
+    "subfabric_diar_600s": "subfabric-diar-600s.json",
+    "speaker_eval_300s": "speaker-eval-300s.json",
+    "speaker_eval_600s": "speaker-eval-600s.json",
+    "pyannote_fix": "pyannote_fix.py"
+  }
+}

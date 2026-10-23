@@ -131,6 +131,15 @@ const mf2 = R.mergeTinyFrags([[w('a', 0, 0.2), w('b', 0.2, 0.4)], [w('c,', 0.5, 
 ok(mf2.length === 1 && mf2[0].length === 3, 'mergeTinyFrags 末尾碎片并回上一句', JSON.stringify(mf2.map(g => g.map(x => x.word))));
 const mf3 = R.mergeTinyFrags([[w('uh,', 0, 0.3)]]);
 ok(mf3.length === 1, 'mergeTinyFrags 只有碎片时不合并成空');
+/* 问句后面的单个词（如「,Spoke」）：离上一句近 → 并回上一句，不再推给下一句 */
+const mf4 = R.mergeTinyFrags([
+  [w('do', 0, 0.3), w('that?', 0.3, 0.8)],
+  [w('spoke,', 0.9, 1.2)],
+  [w('then', 3.0, 3.3), w('go.', 3.3, 3.6)],
+]);
+ok(mf4.length === 2 && mf4[0].map(x => x.word).join(' ') === 'do that? spoke,',
+  'mergeTinyFrags 中间碎片离上一句更近时并回上一句', JSON.stringify(mf4.map(g => g.map(x => x.word))));
+ok(mf4[1].map(x => x.word).join(' ') === 'then go.', '下一句文本不被碎片污染');
 
 /* ── groupsToSegments ── */
 const gs = R.groupsToSegments([[w('a,', 0, 0.5), w('b', 0.5, 1)]]);

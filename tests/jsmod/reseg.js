@@ -302,18 +302,25 @@ function softFold(group) {
   return [head].concat(softFold(tail));
 }
 
-/** 极短碎片（<2词 且 <1s）并入下一句；末尾碎片并回上一句 */
+/** 极短碎片（<2 词且 <1s）并入**更近**的一侧。
+ *
+ *  旧实现一律并进下一句：用户实测问句后面的「,Spoke」被并到下一句，下一句的文本和时间
+ *  都被改掉。句内词间停短、句间停长，所以看前后空档：离上一句更近就并回上一句，
+ *  离下一句更近才并进下一句；首组没有上一句只能并进下一句，末组并回上一句。 */
 function mergeTinyFrags(groups) {
   if (groups.length <= 1) return groups.slice();
   const isTiny = (g) => g.length < 2 && (g[g.length - 1].end - g[0].start) < 1.0;
   const out = [];
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    if (isTiny(g)) {
-      if (i < groups.length - 1) groups[i + 1] = g.concat(groups[i + 1]);   // 并入下一组
-      else if (out.length) out[out.length - 1] = out[out.length - 1].concat(g); // 末尾并回上一组
-      else out.push(g);
-    } else out.push(g);
+    if (!isTiny(g)) { out.push(g); continue; }
+    const prev = out[out.length - 1] || null;
+    const next = groups[i + 1] || null;
+    const gapPrev = prev ? g[0].start - prev[prev.length - 1].end : Infinity;
+    const gapNext = next ? next[0].start - g[g.length - 1].end : Infinity;
+    if (prev && (gapPrev <= gapNext || !next)) { out[out.length - 1] = prev.concat(g); continue; }
+    if (next) { groups[i + 1] = g.concat(next); continue; }
+    out.push(g);
   }
   return out.filter(g => g.length);
 }

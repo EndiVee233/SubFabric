@@ -1,0 +1,40 @@
+{
+ "n": 30,
+ "segments": 9,
+ "ref_speakers": 1,
+ "whisperx": {
+  "mapping": {
+   "SPEAKER_00": "wemmbu"
+  },
+  "pairs": 9,
+  "correct": 2,
+  "accuracy_pct": 22.2,
+  "coverage_pct": 100.0,
+  "ref_speakers": 1,
+  "hyp_speakers": 5,
+  "profiles": {
+   "SPEAKER_00": 2,
+   "SPEAKER_01": 2,
+   "SPEAKER_02": 2,
+   "SPEAKER_04": 2,
+   "SPEAKER_05": 1
+  }
+ },
+ "subfabric": {
+  "mapping": {
+   "5": "wemmbu"
+  },
+  "pairs": 9,
+  "correct": 4,
+  "accuracy_pct": 44.4,
+  "coverage_pct": 100.0,
+  "ref_speakers": 1,
+  "hyp_speakers": 4,
+  "profiles": {
+   "0": 2,
+   "1": 2,
+   "2": 1,
+   "5": 4
+  }
+ }
+}

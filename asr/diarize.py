@@ -8,6 +8,8 @@
 
 --speakers: 说话人数量(用户在界面上填的)。没填默认 6 —— 分离模型按聚类分组,
             聚类数 = 说话人数, 填多了会拆出空组/把同一人拆开, 所以让用户告知。
+            传 0 表示让聚类按 threshold 自动判断人数（编辑器「说话人分离」按钮
+            在创建时没填人数就走这条）。
 --provider: auto(默认, 仅当装的是 CUDA 版 sherpa-onnx 时走 GPU, 否则 CPU) / cpu(强制 CPU)。
             CUDA 需要 CUDA 版 sherpa-onnx + N 卡驱动 + nvidia-* 运行库(与 asr.py 同一套)。
 
@@ -23,10 +25,45 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 import wave
 
 SR = 16000
+
+
+def _parent_alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    import ctypes
+    h = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not h:
+        return ctypes.windll.kernel32.GetLastError() == 5
+    try:
+        return ctypes.windll.kernel32.WaitForSingleObject(h, 0) != 0
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+
+
+def watch_parent():
+    """父进程（SubFabric 服务）退出后 1s 内退出，避免留下孤儿进程。
+
+    不能阻塞读 stdin：实测它和 torch 的导入会死锁；这里轮询父进程句柄。"""
+    if os.environ.get("SUBFABRIC_PARENT_WATCH") != "1":
+        return
+    ppid = os.getppid()
+
+    def run():
+        while True:
+            time.sleep(1)
+            if not _parent_alive(ppid):
+                os._exit(0)
+
+    threading.Thread(target=run, daemon=True).start()
 
 
 def emit(obj):
@@ -121,10 +158,11 @@ def main():
     ap.add_argument("--embedding", required=True, help="说话人嵌入模型 onnx")
     ap.add_argument("--audio", required=True, help="16kHz 单声道 PCM wav")
     ap.add_argument("--out", required=True, help="结果 JSON 输出路径")
-    ap.add_argument("--speakers", type=int, default=6, help="说话人数量(用户填的)")
+    ap.add_argument("--speakers", type=int, default=6, help="说话人数量(用户填的; 0=自动判断)")
     ap.add_argument("--provider", default="auto", choices=["auto", "cpu"],
                     help="推理设备: auto(默认, 先试 CUDA GPU, 失败回退 CPU) / cpu(强制 CPU)")
     args = ap.parse_args()
+    watch_parent()
 
     try:
         import numpy as np
@@ -155,7 +193,7 @@ def main():
                 embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
                     model=args.embedding, provider=provider),
                 clustering=sherpa_onnx.FastClusteringConfig(
-                    num_clusters=max(1, args.speakers), threshold=0.5),
+                    num_clusters=max(0, args.speakers), threshold=0.5),
                 min_duration_on=0.3,
                 min_duration_off=0.5,
             )

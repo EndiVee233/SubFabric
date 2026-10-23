@@ -373,11 +373,15 @@ export class EditorPanel {
     /* 新建字幕必须立刻看到输入框：跳过 .tab-body 的 260ms 入场，
        否则会表现为“已经切过去了但卡住零点几秒”。 */
     const targetBody = document.getElementById(bodies[name]);
+    /* 从角色/设置/日志回到字幕页时不放 260ms 面板淡入：字幕列表是工作区，
+       用户改完角色切回来就要能立刻点条目（否则看起来"列表要等一下才出来"）。
+       新建字幕的 opts.instant 仍走同一套直接显示。 */
+    const instantReveal = !!opts.instant || (name === 'subs' && prevTab !== 'subs');
     /* 该类要一直留到下次切页：提前移除会让 .tab-body 的 260ms 动画在之后重新启动。 */
     for (const el of document.querySelectorAll('.tab-body.is-instant-reveal')) {
-      if (!opts.instant || el !== targetBody) el.classList.remove('is-instant-reveal');
+      if (!instantReveal || el !== targetBody) el.classList.remove('is-instant-reveal');
     }
-    if (opts.instant && targetBody) targetBody.classList.add('is-instant-reveal');
+    if (instantReveal && targetBody) targetBody.classList.add('is-instant-reveal');
     for (const [k, id] of Object.entries(bodies)) {
       const el = document.getElementById(id);
       if (el) el.classList.toggle('active', k === name);
@@ -974,7 +978,12 @@ export class EditorPanel {
       void spacer.offsetHeight;
     }
     const w = spacer.clientWidth || listEl.clientWidth || 0;
-    if (this._hW !== w) { this._h.clear(); this._hW = w; }      // 面板宽度变了 → 换行变了 → 高度作废
+    /* 面板隐藏（角色/设置/日志页）时 clientWidth 是 0，**不能**把 0 当成新的测量宽度记住：
+     * 否则任何在隐藏页里发生的条目重建（改角色、改文本…）都会清空整张高度缓存，
+     * 切回字幕页时再按真实宽度重测所有卡片 —— 实测 1200 行约 500ms，表现就是
+     * 「点完人物立刻点字幕列表会卡一下」。宽度为 0 时保留原缓存与 _metricsDirty，
+     * 等列表可见、拿到真实宽度后再校正（宽度真的变了才清）。 */
+    if (w && this._hW !== w) { this._h.clear(); this._hW = w; }   // 面板宽度变了 → 换行变了 → 高度作废
     if (this._h.size > 200000) this._h.clear();                // 极端长会话积累的旧指纹, 兜底清一次(阈值要够大, 否则大稿件每次操作都被清表重测)
 
     const keys = new Array(n);

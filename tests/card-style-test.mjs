@@ -55,7 +55,7 @@ ok(/overflow:\s*hidden/.test(card || ''), '仍保留 overflow:hidden（逐词溢
 const styleRule = ruleBody(CARD + ' .cc-style');
 ok(styleRule !== null, '存在 .cc-style 规则');
 ok(!/opacity:\s*0/.test(styleRule || ''), '样式标签没有隐藏（常驻）');
-ok(/font-size:\s*8\.2px/.test(styleRule || ''), '样式标签是低对比小字号');
+ok(/font-size:\s*9px/.test(styleRule || ''), '样式标签是低对比小字号（9px）');
 ok(/\.cue-card\.playing::after\s*\{\s*content:\s*none/.test(CSS), '旧的 playing ::after 文本已关闭');
 const l2sep = ruleBody(CARD + ' .cc-l2-sep');
 ok(/border-top:\s*0/.test(l2sep || ''), '新卡片不画中英分隔线');
@@ -64,9 +64,9 @@ ok(times !== null && /border-right:\s*0/.test(times), '时间栏不再有竖分�
 const tspan = CSS.match(/:is\(#editor-panel #cue-list, \.cue-measure\) \.cc-t > span \{ display: none; \}/);
 ok(!!tspan, '时间标签隐藏，只留低对比时间值');
 const l1 = ruleBody(CARD + ' .cc-l1');
-ok(/font-size:\s*12\.5px/.test(l1 || '') && /font-weight:\s*500/.test(l1 || ''), '中文行 12.5px / 500');
+ok(/font-size:\s*13\.5px/.test(l1 || '') && /font-weight:\s*500/.test(l1 || ''), '中文行 13.5px / 500');
 const l2 = ruleBody(CARD + ' .cc-l2');
-ok(/font-size:\s*10\.4px/.test(l2 || ''), '英文行 10.4px（比中文退一档）');
+ok(/font-size:\s*11\.2px/.test(l2 || ''), '英文行 11.2px（比中文退一档）');
 
 console.log('\n== 主题与兼容 ==');
 ok(/body\[data-theme="light"\] :is\(#editor-panel #cue-list, \.cue-measure\)/.test(CSS), '浅色主题有独立卡片变量');

@@ -67,6 +67,23 @@ ok(w.length === 4 && j(w.map(x => x.w)) === j(['SMP,', 'I', 'plan.', 'to']), 're
     '改字幕即使词数不变也按新字母数重分配', j(changedWord));
 }
 
+/* 拖动字幕块（只改时间、不改文本）→ 按原相对位置缩放，保住每词真实时长。
+   曾经这里与"改文本"共用同一分支、按字母数重铺，拖动后词时长全乱（用户反馈）。 */
+{
+  const sent = { start: 10, end: 14, text: 'alpha beta gamma delta', words: [
+    { w: 'alpha', s: 10.0, e: 10.4 }, { w: 'beta', s: 10.4, e: 11.6 },
+    { w: 'gamma', s: 11.6, e: 12.0 }, { w: 'delta', s: 12.0, e: 14.0 },
+  ] };
+  const moved = K.recalcWords(sent, sent.text, 10.3, 14.3);
+  ok(moved.every((w, i) => Math.abs((w.e - w.s) - (sent.words[i].e - sent.words[i].s)) < 1e-6),
+    '整块平移：每词时长不变', j(moved));
+  ok(Math.abs(moved[0].s - 10.3) < 1e-6 && Math.abs(moved[3].e - 14.3) < 1e-6,
+    '整块平移：首词/末词贴到新边界', j(moved));
+  const resized = K.recalcWords(sent, sent.text, 9.5, 14.5);
+  ok(Math.abs((resized[1].e - resized[1].s) - 1.2 * 1.25) < 1e-6,
+    '整块拉长：每词时长按比例缩放', j(resized));
+}
+
 /* 边界: 纯标点 */
 ok(j(S('...')) === j(['...']), '纯标点文本(单块)', j(S('...')));
 ok(j(S('a . b')) === j(['a.', 'b']), '空格+标点混合', j(S('a . b')));

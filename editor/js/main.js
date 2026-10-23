@@ -8,7 +8,7 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
   speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
-  highlightTagForRebuild, applyRealignItems } from './karaoke.js';
+  highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
@@ -54,6 +54,7 @@ const btnExportFull = document.getElementById('btn-export-full');
 // 导出视频（硬字幕压制 / 生肉 / 字幕）—— 见 js/export-video.js
 const btnExportVideo = document.getElementById('btn-export-video');
 const btnFix = document.getElementById('btn-fix-subs');
+const btnDiarize = document.getElementById('btn-diarize');
 const wordConvertStyle = document.getElementById('word-convert-style');
 const wordConvertScope = document.getElementById('word-convert-scope');
 const btnConvertWords = document.getElementById('btn-convert-words');
@@ -1611,6 +1612,10 @@ function setSrt(text, name) {
   if (btnExportVideo) btnExportVideo.disabled = false;
   btnExportClean.disabled = true;
   btnExportJson.disabled = true;
+  /* 项目模式才有的低频操作。SRT 稿件也能点「全片逐词重校对」（确认后转逐词 ASS），
+   * 所以这里只按有没有项目判；说话人分离由点击处理里给 SRT 明确提示。 */
+  if (typeof realignEls !== 'undefined' && realignEls.btn) realignEls.btn.disabled = !state.project;
+  if (btnDiarize) btnDiarize.disabled = !state.project;
   statusFile.textContent = t(`${name} · ${state.srtCues.length} 条`);
   toast(`已打开 SRT：${state.srtCues.length} 条（双语）`);
 }
@@ -1874,6 +1879,8 @@ function setAss(text, name) {
    *   起不到保护作用（这里原来写的就是 const，注释以为 typeof 能挡住，其实挡不住）。
    *   var 会被提升并初始化为 undefined，typeof 才真的返回 'undefined'。 */
   if (typeof realignEls !== 'undefined' && realignEls.btn) realignEls.btn.disabled = !state.project;
+  // 说话人分离同样需要项目（要有 audio.wav）；SRT 由点击处理提示先转 ASS
+  if (btnDiarize) btnDiarize.disabled = !state.project;
   const hasKar = !!state.kar.wordStyle;
   btnExportClean.disabled = !hasKar;
   btnExportJson.disabled = !hasKar;
@@ -2766,13 +2773,13 @@ function setEventSpeakerTag(ev, tag) {
   return true;
 }
 
-/** 把某一行字幕的说话人改成 name(含标签/Name 栏/颜色), 不含重建与提示 —— 供单行与"角色合并"复用 */
-function applyRoleToRow(hit, name) {
+/** 把某一行字幕的说话人改成 name(含标签/Name 栏/颜色), 不含重建与提示 —— 供单行与"角色合并"复用。
+ *  colorHex 由调用方给出时直接用（批量写角色时避免每行重新 computeRoles，几千行会卡）。
+ *  颜色即身份: 目标角色已有颜色时, 连该块行首色标一起换成目标角色的颜色。 */
+function applyRoleToRowWith(hit, name, colorHex) {
   const tag = '[' + name + ']';
-  // 颜色即身份: 目标角色已有颜色时, 连该块行首色标一起换成目标角色的颜色
-  const role = computeRoles().find(r => r.name.toLowerCase() === String(name).toLowerCase());
-  const newAss = role && role.color ? hexToAss(role.color) : null;
-  const hexNorm = role && role.color ? ('#' + String(role.color).replace(/^#/, '').toLowerCase()) : null;
+  const newAss = colorHex ? hexToAss(colorHex) : null;
+  const hexNorm = colorHex ? ('#' + String(colorHex).replace(/^#/, '').toLowerCase()) : null;
   const leadRe = /^(\s*\{[^}]*?\\c&H)([0-9A-Fa-f]{6})(&)/;
   for (const s of [hit.zh, hit.en]) {
     if (!s) continue;
@@ -2800,6 +2807,12 @@ function applyRoleToRow(hit, name) {
   }
   if (hexNorm) hit.color = hexNorm;
   hit.speaker = tag;
+}
+
+/** 单行/合并路径：颜色从现有角色里查（找不到就只写标签，不改色）。 */
+function applyRoleToRow(hit, name) {
+  const role = computeRoles().find(r => r.name.toLowerCase() === String(name).toLowerCase());
+  applyRoleToRowWith(hit, name, role && role.color ? role.color : null);
 }
 
 /** 角色栏单击(单行): 改完重建 + 提示 */
@@ -4853,12 +4866,18 @@ const jobCardEls = {
   close: document.getElementById('jc-close'),
 };
 let jobCardHideTimer = 0;
+/* 可取消的长任务（说话人分离）在进度卡右上角 × 上挂一个"停止"回调；
+ * 其它任务（反思/重识别等）保持"收起，后台继续"。 */
+let jobCardOnClose = null;
 
-/** 显示/更新进度卡。pct 传 null 表示"进度未知"，用条纹动画 */
-function jobCardShow(title, msg, pct, foot) {
+/** 显示/更新进度卡。pct 传 null 表示"进度未知"，用条纹动画。
+ *  onClose 可选：传入时右上角 × 变成"停止任务"，点击先收起再调它。 */
+function jobCardShow(title, msg, pct, foot, onClose) {
   const e = jobCardEls;
   if (!e.box) return;
   clearTimeout(jobCardHideTimer);
+  jobCardOnClose = typeof onClose === 'function' ? onClose : null;
+  if (e.close) e.close.title = jobCardOnClose ? '停止任务' : '收起（任务仍在后台继续）';
   e.box.hidden = false;
   e.box.classList.remove('jc-done', 'jc-err');
   if (e.title && title != null) e.title.textContent = String(title);
@@ -4888,9 +4907,14 @@ function jobCardDone(title, msg, ok) {
 
 function jobCardHide() {
   clearTimeout(jobCardHideTimer);
+  jobCardOnClose = null;
   if (jobCardEls.box) jobCardEls.box.hidden = true;
 }
-if (jobCardEls.close) jobCardEls.close.addEventListener('click', jobCardHide);
+if (jobCardEls.close) jobCardEls.close.addEventListener('click', () => {
+  const stop = jobCardOnClose;
+  jobCardHide();
+  if (stop) stop();
+});
 
 /* ═══════════ 长稿反思纠错（预览优先）═══════════════
  * 流程：点「🧠 反思纠错」→ 服务端让 LLM **通读全片**（分批 + 相邻批重叠）
@@ -5491,11 +5515,41 @@ function stripLeadSpeakerTag(text) {
 }
 
 
-/** 中文按英文词数比例切：这是文本分句边界，不是逐词时间分配。 */
+/** 中文分句切点：先按英文词数比例得到目标位置，再就近吸附到**可切位置**。
+ *
+ *  旧实现直接按字数比例切，中文没有词边界，于是经常切在词/名字中间
+ *  （用户实测："ABCDE FGHIJ" 被切成 "ABCD" / "E FGHIJ"）。现在按优先级就近吸附：
+ *    ① 标点之后（，。！？；：、,.!?;:…— 等）—— 语义边界最可靠；
+ *    ② 落在英文/数字串中间时，挪到该串的起点或终点（离哪边近去哪边）；
+ *    ③ 都没有才切在字间，并避免拆开代理对（emoji）。
+ *  只影响**文本切点**，词级时间仍按英文词数 k / nEn 分配。 */
 function splitZhText(zhText, k, nEn) {
   const zh = stripLeadSpeakerTag(zhText).trim();
-  if (!zh || nEn < 1 || k <= 0 || k >= nEn) return [zh, ''];
-  const cut = Math.max(1, Math.min(zh.length - 1, Math.round(zh.length * k / nEn)));
+  const len = zh.length;
+  if (!zh || nEn < 1 || k <= 0 || k >= nEn || len < 2) return [zh, ''];
+  const target = Math.max(1, Math.min(len - 1, Math.round(len * k / nEn)));
+  const isPunct = ch => /[，。！？；：、,.!?;:…—）》」』”’]/.test(ch || '');
+  const isAlnum = ch => /[0-9A-Za-z]/.test(ch || '');
+  let cut = target;
+  // ① 就近找"标点之后"：标点留在前半句
+  const win = Math.max(3, Math.round(len * 0.25));
+  let best = -1, bestD = Infinity;
+  for (let i = Math.max(1, target - win); i <= Math.min(len - 1, target + win); i++) {
+    if (!isPunct(zh[i - 1]) || isPunct(zh[i])) continue;
+    const d = Math.abs(i - target);
+    if (d < bestD) { best = i; bestD = d; }
+  }
+  if (best > 0) cut = best;
+  // ② 切在英文/数字串中间 → 挪到最近的串边界
+  else if (isAlnum(zh[cut - 1]) && isAlnum(zh[cut])) {
+    let a = cut, b = cut;
+    while (a > 0 && isAlnum(zh[a - 1])) a--;
+    while (b < len && isAlnum(zh[b])) b++;
+    cut = (cut - a <= b - cut) ? a : b;
+  }
+  // ③ 兜底：不拆代理对
+  if (cut > 0 && cut < len && /[\uDC00-\uDFFF]/.test(zh[cut]) && /[\uD800-\uDBFF]/.test(zh[cut - 1])) cut--;
+  cut = Math.max(1, Math.min(len - 1, cut));
   return [zh.slice(0, cut).trim(), zh.slice(cut).trim()];
 }
 
@@ -5716,10 +5770,14 @@ async function retranslateRow(item) {
  * 但整句时间往往是对的 —— 重新识别整段代价大、还可能把正确的文本改坏。
  */
 let realignBusy = false;
+/* 同一时间只跑一条；正在跑时再右键别的句子进队列按顺序执行（2026-10-23 用户要求）。
+ * 队列记的是 realignTargetKey + 文本 + 句时间，执行时**按 key 重新定位句子**：
+ * 前一条重排会 rebuildItemsAndLanes 换掉句子对象，直接持有旧对象会把结果写丢。 */
+const realignQueue = [];
+let realignRunningKey = '';
 
-async function realignRow(item) {
-  if (realignBusy) { toast('正在重排另一条，请稍等', 3200); return; }
-  if (!state.project) { toast('重排逐词时间需要项目模式（要用项目里保存的音频与模型）', 4600); return; }
+/** 校验右键目标并整理成可排队的快照；不合法时已经 toast，返回 null。 */
+function realignTargetFor(item) {
   /* 句子对象在 `item.ref` 上（`item.ref.en` / `item.ref.zh`），**不是** item.l1/l2。
    * ⚠ 这里踩过：item.l1/l2 是**文本字符串**（见 rebuildItemsAndLanes 里的 `l1: zhText`），
    *   于是 `item.l1.words` 永远 undefined —— 每条都误报"还没有逐词时间"。 */
@@ -5732,20 +5790,40 @@ async function realignRow(item) {
     toast(canConvert
       ? '这条还没有逐词时间。到左侧「设置」页最下方「逐词转换」里点「转逐词」，再回来重排'
       : '这条没有可重排的逐词轨（没有英文行，或英文样式不是逐词样式）', 7000);
-    return;
+    return null;
   }
   const text = String(en.text || '').trim();
-  if (!text) { toast('这条没有英文文本，没法重排逐词时间', 4200); return; }
+  if (!text) { toast('这条没有英文文本，没法重排逐词时间', 4200); return null; }
   /* 用**句子**的时间而不是整行的时间：逐词时间必须落在句子自己的区间里。
    * （中英双行时整行区间可能比英文句略宽，用整行会把词铺出句子外。） */
   const start = Number(en.start), end = Number(en.end);
-  if (!(end > start)) { toast('这条英文句的时间区间无效', 4200); return; }
+  if (!(end > start)) { toast('这条英文句的时间区间无效', 4200); return null; }
+  return { pid: state.project.id, key: realignTargetKey(en), text, start, end, no: (row && row.no) || '?' };
+}
 
-  // 记下旧逐词时间：写进操作日志，事后看得出"改成了什么样"
-  const beforeWords = en.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
+function realignRow(item) {
+  if (!state.project) { toast('重排逐词时间需要项目模式（要用项目里保存的音频与模型）', 4600); return; }
+  const target = realignTargetFor(item);
+  if (!target) return;
+  if (realignBusy) {
+    if (realignRunningKey === target.key || realignQueue.some(t => t.key === target.key)) {
+      toast('这条已经在重排队列里了', 3000);
+      return;
+    }
+    realignQueue.push(target);
+    /* 第一条用"正在重排"提示，后面几条只说排队位置，别抢正在跑的那条的提示语。 */
+    toast(`已加入队列：前面还有 ${realignQueue.length} 条，会自动接着重排`, 3400);
+    return;
+  }
+  runRealign(target);
+}
 
+async function runRealign(target) {
+  const { pid, start, end, text } = target;
+  /* 排队等待期间切了稿件：这条和它后面的队列都不再属于当前文档，直接作废。 */
+  if (!state.project || state.project.id !== pid) { realignQueue.length = 0; return; }
   realignBusy = true;
-  const pid = state.project.id;
+  realignRunningKey = target.key;
   const secs = (end - start).toFixed(1);
   jobCardShow('重排逐词时间', `正在用 Qwen3 对齐器重算（${secs} 秒）…`, null,
     '文本已确认，只重新量逐词时间；不跑 ASR、不改文本');
@@ -5762,6 +5840,10 @@ async function realignRow(item) {
     if (!b.ok || !(b.words || []).length) {
       throw new Error(b.note || '这次对齐不可信，未改动');
     }
+    /* 排队期间前面几条已经重建过文档 → 按 targetKey 找**当前**那句，不能写回旧对象。 */
+    const sent = state.kar && state.kar.sentences.find(s => realignTargetKey(s) === target.key);
+    if (!sent) throw new Error('这条字幕在排队期间已改动，已跳过');
+    const beforeWords = sent.words.length;
     /* 写回：**先剥掉原有的逐词高亮标签再写 words**。
      * 原文里每个词都带 `{\c...}` 标签，若把它拼进词表，
      * splitEnglishWords 会把标签当成词，切出来的片数就与词表对不上。 */
@@ -5771,9 +5853,9 @@ async function realignRow(item) {
       .replace(/[\u200b\uFEFF]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
-    en.text = inner;                       // 文本内容不变，只是去掉渲染标签
-    en.words = b.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
-    en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+    sent.text = inner;                     // 文本内容不变，只是去掉渲染标签
+    sent.words = b.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
+    sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
@@ -5781,18 +5863,26 @@ async function realignRow(item) {
     jobCardDone('重排逐词时间 · 完成',
       `${b.words.length} 个词已重排 · ${msec}ms 区间 · Qwen3 对齐器`, true);
     toast(`已重排逐词时间：${b.words.length} 个词（文本未改动）`, 5200);
-    logOp('realign', `第 ${(row && row.no) || '?'} 条 ${fmtTime(start)}~${fmtTime(end)}`,
+    logOp('realign', `第 ${target.no} 条 ${fmtTime(start)}~${fmtTime(end)}`,
       `重排 ${b.words.length} 个词的逐词时间（文本未改动）`
-      + `；旧值 ${beforeWords.length} 词`,
+      + `；旧值 ${beforeWords} 词`,
       `Qwen3-ForcedAligner：用已确认文本对原片音频做纯对齐（不跑 ASR、不改文本）`);
   } catch (e) {
     const msg = String((e && e.message) || e);
     jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
     toast('重排失败：' + msg, 6600);
-    logOp('realign', `第 ${(row && row.no) || '?'} 条 ${fmtTime(start)}~${fmtTime(end)}`,
+    logOp('realign', `第 ${target.no} 条 ${fmtTime(start)}~${fmtTime(end)}`,
       '重排逐词时间失败，未改动', msg.slice(0, 200));
   } finally {
     realignBusy = false;
+    realignRunningKey = '';
+    const next = realignQueue.shift();
+    if (next) {
+      setTimeout(() => {
+        if (state.project && state.project.id === next.pid) runRealign(next);
+        else realignQueue.length = 0;      // 切了稿件：队列整个作废
+      }, 0);
+    }
   }
 }
 
@@ -5829,20 +5919,32 @@ let realignPicked = new Set();   // 勾选的 items 下标
 let realignUnpicked = new Set();
 let realignRunning = false;
 let realignPollTimer = 0;
+let realignPid = '';             // 正在跑/刚跑完的作业所属项目（切换稿件时要停掉它）
 
 function realignShow(show) {
   if (realignEls.overlay) realignEls.overlay.hidden = !show;
+}
+
+/** 请求服务端停止当前重校对作业（worker 会被 taskkill /T 收掉）。 */
+function cancelRealignJob() {
+  const pid = realignPid || (state.project && state.project.id);
+  if (!pid) return;
+  fetch(`/api/projects/${pid}/realign-full-cancel`, { method: 'POST' }).catch(() => {});
 }
 
 function renderRealignList() {
   const box = realignEls.list;
   if (!box || !realignData) return;
   const its = realignData.items || [];
+  const toAss = !!realignData.srtToAss;
   box.innerHTML = its.map((it, k) => {
     const picked = realignPicked.has(k);
     const off = !it.ok;
+    const offNote = toAss
+      ? '对齐器没有给出有效时间，这行会按句内时长平均分配'
+      : '对齐器没有给出有效时间，会保留原逐词时间';
     return `<label class="reflect-item${off ? ' is-off' : ''}${picked ? ' is-on' : ''}" data-k="${k}"`
-      + ` title="${off ? '对齐器没有给出有效时间，会保留原逐词时间' : '勾选后应用它的新逐词时间'}">`
+      + ` title="${off ? offNote : '勾选后应用它的新逐词时间'}">`
       + `<input type="checkbox" data-k="${k}"${picked ? ' checked' : ''}${off ? ' disabled' : ''}>`
       + `<span class="ri-body">`
       + `<span class="ri-head">`
@@ -5858,9 +5960,12 @@ function renderRealignList() {
 
 function syncRealignApply() {
   const n = realignPicked.size;
+  const toAss = !!(realignData && realignData.srtToAss);
   if (realignEls.apply) {
     realignEls.apply.disabled = n === 0;
-    realignEls.apply.textContent = n ? `应用选中项（${n} 句）` : '应用选中项';
+    realignEls.apply.textContent = n
+      ? (toAss ? `生成逐词 ASS（已对齐 ${n} 句）` : `应用选中项（${n} 句）`)
+      : (toAss ? '生成逐词 ASS' : '应用选中项');
   }
   if (realignEls.all) {
     const usable = (realignData && realignData.items || []).filter(i => i.ok).length;
@@ -5875,6 +5980,10 @@ function syncRealignApply() {
  * 于是从 A 稿切到 B 稿、浮层还开着时，界面上留着 A 的 3927 句数据（用户实测反馈）。
  * 由 project.js 的 openProject() 调（与 __notesReload 同一套路）。 */
 function resetRealignForProjectSwitch() {
+  /* 切稿前先把旧项目的后台对齐停掉；否则它继续占着 GPU，用户还以为已经关了。 */
+  if (realignRunning && realignPid) cancelRealignJob();
+  realignQueue.length = 0;                  // 旧稿件的单条重排队列跟着作废
+  realignRunningKey = '';
   clearTimeout(realignPollTimer);
   realignRunning = false;
   realignData = null;
@@ -5885,9 +5994,19 @@ function resetRealignForProjectSwitch() {
   if (realignEls.summary) realignEls.summary.hidden = true;
   if (realignEls.allWrap) realignEls.allWrap.hidden = true;
   if (realignEls.reload) realignEls.reload.hidden = true;
+  if (realignEls.cancel) realignEls.cancel.textContent = '关闭';
   if (realignEls.msg) realignEls.msg.textContent = '正在用 Qwen3 对齐器逐句重算时间…';
   syncRealignApply();                       // 按钮回到"应用选中项"、禁用
   if (realignEls.btn) realignEls.btn.disabled = !state.project;
+  realignPid = '';
+  // 说话人分离的轮询也要断掉，否则切到 B 稿后还会用 A 的作业结果改 B 的字幕
+  if (diarizeRunning && diarizePid) {
+    fetch(`/api/projects/${diarizePid}/diarize-cancel`, { method: 'POST' }).catch(() => {});
+  }
+  clearTimeout(diarizePollTimer);
+  diarizeRunning = false;
+  diarizePid = '';
+  if (btnDiarize) btnDiarize.disabled = !state.project;
   jobCardHide();
 }
 window.__realignReset = resetRealignForProjectSwitch;
@@ -5897,12 +6016,14 @@ function realignFinishUi() {
   clearTimeout(realignPollTimer);
   if (realignEls.btn) realignEls.btn.disabled = !state.project;
   if (realignEls.reload) realignEls.reload.hidden = false;
+  if (realignEls.cancel) realignEls.cancel.textContent = '关闭';
 }
 
 /** 轮询后台作业 */
 function pollRealignFull(pid) {
   clearTimeout(realignPollTimer);
   realignPollTimer = setTimeout(async () => {
+    if (!realignRunning || realignPid !== pid) return;
     if (!state.project || state.project.id !== pid) return;
     try {
       const r = await fetch(`/api/projects/${pid}/realign-full`, { signal: AbortSignal.timeout(15000) });
@@ -5919,6 +6040,11 @@ function pollRealignFull(pid) {
       }
       jobCardHide();
       realignFinishUi();
+      if (job.status === 'canceled') {
+        if (realignEls.msg) realignEls.msg.textContent = '已停止';
+        toast('已停止全片重校对', 4200);
+        return;
+      }
       if (job.status === 'error') {
         if (realignEls.msg) realignEls.msg.textContent = '失败：' + (job.error || '');
         toast('全片重校对失败：' + (job.error || ''), 6600);
@@ -5934,28 +6060,54 @@ function pollRealignFull(pid) {
 
 function showRealignResult(job) {
   const items = job.items || [];
-  realignData = { items, total: job.total || items.length, usable: job.usable || 0 };
+  const toAss = job.sourceFormat === 'srt';
+  realignData = { items, total: job.total || items.length, usable: job.usable || 0, srtToAss: toAss };
   realignPicked = new Set(items.map((it, k) => (it.ok ? k : -1)).filter(k => k >= 0));
   realignUnpicked = new Set();
   if (realignEls.allWrap) realignEls.allWrap.hidden = false;
-  if (realignEls.allNote) realignEls.allNote.textContent = '只改逐词时间戳，文本与整句时间不动';
+  if (realignEls.allNote) {
+    realignEls.allNote.textContent = toAss
+      ? '把 SRT 转成逐词 ASS：勾选的行用 Qwen3 对齐时间，未勾选/失败的行按句内时长平均分配；文本与整句起止不变'
+      : '只改逐词时间戳，文本与整句时间不动';
+  }
   if (realignEls.list) realignEls.list.hidden = false;
-  if (realignEls.msg) realignEls.msg.textContent = '对齐完成，确认后应用（失败项保留原时间）';
+  if (realignEls.msg) {
+    realignEls.msg.textContent = toAss
+      ? '对齐完成，确认后生成逐词 ASS（项目字幕切换为 ASS，原 SRT 文件保留）'
+      : '对齐完成，确认后应用（失败项保留原时间）';
+  }
   if (realignEls.summary) {
     realignEls.summary.hidden = false;
     realignEls.summary.textContent = `共 ${realignData.total} 句：`
-      + `${realignData.usable} 句已对齐、${realignData.total - realignData.usable} 句失败（保留原样）`;
+      + `${realignData.usable} 句已对齐、${realignData.total - realignData.usable} 句失败`
+      + (toAss ? '（失败行按句内时长分配）' : '（保留原样）');
   }
   renderRealignList();
   syncRealignApply();
+}
+
+/** 按钮入口：先二次确认再跑。SRT 与 ASS 的说明不同（前者会把整份稿件转成逐词 ASS）。 */
+function beginRealignFull() {
+  if (realignRunning) { toast('全片重校对已经在跑了', 3200); return; }
+  if (!state.project) { toast('全片重校对需要项目模式', 4200); return; }
+  const toAss = state.format === 'srt';
+  const msg = toAss
+    ? '当前稿件是没有逐词时间的 SRT。将用 Qwen3 对齐器按每行英文原文对齐，生成逐词 ASS（原 SRT 文件保留，项目字幕改为新的 ASS）。'
+      + '完成后先给预览，勾选后才会写入。开始？'
+    : '将用 Qwen3 对齐器把全片已确认的文本逐句重新对齐：只改逐词时间，不改文本与整句起止。'
+      + '完成后先给预览，勾选后才会写入。开始？';
+  panel.showConfirm('全片逐词重校对', msg, '开始校对', '取消', () => { startRealignFull(); });
 }
 
 async function startRealignFull() {
   if (realignRunning) { toast('全片重校对已经在跑了', 3200); return; }
   if (!state.project) { toast('全片重校对需要项目模式', 4200); return; }
   const pid = state.project.id;
+  const allowSrtToAss = state.format === 'srt';
   realignRunning = true;
+  realignPid = pid;
   if (realignEls.btn) realignEls.btn.disabled = true;
+  if (realignEls.cancel) realignEls.cancel.textContent = '停止';
   realignData = null;
   realignPicked = new Set();
   realignUnpicked = new Set();
@@ -5977,7 +6129,8 @@ async function startRealignFull() {
     await Projects.flushSave();
     if (!state.project || state.project.id !== pid) return;
     const r = await fetch(`/api/projects/${pid}/realign-full`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ allowSrtToAss }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
@@ -5997,9 +6150,12 @@ async function applyRealignFull() {
   if (realignApplying || !realignData || !state.project) return;
   const picks = [...realignPicked].filter(k => realignData.items[k] && realignData.items[k].ok);
   if (!picks.length) return;
+  const pid = state.project.id;
+  /* SRT → 逐词 ASS：写入必须由服务端做（要生成整份新字幕文件），
+   * 前端只把勾选的行交回去，然后重新打开项目让编辑器载入新的 ASS。 */
+  if (realignData.srtToAss) return applySrtRealignToAss(pid, picks);
   realignApplying = true;
   if (realignEls.apply) realignEls.apply.disabled = true;
-  const pid = state.project.id;
   try {
     /* ⚠ **不能**拿 item.index 直接索引 state.kar.sentences：
      *   服务端返回的 index 是它那边的句子序号，而它解析出的句子集合与前端
@@ -6035,8 +6191,44 @@ async function applyRealignFull() {
   }
 }
 
-if (realignEls.btn) realignEls.btn.addEventListener('click', startRealignFull);
-if (realignEls.cancel) realignEls.cancel.addEventListener('click', () => { realignShow(false); });
+/** 应用 SRT 重校对结果：服务端把它写成逐词 ASS，然后重新载入项目（编辑器切到 ASS 模式）。 */
+async function applySrtRealignToAss(pid, picks) {
+  if (realignApplying || !realignData || !state.project) return;
+  realignApplying = true;
+  if (realignEls.apply) realignEls.apply.disabled = true;
+  try {
+    const keys = picks.map(k => realignData.items[k].targetKey).filter(Boolean);
+    const r = await fetch(`/api/projects/${pid}/realign-full-apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    toast(`已生成逐词 ASS：${j.total || 0} 行（${j.applied || 0} 行由 Qwen3 对齐）`, 7200);
+    logOp('realign', 'SRT → 逐词 ASS',
+      `已生成 ${j.total || 0} 行逐词 ASS（${j.applied || 0} 行用 Qwen3 对齐，其余按句内时长分配）`,
+      '原 SRT 文件保留；项目字幕切换为新的 subtitle.ass');
+    realignShow(false);
+    if (state.project && state.project.id === pid) await Projects.openProject(pid);
+  } catch (e) {
+    toast('生成逐词 ASS 失败：' + ((e && e.message) || e), 6600);
+  } finally {
+    realignApplying = false;
+    syncRealignApply();
+    if (realignEls.btn) realignEls.btn.disabled = !state.project;
+  }
+}
+
+if (realignEls.btn) realignEls.btn.addEventListener('click', beginRealignFull);
+if (realignEls.cancel) realignEls.cancel.addEventListener('click', () => {
+  /* 运行中这个按钮是「停止」：关闭浮层的同时把后台 worker 也停掉，别让它继续占 GPU。 */
+  if (realignRunning) {
+    cancelRealignJob();
+    realignFinishUi();
+    jobCardHide();
+  }
+  realignShow(false);
+});
 if (realignEls.reload) realignEls.reload.addEventListener('click', startRealignFull);
 if (realignEls.apply) realignEls.apply.addEventListener('click', applyRealignFull);
 if (realignEls.list) {
@@ -6060,6 +6252,156 @@ if (realignEls.all) {
     syncRealignApply();
   });
 }
+
+/* ═══════════ 说话人分离（高级字幕操作） ═══════════
+ *
+ * 初稿创建时没勾「区分说话人」的稿件，事后想补角色标注：只跑本机分离模型，
+ * 把每句的说话人写进 Name 栏/中文行行首 [SPKn] 和角色色（沿用编辑器现有的角色逻辑）。
+ * **只改角色标注**，不碰文本、整句时间、逐词时间。
+ *
+ * 先二次确认；长音频分离很慢，进度走右下角作业卡（服务端后台跑 + 轮询）。
+ */
+let diarizePollTimer = 0;
+let diarizeRunning = false;
+let diarizePid = '';
+
+function diarizeFinishUi() {
+  diarizeRunning = false;
+  clearTimeout(diarizePollTimer);
+  diarizePid = '';
+  if (btnDiarize) btnDiarize.disabled = !state.project;
+}
+
+/** 停止正在跑的长音频说话人分离（服务端 taskkill worker）。 */
+function cancelDiarizeJob() {
+  const pid = diarizePid || (state.project && state.project.id);
+  if (!pid) return;
+  fetch(`/api/projects/${pid}/diarize-cancel`, { method: 'POST' }).catch(() => {});
+  jobCardHide();
+  diarizeFinishUi();
+  toast('已停止说话人分离', 4200);
+}
+
+function beginDiarize() {
+  if (!state.project) { toast('说话人分离需要项目模式（要用项目里的 audio.wav）', 4600); return; }
+  if (diarizeRunning) { toast('说话人分离已经在跑了', 3200); return; }
+  if (state.format !== 'ass' || !state.assDoc) {
+    toast('SRT 没有角色轨：先用「全片逐词重校对」把它转成逐词 ASS，再点说话人分离', 7600);
+    return;
+  }
+  const hasRoles = !!(state.kar && state.kar.rows.some(r => speakerNames(r.speaker || '').length));
+  const dur = Number(state.project && state.project.meta && state.project.meta.duration) || 0;
+  const estMin = dur > 0 ? Math.max(1, Math.round(dur * 0.335 / 60)) : 0;
+  const msg = '将对整段音频运行本机说话人分离模型，再按每句的主要说话人写入 [SPKn] 标签与角色色。'
+    + '只改角色标注，不改字幕文本与时间。'
+    + (hasRoles ? '已有角色标注的行会被覆盖。' : '创建时没填说话人数时自动判断。')
+    + (estMin ? `这段音频约 ${Math.round(dur / 60)} 分钟，整段一次处理，预计约 ${estMin} 分钟（长音频较慢，可随时停止）。` : '')
+    + '开始？';
+  panel.showConfirm('说话人分离', msg, estMin > 30 ? '仍要分离' : '开始分离', '取消', () => { startDiarize(); });
+}
+
+async function startDiarize() {
+  if (!state.project || diarizeRunning) return;
+  if (state.format !== 'ass') { toast('说话人分离只支持 ASS 稿件', 4200); return; }
+  const pid = state.project.id;
+  diarizeRunning = true;
+  diarizePid = pid;
+  if (btnDiarize) btnDiarize.disabled = true;
+  jobCardShow('说话人分离', '正在启动…', null, '本地分离模型；只改角色标注，不改文本与时间；点右上角 × 停止',
+    cancelDiarizeJob);
+  try {
+    await Projects.flushSave();
+    if (!state.project || state.project.id !== pid) return;
+    const r = await fetch(`/api/projects/${pid}/diarize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    pollDiarize(pid);
+  } catch (e) {
+    jobCardHide();
+    diarizeFinishUi();
+    toast('无法开始说话人分离：' + ((e && e.message) || e), 6600);
+  }
+}
+
+function pollDiarize(pid) {
+  clearTimeout(diarizePollTimer);
+  diarizePollTimer = setTimeout(async () => {
+    if (!diarizeRunning || diarizePid !== pid) return;
+    if (!state.project || state.project.id !== pid) { diarizeFinishUi(); return; }
+    try {
+      const r = await fetch(`/api/projects/${pid}/diarize`, { signal: AbortSignal.timeout(15000) });
+      const j = await r.json().catch(() => ({}));
+      const job = j.job;
+      if (!job) { jobCardHide(); diarizeFinishUi(); return; }
+      jobCardShow('说话人分离', `${job.msg || '处理中…'}${job.pct ? `（${job.pct}%）` : ''}`, job.pct,
+        '本地分离模型；只改角色标注，不改文本与时间；点右上角 × 停止', cancelDiarizeJob);
+      if (job.status === 'running' || job.status === 'pending') { pollDiarize(pid); return; }
+      jobCardHide();
+      diarizeFinishUi();
+      if (job.status === 'canceled') {
+        toast('已停止说话人分离', 4200);
+        return;
+      }
+      if (job.status === 'error') {
+        toast('说话人分离失败：' + (job.error || ''), 7600);
+        return;
+      }
+      applyDiarizeResult(job);
+    } catch (e) {
+      jobCardHide();
+      diarizeFinishUi();
+      toast('说话人分离轮询失败：' + ((e && e.message) || e), 5600);
+    }
+  }, 900);
+}
+
+/** 把分离回来的时间段落到字幕：每行取重叠最大的说话人，按首次出现编号 SPK1..N。 */
+function applyDiarizeResult(job) {
+  if (state.format !== 'ass' || !state.kar || !state.assDoc) {
+    toast('当前不是 ASS 稿件，无法写入角色标注', 5200);
+    return;
+  }
+  const { picks, order } = speakerSpansForRows(state.kar.rows, job.regions || []);
+  if (!picks.length) {
+    toast('说话人分离没有给出与字幕重叠的片段，字幕未改动', 5600);
+    return;
+  }
+  const names = new Map(order.map((spk, i) => [spk, 'SPK' + (i + 1)]));
+  const known = new Map(computeRoles().map(r => [String(r.name).toLowerCase(), r.color]));
+  const colors = new Map();
+  order.forEach((spk, i) => {
+    const name = names.get(spk);
+    colors.set(name, known.get(name.toLowerCase()) || ROLE_PALETTE[i % ROLE_PALETTE.length]);
+  });
+  for (const p of picks) {
+    const name = names.get(p.speaker);
+    if (name) applyRoleToRowWith(p.row, name, colors.get(name));
+  }
+  /* \k 卡拉OK行的"未唱位"颜色（头部 \2c）跟随角色色；中文行行首色上面已经写好。
+   * 这一步按角色名定位，不会改英文行的逐词高亮色。 */
+  for (const [name, color] of colors) {
+    recolorRoleInRows(state.assDoc, state.kar.rows, [name], color);
+  }
+  reconcileKaraoke();
+  /* 角色标注开关关着的话，刚写进去的 [SPKn] 在角色页/筛选里看不到 —— 与创建初稿勾了
+   * 「区分说话人」时的做法一致：自动打开（写的是本机偏好，不改字幕内容）。 */
+  if (localStorage.getItem(ROLE_KEY) === '0') {
+    localStorage.setItem(ROLE_KEY, '1');
+    applyRoleAnnot(false);
+  }
+  rebuildItemsAndLanes(true, true);
+  if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
+  if (state.project && Projects && Projects.scheduleSave) Projects.scheduleSave();
+  const speakerCount = new Set(picks.map(p => p.speaker)).size;
+  toast(`已给 ${picks.length} 行写入说话人：识别到 ${speakerCount} 位（[SPK1]…可在角色页改名）`, 7600);
+  logOp('说话人分离', `写入 ${picks.length} 行`,
+    `识别到 ${speakerCount} 位说话人；只改角色标注，未改文本与时间`,
+    `本机分离模型${job.speakers ? `（${job.speakers} 人）` : ''}按每行主要说话人写入 [SPKn] 与角色色`);
+}
+
+if (btnDiarize) btnDiarize.addEventListener('click', beginDiarize);
 
 panel.onRetranslateCard = (item) => {
   try { retranslateRow(item); }
@@ -6730,7 +7072,6 @@ video.addEventListener('timeupdate', () => {
 (function initNotes() {
   const bar = document.getElementById('note-bar');
   const input = document.getElementById('note-input');
-  const atEl = document.getElementById('note-at');
   const durSel = document.getElementById('note-dur');
   const sendBtn = document.getElementById('btn-note-send');
   const cbDanmaku = document.getElementById('cb-danmaku');
@@ -6747,17 +7088,6 @@ video.addEventListener('timeupdate', () => {
   let flashId = null;           // 刚写下的那条 → 高亮
 
   const durOf = danmakuDuration;   // 与服务端 clampDur 同一套范围（2~5 秒）
-
-  /* ── 输入条上的"当前播放位置" ── */
-  function refreshAtLabel() {
-    if (!atEl) return;
-    const t0 = Number(video.currentTime) || 0;
-    atEl.textContent = fmtTime(t0).replace(/\.(\d)\d\d$/, '.$1');   // 秒数保留一位就够
-    atEl.title = `备注会记下这个播放位置（${fmtTime(t0)}）`;
-  }
-  video.addEventListener('timeupdate', refreshAtLabel);
-  video.addEventListener('seeked', refreshAtLabel);
-  refreshAtLabel();
 
   /* ── 弹幕层 ── */
   function hideDanmaku() {

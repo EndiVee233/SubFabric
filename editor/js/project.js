@@ -822,35 +822,18 @@ export function initProjects(ctx) {
   async function pickVideoForProject() {
     const project = state.project;
     if (!project) return;
-    // 双通道: 原生对话框优先, 超时/失败自动降级浏览器选择(上传成服务端文件再 relink)
-    // 立即提示: 系统对话框开在系统层, 可能被浏览器挡住 —— 用户得知道它已经弹了
-    toast('正在打开文件选择窗口…没看到的话看任务栏图标', 2600);
-    let pick = null;
-    try {
-      const ctl = new AbortController();
-      const killer = setTimeout(() => ctl.abort(), 38000);
-      const r = await fetch('/api/pick', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' }),
-        signal: ctl.signal
-      });
-      clearTimeout(killer);
-      pick = await r.json();
-    } catch { pick = null; }
-    if (!pick || (!pick.path && pick.fallback)) {
-      const f = await browserPickVideo();
-      if (!f) return;
-      toast('正在上传视频…', 4000);
-      const up = await fetch('/api/upload-video?name=' + encodeURIComponent(f.name), {
-        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f
-      });
-      const um = await up.json().catch(() => ({}));
-      if (!up.ok || !um.path) { toast('视频上传失败: ' + (um.error || up.status), 5000); return; }
-      pick = { path: um.path, name: um.name };
-    }
-    if (!pick.path) {
-      if (pick.error) toast(pick.error, 3200);
-      return;
-    }
+    /* 视频统一走**浏览器自己的文件选择框**（与选择字幕/导入项目包同一个窗口）：
+       系统原生 PowerShell 对话框是另一个进程的窗口，只压在本应用之上/抢前台都做不稳，
+       层级也不属于浏览器。代价是视频要复制一份进程序目录（下面的 upload-video）。 */
+    const f = await browserPickVideo();
+    if (!f) return;
+    toast('正在上传视频…', 6000);
+    const up = await fetch('/api/upload-video?name=' + encodeURIComponent(f.name), {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: f
+    });
+    const um = await up.json().catch(() => ({}));
+    if (!up.ok || !um.path) { toast('视频上传失败: ' + (um.error || up.status), 5000); return; }
+    const pick = { path: um.path, name: um.name };
     if (state.project !== project) return;
     const r = await fetch(`/api/projects/${project.id}/relink`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4353,6 +4336,9 @@ async function renderAsrModels() {
     clearTimeout(saveTimer);
     clearInterval(pollTimer); pollTimer = 0;
     state.project = null;
+    /* 离开项目时把仍在跑的重校对/说话人分离停掉。以前只断轮询，服务端 worker
+     * 会继续占 GPU（用户实测退出/切走后还有 Python 在跑）。 */
+    if (typeof window.__realignReset === 'function') window.__realignReset();
     window.__sfCurrentProjectId = null;   // 脱离项目后「导出视频」没有可导出的对象
     pendingText = null; saveRevision = ''; saveConflict = false;
     if (typeof window.__notesReload === 'function') window.__notesReload();
@@ -4858,10 +4844,9 @@ async function renderAsrModels() {
   const npSpk = $('#np-speakers');
   if (npSpk) npSpk.addEventListener('change', npSyncSpeakers);
 
-  /** 视频选择(双通道):
-   *  ① 服务端原生对话框(快, 直接返回本地路径, 视频不复制); 35s 超时/失败 → ②
-   *  ② 浏览器 <input type=file>(任何环境都能用): File 暂存, 创建项目时经
-   *     /api/upload-video 落盘成服务端持久文件, 之后与本地路径完全同构。 */
+  /** 视频选择：统一用浏览器 <input type=file>（与选择字幕/导入项目包同一个窗口）。
+   *  File 先暂存，创建项目时经 /api/upload-video 落盘成服务端持久文件，
+   *  之后与本地路径完全同构；代价是视频会复制一份进程序目录。 */
   let npPicking = false;
   $('#np-pick-video').addEventListener('click', async () => {
     if (npPicking) return;                       // 防双击重复触发
@@ -4869,39 +4854,23 @@ async function renderAsrModels() {
     const btn = $('#np-pick-video');
     const oldLabel = btn.textContent;
     btn.textContent = '打开选择框…';
-    toast('正在打开文件选择窗口…没看到的话看任务栏图标', 2600);
-    let pick = null, usedBrowser = false;
     try {
-      const ctl = new AbortController();
-      const killer = setTimeout(() => ctl.abort(), 38000);   // 服务端 35s 超时 + 余量
-      const r = await fetch('/api/pick', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'video' }),
-        signal: ctl.signal
-      });
-      clearTimeout(killer);
-      pick = await r.json();
-    } catch { pick = null; }
-    if (!pick || (!pick.path && pick.fallback)) {
-      // 原生对话框没弹出来(超时/出错) → 自动降级浏览器选择
-      usedBrowser = true;
-      toast('系统对话框不可用，已改用浏览器选择（视频会复制一份进程序目录）', 4200);
+      /* 与「选择字幕 / 导入项目包」同一个浏览器文件选择框（原生对话框是另一个进程的窗口，
+         层级/置顶都做不稳）。File 暂存，创建项目时经 /api/upload-video 落盘。 */
       const f = await browserPickVideo();
-      btn.textContent = oldLabel; npPicking = false;
       if (!f) return;
       npVideoFile = f;
       npVideo.path = 'upload:' + f.name;
       npVideo.name = f.name;
-    } else {
-      btn.textContent = oldLabel; npPicking = false;
-      npVideoFile = null;
-      if (!pick.path) { if (pick.error) toast(pick.error, 3200); return; }
-      npVideo.path = pick.path; npVideo.name = pick.name;
+      const el = $('#np-video-name');
+      el.textContent = npVideo.name + '（浏览器选择）';
+      el.classList.add('filled');
+      if (!$('#np-name').value.trim()) $('#np-name').value = npVideo.name.replace(/\.[^.]+$/, '');
+      npMaybeEnable();
+    } finally {
+      btn.textContent = oldLabel;
+      npPicking = false;
     }
-    const el = $('#np-video-name');
-    el.textContent = npVideo.name + (usedBrowser ? '（浏览器选择）' : '');
-    el.classList.add('filled');
-    if (!$('#np-name').value.trim()) $('#np-name').value = npVideo.name.replace(/\.[^.]+$/, '');
-    npMaybeEnable();
   });
   /** 浏览器选视频: 动态建 input[type=file], 返回 Promise<File> 或 null */
   function browserPickVideo() {

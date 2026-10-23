@@ -1,0 +1,45 @@
+{
+ "n": 300,
+ "segments": 138,
+ "ref_speakers": 5,
+ "whisperx": {
+  "mapping": {
+   "SPEAKER_00": "wemmbu",
+   "SPEAKER_01": "drenought",
+   "SPEAKER_02": "flowtives",
+   "SPEAKER_03": "eggchan"
+  },
+  "pairs": 138,
+  "correct": 89,
+  "accuracy_pct": 64.5,
+  "coverage_pct": 100.0,
+  "ref_speakers": 5,
+  "hyp_speakers": 4,
+  "profiles": {
+   "SPEAKER_00": 114,
+   "SPEAKER_01": 9,
+   "SPEAKER_02": 12,
+   "SPEAKER_03": 3
+  }
+ },
+ "subfabric": {
+  "mapping": {
+   "0": "wemmbu",
+   "1": "drenought",
+   "2": "eggchan",
+   "5": "flowtives"
+  },
+  "pairs": 138,
+  "correct": 101,
+  "accuracy_pct": 73.2,
+  "coverage_pct": 100.0,
+  "ref_speakers": 5,
+  "hyp_speakers": 4,
+  "profiles": {
+   "0": 104,
+   "1": 2,
+   "2": 7,
+   "5": 25
+  }
+ }
+}

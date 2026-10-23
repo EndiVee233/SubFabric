@@ -953,7 +953,10 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-slider {
   position: relative; width: 38px; height: 20px; border-radius: 10px;
-  background: #2a2a34; border: 1px solid var(--border);
+  /* 关态轨道跟随主题：浅色是浅灰胶囊，深色仍是深灰。
+     旧实现写死 #2a2a34，浅色模式整条开关看着还是深色的。 */
+  background: color-mix(in srgb, var(--text) 14%, var(--surface));
+  border: 1px solid var(--border);
   transition: background .15s, border-color .15s;
 }
 .switch-slider::after {
@@ -1946,11 +1949,14 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
 }
 
 /* ── 7. Toast：滑入 / 滑出（替代原来的内联 opacity 硬切） ───────── */
+/* 底色/文字跟随主题令牌：浅色模式不再出现"深色胶囊 + 深色文字"看不清的提示
+ * （旧实现写死 rgba(22,24,31,.97) 深色底，浅色主题下正文几乎不可读）。 */
 #toast {
   position: fixed; left: 50%; top: 60px; z-index: 99; pointer-events: none;
-  background: rgba(22, 24, 31, .97); border: 1px solid var(--border); color: var(--text-0);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  border: 1px solid var(--line); color: var(--text);
   padding: 8px 18px; border-radius: 10px; font-size: 13px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
 }
 #toast.toast-in { animation: toast-in var(--dur-3) var(--ease-out) both; }
 #toast.toast-out { animation: toast-out var(--dur-2) var(--ease) both; }
@@ -2245,11 +2251,13 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   width: 300px;
   display: flex; flex-direction: column; gap: 7px;
   padding: 11px 13px;
-  background: rgba(22, 24, 31, .97);
-  border: 1px solid var(--border);
+  /* 跟随主题表面色，不能写死深色：浅色主题（Material/Classic light）下会变成
+   * 一块突兀的黑卡，文字与进度条也和页面不搭（用户截图反馈）。 */
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
   border-radius: 10px;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, .5);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .24);
   animation: jobcard-in var(--dur-3, .2s) var(--ease-out, ease-out) both;
 }
 #job-card[hidden] { display: none; }
@@ -2405,11 +2413,7 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 }
 #note-bar .note-ico { display: flex; color: var(--text-2); }
 #note-bar .note-ico .ico { width: 15px; height: 15px; }
-/* 当前播放位置：写备注时记的就是它，所以要在输入框左边一直可见 */
-#note-bar .note-at {
-  font-family: Consolas, monospace; font-size: 11.5px; color: var(--accent);
-  min-width: 62px; text-align: right; flex: none;
-}
+/* 输入框左边不再放"当前播放位置"：时间和时间轴底部状态是同一条，重复显示（用户要求删掉）。 */
 #note-input {
   flex: 1; min-width: 0;
   background: var(--bg-1); color: var(--text-0);
@@ -2777,17 +2781,21 @@ body::before {
 #video-hover-tip:not([hidden]) { animation: pop-in .13s var(--ease-out) both; }
 
 #stage-hint { color: var(--text-2); }#stage-hint .sh-box, #stage-hint > div { border-radius: var(--r-2); }
-/* 空视频区的提示卡：虚线圆角框 + 毛玻璃，比裸文字更像"这里可以放东西" */
+/* 空视频区的提示卡：虚线圆角框 + **主题遮罩**。
+   视频区本身是黑的，所以卡片必须自带一层底色：浅色模式给浅色遮罩 + 深色字，
+   深色模式给深色遮罩 + 浅色字。旧实现是 2.2% 白叠加，浅色模式下等于一块黑卡片
+   配灰字（实测卡片底色只有 #060606），几乎看不清。 */
 .hint-card {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
   padding: 26px 34px; border-radius: var(--r-4);
-  border: 1px dashed var(--hair-2);
-  background: rgba(255, 255, 255, .022);
+  border: 1px dashed var(--line);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  color: var(--text);
   transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease), transform var(--dur-2) var(--ease-out);
 }
-.hint-card:hover { border-color: var(--accent-a45); background: var(--accent-a07); transform: translateY(-1px); }
-.hint-card .hint-sub { color: var(--text-2); font-size: 12px; }
-.hint-card b { color: var(--text-0); }
+.hint-card:hover { border-color: var(--accent-a45); background: color-mix(in srgb, var(--surface) 94%, transparent); transform: translateY(-1px); }
+.hint-card .hint-sub { color: var(--muted); font-size: 12px; }
+.hint-card b { color: var(--text); }
 
 /* ── 5. 首页：卡片层次 + 悬停揭示 + 骨架屏 + 空状态 ──────────────────────── */
 .home-inner { max-width: 940px; }
@@ -4554,7 +4562,8 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 }
 :is(#editor-panel #cue-list, .cue-measure) .cc-t > span { display: none; }
 :is(#editor-panel #cue-list, .cue-measure) .cc-t b {
-  font: 8.6px/1.65 var(--mono);
+  /* 时间列 9.4px：8.6px 在 1080p 下几乎要凑近看（用户反馈卡片里其它元素也偏小）。 */
+  font: 9.4px/1.65 var(--mono);
   font-weight: 400;
   color: var(--cc-text-3);
   letter-spacing: -.03em;
@@ -4562,7 +4571,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   font-variant-numeric: tabular-nums;
 }
 :is(#editor-panel #cue-list, .cue-measure) .cc-t:nth-child(2) b { color: var(--cc-text-2); }
-:is(#editor-panel #cue-list, .cue-measure) .cc-t:nth-child(3) b { font-size: 7.8px; color: var(--cc-text-3); opacity: .85; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-t:nth-child(3) b { font-size: 8.6px; color: var(--cc-text-3); opacity: .85; }
 :is(#editor-panel #cue-list, .cue-measure) .cc-left-stack {
   display: flex;
   flex-direction: row;
@@ -4579,15 +4588,15 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   border: 0;
   background: transparent;
   color: var(--cc-text-3);
-  font-size: 7.8px;
+  font-size: 8.6px;
   line-height: 1.4;
   text-align: left;
 }
 :is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .chip-conf-low { color: var(--cc-warn); font-weight: 700; }
 :is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .chip-conf { color: var(--cc-text-3); }
 :is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .cc-rerecog {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   flex: none;
   margin-left: auto;
   padding: 0;
@@ -4602,7 +4611,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   font-size: 0;
   opacity: .6;
 }
-:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .cc-rerecog::before { content: "↻"; font-size: 10px; line-height: 1; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-left-stack .cc-rerecog::before { content: "↻"; font-size: 11px; line-height: 1; }
 :is(#editor-panel #cue-list, .cue-measure) .cue-card:hover .cc-rerecog,
 :is(#editor-panel #cue-list, .cue-measure) .cue-card.selected .cc-rerecog,
 :is(#editor-panel #cue-list, .cue-measure) .cc-rerecog:focus-visible { opacity: 1; }
@@ -4636,7 +4645,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   overflow: hidden;
   text-overflow: ellipsis;
   color: color-mix(in srgb, var(--role, var(--accent)) 72%, var(--cc-text));
-  font-size: 9.2px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: .01em;
   white-space: nowrap;
@@ -4656,7 +4665,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--cc-text-3);
-  font-size: 8.2px;
+  font-size: 9px;
   white-space: nowrap;
 }
 :is(#editor-panel #cue-list, .cue-measure) .cc-playing {
@@ -4666,7 +4675,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   margin-left: auto;
   flex: none;
   color: var(--cc-ok);
-  font-size: 7.8px;
+  font-size: 8.6px;
   white-space: nowrap;
 }
 :is(#editor-panel #cue-list, .cue-measure) .cue-card.playing .cc-playing { display: inline-flex; }
@@ -4681,17 +4690,18 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   flex: none;
   margin-left: 1px;
   color: var(--cc-warn);
 }
-:is(#editor-panel #cue-list, .cue-measure) .cc-warn svg { width: 10px; height: 10px; }
+:is(#editor-panel #cue-list, .cue-measure) .cc-warn svg { width: 11px; height: 11px; }
 :is(#editor-panel #cue-list, .cue-measure) .cc-l1 {
   margin: 0;
   color: var(--cc-text);
-  font-size: 12.5px;
+  /* 主行 13.5px：12.5px 在 1080p 下偏小，长句读起来吃力（用户反馈可读性差）。 */
+  font-size: 13.5px;
   line-height: 1.5;
   font-weight: 500;
   white-space: normal;
@@ -4701,7 +4711,8 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 :is(#editor-panel #cue-list, .cue-measure) .cc-l2 {
   margin: 2px 0 0;
   color: var(--cc-text-2);
-  font-size: 10.4px;
+  /* 副行同步提到 11.2px（原 10.4px），主/副层次不变。 */
+  font-size: 11.2px;
   line-height: 1.5;
   white-space: normal;
   word-break: break-word;
@@ -4725,8 +4736,8 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   border-color: color-mix(in srgb, var(--role, var(--accent)) 42%, var(--cc-line-strong));
   box-shadow: 0 10px 28px -18px rgba(0, 0, 0, .45), 0 0 0 1px var(--cc-line);
 }
-:is(#editor-panel #cue-list, .cue-measure) .ie-l1 { font-size: 12.5px; font-weight: 500; color: var(--cc-text); }
-:is(#editor-panel #cue-list, .cue-measure) .ie-l2 { font-size: 10.8px; color: var(--cc-text-2); }
+:is(#editor-panel #cue-list, .cue-measure) .ie-l1 { font-size: 13.5px; font-weight: 500; color: var(--cc-text); }
+:is(#editor-panel #cue-list, .cue-measure) .ie-l2 { font-size: 11.5px; color: var(--cc-text); }
 :is(#editor-panel #cue-list, .cue-measure) .ie-line:focus { background: color-mix(in srgb, var(--role, var(--accent)) 7%, transparent); }
 :is(#editor-panel #cue-list, .cue-measure) .ie-hint { color: var(--cc-text-3); }
 :is(#editor-panel #cue-list, .cue-measure) .ie-line:empty::before { color: var(--cc-text-3); }
@@ -7185,8 +7196,6 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .sf-studio[data-design=claude] #sf-player #sf-play { background: var(--accent); color: var(--on-accent); border: 1px solid var(--accent); border-radius: 10px; }
 .sf-studio[data-design=claude] #sf-player #sf-play:hover { filter: brightness(1.07); transform: none; border-radius: 10px; }
 .sf-studio[data-design=claude] #sf-player #sf-mute { border-radius: 10px; }
-/* 时间码用强调色，浅色下压在 surface-2 上只有 4.37:1，换成 --accent-text。 */
-.sf-studio[data-design=claude] #note-bar .note-at { color: var(--accent-text); }
 /* 视频区提示卡是压在黑色视频上的深色浮层，浅色主题下也保持深色；
    弱化文字 #6B675C 在它上面只有 3.59:1，提到近白。 */
 /* 视频区提示卡是压在黑色视频上的深色浮层，浅色主题下也保持深色。

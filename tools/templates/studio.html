@@ -299,6 +299,7 @@
             </div>
             <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处，先给预览，确认后再重识别那几段" disabled><span data-ico="wand"></span> 反思纠错</button>
             <button class="btn btn-mini" id="btn-realign-full" title="用 Qwen3 对齐器重算全片逐词时间；只改时间、不改文本，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
+            <button class="btn btn-mini" id="btn-diarize" title="按音频给每条字幕标说话人（[SPKn] + 角色色）；只改角色标注，不改文本与时间；先确认再跑" disabled><span data-ico="mic"></span> 说话人分离</button>
             <button class="btn btn-mini" id="btn-region-import" title="把协作字幕的指定区间并入当前稿件；撞到已有字幕会先询问" disabled><span data-ico="upload"></span> 分段导入</button>
           </div>
         </div>
@@ -755,9 +756,8 @@
          播放到那里时以置顶弹幕浮在画面上（见 #danmaku-layer）。 -->
     <div id="note-bar">
       <span class="note-ico" data-ico="chat" title="备注"></span>
-      <span id="note-at" class="note-at" title="备注会记下这个播放位置">00:00:00.0</span>
       <input id="note-input" type="text" spellcheck="false" maxlength="2000"
-             placeholder="在这儿写一句备注，回车发送（会记下当前播放位置，播放时当弹幕显示）">
+             placeholder="输入备注/弹幕">
       <label class="note-dur-wrap" title="这条备注在画面上停留多久">
         <span class="note-dur-lbl">停留</span>
         <select id="note-dur" class="note-dur">
