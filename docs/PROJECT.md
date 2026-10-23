@@ -823,6 +823,21 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 
 ### 最近状态
 
+**2026-10-24（版本推进至 beta 1.4.5.1，同版本修补重发）**
+
+- **范围**：只改三处版本号与 jsmod 镜像 —— `editor/server.js` 的 `APP_VERSION`
+  `beta 1.4.5.1` / `APP_FILE_VERSION` `1.4.5.1`，`build/installer/SubFabric.iss` 的
+  `MyAppVersion` / `MyAppFileVersion` 同步；`tests/jsmod/server.js` 镜像一致。无功能改动。
+- **重打包**（2026-10-24 01:08）：`build/SubFabric.exe` 文件版本 `1.4.5.1`（GUI 子系统、
+  SEA blob 在）；`build/installer/SubFabric-beta.1.4.5.1-setup.exe` **36,561,214 字节
+  （34.87 MB）**，SHA-256 `f892303a7b7a9c06f26fbc07a1dfb6ec3db469f794dfb0d3cfedb0ed0d5bf3a8`，
+  109 个文件入包（`editor/srt-ass.js`、`editor/realign-batch.js`、`asr/diarize.py`、
+  `asr/qwen_align.py` 均在；模型与运行时目录仍排除）。
+- **验证**：本次只改版本常量，未重跑全量回归（上一轮 1.4.5 全量 **124 通过 / 8 部分 / 0 失败 /
+  2 排除**，ESLint 0 error）；`/api/version` 的返回值取自 `APP_VERSION`，装完可核对。
+- **GitHub**：版本改动与本文记录随本次提交一同上传（`main`，父 `3f647491f5`）。
+- **未做**：真实静默安装自检；未创建 tag / Release（1.4.5 系列的 tag 仍未建，发版号待定）。
+
 **2026-10-23（4h 说话人分离 30% 长时间不动：预计时长/心跳/可停止，安装版 1.4.5）**
 
 - **现象（用户实测 4h 稿件）**：说话人分离卡在 30% 超过半小时；任务管理器看到两个 Python，
