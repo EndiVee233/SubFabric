@@ -162,6 +162,8 @@
       <button class="ptab" data-tab="roles" title="角色(说话人)总览">角色</button>
       <button class="ptab" data-tab="settings" title="设置">设置</button>
       <button class="ptab" data-tab="logs" title="服务端运行日志">日志</button>
+      <!-- 字幕 + 角色并排：只改布局，不新增数据源；角色栏在右侧单列显示。 -->
+      <button class="ptab-split" id="panel-split-roles" type="button" aria-pressed="false" title="字幕和角色并排显示（需要 ASS 角色）" hidden><span data-ico="columns"></span></button>
     </div>
 
     <!-- 字幕 Tab: 当前字幕列表 -->
@@ -223,6 +225,13 @@
 
     <!-- 角色 Tab: 解析所有人物(字幕 Name 栏的 [人物]) -->
     <div id="tab-roles" class="tab-body">
+      <div class="split-role-grip" id="split-role-grip" role="separator" aria-orientation="vertical" tabindex="0" aria-label="拖动调整角色栏宽度" title="拖动调整角色栏宽度，双击复位"></div>
+      <!-- 并排模式的小顶栏：切换这一栏显示人物还是备注（普通角色页不显示） -->
+      <div class="split-pane-head" id="split-pane-head" hidden>
+        <button type="button" class="split-pane-tab active" data-split-pane="roles">人物</button>
+        <button type="button" class="split-pane-tab" data-split-pane="notes">备注</button>
+      </div>
+      <div class="split-note-holder" id="split-note-holder" hidden></div>
       <div class="tab-head">
         <span class="tab-head-title">角色总览</span>
         <span class="tab-head-sub">点一下=设为播放头所在块的角色 · 右键=重命名/改色</span>
@@ -299,6 +308,7 @@
             </div>
             <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处，先给预览，确认后再重识别那几段" disabled><span data-ico="wand"></span> 反思纠错</button>
             <button class="btn btn-mini" id="btn-realign-full" title="用 Qwen3 对齐器重算全片逐词时间；只改时间、不改文本，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
+            <button class="btn btn-mini" id="btn-glossary-review" title="用 LLM 通读全片字幕，找出中英文专有名词；术语表里已有的词带出现有译法，其余自动生成，确认后写入翻译方案术语表"><span data-ico="book"></span> 术语表校对</button>
             <button class="btn btn-mini" id="btn-diarize" title="按音频给每条字幕标说话人（[SPKn] + 角色色）；只改角色标注，不改文本与时间；先确认再跑" disabled><span data-ico="mic"></span> 说话人分离</button>
             <button class="btn btn-mini" id="btn-region-import" title="把协作字幕的指定区间并入当前稿件；撞到已有字幕会先询问" disabled><span data-ico="upload"></span> 分段导入</button>
           </div>
@@ -1016,6 +1026,25 @@
       <button type="button" class="btn" id="realign-cancel">关闭</button>
       <button type="button" class="btn" id="realign-reload" hidden>重新校对</button>
       <button type="button" class="btn btn-accent" id="realign-apply" disabled>应用选中项</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全片术语表校对：LLM 提取专有名词 → 预览/编辑 → 写入翻译方案术语表 -->
+<div id="glossary-overlay" hidden>
+  <div class="rn-box modal-surface reflect-box glossary-box">
+    <div class="rn-title modal-drag-handle">全片术语表校对 · 预览</div>
+    <div class="rn-msg" id="glossary-msg">正在让模型通读全片，找出中英文专有名词…</div>
+    <div class="reflect-summary" id="glossary-summary" hidden></div>
+    <div class="glossary-list" id="glossary-list" hidden></div>
+    <label class="glossary-save" id="glossary-save-wrap" hidden>
+      <input type="checkbox" id="glossary-save" checked>
+      <span>保存到翻译方案术语表</span>
+      <span class="glossary-scheme" id="glossary-scheme"></span>
+    </label>
+    <div class="rn-actions">
+      <button type="button" class="btn" id="glossary-cancel">关闭</button>
+      <button type="button" class="btn btn-accent" id="glossary-apply" disabled>保存到术语表</button>
     </div>
   </div>
 </div>

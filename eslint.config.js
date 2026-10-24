@@ -110,6 +110,8 @@ export default [
       'editor/srt-ass.js',
       // 全片逐词重校对的批量分段纯逻辑
       'editor/realign-batch.js',
+      // 全片术语表校对：把确认后的词条合并进方案术语表（纯逻辑，只用 require）
+      'editor/glossary-merge.js',
     ],
     languageOptions: {
       ecmaVersion: 2022,

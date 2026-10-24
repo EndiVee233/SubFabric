@@ -74,7 +74,7 @@
   （同步异常与 async reject 都收）。
 - **项目内操作**统一为 `/api/projects/:id/<action>`：`info`(PUT 改名)、`retry`、`skip`、`rerecognize`、
   `translate`、`draft`、`subtitle`、`relink`、`prepare`、`peaks`、`audio`、`realign-full-apply`、
-  `diarize`；`DELETE` 无 action 即删项目。
+  `glossary-review`、`glossary-apply`、`diarize`；`DELETE` 无 action 即删项目。
 - **本机原生选取（`/api/pick`）**：`nativePick()` 用 PowerShell + WinForms 打开系统文件/文件夹对话框
   （现服务**音频 / 目录**选择），结果经临时文件回传。属性窗体是**真实显示**的 1×1、近乎透明、
   屏幕中心、**非 topmost** 窗口；对话框出现后由 Timer（60ms，约 2.4s）找到它（`#32770` + 标题 +
@@ -225,6 +225,39 @@
 - **页签切回字幕页**：从角色/设置/日志回到字幕页时给 `.tab-body` 加 `is-instant-reveal`，不再播
   260ms 面板淡入 —— 字幕列表是工作区，改完角色切回来要能立刻点条目；新建字幕的 `opts.instant`
   走同一条路径。
+- **编辑器布局记忆**：竖向分割线 `#vsplit` 松手时把面板宽（`--panel-w`，280~720）写入
+  `localStorage['ss-panel-w']`，启动时 `applyPanelWidth()` 恢复；时间轴高度走 `ss-tl-h` +
+  `applyTlHeight()`。刷新或退出编辑器再打开，左右比例与时间轴高度都保持上次拖动结果。
+- **拖拽磁吸（视频刚好铺满）**：拖 `#vsplit` / `#hsplit` 时先按视频宽高比算出「画面刚好铺满
+  播放区」的值（宽 `vw + startPw - ar*vh`、高 `startTl + vh - vw/ar`）；候选值落在 ±32px 内
+  用 `magSnap` 按平方衰减吸过去 —— 越接近越“黏”（阻尼），超过 32px 恢复 1:1 跟手；吸附点
+  范围要落在 280~720 / `TLH_MIN..TLH_MAX` 内才启用。实测吸附点上 `video.clientWidth/Height`
+  的比例与视频一致（1.7773 vs 1.7778）。
+- **播放器进度条两侧的时间**：UWP 主题下 `#sf-play-time` / `#sf-play-duration` 原本沿用
+  `#sf-player` 的 10px，4 小时视频读起来吃力；现提到 **13px/600**（与 Material 主题同口径）。
+- **进度条悬浮时间**：`#sf-seek` 上盖着 `opacity:0` 的原生 `#sf-seek-range`。Chrome 的 range  「位置→数值」映射会在左右各内缩半个拇指宽，所以 CSS 先给 input 设 `appearance:none`（Material You
+  下 input 原本是 `appearance:auto`，Chrome 会按 **UA 的 16px 拇指**算映射、忽略自定义拇指宽 ——
+  实测只有 MY 主题偏，UWP/Classic 因自带 appearance:none 反而正常），再把拇指固定成
+  `--sf-hit-thumb:14px`；提示时间按 `(x - 7) / (宽 - 14)` 反算，提示块也按拇指中心定位。
+  旧实现直接用 `x / 宽`，4 小时视频两端能差约 2 分钟。
+- **字幕 + 角色并排**：标签栏最右的「两栏」按钮（`#panel-split-roles`）把右侧切成字幕列表 +
+  角色单列：`#editor-panel.is-split-roles` 用 grid 排成 `1fr : var(--split-role-w, 30%)`
+  （约 2:1~3:1）；角色列左边界有拖拽条（`#split-role-grip`），拖动改宽（108px ~ 面板 45%，
+  双击复位、←/→ 16px 步进），宽度存 `localStorage['sf-editor-split-role-w']`；角色卡片**不覆盖尺寸**，
+  与完整角色页共用 `.role-card` 规则（实测均 36px 高、内边距 8/10px），列内行距 10px（比角色页 8px 略大），
+  只留名字（隐藏条数与「添加角色」卡）。仅 ASS（有角色）可用、SRT 隐藏按钮；
+  偏好存 `localStorage['sf-editor-split-roles']`，切到角色/设置/日志自动收起、回字幕页恢复。
+- **时间轴块内波形背景**：`timeline.js` 的 `_drawBlockBackdrop` 先用 `waveBg` 把块内已画好的波形
+  填掉，再画一次模糊波形并压暗。**不能**直接在原波形上重画 —— canvas 的 `filter` 只作用于本次
+  绘制，重画等于叠加，块内会比块外更亮（用户看到的「Win10 主题字幕块边缘灰色遮罩」就是它）。
+  实测修后块内亮度约 81、块外 105~110，块内不再发灰。
+- **并排栏的小顶栏（人物 / 备注）**：并排模式角色列顶部有 `#split-pane-head` 两个标签；「备注」把
+  日志页的 `#note-view` / `#note-empty` **节点搬进** `#split-note-holder`（事件委托挂在列表上，
+  搬动不丢），关并排或切页时自动放回 `#log-pane-note`。窄栏里备注行改成「时间 + 删除 / 正文」
+  两行、隐藏「停留 X 秒 · 创建时间」，行高从 ~139px 收到 ~89px。偏好存
+  `localStorage['sf-editor-split-pane']`（roles / notes）。顶栏激活态的蓝色下划线用
+  `.sf-studio #split-pane-head .split-pane-tab.active` 提权 —— UWP 会给所有按钮加 `.uwp-tile`
+  （`border-color` 写灰），不提权的话 active 那条蓝线会被盖掉。
 - **字幕列表高度缓存（2026-10-23 修）**：`editor.js` 的 `_rebuildMetrics` 只在拿到**真实宽度**
   （`w > 0`）时更新测量宽度并清空高度缓存。面板隐藏（角色/设置/日志页）时 `clientWidth` 是 0，
   旧实现会把 0 记成新宽度，于是在隐藏页里重建条目（改角色、改文本…）就清空了整张缓存，
@@ -235,6 +268,12 @@
   播放态 **8.6px**、置信度 chip 8.6px、重识别按钮 18px，正文仍最大以保持层次。
   行内编辑的英文行改用 `--cc-text`（与中文同色，原 `--cc-text-2` 灰字在深色卡上难读），
   字号差保留主/副层次。卡片高度由测量容器实时量（`_measure`），不需要写死行高。
+- **点文字进编辑的光标位置**：点卡片正文哪一行，编辑框就把光标放在**鼠标点的字间**（旧实现一律
+  落在行尾）。`_caretIndexAt` 用 `caretPositionFromPoint` 把点击坐标换成行内字符偏移（多文本节点
+  按前缀累加），`startEdit(item, line, caretAt, cardText)` 里再用 `_mapCaret` 把「卡片显示文本」
+  的偏移映射到「编辑框文本」（卡片省掉了行首 `[角色]`，两者可能差一段）；取不到时回退行尾。
+  正在编辑时点另一条：偏移必须在 `_render()` **之前**取（重建后原节点已游离），且 mousedown 的
+  默认焦点动作会把焦点打回 body，所以补一个 `setTimeout(0)` 重新聚焦并落光标。
 - **拖动字幕块后的词时长**：`karaoke.js` 的 `recalcWords` 在"只改时间、不改文本"时按原相对位置缩放
   （整块平移＝等长平移，拉长/压缩＝按比例），不再按字母数重铺；只有文本变了才重新分配。
 - **手动分句（Ctrl+Enter）的切点**：英文走 `_splitPoint` 的**词边界**（与规范分词、词级时间同口径）；
@@ -267,6 +306,14 @@
   确认后才启动。`#btn-diarize` 点击走 `beginDiarize` → `panel.showConfirm`，确认后才 POST
   `/api/projects/:id/diarize`；SRT 稿件不直接跑，提示先用全片逐词重校对转 ASS。
   两个入口都在 `#editor-advanced-actions` 的网格里，模板改动后必须重新生成 `editor/studio.html`。
+- **全片术语表校对**：`#btn-glossary-review`（设置 → 高级字幕操作）。`POST /api/projects/:id/glossary-review`
+  用「字幕翻译」那套模型通读全片中文字幕（行首 `[角色]` 与 ASS 覆盖标签先剥掉；正文超过 6 万字截断
+  并在界面注明），找出中英文专有名词；**当前方案**术语表里已有的词由服务端带出现有译法
+  （`known:true`，请求里也附带术语表要求模型沿用），其余由模型生成（`known:false`）。
+  预览弹窗 `#glossary-overlay`：每行两个输入框（原文 / 译法）可改、可删，模型新生成的词用强调色
+  亮框提示，术语表已有的词保持普通描边；勾选「保存到翻译方案术语表」后 `POST /glossary-apply`
+  用 `editor/glossary-merge.js` 合并——保留注释 / 分组 / 既有顺序，已有词只改译法，新词追加到
+  目标语言组（`##<glossaryLang>`，组不存在则新建）；不勾选则只查看、不落盘。
 - **右下角进度卡跟随主题**：`#job-card` 背景使用 `var(--surface)` / `var(--line)`，不再写死
   `rgba(22,24,31,.97)`；浅色主题下与页面一致（之前是一块突兀的黑卡）。运行中的重校对浮层里
   「关闭」按钮文案变为「停止」，点击会先调 `realign-full-cancel` 再收起。
@@ -286,10 +333,15 @@
 - **Material 需处理卡**：四瓣花形底做成 1:1 方形（宽 ≤190px，与处理中卡同高，避免抬高整行；SVG path，`r = 53.7 × (1 − .145 cos 4θ)`，`preserveAspectRatio="xMidYMid meet"`），底色为 8% danger 混 `--surface`；底形与两个按钮三部分都加 1px `--line` 框线；文字块水平垂直居中；右上 62px 圆形「继续处理」（play，accent 72% 混 surface 的低饱和底），左下 62×62 圆角方形「详情页」（info），两个按钮外移 5px 并压出轮廓。卡片与按钮的阴影只在鼠标悬浮时出现。继续优先打开第一个 attention 项目，没有项目时进入需处理筛选；详情始终进入模板里的需处理筛选。
 - **Material 主页悬浮**：除时钟外，`sf-resume` / `sf-orbit` / `sf-mu-widget` / 注意力卡 / 项目卡统一为 1px `--accent` 边框提亮 + `--sf-hover-shadow` + `brightness(1.04)` + `translateY(-2px)`；时钟没有边框，只做 drop-shadow + brightness + 上浮。注意力卡在卡片悬浮时同时提亮四瓣描边和两个按钮边框。
 - **新建项目页布局**：`#np-view` 导入模式为左右两列：左列「稿件预览 + 处理进度」，右列「输入与配置 + 生成设置」；两列等高（`align-items:stretch`），上卡顶边同线、下卡底边同线，中段因预览/输入高度不同自然错开，底部卡片 `flex:1` 填满列高。切到**创建初稿**时加 `is-draft`，变成三列：左列仍是预览+进度，中间输入，右下角的生成设置移到第三列并展开；三列按内容高度，底部不再 flex 拉伸，处理进度保持 `min-height:340px`。模式切换只用一个 View Transition：四张卡（输入、生成设置、稿件预览、处理进度）在同一个 `.46s cubic-bezier(.2,.8,.2,1)` 里整体移动/缩放，模式字段在同一次切换中完成；右侧两张不再单独做垂直 height 动画、100ms 停顿或分段展开/收起。`view-transition-name` 为 `np-input` / `np-generate` / `np-preview` / `np-process`。View Transition 处于 top layer；顶栏单独命名 `np-topbar` 并置于 `z-index:999`，卡片动画不覆盖顶栏，同时顶栏与侧栏文字不会被裁掉。减少动效或不支持时直接切换。稿件预览区固定 16:9、封面 `object-fit:cover`。置信度档位说明 `#np-confidence-desc` 用 `.np-conf-desc` 独占一行显示在置信度选项下方，长文案不再挤在选项右侧；「只导入一段」的 checkbox 标签 `.np-lbl-check` 用 auto 宽度 + nowrap，避免在时间范围行折成两行。处理进度卡内加 `.np-progress-box` 小框，`min-height:170px` 向下延伸到 idle 上方，显示当前百分比/状态和处理记录占位；卡片按内容自然增高，不再用固定高度或 flex 拉伸小框。分角色识别标题与「开启」同一行，开启在标题右侧。导入模式下语音识别组整体隐藏时，生成设置卡片说明与「翻译方案」标题之间不再保留空档。识别来源的 `openvino` 显示为「本机 Parakeet TDT V2（Intel NPU）」；说话人数字紧跟标签，与逐词样式/置信度控件左对齐，「区分说话人（中文行标 [SPKn]，按颜色区分）」独占下一行并保持单行。逐词样式下拉 `#np-kstyle` 与置信度下拉同宽（`max-width:230px`），不再撑满整行；选项文案只保留「颜色高亮」「\k 卡拉OK」，去掉括号解释。≤1080px 单列恢复预览 → 输入 → 进度 → 设置的顺序；详细信息页仍用原来的 2×2 网格。
-- **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；输入框基础圆角 8px，Material You
-  下为 12px，与全局输入设计一致。输入框占位文案为「输入备注/弹幕」；左侧**不再显示**
+- **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；「停留」在主题皮肤里被替换成
+  `.sf-choice-toggle`（原生 select 隐藏），其默认高度只有 30~32px，所以备注条内单独钉
+  `height/min-height:34px; box-sizing:border-box`；MY 下再把下拉圆角对齐输入框的 12px
+  （原本 14px 胶囊看起来比输入框“高”），发送键保留 MY 的胶囊形状。三件套实测都对齐在 34px。
+  输入框基础圆角 8px，Material You 下为 12px，Windows 10 主题下为 **2px**（含「停留」下拉，
+  跟主题的直角语言走）；输入框占位文案为「输入备注/弹幕」；左侧**不再显示**
   「当前播放位置」（原 `#note-at`）：时间轴底部状态栏已经有同一个时间，两处重复且会误导；
-  备注仍按发送时的 `video.currentTime` 记录。
+  备注仍按发送时的 `video.currentTime` 记录。视频上的弹幕气泡同样**不再显示时间**（`paintDanmaku`
+  只输出正文），时间点只在日志/备注列表里出现。
 - **材质偏好**：毛玻璃压暗、模糊度、透明度由 `editor/js/studio-state.js` 保存、`studio.js` 同时算
   深浅色令牌、`studio.css` 末端统一应用，主题包不能绕开。
 - **浅色玻璃自动浅色字**：`editor/js/glass-contrast.js` 把卡片自身的半透明背景逐层压到页面底色上

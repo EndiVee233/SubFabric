@@ -683,6 +683,100 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .role-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--text-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .role-count { flex: none; font-size: 11px; color: var(--text-2); }
 
+/* ── 字幕 + 角色并排（面板宽时用） ─────────────────────────────
+ * 标签栏下面切成两列：左 = 字幕列表（2.4fr），右 = 角色单列（1fr，约 2.4:1~3:1）。
+ * 只改布局与角色卡密度，不动数据源；切到角色/设置/日志时自动收起（偏好保留）。 */
+.ptab-split {
+  flex: 0 0 auto;
+  align-self: center;
+  display: grid; place-items: center;
+  width: 34px; height: 26px;
+  margin: 0 0 2px 2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.ptab-split:hover { background: var(--surface-2); color: var(--text-0); }
+.ptab-split[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.ptab-split .ico { width: 15px; height: 15px; }
+.sf-studio[data-design=uwp] .ptab-split { border-radius: 2px; }
+
+#editor-panel.is-split-roles {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--split-role-w, 30%);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+#editor-panel.is-split-roles > #panel-tabs { grid-column: 1 / -1; grid-row: 1; }
+#editor-panel.is-split-roles > #tab-subs {
+  grid-column: 1; grid-row: 2; display: flex; min-width: 0; min-height: 0;
+}
+#editor-panel.is-split-roles > #tab-roles {
+  position: relative;
+  grid-column: 2; grid-row: 2; display: flex; min-width: 0; min-height: 0;
+  border-left: 1px solid var(--line);
+}
+/* 角色栏左边框上的拖拽条：鼠标拖动改宽，双击复位；键盘 ←/→ 步进 16px。 */
+.split-role-grip { display: none; }
+#editor-panel.is-split-roles .split-role-grip {
+  display: block;
+  position: absolute; left: -4px; top: 0; bottom: 0; width: 9px;
+  cursor: col-resize; z-index: 4;
+  background: transparent;
+}
+.split-role-grip::after {
+  content: ''; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px;
+  background: transparent; transition: background .15s;
+}
+.split-role-grip:hover::after,
+.split-role-grip.is-dragging::after,
+.split-role-grip:focus-visible::after { background: var(--accent); }
+.split-role-grip:focus-visible { outline: none; }
+/* 窄列不放大段说明，只保留一列人物名。卡片的尺寸/行距**不覆盖**：
+   与完整角色页共用同一套 .role-card 规则，高度自然一致。 */
+#editor-panel.is-split-roles > #tab-roles .tab-head { display: none; }
+/* 并排栏的小顶栏：人物 / 备注 切换（普通角色页隐藏） */
+.split-pane-head { display: none; flex: none; gap: 2px; padding: 5px 6px 0; border-bottom: 1px solid var(--line); }
+#editor-panel.is-split-roles .split-pane-head { display: flex; }
+.split-pane-head[hidden] { display: none; }
+.split-pane-tab {
+  flex: 1; padding: 4px 0; border: 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  background: transparent; color: var(--text-2);
+  font-size: 11.5px; font-weight: 600; cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.split-pane-tab:hover { color: var(--text-0); }
+.split-pane-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+/* ⚠ UWP 给所有按钮加了 `.uwp-tile`（border-color 用灰色），会把 active 的蓝下划线盖掉。
+   用 ID 提权回来：非激活透明、激活用强调色。 */
+.sf-studio #split-pane-head .split-pane-tab { border-bottom-color: transparent; }
+.sf-studio #split-pane-head .split-pane-tab.active { border-bottom-color: var(--accent); }
+.split-note-holder { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 6px; }
+.split-note-holder[hidden] { display: none; }
+/* 窄栏里备注行改成上下两段：时间 + 删除在首行，正文占满下一行 */
+.split-note-holder #note-view { border: 0; background: transparent; }
+.split-note-holder .note-row {
+  grid-template-columns: minmax(0, 1fr) 22px;
+  grid-template-areas: "t del" "text del";
+  row-gap: 2px; padding: 6px 4px;
+}
+.split-note-holder .note-row .note-t { grid-area: t; }
+.split-note-holder .note-row .note-text { grid-area: text; font-size: 12px; }
+.split-note-holder .note-row .note-del { grid-area: del; align-self: start; }
+.split-note-holder .note-row .note-go { display: none; }
+/* 窄栏里不显示"停留 X 秒 · 创建时间"（会把每行撑到三四行）；日志页保持完整信息 */
+.split-note-holder .note-row .note-meta { display: none; }
+.split-note-holder .note-empty-row { padding: 12px 6px; }
+#editor-panel.is-split-roles #role-list {
+  display: grid; grid-template-columns: minmax(0, 1fr);
+  padding: 8px; gap: 10px;
+}
+#editor-panel.is-split-roles .role-count { display: none; }
+#editor-panel.is-split-roles .role-card.role-add { display: none; }
+
 .empty-hint {
   flex: 1; display: flex; align-items: center; justify-content: center;
   text-align: center; color: var(--text-2); font-size: 13px;
@@ -2131,12 +2225,12 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
  * ⚠ 这两个 id 以前**没有任何 CSS 规则**，于是 position:static —— 显示时不是浮在画面中间，
  *   而是作为普通块堆到**页面最底部**（实测 top:803px，在视口之外），用户根本看不到。
  *   这里补上与 #reflect-overlay 一致的定位。 */
-#realign-overlay, #rim-overlay {
+#realign-overlay, #rim-overlay, #glossary-overlay {
   position: fixed; inset: 0; z-index: 88;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.55);
 }
-#realign-overlay[hidden], #rim-overlay[hidden] { display: none; }
+#realign-overlay[hidden], #rim-overlay[hidden], #glossary-overlay[hidden] { display: none; }
 
 /* ── 分段导入：**不挡时间轴** ──
  * 这个对话框要求用户先在时间轴上拖一段选区（或确认区间填得对），
@@ -2199,6 +2293,45 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 }
 .reflect-all[hidden] { display: none; }
 .reflect-all-note { color: var(--text-2); font-size: 11.5px; }
+
+/* ── 全片术语表校对：可编辑清单 ──
+ * 模型新生成的词用强调色亮框（用户要求"框线亮起提示"），术语表已有的词保持普通描边。 */
+#glossary-overlay .rn-box { width: min(680px, 94vw); max-height: 82vh; }
+.glossary-list {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 2px;
+}
+.glossary-list[hidden] { display: none; }
+.glossary-row {
+  display: grid; grid-template-columns: minmax(0, 1.1fr) auto minmax(0, 1fr) 22px;
+  gap: 8px; align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-2);
+  flex: none;
+}
+.glossary-row.is-new {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.glossary-row .gl-eq { color: var(--text-2); font-size: 12px; }
+.glossary-row input {
+  width: 100%; min-width: 0;
+  background: var(--bg-1); color: var(--text-0);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 7px; font-size: 12.5px; outline: none;
+}
+.glossary-row input:focus { border-color: var(--accent); }
+.glossary-row .gl-del {
+  border: 0; background: transparent; color: var(--text-2);
+  cursor: pointer; font-size: 15px; line-height: 1; padding: 2px;
+}
+.glossary-row .gl-del:hover { color: #ff6b6b; }
+.glossary-save { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-1); }
+.glossary-save[hidden] { display: none; }
+.glossary-scheme { color: var(--text-2); }
 
 .reflect-list {
   flex: 1; min-height: 0; overflow-y: auto;
@@ -2437,6 +2570,18 @@ select.note-dur {
 #note-bar select.note-dur { padding:0 24px 0 9px; }
 #note-bar #btn-note-send { padding:0 16px; display:inline-flex; align-items:center; justify-content:center; line-height:1; }
 .sf-studio[data-design=material] #note-bar #note-input { border-radius:12px; }
+/* UWP：2px 直角语言，输入框/停留时长下拉都跟主题走（原来 8px/5px 偏圆） */
+.sf-studio[data-design=uwp] #note-bar :is(#note-input, select.note-dur) { border-radius:2px; }
+/* 「停留」在下拉被主题皮肤替换成 .sf-choice-toggle 后高度只有 32px，和输入框/发送键差 2px；
+   在备注条里统一钉成 34px（含 border-box，避免 padding 把高度撑开）。 */
+#note-bar .sf-choice-shell > .sf-choice-toggle {
+  height: 34px; min-height: 34px; box-sizing: border-box; padding: 0 10px;
+}
+/* MY：三件套统一 34px；「停留」胶囊原本 14px、发送 22px 圆角，看起来比输入框高/胖，
+   这里把下拉的圆角对齐输入框的 12px（发送保持 MY 的胶囊语言）。 */
+.sf-studio[data-design=material] #note-bar .sf-choice-shell > .sf-choice-toggle {
+  height: 34px; min-height: 34px; border-radius: 12px;
+}
 
 /* ── 备注弹幕层（置顶弹幕）──────────────────────────────────────── */
 #danmaku-layer {
@@ -2459,10 +2604,6 @@ select.note-dur {
 }
 /* 刚写下的那条高亮一下，便于确认"就是这条" */
 .dmk.is-new { background: rgba(90, 130, 255, .78); }
-.dmk .dmk-at {
-  font-family: Consolas, monospace; font-size: 11px; font-weight: 400;
-  opacity: .8; margin-right: 6px;
-}
 #danmaku-layer.is-off { display: none; }
 @keyframes dmk-in {
   from { opacity: 0; transform: translateY(-6px) scale(.97); }
@@ -3764,6 +3905,16 @@ body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-col
 .sf-studio #sf-seek .sf-progress-fill { transition:none!important; }
 .sf-studio #sf-seek #video-hover-tip { bottom:calc(100% + 10px); transform:translateX(-50%); background:var(--surface); color:var(--text); border-color:var(--line); border-radius:8px; animation:none; }
 .sf-studio #sf-seek { min-width:48px; }
+/* 隐藏的原生 range：显式把拇指定为 14px。Chrome 的 range「位置 → 数值」映射会在左右各
+   内缩半个拇指宽；不固定的话默认尺寸随主题/UA 变，hover 位置反算时间就会偏 —— 4 小时的
+   视频上两端能差出 2 分钟（用户实测「悬浮预览进度与实际进度不符」）。JS 用同一个
+   --sf-hit-thumb 反算，提示时间与点击跳转就一致了。 */
+.sf-studio #sf-seek-range { -webkit-appearance: none; appearance: none; --sf-hit-thumb: 14px; }
+.sf-studio #sf-seek-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: var(--sf-hit-thumb); height: var(--sf-hit-thumb);
+  border: 0; background: transparent; box-shadow: none;
+}
 .sf-studio #sf-player>span { white-space:nowrap; }
 .sf-studio #sf-volume { width:64px; min-width:40px; accent-color:var(--accent); }
 .sf-studio #sf-rate { width:64px; padding:5px; font-size:10px; }
@@ -6003,6 +6154,10 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=uwp] .sf-pack-art,
 .sf-studio[data-design=uwp] .sf-pack-symbol { border-radius:2px; }
 .sf-studio[data-design=uwp] #home-view .sf-cover { border-radius:2px 2px 0 0; }
+
+/* 进度条两侧的时间：UWP 原本沿用 #sf-player 的 10px，4 小时视频读起来吃力；
+   提到 13px/600，与 Material 主题同口径。 */
+.sf-studio[data-design=uwp] :is(#sf-play-time,#sf-play-duration) { font-size:13px; font-weight:600; }
 
 /* Q. 审查修正：把仍被旧规则/旧交互压住的设计点逐条钉住。 */
 /* 分区导入浮层原本透明，不能因为统一 scrim 把时间轴压暗（2053 行有明确理由）。 */

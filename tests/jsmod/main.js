@@ -34,6 +34,7 @@ import { enhanceFontInput, loadFontNames } from './font-picker.js';
 import { VideoCueEditor, CueTextDialog } from './videoedit.js';
 import { splitSegments, replaceSegmentInRaw, escapeAssUser, leadPrefixLen, htmlPlainAndMap } from './segment.js';
 import { initExportVideoButton } from './export-video.js';
+import { initGlossaryReview } from './glossary-review.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -287,7 +288,22 @@ function applyIcons(root = document) {
 window.__applyIcons = applyIcons;
 
 /* ─────────── 可拖动分割线: 视频/时间轴(横) 与 左区/字幕列表(竖) ─────────── */
-function bindSplit(el, onMove) {
+/* 右侧字幕面板宽度：拖动 #vsplit 后写 localStorage，下次打开编辑器（含刷新）沿用。
+   区间与拖动时一致 280~720；时间轴高度另有 ss-tl-h 一套（见 setTlHeight）。 */
+const PANEL_W_KEY = 'ss-panel-w';
+const PANEL_W_MIN = 280;
+const PANEL_W_MAX = 720;
+const clampPanelW = (w) => Math.round(Math.max(PANEL_W_MIN, Math.min(PANEL_W_MAX, w)));
+/* 磁吸：候选值离 target 在 radius 内时按平方衰减靠近（越近越“黏”，手感是阻尼），
+   出了 radius 立刻回到 1:1 跟手。用于“视频刚好铺满播放区”的那一条比例线。 */
+function magSnap(value, target, radius = 32) {
+  if (!Number.isFinite(target) || !(radius > 0)) return value;
+  const d = value - target;
+  const t = Math.abs(d) / radius;
+  if (t >= 1) return value;
+  return target + Math.sign(d) * radius * t * t;
+}
+function bindSplit(el, onMove, onEnd) {
   if (!el) return;
   el.addEventListener('pointerdown', (e) => {
     e.preventDefault();
@@ -296,23 +312,45 @@ function bindSplit(el, onMove) {
     const startTl = parseFloat(cs.getPropertyValue('--tl-h')) || 232;
     const startPw = parseFloat(cs.getPropertyValue('--panel-w')) || 400;
     const x0 = e.clientX, y0 = e.clientY;
-    const move = (ev) => onMove(app, ev.clientY - y0, ev.clientX - x0, startTl, startPw);
+    /* 拖拽起点的画面几何：拖动过程中逐步测量会把“吸附点”带着走，所以一次定死。 */
+    const videoEl = document.getElementById('video');
+    const ctx = {
+      vw: videoEl ? videoEl.clientWidth : 0,
+      vh: videoEl ? videoEl.clientHeight : 0,
+      ar: videoEl && videoEl.videoWidth && videoEl.videoHeight ? videoEl.videoWidth / videoEl.videoHeight : 0,
+    };
+    const move = (ev) => onMove(app, ev.clientY - y0, ev.clientX - x0, startTl, startPw, ctx);
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       overlay.fitToVideo();
+      if (typeof onEnd === 'function') onEnd();
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   });
 }
-bindSplit(document.getElementById('hsplit'), (app, dy, dx, startTl) => {
-  setTlHeight(startTl - dy, true);    // 拖动即记住, 下次打开保持这个比例
+bindSplit(document.getElementById('hsplit'), (app, dy, dx, startTl, startPw, ctx) => {
+  let h = startTl - dy;
+  /* 视频刚好铺满（画面宽高比 = 播放区宽高比）时的高度：吸到这条线上。 */
+  if (ctx && ctx.vh > 0 && ctx.ar > 0) {
+    const fitH = startTl + ctx.vh - ctx.vw / ctx.ar;
+    if (fitH >= TLH_MIN && fitH <= TLH_MAX()) h = magSnap(h, fitH, 32);
+  }
+  setTlHeight(h, true);    // 拖动即记住, 下次打开保持这个比例
 });
-bindSplit(document.getElementById('vsplit'), (app, dy, dx, startTl, startPw) => {
-  const w = Math.round(Math.max(280, Math.min(720, startPw - dx)));
-  app.style.setProperty('--panel-w', w + 'px');
+bindSplit(document.getElementById('vsplit'), (app, dy, dx, startTl, startPw, ctx) => {
+  let w = startPw - dx;
+  /* 视频刚好铺满（宽度吃到刚好）时的面板宽：吸到这条线上。 */
+  if (ctx && ctx.vh > 0 && ctx.ar > 0) {
+    const fitW = ctx.vw + startPw - ctx.ar * ctx.vh;
+    if (fitW >= PANEL_W_MIN && fitW <= PANEL_W_MAX) w = magSnap(w, fitW, 32);
+  }
+  app.style.setProperty('--panel-w', clampPanelW(w) + 'px');
   overlay.fitToVideo();
+}, () => {
+  const w = parseFloat(getComputedStyle(document.getElementById('app')).getPropertyValue('--panel-w'));
+  if (isFinite(w) && w > 0) localStorage.setItem(PANEL_W_KEY, String(clampPanelW(w)));
 });
 
 /* ─────────── 波形图(ffmpeg 服务端提取; 视频不在服务端保存) ───────────
@@ -6403,6 +6441,9 @@ function applyDiarizeResult(job) {
 
 if (btnDiarize) btnDiarize.addEventListener('click', beginDiarize);
 
+/* 全片术语表校对：模型通读全片 → 预览编辑 → 写入当前翻译方案的术语表 */
+initGlossaryReview({ state, toast });
+
 panel.onRetranslateCard = (item) => {
   try { retranslateRow(item); }
   catch (e) { toast('翻译失败: ' + ((e && e.message) || e), 4600); }
@@ -6995,6 +7036,14 @@ function applyTlHeight() {
   const cur = parseFloat(getComputedStyle(document.getElementById('app')).getPropertyValue('--tl-h')) || 232;
   setTlHeight(isFinite(v) && v > 0 ? v : cur, false);
 }
+/** 右侧字幕面板宽度：恢复上次拖 #vsplit 记住的值（刷新/重开编辑器后沿用） */
+function applyPanelWidth() {
+  const v = parseFloat(localStorage.getItem(PANEL_W_KEY));
+  if (!isFinite(v) || v <= 0) return;
+  const app = document.getElementById('app');
+  app.style.setProperty('--panel-w', clampPanelW(v) + 'px');
+  if (overlay && typeof overlay.fitToVideo === 'function') overlay.fitToVideo();
+}
 
 /* 角色标注开关: 启用=现状(坏行标「未标注角色」+ 角色 Tab/筛选)；禁用=两者都藏、不再标。
  * 字幕里已有 [角色] 标签时禁用需要二次确认 —— 标签本身保留，只是不再参与判定与列表。 */
@@ -7096,9 +7145,9 @@ video.addEventListener('timeupdate', () => {
   }
 
   function paintDanmaku(n) {
-    const at = fmtTime(Number(n.at) || 0).replace(/^00:/, '');
-    layer.innerHTML = `<div class="dmk${n.id === flashId ? ' is-new' : ''}">`
-      + `<span class="dmk-at">${escapeHtml(at)}</span>${escapeHtml(n.text)}</div>`;
+    /* 气泡里只显示备注正文：时间点是"这条备注记在哪"，播放中显示出来等于重复了进度条的位置，
+       用户要求去掉。 */
+    layer.innerHTML = `<div class="dmk${n.id === flashId ? ' is-new' : ''}">${escapeHtml(n.text)}</div>`;
     flashId = null;
   }
 
@@ -7270,6 +7319,7 @@ applySensitivity();
 applyFilmSetting();
 applyTrackMode(false);
 applyTlHeight();
+applyPanelWidth();
 initFxControls();
 
 /* 调试钩子(测试用) */

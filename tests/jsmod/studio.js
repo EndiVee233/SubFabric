@@ -1929,11 +1929,24 @@ function hideSeekTip() { seekTip.hidden = true; }
 seekRange.addEventListener('pointermove', e => {
   if (scrubbing || seekRange.disabled || !Number.isFinite(video.duration) || video.duration <= 0) { hideSeekTip(); return; }
   const rect = seekRange.getBoundingClientRect();
-  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / Math.max(1, rect.width)));
+  /* 原生 range 的拇指在两端各内缩半个拇指宽（见 CSS 的 --sf-hit-thumb）：
+     命中位置 → 时间要按 (x - 半个拇指) / (宽 - 整个拇指) 反算，否则越靠两端偏得越多。
+     4 小时视频、700px 宽时旧算法两端能差 2 分钟。测试用的假 DOM 没有 getComputedStyle，
+     取不到就退回与 CSS 相同的 14px。 */
+  let thumb = 14;
+  try {
+    const v = parseFloat(getComputedStyle(seekRange).getPropertyValue('--sf-hit-thumb'));
+    if (isFinite(v) && v > 0) thumb = v;
+  } catch {}
+  const usable = Math.max(1, rect.width - thumb);
+  const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left - thumb / 2) / usable));
   const time = ratio * video.duration;
   seekTip.textContent = fmtTime(time).slice(0, 8);
   seekTip.title = fmtTime(time);
-  seekTip.style.left = `clamp(36px,${ratio * 100}%,calc(100% - 36px))`;
+  /* 提示块对准拇指中心（同一个映射），两端各留 36px 不出界。 */
+  const barW = seekBar.clientWidth || rect.width;
+  const cx = thumb / 2 + ratio * Math.max(1, barW - thumb);
+  seekTip.style.left = `${Math.max(36, Math.min(barW - 36, cx)).toFixed(1)}px`;
   seekTip.hidden = false;
 });
 for (const event of ['pointerleave', 'pointercancel', 'blur']) seekRange.addEventListener(event, hideSeekTip);

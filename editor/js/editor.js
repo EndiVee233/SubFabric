@@ -121,6 +121,16 @@ export class EditorPanel {
     this._settingsEnterTimer = 0;
     this._settingsEnterPlayed = false; // 同上，设置页逐个卡片入场
 
+    /* 字幕 + 角色并排（仅 ASS 有角色时可用）：偏好持久化，实际是否展开由当前页签决定。 */
+    this._splitPref = false;
+    try { this._splitPref = localStorage.getItem('sf-editor-split-roles') === '1'; } catch { this._splitPref = false; }
+    this._splitRoles = false;
+    /* 并排栏显示什么：人物列表 / 备注列表（小顶栏切换，偏好持久化） */
+    this._splitPane = 'roles';
+    try { if (localStorage.getItem('sf-editor-split-pane') === 'notes') this._splitPane = 'notes'; } catch {}
+    this.panelEl = document.getElementById('editor-panel');
+    this.splitBtn = null;
+
     this._bind();
   }
 
@@ -146,7 +156,12 @@ export class EditorPanel {
       if (!card) return;
       const item = this.filtered[+card.dataset.idx];
       if (!item) return;
-      const line = e.target.closest('.cc-l1') ? 1 : (e.target.closest('.cc-l2') ? 2 : 0);
+      const lineEl = e.target.closest('.cc-l1') || e.target.closest('.cc-l2');
+      const line = lineEl ? (lineEl.classList.contains('cc-l1') ? 1 : 2) : 0;
+      /* 点文字进编辑时，光标要落在**鼠标点的那两个词之间**，不是行尾。
+         先把点击坐标换算成这一行文本里的字符偏移，startEdit 再按它摆光标。 */
+      const caretAt = line ? this._caretIndexAt(lineEl, e.clientX, e.clientY) : -1;
+      const cardText = lineEl ? (lineEl.textContent || '') : '';
       const now = performance.now();
       if (!line) {
         const last = this._lastClick;
@@ -161,7 +176,7 @@ export class EditorPanel {
         this._lastClick = null;                     // 点文字区域只进入编辑, 不算双击
       }
       if (this.onSelect) this.onSelect(item);
-      if (line) this.startEdit(item, line);
+      if (line) this.startEdit(item, line, caretAt, cardText);
     });
     this.searchBox.addEventListener('input', () => {
       this._filterText = this.searchBox.value.trim().toLowerCase();
@@ -209,6 +224,13 @@ export class EditorPanel {
     this._tabBtns.forEach(btn => {
       btn.addEventListener('click', () => this.showTab(btn.dataset.tab));
     });
+    this.splitBtn = document.getElementById('panel-split-roles');
+    if (this.splitBtn) this.splitBtn.addEventListener('click', () => this.toggleSplitRoles());
+    this.roleGrip = document.getElementById('split-role-grip');
+    this._bindRoleGrip();
+    document.querySelectorAll('#split-pane-head [data-split-pane]').forEach(b => {
+      b.addEventListener('click', () => this._switchSplitPane(b.dataset.splitPane));
+    });
     this._bindRoleMenu();   // 角色右键菜单 / 重命名浮层 / 取色器
     this._bindCardMenu();   // 字幕卡片右键菜单(删除)
     // 点页面其它任意位置 → 退出编辑并自动保存(pointerdown 比 focusout 更可靠,
@@ -225,13 +247,18 @@ export class EditorPanel {
       if (this.editorEl && this.editorEl.contains(e.target)) return;
       const card = e.target.closest ? e.target.closest('.cue-card') : null;
       const item = card ? this.filtered[+card.dataset.idx] : null;
-      const line = item ? (e.target.closest('.cc-l1') ? 1 : (e.target.closest('.cc-l2') ? 2 : 0)) : 0;
+      const lineEl = item && e.target.closest ? (e.target.closest('.cc-l1') || e.target.closest('.cc-l2')) : null;
+      const line = lineEl ? (lineEl.classList.contains('cc-l1') ? 1 : 2) : 0;
       // 点了**另一条**的文字行 → 立刻把编辑转移过去(pointerdown 做, 不等 click):
       // 行内编辑框是浮层, 换行时 mousedown 与 mouseup 的目标往往不是同一节点, 浏览器就
       // 不派发 click, 靠 click 换行会变成"要点两次"。
       // 转移期间(到 pointerup 为止)挂起兜底提交 —— 否则焦点变化触发的**旧行**提交会在
       // 稍后跑完并把刚建好的新编辑框一起收掉。
       if (item && item !== this.editItem && line && (!this.isEditable || this.isEditable(item.ref))) {
+        /* 光标偏移必须在 _render() 之前取：重建会把 lineEl 变成游离节点，
+           caretPositionFromPoint 返回的节点已不在它里面。 */
+        const caretAt = this._caretIndexAt(lineEl, e.clientX, e.clientY);
+        const cardText = lineEl ? (lineEl.textContent || '') : '';
         // 整个换行过程收在一个"切换窗口"里(约一次点击的时长): 期间任何兜底提交 / 焦点收尾
         // 都跳过。换行时旧编辑框被移除、新编辑框刚挂上, 两者的 focusout 都会在同一个 tick
         // 内触发; 不屏蔽的话它们会接连跑完, 把刚建好的新编辑框连同编辑状态一起收掉
@@ -244,7 +271,18 @@ export class EditorPanel {
         this._render();
         const next = this.items.find(x => x.ref === item.ref) || item;
         if (this.onSelect) this.onSelect(next);
-        this.startEdit(next, line);
+        this.startEdit(next, line, caretAt, cardText);
+        /* mousedown 的默认焦点动作在 pointerdown 之后才执行，会把刚聚焦的编辑行打回 body
+           （点击目标还是卡片本身）。等这一轮事件结束，把焦点和光标补回用户点的那一行。 */
+        setTimeout(() => {
+          if (this.editItem !== next || !this.editorEl) return;
+          const el = this.editorEl.querySelector(line === 2 ? '.ie-l2' : '.ie-l1');
+          if (!el) return;
+          if (document.activeElement !== el) el.focus();
+          if (Number.isFinite(caretAt) && caretAt >= 0) {
+            this._setCaret(el, this._mapCaret(cardText, el.textContent || '', caretAt));
+          }
+        }, 0);
         return;
       }
       this._deferCommit = true;
@@ -361,7 +399,142 @@ export class EditorPanel {
     const btn = this._tabBtns.find(b => b.dataset.tab === 'roles');
     if (btn) btn.hidden = !on;
     if (this.roleFilterSel) this.roleFilterSel.hidden = !on;
+    if (this.splitBtn) this.splitBtn.hidden = !on;
+    /* 并排模式只在有角色(ASS)时成立；换到 SRT/无角色稿件时收起，偏好本身保留。 */
+    this._splitRoles = !!on && this._splitPref && this._tab === 'subs';
+    this._applySplit();
+    if (this._splitRoles) this._renderRoles(false);
     if (!on && this._tab === 'roles') this.showTab('subs');
+  }
+
+  /** 同步「字幕 + 角色」并排的 DOM 状态（面板 grid 布局 + 按钮 aria/高亮）。 */
+  _applySplit() {
+    if (this.panelEl) this.panelEl.classList.toggle('is-split-roles', !!this._splitRoles);
+    if (this.splitBtn) {
+      this.splitBtn.setAttribute('aria-pressed', String(!!this._splitRoles));
+      this.splitBtn.classList.toggle('active', !!this._splitRoles);
+    }
+    this._applySplitPane();
+  }
+
+  /** 并排栏的内容：人物列表 ↔ 备注列表。备注列表节点直接复用「日志 → 备注」那一份
+   *  （事件委托挂在列表上，搬动不影响），切页/关并排时再放回日志页。 */
+  _applySplitPane() {
+    const head = document.getElementById('split-pane-head');
+    const holder = document.getElementById('split-note-holder');
+    const roleList = document.getElementById('role-list');
+    const notes = document.getElementById('note-view');
+    const empty = document.getElementById('note-empty');
+    const logPane = document.getElementById('log-pane-note');
+    const on = !!this._splitRoles;
+    const backToLogs = () => {
+      if (!logPane) return;
+      const tb = logPane.querySelector('.log-toolbar');
+      if (notes && notes.parentElement !== logPane) {
+        if (tb && tb.nextSibling) logPane.insertBefore(notes, tb.nextSibling);
+        else logPane.appendChild(notes);
+      }
+      if (empty && empty.parentElement !== logPane) logPane.appendChild(empty);
+    };
+    if (!on) {
+      if (head) head.hidden = true;
+      if (holder) holder.hidden = true;
+      if (roleList) roleList.hidden = false;
+      backToLogs();
+      return;
+    }
+    if (head) head.hidden = false;
+    const isNotes = this._splitPane === 'notes';
+    if (head) head.querySelectorAll('[data-split-pane]').forEach(b => {
+      b.classList.toggle('active', (b.dataset.splitPane === 'notes') === isNotes);
+    });
+    if (roleList) roleList.hidden = isNotes;
+    if (holder) holder.hidden = !isNotes;
+    if (isNotes && holder && notes) {
+      holder.appendChild(notes);
+      if (empty) holder.appendChild(empty);
+      if (typeof window.__onNotesShown === 'function') window.__onNotesShown();
+    } else {
+      backToLogs();
+    }
+  }
+
+  /** 小顶栏：人物 / 备注 */
+  _switchSplitPane(pane) {
+    this._splitPane = pane === 'notes' ? 'notes' : 'roles';
+    try { localStorage.setItem('sf-editor-split-pane', this._splitPane); } catch {}
+    this._applySplitPane();
+    if (this._splitPane === 'notes' && typeof window.__onNotesShown === 'function') window.__onNotesShown();
+  }
+
+  /** 切换并排模式：偏好写 localStorage；开启时确保停在字幕页并渲染角色列表。 */
+  toggleSplitRoles(force) {
+    if (!this._rolesEnabled) return;
+    const on = typeof force === 'boolean' ? force : !this._splitPref;
+    this._splitPref = on;
+    try { localStorage.setItem('sf-editor-split-roles', on ? '1' : '0'); } catch {}
+    if (on && this._tab !== 'subs') this.showTab('subs');
+    this._splitRoles = !!(on && this._rolesEnabled && this._tab === 'subs');
+    this._applySplit();
+    if (this._splitRoles) this._renderRoles(false);
+  }
+
+  /** 并排模式下的角色栏宽：拖动左边界调整、双击复位、键盘 ←/→ 16px 步进；宽度存 localStorage。 */
+  _bindRoleGrip() {
+    const g = this.roleGrip;
+    if (!g) return;
+    const panel = this.panelEl;
+    const clamp = (w) => {
+      const max = Math.max(150, Math.round((panel ? panel.clientWidth : 700) * 0.45));
+      return Math.max(108, Math.min(max, Math.round(w)));
+    };
+    const apply = (w) => {
+      if (!panel) return;
+      const px = clamp(w);
+      panel.style.setProperty('--split-role-w', px + 'px');
+      try { localStorage.setItem('sf-editor-split-role-w', String(px)); } catch {}
+    };
+    let drag = null;
+    g.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const box = document.getElementById('tab-roles');
+      drag = { x0: e.clientX, w0: box ? box.getBoundingClientRect().width : 150 };
+      g.classList.add('is-dragging');
+      try { g.setPointerCapture(e.pointerId); } catch {}
+    });
+    g.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      apply(drag.w0 + (drag.x0 - e.clientX));   // 往左拖 = 角色栏变宽
+    });
+    const end = () => {
+      if (!drag) return;
+      drag = null;
+      g.classList.remove('is-dragging');
+      /* 字幕列宽度变了 → 卡片换行高度变了，标脏重测一次，滚动位置才不含错位。 */
+      this._metricsDirty = true;
+      this._render();
+    };
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) g.addEventListener(ev, end);
+    g.addEventListener('dblclick', () => {
+      if (!panel) return;
+      panel.style.removeProperty('--split-role-w');
+      try { localStorage.removeItem('sf-editor-split-role-w'); } catch {}
+      this._metricsDirty = true;
+      this._render();
+    });
+    g.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const box = document.getElementById('tab-roles');
+      const w = box ? box.getBoundingClientRect().width : 150;
+      apply(w + (e.key === 'ArrowLeft' ? 16 : -16));
+      this._metricsDirty = true;
+      this._render();
+    });
+    let saved = 0;
+    try { saved = Number(localStorage.getItem('sf-editor-split-role-w')) || 0; } catch {}
+    if (saved > 0 && panel) panel.style.setProperty('--split-role-w', clamp(saved) + 'px');
   }
 
   showTab(name, opts = {}) {
@@ -369,6 +542,10 @@ export class EditorPanel {
     if (name === 'roles' && !this._rolesEnabled) name = 'subs';
     const prevTab = this._tab;
     this._tab = name;
+    /* 并排只在字幕页成立：切到角色/设置/日志先收起（偏好保留，回字幕页自动恢复）。
+       点「角色」标签 = 看完整角色列表，不会和并排打架。 */
+    this._splitRoles = !!(this._splitPref && this._rolesEnabled && name === 'subs');
+    this._applySplit();
     const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings', logs: 'tab-logs' };
     /* 新建字幕必须立刻看到输入框：跳过 .tab-body 的 260ms 入场，
        否则会表现为“已经切过去了但卡住零点几秒”。 */
@@ -390,6 +567,7 @@ export class EditorPanel {
     if (this.onTabChange) this.onTabChange(name);      // 离开角色栏 → 主逻辑会清掉没用过的新角色
     if (name === 'subs') {
       this._render();
+      if (this._splitRoles) this._renderRoles(false);
       /* 其它 Tab 是隐藏的：字幕列表量不到可见高度，播放高亮虽然记在 playingItem 上，
        * 但不会滚到当前句。切回来时必须按最近播放时间强制重定位一次，否则列表停在切走前的
        * 位置、而且因为 playingItem 早已等于当前句，tick 的 setPlayingByTime 不会再做任何事
@@ -420,7 +598,7 @@ export class EditorPanel {
       sel.value = [...sel.options].some(o => o.value === cur) ? cur : '__all__';
       if (sel.value !== cur) this._speaker = '';       // 角色不存在了(换了文件) → 取消筛选
     }
-    if (this._tab === 'roles') this._renderRoles();
+    if (this._tab === 'roles' || this._splitRoles) this._renderRoles();
   }
 
   /** 按角色(说话人)筛选字幕列表 */
@@ -1203,8 +1381,10 @@ export class EditorPanel {
 
   /* ─────────── 行内编辑 ─────────── */
 
-  /** 单击文字条 → 在卡片文本位置原位编辑(中英双行) */
-  startEdit(item, focusLine = 0) {
+  /** 单击文字条 → 在卡片文本位置原位编辑(中英双行)。
+   *  caretAt/cardText: 点击处在**卡片那一行**文本里的字符偏移与当时的行文本，
+   *  用来把光标摆到鼠标点的位置（行尾是旧行为）。 */
+  startEdit(item, focusLine = 0, caretAt = -1, cardText = '') {
     if (this.editItem === item) {          // 已在编辑同一条 → 仅切换焦点行
       if (this.editorEl) this._focusLine(focusLine === 2 ? 2 : 1);
       return;
@@ -1353,6 +1533,65 @@ export class EditorPanel {
     this.listEl.appendChild(div);
     this._render();
     this._focusLine(focusLine === 2 ? 2 : 1);
+    /* 光标从「点哪儿在哪儿」开始：把卡片行上的点击偏移映射到编辑框的文本（编辑框省掉了
+       [角色] 前缀，行文本可能和卡片显示文本差一段，所以用 indexOf 对齐后再加偏移）。 */
+    if (Number.isFinite(caretAt) && caretAt >= 0) {
+      const el = this.editorEl.querySelector(focusLine === 2 ? '.ie-l2' : '.ie-l1');
+      if (el) this._setCaret(el, this._mapCaret(cardText, el.textContent || '', caretAt));
+    }
+  }
+
+  /** 点击坐标 → 行文本里的字符偏移；取不到（旧浏览器/点在行外）→ -1（回退行尾）。 */
+  _caretIndexAt(lineEl, x, y) {
+    if (!lineEl || typeof document === 'undefined') return -1;
+    try {
+      let node = null, offset = 0;
+      if (typeof document.caretPositionFromPoint === 'function') {
+        const p = document.caretPositionFromPoint(x, y);
+        if (p) { node = p.offsetNode; offset = p.offset; }
+      } else if (typeof document.caretRangeFromPoint === 'function') {
+        const r = document.caretRangeFromPoint(x, y);
+        if (r) { node = r.startContainer; offset = r.startOffset; }
+      }
+      if (!node || !lineEl.contains(node)) return -1;
+      if (node.nodeType !== Node.TEXT_NODE) return -1;
+      /* 行里可能不止一个文本节点（词高亮切片），累加它前面的长度。 */
+      let total = 0;
+      const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (n === node) return total + offset;
+        total += (n.nodeValue || '').length;
+      }
+      return -1;
+    } catch { return -1; }
+  }
+
+  /** 卡片行文本偏移 → 编辑框文本偏移（两者只差行首被省掉的 [角色]/覆盖标签）。 */
+  _mapCaret(cardText, editorText, caret) {
+    const card = cardText || '';
+    if (card === editorText) return caret;
+    const at = editorText.indexOf(card);
+    return at >= 0 ? at + caret : Math.min(caret, editorText.length);
+  }
+
+  /** 把光标放到 el 的第 pos 个字符（el 是 .ie-line，内容为单文本节点）。 */
+  _setCaret(el, pos) {
+    if (!el) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    const len = (el.textContent || '').length;
+    const at = Math.max(0, Math.min(len, pos));
+    const range = document.createRange();
+    const node = el.firstChild;
+    if (node && node.nodeType === Node.TEXT_NODE) {
+      range.setStart(node, at);
+      range.collapse(true);
+    } else {
+      range.selectNodeContents(el);
+      range.collapse(at >= len);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
   }
 
   /** 聚焦编辑器的指定行并把光标移到行尾 */

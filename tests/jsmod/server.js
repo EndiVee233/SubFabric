@@ -37,6 +37,7 @@ const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有
 const mtLocal = require('./mt-local.js');
 const asrServiceMod = require('./asr-service.js');
 const hotwordsMod = require('./hotwords.js');       // 从操作日志挖 ASR 热词候选(纯逻辑, 有单测)
+const glossaryMerge = require('./glossary-merge.js'); // 全片术语表校对：合并词条进方案术语表(纯逻辑)
 const gluedWordsMod = require('./glued-words.js');  // 扫"单词被粘住"(toescape 这类), 有单测
 const assSentencesMod = require('./ass-sentences.js'); // 从 karaoke 式 ASS 还原"句子+逐词"(服务端, 无 DOM)
 const { AssDoc } = require('./js/ass.js');
@@ -128,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.4.5.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.4.5.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4.6'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.6.0'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -328,8 +329,10 @@ const STATIC_RESOURCES = new Set([
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
-    'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast'].map(n => '/editor/js/' + n + '.js'),
+    'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
+    'glossary-review'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
+  '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
   '/editor/vendor/subtitles-octopus-worker.wasm', '/editor/vendor/fonts/NotoSansCJKsc-Regular.otf',
 ]);
@@ -5396,6 +5399,121 @@ function startPrepare(id, videoPath, mode) {
       if (t.sourceKey === sourceKey && Array.isArray(t.lines) && t.lines.length === n) return t.lines;
     } catch {}
     return null;
+  }
+
+  /* ── 全片术语表校对 ──────────────────────────────────────────────
+   * 用「字幕翻译」那套模型通读全片中文行，挑出中英文专有名词；术语表里已有的词带出
+   * 原译法，其余由模型生成。只读不写：确认后的词条由 /glossary-apply 合并进方案术语表。
+   */
+  const glossaryBusy = new Set();
+  const GLOSSARY_SYS_PROMPT = '你是字幕术语校对助手。只输出 JSON 数组，不要解释、不要 markdown 代码块。';
+  function schemeInfo() {
+    const s = readAsrSettings();
+    const item = (s.translateSchemes || []).find(it => it.id === s.translateSchemeId);
+    return item ? { id: item.id, name: String(item.name || '') } : null;
+  }
+  /** 当前生效的术语表文本与语言：有命名方案用方案自己的，否则用 translate 配置。 */
+  function activeGlossary() {
+    const s = readAsrSettings();
+    const item = (s.translateSchemes || []).find(it => it.id === s.translateSchemeId);
+    if (item) return { text: String(item.glossary || ''), lang: String(item.glossaryLang || '简体') };
+    const t = s.translate || {};
+    return { text: String(t.glossary || ''), lang: String(t.glossaryLang || '简体') };
+  }
+  /** 模型返回的 JSON 数组 → [{src,dst}]；容忍代码块围栏、前后说明、以及逐行 "原文=译法"。 */
+  function parseGlossaryJsonList(raw) {
+    const s = String(raw || '').trim();
+    const a = s.indexOf('['), b = s.lastIndexOf(']');
+    const body = a >= 0 && b > a ? s.slice(a, b + 1) : s;
+    try {
+      const v = JSON.parse(body);
+      if (Array.isArray(v)) return v;
+    } catch {}
+    const out = [];
+    for (const line of s.split(/\r?\n/)) {
+      const m = /^\s*(?:[-*]|\d+[.、])?\s*["']?(.{1,120}?)["']?\s*(?:=|->|→|：|:)\s*["']?(.{1,120}?)["']?\s*,?\s*$/.exec(line);
+      if (m) out.push({ src: m[1], dst: m[2] });
+    }
+    return out;
+  }
+  async function reviewGlossary(id) {
+    const cfg = translateCfg();
+    if (!llmReady(cfg)) {
+      throw new Error('术语表校对要用「字幕翻译」的模型：先到「全局设置 → 翻译方案」把接口地址、模型和 API Key 配好');
+    }
+    const segs = readSegments(id);
+    /* 只取正文：去掉行首角色标签 [Spoke] 与 ASS 覆盖标签，模型只看内容 */
+    const lines = segs.map(s => String(s.text || '')
+      .replace(/^\s*(?:\{[^}]*\}\s*)*\[[^\]]+\]\s*/, '').trim()).filter(Boolean);
+    if (!lines.length) throw new Error('这个稿件还没有可校对的字幕文本');
+    const knownGlossary = activeGlossary();
+    const known = parseGlossary(knownGlossary.text, knownGlossary.lang);
+    const knownMap = new Map(known.map(([a, b]) => [a.toLowerCase(), { src: a, dst: b }]));
+    let text = lines.join('\n');
+    const truncated = text.length > 60000;
+    if (truncated) text = text.slice(0, 60000);
+    const user = [
+      '下面是一部影片的中文字幕。请找出其中出现的**中英文专有名词**（人名、地名、组织、作品、游戏/道具/技能名、品牌、称号等）；普通名词、常用词、语气词不要。',
+      '每个词给出它在简体中文里的统一译法（2–20 字，不要写成一句解释）。',
+      '如果这个词已经出现在【现有术语表】里，译法必须沿用表里的写法，不要另译。',
+      '按在字幕里出现的先后顺序输出 JSON 数组，元素为 {"src":"原文","dst":"译法"}，最多 200 条；没有就输出 []。',
+      '',
+      '【现有术语表】',
+      known.length ? known.slice(0, 400).map(([a, b]) => `${a}=${b}`).join('\n') : '（空）',
+      '',
+      '【字幕正文】',
+      text,
+    ].join('\n');
+    const r = await llmChat(cfg, [
+      { role: 'system', content: GLOSSARY_SYS_PROMPT },
+      { role: 'user', content: user },
+    ], { jsonMode: true, maxTokens: 8192, debugFile: path.join(projDir(id), 'llm-debug.jsonl') });
+    const raw = parseGlossaryJsonList(r && r.content);
+    const out = [];
+    const seen = new Set();
+    for (const it of raw) {
+      const src = String((it && (it.src || it.source || it.term)) || '').trim();
+      const dst = String((it && (it.dst || it.translation || it.zh)) || '').trim();
+      if (!src || !dst || src.length > 300 || dst.length > 300) continue;
+      const key = src.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const hit = knownMap.get(key);
+      out.push({ src: hit ? hit.src : src, dst: hit ? hit.dst : dst, known: !!hit });
+    }
+    /* 术语表里有、字幕里也真的出现了的词：模型漏掉也补上（用户要的是"校对"，不是"重新发现"） */
+    for (const { src, dst } of knownMap.values()) {
+      const key = src.toLowerCase();
+      if (seen.has(key) || src.length < 2) continue;
+      if (!text.includes(src)) continue;
+      seen.add(key);
+      out.push({ src, dst, known: true });
+    }
+    return {
+      terms: out, total: out.length, known: out.filter(t => t.known).length,
+      scanned: lines.length, truncated, scheme: schemeInfo(),
+    };
+  }
+  function applyGlossaryTerms(id, terms, save) {
+    const list = Array.isArray(terms) ? terms : [];
+    const clean = list.map(t => ({ src: String((t && t.src) || '').trim(), dst: String((t && t.dst) || '').trim() }))
+      .filter(t => t.src && t.dst && t.src.length <= 300 && t.dst.length <= 300);
+    if (!clean.length) throw new Error('没有可保存的术语：原文和译法都要填');
+    if (!save) return { saved: false, count: clean.length };
+    const base = activeGlossary();
+    const next = glossaryMerge.mergeGlossary(base.text, base.lang, clean);
+    if (next.length > 100000) throw new Error('术语表超过 10 万字符，请先清理旧条目');
+    const s = readAsrSettings();
+    const schemeId = s.translateSchemeId || '';
+    const items = s.translateSchemes || [];
+    const idx = items.findIndex(it => it.id === schemeId);
+    if (idx >= 0) items[idx].glossary = next;
+    s.translate = Object.assign({}, s.translate || {}, { glossary: next });
+    writeAsrSettings(s);
+    return {
+      saved: true, count: clean.length,
+      scheme: idx >= 0 ? { id: items[idx].id, name: String(items[idx].name || '') } : null,
+    };
   }
 
   /* ── 长稿反思纠错 ──────────────────────────────────────────────
@@ -10734,6 +10852,40 @@ function handleProjectsRoutes(req, res, u) {
       const file = meta.cover && meta.cover.file ? safeProjectFile(id, meta.cover.file) : null;
       if (!file || !fs.existsSync(file)) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'cover not ready');
       return serveFile(req, res, file);
+    }
+
+    /* ═══════════ 全片术语表校对（预览优先） ═══════════
+     * POST /api/projects/:id/glossary-review
+     *   让 LLM 通读全片中文字幕，找出中英文专有名词；已存在于**当前翻译方案术语表**的词
+     *   直接带出现有译法，其余由模型生成。只读不写，结果给前端预览弹窗编辑。
+     * POST /api/projects/:id/glossary-apply  { terms:[{src,dst}], saveToScheme }
+     *   把确认后的词条合并进当前翻译方案的术语表（保留注释/分组/既有顺序）。
+     */
+    if (action === 'glossary-review' && req.method === 'POST') {
+      if (glossaryBusy.has(id)) return sendJson(res, 409, { error: '这个稿件的术语表校对还在跑，等它完成' });
+      glossaryBusy.add(id);
+      return readBody(req, res, 64 * 1024, async (err) => {
+        if (err) { glossaryBusy.delete(id); return sendJson(res, 400, { error: String(err.message) }); }
+        try {
+          return sendJson(res, 200, await reviewGlossary(id));
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e && e.message) || e) });
+        } finally {
+          glossaryBusy.delete(id);
+        }
+      });
+    }
+    if (action === 'glossary-apply' && req.method === 'POST') {
+      return readBody(req, res, 512 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let p = {};
+        try { p = body && body.length ? JSON.parse(body.toString('utf8')) : {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        try {
+          return sendJson(res, 200, applyGlossaryTerms(id, p.terms, p.saveToScheme !== false));
+        } catch (e) {
+          return sendJson(res, 400, { error: String((e && e.message) || e) });
+        }
+      });
     }
 
     if (!action && req.method === 'GET') return sendJson(res, 200, metaView(meta));

@@ -1899,6 +1899,12 @@ export class Timeline {
     if (!n) return;
     ctx.save();
     ctx.clip(path);
+    /* ⚠ 必须先**擦掉**块内已经画好的波形，再画模糊版。
+     *   canvas 的 `filter` 只作用于"本次绘制"，不会替换已有像素 —— 直接在原波形上再画一遍
+     *   等于**叠加**：块内的波形比块外更亮更实（实测接近翻倍），在窄块/高波形处就是用户看到的
+     *   「字幕块边缘露出灰色遮罩」。用波形带底色填回裁剪区，再画一次模糊波形，才是真的"模糊背景"。 */
+    ctx.fillStyle = this.colors.waveBg;
+    ctx.fillRect(0, 0, W, this._cssH());
     /* 支持 filter 才重画波形做模糊；不支持就只压暗（老浏览器上仍能分出层次）。
      * 注意顺序：先设 filter 再画，画完必须复位，否则会影响后面的绘制。 */
     const studio = document.body?.classList?.contains('sf-studio');
