@@ -1887,12 +1887,14 @@ export class Timeline {
         const x2 = this.t2x(Math.min(c.end, spanEnd));
         if (!(x2 - x1 >= 1)) continue;
         const b = bandOf(c, yy, lh);
-        /* 块只覆盖轨道带的一部分（半区块），但模糊/压暗按**整条波形带**来 ——
-         * 否则同一句的上下两半各糊一块、中间留一条没处理的缝，看着更乱。 */
-        const y0 = Math.max(bandTop, b.y - 2);
-        const y1 = Math.min(bandTop + wh, b.y + b.h + 2);
-        if (!(y1 > y0)) continue;
-        path.rect(x1, y0, x2 - x1, y1 - y0);
+        /* 裁剪区**必须和块的圆角边框完全重合**：以前这里用 rect 并把上下各外扩 2px，
+         * 结果方块角 + 多出来的 2px 在圆角边框外面露出一圈压暗/模糊遮罩（用户实测：
+         * 「边角超出彩色框范围，上方也超出了」）。用与块填充同一套 x1+0.5 / wpx-1 / 圆角。 */
+        const bw = x2 - x1;
+        const rx = x1 + 0.5, rw = Math.max(1.5, bw - 1), ry = b.y, rh = b.h;
+        const radius = this.uwp ? 2 : 3;
+        if (typeof path.roundRect === 'function') path.roundRect(rx, ry, rw, rh, radius);
+        else path.rect(rx, ry, rw, rh);
         n++;
       }
     }

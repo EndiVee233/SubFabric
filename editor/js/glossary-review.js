@@ -5,10 +5,11 @@
  *      找出中英文专有名词；术语表里已有的词由服务端带出现有译法。
  *   2) 在弹窗里逐条编辑（原文 / 译法都可改，可删）；模型新生成的词用高亮框提示
  *      （class `is-new`），已有词保持普通边框。
- *   3) POST /api/projects/:id/glossary-apply —— 勾选「保存到翻译方案术语表」时合并写入；
- *      不勾选则只查看，不落盘。
+ *   3) POST /api/projects/:id/glossary-apply-project —— 把术语替换进当前稿件的中文轨
+ *      （时间与英文轨不动），勾选「保存到翻译方案术语表」时同时合并写入方案。
+ *      应用后用 projects.openProject() 重新载入稿件，界面立刻显示替换后的字幕。
  */
-export function initGlossaryReview({ state, toast }) {
+export function initGlossaryReview({ state, toast, projects }) {
   const $ = (id) => document.getElementById(id);
   const btn = $('btn-glossary-review');
   const els = {
@@ -32,8 +33,8 @@ export function initGlossaryReview({ state, toast }) {
 
   function syncApply() {
     const n = rows.filter(r => r.src.trim() && r.dst.trim()).length;
-    els.apply.disabled = busy || !n || !els.save.checked;
-    els.apply.textContent = n ? `保存到术语表（${n} 条）` : '保存到术语表';
+    els.apply.disabled = busy || !n;
+    els.apply.textContent = n ? `应用到该视频（${n} 条）` : '应用到该视频';
   }
 
   function renderRows() {
@@ -114,21 +115,30 @@ export function initGlossaryReview({ state, toast }) {
 
   async function apply() {
     if (!state.project) return;
+    const pid = state.project.id;
     const terms = rows.map(r => ({ src: r.src.trim(), dst: r.dst.trim() })).filter(t => t.src && t.dst);
-    if (!terms.length) { toast('没有可保存的术语：原文和译法都要填', 3600); return; }
+    if (!terms.length) { toast('没有可应用的术语：原文和译法都要填', 3600); return; }
     busy = true; syncApply();
     try {
-      const r = await fetch(`/api/projects/${state.project.id}/glossary-apply`, {
+      /* 先把稿件的未保存修改落盘，再让服务端改字幕；否则 openProject() 的 flush 会把
+         刚替换好的内容用旧文本覆盖回去。 */
+      if (projects && projects.flushSave) { try { await projects.flushSave(); } catch {} }
+      const r = await fetch(`/api/projects/${pid}/glossary-apply-project`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ terms, saveToScheme: els.save.checked }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      if (!j.saved) { show(false); toast('未写入术语表（只查看了结果）', 3600); return; }
       show(false);
-      toast(`已写入${j.scheme ? '「' + j.scheme.name + '」' : ''}术语表：${j.count} 条`, 4600);
+      const savedNote = j.saved ? `，并写入${j.scheme ? '「' + j.scheme.name + '」' : ''}术语表` : '';
+      if (j.replaced) {
+        toast(`已应用到该视频：替换 ${j.replaced} 处（${j.rows} 行）${savedNote}`, 5200);
+        if (projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }
+      } else {
+        toast(`没有在中文轨里找到可替换的原文，字幕未改动${savedNote}`, 5200);
+      }
     } catch (e) {
-      toast('保存术语表失败：' + ((e && e.message) || e), 5600);
+      toast('应用到该视频失败：' + ((e && e.message) || e), 5600);
     } finally {
       busy = false; syncApply();
     }

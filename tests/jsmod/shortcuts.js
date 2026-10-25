@@ -24,8 +24,8 @@ const KEY_MAP = {
   zoomOut: ['-', 'Ctrl+-'],
   fitAll: ['0'],
   toggleFollow: ['F'],
-  prevCue: ['Alt+ArrowUp'],
-  nextCue: ['Alt+ArrowDown'],
+  prevCue: ['ArrowUp', 'Alt+ArrowUp'],
+  nextCue: ['ArrowDown', 'Alt+ArrowDown'],
   selectPlayCue: ['Alt+P'],
 
   applyEdit: ['Ctrl+Enter'],

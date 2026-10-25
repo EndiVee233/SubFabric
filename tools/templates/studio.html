@@ -309,6 +309,7 @@
             <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处，先给预览，确认后再重识别那几段" disabled><span data-ico="wand"></span> 反思纠错</button>
             <button class="btn btn-mini" id="btn-realign-full" title="用 Qwen3 对齐器重算全片逐词时间；只改时间、不改文本，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
             <button class="btn btn-mini" id="btn-glossary-review" title="用 LLM 通读全片字幕，找出中英文专有名词；术语表里已有的词带出现有译法，其余自动生成，确认后写入翻译方案术语表"><span data-ico="book"></span> 术语表校对</button>
+            <button class="btn btn-mini" id="btn-reseg-llm" title="让 LLM 通读全片，按语义把过长的行拆成更短的句子（只拆不合并；中英在同一意思处对应）；先出预览再应用"><span data-ico="wand"></span> 全片重分句</button>
             <button class="btn btn-mini" id="btn-diarize" title="按音频给每条字幕标说话人（[SPKn] + 角色色）；只改角色标注，不改文本与时间；先确认再跑" disabled><span data-ico="mic"></span> 说话人分离</button>
             <button class="btn btn-mini" id="btn-region-import" title="把协作字幕的指定区间并入当前稿件；撞到已有字幕会先询问" disabled><span data-ico="upload"></span> 分段导入</button>
           </div>
@@ -1044,7 +1045,25 @@
     </label>
     <div class="rn-actions">
       <button type="button" class="btn" id="glossary-cancel">关闭</button>
-      <button type="button" class="btn btn-accent" id="glossary-apply" disabled>保存到术语表</button>
+      <button type="button" class="btn btn-accent" id="glossary-apply" disabled>应用到该视频</button>
+    </div>
+  </div>
+</div>
+
+<!-- 全片语义重分句：LLM 规划断句 → 预览勾选 → 逐行拆分 -->
+<div id="reseg-overlay" hidden>
+  <div class="rn-box modal-surface reflect-box">
+    <div class="rn-title modal-drag-handle">全片重分句 · 预览</div>
+    <div class="rn-msg" id="reseg-msg">正在让模型通读全片，按语义规划断句…</div>
+    <div class="reflect-summary" id="reseg-summary" hidden></div>
+    <label class="reflect-all" id="reseg-all-wrap" hidden>
+      <input type="checkbox" id="reseg-all" checked> 全选可拆分项
+      <span class="reflect-all-note" id="reseg-all-note">只拆行，不合并、不跨行移动文字或角色</span>
+    </label>
+    <div class="reflect-list" id="reseg-list" hidden></div>
+    <div class="rn-actions">
+      <button type="button" class="btn" id="reseg-cancel">关闭</button>
+      <button type="button" class="btn btn-accent" id="reseg-apply" disabled>应用选中项</button>
     </div>
   </div>
 </div>

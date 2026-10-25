@@ -762,7 +762,7 @@ $('sf-shortcuts').addEventListener('click', () => {
   const box = $('sf-help').querySelector('.sf-help-grid article:nth-child(3)');
   if (box.querySelector('dl')) return;
   const dl = document.createElement('dl');
-  const list = [['Space / K', '播放 / 暂停'], ['← / →', '前后跳转 2 秒'], ['Shift + ← / →', '前后跳转 5 秒'], [', / .', '逐帧移动'], ['Home / End', '开头 / 末尾'], ['= / − / 0', '放大 / 缩小 / 适应全片'], ['F', '跟随播放'], ['Alt + ↑ / ↓', '上一句 / 下一句'], ['Alt + P', '选中播放句'], ['Ctrl + Enter', '提交编辑'], ['Ctrl + F', '搜索字幕'], ['Ctrl + S', '导出字幕'], ['F8', '逐词 JSON 导出入口']];
+  const list = [['Space / K', '播放 / 暂停'], ['← / →', '前后跳转 2 秒'], ['Shift + ← / →', '前后跳转 5 秒'], [', / .', '逐帧移动'], ['Home / End', '开头 / 末尾'], ['= / − / 0', '放大 / 缩小 / 适应全片'], ['F', '跟随播放'], ['↑ / ↓（或 Alt + ↑ / ↓）', '上一条 / 下一条字幕'], ['Alt + P', '选中播放句'], ['Ctrl + Enter', '提交编辑'], ['Ctrl + F', '搜索字幕'], ['Ctrl + S', '导出字幕'], ['F8', '逐词 JSON 导出入口']];
   dl.innerHTML = list.map(([key, value]) => `<div><dt><kbd>${key}</kbd></dt><dd>${t(value)}</dd></div>`).join(''); box.appendChild(dl);
   if (document.body.dataset.design === 'material') animateMaterialPage(box, 'dl > div');
 });

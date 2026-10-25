@@ -129,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.4.6'; // 产品显示版本
-const APP_FILE_VERSION = '1.4.6.0'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4.6.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.6.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -5436,15 +5436,50 @@ function startPrepare(id, videoPath, mode) {
     }
     return out;
   }
+  /** 备注/术语校对要用的正文行：优先识别结果(asr.json)；导入的 ASS/SRT 没有 asr.json 时
+   *  退回当前字幕文件（ASS 取所有事件的纯文本、SRT 取复文本行），这样导入稿也能校对。 */
+  function subtitleLinesForReview(id) {
+    const clean = (s) => String(s || '')
+      .replace(/^\s*(?:\{[^}]*\}\s*)*\[[^\]]+\]\s*/, '').trim();
+    try {
+      const segs = readSegments(id);
+      const lines = segs.map(s => clean(s.text)).filter(Boolean);
+      if (lines.length) return lines;
+    } catch {}
+    try {
+      const src = subtitleSource(id);
+      const lines = (src.segs || []).map(r => clean(r.zh || r.text)).filter(Boolean);
+      if (lines.length) return lines;
+    } catch {}
+    /* 连 subtitleSource 都解析不了（例如只有中文轨、没有"非中文轨"可配对的 ASS）：
+       退到最朴素的读取，避免"导入稿完全用不了"。 */
+    const meta = readMeta(id);
+    const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
+    if (!file || !fs.existsSync(file)) throw new Error('这个稿件既没有识别结果，也没有可读的字幕文件');
+    const raw = fs.readFileSync(file, 'utf8');
+    if (/\.ass$/i.test(file)) {
+      const doc = new AssDoc(raw);
+      const lines = doc.sorted.map(e => clean(assSentencesMod.plainText(e.text))).filter(Boolean);
+      if (lines.length) return lines;
+    } else {
+      const out = [];
+      let inCue = false;
+      for (const line of raw.split(/\r?\n/)) {
+        if (/^\s*\d+\s*$/.test(line)) { inCue = false; continue; }
+        if (/-->/.test(line)) { inCue = true; continue; }
+        if (!line.trim()) { inCue = false; continue; }
+        if (inCue) out.push(clean(line));
+      }
+      if (out.length) return out;
+    }
+    throw new Error('这个稿件的字幕里没有可校对的文本');
+  }
   async function reviewGlossary(id) {
     const cfg = translateCfg();
     if (!llmReady(cfg)) {
       throw new Error('术语表校对要用「字幕翻译」的模型：先到「全局设置 → 翻译方案」把接口地址、模型和 API Key 配好');
     }
-    const segs = readSegments(id);
-    /* 只取正文：去掉行首角色标签 [Spoke] 与 ASS 覆盖标签，模型只看内容 */
-    const lines = segs.map(s => String(s.text || '')
-      .replace(/^\s*(?:\{[^}]*\}\s*)*\[[^\]]+\]\s*/, '').trim()).filter(Boolean);
+    const lines = subtitleLinesForReview(id);
     if (!lines.length) throw new Error('这个稿件还没有可校对的字幕文本');
     const knownGlossary = activeGlossary();
     const known = parseGlossary(knownGlossary.text, knownGlossary.lang);
@@ -5494,12 +5529,15 @@ function startPrepare(id, videoPath, mode) {
       scanned: lines.length, truncated, scheme: schemeInfo(),
     };
   }
-  function applyGlossaryTerms(id, terms, save) {
-    const list = Array.isArray(terms) ? terms : [];
-    const clean = list.map(t => ({ src: String((t && t.src) || '').trim(), dst: String((t && t.dst) || '').trim() }))
+  /** 词条清洗（原文/译法都非空、长度上限）。 */
+  function cleanGlossaryTerms(terms) {
+    return (Array.isArray(terms) ? terms : [])
+      .map(t => ({ src: String((t && t.src) || '').trim(), dst: String((t && t.dst) || '').trim() }))
       .filter(t => t.src && t.dst && t.src.length <= 300 && t.dst.length <= 300);
-    if (!clean.length) throw new Error('没有可保存的术语：原文和译法都要填');
-    if (!save) return { saved: false, count: clean.length };
+  }
+  /** 把确认的术语写进当前翻译方案（或当前翻译配置）。返回 saved/count/scheme。 */
+  function saveGlossaryToScheme(terms) {
+    const clean = cleanGlossaryTerms(terms);
     const base = activeGlossary();
     const next = glossaryMerge.mergeGlossary(base.text, base.lang, clean);
     if (next.length > 100000) throw new Error('术语表超过 10 万字符，请先清理旧条目');
@@ -5514,6 +5552,142 @@ function startPrepare(id, videoPath, mode) {
       saved: true, count: clean.length,
       scheme: idx >= 0 ? { id: items[idx].id, name: String(items[idx].name || '') } : null,
     };
+  }
+  function applyGlossaryTerms(id, terms, save) {
+    const clean = cleanGlossaryTerms(terms);
+    if (!clean.length) throw new Error('没有可保存的术语：原文和译法都要填');
+    if (!save) return { saved: false, count: clean.length };
+    return saveGlossaryToScheme(clean);
+  }
+  /** 单条术语在文本里的替换：拉丁词按整词边界（前后不是字母/数字），中文按原样子串；
+   * 大小写敏感（模型给的是字幕里的实际写法，避免把普通小写词也换掉）。 */
+  function replaceGlossaryTerm(text, src, dst) {
+    const s = String(src || ''), d = String(dst || '');
+    if (!s || !d || s === d) return { text: String(text || ''), n: 0 };
+    const esc = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const latin = /[A-Za-z]/.test(s);
+    const re = new RegExp((latin ? '(?<![A-Za-z0-9])' : '') + esc + (latin ? '(?![A-Za-z0-9])' : ''), 'g');
+    let n = 0;
+    const out = String(text || '').replace(re, () => { n++; return d; });
+    return { text: out, n };
+  }
+  /** 把术语应用到**当前稿件的字幕**：只改中文轨的文字，时间与英文轨不动。
+   *  写入走 patchSubtitleTranslations（会做编辑冲突检查、保留 ASS 样式/标签）。 */
+  function applyGlossaryToProject(id, terms, saveToScheme) {
+    const clean = cleanGlossaryTerms(terms);
+    if (!clean.length) throw new Error('没有可应用的术语：原文和译法都要填');
+    const source = subtitleSource(id);
+    const rows = source.segs || [];
+    const replaceAll = (text) => {
+      let out = String(text || ''), hits = 0;
+      for (const t of clean) {
+        if (t.src === t.dst) continue;
+        const r = replaceGlossaryTerm(out, t.src, t.dst);
+        out = r.text; hits += r.n;
+      }
+      return { text: out, n: hits };
+    };
+    let replaced = 0, changed = 0;
+    if (rows.some(r => r.zh)) {
+      /* 双语稿：只改中文轨（英文轨与时间不动） */
+      const lines = rows.map(row => {
+        if (!row.zh) return '';
+        const r = replaceAll(row.zh);
+        if (!r.n) return '';
+        replaced += r.n; changed++;
+        return r.text;
+      });
+      if (changed) patchSubtitleTranslations(id, source, lines);
+    } else if (source.format === 'srt' && source.file) {
+      /* 单语 SRT（导入的中文字幕没有单独译文轨）：直接替换每条正文行。
+         ⚠ 行首的 `[角色]` 是元信息，不能参与替换（否则 Alex 会被改成 亚历克斯）。 */
+      const raw = source.raw.slice();
+      for (const row of rows) {
+        for (let i = row.from; i < row.to; i++) {
+          const tag = /^(\s*(?:\{[^}]*\}\s*)*\[[^\]]+\]\s*)/.exec(raw[i]);
+          const prefix = tag ? tag[1] : '';
+          const r = replaceAll(raw[i].slice(prefix.length));
+          if (!r.n) continue;
+          raw[i] = prefix + r.text; replaced += r.n; changed++;
+        }
+      }
+      if (changed) {
+        if (subtitleRevision(fs.readFileSync(source.file)) !== source.revision) {
+          throw new Error('字幕在应用期间被改动过，请重新打开稿件再试');
+        }
+        fs.writeFileSync(source.file, raw.join(source.eol));
+      }
+    } else {
+      throw new Error('这个稿件的字幕没有中文译轨，暂时只能应用在双语 ASS / SRT 上（英文轨与时间不会改动）');
+    }
+    const saved = saveToScheme ? saveGlossaryToScheme(clean) : { saved: false, count: clean.length };
+    return { applied: true, replaced, rows: changed, ...saved };
+  }
+
+  /* ── 全片语义重分句（只拆不合并） ───────────────────────────────
+   * 前端把整片行发过来，模型只负责「哪一行太长、应该在哪断」；返回的每段文本必须是
+   * 原句的连续子串（服务端校验拼接后与原文一致，防止模型顺手改写/翻译）。
+   * 分句的落盘由前端用编辑器自己的 splitRowAt（保留逐词时间、样式、角色），
+   * 因此导入的 ASS 也能用。
+   */
+  const RESEG_MAX_ROWS = 2000;
+  const RESEG_BATCH = 120;
+  const RESEG_ZH_MAX = 14;      // 单行中文超过这个长度才考虑拆
+  const RESEG_EN_MAX = 42;      // 单行英文超过这个长度才考虑拆
+  function normResegText(s) {
+    return String(s || '').replace(/\s+/g, ' ').trim();
+  }
+  function parseJsonArrayLoose(raw) {
+    const s = String(raw || '').trim();
+    const a = s.indexOf('['), b = s.lastIndexOf(']');
+    const body = a >= 0 && b > a ? s.slice(a, b + 1) : s;
+    try { const v = JSON.parse(body); return Array.isArray(v) ? v : []; } catch {}
+    return [];
+  }
+  async function planResegRows(id, rows, cfg) {
+    const plan = [];
+    const notes = [];
+    for (let lo = 0; lo < rows.length; lo += RESEG_BATCH) {
+      const hi = Math.min(rows.length, lo + RESEG_BATCH);
+      const lines = rows.slice(lo, hi).map((r, k) => `${lo + k}\t${r.zh}\t${r.en}`).join('\n');
+      const user = [
+        '你在帮一部双语影片做「语义重分句」。下面按时间顺序给出每一行（数字是行号，制表符分隔：行号、中文、英文）。',
+        `规则：`,
+        `1) 只判断**需要拆的行**：中文超过 ${RESEG_ZH_MAX} 字、或英文超过 ${RESEG_EN_MAX} 个字符（约 8 个词）的一行，按语义拆成 2~3 段；其余行不要列出。`,
+        '2) 先按语义、标点和从句边界判断（逗号/句号/转折/从句前），中文和英文必须在同一个意思处对应。',
+        '3) **不要改写任何文字**：每段的 zh 必须原句连续字符、en 必须原句连续单词；各段按顺序拼起来（中文直接相连、英文以单个空格相连）要等于原句，只允许去掉段首尾空格。',
+        '4) 不要合并行、不要跨行移动文字或角色、不要翻译。',
+        '5) 输出 JSON 数组：[{"row":行号,"parts":[{"zh":"...","en":"..."}, ...]}]；不需要拆的行不要出现；没有可拆的就输出 []。',
+        '',
+        '字幕行（行号\t中文\t英文）：',
+        lines,
+      ].join('\n');
+      const r = await llmChat(cfg, [
+        { role: 'system', content: '你是字幕断句助手。只输出 JSON 数组，不要解释、不要 markdown 代码块。' },
+        { role: 'user', content: user },
+      ], { jsonMode: true, maxTokens: 8192, debugFile: path.join(projDir(id), 'llm-debug.jsonl') });
+      const list = parseJsonArrayLoose(r && r.content);
+      for (const it of list) {
+        const idx = Number(it && it.row);
+        if (!Number.isInteger(idx) || idx < lo || idx >= hi) continue;
+        const row = rows[idx];
+        const parts = Array.isArray(it.parts) ? it.parts : [];
+        if (parts.length < 2 || parts.length > 8) continue;
+        const clean = [];
+        let bad = false;
+        for (const p of parts) {
+          const zh = normResegText(p && p.zh), en = normResegText(p && p.en);
+          if (!zh || !en || zh.length > 300 || en.length > 500) { bad = true; break; }
+          clean.push({ zh, en });
+        }
+        if (bad) continue;
+        /* 必须能拼回原文（中文忽略所有空白后逐字相同；英文按单空格相连），否则说明模型改写了 */
+        if (clean.map(p => p.zh).join('').replace(/\s+/g, '') !== String(row.zh).replace(/\s+/g, '')) { notes.push(idx); continue; }
+        if (normResegText(clean.map(p => p.en).join(' ')) !== normResegText(row.en)) { notes.push(idx); continue; }
+        plan.push({ row: idx, parts: clean });
+      }
+    }
+    return { plan, dropped: notes.length };
   }
 
   /* ── 长稿反思纠错 ──────────────────────────────────────────────
@@ -10884,6 +11058,44 @@ function handleProjectsRoutes(req, res, u) {
           return sendJson(res, 200, applyGlossaryTerms(id, p.terms, p.saveToScheme !== false));
         } catch (e) {
           return sendJson(res, 400, { error: String((e && e.message) || e) });
+        }
+      });
+    }
+    /* 应用到该视频：把术语替换进当前稿件的中文轨（时间与英文轨不动），
+       勾选「保存到翻译方案术语表」时再合并进方案。 */
+    if (action === 'glossary-apply-project' && req.method === 'POST') {
+      return readBody(req, res, 512 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let p = {};
+        try { p = body && body.length ? JSON.parse(body.toString('utf8')) : {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        try {
+          return sendJson(res, 200, applyGlossaryToProject(id, p.terms, !!p.saveToScheme));
+        } catch (e) {
+          return sendJson(res, 400, { error: String((e && e.message) || e) });
+        }
+      });
+    }
+
+    /* 全片语义重分句：只做规划（LLM），不改字幕；写入由前端 splitRowAt 完成。 */
+    if (action === 'reseg-plan' && req.method === 'POST') {
+      return readBody(req, res, 2 * 1024 * 1024, async (err, body) => {
+        if (err) return sendJson(res, 400, { error: '字幕行太多或读取失败' });
+        let p = {};
+        try { p = body && body.length ? JSON.parse(body.toString('utf8')) : {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const rows = (Array.isArray(p.rows) ? p.rows : []).slice(0, RESEG_MAX_ROWS).map(r => ({
+          zh: String((r && r.zh) || ''), en: String((r && r.en) || ''),
+          start: Number(r && r.start) || 0, end: Number(r && r.end) || 0,
+        })).filter(r => r.zh && r.en);
+        if (!rows.length) return sendJson(res, 400, { error: '没有可重分句的字幕行（需要中英都有文本）' });
+        const cfg = translateCfg();
+        if (!llmReady(cfg)) {
+          return sendJson(res, 400, { error: '重分句要用「字幕翻译」的模型：先到「全局设置 → 翻译方案」把接口地址、模型和 API Key 配好' });
+        }
+        try {
+          const out = await planResegRows(id, rows, cfg);
+          return sendJson(res, 200, { ...out, rows: rows.length });
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e && e.message) || e) });
         }
       });
     }

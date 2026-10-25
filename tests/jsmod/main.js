@@ -2442,6 +2442,7 @@ let rimCues = null;      // [{start, end, lines}]（**完整时间轴**，不做
 let rimName = '';
 let rimPlan = null;
 let rimSelTimer = 0;     // 盯着时间轴选区，拖完自动填（对话框不挡时间轴，用户随时能拖）
+let rimBusy = false;     // 正在写入（防止连点两次导入）
 
 /** 从 SRT / ASS 文本里取出「一行字幕 = 起止时间 + 主/副语言」，交给 region-merge 做判定 */
 function rimParseCues(text, name) {
@@ -2659,47 +2660,72 @@ function rimFillFromSel(force) {
   rimRecheck();
 }
 
-/** 执行导入。force=true 时把冲突处也覆盖（用户点了那个按钮才算数） */
-function rimApply(force) {
-  if (!rimPlan || !rimPlan.ok) return;
+/** 执行导入。force=true 时把冲突处也覆盖（用户点了那个按钮才算数）。
+ *  长段落（几百上千行）会持续几秒：用右下角进度卡显示进度，并定期让出一帧，避免界面像卡死。 */
+async function rimApply(force) {
+  if (!rimPlan || !rimPlan.ok || rimBusy) return;
   const res = force ? resolveReplace(rimPlan) : resolveFillOnly(rimPlan);
   const add = res.add || [];
   if (!add.length) { toast('没有可导入的行', 3600); return; }
-  const before = state.items.length;
-  if (force && res.replace && res.replace.length) {
-    // 先删被覆盖的（用与批量删除同一套 removeItemData, 不手改数组）
-    for (const rg of res.replace) {
-      for (const it of itemsInRange(rg.start, rg.end)) removeItemData(it);
+  rimBusy = true;
+  const replaceSteps = (force && res.replace && res.replace.length) ? res.replace.length : 0;
+  const total = replaceSteps + add.length;
+  let step = 0;
+  const note = () => {
+    const rg = rimReadRange();
+    return `区间 ${rg.ok ? fmtTime(rg.start) + '~' + fmtTime(rg.end) : '?'}，来源 ${rimName}`;
+  };
+  jobCardShow('分段导入', '正在合并字幕…', 0, note());
+  try {
+    const before = state.items.length;
+    if (replaceSteps) {
+      for (const rg of res.replace) {
+        // 先删被覆盖的（用与批量删除同一套 removeItemData, 不手改数组）
+        for (const it of itemsInRange(rg.start, rg.end)) removeItemData(it);
+        step++;
+        if (step % 10 === 0) {
+          jobCardShow('分段导入', `正在清理冲突行 ${step}/${replaceSteps}…`, (step / total) * 100, note());
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
     }
-  }
-  let added = 0;
-  for (const r of add) {
-    try {
-      /* ★ 传**原文件的真实词级时间**（ass-group 从逐词行里提取的：那一行的起止就是那个词的时间）。
-       * 不传的话 addRecognizedRow 会调 recalcWords 按字母数铺开 ——
-       * 词序看着对，但节奏是假的（用户实测："逐词不准确，这不是原字幕里的逐词顺序吧"）。 */
-      const row = addRecognizedRow({
-        start: r.start, end: r.end, zh: r.zh, text: r.en,
-        words: (r.words || []).map(w => ({ word: w.word, start: w.start, end: w.end })),
-      });
-      if (row) added++;
-    } catch (e) {
-      console.warn('[rim] 插入一行失败', e);
+    let added = 0;
+    for (let i = 0; i < add.length; i++) {
+      const r = add[i];
+      try {
+        /* ★ 传**原文件的真实词级时间**（ass-group 从逐词行里提取的：那一行的起止就是那个词的时间）。
+         * 不传的话 addRecognizedRow 会调 recalcWords 按字母数铺开 ——
+         * 词序看着对，但节奏是假的（用户实测："逐词不准确，这不是原字幕里的逐词顺序吧"）。 */
+        const row = addRecognizedRow({
+          start: r.start, end: r.end, zh: r.zh, text: r.en,
+          words: (r.words || []).map(w => ({ word: w.word, start: w.start, end: w.end })),
+        });
+        if (row) added++;
+      } catch (e) {
+        console.warn('[rim] 插入一行失败', e);
+      }
+      if (i % 20 === 0 || i === add.length - 1) {
+        jobCardShow('分段导入', `正在写入 ${i + 1}/${add.length} 行…`, ((step + i + 1) / total) * 100, note());
+        await new Promise(r => setTimeout(r, 0));   // 让出一帧，进度条能刷新
+      }
     }
+    // ★ 导入后自动自愈：把"被清空/错位"的逐词文本搬回来。
+    //   放在这个位置的原因：损坏一旦写进文件就会永久留下（列表里看不出、画面只是
+    //   "整句一直亮着"），所以每次导入都顺手体检一遍，而不是等用户发现再处理。
+    const healed = healWordRows('分段导入后');
+    rebuildItemsAndLanes(true);
+    const rg = rimReadRange();
+    const sum = `分段导入：进来 ${added} 行（原 ${before} 行 → 现 ${state.items.length} 行）`
+      + (force && res.replace ? `，覆盖 ${res.replace.length} 处` : '')
+      + (healed ? `；顺带修好 ${healed} 行错位的逐词文本` : '')
+      + `；区间 ${rg.ok ? fmtTime(rg.start) + '~' + fmtTime(rg.end) : '?'}，来源 ${rimName}`;
+    toast(sum, 8000);
+    if (typeof logOp === 'function') logOp('导入', '分段字幕', sum);
+    rimEls.overlay.hidden = true;
+  } finally {
+    jobCardHide();
+    rimBusy = false;
   }
-  // ★ 导入后自动自愈：把"被清空/错位"的逐词文本搬回来。
-  //   放在这个位置的原因：损坏一旦写进文件就会永久留下（列表里看不出、画面只是
-  //   "整句一直亮着"），所以每次导入都顺手体检一遍，而不是等用户发现再处理。
-  const healed = healWordRows('分段导入后');
-  rebuildItemsAndLanes(true);
-  const rg = rimReadRange();
-  const sum = `分段导入：进来 ${added} 行（原 ${before} 行 → 现 ${state.items.length} 行）`
-    + (force && res.replace ? `，覆盖 ${res.replace.length} 处` : '')
-    + (healed ? `；顺带修好 ${healed} 行错位的逐词文本` : '')
-    + `；区间 ${rg.ok ? fmtTime(rg.start) + '~' + fmtTime(rg.end) : '?'}，来源 ${rimName}`;
-  toast(sum, 8000);
-  if (typeof logOp === 'function') logOp('导入', '分段字幕', sum);
-  rimEls.overlay.hidden = true;
 }
 
 if (btnRegionImport) btnRegionImport.addEventListener('click', rimOpen);
@@ -5598,7 +5624,7 @@ function splitZhText(zhText, k, nEn) {
  *  实现上**前半就地改写原行**（复用它的两条事件），只有后半是新建的 —— 不能"先删原行再
  *  appendSentence 两次"：那个函数是在该样式最后一条事件之后插入，样式被删空（例如文件里只有这一条）
  *  会返回 null，两半一起消失（分句真机探针抓到过）。 */
-function splitRowAt(item, enPlainText, caret) {
+function splitRowAt(item, enPlainText, caret, opts = {}) {
   if (!item) return false;
   panel.commitEdit();                      // 先把编辑框里的最新文本落盘
   const row = item.ref;
@@ -5609,7 +5635,17 @@ function splitRowAt(item, enPlainText, caret) {
   // (用户报的: 光标在 "…my house|oh my god" 却被切成 "…my house oh / my god")。
   const toks = splitEnglishWords(enPlain);
   const totW = toks.length;
-  const sp = panel._splitPoint ? panel._splitPoint(enPlain, caret) : null;
+  /* 语义重分句会给一个**精确的切分文本**（enFirst / zhFirst）：直接用它切，不依赖光标位置。
+     光标路径（Ctrl+回车）保持原来的 _splitPoint。 */
+  let sp = null;
+  if (typeof opts.enFirst === 'string' && opts.enFirst) {
+    const want = String(opts.enFirst).replace(/\s+/g, ' ').trim();
+    if (want && enPlain.startsWith(want)) {
+      const kk = splitEnglishWords(want).length;
+      if (kk >= 1 && kk < totW) sp = { k: kk, sp: want.length };
+    }
+  }
+  if (!sp) sp = panel._splitPoint ? panel._splitPoint(enPlain, caret) : null;
   if (!enPlain || !sp || totW < 2) { toast('把光标放在句子中间再按 Ctrl+回车 才能分句'); return false; }
   const k = sp.k;
   // 文本按**原字符位置**切(保留原始空格: "wood,need" 不会被改写成 "wood, need"); k 只用来分配词级时间
@@ -5639,7 +5675,16 @@ function splitRowAt(item, enPlainText, caret) {
   // 否则那一半丢掉角色颜色(用户报的分句后两半变黄)。
   const zhLead = (row.zh && row.zh.events[0]) ? (((/^\s*(\{\\[^}]*\})/.exec(row.zh.events[0].text) || [])[1]) || '') : '';
   const zhBody = zhText.slice(zhTag.length);
-  const [zhA0, zhB0] = splitZhText(zhBody, k, totW);
+  /* 语义重分句：用模型给的精确中文前半（原文子串）来切；对不上再退回按英文比例分。 */
+  const zhWant = typeof opts.zhFirst === 'string' ? String(opts.zhFirst).trim() : '';
+  let zhA0, zhB0;
+  if (zhWant && zhBody.trim().startsWith(zhWant)) {
+    const at = zhBody.indexOf(zhWant);
+    zhA0 = zhWant;
+    zhB0 = zhBody.slice(at + zhWant.length);
+  } else {
+    [zhA0, zhB0] = splitZhText(zhBody, k, totW);
+  }
   // 行首前缀 = 事件里的色标 + 纯文本里的角色名(splitZhText 会把角色名剥掉, 这里补回; 两半都要带)
   const zhName = (zhTag || '').replace(/^\s*(\{\\[^}]*\})*\s*/, '');   // zhTag 里只取 [..] 那段, 色标用 zhLead
   const zhPrefix = zhLead + zhName;
@@ -5691,15 +5736,210 @@ function splitRowAt(item, enPlainText, caret) {
     state.assDoc.orderDialoguesByStyle(originalOrder === 'zh-top' ? state.assStyleTargets.en : state.assStyleTargets.zh);
   }
   reconcileKaraoke();
+  /* deferUi：批量应用时不要每切一刀就重建整张列表/更新播放器（长稿会卡死），
+     调用方在全部切完后统一做一次。 */
+  if (opts.quiet && opts.deferUi) return row2;
   assPlayer.updateNow(state.assDoc.serialize());
   rebuildItemsAndLanes(true, true);
-  const ni = state.itemByRef.get(row);                // 光标留在前半的英文行, 接着往下切
-  if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
-  toast(`已在 ${fmtTime(st)} 处分为两条字幕`, 2600);
-  logOp('split', `第 ${row.no || '?'} 条 → ${fmtTime(t0)}~${fmtTime(st)} / ${fmtTime(st)}~${fmtTime(t1)}`,
-    `按光标位置拆成两条："${enA.slice(0, 40)}" ｜ "${enRest.slice(0, 40)}"`,
-    `切点取第 ${k}/${totW} 个词的词间中点（${fmtTime(st)}），逐词时间原样分配给两半、不重算`);
-  return true;
+  if (!opts.quiet) {
+    const ni = state.itemByRef.get(row);                // 光标留在前半的英文行, 接着往下切
+    if (ni) { selectItem(ni, false); panel.startEdit(ni, 2); }
+    toast(`已在 ${fmtTime(st)} 处分为两条字幕`, 2600);
+    logOp('split', `第 ${row.no || '?'} 条 → ${fmtTime(t0)}~${fmtTime(st)} / ${fmtTime(st)}~${fmtTime(t1)}`,
+      `按光标位置拆成两条："${enA.slice(0, 40)}" ｜ "${enRest.slice(0, 40)}"`,
+      `切点取第 ${k}/${totW} 个词的词间中点（${fmtTime(st)}），逐词时间原样分配给两半、不重算`);
+  }
+  return row2;
+}
+
+/* ─────────── 全片语义重分句（LLM 规划 → 预览 → splitRowAt 落盘） ───────────
+ * 只拆不合并、不跨行移动文字/角色；模型只给「哪一行拆成哪几段」，写入复用编辑器自己的
+ * splitRowAt（保留逐词时间、样式与角色标签），所以导入的 ASS 也能用。 */
+const resegEls = {
+  overlay: document.getElementById('reseg-overlay'),
+  msg: document.getElementById('reseg-msg'),
+  summary: document.getElementById('reseg-summary'),
+  allWrap: document.getElementById('reseg-all-wrap'),
+  all: document.getElementById('reseg-all'),
+  list: document.getElementById('reseg-list'),
+  cancel: document.getElementById('reseg-cancel'),
+  apply: document.getElementById('reseg-apply'),
+  btn: document.getElementById('btn-reseg-llm'),
+};
+let resegRows = [], resegPlans = [], resegBusy = false;
+const resegNorm = (s) => String(s || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+const resegStrip = (s) => String(s || '').replace(/^\s*(?:\{[^}]*\}\s*)*\[[^\]]+\]\s*/, '').trim();
+
+function resegSync() {
+  if (!resegEls.apply) return;
+  const n = resegPlans.filter(p => p.picked).length;
+  resegEls.apply.disabled = resegBusy || !n;
+  resegEls.apply.textContent = n ? `应用选中项（${n} 行）` : '应用选中项';
+}
+
+/** 预览用的分段起止：按英文长度比例估（真正落盘时用逐词时间） */
+function resegTimes(row, parts) {
+  const total = parts.reduce((n, p) => n + Math.max(1, p.en.length), 0);
+  let acc = 0, prev = row.start;
+  return parts.map((p, i) => {
+    acc += Math.max(1, p.en.length);
+    const end = i === parts.length - 1 ? row.end : row.start + (row.end - row.start) * (acc / total);
+    const range = `${fmtTime(prev)}–${fmtTime(end)}`;
+    prev = end;
+    return range;
+  });
+}
+
+function resegRender() {
+  if (!resegEls.list) return;
+  resegEls.list.innerHTML = '';
+  resegPlans.forEach((p, i) => {
+    const row = resegRows[p.row];
+    const times = resegTimes(row, p.parts);
+    const el = document.createElement('div');
+    el.className = 'reflect-item' + (p.picked ? ' is-on' : ' is-off');
+    el.innerHTML = `<input type="checkbox" ${p.picked ? 'checked' : ''}>
+      <div class="ri-body">
+        <div class="ri-head"><span class="ri-range">${fmtTime(row.start)}–${fmtTime(row.end)}</span>
+          <span class="ri-note">拆成 ${p.parts.length} 段</span></div>
+        <div class="reseg-old">原句：${escapeHtml(row.zh)}</div>
+        <div class="reseg-old">${escapeHtml(row.en)}</div>
+        <div class="reseg-parts">${p.parts.map((part, j) =>
+          `<div class="reseg-part"><span class="reseg-t">${times[j]}</span>${escapeHtml(part.zh)}
+            <span class="reseg-en">${escapeHtml(part.en)}</span></div>`).join('')}</div>
+      </div>`;
+    const cb = el.querySelector('input');
+    cb.addEventListener('change', () => {
+      p.picked = cb.checked;
+      el.classList.toggle('is-on', cb.checked);
+      el.classList.toggle('is-off', !cb.checked);
+      resegSync();
+    });
+    resegEls.list.appendChild(el);
+  });
+}
+
+async function resegOpen() {
+  if (resegBusy) return;
+  if (!state.project) { toast('先打开一个稿件，再做全片重分句', 3600); return; }
+  panel.commitEdit();
+  const items = (state.items || []).filter(it => it && it.l1 && it.l2
+    && String(it.l1).trim() && String(it.l2).trim());
+  if (!items.length) { toast('当前稿件没有中英对照的行', 3600); return; }
+  resegRows = items.map(it => ({
+    ref: it.ref, zh: resegStrip(it.l1), en: resegNorm(it.l2), start: it.start, end: it.end,
+  }));
+  resegPlans = [];
+  resegBusy = true;
+  resegEls.overlay.hidden = false;
+  resegEls.msg.textContent = '正在让模型通读全片，按语义规划断句…（长片可能要一两分钟）';
+  resegEls.summary.hidden = true;
+  resegEls.list.hidden = true;
+  resegEls.list.innerHTML = '';
+  resegEls.allWrap.hidden = true;
+  resegSync();
+  try {
+    const r = await fetch(`/api/projects/${state.project.id}/reseg-plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: resegRows.map(({ zh, en, start, end }) => ({ zh, en, start, end })) }),
+      signal: AbortSignal.timeout(600000),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    resegPlans = (Array.isArray(j.plan) ? j.plan : [])
+      .filter(p => p && resegRows[p.row] && Array.isArray(p.parts) && p.parts.length >= 2)
+      .map(p => ({ row: p.row, parts: p.parts, picked: true }));
+    if (!resegPlans.length) {
+      resegEls.msg.textContent = '通读完成：没有需要拆分的行（已经很短，或模型认为不必拆）。';
+      return;
+    }
+    resegEls.msg.textContent = `通读完成：${resegPlans.length} 行可以拆得更短。勾选后应用，只拆行、不合并。`;
+    resegEls.summary.hidden = false;
+    resegEls.summary.textContent = `共 ${resegPlans.length} 行需要拆分`
+      + (j.dropped ? `；${j.dropped} 行模型的拆分没对上原文，已跳过` : '');
+    resegEls.allWrap.hidden = false;
+    resegEls.all.checked = true;
+    resegEls.list.hidden = false;
+    resegRender();
+    resegSync();
+  } catch (e) {
+    resegEls.msg.textContent = '重分句失败：' + ((e && e.message) || e);
+  } finally {
+    resegBusy = false;
+    resegSync();
+  }
+}
+
+async function resegApplyNow() {
+  const picked = resegPlans.filter(p => p.picked);
+  if (!picked.length || resegBusy) return;
+  resegBusy = true;
+  resegSync();
+  let done = 0, failed = 0;
+  const totalCuts = picked.reduce((n, p) => n + Math.max(0, p.parts.length - 1), 0);
+  let cuts = 0;
+  try {
+    if (Projects && Projects.flushSave) await Projects.flushSave();
+    /* 长稿应用会连续切很多次：用右下角进度卡显示进度，并定期让出一帧，避免界面像卡死。 */
+    jobCardShow('全片重分句', `正在应用：0/${picked.length} 行…`, 0, '只拆行，不合并；逐词时间按切点分配');
+    for (const p of picked) {
+      const row = resegRows[p.row];
+      let target = row && { ref: row.ref };
+      if (!target) { failed++; continue; }
+      let enRest = resegNorm(row.en), zhRest = resegNorm(row.zh);
+      let ok = true;
+      for (let i = 0; i < p.parts.length - 1; i++) {
+        const enFirst = resegNorm(p.parts[i].en);
+        const zhFirst = resegNorm(p.parts[i].zh);
+        if (!enFirst || !zhFirst || !enRest.startsWith(enFirst) || !zhRest.startsWith(zhFirst)) { ok = false; break; }
+        const row2 = splitRowAt(target, enRest, enFirst.length, { enFirst, zhFirst, quiet: true, deferUi: true });
+        if (!row2) { ok = false; break; }
+        target = { ref: row2 };
+        enRest = resegNorm(enRest.slice(enFirst.length));
+        zhRest = resegNorm(zhRest.slice(zhFirst.length));
+        cuts++;
+        if (cuts % 10 === 0 || cuts === totalCuts) {
+          jobCardShow('全片重分句', `正在应用：${cuts}/${totalCuts} 处切分（${done + 1}/${picked.length} 行）…`,
+            totalCuts ? (cuts / totalCuts) * 100 : null, '只拆行，不合并；逐词时间按切点分配');
+          await new Promise(r => setTimeout(r, 0));   // 让出一帧，进度条能刷新
+        }
+      }
+      if (ok) done++; else failed++;
+    }
+    /* 批量切分期间没有重建列表/播放器：这里统一收尾一次。 */
+    rebuildItemsAndLanes(true, true);
+    if (state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
+    if (done && Projects && Projects.saveNow) await Projects.saveNow();
+    resegEls.overlay.hidden = true;
+    jobCardHide();
+    toast(`已重分句：${done} 行${failed ? `（${failed} 行对不上原文，已跳过）` : ''}`, 5600);
+    if (done) logOp('reseg', `LLM 语义重分句 ${done} 行`,
+      '只拆行、不合并；逐词时间按切点原样分配给两半', '按语义/标点边界拆分过长行，中英在同一意思处对应');
+  } catch (e) {
+    jobCardHide();
+    toast('重分句失败：' + ((e && e.message) || e), 5600);
+  } finally {
+    resegBusy = false;
+    resegSync();
+  }
+}
+
+function initResegLLM() {
+  if (!resegEls.btn || !resegEls.overlay) return;
+  resegEls.btn.addEventListener('click', resegOpen);
+  if (resegEls.cancel) resegEls.cancel.addEventListener('click', () => { resegEls.overlay.hidden = true; });
+  if (resegEls.apply) resegEls.apply.addEventListener('click', resegApplyNow);
+  if (resegEls.all) resegEls.all.addEventListener('change', () => {
+    resegPlans.forEach(p => { p.picked = resegEls.all.checked; });
+    resegRender();
+    resegSync();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && resegEls.overlay && !resegEls.overlay.hidden) {
+      e.preventDefault();
+      resegEls.overlay.hidden = true;
+    }
+  });
 }
 
 /** 与**上一个**字幕块合并: 时间取并集; 文本与词级时间交给纯函数 mergeRowParts(karaoke.js)。
@@ -6441,8 +6681,7 @@ function applyDiarizeResult(job) {
 
 if (btnDiarize) btnDiarize.addEventListener('click', beginDiarize);
 
-/* 全片术语表校对：模型通读全片 → 预览编辑 → 写入当前翻译方案的术语表 */
-initGlossaryReview({ state, toast });
+/* 全片术语表校对：模型通读全片 → 预览编辑 → 应用到该视频（可选同时写入方案术语表） */
 
 panel.onRetranslateCard = (item) => {
   try { retranslateRow(item); }
@@ -6889,6 +7128,16 @@ document.addEventListener('keyup', (e) => {
   }
 }, true);
 
+/* 哪些模态浮层开着时不抢 ↑/↓：确认框、片段/整行编辑、修复、查找替换、术语表、重分句… */
+const MODAL_OVERLAY_IDS = ['confirm-overlay', 'cue-text-overlay', 'fix-overlay', 'fr-overlay',
+  'glossary-overlay', 'pick-overlay', 'realign-overlay', 'reflect-overlay', 'reseg-overlay', 'rim-overlay'];
+function anyModalOpen() {
+  return MODAL_OVERLAY_IDS.some((id) => {
+    const el = document.getElementById(id);
+    return !!(el && !el.hidden);
+  });
+}
+
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
   const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
@@ -6897,6 +7146,8 @@ document.addEventListener('keydown', (e) => {
   const id = shortcuts.actionForCombo(combo);
   if (!id) return;
   if (typing) return;                             // 输入框/行内编辑内不抢键(Ctrl+Enter 由编辑框自行处理)
+  /* ↑/↓ 默认跳上一条/下一条字幕；但视频上的片段编辑框、任何模态弹窗打开时不要抢键。 */
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && (cueEditOpen || anyModalOpen())) return;
   e.preventDefault();
   if (id === 'playPause') {
     const now = performance.now();
@@ -7333,6 +7584,11 @@ const Projects = initProjects({
   logOp,   // ⚠ 必须经 ctx 传入：logOp 是本模块的局部函数，project.js 里 typeof logOp 恒为
            //   'undefined'（模块作用域互不相通），于是"加进热词表"那条操作日志从来没记上。
 });
+
+/* 术语表校对要用 Projects.openProject() 在应用后重新载入稿件，所以放在 Projects 之后接线。 */
+initGlossaryReview({ state, toast, projects: Projects });
+/* 全片语义重分句：规划走服务端 LLM，落盘复用编辑器自己的 splitRowAt。 */
+initResegLLM();
 
 /* ═══════════ 主循环 ═══════════ */
 function tick() {

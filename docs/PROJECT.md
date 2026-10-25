@@ -250,7 +250,9 @@
 - **时间轴块内波形背景**：`timeline.js` 的 `_drawBlockBackdrop` 先用 `waveBg` 把块内已画好的波形
   填掉，再画一次模糊波形并压暗。**不能**直接在原波形上重画 —— canvas 的 `filter` 只作用于本次
   绘制，重画等于叠加，块内会比块外更亮（用户看到的「Win10 主题字幕块边缘灰色遮罩」就是它）。
-  实测修后块内亮度约 81、块外 105~110，块内不再发灰。
+  模糊/压暗的**裁剪区必须和块的圆角边框重合**（`path.roundRect(x1+0.5, band.y, 宽-1, 高, 圆角)`）；
+  以前用 `rect` 并把上下各外扩 2px，方块角与上沿会在彩色边框外露出一圈压暗遮罩（用户实测
+  「边角超出彩色框范围，上方也超出了」）。实测修后块内亮度约 82、块外 110。
 - **并排栏的小顶栏（人物 / 备注）**：并排模式角色列顶部有 `#split-pane-head` 两个标签；「备注」把
   日志页的 `#note-view` / `#note-empty` **节点搬进** `#split-note-holder`（事件委托挂在列表上，
   搬动不丢），关并排或切页时自动放回 `#log-pane-note`。窄栏里备注行改成「时间 + 删除 / 正文」
@@ -310,10 +312,33 @@
   用「字幕翻译」那套模型通读全片中文字幕（行首 `[角色]` 与 ASS 覆盖标签先剥掉；正文超过 6 万字截断
   并在界面注明），找出中英文专有名词；**当前方案**术语表里已有的词由服务端带出现有译法
   （`known:true`，请求里也附带术语表要求模型沿用），其余由模型生成（`known:false`）。
+  取正文的顺序：`asr.json` → `subtitleSource()`（当前字幕的中文轨）→ 直接解析 ASS/SRT 文件 ——
+  **导入的 ASS/SRT 没有 asr.json 也能校对**（以前这里直接抛 ENOENT）。
   预览弹窗 `#glossary-overlay`：每行两个输入框（原文 / 译法）可改、可删，模型新生成的词用强调色
-  亮框提示，术语表已有的词保持普通描边；勾选「保存到翻译方案术语表」后 `POST /glossary-apply`
-  用 `editor/glossary-merge.js` 合并——保留注释 / 分组 / 既有顺序，已有词只改译法，新词追加到
-  目标语言组（`##<glossaryLang>`，组不存在则新建）；不勾选则只查看、不落盘。
+  亮框提示，术语表已有的词保持普通描边。主按钮**「应用到该视频（N 条）」**走
+  `POST /api/projects/:id/glossary-apply-project`：把术语替换进**当前稿件的中文轨**（ASS 双语稿改
+  `zh` 行；单语 SRT 直接改正文行，行首 `[角色]` 先摘掉不参与替换），**时间与英文轨不动**；
+  替换后前端 `Projects.openProject()` 重新载入稿件，界面立刻显示新文本。勾选
+  「保存到翻译方案术语表」时同时走 `editor/glossary-merge.js` 合并进方案——保留注释 / 分组 /
+  既有顺序，已有词只改译法，新词追加到目标语言组（`##<glossaryLang>`，组不存在则新建）；
+  不勾选则只改当前稿件、不动方案。旧接口 `POST /glossary-apply`（只存方案）保留。
+- **全片语义重分句**：`#btn-reseg-llm`（设置 → 高级字幕操作）。前端把当前稿件每行（中文去掉
+  `[角色]` 标签、英文）POST 到 `/api/projects/:id/reseg-plan`；服务端按 120 行分批让模型判断
+  「哪些行太长、该在哪断」，模型只返回每行的 `parts`（中文/英文），**必须能拼回原文**才保留
+  （中文忽略所有空白逐字相同、英文按单空格相连），否则记 `dropped` 丢弃。硬约束：只拆不合并、
+  不跨行移动文字/角色；中文 >14 字或英文 >42 字符才考虑拆；中英必须在同一语义/标点边界对应。
+  `#reseg-overlay` 预览（每行可勾选，显示原句与各段按比例估算的时间），应用时前端逐行依次调用
+  编辑器自己的 `splitRowAt(item, enText, caret, { enFirst, zhFirst, quiet:true, deferUi:true })`：
+  逐词时间按切点原样分配给两半、样式与角色标签保留，所以**导入的 ASS 也能重分句**（保存走编辑器
+  原有管线）。批量应用时 `deferUi` **不**每切一刀就 `rebuildItemsAndLanes`/更新播放器，全部切完统一
+  做一次；每 10 刀让出一帧并在 `#job-card` 显示「k/总切分」，长稿不再像卡死。
+- **长任务进度（分段导入）**：`rimApply` 改为 async 分批执行：覆盖导入先按「清理冲突行 k/N」、
+  再按「写入 k/N」更新 `#job-card`（每 10/20 行让出一帧），`rimBusy` 防连点；结束后统一
+  `healWordRows` + `rebuildItemsAndLanes`，收尾隐藏进度卡。
+- **↑/↓ 跳字幕**：`shortcuts.js` 的 `prevCue/nextCue` 同时绑 `ArrowUp/ArrowDown` 与
+  `Alt+ArrowUp/Down`；纯方向键走 `jumpCue(±1)`（选中并 seek）。输入框 / 行内编辑器 / 视频上的
+  片段编辑框（`cueEditOpen`）以及任何模态浮层打开时不抢键——`anyModalOpen()` 列出 confirm /
+  片段编辑 / 修复 / 查找替换 / 术语表 / 重分句 等 overlay id。
 - **右下角进度卡跟随主题**：`#job-card` 背景使用 `var(--surface)` / `var(--line)`，不再写死
   `rgba(22,24,31,.97)`；浅色主题下与页面一致（之前是一块突兀的黑卡）。运行中的重校对浮层里
   「关闭」按钮文案变为「停止」，点击会先调 `realign-full-cancel` 再收起。
@@ -349,6 +374,22 @@
   浅色字至少 3:1 时给面板加 `.sf-fg-on-dark`，局部覆盖 `--text` / `--muted` / `--line`。
   只在浅色模式生效，深色模式本来就用浅色字。覆盖主题包卡片、设置卡片、项目卡、字幕卡等玻璃表面，
   主题包预览图内部不参与。
+- **浅色模式浮层用不透明表面**：浅色玻璃底色是 `rgb(0 0 0 / α)`，叠在浮层背后的**暗 scrim** 上会
+  变成近黑色（用户实测：浅色模式「删除项目」确认框仍是深色）。`[data-theme=light]` 下把
+  `.modal-surface/.rn-box/.pick-box/.fix-box/.ctd-box/.menu/#role-menu/#card-menu/#tl-menu/
+  .sf-choice-menu/.sf-rate-menu/.fp-panel/.fr-menu/.sscp` 的 background 固定为**不透明的 `var(--surface)`**
+  并去掉 `backdrop-filter`。⚠ `.sscp` 必须写进**同一个 `:is()` 清单**：玻璃规则的 `:is()` 里带 ID，
+  特异性 1,2,0，另起一条 `.sf-studio[data-theme=light] .sscp`（0,3,0）压不住它。实测四个主题
+  （UWP/Material/Classic/Claude）全部浅色浮层：0 个深色、正文对比度 ≥ 5.6:1。
+- **颜色选择器浅色**：`.sscp` 原为整块深色（`#202027` + 亮字），浅色下补 `.sscp-head` 用
+  `--surface-2`、`.sscp-x/.sscp-label/.sscp-fields` 用 `--text/--muted/--line`、输入框用
+  `--bg-2`、色块描边改深色半透明。
+- **浅色模式视频区**：`#video-stage` / `#video` 原来写死 `#000`，视频比例与舞台不一致时两侧是黑边，
+  浅色主题下很突兀；`[data-theme=light]` 下改为 `var(--surface-2)` 并补一格 `--line` 内描边。
+- **日志页浅色**：`#log-view` / `#oplog-view` / 备注列表 `#note-view` 原来写死 `#141418`，浅色主题下
+  是一整块深色；改用 `var(--bg-2)`，`.oplog-row` / `.note-row` 分隔线用 `var(--border)`、悬停用
+  `color-mix`、`.note-row.is-here` 用 `color-mix(var(--accent) 12%)`，级别色在
+  `[data-theme=light]` 下换成深一档（error `#b42318` / info `#067647` / warn `#b54708`）。
 - **UWP 特例**：默认 Windows 10 蓝 `#0078D7`；仅在未自定义强调色时使用该默认值，`SSAccent.set()`
   允许覆盖，设置页取色控件保持可用；形状走 2–4px 近直角、无 `backdrop-filter`。
 - **Claude 特例**：暖纸底 `#F6F4EE` / 墨色文字 / 陶土强调 `#B0512F`（用户改色时用 `readable()` 兜底），

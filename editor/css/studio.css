@@ -1196,7 +1196,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .log-hint { font-size: 11px; color: var(--text-2); }
 #log-view {
   flex: 1; min-height: 0; overflow-y: auto;
-  background: #141418; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 10px;
   font-family: Consolas, monospace; font-size: 12px; line-height: 1.5;
 }
@@ -1206,6 +1206,11 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* warn 级：server.js 以前**没包装 console.warn**，所以日志页从来没有这一级；
  * 补上包装后这类"能跑但不对劲"的信息才会出现在这里。 */
 .log-warn { color: #ffc46b; }
+/* 浅色模式：日志框用主题的浅色表面，级别色换成深一档，保证在浅底上仍看得清
+ * （以前 #log-view 写死 #141418，浅色主题下是一整块深色）。 */
+.sf-studio[data-theme=light] .log-err { color: #b42318; }
+.sf-studio[data-theme=light] .log-info { color: #067647; }
+.sf-studio[data-theme=light] .log-warn { color: #b54708; }
 
 /* ── 创建页的「创建后自动处理」勾选项 ──────────────────────────────
    做成一个带说明的横条，而不是普通的一行 checkbox ——
@@ -2225,12 +2230,12 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
  * ⚠ 这两个 id 以前**没有任何 CSS 规则**，于是 position:static —— 显示时不是浮在画面中间，
  *   而是作为普通块堆到**页面最底部**（实测 top:803px，在视口之外），用户根本看不到。
  *   这里补上与 #reflect-overlay 一致的定位。 */
-#realign-overlay, #rim-overlay, #glossary-overlay {
+#realign-overlay, #rim-overlay, #glossary-overlay, #reseg-overlay {
   position: fixed; inset: 0; z-index: 88;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.55);
 }
-#realign-overlay[hidden], #rim-overlay[hidden], #glossary-overlay[hidden] { display: none; }
+#realign-overlay[hidden], #rim-overlay[hidden], #glossary-overlay[hidden], #reseg-overlay[hidden] { display: none; }
 
 /* ── 分段导入：**不挡时间轴** ──
  * 这个对话框要求用户先在时间轴上拖一段选区（或确认区间填得对），
@@ -2293,6 +2298,13 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 }
 .reflect-all[hidden] { display: none; }
 .reflect-all-note { color: var(--text-2); font-size: 11.5px; }
+
+/* ── 全片语义重分句：预览条目 ── */
+.reseg-old { font-size: 12px; color: var(--text-2); line-height: 1.5; word-break: break-word; }
+.reseg-parts { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+.reseg-part { font-size: 12.5px; color: var(--text-0); line-height: 1.5; word-break: break-word; }
+.reseg-part .reseg-t { color: var(--accent); font-family: Consolas, monospace; font-size: 11px; margin-right: 6px; }
+.reseg-part .reseg-en { color: var(--text-2); margin-left: 6px; }
 
 /* ── 全片术语表校对：可编辑清单 ──
  * 模型新生成的词用强调色亮框（用户要求"框线亮起提示"），术语表已有的词保持普通描边。 */
@@ -2514,18 +2526,18 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
 #oplog-view {
   flex: 1; min-height: 0; overflow-y: auto;
   border: 1px solid var(--border); border-radius: 8px;
-  background: #141418;
+  background: var(--bg-2);
 }
 .oplog-row {
   display: grid;
   grid-template-columns: 62px 96px 1fr;
   gap: 8px; align-items: start;
   padding: 7px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, .05);
+  border-bottom: 1px solid var(--border);
   font-size: 12px; line-height: 1.55;
 }
 .oplog-row:last-child { border-bottom: none; }
-.oplog-row:hover { background: rgba(255, 255, 255, .03); }
+.oplog-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
 .oplog-t { color: var(--text-2); font-family: Consolas, monospace; font-size: 11px; white-space: nowrap; }
 .oplog-act {
   color: var(--accent); font-weight: 700; font-size: 11.5px;
@@ -2614,18 +2626,18 @@ select.note-dur {
 #note-view {
   flex: 1; min-height: 0; overflow-y: auto;
   border: 1px solid var(--border); border-radius: 8px;
-  background: #141418;
+  background: var(--bg-2);
 }
 .note-row {
   display: grid; grid-template-columns: 66px 1fr 26px 26px;
   gap: 8px; align-items: start;
   padding: 8px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, .05);
+  border-bottom: 1px solid var(--border);
   font-size: 12.5px; line-height: 1.55;
 }
 .note-row:last-child { border-bottom: none; }
-.note-row:hover { background: rgba(255, 255, 255, .03); }
-.note-row.is-here { background: rgba(90, 130, 255, .13); }
+.note-row:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.note-row.is-here { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* 时间是可点的：跳到该位置 */
 .note-row .note-t {
   font-family: Consolas, monospace; font-size: 11.5px; color: var(--accent);
@@ -3890,6 +3902,11 @@ body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-col
 .sf-studio #hsplit::after,.sf-studio #vsplit::after { display:none; }
 .sf-studio #toolbar { border:0; border-radius:14px 14px 0 0; background:var(--surface); box-shadow:none; padding:8px 12px; gap:8px; }.sf-studio #toolbar .btn { font-size:11px; }.sf-studio #toolbar .app-logo b { background:none; color:var(--text); }
 .sf-studio #stage-wrap { background:var(--surface); border-radius:0 0 16px 16px; }.sf-studio #video-stage { inset:10px 10px 60px; border-radius:14px; box-shadow:none; }.sf-studio #video-stage::after { display:none; }.sf-studio #stage-hint { color:#e0e6da; }
+/* 浅色模式：视频区（含画面四周的 letterbox 留白）不要留黑底 —— #video-stage / #video 原来写死 #000，
+   视频比例与舞台不一致时两侧是黑边，浅色主题下很突兀。 */
+.sf-studio[data-theme=light] #video-stage,
+.sf-studio[data-theme=light] #video { background: var(--surface-2); }
+.sf-studio[data-theme=light] #video-stage { box-shadow: inset 0 0 0 1px var(--line); }
 .sf-studio #editor-panel { background:var(--surface); border:1px solid var(--line); border-radius:16px; margin-left:4px; overflow:hidden; }.sf-studio #panel-tabs { background:var(--surface); padding:10px; border-color:var(--line); gap:4px; }.sf-studio .ptab { color:var(--muted); font-size:11px; padding:8px; border:0; border-radius:12px; }.sf-studio .ptab.active { background:var(--accent-soft); color:var(--accent); box-shadow:none; }.sf-studio .panel-head { background:var(--surface); border-color:var(--line); padding:10px 12px; }.sf-studio .ph-row { flex-wrap:wrap; gap:6px; }.sf-studio .ph-row .btn { padding:5px 8px; min-height:25px; font-size:10px; }.sf-studio #timeline-panel { border-radius:16px; border:1px solid var(--line); overflow:hidden; }.sf-studio .tl-toolbar { background:var(--surface); border-color:var(--line); }.sf-studio .tab-head { color:var(--text); background:var(--surface); border-color:var(--line); }
 .sf-studio .cue-card { background:var(--surface); border:1px solid var(--line); border-radius:12px; box-shadow:none; margin:0 6px 9px; }.sf-studio .cue-card.selected,.sf-studio .cue-card.playing { background:color-mix(in srgb,var(--accent-soft) 40%,var(--surface)); border-color:var(--accent); }.sf-studio .cc-l1 { color:var(--text); }.sf-studio .cc-l2 { color:var(--muted); }.sf-studio .cc-l2-sep { border-color:var(--line); }.sf-studio .cc-times { border-color:var(--line); color:var(--muted); }.sf-studio .cc-t b { color:var(--text); }.sf-studio .cc-chip { background:var(--surface-2); color:var(--muted); }.sf-studio .settings-list .set-group { background:var(--surface); border:1px solid var(--line); box-shadow:none; border-radius:14px; }.sf-studio .setting-name { color:var(--text); }.sf-studio .role-card { background:var(--surface); border-color:var(--line); color:var(--text); border-radius:12px; }
 .sf-studio .modal-surface,.sf-studio .rn-box,.sf-studio .pick-box,.sf-studio .fix-box,.sf-studio .ctd-box,.sf-studio .menu { background:var(--surface); color:var(--text); border-color:var(--line); border-radius:18px; box-shadow:0 24px 80px #15221935; }.sf-studio .inline-editor,.sf-studio .ie-line { background:var(--surface); color:var(--text); }.sf-studio .range-summary,.sf-studio .log-line { color:var(--muted); }
@@ -4534,6 +4551,32 @@ body.sf-studio .sf-unavailable { opacity: .5; }
   box-shadow:0 8px 28px -18px #0005,inset 0 1px 0 #ffffff60;
 }
 .sf-studio[data-theme=light] :is(.sf-choice-menu,.sf-rate-menu,.fp-panel):not([hidden]) { background:var(--sf-glass-light-raised); }
+/* 浮层/菜单在浅色下必须用**不透明**表面：它们背后的 scrim 是暗的，20% 黑玻璃叠上去会变成
+   近黑色（用户实测：浅色模式删除项目的确认框仍是深色）。用主题的 --surface，文字才是深色。 */
+.sf-studio[data-theme=light] :is(.modal-surface,.rn-box,.pick-box,.fix-box,.ctd-box,.menu,#role-menu,#card-menu,#tl-menu,.sf-choice-menu,.sf-rate-menu,.fp-panel,.fr-menu,.sscp) {
+  background: var(--surface);
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+}
+.sf-studio[data-theme=light] .fr-menu-item:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+/* 颜色选择器（.sscp）原来整块是深色写死的；浅色模式换成主题表面与描边。 */
+.sf-studio[data-theme=light] .sscp {
+  color: var(--text); background: var(--surface); border-color: var(--line);
+  box-shadow: 0 18px 52px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08);
+}
+.sf-studio[data-theme=light] .sscp-head {
+  background: var(--surface-2); border-bottom-color: var(--line);
+}
+.sf-studio[data-theme=light] .sscp-x { color: var(--muted); }
+.sf-studio[data-theme=light] .sscp-label { color: var(--text-1); }
+.sf-studio[data-theme=light] .sscp-label span { color: var(--muted); }
+.sf-studio[data-theme=light] .sscp-empty { color: var(--muted); }
+.sf-studio[data-theme=light] .sscp-fields { border-top-color: var(--line); }
+.sf-studio[data-theme=light] .sscp-fields label { color: var(--text-1); }
+.sf-studio[data-theme=light] .sscp-fields input { color: var(--text); background: var(--bg-2); border-color: var(--line); }
+.sf-studio[data-theme=light] .sscp-swatch { border-color: rgba(0,0,0,.22); }
+.sf-studio[data-theme=light] .sscp-preview { border-color: var(--line); }
 .sf-studio[data-theme=light] :is(.cue-card.selected,.cue-card.playing) { background:color-mix(in srgb,var(--accent-soft) 42%,var(--sf-glass-light-raised)); }
 .sf-studio[data-theme=dark] :is(.sf-nav,.sf-topbar,.proj-card,.page-surface,.sf-help-grid article,#toolbar,#stage-wrap,#editor-panel,#timeline-panel,.st-drawer,.modal-surface,.rn-box,.pick-box,.fix-box,.ctd-box,.menu,.sscp,.font-picker,#role-menu,#card-menu,#tl-menu,.st-card,.set-group,.st-section,.sf-asr-family,.panel-head,.tl-toolbar,.tab-head,.cue-card,.role-card,.sm-model,.st-entry,.st-scheme,.sf-pack,.sf-prerequisite,.sf-choice-menu,.sf-rate-menu,.fp-panel) {
   background:var(--sf-glass-surface);

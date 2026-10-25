@@ -91,6 +91,74 @@ try {
   assert.ok(sc.glossary.includes('##简体'), '分组保留');
   assert.ok(st.translate.glossary.includes('Cookie=饼干'), '当前翻译配置同步');
 
+  // 导入的 ASS（没有 asr.json）也要能校对：从当前字幕取中文行
+  const assDir = path.join(s.root, 'projects/p-gl-ass');
+  fs.mkdirSync(assDir, { recursive: true });
+  const ASS = [
+    '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 1920', 'PlayResY: 1080',
+    '[V4+ Styles]', 'Format: Name, Fontname, Fontsize', 'Style: Default,Arial,53', 'Style: 中文字幕,Arial,58',
+    '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    'Dialogue: 0,0:00:01.00,0:00:04.00,中文字幕,Alex,0,0,0,,{\\c&H00AA55&}[Alex] Ender Dragon 来了',
+    'Dialogue: 0,0:00:01.00,0:00:04.00,Default,Alex,0,0,0,,The Ender Dragon is here',
+  ].join('\n');
+
+  fs.writeFileSync(path.join(assDir, 'subtitle.ass'), ASS);
+  fs.writeFileSync(path.join(assDir, 'project.json'), JSON.stringify({ id: 'p-gl-ass', name: 'imported', subtitle: { format: 'ass', file: 'subtitle.ass' } }));
+  const rr = await s.call('/api/projects/p-gl-ass/glossary-review', { method: 'POST' });
+  const rrText = await rr.text();
+  assert.equal(rr.status, 200, rrText);
+  assert.ok(JSON.parse(rrText).terms.length > 0, '导入 ASS 的术语校对有结果');
+  const reqAss = llm.requests.at(-1).messages.map(m => m.content).join('\n');
+  assert.ok(reqAss.includes('Ender Dragon 来了'), '从 ASS 的中文轨取到正文（不需要 asr.json）');
+  assert.ok(!reqAss.includes('读取识别结果失败'), '不再报 asr.json 缺失');
+
+  // 应用到该视频：只替换中文轨的文字，英文轨与时间不动
+  const ap = await s.call('/api/projects/p-gl-ass/glossary-apply-project', {
+    method: 'POST',
+    body: JSON.stringify({ terms: [{ src: 'Ender Dragon', dst: '末影龙' }], saveToScheme: false }),
+  });
+  const apText = await ap.text();
+  assert.equal(ap.status, 200, apText);
+  const apJson = JSON.parse(apText);
+  assert.equal(apJson.applied, true);
+  assert.ok(apJson.replaced >= 1, '统计到替换次数');
+  assert.equal(apJson.saved, false, '未勾选不写方案');
+  const assAfter = fs.readFileSync(path.join(assDir, 'subtitle.ass'), 'utf8');
+  assert.ok(assAfter.includes('[Alex] 末影龙 来了'), '中文轨原文被替换成译法（颜色标签保留）:\n' + assAfter);
+  assert.ok(assAfter.includes('The Ender Dragon is here'), '英文轨不动');
+  assert.ok(assAfter.includes('0:00:01.00,0:00:04.00'), '时间不动');
+
+  // 勾选保存：应用到视频 + 写入方案术语表
+  const ap2 = await s.call('/api/projects/p-gl-ass/glossary-apply-project', {
+    method: 'POST',
+    body: JSON.stringify({ terms: [{ src: 'Ender Dragon', dst: '末影龙' }], saveToScheme: true }),
+  });
+  const ap2Text = await ap2.text();
+  assert.equal(ap2.status, 200, ap2Text);
+  const ap2Json = JSON.parse(ap2Text);
+  assert.equal(ap2Json.saved, true, '勾选后写方案');
+  const stAfter = JSON.parse(fs.readFileSync(path.join(s.root, 'asr/settings.json'), 'utf8'));
+  assert.ok(stAfter.translate.glossary.includes('Ender Dragon=末影龙'), '方案术语表已写入');
+
+  // 单语中文 SRT（导入稿件没有独立译文轨）：直接替换正文
+  const srtDir = path.join(s.root, 'projects/p-gl-srt');
+  fs.mkdirSync(srtDir, { recursive: true });
+  const SRT = '1\r\n00:00:01,000 --> 00:00:04,000\r\n我们把 The Art of War 放在了书架上\r\n\r\n'
+    + '2\r\n00:00:05,000 --> 00:00:08,000\r\n[Alex] The Art of War 在这里\r\n\r\n';
+  fs.writeFileSync(path.join(srtDir, 'subtitle.srt'), SRT);
+  fs.writeFileSync(path.join(srtDir, 'project.json'), JSON.stringify({ id: 'p-gl-srt', subtitle: { format: 'srt', file: 'subtitle.srt' } }));
+  const sp = await s.call('/api/projects/p-gl-srt/glossary-apply-project', {
+    method: 'POST',
+    body: JSON.stringify({ terms: [{ src: 'The Art of War', dst: '孙子兵法' }], saveToScheme: false }),
+  });
+  const spText = await sp.text();
+  assert.equal(sp.status, 200, spText);
+  assert.ok(JSON.parse(spText).replaced >= 1);
+  const srtAfter = fs.readFileSync(path.join(srtDir, 'subtitle.srt'), 'utf8');
+  assert.ok(srtAfter.includes('我们把 孙子兵法 放在了书架上'), '单语 SRT 正文被替换:\n' + srtAfter);
+  assert.ok(srtAfter.includes('[Alex] 孙子兵法 在这里'), '行首 [角色] 不参与替换:\n' + srtAfter);
+  assert.ok(srtAfter.includes('00:00:01,000 --> 00:00:04,000'), 'SRT 时间不动');
+
   // 空词条 / 全空 → 400
   a = await s.call('/api/projects/p-gloss/glossary-apply', {
     method: 'POST', body: JSON.stringify({ terms: [{ src: '', dst: '' }], saveToScheme: true }),
