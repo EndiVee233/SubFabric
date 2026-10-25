@@ -556,6 +556,12 @@
 - **构建稳定性**：刚写出的约 90MB exe 会被杀毒/索引短暂占用，rcedit 报
   `Fatal error: Unable to commit changes`；`build_exe.py` 的 `embed_icon_and_version` 已做短重试
   （0.4–2.0s，最多 5 次），真失败仍退出。
+- **安装包被杀软误判（2026-10-25 实测）**：荣耀电脑管家（内置奇安信引擎）会把
+  `Compression=lzma2/max` + `SolidCompression=yes` 的 Inno 包判成木马并**实时删除**，连 20 秒都留不住。
+  同一份代码只把压缩改成 `lzma/normal` + `SolidCompression=no` 就能正常留存（体积 36.5MB → 38.2MB）。
+  另外 `build_exe.py` 新增 `strip_invalid_signature()`：rcedit/postject 会让 node.exe 自带的
+  OpenJS 签名失效但证书表仍在，清掉目录项（**不要按 cert_off 截断**——证书表落在 `.rsrc` 节区间内部，
+  截断会把资源后半段砍掉，exe 直接 `Exec format error`）。根治仍是代码签名，且必须签在最后一步。
 - **升级原地覆盖**：`SubFabric.iss` 三路检测已有安装目录（Inno 的 `UsePreviousAppDir` → 注册表 AppId →
   扫盘），结果预填到目录页；不要把 `DefaultDirName` 写成 `{code:...}`（会顶掉命令行 `/DIR`）。
 - **安装包与已停用运行时**：`SubFabric.iss` 现在排除 `asr/runtime-vibevoice` 以及

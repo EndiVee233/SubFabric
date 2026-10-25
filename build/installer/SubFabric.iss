@@ -48,8 +48,11 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=.
 OutputBaseFilename=SubFabric-{#MyAppVersion}-setup
-Compression=lzma2/max
-SolidCompression=yes
+; 压缩方式：**不要**用 lzma2 + SolidCompression —— 实测（2026-10-25）`lzma2/max` + `solid`
+; 会被荣耀电脑管家（奇安信引擎）判成木马并实时隔离安装包；换成 `lzma/normal` + 非 solid
+; 后同一份代码可正常留存，体积只从 36.5MB 涨到 38.2MB。改这里之前先读 docs/PROJECT.md §6。
+Compression=lzma/normal
+SolidCompression=no
 WizardStyle=modern
 PrivilegesRequired=admin
 ; 安装/卸载向导自身的图标（.iss 同目录，相对路径即可）

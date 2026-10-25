@@ -171,6 +171,43 @@ def patch_gui_subsystem(exe_path):
     print('已切换为 GUI 子系统(双击不再弹出 cmd 窗口):', exe_path)
 
 
+def strip_invalid_signature(exe_path):
+    """清掉 PE 里残留但已失效的 Authenticode 证书表。
+
+    rcedit 重写资源、postject 注入 SEA blob 之后，node.exe 自带的 OpenJS 签名已经失效，
+    但 PE 头里的证书表目录仍指向文件尾那段签名数据。杀软对"有签名目录、哈希却对不上"的
+    文件权重很高（更像伪造/被篡改的签名），而"完全未签名"只是普通状态。
+    所以把目录项清零，让产物变成干净的无签名程序。"""
+    import struct
+    with open(exe_path, 'rb') as f:
+        data = bytearray(f.read())
+    e_lfanew = struct.unpack_from('<I', data, 0x3C)[0]
+    if bytes(data[e_lfanew:e_lfanew + 4]) != b'PE\x00\x00':
+        print('警告: PE 签名异常, 跳过证书表清理')
+        return
+    opt = e_lfanew + 24
+    magic = struct.unpack_from('<H', data, opt)[0]
+    if magic not in (0x10B, 0x20B):
+        print('警告: 未知 Optional Header magic, 跳过证书表清理')
+        return
+    dd = opt + (112 if magic == 0x20B else 96)
+    sec_entry = dd + 4 * 8          # data directory[4] = IMAGE_DIRECTORY_ENTRY_SECURITY
+    cert_off, cert_size = struct.unpack_from('<II', data, sec_entry)   # noqa: F841 — off 仅用于日志排查
+    if not cert_size:
+        print('证书表为空, 无需清理:', exe_path)
+        return
+    struct.pack_into('<II', data, sec_entry, 0, 0)
+    struct.pack_into('<I', data, opt + 64, 0)      # CheckSum 清零 = 未计算, 避免旧值失配
+    # ⚠ 不能按 cert_off 截断：rcedit 重建 .rsrc 后新资源会追加在旧签名之后，
+    #   证书表落在 .rsrc 节区间内部（实测 .rsrc 末尾还有 33KB 资源数据），
+    #   截断会把 .rsrc 后半段一起砍掉，文件直接变成"Exec format error"。
+    #   只清目录项即可：没有目录指向，尾部那段字节就只是普通节数据。
+    print('已清除失效签名目录项: %s（证书表 %d 字节保留在 .rsrc 内，不再被引用）'
+          % (os.path.basename(exe_path), cert_size))
+    with open(exe_path, 'wb') as f:
+        f.write(data)
+
+
 def main():
     os.makedirs(BUILD, exist_ok=True)
 
@@ -206,6 +243,10 @@ def main():
     run([NODE_EXE, os.path.join(ROOT, 'editor', 'scripts', 'inject_postject.mjs'), OUT,
          os.path.join(BUILD, 'sea-prep.blob')], cwd=ROOT)
     patch_gui_subsystem(OUT)
+
+    # 6. 清掉 node.exe 残留但已失效的 Authenticode 证书表（见函数注释：
+    #    "有签名目录但哈希不匹配"比"未签名"更容易被杀软判成篡改/木马）
+    strip_invalid_signature(OUT)
     print('完成:', OUT)
 
 
