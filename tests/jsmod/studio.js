@@ -1075,7 +1075,11 @@ function renderMuProcessing() {
   if (kicker) kicker.textContent = !latest ? '处理中' : active ? '处理中' : done ? '已完成' : draftStatus === 'error' ? '处理中断' : '最近处理';
   if (fill) fill.style.width = progress + '%';
   if (pct) pct.textContent = progress + '%';
-  if (card) card.dataset.processing = latest?.id || '';
+  if (card) {
+    card.dataset.processing = latest?.id || '';
+    /* 需要重试（识别/提取失败）→ 进度条转红，和列表卡片 .pc-draft.error 一致。 */
+    card.classList.toggle('is-error', !!latest && (draftStatus === 'error' || latest?.prepare?.status === 'error'));
+  }
   const dur = Number(latest?.prepare?.duration || latest?.source?.duration || latest?.duration || 0);
   const durEl = $('sf-mu-processing-duration'), devEl = $('sf-mu-processing-device');
   if (durEl) durEl.textContent = fmtMuDuration(dur);
@@ -1422,8 +1426,12 @@ $('sf-mu-widgets').addEventListener('click', (e) => {
   const processing = e.target.closest('#sf-mu-processing');
   if (processing) {
     const id = processing.dataset.processing;
-    if (id) location.hash = '#/project/' + encodeURIComponent(id);
-    else goLibraryFilter('active');
+    if (id) {
+      /* 处理中 → 详情页看进度；跑完 → 编辑器。 */
+      const p = projects.find(x => x.id === id);
+      const active = !!p && projectPhase(p) === 'active';
+      location.hash = (active ? '#/details/' : '#/project/') + encodeURIComponent(id);
+    } else goLibraryFilter('active');
     return;
   }
   const b = e.target.closest('[data-mu-filter],[data-mu-action]');

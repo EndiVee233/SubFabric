@@ -3695,6 +3695,9 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-mu-processing-name { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:550; line-height:1.5; padding-bottom:2px; letter-spacing:-.01em; }
 .sf-mu-processing-progress { position:relative; width:100%; height:32px; display:flex; align-items:center; padding:0 13px; margin-top:20px; overflow:hidden; border-radius:999px; background:var(--accent-soft); color:var(--on-container, var(--text)); }
 .sf-mu-processing-fill { position:absolute; left:0; top:0; bottom:0; width:0; border-radius:inherit; background:var(--accent); transition:width .45s var(--ease-out, cubic-bezier(.16,1,.3,1)); }
+/* 需要重试（识别/提取失败）：进度条与底槽转红，与列表卡片的 .pc-draft.error 保持一致。 */
+.sf-mu-processing.is-error .sf-mu-processing-fill { background: var(--danger, #ff5f6b); }
+.sf-mu-processing.is-error .sf-mu-processing-progress { background: color-mix(in srgb, var(--danger, #ff5f6b) 20%, transparent); }
 .sf-mu-processing-pct { position:relative; z-index:1; font-family:var(--mono); font-size:9px; font-weight:600; letter-spacing:.02em; }
 .sf-mu-processing-pills { display:flex; gap:8px; width:100%; margin-top:auto; padding-top:6px; }
 .sf-mu-processing-pill { min-width:0; flex:1; display:flex; align-items:center; gap:7px; padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:var(--surface); color:var(--text); font-size:10px; }

@@ -1032,19 +1032,28 @@ export function initProjects(ctx) {
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
           <button type="button" class="btn pc-del ico-only" title="删除项目（音频、波形、字幕副本一起删）" aria-label="删除项目">${ico('trash')}</button>
         </div>`;
+      /* 处理中（提取/识别/翻译还没跑完）点卡片进**详情页**看进度；完成后再进编辑器。
+       * 以前只有"还没字幕"时才拦，识别中已有部分字幕的卡片会直接跳编辑器，
+       * 用户看不到进度、也容易在写入过程中编辑。 */
+      const processing = isCreating(p);
+      const openCard = () => {
+        if (processing) { openProjectDetails(p); return; }
+        if (locked) return;
+        location.hash = '#/project/' + p.id;
+      };
       card.querySelector('.pc-details').addEventListener('click', (e) => {
         e.stopPropagation();
         openProjectDetails(p);
       });
       card.querySelector('.pc-open').addEventListener('click', (e) => {
         e.stopPropagation();
-        if (!locked) location.hash = '#/project/' + p.id;
+        openCard();
       });
-      card.addEventListener('click', () => { if (!locked) location.hash = '#/project/' + p.id; });
+      card.addEventListener('click', openCard);
       card.onkeydown = (e) => {
         if (e.target !== card || (e.key !== 'Enter' && e.key !== ' ')) return;
         e.preventDefault();
-        if (!locked) location.hash = '#/project/' + p.id;
+        openCard();
       };
       const tb = card.querySelector('.pc-trans');
       if (tb) tb.addEventListener('click', (e) => { e.stopPropagation(); requestTranslate(p.id); });
@@ -4509,6 +4518,7 @@ async function renderAsrModels() {
     else genSetState('np', (genTr && genTr.ready) ? '已配置' : '读取方案…');
     // Python 环境预检失败 → 提前提醒(不拦按钮: whisper.cpp 引擎不需要 Python, 由服务端预检按引擎分流)
     const hint = $('#np-hint');
+    if (hint) delete hint.dataset.warn;
     const probeForUi = (() => {
       const pp = asrStatus.pythonProbe;
       if (!pp) return null;
@@ -4518,6 +4528,7 @@ async function renderAsrModels() {
     if (hint && probeForUi && !probeForUi.ok) {
       hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet NPU 需要 Python + OpenVINO（修复方法见创建后的日志）；Vulkan 版 Parakeet（CrispASR）和「必剪 ASR」云端识别都不需要 Python';
       hint.style.color = '#ff9a5c';
+      hint.dataset.warn = '1';
     }
     npMaybeEnable();
   }
@@ -4562,10 +4573,28 @@ async function renderAsrModels() {
     el.classList.toggle('is-err', tone === 'err');
     el.classList.toggle('is-ok', tone === 'ok');
   }
+  /** 初稿模式按钮被禁用的具体原因（给用户看，而不是只把按钮变灰）。 */
+  function npModelBlockReason() {
+    const sel = $('#np-model-sel');
+    const mid = sel && sel.value;
+    const list = (asrStatus && asrStatus.models) || [];
+    const m = mid ? list.find(x => x.id === mid) : null;
+    if (m && m.ready === false) {
+      return '识别模型「' + (m.name || mid) + '」还没就绪'
+        + (m.blockedReason ? '：' + m.blockedReason : '（到「设置 → 识别模型」下载/检查）');
+    }
+    if (!mid) return '先在「识别来源 → 语音识别」里选一个模型';
+    if (!asrStatus.ready) return '没有已就绪的识别模型：到「设置 → 识别模型」下载一个，或换用云端识别';
+    return '识别模型还没就绪';
+  }
+  function npDefaultHint() {
+    return npMode === 'draft'
+      ? '创建后在后台识别，进度看项目列表'
+      : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
+  }
   function npMaybeEnable() {
     const npUrlNow = (($('#np-url') || {}).value || '').trim();
     const hasSource = !!npVideo.path || (npMode === 'draft' && !!npUrlNow);
-    if (!hasSource) { $('#np-create').disabled = true; return; }
     // 初稿模式不需要字幕文件, 但必须有可用的识别模型
     const hasModel = npMode !== 'draft' || !!($('#np-model-sel') && $('#np-model-sel').value);
     // 导入模式：字幕文件**或**项目包，二选一即可
@@ -4574,7 +4603,25 @@ async function renderAsrModels() {
     const regionOk = npReadRegion().ok;
     // 初稿模式必须有可用的识别模型（导入模式不需要）
     const draftReady = npMode !== 'draft' || !!asrStatus.ready;
-    $('#np-create').disabled = !hasSubOrPack || !hasModel || !regionOk || !draftReady;
+    let why = '';
+    if (!hasSource) why = npMode === 'draft' ? '先粘贴视频链接（或选择视频文件）' : '先选择要导入的字幕文件或项目包';
+    else if (!hasSubOrPack) why = '先选择字幕文件或项目包';
+    else if (!hasModel) why = '先在「识别来源 → 语音识别」里选一个模型';
+    else if (!regionOk) why = '时间区间无效：结束时间要晚于开始时间';
+    else if (!draftReady) why = npModelBlockReason();
+    $('#np-create').disabled = !!why;
+    $('#np-create').title = why || '开始创建/识别';
+    const hint = $('#np-hint');
+    /* 不要盖掉 refreshAsrStatus 写的 Python 环境警告（那条更具体）。 */
+    if (hint && !hint.dataset.warn) {
+      if (why) {
+        hint.textContent = '还不能开始：' + why;
+        hint.style.color = '#ff9a5c';
+      } else {
+        hint.textContent = npDefaultHint();
+        hint.style.color = '';
+      }
+    }
   }
   /** 自定义方案选择：读取全局命名方案，激活后新稿件沿用同一套翻译配置。 */
   function npSchemeProviderName(id) {

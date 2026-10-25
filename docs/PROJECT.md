@@ -97,6 +97,13 @@
     **轮到某条时先 `refreshRealignTarget()`**：按行对象 → 开始时间 → targetKey 依次定位当前句子，
     用**最新**的文本/时间提交对齐（内容被改过时提示「已按最新文本重排」）；行被删除/拆分才跳过。
     这样排队期间编辑字幕不会让这条拿旧文本对齐或报「排队期间已改动」。
+  - **仅逐词异常行重校对**：右键「全片逐词重校对」→「仅逐词异常的字幕…」。前端 `wordAnomalyKeys()`
+    收集「逐词缺词/多词、词重叠」的行（`enWordCount !== enTokenCount`、`enOverlap`、badReason 含「逐词」），
+    确认后随 `/realign-full` 传 `onlyKeys`（开始时间 toFixed(3) 数组）；服务端与 skip/region 一起过滤，
+    没有可重校的行时明确报错。
+  - **初稿末词尾巴**：本地 Whisper v2 的末词终点常比真实收音早 100~200ms。`buildDraftSubtitle` 调
+    `writeSubtitle(..., { tail: 0.15 })`，每句结尾补 0.15s（不超过下一句起点）；`writeSubtitle` 的
+    `tail` 默认 0，SRT→ASS 等路径不会越出原片区间（有 `srt-ass-e2e-test` 断言）。
   - **初稿首末词时间（2026-10-23 修）**：`writeSubtitle` 生成逐词 ASS 时，句块时间取
     「句时间 ∪ 实测词跨度」（`realign-words.js` 的 `wordSpanRange`，±1s 容差防脏数据），
     首片从首词实测起点开始、末片收在末词实测终点；中文行与英文行共用同一组时间。
@@ -416,6 +423,17 @@
   服务端在 `runFullRealign` 里先按「`end > region.start && start < region.end`」过滤 targets ——
   **在加载对齐器之前**过滤，选区里没有句子时直接报错；区域重分句在前端按同一相交规则过滤
   `resegRows`，预览标题变为「区域重分句 · 预览」。
+- **首页卡片点击（处理中 → 详情）**：卡片/「处理中」组件在稿件仍在处理时点进去是 `#/details/<id>`
+  详情页，处理完成后才进 `#/project/<id>` 编辑器。`project.js` 的 `.proj-card` 用 `isCreating(p)`
+  分支，Material 的 `#sf-mu-processing` 用 `projectPhase(p) === 'active'` 分支；键盘 Enter/空格与
+  「打开」按钮同一条逻辑。
+- **需要重试的进度条转红**：`#sf-mu-processing` 在 `draft.status === 'error'` 或 `prepare.status === 'error'`
+  时加 `.is-error`，进度填充 `var(--danger)`、底槽用 20% 红；列表卡片本来就有 `.pc-draft.error` 红色进度条。
+- **时间轴字幕块样式（2026-10-25）**：块内中英文字重固定 **400（不加粗）**，不跟随字体设置里的
+  加粗选项；选中块的左右边缘画**白色菱形手柄**（`_drawBlockHandles`：块高 ≥26px 时每侧上下各一个，落在中文/英文半区中心；更矮时退回中间一个。命中区仍是 `EDGE_TOL` 的拖边）；
+  英文逐词区每个词起点画一条 **3/3 竖向虚线**（`_drawWordAxis`，只画在英文半区，不压中文）；
+  点中/拖动某一根线时**只有当前块**的那根变白（按 `_wordDrag.block === block` 匹配，
+  以前只比 row 引用，cue 没有 row 时会 `undefined === undefined` 让所有块同下标一起亮）。
 - **UWP 特例**：默认 Windows 10 蓝 `#0078D7`；仅在未自定义强调色时使用该默认值，`SSAccent.set()`
   允许覆盖，设置页取色控件保持可用；形状走 2–4px 近直角、无 `backdrop-filter`。
 - **Claude 特例**：暖纸底 `#F6F4EE` / 墨色文字 / 陶土强调 `#B0512F`（用户改色时用 `readable()` 兜底），

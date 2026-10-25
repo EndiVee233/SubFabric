@@ -6074,6 +6074,16 @@ function initAdvancedOpMenus() {
   bindOpMenu(document.getElementById('btn-realign-full'), () => ([
     { label: '全片逐词重校对', run: () => beginRealignFull() },
     {
+      label: '仅逐词异常的字幕…',
+      run: () => {
+        const keys = wordAnomalyKeys();
+        if (!keys.length) { toast('没有检测到逐词异常的字幕（缺词 / 多词 / 词重叠）', 4600); return; }
+        panel.showConfirm('仅重校逐词异常行',
+          `检测到 ${keys.length} 条逐词异常（缺词 / 多词 / 词重叠）。只重排这些行的逐词时间，其它行不动；完成后先给预览。开始？`,
+          '开始校对', '取消', () => startRealignFull(null, { onlyKeys: keys }));
+      },
+    },
+    {
       label: '区域逐词重校对…',
       run: () => openOpRangeDialog({
         title: '区域逐词重校对',
@@ -6642,6 +6652,20 @@ function timelineRegion() {
   return { start: sel.a, end: sel.b };
 }
 
+/** 逐词异常的行（缺词/多词/重叠）：返回开始时间键，供「仅异常行重校对」用。 */
+function wordAnomalyKeys() {
+  const keys = [];
+  for (const it of state.items || []) {
+    if (!it || !it.ref) continue;
+    const reason = String(it.badReason || '');
+    const bad = (it.enWordCount > 0 && it.enWordCount !== it.enTokenCount)
+      || it.enOverlap
+      || reason.includes('逐词');
+    if (bad) keys.push(Number(it.start).toFixed(3));
+  }
+  return keys;
+}
+
 /** 按钮入口：先二次确认再跑。SRT 与 ASS 的说明不同（前者会把整份稿件转成逐词 ASS）。
  *  region 传时间轴选区对象时只重校对该区间。 */
 function beginRealignFull(region) {
@@ -6662,9 +6686,10 @@ function beginRealignFull(region) {
   });
 }
 
-async function startRealignFull(region) {
+async function startRealignFull(region, opts) {
   if (realignRunning) { toast('全片重校对已经在跑了', 3200); return; }
   if (!state.project) { toast('全片重校对需要项目模式', 4200); return; }
+  const onlyKeys = (opts && Array.isArray(opts.onlyKeys) && opts.onlyKeys.length) ? opts.onlyKeys : null;
   const pid = state.project.id;
   const allowSrtToAss = state.format === 'srt';
   realignRunning = true;
@@ -6693,7 +6718,7 @@ async function startRealignFull(region) {
     if (!state.project || state.project.id !== pid) return;
     const r = await fetch(`/api/projects/${pid}/realign-full`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ allowSrtToAss, region: region || null }),
+      body: JSON.stringify({ allowSrtToAss, region: region || null, onlyKeys: onlyKeys || null }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));

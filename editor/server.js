@@ -129,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.4.6.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.4.6.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4.6.2'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.6.2'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -5919,7 +5919,10 @@ function startPrepare(id, videoPath, mode) {
 
   /** 组装初稿字幕: 英文段 segs + 可选中文译文 trans(长度必须等于 segs)。
    *  有译文时 ASS 会多写一轨「中文字幕」行 —— 那才是本编辑器的双语结构 */
-  function writeSubtitle(id, wordLevel, segs, trans) {
+  function writeSubtitle(id, wordLevel, segs, trans, opts) {
+    /* 末词尾巴（秒）：只给**初稿识别**用（本地 Whisper v2 的末词终点常比真实收音早）。
+     * SRT→ASS 转换等路径必须保持"不越出原片区间"，所以默认 0。 */
+    const tailSec = opts && Number.isFinite(Number(opts.tail)) ? Number(opts.tail) : 0;
     const totalWords = segs.reduce((n, s) => n + ((s.words || []).length), 0);
     const hasTrans = Array.isArray(trans) && trans.length === segs.length;
     const hasSpk = segs.some(s => s.speaker != null);
@@ -5998,6 +6001,11 @@ function startPrepare(id, videoPath, mode) {
       let out = withConfidence(assHeader(engineLabel, styleColors), segs);
       segs.forEach((s, i) => {
         const zh = zhText(i);
+        /* 末词尾巴：本地 Whisper v2 的末词终点常比真实收音早 100~200ms（用户实测「末词结束
+         * 有点早」）。每句结尾补 0.15s，但不超过下一句起点（避免两条字幕时间重叠）。 */
+        const nextStart = segs[i + 1] ? Number(segs[i + 1].start) : Infinity;
+        const want = tailSec > 0 ? Math.min(Number(s.end) + tailSec, nextStart - 0.001) : Number(s.end);
+        if (want > Number(s.end)) s.end = want;
         if (zh) out += zhLine(s, zh, roleOf(s));
         out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,,0,0,0,,${escAss(s.text)}\n`;
       });
@@ -6017,6 +6025,11 @@ function startPrepare(id, videoPath, mode) {
           // 纯逻辑在 realign-words.js 的 wordSpanRange（有单测）：首词实测起点 / 末词实测终点。
           const span = realignWordsMod.wordSpanRange(s);
           s.start = span.start; s.end = span.end;
+          /* 末词尾巴：本地 Whisper v2 的末词终点常比真实收音早 100~200ms。补 0.15s，
+           * 但不超过下一句起点（避免两条字幕重叠）。 */
+          const nextStart = segs[i + 1] ? Number(segs[i + 1].start) : Infinity;
+          const want = tailSec > 0 ? Math.min(Number(s.end) + tailSec, nextStart - 0.001) : Number(s.end);
+          if (want > Number(s.end)) s.end = want;
         }
         const zh = zhText(i);
         if (zh) out += zhLine(s, zh, roleOf(s));
@@ -6599,11 +6612,18 @@ function startPrepare(id, videoPath, mode) {
       ? src.targets.filter(t => !skipKeys.has(Number(t.start).toFixed(3)))
       : src.targets;
     if (rg) all = all.filter(t => Number(t.end) > rg.start && Number(t.start) < rg.end);
+    /* 仅逐词异常的行：前端按「逐词缺词/多词/重叠」算好开始时间列表传上来。 */
+    const onlyKeys = Array.isArray(o.onlyKeys) && o.onlyKeys.length
+      ? new Set(o.onlyKeys.map(String)) : null;
+    if (onlyKeys) all = all.filter(t => onlyKeys.has(Number(t.start).toFixed(3)));
     if (!src.targets.length) {
       throw new Error('这个稿件没有带逐词时间的英文行，没法重排'
         + '（中文整句轨没有逐词时间；先在「设置 → 逐词转换」把英文转成逐词）');
     }
     if (!all.length) {
+      if (onlyKeys) {
+        throw new Error('没有可重校对的逐词异常行（可能都带「已校对」标签，或刚刚已被修复）');
+      }
       if (rg) {
         throw new Error('选中区间里没有可重校对的句子'
           + '（先拖一段有字幕的区间；区间内的行若都带「已校对」标签，点掉标签再试）');
@@ -6928,7 +6948,8 @@ function startPrepare(id, videoPath, mode) {
     let segs, info;
     try {
       segs = readSegments(id);
-      info = writeSubtitle(id, wordLevel, segs, null);
+      /* 0.15s 末词尾巴：只给初稿识别加（Whisper v2 词尾偏早）。 */
+      info = writeSubtitle(id, wordLevel, segs, null, { tail: 0.15 });
     } catch (e) { return finishDraft(id, e); }
 
     const cfg = translateCfg();

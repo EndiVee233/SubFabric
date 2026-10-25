@@ -13,9 +13,10 @@ const TEXT_PAD = 6;
  * 字号改这里一处即可 —— zhFontOf/enFontOf 都从它拼，不会再出现两处写死不同的情况。 */
 /* 中文行：**不加粗**（用户明确要求"字幕块里的中文字幕不要加粗，无论设置中文字幕是否加粗"）。
  *  字号是 17px，靠字号而不是字重来保证可读性 —— 加粗在 17px 下会让笔画糊在一起。
- *  EN 行保持加粗：拉丁字母在 15px 下细体偏虚。 */
+ *  EN 行同样**不加粗**（用户要求：时间轴上所有字幕块的字体统一取消加粗，且字重不跟随
+ *  字体设置里的加粗选项）。字重是这里的常量，不读设置。 */
 const ZH_TEXT = { weight: 400, px: 17, fallback: '"Microsoft YaHei", sans-serif' };
-const EN_TEXT = { weight: 700, px: 15, fallback: '"Microsoft YaHei", sans-serif' };
+const EN_TEXT = { weight: 400, px: 15, fallback: '"Microsoft YaHei", sans-serif' };
 const ZH_FONT = `${ZH_TEXT.weight} ${ZH_TEXT.px}px ${ZH_TEXT.fallback}`;
 const EN_FONT = `${EN_TEXT.weight} ${EN_TEXT.px}px ${EN_TEXT.fallback}`;
 /* 两行文字各自需要的竖直空间(px)，用于 _wordGeom 排布。取字号 + 一点行距，
@@ -381,6 +382,8 @@ export class Timeline {
     this.selected = null;     // 行对象
     this.panSensitivity = 120;  // 滚轮平移灵敏度(px/格, 设置 Tab 可调)
     this.zoomSensitivity = 1.25; // Ctrl+滚轮缩放灵敏度(每格倍率, 设置 Tab 可调)
+    this._zoomTargetPx = 0;     // 缩放动画的目标 pxPerSec（连续滚轮累积）
+    this._zoomAnchor = null;    // 缩放锚点：{px, t} 光标下的时间
     this.waveform = null;     // 波形图 Image(ffmpeg 提取, 画在字幕块内; PNG 兜底)
     this.waveformReady = false;
     this.peaks = null;        // 峰值包络 {data: Uint8Array, rate, ch} —— 优先用它绘制(任意缩放都锐利)
@@ -702,31 +705,49 @@ export class Timeline {
     return true;
   }
 
-  /** 缩放（带缓动）：约 160ms 内把倍率补间到目标值，**光标下的时间保持不动**（跟手）。
-   *  连续滚轮会从"当前值"重新起步（不是排队), 所以手感是顺滑而不是卡顿。
+  /** 缩放（平滑追目标）：滚轮连续触发时**累积目标倍率**，动画只朝目标指数逼近，
+   *  不再每个事件都取消上一段动画、从半路重新起步（那种"起步—取消—再起步"就是抽搐感）。
    *  Ctrl+滚轮 / 工具栏 ± / 快捷键都走这里；prefers-reduced-motion 时退化为瞬时。 */
   _zoomAtSmooth(px, factor) {
     const lim = this._zoomLimits();
-    const target = Math.max(lim.min, Math.min(lim.max, this.pxPerSec * factor));
-    if (!isFinite(target) || Math.abs(target - this.pxPerSec) < 1e-9) return false;
+    /* 有动画在跑 → 在**上一次目标**上继续乘；动画已停 → 从当前值起算。 */
+    const base = this._zoomAnim && this._zoomTargetPx > 0 ? this._zoomTargetPx : this.pxPerSec;
+    const target = Math.max(lim.min, Math.min(lim.max, base * factor));
+    if (!isFinite(target)) return false;
+    if (!this._zoomAnim && Math.abs(target - this.pxPerSec) < 1e-6) return false;
+    this._zoomTargetPx = target;
+    /* 锚点：光标下的时间（最新一次滚轮为准）。 */
+    this._zoomAnchor = { px, t: this.viewStart + px / this.pxPerSec };
     const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (this._zoomAnim) { cancelAnimationFrame(this._zoomAnim); this._zoomAnim = 0; }
-    if (reduced) return this._zoomAt(px, factor);
-    const from = this.pxPerSec;
-    const tUnder = this.viewStart + px / this.pxPerSec;      // 光标下的时间
-    const t0 = performance.now();
-    const DUR = 160;
+    if (reduced) {
+      if (this._zoomAnim) { cancelAnimationFrame(this._zoomAnim); this._zoomAnim = 0; }
+      this.pxPerSec = target;
+      this.viewStart = this._zoomAnchor.t - px / this.pxPerSec;
+      this._clampView(); this._dirty = true; this._viewReady = true;
+      if (this.onLayout) this.onLayout();
+      return true;
+    }
+    if (this._zoomAnim) return true;            // 已有动画在追目标，只更新目标与锚点
     const self = this;
-    const step = (now) => {
-      const k = Math.min(1, (now - t0) / DUR);
-      const e = 1 - Math.pow(1 - k, 3);                      // easeOutCubic
-      self.pxPerSec = from + (target - from) * e;
-      self.viewStart = tUnder - px / self.pxPerSec;
-      self._dirty = true;                                    // 动画期间每帧都要重绘
+    const step = () => {
+      const tgt = self._zoomTargetPx;
+      const d = tgt - self.pxPerSec;
+      const a = self._zoomAnchor || { px, t: self.viewStart };
+      if (Math.abs(d) <= Math.max(0.005, tgt * 5e-5)) {
+        self.pxPerSec = tgt;
+        self.viewStart = a.t - a.px / self.pxPerSec;
+        self._clampView();
+        self._dirty = true; self._viewReady = true;
+        if (self.onLayout) self.onLayout();
+        self._zoomAnim = 0;
+        return;
+      }
+      self.pxPerSec += d * 0.32;                // 指数逼近，越快越顺
+      self.viewStart = a.t - a.px / self.pxPerSec;
       self._clampView();
-      self._viewReady = true;
+      self._dirty = true; self._viewReady = true;
       if (self.onLayout) self.onLayout();
-      self._zoomAnim = k < 1 ? requestAnimationFrame(step) : 0;
+      self._zoomAnim = requestAnimationFrame(step);
     };
     this._zoomAnim = requestAnimationFrame(step);
     return true;
@@ -813,8 +834,13 @@ export class Timeline {
       e.preventDefault();
       this._hideMenu();
       const dir = e.deltaY < 0 ? 1 : -1;        // 上滚为正
-      if (e.ctrlKey || e.metaKey) this._zoomAtSmooth(e.offsetX, dir > 0 ? this.zoomSensitivity : 1 / this.zoomSensitivity);
-      else this._panBy(dir * this.panSensitivity);   // 下滚 dir=-1 → 负 → 看更早
+      if (e.ctrlKey || e.metaKey) {
+        /* 按滚动量缩放：鼠标一格 ≈ 100 会得到完整的 zoomSensitivity；触控板的小 delta
+         * 按比例打折，不会"一格没滚完就跳到底"，也不会因为事件密集而抽搐。 */
+        const mag = Math.min(1.5, Math.max(0.3, Math.abs(e.deltaY) / 120));
+        const f = Math.pow(this.zoomSensitivity, dir > 0 ? mag : -mag);
+        this._zoomAtSmooth(e.offsetX, f);
+      } else this._panBy(dir * this.panSensitivity);   // 下滚 dir=-1 → 负 → 看更早
     }, { passive: false });
 
     cv.addEventListener('pointerdown', (e) => {
@@ -847,7 +873,7 @@ export class Timeline {
         if (!wh.cue.words || !wh.cue.words.length) return;
         const idx = Math.min(wh.idx, wh.cue.words.length - 1);
         this._selCueRef = wh.cue.row || wh.cue.ref;
-        this._wordDrag = { cue: wh.cue.row || wh.cue.ref, ref: wh.cue.ref, idx };
+        this._wordDrag = { cue: wh.cue.row || wh.cue.ref, ref: wh.cue.ref, block: wh.cue, idx };
         this._drag = { type: 'word', cue: wh.cue, idx, x0: x, y0: y, moved: false };
         if (this.onSelect) this.onSelect(wh.cue.ref, { seek: false });
         return;
@@ -871,7 +897,7 @@ export class Timeline {
             if (!c.words || !c.words.length) return;
             const idx = part === 'left' ? 0 : c.words.length - 1;
             this._selCueRef = c.row || c.ref;
-            this._wordDrag = { cue: c.row || c.ref, ref: c.ref, idx };
+            this._wordDrag = { cue: c.row || c.ref, ref: c.ref, block: c, idx };
             // 左边缘=调首词开始(块起始同步); 右边缘=调末词**结束**(块 end 同步延伸)
             const nb = this._neighbors(c);
             this._drag = { type: 'word', cue: c, idx, x0: x, y0: y, moved: false,
@@ -1454,7 +1480,7 @@ export class Timeline {
 
     const step = this._niceStep(80);
     const t0 = Math.max(0, Math.floor(this.viewStart / step) * step);
-    const sub = step / 5;                       // 次刻度: 主刻度之间再分 5 格, 读数更好对位
+    const sub = step / 4;                       // 次刻度: 主刻度之间再分 4 格（用户要求：五块改成四块）
     const end = this.viewStart + W / this.pxPerSec + step;
     ctx.strokeStyle = this.colors.rulerTick;
     ctx.beginPath();
@@ -1644,7 +1670,7 @@ export class Timeline {
       ctx.fillStyle = readableTextOn(base);                // 亮角色色保留，暗的换近白
       ctx.fillText(zh, x1 + TEXT_PAD, zhBase);
       if (showWords && fitWords) {
-        this._drawWordAxis(ctx, words, g, x1, x2, c.end);
+        this._drawWordAxis(ctx, words, g, x1, x2, c.end, c, band);
       } else if (showWords) {
         /* 有逐词但竖直空间不够 → **只画分隔线**，词不画（免得糊在中文字上）。
          *  这是"块太矮"的兜底，正常字号下不会走到这里；也别退化去画整句英文 ——
@@ -1669,7 +1695,7 @@ export class Timeline {
         }
       }
     } else if (showWords && fitWords) {
-      this._drawWordAxis(ctx, words, g, x1, x2, c.end);   // 纯英文孤行
+      this._drawWordAxis(ctx, words, g, x1, x2, c.end, c, band);   // 纯英文孤行
     } else if (showWords) {
       /* 纯英文孤行但空间不够：不画词，留白（用户拉高轨道就会显示出来） */
     } else {
@@ -1682,7 +1708,7 @@ export class Timeline {
 
   /** 英文逐词轴: 一条中性轴的线 + 首词后的每个词一个标记块
    * (可拖动, 词太长则只留标记；首词用字幕块左边缘下半区调整) */
-  _drawWordAxis(ctx, words, g, x1, x2, blockEnd) {
+  _drawWordAxis(ctx, words, g, x1, x2, blockEnd, block, band) {
     const ax0 = Math.max(x1 + 4, 0), ax1 = Math.min(x2 - 4, this._cssW());
     ctx.strokeStyle = AXIS_COLOR;                   // 轴
     ctx.lineWidth = 1;
@@ -1691,14 +1717,36 @@ export class Timeline {
     ctx.lineTo(ax1, g.axisY + 0.5);
     ctx.stroke();
 
-    ctx.font = this.enFont();      // 词文本也跟稿件样式同步
+    ctx.font = this.enFont();      // 词文本也跟稿件字体同步（字重固定不加粗）
     ctx.textAlign = 'left';
     let lastRight = -Infinity;                      // 已画出去的文字右边界(避免相邻词压字)
+    /* 每个词起点一条**竖向虚线**（参考图样式）：只画在英文逐词区，不压中文字。
+       被点中/拖动的那一根变白，其它块不受影响（按 block 对象 + 词下标匹配）。 */
+    ctx.save();
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    for (let i = 0; i < words.length; i++) {
+      const wx = Math.round(this.t2x(words[i].s)) + 0.5;
+      if (wx < x1 + 2 || wx > x2 - 2) continue;
+      const hotLine = this._wordDrag && this._wordDrag.block === block && this._wordDrag.idx === i;
+      ctx.strokeStyle = hotLine ? 'rgba(255,255,255,.9)' : 'rgba(180,180,198,.45)';
+      ctx.beginPath();
+      ctx.moveTo(wx, g.axisY + 1);
+      /* 一直画到块下边框（用户要求"小短线延伸到字幕块的下边框"）；上端仍在词轴处，
+         不压上面的中文行。 */
+      ctx.lineTo(wx, (band ? band.y + band.h - 1.5 : g.markTop + g.markH));
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
       const wx = this.t2x(w.s);
       if (wx < x1 - 30 || wx > x2 + 30) continue;
-      const hot = this._wordDrag && this._wordDrag.cue === this._selCueRef && this._wordDrag.idx === i;
+      /* 只让**当前这一块**里被拖动/点中的那根线亮起：按块对象 + 词下标双重匹配。
+         以前只比 row 引用，遇到 cue 没有 row（或 ref 共享）时 undefined === undefined，
+         于是每个块的第 i 根线一起变白（用户实测）。 */
+      const hot = this._wordDrag && this._wordDrag.block === block && this._wordDrag.idx === i;
       // 首词已经是整个字幕块的第一段文字：不再额外画灰色逐词标记。
       // 其余词的标记仍是拖动抓手；首词走字幕块左边缘下半区拖动（见 _hitWordHandle）。
       if (hasVisibleWordMark(i)) {
@@ -2016,6 +2064,8 @@ export class Timeline {
           this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), this.uwp ? 2 : 4);
           ctx.stroke();
           ctx.restore();
+          /* 选中块左右边缘的菱形拖拽点：点住拖动 = 改块起止（命中区见 EDGE_TOL）。 */
+          this._drawBlockHandles(ctx, x1, x2, band, wpx);
         }
         // 块内: 中文行(角色色/加粗/100% 不透明) + 分隔线 + 英文逐词轴(可拖动标记)
         if (wpx > 46 && (c.text || c.text2)) this._drawBlockText(ctx, c, band, x1, x2, wpx, base);
@@ -2059,6 +2109,33 @@ export class Timeline {
     const tip = this.uwp ? 3 : 4;
     ctx.moveTo(x - tip, 8); ctx.lineTo(x + tip, 8); ctx.lineTo(x, this.uwp ? 11 : 13);
     ctx.closePath(); ctx.fill();
+  }
+
+  /** 选中块左右边缘的菱形手柄（白色小菱形 + 深色描边），提示"可拖边改时长"。
+   *  每侧画**上下两个**（分别落在中文半区、英文半区的垂直中心）；块太矮时退回中间一个。 */
+  _drawBlockHandles(ctx, x1, x2, band, wpx) {
+    if (wpx < 18) return;
+    const s = this.uwp ? 3.5 : 4;
+    const ys = band.h >= 26
+      ? [band.y + band.h * 0.25, band.y + band.h * 0.75]
+      : [band.y + band.h / 2];
+    ctx.save();
+    for (const x of [x1 + 1.5, x2 - 1.5]) {
+      for (const cy of ys) {
+        ctx.beginPath();
+        ctx.moveTo(x, cy - s);
+        ctx.lineTo(x + s, cy);
+        ctx.lineTo(x, cy + s);
+        ctx.lineTo(x - s, cy);
+        ctx.closePath();
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = 'rgba(0,0,0,.55)';
+        ctx.lineWidth = 1;
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   /** 单语孤行"缺的另一半": 虚线空槽。bad=true 时用坏行红 + ⚠(缺另一半就是这条行被判坏的原因),
