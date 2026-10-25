@@ -65,6 +65,13 @@
   Parakeet Vulkan / Qwen3-ASR + 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
   Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
+- **波形包络分桶（2026-10-26 修）**：`attachPeakCollector` 每桶采样数必须用**整数相位累加**
+  （`phase += rate`，满 `inSr` 减掉并 flush），不能写 `dur * inSr / (dur * rate)` 再比较 `++inBucket >= spb`。
+  2700.502333 这类时长会算出 `160.00000000000003`，第 160 个采样比较失败 → 实际每桶 161 采样；
+  前端按 `rate=100`（10ms/桶）换算，包络整体短 1/161，45 分钟片尾少约 17 秒波形，且越往后越提前、
+  与字幕错位。旧 `peaks.bin` 由 `metaView` 的 `peaksCoversAudio` 对照同项目 `audio.wav` 字节数校验：
+  覆盖时长短超过 0.3% 即 `hasPeaks=false`，打开项目时自动走 prepare 重提取（不会误伤音轨本身比视频短的项目）。
+  `tests/peaks-span-test.mjs` 覆盖 160 采样/桶、末尾残桶与真实项目短包络判定，`tools/peaks_e2e.mjs` 覆盖桶覆盖时长。
 - **语义分句的短碎片（2026-10-23 修）**：`groupResegWords` 只按句末标点 / >0.8s 停顿断句，
   之后 `mergeTinyFrags` 处理 <2 词且 <1s 的碎片：按**前后空档**决定并入哪一侧
   （句内词间停短、句间停长），离上一句更近就并回上一句；首组只能并进下一句、末组并回上一句。
@@ -583,16 +590,15 @@
   `crispasr`、`faster-whisper-xxl`、`runtime-python`、`ytdlp`、`logs` 等用户数据与运行时。入库的只有
   `build/installer/{SubFabric.iss, logo.png, logo.ico, start-editor.*}`。
 - **三处版本号必须同步**（漏一处会出现"装完版本还是旧的"）：`editor/server.js` 的 `APP_VERSION`
-  （显示版本，如 `beta 1.3`）与 `APP_FILE_VERSION`（Windows 文件版本，四段纯数字，如 `1.3.0.0`）；
-  `build/installer/SubFabric.iss` 的 `MyAppVersion` / `MyAppFileVersion`；git tag / Release tag。
-  `.iss` 的 `VersionInfoVersion` / `VersionInfoProductVersion` **只接受纯数字**，一律填
-  `MyAppFileVersion`；显示版本只走 `AppVersion` / `AppVerName` / `VersionInfoProductName`。
-- **推进规则**（发版前必读）：0）先取远端最新 tag 核对三处是否已对齐，对不上先补齐；1）同版本修补重发
-  ——显示版本与文件版本不变，只把 tag 的 beta 序号 +1；2）开新 beta（默认推进）——次位 +1：显示
-  `beta <主>.<次+1>`、文件 `<主>.<次+1>.0.0`、tag `v<主>.<次+1>.0-beta.1`；3）转正——显示版本去掉
-  `beta ` 前缀、tag 去掉 `-beta.<序号>`、Release 取消 prerelease；4）稳定版之后——修复/小改抬补丁位、
-  新增模块抬次位、架构级改动须用户确认才动主位；5）撞号检查——推出的号必须与远端 tag 列表比对。
-  `beta <主>.<次>` 读作"`<主>.<次>` 的 beta"，显示版本与 tag 用同一个 `<主>.<次>`。
+  （显示版本）与 `APP_FILE_VERSION`（Windows 文件版本）；`build/installer/SubFabric.iss` 的
+  `MyAppVersion` / `MyAppFileVersion`；安装包名自动跟 `MyAppVersion`。`.iss` 的 `VersionInfoVersion` /
+  `VersionInfoProductVersion` **只接受纯数字**，一律填 `MyAppFileVersion`；显示版本只走
+  `AppVersion` / `AppVerName` / `VersionInfoProductName`。
+- **四段版本号规则**（唯一权威说明见 [PROJECT_MAP.md §1.1](../PROJECT_MAP.md#11-版本号命名规则发版前必读)）：
+  `<主>.<次>.<补丁>.<当日构建序号>`。末段是**同一天内的第几次构建/修复**，当天第一版为 `1`，同一天再修
+  一版 `+1`，次日重新从 `1` 开始；因此第四段可以比前一天更小，跨天比较看前三段。当天只修 bug 时保持
+  前三段不变（如 `1.4.6.2` 的次日第一版是 `1.4.6.1`）；需要抬前三段时，抬完末段也从 `1` 开始。
+  推出的号仍要与远端 tag/Release 列表比对，避免撞号。
 - **Release**：只上传 setup.exe 一个资产，发完核对 `assets[].digest` 与本地 sha256 一致。
 - **静默安装自检**：`/VERYSILENT ... /DIR=<临时目录>` 会被 Inno 默认的 `UsePreviousAppDir` 顶掉，
   本机装过 SubFabric 时实际上是一次原地覆盖升级（`[Files]` 不含用户数据，属无害），但要知道它确实换了
@@ -613,6 +619,12 @@
   VibeVoice 运行时；用户已下载的旧目录不会被安装/卸载碰到。
 - **改了后端 / 前端代码后正式版必须重打包**：源码运行重启即生效；已安装版是 SEA 单文件
   `SubFabric.exe`，不重跑 `python build_exe.py` 与 ISCC 不会带上修复；版本号仍按上面的三处同步规则推进。
+- **构建记录（2026-10-26，波形分桶修复）**：版本按四段规则定为 `beta 1.4.6.1` / `1.4.6.1`（末段 = 当天
+  第几版，今天第一版）。`fetch-vendor` → `build_exe.py` 得 `build/SubFabric.exe` 93,613,568 B
+  （FileVersion/ProductVersion `1.4.6.1`；SEA sentinel 与 `NODE_SEA_BLOB` 在）；Inno Setup 7.1 编译
+  `SubFabric-beta 1.4.6.1-setup.exe` 39,768,494 B。静默安装到原目录后 `editor/server.js` 与源码逐字节
+  一致，`/api/version` 返回 `beta 1.4.6.1`；安装版打开旧项目会自动重算 `peaks.bin`（536,746 B →
+  540,102 B），UI 在数秒内切换，44:55 片尾波形恢复。
 
 ## 7. 功能与设计结论
 

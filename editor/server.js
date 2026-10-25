@@ -129,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.4.6.2'; // 产品显示版本
-const APP_FILE_VERSION = '1.4.6.2'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4.6.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.6.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -512,21 +512,34 @@ function encodeEnvelope(lo, hi, filled) {
 /** 峰值分桶采集器: 从 s16le 单声道 PCM 流(inSr 采样率)按 1/rate 秒一桶取 min/max 包络。
  *  返回 finish(code, stderr) — 流结束后调用, 返回 {buf, code, stderr}(buf = min/max 双通道)。
  *
- *  total 只是**预分配容量**(有下限/上限防内存爆), 真正决定桶数的是 spb。
- *  spb 必须按 duration/rate 算, **不能**按 total 算:
- *    30s 音频 @rate=100 只需 3000 桶, 但 total 被下限 clamp 到 20000;
- *    若 spb = duration*inSr/total, 就会切出 20000 桶 → 覆盖 200 秒,
+ *  total 只是**预分配容量**(有下限/上限防内存爆)，桶数由真实采样数决定：
+ *    30s 音频 @rate=100 只需 3000 桶, 但 total 被下限 clamp 到 20000；
+ *    若把 total 当成桶数切分, 就会切出 20000 桶 → 覆盖 200 秒,
  *    而实际音频只有 30 秒 → 前端按 rate 换算时间轴时波形被压到左侧 15%,
  *    整个波形与时间轴错位。(旧实现也有这个隐患, 只是单通道时不易察觉。) */
 function attachPeakCollector(readable, duration, rate, inSr) {
   const dur = duration > 0 ? duration : 600;
-  const total = Math.max(20000, Math.min(2000000, Math.round(dur * rate)));   // 仅预分配
-  const spb = dur * inSr / (dur * rate);                                       // = inSr/rate, 按真实桶密度
-  const lo = new Float32Array(total), hi = new Float32Array(total);
-  let filled = 0, mn = 0, mx = 0, inBucket = 0, carry = null, touched = false;
+  const rateN = Math.max(1, Math.round(rate));
+  // 预分配只是省扩容，真正的桶数由**采样数**决定。音频可能比探测到的时长略长
+  // （容器 duration 取的是最长流），所以装满后翻倍，不能像旧实现那样静默丢掉尾巴。
+  let lo = new Float32Array(Math.max(20000, Math.min(2000000, Math.ceil(dur * rateN) + 2)));
+  let hi = new Float32Array(lo.length);
+  let filled = 0, mn = 0, mx = 0, phase = 0, carry = null;
+  /* ⚠ 绝不能写成 `spb = dur * inSr / (dur * rate)` 再比较 `++inBucket >= spb`。
+   *   浮点除法的结果并不总是整数：2700.502333 秒算出来是 160.00000000000003，
+   *   于是 160 个采样时 160 >= 160.00000000000003 为 false，桶要到第 161 个采样
+   *   才 flush —— 每桶实际 161/16000 = 10.0625ms，前端却按 10ms 画。
+   *   包络整体被压短 1/161：45 分钟的片子片尾约 17 秒没有波形，越往后越对不上字幕。
+   *   这里改成**整数相位累加**：每个采样 phase += rate，满 inSr 就是一桶。
+   *   16000/100 恰好 160 个采样，与浮点时长无关。 */
   const flush = () => {
-    if (filled < total) { lo[filled] = mn; hi[filled] = mx; filled++; }
-    mn = 0; mx = 0; inBucket = 0; touched = false;
+    if (filled >= lo.length) {
+      const grown = Math.max(lo.length + 1024, Math.ceil(lo.length * 1.5));
+      const nlo = new Float32Array(grown); nlo.set(lo); lo = nlo;
+      const nhi = new Float32Array(grown); nhi.set(hi); hi = nhi;
+    }
+    lo[filled] = mn; hi[filled] = mx; filled++;
+    mn = 0; mx = 0;
   };
   readable.on('data', (chunk) => {
     let buf = chunk;
@@ -537,12 +550,12 @@ function attachPeakCollector(readable, duration, rate, inSr) {
       const v = buf.readInt16LE(i * 2) / 32768;
       if (v < mn) mn = v;
       if (v > mx) mx = v;
-      touched = true;
-      if (++inBucket >= spb) flush();
+      phase += rateN;
+      if (phase >= inSr) { phase -= inSr; flush(); }
     }
   });
   return (code, stderr) => {
-    if (touched && (inBucket > 0 || mx > 0 || mn < 0)) flush();
+    if (phase > 0) flush();      // 末尾不满一桶也要保留，否则最后一段波形会缺
     return { buf: encodeEnvelope(lo, hi, filled), code, stderr };
   };
 }
@@ -4506,6 +4519,35 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
     });
   }
 
+  /** 峰值包络是否覆盖了整段音频。
+   *
+   *  2026-10-26 修：旧分桶把 `inSr/rate` 用浮点除法算成 160.00000000000003，实际每桶
+   *  取了 161 个采样，包络整体短 1/161。前端按 `rate` 换算时间，于是波形越往后越提前、
+   *  片尾约 1/161 的时长没有波形（45 分钟 ≈ 17 秒）。`peaks.bin` 本身没有时长字段，
+   *  这里用同一项目 `audio.wav` 的采样数校验；短了就不算就绪，让打开项目时自动重提取。
+   *
+   *  只和 audio.wav 比，不和视频时长比：音轨本来就比视频短时，包络只覆盖音轨是正确的，
+   *  不能因此反复重算。没有 audio.bytes 时按 audio.file 实际大小兜底；连文件都读不到
+   *  的旧项目无法判断，按就绪处理（避免误触发）。 */
+  function peaksCoversAudio(meta, pkPath) {
+    if (!meta.peaks || !pkPath) return false;
+    const rate = Number(meta.peaks.rate) || 100;
+    const ch = Number(meta.peaks.ch) === 1 ? 1 : 2;
+    let peakBytes = Number(meta.peaks.bytes) || 0;
+    if (!peakBytes) { try { peakBytes = fs.statSync(pkPath).size; } catch { return false; } }
+    let audioBytes = Number(meta.audio && meta.audio.bytes) || 0;
+    if (!audioBytes && meta.audio && meta.audio.file) {
+      const auPath = safeProjectFile(meta.id, meta.audio.file);
+      if (auPath) { try { audioBytes = fs.statSync(auPath).size; } catch {} }
+    }
+    if (!(audioBytes > 0)) return true;                      // 无 audio.wav 字节数：不做判断
+    const audioSec = audioBytes / (AUDIO_SR * 2);            // 16k / 16bit / 单声道（WAV 头误差可忽略）
+    const covered = (peakBytes / ch) / rate;
+    // 允许 0.3% 误差：WAV 头 + 末尾不满一桶远小于它；旧 bug 固定短 0.62%。
+    const tol = Math.max(0.02, audioSec * 0.003);
+    return covered >= audioSec - tol;
+  }
+
   /** 对外视图: 元数据 + 派生状态(视频是否还在/资产是否就绪/中断修正) */
   function metaView(meta) {
     const v = Object.assign({}, meta);
@@ -4517,7 +4559,8 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
     // 判为 false → 走 prepare 兜底补跑重算(见 POST /api/projects/:id/prepare)。
     // 路径一律过 safeProjectFile：meta 可能来自导入的项目包，不能直接拼
     const pkPath = (meta.peaks && meta.peaks.file) ? safeProjectFile(meta.id, meta.peaks.file) : null;
-    v.hasPeaks = !!(pkPath && (meta.peaks.ver || 1) === PEAK_VER && fs.existsSync(pkPath));
+    v.hasPeaks = !!(pkPath && (meta.peaks.ver || 1) === PEAK_VER && fs.existsSync(pkPath)
+      && peaksCoversAudio(meta, pkPath));
     const auPath = (meta.audio && meta.audio.file) ? safeProjectFile(meta.id, meta.audio.file) : null;
     v.hasAudio = !!(auPath && fs.existsSync(auPath));
     ensureProjectCover(meta);
