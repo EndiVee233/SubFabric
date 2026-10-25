@@ -6585,14 +6585,33 @@ function startPrepare(id, videoPath, mode) {
     const o = opt || {};
     /* 先看字幕格式/目标，再看音频与对齐器：
      * SRT 没确认过就直接给出"点按钮并确认"的明确原因，而不是先报缺对齐模型。 */
-    const src = realignSource(id, readMeta(id), o.allowSrtToAss === true);
-    const prep = await realignPrep(id, o);
-    const all = src.targets;
+    const meta = readMeta(id);
+    const src = realignSource(id, meta, o.allowSrtToAss === true);
     const sourceRevision = src.revision;
-    if (!all.length) {
+    /* 区域重校对：只对齐与时间轴选区相交的句子。先过滤再叫对齐器 —— 选区里没东西时
+     * 直接报错，不要让用户等模型加载。 */
+    const rg = o.region && Number.isFinite(Number(o.region.start)) && Number.isFinite(Number(o.region.end))
+      ? { start: Number(o.region.start), end: Number(o.region.end) } : null;
+    /* 列表里「已校对」的标签：按行开始时间跳过（编辑过的行默认打上，可手动取消）。
+     * 存在 project.json 的 realignSkip（数组，元素是 toFixed(3) 的开始秒），自动流程也吃它。 */
+    const skipKeys = new Set((Array.isArray(meta.realignSkip) ? meta.realignSkip : []).map(String));
+    let all = skipKeys.size
+      ? src.targets.filter(t => !skipKeys.has(Number(t.start).toFixed(3)))
+      : src.targets;
+    if (rg) all = all.filter(t => Number(t.end) > rg.start && Number(t.start) < rg.end);
+    if (!src.targets.length) {
       throw new Error('这个稿件没有带逐词时间的英文行，没法重排'
         + '（中文整句轨没有逐词时间；先在「设置 → 逐词转换」把英文转成逐词）');
     }
+    if (!all.length) {
+      if (rg) {
+        throw new Error('选中区间里没有可重校对的句子'
+          + '（先拖一段有字幕的区间；区间内的行若都带「已校对」标签，点掉标签再试）');
+      }
+      throw new Error(`这 ${src.targets.length} 条都标成了「已校对」，没有需要重校对的句子；`
+        + '在列表里点掉标签再试');
+    }
+    const prep = await realignPrep(id, o);
     const cap = Number.isFinite(Number(o.maxItems)) && Number(o.maxItems) > 0
       ? Math.floor(Number(o.maxItems)) : all.length;
     const list = all.slice(0, cap);
@@ -11271,6 +11290,31 @@ function handleProjectsRoutes(req, res, u) {
      * GET  → 轮询 { job }
      * 只算不写：返回的 items 里带每句的新逐词时间，由前端确认后应用
      * （与反思纠错、单条重排同一套"预览优先"约定）。 */
+    /* 列表卡片的「已校对」标签：写进 project.json 的 realignSkip（开始秒 toFixed(3)）。
+       只影响全片逐词重校对挑哪些句子，不改字幕。 */
+    if (action === 'realign-skip' && req.method === 'POST') {
+      return readBody(req, res, 256 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: String(err.message) });
+        let o = {};
+        try { o = body && body.length ? JSON.parse(body.toString('utf8')) : {}; }
+        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        const list = Array.isArray(o.skip) ? o.skip : null;
+        if (!list) return sendJson(res, 400, { error: 'skip 必须是数组' });
+        if (list.length > 20000) return sendJson(res, 400, { error: '跳过标记太多（上限 20000 条）' });
+        const clean = [];
+        for (const v of list) {
+          const s = String(v == null ? '' : v).trim();
+          if (!/^\d{1,8}(\.\d{1,3})?$/.test(s)) continue;    // 只接受"秒"的十进制写法
+          clean.push(s.slice(0, 24));
+        }
+        try {
+          updateMeta(id, m => { m.realignSkip = [...new Set(clean)]; });
+          return sendJson(res, 200, { ok: true, count: new Set(clean).size });
+        } catch (e) {
+          return sendJson(res, 500, { error: String((e && e.message) || e) });
+        }
+      });
+    }
     if (action === 'realign-full' && req.method === 'POST') {
       return readBody(req, res, 64 * 1024, (err, body) => {
         if (err) return sendJson(res, 400, { error: String(err.message) });

@@ -52,19 +52,25 @@ let html = panel._cardHtml(Object.assign({}, base, {
 }), 0);
 ok(html.includes('cc-rerecog'), '含 cc-rerecog');
 ok(html.includes('data-act="rerecog"'), '含 data-act="rerecog"');
-ok(html.includes('↻ 重识别'), '含按钮文案');
+ok(html.includes('aria-label="重新识别"'), '图标按钮带无障碍文案（文字太占宽度，界面只显示 ↻）');
 ok(html.includes('91%'), '含置信度 91%');
 ok(html.includes('chip-conf') && !html.includes('chip-conf-low'), '高置信度用弱化样式');
 ok(html.includes('data-idx="0"'), '含 data-idx（事件委托靠它取行数据）');
-// 位置：用户要求放在**左侧时间点下方**。仅存在不够 —— 得确认它在 .cc-times 内、
-// 且在 .cc-left-stack 里（否则又跑回右侧徽标行了）
+// 位置：重识别与「已校对」都在时间列里的 .cc-foot（横线 + 两个按钮同一列），
+// 置信度徽标也在时间列（.cc-left-stack）。
 {
   const times = /<div class="cc-times">([\s\S]*?)<\/div>\s*<div class="cc-body"/.exec(html);
   ok(!!times, '能找到 .cc-times 块');
   const inner = times ? times[1] : '';
   ok(inner.includes('cc-left-stack'), '左列里有 cc-left-stack 容器');
-  ok(inner.includes('cc-rerecog'), '重识别按钮在左列里');
+  ok(inner.includes('cc-foot'), '左列里有 .cc-foot（横线 + 两个按钮）');
+  ok(inner.includes('cc-times-rule'), '时间列里有小横线');
   ok(inner.includes('chip-conf'), '置信度徽标在左列里');
+  const footM = /<div class="cc-foot">([\s\S]*?)<\/div>/.exec(inner);
+  const foot = footM ? footM[1] : '';
+  ok(!!footM, '有 .cc-foot');
+  ok(foot.includes('cc-rerecog'), '重识别在左下角');
+  ok(foot.includes('cc-skip'), '「已校对」标签在左下角');
   // 反向：右侧徽标行里不该再有这两样
   const headM = /<div class="cc-head">([\s\S]*?)<\/div>/.exec(html);
   const head = headM ? headM[1] : '';

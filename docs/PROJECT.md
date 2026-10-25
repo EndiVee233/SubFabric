@@ -90,10 +90,13 @@
   Vulkan 用 `CrispASR --align-only`；结果经 `align.js` 做 token 映射/单调性修正。**不跑 ASR、
   不改文本、不改整句起止**；对齐失败保持原时间，不回退 ASR。文本不确定走独立的 `rerecognize`。
   已删除 `/api/asr/realign-settings` 与锚点率/置信度门槛。
-  - **单条排队（2026-10-23 修）**：正在重排 A 句时右键 B 句不再被
+  - **单条排队（2026-10-23 修，2026-10-25 补最新状态）**：正在重排 A 句时右键 B 句不再被
     「正在重排另一条，请稍等」挡掉，而是把 `realignTargetKey + 文本 + 句时间` 压进
     `realignQueue`，当前这条结束后自动接着跑（重复目标会被去重）。执行时按 targetKey
     重新定位句子 —— 前一条重排会重建条目对象，写回旧对象会把结果写丢；切稿件时队列整体作废。
+    **轮到某条时先 `refreshRealignTarget()`**：按行对象 → 开始时间 → targetKey 依次定位当前句子，
+    用**最新**的文本/时间提交对齐（内容被改过时提示「已按最新文本重排」）；行被删除/拆分才跳过。
+    这样排队期间编辑字幕不会让这条拿旧文本对齐或报「排队期间已改动」。
   - **初稿首末词时间（2026-10-23 修）**：`writeSubtitle` 生成逐词 ASS 时，句块时间取
     「句时间 ∪ 实测词跨度」（`realign-words.js` 的 `wordSpanRange`，±1s 容差防脏数据），
     首片从首词实测起点开始、末片收在末词实测终点；中文行与英文行共用同一组时间。
@@ -247,6 +250,9 @@
   与完整角色页共用 `.role-card` 规则（实测均 36px 高、内边距 8/10px），列内行距 10px（比角色页 8px 略大），
   只留名字（隐藏条数与「添加角色」卡）。仅 ASS（有角色）可用、SRT 隐藏按钮；
   偏好存 `localStorage['sf-editor-split-roles']`，切到角色/设置/日志自动收起、回字幕页恢复。
+  宽度恢复不能只靠初始化那一次：面板还没布局时 `clientWidth=0`，按 45% 夹会把保存值压到 108~150px
+  （用户看到的「刷新后变窄」）。现在记在 `_roleW` 里，`_applySplit()` 展开并排时用 rAF + 150ms
+  再套一次 `_applyRoleW()`（按当前面板宽夹），刷新后宽度才保持。
 - **时间轴块内波形背景**：`timeline.js` 的 `_drawBlockBackdrop` 先用 `waveBg` 把块内已画好的波形
   填掉，再画一次模糊波形并压暗。**不能**直接在原波形上重画 —— canvas 的 `filter` 只作用于本次
   绘制，重画等于叠加，块内会比块外更亮（用户看到的「Win10 主题字幕块边缘灰色遮罩」就是它）。
@@ -390,6 +396,26 @@
   是一整块深色；改用 `var(--bg-2)`，`.oplog-row` / `.note-row` 分隔线用 `var(--border)`、悬停用
   `color-mix`、`.note-row.is-here` 用 `color-mix(var(--accent) 12%)`，级别色在
   `[data-theme=light]` 下换成深一档（error `#b42318` / info `#067647` / warn `#b54708`）。
+- **「已校对」标签（全片逐词重校对）**：时间列底部 `.cc-times-rule`（虚线）+ `.cc-foot`（↻ 图标 +
+  带描边的「逐词校对 / ✓ 已校对」标签）。三者都在 `.cc-times` 这一列里按流式排列：虚线与按钮的
+  间距固定（`.cc-foot` 的 `margin-top`，与正文行数无关）；按钮用 `justify-content:space-between`
+  左右对齐到 76px 时间列。时间字号 `10.6px`（原 9.4px）、行高 `1.45`、三行之间 `gap:1px`，
+  左列整体 `padding-top` 下移一点。↻ 用 `display:grid; place-items:center` 居中并带 2px 底内边距
+  （视觉上抬 1px）；Windows 10 主题下两个按钮的圆角改为主题的 2px（基类是 8px）。
+  亮起 = 这一条不参与全片逐词重校对。
+  状态存 `project.json` 的 `realignSkip`（开始秒 `toFixed(3)` 的数组），`POST /api/projects/:id/
+  realign-skip` 原子写回；`runFullRealign` 按它过滤 targets（全被跳过时给明确错误，提示点掉标签）。
+  行内编辑/查找替换等**文本变化**由 `markEditedRealignRows` 在重建条目时用「开始时间 → 文本签名」
+  比对自动打上标签（点击可切回参与）。打开项目时 `routeSub()` 会先建一次条目（那时 `state.project`
+  还没换成新项目，读不到 `realignSkip`），所以 `openProject()` 末尾再调 `window.__realignRefresh()`
+  重建一次，标签才准确。
+- **高级字幕操作的区域变体**：右键「全片逐词重校对」/「全片重分句」按钮弹出 `.op-menu`（全片 / 区域）。
+  选区域会先弹 `#op-range-overlay`（与分段导入类似的开始/结束输入 + 「用选区」按钮，打开时若
+  时间轴有选区自动填入），确认后才执行。弹窗不压暗、顶部居中，且 `pointer-events:none`（只有
+  框体可点）—— 开着框也能在时间轴上拖选区，点框外不会自动关闭（取消 / Esc 关闭）。区域重校对把 `{start,end}` 传给 `POST /realign-full`，
+  服务端在 `runFullRealign` 里先按「`end > region.start && start < region.end`」过滤 targets ——
+  **在加载对齐器之前**过滤，选区里没有句子时直接报错；区域重分句在前端按同一相交规则过滤
+  `resegRows`，预览标题变为「区域重分句 · 预览」。
 - **UWP 特例**：默认 Windows 10 蓝 `#0078D7`；仅在未自定义强调色时使用该默认值，`SSAccent.set()`
   允许覆盖，设置页取色控件保持可用；形状走 2–4px 近直角、无 `backdrop-filter`。
 - **Claude 特例**：暖纸底 `#F6F4EE` / 墨色文字 / 陶土强调 `#B0512F`（用户改色时用 `readable()` 兜底），

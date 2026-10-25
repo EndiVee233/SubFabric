@@ -1068,6 +1068,24 @@
   </div>
 </div>
 
+<!-- 区域处理：给「区域逐词重校对 / 区域重分句」选时间范围（类似分段导入） -->
+<div id="op-range-overlay" hidden>
+  <div class="rn-box modal-surface">
+    <div class="rn-title modal-drag-handle" id="op-range-title">区域处理</div>
+    <div class="rn-msg" id="op-range-msg">选择要处理的时间范围（可直接输入时间，或用时间轴上的选区）。</div>
+    <div class="op-range-row">
+      <label>开始 <input id="op-range-start" type="text" spellcheck="false" placeholder="00:00:00.000"></label>
+      <label>结束 <input id="op-range-end" type="text" spellcheck="false" placeholder="00:00:00.000"></label>
+      <button type="button" class="btn" id="op-range-from-sel">用选区</button>
+    </div>
+    <div class="np-region-note" id="op-range-note"></div>
+    <div class="rn-actions">
+      <button type="button" class="btn" id="op-range-cancel">取消</button>
+      <button type="button" class="btn btn-accent" id="op-range-ok">确定</button>
+    </div>
+  </div>
+</div>
+
 <!-- 添加角色 -->
 <div id="role-new" hidden>
   <div class="rn-box modal-surface">

@@ -44,12 +44,13 @@ assert.match(group, /id="btn-diarize"/, '说话人分离在高级字幕操作组
 assert.match(group, /id="btn-diarize"[^>]*title="[^"]*先确认再跑/, '说话人分离按钮提示二次确认');
 
 /* ── 全片逐词重校对：先确认，再启动 ── */
-assert.match(main, /realignEls\.btn\.addEventListener\('click', beginRealignFull\)/,
-  '主按钮必须走确认入口，不能直接 startRealignFull');
+assert.match(main, /realignEls\.btn\.addEventListener\('click', \(\) => beginRealignFull\(\)\)/,
+  '主按钮必须走确认入口（左键 = 全片），不能直接 startRealignFull');
 const beginRealign = bodyOf(main, 'beginRealignFull');
 assert.match(beginRealign, /panel\.showConfirm\(/, '全片逐词重校对必须先二次确认');
 assert.match(beginRealign, /state\.format === 'srt'/, 'SRT 与 ASS 的确认文案要分开');
-assert.match(beginRealign, /startRealignFull\(\)/, '确认后才真正启动');
+assert.match(beginRealign, /startRealignFull\(rg\)/, '确认后才真正启动（可带区域）');
+assert.match(beginRealign, /区域逐词重校对/, '右键的区域重校对走同一个确认入口');
 
 const startRealign = bodyOf(main, 'startRealignFull');
 assert.match(startRealign, /allowSrtToAss/, '启动请求必须带 SRT→ASS 的确认标记');

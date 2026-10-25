@@ -2266,6 +2266,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           textRaw: c.lines.join('\n'),
           speaker: '',
           isNew: state.newRows.has(c),
+          realignSkip: isRealignSkipped(c),
           bad: !!c.bad,
           badReason: c.bad ? ('结束早于开始(' + c.bad.order + ')') : ''
         };
@@ -2288,6 +2289,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           color: row.color || null,                 // 角色(说话人)色: 卡片文字/徽标/时间值都跟着它走
           speaker: row.speaker || '',               // 角色筛选用: 字幕 Name 栏的 [人物]
           isNew: state.newRows.has(row),            // 新建未输入 → 卡片显示占位, 空着离开则撤销
+          realignSkip: isRealignSkipped(row),      // 左下角「已校对」标签：跳过全片逐词重校对
           textRaw: zhText + '\n' + enText,
           bad: !!((zhS && zhS.bad) || (enS && enS.bad)),
           badReason: [badReasonOf(zhS), badReasonOf(enS)].filter(Boolean).join(' / '),
@@ -2304,6 +2306,12 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
       state.items = [];
     }
     markBadRows(state.items);      // 时间异常 + 重叠 + 英文含方括号 + 单语行
+    const markedSkip = markEditedRealignRows(state.items);   // 文本变了的行默认标成「已校对」
+    if (markedSkip.size) {
+      for (const it of state.items) {
+        if (markedSkip.has(Number(it.start).toFixed(3))) it.realignSkip = true;
+      }
+    }
     panel.setItems(state.items, keepView);
     panel.setRoles(computeRoles()); // 角色 Tab: 解析所有说话人(字幕 Name 栏的 [人物]); computeRoles 见模块级定义
   }
@@ -5307,6 +5315,24 @@ if (rbReRecog) rbReRecog.addEventListener('click', () => {
 {
   const spacer = document.getElementById('cue-spacer');
   if (spacer) spacer.addEventListener('click', (e) => {
+    const skipBtn = e.target && e.target.closest && e.target.closest('.cc-skip');
+    if (skipBtn && spacer.contains(skipBtn)) {
+      e.preventDefault();
+      e.stopPropagation();             // 别让点击顺带选中/打开这一行
+      const card = skipBtn.closest('[data-idx]');
+      const it = card ? panel.itemAt(Number(card.dataset.idx)) : null;
+      if (!it) return;
+      const on = !isRealignSkipped(it.ref);
+      setRealignSkip(it.ref, on);
+      it.realignSkip = on;
+      skipBtn.classList.toggle('is-on', on);
+      skipBtn.textContent = on ? '✓ 已校对' : '逐词校对';
+      skipBtn.title = on
+        ? '已编辑过：全片逐词重校对会跳过这一条（点击恢复参与）'
+        : '全片逐词重校对会重算这一条的逐词时间（点击标记为已校对、跳过）';
+      toast(on ? '已标记为已校对：全片逐词重校对会跳过这一条' : '已恢复参与全片逐词重校对', 3200);
+      return;
+    }
     const btn = e.target && e.target.closest && e.target.closest('.cc-rerecog');
     if (!btn || !spacer.contains(btn)) return;
     e.preventDefault();
@@ -5819,20 +5845,31 @@ function resegRender() {
   });
 }
 
-async function resegOpen() {
+async function resegOpen(region) {
+  /* 只在拿到真正的区间对象时才按区域处理：按钮的 click 会把 MouseEvent 传进来。 */
+  const rg = region && Number.isFinite(Number(region.start)) && Number.isFinite(Number(region.end))
+    ? { start: Number(region.start), end: Number(region.end) } : null;
   if (resegBusy) return;
   if (!state.project) { toast('先打开一个稿件，再做全片重分句', 3600); return; }
   panel.commitEdit();
-  const items = (state.items || []).filter(it => it && it.l1 && it.l2
+  let items = (state.items || []).filter(it => it && it.l1 && it.l2
     && String(it.l1).trim() && String(it.l2).trim());
-  if (!items.length) { toast('当前稿件没有中英对照的行', 3600); return; }
+  if (rg) items = items.filter(it => it.end > rg.start && it.start < rg.end);
+  if (!items.length) {
+    toast(rg ? '选中区间里没有中英对照的行' : '当前稿件没有中英对照的行', 3600);
+    return;
+  }
   resegRows = items.map(it => ({
     ref: it.ref, zh: resegStrip(it.l1), en: resegNorm(it.l2), start: it.start, end: it.end,
   }));
   resegPlans = [];
   resegBusy = true;
   resegEls.overlay.hidden = false;
-  resegEls.msg.textContent = '正在让模型通读全片，按语义规划断句…（长片可能要一两分钟）';
+  const titleEl = document.querySelector('#reseg-overlay .rn-title');
+  if (titleEl) titleEl.textContent = rg ? '区域重分句 · 预览' : '全片重分句 · 预览';
+  resegEls.msg.textContent = rg
+    ? `正在让模型通读 ${fmtTime(rg.start)}~${fmtTime(rg.end)} 这一段的字幕，按语义规划断句…`
+    : '正在让模型通读全片，按语义规划断句…（长片可能要一两分钟）';
   resegEls.summary.hidden = true;
   resegEls.list.hidden = true;
   resegEls.list.innerHTML = '';
@@ -5924,9 +5961,145 @@ async function resegApplyNow() {
   }
 }
 
+/* ── 区域处理弹窗（区域重校对 / 区域重分句 共用，交互类似分段导入） ── */
+const opRangeEls = {
+  overlay: document.getElementById('op-range-overlay'),
+  title: document.getElementById('op-range-title'),
+  msg: document.getElementById('op-range-msg'),
+  start: document.getElementById('op-range-start'),
+  end: document.getElementById('op-range-end'),
+  fromSel: document.getElementById('op-range-from-sel'),
+  note: document.getElementById('op-range-note'),
+  cancel: document.getElementById('op-range-cancel'),
+  ok: document.getElementById('op-range-ok'),
+};
+let opRangeCb = null;
+function opRangeClose() {
+  if (opRangeEls.overlay) opRangeEls.overlay.hidden = true;
+  opRangeCb = null;
+}
+function opRangeFillFromSel() {
+  const r = timelineRegion();
+  if (!r) {
+    opRangeEls.note.textContent = '时间轴上还没有选区：按住 Ctrl 在时间轴上拖一段，或用下方输入框直接填时间';
+    return;
+  }
+  opRangeEls.start.value = fmtTime(r.start);
+  opRangeEls.end.value = fmtTime(r.end);
+  opRangeEls.note.textContent = `已填入 ${fmtTime(r.start)}~${fmtTime(r.end)}，可修改`;
+}
+function opRangeParse() {
+  const a = parseRegionTime(opRangeEls.start.value);
+  const b = parseRegionTime(opRangeEls.end.value);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !(b > a)) return null;
+  return { start: a, end: b };
+}
+function openOpRangeDialog({ title, msg, okText, onOk }) {
+  if (!opRangeEls.overlay) return;
+  opRangeEls.title.textContent = title;
+  opRangeEls.msg.textContent = msg || '选择要处理的时间范围（可直接输入时间，或用时间轴上的选区）。';
+  opRangeEls.ok.textContent = okText || '确定';
+  opRangeEls.start.value = '';
+  opRangeEls.end.value = '';
+  opRangeEls.note.textContent = '';
+  opRangeCb = onOk || null;
+  opRangeEls.overlay.hidden = false;
+  opRangeFillFromSel();
+  opRangeEls.start.focus();
+}
+function initOpRangeDialog() {
+  if (!opRangeEls.overlay) return;
+  opRangeEls.cancel.addEventListener('click', opRangeClose);
+  opRangeEls.fromSel.addEventListener('click', opRangeFillFromSel);
+  /* 点弹窗外的空白不关闭：用户常在时间轴上取选区，误点一下不该丢掉已填的时间。 */
+  opRangeEls.ok.addEventListener('click', () => {
+    const r = opRangeParse();
+    if (!r) { opRangeEls.note.textContent = '时间格式无效，或结束时间不晚于开始时间'; return; }
+    const cb = opRangeCb;
+    opRangeClose();
+    if (cb) cb(r);
+  });
+  [opRangeEls.start, opRangeEls.end].forEach((el) => el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); opRangeEls.ok.click(); }
+    else if (e.key === 'Escape') { e.preventDefault(); opRangeClose(); }
+  }));
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && opRangeEls.overlay && !opRangeEls.overlay.hidden) {
+    e.preventDefault();
+    opRangeClose();
+  }
+});
+
+/* ── 高级字幕操作按钮的右键菜单：全片 / 区域（区域 = 时间轴选区） ── */
+let opMenuEl = null;
+function closeOpMenu() {
+  if (opMenuEl) { opMenuEl.remove(); opMenuEl = null; }
+}
+function showOpMenu(x, y, items) {
+  closeOpMenu();
+  const m = document.createElement('div');
+  m.className = 'menu op-menu';
+  m.innerHTML = items.map((it, i) =>
+    `<button type="button" class="tl-menu-item" data-i="${i}">${escapeHtml(it.label)}</button>`).join('');
+  document.body.appendChild(m);
+  const w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(6, Math.min(x, innerWidth - w - 8)) + 'px';
+  m.style.top = Math.max(6, Math.min(y, innerHeight - h - 8)) + 'px';
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.tl-menu-item');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const it = items[Number(b.dataset.i)];
+    closeOpMenu();
+    if (it && it.run) it.run();
+  });
+  opMenuEl = m;
+}
+document.addEventListener('pointerdown', (e) => {
+  if (opMenuEl && !opMenuEl.contains(e.target)) closeOpMenu();
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOpMenu(); });
+
+function bindOpMenu(btn, build) {
+  if (!btn) return;
+  btn.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const items = build();
+    if (items && items.length) showOpMenu(e.clientX, e.clientY, items);
+  });
+}
+function initAdvancedOpMenus() {
+  bindOpMenu(document.getElementById('btn-realign-full'), () => ([
+    { label: '全片逐词重校对', run: () => beginRealignFull() },
+    {
+      label: '区域逐词重校对…',
+      run: () => openOpRangeDialog({
+        title: '区域逐词重校对',
+        okText: '开始校对',
+        msg: '选择要重校对的区间：只改区间内句子的逐词时间，不改文本与整句起止。',
+        onOk: (r) => beginRealignFull(r),
+      }),
+    },
+  ]));
+  bindOpMenu(document.getElementById('btn-reseg-llm'), () => ([
+    { label: '全片重分句', run: () => resegOpen() },
+    {
+      label: '区域重分句…',
+      run: () => openOpRangeDialog({
+        title: '区域重分句',
+        okText: '开始',
+        msg: '选择要重分句的区间：只会拆分区间内过长的行，不合并、不跨行移动。',
+        onOk: (r) => resegOpen(r),
+      }),
+    },
+  ]));
+}
+
 function initResegLLM() {
   if (!resegEls.btn || !resegEls.overlay) return;
-  resegEls.btn.addEventListener('click', resegOpen);
+  resegEls.btn.addEventListener('click', () => resegOpen());
   if (resegEls.cancel) resegEls.cancel.addEventListener('click', () => { resegEls.overlay.hidden = true; });
   if (resegEls.apply) resegEls.apply.addEventListener('click', resegApplyNow);
   if (resegEls.all) resegEls.all.addEventListener('change', () => {
@@ -6076,7 +6249,27 @@ function realignTargetFor(item) {
    * （中英双行时整行区间可能比英文句略宽，用整行会把词铺出句子外。） */
   const start = Number(en.start), end = Number(en.end);
   if (!(end > start)) { toast('这条英文句的时间区间无效', 4200); return null; }
-  return { pid: state.project.id, key: realignTargetKey(en), text, start, end, no: (row && row.no) || '?' };
+  return { pid: state.project.id, ref: row, key: realignTargetKey(en), text, start, end, no: (row && row.no) || '?' };
+}
+
+/** 排队/执行前把快照换回**当前**这一行的最新状态。
+ *  排队的句子可能等几十秒；期间用户改了文本、挪了时间、甚至分句/合并。用旧快照去对齐
+ *  会拿旧文本对音频（结果错位）或按旧 key 找不到行（"排队期间已改动"）。这里按行对象/
+ *  开始时间/key 依次定位当前句子，返回最新文本与时间；行真的没了才返回 null。 */
+function refreshRealignTarget(old) {
+  const rows = (state.kar && state.kar.rows) || [];
+  let row = old && old.ref ? (rows.indexOf(old.ref) !== -1 ? old.ref : null) : null;
+  if (!row && old) row = rows.find(r => r.en && Math.abs(Number(r.en.start) - old.start) < 0.002) || null;
+  if (!row && old) row = rows.find(r => r.en && realignTargetKey(r.en) === old.key) || null;
+  const en = row && row.en;
+  if (!en || !Array.isArray(en.words) || !en.words.length) return null;
+  const text = String(en.text || '').trim();
+  if (!text) return null;
+  const start = Number(en.start), end = Number(en.end);
+  if (!(end > start)) return null;
+  const key = realignTargetKey(en);
+  const changed = key !== old.key || Math.abs(start - old.start) > 0.002 || text !== old.text;
+  return Object.assign({}, old, { ref: row, key, text, start, end, no: row.no || old.no, changed });
 }
 
 function realignRow(item) {
@@ -6084,7 +6277,8 @@ function realignRow(item) {
   const target = realignTargetFor(item);
   if (!target) return;
   if (realignBusy) {
-    if (realignRunningKey === target.key || realignQueue.some(t => t.key === target.key)) {
+    if (realignRunningKey === target.key
+        || realignQueue.some(t => t.key === target.key || (target.ref && t.ref === target.ref))) {
       toast('这条已经在重排队列里了', 3000);
       return;
     }
@@ -6096,10 +6290,24 @@ function realignRow(item) {
   runRealign(target);
 }
 
-async function runRealign(target) {
-  const { pid, start, end, text } = target;
+async function runRealign(queued) {
   /* 排队等待期间切了稿件：这条和它后面的队列都不再属于当前文档，直接作废。 */
-  if (!state.project || state.project.id !== pid) { realignQueue.length = 0; return; }
+  if (!state.project || state.project.id !== queued.pid) { realignQueue.length = 0; return; }
+  /* 轮到它时按**最新状态**重取文本/时间（见 refreshRealignTarget）；行没了就跳过去。 */
+  const target = refreshRealignTarget(queued);
+  if (!target) {
+    toast('排队期间这条字幕已改动或被删除，已跳过重排', 5200);
+    const next = realignQueue.shift();
+    if (next) {
+      setTimeout(() => {
+        if (state.project && state.project.id === next.pid) runRealign(next);
+        else realignQueue.length = 0;
+      }, 0);
+    }
+    return;
+  }
+  if (target.changed) toast('这条字幕在排队期间被改过，已按最新文本重排', 4200);
+  const { pid, start, end, text } = target;
   realignBusy = true;
   realignRunningKey = target.key;
   const secs = (end - start).toFixed(1);
@@ -6199,6 +6407,61 @@ let realignRunning = false;
 let realignPollTimer = 0;
 let realignPid = '';             // 正在跑/刚跑完的作业所属项目（切换稿件时要停掉它）
 
+/* ── 「已校对」标签：哪些行不参与全片逐词重校对 ─────────────────────
+ * 存在 project.json 的 `realignSkip`（开始秒 toFixed(3)）。编辑过的行默认打上标签，
+ * 点卡片左下角的标签可以手动切换；全片重校对在服务端按这个列表跳过。 */
+function realignSkipKeyOf(row) { return Number(row && row.start).toFixed(3); }
+function realignSkipSet() {
+  const m = state.project && state.project.meta;
+  return new Set((m && Array.isArray(m.realignSkip) ? m.realignSkip : []).map(String));
+}
+function isRealignSkipped(row) {
+  return !!row && realignSkipSet().has(realignSkipKeyOf(row));
+}
+let realignSkipSaveTimer = 0;
+function saveRealignSkip() {
+  clearTimeout(realignSkipSaveTimer);
+  realignSkipSaveTimer = setTimeout(() => {
+    const p = state.project;
+    if (!p) return;
+    fetch(`/api/projects/${p.id}/realign-skip`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skip: [...realignSkipSet()] }),
+    }).catch(() => {});
+  }, 350);
+}
+function setRealignSkip(row, on) {
+  const p = state.project;
+  if (!p || !p.meta) { toast('需要项目模式才能记住这个标签', 3600); return; }
+  const k = realignSkipKeyOf(row);
+  const set = realignSkipSet();
+  if (on) set.add(k); else set.delete(k);
+  p.meta.realignSkip = [...set];
+  saveRealignSkip();
+}
+/** 文本变了的行默认打上「已校对」；由 rebuildItemsAndLanes 在重建条目后调用。
+ *  用「开始时间 → 文本签名」比对：所有编辑路径（行内编辑、查找替换、分句…）都会经过重建。 */
+let realignTextSig = new Map();
+function markEditedRealignRows(items) {
+  if (!state.project || !state.project.meta) { realignTextSig = new Map(); return new Set(); }
+  const next = new Map();
+  const set = realignSkipSet();
+  const marked = new Set();
+  for (const it of items) {
+    const k = Number(it.start).toFixed(3);
+    const sig = String(it.l1 || '') + '\u0000' + String(it.l2 || '');
+    const prev = realignTextSig.get(k);
+    if (prev !== undefined && prev !== sig && !set.has(k)) { set.add(k); marked.add(k); }
+    next.set(k, sig);
+  }
+  realignTextSig = next;
+  if (marked.size) {
+    state.project.meta.realignSkip = [...set];
+    saveRealignSkip();
+  }
+  return marked;
+}
+
 function realignShow(show) {
   if (realignEls.overlay) realignEls.overlay.hidden = !show;
 }
@@ -6260,6 +6523,7 @@ function syncRealignApply() {
 function resetRealignForProjectSwitch() {
   /* 切稿前先把旧项目的后台对齐停掉；否则它继续占着 GPU，用户还以为已经关了。 */
   if (realignRunning && realignPid) cancelRealignJob();
+  realignTextSig = new Map();               // 换稿后文本签名表作废（开始时间会撞车）
   realignQueue.length = 0;                  // 旧稿件的单条重排队列跟着作废
   realignRunningKey = '';
   clearTimeout(realignPollTimer);
@@ -6288,6 +6552,13 @@ function resetRealignForProjectSwitch() {
   jobCardHide();
 }
 window.__realignReset = resetRealignForProjectSwitch;
+/* 打开项目时 routeSub() 会先建一次条目（那时 state.project 还没换成新项目，
+ * isRealignSkipped 读不到 realignSkip）→ 换好 state.project 后再重建一次，标签才准。 */
+window.__realignRefresh = () => {
+  if (!state.project) return;
+  realignTextSig = new Map();
+  rebuildItemsAndLanes(true);
+};
 
 function realignFinishUi() {
   realignRunning = false;
@@ -6364,20 +6635,34 @@ function showRealignResult(job) {
   syncRealignApply();
 }
 
-/** 按钮入口：先二次确认再跑。SRT 与 ASS 的说明不同（前者会把整份稿件转成逐词 ASS）。 */
-function beginRealignFull() {
+/** 时间轴选区 → 区域对象（没有有效选区返回 null）。 */
+function timelineRegion() {
+  const sel = timeline.rangeSel;
+  if (!sel || !(sel.b > sel.a)) return null;
+  return { start: sel.a, end: sel.b };
+}
+
+/** 按钮入口：先二次确认再跑。SRT 与 ASS 的说明不同（前者会把整份稿件转成逐词 ASS）。
+ *  region 传时间轴选区对象时只重校对该区间。 */
+function beginRealignFull(region) {
+  /* 只在拿到真正的区间对象时才按区域处理：按钮的 click 会把 MouseEvent 传进来。 */
+  const rg = region && Number.isFinite(Number(region.start)) && Number.isFinite(Number(region.end))
+    ? { start: Number(region.start), end: Number(region.end) } : null;
   if (realignRunning) { toast('全片重校对已经在跑了', 3200); return; }
   if (!state.project) { toast('全片重校对需要项目模式', 4200); return; }
   const toAss = state.format === 'srt';
-  const msg = toAss
+  const where = rg ? `区间 ${fmtTime(rg.start)}~${fmtTime(rg.end)}` : '全片';
+  const msg = (toAss
     ? '当前稿件是没有逐词时间的 SRT。将用 Qwen3 对齐器按每行英文原文对齐，生成逐词 ASS（原 SRT 文件保留，项目字幕改为新的 ASS）。'
-      + '完成后先给预览，勾选后才会写入。开始？'
-    : '将用 Qwen3 对齐器把全片已确认的文本逐句重新对齐：只改逐词时间，不改文本与整句起止。'
-      + '完成后先给预览，勾选后才会写入。开始？';
-  panel.showConfirm('全片逐词重校对', msg, '开始校对', '取消', () => { startRealignFull(); });
+      + '完成后先给预览，勾选后才会写入。'
+    : '将用 Qwen3 对齐器把已确认的文本逐句重新对齐：只改逐词时间，不改文本与整句起止。'
+      + '完成后先给预览，勾选后才会写入。') + `\n\n范围：${where}。开始？`;
+  panel.showConfirm(rg ? '区域逐词重校对' : '全片逐词重校对', msg, '开始校对', '取消', () => {
+    startRealignFull(rg);
+  });
 }
 
-async function startRealignFull() {
+async function startRealignFull(region) {
   if (realignRunning) { toast('全片重校对已经在跑了', 3200); return; }
   if (!state.project) { toast('全片重校对需要项目模式', 4200); return; }
   const pid = state.project.id;
@@ -6408,7 +6693,7 @@ async function startRealignFull() {
     if (!state.project || state.project.id !== pid) return;
     const r = await fetch(`/api/projects/${pid}/realign-full`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ allowSrtToAss }),
+      body: JSON.stringify({ allowSrtToAss, region: region || null }),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
@@ -6497,7 +6782,7 @@ async function applySrtRealignToAss(pid, picks) {
   }
 }
 
-if (realignEls.btn) realignEls.btn.addEventListener('click', beginRealignFull);
+if (realignEls.btn) realignEls.btn.addEventListener('click', () => beginRealignFull());
 if (realignEls.cancel) realignEls.cancel.addEventListener('click', () => {
   /* 运行中这个按钮是「停止」：关闭浮层的同时把后台 worker 也停掉，别让它继续占 GPU。 */
   if (realignRunning) {
@@ -7130,7 +7415,8 @@ document.addEventListener('keyup', (e) => {
 
 /* 哪些模态浮层开着时不抢 ↑/↓：确认框、片段/整行编辑、修复、查找替换、术语表、重分句… */
 const MODAL_OVERLAY_IDS = ['confirm-overlay', 'cue-text-overlay', 'fix-overlay', 'fr-overlay',
-  'glossary-overlay', 'pick-overlay', 'realign-overlay', 'reflect-overlay', 'reseg-overlay', 'rim-overlay'];
+  'glossary-overlay', 'pick-overlay', 'realign-overlay', 'reflect-overlay', 'reseg-overlay', 'rim-overlay',
+  'op-range-overlay'];
 function anyModalOpen() {
   return MODAL_OVERLAY_IDS.some((id) => {
     const el = document.getElementById(id);
@@ -7589,6 +7875,9 @@ const Projects = initProjects({
 initGlossaryReview({ state, toast, projects: Projects });
 /* 全片语义重分句：规划走服务端 LLM，落盘复用编辑器自己的 splitRowAt。 */
 initResegLLM();
+/* 两个「高级字幕操作」按钮的右键菜单：全片 / 区域（区域走时间范围弹窗）。 */
+initAdvancedOpMenus();
+initOpRangeDialog();
 
 /* ═══════════ 主循环 ═══════════ */
 function tick() {

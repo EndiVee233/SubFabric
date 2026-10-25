@@ -798,6 +798,7 @@ export function initProjects(ctx) {
     }
     if (typeof window.__notesReload === 'function') window.__notesReload();
     if (typeof window.__realignReset === 'function') window.__realignReset();
+    if (typeof window.__realignRefresh === 'function') window.__realignRefresh();
 
     // 2) 视频: 按保存的路径经服务端 Range 流式播放; 失效则要求重选
     if (m.videoExists && m.video && m.video.path) {

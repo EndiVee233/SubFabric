@@ -125,6 +125,7 @@ export class EditorPanel {
     this._splitPref = false;
     try { this._splitPref = localStorage.getItem('sf-editor-split-roles') === '1'; } catch { this._splitPref = false; }
     this._splitRoles = false;
+    this._roleW = 0;                 // 并排角色栏宽度（px，localStorage 持久化；0 = 用默认比例）
     /* 并排栏显示什么：人物列表 / 备注列表（小顶栏切换，偏好持久化） */
     this._splitPane = 'roles';
     try { if (localStorage.getItem('sf-editor-split-pane') === 'notes') this._splitPane = 'notes'; } catch {}
@@ -415,6 +416,23 @@ export class EditorPanel {
       this.splitBtn.classList.toggle('active', !!this._splitRoles);
     }
     this._applySplitPane();
+    /* 记住的角色栏宽度在面板还没布局好（clientWidth=0 / 隐藏）时会算错，这里等一帧再套一次。 */
+    if (this._splitRoles && this._roleW > 0) {
+      const applyW = () => this._applyRoleW(this._roleW);
+      requestAnimationFrame(applyW);
+      setTimeout(applyW, 150);
+    }
+  }
+
+  /** 套用角色栏宽度：按当前面板宽夹一下（面板宽度未知时用保存值本身）。 */
+  _applyRoleW(px) {
+    if (!this.panelEl) return;
+    const max = this.panelEl.clientWidth > 0
+      ? Math.max(150, Math.round(this.panelEl.clientWidth * 0.45))
+      : 600;
+    const w = Math.max(108, Math.min(max, Math.round(px)));
+    this._roleW = w;
+    this.panelEl.style.setProperty('--split-role-w', w + 'px');
   }
 
   /** 并排栏的内容：人物列表 ↔ 备注列表。备注列表节点直接复用「日志 → 备注」那一份
@@ -484,14 +502,10 @@ export class EditorPanel {
     const g = this.roleGrip;
     if (!g) return;
     const panel = this.panelEl;
-    const clamp = (w) => {
-      const max = Math.max(150, Math.round((panel ? panel.clientWidth : 700) * 0.45));
-      return Math.max(108, Math.min(max, Math.round(w)));
-    };
     const apply = (w) => {
       if (!panel) return;
-      const px = clamp(w);
-      panel.style.setProperty('--split-role-w', px + 'px');
+      this._applyRoleW(w);
+      const px = this._roleW || Math.round(w);
       try { localStorage.setItem('sf-editor-split-role-w', String(px)); } catch {}
     };
     let drag = null;
@@ -519,6 +533,7 @@ export class EditorPanel {
     g.addEventListener('dblclick', () => {
       if (!panel) return;
       panel.style.removeProperty('--split-role-w');
+      this._roleW = 0;
       try { localStorage.removeItem('sf-editor-split-role-w'); } catch {}
       this._metricsDirty = true;
       this._render();
@@ -534,7 +549,7 @@ export class EditorPanel {
     });
     let saved = 0;
     try { saved = Number(localStorage.getItem('sf-editor-split-role-w')) || 0; } catch {}
-    if (saved > 0 && panel) panel.style.setProperty('--split-role-w', clamp(saved) + 'px');
+    if (saved > 0 && panel) this._applyRoleW(saved);
   }
 
   showTab(name, opts = {}) {
@@ -1045,9 +1060,10 @@ export class EditorPanel {
     const l1Text = cardDisplayL1(it.l1);
     const styleText = [showFirst ? it.badge1 : '', showSecond ? it.badge2 : ''].filter(Boolean).join(' · ');
 
-    // 置信度徽标 + 「↻ 重识别」放在左侧时间列下方；样式/角色是描述信息，放右侧首行。
+    // 置信度徽标留在左侧时间列；「↻ 重识别」与「已校对」标签放到卡片底部左下角（见 .cc-foot）。
     const cf = it.confidence;
     const leftBits = [];
+    const footBits = [];
     if (cf && typeof cf.score === 'number') {
       const pct = Math.round(cf.score * 100);
       const tip = `ASR 置信度 ${pct}%` + (cf.worstWord != null ? `；最可疑的是第 ${cf.worstWord + 1} 个词` : '')
@@ -1057,10 +1073,17 @@ export class EditorPanel {
         : `<span class="cc-chip chip-conf" title="${escapeHtml(tip)}">${pct}%</span>`);
     }
     if (Number.isFinite(it.start) && Number.isFinite(it.end) && it.end > it.start) {
-      leftBits.push(`<button type="button" class="cc-chip cc-rerecog" data-act="rerecog"`
-        + ` title="重新识别这一句（切出该句音频 → ASR → 翻译 → 写回）">↻ 重识别</button>`);
+      footBits.push(`<button type="button" class="cc-chip cc-rerecog" data-act="rerecog"`
+        + ` title="重新识别这一句（切出该句音频 → ASR → 翻译 → 写回）" aria-label="重新识别">↻</button>`);
     }
+    /* 「已校对」标签（左下角）：亮起 = 全片逐词重校对跳过这一条；编辑过的行默认亮起。 */
+    footBits.push(`<button type="button" class="cc-chip cc-skip${it.realignSkip ? ' is-on' : ''}" data-act="skip"`
+      + ` title="${it.realignSkip
+        ? '已编辑过：全片逐词重校对会跳过这一条（点击恢复参与）'
+        : '全片逐词重校对会重算这一条的逐词时间（点击标记为已校对、跳过）'}"
+      >${it.realignSkip ? '✓ 已校对' : '逐词校对'}</button>`);
     const leftStack = leftBits.length ? `<div class="cc-left-stack">${leftBits.join('')}</div>` : '';
+    const foot = footBits.length ? `<div class="cc-foot">${footBits.join('')}</div>` : '';
 
     const head = `<div class="cc-head">
       ${roleName ? `<span class="cc-role" title="${escapeHtml(roleName)}"><i class="cc-role-dot"></i>${escapeHtml(roleName)}</span>` : ''}
@@ -1078,6 +1101,8 @@ export class EditorPanel {
         <div class="cc-t" title="开始"><b>${fmtTime(it.start)}</b></div>
         <div class="cc-t" title="结束"><b>${fmtTime(it.end)}</b></div>
         <div class="cc-t" title="时长"><b>${(it.end - it.start).toFixed(3)}s</b></div>
+        <div class="cc-times-rule" aria-hidden="true"></div>
+        ${foot}
         ${leftStack}
       </div>
       <div class="cc-body">

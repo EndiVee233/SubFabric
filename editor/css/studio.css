@@ -431,7 +431,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
      作者本意是"左右各留 8px 边距"，用 margin 才是正确写法。 */
   position: relative;
   margin: 0 8px 6px;
-  display: flex; gap: 9px;
+  display: flex; flex-wrap: wrap; gap: 9px;
   padding: 7px 10px 7px 8px;
   background: #1a1a21;
   border: 1px solid var(--border);
@@ -509,7 +509,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .cc-left-stack {
   display: flex; flex-direction: row; align-items: center; gap: 3px;
   margin-top: 4px; padding-top: 4px;
-  border-top: 1px dashed #26262f;
+  border-top: 1px dashed var(--line);
   white-space: nowrap;
 }
 .cc-left-stack .cc-chip {
@@ -518,6 +518,46 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   min-width: 0;
 }
 .cc-left-stack .cc-rerecog { flex: none; }
+/* 时间列底部的小横线：紧贴「时长」下面，宽度与时间列一致（用户要求横线往上、
+   放在起始时间/时长下面）。footer 不再画横线，只放按钮。 */
+.cc-times-rule {
+  margin-top: 3px;
+  border-top: 1px dashed var(--line);
+  width: 100%;
+}
+/* 卡片左下角：横线 + 「↻」+「已校对」标签都在时间列里（同一列流式排列），
+   横线与按钮的间距固定，不随正文行数变化；两个按钮左右对齐到时间列宽。 */
+.cc-foot {
+  width: 76px;
+  display: flex; align-items: center; justify-content: space-between; gap: 2px;
+  margin: 6px 0 0 0;                 /* 与小横线之间的固定间距 */
+}
+.cc-foot .cc-chip { font-size: 10px; line-height: 18px; padding: 0 6px; flex: none; white-space: nowrap; }
+.cc-foot .cc-skip { padding: 0 4px; }
+/* 重识别只留图标（文字太占宽度，窄卡片里会竖排）；说明放 title / aria-label。 */
+.cc-foot .cc-rerecog {
+  width: 20px; height: 20px; padding: 0 0 2px 0;   /* 底内边距把 ↻ 视觉上抬 1px */
+  display: grid; place-items: center;
+  font-size: 12px; line-height: 1;
+  color: var(--cc-text-3, var(--text-2)) !important;
+  border: 1px solid var(--cc-line, var(--line)) !important;
+  background: transparent !important;
+}
+/* Windows 10 主题：两个小按钮跟主题走 2px 圆角（基类 .cc-chip 是 8px 胶囊）。 */
+.sf-studio[data-design=uwp] .cc-foot .cc-chip { border-radius: 2px; }
+.cc-foot .cc-rerecog:hover { color: var(--accent) !important; border-color: var(--accent) !important; }
+.cc-foot .cc-skip {
+  border: 1px solid var(--cc-line, var(--line)) !important;
+  background: transparent !important;
+  color: var(--cc-text-3, var(--text-2)) !important;
+  font-weight: 500;
+}
+.cc-foot .cc-skip.is-on {
+  border-color: var(--accent) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+  font-weight: 700;
+}
 /* 按钮常驻显示 —— 它现在有自己的位置，不必再靠悬停开关（原来在右侧徽标行，
    常驻会把阅读区塞满，所以那时是 hover 才显示）。 */
 .cc-rerecog {
@@ -529,6 +569,19 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 }
 .cc-rerecog:hover { background: var(--accent-a28) !important; color: #fff !important; }
 .cc-rerecog:disabled { opacity: .4; cursor: default; }
+/* 「已校对」标签（卡片左下角）：亮起 = 不参与全片逐词重校对。
+   行内编辑过默认亮起（由 rebuildItemsAndLanes 的文本比对打上），点击可切换。 */
+.cc-skip {
+  font-family: inherit; cursor: pointer; flex: none;
+  color: var(--text-2) !important; border-color: var(--line) !important;
+  background: transparent !important;
+  transition: background .12s var(--ease), color .12s var(--ease), border-color .12s var(--ease);
+}
+.cc-skip:hover { color: var(--accent) !important; border-color: var(--accent) !important; }
+.cc-skip.is-on {
+  color: var(--accent) !important; border-color: var(--accent) !important;
+  background: var(--accent-soft) !important; font-weight: 700;
+}
 .chip-bad { color: #ffd54a; border-color: #5a4a23; background: rgba(255,213,74,.10); font-weight: 700; }
 .chip-l2 { color: #bdb7ff; border-color: #3d3a68; background: rgba(139,124,246,.12); }
 .cc-l1 {
@@ -1294,6 +1347,13 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .tl-menu-item:hover { background: var(--bg-2); }
 .tl-menu-item.danger { color: #ff9aa2; }
 .tl-menu-item.danger:hover { background: rgba(255,95,107,.16); color: #ffd0d4; }
+/* 「高级字幕操作」按钮的右键菜单（全片 / 区域） */
+.op-menu {
+  position: fixed; z-index: 10060; min-width: 210px; padding: 4px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 14px 40px #0005;
+}
 
 /* ── 批量选区浮条(Ctrl+左键在时间轴上拖动框选 → 贴着选区左上角出现) ────────── */
 #range-bar {
@@ -2230,12 +2290,31 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
  * ⚠ 这两个 id 以前**没有任何 CSS 规则**，于是 position:static —— 显示时不是浮在画面中间，
  *   而是作为普通块堆到**页面最底部**（实测 top:803px，在视口之外），用户根本看不到。
  *   这里补上与 #reflect-overlay 一致的定位。 */
-#realign-overlay, #rim-overlay, #glossary-overlay, #reseg-overlay {
+#realign-overlay, #rim-overlay, #glossary-overlay, #reseg-overlay, #op-range-overlay {
   position: fixed; inset: 0; z-index: 88;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.55);
 }
-#realign-overlay[hidden], #rim-overlay[hidden], #glossary-overlay[hidden], #reseg-overlay[hidden] { display: none; }
+#realign-overlay[hidden], #rim-overlay[hidden], #glossary-overlay[hidden], #reseg-overlay[hidden], #op-range-overlay[hidden] { display: none; }
+#op-range-overlay {
+  align-items: flex-start;          /* 顶部居中，不压暗背景 */
+  padding-top: 64px;
+  background: transparent;
+  pointer-events: none;             /* 不挡时间轴：开着框也能拖选区；点框外也不会关 */
+}
+#op-range-overlay .rn-box { pointer-events: auto; width: min(480px, 94vw); }
+#op-range-note {
+  padding-left: 0;                  /* 基类 .np-region-note 是给分段导入的标签列对齐用的 */
+  margin: 0 0 8px;
+}
+.op-range-row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+.op-range-row label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--text-2); }
+.op-range-row input {
+  width: 132px; height: 30px; padding: 0 8px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+  font-family: var(--mono); font-size: 12px;
+}
+.op-range-row .btn { min-height: 30px; }
 
 /* ── 分段导入：**不挡时间轴** ──
  * 这个对话框要求用户先在时间轴上拖一段选区（或确认区间填得对），
@@ -4745,7 +4824,8 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;                         /* 三行时间之间收紧（用户要求） */
+  padding-top: 4px;                 /* 左列整体略微下移（用户要求） */
   padding-right: 0;
   border-right: 0;
 }
@@ -4756,8 +4836,8 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 }
 :is(#editor-panel #cue-list, .cue-measure) .cc-t > span { display: none; }
 :is(#editor-panel #cue-list, .cue-measure) .cc-t b {
-  /* 时间列 9.4px：8.6px 在 1080p 下几乎要凑近看（用户反馈卡片里其它元素也偏小）。 */
-  font: 9.4px/1.65 var(--mono);
+  /* 时间列 9.4px→10.6px：用户要求起始/持续时间的字号再大一点；行高 1.55→1.45 收紧行距。 */
+  font: 10.6px/1.45 var(--mono);
   font-weight: 400;
   color: var(--cc-text-3);
   letter-spacing: -.03em;
