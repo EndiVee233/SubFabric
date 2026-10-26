@@ -86,9 +86,14 @@ _RUNTIME_PRIORITY = {"deno": 0, "node": 1, "quickjs": 2, "bun": 3}
 
 
 def _runtime_from_path(path: str) -> tuple[str, str]:
-    """路径 → (运行时名, 路径)。认不出名字时返回空名。"""
+    """路径 → (运行时名, 路径)。认不出名字时返回空名。
+
+    ⚠ 不能只靠 Path(path).stem：Windows 路径在 POSIX 上反斜杠不算分隔符，
+       CI（Linux）跑测试时 "C:\\Program Files\\nodejs\\node.exe" 会被当成一整个文件名，
+       于是认不出 node。这里同时按 / 与 \\ 切，再按最后一个点去扩展名。"""
     p = Path(path)
-    stem = p.stem.lower()
+    base = re.split(r"[\\/]", str(path).rstrip("\\/"))[-1]
+    stem = os.path.splitext(base)[0].lower()
     # qjs / qjs-ng / quickjs 的 exe 名不一定带版本号
     if stem.startswith("qjs"):
         return "quickjs", str(p)
