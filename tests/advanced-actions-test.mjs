@@ -60,6 +60,26 @@ const applySrt = bodyOf(main, 'applySrtRealignToAss');
 assert.match(applySrt, /realign-full-apply/, 'SRT 的应用走服务端写 ASS');
 assert.match(applySrt, /Projects\.openProject\(pid\)/, '写完后重新载入项目以切换到 ASS');
 
+/* ── 逐词重校对写回：修复异常行 + 不顶掉正在输入的其它字幕 ── */
+const applyRealign = bodyOf(main, 'applyRealignFull');
+assert.match(applyRealign, /repairWords/, '「仅逐词异常行」应用时必须允许按文本分词修复词序列');
+assert.match(applyRealign, /stashInlineEdit/, '写回前要保存正在输入的字幕');
+assert.match(applyRealign, /resumeInlineEdit/, '重建后要恢复同一行的编辑');
+assert.match(main, /closest\('#op-range-overlay'\)/, '区域弹窗内的点击不能清掉时间轴选区');
+assert.match(main, /realignRepair = !!onlyKeys/, '只有「仅异常行」启用修复模式');
+
+/* ── 生成设置只保留一个模型下拉（不再有重复的「识别来源」） ── */
+assert.doesNotMatch(template, /id="np-set-source"/, '新建页不再有重复的识别来源下拉');
+assert.doesNotMatch(template, /id="dt-set-source"/, '详情页不再有重复的识别来源下拉');
+assert.match(read('editor/js/project.js'), /genLoad\('dt', false, project\.draft && project\.draft\.modelId\)/,
+  '详情页模型跟随项目实际使用的模型');
+
+/* ── 处理进度：步骤、已用/剩余与最近记录 ── */
+assert.match(template, /id="np-meta"[\s\S]*id="np-eta"/, '新建页进度卡有阶段/已用/剩余');
+assert.match(template, /id="np-log"/, '新建页进度卡显示最近处理记录');
+assert.match(template, /id="dp-meta"[\s\S]*id="dp-eta"/, '详情页进度卡有阶段/已用/剩余');
+assert.match(read('editor/js/project.js'), /function startNpDraftProgress/, '创建初稿后在本页显示实时进度');
+
 /* ── 说话人分离：先确认，再跑后台作业 ── */
 assert.match(main, /btnDiarize\.addEventListener\('click', beginDiarize\)/);
 const beginDiarize = bodyOf(main, 'beginDiarize');

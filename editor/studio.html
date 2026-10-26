@@ -1312,6 +1312,12 @@
           <span id="dp-pct">0%</span>
           <span class="dp-msg" id="dp-msg"></span>
         </div>
+        <div class="dp-meta" id="dp-meta" hidden>
+          <span id="dp-stage">当前阶段 —</span>
+          <span id="dp-elapsed">已用 0:00</span>
+          <span id="dp-eta">剩余 —</span>
+          <span id="dp-transfer"></span>
+        </div>
         <div class="ws-idle" id="dp-idle">
           <p class="ws-idle-title">尚未开始</p>
           <p>这个项目没有初稿任务，直接打开编辑器改字幕就行。</p>
@@ -1360,9 +1366,6 @@
           </select>
         </div>
         <p class="ws-hint" id="dt-set-speakers-note">说话人是在创建初稿时定下的；逐句置信度也是，这里只显示当时的选择。</p>
-
-        <div class="ws-group-title">识别来源</div>
-        <div class="ws-row"><select id="dt-set-source" class="np-select ws-fld"></select></div>
 
         <!-- 翻译方案：与「新建项目」共用同一套选择器。
              以前这里直接摊开「翻译模型 / 模型名称 / 提示词」，同一个 2×2 骨架在新建页是方案、
@@ -1458,7 +1461,14 @@
             <span id="np-pct">0%</span>
             <span class="dp-msg" id="np-msg">尚未开始</span>
           </div>
-          <p class="np-progress-box-note">创建项目后，这里会显示每一步的处理状态和记录。</p>
+          <div class="dp-meta" id="np-meta" hidden>
+            <span id="np-stage">当前阶段 —</span>
+            <span id="np-elapsed">已用 0:00</span>
+            <span id="np-eta">剩余 —</span>
+            <span id="np-transfer"></span>
+          </div>
+          <pre class="dp-log np-mini-log" id="np-log" hidden></pre>
+          <p class="np-progress-box-note" id="np-progress-note">创建项目后，这里会显示每一步的处理状态和记录。</p>
         </div>
         <div class="ws-idle">
           <p class="ws-idle-title">尚未开始</p>
@@ -1650,11 +1660,6 @@
             <input type="number" id="np-spk-count" class="np-input" min="1" max="12" placeholder="6"
                    style="max-width:74px;flex:0 0 74px" title="视频里有几个说话人；留空默认按 6 个聚类">
           </div>
-        </div>
-
-        <div class="np-draft-only" id="np-source-group">
-          <div class="ws-group-title">识别来源</div>
-          <div class="ws-row"><select id="np-set-source" class="np-select ws-fld"></select></div>
         </div>
 
         <div class="ws-group-title" hidden>翻译提示词</div>

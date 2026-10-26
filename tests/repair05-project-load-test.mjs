@@ -33,10 +33,12 @@ globalThis.fetch = async (url, opts = {}) => {
   return Response.json({ id, name: id, subtitle: { file: 'subtitle.srt' }, prepare: { status: 'none' }, videoExists: false });
 };
 let peakCalls = 0;
+let projectDuringRoute = null;
 const api = initProjects({ state, video: { pause() {} }, timeline: { setPeaks() { peakCalls++; } }, panel: { showConfirm() {} }, toast() {},
-  routeSub(value) { text = value; state.srtCues = [{ start: 0, end: 2, lines: [value.split('\n')[2]] }]; },
+  routeSub(value) { projectDuringRoute = state.project && state.project.id; text = value; state.srtCues = [{ start: 0, end: 2, lines: [value.split('\n')[2]] }]; },
   loadVideoUrl() {}, setPlaybackAudioMode() {} });
 await api.openProject('A'); assert.equal(state.project.id, 'A');
+assert.equal(projectDuringRoute, 'A', 'project identity is installed before the synchronous subtitle build');
 const old = state.project;
 pending.set('B', deferred()); const b = api.openProject('B');
 await new Promise(r => setTimeout(r, 5));

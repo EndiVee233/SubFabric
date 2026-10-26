@@ -15,6 +15,7 @@ let saved;
 try { saved = JSON.parse(localStorage.getItem(STUDIO_KEY) || '{}'); } catch { saved = {}; }
 let prefs = normalizeStudio(saved, themes);
 let projects = [], filter = 'all', folder = '', route = location.hash || '#/dashboard';
+let routeBooted = false;   // 本页第一次收到路由（含刷新）—— 编辑器入场动画要靠它区分"刷新"与"重复 applyHash"
 let folderSnapshotSig = '';
 let applying = false, pendingSetting = '';
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
@@ -1297,6 +1298,28 @@ function animateUwpEditorShell() {
   clearTimeout(uwpEditorTimer);
   uwpEditorTimer = setTimeout(() => app.classList.remove('is-uwp-editor-entering'), 420);
 }
+
+/* 编辑器三大板块的入场：视频区 → 右侧列表 → 时间轴（CSS 里 0/90/180ms 错峰）。
+ * 三个主题共用同一套淡入上浮，只跟主题的 `--sf-card-duration` 变快慢。
+ * 只在**进入编辑器或切换稿件**时播一次；同一路由的重复 applyHash、项目数据刷新不重播。 */
+let editorPanelsTimer = 0;
+function animateEditorPanels() {
+  const app = $('app');
+  if (!app || uwpMotionOff()) return;
+  app.classList.remove('is-editor-panels-entering');
+  void app.offsetWidth;                 // 强制回流，确保连续两次进入都能重新起播
+  app.classList.add('is-editor-panels-entering');
+  clearTimeout(editorPanelsTimer);
+  editorPanelsTimer = setTimeout(() => app.classList.remove('is-editor-panels-entering'), 900);
+  /* 通知时间轴：面板淡入结束后再把字幕块从左到右逐个浮出来（canvas 里没有 CSS 动画）。
+   * 刷新时时间轴还没构造，它会通过 #app 上的入场类自行补一次。 */
+  try { if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('sf-editor-panels-enter')); } catch {}
+}
+function clearEditorPanelsEntrance() {
+  clearTimeout(editorPanelsTimer);
+  editorPanelsTimer = 0;
+  $('app')?.classList.remove('is-editor-panels-entering');
+}
 function animateUwpCueList(added = null) {
   if (document.body.dataset.design !== 'uwp') return false;
   if (uwpMotionOff()) { uwpEditorPending = false; return false; }
@@ -1996,6 +2019,11 @@ window.__sfStudio = {
   route(h, project, format) {
     if (h === '#/resources') h = '#/settings';
     const previous = route; route = h;
+    /* 第一次收到路由（含 F5 直接刷新在 #/project/...）也要播入场：
+     * 刷新时模块顶部的 `route` 已经等于 location.hash，只看 wasEditor / h!==previous
+     * 会误判成"同一路由的重复 applyHash"而跳过。 */
+    const firstRoute = !routeBooted;
+    routeBooted = true;
     const editor = h === '#/editor' || h.startsWith('#/project/');
     const wasEditor = previous === '#/editor' || previous.startsWith('#/project/');
     document.body.dataset.workspace = editor ? 'editor' : h.slice(2).split('/')[0];
@@ -2030,6 +2058,8 @@ window.__sfStudio = {
     });
     /* UWP 编辑器：外壳轻微 scale(.97→1) 淡入；字幕卡在 cue 渲染后自上而下 120ms/14ms 淡入上移。 */
     if (editor) {
+      /* 三大板块（视频 / 右侧列表 / 时间轴）逐个淡入：进入编辑器、切换稿件或直接刷新时播一次。 */
+      if (firstRoute || !wasEditor || h !== previous) animateEditorPanels();
       uwpEditorPending = true;
       materialEditorPending = true;
       if (!wasEditor) {
@@ -2046,6 +2076,7 @@ window.__sfStudio = {
       uwpEditorPending = false;
       materialEditorPending = false;
       materialCueSeen.clear();
+      clearEditorPanelsEntrance();
     }
   }
 };

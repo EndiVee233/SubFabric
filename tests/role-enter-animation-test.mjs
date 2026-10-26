@@ -17,5 +17,11 @@ assert.match(editor, /_renderRoles\(animate = false\)/, 'data refreshes do not r
 assert.match(editor, /style="--role-i:\$\{i\}"/, 'each role card carries its stagger index');
 assert.match(editor, /role-add" style="--role-i:\$\{this\._roles\.length\}"/, 'the add-role card joins the stagger');
 assert.match(editor, /el\.classList\.add\('is-role-entering'\)[\s\S]*?setTimeout\(\(\) => el\.classList\.remove\('is-role-entering'\)/, 'the entrance class is cleaned up after the animation');
+/* 并排侧栏「人物」列表：首次真正看到且有角色时，也走同一套逐个入场。 */
+assert.match(editor, /_splitRoleEnterPlayed = false/, 'split pane keeps its own one-shot entrance flag');
+assert.match(editor, /_renderSplitRoles\(\) \{[\s\S]*?!this\._splitRoleEnterPlayed && this\._roles\.length > 0[\s\S]*?this\._renderRoles\(animate\)/, 'split pane animates once, only with real roles');
+assert.match(editor, /const visible = !el \|\| !el\.hidden;/, 'hidden (notes) pane does not consume the entrance');
+assert.match(editor, /_switchSplitPane[\s\S]*?else if \(this\._splitRoles\) this\._renderSplitRoles\(\);/, 'switching back to 人物 replays the entrance if not played');
+assert.match(editor, /resetEntranceAnimations\(\) \{[\s\S]*?this\._splitRoleEnterPlayed = false;/, 'a new editor session resets the split pane entrance too');
 
 console.log('Role list entrance: fade/scale/up stagger, one-shot per editor entry and reduced-motion fallback passed');

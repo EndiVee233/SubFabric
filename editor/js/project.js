@@ -129,32 +129,15 @@ export function initProjects(ctx) {
 
   /* ─────────── 生成设置面板（新建项目 / 详细信息 共用同一份逻辑） ───────────
    * 两个页面的面板结构一模一样，只有 id 前缀不同（np- / dt-），所以逻辑只写一份。
-   * 语音识别 / 翻译模型 / 模型名称 / 翻译提示词 / 角色分析提示词 / 分角色开关
-   * 都是**全局设置**（asr/settings.json），点「保存设置」才写回；
-   * 「自动区分说话人」是项目级参数：新建时选定，详细信息里只读回显。 */
-  const ENGINE_LABEL = {
-    'whisper.cpp': '本地 · whisper.cpp',
-    'faster-whisper': '本地 · Whisper large-v2',
-    'qwen': '本地 · Qwen3（CUDA）',
-    'crispasr': '本地 · Parakeet（Vulkan）',
-    'crispasr-whisper': '本地 · Whisper large-v2（Vulkan）',
-    'crispasr-qwen': '本地 · Qwen3（Vulkan）',
-    'sherpa-onnx': '本地 · Parakeet',
-    openvino: '本机 Parakeet TDT V2（Intel NPU）',
-    nemo: '本地 · NeMo（多说话人）',
-    vibevoice: '本地 · VibeVoice（CUDA 4bit）',
-    bcut: '云端 · 必剪 ASR',
-    capcut: '云端 · 剪映 ASR',
-  };
-  const engineLabel = (e) => ENGINE_LABEL[e] || (e ? String(e) : '未知引擎');
-
+   * 语音识别模型 / 翻译参数 / 分角色开关都是**全局设置**（asr/settings.json），
+   * 点「保存设置」才写回；「自动区分说话人」是项目级参数：新建时选定，详细信息里只读回显。 */
   const GEN_IDS = {
     np: { asr: '#np-model-sel', provider: '#np-set-provider', model: '#np-set-model',
-          cast: '#np-set-cast', source: '#np-set-source',
+          cast: '#np-set-cast',
           prompt: '#np-set-prompt', castPrompt: '#np-set-castprompt',
           save: '#np-set-save', state: '#np-set-state' },
     dt: { asr: '#dt-model-sel', provider: '#dt-set-provider', model: '#dt-set-model',
-          cast: '#dt-set-cast', source: '#dt-set-source',
+          cast: '#dt-set-cast',
           prompt: '#dt-set-prompt', castPrompt: '#dt-set-castprompt',
           save: '#dt-set-save', state: '#dt-set-state' },
   };
@@ -213,50 +196,28 @@ export function initProjects(ctx) {
     const el = $(GEN_IDS[scope].state);
     if (el) el.textContent = text;
   }
-  /** 按「识别来源」选中的引擎过滤「语音识别」下拉 */
-  function genFillModels(scope) {
+  /** 「语音识别」下拉：新建页与详情页都是**扁平列表**（Whisper / Qwen / Parakeet 直接可见）。
+   *
+   *  以前还有一个「识别来源」下拉按引擎过滤模型，于是同一块设置里出现两个都是"选识别模型"
+   *  的控件（用户截图反馈「这两个也重复了」），而且详情页的模型不会跟随项目实际使用的模型。
+   *  现在只保留模型下拉这一个事实来源：选哪个模型，识别来源就是它的引擎。 */
+  function genFillModels(scope, preferred) {
     const e = genEls(scope);
     if (!e.asr) return;
     const pool = ((genAsr && genAsr.models) || []).filter(m => m.ready && m.draftAllowed !== false);
-    const want = e.source ? e.source.value : '';
-    // 新建页把「识别来源」折进模型下拉：Whisper V2 / Qwen / Parakeet 直接同一列表可见，
-    // 选哪个模型就把来源同步到它的引擎；设置页仍保留按来源过滤。
-    const flat = scope === 'np';
-    const list = flat ? pool : (want ? pool.filter(m => (m.engine || '') === want) : pool);
     const keep = e.asr.value;
-    e.asr.innerHTML = list.length
-      ? list.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
-      : '<option value="">（该来源下没有可用模型，去设置里下载）</option>';
-    if (keep && list.some(m => m.id === keep)) e.asr.value = keep;
-    else if (genAsr && genAsr.selectedModel && list.some(m => m.id === genAsr.selectedModel)) e.asr.value = genAsr.selectedModel;
-    if (flat && e.source) {
-      const sel = list.find(m => m.id === e.asr.value);
-      if (sel) e.source.value = sel.engine || '';
-    }
+    e.asr.innerHTML = pool.length
+      ? pool.map(m => '<option value="' + esc(m.id) + '">' + esc(m.name) + '</option>').join('')
+      : '<option value="">（没有可用模型，去设置里下载）</option>';
+    const want = [preferred, keep, genAsr && genAsr.selectedModel].filter(Boolean);
+    const hit = want.find(id => pool.some(m => m.id === id));
+    if (hit) e.asr.value = hit;
     if (scope === 'np') npSyncVibeVoice();
   }
-  /** 把三份配置铺到某个面板上 */
-  function genRender(scope) {
+  /** 把三份配置铺到某个面板上。preferredModel：详情页用它回显项目当初实际用的模型。 */
+  function genRender(scope, preferredModel) {
     const e = genEls(scope);
-    if (genAsr) {
-      if (e.source) {
-        const engines = [];
-        let selEngine = '';
-        for (const m of genAsr.models || []) {
-          if (!(m.ready && m.draftAllowed !== false) || !m.engine) continue;
-          if (engines.indexOf(m.engine) < 0) engines.push(m.engine);
-          // 记住当前默认模型属于哪个引擎：没得继承时才用它当「识别来源」，免得把默认模型换掉
-          if (m.id === genAsr.selectedModel) selEngine = m.engine;
-        }
-        const keep = e.source.value;
-        e.source.innerHTML = engines.length
-          ? engines.map(x => '<option value="' + esc(x) + '">' + esc(engineLabel(x)) + '</option>').join('')
-          : '<option value="">（没有可用引擎）</option>';
-        if (keep && engines.indexOf(keep) >= 0) e.source.value = keep;
-        else if (selEngine) e.source.value = selEngine;
-      }
-      genFillModels(scope);
-    }
+    if (genAsr) genFillModels(scope, preferredModel);
     if (genTr) {
       const presets = genTr.presets || [];
       const cfg = genTr.cfg || {};
@@ -276,14 +237,15 @@ export function initProjects(ctx) {
       if (e.castPrompt) e.castPrompt.value = genCast.prompt || '';
     }
   }
-  /** 拉三份配置；有缓存就不重复拉（force=true 时强制刷新） */
-  async function genLoad(scope, force) {
+  /** 拉三份配置；有缓存就不重复拉（force=true 时强制刷新）。
+   *  preferredModel：详情页传入项目当初实际使用的模型（跟随已选模型，而不是全局默认）。 */
+  async function genLoad(scope, force, preferredModel) {
     try {
       if (force || !genAsr) genAsr = filterStatusModels(await ensureHardware(await (await fetch('/api/asr/status')).json()));
       if (force || !genTr) genTr = await (await fetch('/api/translate/config')).json();
       if (force || !genCast) genCast = await (await fetch('/api/cast/config')).json();
     } catch { /* 拉不到就保持旧值，别打断页面 */ }
-    genRender(scope);
+    genRender(scope, preferredModel);
     genSetState(scope, (genTr && genTr.ready) ? '已配置' : '翻译未配置');
   }
   /** 保存：只写全局那几项；项目级的（逐词/说话人）不在这里动 */
@@ -333,21 +295,8 @@ export function initProjects(ctx) {
   }
   for (const scope of ['np', 'dt']) {
     const e = genEls(scope);
-    if (scope === 'np' && e.asr) e.asr.addEventListener('change', () => {
-      const m = (genAsr && genAsr.models || []).find(x => x.id === e.asr.value);
-      if (m && e.source) e.source.value = m.engine || '';
-      npSyncVibeVoice();
-    });
+    if (scope === 'np' && e.asr) e.asr.addEventListener('change', () => npSyncVibeVoice());
     if (e.save) e.save.addEventListener('click', () => genSave(scope));
-    if (e.source) e.source.addEventListener('change', () => {
-      // 新建页：切来源时把模型下拉切到该来源的第一个可用模型；列表仍保持扁平。
-      if (scope === 'np' && e.asr && genAsr) {
-        const first = (genAsr.models || []).find(m => m.ready && m.draftAllowed !== false
-          && (m.engine || '') === e.source.value);
-        if (first) e.asr.value = first.id;
-      }
-      genFillModels(scope); genSetState(scope, '未保存');
-    });
     for (const k of ['provider', 'model', 'prompt', 'castPrompt', 'cast']) {
       const el = e[k];
       if (!el) continue;
@@ -466,7 +415,8 @@ export function initProjects(ctx) {
           .catch(() => {});
       }
     }
-    genLoad('dt');
+    // 详情页的识别模型跟随这个项目**实际用的**模型（draft.modelId），不是全局默认
+    genLoad('dt', false, project.draft && project.draft.modelId);
     // 详情页的「翻译方案」与新建页共用缓存；首次进来会一并拉取
     loadNpSchemes().then(renderDtSchemes).catch(() => renderDtSchemes());
     // 处理进度：有初稿任务才给日志与操作按钮，否则换成一句空态说明（别留个空洞）
@@ -484,6 +434,8 @@ export function initProjects(ctx) {
       $('#dp-bar-in').classList.remove('err', 'ok');
       $('#dp-pct').textContent = '0%';
       $('#dp-msg').textContent = '尚未开始';
+      const meta = $('#dp-meta');
+      if (meta) meta.hidden = true;
     }
   }
   $('#detail-back').addEventListener('click', returnFromDetails);
@@ -630,19 +582,31 @@ export function initProjects(ctx) {
   });
 
   /* ─────────── 波形(项目缓存) ─────────── */
+  let peaksInFlight = null, peaksTarget = null;
   async function loadPeaks() {
     const project = state.project;
     const gen = _openGen;
     if (!project) return false;
-    try {
-      const r = await fetch(`/api/projects/${project.id}/peaks`);
-      if (!r.ok) return false;                     // 未就绪: prepare 轮询完成后会再调
-      const data = new Uint8Array(await r.arrayBuffer());
-      if (state.project !== project || gen !== _openGen) return false;
-      timeline.setPeaks({ data, rate: parseFloat(r.headers.get('X-Peak-Rate') || '100'), ch: +(r.headers.get('X-Peak-Ch') || 2) });
-      toastAfterCueIntro('波形已就绪(来自项目缓存)', 2000);
-      return true;
-    } catch { return false; }
+    /* 打开项目时 video 与 prepare 两条路径都会要 peaks；合并同一次请求，
+     * 免得同一个 500KB+ 的 peaks.bin 并发下载两遍（旧实现确实会下两次）。 */
+    if (peaksInFlight && peaksTarget === project) return peaksInFlight;
+    peaksTarget = project;
+    const p = (async () => {
+      try {
+        const r = await fetch(`/api/projects/${project.id}/peaks`);
+        if (!r.ok) return false;                     // 未就绪: prepare 轮询完成后会再调
+        const data = new Uint8Array(await r.arrayBuffer());
+        if (state.project !== project || gen !== _openGen) return false;
+        timeline.setPeaks({ data, rate: parseFloat(r.headers.get('X-Peak-Rate') || '100'), ch: +(r.headers.get('X-Peak-Ch') || 2) });
+        toastAfterCueIntro('波形已就绪(来自项目缓存)', 2000);
+        return true;
+      } catch { return false; }
+    })();
+    peaksInFlight = p;
+    try { return await p; }
+    finally {
+      if (peaksInFlight === p) { peaksInFlight = null; peaksTarget = null; }
+    }
   }
 
   /** prepare 状态处理: running→轮询 / done→直接读 / 缺失→自动补跑一次(无音轨的不重试) */
@@ -751,12 +715,17 @@ export function initProjects(ctx) {
   async function openProject(pid) {
     const gen = ++_openGen;
     clearInterval(pollTimer); pollTimer = 0;
-    let m;
+    let m, rSub;
     try {
       await flushSave();
       if (gen !== _openGen) return;
-      const r = await fetch('/api/projects/' + pid);
+      /* 项目元信息与字幕并行取：两者互不依赖，少一次来回等待。 */
+      const [r, rs] = await Promise.all([
+        fetch('/api/projects/' + pid),
+        fetch(`/api/projects/${pid}/subtitle`),
+      ]);
       m = await r.json();
+      rSub = rs;
       if (gen !== _openGen) return;
       if (!r.ok || m.error) throw new Error(m.error || 'HTTP ' + r.status);
     } catch (e) {
@@ -767,51 +736,60 @@ export function initProjects(ctx) {
     }
     // 1) 字幕: 读项目内权威内容, 走与"打开字幕文件"完全相同的解析入口
     try {
-      // ⚠ 必须检查 r.ok: 服务端 500/404 时响应体是 HTML/JSON 错误页, 不挡的话会被
-      // 当字幕解析成空/坏文档, 且 lastSavedText 被污染 —— 用户随后任何一次编辑触发
-      // saveNow() 都会把坏内容 PUT 回写 subtitle.ass, 覆盖权威字幕文件(数据丢失)。
-      const r = await fetch(`/api/projects/${pid}/subtitle`);
+      // ⚠ 必须检查 ok: 服务端 500/404 时响应体是错误页, 不挡的话会被当字幕解析成空/坏文档,
+      // 且 lastSavedText 被污染 —— 用户随后任何一次编辑触发 saveNow() 都会把坏内容写回。
+      if (!rSub.ok) throw new Error(`HTTP ${rSub.status}`);
+      const text = await rSub.text();
       if (gen !== _openGen) return;
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      {
-        const text = await r.text();
-        if (gen !== _openGen) return;
-        const name = (m.subtitle && (m.subtitle.name || m.subtitle.file)) || 'subtitle.ass';
-        const parsed = /\.(ass|ssa)$/i.test(name) ? new AssDoc(text).events : parseSRT(text);
-        if (!parsed.length) throw new Error('字幕没有有效事件');
-        // 所有网络读取和解析完成后，在同一同步阶段提交 ID 与文档。
-        routeSub(text, name);
-        state.project = { id: pid, meta: m, loadPeaks };
-        // 「导出视频」对话框要拿当前稿件 id，但它与 project.js 不属于同一个模块作用域。
-        // 只暴露这一个窄接口（不是整个 state）—— 挂了什么就只给什么，避免变成事实上的全局状态。
-        window.__sfCurrentProjectId = () => pid;
-        lastSavedText = text;
-        saveRevision = (r.headers.get('ETag') || '').replace(/^"|"$/g, '');
-        saveConflict = false;
-        pendingText = null;
-        setSaveState('', '自动保存已开启');
+      const name = (m.subtitle && (m.subtitle.name || m.subtitle.file)) || 'subtitle.ass';
+      /* 只做**轻量**校验，不再为"有没有事件"把整份 ASS 解析一遍 ——
+       * 后面 routeSub→setAss 本来就要构造 AssDoc；旧实现 `new AssDoc(text).events`
+       * 让 3~4MB 的稿件在打开时白解析两遍（主要启动开销之一）。 */
+      const isAss = /\.(ass|ssa)$/i.test(name);
+      const hasEvents = isAss
+        ? /(^|\n)\s*Dialogue\s*:/i.test(text)
+        : parseSRT(text).length > 0;
+      if (!hasEvents) throw new Error('字幕没有有效事件');
+      /* 旧稿件的后台长任务先收掉，再换项目身份；之后 setAss 用到的
+       * realignSkip / meta 已经是新项目，因此不再需要"先建一遍再重建一遍"。 */
+      if (typeof window.__realignReset === 'function') window.__realignReset();
+      /* 先把项目身份、保存基线和视频/波形请求装上，再跑同步的字幕解析：
+       *  · 解析/自愈通常占打开耗时的大头，视频与 peaks 的网络请求可以同时开始；
+       *  · 第一次 rebuildItemsAndLanes 就能读到新项目的 realignSkip（旧实现要重建两次）。
+       * 中间没有 await / 用户事件，stale 文档不会有机会写进新项目。 */
+      state.project = { id: pid, meta: m, loadPeaks };
+      window.__sfCurrentProjectId = () => pid;
+      lastSavedText = text;
+      saveRevision = (rSub.headers.get('ETag') || '').replace(/^"|"$/g, '');
+      saveConflict = false;
+      pendingText = null;
+      // 2) 视频: 按保存的路径经服务端 Range 流式播放; 失效则要求重选
+      pendingPlayback = { id: pid, time: readPlayback(pid) };
+      if (m.videoExists && m.video && m.video.path) {
+        loadVideoUrl('/api/media?path=' + encodeURIComponent(m.video.path), m.video.name);
+      } else {
+        promptRelink(m);
       }
+      // 3) 波形/音频: 就绪直接读, 没就绪轮询
+      handlePrepare(m);
+      /* 时间轴的逐块浮现要等波形画上去再开始；这里告诉它"这个稿件有没有波形可等"，
+       * 无音轨/无视频的项目就不白等 2.5 秒（见 Timeline._armBlockEntrance）。 */
+      const noAudio = /没有音轨/.test(String((m.prepare && m.prepare.error) || ''));
+      timeline.setBlockEntranceWaveExpected?.(!noAudio && (!!m.hasPeaks || !!m.videoExists));
+      syncAudioModeUI(m);          // 音频源下拉回显 + 播放音轨(降噪后→audio.wav 接管发声)
+      // 4) 同步解析 + 首次构建（只此一次）
+      routeSub(text, name);
+      setSaveState('', '自动保存已开启');
     } catch (e) {
       if (gen !== _openGen) return;
+      if (state.project && state.project.id === pid) {
+        state.project = null;    // 解析失败：不要留下指向新项目却没有完整文档的半状态
+        location.hash = '#/home';
+      }
       toast('项目字幕读取失败: ' + e.message, 3600);
       return;
     }
     if (typeof window.__notesReload === 'function') window.__notesReload();
-    if (typeof window.__realignReset === 'function') window.__realignReset();
-    if (typeof window.__realignRefresh === 'function') window.__realignRefresh();
-
-    // 2) 视频: 按保存的路径经服务端 Range 流式播放; 失效则要求重选
-    if (m.videoExists && m.video && m.video.path) {
-      pendingPlayback = { id: pid, time: readPlayback(pid) };
-      loadVideoUrl('/api/media?path=' + encodeURIComponent(m.video.path), m.video.name);
-    } else {
-      pendingPlayback = { id: pid, time: readPlayback(pid) };
-      promptRelink(m);
-    }
-
-    // 3) 波形/音频: 就绪直接读, 没就绪轮询
-    handlePrepare(m);
-    syncAudioModeUI(m);          // 音频源下拉回显 + 播放音轨(降噪后→audio.wav 接管发声)
     if (resumeRerecog) resumeRerecog(pid);   // 接回后台还在跑的「选区重新识别」任务(刷新后也能看到进度/拿到结果)
   }
 
@@ -1144,15 +1122,92 @@ export function initProjects(ctx) {
   function stopDp() { clearInterval(dpTimer); dpTimer = 0; }
 
   /** 步骤条渲染。target 缺省是详细信息页的 #dp-steps；
-   *  新建项目页传 '#np-steps' 画一条全灰的静态预览（curIdx = -1）。 */
-  function renderDpSteps(curIdx, target) {
+   *  新建项目页传 '#np-steps' 画一条全灰的静态预览（curIdx = -1）。
+   *  opts.sub：当前步骤的小字（下载 4% / 第 3/10 片），opts.err：当前步失败标红。 */
+  function renderDpSteps(curIdx, target, opts) {
     const box = $(target || '#dp-steps');
     if (!box) return;
+    const o = opts || {};
     box.innerHTML = DP_STEPS.map((s, i) => {
-      const cls = !s.enabled ? 'off' : (i < curIdx ? 'done' : (i === curIdx ? 'current' : ''));
+      let cls = !s.enabled ? 'off' : (i < curIdx ? 'done' : (i === curIdx ? 'current' : ''));
+      if (i === curIdx && o.err) cls += ' is-err';
       const tip = s.enabled ? s.name : (s.name + '（尚未实现）');
-      return `<span class="dp-step ${cls}" title="${esc(tip)}"><span class="n">${i + 1}</span>${esc(s.name)}</span>`;
+      const sub = (i === curIdx && o.sub) ? `<span class="dp-step-sub">${esc(o.sub)}</span>` : '';
+      return `<span class="dp-step ${cls}" title="${esc(tip)}"><span class="n">${i + 1}</span>${esc(s.name)}${sub}</span>`;
     }).join('');
+  }
+  /** 当前步骤的一句话细进度：从服务端 message 里取「下载 4% / 第 3/10 片 / 72%」这类片段。 */
+  function dpStepSub(d) {
+    const msg = String((d && d.message) || '');
+    const m = /(下载中?\s*\d+%|第\s*\d+\s*\/\s*\d+\s*[片段]|\d+%)/.exec(msg);
+    return m ? m[1].replace(/\s+/g, ' ') : '';
+  }
+  /** 秒 → 1:23 / 1:02:03 */
+  function dpClock(sec) {
+    const s = Math.max(0, Math.round(Number(sec) || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
+  }
+  /** 从「下载中 4% 19.6/480.5 MB 0.4 MB/s 剩 1211s」里拆出大小/速度/预计。 */
+  function dpParseTransfer(msg) {
+    const text = String(msg || '');
+    const size = /(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)\s*MB/i.exec(text);
+    const speed = /(\d+(?:\.\d+)?)\s*MB\/s/i.exec(text);
+    const eta = /剩\s*(\d+)\s*s/i.exec(text);
+    return {
+      got: size ? Number(size[1]) : null,
+      total: size ? Number(size[2]) : null,
+      speed: speed ? Number(speed[1]) : null,
+      eta: eta ? Number(eta[1]) : null,
+    };
+  }
+  /** 进度详情行 + 已用/预计：详情页与新建页共用。
+   *  预计优先用服务端消息里的「剩 Ns」，没有就按已用时间与百分比估算。 */
+  function dpRenderDetail(prefix, d) {
+    const map = {
+      pct: $('#' + prefix + '-pct'),
+      msg: $('#' + prefix + '-msg'),
+      meta: $('#' + prefix + '-meta'),
+      stage: $('#' + prefix + '-stage'),
+      elapsed: $('#' + prefix + '-elapsed'),
+      eta: $('#' + prefix + '-eta'),
+      transfer: $('#' + prefix + '-transfer'),
+    };
+    const t = dpParseTransfer(d.message || '');
+    const t0 = Date.parse(d.startedAt || '');
+    const t1 = d.status === 'running' ? Date.now() : (Date.parse(d.updatedAt || d.finishedAt || '') || Date.now());
+    const elapsed = (Number.isFinite(t0) && t0 > 0) ? Math.max(0, (t1 - t0) / 1000) : 0;
+    let eta = t.eta;
+    if (eta == null && d.status === 'running' && d.progress >= 3 && elapsed > 3) {
+      eta = elapsed * (100 - d.progress) / d.progress;
+    }
+    const running = d.status === 'running';
+    if (map.stage) map.stage.textContent = d.status === 'done' ? '阶段：完成'
+      : `阶段：${dpStepName(d.failedStage || d.stage)}${d.status === 'error' ? '（失败）' : ''}`;
+    if (map.elapsed) map.elapsed.textContent = elapsed > 0 ? `已用 ${dpClock(elapsed)}` : '';
+    if (map.eta) map.eta.textContent = running && eta != null && eta > 0 ? `剩余约 ${dpClock(eta)}` : '';
+    if (map.transfer) {
+      const parts = [];
+      if (t.got != null && t.total) parts.push(`下载 ${t.got.toFixed(1)}/${t.total.toFixed(1)} MB`);
+      if (t.speed) parts.push(`${t.speed.toFixed(1)} MB/s`);
+      map.transfer.textContent = parts.join(' · ');
+    }
+    if (map.meta) {
+      const has = !!(map.stage && map.stage.textContent) || !!(map.elapsed && map.elapsed.textContent)
+        || !!(map.eta && map.eta.textContent) || !!(map.transfer && map.transfer.textContent);
+      map.meta.hidden = !has;
+    }
+    if (map.pct) map.pct.textContent = Math.max(0, Math.min(100, Number(d.progress) || 0)) + '%';
+    if (map.msg) {
+      map.msg.textContent = d.error ? ('✗ ' + d.error) : (d.message || '');
+      map.msg.classList.toggle('dp-err', !!d.error);
+    }
+  }
+  function dpStepName(stage) {
+    const i = DP_STEPS.findIndex(s => s.stages.indexOf(stage) >= 0);
+    if (i >= 0) return DP_STEPS[i].name;
+    return String(stage || '').replace(/[中…]+$/, '') || '准备中';
   }
   function applyDpButtons(curIdx, retries) {
     const st = DP_STEPS[curIdx] || {};
@@ -1177,6 +1232,8 @@ export function initProjects(ctx) {
     $('#dp-log').textContent = '';
     $('#dp-bar-in').style.width = '0%';
     $('#dp-pct').textContent = '0%';
+    const meta = $('#dp-meta');
+    if (meta) meta.hidden = true;
     stopDp();
     tickDp();
     dpTimer = setInterval(tickDp, 1200);
@@ -1229,19 +1286,16 @@ export function initProjects(ctx) {
       || (d.status === 'done' && !d.translated && !!d.needTranslate)) && !d.skippedTranslate;
 
     const curIdx = d.status === 'done' ? DP_STEPS.length - 1 : stepIndexOf(d.failedStage || d.stage);
-    renderDpSteps(curIdx);
+    renderDpSteps(curIdx, null, { sub: dpStepSub(d), err: d.status === 'error' });
     applyDpButtons(curIdx, d.retries || 0);
 
     const pct = Math.max(0, Math.min(100, d.progress || 0));
     $('#dp-bar-in').style.width = pct + '%';
     $('#dp-bar-in').classList.toggle('err', d.status === 'error');
     $('#dp-bar-in').classList.toggle('ok', d.status === 'done' && !!d.translated);
-    $('#dp-pct').textContent = pct + '%';
+    dpRenderDetail('dp', d);
     // 还一行都没翻 → 「开始翻译」；翻了一部分或失败 → 「重试」
     $('#dp-retry').textContent = (d.status === 'paused' && !d.pendingTranslate) ? '开始翻译' : '重试';
-    const msgEl = $('#dp-msg');
-    msgEl.textContent = d.error ? ('✗ ' + d.error) : (d.message || '');
-    msgEl.classList.toggle('dp-err', !!d.error);
 
     const logEl = $('#dp-log');
     if (typeof m.log === 'string' && logEl.textContent !== m.log) {
@@ -4376,6 +4430,8 @@ async function renderAsrModels() {
   // 只读元数据（服务端 --simulate），不下载视频。
   let npProbeSource = null;
   let npProbing = false;
+  // 新建页的实时处理进度（创建初稿后在本页轮询；见 startNpDraftProgress）
+  let npDraftId = '', npDraftTimer = 0, npDraftDone = false, npDraftFailed = false, npDraftErrors = 0;
   let npConfSynced = false;              // 初稿模式的置信度档位是否已按全局默认同步过
   let asrConfDefaultCache = null;         // 全局「逐句置信度」档位（null=还不知道）
   const CONF_MODES = ['off', 'fast', 'full'];
@@ -4446,7 +4502,7 @@ async function renderAsrModels() {
     add('#np-row-conf', !draft);
     add('#np-row-spk', !draft);
     add('#np-auto-wrap', !draft);
-    for (const sel of ['#np-voice-group', '#np-cast-group', '#np-source-group']) add(sel, !draft);
+    for (const sel of ['#np-voice-group', '#np-cast-group']) add(sel, !draft);
     return entries;
   }
 
@@ -4458,7 +4514,7 @@ async function renderAsrModels() {
     // 只在第一次进入时拉一次，避免每次切模式都把用户的改动冲掉。
     if (draft && !npConfSynced) { npConfSynced = true; syncConfidenceFromGlobal(); }
     $('#np-hint').textContent = draft
-      ? '创建后在后台识别，进度看项目列表'
+      ? '创建后在左侧「处理进度」里显示下载与识别进度'
       : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
     $('#np-hint').style.color = '';
     $('#np-create').textContent = draft ? '开始识别' : '创建项目';
@@ -4505,7 +4561,7 @@ async function renderAsrModels() {
     }
   }
 
-  /** 拉取识别模型状态: 填「识别来源」+「语音识别」两个下拉
+  /** 拉取识别模型状态: 填「语音识别」下拉（来源就是模型的引擎）
    *  —— 走 genRender 的统一通道，避免和生成设置面板抢同一个 select。 */
   async function refreshAsrStatus(force) {
     if (force || !genAsr) {
@@ -4533,7 +4589,113 @@ async function renderAsrModels() {
     npMaybeEnable();
   }
 
+  /** 新建项目页的「处理进度」实时预览：创建初稿后不再立刻跳走，
+   *  就在这张卡里显示下载/识别/分句/翻译的细进度（步骤、百分比、已用/剩余、最近记录），
+   *  完成后按钮变成「打开项目」。
+   *
+   *  以前这里只是一张全灰的静态预览，创建后直接跳主页，用户看不到"下载到多少、
+   *  识别到第几片、还剩多久"（截图反馈「在这里多加一些进度」）。 */
+  function stopNpDraft() {
+    clearTimeout(npDraftTimer);
+    npDraftTimer = 0;
+  }
+  function npProgressReset() {
+    stopNpDraft();
+    npDraftId = '';
+    npDraftDone = false;
+    npDraftFailed = false;
+    npDraftErrors = 0;
+    const logEl = $('#np-log');
+    if (logEl) { logEl.hidden = true; logEl.textContent = ''; }
+    const meta = $('#np-meta');
+    if (meta) meta.hidden = true;
+    const note = $('#np-progress-note');
+    if (note) { note.hidden = false; note.textContent = '创建项目后，这里会显示每一步的处理状态和记录。'; }
+    const bar = $('#np-bar-in');
+    if (bar) { bar.style.width = '0%'; bar.classList.remove('ok', 'err'); }
+    const pct = $('#np-pct');
+    if (pct) pct.textContent = '0%';
+    const msg = $('#np-msg');
+    if (msg) { msg.textContent = '尚未开始'; msg.classList.remove('dp-err'); }
+    renderDpSteps(-1, '#np-steps');
+  }
+  function npSetDraftButton() {
+    const btn = $('#np-create');
+    if (!btn) return;
+    btn.disabled = false;
+    btn.textContent = npDraftDone ? '打开项目' : (npDraftFailed ? '查看详情' : '处理中…');
+  }
+  function npShowDraftLog(log) {
+    const el = $('#np-log');
+    if (!el) return;
+    const lines = String(log || '').split('\n').filter(Boolean).slice(-8)
+      .map(l => l.replace(/^(\[\d{2}:\d{2}:\d{2}\]\s*)([\s\S]*)$/, (all, pre, rest) => pre + t(rest)));
+    if (!lines.length) { el.hidden = true; return; }
+    el.hidden = false;
+    el.textContent = lines.join('\n');
+    el.scrollTop = el.scrollHeight;
+  }
+  async function npDraftTick() {
+    if (!npDraftId) return;
+    let m;
+    try { m = await (await fetch('/api/projects/' + npDraftId + '/draft')).json(); }
+    catch {
+      /* 服务重启/项目被删时轮询会一直失败：连续 5 次就收手，别无限重试。 */
+      npDraftErrors++;
+      if (npDraftErrors >= 5) {
+        stopNpDraft();
+        npDraftFailed = true;
+        npSetDraftButton();
+        const note = $('#np-progress-note');
+        if (note) { note.hidden = false; note.textContent = '读不到处理进度（服务可能刚重启或项目已删除）。点「查看详情」核对。'; }
+        return;
+      }
+      npDraftTimer = setTimeout(npDraftTick, 2400); return;
+    }
+    npDraftErrors = 0;
+    const d = m.draft || {};
+    const curIdx = d.status === 'done' ? DP_STEPS.length - 1 : stepIndexOf(d.failedStage || d.stage);
+    renderDpSteps(curIdx, '#np-steps', { sub: dpStepSub(d), err: d.status === 'error' });
+    dpRenderDetail('np', d);
+    const bar = $('#np-bar-in');
+    if (bar) {
+      bar.style.width = Math.max(0, Math.min(100, d.progress || 0)) + '%';
+      bar.classList.toggle('ok', d.status === 'done');
+      bar.classList.toggle('err', d.status === 'error');
+    }
+    const note = $('#np-progress-note');
+    if (note) {
+      note.hidden = d.status === 'running';
+      if (d.status === 'done') note.textContent = '初稿已生成。点「打开项目」进入编辑器复核逐词与翻译。';
+      else if (d.status === 'error') note.textContent = '处理中断：' + (d.error || '未知错误') + '。可点「查看详情」重试。';
+      else if (d.status === 'paused') note.textContent = '已出稿，翻译还没完成。点「查看详情」继续翻译。';
+    }
+    npShowDraftLog(m.log);
+    if (d.status === 'running') {
+      npDraftTimer = setTimeout(npDraftTick, 1200);
+      return;
+    }
+    stopNpDraft();
+    npDraftDone = d.status === 'done';
+    npDraftFailed = !npDraftDone;      // 失败 / 等待翻译 / 已取消 → 都走「查看详情」
+    npSetDraftButton();
+    if (npDraftDone) toast('初稿已生成，可以点「打开项目」开始校对', 6000);
+    else if (npDraftFailed) toast('处理失败：' + (d.error || '未知错误'), 8000);
+  }
+  function startNpDraftProgress(id) {
+    stopNpDraft();
+    npDraftId = id;
+    npDraftDone = false;
+    npDraftFailed = false;
+    npDraftErrors = 0;
+    const note = $('#np-progress-note');
+    if (note) { note.hidden = true; note.textContent = ''; }
+    npSetDraftButton();
+    npDraftTick();
+  }
+  /** 新建项目页复位：清空表单、停掉上一轮进度预览。 */
   function npReset() {
+    npProgressReset();
     npVideo.path = npVideo.name = '';
     npSub.name = npSub.text = '';
     npVideoFile = null;
@@ -4560,7 +4722,7 @@ async function renderAsrModels() {
     setNpBadge('等待确认', 'muted');
     const probeBtn = $('#np-probe');
     if (probeBtn) { probeBtn.disabled = false; probeBtn.textContent = '解析'; }
-    renderDpSteps(-1, '#np-steps');     // 处理进度：全灰的静态预览（真正跑起来在项目列表看）
+    renderDpSteps(-1, '#np-steps');     // 处理进度：创建前是全灰预览；创建后由 npDraftTick 实时更新
     npSetMode('import');
     npSyncSpeakers();       // 逐词默认开 → 说话人可勾; 切到 SRT 时自动取消并禁用
   }
@@ -4583,16 +4745,18 @@ async function renderAsrModels() {
       return '识别模型「' + (m.name || mid) + '」还没就绪'
         + (m.blockedReason ? '：' + m.blockedReason : '（到「设置 → 识别模型」下载/检查）');
     }
-    if (!mid) return '先在「识别来源 → 语音识别」里选一个模型';
+    if (!mid) return '先在「语音识别」里选一个模型';
     if (!asrStatus.ready) return '没有已就绪的识别模型：到「设置 → 识别模型」下载一个，或换用云端识别';
     return '识别模型还没就绪';
   }
   function npDefaultHint() {
     return npMode === 'draft'
-      ? '创建后在后台识别，进度看项目列表'
+      ? '创建后在左侧「处理进度」里显示下载与识别进度'
       : '音频和波形会自动存进项目，下次打开就不用重新生成；字幕边改边存';
   }
   function npMaybeEnable() {
+    /* 初稿已经在跑：按钮是「打开项目 / 查看详情」，不要被表单变化改回禁用/改文案。 */
+    if (npDraftId) { npSetDraftButton(); return; }
     const npUrlNow = (($('#np-url') || {}).value || '').trim();
     const hasSource = !!npVideo.path || (npMode === 'draft' && !!npUrlNow);
     // 初稿模式不需要字幕文件, 但必须有可用的识别模型
@@ -4606,7 +4770,7 @@ async function renderAsrModels() {
     let why = '';
     if (!hasSource) why = npMode === 'draft' ? '先粘贴视频链接（或选择视频文件）' : '先选择要导入的字幕文件或项目包';
     else if (!hasSubOrPack) why = '先选择字幕文件或项目包';
-    else if (!hasModel) why = '先在「识别来源 → 语音识别」里选一个模型';
+    else if (!hasModel) why = '先在「语音识别」里选一个模型';
     else if (!regionOk) why = '时间区间无效：结束时间要晚于开始时间';
     else if (!draftReady) why = npModelBlockReason();
     $('#np-create').disabled = !!why;
@@ -5115,6 +5279,12 @@ async function renderAsrModels() {
     }
   });
   $('#np-create').addEventListener('click', async () => {
+    /* 正在创建初稿时按钮变成「处理中… / 打开项目 / 查看详情」：
+     * 点它直接去对应页面，不要重复提交一次创建请求。 */
+    if (npDraftId) {
+      location.hash = npDraftDone ? '#/project/' + npDraftId : '#/details/' + npDraftId;
+      return;
+    }
     const isDraft = npMode === 'draft';
     const npUrl = normalizeVideoUrl(($('#np-url') || {}).value);
     // ── 链接模式: 交给服务端下载 + 跑初稿（视频落在项目目录里） ──
@@ -5151,15 +5321,16 @@ async function renderAsrModels() {
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
         const m0 = await r0.json();
         if (!r0.ok) { toast(m0.error || '创建失败', 4200); return; }
-        location.hash = '#/home';
-        toast('开始下载了，不用等着；进度看项目列表', 5200);
+        /* 不跳走：留在新建页，把下载/识别/分句/翻译的细进度直接铺在「处理进度」卡里。 */
+        if (m0.id) startNpDraftProgress(m0.id);
+        toast('已开始下载并识别，进度就在左侧「处理进度」里', 5600);
       } catch (e) {
         toast('创建失败: ' + e.message, 3600);
       } finally {
         npSubmitting = false;
         $('#np-open-settings').disabled = false;
-        btn0.textContent = '开始识别';
-        npMaybeEnable();
+        if (npDraftId) npSetDraftButton();
+        else { btn0.textContent = '开始识别'; npMaybeEnable(); }
       }
       return;
     }
@@ -5272,8 +5443,9 @@ async function renderAsrModels() {
       const m = await r.json();
       if (!r.ok) { toast(m.error || '创建失败', 4000); return; }
       if (isDraft) {
-        location.hash = '#/home';         // 项目立刻进列表，进度在卡片上
-        toast('开始识别了，不用等着；进度看项目列表', 5200);
+        /* 同上：留在本页看实时进度（下载/识别/分句/翻译），完成后按钮变「打开项目」。 */
+        if (m.id) startNpDraftProgress(m.id);
+        toast('已开始识别，进度就在左侧「处理进度」里', 5200);
       } else {
         lastSavedText = npSub.text;
         location.hash = '#/project/' + m.id;
@@ -5284,8 +5456,11 @@ async function renderAsrModels() {
     } finally {
       npSubmitting = false;
       $('#np-open-settings').disabled = false;
-      btn.textContent = npMode === 'draft' ? '开始识别' : '创建项目';
-      npMaybeEnable();
+      if (npDraftId) npSetDraftButton();
+      else {
+        btn.textContent = npMode === 'draft' ? '开始识别' : '创建项目';
+        npMaybeEnable();
+      }
     }
   });
 
@@ -5335,6 +5510,8 @@ async function renderAsrModels() {
     if (!detailsMatch && previousRoute.startsWith('#/details/')) {
       stopDp(); dpId = ''; detailLoadToken++;
     }
+    /* 离开新建页就停掉它的进度轮询；回到 #/new 时若作业还在，用户可以从项目列表/详情页继续看。 */
+    if (h !== '#/new') stopNpDraft();
     if (detailsMatch) {
       const id = detailsMatch[1];
       if (previousRoute !== h) {

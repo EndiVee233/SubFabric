@@ -293,6 +293,10 @@ assert.equal(document.body.dataset.workspace, 'editor', 'direct Studio #/editor 
 assert.equal($('sf-nav').hidden, true, 'direct editor hides primary navigation');
 assert.equal($('sf-topbar').hidden, true, 'direct editor hides application topbar');
 assert.equal(Boolean($('ass-style-group').inert), false, 'direct editor style controls remain available');
+if (probe !== 'initial-editor') {
+  assert.equal($('app').classList.contains('is-editor-panels-entering'), true,
+    'refreshing directly into the editor still starts the panel entrance');
+}
 
 // Media decoding may report an old time while a long-video seek is pending.
 // Drive the real adapter events: the visible fill/time must follow input immediately.
@@ -821,7 +825,11 @@ assert.equal(created.length, 1, 'upload completion submits exactly one project')
 assert.deepEqual(created[0], { name: 'Original title', video: { path: 'videos/original.webm', name: 'original.webm' }, subtitle: { name: 'original.srt', text: subtitle.replace(/^\uFEFF/, '') } }, 'submitted payload preserves all original materials after blocked navigation');
 assert.equal(location.hash, '#/project/created', 'completed submission enters its project');
 assert.equal(state.project?.id, 'created', 'real project loader opens the synthetic created project');
+assert.equal($('app').classList.contains('is-editor-panels-entering'), true,
+  'entering the editor starts the three-panel entrance');
 await navigate('#/home');
+assert.equal($('app').classList.contains('is-editor-panels-entering'), false,
+  'leaving the editor clears the three-panel entrance');
 assert.equal(location.hash, '#/home', 'navigation unlocks after completion');
 assert.deepEqual(unexpected, [], 'all fetches stay in the explicit in-memory API map');
 assert.deepEqual(asyncErrors, []);

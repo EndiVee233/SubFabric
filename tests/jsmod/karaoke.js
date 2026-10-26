@@ -13,16 +13,43 @@ export function realignTargetKey(sentence) {
 }
 export function applyRealignItems(doc, kar, items, context) {
   const plans = [], used = new Set();
+  const repair = context && context.repairWords === true;
   let skipped = 0;
   for (const it of items) {
-    if (!it || it.projectId !== context.projectId || it.sourceRevision !== context.revision) { skipped++; continue; }
-    const candidates = kar.sentences.filter(s => s.words.length && realignTargetKey(s) === it.targetKey);
-    const sent = candidates.length === 1 ? candidates[0] : null;
-    if (!sent || used.has(sent) || sent.text !== it.text || !Array.isArray(it.words) || it.words.length !== sent.words.length
-        || it.words.some((w, i) => w.w !== sent.words[i].w || !Number.isFinite(w.s) || !Number.isFinite(w.e)
-          || w.e <= w.s || w.s < sent.start - 0.01 || w.e > sent.end + 0.01
-          || (i > 0 && w.s < it.words[i - 1].s))) { skipped++; continue; }
-    const words = sent.words.map((w, i) => ({ ...w, s: it.words[i].s, e: it.words[i].e }));
+    if (!it || it.projectId !== context.projectId) { skipped++; continue; }
+    /* 不再只认「整份稿件版本」：全片对齐可能跑几分钟，用户顺手改一条别的字幕就会让
+     * sourceRevision 失配，旧实现因此把**整批**都跳过（用户看到「0 句 / 265 句没对上」）。
+     * 改为逐条核对 targetKey（含文本/起止/词序列/事件位置）或修复模式下的「起止+文本」，
+     * 只有这一条真的变了才跳过；别处的编辑不影响本条的写回。 */
+    let candidates = kar.sentences.filter(s => s.words.length && realignTargetKey(s) === it.targetKey);
+    let sent = candidates.length === 1 ? candidates[0] : null;
+    if (!sent && repair) {
+      // 词数异常时旧 words 可能已经和文本对不上，targetKey 仍应一致；行号/重复台词
+      // 让 key 撞车时退回「开始+结束+文本」唯一定位。
+      const near = kar.sentences.filter(s => s.words.length && s.text === it.text
+        && Math.abs(Number(s.start) - Number(it.start)) < 0.002
+        && Math.abs(Number(s.end) - Number(it.end)) < 0.002);
+      if (near.length === 1) sent = near[0];
+    }
+    if (!sent || used.has(sent) || sent.text !== it.text) { skipped++; continue; }
+    const aligned = Array.isArray(it.words) ? it.words : [];
+    const timeOk = aligned.length > 0 && aligned.every((w, i) => w && w.e > w.s
+      && Number.isFinite(w.s) && Number.isFinite(w.e)
+      && w.s >= sent.start - 0.01 && w.e <= sent.end + 0.01
+      && (i === 0 || w.s >= aligned[i - 1].s));
+    if (!timeOk) { skipped++; continue; }
+    /* 逐词时间要落到**文本的实际分词**上，否则 buildWordSpecs 会退回按字母数重铺。
+     *  · 普通路径：新词序列必须与原句词序列逐词相同（只改时间，不改分词）；
+     *  · 修复路径：异常行本来就有缺词/多词，改为要求对齐结果的词序列等于
+     *    splitEnglishWords(文本) —— 这正是整条流程用来判断"缺词/多词"的口径。 */
+    const targetToks = splitEnglishWords(sent.text);
+    const sameAsOld = aligned.length === sent.words.length
+      && aligned.every((w, i) => w.w === sent.words[i].w);
+    const repaired = repair && aligned.length === targetToks.length
+      && aligned.every((w, i) => w.w === targetToks[i]);
+    if (!sameAsOld && !repaired) { skipped++; continue; }
+    const words = repaired ? aligned.map(w => ({ w: w.w, s: w.s, e: w.e }))
+      : sent.words.map((w, i) => ({ ...w, s: it.words[i].s, e: it.words[i].e }));
     const specs = buildWordSpecs({ ...sent, words });
     const visible = assPlainText(sent.events[0].text);
     if (specs.some(s => assPlainText(s.text) !== visible)) { skipped++; continue; }

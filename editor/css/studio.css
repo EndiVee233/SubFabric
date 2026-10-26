@@ -1789,6 +1789,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .dp-step.done { color: var(--text-1); }
 .dp-step.done .n { border-color: rgba(46, 204, 113, .65); color: #58d68d; }
 .dp-step.off { opacity: .38; }
+.dp-step.is-err { color: var(--danger); }
+.dp-step.is-err .n { border-color: var(--danger); color: var(--danger); box-shadow: none; }
 
 .dp-bar { height: 8px; border-radius: 999px; background: var(--bg-3); overflow: hidden; }
 .dp-bar-in {
@@ -1808,6 +1810,22 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 }
 .dp-msg { min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dp-msg.dp-err { color: var(--danger); }
+/* 进度详情：当前阶段 / 已用 / 预计剩余 / 下载量与速度（能从消息里解析出来时才显示）。 */
+.dp-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  margin-top: 7px; font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums;
+}
+.dp-meta > span { white-space: nowrap; }
+.dp-meta > span:empty { display: none; }
+/* 当前步骤后面跟一行小字（下载 4% / 第 3/10 片），不用另开一行就能看出细进度 */
+.dp-step-sub { font-size: 10.5px; font-weight: 500; color: var(--text-2); margin-left: 2px; }
+.dp-step.current .dp-step-sub { color: var(--accent); }
+.np-mini-log {
+  margin: 8px 0 0; padding: 7px 9px; min-height: 64px; max-height: 118px;
+  font-size: 10.8px; line-height: 1.55; flex: 1;
+}
+.np-progress-box-note[hidden] { display: none; }
+.np-progress-box .dp-meta { margin-top: 5px; }
 /* 新建项目处理进度里的进度内容小框：当前状态 + 后续记录占位。 */
 .np-progress-box {
   margin-top: 12px; padding: 9px 12px 10px;
@@ -5407,6 +5425,28 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 }
 .sf-studio[data-motion=off] #app.is-material-editor-entering,
 .sf-studio[data-motion=off] #cue-list.is-my-cue-entering .cue-card[data-my-cue] { animation:none; }
+
+/* 编辑器三大板块入场（2026-10-26）：视频区 → 右侧列表 → 时间轴，逐个淡入并轻微上浮。
+   与主页卡片同一条 `cubic-bezier(.2,.8,.2,1)` 曲线；UWP 沿用 180ms 的 `--sf-card-duration`，
+   classic/material 为 420ms。只动 opacity/translate，不改布局，所以时间轴 canvas 尺寸不受影响。
+   由 studio.js 的 animateEditorPanels() 在**每次进入编辑器/切换稿件**时加一次类。 */
+@keyframes sf-editor-panel-in {
+  from { opacity:0; translate:0 14px; }
+  to { opacity:1; translate:0 0; }
+}
+#app.is-editor-panels-entering :is(#stage-wrap, #editor-panel, #timeline-panel) {
+  animation: sf-editor-panel-in var(--sf-card-duration,.42s) cubic-bezier(.2,.8,.2,1) both;
+  animation-delay: var(--sf-panel-delay,0ms);
+}
+#app.is-editor-panels-entering #stage-wrap { --sf-panel-delay:0ms; }
+#app.is-editor-panels-entering #editor-panel { --sf-panel-delay:90ms; }
+#app.is-editor-panels-entering #timeline-panel { --sf-panel-delay:180ms; }
+@media (prefers-reduced-motion:reduce) {
+  #app.is-editor-panels-entering :is(#stage-wrap, #editor-panel, #timeline-panel) { animation:none; }
+}
+.sf-studio[data-motion=off] #app.is-editor-panels-entering :is(#stage-wrap, #editor-panel, #timeline-panel) {
+  animation:none;
+}
 .sf-studio[data-design=uwp] {
   --sf-card-duration:var(--uwp-enter-duration,180ms);
   --sf-card-delay-scale:1;

@@ -75,6 +75,88 @@ def find_ffmpeg(explicit: str = "") -> Optional[str]:
     return w or None
 
 
+# ── JavaScript 运行时（yt-dlp 的 YouTube 完整解析需要） ─────────────────────
+# 2025 年底以后，yt-dlp 解析 YouTube 的 nsig/挑战脚本需要一个 JS 运行时；默认只启用
+# Deno。没有运行时它会退回「jsl」兼容客户端并打一条英文 WARNING —— 用户会把它当成
+# 故障（截图反馈）。这里主动找本机已有的 Node.js / Deno / Bun / QuickJS，交给
+# yt-dlp 的 `js_runtimes`，能拿到完整格式，也不再出现那条警告。
+_RUNTIME_NAMES = {"deno": "deno", "node": "node", "nodejs": "node", "bun": "bun",
+                  "qjs": "quickjs", "quickjs": "quickjs", "quickjs-ng": "quickjs"}
+_RUNTIME_PRIORITY = {"deno": 0, "node": 1, "quickjs": 2, "bun": 3}
+
+
+def _runtime_from_path(path: str) -> tuple[str, str]:
+    """路径 → (运行时名, 路径)。认不出名字时返回空名。"""
+    p = Path(path)
+    stem = p.stem.lower()
+    # qjs / qjs-ng / quickjs 的 exe 名不一定带版本号
+    if stem.startswith("qjs"):
+        return "quickjs", str(p)
+    for key, name in _RUNTIME_NAMES.items():
+        if stem == key or stem.startswith(key):
+            return name, str(p)
+    return "", str(p)
+
+
+def _runtime_version(name: str, path: str) -> str:
+    try:
+        import subprocess
+        if name == "quickjs":
+            args = [path, "--help"]
+        else:
+            args = [path, "--version"]
+        out = subprocess.run(args, capture_output=True, text=True, timeout=6,
+                             encoding="utf-8", errors="replace")
+        text = (out.stdout or "") + (out.stderr or "")
+        m = re.search(r"v?(\d+\.\d+(?:\.\d+)?)", text)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+def find_js_runtimes() -> list[tuple[str, str]]:
+    """本机可用的 JS 运行时，按 yt-dlp 的优先级返回 [(name, path)]。
+    显式环境变量（SUBFABRIC_JS_RUNTIME / SUBFABRIC_NODE_PATH）优先于 PATH 探测。"""
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(name: str, path: str) -> None:
+        if not name or not path:
+            return
+        try:
+            if not Path(path).is_file():
+                return
+        except OSError:
+            return
+        key = str(Path(path).resolve()).lower()
+        if key in seen:
+            return
+        seen.add(key)
+        found.append((name, path))
+
+    explicit = os.environ.get("SUBFABRIC_JS_RUNTIME", "").strip()
+    if explicit:
+        # 支持 `node:C:\path\node.exe`、单条路径、以及 os.pathsep 分隔的多条
+        for raw in re.split(r"[;\n]+", explicit):
+            raw = raw.strip()
+            if not raw:
+                continue
+            if ":" in raw and not re.match(r"^[A-Za-z]:[\\/]", raw):
+                name, path = [x.strip() for x in raw.split(":", 1)]
+                add(_RUNTIME_NAMES.get(name.lower(), name.lower()), path)
+            else:
+                add(*_runtime_from_path(raw))
+    node_hint = os.environ.get("SUBFABRIC_NODE_PATH", "").strip()
+    if node_hint:
+        add("node", node_hint)
+    for exe in ("deno", "node", "bun", "qjs"):
+        w = shutil.which(exe)
+        if w:
+            add(*_runtime_from_path(w))
+    found.sort(key=lambda x: _RUNTIME_PRIORITY.get(x[0], 9))
+    return found
+
+
 def make_logger():
     """yt-dlp 的 logger: 只把有意义的话转发成 log 行（debug 丢弃, 免得刷屏）。"""
     class _L:
@@ -152,6 +234,9 @@ def main(argv=None) -> int:
             return 3
         yt_dlp = ytdlp_mod.require()
         log("下载引擎 yt-dlp " + (ytdlp_mod.installed_version() or "?"))
+        # YouTube 完整解析需要的 JS 运行时（见 find_js_runtimes 的说明）：
+        # 有就交给 yt-dlp，没有就明确写一条中文日志，避免用户把英文 WARNING 当故障。
+        js_runtimes = find_js_runtimes()
 
         fmt = sel.build_format_selector(url, a.quality, {}, a.custom_format)
         # 日志里只留开头一段: bilibili 的 best 链会枚举"画质×编码×音质"几千字符, 整条打进日志会把界面刷爆
@@ -209,6 +294,14 @@ def main(argv=None) -> int:
         if ff:
             opts["ffmpeg_location"] = ff
             log("ffmpeg: " + ff)
+        if js_runtimes:
+            opts["js_runtimes"] = {name: {"path": p} for name, p in js_runtimes}
+            desc = "、".join(
+                ("%s %s" % (name, _runtime_version(name, p))).strip() for name, p in js_runtimes)
+            log("JS 运行时: " + desc + "（YouTube 完整格式解析已启用）")
+        else:
+            log("未找到 JavaScript 运行时（Node.js / Deno / Bun）：YouTube 会退回兼容客户端，"
+                "个别高清格式可能缺失；安装 Node.js 或 Deno 后自动启用完整解析")
         if a.proxy:
             opts["proxy"] = a.proxy
             log("代理: " + a.proxy)

@@ -114,6 +114,19 @@ const baseline = JSON.parse(fs.readFileSync(path.join(root, 'docs/ui-integration
 const crypto = await import('node:crypto');
 assert.equal(fs.existsSync(path.join(root, 'editor/index.html')), false, 'legacy entry removed');
 assert.match(fs.readFileSync(path.join(root, 'editor/js/main.js'), 'utf8'), /allocateWordTimes/, 'legacy editor keeps the shared letter-weighted word allocator');
+/* 编辑器三大板块入场：视频 → 右侧列表 → 时间轴，逐个淡入上浮，跟随主题时长与“减少动效”。 */
+assert.match(studioCss, /@keyframes sf-editor-panel-in\s*\{[\s\S]*?translate:0 14px/, 'editor panels use the fade/float entrance');
+assert.match(studioCss, /#app\.is-editor-panels-entering :is\(#stage-wrap, #editor-panel, #timeline-panel\)/, 'editor panels entrance covers the three work areas');
+assert.match(studioCss, /#app\.is-editor-panels-entering #stage-wrap \{ --sf-panel-delay:0ms; \}/, 'video stage enters first');
+assert.match(studioCss, /#app\.is-editor-panels-entering #editor-panel \{ --sf-panel-delay:90ms; \}/, 'right list enters second');
+assert.match(studioCss, /#app\.is-editor-panels-entering #timeline-panel \{ --sf-panel-delay:180ms; \}/, 'timeline enters third');
+assert.match(studioCss, /prefers-reduced-motion:reduce[\s\S]*?#app\.is-editor-panels-entering :is\(#stage-wrap, #editor-panel, #timeline-panel\) \{ animation:none; \}/,
+  'editor panels entrance respects reduced motion');
+assert.match(studioCss, /\[data-motion=off\][\s\S]*?#app\.is-editor-panels-entering/, 'editor panels entrance respects data-motion=off');
+assert.match(studioJs, /function animateEditorPanels\(\)/, 'studio.js owns the editor panels entrance');
+assert.match(studioJs, /if \(firstRoute \|\| !wasEditor \|\| h !== previous\) animateEditorPanels\(\)/, 'entrance replays on refresh / editor entry / project switch only');
+assert.match(studioJs, /const firstRoute = !routeBooted/, 'refresh is treated as a first route so the entrance still plays');
+assert.match(studioJs, /clearEditorPanelsEntrance\(\)/, 'leaving the editor clears the entrance state');
 const server = await isolatedServer({ source: process.argv[2] ? path.resolve(process.argv[2]) : undefined });
 try {
   async function entry(value) {

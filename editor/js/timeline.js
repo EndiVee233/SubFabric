@@ -47,6 +47,18 @@ const WORD_MARK = 'rgba(214,214,228,.85)';    // 逐词标记块
 const WORD_MARK_HOT = 'rgba(255,255,255,.95)';// 拖动中的标记
 const WORD_TEXT = '#e9e9f0';                  // 英文词文本(浅色, 与参考图一致)
 
+/* ── 字幕块入场（2026-10-26）────────────────────────────────────────────
+ * 时间轴板块的淡入结束后，可见字幕块按从左到右的顺序逐个淡入（只淡入，不上浮）。
+ * 画布上的块不是 DOM，没法用 CSS 动画；这里用「起始时间 + 每块延迟」在绘制时算
+ * 每一块的 opacity/位移，由 main.js 的既有 rAF 主循环驱动（drawIfNeeded 在入场窗口内
+ * 保持重绘）。时间轴面板的 CSS 动画一结束（或刷新时已在播）调用 _armBlockEntrance()，
+ * 它会把 startAt 放到面板动画结束之后，因此块不会在面板还在淡入时就先冒出来。 */
+const BLOCK_ENTER_STAGGER = 28;       // 相邻块延迟（放慢后）
+const BLOCK_ENTER_DUR = 480;          // 单块淡入时长
+const BLOCK_ENTER_MAX_DELAY = 392;    // 延迟封顶（块再多也不会等太久）
+const BLOCK_ENTER_BLUR = 300;         // 块全部浮现后，遮罩模糊度渐入的时长
+const BLOCK_ENTER_WINDOW = BLOCK_ENTER_MAX_DELAY + BLOCK_ENTER_DUR + BLOCK_ENTER_BLUR + 80;
+
 /**
  * 首词已经是整块字幕的起点，不再额外画一根逐词灰色标记。
  *
@@ -419,6 +431,24 @@ export class Timeline {
     // 交互/数据/布局任何会改变画面的地方都要置脏; 2s 心跳兜底, 防漏标导致画面永久过期。
     this._dirty = true;
     this._lastDrawAt = 0;
+    // 字幕块入场：_blockEnterAt = 第一块开始淡入的时刻；_blockEnterNow 每次 draw 取一次。
+    this._blockEnterArmed = false;
+    this._blockEnterAt = 0;
+    this._blockEnterNow = 0;
+    this._blockEnterAdjusted = false;
+    this._blockEnterDrawn = false;  // 是否已经画过第一帧入场（防主线程卡顿后整段动画被跳过）
+    this._lanesRev = 0;             // 轨道/块数据版本（离屏遮罩缓存失效用）
+    this._enterSharp = null;        // 入场用：不模糊的块内压暗层（浮现期间）
+    this._enterBlur = null;         // 入场用：模糊版遮罩（浮现结束后渐入）
+    this._enterBackdropKey = '';
+    this._enterBase = null;         // 入场用：静态底图（底/标尺/波形/轨道底），逐帧不再重画
+    this._enterBaseKey = '';
+    this._enterSprites = null;      // 入场用：所有可见块的最终样子（整层离屏位图）
+    this._enterRects = null;        //  每块的裁剪矩形 + 入场顺序
+    this._enterSpriteKey = '';
+    this._blockEnterWaveWait = false;   // 等波形就绪再开始浮现
+    this._blockEnterWaveExpected = null; // null=未知 / true=等项目 peaks / false=无波形
+    this._blockEnterWaveTimer = 0;
 
     /* ── 块内文字用的字体 ──────────────────────────────────────────────
      * 默认用内置的 generic 字体（见 ZH_FONT / EN_FONT）。
@@ -436,8 +466,142 @@ export class Timeline {
     this.onBlockFonts = null;     // 字体变化回调 → main.js 用来重画 + 失效度量缓存
 
     this._bindEvents();
+    this._bindBlockEntrance();
     new ResizeObserver(() => this._resize()).observe(canvas.parentElement);
     this._resize();
+  }
+
+  /* ── 字幕块入场 ────────────────────────────────────────────────────── */
+  /** 监听编辑器板块入场；刷新时 studio.js 的事件早于本类构造，改看 #app 的类补一次。 */
+  _bindBlockEntrance() {
+    try {
+      window.addEventListener('sf-editor-panels-enter', () => this._armBlockEntrance());
+    } catch { /* 测试/旧浏览器没有 window 事件也不影响绘制 */ }
+    try {
+      const app = document.getElementById('app');
+      if (app && app.classList && app.classList.contains('is-editor-panels-entering')) this._armBlockEntrance();
+    } catch { /* ignore */ }
+  }
+
+  /** 时间轴面板 CSS 动画还剩多久（毫秒）。用 WAAPI 读真实进度；取不到再退回 CSS 计算值。 */
+  _panelEntranceWait() {
+    let fallback = 600;
+    try {
+      const panel = this.canvas && this.canvas.closest ? this.canvas.closest('#timeline-panel') : null;
+      if (panel && typeof panel.getAnimations === 'function') {
+        const anims = panel.getAnimations() || [];
+        const a = anims.find(x => String((x && x.animationName) || '') === 'sf-editor-panel-in');
+        if (a && a.effect) {
+          const timing = a.effect.getComputedTiming ? a.effect.getComputedTiming() : {};
+          const total = Number(timing.delay || 0) + Number(timing.duration || 0);
+          const elapsed = Number(a.currentTime) || 0;
+          if (a.playState === 'finished' || (Number.isFinite(total) && elapsed >= total)) return 0;
+          if (Number.isFinite(total) && total > 0) return Math.max(0, total - elapsed);
+        }
+      }
+      if (panel && window.getComputedStyle) {
+        const cs = getComputedStyle(panel);
+        const ms = (v) => {
+          const s = String(v || '').split(',')[0].trim();
+          const n = parseFloat(s);
+          return Number.isFinite(n) ? (s.endsWith('ms') ? n : n * 1000) : 0;
+        };
+        const total = ms(cs.animationDelay) + ms(cs.animationDuration);
+        if (total > 0) return total;
+      }
+    } catch { /* 取不到就按默认 600ms */ }
+    return fallback;
+  }
+
+  /** 安排字幕块入场：等时间轴面板的淡入结束后再开始（+20ms 余量）。
+   *  另外等**波形就绪/渲染**后才真正开始（用户要求"波形图渲染完毕后再播放"）。 */
+  _armBlockEntrance() {
+    try {
+      const reduce = typeof window.matchMedia === 'function'
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduce || document.body?.dataset?.motion === 'off') return;
+    } catch { /* 无 matchMedia 时照常播 */ }
+    const now = performance.now();
+    this._blockEnterArmed = true;
+    this._blockEnterAdjusted = false;
+    this._blockEnterDrawn = false;
+    this._blockEnterAt = now + 20 + this._panelEntranceWait();
+    this._blockEnterNow = now;
+    this._enterSharp = null;
+    this._enterBlur = null;
+    this._enterBackdropKey = '';
+    this._enterBase = null;
+    this._enterBaseKey = '';
+    this._enterSprites = null;
+    this._enterRects = null;
+    this._enterSpriteKey = '';
+    this._blockEnterWaveWait = !this._hasWave() && this._blockEnterWaveExpected !== false;
+    clearTimeout(this._blockEnterWaveTimer);
+    this._blockEnterWaveTimer = 0;
+    if (this._blockEnterWaveWait) {
+      /* 没有波形可等（无音轨/示例项目）时不要永久藏块：2.5s 后按普通节奏开始。 */
+      this._blockEnterWaveTimer = setTimeout(() => this._releaseBlockEntranceWave(false), 2500);
+    }
+    this._dirty = true;
+  }
+
+  _hasWave() {
+    return !!((this.peaks && this.peaks.data && this.peaks.data.length)
+      || (this.waveformReady && this.waveform));
+  }
+
+  /** 稿件解析/首次构建完成后重新起算入场。
+   *
+   *  为什么需要它：面板入场是路由一进来就排的，但大稿件同步解析可能超过整段动画窗口；
+   *  等 rAF 恢复时 `_blockEnterAt + BLOCK_ENTER_WINDOW` 已经过去，块会直接以全不透明出现
+   *  （用户实测「所有字幕块一下闪出来」）。解析结束时重新 arm 一次，确保动画从**内容真正
+   *  可显示**之后才开始，而不是按打开瞬间计时。 */
+  restartBlockEntrance() {
+    if (!this.ctx) return;
+    this._armBlockEntrance();
+  }
+
+  /** 项目侧告知"这个稿件是否应该等波形"（handlePrepare 之后调用）。 */
+  setBlockEntranceWaveExpected(expect) {
+    this._blockEnterWaveExpected = !!expect;
+    if (!this._blockEnterArmed) return;
+    if (!expect || this._hasWave()) { this._releaseBlockEntranceWave(this._hasWave()); return; }
+    /* 上一个稿件可能留下了 false（无波形），而这一次需要等：只要还没到开始时间就补上等待。 */
+    if (!this._blockEnterWaveWait && performance.now() < this._blockEnterAt) {
+      this._blockEnterWaveWait = true;
+      clearTimeout(this._blockEnterWaveTimer);
+      this._blockEnterWaveTimer = setTimeout(() => this._releaseBlockEntranceWave(false), 2500);
+      this._dirty = true;
+    }
+  }
+
+  /** 波形刚画上去时由 setPeaks / setWaveform 调用。 */
+  _noteWaveRendered() {
+    if (this._blockEnterArmed && this._blockEnterWaveWait && this._hasWave()) {
+      this._releaseBlockEntranceWave(true);
+    }
+  }
+
+  _releaseBlockEntranceWave(rendered) {
+    if (!this._blockEnterWaveWait) return;
+    this._blockEnterWaveWait = false;
+    clearTimeout(this._blockEnterWaveTimer);
+    this._blockEnterWaveTimer = 0;
+    const now = performance.now();
+    // 波形刚渲染：再等 ~80ms（两帧左右）确保波形这一帧已经画完，然后开始浮块。
+    this._blockEnterAt = Math.max(this._blockEnterAt, now + (rendered ? 80 : 20));
+    this._dirty = true;
+  }
+
+  /** 第 rank 块（可见顺序，从 0 起）的入场进度 0..1。 */
+  _blockEnterProgress(rank) {
+    if (!this._blockEnterArmed) return 1;
+    const n = Math.max(0, Number(rank) | 0);
+    const delay = Math.min(n * BLOCK_ENTER_STAGGER, BLOCK_ENTER_MAX_DELAY);
+    const t = (this._blockEnterNow - (this._blockEnterAt + delay)) / BLOCK_ENTER_DUR;
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    return 1 - Math.pow(1 - t, 3);       // ease-out：先快后慢，最后轻轻落位
   }
 
   setVideo(video) { this.video = video; this.film.reset(video); this._dirty = true; }
@@ -475,7 +639,7 @@ export class Timeline {
     this._waveUrl = url || null;
     if (!url) return;
     const img = new Image();
-    img.onload = () => { this.waveform = img; this.waveformReady = true; this._dirty = true; };
+    img.onload = () => { this.waveform = img; this.waveformReady = true; this._dirty = true; this._noteWaveRendered(); };
     img.src = url;
   }
 
@@ -496,10 +660,12 @@ export class Timeline {
     const ch = peaks.ch || 2;
     this.peaks = { data: peaks.data, rate: peaks.rate || 100, ch };
     this._waveCache = null;      // 数据换了 → 之前按列算好的包络作废
+    this._noteWaveRendered();    // 入场若在等波形：现在开始浮块
   }
 
   setLanes(lanes) {
     this._dirty = true;
+    this._lanesRev = (this._lanesRev || 0) + 1;
     this.lanes = lanes.map((l, i) => {
       const lane = Object.assign({ color: LANE_COLORS[i % LANE_COLORS.length] }, l);
       // 合并轨(中英同起止): 高度盖住原来两条轨 + 中间间隙 → 一个块无空隙
@@ -515,13 +681,39 @@ export class Timeline {
       this._viewFromLanes = true;
       this._applyDefaultView();
     }
+    /* 时间轴面板淡入时可能还没有字幕数据（刷新后项目异步载入）。数据晚到超过原定起点时
+     * 把入场整体后移一次，否则块会"直接以半透明/已完成"的状态出现。 */
+    if (this._blockEnterArmed && !this._blockEnterAdjusted) {
+      const hasCues = this.lanes.some(l => l.cues && l.cues.length);
+      if (hasCues) {
+        this._blockEnterAdjusted = true;
+        const now = performance.now();
+        if (now > this._blockEnterAt) this._blockEnterAt = now + 30;
+      }
+    }
+    /* 入场期间预建两层遮罩：这一步放在数据刚到时（面板还在淡入），
+     * 避免第一块开始浮现的那一帧才做 blur 造成卡顿。 */
+    if (this._blockEnterArmed) {
+      try { this._ensureEnterBackdrops(this._cssW()); } catch { /* 建不出来就退回直绘 */ }
+    }
   }
 
   setDuration(d) {
     this._dirty = true;
     const prev = this.duration;
+    const wasReady = prev > 0;
     this.duration = d || 0;
     if (!this._viewReady || Math.abs(this.duration - prev) > 0.05) this._applyDefaultView();
+    if (this._blockEnterArmed && !this._blockEnterAdjusted && this.duration > 0) {
+      this._blockEnterAdjusted = true;
+      const now = performance.now();
+      if (now > this._blockEnterAt) this._blockEnterAt = now + 30;
+    } else if (this._blockEnterArmed && this.duration > 0 && !wasReady) {
+      /* 刷新时视频元数据可能比面板动画晚到：之前的入场起点已经过去，块还没画过。
+       * 等时长就绪后重新起算一次，保证刷新仍能看到逐个浮现。 */
+      const now = performance.now();
+      if (now > this._blockEnterAt) this._blockEnterAt = now + 30;
+    }
   }
 
   setSelected(ref) { this.selected = ref; this._dirty = true; }
@@ -1214,7 +1406,11 @@ export class Timeline {
    *  心跳是安全网: 万一有哪处状态变更漏标脏, 画面最多过期 2 秒, 不会永久错。 */
   drawIfNeeded(t, playing) {
     const now = performance.now();
-    if (playing || this._dirty || t !== this._lastT || now - this._lastDrawAt > 2000) {
+    /* 入场等待期（面板还在淡入）不用每帧重画：arm 时置脏画一帧把块藏起来即可，
+       真正开始后才连续重绘。 */
+    const blockAnimating = this._blockEnterArmed && now >= this._blockEnterAt
+      && now < this._blockEnterAt + BLOCK_ENTER_WINDOW;
+    if (playing || this._dirty || blockAnimating || t !== this._lastT || now - this._lastDrawAt > 2000) {
       return this.draw(t, playing);
     }
   }
@@ -1223,16 +1419,37 @@ export class Timeline {
     this._dirty = false;
     this._lastDrawAt = performance.now();
     this._lastT = t;
+    this._blockEnterNow = this._lastDrawAt;
+    /* 主线程被大稿件解析/自绘卡住时，第一帧可能已经越过整段动画窗口。
+     * 这时重排一次起点，保证用户看到的是逐块浮现，而不是全部一下子出现。 */
+    if (this._blockEnterArmed && !this._blockEnterWaveWait
+        && this._blockEnterNow > this._blockEnterAt && !this._blockEnterDrawn) {
+      this._blockEnterDrawn = true;
+      if (this._blockEnterNow >= this._blockEnterAt + BLOCK_ENTER_WINDOW) {
+        this._blockEnterAt = this._blockEnterNow + 20;
+      }
+    }
     const ctx = this.ctx;
     const W = this._cssW(), H = this._cssH();
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = this.colors.bg;
-    ctx.fillRect(0, 0, W, H);
     if (!this.duration) {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = this.colors.bg;
+      ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = this.colors.ruler;
       ctx.font = '13px "Microsoft YaHei", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('打开视频后，这里显示时间轴', W / 2, H / 2);
+      if (this._blockEnterArmed && this._blockEnterNow >= this._blockEnterAt + BLOCK_ENTER_WINDOW) {
+        this._blockEnterArmed = false;
+        this._enterSharp = null;
+        this._enterBlur = null;
+        this._enterBackdropKey = '';
+        this._enterBase = null;
+        this._enterBaseKey = '';
+        this._enterSprites = null;
+        this._enterRects = null;
+        this._enterSpriteKey = '';
+      }
       return;
     }
 
@@ -1246,16 +1463,46 @@ export class Timeline {
       }
     }
 
-    if (this._filmH() > 0) this._drawFilmstrip(ctx, W);   // 空间不够时 _filmH()=0, 这一帧不画
-    this._drawRuler(ctx, W);
-    this._drawWaveBand(ctx, W);
+    /* 入场期间把底/标尺/波形/轨道底缓存成一张底图、把所有可见块预渲染成一张块层：
+     * 每帧只 drawImage 底图 + 按块裁剪块层 + 播放头，不再重扫波形/重排版文字。 */
+    let base = null, sprites = false;
+    if (this._blockEnterArmed && !this._blockEnterWaveWait && !this.showFilm) {
+      base = this._ensureEnterBase(W, H);
+      if (base) {
+        sprites = !!(this._enterSprites || this._ensureEnterSprites(W, H));
+        if (!sprites) base = null;      // 块层失败就退回普通逐帧绘制（避免重画轨道底）
+      }
+    }
+    if (base) {
+      ctx.drawImage(base, 0, 0, W, H);
+    } else {
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = this.colors.bg;
+      ctx.fillRect(0, 0, W, H);
+      if (this._filmH() > 0) this._drawFilmstrip(ctx, W);   // 空间不够时 _filmH()=0, 这一帧不画
+      this._drawRuler(ctx, W);
+      this._drawWaveBand(ctx, W);
+    }
     // 块内背景模糊 + 压暗：必须在波形之后、块之前 —— 它处理的就是"块底下那块波形"
     this._drawBlockBackdrop(ctx, W);
-    this._drawLanes(ctx, W, t);
+    if (base && sprites) this._drawEnterSprites(ctx);
+    else this._drawLanes(ctx, W, t);
     if (this._drag && this._drag.type === 'create' && this._drag.moved) this._drawCreatePreview(ctx);
     if (this.rangeSel && this.rangeSel.b > this.rangeSel.a) this._drawRangeSel(ctx);
     if (this.reRecogRegion) this._drawReRecog(ctx, W);
     this._drawPlayhead(ctx, H, t);
+    /* 入场窗口结束：再画一帧全不透明（上面的 _drawLanes 已按 t>=1 画满），然后停掉强制重绘。 */
+    if (this._blockEnterArmed && this._blockEnterNow >= this._blockEnterAt + BLOCK_ENTER_WINDOW) {
+      this._blockEnterArmed = false;
+      this._enterSharp = null;
+      this._enterBlur = null;
+      this._enterBackdropKey = '';
+      this._enterBase = null;
+      this._enterBaseKey = '';
+      this._enterSprites = null;
+      this._enterRects = null;
+      this._enterSpriteKey = '';
+    }
   }
 
   /** 批量选区(Ctrl+左键拖动): 盖住整条轨道高度的半透明色块 + 虚线边 + 时间范围标签。
@@ -1916,6 +2163,146 @@ export class Timeline {
   _drawBlockBackdrop(ctx, W) {
     const wh = this._waveH();
     if (!(wh > 2)) return;                       // 没有波形就没什么可模糊的
+    /* 入场期间（用户反馈"浮现时不要模糊，结束后再渐变"）：
+     *  · 块的逐个浮现阶段完全不画块内遮罩（只有底图 + 块本身，最省）；
+     *  · 所有块浮现完之后，才把预渲染好的「模糊+压暗」层用 300ms 渐入。
+     * 模糊只渲染一次到离屏画布，动画帧里只 drawImage，不做任何 filter。 */
+    if (this._blockEnterArmed) {
+      /* 模糊层在**浮现开始前**就预建好（此时波形刚就绪、块还没出现），
+       * 等块全部浮现完再渐变时不会临时做一次 blur 卡一下。 */
+      if (!this._blockEnterWaveWait) this._ensureEnterBackdrops(W);
+      const blocksEnd = this._blockEnterAt + BLOCK_ENTER_MAX_DELAY + BLOCK_ENTER_DUR;
+      if (this._blockEnterNow < blocksEnd) return;
+      const blur = this._enterBlur;
+      if (!blur) return;
+      const raw = Math.max(0, Math.min(1, (this._blockEnterNow - blocksEnd) / BLOCK_ENTER_BLUR));
+      const mix = 1 - Math.pow(1 - raw, 3);
+      if (mix <= 0.001) return;
+      ctx.save();
+      ctx.globalAlpha *= mix;
+      ctx.drawImage(blur, 0, 0, W, this._cssH());
+      ctx.restore();
+      return;
+    }
+    this._paintBlockBackdrop(ctx, W);
+  }
+
+  /** 离屏缓存键：视野/尺寸/轨道数据变了就重做（入场期间通常只有一次）。 */
+  _backdropKey(W) {
+    return [W, this._cssH(), window.devicePixelRatio || 1,
+      this.viewStart.toFixed(3), this.pxPerSec.toFixed(4), this._lanesRev || 0,
+      this.duration || 0, this.showFilm ? 1 : 0,
+      this.peaks ? (this.peaks.data.length + ':' + this.peaks.rate) : 0].join('|');
+  }
+
+  /** 预建模糊遮罩（浮现结束后用；浮现阶段不画遮罩，避免逐帧合成与迷感）。 */
+  _ensureEnterBackdrops(W) {
+    const key = this._backdropKey(W);
+    if (this._enterBackdropKey === key && this._enterBlur) return;
+    this._enterBackdropKey = key;
+    this._enterSharp = null;
+    this._enterBlur = this._buildBlockBackdrop(W, true);
+  }
+
+  /** 入场底图缓存键：视野/尺寸/波形/主题色变了就重做（一次入场通常只做一次）。 */
+  _baseKey(W, H) {
+    const c = this.colors;
+    return [W, H, window.devicePixelRatio || 1,
+      this.viewStart.toFixed(3), this.pxPerSec.toFixed(4), this.duration || 0,
+      this._lanesRev || 0,
+      this.peaks ? (this.peaks.data.length + ':' + this.peaks.rate) : 0,
+      this.accent || '', c.bg, c.waveBg, c.ruler, c.rulerTick, c.rulerBg0, c.rulerBg1].join('|');
+  }
+
+  /** 入场块层：只含所有可见块（透明背景）的离屏位图，逐帧按块裁剪合成。 */
+  _ensureEnterSprites(W, H) {
+    const key = [W, H, window.devicePixelRatio || 1,
+      this.viewStart.toFixed(3), this.pxPerSec.toFixed(4), this.duration || 0,
+      this._lanesRev || 0, this.accent || '', this.uwp ? 1 : 0].join('|');
+    if (this._enterSprites && this._enterSpriteKey === key) return this._enterSprites;
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(W * dpr));
+      cv.height = Math.max(1, Math.round(H * dpr));
+      const c = cv.getContext('2d');
+      if (!c) return null;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const rects = [];
+      this._drawLanes(c, W, this._lastT || 0, { blocksOnly: true, forceFull: true, collect: rects });
+      this._enterSprites = cv;
+      this._enterRects = rects;
+      this._enterSpriteKey = key;
+      return cv;
+    } catch { return null; }
+  }
+
+  /** 逐块合成预渲染好的块位图：只做 drawImage + 透明度/位移，不再画文字/描边。 */
+  _drawEnterSprites(ctx) {
+    const layer = this._enterSprites;
+    const rects = this._enterRects;
+    if (!layer || !rects) return false;
+    const dpr = window.devicePixelRatio || 1;
+    const pad = 2;
+    ctx.save();
+    for (const r of rects) {
+      const p = this._blockEnterProgress(r.rank);
+      if (p <= 0) continue;
+      const sx = Math.max(0, Math.floor((r.x - pad) * dpr));
+      const sy = Math.max(0, Math.floor((r.y - pad) * dpr));
+      const ex = Math.min(layer.width, Math.ceil((r.x + r.w + pad) * dpr));
+      const ey = Math.min(layer.height, Math.ceil((r.y + r.h + pad) * dpr));
+      const sw = ex - sx, sh = ey - sy;
+      if (sw <= 0 || sh <= 0) continue;
+      ctx.globalAlpha = p;
+      ctx.drawImage(layer, sx, sy, sw, sh, sx / dpr, sy / dpr, sw / dpr, sh / dpr);
+    }
+    ctx.restore();
+    return true;
+  }
+
+  _ensureEnterBase(W, H) {
+    const key = this._baseKey(W, H);
+    if (this._enterBase && this._enterBaseKey === key) return this._enterBase;
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(W * dpr));
+      cv.height = Math.max(1, Math.round(H * dpr));
+      const c = cv.getContext('2d');
+      if (!c) return null;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.fillStyle = this.colors.bg;
+      c.fillRect(0, 0, W, H);
+      this._drawRuler(c, W);
+      this._drawWaveBand(c, W);
+      /* 轨道底/分隔线/轨道标签也属于静态层：一起进底图，入场帧里不再逐条重画。 */
+      this._drawLanes(c, W, this._lastT || 0, { skipBlocks: true });
+      this._enterBase = cv;
+      this._enterBaseKey = key;
+      return cv;
+    } catch { return null; }
+  }
+
+  /** 把块内背景画到离屏 canvas（只做一次）。withBlur=false 时不加 filter。 */
+  _buildBlockBackdrop(W, withBlur = true) {
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const H = this._cssH();
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(W * dpr));
+      cv.height = Math.max(1, Math.round(H * dpr));
+      const c = cv.getContext('2d');
+      if (!c) return null;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this._paintBlockBackdrop(c, W, withBlur);
+      return cv;
+    } catch { return null; }
+  }
+
+  _paintBlockBackdrop(ctx, W, withBlur = true) {
+    const wh = this._waveH();
+    if (!(wh > 2)) return;                       // 没有波形就没什么可模糊的
     /* 与 _drawWaveBand 用同一套坐标：带顶 = _lanesTop()，波形本身内缩 2px、高 h-4。
      * （早先这里我写成不存在的 _waveTop()，靠这条注释记住正确来源。） */
     const bandTop = this._lanesTop();
@@ -1958,7 +2345,7 @@ export class Timeline {
     /* 支持 filter 才重画波形做模糊；不支持就只压暗（老浏览器上仍能分出层次）。
      * 注意顺序：先设 filter 再画，画完必须复位，否则会影响后面的绘制。 */
     const studio = document.body?.classList?.contains('sf-studio');
-    const canBlur = typeof ctx.filter === 'string' && !(studio && this._drag);
+    const canBlur = withBlur && typeof ctx.filter === 'string' && !(studio && this._drag);
     if (canBlur) ctx.filter = studio ? 'blur(1.25px)' : 'blur(3px)';
     this._drawWaveLayer(ctx, W, top, h);         // 在裁剪区内重画一遍 → 这块被模糊
     if (canBlur) ctx.filter = 'none';
@@ -1967,18 +2354,21 @@ export class Timeline {
     ctx.restore();
   }
 
-  _drawLanes(ctx, W, t) {
+  _drawLanes(ctx, W, t, opts) {
+    const o = opts || {};
     this.lanes.forEach((lane, li) => {
       const yy = this._laneTop(li);
       const lh = this._laneH(li);
-      // 轨道底**只在没有波形时**才铺不透明底色: 波形与轨道重叠, 用不透明底会把波形盖死,
-      // 字幕块就"贴"不到波形上了(块间缝隙也看不到波形)。
-      if (!this._waveH()) {
-        ctx.fillStyle = this.colors.laneBg;
-        ctx.fillRect(0, yy, W, lh);
+      if (!o.blocksOnly) {
+        // 轨道底**只在没有波形时**才铺不透明底色: 波形与轨道重叠, 用不透明底会把波形盖死,
+        // 字幕块就"贴"不到波形上了(块间缝隙也看不到波形)。
+        if (!this._waveH()) {
+          ctx.fillStyle = this.colors.laneBg;
+          ctx.fillRect(0, yy, W, lh);
+        }
+        ctx.strokeStyle = this.colors.laneBorder;
+        ctx.beginPath(); ctx.moveTo(0, yy + lh + 0.5); ctx.lineTo(W, yy + lh + 0.5); ctx.stroke();
       }
-      ctx.strokeStyle = this.colors.laneBorder;
-      ctx.beginPath(); ctx.moveTo(0, yy + lh + 0.5); ctx.lineTo(W, yy + lh + 0.5); ctx.stroke();
 
       // 波形由 _drawWaveBand 统一画在下面(只画一次), 不再每轨重画。
 
@@ -1990,6 +2380,7 @@ export class Timeline {
       const minPx = 2;
       let runStart = null, runEnd = null, runBand = null;
       const flushRun = () => {
+        if (o.blocksOnly || o.skipBlocks) { runStart = runEnd = runBand = null; return; }
         if (runStart === null) return;
         const b = runBand || { y: yy + 4, h: lh - 8 };
         ctx.fillStyle = withAlpha(mutedHex(lane.color, 0.62), 0.24, lane.color + '1f');
@@ -1997,6 +2388,19 @@ export class Timeline {
         ctx.fill();
         runStart = runEnd = runBand = null;
       };
+
+      if (o.skipBlocks) {
+        if (lane.label) {
+          ctx.save();
+          ctx.globalAlpha = 0.5;
+          ctx.font = '10px "Microsoft YaHei", sans-serif';
+          ctx.textAlign = 'left';
+          ctx.fillStyle = C.chipText;
+          ctx.fillText(lane.label, 12, yy + lh - 7);
+          ctx.restore();
+        }
+        return;
+      }
 
       ctx.font = '10px "Microsoft YaHei", sans-serif';
       ctx.textAlign = 'left';
@@ -2013,6 +2417,16 @@ export class Timeline {
         }
         flushRun();
 
+        /* 入场：按可见顺序从左到右逐个淡入（只改透明度，不做位移）。只包住块自身。 */
+        const rank = i - lo;
+        if (o.collect) o.collect.push({ x: x1, y: band.y, w: Math.max(1.5, wpx), h: band.h, rank });
+        const enterP = o.forceFull ? 1 : this._blockEnterProgress(rank);
+        if (enterP <= 0) continue;              // 还没轮到的块完全不画（省掉填充/描边/排版）
+        const entering = enterP < 1;
+        if (entering) {
+          ctx.save();
+          ctx.globalAlpha *= enterP;
+        }
         // 单语孤行: **有内容的那半画成实心块**(干净的整块边界), **缺的那半画虚线空槽**。
         //   · 只有该行真的没有另一种语言才画空槽(中英都在、只是起止不同则不画, 免得两半互相叠出噪声);
         //   · 空槽用坏行红(单语行必然记坏行) → "红虚线 = 缺另一半" 一眼可读, 且不再糊住实心块。
@@ -2072,12 +2486,13 @@ export class Timeline {
         // 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ —— 英文行(下半区)重叠也能看到。
         // 单语行的"坏"已经画在**缺的那半**上了, 这里不再把红虚线糊到实心块上(否则看不出块是实心的)。
         if (c.bad && !lacks) this._drawBadMark(ctx, x1, band, wpx);
+        if (entering) ctx.restore();
       }
       flushRun();
 
       // 轨道标签: 无背景无边框、半透明, 固定在轨道左下角(文字下方), 不挡字幕块内容
       const label = lane.label || '';
-      if (label) {
+      if (label && !o.blocksOnly) {
         ctx.save();
         ctx.globalAlpha = 0.5;
         ctx.font = '10px "Microsoft YaHei", sans-serif';
@@ -2094,7 +2509,9 @@ export class Timeline {
     if (x < -2 || x > this._cssW() + 2) return;
     const acc = this.accent || C.playhead;
     ctx.save();
-    if (!this.uwp) {
+    /* 入场动画期间不画播放头光晕：shadowBlur 在整条画布高度的线上很贵，
+     * 逐块浮现时每帧一次会明显掉帧；结构线本身仍画，不影响定位。 */
+    if (!this.uwp && !this._blockEnterArmed) {
       ctx.shadowColor = withAlpha(acc, 0.55, 'rgba(255,122,69,.55)');   // 游标光晕: 一眼找到当前时间
       ctx.shadowBlur = 8;
     }

@@ -129,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.4.6.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.4.6.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.4.6.3'; // 产品显示版本
+const APP_FILE_VERSION = '1.4.6.3'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -2170,8 +2170,16 @@ function asrCanServe(script) {
 
 /** Python 子进程统一环境: 强制 UTF-8 输入输出。
  *  Windows 管道模式下 Python 默认按 GBK 写 stdout/stderr, Node 这边按 UTF-8 解码,
- *  asr.py 的中文日志就成了 ◆◆◆ 乱码(实测「分块 358 段」变「◆◆◆ 358 ◆◆」)。 */
-const pySpawnEnv = () => Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' });
+ *  asr.py 的中文日志就成了 ◆◆◆ 乱码(实测「分块 358 段」变「◆◆◆ 358 ◆◆」)。
+ *
+ *  另外把**当前 Node 解释器**的位置告诉 Python 侧：yt-dlp 的 YouTube 完整解析需要一个
+ *  JavaScript 运行时（nsig/挑战脚本）。源码运行时进程就是 node.exe，直接复用即可；
+ *  安装版是 SEA（SubFabric.exe），拿它当 node 跑不起来，所以只在 basename 是 node 时传。 */
+const pySpawnEnv = () => Object.assign({}, process.env, {
+  PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1',
+  ...(/^node(?:\.exe)?$/i.test(path.basename(process.execPath || ''))
+    ? { SUBFABRIC_NODE_PATH: process.execPath } : {}),
+});
 
 /** 检测 NVIDIA 显卡(驱动自带 nvidia-smi); 返回显卡名或 null。结果由调用方缓存。 */
 function detectNvidia() {

@@ -231,14 +231,13 @@ result.np_draft = await evalJs(`(() => {
   const o = {};
   o.voiceGroupHidden = g('#np-voice-group').hidden;
   o.castGroupHidden  = g('#np-cast-group').hidden;
-  o.sourceGroupHidden= g('#np-source-group').hidden;
   o.urlRowHidden     = g('#np-row-url').hidden;
   o.partRowHidden    = g('#np-row-part').hidden;
   o.subRowHidden     = g('#np-row-sub').hidden;
   o.wordRowHidden    = g('#np-row-word').hidden;
   o.spkRowHidden     = g('#np-row-spk').hidden;
-  o.sourceOptions = [...g('#np-set-source').options].map(x => x.value + '|' + x.textContent);
-  o.sourceValue = g('#np-set-source').value;
+  o.metaHidden       = g('#np-meta').hidden;
+  o.logHidden        = g('#np-log').hidden;
   o.modelOptions = [...g('#np-model-sel').options].map(x => x.value + '|' + x.textContent);
   o.modelValue = g('#np-model-sel').value;
   o.probeBtn = !!g('#np-probe');
@@ -307,7 +306,7 @@ result.dt = await evalJs(`(async () => {
   o.dpSteps = g('#dp-steps').children.length;
   o.dpMsg = g('#dp-msg').textContent;
   o.dpPct = g('#dp-pct').textContent;
-  o.dtSourceOptions = [...g('#dt-set-source').options].map(x => x.value);
+  o.dpMetaHidden = g('#dp-meta').hidden;
   o.dtModelOptions = [...g('#dt-model-sel').options].map(x => x.value);
   o.dtModelValue = g('#dt-model-sel').value;
   o.dtProviderOptions = [...g('#dt-set-provider').options].map(x => x.value);

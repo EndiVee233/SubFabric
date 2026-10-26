@@ -59,6 +59,14 @@
 - **安全基线**：Host 必须回环；有 Origin 的读写请求校验明确集合，无 Origin 的写请求须带
   `X-SubFabric-Token`；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用；`safeJoin` 解码后归一化并补路径
   分隔符边界，拒绝编码穿越。
+- **打开稿件的加载路径（2026-10-26 优化）**：`openProject` 先 `flushSave()`，再**并行**取
+  项目元信息与 `subtitle`；ASS 只做轻量的 `Dialogue:` 行校验（旧实现 `new AssDoc(text).events`
+  把 3~4MB 稿件完整解析两遍）。随后**先装项目身份/保存基线**，同步启动视频、peaks、音频源，
+  最后才 `routeSub()` 做唯一一次解析与 `rebuildItemsAndLanes` —— 旧实现先建一次列表、
+  `__realignRefresh()` 又整份重建一次；现在 `realignSkip` 在第一次构建时已可读。
+  `loadPeaks()` 合并并发请求（video 与 prepare 两条路径同时要 peaks 时只下 1 次）。
+  `setAss()` 末尾不再同步 `assPlayer.load(serialize())`，改由 `scheduleAssRender()` 在
+  **首帧绘制后**再序列化并初始化 libass（期间换稿由代次作废），编辑器/字幕列表先出现。
 - **初稿流水线**：创建 → 下载（`startFetchJob` → `asr/fetch/fetch_cli.py`，10 分钟无输出看门狗）→
   prepare（ffprobe → ffmpeg 抽 `audio.wav` + `peaks.bin`；**ASR 默认用原声 `mode='raw'`**，降噪版实测会让
   Whisper large-v2 的 WER 从 8.70% 升到 11.02%）→ ASR（Faster-Whisper-XXL / Parakeet NPU /
@@ -108,6 +116,14 @@
     收集「逐词缺词/多词、词重叠」的行（`enWordCount !== enTokenCount`、`enOverlap`、badReason 含「逐词」），
     确认后随 `/realign-full` 传 `onlyKeys`（开始时间 toFixed(3) 数组）；服务端与 skip/region 一起过滤，
     没有可重校的行时明确报错。
+  - **异常行必须能应用（2026-10-26 修）**：异常的定义就是「逐词数 ≠ 文本词数」，
+    旧 `applyRealignItems` 却要求对齐结果的词数等于**旧逐词表**，于是 265 条异常全部
+    `skipped`，界面只报「已重排 0 句（265 句没对上）」。现在 `onlyKeys` 流程传 `repairWords`：
+    按 `splitEnglishWords(文本)` 校验对齐词序列（与坏行判定同一口径），一致就**采纳新词序列**
+    并重建切片（文本不动）；词序列对不上仍拒绝。同时去掉「整份稿件 revision 必须等于作业开始时」
+    这道全局门槛 —— 改为逐条 `targetKey`（含文本/起止/词序/事件位置）核对，别处的编辑不再
+    让整批写回失效；若一条都没写进去，预览不收起并说明原因。
+    `tests/repair04-realign-test.mjs` 覆盖严格模式拒绝、修复模式采纳与错误词序列拒绝。
   - **初稿末词尾巴**：本地 Whisper v2 的末词终点常比真实收音早 100~200ms。`buildDraftSubtitle` 调
     `writeSubtitle(..., { tail: 0.15 })`，每句结尾补 0.15s（不超过下一句起点）；`writeSubtitle` 的
     `tail` 默认 0，SRT→ASS 等路径不会越出原片区间（有 `srt-ass-e2e-test` 断言）。
@@ -245,6 +261,44 @@
 - **编辑器布局记忆**：竖向分割线 `#vsplit` 松手时把面板宽（`--panel-w`，280~720）写入
   `localStorage['ss-panel-w']`，启动时 `applyPanelWidth()` 恢复；时间轴高度走 `ss-tl-h` +
   `applyTlHeight()`。刷新或退出编辑器再打开，左右比例与时间轴高度都保持上次拖动结果。
+- **编辑器三大板块入场（2026-10-26）**：进入编辑器或切换稿件时，视频区 `#stage-wrap` →
+  右侧列表 `#editor-panel` → 时间轴 `#timeline-panel` 按 **0 / 90 / 180ms** 错峰播放
+  `sf-editor-panel-in`（`opacity 0→1` + `translate 0 14px→0`），曲线与主页卡片相同
+  `cubic-bezier(.2,.8,.2,1)`，时长取主题的 `--sf-card-duration`（UWP 180ms、其它 420ms）。
+  由 `studio.js` 的 `animateEditorPanels()` 给 `#app` 加 `is-editor-panels-entering`，
+  只在 `firstRoute || !wasEditor || h !== previous`（刷新、进入编辑器或换稿件）时触发，
+  同一路由的重复 `applyHash`/项目数据刷新不重播；离开编辑器立即清掉类与定时器。
+  `routeBooted` 记录本页第一次收到路由 —— F5 直接刷新在 `#/project/...` 时模块顶部的
+  `route` 已等于 `location.hash`，没有这条会被误判成“同一路由的重复 applyHash”而不播动画。
+  `prefers-reduced-motion` 与 `data-motion=off` 下关闭动画。只动 `opacity/translate`，不改布局，
+  时间轴 canvas 尺寸不受影响。
+  **字幕块随后逐个浮现**：时间轴是 canvas，块不能用 CSS 动画。`animateEditorPanels()` 派发
+  `sf-editor-panels-enter`，`Timeline._armBlockEntrance()` 用 `_panelEntranceWait()` 读面板
+  CSS 动画的剩余时长（WAAPI `getAnimations()`，取不到退回 `getComputedStyle` 的
+  delay+duration），把 `_blockEnterAt` 放到**面板淡入结束之后**；`_drawLanes` 按可见顺序
+  （`i - lo`）给每块算 `_blockEnterProgress()`：`opacity` 0→1（**只淡入、不做位移**），间隔 28ms、
+  单块 480ms、总延迟封顶 392ms（ease-out）。入场窗口内 `drawIfNeeded` 保持重绘，结束后只多画一帧
+  全不透明。刷新时 `studio.js` 的初始路由早于 `Timeline` 构造，构造时会检查 `#app` 上的
+  `is-editor-panels-entering` 补排一次；字幕数据晚到时 `setLanes` / `setDuration` 会把起点后移一次。
+  **等波形再浮现**：`_armBlockEntrance()` 若还没有 `peaks`/`waveform`，置 `_blockEnterWaveWait`，
+  块保持隐藏；`setPeaks()`（或波形 PNG `onload`）调用 `_noteWaveRendered()`，再等约 80ms 让波形
+  先画上去才起步。项目侧 `openProject` 通过 `setBlockEntranceWaveExpected()` 说明该稿件是否
+  应当等波形（无音轨/无视频直接放行）；未知/迟迟不到时 2.5s 兜底，避免一直不出现。
+  **解析完成后再起算 + 防整段跳过**：路由一进来就排的面板动画可能被大稿件同步解析拖过整段窗口，
+  rAF 恢复时块会全部一下出现（用户实测「所有块闪出来」）。`setAss`/`setSrt` 在内容建好后调
+  `Timeline.restartBlockEntrance()` 重新 arm；`draw()` 里 `_blockEnterDrawn` 守卫第一帧若已越过
+  窗口就把起点后移，保证逐块动画一定被看到。
+  **掉帧优化（2026-10-26，用户多次反馈后）**：浮现阶段**完全不画块内遮罩**（少一次全画布合成），
+  也不再逐帧重绘底/标尺/波形或重排块内文字 —— 入场期间预渲染两张离屏图：
+  「底色 + 标尺 + 波形 + 轨道底/标签」底图（`_ensureEnterBase`）与所有可见块的块层
+  （`_ensureEnterSprites`，用 `_drawLanes(..., { blocksOnly: true, forceFull: true, collect })`
+  一次性画好并记下每块裁剪矩形）。每帧只 `drawImage` 底图 + 按块裁剪块层（只套 opacity）
+  + 播放头；播放头在入场时不画 `shadowBlur` 光晕（整条画布高的 shadow 很贵）。
+  底图/块层键含尺寸、视野、缩放、时长、轨道版本、波形数据与主题色，变化才重建。
+  **所有块浮现完毕后**才把预渲染一次的模糊压暗层（`_buildBlockBackdrop`，键 `_backdropKey()`）
+  用 300ms 渐入（`BLOCK_ENTER_BLUR`）。动画帧里没有任何 `filter` 运算；进度仍为 0 的块直接
+  `continue`；等待期也不逐帧重绘。
+  入场结束释放离屏画布、回到原来的直绘路径，最终画面与优化前一致（模糊+压暗）。
 - **拖拽磁吸（视频刚好铺满）**：拖 `#vsplit` / `#hsplit` 时先按视频宽高比算出「画面刚好铺满
   播放区」的值（宽 `vw + startPw - ar*vh`、高 `startTl + vh - vw/ar`）；候选值落在 ±32px 内
   用 `magSnap` 按平方衰减吸过去 —— 越接近越“黏”（阻尼），超过 32px 恢复 1:1 跟手；吸附点
@@ -257,6 +311,13 @@
   实测只有 MY 主题偏，UWP/Classic 因自带 appearance:none 反而正常），再把拇指固定成
   `--sf-hit-thumb:14px`；提示时间按 `(x - 7) / (宽 - 14)` 反算，提示块也按拇指中心定位。
   旧实现直接用 `x / 宽`，4 小时视频两端能差约 2 分钟。
+- **并排栏「人物」首次入场（2026-10-26）**：并排侧栏复用的是同一个 `#role-list`，因此
+  完整角色页的 `is-role-entering` 卡片动画（260ms 淡入 + 上移/微缩放，按 `--role-i` 32ms 错峰）
+  直接适用。`Panel._renderSplitRoles()` 用独立的 `_splitRoleEnterPlayed` 记账：只在**该会话第一次
+  真正看到侧栏人物列表且有角色**时播一次；侧栏停在「备注」、或角色数据还没到时都不播也不记账，
+  之后切回「人物」/数据到达再补播。它与角色页的 `_roleEnterPlayed` 各自独立，两个视图第一次打开
+  都会各播一次；`resetEntranceAnimations()`（进入编辑器、载入/切换稿件）同时重置两者。
+  调用点：并排启停、切回字幕页、`setRoles` 数据刷新、小顶栏切回「人物」。
 - **字幕 + 角色并排**：标签栏最右的「两栏」按钮（`#panel-split-roles`）把右侧切成字幕列表 +
   角色单列：`#editor-panel.is-split-roles` 用 grid 排成 `1fr : var(--split-role-w, 30%)`
   （约 2:1~3:1）；角色列左边界有拖拽条（`#split-role-grip`），拖动改宽（108px ~ 面板 45%，
@@ -430,6 +491,24 @@
   服务端在 `runFullRealign` 里先按「`end > region.start && start < region.end`」过滤 targets ——
   **在加载对齐器之前**过滤，选区里没有句子时直接报错；区域重分句在前端按同一相交规则过滤
   `resegRows`，预览标题变为「区域重分句 · 预览」。
+  **弹窗内点击不能清选区（2026-10-26 修）**：main.js 的「点画布外 = 取消选区」捕获监听
+  原来会先于按钮 click 清掉 `timeline.rangeSel`，于是点「用选区」读不到区间、时间轴高亮也消失。
+  现在该监听显式放行 `#op-range-overlay` 内的 pointerdown。
+- **生成设置只有一个识别模型下拉（2026-10-26）**：删除了新建页/详情页的「识别来源」下拉
+  （`#np-set-source` / `#dt-set-source`）。它和「语音识别」下拉其实是同一件事（当时用来按引擎过滤
+  模型），现在统一成**扁平模型列表**：选哪个模型，来源就是它的引擎。详情页的模型下拉用
+  `project.draft.modelId` 回显**这个项目实际用的模型**，而不是全局默认（`genLoad('dt', false, modelId)`）。
+- **处理进度显示细节（2026-10-26）**：
+  - 新建页的 PROCESS 卡不再只是全灰预览：创建初稿（链接下载或本地视频）后**留在本页**，
+    每 1.2s 轮询 `GET /api/projects/:id/draft`，实时更新步骤灯、百分比、当前阶段、已用时间、
+    预计剩余（优先用消息里的「剩 Ns」，否则按已用/百分比估算）、下载量/速度与最近 8 行处理记录；
+    完成后按钮变「打开项目」，失败/等待翻译变「查看详情」。离开 `#/new` 时停轮询。
+  - 详情页同一条进度卡新增 `#dp-meta`（当前阶段 / 已用 / 剩余 / 下载量与速度），步骤条当前步
+    后面跟一行小字（下载 4% / 第 3/10 片）；失败步标红。`dpRenderDetail()` 与新建页共用，
+    `dpParseTransfer()` 解析 yt-dlp 进度文案。
+- **逐词写回不打断行内编辑（2026-10-26 修）**：单条重排与全片重校对写回前调
+  `panel.stashInlineEdit()`（提交编辑框文本但不重建列表），重建后 `resumeInlineEdit()` 按
+  原条目/行号/光标重新打开编辑。SRT→ASS 路径会整份重载项目，写回前先提交并 `flushSave()`。
 - **首页卡片点击（处理中 → 详情）**：卡片/「处理中」组件在稿件仍在处理时点进去是 `#/details/<id>`
   详情页，处理完成后才进 `#/project/<id>` 编辑器。`project.js` 的 `.proj-card` 用 `isCreating(p)`
   分支，Material 的 `#sf-mu-processing` 用 `projectPhase(p) === 'active'` 分支；键盘 Enter/空格与
@@ -550,6 +629,12 @@
   `editor/studio.html`、`editor/js/*.js`、`editor/server.js`、`editor/asr-params.js`、`editor/scripts/*`，要求每条
   用户可见中文都能在 `editor/lang/zh-CN.json` 找到键；`node tests/gen-lang.mjs` 负责补齐/保留用户润色。
 - **兼容别名**：`node tools/repair15-regression.mjs` 内部转发到同一实现，参数相同。
+- **编辑器入场**：`tests/editor-panels-entrance-test.mjs` 守三板块 CSS 的 0/90/180ms 顺序、
+  `studio.js` 的刷新/进入/切换触发与事件、以及 `Timeline._blockEnterProgress` 的左→右顺序、
+  等待、ease 与延迟封顶；`tests/studio-navigation-test.mjs` 走真实路由断言类名出现/清除。
+- **打开稿件懒加载**：`tests/project-open-lazy-test.mjs` 守 meta+字幕并行、轻量 ASS 校验、
+  只构建一次、视频/波形提前请求、peaks 合并、libass 首帧后加载；`tests/repair05-project-load-test.mjs`
+  断言 `routeSub` 执行时新项目身份已就位（A/B 失败、快速切换、卸载与保存 flush 行为不变）。
 - **Python 隔离回归**：先设 `$env:SUBFABRIC_TEST_ISOLATED='1'; $env:PYTHONDONTWRITEBYTECODE='1'`，
   再对 `confidence-test`、`draft-role-gap-test`、`fetch-format-test`、`glommed-split-test`、
   `frame-units-test`、`asr-segment-parity-test`、`vibevoice-worker-test`、`diarize-wav-test` 逐个执行
@@ -819,6 +904,18 @@ PyPI 自举官方 wheel 到 `asr/ytdlp/`（不入库/不进安装包），`bilib
 项目目录 `_bili_cookies.txt`，桌面设置里密文保存（Windows DPAPI / 其他平台 AES-GCM），绝不写日志；
 元数据写 `source.json` 供 LLM 分角色推断阵容。验证见 `tests/fetch-format-test.py`，`--simulate` 只解析不下载。
 
+**YouTube 的 JavaScript 运行时（2026-10-26 修）**：新版 yt-dlp 解析 YouTube 需要一个 JS 运行时
+（nsig/挑战脚本），默认只启用 Deno；没有时它退回兼容客户端并打一条英文 WARNING
+（`No supported JavaScript runtime could be found...`），用户会当成故障。`fetch_cli.py` 现在
+`find_js_runtimes()` 按优先级探测 Deno / Node.js / QuickJS / Bun：显式环境变量
+`SUBFABRIC_JS_RUNTIME`（`node:<path>`、单路径或分号分隔）→ `SUBFABRIC_NODE_PATH` →
+`PATH` 上的 `deno` / `node` / `bun` / `qjs`，去重后以 `js_runtimes = {name: {path}}` 传给
+yt-dlp（2026.08 与 2026.10 的 Python API 都已核对同为此格式），并在日志写中文的
+「JS 运行时: node 24.x（YouTube 完整格式解析已启用）」。都没有时写中文说明而不是让英文警告
+冒充错误；YouTube 仍可下载，只是个别高清格式可能缺失。源码运行时 `server.js` 的 `pySpawnEnv()`
+会把 `process.execPath`（仅当 basename 是 `node`）作为 `SUBFABRIC_NODE_PATH` 传下去；安装版是
+SEA（`SubFabric.exe`）不能当 node 用，所以不传，靠 PATH 探测。
+
 ## 9. 工作约定与红线
 
 - **读数规则**：新任务或上下文压缩后恢复，先读本文件与被引用的代码，再看 `AGENTS.md`；按当前任务读完整
@@ -977,6 +1074,73 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
 ### 最近状态
+
+**2026-10-26（打开稿件懒加载 + 字幕块浮现放慢，beta 1.4.6.3）**
+
+- **字幕块浮现放慢**：单块 320→480ms、块间 20→28ms、延迟封顶 320→392ms、模糊渐入
+  280→300ms；`prefers-reduced-motion`/`data-motion=off` 仍然关闭。
+- **打开稿件**：meta 与字幕并行请求；ASS 用 `Dialogue:` 行轻量校验（不再为校验完整解析
+  一遍）；先装项目身份再 `routeSub`，只构建一次（移除末尾 `__realignRefresh` 的第二次重建）；
+  视频/peaks/音频请求提前到解析之前；`loadPeaks()` 合并并发请求；`setAss` 的
+  `assPlayer.load(serialize())` 延到首帧后（`scheduleAssRender`），期间换稿按代次作废。
+- **验证**：新增 `tests/project-open-lazy-test.mjs`；`repair05-project-load-test` 增加
+  「routeSub 时新项目身份已就位」断言；`editor-panels-entrance-test` 更新为放慢后的时长。
+  全量 JS 回归 `_test/maintenance/js-results-1463-fadeonly.json` **131 通过 / 8 部分 /
+  0 失败**（2 排除）；ESLint 0 error。
+- **未做**：安装版重打包、真实浏览器打开耗时夹具（本轮无 3~4MB 真实稿件）；GitHub：**尚未提交**。
+
+**2026-10-26（编辑器三大板块入场动画，beta 1.4.6.3）**
+
+- **需求**：视频播放区、右侧字幕/角色列表、时间轴三个板块，按顺序加入与主页类似的逐个淡入浮现。
+- **实现**：`editor/css/studio.css` 新增 `sf-editor-panel-in`，三块按 0/90/180ms 错峰；
+  `studio.js` 新增 `animateEditorPanels()` / `clearEditorPanelsEntrance()`，在
+  `firstRoute || !wasEditor || h !== previous` 时触发（含 F5 直接刷新在编辑器路由），
+  离开编辑器立即清理；UWP/Material 既有外壳入场保留。
+- **时间轴字幕块**：`studio.js` 派发 `sf-editor-panels-enter`；`Timeline` 按面板动画剩余时长
+  推迟，`_drawLanes` 按可见顺序 `opacity 0→1`（只淡入、不做位移）、28ms/块（总延迟封顶 392ms）、
+  单块 480ms；面板淡入结束后、并且**波形就绪并画上去之后**才开始（`_blockEnterWaveWait` / `setBlockEntranceWaveExpected` / `_noteWaveRendered`，无波形项目 2.5s 兜底）；刷新时 Timeline 构造晚于事件，会看 `#app` 的入场类补排。
+- **只淡入、不上浮（2026-10-26）**：用户要求去掉块的上浮位移。`_drawLanes` 的入场分支只保留
+  `globalAlpha *= enterP`；预渲染块层合成也不再带 `sy/dpr + (1-p)*10` 偏移。错峰节奏不变。
+- **掉帧优化**：浮现阶段**完全不画块内遮罩**，并把「底色 + 标尺 + 波形 + 轨道底/标签」预渲染成
+  底图（`_ensureEnterBase`）、所有可见块预渲染成块层（`_ensureEnterSprites`），每帧只合成
+  底图 + 按块裁剪块层 + 播放头；播放头入场时不画 `shadowBlur`。所有块浮现后才用 300ms 把
+  预渲染一次的模糊压暗层渐入；未轮到的块直接跳过，等待期不逐帧重绘。`_baseKey()` /
+  `_backdropKey()` 变化才重建；入场结束释放离屏画布并回退直绘。
+- **大稿件不再整段跳过**：`setAss`/`setSrt` 解析完成后调用 `Timeline.restartBlockEntrance()`
+  重新起算入场；`draw()` 的 `_blockEnterDrawn` 守卫第一帧若已越过窗口就把起点后移。
+- **并排栏人物列表**：`Panel._renderSplitRoles()` 复用角色页的 `is-role-entering` 逐个动画，
+  独立 `_splitRoleEnterPlayed`，只在该会话第一次真正看到侧栏人物且有角色时播一次；备注页/空数据
+  不消费，切回人物或数据到达再播；`resetEntranceAnimations()` 同时重置。
+- **验证**：新增 `tests/editor-panels-entrance-test.mjs`（CSS/JS 契约 + `_blockEnterProgress`
+  纯逻辑：先后顺序、等待、ease、延迟封顶）；`tests/ui-integration-test.mjs` 增加 CSS/JS 契约；
+  `tests/studio-navigation-test.mjs` 增加真实路由断言（刷新直接进 `#/editor`、进入项目出现
+  `is-editor-panels-entering`，回主页即清除）。全量 JS 回归
+  `_test/maintenance/js-results-1463-splitroles-final.json` **130 通过 / 8 部分 / 0 失败**（2 排除）；
+  ESLint 0 error。
+- 版本 `beta 1.4.6.3` / `1.4.6.3`（当天第三版；`editor/server.js`、`SubFabric.iss`、jsmod 镜像同步）。
+- **未做**：安装版重打包、浏览器人工观感验收。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+**2026-10-26（同步上游 20b7b9e；6 项交互修复，beta 1.4.6.2）**
+
+- **同步**：本地此前对应 `23fe844`；远端 `5d68152`（波形分桶改整数相位 + `peaksCoversAudio`
+  自动重提取）与 `20b7b9e`（文档）共 7 个文件已同步，562 个入库文件逐字节等于远端 HEAD。
+- **仅逐词异常行重校对可应用（①）**：`repairWords` 模式按 `splitEnglishWords` 校验并采纳
+  对齐词序列；去掉整份 revision 门槛，逐条 `targetKey` 核对；0 句时保留预览并说明。
+- **区域重校对选区保留（②）**：放行 `#op-range-overlay` 内的 pointerdown，点「用选区」
+  不再先清掉时间轴选区。
+- **识别来源去重（③）**：删除 `#np-set-source` / `#dt-set-source`，模型列表统一扁平；
+  详情页按 `project.draft.modelId` 回显项目实际模型。
+- **处理进度细化（④）**：新建页创建后留在本页轮询 `/draft`，显示阶段/已用/剩余/下载量速度
+  与最近 8 行日志，完成变「打开项目」；详情页增加 `#dp-meta` 与小字细进度。
+- **yt-dlp JS 运行时（⑤）**：`find_js_runtimes()` 探测 Deno/Node/QuickJS/Bun 并传
+  `js_runtimes`，`pySpawnEnv()` 传源码运行时的 node 路径；没有时给中文说明。
+- **行内编辑保护（⑥）**：重排/重校对写回前后 `stashInlineEdit()` / `resumeInlineEdit()`，
+  SRT→ASS 路径先提交并 `flushSave()`。
+- **验证**：全量 JS 回归 `_test/maintenance/js-results-1462.json` **129 通过 / 8 部分 /
+  1 诊断 / 0 失败**（2 排除）；ESLint 0 error；`tests/fetch-format-test.py` 65 项通过；
+  版本 `beta 1.4.6.2` / `1.4.6.2`（`.iss` 与 jsmod 镜像同步）。
+- **未做**：安装版重打包、真实 YouTube 下载复验、浏览器人工点按验收。GitHub：**尚未提交**
+  （工作副本无 `.git`）。
 
 **2026-10-24（版本推进至 beta 1.4.5.1，同版本修补重发）**
 

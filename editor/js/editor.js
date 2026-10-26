@@ -117,7 +117,8 @@ export class EditorPanel {
     this._renameRole = null;
     this._colorRole = null;
     this._roleEnterTimer = 0;
-    this._roleEnterPlayed = false;   // 本次进入编辑器后，角色列表入场动画是否已播放
+    this._roleEnterPlayed = false;   // 本次进入编辑器后，角色列表入场
+    this._splitRoleEnterPlayed = false; // 并排侧栏「人物」列表的首次入场（与角色页各自一次）动画是否已播放
     this._settingsEnterTimer = 0;
     this._settingsEnterPlayed = false; // 同上，设置页逐个卡片入场
 
@@ -317,12 +318,16 @@ export class EditorPanel {
   /** 标记一次新的编辑器会话，让角色/设置页的入场动画各只播一次。 */
   resetEntranceAnimations() {
     this._roleEnterPlayed = false;
+    this._splitRoleEnterPlayed = false;
     this._settingsEnterPlayed = false;
   }
 
   /** 面板标题显示当前字幕文件名；载入/切换文件即视为重新进入编辑器。 */
   setFileName(name) {
     this.resetEntranceAnimations();
+    /* 换稿件时先清掉上一份角色，避免 setRolesEnabled() 先把旧列表渲染并消耗掉
+     * 并排侧栏的首次入场（新稿件的角色随后 setRoles 才到）。 */
+    this._roles = [];
     if (!this.phName) return;
     this.phName.textContent = name || '字幕总览';
     this.phName.title = name || '';
@@ -404,7 +409,7 @@ export class EditorPanel {
     /* 并排模式只在有角色(ASS)时成立；换到 SRT/无角色稿件时收起，偏好本身保留。 */
     this._splitRoles = !!on && this._splitPref && this._tab === 'subs';
     this._applySplit();
-    if (this._splitRoles) this._renderRoles(false);
+    if (this._splitRoles) this._renderSplitRoles();
     if (!on && this._tab === 'roles') this.showTab('subs');
   }
 
@@ -483,6 +488,7 @@ export class EditorPanel {
     try { localStorage.setItem('sf-editor-split-pane', this._splitPane); } catch {}
     this._applySplitPane();
     if (this._splitPane === 'notes' && typeof window.__onNotesShown === 'function') window.__onNotesShown();
+    else if (this._splitRoles) this._renderSplitRoles();
   }
 
   /** 切换并排模式：偏好写 localStorage；开启时确保停在字幕页并渲染角色列表。 */
@@ -494,7 +500,7 @@ export class EditorPanel {
     if (on && this._tab !== 'subs') this.showTab('subs');
     this._splitRoles = !!(on && this._rolesEnabled && this._tab === 'subs');
     this._applySplit();
-    if (this._splitRoles) this._renderRoles(false);
+    if (this._splitRoles) this._renderSplitRoles();
   }
 
   /** 并排模式下的角色栏宽：拖动左边界调整、双击复位、键盘 ←/→ 16px 步进；宽度存 localStorage。 */
@@ -582,7 +588,7 @@ export class EditorPanel {
     if (this.onTabChange) this.onTabChange(name);      // 离开角色栏 → 主逻辑会清掉没用过的新角色
     if (name === 'subs') {
       this._render();
-      if (this._splitRoles) this._renderRoles(false);
+      if (this._splitRoles) this._renderSplitRoles();
       /* 其它 Tab 是隐藏的：字幕列表量不到可见高度，播放高亮虽然记在 playingItem 上，
        * 但不会滚到当前句。切回来时必须按最近播放时间强制重定位一次，否则列表停在切走前的
        * 位置、而且因为 playingItem 早已等于当前句，tick 的 setPlayingByTime 不会再做任何事
@@ -613,7 +619,21 @@ export class EditorPanel {
       sel.value = [...sel.options].some(o => o.value === cur) ? cur : '__all__';
       if (sel.value !== cur) this._speaker = '';       // 角色不存在了(换了文件) → 取消筛选
     }
-    if (this._tab === 'roles' || this._splitRoles) this._renderRoles();
+    if (this._tab === 'roles') this._renderRoles();
+    else if (this._splitRoles) this._renderSplitRoles();
+  }
+
+  /** 并排侧栏的「人物」列表：每个编辑器会话第一次**真正看到**它时播一次逐个入场。
+   *
+   *  与完整角色页各自计数（`_splitRoleEnterPlayed` / `_roleEnterPlayed`）：两种视图
+   *  第一次打开都会有动画，互不吞掉。侧栏切到「备注」或还没有角色时不播、也不记账，
+   *  等用户切回「人物」或角色数据到达时再播。 */
+  _renderSplitRoles() {
+    const el = document.getElementById('role-list');
+    const visible = !el || !el.hidden;
+    const animate = visible && !this._splitRoleEnterPlayed && this._roles.length > 0;
+    if (animate) this._splitRoleEnterPlayed = true;
+    this._renderRoles(animate);
   }
 
   /** 按角色(说话人)筛选字幕列表 */
@@ -1765,6 +1785,35 @@ export class EditorPanel {
 
   /** Esc 明确取消；提交只通过 commitEdit，内部移除编辑框不等于取消。 */
   cancelEdit() { this.closeEdit('cancel'); }
+
+  /* ── 后台任务写回字幕时的编辑保护 ──
+   * 逐词重排/重校对完成后会 rebuildItemsAndLanes 重建整张列表，正在行内编辑的
+   * 另一个条目会连同编辑框一起被换掉，用户刚敲的字直接丢（用户实测反馈）。
+   * stashInlineEdit 先把当前编辑框的文本提交进数据（switching 模式不重建列表），
+   * 返回句柄；重建后 resumeInlineEdit 找到同一条目重新打开编辑并摆回光标。 */
+  stashInlineEdit() {
+    if (!this.editItem) return null;
+    const it = this.editItem;
+    const el = this.editorEl;
+    const active = (el && document.activeElement && el.contains(document.activeElement))
+      ? document.activeElement : null;
+    let line = 0, caret = -1, cardText = '';
+    if (active && active.classList && active.classList.contains('ie-line')) {
+      line = active.classList.contains('ie-l2') ? 2 : 1;
+      caret = this._caretOffset();
+      cardText = active.textContent || '';
+    }
+    this.commitEdit({ switching: true });
+    return { ref: it.ref, line, caret, cardText };
+  }
+
+  /** 与 stashInlineEdit 配对：重建后恢复同一行的编辑状态（找不到该行则不动）。 */
+  resumeInlineEdit(snap) {
+    if (!snap || !snap.ref) return;
+    const item = this.items.find(x => x.ref === snap.ref);
+    if (!item) return;
+    this.startEdit(item, snap.line === 2 ? 2 : 1, snap.caret, snap.cardText || '');
+  }
 
   closeEdit(reason = 'cancel') {
     const oldItem = this.editItem;

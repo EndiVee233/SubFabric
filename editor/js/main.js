@@ -1655,6 +1655,7 @@ function setSrt(text, name) {
   if (typeof realignEls !== 'undefined' && realignEls.btn) realignEls.btn.disabled = !state.project;
   if (btnDiarize) btnDiarize.disabled = !state.project;
   statusFile.textContent = t(`${name} · ${state.srtCues.length} 条`);
+  timeline.restartBlockEntrance?.();   // 解析完成后再起算入场，避免大稿件解析期间把动画窗口耗掉
   toast(`已打开 SRT：${state.srtCues.length} 条（双语）`);
 }
 
@@ -1723,6 +1724,26 @@ function normalizeAssColorTags() {
     if (next !== t) { state.assDoc.setEventText(ev, next); n++; }
   }
   return n;
+}
+
+let assRenderTimer = 0, assRenderGen = 0;
+/** 首屏后再把整份 ASS 交给 libass（见 setAss 末尾的调用说明）。
+ *  doc/fonts 在调用时捕获，代次/文档不符就作废。 */
+function scheduleAssRender(doc, fonts) {
+  if (!doc) return;
+  const gen = ++assRenderGen;
+  clearTimeout(assRenderTimer);
+  const run = () => {
+    if (gen !== assRenderGen || state.assDoc !== doc) return;
+    assPlayer.load(doc.serialize(), fonts);
+    autoLoadSystemFonts();     // 样式里写的字体若本机装了 → 自动喂给预览
+  };
+  // 先让浏览器把编辑器/列表画出来，再在下一轮事件循环做 serialize + worker 初始化。
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => { assRenderTimer = setTimeout(run, 0); });
+  } else {
+    assRenderTimer = setTimeout(run, 0);
+  }
 }
 
 function setAss(text, name) {
@@ -1898,8 +1919,10 @@ function setAss(text, name) {
   const renderFonts = state.assStyleTargets
     ? [state.assDoc.getStyle(state.assStyleTargets.zh).fontname, state.assDoc.getStyle(state.assStyleTargets.en).fontname]
     : [];
-  assPlayer.load(state.assDoc.serialize(), renderFonts);
-  autoLoadSystemFonts();     // 样式里写的字体若本机装了 → 自动喂给预览
+  /* 懒加载 libass 整轨：serialize 整份 ASS（大字幕 3~4MB）并初始化 worker 是打开稿件尾部的
+   * 一大块同步开销，但它只影响视频区叠字，不影响编辑器/字幕列表能不能先出现。
+   * 延到首帧绘制之后再做；期间换了稿件由代次作废，不会把旧稿渲染出来。 */
+  scheduleAssRender(state.assDoc, renderFonts);
   btnExport.disabled = false;
   if (btnExportPack) btnExportPack.disabled = false;
   if (btnExportFull) btnExportFull.disabled = false;
@@ -1927,6 +1950,8 @@ function setAss(text, name) {
   // 拼接出来的状态行要分段过词典：整段拼接后无法命中任何键（词典层是整段匹配）
   statusFile.textContent = t(`${name} · ${state.kar.rows.length} 行 / ${state.kar.sentences.length} 句`)
     + (hasKar ? t('（逐词特效）') : '');
+  /* 解析/自愈可能耗时超过入场窗口：等这一帧的内容真正建好后再重新起算块入场。 */
+  timeline.restartBlockEntrance?.();
 }
 
 // 字体名: 先去本机字体库把字体备好再套用(用户不必手动选 .ttf)
@@ -5352,6 +5377,10 @@ document.addEventListener('pointerdown', (e) => {
   if (!timeline.rangeSel) return;
   if (rangeBar && rangeBar.contains(e.target)) return;   // 点浮条不算"别处"
   if (e.target === timeline.canvas) return;              // 画布内: 交给 timeline 的 pointerdown
+  /* 区域处理弹窗不压暗、也不抢时间轴：用户先在时间轴上 Ctrl+拖出选区，再点「用选区」。
+   * 这个点击落在弹窗里，同样不是"点别处" —— 旧实现会先把选区清掉，于是「用选区」读不到
+   * 区间、时间轴上的高亮也跟着消失（用户实测反馈）。弹窗内的一切点击都保留选区。 */
+  if (e.target && e.target.closest && e.target.closest('#op-range-overlay')) return;
   timeline.clearRangeSel();
 }, true);
 
@@ -6323,6 +6352,7 @@ async function runRealign(queued) {
   const secs = (end - start).toFixed(1);
   jobCardShow('重排逐词时间', `正在用 Qwen3 对齐器重算（${secs} 秒）…`, null,
     '文本已确认，只重新量逐词时间；不跑 ASR、不改文本');
+  let editSnap = null;
   try {
     const r = await fetch(`/api/projects/${pid}/realign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -6337,8 +6367,14 @@ async function runRealign(queued) {
       throw new Error(b.note || '这次对齐不可信，未改动');
     }
     /* 排队期间前面几条已经重建过文档 → 按 targetKey 找**当前**那句，不能写回旧对象。 */
-    const sent = state.kar && state.kar.sentences.find(s => realignTargetKey(s) === target.key);
+    let sent = state.kar && state.kar.sentences.find(s => realignTargetKey(s) === target.key);
     if (!sent) throw new Error('这条字幕在排队期间已改动，已跳过');
+    /* 后台对齐跑完写回时，用户可能正在编辑另一条：先保存编辑框文本，重建后恢复。 */
+    editSnap = panel.stashInlineEdit ? panel.stashInlineEdit() : null;
+    /* 提交编辑可能改了这一条本身（例如用户正在改这条的文本）→ 按 key 重新定位，
+     * 找不到就说明文本已经变了，不能拿旧文本的对齐结果覆盖它。 */
+    sent = state.kar.sentences.find(s => realignTargetKey(s) === target.key);
+    if (!sent) throw new Error('这条字幕的文本刚被改过，已跳过重排');
     const beforeWords = sent.words.length;
     /* 写回：**先剥掉原有的逐词高亮标签再写 words**。
      * 原文里每个词都带 `{\c...}` 标签，若把它拼进词表，
@@ -6349,11 +6385,15 @@ async function runRealign(queued) {
       .replace(/[\u200b\uFEFF]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
+    if (String(sent.text || '').trim() !== inner) {
+      throw new Error('这条字幕的文本刚被改过，已跳过重排');
+    }
     sent.text = inner;                     // 文本内容不变，只是去掉渲染标签
     sent.words = b.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
     sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
+    if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
     const msec = Math.round((end - start) * 1000);
     jobCardDone('重排逐词时间 · 完成',
@@ -6365,6 +6405,7 @@ async function runRealign(queued) {
       `Qwen3-ForcedAligner：用已确认文本对原片音频做纯对齐（不跑 ASR、不改文本）`);
   } catch (e) {
     const msg = String((e && e.message) || e);
+    if (editSnap && panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
     jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
     toast('重排失败：' + msg, 6600);
     logOp('realign', `第 ${target.no} 条 ${fmtTime(start)}~${fmtTime(end)}`,
@@ -6408,8 +6449,11 @@ var realignEls = {
   apply: document.getElementById('realign-apply'),
   btn: document.getElementById('btn-realign-full'),
 };
-let realignData = null;          // { items, threshold, total, usable }
+let realignData = null;          // { items, threshold, total, usable, repair }
 let realignPicked = new Set();   // 勾选的 items 下标
+/* 这一轮只重校「逐词异常行」：应用时允许把缺词/多词的行按对齐结果的词序列修好，
+ * 不再要求新词数等于旧的（异常行本来就对不上，否则永远应用不了）。 */
+let realignRepair = false;
 /* 用户**手动取消勾选**过的达标项 —— 改门槛重判时不要把它们的勾自动加回来。
  * 每次开新一轮重校对会清空。 */
 let realignUnpicked = new Set();
@@ -6539,6 +6583,7 @@ function resetRealignForProjectSwitch() {
   clearTimeout(realignPollTimer);
   realignRunning = false;
   realignData = null;
+  realignRepair = false;
   realignPicked = new Set();
   realignUnpicked = new Set();
   realignShow(false);
@@ -6620,7 +6665,8 @@ function pollRealignFull(pid) {
 function showRealignResult(job) {
   const items = job.items || [];
   const toAss = job.sourceFormat === 'srt';
-  realignData = { items, total: job.total || items.length, usable: job.usable || 0, srtToAss: toAss };
+  realignData = { items, total: job.total || items.length, usable: job.usable || 0, srtToAss: toAss,
+    repair: !!realignRepair && !toAss };
   realignPicked = new Set(items.map((it, k) => (it.ok ? k : -1)).filter(k => k >= 0));
   realignUnpicked = new Set();
   if (realignEls.allWrap) realignEls.allWrap.hidden = false;
@@ -6690,6 +6736,7 @@ async function startRealignFull(region, opts) {
   if (realignRunning) { toast('全片重校对已经在跑了', 3200); return; }
   if (!state.project) { toast('全片重校对需要项目模式', 4200); return; }
   const onlyKeys = (opts && Array.isArray(opts.onlyKeys) && opts.onlyKeys.length) ? opts.onlyKeys : null;
+  realignRepair = !!onlyKeys;
   const pid = state.project.id;
   const allowSrtToAss = state.format === 'srt';
   realignRunning = true;
@@ -6745,6 +6792,10 @@ async function applyRealignFull() {
   realignApplying = true;
   if (realignEls.apply) realignEls.apply.disabled = true;
   try {
+    /* 用户可能正在改另一条字幕：先把编辑框里的文本提交进数据（不重建列表），
+     * 重建后再把编辑状态恢复回去。否则这一步 rebuildItemsAndLanes 会把正在输入的
+     * 那条连同文字一起顶掉（用户实测：「逐词时间戳插入时不要顶掉输入操作」）。 */
+    const editSnap = panel.stashInlineEdit ? panel.stashInlineEdit() : null;
     /* ⚠ **不能**拿 item.index 直接索引 state.kar.sentences：
      *   服务端返回的 index 是它那边的句子序号，而它解析出的句子集合与前端
      *   analyzeKaraoke 的**不一样** —— 实测导入 ASS 的稿件：
@@ -6756,8 +6807,12 @@ async function applyRealignFull() {
     const snapshot = doc.serialize();
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(snapshot));
     const revision = [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('');
-    if (state.project !== project || state.assDoc !== doc || doc.serialize() !== snapshot) return;
-    const { changed: n, skipped: miss } = applyRealignItems(doc, state.kar, picks.map(k => data.items[k]), { projectId: pid, revision });
+    if (state.project !== project || state.assDoc !== doc || doc.serialize() !== snapshot) {
+      if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
+      return;
+    }
+    const { changed: n, skipped: miss } = applyRealignItems(doc, state.kar, picks.map(k => data.items[k]),
+      { projectId: pid, revision, repairWords: !!data.repair });
     const detail = picks.map(k => `${fmtTime(data.items[k].start)} · ${(data.items[k].words || []).length} 词`).join('、');
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
@@ -6765,6 +6820,16 @@ async function applyRealignFull() {
     if (state.project && state.project.id === pid && Projects && Projects.scheduleSave) {
       Projects.scheduleSave();
     }
+    /* 一条都没写进去时不要假装成功并收起预览：告诉用户为什么，保留清单让他重试/核对。 */
+    if (!n) {
+      toast(`没有可应用的行：${miss || picks.length} 句的词序列与当前文本对不上，已跳过；文本未改动`, 7200);
+      logOp('realign', '全片逐词重校对：未应用',
+        `对齐结果与当前文本分词不一致，${miss || picks.length} 句全部跳过（文本未改动）`,
+        'Qwen3-ForcedAligner 纯对齐；若字幕刚被改过，请重新跑一次重校对');
+      if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
+      return;
+    }
+    if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
     toast(`已重排 ${n} 句的逐词时间${miss ? `（${miss} 句没对上，已跳过）` : ''}（文本未改动）`, 6200);
     logOp('realign', `全片逐词重校对：应用 ${n} 句`,
       `重排了 ${n} 句的逐词时间（文本与整句时间未改动）`,
@@ -6785,6 +6850,9 @@ async function applySrtRealignToAss(pid, picks) {
   realignApplying = true;
   if (realignEls.apply) realignEls.apply.disabled = true;
   try {
+    /* 这条路径会整份重新载入项目：先把正在输入的文本提交并落盘，别让它随重载丢掉。 */
+    if (panel.stashInlineEdit) panel.stashInlineEdit();
+    if (Projects && Projects.flushSave) await Projects.flushSave();
     const keys = picks.map(k => realignData.items[k].targetKey).filter(Boolean);
     const r = await fetch(`/api/projects/${pid}/realign-full-apply`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

@@ -13,6 +13,7 @@ sys.path.insert(0, str(HERE.parent / "asr"))
 
 from fetch import bilibili as bili          # noqa: E402
 from fetch import selector as sel           # noqa: E402
+from fetch import fetch_cli as fcli         # noqa: E402
 
 passed = failed = 0
 
@@ -123,6 +124,26 @@ with tempfile.TemporaryDirectory() as d:
     ok(back.get("SESSDATA") == "s3cr3t" and back.get("bili_jct") == "j1", "写出去再读回来一致", back)
     ok(bili.parse_cookie_input(txt).get("SESSDATA") == "s3cr3t", "整份文件内容也能直接解析", bili.parse_cookie_input(txt))
 
+
+print("\n== JavaScript 运行时探测（yt-dlp YouTube 完整解析） ==")
+# 用临时文件模拟运行时，不依赖本机是否装了 Node/Deno。
+with tempfile.TemporaryDirectory() as d:
+    fake_node = Path(d) / "node.exe"
+    fake_node.write_bytes(b"")
+    fake_qjs = Path(d) / "qjs-ng.exe"
+    fake_qjs.write_bytes(b"")
+    os.environ["SUBFABRIC_JS_RUNTIME"] = "node:" + str(fake_node)
+    got = fcli.find_js_runtimes()
+    ok(any(n == "node" and Path(p) == fake_node for n, p in got), "SUBFABRIC_JS_RUNTIME=node:<path> 被采纳", got)
+    ok(len({p.lower() for _, p in got}) == len(got), "同一路径不重复登记", got)
+    ok(all(n in ("deno", "node", "bun", "quickjs") for n, _ in got), "只登记 yt-dlp 支持的运行时名", got)
+    os.environ["SUBFABRIC_JS_RUNTIME"] = str(fake_qjs)
+    ok(any(n == "quickjs" and Path(p) == fake_qjs for n, p in fcli.find_js_runtimes()),
+       "直接给路径也能按 exe 名认出 quickjs", fcli.find_js_runtimes())
+    os.environ.pop("SUBFABRIC_JS_RUNTIME", None)
+ok(fcli._runtime_from_path("/usr/bin/deno")[0] == "deno", "deno 路径识别")
+ok(fcli._runtime_from_path(r"C:\Program Files\nodejs\node.exe")[0] == "node", "含空格的 Windows 路径识别")
+ok(not os.environ.get("SUBFABRIC_JS_RUNTIME"), "临时环境变量已清理")
 
 print("\n== CLI 契约（离线, 不下载） ==")
 import subprocess  # noqa: E402
