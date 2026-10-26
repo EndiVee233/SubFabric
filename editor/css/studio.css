@@ -3920,8 +3920,10 @@ body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-col
 .sf-studio #st-view .sf-settings-color .sscp-control { flex:0 0 auto; }
 .sf-studio .sf-settings-swatches { flex-wrap:wrap; gap:12px; }
 /* 自定义主题色与色板共用一块遮罩；圆角随主题（MY 24px / UWP 2px）。 */
-.sf-studio .sf-theme-color-panel { margin-top:16px; padding:16px 18px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+.sf-studio .sf-theme-color-panel { margin-top:16px; padding:20px 18px 18px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
 .sf-studio .sf-theme-color-panel .sf-settings-line { padding:0; border-top:0; }
+/* 莫奈取色与上面的自定义色稍微拉开：用户反馈两行贴在一起、说明文字被压到下一行边缘。 */
+.sf-studio .sf-theme-color-panel #sf-monet-row { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
 .sf-studio .sf-theme-color-panel .sf-settings-swatches { margin-top:14px; padding:14px 0 0; border-top:1px solid var(--line); }
 .sf-studio[data-design=material] .sf-theme-color-panel { border-radius:24px; }
 .sf-studio[data-design=uwp] .sf-theme-color-panel { border-radius:2px; }
@@ -4268,7 +4270,7 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-design=material] .pc-draft-bar .sf-wave-shift { top:calc(50% - 10px); height:20px; mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='20' viewBox='0 0 48 20'%3E%3Cpath d='M-24 10Q-18 5 -12 10Q-6 15 0 10Q6 5 12 10Q18 15 24 10Q30 5 36 10Q42 15 48 10Q54 5 60 10Q66 15 72 10' fill='none' stroke='black' stroke-width='8'/%3E%3C/svg%3E"); }
 /* 动态/静态流光只用 play-state 切换：静态时停住当前帧，切回动态继续漂移，
    不会因为 animation-name 归零而瞬间跳回原点（2026-10-20 反馈：切换生硬）。 */
-.sf-studio .sf-ambient i { animation-name:sf-drift; animation-duration:20s; animation-timing-function:ease-in-out; animation-iteration-count:infinite; animation-direction:alternate; animation-play-state:paused; }
+.sf-studio .sf-ambient i { animation-name:sf-drift; animation-duration:var(--sf-aurora-duration,20s); animation-timing-function:ease-in-out; animation-iteration-count:infinite; animation-direction:alternate; animation-play-state:paused; }
 .sf-studio[data-bg=aurora][data-aurora-motion=dynamic][data-page-visible=true] .sf-ambient i { animation-play-state:running; }
 .sf-studio .sf-aurora-colors { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; padding:16px 0; }
 .sf-studio .sf-aurora-color { display:flex; align-items:center; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:12px; }

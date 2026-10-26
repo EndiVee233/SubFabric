@@ -1,5 +1,5 @@
 import { STUDIO_KEY, defaults, normalizeStudio, projectPhase, matchesProject, imageData } from './studio-state.js';
-import { configure as configureRim } from './rim-curve.js';
+import { configure as configureRim, updateParams as updateRimParams } from './rim-curve.js';
 import { escapeHtml as esc, fmtTime, popOrigin } from './util.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
@@ -133,12 +133,24 @@ function applyTheme() {
   $('sf-aurora-options').hidden = prefs.background !== 'aurora';
   $('sf-image-tools').hidden = prefs.background !== 'image';
   $('sf-aurora-motion').value = prefs.auroraMotion;
+  /* 流光速度：CSS 里 animation-duration 取 --sf-aurora-duration（20s / speed）。 */
+  const auroraSpeed = prefs.auroraSpeed;
+  st.setProperty('--sf-aurora-duration', (20 / auroraSpeed).toFixed(2) + 's');
+  const auroraSpeedInput = $('sf-aurora-speed');
+  if (auroraSpeedInput) auroraSpeedInput.value = String(auroraSpeed);
+  const auroraSpeedValue = $('sf-aurora-speed-value');
+  if (auroraSpeedValue) auroraSpeedValue.textContent = auroraSpeed.toFixed(1) + '×';
+  const auroraSpeedRow = $('sf-aurora-speed-row');
+  if (auroraSpeedRow) auroraSpeedRow.hidden = prefs.auroraMotion !== 'dynamic';
   $('sf-aurora-palette').value = !prefs.auroraColors.length ? 'theme' : Object.keys(auroraPalettes).find(key => auroraPalettes[key].every((color, i) => color === prefs.auroraColors[i])) || 'custom';
   $('sf-background').value = prefs.background; $('sf-mode').value = prefs.mode; $('sf-motion').value = prefs.motion; $('sf-color').value = accent;
   $('sf-color').disabled = false;
   $('sf-color').title = '';
   $('sf-image-pick').disabled = prefs.background !== 'image';
   $('sf-image-clear').disabled = !prefs.image;
+  /* 莫奈取色只对 Material You 有意义；图片由用户临时选择，不改背景素材。 */
+  const monetRow = $('sf-monet-row');
+  if (monetRow) monetRow.hidden = pack.design !== 'material';
   for (const input of document.querySelectorAll('#sf-color, #theme-color, [data-theme-color]')) {
     input.value = accent;
     input.disabled = false;
@@ -398,8 +410,18 @@ if (rimEnabled) rimEnabled.addEventListener('change', () => {
 });
 for (const [id, key] of [['sf-rim-sat-low', 'rimSatLow'], ['sf-rim-bri-gain', 'rimBriGain'], ['sf-rim-spec-base', 'rimSpecBase'], ['sf-rim-power', 'rimPower']]) {
   const input = $(id);
-  if (input) input.addEventListener('input', () => {
-    if (commit({ [key]: Number(input.value) })) { applyTheme(); themeStatus(); }
+  if (!input) continue;
+  /* 拖动时只重画曲线/已有环：不能 applyTheme()。applyTheme 会 renderPacks() 重建主题卡、
+   * 重播设置卡入场并重算全部令牌，连续 input 看起来就是整页反复刷新。 */
+  input.addEventListener('input', () => {
+    prefs[key] = Number(input.value);
+    updateRimParams(prefs);
+  });
+  input.addEventListener('change', () => {
+    if (commit({ [key]: prefs[key] })) {
+      updateRimParams(prefs);
+      themeStatus();
+    }
   });
 }
 $('sf-background').addEventListener('change', () => {
@@ -408,6 +430,23 @@ $('sf-background').addEventListener('change', () => {
 for (const [id, key] of [['sf-motion', 'motion'], ['sf-aurora-motion', 'auroraMotion']]) $(id).addEventListener('change', () => {
   if (commit({ [key]: $(id).value })) { applyTheme(); themeStatus(); }
 });
+/* 流光速度：拖动时实时改 --sf-aurora-duration，松手才写 localStorage。 */
+{
+  const speed = $('sf-aurora-speed'), output = $('sf-aurora-speed-value');
+  const read = () => Math.round(Math.max(0.4, Math.min(2.5, Number(speed.value) || 1)) * 10) / 10;
+  const preview = () => {
+    const v = read();
+    document.documentElement.style.setProperty('--sf-aurora-duration', (20 / v).toFixed(2) + 's');
+    if (output) output.textContent = v.toFixed(1) + '×';
+  };
+  if (speed) {
+    speed.addEventListener('input', preview);
+    speed.addEventListener('change', () => {
+      const v = read();
+      if (commit({ auroraSpeed: v })) { applyTheme(); themeStatus(); }
+    });
+  }
+}
 $('sf-mode').addEventListener('change', () => {
   if (commit({ mode: $('sf-mode').value })) applyModeWithReveal();
 });
@@ -550,6 +589,38 @@ $('sf-theme-file').addEventListener('change', async () => {
 });
 $('sf-image-pick').addEventListener('click', () => $('sf-image-file').click());
 $('sf-image-clear').addEventListener('click', () => { if (commit({ image: '', background: 'solid' })) applyBackgroundWithFade(); });
+/* Material You 莫奈取色：从当前背景图提取种子色，再按现有 palette() 生成整套配色。
+ * 不是取平均色（平均常是灰），monet.js 会按色相桶 + 饱和度/明度权重挑主色。 */
+$('sf-color-from-image')?.addEventListener('click', () => $('sf-monet-file').click());
+$('sf-monet-file')?.addEventListener('change', async (event) => {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  input.value = '';                       // 允许连续选同一张图
+  if (!file) return;
+  if (!(BG_IMAGE_TYPES.test(file.type || '') || BG_IMAGE_EXT.test(file.name || '')) || file.size > 64 * 1024 * 1024) {
+    notice('请选择 PNG、JPEG、WebP、HEIC 或 HEIF 图片（单文件不超过 64MB）。');
+    return;
+  }
+  const btn = $('sf-color-from-image');
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '取色中…'; }
+  try {
+    /* 动态加载：取色模块是本期新增文件。旧服务进程的静态白名单还没它时，
+     * 顶层静态 import 会让整个 studio.js 加载失败（主题/背景/流光全部不应用）。
+     * 放在点击里，最坏也只是取色不可用，其余界面照常。 */
+    const { extractSeedFromImageSrc } = await import('./monet.js');
+    const data = await prepareBackgroundImage(file);   // 兼容 HEIC，顺手压到可解码的小图
+    const seed = await extractSeedFromImageSrc(data);
+    if (!seed) throw new Error('图片里没有找到可用的颜色');
+    if (!commit({ accent: seed })) throw new Error('主题色保存失败');
+    applyTheme();
+    notice(`已从图片提取主题色 ${seed.toUpperCase()}（莫奈取色）`);
+  } catch (error) {
+    notice('图片取色失败：' + (error && error.message ? error.message : error));
+  } finally {
+    if (btn) { btn.textContent = label; btn.disabled = false; }
+  }
+});
 /* 背景图不再限制 2MB 输入：先 decode，再压到长边 2560 的 WebP/JPEG。
    HEIC/HEIF 走浏览器/系统解码器；Windows 装了 HEIF 图像扩展的 Edge 可直接读。
    这样既支持大图，也不会把 localStorage 撑爆。 */

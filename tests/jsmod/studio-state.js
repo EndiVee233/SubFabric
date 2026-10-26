@@ -1,6 +1,6 @@
 // 只保存界面偏好/文件夹关系；字幕、任务、模型、凭据不进入浏览器演示状态。
 export const STUDIO_KEY = 'subfabric-studio-v1';
-export const defaults = Object.freeze({ themePack: 'windows-uwp', accent: '#5c7560', mode: 'light', background: 'solid', image: '', imageBlur: 0, imageDim: 0, motion: 'on', auroraColors: [], auroraMotion: 'dynamic', glassDim: 80, glassBlur: 18, glassOpacity: 100, rimEnabled: true, rimSatLow: 0.85, rimBriGain: 0.58, rimSpecBase: 0.60, rimPower: 1.5, custom: [], folders: [], assignments: {}, recent: '', view: 'grid' });
+export const defaults = Object.freeze({ themePack: 'windows-uwp', accent: '#5c7560', mode: 'light', background: 'solid', image: '', imageBlur: 0, imageDim: 0, motion: 'on', auroraColors: [], auroraMotion: 'dynamic', auroraSpeed: 1, glassDim: 80, glassBlur: 18, glassOpacity: 100, rimEnabled: true, rimSatLow: 0.85, rimBriGain: 0.58, rimSpecBase: 0.60, rimPower: 1.5, custom: [], folders: [], assignments: {}, recent: '', view: 'grid' });
 const id = s => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
 const number = (v, lo, hi, fallback) => typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
 /* 背景图在保存前会压到长边 2560 的 JPEG；这里只防超大数据把 localStorage 撑爆，
@@ -18,6 +18,7 @@ export function normalizeStudio(value, themes) {
     mode: ['light', 'dark', 'system'].includes(v.mode) ? v.mode : 'light', background: ['solid', 'aurora', 'image'].includes(v.background) ? v.background : 'solid',
     auroraColors: Array.isArray(v.auroraColors) && v.auroraColors.length === 3 && v.auroraColors.every(color => themes.hex(color)) ? [...v.auroraColors] : [],
     auroraMotion: v.auroraMotion === 'static' ? 'static' : 'dynamic',
+    auroraSpeed: Math.round(number(v.auroraSpeed, 0.4, 2.5, defaults.auroraSpeed) * 10) / 10,
     glassDim: typeof v.glassDim === 'number' && Number.isFinite(v.glassDim) ? Math.max(72, Math.min(92, Math.round(v.glassDim))) : defaults.glassDim,
     glassBlur: typeof v.glassBlur === 'number' && Number.isFinite(v.glassBlur) ? Math.max(0, Math.min(32, Math.round(v.glassBlur))) : defaults.glassBlur,
     glassOpacity: typeof v.glassOpacity === 'number' && Number.isFinite(v.glassOpacity) ? Math.max(20, Math.min(100, Math.round(v.glassOpacity))) : defaults.glassOpacity,

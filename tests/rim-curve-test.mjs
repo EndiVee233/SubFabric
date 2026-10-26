@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { RIM_DEFAULTS, RIM_SELECTOR, rimActive, rimParams, rimMap, makeField, sampleField } from './jsmod/rim-curve.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { RIM_DEFAULTS, RIM_SELECTOR, rimActive, rimParams, rimMap, makeField, sampleField, updateParams } from './jsmod/rim-curve.js';
 
 let count = 0;
 const check = fn => { fn(); count++; };
@@ -55,5 +57,16 @@ check(() => assert.deepEqual(sampleField(null, 0, 0, 1, 1), { s: 0, v: 0 }));
 
 check(() => assert.ok(rimMap(defaults, -1, -1).kSat <= 1.10));
 check(() => assert.ok(rimMap(defaults, 2, 2).kSat >= 0.85));
+check(() => assert.equal(typeof updateParams, 'function', '拖动时只更新参数的入口存在'));
+check(() => updateParams({ rimSatLow: 0.7 }));
+const studio = fs.readFileSync(new URL('../editor/js/studio.js', import.meta.url), 'utf8');
+const rimLoop = studio.slice(
+  studio.indexOf("for (const [id, key] of [['sf-rim-sat-low'"),
+  studio.indexOf("$('sf-background')", studio.indexOf("for (const [id, key] of [['sf-rim-sat-low'"))
+);
+const rimCode = rimLoop.replace(/\/\*[\s\S]*?\*\//g, '');
+check(() => assert.match(rimCode, /updateRimParams\(prefs\)/, '拖动只重画描边曲线'));
+check(() => assert.doesNotMatch(rimCode, /applyTheme\(\)/, '拖动不再整页 applyTheme（会重建主题卡/重播入场）'));
+check(() => assert.match(studio, /updateParams as updateRimParams/, 'studio.js 接入轻量更新入口'));
 
 console.log(`rim-curve-test: ${count} assertions passed`);

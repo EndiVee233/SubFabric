@@ -1,5 +1,19 @@
 # 项目当前状态（唯一权威入口）
 
+- 当前任务（2026-10-26，第七轮）：**描边曲线拖动不再整页刷新**，**已实现且已验证（自动回归）；安装版未重打包**。
+  四个描边参数滑杆原来每次 `input` 都调 `applyTheme()`，会 `renderPacks()` 重建主题卡、重播设置卡入场并重算令牌，看起来整页反复刷新。现在 `rim-curve.js` 新增 `updateParams(prefs)`（更新参数/读数/SVG 曲线 + rAF 刷新已有环），`studio.js` 的 `input` 只调 `updateRimParams(prefs)`，`change` 松手才 `commit`；拖动不再触碰主题包 DOM 与入场动画。`rim-curve-test` 增加「拖动代码块禁止 applyTheme」断言；全量 JS 回归 `_test/maintenance/js-results-1463-rimdrag.json` 为 **133 通过 / 8 部分 / 0 失败**（2 排除）；ESLint 0 error。
+  **未做**：安装版重打包、真实观感验收。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+- 当前任务（2026-10-26，第六轮）：**动态流光速度设置**，**已实现且已验证（自动回归）；安装版未重打包**。
+  外观 → 流光选项新增「流光速度」滑杆 **0.4×~2.5×（默认 1×）**，存 `prefs.auroraSpeed`（`normalizeStudio` 对非法值回 1、夹取并保留一位小数）；`applyTheme()` 把 `20s / speed` 写入 `--sf-aurora-duration`，`.sf-ambient i` 的 `animation-duration: var(--sf-aurora-duration,20s)`。拖动 input 时实时预览，change 时才 `commit`；静态流光下隐藏 `#sf-aurora-speed-row`。新增 `tests/aurora-speed-test.mjs`（默认/夹取/舍入、CSS 变量、静态隐藏、模板）；全量 JS 回归 `_test/maintenance/js-results-1463-auroraspeed.json` 为 **133 通过 / 8 部分 / 0 失败**（2 排除）；ESLint 0 error。
+  **未做**：安装版重打包、真实观感验收。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+- 当前任务（2026-10-26，第五轮）：**Material You 莫奈取色**，**已实现且已验证（自动回归）；安装版未重打包**。
+  新增 `editor/js/monet.js`：`seedFromPixels()` 跳过透明/过暗/过亮/灰像素，按 15° 色相桶 + 饱和度²/中等明度权重挑主色（不是平均色），最高桶合并左右相邻桶做加权平均，饱和度夹 0.35~0.75、明度夹 0.42~0.62；灰图走中性兜底，全透明返回 null。`extractSeedFromImageSrc()` 解码图片并缩到 96px。设置 → 外观的「莫奈取色」行只在 Material You 显示，选图片（PNG/JPEG/WebP/HEIC，复用 `prepareBackgroundImage()`）后提取种子色，`commit({accent:seed})` 写回并 `applyTheme()`，由现有 `themes.palette()` 生成整套配色。`editor/server.js` 静态白名单加入 `/editor/js/monet.js`；模板新增 `#sf-monet-row` / `#sf-color-from-image` / `#sf-monet-file` 后重新生成 `editor/studio.html`；`zh-CN.json` 补键。主题色遮罩顶部内边距 16→20px，`#sf-monet-row` 增加 14px 上外边距、14px 内边距与一条分隔线，避免与上一行说明文字挤在一起。
+  验证：新增 `tests/monet-test.mjs`（色相桶选择、灰图兜底、透明/空数据、MY 接线与模板、禁止顶层静态 import）；`ui-integration`、`theme-packs`、`material-home`、`studio-navigation` 通过。全量 JS 回归 `_test/maintenance/js-results-1463-monet.json` 为 **132 通过 / 8 部分 / 0 失败**（2 排除；含新增 monet 测试）；ESLint 0 error。
+  **背景流光不动（同日修复）**：`monet.js` 原为 studio.js 顶层静态 import。新增静态资源要重启服务才进白名单；旧进程对 `/editor/js/monet.js` 返回 403 时整个 studio.js 加载失败，`applyTheme()` 不执行，`data-bg` 停在 `solid`、`data-aurora-motion`/`data-page-visible` 未写入，CSS 的 `animation-play-state:running` 永不匹配，流光停止。已改为点击取色时 `await import('./monet.js')`，最坏只影响取色按钮；`monet-test` 增加「禁止顶层静态 import」断言。启用取色仍需重启一次服务以加载新静态文件。
+  **未做**：安装版重打包；真实壁纸人工观感验收。GitHub：**尚未提交**（工作副本无 `.git`）。
+
 - 当前任务（2026-10-26，第四轮）：**打开稿件懒加载 + 字幕块浮现放慢**，**已实现且已验证（自动回归）；安装版未重打包**。
   **浮现放慢**：`editor/js/timeline.js` 的 `BLOCK_ENTER_DUR` 320→480ms、`BLOCK_ENTER_STAGGER` 20→28ms、`BLOCK_ENTER_MAX_DELAY` 320→392ms、`BLOCK_ENTER_BLUR` 280→300ms；减少动效时仍关闭。
   **去上浮**：字幕块入场只保留 `opacity 0→1`，`_drawLanes` 不再 `translate(0,(1-enterP)*10)`，预渲染块层合成也不再叠加纵向偏移；错峰节奏不变。

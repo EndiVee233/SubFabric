@@ -223,12 +223,34 @@
   `author` `design` `seed` `tokens` `assets` `builtin`）、`#RRGGBB` 颜色令牌与内嵌 PNG/JPEG/WebP 预览；
   **不能**含脚本、CSS、HTML、SVG 或远程 URL。导入同名自定义包替换旧版，导入内置包生成 `-custom` 副本，
   内置包不可删除。
+- **Material You 莫奈取色（2026-10-26）**：设置 → 外观 → 「莫奈取色」只在 MY 主题显示。用户选一张图片，
+  `editor/js/monet.js` 的 `seedFromPixels()` 从中挑种子色，再交给现有 `themes.palette(seed, dark)`
+  生成整套 Material 配色（`commit({accent:seed})` + `applyTheme()`）。算法是轻量近似 HCT：
+  透明/过暗/过亮/灰像素跳过；按 15° 色相桶，权重 = 饱和度² × 中等明度偏好（暗部与高光降权），
+  取最高桶并合并左右相邻桶做加权平均；最终饱和度夹到 0.35~0.75、明度 0.42~0.62，避免荧光色或近黑。
+  没有可用彩色时退回中性平均色；全透明返回 null。图片先走 `prepareBackgroundImage()`（兼容 HEIC、
+  压到长边 2560）再缩到 96px 取色，不依赖当前背景模式，也不会改背景图。回归：
+  `tests/monet-test.mjs` 覆盖色相桶选择、灰图兜底、透明/空数据安全与设置页接线。
+  主题色遮罩内新增 `#sf-monet-row` 的上分隔线（`margin-top:14px; padding-top:14px`），
+  遮罩顶部内边距 16→20px，避免与上一行说明文字挤在一起。
+  **加载方式**：`monet.js` 只在点击取色时 `await import('./monet.js')`，不在 studio.js 顶层静态 import。
+  原因：新增静态资源要重启服务才会进白名单；旧进程返回 403 时静态 import 会让整个 studio.js 加载失败，
+  表现为主题不应用、背景流光停住。动态加载把影响限制在取色按钮本身。启用取色仍需重启一次服务。
+- **背景流光不动（2026-10-26 修）**：根因是上一条——旧服务进程没有 `/editor/js/monet.js` 白名单，
+  studio.js 顶层静态 import 403，模块整体不执行，`applyTheme()` 从未运行，`data-bg` 停在 `solid`、
+  `data-aurora-motion`/`data-page-visible` 也没写入，CSS 的 `animation-play-state:running` 选择器
+  永远不匹配。改为动态 import 后 studio.js 正常执行，流光恢复；参考
+  `tests/monet-test.mjs` 的顶层 import 禁令断言。
 - **主题示意图几何**：主题卡内的预览示意图按卡片自身 `design` 取圆角（Windows 10 2px / Material You 24px /
   Classic 8px / Studio 12px），不随当前启用主题的 `body[data-design]` 切换；UWP 的三条内容横条保持直角。
 - **主题卡悬浮**：Material You 下悬浮非当前主题卡时，1px 边框以 160ms 过渡点亮为 `--accent`；当前卡继续
   使用 2px 选中环，UWP 保留其中性 `--muted` 悬浮边框。
 - **描边映射开关**：`#sf-rim-enabled` 复用共享 `.switch` 组件（默认 38×20 / 14px，UWP 40×20 / 12px），
   不再使用 26×15 的自绘双伪元素开关；`configureRim()` 继续同步 `checked`。
+- **描边曲线拖动（2026-10-26）**：四个参数滑杆的 `input` 只调用 `rim-curve.js` 新增的
+  `updateParams(prefs)`（更新参数 → 同步读数 → 重画 SVG 曲线 → rAF 更新已有环），**不再
+  `applyTheme()`**。原实现每次 input 都会 `renderPacks()` 重建主题包卡、重播设置卡入场并重算全部
+  令牌，视觉上像整页反复刷新；现在拖动只重画这一张曲线卡，`change` 松手时才 `commit` 写偏好。
 - **开关关态配色**：`.switch-slider` 的关态轨道用 `color-mix(in srgb, var(--text) 14%, var(--surface))`，
   浅色模式是浅灰胶囊、深色模式仍是深灰；旧实现写死 `#2a2a34`，浅色主题下开关仍是深色的。
   开态仍走 `--accent` 渐变，UWP 的 `--surface-2` 轨道单独覆盖。
@@ -250,6 +272,10 @@
   项目数据刷新不再触发动画。`sf-studio-theme` 仍显式传入重播标记。
 - **流光过渡**：`.sf-ambient i` 用 `background-color` 承接 `--sf-aurora-1..3` 并做 420ms 过渡，换配色或
   切换明暗都不硬切；动态/静态只切 `animation-play-state`，静态停在当前帧、切回继续漂移，不跳回原点。
+- **流光速度（2026-10-26）**：外观设置「流光速度」滑杆 0.4×~2.5×（默认 1×），存
+  `prefs.auroraSpeed`；`applyTheme()` 把 `20s / speed` 写进 `--sf-aurora-duration`，
+  `.sf-ambient i` 的 `animation-duration` 读该变量。拖动时实时预览、松手才写 localStorage；
+  静态流光下隐藏速度行。归一化：非法值回 1，夹取后保留一位小数。
 - **提示条配色**：`#toast` 的底色/文字/描边改用 `--surface` / `--text` / `--line`（旧实现写死深色
   `rgba(22,24,31,.97)`），浅色模式下不再出现"深底 + 深字"看不清的提示；UWP 仍走右下 3px 色条那套。
 - **空视频提示卡**：`#stage-hint .hint-card` 的底色改成 `color-mix(in srgb, var(--surface) 84%, transparent)`、
@@ -1074,6 +1100,48 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
 ### 最近状态
+
+**2026-10-26（描边曲线拖动不再整页刷新，beta 1.4.6.3）**
+
+- **问题**：拖动「描边映射曲线」任一滑杆时页面反复刷新/闪动。
+- **原因**：四个 `input` 监听都调用 `applyTheme()`；它会 `renderPacks()` 重建主题包 DOM、
+  `animateMaterialPage()` 重播设置卡入场并重算全部令牌。连续 input 就表现为整页反复刷新。
+- **修复**：`rim-curve.js` 新增 `updateParams(prefs)`，只更新参数、读数、SVG 曲线并用 rAF
+  刷新已有描边环；`studio.js` 的 `input` 改为 `updateRimParams(prefs)`，`change` 松手才
+  `commit` 持久化，不再动主题/主题包/入场。
+- **验证**：`rim-curve-test` 增加轻量更新入口与「拖动代码块禁止 applyTheme」断言；
+  `ui-integration`、`studio-navigation` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-rimdrag.json` **133 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+**2026-10-26（动态流光速度设置，beta 1.4.6.3）**
+
+- **需求**：为背景动态流光加入速度调节。
+- **实现**：外观 → 流光选项新增「流光速度」滑杆 **0.4×~2.5×（默认 1×）**，存
+  `prefs.auroraSpeed`；`applyTheme()` 把 `20s / speed` 写入 `--sf-aurora-duration`，
+  `.sf-ambient i` 的 `animation-duration` 读该变量。拖动时实时预览、松手才持久化；
+  静态流光下隐藏速度行。`normalizeStudio` 对非法值回 1、夹取 0.4~2.5 并保留一位小数。
+- **验证**：新增 `tests/aurora-speed-test.mjs`（默认/夹取/舍入、CSS 变量、静态隐藏、模板）；
+  `ui-integration`、`theme-packs` 通过。全量 JS 回归
+  `_test/maintenance/js-results-1463-auroraspeed.json` **133 通过 / 8 部分 / 0 失败**（2 排除）；
+  ESLint 0 error。
+- **未做**：安装版重打包、真实观感验收。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+**2026-10-26（Material You 莫奈取色，beta 1.4.6.3）**
+
+- **需求**：为 MY 主题的主题色加入基于图片的莫奈（Monet）取色。
+- **实现**：新增 `editor/js/monet.js`（`seedFromPixels` 纯逻辑 + `extractSeedFromImageSrc`
+  浏览器解码）；设置 → 外观的「莫奈取色」行只在 Material You 显示，选图片（PNG/JPEG/WebP/HEIC）
+  后提取种子色，写回 `prefs.accent` 并 `applyTheme()`，由现有 `themes.palette()` 生成整套配色。
+  算法按 15° 色相桶 + 饱和度²/中等明度权重挑主色（不是平均色），灰图有中性兜底，透明/空数据安全；
+  饱和度与明度做夹取，避免荧光色/近黑。图片复用 `prepareBackgroundImage()` 以支持 HEIC。
+- **接入**：`editor/server.js` 静态白名单加入 `/editor/js/monet.js`；`tools/templates/studio.html`
+  增加 `#sf-monet-row` / `#sf-color-from-image` / `#sf-monet-file`，重新生成 `editor/studio.html`；
+  `editor/lang/zh-CN.json` 自动补键。
+- **验证**：新增 `tests/monet-test.mjs`（色相桶、灰图、透明/空数据、MY 接线与模板）；
+  `ui-integration`、`theme-packs`、`material-home`、`studio-navigation` 通过；
+  全量 JS 回归 `_test/maintenance/js-results-1463-monet.json` **132 通过 / 8 部分 / 0 失败**；
+  ESLint 0 error。
+- **未做**：安装版重打包、真实壁纸人工观感验收。GitHub：**尚未提交**（工作副本无 `.git`）。
 
 **2026-10-26（打开稿件懒加载 + 字幕块浮现放慢，beta 1.4.6.3）**
 

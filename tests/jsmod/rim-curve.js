@@ -405,6 +405,21 @@ function stop() {
   }
 }
 
+/* 只更新曲线参数（设置页拖动滑杆时用）：不重建色场、不重挂观察器、不改主题。
+ * 之前 studio.js 每收到一次 input 就 applyTheme()，会重建主题包 DOM / 重播设置卡入场，
+ * 看起来像页面在反复刷新；拖动时只需要重画曲线和已有环。 */
+export function updateParams(prefs = {}) {
+  state.params = rimParams(prefs);
+  if (typeof document === 'undefined') return;
+  syncControls(prefs);
+  if (!state.active) {
+    updateSample($('sf-rim-sample'), true);
+    return;
+  }
+  drawCurves();
+  schedule();
+}
+
 export function configure(options = {}) {
   const material = options.material === true;
   const enabled = options.enabled !== false;
