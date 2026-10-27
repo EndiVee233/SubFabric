@@ -7007,6 +7007,7 @@ body.sf-welcome-open #app { visibility: hidden; }
 }
 .welcome-view[hidden] { display: none; }
 .welcome-view [hidden] { display: none !important; }
+body.sf-welcome-open #confirm-overlay { z-index: 401; }
 
 .welcome-aurora { position: fixed; inset: -18%; z-index: -1; pointer-events: none; overflow: hidden; }
 .welcome-aurora i {
@@ -7206,21 +7207,14 @@ body.sf-welcome-open #app { visibility: hidden; }
 .welcome-prep-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .welcome-prep h2 { margin: 0; font-size: 17px; }
 .welcome-prep-note, #welcome-prep-status { color: var(--text-1); font-size: 12px; line-height: 1.7; }
-.welcome-prep-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 14px; margin-top: 14px; }
-.welcome-prep-card { min-width: 0; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--welcome-card-bg); }
-.welcome-prep-card h3 { margin: 0 0 10px; font-size: 15px; }
-.welcome-prep-card p { margin: 8px 0; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
-.welcome-prep-card label { display: grid; gap: 8px; font-size: 12px; }
-.welcome-prep-card select { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
-.welcome-prep-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--border); padding: 10px 0; font-size: 12px; }
-.welcome-prep-row > span { min-width: 0; overflow-wrap: anywhere; }
-.welcome-prep-row small { display: block; color: var(--text-1); margin-top: 4px; line-height: 1.6; }
-.welcome-prep-row button { flex-shrink: 0; }
-.welcome-prep-warning { color: var(--danger); }
-.welcome-prep-ready { color: var(--accent); }
-.sf-studio[data-design=uwp] .welcome-prep-card,
-.sf-studio[data-design=uwp] .welcome-prep-card select { border-radius: 2px; }
-.sf-studio[data-design=material] .welcome-prep-card { border-radius: 24px; }
+.sf-asr-catalog { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.welcome-view .sf-asr-catalog { --text-2: var(--muted); --text-0: var(--text); }
+@media (max-width: 560px) {
+  .welcome-view .sf-asr-families { grid-template-columns: minmax(0, 1fr); }
+  .welcome-view .sm-head, .welcome-view .st-row { flex-wrap: wrap; }
+  .welcome-view .sm-actions { flex-wrap: wrap; }
+  .welcome-view .st-input { min-width: 0; max-width: 100%; }
+}
 
 .welcome-view.is-open .welcome-shell { animation: welcome-rise .55s cubic-bezier(.2,.8,.2,1) both; }
 .welcome-view.is-open .welcome-copy > * { animation: welcome-rise .5s cubic-bezier(.2,.8,.2,1) both; }

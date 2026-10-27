@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
-import { welcomeRecommendations, welcomeRequirements, gpuMemoryText } from '../editor/js/welcome-model.js';
+import { welcomeRecommendations, gpuMemoryText } from '../editor/js/welcome-model.js';
 
 const models = [
   ['faster-whisper-large-v2', 'cuda', 'faster-whisper', 3090, 'runtime:faster-whisper', true],
@@ -50,18 +50,6 @@ assert.equal(group(multi, 'vulkan').vramMB, 2048);
 multi.cuda.devices[0].vramMB = 12288;
 assert.equal(group(multi, 'cuda').models.find(m => m.id === 'qwen3-asr-1.7b').fits, false, 'Turing bf16 is not recommended');
 
-const qwen = group(hw(8192), 'cuda').models[1];
-const qwenReqs = welcomeRequirements(status, qwen);
-assert.deepEqual(qwenReqs.map(r => r.key), ['runtime:qwen', 'model:qwen3-asr-1.7b', 'model:align-cuda']);
-assert.equal(qwenReqs.at(-1).ready, true, 'already downloaded aligner is not downloaded again');
-assert.ok(!qwenReqs.some(r => r.key.includes('vulkan')));
-const missingPython = welcomeRequirements({ ...status, qwenPythonReady: false }, qwen);
-assert.equal(missingPython[0].key, 'pyenv');
-assert.match(missingPython[1].blockedReason, /Python/);
-const parakeet = group(hw(8192), 'vulkan').models[0];
-assert.equal(welcomeRequirements(status, parakeet).length, 2, 'native timestamps need no aligner');
-assert.equal(welcomeRequirements({ ...status, aligners: [] }, qwen).at(-1).key, 'aligner-missing');
-assert.equal(welcomeRequirements(status, null).length, 0);
 const before = JSON.stringify(status);
 welcomeRecommendations(status, hw(8192), both);
 assert.equal(JSON.stringify(status), before, 'recommendations do not mutate status or resurrect retired models');

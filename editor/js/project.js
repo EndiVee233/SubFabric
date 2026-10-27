@@ -21,7 +21,7 @@ import { stripEffectTagsSafe } from './postprocess.js';
 //   ReferenceError（被外层 catch 吞掉，界面只显示"读不到设置"）。2026-10-11 由 eslint no-undef 发现。
 import { escapeHtml } from './util.js';
 import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL,
-  welcomeRecommendations, welcomeRequirements, gpuMemoryText } from './welcome-model.js';
+  welcomeRecommendations, gpuMemoryText } from './welcome-model.js';
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
@@ -2685,7 +2685,7 @@ async function resetAsrParams() {
 }
 
 function initAsrParams() {
-  const box = $('#st-panel-models');
+  const box = $('#sf-asr-catalog');
   if (!box || box.dataset.asrParamsBound) return;
   box.dataset.asrParamsBound = '1';
   box.addEventListener('click', (e) => {
@@ -2871,6 +2871,8 @@ function modelRowHtml(m, d, dlOf) {
     state = `<span class="sm-state running">${esc((st.running ? st.msg : rtSt.msg) || '下载中…')} ${(st.running ? st.pct : rtSt.pct) || 0}%</span>`;
   } else if (st.error) {
     state = `<span class="sm-state" style="color:var(--danger)">${esc(st.msg || st.error)}</span>`;
+  } else if (m.needRuntime && rtSt.error) {
+    state = `<span class="sm-state" style="color:var(--danger)">${esc(rtSt.msg || rtSt.error)}</span>`;
   } else if (gpuUnknown && m.engine === 'nemo') {
     state = '<span class="sm-state">检测中…（正在查显卡）</span>';
   } else if (gpuUnknown && m.engine === 'vibevoice') {
@@ -2988,6 +2990,7 @@ const MODEL_FAMILY = (m) => {
 const GROUP_OPEN = new Map();
 let selectedAsrFamily = '';
 let latestAsrStatus = null;
+let asrRenderGeneration = 0;
 let modelEnterTimer = 0;
 function showAsrFamily(family) {
   const changedFamily = selectedAsrFamily !== family;
@@ -3138,16 +3141,36 @@ function enhanceDetailsAnimations(root) {
   });
 }
 
-async function renderAsrModels() {
+async function renderAsrModels(providedStatus = null) {
     const box = $('#st-models');
     if (!box) return;
+    const generation = ++asrRenderGeneration;
     let d;
     try {
       // 加超时: 服务端异常时请求可能一直不返回, 不能让界面永远停在「读取中…」
-      const resp = await fetch('/api/asr/status', { signal: AbortSignal.timeout(15000) });
-      d = filterStatusModels(await ensureHardware(await resp.json()));
-      if (!resp.ok) throw new Error(d.error || ('HTTP ' + resp.status));
+      let raw = providedStatus;
+      if (!raw) {
+        const resp = await fetch('/api/asr/status', { signal: AbortSignal.timeout(15000) });
+        raw = await resp.json();
+        if (!resp.ok) throw new Error(raw.error || ('HTTP ' + resp.status));
+      }
+      if (generation !== asrRenderGeneration) return;
+      const preparing = welcomeBlocking && welcomeStep === 2;
+      if (preparing) {
+        welcomePrepStatus = raw;
+        const selected = welcomeSelected();
+        // 后端尚未保存；按第一步的当前勾选重算，不沿用上次设置的 backendAllowed。
+        raw = { ...raw, backends: selected, hardware: welcomeHardware,
+          models: (raw.models || []).filter(m => m.cloud || ['cuda', 'vulkan'].includes(backendOf(m)))
+            .map(m => ({ ...m, backendAllowed: true })),
+          aligners: (raw.aligners || []).filter(a => selected[a.backend]),
+          gpu: welcomeHardware?.cuda?.device || raw.gpu, gpuPending: false };
+      }
+      d = filterStatusModels(await ensureHardware(raw));
+      if (generation !== asrRenderGeneration) return;
+      if (preparing) welcomeRenderPrep();
     } catch (e) {
+      if (generation !== asrRenderGeneration) return;
       const why = String((e && e.message) || e);
       box.innerHTML = '<div class="st-row">读取失败：' + esc(why)
         + ' <button type="button" class="btn btn-mini" id="st-models-retry">重试</button></div>';
@@ -3458,7 +3481,7 @@ async function renderAsrModels() {
       b.disabled = true; b.textContent = '开始…';
       try {
         const r = await (await fetch('/api/asr/ffmpeg/download', { method: 'POST' })).json();
-        const msgEl = $('#st-msg');
+        const msgEl = $('#sf-asr-message') || $('#st-msg');
         if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); }
         else {
           msgEl.textContent = '正在下载 ffmpeg（约 30MB），装到项目自带的 tools/ffmpeg/；进度见上方';
@@ -3466,7 +3489,7 @@ async function renderAsrModels() {
           pollModelDownload();
         }
       } catch (e) {
-        const msgEl = $('#st-msg'); msgEl.textContent = '✗ 下载启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err');
+        const msgEl = $('#sf-asr-message') || $('#st-msg'); msgEl.textContent = '✗ 下载启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err');
       }
       // 轮询靠 renderAsrModels 的既有循环（它每秒重画一次，会读到新的 ffmpeg.download 状态）
       renderAsrModels();
@@ -3475,14 +3498,14 @@ async function renderAsrModels() {
       b.disabled = true; b.textContent = '开始…';
       try {
         const r = await (await fetch('/api/asr/install-nemo', { method: 'POST' })).json();
-        const msgEl = $('#st-msg');
+        const msgEl = $('#sf-asr-message') || $('#st-msg');
         if (r.error) { msgEl.textContent = '✗ ' + r.error; msgEl.classList.add('err'); }
         else if (r.started || r.already) { msgEl.textContent = '正在安装 NeMo 运行时（约 5GB，进度见上方）…装完会自动测一次 CUDA'; msgEl.classList.remove('err'); pollModelDownload(); }
-      } catch (e) { const msgEl = $('#st-msg'); msgEl.textContent = '✗ 安装启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err'); }
+      } catch (e) { const msgEl = $('#sf-asr-message') || $('#st-msg'); msgEl.textContent = '✗ 安装启动失败: ' + String((e && e.message) || e); msgEl.classList.add('err'); }
       renderAsrModels();
     }));
     if (rrSel) rrSel.addEventListener('change', async () => {
-      const msgEl = $('#st-msg');
+      const msgEl = $('#sf-asr-message') || $('#st-msg');
       try {
         const r = await (await fetch('/api/asr/select-rerecog', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId: rrSel.value })
@@ -5603,9 +5626,9 @@ async function renderAsrModels() {
   let welcomePrepTimer = 0;
   let welcomePrepGeneration = 0;
   let welcomeLoadGeneration = 0;
-  let welcomePrepLayout = '';
-  const welcomePrepChoices = {};
-  const welcomePrepPending = new Set();
+  let welcomeCatalogFamily = '';
+  let welcomeCatalogMounted = false;
+
 
   function welcomeSetStep(step) {
     welcomeStep = step === 2 ? 2 : 1;
@@ -5636,6 +5659,7 @@ async function renderAsrModels() {
       clearTimeout(welcomePrepTimer);
       welcomePrepGeneration++;
     }
+    welcomeMoveCatalog(preparing);
     welcomeSyncSelection();
   }
   function welcomeAdvance() {
@@ -5651,80 +5675,47 @@ async function renderAsrModels() {
     welcomeNext?.focus({ preventScroll: true });
   }
 
-  function welcomePrepItems() {
-    const common = welcomePrepStatus?.ffmpeg;
-    const groups = welcomeRecommendations(welcomePrepStatus, welcomeHardware, welcomeSelected());
-    const items = common ? [{ key: 'ffmpeg', label: 'FFmpeg / FFprobe', ready: !!common.ok,
-      blockedReason: !common.ok && !common.canAutoDownload ? '当前系统不支持自动安装，请到设置中指定 FFmpeg。' : '',
-      url: '/api/asr/ffmpeg/download' }] : [];
-    for (const group of groups) {
-      const choice = group.models.find(m => m.id === welcomePrepChoices[group.backend])
-        || group.models.find(m => m.id === group.preferred) || group.models[0];
-      group.choice = choice;
-      group.requirements = welcomeRequirements(welcomePrepStatus, choice);
-      items.push(...group.requirements);
+  function welcomeMoveCatalog(preparing) {
+    if (!preparing && !welcomeCatalogMounted) return;
+    const catalog = $('#sf-asr-catalog');
+    const target = $(preparing ? '#welcome-asr-mount' : '#sf-asr-home');
+    if (!catalog || !target || catalog.parentNode === target) return;
+    asrRenderGeneration++;
+    target.appendChild(catalog);
+    welcomeCatalogMounted = preparing;
+    catalog.inert = preparing;
+    if (preparing) {
+      welcomeCatalogFamily = selectedAsrFamily;
+      showAsrFamily('');
+      initAsrParams();
+      bindModelDirSettings();
+    } else {
+      showAsrFamily(welcomeCatalogFamily);
     }
-    return { groups, items };
-  }
-  function welcomePrepRow(item) {
-    const dl = item.key === 'ffmpeg' ? welcomePrepStatus?.ffmpeg?.download
-      : welcomePrepStatus?.downloads?.find(d => d.key === item.key);
-    const pending = welcomePrepPending.has(item.key);
-    const running = pending || dl?.running;
-    const detail = item.ready ? '已就绪' : item.blockedReason || (running
-      ? (dl?.msg || '正在启动…') + (Number.isFinite(dl?.pct) ? ' · ' + Math.round(dl.pct) + '%' : '')
-      : dl?.error || '尚未准备');
-    const size = item.sizeMB > 0 ? ' · 下载约 ' + (item.sizeMB >= 1024
-      ? (item.sizeMB / 1024).toFixed(1) + ' GB' : item.sizeMB + ' MB') : '';
-    return '<div class="welcome-prep-row"><span>' + escapeHtml(item.label || item.key)
-      + '<small class="' + (item.ready ? 'welcome-prep-ready' : dl?.error ? 'welcome-prep-warning' : '')
-      + '">' + escapeHtml(detail + size) + '</small></span>'
-      + (item.ready ? '' : '<button type="button" class="btn" data-prep-key="' + escapeHtml(item.key)
-        + '"' + (running || item.blockedReason || !item.body && !item.url ? ' disabled' : '') + '>'
-        + (running ? '准备中…' : dl?.error ? '重试' : '下载 / 安装') + '</button>') + '</div>';
+    if (!preparing) {
+      clearTimeout(pythonPollTimer);
+      pythonPollTimer = 0;
+    }
   }
   function welcomeRenderPrep() {
-    const box = $('#welcome-prep-models');
-    const common = $('#welcome-prep-common');
     const message = $('#welcome-prep-status');
-    if (!box || !common || !message) return;
+    const summary = $('#welcome-prep-summary');
+    if (!message || !summary) return;
     message.textContent = welcomePrepError || (!welcomePrepStatus ? '正在读取模型与前置状态…'
-      : !welcomeHardware ? '等待显卡检测完成…' : !welcomeSelected().cuda && !welcomeSelected().vulkan
-        ? '选择 GPU 后端后显示对应推荐。' : '选择适合素材的模型，然后按需下载前置与权重。');
-    const { groups, items } = welcomePrepItems();
-    const commonHtml = items.filter(i => i.key === 'ffmpeg').map(welcomePrepRow).join('');
-    if (common.innerHTML !== commonHtml) common.innerHTML = commonHtml;
-    // 下载轮询不重建下拉控件，避免打断已打开的菜单与键盘焦点。
-    const layout = JSON.stringify(groups.map(g => ({ backend: g.backend, devices: g.devices,
-      vramMB: g.vramMB, preferred: g.preferred, models: g.models.map(m => [m.id, m.model.name, m.fits]) })));
-    if (layout !== welcomePrepLayout) {
-      welcomePrepLayout = layout;
-      box.innerHTML = groups.map(group => {
-        const choice = group.choice;
-        return '<article class="welcome-prep-card"><h3>' + group.backend.toUpperCase() + '</h3>'
-          + group.devices.map(g => '<p>' + escapeHtml(gpuMemoryText(g)) + '</p>').join('')
-          + '<p class="welcome-prep-note">' + escapeHtml(group.note) + '</p>'
-          + (group.backend === 'cuda' ? '<p>使用 NVIDIA 驱动；Faster-Whisper-XXL 自带 CUDA/cuDNN。Qwen CUDA 另需 CUDA 版 PyTorch，安装运行时后会验证。</p>'
-            : '<p>需安装显卡厂商的 Vulkan 驱动，无需 CUDA 或 Python；驱动能力仍需实际识别验证。</p>')
-          + (group.multiGpu ? '<p>多张显卡的显存不能相加；Vulkan 自动选卡，建议按最保守单卡容量展示。</p>' : '')
-          + (group.backend === 'cuda' && group.devices.length > 1 ? '<p>CUDA 建议按默认第 0 张显卡计算。</p>' : '')
-          + (group.lowMemory ? '<p class="welcome-prep-warning">当前显存低于 CUDA 建议档位，可改选 Vulkan 轻量模型，或使用云端识别。</p>' : '')
-          + (!choice ? '<p>当前没有可推荐的模型，请刷新准备状态。</p>' : '<label>要准备的模型<select data-prep-backend="' + group.backend + '">'
-            + group.models.map(m => '<option value="' + m.id + '"' + (m.id === choice.id ? ' selected' : '') + '>'
-              + escapeHtml(m.model.name + (m.id === group.preferred && m.fits ? ' · 推荐' : '')) + '</option>').join('')
-            + '</select></label><div data-prep-detail="' + group.backend + '"></div>') + '</article>';
-      }).join('');
-    }
-    for (const group of groups) {
-      const choice = group.choice;
-      const detail = box.querySelector('[data-prep-detail="' + group.backend + '"]');
-      if (!choice || !detail) continue;
-      const html = '<p>' + escapeHtml(choice.reason) + '</p><p class="' + (choice.fits ? 'welcome-prep-note' : 'welcome-prep-warning')
-        + '">' + escapeHtml('建议专用显存至少 ' + (choice.memory / 1024) + ' GiB'
-          + (choice.fits ? '；请同时留意当前空闲显存。' : '；当前容量未知、偏低或显卡代际需核对，建议先试短片。')) + '</p>'
-        + group.requirements.map(welcomePrepRow).join('');
-      if (detail.innerHTML !== html) detail.innerHTML = html;
-    }
+      : '点击下方系列卡片管理模型，或进入「前置」准备运行环境。');
+    const groups = welcomeRecommendations(welcomePrepStatus, welcomeHardware, welcomeSelected());
+    const html = groups.map(group => {
+      const recommended = group.models.filter(m => m.fits);
+      const names = recommended.length ? recommended.map(m => m.model.name).join(' / ')
+        : group.models.find(m => m.id === group.preferred)?.model.name || '';
+      return '<p><b>' + group.backend.toUpperCase() + '</b> · '
+        + group.devices.map(g => escapeHtml(gpuMemoryText(g))).join('；')
+        + '<br>' + escapeHtml((recommended.length ? '推荐：' : '可选：') + names)
+        + '<br>' + escapeHtml(group.note)
+        + (group.lowMemory ? '<br>当前显存低于 CUDA 建议档位，可改选 Vulkan 轻量模型，或使用云端识别。' : '')
+        + (group.multiGpu ? '<br>多张显卡显存不能相加，Vulkan 按最保守单卡容量给建议。' : '') + '</p>';
+    }).join('');
+    if (summary.innerHTML !== html) summary.innerHTML = html;
   }
   async function welcomeRefreshPrep() {
     clearTimeout(welcomePrepTimer);
@@ -5737,8 +5728,11 @@ async function renderAsrModels() {
       if (generation !== welcomePrepGeneration || !welcomeBlocking || welcomeStep !== 2) return;
       welcomePrepStatus = j;
       welcomePrepError = '';
+      await renderAsrModels(j);
+      if (generation !== welcomePrepGeneration || !welcomeBlocking || welcomeStep !== 2) return;
+      const catalog = $('#sf-asr-catalog'); if (catalog) catalog.inert = false;
       welcomeRenderPrep();
-      if (j.downloads?.some(d => d.running) || j.ffmpeg?.download?.running) {
+      if (!_modelPolling && (j.downloads?.some(d => d.running) || j.ffmpeg?.download?.running)) {
         welcomePrepTimer = setTimeout(welcomeRefreshPrep, 2000);
       }
     } catch (e) {
@@ -5747,30 +5741,6 @@ async function renderAsrModels() {
       welcomeRenderPrep();
     }
   }
-  async function welcomePrepare(key) {
-    if (!welcomeBlocking || welcomeStep !== 2) return;
-    const item = welcomePrepItems().items.find(i => i.key === key);
-    if (!item || item.ready || item.blockedReason || welcomePrepPending.has(key)) return;
-    welcomePrepPending.add(key);
-    welcomeRenderPrep();
-    try {
-      const r = await fetch(item.url || '/api/asr/download', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item.body || {}),
-        signal: AbortSignal.timeout(15000) });
-      const j = await r.json();
-      if (!r.ok || j.error) throw Error(j.error || 'HTTP ' + r.status);
-      welcomePrepError = '';
-    } catch (e) {
-      welcomePrepError = '准备失败：' + (e.message || e);
-    } finally {
-      welcomePrepPending.delete(key);
-      if (welcomeBlocking && welcomeStep === 2) {
-        welcomeRenderPrep();
-        if (!welcomePrepError) welcomeRefreshPrep();
-      }
-    }
-  }
-
   function clearWelcomePending() {
     try { document.documentElement?.classList?.remove('sf-welcome-pending'); } catch { /* 旧测试 DOM 没有 documentElement */ }
   }
@@ -5929,6 +5899,7 @@ async function renderAsrModels() {
     clearTimeout(welcomePrepTimer);
     welcomePrepGeneration++;
     welcomeLoadGeneration++;
+    welcomeMoveCatalog(false);
     document.body.classList.remove('sf-welcome-open');
     const app = $('#app'); if (app) app.inert = false;
     welcomeView.hidden = true;
@@ -6028,15 +5999,6 @@ async function renderAsrModels() {
     welcomeCuda?.addEventListener('change', welcomeSyncSelection);
     welcomeVulkan?.addEventListener('change', welcomeSyncSelection);
     $('#welcome-prep-refresh')?.addEventListener('click', welcomeRefreshPrep);
-    $('#welcome-prep')?.addEventListener('change', e => {
-      if (!e.target.dataset.prepBackend) return;
-      welcomePrepChoices[e.target.dataset.prepBackend] = e.target.value;
-      welcomeRenderPrep();
-    });
-    $('#welcome-prep')?.addEventListener('click', e => {
-      const button = e.target.closest('[data-prep-key]');
-      if (button && !button.disabled) welcomePrepare(button.dataset.prepKey);
-    });
     welcomeGo?.addEventListener('click', welcomeContinue);
     welcomeNext?.addEventListener('click', welcomeAdvance);
     welcomeBack?.addEventListener('click', welcomePrevious);
@@ -6044,6 +6006,7 @@ async function renderAsrModels() {
     welcomeCancel?.addEventListener('click', () => { welcomeHide(); applyHash(); renderAsrModels(); });
     document.addEventListener('keydown', (e) => {
       if (!welcomeBlocking) return;
+      if ((asrParamDialog && !asrParamDialog.hidden) || $('#confirm-overlay')?.hidden === false) return;
       if (e.key === 'Escape' && !welcomeFirstRun) { e.preventDefault(); welcomeHide(); applyHash(); }
       if (e.key === 'Enter' && e.target === welcomeView) {
         e.preventDefault();

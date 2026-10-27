@@ -85,8 +85,8 @@
       <div class="welcome-prep-head"><h2 id="welcome-prep-title" tabindex="-1">模型与前置准备</h2><button type="button" class="btn" id="welcome-prep-refresh">刷新准备状态</button></div>
       <p class="welcome-prep-note">按所选后端与专用显存给出保守建议；模型下载大小不代表显存占用。可在这里准备，也可稍后到设置中完成。</p>
       <p id="welcome-prep-status" role="status" aria-live="polite">正在读取模型与前置状态…</p>
-      <div id="welcome-prep-common"></div>
-      <div class="welcome-prep-grid" id="welcome-prep-models"></div>
+      <div id="welcome-prep-summary" class="welcome-prep-note"></div>
+      <div id="welcome-asr-mount"></div>
     </section>
     <div class="welcome-alert-slot" id="welcome-alert-slot" aria-hidden="true">
       <div class="welcome-alert-inner">
@@ -1765,6 +1765,7 @@
         <!-- 本机硬件条（设计稿 ②）：N 卡 / NPU / Vulkan 各一枚胶囊 + 右侧"已安装 N / M"。
              内容全由 project.js 的 renderHardwareBar() 按 /api/asr/status 的探测结果渲染 ——
              没检测到的硬件不会显示（不谎报），右侧计数与模型列表同源。 -->
+        <div id="sf-asr-home"><div id="sf-asr-catalog" class="sf-asr-catalog">
         <div class="st-hw" id="st-hardware"></div>
         <div id="sf-asr-families" class="sf-asr-families">
           <button type="button" class="sf-asr-family" data-asr-family="Whisper 系列"><span class="sf-asr-family-name">Whisper 系列</span><span class="sf-asr-family-desc">Faster-Whisper · 本地识别</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
@@ -1817,6 +1818,8 @@
           <div class="st-env-grid" id="st-runtime-env"><span class="spin"></span>检测中…</div>
         </div>
         <div id="sf-asr-rerecog-mount" class="st-card"></div>
+        <div class="st-msg" id="sf-asr-message" role="status"></div>
+        </div></div><!-- /shared ASR catalog -->
         </div><!-- /st-subview asr -->
       </div>
 

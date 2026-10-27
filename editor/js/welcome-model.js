@@ -162,30 +162,3 @@ export function welcomeRecommendations(status, hardware, backends) {
   });
 }
 
-/** 文件、运行时、对齐器分开准备；已有文件不重新下载，共享运行时只列一次。 */
-export function welcomeRequirements(status, recommendation) {
-  if (!recommendation?.model) return [];
-  const model = recommendation.model;
-  const result = [{ key: 'model:' + model.id, label: model.name, ready: !!model.filesOk,
-    sizeMB: model.sizeMB, body: { modelId: model.id } }];
-  if (model.runtimeKey) result.unshift({ key: model.runtimeKey, label: model.runtimeName,
-    ready: !!model.runtimeReady, sizeMB: model.runtimeSizeMB, body: { kind: model.runtimeKey } });
-  // 原生逐词模型可直接生成逐词字幕；其它模型需明确准备同后端对齐器。
-  if (model.nativeWordLevel === false) {
-    const aligner = (status.aligners || []).find(a => a.backend === recommendation.backend);
-    if (aligner) {
-      if (aligner.runtimeKey && !result.some(r => r.key === aligner.runtimeKey)) result.push({
-        key: aligner.runtimeKey, label: aligner.runtimeName, ready: !!aligner.runtimeReady,
-        sizeMB: aligner.runtimeSizeMB, body: { kind: aligner.runtimeKey } });
-      result.push({ key: 'model:' + aligner.id, label: aligner.name, ready: !!aligner.filesOk,
-        sizeMB: aligner.sizeMB, body: { modelId: aligner.id }, blockedReason: aligner.blockedReason || '' });
-    } else result.push({ key: 'aligner-missing', label: '逐词对齐模型', ready: false,
-      blockedReason: '未取得配套对齐器状态，请重新检测。' });
-  }
-  if (result.some(r => r.key === 'runtime:qwen') && !status.qwenPythonReady) {
-    result.unshift({ key: 'pyenv', label: 'Python 基础环境（Qwen CUDA 前置）', ready: false, body: { kind: 'pyenv' } });
-    const runtime = result.find(r => r.key === 'runtime:qwen');
-    if (!runtime.ready) runtime.blockedReason = '先准备 Python 基础环境，再安装 Qwen CUDA 运行时（会验证 PyTorch CUDA）。';
-  }
-  return result;
-}

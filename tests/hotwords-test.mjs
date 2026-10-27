@@ -209,21 +209,15 @@ console.log('\n== ⑨ 「模型管理」状态卡不能误报（三个实测撞�
   ok(/gpuUnknown/.test(PJS) && /正在查显卡/.test(PJS),
     '★ Multitalker 卡探测期间显示「检测中」，不说"没检测到 N 卡"');
 
-  /* ③ nvidiaCache.name 在**业务代码**里只该剩少数几处，且都说得通：
-   *      · nvidiaGpu() 内部两处（读缓存 / 写回后返回）
-   *      · gpuPending 一处（它就在 `gpu: gpuName` **之后**，用来判断探测结果空不空）
-   *      · Qwen3 GPU 门禁一处（创建前已走完硬件探测；未探测到 N 卡时明确拒绝）
-   *      · 对齐器 GPU 门禁两处（draftAlignerReady / realignPrep，冷启动时补 `await nvidiaGpu()`）
-   *      · 对齐器缺 N 卡的错误文案一处（只在前两处 await 之后被调用，缓存已热身）
+  /* ③ 验证缓存读取所处的门禁，不限制总次数：nvidiaGpu 的并发合并重构可能减少读取。
    *    任何"打后台 + 立刻读缓存"的写法都会在冷启动时读到 null → 误报；
-   *    这里只接受带 `await nvidiaGpu()` 兜底、或在 await 之后才执行的读取。 */
+   *    这里只接受带 `await nvidiaGpu()` 兜底、或在 await 之后才执行的读取。
+   *    冷启动、缓存命中、并发合并和强制刷新由 welcome-preparation-test 动态验证。 */
   const bizCacheReads = SRV.split('\n')
     .map(l => l.trim())
     .filter(t => /nvidiaCache\.name/.test(t) && !t.startsWith('*') && !t.startsWith('/*') && !t.startsWith('//'));
-  ok(bizCacheReads.length === 7,
-    `★ 业务代码里读缓存只剩 7 处（实际 ${bizCacheReads.length}）`, bizCacheReads);
   ok(bizCacheReads.filter(t => !/gpuPending|return nvidiaCache\.name|nvidiaCache\.at|Qwen3|cudaReady|qwen3-forced|await nvidiaGpu|对齐模型已下载/.test(t)).length === 0,
-    '★ 那 7 处都说得通（nvidiaGpu 内部 ×2 + gpuPending ×1 + Qwen3 门禁 ×1 + 对齐器门禁 ×2 + 错误文案 ×1）', bizCacheReads);
+    '★ 缓存读取只出现在缓存函数、探测状态或已完成探测的 GPU 门禁', bizCacheReads);
 }
 
 console.log('\n== ⑩ 「自动纠错」卡：不能选做不了纠错的模型、报错要指向真原因 ==');

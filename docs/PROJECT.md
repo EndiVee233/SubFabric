@@ -29,7 +29,7 @@
 | --- | --- |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘与退出 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
-| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 后端过滤、显存推荐与准备清单纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 后端过滤与显存推荐纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
@@ -67,7 +67,7 @@
   不按型号猜显存，不把共享系统内存算为专用显存。缓存与并发合并均在模块作用域，
   `?refresh=1` 同时强制刷新 NVIDIA 缓存；每条探测命令有 8 秒超时。Vulkan 可用性仍是
   加载器与物理显卡的初筛，不能代替真实推理验证。`/api/asr/status.qwenPythonReady` 单独报告
-  Qwen 所用 Python 解释器路径是否存在，供欢迎页安排基础环境 → Qwen 运行时的准备顺序。
+  Qwen 所用 Python 解释器路径是否存在；实际模型/运行时可用性仍以对应状态字段为准。
 - **打开稿件的加载路径（2026-10-26 优化）**：`openProject` 先 `flushSave()`，再**并行**取
   项目元信息与 `subtitle`；ASS 只做轻量的 `Dialogue:` 行校验（旧实现 `new AssDoc(text).events`
   把 3~4MB 稿件完整解析两遍）。随后**先装项目身份/保存基线**，同步启动视频、peaks、音频源，
@@ -213,16 +213,21 @@
   Vulkan Parakeet 2GiB、Whisper 6GiB、Qwen Q4 4GiB；这不是最低需求或本次 GPU 验收结论。
   CUDA 旧代 GTX / RTX 20 / Quadro P/K/M 不把 Qwen bf16 标为推荐；未知容量不标显存足够，
   低显存提示先试短片或改用 Vulkan 轻量模型/云端识别。Vulkan 大显存默认 Whisper 质量档，
-  小显存/未知默认英语 Parakeet；用户可下拉改选待准备模型。
+  小显存/未知容量提示轻量 Parakeet；推荐在简短文字中列出，不另建模型卡或模型选择器。
   驱动保留页造成的少量差值容忍 128MiB（例如 8188MiB 仍归入 8GiB 档），不会跨越整档容量。
-  清单分别列 FFmpeg/FFprobe、引擎运行时、模型文件，以及非原生逐词模型的同后端对齐器；
-  Qwen CUDA 缺解释器时先给基础 Python 环境入口，已有文件不重复下载。按钮复用现有下载 API，
-  不自动安装；运行中每 2 秒刷新进度，失败显示原因与重试，关闭欢迎页后停止轮询并丢弃迟到响应。
-  第一步不展示准备清单、不启动准备状态轮询；点击「下一步」才读取模型状态。返回第一步保留
-  后端与待下载模型选择，停止准备轮询并作废迟到响应，已经启动的下载继续由后端负责；再次进入
-  第二步按修改后的后端刷新清单。重新打开欢迎页总是从第一步开始，两个步骤均回到滚动顶部。
-  仅第二步的「进入工作台」保存后端与首次设置完成标记；准备操作不阻止进入工作台，
-  识别的实际默认模型仍由现有设置/新建稿件入口选择。
+  **直接复用语音识别原始控件**：模板中唯一的 `#sf-asr-catalog` 包含硬件条、系列大卡片、
+  模型详情、前置、下载目录与重新识别设置，平时位于 `#sf-asr-home`。第二步用 `appendChild`
+  把原节点移到 `#welcome-asr-mount`，返回/取消/完成时放回原位并恢复原设置系列。不克隆控件、
+  不生成重复 ID；主题、系列导航、下载/安装/删除/参数/目录操作继续使用 `renderAsrModels`、
+  `showAsrFamily` 与原事件处理。欢迎页自写的模型卡、前置行和下载处理已移除。
+  参数按钮的事件委托挂在会移动的目录根节点上，首次欢迎也会初始化；移动不重复绑定。
+  只有确实借出过控件才恢复设置系列；确认弹窗在欢迎层上方，Esc 优先关闭参数/确认弹窗。
+  `renderAsrModels(providedStatus)` 可接收欢迎页取得的状态，避免重取；欢迎期间按第一步的
+  当前后端重算模型与对齐器，不沿用服务器上次保存的 `backendAllowed`。渲染用代次校验，
+  防止节点移回设置后迟到响应覆盖目录。下载启动后沿用既有轮询，欢迎自己的轮询与其互斥。
+  第一步不展示下载、不启动准备轮询，下一步才读取模型状态。返回第一步保留后端选择、停止
+  欢迎轮询并作废迟到响应；已启动的下载继续由原任务和轮询负责。重进第二步显示系列总览。
+  仅第二步「进入工作台」保存后端与首次设置完成标记；模型管理操作仍按设置页规则即时保存。
 - **UWP 欢迎页磁贴**：CUDA / Vulkan 两张选择卡加 `uwp-tile`，与工作台磁贴共用 Reveal 面光、
   2px 直角和实色底；`data-theme-pack="windows-uwp"` 同时兜底圆角，避免首帧 `data-design`
   尚未写入时出现大圆角。红色错误条也固定 2px 直角。欢迎卡、UWP 原生 checkbox、下拉选择
@@ -671,7 +676,7 @@
   `tests/glossary-repair-test.mjs`（术语表修复的命中与误伤边界）、`tests/welcome-model-test.mjs`
   （CUDA/Vulkan/NPU/云端模型的可见性、双引擎依赖、其它模型、过滤后默认选择）、
   `tests/welcome-preparation-test.mjs`（推荐档位/保留页边界、低显存/未知显存、多卡不相加、
-  CUDA bf16 旧卡提示、前置依赖/已有文件，以及硬件探测的缓存、并发合并与强制刷新）、
+  CUDA bf16 旧卡提示，以及硬件探测的缓存、并发合并与强制刷新）、
   `tests/welcome-flow-test.mjs`（两步可见性、空选择禁止下一步、返回保留选择/停止轮询、
   迟到响应作废、保存失败恢复/成功完成与重新打开回到第一步）、
   `tests/glass-contrast-test.mjs`（玻璃背景 alpha 合成、相对亮度、对比度与浅色前景阈值）、
@@ -682,21 +687,20 @@
   只验证静态拼接，不代表模型仍可运行）、
   `tests/asr-bench-repair-test.mjs`（速度测试工作目录不得落 `%TEMP%`、退役引擎统一兜底与安装接口拒绝）。
   这些测试不加载模型、不需要 GPU。
-- **欢迎页硬件与准备清单历史验收（2026-10-27，两步拆分前）**：
-  `welcome-model`、`welcome-preparation`、`asr-aligner-status`、`i18n-coverage`、`ui-integration`、
-  `repair14-static-allowlist` 六项通过，无跳过。隔离副本的无头 Chrome 验证后端勾选、实际下拉
-  改选、模型/运行时/FFmpeg 请求、已有对齐文件不重下、进度/错误/重试、硬件重探与关闭；
-  390px 下 Material / Classic / UWP 无横向溢出，无前端 JS 错误。下载与模型状态使用受控响应，
-  未下载大模型、未实际安装运行时、未执行模型推理；AMD 独显真实检测未运行。
-  本机真实隔离硬件 API 读到 RTX 4060 Ti 8188MiB 总显存及空闲显存，Intel 核显容量保持未知。
-  ESLint 9 无错误，已有未使用变量等告警保留。上述结果不代替各 GPU/模型的真实推理验收。
-- **欢迎页两步流程本次验收（2026-10-27）**：实现与相关回归为**已完成且已验证**。
-  `welcome-flow`、`welcome-model`、`welcome-preparation`、`i18n-coverage`、`ui-integration`、
-  `repair14-static-allowlist` 六项通过，无跳过。隔离 Chrome 验证第一步隐藏下载/禁止空选择、
-  点击下一步只显示准备页、返回保留勾选、改选后更新第二步、下载进度/错误/重试、保存进入与
-  重新打开回到第一步；三个主题在 390px 宽度下无横向溢出，无前端 JS 错误。
-  ESLint 9 无错误；原有未使用变量等告警保留。下载使用受控响应，未实际下载模型/安装运行时，
-  未运行真实模型推理与 AMD 实机验收；本次未重跑与页面分步无关的全量回归。
+- **欢迎页复用与 CI 修复（2026-10-27）**：已完成且已验证。相关八项回归已通过；浏览器确认
+  系列卡与目录为原节点移动、模型/运行时/FFmpeg 下载进度与错误重试、已有对齐文件不重下、
+  返回改选后端、三个主题的 390px 布局与设置页恢复，无 JS 错误。全量 JS：131 passed、
+  12 partial、1 diagnostic、0 failed、2 excluded；参数事件委托调整后四项相关回归与浏览器
+  复验通过（含删除确认、参数模态与 Esc）。ESLint 9 全仓无错误，保留已有告警。
+  partial 项为 `ass-group`、`diarize-api`、`font-picker`、`realign-cancel-api`、`role-order`、
+  `role-recolor`、`speech-gap`、`srt-ass-e2e`、`vibevoice-worker-behavior`、`word-boundary`、
+  `zh-ghost-heal`、`zh-punct`，原因是缺真实夹具、Python/模型运行时或 GUI；
+  `rows-timeline` 为诊断；`colorfix` / `font-status` 因依赖用户项目/GUI 按约定排除。
+  此前远程提交的全量 CI 曾在 `hotwords-test` 失败：把 `nvidiaCache.name` 读取次数写死为 7，
+  并发缓存重构后实际为 6。现保留缓存读取门禁检查，移除数量断言；冷启动、缓存命中、并发与
+  刷新由 `welcome-preparation-test` 动态验证。统一测试入口现在会输出失败项最多 16000 字符的
+  诊断，不再只给 FAIL 名称。下载使用受控响应，未实际下载模型/安装运行时、未做模型推理或
+  AMD 独显实机验收；这些不作为此次界面/测试修复完成的条件。
 - **文案覆盖**：`tests/i18n-coverage-test.mjs` 用 `tools/lib/copy_scan.mjs` 重扫
   `editor/studio.html`、`editor/js/*.js`、`editor/server.js`、`editor/asr-params.js`、`editor/scripts/*`，要求每条
   用户可见中文都能在 `editor/lang/zh-CN.json` 找到键；`node tests/gen-lang.mjs` 负责补齐/保留用户润色。

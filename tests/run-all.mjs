@@ -85,6 +85,7 @@ async function main() {
     if (result.error) entry.error = result.error.message;
     results.push(entry);
     console.log(`  ${status === 'failed' ? 'FAIL' : status === 'partial' ? 'PARTIAL' : 'PASS'} ${file}`);
+    if (status === 'failed') console.error(output.slice(-16000) || failureOf(result));
   }
 
   const counts = Object.fromEntries(['passed', 'partial', 'diagnostic', 'failed'].map(status =>
