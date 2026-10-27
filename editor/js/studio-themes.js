@@ -142,6 +142,15 @@
   }
   function luminance(color) { return rgb(color).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0); }
   function contrast(a, b) { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); }
+  // Keep the selected fill, but derive a readable foreground for links/counts.
+  function foregroundColor(color, surfaces, dark) {
+    const channels = rgb(color).map(v => v * 255), target = dark ? 255 : 0;
+    for (let step = 0; step <= 100; step++) {
+      const ink = '#' + channels.map(v => Math.round(v + (target - v) * step / 100).toString(16).padStart(2, '0')).join('');
+      if (surfaces.every(bg => contrast(ink, bg) >= 4.6)) return ink;
+    }
+    return dark ? '#ffffff' : '#000000';
+  }
   // Windows 浅色模式把强调底色与文字色分开：保留用户的颜色，但保证小字可读。
   function uwpLightColors(accent, selectedSurface) {
     const surfaces = ['#FFFFFF', '#EDEDED', '#E5E5E5', '#E5F1FB', selectedSurface];
@@ -170,7 +179,10 @@
     const onPrimary = contrast(primary, '#ffffff') >= 4.5 ? '#ffffff' : '#101318';
     const text = readable(tone(h, n, dark ? 92 : 12), bg, h, n, dark);
     const muted = readable(tone(h, .09, dark ? 73 : 38), bg, h, .09, dark);
-    return { '--bg': bg, '--surface': surface, '--surface-2': tone(h, n, dark ? 18 : 92), '--text': text, '--muted': muted, '--line': tone(h, .12, dark ? 31 : 80), '--accent': primary, '--accent-soft': container, '--on-accent': onPrimary, '--on-container': tone(h, .4, dark ? 91 : 16), '--secondary-container': tone((h + 18) % 360, .24, dark ? 23 : 88), '--tertiary-container': tone((h + 65) % 360, .32, dark ? 24 : 88), '--outline': tone(h, .08, dark ? 66 : 43) };
+    // Every pack starts with a complete palette. A switch must never inherit a
+    // previous pack's raised surface or rely on bright dark-mode status fallbacks.
+    return { '--bg': bg, '--surface': surface, '--surface-2': tone(h, n, dark ? 18 : 92), '--surface-3': tone(h, n, dark ? 23 : 87), '--text': text, '--muted': muted, '--dim': muted, '--line': tone(h, .12, dark ? 31 : 80), '--accent': primary, '--accent-soft': container, '--accent-hover': tone(h, n, dark ? 23 : 90), '--on-accent': onPrimary, '--on-container': tone(h, .4, dark ? 91 : 16), '--secondary-container': tone((h + 18) % 360, .24, dark ? 23 : 88), '--tertiary-container': tone((h + 65) % 360, .32, dark ? 24 : 88), '--outline': tone(h, .08, dark ? 66 : 43),
+      '--success': dark ? '#4FD1A5' : '#0B6A3C', '--warning': dark ? '#FFD35C' : '#7A4600', '--danger': dark ? '#FF6B76' : '#A4262C', '--info': dark ? '#8AB4F8' : '#005A9E' };
   }
   function apply(settings, custom, dark) {
     const pack = get(settings.themePack, custom), root = document.body;
@@ -180,8 +192,8 @@
     const tokens = palette(accent, dark);
     [...Object.keys(tokens), '--accent-text', '--on-accent-hover', '--on-accent-pressed',
       '--danger', '--success', '--warning', '--info', '--dim'].forEach(key => root.style.removeProperty(key));
-    if (pack.design === 'material') Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value));
-    else if (pack.design === 'uwp') {
+    Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value));
+    if (pack.design === 'uwp') {
       Object.entries({ ...tokens,
         '--accent': accent,
         '--on-accent': contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318',
@@ -228,5 +240,5 @@
       root.style.setProperty('--on-accent', contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318');
     }
   }
-  window.SF_THEMES = Object.freeze({ builtins, hex, valid, validList, list, get, isBuiltin, canDelete, remove, asCustom, tokenOverrides, palette, contrast, uwpLightColors, apply });
+  window.SF_THEMES = Object.freeze({ builtins, hex, valid, validList, list, get, isBuiltin, canDelete, remove, asCustom, tokenOverrides, palette, contrast, foregroundColor, uwpLightColors, apply });
 }());

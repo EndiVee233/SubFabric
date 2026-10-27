@@ -42,6 +42,20 @@ jobs:
       - name: 全量测试
         run: node tests/run-all.mjs
 
+      - name: 全主题实际渲染检查
+        env:
+          SUBFABRIC_BROWSER: /usr/bin/google-chrome
+        run: node tools/theme-visual-test.mjs --out _test/theme-visual
+
+      - name: 主题覆盖矩阵与截图
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme-visual
+          path: _test/theme-visual/
+          if-no-files-found: ignore
+          retention-days: 14
+
   py:
     name: Python · ruff + 单测
     runs-on: ubuntu-latest

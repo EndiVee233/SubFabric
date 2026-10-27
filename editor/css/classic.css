@@ -83,7 +83,7 @@ body.sf-studio[data-design="classic"] .sf-folder>button.active {
   background: var(--surface-3); color: var(--text); font-weight: 550;
   box-shadow: inset 3px 0 0 var(--accent);
 }
-body.sf-studio[data-design="classic"] .sf-brand>span { background: var(--accent-soft); color: var(--accent); }
+body.sf-studio[data-design="classic"] .sf-brand>span { background: var(--accent-soft); color: var(--accent-text, var(--accent)); }
 
 /* ── 3. 仪表盘 ───────────────────────────────────────────────────────────── */
 body.sf-studio[data-design="classic"] .sf-widget {
@@ -107,9 +107,9 @@ body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"]:hover {
 }
 body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] :is(.sf-widget-kicker, small) { color: var(--muted); }
 body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] .sf-widget-title { color: var(--text); }
-body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] .sf-widget-cta { color: var(--accent); font-weight: 600; }
+body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] .sf-widget-cta { color: var(--accent-text, var(--accent)); font-weight: 600; }
 body.sf-studio[data-design="classic"] .sf-widget[data-tone="accent"] :is(.sf-widget-plus, .sf-widget-arrow) {
-  color: var(--accent); background: transparent;
+  color: var(--accent-text, var(--accent)); background: transparent;
 }
 body.sf-studio[data-design="classic"] .sf-widget[data-tone="warn"] {
   border-color: color-mix(in srgb, var(--danger) 38%, var(--line-soft));
@@ -120,7 +120,7 @@ body.sf-studio[data-design="classic"] .sf-widget small { color: var(--muted); }
 body.sf-studio[data-design="classic"] .sf-widget-ico { color: var(--muted); }
 
 /* 仪表盘标题：眉标别用强调色铺满 */
-body.sf-studio[data-design="classic"] .dashboard-head .sf-eyebrow { color: var(--accent); letter-spacing: .16em; }
+body.sf-studio[data-design="classic"] .dashboard-head .sf-eyebrow { color: var(--accent-text, var(--accent)); letter-spacing: .16em; }
 body.sf-studio[data-design="classic"] .dashboard-head h1 { letter-spacing: -.04em; }
 
 /* ── 4. 稿件卡 ───────────────────────────────────────────────────────────── */
@@ -139,7 +139,7 @@ body.sf-studio[data-design="classic"] .sf-cover {
   background: linear-gradient(150deg, var(--surface-3), var(--surface-2));
   color: var(--dim);
 }
-body.sf-studio[data-design="classic"] .proj-card:hover .sf-cover { color: var(--accent); }
+body.sf-studio[data-design="classic"] .proj-card:hover .sf-cover { color: var(--accent-text, var(--accent)); }
 body.sf-studio[data-design="classic"] .pc-badge {
   background: var(--surface); border: 1px solid var(--line); color: var(--muted);
 }
@@ -208,7 +208,7 @@ body.sf-studio[data-design="classic"] #stage-wrap { background: var(--bg); }
 body.sf-studio[data-design="classic"] #editor-panel .cue-card {
   --cc-bg: var(--surface); --cc-bg-hover: var(--surface-2); --cc-bg-selected: var(--surface-3);
   --cc-line: var(--line-soft); --cc-line-strong: var(--line);
-  --cc-text: var(--text); --cc-text-2: var(--muted); --cc-text-3: var(--dim);
+  --cc-text: var(--text); --cc-text-2: var(--muted); --cc-text-3: var(--muted);
   border-radius: var(--r-1); border-left-width: 3px;
   transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease);
 }

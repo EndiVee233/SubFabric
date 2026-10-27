@@ -26,7 +26,7 @@
     { hex: '#ff5f6b', name: '红' }
   ];
   /* 需要跟着主题色走的透明度档（CSS 里用的就是这一组） */
-  var ALPHAS = [7, 9, 10, 12, 14, 16, 18, 28, 40, 45, 55];
+  var ALPHAS = [7, 9, 10, 12, 14, 16, 18, 24, 28, 40, 45, 55];
   var VARS = ['--accent', '--accent-2', '--accent-ink', '--accent-glow'].concat(
     ALPHAS.map(function (a) { return '--accent-a' + (a < 10 ? '0' + a : a); }));
 

@@ -4,7 +4,7 @@ import { escapeHtml as esc, fmtTime, popOrigin } from './util.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
-import { parseCssColor, compositeColor, shouldUseLightText } from './glass-contrast.js';
+import { parseCssColor, compositeColor, shouldUseLightText, readableForeground } from './glass-contrast.js';
 
 // 所有编辑、导出、识别与保存仍由 main/project.js 负责。此层只接导航和外观。
 const $ = id => document.getElementById(id);
@@ -62,7 +62,7 @@ function applyTheme() {
   document.body.dataset.auroraMotion = prefs.auroraMotion;
   document.body.dataset.pageVisible = String(!document.hidden);
   let tokens = pack.design === 'material' ? palette : pack.design === 'uwp' ? {
-    ...palette, '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
+    ...palette, '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#000000', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
     '--surface-2': dark ? '#333333' : '#EDEDED', '--surface-3': dark ? '#3A3A3A' : '#E5E5E5', '--text': dark ? '#F3F3F3' : '#202020', '--muted': dark ? '#C5C5C5' : '#606060',
     '--line': dark ? '#666666' : '#B8B8B8', '--accent-soft': palette['--accent-soft'], '--accent-hover': dark ? '#383838' : '#E5F1FB', '--outline': dark ? '#C8C8C8' : '#666666'
   } : pack.design === 'claude' ? {
@@ -89,13 +89,14 @@ function applyTheme() {
     // 包的调色板可以自绘，但设置中的强调色仍是最终用户偏好。
     // 用 accent 而不是 prefs.accent：Claude/UWP 在用户没改过颜色时要落在主题包 seed 上。
     tokens['--accent'] = accent.toUpperCase();
-    /* 深色兜底按 design 分流：Claude 用暖褐 #241B14 与纸面基调一致；
-       其它主题保持原有的近黑蓝 #101318，避免波及 Material/Classic/Studio。 */
+    /* Claude 深色保留暖褐墨色；其余主题在白字不够清楚时用纯黑，
+       避免临界强调底色配近黑字后仍低于普通文字的 4.5:1。 */
     tokens['--on-accent'] = themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff'
-      : (dark && pack.design === 'claude' ? '#241B14' : '#101318');
+      : (dark && pack.design === 'claude' ? '#241B14' : '#000000');
   }
   // 原控件和 canvas 都从 root 读变量，统一映射为原程序的令牌名。
   if (pack.design === 'uwp' && !dark) Object.assign(tokens, themes.uwpLightColors(accent, tokens['--accent-soft']));
+  else tokens['--accent-text'] = themes.foregroundColor(accent, [tokens['--surface'], tokens['--surface-2'], tokens['--accent-soft']], dark);
   window.SSAccent.apply(tokens['--accent']);
   const st = document.documentElement.style;
   for (const key of ['--accent-text', '--on-accent-hover', '--on-accent-pressed', '--danger', '--success', '--warning', '--info', '--dim']) st.removeProperty(key);
@@ -273,6 +274,7 @@ const GLASS_FG_SELECTOR = [
   '.proj-card', '.page-surface', '.cue-card', '.role-card', '.sm-model',
   '.st-entry', '.st-scheme', '.panel-head', '.tl-toolbar', '.tab-head',
   '.sf-pack-group h4',
+  '.sf-help-grid article', '.np-mode', '.ws-badge', '.badge', '.sf-accel-chip', '.log-hint', '.pc-missing', '.pc-st',
 ].join(',');
 let glassFgFrame = 0;
 let glassBackdropImage = { src: '', color: null, loading: false };
@@ -372,7 +374,15 @@ function syncGlassForeground() {
   if (!document.body || typeof getComputedStyle !== 'function') return;
   const light = document.body.dataset.theme === 'light';
   for (const el of document.querySelectorAll(GLASS_FG_SELECTOR)) {
-    el.classList.toggle('sf-fg-on-dark', light && shouldUseLightText({ background: glassElementBackground(el) }));
+    el.classList.remove('sf-readable-foreground');
+    const background = glassElementBackground(el);
+    el.classList.toggle('sf-fg-on-dark', light && shouldUseLightText({ background }));
+    const computed = getComputedStyle(el);
+    for (const [property, role] of Object.entries({ '--sf-readable-muted': '--muted', '--sf-readable-accent-text': '--accent-text', '--sf-readable-success': '--success', '--sf-readable-danger': '--danger' })) {
+      const readable = readableForeground(computed.getPropertyValue(role).trim(), background);
+      if (readable) el.style.setProperty(property, readable);
+    }
+    el.classList.add('sf-readable-foreground');
   }
   /* 分组标题本身是透明背景，合成值可能落在阈值边缘；只要同组主题卡已经被判定为
      深底，就跟着切浅色，避免“卡片白字、上面的‘内置主题包’仍是深灰字”。 */
@@ -388,6 +398,11 @@ function scheduleGlassForeground() {
 }
 window.addEventListener('hashchange', scheduleGlassForeground);
 window.addEventListener('resize', scheduleGlassForeground);
+// New role cards, task rows and conditional panels must get the same treatment as
+// the initial page. Observe structure/visibility, not the styles/classes we write.
+if (typeof MutationObserver === 'function') new MutationObserver(records => {
+  if (records.some(record => record.type === 'attributes' || [...record.addedNodes].some(node => node.nodeType === 1 && (node.matches(GLASS_FG_SELECTOR) || node.querySelector(GLASS_FG_SELECTOR))))) scheduleGlassForeground();
+}).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'] });
 $('sf-theme-packs').addEventListener('click', e => {
   const del = e.target.closest('[data-delete-pack]');
   if (del) {

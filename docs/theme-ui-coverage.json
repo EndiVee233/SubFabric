@@ -1,0 +1,3133 @@
+{
+  "schema": 1,
+  "scope": "Static production UI inventory; rendering evidence is the separate browser matrix. Dynamic sites include helper calls and comments and need contextual review.",
+  "files": [
+    {
+      "file": "editor/css/classic.css",
+      "sha256": "a4054e9913fd074b29c61220f0e4f1594863ac577866ba0b1e650aa847a594ca",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/css/studio.css",
+      "sha256": "2d1c977cc2d01c5330ee293f8e21ce0bbfb843aa428d42d35d0ac95dc7081812",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": [
+        "accent-color:var(--accent, #ff7a45)",
+        "accent-color:var(--accent, #ff7a45)",
+        "accent-color:var(--accent, #ff7a45)",
+        "background-color:rgb(0 0 0 / .025)",
+        "background-image:linear-gradient(rgb(255 255 255 / calc(var(--uwp-glow) * .09)), rgb(255 255 255 / calc(var(--uwp-glow) * .09)))",
+        "background-image:radial-gradient(circle 240px at var(--uwp-mx,50%) var(--uwp-my,50%), rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face))) 0%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .7)) 32%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .32)) 62%, rgb(var(--uwp-card-light) / 0) 100%), linear-gradient(180deg, rgb(var(--uwp-card-light) / .025), rgb(var(--uwp-card-light) / .005))",
+        "background-image:radial-gradient(circle 240px at var(--uwp-mx,50%) var(--uwp-my,50%), rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face))) 0%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .7)) 32%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .32)) 62%, rgb(var(--uwp-card-light) / 0) 100%), linear-gradient(180deg, rgb(var(--uwp-card-light) / .025), rgb(var(--uwp-card-light) / .005)) !important",
+        "background-image:radial-gradient(circle 240px at var(--uwp-mx,50%) var(--uwp-my,50%), rgb(var(--uwp-card-light)/calc(var(--uwp-face,0)*var(--uwp-card-face))) 0%, rgb(var(--uwp-card-light)/calc(var(--uwp-face,0)*var(--uwp-card-face)*.7)) 32%, rgb(var(--uwp-card-light)/calc(var(--uwp-face,0)*var(--uwp-card-face)*.32)) 62%, rgb(var(--uwp-card-light)/0) 100%), linear-gradient(180deg, rgb(var(--uwp-card-light)/.025), rgb(var(--uwp-card-light)/.005))",
+        "background-image:var(--uwp-face-image), var(--uwp-tile-base, linear-gradient(180deg, rgb(var(--uwp-tile-rgb) / .025), rgb(var(--uwp-tile-rgb) / .005)))",
+        "background-image:var(--uwp-face-image), var(--uwp-tile-base, linear-gradient(180deg, rgb(var(--uwp-tile-rgb) / .025), rgb(var(--uwp-tile-rgb) / .005)))",
+        "background-image:var(--uwp-face-image), var(--uwp-tile-base, linear-gradient(180deg, rgb(var(--uwp-tile-rgb) / .025), rgb(var(--uwp-tile-rgb) / .005)))",
+        "background-image:var(--uwp-face-image), var(--uwp-tile-base, linear-gradient(180deg, rgb(var(--uwp-tile-rgb) / .025), rgb(var(--uwp-tile-rgb) / .005))) !important",
+        "background:#000",
+        "background:#000",
+        "background:#000",
+        "background:#0b0b0f",
+        "background:#0e0e12",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#101015",
+        "background:#131318",
+        "background:#131319",
+        "background:#141419",
+        "background:#16161c",
+        "background:#17171d",
+        "background:#1a1a21",
+        "background:#1a1a21",
+        "background:#1a1a21",
+        "background:#1a1a21",
+        "background:#1a1a21",
+        "background:#1c1c24",
+        "background:#1f1f28",
+        "background:#202027",
+        "background:#21212b",
+        "background:#23232d",
+        "background:#241b14",
+        "background:#241b16",
+        "background:#332d1a!important",
+        "background:#49401f!important",
+        "background:#a83232",
+        "background:#c08a4a",
+        "background:#d94a3d",
+        "background:#f7f7f8",
+        "background:#ffedb5!important",
+        "background:#fff4ce!important",
+        "background:color-mix(in srgb, #0b0d0c 58%, transparent)",
+        "background:color-mix(in srgb, #0b0d0c 58%, transparent)",
+        "background:color-mix(in srgb, var(--accent) 16%, var(--surface, #1a1a21))",
+        "background:color-mix(in srgb, var(--accent) 72%, #000)",
+        "background:color-mix(in srgb, var(--accent) 86%, #000)",
+        "background:color-mix(in srgb, var(--accent-soft) 58%, var(--surface, #1a1a21))",
+        "background:color-mix(in srgb, var(--danger, #ff5f6b) 20%, transparent)",
+        "background:color-mix(in srgb, var(--surface-2, #f3f5f3) 55%, transparent)",
+        "background:linear-gradient(#292934, #23232b)",
+        "background:linear-gradient(100deg, var(--accent), var(--accent-2) 62%, color-mix(in srgb, var(--accent) 45%, #4f8cff))",
+        "background:linear-gradient(135deg, #ffd54a, #ffb84a)",
+        "background:linear-gradient(145deg,#1c2a33,#24333d 55%,#18232a)",
+        "background:linear-gradient(148deg, rgba(255,255,255,.92), rgba(255,255,255,.22) 16%, rgba(255,255,255,0) 44%, rgba(255,255,255,.14) 100%)",
+        "background:linear-gradient(180deg, #1b1b22, #141419 62%)",
+        "background:linear-gradient(180deg, rgba(255, 255, 255, .014), transparent 60%)",
+        "background:linear-gradient(180deg, rgba(255, 255, 255, .025), transparent)",
+        "background:linear-gradient(180deg, rgba(255, 255, 255, .03), transparent), var(--bg-1)",
+        "background:linear-gradient(180deg, rgba(255, 255, 255, .035), transparent 70%), var(--bg-1)",
+        "background:linear-gradient(180deg, rgba(255,255,255,.018), transparent 70%), #1c1c24",
+        "background:linear-gradient(180deg, rgba(255,255,255,.018), transparent 70%), var(--bg-2)",
+        "background:linear-gradient(180deg, rgba(5, 5, 8, .78), rgba(2, 2, 4, .86))",
+        "background:linear-gradient(180deg, var(--danger, #ff5f6b) 0 46%, transparent 46% 54%, var(--accent) 54% 100%)",
+        "background:linear-gradient(90deg, #23b26a, #58d68d)",
+        "background:linear-gradient(90deg, #23b26a, #58d68d)",
+        "background:linear-gradient(90deg, #4a7fd4, #6aa9ff)",
+        "background:linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.11) 37%, rgba(255,255,255,.05) 63%)",
+        "background:linear-gradient(90deg, rgba(90, 130, 255, .16), rgba(90, 130, 255, .07) 42%, transparent 78%)",
+        "background:linear-gradient(to bottom, #f00 0%, #ff0 16.6%, #0f0 33.3%, #0ff 50%, #00f 66.6%, #f0f 83.3%, #f00 100%)",
+        "background:linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, hsl(var(--sscp-h), 100%, 50%))",
+        "background:radial-gradient(120% 120% at 50% 0%, #101015, #0b0b0e 72%)",
+        "background:radial-gradient(58vw 42vh at 8% -10%, var(--accent-a07), transparent 62%), radial-gradient(46vw 34vh at 102% 2%, rgba(97, 184, 255, .045), transparent 60%)",
+        "background:radial-gradient(circle var(--uwp-press-r,180px) at var(--uwp-px,50%) var(--uwp-py,50%), rgb(0 0 0 / calc(var(--uwp-press-local,0) * .20)) 0%, rgb(0 0 0 / calc(var(--uwp-press-local,0) * .08)) 45%, transparent 75%)",
+        "background:radial-gradient(circle, color-mix(in srgb, var(--accent) 42%, #4f8cff), transparent 68%)",
+        "background:rgb(0 0 0 / .32)",
+        "background:rgb(0 0 0 / .45)",
+        "background:rgb(0 0 0 / .45)",
+        "background:rgb(0 0 0 / .45)",
+        "background:rgb(12 16 14)",
+        "background:rgb(255 255 255/.05)",
+        "background:rgba(0, 0, 0, .62)",
+        "background:rgba(0,0,0,.55)",
+        "background:rgba(0,0,0,.55)",
+        "background:rgba(106, 169, 255, .1)",
+        "background:rgba(106, 169, 255, .12)",
+        "background:rgba(106, 169, 255, .14)",
+        "background:rgba(11,11,14,.74)",
+        "background:rgba(12, 12, 16, .90)",
+        "background:rgba(127,216,232,.12)",
+        "background:rgba(139, 124, 246, .12)",
+        "background:rgba(139, 124, 246, .12)",
+        "background:rgba(139,124,246,.12)",
+        "background:rgba(16, 16, 20, .96)",
+        "background:rgba(255, 107, 107, .12)",
+        "background:rgba(255, 213, 74, .08)",
+        "background:rgba(255, 213, 74, .1)",
+        "background:rgba(255, 255, 255, .012)",
+        "background:rgba(255, 255, 255, .015)",
+        "background:rgba(255, 255, 255, .015)",
+        "background:rgba(255, 255, 255, .015)",
+        "background:rgba(255, 255, 255, .02)",
+        "background:rgba(255, 255, 255, .022)",
+        "background:rgba(255, 255, 255, .03)",
+        "background:rgba(255, 255, 255, .10)",
+        "background:rgba(255, 95, 107, .10)",
+        "background:rgba(255, 95, 107, .12)",
+        "background:rgba(255,107,107,.07)",
+        "background:rgba(255,213,74,.10)",
+        "background:rgba(255,213,74,.16)",
+        "background:rgba(255,213,74,.16)",
+        "background:rgba(255,255,255,.06)",
+        "background:rgba(255,255,255,.06)",
+        "background:rgba(255,255,255,.1)",
+        "background:rgba(255,95,107,.08)",
+        "background:rgba(255,95,107,.16)",
+        "background:rgba(255,95,107,.18)",
+        "background:rgba(255,95,107,.3)",
+        "background:rgba(46, 204, 113, .12)",
+        "background:rgba(56, 189, 248, .14)",
+        "background:rgba(6, 6, 9, .62)",
+        "background:rgba(6, 6, 9, .62)",
+        "background:rgba(6, 6, 9, .62)",
+        "background:rgba(6, 6, 9, .62)",
+        "background:rgba(6, 6, 9, .62)",
+        "background:rgba(6, 6, 9, .62)",
+        "background:rgba(6,6,9,.62)",
+        "background:rgba(6,6,9,.62)",
+        "background:rgba(78, 205, 136, .1)",
+        "background:rgba(78, 205, 136, .1)",
+        "background:rgba(78, 205, 136, .1)",
+        "background:rgba(90, 130, 255, .78)",
+        "background:var(--accent, #ff7a45)",
+        "background:var(--accent-a20, rgba(255,122,69,.18))",
+        "background:var(--accent-a28, rgba(255,122,69,.28))",
+        "background:var(--danger, #ff5f6b)",
+        "background:var(--danger, #ff5f6b)",
+        "background:var(--danger, #ff5f6b)",
+        "background:var(--danger,#ff5f6b)",
+        "background:var(--hover, rgba(255,255,255,.04))",
+        "background:var(--ink-strong, #1C1B18) !important",
+        "background:var(--input-bg, #17171e)",
+        "background:var(--ok, #34d399)",
+        "background:var(--success,#6ccb5f)",
+        "background:var(--surface, #fff)",
+        "background:var(--surface, #fff)",
+        "background:var(--surface, #fff)",
+        "background:var(--surface-2, #e8ebe8)",
+        "background:var(--surface-2, #eef1ee)",
+        "background:var(--surface-2, #eef1ee)",
+        "background:var(--surface-2, #f3f5f3)",
+        "background:var(--surface-2, #f3f5f3)",
+        "background:var(--surface-2, #f3f5f3)",
+        "background:var(--surface-2, #f3f5f3)",
+        "background:var(--surface-2, #f3f5f3)",
+        "background:var(--surface-2, #f3f5f3)",
+        "border-bottom:1px solid #484854",
+        "border-color:#2b5560",
+        "border-color:#2f6b52",
+        "border-color:#3d3a68",
+        "border-color:#5a4a23",
+        "border-color:#5a4a23",
+        "border-color:#5a4a23",
+        "border-color:#6a561d!important",
+        "border-color:#6b5828",
+        "border-color:#806a20!important",
+        "border-color:#fff",
+        "border-color:#fff",
+        "border-color:color-mix(in srgb, #fff calc(var(--uwp-edge) * 100%), var(--line))",
+        "border-color:color-mix(in srgb, #fff calc(var(--uwp-edge) * 100%), var(--line))",
+        "border-color:color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0) * var(--uwp-card-edge) * 100%), var(--line))",
+        "border-color:color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0)*var(--uwp-card-edge)*100%), var(--line))",
+        "border-color:color-mix(in srgb, rgb(var(--uwp-tile-rgb)) calc(2% + var(--uwp-edge) * var(--uwp-edge-alpha) * 100%), var(--line))",
+        "border-color:color-mix(in srgb, rgb(var(--uwp-tile-rgb)) calc(2% + var(--uwp-edge) * var(--uwp-edge-alpha) * 100%), var(--line))",
+        "border-color:color-mix(in srgb, rgb(var(--uwp-tile-rgb)) calc(2% + var(--uwp-edge) * var(--uwp-edge-alpha) * 100%), var(--line))",
+        "border-color:color-mix(in srgb, var(--accent) 72%, #000)",
+        "border-color:color-mix(in srgb, var(--accent) 86%, #000)",
+        "border-color:color-mix(in srgb, var(--accent, #ff7a45) 42%, var(--line, #d8ddd9))",
+        "border-color:color-mix(in srgb, var(--danger, #ff6b6b) 34%, var(--line))",
+        "border-color:color-mix(in srgb,var(--danger,#ff6b6b) 38%,var(--line))",
+        "border-color:color-mix(in srgb,var(--success,#6ccb5f) 55%,var(--line))",
+        "border-color:rgba(0,0,0,.22)",
+        "border-color:rgba(255, 107, 107, .45)",
+        "border-color:rgba(255, 95, 107, .30)",
+        "border-color:rgba(255, 95, 107, .4)",
+        "border-color:rgba(255, 95, 107, .5)",
+        "border-color:rgba(255,107,107,.45)",
+        "border-color:rgba(255,107,107,.45)",
+        "border-color:rgba(46, 204, 113, .65)",
+        "border-color:var(--accent, #ff7a45)",
+        "border-color:var(--accent, #ff7a45)",
+        "border-left-color:var(--danger, #ff5f6b)",
+        "border-left-color:var(--ok, #34d399)",
+        "border-left-color:var(--success,#6ccb5f)",
+        "border-left-color:var(--warning,#ffd35c)",
+        "border-left:2px solid var(--hair, rgba(255,255,255,.12))",
+        "border-left:9px solid #fff",
+        "border-right:1px solid #26262f",
+        "border-top:1px dashed var(--hair, rgba(255,255,255,.12))",
+        "border-top:1px dashed var(--hair, rgba(255,255,255,.12))",
+        "border-top:1px dashed var(--line, #d8ddd9)",
+        "border-top:1px solid #3b3b47",
+        "border-top:1px solid rgba(255,255,255,.14)",
+        "border-top:1px solid var(--line, #d8ddd9)",
+        "border-top:1px solid var(--line, #d8ddd9)",
+        "border:1px solid #1C1B18 !important",
+        "border:1px solid #26262f",
+        "border:1px solid #292934",
+        "border:1px solid #30303a",
+        "border:1px solid #3a3a46",
+        "border:1px solid #484854",
+        "border:1px solid #4a4a58",
+        "border:1px solid #777784",
+        "border:1px solid #d7b600!important",
+        "border:1px solid #fce100!important",
+        "border:1px solid #fff",
+        "border:1px solid color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0) * var(--uwp-card-edge) * 100%), var(--line))",
+        "border:1px solid color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0)*var(--uwp-card-edge)*100%), var(--line))",
+        "border:1px solid color-mix(in srgb, rgb(var(--uwp-tile-rgb)) calc(2% + var(--uwp-edge) * var(--uwp-edge-alpha) * 100%), var(--line))",
+        "border:1px solid rgb(255 255 255/.22)",
+        "border:1px solid rgba(125, 211, 252, .95)",
+        "border:1px solid rgba(255, 255, 255, .14)",
+        "border:1px solid rgba(255, 255, 255, .18)",
+        "border:1px solid rgba(255,255,255,.16)",
+        "border:1px solid rgba(255,255,255,.28)",
+        "border:1px solid rgba(255,255,255,.38)",
+        "border:1px solid var(--accent, #ff7a45)",
+        "border:1px solid var(--border, #343440)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:1px solid var(--line, #d8ddd9)",
+        "border:2px solid #fff",
+        "box-shadow:-12px 0 40px rgba(0, 0, 0, .5)",
+        "box-shadow:-20px 0 80px #15221930",
+        "box-shadow:-8px 0 24px #00000030",
+        "box-shadow:0 0 0 1px #111",
+        "box-shadow:0 0 0 1px #111, 0 1px 3px #000",
+        "box-shadow:0 0 0 1px rgba(0, 0, 0, .45)",
+        "box-shadow:0 0 0 1px rgba(0,0,0,.4) inset",
+        "box-shadow:0 0 0 1px rgba(0,0,0,.4) inset",
+        "box-shadow:0 0 0 1px rgba(0,0,0,.45) inset",
+        "box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 0 0 3px rgba(255,255,255,.25)",
+        "box-shadow:0 0 0 1px var(--accent, #ff7a45)",
+        "box-shadow:0 0 0 1px var(--accent-a40), 0 4px 16px rgba(0,0,0,.5)",
+        "box-shadow:0 10px 18px -10px rgba(0,0,0,.55)",
+        "box-shadow:0 10px 26px rgba(0, 0, 0, .62)",
+        "box-shadow:0 10px 28px #00000040",
+        "box-shadow:0 10px 28px #0004",
+        "box-shadow:0 10px 28px -18px rgba(0, 0, 0, .45), 0 0 0 1px var(--cc-line)",
+        "box-shadow:0 10px 30px rgba(0, 0, 0, .28)",
+        "box-shadow:0 10px 40px #15221930",
+        "box-shadow:0 12px 28px #00000040",
+        "box-shadow:0 12px 28px #00000040",
+        "box-shadow:0 12px 28px #00000040",
+        "box-shadow:0 12px 28px #00000040",
+        "box-shadow:0 12px 28px rgba(0, 0, 0, .38)",
+        "box-shadow:0 12px 28px rgba(0,0,0,.55)",
+        "box-shadow:0 12px 32px rgba(0,0,0,.45)",
+        "box-shadow:0 12px 34px rgba(0, 0, 0, .24)",
+        "box-shadow:0 12px 36px #0004",
+        "box-shadow:0 12px 36px #0004",
+        "box-shadow:0 14px 40px #0005",
+        "box-shadow:0 14px 40px #15221930",
+        "box-shadow:0 14px 40px rgba(0, 0, 0, .48)",
+        "box-shadow:0 16px 40px #00000055",
+        "box-shadow:0 16px 40px #00000055",
+        "box-shadow:0 16px 48px rgba(0,0,0,.55)",
+        "box-shadow:0 18px 40px -24px rgb(40 30 20 / .6) !important",
+        "box-shadow:0 18px 48px #00000055",
+        "box-shadow:0 18px 48px rgba(0,0,0,.6)",
+        "box-shadow:0 18px 48px rgba(0,0,0,.6)",
+        "box-shadow:0 18px 48px rgba(0,0,0,.6)",
+        "box-shadow:0 18px 48px rgba(0,0,0,.6)",
+        "box-shadow:0 18px 52px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08)",
+        "box-shadow:0 18px 52px rgba(0,0,0,.62), 0 2px 8px rgba(0,0,0,.4)",
+        "box-shadow:0 18px 56px rgba(0,0,0,.7)",
+        "box-shadow:0 18px 60px rgba(0, 0, 0, .5)",
+        "box-shadow:0 18px 60px rgba(0, 0, 0, .5)",
+        "box-shadow:0 1px 0 var(--hair), 0 8px 22px rgba(0, 0, 0, .3)",
+        "box-shadow:0 1px 2px #00000006",
+        "box-shadow:0 1px 2px #00000014",
+        "box-shadow:0 1px 2px #00000025",
+        "box-shadow:0 1px 2px rgb(58 46 34 / .22)",
+        "box-shadow:0 1px 2px rgb(58 46 34 / .3)",
+        "box-shadow:0 1px 3px #00000014",
+        "box-shadow:0 1px 3px #00000014",
+        "box-shadow:0 1px 3px #00000014",
+        "box-shadow:0 1px 3px #00000018",
+        "box-shadow:0 1px 3px #00000018",
+        "box-shadow:0 1px 3px #00000018",
+        "box-shadow:0 1px 3px #00000018",
+        "box-shadow:0 1px 3px #00000018, 0 0 0 1px rgb(255 255 255 / calc(var(--uwp-edge) * .22)), 0 0 18px rgb(255 255 255 / calc(var(--uwp-edge) * .10))",
+        "box-shadow:0 1px 3px #00000018, 0 0 0 1px rgb(255 255 255 / calc(var(--uwp-edge) * .22)), 0 0 18px rgb(255 255 255 / calc(var(--uwp-edge) * .10))",
+        "box-shadow:0 1px 3px #15221915",
+        "box-shadow:0 1px 3px rgb(58 46 34 / .3)",
+        "box-shadow:0 20px 44px -26px rgb(58 46 34 / .5)",
+        "box-shadow:0 22px 60px rgba(0, 0, 0, .34)",
+        "box-shadow:0 24px 70px #00000073",
+        "box-shadow:0 24px 70px -30px #00000080",
+        "box-shadow:0 24px 70px -30px #00000080",
+        "box-shadow:0 24px 80px #15221935",
+        "box-shadow:0 28px 72px #00000055",
+        "box-shadow:0 2px 10px #00000030",
+        "box-shadow:0 2px 5px #0000001c",
+        "box-shadow:0 2px 8px #0000001c",
+        "box-shadow:0 30px 70px -40px rgb(40 30 20 / .55)",
+        "box-shadow:0 30px 80px #00000080",
+        "box-shadow:0 30px 90px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(255, 255, 255, .04)",
+        "box-shadow:0 3px 10px rgba(0, 0, 0, .22)",
+        "box-shadow:0 4px 12px #00000022",
+        "box-shadow:0 4px 12px #00000022!important",
+        "box-shadow:0 4px 12px #00000022!important",
+        "box-shadow:0 4px 12px #0000002e",
+        "box-shadow:0 4px 14px #00000040",
+        "box-shadow:0 4px 14px rgba(0, 0, 0, .28)",
+        "box-shadow:0 4px 14px rgba(0,0,0,.28)",
+        "box-shadow:0 4px 16px #00000024",
+        "box-shadow:0 4px 20px -16px #14221b40",
+        "box-shadow:0 5px 18px -14px #15221940",
+        "box-shadow:0 5px 18px -14px #15221940",
+        "box-shadow:0 5px 18px -14px #15221940",
+        "box-shadow:0 6px 18px #00000040",
+        "box-shadow:0 6px 18px #00000040",
+        "box-shadow:0 8px 20px #00000026",
+        "box-shadow:0 8px 24px #00000040",
+        "box-shadow:0 8px 24px #00000040",
+        "box-shadow:0 8px 24px #00000040",
+        "box-shadow:0 8px 24px #00000040",
+        "box-shadow:0 8px 24px #00000040",
+        "box-shadow:0 8px 24px #0006",
+        "box-shadow:0 8px 24px -24px #15221960",
+        "box-shadow:0 8px 24px rgba(0,0,0,.5)",
+        "box-shadow:0 8px 24px rgba(0,0,0,.55)",
+        "box-shadow:0 8px 24px rgba(0,0,0,.55)",
+        "box-shadow:0 8px 24px rgba(0,0,0,.55)",
+        "box-shadow:0 8px 24px rgba(0,0,0,.55)",
+        "box-shadow:0 8px 28px #00000024",
+        "box-shadow:0 8px 28px #00000024",
+        "box-shadow:0 8px 28px #00000024,0 2px 6px #0000000d",
+        "box-shadow:0 8px 28px -18px #0005,inset 0 1px 0 #ffffff60",
+        "box-shadow:0 8px 28px -18px #0009,inset 0 1px 0 #ffffff08",
+        "box-shadow:inset 0 -2px 0 var(--accent),inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+        "box-shadow:inset 0 0 0 1px rgb(var(--uwp-card-light) / calc(.02 + var(--uwp-edge,0) * .18))",
+        "box-shadow:inset 0 0 0 1px rgb(var(--uwp-card-light) / calc(.02 + var(--uwp-edge,0) * .18))",
+        "box-shadow:inset 0 0 0 1px rgb(var(--uwp-card-light) / calc(.02 + var(--uwp-edge,0) * .18)) !important",
+        "box-shadow:inset 0 0 0 1px rgb(var(--uwp-card-light)/calc(.02 + var(--uwp-edge,0)*.18))",
+        "box-shadow:inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+        "box-shadow:inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+        "box-shadow:inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+        "box-shadow:inset 0 0 0 1px rgba(0,0,0,.20)",
+        "box-shadow:inset 0 0 0 2px rgba(0,0,0,.22)",
+        "box-shadow:inset 0 0 0 2px rgba(0,0,0,.28)",
+        "box-shadow:inset 0 0 90px rgba(0, 0, 0, .5)",
+        "box-shadow:inset 0 1px 2px #0000001c",
+        "box-shadow:inset 3px 0 0 var(--accent),inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+        "color:#067647",
+        "color:#15161a",
+        "color:#1a1206",
+        "color:#323130!important",
+        "color:#323130!important",
+        "color:#4ec9b0",
+        "color:#6aa9ff",
+        "color:#6aa9ff",
+        "color:#6aa9ff",
+        "color:#6fd3a7",
+        "color:#72e2a0",
+        "color:#7fd8e8",
+        "color:#858591",
+        "color:#8c8c99",
+        "color:#8f8fb0",
+        "color:#9fe3b9",
+        "color:#C9C5BD",
+        "color:#E8E4DC",
+        "color:#F4F0E8",
+        "color:#FDFBF6 !important",
+        "color:#FFFFFF",
+        "color:#b42318",
+        "color:#b54708",
+        "color:#bdb7ff",
+        "color:#bfc0ca",
+        "color:#cfd0da",
+        "color:#cfdde5",
+        "color:#d8d8df",
+        "color:#d94a3d",
+        "color:#e0e6da",
+        "color:#e9e9f0",
+        "color:#f2f2f6",
+        "color:#f3f4f6",
+        "color:#ff4d4f",
+        "color:#ff7a7a",
+        "color:#ff7a7a",
+        "color:#ffc46b",
+        "color:#fff",
+        "color:#fff",
+        "color:#fff",
+        "color:#fff",
+        "color:#fff !important",
+        "color:#fff!important",
+        "color:#fff!important",
+        "color:var(--accent-text, var(--accent, #ff7a45))",
+        "color:var(--accent-text, var(--accent, #ff7a45))",
+        "color:var(--accent-text, var(--accent, #ff7a45))",
+        "color:var(--accent-text, var(--accent, #ff7a45))",
+        "color:var(--danger, #d94a3d)",
+        "color:var(--danger,#c42b1c)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--muted, #6b756e)",
+        "color:var(--on-accent, #0b1020)",
+        "color:var(--success,#6ccb5f)",
+        "color:var(--success,#6ccb5f)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #1b201c)",
+        "color:var(--text, #e8e8ee)",
+        "color:var(--text-2, #9aa0aa)",
+        "color:var(--text-2, #9aa0aa)",
+        "color:var(--text-2, #9aa0aa)",
+        "color:var(--text-2, #c9d1d9)",
+        "color:var(--text-3, #8b949e)",
+        "color:var(--tx, var(--text-2, #c9d1d9))",
+        "color:var(--warning,#ffd35c)",
+        "fill:#c08a4a",
+        "fill:color-mix(in srgb, #c08a4a 7%, transparent)",
+        "fill:color-mix(in srgb, #c08a4a 80%, var(--muted))",
+        "fill:color-mix(in srgb, var(--accent) 86%, #fff)",
+        "fill:color-mix(in srgb, var(--danger, #ff6b6b) 8%, var(--surface))",
+        "outline:2px solid color-mix(in srgb, var(--accent, #ff7a45) 60%, transparent)",
+        "outline:2px solid var(--accent, #ff7a45)",
+        "outline:2px solid var(--accent, #ff7a45)",
+        "stroke:#c08a4a",
+        "stroke:black",
+        "stroke:black",
+        "stroke:black",
+        "stroke:color-mix(in srgb, var(--accent) 70%, #fff)",
+        "stroke:color-mix(in srgb, var(--accent) 92%, #fff)",
+        "text-shadow:-1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 0 6px rgba(0,0,0,.85)",
+        "text-shadow:0 1px 3px rgba(0, 0, 0, .85)"
+      ]
+    },
+    {
+      "file": "editor/js/accent.js",
+      "sha256": "5091a72b817e894f3b99e1496054b02faffec014fcc3b30d0fec15ae337f3f7c",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/ass.js",
+      "sha256": "5a872dea5411d78b9ed27779231eef9c4db108353c8e7542fd2d5e3353c2afc1",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/assplayer.js",
+      "sha256": "51f9338e9669023c82228e64c4f7f51fd800d9d3eb06b571b92aa4b7e73aeb51",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/color-picker.js",
+      "sha256": "306049da5329f7d191bd6acd098dd95cb758c93ded6e053cc2ddffa81dfb14b0",
+      "ids": [],
+      "dynamicIds": [
+        "ss-color-picker"
+      ],
+      "dynamic": [
+        {
+          "line": 150,
+          "method": "createElement"
+        },
+        {
+          "line": 156,
+          "method": "innerHTML"
+        },
+        {
+          "line": 254,
+          "method": "innerHTML"
+        },
+        {
+          "line": 256,
+          "method": "innerHTML"
+        },
+        {
+          "line": 336,
+          "method": "createElement"
+        },
+        {
+          "line": 340,
+          "method": "createElement"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/editor.js",
+      "sha256": "f05d097a94b20c0b38d2db9be1fbb453cef20681255de67d348b61286a19ad8f",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 371,
+          "method": "innerHTML"
+        },
+        {
+          "line": 617,
+          "method": "innerHTML"
+        },
+        {
+          "line": 688,
+          "method": "innerHTML"
+        },
+        {
+          "line": 768,
+          "method": "innerHTML"
+        },
+        {
+          "line": 808,
+          "method": "innerHTML"
+        },
+        {
+          "line": 820,
+          "method": "innerHTML"
+        },
+        {
+          "line": 855,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1176,
+          "method": "createElement"
+        },
+        {
+          "line": 1179,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1301,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1319,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1452,
+          "method": "createElement"
+        },
+        {
+          "line": 1459,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": [
+        "background:#5b6472"
+      ]
+    },
+    {
+      "file": "editor/js/export-video.js",
+      "sha256": "e288f0bde945a8b8e8fd721d157bc18c862b9f895a5cda6c3cd93f05f3533e02",
+      "ids": [],
+      "dynamicIds": [
+        "sf-ev-accel",
+        "sf-ev-adv",
+        "sf-ev-browse",
+        "sf-ev-cancel",
+        "sf-ev-cap",
+        "sf-ev-close",
+        "sf-ev-codec",
+        "sf-ev-dir",
+        "sf-ev-dismiss",
+        "sf-ev-k-bilingual",
+        "sf-ev-k-raw",
+        "sf-ev-k-subtitle",
+        "sf-ev-notes",
+        "sf-ev-out-list",
+        "sf-ev-outputs",
+        "sf-ev-overwrite",
+        "sf-ev-progress",
+        "sf-ev-quality",
+        "sf-ev-start",
+        "sf-ev-status",
+        "sf-ev-threads",
+        "sf-ev-title",
+        "sf-export-video"
+      ],
+      "dynamic": [
+        {
+          "line": 78,
+          "method": "createElement"
+        },
+        {
+          "line": 82,
+          "method": "innerHTML"
+        },
+        {
+          "line": 176,
+          "method": "innerHTML"
+        },
+        {
+          "line": 187,
+          "method": "innerHTML"
+        },
+        {
+          "line": 192,
+          "method": "createElement"
+        },
+        {
+          "line": 278,
+          "method": "innerHTML"
+        },
+        {
+          "line": 284,
+          "method": "innerHTML"
+        },
+        {
+          "line": 348,
+          "method": "innerHTML"
+        },
+        {
+          "line": 371,
+          "method": "createElement"
+        },
+        {
+          "line": 373,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/font-picker.js",
+      "sha256": "a3a54d0a68254da452f2b75680dbe7ceff43672a8b4d5681cfc8732a34b08e14",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 71,
+          "method": "createElement"
+        },
+        {
+          "line": 76,
+          "method": "createElement"
+        },
+        {
+          "line": 87,
+          "method": "createElement"
+        },
+        {
+          "line": 91,
+          "method": "innerHTML"
+        },
+        {
+          "line": 108,
+          "method": "createElement"
+        },
+        {
+          "line": 140,
+          "method": "innerHTML"
+        },
+        {
+          "line": 144,
+          "method": "innerHTML"
+        },
+        {
+          "line": 193,
+          "method": "innerHTML"
+        },
+        {
+          "line": 198,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/glass-contrast.js",
+      "sha256": "7c05c8eed7a514245673fc64384c518aea02e5db80370f1f8c1d2ae1dd105eba",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/glossary-review.js",
+      "sha256": "4394741cb34f5a1d400c8a9674b24627ad7ed2a3ca054a2502f16d6810dfd355",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 41,
+          "method": "innerHTML"
+        },
+        {
+          "line": 43,
+          "method": "createElement"
+        },
+        {
+          "line": 45,
+          "method": "createElement"
+        },
+        {
+          "line": 48,
+          "method": "createElement"
+        },
+        {
+          "line": 50,
+          "method": "createElement"
+        },
+        {
+          "line": 53,
+          "method": "createElement"
+        },
+        {
+          "line": 68,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/i18n.js",
+      "sha256": "d73f001214f4fb7e701619e46c6f8ffecee8db7fc962f46b6842184707dc4621",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/icons.js",
+      "sha256": "18dae613f5cc101a3d53be44222f4d65aa24bcb83f6740764c4198d30c78fb33",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 9,
+          "method": "innerHTML"
+        },
+        {
+          "line": 10,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/karaoke.js",
+      "sha256": "a11c1970ec5d51b36d8952f365f24427ebf446584a90a6352e4e234d2f61c56a",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/main.js",
+      "sha256": "386efed7529f2f53246be3d37c2e6ddff7f4c95930ba94e24cb7854f8b38fb90",
+      "ids": [],
+      "dynamicIds": [
+        "${escapeHtml(n.id)}",
+        "app-exited",
+        "badcat-all",
+        "badcat-clear",
+        "toast"
+      ],
+      "dynamic": [
+        {
+          "line": 218,
+          "method": "createElement"
+        },
+        {
+          "line": 236,
+          "method": "innerHTML"
+        },
+        {
+          "line": 284,
+          "method": "insertAdjacentHTML"
+        },
+        {
+          "line": 847,
+          "method": "innerHTML"
+        },
+        {
+          "line": 849,
+          "method": "createElement"
+        },
+        {
+          "line": 1668,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 1669,
+          "method": "createElement"
+        },
+        {
+          "line": 1678,
+          "method": "createElement"
+        },
+        {
+          "line": 2532,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2541,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2591,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2671,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3299,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4991,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4992,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5132,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5150,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5237,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5317,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5343,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5422,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5855,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5859,
+          "method": "createElement"
+        },
+        {
+          "line": 5861,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5909,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6075,
+          "method": "createElement"
+        },
+        {
+          "line": 6077,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6540,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6595,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6754,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7087,
+          "method": "createElement"
+        },
+        {
+          "line": 7125,
+          "method": "createElement"
+        },
+        {
+          "line": 7180,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7182,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7182,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7347,
+          "method": "createElement"
+        },
+        {
+          "line": 7375,
+          "method": "createElement"
+        },
+        {
+          "line": 7386,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7455,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7456,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7484,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7711,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7866,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 7872,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7917,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7918,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7939,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7952,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8244,
+          "method": "createElement"
+        },
+        {
+          "line": 8249,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8258,
+          "method": "createElement"
+        },
+        {
+          "line": 8264,
+          "method": "createElement"
+        },
+        {
+          "line": 8266,
+          "method": "createElement"
+        }
+      ],
+      "literals": [
+        "background:#2563eb",
+        "background:#5b6472",
+        "background:#b3261e",
+        "background:#b45309",
+        "background:rgba(255,255,255,.18)",
+        "box-shadow:0 4px 16px rgba(0,0,0,.3)",
+        "box-shadow:0 4px 16px rgba(0,0,0,.35)",
+        "box-shadow:0 4px 16px rgba(0,0,0,.35)",
+        "color:#fff",
+        "color:#fff",
+        "color:#fff",
+        "color:#fff"
+      ]
+    },
+    {
+      "file": "editor/js/modal.js",
+      "sha256": "7f0ee80fa950ed83b2c7143168039031c70ae3c24ca36a31ed739e48d07d8ae4",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/monet.js",
+      "sha256": "eeda69ea0b0c34bcf7dea7bf45b4849a42e93eb79b153b2d5d552c96b0508719",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 130,
+          "method": "createElement"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/overlay.js",
+      "sha256": "8aba87d734ca45b75165e6e79ab07f10a08d01f31669335a76d71421908c2929",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 88,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/postprocess.js",
+      "sha256": "57a461e91f7efa3ab7764315d38b9ccc3264339707a110681055d9d6bdfd6ff7",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/project.js",
+      "sha256": "e3e1bf4122ae77c69d5879a20182b75b236e01fa1c34dd8653b3485a8db660d6",
+      "ids": [],
+      "dynamicIds": [
+        "${esc(a.id)}",
+        "${esc(item.id)}",
+        "${esc(m.id)}",
+        "${id}",
+        "diarize",
+        "np-scheme-create",
+        "np-scheme-retry",
+        "perf-apply",
+        "perf-apply-note",
+        "perf-copy",
+        "sf-ap-cancel",
+        "sf-ap-close",
+        "sf-ap-fields",
+        "sf-ap-model",
+        "sf-ap-msg",
+        "sf-ap-reset",
+        "sf-ap-save",
+        "sf-ap-state",
+        "sf-ap-title",
+        "sf-asr-params",
+        "st-env-nemo",
+        "st-models-retry",
+        "st-rerecog-sel"
+      ],
+      "dynamic": [
+        {
+          "line": 210,
+          "method": "innerHTML"
+        },
+        {
+          "line": 226,
+          "method": "innerHTML"
+        },
+        {
+          "line": 909,
+          "method": "innerHTML"
+        },
+        {
+          "line": 917,
+          "method": "innerHTML"
+        },
+        {
+          "line": 919,
+          "method": "innerHTML"
+        },
+        {
+          "line": 929,
+          "method": "innerHTML"
+        },
+        {
+          "line": 944,
+          "method": "createElement"
+        },
+        {
+          "line": 950,
+          "method": "innerHTML"
+        },
+        {
+          "line": 952,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 1001,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1132,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1350,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1353,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1369,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1379,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1490,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1492,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1530,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1537,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1755,
+          "method": "createElement"
+        },
+        {
+          "line": 1757,
+          "method": "createElement"
+        },
+        {
+          "line": 1763,
+          "method": "createElement"
+        },
+        {
+          "line": 1771,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1815,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1817,
+          "method": "createElement"
+        },
+        {
+          "line": 1819,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1828,
+          "method": "createElement"
+        },
+        {
+          "line": 1830,
+          "method": "createElement"
+        },
+        {
+          "line": 1834,
+          "method": "createElement"
+        },
+        {
+          "line": 1836,
+          "method": "createElement"
+        },
+        {
+          "line": 1841,
+          "method": "createElement"
+        },
+        {
+          "line": 1857,
+          "method": "createElement"
+        },
+        {
+          "line": 1974,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2016,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2020,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2034,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2149,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2201,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2205,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2215,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2229,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2378,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2482,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2495,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2499,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2510,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2602,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2630,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2679,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2782,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2832,
+          "method": "createElement"
+        },
+        {
+          "line": 2836,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2905,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2938,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2957,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3125,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3139,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3145,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3179,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3229,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3371,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3558,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3677,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3799,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3806,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 4143,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4244,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4245,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4260,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4465,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4491,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4493,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4497,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4499,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4649,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4660,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4662,
+          "method": "createElement"
+        },
+        {
+          "line": 4664,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5207,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5210,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5228,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5231,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5260,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5490,
+          "method": "createElement"
+        },
+        {
+          "line": 6033,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6102,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6102,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6340,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6357,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": [
+        "background:var(--accent-soft,rgba(90,140,255,.14))"
+      ]
+    },
+    {
+      "file": "editor/js/rim-curve.js",
+      "sha256": "83c63000a9c80e3169bff974e27e82154437bbd2492fcdd79e20feb347869070",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 224,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 225,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 292,
+          "method": "createElement"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/segment.js",
+      "sha256": "a11a3ae361993a4e48b53d68cc248cfc8f2d6616d2be5501f73f1c050f4bb099",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/shortcuts.js",
+      "sha256": "0202cdb0643acd3837ad97c81ea9c538f2cea35b84f8401721012f8cdfde396e",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/srt.js",
+      "sha256": "8086b1a754fee8f6b7cf95be9db1017501744135eda42adbe2ae15dd811ea416",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/studio-progress.js",
+      "sha256": "e5b128511ff4fe0e4b33570d3706347da0e009f326253055c107e0af23fc70a5",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/studio-state.js",
+      "sha256": "6729fb75583edde409c8f0186be8769365f3122144a6870073761f98bc2cb9fc",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/studio-themes.js",
+      "sha256": "77f09571d55c3dcb16bc61d07d638e6395db0e84457f7054b0d6a1a2f9e4d922",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/studio.js",
+      "sha256": "1984f75bbc8714a640e070a8de51e01e1337e6515f521029d59d695eabf920a3",
+      "ids": [],
+      "dynamicIds": [
+        "sf-choice-menu",
+        "sf-choice-option-",
+        "sf-folder-desc",
+        "sf-folder-dialog",
+        "sf-folder-error",
+        "sf-folder-name",
+        "sf-folder-title",
+        "sf-mute",
+        "sf-play",
+        "sf-play-duration",
+        "sf-play-time",
+        "sf-player",
+        "sf-rate",
+        "sf-rate-label",
+        "sf-rate-menu",
+        "sf-rate-toggle",
+        "sf-seek",
+        "sf-seek-range",
+        "sf-volume",
+        "uwp-tile-press",
+        "uwp-tile-rebound"
+      ],
+      "dynamic": [
+        {
+          "line": 259,
+          "method": "innerHTML"
+        },
+        {
+          "line": 301,
+          "method": "createElement"
+        },
+        {
+          "line": 655,
+          "method": "createElement"
+        },
+        {
+          "line": 915,
+          "method": "createElement"
+        },
+        {
+          "line": 979,
+          "method": "createElement"
+        },
+        {
+          "line": 980,
+          "method": "createElement"
+        },
+        {
+          "line": 986,
+          "method": "createElement"
+        },
+        {
+          "line": 987,
+          "method": "createElement"
+        },
+        {
+          "line": 1093,
+          "method": "createElement"
+        },
+        {
+          "line": 1095,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1103,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1109,
+          "method": "createElement"
+        },
+        {
+          "line": 1111,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1264,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1285,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2120,
+          "method": "createElement"
+        },
+        {
+          "line": 2120,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2123,
+          "method": "createElement"
+        },
+        {
+          "line": 2134,
+          "method": "createElement"
+        },
+        {
+          "line": 2141,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2141,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2147,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2167,
+          "method": "createElement"
+        },
+        {
+          "line": 2168,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2175,
+          "method": "createElement"
+        },
+        {
+          "line": 2178,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2181,
+          "method": "createElement"
+        },
+        {
+          "line": 2186,
+          "method": "createElement"
+        },
+        {
+          "line": 2188,
+          "method": "createElement"
+        },
+        {
+          "line": 2191,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2192,
+          "method": "createElement"
+        },
+        {
+          "line": 2194,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2256,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2419,
+          "method": "createElement"
+        },
+        {
+          "line": 2462,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 2468,
+          "method": "createElement"
+        },
+        {
+          "line": 2471,
+          "method": "createElement"
+        },
+        {
+          "line": 2475,
+          "method": "createElement"
+        },
+        {
+          "line": 2476,
+          "method": "createElement"
+        },
+        {
+          "line": 2476,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2549,
+          "method": "createElement"
+        },
+        {
+          "line": 2551,
+          "method": "createElement"
+        },
+        {
+          "line": 2554,
+          "method": "createElement"
+        },
+        {
+          "line": 2555,
+          "method": "createElement"
+        },
+        {
+          "line": 2555,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/timeline.js",
+      "sha256": "e4d77ae472bf69469e288866e68d691c090be5df95ee41fb5b54887a1634d00b",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 293,
+          "method": "createElement"
+        },
+        {
+          "line": 317,
+          "method": "createElement"
+        },
+        {
+          "line": 1262,
+          "method": "createElement"
+        },
+        {
+          "line": 2218,
+          "method": "createElement"
+        },
+        {
+          "line": 2262,
+          "method": "createElement"
+        },
+        {
+          "line": 2285,
+          "method": "createElement"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/util.js",
+      "sha256": "2d7f70c7994ec958d1992bbdf9feb21e4aca19569432467c0020feef9023aa45",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/video-hover-tip.js",
+      "sha256": "8f42c1345702778fa3afbbb091d848991ba55f2f82b61c78a5f3313190fab45b",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/videoedit.js",
+      "sha256": "7db6a7510aad0a4d60a845fd7a9da8169098e1e72e28fed22a9f54099e6e2ad3",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 344,
+          "method": "createElement"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/welcome-boot.js",
+      "sha256": "c792c8b1b02f1825596180d888c12d508c396a13edfe86a8a78474c99d5fbdd0",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/welcome-model.js",
+      "sha256": "25058dfe79d0e02721d009da534d944264b7adb8f11c4fda095fd85dbe855c73",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/zip.js",
+      "sha256": "10c87960954290b89280b4038fa43a8fce1b732dccd2f0b1f335eee3f994bda5",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/lang/zh-CN.json",
+      "sha256": "84fa1d3472eeaf30b99f32f0aae7d97c37c08b5317192d47603bdcdb763e89fe",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/themes/claude.theme.json",
+      "sha256": "5143661f470cd5dff2cb16af64a0806159549a34dbaac370e7a27fa4f31503b1",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/themes/material-you.theme.json",
+      "sha256": "141a1ea055dfe1cb8461121734ac377fe71515f17fd7809e4af0834a0b70e647",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/themes/subfabric-classic.theme.json",
+      "sha256": "831f9131826e7becff09c3673863bfbbcdcce913a35a87200b971af23b31f1c7",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/themes/windows-uwp.theme.json",
+      "sha256": "48f41a790453425bc2df487c4be3bc9ce8f779db343f06cb82f8713f8e0a84f8",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "tools/templates/studio.html",
+      "sha256": "f89cb845ac42a5faff5b8f7771e9297d8c299444f6e157f0f0df8be0663bc425",
+      "ids": [
+        "adv-export-all",
+        "adv-export-cancel",
+        "adv-export-format",
+        "adv-export-none",
+        "adv-export-ok",
+        "adv-export-overlay",
+        "adv-role-list",
+        "ah-add",
+        "ah-llm-note",
+        "ah-mine",
+        "ah-mine-all",
+        "ah-mine-apply",
+        "ah-mine-count",
+        "ah-mine-foot",
+        "ah-mine-hint",
+        "ah-mine-list",
+        "ah-mine-none",
+        "ah-score",
+        "ah-terms-list",
+        "ah-use-llm",
+        "an-baseurl",
+        "an-fields",
+        "an-follow-note",
+        "an-key",
+        "an-key-clear",
+        "an-key-hint",
+        "an-maxedits",
+        "an-model",
+        "an-provider",
+        "an-status",
+        "an-use-translate",
+        "app",
+        "app-version",
+        "ass-font-list",
+        "ass-fx-group",
+        "ass-style-en-bold",
+        "ass-style-en-color",
+        "ass-style-en-color-val",
+        "ass-style-en-color2",
+        "ass-style-en-color2-val",
+        "ass-style-en-font",
+        "ass-style-en-font-file",
+        "ass-style-en-font-file-btn",
+        "ass-style-en-font-mark",
+        "ass-style-en-font-note",
+        "ass-style-en-italic",
+        "ass-style-en-name",
+        "ass-style-en-size",
+        "ass-style-group",
+        "ass-style-k-base",
+        "ass-style-k-base-val",
+        "ass-style-k-sweep",
+        "ass-style-k-sweep-val",
+        "ass-style-order",
+        "ass-style-order-val",
+        "ass-style-preset-export",
+        "ass-style-preset-file",
+        "ass-style-preset-hint",
+        "ass-style-preset-import",
+        "ass-style-status",
+        "ass-style-word-color",
+        "ass-style-word-color-val",
+        "ass-style-zh-bold",
+        "ass-style-zh-color",
+        "ass-style-zh-color-val",
+        "ass-style-zh-color2",
+        "ass-style-zh-color2-val",
+        "ass-style-zh-font",
+        "ass-style-zh-font-file",
+        "ass-style-zh-font-file-btn",
+        "ass-style-zh-font-mark",
+        "ass-style-zh-font-note",
+        "ass-style-zh-italic",
+        "ass-style-zh-name",
+        "ass-style-zh-size",
+        "audio-mode",
+        "bad-count",
+        "badcat-count",
+        "badcat-panel",
+        "badcat-wrap",
+        "badge-format",
+        "batch-add",
+        "batch-align",
+        "batch-autopost",
+        "batch-back",
+        "batch-clear",
+        "batch-draft-overlay",
+        "batch-files",
+        "batch-item-align",
+        "batch-item-cancel",
+        "batch-item-model",
+        "batch-item-name",
+        "batch-item-ok",
+        "batch-item-overlay",
+        "batch-item-scheme",
+        "batch-item-speakers",
+        "batch-item-word",
+        "batch-list",
+        "batch-model",
+        "batch-scheme",
+        "batch-speakers",
+        "batch-start",
+        "batch-stop",
+        "batch-summary",
+        "batch-view",
+        "batch-word",
+        "bd-align",
+        "bd-close",
+        "bd-list",
+        "bd-model",
+        "bd-speakers",
+        "bd-start",
+        "bd-status",
+        "bd-word",
+        "bench-all",
+        "bench-audio-auto",
+        "bench-audio-path",
+        "bench-audio-pick",
+        "bench-bar",
+        "bench-cancel",
+        "bench-cast",
+        "bench-cond-note",
+        "bench-conditions",
+        "bench-confidence",
+        "bench-models",
+        "bench-models-note",
+        "bench-none",
+        "bench-note",
+        "bench-progress",
+        "bench-refresh",
+        "bench-result",
+        "bench-seconds",
+        "bench-speaker-count",
+        "bench-speakers",
+        "bench-stage",
+        "bench-start",
+        "bench-word",
+        "btn-bad-rows",
+        "btn-badcat",
+        "btn-batch-draft",
+        "btn-convert-words",
+        "btn-diarize",
+        "btn-export",
+        "btn-export-advanced",
+        "btn-export-clean",
+        "btn-export-en",
+        "btn-export-full",
+        "btn-export-json",
+        "btn-export-pack",
+        "btn-export-video",
+        "btn-export-zh",
+        "btn-fix-subs",
+        "btn-glossary-review",
+        "btn-home",
+        "btn-log-clear",
+        "btn-low-conf",
+        "btn-new-project",
+        "btn-note-refresh",
+        "btn-note-send",
+        "btn-open-sub",
+        "btn-open-video",
+        "btn-oplog-refresh",
+        "btn-realign-full",
+        "btn-reflect",
+        "btn-refresh-subs",
+        "btn-regen-audio",
+        "btn-region-import",
+        "btn-reseg-llm",
+        "btn-search",
+        "btn-settings",
+        "btn-settings-ed",
+        "card-menu",
+        "cb-danmaku",
+        "cb-follow-toolbar",
+        "cb-heal-words",
+        "cb-log-follow",
+        "cb-log-only-warn",
+        "cie-input",
+        "confirm-msg",
+        "confirm-no",
+        "confirm-overlay",
+        "confirm-title",
+        "confirm-yes",
+        "ctd-cancel",
+        "ctd-hint",
+        "ctd-input",
+        "ctd-ok",
+        "ctd-preview",
+        "cue-edit-layer",
+        "cue-hit-shield",
+        "cue-inline-editor",
+        "cue-list",
+        "cue-seg-box",
+        "cue-spacer",
+        "cue-text-overlay",
+        "danmaku-layer",
+        "dashboard-view",
+        "detail-back",
+        "detail-cancel",
+        "detail-created",
+        "detail-error",
+        "detail-form",
+        "detail-format",
+        "detail-m-desc",
+        "detail-m-duration",
+        "detail-m-title",
+        "detail-m-uploader",
+        "detail-modified",
+        "detail-name",
+        "detail-preview-empty",
+        "detail-progress",
+        "detail-save",
+        "detail-subtitle",
+        "detail-thumb",
+        "detail-video",
+        "detail-view",
+        "dp-bar-in",
+        "dp-body",
+        "dp-close",
+        "dp-elapsed",
+        "dp-eta",
+        "dp-idle",
+        "dp-log",
+        "dp-meta",
+        "dp-msg",
+        "dp-pct",
+        "dp-retries",
+        "dp-retry",
+        "dp-skip",
+        "dp-stage",
+        "dp-steps",
+        "dp-transfer",
+        "dt-advanced",
+        "dt-input-title",
+        "dt-model-sel",
+        "dt-open-settings",
+        "dt-preview-title",
+        "dt-progress-title",
+        "dt-scheme-list",
+        "dt-scheme-manage",
+        "dt-scheme-refresh",
+        "dt-set-cast",
+        "dt-set-castprompt",
+        "dt-set-confidence",
+        "dt-set-model",
+        "dt-set-prompt",
+        "dt-set-provider",
+        "dt-set-save",
+        "dt-set-speakers",
+        "dt-set-speakers-note",
+        "dt-set-state",
+        "dt-set-title",
+        "dt-settings-panel",
+        "dual-ratio",
+        "dual-ratio-note",
+        "dual-ratio-row",
+        "editor-advanced-actions",
+        "editor-panel",
+        "f8-section",
+        "file-sub",
+        "file-video",
+        "fix-cancel",
+        "fix-input",
+        "fix-input-wrap",
+        "fix-list",
+        "fix-ok",
+        "fix-overlay",
+        "fix-title",
+        "fr-case",
+        "fr-close",
+        "fr-dst",
+        "fr-dst-dd",
+        "fr-dst-menu",
+        "fr-find",
+        "fr-locate",
+        "fr-next",
+        "fr-overlay",
+        "fr-pane-role",
+        "fr-pane-text",
+        "fr-prev",
+        "fr-repl",
+        "fr-replace-all",
+        "fr-replace-one",
+        "fr-scope",
+        "fr-src",
+        "fr-src-dd",
+        "fr-src-menu",
+        "fr-status",
+        "fr-tab-role",
+        "fr-tab-text",
+        "fr-text-opts",
+        "fr-word",
+        "fx-controls",
+        "fx-en-channel",
+        "fx-en-color",
+        "fx-en-color-val",
+        "fx-en-enable",
+        "fx-en-enable-val",
+        "fx-en-group",
+        "fx-en-head",
+        "fx-en-intensity",
+        "fx-en-intensity-val",
+        "fx-en-radius",
+        "fx-en-radius-val",
+        "fx-en-state",
+        "fx-enable",
+        "fx-enable-val",
+        "fx-fadein-block",
+        "fx-fadein-duration",
+        "fx-fadein-duration-val",
+        "fx-fadein-enable",
+        "fx-fadein-enable-val",
+        "fx-fadein-from",
+        "fx-fadein-from-val",
+        "fx-fadein-opts",
+        "fx-fadein-ratio",
+        "fx-fadein-ratio-val",
+        "fx-fadein-target",
+        "fx-glow-block",
+        "fx-glow-enable",
+        "fx-glow-enable-val",
+        "fx-glow-follow-role",
+        "fx-glow-follow-role-val",
+        "fx-glow-opts",
+        "fx-glow-target",
+        "fx-status-note",
+        "fx-zh-channel",
+        "fx-zh-color",
+        "fx-zh-color-val",
+        "fx-zh-enable",
+        "fx-zh-enable-val",
+        "fx-zh-group",
+        "fx-zh-head",
+        "fx-zh-intensity",
+        "fx-zh-intensity-val",
+        "fx-zh-radius",
+        "fx-zh-radius-val",
+        "fx-zh-state",
+        "gl-add",
+        "gl-langname",
+        "gl-rows",
+        "gl-tabs",
+        "glossary-apply",
+        "glossary-cancel",
+        "glossary-list",
+        "glossary-msg",
+        "glossary-overlay",
+        "glossary-save",
+        "glossary-save-wrap",
+        "glossary-scheme",
+        "glossary-summary",
+        "home-empty",
+        "home-list",
+        "home-view",
+        "hsplit",
+        "jc-bar-in",
+        "jc-close",
+        "jc-foot",
+        "jc-msg",
+        "jc-title",
+        "job-card",
+        "list-actions",
+        "log-cnt",
+        "log-empty",
+        "log-pane-app",
+        "log-pane-note",
+        "log-pane-op",
+        "log-sub-app",
+        "log-sub-note",
+        "log-sub-op",
+        "log-view",
+        "low-conf-count",
+        "note-bar",
+        "note-cnt",
+        "note-dur",
+        "note-empty",
+        "note-input",
+        "note-view",
+        "np-align",
+        "np-align-desc",
+        "np-auto-wrap",
+        "np-autopost",
+        "np-back",
+        "np-bar-in",
+        "np-cancel",
+        "np-cast-group",
+        "np-confidence",
+        "np-confidence-desc",
+        "np-create",
+        "np-dl-msg",
+        "np-elapsed",
+        "np-eta",
+        "np-file-pack",
+        "np-file-sub",
+        "np-hint",
+        "np-input-title",
+        "np-kstyle",
+        "np-log",
+        "np-m-desc",
+        "np-m-duration",
+        "np-m-title",
+        "np-m-uploader",
+        "np-meta",
+        "np-mode-draft",
+        "np-mode-import",
+        "np-model",
+        "np-model-sel",
+        "np-msg",
+        "np-name",
+        "np-open-settings",
+        "np-pack-name",
+        "np-part",
+        "np-pct",
+        "np-pick-pack",
+        "np-pick-sub",
+        "np-pick-video",
+        "np-preview-badge",
+        "np-preview-empty",
+        "np-preview-title",
+        "np-probe",
+        "np-progress-note",
+        "np-progress-title",
+        "np-region-end",
+        "np-region-fields",
+        "np-region-note",
+        "np-region-on",
+        "np-region-start",
+        "np-row-align",
+        "np-row-conf",
+        "np-row-kstyle",
+        "np-row-pack",
+        "np-row-part",
+        "np-row-region",
+        "np-row-spk",
+        "np-row-sub",
+        "np-row-url",
+        "np-row-word",
+        "np-scheme-block",
+        "np-scheme-list",
+        "np-scheme-manage",
+        "np-scheme-refresh",
+        "np-set-cast",
+        "np-set-castprompt",
+        "np-set-model",
+        "np-set-prompt",
+        "np-set-provider",
+        "np-set-save",
+        "np-set-state",
+        "np-set-title",
+        "np-settings-panel",
+        "np-speakers",
+        "np-spk-count",
+        "np-stage",
+        "np-steps",
+        "np-sub-name",
+        "np-thumb",
+        "np-transfer",
+        "np-url",
+        "np-video-name",
+        "np-view",
+        "np-voice-group",
+        "np-word",
+        "np-word-desc",
+        "op-range-cancel",
+        "op-range-end",
+        "op-range-from-sel",
+        "op-range-msg",
+        "op-range-note",
+        "op-range-ok",
+        "op-range-overlay",
+        "op-range-start",
+        "op-range-title",
+        "oplog-cnt",
+        "oplog-empty",
+        "oplog-view",
+        "panel-split-roles",
+        "panel-tabs",
+        "perf-applied",
+        "perf-audio-auto",
+        "perf-audio-path",
+        "perf-audio-pick",
+        "perf-audio-sec",
+        "perf-bar",
+        "perf-dual-view",
+        "perf-models-view",
+        "perf-note",
+        "perf-progress",
+        "perf-result",
+        "perf-slices",
+        "perf-stage",
+        "perf-start",
+        "perf-tab-dual",
+        "perf-tab-models",
+        "ph-name",
+        "pick-cancel",
+        "pick-list",
+        "pick-overlay",
+        "pick-title",
+        "range-bar",
+        "rb-count",
+        "rb-delete",
+        "rb-rerecog",
+        "realign-all",
+        "realign-all-note",
+        "realign-all-wrap",
+        "realign-apply",
+        "realign-cancel",
+        "realign-list",
+        "realign-msg",
+        "realign-overlay",
+        "realign-reload",
+        "realign-summary",
+        "reflect-all",
+        "reflect-all-note",
+        "reflect-all-wrap",
+        "reflect-apply",
+        "reflect-cancel",
+        "reflect-conf",
+        "reflect-conf-note",
+        "reflect-conf-val",
+        "reflect-list",
+        "reflect-msg",
+        "reflect-overlay",
+        "reflect-reload",
+        "reflect-summary",
+        "reseg-all",
+        "reseg-all-note",
+        "reseg-all-wrap",
+        "reseg-apply",
+        "reseg-cancel",
+        "reseg-list",
+        "reseg-msg",
+        "reseg-overlay",
+        "reseg-summary",
+        "rim-apply",
+        "rim-apply-force",
+        "rim-cancel",
+        "rim-end",
+        "rim-file",
+        "rim-file-name",
+        "rim-from-sel",
+        "rim-list",
+        "rim-overlay",
+        "rim-pick",
+        "rim-range-note",
+        "rim-recheck",
+        "rim-start",
+        "rim-summary",
+        "rng-font",
+        "rng-font-val",
+        "role-color-input",
+        "role-list",
+        "role-menu",
+        "role-new",
+        "role-new-cancel",
+        "role-new-color",
+        "role-new-colors",
+        "role-new-name",
+        "role-new-ok",
+        "role-rename",
+        "role-rename-input",
+        "role-rename-ok",
+        "save-state",
+        "search-box",
+        "sel-display-mode",
+        "sel-role-filter",
+        "set-audio-mode-row",
+        "set-film",
+        "set-film-val",
+        "set-pan",
+        "set-pan-val",
+        "set-regen-audio-row",
+        "set-role",
+        "set-role-val",
+        "set-tlh",
+        "set-tlh-val",
+        "set-tracks",
+        "set-tracks-val",
+        "set-zoom",
+        "set-zoom-val",
+        "sf-accel-card",
+        "sf-asr-back",
+        "sf-asr-catalog",
+        "sf-asr-detail",
+        "sf-asr-detail-title",
+        "sf-asr-families",
+        "sf-asr-home",
+        "sf-asr-message",
+        "sf-asr-rerecog-mount",
+        "sf-aurora-color-1",
+        "sf-aurora-color-2",
+        "sf-aurora-color-3",
+        "sf-aurora-motion",
+        "sf-aurora-options",
+        "sf-aurora-palette",
+        "sf-aurora-speed",
+        "sf-aurora-speed-row",
+        "sf-aurora-speed-value",
+        "sf-background",
+        "sf-breadcrumb",
+        "sf-clear-filter",
+        "sf-color",
+        "sf-color-from-image",
+        "sf-editor-display",
+        "sf-editor-export",
+        "sf-editor-media",
+        "sf-editor-roles",
+        "sf-editor-timeline",
+        "sf-filter-empty",
+        "sf-filters",
+        "sf-folder-add",
+        "sf-folders",
+        "sf-glass-blur",
+        "sf-glass-blur-value",
+        "sf-glass-dim",
+        "sf-glass-dim-value",
+        "sf-glass-opacity",
+        "sf-glass-opacity-value",
+        "sf-help",
+        "sf-image-blur",
+        "sf-image-blur-value",
+        "sf-image-clear",
+        "sf-image-dim",
+        "sf-image-dim-value",
+        "sf-image-file",
+        "sf-image-pick",
+        "sf-image-tools",
+        "sf-library-title",
+        "sf-list-mode",
+        "sf-mode",
+        "sf-monet-file",
+        "sf-monet-row",
+        "sf-motion",
+        "sf-mu-all-count",
+        "sf-mu-attention",
+        "sf-mu-attention-count",
+        "sf-mu-attention-resume",
+        "sf-mu-clock-hour",
+        "sf-mu-clock-minute",
+        "sf-mu-clock-second",
+        "sf-mu-date",
+        "sf-mu-flower-face",
+        "sf-mu-home",
+        "sf-mu-new",
+        "sf-mu-next-meta",
+        "sf-mu-next-title",
+        "sf-mu-processing",
+        "sf-mu-processing-device",
+        "sf-mu-processing-duration",
+        "sf-mu-processing-fill",
+        "sf-mu-processing-kicker",
+        "sf-mu-processing-name",
+        "sf-mu-processing-pct",
+        "sf-mu-ready-widget",
+        "sf-mu-resume",
+        "sf-mu-resume-cta",
+        "sf-mu-resume-eyebrow",
+        "sf-mu-status-num",
+        "sf-mu-temp",
+        "sf-mu-widgets",
+        "sf-nav",
+        "sf-notice",
+        "sf-rim-axis",
+        "sf-rim-bri",
+        "sf-rim-bri-gain",
+        "sf-rim-bri-gain-value",
+        "sf-rim-card",
+        "sf-rim-chart",
+        "sf-rim-curves",
+        "sf-rim-dot-bri",
+        "sf-rim-dot-sat",
+        "sf-rim-enabled",
+        "sf-rim-grid",
+        "sf-rim-marker",
+        "sf-rim-marker-line",
+        "sf-rim-name",
+        "sf-rim-out",
+        "sf-rim-power",
+        "sf-rim-power-value",
+        "sf-rim-s",
+        "sf-rim-sample",
+        "sf-rim-sat",
+        "sf-rim-sat-low",
+        "sf-rim-sat-low-value",
+        "sf-rim-spec",
+        "sf-rim-spec-base",
+        "sf-rim-spec-base-value",
+        "sf-rim-v",
+        "sf-search",
+        "sf-settings-heading-enhance",
+        "sf-settings-heading-fetch",
+        "sf-settings-heading-models",
+        "sf-settings-heading-perf",
+        "sf-settings-heading-theme",
+        "sf-settings-heading-translate",
+        "sf-settings-tab-enhance",
+        "sf-settings-tab-fetch",
+        "sf-settings-tab-models",
+        "sf-settings-tab-perf",
+        "sf-settings-tab-theme",
+        "sf-settings-tab-translate",
+        "sf-shortcuts",
+        "sf-theme-export",
+        "sf-theme-file",
+        "sf-theme-import",
+        "sf-theme-packs",
+        "sf-theme-status",
+        "sf-topbar",
+        "sf-widgets",
+        "split-note-holder",
+        "split-pane-head",
+        "split-role-grip",
+        "srt-overlay",
+        "st-accel-chips",
+        "st-accel-note",
+        "st-accel-open",
+        "st-baseurl",
+        "st-batch",
+        "st-box",
+        "st-cancel",
+        "st-cast-enabled",
+        "st-cast-note",
+        "st-conf-mode",
+        "st-conf-note",
+        "st-correct-baseurl",
+        "st-correct-batch",
+        "st-correct-custom",
+        "st-correct-eff",
+        "st-correct-key",
+        "st-correct-max",
+        "st-correct-mode",
+        "st-correct-model",
+        "st-correct-note",
+        "st-correct-pad",
+        "st-correct-provider",
+        "st-correct-usetranslate",
+        "st-ctx",
+        "st-drawer-cancel",
+        "st-drawer-msg",
+        "st-drawer-picks",
+        "st-drawer-save",
+        "st-entry-asr",
+        "st-entry-asr-bar",
+        "st-entry-asr-chips",
+        "st-entry-asr-sub",
+        "st-entry-llm",
+        "st-entry-llm-bar",
+        "st-entry-llm-chips",
+        "st-entry-llm-sub",
+        "st-fetch-browser",
+        "st-fetch-cookie",
+        "st-fetch-cookie-clear",
+        "st-fetch-cookie-note",
+        "st-fetch-cookie-save",
+        "st-fetch-proxy",
+        "st-fetch-quality",
+        "st-hardware",
+        "st-key",
+        "st-key-clear",
+        "st-key-eye",
+        "st-key-hint",
+        "st-model",
+        "st-model-dir",
+        "st-model-dir-open",
+        "st-model-note",
+        "st-models",
+        "st-msg",
+        "st-panel-enhance",
+        "st-panel-fetch",
+        "st-panel-models",
+        "st-panel-perf",
+        "st-panel-theme",
+        "st-panel-translate",
+        "st-prompt",
+        "st-provider",
+        "st-runtime-env",
+        "st-save",
+        "st-scheme-activate",
+        "st-scheme-auto",
+        "st-scheme-close",
+        "st-scheme-cur",
+        "st-scheme-drawer",
+        "st-scheme-hint",
+        "st-scheme-list",
+        "st-scheme-name",
+        "st-scheme-name-error",
+        "st-scheme-new",
+        "st-scheme-picks",
+        "st-scheme-reset",
+        "st-scheme-test",
+        "st-scheme-title",
+        "st-temp",
+        "st-test",
+        "st-view",
+        "stage-hint",
+        "stage-wrap",
+        "status-file",
+        "tab-logs",
+        "tab-roles",
+        "tab-settings",
+        "tab-subs",
+        "theme-color",
+        "theme-color-global",
+        "theme-reset",
+        "theme-reset-global",
+        "theme-swatches-side",
+        "timeline",
+        "timeline-panel",
+        "tl-canvas-wrap",
+        "tl-cursor-time",
+        "tl-duration",
+        "tl-menu",
+        "toolbar",
+        "video",
+        "video-hover-tip",
+        "video-stage",
+        "vsplit",
+        "welcome-alert",
+        "welcome-alert-slot",
+        "welcome-asr-mount",
+        "welcome-back",
+        "welcome-cancel",
+        "welcome-cards",
+        "welcome-cuda",
+        "welcome-cuda-card",
+        "welcome-cuda-state",
+        "welcome-foot",
+        "welcome-go",
+        "welcome-next",
+        "welcome-prep",
+        "welcome-prep-refresh",
+        "welcome-prep-status",
+        "welcome-prep-summary",
+        "welcome-prep-title",
+        "welcome-retry",
+        "welcome-step",
+        "welcome-sub",
+        "welcome-title",
+        "welcome-view",
+        "welcome-vulkan",
+        "welcome-vulkan-card",
+        "welcome-vulkan-state",
+        "word-convert-group",
+        "word-convert-hint",
+        "word-convert-loading",
+        "word-convert-scope",
+        "word-convert-style"
+      ],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": [
+        "background:#38bdf8",
+        "background:#38bdf8",
+        "background:#4fd1a5",
+        "background:#7eb6ff",
+        "background:#8b7cf6",
+        "background:#8b7cf6",
+        "background:#8b7cf6",
+        "background:#d9a441",
+        "background:#f472b6",
+        "background:#ff7a45",
+        "background:#ffd54a"
+      ]
+    }
+  ],
+  "tokens": {
+    "defined": [
+      "--accent",
+      "--accent-2",
+      "--accent-a07",
+      "--accent-a09",
+      "--accent-a10",
+      "--accent-a12",
+      "--accent-a14",
+      "--accent-a16",
+      "--accent-a18",
+      "--accent-a24",
+      "--accent-a28",
+      "--accent-a40",
+      "--accent-a45",
+      "--accent-a55",
+      "--accent-glow",
+      "--accent-hover",
+      "--accent-ink",
+      "--accent-soft",
+      "--accent-text",
+      "--bg",
+      "--bg-0",
+      "--bg-1",
+      "--bg-2",
+      "--bg-3",
+      "--border",
+      "--cc-bg",
+      "--cc-bg-hover",
+      "--cc-bg-selected",
+      "--cc-line",
+      "--cc-line-strong",
+      "--cc-ok",
+      "--cc-shadow",
+      "--cc-text",
+      "--cc-text-2",
+      "--cc-text-3",
+      "--cc-warn",
+      "--danger",
+      "--dim",
+      "--dur-1",
+      "--dur-2",
+      "--dur-3",
+      "--dur-4",
+      "--ease",
+      "--ease-back",
+      "--ease-exit",
+      "--ease-out",
+      "--en",
+      "--hair",
+      "--hair-2",
+      "--i",
+      "--info",
+      "--lane-word",
+      "--line",
+      "--line-soft",
+      "--main-sub",
+      "--mono",
+      "--muted",
+      "--my-cue-delay",
+      "--my-enter-delay",
+      "--ok",
+      "--on-accent",
+      "--on-accent-hover",
+      "--on-accent-pressed",
+      "--on-container",
+      "--orbit-x",
+      "--outline",
+      "--pack-art-radius",
+      "--pack-line-radius",
+      "--pack-symbol-radius",
+      "--panel-top",
+      "--panel-w",
+      "--pop-ox",
+      "--pop-oy",
+      "--preview-accent",
+      "--preview-bg",
+      "--preview-image",
+      "--preview-ink",
+      "--r-1",
+      "--r-2",
+      "--r-3",
+      "--r-4",
+      "--role",
+      "--role-i",
+      "--row-h",
+      "--secondary-container",
+      "--settings-i",
+      "--sf-aurora-duration",
+      "--sf-card-delay",
+      "--sf-card-delay-scale",
+      "--sf-card-duration",
+      "--sf-claude-display",
+      "--sf-claude-lift",
+      "--sf-claude-shadow",
+      "--sf-glass-blur",
+      "--sf-glass-dim",
+      "--sf-glass-light-raised",
+      "--sf-glass-light-surface",
+      "--sf-glass-opacity",
+      "--sf-glass-raised",
+      "--sf-glass-surface",
+      "--sf-help-cols",
+      "--sf-hit-thumb",
+      "--sf-hover-shadow",
+      "--sf-image-blur",
+      "--sf-image-dim",
+      "--sf-library-cols",
+      "--sf-mode-r",
+      "--sf-mode-x",
+      "--sf-mode-y",
+      "--sf-nav-w",
+      "--sf-panel-delay",
+      "--sf-progress",
+      "--sf-radius",
+      "--sf-readable-accent-text",
+      "--sf-readable-danger",
+      "--sf-readable-muted",
+      "--sf-readable-success",
+      "--sf-rim-bri",
+      "--sf-rim-field",
+      "--sf-rim-pos",
+      "--sf-rim-sat",
+      "--sf-rim-spec",
+      "--sf-spring",
+      "--sf-thumb",
+      "--sf-top-h",
+      "--sf-volume",
+      "--sh-1",
+      "--sh-2",
+      "--sh-3",
+      "--split-role-w",
+      "--sscp-h",
+      "--stagger",
+      "--sub-sub",
+      "--success",
+      "--surface",
+      "--surface-2",
+      "--surface-3",
+      "--tertiary-container",
+      "--text",
+      "--text-0",
+      "--text-1",
+      "--text-2",
+      "--tl-h",
+      "--uwp-card-edge",
+      "--uwp-card-face",
+      "--uwp-card-light",
+      "--uwp-cue-delay",
+      "--uwp-edge",
+      "--uwp-edge-alpha",
+      "--uwp-enter-delay",
+      "--uwp-enter-duration",
+      "--uwp-exit-delay",
+      "--uwp-exit-ox",
+      "--uwp-exit-oy",
+      "--uwp-face",
+      "--uwp-face-alpha",
+      "--uwp-face-image",
+      "--uwp-face-r",
+      "--uwp-glow",
+      "--uwp-mx",
+      "--uwp-my",
+      "--uwp-press-local",
+      "--uwp-press-r",
+      "--uwp-px",
+      "--uwp-py",
+      "--uwp-range",
+      "--uwp-tile-base",
+      "--uwp-tile-rgb",
+      "--view-enter-delay",
+      "--warning",
+      "--welcome-card-bg",
+      "--welcome-card-checked",
+      "--welcome-gap",
+      "--zh"
+    ],
+    "referenced": [
+      "--accent",
+      "--accent-2",
+      "--accent-a07",
+      "--accent-a09",
+      "--accent-a10",
+      "--accent-a12",
+      "--accent-a14",
+      "--accent-a16",
+      "--accent-a18",
+      "--accent-a20",
+      "--accent-a24",
+      "--accent-a28",
+      "--accent-a40",
+      "--accent-a45",
+      "--accent-a55",
+      "--accent-glow",
+      "--accent-hover",
+      "--accent-ink",
+      "--accent-soft",
+      "--accent-text",
+      "--bg",
+      "--bg-",
+      "--bg-0",
+      "--bg-1",
+      "--bg-2",
+      "--bg-3",
+      "--border",
+      "--cc-bg",
+      "--cc-bg-hover",
+      "--cc-bg-selected",
+      "--cc-line",
+      "--cc-line-strong",
+      "--cc-ok",
+      "--cc-shadow",
+      "--cc-text",
+      "--cc-text-2",
+      "--cc-text-3",
+      "--cc-warn",
+      "--danger",
+      "--dim",
+      "--dur-1",
+      "--dur-2",
+      "--dur-3",
+      "--dur-4",
+      "--ease",
+      "--ease-back",
+      "--ease-out",
+      "--en",
+      "--hair",
+      "--hair-2",
+      "--hover",
+      "--i",
+      "--info",
+      "--ink-strong",
+      "--input-bg",
+      "--lane-word",
+      "--line",
+      "--line-soft",
+      "--main-sub",
+      "--mono",
+      "--muted",
+      "--my-cue-delay",
+      "--my-enter-delay",
+      "--ok",
+      "--on-accent",
+      "--on-accent-hover",
+      "--on-accent-pressed",
+      "--on-container",
+      "--on-tertiary-container",
+      "--orbit-x",
+      "--outline",
+      "--pack-art-radius",
+      "--pack-line-radius",
+      "--pack-symbol-radius",
+      "--panel-top",
+      "--panel-w",
+      "--pop-ox",
+      "--pop-oy",
+      "--preview-accent",
+      "--preview-bg",
+      "--preview-image",
+      "--preview-ink",
+      "--r-1",
+      "--r-2",
+      "--r-3",
+      "--r-4",
+      "--reflect-bar",
+      "--role",
+      "--role-i",
+      "--secondary-container",
+      "--settings-i",
+      "--sf-aurora-1",
+      "--sf-aurora-2",
+      "--sf-aurora-3",
+      "--sf-aurora-duration",
+      "--sf-card-delay",
+      "--sf-card-delay-scale",
+      "--sf-card-duration",
+      "--sf-claude-display",
+      "--sf-claude-lift",
+      "--sf-claude-shadow",
+      "--sf-glass-blur",
+      "--sf-glass-light-raised",
+      "--sf-glass-light-surface",
+      "--sf-glass-raised",
+      "--sf-glass-surface",
+      "--sf-help-cols",
+      "--sf-hit-thumb",
+      "--sf-hover-shadow",
+      "--sf-image-blur",
+      "--sf-image-dim",
+      "--sf-library-cols",
+      "--sf-mode-r",
+      "--sf-mode-x",
+      "--sf-mode-y",
+      "--sf-nav-w",
+      "--sf-panel-delay",
+      "--sf-progress",
+      "--sf-radius",
+      "--sf-readable-accent-text",
+      "--sf-readable-danger",
+      "--sf-readable-muted",
+      "--sf-readable-success",
+      "--sf-rim-bri",
+      "--sf-rim-field",
+      "--sf-rim-pos",
+      "--sf-rim-sat",
+      "--sf-rim-spec",
+      "--sf-spring",
+      "--sf-thumb",
+      "--sf-top-h",
+      "--sf-volume",
+      "--sh-1",
+      "--sh-2",
+      "--sh-3",
+      "--split-role-w",
+      "--sscp-h",
+      "--sub-sub",
+      "--success",
+      "--surface",
+      "--surface-2",
+      "--surface-3",
+      "--tertiary-container",
+      "--text",
+      "--text-",
+      "--text-0",
+      "--text-1",
+      "--text-2",
+      "--text-3",
+      "--tl-h",
+      "--tx",
+      "--uwp-card-edge",
+      "--uwp-card-face",
+      "--uwp-card-light",
+      "--uwp-cue-delay",
+      "--uwp-edge",
+      "--uwp-edge-alpha",
+      "--uwp-enter-delay",
+      "--uwp-enter-duration",
+      "--uwp-exit-delay",
+      "--uwp-exit-ox",
+      "--uwp-exit-oy",
+      "--uwp-face",
+      "--uwp-face-alpha",
+      "--uwp-face-image",
+      "--uwp-face-r",
+      "--uwp-glow",
+      "--uwp-mx",
+      "--uwp-my",
+      "--uwp-press-local",
+      "--uwp-press-r",
+      "--uwp-px",
+      "--uwp-py",
+      "--uwp-range",
+      "--uwp-tile-base",
+      "--uwp-tile-rgb",
+      "--view-enter-delay",
+      "--warning",
+      "--welcome-card-bg",
+      "--welcome-card-checked",
+      "--welcome-gap",
+      "--zh"
+    ],
+    "missing": [],
+    "unusedCandidates": [
+      "--ease-exit",
+      "--row-h",
+      "--sf-glass-dim",
+      "--sf-glass-opacity",
+      "--stagger"
+    ]
+  }
+}

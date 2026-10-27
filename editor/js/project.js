@@ -4983,7 +4983,7 @@ async function renderAsrModels(providedStatus = null) {
     })();
     if (hint && probeForUi && !probeForUi.ok) {
       hint.textContent = '⚠ Python 环境不可用：' + probeForUi.msg + '。Parakeet NPU 需要 Python + OpenVINO（修复方法见创建后的日志）；Vulkan 版 Parakeet（CrispASR）和「必剪 ASR」云端识别都不需要 Python';
-      hint.style.color = '#ff9a5c';
+      hint.style.color = 'var(--warning)';
       hint.dataset.warn = '1';
     }
     npMaybeEnable();
@@ -5180,7 +5180,7 @@ async function renderAsrModels(providedStatus = null) {
     if (hint && !hint.dataset.warn) {
       if (why) {
         hint.textContent = '还不能开始：' + why;
-        hint.style.color = '#ff9a5c';
+        hint.style.color = 'var(--warning)';
       } else {
         hint.textContent = npDefaultHint();
         hint.style.color = '';

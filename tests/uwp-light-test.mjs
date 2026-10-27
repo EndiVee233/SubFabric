@@ -32,7 +32,8 @@ assert.equal(properties.get('--accent'), '#0078D7', 'brand accent is preserved')
 assert.equal(properties.get('--danger'), '#A4262C');
 themes.apply({ themePack: 'windows-uwp', accent: '#0078D7' }, [], true);
 assert.equal(properties.get('--surface'), '#2B2B2B');
-assert.equal(properties.has('--danger'), false, 'light status roles cannot leak into dark mode');
+assert.equal(properties.get('--danger'), themes.palette('#0078D7', true)['--danger'], 'dark status replaces the light status');
+assert.ok(themes.contrast(properties.get('--danger'), properties.get('--surface')) >= 4.5);
 assert.equal(properties.has('--accent-text'), false);
 themes.apply({ themePack: 'windows-uwp', accent: '#FFFF00' }, [], false);
 themes.apply({ themePack: 'material-you', accent: '#5789dc' }, [], false);
