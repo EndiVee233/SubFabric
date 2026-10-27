@@ -4,7 +4,7 @@
 用户向介绍见 [README.md](../README.md)；长期工作规则见 [AGENTS.md](../AGENTS.md)。
 
 > 历史材料（三轮代码审查、两次 STATUS 快照、卡拉OK 调研、双引擎实测）已压缩为本文的
-> [历史文档索引](#12-历史文档索引)，原件删除后仍可在 git 历史中找回。
+> [历史文档索引](#13-历史文档索引)，历史正文可在 git 历史中找回；保留的旧入口不再承担现行约定。
 
 ---
 
@@ -33,7 +33,7 @@
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
-| `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
+| `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`qwen_asr.py`、`qwen_align.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`（分句/能量计算及 worker 父进程看护共用）；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（见 §9） |
 | `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端模块自动同步镜像（入库） |
 | `tools/` | 探针与验收脚本：`build-install.mjs`（事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs` |
@@ -113,6 +113,8 @@
 - **视频选择走浏览器文件框**：新建项目选视频、重新关联视频都用 `<input type=file>` +
   `/api/upload-video` 落盘（与选择字幕/导入项目包**同一个窗口**），不再调用 `/api/pick`。
   代价是视频会复制一份进程序目录；落盘后与本地路径同构，`video`/`relink` 逻辑不变。
+  同名上传用 `openSync(..., 'wx')` 原子预留文件，再交给写入流；仅 `EEXIST` 时换下一个名称，
+  避免并发请求同时通过 `existsSync` 后覆盖同一文件。响应字段及媒体白名单登记保持原契约。
 - **逐词时间重排**（单条 `/realign` + 全片 `/realign-full`）：语义是“文本已确认，只量时间”。
   只调用 **Qwen3-ForcedAligner**：CUDA 用 `asr/qwen_align.py` 批量 worker（一次加载、按切片对齐），
   Vulkan 用 `CrispASR --align-only`；结果经 `align.js` 做 token 映射/单调性修正。**不跑 ASR、
@@ -159,6 +161,8 @@
     `POST /realign-full-cancel` 取消作业（`taskkill /T` 收 worker），前端运行中「关闭」按钮显示
     「停止」；切稿/退出应用也会停掉。worker 同时登记 `projProcs`，并带
     `SUBFABRIC_PARENT_WATCH=1`（每秒轮询父进程句柄，**不阻塞 stdin**），避免父进程被硬杀后留孤儿 Python。
+    `qwen_align.py` 与 `diarize.py` 复用 `asr/common.py` 的 `watch_parent`；Windows 显式声明
+    HANDLE 参数/返回类型并在 `finally` 关闭句柄，仍在模型导入之前启动看护，不改变推理参数与输出。
   - **SRT 稿件直接转逐词 ASS**：`/realign-full` 带 `{allowSrtToAss:true}`（只由前端在二次确认后发）
     时，`realignSource` 用 `subtitleSource` 的 SRT 行（归一标点空格后）做目标；预览内容不变。
     `POST /realign-full-apply`（只接受 `status=done` 的作业、并核对稿件版本）用 `srt-ass.js`
@@ -549,9 +553,8 @@
   状态存 `project.json` 的 `realignSkip`（开始秒 `toFixed(3)` 的数组），`POST /api/projects/:id/
   realign-skip` 原子写回；`runFullRealign` 按它过滤 targets（全被跳过时给明确错误，提示点掉标签）。
   行内编辑/查找替换等**文本变化**由 `markEditedRealignRows` 在重建条目时用「开始时间 → 文本签名」
-  比对自动打上标签（点击可切回参与）。打开项目时 `routeSub()` 会先建一次条目（那时 `state.project`
-  还没换成新项目，读不到 `realignSkip`），所以 `openProject()` 末尾再调 `window.__realignRefresh()`
-  重建一次，标签才准确。
+  比对自动打上标签（点击可切回参与）。打开项目时 `openProject()` 先装载新项目身份、元信息与保存
+  基线，再调用 `routeSub()`；首次构建即可读到 `realignSkip`，不再在末尾重复重建整份条目。
 - **高级字幕操作的区域变体**：右键「全片逐词重校对」/「全片重分句」按钮弹出 `.op-menu`（全片 / 区域）。
   选区域会先弹 `#op-range-overlay`（与分段导入类似的开始/结束输入 + 「用选区」按钮，打开时若
   时间轴有选区自动填入），确认后才执行。弹窗不压暗、顶部居中，且 `pointer-events:none`（只有
@@ -730,6 +733,78 @@
 - GPU、模型、真实媒体或服务依赖必须具备后才做相应验收。造测试媒体用 ffmpeg lavfi 的 `testsrc`，
   必须加 `sine` 音轨，否则抽音轨失败。
 
+### 全项目维护审查覆盖（2026-10-27）
+
+**整体状态：进行中。** 本阶段以 `15e8ef5` 建立内容哈希基线，随后按用户要求同步到
+`f90bf8d`；576 个上游文件逐字节核对，27 个更新、无删除，本轮改动在独立源码副本中三方合并。
+不使用本地暂存/提交/推送。以下计数与 [review-coverage.json](review-coverage.json) 是审查快照，
+不是全项目功能验收；该 JSON 只登记文件、审查深度与静态检查结果，不另立技术文档。
+
+范围包含生产前后端、Python、测试、工具、发行脚本、原型、配置和文档文本；模型、运行时、
+依赖、用户项目、下载媒体与构建产物不纳入源码审查。镜像按源文件核对，不重复算人工审查。
+本阶段正文通读与调用点核对集中在 ASR 生命周期、上传、下载内核、测试入口及若干公共纯逻辑；
+`server.js`、`main.js`、`project.js`、`timeline.js` 等大文件仍只审查了相关段，不能标成整文件完成。
+
+| 模块 | 已登记文件（含资源/镜像） | 人工通读 | 部分人工审查 | 待人工审查的文本 | 阶段范围 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `editor/` | 87 | 13 | 6 | 64 | 上传、常驻 ASR、公共纯逻辑、前端死代码；编辑器核心大模块仍进行中 |
+| `asr/` | 22 | 11 | 0 | 11 | 下载内核、common、Qwen、分离 worker；NPU/置信度等仍待深入 |
+| `tests/` | 250 | 14 | 0 | 169 | 回归入口、隔离服务、相关行为测试；另 67 份机械镜像 |
+| `tools/` | 129 | 3 | 2 | 124 | 入口生成、兼容测试入口、探针夹具；大部分探针待人工审查 |
+| `build/` | 5 | 2 | 1 | 0 | 启动脚本通读、安装清单部分核对；另 2 个图标资源 |
+| `docs/` | 45 | 1 | 0 | 34 | PROJECT 正文与引用核对；其余基线/历史材料待按用途核对，另 10 个资源 |
+| `prototypes/` | 34 | 0 | 0 | 11 | 仅登记、语法扫描；另 23 个资源，未作交互验收 |
+| 根目录与 CI | 10 | 6 | 0 | 3 | AGENTS/README、ESLint/Ruff、CI、build_exe；main.py 与旧地图/启动器仍待深入 |
+
+以上合计 582 个文件（不计清单文件本身）：475 份源码/配置/文档文本中，50 份已人工通读、
+9 份部分审查、416 份待人工审查；另有 67 份镜像和 40 份资源。人工通读不等于真实 GPU、
+GUI、网络、构建或业务全路径验收。Node/Python/JSON 解析已覆盖的文件单列于清单；HTML/CSS、
+PowerShell、VBS、安装脚本的静态登记不冒充解析器或实际运行验证。
+
+本阶段问题与处理（位置用函数/标识符定位，避免后续行号漂移）：
+
+| 编号/级别 | 位置、证据与影响 | 修改/收益 | 风险与验证 | 状态 |
+| --- | --- | --- | --- | --- |
+| R01 P1 | `server.js` `/api/upload-video`：12 个同名并发上传只产生 10 个独立文件，2 份内容被覆盖 | 独占预留文件名，避免检查后写入竞争；响应和文件命名规则兼容 | 中，用户已确认；12 路并发、已有文件保留、内容逐字节与媒体 API 验证 | 已完成且已验证 |
+| R02 P1 | `asr/fetch/ytdlp.py::_unpack_wheel`：只检查路径段，没有拒绝绝对路径；受控恶意 wheel 尝试写组件目录外，测试守卫拦住；前提是恶意/损坏包进入安装链 | 拒绝根路径、盘符/ADS、穿越；用已校验的路径段拼接目标 | 中，用户已确认；9 类恶意路径与正常 wheel 布局，不联网、不向目录外写入 | 已完成且已验证 |
+| R03 P1 | `asr/fetch/yt_format.py::is_youtube_url`：子串判定接受查询参数、伪子域与 userinfo 伪装，影响独立 CLI；Node 服务本已有 hostname 守卫 | 用 HTTP(S) hostname 精确匹配，保留短链、子域、nocookie 与无协议头合法输入 | 中，用户已确认；URL 集合与 CLI 在自举/建目录之前拒绝测试 | 已完成且已验证 |
+| R04 P2 | `editor/asr-service.js`：close/error 重复清理等待者，成功/catch/finally 重复检查空闲 | 复用 `_fail`，统一在 finally 归还 active 后调度；错误文案、共享 worker 与迟到结果语义保留 | 低；ready 前后失败、并发拒绝、替代 worker、取消与空闲回收行为测试 | 已完成且已验证 |
+| R05 P2 | `qwen_align.py` / `diarize.py`：父进程轮询逐份复制，Windows ctypes 未显式声明 HANDLE 契约 | 复用现有 `common.py::watch_parent`，明确句柄类型与 finally 关闭；不碰模型/分句算法 | 低；启用开关、句柄清理、真实进程存活/退出、真实孤儿 worker 自退；不代表模型推理验收 | 已完成且已验证 |
+| R06 P2 | `tests/run-all.mjs`：读取不存在的 `spawnSync().duration`，每项耗时恒为 null | 用单调时钟记录实际耗时，保持通过/部分/诊断/失败分类 | 低；独立小测试树验证真实通过、部分、失败与耗时，未删断言 | 已完成且已验证 |
+| R07 P3 | `main.js` 两个未使用 import 和回调下标、`project.js::schemeConfigured`、timeline 的 ZH_ROW_R/FALLBACK_FAMILY/GAP、videoedit 的 NEAR_MAX；Python 三个未使用标准库/typing 导入 | 删除无导出、无调用、无初始化副作用的绑定，简化等价登录态判定；更新过期注释 | 低；调用/脚本/测试引用核对，前端相关回归、fetch 回归、静态检查 | 已完成且已验证 |
+| R08 P2 | `tests/helpers/isolated-server.mjs`：Windows 硬杀绕过 shutdown，硬件探针可能继续占临时目录；close 的竞速超时也未清除。Node 22 全量曾在 vibevoice-backend 清理时报 EBUSY；新增测试复现成功清理仍残留一个定时器 | 先调用隔离实例自身 quit，等待 close、取消定时器；超时强制终止，收尾幂等 | 低，仅测试基础设施；定时器护栏、退出、vibevoice-backend、并发上传复验 | 已完成且已验证 |
+| R09 P2 | 文档仍声称 openProject 二次重建；README 将暂停的 Grow 描述为可用、将浏览器选视频描述为不复制；旧地图/STATUS 自称权威 | 按代码更新说明，保留旧文件原文并加历史提示，现行信息集中于本文 | 低；代码/模板/文档引用核对，未改业务语义 | 已完成且已验证 |
+
+保留项与下一阶段（不能据静态告警猜测性删除）：
+
+- **P1，未开始**：`build/installer/start-editor.bat` / `.command` 按端口直接结束进程，未核验身份。
+  范围为旧启动入口；建议复用已确认的 SubFabric 实例，未知占用时给错误并退出。需先就启动策略
+  提交具体方案并确认，再用受控占用端口与真实 Windows/macOS/Linux 入口验收；本阶段未改启动行为。
+- **P1，未开始**：`tools/lib/fixture.mjs` 固定目录可覆盖既有同名夹具，remove 无创建者核对。
+  仅 `control_style_probe.mjs` 使用；建议独占建目录并记录所有权，遇既有目录拒绝。需用既有目录保留、
+  创建失败与退出清理测试验证，不在用户项目上运行旧探针。
+- **P2，进行中/待核实**：`AsrService.setPython` 只改字段、缓存键不含解释器；需核对设置热切换是否
+  会复用旧 worker，并用双解释器替身测试后决定缓存失效策略，避免改变正在运行的识别任务。
+- `APP_FILE_VERSION` 由 `build_exe.py` 文本读取；停用引擎 schema/函数、双引擎回滚实现、
+  测试直接取用的 `textOnTranslucent`、旧工具引用的 `settingsVisit` 均保留。`k-line.js` 与编辑器的
+  序列化场景不同，未机械合并；主题 ZIP 内置回退承担旧服务兼容，也未仅因相似就删除。
+- 下一轮优先覆盖 `server.js` 持久化/后台作业与退出、前端保存/切稿/编辑状态，之后是 Python
+  NPU/置信度和工程探针；字幕时间轴、逐词语义、ASS 特效不作缺乏真实验收的改写。
+
+**本次验证**：模块回归 10 项、同步后新功能/上传回归 7 项、退出问题复验 3 项通过；
+Python 3.12 隔离测试 10 文件通过，新增 `parent-watch-test` / `fetch-boundary-test` 已加入 CI。
+Node 22.23.4 全量重跑 **140 passed / 12 partial / 1 diagnostic / 0 failed / 2 excluded**；
+首轮曾为 138 passed / 12 partial / 1 diagnostic / 1 failed / 2 excluded，失败为上面的隔离服务收尾，
+原报告保留。ESLint 9 为 0 error / 27 warning（包含构建文本读取、兼容/回滚与测试参考绑定），
+Ruff 0 error；Node --check / Python AST / JSON 静态解析无失败，范围见覆盖清单。
+12 个 partial 为 ass-group、diarize-api、font-picker、realign-cancel-api、role-order、role-recolor、
+speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-heal、zh-punct，
+分别受真实夹具、GUI 或 Python/模型运行时限制；rows-timeline 为诊断，colorfix/font-status 按约定排除。
+未运行真实 GPU/ASR/翻译服务、模型下载、真实稿件人工交互、SEA/Inno 安装构建与原生启动验收。
+历史验证仍保留在原章节，不能替代本轮验证。本阶段交付到独立审查分支
+`maintenance/deep-review-20261027`，GitHub 保存结果单独在交付汇报中核对，不能代替功能验收；
+main 未合并本轮改动，不创建/合并 PR，不发布安装包。
+
 ## 6. 打包与发版
 
 - 只发 Inno Setup 安装包 `SubFabric-<版本>-setup.exe`，不再出便携版 zip。链路：
@@ -747,7 +822,7 @@
   `MyAppVersion` / `MyAppFileVersion`；安装包名自动跟 `MyAppVersion`。`.iss` 的 `VersionInfoVersion` /
   `VersionInfoProductVersion` **只接受纯数字**，一律填 `MyAppFileVersion`；显示版本只走
   `AppVersion` / `AppVerName` / `VersionInfoProductName`。
-- **四段版本号规则**（唯一权威说明见 [PROJECT_MAP.md §1.1](../PROJECT_MAP.md#11-版本号命名规则发版前必读)）：
+- **四段版本号规则**（现行规则以本节为准）：
   `<主>.<次>.<补丁>.<当日构建序号>`。末段是**同一天内的第几次构建/修复**，当天第一版为 `1`，同一天再修
   一版 `+1`，次日重新从 `1` 开始；因此第四段可以比前一天更小，跨天比较看前三段。当天只修 bug 时保持
   前三段不变（如 `1.4.6.2` 的次日第一版是 `1.4.6.1`）；需要抬前三段时，抬完末段也从 `1` 开始。
@@ -972,6 +1047,11 @@ PyPI 自举官方 wheel 到 `asr/ytdlp/`（不入库/不进安装包），`bilib
 项目目录 `_bili_cookies.txt`，桌面设置里密文保存（Windows DPAPI / 其他平台 AES-GCM），绝不写日志；
 元数据写 `source.json` 供 LLM 分角色推断阵容。验证见 `tests/fetch-format-test.py`，`--simulate` 只解析不下载。
 
+Python CLI 的 YouTube 判站同样按 HTTP(S) hostname 精确匹配，保留 youtube.com / youtu.be /
+youtube-nocookie.com 及其子域，不接受查询参数或 userinfo 中的伪装域名。自举 wheel 只提取
+yt_dlp 与 dist-info 的合法相对路径，拒绝根路径、盘符/ADS 和穿越，按校验后的路径段构造目标；
+`tests/fetch-boundary-test.py` 覆盖正常布局、恶意归档与无网络的 CLI 拒绝路径。
+
 **YouTube 的 JavaScript 运行时（2026-10-26 修）**：新版 yt-dlp 解析 YouTube 需要一个 JS 运行时
 （nsig/挑战脚本），默认只启用 Deno；没有时它退回兼容客户端并打一条英文 WARNING
 （`No supported JavaScript runtime could be found...`），用户会当成故障。`fetch_cli.py` 现在
@@ -1126,13 +1206,13 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 
 ## 13. 历史文档索引
 
-原文件已删除，内容可在 git 历史中找回。
+旧文档正文已归并，历史内容可在 git 历史中找回；仓库仍保留的旧地图/状态文件只作历史入口，不更新现行约定。
 
 | 原文件 | 内容 | 现状 |
 | --- | --- | --- |
-| `PROJECT_MAP.md` | 目录地图、后端/前端结构、核心数据流、开发约定、测试地图 | 已并入本文 §2–§6、§9 |
+| `PROJECT_MAP.md` | 目录地图、后端/前端结构、核心数据流、开发约定、测试地图 | 已并入本文 §2–§6、§9；原路径保留历史提示 |
 | `README-DEV.md` | 环境、测试、启动与构建、仓库写入 | 已并入本文 §1、§5、§6、§10 |
-| `docs/STATUS.md` | 逐条任务状态流水账（约 58KB） | 已压缩进下文「最近状态」 |
+| `docs/STATUS.md` | 旧逐条任务状态流水账 | 已压缩进下文「最近状态」；远端恢复的原路径保留历史提示 |
 | `docs/STATUS-before-maintenance-20261015.md` | 维护前状态快照 | 已被 STATUS 取代，仅历史存档 |
 | `docs/CONTINUITY.md` | 连续性要求与验收门槛 | 已并入本文 §9、§10 |
 | `docs/MAINTENANCE.md` | 全项目测试与维护命令 | 已并入本文 §5 |

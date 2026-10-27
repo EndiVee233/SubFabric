@@ -9137,10 +9137,17 @@ function handleWaveRoutes(req, res, u) {
     const base = path.basename(name, ext);
     const dir = path.join(ROOT, 'videos');
     fs.mkdirSync(dir, { recursive: true });
-    let finalName = name, n = 0;
-    while (fs.existsSync(path.join(dir, finalName))) finalName = `${base}-${++n}${ext}`;
+    let finalName = name, n = 0, fd;
+    // 独占预留文件名；existsSync + 默认 w 打开会让并发上传覆盖同一文件。
+    for (;;) {
+      try { fd = fs.openSync(path.join(dir, finalName), 'wx'); break; }
+      catch (error) {
+        if (error.code !== 'EEXIST') return sendJson(res, 500, { error: '写入失败(磁盘/权限?)' });
+        finalName = `${base}-${++n}${ext}`;
+      }
+    }
     const dest = path.join(dir, finalName);
-    const out = fs.createWriteStream(dest);
+    const out = fs.createWriteStream(dest, { fd });
     let size = 0, done = false;
     const finish = (code, body) => { if (done) return; done = true; sendJson(res, code, body); };
     // 注意: 用 pipe 就不要再手动 out.end() —— 双重 end 会触发 ERR_STREAM_ALREADY_FINISHED,

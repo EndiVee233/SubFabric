@@ -3,7 +3,7 @@
 
 为什么要单独一层：
 程序打包成 exe 分发时**不内置 yt-dlp**（它更新频繁，内置就等于把版本冻结在打包那一刻），
-而是沿用程序既有的能力 —— 从 PyPI 下载官方 wheel 解压到 `%APPDATA%\\YtDlpGui\\lib`。
+而是从 PyPI 下载官方 wheel 解压到程序自管的 `asr/ytdlp/`。
 副作用是：全新机器上首次启动时 `import yt_dlp` 会失败（旧代码是顶层 import，会直接崩）。
 
 因此这里统一提供：
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import os
 import shutil
 import sys
 import urllib.request
@@ -28,7 +27,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-# 与 app/__init__.py 保持一致：程序自管的组件目录
+# 程序自管的组件目录，不依赖当前工作目录。
 _PKG_DIR = Path(__file__).resolve().parent.parent / "ytdlp"   # SubFabric: 组件自管目录 asr/ytdlp
 PYPI_JSON = "https://pypi.org/pypi/yt-dlp/json"
 _USER_AGENT = "SubFabric/2.0 (+https://github.com/EndiVee233/SubFabric)"
@@ -80,7 +79,7 @@ def last_import_error() -> str:
 
 
 def _dbg(message: str) -> None:
-    """把自举过程写进 %APPDATA%\\YtDlpGui\\logs\\bootstrap.log。
+    """把自举过程写进 asr/logs/bootstrap.log。
 
     打包分发后没有控制台，用户报「打不开」时这份日志是唯一线索，
     因此即使成功也留一行。
@@ -142,13 +141,15 @@ def _unpack_wheel(archive: Path) -> bool:
                 # 这种"第一段合法、后面绕出去"的成员(wheel 解压会把文件写到包目录外)。
                 if member.endswith("/"):
                     continue
-                parts = [p for p in member.replace("\\", "/").split("/") if p]
-                if not parts or any(p in ("..", ".") for p in parts):
+                normalized = member.replace("\\", "/")
+                parts = [p for p in normalized.split("/") if p]
+                if (normalized.startswith("/") or ":" in normalized
+                        or not parts or any(p in ("..", ".") for p in parts)):
                     continue
                 top = parts[0]
                 if not (top == "yt_dlp" or top.endswith(".dist-info")):
                     continue
-                target = _PKG_DIR / member
+                target = _PKG_DIR.joinpath(*parts)
                 if member.endswith(".dist-info/RECORD"):
                     # RECORD 里的哈希在解压后校验不了，留着会让「更新」逻辑误判
                     continue

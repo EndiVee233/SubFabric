@@ -28,7 +28,6 @@ import { htmlPlainAndMap } from './segment.js';
 const FONT_STACK = '"Microsoft YaHei", "PingFang SC", "Segoe UI", system-ui, sans-serif';
 const SEG_PAD_X = 6;          // 高亮框在片段左右各留一点(视觉)
 const SEG_HIT_SLOP = 10;      // 点在片段边界外多少像素内还算命中
-const NEAR_MAX = 1.6;         // 离最近片段超过 1.6em 就算"没点字幕"
 /* 原生 <video controls> 底部控制条的高度。**必须与 main.js 里那个 72 一致**
  * （main.js 用它把"点视频=播放/暂停"让给原生控件）。实测这条带子里
  * pointerdown/mousedown/click/dblclick 一个都到不了页面 —— 所以它上面的字幕必须另想办法。 */
@@ -324,7 +323,7 @@ export class VideoCueEditor {
     return it;
   }
 
-  /** 横向：落在哪个片段的 x 区间内；落在缝隙里取最近的（容差 NEAR_MAX em） */
+  /** 横向：落在哪个片段的 x 区间内；落在缝隙里取最近的，与行命中共用横向容差。 */
   _segmentAt(it, x) {
     const segs = it.segs;
     if (!segs || !segs.length) return null;

@@ -97,33 +97,15 @@ class Worker {
     this.proc.stdin.on('error', e => this._fail(e));
     this.proc.on('close', (code) => {
       if (this.proc !== proc) return;
-      this.ready = false;
       this.proc = null;
-      for (const [, p] of this.pending) {
-        clearTimeout(p.timer);
-        p.reject(new Error(`常驻识别进程退出（代码 ${code}）`));
-      }
-      this.pending.clear();
       // ready 之前就退出（模型损坏/依赖崩溃）也要唤醒 waitReady —— 否则它干等满
       // 180s 超时才失败，初稿流水线白白卡 3 分钟。
-      for (const w of this.readyWaiters) {
-        try { w.reject(new Error(`常驻识别进程退出（代码 ${code}），模型未就绪`)); } catch {}
-      }
-      this.readyWaiters = [];
-      this._fail(new Error(`常驻识别进程退出（代码 ${code}）`));
+      this._fail(new Error(`常驻识别进程退出（代码 ${code}）`),
+        new Error(`常驻识别进程退出（代码 ${code}），模型未就绪`));
     });
     this.proc.on('error', (e) => {
       if (this.proc !== proc) return;
-      for (const [, p] of this.pending) {
-        clearTimeout(p.timer);
-        p.reject(new Error('常驻识别进程启动失败：' + e.message));
-      }
-      this.pending.clear();
-      for (const w of this.readyWaiters) {
-        try { w.reject(new Error('常驻识别进程启动失败：' + e.message)); } catch {}
-      }
-      this.readyWaiters = [];
-      this._fail(e);
+      this._fail(new Error('常驻识别进程启动失败：' + e.message));
     });
   }
 
@@ -199,13 +181,13 @@ class Worker {
     });
   }
 
-  _fail(error) {
+  _fail(error, readyError = error) {
     this.closed = true; this.ready = false;
     if (this.idleTimer) this.clearIdle(this.idleTimer);
     this.idleTimer = null;
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear();
-    for (const w of this.readyWaiters) w.reject(error);
+    for (const w of this.readyWaiters) w.reject(readyError);
     this.readyWaiters = []; this.buf = '';
     this.onExit(this);
   }
@@ -280,15 +262,10 @@ export class AsrService {
       const tmp = outPath + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify(payload));
       fs.renameSync(tmp, outPath);
-      this._scheduleIdle(key, w);
       return payload;
-    } catch (e) {
-      // 失败路径同样布置空闲回收: 否则最后一次调用失败（超时/进程退出）后没人再
-      // 清 timer，worker 进程与 Map 条目永驻内存。短暂失败后 5 分钟内重试仍复用进程。
-      this._scheduleIdle(key, w);
-      throw e;
     } finally {
       w.active--;
+      // 成功与失败都在 active 归还后检查空闲，避免重复调度和遗漏失败路径。
       this._scheduleIdle(key, w);
       tasks.delete(ctl); if (!tasks.size) this.owners.delete(owner);
       signal?.removeEventListener('abort', relay);

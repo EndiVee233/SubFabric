@@ -2,11 +2,11 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle, assStylePresetOf, parseAssStylePreset, applyAssStylePreset, findStyleForLang } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, isKaraokeLine, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
+import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
   // ── 上游 2.1.13 新增的导出（角色换色串色修复 / 中文标点归一 / 中文行预览 / 角色排序）──
   // 这些纯函数放在 karaoke.js 里以便单测；main.js 必须**显式导入**，
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
-  speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
+  speakerNames, sortRoles, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
   highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows,
   sentenceSpeakerNames, filterSentencesBySpeakers } from './karaoke.js';
@@ -5853,7 +5853,7 @@ function resegTimes(row, parts) {
 function resegRender() {
   if (!resegEls.list) return;
   resegEls.list.innerHTML = '';
-  resegPlans.forEach((p, i) => {
+  resegPlans.forEach((p) => {
     const row = resegRows[p.row];
     const times = resegTimes(row, p.parts);
     const el = document.createElement('div');

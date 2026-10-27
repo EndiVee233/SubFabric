@@ -23,8 +23,6 @@ const EN_FONT = `${EN_TEXT.weight} ${EN_TEXT.px}px ${EN_TEXT.fallback}`;
  * 改动字号时必须同步 —— 否则分隔线/标记会压到字上。 */
 const ZH_LINE = 19;
 const EN_LINE = 18;
-/* 中文行在块高里占的比例 —— 分隔线画在它下面，剩下的给英文逐词行。 */
-const ZH_ROW_R = 0.30;
 /* 坏行/空槽的红色虚线边框。原来是 [4,3]（4px 实 + 3px 空）—— 在 1.5px 线宽下
  * 密到像一层毛边，"这片全是毛病"的压迫感远大于它要表达的"这行时间或文本有异常"
  * （用户反馈："表明字幕异常的红框线条不要这么密集，稀疏一点，红线长一点"）。
@@ -98,11 +96,6 @@ export function wordTextX(wx, x1, pad) {
 function cssFamily(name) {
   return String(name || '').replace(/["'\\\r\n]/g, ' ').trim();
 }
-/* "微软雅黑" —— 字体族写了但本机没装时的**显式回退字体**。
- *  不写它也能靠 generics 落到某个默认中文字体，但用户看不到"到底回退成了什么"，
- *  会觉得块上的字跟设置里写的不一样是 bug。显式写出来，设置页也照这个说法提示。 */
-const FALLBACK_FAMILY = 'Microsoft YaHei';
-
 /** 中文行：字号字重跟内置一致，只换字体族（末尾保留中文回退族，缺字时才不至于画成方框） */
 function zhFontOf(name) {
   const f = cssFamily(name);
@@ -1782,7 +1775,7 @@ export class Timeline {
     /* 逐词标记块(拖动抓手)。高度**与英文词文本一致**（见下面 markBandH），
      *  宽度 8px、拖动中 10px。宽度不超过高度，极矮时不该是横条。 */
     const MARK_W = 8, MARK_W_HOT = 10, MARK_MIN_H = 6;
-    const TOP_PAD = 1, GAP = 3;
+    const TOP_PAD = 1;
     // 底部余量: 2.5px(贴底但仍留一线缝隙, 不与块边框粘连), 且**不能吃掉整块**
     // (实测块高 4px 时固定 5px 会让 markBot 跑到块顶之上、标记被画到块外)。
     // 所以按块高缩放, 最少留 1px。

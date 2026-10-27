@@ -11,6 +11,7 @@ AV1、音轨要 Opus，排一次序就够了。
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from .priority import normalize_order
 
@@ -67,9 +68,19 @@ _CODEC_NAMES = {c: n for c, n, _f in CODEC_TIERS}
 
 
 def is_youtube_url(url: str) -> bool:
-    text = (url or "").lower()
-    return ("youtube.com" in text or "youtu.be" in text
-            or "youtube-nocookie.com" in text)
+    text = str(url or "").strip()
+    if not text:
+        return False
+    if "://" not in text:
+        text = "https://" + text
+    try:
+        parsed = urlsplit(text)
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return False
+    return parsed.scheme.lower() in ("http", "https") and any(
+        host == domain or host.endswith("." + domain)
+        for domain in ("youtube.com", "youtu.be", "youtube-nocookie.com"))
 
 
 def quality_name(height: Any) -> str:

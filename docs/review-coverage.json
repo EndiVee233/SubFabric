@@ -1,0 +1,3475 @@
+{
+  "scope": "Source/configuration/document inventory; manual static review is separate from behavioral acceptance. The inventory file itself is excluded.",
+  "status": "进行中",
+  "baselineHead": "f90bf8df8fa5b0e02c853e4c43b1091f7f9f6f71",
+  "summary": {
+    "files": 582,
+    "categories": {
+      "source": 475,
+      "asset": 40,
+      "mirror": 67
+    },
+    "review": {
+      "已人工审查": 50,
+      "待人工审查": 416,
+      "部分人工审查": 9
+    },
+    "syntax": {
+      "not-covered-by-node-or-python-parser": 41,
+      "not-applicable": 107,
+      "passed": 434
+    },
+    "modules": {
+      "editor": {
+        "files": 87,
+        "review": {
+          "待人工审查": 64,
+          "已人工审查": 13,
+          "资源或数据，已登记，未作源码审查": 4,
+          "部分人工审查": 6
+        }
+      },
+      "asr": {
+        "files": 22,
+        "review": {
+          "待人工审查": 11,
+          "已人工审查": 11
+        }
+      },
+      "tests": {
+        "files": 250,
+        "review": {
+          "待人工审查": 169,
+          "已人工审查": 14,
+          "机械镜像，单独核对同步，不重复计人工审查": 67
+        }
+      },
+      "tools": {
+        "files": 129,
+        "review": {
+          "待人工审查": 124,
+          "已人工审查": 3,
+          "部分人工审查": 2
+        }
+      },
+      "build": {
+        "files": 5,
+        "review": {
+          "部分人工审查": 1,
+          "资源或数据，已登记，未作源码审查": 2,
+          "已人工审查": 2
+        }
+      },
+      "docs": {
+        "files": 45,
+        "review": {
+          "待人工审查": 34,
+          "已人工审查": 1,
+          "资源或数据，已登记，未作源码审查": 10
+        }
+      },
+      "prototypes": {
+        "files": 34,
+        "review": {
+          "待人工审查": 11,
+          "资源或数据，已登记，未作源码审查": 23
+        }
+      },
+      "root": {
+        "files": 10,
+        "review": {
+          "已人工审查": 6,
+          "资源或数据，已登记，未作源码审查": 1,
+          "待人工审查": 3
+        }
+      }
+    }
+  },
+  "files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": ".gitignore",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "AGENTS.md",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "PROJECT_MAP.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "README.md",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "asr/asr.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/asr_dual.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/asr_npu.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/asr_perf.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/common.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/confidence.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/diarize.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/README.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "asr/fetch/__init__.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/bili_format.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/bilibili.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/fetch_cli.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/priority.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/selector.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/yt_format.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/fetch/ytdlp.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/mt_nllb.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/multitalker.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/qwen_align.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/qwen_asr.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "asr/requirements.txt",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "asr/vibevoice.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "build/installer/SubFabric.iss",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "build/installer/logo.ico",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "build/installer/logo.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "build/installer/start-editor.bat",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "build/installer/start-editor.command",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "build_exe.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/DESIGN_LANGUAGE.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/PROJECT.md",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/STATUS.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/SubFabric-ASR-横评报告-2026-10-21.pdf",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/SubFabric-ASR-横评报告-2026-10-21（含WhisperX补充）.pdf",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/SubFabric-WhisperX-补充评测-2026-10-23.docx",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/SubFabric-WhisperX-补充评测-2026-10-23.pdf",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/THEME_PACKS.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/UI_INTEGRATION.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/design-language/CRITIQUE.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/design-language/classic-shell.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/design-language/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/design-language/motion.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/design-language/shots/dashboard-dark.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/design-language/shots/dashboard-light.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/design-language/shots/library-dark.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/design-language/shots/settings-dark.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/design-language/shots/settings-translate-fixed.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/design-language/why-classic-fails.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/repair15-baseline.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/repair15-regression-results.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/ui-integration-baseline.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/ui-integration-review/installed-ass-settings.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/README.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/hyp-300s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/hyp-30s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/hyp-600s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/hyp-300s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/hyp-30s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/hyp-600s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/pyannote_fix.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/results.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/speaker-eval-300s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/speaker-eval-30s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/speaker-eval-600s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/subfabric-diar-300s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/subfabric-diar-30s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/subfabric-diar-600s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/whisperx-diar-300s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/whisperx-diar-30s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/mdx-diar/whisperx-diar-600s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/ref-300s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/ref-30s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/ref-600s.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "docs/whisperx-2026-10-23/results.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/align.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/asr-chunks.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/asr-params.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/asr-service.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/ass-group.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/ass-sentences.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/assets/app-logo.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "editor/audio-slice.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/bcut-asr.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/capcut-asr.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/cast.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/css/classic.css",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "editor/css/studio.css",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "editor/danmaku.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/faster-whisper.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/ffmpeg-tool.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/fonts.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/glossary-merge.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/glossary-repair.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/glued-words.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/hardsub.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/hotwords.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/accent.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/ass.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/assplayer.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/color-picker.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/editor.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/export-video.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/font-picker.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/glass-contrast.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/glossary-review.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/i18n.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/icons.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/karaoke.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/main.js",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/modal.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/monet.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/overlay.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/postprocess.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/project.js",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/rim-curve.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/segment.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/shortcuts.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/srt.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/studio-progress.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/studio-state.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/studio-themes.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/studio.js",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/timeline.js",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/util.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/video-hover-tip.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/videoedit.js",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/welcome-boot.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/welcome-model.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/js/zip.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/k-line.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/lang/zh-CN.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/llm-text.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/mt-local.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/project-pack.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/realign-batch.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/realign-words.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/reflect.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/region-merge.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/region.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/repair-words.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/reseg.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/scripts/7z-README.txt",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "editor/scripts/7z.exe",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "editor/scripts/fetch-vendor.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/scripts/gen_app_icon.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/scripts/gen_tray_icon.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/scripts/inject_postject.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/scripts/sea-launcher.cjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/scripts/tray-preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "editor/scripts/tray.ico",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "editor/scripts/tray.ps1",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "editor/secret-store.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/server.js",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/speech-gap.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/srt-ass.js",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/studio.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "editor/themes/claude.theme.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/themes/material-you.theme.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/themes/subfabric-classic.theme.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/themes/windows-uwp.theme.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "editor/wordlist-en.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "eslint.config.js",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "main.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "prototypes/adaptive-selection/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/adaptive-selection/preview-light.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/adaptive-selection/preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/cue-card-redesign/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/cue-card-redesign/preview-diagnostics.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/cue-card-redesign/preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/material-you-shapes/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/material-you-shapes/preview-phone.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/material-you-shapes/preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/subtitle-editor/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/subtitle-editor/preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/subtitle-editor/redesign-full-dark.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/subtitle-editor/redesign-full-dark.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-controls/README.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/uwp-controls/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/uwp-controls/preview-full.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-controls/preview-light.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-controls/preview-states.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-controls/preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-page-motion/README.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/uwp-page-motion/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/uwp-page-motion/preview-library.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-page-motion/preview-my.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-page-motion/preview-shortcuts.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-page-motion/preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-tiles/README.md",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/uwp-tiles/index.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "prototypes/uwp-tiles/preview-detail.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-tiles/preview-gap.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-tiles/preview-open.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-tiles/preview-press.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-tiles/preview-return.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-tiles/preview-transition.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "prototypes/uwp-tiles/preview.png",
+      "category": "asset",
+      "review": "资源或数据，已登记，未作源码审查"
+    },
+    {
+      "path": "ruff.toml",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "tests/advanced-actions-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/advanced-export-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/align-sample.json",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/align-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/apply-region-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-aligner-status-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-bench-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-bench-conditions-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-bench-repair-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-model-args-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-params-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-params-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-segment-parity-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/asr-service-failures-test.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ass-color-uppercase-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ass-escape-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ass-fixture.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ass-group-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ass-style-color-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ass-style-preset-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/audio-chunk-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/aurora-speed-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/bad-cats-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/badcat-layer-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/batch-draft-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/batch-queue-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/calibrate-confidence.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/card-style-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/carry-confidence-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/cast-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/color-picker-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/colorfix-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/confidence-meta-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/confidence-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/confidence-toggle-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/correct-switch-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/cuda-confidence-smoke.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/cue-segment-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/diag-joint-probs.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/diag-probs-flow.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/diag-timeline.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/diarize-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/diarize-wav-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/draft-align-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/draft-role-gap-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/edit-preview-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/editor-panels-entrance-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/effect-reimport-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/export-roundtrip-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/export-video-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/faster-whisper-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/fetch-boundary-test.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/fetch-format-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/first-word-mark-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/fix-word-color-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/font-picker-harness.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "tests/font-picker-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/font-status-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/frame-units-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/gen-fixture.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/gen-lang.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glass-contrast-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glommed-split-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glossary-merge-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glossary-repair-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glossary-review-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glossary-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glow-role-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/glued-words-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/hardsub-accel-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/helpers/fake-asr.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/helpers/isolated-server.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/helpers/mock-llm.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/helpers/server-functions.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/helpers/zip-fixture.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/home-project-list-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/hotwords-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/i18n-coverage-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/isolated-server-close-test.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/jsmod/accent.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/align.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/asr-chunks.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/asr-params.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/asr-service.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/ass-group.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/ass-sentences.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/ass.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/assplayer.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/audio-slice.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/bcut-asr.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/capcut-asr.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/cast.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/color-picker.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/danmaku.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/editor.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/export-video.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/faster-whisper.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/ffmpeg-tool.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/font-picker.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/fonts.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/glass-contrast.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/glossary-merge.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/glossary-repair.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/glossary-review.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/glued-words.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/hardsub.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/hotwords.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/i18n.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/icons.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/k-line.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/karaoke.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/llm-text.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/main.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/modal.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/monet.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/mt-local.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/overlay.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/package.json",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/postprocess.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/project-pack.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/project.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/realign-batch.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/realign-words.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/reflect.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/region-merge.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/region.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/repair-words.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/reseg.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/rim-curve.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/secret-store.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/segment.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/server.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/shortcuts.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/speech-gap.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/srt-ass.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/srt.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/studio-progress.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/studio-state.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/studio-themes.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/studio.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/timeline.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/util.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/video-hover-tip.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/videoedit.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/welcome-boot.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/jsmod/welcome-model.js",
+      "category": "mirror",
+      "review": "机械镜像，单独核对同步，不重复计人工审查"
+    },
+    {
+      "path": "tests/k-line-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/karaoke-exhaustive.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/karaoke-k-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/llm-params-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/llm-text-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/local-llm-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/log-panel-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/make-noisy-samples.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/material-home-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/merge-row-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/monet-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/notes-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/orbit-capsule-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/order-color-stale-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/overlay-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/pair-anchor-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/pair-rows-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/parent-watch-test.py",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/parse-line-array-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/parse-timeline-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/peaks-span-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/perf-view-spacing-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/play-toggle-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/postprocess-comprehensive-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/postprocess-presets-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/postprocess-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/project-open-lazy-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/project-pack-safety-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/realign-batch-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/realign-cancel-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/realign-skip-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/realign-words-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/reflect-lock-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/reflect-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/reflect-ui-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/region-import-format-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/region-merge-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/region-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/reload-pipeline-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair-words-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair01-model-delete-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair02-save-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair03-translation-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair04-realign-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair05-project-load-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair06-meta-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair07-asr-lifecycle-test.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair08-asr-idle-test.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair09-pack-import-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair10-request-errors-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair11-origin-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair12-build-install-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair13-translation-context-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair14-static-allowlist-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/repair15-project-pack-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/reseg-plan-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/reseg-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/rim-curve-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/role-enter-animation-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/role-gap-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/role-order-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/role-recolor-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/row-rerecog-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/rows-timeline-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/run-all.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/runner-report-test.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/secret-store-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/settings-enter-animation-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/speaker-map-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/speech-gap-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/split-sentence-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/srt-ass-e2e-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/srt-ass-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/srt-realign-api-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/studio-navigation-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/subtitle-split-order-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/sweep-thresholds.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/theme-pack-zip-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/theme-packs-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/timeline-accent-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/timeline-fit-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/timeline-text-test.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/translate-schemes-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ui-feedback-20261017-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/ui-integration-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/unassigned-role-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/upload-concurrency-test.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/uwp-light-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/uwp-theme-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/vibevoice-backend-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/vibevoice-contract-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/vibevoice-worker-behavior-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/vibevoice-worker-test.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/video-geometry-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/welcome-flow-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/welcome-model-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/welcome-preparation-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/word-boundary-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/word-clip-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/word-highlight-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/word-split-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/zh-ghost-heal-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/zh-punct-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tests/zh-split-point-test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ass_style_preview_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/bcut_asr_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/bench_equal.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/build-install.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/capcut_asr_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/card_layout_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/cast_pipeline_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/cdp_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/check-python-env.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/check-speech-gap.cjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/check-timeline.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/check-word-timing.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/chunk_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/classify-broken.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/compare-engines.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/confirm_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/control_style_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/copy_inventory.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/copy_lint.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/css_fixed_scan.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/cue_list_jank_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/cue_list_offset_diag.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/cue_list_virtual_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/cue_list_visual_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/delete_sync_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/diag-tokens.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/download-mt-nllb.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/fetch_pipeline_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/fetch_ui_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/fg_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/find-word-loss.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/generate-studio.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/gh_push_fix.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/gh_upload.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/http_layer_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/i18n_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/lane_shot.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/lane_visible.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/layout_chain.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/layout_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/lib/cdp.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/lib/copy_scan.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/lib/fixture.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/measure-merge-gain.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/merge_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/mk_project.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/peaks_e2e.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/pick_local_test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/pick_min_repro.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/pick_mode_test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/pick_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/pick_root_cause.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/pick_visible_check.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/postprocess_preview_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/postprocess_ui_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe-context-effect.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe-merge-redecode.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_audio.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_bar_fit.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_bar_geometry.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_bar_mapping.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_entry_card.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_final.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_first_word_clip.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_first_word_mark.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_flex_squash.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_home_live.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_home_progress_writes.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_home_rebuild.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_home_running_class.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_home_who_writes.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_realign_row.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_rerecog.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_settings_content.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_settings_layout.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_splitmerge2.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_tab.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/probe_video_controls.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/progress_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/progress_state_setup.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ps_count.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ps_dialog_trace.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ps_spawn_test.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/repair15-regression.mjs",
+      "category": "source",
+      "review": "已人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/repeat-var.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/repro-splice.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/repro_highlight_dup.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/repro_order_color.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/repro_zh_doubles.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/role_tag_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/route_smoke.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/shot_realign_preview.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/shot_settings_views.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/sim-region-loss.cjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/split_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/studio-install.mjs",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/templates/studio-settings.html",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "tools/templates/studio.html",
+      "category": "source",
+      "review": "部分人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    },
+    {
+      "path": "tools/test-serve.py",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/tray_quit_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ui-integration-preview.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ui_shot_walk.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ui_theme_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/unassigned_role_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify-studio-live.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_home_idle_static.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_home_new_project_top.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_home_no_flicker.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_home_only_running.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_home_sort_rule.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_model_groups.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_realign_preview.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_scheme_drawer.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_style_preset.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_tip_letterbox.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_track_mode_label.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/verify_video_hover_tip.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/videoedit_live_check.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/videoedit_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/videoedit_srt_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/wave_compare.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/wave_overlap.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/wave_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/wave_shot.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/wave_verify.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/waveband_check.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/wordmark_geom.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/wordmark_shot.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "tools/ws_workspace_probe.mjs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "passed"
+    },
+    {
+      "path": "启动SubFabric(无窗口).vbs",
+      "category": "source",
+      "review": "待人工审查",
+      "syntax": "not-covered-by-node-or-python-parser"
+    }
+  ]
+}

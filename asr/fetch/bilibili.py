@@ -10,7 +10,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 from urllib.parse import urlsplit
 
 # bilibili 需要登录态的 Cookie 名（用于判断"这份 cookie 到底算不算登录了"）
@@ -125,7 +125,7 @@ def set_part(url: str, part: int = 1) -> str:
 def has_login(cookies: Dict[str, str]) -> bool:
     """这份 cookie 算不算"已登录"（有 SESSDATA 就基本算了）。"""
     keys = {k.lower() for k in (cookies or {}).keys()}
-    return any(k.lower() in keys for k in LOGIN_COOKIE_KEYS if k.lower() == "sessdata") or "sessdata" in keys
+    return "sessdata" in keys
 
 
 def write_netscape(cookies: Dict[str, str], path: Path, domain: str = ".bilibili.com") -> Path:

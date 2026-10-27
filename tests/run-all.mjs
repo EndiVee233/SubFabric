@@ -75,12 +75,14 @@ async function main() {
   console.log(`Running ${selected.length} isolated JavaScript tests serially...`);
 
   for (const file of selected) {
+    const testStarted = performance.now();
     const result = run([path.join(TESTS, file)]);
+    const durationMs = performance.now() - testStarted;
     const output = outputOf(result);
     const status = result.status === 0 && !result.error && !result.signal
       ? (isPartial(output) ? 'partial' : DIAGNOSTICS.has(file) ? 'diagnostic' : 'passed') : 'failed';
     const entry = { file, status, exitCode: result.status, signal: result.signal || null,
-      durationMs: result.duration || null };
+      durationMs };
     if (status !== 'passed') entry.output = output.split('\n').slice(-30).join('\n');
     if (result.error) entry.error = result.error.message;
     results.push(entry);

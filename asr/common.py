@@ -1,5 +1,5 @@
 """
-两个识别引擎**共用**的部分。
+识别引擎与后台 worker **共用**的部分。
 
 - `asr.py`     —— sherpa-onnx / CUDA（N 卡 GPU）
 - `asr_npu.py` —— OpenVINO / NPU
@@ -16,10 +16,59 @@
   · `group_words()`   —— 纯分组，不含置信度
   · `seg_base()`      —— 一段的公共字段（id / start / end / text / words）
   · `clamp_overlap()` —— 相邻行不交叠
+  · `watch_parent()` —— 对齐/说话人分离 worker 的非阻塞父进程看护
 
 置信度**刻意不在这里**：两个引擎能拿到的信号不同（sherpa 不给 token 概率、NPU 给），
 口径本来就该各写各的（对拍测试里也把这项差异钉成"设计如此"）。
 """
+
+import os
+import threading
+import time
+
+
+def parent_alive(pid):
+    """检查进程是否存活；Windows 用进程句柄，不能依赖退出后仍保留的 PPID。"""
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    # ctypes 默认把返回值当 c_int；显式声明 HANDLE，保持 32/64 位调用契约。
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        return ctypes.get_last_error() == 5  # ACCESS_DENIED：保守当作存活
+    try:
+        return kernel.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0：已退出
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def watch_parent():
+    """显式启用后每秒检查父进程，退出时回收 worker；不读 stdin，避免模型导入死锁。"""
+    if os.environ.get("SUBFABRIC_PARENT_WATCH") != "1":
+        return
+    ppid = os.getppid()
+
+    def run():
+        while True:
+            time.sleep(1)
+            if not parent_alive(ppid):
+                os._exit(0)
+
+    threading.Thread(target=run, daemon=True).start()
 
 SAMPLE_RATE = 16000
 

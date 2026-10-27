@@ -24,18 +24,38 @@ export async function isolatedServer(options = {}) {
     cwd: options.cwd || root, windowsHide: true,
     env: { ...process.env, PORT: String(port), SUBFABRIC_TRAY: '0', ...options.env }
   });
+  let childClosed = false;
+  const closed = new Promise(resolve => child.once('close', () => { childClosed = true; resolve(); }));
   let output = '';
   child.stdout.on('data', d => { output += d; });
   child.stderr.on('data', d => { output += d; });
   const call = (url, init = {}) => fetch(origin + url, { ...init,
     headers: { Origin: origin, ...init.headers } });
-  const close = async () => {
-    if (child.exitCode === null) {
-      child.kill();
-      await Promise.race([new Promise(r => child.once('exit', r)), new Promise(r => setTimeout(r, 5000))]);
-      if (child.exitCode === null) child.kill('SIGKILL');
-    }
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  const waitForClose = async () => {
+    let timer;
+    try { return await Promise.race([closed.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); })]); }
+    finally { clearTimeout(timer); }
+  };
+  let closePromise;
+  const close = () => {
+    if (!closePromise) closePromise = (async () => {
+      if (!childClosed) {
+        // Windows 的 child.kill() 直接终结服务，绕过 shutdown，会留下持有临时目录的硬件探针。
+        // 先让隔离服务按生产退出路径回收自己登记的子进程；超时才强制终止。
+        if (child.exitCode === null) {
+          try {
+            const response = await call('/api/quit', { method: 'POST', signal: AbortSignal.timeout(1000) });
+            await response.arrayBuffer();
+          } catch {}
+        }
+        if (!await waitForClose()) {
+          child.kill('SIGKILL');
+          if (!await waitForClose()) throw new Error('Isolated server did not close; temporary files retained');
+        }
+      }
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    })();
+    return closePromise;
   };
   try {
     const deadline = Date.now() + 15000;

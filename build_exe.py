@@ -6,7 +6,7 @@
 用法: python build_exe.py
 前置: 本机有 Node >= 22(用托管版 22.22.2), 需联网下载 node.exe 二进制(仅首次, 有缓存)。
 """
-import json, os, re, subprocess, sys, hashlib, urllib.request, shutil
+import json, os, re, subprocess, sys, urllib.request, shutil
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.path.join(ROOT, 'build')

@@ -25,45 +25,12 @@ import argparse
 import json
 import os
 import sys
-import threading
 import time
 import wave
 
+from common import watch_parent
+
 SR = 16000
-
-
-def _parent_alive(pid):
-    if os.name != "nt":
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-    import ctypes
-    h = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
-    if not h:
-        return ctypes.windll.kernel32.GetLastError() == 5
-    try:
-        return ctypes.windll.kernel32.WaitForSingleObject(h, 0) != 0
-    finally:
-        ctypes.windll.kernel32.CloseHandle(h)
-
-
-def watch_parent():
-    """父进程（SubFabric 服务）退出后 1s 内退出，避免留下孤儿进程。
-
-    不能阻塞读 stdin：实测它和 torch 的导入会死锁；这里轮询父进程句柄。"""
-    if os.environ.get("SUBFABRIC_PARENT_WATCH") != "1":
-        return
-    ppid = os.getppid()
-
-    def run():
-        while True:
-            time.sleep(1)
-            if not _parent_alive(ppid):
-                os._exit(0)
-
-    threading.Thread(target=run, daemon=True).start()
 
 
 def emit(obj):
