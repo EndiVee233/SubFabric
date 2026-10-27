@@ -1,9 +1,19 @@
 import assert from 'node:assert/strict';
 import {
-  parseCssColor, compositeColor, relativeLuminance, contrastRatio, shouldUseLightText,
+  parseCssColor, compositeColor, relativeLuminance, contrastRatio, shouldUseLightText, readableForeground,
 } from '../editor/js/glass-contrast.js';
 
 const near = (a, b, eps = 1.5) => assert.ok(Math.abs(a - b) <= eps, `${a} != ${b}`);
+
+for (const background of ['#ffffff','#c3c3c3','#8d8d8d','#35322a','#080b0a']) {
+  for (const color of ['#585f6a','#ff7a45','#0078d7','#a7b1bf']) {
+    const bg = parseCssColor(background), original = parseCssColor(color);
+    const adjusted = readableForeground(color,bg);
+    assert.ok(contrastRatio(parseCssColor(adjusted),bg)>=4.5, `${color} on ${background}`);
+    if (contrastRatio(original,bg)>=4.6) assert.equal(adjusted,color,'already readable foreground is preserved');
+  }
+}
+assert.equal(readableForeground('invalid',parseCssColor('#fff')),null);
 
 assert.deepEqual(parseCssColor('#000'), { r: 0, g: 0, b: 0, a: 1 });
 assert.deepEqual(parseCssColor('#ffffff'), { r: 255, g: 255, b: 255, a: 1 });
@@ -31,7 +41,7 @@ assert.equal(shouldUseLightText({ background: parseCssColor('#a6a6a6') }), false
 for (const hex of ['#8d8f90', '#999999', '#b3b3b3']) {
   const bg = parseCssColor(hex);
   const light = parseCssColor('#f8f8f3');
-  const expected = relativeLuminance(bg) < 0.30 && contrastRatio(light, bg) >= 3;
+  const expected = contrastRatio(light, bg) >= 4.5 && contrastRatio(light, bg) > contrastRatio(parseCssColor('#1c1c1c'),bg);
   assert.equal(shouldUseLightText({ background: bg }), expected, hex);
 }
 

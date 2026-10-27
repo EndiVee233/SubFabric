@@ -26,10 +26,11 @@ export function unescapeJs(s) {
  * 提取 JS 里的字符串字面量（单/双/反引号），并跳过注释。
  * **必须是状态机**：逐行扫会漏掉跨行的模板串（模型卡片那种整段 HTML 就是多行的，踩过）；
  * 整文件用正则又会跨行配对。这里按字符走，跟踪注释与引号，模板串允许换行。
+ * 默认只返回含中文的字面量；hanOnly:false 供主题检查复用完整字符串扫描。
  * 返回 [{ line（1 基起始行号）, text }]。（不解析正则字面量：极少数带引号的正则可能产出无用键，
  * 但会被「含中文 + 长度≥2」和 extractVisible 过滤掉，不会污染界面。）
  */
-export function jsLiterals(src) {
+export function jsLiterals(src, { hanOnly = true } = {}) {
   const out = [];
   const s = String(src);
   const n = s.length;
@@ -59,7 +60,7 @@ export function jsLiterals(src) {
       i++;
       if (buf.length >= 2) {
         const real = unescapeJs(buf);          // 按运行时字符串进词典，转义已还原
-        if (HANX.test(real)) out.push({ line: startLine, text: real });
+        if (!hanOnly || HANX.test(real)) out.push({ line: startLine, text: real });
       }
       continue;
     }

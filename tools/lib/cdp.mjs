@@ -6,14 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const BROWSERS = [
+  process.env.SUBFABRIC_BROWSER,
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ];
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 起一个无头浏览器并连上第一个 page 目标 */
 export async function launch({ url, port = 9333, width = 1600, height = 1000 }) {
-  const exe = BROWSERS.find((p) => existsSync(p));
+  const exe = BROWSERS.find((p) => p && existsSync(p));
+  if (!exe) throw new Error('No Chromium browser found; set SUBFABRIC_BROWSER to an existing executable');
   const profile = mkdtempSync(join(tmpdir(), 'subfab-probe-'));
   const headed = !!process.env.SUBFAB_HEADED;      // SUBFAB_HEADED=1 → 起真实窗口(焦点行为与无头不同)
   // ⚠ 沙箱会给子进程塞 HTTP(S)_PROXY，本地 127.0.0.1 走代理会变成 chrome-error 页
@@ -48,9 +51,11 @@ export async function launch({ url, port = 9333, width = 1600, height = 1000 }) 
   const reqUrls = new Map();     // requestId → url（loadingFailed 只给 requestId）
   const send = (method, params = {}) => new Promise((res, rej) => {
     const mid = ++id;
-    pending.set(mid, { res, rej });
+    const timer = setTimeout(() => {pending.delete(mid);rej(new Error('CDP timeout: ' + method));}, 30000);
+    pending.set(mid, { res: value => {clearTimeout(timer);res(value);}, rej: error => {clearTimeout(timer);rej(error);} });
     ws.send(JSON.stringify({ id: mid, method, params }));
   });
+  ws.addEventListener('close', () => {for(const p of pending.values())p.rej(new Error('CDP connection closed'));pending.clear();});
   ws.addEventListener('message', (ev) => {
     const m = JSON.parse(ev.data);
     if (m.id && pending.has(m.id)) {

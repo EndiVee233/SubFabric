@@ -1,0 +1,1801 @@
+{
+  "schema": 1,
+  "policy": "Finite per-file declaration counts. New literals require an explicit reviewed reason. Existing entries are a migration boundary, not a claim that every conditional UI has passed visual acceptance.",
+  "files": [
+    {
+      "file": "editor/css/studio.css",
+      "literals": [
+        {
+          "value": "accent-color:var(--accent, #ff7a45)",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background-color:rgb(0 0 0 / .025)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background-image:linear-gradient(rgb(255 255 255 / calc(var(--uwp-glow) * .09)), rgb(255 255 255 / calc(var(--uwp-glow) * .09)))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background-image:radial-gradient(circle 240px at var(--uwp-mx,50%) var(--uwp-my,50%), rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face))) 0%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .7)) 32%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .32)) 62%, rgb(var(--uwp-card-light) / 0) 100%), linear-gradient(180deg, rgb(var(--uwp-card-light) / .025), rgb(var(--uwp-card-light) / .005))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background-image:radial-gradient(circle 240px at var(--uwp-mx,50%) var(--uwp-my,50%), rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face))) 0%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .7)) 32%, rgb(var(--uwp-card-light) / calc(var(--uwp-face,0) * var(--uwp-card-face) * .32)) 62%, rgb(var(--uwp-card-light) / 0) 100%), linear-gradient(180deg, rgb(var(--uwp-card-light) / .025), rgb(var(--uwp-card-light) / .005)) !important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background-image:radial-gradient(circle 240px at var(--uwp-mx,50%) var(--uwp-my,50%), rgb(var(--uwp-card-light)/calc(var(--uwp-face,0)*var(--uwp-card-face))) 0%, rgb(var(--uwp-card-light)/calc(var(--uwp-face,0)*var(--uwp-card-face)*.7)) 32%, rgb(var(--uwp-card-light)/calc(var(--uwp-face,0)*var(--uwp-card-face)*.32)) 62%, rgb(var(--uwp-card-light)/0) 100%), linear-gradient(180deg, rgb(var(--uwp-card-light)/.025), rgb(var(--uwp-card-light)/.005))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background-image:var(--uwp-face-image), var(--uwp-tile-base, linear-gradient(180deg, rgb(var(--uwp-tile-rgb) / .025), rgb(var(--uwp-tile-rgb) / .005)))",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background-image:var(--uwp-face-image), var(--uwp-tile-base, linear-gradient(180deg, rgb(var(--uwp-tile-rgb) / .025), rgb(var(--uwp-tile-rgb) / .005))) !important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#000",
+          "count": 3,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:#0b0b0f",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#0e0e12",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#101015",
+          "count": 11,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#131318",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#131319",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#141419",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#16161c",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#17171d",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#1a1a21",
+          "count": 5,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#1c1c24",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#1f1f28",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#202027",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#21212b",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#23232d",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#241b14",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#241b16",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#332d1a!important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#49401f!important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#a83232",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#c08a4a",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#d94a3d",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#f7f7f8",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#ffedb5!important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:#fff4ce!important",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:color-mix(in srgb, #0b0d0c 58%, transparent)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:color-mix(in srgb, var(--accent) 16%, var(--surface, #1a1a21))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:color-mix(in srgb, var(--accent) 72%, #000)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:color-mix(in srgb, var(--accent) 86%, #000)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:color-mix(in srgb, var(--accent-soft) 58%, var(--surface, #1a1a21))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:color-mix(in srgb, var(--danger, #ff5f6b) 20%, transparent)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:color-mix(in srgb, var(--surface-2, #f3f5f3) 55%, transparent)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(#292934, #23232b)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(100deg, var(--accent), var(--accent-2) 62%, color-mix(in srgb, var(--accent) 45%, #4f8cff))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(135deg, #ffd54a, #ffb84a)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(145deg,#1c2a33,#24333d 55%,#18232a)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(148deg, rgba(255,255,255,.92), rgba(255,255,255,.22) 16%, rgba(255,255,255,0) 44%, rgba(255,255,255,.14) 100%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, #1b1b22, #141419 62%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, rgba(255, 255, 255, .014), transparent 60%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, rgba(255, 255, 255, .025), transparent)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, rgba(255, 255, 255, .03), transparent), var(--bg-1)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, rgba(255, 255, 255, .035), transparent 70%), var(--bg-1)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, rgba(255,255,255,.018), transparent 70%), #1c1c24",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, rgba(255,255,255,.018), transparent 70%), var(--bg-2)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, rgba(5, 5, 8, .78), rgba(2, 2, 4, .86))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(180deg, var(--danger, #ff5f6b) 0 46%, transparent 46% 54%, var(--accent) 54% 100%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(90deg, #23b26a, #58d68d)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(90deg, #4a7fd4, #6aa9ff)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.11) 37%, rgba(255,255,255,.05) 63%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(90deg, rgba(90, 130, 255, .16), rgba(90, 130, 255, .07) 42%, transparent 78%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(to bottom, #f00 0%, #ff0 16.6%, #0f0 33.3%, #0ff 50%, #00f 66.6%, #f0f 83.3%, #f00 100%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:linear-gradient(to bottom, transparent, #000), linear-gradient(to right, #fff, hsl(var(--sscp-h), 100%, 50%))",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:radial-gradient(120% 120% at 50% 0%, #101015, #0b0b0e 72%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:radial-gradient(58vw 42vh at 8% -10%, var(--accent-a07), transparent 62%), radial-gradient(46vw 34vh at 102% 2%, rgba(97, 184, 255, .045), transparent 60%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:radial-gradient(circle var(--uwp-press-r,180px) at var(--uwp-px,50%) var(--uwp-py,50%), rgb(0 0 0 / calc(var(--uwp-press-local,0) * .20)) 0%, rgb(0 0 0 / calc(var(--uwp-press-local,0) * .08)) 45%, transparent 75%)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:radial-gradient(circle, color-mix(in srgb, var(--accent) 42%, #4f8cff), transparent 68%)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgb(0 0 0 / .32)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:rgb(0 0 0 / .45)",
+          "count": 3,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:rgb(12 16 14)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgb(255 255 255/.05)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(0, 0, 0, .62)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:rgba(0,0,0,.55)",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:rgba(106, 169, 255, .1)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(106, 169, 255, .12)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(106, 169, 255, .14)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(11,11,14,.74)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(12, 12, 16, .90)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(127,216,232,.12)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(139, 124, 246, .12)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(139,124,246,.12)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(16, 16, 20, .96)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 107, 107, .12)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 213, 74, .08)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 213, 74, .1)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 255, 255, .012)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 255, 255, .015)",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 255, 255, .02)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 255, 255, .022)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 255, 255, .03)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 255, 255, .10)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 95, 107, .10)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255, 95, 107, .12)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,107,107,.07)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,213,74,.10)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,213,74,.16)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,255,255,.06)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,255,255,.1)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,95,107,.08)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,95,107,.16)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,95,107,.18)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(255,95,107,.3)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(46, 204, 113, .12)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(56, 189, 248, .14)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(6, 6, 9, .62)",
+          "count": 6,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(6,6,9,.62)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(78, 205, 136, .1)",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:rgba(90, 130, 255, .78)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--accent, #ff7a45)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--accent-a20, rgba(255,122,69,.18))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--accent-a28, rgba(255,122,69,.28))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--danger, #ff5f6b)",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--danger,#ff5f6b)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--hover, rgba(255,255,255,.04))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--ink-strong, #1C1B18) !important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--input-bg, #17171e)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--ok, #34d399)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--success,#6ccb5f)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--surface, #fff)",
+          "count": 3,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:var(--surface-2, #e8ebe8)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--surface-2, #eef1ee)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "background:var(--surface-2, #f3f5f3)",
+          "count": 6,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-bottom:1px solid #484854",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#2b5560",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#2f6b52",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#3d3a68",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#5a4a23",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#6a561d!important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#6b5828",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#806a20!important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:#fff",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, #fff calc(var(--uwp-edge) * 100%), var(--line))",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0) * var(--uwp-card-edge) * 100%), var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0)*var(--uwp-card-edge)*100%), var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, rgb(var(--uwp-tile-rgb)) calc(2% + var(--uwp-edge) * var(--uwp-edge-alpha) * 100%), var(--line))",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, var(--accent) 72%, #000)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, var(--accent) 86%, #000)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, var(--accent, #ff7a45) 42%, var(--line, #d8ddd9))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:color-mix(in srgb, var(--danger, #ff6b6b) 34%, var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:color-mix(in srgb,var(--danger,#ff6b6b) 38%,var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:color-mix(in srgb,var(--success,#6ccb5f) 55%,var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:rgba(0,0,0,.22)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "border-color:rgba(255, 107, 107, .45)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:rgba(255, 95, 107, .30)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:rgba(255, 95, 107, .4)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:rgba(255, 95, 107, .5)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:rgba(255,107,107,.45)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:rgba(46, 204, 113, .65)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-color:var(--accent, #ff7a45)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-left-color:var(--danger, #ff5f6b)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-left-color:var(--ok, #34d399)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-left-color:var(--success,#6ccb5f)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-left-color:var(--warning,#ffd35c)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-left:2px solid var(--hair, rgba(255,255,255,.12))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-left:9px solid #fff",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "border-right:1px solid #26262f",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-top:1px dashed var(--hair, rgba(255,255,255,.12))",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-top:1px dashed var(--line, #d8ddd9)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-top:1px solid #3b3b47",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-top:1px solid rgba(255,255,255,.14)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border-top:1px solid var(--line, #d8ddd9)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #1C1B18 !important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #26262f",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #292934",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #30303a",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #3a3a46",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #484854",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #4a4a58",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #777784",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #d7b600!important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #fce100!important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid #fff",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "border:1px solid color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0) * var(--uwp-card-edge) * 100%), var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid color-mix(in srgb, rgb(var(--uwp-card-light)) calc(2% + var(--uwp-edge,0)*var(--uwp-card-edge)*100%), var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid color-mix(in srgb, rgb(var(--uwp-tile-rgb)) calc(2% + var(--uwp-edge) * var(--uwp-edge-alpha) * 100%), var(--line))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid rgb(255 255 255/.22)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid rgba(125, 211, 252, .95)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid rgba(255, 255, 255, .14)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid rgba(255, 255, 255, .18)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid rgba(255,255,255,.16)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid rgba(255,255,255,.28)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid rgba(255,255,255,.38)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid var(--accent, #ff7a45)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid var(--border, #343440)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:1px solid var(--line, #d8ddd9)",
+          "count": 9,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "border:2px solid #fff",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:-12px 0 40px rgba(0, 0, 0, .5)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:-20px 0 80px #15221930",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:-8px 0 24px #00000030",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px #111",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px #111, 0 1px 3px #000",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px rgba(0, 0, 0, .45)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px rgba(0,0,0,.4) inset",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px rgba(0,0,0,.45) inset",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px rgba(0,0,0,.6), 0 0 0 3px rgba(255,255,255,.25)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px var(--accent, #ff7a45)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 0 0 1px var(--accent-a40), 0 4px 16px rgba(0,0,0,.5)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 10px 18px -10px rgba(0,0,0,.55)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 10px 26px rgba(0, 0, 0, .62)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 10px 28px #00000040",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 10px 28px #0004",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 10px 28px -18px rgba(0, 0, 0, .45), 0 0 0 1px var(--cc-line)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 10px 30px rgba(0, 0, 0, .28)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 10px 40px #15221930",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 12px 28px #00000040",
+          "count": 4,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 12px 28px rgba(0, 0, 0, .38)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 12px 28px rgba(0,0,0,.55)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 12px 32px rgba(0,0,0,.45)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 12px 34px rgba(0, 0, 0, .24)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 12px 36px #0004",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 14px 40px #0005",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 14px 40px #15221930",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 14px 40px rgba(0, 0, 0, .48)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 16px 40px #00000055",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 16px 48px rgba(0,0,0,.55)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 18px 40px -24px rgb(40 30 20 / .6) !important",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 18px 48px #00000055",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 18px 48px rgba(0,0,0,.6)",
+          "count": 4,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 18px 52px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.08)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 18px 52px rgba(0,0,0,.62), 0 2px 8px rgba(0,0,0,.4)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 18px 56px rgba(0,0,0,.7)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 18px 60px rgba(0, 0, 0, .5)",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 0 var(--hair), 0 8px 22px rgba(0, 0, 0, .3)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 2px #00000006",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 2px #00000014",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 2px #00000025",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 2px rgb(58 46 34 / .22)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 2px rgb(58 46 34 / .3)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 3px #00000014",
+          "count": 3,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 3px #00000018",
+          "count": 4,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 3px #00000018, 0 0 0 1px rgb(255 255 255 / calc(var(--uwp-edge) * .22)), 0 0 18px rgb(255 255 255 / calc(var(--uwp-edge) * .10))",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 3px #15221915",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 1px 3px rgb(58 46 34 / .3)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 20px 44px -26px rgb(58 46 34 / .5)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 22px 60px rgba(0, 0, 0, .34)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 24px 70px #00000073",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 24px 70px -30px #00000080",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 24px 80px #15221935",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 28px 72px #00000055",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 2px 10px #00000030",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 2px 5px #0000001c",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 2px 8px #0000001c",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 30px 70px -40px rgb(40 30 20 / .55)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 30px 80px #00000080",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 30px 90px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(255, 255, 255, .04)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 3px 10px rgba(0, 0, 0, .22)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 12px #00000022",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 12px #00000022!important",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 12px #0000002e",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 14px #00000040",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 14px rgba(0, 0, 0, .28)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 14px rgba(0,0,0,.28)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 16px #00000024",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 4px 20px -16px #14221b40",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 5px 18px -14px #15221940",
+          "count": 3,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 6px 18px #00000040",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 20px #00000026",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 24px #00000040",
+          "count": 5,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 24px #0006",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 24px -24px #15221960",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 24px rgba(0,0,0,.5)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 24px rgba(0,0,0,.55)",
+          "count": 4,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 28px #00000024",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 28px #00000024,0 2px 6px #0000000d",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 28px -18px #0005,inset 0 1px 0 #ffffff60",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:0 8px 28px -18px #0009,inset 0 1px 0 #ffffff08",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 -2px 0 var(--accent),inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 0 1px rgb(var(--uwp-card-light) / calc(.02 + var(--uwp-edge,0) * .18))",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 0 1px rgb(var(--uwp-card-light) / calc(.02 + var(--uwp-edge,0) * .18)) !important",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 0 1px rgb(var(--uwp-card-light)/calc(.02 + var(--uwp-edge,0)*.18))",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+          "count": 3,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 0 1px rgba(0,0,0,.20)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 0 2px rgba(0,0,0,.22)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 0 2px rgba(0,0,0,.28)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 0 90px rgba(0, 0, 0, .5)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 0 1px 2px #0000001c",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "box-shadow:inset 3px 0 0 var(--accent),inset 0 0 0 1px rgb(var(--uwp-tile-rgb) / calc(.02 + var(--uwp-edge) * .18))",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "color:#067647",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#15161a",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#1a1206",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#323130!important",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#4ec9b0",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#6aa9ff",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#6fd3a7",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#72e2a0",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#7fd8e8",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#858591",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#8c8c99",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#8f8fb0",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#9fe3b9",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#C9C5BD",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#E8E4DC",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#F4F0E8",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#FDFBF6 !important",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#FFFFFF",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "color:#b42318",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#b54708",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#bdb7ff",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#bfc0ca",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#cfd0da",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#cfdde5",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#d8d8df",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#d94a3d",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#e0e6da",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#e9e9f0",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#f2f2f6",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#f3f4f6",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#ff4d4f",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#ff7a7a",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#ffc46b",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:#fff",
+          "count": 4,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "color:#fff !important",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "color:#fff!important",
+          "count": 2,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "color:var(--accent-text, var(--accent, #ff7a45))",
+          "count": 4,
+          "reason": "Shared readable accent foreground; legacy accent fallback retained for older host styles."
+        },
+        {
+          "value": "color:var(--danger, #d94a3d)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--danger,#c42b1c)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--muted, #6b756e)",
+          "count": 18,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--on-accent, #0b1020)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--success,#6ccb5f)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--text, #1b201c)",
+          "count": 8,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--text, #e8e8ee)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--text-2, #9aa0aa)",
+          "count": 3,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--text-2, #c9d1d9)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--text-3, #8b949e)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--tx, var(--text-2, #c9d1d9))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "color:var(--warning,#ffd35c)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "fill:#c08a4a",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "fill:color-mix(in srgb, #c08a4a 7%, transparent)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "fill:color-mix(in srgb, #c08a4a 80%, var(--muted))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "fill:color-mix(in srgb, var(--accent) 86%, #fff)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "fill:color-mix(in srgb, var(--danger, #ff6b6b) 8%, var(--surface))",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "outline:2px solid color-mix(in srgb, var(--accent, #ff7a45) 60%, transparent)",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "outline:2px solid var(--accent, #ff7a45)",
+          "count": 2,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "stroke:#c08a4a",
+          "count": 1,
+          "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
+        },
+        {
+          "value": "stroke:black",
+          "count": 3,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "stroke:color-mix(in srgb, var(--accent) 70%, #fff)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "stroke:color-mix(in srgb, var(--accent) 92%, #fff)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "text-shadow:-1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000, 0 0 6px rgba(0,0,0,.85)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "text-shadow:0 1px 3px rgba(0, 0, 0, .85)",
+          "count": 1,
+          "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        }
+      ]
+    },
+    {
+      "file": "editor/js/editor.js",
+      "literals": [
+        {
+          "value": "background:#5b6472",
+          "count": 1,
+          "reason": "Unassigned speaker swatch; user subtitle/role color visualization."
+        }
+      ]
+    },
+    {
+      "file": "editor/js/main.js",
+      "literals": [
+        {
+          "value": "background:#2563eb",
+          "count": 1,
+          "reason": "Existing standalone update/error/dependency banner or neutral shadow; explicit status surface/ink pair."
+        },
+        {
+          "value": "background:#5b6472",
+          "count": 1,
+          "reason": "Unassigned speaker swatch; user subtitle/role color visualization."
+        },
+        {
+          "value": "background:#b3261e",
+          "count": 1,
+          "reason": "Existing standalone update/error/dependency banner or neutral shadow; explicit status surface/ink pair."
+        },
+        {
+          "value": "background:#b45309",
+          "count": 1,
+          "reason": "Existing standalone update/error/dependency banner or neutral shadow; explicit status surface/ink pair."
+        },
+        {
+          "value": "background:rgba(255,255,255,.18)",
+          "count": 1,
+          "reason": "Existing standalone update/error/dependency banner or neutral shadow; explicit status surface/ink pair."
+        },
+        {
+          "value": "box-shadow:0 4px 16px rgba(0,0,0,.3)",
+          "count": 1,
+          "reason": "Existing standalone update/error/dependency banner or neutral shadow; explicit status surface/ink pair."
+        },
+        {
+          "value": "box-shadow:0 4px 16px rgba(0,0,0,.35)",
+          "count": 2,
+          "reason": "Existing standalone update/error/dependency banner or neutral shadow; explicit status surface/ink pair."
+        },
+        {
+          "value": "color:#fff",
+          "count": 4,
+          "reason": "Existing standalone update/error/dependency banner or neutral shadow; explicit status surface/ink pair."
+        }
+      ]
+    },
+    {
+      "file": "editor/js/project.js",
+      "literals": [
+        {
+          "value": "background:var(--accent-soft,rgba(90,140,255,.14))",
+          "count": 1,
+          "reason": "Existing performance comparison highlight; semantic accent has a legacy fallback."
+        }
+      ]
+    },
+    {
+      "file": "tools/templates/studio.html",
+      "literals": [
+        {
+          "value": "background:#38bdf8",
+          "count": 2,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
+          "value": "background:#4fd1a5",
+          "count": 1,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
+          "value": "background:#7eb6ff",
+          "count": 1,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
+          "value": "background:#8b7cf6",
+          "count": 3,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
+          "value": "background:#d9a441",
+          "count": 1,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
+          "value": "background:#f472b6",
+          "count": 1,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
+          "value": "background:#ff7a45",
+          "count": 1,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
+          "value": "background:#ffd54a",
+          "count": 1,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        }
+      ]
+    }
+  ]
+}

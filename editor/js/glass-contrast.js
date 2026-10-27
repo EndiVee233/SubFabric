@@ -84,11 +84,24 @@ export function contrastRatio(a, b) {
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
 
-/** 背景亮度低于约 0.30，且浅色字至少 3:1 时使用浅色前景。
- *  30% 黑压在浅底上约 #b3（亮度 .45），不会误切；压到 #8d 以下才切。 */
+/** Adjust UI text against an already composited surface; never subtitle colors. */
+export function readableForeground(color, background, minimum = 4.6) {
+  const original = typeof color === 'string' ? parseCssColor(color) : color;
+  if (!original || !background) return null;
+  const start = compositeColor(original, background);
+  const white = { r: 255, g: 255, b: 255 }, black = { r: 0, g: 0, b: 0 };
+  const target = contrastRatio(white, background) > contrastRatio(black, background) ? 255 : 0;
+  for (let step = 0; step <= 100; step++) {
+    const result = Object.fromEntries(['r','g','b'].map(key => [key, Math.round(start[key] + (target - start[key]) * step / 100)]));
+    if (contrastRatio(result, background) >= minimum || step === 100) return '#' + ['r','g','b'].map(key => result[key].toString(16).padStart(2,'0')).join('');
+  }
+  return null;
+}
+
+/** Choose light UI text only when it is more readable than the dark foreground. */
 export function shouldUseLightText({ background, lightText = '#f8f8f3' } = {}) {
   if (!background) return false;
-  const bgL = relativeLuminance(background);
   const light = parseCssColor(lightText) || { r: 248, g: 248, b: 243, a: 1 };
-  return bgL < 0.30 && contrastRatio(light, background) >= 3;
+  const dark = { r: 28, g: 28, b: 28 };
+  return contrastRatio(light, background) >= 4.5 && contrastRatio(light, background) > contrastRatio(dark, background);
 }
