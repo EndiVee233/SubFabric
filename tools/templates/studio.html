@@ -81,6 +81,13 @@
         <span class="welcome-card-check" aria-hidden="true"></span>
       </label>
     </div>
+    <section class="welcome-prep" id="welcome-prep" aria-labelledby="welcome-prep-title">
+      <div class="welcome-prep-head"><h2 id="welcome-prep-title">模型与前置准备</h2><button type="button" class="btn" id="welcome-prep-refresh">刷新准备状态</button></div>
+      <p class="welcome-prep-note">按所选后端与专用显存给出保守建议；模型下载大小不代表显存占用。可在这里准备，也可稍后到设置中完成。</p>
+      <p id="welcome-prep-status" role="status" aria-live="polite">正在读取模型与前置状态…</p>
+      <div id="welcome-prep-common"></div>
+      <div class="welcome-prep-grid" id="welcome-prep-models"></div>
+    </section>
     <div class="welcome-alert-slot" id="welcome-alert-slot" aria-hidden="true">
       <div class="welcome-alert-inner">
         <p class="welcome-alert" id="welcome-alert" role="status"></p>

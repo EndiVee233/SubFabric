@@ -20,7 +20,8 @@ import { stripEffectTagsSafe } from './postprocess.js';
 //   而它只从 util.js 导出给 editor.js —— 结果是每次渲染"双引擎/性能测试"结果都抛
 //   ReferenceError（被外层 catch 吞掉，界面只显示"读不到设置"）。2026-10-11 由 eslint no-undef 发现。
 import { escapeHtml } from './util.js';
-import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL } from './welcome-model.js';
+import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL,
+  welcomeRecommendations, welcomeRequirements, gpuMemoryText } from './welcome-model.js';
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
@@ -5594,6 +5595,132 @@ async function renderAsrModels() {
   const welcomeAlertSlot = $('#welcome-alert-slot');
   let welcomeError = '';
   let welcomeAlertClearTimer = 0;
+  let welcomePrepStatus = null;
+  let welcomePrepError = '';
+  let welcomePrepTimer = 0;
+  let welcomePrepGeneration = 0;
+  let welcomeLoadGeneration = 0;
+  let welcomePrepLayout = '';
+  const welcomePrepChoices = {};
+  const welcomePrepPending = new Set();
+
+  function welcomePrepItems() {
+    const common = welcomePrepStatus?.ffmpeg;
+    const groups = welcomeRecommendations(welcomePrepStatus, welcomeHardware, welcomeSelected());
+    const items = common ? [{ key: 'ffmpeg', label: 'FFmpeg / FFprobe', ready: !!common.ok,
+      blockedReason: !common.ok && !common.canAutoDownload ? '当前系统不支持自动安装，请到设置中指定 FFmpeg。' : '',
+      url: '/api/asr/ffmpeg/download' }] : [];
+    for (const group of groups) {
+      const choice = group.models.find(m => m.id === welcomePrepChoices[group.backend])
+        || group.models.find(m => m.id === group.preferred) || group.models[0];
+      group.choice = choice;
+      group.requirements = welcomeRequirements(welcomePrepStatus, choice);
+      items.push(...group.requirements);
+    }
+    return { groups, items };
+  }
+  function welcomePrepRow(item) {
+    const dl = item.key === 'ffmpeg' ? welcomePrepStatus?.ffmpeg?.download
+      : welcomePrepStatus?.downloads?.find(d => d.key === item.key);
+    const pending = welcomePrepPending.has(item.key);
+    const running = pending || dl?.running;
+    const detail = item.ready ? '已就绪' : item.blockedReason || (running
+      ? (dl?.msg || '正在启动…') + (Number.isFinite(dl?.pct) ? ' · ' + Math.round(dl.pct) + '%' : '')
+      : dl?.error || '尚未准备');
+    const size = item.sizeMB > 0 ? ' · 下载约 ' + (item.sizeMB >= 1024
+      ? (item.sizeMB / 1024).toFixed(1) + ' GB' : item.sizeMB + ' MB') : '';
+    return '<div class="welcome-prep-row"><span>' + escapeHtml(item.label || item.key)
+      + '<small class="' + (item.ready ? 'welcome-prep-ready' : dl?.error ? 'welcome-prep-warning' : '')
+      + '">' + escapeHtml(detail + size) + '</small></span>'
+      + (item.ready ? '' : '<button type="button" class="btn" data-prep-key="' + escapeHtml(item.key)
+        + '"' + (running || item.blockedReason || !item.body && !item.url ? ' disabled' : '') + '>'
+        + (running ? '准备中…' : dl?.error ? '重试' : '下载 / 安装') + '</button>') + '</div>';
+  }
+  function welcomeRenderPrep() {
+    const box = $('#welcome-prep-models');
+    const common = $('#welcome-prep-common');
+    const message = $('#welcome-prep-status');
+    if (!box || !common || !message) return;
+    message.textContent = welcomePrepError || (!welcomePrepStatus ? '正在读取模型与前置状态…'
+      : !welcomeHardware ? '等待显卡检测完成…' : !welcomeSelected().cuda && !welcomeSelected().vulkan
+        ? '选择 GPU 后端后显示对应推荐。' : '选择适合素材的模型，然后按需下载前置与权重。');
+    const { groups, items } = welcomePrepItems();
+    const commonHtml = items.filter(i => i.key === 'ffmpeg').map(welcomePrepRow).join('');
+    if (common.innerHTML !== commonHtml) common.innerHTML = commonHtml;
+    // 下载轮询不重建下拉控件，避免打断已打开的菜单与键盘焦点。
+    const layout = JSON.stringify(groups.map(g => ({ backend: g.backend, devices: g.devices,
+      vramMB: g.vramMB, preferred: g.preferred, models: g.models.map(m => [m.id, m.model.name, m.fits]) })));
+    if (layout !== welcomePrepLayout) {
+      welcomePrepLayout = layout;
+      box.innerHTML = groups.map(group => {
+        const choice = group.choice;
+        return '<article class="welcome-prep-card"><h3>' + group.backend.toUpperCase() + '</h3>'
+          + group.devices.map(g => '<p>' + escapeHtml(gpuMemoryText(g)) + '</p>').join('')
+          + '<p class="welcome-prep-note">' + escapeHtml(group.note) + '</p>'
+          + (group.backend === 'cuda' ? '<p>使用 NVIDIA 驱动；Faster-Whisper-XXL 自带 CUDA/cuDNN。Qwen CUDA 另需 CUDA 版 PyTorch，安装运行时后会验证。</p>'
+            : '<p>需安装显卡厂商的 Vulkan 驱动，无需 CUDA 或 Python；驱动能力仍需实际识别验证。</p>')
+          + (group.multiGpu ? '<p>多张显卡的显存不能相加；Vulkan 自动选卡，建议按最保守单卡容量展示。</p>' : '')
+          + (group.backend === 'cuda' && group.devices.length > 1 ? '<p>CUDA 建议按默认第 0 张显卡计算。</p>' : '')
+          + (group.lowMemory ? '<p class="welcome-prep-warning">当前显存低于 CUDA 建议档位，可改选 Vulkan 轻量模型，或使用云端识别。</p>' : '')
+          + (!choice ? '<p>当前没有可推荐的模型，请刷新准备状态。</p>' : '<label>要准备的模型<select data-prep-backend="' + group.backend + '">'
+            + group.models.map(m => '<option value="' + m.id + '"' + (m.id === choice.id ? ' selected' : '') + '>'
+              + escapeHtml(m.model.name + (m.id === group.preferred && m.fits ? ' · 推荐' : '')) + '</option>').join('')
+            + '</select></label><div data-prep-detail="' + group.backend + '"></div>') + '</article>';
+      }).join('');
+    }
+    for (const group of groups) {
+      const choice = group.choice;
+      const detail = box.querySelector('[data-prep-detail="' + group.backend + '"]');
+      if (!choice || !detail) continue;
+      const html = '<p>' + escapeHtml(choice.reason) + '</p><p class="' + (choice.fits ? 'welcome-prep-note' : 'welcome-prep-warning')
+        + '">' + escapeHtml('建议专用显存至少 ' + (choice.memory / 1024) + ' GiB'
+          + (choice.fits ? '；请同时留意当前空闲显存。' : '；当前容量未知、偏低或显卡代际需核对，建议先试短片。')) + '</p>'
+        + group.requirements.map(welcomePrepRow).join('');
+      if (detail.innerHTML !== html) detail.innerHTML = html;
+    }
+  }
+  async function welcomeRefreshPrep() {
+    clearTimeout(welcomePrepTimer);
+    const generation = ++welcomePrepGeneration;
+    try {
+      const r = await fetch('/api/asr/status', { signal: AbortSignal.timeout(15000) });
+      const j = await r.json();
+      if (!r.ok || j.error) throw Error(j.error || 'HTTP ' + r.status);
+      if (generation !== welcomePrepGeneration || !welcomeBlocking) return;
+      welcomePrepStatus = j;
+      welcomePrepError = '';
+      welcomeRenderPrep();
+      if (j.downloads?.some(d => d.running) || j.ffmpeg?.download?.running) {
+        welcomePrepTimer = setTimeout(welcomeRefreshPrep, 2000);
+      }
+    } catch (e) {
+      if (generation !== welcomePrepGeneration || !welcomeBlocking) return;
+      welcomePrepError = '准备状态读取失败：' + (e.message || e) + '。请刷新准备状态。';
+      welcomeRenderPrep();
+    }
+  }
+  async function welcomePrepare(key) {
+    const item = welcomePrepItems().items.find(i => i.key === key);
+    if (!item || item.ready || item.blockedReason || welcomePrepPending.has(key)) return;
+    welcomePrepPending.add(key);
+    welcomeRenderPrep();
+    try {
+      const r = await fetch(item.url || '/api/asr/download', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item.body || {}),
+        signal: AbortSignal.timeout(15000) });
+      const j = await r.json();
+      if (!r.ok || j.error) throw Error(j.error || 'HTTP ' + r.status);
+      welcomePrepError = '';
+    } catch (e) {
+      welcomePrepError = '准备失败：' + (e.message || e);
+    } finally {
+      welcomePrepPending.delete(key);
+      if (welcomeBlocking) {
+        welcomeRenderPrep();
+        if (!welcomePrepError) welcomeRefreshPrep();
+      }
+    }
+  }
 
   function clearWelcomePending() {
     try { document.documentElement?.classList?.remove('sf-welcome-pending'); } catch { /* 旧测试 DOM 没有 documentElement */ }
@@ -5640,6 +5767,7 @@ async function renderAsrModels() {
     if (welcomeCudaCard) welcomeCudaCard.classList.toggle('is-checked', sel.cuda);
     if (welcomeVulkanCard) welcomeVulkanCard.classList.toggle('is-checked', sel.vulkan);
     if (welcomeGo) welcomeGo.disabled = welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan);
+    welcomeRenderPrep();
     if (!welcomeHardware) {
       welcomeAlertText(welcomeError || '');
       return;
@@ -5665,7 +5793,7 @@ async function renderAsrModels() {
     const cudaOk = !!(hw.cuda && hw.cuda.available);
     const vulkanOk = !!(hw.vulkan && hw.vulkan.available);
     welcomePaintCard(welcomeCudaCard, welcomeCuda, welcomeCudaState, cudaOk,
-      cudaOk ? (hw.cuda.device || 'NVIDIA 显卡') : '未检测到 NVIDIA 显卡');
+      cudaOk ? gpuMemoryText({ ...hw.cuda, name: hw.cuda.device }) : '未检测到 NVIDIA 显卡');
     const vkDevices = (hw.vulkan && hw.vulkan.devices) || [];
     welcomePaintCard(welcomeVulkanCard, welcomeVulkan, welcomeVulkanState, vulkanOk,
       vulkanOk ? (vkDevices[0] || 'Vulkan 可用') : '未检测到 Vulkan 显卡/驱动');
@@ -5684,6 +5812,7 @@ async function renderAsrModels() {
   }
   async function welcomeLoad(force) {
     if (!welcomeView) return;
+    const generation = ++welcomeLoadGeneration;
     welcomeHardware = null;
     welcomeError = '';
     welcomeBusy = true;
@@ -5692,19 +5821,24 @@ async function renderAsrModels() {
     if (welcomeCudaState) welcomeCudaState.textContent = '检测中…';
     if (welcomeVulkanState) welcomeVulkanState.textContent = '检测中…';
     welcomeAlertText('');
+    welcomeRenderPrep();
     try {
       const r = await fetch('/api/asr/hardware' + (force ? '?refresh=1' : ''), { signal: AbortSignal.timeout(15000) });
       const j = await r.json();
+      if (generation !== welcomeLoadGeneration || !welcomeBlocking) return;
       if (!r.ok || !j || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
       welcomeHardware = j;
       welcomePreselect();
     } catch (e) {
+      if (generation !== welcomeLoadGeneration || !welcomeBlocking) return;
       welcomeError = '硬件检测失败：' + ((e && e.message) || e) + '。请点「重新检测」再试。';
     } finally {
-      welcomeBusy = false;
-      if (welcomeRetry) welcomeRetry.disabled = false;
-      welcomeRender();
-      if (welcomeError) welcomeAlertText(welcomeError);
+      if (generation === welcomeLoadGeneration && welcomeBlocking) {
+        welcomeBusy = false;
+        if (welcomeRetry) welcomeRetry.disabled = false;
+        welcomeRender();
+        if (welcomeError) welcomeAlertText(welcomeError);
+      }
     }
   }
   function welcomeShow(opts) {
@@ -5727,7 +5861,11 @@ async function renderAsrModels() {
     welcomeCuda.checked = false; welcomeVulkan.checked = false;
     welcomeHardware = null;
     welcomeRender();
+    welcomePrepStatus = null;
+    welcomePrepError = '';
+    welcomeRefreshPrep();
     welcomeLoad(true).then(() => {
+      if (!welcomeBlocking) return;
       const target = welcomeCuda && !welcomeCuda.disabled ? welcomeCuda
         : welcomeVulkan && !welcomeVulkan.disabled ? welcomeVulkan
         : (welcomeRetry || welcomeGo);
@@ -5738,6 +5876,9 @@ async function renderAsrModels() {
     if (!welcomeView) return;
     clearWelcomePending();
     welcomeBlocking = false;
+    clearTimeout(welcomePrepTimer);
+    welcomePrepGeneration++;
+    welcomeLoadGeneration++;
     document.body.classList.remove('sf-welcome-open');
     const app = $('#app'); if (app) app.inert = false;
     welcomeView.hidden = true;
@@ -5835,6 +5976,16 @@ async function renderAsrModels() {
     }
     welcomeCuda?.addEventListener('change', welcomeSyncSelection);
     welcomeVulkan?.addEventListener('change', welcomeSyncSelection);
+    $('#welcome-prep-refresh')?.addEventListener('click', welcomeRefreshPrep);
+    $('#welcome-prep')?.addEventListener('change', e => {
+      if (!e.target.dataset.prepBackend) return;
+      welcomePrepChoices[e.target.dataset.prepBackend] = e.target.value;
+      welcomeRenderPrep();
+    });
+    $('#welcome-prep')?.addEventListener('click', e => {
+      const button = e.target.closest('[data-prep-key]');
+      if (button && !button.disabled) welcomePrepare(button.dataset.prepKey);
+    });
     welcomeGo?.addEventListener('click', welcomeContinue);
     welcomeRetry?.addEventListener('click', () => welcomeLoad(true));
     welcomeCancel?.addEventListener('click', () => { welcomeHide(); applyHash(); renderAsrModels(); });

@@ -29,7 +29,7 @@
 | --- | --- |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘与退出 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
-| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 后端过滤、显存推荐与准备清单纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
@@ -59,6 +59,15 @@
 - **安全基线**：Host 必须回环；有 Origin 的读写请求校验明确集合，无 Origin 的写请求须带
   `X-SubFabric-Token`；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用；`safeJoin` 解码后归一化并补路径
   分隔符边界，拒绝编码穿越。
+- **欢迎页硬件信息**：`GET /api/asr/hardware` 保留 `cuda.device` / `vulkan.devices`，新增
+  `cuda.devices`（NVIDIA 设备对象列表）、首卡 `vramMB` / `freeMB` / `driver`，以及
+  `vulkan.adapters`（`name` / `vramMB` / `freeMB` / `memorySource`）。容量单位为 MiB，未知为 `null`。
+  NVIDIA 用 `nvidia-smi` 读取总量、空闲量与驱动版本；其它显卡按 PNP 设备映射到驱动注册表的
+  `HardwareInformation.qwMemorySize`（64 位）。不使用会被 4GB 截断的 WMI `AdapterRAM`，
+  不按型号猜显存，不把共享系统内存算为专用显存。缓存与并发合并均在模块作用域，
+  `?refresh=1` 同时强制刷新 NVIDIA 缓存；每条探测命令有 8 秒超时。Vulkan 可用性仍是
+  加载器与物理显卡的初筛，不能代替真实推理验证。`/api/asr/status.qwenPythonReady` 单独报告
+  Qwen 所用 Python 解释器路径是否存在，供欢迎页安排基础环境 → Qwen 运行时的准备顺序。
 - **打开稿件的加载路径（2026-10-26 优化）**：`openProject` 先 `flushSave()`，再**并行**取
   项目元信息与 `subtitle`；ASS 只做轻量的 `Dialogue:` 行校验（旧实现 `new AssDoc(text).events`
   把 3~4MB 稿件完整解析两遍）。随后**先装项目身份/保存基线**，同步启动视频、peaks、音频源，
@@ -196,6 +205,19 @@
   未选中卡片使用主题 `surface-2` 的浅色底（不再回落到深色 `--bg-3`）；提示条用
   `grid-template-rows: 0fr → 1fr` 展开/收起，配合负 gap 抵消与 440ms 非线性曲线，
   选择状态切换时卡片、按钮、提示条连续移动，不跳帧。
+- **欢迎页模型与前置准备**：同页按当前勾选的 CUDA / Vulkan 展示显卡型号、专用显存与
+  NVIDIA 当前空闲显存，并从 `/api/asr/status` 实际返回的在用模型中给建议；不受上一次保存的
+  `backendAllowed` 限制，也不复活停用模型。CUDA 按默认第 0 卡，Vulkan 自动选卡未确定时
+  按最保守单卡容量，不相加多卡显存。保守建议档位为 CUDA Whisper 6GiB、CUDA Qwen 8GiB、
+  Vulkan Parakeet 2GiB、Whisper 6GiB、Qwen Q4 4GiB；这不是最低需求或本次 GPU 验收结论。
+  CUDA 旧代 GTX / RTX 20 / Quadro P/K/M 不把 Qwen bf16 标为推荐；未知容量不标显存足够，
+  低显存提示先试短片或改用 Vulkan 轻量模型/云端识别。Vulkan 大显存默认 Whisper 质量档，
+  小显存/未知默认英语 Parakeet；用户可下拉改选待准备模型。
+  驱动保留页造成的少量差值容忍 128MiB（例如 8188MiB 仍归入 8GiB 档），不会跨越整档容量。
+  清单分别列 FFmpeg/FFprobe、引擎运行时、模型文件，以及非原生逐词模型的同后端对齐器；
+  Qwen CUDA 缺解释器时先给基础 Python 环境入口，已有文件不重复下载。按钮复用现有下载 API，
+  不自动安装；运行中每 2 秒刷新进度，失败显示原因与重试，关闭欢迎页后停止轮询并丢弃迟到响应。
+  准备操作不阻止进入工作台，识别的实际默认模型仍由现有设置/新建稿件入口选择。
 - **UWP 欢迎页磁贴**：CUDA / Vulkan 两张选择卡加 `uwp-tile`，与工作台磁贴共用 Reveal 面光、
   2px 直角和实色底；`data-theme-pack="windows-uwp"` 同时兜底圆角，避免首帧 `data-design`
   尚未写入时出现大圆角。红色错误条也固定 2px 直角。欢迎卡、UWP 原生 checkbox、下拉选择
@@ -643,6 +665,8 @@
 - **ASR 纯逻辑单测**：`tests/faster-whisper-test.mjs`（XXL 参数跨版本、JSON → segments、进度解析）、
   `tests/glossary-repair-test.mjs`（术语表修复的命中与误伤边界）、`tests/welcome-model-test.mjs`
   （CUDA/Vulkan/NPU/云端模型的可见性、双引擎依赖、其它模型、过滤后默认选择）、
+  `tests/welcome-preparation-test.mjs`（推荐档位/保留页边界、低显存/未知显存、多卡不相加、
+  CUDA bf16 旧卡提示、前置依赖/已有文件，以及硬件探测的缓存、并发合并与强制刷新）、
   `tests/glass-contrast-test.mjs`（玻璃背景 alpha 合成、相对亮度、对比度与浅色前景阈值）、
   `tests/asr-params-test.mjs`（模型参数 schema/默认值/范围校验/`multipleOf` 吸附/重置语义；
   已停用引擎的旧 schema 保留但模型不可达）、
@@ -651,6 +675,14 @@
   只验证静态拼接，不代表模型仍可运行）、
   `tests/asr-bench-repair-test.mjs`（速度测试工作目录不得落 `%TEMP%`、退役引擎统一兜底与安装接口拒绝）。
   这些测试不加载模型、不需要 GPU。
+- **欢迎页准备流程本次验收（2026-10-27）**：实现与相关回归为**已完成且已验证**。
+  `welcome-model`、`welcome-preparation`、`asr-aligner-status`、`i18n-coverage`、`ui-integration`、
+  `repair14-static-allowlist` 六项通过，无跳过。隔离副本的无头 Chrome 验证后端勾选、实际下拉
+  改选、模型/运行时/FFmpeg 请求、已有对齐文件不重下、进度/错误/重试、硬件重探与关闭；
+  390px 下 Material / Classic / UWP 无横向溢出，无前端 JS 错误。下载与模型状态使用受控响应，
+  未下载大模型、未实际安装运行时、未执行模型推理；AMD 独显真实检测未运行。
+  本机真实隔离硬件 API 读到 RTX 4060 Ti 8188MiB 总显存及空闲显存，Intel 核显容量保持未知。
+  ESLint 9 无错误，已有未使用变量等告警保留。上述结果不代替各 GPU/模型的真实推理验收。
 - **文案覆盖**：`tests/i18n-coverage-test.mjs` 用 `tools/lib/copy_scan.mjs` 重扫
   `editor/studio.html`、`editor/js/*.js`、`editor/server.js`、`editor/asr-params.js`、`editor/scripts/*`，要求每条
   用户可见中文都能在 `editor/lang/zh-CN.json` 找到键；`node tests/gen-lang.mjs` 负责补齐/保留用户润色。

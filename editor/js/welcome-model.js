@@ -111,3 +111,81 @@ export function pickVisibleModel(models, selectedId, ctx) {
     || vis[0];
   return ready ? ready.id : '';
 }
+
+// 欢迎页的保守建议档位（MiB），不是最低运行要求；不从下载体积推算显存。
+const PREP_PROFILES = [
+  { id: 'faster-whisper-large-v2', backend: 'cuda', memory: 6144, reason: '英语与带背景音乐的素材，优先使用人声分离精校。' },
+  { id: 'qwen3-asr-1.7b', backend: 'cuda', memory: 8192, reason: '多语识别；需要支持 bf16 的 NVIDIA 显卡，并配套 CUDA 对齐器。' },
+  { id: 'parakeet-tdt-0.6b-v2-vulkan', backend: 'vulkan', memory: 2048, reason: '英语轻量入门，原生逐词时间戳，无需 Python。' },
+  { id: 'whisper-large-v2-vulkan', backend: 'vulkan', memory: 6144, reason: '英语质量优先；逐词字幕需另备 Vulkan 对齐器。' },
+  { id: 'qwen3-asr-1.7b-vulkan', backend: 'vulkan', memory: 4096, reason: '多语量化备选，长音频质量与速度通常不如 CUDA 版。' },
+];
+// 驱动可能为显示/保留页少报数 MiB；只容忍 128MiB，不把 6GB 算成 8GB。
+const reachesMemoryTier = (mb, tier) => mb != null && mb + 128 >= tier;
+
+export function gpuMemoryText(gpu) {
+  const mb = Number(gpu?.vramMB);
+  const total = mb > 0 ? (mb / 1024).toFixed(1) + ' GiB' : '显存未知';
+  const free = gpu?.freeMB;
+  return (gpu?.name || gpu?.device || '显卡') + ' · ' + total
+    + (free != null && Number.isFinite(Number(free)) && Number(free) >= 0
+      ? ' · 当前空闲 ' + (Number(free) / 1024).toFixed(1) + ' GiB' : '');
+}
+
+/** 使用正在勾选的后端，不受 status 中旧的 backendAllowed 影响。不合并多卡显存。
+ * CUDA 按运行时默认第 0 卡；Vulkan 自动选卡未确定时按最保守的单卡容量建议。 */
+export function welcomeRecommendations(status, hardware, backends) {
+  if (!status || !hardware) return [];
+  return ['cuda', 'vulkan'].filter(kind => backends?.[kind] && hardware[kind]?.available).map(kind => {
+    const hw = hardware[kind];
+    const devices = kind === 'cuda'
+      ? (hw.devices?.length ? hw.devices : [{ name: hw.device, vramMB: hw.vramMB, freeMB: hw.freeMB }])
+      : (hw.adapters?.length ? hw.adapters : (hw.devices || []).map(name => ({ name })));
+    const relevant = kind === 'cuda' ? devices.slice(0, 1) : devices;
+    const known = relevant.length && relevant.every(g => Number(g.vramMB) > 0);
+    const vramMB = known ? Math.min(...relevant.map(g => Number(g.vramMB))) : null;
+    const legacyCuda = kind === 'cuda' && /\b(?:GTX|RTX\s*20\d{2}|Quadro\s*[PKM]\d*)\b/i.test(relevant[0]?.name || '');
+    const models = PREP_PROFILES.filter(p => p.backend === kind).flatMap(profile => {
+      const model = (status.models || []).find(m => m.id === profile.id && !m.cloud && m.draftAllowed !== false);
+      if (!model) return [];
+      const fits = reachesMemoryTier(vramMB, profile.memory) && !(legacyCuda && model.engine === 'qwen');
+      return [{ ...profile, model, fits }];
+    });
+    // Vulkan 大显存默认质量档，小显存/未知默认轻量档；CUDA 默认英语精校。
+    const preferred = kind === 'vulkan' && reachesMemoryTier(vramMB, 6144) ? 'whisper-large-v2-vulkan'
+      : models.find(m => m.fits)?.id || models[0]?.id || '';
+    return { backend: kind, devices, vramMB, models, preferred,
+      note: vramMB == null ? '显存无法可靠读取，以下仅列可选模型；请在任务管理器核对专用显存后先试短片。'
+        : '建议档位预留了推理余量，实际占用随素材长度、参数与其它程序变化。',
+      multiGpu: kind === 'vulkan' && devices.length > 1,
+      lowMemory: kind === 'cuda' && vramMB != null && !reachesMemoryTier(vramMB, 6144) };
+  });
+}
+
+/** 文件、运行时、对齐器分开准备；已有文件不重新下载，共享运行时只列一次。 */
+export function welcomeRequirements(status, recommendation) {
+  if (!recommendation?.model) return [];
+  const model = recommendation.model;
+  const result = [{ key: 'model:' + model.id, label: model.name, ready: !!model.filesOk,
+    sizeMB: model.sizeMB, body: { modelId: model.id } }];
+  if (model.runtimeKey) result.unshift({ key: model.runtimeKey, label: model.runtimeName,
+    ready: !!model.runtimeReady, sizeMB: model.runtimeSizeMB, body: { kind: model.runtimeKey } });
+  // 原生逐词模型可直接生成逐词字幕；其它模型需明确准备同后端对齐器。
+  if (model.nativeWordLevel === false) {
+    const aligner = (status.aligners || []).find(a => a.backend === recommendation.backend);
+    if (aligner) {
+      if (aligner.runtimeKey && !result.some(r => r.key === aligner.runtimeKey)) result.push({
+        key: aligner.runtimeKey, label: aligner.runtimeName, ready: !!aligner.runtimeReady,
+        sizeMB: aligner.runtimeSizeMB, body: { kind: aligner.runtimeKey } });
+      result.push({ key: 'model:' + aligner.id, label: aligner.name, ready: !!aligner.filesOk,
+        sizeMB: aligner.sizeMB, body: { modelId: aligner.id }, blockedReason: aligner.blockedReason || '' });
+    } else result.push({ key: 'aligner-missing', label: '逐词对齐模型', ready: false,
+      blockedReason: '未取得配套对齐器状态，请重新检测。' });
+  }
+  if (result.some(r => r.key === 'runtime:qwen') && !status.qwenPythonReady) {
+    result.unshift({ key: 'pyenv', label: 'Python 基础环境（Qwen CUDA 前置）', ready: false, body: { kind: 'pyenv' } });
+    const runtime = result.find(r => r.key === 'runtime:qwen');
+    if (!runtime.ready) runtime.blockedReason = '先准备 Python 基础环境，再安装 Qwen CUDA 运行时（会验证 PyTorch CUDA）。';
+  }
+  return result;
+}

@@ -2182,21 +2182,29 @@ const pySpawnEnv = () => Object.assign({}, process.env, {
 });
 
 /** 检测 NVIDIA 显卡(驱动自带 nvidia-smi); 返回显卡名或 null。结果由调用方缓存。 */
-function detectNvidia() {
-  return new Promise((resolve) => {
-    const p = spawn('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true });
-    let out = '';
-    const t = setTimeout(() => { try { p.kill(); } catch {} resolve(null); }, 8000);
-    p.stdout.on('data', c => { out += c; });
-    p.on('error', () => { clearTimeout(t); resolve(null); });
-    p.on('close', code => { clearTimeout(t); resolve(code === 0 && out.trim() ? out.trim().split('\n')[0].trim() : null); });
-  });
+async function detectNvidia() {
+  const lines = await runCmdLines('nvidia-smi', ['--query-gpu=name,memory.total,memory.free,driver_version', '--format=csv,noheader,nounits']);
+  nvidiaDevices = lines.map(line => {
+    const fields = line.split(',').map(s => s.trim());
+    if (fields.length !== 4 || !/^\d+(?:\.\d+)+$/.test(fields[3])) return null;
+    const [name, total, free, driver] = fields;
+    return { name, vramMB: Number.isFinite(Number(total)) && Number(total) > 0 ? Number(total) : null,
+      freeMB: free && Number.isFinite(Number(free)) && Number(free) >= 0 ? Number(free) : null,
+      driver: driver || '', memorySource: 'nvidia-smi' };
+  }).filter(g => g?.name);
+  return nvidiaDevices[0]?.name || null;
 }
 let nvidiaCache = { at: 0, name: null };
-async function nvidiaGpu() {
-  if (Date.now() - nvidiaCache.at < 5 * 60 * 1000) return nvidiaCache.name;
-  nvidiaCache = { at: Date.now(), name: await detectNvidia() };
-  return nvidiaCache.name;
+let nvidiaDevices = [];
+let nvidiaInflight = null;
+async function nvidiaGpu(force = false) {
+  if (nvidiaInflight) return nvidiaInflight;
+  if (!force && Date.now() - nvidiaCache.at < 5 * 60 * 1000) return nvidiaCache.name;
+  nvidiaInflight = detectNvidia().then(name => {
+    nvidiaCache = { at: Date.now(), name };
+    return name;
+  }).finally(() => { nvidiaInflight = null; });
+  return nvidiaInflight;
 }
 
 /* ═══════════ 硬件能力探测（欢迎界面 / 设置页的加速方式） ═══════════
@@ -2241,6 +2249,20 @@ async function detectVideoControllers() {
     seen.add(k); return true;
   });
 }
+/** 只读取驱动的 64 位专用显存值；WMI AdapterRAM 是 uint32，超过 4GB 会截断。
+ * 核显的共享系统内存不能当作专用显存；读不到时保持未知，不按型号猜容量。 */
+async function detectVideoMemory() {
+  const script = "$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+    + "$rows=@(Get-CimInstance Win32_VideoController | ForEach-Object { "
+    + "$dev=Get-ItemProperty -LiteralPath ('HKLM:\\SYSTEM\\CurrentControlSet\\Enum\\'+$_.PNPDeviceID); "
+    + "$reg=Get-ItemProperty -LiteralPath ('HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\'+$dev.Driver); "
+    + "$bytes=$reg.'HardwareInformation.qwMemorySize'; "
+    + "if($bytes -is [byte[]] -and $bytes.Length -eq 8){$bytes=[BitConverter]::ToUInt64($bytes,0)}; "
+    + "[pscustomobject]@{name=$_.Name;vramMB=$(if($bytes -is [ValueType] -and $bytes -gt 0){[math]::Round($bytes/1MB)}else{$null});memorySource='driver-registry'} "
+    + "}); ConvertTo-Json -InputObject $rows -Compress";
+  const lines = await runCmdLines('powershell.exe', ['-NoProfile', '-Command', script]);
+  try { const rows = JSON.parse(lines.join('')); return Array.isArray(rows) ? rows : []; } catch { return []; }
+}
 async function detectNpuDevices() {
   const names = await runCmdLines('powershell.exe', ['-NoProfile', '-Command',
     "Get-CimInstance Win32_PnPEntity | Where-Object { ($_.Name -match 'AI Boost|Ryzen AI|NPU|IPU') -and ($_.Name -notmatch 'Input|HID') } | Select-Object -ExpandProperty Name"], 8000);
@@ -2252,8 +2274,8 @@ function probeHardware(force = false) {
   if (!force && fresh) return Promise.resolve(hardwareCache.data);
   if (hardwareCache.inflight) return hardwareCache.inflight;
   hardwareCache.inflight = (async () => {
-    const [cuda, controllers, npuDevices] = await Promise.all([
-      nvidiaGpu().catch(() => null), detectVideoControllers(), detectNpuDevices(),
+    const [cuda, controllers, npuDevices, memory] = await Promise.all([
+      nvidiaGpu(force).catch(() => null), detectVideoControllers(), detectNpuDevices(), detectVideoMemory(),
     ]);
     const vulkanLoader = (() => {
       try { return fs.statSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'vulkan-1.dll')).isFile(); }
@@ -2261,9 +2283,17 @@ function probeHardware(force = false) {
     })();
     const physical = controllers.filter(n => !/virtual|remote|basic|gameviewer|honor/i.test(n));
     const vulkanDevices = physical;
+    const adapters = physical.map(name => {
+      const info = nvidiaDevices.find(g => g.name.toLowerCase() === name.toLowerCase())
+        || memory.find(g => String(g.name).toLowerCase() === name.toLowerCase());
+      return { name, vramMB: Number(info?.vramMB) > 0 ? Number(info.vramMB) : null,
+        freeMB: info?.freeMB ?? null, memorySource: info?.memorySource || '' };
+    });
     const data = {
-      cuda: { available: !!cuda, device: cuda || '' },
-      vulkan: { available: vulkanLoader && vulkanDevices.length > 0, devices: vulkanDevices, loader: vulkanLoader },
+      cuda: { available: !!cuda, device: cuda || '', devices: nvidiaDevices.slice(),
+        vramMB: cuda ? nvidiaDevices[0]?.vramMB ?? null : null,
+        freeMB: cuda ? nvidiaDevices[0]?.freeMB ?? null : null, driver: cuda ? nvidiaDevices[0]?.driver || '' : '' },
+      vulkan: { available: vulkanLoader && vulkanDevices.length > 0, devices: vulkanDevices, adapters, loader: vulkanLoader },
       npu: { available: npuDevices.length > 0, devices: npuDevices },
       cpu: false,
       at: new Date().toISOString(),
@@ -9349,6 +9379,7 @@ function handleAsrRoutes(req, res, u) {
         return r ? { ok: !!r.ok, msg: r.msg || '', engine: key, at: r.at } : null;
       })(),
       python: ASR_PY, pythonOk,
+      qwenPythonReady: fs.existsSync(qwenPython()),
       // Python 环境预检(结果缓存 5 分钟; 触发后台探测, 下次轮询就有)
       pythonProbe: pyProbeCache,
       provider: asrProvider(),              // Parakeet 推理设备: 'cpu' | 'cuda'
