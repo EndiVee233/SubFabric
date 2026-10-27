@@ -4,9 +4,13 @@
   const tokenKeys = Object.freeze({ bg: '--bg', surface: '--surface', surface2: '--surface-2', text: '--text', muted: '--muted', line: '--line', accent: '--accent', accentSoft: '--accent-soft', onAccent: '--on-accent', outline: '--outline', accentHover: '--accent-hover' });
   const dataImage = value => typeof value === 'string' && value.length <= 700000 && /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/.test(value);
   const hex = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
-  const allowedKeys = new Set(['schema', 'id', 'name', 'version', 'description', 'author', 'design', 'seed', 'tokens', 'assets', 'builtin']);
+  const allowedKeys = new Set(['schema', 'id', 'name', 'version', 'description', 'author', 'design', 'seed', 'tokens', 'assets', 'builtin', 'personalization', 'layouts']);
   const designNames = new Set(['studio', 'material', 'uwp', 'classic', 'claude']);
   const tokenNames = new Set(Object.keys(tokenKeys));
+  /* 主题包除了自带设计/tokens，还可以携带导出时的个性化快照：强调色、明暗、毛玻璃、
+   * 流光、描边映射参数等。导入时恢复这套设置；不含背景图片（体积大且属于用户素材）。 */
+  const personalizationKeys = new Set(['accent', 'mode', 'motion', 'background', 'auroraColors', 'auroraMotion',
+    'auroraSpeed', 'glassDim', 'glassBlur', 'glassOpacity', 'rimEnabled', 'rimSatLow', 'rimBriGain', 'rimSpecBase', 'rimPower']);
   /* 2026-10-19：Studio 主题已从内置选择器移除；保留 design:'studio' 供旧自定义包使用。
      顺序即默认回退顺序，Windows UWP 作为新的第一内置主题。 */
   const builtins = Object.freeze([
@@ -23,6 +27,53 @@
     return Object.keys(tokens).every(mode => ['light', 'dark'].includes(mode) && tokens[mode] && typeof tokens[mode] === 'object' && !Array.isArray(tokens[mode])
       && Object.keys(tokens[mode]).every(key => tokenNames.has(key) && hex(tokens[mode][key])));
   }
+  function validPersonalization(value) {
+    if (value === undefined) return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    if (!Object.keys(value).every(key => personalizationKeys.has(key))) return false;
+    const num = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+    return (value.accent === undefined || hex(value.accent))
+      && (value.mode === undefined || ['light', 'dark', 'system'].includes(value.mode))
+      && (value.motion === undefined || ['on', 'off'].includes(value.motion))
+      && (value.background === undefined || ['solid', 'aurora'].includes(value.background))
+      && (value.auroraColors === undefined || (Array.isArray(value.auroraColors) && (value.auroraColors.length === 0 || (value.auroraColors.length === 3 && value.auroraColors.every(hex)))))
+      && (value.auroraMotion === undefined || ['dynamic', 'static'].includes(value.auroraMotion))
+      && (value.auroraSpeed === undefined || num(value.auroraSpeed, 0.4, 2.5))
+      && (value.glassDim === undefined || num(value.glassDim, 72, 92))
+      && (value.glassBlur === undefined || num(value.glassBlur, 0, 32))
+      && (value.glassOpacity === undefined || num(value.glassOpacity, 20, 100))
+      && (value.rimEnabled === undefined || typeof value.rimEnabled === 'boolean')
+      && (value.rimSatLow === undefined || num(value.rimSatLow, 0.70, 1.00))
+      && (value.rimBriGain === undefined || num(value.rimBriGain, 0.30, 0.80))
+      && (value.rimSpecBase === undefined || num(value.rimSpecBase, 0.45, 0.75))
+      && (value.rimPower === undefined || num(value.rimPower, 1.00, 2.20));
+  }
+  function validLayouts(value) {
+    if (value === undefined) return true;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    if (!Object.keys(value).every(key => ['home', 'library', 'editor', 'help'].includes(key))) return false;
+    const num = (v, lo, hi) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
+    const home = value.home;
+    if (home !== undefined && (!home || typeof home !== 'object' || Array.isArray(home)
+      || !Object.keys(home).every(k => k === 'widgets')
+      || (home.widgets !== undefined && (!Array.isArray(home.widgets) || home.widgets.length > 16
+        || !home.widgets.every(k => typeof k === 'string' && /^[A-Za-z0-9_-]{1,40}$/.test(k)))))) return false;
+    const library = value.library;
+    if (library !== undefined && (!library || typeof library !== 'object' || Array.isArray(library)
+      || !Object.keys(library).every(k => k === 'view' || k === 'columns')
+      || (library.view !== undefined && !['grid', 'list'].includes(library.view))
+      || (library.columns !== undefined && !num(library.columns, 1, 4)))) return false;
+    const editor = value.editor;
+    if (editor !== undefined && (!editor || typeof editor !== 'object' || Array.isArray(editor)
+      || !Object.keys(editor).every(k => k === 'timelineHeight' || k === 'panelWidth' || k === 'splitPane')
+      || (editor.timelineHeight !== undefined && !num(editor.timelineHeight, 132, 420))
+      || (editor.panelWidth !== undefined && !num(editor.panelWidth, 280, 720))
+      || (editor.splitPane !== undefined && !['roles', 'notes'].includes(editor.splitPane)))) return false;
+    const help = value.help;
+    return help === undefined || (help && typeof help === 'object' && !Array.isArray(help)
+      && Object.keys(help).every(k => k === 'columns')
+      && (help.columns === undefined || num(help.columns, 1, 3)));
+  }
   function validAssets(assets) {
     if (assets === undefined) return true;
     if (!assets || typeof assets !== 'object' || Array.isArray(assets)) return false;
@@ -37,7 +88,8 @@
       && (pack.author === undefined || typeof pack.author === 'string' && pack.author.length <= 80)
       && typeof pack.version === 'string' && /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(pack.version)
       && designNames.has(pack.design) && hex(pack.seed) && (pack.builtin === undefined || typeof pack.builtin === 'boolean')
-      && validTokens(pack.tokens) && validAssets(pack.assets);
+      && validTokens(pack.tokens) && validAssets(pack.assets) && validPersonalization(pack.personalization)
+      && validLayouts(pack.layouts);
   }
   function validList(list) {
     return Array.isArray(list) && list.length <= 24 && list.every(valid)
@@ -49,6 +101,19 @@
     if (pack.author?.trim()) out.author = pack.author.trim();
     if (pack.tokens) out.tokens = Object.fromEntries(Object.entries(pack.tokens).map(([mode, values]) => [mode, Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.toUpperCase()]))]));
     if (pack.assets?.preview) out.assets = { preview: pack.assets.preview };
+    if (pack.personalization) {
+      const p = pack.personalization;
+      out.personalization = { ...p };
+      if (p.accent) out.personalization.accent = p.accent.toUpperCase();
+      if (Array.isArray(p.auroraColors)) out.personalization.auroraColors = p.auroraColors.map(c => c.toUpperCase());
+    }
+    if (pack.layouts) {
+      out.layouts = {};
+      for (const [page, layout] of Object.entries(pack.layouts)) {
+        out.layouts[page] = { ...layout };
+        if (Array.isArray(layout.widgets)) out.layouts[page].widgets = [...layout.widgets];
+      }
+    }
     if (builtin) out.builtin = true;
     return out;
   }

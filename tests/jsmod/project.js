@@ -19,7 +19,7 @@ import { stripEffectTagsSafe } from './postprocess.js';
 // ⚠ 原来这里漏了 import：perfRenderApplied / perfRenderResult 直接调 escapeHtml，
 //   而它只从 util.js 导出给 editor.js —— 结果是每次渲染"双引擎/性能测试"结果都抛
 //   ReferenceError（被外层 catch 吞掉，界面只显示"读不到设置"）。2026-10-11 由 eslint no-undef 发现。
-import { escapeHtml } from './util.js';
+import { escapeHtml, fmtTime } from './util.js';
 import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL,
   welcomeRecommendations, gpuMemoryText } from './welcome-model.js';
 
@@ -1328,6 +1328,389 @@ export function initProjects(ctx) {
       renderList();
       toast(m.queued ? '识别仍在进行，翻译已排队，完成后自动开始' : '已开始翻译，进度见项目列表', 4200);
   }
+
+  /* ─────────── 批量创建初稿 ───────────
+   * 只列已有视频、还没有字幕的项目；服务端串行跑（一次一个 ASR），前端轮询作业进度。
+   * 不覆盖已有稿件：批量功能只处理「还没字幕」的条目。 */
+  let bdJobId = '', bdTimer = 0, bdBusy = false;
+  const bdEligible = ps => ps.filter(p => p && p.videoExists && !p.format && !p.fetching
+    && !(p.draft && p.draft.status === 'running'));
+  function bdStateText(it) {
+    if (it.status === 'pending') return '等待';
+    if (it.status === 'running') return '处理中…';
+    if (it.status === 'done') return '完成';
+    if (it.status === 'paused') return '待翻译';
+    if (it.status === 'canceled') return '已取消';
+    return it.error ? '失败：' + it.error : '失败';
+  }
+  function bdRenderList(items, locked) {
+    const list = $('#bd-list');
+    if (!list) return;
+    if (!items.length) {
+      list.innerHTML = '<div class="bd-item"><div class="bd-item-main"><div class="bd-item-name">没有可创建初稿的项目</div><div class="bd-item-meta">需要已有视频、且还没有字幕。</div></div></div>';
+      return;
+    }
+    list.innerHTML = items.map((it) => {
+      const checked = it.checked === false ? '' : ' checked';
+      const disabled = locked || it.status === 'running' || it.status === 'done' ? ' disabled' : '';
+      const cls = it.status === 'error' ? ' is-error' : (it.status === 'done' ? ' is-done' : '');
+      return `<label class="bd-item"><input type="checkbox" value="${escapeHtml(it.id)}"${checked}${disabled}>`
+        + `<span class="bd-item-main"><span class="bd-item-name">${escapeHtml(it.name || it.id)}</span>`
+        + `<span class="bd-item-meta">${escapeHtml(it.meta || '')}</span></span>`
+        + `<span class="bd-item-state${cls}">${escapeHtml(bdStateText(it))}</span></label>`;
+    }).join('');
+  }
+  async function openBatchDraft() {
+    const ov = $('#batch-draft-overlay');
+    if (!ov) return;
+    ov.hidden = false;
+    if (bdJobId) { bdPoll(); return; }
+    const list = $('#bd-list');
+    if (list) list.innerHTML = '<div class="bd-item"><div class="bd-item-main"><div class="bd-item-name">读取项目…</div></div></div>';
+    const status = $('#bd-status');
+    if (status) { status.hidden = true; status.textContent = ''; status.classList.remove('is-error'); }
+    try {
+      const [pr, ar] = await Promise.all([fetch('/api/projects'), fetch('/api/asr/status')]);
+      const pd = await pr.json(); const ad = await ar.json().catch(() => ({}));
+      const ps = bdEligible(pd.projects || []);
+      const models = ((ad && ad.models) || []).filter(m => m.ready && m.draftAllowed !== false);
+      const sel = $('#bd-model');
+      if (sel) {
+        sel.innerHTML = models.length
+          ? models.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name || m.id)}</option>`).join('')
+          : '<option value="">没有可用模型</option>';
+      }
+      const items = ps.map(p => ({ id: p.id, name: p.name, meta: [p.video && p.video.name, p.duration ? fmtTime(p.duration) : ''].filter(Boolean).join(' · '), checked: true }));
+      bdRenderList(items, false);
+      const start = $('#bd-start');
+      if (start) start.disabled = !items.length || !models.length || bdBusy;
+      if (!models.length && status) {
+        status.hidden = false;
+        status.textContent = '没有可用于创建初稿的识别模型：到「设置 → 识别模型」下载一个，或换一个支持初稿的模型。';
+        status.classList.add('is-error');
+      } else if (!items.length && status) {
+        status.hidden = false;
+        status.textContent = '没有符合条件的项目：需要已有视频、且还没有字幕。';
+      }
+    } catch (e) {
+      if (status) { status.hidden = false; status.textContent = '读取失败：' + ((e && e.message) || e); status.classList.add('is-error'); }
+    }
+  }
+  function bdRenderJob(job) {
+    const items = (job.items || []).map(it => ({ ...it, checked: true }));
+    bdRenderList(items, true);
+    const status = $('#bd-status');
+    if (status) {
+      status.hidden = false;
+      status.classList.toggle('is-error', job.failed > 0);
+      const current = items.find(it => it.status === 'running');
+      status.textContent = job.status === 'running'
+        ? `正在处理 ${Math.min(job.done + 1, job.total)}/${job.total}${current ? '：' + current.name : ''}`
+        : `完成：成功 ${job.total - job.failed}/${job.total}${job.failed ? `，失败 ${job.failed}` : ''}`;
+    }
+  }
+  async function bdPoll() {
+    if (!bdJobId) return;
+    clearTimeout(bdTimer);
+    try {
+      const r = await fetch('/api/projects/batch-draft/' + encodeURIComponent(bdJobId));
+      const job = await r.json();
+      if (!r.ok) throw new Error(job.error || '读取批量进度失败');
+      bdRenderJob(job);
+      if (job.status === 'running') {
+        bdTimer = setTimeout(bdPoll, 1600);
+        return;
+      }
+      bdBusy = false;
+      const start = $('#bd-start');
+      if (start) start.disabled = true;
+      toast(`批量初稿完成：成功 ${job.total - job.failed}/${job.total}${job.failed ? `，失败 ${job.failed}，详情见列表` : ''}`, 6200);
+      bdJobId = '';
+      renderList();
+    } catch (e) {
+      bdBusy = false;
+      const status = $('#bd-status');
+      if (status) { status.hidden = false; status.textContent = '批量进度读取失败：' + ((e && e.message) || e); status.classList.add('is-error'); }
+      const start = $('#bd-start');
+      if (start) start.disabled = false;
+      bdJobId = '';
+    }
+  }
+  $('#btn-batch-draft')?.addEventListener('click', () => { location.hash = '#/batch'; });
+  $('#bd-close')?.addEventListener('click', () => { const ov = $('#batch-draft-overlay'); if (ov) ov.hidden = true; });
+  $('#bd-start')?.addEventListener('click', async () => {
+    if (bdBusy) return;
+    const ids = [...document.querySelectorAll('#bd-list input[type=checkbox]:checked')].map(x => x.value);
+    if (!ids.length) { toast('先勾选要创建初稿的项目', 3600); return; }
+    const modelId = ($('#bd-model') || {}).value || '';
+    if (!modelId) { toast('没有可用的识别模型', 4200); return; }
+    bdBusy = true;
+    const start = $('#bd-start');
+    if (start) start.disabled = true;
+    try {
+      const r = await fetch('/api/projects/batch-draft', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, options: {
+          modelId,
+          wordLevel: !!($('#bd-word') && $('#bd-word').checked),
+          align: !!($('#bd-align') && $('#bd-align').checked),
+          speakers: !!($('#bd-speakers') && $('#bd-speakers').checked),
+        } }),
+      });
+      const job = await r.json();
+      if (!r.ok) throw new Error(job.error || '启动失败');
+      bdJobId = job.id;
+      bdRenderJob(job);
+      bdPoll();
+    } catch (e) {
+      bdBusy = false;
+      if (start) start.disabled = false;
+      toast('批量创建失败：' + ((e && e.message) || e), 6200);
+    }
+  });
+
+  /* ─────────── 批量初稿独立页：视频队列串行处理 ─────────── */
+  const batchState = { items: [], running: false, stop: false, seq: 0, editing: null, models: [], schemes: [], activeScheme: '' };
+  const batchDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const BATCH_STATUS = { queued: '等待', uploading: '上传中…', running: '处理中…', done: '完成', paused: '待翻译', error: '失败' };
+  function batchItemMeta(item) {
+    const mb = item.file ? (item.file.size / 1024 / 1024).toFixed(1) + ' MB' : '';
+    return [mb, item.projectId ? '项目 ' + item.projectId : ''].filter(Boolean).join(' · ');
+  }
+  function batchSummary() {
+    const counts = { queued: 0, running: 0, done: 0, error: 0, paused: 0 };
+    for (const item of batchState.items) counts[item.status] = (counts[item.status] || 0) + 1;
+    if (!batchState.items.length) return '队列为空';
+    return `${batchState.items.length} 个视频 · 完成 ${counts.done} · 失败 ${counts.error}${counts.queued ? ` · 等待 ${counts.queued}` : ''}`;
+  }
+  function batchRender() {
+    const list = $('#batch-list');
+    if (!list) return;
+    if (!batchState.items.length) {
+      list.innerHTML = '<div class="batch-empty">还没有视频。点右上角「＋ 添加视频」选择一个或多个视频加入队列。</div>';
+    } else {
+      list.innerHTML = batchState.items.map((item, i) => {
+        const cls = item.status === 'running' || item.status === 'uploading' ? ' is-running'
+          : item.status === 'done' ? ' is-done' : item.status === 'error' ? ' is-error' : '';
+        const pct = Math.max(0, Math.min(100, Number(item.pct) || 0));
+        const state = item.status === 'running' && pct ? `${BATCH_STATUS.running} ${pct}%` : (BATCH_STATUS[item.status] || item.status);
+        return `<div class="batch-item" data-batch-index="${i}">
+          <div class="batch-item-main"><div class="batch-item-name">${escapeHtml(item.name || item.file?.name || '未命名视频')}</div>
+          <div class="batch-item-meta">${escapeHtml(batchItemMeta(item))}${item.message ? ' · ' + escapeHtml(item.message) : ''}</div>
+          ${item.status === 'running' || item.status === 'uploading' ? `<div class="batch-item-bar"><i style="width:${pct}%"></i></div>` : ''}</div>
+          <span class="batch-item-state${cls}">${escapeHtml(state)}</span>
+          <div class="batch-item-actions">${item.projectId && item.status === 'done' ? '<button type="button" class="btn btn-mini" data-batch-open>打开</button>' : ''}<button type="button" class="btn btn-mini" data-batch-settings>设置</button><button type="button" class="btn btn-mini ico-only" data-batch-remove title="移出队列" aria-label="移出队列">${ico('trash')}</button></div>
+        </div>`;
+      }).join('');
+    }
+    const summary = $('#batch-summary');
+    if (summary) summary.textContent = batchSummary();
+    const start = $('#batch-start');
+    if (start) start.disabled = batchState.running || !batchState.items.some(i => i.status === 'queued' || i.status === 'error');
+    const add = $('#batch-add'), clear = $('#batch-clear'), stop = $('#batch-stop');
+    if (add) add.disabled = batchState.running;
+    if (clear) clear.disabled = batchState.running;
+    if (stop) stop.hidden = !batchState.running;
+  }
+  async function batchRefreshOptions() {
+    try {
+      const [ar, sr] = await Promise.all([fetch('/api/asr/status'), fetch('/api/translate/schemes')]);
+      const ad = await ar.json().catch(() => ({}));
+      const sd = await sr.json().catch(() => ({}));
+      batchState.models = ((ad && ad.models) || []).filter(m => m.ready && m.draftAllowed !== false);
+      batchState.schemes = Array.isArray(sd.schemes) ? sd.schemes : [];
+      batchState.activeScheme = sd.activeSchemeId || '';
+      const options = batchState.models.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name || m.id)}</option>`).join('');
+      const schemeOptions = '<option value="">跟随当前方案</option>'
+        + batchState.schemes.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name || s.id)}</option>`).join('');
+      for (const [id, extra] of [['#batch-model', ''], ['#batch-item-model', '<option value="">跟随默认</option>']]) {
+        const sel = $(id);
+        if (!sel) continue;
+        const old = sel.value;
+        sel.innerHTML = (extra ? extra : '') + (options || '<option value="">没有可用模型</option>');
+        if (old && [...sel.options].some(o => o.value === old)) sel.value = old;
+      }
+      for (const [id, extra] of [['#batch-scheme', '<option value="">跟随当前方案</option>'], ['#batch-item-scheme', '<option value="">跟随默认</option>']]) {
+        const sel = $(id);
+        if (!sel) continue;
+        const old = sel.value;
+        sel.innerHTML = extra + (schemeOptions.replace('<option value="">跟随当前方案</option>', ''));
+        if (old && [...sel.options].some(o => o.value === old)) sel.value = old;
+      }
+    } catch (e) {
+      toast('读取批量初稿设置失败：' + ((e && e.message) || e), 4600);
+    }
+  }
+  function batchGlobalOptions() {
+    return {
+      modelId: ($('#batch-model') || {}).value || '',
+      schemeId: ($('#batch-scheme') || {}).value || '',
+      wordLevel: !!($('#batch-word') && $('#batch-word').checked),
+      align: !!($('#batch-align') && $('#batch-align').checked),
+      speakers: !!($('#batch-speakers') && $('#batch-speakers').checked),
+      autoPost: !!($('#batch-autopost') && $('#batch-autopost').checked),
+    };
+  }
+  function batchEffective(item, global) {
+    const pick = (v, fallback) => v === null || v === undefined ? fallback : v;
+    return {
+      modelId: item.modelId || global.modelId,
+      schemeId: item.schemeId || global.schemeId,
+      wordLevel: pick(item.wordLevel, global.wordLevel),
+      align: pick(item.align, global.align),
+      speakers: pick(item.speakers, global.speakers),
+      autoPost: global.autoPost,
+    };
+  }
+  function batchAddFiles(files) {
+    const videos = [...files].filter(f => /^video\//i.test(f.type || '') || /\.(mp4|mkv|mov|webm|avi|flv|wmv|m4v|ts)$/i.test(f.name || ''));
+    if (!videos.length) { toast('请选择视频文件', 3800); return; }
+    for (const file of videos) {
+      batchState.items.push({
+        id: ++batchState.seq, file, name: file.name.replace(/\.[^.]+$/, ''), status: 'queued',
+        pct: 0, message: '', modelId: null, schemeId: null, wordLevel: null, align: null, speakers: null,
+      });
+    }
+    batchRender();
+  }
+  function batchOpenItem(index) {
+    const item = batchState.items[index];
+    if (!item || batchState.running) return;
+    batchState.editing = item;
+    $('#batch-item-name').textContent = item.name || item.file?.name || '';
+    const set = (id, value) => { const el = $(id); if (el) el.value = value == null ? '' : String(value); };
+    set('#batch-item-model', item.modelId || '');
+    set('#batch-item-scheme', item.schemeId || '');
+    set('#batch-item-word', item.wordLevel == null ? '' : (item.wordLevel ? '1' : '0'));
+    set('#batch-item-align', item.align == null ? '' : (item.align ? '1' : '0'));
+    set('#batch-item-speakers', item.speakers == null ? '' : (item.speakers ? '1' : '0'));
+    const ov = $('#batch-item-overlay'); if (ov) ov.hidden = false;
+  }
+  function batchSaveItem() {
+    const item = batchState.editing;
+    if (!item) return;
+    const tri = id => { const v = ($(id) || {}).value; return v === '' ? null : v === '1'; };
+    item.modelId = ($('#batch-item-model') || {}).value || null;
+    item.schemeId = ($('#batch-item-scheme') || {}).value || null;
+    item.wordLevel = tri('#batch-item-word');
+    item.align = tri('#batch-item-align');
+    item.speakers = tri('#batch-item-speakers');
+    batchState.editing = null;
+    const ov = $('#batch-item-overlay'); if (ov) ov.hidden = true;
+    batchRender();
+  }
+  async function batchWaitDraft(item) {
+    const deadline = Date.now() + 6 * 3600 * 1000;
+    let failures = 0;
+    while (batchState.running && Date.now() < deadline) {
+      await batchDelay(2000);
+      if (!item.projectId) break;
+      try {
+        const m = await (await fetch('/api/projects/' + encodeURIComponent(item.projectId) + '/draft')).json();
+        const d = m.draft || {};
+        failures = 0;
+        item.pct = Math.max(0, Math.min(100, Number(d.progress) || 0));
+        item.message = d.message || d.stage || '';
+        if (d.status && d.status !== 'running') {
+          item.status = d.status === 'done' ? 'done' : d.status === 'paused' ? 'paused' : 'error';
+          if (d.status === 'error') item.message = d.error || d.message || '识别失败';
+          batchRender();
+          return;
+        }
+        batchRender();
+      } catch {
+        if (++failures >= 5) { item.status = 'error'; item.message = '连续读取进度失败（服务可能已重启）'; break; }
+      }
+    }
+    if (item.status === 'running') { item.status = 'error'; item.message = item.message || '等待超时'; }
+  }
+  async function batchStart() {
+    if (batchState.running) return;
+    const global = batchGlobalOptions();
+    if (!global.modelId) { toast('先选择一个识别模型', 4200); return; }
+    const pending = batchState.items.filter(i => i.status === 'queued' || i.status === 'error');
+    if (!pending.length) { toast('队列里没有待处理的视频', 3800); return; }
+    batchState.running = true;
+    batchState.stop = false;
+    batchRender();
+    const originalScheme = batchState.activeScheme;
+    let done = 0, failed = 0;
+    for (const item of pending) {
+      if (batchState.stop) break;
+      try {
+        item.status = 'uploading'; item.pct = 0; item.message = '上传视频…'; batchRender();
+        const up = await fetch('/api/upload-video?name=' + encodeURIComponent(item.file.name), { method: 'POST', body: item.file });
+        const um = await up.json().catch(() => ({}));
+        if (!up.ok || !um.path) throw new Error(um.error || ('上传失败 HTTP ' + up.status));
+        const opts = batchEffective(item, global);
+        const desiredScheme = opts.schemeId || originalScheme;
+        if (desiredScheme && desiredScheme !== batchState.activeScheme) {
+          const act = await fetch('/api/translate/schemes/' + encodeURIComponent(desiredScheme) + '/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          if (!act.ok) { const am = await act.json().catch(() => ({})); throw new Error(am.error || '切换翻译方案失败'); }
+          batchState.activeScheme = desiredScheme;
+        }
+        const payload = {
+          name: item.name, video: { path: um.path, name: um.name || item.file.name }, draft: true,
+          modelId: opts.modelId, wordLevel: opts.wordLevel, align: opts.align,
+          speakers: opts.speakers && opts.wordLevel, speakerCount: 6, confidence: 'full',
+          autoPost: opts.autoPost,
+        };
+        if (payload.wordLevel || payload.align) payload.karaokeStyle = 'color';
+        const r = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        const m = await r.json().catch(() => ({}));
+        if (!r.ok || !m.id) throw new Error(m.error || '创建项目失败');
+        item.projectId = m.id;
+        item.status = 'running'; item.pct = 1; item.message = '已创建，等待识别…'; batchRender();
+        await batchWaitDraft(item);
+        if (item.status === 'done' || item.status === 'paused') done++;
+        else failed++;
+      } catch (e) {
+        item.status = 'error';
+        item.message = String((e && e.message) || e);
+        failed++;
+      }
+      batchRender();
+    }
+    if (originalScheme && batchState.activeScheme !== originalScheme) {
+      try { await fetch('/api/translate/schemes/' + encodeURIComponent(originalScheme) + '/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch {}
+      batchState.activeScheme = originalScheme;
+    }
+    batchState.running = false;
+    batchState.stop = false;
+    batchRender();
+    toast(`批量初稿结束：成功 ${done}${failed ? `，失败 ${failed}` : ''}`, 6200);
+    renderList();
+  }
+  $('#batch-add')?.addEventListener('click', () => $('#batch-files').click());
+  $('#batch-files')?.addEventListener('change', (e) => {
+    batchAddFiles(e.target.files || []); e.target.value = '';
+  });
+  $('#batch-start')?.addEventListener('click', batchStart);
+  $('#batch-stop')?.addEventListener('click', () => { batchState.stop = true; toast('已请求停止：当前视频处理完后不再开始下一个', 4800); });
+  $('#batch-clear')?.addEventListener('click', () => {
+    if (batchState.running) return;
+    batchState.items = []; batchRender();
+  });
+  $('#batch-back')?.addEventListener('click', () => { location.hash = '#/home'; });
+  $('#batch-list')?.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-batch-index]');
+    if (!row) return;
+    const index = Number(row.dataset.batchIndex);
+    if (e.target.closest('[data-batch-remove]')) {
+      if (batchState.running) return;
+      batchState.items.splice(index, 1); batchRender(); return;
+    }
+    if (e.target.closest('[data-batch-settings]')) { batchOpenItem(index); return; }
+    if (e.target.closest('[data-batch-open]')) {
+      const item = batchState.items[index];
+      if (item?.projectId) location.hash = '#/project/' + encodeURIComponent(item.projectId);
+    }
+  });
+  $('#batch-item-cancel')?.addEventListener('click', () => { batchState.editing = null; const ov = $('#batch-item-overlay'); if (ov) ov.hidden = true; });
+  $('#batch-item-ok')?.addEventListener('click', batchSaveItem);
+  $('#batch-item-overlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'batch-item-overlay') { batchState.editing = null; e.currentTarget.hidden = true; }
+  });
 
   /* ─────────── 重试：LLM 步骤失败后从这里续跑，已有进度不丢 ─────────── */
   async function requestRetry(id) {
@@ -4438,6 +4821,7 @@ async function renderAsrModels(providedStatus = null) {
 
   /* ─────────── 新建项目页面 ─────────── */
   const npView = $('#np-view');
+  const batchView = $('#batch-view');
   let npSubmitting = false;
   let npSchemesLoaded = false, npSchemeBusy = false;
   let npProviders = new Map();
@@ -5521,14 +5905,15 @@ async function renderAsrModels(providedStatus = null) {
       settingsOpenedFromApp = !!previousRoute;
     }
     const detailsMatch = /^#\/details\/([A-Za-z0-9_-]{1,64})$/.exec(h);
-    if (!location.hash || !['#/dashboard', '#/home', '#/new', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
+    if (!location.hash || !['#/dashboard', '#/home', '#/new', '#/batch', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
       h = '#/dashboard';
       history.replaceState(null, '', h);
     }
-    $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/new' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
+    $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/new' || h === '#/batch' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
     setPageVisible(dashboardView, h === '#/dashboard');
     setPageVisible(elHome, h === '#/home');
     setPageVisible(npView, h === '#/new');
+    setPageVisible(batchView, h === '#/batch');
     setPageVisible(stView, h === '#/settings');
     setPageVisible(detailView, !!detailsMatch);
     if (!detailsMatch && previousRoute.startsWith('#/details/')) {
@@ -5565,6 +5950,13 @@ async function renderAsrModels(providedStatus = null) {
       if (previousRoute !== h) showHome();
       if (previousRoute === '#/new' || previousRoute === '#/settings')
         requestAnimationFrame(() => $('#btn-new-project').focus({ preventScroll: true }));
+    } else if (h === '#/batch') {
+      setAudioControlsVisible(false);
+      if (previousRoute !== h) {
+        batchRefreshOptions();
+        batchRender();
+        focusPage(batchView);
+      }
     } else if (h === '#/new') {
       const fromSettings = previousRoute === '#/settings';
       if (!fromSettings && previousRoute !== '#/new') npReset();

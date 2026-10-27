@@ -1178,6 +1178,13 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   padding: 24px;
 }
 #confirm-overlay[hidden] { display: none; }
+#batch-draft-overlay {
+  position: fixed; inset: 0; z-index: 86;
+  background: rgba(6, 6, 9, .62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+#batch-draft-overlay[hidden] { display: none; }
 .rn-msg { font-size: 13px; line-height: 1.7; color: var(--text-1); }
 .rn-box {
   width: min(420px, 92vw);
@@ -3701,7 +3708,10 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-mu-widget-kicker { color:var(--muted); font-size:10px; letter-spacing:.1em; }
 .sf-mu-widget strong { font-size:38px; font-weight:400; line-height:1; letter-spacing:-.04em; }
 .sf-mu-widget small { color:var(--muted); font-size:10.5px; }
-.sf-mu-widget[data-kind="processing"], .sf-mu-widget[data-kind="all"] { grid-column:span 2; }
+.sf-mu-widget[data-kind="processing"] { grid-column:span 2; }
+/* 底部第二行四张小卡：全部稿件 / 新建稿件 / 批量初稿 / 全局设置。
+ * 全部稿件不再独占两格 —— 右半格留给新建稿件（用户要求把新建卡放进这块空位）。 */
+.sf-mu-widget[data-kind="all"] { grid-column:span 1; }
 .sf-mu-widget-action { grid-column:span 1; }
 .sf-mu-widget-action .sf-mu-widget-title { font-size:22px; font-weight:550; letter-spacing:-.02em; }
 .sf-mu-widget-arrow { margin-top:auto; color:var(--muted); font-size:16px; }
@@ -3759,7 +3769,8 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
   .sf-mu .sf-orbit { width:88px; height:130px; left:-12px; }
   .sf-studio[data-design=material] .sf-mu .sf-orbit { width:88px; height:130px; }
   .sf-mu-widgets { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-  .sf-mu-widget[data-kind="processing"], .sf-mu-widget[data-kind="all"] { grid-column:span 2; }
+  .sf-mu-widget[data-kind="processing"] { grid-column:span 2; }
+  .sf-mu-widget[data-kind="all"] { grid-column:span 1; }
   .sf-mu-widget-action { grid-column:span 1; }
   .sf-mu .sf-resume { width:100%; max-width:100%; justify-self:stretch; margin-left:0; }
 }
@@ -3808,7 +3819,7 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-widget-plus,.sf-widget-arrow,.sf-widget-ico,.sf-widget-wm { display:none; }
 @media (max-width:900px) { .sf-widgets { grid-template-columns:repeat(2,minmax(0,1fr)); } .sf-widget-wide { grid-column:span 2; } }
 .sf-library-tools { display:flex; gap:12px; align-items:center; margin-bottom:20px; }.sf-library-tools input { margin-left:auto; width:200px; padding:9px 12px; font-size:11px; }#sf-filters { display:flex; gap:5px; }#sf-filters button { background:none; border:0; color:var(--muted); padding:9px 12px; border-radius:10px; cursor:pointer; font-size:11px; }#sf-filters button.active { background:var(--accent-soft); color:var(--accent); }
-.sf-studio .home-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
+.sf-studio .home-list { display:grid; grid-template-columns:repeat(var(--sf-library-cols,3),minmax(0,1fr)); gap:20px; }
 .sf-studio .proj-card { display:flex; flex-direction:column; align-items:stretch; gap:0; padding:10px; border-radius:20px; background:color-mix(in srgb,var(--surface) 96%,transparent); border:1px solid var(--line); box-shadow:0 5px 18px -14px #15221940; position:relative; }
 .sf-studio .proj-card:hover { transform:translateY(-3px); border-color:var(--accent); }.sf-studio .proj-card::before { display:none; }
 .sf-cover { aspect-ratio:16/9; border-radius:13px; overflow:hidden; background:linear-gradient(145deg,var(--surface-2),var(--accent-soft)); display:flex; align-items:center; justify-content:center; gap:10px; color:var(--accent); position:relative; }.sf-cover>svg { width:30px; height:30px; opacity:.7; }.sf-cover>span { font-size:9px; letter-spacing:.16em; opacity:.6; }.sf-cover img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
@@ -3996,7 +4007,7 @@ body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-col
 .sf-studio #st-panel-theme .sscp-control { background:transparent; border:0; border-radius:0; box-shadow:none; padding:3px; flex-shrink:0; overflow:visible; }
 .sf-studio #st-panel-theme .sscp-value { height:30px; flex-shrink:0; }
 .sf-studio #st-panel-theme .sscp-trigger { width:30px; height:30px; flex-shrink:0; border-radius:7px; border-color:var(--line); }
-.sf-help-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; margin-top:26px; }.sf-help-grid article { background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:26px; }.sf-page h1 { font-size:30px; font-weight:500; margin-bottom:14px; }.sf-page h2 { font-size:16px; font-weight:500; margin-bottom:15px; }.sf-help-grid p { color:var(--muted); line-height:1.9; font-size:12px; margin-bottom:18px; }.sf-help-grid dl>div { display:flex; justify-content:space-between; gap:12px; margin-top:12px; font-size:11px; }#sf-notice { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); border:1px solid var(--line); border-radius:12px; padding:13px 20px; background:var(--surface); color:var(--text); box-shadow:0 10px 40px #15221930; z-index:5000; }
+.sf-help-grid { display:grid; grid-template-columns:repeat(var(--sf-help-cols,2),minmax(0,1fr)); gap:20px; margin-top:26px; }.sf-help-grid article { background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:26px; }.sf-page h1 { font-size:30px; font-weight:500; margin-bottom:14px; }.sf-page h2 { font-size:16px; font-weight:500; margin-bottom:15px; }.sf-help-grid p { color:var(--muted); line-height:1.9; font-size:12px; margin-bottom:18px; }.sf-help-grid dl>div { display:flex; justify-content:space-between; gap:12px; margin-top:12px; font-size:11px; }#sf-notice { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); border:1px solid var(--line); border-radius:12px; padding:13px 20px; background:var(--surface); color:var(--text); box-shadow:0 10px 40px #15221930; z-index:5000; }
 /* 独立工作台：维持旧版左视频/下时间轴/右四 Tab，不改变拖动和虚拟列表结构。 */
 .sf-studio #app { position:relative; z-index:1; padding:12px; height:100vh; gap:0; background:transparent; grid-template-rows:54px minmax(0,1fr) 8px var(--tl-h); }
 .sf-studio:not([data-workspace=editor]) #app { visibility:hidden; pointer-events:none; }
@@ -4434,7 +4445,7 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-design=uwp] .home-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 12px; padding:8px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
 .sf-studio[data-design=uwp] .home-list-title { font-size:14px; font-weight:600; }
 .sf-studio[data-design=uwp] .sf-library-tools { margin:0; }
-.sf-studio[data-design=uwp] .home-list { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.sf-studio[data-design=uwp] .home-list { grid-template-columns:repeat(var(--sf-library-cols,3),minmax(0,1fr)); gap:8px; }
 .sf-studio[data-design=uwp] .sf-cover { border-radius:2px; }
 .sf-studio[data-design=uwp] .proj-card:hover { background:var(--accent-hover); }
 .sf-studio[data-design=uwp] .proj-card { padding:8px; border:1px solid var(--line); box-shadow:0 1px 3px #00000018; }
@@ -5353,6 +5364,8 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .dashboard-view.is-entering #sf-mu-widgets > .sf-mu-widget:nth-child(4) { --sf-card-delay:360ms; }
 .dashboard-view.is-entering #sf-mu-widgets > .sf-mu-widget:nth-child(5) { --sf-card-delay:420ms; }
 .dashboard-view.is-entering #sf-mu-widgets > .sf-mu-widget:nth-child(6) { --sf-card-delay:480ms; }
+.dashboard-view.is-entering #sf-mu-widgets > .sf-mu-widget:nth-child(7) { --sf-card-delay:540ms; }
+.dashboard-view.is-entering #sf-mu-widgets > .sf-mu-widget:nth-child(8) { --sf-card-delay:600ms; }
 .dashboard-view.is-entering #sf-widgets > .sf-widget:nth-child(1) { --sf-card-delay:0ms; }
 .dashboard-view.is-entering #sf-widgets > .sf-widget:nth-child(2) { --sf-card-delay:55ms; }
 .dashboard-view.is-entering #sf-widgets > .sf-widget:nth-child(3) { --sf-card-delay:110ms; }
@@ -7582,6 +7595,23 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 }
 
 
+/* 批量创建初稿弹窗 */
+.bd-box { width: min(560px, calc(100vw - 40px)); max-height: min(78vh, 720px); display: flex; flex-direction: column; }
+.bd-options { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 10px 0 12px; font-size: 12px; color: var(--muted); }
+.bd-options select { max-width: 220px; }
+.bd-check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
+.bd-list { flex: 1; min-height: 80px; max-height: 300px; overflow: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 6px 0; }
+.bd-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 4px; border-radius: 8px; }
+.bd-item:hover { background: var(--surface-2); }
+.bd-item input { margin-top: 2px; accent-color: var(--accent); }
+.bd-item-main { flex: 1; min-width: 0; }
+.bd-item-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.bd-item-state { flex: 0 0 auto; font-size: 11px; color: var(--muted); }
+.bd-item-state.is-error { color: #ff7a74; }
+.bd-item-state.is-done { color: var(--accent); }
+.bd-status { margin-top: 10px; font-size: 12px; color: var(--muted); line-height: 1.7; }
+.bd-status.is-error { color: #ff7a74; }
 /* Windows 10 浅色：独立前景色角色，不把为深底准备的亮色用于浅色表面。
  * 作用域按组件而非 #st-view，欢迎页借用卡片、编辑器和弹窗使用同一套颜色。 */
 .sf-studio[data-design=uwp][data-theme=light] :is(#editor-panel #cue-list, .cue-measure) {
@@ -7647,3 +7677,49 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .sf-studio[data-design=uwp][data-theme=light] :is(#editor-panel #cue-list,.cue-measure) .cue-card.playing .cc-no { color:var(--accent-text); }
 .sf-studio[data-design=uwp][data-theme=light] #st-view .gl-add { color:var(--accent-text); }
 .sf-studio[data-design=uwp][data-theme=light] :is(#np-pct,#detail-pct,.sf-widget-resume .sf-widget-cta) { color:var(--accent-text); }
+
+/* 高级导出：按说话人筛选 */
+#adv-export-overlay { position:fixed; inset:0; z-index:87; background:rgba(6,6,9,.62); display:flex; align-items:center; justify-content:center; padding:24px; }
+#adv-export-overlay[hidden] { display:none; }
+.adv-export-box { width:min(480px, calc(100vw - 40px)); max-height:min(78vh, 680px); display:flex; flex-direction:column; }
+.adv-export-tools { display:flex; gap:8px; margin:8px 0; }
+.adv-role-list { flex:1; min-height:100px; max-height:280px; overflow:auto; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:6px 0; }
+.adv-role-item { display:flex; align-items:center; gap:10px; padding:8px 4px; border-radius:8px; font-size:12px; cursor:pointer; }
+.adv-role-item:hover { background:var(--surface-2); }
+.adv-role-item input { accent-color:var(--accent); }
+.adv-role-item small { margin-left:auto; color:var(--muted); }
+.adv-role-empty { padding:14px 4px; color:var(--muted); font-size:12px; }
+.adv-export-format { display:flex; align-items:center; gap:10px; margin:12px 0; font-size:12px; color:var(--muted); }
+.adv-export-format select { flex:1; min-width:0; }
+
+/* 批量初稿独立页 */
+#batch-view .batch-layout { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:18px; align-items:start; }
+.batch-queue-card { display:flex; flex-direction:column; min-height:420px; }
+.batch-queue-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.batch-queue-head h3 { margin:0 0 2px; }
+.batch-queue-actions { flex:none; }
+.batch-list { display:flex; flex-direction:column; gap:8px; margin:14px 0; max-height:520px; overflow:auto; }
+.batch-empty { padding:34px 12px; text-align:center; color:var(--muted); font-size:12px; border:1px dashed var(--line); border-radius:12px; }
+.batch-item { display:flex; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.batch-item-main { flex:1; min-width:0; }
+.batch-item-name { font-size:12px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.batch-item-meta { margin-top:3px; color:var(--muted); font-size:11px; }
+.batch-item-state { flex:none; font-size:11px; color:var(--muted); }
+.batch-item-state.is-running { color:var(--accent); }
+.batch-item-state.is-done { color:var(--success,#4fd1a5); }
+.batch-item-state.is-error { color:var(--danger,#ff6b6b); }
+.batch-item-bar { height:3px; margin-top:6px; overflow:hidden; border-radius:999px; background:var(--surface-2); }
+.batch-item-bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .3s; }
+.batch-item-actions { display:flex; gap:4px; flex:none; }
+.batch-item-actions .btn { min-width:0; padding:5px 8px; }
+.batch-runbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:auto; padding-top:12px; border-top:1px solid var(--line); }
+.batch-runbar>div { display:flex; gap:8px; }
+.batch-side { display:flex; flex-direction:column; gap:14px; }
+.batch-setting { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:10px 0; font-size:12px; }
+.batch-setting select { min-width:0; max-width:190px; }
+.batch-checks { display:flex; flex-wrap:wrap; gap:8px 12px; margin:12px 0; font-size:12px; }
+.batch-help p { color:var(--muted); font-size:11px; line-height:1.8; }
+#batch-item-overlay { position:fixed; inset:0; z-index:88; background:rgba(6,6,9,.62); display:flex; align-items:center; justify-content:center; padding:24px; }
+#batch-item-overlay[hidden] { display:none; }
+.batch-item-box { width:min(460px, calc(100vw - 40px)); }
+@media (max-width:900px) { #batch-view .batch-layout { grid-template-columns:1fr; } }

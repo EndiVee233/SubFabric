@@ -182,6 +182,7 @@ function applyTheme() {
         const panel = [...$('st-view').querySelectorAll('.st-panel:not([hidden])')][0];
         if (panel) animateMaterialPage(panel);
       } else if (h === '#/help') animateMaterialPage($('sf-help'));
+      else if (h === '#/batch') animateMaterialPage($('batch-view'));
       else if (h === '#/editor' || h.startsWith('#/project/')) {
         animateMaterialEditorShell();
         animateMaterialCueList();
@@ -225,8 +226,9 @@ function renderPacks() {
   const render = pack => {
     // 示意卡片的工作区预览跟随当前明暗模式，避免深色设置页内仍显示浅色工作区。
     const dark = document.body.dataset.theme === 'dark';
-    const previewAccent = pack.id === prefs.themePack && pack.design === 'uwp' && prefs.accent !== defaults.accent
-      ? prefs.accent : pack.seed;
+    const previewAccent = pack.id === prefs.themePack
+      ? ((pack.design === 'uwp' && prefs.accent === defaults.accent) ? pack.seed : prefs.accent)
+      : (pack.personalization?.accent || pack.seed);
     const palette = pack.design === 'uwp'
       ? { '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--accent': previewAccent, '--on-accent': '#FFFFFF' }
       : pack.design === 'claude'
@@ -400,7 +402,7 @@ $('sf-theme-packs').addEventListener('click', e => {
   // 卡片把主题 ID 放在 data-pack-select；读取错误的 dataset.pack 会让
   // themes.get(undefined) 静默回退到 Studio，造成“点击没有任何反应”。
   const pack = themes.get(b.dataset.packSelect, prefs.custom);
-  if (commit({ themePack: pack.id, accent: pack.seed })) { applyTheme(); themeStatus(); }
+  activatePack(pack);
 });
 function themeStatus() { $('sf-theme-status').textContent = t('外观已保存，刷新后保留。'); }
 for (const [id, key] of [['sf-glass-dim', 'glassDim'], ['sf-glass-blur', 'glassBlur'], ['sf-glass-opacity', 'glassOpacity']]) $(id).addEventListener('input', () => {
@@ -561,20 +563,241 @@ window.addEventListener('storage', e => {
   if (e.key !== STUDIO_KEY) return;
   try { prefs = normalizeStudio(JSON.parse(e.newValue || '{}'), themes); applyTheme(); renderFolders(); refreshLibrary(); } catch { /* 保持当前可用界面。 */ }
 });
-function download(name, data) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+/* 旧服务进程的静态白名单可能还没有 zip.js（新增文件要重启才生效）。这里保留一份
+ * store 模式的 ZIP 兜底，动态 import 失败时直接用它，避免“导出主题包”被服务重启卡住。 */
+const ZIP_CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+function zipCrc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = ZIP_CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function zipU16(v) { return Uint8Array.of(v & 255, (v >>> 8) & 255); }
+function zipU32(v) { return Uint8Array.of(v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255); }
+function zipConcat(parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+}
+function zipStore(files) {
+  const enc = new TextEncoder(), locals = [], centrals = [];
+  const now = new Date();
+  const time = ((now.getHours() & 31) << 11) | ((now.getMinutes() & 63) << 5) | ((now.getSeconds() / 2) & 31);
+  const day = (((now.getFullYear() - 1980) & 127) << 9) | (((now.getMonth() + 1) & 15) << 5) | (now.getDate() & 31);
+  let offset = 0;
+  for (const file of files) {
+    const name = String(file.name || '').replace(/\\/g, '/');
+    const nameBytes = enc.encode(name);
+    const data = file.bytes instanceof Uint8Array ? file.bytes : enc.encode(String(file.text == null ? '' : file.text));
+    const crc = zipCrc32(data);
+    const local = zipConcat([zipU32(0x04034b50), zipU16(20), zipU16(0x0800), zipU16(0), zipU16(time), zipU16(day),
+      zipU32(crc), zipU32(data.length), zipU32(data.length), zipU16(nameBytes.length), zipU16(0), nameBytes, data]);
+    locals.push(local);
+    centrals.push(zipConcat([zipU32(0x02014b50), zipU16(20), zipU16(20), zipU16(0x0800), zipU16(0), zipU16(time), zipU16(day),
+      zipU32(crc), zipU32(data.length), zipU32(data.length), zipU16(nameBytes.length), zipU16(0), zipU16(0), zipU16(0),
+      zipU16(0), zipU32(0), zipU32(offset), nameBytes]));
+    offset += local.length;
+  }
+  const central = zipConcat(centrals);
+  return new Blob([zipConcat([...locals, central, zipConcat([
+    zipU32(0x06054b50), zipU16(0), zipU16(0), zipU16(files.length), zipU16(files.length),
+    zipU32(central.length), zipU32(offset), zipU16(0)])])], { type: 'application/zip' });
+}
+function zipRead(buffer) {
+  const b = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const u16 = o => b[o] | (b[o + 1] << 8);
+  const u32 = o => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+  let end = -1;
+  for (let i = b.length - 22; i >= 0; i--) if (u32(i) === 0x06054b50) { end = i; break; }
+  if (end < 0) throw new Error('不是有效的压缩包（缺少 ZIP 目录）');
+  const count = u16(end + 10), cdOffset = u32(end + 16), files = new Map();
+  let at = cdOffset;
+  for (let i = 0; i < count; i++) {
+    if (u32(at) !== 0x02014b50) throw new Error('压缩包目录损坏');
+    const method = u16(at + 10), compSize = u32(at + 20), nameLen = u16(at + 28);
+    const extraLen = u16(at + 30), commentLen = u16(at + 32), localOffset = u32(at + 42);
+    const name = new TextDecoder().decode(b.subarray(at + 46, at + 46 + nameLen));
+    if (method !== 0) throw new Error('压缩包使用了不支持的压缩方式，请用本应用重新导出');
+    if (u32(localOffset) !== 0x04034b50) throw new Error('压缩包文件头损坏');
+    const start = localOffset + 30 + u16(localOffset + 26) + u16(localOffset + 28);
+    files.set(name, b.slice(start, start + compSize));
+    at += 46 + nameLen + extraLen + commentLen;
+  }
+  return files;
+}
+const zipReadText = bytes => new TextDecoder().decode(bytes);
+
+function downloadBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-$('sf-theme-export').addEventListener('click', () => {
+function widgetLayoutKey(el) {
+  if (!el) return '';
+  if (el.dataset.kind) return el.dataset.kind;
+  if (el.dataset.muFilter) return 'filter-' + el.dataset.muFilter;
+  if (el.dataset.muAction) return 'action-' + el.dataset.muAction;
+  return el.id || '';
+}
+function gridColumns(el, fallback) {
+  if (!el) return fallback;
+  try {
+    const value = getComputedStyle(el).gridTemplateColumns;
+    if (!value || value === 'none') return fallback;
+    const n = value.split(' ').filter(Boolean).length;
+    return n >= 1 ? n : fallback;
+  } catch { return fallback; }
+}
+/** 导出当前四个页面的布局快照。编辑器尺寸来自 localStorage（拖动 #hsplit/#vsplit 写过）。 */
+function layoutsSnapshot() {
+  const layouts = {};
+  const widgets = [...document.querySelectorAll('#sf-mu-widgets > .sf-mu-widget')]
+    .map(widgetLayoutKey).filter(Boolean);
+  if (widgets.length) layouts.home = { widgets };
+  const list = document.getElementById('home-view')?.querySelector('.home-list');
+  layouts.library = { view: prefs.view === 'list' ? 'list' : 'grid', columns: Math.max(1, Math.min(4, gridColumns(list, 3))) };
+  const editor = {};
+  const tl = parseFloat(localStorage.getItem('ss-tl-h'));
+  const pw = parseFloat(localStorage.getItem('ss-panel-w'));
+  if (Number.isFinite(tl) && tl > 0) editor.timelineHeight = Math.round(Math.max(132, Math.min(420, tl)));
+  if (Number.isFinite(pw) && pw > 0) editor.panelWidth = Math.round(Math.max(280, Math.min(720, pw)));
+  const split = localStorage.getItem('sf-editor-split-pane');
+  if (split === 'roles' || split === 'notes') editor.splitPane = split;
+  if (Object.keys(editor).length) layouts.editor = editor;
+  const help = document.querySelector('#sf-help .sf-help-grid');
+  layouts.help = { columns: Math.max(1, Math.min(3, gridColumns(help, 2))) };
+  return layouts;
+}
+/** 应用主题包里的页面布局。返回是否改动过 DOM/CSS。 */
+function applyLayouts(layouts) {
+  if (!layouts || typeof layouts !== 'object') return false;
+  let touched = false;
+  const box = document.getElementById('sf-mu-widgets');
+  if (box && layouts.home && Array.isArray(layouts.home.widgets) && layouts.home.widgets.length) {
+    const nodes = [...box.children];
+    const byKey = new Map(nodes.map(n => [widgetLayoutKey(n), n]));
+    for (const key of layouts.home.widgets) {
+      const node = byKey.get(key);
+      if (node) { box.append(node); byKey.delete(key); touched = true; }
+    }
+    for (const node of byKey.values()) box.append(node);
+  }
+  const lib = layouts.library;
+  if (lib) {
+    if (lib.columns) document.documentElement.style.setProperty('--sf-library-cols', String(Math.max(1, Math.min(4, lib.columns))));
+    if (lib.view === 'list' || lib.view === 'grid') {
+      const view = document.getElementById('home-view');
+      if (view) { view.dataset.list = lib.view === 'list' ? 'list' : 'grid'; touched = true; }
+    }
+  }
+  const ed = layouts.editor;
+  if (ed) {
+    const app = document.getElementById('app');
+    if (ed.timelineHeight) {
+      const h = Math.round(Math.max(132, Math.min(420, ed.timelineHeight)));
+      try { localStorage.setItem('ss-tl-h', String(h)); } catch {}
+      if (app) app.style.setProperty('--tl-h', h + 'px');
+      touched = true;
+    }
+    if (ed.panelWidth) {
+      const w = Math.round(Math.max(280, Math.min(720, ed.panelWidth)));
+      try { localStorage.setItem('ss-panel-w', String(w)); } catch {}
+      if (app) app.style.setProperty('--panel-w', w + 'px');
+      touched = true;
+    }
+    if (ed.splitPane === 'roles' || ed.splitPane === 'notes') {
+      try { localStorage.setItem('sf-editor-split-pane', ed.splitPane); } catch {}
+      touched = true;
+    }
+  }
+  if (layouts.help && layouts.help.columns) {
+    document.documentElement.style.setProperty('--sf-help-cols', String(Math.max(1, Math.min(3, layouts.help.columns))));
+    touched = true;
+  }
+  return touched;
+}
+/** 导出主题包时附带的个性化快照：只含界面参数，不含背景图片本身。 */
+function personalizationSnapshot() {  const snap = {};
+  for (const key of ['accent', 'mode', 'motion', 'background', 'auroraColors', 'auroraMotion', 'auroraSpeed',
+    'glassDim', 'glassBlur', 'glassOpacity', 'rimEnabled', 'rimSatLow', 'rimBriGain', 'rimSpecBase', 'rimPower']) {
+    if (prefs[key] !== undefined) snap[key] = Array.isArray(prefs[key]) ? [...prefs[key]] : prefs[key];
+  }
+  /* 图片背景不随包走：恢复时退回纯色，避免把上一位用户的壁纸带过去。 */
+  if (snap.background === 'image') snap.background = 'solid';
+  return snap;
+}
+/** 选中有个性化快照的主题包时，连同强调色/毛玻璃/流光/描边参数一起恢复。 */
+function activatePack(pack) {
+  const p = pack && pack.personalization;
+  const layouts = pack && pack.layouts;
+  const change = { themePack: pack.id };
+  if (p) {
+    Object.assign(change, p);
+    change.accent = themes.hex(p.accent) ? p.accent : pack.seed;
+    change.background = p.background === 'aurora' ? 'aurora' : 'solid';
+  } else {
+    change.accent = pack.seed;
+  }
+  if (layouts && layouts.library && (layouts.library.view === 'list' || layouts.library.view === 'grid')) {
+    change.view = layouts.library.view;
+  }
+  if (commit(change)) { applyTheme(); applyLayouts(layouts); themeStatus(); }
+}
+$('sf-theme-export').addEventListener('click', async () => {
   const pack = themes.get(prefs.themePack, prefs.custom);
-  download(`${pack.id}.theme.json`, { ...pack, seed: pack.design === 'uwp' ? pack.seed : prefs.accent });
+  const layouts = layoutsSnapshot();
+  const theme = {
+    ...pack,
+    seed: pack.design === 'uwp' ? pack.seed : prefs.accent,
+    personalization: personalizationSnapshot(),
+    layouts,
+  };
+  const files = [{ name: 'theme.json', text: JSON.stringify(theme, null, 2) }];
+  for (const page of ['home', 'library', 'editor', 'help']) {
+    if (layouts[page]) files.push({ name: `layouts/${page}.json`, text: JSON.stringify(layouts[page], null, 2) });
+  }
+  try {
+    let writeZip = zipStore;
+    try { ({ makeZip: writeZip } = await import('./zip.js')); } catch { /* 旧服务白名单没有 zip.js：用内置兜底 */ }
+    downloadBlob(`${pack.id}.theme.zip`, writeZip(files));
+    notice('已导出主题包（压缩包：四个页面布局 + 个性化设置）');
+  } catch (e) {
+    notice('导出失败：' + ((e && e.message) || e));
+  }
 });
 $('sf-theme-import').addEventListener('click', () => $('sf-theme-file').click());
 $('sf-theme-file').addEventListener('change', async () => {
   const f = $('sf-theme-file').files[0]; $('sf-theme-file').value = ''; if (!f) return;
   try {
-    if (f.size > 800000) throw Error('主题包过大，最大支持 800KB。');
-    const imported = JSON.parse(await f.text()); if (!themes.valid(imported)) throw Error('主题包格式无效，只支持声明式主题 JSON。');
+    if (f.size > 2 * 1024 * 1024) throw Error('主题包过大，最大支持 2MB。');
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const isZip = (bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04)
+      || /\.zip$/i.test(f.name || '');
+    let imported;
+    if (isZip) {
+      let readZip = zipRead, textOf = zipReadText;
+      try { ({ readZip, textOf } = await import('./zip.js')); } catch { /* 旧服务白名单没有 zip.js：用内置兜底 */ }
+      const files = readZip(bytes);
+      const themeBytes = files.get('theme.json') || files.get('theme/theme.json');
+      if (!themeBytes) throw Error('压缩包里缺少 theme.json。');
+      imported = JSON.parse(textOf(themeBytes));
+      imported.layouts = imported.layouts && typeof imported.layouts === 'object' ? imported.layouts : {};
+      for (const page of ['home', 'library', 'editor', 'help']) {
+        const raw = files.get(`layouts/${page}.json`);
+        if (!raw) continue;
+        try { imported.layouts[page] = JSON.parse(textOf(raw)); } catch { throw Error(`压缩包里的 layouts/${page}.json 不是有效 JSON。`); }
+      }
+    } else {
+      imported = JSON.parse(new TextDecoder().decode(bytes));   // 兼容旧的单文件 .theme.json
+    }
+    if (!themes.valid(imported)) throw Error('主题包格式无效，只支持声明式主题或本应用导出的 .zip。');
     let pack = imported;
     if (themes.isBuiltin(pack)) {
       const base = pack.id + '-custom';
@@ -586,7 +809,24 @@ $('sf-theme-file').addEventListener('change', async () => {
     let custom = prefs.custom;
     custom = [...custom.filter(p => p.id !== pack.id), pack];
     if (!themes.validList(custom)) throw Error('主题包数量已达上限。');
-    if (commit({ custom, themePack: pack.id, accent: pack.seed })) { applyTheme(); themeStatus(); }
+    const p = pack.personalization;
+    const layouts = pack.layouts;
+    const change = { custom, themePack: pack.id,
+      accent: p && themes.hex(p.accent) ? p.accent : pack.seed };
+    if (p) {
+      for (const key of ['mode', 'motion', 'auroraColors', 'auroraMotion', 'auroraSpeed',
+        'glassDim', 'glassBlur', 'glassOpacity', 'rimEnabled', 'rimSatLow', 'rimBriGain', 'rimSpecBase', 'rimPower']) {
+        if (p[key] !== undefined) change[key] = p[key];
+      }
+      change.background = p.background === 'aurora' ? 'aurora' : 'solid';
+    }
+    if (layouts && layouts.library && (layouts.library.view === 'list' || layouts.library.view === 'grid')) {
+      change.view = layouts.library.view;
+    }
+    if (commit(change)) {
+      applyTheme(); applyLayouts(layouts); themeStatus();
+      notice(`已导入主题包「${pack.name}」${p || layouts ? '并恢复个性化设置与页面布局' : ''}`);
+    }
   } catch (e) { notice(e.message); }
 });
 $('sf-image-pick').addEventListener('click', () => $('sf-image-file').click());
@@ -1534,6 +1774,7 @@ $('sf-mu-widgets').addEventListener('click', (e) => {
   if (!b) return;
   if (b.dataset.muFilter) { goLibraryFilter(b.dataset.muFilter); return; }
   if (b.dataset.muAction === 'new') { $('btn-new-project').click(); return; }
+  if (b.dataset.muAction === 'batch') { $('btn-batch-draft')?.click(); return; }
   if (b.dataset.muAction === 'settings') { location.hash = '#/settings'; }
 });
 window.addEventListener('sf-studio-theme', () => syncDashboardMode(true));
@@ -2103,7 +2344,7 @@ window.__sfStudio = {
     $('sf-nav').hidden = editor; $('sf-topbar').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
     const global = h === '#/settings';
     moveStyles(global);
-    const titles = { dashboard: '主页', home: '稿件库', settings: '设置', help: '帮助与快捷键', new: '新建稿件', details: '稿件详情' };
+    const titles = { dashboard: '主页', home: '稿件库', settings: '设置', help: '帮助与快捷键', new: '新建稿件', batch: '批量初稿', details: '稿件详情' };
     $('sf-breadcrumb').textContent = t(titles[h.slice(2).split('/')[0]] || '字幕工作台');
     document.querySelectorAll('[data-route]').forEach(a => { const active = h === '#/' + a.dataset.route; a.classList.toggle('active', active); if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     if (global) {
@@ -2115,7 +2356,7 @@ window.__sfStudio = {
     /* 所有 UWP 非编辑器页面共用同一套入场：页面 .92→1，元素按几何位置错峰。 */
     if (!editor && document.body.dataset.design === 'uwp') {
       const page = h === '#/dashboard' ? $('dashboard-view') : h === '#/home' ? $('home-view')
-        : h === '#/settings' ? $('st-view') : h === '#/new' ? $('np-view')
+        : h === '#/settings' ? $('st-view') : h === '#/new' ? $('np-view') : h === '#/batch' ? $('batch-view')
           : h === '#/help' ? $('sf-help') : h.startsWith('#/details/') ? $('detail-view') : null;
       if (page && !page.hidden) animateUwpPage(page);
     }
@@ -2128,6 +2369,7 @@ window.__sfStudio = {
         const panel = [...$('st-view').querySelectorAll('.st-panel:not([hidden])')][0];
         if (panel) animateMaterialPage(panel);
       } else if (h === '#/help') animateMaterialPage($('sf-help'));
+      else if (h === '#/batch') animateMaterialPage($('batch-view'));
     });
     /* UWP 编辑器：外壳轻微 scale(.97→1) 淡入；字幕卡在 cue 渲染后自上而下 120ms/14ms 淡入上移。 */
     if (editor) {

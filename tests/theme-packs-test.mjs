@@ -50,6 +50,25 @@ assert.equal(themes.valid({ ...custom, css: 'body{}' }), false, 'CSS injection i
 assert.equal(themes.valid({ ...custom, assets: { preview: 'https://example.com/a.png' } }), false, 'remote assets are rejected');
 assert.equal(themes.valid({ ...custom, assets: { preview: 'data:image/svg+xml;base64,AAAA' } }), false, 'SVG assets are rejected');
 assert.equal(themes.valid({ ...custom, tokens: { light: { '--bg': '#fff' } } }), false, 'token names stay on the safe allowlist');
+const portable = {
+  ...custom,
+  personalization: {
+    accent: '#225588', mode: 'dark', motion: 'on', background: 'aurora',
+    auroraColors: ['#112233', '#445566', '#778899'], auroraMotion: 'dynamic', auroraSpeed: 1.6,
+    glassDim: 84, glassBlur: 20, glassOpacity: 90,
+    rimEnabled: true, rimSatLow: 0.9, rimBriGain: 0.5, rimSpecBase: 0.62, rimPower: 1.8,
+  },
+};
+assert.equal(themes.valid(portable), true, 'theme pack accepts a personalization snapshot');
+const portableStored = themes.asCustom(portable);
+assert.equal(portableStored.personalization.accent, '#225588', 'asCustom keeps personalization');
+assert.equal(portableStored.personalization.rimSpecBase, 0.62, 'asCustom keeps rim curve params');
+assert.equal(themes.valid({ ...portable, personalization: { ...portable.personalization, evil: 1 } }), false, 'unknown personalization keys are rejected');
+assert.equal(themes.valid({ ...portable, personalization: { accent: 'red' } }), false, 'personalization colors must be hex');
+assert.equal(themes.valid({ ...portable, personalization: { auroraColors: [] } }), true, 'empty aurora colors mean follow theme');
+assert.match(studioSource, /personalization: personalizationSnapshot\(\)/, 'export packages a personalization snapshot');
+assert.match(studioSource, /const p = pack\.personalization;[\s\S]*?rimSpecBase/, 'import restores personalization fields');
+assert.match(studioSource, /function activatePack[\s\S]*?Object\.assign\(change, p\)/, 'selecting a portable pack restores its snapshot');
 assert.equal(themes.canDelete('windows-uwp'), false, 'built-in packs cannot be deleted');
 assert.equal(themes.canDelete('painted-studio'), true, 'custom packs can be deleted');
 assert.equal(themes.remove([stored], 'painted-studio').length, 0, 'custom pack removal is deterministic');

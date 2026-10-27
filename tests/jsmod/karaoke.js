@@ -8,8 +8,11 @@ import { assPlainText } from './ass.js';
 
 // 服务端与浏览器共用同一句身份：重复台词也必须匹配原始事件位置和完整词序。
 export function realignTargetKey(sentence) {
+  /* 不把 events.lineIdx 放进 key：保存后行号可能重新编号，而句子内容/时间没变；
+   * 带上行号会让「跑完对齐 → 保存过 / 编辑过其它行」的整批结果全部失配。
+   * 文本+起止+逐词序列已足够区分同一句。 */
   return JSON.stringify([sentence.style, sentence.proto && sentence.proto.name, sentence.start, sentence.end,
-    sentence.text, sentence.events.map(e => e.lineIdx), sentence.words.map(w => w.w)]);
+    sentence.text, sentence.words.map(w => w.w)]);
 }
 export function applyRealignItems(doc, kar, items, context) {
   const plans = [], used = new Set();
@@ -23,9 +26,10 @@ export function applyRealignItems(doc, kar, items, context) {
      * 只有这一条真的变了才跳过；别处的编辑不影响本条的写回。 */
     let candidates = kar.sentences.filter(s => s.words.length && realignTargetKey(s) === it.targetKey);
     let sent = candidates.length === 1 ? candidates[0] : null;
-    if (!sent && repair) {
-      // 词数异常时旧 words 可能已经和文本对不上，targetKey 仍应一致；行号/重复台词
-      // 让 key 撞车时退回「开始+结束+文本」唯一定位。
+    /* targetKey 还包含逐词序列；用户若刚修过该行的逐词、但文本与整句起止没变，
+     * key 会失配。服务端每条都带 start/end/text，退回「开始+结束+文本」唯一匹配；
+     * 后面仍会用**当前**词序列核对，词真被改过就不会写回。 */
+    if (!sent && Number.isFinite(Number(it.start)) && Number.isFinite(Number(it.end))) {
       const near = kar.sentences.filter(s => s.words.length && s.text === it.text
         && Math.abs(Number(s.start) - Number(it.start)) < 0.002
         && Math.abs(Number(s.end) - Number(it.end)) < 0.002);
@@ -726,10 +730,26 @@ function finalizeSentences(sentences) {
  * "{\c&H0B0BE5&}[Spoke]在 Unstable SMP…" 的 "[Spoke]"(说话人分离工具写入文本)。
  * 文本没有 [ ] 时回退到 Name 栏(如 "Spoke")。
  */
-export function speakerTagOf(sent) {
-  const name = speakerTextTagOf(sent);
+export function speakerTagOf(sent) {  const name = speakerTextTagOf(sent);
   if (name) return '[' + name + ']';        // 保持原有格式: 带方括号
   return (sent.proto && sent.proto.name) || '';
+}
+
+/** 一句话实际归属的说话人名（可能多个，用 / 或 、 分隔）。 */
+export function sentenceSpeakerNames(sent) {
+  const raw = speakerTextTagOf(sent) || speakerTagOf(sent) || '';
+  return speakerNames(raw).map(n => String(n).trim()).filter(Boolean);
+}
+
+/** 按说话人筛选句子：只有所有说话人都在 selected 里才保留；无说话人的句子由 includeUnassigned 控制。
+ *  高级导出与角色筛选共用这一口径。 */
+export function filterSentencesBySpeakers(sentences, selected, includeUnassigned = true) {
+  const set = new Set((selected || []).map(n => String(n).toLowerCase()));
+  return (sentences || []).filter(sent => {
+    const names = sentenceSpeakerNames(sent);
+    if (!names.length) return includeUnassigned;
+    return names.every(n => set.has(n.toLowerCase()));
+  });
 }
 
 /**

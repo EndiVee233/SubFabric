@@ -61,6 +61,10 @@ assert.match(studio, /animateMaterialPage\(e\.detail\?\.panel\)/, 'settings pane
 assert.match(css, /\.sf-studio\[data-design=material\] \.is-my-page-entering \[data-my-enter\]/, 'Material page cards use data-my-enter');
 assert.match(css, /sf-home-card-in var\(--sf-card-duration,\.42s\)/, 'Material page cards reuse the homepage float-up curve');
 assert.match(studio, /function animateMaterialCueList/, 'Material editor cues have their own entrance');
+assert.match(template, /data-kind="all"[\s\S]*?data-mu-action="new"[\s\S]*?data-mu-action="batch"[\s\S]*?data-mu-action="settings"/,
+  '第二行：全部稿件 / 新建稿件 / 批量初稿 / 全局设置');
+assert.match(css, /\.sf-mu-widget\[data-kind="all"\] \{ grid-column:span 1; \}/, '全部稿件让出一格给新建稿件');
+assert.match(studio, /muAction === 'batch'[\s\S]*?btn-batch-draft/, '主页批量初稿卡打开批量弹窗');
 assert.match(studio, /\(i \* 22\)/, 'Material cue cards appear one by one every 22ms (bounce duration unchanged)');
 assert.doesNotMatch(
   studio.slice(studio.indexOf('function animateMaterialCueList'), studio.indexOf('function animateUwpEditorShell')),

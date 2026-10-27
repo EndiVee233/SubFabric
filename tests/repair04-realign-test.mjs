@@ -17,6 +17,7 @@ for (const kind of ['k', 'color']) {
   const sent = wordSentences[0]; assert.ok(sent.words.length >= 2);
   const rev = revision(doc);
   const proposal = { projectId: 'p-A', sourceRevision: rev, targetKey: realignTargetKey(sent), text: sent.text,
+    start: sent.start, end: sent.end,
     words: sent.words.map((w, i) => ({ w: w.w, s: i ? 2.2 : 1, e: i ? 3 : 2.2 })) };
   const second = wordSentences[1].events.map(e => doc.lines[e.lineIdx]);
   assert.equal(applyRealignItems(doc, kar, [proposal], { projectId: 'p-A', revision: rev }).changed, 1);
@@ -29,6 +30,11 @@ for (const kind of ['k', 'color']) {
   const fresh = new AssDoc(head + source + anchors), freshKar = analyzeKaraoke(fresh);
   assert.equal(applyRealignItems(fresh, freshKar, [{ ...proposal, projectId: 'p-B' }], { projectId: 'p-A', revision: rev }).changed, 0);
   assert.equal(applyRealignItems(fresh, freshKar, [{ ...proposal, words: proposal.words.slice(0, 1) }], { projectId: 'p-A', revision: rev }).changed, 0);
+  /* 保存后事件行号可能重排：旧 targetKey（含 lineIdx / 旧词序列）失配，但起止+文本没变，
+   * 仍应找回同一句并只写时间；以前这里会 232 句全部跳过。 */
+  const shifted = new AssDoc(head + source + anchors), shiftedKar = analyzeKaraoke(shifted);
+  assert.equal(applyRealignItems(shifted, shiftedKar, [{ ...proposal, targetKey: 'stale-line-index' }],
+    { projectId: 'p-A', revision: rev }).changed, 1, '旧 key 失配时按起止+文本回退');
 
   /* 「仅逐词异常的字幕」修复模式：异常行本来就有缺词（逐词 1 个 / 文本 2 个），
    * 严格模式永远应用不了（这就是用户截图里「0 句」的原因）。修复模式允许把

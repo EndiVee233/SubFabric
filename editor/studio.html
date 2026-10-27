@@ -671,6 +671,7 @@
             <button class="btn btn-mini" id="btn-export-en" disabled title="导出仅英文 ASS(去掉中文行)">导出仅英文</button>
             <button class="btn btn-mini" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出无逐词</button>
             <button class="btn btn-mini" id="btn-export-full" disabled title="导出原始格式(含逐词特效)">导出逐词字幕</button>
+            <button class="btn btn-mini" id="btn-export-advanced" disabled title="选择要保留的说话人，再导出字幕">高级导出…</button>
           </div>
           <div class="export-grid" style="margin-top:10px">
             <button class="btn btn-mini btn-accent" id="btn-export-video" disabled title="选择导出目录，勾选「双语硬字幕视频 / 生肉原片 / ASS 字幕」；压制沿用稿件里的 ASS 样式">导出视频…</button>
@@ -921,6 +922,38 @@
 
 <!-- ══════════ 全屏浮层(挂在 body 直属: 不受 #app grid 自动放置影响,
      老内核浏览器不支持 inset 简写时也能全屏居中) ══════════ -->
+
+<!-- 批量创建初稿：只列已有视频、还没有字幕的项目；后台串行跑，避免抢显卡。 -->
+<div id="batch-draft-overlay" hidden>
+  <div class="rn-box modal-surface bd-box">
+    <div class="rn-title modal-drag-handle">批量创建初稿</div>
+    <div class="rn-msg">勾选还没有字幕的项目，按同一个识别模型依次生成初稿。一次只跑一个，完成一个才开始下一个。</div>
+    <div class="bd-options">
+      <label>识别模型 <select id="bd-model"></select></label>
+      <label class="bd-check"><input type="checkbox" id="bd-word" checked> 逐词</label>
+      <label class="bd-check"><input type="checkbox" id="bd-align"> 对齐</label>
+      <label class="bd-check"><input type="checkbox" id="bd-speakers"> 区分说话人</label>
+    </div>
+    <div id="bd-list" class="bd-list"></div>
+    <div id="bd-status" class="bd-status" hidden></div>
+    <div class="rn-actions">
+      <button type="button" class="btn" id="bd-close">关闭</button>
+      <button type="button" class="btn btn-accent" id="bd-start">开始创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 高级导出：按说话人筛选导出内容，未勾选的角色整行不写入 -->
+<div id="adv-export-overlay" hidden>
+  <div class="rn-box modal-surface adv-export-box">
+    <div class="rn-title">高级导出</div>
+    <p class="rn-msg">勾选要保留的说话人；未勾选的角色不会写入导出文件。默认全选。</p>
+    <div class="adv-export-tools"><button type="button" class="btn btn-mini" id="adv-export-all">全选</button><button type="button" class="btn btn-mini" id="adv-export-none">全不选</button></div>
+    <div id="adv-role-list" class="adv-role-list"></div>
+    <div class="adv-export-format"><label for="adv-export-format">导出格式</label><select id="adv-export-format"><option value="raw">原始字幕（保留逐词）</option><option value="clean">干净 ASS（无逐词）</option><option value="zh">仅中文</option><option value="en">仅英文</option><option value="json">逐词 JSON</option></select></div>
+    <div class="rn-actions"><button type="button" class="btn" id="adv-export-cancel">取消</button><button type="button" class="btn btn-accent" id="adv-export-ok">导出</button></div>
+  </div>
+</div>
 
 <!-- 通用确认弹窗(如"删除项目") -->
 <div id="confirm-overlay" hidden>
@@ -1194,7 +1227,8 @@
           <button type="button" class="sf-mu-attn-btn sf-mu-attn-details" data-mu-attn="details" aria-label="详情页" title="详情页"><span data-ico="info"></span></button>
         </div>
         <button type="button" class="sf-mu-widget" data-kind="all" data-mu-filter="all"><span class="sf-mu-widget-kicker">全部稿件</span><strong id="sf-mu-all-count">0</strong><small>本地工作空间</small></button>
-        <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="new" data-tone="accent"><span class="sf-mu-widget-kicker">NEW</span><strong class="sf-mu-widget-title">新建稿件</strong><small>视频、链接或字幕</small><span class="sf-mu-widget-arrow">→</span></button>
+        <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="new" data-tone="surface"><span class="sf-mu-widget-kicker">NEW</span><strong class="sf-mu-widget-title">新建稿件</strong><small>视频、链接或字幕</small><span class="sf-mu-widget-arrow">→</span></button>
+        <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="batch" data-tone="accent"><span class="sf-mu-widget-kicker">BATCH</span><strong class="sf-mu-widget-title">批量初稿</strong><small>多项目依次识别</small><span class="sf-mu-widget-arrow">→</span></button>
         <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="settings" data-tone="surface"><span class="sf-mu-widget-kicker">SETTINGS</span><strong class="sf-mu-widget-title">全局设置</strong><small>模型、翻译与外观</small><span class="sf-mu-widget-arrow">→</span></button>
       </div>
     </div>
@@ -1223,6 +1257,7 @@
       <h2 class="home-list-title">我的项目</h2>
       <div class="home-toolbar-btns">
         <button class="btn" id="btn-settings" data-ico="sliders" title="识别模型和字幕翻译的设置">全局设置</button>
+        <button class="btn" id="btn-batch-draft" title="为多个还没有字幕的项目依次生成初稿">批量初稿</button>
         <button class="btn btn-accent" id="btn-new-project" data-ico="plus">新建项目</button>
       </div>
     </div>
@@ -1413,6 +1448,46 @@
 </div>
 
 <!-- 新建项目：与项目列表并列的独立页面（与详细信息共用 2×2 工作台骨架） -->
+<div id="batch-view" class="workspace-page" hidden>
+  <div class="page-inner ws-inner">
+    <header class="page-head">
+      <button type="button" class="btn page-back" id="batch-back" data-ico="chevronDown">返回项目</button>
+      <div><p class="sf-eyebrow">BATCH DRAFT</p><h1>批量初稿</h1><p>把多个视频排进队列，按顺序逐个上传、识别、分句与翻译；前一个完成后再开始下一个。</p></div>
+    </header>
+    <div class="batch-layout">
+      <section class="st-card batch-queue-card">
+        <div class="batch-queue-head"><div><h3>初稿队列</h3><p class="gl-hint">刷新页面会清空尚未开始的队列；已创建的项目不受影响。</p></div><div class="batch-queue-actions"><button type="button" class="btn btn-accent" id="batch-add">＋ 添加视频</button><input type="file" id="batch-files" accept="video/*" multiple hidden></div></div>
+        <div id="batch-list" class="batch-list"></div>
+        <div class="batch-runbar"><span id="batch-summary" class="gl-hint">队列为空</span><div><button type="button" class="btn" id="batch-stop" hidden>停止</button><button type="button" class="btn" id="batch-clear">清空</button><button type="button" class="btn btn-accent" id="batch-start" disabled>开始处理</button></div></div>
+      </section>
+      <aside class="batch-side">
+        <section class="st-card">
+          <h3>默认设置</h3><p class="gl-hint">新加入队列的视频默认使用这里；每个视频也可以在列表里单独设置。</p>
+          <div class="batch-setting"><label for="batch-model">识别模型</label><select id="batch-model"></select></div>
+          <div class="batch-setting"><label for="batch-scheme">翻译方案</label><select id="batch-scheme"><option value="">跟随当前方案</option></select></div>
+          <div class="batch-checks"><label class="np-lbl-check"><input type="checkbox" id="batch-word" checked> 逐词</label><label class="np-lbl-check"><input type="checkbox" id="batch-align"> 对齐</label><label class="np-lbl-check"><input type="checkbox" id="batch-speakers"> 区分说话人</label><label class="np-lbl-check"><input type="checkbox" id="batch-autopost"> 创建后自动处理</label></div>
+          <p class="gl-hint">识别模型与逐词/对齐/说话人按视频生效；翻译方案会在处理该视频前切换，全部结束后恢复原来的方案。</p>
+        </section>
+        <section class="st-card batch-help"><h3>处理顺序</h3><p>队列从上到下串行执行：上传 → 创建项目 → 识别 → 语义分句 → 翻译。一个视频失败不会中断后面的视频。</p></section>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<!-- 单个视频的识别设置 -->
+<div id="batch-item-overlay" hidden>
+  <div class="rn-box modal-surface batch-item-box">
+    <div class="rn-title">单个视频设置</div>
+    <p class="rn-msg" id="batch-item-name"></p>
+    <div class="batch-setting"><label for="batch-item-model">识别模型</label><select id="batch-item-model"><option value="">跟随默认</option></select></div>
+    <div class="batch-setting"><label for="batch-item-scheme">翻译方案</label><select id="batch-item-scheme"><option value="">跟随默认</option></select></div>
+    <div class="batch-setting"><label for="batch-item-word">逐词</label><select id="batch-item-word"><option value="">跟随默认</option><option value="1">开启</option><option value="0">关闭</option></select></div>
+    <div class="batch-setting"><label for="batch-item-align">对齐</label><select id="batch-item-align"><option value="">跟随默认</option><option value="1">开启</option><option value="0">关闭</option></select></div>
+    <div class="batch-setting"><label for="batch-item-speakers">区分说话人</label><select id="batch-item-speakers"><option value="">跟随默认</option><option value="1">开启</option><option value="0">关闭</option></select></div>
+    <div class="rn-actions"><button type="button" class="btn" id="batch-item-cancel">取消</button><button type="button" class="btn btn-accent" id="batch-item-ok">保存</button></div>
+  </div>
+</div>
+
 <div id="np-view" class="workspace-page" hidden>
   <div class="page-inner ws-inner">
     <header class="page-head">
@@ -2289,7 +2364,7 @@
           <div class="sf-settings-line sf-glass-setting"><div><label for="sf-glass-opacity">毛玻璃透明度</label><p>降低数值可让背景更透；设置为 100% 时保持当前卡片的遮罩强度。</p></div><div class="sf-glass-range"><input type="range" id="sf-glass-opacity" min="20" max="100" step="1" value="100"><output id="sf-glass-opacity-value" for="sf-glass-opacity">100%</output></div></div>
           <p id="sf-theme-status" class="gl-hint" role="status">外观更改立即保存。</p>
         </div>
-        <div class="st-card sf-theme-card"><h3>主题包与色彩</h3><p class="gl-hint">选择界面的轮廓与材质，再调整你的强调色。</p><div id="sf-theme-packs" class="sf-theme-packs"></div><div class="sf-theme-tools"><button type="button" class="btn" id="sf-theme-import">导入主题包</button><button type="button" class="btn" id="sf-theme-export">导出主题包</button><input type="file" id="sf-theme-file" accept=".json,application/json" hidden></div>
+        <div class="st-card sf-theme-card"><h3>主题包与色彩</h3><p class="gl-hint">选择界面的轮廓与材质，再调整你的强调色。</p><div id="sf-theme-packs" class="sf-theme-packs"></div><div class="sf-theme-tools"><button type="button" class="btn" id="sf-theme-import">导入主题包</button><button type="button" class="btn" id="sf-theme-export">导出主题包</button><input type="file" id="sf-theme-file" accept=".zip,application/zip,.json,application/json" hidden></div>
           <div class="sf-theme-color-panel">
             <div class="sf-settings-line sf-settings-color"><div><label for="sf-color">自定义主题色</label><p>只改界面强调色，不影响字幕颜色与角色色。</p></div><input type="text" id="sf-color" data-color-input="1" value="#5c7560" aria-label="自定义主题色"></div>
             <div class="sf-settings-line sf-settings-monet" id="sf-monet-row" hidden><div><b>莫奈取色</b><p>选一张图片，从里面提取主色并按 Material You 重新生成整套配色。</p></div><button type="button" class="btn" id="sf-color-from-image">选择图片取色…</button><input type="file" id="sf-monet-file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" hidden></div>

@@ -8,7 +8,8 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
   speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
-  highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows } from './karaoke.js';
+  highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows,
+  sentenceSpeakerNames, filterSentencesBySpeakers } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
@@ -52,6 +53,7 @@ const btnExportJson = document.getElementById('btn-export-json');
 const btnExportZh = document.getElementById('btn-export-zh');
 const btnExportEn = document.getElementById('btn-export-en');
 const btnExportFull = document.getElementById('btn-export-full');
+const btnExportAdvanced = document.getElementById('btn-export-advanced');
 // 导出视频（硬字幕压制 / 生肉 / 字幕）—— 见 js/export-video.js
 const btnExportVideo = document.getElementById('btn-export-video');
 const btnFix = document.getElementById('btn-fix-subs');
@@ -1650,6 +1652,7 @@ function setSrt(text, name) {
   if (btnExportVideo) btnExportVideo.disabled = false;
   btnExportClean.disabled = true;
   btnExportJson.disabled = true;
+  if (btnExportAdvanced) btnExportAdvanced.disabled = true;
   /* 项目模式才有的低频操作。SRT 稿件也能点「全片逐词重校对」（确认后转逐词 ASS），
    * 所以这里只按有没有项目判；说话人分离由点击处理里给 SRT 明确提示。 */
   if (typeof realignEls !== 'undefined' && realignEls.btn) realignEls.btn.disabled = !state.project;
@@ -1945,6 +1948,7 @@ function setAss(text, name) {
   const hasKar = !!state.kar.wordStyle;
   btnExportClean.disabled = !hasKar;
   btnExportJson.disabled = !hasKar;
+  if (btnExportAdvanced) btnExportAdvanced.disabled = state.format !== 'ass' || !state.kar;
   btnExportZh.disabled = !hasKar;
   btnExportEn.disabled = !hasKar;
   // 拼接出来的状态行要分段过词典：整段拼接后无法命中任何键（词典层是整段匹配）
@@ -4619,6 +4623,7 @@ if (btnConvertWords) btnConvertWords.addEventListener('click', async () => {
     setAssStyleControls();
     btnExportClean.disabled = false;
     btnExportJson.disabled = false;
+    if (btnExportAdvanced) btnExportAdvanced.disabled = false;
     btnExportZh.disabled = false;
     btnExportEn.disabled = false;
     if (prior) {
@@ -6822,9 +6827,9 @@ async function applyRealignFull() {
     }
     /* 一条都没写进去时不要假装成功并收起预览：告诉用户为什么，保留清单让他重试/核对。 */
     if (!n) {
-      toast(`没有可应用的行：${miss || picks.length} 句的词序列与当前文本对不上，已跳过；文本未改动`, 7200);
+      toast(`没有可应用的行：${miss || picks.length} 句与当前字幕对不上（文本/时间/逐词可能已改动），已跳过；文本未改动`, 7200);
       logOp('realign', '全片逐词重校对：未应用',
-        `对齐结果与当前文本分词不一致，${miss || picks.length} 句全部跳过（文本未改动）`,
+        `对齐结果与当前字幕的文本/时间/逐词序列不一致，${miss || picks.length} 句全部跳过（文本未改动）`,
         'Qwen3-ForcedAligner 纯对齐；若字幕刚被改过，请重新跑一次重校对');
       if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
       return;
@@ -7147,6 +7152,93 @@ function buildLangAss(doc, sentences, wordStyle, lang) {
       });
     });
   return head.concat(body).join('\r\n');
+}
+
+/* ─────────── 高级导出：按说话人筛选 ─────────── */
+function buildSpeakerAss(doc, sentences) {
+  const cut = doc.eventsFormatLineIdx != null ? doc.eventsFormatLineIdx + 1 : doc.lines.length;
+  const head = doc.lines.slice(0, cut).filter(line => line !== null);
+  const body = sentences.map(sent => {
+    const ev = sent.events && sent.events[0];
+    if (!ev) return null;
+    const proto = sent.proto || {};
+    return doc._buildDialogueLine({
+      layer: proto.layer, style: sent.style, name: proto.name,
+      effect: proto.effect, margins: proto.margins,
+      start: sent.start, end: sent.end, text: ev.text,
+    });
+  }).filter(Boolean);
+  return head.concat(body).join('\r\n');
+}
+function advOpen() {
+  if (state.format !== 'ass' || !state.kar) { toast('高级导出（按角色）只支持 ASS 稿件', 4600); return; }
+  const ov = document.getElementById('adv-export-overlay');
+  const list = document.getElementById('adv-role-list');
+  if (!ov || !list) return;
+  const roles = computeRoles();
+  const hasUnassigned = state.kar.sentences.some(sent => !sentenceSpeakerNames(sent).length);
+  list.innerHTML = (roles.length ? roles.map(role => `<label class="adv-role-item"><input type="checkbox" data-adv-role="${escapeHtml(role.name)}" checked><span>${escapeHtml(role.name)}</span><small>${role.count || 0} 行</small></label>`).join('') : '')
+    + (hasUnassigned || !roles.length ? '<label class="adv-role-item"><input type="checkbox" data-adv-unassigned checked><span>未标注角色</span><small>不写角色名</small></label>' : '');
+  if (!list.innerHTML) list.innerHTML = '<div class="adv-role-empty">当前稿件没有角色标注；先到「角色」页给字幕分配说话人。</div>';
+  const fmt = document.getElementById('adv-export-format');
+  if (fmt) fmt.value = 'raw';
+  ov.hidden = false;
+}
+function advClose() { const ov = document.getElementById('adv-export-overlay'); if (ov) ov.hidden = true; }
+function advExport() {
+  if (state.format !== 'ass' || !state.kar) return;
+  const boxes = [...document.querySelectorAll('#adv-role-list input[data-adv-role]:checked')];
+  const selected = boxes.map(b => b.dataset.advRole);
+  const includeUnassigned = !!document.querySelector('#adv-role-list input[data-adv-unassigned]:checked');
+  if (!selected.length && !includeUnassigned) { toast('至少保留一个说话人', 3600); return; }
+  const filtered = filterSentencesBySpeakers(state.kar.sentences, selected, includeUnassigned);
+  if (!filtered.length) { toast('勾选的说话人没有可导出的字幕行', 4200); return; }
+  const fmt = (document.getElementById('adv-export-format') || {}).value || 'raw';
+  const base = state.fileName.replace(/\.(ass|ssa)$/i, '');
+  const suffix = selected.length === 1 ? '_' + selected[0].replace(/[\\/:*?"<>|]/g, '_') : '_speakers';
+  try {
+    if (fmt === 'json') {
+      const r3 = v => Math.round(v * 1000) / 1000;
+      const data = {
+        generator: 'subtitle-editor',
+        wordStyle: state.kar.wordStyle,
+        speakers: selected,
+        sentences: filtered.filter(sn => sn.words.length).map(sn => ({
+          style: sn.style, speaker: sentenceSpeakerNames(sn).join('/'),
+          start: r3(sn.start), end: r3(sn.end), text: sn.text,
+          words: sn.words.map(w => ({ w: w.w, s: r3(w.s), e: r3(w.e) })),
+        })),
+      };
+      download(`${base}${suffix}_words.json`, JSON.stringify(data, null, 2));
+    } else if (fmt === 'clean') {
+      const out = applyPostProcess(buildCleanAss(state.assDoc, filtered), state.postProcessConfig, state.assStyleTargets);
+      download(`${base}${suffix}_clean.ass`, out);
+    } else if (fmt === 'zh' || fmt === 'en') {
+      const out = applyPostProcess(buildLangAss(state.assDoc, filtered, state.kar.wordStyle, fmt), state.postProcessConfig, state.assStyleTargets);
+      download(`${base}${suffix}_${fmt}.ass`, out);
+    } else {
+      const out = applyPostProcess(buildSpeakerAss(state.assDoc, filtered), state.postProcessConfig, state.assStyleTargets);
+      download(`${base}${suffix}.ass`, out);
+    }
+    advClose();
+    toast(`已导出 ${filtered.length} 行（${selected.length ? selected.join(' / ') : '未标注角色'}）`, 5600);
+  } catch (e) {
+    toast('高级导出失败：' + ((e && e.message) || e), 5600);
+  }
+}
+if (btnExportAdvanced) {
+  btnExportAdvanced.addEventListener('click', advOpen);
+  document.getElementById('adv-export-cancel')?.addEventListener('click', advClose);
+  document.getElementById('adv-export-ok')?.addEventListener('click', advExport);
+  document.getElementById('adv-export-all')?.addEventListener('click', () => {
+    document.querySelectorAll('#adv-role-list input[type=checkbox]').forEach(b => { b.checked = true; });
+  });
+  document.getElementById('adv-export-none')?.addEventListener('click', () => {
+    document.querySelectorAll('#adv-role-list input[type=checkbox]').forEach(b => { b.checked = false; });
+  });
+  document.getElementById('adv-export-overlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'adv-export-overlay') advClose();
+  });
 }
 
 /* 导出无逐词效果的干净 ASS */

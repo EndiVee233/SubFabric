@@ -129,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.0.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.0.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.0.2'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.0.2'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -330,7 +330,7 @@ const STATIC_RESOURCES = new Set([
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'glossary-review'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
@@ -707,6 +707,9 @@ const prepareJobs = new Set();   // 正在跑 prepare 的项目 id(进程内; �
  * 导致运行中的任务被误判为「服务已重启而中断」。 */
 const draftJobs = new Set();     // 正在跑"提取之后"阶段的项目 id
 const draftProcs = new Map();    // 项目 id → 正在跑的识别子进程(ChildProcess), 删项目/重跑时精确清理
+/* 批量创建初稿：一个作业串行处理多个已有视频/无字幕项目，避免同时开多个 ASR 抢显卡。 */
+const batchDraftJobs = new Map();
+let batchDraftSeq = 0;
 const draftAborts = new Map();   // 项目 id → AbortController(云端识别没有子进程, 靠它取消)
 const pendingAsr = new Map();    // prepare 成功后待跑识别的项目 id -> { wordLevel }
 const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId -> job
@@ -8239,6 +8242,107 @@ function startPrepare(id, videoPath, mode) {
     throw lastErr || new Error('云端识别失败（两个引擎都没成功）');
   }
 
+  /** 为一个已经存在、还没有字幕的项目启动初稿流水线。
+   *  与「新建项目」不同：视频/音频通常已经在项目里，能直接进 ASR；没有音频才补 prepare。
+   *  只允许无字幕项目 —— 批量功能不应覆盖已有稿件。 */
+  async function startDraftForExisting(id, options) {
+    const o = options || {};
+    const meta = readMeta(id);
+    if (!meta) throw new Error('项目不存在');
+    if (meta.subtitle && meta.subtitle.file) throw new Error('项目已有字幕');
+    if (meta.draft && meta.draft.status === 'running') throw new Error('项目正在处理中');
+    const vp = String((meta.video && meta.video.path) || '');
+    if (!vp || !fs.existsSync(vp)) throw new Error('视频文件不存在');
+    const model = (o.modelId && modelById(String(o.modelId))) || resolveAsrModel();
+    if (!model) throw new Error('没有可用的语音识别模型');
+    if (!draftAllowedOf(model)) throw new Error('「' + model.name + '」只能用于重新识别，不能创建初稿');
+    const plan = await draftOutputPlan(model, o);
+    const wantSpeakers = !!o.speakers && !!plan.wordLevel;
+    const speakerCount = Math.max(1, Math.min(12, parseInt(o.speakerCount, 10) || 6));
+    const now = new Date().toISOString();
+    meta.draft = {
+      status: 'running', stage: STAGE.extract, progress: 3, message: '准备创建初稿…',
+      wordLevel: plan.wordLevel, align: plan.align, lines: 0, words: 0,
+      translated: false, needTranslate: false,
+      karaokeStyle: plan.wordLevel && o.karaokeStyle === 'k' ? 'k' : 'color',
+      karaokeSweep: false, karaokeBase: '#FFFFFF',
+      modelId: model.id, engine: model.engine || '',
+      speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
+      confidence: CONFIDENCE_MODES.includes(o.confidence) ? o.confidence : null,
+      startedAt: now, error: null,
+    };
+    if (o.autoPost) meta.autoPost = true;
+    writeMeta(meta);
+    pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] 批量创建初稿：' + (meta.name || id));
+    const prepared = meta.prepare && meta.prepare.status === 'done'
+      && fs.existsSync(path.join(projDir(id), 'audio.wav'));
+    pendingAsr.set(id, { wordLevel: plan.wordLevel, align: plan.align });
+    if (prepared) {
+      pendingAsr.delete(id);
+      safeDraftStep(id, () => startDraftAsr(id, plan.wordLevel, plan.align));
+    } else if (meta.prepare && meta.prepare.status === 'running') {
+      /* 已有 prepare 在跑：finishPrepare 会读 pendingAsr 接着识别。 */
+    } else {
+      startPrepare(id, vp, 'raw');
+    }
+    return readMeta(id);
+  }
+
+  /** 串行批处理：一次只跑一个项目的初稿；进度存在内存，前端按 job id 轮询。 */
+  function startBatchDraftJob(ids, options) {
+    const list = [...new Set(ids)].slice(0, 50);
+    const active = [...batchDraftJobs.values()].some(j => j.status === 'running');
+    if (active) throw new Error('已有一个批量创建初稿任务在跑，等它结束再开始');
+    const job = {
+      id: 'bd-' + Date.now().toString(36) + '-' + (++batchDraftSeq).toString(36),
+      status: 'running', total: list.length, done: 0, failed: 0,
+      current: '', startedAt: new Date().toISOString(), finishedAt: '',
+      items: list.map(id => {
+        const m = readMeta(id);
+        return { id, name: (m && m.name) || id, status: 'pending', error: '' };
+      }),
+    };
+    batchDraftJobs.set(job.id, job);
+    (async () => {
+      for (const item of job.items) {
+        if (job.canceled) { item.status = 'canceled'; continue; }
+        job.current = item.id;
+        try {
+          const meta = readMeta(item.id);
+          item.name = (meta && meta.name) || item.id;
+          await startDraftForExisting(item.id, options);
+          item.status = 'running';
+          const deadline = Date.now() + 6 * 3600 * 1000;
+          while (Date.now() < deadline && !job.canceled) {
+            await new Promise(r => setTimeout(r, 1500));
+            const m = readMeta(item.id);
+            const d = m && m.draft;
+            if (!d || d.status !== 'running') {
+              item.status = d ? (d.status || 'error') : 'error';
+              item.error = (d && d.error) || (d ? '' : '项目或任务已消失');
+              break;
+            }
+          }
+          if (item.status === 'running') { item.status = 'error'; item.error = '等待初稿完成超时'; }
+        } catch (e) {
+          item.status = 'error';
+          item.error = String((e && e.message) || e);
+        }
+        job.done++;
+        if (item.status === 'error') job.failed++;
+        job.current = '';
+      }
+      job.status = job.canceled ? 'canceled' : 'done';
+      job.finishedAt = new Date().toISOString();
+      setTimeout(() => batchDraftJobs.delete(job.id), 10 * 60 * 1000).unref?.();
+    })().catch(e => {
+      job.status = 'error';
+      job.error = String((e && e.message) || e);
+      job.finishedAt = new Date().toISOString();
+    });
+    return job;
+  }
+
   async function startDraftAsr(id, wordLevel, align) {
     const meta0 = readMeta(id) || {};
     const wantId = meta0.draft && meta0.draft.modelId;
@@ -10647,6 +10751,31 @@ function handleProjectsRoutes(req, res, u) {
       startPrepare(id, vp, 'raw');       // 后台提取音频 + 波形
       return sendJson(res, 200, metaView(readMeta(id)));   // 重读: startPrepare 已把 prepare 置为 running
     });
+  }
+  /* ═══ 批量创建初稿（已有视频、还没有字幕的项目）═══ */
+  if (pathname === '/api/projects/batch-draft' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, async (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let data; try { data = JSON.parse(body.toString('utf8')); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const ids = Array.isArray(data && data.ids)
+        ? [...new Set(data.ids.filter(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id)))]
+        : [];
+      if (!ids.length) return sendJson(res, 400, { error: '没有选择项目' });
+      try {
+        const job = startBatchDraftJob(ids, data.options || {});
+        return sendJson(res, 200, job);
+      } catch (e) {
+        return sendJson(res, 409, { error: String((e && e.message) || e) });
+      }
+    });
+  }
+  {
+    const mBD = /^\/api\/projects\/batch-draft\/([a-z0-9-]{3,80})$/i.exec(pathname);
+    if (mBD && req.method === 'GET') {
+      const job = batchDraftJobs.get(mBD[1]);
+      if (!job) return sendJson(res, 404, { error: '批量任务不存在或已过期' });
+      return sendJson(res, 200, job);
+    }
   }
   /* ═══ 项目压缩包：导出 / 导入（在 if (pm) 之外 —— 导入没有项目 id，
    *     导出虽然带 id 但要能在任意路径命中，所以都自取 pathname）═══ */

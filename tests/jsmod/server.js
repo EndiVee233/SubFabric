@@ -129,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.0.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.0.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.0.2'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.0.2'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -330,7 +330,7 @@ const STATIC_RESOURCES = new Set([
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'glossary-review'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
@@ -707,6 +707,9 @@ const prepareJobs = new Set();   // 正在跑 prepare 的项目 id(进程内; �
  * 导致运行中的任务被误判为「服务已重启而中断」。 */
 const draftJobs = new Set();     // 正在跑"提取之后"阶段的项目 id
 const draftProcs = new Map();    // 项目 id → 正在跑的识别子进程(ChildProcess), 删项目/重跑时精确清理
+/* 批量创建初稿：一个作业串行处理多个已有视频/无字幕项目，避免同时开多个 ASR 抢显卡。 */
+const batchDraftJobs = new Map();
+let batchDraftSeq = 0;
 const draftAborts = new Map();   // 项目 id → AbortController(云端识别没有子进程, 靠它取消)
 const pendingAsr = new Map();    // prepare 成功后待跑识别的项目 id -> { wordLevel }
 const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId -> job
@@ -2182,21 +2185,29 @@ const pySpawnEnv = () => Object.assign({}, process.env, {
 });
 
 /** 检测 NVIDIA 显卡(驱动自带 nvidia-smi); 返回显卡名或 null。结果由调用方缓存。 */
-function detectNvidia() {
-  return new Promise((resolve) => {
-    const p = spawn('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { windowsHide: true });
-    let out = '';
-    const t = setTimeout(() => { try { p.kill(); } catch {} resolve(null); }, 8000);
-    p.stdout.on('data', c => { out += c; });
-    p.on('error', () => { clearTimeout(t); resolve(null); });
-    p.on('close', code => { clearTimeout(t); resolve(code === 0 && out.trim() ? out.trim().split('\n')[0].trim() : null); });
-  });
+async function detectNvidia() {
+  const lines = await runCmdLines('nvidia-smi', ['--query-gpu=name,memory.total,memory.free,driver_version', '--format=csv,noheader,nounits']);
+  nvidiaDevices = lines.map(line => {
+    const fields = line.split(',').map(s => s.trim());
+    if (fields.length !== 4 || !/^\d+(?:\.\d+)+$/.test(fields[3])) return null;
+    const [name, total, free, driver] = fields;
+    return { name, vramMB: Number.isFinite(Number(total)) && Number(total) > 0 ? Number(total) : null,
+      freeMB: free && Number.isFinite(Number(free)) && Number(free) >= 0 ? Number(free) : null,
+      driver: driver || '', memorySource: 'nvidia-smi' };
+  }).filter(g => g?.name);
+  return nvidiaDevices[0]?.name || null;
 }
 let nvidiaCache = { at: 0, name: null };
-async function nvidiaGpu() {
-  if (Date.now() - nvidiaCache.at < 5 * 60 * 1000) return nvidiaCache.name;
-  nvidiaCache = { at: Date.now(), name: await detectNvidia() };
-  return nvidiaCache.name;
+let nvidiaDevices = [];
+let nvidiaInflight = null;
+async function nvidiaGpu(force = false) {
+  if (nvidiaInflight) return nvidiaInflight;
+  if (!force && Date.now() - nvidiaCache.at < 5 * 60 * 1000) return nvidiaCache.name;
+  nvidiaInflight = detectNvidia().then(name => {
+    nvidiaCache = { at: Date.now(), name };
+    return name;
+  }).finally(() => { nvidiaInflight = null; });
+  return nvidiaInflight;
 }
 
 /* ═══════════ 硬件能力探测（欢迎界面 / 设置页的加速方式） ═══════════
@@ -2241,6 +2252,20 @@ async function detectVideoControllers() {
     seen.add(k); return true;
   });
 }
+/** 只读取驱动的 64 位专用显存值；WMI AdapterRAM 是 uint32，超过 4GB 会截断。
+ * 核显的共享系统内存不能当作专用显存；读不到时保持未知，不按型号猜容量。 */
+async function detectVideoMemory() {
+  const script = "$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+    + "$rows=@(Get-CimInstance Win32_VideoController | ForEach-Object { "
+    + "$dev=Get-ItemProperty -LiteralPath ('HKLM:\\SYSTEM\\CurrentControlSet\\Enum\\'+$_.PNPDeviceID); "
+    + "$reg=Get-ItemProperty -LiteralPath ('HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\'+$dev.Driver); "
+    + "$bytes=$reg.'HardwareInformation.qwMemorySize'; "
+    + "if($bytes -is [byte[]] -and $bytes.Length -eq 8){$bytes=[BitConverter]::ToUInt64($bytes,0)}; "
+    + "[pscustomobject]@{name=$_.Name;vramMB=$(if($bytes -is [ValueType] -and $bytes -gt 0){[math]::Round($bytes/1MB)}else{$null});memorySource='driver-registry'} "
+    + "}); ConvertTo-Json -InputObject $rows -Compress";
+  const lines = await runCmdLines('powershell.exe', ['-NoProfile', '-Command', script]);
+  try { const rows = JSON.parse(lines.join('')); return Array.isArray(rows) ? rows : []; } catch { return []; }
+}
 async function detectNpuDevices() {
   const names = await runCmdLines('powershell.exe', ['-NoProfile', '-Command',
     "Get-CimInstance Win32_PnPEntity | Where-Object { ($_.Name -match 'AI Boost|Ryzen AI|NPU|IPU') -and ($_.Name -notmatch 'Input|HID') } | Select-Object -ExpandProperty Name"], 8000);
@@ -2252,8 +2277,8 @@ function probeHardware(force = false) {
   if (!force && fresh) return Promise.resolve(hardwareCache.data);
   if (hardwareCache.inflight) return hardwareCache.inflight;
   hardwareCache.inflight = (async () => {
-    const [cuda, controllers, npuDevices] = await Promise.all([
-      nvidiaGpu().catch(() => null), detectVideoControllers(), detectNpuDevices(),
+    const [cuda, controllers, npuDevices, memory] = await Promise.all([
+      nvidiaGpu(force).catch(() => null), detectVideoControllers(), detectNpuDevices(), detectVideoMemory(),
     ]);
     const vulkanLoader = (() => {
       try { return fs.statSync(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'vulkan-1.dll')).isFile(); }
@@ -2261,9 +2286,17 @@ function probeHardware(force = false) {
     })();
     const physical = controllers.filter(n => !/virtual|remote|basic|gameviewer|honor/i.test(n));
     const vulkanDevices = physical;
+    const adapters = physical.map(name => {
+      const info = nvidiaDevices.find(g => g.name.toLowerCase() === name.toLowerCase())
+        || memory.find(g => String(g.name).toLowerCase() === name.toLowerCase());
+      return { name, vramMB: Number(info?.vramMB) > 0 ? Number(info.vramMB) : null,
+        freeMB: info?.freeMB ?? null, memorySource: info?.memorySource || '' };
+    });
     const data = {
-      cuda: { available: !!cuda, device: cuda || '' },
-      vulkan: { available: vulkanLoader && vulkanDevices.length > 0, devices: vulkanDevices, loader: vulkanLoader },
+      cuda: { available: !!cuda, device: cuda || '', devices: nvidiaDevices.slice(),
+        vramMB: cuda ? nvidiaDevices[0]?.vramMB ?? null : null,
+        freeMB: cuda ? nvidiaDevices[0]?.freeMB ?? null : null, driver: cuda ? nvidiaDevices[0]?.driver || '' : '' },
+      vulkan: { available: vulkanLoader && vulkanDevices.length > 0, devices: vulkanDevices, adapters, loader: vulkanLoader },
       npu: { available: npuDevices.length > 0, devices: npuDevices },
       cpu: false,
       at: new Date().toISOString(),
@@ -8209,6 +8242,107 @@ function startPrepare(id, videoPath, mode) {
     throw lastErr || new Error('云端识别失败（两个引擎都没成功）');
   }
 
+  /** 为一个已经存在、还没有字幕的项目启动初稿流水线。
+   *  与「新建项目」不同：视频/音频通常已经在项目里，能直接进 ASR；没有音频才补 prepare。
+   *  只允许无字幕项目 —— 批量功能不应覆盖已有稿件。 */
+  async function startDraftForExisting(id, options) {
+    const o = options || {};
+    const meta = readMeta(id);
+    if (!meta) throw new Error('项目不存在');
+    if (meta.subtitle && meta.subtitle.file) throw new Error('项目已有字幕');
+    if (meta.draft && meta.draft.status === 'running') throw new Error('项目正在处理中');
+    const vp = String((meta.video && meta.video.path) || '');
+    if (!vp || !fs.existsSync(vp)) throw new Error('视频文件不存在');
+    const model = (o.modelId && modelById(String(o.modelId))) || resolveAsrModel();
+    if (!model) throw new Error('没有可用的语音识别模型');
+    if (!draftAllowedOf(model)) throw new Error('「' + model.name + '」只能用于重新识别，不能创建初稿');
+    const plan = await draftOutputPlan(model, o);
+    const wantSpeakers = !!o.speakers && !!plan.wordLevel;
+    const speakerCount = Math.max(1, Math.min(12, parseInt(o.speakerCount, 10) || 6));
+    const now = new Date().toISOString();
+    meta.draft = {
+      status: 'running', stage: STAGE.extract, progress: 3, message: '准备创建初稿…',
+      wordLevel: plan.wordLevel, align: plan.align, lines: 0, words: 0,
+      translated: false, needTranslate: false,
+      karaokeStyle: plan.wordLevel && o.karaokeStyle === 'k' ? 'k' : 'color',
+      karaokeSweep: false, karaokeBase: '#FFFFFF',
+      modelId: model.id, engine: model.engine || '',
+      speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
+      confidence: CONFIDENCE_MODES.includes(o.confidence) ? o.confidence : null,
+      startedAt: now, error: null,
+    };
+    if (o.autoPost) meta.autoPost = true;
+    writeMeta(meta);
+    pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] 批量创建初稿：' + (meta.name || id));
+    const prepared = meta.prepare && meta.prepare.status === 'done'
+      && fs.existsSync(path.join(projDir(id), 'audio.wav'));
+    pendingAsr.set(id, { wordLevel: plan.wordLevel, align: plan.align });
+    if (prepared) {
+      pendingAsr.delete(id);
+      safeDraftStep(id, () => startDraftAsr(id, plan.wordLevel, plan.align));
+    } else if (meta.prepare && meta.prepare.status === 'running') {
+      /* 已有 prepare 在跑：finishPrepare 会读 pendingAsr 接着识别。 */
+    } else {
+      startPrepare(id, vp, 'raw');
+    }
+    return readMeta(id);
+  }
+
+  /** 串行批处理：一次只跑一个项目的初稿；进度存在内存，前端按 job id 轮询。 */
+  function startBatchDraftJob(ids, options) {
+    const list = [...new Set(ids)].slice(0, 50);
+    const active = [...batchDraftJobs.values()].some(j => j.status === 'running');
+    if (active) throw new Error('已有一个批量创建初稿任务在跑，等它结束再开始');
+    const job = {
+      id: 'bd-' + Date.now().toString(36) + '-' + (++batchDraftSeq).toString(36),
+      status: 'running', total: list.length, done: 0, failed: 0,
+      current: '', startedAt: new Date().toISOString(), finishedAt: '',
+      items: list.map(id => {
+        const m = readMeta(id);
+        return { id, name: (m && m.name) || id, status: 'pending', error: '' };
+      }),
+    };
+    batchDraftJobs.set(job.id, job);
+    (async () => {
+      for (const item of job.items) {
+        if (job.canceled) { item.status = 'canceled'; continue; }
+        job.current = item.id;
+        try {
+          const meta = readMeta(item.id);
+          item.name = (meta && meta.name) || item.id;
+          await startDraftForExisting(item.id, options);
+          item.status = 'running';
+          const deadline = Date.now() + 6 * 3600 * 1000;
+          while (Date.now() < deadline && !job.canceled) {
+            await new Promise(r => setTimeout(r, 1500));
+            const m = readMeta(item.id);
+            const d = m && m.draft;
+            if (!d || d.status !== 'running') {
+              item.status = d ? (d.status || 'error') : 'error';
+              item.error = (d && d.error) || (d ? '' : '项目或任务已消失');
+              break;
+            }
+          }
+          if (item.status === 'running') { item.status = 'error'; item.error = '等待初稿完成超时'; }
+        } catch (e) {
+          item.status = 'error';
+          item.error = String((e && e.message) || e);
+        }
+        job.done++;
+        if (item.status === 'error') job.failed++;
+        job.current = '';
+      }
+      job.status = job.canceled ? 'canceled' : 'done';
+      job.finishedAt = new Date().toISOString();
+      setTimeout(() => batchDraftJobs.delete(job.id), 10 * 60 * 1000).unref?.();
+    })().catch(e => {
+      job.status = 'error';
+      job.error = String((e && e.message) || e);
+      job.finishedAt = new Date().toISOString();
+    });
+    return job;
+  }
+
   async function startDraftAsr(id, wordLevel, align) {
     const meta0 = readMeta(id) || {};
     const wantId = meta0.draft && meta0.draft.modelId;
@@ -9349,6 +9483,7 @@ function handleAsrRoutes(req, res, u) {
         return r ? { ok: !!r.ok, msg: r.msg || '', engine: key, at: r.at } : null;
       })(),
       python: ASR_PY, pythonOk,
+      qwenPythonReady: fs.existsSync(qwenPython()),
       // Python 环境预检(结果缓存 5 分钟; 触发后台探测, 下次轮询就有)
       pythonProbe: pyProbeCache,
       provider: asrProvider(),              // Parakeet 推理设备: 'cpu' | 'cuda'
@@ -10616,6 +10751,31 @@ function handleProjectsRoutes(req, res, u) {
       startPrepare(id, vp, 'raw');       // 后台提取音频 + 波形
       return sendJson(res, 200, metaView(readMeta(id)));   // 重读: startPrepare 已把 prepare 置为 running
     });
+  }
+  /* ═══ 批量创建初稿（已有视频、还没有字幕的项目）═══ */
+  if (pathname === '/api/projects/batch-draft' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, async (err, body) => {
+      if (err) return sendJson(res, 400, { error: String(err.message) });
+      let data; try { data = JSON.parse(body.toString('utf8')); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const ids = Array.isArray(data && data.ids)
+        ? [...new Set(data.ids.filter(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id)))]
+        : [];
+      if (!ids.length) return sendJson(res, 400, { error: '没有选择项目' });
+      try {
+        const job = startBatchDraftJob(ids, data.options || {});
+        return sendJson(res, 200, job);
+      } catch (e) {
+        return sendJson(res, 409, { error: String((e && e.message) || e) });
+      }
+    });
+  }
+  {
+    const mBD = /^\/api\/projects\/batch-draft\/([a-z0-9-]{3,80})$/i.exec(pathname);
+    if (mBD && req.method === 'GET') {
+      const job = batchDraftJobs.get(mBD[1]);
+      if (!job) return sendJson(res, 404, { error: '批量任务不存在或已过期' });
+      return sendJson(res, 200, job);
+    }
   }
   /* ═══ 项目压缩包：导出 / 导入（在 if (pm) 之外 —— 导入没有项目 id，
    *     导出虽然带 id 但要能在任意路径命中，所以都自取 pathname）═══ */
