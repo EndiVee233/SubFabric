@@ -58,7 +58,7 @@
   <div class="welcome-shell">
     <header class="welcome-head">
       <span class="welcome-brand"><img src="/editor/assets/app-logo.png" alt=""><b>SubFabric</b><small>字幕创作工作室</small></span>
-      <span class="welcome-step" id="welcome-step">首次设置</span>
+      <span class="welcome-step" id="welcome-step" aria-live="polite">1 / 2 · 加速方式</span>
     </header>
     <div class="welcome-copy">
       <p class="welcome-eyebrow">WELCOME TO SUBFABRIC</p>
@@ -81,8 +81,8 @@
         <span class="welcome-card-check" aria-hidden="true"></span>
       </label>
     </div>
-    <section class="welcome-prep" id="welcome-prep" aria-labelledby="welcome-prep-title">
-      <div class="welcome-prep-head"><h2 id="welcome-prep-title">模型与前置准备</h2><button type="button" class="btn" id="welcome-prep-refresh">刷新准备状态</button></div>
+    <section class="welcome-prep" id="welcome-prep" aria-labelledby="welcome-prep-title" hidden>
+      <div class="welcome-prep-head"><h2 id="welcome-prep-title" tabindex="-1">模型与前置准备</h2><button type="button" class="btn" id="welcome-prep-refresh">刷新准备状态</button></div>
       <p class="welcome-prep-note">按所选后端与专用显存给出保守建议；模型下载大小不代表显存占用。可在这里准备，也可稍后到设置中完成。</p>
       <p id="welcome-prep-status" role="status" aria-live="polite">正在读取模型与前置状态…</p>
       <div id="welcome-prep-common"></div>
@@ -94,11 +94,13 @@
       </div>
     </div>
     <footer class="welcome-actions">
-      <button type="button" class="btn btn-accent welcome-go" id="welcome-go" disabled>进入工作台 <span aria-hidden="true">→</span></button>
+      <button type="button" class="btn btn-accent welcome-go" id="welcome-next" disabled>下一步 <span aria-hidden="true">→</span></button>
+      <button type="button" class="btn btn-accent welcome-go" id="welcome-go" hidden disabled>进入工作台 <span aria-hidden="true">→</span></button>
+      <button type="button" class="btn welcome-back" id="welcome-back" hidden>上一步</button>
       <button type="button" class="btn welcome-retry" id="welcome-retry">重新检测</button>
       <button type="button" class="btn welcome-cancel" id="welcome-cancel" hidden>取消</button>
     </footer>
-    <p class="welcome-foot">CPU 推理不受支持 · 至少选择一种 GPU 后端；更多硬件信息在「设置 → 性能与调度」</p>
+    <p class="welcome-foot" id="welcome-foot">CPU 推理不受支持 · 至少选择一种 GPU 后端；更多硬件信息在「设置 → 性能与调度」</p>
   </div>
 </section>
 <div id="app">

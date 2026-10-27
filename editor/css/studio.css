@@ -7006,6 +7006,7 @@ body.sf-welcome-open #app { visibility: hidden; }
   isolation: isolate;
 }
 .welcome-view[hidden] { display: none; }
+.welcome-view [hidden] { display: none !important; }
 
 .welcome-aurora { position: fixed; inset: -18%; z-index: -1; pointer-events: none; overflow: hidden; }
 .welcome-aurora i {
@@ -7196,10 +7197,12 @@ body.sf-welcome-open #app { visibility: hidden; }
 .welcome-go:not(:disabled) span { transition: transform .2s ease; }
 .welcome-go:not(:disabled):hover span { transform: translateX(4px); }
 .welcome-go:disabled { opacity: .45; }
-.welcome-retry, .welcome-cancel { min-height: 40px; }
+.welcome-retry, .welcome-cancel, .welcome-back { min-height: 40px; }
 .welcome-foot { margin: 0; color: var(--text-2); font-size: 10.5px; line-height: 1.7; }
 
 .welcome-prep { border-top: 1px solid var(--border); padding-top: 20px; min-width: 0; }
+.welcome-view[data-welcome-step="2"] .welcome-copy h1 { font-size: clamp(28px, 4vw, 42px); }
+.welcome-view[data-welcome-step="2"] .welcome-prep { border-top: 0; padding-top: 0; }
 .welcome-prep-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .welcome-prep h2 { margin: 0; font-size: 17px; }
 .welcome-prep-note, #welcome-prep-status { color: var(--text-1); font-size: 12px; line-height: 1.7; }

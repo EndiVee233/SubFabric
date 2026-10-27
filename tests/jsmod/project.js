@@ -5589,6 +5589,8 @@ async function renderAsrModels() {
   const welcomeCudaState = $('#welcome-cuda-state');
   const welcomeVulkanState = $('#welcome-vulkan-state');
   const welcomeGo = $('#welcome-go');
+  const welcomeNext = $('#welcome-next');
+  const welcomeBack = $('#welcome-back');
   const welcomeRetry = $('#welcome-retry');
   const welcomeCancel = $('#welcome-cancel');
   const welcomeAlert = $('#welcome-alert');
@@ -5596,6 +5598,7 @@ async function renderAsrModels() {
   let welcomeError = '';
   let welcomeAlertClearTimer = 0;
   let welcomePrepStatus = null;
+  let welcomeStep = 1;
   let welcomePrepError = '';
   let welcomePrepTimer = 0;
   let welcomePrepGeneration = 0;
@@ -5603,6 +5606,50 @@ async function renderAsrModels() {
   let welcomePrepLayout = '';
   const welcomePrepChoices = {};
   const welcomePrepPending = new Set();
+
+  function welcomeSetStep(step) {
+    welcomeStep = step === 2 ? 2 : 1;
+    const preparing = welcomeStep === 2;
+    if (welcomeView) {
+      welcomeView.dataset.welcomeStep = String(welcomeStep);
+      welcomeView.scrollTop = 0;
+    }
+    const cards = $('#welcome-cards'); if (cards) cards.hidden = preparing;
+    const prep = $('#welcome-prep'); if (prep) prep.hidden = !preparing;
+    if (welcomeNext) welcomeNext.hidden = preparing;
+    if (welcomeGo) welcomeGo.hidden = !preparing;
+    if (welcomeBack) welcomeBack.hidden = !preparing;
+    if (welcomeRetry) welcomeRetry.hidden = preparing;
+    const indicator = $('#welcome-step');
+    if (indicator) indicator.textContent = preparing ? '2 / 2 · 模型与前置' : '1 / 2 · 加速方式';
+    const title = $('#welcome-title');
+    if (title) title.innerHTML = preparing ? '下载模型<em>与前置。</em>' : '先让这台电脑<br><em>跑起来。</em>';
+    const sub = $('#welcome-sub');
+    if (sub) sub.textContent = preparing
+      ? '根据刚才选择的加速方式，为这台电脑准备识别模型和运行环境。'
+      : '检测本机的加速能力。选择至少一种 GPU 后端，语音识别只会显示可用的模型。';
+    const foot = $('#welcome-foot');
+    if (foot) foot.textContent = preparing
+      ? '可按需下载，也可先进入工作台，稍后在设置中完成准备。'
+      : 'CPU 推理不受支持 · 至少选择一种 GPU 后端；更多硬件信息在「设置 → 性能与调度」';
+    if (!preparing) {
+      clearTimeout(welcomePrepTimer);
+      welcomePrepGeneration++;
+    }
+    welcomeSyncSelection();
+  }
+  function welcomeAdvance() {
+    const sel = welcomeSelected();
+    if (welcomeStep !== 1 || welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan)) return;
+    welcomeSetStep(2);
+    welcomeRefreshPrep();
+    $('#welcome-prep-title')?.focus({ preventScroll: true });
+  }
+  function welcomePrevious() {
+    if (welcomeBusy || welcomeStep !== 2) return;
+    welcomeSetStep(1);
+    welcomeNext?.focus({ preventScroll: true });
+  }
 
   function welcomePrepItems() {
     const common = welcomePrepStatus?.ffmpeg;
@@ -5681,12 +5728,13 @@ async function renderAsrModels() {
   }
   async function welcomeRefreshPrep() {
     clearTimeout(welcomePrepTimer);
+    if (!welcomeBlocking || welcomeStep !== 2) return;
     const generation = ++welcomePrepGeneration;
     try {
       const r = await fetch('/api/asr/status', { signal: AbortSignal.timeout(15000) });
       const j = await r.json();
       if (!r.ok || j.error) throw Error(j.error || 'HTTP ' + r.status);
-      if (generation !== welcomePrepGeneration || !welcomeBlocking) return;
+      if (generation !== welcomePrepGeneration || !welcomeBlocking || welcomeStep !== 2) return;
       welcomePrepStatus = j;
       welcomePrepError = '';
       welcomeRenderPrep();
@@ -5694,12 +5742,13 @@ async function renderAsrModels() {
         welcomePrepTimer = setTimeout(welcomeRefreshPrep, 2000);
       }
     } catch (e) {
-      if (generation !== welcomePrepGeneration || !welcomeBlocking) return;
+      if (generation !== welcomePrepGeneration || !welcomeBlocking || welcomeStep !== 2) return;
       welcomePrepError = '准备状态读取失败：' + (e.message || e) + '。请刷新准备状态。';
       welcomeRenderPrep();
     }
   }
   async function welcomePrepare(key) {
+    if (!welcomeBlocking || welcomeStep !== 2) return;
     const item = welcomePrepItems().items.find(i => i.key === key);
     if (!item || item.ready || item.blockedReason || welcomePrepPending.has(key)) return;
     welcomePrepPending.add(key);
@@ -5715,7 +5764,7 @@ async function renderAsrModels() {
       welcomePrepError = '准备失败：' + (e.message || e);
     } finally {
       welcomePrepPending.delete(key);
-      if (welcomeBlocking) {
+      if (welcomeBlocking && welcomeStep === 2) {
         welcomeRenderPrep();
         if (!welcomePrepError) welcomeRefreshPrep();
       }
@@ -5767,6 +5816,8 @@ async function renderAsrModels() {
     if (welcomeCudaCard) welcomeCudaCard.classList.toggle('is-checked', sel.cuda);
     if (welcomeVulkanCard) welcomeVulkanCard.classList.toggle('is-checked', sel.vulkan);
     if (welcomeGo) welcomeGo.disabled = welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan);
+    if (welcomeNext) welcomeNext.disabled = welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan);
+    if (welcomeBack) welcomeBack.disabled = welcomeBusy;
     welcomeRenderPrep();
     if (!welcomeHardware) {
       welcomeAlertText(welcomeError || '');
@@ -5817,6 +5868,7 @@ async function renderAsrModels() {
     welcomeError = '';
     welcomeBusy = true;
     if (welcomeGo) welcomeGo.disabled = true;
+    if (welcomeNext) welcomeNext.disabled = true;
     if (welcomeRetry) welcomeRetry.disabled = true;
     if (welcomeCudaState) welcomeCudaState.textContent = '检测中…';
     if (welcomeVulkanState) welcomeVulkanState.textContent = '检测中…';
@@ -5856,14 +5908,12 @@ async function renderAsrModels() {
     void welcomeView.offsetWidth;
     welcomeView.classList.add('is-open');
     if (welcomeCancel) welcomeCancel.hidden = welcomeFirstRun;
-    const step = $('#welcome-step');
-    if (step) step.textContent = welcomeFirstRun ? '首次设置' : '加速方式';
     welcomeCuda.checked = false; welcomeVulkan.checked = false;
     welcomeHardware = null;
-    welcomeRender();
     welcomePrepStatus = null;
     welcomePrepError = '';
-    welcomeRefreshPrep();
+    welcomeSetStep(1);
+    welcomeRender();
     welcomeLoad(true).then(() => {
       if (!welcomeBlocking) return;
       const target = welcomeCuda && !welcomeCuda.disabled ? welcomeCuda
@@ -5887,9 +5937,10 @@ async function renderAsrModels() {
   }
   async function welcomeContinue() {
     const sel = welcomeSelected();
-    if (welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan)) return;
+    if (welcomeStep !== 2 || welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan)) return;
     const label = welcomeGo ? welcomeGo.textContent : '';
     welcomeBusy = true;
+    if (welcomeBack) welcomeBack.disabled = true;
     if (welcomeGo) { welcomeGo.disabled = true; welcomeGo.textContent = '保存中…'; }
     const target = welcomeReturnHash || (['#/dashboard', '#/home', '#/settings', '#/new'].includes(location.hash) ? location.hash : '#/dashboard');
     try {
@@ -5987,17 +6038,22 @@ async function renderAsrModels() {
       if (button && !button.disabled) welcomePrepare(button.dataset.prepKey);
     });
     welcomeGo?.addEventListener('click', welcomeContinue);
+    welcomeNext?.addEventListener('click', welcomeAdvance);
+    welcomeBack?.addEventListener('click', welcomePrevious);
     welcomeRetry?.addEventListener('click', () => welcomeLoad(true));
     welcomeCancel?.addEventListener('click', () => { welcomeHide(); applyHash(); renderAsrModels(); });
     document.addEventListener('keydown', (e) => {
       if (!welcomeBlocking) return;
       if (e.key === 'Escape' && !welcomeFirstRun) { e.preventDefault(); welcomeHide(); applyHash(); }
-      if (e.key === 'Enter' && e.target === welcomeView) { e.preventDefault(); if (!welcomeGo?.disabled) welcomeContinue(); }
+      if (e.key === 'Enter' && e.target === welcomeView) {
+        e.preventDefault();
+        if (welcomeStep === 1) welcomeAdvance(); else if (!welcomeGo?.disabled) welcomeContinue();
+      }
     });
     $('#st-accel-open')?.addEventListener('click', () => welcomeShow({ returnHash: location.hash || '#/settings' }));
     window.__sfWelcome = {
       open: (opts) => welcomeShow(opts || {}),
-      state: () => ({ blocking: welcomeBlocking, hardware: welcomeHardware, selected: welcomeSelected() }),
+      state: () => ({ blocking: welcomeBlocking, step: welcomeStep, hardware: welcomeHardware, selected: welcomeSelected() }),
       close: () => { welcomeHide(); applyHash(); },
     };
   }

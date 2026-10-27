@@ -188,7 +188,8 @@
   `#/project/<id>`、`#/editor`；无 hash 默认 `#/dashboard`，旧 `#/resources` 转 `#/settings`、
   旧 `#/tasks` 转 `#/home`。
 - **首次启动（加速方式）**：浏览器没有 `localStorage.sf-welcome-v1` 时先显示 `#welcome-view`，
-  `#app` 置 `inert` 并隐藏；只提供 **CUDA / Vulkan** 两个勾选，至少勾一个才能进入（不支持 CPU 推理）。
+  `#app` 置 `inert` 并隐藏；第一步只提供 **CUDA / Vulkan** 两个勾选，至少勾一个才能点
+  「下一步」进入第二步「模型与前置」；第二步提供「上一步 / 进入工作台」（不支持 CPU 推理）。
   NPU 不在欢迎页出现：`GET /api/asr/hardware` 探到 Intel AI Boost / Ryzen AI 才在设置页显示。
   硬件探测：CUDA 走 `nvidia-smi`；Vulkan 用 `System32\vulkan-1.dll` + 非虚拟显卡列表；NPU 用
   `Win32_PnPEntity` 匹配 `AI Boost|Ryzen AI|NPU|IPU`（排除 Input/HID）。结果缓存 5 分钟，
@@ -205,7 +206,7 @@
   未选中卡片使用主题 `surface-2` 的浅色底（不再回落到深色 `--bg-3`）；提示条用
   `grid-template-rows: 0fr → 1fr` 展开/收起，配合负 gap 抵消与 440ms 非线性曲线，
   选择状态切换时卡片、按钮、提示条连续移动，不跳帧。
-- **欢迎页模型与前置准备**：同页按当前勾选的 CUDA / Vulkan 展示显卡型号、专用显存与
+- **欢迎页模型与前置准备**：在第二步按当前勾选的 CUDA / Vulkan 展示显卡型号、专用显存与
   NVIDIA 当前空闲显存，并从 `/api/asr/status` 实际返回的在用模型中给建议；不受上一次保存的
   `backendAllowed` 限制，也不复活停用模型。CUDA 按默认第 0 卡，Vulkan 自动选卡未确定时
   按最保守单卡容量，不相加多卡显存。保守建议档位为 CUDA Whisper 6GiB、CUDA Qwen 8GiB、
@@ -217,7 +218,11 @@
   清单分别列 FFmpeg/FFprobe、引擎运行时、模型文件，以及非原生逐词模型的同后端对齐器；
   Qwen CUDA 缺解释器时先给基础 Python 环境入口，已有文件不重复下载。按钮复用现有下载 API，
   不自动安装；运行中每 2 秒刷新进度，失败显示原因与重试，关闭欢迎页后停止轮询并丢弃迟到响应。
-  准备操作不阻止进入工作台，识别的实际默认模型仍由现有设置/新建稿件入口选择。
+  第一步不展示准备清单、不启动准备状态轮询；点击「下一步」才读取模型状态。返回第一步保留
+  后端与待下载模型选择，停止准备轮询并作废迟到响应，已经启动的下载继续由后端负责；再次进入
+  第二步按修改后的后端刷新清单。重新打开欢迎页总是从第一步开始，两个步骤均回到滚动顶部。
+  仅第二步的「进入工作台」保存后端与首次设置完成标记；准备操作不阻止进入工作台，
+  识别的实际默认模型仍由现有设置/新建稿件入口选择。
 - **UWP 欢迎页磁贴**：CUDA / Vulkan 两张选择卡加 `uwp-tile`，与工作台磁贴共用 Reveal 面光、
   2px 直角和实色底；`data-theme-pack="windows-uwp"` 同时兜底圆角，避免首帧 `data-design`
   尚未写入时出现大圆角。红色错误条也固定 2px 直角。欢迎卡、UWP 原生 checkbox、下拉选择
@@ -667,6 +672,8 @@
   （CUDA/Vulkan/NPU/云端模型的可见性、双引擎依赖、其它模型、过滤后默认选择）、
   `tests/welcome-preparation-test.mjs`（推荐档位/保留页边界、低显存/未知显存、多卡不相加、
   CUDA bf16 旧卡提示、前置依赖/已有文件，以及硬件探测的缓存、并发合并与强制刷新）、
+  `tests/welcome-flow-test.mjs`（两步可见性、空选择禁止下一步、返回保留选择/停止轮询、
+  迟到响应作废、保存失败恢复/成功完成与重新打开回到第一步）、
   `tests/glass-contrast-test.mjs`（玻璃背景 alpha 合成、相对亮度、对比度与浅色前景阈值）、
   `tests/asr-params-test.mjs`（模型参数 schema/默认值/范围校验/`multipleOf` 吸附/重置语义；
   已停用引擎的旧 schema 保留但模型不可达）、
@@ -675,7 +682,7 @@
   只验证静态拼接，不代表模型仍可运行）、
   `tests/asr-bench-repair-test.mjs`（速度测试工作目录不得落 `%TEMP%`、退役引擎统一兜底与安装接口拒绝）。
   这些测试不加载模型、不需要 GPU。
-- **欢迎页准备流程本次验收（2026-10-27）**：实现与相关回归为**已完成且已验证**。
+- **欢迎页硬件与准备清单历史验收（2026-10-27，两步拆分前）**：
   `welcome-model`、`welcome-preparation`、`asr-aligner-status`、`i18n-coverage`、`ui-integration`、
   `repair14-static-allowlist` 六项通过，无跳过。隔离副本的无头 Chrome 验证后端勾选、实际下拉
   改选、模型/运行时/FFmpeg 请求、已有对齐文件不重下、进度/错误/重试、硬件重探与关闭；
@@ -683,6 +690,13 @@
   未下载大模型、未实际安装运行时、未执行模型推理；AMD 独显真实检测未运行。
   本机真实隔离硬件 API 读到 RTX 4060 Ti 8188MiB 总显存及空闲显存，Intel 核显容量保持未知。
   ESLint 9 无错误，已有未使用变量等告警保留。上述结果不代替各 GPU/模型的真实推理验收。
+- **欢迎页两步流程本次验收（2026-10-27）**：实现与相关回归为**已完成且已验证**。
+  `welcome-flow`、`welcome-model`、`welcome-preparation`、`i18n-coverage`、`ui-integration`、
+  `repair14-static-allowlist` 六项通过，无跳过。隔离 Chrome 验证第一步隐藏下载/禁止空选择、
+  点击下一步只显示准备页、返回保留勾选、改选后更新第二步、下载进度/错误/重试、保存进入与
+  重新打开回到第一步；三个主题在 390px 宽度下无横向溢出，无前端 JS 错误。
+  ESLint 9 无错误；原有未使用变量等告警保留。下载使用受控响应，未实际下载模型/安装运行时，
+  未运行真实模型推理与 AMD 实机验收；本次未重跑与页面分步无关的全量回归。
 - **文案覆盖**：`tests/i18n-coverage-test.mjs` 用 `tools/lib/copy_scan.mjs` 重扫
   `editor/studio.html`、`editor/js/*.js`、`editor/server.js`、`editor/asr-params.js`、`editor/scripts/*`，要求每条
   用户可见中文都能在 `editor/lang/zh-CN.json` 找到键；`node tests/gen-lang.mjs` 负责补齐/保留用户润色。
