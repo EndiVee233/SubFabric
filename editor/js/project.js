@@ -10,7 +10,7 @@
  */
 import { serializeSRT } from './srt.js';
 import { parseSRT } from './srt.js';
-import { AssDoc } from './ass.js';
+import { AssDoc, prepareImportedSubtitle } from './ass.js';
 // 区域字幕导入（按时间区间裁剪）：纯逻辑模块，有 tests/region-test.mjs 钉住行为
 import { normalizeRegion, filterCues, regionSummary } from '../region.js';
 import { t } from './i18n.js';
@@ -4890,6 +4890,7 @@ async function renderAsrModels(providedStatus = null) {
     const entries = [];
     const add = (sel, hidden) => { const el = $(sel); if (el) entries.push({ el, hidden }); };
     add('#np-row-sub', draft);
+    add('#np-row-remove-linebreaks', draft);
     // 项目包导入也是"导入模式"的事（初稿模式是从视频识别，用不上包）
     add('#np-row-pack', draft);
     // 区域裁剪两种模式都可能有意义：导入模式裁字幕/包；初稿模式暂时用不上（识别本来就全片）
@@ -5102,6 +5103,7 @@ async function renderAsrModels(providedStatus = null) {
     npProbeSource = null;
     $('#np-name').value = '';
     $('#np-word').checked = true;
+    $('#np-remove-linebreaks').checked = true;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
     if ($('#np-align')) { $('#np-align').checked = false; delete $('#np-align').dataset.touched; }
     delete $('#np-word').dataset.touched;
@@ -5827,6 +5829,7 @@ async function renderAsrModels(providedStatus = null) {
       } else {
         // 区域裁剪后的文本（没勾选时 clipped 为 null，原样提交）
         payload.subtitle = { name: npSub.name, text: clipped ? clipped.text : npSub.text };
+        payload.subtitle.text = prepareImportedSubtitle(payload.subtitle.text, npSub.name, $('#np-remove-linebreaks').checked);
         // 把区间记进项目元信息：事后能看出"这份稿子是裁过的"，而不是像丢了内容
         if (region.active) {
           payload.region = {
@@ -5847,7 +5850,7 @@ async function renderAsrModels(providedStatus = null) {
         if (m.id) startNpDraftProgress(m.id);
         toast('已开始识别，进度就在左侧「处理进度」里', 5200);
       } else {
-        lastSavedText = npSub.text;
+        lastSavedText = payload.subtitle.text;
         location.hash = '#/project/' + m.id;
         toast('项目已创建，正在后台提取音频与波形…', 4000);
       }

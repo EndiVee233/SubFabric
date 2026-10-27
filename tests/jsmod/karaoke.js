@@ -216,7 +216,6 @@ function stripTags(t) {
     // 只剥"覆盖标签"（{\...}）—— 真标签一定以反斜杠开头。文本里的字面大括号（如 {brace}）是用户原文,
     // 必须原样保留: 否则"序列化 → 重新分析"会把它们吃掉, 编辑后重载文本就变了(实测英文含 {brace} 时丢失)。
     .replace(/\{\\[^}]*\}/g, '')
-    .replace(/\\N/gi, ' ')
     .replace(/\\h/g, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -413,8 +412,8 @@ export function parseKLine(text, evStart, evEnd) {
       // 第一个 k 之后的非 k 覆盖块：忽略（罕见布局，重生成时不保留——设计稿已注明）
     } else {
       // 裸文本 = 该行渲染出的**明文**。按出现顺序原样收集（parseKLine 的 text 用它拼,
-      // 保住原文里的空格 —— "plan.to" 不能被重排成 "plan. to"）；\N/\h 视为空格。
-      const chunk = m[2].replace(/\\[Nn]/g, ' ').replace(/\\h/g, ' ');
+      // 保住原文里的空格与 \N/\n；\h 仍视为空格。
+      const chunk = m[2].replace(/\\h/g, ' ');
       const cStart = plainLen;
       plainLen += chunk.length;
       plainChunks.push(chunk);
@@ -435,11 +434,12 @@ export function parseKLine(text, evStart, evEnd) {
   const lo = evStart, hi = Math.max(evStart, evEnd);   // 防御: 夹进事件范围(脏文件里 \k 总长可能超出事件)
   for (const seg of segments) {
     const raw = String(seg.text);
-    const w = raw.trim();
-    if (!w) continue;
+    const normalized = raw.replace(/\\[Nn]/g, '  ');
+    if (!normalized.trim()) continue;
     // 该词在明文里的位置（trim 掉的首尾空白不计入）—— 重建时按它逐字回填, 任何空格布局都零损失
-    const leadWs = raw.length - raw.trimStart().length;
-    const trailWs = raw.length - raw.trimEnd().length;
+    const leadWs = normalized.length - normalized.trimStart().length;
+    const trailWs = normalized.length - normalized.trimEnd().length;
+    const w = raw.slice(leadWs, raw.length - trailWs);
     const pStart = Math.max(0, (seg.pStart || 0) + leadWs - trimmedOff);
     const pEnd = Math.max(pStart, (seg.pEnd || 0) - trailWs - trimmedOff);
     words.push({
@@ -513,7 +513,7 @@ export function analyzeKaraoke(doc) {
   const sentences = [];
   if (!wordStyle) {
     for (const ev of doc.sorted) {
-      sentences.push(makeSentence(ev.style, ev.start, ev.end, assPlainText(ev.text), [ev], [], protoOf(ev, doc.format)));
+      sentences.push(makeSentence(ev.style, ev.start, ev.end, assPlainText(ev.text, true), [ev], [], protoOf(ev, doc.format)));
     }
     finalizeSentences(sentences);
     return { wordStyle: null, sentences };
@@ -628,7 +628,7 @@ export function analyzeKaraoke(doc) {
   }
   // 其他样式句子(整句, 原样保留) —— 始终输出, 它们是中文等非逐词语言的字幕内容
   for (const a of anchors) {
-    sentences.push(makeSentence(a.style, a.start, a.end, assPlainText(a.text), [a], [], protoOf(a, doc.format)));
+    sentences.push(makeSentence(a.style, a.start, a.end, assPlainText(a.text, true), [a], [], protoOf(a, doc.format)));
   }
   // 未归属切片: 按时间间隔 > 0.5s 分组成句
   loose.sort((a, b) => a.start - b.start);
@@ -1000,7 +1000,7 @@ export function allocateWordTimes(tokens, start, end) {
  * 返回 [{ w, start, end }]，start/end 是原文里的字符下标。
  */
 export function splitEnglishWordsWithSpans(text) {
-  const s = String(text == null ? '' : text);
+  const s = String(text == null ? '' : text).replace(/\\[Nn]/g, '  ');
   const isPunct = (ch) => ch === ',' || ch === '.' || ch === '?' || ch === '!';
   const out = [];
   const n = s.length;
@@ -1437,7 +1437,7 @@ export function normalizeZhPunctuationInSentences(doc, sentences, wordStyle) {
     const after = normalizeZhPunctuation(before);
     if (after === before) continue;
     doc.setEventText(ev, after);
-    s.text = assPlainText(after);
+    s.text = assPlainText(after, true);
     n++;
   }
   return n;

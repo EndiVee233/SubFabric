@@ -672,8 +672,6 @@
             <button class="btn btn-mini" id="btn-export-clean" disabled title="导出无逐词效果的干净 ASS(整句)">导出无逐词</button>
             <button class="btn btn-mini" id="btn-export-full" disabled title="导出原始格式(含逐词特效)">导出逐词字幕</button>
             <button class="btn btn-mini" id="btn-export-advanced" disabled title="选择要保留的说话人，再导出字幕">高级导出…</button>
-          </div>
-          <div class="export-grid" style="margin-top:10px">
             <button class="btn btn-mini btn-accent" id="btn-export-video" disabled title="选择导出目录，勾选「双语硬字幕视频 / 生肉原片 / ASS 字幕」；压制沿用稿件里的 ASS 样式">导出视频…</button>
           </div>
         </div>
@@ -1628,6 +1626,13 @@
           <span class="np-lbl">字幕</span>
           <span class="np-file" id="np-sub-name">还没选</span>
           <button type="button" class="btn btn-mini" id="np-pick-sub">浏览…</button>
+        </div>
+
+        <div class="np-file-row" id="np-row-remove-linebreaks">
+          <label class="np-switch" title="开启时删除导入字幕中的所有 \N；关闭时保留原文">
+            <input type="checkbox" id="np-remove-linebreaks" checked>
+            <span>删除换行符</span>
+          </label>
         </div>
 
         <!-- 从项目压缩包导入：字幕/译文/备注/日志都从包里来，视频要另外选（重建音频与波形）。

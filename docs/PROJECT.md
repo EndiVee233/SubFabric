@@ -198,6 +198,14 @@
 
 ## 4. 前端与主题
 
+- **导入与编辑换行符**：新建项目的「导入字幕」模式提供「删除换行符」，每次新建默认开启；
+  在创建请求前按最终勾选状态调用 `prepareImportedSubtitle`，删除字幕正文中的所有字面 `\N`
+  （直接删除，不补空格），关闭时保留；不改源文件、不改 ASS 元信息，不处理 SRT 结构换行或项目包。
+  区域导入先裁剪再清理。列表/句子模型用 `assPlainText(text, true)` 保留 `\N` / `\n`，
+  颜色切片与 `\k` 解析也保留标记；英文分词按等长空白识别边界，保住原文位置与词时间。
+  列表直接输入 `\N` 即可换行，Enter / Ctrl+Enter 沿用已有快捷键；视频仍走原 ASS/libass 渲染与命中映射。
+- **导出区排列**：「导出视频…」与其余五个按钮共用一个双列 `.export-grid`，位于第三行右侧，
+  左侧为「高级导出…」，不再单独凸出一行。
 - **装配**：`editor/studio.html` 装载多个 `<script type="module">`（`js/studio.js`、`js/main.js`、
   `js/color-picker.js` 等）。主 hash 路由：`#/dashboard`、`#/home`、`#/new`、`#/settings`、
   `#/project/<id>`、`#/editor`；无 hash 默认 `#/dashboard`，旧 `#/resources` 转 `#/settings`、
@@ -736,6 +744,12 @@
 
 ## 5. 测试与验证
 
+- **导入/列表换行符验证（2026-10-27，已完成且已验证）**：`subtitle-linebreak-test`
+  验证导入开/关、ASS 元信息与 SRT 结构保留、实际列表提交、普通/颜色切片/`\k` 保存重载、
+  预览标记与逐词时间；`studio-navigation-test` 走选文件后切开关、实际建稿 POST、默认复位与导出网格。
+  本轮相关回归 19 组通过、`word-boundary-test` 1 组部分通过（未配置 `SUBFABRIC_PYTHON`，
+  跳过 Python 行为探针）；最终无失败。开发期间的文案漏项、源码换行编码和新增测试夹具问题
+  已修正并复跑通过。本轮未做真实媒体播放、GPU 或视频压制验收。
 - **JS 全量回归**：`node tests/run-all.mjs`；带机器可读报告：
   `node tests/run-all.mjs --report _test/maintenance/js-results.json`。入口先跑 `tests/gen-fixture.mjs`
   生成 ASS 夹具，再**串行**执行 `tests/` 根目录的 `.mjs`，默认注入 `SUBFABRIC_TEST_ISOLATED=1`、

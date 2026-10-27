@@ -861,5 +861,38 @@ assert.equal($('sf-widgets').querySelector('[data-widget="resume"] .sf-widget-ti
 assert.equal($('sf-widgets').querySelector('[data-widget-filter="all"] .sf-widget-num').textContent, '1', 'late snapshot updates live counts in place');
 assert.equal(dashboardEntranceReads, entranceReadsAfterTheme, 'late project snapshot does not replay the dashboard entrance');
 
-console.log('studio-navigation: immediate scrub/late-media/keyboard/hover/reset, direct editor, settings return, legacy resources alias, settings save, stale ASS guard, deferred upload navigation lock, original submission payload and in-place dashboard refresh passed');
+// Real file selection -> final toggle -> project POST, using only in-memory APIs.
+for (const remove of [false, true]) {
+  await click('btn-new-project');
+  assert.equal($('np-remove-linebreaks').checked, true, 'new project resets removal to on');
+  assert.equal($('np-row-remove-linebreaks').hidden, false);
+  await click('np-mode-draft');
+  assert.equal($('np-row-remove-linebreaks').hidden, true, 'ASR mode hides import-only option');
+  await click('np-mode-import');
+  assert.equal($('np-row-remove-linebreaks').hidden, false);
+  fileDialog = new File(['fixture video bytes'], 'original.webm', { type: 'video/webm' });
+  await click('np-pick-video');
+  const withBreaks = subtitle.replace('Original subtitle', 'Original\\Nsubtitle\\Nend');
+  $('np-file-sub').files = [new File([withBreaks], 'original.srt', { type: 'text/plain' })];
+  $('np-file-sub').dispatchEvent(new Event('change')); await settle();
+  // Change after selecting the file, to catch destructive processing in the picker.
+  $('np-remove-linebreaks').checked = remove;
+  assert.equal($('np-create').disabled, false, 'selected materials enable import');
+  const previousCreates = created.length;
+  upload = deferred();
+  upload.resolve(json({ path: 'videos/original.webm', name: 'original.webm' }));
+  await click('np-create');
+  assert.equal(created.length, previousCreates + 1, 'new import reaches project POST: ' + toasts.at(-1));
+  const selectedText = withBreaks.replace(/^\uFEFF/, '');
+  assert.equal(created.at(-1).subtitle.text, remove ? selectedText.replace(/\\N/g, '') : selectedText,
+    'project POST follows the final checkbox state');
+  await navigate('#/home');
+}
+const exportGrid = $('btn-export-video').parentElement;
+assert.equal(exportGrid, $('btn-export-advanced').parentElement, 'both actions share one grid');
+assert.equal(exportGrid.children.length, 6);
+assert.equal(exportGrid.children[5], $('btn-export-video'), 'last of six actions is bottom-right');
+assert.deepEqual(asyncErrors, []);
+assert.deepEqual(unexpected, []);
+console.log('studio-navigation: player, editor, settings, upload lock, payload, dashboard, import line-break toggle and export grid passed');
 

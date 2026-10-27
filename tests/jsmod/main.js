@@ -2308,8 +2308,8 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
       state.kar.rows.forEach((r, i) => r.no = i + 1);
       state.items = state.kar.rows.map((row) => {
         const zhS = row.zh, enS = row.en;
-        const zhText = zhS ? (zhS.words.length ? zhS.text : assPlainText(zhS.events[0].text)) : '';
-        const enText = enS ? (enS.words.length ? enS.text : assPlainText(enS.events[0].text)) : '';
+        const zhText = zhS ? (zhS.words.length ? zhS.text : assPlainText(zhS.events[0].text, true)) : '';
+        const enText = enS ? (enS.words.length ? enS.text : assPlainText(enS.events[0].text, true)) : '';
         const it = {
           kind: 'ass-row', ref: row, no: row.no,
           start: row.start, end: row.end,
@@ -2903,7 +2903,7 @@ function applyRoleToRowWith(hit, name, colorHex) {
         state.assDoc.setEventText(ev, head + '{\\c&H' + newAss + '&}' + t.slice(head.length));
       }
     }
-    hit.zh.text = assPlainText(hit.zh.events[0].text);
+    hit.zh.text = assPlainText(hit.zh.events[0].text, true);
     if (hexNorm) hit.zh.color = hexNorm;
   }
   if (hexNorm) hit.color = hexNorm;
@@ -3354,7 +3354,7 @@ function clearRoleFromRow(row) {
       }
     }
   }
-  if (row.zh) row.zh.text = assPlainText(row.zh.events[0].text);
+  if (row.zh) row.zh.text = assPlainText(row.zh.events[0].text, true);
   row.speaker = '';
 }
 
@@ -3652,7 +3652,7 @@ function applyAnchorSentence(sent, s, e, text) {
   newText = newText.replace(/\r\n?|\n/g, '\\N');
   state.assDoc.setEventTime(ev, s, e);
   state.assDoc.setEventText(ev, newText);
-  sent.start = s; sent.end = e; sent.text = assPlainText(newText);
+  sent.start = s; sent.end = e; sent.text = assPlainText(newText, true);
 }
 
 /** 逐词样式(如英文): 重算词级时间并重建切片 */
@@ -3672,8 +3672,7 @@ function applyWordSentence(sent, s, e, text) {
 
 /** 应用一行(中英双行)编辑: 中文整句 + 英文逐词句同步更新, 视频区立即重渲染 */
 /** 用户文本 → ASS 安全文本(花括号/反斜杠转义): ASS 里 {…} 是覆盖标签, 不转义会被吃掉 */
-const escAss = (s) => String(s == null ? '' : s)
-  .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\r?\n/g, '\\N');
+const escAss = (s) => escapeAssUser(String(s == null ? '' : s).replace(/\\N/g, '\n'));
 
 /** 该行此刻在视频区可见吗(播放头落在它时间范围内) —— 中/英任一有就算(以前只认英文行,
  *  于是中文单行块编辑时拿不到实时预览)。 */
@@ -3930,7 +3929,7 @@ function assCanvasEl() {
 function sentencePlain(sent, side) {
   if (!sent) return '';
   const ev = sent.events && sent.events[0];
-  if (side === 'en') return (sent.words && sent.words.length) ? sent.text : assPlainText(ev ? ev.text : '');
+  if (side === 'en') return (sent.words && sent.words.length) ? sent.text.replace(/\\[Nn]/g, ' ') : assPlainText(ev ? ev.text : '');
   return assPlainText(ev ? ev.text : '');
 }
 
@@ -4055,7 +4054,7 @@ function commitCueSegment(item, seg, text) {
     const raw = replaceSegmentInRaw(ev.text, 'ass', seg, text);
     if (raw == null) return false;
     state.assDoc.setEventText(ev, normalizeRoleGap(raw));
-    item.sent.text = assPlainText(ev.text);
+    item.sent.text = assPlainText(ev.text, true);
     afterCueEdit(item.sent);
     return true;
   }
@@ -4085,7 +4084,7 @@ function commitCueWhole(item, body) {
     const ev = item.sent.events[0];
     // 整行弹窗允许直接写 ASS 内联标签 → 不做转义，只把换行转成 \N（与 Text 字段一致）
     state.assDoc.setEventText(ev, normalizeRoleGap(item.prefix + user.replace(/\n/g, '\\N')));
-    item.sent.text = assPlainText(ev.text);
+    item.sent.text = assPlainText(ev.text, true);
     afterCueEdit(item.sent);
     return true;
   }

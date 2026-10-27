@@ -510,19 +510,20 @@ export class AssDoc {
 }
 
 /** 去除 ASS 覆盖标签 → 预览纯文本。
- *  先还原转义(\N/\n/\h → 空格, \{ → {, \} → }, \\ → \), 再剥掉真正的覆盖标签 {…} ——
- *  顺序不能反: 否则被转义的成对花括号会被当成标签整段吞掉。 */
-/** 去除 ASS 覆盖标签 → 预览纯文本。
  *  用扫描器而不是正则: 被转义的 \\{ 必须**先**还原成普通字符, 否则成对花括号会被当成
- *  覆盖标签整段吞掉(译文里出现 {音效} 这种时就会丢字)。\\N/\\n/\\h 视为空格。 */
-export function assPlainText(text) {
+ *  覆盖标签整段吞掉(译文里出现 {音效} 这种时就会丢字)。默认把换行视为空格；
+ *  列表/句子模型传 preserveLineBreaks=true，保留可编辑的 \\N/\\n。\\h 始终视为空格。 */
+export function assPlainText(text, preserveLineBreaks = false) {
   const s = String(text);
   let out = '', i = 0;
   while (i < s.length) {
     const c = s[i];
     if (c === '\\') {
       const n = s[i + 1];
-      if (n === 'N' || n === 'n' || n === 'h') { out += ' '; i += 2; continue; }
+      if (n === 'N' || n === 'n' || n === 'h') {
+        out += preserveLineBreaks && n !== 'h' ? '\\' + n : ' ';
+        i += 2; continue;
+      }
       if (n === '{' || n === '}' || n === '\\') { out += n; i += 2; continue; }
       out += c; i += 1; continue;
     }
@@ -534,6 +535,17 @@ export function assPlainText(text) {
     out += c; i += 1;
   }
   return out.replace(/\s{2,}/g, ' ').trim();
+}
+
+/** 建稿时按最终开关处理副本；不改选中的文件，关闭时逐字保留。 */
+export function prepareImportedSubtitle(text, name, removeLineBreaks = true) {
+  if (!removeLineBreaks || !text.includes('\\N')) return text;
+  if (!isAssSubtitle(text, name)) return text.replace(/\\N/g, '');
+  const doc = new AssDoc(text);
+  for (const ev of doc.events) {
+    if (ev.text.includes('\\N')) doc.setEventText(ev, ev.text.replace(/\\N/g, ''));
+  }
+  return doc.serialize();
 }
 
 /* ═══════════ ASS 双语样式预设：导出 / 导入 ═══════════
