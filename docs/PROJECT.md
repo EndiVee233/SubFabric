@@ -790,7 +790,7 @@
 - **CI**（`.github/workflows/ci.yml`，push 到 main 与所有 PR，同分支连推取消旧任务）两个 job：
   `JS · ESLint + 全量测试` 在 ubuntu-latest + Node 22 上跑 `npx --yes eslint@9 editor/ tools/ tests/` 与
   `node tests/run-all.mjs`；`Python · ruff + 单测` 在 ubuntu-latest + Python 3.12 上 `pip install ruff numpy`
-  （刻意不装 sherpa-onnx/openvino），跑 `ruff check .` 并逐个执行上面那 8 个可移植测试文件。
+  （刻意不装 sherpa-onnx/openvino），跑 `ruff check .` 并逐个执行 CI 中列出的 10 个可移植测试文件。
 - GPU、模型、真实媒体或服务依赖必须具备后才做相应验收。造测试媒体用 ffmpeg lavfi 的 `testsrc`，
   必须加 `sine` 音轨，否则抽音轨失败。
 
@@ -864,7 +864,7 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 未运行真实 GPU/ASR/翻译服务、模型下载、真实稿件人工交互、SEA/Inno 安装构建与原生启动验收。
 历史验证仍保留在原章节，不能替代本轮验证。本阶段交付到独立审查分支
 `maintenance/deep-review-20261027`，GitHub 保存结果单独在交付汇报中核对，不能代替功能验收；
-main 未合并本轮改动，不创建/合并 PR，不发布安装包。
+该维护阶段已按用户授权合入 main，云端 CI 通过；后续 UI 审查检查点另见 §4，独立保存，不发布安装包。
 
 ## 6. 打包与发版
 
