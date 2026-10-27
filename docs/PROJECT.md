@@ -697,7 +697,7 @@
   `.sf-choice-shell`，不再只约束已隐藏的原生 select。新建页动态警告用 `--warning`。
   字幕卡辅助字使用可读次要色，Classic 的辅助字不再落到过暗的 `--dim`。
 - [theme-ui-coverage.json](theme-ui-coverage.json) 是**静态发现清单**：41 个生产模板/JS/CSS/主题/文案文件，
-  模板 847 个 DOM id、73 个动态 id/模式、246 个动态 DOM 调用位置、内容哈希与令牌引用。目录递归枚举，新增文件也进入检查；
+  模板 849 个 DOM id、73 个动态 id/模式、246 个动态 DOM 调用位置、内容哈希与令牌引用。目录递归枚举，新增文件也进入检查；
   `editor/studio.html` 另与模板逐字节核对。动态位置含辅助调用和注释线索，需要按上下文理解。
   未引用候选保留用于核实；例如玻璃偏好在 JS 中读取、动态令牌不能仅凭 CSS 引用数认定为废代码。
 
@@ -712,7 +712,8 @@
 
 **检查入口与维护方式：**
 
-1. `node tools/theme-audit.mjs` 更新发现清单；它不会更新颜色例外。
+1. `node tools/theme-audit.mjs` 更新发现清单；它不会更新颜色例外。清单包含文件内容哈希，
+   覆盖范围内的模板、JS、CSS、主题或文案有任何变化（包括纯逻辑改动）都须重新生成并审阅增量。
 2. `tests/theme-audit-test.mjs` 已纳入 `node tests/run-all.mjs`。它核对清单/模板、四包与明暗的必需令牌、
    颜色格式、无默认值的缺失引用和状态对比度；新增 UI 必须审阅清单增量。
 3. [theme-literal-exceptions.json](theme-literal-exceptions.json) 按文件、具体声明和次数限制已有视觉字面量，
@@ -733,8 +734,9 @@
 
 **本轮验证范围：** 四包 × light/dark × 1440×1000、900×1000；736 个状态采样已通过，包含打开弹窗后切主题、
 加载后的参数表单与刷新持久化；普通可合成表面的可见文字无低于 AA 阈值的候选，所测浮层无越界。
-已抽查代表截图；全主题自动测量不能代替每个像素的人工验收。JS 全量回归 141 passed / 12 partial /
-1 diagnostic / 0 failed / 2 excluded；部分验证沿用入口报告的硬件/素材限制。新增 CI 接线的云端执行结果
+此前已抽查代表截图；全主题自动测量不能代替每个像素的人工验收。本次清单修复重新运行 736 个状态，
+无发现；本地 JS 全量回归 142 passed / 12 partial / 1 diagnostic / 0 failed / 2 excluded。
+部分验证沿用入口报告的硬件/素材限制。CI 接线的云端执行结果
 与本地结果分别记录在交付汇报中。
 
 **保留范围：** 真实下载/识别/对齐/翻译/编码作业的全部进度与失败载荷、NPU 专属状态、首次欢迎第二步
@@ -747,9 +749,12 @@
 - **导入/列表换行符验证（2026-10-27，已完成且已验证）**：`subtitle-linebreak-test`
   验证导入开/关、ASS 元信息与 SRT 结构保留、实际列表提交、普通/颜色切片/`\k` 保存重载、
   预览标记与逐词时间；`studio-navigation-test` 走选文件后切开关、实际建稿 POST、默认复位与导出网格。
-  本轮相关回归 19 组通过、`word-boundary-test` 1 组部分通过（未配置 `SUBFABRIC_PYTHON`，
-  跳过 Python 行为探针）；最终无失败。开发期间的文案漏项、源码换行编码和新增测试夹具问题
-  已修正并复跑通过。本轮未做真实媒体播放、GPU 或视频压制验收。
+  实现阶段的历史验证为相关回归 19 组通过、`word-boundary-test` 1 组部分通过（未配置
+  `SUBFABRIC_PYTHON`，跳过 Python 行为探针）。首次云端全量回归 140 passed / 13 partial /
+  1 diagnostic / 1 failed：漏同步 `theme-ui-coverage.json`，导致 `theme-audit-test` 失败并跳过浏览器步骤；
+  同轮 ESLint 与 Python 检查通过。清单已按新增两个 DOM id 和相关源码变化更新，未改变主题令牌或
+  颜色例外；本次本地全量与 736 个浏览器状态的验证见上节，已完成且已验证。开发期间的文案漏项、
+  源码换行编码和新增测试夹具问题已修正。本轮未做真实媒体播放、GPU 或视频压制验收。
 - **JS 全量回归**：`node tests/run-all.mjs`；带机器可读报告：
   `node tests/run-all.mjs --report _test/maintenance/js-results.json`。入口先跑 `tests/gen-fixture.mjs`
   生成 ASS 夹具，再**串行**执行 `tests/` 根目录的 `.mjs`，默认注入 `SUBFABRIC_TEST_ISOLATED=1`、
