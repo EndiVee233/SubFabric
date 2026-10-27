@@ -1,5 +1,28 @@
 # 项目当前状态（唯一权威入口）
 
+- 当前任务（2026-10-27，第十三轮）：**批量初稿独立队列页**，**已实现且已验证（自动回归）；安装版未重打包**。
+  新增 `#/batch`（`#batch-view`）：加号多选视频进队列；右侧默认设置与每条视频「设置」弹窗可覆盖识别模型、翻译方案、逐词/对齐/区分说话人；开始后**串行**上传 → 创建项目 → 轮询 `/:id/draft`，前一个完成/失败才下一个，失败不中断队列；翻译方案逐条切换并在结束后恢复，刷新清空未开始队列，停止只影响下一条。入口为项目列表「批量初稿」与主页批量卡。新增 `tests/batch-queue-test.mjs`；旧 `batch-draft-api-test` 保留兼容接口。全量 JS 回归 `_test/maintenance/js-results-1463-batchqueue.json` 为 **140 通过 / 8 部分 / 0 失败**（2 排除）。**未做**：安装版重打包、真实多视频长任务验收。GitHub：**云端提交成功且已核对（6f8b404）**。
+
+- 当前任务（2026-10-27，第十二轮）：**高级导出：按说话人筛选**，**已实现且已验证（自动回归）；安装版未重打包**。
+  导出设置新增「高级导出…」按钮与弹窗：列出 ASS 全部角色（含未标注），默认全选，可全选/全不选；导出时只写勾选角色的字幕行，取消「译者注」后文件里不再出现该角色。格式可选原始字幕（保留逐词）/ 干净 ASS / 仅中文 / 仅英文 / 逐词 JSON。`karaoke.js` 新增 `sentenceSpeakerNames()`/`filterSentencesBySpeakers()`（行首 `[角色]` 优先，缺失退回 Name 栏；多说话人需全选），`main.js` 的 `buildSpeakerAss()` 保留 ASS 头与样式、仅重建选中角色的 Dialogue 行。新增 `tests/advanced-export-test.mjs`（译者注排除、Alice 保留、多角色/未标注）；全量 JS 回归 `_test/maintenance/js-results-1463-advanced-export.json` 为 **139 通过 / 8 部分 / 0 失败**（2 排除）；ESLint 0 error。
+  **未做**：安装版重打包、真实稿件人工导出验收。GitHub：**云端提交成功且已核对（6f8b404）**。
+
+- 当前任务（2026-10-27，第十一轮）：**同步上游 15e8ef5**，**代码已合并，全量回归 138 通过 / 8 部分 / 0 失败；安装版未重打包**。
+  远端 `08ecfc0` → `15e8ef5` 4 个提交：欢迎页硬件感知模型/前置准备、拆成「加速方式 / 模型与前置」两步、第二步复用原语音识别目录、Windows 10 浅色前景色与对比度修复。以 `08ecfc0` 为 base 三路合并，保留本地批量初稿、主题包 ZIP/页面布局、全片重校对回退、主页布局等；`project.js`/`studio.css` 手工合并，新增 `welcome-flow-test`/`welcome-preparation-test`/`uwp-light-test`，jsmod 镜像同步。**未做**：安装版重打包、真实硬件/模型复测。GitHub：**云端提交成功且已核对（6f8b404）**。
+
+- 当前任务（2026-10-27，第十轮）：**主题包 ZIP：四页布局 + 界面样式与个性化**，**已实现且已验证（自动回归）；安装版未重打包**。
+  导出改为 `.theme.zip`（`theme.json` + `layouts/{home,library,editor,help}.json`）；`theme.json` 保留 `design + tokens + assets + seed`，附加 `personalization`（accent、mode、motion、background solid/aurora、auroraColors/Motion/Speed、glassDim/Blur/Opacity、rimEnabled、rimSatLow/rimBriGain/rimSpecBase/rimPower）与四页 `layouts`（主页小组件顺序、稿件库 view/columns、编辑器 timelineHeight/panelWidth/splitPane、帮助页 columns）。`studio-themes.js` 用 `validLayouts` 白名单+范围校验；导入优先读 ZIP 内布局文件，`applyLayouts()` 重排主页小组件、恢复库视图/列数、写编辑器 localStorage 尺寸/分栏、设置帮助页 CSS 变量；选中带布局的包也恢复。`zip.js` 为 store 模式零依赖 ZIP；studio.js 动态 import，失败自动用内置 store ZIP 兜底，旧服务缺文件也能正常导入导出。背景图片/图片模糊压暗不随包走，`background:image` 导出回落 `solid`。
+  验证：新增 `tests/theme-pack-zip-test.mjs`（ZIP 往返/UTF-8 文件名/四页布局校验/接线），`theme-packs-test` 扩展快照与布局；全量 JS 回归 `_test/maintenance/js-results-1463-themezip.json` 为 **135 通过 / 8 部分 / 0 失败**（2 排除）；ESLint 0 error。
+  **未做**：安装版重打包、跨机器人工导入验收。GitHub：**云端提交成功且已核对（6f8b404）**。
+
+- 当前任务（2026-10-26，第九轮）：**批量创建初稿**，**已实现且已验证（自动回归）；安装版未重打包**。
+  项目列表工具栏新增「批量初稿」：只列**已有视频、还没有字幕**且不在处理中的项目，弹窗可选识别模型与逐词/对齐/区分说话人。`POST /api/projects/batch-draft` 建串行内存作业，逐项 `startDraftForExisting()`（已有音频直接 `startDraftAsr`，没有则 `startPrepare` + `pendingAsr`），一项完成后再启动下一项，避免多个 ASR 抢显卡；`GET /api/projects/batch-draft/:id` 返回每项状态，前端 1.6s 轮询；同一时刻只允许一个批量作业，已有字幕项目不覆盖。**主页布局（10-27）**：MY 工作台第二行改为「全部稿件 / 新建稿件 / 批量初稿 / 全局设置」；`data-kind="all"` 由 `span 2` 改 `span 1`，新建稿件移到让出的右侧格，原位置放批量初稿卡（`data-mu-action="batch"`，打开同一弹窗）；两卡底色互换：新建稿件 `surface`、批量初稿 `accent`。新增 `tests/batch-draft-api-test.mjs`（200/404/400、无模型逐项失败不 500、前端入口/轮询）；全量 JS 回归 `_test/maintenance/js-results-1463-batchdraft.json` 为 **134 通过 / 8 部分 / 0 失败**（2 排除）；ESLint 0 error。
+  **未做**：安装版重打包、真实多项目长任务人工验收。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+- 当前任务（2026-10-26，第八轮）：**全片逐词重校对应用 0 句修复**，**已实现且已验证（自动回归）；安装版未重打包**。
+  现象「没有可应用的行：232 句的词序列与当前文本对不上」。根因 `realignTargetKey` 含 `events.lineIdx`，保存/序列化后行号重排，文本/时间/逐词未变的句子也整批失配。现在 key 只含 style/proto/start/end/text/词序列；精确 key 失配时用服务端 `start+end+text` 唯一找回，再按**当前**词序列做严格/修复校验（词真改过仍拒绝）。0 句提示改为「与当前字幕对不上（文本/时间/逐词可能已改动）」。`repair04-realign-test` 增加「旧 key 失配但起止+文本未变仍应用」断言；`realign-words`、`realign-batch` 通过。全量 JS 回归 `_test/maintenance/js-results-1463-realignapply.json` 为 **133 通过 / 8 部分 / 0 失败**（2 排除）；ESLint 0 error。
+  **未做**：安装版重打包、真实稿件人工复验。GitHub：**尚未提交**（工作副本无 `.git`）。
+
 - 当前任务（2026-10-26，第七轮）：**描边曲线拖动不再整页刷新**，**已实现且已验证（自动回归）；安装版未重打包**。
   四个描边参数滑杆原来每次 `input` 都调 `applyTheme()`，会 `renderPacks()` 重建主题卡、重播设置卡入场并重算令牌，看起来整页反复刷新。现在 `rim-curve.js` 新增 `updateParams(prefs)`（更新参数/读数/SVG 曲线 + rAF 刷新已有环），`studio.js` 的 `input` 只调 `updateRimParams(prefs)`，`change` 松手才 `commit`；拖动不再触碰主题包 DOM 与入场动画。`rim-curve-test` 增加「拖动代码块禁止 applyTheme」断言；全量 JS 回归 `_test/maintenance/js-results-1463-rimdrag.json` 为 **133 通过 / 8 部分 / 0 失败**（2 排除）；ESLint 0 error。
   **未做**：安装版重打包、真实观感验收。GitHub：**尚未提交**（工作副本无 `.git`）。

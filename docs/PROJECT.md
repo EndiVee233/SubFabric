@@ -29,7 +29,7 @@
 | --- | --- |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘与退出 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
-| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 后端过滤与显存推荐纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
@@ -59,15 +59,6 @@
 - **安全基线**：Host 必须回环；有 Origin 的读写请求校验明确集合，无 Origin 的写请求须带
   `X-SubFabric-Token`；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用；`safeJoin` 解码后归一化并补路径
   分隔符边界，拒绝编码穿越。
-- **欢迎页硬件信息**：`GET /api/asr/hardware` 保留 `cuda.device` / `vulkan.devices`，新增
-  `cuda.devices`（NVIDIA 设备对象列表）、首卡 `vramMB` / `freeMB` / `driver`，以及
-  `vulkan.adapters`（`name` / `vramMB` / `freeMB` / `memorySource`）。容量单位为 MiB，未知为 `null`。
-  NVIDIA 用 `nvidia-smi` 读取总量、空闲量与驱动版本；其它显卡按 PNP 设备映射到驱动注册表的
-  `HardwareInformation.qwMemorySize`（64 位）。不使用会被 4GB 截断的 WMI `AdapterRAM`，
-  不按型号猜显存，不把共享系统内存算为专用显存。缓存与并发合并均在模块作用域，
-  `?refresh=1` 同时强制刷新 NVIDIA 缓存；每条探测命令有 8 秒超时。Vulkan 可用性仍是
-  加载器与物理显卡的初筛，不能代替真实推理验证。`/api/asr/status.qwenPythonReady` 单独报告
-  Qwen 所用 Python 解释器路径是否存在；实际模型/运行时可用性仍以对应状态字段为准。
 - **打开稿件的加载路径（2026-10-26 优化）**：`openProject` 先 `flushSave()`，再**并行**取
   项目元信息与 `subtitle`；ASS 只做轻量的 `Dialogue:` 行校验（旧实现 `new AssDoc(text).events`
   把 3~4MB 稿件完整解析两遍）。随后**先装项目身份/保存基线**，同步启动视频、peaks、音频源，
@@ -82,6 +73,19 @@
   Parakeet Vulkan / Qwen3-ASR + 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
   Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
+- **批量初稿独立页（2026-10-27）**：`#/batch` 新页面，不再用项目列表弹窗。点「＋ 添加视频」一次选多个
+  文件进入**本地队列**；每条显示状态/进度/项目，提供单独「设置」按钮（模型、翻译方案、逐词/对齐/
+  区分说话人可逐条覆盖，空=跟随默认）。右侧默认设置含模型、翻译方案、逐词/对齐/说话人/自动处理。
+  点「开始处理」按队列**串行**执行：上传 → 创建项目（`POST /api/projects`，`draft:true`）→
+  轮询 `/api/projects/:id/draft`，一个完成/失败才下一个，不并行抢显卡；每条可失败而不中断队列。
+  翻译方案逐条切换，批量开始前记录当前方案、全部结束后恢复。刷新会清空尚未开始的队列，已创建项目
+  不受影响；支持停止（当前视频处理完后不再开始下一个）。
+  旧的 `POST /api/projects/batch-draft` 接口与项目列表弹窗代码保留兼容，但入口已改为本页。
+  `tests/batch-queue-test.mjs` 覆盖独立页、队列、全局/单条设置与串行接线；`batch-draft-api-test`
+  继续覆盖旧接口。
+  **主页入口**：MY 工作台第二行固定为「全部稿件 / 新建稿件 / 批量初稿 / 全局设置」；
+  `data-kind="all"` 从 `span 2` 改为 `span 1`，让出的右侧空位放「新建稿件」，
+  原新建卡位置换成 `data-mu-action="batch"` 的「批量初稿」，点击进入 `#/batch`。
 - **波形包络分桶（2026-10-26 修）**：`attachPeakCollector` 每桶采样数必须用**整数相位累加**
   （`phase += rate`，满 `inSr` 减掉并 flush），不能写 `dur * inSr / (dur * rate)` 再比较 `++inBucket >= spb`。
   2700.502333 这类时长会算出 `160.00000000000003`，第 160 个采样比较失败 → 实际每桶 161 采样；
@@ -130,9 +134,16 @@
     `skipped`，界面只报「已重排 0 句（265 句没对上）」。现在 `onlyKeys` 流程传 `repairWords`：
     按 `splitEnglishWords(文本)` 校验对齐词序列（与坏行判定同一口径），一致就**采纳新词序列**
     并重建切片（文本不动）；词序列对不上仍拒绝。同时去掉「整份稿件 revision 必须等于作业开始时」
-    这道全局门槛 —— 改为逐条 `targetKey`（含文本/起止/词序/事件位置）核对，别处的编辑不再
+    这道全局门槛 —— 改为逐条 `targetKey`（文本/起止/词序）核对，别处的编辑不再
     让整批写回失效；若一条都没写进去，预览不收起并说明原因。
     `tests/repair04-realign-test.mjs` 覆盖严格模式拒绝、修复模式采纳与错误词序列拒绝。
+  - **全片应用 0 句 / 保存后行号漂移（2026-10-26 修）**：`realignTargetKey` 以前包含
+    `events.lineIdx`，保存后事件行号可能重新编号，而文本/时间/逐词都没变，导致 232 句整批失配
+    （用户截图「没有可应用的行：232 句的词序列与当前文本对不上」）。现在 key 只含
+    style/proto/start/end/text/词序列；若 key 仍因逐词刚被修过而失配，则用服务端返回的
+    `start + end + text` 唯一找回该句，再用**当前**词序列做 `sameAsOld` / `repaired` 核对
+    （词真被改过仍拒绝）。0 句提示改为「与当前字幕对不上（文本/时间/逐词可能已改动）」，
+    避免把所有跳过都误报成词序列问题。`repair04` 新增「旧 key 失配但起止+文本未变仍应用」断言。
   - **初稿末词尾巴**：本地 Whisper v2 的末词终点常比真实收音早 100~200ms。`buildDraftSubtitle` 调
     `writeSubtitle(..., { tail: 0.15 })`，每句结尾补 0.15s（不超过下一句起点）；`writeSubtitle` 的
     `tail` 默认 0，SRT→ASS 等路径不会越出原片区间（有 `srt-ass-e2e-test` 断言）。
@@ -188,8 +199,7 @@
   `#/project/<id>`、`#/editor`；无 hash 默认 `#/dashboard`，旧 `#/resources` 转 `#/settings`、
   旧 `#/tasks` 转 `#/home`。
 - **首次启动（加速方式）**：浏览器没有 `localStorage.sf-welcome-v1` 时先显示 `#welcome-view`，
-  `#app` 置 `inert` 并隐藏；第一步只提供 **CUDA / Vulkan** 两个勾选，至少勾一个才能点
-  「下一步」进入第二步「模型与前置」；第二步提供「上一步 / 进入工作台」（不支持 CPU 推理）。
+  `#app` 置 `inert` 并隐藏；只提供 **CUDA / Vulkan** 两个勾选，至少勾一个才能进入（不支持 CPU 推理）。
   NPU 不在欢迎页出现：`GET /api/asr/hardware` 探到 Intel AI Boost / Ryzen AI 才在设置页显示。
   硬件探测：CUDA 走 `nvidia-smi`；Vulkan 用 `System32\vulkan-1.dll` + 非虚拟显卡列表；NPU 用
   `Win32_PnPEntity` 匹配 `AI Boost|Ryzen AI|NPU|IPU`（排除 Input/HID）。结果缓存 5 分钟，
@@ -206,28 +216,16 @@
   未选中卡片使用主题 `surface-2` 的浅色底（不再回落到深色 `--bg-3`）；提示条用
   `grid-template-rows: 0fr → 1fr` 展开/收起，配合负 gap 抵消与 440ms 非线性曲线，
   选择状态切换时卡片、按钮、提示条连续移动，不跳帧。
-- **欢迎页模型与前置准备**：在第二步按当前勾选的 CUDA / Vulkan 展示显卡型号、专用显存与
-  NVIDIA 当前空闲显存，并从 `/api/asr/status` 实际返回的在用模型中给建议；不受上一次保存的
-  `backendAllowed` 限制，也不复活停用模型。CUDA 按默认第 0 卡，Vulkan 自动选卡未确定时
-  按最保守单卡容量，不相加多卡显存。保守建议档位为 CUDA Whisper 6GiB、CUDA Qwen 8GiB、
-  Vulkan Parakeet 2GiB、Whisper 6GiB、Qwen Q4 4GiB；这不是最低需求或本次 GPU 验收结论。
-  CUDA 旧代 GTX / RTX 20 / Quadro P/K/M 不把 Qwen bf16 标为推荐；未知容量不标显存足够，
-  低显存提示先试短片或改用 Vulkan 轻量模型/云端识别。Vulkan 大显存默认 Whisper 质量档，
-  小显存/未知容量提示轻量 Parakeet；推荐在简短文字中列出，不另建模型卡或模型选择器。
-  驱动保留页造成的少量差值容忍 128MiB（例如 8188MiB 仍归入 8GiB 档），不会跨越整档容量。
-  **直接复用语音识别原始控件**：模板中唯一的 `#sf-asr-catalog` 包含硬件条、系列大卡片、
-  模型详情、前置、下载目录与重新识别设置，平时位于 `#sf-asr-home`。第二步用 `appendChild`
-  把原节点移到 `#welcome-asr-mount`，返回/取消/完成时放回原位并恢复原设置系列。不克隆控件、
-  不生成重复 ID；主题、系列导航、下载/安装/删除/参数/目录操作继续使用 `renderAsrModels`、
-  `showAsrFamily` 与原事件处理。欢迎页自写的模型卡、前置行和下载处理已移除。
-  参数按钮的事件委托挂在会移动的目录根节点上，首次欢迎也会初始化；移动不重复绑定。
-  只有确实借出过控件才恢复设置系列；确认弹窗在欢迎层上方，Esc 优先关闭参数/确认弹窗。
-  `renderAsrModels(providedStatus)` 可接收欢迎页取得的状态，避免重取；欢迎期间按第一步的
-  当前后端重算模型与对齐器，不沿用服务器上次保存的 `backendAllowed`。渲染用代次校验，
-  防止节点移回设置后迟到响应覆盖目录。下载启动后沿用既有轮询，欢迎自己的轮询与其互斥。
-  第一步不展示下载、不启动准备轮询，下一步才读取模型状态。返回第一步保留后端选择、停止
-  欢迎轮询并作废迟到响应；已启动的下载继续由原任务和轮询负责。重进第二步显示系列总览。
-  仅第二步「进入工作台」保存后端与首次设置完成标记；模型管理操作仍按设置页规则即时保存。
+- **欢迎页两步与模型/前置准备（同步 15e8ef5）**：第一步只选 CUDA/Vulkan；点「下一步」进入
+  `#welcome-prep`，再按所选后端展示显存建议（`welcome-model.js` 的 `welcomeRecommendations()`，
+  CUDA 只看第 0 张卡、Vulkan 多卡取最保守单卡容量，下载体积不换算显存）。第二步把原「语音识别」
+  目录整体移动到 `#welcome-asr-mount`，复用系列卡、模型行、前置安装、目录选择与事件处理；
+  「上一步」把目录移回 `#sf-asr-home`、停止准备轮询并保留勾选。`#welcome-next` / `#welcome-back`
+  与 `#welcome-prep-refresh` 由 `project.js` 接线；回退/取消/完成都恢复原目录，完成只在第二步保存。
+- **UWP 浅色前景色（同步 15e8ef5）**：`studio-themes.js` 新增 `uwpLightColors()`，按强调色生成
+  `--accent-text` / `--on-accent-hover` / `--on-accent-pressed` 与语义色；`applyTheme()` 在
+  UWP 浅色下把角色写进控件与 canvas，并先清掉上一套内联语义色，避免切主题残留。
+  `tests/uwp-light-test.mjs` 覆盖 9 组强调色与状态对比度。
 - **UWP 欢迎页磁贴**：CUDA / Vulkan 两张选择卡加 `uwp-tile`，与工作台磁贴共用 Reveal 面光、
   2px 直角和实色底；`data-theme-pack="windows-uwp"` 同时兜底圆角，避免首帧 `data-design`
   尚未写入时出现大圆角。红色错误条也固定 2px 直角。欢迎卡、UWP 原生 checkbox、下拉选择
@@ -252,9 +250,21 @@
 - **主题包**：内置四个——Windows 10(`uwp`)、Material You(`material`)、SubFabric Classic(`classic`)、
   Claude(`claude`)；`design:"studio"` 仅保留给旧自定义包。同源 JSON 在 `editor/themes/*.theme.json`，
   运行期定义在 `editor/js/studio-themes.js`。自定义包只接受白名单键（`schema` `id` `name` `version` `description`
-  `author` `design` `seed` `tokens` `assets` `builtin`）、`#RRGGBB` 颜色令牌与内嵌 PNG/JPEG/WebP 预览；
+  `author` `design` `seed` `tokens` `assets` `builtin` `personalization`）、`#RRGGBB` 颜色令牌与内嵌 PNG/JPEG/WebP 预览；
   **不能**含脚本、CSS、HTML、SVG 或远程 URL。导入同名自定义包替换旧版，导入内置包生成 `-custom` 副本，
   内置包不可删除。
+- **主题包压缩包（2026-10-27）**：导出改为 `.theme.zip`，内含 `theme.json` 与
+  `layouts/home.json`、`layouts/library.json`、`layouts/editor.json`、`layouts/help.json`。
+  `theme.json` 仍带 `design + tokens + seed + assets.preview`，并附加 `personalization`
+  （accent / mode / motion / 背景 solid|aurora / 流光颜色与速度 / 毛玻璃三项 / `rimEnabled` /
+  `rimSatLow` / `rimBriGain` / `rimSpecBase` / `rimPower`）与 `layouts` 快照。布局字段：
+  `home.widgets`（主页小组件顺序）、`library.view|columns`、`editor.timelineHeight|panelWidth|splitPane`、
+  `help.columns`；`studio-themes.js` 的 `validLayouts` 只放行这四页和上述键，数值有范围夹取。
+  导入优先读 ZIP 内的布局文件再覆盖 `theme.json`，`applyLayouts()` 重排主页小组件、恢复库视图/列数、
+  写入编辑器 localStorage 尺寸与分栏、设置帮助页 CSS 变量；选中带布局的包也同样恢复。
+  背景图片与图片模糊/压暗不随包走（体积与素材归属），导出时 `background:image` 回落为 `solid`。
+  `zip.js` 是零依赖 store 模式 ZIP 读写；studio.js 动态 import，失败时自动退回内置的同款 store ZIP 实现，因此旧服务进程没有新静态文件也能正常导出/导入，且不会拖垮整个外观模块。回归：`theme-pack-zip-test`（ZIP 往返、UTF-8 文件名、
+  四页布局校验、导入导出接线）、`theme-packs-test`（个人化快照/非法键/包选择恢复）。
 - **Material You 莫奈取色（2026-10-26）**：设置 → 外观 → 「莫奈取色」只在 MY 主题显示。用户选一张图片，
   `editor/js/monet.js` 的 `seedFromPixels()` 从中挑种子色，再交给现有 `themes.palette(seed, dark)`
   生成整套 Material 配色（`commit({accent:seed})` + `applyTheme()`）。算法是轻量近似 HCT：
@@ -507,7 +517,7 @@
   备注仍按发送时的 `video.currentTime` 记录。视频上的弹幕气泡同样**不再显示时间**（`paintDanmaku`
   只输出正文），时间点只在日志/备注列表里出现。
 - **材质偏好**：毛玻璃压暗、模糊度、透明度由 `editor/js/studio-state.js` 保存、`studio.js` 同时算
-  深浅色令牌、`studio.css` 末端统一应用；Windows 10 浅色使用实色表面，不应用黑玻璃层。
+  深浅色令牌、`studio.css` 末端统一应用，主题包不能绕开。
 - **浅色玻璃自动浅色字**：`editor/js/glass-contrast.js` 把卡片自身的半透明背景逐层压到页面底色上
   （图片背景取 16×16 平均色，按 `opacity` 与 `imageDim` 合成），算 WCAG 相对亮度；亮度低于约 0.30、
   浅色字至少 3:1 时给面板加 `.sf-fg-on-dark`，局部覆盖 `--text` / `--muted` / `--line`。
@@ -520,14 +530,6 @@
   并去掉 `backdrop-filter`。⚠ `.sscp` 必须写进**同一个 `:is()` 清单**：玻璃规则的 `:is()` 里带 ID，
   特异性 1,2,0，另起一条 `.sf-studio[data-theme=light] .sscp`（0,3,0）压不住它。实测四个主题
   （UWP/Material/Classic/Claude）全部浅色浮层：0 个深色、正文对比度 ≥ 5.6:1。
-- **Windows 10 浅色表面与可读色**：共享浅色黑玻璃层及设置卡片层排除 UWP 浅色，避免
-  多层黑色透明背景叠成灰底；使用 `:where()` 保持其它主题原有选择器优先级。按组件覆盖颜色，
-  不依赖 `#st-view`，欢迎页移入的模型目录也保持白色实底。`themes.uwpLightColors()` 保留用户
-  强调底色，单独生成在白/灰/选中表面可读的 `--accent-text`，并按普通、悬停、按下三种底色
-  分别选择黑/白前景；成功/警告/错误/信息使用浅色语义角色，切换深色或其它主题时清除。
-  覆盖模型/前置/硬件状态、稿件徽标和进度、字幕时间及校对按钮、选中菜单与页签、查找替换、
-  字体菜单、颜色选择器、导出状态等。占位提示不额外降低透明度，输入边界用 `--outline`，
-  稿件缺省封面使用浅灰表面。字幕内容、角色自定义颜色与媒体画面不参与语义色修正。
 - **颜色选择器浅色**：`.sscp` 原为整块深色（`#202027` + 亮字），浅色下补 `.sscp-head` 用
   `--surface-2`、`.sscp-x/.sscp-label/.sscp-fields` 用 `--text/--muted/--line`、输入框用
   `--bg-2`、色块描边改深色半透明。
@@ -683,10 +685,6 @@
 - **ASR 纯逻辑单测**：`tests/faster-whisper-test.mjs`（XXL 参数跨版本、JSON → segments、进度解析）、
   `tests/glossary-repair-test.mjs`（术语表修复的命中与误伤边界）、`tests/welcome-model-test.mjs`
   （CUDA/Vulkan/NPU/云端模型的可见性、双引擎依赖、其它模型、过滤后默认选择）、
-  `tests/welcome-preparation-test.mjs`（推荐档位/保留页边界、低显存/未知显存、多卡不相加、
-  CUDA bf16 旧卡提示，以及硬件探测的缓存、并发合并与强制刷新）、
-  `tests/welcome-flow-test.mjs`（两步可见性、空选择禁止下一步、返回保留选择/停止轮询、
-  迟到响应作废、保存失败恢复/成功完成与重新打开回到第一步）、
   `tests/glass-contrast-test.mjs`（玻璃背景 alpha 合成、相对亮度、对比度与浅色前景阈值）、
   `tests/asr-params-test.mjs`（模型参数 schema/默认值/范围校验/`multipleOf` 吸附/重置语义；
   已停用引擎的旧 schema 保留但模型不可达）、
@@ -695,29 +693,6 @@
   只验证静态拼接，不代表模型仍可运行）、
   `tests/asr-bench-repair-test.mjs`（速度测试工作目录不得落 `%TEMP%`、退役引擎统一兜底与安装接口拒绝）。
   这些测试不加载模型、不需要 GPU。
-- **Windows 10 浅色审查（2026-10-27，本轮）**：已完成且已验证。新增 `uwp-light-test` 验证
-  9 种强调色、普通/悬停/按下前景、小字与语义色对比度、主题切换清理及共享表面作用域。
-  六项相关回归通过；全量 JS：132 passed、12 partial、1 diagnostic、0 failed、2 excluded；
-  partial/diagnostic/excluded 的项目与原因同下方历史验证。ESLint 9 全仓 0 错误、34 条已有告警。
-  隔离 Chrome 用受控硬件/模型/稿件状态与 ASS 夹具检查 46 个页面/交互状态、3228 次文字及
-  占位提示观测（包含重复节点），对比度筛查 0 项不足、0 JS 异常；另验证明暗切换恢复角色。
-  覆盖欢迎、稿件列表、新建、帮助、六类设置、编辑器、字体/字幕菜单、查找替换、颜色/参数/
-  角色/确认/导出弹窗、四种实际自定义颜色及按钮悬停/按下。该筛查不等于完整无障碍认证。
-  未执行安装包构建、系统原生文件对话框或真实 GPU/模型推理；本轮只验收前端浅色适配。
-- **欢迎页复用与 CI 修复（2026-10-27，历史验证）**：已完成且已验证。相关八项回归已通过；浏览器确认
-  系列卡与目录为原节点移动、模型/运行时/FFmpeg 下载进度与错误重试、已有对齐文件不重下、
-  返回改选后端、三个主题的 390px 布局与设置页恢复，无 JS 错误。全量 JS：131 passed、
-  12 partial、1 diagnostic、0 failed、2 excluded；参数事件委托调整后四项相关回归与浏览器
-  复验通过（含删除确认、参数模态与 Esc）。ESLint 9 全仓无错误，保留已有告警。
-  partial 项为 `ass-group`、`diarize-api`、`font-picker`、`realign-cancel-api`、`role-order`、
-  `role-recolor`、`speech-gap`、`srt-ass-e2e`、`vibevoice-worker-behavior`、`word-boundary`、
-  `zh-ghost-heal`、`zh-punct`，原因是缺真实夹具、Python/模型运行时或 GUI；
-  `rows-timeline` 为诊断；`colorfix` / `font-status` 因依赖用户项目/GUI 按约定排除。
-  此前远程提交的全量 CI 曾在 `hotwords-test` 失败：把 `nvidiaCache.name` 读取次数写死为 7，
-  并发缓存重构后实际为 6。现保留缓存读取门禁检查，移除数量断言；冷启动、缓存命中、并发与
-  刷新由 `welcome-preparation-test` 动态验证。统一测试入口现在会输出失败项最多 16000 字符的
-  诊断，不再只给 FAIL 名称。下载使用受控响应，未实际下载模型/安装运行时、未做模型推理或
-  AMD 独显实机验收；这些不作为此次界面/测试修复完成的条件。
 - **文案覆盖**：`tests/i18n-coverage-test.mjs` 用 `tools/lib/copy_scan.mjs` 重扫
   `editor/studio.html`、`editor/js/*.js`、`editor/server.js`、`editor/asr-params.js`、`editor/scripts/*`，要求每条
   用户可见中文都能在 `editor/lang/zh-CN.json` 找到键；`node tests/gen-lang.mjs` 负责补齐/保留用户润色。
@@ -1047,6 +1022,16 @@ SEA（`SubFabric.exe`）不能当 node 用，所以不传，靠 PATH 探测。
   不盲目重试。无认证或写权限时记录具体阻塞、未提交内容与恢复入口，继续可做的工作；不切换成本地提交
   推送，不要求用户粘贴密码/令牌/私钥。不创建、修改、启用或信任任何 Hook。
 
+### 高级导出（按说话人筛选）
+
+「设置 → 导出 → 高级导出…」打开弹窗，列出当前 ASS 稿件的全部角色（含「未标注角色」），
+**默认全选**，可用「全选 / 全不选」。导出时只写入勾选角色的字幕行，例如取消「译者注」
+后，导出文件里不再出现该角色的任何台词。可选格式：原始字幕（保留逐词）、干净 ASS、
+仅中文、仅英文、逐词 JSON。`karaoke.js` 的 `sentenceSpeakerNames()` /
+`filterSentencesBySpeakers()` 是唯一判定口径：说话人取行首 `[角色]` 文本标签，缺失时退回
+ASS Name 栏；一句有多个说话人时必须全部勾选才保留。`main.js` 的 `buildSpeakerAss()`
+保留原 ASS 头/样式，仅按选中句子重建 Dialogue 行，因此不会把未选角色的行带出去。
+
 ## 11. 视频导出（硬字幕 / 生肉 / 字幕）
 
 编辑器「设置 → 导出 → 导出视频…」打开导出对话框：选一个导出目录，勾选要产出的内容（可多选同时导出）。
@@ -1167,6 +1152,91 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
 ### 最近状态
+
+**2026-10-27（批量初稿独立队列页，beta 1.5.0.2）**
+
+- **需求**：批量初稿做成像创建初稿一样的独立界面；加号选视频进队列，列表旁有全局设置、
+  每条视频有单独设置，点开始后串行处理，不并行。
+- **实现**：新增 `#/batch` 页面（`#batch-view`），支持多选视频、队列状态/进度/移除/打开；
+  右侧默认设置与每条「设置」弹窗可覆盖识别模型、翻译方案、逐词/对齐/区分说话人。
+  `batchStart()` 按队列串行上传 → `POST /api/projects`（draft）→ 轮询 `/:id/draft`；
+  翻译方案逐条切换并在结束时恢复；停止只影响尚未开始的下一条。刷新清空未开始队列。
+- **验证**：新增 `tests/batch-queue-test.mjs`；`batch-draft-api-test`、`ui-integration`、
+  `material-home` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-batchqueue.json` **140 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包、真实多视频长任务验收。GitHub：**云端提交成功且已核对（6f8b404）**。
+
+**2026-10-27（高级导出：按说话人筛选，beta 1.5.0.2）**
+
+- **需求**：导出区加入「高级导出」，弹窗选择说话人（默认全选），未勾选角色的字幕不导出。
+- **实现**：`karaoke.js` 新增 `sentenceSpeakerNames()` / `filterSentencesBySpeakers()`；
+  `main.js` 高级导出弹窗列出角色（含未标注），支持原始字幕 / 干净 ASS / 仅中文 / 仅英文 /
+  逐词 JSON；`buildSpeakerAss()` 保留 ASS 头与样式、只重建选中角色的 Dialogue 行。
+  一句多说话人时必须全部勾选；未标注行单独控制。`tests/advanced-export-test.mjs`
+  覆盖译者注排除、Alice 保留、多角色与未标注。
+- **验证**：`advanced-export-test`、`ui-integration` 通过；全量 JS 回归
+  `_test/maintenance/js-results-1463-advanced-export.json` **139 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包、真实稿件人工导出验收。GitHub：**云端提交成功且已核对（6f8b404）**。
+
+**2026-10-27（同步上游 15e8ef5）**
+
+- **远端**：`08ecfc0` → `15e8ef5`，共 4 个上游提交：硬件感知的欢迎页模型/前置准备、
+  欢迎页拆成「加速方式 / 模型与前置」两步、第二步复用原语音识别目录、Windows 10 浅色
+  前景色与对比度修复（含 `uwpLightColors`）。
+- **合并**：以 `08ecfc0` 为 base 做三路合并，保留本地批量初稿、主题包 ZIP/页面布局、
+  全片重校对回退匹配、主页第二行布局等增量；`project.js`/`studio.css` 两处手工合并
+  （导入 `fmtTime` + `welcomeRecommendations`、批量弹窗 CSS + UWP 浅色样式），其余文件自动合并。
+  新增上游测试 `welcome-flow-test`、`welcome-preparation-test`、`uwp-light-test`，
+  `project.js`/`studio.js`/`studio-themes.js`/`welcome-model.js`/`server.js` 与 jsmod 镜像同步。
+- **验证**：目标测试与新增上游测试通过；全量 JS 回归
+  `_test/maintenance/js-results-1463-sync15e8ef5.json` **138 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；AMD/NVIDIA 真实硬件与模型推理未复测。GitHub：**云端提交成功且已核对（6f8b404）**；
+  文档为合并摘要（未逐字节复制上游 PROJECT.md）。
+
+**2026-10-27（主题包 ZIP：四页布局 + 界面样式与个性化，beta 1.4.6.3）**
+
+- **需求**：主题包导入/导出可用；把编辑器/主页/稿件库/帮助页面的布局一起打包，格式改为压缩包，
+  并保留当前个性化设置（强调色 / 白高光 / 描边饱和度映射曲线等）。
+- **实现**：导出改为 `.theme.zip`（`theme.json` + `layouts/{home,library,editor,help}.json`），
+  包内保留 `design + tokens + assets + seed`，附加 `personalization` 与四页 `layouts`。
+  布局字段：主页小组件顺序、稿件库视图/列数、编辑器时间轴高度/右侧面板宽/分栏页、帮助页列数；
+  `themes.validLayouts()` 只放行这些页与键并夹取范围。导入优先读 ZIP 内布局文件，校验后
+  连同主题包 `commit` + `applyTheme()` + `applyLayouts()`；选中带布局的包也会恢复。
+  `zip.js` 为 store 模式零依赖 ZIP 读写，studio.js 动态 import；动态模块失败时自动退回
+  内置同款 store ZIP，因此旧服务缺文件也能正常导入导出。
+  背景图片/图片模糊压暗不随包走，`background:image` 导出回落 `solid`。
+- **验证**：新增 `theme-pack-zip-test`（ZIP 往返、UTF-8 文件名、四页布局校验、导入/导出接线）；
+  `theme-packs-test` 扩展个人化快照/非法键/`asCustom`；`ui-integration`/`material-home` 通过；
+  全量 JS 回归 `_test/maintenance/js-results-1463-themezip.json` **135 通过 / 8 部分 / 0 失败**
+  （2 排除）。
+- **未做**：安装版重打包、跨机器人工导入验收。GitHub：**云端提交成功且已核对（6f8b404）**。
+
+**2026-10-26（批量创建初稿，beta 1.4.6.3）**
+
+- **需求**：为项目列表加入批量创建初稿。
+- **实现**：工具栏「批量初稿」只列已有视频、还没有字幕且不在处理中的项目；弹窗内可选识别模型、
+  逐词/对齐/区分说话人。服务端 `POST /api/projects/batch-draft` 建串行作业，逐项
+  `startDraftForExisting`（有音频直接 ASR，无音频先 prepare）并轮询子项完成后再启动下一项，
+  避免多个 ASR 抢显卡；`GET /api/projects/batch-draft/:id` 给前端 1.6s 轮询进度，
+  完成/失败逐项显示。已有字幕项目不会被覆盖；同一时刻只允许一个批量作业。
+- **验证**：新增 `tests/batch-draft-api-test.mjs`（200/404/400、无模型时逐项失败但不 500、
+  前端入口与轮询契约）；`ui-integration`/`advanced-actions`/`material-home` 通过；全量 JS 回归
+  `_test/maintenance/js-results-1463-batchdraft.json` **134 通过 / 8 部分 / 0 失败**（2 排除）。
+- **主页布局**：MY 工作台第二行改为「全部稿件 / 新建稿件 / 批量初稿 / 全局设置」；全部稿件卡
+  `span 2 → span 1`，新建稿件移到让出的右侧格，原位置换成批量初稿卡（打开批量弹窗）。两张卡的底色互换：新建稿件用 surface、批量初稿用 accent。
+- **未做**：安装版重打包、真实多项目长任务人工验收。GitHub：**尚未提交**（工作副本无 `.git`）。
+
+**2026-10-26（全片逐词重校对应用 0 句修复，beta 1.4.6.3）**
+
+- **现象**：全片逐词重校对预览后点应用，提示「没有可应用的行：232 句的词序列与当前文本对不上」。
+- **根因**：`realignTargetKey` 把 `events.lineIdx` 也算进 key；保存/序列化后行号重新编号，
+  文本、整句起止、逐词都没变的句子也会整批失配，`applyRealignItems` 于是 0 句写入。
+- **修复**：key 去掉 `lineIdx`（保留 style/proto/start/end/text/词序列）；精确 key 失配时，
+  用服务端返回的 `start + end + text` 唯一找回句子，再按**当前**词序列做严格/修复校验
+  （真的改过词仍拒绝）。0 句提示改为「与当前字幕对不上（文本/时间/逐词可能已改动）」。
+- **验证**：`repair04-realign-test` 新增「旧 key 失配但起止+文本未变仍应用」；`realign-words`、
+  `realign-batch` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-realignapply.json`
+  **133 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包。GitHub：**尚未提交**（工作副本无 `.git`）。
 
 **2026-10-26（描边曲线拖动不再整页刷新，beta 1.4.6.3）**
 
