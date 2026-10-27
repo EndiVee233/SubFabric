@@ -77,6 +77,21 @@
   }
   function luminance(color) { return rgb(color).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0); }
   function contrast(a, b) { const x = luminance(a), y = luminance(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); }
+  // Windows 浅色模式把强调底色与文字色分开：保留用户的颜色，但保证小字可读。
+  function uwpLightColors(accent, selectedSurface) {
+    const surfaces = ['#FFFFFF', '#EDEDED', '#E5E5E5', '#E5F1FB', selectedSurface];
+    const channels = rgb(accent).map(v => v * 255);
+    const shade = factor => '#' + channels.map(v => Math.round(v * factor).toString(16).padStart(2, '0')).join('');
+    let ink = accent;
+    for (let step = 0; step <= 100; step++) {
+      ink = shade(1 - step / 100);
+      if (surfaces.every(bg => contrast(ink, bg) >= 4.6)) break;
+    }
+    const on = bg => contrast('#FFFFFF', bg) >= contrast('#000000', bg) ? '#FFFFFF' : '#000000';
+    return { '--accent-text': ink, '--on-accent': on(accent),
+      '--on-accent-hover': on(shade(.86)), '--on-accent-pressed': on(shade(.72)),
+      '--danger': '#A4262C', '--success': '#0B6A3C', '--warning': '#7A4600', '--info': '#005A9E', '--dim': '#606060' };
+  }
   function readable(color, background, h, s, dark) {
     let l = dark ? 76 : 38;
     while (contrast(color, background) < 4.6 && l > 8 && l < 98) { l += dark ? 1 : -1; color = tone(h, s, l); }
@@ -98,7 +113,8 @@
     document.body.dataset.design = pack.design;
     const accent = settings.accent || pack.seed;
     const tokens = palette(accent, dark);
-    Object.keys(tokens).forEach(key => root.style.removeProperty(key));
+    [...Object.keys(tokens), '--accent-text', '--on-accent-hover', '--on-accent-pressed',
+      '--danger', '--success', '--warning', '--info', '--dim'].forEach(key => root.style.removeProperty(key));
     if (pack.design === 'material') Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value));
     else if (pack.design === 'uwp') {
       Object.entries({ ...tokens,
@@ -113,7 +129,8 @@
         '--line': dark ? '#666666' : '#B8B8B8',
         '--accent-soft': tokens['--accent-soft'],
         '--accent-hover': dark ? '#383838' : '#E5F1FB',
-        '--outline': dark ? '#C8C8C8' : '#666666'
+        '--outline': dark ? '#C8C8C8' : '#666666',
+        ...(!dark ? uwpLightColors(accent, tokens['--accent-soft']) : {})
       }).forEach(([key, value]) => root.style.setProperty(key, value));
     } else if (pack.design === 'classic') {
       const accent = settings.accent || pack.seed;
@@ -146,5 +163,5 @@
       root.style.setProperty('--on-accent', contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318');
     }
   }
-  window.SF_THEMES = Object.freeze({ builtins, hex, valid, validList, list, get, isBuiltin, canDelete, remove, asCustom, tokenOverrides, palette, contrast, apply });
+  window.SF_THEMES = Object.freeze({ builtins, hex, valid, validList, list, get, isBuiltin, canDelete, remove, asCustom, tokenOverrides, palette, contrast, uwpLightColors, apply });
 }());

@@ -4646,8 +4646,8 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-design=classic] .sf-ambient,.sf-studio[data-design=classic] .sf-backdrop { display:none; }
 
 /* 毛玻璃参数的统一末端覆盖：浅色模式也使用同一组压暗/模糊/透明度设置。
- * 主题包只决定几何与强调色；材质参数属于 Studio 偏好，必须跨 Studio、Material、UWP、Classic 生效。 */
-.sf-studio[data-theme=light] :is(.sf-nav,.sf-topbar,.proj-card,.page-surface,.sf-help-grid article,#toolbar,#stage-wrap,#editor-panel,#timeline-panel,.st-drawer,.modal-surface,.rn-box,.pick-box,.fix-box,.ctd-box,.menu,.sscp,.font-picker,#role-menu,#card-menu,#tl-menu,.st-card,.set-group,.st-section,.sf-asr-family,.panel-head,.tl-toolbar,.tab-head,.cue-card,.role-card,.sm-model,.st-entry,.st-scheme,.sf-pack,.sf-prerequisite,.sf-choice-menu,.sf-rate-menu,.fp-panel) {
+ * UWP 浅色遵循实色表面，其它设计保留 Studio 材质偏好。 */
+.sf-studio:where(:not([data-design=uwp]))[data-theme=light] :is(.sf-nav,.sf-topbar,.proj-card,.page-surface,.sf-help-grid article,#toolbar,#stage-wrap,#editor-panel,#timeline-panel,.st-drawer,.modal-surface,.rn-box,.pick-box,.fix-box,.ctd-box,.menu,.sscp,.font-picker,#role-menu,#card-menu,#tl-menu,.st-card,.set-group,.st-section,.sf-asr-family,.panel-head,.tl-toolbar,.tab-head,.cue-card,.role-card,.sm-model,.st-entry,.st-scheme,.sf-pack,.sf-prerequisite,.sf-choice-menu,.sf-rate-menu,.fp-panel) {
   background:var(--sf-glass-light-surface);
   backdrop-filter:blur(var(--sf-glass-blur))!important; -webkit-backdrop-filter:blur(var(--sf-glass-blur))!important;
   box-shadow:0 8px 28px -18px #0005,inset 0 1px 0 #ffffff60;
@@ -4704,10 +4704,10 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-workspace=settings] #st-view .settings-inner,
 .sf-studio[data-workspace=settings] #st-view .st-box,
 .sf-studio[data-workspace=settings] #st-view .st-body { background:transparent!important; }
-.sf-studio[data-workspace=settings] #st-view .st-card,
-.sf-studio[data-workspace=settings] #st-view .set-group,
-.sf-studio[data-workspace=settings] #st-view .st-section,
-.sf-studio[data-workspace=settings] #st-view .sf-asr-family { background:var(--sf-glass-light-surface); }
+.sf-studio:not(:where([data-design=uwp][data-theme=light]))[data-workspace=settings] #st-view .st-card,
+.sf-studio:not(:where([data-design=uwp][data-theme=light]))[data-workspace=settings] #st-view .set-group,
+.sf-studio:not(:where([data-design=uwp][data-theme=light]))[data-workspace=settings] #st-view .st-section,
+.sf-studio:not(:where([data-design=uwp][data-theme=light]))[data-workspace=settings] #st-view .sf-asr-family { background:var(--sf-glass-light-surface); }
 
 /* 胶囊形只属于 Material You；其它主题使用小圆角矩形。Material You 的倾斜胶囊
  * 保留原有品牌动势；用户要求把角度收到 40°，文字反向旋转 -40° 保持水平。 */
@@ -7581,3 +7581,69 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
   .sf-studio[data-design=claude] :is(.sf-widget,.proj-card,.sf-pack,.cue-card,.role-card,.btn):hover { transform: none; }
 }
 
+
+/* Windows 10 浅色：独立前景色角色，不把为深底准备的亮色用于浅色表面。
+ * 作用域按组件而非 #st-view，欢迎页借用卡片、编辑器和弹窗使用同一套颜色。 */
+.sf-studio[data-design=uwp][data-theme=light] :is(#editor-panel #cue-list, .cue-measure) {
+  --cc-text-2: var(--muted); --cc-text-3: var(--muted);
+  --cc-warn: var(--warning); --cc-ok: var(--success);
+}
+.sf-studio[data-design=uwp][data-theme=light] :is(.setting-val,.page-eyebrow,.ws-kicker,.sf-settings-scope,
+  .sf-asr-count,.sf-asr-arrow,.sf-background-check,.badge,.perf-tab.active,.log-subtab.active,
+  .sf-accel-chip.on,.sf-settings-details summary,.st-group-title) { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] #sf-filters button.active,
+.sf-studio[data-design=uwp][data-theme=light] .sf-settings-segments button[aria-pressed=true],
+.sf-studio[data-design=uwp][data-theme=light] .sf-background-choice[aria-pressed=true],
+.sf-studio[data-design=uwp][data-theme=light] .welcome-card.is-checked .welcome-card-text em { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.ass-style-font-note.ok,.sm-state.ok,.hw-chip.ok,
+  .st-env-state:not(.bad):not(.warn),.sm-group-ready,.st-tag-cur,.st-scheme-cur,
+  .pc-st.st-done,.pc-draft.done .pct,.rim-item .rim-ok,.st-entry-chips > span.ok,
+  #toast.toast-ok .ico) { color:var(--success); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.ass-style-font-note.warn,.st-entry-chips > span.warn,
+  .st-env-state.warn,.warn-toggle,.pc-missing .ico,#toast.toast-warn .ico) { color:var(--warning); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.st-entry-chips > span.blue,.pc-badge.srt,.pc-st.st-paused) { color:var(--info); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.tl-menu-item.danger,.tl-menu-item.danger:hover,
+  #range-bar .rb-btn.danger,.np-region-note.bad,.rim-item .rim-no,.reflect-summary.rim-bad,
+  .gl-del:hover,.note-row button.note-del:hover) { color:var(--danger); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.st-env-dot.ok,.st-scheme-dot.ok) { background:var(--success); }
+.sf-studio[data-design=uwp][data-theme=light] .st-env-dot.warn { background:var(--warning); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.sf-widget-kicker,.sf-topbar span i) { opacity:1; }
+.sf-studio[data-design=uwp][data-theme=light] .tl-sep { color:var(--muted); }
+.sf-studio[data-design=uwp][data-theme=light] .fp-btn { background:var(--surface-2); color:var(--text); border-color:var(--line); }
+.sf-studio[data-design=uwp][data-theme=light] #an-fields { opacity:1!important; }
+.sf-studio[data-design=uwp][data-theme=light] #np-hint { color:var(--warning)!important; }
+.sf-studio[data-design=uwp][data-theme=light] .btn-accent:hover { color:var(--on-accent-hover); }
+.sf-studio[data-design=uwp][data-theme=light] .btn-accent:active { color:var(--on-accent-pressed); }
+.sf-studio[data-design=uwp][data-theme=light] #st-view :is(.sf-background-choice[aria-pressed=true],.sf-settings-segments button[aria-pressed=true]),
+.sf-studio[data-design=uwp][data-theme=light] #editor-panel .log-subtab.active,
+.sf-studio[data-design=uwp][data-theme=light] .sf-accel-chip.on b { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] :is(#editor-panel #cue-list,.cue-measure) .cc-t:nth-child(3) b { opacity:1; }
+.sf-studio[data-design=uwp][data-theme=light] :is(.pc-st.st-running,.fp-item.active,.fr-title) { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.pc-badge,.pc-draft-txt .pct,.st-key-clear,.hw-mine-term,.hw-mine-add,.st-pick.on) { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] .home-list > .proj-card .pc-actions > .btn-accent.pc-retry { color:var(--accent-text); border-color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.chip-conf-low,.chip-bad,.conf-toggle,.conf-toggle.active) { color:var(--warning); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.chip-conf,.chip-l2,.st-entry-chips > span.violet) { color:var(--info); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.dp-step.done .n,.sf-ev-step[data-status=done] .sf-ev-stephead > span:first-child) { color:var(--success); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.gl-del,.font-missing-mark,.sf-ev-step[data-status=error] .sf-ev-stepmsg) { color:var(--danger); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.cc-ph1,.cc-ph2) { color:var(--muted); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.cc-skip.is-on,.cc-skip:hover,.cc-rerecog:hover) { color:var(--accent-text)!important; }
+.sf-studio[data-design=uwp][data-theme=light] .sscp-x:hover { color:#FFFFFF; }
+.sf-studio[data-design=uwp][data-theme=light] :is(.fr-tabs,.fr-hint) { background:var(--surface-2); }
+.sf-studio[data-design=uwp][data-theme=light] .fr-menu-item:hover { background:var(--accent-hover); }
+.sf-studio[data-design=uwp][data-theme=light] .home-list > .proj-card .sf-cover { background:var(--surface-2); }
+.sf-studio[data-design=uwp][data-theme=light] .home-list > .proj-card .sf-cover > span { color:var(--muted); opacity:1; }
+.sf-studio[data-design=uwp][data-theme=light] .home-list > .proj-card .sf-cover::before { border-color:var(--outline); background:transparent; }
+.sf-studio[data-design=uwp][data-theme=light] .home-list > .proj-card .sf-cover::after { border-left-color:var(--muted); }
+/* 占位提示也属于可读内容；控件边界使用 outline，分隔线仍保留 line。 */
+.sf-studio[data-design=uwp][data-theme=light] :is(input,textarea,#st-view .st-input,#st-view .st-area,
+  #np-view .np-input,#np-view .np-area,#search-box,.fr-input,.hotword-input,.ctd-input)::placeholder { color:var(--muted); opacity:1; }
+.sf-studio[data-design=uwp][data-theme=light] :is(input:not([type=range]):not([type=file]),select,textarea,
+  #sf-search,#st-view .st-input,#st-view .st-area,#st-view .gl-input,#st-view .st-select,
+  #np-view .np-input,#np-view .np-select,#np-view .np-area,#np-view .np-time,
+  #detail-name,#role-new-name,#role-rename-input,#note-input,#search-box,.fr-input,.hotword-input,
+  .ctd-input,#cie-input,.sscp-value,.sscp-fields input,.fp-filter):not(:focus):not(:focus-visible):not(:checked):not([aria-invalid=true]):not(.is-invalid) { border-color:var(--outline); }
+.sf-studio[data-design=uwp][data-theme=light] :is(.sf-widget-cta,.sf-widget-arrow,.sf-choice-option[aria-selected=true],
+  .sf-choice-check,.sf-choice-toggle,.gl-add,.save-state.saving,.ws-badge,.st-group-title,.sf-ev-adv summary) { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] :is(#editor-panel #cue-list,.cue-measure) .cue-card.playing .cc-no { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] #st-view .gl-add { color:var(--accent-text); }
+.sf-studio[data-design=uwp][data-theme=light] :is(#np-pct,#detail-pct,.sf-widget-resume .sf-widget-cta) { color:var(--accent-text); }

@@ -54,7 +54,8 @@ class Element extends Surface {
     super(); this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null;
     this.attributes = new Map(); this.dataset = {}; this._class = ''; this._text = ''; this._html = '';
     this.value = ''; this.checked = false; this.disabled = false; this.hidden = false; this.files = [];
-    this.style = { setProperty(key, value) { this[key] = value; }, getPropertyValue(key) { return this[key] || ''; } };
+    this.style = { setProperty(key, value) { this[key] = value; }, getPropertyValue(key) { return this[key] || ''; },
+      removeProperty(key) { const value = this[key] || ''; delete this[key]; return value; } };
     this.classList = {
       contains: name => this._class.split(/\s+/).includes(name),
       add: (...names) => { this._class = [...new Set([...this._class.split(/\s+/).filter(Boolean), ...names])].join(' '); },

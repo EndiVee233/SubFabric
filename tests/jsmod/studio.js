@@ -95,8 +95,10 @@ function applyTheme() {
       : (dark && pack.design === 'claude' ? '#241B14' : '#101318');
   }
   // 原控件和 canvas 都从 root 读变量，统一映射为原程序的令牌名。
+  if (pack.design === 'uwp' && !dark) Object.assign(tokens, themes.uwpLightColors(accent, tokens['--accent-soft']));
   window.SSAccent.apply(tokens['--accent']);
   const st = document.documentElement.style;
+  for (const key of ['--accent-text', '--on-accent-hover', '--on-accent-pressed', '--danger', '--success', '--warning', '--info', '--dim']) st.removeProperty(key);
   Object.entries(tokens).forEach(([k, v]) => st.setProperty(k, v));
   for (const [k, v] of Object.entries({ '--bg-0': tokens['--bg'], '--bg-1': tokens['--surface'], '--bg-2': tokens['--surface-2'], '--bg-3': tokens['--accent-soft'], '--border': tokens['--line'], '--text-0': tokens['--text'], '--text-1': tokens['--muted'], '--text-2': tokens['--muted'], '--zh': tokens['--text'], '--en': tokens['--muted'], '--accent-ink': tokens['--on-accent'] })) st.setProperty(k, v);
   st.colorScheme = dark ? 'dark' : 'light';
