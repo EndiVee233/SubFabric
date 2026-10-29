@@ -11,8 +11,8 @@ import path from 'node:path';
  *  - 退役引擎有统一兜底，下载/安装接口明确拒绝。
  */
 const root = path.resolve(import.meta.dirname, '..');
-const server = fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8');
-const project = fs.readFileSync(path.join(root, 'editor/js/project.js'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8').replace(/\r\n/g, '\n');
+const project = fs.readFileSync(path.join(root, 'editor/js/project.js'), 'utf8').replace(/\r\n/g, '\n');
 const css = fs.readFileSync(path.join(root, 'editor/css/studio.css'), 'utf8');
 
 assert.match(server, /function benchWorkRoot\(\) \{\n  const base = path\.join\(ROOT, 'projects', '\.bench'\);/,

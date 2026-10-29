@@ -19,8 +19,13 @@
 ## 代码与验证
 
 - 修改代码前读 `docs/PROJECT.md` §3（后端与数据流）、§4（前端与主题）、§9（红线）。
-- 保持原生前端 ESM、无前端构建步骤和后端零 npm 依赖；遵守 SEA 单文件入口约束，跨请求状态放模块作用域。
-- 源码启动：`node editor/server.js --no-tray`（按需隔离端口）；此命令会创建本地日志与数据，执行前核对运行环境。
+- 保持原生前端 ESM、无前端构建步骤和后端零 npm 依赖，`server.js` 仍保持单文件，跨请求状态放模块作用域。
+  Electron / electron-builder 依赖仅限 `desktop/package.json` 独立子包；根目录不得建 `package.json`，
+  不改变 Node 22 同步 `require(esm)` 与前端 ESM 的模块边界。当前安装主链路为 Electron + NSIS；
+  SEA 脚本保留为旧链路，不能把其入口限制当成 Electron 的打包方式。
+- 浏览器源码启动：`node editor/server.js --no-tray`（按需隔离端口）；此命令会创建本地日志与数据，执行前核对运行环境。
+  Electron 构建见 `docs/PROJECT.md` §6；`npm --prefix desktop start` 前必须先 stage，测试用
+  `SUBFABRIC_DESKTOP_PORT=0` 与隔离用户数据，不接管未知端口进程、不迁移或删除旧安装用户数据。
 - JS 回归入口：`node tests/run-all.mjs`；CI 见 `.github/workflows/ci.yml`。
   按改动选择必要检查，纯文档任务核对路径、内容、范围即可，不安装依赖或重复跑无关功能测试。
 - JS 测试可能生成夹具并同步 `tests/jsmod/`；先记录已有修改，只提交属于当前任务的镜像差异。

@@ -37,7 +37,7 @@ jobs:
       # 项目没有 package.json（无构建步骤），所以用 npx 现拉 eslint@9；
       # 仓库根的 eslint.config.js 是 flat config，会被自动读取。
       - name: ESLint
-        run: npx --yes eslint@9 editor/ tools/ tests/
+        run: npx --yes eslint@9 editor/ tools/ tests/ desktop/
 
       - name: 全量测试
         run: node tests/run-all.mjs

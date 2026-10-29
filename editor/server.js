@@ -123,14 +123,14 @@ const PORT = (() => {
   const i = process.argv.indexOf('--port');
   if (i >= 0) {
     const n = Number(process.argv[i + 1]);
-    if (Number.isInteger(n) && n > 0 && n < 65536) return n;
+    if (Number.isInteger(n) && n >= 0 && n < 65536) return n;
     console.error('[subtitle-editor] --port 的值无效：' + process.argv[i + 1] + '（忽略，用默认端口）');
   }
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.0.2'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.0.2'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.1.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.1.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -12143,7 +12143,10 @@ process.on('unhandledRejection', (e) => {
 server.listen(PORT, HOST, () => {
   console.log(`[subtitle-editor] node ${process.version}`);
   console.log(`[subtitle-editor] serving ${ROOT}`);
-  console.log(`[subtitle-editor] open  http://${HOST}:${PORT}/`);
+  console.log(`[subtitle-editor] open  http://${HOST}:${server.address().port}/`);
+  if (process.env.SUBFABRIC_DESKTOP === '1' && process.send) {
+    process.send({ type: 'subfabric-ready', pid: process.pid, port: server.address().port, version: APP_VERSION, nodeVersion: process.version });
+  }
   // libass 渲染依赖自检：缺了就直说。否则用户只会看到"视频上没有字幕"，
   // 而列表与时间轴都正常，很难想到是渲染器缺失。
   // 用 console.error 而不是 console.warn —— 日志面板只包装了 log/error，
@@ -12163,6 +12166,7 @@ server.on('error', (e) => {
   // 端口被占用/被拒绝时给出可读提示, 而不是抛一堆栈
   console.error('[subtitle-editor] 启动失败：' + String((e && e.message) || e)
     + (e && e.code === 'EADDRINUSE' ? '（端口 ' + PORT + ' 已被占用：是不是已经开着一个？）' : ''));
+  if (process.env.SUBFABRIC_DESKTOP === '1') process.exit(1);
 });
 
 /* ═══════════ 完全退出 ═══════════
@@ -12210,6 +12214,10 @@ function shutdown(reason) {
  * 直接变孤儿: 服务没了它们照旧活着(Windows 下继续烧 CPU/显存), 只能去任务管理器杀。 */
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+if (process.env.SUBFABRIC_DESKTOP === '1') {
+  process.on('message', message => { if (message && message.type === 'subfabric-quit') shutdown('desktop'); });
+  process.on('disconnect', () => shutdown('desktop-disconnected'));
+}
 
 /* ── 任务栏托盘图标(仅 Windows) ─────────────────────────────────
  * 用系统自带的 PowerShell + WinForms NotifyIcon 实现 —— SEA 版 exe 里装不了 npm 原生

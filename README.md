@@ -115,11 +115,45 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 
 ### Windows 安装版
 
-从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases/tag/v2.4.0) 下载最新的安装包并安装
+从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases) 列表选择已发布的 Windows 安装包。
 
-### 从源码运行
+当前桌面实现为 **SubFabric Electron**（NSIS，Windows x64），版本 `beta 1.5.1.1`，
+安装包名 `SubFabric-1.5.1.1-electron-x64-setup.exe`，已完成构建及桌面启动、接口、渲染隔离和退出冒烟。
+这是未签名的测试版；实际 GPU 识别、真实媒体导出及旧版迁移未在本轮验收。
+安装包包含 Electron、真实 Node 22 运行时和字幕渲染资源，无需自行安装 Node 或 Python；
+语音识别所需的 Python 运行时与模型仍按需下载。
 
-需要 Node.js 22
+这是与旧 SEA 版并存的新安装，不会自动覆盖或迁移旧安装，也不会迁移旧浏览器的 `localStorage`。
+桌面版的代码与本地数据位于 Electron 用户数据目录的 `workspace/`；更新只替换校验过的随包代码与渲染资源，
+不复制设置、项目、视频、模型或已下载运行时，不删除用户数据。默认后端端口固定为 `8325`，
+以保持桌面窗口设置的本源；可用 `SUBFABRIC_DESKTOP_PORT` 覆盖，测试时可设为 `0` 使用临时端口。
+
+### 从源码构建与运行 Electron
+
+需要 Node.js **22.12+（22.x，当前构建运行时为 22.22.2）**。在仓库根目录执行：
+
+```bash
+npm --prefix desktop ci
+node editor/scripts/fetch-vendor.js
+npm --prefix desktop run dist:win
+```
+
+安装包输出到 `build/electron/build-<id>/SubFabric-1.5.1.1-electron-x64-setup.exe`；
+`build/electron/latest-build.json` 记录最新成功构建的位置和 SHA-256。每次使用新目录，不删除旧构建。
+只启动开发版时，前两步完成后执行：
+
+```bash
+npm --prefix desktop run stage
+npm --prefix desktop start
+```
+
+`start` **不会自动 stage**，代码或渲染资源变动后须重新执行 `stage`。
+Electron `45.1.0` 与 electron-builder `26.18.0` 的依赖仅在 `desktop/` 独立子包；
+根目录不建 `package.json`，后端仍零 npm 依赖，前端仍为无构建步骤的原生 ESM。
+
+### 从源码运行浏览器版（保留入口）
+
+需要 Node.js 22.12+（22.x），不需要安装 `desktop/` 依赖。
 
 > **⚠ 第一次跑必须先生成渲染依赖，否则视频区不会有任何字幕**
 >

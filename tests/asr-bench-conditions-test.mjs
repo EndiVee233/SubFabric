@@ -10,8 +10,8 @@ import path from 'node:path';
  * 不启动模型、不调用 LLM。
  */
 const root = path.resolve(import.meta.dirname, '..');
-const server = fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8');
-const project = fs.readFileSync(path.join(root, 'editor/js/project.js'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8').replace(/\r\n/g, '\n');
+const project = fs.readFileSync(path.join(root, 'editor/js/project.js'), 'utf8').replace(/\r\n/g, '\n');
 const template = fs.readFileSync(path.join(root, 'tools/templates/studio.html'), 'utf8');
 const production = fs.readFileSync(path.join(root, 'editor/studio.html'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'editor/css/studio.css'), 'utf8');

@@ -8055,6 +8055,9 @@ const Projects = initProjects({
            //   'undefined'（模块作用域互不相通），于是"加进热词表"那条操作日志从来没记上。
 });
 
+// Narrow, renderer-only close hook: no Node or privileged IPC is exposed to the page.
+window.__subfabricFlushSave = () => Projects.flushSave();
+
 /* 术语表校对要用 Projects.openProject() 在应用后重新载入稿件，所以放在 Projects 之后接线。 */
 initGlossaryReview({ state, toast, projects: Projects });
 /* 全片语义重分句：规划走服务端 LLM，落盘复用编辑器自己的 splitRowAt。 */

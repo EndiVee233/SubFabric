@@ -814,7 +814,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "1f2fce35464085d36278ab4d7a6c0d6a86e03bd68015bf4f4f860634248862de",
+      "sha256": "9a91c2f0f87262b4fa44402de0c3e5b392ca8a0b6f5ffb949ffb97983512d45e",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -1017,23 +1017,23 @@
           "method": "innerHTML"
         },
         {
-          "line": 8243,
+          "line": 8246,
           "method": "createElement"
         },
         {
-          "line": 8248,
+          "line": 8251,
           "method": "innerHTML"
         },
         {
-          "line": 8257,
+          "line": 8260,
           "method": "createElement"
         },
         {
-          "line": 8263,
+          "line": 8266,
           "method": "createElement"
         },
         {
-          "line": 8265,
+          "line": 8268,
           "method": "createElement"
         }
       ],

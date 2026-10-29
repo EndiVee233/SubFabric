@@ -5,12 +5,13 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const template = fs.readFileSync(path.join(root, 'tools/templates/studio.html'), 'utf8');
 const production = fs.readFileSync(path.join(root, 'editor/studio.html'), 'utf8');
-const studio = fs.readFileSync(path.join(root, 'editor/js/studio.js'), 'utf8');
+const studioSource = fs.readFileSync(path.join(root, 'editor/js/studio.js'), 'utf8');
+const studio = studioSource.replace(/\r\n/g, '\n');
 const mirror = fs.readFileSync(path.join(root, 'tests/jsmod/studio.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'editor/css/studio.css'), 'utf8');
 
 assert.equal(production, template, 'production studio.html stays byte-identical to the template');
-assert.equal(mirror, studio, 'studio.js test mirror stays byte-identical to production');
+assert.equal(mirror, studioSource, 'studio.js test mirror stays byte-identical to production');
 
 for (const id of [
   'dashboard-view', 'sf-mu-home', 'sf-mu-new', 'sf-mu-resume', 'sf-mu-next-title',

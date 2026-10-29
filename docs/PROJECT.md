@@ -5,50 +5,79 @@
 
 > 历史材料（三轮代码审查、两次 STATUS 快照、卡拉OK 调研、双引擎实测）已压缩为本文的
 > [历史文档索引](#13-历史文档索引)，历史正文可在 git 历史中找回；保留的旧入口不再承担现行约定。
+> 本文 SEA/Inno 构建、安装与验证记录均属于旧链路；当前 Electron/NSIS 快照见 §1–§4、§6、§9。
 
 ---
 
 ## 1. 快速开始
 
+- **当前桌面链路**：`SubFabric Electron`，Windows x64 用 NSIS 安装，版本 `beta 1.5.1.1` / 文件版本
+  `1.5.1.1`（npm `1.5.1-beta.1`）。已完成构建与桌面/后端冒烟，完整 JS 回归零失败；
+  真实 GPU、模型、媒体交互、安装向导与旧版迁移不在本轮验收范围。GitHub 保存与发布结果独立核对。
+- **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
+  `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
+  仅运行桌面开发入口时也须先 `npm --prefix desktop run stage`，再 `npm --prefix desktop start`；
+  `start` 不会自动 staging，源码或 vendor 改动后须重新 stage。
 - 渲染依赖（新克隆必做一次，约 18MB，不入库）：`node editor/scripts/fetch-vendor.js`。
   缺 `editor/vendor/` 时字幕列表与时间轴正常，但视频区不显示字幕、样式面板也没有「ASS 渲染就绪」
-  —— 原因是 libass worker 起不来。安装版不需要这一步（安装包已含）。
-- 启动服务：`node editor/server.js --no-tray`，打开 <http://127.0.0.1:8321/>（`/` 与 `/index.html`
-  均 302 到 `/editor/studio.html`）。`--no-tray` 表示不挂 Windows 托盘（等价 `SUBFABRIC_TRAY=0`），
-  供自动化/无桌面环境使用；需要托盘时直接 `node editor/server.js`。
-- 端口优先级：`--port NNNN` > 环境变量 `PORT` > 默认 `8321`。SEA 启动器把端口写死 8321。
-- 该命令会创建本地日志与数据（`logs/`、`projects/`、`asr/settings.json`）；手工验收用一次性工作副本
+  —— 原因是 libass worker 起不来。安装版已含这四个 vendor 文件，不需要这一步。
+- **依赖边界**：只有 `desktop/package.json` 是独立 npm 子包，Electron `45.1.0` / electron-builder
+  `26.18.0` 已由 npm 确认；根目录不建 `package.json`，保持 Node 22 同步 `require(esm)` 的模块推断、
+  后端零 npm 依赖与 `server.js` 单文件、原生 ESM 前端无构建步骤。随包真实 Node 22.12+
+  （当前构建运行时 `22.22.2`）执行后端，不借 Electron 内嵌 Node；安装用户无需自行安装 Node/Python，
+  Python 运行时与模型仍按需下载，Python 源码依赖见 `asr/requirements.txt`。
+- **桌面端口与数据**：默认固定 `8325`，使 Electron `localStorage` 保持同一本源；
+  `SUBFABRIC_DESKTOP_PORT` 可覆盖，测试可设 `0` 申请临时端口。后台经 fork IPC 报告实际 port/pid/version
+  就绪，不连接或接管未知占用进程。可信代码与渲染资源校验后运行于
+  `app.getPath('userData')/workspace`；不自动迁移旧 SEA 安装的数据或旧浏览器 `localStorage`。
+- **浏览器源码入口（保留）**：`node editor/server.js --no-tray`，打开 <http://127.0.0.1:8321/>
+  （`/` 与 `/index.html` 均 302 到 `/editor/studio.html`）。`--no-tray` 等价 `SUBFABRIC_TRAY=0`；
+  需要旧托盘时直接 `node editor/server.js`。端口优先级为 `--port NNNN` > `PORT` > 默认 `8321`。
+  此入口会在源码 root 创建 `logs/`、`projects/`、`asr/settings.json`；手工验收用一次性工作副本
   并确认端口空闲，正常测试不要直接启动源码服务。
-- 运行需要 Node.js 22+（项目靠 `require(esm)` 让一份 ESM 双端复用）。服务端零 npm 依赖、
-  前端原生 ESM 无构建步骤（仓库没有 `package.json`）；Python 依赖见 `asr/requirements.txt`。
-- 双击启动器：`启动SubFabric(无窗口).vbs` 隐藏窗口拉起服务，在 8321–8324 找空闲端口，就绪后开浏览器。
+- **旧启动链路**：SEA 启动器端口写死 `8321`；`启动SubFabric(无窗口).vbs` 在 `8321–8324` 找空闲端口、
+  就绪后开浏览器。脚本保留，不是当前 Electron/NSIS 安装入口。
 
 ## 2. 目录地图
 
 | 路径 | 职责 |
 | --- | --- |
-| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、托盘与退出 |
+| `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
+| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式禁用托盘并通过 IPC 报告实际 port/pid/version 就绪 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
-| `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`sea-launcher.cjs`（SEA 入口）、`tray.ps1`、`gen_app_icon.py`、`gen_tray_icon.py`、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时） |
+| `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
 | `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`qwen_asr.py`、`qwen_align.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`（分句/能量计算及 worker 父进程看护共用）；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（见 §9） |
-| `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端模块自动同步镜像（入库） |
-| `tools/` | 探针与验收脚本：`build-install.mjs`（事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs` |
+| `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端模块自动同步镜像（入库）；`electron-desktop-test.mjs` 检查 payload、数据保留、路径与窗口安全边界，`electron-backend-smoke.mjs` 检查随包 Node、接口、重启保留数据与断线退出，两者本轮通过 |
+| `tools/` | 探针与验收脚本：`build-install.mjs`（旧链路事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs`；Electron 安装构建改走 `desktop/` |
 | `tools/templates/studio.html` | Studio 入口的唯一上游模板，改界面先改模板再生成 |
 | `prototypes/` | 与生产隔离的无构建原型：`cue-card-redesign/`、`subtitle-editor/`、`adaptive-selection/` |
-| `build/` | 打包产物目录；仅 `build/installer/` 的 `.iss`、图标与启动脚本入库 |
+| `build/` | 打包产物目录：`electron-stage/` 为 payload、真实 Node 与 manifest，`electron/` 为 NSIS 输出；旧 `installer/` 的 `.iss`、图标与启动脚本保留入库 |
 | `docs/` | 本文件 + `ui-integration-baseline.json`、`repair15-baseline.json` 等被测试读取的数据文件 |
 | `main.py` | 历史遗留的 Python 字幕处理工具（`ass`/`srt`/`config`/`fonts` 子命令与 GUI），与编辑器主线关系弱 |
-| `build_exe.py` | SEA 打包脚本，产出 `build/SubFabric.exe`；从 `editor/server.js` 读 `APP_VERSION` / `APP_FILE_VERSION` |
+| `build_exe.py` | 旧 SEA 打包脚本，保留产出 `build/SubFabric.exe` 与读取后端版本号的逻辑；不是当前 Electron/NSIS 主链路 |
 | `eslint.config.js` | ESLint 9 flat config，仅开发/CI 期使用，不是运行时依赖 |
 
 ## 3. 后端与数据流
 
-- **单文件约束**：SEA 入口 `editor/scripts/sea-launcher.cjs` 用 `Module._compile` 从磁盘加载
-  `server.js`，SEA 里相对 `require` 不可用，因此 `server.js` 必须保持单文件；"拆分"只能是函数体内重排。
+- **后端与模块边界**：`server.js` 仍保持单文件与零 npm 依赖；根目录不建 `package.json`，
+  继续由真实 Node 22 同步 `require(esm)` 复用原生前端 ESM。Electron 封装逻辑只放在 `desktop/`。
+  旧 SEA 入口 `editor/scripts/sea-launcher.cjs` 的 `Module._compile` / 相对 `require` 限制保留为旧链路说明，
+  不是当前 Electron 后端的加载方式。
+- **桌面 payload 与可写 root**：`stage.mjs` 白名单收集 Git 跟踪的 `editor/`、`asr/` 源码及四个 vendor 文件，
+  排除 settings/projects/videos/models/运行时/logs 与旧 SEA/托盘脚本，不整目录打包用户环境。
+  `security.cjs` 在任何复制之前校验 manifest 的逐文件 SHA-256、路径边界及链接；`backend.cjs` 另校验
+  随包 Node。只将可信代码与渲染资源同步到 `app.getPath('userData')/workspace`，不复制或删除用户数据。
+  后端的入口、cwd 与所有现有 ASR/tools 相对路径仍在同一个可写 root，无需重构路径布局。
+- **桌面启动与回收**：`backend.cjs` 用随包真实 Node 22.12+（当前 `22.22.2`）fork `server.js --no-tray`，
+  禁止 Electron 内嵌 Node 替代。监听后发送 `subfabric-ready` IPC（实际 port/pid/version），父进程校验 PID、
+  版本与实际端口，再核对 `/api/version`；默认 `8325`，`SUBFABRIC_DESKTOP_PORT` 覆盖，测试 `0` 临时端口。
+  退出先带自有控制 token 请求 `/api/quit`，失败用 `subfabric-quit` IPC；IPC 断线同样触发后端 shutdown，
+  收回自有 ASR/项目任务与子进程，不按端口杀未知进程。启动限时 30s，quit 请求限时 2s，等待退出 6s
+  后收自有进程树；后端 shutdown 另有 4s 退出兜底。
 - **铁律：跨请求状态必须放模块作用域**——`prepareJobs`、`draftJobs`、`pendingAsr`、`draftProcs`、
   `draftAborts`、`rerecogJobs`、`projProcs`、`MEDIA_ALLOW`、`mediaMetaCache`、`logBuf`、`logClients`、
   `lifeClients`、`dlState`、`CHILDREN`、`realignJobs`、`diarizeJobs`、`subtitleCommits`、`deletedProjects`。
@@ -198,6 +227,15 @@
 
 ## 4. 前端与主题
 
+- **Electron 窗口边界**：仍加载本地 HTTP 的同一生产 Studio 与原生 ESM；`main.cjs` 设置
+  `sandbox: true`、`contextIsolation: true`、`nodeIntegration: false`，无 preload，不向 renderer 暴露
+  Node 或特权 IPC。只允许后台本源导航；跨源导航/重定向阻止，新窗口一律 `deny`，合法 `http(s)`
+  外链仅在用户明确确认后交系统浏览器，禁止 webview，默认拒绝权限申请。
+- **桌面设置与关闭契约**：Electron 使用独立用户数据配置与 `localStorage`，默认固定端口 `8325`
+  保持本源；改端口会改变本源，测试 `0` 不用于持久设置。不会自动迁移旧浏览器 `localStorage`。
+  关闭先将根元素设为 `inert` 冻结 renderer 编辑，再经窄钩子 `window.__subfabricFlushSave` 调用
+  `Projects.flushSave()`；保存失败或 10s 超时默认保持编辑并恢复交互，只有明确确认「不保存退出」才允许
+  丢弃。本轮窄钩子调用与干净退出冒烟通过；真实脏稿件关闭失败的人工交互仍未验收。
 - **导入与编辑换行符**：新建项目的「导入字幕」模式提供「删除换行符」，每次新建默认开启；
   在创建请求前按最终勾选状态调用 `prepareImportedSubtitle`，删除字幕正文中的所有字面 `\N`
   （直接删除，不补空格），关闭时保留；不改源文件、不改 ASS 元信息，不处理 SRT 结构换行或项目包。
@@ -887,7 +925,46 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-- 只发 Inno Setup 安装包 `SubFabric-<版本>-setup.exe`，不再出便携版 zip。链路：
+### 当前主链路：Electron + NSIS
+
+- **独立子包**：`desktop/package.json` / 锁文件固定 Electron `45.1.0`、electron-builder `26.18.0`
+  （已由 npm 确认），依赖只在 `desktop/`。根目录不建 `package.json`，后端与原生 ESM 前端无 npm 运行依赖。
+  `builder.cjs` 合并子包 build 配置，并以 manifest 路径逐文件过滤资源；不清理旧 staging，不将残留文件带入包。
+- **构建顺序**（仓库根目录）：`npm --prefix desktop ci` → `node editor/scripts/fetch-vendor.js` →
+  `npm --prefix desktop run dist:win`。`dist:win` 经 `build.mjs` 先 stage，再以完整配置执行
+  `electron-builder --config builder.cjs --win nsis --x64 --publish never`，每次使用新的构建目录，不删除旧产物、不自动发布。开发启动必须先 `npm --prefix desktop run stage` 再 `npm --prefix desktop start`，
+  `start` 本身只执行 `electron .`。
+- **白名单 staging**：`desktop/stage.mjs` 从 Git 跟踪路径读取 `editor/`、`asr/` 源码，
+  `editor/scripts/` 仅保留 `7z.exe` 与 `7z-README.txt`，旧 SEA/tray/图标生成脚本不随包；额外添加
+  `subtitles-octopus.js`、`subtitles-octopus-worker.js`、`subtitles-octopus-worker.wasm`、
+  `fonts/NotoSansCJKsc-Regular.otf` 四个 `editor/vendor/` 文件。拒绝 settings/projects/videos/models/运行时/logs，
+  输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
+  （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
+- **产品与版本**：产品 `SubFabric Electron`，appId `com.endivee233.subfabric.electron`；
+  `APP_VERSION = 'beta 1.5.1.1'`、`APP_FILE_VERSION = '1.5.1.1'`、npm version `1.5.1-beta.1`。
+  `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
+  `build/electron/build-<id>/SubFabric-1.5.1.1-electron-x64-setup.exe`；`build/electron/latest-build.json`
+  记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
+  旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
+- **安装与数据边界**：NSIS 为与旧 SEA 并存的新安装，允许选择安装目录；不会自动迁移或覆盖旧安装，
+  不迁移旧浏览器 `localStorage`。随包代码校验后复制至 `app.getPath('userData')/workspace`，
+  同一个可写 root 执行后端与现有 ASR/tools 路径；不复制 settings/projects/videos/models/运行时，
+  不删除用户数据，`deleteAppDataOnUninstall: false`，`runAfterFinish: false`。
+  用户无需预装 Python 或 Node，Python 运行时、模型与工具仍按需下载。
+- **修改与发布**：代码/vendor 变化后重新 stage，正式安装版必须重新 `dist:win`；只发 setup.exe，
+  真正发布后核对远端资产 digest 与本地 SHA-256；不将构建成功当作上传成功证据。
+- **本轮验证**：JS 回归 157 项：144 passed、12 partial、1 diagnostic、0 failed，另外 2 项按约定排除。
+  4 项 Windows CRLF 正则假失败已修复，主题审计仅按关闭钩子变化刷新哈希/行号；ESLint 全量 0 error、27 既有 warning。
+  NSIS 最终构建 158,309,970 B，包内 105 个后端/渲染文件及真实 Node 22.22.2，应用 ASAR 仅含4个桌面入口文件。
+  安装包内嵌应用提取后亦通过同一桌面冒烟；归档检测的尾部数据提示来自自解压安装器封装，完整性结果为通过。
+  安装归档完整性检验通过；打包应用的启动、版本、Studio 初始化、沙箱隔离、vendor 可用、保存钩子与后端退出冒烟通过。
+  未签名测试版；未运行真实 GPU/模型/媒体导出、脏稿件失败关闭人工交互与安装/卸载向导，不覆盖旧安装。
+
+### 旧链路与历史记录：SEA + Inno Setup（保留，非当前主链路）
+
+以下脚本、限制、安装行为与验证记录仅适用于旧 SEA/Inno 包，不自动套用于 Electron/NSIS。
+
+- 旧链路只发 Inno Setup 安装包 `SubFabric-<版本>-setup.exe`，不再出便携版 zip。链路：
   `node editor/scripts/fetch-vendor.js` → `python build_exe.py` →
   `"<Inno Setup 目录>\ISCC.exe" build/installer/SubFabric.iss`。
 - `build_exe.py` 生成 Node 22 SEA 单文件 `build/SubFabric.exe`（内嵌 `editor/scripts/sea-launcher.cjs`；
@@ -897,7 +974,7 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   `asr\*` 等收进安装包，并排除 `projects/`、`asr\.venv`、`asr\models`、`settings.json`、`whisper.cpp`、
   `crispasr`、`faster-whisper-xxl`、`runtime-python`、`ytdlp`、`logs` 等用户数据与运行时。入库的只有
   `build/installer/{SubFabric.iss, logo.png, logo.ico, start-editor.*}`。
-- **三处版本号必须同步**（漏一处会出现"装完版本还是旧的"）：`editor/server.js` 的 `APP_VERSION`
+- **旧 SEA 链路三处版本号必须同步**（漏一处会出现"装完版本还是旧的"）：`editor/server.js` 的 `APP_VERSION`
   （显示版本）与 `APP_FILE_VERSION`（Windows 文件版本）；`build/installer/SubFabric.iss` 的
   `MyAppVersion` / `MyAppFileVersion`；安装包名自动跟 `MyAppVersion`。`.iss` 的 `VersionInfoVersion` /
   `VersionInfoProductVersion` **只接受纯数字**，一律填 `MyAppFileVersion`；显示版本只走
@@ -925,8 +1002,8 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 - **安装包与已停用运行时**：`SubFabric.iss` 现在排除 `asr/runtime-vibevoice` 以及
   `multitalker.py` / `vibevoice.py` / `asr_dual.py` / `asr_perf.py`，不会再打包约 2.2GB 的
   VibeVoice 运行时；用户已下载的旧目录不会被安装/卸载碰到。
-- **改了后端 / 前端代码后正式版必须重打包**：源码运行重启即生效；已安装版是 SEA 单文件
-  `SubFabric.exe`，不重跑 `python build_exe.py` 与 ISCC 不会带上修复；版本号仍按上面的三处同步规则推进。
+- **旧 SEA 安装版修改后必须重打包**：源码运行重启即生效；旧已安装版是 SEA 单文件
+  `SubFabric.exe`，不重跑 `python build_exe.py` 与 ISCC 不会带上修复；仅旧链路按上面的三处同步规则推进。
 - **构建记录（2026-10-26，波形分桶修复）**：版本按四段规则定为 `beta 1.4.6.1` / `1.4.6.1`（末段 = 当天
   第几版，今天第一版）。`fetch-vendor` → `build_exe.py` 得 `build/SubFabric.exe` 93,613,568 B
   （FileVersion/ProductVersion `1.4.6.1`；SEA sentinel 与 `NODE_SEA_BLOB` 在）；Inno Setup 7.1 编译
@@ -1140,9 +1217,9 @@ yt_dlp 与 dist-info 的合法相对路径，拒绝根路径、盘符/ADS 和穿
 `PATH` 上的 `deno` / `node` / `bun` / `qjs`，去重后以 `js_runtimes = {name: {path}}` 传给
 yt-dlp（2026.08 与 2026.10 的 Python API 都已核对同为此格式），并在日志写中文的
 「JS 运行时: node 24.x（YouTube 完整格式解析已启用）」。都没有时写中文说明而不是让英文警告
-冒充错误；YouTube 仍可下载，只是个别高清格式可能缺失。源码运行时 `server.js` 的 `pySpawnEnv()`
-会把 `process.execPath`（仅当 basename 是 `node`）作为 `SUBFABRIC_NODE_PATH` 传下去；安装版是
-SEA（`SubFabric.exe`）不能当 node 用，所以不传，靠 PATH 探测。
+冒充错误；YouTube 仍可下载，只是个别高清格式可能缺失。源码与 Electron 的真实 Node 后端中，
+`server.js` 的 `pySpawnEnv()` 会把 `process.execPath`（basename 是 `node` / `node.exe`）作为
+`SUBFABRIC_NODE_PATH` 传下去；旧 SEA 安装版（`SubFabric.exe`）不能当 node 用，仍靠 PATH 探测。
 
 ## 9. 工作约定与红线
 
@@ -1153,8 +1230,14 @@ SEA（`SubFabric.exe`）不能当 node 用，所以不传，靠 PATH 探测。
   历史验证与本次验证分开；提交成功不能代替功能验收。
 - **文档职责**：本文件承担结构、流程、约定与设计结论；`AGENTS.md` 承担长期工作规则；`README.md` 面向
   用户。结构、职责、接口或数据流变化要同步更新本文件 §2–§4。文档与代码冲突时先核实并以代码为准。
-- **代码红线**：不引入前端构建步骤或 npm 依赖；不把 `server.js` 拆成多文件；跨请求状态不得放进路由段
-  函数体；新增后台任务必须有超时/看门狗与异常收尾；新增用户可见文案进 `editor/lang/zh-CN.json`（键=原文）。
+- **代码红线**：不引入前端构建步骤或后端 npm 依赖；Electron / electron-builder 仅允许在 `desktop/`
+  独立子包，根目录不得建 `package.json` 或改变 Node 22 同步 `require(esm)` / 原生 ESM 模块边界。
+  不把 `server.js` 拆成多文件；跨请求状态不得放进路由段函数体；新增后台任务必须有超时/看门狗与异常收尾；
+  新增用户可见文案进 `editor/lang/zh-CN.json`（键=原文）。SEA 脚本保留为旧链路，当前安装主链路是 NSIS。
+- **桌面安全与资产**：保持 sandbox/contextIsolation 开启、nodeIntegration 关闭、无 preload；
+  只同源导航，新窗口 deny，http(s) 外链先确认。只校验并同步白名单代码/vendor，设置、项目、视频、模型与
+  已下载运行时不随包复制或删除；不自动迁移旧安装或旧浏览器 localStorage。关闭先冻结编辑再 flushSave，
+  保存失败默认保持编辑、丢弃须明确确认；quit / IPC 断线仅回收自有进程且必须有超时。
 - **敏感值**：统一走 `editor/secret-store.js`（DPAPI 密文，降级 AES），不进命令行参数、不进日志、
   不回传前端；临时明文文件用完即删。文档中不写凭据、隐私或无必要本机绝对路径。
 - **不提交用户数据与大文件**：`projects/`、`asr/settings.json`、`asr/models/`、`asr/runtime-python/`、

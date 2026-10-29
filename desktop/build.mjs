@@ -1,0 +1,18 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+const require = createRequire(import.meta.url);
+const desktop = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(desktop, '..');
+execFileSync(process.execPath, [path.join(desktop, 'stage.mjs')], { cwd: root, stdio: 'inherit' });
+const output = path.join(root, 'build/electron', 'build-' + crypto.randomBytes(6).toString('hex'));
+const cli = path.join(path.dirname(require.resolve('electron-builder/package.json')), 'out/cli/cli.js');
+execFileSync(process.execPath, [cli, '--config', 'builder.cjs', '--win', 'nsis', '--x64', '--publish', 'never', '--config.directories.output=' + output], { cwd: desktop, stdio: 'inherit' });
+const installer = fs.readdirSync(output).find(name => name.endsWith('-setup.exe'));
+if (!installer) throw Error('Installer output missing');
+const result = { output, installer: path.join(output, installer), executable: path.join(output, 'win-unpacked/SubFabric Electron.exe'), sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(output, installer))).digest('hex') };
+fs.writeFileSync(path.join(root, 'build/electron/latest-build.json'), JSON.stringify(result, null, 2) + '\n');
+console.log(JSON.stringify(result));

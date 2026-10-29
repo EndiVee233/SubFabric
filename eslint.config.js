@@ -13,9 +13,10 @@
  * 说明：项目无 package.json，需先 `npm i -D eslint@9`（node_modules/ 已在 .gitignore）。
  */
 export default [
+  { ignores: ['desktop/node_modules/**', 'desktop/dist/**', 'build/**'] },
   {
     // 浏览器侧：原生 ES module，靠 import/export，不用 node 专属语法
-    files: ['editor/**/*.js', 'tools/**/*.mjs', 'tests/**/*.mjs'],
+    files: ['editor/**/*.js', 'tools/**/*.mjs', 'tests/**/*.mjs', 'desktop/**/*.mjs', 'desktop/**/*.cjs'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -94,6 +95,7 @@ export default [
    *   **整个文件等于没被 lint**（2026-10-11 发现：有 10 个文件一直没被检查过）。 */
   {
     files: [
+      'desktop/**/*.cjs',
       'editor/server.js', 'editor/asr-chunks.js', 'editor/ass-sentences.js', 'editor/audio-slice.js',
       'editor/bcut-asr.js', 'editor/capcut-asr.js', 'editor/cast.js', 'editor/fonts.js',
       'editor/glued-words.js', 'editor/k-line.js', 'editor/llm-text.js', 'editor/project-pack.js',
@@ -157,7 +159,7 @@ export default [
   /* tools/ 与 tests/ 是 **Node 脚本**（跑探针、跑测试、跑发布），不是浏览器代码：
    * 会用 process.exit / Buffer / WebSocket 等浏览器没有的全局。 */
   {
-    files: ['tools/**/*.mjs', 'tests/**/*.mjs', 'editor/scripts/**/*.js'],
+    files: ['tools/**/*.mjs', 'tests/**/*.mjs', 'desktop/**/*.mjs', 'editor/scripts/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',

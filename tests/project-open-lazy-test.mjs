@@ -15,8 +15,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const src = fs.readFileSync(path.join(root, 'editor/js/project.js'), 'utf8');
-const main = fs.readFileSync(path.join(root, 'editor/js/main.js'), 'utf8');
+const src = fs.readFileSync(path.join(root, 'editor/js/project.js'), 'utf8').replace(/\r\n/g, '\n');
+const main = fs.readFileSync(path.join(root, 'editor/js/main.js'), 'utf8').replace(/\r\n/g, '\n');
 const openStart = src.indexOf('async function openProject(pid)');
 const openEnd = src.indexOf('\n  function promptRelink(', openStart);
 assert.ok(openStart > 0 && openEnd > openStart, 'openProject 存在');
