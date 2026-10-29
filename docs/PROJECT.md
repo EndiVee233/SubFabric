@@ -11,8 +11,8 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric Electron`，Windows x64 用 NSIS 安装，版本 `beta 1.5.1.1` / 文件版本
-  `1.5.1.1`（npm `1.5.1-beta.1`）。已完成构建与桌面/后端冒烟，完整 JS 回归零失败；
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.2.1` / 文件版本
+  `1.5.2.1`（npm `1.5.2-beta.1`）。已完成构建与桌面/后端冒烟，完整 JS 回归零失败；
   真实 GPU、模型、媒体交互、安装向导与旧版迁移不在本轮验收范围。GitHub 保存与发布结果独立核对。
 - **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
   `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
@@ -28,8 +28,14 @@
   Python 运行时与模型仍按需下载，Python 源码依赖见 `asr/requirements.txt`。
 - **桌面端口与数据**：默认固定 `8325`，使 Electron `localStorage` 保持同一本源；
   `SUBFABRIC_DESKTOP_PORT` 可覆盖，测试可设 `0` 申请临时端口。后台经 fork IPC 报告实际 port/pid/version
-  就绪，不连接或接管未知占用进程。可信代码与渲染资源校验后运行于
-  `app.getPath('userData')/workspace`；不自动迁移旧 SEA 安装的数据或旧浏览器 `localStorage`。
+  就绪，不连接或接管未知占用进程。**数据目录就是程序目录**（打包后取 `path.dirname(app.getPath('exe'))`，
+  开发运行取 `build/electron-dev-data`，测试可用 `SUBFABRIC_DESKTOP_DATA` 覆盖）：代码、`projects/`、
+  `videos/`、`asr/settings.json`、模型与日志都在这里，Chromium 配置经 `app.setPath('userData')`
+  重定向到同目录的 `.profile/`，不再写入用户文件夹的 `workspace/`。安装目录必须可写，
+  不可写时启动即报错退出，不改放到 AppData。不自动迁移旧 SEA 安装的数据或旧浏览器 `localStorage`。
+- **托盘与退出**：Electron 自己创建右下角托盘图标（打包后 `resources/tray.ico`，开发用 `build/installer/logo.ico`），
+  菜单为「打开界面 / 打开数据目录 / 完全退出」。点窗口关闭只隐藏到托盘并提示一次；只有托盘
+  「完全退出」、菜单「完全退出」或系统关机才走保存 → 停后端 → 退出。托盘创建失败时退回关窗即退出。
 - **浏览器源码入口（保留）**：`node editor/server.js --no-tray`，打开 <http://127.0.0.1:8321/>
   （`/` 与 `/index.html` 均 302 到 `/editor/studio.html`）。`--no-tray` 等价 `SUBFABRIC_TRAY=0`；
   需要旧托盘时直接 `node editor/server.js`。端口优先级为 `--port NNNN` > `PORT` > 默认 `8321`。
@@ -43,7 +49,7 @@
 | 路径 | 职责 |
 | --- | --- |
 | `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
-| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式禁用托盘并通过 IPC 报告实际 port/pid/version 就绪 |
+| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式禁用后端托盘（由桌面壳自建托盘）并通过 IPC 报告实际 port/pid/version 就绪 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
@@ -70,7 +76,7 @@
 - **桌面 payload 与可写 root**：`stage.mjs` 白名单收集 Git 跟踪的 `editor/`、`asr/` 源码及四个 vendor 文件，
   排除 settings/projects/videos/models/运行时/logs 与旧 SEA/托盘脚本，不整目录打包用户环境。
   `security.cjs` 在任何复制之前校验 manifest 的逐文件 SHA-256、路径边界及链接；`backend.cjs` 另校验
-  随包 Node。只将可信代码与渲染资源同步到 `app.getPath('userData')/workspace`，不复制或删除用户数据。
+  随包 Node。只将可信代码与渲染资源同步到**程序目录**（打包后为 exe 所在目录），不复制或删除用户数据。
   后端的入口、cwd 与所有现有 ASR/tools 相对路径仍在同一个可写 root，无需重构路径布局。
 - **桌面启动与回收**：`backend.cjs` 用随包真实 Node 22.12+（当前 `22.22.2`）fork `server.js --no-tray`，
   禁止 Electron 内嵌 Node 替代。监听后发送 `subfabric-ready` IPC（实际 port/pid/version），父进程校验 PID、
@@ -231,11 +237,11 @@
   `sandbox: true`、`contextIsolation: true`、`nodeIntegration: false`，无 preload，不向 renderer 暴露
   Node 或特权 IPC。只允许后台本源导航；跨源导航/重定向阻止，新窗口一律 `deny`，合法 `http(s)`
   外链仅在用户明确确认后交系统浏览器，禁止 webview，默认拒绝权限申请。
-- **桌面设置与关闭契约**：Electron 使用独立用户数据配置与 `localStorage`，默认固定端口 `8325`
+- **桌面设置与关闭契约**：Electron 的配置与 `localStorage` 随程序目录走（`.profile/`），默认固定端口 `8325`
   保持本源；改端口会改变本源，测试 `0` 不用于持久设置。不会自动迁移旧浏览器 `localStorage`。
-  关闭先将根元素设为 `inert` 冻结 renderer 编辑，再经窄钩子 `window.__subfabricFlushSave` 调用
-  `Projects.flushSave()`；保存失败或 10s 超时默认保持编辑并恢复交互，只有明确确认「不保存退出」才允许
-  丢弃。本轮窄钩子调用与干净退出冒烟通过；真实脏稿件关闭失败的人工交互仍未验收。
+  关闭窗口只隐藏到托盘；真正退出时先把根元素设为 `inert` 冻结 renderer 编辑，再经窄钩子
+  `window.__subfabricFlushSave` 调用 `Projects.flushSave()`；保存失败或 10s 超时默认保持编辑并恢复交互，
+  只有明确确认「不保存退出」才允许丢弃。窄钩子调用与干净退出冒烟通过；真实脏稿件关闭失败的人工交互仍未验收。
 - **导入与编辑换行符**：新建项目的「导入字幕」模式提供「删除换行符」，每次新建默认开启；
   在创建请求前按最终勾选状态调用 `prepareImportedSubtitle`，删除字幕正文中的所有字面 `\N`
   （直接删除，不补空格），关闭时保留；不改源文件、不改 ASS 元信息，不处理 SRT 结构换行或项目包。
@@ -940,16 +946,18 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   `fonts/NotoSansCJKsc-Regular.otf` 四个 `editor/vendor/` 文件。拒绝 settings/projects/videos/models/运行时/logs，
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
-- **产品与版本**：产品 `SubFabric Electron`，appId `com.endivee233.subfabric.electron`；
-  `APP_VERSION = 'beta 1.5.1.1'`、`APP_FILE_VERSION = '1.5.1.1'`、npm version `1.5.1-beta.1`。
+- **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
+  `APP_VERSION = 'beta 1.5.2.1'`、`APP_FILE_VERSION = '1.5.2.1'`、npm version `1.5.2-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.1.1-electron-x64-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.2.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 为与旧 SEA 并存的新安装，允许选择安装目录；不会自动迁移或覆盖旧安装，
-  不迁移旧浏览器 `localStorage`。随包代码校验后复制至 `app.getPath('userData')/workspace`，
-  同一个可写 root 执行后端与现有 ASR/tools 路径；不复制 settings/projects/videos/models/运行时，
-  不删除用户数据，`deleteAppDataOnUninstall: false`，`runAfterFinish: false`。
+  不迁移旧浏览器 `localStorage`。默认按用户安装到 `%LOCALAPPDATA%\Programs\SubFabric`（可改到任意
+  可写目录，例如 `D:\SubFabric`），随包代码校验后复制进**安装目录本身**，同一个可写 root 执行后端与
+  现有 ASR/tools 路径，`projects/`、`videos/`、`asr/`、`logs/` 与 `.profile/` 都落在程序目录；
+  不复制 settings/projects/videos/models/运行时，不删除用户数据，`deleteAppDataOnUninstall: false`，
+  `runAfterFinish: false`。安装到 `Program Files` 等只读位置时启动报错，不回退到用户目录。
   用户无需预装 Python 或 Node，Python 运行时、模型与工具仍按需下载。
 - **修改与发布**：代码/vendor 变化后重新 stage，正式安装版必须重新 `dist:win`；只发 setup.exe，
   真正发布后核对远端资产 digest 与本地 SHA-256；不将构建成功当作上传成功证据。

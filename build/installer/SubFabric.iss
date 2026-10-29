@@ -21,8 +21,8 @@
 ;   beta 期：显示 `beta <主>.<次>`、文件 `<主>.<次>.0.0`、tag `v<主>.<次>.0-beta.<序号>`；转正后去掉 beta 前缀。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "beta 1.5.1.1"
-#define MyAppFileVersion "1.5.1.1"
+#define MyAppVersion "beta 1.5.2.1"
+#define MyAppFileVersion "1.5.2.1"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"

@@ -117,16 +117,23 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 
 从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases) 列表选择已发布的 Windows 安装包。
 
-当前桌面实现为 **SubFabric Electron**（NSIS，Windows x64），版本 `beta 1.5.1.1`，
-安装包名 `SubFabric-1.5.1.1-electron-x64-setup.exe`，已完成构建及桌面启动、接口、渲染隔离和退出冒烟。
+当前桌面实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.2.1`，
+安装包名 `SubFabric-1.5.2.1-setup.exe`，已完成构建及桌面启动、接口、渲染隔离和退出冒烟。
 这是未签名的测试版；实际 GPU 识别、真实媒体导出及旧版迁移未在本轮验收。
 安装包包含 Electron、真实 Node 22 运行时和字幕渲染资源，无需自行安装 Node 或 Python；
 语音识别所需的 Python 运行时与模型仍按需下载。
 
 这是与旧 SEA 版并存的新安装，不会自动覆盖或迁移旧安装，也不会迁移旧浏览器的 `localStorage`。
-桌面版的代码与本地数据位于 Electron 用户数据目录的 `workspace/`；更新只替换校验过的随包代码与渲染资源，
-不复制设置、项目、视频、模型或已下载运行时，不删除用户数据。默认后端端口固定为 `8325`，
-以保持桌面窗口设置的本源；可用 `SUBFABRIC_DESKTOP_PORT` 覆盖，测试时可设为 `0` 使用临时端口。
+**代码与本地数据都放在安装目录**（`editor/`、`asr/`、`projects/`、`videos/`、`logs/`），
+不再写入用户文件夹里的 `workspace/`；Chromium 配置（主题、欢迎页等偏好）也在安装目录的 `.profile/`。
+安装向导默认装到当前用户的 `Programs\SubFabric`，也可以改到任意**有写权限**的目录（例如 `D:\SubFabric`）；
+装到 `Program Files` 这类只读位置时程序会提示无法写入并退出，而不是把数据偷偷放进 AppData。
+更新只替换校验过的随包代码与渲染资源，不复制或删除设置、项目、视频、模型与已下载运行时。
+默认后端端口固定为 `8325`，以保持桌面窗口设置的本源；可用 `SUBFABRIC_DESKTOP_PORT` 覆盖，
+测试时可设为 `0` 使用临时端口。
+
+关闭窗口只把程序收进右下角托盘，**右键托盘图标 →「完全退出」**才会保存并结束进程；
+托盘菜单另有「打开界面」「打开数据目录」。
 
 ### 从源码构建与运行 Electron
 
@@ -138,7 +145,7 @@ node editor/scripts/fetch-vendor.js
 npm --prefix desktop run dist:win
 ```
 
-安装包输出到 `build/electron/build-<id>/SubFabric-1.5.1.1-electron-x64-setup.exe`；
+安装包输出到 `build/electron/build-<id>/SubFabric-1.5.2.1-setup.exe`；
 `build/electron/latest-build.json` 记录最新成功构建的位置和 SHA-256。每次使用新目录，不删除旧构建。
 只启动开发版时，前两步完成后执行：
 

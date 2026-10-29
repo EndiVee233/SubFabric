@@ -35,9 +35,17 @@ try {
   assert.throws(() => syncPayload(source, data, { format: 1, files: [] }), /manifest/);
   const main = fs.readFileSync(path.join(root, 'desktop/main.cjs'), 'utf8');
   for (const rule of ['nodeIntegration: false', 'contextIsolation: true', 'sandbox: true', 'webSecurity: true', 'requestSingleInstanceLock', 'setWindowOpenHandler', 'will-attach-webview', 'await flush()']) assert.ok(main.includes(rule), rule);
+  // 产品名与旧版一致；数据放程序目录；托盘常驻、关窗只隐藏、右键「完全退出」才结束。
+  for (const rule of ['new Tray(', 'hideToTray', "app.setPath('userData'", '完全退出', "app.setName('SubFabric')",
+    "app.isPackaged ? path.dirname(app.getPath('exe'))"]) assert.ok(main.includes(rule), rule);
+  assert.ok(!/app\.getPath\('userData'\)[^)]*workspace/.test(main), 'workspace must not live in the user profile');
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'desktop/package.json'), 'utf8'));
+  assert.equal(pkg.productName, 'SubFabric');
+  assert.equal(pkg.build.appId, 'com.endivee233.subfabric');
+  assert.equal(pkg.build.nsis.shortcutName, 'SubFabric');
   assert.equal(pkg.build.nsis.deleteAppDataOnUninstall, false);
   assert.equal(pkg.build.nsis.runAfterFinish, false);
+  assert.ok(fs.readFileSync(path.join(root, 'desktop/builder.cjs'), 'utf8').includes("to: 'tray.ico'"), 'tray icon must be packaged');
   assert.ok(!fs.existsSync(path.join(root, 'package.json')), 'Do not alter backend mixed module inference');
-  console.log('Electron desktop: payload integrity, data preservation, path guards, navigation policy, isolated package boundary PASS');
+  console.log('Electron desktop: payload integrity, data preservation, path guards, navigation policy, program-directory data, tray lifecycle, isolated package boundary PASS');
 } finally { fs.rmSync(temp, { recursive: true, force: true }); }

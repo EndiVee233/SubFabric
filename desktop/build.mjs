@@ -13,6 +13,7 @@ const cli = path.join(path.dirname(require.resolve('electron-builder/package.jso
 execFileSync(process.execPath, [cli, '--config', 'builder.cjs', '--win', 'nsis', '--x64', '--publish', 'never', '--config.directories.output=' + output], { cwd: desktop, stdio: 'inherit' });
 const installer = fs.readdirSync(output).find(name => name.endsWith('-setup.exe'));
 if (!installer) throw Error('Installer output missing');
-const result = { output, installer: path.join(output, installer), executable: path.join(output, 'win-unpacked/SubFabric Electron.exe'), sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(output, installer))).digest('hex') };
+const productName = JSON.parse(fs.readFileSync(path.join(desktop, 'package.json'), 'utf8')).productName;
+const result = { output, installer: path.join(output, installer), executable: path.join(output, 'win-unpacked', productName + '.exe'), sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(output, installer))).digest('hex') };
 fs.writeFileSync(path.join(root, 'build/electron/latest-build.json'), JSON.stringify(result, null, 2) + '\n');
 console.log(JSON.stringify(result));

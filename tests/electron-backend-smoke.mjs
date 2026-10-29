@@ -11,11 +11,12 @@ const resourceRoot = path.join(root, 'build/electron-stage');
 if (!fs.existsSync(resourceRoot)) { console.log('SKIP backend smoke: run desktop/stage.mjs first'); }
 else {
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'subfabric-electron-backend-'));
+  const manifest = JSON.parse(fs.readFileSync(path.join(resourceRoot, 'manifest.json'), 'utf8'));
   let backend;
   try {
     backend = await startBackend({ resourceRoot, dataRoot, port: 0 });
-    assert.equal(backend.version, 'beta 1.5.1.1');
-    assert.equal(backend.nodeVersion, JSON.parse(fs.readFileSync(path.join(resourceRoot, 'manifest.json'), 'utf8')).nodeVersion);
+    assert.equal(backend.version, manifest.appVersion);
+    assert.equal(backend.nodeVersion, manifest.nodeVersion);
     for (const route of ['/editor/studio.html', '/editor/js/main.js', '/editor/vendor/subtitles-octopus-worker.wasm', '/api/projects', '/api/asr/status']) {
       const response = await fetch(backend.origin + route, { signal: AbortSignal.timeout(15000) });
       assert.equal(response.status, 200, route);

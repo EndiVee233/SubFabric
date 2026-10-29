@@ -1,7 +1,7 @@
 {
   "name": "subfabric-desktop",
-  "productName": "SubFabric Electron",
-  "version": "1.5.1-beta.1",
+  "productName": "SubFabric",
+  "version": "1.5.2-beta.1",
   "description": "SubFabric local subtitle editor — Electron desktop edition",
   "author": "EndiVee233",
   "private": true,
@@ -16,21 +16,21 @@
     "electron-builder": "26.18.0"
   },
   "build": {
-    "appId": "com.endivee233.subfabric.electron",
+    "appId": "com.endivee233.subfabric",
     "asar": true,
     "directories": { "output": "../build/electron", "buildResources": "../build/installer" },
     "files": ["main.cjs", "backend.cjs", "security.cjs", "package.json"],
     "win": {
       "icon": "../build/installer/logo.ico",
       "target": [{ "target": "nsis", "arch": ["x64"] }],
-      "artifactName": "SubFabric-1.5.1.1-electron-x64-setup.${ext}"
+      "artifactName": "SubFabric-1.5.2.1-setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "SubFabric Electron",
+      "shortcutName": "SubFabric",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": false
     }

@@ -25,7 +25,9 @@
   SEA 脚本保留为旧链路，不能把其入口限制当成 Electron 的打包方式。
 - 浏览器源码启动：`node editor/server.js --no-tray`（按需隔离端口）；此命令会创建本地日志与数据，执行前核对运行环境。
   Electron 构建见 `docs/PROJECT.md` §6；`npm --prefix desktop start` 前必须先 stage，测试用
-  `SUBFABRIC_DESKTOP_PORT=0` 与隔离用户数据，不接管未知端口进程、不迁移或删除旧安装用户数据。
+  `SUBFABRIC_DESKTOP_PORT=0` 与 `SUBFABRIC_DESKTOP_DATA` 指定隔离数据目录，不接管未知端口进程。
+  桌面版数据（含 Chromium 配置）一律放程序目录，不写用户 AppData；关窗只隐藏到托盘，
+  「完全退出」才结束进程。不迁移或删除旧安装用户数据。
 - JS 回归入口：`node tests/run-all.mjs`；CI 见 `.github/workflows/ci.yml`。
   按改动选择必要检查，纯文档任务核对路径、内容、范围即可，不安装依赖或重复跑无关功能测试。
 - JS 测试可能生成夹具并同步 `tests/jsmod/`；先记录已有修改，只提交属于当前任务的镜像差异。

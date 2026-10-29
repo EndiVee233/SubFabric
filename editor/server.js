@@ -129,8 +129,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.1.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.1.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.2.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.2.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
