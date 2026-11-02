@@ -4823,6 +4823,29 @@ function normalizePart(v) {
   const n = parseInt(v, 10);
   return (Number.isFinite(n) && n >= 1) ? Math.min(9999, n) : 1;
 }
+/** 详情页「解析」写入的项目来源元数据：只保留展示用字段并全部夹长度，
+ *  缩略图只认 http(s)，标题/作者/简介/封面全空时视为没有读到信息。 */
+function cleanProjectSource(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const text = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+  const source = {
+    url: normalizeFetchUrl(raw.url || ''),
+    site: text(raw.site, 40),
+    id: text(raw.id, 120),
+    title: text(raw.title, 300),
+    description: text(raw.description, 4000),
+    uploader: text(raw.uploader, 200),
+    duration: Math.max(0, Number(raw.duration) || 0),
+    uploadDate: text(raw.uploadDate, 40),
+    tags: Array.isArray(raw.tags) ? raw.tags.slice(0, 40).map(t => text(t, 60)).filter(Boolean) : [],
+    viewCount: Math.max(0, Number(raw.viewCount) || 0),
+    thumbnail: /^https?:\/\//i.test(String(raw.thumbnail || '')) ? String(raw.thumbnail).slice(0, 2000) : '',
+    height: Math.max(0, Number(raw.height) || 0),
+    fetchedAt: new Date().toISOString(),
+  };
+  if (!source.title && !source.uploader && !source.description && !source.thumbnail) return null;
+  return source;
+}
 /** 下载内核要 Python 3.8+：先试 ASR 那套, 再试 py -3.12/3.11/3.10、python3、内置 Python。
  *  结果缓存成一个 Promise（探测只做一次）。用异步 spawn —— 本环境 spawnSync 会 EBUSY（实测）。 */
 let fetchPyPromise = null;
@@ -11841,7 +11864,7 @@ function handleProjectsRoutes(req, res, u) {
     }
 
     if (action === 'info' && req.method === 'PUT') {
-      return readBody(req, res, 8 * 1024, (err, body) => {
+      return readBody(req, res, 64 * 1024, (err, body) => {
         if (err) return sendJson(res, 400, { error: String(err.message) });
         let data;
         try { data = JSON.parse(body.toString('utf8')); }
@@ -11855,8 +11878,14 @@ function handleProjectsRoutes(req, res, u) {
         if (!current) return sendJson(res, 404, { error: '项目不存在' });
         current.name = name;
         current.nameCustomized = true;
+        /* 详情页可单独解析在线链接补封面/标题；只更新元数据，不碰视频、字幕与进度。 */
+        if (data.source !== undefined) {
+          const src = cleanProjectSource(data.source);
+          if (src) current.source = src;
+          else delete current.source;
+        }
         touchMeta(current);
-        return sendJson(res, 200, { ok: true, name: current.name, modifiedAt: current.modifiedAt });
+        return sendJson(res, 200, { ok: true, name: current.name, modifiedAt: current.modifiedAt, source: current.source || null });
       });
     }
 

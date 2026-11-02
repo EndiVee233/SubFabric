@@ -7734,6 +7734,10 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .batch-item-box { width:min(460px, calc(100vw - 40px)); }
 @media (max-width:900px) { #batch-view .batch-layout { grid-template-columns:1fr; } }
 
+/* 详情页「解析」：链接输入框 + 按钮，只读取在线元数据。 */
+.dt-source-row { display:flex; gap:8px; margin:0 0 14px; }
+.dt-source-row .np-input { flex:1; min-width:0; }
+
 /* ══════════════════════════════════════════════════════════════════════
    存储空间（#/storage）
    ----------------------------------------------------------------------

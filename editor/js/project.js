@@ -353,6 +353,7 @@ export function initProjects(ctx) {
   }
 
   let detailProjectId = '';
+  let detailSource = null;
   const detailForm = $('#detail-form');
   const detailName = $('#detail-name');
   const detailError = $('#detail-error');
@@ -399,7 +400,10 @@ export function initProjects(ctx) {
     $('#detail-created').textContent = fmtDate(project.createdAt) || '—';
     $('#detail-modified').textContent = fmtDate(project.modifiedAt) || '—';
     // 稿件预览：从链接创建的项目带 source（标题/作者/简介/缩略图），本地文件没有
-    fillPreview('detail', project.source);
+    detailSource = project.source || null;
+    fillPreview('detail', detailSource);
+    const detailUrl = $('#detail-url');
+    if (detailUrl) detailUrl.value = detailSource && detailSource.url ? detailSource.url : '';
     // 生成设置里的全局项；「自动区分说话人」是项目级参数，这里只回显当时的选择
     const spk = $('#dt-set-speakers');
     if (spk) { spk.checked = !!(project.draft && project.draft.speakers); spk.disabled = true; }
@@ -443,6 +447,45 @@ export function initProjects(ctx) {
   $('#detail-back').addEventListener('click', returnFromDetails);
   $('#detail-cancel').addEventListener('click', returnFromDetails);
   $('#dp-close').addEventListener('click', returnFromDetails);
+  $('#detail-probe')?.addEventListener('click', async () => {
+    const id = detailProjectId;
+    const input = $('#detail-url');
+    const btn = $('#detail-probe');
+    const url = normalizeVideoUrl(input ? input.value : '');
+    if (!id) return;
+    if (!url) { toast('先把在线视频链接粘进来', 3000); if (input) input.focus(); return; }
+    if (btn) { btn.disabled = true; btn.textContent = '解析中…'; }
+    try {
+      const r = await fetch('/api/fetch/probe', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, part: Math.max(1, parseInt((/[?&]p=(\d+)/.exec(url) || [])[1], 10) || 1) }),
+      });
+      const m = await r.json().catch(() => ({}));
+      if (!r.ok || m.error) throw new Error(m.error || ('HTTP ' + r.status));
+      const source = m.source || null;
+      if (!source) throw new Error('没有读到标题/作者/封面');
+      const name = (detailName.value || '').trim();
+      if (!name) throw new Error('项目名称为空，先填写项目名称');
+      const save = await fetch(`/api/projects/${encodeURIComponent(id)}/info`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, source }),
+      });
+      const saved = await save.json().catch(() => ({}));
+      if (!save.ok) throw new Error(saved.error || ('HTTP ' + save.status));
+      detailSource = source;
+      /* 这里刻意不写本地缓存：项目列表由 renderList() 每次重新拉取 /api/projects，
+         之前的 `(projects || [])` 引用了一个不存在的变量，点「解析」必抛 ReferenceError，
+         后面的预览与刷新全被跳过（保存其实已成功，界面却停在旧状态）。 */
+      fillPreview('detail', source);
+      $('#detail-modified').textContent = fmtDate(saved.modifiedAt) || $('#detail-modified').textContent;
+      renderList();
+      toast('已解析并保存在线视频信息（没有下载视频、没有改动字幕）', 5200);
+    } catch (e) {
+      toast('解析失败：' + ((e && e.message) || e), 5200);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '解析'; }
+    }
+  });
   detailForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const id = detailProjectId;
