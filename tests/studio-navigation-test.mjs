@@ -573,7 +573,9 @@ assert.ok(themeColorPanel.querySelector('.sf-settings-swatches'), 'theme color p
 // Theme pack cards are delegated controls: exercise every built-in pack through
 // the same click path users take in the released Studio UI, including the
 // rerender that happens after applyTheme().
-for (const id of ['windows-uwp', 'material-you', 'subfabric-classic']) {
+assert.ok(document.querySelector('[data-route="storage"]'), 'sidebar exposes the storage page');
+assert.ok(document.getElementById('storage-view'), 'storage page exists as a workspace page');
+for (const id of ['windows-uwp', 'material-you']) {
   const packButton = document.querySelector(`[data-pack-select="${id}"]`);
   assert.ok(packButton, 'built-in theme pack is rendered: ' + id);
   // The in-memory DOM does not synthesize event bubbling; dispatch at the
@@ -583,6 +585,11 @@ for (const id of ['windows-uwp', 'material-you', 'subfabric-classic']) {
   assert.equal(document.body.dataset.themePack, id, 'theme pack click applies ' + id);
   assert.equal(document.body.dataset.design, id === 'material-you' ? 'material' : id === 'subfabric-classic' ? 'classic' : id === 'windows-uwp' ? 'uwp' : 'studio', 'theme design follows ' + id);
   assert.equal(document.querySelector(`[data-pack-select="${id}"]`).getAttribute('aria-pressed'), 'true', 'theme pack selection is retained for ' + id);
+}
+/* 已下线的 Claude / Classic 不再出现在设置里，也没有可点击的入口。 */
+for (const id of ['subfabric-classic', 'claude']) {
+  assert.equal(document.querySelector(`[data-pack-select="${id}"]`), null, 'retired theme pack is not rendered: ' + id);
+  assert.equal(document.querySelector(`[data-pack="${id}"]`), null, 'retired theme pack card is not rendered: ' + id);
 }
 for (const [name, input] of [['models', 'st-model-dir'], ['translate', 'st-scheme-list'], ['enhance', 'st-conf-mode'], ['fetch', 'st-fetch-quality'], ['perf', 'perf-start'], ['theme', 'sf-color']]) {
   await click('sf-settings-tab-' + name);
@@ -701,7 +708,7 @@ assert.ok(![...storage.values()].some(value=>value.includes('fake-secret')),'key
 assert.equal(requests.some(request=>request.url==='/api/translate/config'&&request.method==='POST'),false);
 
 // Aurora preferences use validated colors, survive storage reload and add no clocks.
-const auroraTimers=timers.size, auroraFrames=frames.size;
+const auroraTimers=timers.size;
 $('sf-background').value='aurora'; $('sf-background').dispatchEvent(new Event('change'));
 assert.equal($('sf-aurora-options').hidden,false);
 $('sf-aurora-palette').value='ocean'; $('sf-aurora-palette').dispatchEvent(new Event('change'));
@@ -723,7 +730,10 @@ $('sf-aurora-palette').value='theme'; $('sf-aurora-palette').dispatchEvent(new E
 assert.deepEqual(JSON.parse(storage.get('subfabric-studio-v1')).auroraColors,[]);
 $('sf-background').value='solid'; $('sf-background').dispatchEvent(new Event('change'));
 assert.equal($('sf-aurora-options').hidden,true);
-assert.equal(frames.size,auroraFrames,'no aurora animation frame loop');
+/* Material 主题切换会排一次入场帧；先跑完这些一次性帧，再要求不再有排队帧 ——
+   真正的循环会把自己重新排回来，所以"归零"同样能捕获泄漏。 */
+await settle();
+assert.equal(frames.size,0,'no aurora animation frame loop');
 assert.ok(timers.size<=auroraTimers+1,'only invalid-color notice may add a timeout');
 
 // Series navigation keeps prerequisites and model actions behind the selected family.
@@ -738,7 +748,8 @@ assert.equal(document.documentElement.style.getPropertyValue('--sf-glass-blur'),
 assert.equal($('sf-glass-dim-value').textContent,'72%');
 assert.equal($('sf-glass-blur-value').textContent,'32px');
 assert.equal($('sf-glass-opacity-value').textContent,'20%');
-assert.equal(frames.size,auroraFrames,'glass controls add no animation loop');
+await settle();   // 玻璃前景同步是一次性 rAF；跑完仍为 0 才说明没有自我重排。
+assert.equal(frames.size,0,'glass controls add no animation loop');
 await click('sf-settings-tab-models');
 assert.equal($('sf-asr-families').hidden,false);
 assert.equal($('st-rerecog-sel').closest('.st-card'),$('sf-asr-rerecog-mount'));
@@ -847,7 +858,10 @@ Object.defineProperty(dashboard, 'offsetWidth', {
   get() { dashboardEntranceReads++; return 1200; },
 });
 window.dispatchEvent(new Event('sf-studio-theme')); await settle();
-assert.ok(dashboard.classList.contains('is-entering'), 'theme switch starts the dashboard entrance');
+/* Windows 10 用 is-uwp-page-entering + data-uwp-enter，其余设计用 is-entering。
+   这里按当前设计断言对应机制，避免把两套入场实现混为一谈。 */
+const entranceClass = document.body.dataset.design === 'uwp' ? 'is-uwp-page-entering' : 'is-entering';
+assert.ok(dashboard.classList.contains(entranceClass), 'theme switch starts the dashboard entrance');
 assert.ok(dashboardEntranceReads > 0, 'dashboard entrance forces a layout');
 const entranceReadsAfterTheme = dashboardEntranceReads;
 const widgetNodes = [...$('sf-widgets').children];

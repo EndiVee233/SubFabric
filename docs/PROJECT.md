@@ -321,12 +321,22 @@
   逐级拒绝符号链接与祖先 junction。项目字幕、媒体、字体走各自 API。
 - **UI 单入口**：旧 `editor/index.html` 与旧 CSS 已删除，旧视觉迁移为 `subfabric-classic` 主题包；
   根入口无论 `ui-config.json` 缺失、损坏还是 `{"ui":"legacy"}` 都只进 Studio，且该配置不对外服务。
-- **主题包**：内置四个——Windows 10(`uwp`)、Material You(`material`)、SubFabric Classic(`classic`)、
-  Claude(`claude`)；`design:"studio"` 仅保留给旧自定义包。同源 JSON 在 `editor/themes/*.theme.json`，
-  运行期定义在 `editor/js/studio-themes.js`。自定义包只接受白名单键（`schema` `id` `name` `version` `description`
+- **主题包**：内置四个定义，但**只对外提供两个**——Windows 10(`uwp`)、Material You(`material`)；
+  SubFabric Classic(`classic`) 与 Claude(`claude`) 已下线：定义、CSS/JS 分支与 `editor/themes/*.theme.json`
+  都保留以便恢复，但 `themes.list()`/`get()` 会排除它们，设置里不渲染、旧 `themePack` 自动回退 Windows 10、
+  导入同设计包被拒绝，静态白名单也不再提供这两个 JSON。残留的旧偏好与同设计导入包会出现在存储空间页，
+  由用户确认清理。`design:"studio"` 仅保留给旧自定义包。运行期定义在 `editor/js/studio-themes.js`。自定义包只接受白名单键（`schema` `id` `name` `version` `description`
   `author` `design` `seed` `tokens` `assets` `builtin` `personalization`）、`#RRGGBB` 颜色令牌与内嵌 PNG/JPEG/WebP 预览；
   **不能**含脚本、CSS、HTML、SVG 或远程 URL。导入同名自定义包替换旧版，导入内置包生成 `-custom` 副本，
   内置包不可删除。
+- **存储空间（2026-11-02）**：新增 `#/storage` 页面与 `GET /api/storage`、`POST /api/storage/clean`。
+  `editor/storage-scan.js` 只扫描白名单目录（项目中间文件 `audio.wav`/`peaks.bin`/`asr.json`/`reseg.json`/`draft.log`、
+  `asr/models/*`、`asr/` 下的可选运行时、`__pycache__`、7 天前的日志），字幕、`project.json`、视频目录与
+  `videos/` 永不进入清理集。客户端只回传扫描生成的 id，服务端按登记表与前缀边界复核；统计与删除都走
+  `lstat` 不跟随符号链接，识别中的项目、当前/重识别模型、`asr/models/diarize`、ASR 基础运行时与 `ytdlp`
+  一律标记受保护。删除逐文件进行并对 EBUSY/EPERM 退避重试；扫描会话 30 分钟过期，避免拿旧登记表删新文件。
+  页面样式只用主题令牌：Material You 用 28px/26px 大圆角与胶囊筛选，Windows 10 用 2px 直角、磁贴与按下位移。
+  主题残留（旧 `themePack` 与同设计导入包）在前端清理，会同时写回 `localStorage`。
 - **主题包压缩包（2026-10-27）**：导出改为 `.theme.zip`，内含 `theme.json` 与
   `layouts/home.json`、`layouts/library.json`、`layouts/editor.json`、`layouts/help.json`。
   `theme.json` 仍带 `design + tokens + seed + assets.preview`，并附加 `personalization`

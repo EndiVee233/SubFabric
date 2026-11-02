@@ -114,6 +114,8 @@ export default [
       'editor/realign-batch.js',
       // 全片术语表校对：把确认后的词条合并进方案术语表（纯逻辑，只用 require）
       'editor/glossary-merge.js',
+      // 存储空间扫描/清理：纯 Node 逻辑（白名单、不跟随链接），单测直接 require
+      'editor/storage-scan.js',
     ],
     languageOptions: {
       ecmaVersion: 2022,

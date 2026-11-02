@@ -15,9 +15,16 @@ vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(root, 'editor/js/studio-themes.js'), 'utf8'), context);
 const themes = context.window.SF_THEMES;
 
-assert.equal(themes.builtins.length, 4, 'four built-in theme packs are registered (Studio removed, Claude added)');
-assert.equal(themes.get('claude').design, 'claude', 'the Claude pack selects its own design family');
-assert.equal(themes.get('claude').seed, '#B0512F', 'Claude keeps its terracotta seed');
+assert.equal(themes.builtins.length, 4, 'four built-in theme packs stay registered so their files remain restorable');
+assert.equal(themes.visibleBuiltins.length, 2, 'only two built-in packs are offered to users');
+assert.deepEqual([...themes.list([])].map(pack => pack.id), ['windows-uwp', 'material-you'], 'the picker lists only Windows 10 and Material You');
+assert.equal(themes.get('claude').id, 'windows-uwp', 'the hidden Claude pack resolves to the default instead of being selectable');
+assert.equal(themes.get('subfabric-classic').id, 'windows-uwp', 'the hidden Classic pack resolves to the default instead of being selectable');
+assert.equal(themes.get('claude', [{ schema: 'subfabric-theme-v1', id: 'claude-copy', name: 'Claude Copy', version: '1.0.0', description: '', design: 'claude', seed: '#B0512F' }]).id, 'windows-uwp', 'custom packs cloned from a hidden design are not selectable');
+assert.equal(themes.isHiddenDesign('claude'), true, 'Claude design is marked retired');
+assert.equal(themes.isHiddenDesign('classic'), true, 'Classic design is marked retired');
+assert.equal(themes.isHiddenDesign('material'), false, 'Material design stays available');
+assert.deepEqual(JSON.parse(JSON.stringify(themes.hiddenThemes.map(pack => pack.id))), ['subfabric-classic', 'claude'], 'hidden packs are reported for storage cleanup');
 assert.equal(themes.get('nope').id, 'windows-uwp', 'unknown pack ids still fall back to the first built-in');
 for (const pack of themes.builtins) {
   assert.equal(pack.builtin, true, `${pack.id} is marked built-in`);

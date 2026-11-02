@@ -20,7 +20,18 @@
     /* 追加在末尾：builtins[0] 仍是未知 id 的回退主题，不改变旧行为。 */
     Object.freeze({ schema: 'subfabric-theme-v1', id: 'claude', name: 'Claude', version: '1.0.0', description: '暖纸底、陶土强调、衬线标题与柔和圆角', design: 'claude', seed: '#B0512F', builtin: true })
   ]);
+  /* 2026-11-02：Claude 与 SubFabric Classic 不再对外提供。
+     定义仍保留在 builtins 里（CSS/JS 分支与仓库文件都留着，日后可恢复），
+     但 list()/get() 会把它们排除：设置界面不渲染、旧偏好自动回退到 Windows 10，
+     导入同设计的自定义包也会被拒绝 —— 因而不存在任何可切换入口。
+     已导入的同设计包不会被静默删除，而是作为"主题残留"出现在存储空间页，由用户确认清理。 */
+  const hiddenIds = new Set(['claude', 'subfabric-classic']);
+  const hiddenDesigns = new Set(['claude', 'classic']);
   const builtinIds = new Set(builtins.map(pack => pack.id));
+  const visibleBuiltins = builtins.filter(pack => !hiddenIds.has(pack.id));
+  const isHiddenDesign = design => hiddenDesigns.has(design);
+  const hiddenThemes = builtins.filter(pack => hiddenIds.has(pack.id))
+    .map(pack => ({ id: pack.id, name: pack.name, design: pack.design }));
   function validTokens(tokens) {
     if (tokens === undefined) return true;
     if (!tokens || typeof tokens !== 'object' || Array.isArray(tokens)) return false;
@@ -118,8 +129,8 @@
     return out;
   }
   function customPack(pack, id = pack.id, name = pack.name) { return clone({ ...pack, id, name, builtin: false }); }
-  const list = custom => [...builtins, ...(validList(custom) ? custom.map(p => clone(p)) : [])];
-  const get = (id, custom) => list(custom).find(p => p.id === id) || builtins[0];
+  const list = custom => [...visibleBuiltins, ...(validList(custom) ? custom.filter(p => !hiddenDesigns.has(p.design)).map(p => clone(p)) : [])];
+  const get = (id, custom) => list(custom).find(p => p.id === id) || visibleBuiltins[0];
   const isBuiltin = packOrId => builtinIds.has(typeof packOrId === 'string' ? packOrId : packOrId?.id);
   const canDelete = packOrId => !isBuiltin(packOrId);
   const remove = (custom, id) => validList(custom) ? custom.filter(pack => pack.id !== id).map(pack => clone(pack)) : [];
@@ -240,5 +251,5 @@
       root.style.setProperty('--on-accent', contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#101318');
     }
   }
-  window.SF_THEMES = Object.freeze({ builtins, hex, valid, validList, list, get, isBuiltin, canDelete, remove, asCustom, tokenOverrides, palette, contrast, foregroundColor, uwpLightColors, apply });
+  window.SF_THEMES = Object.freeze({ builtins, visibleBuiltins, hiddenThemes, isHiddenDesign, hex, valid, validList, list, get, isBuiltin, canDelete, remove, asCustom, tokenOverrides, palette, contrast, foregroundColor, uwpLightColors, apply });
 }());

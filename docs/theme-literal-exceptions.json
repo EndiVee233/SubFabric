@@ -1684,6 +1684,11 @@
           "value": "text-shadow:0 1px 3px rgba(0, 0, 0, .85)",
           "count": 1,
           "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
+        },
+        {
+          "value": "background:rgb(0 0 0 / 45%)",
+          "count": 1,
+          "reason": "Modal dialog scrim: intentionally theme-independent dimming so the confirming surface stays readable in both light and dark themes; contrast of the dialog itself is provided by --bg-1/--text-0."
         }
       ]
     },

@@ -42,6 +42,7 @@
   <span class="sf-nav-label">工作空间</span>
   <a href="#/dashboard" data-route="dashboard" data-ico="home">主页</a>
   <a href="#/home" data-route="home" data-ico="folder">稿件库</a>
+  <a href="#/storage" data-route="storage" data-ico="storage">存储空间</a>
   <div class="sf-folder-head"><span>文件夹</span><button type="button" id="sf-folder-add" data-ico="plus" aria-label="新建文件夹"></button></div>
   <div id="sf-folders"></div>
   <div class="sf-nav-bottom"><a href="#/settings" data-route="settings" data-ico="sliders">设置</a><a href="#/help" data-route="help" data-ico="info">帮助与快捷键</a><p>本地工作空间 · 自动保存</p></div>
@@ -2433,6 +2434,98 @@
   </div>
 </div>
 </div>
+
+<!-- ══════════ 存储空间：扫描 + 白名单清理 ══════════
+     只删可重新生成的中间文件/模型/运行时/缓存/日志；字幕、项目元数据与原始视频永不在此删除。
+     主题残留（已下线主题的偏好与导入包）在本地清理，不发文件请求。 -->
+<section id="storage-view" class="workspace-page storage-view" hidden aria-labelledby="stg-title">
+  <div class="page-inner stg-inner">
+    <header class="page-head">
+      <span class="page-brand" data-ico="film">SubFabric <span>/ 存储空间</span></span>
+      <div class="stg-head-actions">
+        <span class="stg-scan-state" id="stg-scan-state" role="status">尚未扫描</span>
+        <button class="btn" type="button" id="stg-rescan" data-ico="refresh">重新扫描</button>
+      </div>
+    </header>
+
+    <div class="page-intro">
+      <div class="page-eyebrow">STORAGE &amp; CLEANUP</div>
+      <h1 id="stg-title">存储空间</h1>
+      <p>项目、模型与本机运行时的实际占用。清理只删除可以重新生成的文件，字幕、项目信息与原始视频始终保留。</p>
+    </div>
+
+    <p class="stg-note" id="stg-note" role="status" hidden></p>
+
+    <section class="stg-hero" aria-label="磁盘占用">
+      <div class="stg-ring" id="stg-ring" role="img" aria-label="磁盘占用">
+        <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+          <circle class="stg-ring-track" cx="60" cy="60" r="50"></circle>
+          <circle class="stg-ring-value" id="stg-ring-value" cx="60" cy="60" r="50"></circle>
+        </svg>
+        <span class="stg-ring-label"><b id="stg-used">—</b><small>已用</small></span>
+      </div>
+      <div class="stg-hero-copy">
+        <p class="stg-kicker">程序目录 · 本地磁盘</p>
+        <p class="stg-hero-line"><b id="stg-cleanable">—</b><span>可释放</span></p>
+        <p class="stg-disk-note" id="stg-disk-note">扫描后显示磁盘容量</p>
+        <div class="stg-bar" id="stg-bar" aria-hidden="true"></div>
+        <div class="stg-legend" id="stg-legend"></div>
+      </div>
+    </section>
+
+    <div class="stg-tiles" id="stg-categories"></div>
+
+    <div class="stg-grid">
+      <section class="stg-panel" aria-labelledby="stg-list-title">
+        <header class="stg-panel-head">
+          <div><h2 id="stg-list-title">可清理内容</h2><p>按类别筛选，勾选后先预览再清理</p></div>
+          <span class="stg-count" id="stg-visible-count">0 项</span>
+        </header>
+        <div class="stg-chips" id="stg-chips" role="tablist" aria-label="清理分类"></div>
+        <div class="stg-toolbar">
+          <label class="stg-check stg-check-all"><input type="checkbox" id="stg-select-all"><span class="stg-box"></span><span>全选当前分类</span></label>
+          <span class="stg-toolbar-note" id="stg-toolbar-note"></span>
+          <button class="stg-link" type="button" id="stg-recommend">选择推荐项</button>
+        </div>
+        <div class="stg-list" id="stg-list"></div>
+        <footer class="stg-foot">
+          <span class="stg-foot-copy">已选 <b id="stg-selected-count">0</b> 项 · 预计释放 <b id="stg-selected-size">0 B</b></span>
+          <button class="btn btn-accent" type="button" id="stg-preview" disabled>查看清理预览</button>
+        </footer>
+      </section>
+
+      <aside class="stg-side">
+        <section class="stg-card">
+          <h3>清理边界</h3>
+          <ul class="stg-boundary">
+            <li><b>保留</b>字幕、项目信息、备注与操作日志</li>
+            <li><b>保留</b>原始视频与视频目录</li>
+            <li><b>保护</b>正在识别或导出的项目</li>
+            <li><b>保护</b>当前选中模型与识别后端</li>
+          </ul>
+        </section>
+        <section class="stg-card" id="stg-residue" hidden>
+          <h3>主题残留</h3>
+          <p id="stg-residue-copy"></p>
+          <button class="btn" type="button" id="stg-residue-clean">清理残留</button>
+        </section>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<dialog id="stg-dialog" class="stg-dialog" aria-labelledby="stg-dialog-title">
+  <div class="stg-dialog-body">
+    <h2 id="stg-dialog-title">确认清理</h2>
+    <p class="stg-dialog-lede">以下内容会被删除，且不会进入回收站。删除后只能通过重新识别、重新下载或重新安装恢复。</p>
+    <ul class="stg-dialog-list" id="stg-dialog-list"></ul>
+    <p class="stg-dialog-warn" id="stg-dialog-warn" hidden></p>
+    <div class="stg-dialog-foot">
+      <button class="btn" type="button" data-close>取消</button>
+      <button class="btn btn-accent" type="button" id="stg-confirm">确认清理</button>
+    </div>
+  </div>
+</dialog>
 
 <!-- 设置页状态提示：不占设置面板布局，只有出现消息时才以浮动提示显示；空态完全隐藏。 -->
 <div class="sf-settings-status" aria-live="polite"><span class="st-msg" id="st-msg" role="status"></span></div>

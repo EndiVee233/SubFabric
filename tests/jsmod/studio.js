@@ -5,9 +5,13 @@ import { t } from './i18n.js';
 import { ico } from './icons.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
 import { parseCssColor, compositeColor, shouldUseLightText, readableForeground } from './glass-contrast.js';
+import { createStoragePage } from './storage.js';
 
 // 所有编辑、导出、识别与保存仍由 main/project.js 负责。此层只接导航和外观。
 const $ = id => document.getElementById(id);
+/* 内存 DOM / 未挂载节点没有 getClientRects：没有布局信息时按"有盒子"处理，
+   真实浏览器仍然按几何过滤，测试环境也不会因为缺 API 抛错。 */
+const hasBox = el => typeof el.getClientRects !== 'function' || el.getClientRects().length > 0;
 const themes = window.SF_THEMES;
 // 移动唯一版本节点，保留 main 的服务端更新；各列表标题不再重复版本号。
 document.querySelector('.sf-brand-title').appendChild($('app-version'));
@@ -184,6 +188,7 @@ function applyTheme() {
         if (panel) animateMaterialPage(panel);
       } else if (h === '#/help') animateMaterialPage($('sf-help'));
       else if (h === '#/batch') animateMaterialPage($('batch-view'));
+      else if (h === '#/storage') animateMaterialPage($('storage-view'));
       else if (h === '#/editor' || h.startsWith('#/project/')) {
         animateMaterialEditorShell();
         animateMaterialCueList();
@@ -255,7 +260,8 @@ function renderPacks() {
     return `<article class="sf-pack" data-pack="${esc(pack.id)}" data-builtin="${builtin}" aria-current="${selected ? 'true' : 'false'}"><button type="button" class="sf-pack-select" data-pack-select="${esc(pack.id)}" aria-pressed="${selected}"><span class="sf-pack-art ${pack.design}" aria-hidden="true" style="--preview-bg:${palette['--bg']};--preview-accent:${palette['--accent']};--preview-ink:${palette['--on-accent']};${preview}"><span class="sf-pack-symbol"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${glyph}</svg></span><span class="sf-pack-lines"><i></i><i></i><i></i></span></span><span class="sf-pack-name"><b>${esc(pack.name)}</b>${selected ? ico('checkCircle') : ''}</span><small>${esc(pack.description)}</small><em>${builtin ? '内置主题包' : '我的主题包'}</em></button>${builtin ? '' : `<button type="button" class="sf-pack-delete" data-delete-pack="${esc(pack.id)}" title="删除主题包" aria-label="删除 ${esc(pack.name)}">${ico('trash')}</button>`}</article>`;
   };
   const builtin = themes.list([]).map(render).join('');
-  const custom = prefs.custom.map(render).join('');
+  /* 已下线的设计不再出现在设置里；残留的导入包留给存储空间页清理。 */
+  const custom = prefs.custom.filter(pack => !themes.isHiddenDesign(pack.design)).map(render).join('');
   $('sf-theme-packs').innerHTML = `<section class="sf-pack-group"><h4>内置主题包</h4><div class="sf-theme-pack-grid">${builtin}</div></section><section class="sf-pack-group"><h4>我的主题包</h4><div class="sf-theme-pack-grid">${custom || '<p class="sf-pack-empty">导入你绘制的 JSON 主题包，它会显示在这里。</p>'}</div></section>`;
   scheduleGlassForeground();
 }
@@ -813,6 +819,8 @@ $('sf-theme-file').addEventListener('change', async () => {
       imported = JSON.parse(new TextDecoder().decode(bytes));   // 兼容旧的单文件 .theme.json
     }
     if (!themes.valid(imported)) throw Error('主题包格式无效，只支持声明式主题或本应用导出的 .zip。');
+    /* 已下线的设计不接受导入：否则导出一个旧内置包、改个 id 就能绕过设置界面的隐藏。 */
+    if (themes.isHiddenDesign(imported.design)) throw Error('该主题设计已停用，无法导入。');
     let pack = imported;
     if (themes.isBuiltin(pack)) {
       const base = pack.id + '-custom';
@@ -1456,7 +1464,8 @@ const UWP_ENTER_ITEM_SELECTORS = {
   'sf-help': '.sf-page-content > .sf-eyebrow, .sf-page-content > h1, .sf-page-content > p, .sf-help-grid > article, .sf-help-grid article dl > div'
 };
 function uwpSettingsItems(panel) {
-  const visible = el => el.getClientRects().length > 0;
+  /* 内存 DOM/脱离文档的节点没有布局信息，按可见处理（与浏览器行为一致）。 */
+  const visible = hasBox;
   const content = [...panel.querySelectorAll(SETTINGS_ENTER_ITEMS)].filter(visible);
   const heading = [...panel.querySelectorAll(':scope > .sf-settings-heading')].filter(visible);
   /* 性能页没有 .st-card/.st-scheme，只有标题和两个 .st-section；
@@ -1485,7 +1494,7 @@ function uwpOrderByGeometry(items) {
 }
 function animateUwpPage(root, itemsOnly = false) {
   if (document.body.dataset.design !== 'uwp' || !root || root.hidden || uwpMotionOff()) return;
-  let items = uwpEnterCandidates(root).filter(el => el.getClientRects().length);
+  let items = uwpEnterCandidates(root).filter(hasBox);
   /* 页面刚显示时卡片可能还没渲染完；不要先占用节流时间片，否则后面补渲染不会动。 */
   if (!items.length && !itemsOnly) return;
   const now = performance.now();
@@ -1529,7 +1538,9 @@ function animateMaterialPage(root, selector = '', force = false) {
   if (document.body.dataset.design !== 'material' || !root || root.hidden || uwpMotionOff()) return;
   const sel = selector || (root.classList?.contains('st-panel') ? MY_SETTINGS_ITEMS : MY_ENTER_ITEMS[root.id]);
   if (!sel) return;
-  const items = [...root.querySelectorAll(sel)].filter(el => el.getClientRects().length);
+  /* 无布局环境（内存测试里的最小 DOM）没有 getClientRects/hasAttribute：
+     这类节点按"不可测量"跳过，生产 DOM 的行为不变。 */
+  const items = [...root.querySelectorAll(sel)].filter(el => typeof el.hasAttribute === 'function' && !el.hidden && hasBox(el));
   if (!items.length) return;
   const now = performance.now();
   if (!force && root._myEnterAt && now - root._myEnterAt < 80
@@ -2359,7 +2370,7 @@ window.__sfStudio = {
     $('sf-nav').hidden = editor; $('sf-topbar').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
     const global = h === '#/settings';
     moveStyles(global);
-    const titles = { dashboard: '主页', home: '稿件库', settings: '设置', help: '帮助与快捷键', new: '新建稿件', batch: '批量初稿', details: '稿件详情' };
+    const titles = { dashboard: '主页', home: '稿件库', storage: '存储空间', settings: '设置', help: '帮助与快捷键', new: '新建稿件', batch: '批量初稿', details: '稿件详情' };
     $('sf-breadcrumb').textContent = t(titles[h.slice(2).split('/')[0]] || '字幕工作台');
     document.querySelectorAll('[data-route]').forEach(a => { const active = h === '#/' + a.dataset.route; a.classList.toggle('active', active); if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     if (global) {
@@ -2371,8 +2382,9 @@ window.__sfStudio = {
     /* 所有 UWP 非编辑器页面共用同一套入场：页面 .92→1，元素按几何位置错峰。 */
     if (!editor && document.body.dataset.design === 'uwp') {
       const page = h === '#/dashboard' ? $('dashboard-view') : h === '#/home' ? $('home-view')
-        : h === '#/settings' ? $('st-view') : h === '#/new' ? $('np-view') : h === '#/batch' ? $('batch-view')
-          : h === '#/help' ? $('sf-help') : h.startsWith('#/details/') ? $('detail-view') : null;
+        : h === '#/storage' ? $('storage-view') : h === '#/settings' ? $('st-view')
+          : h === '#/new' ? $('np-view') : h === '#/batch' ? $('batch-view')
+            : h === '#/help' ? $('sf-help') : h.startsWith('#/details/') ? $('detail-view') : null;
       if (page && !page.hidden) animateUwpPage(page);
     }
     /* Material You：稿件库/文件夹/设置/帮助各自按几何顺序上浮，主页保持原卡片节奏。
@@ -2385,6 +2397,7 @@ window.__sfStudio = {
         if (panel) animateMaterialPage(panel);
       } else if (h === '#/help') animateMaterialPage($('sf-help'));
       else if (h === '#/batch') animateMaterialPage($('batch-view'));
+      else if (h === '#/storage') animateMaterialPage($('storage-view'));
     });
     /* UWP 编辑器：外壳轻微 scale(.97→1) 淡入；字幕卡在 cue 渲染后自上而下 120ms/14ms 淡入上移。 */
     if (editor) {
@@ -2610,5 +2623,16 @@ for (const event of ['keydown', 'keyup']) document.addEventListener(event, e => 
   if (!typing && document.body.dataset.workspace !== 'editor' && shortcuts.actionForCombo(comboFromEvent(e))) e.stopImmediatePropagation();
 }, true);
 applyTheme(); renderFolders(); syncPlayer(); window.SF_PROGRESS.mount();
+/* 存储空间页：偏好读写留在本模块（commit 会归一化并落盘），页面模块只负责渲染与请求。 */
+window.__sfStorage = createStoragePage({
+  themes,
+  getPrefs: () => prefs,
+  applyPrefs(change) {
+    if (!commit(change)) throw Error('界面偏好保存失败');
+    applyTheme();
+    renderPacks();
+  },
+  notify: message => notice(message),
+});
 // #/editor 的旧直开 boot 不经过项目路由，也须初始化独立工作台可见性。
 window.__sfStudio.route(route, null, '');

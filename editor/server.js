@@ -83,6 +83,7 @@ const cast = require('./cast.js');            // LLM 分角色(纯逻辑: 阵容
 const secretStore = require('./secret-store.js'); // 敏感值落盘: bilibili Cookie / LLM API Key 走密文, 不明文进 settings.json
 const hardsub = require('./hardsub.js');     // 视频导出: 硬字幕压制 / 生肉复制 / 字幕导出（逻辑取自 hardsub-py）
 const asrParams = require('./asr-params.js'); // ASR 模型参数 schema / 默认值 / 校验（Whisper 等）
+const { StorageService } = require('./storage-scan.js'); // 存储空间扫描/清理（白名单、不跟随链接、保护在用资源）
 const ffmpegTool = require('./ffmpeg-tool.js'); // ffmpeg/ffprobe 定位与按需自动下载
 
 const ROOT = path.resolve(__dirname, '..'); // D:\subtitle
@@ -324,13 +325,15 @@ function safeJoin(root, urlPath) {
 }
 
 // 明确列出浏览器入口、依赖和双端纯模块；editor 下的后端模块不随目录一并公开。
+/* 2026-11-02：Claude / SubFabric Classic 已从主题选择器下线，对应的主题包也不再生效
+   提供访问（文件仍留在仓库里可随时恢复，只是没有 HTTP 入口）。 */
 const STATIC_RESOURCES = new Set([
-  '/editor/studio.html', '/editor/css/studio.css', '/editor/css/classic.css', '/editor/lang/zh-CN.json', '/editor/themes/subfabric-classic.theme.json', '/editor/themes/claude.theme.json', '/editor/assets/app-logo.png',
+  '/editor/studio.html', '/editor/css/studio.css', '/editor/css/classic.css', '/editor/lang/zh-CN.json', '/editor/assets/app-logo.png',
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'zip', 'glossary-review'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review', 'storage'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
@@ -10420,6 +10423,69 @@ function handleLogsRoutes(req, res, u) {
   sendJson(res, 404, { error: 'not found' });
 }
 
+/* ── 存储空间: 扫描与安全清理 ──────────────────────────────────────
+ * 扫描只读；删除只认扫描时登记过的 id，路径边界与"在用资源"保护都在服务端复核，
+ * 前端的禁用状态只是提示，不能作为安全边界。
+ * 扫描会话留在内存里并在 30 分钟后失效：拿旧登记表删新文件是最危险的错配。 */
+let storageSession = null;
+function createStorageSession() {
+  const settings = readAsrSettings();
+  /* diarize/ 是说话人分离共用的模型目录，不属于任何单个模型，删了会让分离直接失效。 */
+  const protectedModels = new Set(['diarize', ...[settings.selectedModel, settings.rerecogModel].filter(id => typeof id === 'string' && id)]);
+  const engine = (ASR_MODELS.find(model => model.id === settings.selectedModel) || {}).engine || '';
+  const runtimeForEngine = {
+    'whisper.cpp': 'whisper.cpp', 'faster-whisper': 'faster-whisper-xxl',
+    'crispasr': 'crispasr', 'crispasr-whisper': 'crispasr', 'crispasr-qwen': 'crispasr',
+    'vibevoice': 'runtime-vibevoice',
+  }[engine];
+  const protectedRuntimes = new Set(['ytdlp']);   // 链接下载依赖它，删了会让"从链接新建"失败
+  if (runtimeForEngine) protectedRuntimes.add(runtimeForEngine);
+  const asrBusy = draftJobs.size > 0 || pendingAsr.size > 0;
+  return new StorageService({
+    root: ROOT,
+    protectedModels,
+    protectedRuntimes,
+    isProjectBusy: id => draftJobs.has(id) || pendingAsr.has(id),
+    isModelBusy: () => asrBusy,   // 识别进行中不动任何模型，避免删掉正在加载的权重
+  });
+}
+
+function handleStorageRoutes(req, res, u) {
+  const pathname = u.pathname;
+  if (pathname === '/api/storage' && req.method === 'GET') {
+    let session;
+    try { session = createStorageSession(); } catch (error) { return sendJson(res, 500, { error: '无法读取识别配置: ' + error.message }); }
+    return session.scan().then(result => {
+      storageSession = session;   // 扫描成功后才替换会话，失败时保留上一次可用的登记表
+      sendJson(res, 200, result);
+    }).catch(error => {
+      console.error('[storage] 扫描失败', error);
+      sendJson(res, 500, { error: '扫描失败: ' + String((error && error.message) || error) });
+    });
+  }
+  if (pathname === '/api/storage/clean' && req.method === 'POST') {
+    return readBody(req, res, 64 * 1024, async (err, body) => {
+      if (err) return sendJson(res, 400, { error: '请求内容过大或读取失败' });
+      let input;
+      try { input = JSON.parse(body.toString('utf8') || '{}'); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+      const ids = Array.isArray(input && input.ids)
+        ? input.ids.filter(id => typeof id === 'string' && id.length > 0 && id.length <= 80) : [];
+      if (!ids.length) return sendJson(res, 400, { error: '没有选中任何条目' });
+      if (!storageSession) return sendJson(res, 409, { error: '请先扫描存储空间' });
+      try {
+        const result = await storageSession.clean(ids);
+        if (!result.ok) return sendJson(res, 409, { error: result.error });
+        if (result.removed.length) console.log('[storage] 已清理 ' + result.removed.length + ' 项，释放 ' + result.freed + ' 字节');
+        return sendJson(res, 200, result);
+      } catch (error) {
+        console.error('[storage] 清理失败', error);
+        return sendJson(res, 500, { error: '清理失败: ' + String((error && error.message) || error) });
+      }
+    });
+  }
+  return sendJson(res, 404, { error: 'not found' });
+}
+
 /* 路由段: 诊断上报/媒体流白名单 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleDiagRoutes(req, res, u) {
   const pathname = u.pathname;
@@ -12082,6 +12148,7 @@ const API_SECTIONS = [
   [/^\/api\/(translate|cast|mt)\b/, handleLlmRoutes],
   [/^\/api\/(logs|lifecycle|quit)\b/, handleLogsRoutes],
   [/^\/api\/(diag|media)\b/, handleDiagRoutes],
+  [/^\/api\/storage\b/, handleStorageRoutes],
   [/^\/api\/projects\b/, handleProjectsRoutes],
 ];
 

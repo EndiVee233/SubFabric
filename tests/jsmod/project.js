@@ -43,6 +43,7 @@ export function initProjects(ctx) {
   const elList = $('#home-list');
   const elEmpty = $('#home-empty');
   const detailView = $('#detail-view');
+  const storageView = $('#storage-view');
   const pageTimers = new WeakMap();
   let previousRoute = '';
   let welcomeBlocking = false;      // 欢迎界面打开时拦截路由，App 不可交互
@@ -5900,15 +5901,16 @@ async function renderAsrModels(providedStatus = null) {
       settingsOpenedFromApp = !!previousRoute;
     }
     const detailsMatch = /^#\/details\/([A-Za-z0-9_-]{1,64})$/.exec(h);
-    if (!location.hash || !['#/dashboard', '#/home', '#/new', '#/batch', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
+    if (!location.hash || !['#/dashboard', '#/home', '#/storage', '#/new', '#/batch', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
       h = '#/dashboard';
       history.replaceState(null, '', h);
     }
-    $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/new' || h === '#/batch' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
+    $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/storage' || h === '#/new' || h === '#/batch' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
     setPageVisible(dashboardView, h === '#/dashboard');
     setPageVisible(elHome, h === '#/home');
     setPageVisible(npView, h === '#/new');
     setPageVisible(batchView, h === '#/batch');
+    setPageVisible(storageView, h === '#/storage');
     setPageVisible(stView, h === '#/settings');
     setPageVisible(detailView, !!detailsMatch);
     if (!detailsMatch && previousRoute.startsWith('#/details/')) {
@@ -5959,6 +5961,14 @@ async function renderAsrModels(providedStatus = null) {
       genLoad('np', fromSettings).then(() => { if (fromSettings) refreshAsrStatus(); if (npSchemesLoaded) setNpSchemeBadge(); });
       loadNpSchemes(true);
       if (previousRoute !== h) focusPage(npView);
+    } else if (h === '#/storage') {
+      /* 进入页面才扫描：扫描要遍历项目与模型目录，不能拖慢启动。 */
+      setAudioControlsVisible(false);
+      if (previousRoute !== h) {
+        if (state.project) saveNow();
+        window.__sfStorage?.open();
+        focusPage(storageView);
+      }
     } else if (h === '#/settings') {
       if (previousRoute !== h) {
         settingsVisit++;
