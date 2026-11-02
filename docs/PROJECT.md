@@ -11,9 +11,9 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.2.1` / 文件版本
-  `1.5.2.1`（npm `1.5.2-beta.1`）。已完成构建与桌面/后端冒烟，完整 JS 回归零失败；
-  真实 GPU、模型、媒体交互、安装向导与旧版迁移不在本轮验收范围。GitHub 保存与发布结果独立核对。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.3.1` / 文件版本
+  `1.5.3.1`（npm `1.5.3-beta.1`）。本轮补齐旧 SEA/Edge 与首个 Electron 版的用户状态继承和覆盖安装验证；
+  真实 GPU 推理与媒体导出不在本轮验收范围。GitHub 保存与发布结果独立核对。
 - **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
   `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
   仅运行桌面开发入口时也须先 `npm --prefix desktop run stage`，再 `npm --prefix desktop start`；
@@ -32,7 +32,8 @@
   开发运行取 `build/electron-dev-data`，测试可用 `SUBFABRIC_DESKTOP_DATA` 覆盖）：代码、`projects/`、
   `videos/`、`asr/settings.json`、模型与日志都在这里，Chromium 配置经 `app.setPath('userData')`
   重定向到同目录的 `.profile/`，不再写入用户文件夹的 `workspace/`。安装目录必须可写，
-  不可写时启动即报错退出，不改放到 AppData。不自动迁移旧 SEA 安装的数据或旧浏览器 `localStorage`。
+  不可写或旧数据校验迁移失败时启动即报错退出，不改放到 AppData，也不以空状态继续。
+  `desktop/migration.cjs` 负责首个 Electron AppData 数据回迁与旧 SEA/Edge 浏览器偏好继承，详见 §3–§4。
 - **托盘与退出**：Electron 自己创建右下角托盘图标（打包后 `resources/tray.ico`，开发用 `build/installer/logo.ico`），
   菜单为「打开界面 / 打开数据目录 / 完全退出」。点窗口关闭只隐藏到托盘并提示一次；只有托盘
   「完全退出」、菜单「完全退出」或系统关机才走保存 → 停后端 → 退出。托盘创建失败时退回关窗即退出。
@@ -48,7 +49,7 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
+| `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`migration.cjs` 只补缺继承旧版文件与浏览器状态，`installer.nsh` 复用旧安装目录，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式禁用后端托盘（由桌面壳自建托盘）并通过 IPC 报告实际 port/pid/version 就绪 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
@@ -57,7 +58,7 @@
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
 | `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`qwen_asr.py`、`qwen_align.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`（分句/能量计算及 worker 父进程看护共用）；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（见 §9） |
-| `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端模块自动同步镜像（入库）；`electron-desktop-test.mjs` 检查 payload、数据保留、路径与窗口安全边界，`electron-backend-smoke.mjs` 检查随包 Node、接口、重启保留数据与断线退出，两者本轮通过 |
+| `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端自动同步镜像（入库）；`electron-desktop-test.mjs` 检查 payload、旧版数据/路径/浏览器偏好迁移、路径与窗口安全边界，`electron-backend-smoke.mjs` 检查随包 Node、接口、重启保留数据与断线退出 |
 | `tools/` | 探针与验收脚本：`build-install.mjs`（旧链路事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs`；Electron 安装构建改走 `desktop/` |
 | `tools/templates/studio.html` | Studio 入口的唯一上游模板，改界面先改模板再生成 |
 | `prototypes/` | 与生产隔离的无构建原型：`cue-card-redesign/`、`subtitle-editor/`、`adaptive-selection/` |
@@ -78,6 +79,16 @@
   `security.cjs` 在任何复制之前校验 manifest 的逐文件 SHA-256、路径边界及链接；`backend.cjs` 另校验
   随包 Node。只将可信代码与渲染资源同步到**程序目录**（打包后为 exe 所在目录），不复制或删除用户数据。
   后端的入口、cwd 与所有现有 ASR/tools 相对路径仍在同一个可写 root，无需重构路径布局。
+- **旧版用户状态继承（2026-11-02）**：`desktop/migration.cjs` 只迁移用户状态——`asr/settings.json`、
+  `asr/perf-result.json`、`asr/.qwen-runtime-ok.json`、`asr/models`、`asr/runtime-python`、
+  `asr/runtime-vibevoice`、`asr/whisper.cpp`、`asr/crispasr`、`asr/faster-whisper-xxl`、`asr/ytdlp`、
+  `asr/logs`、`asr/.venv`、`projects`、`videos`、`samples`、`logs`、`tools/ffmpeg`；不迁移 `editor/`
+  旧应用源码。复制采用临时文件 + 流式 SHA-256 校验 + 原子重命名，只补缺、不覆盖当前文件、不删除来源，
+  目录包含关系与符号链接直接拒绝，失败时启动报错而不是以空数据继续。实际复制的新设置/项目 JSON 会把
+  `modelsRoot`、`pythonExe`、`models.*`、`video.path` 中指向旧根目录的绝对路径改写到新安装目录；
+  外部盘符路径与未复制文件不动，源文件保持原值。首个 Electron 版的 Chromium
+  `Local Storage/leveldb`、`Preferences`、`Secure Preferences` 在 Electron 初始化前整目录搬入 `.profile/`；
+  目标 LevelDB 已存在时整目录跳过，避免两个 profile 的文件交叉混合。
 - **桌面启动与回收**：`backend.cjs` 用随包真实 Node 22.12+（当前 `22.22.2`）fork `server.js --no-tray`，
   禁止 Electron 内嵌 Node 替代。监听后发送 `subfabric-ready` IPC（实际 port/pid/version），父进程校验 PID、
   版本与实际端口，再核对 `/api/version`；默认 `8325`，`SUBFABRIC_DESKTOP_PORT` 覆盖，测试 `0` 临时端口。
@@ -238,7 +249,14 @@
   Node 或特权 IPC。只允许后台本源导航；跨源导航/重定向阻止，新窗口一律 `deny`，合法 `http(s)`
   外链仅在用户明确确认后交系统浏览器，禁止 webview，默认拒绝权限申请。
 - **桌面设置与关闭契约**：Electron 的配置与 `localStorage` 随程序目录走（`.profile/`），默认固定端口 `8325`
-  保持本源；改端口会改变本源，测试 `0` 不用于持久设置。不会自动迁移旧浏览器 `localStorage`。
+  保持本源；改端口会改变本源，测试 `0` 不用于持久设置。旧 SEA/Edge 来源（`127.0.0.1:8321–8324`）
+  的界面偏好经 `desktop/migration.cjs` 的一次性本机迁移页继承，当前 Electron 已有的键优先；
+  首个 Electron 版的 AppData `workspace/` 与 Chromium 配置只补缺回迁，来源保留作回滚。
+- **旧浏览器迁移页**：仅在“程序目录已有旧 SEA 用户状态、且没有首个 Electron workspace”时触发；
+  迁移页同时监听 `127.0.0.1:8321–8324`，用随机 token 路径、Host 校验、同源 POST 与 CSP 读取各旧源
+  `localStorage`，按 8324→8321 合并（8321 同名键优先），所有源返回后才算完成。只导入当前缺失的键，
+  已有桌面设置不会被覆盖；导入成功后写入 `.migration-v1.json`，失败则保留 `pending` 并下次启动重试，
+  期间不删除旧浏览器或旧程序目录的任何数据。
   关闭窗口只隐藏到托盘；真正退出时先把根元素设为 `inert` 冻结 renderer 编辑，再经窄钩子
   `window.__subfabricFlushSave` 调用 `Projects.flushSave()`；保存失败或 10s 超时默认保持编辑并恢复交互，
   只有明确确认「不保存退出」才允许丢弃。窄钩子调用与干净退出冒烟通过；真实脏稿件关闭失败的人工交互仍未验收。
@@ -947,26 +965,36 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.2.1'`、`APP_FILE_VERSION = '1.5.2.1'`、npm version `1.5.2-beta.1`。
+  `APP_VERSION = 'beta 1.5.3.1'`、`APP_FILE_VERSION = '1.5.3.1'`、npm version `1.5.3-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.2.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.3.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
-- **安装与数据边界**：NSIS 为与旧 SEA 并存的新安装，允许选择安装目录；不会自动迁移或覆盖旧安装，
-  不迁移旧浏览器 `localStorage`。默认按用户安装到 `%LOCALAPPDATA%\Programs\SubFabric`（可改到任意
-  可写目录，例如 `D:\SubFabric`），随包代码校验后复制进**安装目录本身**，同一个可写 root 执行后端与
-  现有 ASR/tools 路径，`projects/`、`videos/`、`asr/`、`logs/` 与 `.profile/` 都落在程序目录；
-  不复制 settings/projects/videos/models/运行时，不删除用户数据，`deleteAppDataOnUninstall: false`，
-  `runAfterFinish: false`。安装到 `Program Files` 等只读位置时启动报错，不回退到用户目录。
+- **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
+  或旧 SEA/Inno 的已有安装目录（含 Inno 在 32 位 `WOW6432Node` 视图的登记）；调用方显式 `/D=` 时仍以调用方目录为准。默认按用户安装到
+  `%LOCALAPPDATA%\Programs\SubFabric`（可改到任意可写目录，例如非系统盘目录），随包代码校验后复制进
+  **安装目录本身**，同一个可写 root 执行后端与现有 ASR/tools 路径，`projects/`、`videos/`、`asr/`、
+  `samples/`、`logs/` 与 `.profile/` 都落在程序目录；安装包不携带 settings/projects/videos/models/运行时，
+  不删除用户数据，`deleteAppDataOnUninstall: false`，`runAfterFinish: false`。首个 Electron 版的 AppData
+  用户状态由 `migration.cjs` 逐文件流式校验后只补缺回迁，不迁移旧应用源码；旧 SEA/Edge 浏览器偏好经
+  一次性迁移页继承。安装到 `Program Files` 等只读位置时启动报错，不回退到用户目录。
   用户无需预装 Python 或 Node，Python 运行时、模型与工具仍按需下载。
 - **修改与发布**：代码/vendor 变化后重新 stage，正式安装版必须重新 `dist:win`；只发 setup.exe，
   真正发布后核对远端资产 digest 与本地 SHA-256；不将构建成功当作上传成功证据。
-- **本轮验证**：JS 回归 157 项：144 passed、12 partial、1 diagnostic、0 failed，另外 2 项按约定排除。
-  4 项 Windows CRLF 正则假失败已修复，主题审计仅按关闭钩子变化刷新哈希/行号；ESLint 全量 0 error、27 既有 warning。
-  NSIS 最终构建 158,309,970 B，包内 105 个后端/渲染文件及真实 Node 22.22.2，应用 ASAR 仅含4个桌面入口文件。
-  安装包内嵌应用提取后亦通过同一桌面冒烟；归档检测的尾部数据提示来自自解压安装器封装，完整性结果为通过。
-  安装归档完整性检验通过；打包应用的启动、版本、Studio 初始化、沙箱隔离、vendor 可用、保存钩子与后端退出冒烟通过。
-  未签名测试版；未运行真实 GPU/模型/媒体导出、脏稿件失败关闭人工交互与安装/卸载向导，不覆盖旧安装。
+- **本轮验证（2026-11-02，旧版状态继承）**：JS 全量 157 项为 142 passed、12 partial、1 diagnostic、
+  2 failed（另 2 项按约定排除）。两项失败均为既有 `isolated-server` 在 Windows 临时目录清理时
+  `EBUSY`，测试正文已输出 `asr-params-api-test: ok`；`electron-desktop-test` 与
+  `electron-backend-smoke` 定向复跑通过。ESLint 全量 0 error、27 既有 warning。
+  NSIS 最终安装包 158,403,155 B，SHA-256 `b45501d3abfa3f4bf5762de462cc7dfba687988b7682aaf8139d31ada1fd7b9d`。
+  隔离实际静默覆盖安装（不是真实安装目录；旧进程占用 8321，验证等价使用 18321/18322）：
+  旧 SEA/Edge 程序目录的 11 个用户文件哈希保持不变，设置字节不变，项目、模型目录/文件清单、运行时、
+  samples、logs、tools 保留；5 个浏览器界面键继承，8321 等价源同名键优先，主题与欢迎完成状态生效。
+  不指定 `/D` 时，安装器按已登记的首个 Electron 目录自动复用并通过；Inno 的 32 位 `WOW6432Node`
+  登记路径已纳入检测。首个 Electron AppData 场景回迁 17 个 workspace 文件、2 个 profile 文件并重写 2 个 JSON 路径；
+  `models.*`、`pythonExe`、`modelsRoot`、`video.path` 指向新安装目录，外部路径与旧源保持原值。
+  测试模型使用小型夹具，故 `filesOk=false` 是尺寸校验结果、不是文件丢失（`missing=[]`）；
+  真实大模型、GPU 推理、媒体导出与 Edge 默认配置未运行。安装器快捷方式/注册表已在验证后清理。
+  未签名测试版；脏稿件失败关闭的人工交互仍未验收。
 
 ### 旧链路与历史记录：SEA + Inno Setup（保留，非当前主链路）
 

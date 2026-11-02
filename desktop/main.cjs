@@ -2,41 +2,57 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, session } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const { startBackend } = require('./backend.cjs');
 const { sameOrigin, externalURL } = require('./security.cjs');
+const {
+  LEGACY_PORTS, migrateLegacyWorkspace, migrateLegacyProfile, hasWorkspaceState,
+  readReport, writeReport, importLegacyBrowserState, applyBrowserState
+} = require('./migration.cjs');
 
 let backend, window, tray, quitting = false, quitPending = false, ready = false, trayHintShown = false, storageError = null;
+let browserMigration = null;
 const smokeReport = process.env.SUBFABRIC_ELECTRON_SMOKE_REPORT;
 
-/* ── 数据目录 ─────────────────────────────────────────────────────────────
- * 与旧版一致：代码、项目、视频、模型、设置、日志都放在**程序目录**，
- * 不再写入用户文件夹（AppData\Roaming）里的 workspace。
- * 因此 Chromium 的 userData（localStorage、缓存）也重定向到程序目录下的 .profile，
- * 否则主题、欢迎页等界面偏好仍会落到用户目录。
- * 开发运行用 build/electron-dev-data，避免覆盖源码；测试可用 SUBFABRIC_DESKTOP_DATA 指定。 */
+/* ── 数据目录与旧版继承 ──────────────────────────────────────────────────
+ * 当前版本与旧 SEA 一样以程序目录为 root。首个 Electron 版的 AppData workspace
+ * 只迁移用户状态，逐文件校验、只补缺且不删除来源；当前文件永远优先。
+ * Chromium 配置在 Electron 初始化前复制，避免两个 LevelDB 被交叉合并。 */
 const programRoot = app.isPackaged ? path.dirname(app.getPath('exe')) : path.resolve(__dirname, '..');
 const dataRoot = path.resolve(process.env.SUBFABRIC_DESKTOP_DATA
   || (app.isPackaged ? programRoot : path.join(programRoot, 'build/electron-dev-data')));
-try {
-  fs.mkdirSync(dataRoot, { recursive: true });
-  const probe = path.join(dataRoot, '.write-probe');
-  fs.writeFileSync(probe, 'ok');
-  fs.unlinkSync(probe);
-  app.setPath('userData', path.join(dataRoot, '.profile'));
-} catch (error) {
-  storageError = '无法写入程序目录：\n' + dataRoot + '\n' + error.message
-    + '\n\n请把 SubFabric 安装到有写权限的目录（安装向导默认位置即可）。';
-}
+const profileRoot = path.join(dataRoot, '.profile');
+const legacyProfile = path.resolve(process.env.SUBFABRIC_LEGACY_PROFILE
+  || path.join(app.getPath('appData'), 'SubFabric Electron'));
+const legacyWorkspace = path.resolve(process.env.SUBFABRIC_LEGACY_WORKSPACE || path.join(legacyProfile, 'workspace'));
+const hadLegacyElectron = hasWorkspaceState(legacyWorkspace);
+const browserReport = readReport(dataRoot).browser;
+const shouldMigrateBrowser = app.isPackaged && !hadLegacyElectron && hasWorkspaceState(dataRoot)
+  && browserReport?.status !== 'complete';
 app.setName('SubFabric');
-
 if (!app.requestSingleInstanceLock()) { quitting = true; app.exit(0); }
 else {
   app.on('second-instance', () => showWindow());
-  app.whenReady().then(launch).catch(async error => {
-    if (smokeReport) fs.writeFileSync(smokeReport, JSON.stringify({ ok: false, error: error.message }, null, 2));
-    else await dialog.showMessageBox({ type: 'error', title: 'SubFabric', message: 'SubFabric 启动失败', detail: error.message });
-    await quitApp(1);
-  });
+  (async () => {
+    try {
+      fs.mkdirSync(dataRoot, { recursive: true });
+      const probe = path.join(dataRoot, '.write-probe');
+      fs.writeFileSync(probe, 'ok');
+      fs.unlinkSync(probe);
+      const workspace = await migrateLegacyWorkspace(legacyWorkspace, dataRoot);
+      const profile = await migrateLegacyProfile(legacyProfile, profileRoot);
+      app.setPath('userData', profileRoot);
+      if (workspace.files || profile.files) writeReport(dataRoot, { filesystem: { status: 'complete', workspace, profile } });
+    } catch (error) {
+      storageError = '无法安全继承程序数据：\n' + dataRoot + '\n' + error.message
+        + '\n\n旧数据未被删除。请检查目录写权限后重试，或把 SubFabric 安装到有写权限的目录。';
+    }
+    app.whenReady().then(launch).catch(async error => {
+      if (smokeReport) fs.writeFileSync(smokeReport, JSON.stringify({ ok: false, error: error.message }, null, 2));
+      else await dialog.showMessageBox({ type: 'error', title: 'SubFabric', message: 'SubFabric 启动失败', detail: error.message });
+      await quitApp(1);
+    });
+  })();
 }
 
 function trayIconPath() {
@@ -86,6 +102,21 @@ async function external(url) {
   if (!externalURL(url)) return;
   const result = await dialog.showMessageBox(window, { type: 'question', message: 'Open this link in your browser?', detail: url, buttons: ['Cancel', 'Open'], defaultId: 0, cancelId: 0 });
   if (result.response === 1) await shell.openExternal(url);
+}
+function legacyPorts() {
+  const value = process.env.SUBFABRIC_LEGACY_BROWSER_PORTS;
+  if (!value) return LEGACY_PORTS;
+  return value.split(',').map(part => Number(part.trim()));
+}
+async function openMigrationBrowser(url) {
+  const executable = process.env.SUBFABRIC_MIGRATION_BROWSER;
+  if (!executable) return shell.openExternal(url);
+  const args = ['--no-first-run', '--no-default-browser-check'];
+  if (process.env.SUBFABRIC_MIGRATION_BROWSER_PROFILE) args.push('--user-data-dir=' + path.resolve(process.env.SUBFABRIC_MIGRATION_BROWSER_PROFILE));
+  args.push('--new-window', url);
+  const child = spawn(executable, args, { stdio: 'ignore', windowsHide: false });
+  child.unref();
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
 }
 
 async function flush() {
@@ -173,6 +204,25 @@ async function launch() {
     { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
     { label: '视图', submenu: [{ role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }, ...(!app.isPackaged ? [{ role: 'toggleDevTools' }] : [])] }
   ]));
+  if (shouldMigrateBrowser) {
+    try {
+      browserMigration = await importLegacyBrowserState({ ports: legacyPorts(), openExternal: openMigrationBrowser });
+      if (browserMigration.keys) {
+        // A JSON response on the backend origin gives us a minimal same-origin page.
+        // Import before Studio modules read their preferences; existing keys always win.
+        await window.loadURL(backend.origin + '/api/version');
+        browserMigration.imported = await applyBrowserState(window, browserMigration.values);
+      } else browserMigration.imported = 0;
+      writeReport(dataRoot, { browser: { status: 'complete', origins: browserMigration.origins, keys: browserMigration.keys, imported: browserMigration.imported } });
+    } catch (error) {
+      browserMigration = { error: error.message };
+      writeReport(dataRoot, { browser: { status: 'pending', error: error.message } });
+      await dialog.showMessageBox(window, {
+        type: 'warning', title: 'SubFabric', message: '旧浏览器界面设置暂未迁移',
+        detail: error.message + '\n\n项目、模型与服务端设置已保留，旧浏览器数据也未被修改。完全退出旧版后，下次启动会自动重试。'
+      });
+    }
+  }
   await window.loadURL(backend.origin + '/editor/studio.html');
   createTray();
   ready = true;
@@ -207,11 +257,23 @@ async function smoke() {
   await new Promise(resolve => setTimeout(resolve, 500));
   const hiddenToTray = !!tray && !window.isDestroyed() && !window.isVisible();
   if (!hiddenToTray) throw Error('Closing the window must hide it to the tray');
+  const smokeKeys = (process.env.SUBFABRIC_ELECTRON_SMOKE_LOCALSTORAGE || '').split(',').map(key => key.trim()).filter(Boolean);
+  if (smokeKeys.length) renderer.migrationValues = await window.webContents.executeJavaScript(`Object.fromEntries(${JSON.stringify(smokeKeys)}.map(key => [key, localStorage.getItem(key)]))`);
+  const [projectsResponse, asrResponse] = await Promise.all([
+    fetch(backend.origin + '/api/projects', { signal: AbortSignal.timeout(5000) }),
+    fetch(backend.origin + '/api/asr/status', { signal: AbortSignal.timeout(10000) })
+  ]);
+  if (!projectsResponse.ok || !asrResponse.ok) throw Error('Migrated backend state could not be read');
+  const projects = await projectsResponse.json(), asr = await asrResponse.json();
+  const projectList = Array.isArray(projects) ? projects : (Array.isArray(projects.projects) ? projects.projects : []);
   const info = {
     ok: true, packaged: app.isPackaged, electron: process.versions.electron,
     backendVersion: backend.version, backendPid: backend.pid, port: backend.port,
     dataRoot: backend.dataRoot, programRoot, userData: app.getPath('userData'), tray: !!tray,
-    hiddenToTray, windowTitle: window.getTitle(), renderer, flushed: true
+    hiddenToTray, windowTitle: window.getTitle(), renderer, flushed: true,
+    projectIds: projectList.map(project => project.id),
+    asrModels: Array.isArray(asr.models) ? asr.models.map(model => ({ id: model.id, dir: model.dir, missing: model.missing, filesOk: model.filesOk, ready: model.ready })) : [],
+    migration: readReport(dataRoot), browserMigration: browserMigration && { keys: browserMigration.keys, imported: browserMigration.imported, origins: browserMigration.origins, error: browserMigration.error }
   };
   await backend.stop();
   info.backendStopped = backend.child.exitCode !== null;
