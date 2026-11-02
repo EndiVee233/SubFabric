@@ -130,8 +130,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.3.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.3.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.4.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.4.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -10423,7 +10423,6 @@ function handleLogsRoutes(req, res, u) {
   sendJson(res, 404, { error: 'not found' });
 }
 
-/* 路由段: 诊断上报/媒体流白名单 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 /* ── 存储空间: 扫描与安全清理 ──────────────────────────────────────
  * 扫描只读；删除只认扫描时登记过的 id，路径边界与"在用资源"保护都在服务端复核，
  * 前端的禁用状态只是提示，不能作为安全边界。
@@ -10487,6 +10486,7 @@ function handleStorageRoutes(req, res, u) {
   return sendJson(res, 404, { error: 'not found' });
 }
 
+/* 路由段: 诊断上报/媒体流白名单 —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleDiagRoutes(req, res, u) {
   const pathname = u.pathname;
   /* 前端诊断上报: 页面把布局/运行状态快照回传, 落到 .diag.json 供排查(不影响任何功能) */

@@ -11,9 +11,11 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.3.1` / 文件版本
-  `1.5.3.1`（npm `1.5.3-beta.1`）。本轮补齐旧 SEA/Edge 与首个 Electron 版的用户状态继承和覆盖安装验证；
-  真实 GPU 推理与媒体导出不在本轮验收范围。GitHub 保存与发布结果独立核对。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.4.1` / 文件版本
+  `1.5.4.1`（npm `1.5.4-beta.1`）。本轮新增存储空间扫描/清理页（`#/storage`，分类清理并保护
+  `diarize`、当前与重识别模型、`ytdlp`、运行中任务），并下线 `claude`、`subfabric-classic` 两套主题
+  （入口封闭、可清理残留，文件保留）；真实 GPU 推理与媒体导出不在本轮验收范围。
+  GitHub 保存与发布结果独立核对。
 - **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
   `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
   仅运行桌面开发入口时也须先 `npm --prefix desktop run stage`，再 `npm --prefix desktop start`；
@@ -975,9 +977,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.3.1'`、`APP_FILE_VERSION = '1.5.3.1'`、npm version `1.5.3-beta.1`。
+  `APP_VERSION = 'beta 1.5.4.1'`、`APP_FILE_VERSION = '1.5.4.1'`、npm version `1.5.4-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.3.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.4.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
