@@ -229,4 +229,4 @@ Whisper 与 CrispASR 模型行上有「参数」入口：可调识别语言、VA
 - SubFabric 完全由 AI 负责 而 EndiVee233 实际上并没有看过任何代码 也看不懂任何代码 所以有时 EndiVee233 会怀疑自己能不能胜任这个项目 甚至会想将它拱手让人
 - 如果你使用了此项目并会在bilibili发布视频 我`希望`能在联合投稿`研发`里露面`UID:2121076233` 若对此条感到反感 就忽略这个请求吧
 - EndiVee is the biggest bird
-- 
+- R2FtYml0 是 EndiVee 的主人
