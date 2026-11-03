@@ -12,7 +12,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'desktop/package.json'), 
 const server = fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8');
 const appVersion = /const APP_VERSION = '([^']+)'/.exec(server)?.[1];
 const fileVersion = /const APP_FILE_VERSION = '([^']+)'/.exec(server)?.[1];
-if (pkg.version !== '1.5.5-beta.1' || appVersion !== 'beta 1.5.5' || fileVersion !== '1.5.5') throw Error('Desktop/server version mismatch');
+if (pkg.version !== '1.5.5-beta.2' || appVersion !== 'beta 1.5.5.1' || fileVersion !== '1.5.5.1') throw Error('Desktop/server version mismatch');
 const tracked = execFileSync('git', ['-C', root, 'ls-files', '-z', 'editor', 'asr'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const paths = tracked.filter(p => !p.startsWith('editor/scripts/') || p === 'editor/scripts/7z.exe' || p === 'editor/scripts/7z-README.txt');
 const vendor = ['editor/vendor/subtitles-octopus.js', 'editor/vendor/subtitles-octopus-worker.js', 'editor/vendor/subtitles-octopus-worker.wasm', 'editor/vendor/fonts/NotoSansCJKsc-Regular.otf'];

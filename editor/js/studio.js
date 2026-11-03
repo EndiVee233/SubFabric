@@ -1526,7 +1526,7 @@ async function refreshEditStats() {
   } catch { /* 日志统计失败不影响主页其它内容 */ }
   finally { editStatsBusy = false; }
 }
-let ytState = null, ytAt = 0, ytBusy = false;
+let ytState = null, ytAt = 0, ytBusy = false, ytRefreshQueued = false;
 const ytCoverSeeds = new Map();
 const YT_CHANNELS = [
   { id: 'wemmbu', name: 'Wemmbu' }, { id: 'parrot', name: 'Parrot' },
@@ -1628,19 +1628,29 @@ function renderYoutubeUpdates() {
   if (statusNum) statusNum.textContent = String(ytRecentWeekCount());
 }
 async function loadYoutubeUpdates(force = false) {
-  if (ytBusy) return;
   if (!isMaterialHome()) return;
+  if (ytBusy) { if (force) { ytRefreshQueued = true; notice('正在刷新主播更新，完成后会再拉取一次…'); } return; }
   if (!force && ytState && Date.now() - ytAt < YT_REFRESH_MS) { renderYoutubeUpdates(); return; }
+  const orbit = $('sf-mu-temp');
+  if (force) {
+    orbit?.classList.add('is-refreshing');
+    orbit?.setAttribute('aria-busy', 'true');
+    notice('正在刷新四位主播的最近更新…');
+  }
   ytBusy = true;
   try {
     const response = await fetch('/api/youtube/updates' + (force ? '?refresh=1' : ''), {
-      cache: 'no-store', signal: AbortSignal.timeout(30000),
+      cache: 'no-store', signal: AbortSignal.timeout(45000),
     });
     const data = await response.json().catch(() => null);
     if (response.ok && data && Array.isArray(data.channels)) {
       ytState = data;
       ytAt = Date.now();
       renderYoutubeUpdates();
+      if (force) {
+        const got = data.channels.filter(channel => channel && channel.video).length;
+        notice(got ? `主播更新已刷新（${got}/4）` : '刷新完成，但暂时没有拿到视频');
+      }
     } else {
       ytState = {
         ...(ytState || {}),
@@ -1649,16 +1659,25 @@ async function loadYoutubeUpdates(force = false) {
         errors: [`接口返回 ${response.status}`],
       };
       renderYoutubeUpdates();
+      if (force) notice(`刷新失败：接口返回 ${response.status}，请重启 SubFabric 后重试`);
     }
   } catch (error) {
-    /* 断网保留上次数据；首次失败时把原因显示在组件标题下方。 */
+    const message = String((error && error.message) || error || '未知错误');
+    /* 断网保留上次数据；首次失败时把原因显示在组件占位里。 */
     if (!ytState) {
-      ytState = { channels: YT_CHANNELS.map(channel => ({ ...channel, video: null })), stale: true, errors: [String(error && error.message || error)] };
+      ytState = { channels: YT_CHANNELS.map(channel => ({ ...channel, video: null })), stale: true, errors: [message] };
       renderYoutubeUpdates();
     }
+    if (force) notice('刷新失败：' + message.slice(0, 100));
   }
   finally {
     ytBusy = false;
+    orbit?.classList.remove('is-refreshing');
+    orbit?.removeAttribute('aria-busy');
+    if (ytRefreshQueued) {
+      ytRefreshQueued = false;
+      loadYoutubeUpdates(true);
+    }
   }
 }
 function renderMaterialHome() {

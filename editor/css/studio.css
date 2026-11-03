@@ -8189,3 +8189,7 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
   letter-spacing:.02em;
   color:color-mix(in srgb, var(--on-tertiary-container, var(--text)) 92%, transparent);
 }
+.sf-mu .sf-orbit.is-refreshing { opacity:.62; cursor:progress; }
+/* 全局 Notice 弹窗也使用主题胶囊形 */
+#sf-notice { border-radius:999px; }
+.sf-studio[data-design=uwp] #sf-notice { border-radius:999px; border-left-width:1px; border-left-color:var(--line); }
