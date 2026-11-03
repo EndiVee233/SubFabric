@@ -28,6 +28,9 @@ import sys
 import time
 import wave
 
+# 嵌入式 Python 的 ._pth 不把脚本目录加入 sys.path，显式补上。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from common import watch_parent
 
 SR = 16000

@@ -4377,6 +4377,95 @@ async function renderAsrModels(providedStatus = null) {
     openDrawer(target.name, false);
     renderSchemes();
   });
+
+  /* ── 翻译方案导入 / 导出 ───────────────────────────────────────────
+   * 导出不包含 API Key（只带 hasKey 标记）；导入后 Key 需重新填写。
+   * 这样配置文件可以安全备份/分享，不需要把凭证写进明文。 */
+  const SCHEME_FILE_FORMAT = 'subfabric.translate-schemes';
+  const schemeFileFields = ['name', 'provider', 'baseUrl', 'model', 'autoTranslate', 'prompt',
+    'glossary', 'glossaryLang', 'batchSize', 'temperature', 'contextRows', 'hasKey'];
+  function schemeExportJson() {
+    const schemes = savedSchemes.map(item => {
+      const out = {};
+      for (const field of schemeFileFields) {
+        if (field === 'name') out.name = item.name || '';
+        else if (field === 'hasKey') out.hasKey = !!item.hasKey;
+        else out[field] = item[field];
+      }
+      return out;
+    });
+    return JSON.stringify({
+      format: SCHEME_FILE_FORMAT, version: 1,
+      exportedAt: new Date().toISOString(),
+      activeSchemeName: (savedSchemes.find(item => item.id === activeSchemeId) || {}).name || '',
+      schemes,
+    }, null, 2);
+  }
+  function downloadSchemeFile(text) {
+    const stamp = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `subfabric-translate-schemes-${stamp}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+  const schemeExport = document.getElementById('st-scheme-export');
+  if (schemeExport) schemeExport.addEventListener('click', () => {
+    if (!savedSchemes.length) { toast('还没有可导出的翻译方案', 3200); return; }
+    downloadSchemeFile(schemeExportJson());
+    toast(`已导出 ${savedSchemes.length} 个方案（不含 API Key）`, 4200);
+  });
+  const schemeFile = document.getElementById('st-scheme-file');
+  const schemeImport = document.getElementById('st-scheme-import');
+  if (schemeImport && schemeFile) {
+    schemeImport.addEventListener('click', () => { if (!schemeSaving) schemeFile.click(); });
+    schemeFile.addEventListener('change', async () => {
+      const file = schemeFile.files && schemeFile.files[0];
+      schemeFile.value = '';
+      if (!file || schemeSaving) return;
+      let data;
+      try { data = JSON.parse(await file.text()); }
+      catch { toast('导入失败：文件不是有效的 JSON', 4200); return; }
+      const list = Array.isArray(data) ? data : (data && Array.isArray(data.schemes) ? data.schemes : []);
+      if (!list.length) { toast('导入失败：文件里没有翻译方案', 4200); return; }
+      if (data && data.format && data.format !== SCHEME_FILE_FORMAT) {
+        toast('导入失败：不是 SubFabric 翻译方案文件', 4200); return;
+      }
+      schemeSaving = true;
+      let done = 0, failed = 0, last = null;
+      const names = new Set(savedSchemes.map(item => String(item.name || '').toLowerCase()));
+      try {
+        for (const raw of list) {
+          if (!raw || typeof raw !== 'object') { failed++; continue; }
+          const payload = {};
+          for (const field of schemeFileFields) {
+            if (field === 'name' || field === 'hasKey') continue;
+            if (Object.prototype.hasOwnProperty.call(raw, field)) payload[field] = raw[field];
+          }
+          let name = String(raw.name || '导入方案').trim().slice(0, 80) || '导入方案';
+          if (names.has(name.toLowerCase())) {
+            let n = 2;
+            while (names.has(`${name}（导入 ${n}）`.toLowerCase())) n++;
+            name = `${name}（导入 ${n}）`;
+          }
+          payload.name = name;
+          payload.activate = false;
+          try {
+            const res = await schemeRequest('/api/translate/schemes', 'POST', payload);
+            last = res;
+            names.add(name.toLowerCase());
+            done++;
+          } catch { failed++; }
+        }
+        if (last) acceptSchemes(last);
+        renderSavedSchemes();
+        toast(`已导入 ${done} 个方案${failed ? `，${failed} 个失败` : ''}；API Key 需在方案里重新填写`, 6000);
+      } finally {
+        schemeSaving = false;
+      }
+    });
+  }
   const drawerTest = document.getElementById('st-scheme-test');
   if (drawerTest) drawerTest.addEventListener('click', () => {
     if (studioUI) return testNamedScheme();
@@ -5733,8 +5822,11 @@ async function renderAsrModels(providedStatus = null) {
     }
     const isDraft = npMode === 'draft';
     const npUrl = normalizeVideoUrl(($('#np-url') || {}).value);
-    // ── 链接模式: 交给服务端下载 + 跑初稿（视频落在项目目录里） ──
-    if (isDraft && npUrl) {
+    const npPart = Math.max(1, parseInt(($('#np-part') || {}).value, 10) || 1);
+    const npUrlSource = npProbeSource && npProbeSource.url === npUrl && npProbeSource.part === npPart
+      ? npProbeSource.source : null;
+    // ── 链接模式: 没有本地视频时，交给服务端下载 + 跑初稿 ──
+    if (isDraft && npUrl && !npVideo.path) {
       const btn0 = $('#np-create');
       btn0.disabled = true; btn0.textContent = '提交中…';
       npSubmitting = true;
@@ -5846,6 +5938,8 @@ async function renderAsrModels(providedStatus = null) {
         }
       }
       const payload = { name: $('#np-name').value.trim(), video: { path: npVideo.path, name: npVideo.name } };
+      /* 本地视频也能先「解析」在线链接：只把标题/作者/封面等元数据随项目存下，不下载链接视频。 */
+      if (npUrlSource) payload.source = npUrlSource;
       if (isDraft) {
         payload.draft = true;
         payload.wordLevel = !!$('#np-word').checked;

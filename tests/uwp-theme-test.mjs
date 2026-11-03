@@ -61,7 +61,8 @@ assert.match(studioSource, /'--accent-hover': dark \? '#383838' : '#E5F1FB'/, 'U
 assert.match(studioSource, /'--line': dark \? '#666666' : '#B8B8B8'/, 'UWP uses bright neutral control outlines');
 assert.match(studioSource, /'--outline': dark \? '#C8C8C8' : '#666666'/, 'UWP focus outlines remain bright and neutral');
 assert.match(studioSource, /pack\.design === 'uwp'[\s\S]*'#1F1F1F' : '#F3F3F3'/, 'UWP picker preview uses the exact Windows 10 background surface');
-assert.match(studioSource, /const seedAccent = \(pack\.design === 'uwp' \|\| pack\.design === 'claude'\) && prefs\.accent === defaults\.accent \? pack\.seed : prefs\.accent/, 'UWP keeps blue as its untouched default and accepts a custom accent; Claude falls back to its own seed');
+assert.match(studioSource, /const seedAccent = prefs\.accent;/, 'UWP 的强调色直接取当前包记下的颜色，不再按 design 套全局回退');
+assert.match(studioSource, /accentByPack\[pack\.id\]/, '切换主题包时按包恢复各自保存的强调色');
 assert.match(studioSource, /pack\.design === 'claude' && dark/, 'Claude recomputes its accent for dark mode');
 assert.match(studioSource, /#DE8A64/, 'Claude dark uses the lightened terracotta instead of the paper seed');
 assert.match(studioSource, /sf-color'\)\.disabled = false/, 'UWP custom color input is enabled');

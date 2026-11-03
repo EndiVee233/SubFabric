@@ -1,6 +1,6 @@
 // 只保存界面偏好/文件夹关系；字幕、任务、模型、凭据不进入浏览器演示状态。
 export const STUDIO_KEY = 'subfabric-studio-v1';
-export const defaults = Object.freeze({ themePack: 'windows-uwp', accent: '#5c7560', mode: 'light', background: 'solid', image: '', imageBlur: 0, imageDim: 0, motion: 'on', auroraColors: [], auroraMotion: 'dynamic', auroraSpeed: 1, glassDim: 80, glassBlur: 18, glassOpacity: 100, rimEnabled: true, rimSatLow: 0.85, rimBriGain: 0.58, rimSpecBase: 0.60, rimPower: 1.5, custom: [], folders: [], assignments: {}, recent: '', view: 'grid' });
+export const defaults = Object.freeze({ themePack: 'windows-uwp', accent: '#5c7560', accentByPack: {}, mode: 'light', background: 'solid', image: '', imageBlur: 0, imageDim: 0, motion: 'on', auroraColors: [], auroraMotion: 'dynamic', auroraSpeed: 1, glassDim: 80, glassBlur: 18, glassOpacity: 100, rimEnabled: true, rimSatLow: 0.85, rimBriGain: 0.58, rimSpecBase: 0.60, rimPower: 1.5, custom: [], folders: [], assignments: {}, recent: '', view: 'grid' });
 const id = s => typeof s === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(s);
 const number = (v, lo, hi, fallback) => typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
 /* 背景图在保存前会压到长边 2560 的 JPEG；这里只防超大数据把 localStorage 撑爆，
@@ -14,7 +14,21 @@ export function normalizeStudio(value, themes) {
   const folders = Array.isArray(v.folders) ? v.folders.filter(f => f && id(f.id) && typeof f.name === 'string' && f.name.trim() && f.name.length <= 60).slice(0, 40).map(f => ({ id: f.id, name: f.name.trim() })) : [];
   const unique = folders.filter((f, i) => folders.findIndex(x => x.id === f.id) === i);
   const assignments = Object.fromEntries(Object.entries(v.assignments && typeof v.assignments === 'object' ? v.assignments : {}).filter(([p, f]) => id(p) && unique.some(x => x.id === f)).slice(0, 5000));
-  return { ...defaults, themePack: themes.get(v.themePack, custom).id, accent: themes.hex(v.accent) ? v.accent : defaults.accent,
+  const pack = themes.get(v.themePack, custom);
+  const sourceMap = v.accentByPack && typeof v.accentByPack === 'object' && !Array.isArray(v.accentByPack) ? v.accentByPack : null;
+  const accentByPack = Object.fromEntries(Object.entries(sourceMap || {})
+    .filter(([key, hex]) => id(key) && themes.hex(hex)).slice(0, 200));
+  const incomingAccent = themes.hex(v.accent) ? v.accent : '';
+  if (incomingAccent) accentByPack[pack.id] = incomingAccent;
+  if (!accentByPack[pack.id]) {
+    const own = themes.hex(pack.personalization && pack.personalization.accent)
+      ? pack.personalization.accent : '';
+    const legacy = (pack.design === 'uwp' || pack.design === 'claude') && (!incomingAccent || incomingAccent === defaults.accent)
+      ? pack.seed : (incomingAccent || defaults.accent);
+    accentByPack[pack.id] = own || legacy;
+  }
+  const accent = accentByPack[pack.id] || defaults.accent;
+  return { ...defaults, themePack: pack.id, accent, accentByPack,
     mode: ['light', 'dark', 'system'].includes(v.mode) ? v.mode : 'light', background: ['solid', 'aurora', 'image'].includes(v.background) ? v.background : 'solid',
     auroraColors: Array.isArray(v.auroraColors) && v.auroraColors.length === 3 && v.auroraColors.every(color => themes.hex(color)) ? [...v.auroraColors] : [],
     auroraMotion: v.auroraMotion === 'static' ? 'static' : 'dynamic',

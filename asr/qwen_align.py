@@ -21,6 +21,11 @@ import sys
 import time
 from pathlib import Path
 
+# 嵌入式 Python（asr/runtime-python）的 ._pth 不会把脚本目录加入 sys.path，
+# 直接运行 qwen_align.py 时 `from common import ...` 会 ModuleNotFoundError。
+# 显式补上脚本目录，保证源码运行和安装版都可用。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from common import watch_parent
 
 def progress(pct, msg):

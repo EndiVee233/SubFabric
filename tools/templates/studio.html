@@ -2071,7 +2071,12 @@
             <div class="st-subtitle-strong">翻译方案</div>
             
           </div>
-          <button type="button" class="btn btn-mini" id="st-scheme-new">＋ 添加方案</button>
+          <div class="st-scheme-actions">
+            <button type="button" class="btn btn-mini" id="st-scheme-import">导入方案</button>
+            <button type="button" class="btn btn-mini" id="st-scheme-export">导出方案</button>
+            <button type="button" class="btn btn-mini" id="st-scheme-new">＋ 添加方案</button>
+            <input type="file" id="st-scheme-file" accept=".json,application/json" hidden>
+          </div>
         </div>
 
         <!-- 服务选择胶囊：点一枚 = 把该服务商预置写进卡片下方的设置区 -->
@@ -2378,6 +2383,7 @@
           <div class="sf-theme-color-panel">
             <div class="sf-settings-line sf-settings-color"><div><label for="sf-color">自定义主题色</label><p>只改界面强调色，不影响字幕颜色与角色色。</p></div><input type="text" id="sf-color" data-color-input="1" value="#5c7560" aria-label="自定义主题色"></div>
             <div class="sf-settings-line sf-settings-monet" id="sf-monet-row" hidden><div><b>莫奈取色</b><p>选一张图片，从里面提取主色并按 Material You 重新生成整套配色。</p></div><button type="button" class="btn" id="sf-color-from-image">选择图片取色…</button><input type="file" id="sf-monet-file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" hidden></div>
+            <div class="sf-settings-line sf-settings-palette" id="sf-palette-row" hidden><div><b>取色预览</b><p>从图片提取的三分配色；点一个应用到主题色，换主题包后仍保留。</p></div><div id="sf-palette-list" class="sf-palette-list"></div></div>
             <div class="theme-row sf-settings-swatches"><div class="theme-swatches" data-theme-swatches="1"></div><label class="theme-custom" hidden><input type="text" data-color-input="1" id="theme-color-global" data-theme-color="1" value="#ff7a45">自定义</label><button type="button" class="btn btn-mini" id="theme-reset-global" data-theme-reset="1">恢复默认</button></div>
           </div>
         </div>

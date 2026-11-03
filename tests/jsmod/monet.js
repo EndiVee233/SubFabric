@@ -111,8 +111,73 @@ export function seedFromPixels(data, width, height) {
   return hslToHex(hue, sat, lig);
 }
 
+/** 从 RGBA 像素里取多个候选种子色（按色相桶权重排序，供三分调色盘预览选择）。 */
+export function seedCandidatesFromPixels(data, width, height, count = 6) {
+  const w = Math.max(0, Number(width) | 0), h = Math.max(0, Number(height) | 0);
+  if (!data || !data.length || !w || !h) return [];
+  const bins = Array.from({ length: 24 }, () => ({ weight: 0, hx: 0, hy: 0, s: 0, l: 0 }));
+  let neutral = { weight: 0, r: 0, g: 0, b: 0 }, opaque = 0;
+  const total = w * h;
+  const step = Math.max(1, Math.floor(Math.sqrt(total / 4096)));
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const i = (y * w + x) * 4;
+      if (i + 3 >= data.length) continue;
+      if (data[i + 3] < 128) continue;
+      opaque++;
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      const [hue, sat, lig] = rgbToHsl(r, g, b);
+      if (lig < 0.10 || lig > 0.95 || sat < 0.08) {
+        neutral.weight++; neutral.r += r; neutral.g += g; neutral.b += b;
+        continue;
+      }
+      const mid = 1 - Math.min(1, Math.abs(lig - 0.55) * 1.8);
+      const weight = Math.pow(sat, 2.2) * (0.35 + mid) + 0.01;
+      const bin = bins[Math.min(23, Math.floor(hue / 15))];
+      const rad = hue * Math.PI / 180;
+      bin.weight += weight; bin.hx += Math.cos(rad) * weight; bin.hy += Math.sin(rad) * weight;
+      bin.s += sat * weight; bin.l += lig * weight;
+    }
+  }
+  if (!opaque) return [];
+  const ranked = bins.map((bin, index) => ({ bin, index })).filter(x => x.bin.weight > 0)
+    .sort((a, b) => b.bin.weight - a.bin.weight);
+  const out = [], hues = [];
+  for (const { bin, index } of ranked) {
+    let sx = 0, sy = 0, ss = 0, sl = 0, sw = 0;
+    for (const d of [-1, 0, 1]) {
+      const b = bins[(index + d + bins.length) % bins.length];
+      if (!b.weight) continue;
+      sx += b.hx; sy += b.hy; ss += b.s; sl += b.l; sw += b.weight;
+    }
+    const hue = (Math.atan2(sy, sx) * 180 / Math.PI + 360) % 360;
+    const near = hues.some(h => { const d = Math.abs(h - hue); return Math.min(d, 360 - d) < 20; });
+    if (near) continue;
+    hues.push(hue);
+    out.push(hslToHex(hue, clamp((ss / sw) * 1.15, 0.35, 0.75), clamp(sl / sw, 0.42, 0.62)));
+    if (out.length >= count) break;
+  }
+  if (!out.length) {
+    const gray = hslToHex(0, 0, clamp((neutral.r + neutral.g + neutral.b) / (3 * 255), 0.35, 0.65));
+    out.push(gray);
+  }
+  return [...new Set(out)];
+}
+
 /** 把 data URL / blob URL 解成小图并取色（仅浏览器）。失败返回 null。 */
 export async function extractSeedFromImageSrc(src, opts) {
+  const pixels = await imagePixels(src, opts);
+  return pixels ? seedFromPixels(pixels.data, pixels.w, pixels.h) : null;
+}
+
+/** 与 extractSeedFromImageSrc 同源，但返回多个候选色（三分调色盘预览）。 */
+export async function extractSeedCandidatesFromImageSrc(src, opts) {
+  const count = Math.max(1, Math.min(8, Number(opts && opts.count) || 6));
+  const pixels = await imagePixels(src, opts);
+  return pixels ? seedCandidatesFromPixels(pixels.data, pixels.w, pixels.h, count) : [];
+}
+
+async function imagePixels(src, opts) {
   const max = Math.max(8, Math.min(256, Number(opts && opts.max) || 96));
   if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
   const img = new Image();
@@ -132,6 +197,6 @@ export async function extractSeedFromImageSrc(src, opts) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return null;
     ctx.drawImage(img, 0, 0, w, h);
-    return seedFromPixels(ctx.getImageData(0, 0, w, h).data, w, h);
+    return { data: ctx.getImageData(0, 0, w, h).data, w, h };
   } catch { return null; }
 }

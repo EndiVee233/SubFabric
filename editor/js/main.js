@@ -2,7 +2,7 @@
 import { fmtTime, parseTime, escapeHtml } from './util.js';
 import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle, assStylePresetOf, parseAssStylePreset, applyAssStylePreset, findStyleForLang } from './ass.js';
-import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpecs, buildCleanAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
+import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpecs, buildCleanAss, buildSpeakerAss, buildLangAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
   // ── 上游 2.1.13 新增的导出（角色换色串色修复 / 中文标点归一 / 中文行预览 / 角色排序）──
   // 这些纯函数放在 karaoke.js 里以便单测；main.js 必须**显式导入**，
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
@@ -5826,7 +5826,7 @@ const resegEls = {
   btn: document.getElementById('btn-reseg-llm'),
 };
 let resegRows = [], resegPlans = [], resegBusy = false;
-const resegNorm = (s) => String(s || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+const resegNorm = (s) => String(s || '').replace(/\\[Nn]/g, ' ').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 const resegStrip = (s) => String(s || '').replace(/^\s*(?:\{[^}]*\}\s*)*\[[^\]]+\]\s*/, '').trim();
 
 function resegSync() {
@@ -6497,20 +6497,57 @@ function setRealignSkip(row, on) {
   p.meta.realignSkip = [...set];
   saveRealignSkip();
 }
-/** 文本变了的行默认打上「已校对」；由 rebuildItemsAndLanes 在重建条目后调用。
- *  用「开始时间 → 文本签名」比对：所有编辑路径（行内编辑、查找替换、分句…）都会经过重建。 */
+/** 手动操作过的行默认打上「已校对」；由 rebuildItemsAndLanes 在重建条目后调用。
+ *  不只比文本：逐词时间、整句起止、说话人、样式变化都算手动改过（用户要求
+ *  “任何手动操作都点亮逐词校对”）。行对象身份用 WeakMap 保持，起点变了也能追踪，
+ *  并把 realignSkip 从旧开始时间迁移到新开始时间。 */
 let realignTextSig = new Map();
+let realignRowSig = new WeakMap();
+let realignRowStart = new WeakMap();
+function resetRealignSignatures() {
+  realignTextSig = new Map();
+  realignRowSig = new WeakMap();
+  realignRowStart = new WeakMap();
+}
+function realignRowSignature(it) {
+  const row = it.ref && typeof it.ref === 'object' ? it.ref : null;
+  const wordSig = part => (part && Array.isArray(part.words)
+    ? part.words.map(w => `${w.w || ''}\u0001${Number(w.s).toFixed(3)}\u0001${Number(w.e).toFixed(3)}`).join('\u0002')
+    : '');
+  return JSON.stringify([
+    it.l1 || '', it.l2 || '', Number(it.start).toFixed(3), Number(it.end).toFixed(3),
+    row && row.start != null ? Number(row.start).toFixed(3) : '',
+    row && row.end != null ? Number(row.end).toFixed(3) : '',
+    row && row.zh ? speakerTagOf(row.zh) : '', row && row.en ? speakerTagOf(row.en) : '',
+    row && row.zh ? row.zh.style : '', row && row.en ? row.en.style : '',
+    row && row.zh ? row.zh.color : '', row && row.en ? row.en.color : '',
+    wordSig(row && row.zh), wordSig(row && row.en),
+  ]);
+}
 function markEditedRealignRows(items) {
-  if (!state.project || !state.project.meta) { realignTextSig = new Map(); return new Set(); }
+  if (!state.project || !state.project.meta) { resetRealignSignatures(); return new Set(); }
   const next = new Map();
   const set = realignSkipSet();
   const marked = new Set();
   for (const it of items) {
     const k = Number(it.start).toFixed(3);
-    const sig = String(it.l1 || '') + '\u0000' + String(it.l2 || '');
-    const prev = realignTextSig.get(k);
-    if (prev !== undefined && prev !== sig && !set.has(k)) { set.add(k); marked.add(k); }
-    next.set(k, sig);
+    const row = it.ref && typeof it.ref === 'object' ? it.ref : null;
+    const sig = realignRowSignature(it);
+    const textSig = String(it.l1 || '') + '\u0000' + String(it.l2 || '');
+    if (row) {
+      const oldKey = realignRowStart.get(row);
+      if (oldKey && oldKey !== k && set.has(oldKey)) {
+        set.delete(oldKey); set.add(k); marked.add(k);
+      }
+      const prev = realignRowSig.get(row);
+      if (prev !== undefined && prev !== sig && !set.has(k)) { set.add(k); marked.add(k); }
+      realignRowSig.set(row, sig);
+      realignRowStart.set(row, k);
+    } else {
+      const prev = realignTextSig.get(k);
+      if (prev !== undefined && prev !== textSig && !set.has(k)) { set.add(k); marked.add(k); }
+    }
+    next.set(k, textSig);
   }
   realignTextSig = next;
   if (marked.size) {
@@ -6581,7 +6618,7 @@ function syncRealignApply() {
 function resetRealignForProjectSwitch() {
   /* 切稿前先把旧项目的后台对齐停掉；否则它继续占着 GPU，用户还以为已经关了。 */
   if (realignRunning && realignPid) cancelRealignJob();
-  realignTextSig = new Map();               // 换稿后文本签名表作废（开始时间会撞车）
+  resetRealignSignatures();                 // 换稿后签名表作废（开始时间会撞车）
   realignQueue.length = 0;                  // 旧稿件的单条重排队列跟着作废
   realignRunningKey = '';
   clearTimeout(realignPollTimer);
@@ -6615,7 +6652,7 @@ window.__realignReset = resetRealignForProjectSwitch;
  * isRealignSkipped 读不到 realignSkip）→ 换好 state.project 后再重建一次，标签才准。 */
 window.__realignRefresh = () => {
   if (!state.project) return;
-  realignTextSig = new Map();
+  resetRealignSignatures();
   rebuildItemsAndLanes(true);
 };
 
@@ -7136,39 +7173,6 @@ if (btnExportPack) btnExportPack.addEventListener('click', async () => {
   }
 });
 
-/* 按语言过滤导出 ASS: lang='zh' 只保留中文整句样式行, lang='en' 只保留英文逐词样式行 */
-function buildLangAss(doc, sentences, wordStyle, lang) {
-  const cut = doc.eventsFormatLineIdx != null ? doc.eventsFormatLineIdx + 1 : doc.lines.length;
-  const head = doc.lines.slice(0, cut).filter(l => l !== null);
-  const body = sentences
-    .filter(sent => lang === 'zh' ? (sent.style !== wordStyle) : (sent.style === wordStyle))
-    .map(sent => {
-      const ev = sent.events[0];
-      return doc._buildDialogueLine({
-        layer: sent.proto.layer, style: sent.style, name: sent.proto.name,
-        effect: sent.proto.effect, margins: sent.proto.margins,
-        start: sent.start, end: sent.end, text: ev.text
-      });
-    });
-  return head.concat(body).join('\r\n');
-}
-
-/* ─────────── 高级导出：按说话人筛选 ─────────── */
-function buildSpeakerAss(doc, sentences) {
-  const cut = doc.eventsFormatLineIdx != null ? doc.eventsFormatLineIdx + 1 : doc.lines.length;
-  const head = doc.lines.slice(0, cut).filter(line => line !== null);
-  const body = sentences.map(sent => {
-    const ev = sent.events && sent.events[0];
-    if (!ev) return null;
-    const proto = sent.proto || {};
-    return doc._buildDialogueLine({
-      layer: proto.layer, style: sent.style, name: proto.name,
-      effect: proto.effect, margins: proto.margins,
-      start: sent.start, end: sent.end, text: ev.text,
-    });
-  }).filter(Boolean);
-  return head.concat(body).join('\r\n');
-}
 function advOpen() {
   if (state.format !== 'ass' || !state.kar) { toast('高级导出（按角色）只支持 ASS 稿件', 4600); return; }
   const ov = document.getElementById('adv-export-overlay');

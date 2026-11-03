@@ -393,8 +393,13 @@ export class EditorPanel {
     this.playingItem = null;
     this._syncActiveRole();
     this._playingT = null;    // 条目集/项目换了 → 旧播放时间不再可信，等下一次 tick 重新写入
-    this._speaker = '';       // 新数据 → 重置角色筛选(避免跨文件残留)
-    if (this.roleFilterSel) this.roleFilterSel.value = '__all__';
+    /* 只有载入新文件/换项目（keepView=false）才重置角色筛选；
+     * 删除/改时间/改文本等重建（keepView=true）必须保持当前角色，
+     * 即使这个角色刚被删到 0 条，也要留在该角色的空列表里。 */
+    if (!keepView) {
+      this._speaker = '';
+      if (this.roleFilterSel) this.roleFilterSel.value = '__all__';
+    }
     this._applyFilter(keepView ? keepTop : 0);
   }
 
@@ -613,11 +618,16 @@ export class EditorPanel {
     this._roles = roles || [];
     const sel = this.roleFilterSel;
     if (sel) {
-      const cur = sel.value || '__all__';
+      /* 当前角色即使因为刚被删到 0 条而从 computeRoles() 消失，也要保留一个
+       * “（0）”选项并继续选中它；不能自动跳回「全部角色」。 */
+      const cur = this._speaker || sel.value || '__all__';
       sel.innerHTML = '<option value="__all__">全部角色</option>' +
         this._roles.map(r => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.name)}（${r.count}）</option>`).join('');
+      if (cur !== '__all__' && ![...sel.options].some(o => o.value === cur)) {
+        sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(cur)}">${escapeHtml(cur)}（0）</option>`);
+      }
       sel.value = [...sel.options].some(o => o.value === cur) ? cur : '__all__';
-      if (sel.value !== cur) this._speaker = '';       // 角色不存在了(换了文件) → 取消筛选
+      if (sel.value !== cur) this._speaker = '';       // 连零条选项都不存在时（换文件）才取消筛选
     }
     if (this._tab === 'roles') this._renderRoles();
     else if (this._splitRoles) this._renderSplitRoles();

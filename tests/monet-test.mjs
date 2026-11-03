@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { seedFromPixels } from '../editor/js/monet.js';
+import { seedFromPixels, seedCandidatesFromPixels } from '../editor/js/monet.js';
 
 const root = path.resolve(import.meta.dirname, '..');
 const read = rel => fs.readFileSync(path.join(root, rel), 'utf8');
@@ -43,12 +43,28 @@ assert.equal(seedFromPixels(new Uint8ClampedArray(64 * 4), 8, 8), null, '全透�
 assert.equal(seedFromPixels(null, 8, 8), null, '空数据安全');
 assert.equal(seedFromPixels(new Uint8ClampedArray(4), 0, 0), null, '零尺寸安全');
 
+const candidates = seedCandidatesFromPixels(...pixels(Array.from({ length: 64 }, (_, i) => i < 32 ? [58, 143, 74] : [221, 51, 51])), 6);
+assert.ok(candidates.length >= 2 && candidates.length <= 6, '多候选数量受限');
+assert.equal(new Set(candidates).size, candidates.length, '候选色不重复');
+for (const c of candidates) assert.match(c, /^#[0-9a-f]{6}$/);
+assert.deepEqual(seedCandidatesFromPixels(new Uint8ClampedArray(64 * 4), 8, 8), [], '全透明无候选');
+assert.equal(seedCandidatesFromPixels(null, 8, 8).length, 0, '空数据无候选');
+
 const studio = read('editor/js/studio.js');
 const template = read('tools/templates/studio.html');
 const css = read('editor/css/studio.css');
 assert.match(studio, /await import\('\.\/monet\.js'\)/, 'studio.js 动态加载 monet 模块（旧服务缺文件也不会拖垮整个界面）');
 assert.doesNotMatch(studio, /^import .*monet\.js/m, 'monet 模块不能顶层静态 import');
 assert.match(template, /id="sf-monet-row"[\s\S]*?id="sf-color-from-image"[\s\S]*?id="sf-monet-file"/, '设置页有莫奈取色入口与图片选择');
+assert.match(template, /id="sf-palette-row"[\s\S]*?id="sf-palette-list"/, '莫奈取色下方有三分配色预览');
+assert.match(studio, /function renderPalettePreviews/, '三分预览渲染函数');
+assert.match(studio, /data-palette-seed/, '点击预览切换主题色');
+assert.match(studio, /accentByPack = \{ \.\.\.\(prefs\.accentByPack \|\| \{\}\), \[prefs\.themePack\]: prefs\.accent \}/, '切换主题包先保存旧包颜色');
+assert.match(studio, /savedAccent \|\| ownAccent/, '切回主题包恢复它自己的颜色');
+assert.match(studio, /const seeds = themes\.hex\(current\)/, '第一个圆固定为当前主题色');
+assert.match(studio, /\[current, \.\.\.candidates\.filter/, '当前色排在候选首位并去重');
+assert.match(studio, /renderPalettePreviews\(\)/, '应用主题后刷新预览');
+assert.match(css, /\.sf-palette-dot/, '三分调色盘样式');
 assert.match(studio, /monetRow\.hidden = pack\.design !== 'material'/, '莫奈取色只在 Material You 显示');
 assert.match(studio, /prepareBackgroundImage\(file\)[\s\S]*?extractSeedFromImageSrc\(data\)/, '从选择的图片提取种子色（兼容 HEIC）');
 assert.match(studio, /commit\(\{ accent: seed \}\)[\s\S]*?applyTheme\(\)/, '取色后写回并应用主题');

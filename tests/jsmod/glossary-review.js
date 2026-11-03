@@ -130,9 +130,12 @@ export function initGlossaryReview({ state, toast, projects }) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       show(false);
-      const savedNote = j.saved ? `，并写入${j.scheme ? '「' + j.scheme.name + '」' : ''}术语表` : '';
+      const savedNote = j.saveError
+        ? `，但方案术语表保存失败（${j.saveError}）`
+        : (j.saved ? `，并写入${j.scheme ? '「' + j.scheme.name + '」' : ''}术语表` : '');
       if (j.replaced) {
         toast(`已应用到该视频：替换 ${j.replaced} 处（${j.rows} 行）${savedNote}`, 5200);
+        /* 即使方案术语表保存失败，字幕文件已经改好，也必须重载让界面同步。 */
         if (projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }
       } else {
         toast(`没有在中文轨里找到可替换的原文，字幕未改动${savedNote}`, 5200);

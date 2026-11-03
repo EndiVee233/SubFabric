@@ -11,11 +11,13 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.4.1` / 文件版本
-  `1.5.4.1`（npm `1.5.4-beta.1`）。本轮新增存储空间扫描/清理页（`#/storage`，分类清理并保护
-  `diarize`、当前与重识别模型、`ytdlp`、运行中任务），并下线 `claude`、`subfabric-classic` 两套主题
-  （入口封闭、可清理残留，文件保留）；真实 GPU 推理与媒体导出不在本轮验收范围。
-  GitHub 保存与发布结果独立核对。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.4.2` / 文件版本
+  `1.5.4.2`（npm `1.5.4-beta.2`）。本轮把本机工作区在跑的功能并回主线：主题强调色改成**按主题包各自保存**
+  （`accentByPack`，切包不复用上一个包的颜色）、莫奈取色下方新增**三分配色预览**、样式方案支持**导入/导出**、
+  详情页与新建页都能单独「解析」在线链接补标题/作者/封面；另外修掉两处运行环境问题：Qwen 对齐运行时先装
+  CUDA 版 PyTorch 再装依赖（`accelerate` 会把 CPU 版 torch 一起拉进来），以及嵌入式 Python 下
+  `qwen_align.py` / `diarize.py` 缺脚本目录导致 `import common` 失败。存储空间清理与两套主题下线沿用
+  1.5.4.1；真实 GPU 推理与媒体导出不在本轮验收范围，GitHub 保存与发布结果独立核对。
 - **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
   `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
   仅运行桌面开发入口时也须先 `npm --prefix desktop run stage`，再 `npm --prefix desktop start`；
@@ -79,7 +81,7 @@
 - **桌面 payload 与可写 root**：`stage.mjs` 白名单收集 Git 跟踪的 `editor/`、`asr/` 源码及四个 vendor 文件，
   排除 settings/projects/videos/models/运行时/logs 与旧 SEA/托盘脚本，不整目录打包用户环境。
   `security.cjs` 在任何复制之前校验 manifest 的逐文件 SHA-256、路径边界及链接；`backend.cjs` 另校验
-  随包 Node。只将可信代码与渲染资源同步到**程序目录**（打包后为 exe 所在目录），不复制或删除用户数据。
+  随包 Node。只将可信代码与渲染资源同步到 `app.getPath('userData')/workspace`，不复制或删除用户数据。
   后端的入口、cwd 与所有现有 ASR/tools 相对路径仍在同一个可写 root，无需重构路径布局。
 - **旧版用户状态继承（2026-11-02）**：`desktop/migration.cjs` 只迁移用户状态——`asr/settings.json`、
   `asr/perf-result.json`、`asr/.qwen-runtime-ok.json`、`asr/models`、`asr/runtime-python`、
@@ -211,6 +213,11 @@
     `SUBFABRIC_PARENT_WATCH=1`（每秒轮询父进程句柄，**不阻塞 stdin**），避免父进程被硬杀后留孤儿 Python。
     `qwen_align.py` 与 `diarize.py` 复用 `asr/common.py` 的 `watch_parent`；Windows 显式声明
     HANDLE 参数/返回类型并在 `finally` 关闭句柄，仍在模型导入之前启动看护，不改变推理参数与输出。
+    **嵌入式 Python 导入修复（2026-10-28）**：`asr/runtime-python` 的 `python312._pth` 只把
+    运行时目录/site-packages 放进 `sys.path`，不包含脚本目录；直接 spawn `qwen_align.py` 时
+    `from common import watch_parent` 会 `ModuleNotFoundError: No module named 'common'`。
+    `qwen_align.py` 与 `diarize.py` 在 import 前用 `sys.path.insert(0, 脚本目录)` 补齐
+    （`asr.py`/`asr_npu.py` 原本就有）；`tests/asr-script-path-test.mjs` 钉住顺序。
   - **SRT 稿件直接转逐词 ASS**：`/realign-full` 带 `{allowSrtToAss:true}`（只由前端在二次确认后发）
     时，`realignSource` 用 `subtitleSource` 的 SRT 行（归一标点空格后）做目标；预览内容不变。
     `POST /realign-full-apply`（只接受 `status=done` 的作业、并核对稿件版本）用 `srt-ass.js`
@@ -361,6 +368,11 @@
   `tests/monet-test.mjs` 覆盖色相桶选择、灰图兜底、透明/空数据安全与设置页接线。
   主题色遮罩内新增 `#sf-monet-row` 的上分隔线（`margin-top:14px; padding-top:14px`），
   遮罩顶部内边距 16→20px，避免与上一行说明文字挤在一起。
+  **三分配色预览（2026-10-28）**：莫奈取色下方显示三片扇形配色按钮（无拍照图标，SVG 绘制）；
+  颜色来自最近一次图片取色的 `seedCandidatesFromPixels()` 候选色，未选图时用内置候选。
+  第一个圆固定显示当前主题色（最近提取/应用到的颜色），其余为候选；点击只写当前包的 `accent`，
+  由现有 `palette()` 生成整套 Material 配色。每个主题包在 `prefs.accentByPack` 保存自己的颜色；
+  切换包时先存旧包、再恢复新包自己的颜色，MY 改色不会影响 UWP/其他包。
   **加载方式**：`monet.js` 只在点击取色时 `await import('./monet.js')`，不在 studio.js 顶层静态 import。
   原因：新增静态资源要重启服务才会进白名单；旧进程返回 403 时静态 import 会让整个 studio.js 加载失败，
   表现为主题不应用、背景流光停住。动态加载把影响限制在取色按钮本身。启用取色仍需重启一次服务。
@@ -557,6 +569,13 @@
   「保存到翻译方案术语表」时同时走 `editor/glossary-merge.js` 合并进方案——保留注释 / 分组 /
   既有顺序，已有词只改译法，新词追加到目标语言组（`##<glossaryLang>`，组不存在则新建）；
   不勾选则只改当前稿件、不动方案。旧接口 `POST /glossary-apply`（只存方案）保留。
+  **中文轨识别（2026-11-01 修）**：ASS 样式名除 `中文/翻译/translation/zh` 外，还接受
+  `chinese/chs/cht/简体/繁體/繁体`，并回退到事件正文含 CJK 字符；否则自定义 `CN` 样式会被当成
+  英文轨，应用时找不到中文轨。方案术语表保存失败不再把已改好的字幕回报成 400：服务端返回
+  `saveError`，前端仍重载字幕并提示「字幕已应用，但方案术语表保存失败」。
+  **重复译文轨（2026-11-02 修）**：同一时间点存在多条中文轨时，`subtitleSource()` 不再抛
+  「译文轨匹配不唯一」，而是把这些事件都记为 `row.targets`；应用术语时逐条写回，
+  两条中文轨会一起替换，统计也按轨数累加。
 - **全片语义重分句**：`#btn-reseg-llm`（设置 → 高级字幕操作）。前端把当前稿件每行（中文去掉
   `[角色]` 标签、英文）POST 到 `/api/projects/:id/reseg-plan`；服务端按 120 行分批让模型判断
   「哪些行太长、该在哪断」，模型只返回每行的 `parts`（中文/英文），**必须能拼回原文**才保留
@@ -565,7 +584,9 @@
   `#reseg-overlay` 预览（每行可勾选，显示原句与各段按比例估算的时间），应用时前端逐行依次调用
   编辑器自己的 `splitRowAt(item, enText, caret, { enFirst, zhFirst, quiet:true, deferUi:true })`：
   逐词时间按切点原样分配给两半、样式与角色标签保留，所以**导入的 ASS 也能重分句**（保存走编辑器
-  原有管线）。批量应用时 `deferUi` **不**每切一刀就 `rebuildItemsAndLanes`/更新播放器，全部切完统一
+  原有管线）。**无逐词时间戳（含 SRT / 整句 ASS）**：前端 `resegNorm()` 先折叠 ASS 的 `\N` 行内换行
+  与不换行空格，模型返回的切点才能和行文本对上；切点时间没有逐词表时按词数比例落在句内。
+  批量应用时 `deferUi` **不**每切一刀就 `rebuildItemsAndLanes`/更新播放器，全部切完统一
   做一次；每 10 刀让出一帧并在 `#job-card` 显示「k/总切分」，长稿不再像卡死。
 - **长任务进度（分段导入）**：`rimApply` 改为 async 分批执行：覆盖导入先按「清理冲突行 k/N」、
   再按「写入 k/N」更新 `#job-card`（每 10/20 行让出一帧），`rimBusy` 防连点；结束后统一
@@ -654,6 +675,11 @@
   （`#np-set-source` / `#dt-set-source`）。它和「语音识别」下拉其实是同一件事（当时用来按引擎过滤
   模型），现在统一成**扁平模型列表**：选哪个模型，来源就是它的引擎。详情页的模型下拉用
   `project.draft.modelId` 回显**这个项目实际用的模型**，而不是全局默认（`genLoad('dt', false, modelId)`）。
+- **本地视频也可单独解析在线链接（2026-11-01）**：新建页的「链接」行与本地视频不再互斥。
+  只解析链接（`/api/fetch/probe`，不下载）得到标题/作者/简介/封面后，若同时选了本地视频，
+  创建请求带 `source` 元数据、视频仍走本地上传/初稿；只有没选本地视频时才走链接下载模式。
+  详情页预览卡也加了独立的链接解析框：解析结果通过 `PUT /api/projects/:id/info` 写进
+  `meta.source`，立即刷新预览、项目卡封面与列表，不改视频、字幕或处理进度。有真实封面时卡片隐藏占位胶片图标/「SUBFABRIC」字与 UWP 伪元素，不再压在封面上。
 - **处理进度显示细节（2026-10-26）**：
   - 新建页的 PROCESS 卡不再只是全灰预览：创建初稿（链接下载或本地视频）后**留在本页**，
     每 1.2s 轮询 `GET /api/projects/:id/draft`，实时更新步骤灯、百分比、当前阶段、已用时间、
@@ -733,6 +759,11 @@
   「回退到了老版本」。现统一为：两处都给「翻译方案」列表（同一份 `savedSchemes`，渲染函数 `renderDtSchemes`
   与 `renderNpSchemes` 共用卡片样式），手改参数收进 `details#dt-advanced`「高级 · 自定义翻译参数」。
   改模板要跑 `node tools/generate-studio.mjs` 重新生成 `editor/studio.html`，不能只改生成物。
+- **翻译方案导入 / 导出（2026-11-03）**：设置 → 翻译与术语 → 翻译方案右侧新增「导入方案 / 导出方案」。
+  格式为 JSON：`{format:"subfabric.translate-schemes", version:1, exportedAt, activeSchemeName, schemes:[...]}`，
+  每项含 name/provider/baseUrl/model/autoTranslate/prompt/glossary/glossaryLang/batchSize/temperature/contextRows/hasKey。
+  **不导出 API Key**，只带 hasKey 标记；导入后方案落盘但 Key 需重新填写。导入按现有
+  `POST /api/translate/schemes` 逐个创建，重名自动加「（导入 N）」后缀，不会覆盖现有方案。
 - **卡片操作区按钮个数是 3 或 4**：`#home` 的 `.pc-actions` 里「更多」恒在、「重试/翻译」按状态出现、
   「打开」「删除」恒在。UWP 曾用固定三列网格，4 个按钮时会把「删除」挤到第二行、只剩 1/3 宽
   （用户截图报的「突出来一块」）。已改为等宽 flex：文字按钮 `flex:1 1 0`、图标按钮定宽 30px，
@@ -977,9 +1008,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.4.1'`、`APP_FILE_VERSION = '1.5.4.1'`、npm version `1.5.4-beta.1`。
+  `APP_VERSION = 'beta 1.5.4.2'`、`APP_FILE_VERSION = '1.5.4.2'`、npm version `1.5.4-beta.2`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.4.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.4.2-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
@@ -1318,7 +1349,9 @@ yt-dlp（2026.08 与 2026.10 的 Python API 都已核对同为此格式），并
 「设置 → 导出 → 高级导出…」打开弹窗，列出当前 ASS 稿件的全部角色（含「未标注角色」），
 **默认全选**，可用「全选 / 全不选」。导出时只写入勾选角色的字幕行，例如取消「译者注」
 后，导出文件里不再出现该角色的任何台词。可选格式：原始字幕（保留逐词）、干净 ASS、
-仅中文、仅英文、逐词 JSON。`karaoke.js` 的 `sentenceSpeakerNames()` /
+仅中文、仅英文、逐词 JSON。**逐词切片导出（2026-10-28 修）**：颜色逐词形态下一句由多条
+事件组成，原始/仅中文/仅英文导出必须把 `sent.events` 全部写回（各自 start/end），只取
+`events[0]` 会表现成“每句只有第一个词亮且一直亮”。`karaoke.js` 的 `sentenceSpeakerNames()` /
 `filterSentencesBySpeakers()` 是唯一判定口径：说话人取行首 `[角色]` 文本标签，缺失时退回
 ASS Name 栏；一句有多个说话人时必须全部勾选才保留。`main.js` 的 `buildSpeakerAss()`
 保留原 ASS 头/样式，仅按选中句子重建 Dialogue 行，因此不会把未选角色的行带出去。
@@ -1443,6 +1476,140 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
 ### 最近状态
+
+**2026-11-03（不同主题包的主题色互不干扰，beta 1.5.0.2）**
+
+- **需求**：每个主题包保留自己的主题色，切换主题时各自不变，不再让一个包的颜色覆盖其它包。
+- **实现**：`prefs.accentByPack` 按主题包 ID 保存颜色；`normalizeStudio()` 校验并按当前包取色，
+  `activatePack()` 先保存旧包颜色、再恢复新包自己的（无记录时用包内 personalization/seed）。
+  主题包导入/删除当前包、莫奈取色、三分配色、侧栏取色都按当前包写入。首次升级的旧全局 accent
+  只归属当前包，其它包回到各自 seed。
+- **验证**：`ui-integration` 增加每包独立颜色断言；`monet-test` 改为检查 accentByPack；
+  `theme-packs-test`、`theme-pack-zip-test` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-scheme-io.json` **158 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-03（翻译方案导入/导出，beta 1.5.0.2）**
+
+- **需求**：翻译方案支持导出备份、导入恢复；格式自定义。
+- **实现**：设置 → 翻译与术语 → 翻译方案新增「导入方案 / 导出方案」。导出
+  `subfabric-translate-schemes-YYYY-MM-DD.json`，含 format/version/exportedAt/activeSchemeName
+  与全部方案的 provider/baseUrl/model/prompt/glossary/glossaryLang/batchSize/temperature/contextRows，
+  **不含 API Key**（只带 hasKey）。导入逐个走现有 `POST /api/translate/schemes`，重名自动加
+  「（导入 N）」，不覆盖现有方案。
+- **验证**：新增 `translation-schemes-io-test`；`translate-schemes-test`、`theme-audit`、
+  `ui-integration` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-scheme-io.json` **158 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-03（Qwen CUDA 运行时安装 + 设置卡片间距/术语聚焦框，beta 1.5.0.2）**
+
+- **Qwen 对齐器「安装运行时」失败**：错误「Qwen 运行时没有可用的 CUDA」。原来只往
+  `runtime-python` 装 Transformers，未确保 CUDA torch。现在优先复用 VibeVoice CUDA Python；
+  安装前探测 `torch.cuda.is_available()`，false 时按 cu126 安装 `torch/torchaudio`，再装
+  Transformers 5.20.2；标记记录实际解释器，换环境自动作废。
+- **设置卡片垂直间距**：翻译与术语页 `.st-body` 卡片间距 24px；「添加方案」抽屉内的子卡片\n  间距 16px。
+- **术语输入聚焦框被裁**：`.gl-input` / `.glossary-row input` 的聚焦改为内阴影，不再被
+  `.gl-rows` 的 `overflow-y:auto` 裁掉。
+- **验证**：新增 `qwen-runtime-install-test`、`settings-gap-focus-test`；全量 JS 回归 `_test/maintenance/js-results-1463-qwen-ui.json` **157 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-02（术语应用兼容重复中文译文轨，beta 1.5.0.2）**
+
+- **问题**：术语表校对应用时报「译文轨匹配不唯一，请先整理字幕轨」，整个应用失败。
+- **原因**：同一时间点有两条中文轨（重复译文轨 / 多套中文字体样式各写一遍）时，
+  `subtitleSource()` 直接抛错，不继续匹配。
+- **修复**：这些目标都记进 `row.targets`，`patchSubtitleTranslations()` 逐条写回，
+  两条中文轨一起替换；替换数按轨数统计，不再要求用户先手工整理字幕轨。
+- **验证**：`glossary-review-api-test` 增加重复中文轨用例（两条都替换）；全量 JS 回归 `_test/maintenance/js-results-1463-source.json` **153 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-01（本地视频/详情页单独解析在线视频元数据，beta 1.5.0.2）**
+
+- **需求**：封面/稿件详情页能单独根据在线视频链接解析；本地视频创建初稿前后都能解析。
+- **实现**：新建页允许本地视频 + 在线链接同时存在；链接只走 `/api/fetch/probe` 取标题/作者/
+  简介/封面，不下载。有本地视频时创建请求带 `source` 元数据，初稿仍用本地视频；没本地视频时
+  维持原链接下载分支。详情页新增 `#detail-url` + `#detail-probe`，解析后经
+  `PUT /api/projects/:id/info` 写 `meta.source`，并刷新预览、项目卡封面与列表。
+  服务端 `cleanProjectSource()` 只放行展示字段，不碰视频/字幕/进度。
+- **验证**：`repair06-meta-test` 覆盖 info 保存 source；新增 `project-source-test` 检查本地
+  创建/详情解析接线；全量 JS 回归 `_test/maintenance/js-results-1463-source.json` **152 通过 / 9 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-01（无逐词时间戳重分句 + 术语应用到字幕，beta 1.5.0.2）**
+
+- **重分句应用不上**：无逐词时间戳的 ASS 行文本里可能带 `\N` 行内换行；`resegNorm()` 只折叠
+  空白，模型按空格重排后 `enRest.startsWith(enFirst)`/`zhRest` 对不上，整行被跳过。现在先把
+  `\N` 当空格归一化再送模型/比对；没有逐词表时切点仍按词数比例落在句内。
+- **术语表应用不生效**：ASS 中文轨识别原来只认 `中文/翻译/translation/^zh$`，自定义 `CN` 等
+  样式会被当成英文轨；现兼容 `chinese/chs/cht/简体/繁體/繁体` 并回退 CJK 文本判断。
+  另外方案术语表保存若抛错，不再把已改好的字幕整体回报 400；服务端返回 `saveError`，前端仍
+  重载字幕并提示部分成功。
+- **验证**：新增 `tests/reseg-no-words-test.mjs`；`glossary-review-api-test` 增加 `CN` 样式替换；
+  全量 JS 回归 `_test/maintenance/js-results-1463-reseg-glossary.json` **151 通过 / 9 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-10-28（高级导出按角色筛选后逐词只剩首词亮，beta 1.5.0.2）**
+
+- **问题**：高级导出只勾选部分说话人后，导出 ASS 的逐词效果异常：每句只有第一个词亮起并
+  一直保持。
+- **原因**：颜色逐词形态下 `sent.events` 是**多条词级切片**；`buildSpeakerAss()` /
+  `buildLangAss()` 只取 `events[0].text`，把后续切片全丢了。
+- **修复**：两个导出函数都改为展开 `sent.events` 全部事件，按各自的 start/end 写 Dialogue；
+  `\k` 单事件形态不受影响，干净 ASS 仍保持整句一行。
+- **验证**：`advanced-export-test` 增加“全部词级事件、各自起止时间”断言；全量 JS 回归 `_test/maintenance/js-results-1463-adv-export-words.json` **149 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-10-28（角色筛选中删除字幕后保持当前角色，beta 1.5.0.2）**
+
+- **问题**：按角色筛选字幕时，把当前角色的字幕删完后，列表自动跳回「全部角色」。
+- **原因**：`setItems()` 每次重建都把 `_speaker` 清空；`setRoles()` 发现当前角色已无行时也回退
+  `__all__`，这是载入新文件才该有的行为。
+- **修复**：只有 `keepView=false`（载入新文件/换项目）才重置筛选；删除等重建保留 `_speaker`。
+  `setRoles()` 在当前角色已从 `computeRoles()` 消失时补一个「角色（0）」选项并继续选中它，
+  列表显示该角色的空结果，不跳回全部角色。
+- **验证**：新增 `tests/role-filter-persistence-test.mjs`；全量 JS 回归 `_test/maintenance/js-results-1463-rolefilter.json` **149 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-10-28（莫奈三分配色预览与主题色跨包保留，beta 1.5.0.2）**
+
+- **需求**：莫奈取色下方加入三分调色盘预览（不要拍照图标），且切到其它主题包再切回来
+  时保留主题色。
+- **实现**：新增 `#sf-palette-row` / `#sf-palette-list`，用 `themes.palette(seed,dark)` 的
+  accent/secondary/tertiary 用 SVG 三个扇形 path（同色 stroke 重叠，避免白色接缝）；候选色来自
+  `seedCandidatesFromPixels()`（图片最近一次取色）或内置候选。点击 `commit({accent})`
+  即时应用。`activatePack()` 不再把非默认 `prefs.accent` 重置为包 seed，只在仍是默认色时
+  使用包 seed；`monetSeeds` 跨主题包保留。
+- **验证**：`monet-test` 扩展多候选、唯一性、透明/空数据与预览接线；`theme-packs-test`、
+  `ui-integration` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-palette.json` **148 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-10-28（手动操作自动点亮「逐词校对」，beta 1.5.0.2）**
+
+- **需求**：对字幕做任何手动操作（逐词时间戳、分配说话人、修改中文字幕、调整整块起止、
+  整句自动逐词重校对等）时，列表里该行的「逐词校对」按钮自动点亮为「✓ 已校对」。
+- **实现**：`markEditedRealignRows()` 的签名从“开始时间 + 文本”扩展为**行对象身份 + 文本 +
+  整句起止 + 逐词序列/时间 + 说话人 + 样式/颜色**；`WeakMap` 保持行身份，起点变化也能追踪，
+  并把 `realignSkip` 从旧开始时间迁移到新开始时间。所有经过 `rebuildItemsAndLanes()` 的
+  编辑路径（行内文本、查找替换、角色分配/改名、时间轴拖块/拖逐词、单句/全片重校对）都会自动
+  点亮；换稿时清空签名表。
+- **验证**：新增 `tests/realign-manual-mark-test.mjs`；`realign-skip-api`、`repair04`、
+  `draft-align` 等通过；全量 JS 回归 `_test/maintenance/js-results-1463-manualmark.json`
+  **148 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包、真实稿件人工点按验收。GitHub：**尚未提交**。
+
+**2026-10-28（修复嵌入式 Python 下 Qwen 对齐 ModuleNotFoundError，beta 1.5.0.2）**
+
+- **现象**：Qwen 对齐失败，`asr/qwen_align.py` 第 24 行 `from common import watch_parent`
+  报 `ModuleNotFoundError: No module named 'common'`。
+- **根因**：安装版的 `asr/runtime-python/python312._pth` 把 `sys.path` 固定为运行时目录、
+  `python312.zip` 与 `Lib/site-packages`，**不包含脚本目录**；`spawn` 时虽然 `cwd=asr`，
+  但 `_pth` 模式不看 cwd，所以同目录的 `common.py` 无法导入。`asr.py`/`asr_npu.py` 早已自己
+  `sys.path.insert`，`qwen_align.py`/`diarize.py` 漏了。
+- **修复**：两个脚本在 `from common import` 前把 `__file__` 所在目录插入 `sys.path`；
+  不修改 Python 参数、模型或输出格式。
+- **验证**：`asr/runtime-python/python.exe qwen_align.py --help` / `diarize.py --help` 均可启动；
+  新增 `tests/asr-script-path-test.mjs`；`asr-aligner-status-test`、`draft-align-test` 通过；
+  全量 JS 回归 `_test/maintenance/js-results-1463-asrpath.json` **147 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包（现有安装目录需重装或手动替换两个脚本）；GitHub：**尚未提交**。
 
 **2026-10-27（批量初稿独立队列页，beta 1.5.0.2）**
 
@@ -2018,9 +2185,12 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 - **worker**：`asr/qwen_asr.py` 内部按 150s 分块（30s 单次），每块先 ASR 出文本，再用 ASR 文本做
   强制对齐出词级时间；输出与 `asr.py` 同构的 `{segments:[{start,end,text,words}]}`。参数：
   分块长度、ASR 最大 token（`editor/asr-params.js`）。
-- **运行时**：复用 app 的 `asr/runtime-python`（CUDA torch 2.14），安装
-  Transformers 5.20.2 + Accelerate；装好后写 `asr/.qwen-runtime-ok.json`，状态页只读标记，
+- **运行时**：优先复用 `asr/runtime-vibevoice/python.exe` 的 CUDA torch；没有时用
+  `asr/runtime-python`。安装运行时先探测 `torch.cuda.is_available()`，为 false 时按
+  `QWEN_TORCH_INDEX`（默认 PyTorch cu126）安装 `torch/torchaudio`，再装 Transformers 5.20.2 +
+  Accelerate。装好后写 `asr/.qwen-runtime-ok.json`（含实际解释器路径），状态页只读标记，
   不再每次轮询 import torch。设置页 Qwen 行可直接「安装运行时」；换 Python 解释器会作废标记。
+  这修复了只有 CPU torch 时「Qwen 运行时没有可用的 CUDA」的安装失败。
 - **UI**：新增「Qwen 系列」入口；创建稿件的「语音识别」下拉改为**扁平列表**，Whisper V2 / Qwen /
   Parakeet 直接可选（不再必须先切「识别来源」），选模型时自动同步来源。全模型速度测试支持
   `qwen` 引擎。

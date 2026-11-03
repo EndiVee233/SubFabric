@@ -130,8 +130,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.4.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.4.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.4.2'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.4.2'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -325,8 +325,8 @@ function safeJoin(root, urlPath) {
 }
 
 // 明确列出浏览器入口、依赖和双端纯模块；editor 下的后端模块不随目录一并公开。
-/* 2026-11-02：Claude / SubFabric Classic 已从主题选择器下线，对应的主题包也不再生效
-   提供访问（文件仍留在仓库里可随时恢复，只是没有 HTTP 入口）。 */
+// 2026-11-02：Claude / SubFabric Classic 已从主题选择器下线，对应的主题包也不再生效
+// 提供访问（文件仍留在仓库里可随时恢复，只是没有 HTTP 入口）。
 const STATIC_RESOURCES = new Set([
   '/editor/studio.html', '/editor/css/studio.css', '/editor/css/classic.css', '/editor/lang/zh-CN.json', '/editor/assets/app-logo.png',
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
@@ -1215,11 +1215,21 @@ const vibevoiceRuntimeOk = () => !!(vibevoiceProbeCache && vibevoiceProbeCache.o
 /* Qwen3 复用 runtime-vibevoice 的 CUDA PyTorch，但要求 Transformers 5.20+。
  * 装好后写一个标记文件；不再让每个状态轮询都 import torch。 */
 const QWEN_RUNTIME_MARK = path.join(ASR_DIR, '.qwen-runtime-ok.json');
-const qwenPython = () => process.env.SUBFABRIC_QWEN_PYTHON || ASR_PY;
+const QWEN_TORCH_INDEX = process.env.SUBFABRIC_QWEN_TORCH_INDEX
+  || 'https://download.pytorch.org/whl/cu126';
+/* Qwen 对齐器只认 CUDA。优先复用已装好的 VibeVoice CUDA 运行时（同一套 torch cu126），
+ * 没有时退回 ASR Python；安装阶段再确保这个解释器里的 torch 真能用到 CUDA。 */
+const qwenPython = () => {
+  if (process.env.SUBFABRIC_QWEN_PYTHON) return process.env.SUBFABRIC_QWEN_PYTHON;
+  const vp = vibevoicePython();
+  return fs.existsSync(vp) ? vp : ASR_PY;
+};
 function qwenRuntimeOk() {
   try {
     const j = JSON.parse(fs.readFileSync(QWEN_RUNTIME_MARK, 'utf8'));
-    return fs.existsSync(qwenPython()) && String(j.transformers || '').startsWith('5.20');
+    const py = qwenPython();
+    if (j.python && j.python !== py) return false;   // 换过解释器（如后来装了 VibeVoice）需重装
+    return fs.existsSync(py) && String(j.transformers || '').startsWith('5.20');
   } catch { return false; }
 }
 function startQwenRuntimeInstall() {
@@ -1233,17 +1243,32 @@ function startQwenRuntimeInstall() {
         throw new Error('缺少 CUDA Python 运行时（asr/runtime-python）。先用「Python 环境」或完整安装包准备好，再装 Qwen 运行时');
       }
       const prog = (pct, msg) => dlState(key, { running: true, kind: 'runtime:qwen', pct, msg, error: null });
-      prog(10, '安装 Transformers 5.20 / Accelerate…');
+      const cudaProbe = async () => {
+        try {
+          const r = await runCapture(py, ['-c', 'import torch; print(torch.cuda.is_available())'], 120000);
+          return /^true$/i.test(String(r.stdout || '').trim().split(/\r?\n/)[0] || '');
+        } catch { return false; }
+      };
+      if (!(await cudaProbe())) {
+        prog(6, '安装 CUDA PyTorch（约 2GB，首次较慢）…');
+        await pipInstallRetry(py, ['-m', 'pip', 'install', '--upgrade', 'torch', 'torchaudio',
+          '--index-url', QWEN_TORCH_INDEX], 3600000,
+          line => prog(8 + Math.min(24, String(line).length / 30), '安装 CUDA PyTorch…'));
+      }
+      if (!(await cudaProbe())) {
+        throw new Error('CUDA PyTorch 安装后仍不可用：请确认 NVIDIA 驱动正常，或到「设置 → 语音识别」检查 CUDA 运行时');
+      }
+      prog(34, '安装 Transformers 5.20 / Accelerate…');
       await pipInstallRetry(py, ['-m', 'pip', 'install', '--upgrade',
         'transformers==5.20.2', 'accelerate',
         '-i', NEMO_PIP_INDEX, '--extra-index-url', 'https://pypi.org/simple'], 1800000,
-        line => prog(15 + Math.min(70, String(line).length / 4), '安装 Qwen 运行依赖…'));
+        line => prog(38 + Math.min(52, String(line).length / 5), '安装 Qwen 运行依赖…'));
       prog(92, '验证 Qwen 运行时…');
       const out = await runCapture(py, ['-c', 'import torch, transformers; print(torch.cuda.is_available()); print(transformers.__version__)'], 180000);
       const lines = String(out.stdout || '').trim().split(/\r?\n/);
       if (!/^true$/i.test(lines[0] || '')) throw new Error('Qwen 运行时没有可用的 CUDA');
       if (!/^5\.20/.test(lines[1] || '')) throw new Error('Transformers 版本不是 5.20：' + (lines[1] || '?'));
-      fs.writeFileSync(QWEN_RUNTIME_MARK, JSON.stringify({ transformers: lines[1].trim(), at: new Date().toISOString() }, null, 2));
+      fs.writeFileSync(QWEN_RUNTIME_MARK, JSON.stringify({ transformers: lines[1].trim(), python: py, at: new Date().toISOString() }, null, 2));
       dlState(key, { running: false, kind: 'runtime:qwen', pct: 100, msg: 'Qwen CUDA 运行时就绪', error: null });
     } catch (e) {
       const msg = String((e && e.message) || e).slice(0, 400);
@@ -4807,6 +4832,28 @@ function normalizeFetchUrl(raw) {
   if (!s) return '';
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : 'https://' + s;
 }
+/** 在线元数据快照：只接受可展示的字段，不把任意对象塞进 project.json。 */
+function cleanProjectSource(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const text = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
+  const source = {
+    url: normalizeFetchUrl(raw.url || ''),
+    site: text(raw.site, 40),
+    id: text(raw.id, 120),
+    title: text(raw.title, 300),
+    description: text(raw.description, 4000),
+    uploader: text(raw.uploader, 200),
+    duration: Math.max(0, Number(raw.duration) || 0),
+    uploadDate: text(raw.uploadDate, 40),
+    tags: Array.isArray(raw.tags) ? raw.tags.slice(0, 40).map(t => text(t, 60)).filter(Boolean) : [],
+    viewCount: Math.max(0, Number(raw.viewCount) || 0),
+    thumbnail: /^https?:\/\//i.test(String(raw.thumbnail || '')) ? String(raw.thumbnail).slice(0, 2000) : '',
+    height: Math.max(0, Number(raw.height) || 0),
+    fetchedAt: new Date().toISOString(),
+  };
+  if (!source.title && !source.uploader && !source.description && !source.thumbnail) return null;
+  return source;
+}
 /** bilibili Cookie 文本规范化: 用户常常**只复制到值**（DevTools / 扩展里点一下就复制了值本身，
  *  形如 `ac87ca47%2C1806119310%2C…`），这种文本里没有任何 name=value →
  *  下载内核解析出来是空 cookie（等于未登录，画质掉回免登录档）。这里补上 SESSDATA=。
@@ -5704,7 +5751,8 @@ function startPrepare(id, videoPath, mode) {
         if (!row.zh) return '';
         const r = replaceAll(row.zh);
         if (!r.n) return '';
-        replaced += r.n; changed++;
+        replaced += r.n * Math.max(1, (row.targets || []).length);
+        changed++;
         return r.text;
       });
       if (changed) patchSubtitleTranslations(id, source, lines);
@@ -5730,8 +5778,16 @@ function startPrepare(id, videoPath, mode) {
     } else {
       throw new Error('这个稿件的字幕没有中文译轨，暂时只能应用在双语 ASS / SRT 上（英文轨与时间不会改动）');
     }
-    const saved = saveToScheme ? saveGlossaryToScheme(clean) : { saved: false, count: clean.length };
-    return { applied: true, replaced, rows: changed, ...saved };
+    /* 先改字幕，再保存方案术语表。保存失败不能把已经写好的字幕回报成 400：
+     * 否则前端不会重载，用户看到“应用失败”但文件其实已经变了（下次打开才发现）。
+     * 保存异常作为 saveError 返回，前端仍重载并提示部分成功。 */
+    let saved = { saved: false, count: clean.length };
+    let saveError = null;
+    if (saveToScheme) {
+      try { saved = saveGlossaryToScheme(clean); }
+      catch (e) { saveError = String((e && e.message) || e); }
+    }
+    return { applied: true, replaced, rows: changed, ...saved, saveError };
   }
 
   /* ── 全片语义重分句（只拆不合并） ───────────────────────────────
@@ -7096,7 +7152,8 @@ function startPrepare(id, videoPath, mode) {
     let rows = [], format = /\.srt$/i.test(file) ? 'srt' : 'ass', doc = null;
     if (format === 'ass') {
       doc = new AssDoc(text);
-      const isZh = e => /中文|翻译|translation|^zh$/i.test(e.style);
+      const isZh = e => /中文|翻译|translation|^zh|chinese|chs|cht|简体|繁體|繁体/i.test(e.style)
+        || /[\u3400-\u9fff]/.test(assSentencesMod.plainText(e.text));
       const targets = doc.events.filter(isZh);
       const events = doc.sorted.filter(e => !isZh(e));
       for (const ev of events) {
@@ -7112,9 +7169,11 @@ function startPrepare(id, videoPath, mode) {
       const used = new Set();
       for (const row of rows) {
         const matches = targets.filter(e => !used.has(e) && Math.abs(e.start - row.start) < 0.02 && Math.abs(e.end - row.end) < 0.02);
-        if (matches.length > 1) throw new Error('译文轨匹配不唯一，请先整理字幕轨');
+        /* 同一个时间点有多条中文轨（重复译文轨、双语样式各写一遍）时，不再整单报
+         * “译文轨匹配不唯一”；把这几条都记为该行的译文目标，替换时一起改。 */
+        row.targets = matches;
         row.target = matches[0] || null;
-        if (row.target) used.add(row.target);
+        for (const ev of matches) used.add(ev);
         row.zh = row.target ? assSentencesMod.plainText(row.target.text).replace(/^\[[^\]]+\]\s*/, '') : '';
       }
     } else {
@@ -7146,11 +7205,14 @@ function startPrepare(id, videoPath, mode) {
       if (source.format === 'srt') {
         raw[row.from] = row.target ? zh : zh + source.eol + raw[row.from];
       } else if (row.target) {
-        const ev = row.target, parts = ev._rawParts.slice();
-        const prefix = /^(?:\{[^}]*\})*(?:\[[^\]]+\]\s*)?/.exec(ev.text)[0];
-        const tags = ev.text.slice(prefix.length).match(/\{[^}]*\}/g) || [];
-        parts[source.doc.format.indexOf('text')] = prefix + escAss(zh) + tags.join('');
-        raw[ev.lineIdx] = 'Dialogue: ' + parts.join(',');
+        /* 同一时间点可能有多条中文轨（重复译文轨）；一起写，避免只改到其中一条。 */
+        for (const ev of (row.targets && row.targets.length ? row.targets : [row.target])) {
+          const parts = ev._rawParts.slice();
+          const prefix = /^(?:\{[^}]*\})*(?:\[[^\]]+\]\s*)?/.exec(ev.text)[0];
+          const tags = ev.text.slice(prefix.length).match(/\{[^}]*\}/g) || [];
+          parts[source.doc.format.indexOf('text')] = prefix + escAss(zh) + tags.join('');
+          raw[ev.lineIdx] = 'Dialogue: ' + parts.join(',');
+        }
       } else {
         const ev = row.events[0], parts = ev._rawParts.slice(), fmt = source.doc.format;
         parts[fmt.indexOf('start')] = fmtAssTime(row.start); parts[fmt.indexOf('end')] = fmtAssTime(row.end);
@@ -10802,6 +10864,9 @@ function handleProjectsRoutes(req, res, u) {
         prepare: { status: 'none' }
       };
       if (file) meta.subtitle = { format, file, name: subName };
+      /* 本地视频 + 手动解析的在线链接：只存元数据（标题/作者/封面），不下载链接视频。 */
+      const manualSource = cleanProjectSource(data.source);
+      if (manualSource) meta.source = manualSource;
       /* 区域字幕导入（按时间区间裁剪）：把区间记下来。
        * 意义不只是"存个说明" —— 裁过的稿子时间轴从区间起点才开始，
        * 之后"波形漏字幕检测""行间空档检测"这类功能必须知道这件事，

@@ -12,7 +12,9 @@ const { normalizeStudio, projectPhase, matchesProject, imageData } = await impor
 assert.equal(normalizeStudio(null, themes).themePack, 'windows-uwp');
 assert.ok(themes.get('windows-uwp').design === 'uwp', 'Windows 10 theme is built in');
 assert.equal(themes.valid({ schema: 'subfabric-theme-v1', id: 'windows-uwp-copy', name: 'Windows UWP Copy', version: '1.0.0', description: 'test', design: 'uwp', seed: '#0078d4' }), true);
-assert.equal(normalizeStudio({ themePack: 'bad', accent: 'url(evil)', mode: 'bad', image: '<svg>', motion: 'bad', custom: [{}] }, themes).accent, '#5c7560');
+// 每个主题包各自记住强调色：非法包回落到首个可见包（Windows 10），非法强调色回落到该包的 seed（Windows 蓝），
+// 不再是全局的 Studio 鼠尾草绿。
+assert.equal(normalizeStudio({ themePack: 'bad', accent: 'url(evil)', mode: 'bad', image: '<svg>', motion: 'bad', custom: [{}] }, themes).accent, '#0078D7');
 assert.equal(imageData('data:image/svg+xml;base64,AAAA'), false);
 assert.deepEqual(normalizeStudio({},themes).auroraColors,[],'old preferences inherit theme colors');
 assert.equal(normalizeStudio({},themes).auroraMotion,'dynamic');

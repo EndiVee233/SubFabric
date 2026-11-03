@@ -13,6 +13,8 @@ const $ = id => document.getElementById(id);
    真实浏览器仍然按几何过滤，测试环境也不会因为缺 API 抛错。 */
 const hasBox = el => typeof el.getClientRects !== 'function' || el.getClientRects().length > 0;
 const themes = window.SF_THEMES;
+let monetSeeds = [];   // 最近一次莫奈取色得到的候选色（三分配色预览用；切换主题包不清空）
+const FALLBACK_PALETTE_SEEDS = ['#5789dc', '#e05a5a', '#f0a830', '#4caf7d', '#7c5cff', '#e86aa6'];
 // 移动唯一版本节点，保留 main 的服务端更新；各列表标题不再重复版本号。
 document.querySelector('.sf-brand-title').appendChild($('app-version'));
 let saved;
@@ -46,10 +48,9 @@ function applyTheme() {
   applying = true;
   const dark = prefs.mode === 'dark' || prefs.mode === 'system' && systemDark.matches;
   const pack = themes.get(prefs.themePack, prefs.custom);
-  // UWP 的默认蓝仍取 pack.seed；一旦用户改过主题色，就用 prefs.accent。
-  // 旧默认 accent 是 Studio 的鼠尾草绿，不能让它把首次 UWP 染绿。
-  /* UWP / Claude 的默认强调色取主题包 seed；用户一旦改过就跟随 prefs。 */
-  const seedAccent = (pack.design === 'uwp' || pack.design === 'claude') && prefs.accent === defaults.accent ? pack.seed : prefs.accent;
+  /* 每个主题包各自保存强调色；prefs.accent 永远是当前包的颜色，
+     不再用“默认色=跟随包 seed”的全局回退。 */
+  const seedAccent = prefs.accent;
   /* Claude 的 seed（#B0512F）是为浅色纸面调的，深色下直接用只有 2.6:1，
      箭头、计数、链接会全部糊在深底上。这里换成提亮变体 #DE8A64（6.1:1）。
      不用 palette() 的 readable()：它会把陶土一路洗到 #EABEAE（三文鱼粉），丢掉色相。
@@ -158,6 +159,9 @@ function applyTheme() {
   /* 莫奈取色只对 Material You 有意义；图片由用户临时选择，不改背景素材。 */
   const monetRow = $('sf-monet-row');
   if (monetRow) monetRow.hidden = pack.design !== 'material';
+  const paletteRow = $('sf-palette-row');
+  if (paletteRow) paletteRow.hidden = pack.design !== 'material';
+  renderPalettePreviews();
   for (const input of document.querySelectorAll('#sf-color, #theme-color, [data-theme-color]')) {
     input.value = accent;
     input.disabled = false;
@@ -218,10 +222,7 @@ for (const kind of ['background', 'mode']) {
   }));
 }
 // 侧栏取色控件写入 Studio 独立偏好，不改变项目业务配置。
-window.SSAccent.current = () => {
-  const pack = themes.get(prefs.themePack, prefs.custom);
-  return pack.design === 'uwp' && prefs.accent === defaults.accent ? pack.seed : prefs.accent;
-};
+window.SSAccent.current = () => prefs.accent;
 window.SSAccent.set = hex => {
   if (applying) return false;
   if (!themes.hex(hex) || !commit({ accent: hex })) return false;
@@ -233,8 +234,9 @@ function renderPacks() {
     // 示意卡片的工作区预览跟随当前明暗模式，避免深色设置页内仍显示浅色工作区。
     const dark = document.body.dataset.theme === 'dark';
     const previewAccent = pack.id === prefs.themePack
-      ? ((pack.design === 'uwp' && prefs.accent === defaults.accent) ? pack.seed : prefs.accent)
-      : (pack.personalization?.accent || pack.seed);
+      ? prefs.accent
+      : (themes.hex((prefs.accentByPack || {})[pack.id]) ? prefs.accentByPack[pack.id]
+        : (pack.personalization?.accent || pack.seed));
     const palette = pack.design === 'uwp'
       ? { '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--accent': previewAccent, '--on-accent': '#FFFFFF' }
       : pack.design === 'claude'
@@ -416,7 +418,12 @@ $('sf-theme-packs').addEventListener('click', e => {
     if (!themes.canDelete(id)) return;
     const next = themes.remove(prefs.custom, id);
     const selected = prefs.themePack === id;
-    if (commit(selected ? { custom: next, themePack: 'windows-uwp', accent: themes.get('windows-uwp').seed } : { custom: next })) { applyTheme(); themeStatus(); }
+    if (selected) {
+      const accentByPack = { ...(prefs.accentByPack || {}), [prefs.themePack]: prefs.accent };
+      const fallback = themes.get('windows-uwp');
+      const accent = themes.hex(accentByPack[fallback.id]) ? accentByPack[fallback.id] : fallback.seed;
+      if (commit({ custom: next, themePack: fallback.id, accentByPack, accent })) { applyTheme(); themeStatus(); }
+    } else if (commit({ custom: next })) { applyTheme(); themeStatus(); }
     return;
   }
   const b = e.target.closest('[data-pack-select]'); if (!b) return;
@@ -676,6 +683,29 @@ function gridColumns(el, fallback) {
     return n >= 1 ? n : fallback;
   } catch { return fallback; }
 }
+/** 莫奈取色下方的三分配色预览：用当前候选色生成 Material 三角配色，点击切换强调色。 */
+function renderPalettePreviews() {
+  const row = $('sf-palette-row'), box = $('sf-palette-list');
+  if (!row || !box) return;
+  const candidates = monetSeeds.length ? monetSeeds : FALLBACK_PALETTE_SEEDS;
+  const dark = document.body.dataset.theme === 'dark';
+  const current = String(prefs.accent || '').toLowerCase();
+  /* 第一个圆固定显示“当前主题色”（即最近一次提取或应用到的颜色），
+   * 其余圆是可选候选；这样点第二个圆后，第一个会立即变成刚选中的颜色。 */
+  const seeds = themes.hex(current)
+    ? [current, ...candidates.filter(s => String(s).toLowerCase() !== current)].slice(0, 8)
+    : candidates.slice(0, 8);
+  box.innerHTML = seeds.map(seed => {
+    const p = themes.palette(seed, dark);
+    const c1 = p['--accent'] || seed;
+    const c2 = p['--secondary-container'] || p['--accent-soft'] || seed;
+    const c3 = p['--tertiary-container'] || p['--accent-soft'] || seed;
+    const pt = (deg) => `${(20 + 18 * Math.cos(deg * Math.PI / 180)).toFixed(2)} ${(20 + 18 * Math.sin(deg * Math.PI / 180)).toFixed(2)}`;
+    const wedge = (start, color) => `<path d="M20 20 L${pt(start)} A18 18 0 0 1 ${pt(start + 120)} Z" fill="${color}" stroke="${color}" stroke-width="0.9"/>`;
+    const svg = `<svg viewBox="0 0 40 40" aria-hidden="true">${wedge(-90, c1)}${wedge(30, c2)}${wedge(150, c3)}</svg>`;
+    return `<button type="button" class="sf-palette-dot${seed.toLowerCase() === current ? ' active' : ''}" data-palette-seed="${esc(seed)}" title="${esc(seed)} · 三分配色" aria-label="应用配色 ${esc(seed)}">${svg}</button>`;
+  }).join('');
+}
 /** 导出当前四个页面的布局快照。编辑器尺寸来自 localStorage（拖动 #hsplit/#vsplit 写过）。 */
 function layoutsSnapshot() {
   const layouts = {};
@@ -758,13 +788,16 @@ function personalizationSnapshot() {  const snap = {};
 function activatePack(pack) {
   const p = pack && pack.personalization;
   const layouts = pack && pack.layouts;
-  const change = { themePack: pack.id };
+  /* 先记住旧主题当前颜色，再取新主题自己保存的颜色；没有就用它的
+     personalization accent 或 seed。不同主题互不覆盖。 */
+  const accentByPack = { ...(prefs.accentByPack || {}), [prefs.themePack]: prefs.accent };
+  const savedAccent = themes.hex(accentByPack[pack.id]) ? accentByPack[pack.id] : '';
+  const ownAccent = themes.hex(p && p.accent) ? p.accent : pack.seed;
+  const change = { themePack: pack.id, accentByPack, accent: savedAccent || ownAccent };
   if (p) {
     Object.assign(change, p);
-    change.accent = themes.hex(p.accent) ? p.accent : pack.seed;
+    change.accent = savedAccent || ownAccent;
     change.background = p.background === 'aurora' ? 'aurora' : 'solid';
-  } else {
-    change.accent = pack.seed;
   }
   if (layouts && layouts.library && (layouts.library.view === 'list' || layouts.library.view === 'grid')) {
     change.view = layouts.library.view;
@@ -834,8 +867,12 @@ $('sf-theme-file').addEventListener('change', async () => {
     if (!themes.validList(custom)) throw Error('主题包数量已达上限。');
     const p = pack.personalization;
     const layouts = pack.layouts;
-    const change = { custom, themePack: pack.id,
-      accent: p && themes.hex(p.accent) ? p.accent : pack.seed };
+    /* 导入/替换主题包也遵守“每个包自己的颜色”：先保存当前包颜色，
+       新包已有保存色时优先恢复，否则用包内 accent/seed。 */
+    const accentByPack = { ...(prefs.accentByPack || {}), [prefs.themePack]: prefs.accent };
+    const savedAccent = themes.hex(accentByPack[pack.id]) ? accentByPack[pack.id] : '';
+    const ownAccent = p && themes.hex(p.accent) ? p.accent : pack.seed;
+    const change = { custom, themePack: pack.id, accentByPack, accent: savedAccent || ownAccent };
     if (p) {
       for (const key of ['mode', 'motion', 'auroraColors', 'auroraMotion', 'auroraSpeed',
         'glassDim', 'glassBlur', 'glassOpacity', 'rimEnabled', 'rimSatLow', 'rimBriGain', 'rimSpecBase', 'rimPower']) {
@@ -856,6 +893,16 @@ $('sf-image-pick').addEventListener('click', () => $('sf-image-file').click());
 $('sf-image-clear').addEventListener('click', () => { if (commit({ image: '', background: 'solid' })) applyBackgroundWithFade(); });
 /* Material You 莫奈取色：从当前背景图提取种子色，再按现有 palette() 生成整套配色。
  * 不是取平均色（平均常是灰），monet.js 会按色相桶 + 饱和度/明度权重挑主色。 */
+$('sf-palette-list')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-palette-seed]');
+  if (!btn) return;
+  const seed = btn.dataset.paletteSeed;
+  if (!themes.hex(seed)) return;
+  if (commit({ accent: seed })) {
+    applyTheme();
+    notice(`已应用三分配色 ${seed.toUpperCase()}`);
+  }
+});
 $('sf-color-from-image')?.addEventListener('click', () => $('sf-monet-file').click());
 $('sf-monet-file')?.addEventListener('change', async (event) => {
   const input = event.target;
@@ -873,13 +920,18 @@ $('sf-monet-file')?.addEventListener('change', async (event) => {
     /* 动态加载：取色模块是本期新增文件。旧服务进程的静态白名单还没它时，
      * 顶层静态 import 会让整个 studio.js 加载失败（主题/背景/流光全部不应用）。
      * 放在点击里，最坏也只是取色不可用，其余界面照常。 */
-    const { extractSeedFromImageSrc } = await import('./monet.js');
+    const { extractSeedFromImageSrc, extractSeedCandidatesFromImageSrc } = await import('./monet.js');
     const data = await prepareBackgroundImage(file);   // 兼容 HEIC，顺手压到可解码的小图
-    const seed = await extractSeedFromImageSrc(data);
+    const candidates = extractSeedCandidatesFromImageSrc
+      ? await extractSeedCandidatesFromImageSrc(data).catch(() => []) : [];
+    monetSeeds = Array.isArray(candidates) ? candidates.slice(0, 8) : [];
+    const seed = monetSeeds[0] || await extractSeedFromImageSrc(data);
     if (!seed) throw new Error('图片里没有找到可用的颜色');
+    if (!monetSeeds.length) monetSeeds = [seed];
     if (!commit({ accent: seed })) throw new Error('主题色保存失败');
     applyTheme();
-    notice(`已从图片提取主题色 ${seed.toUpperCase()}（莫奈取色）`);
+    renderPalettePreviews();
+    notice(`已从图片提取 ${monetSeeds.length || 1} 组配色；可在下方「取色预览」切换`);
   } catch (error) {
     notice('图片取色失败：' + (error && error.message ? error.message : error));
   } finally {
@@ -1223,7 +1275,7 @@ function animateLibraryViewChange() {
   const design = document.body.dataset.design;
   const list = view.querySelector('.home-list');
   const cards = [...view.querySelectorAll('.proj-card')]
-    .filter(card => card.getClientRects().length)
+    .filter(hasBox)
     .sort((a, b) => {
       const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
       return Math.abs(ra.top - rb.top) > 8 ? ra.top - rb.top : ra.left - rb.left;
@@ -2139,6 +2191,7 @@ function refreshLibrary() {
     // 在线来源优先使用来源缩略图；没有绑定来源时使用服务端从本地视频抽取的封面。
     const cover = card.querySelector('.sf-cover');
     const coverUrl = /^https?:\/\//.test(p.source?.thumbnail || '') ? p.source.thumbnail : (p.cover || '');
+    cover.classList.toggle('has-cover', !!coverUrl);
     let coverImg = cover.querySelector('img');
     if (coverUrl) {
       if (!coverImg) {

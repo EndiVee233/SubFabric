@@ -1235,6 +1235,42 @@ export function buildCleanAss(doc, sentences) {
   return head.concat(body).join('\r\n');
 }
 
+/** 按说话人筛选后的原始 ASS：保留 ASS 头/样式，逐句展开**全部词级事件**。
+ *  颜色逐词形态一句由多条切片组成，只取 events[0] 会导出成“只有首词亮”。 */
+export function buildSpeakerAss(doc, sentences) {
+  const cut = doc.eventsFormatLineIdx != null ? doc.eventsFormatLineIdx + 1 : doc.lines.length;
+  const head = doc.lines.slice(0, cut).filter(line => line !== null);
+  const body = (sentences || []).flatMap(sent => {
+    const evs = (sent.events || []).filter(Boolean);
+    if (!evs.length) return [];
+    const proto = sent.proto || {};
+    return evs.map(ev => doc._buildDialogueLine({
+      layer: proto.layer, style: sent.style, name: proto.name,
+      effect: proto.effect, margins: proto.margins,
+      start: ev.start != null ? ev.start : sent.start,
+      end: ev.end != null ? ev.end : sent.end,
+      text: ev.text,
+    })).filter(Boolean);
+  });
+  return head.concat(body).join('\r\n');
+}
+
+/** 按语言筛选后的 ASS：同样保留一句的全部词级事件，避免英文逐词只剩首词。 */
+export function buildLangAss(doc, sentences, wordStyle, lang) {
+  const cut = doc.eventsFormatLineIdx != null ? doc.eventsFormatLineIdx + 1 : doc.lines.length;
+  const head = doc.lines.slice(0, cut).filter(l => l !== null);
+  const body = (sentences || [])
+    .filter(sent => lang === 'zh' ? (sent.style !== wordStyle) : (sent.style === wordStyle))
+    .flatMap(sent => (sent.events || []).filter(Boolean).map(ev => doc._buildDialogueLine({
+      layer: sent.proto.layer, style: sent.style, name: sent.proto.name,
+      effect: sent.proto.effect, margins: sent.proto.margins,
+      start: ev.start != null ? ev.start : sent.start,
+      end: ev.end != null ? ev.end : sent.end,
+      text: ev.text,
+    })));
+  return head.concat(body).join('\r\n');
+}
+
 /** 去掉一行的内联标签，只留**纯文本**：颜色覆盖标签(`{\c&H..&}`/`{\c}`/`{\1c..}`)、行首说话人名字
  *  标签(`[..]`)、逐词高亮标签都剥掉，换行(`\N`)转空格。合并字幕时"后段以纯文本并入上一句"用它。 */
 export function stripInlineTags(text) {

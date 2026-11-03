@@ -140,6 +140,51 @@ try {
   const stAfter = JSON.parse(fs.readFileSync(path.join(s.root, 'asr/settings.json'), 'utf8'));
   assert.ok(stAfter.translate.glossary.includes('Ender Dragon=末影龙'), '方案术语表已写入');
 
+  // 中文样式名不是「中文字幕」时，也要按 CJK 文本识别出中文轨并替换
+  const cnDir = path.join(s.root, 'projects/p-gl-cn');
+  fs.mkdirSync(cnDir, { recursive: true });
+  const CN = [
+    '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 1920', 'PlayResY: 1080',
+    '[V4+ Styles]', 'Format: Name, Fontname, Fontsize', 'Style: Default,Arial,53', 'Style: CN,Arial,58',
+    '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    'Dialogue: 0,0:00:01.00,0:00:04.00,CN,Alex,0,0,0,,Ender Dragon 来了',
+    'Dialogue: 0,0:00:01.00,0:00:04.00,Default,Alex,0,0,0,,The Ender Dragon is here',
+  ].join('\n');
+  fs.writeFileSync(path.join(cnDir, 'subtitle.ass'), CN);
+  fs.writeFileSync(path.join(cnDir, 'project.json'), JSON.stringify({ id: 'p-gl-cn', subtitle: { format: 'ass', file: 'subtitle.ass' } }));
+  const cp = await s.call('/api/projects/p-gl-cn/glossary-apply-project', {
+    method: 'POST',
+    body: JSON.stringify({ terms: [{ src: 'Ender Dragon', dst: '末影龙' }], saveToScheme: true }),
+  });
+  const cpText = await cp.text();
+  assert.equal(cp.status, 200, cpText);
+  assert.ok(JSON.parse(cpText).replaced >= 1, '非标准中文样式名也能替换');
+  const cnAfter = fs.readFileSync(path.join(cnDir, 'subtitle.ass'), 'utf8');
+  assert.ok(cnAfter.includes('末影龙 来了'), 'CN 样式中文行被替换:\n' + cnAfter);
+
+  // 同一时间点有两条中文轨（重复翻译轨）：应用不能报“匹配不唯一”，两条都要替换
+  const dupDir = path.join(s.root, 'projects/p-gl-dup');
+  fs.mkdirSync(dupDir, { recursive: true });
+  const DUP = [
+    '[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 1920', 'PlayResY: 1080',
+    '[V4+ Styles]', 'Format: Name, Fontname, Fontsize', 'Style: Default,Arial,53', 'Style: 中文字幕,Arial,58', 'Style: CN,Arial,58',
+    '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    'Dialogue: 0,0:00:01.00,0:00:04.00,中文字幕,Alex,0,0,0,,Ender Dragon 来了',
+    'Dialogue: 0,0:00:01.00,0:00:04.00,CN,Alex,0,0,0,,Ender Dragon 来了',
+    'Dialogue: 0,0:00:01.00,0:00:04.00,Default,Alex,0,0,0,,The Ender Dragon is here',
+  ].join('\n');
+  fs.writeFileSync(path.join(dupDir, 'subtitle.ass'), DUP);
+  fs.writeFileSync(path.join(dupDir, 'project.json'), JSON.stringify({ id: 'p-gl-dup', subtitle: { format: 'ass', file: 'subtitle.ass' } }));
+  const dp = await s.call('/api/projects/p-gl-dup/glossary-apply-project', {
+    method: 'POST',
+    body: JSON.stringify({ terms: [{ src: 'Ender Dragon', dst: '末影龙' }], saveToScheme: false }),
+  });
+  const dpText = await dp.text();
+  assert.equal(dp.status, 200, dpText);
+  assert.ok(JSON.parse(dpText).replaced >= 1, '重复中文轨应用成功');
+  const dupAfter = fs.readFileSync(path.join(dupDir, 'subtitle.ass'), 'utf8');
+  assert.equal((dupAfter.match(/末影龙 来了/g) || []).length, 2, '两条中文轨都替换:\n' + dupAfter);
+
   // 单语中文 SRT（导入稿件没有独立译文轨）：直接替换正文
   const srtDir = path.join(s.root, 'projects/p-gl-srt');
   fs.mkdirSync(srtDir, { recursive: true });

@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "c2a3bdd9f53ba020417ae5d89d26f4963f39b0cd8602882fa890c57721c3d5ae",
+      "sha256": "e30678032a279e2a0cad535c27512c89c6422eeec3ccabab3003ba23f95becee",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -556,7 +556,7 @@
     },
     {
       "file": "editor/js/editor.js",
-      "sha256": "f05d097a94b20c0b38d2db9be1fbb453cef20681255de67d348b61286a19ad8f",
+      "sha256": "3877534a2a743da0f9e6a4d78751e9b0c980626d8e65964e9332f8d38b27a3b3",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -565,51 +565,55 @@
           "method": "innerHTML"
         },
         {
-          "line": 617,
+          "line": 624,
           "method": "innerHTML"
         },
         {
-          "line": 688,
+          "line": 627,
+          "method": "insertAdjacentHTML"
+        },
+        {
+          "line": 698,
           "method": "innerHTML"
         },
         {
-          "line": 768,
+          "line": 778,
           "method": "innerHTML"
         },
         {
-          "line": 808,
+          "line": 818,
           "method": "innerHTML"
         },
         {
-          "line": 820,
+          "line": 830,
           "method": "innerHTML"
         },
         {
-          "line": 855,
+          "line": 865,
           "method": "innerHTML"
         },
         {
-          "line": 1176,
+          "line": 1186,
           "method": "createElement"
         },
         {
-          "line": 1179,
+          "line": 1189,
           "method": "innerHTML"
         },
         {
-          "line": 1301,
+          "line": 1311,
           "method": "innerHTML"
         },
         {
-          "line": 1319,
+          "line": 1329,
           "method": "innerHTML"
         },
         {
-          "line": 1452,
+          "line": 1462,
           "method": "createElement"
         },
         {
-          "line": 1459,
+          "line": 1469,
           "method": "innerHTML"
         }
       ],
@@ -745,7 +749,7 @@
     },
     {
       "file": "editor/js/glossary-review.js",
-      "sha256": "4394741cb34f5a1d400c8a9674b24627ad7ed2a3ca054a2502f16d6810dfd355",
+      "sha256": "7b48188560e280791b7e94be4ac82d49ce875e72c439dfddb7b8894033d1a249",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -807,7 +811,7 @@
     },
     {
       "file": "editor/js/karaoke.js",
-      "sha256": "681635f4dfa0645ea8e213d78fd9b014922e80d6900e1f3f987a50202427491b",
+      "sha256": "acf82dc974c443962269de87a7fb7f0d8f45c27b9cb9fd7fce16dbbfc25a8262",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -815,7 +819,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "9a91c2f0f87262b4fa44402de0c3e5b392ca8a0b6f5ffb949ffb97983512d45e",
+      "sha256": "7392bdfe260634dc4de3e1f8e832a8c78ddc596e259fa7a76cf5a03b06400685",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -934,107 +938,107 @@
           "method": "innerHTML"
         },
         {
-          "line": 6539,
+          "line": 6576,
           "method": "innerHTML"
         },
         {
-          "line": 6594,
+          "line": 6631,
           "method": "innerHTML"
         },
         {
-          "line": 6753,
+          "line": 6790,
           "method": "innerHTML"
         },
         {
-          "line": 7086,
+          "line": 7123,
           "method": "createElement"
         },
         {
-          "line": 7124,
+          "line": 7161,
           "method": "createElement"
         },
         {
-          "line": 7179,
+          "line": 7183,
           "method": "innerHTML"
         },
         {
-          "line": 7181,
+          "line": 7185,
           "method": "innerHTML"
         },
         {
-          "line": 7181,
+          "line": 7185,
           "method": "innerHTML"
         },
         {
-          "line": 7346,
+          "line": 7350,
           "method": "createElement"
         },
         {
-          "line": 7374,
+          "line": 7378,
           "method": "createElement"
         },
         {
-          "line": 7385,
+          "line": 7389,
           "method": "innerHTML"
         },
         {
-          "line": 7454,
+          "line": 7458,
           "method": "innerHTML"
         },
         {
-          "line": 7455,
+          "line": 7459,
           "method": "innerHTML"
         },
         {
-          "line": 7483,
+          "line": 7487,
           "method": "innerHTML"
         },
         {
-          "line": 7710,
+          "line": 7714,
           "method": "innerHTML"
         },
         {
-          "line": 7865,
+          "line": 7869,
           "method": "replaceChildren"
         },
         {
-          "line": 7871,
+          "line": 7875,
           "method": "innerHTML"
         },
         {
-          "line": 7916,
+          "line": 7920,
           "method": "innerHTML"
         },
         {
-          "line": 7917,
+          "line": 7921,
           "method": "innerHTML"
         },
         {
-          "line": 7938,
+          "line": 7942,
           "method": "innerHTML"
         },
         {
-          "line": 7951,
+          "line": 7955,
           "method": "innerHTML"
         },
         {
-          "line": 8246,
+          "line": 8250,
           "method": "createElement"
         },
         {
-          "line": 8251,
+          "line": 8255,
           "method": "innerHTML"
         },
         {
-          "line": 8260,
+          "line": 8264,
           "method": "createElement"
         },
         {
-          "line": 8266,
+          "line": 8270,
           "method": "createElement"
         },
         {
-          "line": 8268,
+          "line": 8272,
           "method": "createElement"
         }
       ],
@@ -1063,12 +1067,12 @@
     },
     {
       "file": "editor/js/monet.js",
-      "sha256": "eeda69ea0b0c34bcf7dea7bf45b4849a42e93eb79b153b2d5d552c96b0508719",
+      "sha256": "b5f6c0b1d96e2321c606b610100e4d94f2ca36161d4f0bedde241634a06b2916",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
         {
-          "line": 130,
+          "line": 195,
           "method": "createElement"
         }
       ],
@@ -1097,7 +1101,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "63e1bc3a303e34fa1b56a57e790e66f3de27c42e4ff5f9bbd53a997c136df3dd",
+      "sha256": "3a144458758426be52ee414ac338a990b66441743a63ba234c31683b305381be",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1402,83 +1406,87 @@
           "method": "innerHTML"
         },
         {
-          "line": 4509,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4535,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4537,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4541,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4543,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4693,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4704,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4706,
+          "line": 4407,
           "method": "createElement"
         },
         {
-          "line": 4708,
+          "line": 4598,
           "method": "innerHTML"
         },
         {
-          "line": 5253,
+          "line": 4624,
           "method": "innerHTML"
         },
         {
-          "line": 5256,
+          "line": 4626,
           "method": "innerHTML"
         },
         {
-          "line": 5274,
+          "line": 4630,
           "method": "innerHTML"
         },
         {
-          "line": 5277,
+          "line": 4632,
           "method": "innerHTML"
         },
         {
-          "line": 5306,
+          "line": 4782,
           "method": "innerHTML"
         },
         {
-          "line": 5536,
+          "line": 4793,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4795,
           "method": "createElement"
         },
         {
-          "line": 6089,
+          "line": 4797,
           "method": "innerHTML"
         },
         {
-          "line": 6158,
+          "line": 5342,
           "method": "innerHTML"
         },
         {
-          "line": 6158,
+          "line": 5345,
           "method": "innerHTML"
         },
         {
-          "line": 6396,
+          "line": 5363,
           "method": "innerHTML"
         },
         {
-          "line": 6413,
+          "line": 5366,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5395,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5625,
+          "method": "createElement"
+        },
+        {
+          "line": 6183,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6252,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6252,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6490,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6507,
           "method": "innerHTML"
         }
       ],
@@ -1596,7 +1604,7 @@
     },
     {
       "file": "editor/js/studio-state.js",
-      "sha256": "6729fb75583edde409c8f0186be8769365f3122144a6870073761f98bc2cb9fc",
+      "sha256": "ff5abe62586593182b86922fb75259e0fa5ee7af4f6b863078e3ef748be7c14e",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -1612,7 +1620,7 @@
     },
     {
       "file": "editor/js/studio.js",
-      "sha256": "6eaf40266ee4d5b251fa0da14cf10a88811a718a84c12e8353d2fc56f388cf75",
+      "sha256": "851c266e2afaedbf3f9b63fcfc3a3390388c88021515416acc211a4f20218829",
       "ids": [],
       "dynamicIds": [
         "sf-choice-menu",
@@ -1639,99 +1647,75 @@
       ],
       "dynamic": [
         {
-          "line": 265,
+          "line": 267,
           "method": "innerHTML"
         },
         {
-          "line": 307,
+          "line": 309,
           "method": "createElement"
         },
         {
-          "line": 661,
+          "line": 668,
           "method": "createElement"
         },
         {
-          "line": 923,
-          "method": "createElement"
-        },
-        {
-          "line": 987,
-          "method": "createElement"
-        },
-        {
-          "line": 988,
-          "method": "createElement"
-        },
-        {
-          "line": 994,
-          "method": "createElement"
-        },
-        {
-          "line": 995,
-          "method": "createElement"
-        },
-        {
-          "line": 1101,
-          "method": "createElement"
-        },
-        {
-          "line": 1103,
+          "line": 698,
           "method": "innerHTML"
         },
         {
-          "line": 1111,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1117,
+          "line": 975,
           "method": "createElement"
         },
         {
-          "line": 1119,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1272,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1293,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2131,
+          "line": 1039,
           "method": "createElement"
         },
         {
-          "line": 2131,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2134,
+          "line": 1040,
           "method": "createElement"
         },
         {
-          "line": 2145,
+          "line": 1046,
           "method": "createElement"
         },
         {
-          "line": 2152,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2152,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2158,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2178,
+          "line": 1047,
           "method": "createElement"
         },
         {
-          "line": 2179,
+          "line": 1153,
+          "method": "createElement"
+        },
+        {
+          "line": 1155,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1163,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1169,
+          "method": "createElement"
+        },
+        {
+          "line": 1171,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1324,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1345,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2183,
+          "method": "createElement"
+        },
+        {
+          "line": 2183,
           "method": "innerHTML"
         },
         {
@@ -1739,27 +1723,7 @@
           "method": "createElement"
         },
         {
-          "line": 2189,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2192,
-          "method": "createElement"
-        },
-        {
-          "line": 2197,
-          "method": "createElement"
-        },
-        {
-          "line": 2199,
-          "method": "createElement"
-        },
-        {
-          "line": 2202,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2203,
+          "line": 2198,
           "method": "createElement"
         },
         {
@@ -1767,55 +1731,103 @@
           "method": "innerHTML"
         },
         {
-          "line": 2267,
+          "line": 2205,
           "method": "innerHTML"
         },
         {
-          "line": 2432,
+          "line": 2211,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2231,
           "method": "createElement"
         },
         {
-          "line": 2475,
+          "line": 2232,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2239,
+          "method": "createElement"
+        },
+        {
+          "line": 2242,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2245,
+          "method": "createElement"
+        },
+        {
+          "line": 2250,
+          "method": "createElement"
+        },
+        {
+          "line": 2252,
+          "method": "createElement"
+        },
+        {
+          "line": 2255,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2256,
+          "method": "createElement"
+        },
+        {
+          "line": 2258,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2320,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2485,
+          "method": "createElement"
+        },
+        {
+          "line": 2528,
           "method": "replaceChildren"
         },
         {
-          "line": 2481,
+          "line": 2534,
           "method": "createElement"
         },
         {
-          "line": 2484,
+          "line": 2537,
           "method": "createElement"
         },
         {
-          "line": 2488,
+          "line": 2541,
           "method": "createElement"
         },
         {
-          "line": 2489,
+          "line": 2542,
           "method": "createElement"
         },
         {
-          "line": 2489,
+          "line": 2542,
           "method": "innerHTML"
         },
         {
-          "line": 2562,
+          "line": 2615,
           "method": "createElement"
         },
         {
-          "line": 2564,
+          "line": 2617,
           "method": "createElement"
         },
         {
-          "line": 2567,
+          "line": 2620,
           "method": "createElement"
         },
         {
-          "line": 2568,
+          "line": 2621,
           "method": "createElement"
         },
         {
-          "line": 2568,
+          "line": 2621,
           "method": "innerHTML"
         }
       ],
@@ -1909,7 +1921,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "3767d9b7a7894cfabb19b23d235bb7a3a67d3ddff123c5fdc4bc0b9abecd25c8",
+      "sha256": "fa2626451afac1d1c13d8fbd7f3b25cca6c3c5b46f7b30fdf113eebbf255ce8a",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -1949,7 +1961,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "cf478e8f5525f251ddc8031e0e8d264169a42d601fe3e4eb23483f755d7e7921",
+      "sha256": "f850f2a70880aa94165aa024950d241aaa625b3a01af0cd89cee372bcf88944a",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2617,6 +2629,8 @@
         "sf-mu-widgets",
         "sf-nav",
         "sf-notice",
+        "sf-palette-list",
+        "sf-palette-row",
         "sf-rim-axis",
         "sf-rim-bri",
         "sf-rim-bri-gain",
@@ -2737,7 +2751,10 @@
         "st-scheme-close",
         "st-scheme-cur",
         "st-scheme-drawer",
+        "st-scheme-export",
+        "st-scheme-file",
         "st-scheme-hint",
+        "st-scheme-import",
         "st-scheme-list",
         "st-scheme-name",
         "st-scheme-name-error",
