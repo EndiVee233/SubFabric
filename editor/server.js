@@ -130,8 +130,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.4.2'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.4.2'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.4.3'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.4.3'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -1258,17 +1258,44 @@ function startQwenRuntimeInstall() {
       if (!(await cudaProbe())) {
         throw new Error('CUDA PyTorch 安装后仍不可用：请确认 NVIDIA 驱动正常，或到「设置 → 语音识别」检查 CUDA 运行时');
       }
-      prog(34, '安装 Transformers 5.20 / Accelerate…');
+      prog(34, '安装 Transformers 5.20 / Accelerate / soundfile…');
       await pipInstallRetry(py, ['-m', 'pip', 'install', '--upgrade',
-        'transformers==5.20.2', 'accelerate',
+        'transformers==5.20.2', 'accelerate', 'soundfile',
         '-i', NEMO_PIP_INDEX, '--extra-index-url', 'https://pypi.org/simple'], 1800000,
         line => prog(38 + Math.min(52, String(line).length / 5), '安装 Qwen 运行依赖…'));
       prog(92, '验证 Qwen 运行时…');
-      const out = await runCapture(py, ['-c', 'import torch, transformers; print(torch.cuda.is_available()); print(transformers.__version__)'], 180000);
-      const lines = String(out.stdout || '').trim().split(/\r?\n/);
-      if (!/^true$/i.test(lines[0] || '')) throw new Error('Qwen 运行时没有可用的 CUDA');
-      if (!/^5\.20/.test(lines[1] || '')) throw new Error('Transformers 版本不是 5.20：' + (lines[1] || '?'));
-      fs.writeFileSync(QWEN_RUNTIME_MARK, JSON.stringify({ transformers: lines[1].trim(), python: py, at: new Date().toISOString() }, null, 2));
+      /* 对齐脚本要读音频，只验 torch/transformers 不够：qwen_align.py 还要 import soundfile，
+         少了它要到第一次全片重校对才炸在子进程里（2026-11-04 就漏过这一个包）。
+         逐项 import 各给一条明确报错，别把「缺包」误报成「没有 CUDA」。 */
+      const probeScript = [
+        'import importlib, json',
+        'info = {}',
+        'try:',
+        '    torch = importlib.import_module("torch")',
+        '    info["torch"] = torch.__version__',
+        '    info["cuda"] = bool(torch.cuda.is_available())',
+        'except Exception as exc:',
+        '    info["torchError"] = str(exc)',
+        'try:',
+        '    info["tf"] = importlib.import_module("transformers").__version__',
+        'except Exception as exc:',
+        '    info["tfError"] = str(exc)',
+        'try:',
+        '    info["sf"] = importlib.import_module("soundfile").__version__',
+        'except Exception as exc:',
+        '    info["sfError"] = str(exc)',
+        'print(json.dumps(info))',
+      ].join('\n');
+      const out = await runCapture(py, ['-c', probeScript], 180000);
+      let probeInfo = {};
+      try {
+        probeInfo = JSON.parse(String(out.stdout || '').trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
+      } catch { probeInfo = {}; }
+      if (!probeInfo.torch) throw new Error('Qwen 运行时里的 PyTorch 不可用：' + (probeInfo.torchError || '见运行时日志'));
+      if (!probeInfo.cuda) throw new Error('Qwen 运行时没有可用的 CUDA（PyTorch ' + probeInfo.torch + '）：需要 NVIDIA 驱动与 CUDA 版 torch，点「安装运行时」会自动换装');
+      if (!/^5\.20/.test(probeInfo.tf || '')) throw new Error('Transformers 版本不是 5.20：' + (probeInfo.tf || probeInfo.tfError || '?'));
+      if (!probeInfo.sf) throw new Error('Qwen 运行时缺少 soundfile（读取音频用）：' + (probeInfo.sfError || '未安装') + '，请重新点「安装运行时」');
+      fs.writeFileSync(QWEN_RUNTIME_MARK, JSON.stringify({ transformers: probeInfo.tf, python: py, at: new Date().toISOString() }, null, 2));
       dlState(key, { running: false, kind: 'runtime:qwen', pct: 100, msg: 'Qwen CUDA 运行时就绪', error: null });
     } catch (e) {
       const msg = String((e && e.message) || e).slice(0, 400);
@@ -9103,7 +9130,7 @@ function startPrepare(id, videoPath, mode) {
       `$p = if ($r -eq [System.Windows.Forms.DialogResult]::OK) { ${isFolder ? '$d.SelectedPath' : '$d.FileName'} } else { '' }`,
       // 显式 UTF-8 无 BOM 写盘, 与 Node 侧的读取编码对齐
       `[System.IO.File]::WriteAllText('${tmpPs}', $p, (New-Object System.Text.UTF8Encoding($false)))`,
-    ].join('; ');
+    ].join('\n');
 
     const cleanup = () => { try { fs.unlinkSync(tmp); } catch {} };
     const p = spawn('powershell.exe', ['-NoProfile', '-STA', '-Command', ps], { windowsHide: true });

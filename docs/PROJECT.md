@@ -11,13 +11,13 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.4.2` / 文件版本
-  `1.5.4.2`（npm `1.5.4-beta.2`）。本轮把本机工作区在跑的功能并回主线：主题强调色改成**按主题包各自保存**
-  （`accentByPack`，切包不复用上一个包的颜色）、莫奈取色下方新增**三分配色预览**、样式方案支持**导入/导出**、
-  详情页与新建页都能单独「解析」在线链接补标题/作者/封面；另外修掉两处运行环境问题：Qwen 对齐运行时先装
-  CUDA 版 PyTorch 再装依赖（`accelerate` 会把 CPU 版 torch 一起拉进来），以及嵌入式 Python 下
-  `qwen_align.py` / `diarize.py` 缺脚本目录导致 `import common` 失败。存储空间清理与两套主题下线沿用
-  1.5.4.1；真实 GPU 推理与媒体导出不在本轮验收范围，GitHub 保存与发布结果独立核对。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.4.3` / 文件版本
+  `1.5.4.3`（npm `1.5.4-beta.3`）。本轮补齐 Qwen 对齐运行时的两处安装缺陷：安装清单加上 `soundfile`
+  （对齐脚本要用它读音频，之前漏装，直到第一次全片重校对才在子进程里报 `ModuleNotFoundError`），
+  握手验证改成 torch / CUDA / transformers / soundfile 逐项探测，缺什么报什么，不再把「缺包」误报成
+  「没有可用的 CUDA」；`qwen_align.py` 也在缺包时给出可执行的提示而不是 traceback。上一轮并回主线的
+  主题强调色按包保存、三分配色预览、样式方案导入导出、详情页「解析」在线链接等改动一并延续；
+  存储空间清理与两套主题下线沿用 1.5.4.1；真实 GPU 推理与媒体导出不在本轮验收范围。
 - **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
   `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
   仅运行桌面开发入口时也须先 `npm --prefix desktop run stage`，再 `npm --prefix desktop start`；
@@ -1008,9 +1008,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.4.2'`、`APP_FILE_VERSION = '1.5.4.2'`、npm version `1.5.4-beta.2`。
+  `APP_VERSION = 'beta 1.5.4.3'`、`APP_FILE_VERSION = '1.5.4.3'`、npm version `1.5.4-beta.3`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.4.2-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.4.3-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron

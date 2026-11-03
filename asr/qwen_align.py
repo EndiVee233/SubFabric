@@ -49,7 +49,13 @@ def main():
     # 重导入（torch/transformers 约 5s）放到 watch_parent 之后：父进程在加载模型期间
     # 退出时，看护线程也能尽早发现，不留下长时间孤儿。
     import numpy as np
-    import soundfile as sf
+    try:
+        import soundfile as sf
+    except ModuleNotFoundError:
+        # 安装流程漏装过 soundfile（2026-11-04）：给出可执行的提示，别只甩 traceback。
+        raise SystemExit(
+            "缺少 soundfile：Qwen 对齐要用它读取音频。"
+            "到「设置 → 模型与配置」的 Qwen 卡片重新点「安装运行时」即可补上。")
     import torch
     from transformers import AutoModelForTokenClassification, AutoProcessor
 
