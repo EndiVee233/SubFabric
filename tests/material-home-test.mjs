@@ -15,13 +15,25 @@ assert.equal(mirror, studioSource, 'studio.js test mirror stays byte-identical t
 
 for (const id of [
   'dashboard-view', 'sf-mu-home', 'sf-mu-new', 'sf-mu-resume', 'sf-mu-next-title',
-  'sf-mu-next-meta', 'sf-mu-resume-cta', 'sf-mu-temp', 'sf-mu-status-num',
+  'sf-mu-next-meta', 'sf-mu-resume-cta', 'sf-mu-temp', 'sf-mu-status-num', 'sf-mu-greeting', 'sf-mu-edits-total',
 ]) assert.match(template, new RegExp(`id="${id}"`), `${id} is present in the homepage template`);
 
 assert.match(template, /class="sf-hero"/, 'Material You uses the legacy three-column hero');
 assert.match(template, /class="sf-flower"/, 'new-work entry uses the Material flower silhouette');
 assert.match(template, /class="sf-resume"/, 'resume card is present');
-assert.match(template, /class="sf-orbit"/, 'editable count uses the tilted Material capsule');
+assert.match(template, /id="sf-mu-resume-detail">详情信息/, 'resume card has details button');
+assert.match(studio, /#\/details\/.*encodeURIComponent\(id\)/, 'details button opens the details route');
+assert.match(css, /\.sf-resume-actions \.btn:hover \{[^}]*border-color:var\(--accent\)[^}]*translateY\(-1px\)/, 'resume buttons lift and light on hover');
+assert.match(template, /class="sf-mu-widget sf-mu-combo"[\s\S]*?data-mu-action="new"[\s\S]*?data-mu-action="batch"/,
+  '新建稿件长卡内嵌批量初稿子选项');
+assert.match(css, /\.sf-mu-combo \{[^}]*grid-column:span 2;/, '合并卡横跨两列');
+assert.match(css, /\.sf-mu-combo-main \{[^}]*position:absolute; inset:0;/, '新建稿件主卡铺满整张长卡');
+assert.match(css, /\.sf-mu-combo-batch \{[^}]*position:absolute; top:8px; right:8px; bottom:8px; z-index:2; width:47.5%/, '批量初稿覆盖在右侧且边界对齐');
+assert.match(css, /\.sf-mu-combo:hover \.sf-mu-combo-batch \{[^}]*border-color:var\(--accent\)/, '长卡悬浮时两半同时亮框');
+assert.match(css, /\.sf-mu-combo-batch:hover \{[^}]*translateY\(-1px\)[^}]*border-color:var\(--accent\)/, '批量初稿悬浮轻微上浮并亮框');
+assert.match(css, /\.sf-mu \.sf-orbit,[\s\S]*?transform:rotate\(40deg\)/, '胶囊整体固定旋转 40°');
+assert.match(css, /\.sf-mu \.sf-orbit > span,[\s\S]*?transform:rotate\(-40deg\)/, '胶囊文字反向旋转保持水平');
+assert.match(css, /\.sf-mu \.sf-orbit:hover,[\s\S]*?transform:rotate\(40deg\)[\s\S]*?translate:0 -2px/, '悬浮时旋转不变、仅上浮');
 assert.equal((template.match(/sf-mu-search-form/g) || []).length, 0, 'New Tab search is removed from the Material homepage');
 assert.match(template, /id="sf-mu-attention"[\s\S]*?data-mu-attn="resume"[\s\S]*?data-mu-attn="details"/,
   'attention card exposes continue and details overlay actions');
@@ -30,6 +42,9 @@ assert.match(studio, /dataset\.muAttn === 'resume'[\s\S]*?#\/project\//,
 
 assert.match(studio, /let projects = \[\], filter = 'all', folder = '', route = location\.hash \|\| '#\/dashboard'/,
   'dashboard is the default route');
+assert.match(studio, /renderEditStats\(\)/, '主页圆环渲染已接线');
+assert.match(studio, /\/api\/oplog\/stats\?days=7/, '圆环读取最近 7 天日志统计');
+assert.match(studio, /greeting\.textContent = materialGreeting\(now\.getHours\(\)\)/, '花形按钮按小时显示问候语');
 assert.match(studio, /function isMaterialHome\(\) \{ return document\.body\.dataset\.themePack === 'material-you'; \}/,
   'Material You detection is scoped to the theme pack');
 assert.match(studio, /const mode = on \? 'material' : 'widgets';/,

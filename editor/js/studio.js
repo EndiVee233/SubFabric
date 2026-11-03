@@ -1,4 +1,4 @@
-import { STUDIO_KEY, defaults, normalizeStudio, projectPhase, matchesProject, imageData } from './studio-state.js';
+import { STUDIO_KEY, defaults, normalizeStudio, projectPhase, matchesProject, imageData, materialGreeting } from './studio-state.js';
 import { configure as configureRim, updateParams as updateRimParams } from './rim-curve.js';
 import { escapeHtml as esc, fmtTime, popOrigin } from './util.js';
 import { t } from './i18n.js';
@@ -1425,6 +1425,8 @@ function updateMuClock() {
   const now = new Date();
   const date = $('sf-mu-date');
   if (date) date.textContent = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(now);
+  const greeting = $('sf-mu-greeting');
+  if (greeting) greeting.textContent = materialGreeting(now.getHours());
   const hourHand = $('sf-mu-clock-hour'), minuteHand = $('sf-mu-clock-minute'), secondHand = $('sf-mu-clock-second'), flowerFace = $('sf-mu-flower-face');
   const hourDeg = ((now.getHours() % 12) + now.getMinutes() / 60) * 30;
   const minuteDeg = now.getMinutes() * 6;
@@ -1474,14 +1476,203 @@ function renderMuProcessing() {
   if (durEl) durEl.textContent = fmtMuDuration(dur);
   if (devEl) devEl.textContent = muDeviceOf(latest);
 }
+function renderEditStats() {
+  const box = $('sf-mu-edits-segments');
+  const totalEl = $('sf-mu-edits-total');
+  if (!box || !totalEl) return;
+  const projectsInStats = (editStats && Array.isArray(editStats.projects) ? editStats.projects : [])
+    .filter(item => item && Number(item.count) > 0);
+  const total = projectsInStats.reduce((sum, item) => sum + Number(item.count), 0);
+  totalEl.textContent = total ? total.toLocaleString('zh-CN') : '0';
+  const c = 2 * Math.PI * 50;
+  const rootStyle = typeof getComputedStyle === 'function' ? getComputedStyle(document.documentElement) : null;
+  const cssColor = (name, fallback) => {
+    const value = rootStyle ? rootStyle.getPropertyValue(name).trim() : '';
+    return value || fallback;
+  };
+  const colors = ['--accent', '--info', '--success', '--warning', '--danger']
+    .map((name, i) => cssColor(name, ['#669c3b', '#5789dc', '#4caf7d', '#f0a830', '#e05a5a'][i]));
+  box.replaceChildren();
+  if (!total) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const gap = projectsInStats.length > 1 ? 2.5 : 0;
+  let offset = 0;
+  projectsInStats.forEach((item, i) => {
+    const length = Math.max(0, (Number(item.count) / total) * c - gap);
+    if (length <= 0) return;
+    const seg = document.createElementNS(ns, 'circle');
+    seg.setAttribute('class', 'sf-mu-edits-seg');
+    seg.setAttribute('cx', '60'); seg.setAttribute('cy', '60'); seg.setAttribute('r', '50');
+    seg.setAttribute('stroke-dasharray', `${length.toFixed(2)} ${(c - length).toFixed(2)}`);
+    seg.setAttribute('stroke-dashoffset', `${(-offset).toFixed(2)}`);
+    seg.style.stroke = i < colors.length ? colors[i]
+      : `color-mix(in srgb, ${colors[0]} ${Math.max(25, 80 - i * 8)}%, ${colors[i % colors.length]})`;
+    box.appendChild(seg);
+    offset += (Number(item.count) / total) * c;
+  });
+}
+let editStats = null, editStatsAt = 0, editStatsBusy = false;
+async function refreshEditStats() {
+  if (editStatsBusy) return;
+  editStatsBusy = true;
+  try {
+    const response = await fetch('/api/oplog/stats?days=7', { cache: 'no-store' });
+    if (!response.ok) return;
+    const data = await response.json().catch(() => null);
+    if (!data || !Array.isArray(data.projects)) return;
+    editStats = data;
+    editStatsAt = Date.now();
+    renderEditStats();
+  } catch { /* 日志统计失败不影响主页其它内容 */ }
+  finally { editStatsBusy = false; }
+}
+let ytState = null, ytAt = 0, ytBusy = false;
+const ytCoverSeeds = new Map();
+const YT_CHANNELS = [
+  { id: 'wemmbu', name: 'Wemmbu' }, { id: 'parrot', name: 'Parrot' },
+  { id: 'spoke', name: 'Spoke' }, { id: 'flame', name: 'FlameFrags' },
+];
+const YT_REFRESH_MS = 5 * 60 * 1000;
+function fmtYtDuration(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  if (!s) return '—';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    : `${m}:${String(sec).padStart(2, '0')}`;
+}
+function fmtYtPublished(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '更新时间未知';
+  const d = new Date(t);
+  const pad = value => String(value).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function ytRecentWeekCount() {
+  if (!ytState || !Array.isArray(ytState.channels)) return 0;
+  const cutoff = Date.now() - 7 * 86400000;
+  return ytState.channels.reduce((count, channel) => {
+    const at = Date.parse(channel && channel.video && channel.video.published);
+    return count + (Number.isFinite(at) && at >= cutoff ? 1 : 0);
+  }, 0);
+}
+async function tintYoutubeCard(card, video) {
+  if (!card || !video || !video.thumbnail || !themes) return;
+  const key = video.id || video.thumbnail;
+  try {
+    let seeds = ytCoverSeeds.get(key);
+    if (!seeds) {
+      /* 动态加载，旧服务缺少 monet.js 时不影响主页。 */
+      const { extractSeedCandidatesFromImageSrc } = await import('./monet.js');
+      seeds = await extractSeedCandidatesFromImageSrc(video.thumbnail, { cors: true, count: 3, max: 72 });
+      if (!Array.isArray(seeds) || !seeds.length) return;
+      ytCoverSeeds.set(key, seeds);
+    }
+    const dark = document.body.dataset.theme === 'dark';
+    const pals = seeds.slice(0, 3).map(seed => themes.palette(seed, dark));
+    const base = pals[0];
+    const tone = (pal, name) => `color-mix(in srgb, ${pal[name]} 52%, ${pal['--surface']})`;
+    const c1 = tone(base, '--accent-soft');
+    const c2 = tone(pals[1] || base, pals[1] ? '--accent-soft' : '--secondary-container');
+    const c3 = tone(pals[2] || base, pals[2] ? '--accent-soft' : '--tertiary-container');
+    card.style.setProperty('--yt-bg', c1);
+    card.style.setProperty('--yt-flow', `linear-gradient(135deg, ${c1} 0%, ${c2} 52%, ${c3} 100%)`);
+    card.style.setProperty('--yt-border', base['--line']);
+    card.style.setProperty('--yt-text', base['--text']);
+    card.style.setProperty('--yt-muted', base['--muted']);
+    card.style.setProperty('--yt-accent', base['--accent']);
+    card.dataset.coverTinted = '1';
+  } catch { /* 封面跨域/解码失败时保留默认主题底色 */ }
+}
+function renderYoutubeUpdates() {
+  const grid = $('sf-mu-yt-grid');
+  if (!grid) return;
+  const loaded = ytState && Array.isArray(ytState.channels) ? ytState.channels : [];
+  const channels = loaded.length ? loaded : YT_CHANNELS.map(channel => ({ ...channel, video: null }));
+  grid.replaceChildren();
+  for (const channel of channels) {
+    const video = channel.video || null;
+    const card = document.createElement(video && video.url ? 'a' : 'div');
+    card.className = 'sf-mu-yt-card';
+    if (video && video.url) {
+      card.href = video.url;
+      card.target = '_blank';
+      card.rel = 'noopener noreferrer';
+    }
+    const thumb = document.createElement('div');
+    thumb.className = 'sf-mu-yt-thumb' + (video ? '' : ' sf-mu-yt-empty');
+    if (video && video.thumbnail) {
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.alt = video.title || channel.name;
+      img.addEventListener('error', () => { thumb.textContent = '封面加载失败'; });
+      img.src = video.thumbnail;
+      thumb.appendChild(img);
+    } else {
+      thumb.textContent = '暂无更新';
+    }
+    const channelLine = document.createElement('div');
+    channelLine.className = 'sf-mu-yt-channel';
+    channelLine.innerHTML = `<span>${esc(channel.name)}</span><span>YouTube</span>`;
+    const title = document.createElement('div');
+    title.className = 'sf-mu-yt-title';
+    title.textContent = video ? video.title : '还没有读取到视频';
+    const meta = document.createElement('div');
+    meta.className = 'sf-mu-yt-meta';
+    meta.innerHTML = `<span>${video ? fmtYtDuration(video.duration) : '—'}</span><span>${video ? fmtYtPublished(video.published) : '等待刷新'}</span>`;
+    card.append(thumb, channelLine, title, meta);
+    grid.appendChild(card);
+    if (video) tintYoutubeCard(card, video);
+  }
+  const statusNum = $('sf-mu-status-num');
+  if (statusNum) statusNum.textContent = String(ytRecentWeekCount());
+}
+async function loadYoutubeUpdates(force = false) {
+  if (ytBusy) return;
+  if (!isMaterialHome()) return;
+  if (!force && ytState && Date.now() - ytAt < YT_REFRESH_MS) { renderYoutubeUpdates(); return; }
+  ytBusy = true;
+  try {
+    const response = await fetch('/api/youtube/updates' + (force ? '?refresh=1' : ''), {
+      cache: 'no-store', signal: AbortSignal.timeout(30000),
+    });
+    const data = await response.json().catch(() => null);
+    if (response.ok && data && Array.isArray(data.channels)) {
+      ytState = data;
+      ytAt = Date.now();
+      renderYoutubeUpdates();
+    } else {
+      ytState = {
+        ...(ytState || {}),
+        channels: (ytState && ytState.channels) || YT_CHANNELS.map(channel => ({ ...channel, video: null })),
+        stale: true,
+        errors: [`接口返回 ${response.status}`],
+      };
+      renderYoutubeUpdates();
+    }
+  } catch (error) {
+    /* 断网保留上次数据；首次失败时把原因显示在组件标题下方。 */
+    if (!ytState) {
+      ytState = { channels: YT_CHANNELS.map(channel => ({ ...channel, video: null })), stale: true, errors: [String(error && error.message || error)] };
+      renderYoutubeUpdates();
+    }
+  }
+  finally {
+    ytBusy = false;
+  }
+}
 function renderMaterialHome() {
   const root = $('sf-mu-home');
   if (!root || root.hidden) return;
   updateMuClock();
+  renderEditStats();
+  renderYoutubeUpdates();
+  loadYoutubeUpdates();
+  if (!editStats || Date.now() - editStatsAt > 20000) refreshEditStats();
   const counts = muCounts();
   const current = projects.find(p => p.id === prefs.recent) || null;
   const write = (id, value) => { const el = $(id); if (el) el.textContent = String(value); };
-  write('sf-mu-status-num', counts.ready);
+  write('sf-mu-status-num', ytRecentWeekCount());
   renderMuProcessing();
   write('sf-mu-ready-widget', counts.ready);
   write('sf-mu-attention-count', counts.attention);
@@ -1494,7 +1685,9 @@ function renderMaterialHome() {
   write('sf-mu-next-meta', current
     ? `${String(current.format || 'ASS').toUpperCase()}${current.subName ? ' · ' + current.subName : ''}`
     : '从视频或字幕开始');
-  write('sf-mu-resume-cta', current ? '继续编辑 →' : '新建稿件 →');
+  write('sf-mu-resume-cta', current ? '继续编辑' : '新建稿件');
+  const resumeDetail = $('sf-mu-resume-detail');
+  if (resumeDetail) resumeDetail.hidden = !current;
   const resume = $('sf-mu-resume');
   if (resume) resume.dataset.projectId = current?.id || '';
 
@@ -1769,7 +1962,7 @@ function animateDashboardCards() {
   void view.offsetWidth;
   view.classList.add('is-entering');
   clearTimeout(dashboardEnterTimer);
-  dashboardEnterTimer = setTimeout(() => view.classList.remove('is-entering'), 1100);
+  dashboardEnterTimer = setTimeout(() => view.classList.remove('is-entering'), 1500);
 }
 function animateLibraryCards() {
   const view = $('home-view');
@@ -1820,10 +2013,19 @@ function goLibraryFilter(nextFilter, clearSearch = true) {
   requestAnimationFrame(() => $('home-list')?.scrollIntoView({ block: 'start' }));
 }
 $('sf-mu-new').addEventListener('click', () => $('btn-new-project').click());
-$('sf-mu-temp').addEventListener('click', () => goLibraryFilter('ready'));
+$('sf-mu-temp').addEventListener('click', () => loadYoutubeUpdates(true));
 $('sf-mu-resume').addEventListener('click', () => {
   const id = $('sf-mu-resume').dataset.projectId;
   if (id) location.hash = '#/project/' + encodeURIComponent(id); else $('btn-new-project').click();
+});
+$('sf-mu-resume').addEventListener('keydown', (event) => {
+  if (event.target.closest('#sf-mu-resume-detail')) return;
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('sf-mu-resume').click(); }
+});
+$('sf-mu-resume-detail')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const id = $('sf-mu-resume').dataset.projectId;
+  if (id) location.hash = '#/details/' + encodeURIComponent(id);
 });
 $('sf-mu-widgets').addEventListener('click', (e) => {
   const attentionAction = e.target.closest('[data-mu-attn]');
@@ -1858,6 +2060,8 @@ $('sf-mu-widgets').addEventListener('click', (e) => {
 window.addEventListener('sf-studio-theme', () => syncDashboardMode(true));
 const muClockTimer = setInterval(updateMuClock, 1000);
 if (muClockTimer && typeof muClockTimer.unref === 'function') muClockTimer.unref();
+const youtubeTimer = setInterval(() => { if (!document.hidden) loadYoutubeUpdates(); }, YT_REFRESH_MS);
+if (youtubeTimer && typeof youtubeTimer.unref === 'function') youtubeTimer.unref();
 updateMuClock();
 syncDashboardMode();
 // Replay the card stagger whenever the dashboard page becomes visible again.
@@ -2420,11 +2624,9 @@ window.__sfStudio = {
     const editor = h === '#/editor' || h.startsWith('#/project/');
     const wasEditor = previous === '#/editor' || previous.startsWith('#/project/');
     document.body.dataset.workspace = editor ? 'editor' : h.slice(2).split('/')[0];
-    $('sf-nav').hidden = editor; $('sf-topbar').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
+    $('sf-nav').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
     const global = h === '#/settings';
     moveStyles(global);
-    const titles = { dashboard: '主页', home: '稿件库', storage: '存储空间', settings: '设置', help: '帮助与快捷键', new: '新建稿件', batch: '批量初稿', details: '稿件详情' };
-    $('sf-breadcrumb').textContent = t(titles[h.slice(2).split('/')[0]] || '字幕工作台');
     document.querySelectorAll('[data-route]').forEach(a => { const active = h === '#/' + a.dataset.route; a.classList.toggle('active', active); if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     if (global) {
       $('st-view').querySelector('.page-intro h1').textContent = t('设置');

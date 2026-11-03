@@ -46,8 +46,21 @@ export function normalizeStudio(value, themes) {
     imageDim: number(v.imageDim, 0, 80, defaults.imageDim),
     motion: v.motion === 'off' ? 'off' : 'on', custom, folders: unique, assignments, recent: id(v.recent) ? v.recent : '', view: v.view === 'list' ? 'list' : 'grid' };
 }
-export function projectPhase(project) {
-  if (project.fetching || project.prepare?.status === 'running' || project.draft?.status === 'running') return 'active';
+/** 主页花形按钮上的问候语：语气轻、短，按本地小时切换。 */
+export function materialGreeting(hour) {
+  const h = Math.max(0, Math.min(23, Math.floor(Number(hour) || 0)));
+  if (h >= 23 || h < 1) return '该睡啦';
+  if (h < 3) return '晚安 好梦';
+  if (h < 5) return '凌晨好，你起得真早';
+  if (h < 8) return '早上好';
+  if (h < 11) return '上午好，慢慢进入状态';
+  if (h < 13) return '中午好，记得吃饭';
+  if (h < 17) return '下午好，继续加油';
+  if (h < 19) return '傍晚好，收个尾吧';
+  if (h < 22) return '晚上好，慢慢来';
+  return '夜深了，早点休息';
+}
+export function projectPhase(project) {  if (project.fetching || project.prepare?.status === 'running' || project.draft?.status === 'running') return 'active';
   if (['error', 'paused'].includes(project.draft?.status) || project.prepare?.status === 'error' || project.videoExists === false) return 'attention';
   if (project.format) return 'ready';
   return project.draft?.status ? 'attention' : 'active';

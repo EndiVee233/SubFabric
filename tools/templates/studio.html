@@ -47,7 +47,7 @@
   <div id="sf-folders"></div>
   <div class="sf-nav-bottom"><a href="#/settings" data-route="settings" data-ico="sliders">设置</a><a href="#/help" data-route="help" data-ico="info">帮助与快捷键</a><p>本地工作空间 · 自动保存</p></div>
 </aside>
-<header id="sf-topbar" class="sf-topbar"><span>工作空间 <i>/</i> <b id="sf-breadcrumb">稿件库</b></span></header>
+
 <div id="sf-notice" role="status" hidden></div>
 <section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在稿件库看处理进度 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件，可导出样式预设；后处理特效保存在本机，导出时应用。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article></div></div></section>
 
@@ -1193,16 +1193,19 @@
             <line class="sf-mu-clock-hand sf-mu-clock-minute" id="sf-mu-clock-minute" x1="50" y1="50" x2="50" y2="17"/>
             <circle class="sf-mu-clock-second" id="sf-mu-clock-second" cx="50" cy="14" r="3.2"/>
           </svg></span>
-          <b>点击开始新的创作</b><small id="sf-mu-date">10月18日 星期六</small>
+          <b id="sf-mu-greeting">点击开始新的创作</b><small id="sf-mu-date">10月18日 星期六</small>
         </button>
-        <button type="button" class="sf-resume" id="sf-mu-resume">
+        <div class="sf-resume" id="sf-mu-resume" role="button" tabindex="0" aria-label="继续编辑当前稿件">
           <p class="sf-eyebrow" id="sf-mu-resume-eyebrow">当前正在编辑</p>
           <strong id="sf-mu-next-title">为每一句话，留出呼吸的空间。</strong>
           <small id="sf-mu-next-meta">从视频开始，把灵感变成字幕。</small>
-          <span class="btn" id="sf-mu-resume-cta">新建稿件 →</span>
-        </button>
-        <button type="button" class="sf-orbit" id="sf-mu-temp" title="查看可编辑稿件">
-          <span><b id="sf-mu-status-num">0</b><small>可编辑稿件</small></span>
+          <div class="sf-resume-actions">
+            <span class="btn" id="sf-mu-resume-cta">新建稿件</span>
+            <button type="button" class="btn sf-resume-detail" id="sf-mu-resume-detail">详情信息</button>
+          </div>
+        </div>
+        <button type="button" class="sf-orbit" id="sf-mu-temp" title="立即刷新四位主播的最近视频">
+          <span><b id="sf-mu-status-num">0</b><small>一周内更新</small></span>
         </button>
       </section>
       <div class="sf-mu-widgets" id="sf-mu-widgets">
@@ -1212,7 +1215,7 @@
           <span class="sf-mu-processing-progress"><span class="sf-mu-processing-fill" id="sf-mu-processing-fill"></span><b class="sf-mu-processing-pct" id="sf-mu-processing-pct">0%</b></span>
           <span class="sf-mu-processing-pills"><span class="sf-mu-processing-pill"><span data-ico="film"></span><b id="sf-mu-processing-duration">—</b></span><span class="sf-mu-processing-pill"><span data-ico="activity"></span><b id="sf-mu-processing-device">—</b></span></span>
         </button>
-        <button type="button" class="sf-mu-widget" data-mu-filter="ready"><span class="sf-mu-widget-kicker">可编辑</span><strong id="sf-mu-ready-widget">0</strong><small>已经可以改字幕</small></button>
+        <button type="button" class="sf-mu-widget sf-mu-ready" data-mu-filter="ready"><span class="sf-mu-widget-kicker">可编辑</span><strong id="sf-mu-ready-widget">0</strong><small>已经可以改字幕</small><span class="sf-mu-edits" aria-hidden="true"><svg viewBox="0 0 120 120" focusable="false"><circle class="sf-mu-edits-track" cx="60" cy="60" r="50"></circle><g id="sf-mu-edits-segments"></g></svg><span class="sf-mu-edits-center"><b id="sf-mu-edits-total">0</b><small>近7天改动</small></span></span></button>
         <div class="sf-mu-widget sf-mu-attention" id="sf-mu-attention" role="group" aria-label="需处理">
           <svg class="sf-mu-attention-shape" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
             <path d="M95.9 50.0 L96.0 51.9 L96.2 53.7 L96.5 55.6 L96.9 57.6 L97.3 59.7 L97.8 61.8 L98.4 64.0 L98.9 66.3 L99.3 68.7 L99.7 71.2 L99.9 73.7 L100.0 76.2 L99.9 78.8 L99.5 81.3 L99.0 83.8 L98.2 86.2 L97.1 88.5 L95.9 90.6 L94.3 92.6 L92.6 94.3 L90.6 95.9 L88.5 97.1 L86.2 98.2 L83.8 99.0 L81.3 99.5 L78.8 99.9 L76.2 100.0 L73.7 99.9 L71.2 99.7 L68.7 99.3 L66.3 98.9 L64.0 98.4 L61.8 97.8 L59.7 97.3 L57.6 96.9 L55.6 96.5 L53.7 96.2 L51.9 96.0 L50.0 95.9 L48.1 96.0 L46.3 96.2 L44.4 96.5 L42.4 96.9 L40.3 97.3 L38.2 97.8 L36.0 98.4 L33.7 98.9 L31.3 99.3 L28.8 99.7 L26.3 99.9 L23.8 100.0 L21.2 99.9 L18.7 99.5 L16.2 99.0 L13.8 98.2 L11.5 97.1 L9.4 95.9 L7.4 94.3 L5.7 92.6 L4.1 90.6 L2.9 88.5 L1.8 86.2 L1.0 83.8 L0.5 81.3 L0.1 78.8 L0.0 76.2 L0.1 73.7 L0.3 71.2 L0.7 68.7 L1.1 66.3 L1.6 64.0 L2.2 61.8 L2.7 59.7 L3.1 57.6 L3.5 55.6 L3.8 53.7 L4.0 51.9 L4.1 50.0 L4.0 48.1 L3.8 46.3 L3.5 44.4 L3.1 42.4 L2.7 40.3 L2.2 38.2 L1.6 36.0 L1.1 33.7 L0.7 31.3 L0.3 28.8 L0.1 26.3 L0.0 23.8 L0.1 21.2 L0.5 18.7 L1.0 16.2 L1.8 13.8 L2.9 11.5 L4.1 9.4 L5.7 7.4 L7.4 5.7 L9.4 4.1 L11.5 2.9 L13.8 1.8 L16.2 1.0 L18.7 0.5 L21.2 0.1 L23.8 0.0 L26.3 0.1 L28.8 0.3 L31.3 0.7 L33.7 1.1 L36.0 1.6 L38.2 2.2 L40.3 2.7 L42.4 3.1 L44.4 3.5 L46.3 3.8 L48.1 4.0 L50.0 4.1 L51.9 4.0 L53.7 3.8 L55.6 3.5 L57.6 3.1 L59.7 2.7 L61.8 2.2 L64.0 1.6 L66.3 1.1 L68.7 0.7 L71.2 0.3 L73.7 0.1 L76.2 0.0 L78.8 0.1 L81.3 0.5 L83.8 1.0 L86.2 1.8 L88.5 2.9 L90.6 4.1 L92.6 5.7 L94.3 7.4 L95.9 9.4 L97.1 11.5 L98.2 13.8 L99.0 16.2 L99.5 18.7 L99.9 21.2 L100.0 23.8 L99.9 26.3 L99.7 28.8 L99.3 31.3 L98.9 33.7 L98.4 36.0 L97.8 38.2 L97.3 40.3 L96.9 42.4 L96.5 44.4 L96.2 46.3 L96.0 48.1 Z"/>
@@ -1226,10 +1229,19 @@
           <button type="button" class="sf-mu-attn-btn sf-mu-attn-details" data-mu-attn="details" aria-label="详情页" title="详情页"><span data-ico="info"></span></button>
         </div>
         <button type="button" class="sf-mu-widget" data-kind="all" data-mu-filter="all"><span class="sf-mu-widget-kicker">全部稿件</span><strong id="sf-mu-all-count">0</strong><small>本地工作空间</small></button>
-        <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="new" data-tone="surface"><span class="sf-mu-widget-kicker">NEW</span><strong class="sf-mu-widget-title">新建稿件</strong><small>视频、链接或字幕</small><span class="sf-mu-widget-arrow">→</span></button>
-        <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="batch" data-tone="accent"><span class="sf-mu-widget-kicker">BATCH</span><strong class="sf-mu-widget-title">批量初稿</strong><small>多项目依次识别</small><span class="sf-mu-widget-arrow">→</span></button>
+        <div class="sf-mu-widget sf-mu-combo" role="group" aria-label="新建稿件与批量初稿">
+          <button type="button" class="sf-mu-combo-main" data-mu-action="new">
+            <span class="sf-mu-widget-kicker">NEW</span><strong class="sf-mu-widget-title">新建稿件</strong><small>视频、链接或字幕</small><span class="sf-mu-widget-arrow">→</span>
+          </button>
+          <button type="button" class="sf-mu-combo-batch" data-mu-action="batch" data-tone="accent">
+            <span class="sf-mu-widget-kicker">BATCH</span><strong>批量初稿</strong><small>多项目依次识别</small><span class="sf-mu-widget-arrow">→</span>
+          </button>
+        </div>
         <button type="button" class="sf-mu-widget sf-mu-widget-action" data-mu-action="settings" data-tone="surface"><span class="sf-mu-widget-kicker">SETTINGS</span><strong class="sf-mu-widget-title">全局设置</strong><small>模型、翻译与外观</small><span class="sf-mu-widget-arrow">→</span></button>
       </div>
+      <section class="sf-mu-yt" id="sf-mu-youtube" aria-label="主播最近更新">
+        <div class="sf-mu-yt-grid" id="sf-mu-yt-grid"></div>
+      </section>
     </div>
   </div>
   <div class="dashboard-inner">
@@ -2068,13 +2080,13 @@
       <div class="st-subview" data-stsub="llm" hidden>
         <div class="st-subhead">
           <div>
-            <div class="st-subtitle-strong">翻译方案</div>
+            <div class="st-subtitle-strong st-scheme-title">翻译方案</div>
             
           </div>
           <div class="st-scheme-actions">
             <button type="button" class="btn btn-mini" id="st-scheme-import">导入方案</button>
             <button type="button" class="btn btn-mini" id="st-scheme-export">导出方案</button>
-            <button type="button" class="btn btn-mini" id="st-scheme-new">＋ 添加方案</button>
+            <button type="button" class="btn btn-mini" id="st-scheme-new">添加方案</button>
             <input type="file" id="st-scheme-file" accept=".json,application/json" hidden>
           </div>
         </div>
@@ -2471,6 +2483,7 @@
         <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
           <circle class="stg-ring-track" cx="60" cy="60" r="50"></circle>
           <circle class="stg-ring-value" id="stg-ring-value" cx="60" cy="60" r="50"></circle>
+          <circle class="stg-ring-app" id="stg-ring-app" cx="60" cy="60" r="50"></circle>
         </svg>
         <span class="stg-ring-label"><b id="stg-used">—</b><small>已用</small></span>
       </div>
@@ -2478,6 +2491,7 @@
         <p class="stg-kicker">程序目录 · 本地磁盘</p>
         <p class="stg-hero-line"><b id="stg-cleanable">—</b><span>可释放</span></p>
         <p class="stg-disk-note" id="stg-disk-note">扫描后显示磁盘容量</p>
+        <p class="stg-app-line"><i></i><span>SubFabric</span><b id="stg-app-size">—</b><small id="stg-app-pct"></small></p>
         <div class="stg-bar" id="stg-bar" aria-hidden="true"></div>
         <div class="stg-legend" id="stg-legend"></div>
       </div>

@@ -22,6 +22,6 @@ assert.doesNotMatch(js.slice(js.indexOf('async function batchStart'), js.indexOf
 assert.match(js, /await batchWaitDraft\(item\)/, '前一个完成后再继续');
 assert.match(js, /data-batch-settings/, '每个视频有单独设置按钮');
 assert.match(js, /#\/batch/, '按钮进入独立批量页');
-assert.match(studio, /batch: '批量初稿'/, '面包屑标题');
+assert.doesNotMatch(tpl, /sf-breadcrumb/, '面包屑条已移除');
 assert.match(studio, /h === '#\/batch'/, '路由识别批量页');
 console.log('batch-queue: 独立页、队列、全局/单个设置与串行处理接线通过');

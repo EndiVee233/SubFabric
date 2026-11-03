@@ -8,13 +8,24 @@ const themesContext = { window: {} }; vm.createContext(themesContext);
 vm.runInContext(fs.readFileSync(path.join(root, 'editor/js/studio-themes.js'), 'utf8'), themesContext);
 const themes = themesContext.window.SF_THEMES;
 const stateSource = fs.readFileSync(path.join(root, 'editor/js/studio-state.js'), 'utf8');
-const { normalizeStudio, projectPhase, matchesProject, imageData } = await import('data:text/javascript;base64,' + Buffer.from(stateSource).toString('base64'));
+const { normalizeStudio, projectPhase, matchesProject, imageData, materialGreeting } = await import('data:text/javascript;base64,' + Buffer.from(stateSource).toString('base64'));
 assert.equal(normalizeStudio(null, themes).themePack, 'windows-uwp');
+assert.equal(materialGreeting(23), '该睡啦');
+assert.equal(materialGreeting(2), '晚安 好梦');
+assert.equal(materialGreeting(4), '凌晨好，你起得真早');
+assert.equal(materialGreeting(7), '早上好');
+assert.equal(materialGreeting(15), '下午好，继续加油');
+assert.equal(materialGreeting(18), '傍晚好，收个尾吧');
+assert.equal(materialGreeting(21), '晚上好，慢慢来');
+assert.equal(materialGreeting(22), '夜深了，早点休息');
 assert.ok(themes.get('windows-uwp').design === 'uwp', 'Windows 10 theme is built in');
 assert.equal(themes.valid({ schema: 'subfabric-theme-v1', id: 'windows-uwp-copy', name: 'Windows UWP Copy', version: '1.0.0', description: 'test', design: 'uwp', seed: '#0078d4' }), true);
-// 每个主题包各自记住强调色：非法包回落到首个可见包（Windows 10），非法强调色回落到该包的 seed（Windows 蓝），
-// 不再是全局的 Studio 鼠尾草绿。
 assert.equal(normalizeStudio({ themePack: 'bad', accent: 'url(evil)', mode: 'bad', image: '<svg>', motion: 'bad', custom: [{}] }, themes).accent, '#0078D7');
+const perPack = normalizeStudio({ themePack: 'material-you', accent: '#669c3b', accentByPack: { 'windows-uwp': '#0078d7' } }, themes);
+assert.equal(perPack.accent, '#669c3b');
+assert.equal(perPack.accentByPack['windows-uwp'], '#0078d7', '不同主题包各自保存强调色');
+const backUwp = normalizeStudio({ themePack: 'windows-uwp', accent: '#0078d7', accentByPack: perPack.accentByPack }, themes);
+assert.equal(backUwp.accentByPack['material-you'], '#669c3b', '切回主题包仍保留自己的颜色');
 assert.equal(imageData('data:image/svg+xml;base64,AAAA'), false);
 assert.deepEqual(normalizeStudio({},themes).auroraColors,[],'old preferences inherit theme colors');
 assert.equal(normalizeStudio({},themes).auroraMotion,'dynamic');

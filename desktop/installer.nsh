@@ -41,4 +41,44 @@
       ${EndIf}
     ${EndIf}
   ${EndIf}
+
+  ; ── 覆盖安装：不要执行旧版本的卸载器 ────────────────────────────────
+  ; 安装器的 install 段会先静默执行「已注册版本」的卸载器，而那个卸载器会对整个
+  ; $INSTDIR 做 RMDir /r。本产品的用户数据就在程序目录里（asr\models、
+  ; asr\runtime-python、projects\、videos\、.profile\），升级等于把它们连同
+  ; 41,748 个文件一起删掉（2026-11-04 实测发生过）。
+  ; uninstallOldVersion 读不到 UninstallString 就直接 Return，所以这里在安装前
+  ; 抹掉卸载登记：只看得到程序文件被覆盖，数据一个都不动。装完 registryAddInstallInfo
+  ; 会写回新的登记项。
+  ${If} ${FileExists} "$INSTDIR\SubFabric.exe"
+    DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY}"
+    DeleteRegKey HKLM "${UNINSTALL_REGISTRY_KEY}"
+    !ifdef UNINSTALL_REGISTRY_KEY_2
+      DeleteRegKey HKCU "${UNINSTALL_REGISTRY_KEY_2}"
+      DeleteRegKey HKLM "${UNINSTALL_REGISTRY_KEY_2}"
+    !endif
+  ${EndIf}
+!macroend
+
+; ── 卸载：默认保留用户数据 ─────────────────────────────────────────────
+; electron-builder 默认对 $INSTDIR 整目录 RMDir /r；这里接管成「只删程序文件」，
+; 模型、Python 运行时、项目、视频、浏览器偏好一律留下。真要清空，删掉安装目录即可。
+!macro customRemoveFiles
+  ${If} ${isUpdated}
+    ; 升级路径：程序文件马上会被覆盖，这里什么都不删。
+    DetailPrint "升级安装：保留现有数据目录"
+  ${Else}
+    DetailPrint "卸载程序文件，保留模型、运行时与项目数据"
+    Delete "$INSTDIR\SubFabric.exe"
+    Delete "$INSTDIR\Uninstall SubFabric.exe"
+    Delete "$INSTDIR\*.dll"
+    Delete "$INSTDIR\*.pak"
+    Delete "$INSTDIR\*.bin"
+    Delete "$INSTDIR\*.dat"
+    Delete "$INSTDIR\*.json"
+    Delete "$INSTDIR\LICENSE*"
+    Delete "$INSTDIR\vk_swiftshader_icd.json"
+    RMDir /r "$INSTDIR\locales"
+    RMDir /r "$INSTDIR\resources"
+  ${EndIf}
 !macroend

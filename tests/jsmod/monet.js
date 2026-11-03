@@ -182,6 +182,7 @@ async function imagePixels(src, opts) {
   if (typeof document === 'undefined' || typeof Image === 'undefined') return null;
   const img = new Image();
   img.decoding = 'async';
+  if (opts && opts.cors) img.crossOrigin = 'anonymous';
   img.src = src;
   try {
     if (typeof img.decode === 'function') await img.decode();

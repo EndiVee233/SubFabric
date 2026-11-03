@@ -69,4 +69,5 @@ check(() => assert.match(rimCode, /updateRimParams\(prefs\)/, '拖动只重画�
 check(() => assert.doesNotMatch(rimCode, /applyTheme\(\)/, '拖动不再整页 applyTheme（会重建主题卡/重播入场）'));
 check(() => assert.match(studio, /updateParams as updateRimParams/, 'studio.js 接入轻量更新入口'));
 
+
 console.log(`rim-curve-test: ${count} assertions passed`);

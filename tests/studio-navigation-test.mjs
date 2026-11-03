@@ -219,6 +219,13 @@ globalThis.fetch = async (url, options = {}) => {
   if (url.startsWith('/api/upload-video?')) { assert.ok(upload, 'upload must be deliberately deferred'); return upload.promise; }
   if (url === '/api/projects' && options.method === 'POST') { created.push(JSON.parse(options.body)); return json({ id: 'created' }); }
   if (url === '/api/projects') return json({ projects: [] });
+  if (url === '/api/oplog/stats?days=7') return json({ days: 7, total: 0, projects: [] });
+  if (url === '/api/youtube/updates' || url === '/api/youtube/updates?refresh=1') {
+    return json({ channels: [
+      { id: 'wemmbu', name: 'Wemmbu', video: null }, { id: 'parrot', name: 'Parrot', video: null },
+      { id: 'spoke', name: 'Spoke', video: null }, { id: 'flame', name: 'Flame', video: null },
+    ], stale: true });
+  }
   if (url === '/api/projects/created') return json({ id: 'created', name: 'Original title', videoExists: false,
     subtitle: { file: 'subtitle.srt' }, prepare: { status: 'none' } });
   if (url === '/api/projects/created/subtitle') return new Response(subtitle, { headers: { ETag: '"' + revision + '"' } });
@@ -292,7 +299,7 @@ await loadProduction('studio.js', probe === 'initial-editor'
   ? source => source.replace(/window\.__sfStudio\.route\(route, null, ''\);/, '') : null);
 assert.equal(document.body.dataset.workspace, 'editor', 'direct Studio #/editor initializes workspace without project routing');
 assert.equal($('sf-nav').hidden, true, 'direct editor hides primary navigation');
-assert.equal($('sf-topbar').hidden, true, 'direct editor hides application topbar');
+assert.equal(document.getElementById('sf-topbar'), null, 'application top strip is removed for all non-editor pages');
 assert.equal(Boolean($('ass-style-group').inert), false, 'direct editor style controls remain available');
 if (probe !== 'initial-editor') {
   assert.equal($('app').classList.contains('is-editor-panels-entering'), true,

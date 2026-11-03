@@ -130,8 +130,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.4.3'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.4.3'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.5'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.5'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -10755,6 +10755,32 @@ function handleProjectsRoutes(req, res, u) {
    * （实测：加 tts-voices 时踩到，排查了一阵才意识到不是路由写错、是没匹配上）。 */
   let pm = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/([a-z][a-z-]*))?$/.exec(pathname);
 
+  /* 最近操作日志统计：主页「可编辑」卡的小圆环按项目显示改动占比。
+     只读 oplog.json，不碰项目字幕/视频；days 夹在 1–365，默认 7 天。 */
+  if (pathname === '/api/oplog/stats' && req.method === 'GET') {
+    const days = Math.max(1, Math.min(365, parseInt(new URL(req.url, 'http://local').searchParams.get('days'), 10) || 7));
+    const cutoff = Date.now() - days * 86400000;
+    const projectsOut = [];
+    let total = 0;
+    let ids = [];
+    try { ids = fs.readdirSync(PROJECTS_DIR); } catch {}
+    for (const id of ids) {
+      if (!validId(id)) continue;
+      const meta = readMeta(id);
+      if (!meta) continue;
+      let count = 0;
+      for (const entry of readOpLog(id)) {
+        const at = Date.parse(entry && entry.t);
+        if (Number.isFinite(at) && at >= cutoff) count++;
+      }
+      if (!count) continue;
+      total += count;
+      projectsOut.push({ id, name: String(meta.name || id), count, modifiedAt: meta.modifiedAt || '' });
+    }
+    projectsOut.sort((a, b) => b.count - a.count || String(b.modifiedAt).localeCompare(String(a.modifiedAt)));
+    return sendJson(res, 200, { days, total, projects: projectsOut });
+  }
+
   if (pathname === '/api/projects' && req.method === 'GET') {
     const items = [];
     let ids = [];
@@ -12260,6 +12286,177 @@ function handleProjectsRoutes(req, res, u) {
   sendJson(res, 404, { error: 'not found' });
 }
 
+/* ═══════════ YouTube 主播最近更新（MY 主页小组件）═══════════
+ * 只用 YouTube 公开 RSS / 频道页，不依赖 API Key；缓存落盘，断网时继续显示上一次数据。
+ * 四位主播用 handle 先解析 channelId，避免把频道 ID 写死后改名失效。 */
+const YOUTUBE_CHANNELS = Object.freeze([
+  { id: 'wemmbu', name: 'Wemmbu', handle: '@wemmbumc', channelIds: ['UCkzzNLnuM-VsATWC53ehwOQ'] },
+  { id: 'parrot', name: 'Parrot', handle: '@parrotx2', channelIds: ['UCPLMPHT-d8GZOqL_AHJFdQQ'] },
+  { id: 'spoke', name: 'Spoke', handle: '@spokeishere', channelIds: ['UCk2uxbWi5py_iJXaEsh2YRA'] },
+  { id: 'flame', name: 'FlameFrags', handle: '@flamefragsmc', channelIds: ['UCvYPobTo42NM36X7VC4dLhA'] },
+]);
+const YOUTUBE_CACHE_FILE = path.join(ROOT, 'cache', 'youtube-updates.json');
+const YOUTUBE_TTL = 5 * 60 * 1000;
+let youtubeMemory = null;
+let youtubeInflight = null;
+
+function youtubeReadCache() {
+  if (youtubeMemory) return youtubeMemory;
+  try {
+    const j = JSON.parse(fs.readFileSync(YOUTUBE_CACHE_FILE, 'utf8'));
+    youtubeMemory = j && typeof j === 'object' ? j : {};
+  } catch { youtubeMemory = {}; }
+  return youtubeMemory;
+}
+function youtubeWriteCache(data) {
+  youtubeMemory = data;
+  try {
+    fs.mkdirSync(path.dirname(YOUTUBE_CACHE_FILE), { recursive: true });
+    fs.writeFileSync(YOUTUBE_CACHE_FILE + '.tmp', JSON.stringify(data));
+    fs.renameSync(YOUTUBE_CACHE_FILE + '.tmp', YOUTUBE_CACHE_FILE);
+  } catch { /* 缓存写失败不影响本次返回 */ }
+}
+function xmlText(raw) {
+  const s = String(raw || '').trim();
+  const cdata = /^<!\[CDATA\[([\s\S]*)\]\]>$/.exec(s);
+  const body = cdata ? cdata[1] : s;
+  return body.replace(/&(#x?[0-9a-f]+|amp|lt|gt|quot|apos);/gi, (all, key) => {
+    const k = key.toLowerCase();
+    if (k === 'amp') return '&';
+    if (k === 'lt') return '<';
+    if (k === 'gt') return '>';
+    if (k === 'quot') return '"';
+    if (k === 'apos') return "'";
+    const n = k.startsWith('#x') ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10);
+    return Number.isFinite(n) ? String.fromCodePoint(n) : all;
+  });
+}
+function youtubePowerShellFetch(url) {
+  if (process.platform !== 'win32') throw Error('没有可用的系统代理回退');
+  /* Node fetch 不读 Windows 系统代理（浏览器/Invoke-WebRequest 会读）。
+     本机开了代理、浏览器能上 YouTube 但 Node 直连超时时，用系统 PowerShell 兜底。 */
+  const safeUrl = String(url).replace(/"/g, '%22');
+  const script = `[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Invoke-WebRequest -Uri "${safeUrl}" -UseBasicParsing -TimeoutSec 25).Content`;
+  return childProcess.execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8', timeout: 32000, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+  });
+}
+async function youtubeFetch(url, timeout = 5000) {
+  try {
+    const response = await fetch(url, {
+      headers: { 'user-agent': 'Mozilla/5.0 SubFabric/1.0', 'accept-language': 'en-US,en;q=0.8' },
+      signal: AbortSignal.timeout(timeout),
+    });
+    if (!response.ok) throw Error('HTTP ' + response.status);
+    return await response.text();
+  } catch (error) {
+    try { return youtubePowerShellFetch(url); }
+    catch { throw error; }
+  }
+}
+function youtubeVideoId(xml) {
+  const m = /<yt:videoId>([^<]+)<\/yt:videoId>/.exec(xml);
+  return m ? xmlText(m[1]) : '';
+}
+async function youtubeDuration(videoId) {
+  try {
+    const html = await youtubeFetch('https://www.youtube.com/watch?v=' + encodeURIComponent(videoId));
+    const m = /"lengthSeconds":"(\d+)"/.exec(html) || /"approxDurationMs":"(\d+)"/.exec(html);
+    if (!m) return 0;
+    return /lengthSeconds/.test(m[0]) ? Number(m[1]) : Math.round(Number(m[1]) / 1000);
+  } catch { return 0; }
+}
+async function youtubeChannelVideo(channel, previous) {
+  const ids = [];
+  if (previous && previous.channelId) ids.push(previous.channelId);
+  for (const id of channel.channelIds || []) if (!ids.includes(id)) ids.push(id);
+  /* 先用已知 channelId 直连 RSS，避免频道页的同意页/验证页解析不到 ID；
+     全部失败再打开频道页解析一次（频道迁移时兜底）。 */
+  const tryId = async (channelId) => {
+    const xml = await youtubeFetch('https://www.youtube.com/feeds/videos.xml?channel_id=' + encodeURIComponent(channelId));
+    const entry = /<entry>([\s\S]*?)<\/entry>/.exec(xml);
+    if (!entry) throw Error('频道还没有视频');
+    const block = entry[1];
+    const id = youtubeVideoId(block);
+    const titleM = /<title>([\s\S]*?)<\/title>/.exec(block);
+    const publishedM = /<published>([^<]+)<\/published>/.exec(block);
+    const thumbM = /<media:thumbnail\s+url="([^"]+)"/.exec(block);
+    if (!id || !titleM) throw Error('RSS 内容不完整');
+    return { channelId, id, titleM, publishedM, thumbM };
+  };
+  let hit = null, lastError = null;
+  for (const channelId of ids) {
+    try { hit = await tryId(channelId); break; } catch (e) { lastError = e; }
+  }
+  if (!hit) {
+    const html = await youtubeFetch('https://www.youtube.com/' + channel.handle + '/videos');
+    const m = /"externalId":"(UC[0-9A-Za-z_-]{20,})"/.exec(html)
+      || /"channelId":"(UC[0-9A-Za-z_-]{20,})"/.exec(html)
+      || /channel_id=(UC[0-9A-Za-z_-]{20,})/.exec(html);
+    if (!m) throw lastError || Error('无法解析频道 ID');
+    hit = await tryId(m[1]);
+  }
+  const id = hit.id;
+  const video = {
+    id,
+    title: xmlText(hit.titleM[1]),
+    published: hit.publishedM ? xmlText(hit.publishedM[1]) : '',
+    thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+    duration: previous && previous.video && previous.video.id === id ? Number(previous.video.duration) || 0 : 0,
+    url: 'https://www.youtube.com/watch?v=' + encodeURIComponent(id),
+  };
+  if (!video.duration) video.duration = await youtubeDuration(id);
+  return { channelId: hit.channelId, video, checkedAt: new Date().toISOString() };
+}
+async function youtubeUpdates(force) {
+  const cache = youtubeReadCache();
+  const fresh = cache.at && (Date.now() - Number(cache.at) < YOUTUBE_TTL);
+  if (!force && fresh && cache.channels) {
+    return { ...youtubeResult(cache), stale: false };
+  }
+  if (youtubeInflight) return youtubeInflight;
+  youtubeInflight = (async () => {
+    const channels = { ...(cache.channels || {}) };
+    let anyFresh = false;
+    const errors = [];
+    /* 四个频道并发抓取：断网时最多等一轮超时，而不是串行等 4 次。 */
+    const fetched = await Promise.all(YOUTUBE_CHANNELS.map(async channel => {
+      try {
+        return [channel.id, await youtubeChannelVideo(channel, channels[channel.id]), null];
+      } catch (e) {
+        // 断网/频道请求失败：保留此前的频道视频，不把组件清空。
+        return [channel.id, null, `${channel.name}: ${String((e && e.message) || e)}`];
+      }
+    }));
+    for (const [id, entry, error] of fetched) {
+      if (entry) { channels[id] = entry; anyFresh = true; }
+      else if (error) errors.push(error);
+    }
+    const next = { at: anyFresh ? Date.now() : (cache.at || 0), channels };
+    if (anyFresh) youtubeWriteCache(next);
+    return { ...youtubeResult(next), stale: !anyFresh, errors };
+  })().finally(() => { youtubeInflight = null; });
+  return youtubeInflight;
+}
+function youtubeResult(cache) {
+  return {
+    updatedAt: cache.at ? new Date(Number(cache.at)).toISOString() : '',
+    channels: YOUTUBE_CHANNELS.map(channel => ({
+      id: channel.id, name: channel.name, handle: channel.handle,
+      video: (cache.channels && cache.channels[channel.id] && cache.channels[channel.id].video) || null,
+    })),
+  };
+}
+function handleYoutubeRoutes(req, res, u) {
+  if (u.pathname !== '/api/youtube/updates' || req.method !== 'GET') {
+    return sendJson(res, 404, { error: 'not found' });
+  }
+  const force = u.searchParams.get('refresh') === '1';
+  youtubeUpdates(force)
+    .then(data => sendJson(res, 200, data))
+    .catch(e => sendJson(res, 200, { ...youtubeResult(youtubeReadCache()), stale: true, errors: [String((e && e.message) || e)] }));
+}
+
 /* 路由段表: 前缀互不相交, 顺序即原 handleRequest 的书写顺序。
  * 命中前缀即由该段全权处理(未匹配的 method/路径组合由段内兜底回 404)。 */
 const API_SECTIONS = [
@@ -12270,6 +12467,8 @@ const API_SECTIONS = [
   [/^\/api\/(logs|lifecycle|quit)\b/, handleLogsRoutes],
   [/^\/api\/(diag|media)\b/, handleDiagRoutes],
   [/^\/api\/storage\b/, handleStorageRoutes],
+  [/^\/api\/youtube\//, handleYoutubeRoutes],
+  [/^\/api\/oplog\//, handleProjectsRoutes],
   [/^\/api\/projects\b/, handleProjectsRoutes],
 ];
 

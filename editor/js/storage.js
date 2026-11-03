@@ -128,13 +128,28 @@ export function createStoragePage({ themes, getPrefs, applyPrefs, notify }) {
     ring.setAttribute('stroke-dasharray', `${(pct / 100 * c).toFixed(2)} ${c.toFixed(2)}`);
     ring.setAttribute('stroke-dashoffset', '0');
     ring.dataset.percent = String(Math.round(pct));
-    $('stg-ring').setAttribute('aria-label', `磁盘已用 ${Math.round(pct)}%`);
+    const appBytes = (state.items || []).reduce((sum, item) => sum + (Number(item.size) || 0), 0);
+    const appPct = total > 0 ? Math.min(pct, Math.max(0, appBytes / total * 100)) : 0;
+    const ringApp = $('stg-ring-app');
+    if (ringApp) {
+      ringApp.setAttribute('stroke-dasharray', `${(appPct / 100 * c).toFixed(2)} ${c.toFixed(2)}`);
+      ringApp.setAttribute('stroke-dashoffset', '0');
+    }
+    $('stg-app-size').textContent = formatBytes(appBytes);
+    $('stg-app-pct').textContent = total > 0 ? `占已用 ${(used > 0 ? appBytes / used * 100 : 0).toFixed(1)}%` : '';
+    $('stg-ring').setAttribute('aria-label', `磁盘已用 ${Math.round(pct)}%，其中 SubFabric ${formatBytes(appBytes)}`);
 
     const cats = categories();
     const bar = $('stg-bar'), legend = $('stg-legend');
     if (!cats.length) { bar.innerHTML = ''; legend.innerHTML = ''; return; }
     const totalCat = cats.reduce((sum, category) => sum + category.size, 0) || 1;
-    bar.innerHTML = cats.map(category => `<i data-cat="${category.id}" style="width:${(category.size / totalCat * 100).toFixed(2)}%"></i>`).join('');
+    /* 太小的分类（几 KB 缓存/日志）在整条里不足 0.1%：不画进条里，否则最后一段
+       会被压成 0px，绿色主段在容器圆角前就结束，右边看起来是方的。
+       图例仍保留这些分类和数值。 */
+    const barCats = cats.filter(category => category.size / totalCat >= 0.001);
+    const drawCats = barCats.length ? barCats : cats;
+    const barTotal = drawCats.reduce((sum, category) => sum + category.size, 0) || 1;
+    bar.innerHTML = drawCats.map(category => `<i data-cat="${category.id}" style="width:${(category.size / barTotal * 100).toFixed(2)}%"></i>`).join('');
     legend.innerHTML = cats.map(category =>
       `<span class="stg-legend-item"><i data-cat="${category.id}"></i>${esc(category.name)} <b>${formatBytes(category.size)}</b></span>`).join('');
   }

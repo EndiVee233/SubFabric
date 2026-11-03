@@ -235,6 +235,8 @@ function toast(msg, ms = 2600, forceKind) {
   el.classList.add('toast-' + kind);
   el.innerHTML = ico(icon) + '<span></span>';   // 图标与文案分成两个节点: 文案仍可被词典整体替换
   el.lastElementChild.textContent = text;
+  /* 单行保持胶囊；换行撑高后改用大圆角矩形，避免长报错变成椭圆。 */
+  el.classList.toggle('toast-tall', el.offsetHeight > 46);
   el.classList.remove('toast-out');
   el.classList.add('toast-in');
   clearTimeout(toastTimer);

@@ -11,13 +11,14 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.4.3` / 文件版本
-  `1.5.4.3`（npm `1.5.4-beta.3`）。本轮补齐 Qwen 对齐运行时的两处安装缺陷：安装清单加上 `soundfile`
-  （对齐脚本要用它读音频，之前漏装，直到第一次全片重校对才在子进程里报 `ModuleNotFoundError`），
-  握手验证改成 torch / CUDA / transformers / soundfile 逐项探测，缺什么报什么，不再把「缺包」误报成
-  「没有可用的 CUDA」；`qwen_align.py` 也在缺包时给出可执行的提示而不是 traceback。上一轮并回主线的
-  主题强调色按包保存、三分配色预览、样式方案导入导出、详情页「解析」在线链接等改动一并延续；
-  存储空间清理与两套主题下线沿用 1.5.4.1；真实 GPU 推理与媒体导出不在本轮验收范围。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.5` / 文件版本
+  `1.5.5`（npm `1.5.5-beta.1`）。本轮把本机工作区又一批 UI 改动并回主线（首页「新建稿件 + 批量初稿」合并长卡、
+  移除顶栏面包屑、存储页磁盘环显示 SubFabric 自身占用、角色筛选持久化、设置页空档焦点、油管组件、
+  样式方案导入导出等，配套 10 个新测试），并彻底解决升级会删数据的问题：安装器在安装前不再执行旧版本的
+  卸载器（`installer.nsh` 在 `customInit` 里抹掉卸载登记，让 `uninstallOldVersion` 读不到 `UninstallString`
+  直接返回），卸载走 `customRemoveFiles` 只删程序文件、保留 `asr\models`、`asr\runtime-python`、`projects`、
+  `videos`、`.profile`。上一轮的 Qwen 运行时修复（补 `soundfile`、逐项探测握手）一并延续；
+  真实 GPU 推理与媒体导出仍不在验收范围。
 - **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
   `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
   仅运行桌面开发入口时也须先 `npm --prefix desktop run stage`，再 `npm --prefix desktop start`；
@@ -346,6 +347,10 @@
   一律标记受保护。删除逐文件进行并对 EBUSY/EPERM 退避重试；扫描会话 30 分钟过期，避免拿旧登记表删新文件。
   页面样式只用主题令牌：Material You 用 28px/26px 大圆角与胶囊筛选，Windows 10 用 2px 直角、磁贴与按下位移。
   主题残留（旧 `themePack` 与同设计导入包）在前端清理，会同时写回 `localStorage`。
+  **SubFabric 占用可视化（2026-11-04）**：磁盘圆环在已用弧上叠加一层较细的
+  `#stg-ring-app` 弧，长度=扫描到的项目/模型/运行时/缓存/日志总大小占磁盘比例，
+  颜色由当前 `--accent` 色相旋转 135°（保持主题饱和度/明度，与已用弧明显区分）；旁边显示 `SubFabric x GB · 占已用 x%`，
+  图例圆点同色，不额外扫描全盘大文件。
 - **主题包压缩包（2026-10-27）**：导出改为 `.theme.zip`，内含 `theme.json` 与
   `layouts/home.json`、`layouts/library.json`、`layouts/editor.json`、`layouts/help.json`。
   `theme.json` 仍带 `design + tokens + seed + assets.preview`，并附加 `personalization`
@@ -612,6 +617,25 @@
   10.5px、左对齐，避免和下拉框挤在同一行折成两行。
 - **Material 时钟**：外轮廓为 13 瓣波浪花形（SVG path，`r = 48 × (1 + .042 cos(13θ + π/2))`），外层 `span` 不再用星形 clip-path，轮廓只由 path 承担；时针与分针统一 `stroke-width:7`；SVG 中先画时针、后画分针，重叠时分针在上。
 - **Material 需处理卡**：四瓣花形底做成 1:1 方形（宽 ≤190px，与处理中卡同高，避免抬高整行；SVG path，`r = 53.7 × (1 − .145 cos 4θ)`，`preserveAspectRatio="xMidYMid meet"`），底色为 8% danger 混 `--surface`；底形与两个按钮三部分都加 1px `--line` 框线；文字块水平垂直居中；右上 62px 圆形「继续处理」（play，accent 72% 混 surface 的低饱和底），左下 62×62 圆角方形「详情页」（info），两个按钮外移 5px 并压出轮廓。卡片与按钮的阴影只在鼠标悬浮时出现。继续优先打开第一个 attention 项目，没有项目时进入需处理筛选；详情始终进入模板里的需处理筛选。
+- **Material 问候语（2026-11-04）**：花形按钮标题改为 `#sf-mu-greeting`，由
+  `materialGreeting(hour)` 按本地时间切换：23–1「该睡啦」、1–3「晚安 好梦」、
+  3–5「凌晨好，你起得真早」、5–8「早上好」、8–11「上午好，慢慢进入状态」、
+  11–13「中午好，记得吃饭」、13–17「下午好，继续加油」、17–19「傍晚好，收个尾吧」、
+  19–22「晚上好，慢慢来」、22–23「夜深了，早点休息」。`updateMuClock()` 每秒同步，
+  日期仍显示在下方。
+- **Material 改动圆环（2026-11-04）**：可编辑卡右下角新增 `#sf-mu-edits` 小圆环，
+  数据来自 `GET /api/oplog/stats?days=7`（读取各项目 `oplog.json` 的操作日志条数，
+  近 7 天一个改动计一次）；圆环按项目计数分段，中心显示所有项目总改动次数；
+  颜色取主题 accent/info/success/warning/danger，超过五种时用 `color-mix` 派生。
+- **YouTube 主播最近更新（2026-11-04）**：MY 主页新增 `#sf-mu-youtube` 四宫格，
+  固定 Wemmbu（@wemmbumc 主频道）/ Parrot / Spoke / FlameFrags 四位主播；
+  `GET /api/youtube/updates` 先用固定 channelId 直读 RSS（失败再从频道页 `externalId` 解析），
+  解析封面、标题、发布时间，并用 watch 页 `lengthSeconds` 补时长；结果落盘
+  `cache/youtube-updates.json`，网络失败时保留上一次频道数据并标注“显示上次数据”；Node 直连超时会回退到
+  Windows PowerShell `Invoke-WebRequest`（走系统代理）。
+  前端首次进入加载、每 5 分钟自动刷新；主播区不显示标题和刷新按钮，卡片直接接在其他卡下方；
+  即使首次没有缓存也先渲染四张占位卡，不会整块空白。更新时间用绝对日期时间。
+  MY 主页整体 `padding-top` 54→64px。新建稿件与批量初稿合并为一张横跨两列的长卡，新建稿件主卡铺满整张长卡（`--surface-2` 底色、点击响应覆盖全宽）；批量初稿绝对定位覆盖在右侧（`sf-mu-combo`），子卡约占 47.5% 宽，左边界与上一排卡片对齐，右侧留出与上下一致的 8px 内边距。MY 胶囊只保留轻微上浮、边框和阴影，不再 hover 放大；点击胶囊手动刷新四位主播。当前稿件卡新增「详情信息」按钮：点整卡或「继续编辑」进编辑器，点详情进 `#/details/<id>`；两个按钮悬浮时亮框并上浮 1px。批量初稿在长卡悬浮时同步亮框，自身再小幅上浮 1px。胶囊整体固定 `rotate(40deg)`，文字层反向 `rotate(-40deg)` 并微调 1px 保持水平居中；hover 只用 `translate` 上浮，不插值旋转/缩放。
 - **Material 主页悬浮**：除时钟外，`sf-resume` / `sf-orbit` / `sf-mu-widget` / 注意力卡 / 项目卡统一为 1px `--accent` 边框提亮 + `--sf-hover-shadow` + `brightness(1.04)` + `translateY(-2px)`；时钟没有边框，只做 drop-shadow + brightness + 上浮。注意力卡在卡片悬浮时同时提亮四瓣描边和两个按钮边框。
 - **新建项目页布局**：`#np-view` 导入模式为左右两列：左列「稿件预览 + 处理进度」，右列「输入与配置 + 生成设置」；两列等高（`align-items:stretch`），上卡顶边同线、下卡底边同线，中段因预览/输入高度不同自然错开，底部卡片 `flex:1` 填满列高。切到**创建初稿**时加 `is-draft`，变成三列：左列仍是预览+进度，中间输入，右下角的生成设置移到第三列并展开；三列按内容高度，底部不再 flex 拉伸，处理进度保持 `min-height:340px`。模式切换只用一个 View Transition：四张卡（输入、生成设置、稿件预览、处理进度）在同一个 `.46s cubic-bezier(.2,.8,.2,1)` 里整体移动/缩放，模式字段在同一次切换中完成；右侧两张不再单独做垂直 height 动画、100ms 停顿或分段展开/收起。`view-transition-name` 为 `np-input` / `np-generate` / `np-preview` / `np-process`。View Transition 处于 top layer；顶栏单独命名 `np-topbar` 并置于 `z-index:999`，卡片动画不覆盖顶栏，同时顶栏与侧栏文字不会被裁掉。减少动效或不支持时直接切换。稿件预览区固定 16:9、封面 `object-fit:cover`。置信度档位说明 `#np-confidence-desc` 用 `.np-conf-desc` 独占一行显示在置信度选项下方，长文案不再挤在选项右侧；「只导入一段」的 checkbox 标签 `.np-lbl-check` 用 auto 宽度 + nowrap，避免在时间范围行折成两行。处理进度卡内加 `.np-progress-box` 小框，`min-height:170px` 向下延伸到 idle 上方，显示当前百分比/状态和处理记录占位；卡片按内容自然增高，不再用固定高度或 flex 拉伸小框。分角色识别标题与「开启」同一行，开启在标题右侧。导入模式下语音识别组整体隐藏时，生成设置卡片说明与「翻译方案」标题之间不再保留空档。识别来源的 `openvino` 显示为「本机 Parakeet TDT V2（Intel NPU）」；说话人数字紧跟标签，与逐词样式/置信度控件左对齐，「区分说话人（中文行标 [SPKn]，按颜色区分）」独占下一行并保持单行。逐词样式下拉 `#np-kstyle` 与置信度下拉同宽（`max-width:230px`），不再撑满整行；选项文案只保留「颜色高亮」「\k 卡拉OK」，去掉括号解释。≤1080px 单列恢复预览 → 输入 → 进度 → 设置的顺序；详细信息页仍用原来的 2×2 网格。
 - **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；「停留」在主题皮肤里被替换成
@@ -1078,6 +1102,11 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   截断会把资源后半段砍掉，exe 直接 `Exec format error`）。根治仍是代码签名，且必须签在最后一步。
 - **升级原地覆盖**：`SubFabric.iss` 三路检测已有安装目录（Inno 的 `UsePreviousAppDir` → 注册表 AppId →
   扫盘），结果预填到目录页；不要把 `DefaultDirName` 写成 `{code:...}`（会顶掉命令行 `/DIR`）。
+  `UsePreviousAppDir=yes` 且没有 `[InstallDelete]`：覆盖安装只更新清单内文件，不清理旧目录里
+  用户额外放的文件。**卸载器数据选项（2026-11-04）**：`InitializeUninstall` 默认问“保留数据？”，
+  默认按钮保留；只有选“否”或静默卸载带 `/REMOVEDATA` 才在 `usPostUninstall` 删除
+  projects、asr\models、runtime-python/runtime-vibevoice、whisper.cpp/crispasr/faster-whisper-xxl、
+  ytdlp、logs、asr\settings.json 及 `%APPDATA%` / `%LOCALAPPDATA%` 的 SubFabric 目录。
 - **安装包与已停用运行时**：`SubFabric.iss` 现在排除 `asr/runtime-vibevoice` 以及
   `multitalker.py` / `vibevoice.py` / `asr_dual.py` / `asr_perf.py`，不会再打包约 2.2GB 的
   VibeVoice 运行时；用户已下载的旧目录不会被安装/卸载碰到。
@@ -1476,6 +1505,74 @@ ffmpeg 是波形、抽音频与视频压制的前提。定位顺序（`editor/ff
 | `prototypes/*/README.md` | 三个原型各自的说明 | 已并入本文 §12 |
 
 ### 最近状态
+
+**2026-11-04（MY 主页 YouTube 主播最近更新，beta 1.5.1.1）**
+
+- **需求**：MY 主页加入 Wemmbu / Parrot / Spoke / FlameFrags 四位主播最近视频小组件，
+  每 5 分钟自动刷新；YouTube 不可用时保留已有数据。主播卡悬浮 -4px 并加 `--sf-hover-shadow`，开屏跟随主页卡片逐个浮现；`.sf-mu-widgets` 行距与上下组间距统一为 18px，主播卡延迟提前到 480–660ms。
+- **实现**：`GET /api/youtube/updates` 先用固定 channelId 直读 YouTube RSS（失败再从频道页
+  `externalId` 解析），封面/标题/发布时间直接读 RSS，时长读 watch 页 lengthSeconds；缓存落盘
+  `cache/youtube-updates.json`，单个频道失败保留该频道旧视频，整体失败标记 stale。
+  Node `fetch` 直连超时时回退 Windows PowerShell `Invoke-WebRequest`，走系统代理。
+  前端四宫格显示封面/标题/时长/日期时间，5 分钟定时刷新，手动按钮强制刷新。
+  右上角倾斜胶囊的数字改为四位主播近 7 天有更新的视频数，点击滚到主播区；卡片文字左右内收 6px；每张卡从封面取最多三种莫奈种子色，经 `themes.palette(seed, dark)` 生成三色静态流光；颜色与 `--surface` 混合降低饱和度。
+- **验证**：本机探测确认 Node 直连 YouTube 超时、PowerShell 经系统代理成功；隔离服务
+  `/api/youtube/updates?refresh=1` 返回四位主播各一条视频。Wemmbu 已改用 `@wemmbumc`
+  主频道（`UCkzz...`），封面统一 `mqdefault.jpg` 16:9 避免黑边。`youtube-widgets-test`、
+  `material-home-test`、`theme-audit`、`ui-integration` 通过；全量 JS 回归
+  `_test/maintenance/js-results-1463-youtube.json` **163 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-04（移除编辑器外的顶部面包屑条，beta 1.5.1.1）**
+
+- **需求**：除编辑器外所有页面删除最顶端「工作空间 / 页面」条，内容整体上移。
+- **实现**：删除 `#sf-topbar` 模板节点及 `sf-breadcrumb` 更新；`.sf-studio` 各页面
+  `top` 从 `var(--sf-top-h)` 改为 `0`，设置页 sticky 栏高度同步去掉 72px 偏移。
+  编辑器自身工具栏不受影响。
+- **验证**：`studio-navigation-test` 检查 topbar 不存在；`material-home-test`、`theme-audit`、
+  `ui-integration` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-no-topbar.json` **162 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-04（Material 可编辑卡最近改动圆环，beta 1.5.1.1）**
+
+- **需求**：可编辑卡右下角显示最近稿件改动圆环；中心总改动数，分段为各项目占比。
+- **实现**：新增 `GET /api/oplog/stats?days=7`，按项目统计 `oplog.json` 中近 7 天条数；
+  前端 `renderEditStats()` 用 SVG 分段圆环展示，项目按次数排序，中心显示总数；
+  颜色取主题 accent/info/success/warning/danger，>5 项用 `color-mix` 派生。
+- **验证**：新增 `oplog-stats-test`；`material-home-test`、`theme-audit`、`ui-integration` 通过；
+  全量 JS 回归 `_test/maintenance/js-results-1463-oplog-ring.json` **162 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-04（Material 主页按时间问候，beta 1.5.1.1）**
+
+- **需求**：把花形按钮上的「点击开始新的创作」替换成随时间变化的问候语。
+- **实现**：新增纯函数 `materialGreeting(hour)`；`#sf-mu-greeting` 由 `updateMuClock()` 每秒更新，
+  覆盖 23–1 该睡啦、1–3 晚安好梦、3–5 凌晨好、5–8 早上好、8–11 上午好、11–13 中午好、
+  13–17 下午好、17–19 傍晚好、19–22 晚上好、22–23 夜深了。
+- **验证**：`ui-integration` 覆盖各时段边界；`material-home-test` 检查模板/接线；全量 JS 回归 `_test/maintenance/js-results-1463-greeting.json` **161 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-04（存储圆环加入 SubFabric 占用层，beta 1.5.1.1）**
+
+- **需求**：存储空间圆环里能看到 SubFabric 自身占用，颜色跟随主题。
+- **实现**：圆环新增 `#stg-ring-app` 弧，叠加在磁盘已用弧上；长度按扫描到的
+  项目中间文件/模型/运行时/缓存/日志总大小计算，颜色 `--accent-2`（无则 `--accent`）。
+  旁边显示 `SubFabric x GB · 占已用 x%`，图例圆点同色。
+- **验证**：新增 `tests/storage-ring-test.mjs`；`storage-api-test`、`storage-scan-test`、
+  `theme-audit`、`ui-integration` 通过；全量 JS 回归 `_test/maintenance/js-results-1463-storage-ring.json` **160 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：安装版重打包；GitHub：**尚未提交**。
+
+**2026-11-04（卸载保留数据选项 + 覆盖安装保留旧目录，beta 1.5.1.1）**
+
+- **需求**：卸载器可选择保留模型、运行时、项目、个性化设置；安装新版本不删除原有目录。
+- **Electron/NSIS**：`desktop/installer.nsh` 自定义 `customUnInstall`，默认保留数据，用户选“否”
+  才删 `%APPDATA%\SubFabric Electron` / `%LOCALAPPDATA%\SubFabric Electron`；升级时
+  `${isUpdated}` 跳过询问与删除。
+- **SEA/Inno**：`SubFabric.iss` 增加 `UsePreviousAppDir=yes`、无 `[InstallDelete]`；
+  `InitializeUninstall` 默认询问是否保留，静默卸载默认保留，`/REMOVEDATA` 才清理；删除覆盖
+  projects、模型、运行时、设置、日志与本地偏好。
+- **验证**：新增 `installer-data-test` 检查两份安装脚本的数据边界；未运行真实安装/卸载向导。全量 JS 回归 `_test/maintenance/js-results-1463-installer-data.json` **159 通过 / 8 部分 / 0 失败**（2 排除）。
+- **未做**：重新构建安装包；GitHub：**尚未提交**。
 
 **2026-11-03（不同主题包的主题色互不干扰，beta 1.5.0.2）**
 
