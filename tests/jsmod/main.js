@@ -3554,6 +3554,8 @@ timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
   if (done) {
     const hadTransient = !!wordPreviewTrackRow;
     clearWordPreview(false);
+    /* 逐词把柄拖动也记一次；批量重校对/重分句/术语表不是逐次拖动，不能在这里记。 */
+    logOp('adjust', `第 ${row.no || '?'} 条`);
     // mouseup / pointercancel 一律做最终单句重建，即使上一帧尚未送到渲染器。
     en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
     if (editRowVisible(row) || hadTransient) {
@@ -3600,6 +3602,8 @@ timeline.onRetime = (row, s, e, done, shift) => {
   }
   if (state.selected === item) panel.select(item, false);
   if (!done) return;
+  /* 拖动字幕块调整起止时间也进操作日志；只记被调整的句子。 */
+  logOp('adjust', `第 ${item.no || row.no || '?'} 条`);
 
   // 按住 Shift 拖出的重叠 → 涉及的行一律去掉逐词(整句化), 避免两句话的高亮糊在一起。
   // 去逐词前已预留词级时间轴(见 deKaraokeRow); 该句被「拉回」不再与其它字幕重叠时,
@@ -7441,6 +7445,7 @@ window.addEventListener('pagehide', flushOpLog);
 
 const OP_ACTION_LABEL = {
   edit: '编辑字幕', split: '分句', merge: '合并', 'delete': '删除', insert: '新建',
+  adjust: '调整时间轴', glossary: '术语表应用',
   realign: '重排逐词', retranslate: '重新翻译', rerecog: '重新识别',
   reflect: '反思纠错', confidence: '置信度', role: '角色', style: '样式',
   export: '导出', import: '导入', other: '其它',
@@ -8065,7 +8070,7 @@ const Projects = initProjects({
 window.__subfabricFlushSave = () => Projects.flushSave();
 
 /* 术语表校对要用 Projects.openProject() 在应用后重新载入稿件，所以放在 Projects 之后接线。 */
-initGlossaryReview({ state, toast, projects: Projects });
+initGlossaryReview({ state, toast, projects: Projects, logOp });
 /* 全片语义重分句：规划走服务端 LLM，落盘复用编辑器自己的 splitRowAt。 */
 initResegLLM();
 /* 两个「高级字幕操作」按钮的右键菜单：全片 / 区域（区域走时间范围弹窗）。 */

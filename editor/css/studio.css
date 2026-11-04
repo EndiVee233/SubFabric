@@ -7748,8 +7748,6 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .batch-item-box { width:min(460px, calc(100vw - 40px)); }
 @media (max-width:900px) { #batch-view .batch-layout { grid-template-columns:1fr; } }
 
-/* 详情页「解析」：链接输入框 + 按钮，只读取在线元数据。 */
-
 /* 莫奈取色下方的三分配色预览 */
 .sf-palette-list { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
 .sf-palette-dot { flex:0 0 38px; width:38px; height:38px; min-width:38px; padding:0; box-sizing:border-box; appearance:none; -webkit-appearance:none; background:transparent; overflow:hidden; border-radius:50%; border:2px solid transparent; cursor:pointer; transition:transform .16s, border-color .16s; }
@@ -7766,6 +7764,8 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 /* 日志页三个 pane 的内容框与子标签对齐留白；底部也留出与面板边缘的间距 */
 #tab-logs .log-pane { padding: 0 10px 10px; }
 #tab-logs .log-toolbar { padding: 0 0 8px; }
+
+/* 详情页：本地视频项目可单独解析在线链接补标题/作者/封面，不改视频文件 */
 .dt-source-row { display:flex; gap:8px; margin:0 0 14px; }
 .dt-source-row .np-input { flex:1; min-width:0; }
 
@@ -8055,7 +8055,7 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .sf-mu-combo-batch > small { color:color-mix(in srgb, var(--on-container, var(--text)) 68%, transparent); }
 /* 悬停整张长卡时左右两半同时亮起；不单独给主按钮叠背景，避免半侧慢半拍 */
 .sf-mu-combo:hover .sf-mu-combo-main { background:var(--surface-3); }
-.sf-mu-combo:hover .sf-mu-combo-batch { border-color:var(--accent); filter:brightness(1.06); }
+.sf-mu-combo:hover .sf-mu-combo-batch { filter:brightness(1.06); }
 .sf-mu-combo-batch:hover { transform:translateY(-1px); border-color:var(--accent); filter:brightness(1.04); }
 @media (max-width:560px) { .sf-mu-combo { grid-column:auto; } }
 .sf-mu-combo-main:focus-visible, .sf-mu-combo-batch:focus-visible { outline:2px solid var(--accent); outline-offset:-3px; }
@@ -8197,3 +8197,38 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 /* 全局 Notice 弹窗也使用主题胶囊形 */
 #sf-notice { border-radius:999px; }
 .sf-studio[data-design=uwp] #sf-notice { border-radius:999px; border-left-width:1px; border-left-color:var(--line); }
+/* 新建文件夹：输入框只保留一层焦点框；卡片不透明 */
+.sf-studio .sf-folder-dialog .sf-folder-field input:focus,
+.sf-studio .sf-folder-dialog .sf-folder-field input:focus-visible {
+  outline:none;
+  box-shadow:none;
+  border-color:var(--accent);
+}
+.sf-studio[data-design=uwp] .sf-folder-dialog .sf-folder-field input:focus,
+.sf-studio[data-design=uwp] .sf-folder-dialog .sf-folder-field input:focus-visible {
+  box-shadow:none;
+  border-color:var(--accent);
+}
+.sf-studio[data-design=material] .sf-folder-dialog .sf-folder-field input:focus,
+.sf-studio[data-design=material] .sf-folder-dialog .sf-folder-field input:focus-visible {
+  border:0;
+  box-shadow:inset 0 0 0 2px var(--accent);
+}
+.sf-studio[data-design=material] .sf-folder-box {
+  background:var(--surface);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+/* 自定义下拉菜单必须高于导出视频弹窗，否则编码/加速点开后被遮住 */
+#sf-choice-menu:not([hidden]) { z-index:100010; }
+/* MY 主页滚动条：不滚动时隐藏，滚动时淡入 */
+.dashboard-view[data-home-mode="material"] {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.dashboard-view[data-home-mode="material"].is-scrolling { scrollbar-color: color-mix(in srgb, var(--text) 26%, transparent) transparent; }
+.dashboard-view[data-home-mode="material"]::-webkit-scrollbar { width: 8px; height: 8px; }
+.dashboard-view[data-home-mode="material"]::-webkit-scrollbar-track { background: transparent; }
+.dashboard-view[data-home-mode="material"]::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; transition: background .18s; }
+.dashboard-view[data-home-mode="material"].is-scrolling::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 26%, transparent); }
+.dashboard-view[data-home-mode="material"].is-scrolling::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text) 40%, transparent); }

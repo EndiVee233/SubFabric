@@ -29,8 +29,10 @@ assert.match(template, /class="sf-mu-widget sf-mu-combo"[\s\S]*?data-mu-action="
 assert.match(css, /\.sf-mu-combo \{[^}]*grid-column:span 2;/, '合并卡横跨两列');
 assert.match(css, /\.sf-mu-combo-main \{[^}]*position:absolute; inset:0;/, '新建稿件主卡铺满整张长卡');
 assert.match(css, /\.sf-mu-combo-batch \{[^}]*position:absolute; top:8px; right:8px; bottom:8px; z-index:2; width:47.5%/, '批量初稿覆盖在右侧且边界对齐');
-assert.match(css, /\.sf-mu-combo:hover \.sf-mu-combo-batch \{[^}]*border-color:var\(--accent\)/, '长卡悬浮时两半同时亮框');
+assert.doesNotMatch(css, /\.sf-mu-combo:hover \.sf-mu-combo-batch \{[^}]*border-color/, '仅悬浮子卡时亮框');
 assert.match(css, /\.sf-mu-combo-batch:hover \{[^}]*translateY\(-1px\)[^}]*border-color:var\(--accent\)/, '批量初稿悬浮轻微上浮并亮框');
+assert.match(studio, /dashboardViewEl\.classList\.add\('is-scrolling'\)/, 'MY 主页滚动时显示滚动条');
+assert.match(css, /data-home-mode="material"\]\.is-scrolling::-webkit-scrollbar-thumb/, 'MY 主页静止时隐藏滚动条');
 assert.match(css, /\.sf-mu \.sf-orbit,[\s\S]*?transform:rotate\(40deg\)/, '胶囊整体固定旋转 40°');
 assert.match(css, /\.sf-mu \.sf-orbit > span,[\s\S]*?transform:rotate\(-40deg\)/, '胶囊文字反向旋转保持水平');
 assert.match(css, /\.sf-mu \.sf-orbit:hover,[\s\S]*?transform:rotate\(40deg\)[\s\S]*?translate:0 -2px/, '悬浮时旋转不变、仅上浮');

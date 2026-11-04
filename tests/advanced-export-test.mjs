@@ -62,3 +62,6 @@ assert.match(karaoke, /flatMap\(sent =>/, '一句的全部词级事件都导出�
 assert.match(karaoke, /ev\.start != null \? ev\.start : sent\.start/, '逐词切片保留各自起止时间');
 assert.match(main, /adv-export-ok/, '弹窗导出按钮接线');
 console.log('advanced-export: 角色识别/筛选/译者注排除/弹窗入口通过');
+
+const css = fs.readFileSync(path.join(root, 'editor/css/studio.css'), 'utf8');
+assert.match(css, /#sf-choice-menu:not\(\[hidden\]\) \{ z-index:100010; \}/, '编码/加速下拉菜单高于导出弹窗');

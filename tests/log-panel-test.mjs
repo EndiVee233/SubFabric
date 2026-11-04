@@ -22,6 +22,7 @@ const RB = fs.readFileSync(path.join(REPO, 'editor', 'realign-batch.js'), 'utf8'
 const HTML = fs.readFileSync(path.join(REPO, 'editor', 'studio.html'), 'utf8');
 const MJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
 const PJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
+const GR = fs.readFileSync(path.join(REPO, 'editor', 'js', 'glossary-review.js'), 'utf8');
 const CSS = fs.readFileSync(path.join(REPO, 'editor', 'css', 'studio.css'), 'utf8');
 
 let pass = 0, fail = 0;
@@ -89,8 +90,10 @@ ok(/navigator\.sendBeacon/.test(MJ), '用 sendBeacon 发送（页面切走也能
 ok(/flushOpLog, 1500/.test(MJ), '攒一小批再发（不每次编辑打一次请求）');
 ok(/visibilitychange[\s\S]{0,80}flushOpLog/.test(MJ), '页面隐藏前把攒的发掉');
 ok(/OP_ACTION_LABEL/.test(MJ), '动作名有中文标签');
+ok(/adjust: '调整时间轴'/.test(MJ), '拖动时间轴使用「调整时间轴」标签');
+ok(/logOp\('glossary'/.test(GR), '术语表一次应用记一条操作');
 // 各动作都接了
-for (const act of ['realign', 'split', 'merge', 'delete', 'retranslate', 'reflect']) {
+for (const act of ['realign', 'split', 'merge', 'delete', 'retranslate', 'reflect', 'adjust']) {
   ok(new RegExp(`logOp\\('${act}'`).test(MJ), `接了 logOp('${act}')`);
 }
 /* why 里要带**依据**，否则事后没法复盘 —— 这是"为什么"这个需求的核心。

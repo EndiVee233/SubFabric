@@ -9,7 +9,7 @@
  *      （时间与英文轨不动），勾选「保存到翻译方案术语表」时同时合并写入方案。
  *      应用后用 projects.openProject() 重新载入稿件，界面立刻显示替换后的字幕。
  */
-export function initGlossaryReview({ state, toast, projects }) {
+export function initGlossaryReview({ state, toast, projects, logOp }) {
   const $ = (id) => document.getElementById(id);
   const btn = $('btn-glossary-review');
   const els = {
@@ -135,6 +135,7 @@ export function initGlossaryReview({ state, toast, projects }) {
         : (j.saved ? `，并写入${j.scheme ? '「' + j.scheme.name + '」' : ''}术语表` : '');
       if (j.replaced) {
         toast(`已应用到该视频：替换 ${j.replaced} 处（${j.rows} 行）${savedNote}`, 5200);
+        if (logOp) logOp('glossary', '全片术语表', `替换 ${j.replaced} 处（${j.rows} 行）`);
         /* 即使方案术语表保存失败，字幕文件已经改好，也必须重载让界面同步。 */
         if (projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }
       } else {

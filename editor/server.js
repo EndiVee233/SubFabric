@@ -130,8 +130,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.5.2'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.5.2'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.5.3'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.5.3'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -4896,29 +4896,6 @@ function normalizeBiliCookie(text) {
 function normalizePart(v) {
   const n = parseInt(v, 10);
   return (Number.isFinite(n) && n >= 1) ? Math.min(9999, n) : 1;
-}
-/** 详情页「解析」写入的项目来源元数据：只保留展示用字段并全部夹长度，
- *  缩略图只认 http(s)，标题/作者/简介/封面全空时视为没有读到信息。 */
-function cleanProjectSource(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const text = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
-  const source = {
-    url: normalizeFetchUrl(raw.url || ''),
-    site: text(raw.site, 40),
-    id: text(raw.id, 120),
-    title: text(raw.title, 300),
-    description: text(raw.description, 4000),
-    uploader: text(raw.uploader, 200),
-    duration: Math.max(0, Number(raw.duration) || 0),
-    uploadDate: text(raw.uploadDate, 40),
-    tags: Array.isArray(raw.tags) ? raw.tags.slice(0, 40).map(t => text(t, 60)).filter(Boolean) : [],
-    viewCount: Math.max(0, Number(raw.viewCount) || 0),
-    thumbnail: /^https?:\/\//i.test(String(raw.thumbnail || '')) ? String(raw.thumbnail).slice(0, 2000) : '',
-    height: Math.max(0, Number(raw.height) || 0),
-    fetchedAt: new Date().toISOString(),
-  };
-  if (!source.title && !source.uploader && !source.description && !source.thumbnail) return null;
-  return source;
 }
 /** 下载内核要 Python 3.8+：先试 ASR 那套, 再试 py -3.12/3.11/3.10、python3、内置 Python。
  *  结果缓存成一个 Promise（探测只做一次）。用异步 spawn —— 本环境 spawnSync 会 EBUSY（实测）。 */
@@ -12003,7 +11980,8 @@ function handleProjectsRoutes(req, res, u) {
           else delete current.source;
         }
         touchMeta(current);
-        return sendJson(res, 200, { ok: true, name: current.name, modifiedAt: current.modifiedAt, source: current.source || null });
+        return sendJson(res, 200, { ok: true, name: current.name, modifiedAt: current.modifiedAt,
+          source: current.source || null });
       });
     }
 
@@ -12411,8 +12389,10 @@ async function youtubeChannelVideo(channel, previous) {
 async function youtubeUpdates(force) {
   const cache = youtubeReadCache();
   const fresh = cache.at && (Date.now() - Number(cache.at) < YOUTUBE_TTL);
-  if (!force && fresh && cache.channels) {
-    return { ...youtubeResult(cache), stale: false };
+  if (!force && cache.channels && Object.keys(cache.channels).length) {
+    /* 启动先返回本地缓存，过期也先显示；后台再刷新，避免每次重启空白等待。 */
+    if (!fresh) setTimeout(() => { youtubeUpdates(true).catch(() => {}); }, 0);
+    return { ...youtubeResult(cache), stale: !fresh };
   }
   if (youtubeInflight) return youtubeInflight;
   youtubeInflight = (async () => {

@@ -1527,6 +1527,23 @@ async function refreshEditStats() {
   finally { editStatsBusy = false; }
 }
 let ytState = null, ytAt = 0, ytBusy = false, ytRefreshQueued = false;
+const YT_LOCAL_KEY = 'subfabric.youtube.updates.v1';
+function hydrateYoutubeCache() {
+  try {
+    const raw = localStorage.getItem(YT_LOCAL_KEY);
+    if (!raw || ytState) return;
+    const cached = JSON.parse(raw);
+    if (!cached || !Array.isArray(cached.channels) || !cached.channels.length) return;
+    ytState = { channels: cached.channels, updatedAt: cached.updatedAt || '', stale: true };
+  } catch { /* 本地缓存不可用就等接口 */ }
+}
+function persistYoutubeCache(data) {
+  try {
+    localStorage.setItem(YT_LOCAL_KEY, JSON.stringify({
+      channels: data.channels, updatedAt: data.updatedAt || '', savedAt: new Date().toISOString(),
+    }));
+  } catch { /* 隐私模式/配额不足时忽略 */ }
+}
 const ytCoverSeeds = new Map();
 const YT_CHANNELS = [
   { id: 'wemmbu', name: 'Wemmbu' }, { id: 'parrot', name: 'Parrot' },
@@ -1646,6 +1663,7 @@ async function loadYoutubeUpdates(force = false) {
     if (response.ok && data && Array.isArray(data.channels)) {
       ytState = data;
       ytAt = Date.now();
+      persistYoutubeCache(data);
       renderYoutubeUpdates();
       if (force) {
         const got = data.channels.filter(channel => channel && channel.video).length;
@@ -2081,11 +2099,19 @@ const muClockTimer = setInterval(updateMuClock, 1000);
 if (muClockTimer && typeof muClockTimer.unref === 'function') muClockTimer.unref();
 const youtubeTimer = setInterval(() => { if (!document.hidden) loadYoutubeUpdates(); }, YT_REFRESH_MS);
 if (youtubeTimer && typeof youtubeTimer.unref === 'function') youtubeTimer.unref();
+hydrateYoutubeCache();
 updateMuClock();
 syncDashboardMode();
 // Replay the card stagger whenever the dashboard page becomes visible again.
 const dashboardViewEl = $('dashboard-view');
+let dashboardScrollTimer = 0;
 if (dashboardViewEl) {
+  dashboardViewEl.addEventListener('scroll', () => {
+    if (dashboardViewEl.dataset.homeMode !== 'material') return;
+    dashboardViewEl.classList.add('is-scrolling');
+    clearTimeout(dashboardScrollTimer);
+    dashboardScrollTimer = setTimeout(() => dashboardViewEl.classList.remove('is-scrolling'), 900);
+  }, { passive: true });
   if (typeof MutationObserver === 'function') {
     let dashboardWasHidden = dashboardViewEl.hidden;
     new MutationObserver(() => {
