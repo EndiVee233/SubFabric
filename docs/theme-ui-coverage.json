@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "c8ca666616b04900a508e0f59ed20dd2fd14a54e8be09bd0b0efb3fe1beb1c86",
+      "sha256": "d246b8c189e19e11282d94a5af41b0b17b583299077b629a3d176fc539399d2c",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -824,7 +824,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "96a242d0bc54d925da920c21be03ba91df84096d00a270bbb9a20e56ae242022",
+      "sha256": "e0e15cbb00802dfe82643bc787425afb280b5028cf2b2387ebd6afed6f42c891",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -847,211 +847,211 @@
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 933,
+          "line": 993,
           "method": "innerHTML"
         },
         {
-          "line": 935,
+          "line": 995,
           "method": "createElement"
         },
         {
-          "line": 1405,
+          "line": 1465,
           "method": "innerHTML"
         },
         {
-          "line": 1408,
+          "line": 1468,
           "method": "innerHTML"
         },
         {
-          "line": 2022,
+          "line": 2082,
           "method": "replaceChildren"
         },
         {
-          "line": 2023,
+          "line": 2083,
           "method": "createElement"
         },
         {
-          "line": 2032,
+          "line": 2092,
           "method": "createElement"
         },
         {
-          "line": 2886,
+          "line": 2946,
           "method": "innerHTML"
         },
         {
-          "line": 2895,
+          "line": 2955,
           "method": "innerHTML"
         },
         {
-          "line": 2945,
+          "line": 3005,
           "method": "innerHTML"
         },
         {
-          "line": 3025,
+          "line": 3085,
           "method": "innerHTML"
         },
         {
-          "line": 3707,
+          "line": 3767,
           "method": "innerHTML"
         },
         {
-          "line": 5414,
+          "line": 5474,
           "method": "innerHTML"
         },
         {
-          "line": 5415,
+          "line": 5475,
           "method": "innerHTML"
         },
         {
-          "line": 5621,
+          "line": 5681,
           "method": "innerHTML"
         },
         {
-          "line": 5639,
+          "line": 5699,
           "method": "innerHTML"
         },
         {
-          "line": 5726,
+          "line": 5786,
           "method": "innerHTML"
         },
         {
-          "line": 5806,
+          "line": 5866,
           "method": "innerHTML"
         },
         {
-          "line": 5832,
+          "line": 5892,
           "method": "innerHTML"
         },
         {
-          "line": 5911,
+          "line": 5971,
           "method": "innerHTML"
         },
         {
-          "line": 6351,
+          "line": 6411,
           "method": "innerHTML"
         },
         {
-          "line": 6355,
+          "line": 6415,
           "method": "createElement"
         },
         {
-          "line": 6357,
+          "line": 6417,
           "method": "innerHTML"
         },
         {
-          "line": 6405,
+          "line": 6465,
           "method": "innerHTML"
         },
         {
-          "line": 6571,
+          "line": 6631,
           "method": "createElement"
         },
         {
-          "line": 6573,
+          "line": 6633,
           "method": "innerHTML"
         },
         {
-          "line": 7073,
+          "line": 7133,
           "method": "innerHTML"
         },
         {
-          "line": 7128,
+          "line": 7188,
           "method": "innerHTML"
         },
         {
-          "line": 7289,
+          "line": 7349,
           "method": "innerHTML"
-        },
-        {
-          "line": 7622,
-          "method": "createElement"
-        },
-        {
-          "line": 7660,
-          "method": "createElement"
         },
         {
           "line": 7682,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7684,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7684,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7849,
           "method": "createElement"
         },
         {
-          "line": 7877,
+          "line": 7720,
           "method": "createElement"
         },
         {
-          "line": 7888,
+          "line": 7742,
           "method": "innerHTML"
         },
         {
-          "line": 7958,
+          "line": 7744,
           "method": "innerHTML"
         },
         {
-          "line": 7959,
+          "line": 7744,
           "method": "innerHTML"
         },
         {
-          "line": 7987,
+          "line": 7909,
+          "method": "createElement"
+        },
+        {
+          "line": 7937,
+          "method": "createElement"
+        },
+        {
+          "line": 7948,
           "method": "innerHTML"
         },
         {
-          "line": 8214,
+          "line": 8018,
           "method": "innerHTML"
         },
         {
-          "line": 8369,
+          "line": 8019,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8047,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8274,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8429,
           "method": "replaceChildren"
         },
         {
-          "line": 8375,
+          "line": 8435,
           "method": "innerHTML"
         },
         {
-          "line": 8420,
+          "line": 8480,
           "method": "innerHTML"
         },
         {
-          "line": 8421,
+          "line": 8481,
           "method": "innerHTML"
         },
         {
-          "line": 8442,
+          "line": 8502,
           "method": "innerHTML"
         },
         {
-          "line": 8455,
+          "line": 8515,
           "method": "innerHTML"
         },
         {
-          "line": 8756,
+          "line": 8816,
           "method": "createElement"
         },
         {
-          "line": 8761,
+          "line": 8821,
           "method": "innerHTML"
         },
         {
-          "line": 8770,
+          "line": 8830,
           "method": "createElement"
         },
         {
-          "line": 8776,
+          "line": 8836,
           "method": "createElement"
         },
         {
-          "line": 8778,
+          "line": 8838,
           "method": "createElement"
         }
       ],
@@ -1633,7 +1633,7 @@
     },
     {
       "file": "editor/js/studio.js",
-      "sha256": "4ef91d22fad1f8752efcc99139979a0011bf7d6623a00649ff8cff8a0b5cceff",
+      "sha256": "f3774cd0d461770656679cc057052dd788b1cfe32464867eda24d58882c8a08b",
       "ids": [],
       "dynamicIds": [
         "sf-choice-menu",
@@ -1892,51 +1892,51 @@
           "method": "innerHTML"
         },
         {
-          "line": 2976,
+          "line": 2988,
           "method": "createElement"
         },
         {
-          "line": 3019,
+          "line": 3031,
           "method": "replaceChildren"
         },
         {
-          "line": 3025,
+          "line": 3037,
           "method": "createElement"
         },
         {
-          "line": 3028,
+          "line": 3040,
           "method": "createElement"
         },
         {
-          "line": 3032,
+          "line": 3044,
           "method": "createElement"
         },
         {
-          "line": 3033,
+          "line": 3045,
           "method": "createElement"
         },
         {
-          "line": 3033,
+          "line": 3045,
           "method": "innerHTML"
         },
         {
-          "line": 3106,
+          "line": 3118,
           "method": "createElement"
         },
         {
-          "line": 3108,
+          "line": 3120,
           "method": "createElement"
         },
         {
-          "line": 3111,
+          "line": 3123,
           "method": "createElement"
         },
         {
-          "line": 3112,
+          "line": 3124,
           "method": "createElement"
         },
         {
-          "line": 3112,
+          "line": 3124,
           "method": "innerHTML"
         }
       ],
@@ -2078,7 +2078,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "dd723a058e5326782f0d67368190fe52722ac5bd9b5581f876cab32e299405c1",
+      "sha256": "824c74946fbde4bf5b4ec57e424f42a8b617aad348b033f7299be8f557cf4f46",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",

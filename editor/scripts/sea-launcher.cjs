@@ -36,9 +36,7 @@ function probePort() {
 }
 
 function openBrowser(url) {
-  /* 优先 Edge 应用模式(--app): 独立无边框窗口、无地址栏 → 桌面应用观感。
-   * 注意: 不带 --user-data-dir —— 独立新 profile 会触发 Edge 首次运行的"登录到 Edge"
-   * 向导(实测点了确定窗口直接没了); 用用户现有 Edge 配置则早已初始化, 直接开窗口。 */
+  /* 优先 Edge 应用模式(--app): 独立无边框窗口、无地址栏 → 桌面应用观感。 */
   const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
   const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
   const cand = [
@@ -50,10 +48,28 @@ function openBrowser(url) {
     if (edge) {
       /* 这几个开关是给"要持续渲染的桌面应用"用的：窗口被遮挡/最小化时 Chromium 默认
        * 会挂起 rAF、把定时器节流到 1Hz，编辑器里就是「点播放没反应、跳转后画面不动」。
-       * 硬件解码不用开关，GPU 支持时自动走硬解。 */
-      spawn(edge, ['--app=' + url, '--no-first-run', '--no-default-browser-check',
+       * 硬件解码不用开关，GPU 支持时自动走硬解。
+       *
+       * ⚠ 必须带独立 --user-data-dir：Edge 已经在跑时，新进程只是把 URL 转交给已有实例，
+       * 上面这些 --disable-* 会被**整片丢掉**（实测本机 Edge 主进程命令行只剩
+       * `--enable-features=ParallelDownloading --restore-last-session --restart`，
+       * 窗口被盖住时 rAF 出现 6~10 秒空档，同期主线程定时器空档 0ms = 不是 JS 忙）。
+       * 独立 profile 才是独立浏览器实例，开关才真正进浏览器进程（chrome://version 可验）。
+       * --no-first-run / --no-default-browser-check 压掉独立 profile 的首次运行向导。
+       * 磁盘缓存限 1GB：媒体缓存曾把 D 盘写到 0 字节（7GB 的 AV1 稿件）。 */
+      const exeDir = path.dirname(process.execPath);
+      let profileDir = path.join(exeDir, 'browser-profile');
+      try {
+        fs.accessSync(exeDir, fs.constants.W_OK);
+      } catch {
+        /* 装在 Program Files 之类不可写的目录时退回用户目录 */
+        profileDir = path.join(process.env.LOCALAPPDATA || process.env.USERPROFILE || exeDir, 'SubFabric', 'browser-profile');
+      }
+      spawn(edge, ['--app=' + url, '--user-data-dir=' + profileDir,
+        '--no-first-run', '--no-default-browser-check',
         '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
-        '--disable-backgrounding-occluded-windows', '--enable-gpu-rasterization'],
+        '--disable-backgrounding-occluded-windows', '--enable-gpu-rasterization',
+        '--disk-cache-size=1073741824'],
       { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       return;
     }

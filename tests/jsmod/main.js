@@ -513,27 +513,82 @@ let seekInflight = false;              // 元素上已有 seek 在飞
 let seekPendingT = null;               // 等落地后再发的"最后一枪"
 let seekFlushRaf = 0;
 let seekInflightTimer = 0;
+let seekStartedAt = 0;                 // 当前这枪发出的时刻
+let seekWarmup = false;                // 正在为"冷元素"预热首段数据
+let seekWarmupTimer = 0;
 
 function scheduleSeekFlush() {
   if (seekFlushRaf) return;
   seekFlushRaf = requestAnimationFrame(() => { seekFlushRaf = 0; flushSeek(); });
 }
 
+/* 元素里是否已经有可用数据。readyState<2 且 buffered 为空 = 冷元素。
+ * 冷元素上直接写 currentTime，Chromium 会把 seek 退化成**从第 0 字节顺序读**：
+ * 实测 4 小时 7GB 的 AV1 稿件，点 3h30m 之后先取尾部 Cues，接着从 0 灌了 2GB，
+ * 20 秒才走到 7964s（约 400 秒视频/秒），根本到不了目标；期间 seeking 恒为 true。
+ * 有哪怕 2 秒缓冲时，同一操作 200~660ms 落地。 */
+function seekHasData() {
+  if (video.buffered.length > 0) return true;
+  return video.readyState >= 2;
+}
+
+function endSeekWarmup() {
+  if (!seekWarmup) return;
+  seekWarmup = false;
+  clearTimeout(seekWarmupTimer);
+  video.removeEventListener('progress', onWarmupProgress);
+  video.removeEventListener('loadeddata', onWarmupProgress);
+  scheduleSeekFlush();
+}
+function onWarmupProgress() {
+  if (video.buffered.length > 0 || video.readyState >= 2) endSeekWarmup();
+}
+
+/* 冷元素预热：把 preload 提到 auto 让首段数据先落地，最多等 1.2s（超时也照样发枪，
+ * 交给下面的硬超时兜底）。UI/字幕早已跳到目标时间，用户感知仍是即时的。 */
+function startSeekWarmup() {
+  if (seekWarmup) return;
+  seekWarmup = true;
+  try { if (video.preload !== 'auto') video.preload = 'auto'; } catch {}
+  video.addEventListener('progress', onWarmupProgress);
+  video.addEventListener('loadeddata', onWarmupProgress);
+  seekWarmupTimer = setTimeout(endSeekWarmup, 1200);
+}
+
 function flushSeek() {
-  if (seekInflight || seekPendingT == null) return;
+  if (seekInflight || seekWarmup || seekPendingT == null) return;
   const target = seekPendingT;
+  /* 冷元素先热身，这一枪留在 seekPendingT 里，预热结束（或超时）后由 endSeekWarmup 补发。 */
+  if (!seekHasData() && Math.abs(video.currentTime - target) > 1e-3) { startSeekWarmup(); return; }
   seekPendingT = null;
   if (Math.abs(video.currentTime - target) <= 1e-3 && !video.seeking) return;
   seekInflight = true;
+  seekStartedAt = performance.now();
   clearTimeout(seekInflightTimer);
-  /* 兜底：轨道被换/解码器异常时 seeked 可能不来，不能因此把后续跳转全堵死。
-   * 但视频确实还在 seeking 时不解除 —— 那会退回"一次拖动打几十枪"的老毛病。 */
-  seekInflightTimer = setTimeout(() => {
-    if (video.seeking) return;
+  /* 兜底两级：
+   * ① seeked 丢了（换轨/解码器异常）→ 1.5s 后元素不再 seeking 就放行；
+   * ② 元素一直在 seeking 且超过 3.5s（就是上面那种退化扫描，4 小时稿件能卡 30s）→
+   *    **硬放行**。原来这里写着 `if (video.seeking) return`，扫描期间 Seeking 恒为 true，
+   *    seekInflight 永不解除 → 之后每次点击只进 seekPendingT 不发出，UI 被 previewSeekT 钉住，
+   *    表现就是"再点别处也没反应"。放行后新一枪赋值 currentTime 会中止那次扫描。 */
+  const armInflightTimer = () => {
+    clearTimeout(seekInflightTimer);
+    seekInflightTimer = setTimeout(() => {
+      if (!video.seeking) {
+        seekInflight = false;
+        if (seekPendingT != null) scheduleSeekFlush();
+        return;
+      }
+      if (performance.now() - seekStartedAt < 3500) { armInflightTimer(); return; }
+      seekInflight = false;
+      if (seekPendingT != null) scheduleSeekFlush();
+    }, 1500);
+  };
+  armInflightTimer();
+  try { video.currentTime = target; } catch {
     seekInflight = false;
-    if (seekPendingT != null) scheduleSeekFlush();
-  }, 1500);
-  try { video.currentTime = target; } catch { seekInflight = false; clearTimeout(seekInflightTimer); }
+    clearTimeout(seekInflightTimer);
+  }
 }
 
 function requestSeek(t) {
@@ -571,6 +626,11 @@ video.addEventListener('seeked', () => {
 video.addEventListener('emptied', () => {
   previewSeekT = null; seekPendingT = null; seekInflight = false;
   clearTimeout(previewSeekTimer); clearTimeout(seekInflightTimer);
+  /* 换源时预热的监听/计时器一起收掉，否则旧的 progress 监听会一直挂着 */
+  seekWarmup = false;
+  clearTimeout(seekWarmupTimer);
+  video.removeEventListener('progress', onWarmupProgress);
+  video.removeEventListener('loadeddata', onWarmupProgress);
 });
 window.__sfSeek = requestSeek;
 

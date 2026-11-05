@@ -4206,7 +4206,8 @@ body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-col
 .sf-studio[data-design=material] #sf-seek:focus-within { outline:none; }
 .sf-studio[data-design=material] #sf-seek::after { content:''; position:absolute; inset:-7px -6px; border:2px solid var(--accent); border-radius:999px; pointer-events:none; opacity:0; }
 .sf-studio[data-design=material] #sf-seek:focus-within::after { opacity:1; }
-.sf-studio[data-design=material] .sf-progress-rest { display:block; position:absolute; left:min(100%,calc(var(--sf-progress) + var(--sf-thumb)/2)); right:0; top:calc(50% - 2px); height:4px; border-radius:4px; background:var(--accent-soft); }
+/* rest 从圆钮中心起步、伸到圆钮底下（圆钮实心且在其上层），两侧轨道无缝衔接；原先从钮右缘起步会在圆周与方条间露出底色缺口。 */
+.sf-studio[data-design=material] .sf-progress-rest { display:block; position:absolute; left:min(100%,var(--sf-progress)); right:0; top:calc(50% - 2px); height:4px; border-radius:4px; background:var(--accent-soft); }
 .sf-studio[data-design=material] .sf-progress-fill { display:block; position:absolute; left:0; top:0; height:100%; background:transparent!important; border-radius:0; overflow:hidden; transition:none!important; animation:none!important; }
 .sf-studio[data-design=material] .sf-progress-line { display:block; position:absolute; left:0; right:0; top:calc(50% - 2px); height:4px; background:var(--accent); border-radius:4px; }
 .sf-studio[data-design=material] .sf-progress-wave { position:absolute; inset:0; overflow:hidden; }
@@ -8340,3 +8341,42 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 /* 新建文件夹输入框文字不要继承 11px 标签字号 */
 .sf-folder-field input { font-size:14px; }
 .sf-studio[data-design=material] .sf-folder-dialog .sf-folder-field input { font-size:15px; }
+
+/* ── 编辑页渲染瘦身：视频在动的时候，背景效果不该抢 GPU ─────────────────────────
+ * 背景：用户开着「流光背景 + Material You 波浪进度条」时，点进度条卡、播放掉帧。
+ * 渲染层实测的两个大头都在这里，改法都不动观感（静态截图对比几乎看不出差别）：
+ *
+ * ① 编辑工作区在流光/图片背景下，四块大面板已经被压到 78% 实色 —— 底下那层
+ *    blur(18px) 只剩 22% 的透出量，看得见的贡献极小；代价却是背后只要有一层在动，
+ *    模糊结果就必须逐帧重算（三块 50vw×65vh 的流光在漂 → 每帧 4 次全宽重采样）。
+ *    这里直接关掉模糊，把底色提到 92% 补回同样的实感。
+ * ② 流光在视频播放/跳转期间停住（body[data-media-active]，由 studio.js 维护）。
+ *    静止层的合成结果会被缓存成纹理，之后每帧只做一次 blit，而不是整屏重新混合。 */
+body.sf-studio[data-workspace=editor]:is([data-bg=aurora],[data-bg=image]) :is(#toolbar,#stage-wrap,#editor-panel,#timeline-panel) {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body.sf-studio[data-bg=aurora][data-aurora-motion=dynamic][data-media-active=true] .sf-ambient i {
+  animation-play-state: paused !important;
+}
+
+/* ③ MY 波浪进度条：位移层单独提成合成层。
+ *    原先 .sf-wave-shift 只是普通子元素，每帧 translateX 都要把整条进度条（含遮罩、
+ *    进度填充、圆钮）重绘一次；提层后遮罩只栅格化一次，之后只是纹理平移。
+ *    只在 data-wave-animated=true（真的在跑）时占这一层，停下就释放。 */
+body.sf-studio[data-design=material] .sf-progress[data-wave-animated=true] .sf-wave-shift {
+  will-change: transform;
+  backface-visibility: hidden;
+}
+body.sf-studio[data-design=material] .sf-progress-wave { contain: paint; }
+
+/* ④ 视频舞台自己不可能是"半透明的"：它的底色是不透明的 --surface，内层 #video-stage 是 #000。
+ *    给一个不透明底加 backdrop-filter 视觉上零收益，却会让它成为 backdrop root ——
+ *    背后的整块区域（含正在播放的 <video>）每帧都要被读回来参与模糊，
+ *    视频因此走不了直通 overlay，笔记本双显卡上还要跨 GPU 拷一份。
+ *    这条对所有主题/背景生效，观感不变。 */
+body.sf-studio #stage-wrap {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

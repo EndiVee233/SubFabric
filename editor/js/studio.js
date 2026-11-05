@@ -2794,6 +2794,18 @@ function syncPlayer() {
   window.SF_PROGRESS.set(seekBar, value, active ? 'running' : 'paused');
 }
 for (const event of ['timeupdate', 'play', 'pause', 'ended', 'durationchange', 'emptied', 'loadedmetadata']) video.addEventListener(event, syncPlayer);
+/* 视频在动（播放/跳转/等数据）时把 background 上的流光停住。
+ * 流光每帧都在做位移+缩放的合成，而编辑区四块大面板在浅色/深色下都带 backdrop-filter：
+ * 背后一旦有东西在动，模糊就必须逐帧重新采样一遍全宽面积，和视频解码/合成抢同一份 GPU。
+ * 停住后流光变成一张静态缓存层，只剩一次 blit；暂停 260ms 后恢复，观感只在"看视频"时让路。 */
+let mediaBusyTimer = 0;
+function markMediaBusy(busy) {
+  clearTimeout(mediaBusyTimer);
+  if (busy) { document.body.dataset.mediaActive = 'true'; return; }
+  mediaBusyTimer = setTimeout(() => { document.body.dataset.mediaActive = 'false'; }, 260);
+}
+for (const event of ['playing', 'seeking', 'waiting']) video.addEventListener(event, () => markMediaBusy(true));
+for (const event of ['pause', 'ended', 'seeked', 'emptied']) video.addEventListener(event, () => markMediaBusy(false));
 $('sf-play').addEventListener('click', () => {
   if (!video.paused) { video.pause(); return; }
   /* seek 还没落地时点播放，Chromium 会用 AbortError 拒绝这个 play() —— 那不是

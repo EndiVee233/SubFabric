@@ -127,7 +127,7 @@
 
   <!-- ══════════ 左上: 视频播放区 ══════════ -->
   <main id="stage-wrap">    <div id="video-stage">
-      <video id="video" preload="metadata"></video>
+      <video id="video" preload="auto"></video>
       <!-- 进度条悬浮时间提示：悬在**原生**进度条上时，在上方显示这个位置对应的时间。
            为什么要自己做一个：原生 <video controls> 的控件在 UA shadow DOM 里，
            Chrome 不带 hover 时间预览，且没法插入自己的元素。
