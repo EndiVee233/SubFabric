@@ -4725,6 +4725,10 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-theme=light] .fr-menu-item:hover {
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }
+/* 浅色下卡片是「20% 黑」玻璃，等价于把底色压到中灰。卡片里的小号计数（.role-count
+   用的是 --text-2）叠上去对比度只有 2.35，全主题渲染检查判不合格，肉眼也确实发灰。
+   这里只把这类小字提到 --text，玻璃观感与压暗参数都不动。 */
+.sf-studio[data-theme=light] .role-count { color: var(--text); }
 /* 颜色选择器（.sscp）原来整块是深色写死的；浅色模式换成主题表面与描边。 */
 .sf-studio[data-theme=light] .sscp {
   color: var(--text); background: var(--surface); border-color: var(--line);

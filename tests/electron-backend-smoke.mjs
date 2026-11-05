@@ -14,7 +14,9 @@ else {
   let backend;
   try {
     backend = await startBackend({ resourceRoot, dataRoot, port: 0 });
-    assert.equal(backend.version, 'beta 1.5.6');
+    /* 版本号只维护在 editor/server.js 一处，这里从源文件取，避免每次发版都要改测试 */
+    const expectedVersion = /APP_VERSION = '([^']+)'/.exec(fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8'))[1];
+    assert.equal(backend.version, expectedVersion);
     assert.equal(backend.nodeVersion, JSON.parse(fs.readFileSync(path.join(resourceRoot, 'manifest.json'), 'utf8')).nodeVersion);
     for (const route of ['/editor/studio.html', '/editor/js/main.js', '/editor/vendor/subtitles-octopus-worker.wasm', '/api/projects', '/api/asr/status']) {
       const response = await fetch(backend.origin + route, { signal: AbortSignal.timeout(15000) });
