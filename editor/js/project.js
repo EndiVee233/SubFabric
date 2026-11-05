@@ -24,7 +24,8 @@ import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL,
   welcomeRecommendations, gpuMemoryText } from './welcome-model.js';
 
 export function initProjects(ctx) {
-  const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp } = ctx;
+  const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp,
+    openCardBegin = async () => {}, openCardLabel = () => {}, openCardFail = () => {} } = ctx;
   const $ = (s) => document.querySelector(s);
   const studioUI = document.body?.classList?.contains('sf-studio') === true;
 
@@ -761,6 +762,11 @@ export function initProjects(ctx) {
     const gen = ++_openGen;
     clearInterval(pollTimer); pollTimer = 0;
     let m, rSub;
+    /* 右下角先挂"打开稿件"卡：接下来要 flushSave + 两次网络请求，再往后是整段同步解析，
+     * 这一两秒里界面完全静止。**必须在 state.project 换成新项目之前**等这一帧 ——
+     * 换完之后就不能再有 await 了（旧文档会被自动保存写进新项目）。 */
+    await openCardBegin('项目字幕', '正在读取项目字幕…');
+    if (gen !== _openGen) return;
     try {
       await flushSave();
       if (gen !== _openGen) return;
@@ -773,9 +779,12 @@ export function initProjects(ctx) {
       rSub = rs;
       if (gen !== _openGen) return;
       if (!r.ok || m.error) throw new Error(m.error || 'HTTP ' + r.status);
+      // 卡片补上项目名（紧跟着还有一次 rSub.text() 的 await，所以能画出来）
+      openCardLabel(m.name || '项目字幕');
     } catch (e) {
       if (gen !== _openGen) return;
       toast('项目加载失败: ' + e.message, 3600);
+      openCardFail('项目加载失败：' + e.message);
       location.hash = '#/home';
       return;
     }
@@ -784,9 +793,11 @@ export function initProjects(ctx) {
       // ⚠ 必须检查 ok: 服务端 500/404 时响应体是错误页, 不挡的话会被当字幕解析成空/坏文档,
       // 且 lastSavedText 被污染 —— 用户随后任何一次编辑触发 saveNow() 都会把坏内容写回。
       if (!rSub.ok) throw new Error(`HTTP ${rSub.status}`);
+      // 文件名先算出来：读 3~4MB 字幕这一下也是异步的，卡片这时就能写清"读的是哪一份"
+      const name = (m.subtitle && (m.subtitle.name || m.subtitle.file)) || 'subtitle.ass';
+      openCardLabel(name);
       const text = await rSub.text();
       if (gen !== _openGen) return;
-      const name = (m.subtitle && (m.subtitle.name || m.subtitle.file)) || 'subtitle.ass';
       /* 只做**轻量**校验，不再为"有没有事件"把整份 ASS 解析一遍 ——
        * 后面 routeSub→setAss 本来就要构造 AssDoc；旧实现 `new AssDoc(text).events`
        * 让 3~4MB 的稿件在打开时白解析两遍（主要启动开销之一）。 */
@@ -832,6 +843,7 @@ export function initProjects(ctx) {
         location.hash = '#/home';
       }
       toast('项目字幕读取失败: ' + e.message, 3600);
+      openCardFail('项目字幕读取失败：' + e.message);
       return;
     }
     if (typeof window.__notesReload === 'function') window.__notesReload();

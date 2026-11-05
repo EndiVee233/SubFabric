@@ -1625,15 +1625,38 @@ function initFxControls() {
 }
 
 async function loadSubUrl(url, name) {
+  // 卡片先上墙，再开始读：读文件/解析这一段是同步的，不先等一帧就什么都看不见
+  await openCardBegin(name, '正在读取字幕文件…');
   try {
     const resp = await fetch(url);
-    if (!resp.ok) { toast('字幕打开失败：' + resp.status); return; }
+    if (!resp.ok) {
+      toast('字幕打开失败：' + resp.status);
+      openCardFail('读取失败：HTTP ' + resp.status);
+      return;
+    }
     const text = await resp.text();
     routeSub(text, name);
   } catch (e) {
     // fetch reject(示例字幕 URL 失败) → 避免 unhandledrejection, 给出用户提示
-    toast('字幕打开失败：' + (e && e.message ? e.message : e));
+    const msg = (e && e.message ? e.message : e);
+    toast('字幕打开失败：' + msg);
+    openCardFail('读取失败：' + msg);
   }
+}
+
+/** 本地选文件 / 拖放打开字幕的统一入口（卡片 → 读文本 → routeSub）。
+ *  抽出这一个函数是因为「选文件」和「拖放」两条路原来各写一遍，
+ *  加了进度卡后再各写一遍就很容易漏掉其中一条（漏掉的那条就完全没有反馈）。 */
+async function openSubFile(file) {
+  await openCardBegin(file.name, '正在读取字幕文件…');
+  let text;
+  try {
+    text = await file.text();
+  } catch (e) {
+    openCardFail('读取文件失败：' + (e && e.message ? e.message : e));
+    return;
+  }
+  routeSub(text, file.name);
 }
 
 function routeSub(text, name) {
@@ -1646,6 +1669,8 @@ function routeSub(text, name) {
     setAss(t, name);
   }
   else setSrt(text, name);
+  // 打开走完（解析 + 首次构建都在上面同步做完）→ 卡片收尾
+  openCardDone();
 }
 
 /* ─────────── SRT ─────────── */
@@ -2747,6 +2772,52 @@ async function rimApply(force) {
   };
   jobCardShow('分段导入', '正在合并字幕…', 0, note());
   try {
+    /* ── 分角色配色 ────────────────────────────────────────────────
+     * 角色色只存在于中文行行首的内联色标 `{\c&H......&}` 里（时间轴块底色、视频区文字色、
+     * 角色页色块都读它）。源文件里的那份色标在解析阶段被 plain() 洗掉了，所以这里重新定色，
+     * 优先级：**本稿同名角色已有的色** → 源文件这一行原来的色 → 调色板里还没用过的色。
+     *   · 同名角色沿用本稿的色：同一个人在一份稿子里必须恒为一种颜色，否则整屏花掉；
+     *   · 新角色优先沿用源文件的色：作者已经选好的身份色不该被我们改掉；
+     *   · 都没有才从 ROLE_PALETTE 里挑一个**没被占用**的，避免和已有角色撞色。
+     * 必须先于「删冲突行」计算 —— 被覆盖的行可能正是某些角色唯一的颜色来源。 */
+    const roleColor = new Map();
+    const usedColors = new Set();
+    for (const r of computeRoles()) {
+      if (!r.color) continue;
+      roleColor.set(String(r.name).toLowerCase(), r.color);
+      usedColors.add(String(r.color).toLowerCase());
+    }
+    let paletteCursor = 0;
+    const nextColor = () => {
+      for (let k = 0; k < ROLE_PALETTE.length; k++) {
+        const c = ROLE_PALETTE[paletteCursor++ % ROLE_PALETTE.length];
+        if (usedColors.has(c.toLowerCase()) || HIGHLIGHT_COLORS.has(c.toLowerCase())) continue;
+        usedColors.add(c.toLowerCase());
+        return c;
+      }
+      return ROLE_PALETTE[paletteCursor++ % ROLE_PALETTE.length];
+    };
+    /* 行首可见的 [角色名]（前面的 {\...} 覆盖标签不算）—— 与 karaoke.js 的
+     * speakerTextTagOf 同一口径，这里只需要第一个名字（多角色行以第一个身份定色）。 */
+    const roleNameOf = (text) => {
+      const m = /^\[([^\]]+)\]/.exec(String(text || '').replace(/^\s*(?:\{[^}]*\})*/, ''));
+      return m ? m[1].trim() : '';
+    };
+    const coloredRoles = new Set();
+    const colorForRow = (r) => {
+      const name = roleNameOf(r.zh);
+      if (!name) return '';                       // 没有角色标签就不该凭空上色
+      const key = name.toLowerCase();
+      if (roleColor.has(key)) return roleColor.get(key);
+      /* 源文件的色标原样沿用 —— 但**逐词高亮色（默认绿）不能当角色色**：
+       * speakerColorOf() 会把 #00ff00 当成"逐词高亮"排除掉，写回去等于没写
+       * （块仍然是灰的，且用户看不出为什么）。这种就退回调色板。 */
+      const raw = String(r.color || '').toLowerCase();
+      const src = /^#[0-9a-f]{6}$/.test(raw) && !HIGHLIGHT_COLORS.has(raw) ? raw : '';
+      const c = src || nextColor();
+      roleColor.set(key, c);
+      return c;
+    };
     const before = state.items.length;
     if (replaceSteps) {
       for (const rg of res.replace) {
@@ -2766,8 +2837,10 @@ async function rimApply(force) {
         /* ★ 传**原文件的真实词级时间**（ass-group 从逐词行里提取的：那一行的起止就是那个词的时间）。
          * 不传的话 addRecognizedRow 会调 recalcWords 按字母数铺开 ——
          * 词序看着对，但节奏是假的（用户实测："逐词不准确，这不是原字幕里的逐词顺序吧"）。 */
+        const color = colorForRow(r);
+        if (color) coloredRoles.add(roleNameOf(r.zh).toLowerCase());
         const row = addRecognizedRow({
-          start: r.start, end: r.end, zh: r.zh, text: r.en,
+          start: r.start, end: r.end, zh: r.zh, text: r.en, color,
           words: (r.words || []).map(w => ({ word: w.word, start: w.start, end: w.end })),
         });
         if (row) added++;
@@ -2783,10 +2856,16 @@ async function rimApply(force) {
     //   放在这个位置的原因：损坏一旦写进文件就会永久留下（列表里看不出、画面只是
     //   "整句一直亮着"），所以每次导入都顺手体检一遍，而不是等用户发现再处理。
     const healed = healWordRows('分段导入后');
+    reconcileKaraoke();
+    /* ★ 视频区（libass 渲染层）拿的是**序列化后的整份 ASS**，不重喂就一直是导入前的那份：
+     * 列表和时间轴有新行、画面上却什么都没有，非得刷新一次才出现（用户报的
+     * 「视频预览区这些字幕不显示」）。与重识别写回、说话人分离同一做法。 */
+    if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
     rebuildItemsAndLanes(true);
     const rg = rimReadRange();
     const sum = `分段导入：进来 ${added} 行（原 ${before} 行 → 现 ${state.items.length} 行）`
       + (force && res.replace ? `，覆盖 ${res.replace.length} 处` : '')
+      + (coloredRoles.size ? `，按角色配色 ${coloredRoles.size} 个` : '')
       + (healed ? `；顺带修好 ${healed} 行错位的逐词文本` : '')
       + `；区间 ${rg.ok ? fmtTime(rg.start) + '~' + fmtTime(rg.end) : '?'}，来源 ${rimName}`;
     toast(sum, 8000);
@@ -4715,8 +4794,14 @@ function addRecognizedRow(seg) {
   if (state.format !== 'ass' || !state.kar) return null;
   const zhStyle = (state.kar.sentences.find(x => x.style !== state.kar.wordStyle) || {}).style || '';
   const enStyle = state.kar.wordStyle || '';
+  /* 角色色（可选）：中文行行首的 `{\c&H......&}` 是这个项目里**角色色唯一的载体**
+   * （时间轴块底色、视频区文字色、角色页色块都从它读）。分段导入的源文件里这份色标
+   * 会被 plain() 洗掉，调用方解析出颜色后经 seg.color 传进来，这里补回行首。
+   * 不写的话，导入的字幕在时间轴上一律是中性灰（用户报「没有分角色色彩」）。 */
+  const assHex = seg.color ? hexToAss(seg.color) : null;
+  const zhLead = assHex ? `{\\c&H${assHex}&}` : '';
   // ASS 里花括号是覆盖标签, 用户文本(译文/ASR)必须转义 —— 与服务端写初稿同一约定
-  const zh = zhStyle ? appendSentence(zhStyle, s, e, escAss(zhText)) : null;
+  const zh = zhStyle ? appendSentence(zhStyle, s, e, zhLead + escAss(zhText)) : null;
   const en = enStyle ? appendSentence(enStyle, s, e, escAss(enText)) : null;
   if (!zh && !en) return null;
   // 英文: 有 ASR 的**真实词级时间**就按它铺（逐词高亮跟着真实发音走）
@@ -5007,14 +5092,20 @@ let jobCardHideTimer = 0;
 /* 可取消的长任务（说话人分离）在进度卡右上角 × 上挂一个"停止"回调；
  * 其它任务（反思/重识别等）保持"收起，后台继续"。 */
 let jobCardOnClose = null;
+/* 这张卡现在归谁。用来挡住"顺手把卡收掉"的代码误伤别人的卡：
+ * 切项目时 resetRealignForProjectSwitch 会无脑 jobCardHide()，
+ * 而那时「打开稿件」的卡正要显示解析进度（见下方 openCard*）。 */
+let jobCardOwner = '';
 
 /** 显示/更新进度卡。pct 传 null 表示"进度未知"，用条纹动画。
- *  onClose 可选：传入时右上角 × 变成"停止任务"，点击先收起再调它。 */
-function jobCardShow(title, msg, pct, foot, onClose) {
+ *  onClose 可选：传入时右上角 × 变成"停止任务"，点击先收起再调它。
+ *  owner 可选：当前任务的归属标记（只有 'open' 会被特殊保护，见 jobCardOwner）。 */
+function jobCardShow(title, msg, pct, foot, onClose, owner) {
   const e = jobCardEls;
   if (!e.box) return;
   clearTimeout(jobCardHideTimer);
   jobCardOnClose = typeof onClose === 'function' ? onClose : null;
+  jobCardOwner = owner || '';
   if (e.close) e.close.title = jobCardOnClose ? '停止任务' : '收起（任务仍在后台继续）';
   e.box.hidden = false;
   e.box.classList.remove('jc-done', 'jc-err');
@@ -5046,6 +5137,7 @@ function jobCardDone(title, msg, ok) {
 function jobCardHide() {
   clearTimeout(jobCardHideTimer);
   jobCardOnClose = null;
+  jobCardOwner = '';
   if (jobCardEls.box) jobCardEls.box.hidden = true;
 }
 if (jobCardEls.close) jobCardEls.close.addEventListener('click', () => {
@@ -5053,6 +5145,64 @@ if (jobCardEls.close) jobCardEls.close.addEventListener('click', () => {
   jobCardHide();
   if (stop) stop();
 });
+
+/* ═══════════ 打开稿件：同一张卡 + 进度条 ═══════════════
+ * 打开项目 / .ass / .srt / 拖进来的字幕都会挂一次卡。
+ *
+ * 为什么需要：3~4MB 的稿件要 new AssDoc、分析逐词、配对中英、校正角色色标，
+ * 实测能到一两秒。这一段是**同步计算**，界面完全静止，用户不知道点没点上，
+ * 常常连点两次（第二次又全部重来一遍）。
+ *
+ * 为什么进度条是"在动"的条纹而不是百分比：同步计算期间浏览器没有任何机会重绘，
+ * 硬报百分比只会卡在同一格上，看起来更像卡死。解析结束后把真实行数/句数写进卡，
+ * 卡上的信息也就真的有用（一眼看出这份稿子多大）。
+ */
+let openCardActive = false;
+
+/** 等浏览器真的画过一帧。openCardBegin 里必须等它，
+ *  否则紧随其后的同步解析会把"刚显示"的卡片一起压到解析结束才第一次绘制。 */
+function nextPaint() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(resolve, 0));
+    else setTimeout(resolve, 0);
+  });
+}
+
+/** 开始打开稿件。**要 await**：卡片画出来之后，后面的同步解析才不会把它盖掉。 */
+async function openCardBegin(name, note) {
+  openCardActive = true;
+  jobCardShow('打开稿件', note || '正在读取并解析字幕…', null,
+    `来源 ${escapeHtml(String(name || '未命名字幕'))}`, null, 'open');
+  await nextPaint();
+}
+
+/** 解析中途补一条更准的来源（项目名要等元信息回来才知道），同步改文案，不再等帧。 */
+function openCardLabel(name) {
+  if (!openCardActive || !jobCardEls.foot) return;
+  jobCardEls.foot.hidden = false;
+  jobCardEls.foot.textContent = `来源 ${String(name || '未命名字幕')}`;
+}
+
+/** 打开成功：把真实规模写进卡里（行数/句数），4 秒后自动收起。 */
+function openCardDone() {
+  if (!openCardActive) return;
+  openCardActive = false;
+  const name = String(state.fileName || '');
+  let stat = '已打开';
+  if (state.format === 'ass' && state.kar) {
+    stat = `${state.kar.rows.length} 行 / ${state.kar.sentences.length} 句`;
+  } else if (state.format === 'srt' && state.srtCues) {
+    stat = `${state.srtCues.length} 条字幕`;
+  }
+  jobCardDone('打开稿件 · 完成', name ? `${name} · ${stat}` : stat, true);
+}
+
+/** 打开失败：读不到文件/解析抛错时把原因留在同一张卡上（红色，12 秒后收起）。 */
+function openCardFail(msg) {
+  if (!openCardActive) return;
+  openCardActive = false;
+  jobCardDone('打开稿件 · 失败', String(msg || '读取失败'), false);
+}
 
 /* ═══════════ 长稿反思纠错（预览优先）═══════════════
  * 流程：点「🧠 反思纠错」→ 服务端让 LLM **通读全片**（分批 + 相邻批重叠）
@@ -5617,6 +5767,13 @@ function appendSentence(style, start, end, text) {
   state.assDoc.setEventTime(ev, start, end);
   state.assDoc.setEventText(ev, text);
   const sent = sentenceFromEvent(style, ev, state.assDoc.format, start, end, text);
+  /* ★ 补齐与 analyzeKaraoke 同构的显示元数据。
+   * finalizeSentences() 只在**载入**路径跑（karaoke.js），这里新建的句子若不补，
+   * speaker 恒为空、color 恒为 null —— 于是刚导入的行立刻被判成「未标注角色」画红框，
+   * 时间轴块也没有角色色，要刷新一次才"好一半"（刷新会重跑 finalize 补上 speaker，
+   * 但颜色始终缺失）。用户报的「导入后整排红框 / 刷新后红框没了但块还是灰的」就是这两半。 */
+  sent.color = speakerColorOf(sent);
+  sent.speaker = speakerTagOf(sent);
   state.kar.sentences.push(sent);
   return sent;
 }
@@ -6682,7 +6839,9 @@ function resetRealignForProjectSwitch() {
   diarizeRunning = false;
   diarizePid = '';
   if (btnDiarize) btnDiarize.disabled = !state.project;
-  jobCardHide();
+  // 「打开稿件」的卡不归这里管：它要一直挂到解析结束。
+  // 在这里无脑收掉的话，卡正好在**最慢的那一步**（同步解析）开始时消失，等于没加。
+  if (jobCardOwner !== 'open') jobCardHide();
 }
 window.__realignReset = resetRealignForProjectSwitch;
 /* 打开项目时 routeSub() 会先建一次条目（那时 state.project 还没换成新项目，
@@ -7353,7 +7512,7 @@ document.getElementById('file-video').addEventListener('change', (e) => {
 });
 document.getElementById('file-sub').addEventListener('change', async (e) => {
   const f = e.target.files[0];
-  if (f) routeSub(await f.text(), f.name);
+  if (f) await openSubFile(f);
   e.target.value = '';
 });
 
@@ -7363,7 +7522,7 @@ stage.addEventListener('drop', async (e) => {
   e.preventDefault();
   stage.classList.remove('dragover');
   for (const f of e.dataTransfer.files) {
-    if (/\.(srt|ass|ssa)$/i.test(f.name)) routeSub(await f.text(), f.name);
+    if (/\.(srt|ass|ssa)$/i.test(f.name)) await openSubFile(f);
     else if (/\.(mp4|m4v|webm|mkv|avi|mov)$/i.test(f.name) || f.type.startsWith('video/')) loadVideoFile(f);
   }
 });
@@ -8093,6 +8252,9 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
   state, video, timeline, panel, toast, toastAfterCueIntro, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
+  // 打开项目的进度卡（右下角 #job-card）：读 3~4MB 字幕 + 同步解析的这段时间里
+  // 界面是静止的，得让用户看见"在打开"，也得看见打开了多大的稿子。
+  openCardBegin, openCardLabel, openCardFail,
   logOp,   // ⚠ 必须经 ctx 传入：logOp 是本模块的局部函数，project.js 里 typeof logOp 恒为
            //   'undefined'（模块作用域互不相通），于是"加进热词表"那条操作日志从来没记上。
 });

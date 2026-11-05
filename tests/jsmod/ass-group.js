@@ -64,12 +64,31 @@ const EMPTY = (s) => !plain(s);
 const ROLE_PREFIX = /^\[[^\]]*\]\s*/;
 const sentenceText = (s) => plain(s).replace(ROLE_PREFIX, '');
 
+/**
+ * 取**行首角色色**（`{\c&H......&}`，BGR）并转成 `#rrggbb`。
+ *
+ * 为什么必须单独留着它：`plain()` 会把 `{...}` 连同颜色一起洗掉，于是分段导入
+ * 写回去的中文行**没有角色色** —— 时间轴块只能是中性灰、角色页也没有色块
+ * （用户报「导入后时间轴上没有分角色色彩」）。颜色在项目里没有别的副本，
+ * 只存在于 ASS 文本的内联色标里，所以在解析这一步就得把它带出来。
+ *
+ * 只看**行首连续覆盖标签块**里的 `\c`：正文中间的 `{\c&H..&}词{\c}` 是逐词高亮，
+ * 不是角色色（那份绿由 buildWordSpecs 管，不能当角色色写回去）。
+ */
+function leadColorHex(text) {
+  const head = /^(?:\s*\{[^}]*\})*/.exec(String(text || ''))[0];
+  const m = /\\1?c&H([0-9A-Fa-f]{6})&/.exec(head);
+  if (!m) return '';
+  const h = m[1].toUpperCase();                       // ASS 是 BGR
+  return '#' + h[4] + h[5] + h[2] + h[3] + h[0] + h[1];
+}
 
 /**
  * @param {Array} rows [{start,end,style,text}] —— 从 ASS 的 Dialogue 行解析而来
- * @returns {{ok:boolean, error:string, lines:Array<{start,end,lines:string[],_wordCount:number}>,
+ * @returns {{ok:boolean, error:string, lines:Array<{start,end,lines:string[],color:string,_wordCount:number}>,
  *            stats:Object}}
  *   lines[i].lines 与 SRT cue 同构：[主语言, 副语言]（可能只有一项）
+ *   lines[i].color 源文件里主语言那一行的**角色色**（`#rrggbb`，没有则空串）
  */
 function groupAssRows(rows) {
   const list = (Array.isArray(rows) ? rows : []).filter(r => r
@@ -169,12 +188,18 @@ function groupAssRows(rows) {
     const lines = [];
     if (zh) lines.push(plain(zh.text));
     lines.push(s.text);
-    out.push({ start: s.start, end: s.end, lines, words: s.words || [], _wordCount: s.n });
+    out.push({
+      start: s.start, end: s.end, lines, words: s.words || [], _wordCount: s.n,
+      color: zh ? leadColorHex(zh.text) : '',
+    });
   }
   // ④ 没被逐词句认领的整句行（单语行）也要带上，否则会漏内容
   for (const r of sentRows) {
     if (usedSent.has(r)) continue;
-    out.push({ start: Number(r.start), end: Number(r.end), lines: [plain(r.text)], _wordCount: 0 });
+    out.push({
+      start: Number(r.start), end: Number(r.end), lines: [plain(r.text)], _wordCount: 0,
+      color: leadColorHex(r.text),
+    });
   }
   out.sort((a, b) => a.start - b.start || a.end - b.end);
 

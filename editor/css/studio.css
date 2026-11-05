@@ -2493,7 +2493,7 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
    这里不再用 inset box-shadow —— 那是直角条，和卡片圆角对不齐。 */
 .reflect-item.is-gap:hover { background: var(--bg-3); }
 
-/* ── 右下角进度卡：反思 / 纠错重识别等后台长任务 ───────────────────
+/* ── 右下角进度卡：打开稿件 / 分段导入 / 反思纠错 / 重识别等长任务 ───────
    位置与顶部居中的 #toast 错开，互不遮挡。
    pointer-events 只在卡片自身开启（它是可点关闭的），不拦截背后的编辑操作。 */
 #job-card {
@@ -2505,16 +2505,15 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
    * 一块突兀的黑卡，文字与进度条也和页面不搭（用户截图反馈）。 */
   background: var(--surface);
   border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
+  /* 不再画左侧色条：右下角这张卡常用（打开稿件/分段导入/重识别都会出现），
+   * 一整条高饱和绿边在编辑区旁边太抢眼（用户要求去掉）。状态色改由进度条承担。 */
   border-radius: 10px;
   box-shadow: 0 12px 34px rgba(0, 0, 0, .24);
   animation: jobcard-in var(--dur-3, .2s) var(--ease-out, ease-out) both;
 }
 #job-card[hidden] { display: none; }
-/* 出错时整卡换成红色调，让人一眼看出没成功 */
-#job-card.jc-err { border-left-color: var(--danger, #ff5f6b); }
+/* 结束态只用进度条表态（左色条已去掉，别把"脱边框"又加回来） */
 #job-card.jc-err .jc-bar-in { background: var(--danger, #ff5f6b); }
-#job-card.jc-done { border-left-color: var(--ok, #34d399); }
 #job-card.jc-done .jc-bar-in { background: var(--ok, #34d399); }
 #job-card.jc-done .jc-spin { display: none; }
 /* 失败也要停：jc-err 之前只换了红色边条，转圈仍在跑，看起来像"还在处理"（用户截图反馈）。 */

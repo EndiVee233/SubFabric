@@ -11,14 +11,24 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.5.5` / 文件版本
-  `1.5.5.5`（npm `1.5.5-beta.6`）。同一 Release 另发一份 `SubFabric-1.5.5.5-sea-setup.exe`（Inno Setup + Node SEA）。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.6` / 文件版本
+  `1.5.6.0`（npm `1.5.6-beta.1`）。同一 Release 另发一份 `SubFabric-1.5.6.0-sea-setup.exe`（Inno Setup + Node SEA）。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
   后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
   `main.py` 等）与它的「应用和功能」登记，只留一条。卸载时给一个「保留数据」页，默认全保留，
   可分别勾选删除 ASR 模型与运行时 / 项目与视频 / 配置；静默卸载永远全保留，要清空须显式 `/DELETE-DATA`。
-  本轮把本机工作区的「观感与卡顿」一批改动并回主线：**Windows 10 主页新增底部主播更新行**
+  本轮修掉「分段导入后颜色全丢」的三处断点：`ass-group` 的 `plain()` 把行首角色色标
+  `{\c&H......&}` 一起剥掉（它是角色色的唯一载体），改为新增 `leadColorHex()` 只扫行首连续覆盖标签块、
+  BGR→`#rrggbb` 随 `lines[i].color` 带出；`appendSentence()` 新建句子后没补 `.color/.speaker`
+  （`finalizeSentences` 只在载入路径跑），刚导入的行被判「未标注角色」整排红框，改为就地补上；
+  `rimApply()` 写完只重建列表、没喂渲染层，libass 拿的还是导入前的 ASS（预览空白、刷新才出现），
+  补 `reconcileKaraoke()` + `assPlayer.updateNow()`。配色优先级为「本稿同名角色已有色 → 源文件该行色 →
+  调色板未占用色」，纯绿 `#00ff00` 被逐词高亮排除不能当角色色。同时右下角进度卡去掉左侧色条
+  （状态色只由进度条承担），并让**每次打开稿件**（项目 / `.ass` / `.srt` / 拖放）都挂同一张卡 +
+  条纹进度条：解析是整段同步计算、期间无法重绘，所以先 `nextPaint()` 画出卡片，跑完再把
+  「N 行 / M 句」写进卡片并自动收起。
+  上一轮把本机工作区的「观感与卡顿」一批改动并回主线：**Windows 10 主页新增底部主播更新行**
   （四张磁贴、频道色顶条、相对时间与「更新」小标、手动刷新按钮转圈，按发布时间从新到旧排序，
   项目快照只更新标题栏不重建节点），UWP 主页内容宽度 940 → 1040 与 MY 对齐；
   **跳转预览改为乐观 seek**（`requestSeek` 先让时间轴/字幕/逐词进度切到目标时间，视频画面在 `seeked`
@@ -1060,9 +1070,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.5.5'`、`APP_FILE_VERSION = '1.5.5.5'`、npm version `1.5.5-beta.6`。
+  `APP_VERSION = 'beta 1.5.6'`、`APP_FILE_VERSION = '1.5.6.0'`、npm version `1.5.6-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.5.5-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.6.0-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
