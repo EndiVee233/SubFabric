@@ -929,6 +929,24 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 }
 .ass-style-preset-row .btn-mini { flex:0 0 auto; }
 .ass-style-preset-hint { flex:1 1 140px; min-width:0; color:var(--text-2); font-size:11px; line-height:1.45; }
+
+/* ── 字幕样式预设（设置页「字幕样式预设」分组，见 js/style-preset.js）─────
+   一条预设装下中英两条 ASS 样式 + 后处理特效 + 视频区字号缩放。
+   布局沿用上面「ASS 双语样式」预设行的做法：窄面板里按钮自动换行，
+   选择框/输入框吃掉剩余宽度（右侧设置面板可以拖得很窄，固定宽会溢出）。 */
+.sf-preset-row select { flex:1 1 0; min-width:0; }
+.sf-preset-row input[type="text"] {
+  flex:1 1 0; min-width:0; height:28px; padding:4px 8px; box-sizing:border-box;
+  border:1px solid var(--border); border-radius:5px; outline:none;
+  background:var(--surface-2); color:var(--text-0); font-size:12px;
+}
+.sf-preset-row input[type="text"]::placeholder { color:var(--text-2); }
+.sf-preset-row input[type="text"]:focus { border-color:var(--accent); }
+.sf-preset-actions {
+  display:flex; flex-wrap:wrap; gap:8px;
+  margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);
+}
+.sf-preset-actions .btn-mini { flex:0 0 auto; }
 .ass-style-font-note { margin-top:5px; font-size:11px; line-height:1.5; color:var(--text-2); }
 .ass-style-font-note.ok { color:var(--success); }
 .ass-style-font-note.warn { color:var(--warning); }

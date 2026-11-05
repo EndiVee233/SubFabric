@@ -448,18 +448,28 @@ function syncGlassForeground() {
   }
 }
 
+let glassFgTimer = 0;
 function scheduleGlassForeground() {
-  if (glassFgFrame || typeof getComputedStyle !== 'function') return;
-  /* 首次同步要读几十个元素的 computedStyle（实测 100ms+），不必挡着首屏：
-     推到空闲再算；之后（hashchange/增删卡片）有缓存，走 rAF 即可。 */
-  if (glassFgFirstPending) {
-    glassFgFirstPending = false;
-    if (typeof requestIdleCallback === 'function') {
-      glassFgFrame = requestIdleCallback(() => { glassFgFrame = 0; syncGlassForeground(); }, { timeout: 700 });
-      return;
+  if (typeof getComputedStyle !== 'function') return;
+  /* 合并成一次「尾随」同步，而不是每帧一次。
+   * 名单里含 .cue-card：拖进度条 / 点时间轴时字幕列表会不停重绘窗口内的卡片，
+   * MutationObserver 一批能报几十条记录。以前这些记录每帧触发一次同步，而浅色主题
+   * 下一次同步要读几十个元素及其祖先链的 computedStyle（实测 130ms+），于是拖动
+   * 全程被切成十几个 50ms 长任务 —— 手感就是"进度条点了要等一会儿才动"。
+   * 卡片换一批并不改变玻璃底色的判断结果，晚 150ms 再算完全够用。 */
+  clearTimeout(glassFgTimer);
+  glassFgTimer = setTimeout(() => {
+    glassFgTimer = 0;
+    if (glassFgFrame) return;
+    if (glassFgFirstPending) {
+      glassFgFirstPending = false;
+      if (typeof requestIdleCallback === 'function') {
+        glassFgFrame = requestIdleCallback(() => { glassFgFrame = 0; syncGlassForeground(); }, { timeout: 700 });
+        return;
+      }
     }
-  }
-  glassFgFrame = requestAnimationFrame(syncGlassForeground);
+    glassFgFrame = requestAnimationFrame(syncGlassForeground);
+  }, 150);
 }
 window.addEventListener('hashchange', scheduleGlassForeground);
 window.addEventListener('resize', scheduleGlassForeground);
@@ -2179,8 +2189,12 @@ function animateUwpCueList(added = null) {
 $('cue-list')?.addEventListener('sf-cue-rendered', e => {
   if (document.body.dataset.workspace !== 'editor') return;
   const added = e.detail?.added;
+  /* grew = 条目总数变多了（真的新加了字幕行）。虚拟列表换窗口时 added 也会非空，
+   * 但那只是"滚到的新位置"，不该重播入场：拖进度条时列表跟着滚动会让整屏卡片
+   * 反复淡入（闪），而且每次都要 void offsetWidth 强制回流。 */
+  const grew = e.detail?.grew === true;
   if (document.body.dataset.design === 'uwp') {
-    if (Array.isArray(added) && added.length) animateUwpCueList(added);
+    if (grew && Array.isArray(added) && added.length) animateUwpCueList(added);
     else if (uwpEditorPending) animateUwpCueList();
   } else if (document.body.dataset.design === 'material') {
     /* 只在进入编辑器时播放入场；之后虚拟列表/下拉滚动不再补动画。 */
@@ -2780,7 +2794,25 @@ function syncPlayer() {
   window.SF_PROGRESS.set(seekBar, value, active ? 'running' : 'paused');
 }
 for (const event of ['timeupdate', 'play', 'pause', 'ended', 'durationchange', 'emptied', 'loadedmetadata']) video.addEventListener(event, syncPlayer);
-$('sf-play').addEventListener('click', () => { if (video.paused) video.play().catch(() => notice('视频暂时无法播放。')); else video.pause(); });
+$('sf-play').addEventListener('click', () => {
+  if (!video.paused) { video.pause(); return; }
+  /* seek 还没落地时点播放，Chromium 会用 AbortError 拒绝这个 play() —— 那不是
+   * "放不了"，画面其实马上就绪。等这一次 seeked 再补一次，别把跳转中的正常
+   * 打断报成「视频暂时无法播放」（用户体感就是"点了播放没反应/卡住"）。 */
+  const tryPlay = (attempt) => {
+    video.play().catch((err) => {
+      if (attempt < 1 && err && err.name === 'AbortError') {
+        let done = false;
+        const retry = () => { if (done) return; done = true; video.removeEventListener('seeked', retry); tryPlay(attempt + 1); };
+        video.addEventListener('seeked', retry);
+        setTimeout(retry, 400);
+        return;
+      }
+      notice('视频暂时无法播放。');
+    });
+  };
+  tryPlay(0);
+});
 function skipTen(delta) {
   if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.currentSrc) return;
   requestedTime = Math.max(0, Math.min(video.duration, (requestedTime ?? video.currentTime) + delta));

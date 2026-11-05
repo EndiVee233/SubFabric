@@ -30,6 +30,18 @@ const browserReport = readReport(dataRoot).browser;
 const shouldMigrateBrowser = app.isPackaged && !hadLegacyElectron && hasWorkspaceState(dataRoot)
   && browserReport?.status !== 'complete';
 app.setName('SubFabric');
+/* ── 播放性能：别让 Chromium 把"看不见的窗口"降级 ─────────────────────────
+ * 窗口被别的窗口盖住、最小化到任务栏、或通过远程桌面/虚拟显示器使用时，Chromium
+ * 会把渲染进程当成后台：rAF 挂起、定时器节流到 1Hz、合成器停摆。编辑器里直接表现
+ * 为「点播放没反应」「跳转后画面要等好几秒才动」「时间轴游标卡住」。
+ * 这三个开关是 Chromium 给"要持续渲染的应用"准备的正式开关，关掉降级即可。
+ * 硬件解码不需要开关：GPU 支持时 Chromium 自动选硬解（解码器是否在跑可以在页面里用
+ * navigator.mediaCapabilities.decodingInfo().powerEfficient 复核），所以这里只开
+ * GPU 光栅化，不动 blocklist（强开有把驱动搞崩的风险）。 */
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
 if (!app.requestSingleInstanceLock()) { quitting = true; app.exit(0); }
 else {
   app.on('second-instance', () => showWindow());

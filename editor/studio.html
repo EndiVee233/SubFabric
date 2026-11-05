@@ -49,7 +49,7 @@
 </aside>
 
 <div id="sf-notice" role="status" hidden></div>
-<section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在稿件库看处理进度 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件，可导出样式预设；后处理特效保存在本机，导出时应用。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article></div></div></section>
+<section id="sf-help" class="sf-page" hidden><div class="sf-page-content"><p class="sf-eyebrow">SUBFABRIC STUDIO</p><h1>让每一句话，清晰可见。</h1><p>真实媒体、字幕与识别任务都在本机处理。编辑器沿用原有操作习惯。</p><div class="sf-help-grid"><article><h2>从视频到稿件</h2><p>新建稿件 → 选择本地视频或链接 → 导入字幕或生成初稿 → 在稿件库看处理进度 → 打开编辑器复核 → 导出字幕或项目包。</p><button class="btn btn-accent" data-go="new">创建稿件</button></article><article><h2>编辑与保存</h2><p>单击字幕就地编辑，Enter 提交，Esc 取消。时间轴拖动句子和逐词边界。角色单击分配，右键修改名字与颜色。项目自动保存；保存冲突会明确提示。</p><p>ASS 字体与颜色写入当前稿件；字幕样式预设把中英样式与后处理特效存成一套，可导入导出。</p></article><article><h2>快捷键与日志</h2><p>可在此查看固定快捷键；操作日志、备注、热词与服务日志保留在编辑器「日志」页。</p><button class="btn" id="sf-shortcuts">查看快捷键</button></article></div></div></section>
 
 <!-- ══════════ 首次启动：硬件欢迎界面 ══════════
      只在首次打开的浏览器里出现（见 project.js 的 sf-welcome-v1）；设置 → 性能与调度可以再次打开。
@@ -416,7 +416,7 @@
             <button type="button" class="btn btn-mini" id="ass-style-preset-export">导出样式预设…</button>
             <button type="button" class="btn btn-mini" id="ass-style-preset-import">导入样式预设…</button>
             <input type="file" id="ass-style-preset-file" accept=".json,application/json" hidden>
-            <span class="ass-style-preset-hint" id="ass-style-preset-hint">把当前中英样式存成 json，换稿件时一键套用</span>
+            <span class="ass-style-preset-hint" id="ass-style-preset-hint">只含中英样式，不含特效；要连特效一起存用下面的「字幕样式预设」</span>
           </div>
           <p id="ass-style-status" class="set-group-note">请先打开 ASS/SSA 字幕。设置写入当前稿件；项目自动保存，普通文件请导出。</p>
           <p class="set-group-note">直接填字体名即可（有补全）：本机装了的字体，预览会自动取来用，不用自己找文件。本机没装的字体，预览会回退到内置字体，「载入字体」可导入 .ttf/.otf 补上。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
@@ -598,6 +598,29 @@
             </div>
           </div>
           <p id="fx-status-note" class="set-group-note">纯后处理管线：不破坏原编辑层数据，预览与导出共用同一份特效结果。全部特效都只用静态标签或 \fade/\k 实现，不新增事件、不改时间轴、不打断多行字幕的自动避让。</p>
+        </div>
+
+        <div id="sf-preset-group" class="set-group">
+          <div class="set-group-head"><i class="set-dot" style="background:#c084fc"></i><span class="set-group-title">字幕样式预设</span></div>
+          <p class="set-group-note">一条预设装下整套观感：中英两条样式的字体、字号、粗体斜体、颜色、对齐与边距，逐词高亮色、卡拉OK 两项、中英上下顺序，以及后处理特效的全部开关和参数。预设存在本机，导出的 json 可以带到别的机器。</p>
+          <div class="setting-row sf-preset-row">
+            <span class="setting-name" title="选择一条已经保存的预设">预设</span>
+            <select id="sf-preset-select" class="select select-dark"><option value="">还没有保存的预设</option></select>
+            <button type="button" class="btn btn-mini btn-accent" id="sf-preset-apply" disabled>应用</button>
+          </div>
+          <div class="setting-row sf-preset-row">
+            <span class="setting-name" title="保存时用这个名称。留空会自动编号">名称</span>
+            <input id="sf-preset-name" type="text" maxlength="60" autocomplete="off" placeholder="例如 双语对话·暖光">
+            <button type="button" class="btn btn-mini" id="sf-preset-save">保存当前样式</button>
+          </div>
+          <div class="sf-preset-actions">
+            <button type="button" class="btn btn-mini" id="sf-preset-rename" disabled title="把选中的预设改成上面填的名称">重命名</button>
+            <button type="button" class="btn btn-mini" id="sf-preset-delete" disabled title="从本机预设库里删掉选中的预设，不影响当前稿件">删除</button>
+            <button type="button" class="btn btn-mini" id="sf-preset-export" title="导出选中的预设；没有选中时导出全部">导出…</button>
+            <button type="button" class="btn btn-mini" id="sf-preset-import" title="从 json 文件导入预设；旧版的纯样式预设也能读">导入…</button>
+            <input type="file" id="sf-preset-file" accept=".json,application/json" hidden>
+          </div>
+          <p id="sf-preset-hint" class="set-group-note">应用预设会写进当前稿件（自动保存）；特效与字号缩放立即作用到视频预览与导出。</p>
         </div>
 
         <div class="set-group" id="sf-editor-display">

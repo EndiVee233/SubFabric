@@ -177,7 +177,11 @@ assert.match(studioSource, /data-uwp-cue/, 'only newly loaded cue cards are mark
 assert.match(studioSource, /animateUwpCueList\(added\)/, 'virtual-scroll batches animate their new cards');
 assert.match(editorSource, /sf-cue-rendered/, 'editor renderer emits the cue-rendered event');
 assert.match(editorSource, /_lastWindow/, 'editor renderer tracks the previous virtual window');
-assert.match(editorSource, /detail: \{ start: win\.start, end: win\.end, added \}/, 'editor renderer reports newly added indices');
+assert.match(editorSource, /detail: \{ start: win\.start, end: win\.end, added, grew \}/, 'editor renderer reports newly added indices');
+/* 换虚拟窗口也会产生 "新增"，但那只是滚动；入场动画必须只认"条目变多"，
+ * 否则拖进度条/跟随播放滚动时整屏卡片会反复淡入（闪 + 一次强制回流）。 */
+assert.match(editorSource, /const grew = this\.filtered\.length > \(this\._lastCount \|\| 0\)/, 'entrance animation is gated on the item count growing');
+assert.match(studioSource, /grew && Array\.isArray\(added\) && added\.length\) animateUwpCueList\(added\)/, 'scroll-driven window shifts do not replay the entrance animation');
 assert.match(editorSource, /_syncActiveRole/, 'editor tracks the speaking role');
 assert.match(editorSource, /_activeRoleName/, 'editor resolves the current speaker');
 assert.match(css, /\.role-card\.is-speaking \{ border-color:var\(--accent\)/, 'the speaking role tile gets a theme-accent outline');

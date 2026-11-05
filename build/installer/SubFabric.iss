@@ -32,8 +32,8 @@
 ;      静默卸载永远按「全部保留」处理，要连数据一起清空须显式传 /DELETE-DATA。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "beta 1.5.6"
-#define MyAppFileVersion "1.5.6.0"
+#define MyAppVersion "beta 1.5.7"
+#define MyAppFileVersion "1.5.7.0"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"

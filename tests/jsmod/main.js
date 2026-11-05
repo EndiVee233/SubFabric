@@ -22,7 +22,12 @@ import { analyzeDamage, planRepair as planWordRepair, repairSummary } from '../r
 // （用户实测：226 句的稿件被读成「区间内 43 行」、逐词高亮全丢）。
 import { groupAssRows } from '../ass-group.js';
 import { AssPlayer } from './assplayer.js';
-import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe } from './postprocess.js';
+import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe, cloneConfig } from './postprocess.js';
+// 字幕样式预设库：命名保存 / 导入 / 导出（样式 + 后处理特效，纯逻辑见 tests/style-preset-test.mjs）
+import {
+  makeStylePreset, presetSummary, parsePresetFile, serializePresetFile, loadPresetLibrary, savePresetLibrary,
+  uniquePresetName, upsertPreset, removePresetById, renamePresetById, newPresetId, cleanPresetName
+} from './style-preset.js';
 import { Timeline } from './timeline.js';
 import { EditorPanel } from './editor.js';
 import { shortcuts, comboFromEvent } from './shortcuts.js';
@@ -490,12 +495,47 @@ function loadVideoFile(file) {
   uploadWaveform(file);
 }
 
-/* 跳转预览：视频 seek 往往要 200~800ms（大文件要解码到关键帧），但时间轴/列表/字幕
+/* 跳转预览：视频 seek 往往要 100~800ms（大文件要解码到关键帧），但时间轴/列表/字幕
  * 预览不必等它。点一下字幕块就先把 UI 和 libass 切到目标时间，seeked 后再交回视频。
- * 这样"暂停时点块 → 视频与逐词进度等一会才同步"只剩视频画面本身在追。 */
+ *
+ * ⚠ 关键约束：**同一时刻只允许一个 seek 在飞**。
+ * 拖进度条/连点时间轴时 input 事件是连串来的，每次都直接写 video.currentTime 会让
+ * 浏览器反复中止上一个 seek 再去找关键帧 —— 实测（4 小时 7GB 的 AV1 稿件）一次拖动
+ * 20 步能触发 21 次 seek、主线程被切成十来个 50ms+ 的长任务，表现就是"进度条点了
+ * 半天不动、画面卡住"。这里的做法是：
+ *   · UI/字幕立刻跳到目标时间（previewSeekT，tick 用它驱动时间轴与列表）
+ *   · 元素 seek 合并到一帧一次；上一个还没落地就先不发，只留最后一个目标
+ *   · seeked 之后再补发最后那个目标（最多多一次 seek，不是 N 次） */
 let previewSeekT = null;
 let previewSeekToken = 0;
 let previewSeekTimer = 0;
+let seekInflight = false;              // 元素上已有 seek 在飞
+let seekPendingT = null;               // 等落地后再发的"最后一枪"
+let seekFlushRaf = 0;
+let seekInflightTimer = 0;
+
+function scheduleSeekFlush() {
+  if (seekFlushRaf) return;
+  seekFlushRaf = requestAnimationFrame(() => { seekFlushRaf = 0; flushSeek(); });
+}
+
+function flushSeek() {
+  if (seekInflight || seekPendingT == null) return;
+  const target = seekPendingT;
+  seekPendingT = null;
+  if (Math.abs(video.currentTime - target) <= 1e-3 && !video.seeking) return;
+  seekInflight = true;
+  clearTimeout(seekInflightTimer);
+  /* 兜底：轨道被换/解码器异常时 seeked 可能不来，不能因此把后续跳转全堵死。
+   * 但视频确实还在 seeking 时不解除 —— 那会退回"一次拖动打几十枪"的老毛病。 */
+  seekInflightTimer = setTimeout(() => {
+    if (video.seeking) return;
+    seekInflight = false;
+    if (seekPendingT != null) scheduleSeekFlush();
+  }, 1500);
+  try { video.currentTime = target; } catch { seekInflight = false; clearTimeout(seekInflightTimer); }
+}
+
 function requestSeek(t) {
   const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Infinity;
   const target = Math.max(0, Math.min(duration, Number(t) || 0));
@@ -503,22 +543,35 @@ function requestSeek(t) {
   previewSeekT = target;
   const token = ++previewSeekToken;
   assPlayer.seek(target);                    // 字幕/逐词先跳到目标时间（worker 未就绪时忽略）
-  try {
-    if (Math.abs(video.currentTime - target) > 1e-3 || video.seeking) video.currentTime = target;
-    else previewSeekT = null;                // 已经在目标位置，不用等 seeked
-  } catch { previewSeekT = null; }
+  seekPendingT = target;
+  if (Math.abs(video.currentTime - target) <= 1e-3 && !video.seeking && !seekInflight) {
+    /* 已经站在目标位置上：不会有 seeked 来收尾，必须当场交还给 video.currentTime。
+     * 否则播放中 previewSeekT 会一直压着 tick，游标和列表会"冻"在点击那一刻。 */
+    seekPendingT = null;
+    previewSeekT = null;
+  } else {
+    scheduleSeekFlush();
+  }
   /* 兜底：解码失败/seeked 丢失时不能让 UI 永远停在目标时间 */
   clearTimeout(previewSeekTimer);
-  previewSeekTimer = setTimeout(() => { previewSeekT = null; }, 5000);
+  previewSeekTimer = setTimeout(() => { if (!seekInflight && seekPendingT == null) previewSeekT = null; }, 5000);
   return token;
 }
 video.addEventListener('seeked', () => {
   if (video.seeking) return;                 // 还有新的 seek 在路上
-  if (previewSeekT != null && Math.abs(video.currentTime - previewSeekT) > 0.05) return;
+  seekInflight = false;
+  clearTimeout(seekInflightTimer);
+  if (seekPendingT != null) { scheduleSeekFlush(); return; }   // 还有"最后一枪"，UI 继续停在目标时间
+  /* 落地了就把 UI 交回 video.currentTime。这里**不能**再比 0.05 的容差：
+   * 播放中 seeked 有时会晚到几帧，currentTime 已经越过目标，容差会让 previewSeekT
+   * 一直挂着 —— 表现是播放中跳转一次后进度条和游标冻住好几秒。 */
   previewSeekT = null;
   clearTimeout(previewSeekTimer);
 });
-video.addEventListener('emptied', () => { previewSeekT = null; clearTimeout(previewSeekTimer); });
+video.addEventListener('emptied', () => {
+  previewSeekT = null; seekPendingT = null; seekInflight = false;
+  clearTimeout(previewSeekTimer); clearTimeout(seekInflightTimer);
+});
 window.__sfSeek = requestSeek;
 
 /* ─────────── 播放音频源(项目模式) ───────────
@@ -1206,28 +1259,25 @@ function exportAssStylePreset() {
   }
 }
 
-/** 导入并**立即套用**。走的是样式轨那条既有路径（写文档 → 刷新预览 → 自动保存），
- *  所以时间轴块内字体、颜色、中英上下顺序都会跟着一起更新。 */
-async function importAssStylePreset(file) {
-  if (!file) return;
-  if (state.format !== 'ass' || !state.assDoc) { toast('请先打开一份 ASS/SSA 稿件再导入样式'); return; }
-  let text = '';
-  try { text = await file.text(); }
-  catch (e) { toast('读取文件失败：' + e.message); return; }
-  const parsed = parseAssStylePreset(text);
-  if (!parsed.ok) { toast('样式预设无法导入：' + parsed.error, 4200); return; }
-  const preset = parsed.preset;
+/** 把一条「ASS 双语样式预设」对象写进当前稿件并刷新预览。
+ *  导入文件与套用预设库都走这里 —— 两条路必须完全同款，否则会出现
+ *  「文件导入会让时间轴块内字体跟着换、预设库套用却不换」这种只在一侧出现的偏差。
+ *  @returns {{ok:boolean, zh?:string, en?:string, wordColor?:string, error?:string}} */
+function applyAssStylePresetObject(preset) {
+  if (state.format !== 'ass' || !state.assDoc) {
+    return {
+      ok: false,
+      error: state.format === 'srt' ? '当前是 SRT 字幕；ASS 样式只适用于 ASS/SSA 稿件' : '请先打开一份 ASS/SSA 稿件',
+    };
+  }
   // 先确认两条轨都有落点：no-op 要提前报，不能先**清掉**逐词色再失败
   const zhDest = (state.assStyleTargets && state.assStyleTargets.zh) || findStyleForLang(state.assDoc, 'zh');
   const enDest = (state.assStyleTargets && state.assStyleTargets.en) || findStyleForLang(state.assDoc, 'en');
   if (!zhDest || !enDest) {
-    toast(state.format === 'srt'
-      ? '当前是 SRT 字幕；ASS 样式预设只适用于 ASS/SSA'
-      : '当前稿件里找不到可分别设置的中英两种样式，无法套用预设', 4200);
-    return;
+    return { ok: false, error: '当前稿件里找不到可分别设置的中英两种样式，无法套用预设' };
   }
   const res = applyAssStylePreset(state.assDoc, preset, { zh: zhDest, en: enDest });
-  if (!res.ok) { toast('样式预设无法导入：' + res.error, 4200); return; }
+  if (!res.ok) return { ok: false, error: res.error };
   // 元数据：与面板那条路径同一套常量与语义。
   // ⚠ 未唱默认色只在稿件**确实有 k 卡拉OK行**时才写（面板那边也是这个条件，见
   //   applyAssStyleSettings 的 `kSents.length ? setScriptInfoComment(...) : false`）——
@@ -1286,17 +1336,263 @@ async function importAssStylePreset(file) {
   syncBlockFonts();                            // 时间轴块内字体跟着换（与设置页同款联动）
   refreshFontNotes();
   loadSystemFontList();
-  if (assStyleEls.presetHint) {
-    assStyleEls.presetHint.textContent =
-      `已导入：${res.applied.zh} + ${res.applied.en}` +
-      (preset.wordColor ? `，逐词高亮 ${String(preset.wordColor).toUpperCase()}` : '');
-  }
   if (assStyleEls.status) {
     assStyleEls.status.textContent = assPlayer.ready
       ? '样式预设已套用，视频预览已刷新；项目字幕将自动保存。'
       : '样式预设已写入；ASS 渲染器就绪后同步预览。';
   }
+  return {
+    ok: true,
+    zh: res.applied.zh,
+    en: res.applied.en,
+    wordColor: /^#[0-9a-f]{6}$/i.test(preset.wordColor || '') ? String(preset.wordColor).toLowerCase() : '',
+  };
+}
+
+/** 导入旧版「ASS 双语样式预设」文件并**立即套用**（「ASS 双语样式」组里那条入口）。
+ *  只含样式、不含特效；要连特效一起带走请用「字幕样式预设」组。 */
+async function importAssStylePreset(file) {
+  if (!file) return;
+  if (state.format !== 'ass' || !state.assDoc) { toast('请先打开一份 ASS/SSA 稿件再导入样式'); return; }
+  let text = '';
+  try { text = await file.text(); }
+  catch (e) { toast('读取文件失败：' + e.message); return; }
+  const parsed = parseAssStylePreset(text);
+  if (!parsed.ok) { toast('样式预设无法导入：' + parsed.error, 4200); return; }
+  const r = applyAssStylePresetObject(parsed.preset);
+  if (!r.ok) { toast('样式预设无法导入：' + r.error, 4200); return; }
+  if (assStyleEls.presetHint) {
+    assStyleEls.presetHint.textContent =
+      `已导入：${r.zh} + ${r.en}` + (r.wordColor ? `，逐词高亮 ${r.wordColor.toUpperCase()}` : '');
+  }
   toast('样式预设已套用');
+}
+
+/* ═══════════ 字幕样式预设库（样式 + 特效：命名保存 / 导入 / 导出）═══════════
+ * 纯逻辑在 js/style-preset.js（有 tests/style-preset-test.mjs）；这里只做
+ * 「取当前面板 → 存库 → 渲染下拉 → 套用 → 下载 / 读文件」。
+ *
+ * 与上面「ASS 双语样式」那条预设的区别：
+ *   · 那条只带样式，文件格式旧版本也认（kind = subfabric.ass-style-preset）；
+ *   · 这条带整套观感 —— 中英样式 + 中英上下顺序 + 全部后处理特效 + 视频区字号缩放，
+ *     并且能在本机存多条命名预设，换稿件时从下拉框里挑。
+ * 保存位置是 localStorage（本机偏好，不进 project.json）；跨机器靠导出的 json。 */
+const presetEls = {
+  group: document.getElementById('sf-preset-group'),
+  select: document.getElementById('sf-preset-select'),
+  name: document.getElementById('sf-preset-name'),
+  apply: document.getElementById('sf-preset-apply'),
+  save: document.getElementById('sf-preset-save'),
+  rename: document.getElementById('sf-preset-rename'),
+  del: document.getElementById('sf-preset-delete'),
+  exportBtn: document.getElementById('sf-preset-export'),
+  importBtn: document.getElementById('sf-preset-import'),
+  file: document.getElementById('sf-preset-file'),
+  hint: document.getElementById('sf-preset-hint')
+};
+
+let presetLibrary = loadPresetLibrary();
+let presetActiveId = '';
+
+const presetById = (id) => presetLibrary.find(p => p && p.id === id) || null;
+const setPresetHint = (text) => { if (presetEls.hint) presetEls.hint.textContent = text; };
+
+/** 下拉框重建。**不动名称输入框**（那是用户正在打字的地方），只在换选时预填。 */
+function renderPresetSelect() {
+  const sel = presetEls.select;
+  if (!sel) return;
+  if (!presetLibrary.length) {
+    sel.innerHTML = `<option value="">${escapeHtml(t('还没有保存的预设'))}</option>`;
+    presetActiveId = '';
+  } else {
+    sel.innerHTML = presetLibrary.map(p => {
+      const label = `${p.name} · ${presetSummary(p)}`;
+      return `<option value="${escapeHtml(p.id)}">${escapeHtml(label)}</option>`;
+    }).join('');
+    if (!presetLibrary.some(p => p.id === presetActiveId)) presetActiveId = presetLibrary[0].id;
+    sel.value = presetActiveId;
+  }
+  updatePresetButtons();
+}
+
+/** 选中项才可用的按钮（应用/重命名/删除）；导出在没选中时退化成"导出全部" */
+function updatePresetButtons() {
+  const has = !!presetById(presetActiveId);
+  for (const el of [presetEls.apply, presetEls.rename, presetEls.del]) if (el) el.disabled = !has;
+  if (presetEls.exportBtn) presetEls.exportBtn.title = has ? '导出选中的预设' : '导出本机全部预设';
+}
+
+/** 把库写回 localStorage。写不进去要说出来（隐私模式 / 存储满），不能静默丢。 */
+function persistPresetLibrary() {
+  if (savePresetLibrary(presetLibrary)) return true;
+  toast('预设没能存到本机：浏览器存储不可用或已满', 4200);
+  return false;
+}
+
+/**
+ * 抓当前面板成一条预设。
+ * 样式部分只在 ASS 稿件且能认出中英两条样式时才有 —— 认不出就存"仅特效"，
+ * 而不是硬塞一份半成品（applyAssStylePreset 会拒绝单轨预设，那等于存了用不上）。
+ */
+function captureStylePreset(name) {
+  let style = null;
+  if (state.format === 'ass' && state.assDoc && state.assStyleTargets) {
+    style = assStylePresetOf(state.assDoc, state.assStyleTargets, assStylePresetMeta());
+  }
+  const orderInfo = currentOrderInfo();
+  return makeStylePreset({
+    name,
+    style,
+    order: (assStyleEls.order && assStyleEls.order.value) || (orderInfo && orderInfo.order) || undefined,
+    fx: state.postProcessConfig,
+    // 视频区字幕字号缩放（SRT 叠加层用；ASS 的观感由样式字号决定，两边都存着不冲突）
+    overlayFontScale: rngFont ? parseFloat(rngFont.value) : undefined,
+  });
+}
+
+/** 保存当前面板为预设。名称与已有预设相同 = 覆盖那一条（同 id，不新增）。 */
+function saveCurrentStylePreset() {
+  const raw = (presetEls.name && presetEls.name.value) || '';
+  const want = cleanPresetName(raw, `预设 ${presetLibrary.length + 1}`);
+  const same = presetLibrary.find(p => p && p.name.toLowerCase() === want.toLowerCase());
+  const preset = captureStylePreset(same ? same.name : want);
+  if (same) {
+    preset.id = same.id;
+    preset.createdAt = same.createdAt;
+  }
+  presetLibrary = upsertPreset(presetLibrary, preset);
+  presetActiveId = preset.id;
+  if (!persistPresetLibrary()) return;
+  renderPresetSelect();
+  if (presetEls.name) presetEls.name.value = preset.name;
+  const tail = preset.style ? '' : '（当前不是 ASS 稿件，只存了特效与字号缩放）';
+  setPresetHint(`${same ? '已更新' : '已保存'}「${preset.name}」：${presetSummary(preset)}${tail}`);
+  toast(`${same ? '已更新' : '已保存'}预设「${preset.name}」`, 2800);
+}
+
+/** 套用选中的预设：样式写进稿件 → 重排中英顺序 → 换特效配置 → 换字号缩放。 */
+function applyStylePresetFromLibrary() {
+  const preset = presetById(presetActiveId);
+  if (!preset) { toast('先在下拉框里选一条预设'); return; }
+  const notes = [];
+  let styleOk = false;
+  if (preset.style) {
+    const r = applyAssStylePresetObject(preset.style);
+    if (r.ok) { styleOk = true; notes.push(`样式 ${r.zh} + ${r.en}`); }
+    else notes.push(r.error);
+  }
+  if (styleOk && preset.order) {
+    try { localStorage.setItem(ZH_ORDER_KEY, preset.order); } catch { /* 隐私模式写不了，忽略 */ }
+    // applyZhEnOrder 内部会推预览 + 存盘；顺序本来就是这样时它返回 false
+    notes.push(applyZhEnOrder(preset.order) ? '中英顺序已重排' : '中英顺序未变');
+    refreshOrderControl();
+  }
+  if (preset.fx) {
+    state.postProcessConfig = cloneConfig(preset.fx);
+    savePostProcessConfig(state.postProcessConfig);
+    syncFxUi();
+    notes.push(state.postProcessConfig.enabled ? '特效已开启' : '特效已关闭');
+  }
+  if (typeof preset.overlayFontScale === 'number' && rngFont) {
+    rngFont.value = String(preset.overlayFontScale);
+    // 派发 input 复用那一处唯一的处理（同步 overlay 与右侧数值），别再抄一遍
+    rngFont.dispatchEvent(new Event('input'));
+    notes.push(`字幕字号 ${preset.overlayFontScale.toFixed(2)}×`);
+  }
+  if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
+  if (state.project && Projects && Projects.scheduleSave) Projects.scheduleSave();
+  setPresetHint(`已套用「${preset.name}」：${notes.join('；')}`);
+  toast(`已套用预设「${preset.name}」`, 2800);
+}
+
+function renameSelectedPreset() {
+  const cur = presetById(presetActiveId);
+  if (!cur) { toast('先选一条预设'); return; }
+  const want = (presetEls.name && presetEls.name.value) || '';
+  if (!want.trim()) { toast('先在名称框里填一个新名字'); return; }
+  const r = renamePresetById(presetLibrary, cur.id, want);
+  presetLibrary = r.list;
+  if (!persistPresetLibrary()) return;
+  renderPresetSelect();
+  if (presetEls.name) presetEls.name.value = r.name;
+  setPresetHint(`已重命名为「${r.name}」`);
+}
+
+function deleteSelectedPreset() {
+  const cur = presetById(presetActiveId);
+  if (!cur) { toast('先选一条预设'); return; }
+  if (typeof confirm === 'function' && !confirm(`从本机预设库里删除「${cur.name}」？\n\n只删预设，不改当前稿件。`)) return;
+  presetLibrary = removePresetById(presetLibrary, cur.id);
+  presetActiveId = '';
+  if (!persistPresetLibrary()) return;
+  renderPresetSelect();
+  setPresetHint(`已删除「${cur.name}」`);
+}
+
+/** 导出：选中了就导那一条，没选就导整库（按钮 title 会跟着变）。 */
+function exportStylePresetFile() {
+  const one = presetById(presetActiveId);
+  const list = one ? [one] : presetLibrary;
+  if (!list.length) { toast('本机还没有保存任何预设'); return; }
+  const safe = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) || 'preset';
+  const base = one ? safe(one.name) : 'subfabric-style-presets';
+  download(`${base}.style-preset.json`, serializePresetFile(list), 'application/json;charset=utf-8');
+  setPresetHint(`已导出 ${list.length} 条预设：${base}.style-preset.json`);
+}
+
+/** 导入：只往库里加，**不动已有预设**（重名自动加「（2）」后缀，id 一律重新生成）。 */
+async function importStylePresetFile(file) {
+  if (!file) return;
+  let text = '';
+  try { text = await file.text(); }
+  catch (e) { toast('读取文件失败：' + (e && e.message ? e.message : e), 4200); return; }
+  const parsed = parsePresetFile(text);
+  if (!parsed.ok) { toast('预设无法导入：' + parsed.error, 4200); return; }
+  const names = [];
+  for (const p of parsed.presets) {
+    const name = uniquePresetName(presetLibrary, p.name);
+    const next = { ...p, id: newPresetId(), name };
+    presetLibrary = upsertPreset(presetLibrary, next);
+    presetActiveId = next.id;
+    names.push(name);
+  }
+  if (!persistPresetLibrary()) return;
+  renderPresetSelect();
+  if (presetEls.name) presetEls.name.value = presetById(presetActiveId)?.name || '';
+  const skipped = parsed.skipped ? `，跳过 ${parsed.skipped} 条无法识别的` : '';
+  setPresetHint(`已导入 ${names.length} 条：${names.join('、')}${skipped}`);
+  toast(`已导入 ${names.length} 条预设`, 2800);
+}
+
+function initStylePresetControls() {
+  if (!presetEls.group) return;
+  renderPresetSelect();
+  if (presetEls.select) {
+    presetEls.select.addEventListener('change', () => {
+      presetActiveId = presetEls.select.value || '';
+      const cur = presetById(presetActiveId);
+      // 换选时预填名字：想改名直接改这一格再点「重命名」
+      if (presetEls.name) presetEls.name.value = cur ? cur.name : '';
+      updatePresetButtons();
+      if (cur) setPresetHint(`${cur.name}：${presetSummary(cur)}` +
+        (cur.style ? '' : '（这条预设只有特效与字号缩放）'));
+      else setPresetHint('应用预设会写进当前稿件（自动保存）；特效与字号缩放立即作用到视频预览与导出。');
+    });
+  }
+  if (presetEls.apply) presetEls.apply.addEventListener('click', () => applyStylePresetFromLibrary());
+  if (presetEls.save) presetEls.save.addEventListener('click', () => saveCurrentStylePreset());
+  if (presetEls.rename) presetEls.rename.addEventListener('click', () => renameSelectedPreset());
+  if (presetEls.del) presetEls.del.addEventListener('click', () => deleteSelectedPreset());
+  if (presetEls.exportBtn) presetEls.exportBtn.addEventListener('click', () => exportStylePresetFile());
+  if (presetEls.importBtn && presetEls.file) {
+    presetEls.importBtn.addEventListener('click', () => presetEls.file.click());
+    presetEls.file.addEventListener('change', async () => {
+      const file = presetEls.file.files && presetEls.file.files[0];
+      presetEls.file.value = '';       // 先清空：同一个文件连选两次也要能触发 change
+      try { await importStylePresetFile(file); }
+      catch (e) { toast('预设导入失败：' + (e && e.message ? e.message : e), 4200); }
+    });
+  }
 }
 
 async function loadAssStyleFont(language) {
@@ -5162,9 +5458,16 @@ let openCardActive = false;
 /** 等浏览器真的画过一帧。openCardBegin 里必须等它，
  *  否则紧随其后的同步解析会把"刚显示"的卡片一起压到解析结束才第一次绘制。 */
 function nextPaint() {
+  /* 等"下一帧真的画出来"再继续，后面的同步解析才不会把进度卡盖掉。
+   * ⚠ 不能只等 rAF：窗口最小化/被完全遮挡时浏览器会挂起 rAF，这里会永远不 resolve，
+   *   打开稿件就卡在「正在读取项目字幕…」（实测最小化窗口下 3 分钟不动）。
+   *   所以补一条超时兜底，并且页面不可见时直接放行。 */
   return new Promise((resolve) => {
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(resolve, 0));
-    else setTimeout(resolve, 0);
+    let done = false;
+    const fire = () => { if (done) return; done = true; resolve(); };
+    if (document.hidden || typeof requestAnimationFrame !== 'function') { setTimeout(fire, 0); return; }
+    requestAnimationFrame(() => setTimeout(fire, 0));
+    setTimeout(fire, 120);
   });
 }
 
@@ -8243,6 +8546,7 @@ applyTrackMode(false);
 applyTlHeight();
 applyPanelWidth();
 initFxControls();
+initStylePresetControls();
 
 /* 调试钩子(测试用) */
 initBadCatFilter();

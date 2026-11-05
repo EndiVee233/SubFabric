@@ -130,8 +130,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.6'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.6.0'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.7'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.7.0'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -333,7 +333,7 @@ const STATIC_RESOURCES = new Set([
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'zip', 'glossary-review', 'storage'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review', 'storage', 'style-preset'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
@@ -642,7 +642,12 @@ function sendJson(res, code, obj) {
   send(res, code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' }, JSON.stringify(obj));
 }
 
-function serveFile(req, res, filePath) {
+/* opts.media: 视频/音频这类「大文件 + 反复 Range 请求」的资源。差别只在缓存语义与读块大小：
+ *   · 带 ETag/Last-Modified 并允许短期缓存 —— 编辑时来回拖进度条会反复请求同一段字节，
+ *     原先 no-cache 且没有验证器，等于每次都整段回源。
+ *   · 读块从 64KB 提到 512KB：7GB 的源少 8 倍 createReadStream 次数，事件循环更空。
+ * 普通静态资源仍走 no-cache，保证改了文件刷新就能拿到新版。 */
+function serveFile(req, res, filePath, opts) {
   let stat;
   try { stat = fs.statSync(filePath); } catch { return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, '404 Not Found'); }
   if (stat.isDirectory()) return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, '403 Forbidden');
@@ -665,9 +670,23 @@ function serveFile(req, res, filePath) {
 
   const total = stat.size;
   const range = req.headers.range;
+  const media = !!(opts && opts.media);
 
   // 小文件 / 文本直接整体返回(禁用缓存,便于编辑后立即重载)
   const noCache = { 'Cache-Control': 'no-cache', 'Accept-Ranges': 'bytes' };
+  if (media) {
+    const etag = `"${total.toString(16)}-${Math.round(stat.mtimeMs).toString(16)}"`;
+    const lastModified = new Date(stat.mtimeMs).toUTCString();
+    delete noCache['Cache-Control'];
+    /* 同路径换了文件（重录/重新导出）时 mtime 变 → ETag 变 → 自然失效 */
+    if (req.headers['if-none-match'] === etag) {
+      return send(res, 304, { 'ETag': etag, 'Last-Modified': lastModified, 'Cache-Control': 'private, max-age=600' }, '');
+    }
+    noCache['ETag'] = etag;
+    noCache['Last-Modified'] = lastModified;
+    noCache['Cache-Control'] = 'private, max-age=600';
+  }
+  const readOpts = media ? { highWaterMark: 512 * 1024 } : {};
 
   if (range) {
     const m = /bytes=(\d*)-(\d*)/.exec(range);
@@ -687,14 +706,14 @@ function serveFile(req, res, filePath) {
         'Content-Length': chunkSize
       }, noCache));
       if (req.method === 'HEAD') return res.end();
-      fs.createReadStream(filePath, { start, end }).pipe(res);
+      fs.createReadStream(filePath, Object.assign({ start, end }, readOpts)).pipe(res);
       return;
     }
   }
 
   res.writeHead(200, Object.assign({ 'Content-Type': type, 'Content-Length': total }, noCache));
   if (req.method === 'HEAD') return res.end();
-  fs.createReadStream(filePath).pipe(res);
+  fs.createReadStream(filePath, readOpts).pipe(res);
 }
 
 const coverJobs = new Set();
@@ -10618,7 +10637,7 @@ function handleDiagRoutes(req, res, u) {
     let ok = false;
     try { ok = fs.statSync(full).isFile() && VIDEO_EXTS.includes(path.extname(full).toLowerCase()); } catch {}
     if (!ok) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }, 'video not found: ' + p);
-    return serveFile(req, res, full);      // serveFile 自带 Range 支持
+    return serveFile(req, res, full, { media: true });   // serveFile 自带 Range + 缓存验证器
   }
 
   // 前缀命中但没有匹配的 method/路径组合: 与原静态回落同为 404(原来落到 serveFile)
@@ -12256,7 +12275,7 @@ function handleProjectsRoutes(req, res, u) {
     if (action === 'audio' && req.method === 'GET') {
       const auPath = safeProjectFile(id, (meta.audio && meta.audio.file) || 'audio.wav');
       if (!auPath) return sendJson(res, 400, { error: '音频文件路径不合法' });
-      return serveFile(req, res, auPath);
+      return serveFile(req, res, auPath, { media: true });   // 降噪音频也是反复 Range 流式读的大文件
     }
   }
 

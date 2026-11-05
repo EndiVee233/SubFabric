@@ -48,8 +48,13 @@ function openBrowser(url) {
   const edge = cand.find((p) => { try { return fs.existsSync(p); } catch { return false; } });
   try {
     if (edge) {
-      spawn(edge, ['--app=' + url, '--no-first-run', '--no-default-browser-check'],
-        { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      /* 这几个开关是给"要持续渲染的桌面应用"用的：窗口被遮挡/最小化时 Chromium 默认
+       * 会挂起 rAF、把定时器节流到 1Hz，编辑器里就是「点播放没反应、跳转后画面不动」。
+       * 硬件解码不用开关，GPU 支持时自动走硬解。 */
+      spawn(edge, ['--app=' + url, '--no-first-run', '--no-default-browser-check',
+        '--disable-background-timer-throttling', '--disable-renderer-backgrounding',
+        '--disable-backgrounding-occluded-windows', '--enable-gpu-rasterization'],
+      { detached: true, stdio: 'ignore', windowsHide: true }).unref();
       return;
     }
   } catch {}

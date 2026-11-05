@@ -820,8 +820,11 @@ export class Timeline {
     return this._cssH() >= need ? FILM_H : 0;
   }
 
-  _cssW() { return this.canvas.parentElement.clientWidth; }
-  _cssH() { return this.canvas.parentElement.clientHeight; }
+  /* 尺寸缓存：draw() 一帧要读好几次 clientWidth/clientHeight。拖进度条时右侧字幕列表
+   * 刚动过 DOM，每次读 clientWidth 都会触发一次**强制布局**（整份文档重排，实测一帧
+   * 几十毫秒）。ResizeObserver 本来就在监听面板尺寸，顺手把测量结果存下来复用。 */
+  _cssW() { return this._size ? this._size.w : this.canvas.parentElement.clientWidth; }
+  _cssH() { return this._size ? this._size.h : this.canvas.parentElement.clientHeight; }
   /** 合并轨(主轨)动态填满画布剩余高度 → 字幕块一直顶到面板底端, 不留黑缺。
    *  双行字幕轨模式会有**多条**合并轨(需要几条给几条, 见 main.js packTracks):
    *  剩余高度在它们之间平分 —— 不设大下限, 保证再挤也全部装得下、不会漏到面板外面。
@@ -862,7 +865,10 @@ export class Timeline {
   _resize() {
     this._dirty = true;      // 画布被重新分配(width/height 赋值即清空) → 必须重绘
     const dpr = window.devicePixelRatio || 1;
-    const w = this._cssW(), h = this._cssH();
+    const host = this.canvas.parentElement;
+    const w = host ? host.clientWidth : this.canvas.clientWidth;
+    const h = host ? host.clientHeight : this.canvas.clientHeight;
+    this._size = { w, h };   // 供 _cssW/_cssH 复用，避免每帧强制布局
     this.canvas.width = Math.max(1, Math.round(w * dpr));
     this.canvas.height = Math.max(1, Math.round(h * dpr));
     this.canvas.style.width = w + 'px';

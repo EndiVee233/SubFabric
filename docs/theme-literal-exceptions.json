@@ -1791,6 +1791,11 @@
           "reason": "Existing editor section markers; decorative category dots, not text or control state."
         },
         {
+          "value": "background:#c084fc",
+          "count": 1,
+          "reason": "Existing editor section markers; decorative category dots, not text or control state."
+        },
+        {
           "value": "background:#d9a441",
           "count": 1,
           "reason": "Existing editor section markers; decorative category dots, not text or control state."

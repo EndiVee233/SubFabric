@@ -1392,6 +1392,7 @@ export class EditorPanel {
       this._totalH = 0;
       this._winStart = this._winEnd = 0;
       this._lastWindow = [];
+      this._lastCount = 0;      // 清空后重新灌入（换稿件）也要算"变多"，入场动画照播
       return;
     }
     if (this._metricsDirty || !this._offsets || this._offsets.length !== n + 1) this._rebuildMetrics(n);
@@ -1409,8 +1410,13 @@ export class EditorPanel {
     const previous = this._lastWindow || [];
     const previousSet = new Set(previous);
     const added = winIdx.filter(i => !previousSet.has(i));
+    /* 换窗口也会产生 "新增"（滚到新位置那批全是新的），但那不是"新加了字幕行"。
+     * 播放入场动画只应发生在条目总数变多时：否则拖进度条把列表跟着滚一下，整屏卡片
+     * 就会重播一次淡入 —— 视觉上是闪，代价是一次强制回流（实测单次 100ms+）。 */
+    const grew = this.filtered.length > (this._lastCount || 0);
+    this._lastCount = this.filtered.length;
     this._lastWindow = winIdx;
-    this.listEl.dispatchEvent(new CustomEvent('sf-cue-rendered', { detail: { start: win.start, end: win.end, added } }));
+    this.listEl.dispatchEvent(new CustomEvent('sf-cue-rendered', { detail: { start: win.start, end: win.end, added, grew } }));
   }
 
   refreshItem() { this._metricsDirty = true; this._render(); }
