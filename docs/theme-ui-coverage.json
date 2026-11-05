@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "297334403028afd6bf0d66d10d061800a2660ac366ce5ad46955feec79f29a5b",
+      "sha256": "f7d834bbbaf8e1b19706ccd9cd28a94e442dd7748a18a21030bde716b5f490ee",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -84,6 +84,7 @@
         "background:linear-gradient(145deg,#1c2a33,#24333d 55%,#18232a)",
         "background:linear-gradient(148deg, rgba(255,255,255,.92), rgba(255,255,255,.22) 16%, rgba(255,255,255,0) 44%, rgba(255,255,255,.14) 100%)",
         "background:linear-gradient(180deg, #1b1b22, #141419 62%)",
+        "background:linear-gradient(180deg, rgb(0 0 0 / .12), transparent 34%, rgb(0 0 0 / .38))",
         "background:linear-gradient(180deg, rgba(255, 255, 255, .014), transparent 60%)",
         "background:linear-gradient(180deg, rgba(255, 255, 255, .025), transparent)",
         "background:linear-gradient(180deg, rgba(255, 255, 255, .03), transparent), var(--bg-1)",
@@ -107,6 +108,7 @@
         "background:rgb(0 0 0 / .45)",
         "background:rgb(0 0 0 / .45)",
         "background:rgb(0 0 0 / .45)",
+        "background:rgb(0 0 0 / .66)",
         "background:rgb(0 0 0 / 45%)",
         "background:rgb(12 16 14)",
         "background:rgb(255 255 255/.05)",
@@ -431,6 +433,7 @@
         "color:#fff",
         "color:#fff",
         "color:#fff",
+        "color:#fff",
         "color:#fff !important",
         "color:#fff!important",
         "color:#fff!important",
@@ -513,7 +516,7 @@
     },
     {
       "file": "editor/js/assplayer.js",
-      "sha256": "51f9338e9669023c82228e64c4f7f51fd800d9d3eb06b571b92aa4b7e73aeb51",
+      "sha256": "8572885d31931c264b601691a2c4932717192ec2e285bd03bf249dc07521edd0",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -556,64 +559,68 @@
     },
     {
       "file": "editor/js/editor.js",
-      "sha256": "3877534a2a743da0f9e6a4d78751e9b0c980626d8e65964e9332f8d38b27a3b3",
+      "sha256": "4b9c622dd6961322075d6d620772ffb828e183e9f9666a2ab7a9520a1cd1e3e7",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
         {
-          "line": 371,
+          "line": 375,
           "method": "innerHTML"
         },
         {
-          "line": 624,
+          "line": 628,
           "method": "innerHTML"
         },
         {
-          "line": 627,
+          "line": 631,
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 698,
+          "line": 702,
           "method": "innerHTML"
         },
         {
-          "line": 778,
+          "line": 782,
           "method": "innerHTML"
         },
         {
-          "line": 818,
+          "line": 822,
           "method": "innerHTML"
         },
         {
-          "line": 830,
+          "line": 834,
           "method": "innerHTML"
         },
         {
-          "line": 865,
+          "line": 869,
           "method": "innerHTML"
         },
         {
-          "line": 1186,
+          "line": 1190,
           "method": "createElement"
         },
         {
-          "line": 1189,
+          "line": 1193,
           "method": "innerHTML"
         },
         {
-          "line": 1311,
+          "line": 1301,
           "method": "innerHTML"
         },
         {
-          "line": 1329,
+          "line": 1389,
           "method": "innerHTML"
         },
         {
-          "line": 1462,
+          "line": 1407,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1540,
           "method": "createElement"
         },
         {
-          "line": 1469,
+          "line": 1547,
           "method": "innerHTML"
         }
       ],
@@ -811,7 +818,7 @@
     },
     {
       "file": "editor/js/karaoke.js",
-      "sha256": "acf82dc974c443962269de87a7fb7f0d8f45c27b9cb9fd7fce16dbbfc25a8262",
+      "sha256": "5012e3a5e7c40999718a40c62f87bc8034ad852c92fc7542c08276f2410b7b50",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -819,7 +826,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "c8d001cb33f79f94f63f6913d0985fc027fe978141b2ba19dcb3856c2c1b3003",
+      "sha256": "28cdc8314860d23c6ec4df2efb661896b8b9203c463e454ea6315e3bb6e511ef",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -842,203 +849,203 @@
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 849,
+          "line": 880,
           "method": "innerHTML"
         },
         {
-          "line": 851,
+          "line": 882,
           "method": "createElement"
         },
         {
-          "line": 1670,
+          "line": 1701,
           "method": "replaceChildren"
         },
         {
-          "line": 1671,
+          "line": 1702,
           "method": "createElement"
         },
         {
-          "line": 1680,
+          "line": 1711,
           "method": "createElement"
         },
         {
-          "line": 2534,
+          "line": 2565,
           "method": "innerHTML"
         },
         {
-          "line": 2543,
+          "line": 2574,
           "method": "innerHTML"
         },
         {
-          "line": 2593,
+          "line": 2624,
           "method": "innerHTML"
         },
         {
-          "line": 2673,
+          "line": 2704,
           "method": "innerHTML"
         },
         {
-          "line": 3301,
+          "line": 3332,
           "method": "innerHTML"
         },
         {
-          "line": 4996,
+          "line": 5027,
           "method": "innerHTML"
         },
         {
-          "line": 4997,
+          "line": 5028,
           "method": "innerHTML"
         },
         {
-          "line": 5137,
+          "line": 5168,
           "method": "innerHTML"
         },
         {
-          "line": 5155,
+          "line": 5186,
           "method": "innerHTML"
         },
         {
-          "line": 5242,
+          "line": 5273,
           "method": "innerHTML"
         },
         {
-          "line": 5322,
+          "line": 5353,
           "method": "innerHTML"
         },
         {
-          "line": 5348,
+          "line": 5379,
           "method": "innerHTML"
         },
         {
-          "line": 5427,
+          "line": 5458,
           "method": "innerHTML"
         },
         {
-          "line": 5860,
+          "line": 5891,
           "method": "innerHTML"
         },
         {
-          "line": 5864,
+          "line": 5895,
           "method": "createElement"
         },
         {
-          "line": 5866,
+          "line": 5897,
           "method": "innerHTML"
         },
         {
-          "line": 5914,
+          "line": 5945,
           "method": "innerHTML"
         },
         {
-          "line": 6080,
+          "line": 6111,
           "method": "createElement"
         },
         {
-          "line": 6082,
+          "line": 6113,
           "method": "innerHTML"
         },
         {
-          "line": 6582,
+          "line": 6613,
           "method": "innerHTML"
         },
         {
-          "line": 6637,
+          "line": 6668,
           "method": "innerHTML"
         },
         {
-          "line": 6796,
+          "line": 6827,
           "method": "innerHTML"
         },
         {
-          "line": 7129,
+          "line": 7160,
           "method": "createElement"
         },
         {
-          "line": 7167,
+          "line": 7198,
           "method": "createElement"
         },
         {
-          "line": 7189,
+          "line": 7220,
           "method": "innerHTML"
         },
         {
-          "line": 7191,
+          "line": 7222,
           "method": "innerHTML"
         },
         {
-          "line": 7191,
+          "line": 7222,
           "method": "innerHTML"
         },
         {
-          "line": 7356,
+          "line": 7387,
           "method": "createElement"
         },
         {
-          "line": 7384,
+          "line": 7415,
           "method": "createElement"
         },
         {
-          "line": 7395,
+          "line": 7426,
           "method": "innerHTML"
         },
         {
-          "line": 7465,
+          "line": 7496,
           "method": "innerHTML"
         },
         {
-          "line": 7466,
+          "line": 7497,
           "method": "innerHTML"
         },
         {
-          "line": 7494,
+          "line": 7525,
           "method": "innerHTML"
         },
         {
-          "line": 7721,
+          "line": 7752,
           "method": "innerHTML"
         },
         {
-          "line": 7876,
+          "line": 7907,
           "method": "replaceChildren"
         },
         {
-          "line": 7882,
+          "line": 7913,
           "method": "innerHTML"
         },
         {
-          "line": 7927,
+          "line": 7958,
           "method": "innerHTML"
         },
         {
-          "line": 7928,
+          "line": 7959,
           "method": "innerHTML"
         },
         {
-          "line": 7949,
+          "line": 7980,
           "method": "innerHTML"
         },
         {
-          "line": 7962,
+          "line": 7993,
           "method": "innerHTML"
         },
         {
-          "line": 8257,
+          "line": 8290,
           "method": "createElement"
         },
         {
-          "line": 8262,
+          "line": 8295,
           "method": "innerHTML"
         },
         {
-          "line": 8271,
+          "line": 8304,
           "method": "createElement"
         },
         {
-          "line": 8277,
+          "line": 8310,
           "method": "createElement"
         },
         {
-          "line": 8279,
+          "line": 8312,
           "method": "createElement"
         }
       ],
@@ -1620,7 +1627,7 @@
     },
     {
       "file": "editor/js/studio.js",
-      "sha256": "f643b1967ea37e922ae50dc936b6f9f3bb69db77ed015611a9cd1adbfb0edf88",
+      "sha256": "4f9c40ac0b3bf474e9a11344cf63742dbaad723e62cab7fe55bf44ec9bc9ac1a",
       "ids": [],
       "dynamicIds": [
         "sf-choice-menu",
@@ -1647,227 +1654,283 @@
       ],
       "dynamic": [
         {
-          "line": 267,
+          "line": 274,
           "method": "innerHTML"
         },
         {
-          "line": 309,
+          "line": 319,
           "method": "createElement"
         },
         {
-          "line": 668,
+          "line": 728,
           "method": "createElement"
         },
         {
-          "line": 698,
+          "line": 758,
           "method": "innerHTML"
         },
         {
-          "line": 975,
+          "line": 1035,
           "method": "createElement"
         },
         {
-          "line": 1039,
+          "line": 1099,
           "method": "createElement"
         },
         {
-          "line": 1040,
+          "line": 1100,
           "method": "createElement"
         },
         {
-          "line": 1046,
+          "line": 1106,
           "method": "createElement"
         },
         {
-          "line": 1047,
+          "line": 1107,
           "method": "createElement"
         },
         {
-          "line": 1153,
+          "line": 1213,
           "method": "createElement"
         },
         {
-          "line": 1155,
+          "line": 1215,
           "method": "innerHTML"
         },
         {
-          "line": 1163,
+          "line": 1223,
           "method": "innerHTML"
         },
         {
-          "line": 1169,
+          "line": 1229,
           "method": "createElement"
         },
         {
-          "line": 1171,
+          "line": 1231,
           "method": "innerHTML"
         },
         {
-          "line": 1324,
+          "line": 1384,
           "method": "innerHTML"
         },
         {
-          "line": 1345,
+          "line": 1405,
           "method": "innerHTML"
         },
         {
-          "line": 1495,
+          "line": 1555,
           "method": "replaceChildren"
         },
         {
-          "line": 1608,
+          "line": 1699,
           "method": "replaceChildren"
         },
         {
-          "line": 1611,
+          "line": 1702,
           "method": "createElement"
         },
         {
-          "line": 1618,
+          "line": 1709,
           "method": "createElement"
         },
         {
-          "line": 1621,
+          "line": 1712,
           "method": "createElement"
         },
         {
-          "line": 1631,
+          "line": 1722,
           "method": "createElement"
         },
         {
-          "line": 1633,
+          "line": 1724,
           "method": "innerHTML"
         },
         {
-          "line": 1634,
+          "line": 1725,
           "method": "createElement"
         },
         {
-          "line": 1637,
+          "line": 1728,
           "method": "createElement"
         },
         {
-          "line": 1639,
+          "line": 1730,
           "method": "innerHTML"
         },
         {
-          "line": 2432,
-          "method": "createElement"
-        },
-        {
-          "line": 2432,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2435,
-          "method": "createElement"
-        },
-        {
-          "line": 2447,
-          "method": "createElement"
-        },
-        {
-          "line": 2454,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2454,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2460,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2480,
-          "method": "createElement"
-        },
-        {
-          "line": 2481,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2488,
-          "method": "createElement"
-        },
-        {
-          "line": 2491,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2494,
-          "method": "createElement"
-        },
-        {
-          "line": 2499,
-          "method": "createElement"
-        },
-        {
-          "line": 2501,
-          "method": "createElement"
-        },
-        {
-          "line": 2504,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2505,
-          "method": "createElement"
-        },
-        {
-          "line": 2507,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2569,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2732,
-          "method": "createElement"
-        },
-        {
-          "line": 2775,
+          "line": 1763,
           "method": "replaceChildren"
         },
         {
-          "line": 2781,
+          "line": 1767,
           "method": "createElement"
         },
         {
-          "line": 2784,
+          "line": 1780,
           "method": "createElement"
         },
         {
-          "line": 2788,
+          "line": 1783,
           "method": "createElement"
         },
         {
-          "line": 2789,
+          "line": 1792,
           "method": "createElement"
         },
         {
-          "line": 2789,
+          "line": 1795,
+          "method": "createElement"
+        },
+        {
+          "line": 1800,
+          "method": "createElement"
+        },
+        {
+          "line": 1802,
+          "method": "createElement"
+        },
+        {
+          "line": 1804,
+          "method": "createElement"
+        },
+        {
+          "line": 1806,
+          "method": "createElement"
+        },
+        {
+          "line": 1809,
+          "method": "createElement"
+        },
+        {
+          "line": 1812,
+          "method": "createElement"
+        },
+        {
+          "line": 1814,
+          "method": "createElement"
+        },
+        {
+          "line": 1816,
+          "method": "createElement"
+        },
+        {
+          "line": 2639,
+          "method": "createElement"
+        },
+        {
+          "line": 2639,
           "method": "innerHTML"
         },
         {
-          "line": 2862,
+          "line": 2642,
           "method": "createElement"
         },
         {
-          "line": 2864,
+          "line": 2654,
           "method": "createElement"
         },
         {
-          "line": 2867,
+          "line": 2661,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2661,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2667,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2687,
           "method": "createElement"
         },
         {
-          "line": 2868,
+          "line": 2688,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2695,
           "method": "createElement"
         },
         {
-          "line": 2868,
+          "line": 2698,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2701,
+          "method": "createElement"
+        },
+        {
+          "line": 2706,
+          "method": "createElement"
+        },
+        {
+          "line": 2708,
+          "method": "createElement"
+        },
+        {
+          "line": 2711,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2712,
+          "method": "createElement"
+        },
+        {
+          "line": 2714,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2776,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2944,
+          "method": "createElement"
+        },
+        {
+          "line": 2987,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 2993,
+          "method": "createElement"
+        },
+        {
+          "line": 2996,
+          "method": "createElement"
+        },
+        {
+          "line": 3000,
+          "method": "createElement"
+        },
+        {
+          "line": 3001,
+          "method": "createElement"
+        },
+        {
+          "line": 3001,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3074,
+          "method": "createElement"
+        },
+        {
+          "line": 3076,
+          "method": "createElement"
+        },
+        {
+          "line": 3079,
+          "method": "createElement"
+        },
+        {
+          "line": 3080,
+          "method": "createElement"
+        },
+        {
+          "line": 3080,
           "method": "innerHTML"
         }
       ],
@@ -1875,7 +1938,7 @@
     },
     {
       "file": "editor/js/timeline.js",
-      "sha256": "e4d77ae472bf69469e288866e68d691c090be5df95ee41fb5b54887a1634d00b",
+      "sha256": "bb5aa11488dc172914d9ecd0d3e73cb572f99886cb631ba30103148e6d44a041",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -1892,15 +1955,15 @@
           "method": "createElement"
         },
         {
-          "line": 2218,
+          "line": 2228,
           "method": "createElement"
         },
         {
-          "line": 2262,
+          "line": 2272,
           "method": "createElement"
         },
         {
-          "line": 2285,
+          "line": 2295,
           "method": "createElement"
         }
       ],
@@ -1961,7 +2024,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "42df823080ab37a3530556066ecd088f448c4e1b233f7474033c9c4644854669",
+      "sha256": "f7e7dd0e7fdfb040cc6113202c97ebd61ecc9422f73c0d4bf5c13523ee97a7fd",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2001,7 +2064,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "6c3926d56ca316e27d1a31733d4c16bcc64a4ea4109b4b7771a2a5a1d6628550",
+      "sha256": "4e36d656854dc404aed9802fec2ad14ce4805b280aad62675a42f36f0b07b632",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2721,6 +2784,13 @@
         "sf-theme-import",
         "sf-theme-packs",
         "sf-theme-status",
+        "sf-uwp-youtube",
+        "sf-uwp-yt-at",
+        "sf-uwp-yt-count",
+        "sf-uwp-yt-grid",
+        "sf-uwp-yt-refresh",
+        "sf-uwp-yt-refresh-label",
+        "sf-uwp-yt-title",
         "sf-widgets",
         "split-note-holder",
         "split-pane-head",
@@ -2953,6 +3023,7 @@
       "--cc-text-2",
       "--cc-text-3",
       "--cc-warn",
+      "--ch",
       "--danger",
       "--dim",
       "--dur-1",
@@ -3137,6 +3208,7 @@
       "--cc-text-2",
       "--cc-text-3",
       "--cc-warn",
+      "--ch",
       "--danger",
       "--dim",
       "--dur-1",

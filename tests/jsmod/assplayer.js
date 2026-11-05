@@ -239,6 +239,19 @@ export class AssPlayer {
     this._doUpdate();
   }
 
+  /**
+   * 跳转预览：**不等视频 seek 完成**，先让 libass 按目标时间重画一帧。
+   * 视频解码可能还要 200~800ms，但字幕/逐词高亮可以立刻切过去（暂停时尤其明显）。
+   * 未就绪时忽略；onReady / _doUpdate 会再用 video.currentTime 对齐一次。
+   */
+  seek(time) {
+    if (!this.instance || !this.ready) return false;
+    try {
+      this.instance.setCurrentTime(Number(time) || 0);
+      return true;
+    } catch { return false; }
+  }
+
   _doUpdate() {
     // worker-init 是异步的；尚未 onReady 时发 setTrack 会与 libass 初始化竞争。
     // 保留最新文本，由 onReady 再发，避免“稿件已改、视频仍停留在旧轨”。

@@ -122,7 +122,74 @@ console.log('\n== ⑤ 同跨度多条 → 也能认出逐词样式 ==');
   ok(/first half/.test(g.lines[0].lines[1] || ''), '英文里含第一段', g.lines[0].lines[1]);
 }
 
-console.log('\n== ⑥ 空行 / 空输入 ==');
+console.log('\n== ⑥ 词间空档行（无标签整句）不能把一句切碎 ==');
+{
+  /* 真实导出的逐词 ASS 会在词与词之间补一条**无高亮标签的整句行**（buildWordSpecsColor
+   * 的 head/gap/tail 填充）。旧实现只把"带标签且紧接"的词行算同一句，空档行会把一句切成
+   * 十几段；分段导入后每段单独成行 → 中文行与英文词行配不上，时间轴显示成上下两半 + 整排 ⚠
+   * （用户实测：02:34~02:53 进了 3848 行）。 */
+  const SENT = 'Hold down the wall!';
+  const kara = (w) => SENT.replace(w, `{\\c&H00FF00&}${w}{\\c}`);
+  const rows = [
+    r(0, 1.2, ZH, '守住墙！'),
+    r(0, 0.2, EN, kara('Hold')),
+    r(0.2, 0.26, EN, SENT),          // 词间空档：无标签
+    r(0.26, 0.5, EN, kara('down')),
+    r(0.5, 0.52, EN, SENT),
+    r(0.52, 0.9, EN, kara('the')),
+    r(0.9, 0.92, EN, SENT),
+    r(0.92, 1.2, EN, kara('wall!')),
+  ];
+  const g = groupAssRows(rows);
+  eq(g.lines.length, 1, '★ 词行 + 空档行 → 1 句（旧实现会被切成 7 段）', g.lines.length);
+  eq(g.lines[0].lines, ['守住墙！', SENT], '中英仍然配对');
+  eq([g.lines[0].start, g.lines[0].end], [0, 1.2], '跨度覆盖首词到末词');
+  eq((g.lines[0].words || []).length, 4, '只把带高亮标签的 4 个词当词，空档行不算词');
+  eq(g.lines[0].words.map(w => w.word), ['Hold', 'down', 'the', 'wall!'], '词序正确');
+}
+
+console.log('\n== ⑦ 英文词行带中文角色名时，逐词样式仍然要认出来 ==');
+{
+  /* 用户真实文件里的两条英文行是「整行角色色」：`{\c&H00FFFF&}[路人] They're immortal!`。
+   * 旧实现拿整段明文跑 CJK 判断「该样式也承载整句」，两条就把 Default 踢出逐词样式，
+   * 整份文件退化成"一条 Dialogue 一行"。角色标记 `[..]` 必须先剥掉再判语言。 */
+  const SENT = 'They are immortal!';
+  const kara = (w) => SENT.replace(w, `{\\c&H00FF00&}${w}{\\c}`);
+  const rows = [
+    r(0, 2, ZH, '他们是不死之身！'),
+    r(0, 1, EN, '{\\c&H00FFFF&}[路人] They are immortal!'),   // 整行角色色（无复位），普通整句行
+    r(0, 0.5, EN, kara('They')),
+    r(0.5, 1, EN, kara('are')),
+    r(1, 2, EN, kara('immortal!')),
+  ];
+  const g = groupAssRows(rows);
+  ok(g.stats.wordStyles.includes('Default'), '★ 带中文角色名的英文行不会把 Default 踢出逐词样式', g.stats.wordStyles);
+  ok(g.stats.wordRows >= 3, '词行仍被识别', g.stats.wordRows);
+  ok(g.lines.length >= 2 && g.lines.length <= 3, '不会退化成"每个词一行"（旧实现是 5 行）', g.lines.length);
+  const pair = g.lines.find(x => x.lines.length === 2);
+  ok(pair && pair.lines[0] === '他们是不死之身！', '★ 中文行配给逐词句，不被整行角色色副本抢走', pair && pair.lines);
+}
+
+console.log('\n== ⑧ 10ms 词间空档不能拆成「中文+首词」和「其余英文」两行 ==');
+{
+  /* 用户实测 3:26:26.43~3:26:28.75：中文「放箭放箭」配第一行英文（0.05s），
+   * 余下 2.26s 只有英文。原因是首词结束 26.48、第二词开始 26.49（10ms 空档），
+   * 导出文件没补空档整句行，旧逻辑按 1ms 容差断句。
+   * 期望：合并成一行，中文行结尾延长到英文原本的结尾。 */
+  const SENT = 'Bow, bow, bow, bow, bow, bow.';
+  const tokens = SENT.split(' ');
+  const kara = (k) => tokens.map((t, i) => i === k ? `{\\c&H00FF00&}${t}{\\c}` : t).join(' ');
+  const words = [[0, 0.05], [0.06, 0.1], [0.1, 0.14], [0.14, 0.15], [0.15, 2.31], [2.31, 2.32]];
+  const rows = [r(0, 2.32, ZH, '放箭放箭')];
+  words.forEach(([s, e], k) => rows.push(r(s, e, EN, kara(k))));
+  const g = groupAssRows(rows);
+  eq(g.lines.length, 1, '★ 合并成 1 句（旧实现拆成 0.05s 中英 + 2.26s 英文两行）', g.lines.length);
+  eq(g.lines[0].lines, ['放箭放箭', SENT], '中文与完整英文在同一行');
+  eq([g.lines[0].start, g.lines[0].end], [0, 2.32], '中文行结尾延长到英文原本的结尾');
+  eq((g.lines[0].words || []).length, 6, '6 个词级时间全部保留');
+}
+
+console.log('\n== ⑨ 空行 / 空输入 ==');
 {
   eq(groupAssRows([]).ok, false, '空数组 → 不 ok');
   eq(groupAssRows(null).lines.length, 0, 'null 不炸');

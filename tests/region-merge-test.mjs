@@ -83,6 +83,21 @@ console.log('\n== 零长行：撑到最小宽度（不是丢弃）==');
   ok(/零长/.test(mergeSummary(p)), '总结里说明了这件事', mergeSummary(p));
 }
 
+console.log('\n== 单行条目按语言落轨（英文不能当中文写进中文样式）==');
+{
+  const p = planRegionMerge([
+    { start: 0, end: 2, lines: ['English only here.'] },
+    { start: 2, end: 4, lines: ['纯中文行'] },
+    { start: 4, end: 6, lines: ['中文主语言', 'English sub'] },
+  ], [], 0, 10);
+  eq(p.items.map(r => [r.zh, r.en]), [
+    ['', 'English only here.'],
+    ['纯中文行', ''],
+    ['中文主语言', 'English sub'],
+  ], '★ 单行英文进 en；单行中文进 zh；双行按主/副');
+  eq(p.items[0].words, [], '没有词级时间时 words 为空数组（交给 addRecognizedRow 铺）');
+}
+
 console.log('\n== 源文件时间倒挂要报出来 ==');
 {
   const p = planRegionMerge([{ start: 20, end: 10, lines: ['倒挂'] }], [], 0, 30);

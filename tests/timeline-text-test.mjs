@@ -144,7 +144,8 @@ const mutedBody = SRC.slice(SRC.indexOf('function mutedHex'), SRC.indexOf('\n}',
 ok(/gray = 0x8a/.test(mutedBody) && /v \* \(1 - t\) \+ gray \* t/.test(mutedBody),
   'mutedHex 按比例混入中性灰，降低饱和度');
 ok(/const bgBase = mutedHex\(base, 0\.62\)/.test(SRC) && /withAlpha\(bgBase, alpha/.test(SRC), '实心块背景使用 mutedHex(base, 0.62)');
-ok(/withAlpha\(mutedHex\(lane\.color, 0\.62\), 0\.24/.test(SRC), '窄块（run）背景同样降饱和');
+ok(/const base = runColor \|\| lane\.color/.test(SRC) && /withAlpha\(mutedHex\(base, 0\.42\), 0\.52/.test(SRC),
+  '窄块（run）按角色色降饱和填充（缩到一条线也保留颜色）');
 ok(/ctx\.strokeStyle = withAlpha\(base, 1/.test(SRC), '边框仍使用原角色色（保留说话人识别）');
 
 console.log('\n== 时间轴逐词标记已恢复 ==');

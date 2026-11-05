@@ -1412,6 +1412,8 @@ export class Timeline {
     this._dirty = false;
     this._lastDrawAt = performance.now();
     this._lastT = t;
+    this._playingNow = playing !== false;
+    this._mainSeeking = !!(this.video && this.video.seeking);
     this._blockEnterNow = this._lastDrawAt;
     /* 主线程被大稿件解析/自绘卡住时，第一帧可能已经越过整段动画窗口。
      * 这时重排一次起点，保证用户看到的是逐块浮现，而不是全部一下子出现。 */
@@ -1663,12 +1665,20 @@ export class Timeline {
       cells.push({ i, start, x1, x2 });
     }
     // 每帧至多请求一张缺失缩略图(轮转, 避免抖动)
-    if (cells.length) {
+    /* 缩略图由一个隐藏的 <video> 对**同一个视频**逐帧 seek 解码。播放中每帧都去补图，
+       会和主视频抢解码器/磁盘：表现为「点播放要等一会」「跳转后预览慢半拍」。
+       播放中把补图节流到 ~0.7s 一张，主视频 seek 中完全暂停；暂停时恢复即时补图。 */
+    const now = performance.now();
+    const canRequest = !this._mainSeeking
+      && !(typeof document !== 'undefined' && document.hidden)
+      && (!this._playingNow || now - (this._lastFilmReqAt || 0) > 700);
+    if (cells.length && canRequest) {
       for (let k = 0; k < cells.length; k++) {
         const c = cells[(this._filmRotate + k) % cells.length];
         if (!this.film.get(step, c.i) && !this.film.failed.has(step + '@' + c.i)) {
           this.film.request(step, c.i, c.start + Math.min(1, step * 0.25));
           this._filmRotate++;
+          this._lastFilmReqAt = now;
           break;
         }
       }
@@ -2371,15 +2381,19 @@ export class Timeline {
       while (lo < hi) { const mid = (lo + hi) >> 1; if (cues[mid].end >= spanStart) hi = mid; else lo = mid + 1; }
 
       const minPx = 2;
-      let runStart = null, runEnd = null, runBand = null;
+      let runStart = null, runEnd = null, runBand = null, runColor = null;
       const flushRun = () => {
-        if (o.blocksOnly || o.skipBlocks) { runStart = runEnd = runBand = null; return; }
+        if (o.blocksOnly || o.skipBlocks) { runStart = runEnd = runBand = runColor = null; return; }
         if (runStart === null) return;
         const b = runBand || { y: yy + 4, h: lh - 8 };
-        ctx.fillStyle = withAlpha(mutedHex(lane.color, 0.62), 0.24, lane.color + '1f');
+        /* 缩到 1~2px 的块并成一段"run"来画。旧实现用轨道中性色 + 0.24 透明度，
+           缩到全片时整条轨道只剩一层灰雾；这里按**该段块的说话人颜色**分段填充，
+           并把颜色留得更足 —— 块只剩一条线时也能看出是谁/有字幕。 */
+        const base = runColor || lane.color;
+        ctx.fillStyle = withAlpha(mutedHex(base, 0.42), 0.52, withAlpha(base, 0.52, base));
         this._roundRect(ctx, runStart, b.y, Math.max(1.5, runEnd - runStart), b.h, this.uwp ? 2 : 3);
         ctx.fill();
-        runStart = runEnd = runBand = null;
+        runStart = runEnd = runBand = runColor = null;
       };
 
       if (o.skipBlocks) {
@@ -2404,8 +2418,12 @@ export class Timeline {
         const wpx = x2 - x1;
         const band = bandOf(c, yy, lh);
         if (wpx < minPx) {
-          if (runStart === null) { runStart = x1; runEnd = x2; runBand = band; }
-          else runEnd = Math.max(runEnd, x2);
+          const color = c.color || lane.color;
+          if (runStart === null) { runStart = x1; runEnd = x2; runBand = band; runColor = color; }
+          else if (color !== runColor || band.y !== runBand.y || band.h !== runBand.h || x1 - runEnd > 0.75) {
+            flushRun();
+            runStart = x1; runEnd = x2; runBand = band; runColor = color;
+          } else runEnd = Math.max(runEnd, x2);
           continue;
         }
         flushRun();

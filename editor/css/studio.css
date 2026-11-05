@@ -3654,8 +3654,18 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-topbar i { padding:0 12px; font-style:normal; opacity:.5; }.sf-topbar b { color:var(--text); font-weight:500; }.sf-topbar>div { display:flex; gap:8px; }
 .sf-ambient,.sf-backdrop { position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:0; }
 .sf-ambient { display:none; opacity:0; }.sf-studio[data-bg=aurora] .sf-ambient { display:block; opacity:.65; }
-/* 流光色走 --sf-aurora-N；换配色/换明暗时让 background-color 过渡，避免整屏硬切颜色。 */
-.sf-ambient i { position:absolute; width:50vw; height:65vh; left:8%; top:10%; border-radius:50%; filter:blur(100px); background-color:var(--sf-aurora-1,var(--accent-soft)); transition:background-color .42s ease; }
+/* 流光色走 --sf-aurora-N；换配色/换明暗时让 background-color 过渡，避免整屏硬切颜色。
+   ⚠ 不用 filter:blur(100px)：三块 50vw×65vh 的模糊层每帧都要重新合成/采样，核显上很贵。
+   改成同尺寸的**径向渐变遮罩**（颜色仍走 background-color，换主题仍能过渡）——
+   边缘一样柔，但只是一次性栅格化 + 合成，没有逐帧模糊。 */
+.sf-ambient i {
+  position:absolute; width:50vw; height:65vh; left:8%; top:10%; border-radius:50%;
+  background-color:var(--sf-aurora-1,var(--accent-soft));
+  -webkit-mask-image:radial-gradient(closest-side, #000 0%, rgb(0 0 0 / .72) 46%, transparent 76%);
+  mask-image:radial-gradient(closest-side, #000 0%, rgb(0 0 0 / .72) 46%, transparent 76%);
+  transition:background-color .42s ease;
+  will-change:transform;
+}
 .sf-ambient i:nth-child(2) { left:60%; top:-10%; background-color:var(--sf-aurora-2,var(--secondary-container)); animation-delay:-7s; }.sf-ambient i:nth-child(3) { top:60%; left:35%; background-color:var(--sf-aurora-3,var(--tertiary-container)); animation-delay:-13s; }
 .sf-backdrop { background-size:cover; background-position:center; opacity:.32; filter:blur(var(--sf-image-blur,0px)) brightness(calc(1 - var(--sf-image-dim,0))); }
 .sf-studio #home-view,.sf-studio .workspace-page,.sf-page { left:var(--sf-nav-w); top:0; right:0; bottom:0; position:fixed; background:transparent; z-index:52; overflow:auto; }
@@ -4300,6 +4310,14 @@ body.sf-studio .sf-unavailable { opacity: .5; }
    不会因为 animation-name 归零而瞬间跳回原点（2026-10-20 反馈：切换生硬）。 */
 .sf-studio .sf-ambient i { animation-name:sf-drift; animation-duration:var(--sf-aurora-duration,20s); animation-timing-function:ease-in-out; animation-iteration-count:infinite; animation-direction:alternate; animation-play-state:paused; }
 .sf-studio[data-bg=aurora][data-aurora-motion=dynamic][data-page-visible=true] .sf-ambient i { animation-play-state:running; }
+/* 动态流光在跑时，侧栏/顶栏的 backdrop-filter 每帧都要重新采样背后那一层
+   （218px 宽 + 全宽顶栏），是持续负载的大头。流光本身已经足够柔，这里改成
+   略更实一点的半透明底、去掉 blur：观感几乎不变，合成开销明显下降。 */
+.sf-studio[data-bg=aurora] .sf-nav,
+.sf-studio[data-bg=aurora] .sf-topbar {
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  background:color-mix(in srgb, var(--surface) 94%, transparent);
+}
 .sf-studio .sf-aurora-colors { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; padding:16px 0; }
 .sf-studio .sf-aurora-color { display:flex; align-items:center; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
 .sf-studio .sf-aurora-color input { width:105px; }
@@ -5562,6 +5580,69 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio[data-design=uwp] .sf-widget[data-widget=new] .sf-widget-arrow { display:block; margin-left:auto; color:var(--accent-text, var(--accent)); font-size:18px; line-height:1; }
 .sf-studio[data-design=uwp] :is(.sf-widget[data-widget=settings],.sf-widget-library) .sf-widget-ico { position:static; width:34px; height:34px; margin-bottom:auto; color:var(--text); opacity:.78; }
 
+/* ── Windows 10 主页：加宽磁贴画布 + 底部主播更新行（2026-11-04）──────
+   设计稿 prototypes/uwp-home-redesign：内容宽度 940 → 1040（与 MY 的
+   .sf-mu-shell 一致），桌面左右各留 34px；四列单块从约 209px 增到约 252px。
+   只改 UWP 作用域，不共享 .dashboard-inner，其它设计族的 940px 不变。 */
+.sf-studio[data-design=uwp] .dashboard-inner {
+  width: min(1108px, calc(100% - 68px));
+  max-width: none;
+  margin: 0 auto;
+  padding: 44px 34px 40px;
+}
+/* 主播更新区：默认不占位（MY 有自己的一套），只在 Windows 10 显示。 */
+.sf-uwp-youtube { display: none; margin-top: 26px; }
+.sf-studio[data-design=uwp] .sf-uwp-youtube { display: block; }
+.sf-uwp-yt-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; min-width: 0; }
+.sf-uwp-yt-head h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
+.sf-uwp-yt-count { flex: none; padding: 1px 5px; border: 1px solid var(--line); border-radius: 2px; font: 8.5px/1.5 var(--mono); color: var(--muted); }
+.sf-uwp-yt-head p { margin: 0; min-width: 0; font-size: 9.8px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-uwp-yt-refresh { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: none; font-size: 9.5px; color: var(--muted); }
+/* 刷新按钮保持原型的小尺寸，覆盖 UWP .btn 的 32px 通栏高度。 */
+.sf-uwp-yt-refresh .btn { display: inline-flex; align-items: center; gap: 4px; height: 20px; min-height: 0; padding: 0 7px; font-size: 9.5px; font-weight: 400; box-shadow: none; }
+.sf-uwp-yt-refresh .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.sf-uwp-yt-refresh .ico { width: 12px; height: 12px; }
+.sf-uwp-yt-refresh .btn.is-busy { pointer-events: none; }
+.sf-uwp-yt-refresh .btn.is-busy .ico { animation: sf-uwp-yt-spin .8s linear infinite; }
+@keyframes sf-uwp-yt-spin { to { transform: rotate(360deg); } }
+.sf-uwp-yt-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: 168px; gap: 11px; }
+/* 卡片沿用磁贴的 2px 直角 / Reveal / 按压，只把内边距与方向换成封面上、文字下。 */
+.sf-studio[data-design=uwp] .sf-uwp-yt-card { padding: 0; gap: 0; justify-content: flex-start; text-decoration: none; color: var(--text); }
+.sf-uwp-yt-cover {
+  position: relative; flex: none; width: 100%; height: 88px; overflow: hidden;
+  border-bottom: 1px solid var(--line-soft, var(--line));
+  background:
+    radial-gradient(130% 180% at 86% 6%, color-mix(in srgb, var(--ch, var(--accent)) 40%, transparent), transparent 64%),
+    linear-gradient(135deg, var(--surface-2), color-mix(in srgb, var(--ch, var(--accent)) 14%, var(--surface)));
+}
+/* 压暗层与频道色顶条都画在封面上层：缩略图是 img，会盖住 cover 自己的 inset shadow。 */
+.sf-uwp-yt-cover::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(180deg, rgb(0 0 0 / .12), transparent 34%, rgb(0 0 0 / .38));
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--ch, var(--accent)) 82%, transparent);
+}
+.sf-uwp-yt-thumb { position: absolute; inset: 0; z-index: 0; display: block; width: 100%; height: 100%; object-fit: cover; object-position: center 32%; }
+.sf-uwp-yt-cover:has(.sf-uwp-yt-thumb) .sf-uwp-yt-mono { display: none; }
+.sf-uwp-yt-mono { position: absolute; right: 8px; bottom: -12px; z-index: 1; font-size: 66px; line-height: 1; font-weight: 700; letter-spacing: -.04em; color: var(--ch, var(--accent)); opacity: .24; pointer-events: none; }
+.sf-uwp-yt-dur { position: absolute; right: 7px; bottom: 6px; z-index: 2; padding: 1px 4px; background: rgb(0 0 0 / .66); color: #fff; font: 8.2px/1.5 var(--mono); letter-spacing: .02em; }
+.sf-uwp-yt-body { display: flex; flex-direction: column; gap: 3px; width: 100%; min-width: 0; padding: 8px 12px 9px; }
+.sf-uwp-yt-row { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; width: 100%; }
+.sf-uwp-yt-row b { font-size: 10.8px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sf-uwp-yt-row em { flex: none; font-style: normal; font-size: 8.8px; color: var(--muted); }
+.sf-uwp-yt-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.7em; font-size: 11.5px; line-height: 1.34; font-weight: 500; }
+.sf-uwp-yt-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; font: 8.6px/1.4 var(--mono); color: var(--muted); }
+.sf-uwp-yt-new { flex: none; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent); color: var(--accent-text, var(--accent)); font: 8px/1.5 var(--mono); }
+@media (max-width:1024px) {
+  .sf-uwp-yt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width:760px) {
+  .sf-studio[data-design=uwp] .dashboard-inner { width: calc(100% - 32px); padding: 28px 16px 32px; }
+}
+@media (max-width:560px) {
+  .sf-uwp-yt-head p { display: none; }
+  .sf-uwp-yt-grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
+}
+
 /* 任意按钮磁贴化：Reveal 三层光由 studio.js 写入 --uwp-*；无外发光。 */
 .sf-studio[data-design=uwp] .uwp-tile {
   --uwp-face:0; --uwp-edge:0; --uwp-mx:50%; --uwp-my:50%; --uwp-face-r:240px;
@@ -5662,7 +5743,9 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   transform-origin:var(--uwp-exit-ox,50%) var(--uwp-exit-oy,50%) !important;
   pointer-events:none;
 }
-.sf-studio[data-design=uwp] #dashboard-view.is-uwp-tile-leaving :is(.dashboard-head,.dashboard-foot) { opacity:0; transition:opacity .16s linear .12s; }
+/* 非磁贴文字（页头、页脚、主播行标题）随点击立即淡出；主播行标题带 UWP 入场动画的
+   fill:both，必须先撤掉动画，否则动画的终态 opacity:1 会盖住这里的 opacity:0。 */
+.sf-studio[data-design=uwp] #dashboard-view.is-uwp-tile-leaving :is(.dashboard-head,.dashboard-foot,.sf-uwp-yt-head) { opacity:0; transition:opacity .12s linear; animation:none; }
 
 @media (max-width:760px) {
   .sf-studio[data-design=uwp] .sf-widgets { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -7050,7 +7133,7 @@ body.sf-welcome-open #confirm-overlay { z-index: 401; }
 .welcome-aurora i {
   position: absolute; width: 52vmax; height: 52vmax; border-radius: 50%;
   background: radial-gradient(circle, var(--accent-a40), transparent 66%);
-  filter: blur(70px); opacity: .55;
+  opacity: .55;
   animation: welcome-drift 18s ease-in-out infinite alternate;
 }
 .welcome-aurora i:nth-child(1) { left: -6%; top: -16%; }
@@ -7762,6 +7845,7 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .sf-studio .sf-choice-menu::-webkit-scrollbar { width:0; height:0; }
 
 /* 日志页三个 pane 的内容框与子标签对齐留白；底部也留出与面板边缘的间距 */
+#tab-logs .log-pane { padding: 0 8px 10px; }
 #tab-logs .log-pane { padding: 0 10px 10px; }
 #tab-logs .log-toolbar { padding: 0 0 8px; }
 
@@ -8232,3 +8316,6 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .dashboard-view[data-home-mode="material"]::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; transition: background .18s; }
 .dashboard-view[data-home-mode="material"].is-scrolling::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 26%, transparent); }
 .dashboard-view[data-home-mode="material"].is-scrolling::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text) 40%, transparent); }
+/* 新建文件夹输入框文字不要继承 11px 标签字号 */
+.sf-folder-field input { font-size:14px; }
+.sf-studio[data-design=material] .sf-folder-dialog .sf-folder-field input { font-size:15px; }

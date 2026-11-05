@@ -21,8 +21,8 @@
 ;   beta 期：显示 `beta <主>.<次>`、文件 `<主>.<次>.0.0`、tag `v<主>.<次>.0-beta.<序号>`；转正后去掉 beta 前缀。
 
 #define MyAppName "SubFabric"
-#define MyAppVersion "beta 1.5.5.3"
-#define MyAppFileVersion "1.5.5.3"
+#define MyAppVersion "beta 1.5.5.4"
+#define MyAppFileVersion "1.5.5.4"
 #define MyAppPublisher "EndiVee233"
 #define MyAppURL "https://github.com/EndiVee233/SubFabric"
 #define MyAppExeName "SubFabric.exe"
@@ -47,7 +47,9 @@ VersionInfoProductVersion={#MyAppFileVersion}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=.
-OutputBaseFilename=SubFabric-{#MyAppVersion}-setup
+; 包名带 -sea 后缀：同一个 Release 里同时发 Electron 版 SubFabric-<版本>-setup.exe，
+; 两者文件名不能相同（否则下载后分不清是哪条链路、也容易装错）。
+OutputBaseFilename=SubFabric-{#MyAppFileVersion}-sea-setup
 ; 压缩方式：**不要**用 lzma2 + SolidCompression —— 实测（2026-10-25）`lzma2/max` + `solid`
 ; 会被荣耀电脑管家（奇安信引擎）判成木马并实时隔离安装包；换成 `lzma/normal` + 非 solid
 ; 后同一份代码可正常留存，体积只从 36.5MB 涨到 38.2MB。改这里之前先读 docs/PROJECT.md §6。

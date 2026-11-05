@@ -26,6 +26,12 @@ let folderSnapshotSig = '';
 let applying = false, pendingSetting = '';
 const systemDark = matchMedia('(prefers-color-scheme: dark)');
 const auroraPalettes = { sage: ['#90b99c', '#bacb91', '#9ac2b8'], ocean: ['#74adc8', '#9eaccf', '#95c5be'], sunset: ['#d69caa', '#cfb693', '#aca3cf'] };
+let windowFocused = true;   // 动态流光只在窗口有焦点时跑（见 applyPageVisible）
+/** 页面可见 = 标签页没被隐藏 + 窗口有焦点。最小化/切到别的应用时停掉流光合成。 */
+function applyPageVisible() {
+  if (!document.body) return;
+  document.body.dataset.pageVisible = String(!document.hidden && windowFocused);
+}
 let noticeTimer, noticeHideTimer;
 function notice(message) {
   const el = $('sf-notice');
@@ -65,7 +71,8 @@ function applyTheme() {
   document.body.dataset.bg = prefs.background;
   document.body.dataset.motion = prefs.motion;
   document.body.dataset.auroraMotion = prefs.auroraMotion;
-  document.body.dataset.pageVisible = String(!document.hidden);
+  applyPageVisible();
+  glassFgRev++;   // 主题/明暗/背景变了 → 玻璃前景色缓存作废
   let tokens = pack.design === 'material' ? palette : pack.design === 'uwp' ? {
     ...palette, '--accent': accent.toUpperCase(), '--on-accent': themes.contrast(accent, '#ffffff') >= 4.5 ? '#ffffff' : '#000000', '--bg': dark ? '#1F1F1F' : '#F3F3F3', '--surface': dark ? '#2B2B2B' : '#FFFFFF',
     '--surface-2': dark ? '#333333' : '#EDEDED', '--surface-3': dark ? '#3A3A3A' : '#E5E5E5', '--text': dark ? '#F3F3F3' : '#202020', '--muted': dark ? '#C5C5C5' : '#606060',
@@ -285,6 +292,9 @@ const GLASS_FG_SELECTOR = [
   '.sf-help-grid article', '.np-mode', '.ws-badge', '.badge', '.sf-accel-chip', '.log-hint', '.pc-missing', '.pc-st',
 ].join(',');
 let glassFgFrame = 0;
+let glassFgFirstPending = true;   // 首次同步延到空闲：不占首屏关键路径
+let glassFgRev = 0;               // 主题/背景变化时 +1，用于缓存失效
+const glassFgCache = new WeakMap();
 let glassBackdropImage = { src: '', color: null, loading: false };
 
 function cssVarColor(name, fallback = null) {
@@ -322,6 +332,7 @@ function loadGlassBackdropImage(src) {
     } catch {
       glassBackdropImage = { src, color: null, loading: false };
     }
+    glassFgRev++;
     scheduleGlassForeground();
   };
   img.onerror = () => { glassBackdropImage = { src, color: null, loading: false }; };
@@ -362,17 +373,20 @@ function glassBackdropColor() {
   return base;
 }
 
-/** 把元素自身的半透明背景逐层压到 backdrop 上，得到真实合成色。 */
-function glassElementBackground(el) {
+/** 把元素自身的半透明背景逐层压到 backdrop 上，得到真实合成色。
+ *  bgOf / backdrop 可复用同一轮同步里的缓存（见 syncGlassForeground）。 */
+function glassElementBackground(el, bgOf, backdrop) {
+  const read = typeof bgOf === 'function' ? bgOf
+    : (node) => { try { return parseCssColor(getComputedStyle(node).backgroundColor); } catch { return null; } };
   const layers = [];
   for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
-    const color = parseCssColor(getComputedStyle(node).backgroundColor);
+    const color = read(node);
     if (color && color.a > 0.001) {
       layers.push(color);
       if (color.a >= 0.999) break;
     }
   }
-  let out = glassBackdropColor();
+  let out = backdrop || glassBackdropColor();
   for (let i = layers.length - 1; i >= 0; i--) out = compositeColor(layers[i], out);
   return out;
 }
@@ -381,15 +395,49 @@ function syncGlassForeground() {
   glassFgFrame = 0;
   if (!document.body || typeof getComputedStyle !== 'function') return;
   const light = document.body.dataset.theme === 'light';
+  /* 深色主题本来就用浅色字，不需要逐元素做背景合成（这一步要读几十个元素 × 祖先链的
+     computedStyle，实测 130ms+）。只把浅色模式留下的覆盖清掉，然后直接返回。 */
+  if (!light) {
+    const props = ['--sf-readable-muted', '--sf-readable-accent-text', '--sf-readable-success', '--sf-readable-danger'];
+    for (const el of document.querySelectorAll('.sf-readable-foreground')) {
+      el.classList.remove('sf-readable-foreground');
+      for (const p of props) el.style.removeProperty(p);
+    }
+    for (const el of document.querySelectorAll('.sf-fg-on-dark')) el.classList.remove('sf-fg-on-dark');
+    return;
+  }
+  /* 同一次同步里，卡片共享祖先：computedStyle/颜色解析按节点缓存一次即可，
+     避免每个元素都把整条祖先链重算一遍。 */
+  const bgCache = new Map();
+  const bgOf = (node) => {
+    if (bgCache.has(node)) return bgCache.get(node);
+    let color = null;
+    try { color = parseCssColor(getComputedStyle(node).backgroundColor); } catch {}
+    bgCache.set(node, color);
+    return color;
+  };
+  const backdrop = glassBackdropColor();
   for (const el of document.querySelectorAll(GLASS_FG_SELECTOR)) {
     el.classList.remove('sf-readable-foreground');
-    const background = glassElementBackground(el);
-    el.classList.toggle('sf-fg-on-dark', light && shouldUseLightText({ background }));
+    /* 同一主题/背景/尺寸下，同一张卡的前景色不会变：命中缓存就只重新套用，不再
+       读 computedStyle（hashchange / 增删卡片时会反复触发同步）。 */
+    const cached = glassFgCache.get(el);
+    if (cached && cached.rev === glassFgRev) {
+      el.classList.toggle('sf-fg-on-dark', cached.onDark);
+      for (const [property, value] of cached.props) el.style.setProperty(property, value);
+      el.classList.add('sf-readable-foreground');
+      continue;
+    }
+    const background = glassElementBackground(el, bgOf, backdrop);
+    const onDark = light && shouldUseLightText({ background });
+    el.classList.toggle('sf-fg-on-dark', onDark);
     const computed = getComputedStyle(el);
+    const props = [];
     for (const [property, role] of Object.entries({ '--sf-readable-muted': '--muted', '--sf-readable-accent-text': '--accent-text', '--sf-readable-success': '--success', '--sf-readable-danger': '--danger' })) {
       const readable = readableForeground(computed.getPropertyValue(role).trim(), background);
-      if (readable) el.style.setProperty(property, readable);
+      if (readable) { el.style.setProperty(property, readable); props.push([property, readable]); }
     }
+    glassFgCache.set(el, { rev: glassFgRev, onDark, props });
     el.classList.add('sf-readable-foreground');
   }
   /* 分组标题本身是透明背景，合成值可能落在阈值边缘；只要同组主题卡已经被判定为
@@ -402,6 +450,15 @@ function syncGlassForeground() {
 
 function scheduleGlassForeground() {
   if (glassFgFrame || typeof getComputedStyle !== 'function') return;
+  /* 首次同步要读几十个元素的 computedStyle（实测 100ms+），不必挡着首屏：
+     推到空闲再算；之后（hashchange/增删卡片）有缓存，走 rAF 即可。 */
+  if (glassFgFirstPending) {
+    glassFgFirstPending = false;
+    if (typeof requestIdleCallback === 'function') {
+      glassFgFrame = requestIdleCallback(() => { glassFgFrame = 0; syncGlassForeground(); }, { timeout: 700 });
+      return;
+    }
+  }
   glassFgFrame = requestAnimationFrame(syncGlassForeground);
 }
 window.addEventListener('hashchange', scheduleGlassForeground);
@@ -566,7 +623,10 @@ function applyModeWithReveal() {
 }
 
 // 只有可见的动态背景运行动画；静态/后台/减少动效不启动 JS 时钟。
-document.addEventListener('visibilitychange', () => { document.body.dataset.pageVisible = String(!document.hidden); });
+// 窗口失焦（切到别的应用）也停掉 —— 流光 + 玻璃合成在后台继续跑纯属浪费。
+document.addEventListener('visibilitychange', applyPageVisible);
+window.addEventListener('focus', () => { windowFocused = true; applyPageVisible(); });
+window.addEventListener('blur', () => { windowFocused = false; applyPageVisible(); });
 $('sf-aurora-palette').addEventListener('change', () => {
   const choice = $('sf-aurora-palette').value;
   const colors = choice === 'theme' ? [] : auroraPalettes[choice] || [1, 2, 3].map(i => $('sf-aurora-color-' + i).value);
@@ -1549,6 +1609,9 @@ const YT_CHANNELS = [
   { id: 'wemmbu', name: 'Wemmbu' }, { id: 'parrot', name: 'Parrot' },
   { id: 'spoke', name: 'Spoke' }, { id: 'flame', name: 'FlameFrags' },
 ];
+/* Windows 10 主播磁贴的频道色：只用于封面顶条、色块底纹和首字母，
+   磁贴本身仍是中性 --surface，不改变主题语言。 */
+const YT_CHANNEL_TONES = { wemmbu: '#B18CFF', parrot: '#6CCB5F', spoke: '#FF7A7A', flame: '#FFB86B' };
 const YT_REFRESH_MS = 5 * 60 * 1000;
 function fmtYtDuration(seconds) {
   const s = Math.max(0, Math.round(Number(seconds) || 0));
@@ -1563,6 +1626,34 @@ function fmtYtPublished(iso) {
   const d = new Date(t);
   const pad = value => String(value).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+/* Windows 10 主播磁贴用相对时间（今天 / 昨天 / N 天前），底部 meta 仍留绝对日期。 */
+function ytRelativeLabel(iso) {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return { label: t('时间未知'), days: 999 };
+  const days = Math.max(0, Math.floor((Date.now() - at) / 86400000));
+  const label = days === 0 ? t('今天') : days === 1 ? t('昨天')
+    : days < 30 ? `${days} ${t('天前')}` : `${Math.max(1, Math.floor(days / 30))} ${t('个月前')}`;
+  return { label, days };
+}
+function fmtYtShort(iso) {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return '—';
+  const d = new Date(at), pad = value => String(value).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function ytSortedChannels() {
+  const loaded = ytState && Array.isArray(ytState.channels) ? ytState.channels : [];
+  const channels = loaded.length ? loaded : YT_CHANNELS.map(channel => ({ ...channel, video: null }));
+  /* 按发布时间从新到旧；还没有视频的频道排在最后，保持四位主播的占位顺序。 */
+  return [...channels].sort((a, b) => {
+    const at = Date.parse((a && a.video && a.video.published) || '');
+    const bt = Date.parse((b && b.video && b.video.published) || '');
+    if (Number.isFinite(at) && Number.isFinite(bt)) return bt - at;
+    if (Number.isFinite(at)) return -1;
+    if (Number.isFinite(bt)) return 1;
+    return 0;
+  });
 }
 function ytRecentWeekCount() {
   if (!ytState || !Array.isArray(ytState.channels)) return 0;
@@ -1600,7 +1691,7 @@ async function tintYoutubeCard(card, video) {
     card.dataset.coverTinted = '1';
   } catch { /* 封面跨域/解码失败时保留默认主题底色 */ }
 }
-function renderYoutubeUpdates() {
+function renderMuYoutube() {
   const grid = $('sf-mu-yt-grid');
   if (!grid) return;
   const loaded = ytState && Array.isArray(ytState.channels) ? ytState.channels : [];
@@ -1644,14 +1735,118 @@ function renderYoutubeUpdates() {
   const statusNum = $('sf-mu-status-num');
   if (statusNum) statusNum.textContent = String(ytRecentWeekCount());
 }
+/* Windows 10 主页的主播行：与 MY 共用 /api/youtube/updates 和本地缓存，
+   按发布时间从新到旧排成一行四张磁贴；封面、标题、相对时间与「更新」小标。
+   签名相同就只更新标题栏，项目快照每 1.5s 刷新一次也不会重建节点/重播入场。 */
+let uwpYtSignature = '';
+function syncUwpYoutubeHead(channels) {
+  const count = $('sf-uwp-yt-count');
+  if (count) count.textContent = String(channels.length);
+  const at = $('sf-uwp-yt-at');
+  if (!at) return;
+  const stamp = Date.parse((ytState && ytState.updatedAt) || '') || Number(ytAt) || 0;
+  if (!stamp) { at.textContent = t('尚未刷新'); return; }
+  const d = new Date(stamp), pad = value => String(value).padStart(2, '0');
+  at.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())} ${t('刷新')}`;
+}
+function renderUwpYoutube() {
+  const grid = $('sf-uwp-yt-grid');
+  if (!grid) return;
+  const channels = ytSortedChannels();
+  syncUwpYoutubeHead(channels);
+  const signature = channels.map(channel => {
+    const video = channel.video || null;
+    return [channel.id, video ? [video.id, video.title, video.published, video.duration, video.url, video.thumbnail].join('~') : ''].join(':');
+  }).join('|');
+  if (signature === uwpYtSignature) return;
+  uwpYtSignature = signature;
+  grid.replaceChildren();
+  channels.forEach((channel, index) => {
+    const video = channel.video || null;
+    const relative = video ? ytRelativeLabel(video.published) : null;
+    const card = document.createElement(video && video.url ? 'a' : 'div');
+    card.className = 'sf-widget sf-uwp-yt-card uwp-tile';
+    card.setAttribute('data-uwp-enter', '');
+    card.dataset.channel = channel.id;
+    card.style.setProperty('--uwp-enter-delay', (index * 55) + 'ms');
+    card.style.setProperty('--ch', YT_CHANNEL_TONES[channel.id] || 'var(--accent)');
+    if (video && video.url) {
+      card.href = video.url;
+      card.target = '_blank';
+      card.rel = 'noopener noreferrer';
+    } else {
+      card.setAttribute('role', 'group');
+    }
+    const cover = document.createElement('span');
+    cover.className = 'sf-uwp-yt-cover';
+    if (video && video.thumbnail) {
+      const img = document.createElement('img');
+      img.className = 'sf-uwp-yt-thumb';
+      img.loading = 'lazy';
+      img.referrerPolicy = 'no-referrer';
+      img.alt = '';
+      img.addEventListener('error', () => img.remove());
+      img.src = video.thumbnail;
+      cover.appendChild(img);
+    }
+    const mono = document.createElement('span');
+    mono.className = 'sf-uwp-yt-mono';
+    mono.textContent = String(channel.name || 'YouTube').slice(0, 1).toUpperCase();
+    const duration = document.createElement('span');
+    duration.className = 'sf-uwp-yt-dur';
+    duration.textContent = video ? fmtYtDuration(video.duration) : '—';
+    cover.append(mono, duration);
+
+    const body = document.createElement('span');
+    body.className = 'sf-uwp-yt-body';
+    const row = document.createElement('span');
+    row.className = 'sf-uwp-yt-row';
+    const name = document.createElement('b');
+    name.textContent = channel.name || 'YouTube';
+    const rel = document.createElement('em');
+    rel.textContent = relative ? relative.label : t('等待刷新');
+    row.append(name, rel);
+    const title = document.createElement('span');
+    title.className = 'sf-uwp-yt-title';
+    title.textContent = video ? video.title : t('还没有读取到视频');
+    const meta = document.createElement('span');
+    meta.className = 'sf-uwp-yt-meta';
+    const stamp = document.createElement('span');
+    stamp.textContent = video ? fmtYtShort(video.published) : t('等待刷新');
+    const badge = document.createElement('span');
+    badge.className = 'sf-uwp-yt-new';
+    badge.textContent = video && relative && relative.days <= 7 ? t('更新') : 'YouTube';
+    meta.append(stamp, badge);
+    body.append(row, title, meta);
+    card.append(cover, body);
+    grid.appendChild(card);
+  });
+}
+function renderYoutubeUpdates() {
+  /* 只渲染当前设计正在用的那一套：UWP 主页刷新时不再每 1.5s 重建隐藏的 MY 四宫格
+     （重建会重复取封面莫奈色）。 */
+  if (isMaterialHome()) renderMuYoutube();
+  if (document.body.dataset.design === 'uwp') renderUwpYoutube();
+}
+function youtubeHomeVisible() {
+  const dash = $('dashboard-view');
+  if (!dash || dash.hidden) return false;
+  return isMaterialHome() || document.body.dataset.design === 'uwp';
+}
 async function loadYoutubeUpdates(force = false) {
-  if (!isMaterialHome()) return;
+  if (!youtubeHomeVisible()) return;
   if (ytBusy) { if (force) { ytRefreshQueued = true; notice('正在刷新主播更新，完成后会再拉取一次…'); } return; }
   if (!force && ytState && Date.now() - ytAt < YT_REFRESH_MS) { renderYoutubeUpdates(); return; }
   const orbit = $('sf-mu-temp');
+  const uwpRefresh = $('sf-uwp-yt-refresh');
+  const uwpRefreshLabel = $('sf-uwp-yt-refresh-label');
   if (force) {
     orbit?.classList.add('is-refreshing');
     orbit?.setAttribute('aria-busy', 'true');
+    /* Windows 10 主播行的刷新按钮：图标转圈 + 文案切成「刷新中」。 */
+    uwpRefresh?.classList.add('is-busy');
+    uwpRefresh?.setAttribute('aria-busy', 'true');
+    if (uwpRefreshLabel) uwpRefreshLabel.textContent = t('刷新中');
     notice('正在刷新四位主播的最近更新…');
   }
   ytBusy = true;
@@ -1676,12 +1871,15 @@ async function loadYoutubeUpdates(force = false) {
         stale: true,
         errors: [`接口返回 ${response.status}`],
       };
+      /* 失败也记一次时间：否则 UWP 主页每次项目快照（1.5s）都会重试接口。 */
+      ytAt = Date.now();
       renderYoutubeUpdates();
       if (force) notice(`刷新失败：接口返回 ${response.status}，请重启 SubFabric 后重试`);
     }
   } catch (error) {
     const message = String((error && error.message) || error || '未知错误');
     /* 断网保留上次数据；首次失败时把原因显示在组件占位里。 */
+    ytAt = Date.now();
     if (!ytState) {
       ytState = { channels: YT_CHANNELS.map(channel => ({ ...channel, video: null })), stale: true, errors: [message] };
       renderYoutubeUpdates();
@@ -1692,6 +1890,9 @@ async function loadYoutubeUpdates(force = false) {
     ytBusy = false;
     orbit?.classList.remove('is-refreshing');
     orbit?.removeAttribute('aria-busy');
+    uwpRefresh?.classList.remove('is-busy');
+    uwpRefresh?.removeAttribute('aria-busy');
+    if (uwpRefreshLabel) uwpRefreshLabel.textContent = t('刷新');
     if (ytRefreshQueued) {
       ytRefreshQueued = false;
       loadYoutubeUpdates(true);
@@ -1739,7 +1940,7 @@ let libraryEnterTimer = 0;
    scale(.94→1)+淡入。所有 UWP 页面共用同一套 keyframes/easing，和主页 Tab 一致。 */
 const SETTINGS_ENTER_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .st-entry, .sf-prerequisite, .ws-panel, .st-hw, .st-subhead, .sf-scheme-empty';
 const UWP_ENTER_ITEM_SELECTORS = {
-  'dashboard-view': '#sf-widgets > .sf-widget',
+  'dashboard-view': '#sf-widgets > .sf-widget, #sf-uwp-youtube > .sf-uwp-yt-head, #sf-uwp-yt-grid > .sf-uwp-yt-card',
   'home-view': '.home-list > .proj-card',
   'np-view': ':scope > .page-intro, .ws-grid .ws-panel',
   'detail-view': ':scope > .page-intro, .ws-grid > .ws-panel',
@@ -2040,6 +2241,9 @@ function syncDashboardMode(replay = false) {
   material.hidden = !on;
   widgets.hidden = on;
   if (on) renderMaterialHome();
+  /* Windows 10 磁贴主页底部的主播行复用同一份主播数据；进入主页时才拉取，
+     签名相同只更新标题栏，项目快照刷新不会重建卡片。 */
+  else if (!dashboard.hidden && document.body.dataset.design === 'uwp') { renderYoutubeUpdates(); loadYoutubeUpdates(); }
   if (!dashboard.hidden && (modeChanged || replay)) animateDashboardCards();
 }
 function goLibraryFilter(nextFilter, clearSearch = true) {
@@ -2051,6 +2255,7 @@ function goLibraryFilter(nextFilter, clearSearch = true) {
 }
 $('sf-mu-new').addEventListener('click', () => $('btn-new-project').click());
 $('sf-mu-temp').addEventListener('click', () => loadYoutubeUpdates(true));
+$('sf-uwp-yt-refresh')?.addEventListener('click', () => loadYoutubeUpdates(true));
 $('sf-mu-resume').addEventListener('click', () => {
   const id = $('sf-mu-resume').dataset.projectId;
   if (id) location.hash = '#/project/' + encodeURIComponent(id); else $('btn-new-project').click();
@@ -2139,7 +2344,9 @@ if (libraryViewEl) {
 let uwpGlowFrame = 0;
 let uwpGlowPoint = null;
 function uwpGlowCards() {
-  return [...document.querySelectorAll('.home-list > .proj-card, .sf-widgets > .sf-widget')]
+  /* 主播磁贴和 8 张工作台磁贴共用同一套靠近点亮：从卡片外接近时边框先亮，
+     进入后才是面光。漏掉 #sf-uwp-yt-grid 会让底部四张卡没有这个反馈。 */
+  return [...document.querySelectorAll('.home-list > .proj-card, .sf-widgets > .sf-widget, #sf-uwp-yt-grid > .sf-uwp-yt-card')]
     .filter(el => typeof el.getBoundingClientRect === 'function');
 }
 function setUwpGlow(el, glow, edge, face, mx, my, faceR) {
@@ -2246,7 +2453,7 @@ function resetUwpTileHover() {
   uwpHoverTile = null;
 }
 function uwpTilesTarget(e) {
-  const t = e.target && e.target.closest ? e.target.closest('button, .btn, [role=button], .welcome-card') : null;
+  const t = e.target && e.target.closest ? e.target.closest('button, .btn, [role=button], .welcome-card, .sf-uwp-yt-card') : null;
   return t && !t.disabled && t.getAttribute('aria-disabled') !== 'true' ? t : null;
 }
 function uwpTileHover(e) {
@@ -2578,7 +2785,10 @@ function skipTen(delta) {
   if (!Number.isFinite(video.duration) || video.duration <= 0 || !video.currentSrc) return;
   requestedTime = Math.max(0, Math.min(video.duration, (requestedTime ?? video.currentTime) + delta));
   scrubbing = false; hideSeekTip(); syncPlayer();
-  if (video.currentTime !== requestedTime) video.currentTime = requestedTime;
+  if (video.currentTime !== requestedTime) {
+    /* 交给 main.js 的乐观跳转：时间轴/字幕预览立即跟上，视频 seek 慢慢追 */
+    if (window.__sfSeek) window.__sfSeek(requestedTime); else video.currentTime = requestedTime;
+  }
   else if (!video.seeking) requestedTime = null;
 }
 $('sf-back-ten').addEventListener('click', () => skipTen(-10));
@@ -2591,7 +2801,9 @@ seekRange.addEventListener('input', () => {
   requestedTime = Math.max(0, Math.min(100, Number(seekRange.value) || 0)) / 100 * video.duration;
   // 先显示拖动目标，不能等长视频解码触发 timeupdate，也不能被迟到的旧进度拉回。
   syncPlayer(); hideSeekTip();
-  if (video.currentTime !== requestedTime) video.currentTime = requestedTime;
+  if (video.currentTime !== requestedTime) {
+    if (window.__sfSeek) window.__sfSeek(requestedTime); else video.currentTime = requestedTime;
+  }
   else if (!video.seeking) requestedTime = null;
 });
 video.addEventListener('seeked', () => { if (!video.seeking) { requestedTime = null; syncPlayer(); } });

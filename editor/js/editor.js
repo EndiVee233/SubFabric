@@ -14,6 +14,10 @@ import { splitEnglishWords } from './karaoke.js';
  */
 const OVERSCAN = 6;      // 可视区上下各多渲染几行(滚动时不至于露白)
 const EST_H = 86;        // 还没量过高度的条目用的估值(只影响滚动条长度, 不影响已渲染行)
+/* 卡片高度测量分片：首屏先同步量 SYNC_MAX 张，其余每片 ASYNC_CHUNK 张、帧间让出主线程。
+ * 原因见 EditorPanel._measure：4755 张唯一卡片一次测量会把主线程锁 2s+。 */
+const MEASURE_SYNC_MAX = 80;
+const MEASURE_ASYNC_CHUNK = 200;
 
 /* ─────────── 角色(说话人)配色 ─────────── */
 
@@ -1199,6 +1203,70 @@ export class EditorPanel {
     box.remove();
   }
 
+  /** 把还差的高度测量分帧做完：每片 MEASURE_ASYNC_CHUNK 张，片间 setTimeout(0) 让出主线程。
+   *  期间位置表用 EST_H 估值；全部量完后重建一次位置表，并把滚动位置锚回同一条目，
+   *  避免"打开大稿件卡 2 秒"以及量完后列表跳动。 */
+  _queueMeasure(items, keys) {
+    const pending = this._measurePending || (this._measurePending = new Set());
+    for (const k of keys) pending.add(k);
+    const q = this._measureQueue;
+    if (q) { q.items.push(...items); q.keys.push(...keys); return; }
+    this._measureQueue = { items: items.slice(), keys: keys.slice() };
+    const width = this._hW;
+    const run = () => {
+      const queue = this._measureQueue;
+      if (!queue) return;
+      /* 测量期间面板宽度变了（拖分栏/换主题/窗口缩放）→ 已量的高度都作废，
+         交给下一次 _rebuildMetrics 按新宽度重来（清掉挂起集合，别让它们永远不被量）。 */
+      if (this._hW !== width) {
+        for (const k of queue.keys) pending.delete(k);
+        this._measureQueue = null;
+        this._measureTimer = 0;
+        this._metricsDirty = true;
+        if (typeof this._render === 'function') this._render();
+        return;
+      }
+      const chunkItems = queue.items.splice(0, MEASURE_ASYNC_CHUNK);
+      const chunkKeys = queue.keys.splice(0, MEASURE_ASYNC_CHUNK);
+      if (chunkItems.length) this._measure(chunkItems, chunkKeys);
+      for (const k of chunkKeys) pending.delete(k);
+      if (queue.items.length) { this._measureTimer = setTimeout(run, 0); return; }
+      this._measureQueue = null;
+      this._measureTimer = 0;
+      /* 补测完成：重建位置表。滚动锚点按**当前**视口顶部条目算，量完高度变小/变大时
+         仍停在同一句上（否则 4755 行项目会因累计高度差跳几十行）。 */
+      const anchor = this._scrollAnchor();
+      this._metricsDirty = true;
+      if (typeof this._render === 'function') {
+        this._render();
+        this._restoreScrollAnchor(anchor);
+      }
+    };
+    this._measureTimer = setTimeout(run, 16);
+  }
+
+  /** 当前视口顶部条目 + 行内偏移（补测前后保持阅读位置）。 */
+  _scrollAnchor() {
+    const n = this.filtered.length, offs = this._offsets;
+    if (!n || !offs || offs.length < n + 1) return null;
+    const st = this.listEl.scrollTop;
+    let lo = 0, hi = n;
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (offs[m + 1] > st) hi = m; else lo = m + 1;
+    }
+    const i = Math.max(0, Math.min(n - 1, lo));
+    return { i, delta: Math.max(0, st - offs[i]) };
+  }
+
+  _restoreScrollAnchor(anchor) {
+    const offs = this._offsets;
+    if (!anchor || !offs || offs.length < 2) return;
+    const i = Math.max(0, Math.min(anchor.i, offs.length - 2));
+    const top = offs[i] + anchor.delta;
+    if (Number.isFinite(top)) this.listEl.scrollTop = Math.max(0, top);
+  }
+
   /** 重建高度缓存 + 位置表(前缀和)。只在 _metricsDirty 或条目数变化时调用, 滚动时不走这里。 */
   _rebuildMetrics(n) {
     const spacer = this.spacerEl, listEl = this.listEl;
@@ -1222,13 +1290,23 @@ export class EditorPanel {
     const keys = new Array(n);
     const missItems = [], missKeys = [];
     const seen = new Set();
+    const pending = this._measurePending || (this._measurePending = new Set());
     for (let i = 0; i < n; i++) {
       const k = this._hKey(this.filtered[i]);
       keys[i] = k;
       // 按指纹去重: 同一种内容(文本/徽标完全一样)只需要量一张卡, 重复的卡片高度必然相同
-      if (!this._h.has(k) && !seen.has(k)) { seen.add(k); missItems.push(this.filtered[i]); missKeys.push(k); }
+      if (!this._h.has(k) && !seen.has(k) && !pending.has(k)) { seen.add(k); missItems.push(this.filtered[i]); missKeys.push(k); }
     }
-    if (missItems.length && w) this._measure(missItems, missKeys);
+    if (missItems.length && w) {
+      /* 大稿件首屏要量几千张唯一卡片。一次 innerHTML + 强制布局实测 2.2s 主线程卡死
+       * （4,755 行项目打开时整个界面冻住），所以先同步量够首屏的一小批，其余分帧补测：
+       * 补测期间用 EST_H 估值撑高度，量完再重建位置表并把滚动锚回同一条目。 */
+      const syncCount = Math.min(missItems.length, MEASURE_SYNC_MAX);
+      this._measure(missItems.slice(0, syncCount), missKeys.slice(0, syncCount));
+      if (missItems.length > syncCount) {
+        this._queueMeasure(missItems.slice(syncCount), missKeys.slice(syncCount));
+      }
+    }
 
     const gap = this._gap != null ? this._gap : 0;
     const offs = new Float64Array(n + 1);

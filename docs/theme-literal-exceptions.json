@@ -1541,8 +1541,18 @@
           "reason": "Existing theme/legacy component literal; retained visual style. Conditional states outside the browser matrix remain review debt."
         },
         {
+          "value": "background:linear-gradient(180deg, rgb(0 0 0 / .12), transparent 34%, rgb(0 0 0 / .38))",
+          "count": 1,
+          "reason": "Windows 10 YouTube tile cover scrim: dark-to-transparent overlay keeps the white play badge and duration readable on any thumbnail; the cover itself is an image surface, not a theme surface."
+        },
+        {
+          "value": "background:rgb(0 0 0 / .66)",
+          "count": 1,
+          "reason": "Windows 10 YouTube tile duration badge: fixed dark scrim over an arbitrary thumbnail, paired with white text; independent of light/dark theme surfaces."
+        },
+        {
           "value": "color:#fff",
-          "count": 4,
+          "count": 5,
           "reason": "Existing neutral shadow/scrim/highlight or renderer surface; this exception does not prove contrast for unrendered states."
         },
         {

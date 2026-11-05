@@ -21,6 +21,9 @@
 /** 零长行撑到这个宽度（秒）——太窄的字幕块在时间轴上点不中 */
 const MIN_ROW_SEC = 0.2;
 
+/** 行里有没有汉字：单行条目靠它决定进中文还是英文轨。 */
+const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
+
 /** 把区间外的行剔掉，区间内的原样留下（时间**不动**） */
 function pickInRange(cues, start, end, active) {
   const list = (Array.isArray(cues) ? cues : []).slice()
@@ -81,9 +84,14 @@ function planRegionMerge(cues, existing, start, end) {
     if (fix) { ce = cs + MIN_ROW_SEC; stretched++; }
     const main = (c.lines && c.lines.length) ? String(c.lines[0] || '') : '';
     const sub = (c.lines && c.lines.length > 1) ? c.lines.slice(1).join(' ').trim() : '';
-    // ★ words 必须带下去：导入时要用**原文件的真实词级时间**，
-    //   丢了它 addRecognizedRow 就只能按字母数自动铺开（节奏仍只是估算）。
-    const row = { start: cs, end: ce, zh: main.trim(), en: sub, stretched: fix,
+    /* ★ 单行条目按语言落轨：没有汉字的单行是英文行（如整行角色色的英文句、
+     *   英文单语字幕）。旧实现一律塞进 zh，导入后英文被当中文写进中文样式，
+     *   时间轴上就会出现"中文行里是英文 / 中英配不上"。
+     *   ⚠ words 必须带下去：导入时要用**原文件的真实词级时间**，
+     *   丢了它 addRecognizedRow 就只能按字母数自动铺开（节奏仍只是估算）。 */
+    let zhText = main.trim(), enText = sub;
+    if (!enText && zhText && !CJK.test(zhText)) { enText = zhText; zhText = ''; }
+    const row = { start: cs, end: ce, zh: zhText, en: enText, stretched: fix,
       words: Array.isArray(c.words) ? c.words : [] };
     if (!row.zh && !row.en) continue;                // 空行丢弃（没有内容可放）
     // 与项目里**任何**已有行重叠 → 冲突（不静默覆盖）

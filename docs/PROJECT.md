@@ -11,23 +11,37 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.5.3` / 文件版本
-  `1.5.5.3`（npm `1.5.5-beta.4`）。本轮把本机工作区的新一批改动并回主线：操作日志新增 `adjust`
-  （拖动字幕块调整起止时间）与 `glossary`（术语表整片应用，带替换处数与行数）两类记录，
-  逐次拖动才记、批量重校对/重分句不记；首页 YouTube 更新面板把结果缓存进 `localStorage`
-  （`subfabric.youtube.updates.v1`），启动先用缓存渲染、过期也先显示，后台再刷新，配合后端
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.5.4` / 文件版本
+  `1.5.5.4`（npm `1.5.5-beta.5`）。同一 Release 另发一份保留的旧链路包
+  `SubFabric-1.5.5.4-sea-setup.exe`（Inno Setup + Node SEA），两份是独立安装、互不覆盖。
+  本轮把本机工作区的「观感与卡顿」一批改动并回主线：**Windows 10 主页新增底部主播更新行**
+  （四张磁贴、频道色顶条、相对时间与「更新」小标、手动刷新按钮转圈，按发布时间从新到旧排序，
+  项目快照只更新标题栏不重建节点），UWP 主页内容宽度 940 → 1040 与 MY 对齐；
+  **跳转预览改为乐观 seek**（`requestSeek` 先让时间轴/字幕/逐词进度切到目标时间，视频画面在 `seeked`
+  后追上，`AssPlayer.seek` 直接驱动 libass 重绘，5s 兜底）；**字幕列表卡片高度测量分片**
+  （首屏同步量 80 张，其余每 200 张一帧，量完重建位置表并锚回同一条目，4,755 行稿件不再冻 2s+）；
+  **玻璃前景合成缓存**（深色主题直接跳过、按节点缓存 computedStyle、首次同步推到 `requestIdleCallback`）；
+  流光改用径向渐变遮罩替代 `filter:blur(100px)`、aurora 背景下去掉侧栏/顶栏 `backdrop-filter`、
+  窗口失焦即停流光（`body[data-page-visible]`）；时间轴缩略图在播放中节流到 ~0.7s/张、主视频 seek 时暂停补图。
+  **字幕导入**修掉一批真实错配：词行判定必须同时见到 `{\c}` 复位（整行角色色不再被当词行）、
+  判断语言前先剥掉行首 `[角色]` 标记（角色名含汉字不再把逐词样式踢出）、词间无标签空档行不再把一句切碎、
+  10~200ms 换气空档的同文本英文残句并回有中文的那一行、配对时优先逐词句（整行角色色副本不再抢走中文行）；
+  `region-merge` 的单行条目按有无汉字决定落中文还是英文轨，并带上真实 `words`。
+  上一轮把操作日志新增 `adjust`（拖动字幕块调整起止时间）与 `glossary`（术语表整片应用，带替换处数与行数）
+  两类记录，逐次拖动才记、批量重校对/重分句不记；首页 YouTube 更新面板把结果缓存进 `localStorage`
+  （`subfabric.youtube.updates.v1`），启动先用缓存渲染、过期也先显示、后台再刷新，配合后端
   「缓存过期仍先返回 + `stale` 标记」的策略；MY 主页滚动条改为只在滚动时淡入；新建文件夹对话框
   输入框收敛成单层焦点框；自定义下拉菜单层级提到导出弹窗之上。合并同时清掉了发布分支里
   `cleanProjectSource` 的重复定义（1.5.5.1 合并时的副作用，后者覆盖前者、行为不变）。
-  上一轮修复了 `editor/css/studio.css` 里两处把换行写成字面量 `` `n `` 的笔误
+  再上一轮修复了 `editor/css/studio.css` 里两处把换行写成字面量 `` `n `` 的笔误
   ——`.sf-cover` 封面占位与 `#st-view .gl-input` 聚焦样式被并到上一行、实际不生效；并在真机完成覆盖安装验证
-  （数据先移出安装目录、装完移回，40,422 个文件零丢失，装后冒烟 `ok:true`）。再上一轮把本机工作区又一批
+  （数据先移出安装目录、装完移回，40,422 个文件零丢失，装后冒烟 `ok:true`）。更早几轮把本机工作区又一批
   UI 改动并回主线（首页「新建稿件 + 批量初稿」合并长卡、
   移除顶栏面包屑、存储页磁盘环显示 SubFabric 自身占用、角色筛选持久化、设置页空档焦点、油管组件、
   样式方案导入导出等，配套 10 个新测试），并彻底解决升级会删数据的问题：安装器在安装前不再执行旧版本的
   卸载器（`installer.nsh` 在 `customInit` 里抹掉卸载登记，让 `uninstallOldVersion` 读不到 `UninstallString`
   直接返回），卸载走 `customRemoveFiles` 只删程序文件、保留 `asr\models`、`asr\runtime-python`、`projects`、
-  `videos`、`.profile`。上一轮的 Qwen 运行时修复（补 `soundfile`、逐项探测握手）一并延续；
+  `videos`、`.profile`。Qwen 运行时修复（补 `soundfile`、逐项探测握手）一并延续；
   真实 GPU 推理与媒体导出仍不在验收范围。
 - **源码构建**（在仓库根目录执行）：`npm --prefix desktop ci` →
   `node editor/scripts/fetch-vendor.js` → `npm --prefix desktop run dist:win`。
@@ -1042,9 +1056,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.4.3'`、`APP_FILE_VERSION = '1.5.4.3'`、npm version `1.5.4-beta.3`。
+  `APP_VERSION = 'beta 1.5.5.4'`、`APP_FILE_VERSION = '1.5.5.4'`、npm version `1.5.5-beta.5`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.4.3-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.5.4-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron

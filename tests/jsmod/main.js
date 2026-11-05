@@ -490,6 +490,37 @@ function loadVideoFile(file) {
   uploadWaveform(file);
 }
 
+/* 跳转预览：视频 seek 往往要 200~800ms（大文件要解码到关键帧），但时间轴/列表/字幕
+ * 预览不必等它。点一下字幕块就先把 UI 和 libass 切到目标时间，seeked 后再交回视频。
+ * 这样"暂停时点块 → 视频与逐词进度等一会才同步"只剩视频画面本身在追。 */
+let previewSeekT = null;
+let previewSeekToken = 0;
+let previewSeekTimer = 0;
+function requestSeek(t) {
+  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : Infinity;
+  const target = Math.max(0, Math.min(duration, Number(t) || 0));
+  if (!Number.isFinite(target) || !video.currentSrc) return 0;
+  previewSeekT = target;
+  const token = ++previewSeekToken;
+  assPlayer.seek(target);                    // 字幕/逐词先跳到目标时间（worker 未就绪时忽略）
+  try {
+    if (Math.abs(video.currentTime - target) > 1e-3 || video.seeking) video.currentTime = target;
+    else previewSeekT = null;                // 已经在目标位置，不用等 seeked
+  } catch { previewSeekT = null; }
+  /* 兜底：解码失败/seeked 丢失时不能让 UI 永远停在目标时间 */
+  clearTimeout(previewSeekTimer);
+  previewSeekTimer = setTimeout(() => { previewSeekT = null; }, 5000);
+  return token;
+}
+video.addEventListener('seeked', () => {
+  if (video.seeking) return;                 // 还有新的 seek 在路上
+  if (previewSeekT != null && Math.abs(video.currentTime - previewSeekT) > 0.05) return;
+  previewSeekT = null;
+  clearTimeout(previewSeekTimer);
+});
+video.addEventListener('emptied', () => { previewSeekT = null; clearTimeout(previewSeekTimer); });
+window.__sfSeek = requestSeek;
+
 /* ─────────── 播放音频源(项目模式) ───────────
  * 音频源=降噪后: 视频静音, 用项目里降噪后的 audio.wav(即 ASR 听到的音频)同步发声,
  * 方便用户直接试听判断降噪是否过头/不够; 音频源=原视频: 视频正常出声。 */
@@ -3028,7 +3059,7 @@ function selectItem(item, seek = true) {
   timeline.setSelected(item.ref);
   updateFixButton();
   if (seek && item) {
-    video.currentTime = item.start + 0.001;
+    requestSeek(item.start + 0.001);
   }
 }
 
@@ -3036,13 +3067,13 @@ function selectItem(item, seek = true) {
 panel.onSelect = (item) => selectItem(item, false);
 panel.onSeek = (item) => {
   selectItem(item, false);
-  if (item) video.currentTime = item.start + 0.001;
+  if (item) requestSeek(item.start + 0.001);
 };
 timeline.onSelect = (ref, opts) => {
   const item = state.itemByRef.get(ref);
   if (item) selectItem(item, opts && opts.seek);
 };
-timeline.onSeek = (t) => { video.currentTime = t; };
+timeline.onSeek = (t) => { requestSeek(t); };
 
 // 角色卡片单击 → 把播放头所在字幕块的说话人标签(Name 栏)改成该角色
 panel.onAssignRole = (name) => {
@@ -3216,7 +3247,7 @@ function frScanRole() {
 function frGoto(m) {
   const item = state.itemByRef.get(m.row);
   if (item) selectItem(item, true);          // 选中 + 播放头跳过去
-  else video.currentTime = m.row.start + 0.001;
+  else requestSeek(m.row.start + 0.001);
 }
 
 function frGo(dir) {
@@ -7541,7 +7572,7 @@ if (f8Section) {
 
 /* ═══════════ 快捷键与鼠标操作 ═══════════ */
 function seekBy(dt) {
-  video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + dt));
+  requestSeek(Math.max(0, Math.min(video.duration || 0, video.currentTime + dt)));
 }
 function jumpCue(dir) {
   const arr = (panel.filtered && panel.filtered.length) ? panel.filtered : state.items;
@@ -7561,8 +7592,8 @@ const actions = {
   seekFwd5: () => seekBy(5),
   stepBack: () => seekBy(-0.04),
   stepFwd: () => seekBy(0.04),
-  gotoStart: () => { video.currentTime = 0; },
-  gotoEnd: () => { video.currentTime = Math.max(0, (video.duration || 0) - 0.05); },
+  gotoStart: () => { requestSeek(0); },
+  gotoEnd: () => { requestSeek(Math.max(0, (video.duration || 0) - 0.05)); },
   zoomIn: () => timeline.zoomIn(),
   zoomOut: () => timeline.zoomOut(),
   fitAll: () => timeline.fit(),
@@ -8027,7 +8058,7 @@ video.addEventListener('timeupdate', () => {
       if (go) {
         const t0 = Number(go.dataset.seek) || 0;
         // 停在备注**开始时**：这样它正好落在弹幕窗口里，不会被判成过期
-        try { video.currentTime = t0; } catch {}
+        requestSeek(t0);
         hideDanmaku();
         tickDanmaku();
         toast(`已跳到 ${fmtTime(t0)}`, 1800);
@@ -8080,7 +8111,9 @@ initOpRangeDialog();
 /* ═══════════ 主循环 ═══════════ */
 function tick() {
   window.__tickCount = (window.__tickCount || 0) + 1;
-  const t = video.currentTime;
+  /* seek 未完成时先用目标时间驱动 UI（时间轴播放头、列表跟随、字幕预览），
+     视频画面本身会在 seeked 后追上；播放中 previewSeekT 为 null。 */
+  const t = previewSeekT != null ? previewSeekT : video.currentTime;
   overlay.update(t);
   // 非播放句编辑仅更新数据；第一次播入被修改句时再同步真实 ASS 轨。
   if (pendingPlaybackRows.size && !previewTrack && !wordPreviewTrackRow

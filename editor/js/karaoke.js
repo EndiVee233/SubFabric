@@ -596,6 +596,32 @@ export function analyzeKaraoke(doc) {
     if (keep.length) groups.set(a, keep); else groups.delete(a);
     wholeSents.push(...out);
   }
+  /* 被踢出的短空档行可能属于**上一句**：典型是上一句的尾部空档（0.02s，文本还是上一句），
+   * 它起点更贴近下一句行首，findAnchor 会判给下一句；随后因文本不同被踢进 wholeSents，
+   * pairRows 又拿它去配下一句中文 → 出现「中文行 + 20ms 英文」和「整句英文」两条
+   * （用户实测 00:03:05）。这里把 0.5s 以内的空档事件并回**同文本、紧邻**的那一组。 */
+  if (wholeSents.length && groups.size) {
+    const groupTexts = (S) => new Set(S.filter(e => HL_RE.test(e.text)).map(e => stripTags(e.text)));
+    const spanOf = (S) => {
+      let s = Infinity, e = -Infinity;
+      for (const x of S) { if (x.start < s) s = x.start; if (x.end > e) e = x.end; }
+      return { s, e };
+    };
+    const info = [...groups].map(([a, S]) => ({ a, texts: groupTexts(S), span: spanOf(S) }));
+    for (let i = wholeSents.length - 1; i >= 0; i--) {
+      const ev = wholeSents[i];
+      if (ev.end - ev.start > 0.5) continue;        // 只并空档级别短事件，整句行不动
+      const text = stripTags(ev.text);
+      let bestAnchor = null, bestGap = Infinity;
+      for (const { a, texts, span } of info) {
+        if (!texts.has(text)) continue;
+        const gap = ev.start >= span.e ? ev.start - span.e : span.s - ev.end;
+        if (gap < -0.02 || gap > 0.25) continue;
+        if (gap < bestGap) { bestGap = gap; bestAnchor = a; }
+      }
+      if (bestAnchor) { groups.get(bestAnchor).push(ev); wholeSents.splice(i, 1); }
+    }
+  }
   repairKaraokeGroups(groups, loose, anchors);
 
   function extractWords(slices) {

@@ -117,8 +117,12 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 
 从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases) 列表选择已发布的 Windows 安装包。
 
-当前桌面实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.5.3`，
-安装包名 `SubFabric-1.5.5.3-setup.exe`。这是未签名的测试版；实际 GPU 推理与真实媒体导出仍需单独验收。
+当前桌面实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.5.4`，
+安装包名 `SubFabric-1.5.5.4-setup.exe`。这是未签名的测试版；实际 GPU 推理与真实媒体导出仍需单独验收。
+
+同一个 Release 另提供保留的旧链路安装包 `SubFabric-1.5.5.4-sea-setup.exe`（Inno Setup + Node SEA 单文件）。
+两个包装出来是两份独立安装、互不覆盖，**推荐用上面的 Electron 版**；SEA 版只为兼容仍在使用旧启动方式的场景，
+它装到 `Program Files`（可用 `/DIR` 改），界面与数据行为沿用旧链路。同时装两个会各自占用一份数据目录。
 安装包包含 Electron、真实 Node 22 运行时和字幕渲染资源，无需自行安装 Node 或 Python；
 语音识别所需的 Python 运行时与模型仍按需下载。
 
@@ -147,7 +151,7 @@ node editor/scripts/fetch-vendor.js
 npm --prefix desktop run dist:win
 ```
 
-安装包输出到 `build/electron/build-<id>/SubFabric-1.5.5.3-setup.exe`；
+安装包输出到 `build/electron/build-<id>/SubFabric-1.5.5.4-setup.exe`；
 `build/electron/latest-build.json` 记录最新成功构建的位置和 SHA-256。每次使用新目录，不删除旧构建。
 只启动开发版时，前两步完成后执行：
 
@@ -230,3 +234,4 @@ Whisper 与 CrispASR 模型行上有「参数」入口：可调识别语言、VA
 - 如果你使用了此项目并会在bilibili发布视频 我`希望`能在联合投稿`研发`里露面`UID:2121076233` 若对此条感到反感 就忽略这个请求吧
 - EndiVee is the biggest bird
 - R2FtYml0 是 EndiVee 的主人
+- 目前 Material You 与 Windows 10 主题的主页油管主更新卡片都写死是这四位主播 后面做成开放可自定义的选项
