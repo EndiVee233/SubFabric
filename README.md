@@ -117,12 +117,20 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 
 从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases) 列表选择已发布的 Windows 安装包。
 
-当前桌面实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.5.4`，
-安装包名 `SubFabric-1.5.5.4-setup.exe`。这是未签名的测试版；实际 GPU 推理与真实媒体导出仍需单独验收。
+当前桌面实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.5.5`，
+安装包名 `SubFabric-1.5.5.5-setup.exe`。这是未签名的测试版；实际 GPU 推理与真实媒体导出仍需单独验收。
 
-同一个 Release 另提供保留的旧链路安装包 `SubFabric-1.5.5.4-sea-setup.exe`（Inno Setup + Node SEA 单文件）。
-两个包装出来是两份独立安装、互不覆盖，**推荐用上面的 Electron 版**；SEA 版只为兼容仍在使用旧启动方式的场景，
-它装到 `Program Files`（可用 `/DIR` 改），界面与数据行为沿用旧链路。同时装两个会各自占用一份数据目录。
+同一个 Release 另提供 `SubFabric-1.5.5.5-sea-setup.exe`（Inno Setup + Node SEA 单文件）。
+
+**两个版本可以装进同一个目录，数据完全互通**：模型、项目、视频、翻译方案与热词都放在程序目录里，
+所以你可以先装 SEA 版、再用 Electron 版覆盖安装（或反过来），装完直接接着用，不需要搬数据。
+后装的版本会接管该目录：清掉对方只剩程序文件的残留（Electron 的 `resources/`、`*.dll`、`*.pak`；
+SEA 的 `unins000.*`、`main.py` 等）和它的「应用和功能」登记，不会留下两条重复记录。
+两个包默认都按当前用户安装（SEA 版的向导首屏仍可选「为所有用户安装」），互不要求管理员权限。
+
+卸载时会给一个「保留数据」页面，**默认全部保留**，也可以分别取消勾选来删除 ASR 模型与 Python 运行时、
+项目与视频、或配置（翻译方案 / 热词 / 术语表 / 浏览器数据）。静默卸载（`/S` 或 `/VERYSILENT`）永远保留数据，
+确实要清空得显式加 `/DELETE-DATA`。
 安装包包含 Electron、真实 Node 22 运行时和字幕渲染资源，无需自行安装 Node 或 Python；
 语音识别所需的 Python 运行时与模型仍按需下载。
 
@@ -151,7 +159,7 @@ node editor/scripts/fetch-vendor.js
 npm --prefix desktop run dist:win
 ```
 
-安装包输出到 `build/electron/build-<id>/SubFabric-1.5.5.4-setup.exe`；
+安装包输出到 `build/electron/build-<id>/SubFabric-1.5.5.5-setup.exe`；
 `build/electron/latest-build.json` 记录最新成功构建的位置和 SHA-256。每次使用新目录，不删除旧构建。
 只启动开发版时，前两步完成后执行：
 

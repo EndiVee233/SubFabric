@@ -11,9 +11,13 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.5.4` / 文件版本
-  `1.5.5.4`（npm `1.5.5-beta.5`）。同一 Release 另发一份保留的旧链路包
-  `SubFabric-1.5.5.4-sea-setup.exe`（Inno Setup + Node SEA），两份是独立安装、互不覆盖。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.5.5` / 文件版本
+  `1.5.5.5`（npm `1.5.5-beta.6`）。同一 Release 另发一份 `SubFabric-1.5.5.5-sea-setup.exe`（Inno Setup + Node SEA）。
+  两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
+  `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
+  后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
+  `main.py` 等）与它的「应用和功能」登记，只留一条。卸载时给一个「保留数据」页，默认全保留，
+  可分别勾选删除 ASR 模型与运行时 / 项目与视频 / 配置；静默卸载永远全保留，要清空须显式 `/DELETE-DATA`。
   本轮把本机工作区的「观感与卡顿」一批改动并回主线：**Windows 10 主页新增底部主播更新行**
   （四张磁贴、频道色顶条、相对时间与「更新」小标、手动刷新按钮转圈，按发布时间从新到旧排序，
   项目快照只更新标题栏不重建节点），UWP 主页内容宽度 940 → 1040 与 MY 对齐；
@@ -1056,9 +1060,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.5.4'`、`APP_FILE_VERSION = '1.5.5.4'`、npm version `1.5.5-beta.5`。
+  `APP_VERSION = 'beta 1.5.5.5'`、`APP_FILE_VERSION = '1.5.5.5'`、npm version `1.5.5-beta.6`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.5.4-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.5.5-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
@@ -1070,6 +1074,20 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   用户状态由 `migration.cjs` 逐文件流式校验后只补缺回迁，不迁移旧应用源码；旧 SEA/Edge 浏览器偏好经
   一次性迁移页继承。安装到 `Program Files` 等只读位置时启动报错，不回退到用户目录。
   用户无需预装 Python 或 Node，Python 运行时、模型与工具仍按需下载。
+- **两条链路互通（2026-11-05 起）**：SEA 的 Inno 包改为 `PrivilegesRequired=lowest`
+  （`PrivilegesRequiredOverridesAllowed=dialog commandline`，向导首屏仍可选「为所有用户安装」），
+  这样两边默认都按用户安装、都能装进对方的目录；`[InstallDelete]` 清掉 Electron 版的
+  `resources/`、`*.dll`、`*.pak`、`*.bin`、`locales/` 等纯程序文件，`[Code]` 在
+  `ssPostInstall` 里删掉 Electron 的卸载登记（`HKCU\…\Uninstall\fc565a39-…` + `HKCU\Software\fc565a39-…`）；
+  NSIS 侧反过来清 SEA 的 `unins000.*`、`main.py`、`start-editor.*` 与
+  `…\Uninstall\{8F4E7C2A-…}_is1`。**两边都只在「对方登记的目录 == 本次安装目录」时才动手**，
+  装到别处不会误删另一份安装（2026-11-05 实测踩过一次，已加目录比较）。
+- **卸载可选保留数据**：NSIS 在欢迎页之后插自定义页（`customUnWelcomePage` + `nsDialogs`），
+  Inno 在 `InitializeUninstall` 里弹模态窗体（`CreateCustomForm`），两边都是三个复选框，
+  默认全勾 = 全保留；取消勾选才在卸载后删对应目录。静默卸载不弹窗、永远全保留；
+  自动化要清空数据须显式传 `/DELETE-DATA`。数据分组：ASR = `asr\models`、`runtime-*`、
+  `whisper.cpp`、`crispasr`、`faster-whisper-xxl`、`ytdlp`、`.venv`、`asr\logs`、`tools`；
+  项目 = `projects`、`videos`；配置 = `asr\settings.json`、`.profile`、`logs`、`cache`。
 - **修改与发布**：代码/vendor 变化后重新 stage，正式安装版必须重新 `dist:win`；只发 setup.exe，
   真正发布后核对远端资产 digest 与本地 SHA-256；不将构建成功当作上传成功证据。
 - **本轮验证（2026-11-02，旧版状态继承）**：JS 全量 157 项为 142 passed、12 partial、1 diagnostic、
