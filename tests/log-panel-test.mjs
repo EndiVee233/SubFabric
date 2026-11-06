@@ -77,17 +77,17 @@ ok(appendIdx > 0 && appendIdx < hIdx, 'appendOpLog 定义在模块作用域（�
 ok(/const opLogPath = \(id\) => path\.join\(projDir\(id\), 'oplog\.json'\)/.test(SRV),
   '落盘到 projects/<id>/oplog.json');
 ok(projDirIdx > 0 && projDirIdx < hIdx, 'projDir 也在模块作用域（appendOpLog/opLogPath 与它同域，无跨域 ReferenceError）');
-ok(/function readOpLog\(id\)/.test(SRV), '有读函数');
+ok(/function readOpLog\(id, strict = false\)/.test(SRV), '有读函数，严格读取保护原有历史');
 ok(/return \{ ok: false, err \};/.test(SRV), '写失败返回**原因**（不是静默 false）');
-ok(/errors: errs/.test(SRV), '接口把错误带出来，便于排查"written: 0"');
+ok(/errors: r\.ok \? \[\] : \[r\.err\]/.test(SRV), '接口把写入错误带出来，不把失败报告为成功');
 ok(/renameSync\(p \+ '\.tmp', p\)/.test(SRV), '原子替换（不留半截文件）');
-ok(/while \(list\.length > OP_LOG_MAX\) list\.shift\(\)/.test(SRV), '有上限，超了丢最旧的');
+ok(!/OP_LOG_MAX/.test(SRV), '取消保留条数上限，不再丢弃旧记录');
 ok(/action === 'oplog'/.test(SRV), '有 /oplog 路由');
 
 console.log('\n== 5. 操作日志：前端记录了什么 ==');
 ok(/function logOp\(action, target, detail, why\)/.test(MJ), '有 logOp(action, target, detail, why)');
 ok(/navigator\.sendBeacon/.test(MJ), '用 sendBeacon 发送（页面切走也能发出去）');
-ok(/flushOpLog, 1500/.test(MJ), '攒一小批再发（不每次编辑打一次请求）');
+ok(/flushOpLogQuietly, 1500/.test(MJ), '攒一小批再发（不每次编辑打一次请求）');
 ok(/visibilitychange[\s\S]{0,80}flushOpLog/.test(MJ), '页面隐藏前把攒的发掉');
 ok(/OP_ACTION_LABEL/.test(MJ), '动作名有中文标签');
 ok(/adjust: '调整时间轴'/.test(MJ), '拖动时间轴使用「调整时间轴」标签');

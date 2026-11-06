@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "07bbd86b063517d3d79427e12d51367cae8e181a7a55f3e7813bf4cdf00f158f",
+      "sha256": "3447124aed478e604c43bbd6dce050c87f21a895cc281487806d094f50a4b065",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -824,7 +824,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "b85ba2bcfa8fadadbdc6dd39907cf0c352753e12796c2773b5770300c7d53983",
+      "sha256": "34fc4323457d6c5626bbb516025b4a5c8fc4e208268b77d48d7fb985cba364b7",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -895,163 +895,167 @@
           "method": "innerHTML"
         },
         {
-          "line": 5506,
+          "line": 5509,
           "method": "innerHTML"
         },
         {
-          "line": 5507,
+          "line": 5510,
           "method": "innerHTML"
         },
         {
-          "line": 5713,
+          "line": 5716,
           "method": "innerHTML"
         },
         {
-          "line": 5731,
+          "line": 5734,
           "method": "innerHTML"
         },
         {
-          "line": 5818,
+          "line": 5821,
           "method": "innerHTML"
         },
         {
-          "line": 5898,
+          "line": 5901,
           "method": "innerHTML"
         },
         {
-          "line": 5924,
+          "line": 5927,
           "method": "innerHTML"
         },
         {
-          "line": 6003,
+          "line": 6006,
           "method": "innerHTML"
         },
         {
-          "line": 6443,
+          "line": 6446,
           "method": "innerHTML"
         },
         {
-          "line": 6447,
+          "line": 6450,
           "method": "createElement"
         },
         {
-          "line": 6449,
+          "line": 6452,
           "method": "innerHTML"
         },
         {
-          "line": 6497,
+          "line": 6500,
           "method": "innerHTML"
         },
         {
-          "line": 6663,
+          "line": 6666,
           "method": "createElement"
         },
         {
-          "line": 6665,
+          "line": 6668,
           "method": "innerHTML"
         },
         {
-          "line": 7193,
+          "line": 7196,
           "method": "innerHTML"
         },
         {
-          "line": 7248,
+          "line": 7251,
           "method": "innerHTML"
         },
         {
-          "line": 7409,
+          "line": 7412,
           "method": "innerHTML"
         },
         {
-          "line": 7742,
+          "line": 7745,
           "method": "createElement"
         },
         {
-          "line": 7780,
+          "line": 7783,
           "method": "createElement"
         },
         {
-          "line": 7802,
+          "line": 7805,
           "method": "innerHTML"
         },
         {
-          "line": 7804,
+          "line": 7807,
           "method": "innerHTML"
         },
         {
-          "line": 7804,
+          "line": 7807,
           "method": "innerHTML"
         },
         {
-          "line": 7969,
+          "line": 7972,
           "method": "createElement"
         },
         {
-          "line": 7997,
+          "line": 8000,
           "method": "createElement"
         },
         {
-          "line": 8008,
+          "line": 8011,
           "method": "innerHTML"
         },
         {
-          "line": 8078,
+          "line": 8116,
           "method": "innerHTML"
         },
         {
-          "line": 8079,
+          "line": 8140,
+          "method": "insertAdjacentHTML"
+        },
+        {
+          "line": 8141,
           "method": "innerHTML"
         },
         {
-          "line": 8107,
+          "line": 8172,
           "method": "innerHTML"
         },
         {
-          "line": 8344,
+          "line": 8454,
           "method": "innerHTML"
         },
         {
-          "line": 8499,
+          "line": 8609,
           "method": "replaceChildren"
         },
         {
-          "line": 8505,
+          "line": 8615,
           "method": "innerHTML"
         },
         {
-          "line": 8550,
+          "line": 8660,
           "method": "innerHTML"
         },
         {
-          "line": 8551,
+          "line": 8661,
           "method": "innerHTML"
         },
         {
-          "line": 8572,
+          "line": 8682,
           "method": "innerHTML"
         },
         {
-          "line": 8585,
+          "line": 8695,
           "method": "innerHTML"
         },
         {
-          "line": 8887,
+          "line": 8997,
           "method": "createElement"
         },
         {
-          "line": 8892,
+          "line": 9002,
           "method": "innerHTML"
         },
         {
-          "line": 8901,
+          "line": 9011,
           "method": "createElement"
         },
         {
-          "line": 8907,
+          "line": 9017,
           "method": "createElement"
         },
         {
-          "line": 8909,
+          "line": 9019,
           "method": "createElement"
         }
       ],
@@ -2038,7 +2042,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "846f65966117f67ba5667d16121135c4d1811e588965e25f9ff61ab4270a6437",
+      "sha256": "fc73331a7df6b28a1a93e41be269917a5a7444753689f2fa38b91eb523a5095b",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2078,7 +2082,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "97ec252114eb562f70bcb48eaed4c54062b90220cf81e58ad3d281d1e110e0d4",
+      "sha256": "bca22849c0ad143f55f0ba409507ef2b841fe491bba86a0cd63b746eecea4c87",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2241,6 +2245,8 @@
         "btn-note-send",
         "btn-open-sub",
         "btn-open-video",
+        "btn-oplog-export",
+        "btn-oplog-more",
         "btn-oplog-refresh",
         "btn-realign-full",
         "btn-reflect",
@@ -2559,6 +2565,8 @@
         "op-range-title",
         "oplog-cnt",
         "oplog-empty",
+        "oplog-export-format",
+        "oplog-summary",
         "oplog-view",
         "panel-split-roles",
         "panel-tabs",

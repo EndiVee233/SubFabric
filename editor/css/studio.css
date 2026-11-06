@@ -2650,6 +2650,18 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   border: 1px solid var(--border); border-radius: 8px;
   background: var(--bg-2);
 }
+#log-pane-op .log-toolbar { flex-wrap: wrap; }
+#oplog-export-format { width: auto; max-width: 100px; }
+#oplog-summary {
+  display: flex; flex-wrap: wrap; gap: 6px; flex: none;
+  max-height: 120px; overflow-y: auto; margin: 0 0 8px; font-size: 12px;
+}
+#oplog-summary strong, #oplog-summary span {
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-1); background: var(--bg-2);
+}
+#btn-oplog-more { flex: none; align-self: center; margin-top: 8px; }
+#btn-oplog-more[hidden] { display: none; }
 .oplog-row {
   display: grid;
   grid-template-columns: 62px 96px 1fr;

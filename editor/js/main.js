@@ -4652,7 +4652,10 @@ video.addEventListener('contextmenu', (e) => {
 });
 
 panel.onDeleteCard = (item) => deleteItem(item);   // 字幕列表右键删除(与时间轴右键同一套逻辑)
-panel.onTabChange = (name) => pruneUnusedRoles(name === 'roles');   // 离开角色栏 → 清掉没用上的新角色
+panel.onTabChange = (name) => {
+  pruneUnusedRoles(name === 'roles');
+  if (name === 'logs' && window.__onLogsTabShown) window.__onLogsTabShown();
+};
 
 /* ═══════════ 修复字幕(右键菜单) ═══════════ */
 /** 行首角色色标(非绿)判定用: {\c&H......&} */
@@ -8024,37 +8027,69 @@ rngFont.addEventListener('input', () => {
  */
 let opLogPending = [];            // 攒一小批再发，避免每次编辑都打一次请求
 let opLogFlushTimer = 0;
+let opLogFlushPromise = null;
 
 /** 记一条用户操作。detail = 做了什么，why = 为什么/依据。失败静默（日志不该挡住编辑）。 */
 function logOp(action, target, detail, why) {
   if (!state.project) return;     // 非项目模式没有地方存
-  opLogPending.push({ action, target, detail, why });
-  if (opLogPending.length >= 20) return flushOpLog();
+  const entry = { id: crypto.randomUUID(), action: String(action || '').slice(0, 60),
+    target: String(target || '').slice(0, 120), detail: String(detail || '').slice(0, 400), why: String(why || '').slice(0, 400) };
+  opLogPending.push({ pid: state.project.id, entry });
+  if (opLogPending.length >= 20) return flushOpLogQuietly();
   clearTimeout(opLogFlushTimer);
-  opLogFlushTimer = setTimeout(flushOpLog, 1500);
+  opLogFlushTimer = setTimeout(flushOpLogQuietly, 1500);
 }
 
-function flushOpLog() {
+async function flushOpLog() {
   clearTimeout(opLogFlushTimer);
-  if (!opLogPending.length || !state.project) return;
-  const pid = state.project.id;
-  const batch = opLogPending;
-  opLogPending = [];
-  try {
-    // 用 sendBeacon：页面正在关/切走时也能发出去，且不阻塞
-    const blob = new Blob([JSON.stringify({ entries: batch })], { type: 'application/json' });
-    if (!navigator.sendBeacon(`/api/projects/${pid}/oplog`, blob)) throw new Error('beacon 被拒');
-  } catch {
-    fetch(`/api/projects/${pid}/oplog`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entries: batch }),
-    }).catch(() => {});
+  if (opLogFlushPromise) {
+    await opLogFlushPromise;
+    return flushOpLog(); // 继续等待前一批之后启动的写入，导出不能遗漏在途批次。
   }
-  if (opLogViewVisible()) loadOpLog();
+  if (!opLogPending.length) return;
+  const pid = opLogPending[0].pid;
+  let count = 1;
+  while (count < 10 && count < opLogPending.length && opLogPending[count].pid === pid) count++;
+  const batch = opLogPending.splice(0, count);
+  const request = (async () => {
+    const r = await fetch(`/api/projects/${pid}/oplog`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true, signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ entries: batch.map(item => item.entry) }),
+    });
+    const result = await r.json();
+    if (!r.ok || !result.ok) throw new Error('操作日志保存失败，请重试');
+  })();
+  opLogFlushPromise = request;
+  try {
+    await request;
+  } catch (e) {
+    opLogPending.unshift(...batch);
+    throw e;
+  } finally {
+    opLogFlushPromise = null;
+  }
+  if (opLogPending.length) await flushOpLog();
+}
+function flushOpLogQuietly() {
+  return flushOpLog().then(() => { if (opLogViewVisible()) loadOpLog(); }).catch(() => {});
+}
+function flushOpLogOnHide() {
+  clearTimeout(opLogFlushTimer);
+  while (opLogPending.length) {
+    const pid = opLogPending[0].pid;
+    let count = 1;
+    while (count < 10 && count < opLogPending.length && opLogPending[count].pid === pid) count++;
+    const entries = opLogPending.slice(0, count).map(item => item.entry);
+    try {
+      if (!navigator.sendBeacon(`/api/projects/${pid}/oplog`, new Blob([JSON.stringify({ entries })], { type: 'application/json' }))) break;
+      opLogPending.splice(0, count);
+    } catch { break; }
+  }
+  if (opLogPending.length) flushOpLog().catch(() => {});
 }
 // 页面隐藏/关闭前把攒着的一起发掉（否则最后一次操作会丢）
-document.addEventListener('visibilitychange', () => { if (document.hidden) flushOpLog(); });
-window.addEventListener('pagehide', flushOpLog);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushOpLogOnHide(); });
+window.addEventListener('pagehide', flushOpLogOnHide);
 
 const OP_ACTION_LABEL = {
   edit: '编辑字幕', split: '分句', merge: '合并', 'delete': '删除', insert: '新建',
@@ -8066,22 +8101,33 @@ const OP_ACTION_LABEL = {
 
 function opLogViewVisible() {
   const p = document.getElementById('log-pane-op');
-  return !!(p && !p.hidden);
+  return !!(p && !p.hidden && document.getElementById('tab-logs')?.classList.contains('active'));
 }
 
-function renderOpLog(entries) {
+function opActionLabel(action) {
+  return Object.hasOwn(OP_ACTION_LABEL, action) ? OP_ACTION_LABEL[action] : (action || OP_ACTION_LABEL.other);
+}
+
+function renderOpLog(entries, stats = { total: 0, byAction: {} }, append = false) {
   const box = document.getElementById('oplog-view');
   const empty = document.getElementById('oplog-empty');
   if (!box) return;
+  const summary = document.getElementById('oplog-summary');
+  if (summary) summary.innerHTML = `<strong>总操作次数：${Number(stats.total) || 0}</strong>`
+    + Object.entries(stats.byAction || {}).map(([action, count]) => `<span>${escapeHtml(opActionLabel(action))}：${Number(count) || 0}</span>`).join('');
+  const badge = document.getElementById('oplog-cnt');
+  if (badge) { badge.textContent = String(stats.total || 0); badge.hidden = !stats.total; }
+  const exportButton = document.getElementById('btn-oplog-export');
+  if (exportButton) exportButton.disabled = !state.project || opLogExporting;
   const list = Array.isArray(entries) ? entries.slice().reverse() : [];   // 新的在上面
-  if (empty) empty.hidden = list.length > 0;
-  if (!list.length) { box.innerHTML = ''; return; }
-  box.innerHTML = list.map((e) => {
+  if (empty) empty.hidden = stats.total > 0;
+  const html = list.map((value) => {
+    const e = value || {};
     // 时间只显示 时:分:秒（完整日期占地方、日常排查用不上）
     const d = new Date(e.t);
     const hh = isNaN(d) ? String(e.t || '').slice(11, 19)
       : d.toLocaleTimeString('zh-CN', { hour12: false });
-    const act = OP_ACTION_LABEL[e.action] || e.action || '操作';
+    const act = opActionLabel(e.action);
     return `<div class="oplog-row">`
       + `<span class="oplog-t">${escapeHtml(hh)}</span>`
       + `<span class="oplog-act" title="${escapeHtml(e.action || '')}">${escapeHtml(act)}</span>`
@@ -8091,24 +8137,88 @@ function renderOpLog(entries) {
       + (e.why ? `<br><span class="oplog-why">原因：${escapeHtml(e.why)}</span>` : '')
       + `</span></div>`;
   }).join('');
+  if (append) box.insertAdjacentHTML('beforeend', html);
+  else { box.innerHTML = html; box.scrollTop = 0; }
 }
 
 let opLogLoading = false;
-async function loadOpLog() {
-  if (!state.project || opLogLoading) return;
+let opLogProjectId = '', opLogRequest = 0, opLogOffset = 0, opLogSnapshot = 0, opLogExporting = false;
+async function loadOpLog(append = false) {
+  const pid = state.project && state.project.id;
+  const more = document.getElementById('btn-oplog-more');
+  if (!pid) { renderOpLog([]); if (more) more.hidden = true; return false; }
+  if (opLogLoading && opLogProjectId === pid) return false;
+  if (opLogProjectId !== pid) { append = false; renderOpLog([]); if (more) more.hidden = true; }
+  const request = ++opLogRequest;
+  opLogProjectId = pid;
   opLogLoading = true;
+  if (more) more.disabled = true;
   try {
-    const r = await fetch(`/api/projects/${state.project.id}/oplog`, { signal: AbortSignal.timeout(8000) });
+    await flushOpLog();
+    if (state.project?.id !== pid || request !== opLogRequest) return false;
+    const query = append ? `limit=100&offset=${opLogOffset}&until=${opLogSnapshot}` : 'limit=100';
+    const r = await fetch(`/api/projects/${pid}/oplog?${query}`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
-    renderOpLog(j.entries);
+    if (state.project?.id !== pid || request !== opLogRequest) return false;
+    opLogOffset = j.nextOffset;
+    opLogSnapshot = j.snapshotTotal;
+    renderOpLog(j.entries, j.stats, append);
+    if (more) more.hidden = !j.hasMore;
+    return true;
   } catch (e) {
+    if (state.project?.id !== pid || request !== opLogRequest) return false;
     const box = document.getElementById('oplog-view');
     if (box) box.innerHTML = `<div class="oplog-empty-row">读取操作日志失败：${escapeHtml(String((e && e.message) || e))}</div>`;
+    if (more) more.hidden = true;
+    return false;
   } finally {
-    opLogLoading = false;
+    if (request === opLogRequest) {
+      opLogLoading = false;
+      if (more) more.disabled = false;
+      if (state.project?.id !== pid && opLogViewVisible()) loadOpLog();
+    }
   }
 }
+
+function opLogExportText(entries, stats, format, project) {
+  const actions = Object.entries(stats.byAction || {}).map(([action, count]) => ({ action, label: opActionLabel(action), count }));
+  if (format === 'json') return JSON.stringify({ project, exportedAt: new Date().toISOString(), stats, actions, entries }, null, 2);
+  const cell = value => {
+    let text = String(value == null ? '' : value);
+    if (/^[\s\uFEFF]*[=+\-@]/.test(text)) text = "'" + text; // 电子表格中将用户文本作为文本，而非公式。
+    return '"' + text.replace(/\x22/g, '""') + '"';
+  };
+  const rows = [['稿件', project.name || project.id], ['总操作次数', stats.total], [],
+    ['操作类型', '操作代码', '操作次数'], ...actions.map(a => [a.label, a.action, a.count]), [],
+    ['时间', '操作类型', '操作代码', '目标', '操作详情', '原因'],
+    ...entries.map(e => [e?.t, opActionLabel(e?.action), e?.action || 'other', e?.target, e?.detail, e?.why])];
+  return '\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n');
+}
+
+async function exportOpLog() {
+  const project = state.project;
+  if (!project || opLogExporting) return;
+  opLogExporting = true;
+  const button = document.getElementById('btn-oplog-export');
+  if (button) button.disabled = true;
+  try {
+    await flushOpLog();
+    if (state.project !== project) throw new Error('稿件已切换，请在当前稿件重新导出操作日志');
+    const r = await fetch(`/api/projects/${project.id}/oplog`, { cache: 'no-store', signal: AbortSignal.timeout(30000) });
+    if (!r.ok) throw new Error('读取操作日志失败');
+    const data = await r.json();
+    if (state.project !== project) throw new Error('稿件已切换，请在当前稿件重新导出操作日志');
+    const format = document.getElementById('oplog-export-format')?.value === 'json' ? 'json' : 'csv';
+    const name = String(project.meta?.name || project.id).replace(/[<>:\x22/\\|?*\u0000-\u001f]/g, '_').slice(0, 80).replace(/[. ]+$/, '') || '稿件';
+    download(`${name}-操作日志.${format}`, opLogExportText(data.entries, data.stats, format, { id: project.id, name: project.meta?.name || project.id }),
+      format === 'json' ? 'application/json;charset=utf-8' : 'text/csv;charset=utf-8');
+    toast(`已导出 ${data.stats.total} 条操作日志`, 3000);
+  } catch (e) { toast('导出操作日志失败：' + e.message, 5000); }
+  finally { opLogExporting = false; if (button) button.disabled = !state.project; }
+}
+document.getElementById('btn-oplog-export')?.addEventListener('click', exportOpLog);
+document.getElementById('btn-oplog-more')?.addEventListener('click', () => loadOpLog(true));
 
 /* 两个板块的切换 */
 (function initLogSubTabs() {
@@ -8127,7 +8237,7 @@ async function loadOpLog() {
   };
   for (const tb of tabs) tb.addEventListener('click', () => show(tb.dataset.log));
   const rf = document.getElementById('btn-oplog-refresh');
-  if (rf) rf.addEventListener('click', () => { loadOpLog(); toast('已刷新操作日志', 2000); });
+  if (rf) rf.addEventListener('click', async () => { if (await loadOpLog()) toast('已刷新操作日志', 2000); });
   // 切到日志页且停在某个板块时也要拉一次（首次进入不会触发子标签的 click）
   window.__onLogsTabShown = () => {
     if (panes.op && !panes.op.hidden) loadOpLog();

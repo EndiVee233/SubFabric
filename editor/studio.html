@@ -745,10 +745,14 @@
         <div class="log-pane" id="log-pane-op">
           <div class="log-toolbar">
             <button type="button" class="btn btn-mini" id="btn-oplog-refresh">刷新</button>
+            <select id="oplog-export-format" class="select" aria-label="操作日志导出格式"><option value="csv">CSV</option><option value="json">JSON</option></select>
+            <button type="button" class="btn btn-mini" id="btn-oplog-export" disabled>导出操作日志</button>
             <span class="log-hint">记录你对字幕做的每一步：改文本 / 切分 / 合并 / 重排逐词 / 重识别 / 反思纠错 / 导入导出。
-              每条都写明**改了什么、为什么**（例如对齐锚点率、识别置信度）。随项目保存，最近 500 条。</span>
+              每条写明改了什么、为什么。随项目完整保存；统计和导出包含全部记录。</span>
           </div>
+          <div id="oplog-summary" aria-live="polite"></div>
           <div id="oplog-view"></div>
+          <button type="button" class="btn btn-mini" id="btn-oplog-more" hidden>加载更早的操作</button>
           <div class="log-empty" id="oplog-empty">
             还没有操作记录。<br>
             编辑字幕、重排逐词时间、应用反思纠错、重新识别、分段导入……这些操作都会自动记在这里，

@@ -200,7 +200,6 @@ console.warn = (...a) => { try { _cWarn(...a); } catch {} pushLog('warn', a); };
  *
  * 为什么不放 settings.js：那是全局配置（会被提交/备份），操作日志是项目数据。
  */
-const OP_LOG_MAX = 500;
 /* 注意：操作日志的读写辅助必须定义在 handleRequest **内部**（见 projDir 附近），
  * 因为它们要用 projDir() —— 那是 handleRequest 里的局部函数。
  * 早期放在模块作用域，于是每次调用都 `ReferenceError: projDir is not defined`，
@@ -4518,34 +4517,55 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
    * 落盘到 projects/<id>/oplog.json：跟着项目走、跨重启留存
    * （服务运行日志是 console 镜像、只留内存、重启即清，两者用途不同）。 */
   const opLogPath = (id) => path.join(projDir(id), 'oplog.json');
-  function readOpLog(id) {
+  function readOpLog(id, strict = false) {
     try {
       const a = JSON.parse(fs.readFileSync(opLogPath(id), 'utf8'));
+      if (!Array.isArray(a) && strict) throw new Error('操作日志文件格式无效');
       return Array.isArray(a) ? a : [];
-    } catch { return []; }
+    } catch (e) { if (strict && e.code !== 'ENOENT') throw e; return []; }
   }
   /** 追加一条：action 机器可读，detail 给用户看，why 说明原因/依据。
    *  返回 { ok } 或 { ok:false, err } —— 把原因带出来，否则只能靠猜。 */
   function appendOpLog(id, entry) {
+    return appendOpLogs(id, [entry]);
+  }
+  function appendOpLogs(id, entries) {
     try {
-      const list = readOpLog(id);
-      list.push({
-        t: new Date().toISOString(),
-        action: String((entry && entry.action) || '').slice(0, 60),
-        target: String((entry && entry.target) || '').slice(0, 120),
-        detail: String((entry && entry.detail) || '').slice(0, 400),
-        why: String((entry && entry.why) || '').slice(0, 400),
-      });
-      while (list.length > OP_LOG_MAX) list.shift();
+      const list = readOpLog(id, true);
+      const ids = new Set(list.map(e => e && e.id).filter(Boolean));
+      let written = 0;
+      for (const entry of entries) {
+        const eid = String((entry && entry.id) || '').slice(0, 80);
+        if (eid && ids.has(eid)) continue; // 请求重试 / 关闭页面补发不重复计数
+        list.push({
+          ...(eid ? { id: eid } : {}), t: new Date().toISOString(),
+          action: String((entry && entry.action) || '').slice(0, 60),
+          target: String((entry && entry.target) || '').slice(0, 120),
+          detail: String((entry && entry.detail) || '').slice(0, 400),
+          why: String((entry && entry.why) || '').slice(0, 400),
+        });
+        if (eid) ids.add(eid);
+        written++;
+      }
+      if (!written) return { ok: true, written: 0 };
       const p = opLogPath(id);
       fs.writeFileSync(p + '.tmp', JSON.stringify(list));
       fs.renameSync(p + '.tmp', p);          // 原子替换，别留半截
-      return { ok: true };
+      return { ok: true, written };
     } catch (e) {
       const err = String((e && e.message) || e);
       console.warn('[oplog] 写入失败：' + err);
       return { ok: false, err };
     }
+  }
+
+  function opLogStats(entries) {
+    const byAction = Object.create(null);
+    for (const entry of entries) {
+      const action = String((entry && entry.action) || 'other');
+      byAction[action] = (byAction[action] || 0) + 1;
+    }
+    return { total: entries.length, byAction };
   }
 
   const metaSnapshots = new WeakMap();
@@ -12005,12 +12025,21 @@ function handleProjectsRoutes(req, res, u) {
     }
 
     /* 用户操作日志：读 / 追加。
-     * GET  → { entries:[{t,action,target,detail,why}] }（最近 500 条，跨重启留存）
+     * GET → 全部记录与总计/分类统计；带 limit/offset 时分页（新的在后），不裁掉已保存记录。
      * POST → 追加一条；前端在各处编辑动作里带上"做了什么 + 为什么"。
      * 落盘失败不报错给用户（日志是辅助信息，不该挡住正常编辑）。 */
     if (action === 'oplog' && (req.method === 'GET' || req.method === 'POST')) {
       if (req.method === 'GET') {
-        return sendJson(res, 200, { entries: readOpLog(id) });
+        const all = readOpLog(id, true);
+        const stats = opLogStats(all);
+        const paged = u.searchParams.has('limit');
+        const limit = paged ? Math.max(1, Math.min(200, parseInt(u.searchParams.get('limit'), 10) || 100)) : all.length;
+        const offset = paged ? Math.max(0, Math.min(all.length, parseInt(u.searchParams.get('offset'), 10) || 0)) : 0;
+        const snapshotTotal = paged && u.searchParams.has('until')
+          ? Math.max(0, Math.min(all.length, parseInt(u.searchParams.get('until'), 10) || 0)) : all.length;
+        const end = Math.max(0, snapshotTotal - offset), start = Math.max(0, end - limit);
+        return sendJson(res, 200, { entries: all.slice(start, end), stats,
+          snapshotTotal, nextOffset: offset + end - start, hasMore: start > 0 });
       }
       return readBody(req, res, 64 * 1024, (err, body) => {
         if (err) return sendJson(res, 400, { error: String(err.message) });
@@ -12019,14 +12048,8 @@ function handleProjectsRoutes(req, res, u) {
         catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
         const items = Array.isArray(d && d.entries) ? d.entries : [d];
         if (items.length > 200) return sendJson(res, 400, { error: '一次最多写入 200 条' });
-        let n = 0;
-        const errs = [];
-        for (const e of items) {
-          const r = appendOpLog(id, e);
-          if (r.ok) n++;
-          else if (errs.length < 3) errs.push(r.err);
-        }
-        return sendJson(res, 200, { ok: n > 0, written: n, errors: errs });
+        const r = appendOpLogs(id, items);
+        return sendJson(res, r.ok ? 200 : 500, { ok: r.ok, written: r.written || 0, errors: r.ok ? [] : [r.err] });
       });
     }
 
