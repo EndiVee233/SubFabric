@@ -11,8 +11,19 @@
 
 ## 1. 快速开始
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，版本 `beta 1.5.6` / 文件版本
-  `1.5.6.0`（npm `1.5.6-beta.1`）。同一 Release 另发一份 `SubFabric-1.5.6.0-sea-setup.exe`（Inno Setup + Node SEA）。
+**接管基线（2026-11-06）**：项目结构与入口核对已完成且已验证；当前工作区功能完整验收仍为进行中。
+本地 Git 无有效 HEAD，已有 639 个索引新增条目（其中 25 个另有工作区修改）及 3 个未跟踪文件；
+接管时已记录文件哈希，保留全部已有工作，不能把索引或旧测试结果视为当前功能已验收。
+`main.js` 已静态导入未跟踪的 `editor/js/style-preset.js`，而 `desktop/stage.mjs` 只收集 Git 跟踪源码；
+后续打包前须核对该模块已纳入 payload，不能直接沿用当前跟踪清单。
+本次 Node 22.22.2 定向回归：7 组中 6 组最终通过；`electron-desktop-test` 首次临时目录 rename
+遇 EPERM，改用工作区隔离临时目录复跑通过；`ui-integration-test` 两次均在隔离服务就绪检查超时，尚未通过。
+报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
+仅属历史验证，不覆盖本机功能增量；本次未跑全量 JS、Python、真实 GUI、GPU/ASR、媒体导出或安装验收。
+
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.8.2` / 文件版本
+  `1.5.8.2`（npm `1.5.8-beta.3`）。两条链路的安装包命名分别为 `SubFabric-1.5.8.2-setup.exe` 与
+  `SubFabric-1.5.8.2-sea-setup.exe`（Inno Setup + Node SEA）；此处是源码配置，不代表本次已构建或发布。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
   后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
@@ -120,7 +131,8 @@
 - **桌面 payload 与可写 root**：`stage.mjs` 白名单收集 Git 跟踪的 `editor/`、`asr/` 源码及四个 vendor 文件，
   排除 settings/projects/videos/models/运行时/logs 与旧 SEA/托盘脚本，不整目录打包用户环境。
   `security.cjs` 在任何复制之前校验 manifest 的逐文件 SHA-256、路径边界及链接；`backend.cjs` 另校验
-  随包 Node。只将可信代码与渲染资源同步到 `app.getPath('userData')/workspace`，不复制或删除用户数据。
+  随包 Node。只将可信代码与渲染资源同步到 `dataRoot`（安装版为程序目录，开发版默认
+  `build/electron-dev-data`，测试可显式覆盖）；`app.getPath('userData')` 指向其 `.profile/`，不复制或删除用户数据。
   后端的入口、cwd 与所有现有 ASR/tools 相对路径仍在同一个可写 root，无需重构路径布局。
 - **旧版用户状态继承（2026-11-02）**：`desktop/migration.cjs` 只迁移用户状态——`asr/settings.json`、
   `asr/perf-result.json`、`asr/.qwen-runtime-ok.json`、`asr/models`、`asr/runtime-python`、
@@ -1070,9 +1082,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.6'`、`APP_FILE_VERSION = '1.5.6.0'`、npm version `1.5.6-beta.1`。
+  `APP_VERSION = 'beta 1.5.8.2'`、`APP_FILE_VERSION = '1.5.8.2'`、npm version `1.5.8-beta.3`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.6.0-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.8.2-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
@@ -1396,7 +1408,7 @@ yt-dlp（2026.08 与 2026.10 的 Python API 都已核对同为此格式），并
   新增用户可见文案进 `editor/lang/zh-CN.json`（键=原文）。SEA 脚本保留为旧链路，当前安装主链路是 NSIS。
 - **桌面安全与资产**：保持 sandbox/contextIsolation 开启、nodeIntegration 关闭、无 preload；
   只同源导航，新窗口 deny，http(s) 外链先确认。只校验并同步白名单代码/vendor，设置、项目、视频、模型与
-  已下载运行时不随包复制或删除；不自动迁移旧安装或旧浏览器 localStorage。关闭先冻结编辑再 flushSave，
+  已下载运行时不随包复制或删除；旧版状态仅按 §3–§4 的既有流程只补缺继承，保留来源，不扩大迁移范围。关闭先冻结编辑再 flushSave，
   保存失败默认保持编辑、丢弃须明确确认；quit / IPC 断线仅回收自有进程且必须有超时。
 - **敏感值**：统一走 `editor/secret-store.js`（DPAPI 密文，降级 AES），不进命令行参数、不进日志、
   不回传前端；临时明文文件用完即删。文档中不写凭据、隐私或无必要本机绝对路径。
