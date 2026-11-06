@@ -824,7 +824,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "5e886b874879d1f7860301d6e160ca8b31d5c144430f6edd27c65efc45db1731",
+      "sha256": "b13302841dc4492d7f26780baad283aa1b0e68c80d29fa9502dc4d1fb45291aa",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -1007,51 +1007,51 @@
           "method": "innerHTML"
         },
         {
-          "line": 8278,
+          "line": 8288,
           "method": "innerHTML"
         },
         {
-          "line": 8433,
+          "line": 8443,
           "method": "replaceChildren"
         },
         {
-          "line": 8439,
+          "line": 8449,
           "method": "innerHTML"
         },
         {
-          "line": 8484,
+          "line": 8494,
           "method": "innerHTML"
         },
         {
-          "line": 8485,
+          "line": 8495,
           "method": "innerHTML"
         },
         {
-          "line": 8506,
+          "line": 8516,
           "method": "innerHTML"
         },
         {
-          "line": 8519,
+          "line": 8529,
           "method": "innerHTML"
         },
         {
-          "line": 8821,
+          "line": 8831,
           "method": "createElement"
         },
         {
-          "line": 8826,
+          "line": 8836,
           "method": "innerHTML"
         },
         {
-          "line": 8835,
+          "line": 8845,
           "method": "createElement"
         },
         {
-          "line": 8841,
+          "line": 8851,
           "method": "createElement"
         },
         {
-          "line": 8843,
+          "line": 8853,
           "method": "createElement"
         }
       ],

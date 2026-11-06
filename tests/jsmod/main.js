@@ -8150,19 +8150,31 @@ const PLAY_DEDUP_MS = 40;
 
 function isTypingTarget(t) {
   const tag = (t && t.tagName || '').toLowerCase();
-  return tag === 'input' || tag === 'textarea' || tag === 'select' || !!(t && t.isContentEditable);
+  if (tag === 'textarea' || (t && t.isContentEditable)) return true;
+  return tag === 'input' && !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'image', 'hidden'].includes(t.type);
 }
-/* 空格只由本应用的 keydown 处理一次:
- * 聚焦 <video> 时浏览器原生空格播放/暂停在 keyup 生效, 会造成"按住=暂停, 松开=播放"的反向行为
- * —— 捕获阶段吞掉空格的默认动作与冒泡(keyup 连冒泡一起断), 播放/暂停只走下方 keydown 一条路 */
+function togglePlaybackFromKey(e) {
+  const now = performance.now();
+  if (e.repeat || now - actionCooldown.playPause < PLAY_DEDUP_MS) return;
+  actionCooldown.playPause = now;
+  actions.playPause();
+}
+function isEditorSpace(e) {
+  return document.body.dataset.workspace === 'editor' && (e.key === ' ' || e.code === 'Space')
+    && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && !e.isComposing && !isTypingTarget(e.target);
+}
+/* 空格在捕获阶段执行，先于滑杆/按钮/自定义菜单的监听与默认动作。
+ * keyup 也拦截，防止浏览器在松键时再次点击控件或切换视频；焦点保留供方向键/Enter 使用。 */
 document.addEventListener('keydown', (e) => {
-  if ((e.key === ' ' || e.code === 'Space') && !isTypingTarget(e.target)) e.preventDefault();
+  if (!isEditorSpace(e)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  togglePlaybackFromKey(e);
 }, true);
 document.addEventListener('keyup', (e) => {
-  if ((e.key === ' ' || e.code === 'Space') && !isTypingTarget(e.target)) {
-    e.preventDefault();
-    e.stopPropagation();
-  }
+  if (!isEditorSpace(e)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
 }, true);
 
 /* 哪些模态浮层开着时不抢 ↑/↓：确认框、片段/整行编辑、修复、查找替换、术语表、重分句… */
@@ -8178,6 +8190,7 @@ function anyModalOpen() {
 
 document.addEventListener('keydown', (e) => {
   const tag = (e.target.tagName || '').toLowerCase();
+  if (e.isComposing) return;
   const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
   const combo = comboFromEvent(e);
   if (!combo) return;
@@ -8188,11 +8201,8 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && (cueEditOpen || anyModalOpen())) return;
   e.preventDefault();
   if (id === 'playPause') {
-    const now = performance.now();
-    // e.repeat = 按住不放的自动重复（必须挡，否则状态乱跳）；
-    // PLAY_DEDUP_MS 只挡同一次按键被重复派发，不挡用户连按。
-    if (e.repeat || now - actionCooldown.playPause < PLAY_DEDUP_MS) return;
-    actionCooldown.playPause = now;
+    togglePlaybackFromKey(e);
+    return;
   }
   const fn = actions[id];
   if (fn) fn();
