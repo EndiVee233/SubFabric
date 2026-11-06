@@ -58,10 +58,26 @@ function planBatches(items) {
   return batches;
 }
 
-function itemResult(plan, item) {
-  const words = (plan && plan.words) || [];
-  const valid = words.length > 0 && words.every(w => Number.isFinite(w.s) && Number.isFinite(w.e)
-    && w.e > w.s && w.s >= Number(item.start) - 0.011 && w.e <= Number(item.end) + 0.011);
+function itemResult(plan, item, measured) {
+  const source = (plan && plan.words) || [];
+  // 毫秒正长度不代表能写入 ASS：重复/塌缩的 Qwen 时间曾把 24 个词挤进 157ms，
+  // 仍被当作成功。只在该行实测语音跨度内按厘秒修正，不借整句空白人为拉长。
+  const stamps = (measured || []).filter(w => w && Number.isFinite(w.start) && Number.isFinite(w.end));
+  const lo = Math.max(Math.round(Number(item.start) * 100), Math.round(Math.min(...stamps.map(w => w.start)) * 100));
+  const hi = Math.min(Math.round(Number(item.end) * 100), Math.round(Math.max(...stamps.map(w => w.end)) * 100));
+  const words = [];
+  if (source.length && Number.isFinite(lo) && Number.isFinite(hi) && hi - lo >= source.length
+    && source.every(w => Number.isFinite(w.s) && Number.isFinite(w.e) && w.e > w.s)) {
+    let cursor = lo;
+    for (let i = 0; i < source.length; i++) {
+      const w = source[i], tail = source.length - i - 1;
+      const s = Math.max(cursor, Math.min(Math.round(w.s * 100), hi - tail - 1));
+      const e = Math.max(s + 1, Math.min(Math.round(w.e * 100), hi - tail));
+      words.push({ w: w.w, s: s / 100, e: e / 100 });
+      cursor = e;
+    }
+  }
+  const valid = words.length > 0;
   return {
     ok: valid,
     words,
@@ -94,8 +110,9 @@ function assignChunkWords(batches, chunkWords) {
      * 结果仍不可信的行由 itemResult 标 ok:false，保留原时间。 */
     if (!whole.words || whole.words.length !== b.tokenCount) {
       for (const m of b.members) {
-        out.set(m.id, itemResult(align.planBlock(m.text, { start: m.start, end: m.end }, rec,
-          { minAnchorRatio: 0, rawTimes: true }), m));
+        const plan = align.planBlock(m.text, { start: m.start, end: m.end }, rec,
+          { minAnchorRatio: 0, rawTimes: true });
+        out.set(m.id, itemResult(plan, m, (plan.anchorIdx || []).map(i => rec[i]).filter(Boolean)));
       }
       continue;
     }
@@ -103,11 +120,12 @@ function assignChunkWords(batches, chunkWords) {
     for (const m of b.members) {
       const n = tokenCount(m.text);
       const slice = whole.words.slice(off, off + n);
+      const measured = whole.anchorIdx.slice(off, off + n).map(i => rec[i]).filter(Boolean);
       off += n;
       const plan = align.planBlock(m.text, { start: m.start, end: m.end },
         slice.map(w => ({ word: w.w, start: w.s, end: w.e })),
         { minAnchorRatio: 0, rawTimes: true });
-      out.set(m.id, itemResult(plan, m));
+      out.set(m.id, itemResult(plan, m, measured));
     }
   }
   return out;

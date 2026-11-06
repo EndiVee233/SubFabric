@@ -40,7 +40,9 @@ export function applyRealignItems(doc, kar, items, context) {
     const timeOk = aligned.length > 0 && aligned.every((w, i) => w && w.e > w.s
       && Number.isFinite(w.s) && Number.isFinite(w.e)
       && w.s >= sent.start - 0.01 && w.e <= sent.end + 0.01
-      && (i === 0 || w.s >= aligned[i - 1].s));
+      && Math.round(w.e * 100) > Math.round(w.s * 100)
+      && (i === 0 || (w.s >= aligned[i - 1].e - 1e-9
+        && Math.round(w.s * 100) >= Math.round(aligned[i - 1].e * 100))));
     if (!timeOk) { skipped++; continue; }
     /* 逐词时间要落到**文本的实际分词**上，否则 buildWordSpecs 会退回按字母数重铺。
      *  · 普通路径：新词序列必须与原句词序列逐词相同（只改时间，不改分词）；
