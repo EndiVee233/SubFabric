@@ -832,7 +832,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "519eef9cb925c91b6e5590a1dc8e8e23c2e687dae7e257cbd7bbb7214c8c38d6",
+      "sha256": "7b95fb5ce9ecb46e6f5a3d4caff834be8198d81fbaa67519eddeb1e045e7c031",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -1976,7 +1976,7 @@
     },
     {
       "file": "editor/js/timeline.js",
-      "sha256": "fd4eaaaadf9d3d67331b59af3cc0c623514ad803db045d8d36e8beb0cba7e25d",
+      "sha256": "a5e538e01da838cfa0099c47af23a3bd359ed8c1df7f29299c6dd9a6690404fd",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -1989,19 +1989,19 @@
           "method": "createElement"
         },
         {
-          "line": 1342,
+          "line": 1368,
           "method": "createElement"
         },
         {
-          "line": 2333,
+          "line": 2349,
           "method": "createElement"
         },
         {
-          "line": 2377,
+          "line": 2393,
           "method": "createElement"
         },
         {
-          "line": 2400,
+          "line": 2416,
           "method": "createElement"
         }
       ],

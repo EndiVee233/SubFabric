@@ -57,7 +57,8 @@ function setup() {
   assert.deepEqual([cue.start,cue.end],before,'first swipe cannot change subtitle timing');
   assert.equal(retimes.length,0); assert.equal(seeks.length,0); assert.equal(creates.length,0);
   assert.equal(t._touchEditRef,null,'a swipe does not arm editing');
-  assert.equal(t.follow,false,'manual touch pan is not pulled back by playback follow');
+  assert.equal(t.follow,true,'manual touch pan does not permanently disable playback follow');
+  assert.ok(t._followHoldUntil > performance.now(),'manual touch pan briefly holds the viewport');
 }
 {
   const {timeline:t,cue,event,retimes,tap,center}=setup();
@@ -106,4 +107,27 @@ function setup() {
   assert.equal(t._touchEditRef,null,'new project/removed block cannot inherit an armed touch');
   assert.notEqual(t._touchEditRef,cue.ref);
 }
-console.log('timeline-input: signed/proportional wheel, touch pan/tap/edit, pointer ownership/cancel and unchanged mouse drag passed');
+{
+  const {timeline:t,event}=setup();
+  t._playingNow=true; t.viewStart=100;
+  const now=performance.now(); event('wheel',100,60,{deltaX:40}); const view=t.viewStart;
+  assert.equal(t._followPlayback(250,true,now+100),false,'recent wheel browsing holds the viewport briefly');
+  assert.equal(t.viewStart,view);
+  assert.equal(t._followPlayback(250,true,t._followHoldUntil+1),true,'playing past the viewport resumes following after manual browsing');
+  assert.equal(t.t2x(250),500);
+  t._drag={type:'pan'}; t.viewStart=100;
+  assert.equal(t._followPlayback(250,true,now+10000),false,'active gesture cannot be pulled away');
+  t._drag=null; t._zoomAnim=1;
+  assert.equal(t._followPlayback(250,true,now+10000),false,'zoom anchor remains stable while zooming'); t._zoomAnim=0;
+  t._panBy(100);
+  assert.equal(t._followPlayback(250,false,now+10000),false,'paused viewport never chases playhead');
+  assert.equal(t._followPlayback(250,true,now+10001),true,'resuming playback cancels the browsing hold');
+  t.setFollow(false); t.viewStart=100;
+  assert.equal(t._followPlayback(250,true,now+20000),false,'explicit F off stays disabled');
+  t.setFollow(true); assert.equal(t._followPlayback(250,true,now+20001),true,'explicit on reacquires immediately');
+  t.viewStart=100; assert.equal(t._followPlayback(90,true,now+20002),true,'backward jump also reacquires playhead');
+  t.viewStart=0; t._followPlayback(1,true,now+20003); assert.equal(t.viewStart,0,'video start clamps to zero');
+  t._followPlayback(999,true,now+20004); assert.equal(t.viewStart,900,'video end clamps to content range');
+  t.setFollow(false); t.resetView(); assert.equal(t.follow,true,'a new project starts with following enabled');
+}
+console.log('timeline-input: signed wheel, touch/mouse editing, playback follow/hold/resume, explicit switch and bounds passed');

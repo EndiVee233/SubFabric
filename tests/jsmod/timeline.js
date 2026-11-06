@@ -384,6 +384,7 @@ export class Timeline {
     this.viewStart = 0;
     this.pxPerSec = 50;
     this.follow = true;       // 默认开启跟随播放头
+    this._followHoldUntil = 0; // 手动平移只暂缓跟随，不更改 F 的显式开关
     this.selected = null;     // 行对象
     this.panSensitivity = 120;  // 滚轮平移灵敏度(px/格, 设置 Tab 可调)
     this.zoomSensitivity = 1.25; // Ctrl+滚轮缩放灵敏度(每格倍率, 设置 Tab 可调)
@@ -735,6 +736,8 @@ export class Timeline {
 
   /** 载入新字幕/视频时调用: 下一次 setLanes/setDuration 会重新定位视图 */
   resetView() {
+    this.setFollow(true);
+    this._playingNow = false;
     this._dirty = true;
     this._viewReady = false;
     this._viewFromLanes = false;
@@ -957,6 +960,7 @@ export class Timeline {
   /** 平移: 正数 = 往时间更晚的方向看 */
   _panBy(px) {
     this._dirty = true;
+    this._followHoldUntil = performance.now() + 1500;
     this.viewStart += px / this.pxPerSec;
     this._clampView();
     this._viewReady = true;
@@ -974,6 +978,29 @@ export class Timeline {
 
   t2x(t) { return (t - this.viewStart) * this.pxPerSec; }
   x2t(x) { return this.viewStart + x / this.pxPerSec; }
+
+  setFollow(enabled) {
+    this.follow = !!enabled;
+    this._followHoldUntil = 0;
+    this._dirty = true;
+  }
+
+  _followPlayback(t, playing, now) {
+    const resumed = playing !== false && !this._playingNow;
+    this._playingNow = playing !== false;
+    if (resumed) this._followHoldUntil = 0;
+    if (!this.follow || !this._playingNow || this._drag || this._zoomAnim || now < this._followHoldUntil) return false;
+    const width = this._cssW();
+    if (!this.duration || width <= 0 || !Number.isFinite(t)) return false;
+    const x = this.t2x(t);
+    if (x >= width * 0.1 && x <= width * 0.9) return false;
+    const previous = this.viewStart;
+    this.viewStart = t - width * 0.5 / this.pxPerSec;
+    this._clampView();
+    if (this.viewStart === previous) return false;
+    if (this.onLayout) this.onLayout();
+    return true;
+  }
 
   /** 所有轨道内容的起始 y(胶片 + 刻度之下)。
    *  字幕轨与波形带**故意重叠**: 波形铺满整条带, 字幕块半透明叠在它上面,
@@ -1203,7 +1230,6 @@ export class Timeline {
       d.moved = true;
 
       if (d.type === 'pan') {
-        this.follow = false;                   // 手动平移后保持视野，F 可恢复跟随
         this._panBy(d.lastX - x);
         d.lastX = x;
         return;
@@ -1499,7 +1525,6 @@ export class Timeline {
     this._dirty = false;
     this._lastDrawAt = performance.now();
     this._lastT = t;
-    this._playingNow = playing !== false;
     this._mainSeeking = !!(this.video && this.video.seeking);
     this._blockEnterNow = this._lastDrawAt;
     /* 主线程被大稿件解析/自绘卡住时，第一帧可能已经越过整段动画窗口。
@@ -1513,6 +1538,7 @@ export class Timeline {
     }
     const ctx = this.ctx;
     const W = this._cssW(), H = this._cssH();
+    this._followPlayback(t, playing, this._lastDrawAt);
     if (!this.duration) {
       ctx.clearRect(0, 0, W, H);
       ctx.fillStyle = this.colors.bg;
@@ -1533,16 +1559,6 @@ export class Timeline {
         this._enterSpriteKey = '';
       }
       return;
-    }
-
-    // 跟随: 只在**播放中**才把播放头拉回视野中央 —— 暂停时允许自由平移,
-    // 否则滚轮平移会被下一帧的跟随立刻拽回去, 等于无法平移。
-    if (this.follow && playing !== false) {
-      const x = this.t2x(t);
-      if (x < W * 0.1 || x > W * 0.9) {
-        this.viewStart = t - W * 0.5 / this.pxPerSec;
-        this._clampView();
-      }
     }
 
     /* 入场期间把底/标尺/波形/轨道底缓存成一张底图、把所有可见块预渲染成一张块层：

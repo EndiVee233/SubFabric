@@ -8474,7 +8474,7 @@ const actions = {
   zoomOut: () => timeline.zoomOut(),
   fitAll: () => timeline.fit(),
   toggleFollow: () => {
-    timeline.follow = !timeline.follow;
+    timeline.setFollow(!timeline.follow);
     toast('跟随播放: ' + (timeline.follow ? '开' : '关'));
   },
   prevCue: () => jumpCue(-1),
