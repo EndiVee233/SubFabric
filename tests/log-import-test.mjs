@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { AssDoc } from '../editor/js/ass.js';
 import { groupAssRows } from '../editor/ass-group.js';
-import { parseChangeLog, changedCues, captureLogScope, localProtection, planLogImport,
+import { parseChangeLog, changedCues, modificationWindow, captureLogScope, localProtection, planLogImport,
   resolveLogImport, attachImportEvents, stageAssLogMerge } from '../editor/js/log-import.js';
 
 const cue = (start, end, text = '字幕') => ({ start, end, lines: [text] });
@@ -27,9 +27,30 @@ const rows = [cue(1, 3, '第一句'), cue(5, 7, '第二句'), cue(10, 12, '[甲]
     record(1, [{ op: 'text_set', old_start: 5, old_end: 7 }])].join('\n'));
   assert.deepEqual(changedCues(rows, log, cutoff).items.map(c => c.start), [5], 'cutoff is modification date, strictly after');
   assert.deepEqual(changedCues(rows, log, cutoff + 2000).items, []);
+  assert.equal(changedCues(rows, log, cutoff, cutoff + 1000).items[0].start, 5, 'inclusive upper endpoint');
+  assert.equal(changedCues(rows, log, cutoff, cutoff + 999).items.length, 0, 'exclude edits after the upper endpoint');
+  assert.deepEqual(modificationWindow('', ''), { since: -Infinity, until: Infinity });
+  const local = modificationWindow('2026-10-01T12:00:00', '2026-10-01T13:00:00');
+  assert.equal(local.until - local.since, 3600000, 'manual inputs use the same local time zone');
+  assert.equal(modificationWindow('', '2026-10-01T12:00:00').since, -Infinity);
+  assert.equal(modificationWindow('2026-10-01T12:00:00', '').until, Infinity);
+  assert.throws(() => modificationWindow('invalid', ''), /格式无效/);
+  assert.throws(() => modificationWindow('2026-10-02', '2026-10-01'), /晚于/);
+  assert.throws(() => modificationWindow('2026-10-01', '2026-10-01'), /晚于/);
+  assert.throws(() => changedCues(rows, log, cutoff + 1, cutoff), /范围无效/);
+  assert.equal(changedCues(rows, log).items.length, 2, 'both blank endpoints select all logged edits');
+  assert.deepEqual(changedCues(rows, log, -Infinity, cutoff).items.map(c => c.start), [1], 'end-only filter');
   const moved = parseChangeLog(record(1, [{ op: 'subtitle_time_adjust', group_uuid: 'g', old_start: 1, old_end: 3, new_start: 5, new_end: 7 }])
     + '\n' + record(2, [{ op: 'text_set', group_uuid: 'g', old_start: 5, old_end: 7 }]));
   assert.deepEqual(changedCues(rows, moved, cutoff).items.map(c => c.start), [5], 'historical positions do not select untouched nearby rows');
+  const bounded = changedCues(rows, moved, cutoff, cutoff + 1000);
+  assert.equal(bounded.operations, 1, 'later edits do not inflate window counts');
+  assert.deepEqual(bounded.items.map(c => c.start), [5]);
+  const laterMove = parseChangeLog(record(1, [{ op: 'text_set', group_uuid: 'g', old_start: 1, old_end: 3 }])
+    + '\n' + record(2, [{ op: 'subtitle_time_adjust', group_uuid: 'g', old_start: 1, old_end: 3, new_start: 5, new_end: 7 }])
+    + '\n' + record(3, [{ op: 'text_set', group_uuid: 'other', old_start: 10, old_end: 12 }]));
+  assert.deepEqual(changedCues(rows, laterMove, cutoff, cutoff + 1000).items.map(c => c.start), [5],
+    'follow final location of an in-window sentence while excluding out-of-window-only groups');
   const movedPlan = planLogImport(changedCues(rows, moved, cutoff).items, [cue(1, 3, '本稿也改过')],
     { ranges: [{ start: 1, end: 3 }], unknown: 0 });
   assert.equal(movedPlan[0].current.length, 1, 'keep original locations through later edits of the same stable group');

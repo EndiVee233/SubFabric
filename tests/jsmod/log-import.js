@@ -36,22 +36,40 @@ function opRange(op) {
   return range(op.new_start ?? a?.start_time ?? op.start ?? op.old_start, op.new_end ?? a?.end_time ?? op.end ?? op.old_end);
 }
 
+/** Empty endpoints leave that side unbounded; datetime-local values use the user's local zone. */
+export function modificationWindow(start, end) {
+  const since = start ? new Date(start).getTime() : -Infinity;
+  const until = end ? new Date(end).getTime() : Infinity;
+  if ((since !== -Infinity && !Number.isFinite(since)) || (until !== Infinity && !Number.isFinite(until))) {
+    throw Error('修改时间格式无效，请重新选择日期和时间');
+  }
+  if (since >= until) throw Error('修改结束时间必须晚于开始时间');
+  return { since, until };
+}
+
 /** No UUIDs survive ordinary ASS export. Match final sentences by direct time or role scope,
  * and force review for multi-sentence/unknown scopes; never use mutable file-order indices. */
-export function changedCues(cues, log, since) {
-  if (!Number.isFinite(since)) throw Error('请选择修改发生的日期和时间');
+export function changedCues(cues, log, since = -Infinity, until = Infinity) {
+  if ((since !== -Infinity && !Number.isFinite(since)) || (until !== Infinity && !Number.isFinite(until)) || since >= until) {
+    throw Error('修改时间范围无效');
+  }
   const selected = new Map();
   let operations = 0, unresolved = 0, unmatched = 0, deletions = 0;
   const anchors = new Map();
   // Use the latest location of a stable group, rather than every historical position of a moved line.
   const records = log.records.slice().sort((a, b) => a.time - b.time);
   for (const record of records) for (const op of record.ops) {
-    if (record.time <= since) continue;
-    operations++;
-    if ((op.op || op.action) === 'subtitle_delete') deletions++;
     const id = op.group_uuid || op.groupUuid || op.line_uuid || op.lineUuid;
     const globalRole = ['role_color_replace', 'role_rename'].includes(op.op);
     const anchorId = id && !globalRole ? 'id:' + id : 'op:' + anchors.size;
+    const inWindow = record.time > since && record.time <= until;
+    // Later edits may move a selected sentence. Track its final position without selecting
+    // sentences changed only outside the requested window or replaying historical text.
+    if (!inWindow && !(record.time > until && id && !globalRole && anchors.has(anchorId))) continue;
+    if (inWindow) {
+      operations++;
+      if ((op.op || op.action) === 'subtitle_delete') deletions++;
+    }
     const previous = anchors.get(anchorId)?.previous || new Map();
     const old = range(op.old_start, op.old_end);
     if (old) {

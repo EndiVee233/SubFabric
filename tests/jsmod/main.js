@@ -13,7 +13,7 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
-import { parseChangeLog, changedCues, localProtection, planLogImport, resolveLogImport,
+import { parseChangeLog, changedCues, modificationWindow, localProtection, planLogImport, resolveLogImport,
   captureLogScope, attachImportEvents, stageAssLogMerge } from './log-import.js';
 import { parseRegionTime } from '../region.js';
 // 逐词字幕修复：把"被清空/错位"的逐词文本搬回来（有 tests/repair-words-test.mjs）。
@@ -2908,7 +2908,7 @@ let rimBusy = false;     // 正在写入（防止连点两次导入）
 const rimLog = {
   enabled: document.getElementById('rim-log-enabled'), file: document.getElementById('rim-log-file'),
   pick: document.getElementById('rim-log-pick'), name: document.getElementById('rim-log-name'),
-  since: document.getElementById('rim-log-since'), prepare: document.getElementById('rim-log-prepare'),
+  since: document.getElementById('rim-log-since'), until: document.getElementById('rim-log-until'), prepare: document.getElementById('rim-log-prepare'),
   apply: document.getElementById('rim-log-apply'), review: document.getElementById('rim-log-review'),
   status: document.getElementById('rim-log-status'), pager: document.getElementById('rim-log-pager'),
   prev: document.getElementById('rim-log-prev'), next: document.getElementById('rim-log-next'),
@@ -2953,8 +2953,13 @@ async function rimLogPrepare() {
   if (rimLogReading || rimBusy) return;
   rimLogInvalidate();
   if (!rimLogHistory || !rimCues?.length) { rimLog.status.textContent = '请先选择字幕文件和操作日志'; return; }
-  const since = new Date(rimLog.since.value).getTime(), rg = rimReadRange();
-  if (!Number.isFinite(since)) { rimLog.status.textContent = '请选择修改发生的日期和时间'; return; }
+  if (!rimLog.since.validity.valid || !rimLog.until.validity.valid) {
+    rimLog.status.textContent = '修改时间格式无效，请重新选择日期和时间'; return;
+  }
+  let window;
+  try { window = modificationWindow(rimLog.since.value, rimLog.until.value); }
+  catch (e) { rimLog.status.textContent = e.message; return; }
+  const rg = rimReadRange();
   if (!rg.ok) { rimLog.status.textContent = rg.error; return; }
   panel.stashInlineEdit();
   const generation = rimLogGeneration, project = state.project, snapshot = rimLogSnapshotNow();
@@ -2967,7 +2972,7 @@ async function rimLogPrepare() {
     if (!r.ok) throw Error('读取本稿操作日志失败，已停止自动覆盖');
     const j = await r.json(), protection = localProtection(j.entries);
     if (generation !== rimLogGeneration || state.project !== project || snapshot !== rimLogSnapshotNow()) throw Error('本稿或导入条件已变化，请重新检查');
-    const selected = changedCues(rimCues, rimLogHistory, since);
+    const selected = changedCues(rimCues, rimLogHistory, window.since, window.until);
     const cues = selected.items.filter(c => c.end > rg.start && c.start < rg.end);
     // Never replace a sentence crossing the chosen video range without explicit review.
     for (const c of cues) if (c.start < rg.start || c.end > rg.end) c.uncertain = true;
@@ -3025,6 +3030,7 @@ rimLog.prepare?.addEventListener('click', rimLogPrepare);
 rimLog.apply?.addEventListener('click', rimLogApply);
 rimLog.pick?.addEventListener('click', () => rimLog.file.click());
 rimLog.since?.addEventListener('input', rimLogInvalidate);
+rimLog.until?.addEventListener('input', rimLogInvalidate);
 rimLog.file?.addEventListener('change', async e => {
   const file = e.target.files[0]; e.target.value = ''; if (!file) return;
   rimLogInvalidate(); rimLogHistory = null;
@@ -3034,7 +3040,7 @@ rimLog.file?.addEventListener('change', async e => {
     const parsed = parseChangeLog(await file.text());
     if (generation !== rimLogGeneration) return;
     rimLogHistory = parsed; rimLog.name.textContent = `${file.name}（${parsed.ops} 个操作）`;
-    rimLog.status.textContent = `日志修改时间：${new Date(parsed.first).toLocaleString()} → ${new Date(parsed.last).toLocaleString()}。请选择截止时间后重新检查。`;
+    rimLog.status.textContent = `日志修改时间：${new Date(parsed.first).toLocaleString()} → ${new Date(parsed.last).toLocaleString()}。可手动选择修改时间范围后重新检查。`;
   } catch (err) { rimLog.name.textContent = '日志未加载'; rimLog.status.textContent = err.message; }
 });
 rimLog.review?.addEventListener('change', e => {
@@ -3238,7 +3244,7 @@ function healWordRows(where) {
 function rimOpen() {
   if (!state.format) { toast('先打开一份字幕', 3600); return; }
   rimCues = null; rimName = ''; rimPlan = null;
-  rimLog.enabled.checked = false; rimLogHistory = null; rimLog.since.value = '';
+  rimLog.enabled.checked = false; rimLogHistory = null; rimLog.since.value = ''; rimLog.until.value = '';
   rimLog.name.textContent = '还没选'; rimLog.status.textContent = ''; rimLogMode();
   if (rimEls.fileName) { rimEls.fileName.textContent = '还没选'; rimEls.fileName.classList.remove('filled'); }
   if (rimEls.rangeNote) { rimEls.rangeNote.textContent = ''; rimEls.rangeNote.className = 'np-region-note'; }
