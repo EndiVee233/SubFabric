@@ -2619,6 +2619,8 @@ export class Timeline {
         // 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ —— 英文行(下半区)重叠也能看到。
         // 单语行的"坏"已经画在**缺的那半**上了, 这里不再把红虚线糊到实心块上(否则看不出块是实心的)。
         if (c.bad && !lacks) this._drawBadMark(ctx, x1, band, wpx);
+        // Task failure stays visible even when the context-menu target is still selected.
+        if (c.realignFailed) this._drawRealignFailure(ctx, x1, band, wpx);
         if (entering) ctx.restore();
       }
       flushRun();
@@ -2719,6 +2721,18 @@ export class Timeline {
     ctx.font = '700 9px "Microsoft YaHei", sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('!', sx + 6, sy + 9);
+  }
+
+  /** Solid acknowledgement ring for a failed timeline realignment task. */
+  _drawRealignFailure(ctx, x1, band, wpx) {
+    ctx.save();
+    ctx.strokeStyle = cssVar('--danger', '#ff5c5c');
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 0;
+    ctx.setLineDash([]);
+    this._roundRect(ctx, x1 + 1, band.y + 1, Math.max(1.5, wpx - 2), Math.max(1, band.h - 2), this.uwp ? 2 : 3);
+    ctx.stroke();
+    ctx.restore();
   }
 
   /** 坏行(重叠/缺词/方括号…)警告: 红色虚线描边 + 右上角 ⚠ 角标。

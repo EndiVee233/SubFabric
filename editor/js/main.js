@@ -202,6 +202,8 @@ const state = {
   videoLoaded: false,
   project: null          // 项目模式: { id, meta, loadPeaks } (project.js 维护; null=未用项目管理)
 };
+// Session-only acknowledgements; sentence signatures survive ASS row reconciliation.
+const realignFailureKeys = new Set();
 
 /** 调试出口：URL 里带 debug（如 #/project/xxx?debug）时把 state 挂到 window。
  *  为什么留着：自动化测试（CDP）读不到模块内的 state，就只能靠 DOM 文字反推 ——
@@ -2066,6 +2068,7 @@ function setSrt(text, name) {
     { v: 'second', t: '仅副语言' }
   ], 'bi');
   timeline.clearRangeSel();      // 新文件 → 顺带取消批量选区
+  realignFailureKeys.clear();
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
   btnExport.disabled = false;
@@ -2337,6 +2340,7 @@ function setAss(text, name) {
     { v: 'second', t: '仅英文' }
   ], 'bi');
   timeline.clearRangeSel();      // 新文件 → 顺带取消批量选区
+  realignFailureKeys.clear();
   timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
   rebuildItemsAndLanes(true);
   setAssStyleControls();
@@ -2854,6 +2858,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
     timeline.setLanes([]);
   }
 
+  syncRealignFailureMarks();
   // 恢复选中(重建后行序号可能变化); 'keep' = 仅在完全不可见时才滚, 保持阅读位置稳定
   if (keepRef && state.itemByRef.has(keepRef)) {
     state.selected = state.itemByRef.get(keepRef);
@@ -3702,6 +3707,7 @@ panel.onSeek = (item) => {
   if (item) requestSeek(item.start + 0.001);
 };
 timeline.onSelect = (ref, opts) => {
+  if (ref?.en && realignFailureKeys.delete(realignTargetKey(ref.en))) syncRealignFailureMarks();
   const item = state.itemByRef.get(ref);
   if (item) selectItem(item, opts && opts.seek);
 };
@@ -7189,10 +7195,20 @@ function refreshRealignTarget(old) {
   return Object.assign({}, old, { ref: row, key, text, start, end, no: row.no || old.no, changed });
 }
 
-function realignRow(item) {
+function syncRealignFailureMarks() {
+  for (const lane of timeline.lanes) {
+    for (const cue of lane.cues) cue.realignFailed = realignFailureKeys.size > 0 && !!cue.ref?.en && realignFailureKeys.has(realignTargetKey(cue.ref.en));
+  }
+  timeline._enterSprites = null; // Invalidate a still-active entrance animation's cached block outlines.
+  timeline._enterSpriteKey = '';
+  timeline.touch();
+}
+
+function realignRow(item, markFailure = false) {
   if (!state.project) { toast('重排逐词时间需要项目模式（要用项目里保存的音频与模型）', 4600); return; }
   const target = realignTargetFor(item);
   if (!target) return;
+  target.markFailure = markFailure;
   if (realignBusy) {
     if (realignRunningKey === target.key
         || realignQueue.some(t => t.key === target.key || (target.ref && t.ref === target.ref))) {
@@ -7265,6 +7281,7 @@ async function runRealign(queued) {
     sent.text = inner;                     // 文本内容不变，只是去掉渲染标签
     sent.words = b.words.map(w => ({ w: w.w, s: w.s, e: w.e }));
     sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
+    realignFailureKeys.delete(target.key);
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
@@ -7278,6 +7295,10 @@ async function runRealign(queued) {
       `Qwen3-ForcedAligner：用已确认文本对原片音频做纯对齐（不跑 ASR、不改文本）`);
   } catch (e) {
     if (!current()) return;
+    if (target.markFailure) {
+      realignFailureKeys.add(target.key);
+      syncRealignFailureMarks();
+    }
     const msg = String((e && e.message) || e);
     jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
     toast('重排失败：' + msg, 6600);
@@ -7300,7 +7321,7 @@ async function runRealign(queued) {
 }
 
 panel.onRealignCard = (item) => { realignRow(item); };
-timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref)); };
+timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref), true); };
 
 function convertWordContinuity(row = null) {
   if (state.format !== 'ass' || !state.assDoc || !state.kar) return;
@@ -7516,6 +7537,7 @@ function syncRealignApply() {
  * 于是从 A 稿切到 B 稿、浮层还开着时，界面上留着 A 的 3927 句数据（用户实测反馈）。
  * 由 project.js 的 openProject() 调（与 __notesReload 同一套路）。 */
 function resetRealignForProjectSwitch() {
+  realignFailureKeys.clear();
   subtitleWriteGeneration++;
   reRecogQueue.length = 0;
   reRecogActive = null;

@@ -130,4 +130,17 @@ function setup() {
   t._followPlayback(999,true,now+20004); assert.equal(t.viewStart,900,'video end clamps to content range');
   t.setFollow(false); t.resetView(); assert.equal(t.follow,true,'a new project starts with following enabled');
 }
-console.log('timeline-input: signed wheel, touch/mouse editing, playback follow/hold/resume, explicit switch and bounds passed');
+{
+  const t = Object.create(Timeline.prototype), strokes = [], rounds = [];
+  globalThis.getComputedStyle = () => ({ getPropertyValue: name => name === '--danger' ? '#de3344' : '' });
+  const ctx = { save() {}, restore() {}, setLineDash(dash) { this.dash = dash; },
+    stroke() { strokes.push({ color: this.strokeStyle, width: this.lineWidth, dash: this.dash, blur: this.shadowBlur }); } };
+  t._roundRect = (...args) => rounds.push(args);
+  t.uwp = true; t._drawRealignFailure(ctx, 10, { y: 20, h: 40 }, 80);
+  assert.deepEqual(strokes[0], { color: '#de3344', width: 2, dash: [], blur: 0 }, 'failure outline is solid, uses theme danger and has no selection glow');
+  assert.equal(rounds[0].at(-1), 2, 'failure keeps UWP corner geometry');
+  t.uwp = false; t._drawRealignFailure(ctx, 10, { y: 20, h: 40 }, 80);
+  assert.equal(rounds[1].at(-1), 3, 'failure keeps other themes block geometry');
+  delete globalThis.getComputedStyle;
+}
+console.log('timeline-input: wheel, pointer editing, playback following and failure outline passed');
