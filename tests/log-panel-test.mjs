@@ -85,7 +85,7 @@ ok(!/OP_LOG_MAX/.test(SRV), '取消保留条数上限，不再丢弃旧记录');
 ok(/action === 'oplog'/.test(SRV), '有 /oplog 路由');
 
 console.log('\n== 5. 操作日志：前端记录了什么 ==');
-ok(/function logOp\(action, target, detail, why\)/.test(MJ), '有 logOp(action, target, detail, why)');
+ok(/function logOp\(action, target, detail, why, scope\)/.test(MJ), '记录动作并可携带稳定时间范围');
 ok(/navigator\.sendBeacon/.test(MJ), '用 sendBeacon 发送（页面切走也能发出去）');
 ok(/flushOpLogQuietly, 1500/.test(MJ), '攒一小批再发（不每次编辑打一次请求）');
 ok(/visibilitychange[\s\S]{0,80}flushOpLog/.test(MJ), '页面隐藏前把攒的发掉');

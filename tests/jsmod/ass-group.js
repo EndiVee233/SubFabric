@@ -117,6 +117,11 @@ function groupAssRows(rows) {
     if (hasSentence) { tagStyles.delete(st); continue; }   // 该样式也承载整句 → 不是纯逐词样式
     wordStyles.add(st);
   }
+  // Repeated Chinese notes/roles can share a span. They remain sentence rows,
+  // even if duplicate timestamps originally nominated the style as word-level.
+  for (const st of wordStyles) {
+    if (list.some(r => r.style === st && CJK.test(sentenceText(r.text)))) wordStyles.delete(st);
+  }
 
   const wordRows = list.filter(r => wordStyles.has(r.style));
   const sentRows = list.filter(r => !wordStyles.has(r.style));

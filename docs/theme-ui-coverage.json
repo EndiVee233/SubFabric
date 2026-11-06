@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "3447124aed478e604c43bbd6dce050c87f21a895cc281487806d094f50a4b065",
+      "sha256": "0ac74c9ea25c547f7af01b50dac08eff7c40b9b9bc394f94a92ed4242b06738a",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -823,8 +823,16 @@
       "literals": []
     },
     {
+      "file": "editor/js/log-import.js",
+      "sha256": "3d0bef541ce96081fb503a66e1d9b7fdf13549c6bd91cca6c3570f2405937878",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
       "file": "editor/js/main.js",
-      "sha256": "34fc4323457d6c5626bbb516025b4a5c8fc4e208268b77d48d7fb985cba364b7",
+      "sha256": "d9e910de4a01a80a46113c20d9e02fd06018499f8e55697dc4ded5eb1ec1cdc6",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -835,227 +843,231 @@
       ],
       "dynamic": [
         {
-          "line": 224,
+          "line": 226,
           "method": "createElement"
         },
         {
-          "line": 242,
+          "line": 244,
           "method": "innerHTML"
         },
         {
-          "line": 292,
+          "line": 294,
           "method": "insertAdjacentHTML"
-        },
-        {
-          "line": 998,
-          "method": "innerHTML"
         },
         {
           "line": 1000,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1002,
           "method": "createElement"
         },
         {
-          "line": 1470,
+          "line": 1472,
           "method": "innerHTML"
         },
         {
-          "line": 1473,
+          "line": 1475,
           "method": "innerHTML"
         },
         {
-          "line": 2087,
+          "line": 2089,
           "method": "replaceChildren"
         },
         {
-          "line": 2088,
+          "line": 2090,
           "method": "createElement"
         },
         {
-          "line": 2097,
+          "line": 2099,
           "method": "createElement"
         },
         {
-          "line": 2953,
+          "line": 2935,
           "method": "innerHTML"
         },
         {
-          "line": 2962,
+          "line": 3106,
           "method": "innerHTML"
         },
         {
-          "line": 3012,
+          "line": 3115,
           "method": "innerHTML"
         },
         {
-          "line": 3092,
+          "line": 3165,
           "method": "innerHTML"
         },
         {
-          "line": 3786,
+          "line": 3247,
           "method": "innerHTML"
         },
         {
-          "line": 5509,
+          "line": 3949,
           "method": "innerHTML"
         },
         {
-          "line": 5510,
+          "line": 5678,
           "method": "innerHTML"
         },
         {
-          "line": 5716,
+          "line": 5679,
           "method": "innerHTML"
         },
         {
-          "line": 5734,
+          "line": 5885,
           "method": "innerHTML"
         },
         {
-          "line": 5821,
+          "line": 5903,
           "method": "innerHTML"
         },
         {
-          "line": 5901,
+          "line": 5990,
           "method": "innerHTML"
         },
         {
-          "line": 5927,
+          "line": 6070,
           "method": "innerHTML"
         },
         {
-          "line": 6006,
+          "line": 6096,
           "method": "innerHTML"
         },
         {
-          "line": 6446,
+          "line": 6175,
           "method": "innerHTML"
         },
         {
-          "line": 6450,
+          "line": 6615,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6619,
           "method": "createElement"
         },
         {
-          "line": 6452,
+          "line": 6621,
           "method": "innerHTML"
         },
         {
-          "line": 6500,
+          "line": 6669,
           "method": "innerHTML"
         },
         {
-          "line": 6666,
+          "line": 6835,
           "method": "createElement"
         },
         {
-          "line": 6668,
+          "line": 6837,
           "method": "innerHTML"
         },
         {
-          "line": 7196,
+          "line": 7365,
           "method": "innerHTML"
         },
         {
-          "line": 7251,
+          "line": 7420,
           "method": "innerHTML"
         },
         {
-          "line": 7412,
+          "line": 7581,
           "method": "innerHTML"
         },
         {
-          "line": 7745,
+          "line": 7914,
           "method": "createElement"
         },
         {
-          "line": 7783,
+          "line": 7952,
           "method": "createElement"
         },
         {
-          "line": 7805,
+          "line": 7974,
           "method": "innerHTML"
         },
         {
-          "line": 7807,
+          "line": 7976,
           "method": "innerHTML"
         },
         {
-          "line": 7807,
+          "line": 7976,
           "method": "innerHTML"
-        },
-        {
-          "line": 7972,
-          "method": "createElement"
-        },
-        {
-          "line": 8000,
-          "method": "createElement"
-        },
-        {
-          "line": 8011,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8116,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8140,
-          "method": "insertAdjacentHTML"
         },
         {
           "line": 8141,
+          "method": "createElement"
+        },
+        {
+          "line": 8169,
+          "method": "createElement"
+        },
+        {
+          "line": 8180,
           "method": "innerHTML"
         },
         {
-          "line": 8172,
+          "line": 8285,
           "method": "innerHTML"
         },
         {
-          "line": 8454,
+          "line": 8309,
+          "method": "insertAdjacentHTML"
+        },
+        {
+          "line": 8310,
           "method": "innerHTML"
         },
         {
-          "line": 8609,
+          "line": 8341,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8623,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8778,
           "method": "replaceChildren"
         },
         {
-          "line": 8615,
+          "line": 8784,
           "method": "innerHTML"
         },
         {
-          "line": 8660,
+          "line": 8829,
           "method": "innerHTML"
         },
         {
-          "line": 8661,
+          "line": 8830,
           "method": "innerHTML"
         },
         {
-          "line": 8682,
+          "line": 8851,
           "method": "innerHTML"
         },
         {
-          "line": 8695,
+          "line": 8864,
           "method": "innerHTML"
         },
         {
-          "line": 8997,
+          "line": 9166,
           "method": "createElement"
         },
         {
-          "line": 9002,
+          "line": 9171,
           "method": "innerHTML"
         },
         {
-          "line": 9011,
+          "line": 9180,
           "method": "createElement"
         },
         {
-          "line": 9017,
+          "line": 9186,
           "method": "createElement"
         },
         {
-          "line": 9019,
+          "line": 9188,
           "method": "createElement"
         }
       ],
@@ -2042,7 +2054,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "fc73331a7df6b28a1a93e41be269917a5a7444753689f2fa38b91eb523a5095b",
+      "sha256": "0cfa96dbbff1494f2d113dd3c88638005cae0978cc43c4b4b0580b85fa817afc",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2082,7 +2094,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "bca22849c0ad143f55f0ba409507ef2b841fe491bba86a0cd63b746eecea4c87",
+      "sha256": "e40963e261c75ef522ba1ce089a51dd91a2fddfb04025be9a5cc3bf700f2e17b",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2635,6 +2647,20 @@
         "rim-file-name",
         "rim-from-sel",
         "rim-list",
+        "rim-log-apply",
+        "rim-log-controls",
+        "rim-log-enabled",
+        "rim-log-file",
+        "rim-log-name",
+        "rim-log-next",
+        "rim-log-page",
+        "rim-log-pager",
+        "rim-log-pick",
+        "rim-log-prepare",
+        "rim-log-prev",
+        "rim-log-review",
+        "rim-log-since",
+        "rim-log-status",
         "rim-overlay",
         "rim-pick",
         "rim-range-note",

@@ -198,6 +198,14 @@ console.log('\n== ⑨ 空行 / 空输入 ==');
   eq(g.lines[0].lines[0], '有内容', '留下的是有内容的');
 }
 
+console.log('\n== 重叠中文不应被误认成逐词样式 ==');
+{
+  const g = groupAssRows([r(0,2,ZH,'[甲] 中文一'),r(0,2,ZH,'[乙] 中文二'),
+    r(0,1,EN,'{\\c&H00FF00&}hello{\\c} world'),r(1,2,EN,'hello {\\c&H00FF00&}world{\\c}')]);
+  ok(!g.stats.wordStyles.includes(ZH), '同跨度的中文仍是整句，不能把中英拼成一个逐词行');
+  ok(g.lines.some(c => c.lines.length === 2 && c.words.length === 2), '保留双语配对与真实词时间');
+}
+
 console.log('\n== ⑦ 用真实的 (5) 文件验证规模 ==');
 {
   const P = 'C:/Users/Terry/Downloads/subtitle_edited (5).ass';

@@ -1069,18 +1069,35 @@
     <div class="rim-hintbar">在下面的<b>时间轴</b>上按住 <b>Ctrl</b> 用左键拖一段选区，
       这里会自动填好（也可以直接手输时间）。</div>
 
+    <label class="rim-log-toggle"><input type="checkbox" id="rim-log-enabled">按操作日志导入修改过的字幕</label>
+    <div id="rim-log-controls" hidden>
+      <div class="np-file-row"><span class="np-lbl">操作日志</span><span class="np-file" id="rim-log-name">还没选</span>
+        <button type="button" class="btn btn-mini" id="rim-log-pick">选择 JSONL / JSON…</button></div>
+      <label class="rim-log-date">仅导入此时间之后发生的修改<input type="datetime-local" id="rim-log-since" step="1"></label>
+      <p class="gl-hint">这里填写修改发生的本地日期时间，不是视频播放时间。上方「这一段」仍限制视频范围。
+        先检查两份版本，再逐句勾选保留；未勾选的本稿句子会被移除。ASS 导入保留原始逐词事件。
+        旧日志可能不完整，定位不明时默认保留本稿。原字幕与日志文件不会被改写。</p>
+      <button type="button" class="btn" id="rim-log-prepare">检查修改与冲突</button>
+      <p id="rim-log-status" role="status"></p>
+    </div>
+    <div id="rim-log-review" hidden></div>
+    <div id="rim-log-pager" hidden><button type="button" class="btn btn-mini" id="rim-log-prev">上一页</button>
+      <span id="rim-log-page"></span><button type="button" class="btn btn-mini" id="rim-log-next">下一页</button></div>
+
     <div class="reflect-summary" id="rim-summary" hidden></div>
     <div class="reflect-list" id="rim-list" hidden></div>
 
     <div class="rn-actions">
       <button type="button" class="btn" id="rim-cancel">关闭</button>
       <button type="button" class="btn" id="rim-recheck" hidden>重新检查</button>
+      <button type="button" class="btn btn-accent" id="rim-log-apply" disabled>合并所选</button>
       <button type="button" class="btn btn-accent" id="rim-apply" disabled>只导入空档</button>
       <button type="button" class="btn" id="rim-apply-force" hidden>重叠处也覆盖</button>
     </div>
   </div>
 </div>
 <input type="file" id="rim-file" accept=".srt,.ass,.ssa" hidden>
+<input type="file" id="rim-log-file" accept=".jsonl,.json" hidden>
 
 <!-- 全片逐词重校对：Qwen3 对齐预览（勾选应用，只写逐词时间） -->
 <div id="realign-overlay" hidden>

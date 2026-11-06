@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';import vm from 'node:vm';import crypto from 'node:crypto';
 import {escapeHtml} from '../editor/js/util.js';
+import {captureLogScope} from '../editor/js/log-import.js';
 const source=fs.readFileSync(new URL('../editor/js/main.js',import.meta.url),'utf8');
 const block=source.slice(source.indexOf('let opLogPending ='),source.indexOf('/* 两个板块的切换 */',source.indexOf('let opLogPending =')));
 function setup(fetcher) {
   const elements=new Map(['oplog-view','oplog-empty','oplog-summary','oplog-cnt','btn-oplog-export','btn-oplog-more','oplog-export-format','log-pane-op'].map(id=>[id,{innerHTML:'',textContent:'',hidden:false,disabled:false,value:'csv',addEventListener(){},insertAdjacentHTML(pos,html){this.innerHTML+=html;}}]));
   const state={project:{id:'p-a',meta:{name:'稿件/测试'}}},requests=[],downloads=[],messages=[];
-  const ctx=vm.createContext({state,crypto,escapeHtml,Blob,AbortSignal,
+  const ctx=vm.createContext({state,crypto,escapeHtml,captureLogScope,Blob,AbortSignal,
     document:{getElementById:id=>elements.get(id),addEventListener(){}},window:{addEventListener(){}},
     navigator:{sendBeacon:()=>true},setTimeout:()=>1,clearTimeout(){},
     fetch:async(url,init={})=>{requests.push({url,init});return fetcher(url,init);},

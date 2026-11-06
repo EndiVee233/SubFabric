@@ -2379,6 +2379,21 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   max-height: 62vh;
   overflow-y: auto;
 }
+#rim-overlay.rim-log-mode .rn-box { width: min(1100px, 95vw); max-width: 95vw; max-height: 90vh; }
+#rim-overlay:not(.rim-log-mode) #rim-log-apply { display: none; }
+.rim-log-toggle, .rim-log-date { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.rim-log-date input { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+#rim-log-status { white-space: pre-wrap; color: var(--muted); font-size: 12px; }
+#rim-log-review { flex: 0 0 auto; }
+.rim-log-group { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 10px; }
+.rim-log-group > p { color: var(--muted); margin: 0 0 8px; font-size: 12px; }
+.rim-log-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.rim-log-row { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+.rim-log-row span { min-width: 0; }
+.rim-log-row small { color: var(--muted); font-variant-numeric: tabular-nums; }
+#rim-log-pager { display: flex; align-items: center; justify-content: center; gap: 12px; }
+#rim-log-controls[hidden], #rim-log-review[hidden], #rim-log-pager[hidden] { display: none; }
+@media (max-width: 650px) { .rim-log-columns { grid-template-columns: 1fr; } }
 /* 提示"现在可以去时间轴拖选区" */
 #rim-overlay .rim-hintbar {
   font-size: 12px; line-height: 1.5; color: var(--text-2);

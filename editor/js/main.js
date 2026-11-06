@@ -13,6 +13,8 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
+import { parseChangeLog, changedCues, localProtection, planLogImport, resolveLogImport,
+  captureLogScope, attachImportEvents, stageAssLogMerge } from './log-import.js';
 import { parseRegionTime } from '../region.js';
 // 逐词字幕修复：把"被清空/错位"的逐词文本搬回来（有 tests/repair-words-test.mjs）。
 // 用户实测过这种损坏：逐词行变空、文本连高亮标签一起跑到了同时间戳的另一行上。
@@ -2902,6 +2904,150 @@ let rimPlan = null;
 let rimSelTimer = 0;     // 盯着时间轴选区，拖完自动填（对话框不挡时间轴，用户随时能拖）
 let rimBusy = false;     // 正在写入（防止连点两次导入）
 
+// Log-assisted review is separate from the ordinary fill/replace controls.
+const rimLog = {
+  enabled: document.getElementById('rim-log-enabled'), file: document.getElementById('rim-log-file'),
+  pick: document.getElementById('rim-log-pick'), name: document.getElementById('rim-log-name'),
+  since: document.getElementById('rim-log-since'), prepare: document.getElementById('rim-log-prepare'),
+  apply: document.getElementById('rim-log-apply'), review: document.getElementById('rim-log-review'),
+  status: document.getElementById('rim-log-status'), pager: document.getElementById('rim-log-pager'),
+  prev: document.getElementById('rim-log-prev'), next: document.getElementById('rim-log-next'),
+};
+let rimLogHistory = null, rimLogGroups = null, rimLogSnapshot = '', rimLogProject = null;
+let rimLogPage = 0, rimLogGeneration = 0, rimLogReading = false;
+const rimLogSnapshotNow = () => state.format === 'ass' ? state.assDoc.serialize() : serializeSRT(state.srtCues);
+function rimLogInvalidate() {
+  rimLogGeneration++;
+  rimLogGroups = null;
+  rimLog.apply.disabled = true;
+  rimLog.review.hidden = true;
+  rimLog.pager.hidden = true;
+}
+function rimLogMode() {
+  rimLogInvalidate();
+  rimEls.overlay.classList.toggle('rim-log-mode', rimLog.enabled.checked);
+  document.getElementById('rim-log-controls').hidden = !rimLog.enabled.checked;
+  rimRecheck();
+}
+
+function rimLogRender() {
+  const groups = rimLogGroups || [], from = rimLogPage * 20;
+  rimLog.review.innerHTML = groups.slice(from, from + 20).map(g => {
+    const rows = (list, side, keep) => list.map(c => `<label class="rim-log-row"><input type="checkbox" data-group="${g.key}" data-side="${side}" data-row="${c.key}"${keep.has(c.key) ? ' checked' : ''}>`
+      + `<span><small>${fmtTime(c.start)} → ${fmtTime(c.end)}</small><br>${escapeHtml((c.lines || [c.l1, c.l2]).filter(Boolean).join('\n'))}</span></label>`).join('');
+    const why = g.protected ? '本稿有修改记录或历史定位不明，默认保留本稿' : g.partial ? '导入只覆盖本稿句子的一部分，请人工选择' : g.review ? '日志定位涉及多句，请人工核对' : '本稿没有相关修改记录，默认采用导入版';
+    return `<section class="rim-log-group"><p>${escapeHtml(why)}</p><div class="rim-log-columns"><div><b>SubFabric 本稿 · 勾选保留</b>${rows(g.current, 'current', g.keepCurrent) || '<p>此处没有本稿字幕</p>'}</div>`
+      + `<div><b>导入版本 · 勾选保留</b>${rows(g.incoming, 'incoming', g.keepIncoming)}</div></div></section>`;
+  }).join('');
+  rimLog.review.hidden = !groups.length;
+  rimLog.pager.hidden = !groups.length;
+  rimLog.prev.disabled = rimLogPage === 0;
+  rimLog.next.disabled = from + 20 >= groups.length;
+  document.getElementById('rim-log-page').textContent = `${rimLogPage + 1} / ${Math.max(1, Math.ceil(groups.length / 20))}`;
+  const chosen = resolveLogImport(groups);
+  rimLog.apply.textContent = `合并所选（导入 ${chosen.add.length} 句 / 移除本稿 ${chosen.remove.length} 句）`;
+  rimLog.apply.disabled = !chosen.add.length && !chosen.remove.length;
+}
+
+async function rimLogPrepare() {
+  if (rimLogReading || rimBusy) return;
+  rimLogInvalidate();
+  if (!rimLogHistory || !rimCues?.length) { rimLog.status.textContent = '请先选择字幕文件和操作日志'; return; }
+  const since = new Date(rimLog.since.value).getTime(), rg = rimReadRange();
+  if (!Number.isFinite(since)) { rimLog.status.textContent = '请选择修改发生的日期和时间'; return; }
+  if (!rg.ok) { rimLog.status.textContent = rg.error; return; }
+  panel.stashInlineEdit();
+  const generation = rimLogGeneration, project = state.project, snapshot = rimLogSnapshotNow();
+  rimLogReading = true; rimLog.prepare.disabled = true;
+  rimLog.status.textContent = '正在读取本稿日志并检查冲突…';
+  try {
+    if (!project) throw Error('请先把当前字幕保存为项目，才能核对本稿操作日志');
+    await flushOpLog();
+    const r = await fetch(`/api/projects/${project.id}/oplog`, { cache: 'no-store', signal: AbortSignal.timeout(30000) });
+    if (!r.ok) throw Error('读取本稿操作日志失败，已停止自动覆盖');
+    const j = await r.json(), protection = localProtection(j.entries);
+    if (generation !== rimLogGeneration || state.project !== project || snapshot !== rimLogSnapshotNow()) throw Error('本稿或导入条件已变化，请重新检查');
+    const selected = changedCues(rimCues, rimLogHistory, since);
+    const cues = selected.items.filter(c => c.end > rg.start && c.start < rg.end);
+    // Never replace a sentence crossing the chosen video range without explicit review.
+    for (const c of cues) if (c.start < rg.start || c.end > rg.end) c.uncertain = true;
+    const rows = state.items.map((it, key) => ({ key, start: it.start, end: it.end, l1: it.l1, l2: it.l2, item: it }));
+    rimLogGroups = planLogImport(cues, rows, protection);
+    rimLogSnapshot = snapshot; rimLogProject = project; rimLogPage = 0;
+    rimLog.status.textContent = `时间范围内 ${cues.length} 句有修改记录；${rimLogGroups.filter(g => g.review).length} 组需人工核对。`
+      + `未定位操作 ${selected.unresolved} 个，未匹配最终字幕 ${selected.unmatched} 个；本稿定位不明记录 ${protection.unknown} 条。`
+      + '删除操作不直接重放；请核对最终字幕。两边都勾选会同时保留，两边都取消会删除该处字幕。';
+    rimLogRender();
+  } catch (e) { rimLogInvalidate(); rimLog.status.textContent = e.message; }
+  finally { rimLogReading = false; rimLog.prepare.disabled = false; }
+}
+
+async function rimLogApply() {
+  if (!rimLogGroups || rimBusy) return;
+  panel.stashInlineEdit();
+  if (state.project !== rimLogProject || rimLogSnapshot !== rimLogSnapshotNow()) {
+    rimLogInvalidate(); rimLog.status.textContent = '本稿已变化，请重新检查后合并'; return;
+  }
+  const res = resolveLogImport(rimLogGroups);
+  if (!res.add.length && !res.remove.length) return;
+  rimBusy = true; rimLog.apply.disabled = true;
+  try {
+    // Stage a complete replacement document first. Failures cannot leave a partially deleted draft.
+    let doc = null, kar = null, srt = null;
+    if (state.format === 'ass') {
+      const events = [...new Set(res.remove.flatMap(c => [c.item.ref.zh, c.item.ref.en].filter(Boolean).flatMap(s => s.events)))];
+      doc = stageAssLogMerge(state.assDoc, events, res.add, {
+        zh: state.kar.sentences.find(s => s.style !== state.kar.wordStyle)?.style,
+        en: state.kar.wordStyle,
+      });
+      kar = analyzeKaraoke(doc); kar.rows = pairRows(kar.sentences, kar.wordStyle);
+    } else {
+      const remove = new Set(res.remove.map(c => c.item.ref));
+      srt = state.srtCues.filter(c => !remove.has(c)).concat(res.add.map(c => ({ start: c.start, end: c.end, lines: c.lines.slice() })))
+        .sort((a, b) => a.start - b.start).map((c, i) => ({ ...c, id: i + 1 }));
+    }
+    clearEditPreview(false); clearWordPreview(false); pendingPlaybackRows.clear();
+    if (doc) { state.assDoc = doc; state.kar = kar; assPlayer.updateNow(doc.serialize()); }
+    else { state.srtCues = srt; overlay.setCues(srt); }
+    state.selected = null;
+    rebuildItemsAndLanes(true, true); timeline.touch();
+    const ranges = [...res.add, ...res.remove].map(c => ({ start: c.start, end: c.end }));
+    logOp('import', '按日志合并字幕', `导入 ${res.add.length} 句，移除本稿 ${res.remove.length} 句`, '',
+      { version: 1, global: ranges.length > 32, ranges: ranges.length > 32 ? [] : ranges });
+    toast(`日志字幕合并完成：导入 ${res.add.length} 句，移除本稿 ${res.remove.length} 句`, 6000);
+    rimEls.overlay.hidden = true; rimLogInvalidate();
+  } catch (e) { rimLog.status.textContent = '日志字幕合并失败：' + e.message; rimLog.apply.disabled = false; }
+  finally { rimBusy = false; }
+}
+
+rimLog.enabled?.addEventListener('change', rimLogMode);
+rimLog.prepare?.addEventListener('click', rimLogPrepare);
+rimLog.apply?.addEventListener('click', rimLogApply);
+rimLog.pick?.addEventListener('click', () => rimLog.file.click());
+rimLog.since?.addEventListener('input', rimLogInvalidate);
+rimLog.file?.addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+  rimLogInvalidate(); rimLogHistory = null;
+  const generation = rimLogGeneration;
+  try {
+    if (file.size > 64 * 1024 * 1024) throw Error('操作日志超过 64 MB，请先按时间拆分');
+    const parsed = parseChangeLog(await file.text());
+    if (generation !== rimLogGeneration) return;
+    rimLogHistory = parsed; rimLog.name.textContent = `${file.name}（${parsed.ops} 个操作）`;
+    rimLog.status.textContent = `日志修改时间：${new Date(parsed.first).toLocaleString()} → ${new Date(parsed.last).toLocaleString()}。请选择截止时间后重新检查。`;
+  } catch (err) { rimLog.name.textContent = '日志未加载'; rimLog.status.textContent = err.message; }
+});
+rimLog.review?.addEventListener('change', e => {
+  const cb = e.target.closest('input[data-group]'); if (!cb || !rimLogGroups) return;
+  const group = rimLogGroups[Number(cb.dataset.group)], keep = cb.dataset.side === 'incoming' ? group.keepIncoming : group.keepCurrent;
+  if (cb.checked) keep.add(Number(cb.dataset.row)); else keep.delete(Number(cb.dataset.row));
+  const res = resolveLogImport(rimLogGroups);
+  rimLog.apply.textContent = `合并所选（导入 ${res.add.length} 句 / 移除本稿 ${res.remove.length} 句）`;
+  rimLog.apply.disabled = !res.add.length && !res.remove.length;
+});
+rimLog.prev?.addEventListener('click', () => { rimLogPage--; rimLogRender(); });
+rimLog.next?.addEventListener('click', () => { rimLogPage++; rimLogRender(); });
+
 /** 从 SRT / ASS 文本里取出「一行字幕 = 起止时间 + 主/副语言」，交给 region-merge 做判定 */
 function rimParseCues(text, name) {
   const isAss = /\.(ass|ssa)$/i.test(name || '');
@@ -2922,7 +3068,7 @@ function rimParseCues(text, name) {
     // 解析统计走 console.debug（带 ?debug 时浏览器控制台才显示），别每次导入都刷生产日志
     console.debug(`[rim] ASS 解析：${rows.length} 条 Dialogue → ${g.lines.length} 句`
       + `（逐词 ${g.stats.wordRows} 条 / 整句 ${g.stats.sentRows} 条，逐词样式 ${JSON.stringify(g.stats.wordStyles)}）`);
-    return g.lines;
+    return attachImportEvents(g.lines, doc);
   }
   const cues = parseSRT(text);
   return cues.map(c => ({ start: c.start, end: c.end, lines: c.lines }));
@@ -2945,6 +3091,13 @@ function rimReadRange() {
 
 /** 用当前区间重算计划并刷新预览 */
 function rimRecheck() {
+  if (rimLog.enabled?.checked) {
+    rimLogInvalidate();
+    rimEls.apply.hidden = true; rimEls.applyForce.hidden = true; rimEls.recheck.hidden = true;
+    rimEls.list.hidden = true; rimEls.summary.hidden = true;
+    return;
+  }
+  rimEls.apply.hidden = false;
   if (!rimCues) { rimEls.apply.disabled = true; rimEls.applyForce.hidden = true; return; }
   const rg = rimReadRange();
   if (!rg.ok) {
@@ -3085,6 +3238,8 @@ function healWordRows(where) {
 function rimOpen() {
   if (!state.format) { toast('先打开一份字幕', 3600); return; }
   rimCues = null; rimName = ''; rimPlan = null;
+  rimLog.enabled.checked = false; rimLogHistory = null; rimLog.since.value = '';
+  rimLog.name.textContent = '还没选'; rimLog.status.textContent = ''; rimLogMode();
   if (rimEls.fileName) { rimEls.fileName.textContent = '还没选'; rimEls.fileName.classList.remove('filled'); }
   if (rimEls.rangeNote) { rimEls.rangeNote.textContent = ''; rimEls.rangeNote.className = 'np-region-note'; }
   rimFillFromSel(true);
@@ -3254,6 +3409,7 @@ async function rimApply(force) {
 
 if (btnRegionImport) btnRegionImport.addEventListener('click', rimOpen);
 if (rimEls.cancel) rimEls.cancel.addEventListener('click', () => {
+  rimLogInvalidate();
   rimEls.overlay.hidden = true;
   if (rimSelTimer) { clearInterval(rimSelTimer); rimSelTimer = 0; }   // 停止盯选区
 });
@@ -3262,7 +3418,14 @@ if (rimEls.file) rimEls.file.addEventListener('change', async (e) => {
   const f = e.target.files[0];
   e.target.value = '';
   if (!f) return;
-  let text = await f.text();
+  rimLogInvalidate();
+  const generation = rimLogGeneration;
+  rimCues = null; rimName = '';
+  rimEls.fileName.textContent = '正在读取字幕文件…';
+  let text;
+  try { text = await f.text(); }
+  catch (err) { if (generation === rimLogGeneration) rimShowSummary('读取字幕文件失败：' + err.message, true); return; }
+  if (generation !== rimLogGeneration) return;
   // 带特效的导出行会污染解析（与创建页导入同一处理）
   if (/\.(ass|ssa)$/i.test(f.name)) {
     const { text: cleanedText } = stripEffectTagsSafe(text);
@@ -4072,9 +4235,11 @@ timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
   }
 };
 
+const opRetimeOrigins = new WeakMap();
 timeline.onRetime = (row, s, e, done, shift) => {
   const item = state.itemByRef.get(row);
   if (!item) return;
+  if (!opRetimeOrigins.has(row)) opRetimeOrigins.set(row, { start: item.start, end: item.end });
   item.start = s; item.end = e;
   if (state.format === 'srt') {
     row.start = s; row.end = e;
@@ -4095,7 +4260,9 @@ timeline.onRetime = (row, s, e, done, shift) => {
   if (state.selected === item) panel.select(item, false);
   if (!done) return;
   /* 拖动字幕块调整起止时间也进操作日志；只记被调整的句子。 */
-  logOp('adjust', `第 ${item.no || row.no || '?'} 条`);
+  const origin = opRetimeOrigins.get(row); opRetimeOrigins.delete(row);
+  logOp('adjust', `第 ${item.no || row.no || '?'} 条`, '', '',
+    { version: 1, global: false, ranges: [origin, { start: s, end: e }].filter(r => r && r.end > r.start) });
 
   // 按住 Shift 拖出的重叠 → 涉及的行一律去掉逐词(整句化), 避免两句话的高亮糊在一起。
   // 去逐词前已预留词级时间轴(见 deKaraokeRow); 该句被「拉回」不再与其它字幕重叠时,
@@ -4370,8 +4537,11 @@ panel.onApply = ({ item: editItem, start, end, dur, text, switching = false }) =
   let timeChanged = false;
   if (item.kind === 'srt') {
     const cue = item.ref;
+    const oldStart = cue.start, oldEnd = cue.end, oldText = cue.lines.join('\n');
     cue.start = s; cue.end = e;
     cue.lines = text.replace(/\r\n?/g, '\n').split('\n');
+    if (oldStart !== s || oldEnd !== e || oldText !== cue.lines.join('\n')) logOp('edit', `第 ${item.no} 条`, '编辑 SRT 字幕', '',
+      { version: 1, global: false, ranges: [{ start: oldStart, end: oldEnd }, { start: s, end: e }] });
     state.srtCues.sort((a, b) => a.start - b.start || a.end - b.end);
     state.srtCues.forEach((c, i) => c.id = i + 1);
     overlay.setCues(state.srtCues);
@@ -5005,6 +5175,9 @@ function removeItemData(item, refreshPreview = true) {
 function deleteItem(item, silent) {
   if (!item) return;
   if (!removeItemData(item)) return;
+  if (!silent) logOp('delete', `第 ${item.no || '?'} 条 ${fmtTime(item.start)}~${fmtTime(item.end)}`,
+    `删除字幕：${String(item.l2 || item.l1 || '').slice(0, 60)}`, '',
+    { version: 1, global: false, ranges: [{ start: item.start, end: item.end }] });
   state.selected = null;
   rebuildItemsAndLanes(true, true);
   toast(silent ? '未输入内容，已撤销这条新字幕' : '已删除 #' + item.no);
@@ -5016,10 +5189,6 @@ panel.onEmptyNew = (item) => deleteItem(item, true);
 timeline.onDelete = (ref) => {
   const it = state.itemByRef.get(ref);
   deleteItem(it);
-  if (it) {
-    logOp('delete', `第 ${it.no || '?'} 条 ${fmtTime(it.start)}~${fmtTime(it.end)}`,
-      `删除字幕："${String(it.l2 || it.l1 || '').slice(0, 60)}"`, '用户在时间轴上右键删除');
-  }
 };
 
 /* ─────────── 时间轴批量选区(Ctrl+左键在轨道上拖动框选 → 批量删除) ─────────── */
@@ -8030,9 +8199,9 @@ let opLogFlushTimer = 0;
 let opLogFlushPromise = null;
 
 /** 记一条用户操作。detail = 做了什么，why = 为什么/依据。失败静默（日志不该挡住编辑）。 */
-function logOp(action, target, detail, why) {
+function logOp(action, target, detail, why, scope) {
   if (!state.project) return;     // 非项目模式没有地方存
-  const entry = { id: crypto.randomUUID(), action: String(action || '').slice(0, 60),
+  const entry = { id: crypto.randomUUID(), scope: scope || captureLogScope(target, detail, why, state.items), action: String(action || '').slice(0, 60),
     target: String(target || '').slice(0, 120), detail: String(detail || '').slice(0, 400), why: String(why || '').slice(0, 400) };
   opLogPending.push({ pid: state.project.id, entry });
   if (opLogPending.length >= 20) return flushOpLogQuietly();

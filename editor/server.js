@@ -332,7 +332,7 @@ const STATIC_RESOURCES = new Set([
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'zip', 'glossary-review', 'storage', 'style-preset'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'log-import'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
@@ -4537,8 +4537,18 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
       for (const entry of entries) {
         const eid = String((entry && entry.id) || '').slice(0, 80);
         if (eid && ids.has(eid)) continue; // 请求重试 / 关闭页面补发不重复计数
+        const rawScope = entry && entry.scope;
+        let scope;
+        if (rawScope && rawScope.version === 1) {
+          const ranges = Array.isArray(rawScope.ranges) ? rawScope.ranges : [];
+          const valid = ranges.filter(r => r && typeof r.start === 'number' && typeof r.end === 'number'
+            && Number.isFinite(r.start) && Number.isFinite(r.end) && r.start >= 0 && r.end > r.start);
+          const global = rawScope.global === true || !valid.length || ranges.length > 32 || valid.length !== ranges.length;
+          scope = { version: 1, global, ranges: global ? [] : valid.map(r => ({ start: r.start, end: r.end })) };
+        }
         list.push({
           ...(eid ? { id: eid } : {}), t: new Date().toISOString(),
+          ...(scope ? { scope } : {}),
           action: String((entry && entry.action) || '').slice(0, 60),
           target: String((entry && entry.target) || '').slice(0, 120),
           detail: String((entry && entry.detail) || '').slice(0, 400),
