@@ -124,6 +124,17 @@
 
 ## 3. 后端与数据流
 
+- **下载登录态隔离与 Chromium Cookie 故障（2026-11-06，已完成且已验证：定向范围）**：
+  `prepareFetchCookies` 统一链接解析和实际下载的认证选择；B 站只用 B 站 Cookie，YouTube 优先使用导入的
+  Netscape 文件，否则用所选浏览器。修复已保存 B 站 Cookie 时误覆盖 YouTube 浏览器来源的问题。
+  YouTube 导入经 `normalizeYoutubeCookies` 校验（256KB、7 列、域/字段/控制字符），只保留 YouTube/Google
+  相关域，密文写 `fetch.youtubeCookiesEnc`；GET 只回是否保存和时间。明文不进 argv，按请求写随机目录，
+  成功/失败后清理；不读取测试机真实浏览器数据库、不关闭浏览器或改浏览器保护设置。
+  Python 只在明确的浏览器 Cookie 复制/解密故障时对 YouTube 未登录重试一次，保留格式/代理/下载模式。
+  显式 cookies.txt、不相关 HTTP 错误不重试；登录资源未登录仍失败时给中文操作提示。
+  logger 不再提前发 error 事件，最终失败统一由异常分支输出，避免重试成功仍被 Node 判失败。
+  成功返回 `meta.cookieWarning`，probe 转为顶层 warning 供两个链接解析入口提示本次使用未登录方式。
+
 - **初稿逐词偏好**：本地、链接与已有项目创建统一由 `draftKaraokeOptions` 校验并保存
   `meta.draft.karaokeStyle/karaokeSweep/karaokeBase`；写字幕时读取同一份项目偏好，
   k 走单事件、kf 走扫过标签，有词时间的短初稿保持该形态，无词时间的句子保留整句。
@@ -320,6 +331,17 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **下载与登录（2026-11-06，已完成且已验证：定向范围）**：YouTube 卡片增加 cookies.txt 导入/清除与
+  加密保存状态，原 Chrome/Edge/Firefox 来源保留；说明数据库占用/解密限制与未登录重试行为。
+  导入使用浏览器文件框，读取后只经设置 POST 发送，清空 input，不回显内容；保存失败不报成功、B 站输入保留。
+  本次 5 组定向 JS 回归全部通过；新增 Python 重试 4 用例、原下载格式 65 断言及入口边界 4 用例通过。
+  首次 Python 用例在系统临时目录清理遇权限错误，改用工作区隔离临时目录后通过。
+  ESLint 0 error / 20 个既有 warning，相关 JS 语法检查通过。隔离 Chromium 用合成 Cookie 验证
+  Chrome/Edge 选择保存、文件导入、密文落盘、公开接口不回传内容、重开与清除，无运行时异常；
+  报告 `_test/maintenance/cookie-browser-20261106.json`（本机生成，不入库）。
+  Chrome/Edge 锁库和 DPAPI 故障通过构造 yt-dlp 返回复现；未使用真实账号或真实 YouTube 下载验收，
+  不声称能够直接读取仍被锁定/受应用绑定加密保护的数据库；登录资源可使用导入入口。未全量回归或重打包。
 
 - **词高亮终点与连续性转换（2026-11-06，已完成且已验证：定向范围）**：逐词轴增加较暗的结束拖柄，
   起点在上、终点在下；两个边界同一时刻仍可独立命中，首词起点沿用块左边缘下半区。

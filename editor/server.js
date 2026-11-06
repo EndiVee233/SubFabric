@@ -4776,6 +4776,11 @@ function fetchSettings() {
     }
   }
   f.__biliCookiePlain = plain;
+  f.__youtubeCookiesPlain = '';
+  if (f.youtubeCookiesEnc) {
+    try { f.__youtubeCookiesPlain = secretStore.decrypt(String(f.youtubeCookiesEnc)); }
+    catch { /* 不回显密文或 Cookie；前端提示重新导入。 */ }
+  }
   return f;
 }
 function patchFetchSettings(patch) {
@@ -4796,6 +4801,8 @@ function fetchPublicSettings() {
     proxy: f.proxy || '',
     cookiesFromBrowser: f.cookiesFromBrowser || '',
     hasBiliCookie: !!ck,
+    hasYoutubeCookies: !!f.__youtubeCookiesPlain,
+    youtubeCookiesSavedAt: f.youtubeCookiesSavedAt || '',
     biliCookieKeys: keys.slice(0, 12),
     biliCookieSavedAt: f.biliCookieSavedAt || '',
     biliCookieEnc: !!f.biliCookieEnc,                 // 磁盘上是密文（不是明文躺着）
@@ -4807,6 +4814,44 @@ function fetchPublicSettings() {
 /** 把 `k=v; k2=v2`（或 JSON）写成 yt-dlp 吃的 Netscape cookies.txt ——
  *  与 asr/fetch/bilibili.py 的 write_netscape 同格式。**下载时不再把明文 Cookie 放命令行**
  *  （命令行在进程列表里谁都能看），改为落到项目目录的 cookie 文件。 */
+function normalizeYoutubeCookies(text) {
+  const rows = [];
+  for (const raw of String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    if (!raw.trim() || (raw.startsWith('#') && !raw.startsWith('#HttpOnly_'))) continue;
+    const fields = raw.split('\t');
+    const domain = String(fields[0] || '').replace(/^#HttpOnly_/, '').replace(/^\./, '').toLowerCase();
+    // 导出文件可能带其它站点，只保存下载 YouTube 所需的域。
+    if (!['youtube.com', 'google.com', 'youtu.be', 'googlevideo.com'].some(d => domain === d || domain.endsWith('.' + d))) continue;
+    if (fields.length !== 7 || !/^(TRUE|FALSE)$/.test(fields[1]) || !fields[2].startsWith('/')
+      || !/^(TRUE|FALSE)$/.test(fields[3]) || !/^\d+$/.test(fields[4]) || !fields[5]
+      || fields.some(value => /[\u0000-\u001f\u007f]/.test(value))) {
+      throw new Error('cookies.txt 格式错误，请导出 Netscape 格式的 YouTube Cookie 文件');
+    }
+    rows.push(fields.join('\t'));
+  }
+  if (!rows.length) throw new Error('文件中没有 YouTube Cookie，请导出 Netscape 格式的 cookies.txt');
+  return '# Netscape HTTP Cookie File\n' + rows.join('\n') + '\n';
+}
+
+/** 解析与实际下载共用的站点登录态选择；明文只写随机临时文件，用完清理。 */
+function prepareFetchCookies(url, f, root) {
+  const site = fetchSiteOf(url);
+  const text = site === 'bilibili' ? String(f.__biliCookiePlain || f.biliCookie || '')
+    : site === 'youtube' ? String(f.__youtubeCookiesPlain || '') : '';
+  if (!text) return { args: site === 'youtube' && f.cookiesFromBrowser
+    ? ['--cookies-from-browser', String(f.cookiesFromBrowser)] : [], dir: '' };
+  const dir = fs.mkdtempSync(path.join(root, 'sf-fetch-ck-'));
+  const file = path.join(dir, 'cookies.txt');
+  try {
+    if (site === 'youtube') fs.writeFileSync(file, text, { encoding: 'utf8', mode: 0o600 });
+    else if (!writeNetscapeCookieFile(text, file)) throw new Error('Cookie 写入临时文件失败');
+    return { args: ['--cookies-file', file], dir };
+  } catch (e) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw e;
+  }
+}
+
 function writeNetscapeCookieFile(cookieText, dest, domain) {
   const src = String(cookieText || '').trim();
   const pairs = [];
@@ -5053,30 +5098,21 @@ async function startFetchJob(id, opts) {
   if (f.proxy) args.push('--proxy', String(f.proxy));
   // Cookie: 明文**不放命令行**（进程列表里谁都能看到），落成项目目录里的 Netscape 文件传过去。
   // 这份文件提前写成、传给下载内核；下载结束即删（见本函数下面的 unlink），明文不长期留盘。
-  const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
-  if (ckPlain) {
-    const ckFile = path.join(projDir(id), '_bili_cookies.txt');
-    // Cookie 明文**绝不进命令行**(argv 在 Windows 上可被同用户任意进程经 WMI
-    // Win32_Process.CommandLine 读到, 进程列表里谁都能看到)。写 Netscape 文件失败就
-    // 直接终止任务并报错, 不做 argv 兜底 —— 静默丢 Cookie 会让会员视频下载失败,
-    // argv 兜底则是泄密面, 两者都不可接受; 报错让用户检查磁盘/路径是唯一正确解。
-    if (!writeNetscapeCookieFile(ckPlain, ckFile)) {
-      return finishDraft(id, new Error('Cookie 写入临时文件失败（检查项目目录磁盘与权限），已取消下载以避免明文进进程列表'), { failedStage: FETCH_STAGE });
-    }
-    args.push('--cookies-file', ckFile);
-  } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
+  const auth = prepareFetchCookies(opts.url, f, projDir(id));
+  args.push(...auth.args);
   if (FFMPEG && FFMPEG !== 'ffmpeg') args.push('--ffmpeg', FFMPEG);
   pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [下载] ' + fetchSiteOf(opts.url)
     + ' · 档位 ' + quality + (part > 1 ? ' · 分P ' + part : '') + ' · ' + opts.url);
 
-  const r = await runFetchCli(id, args, (ev) => {
-    const p = Math.max(0, Math.min(100, ev.progress));
-    setDraft(id, { stage: FETCH_STAGE, progress: 2 + Math.round(p * 0.24), message: ev.msg || '下载中 …' });
-  });
-
-  // 明文 cookie 文件用完即删: DPAPI 加密落盘的意义就是明文不长期留盘。
-  // 下载内核已退出不会再读它; 文件不存在时 unlink 抛错被吞。
-  try { fs.unlinkSync(path.join(projDir(id), '_bili_cookies.txt')); } catch {}
+  let r;
+  try {
+    r = await runFetchCli(id, args, (ev) => {
+      const p = Math.max(0, Math.min(100, ev.progress));
+      setDraft(id, { stage: FETCH_STAGE, progress: 2 + Math.round(p * 0.24), message: ev.msg || '下载中 …' });
+    });
+  } finally {
+    if (auth.dir) { try { fs.rmSync(auth.dir, { recursive: true, force: true }); } catch {} }
+  }
 
   if (r.error || !r.done || !r.done.file) {
     return finishDraft(id, new Error(r.error || '下载没有产出文件（检查链接、登录态或画质档位）'), { failedStage: FETCH_STAGE });
@@ -9343,29 +9379,21 @@ function handleFetchRoutes(req, res, u) {
         const args = ['--url', url, '--out', os.tmpdir(), '--simulate'];
         if (part > 1) args.push('--part', String(part));
         if (f.proxy) args.push('--proxy', String(f.proxy));
-        const ckPlain = String(f.__biliCookiePlain || f.biliCookie || '');
-        let probeDir = '';
+        const auth = prepareFetchCookies(url, f, os.tmpdir());
+        args.push(...auth.args);
         let r;
         try {
-          if (ckPlain) {
-            // 明文 cookie 落**随机目录**（mkdtemp）而非固定名文件：固定名（如
-            // sf-probe-cookies.txt）路径可预测，同机其它进程可抢占/替换；放在
-            // finally 里 rmSync 整目录，进程崩溃前的异常路径也能删干净。
-            probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sf-probe-ck-'));
-            const probeCkFile = path.join(probeDir, 'cookies.txt');
-            if (writeNetscapeCookieFile(ckPlain, probeCkFile)) args.push('--cookies-file', probeCkFile);
-          } else if (f.cookiesFromBrowser) args.push('--cookies-from-browser', String(f.cookiesFromBrowser));
           // id 用 '__probe__'(不存在的项目): pushDraftLog 写不进去会被静默吞掉, 不会污染真项目
           r = await runFetchCli('__probe__', args, () => {});
         } finally {
-          if (probeDir) { try { fs.rmSync(probeDir, { recursive: true, force: true }); } catch {} }   // 明文 cookie 用完即删, 不留 %TEMP%
+          if (auth.dir) { try { fs.rmSync(auth.dir, { recursive: true, force: true }); } catch {} }
         }
         if (r.error) return sendJson(res, 400, { error: r.error });
         const m = (r.done && r.done.meta) || null;
         if (!m || (!m.title && !m.id)) {
           return sendJson(res, 400, { error: '没解析到视频信息（检查链接、登录态或代理）' });
         }
-        return sendJson(res, 200, { source: {
+        return sendJson(res, 200, { warning: m.cookieWarning || '', source: {
           url: m.url || url, site: m.source || site, id: m.id || '',
           title: m.title || '', description: m.description || '', uploader: m.uploader || '',
           duration: m.duration || 0, uploadDate: m.uploadDate || '', tags: m.tags || [],
@@ -9378,12 +9406,21 @@ function handleFetchRoutes(req, res, u) {
   }
 
   if (pathname === '/api/fetch/settings' && req.method === 'POST') {
-    return readBody(req, res, 64 * 1024, async (err, body) => {
+    return readBody(req, res, 512 * 1024, async (err, body) => {
       try {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let d = null;
       try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       const patch = {};
+      if (d.youtubeCookies !== undefined) {
+        const raw = String(d.youtubeCookies || '');
+        if (Buffer.byteLength(raw, 'utf8') > 256 * 1024) return sendJson(res, 400, { error: 'Cookie 文件过大，请只导出 YouTube 站点的 cookies.txt（最多 256KB）' });
+        let text;
+        try { text = raw.trim() ? normalizeYoutubeCookies(raw) : ''; }
+        catch (e) { return sendJson(res, 400, { error: e.message }); }
+        patch.youtubeCookiesEnc = text ? secretStore.encrypt(text) : '';
+        patch.youtubeCookiesSavedAt = text ? new Date().toISOString() : '';
+      }
       if (d.quality !== undefined) patch.quality = String(d.quality || 'best');
       if (d.proxy !== undefined) patch.proxy = String(d.proxy || '').trim();
       if (d.cookiesFromBrowser !== undefined) patch.cookiesFromBrowser = String(d.cookiesFromBrowser || '').trim();

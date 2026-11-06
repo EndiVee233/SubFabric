@@ -177,9 +177,40 @@ def make_logger():
             log(str(msg))
 
         def error(self, msg):
-            emit({"type": "error", "msg": str(msg)})
+            # 最终错误由异常分支统一输出；重试成功时不能残留 error 事件。
+            pass
 
     return _L()
+
+
+def browser_cookie_error(exc):
+    message = str(exc).lower()
+    return (("could not copy" in message and "cookie database" in message)
+            or "failed to decrypt with dpapi" in message
+            or ("cookie" in message and ("database is locked" in message or "app-bound" in message)))
+
+
+def extract_with_cookie_retry(yt_dlp, opts, url, download):
+    """浏览器数据库被锁/不能解密时，为公开 YouTube 资源尝试一次未登录解析。"""
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=download), ''
+    except Exception as exc:
+        if not opts.get('cookiesfrombrowser') or opts.get('cookiefile') or not browser_cookie_error(exc):
+            raise
+        hint = ('Chrome/Edge Cookie 数据库被占用或无法解密。需要登录的视频，请完全退出浏览器'
+                '（含后台进程）后重试，或在「设置 → 下载与登录」导入 YouTube cookies.txt。')
+        if sel.site_of(url) != 'youtube':
+            raise RuntimeError(hint) from None
+        log('浏览器 Cookie 读取失败，正在不使用登录态重试公开 YouTube 链接…')
+        retry = dict(opts)
+        retry.pop('cookiesfrombrowser', None)
+        try:
+            with yt_dlp.YoutubeDL(retry) as ydl:
+                info = ydl.extract_info(url, download=download)
+            return info, '本次使用未登录方式解析/下载。' + hint
+        except Exception:
+            raise RuntimeError(hint + '未登录重试也未成功，请检查链接、代理或导入登录态后重试。') from None
 
 
 def main(argv=None) -> int:
@@ -230,7 +261,8 @@ def main(argv=None) -> int:
         created_cookie_file = cookies_file               # 本函数自己落盘的明文文件, 收尾必删
     try:
         log("Cookie: " + (bili.describe_login(cookies) if site == "bilibili"
-                         else ("使用浏览器 Cookie（%s）" % a.cookies_from_browser if a.cookies_from_browser else "未提供 Cookie")))
+                         else ("使用导入的 YouTube Cookie 文件" if cookies_file and cookies_file.exists()
+                               else ("使用浏览器 Cookie（%s）" % a.cookies_from_browser if a.cookies_from_browser else "未提供 Cookie"))))
 
         # ── yt-dlp 本体: 没有就从 PyPI 下官方 wheel 解到 asr/ytdlp ──
         ok, why = ytdlp_mod.ensure()
@@ -312,15 +344,14 @@ def main(argv=None) -> int:
             log("代理: " + a.proxy)
         if cookies_file and Path(cookies_file).exists():
             opts["cookiefile"] = str(cookies_file)
-        if a.cookies_from_browser:
+        elif a.cookies_from_browser:
             opts["cookiesfrombrowser"] = (a.cookies_from_browser,)
         if a.timeout:
             opts["socket_timeout"] = a.timeout
 
         emit({"type": "progress", "pct": 1, "msg": "解析链接中 …"})
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=not a.simulate)
+            info, cookie_warning = extract_with_cookie_retry(yt_dlp, opts, url, not a.simulate)
         except Exception as exc:
             emit({"type": "error", "msg": "%s: %s" % (type(exc).__name__, exc)})
             return 4
@@ -354,6 +385,7 @@ def main(argv=None) -> int:
             final_path = cands[0][1] if cands else ""
 
         meta = {
+            "cookieWarning": cookie_warning,
             "source": site,
             "url": url,
             "id": info.get("id") or "",

@@ -481,6 +481,7 @@ export function initProjects(ctx) {
       if (!r.ok || m.error) throw new Error(m.error || ('HTTP ' + r.status));
       const source = m.source || null;
       if (!source) throw new Error('没有读到标题/作者/封面');
+      if (m.warning) toast(m.warning, 8500);
       const name = (detailName.value || '').trim();
       if (!name) throw new Error('项目名称为空，先填写项目名称');
       const save = await fetch(`/api/projects/${encodeURIComponent(id)}/info`, {
@@ -4541,6 +4542,11 @@ async function renderAsrModels(providedStatus = null) {
       if ($('#st-fetch-quality')) $('#st-fetch-quality').value = d.quality || 'best';
       if ($('#st-fetch-proxy')) $('#st-fetch-proxy').value = d.proxy || '';
       if ($('#st-fetch-browser')) $('#st-fetch-browser').value = d.cookiesFromBrowser || '';
+      const youtubeNote = $('#st-fetch-youtube-note');
+      if (youtubeNote) youtubeNote.textContent = d.hasYoutubeCookies
+        ? '已加密保存 YouTube Cookie；将优先使用导入的登录态，登录是否有效以实际解析为准。'
+        : '未保存 YouTube cookies.txt；可导入浏览器导出的 Netscape Cookie 文件，避开 Chrome / Edge 数据库读取限制。';
+      if ($('#st-fetch-youtube-clear')) $('#st-fetch-youtube-clear').disabled = !d.hasYoutubeCookies;
       const note = $('#st-fetch-cookie-note');
       if (note) {
         note.textContent = cookieNote(d, null);
@@ -4729,6 +4735,7 @@ async function renderAsrModels(providedStatus = null) {
     try {
       const r = await fetch('/api/fetch/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
       const d = await r.json().catch(() => null);
+      if (!r.ok) { toast((d && d.error) || '保存失败', 5000); return null; }
       if (d && d.check) {
         const note = $('#st-fetch-cookie-note');
         if (note) note.textContent = cookieNote(d, d.check);
@@ -4748,6 +4755,7 @@ async function renderAsrModels(providedStatus = null) {
     const note = $('#st-fetch-cookie-note');
     if (note) note.textContent = '已保存，正在验证登录 …';
     const d = await saveFetchSettings({ biliCookie: v });
+    if (!d) return;
     document.getElementById('st-fetch-cookie').value = '';
     if (d && d.check) {
       toast(d.check.isLogin ? ('✓ ' + d.check.message) : ('✗ ' + d.check.message), d.check.isLogin ? 4200 : 6000);
@@ -4757,7 +4765,29 @@ async function renderAsrModels(providedStatus = null) {
     if (d && d.cookieFixed && note) note.title = '你只贴了 SESSDATA 的值，已按 SESSDATA=… 保存';
   });
   const cookieClearBtn = document.getElementById('st-fetch-cookie-clear');
-  if (cookieClearBtn) cookieClearBtn.addEventListener('click', () => { saveFetchSettings({ biliCookie: '' }); toast('已清除 bilibili Cookie', 3000); });
+  if (cookieClearBtn) cookieClearBtn.addEventListener('click', async () => {
+    if (await saveFetchSettings({ biliCookie: '' })) toast('已清除 bilibili Cookie', 3000);
+  });
+  const youtubeFile = $('#st-fetch-youtube-file'), youtubeImport = $('#st-fetch-youtube-import');
+  if (youtubeImport && youtubeFile) youtubeImport.addEventListener('click', () => youtubeFile.click());
+  if (youtubeFile) youtubeFile.addEventListener('change', async () => {
+    const file = youtubeFile.files && youtubeFile.files[0];
+    try {
+      if (!file) return;
+      if (file.size > 256 * 1024) { toast('Cookie 文件过大，请只导出 YouTube 站点的 cookies.txt（最多 256KB）', 5000); return; }
+      const text = await file.text();
+      if (!text.trim()) { toast('Cookie 文件为空', 4000); return; }
+      if (youtubeImport) youtubeImport.disabled = true;
+      const d = await saveFetchSettings({ youtubeCookies: text });
+      if (d) toast('已加密保存 YouTube Cookie', 3500);
+    } catch { toast('Cookie 文件读取失败，请重新选择', 4000); }
+    finally { youtubeFile.value = ''; if (youtubeImport) youtubeImport.disabled = false; }
+  });
+  const youtubeClear = $('#st-fetch-youtube-clear');
+  if (youtubeClear) youtubeClear.addEventListener('click', async () => {
+    const d = await saveFetchSettings({ youtubeCookies: '' });
+    if (d) toast('已清除 YouTube Cookie', 3000);
+  });
   // 编辑器工具栏也有一个设置入口(同一套面板)
   const edSettingsBtn = document.getElementById('btn-settings-ed');
   if (edSettingsBtn) edSettingsBtn.addEventListener('click', openSettings);
@@ -5824,6 +5854,7 @@ async function renderAsrModels(providedStatus = null) {
         return;
       }
       const src = m.source || null;
+      if (m.warning) toast(m.warning, 8500);
       npProbeSource = { url, part, source: src };
       const ok = fillPreview('np', src);
       setNpBadge(ok ? '已解析' : '没读到信息', ok ? 'ok' : 'muted');

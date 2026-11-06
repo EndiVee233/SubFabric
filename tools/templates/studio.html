@@ -2110,7 +2110,13 @@
               <option value="firefox">Firefox</option>
             </select>
           </div>
-          <p class="gl-hint">需要先在该浏览器里登录 YouTube；程序用 yt-dlp 的 --cookies-from-browser 读取。</p>
+          <p class="gl-hint">需要先在该浏览器里登录 YouTube。Chrome / Edge 可能锁定 Cookie 数据库或限制解密；可完全退出浏览器后重试，或导入 cookies.txt。读取失败时会尝试以未登录方式解析公开链接。</p>
+          <div class="st-row">
+            <input type="file" id="st-fetch-youtube-file" accept=".txt,text/plain" hidden>
+            <button type="button" class="btn btn-mini btn-accent" id="st-fetch-youtube-import">导入 YouTube cookies.txt</button>
+            <button type="button" class="btn btn-mini" id="st-fetch-youtube-clear">清除 YouTube Cookie</button>
+          </div>
+          <p class="gl-hint" id="st-fetch-youtube-note">可导入浏览器导出的 Netscape cookies.txt；加密保存在本机，不回显。导入的 Cookie 优先于浏览器读取。</p>
         </div>
       </div>
       <!-- LLM 真实配置在下面独立翻译分类中，保存链路与旧UI共用。 -->
