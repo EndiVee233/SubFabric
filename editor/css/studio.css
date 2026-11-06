@@ -1268,7 +1268,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 #tl-canvas-wrap { flex: 1; min-height: 0; position: relative; }
-#timeline { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; }
+#timeline { position: absolute; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; user-select: none; }
 
 /* 「日志」页: 服务端运行日志实时流(SSE) */
 .log-toolbar { display: flex; align-items: center; gap: 10px; padding: 0 4px 8px; }

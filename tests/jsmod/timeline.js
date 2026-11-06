@@ -409,6 +409,9 @@ export class Timeline {
     this.kStyleLabel = null;  // 菜单文案提供者: () => '切换为 \k 卡拉OK' | '切回颜色高亮'
     this.isEditable = null;
     this._drag = null;
+    this._pointerId = null;
+    this._pointerType = null;
+    this._touchEditRef = null;    // 触屏先轻点选中，再次触摸同一块才允许编辑
     this._filmRotate = 0;
     this._viewReady = false;      // 是否已按"默认跨度"摆好视图
     this._viewFromLanes = false;  // 默认视图是否已按真实字幕范围算过
@@ -671,6 +674,7 @@ export class Timeline {
       for (const c of lane.cues) { m = Math.max(m, c.end); c._maxEnd = m; }
       return lane;
     });
+    if (this._touchEditRef && !this.lanes.some(l => l.cues.some(c => c.ref === this._touchEditRef))) this._touchEditRef = null;
     // 载入新文件后按"默认跨度"摆一次视图; 之后的增删改重建不动用户视角
     const hasRange = this._refreshRange();
     if (hasRange && !this._viewFromLanes) {
@@ -712,7 +716,10 @@ export class Timeline {
     }
   }
 
-  setSelected(ref) { this.selected = ref; this._dirty = true; }
+  setSelected(ref) {
+    if (this._touchEditRef !== ref) this._touchEditRef = null;
+    this.selected = ref; this._dirty = true;
+  }
 
   _notifyRange() { if (this.onRangeSelect) this.onRangeSelect(this.rangeSel); }
 
@@ -1027,24 +1034,44 @@ export class Timeline {
     cv.addEventListener('wheel', (e) => {
       e.preventDefault();
       this._hideMenu();
-      const dir = e.deltaY < 0 ? 1 : -1;        // 上滚为正
+      const delta = e.deltaY || e.deltaX;
+      if (!delta) return;
+      const dir = delta < 0 ? 1 : -1;          // 纵向鼠标滚轮沿用上滚为正
       if (e.ctrlKey || e.metaKey) {
         /* 按滚动量缩放：鼠标一格 ≈ 100 会得到完整的 zoomSensitivity；触控板的小 delta
          * 按比例打折，不会"一格没滚完就跳到底"，也不会因为事件密集而抽搐。 */
-        const mag = Math.min(1.5, Math.max(0.3, Math.abs(e.deltaY) / 120));
+        const mag = Math.min(1.5, Math.max(0.3, Math.abs(delta) / 120));
         const f = Math.pow(this.zoomSensitivity, dir > 0 ? mag : -mag);
         this._zoomAtSmooth(e.offsetX, f);
+      } else if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        // 触控板横滑按带符号的实际距离平移，不能用 deltaY=0 推断方向。
+        const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this._cssW() : 1;
+        this._panBy(e.deltaX * unit * this.panSensitivity / 120);
       } else this._panBy(dir * this.panSensitivity);   // 下滚 dir=-1 → 负 → 看更早
     }, { passive: false });
 
     cv.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;               // 右键交给 contextmenu
+      if (e.pointerType === 'touch' && (e.isPrimary === false || this._drag)) return;
+      this._pointerId = e.pointerId;
+      this._pointerType = e.pointerType;
+      if (e.pointerType === 'touch') e.preventDefault();
       this._dirty = true;                       // 按下即重绘: 选中/菜单状态可能变化
       this._hideMenu();
       this._hideEdgeHint();
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 合成事件无捕获 */ }
       const x = e.offsetX, y = e.offsetY;
       const onLane = this._laneIndexAtY(y) !== -1;
+
+      if (e.pointerType === 'touch') {
+        const hit = onLane ? (this._hitWordHandle(x, y) || this._hitTest(x, y, true)) : null;
+        if (!hit || this._touchEditRef !== hit.cue.ref || (this.isEditable && !this.isEditable(hit.cue.ref))) {
+          this._touchEditRef = null;
+          this.clearRangeSel();
+          this._drag = { type: 'pan', x0: x, y0: y, lastX: x, cue: hit && hit.cue, moved: false };
+          return;
+        }
+      }
 
       // Ctrl(或 Cmd)+左键在轨道上拖动 = **批量选区**(框出一段时间; 松手后出"批量删除"浮条)
       if ((e.ctrlKey || e.metaKey) && onLane) {
@@ -1122,6 +1149,7 @@ export class Timeline {
     });
 
     cv.addEventListener('pointermove', (e) => {
+      if (this._drag && this._pointerId != null && e.pointerId !== this._pointerId) return;
       const x = e.offsetX, y = e.offsetY;
       if (this._drag) this._dirty = true;       // 拖动中块/选区/预览每帧要跟着走; 普通悬停只改光标, 不必重绘
       if (!this._drag) {
@@ -1165,8 +1193,16 @@ export class Timeline {
         return;
       }
       const d = this._drag;
-      if (!d.moved && Math.abs(x - d.x0) < DRAG_THRESH && Math.abs(y - d.y0) < DRAG_THRESH) return;
+      const threshold = this._pointerType === 'touch' ? 8 : DRAG_THRESH;
+      if (!d.moved && Math.abs(x - d.x0) < threshold && Math.abs(y - d.y0) < threshold) return;
       d.moved = true;
+
+      if (d.type === 'pan') {
+        this.follow = false;                   // 手动平移后保持视野，F 可恢复跟随
+        this._panBy(d.lastX - x);
+        d.lastX = x;
+        return;
+      }
 
       if (d.type === 'word') {
         d.lastT = this.x2t(x);
@@ -1208,13 +1244,28 @@ export class Timeline {
     });
 
     const finishDrag = (e) => {
+      if (this._pointerId != null && e.pointerId !== this._pointerId) return;
       const d = this._drag;
+      const touch = this._pointerType === 'touch';
       this._drag = null;
+      this._pointerId = null;
+      this._pointerType = null;
       this._dirty = true;                       // 松手后重建前先重绘一帧(拖到一半的状态立即收尾)
       if (!d) return;
       const t = this._clampT(this.x2t(e.offsetX));
+      if (d.type === 'pan') {
+        if (!d.moved) {
+          if (d.cue) {
+            if (this.onSelect) this.onSelect(d.cue.ref, { seek: false });
+            this._touchEditRef = d.cue.ref;
+          }
+          if (this.onSeek) this.onSeek(t);
+        }
+        return;
+      }
       if (d.type === 'word') {
-        if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true, d.edge, d.hiLimit, d.loLimit);
+        if ((!touch || d.moved) && this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true, d.edge, d.hiLimit, d.loLimit);
+        if (touch && !d.moved && this.onSeek) this.onSeek(t);
         this._wordDrag = null;
         return;
       }
@@ -1247,14 +1298,26 @@ export class Timeline {
       this._hideEdgeHint();
       if (this.uwp && this._hoverCue) { this._hoverCue = null; this._dirty = true; }
     });
-    cv.addEventListener('pointercancel', () => {
+    const cancelDrag = (e) => {
+      if (this._pointerId != null && e.pointerId !== this._pointerId) return;
       const d = this._drag;
+      const touch = this._pointerType === 'touch';
       this._drag = null;
+      this._pointerId = null;
+      this._pointerType = null;
+      this._touchEditRef = null;
+      this._rangeDragging = false;
+      this._dirty = true;
       if (d && d.type === 'word' && d.moved && this.onWordRetime) {
         this.onWordRetime(d.cue.ref, d.idx, d.lastT, true, d.edge, d.hiLimit, d.loLimit);
       }
+      if (touch && d && d.type === 'cue' && d.moved && this.onRetime) {
+        this.onRetime(d.cue.ref, d.cue.start, d.cue.end, true, !!d.shift);
+      }
       this._wordDrag = null;
-    });
+    };
+    cv.addEventListener('pointercancel', cancelDrag);
+    cv.addEventListener('lostpointercapture', e => { if (this._pointerType === 'touch') cancelDrag(e); });
 
     // 点画布/菜单以外的地方 → 收起菜单
     document.addEventListener('pointerdown', (e) => {

@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "d246b8c189e19e11282d94a5af41b0b17b583299077b629a3d176fc539399d2c",
+      "sha256": "07bbd86b063517d3d79427e12d51367cae8e181a7a55f3e7813bf4cdf00f158f",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -1952,7 +1952,7 @@
     },
     {
       "file": "editor/js/timeline.js",
-      "sha256": "998674e713ccaf17b577619437fe126d9c73e853eddc9e8e99a22707963fab46",
+      "sha256": "8dfd67a0aac3daf59090614241af437c6d1829ee3d31b6a2b5217e53ed868af5",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -1965,19 +1965,19 @@
           "method": "createElement"
         },
         {
-          "line": 1271,
+          "line": 1334,
           "method": "createElement"
         },
         {
-          "line": 2242,
+          "line": 2305,
           "method": "createElement"
         },
         {
-          "line": 2286,
+          "line": 2349,
           "method": "createElement"
         },
         {
-          "line": 2309,
+          "line": 2372,
           "method": "createElement"
         }
       ],
