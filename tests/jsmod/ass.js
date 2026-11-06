@@ -194,6 +194,23 @@ export class AssDoc {
     return newEv;
   }
 
+  /** 事件被删空后也能追加；不借用已删除事件的行号或修改其它段落。 */
+  appendEvent(spec) {
+    let index = this.lines.findIndex(line => /^\s*\[Events\]\s*$/i.test(line || ''));
+    if (index < 0 || !this.format.length) return null;
+    index++;
+    while (index < this.lines.length && !/^\s*\[[^\]]+\]/.test(this.lines[index] || '')) index++;
+    const line = this._buildDialogueLine(spec);
+    const ev = this._parseDialogue(line.slice('Dialogue: '.length), this.format, index);
+    if (!ev) return null;
+    this.lines.splice(index, 0, line);
+    for (const other of this.events) if (other.lineIdx >= index) other.lineIdx++;
+    for (const style of this.styles.values()) if (style.lineIdx >= index) style.lineIdx++;
+    this.events.push(ev);
+    this.sorted = this.events.slice().sort((a, b) => a.start - b.start || a.end - b.end);
+    return ev;
+  }
+
   deleteEvent(ev) {
     this._assertLiveEvents([ev]);
     this.lines[ev.lineIdx] = null; // 序列化时剔除

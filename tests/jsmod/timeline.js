@@ -659,6 +659,9 @@ export class Timeline {
   setLanes(lanes) {
     this._dirty = true;
     this._lanesRev = (this._lanesRev || 0) + 1;
+    this._enterSprites = null;
+    this._enterRects = null;
+    this._enterSpriteKey = '';
     this.lanes = lanes.map((l, i) => {
       const lane = Object.assign({ color: LANE_COLORS[i % LANE_COLORS.length] }, l);
       // 合并轨(中英同起止): 高度盖住原来两条轨 + 中间间隙 → 一个块无空隙

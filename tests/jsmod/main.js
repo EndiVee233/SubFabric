@@ -3132,6 +3132,16 @@ async function rimApply(force) {
   };
   jobCardShow('分段导入', '正在合并字幕…', 0, note());
   try {
+    // 先提交编辑，再撤掉临时预览，防止旧草稿在异步导入结束后覆盖新轨。
+    const inlineEdit = panel.stashInlineEdit();
+    clearEditPreview(false);
+    clearWordPreview(false);
+    pendingPlaybackRows.clear();
+    // 覆盖可能删掉一种样式的最后一句，目标样式必须在删除前记住。
+    const targetStyles = state.format === 'ass' && state.kar ? {
+      zh: (state.kar.sentences.find(x => x.style !== state.kar.wordStyle) || {}).style || '',
+      en: state.kar.wordStyle || '',
+    } : null;
     /* ── 分角色配色 ────────────────────────────────────────────────
      * 角色色只存在于中文行行首的内联色标 `{\c&H......&}` 里（时间轴块底色、视频区文字色、
      * 角色页色块都读它）。源文件里的那份色标在解析阶段被 plain() 洗掉了，所以这里重新定色，
@@ -3182,7 +3192,7 @@ async function rimApply(force) {
     if (replaceSteps) {
       for (const rg of res.replace) {
         // 先删被覆盖的（用与批量删除同一套 removeItemData, 不手改数组）
-        for (const it of itemsInRange(rg.start, rg.end)) removeItemData(it);
+        for (const it of itemsInRange(rg.start, rg.end)) removeItemData(it, false);
         step++;
         if (step % 10 === 0) {
           jobCardShow('分段导入', `正在清理冲突行 ${step}/${replaceSteps}…`, (step / total) * 100, note());
@@ -3202,7 +3212,7 @@ async function rimApply(force) {
         const row = addRecognizedRow({
           start: r.start, end: r.end, zh: r.zh, text: r.en, color,
           words: (r.words || []).map(w => ({ word: w.word, start: w.start, end: w.end })),
-        });
+        }, targetStyles);
         if (row) added++;
       } catch (e) {
         console.warn('[rim] 插入一行失败', e);
@@ -3222,6 +3232,8 @@ async function rimApply(force) {
      * 「视频预览区这些字幕不显示」）。与重识别写回、说话人分离同一做法。 */
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
     rebuildItemsAndLanes(true);
+    timeline.touch();
+    panel.resumeInlineEdit(inlineEdit);
     const rg = rimReadRange();
     const sum = `分段导入：进来 ${added} 行（原 ${before} 行 → 现 ${state.items.length} 行）`
       + (force && res.replace ? `，覆盖 ${res.replace.length} 处` : '')
@@ -4948,7 +4960,7 @@ panel.kStyleLabel = karaokeStyleMenuLabel;
 
 /** 删除一条字幕(列表删除按钮 / 时间轴右键菜单共用) */
 /** 从文档/数据里摘掉一条字幕(**不重建界面**) —— 单条删除与批量删除共用, 批量时只重建一次 */
-function removeItemData(item) {
+function removeItemData(item, refreshPreview = true) {
   if (!item) return false;
   if (item.kind === 'srt') {
     const i = state.srtCues.indexOf(item.ref);
@@ -4965,7 +4977,7 @@ function removeItemData(item) {
     }
     const ri = state.kar.rows.indexOf(row);
     if (ri !== -1) state.kar.rows.splice(ri, 1);
-    assPlayer.updateNow(state.assDoc.serialize());
+    if (refreshPreview) assPlayer.updateNow(state.assDoc.serialize());
   }
   state.newRows.delete(item.ref);
   return true;
@@ -5137,7 +5149,7 @@ const rbReRecog = document.getElementById('rb-rerecog');
 let reRecogBusy = false;
 
 /** 按一条识别结果建字幕块: 中文整句 + 英文逐词句（用 ASR 给的真实词级时间） */
-function addRecognizedRow(seg) {
+function addRecognizedRow(seg, targetStyles = null) {
   const s = seg.start, e = seg.end;
   // 与初稿写入同一约定: 中文译文里的逗号/顿号/句号替换成空格(! ? 保留)
   const zhText = String(seg.zh || '').replace(/[，、。]/g, ' ').trim();
@@ -5152,8 +5164,8 @@ function addRecognizedRow(seg) {
     return cue;
   }
   if (state.format !== 'ass' || !state.kar) return null;
-  const zhStyle = (state.kar.sentences.find(x => x.style !== state.kar.wordStyle) || {}).style || '';
-  const enStyle = state.kar.wordStyle || '';
+  const zhStyle = targetStyles ? targetStyles.zh : (state.kar.sentences.find(x => x.style !== state.kar.wordStyle) || {}).style || '';
+  const enStyle = targetStyles ? targetStyles.en : state.kar.wordStyle || '';
   /* 角色色（可选）：中文行行首的 `{\c&H......&}` 是这个项目里**角色色唯一的载体**
    * （时间轴块底色、视频区文字色、角色页色块都从它读）。分段导入的源文件里这份色标
    * 会被 plain() 洗掉，调用方解析出颜色后经 seg.color 传进来，这里补回行首。
@@ -6128,8 +6140,8 @@ updateFixButton();
 function appendSentence(style, start, end, text) {
   const evs = state.assDoc.sorted.filter(e => e.style === style);
   const anchor = evs.length ? evs[evs.length - 1] : null;
-  if (!anchor) return null;
-  const ev = state.assDoc.insertAfterEvent(anchor);
+  const ev = anchor ? state.assDoc.insertAfterEvent(anchor)
+    : state.assDoc.appendEvent({ style, start, end, text });
   if (!ev) return null;
   state.assDoc.setEventTime(ev, start, end);
   state.assDoc.setEventText(ev, text);
