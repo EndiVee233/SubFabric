@@ -318,6 +318,7 @@
             </div>
             <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处，先给预览，确认后再重识别那几段" disabled><span data-ico="wand"></span> 反思纠错</button>
             <button class="btn btn-mini" id="btn-realign-full" title="用 Qwen3 对齐器重算全片逐词时间；只改时间、不改文本，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
+            <button class="btn btn-mini" id="btn-word-continuity" title="将词高亮延长到下一个词开始，消除词间空档；末词结束和整句起止保持原样" disabled><span data-ico="music"></span> 逐词连续性转换</button>
             <button class="btn btn-mini" id="btn-glossary-review" title="用 LLM 通读全片字幕，找出中英文专有名词；术语表里已有的词带出现有译法，其余自动生成，确认后写入翻译方案术语表"><span data-ico="book"></span> 术语表校对</button>
             <button class="btn btn-mini" id="btn-reseg-llm" title="让 LLM 通读全片，按语义把过长的行拆成更短的句子（只拆不合并；中英在同一意思处对应）；先出预览再应用"><span data-ico="wand"></span> 全片重分句</button>
             <button class="btn btn-mini" id="btn-diarize" title="按音频给每条字幕标说话人（[SPKn] + 角色色）；只改角色标注，不改文本与时间；先确认再跑" disabled><span data-ico="mic"></span> 说话人分离</button>
@@ -832,6 +833,7 @@
         <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
         <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
         <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="用 Qwen3 对齐器按已确认文本重算逐词时间。只改逐词时间，不跑 ASR、不动文本">重排逐词时间</button>
+        <button type="button" class="tl-menu-item" data-act="word-continuity" data-ico="music">逐词连续性转换</button>
         <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除字幕块</button>
       </div>
     </div>
@@ -926,6 +928,7 @@
     <button type="button" class="tl-menu-item" data-act="retranslate" data-ico="refresh">重新翻译</button>
     <button type="button" class="tl-menu-item" data-act="karaoke-style" data-ico="music"><span data-kstyle-label>切换为 \k 卡拉OK</span></button>
     <button type="button" class="tl-menu-item" data-act="realign" data-ico="wand" title="用 Qwen3 对齐器按已确认文本重算逐词时间。只改逐词时间，不跑 ASR、不动文本">重排逐词时间</button>
+    <button type="button" class="tl-menu-item" data-act="word-continuity" data-ico="music">逐词连续性转换</button>
     <button type="button" class="tl-menu-item danger" data-act="delete" data-ico="trash">删除该条字幕</button>
   </div>
 

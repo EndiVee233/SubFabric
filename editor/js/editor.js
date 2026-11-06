@@ -916,6 +916,7 @@ export class EditorPanel {
         else if (btn.dataset.act === 'retranslate' && item && this.onRetranslateCard) this.onRetranslateCard(item);
         else if (btn.dataset.act === 'karaoke-style' && item && this.onToggleKaraokeStyle) this.onToggleKaraokeStyle(item.ref);
         else if (btn.dataset.act === 'realign' && item && this.onRealignCard) this.onRealignCard(item);
+        else if (btn.dataset.act === 'word-continuity' && item && this.onWordContinuity) this.onWordContinuity(item.ref);
       });
     }
     this.listEl.addEventListener('contextmenu', (e) => {
@@ -937,6 +938,8 @@ export class EditorPanel {
   _showCardMenu(cx, cy, item) {
     if (!this.cardMenu) return;
     this._cardMenuItem = item;
+    const continuity = this.cardMenu.querySelector('[data-act="word-continuity"]');
+    if (continuity) continuity.disabled = !(item.ref && item.ref.en && item.ref.en.words.length > 1);
     this._refreshKStyleLabel(this.cardMenu);
     this.cardMenu.hidden = false;
     const w = this.cardMenu.offsetWidth, h = this.cardMenu.offsetHeight;

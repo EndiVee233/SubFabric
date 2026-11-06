@@ -9,7 +9,7 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
   speakerNames, sortRoles, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
   highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows,
-  sentenceSpeakerNames, filterSentencesBySpeakers } from './karaoke.js';
+  sentenceSpeakerNames, filterSentencesBySpeakers, continuousWordTimes } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
@@ -66,6 +66,7 @@ const btnDiarize = document.getElementById('btn-diarize');
 const wordConvertStyle = document.getElementById('word-convert-style');
 const wordConvertScope = document.getElementById('word-convert-scope');
 const btnConvertWords = document.getElementById('btn-convert-words');
+const btnWordContinuity = document.getElementById('btn-word-continuity');
 const wordConvertLoading = document.getElementById('word-convert-loading');
 const wordConvertHint = document.getElementById('word-convert-hint');
 const assStyleEls = {
@@ -2698,6 +2699,8 @@ function buildTimelineLanes(rows, cues, label) {
  */
 function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   const keepRef = state.selected ? state.selected.ref : null;
+  if (btnWordContinuity) btnWordContinuity.disabled = state.format !== 'ass'
+    || !state.kar || !state.kar.sentences.some(s => s.words.length > 1);
 
   if (rebuildItems) {
     state.itemByRef = new Map();
@@ -3994,7 +3997,13 @@ timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
   const words = en && en.words;
   if (!words || !words[idx]) return;
   const w = words[idx];
-  if (edge === 'end') {
+  if (edge === 'word-end') {
+    // 独立词尾拖柄只改该词，不带动下一词或整句边界。
+    const lo = w.s + WORD_MIN_GAP;
+    const hi = idx + 1 < words.length ? words[idx + 1].s : en.end;
+    if (hi < lo) return;
+    w.e = Math.min(Math.max(t, lo), hi);
+  } else if (edge === 'end') {
     // 拖末词的**结束**边界: 字幕块最后面 = 末词结束时间(块 end 同步延伸, 中英同行)
     const lo = w.s + WORD_MIN_GAP;                           // 不能压过自己的开始
     let hi = (video && video.duration) ? video.duration : Infinity;
@@ -4011,7 +4020,7 @@ timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
   } else {
     const blockEdge = edge === 'start' && idx === 0;         // 块左边缘拖首词: 字幕块起始时间跟着变
     const lo = idx > 0
-      ? words[idx - 1].s + WORD_MIN_GAP                      // 不能压到前一个词的起点
+      ? (edge === 'word-start' ? words[idx - 1].e : words[idx - 1].s + WORD_MIN_GAP)
       : (blockEdge
           ? (loLimit != null ? loLimit + 1e-3 : 0)           // 块边缘: 不越过前一个字幕块
           : Math.max(row.start, en.start));                  // 词把柄拖动: 保持原约束(不超出字幕块)
@@ -4019,9 +4028,10 @@ timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
       w.e - WORD_MIN_GAP,                                    // 不能晚于自己的结束
       (idx + 1 < words.length) ? words[idx + 1].s - WORD_MIN_GAP : Infinity   // 不能压过下一个词的起点
     );
+    if (edge === 'word-start' && hiRaw < lo) return;
     const hi = Math.max(lo, hiRaw);
     const nt = Math.min(Math.max(t, lo), hi);
-    if (idx > 0) words[idx - 1].e = nt;                      // 共享边界: 前一个词的结束跟着移动
+    if (idx > 0 && edge !== 'word-start') words[idx - 1].e = nt; // 块边缘沿用共享边界；独立拖柄保留空档
     w.s = nt;
     if (blockEdge) {
       // 块最前面 = 首词开始时间: 整块起点(含中文行)同步前移/后移
@@ -4665,9 +4675,15 @@ function enSpanInfo(row) {
   let es = Infinity, ee = -Infinity;
   for (const w of en.words) { if (w.s < es) es = w.s; if (w.e > ee) ee = w.e; }
   if (!isFinite(es) || !isFinite(ee)) return null;
+  // 显式的句首/句尾空档也是有效字幕时间：颜色形态有无高亮 filler，k 形态由整行事件承载。
+  // 词尾独立调整后重载，不能再把有完整事件覆盖的停顿误当成中英错位并拉伸词时间。
+  const events = en.events || [];
+  const covered = events.length > 0
+    && Math.abs(Math.min(...events.map(e => e.start)) - zh.start) <= SPAN_TOL
+    && Math.abs(Math.max(...events.map(e => e.end)) - zh.end) <= SPAN_TOL;
   return {
     zh, en, zs: zh.start, ze: zh.end, es, ee,
-    mismatch: Math.abs(es - zh.start) > SPAN_TOL || Math.abs(ee - zh.end) > SPAN_TOL,
+    mismatch: !covered && (Math.abs(es - zh.start) > SPAN_TOL || Math.abs(ee - zh.end) > SPAN_TOL),
   };
 }
 
@@ -7002,6 +7018,34 @@ async function runRealign(queued) {
 
 panel.onRealignCard = (item) => { realignRow(item); };
 timeline.onRealign = (cue) => { realignRow(state.itemByRef.get(cue && cue.ref)); };
+
+function convertWordContinuity(row = null) {
+  if (state.format !== 'ass' || !state.assDoc || !state.kar) return;
+  const editSnap = panel.stashInlineEdit ? panel.stashInlineEdit() : null;
+  const targets = row ? [row.en].filter(s => s && state.kar.sentences.includes(s)) : state.kar.sentences;
+  const plans = targets.map(sent => ({ sent, words: continuousWordTimes(sent) })).filter(p => p.words);
+  if (!plans.length) {
+    if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
+    toast('未发现可转换的逐词间隙', 4000);
+    return;
+  }
+  clearEditPreview(false);
+  clearWordPreview(false);
+  for (const { sent, words } of plans) {
+    sent.words = words;
+    sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
+  }
+  pendingPlaybackRows.clear();
+  assPlayer.updateNow(state.assDoc.serialize());
+  rebuildItemsAndLanes(true, true);
+  if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
+  if (state.project) Projects.scheduleSave();
+  logOp('adjust', '逐词连续性转换', `已转换 ${plans.length} 句`);
+  toast(`已转换 ${plans.length} 句逐词时间为连续高亮`, 4200);
+}
+if (btnWordContinuity) btnWordContinuity.addEventListener('click', () => convertWordContinuity());
+timeline.onWordContinuity = convertWordContinuity;
+panel.onWordContinuity = convertWordContinuity;
 
 /* ═══════════ 全片逐词重校对 ═══════════
  *

@@ -1123,6 +1123,24 @@ export function buildWordSpecs(sentence) {
   return sentence.karStyle === 'k' ? buildWordSpecsK(sentence) : buildWordSpecsColor(sentence);
 }
 
+/** 只延长词间高亮空档；起点、末词、原文位置及样式元信息保持原样。异常时间不参与转换。 */
+export function continuousWordTimes(sentence) {
+  const words = sentence && sentence.words;
+  if (!words || words.length < 2 || !words.every((w, i) => Number.isFinite(w.s) && Number.isFinite(w.e)
+    && w.e > w.s && w.s >= sentence.start - 1e-9 && w.e <= sentence.end + 1e-9
+    && (!i || w.s >= words[i - 1].e - 1e-9))) return null;
+  let changed = false;
+  const out = words.map((w, i) => {
+    const next = words[i + 1];
+    if (next && Math.round(w.e * 100) < Math.round(next.s * 100)) {
+      changed = true;
+      return { ...w, e: next.s };
+    }
+    return { ...w };
+  });
+  return changed ? out : null;
+}
+
 /** 颜色切片形态(原实现, 行为零改动) */
 function buildWordSpecsColor(sentence) {
   const p = sentence.proto;

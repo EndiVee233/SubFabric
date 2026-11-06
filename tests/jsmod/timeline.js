@@ -395,6 +395,7 @@ export class Timeline {
     this._waveCache = null;   // 逐列 min/max 包络缓存(按 viewStart/pxPerSec/W 失效)
     this.showFilm = false;    // 胶片预览图(视频缩略图条): 设置里可开关, 默认关
     this.onWordRetime = null; // 拖动英文逐词开始标记 → (ref, idx, time, done)
+    this.onWordContinuity = null; // 当前字幕块逐词连续性转换 → (row)
     this.onBeforeWordDrag = null; // 命中拖柄后、建立拖动状态前同步提交文本草稿
     this._wordDrag = null;    // 正在拖的逐词标记 {cue, idx}
     this._selCueRef = null;
@@ -1011,6 +1012,7 @@ export class Timeline {
       else if (act === 'karaoke-style' && cue && this.onToggleKaraokeStyle) this.onToggleKaraokeStyle(cue.ref);
       // 逐词时间重对齐：只改时间不动文本，所以传整个 cue（要拿它的 row/ref 定位那条字幕）
       else if (act === 'realign' && cue && this.onRealign) this.onRealign(cue);
+      else if (act === 'word-continuity' && cue && this.onWordContinuity) this.onWordContinuity(cue.ref);
       });
     }
 
@@ -1094,8 +1096,9 @@ export class Timeline {
         if (!wh.cue.words || !wh.cue.words.length) return;
         const idx = Math.min(wh.idx, wh.cue.words.length - 1);
         this._selCueRef = wh.cue.row || wh.cue.ref;
-        this._wordDrag = { cue: wh.cue.row || wh.cue.ref, ref: wh.cue.ref, block: wh.cue, idx };
-        this._drag = { type: 'word', cue: wh.cue, idx, x0: x, y0: y, moved: false };
+        this._wordDrag = { cue: wh.cue.row || wh.cue.ref, ref: wh.cue.ref, block: wh.cue, idx, edge: wh.edge };
+        const timeOffset = (wh.edge === 'word-end' ? wh.cue.words[idx].e : wh.cue.words[idx].s) - this.x2t(x);
+        this._drag = { type: 'word', cue: wh.cue, idx, edge: wh.edge, timeOffset, x0: x, y0: y, moved: false };
         if (this.onSelect) this.onSelect(wh.cue.ref, { seek: false });
         return;
       }
@@ -1157,7 +1160,9 @@ export class Timeline {
         if (this._laneIndexAtY(y) !== -1) {
           const wh0 = this._hitWordHandle(x, y);
           if (wh0 && (!this.isEditable || this.isEditable(wh0.cue.ref))) {
-            cv.style.cursor = 'ew-resize'; this._hideEdgeHint(); return;
+            cv.style.cursor = 'ew-resize';
+            this._showEdgeHint(e.clientX, e.clientY, wh0.edge === 'word-end' ? '拖动：调整逐词高亮结束' : '拖动：调整逐词高亮开始');
+            return;
           }
           const hit = this._hitTest(x, y, true);
           if (hit && (!this.isEditable || this.isEditable(hit.cue.ref))) {
@@ -1205,9 +1210,9 @@ export class Timeline {
       }
 
       if (d.type === 'word') {
-        d.lastT = this.x2t(x);
+        d.lastT = this.x2t(x) + (d.timeOffset || 0);
         if (this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, d.lastT, false, d.edge, d.hiLimit, d.loLimit);
-        if (d.edge === 'end') d.cue.end = this.x2t(x);                     // 拖动中块宽度实时跟随(松手 rebuild 校正)
+        if (d.edge === 'end') d.cue.end = this.x2t(x);                     // 仅整块边缘同步块宽度；word-end 保持句尾
         else if (d.edge === 'start' && d.idx === 0) d.cue.start = this.x2t(x);
         return;
       }
@@ -1264,8 +1269,11 @@ export class Timeline {
         return;
       }
       if (d.type === 'word') {
-        if ((!touch || d.moved) && this.onWordRetime) this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX), true, d.edge, d.hiLimit, d.loLimit);
-        if (touch && !d.moved && this.onSeek) this.onSeek(t);
+        const independent = d.edge === 'word-start' || d.edge === 'word-end';
+        if ((d.moved || (!touch && !independent)) && this.onWordRetime) {
+          this.onWordRetime(d.cue.ref, d.idx, this.x2t(e.offsetX) + (d.timeOffset || 0), true, d.edge, d.hiLimit, d.loLimit);
+        }
+        if ((touch || independent) && !d.moved && this.onSeek) this.onSeek(t);
         this._wordDrag = null;
         return;
       }
@@ -1348,6 +1356,8 @@ export class Timeline {
     const el = this.menuEl;
     if (!el) return;
     this._menuCue = cue;
+    const continuity = el.querySelector('[data-act="word-continuity"]');
+    if (continuity) continuity.disabled = !(cue.ref && cue.ref.en && cue.ref.en.words.length > 1);
     // 整轨形态切换的文案随当前形态变（只改内层 span —— 图标是插进来的 SVG, 不能 textContent）
     const span = el.querySelector('[data-kstyle-label]');
     if (span && this.kStyleLabel) span.textContent = this.kStyleLabel();
@@ -2055,7 +2065,8 @@ export class Timeline {
     for (let i = 0; i < words.length; i++) {
       const wx = Math.round(this.t2x(words[i].s)) + 0.5;
       if (wx < x1 + 2 || wx > x2 - 2) continue;
-      const hotLine = this._wordDrag && this._wordDrag.block === block && this._wordDrag.idx === i;
+      const hotLine = this._wordDrag && this._wordDrag.block === block && this._wordDrag.idx === i
+        && this._wordDrag.edge !== 'word-end';
       ctx.strokeStyle = hotLine ? 'rgba(255,255,255,.9)' : 'rgba(180,180,198,.45)';
       ctx.beginPath();
       ctx.moveTo(wx, g.axisY + 1);
@@ -2066,6 +2077,15 @@ export class Timeline {
     }
     ctx.setLineDash([]);
     ctx.restore();
+    for (const h of this._wordHandles(block, g, x1, x2)) {
+      const hot = this._wordDrag && this._wordDrag.block === block && this._wordDrag.idx === h.idx
+        && (this._wordDrag.edge || 'word-start') === h.edge;
+      ctx.save();
+      if (h.edge === 'word-end' && !hot) ctx.globalAlpha *= 0.58;
+      ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
+      ctx.fillRect(h.x, h.y, h.w, h.h);
+      ctx.restore();
+    }
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
       const wx = this.t2x(w.s);
@@ -2073,15 +2093,6 @@ export class Timeline {
       /* 只让**当前这一块**里被拖动/点中的那根线亮起：按块对象 + 词下标双重匹配。
          以前只比 row 引用，遇到 cue 没有 row（或 ref 共享）时 undefined === undefined，
          于是每个块的第 i 根线一起变白（用户实测）。 */
-      const hot = this._wordDrag && this._wordDrag.block === block && this._wordDrag.idx === i;
-      // 首词已经是整个字幕块的第一段文字：不再额外画灰色逐词标记。
-      // 其余词的标记仍是拖动抓手；首词走字幕块左边缘下半区拖动（见 _hitWordHandle）。
-      if (hasVisibleWordMark(i)) {
-        // 标记块贴块底, 与英文词文本同一行；以词起点 wx 为中心画。
-        ctx.fillStyle = hot ? WORD_MARK_HOT : WORD_MARK;
-        const mw = hot ? g.markWHot : g.markW;
-        ctx.fillRect(Math.round(wx - mw / 2), g.markTop, mw, g.markH);
-      }
       // 首词不再为灰条让位，文字从词的实际起点开始；后续词留出标记宽度与间隙。
       // ⚠ 但不能越过块内文字的裁剪左界（x1 + TEXT_PAD）—— 否则首词（起点常 == 块起点）
       //   的左脚会被裁掉，用户看到的就是"Home 显示成 ome"。见 wordTextX()。
@@ -2100,7 +2111,24 @@ export class Timeline {
     }
   }
 
-  /** 命中某个英文词的开始标记(用于拖动逐词时间) */
+  /** 起点在上、终点在下：连续词的共用时刻也能分别命中。绘制与命中使用同一份矩形。 */
+  _wordHandles(c, g, x1, x2) {
+    const out = [], height = (g.markH - 1) / 2;
+    if (height < 2 || x2 - x1 < TEXT_PAD * 2 + g.markW) return out;
+    for (let i = 0; i < c.words.length; i++) {
+      for (const edge of ['word-start', 'word-end']) {
+        if (edge === 'word-start' && !hasVisibleWordMark(i)) continue;
+        const px = this.t2x(edge === 'word-end' ? c.words[i].e : c.words[i].s);
+        if (px < x1 - 1 || px > x2 + 1) continue;
+        const center = Math.max(x1 + TEXT_PAD + g.markW / 2, Math.min(x2 - TEXT_PAD - g.markW / 2, px));
+        out.push({ idx: i, edge, x: Math.round(center - g.markW / 2),
+          y: g.markTop + (edge === 'word-end' ? height + 1 : 0), w: g.markW, h: height });
+      }
+    }
+    return out;
+  }
+
+  /** 命中某个英文词的起点/终点标记。 */
   _hitWordHandle(x, y) {
     for (const lane of this.lanes) {
       const li = this.lanes.indexOf(lane);
@@ -2117,12 +2145,12 @@ export class Timeline {
         if (y < band.y || y > band.y + band.h) continue;
         const wpx = this.t2x(Math.min(c.end, this.viewStart + this._cssW() / this.pxPerSec)) - this.t2x(Math.max(c.start, this.viewStart));
         if (wpx / c.words.length <= 8) continue;
-        for (let i = 0; i < c.words.length; i++) {
-          // 首词没有可见标记，不给它留一块"看不见的抓手"；首词改时间走块左边缘下半区。
-          if (!hasVisibleWordMark(i)) continue;
-          const wx = this.t2x(c.words[i].s);
-          // 命中半宽跟隐藏命中区一致(再加 2px 余量), 无需可见标记也能点中
-          if (Math.abs(x - wx) <= g.markW / 2 + 2) return { lane, cue: c, idx: i };
+        const x1 = this.t2x(Math.max(c.start, this.viewStart));
+        const x2 = this.t2x(Math.min(c.end, this.viewStart + this._cssW() / this.pxPerSec));
+        for (const h of this._wordHandles(c, g, x1, x2)) {
+          if (x >= h.x - 2 && x <= h.x + h.w + 2 && y >= h.y && y <= h.y + h.h) {
+            return { lane, cue: c, idx: h.idx, edge: h.edge };
+          }
         }
       }
     }
