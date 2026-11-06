@@ -1409,7 +1409,12 @@ export class Timeline {
        真正开始后才连续重绘。 */
     const blockAnimating = this._blockEnterArmed && now >= this._blockEnterAt
       && now < this._blockEnterAt + BLOCK_ENTER_WINDOW;
-    if (playing || this._dirty || blockAnimating || t !== this._lastT || now - this._lastDrawAt > 2000) {
+    // 视频由浏览器原速呈现；自绘时间轴最多 30fps。seek 等待期间时间不动就不重画。
+    // 交互置脏、暂停定位和入场动画仍立即绘制，不让拖边/缩放等候节流窗口。
+    const timeChanged = t !== this._lastT;
+    const jumped = Math.abs(t - this._lastT) > 0.25;
+    const playbackFrame = playing && timeChanged && now - this._lastDrawAt >= 1000 / 30;
+    if (this._dirty || blockAnimating || jumped || (!playing && timeChanged) || playbackFrame || now - this._lastDrawAt > 2000) {
       return this.draw(t, playing);
     }
   }

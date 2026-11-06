@@ -304,6 +304,19 @@
 
 ## 4. 前端与主题
 
+- **MY 编辑器播放负载（2026-11-06，已完成且已验证：定向范围）**：流光在 `play` 时即暂停，
+  `seeked` 后按视频实际播放/跳转状态决定是否继续暂停；暂停后 260ms 再核对状态恢复，避免跳转后
+  一边播放一边重启最高速流光。`syncPlayer` 只在播放状态变化时重建图标，时间文字仅在值变化时写入。
+  时间轴播放重绘上限 30fps，等待解码且时间不变时跳过；交互置脏、跳转、暂停定位和入场动画不受节流。
+  主视频与 ASS 的呈现帧率不变。冷视频一批跳转只预热一次，1.2s 超时后实际发出 seek，换源清理预热状态。
+  新增 `editor-playback-load-test` 验证流光事件顺序、预热超时/换源、跳转合并、重绘预算与播放条 DOM 稳定性。
+  隔离 Chromium（GPU 启用）、MY 浅色、2.5× 流光、45s 合成 H.264 + 真实 ASS 渲染对比：3.5s 内时间轴
+  重绘 579→97，ScriptDuration 0.628→0.446s，TaskDuration 1.234→0.973s；5 次跳转后首帧延迟中位数
+  75.5→75.2ms，短片未证明跳转延迟显著改善。真实长视频、安装版与 GPU 占用百分比本次未验收。
+  本机对比报告 `_test/maintenance/my-playback-browser-20261106.json`，不入库。
+  最终 14 组定向 JS/HTTP 回归全部通过，相关 JS 语法检查通过，ESLint 0 error / 5 个既有 warning；
+  未运行全量 JS、Python 与安装验收。
+
 - **Electron 窗口边界**：仍加载本地 HTTP 的同一生产 Studio 与原生 ESM；`main.cjs` 设置
   `sandbox: true`、`contextIsolation: true`、`nodeIntegration: false`，无 preload，不向 renderer 暴露
   Node 或特权 IPC。只允许后台本源导航；跨源导航/重定向阻止，新窗口一律 `deny`，合法 `http(s)`

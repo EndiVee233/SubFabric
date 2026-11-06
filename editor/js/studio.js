@@ -2777,6 +2777,7 @@ const seekRange = $('sf-seek-range'), seekBar = $('sf-seek'), seekTip = $('video
 seekBar.appendChild(seekTip);
 seekTip.hidden = true;
 let scrubbing = false, requestedTime = null;
+let playerActive = null;
 function syncPlayer() {
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
   const time = requestedTime ?? video.currentTime;
@@ -2785,12 +2786,17 @@ function syncPlayer() {
   if (!scrubbing) seekRange.value = value;
   seekRange.disabled = !duration;
   $('sf-play').disabled = !video.currentSrc;
-  $('sf-play').dataset.playing = String(active);
   for (const id of ['sf-back-ten', 'sf-forward-ten']) $(id).disabled = !duration || !video.currentSrc;
-  $('sf-play').innerHTML = active ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>' : ico('play');
-  $('sf-play').setAttribute('aria-label', t(active ? '暂停' : '播放'));
-  $('sf-play-time').textContent = fmtTime(time || 0).slice(0, 8);
-  $('sf-play-duration').textContent = fmtTime(duration).slice(0, 8);
+  // timeupdate 只改进度；反复替换 SVG/相同文字会触发文案和玻璃前景观察器。
+  if (playerActive !== active) {
+    playerActive = active;
+    $('sf-play').dataset.playing = String(active);
+    $('sf-play').innerHTML = active ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>' : ico('play');
+    $('sf-play').setAttribute('aria-label', t(active ? '暂停' : '播放'));
+  }
+  const timeText = fmtTime(time || 0).slice(0, 8), durationText = fmtTime(duration).slice(0, 8);
+  if ($('sf-play-time').textContent !== timeText) $('sf-play-time').textContent = timeText;
+  if ($('sf-play-duration').textContent !== durationText) $('sf-play-duration').textContent = durationText;
   window.SF_PROGRESS.set(seekBar, value, active ? 'running' : 'paused');
 }
 for (const event of ['timeupdate', 'play', 'pause', 'ended', 'durationchange', 'emptied', 'loadedmetadata']) video.addEventListener(event, syncPlayer);
@@ -2801,11 +2807,19 @@ for (const event of ['timeupdate', 'play', 'pause', 'ended', 'durationchange', '
 let mediaBusyTimer = 0;
 function markMediaBusy(busy) {
   clearTimeout(mediaBusyTimer);
-  if (busy) { document.body.dataset.mediaActive = 'true'; return; }
-  mediaBusyTimer = setTimeout(() => { document.body.dataset.mediaActive = 'false'; }, 260);
+  const active = () => video.seeking || (!video.paused && !video.ended);
+  if (busy || active()) {
+    if (document.body.dataset.mediaActive !== 'true') document.body.dataset.mediaActive = 'true';
+    return;
+  }
+  // seeked 不等于停止播放。延迟恢复前也重查状态，避免快速暂停/播放把流光提前放开。
+  mediaBusyTimer = setTimeout(() => {
+    const value = String(active());
+    if (document.body.dataset.mediaActive !== value) document.body.dataset.mediaActive = value;
+  }, 260);
 }
-for (const event of ['playing', 'seeking', 'waiting']) video.addEventListener(event, () => markMediaBusy(true));
-for (const event of ['pause', 'ended', 'seeked', 'emptied']) video.addEventListener(event, () => markMediaBusy(false));
+for (const event of ['play', 'playing', 'seeking', 'waiting']) video.addEventListener(event, () => markMediaBusy(true));
+for (const event of ['pause', 'ended', 'seeked', 'emptied', 'error']) video.addEventListener(event, () => markMediaBusy(false));
 $('sf-play').addEventListener('click', () => {
   if (!video.paused) { video.pause(); return; }
   /* seek 还没落地时点播放，Chromium 会用 AbortError 拒绝这个 play() —— 那不是

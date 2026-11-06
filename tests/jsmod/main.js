@@ -516,6 +516,7 @@ let seekInflightTimer = 0;
 let seekStartedAt = 0;                 // 当前这枪发出的时刻
 let seekWarmup = false;                // 正在为"冷元素"预热首段数据
 let seekWarmupTimer = 0;
+let seekWarmupAttempted = false;       // 一批跳转最多预热一次，超时后必须真正发出 seek
 
 function scheduleSeekFlush() {
   if (seekFlushRaf) return;
@@ -549,6 +550,7 @@ function onWarmupProgress() {
 function startSeekWarmup() {
   if (seekWarmup) return;
   seekWarmup = true;
+  seekWarmupAttempted = true;
   try { if (video.preload !== 'auto') video.preload = 'auto'; } catch {}
   video.addEventListener('progress', onWarmupProgress);
   video.addEventListener('loadeddata', onWarmupProgress);
@@ -559,8 +561,9 @@ function flushSeek() {
   if (seekInflight || seekWarmup || seekPendingT == null) return;
   const target = seekPendingT;
   /* 冷元素先热身，这一枪留在 seekPendingT 里，预热结束（或超时）后由 endSeekWarmup 补发。 */
-  if (!seekHasData() && Math.abs(video.currentTime - target) > 1e-3) { startSeekWarmup(); return; }
+  if (!seekHasData() && !seekWarmupAttempted && Math.abs(video.currentTime - target) > 1e-3) { startSeekWarmup(); return; }
   seekPendingT = null;
+  seekWarmupAttempted = false;
   if (Math.abs(video.currentTime - target) <= 1e-3 && !video.seeking) return;
   seekInflight = true;
   seekStartedAt = performance.now();
@@ -628,6 +631,7 @@ video.addEventListener('emptied', () => {
   clearTimeout(previewSeekTimer); clearTimeout(seekInflightTimer);
   /* 换源时预热的监听/计时器一起收掉，否则旧的 progress 监听会一直挂着 */
   seekWarmup = false;
+  seekWarmupAttempted = false;
   clearTimeout(seekWarmupTimer);
   video.removeEventListener('progress', onWarmupProgress);
   video.removeEventListener('loadeddata', onWarmupProgress);
@@ -8653,7 +8657,8 @@ function tick() {
   if (wordPreviewTrackRow && !editRowVisible(wordPreviewTrackRow)) clearWordPreview();
   timeline.drawIfNeeded(t, !video.paused);
   panel.setPlayingByTime(t);
-  tlCursor.textContent = fmtTime(t);
+  const cursorText = fmtTime(t);
+  if (tlCursor.textContent !== cursorText) tlCursor.textContent = cursorText;
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
