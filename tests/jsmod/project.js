@@ -29,6 +29,22 @@ export function initProjects(ctx) {
   const $ = (s) => document.querySelector(s);
   const studioUI = document.body?.classList?.contains('sf-studio') === true;
 
+  /** 初稿入口共用：单个稿件按下拉选择，批量稿件沿用最近记住的逐词形态。 */
+  function draftKaraokeSettings(style) {
+    let saved = '', sweep = '', base = '';
+    try {
+      saved = localStorage.getItem('sf-k-style') || '';
+      sweep = localStorage.getItem('sf-k-sweep') || '';
+      base = localStorage.getItem('sf-k-base') || '';
+    } catch { /* 偏好不可读时仍可使用本次下拉选择。 */ }
+    const karaokeStyle = (style || saved) === 'k' ? 'k' : 'color';
+    return {
+      karaokeStyle,
+      karaokeSweep: karaokeStyle === 'k' && sweep === '1',
+      karaokeBase: /^#[0-9a-f]{6}$/i.test(base) ? base : '#FFFFFF',
+    };
+  }
+
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
   let saveTimer = 0;
   let saving = false;
@@ -1711,7 +1727,7 @@ export function initProjects(ctx) {
           speakers: opts.speakers && opts.wordLevel, speakerCount: 6, confidence: 'full',
           autoPost: opts.autoPost,
         };
-        if (payload.wordLevel || payload.align) payload.karaokeStyle = 'color';
+        if (payload.wordLevel || payload.align) Object.assign(payload, draftKaraokeSettings());
         const r = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const m = await r.json().catch(() => ({}));
         if (!r.ok || !m.id) throw new Error(m.error || '创建项目失败');
@@ -5859,13 +5875,7 @@ async function renderAsrModels(providedStatus = null) {
         };
         // 逐词样式与"本地视频初稿"同款(见下方 payload 的注释)
         if (payload0.wordLevel || payload0.align) {
-          payload0.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
-          if (payload0.karaokeStyle === 'k') {
-            let sweep = '', base = '';
-            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
-            payload0.karaokeSweep = sweep === '1';
-            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload0.karaokeBase = base;
-          }
+          Object.assign(payload0, draftKaraokeSettings($('#np-kstyle')?.value));
         }
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
@@ -5961,13 +5971,7 @@ async function renderAsrModels(providedStatus = null) {
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
         // 逐词样式: 颜色高亮(默认) / \k 卡拉OK。扫过(\kf)与未唱默认色跟随设置面板记住的偏好。
         if (payload.wordLevel || payload.align) {
-          payload.karaokeStyle = ($('#np-kstyle') && $('#np-kstyle').value) === 'k' ? 'k' : 'color';
-          if (payload.karaokeStyle === 'k') {
-            let sweep = '', base = '';
-            try { sweep = localStorage.getItem('sf-k-sweep') || ''; base = localStorage.getItem('sf-k-base') || ''; } catch (e) {}
-            payload.karaokeSweep = sweep === '1';
-            if (/^#[0-9a-fA-F]{6}$/.test(base)) payload.karaokeBase = base;
-          }
+          Object.assign(payload, draftKaraokeSettings($('#np-kstyle')?.value));
         }
         // 逐句置信度档位（off/fast/full）：显式发给服务端，存进 project.json 的
         // draft.confidence。这是个**项目级**选择 —— 建稿时定了，重新识别也沿用。

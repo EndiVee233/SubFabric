@@ -27,9 +27,11 @@ const escAss = (s) => String(s == null ? '' : s)
  * @param start/end 句子起止（秒）—— 首词贴句首、末词收在句尾，与颜色切片同一夹取规则
  * @param sungBgr 已唱位 \1c 的 BBGGRR（逐词高亮色）
  * @param baseBgr 未唱位 \2c 的 BBGGRR（该行有角色 = 角色色；没有 = 「未唱默认色」；空串 = 不写 \2c）
+ * @param kTag '\\k' 瞬切（默认）或 '\\kf' 扫过；其它值回退到瞬切
  * @returns 形如 `{\1c&H00FF00&\2c&HFFFFFF&}{\k40}hello {\k60}world{\k100}` 的文本
  */
-function wordKText(words, start, end, sungBgr, baseBgr) {
+function wordKText(words, start, end, sungBgr, baseBgr, kTag = '\\k') {
+  const tag = kTag === '\\kf' ? '\\kf' : '\\k';
   const startCs = Math.round(start * 100);
   const endCs = Math.max(startCs + 1, Math.round(end * 100));
   let txt = '{\\1c&H' + sungBgr + '&' + (baseBgr ? '\\2c&H' + baseBgr + '&' : '') + '}';
@@ -42,10 +44,10 @@ function wordKText(words, start, end, sungBgr, baseBgr) {
     let eCs = Math.max(sCs + 1, Math.min(endCs,
       Math.round((k + 1 < words.length ? words[k + 1].start : end) * 100)));
     if (eCs <= sCs) eCs = Math.min(endCs, sCs + 1);
-    txt += '{\\k' + (eCs - sCs) + '}' + escAss(words[k].word) + (k + 1 < words.length ? ' ' : '');
+    txt += '{' + tag + (eCs - sCs) + '}' + escAss(words[k].word) + (k + 1 < words.length ? ' ' : '');
     cursor = eCs;
   }
-  if (cursor < endCs) txt += '{\\k' + (endCs - cursor) + '}';   // 行尾兜底（保持段总和 = 行时长）
+  if (cursor < endCs) txt += '{' + tag + (endCs - cursor) + '}';   // 行尾兜底（保持段总和 = 行时长）
   return txt;
 }
 

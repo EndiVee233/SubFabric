@@ -124,6 +124,10 @@
 
 ## 3. 后端与数据流
 
+- **初稿逐词偏好**：本地、链接与已有项目创建统一由 `draftKaraokeOptions` 校验并保存
+  `meta.draft.karaokeStyle/karaokeSweep/karaokeBase`；写字幕时读取同一份项目偏好，
+  k 走单事件、kf 走扫过标签，有词时间的短初稿保持该形态，无词时间的句子保留整句。
+
 - **后端与模块边界**：`server.js` 仍保持单文件与零 npm 依赖；根目录不建 `package.json`，
   继续由真实 Node 22 同步 `require(esm)` 复用原生前端 ESM。Electron 封装逻辑只放在 `desktop/`。
   旧 SEA 入口 `editor/scripts/sea-launcher.cjs` 的 `Module._compile` / 相对 `require` 限制保留为旧链路说明，
@@ -303,6 +307,19 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **初稿卡拉OK修复（2026-11-06，已完成且已验证：定向范围）**：链接创建此前遗漏保存
+  `karaokeStyle/Sweep/Base`，短于 6 词的显式 k 初稿也会走颜色切片的降级分支，生成端还忽略了 sweep。
+  后端 `draftKaraokeOptions` 统一本地、链接和已有项目初稿的参数归一化；`writeSubtitle` 在有词时间时
+  保留短 k 初稿，按 sweep 输出 `\k` 或 `\kf`。无词时间的句子保留整句正文，不输出空白行。
+  前端 `draftKaraokeSettings` 统一单稿参数与批量偏好，批量不再硬编码 color 或重置未唱色/扫过。
+  另复现了无私有样式元数据的短单语 k 文件识别失败：解析器现在把显式 k 标签作为词时间证据，
+  不要求凑足 6 个事件；对应新用例修复前失败、修复后通过。
+  本次 10 组定向回归全部通过；相关 ESLint 0 error / 20 个既有 warning，未运行全量回归。
+  新增 `k-draft-test` 验证链接创建分支、已有项目初稿、前端偏好、1/2/7 词初稿、k/kf、混合缺词时间、
+  编辑器解析重建与重载。隔离 Chromium 读取真实生成的两词初稿并检查 libass 像素：k 在词内保持不变、
+  换词时累计高亮，kf 在词内逐渐扫过；本机报告 `_test/maintenance/k-draft-browser-20261106.json`。
+  未运行真实网络下载、GPU/模型识别或重打包安装版；本次以确定的词表验证实际字幕写入和渲染链路。
 
 - **分段覆盖导入显示同步（2026-11-06，已完成且已验证：定向范围）**：复现了覆盖删除某样式最后一条
   事件后，`appendSentence` 找不到插入锚点、导入行未写入的故障。导入前保留目标语言样式；
@@ -1244,6 +1261,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 - 中英时间自愈对齐对 k 行必须走 `replaceEvents(events, buildWordSpecs(en))` 重建，不能逐条 `setEventTime`。
 - 新建初稿由**服务端直接产出 `\k`**（初稿在后台跑、用户可能已关闭页面）；`editor/k-line.js` 与编辑器
   `buildWordSpecsK` 同格式，二者一致性由交叉单测守着。
+  本地、链接与已有项目创建均保留逐词形态、未唱色及扫过偏好；有词时间的 k 初稿不受颜色切片的
+  六词降级阈值限制。生成端 `wordKText` 默认输出 `\k` 瞬切，扫过输出 `\kf`；没有词时间的句子保留整句。
+  外来短单语文件只要有显式 k 标签即可识别，不依赖 SubFabric 私有样式元数据。
 
 ### SRT → 逐词 ASS / 事后说话人分离
 

@@ -486,7 +486,8 @@ export function analyzeKaraoke(doc) {
   // 识别逐词样式: 高亮切片占比高且数量最多的样式
   let wordStyle = null, wordEvents = [], best = 0;
   for (const [style, evs] of byStyle) {
-    if (evs.length < 6) continue;
+    // k 标签已明确给出词时间，外来单语短文件不必依赖切片数量或私有元数据。
+    if (evs.length < 6 && !evs.some(ev => K_ANY_RE.test(ev.text))) continue;
     let hl = 0;
     for (const ev of evs) if (HL_RE.test(ev.text) || K_ANY_RE.test(ev.text)) hl++;
     if (hl / evs.length > 0.3 && evs.length > best) { wordStyle = style; wordEvents = evs; best = evs.length; }

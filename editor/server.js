@@ -1130,6 +1130,17 @@ async function draftOutputPlan(m, data) {
   return { native, nativeWanted, align, wordLevel: nativeWanted || align };
 }
 
+/** 本地、链接与已有项目初稿共用逐词形态选项，避免某个入口丢掉选择。 */
+function draftKaraokeOptions(data, wordLevel) {
+  const karaokeStyle = wordLevel && data.karaokeStyle === 'k' ? 'k' : 'color';
+  return {
+    karaokeStyle,
+    karaokeSweep: karaokeStyle === 'k' && !!data.karaokeSweep,
+    karaokeBase: /^#[0-9a-f]{6}$/i.test(String(data.karaokeBase || ''))
+      ? String(data.karaokeBase).toUpperCase() : '#FFFFFF',
+  };
+}
+
 /* 说话人分离模型(两个文件一组): 跑在音频上, 与识别引擎无关 —— 两个 ASR 模型都能用 */
 const DIARIZE_MODELS = [
   {
@@ -5542,9 +5553,9 @@ function startPrepare(id, videoPath, mode) {
    *  所以这边简单得多 —— 生成词表没有空档：每词亮到下一词起点、末词收在句尾，与颜色切片同规则，
    *  段时长总和严格 = 行时长）。baseBgr 为空表示该行没有角色 → 写「未唱默认色」。
    *  注意 \k 时长单位是**厘秒**，high 亮前显示 \2c、唱到时切 \1c（Aegisub 文档语义）。 */
-  function wordKLine(words, start, end, name, sungBgr, baseBgr) {
+  function wordKLine(words, start, end, name, sungBgr, baseBgr, sweep = false) {
     // 行文本构造提取在 ./k-line.js（CJS 可单测）；与编辑器 karaoke.js buildWordSpecsK 同一格式
-    const txt = kLine.wordKText(words, start, end, sungBgr, baseBgr);
+    const txt = kLine.wordKText(words, start, end, sungBgr, baseBgr, sweep ? '\\kf' : '\\k');
     return `Dialogue: 0,${fmtAssTime(start)},${fmtAssTime(end)},Default,${name || ''},0,0,0,,${txt}\n`;
   }
 
@@ -6181,7 +6192,9 @@ function startPrepare(id, videoPath, mode) {
         if (zh) body = role ? `[${spkName(role.n)}] ${zh}\n${s.text}` : `${zh}\n${s.text}`;
         return `${i + 1}\n${fmtSrtTime(s.start)} --> ${fmtSrtTime(s.end)}\n${body}\n\n`;
       }).join('');
-    } else if (totalWords < 6) {
+    } else if (!totalWords || (totalWords < 6 && !kOpt)) {
+      // 颜色切片沿用至少 6 词的保守降级；显式 k 不受此限制，单事件可由元数据识别。
+      // 完全没有词时间时仍保留整句，不能伪造卡拉OK或丢正文。
       // karaoke.js 的 analyzeKaraoke 要求逐词样式至少 6 个事件才认, 词太少会被当普通整句
       // → 每个切片各自成一行、全是重复整句。这里降级为干净整句(但中文轨照写)。
       pushDraftLog(id, `[提示] 识别内容较短（共 ${totalWords} 词），降级为无逐词效果的整句字幕`);
@@ -6223,11 +6236,17 @@ function startPrepare(id, videoPath, mode) {
         const zh = zhText(i);
         if (zh) out += zhLine(s, zh, roleOf(s));
         const role = roleOf(s);
+        // 某句缺词时间时保留整句正文，不能生成空的卡拉OK行或直接漏掉这句。
+        if (!ws.length) {
+          const tag = role ? `{\\c&H${role.color}&}` : '';
+          out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,${role ? spkName(role.n) : ''},0,0,0,,${tag}${escAss(s.text)}\n`;
+          return;
+        }
         if (kOpt) {
           // \k 卡拉OK形态: 整行单事件。有角色的行未唱位用角色色, 没有就用「未唱默认色」。
           // hexToAssBgr 返回 &HAABBGGRR(8 位) → 去掉 "A" 前缀取 6 位 BBGGRR, 行内 \2c 只认 6 位
           const baseBgr = role ? role.color : hexToAssBgr(kOpt.base, '&H00FFFFFF').slice(4);
-          out += wordKLine(ws, s.start, s.end, role ? `${spkName(role.n)}` : '', wordAss, baseBgr);
+          out += wordKLine(ws, s.start, s.end, role ? `${spkName(role.n)}` : '', wordAss, baseBgr, kOpt.sweep);
           return;
         }
         for (let k = 0; k < ws.length; k++) {
@@ -8375,8 +8394,7 @@ function startPrepare(id, videoPath, mode) {
       status: 'running', stage: STAGE.extract, progress: 3, message: '准备创建初稿…',
       wordLevel: plan.wordLevel, align: plan.align, lines: 0, words: 0,
       translated: false, needTranslate: false,
-      karaokeStyle: plan.wordLevel && o.karaokeStyle === 'k' ? 'k' : 'color',
-      karaokeSweep: false, karaokeBase: '#FFFFFF',
+      ...draftKaraokeOptions(o, plan.wordLevel),
       modelId: model.id, engine: model.engine || '',
       speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
       confidence: CONFIDENCE_MODES.includes(o.confidence) ? o.confidence : null,
@@ -10837,6 +10855,7 @@ function handleProjectsRoutes(req, res, u) {
           draft: {
             status: 'running', stage: FETCH_STAGE, progress: 1, message: '准备下载…', error: null,
             wordLevel: wordLevelF, align: planF.align, lines: 0, words: 0, translated: false, needTranslate: false,
+            ...draftKaraokeOptions(data, wordLevelF),
             modelId: mF.id, engine: mF.engine || '',
             speakers: wantSpkF, speakerCount: wantSpkF ? spkCountF : 0,
             fetch: { url: fetchUrl, site: site, quality: String((data.fetch && data.fetch.quality) || ''),
@@ -10934,15 +10953,12 @@ function handleProjectsRoutes(req, res, u) {
         const draftModel = (draftModelId && modelById(draftModelId)) || resolveAsrModel() || null;
         // 逐词形态: 'color'(颜色高亮, 默认=升级前行为) | 'k'(\k 卡拉OK)。只在逐词开时有意义。
         //   sweep = \kf(从左到右扫过), base = 未唱默认色(无角色行的 \2c) —— 见 docs/PROJECT.md §7「颜色设计」。
-        const karaokeStyle = (draftPlan.wordLevel && data.karaokeStyle === 'k') ? 'k' : 'color';
-        const karaokeSweep = karaokeStyle === 'k' && !!data.karaokeSweep;
-        const karaokeBase = /^#[0-9a-fA-F]{6}$/.test(String(data.karaokeBase || ''))
-          ? String(data.karaokeBase).toUpperCase() : '#FFFFFF';
+        const karaoke = draftKaraokeOptions(data, draftPlan.wordLevel);
         meta.draft = {
           status: 'running', stage: STAGE.extract, progress: 3,
           message: '提取音频与波形…', wordLevel: draftPlan ? draftPlan.wordLevel : false, align: draftPlan ? draftPlan.align : false, lines: 0, words: 0,
           translated: false, needTranslate: false,
-          karaokeStyle, karaokeSweep, karaokeBase,
+          ...karaoke,
           modelId: draftModel ? draftModel.id : null,
           engine: draftModel ? (draftModel.engine || '') : '',
           speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
