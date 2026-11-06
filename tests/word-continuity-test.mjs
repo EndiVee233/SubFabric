@@ -82,24 +82,25 @@ for(const kind of ['color','k']) {
   const h=t._wordHandles(c,g,100,500),a=h.find(x=>x.idx===0&&x.edge==='word-end'),b=h.find(x=>x.idx===1&&x.edge==='word-start');
   assert.equal(a.x,b.x);assert.ok(a.y>b.y+b.h);
   for(const marker of h){const hit=t._hitWordHandle(marker.x+marker.w/2,marker.y+marker.h/2);assert.equal(hit.idx,marker.idx);assert.equal(hit.edge,marker.edge);}
-  assert.equal(h.filter(x=>x.edge==='word-end').length,3);
-  assert.ok(h.at(-1).x+h.at(-1).w<=494,'last end handle survives clipping');
+  assert.equal(h.filter(x=>x.edge==='word-end').length,2);
+  assert.equal(h.some(x=>x.idx===2&&x.edge==='word-end'),false,'last word has no duplicate end marker');
+  assert.equal(t._hitWordHandle(490,82),null,'hidden last-end marker cannot intercept the block boundary');
 }
-// A final-word handle is inset to remain visible; grab offset prevents jumps, and taps do not edit.
+// A non-final endpoint near the block edge stays inset; grab offset prevents jumps and taps do not edit.
 {
-  const handlers=new Map(),calls=[],c={start:1,end:5,ref:{},words:[{s:1,e:2},{s:2,e:3},{s:3.5,e:5}]};
+  const handlers=new Map(),calls=[],c={start:1,end:5,ref:{},words:[{s:1,e:2},{s:2,e:4.99},{s:4.99,e:5}]};
   const t=Object.create(Timeline.prototype),priorDocument=globalThis.document;
   globalThis.document={getElementById:()=>null,addEventListener(){}};
   try {
     Object.assign(t,{canvas:{setPointerCapture(){},addEventListener:(type,fn)=>handlers.set(type,fn)},
       pxPerSec:100,viewStart:0,_drag:null,_pointerId:null,_pointerType:null,
       _hideMenu(){},_hideEdgeHint(){},clearRangeSel(){},_laneIndexAtY:()=>0,_hitTest:()=>({cue:c}),
-      _hitWordHandle:()=>({cue:c,idx:2,edge:'word-end'}),_clampT:x=>x,onWordRetime:(...args)=>calls.push(args)});
+      _hitWordHandle:()=>({cue:c,idx:1,edge:'word-end'}),_clampT:x=>x,onWordRetime:(...args)=>calls.push(args)});
     t._bindEvents();
     const fire=(type,x)=>handlers.get(type)({button:0,pointerType:'mouse',pointerId:1,offsetX:x,offsetY:80});
     fire('pointerdown',490);fire('pointerup',490);assert.equal(calls.length,0,'clicking a handle never retimes');
     fire('pointerdown',490);fire('pointermove',470);fire('pointerup',470);
-    assert.ok(calls.every(args=>Math.abs(args[2]-4.8)<1e-9),'retime follows displacement from grab point');
+    assert.ok(calls.every(args=>Math.abs(args[2]-4.79)<1e-9),'retime follows displacement from grab point');
     assert.deepEqual(calls.map(args=>args[3]),[false,true]);assert.equal(c.end,5,'word end never moves block end');
   } finally { globalThis.document=priorDocument; }
 }

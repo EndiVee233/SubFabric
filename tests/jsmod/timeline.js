@@ -2134,6 +2134,7 @@ export class Timeline {
     for (let i = 0; i < c.words.length; i++) {
       for (const edge of ['word-start', 'word-end']) {
         if (edge === 'word-start' && !hasVisibleWordMark(i)) continue;
+        if (edge === 'word-end' && i === c.words.length - 1) continue; // 末词结束沿用整块右边缘，不再绘制/命中重复方块
         const px = this.t2x(edge === 'word-end' ? c.words[i].e : c.words[i].s);
         if (px < x1 - 1 || px > x2 + 1) continue;
         const center = Math.max(x1 + TEXT_PAD + g.markW / 2, Math.min(x2 - TEXT_PAD - g.markW / 2, px));
