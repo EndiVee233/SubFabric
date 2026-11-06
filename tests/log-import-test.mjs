@@ -12,6 +12,33 @@ const record = (sec, ops) => JSON.stringify({ created_ts: cutoff / 1000 + sec, o
 const rows = [cue(1, 3, '第一句'), cue(5, 7, '第二句'), cue(10, 12, '[甲] 第三句')];
 {
   const source = fs.readFileSync(new URL('../editor/js/main.js', import.meta.url), 'utf8');
+  const cleared = [], controller = new AbortController();
+  const box = () => ({ hidden: false, replaceChildren() { this.empty = true; } });
+  const rimEls = { overlay: box(), list: box() }, rimLog = { apply: {}, prepare: {}, review: box(), pager: box(), status: { textContent: 'current' } };
+  const ctx = vm.createContext({ rimEls, rimLog, rimLogAbort: controller, rimLogReading: true, rimSelTimer: 42,
+    rimLogGeneration: 2, rimLogGroups: ['old'], rimCues: ['old'], rimName: 'old.ass', rimPlan: {},
+    rimLogHistory: {}, rimLogSnapshot: 'old', rimLogProject: { id: 'old' }, clearInterval: id => cleared.push(id) });
+  vm.runInContext(source.slice(source.indexOf('function rimLogInvalidate()'), source.indexOf('function rimLogMode()')), ctx);
+  ctx.rimClose();
+  assert.equal(rimEls.overlay.hidden, true); assert.equal(controller.signal.aborted, true);
+  assert.deepEqual(cleared, [42]); assert.equal(ctx.rimSelTimer, 0);
+  assert.equal(ctx.rimPlan, null); assert.equal(ctx.rimLogGroups, null); assert.equal(ctx.rimLogHistory, null);
+  assert.equal(ctx.rimLogProject, null); assert.equal(rimLog.review.empty, true); assert.equal(ctx.rimLogReading, false);
+  ctx.rimClose(); assert.deepEqual(cleared, [42], 'repeated close is harmless');
+  let finishFlush, fetches = 0;
+  Object.assign(ctx, { rimBusy: false, rimLogHistory: {}, rimCues: [cue(1,3)], state: { project: { id: 'p' } },
+    modificationWindow, rimReadRange: () => ({ ok: true, start: 0, end: 30 }), panel: { stashInlineEdit() {} },
+    rimLogSnapshotNow: () => 'snapshot', AbortController, AbortSignal,
+    flushOpLog: () => new Promise(resolve => { finishFlush = resolve; }), fetch: () => { fetches++; throw Error('late read'); } });
+  rimLog.since = { value: '', validity: { valid: true } }; rimLog.until = { value: '', validity: { valid: true } };
+  vm.runInContext(source.slice(source.indexOf('async function rimLogPrepare()'), source.indexOf('async function rimLogApply()')), ctx);
+  const pending = ctx.rimLogPrepare(); ctx.rimClose(); rimLog.status.textContent = 'next project';
+  finishFlush(); await pending;
+  assert.equal(fetches, 0, 'leaving while pending writes flush cannot start an old-project log read');
+  assert.equal(rimLog.status.textContent, 'next project', 'late work cannot overwrite a reopened dialog');
+}
+{
+  const source = fs.readFileSync(new URL('../editor/js/main.js', import.meta.url), 'utf8');
   const row = { start: 1, end: 3 }, item = { no: 1, start: 1, end: 3 }, timeline = {}, logs = [];
   const context = vm.createContext({ timeline, state: { format: 'srt', itemByRef: new Map([[row, item]]) },
     logOp: (...args) => logs.push(args), reconcileKaraoke: () => 0, rebuildItemsAndLanes() {}, toast() {} });

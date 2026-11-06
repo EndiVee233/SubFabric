@@ -832,7 +832,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "c8a58dff246a2dad613a48ad1e7919156cd396b577757c38385adf7f6b519519",
+      "sha256": "519eef9cb925c91b6e5590a1dc8e8e23c2e687dae7e257cbd7bbb7214c8c38d6",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -884,190 +884,198 @@
         },
         {
           "line": 2935,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3112,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3121,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3171,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3253,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3955,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5684,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5685,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5891,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5909,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5996,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6076,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6102,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6181,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6621,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6625,
-          "method": "createElement"
-        },
-        {
-          "line": 6627,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6675,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6841,
-          "method": "createElement"
-        },
-        {
-          "line": 6843,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7371,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7426,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7587,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7920,
-          "method": "createElement"
-        },
-        {
-          "line": 7958,
-          "method": "createElement"
-        },
-        {
-          "line": 7980,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7982,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7982,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8147,
-          "method": "createElement"
-        },
-        {
-          "line": 8175,
-          "method": "createElement"
-        },
-        {
-          "line": 8186,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8291,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8315,
-          "method": "insertAdjacentHTML"
-        },
-        {
-          "line": 8316,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8347,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8629,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8784,
           "method": "replaceChildren"
         },
         {
-          "line": 8790,
+          "line": 2935,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 2946,
           "method": "innerHTML"
         },
         {
-          "line": 8835,
+          "line": 3125,
           "method": "innerHTML"
         },
         {
-          "line": 8836,
+          "line": 3134,
           "method": "innerHTML"
         },
         {
-          "line": 8857,
+          "line": 3184,
           "method": "innerHTML"
         },
         {
-          "line": 8870,
+          "line": 3266,
           "method": "innerHTML"
         },
         {
-          "line": 9172,
+          "line": 3964,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5693,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5694,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5900,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5918,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6005,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6085,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6111,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6190,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6630,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6634,
           "method": "createElement"
         },
         {
-          "line": 9177,
+          "line": 6636,
           "method": "innerHTML"
         },
         {
-          "line": 9186,
+          "line": 6684,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6850,
           "method": "createElement"
         },
         {
-          "line": 9192,
+          "line": 6852,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7380,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7435,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7596,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7929,
           "method": "createElement"
         },
         {
-          "line": 9194,
+          "line": 7967,
+          "method": "createElement"
+        },
+        {
+          "line": 7989,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7991,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7991,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8156,
+          "method": "createElement"
+        },
+        {
+          "line": 8184,
+          "method": "createElement"
+        },
+        {
+          "line": 8195,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8300,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8324,
+          "method": "insertAdjacentHTML"
+        },
+        {
+          "line": 8325,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8356,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8638,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8793,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 8799,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8844,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8845,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8866,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8879,
+          "method": "innerHTML"
+        },
+        {
+          "line": 9182,
+          "method": "createElement"
+        },
+        {
+          "line": 9187,
+          "method": "innerHTML"
+        },
+        {
+          "line": 9196,
+          "method": "createElement"
+        },
+        {
+          "line": 9202,
+          "method": "createElement"
+        },
+        {
+          "line": 9204,
           "method": "createElement"
         }
       ],
@@ -1130,7 +1138,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "76652c579f4829fa9dbaf72552617599e5378a127e6637567dba91ceb05c4b5f",
+      "sha256": "5362518e229fc381e1bf72af30d06c1ffa3cf80104dc886a74aec64082d55798",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1499,23 +1507,23 @@
           "method": "createElement"
         },
         {
-          "line": 6230,
+          "line": 6231,
           "method": "innerHTML"
         },
         {
-          "line": 6299,
+          "line": 6300,
           "method": "innerHTML"
         },
         {
-          "line": 6299,
+          "line": 6300,
           "method": "innerHTML"
         },
         {
-          "line": 6537,
+          "line": 6538,
           "method": "innerHTML"
         },
         {
-          "line": 6554,
+          "line": 6555,
           "method": "innerHTML"
         }
       ],

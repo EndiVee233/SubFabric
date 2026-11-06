@@ -25,7 +25,7 @@ import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL,
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp,
-    openCardBegin = async () => {}, openCardLabel = () => {}, openCardFail = () => {} } = ctx;
+    openCardBegin = async () => {}, openCardLabel = () => {}, openCardFail = () => {}, onEditorLeave = () => {} } = ctx;
   const $ = (s) => document.querySelector(s);
   const studioUI = document.body?.classList?.contains('sf-studio') === true;
 
@@ -6089,6 +6089,7 @@ async function renderAsrModels(providedStatus = null) {
       h = '#/dashboard';
       history.replaceState(null, '', h);
     }
+    if (h !== previousRoute && (previousRoute === '#/editor' || previousRoute.startsWith('#/project/'))) onEditorLeave();
     $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/storage' || h === '#/new' || h === '#/batch' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
     setPageVisible(dashboardView, h === '#/dashboard');
     setPageVisible(elHome, h === '#/home');

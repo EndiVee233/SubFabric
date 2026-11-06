@@ -2915,13 +2915,24 @@ const rimLog = {
 };
 let rimLogHistory = null, rimLogGroups = null, rimLogSnapshot = '', rimLogProject = null;
 let rimLogPage = 0, rimLogGeneration = 0, rimLogReading = false;
+let rimLogAbort = null;
 const rimLogSnapshotNow = () => state.format === 'ass' ? state.assDoc.serialize() : serializeSRT(state.srtCues);
 function rimLogInvalidate() {
   rimLogGeneration++;
+  rimLogAbort?.abort(); rimLogAbort = null;
+  rimLogReading = false; rimLog.prepare.disabled = false;
   rimLogGroups = null;
   rimLog.apply.disabled = true;
   rimLog.review.hidden = true;
   rimLog.pager.hidden = true;
+}
+function rimClose() {
+  rimEls.overlay.hidden = true;
+  if (rimSelTimer) { clearInterval(rimSelTimer); rimSelTimer = 0; }
+  rimLogInvalidate();
+  rimCues = null; rimName = ''; rimPlan = null;
+  rimLogHistory = null; rimLogSnapshot = ''; rimLogProject = null;
+  rimLog.review.replaceChildren(); rimEls.list.replaceChildren();
 }
 function rimLogMode() {
   rimLogInvalidate();
@@ -2963,12 +2974,14 @@ async function rimLogPrepare() {
   if (!rg.ok) { rimLog.status.textContent = rg.error; return; }
   panel.stashInlineEdit();
   const generation = rimLogGeneration, project = state.project, snapshot = rimLogSnapshotNow();
+  const request = new AbortController(); rimLogAbort = request;
   rimLogReading = true; rimLog.prepare.disabled = true;
   rimLog.status.textContent = '正在读取本稿日志并检查冲突…';
   try {
     if (!project) throw Error('请先把当前字幕保存为项目，才能核对本稿操作日志');
     await flushOpLog();
-    const r = await fetch(`/api/projects/${project.id}/oplog`, { cache: 'no-store', signal: AbortSignal.timeout(30000) });
+    if (generation !== rimLogGeneration) return;
+    const r = await fetch(`/api/projects/${project.id}/oplog`, { cache: 'no-store', signal: AbortSignal.any([request.signal, AbortSignal.timeout(30000)]) });
     if (!r.ok) throw Error('读取本稿操作日志失败，已停止自动覆盖');
     const j = await r.json(), protection = localProtection(j.entries);
     if (generation !== rimLogGeneration || state.project !== project || snapshot !== rimLogSnapshotNow()) throw Error('本稿或导入条件已变化，请重新检查');
@@ -2983,8 +2996,8 @@ async function rimLogPrepare() {
       + `未定位操作 ${selected.unresolved} 个，未匹配最终字幕 ${selected.unmatched} 个；本稿定位不明记录 ${protection.unknown} 条。`
       + '删除操作不直接重放；请核对最终字幕。两边都勾选会同时保留，两边都取消会删除该处字幕。';
     rimLogRender();
-  } catch (e) { rimLogInvalidate(); rimLog.status.textContent = e.message; }
-  finally { rimLogReading = false; rimLog.prepare.disabled = false; }
+  } catch (e) { if (generation === rimLogGeneration) { rimLogInvalidate(); rimLog.status.textContent = e.message; } }
+  finally { if (rimLogAbort === request) { rimLogAbort = null; rimLogReading = false; rimLog.prepare.disabled = false; } }
 }
 
 async function rimLogApply() {
@@ -3041,7 +3054,7 @@ rimLog.file?.addEventListener('change', async e => {
     if (generation !== rimLogGeneration) return;
     rimLogHistory = parsed; rimLog.name.textContent = `${file.name}（${parsed.ops} 个操作）`;
     rimLog.status.textContent = `日志修改时间：${new Date(parsed.first).toLocaleString()} → ${new Date(parsed.last).toLocaleString()}。可手动选择修改时间范围后重新检查。`;
-  } catch (err) { rimLog.name.textContent = '日志未加载'; rimLog.status.textContent = err.message; }
+  } catch (err) { if (generation === rimLogGeneration) { rimLog.name.textContent = '日志未加载'; rimLog.status.textContent = err.message; } }
 });
 rimLog.review?.addEventListener('change', e => {
   const cb = e.target.closest('input[data-group]'); if (!cb || !rimLogGroups) return;
@@ -3414,11 +3427,7 @@ async function rimApply(force) {
 }
 
 if (btnRegionImport) btnRegionImport.addEventListener('click', rimOpen);
-if (rimEls.cancel) rimEls.cancel.addEventListener('click', () => {
-  rimLogInvalidate();
-  rimEls.overlay.hidden = true;
-  if (rimSelTimer) { clearInterval(rimSelTimer); rimSelTimer = 0; }   // 停止盯选区
-});
+if (rimEls.cancel) rimEls.cancel.addEventListener('click', rimClose);
 if (rimEls.pick) rimEls.pick.addEventListener('click', () => rimEls.file.click());
 if (rimEls.file) rimEls.file.addEventListener('change', async (e) => {
   const f = e.target.files[0];
@@ -8971,6 +8980,7 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
   state, video, timeline, panel, toast, toastAfterCueIntro, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
+  onEditorLeave: rimClose,
   // 打开项目的进度卡（右下角 #job-card）：读 3~4MB 字幕 + 同步解析的这段时间里
   // 界面是静止的，得让用户看见"在打开"，也得看见打开了多大的稿子。
   openCardBegin, openCardLabel, openCardFail,

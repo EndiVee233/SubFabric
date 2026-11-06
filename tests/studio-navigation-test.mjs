@@ -521,15 +521,23 @@ assert.equal(frames.size, playerFrames, 'select controls add no animation-frame 
 await settle();
 
 const state = { project: null, format: null, srtCues: [] };
+let editorLeaves = 0;
 const { initProjects } = await loadProduction('project.js', probe === 'upload-lock'
     ? source => source.replace(/if \(studioUI && npSubmitting && h !== '#\/new'\) \{[\s\S]*?\n    \}/, '') : null);
 const api = initProjects({ state, video: $('video'), timeline: { setPeaks() {} }, panel: { showConfirm(_title, _msg, _yes, _no, onYes) { if (schemeConfirm) return onYes(); } },
   toast: text => toasts.push(text), setPlaybackAudioMode() {}, loadVideoUrl() {},
+  onEditorLeave() { editorLeaves++; $('rim-overlay').hidden = true; },
   routeSub(text) { state.format = 'srt'; state.srtCues = parseSRT(text); } });
 api.applyHash(); await settle();
 assert.equal($('app').inert, false, 'editor routing enables actual editor interactions');
+$('rim-overlay').hidden = false;
+api.applyHash(); await settle();
+assert.equal(editorLeaves, 0, 'same-editor refresh does not close an active import');
+assert.equal($('rim-overlay').hidden, false);
 await click('btn-new-project');
 assert.equal(location.hash, '#/new');
+assert.equal(editorLeaves, 1, 'editor departure calls the cleanup once');
+assert.equal($('rim-overlay').hidden, true, 'import overlay cannot remain over the next page');
 fileDialog = new File(['fixture video bytes'], 'original.webm', { type: 'video/webm' });
 await click('np-pick-video');
 $('np-file-sub').files = [new File([subtitle], 'original.srt', { type: 'text/plain' })];
