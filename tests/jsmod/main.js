@@ -5523,17 +5523,47 @@ function applyRecognizedOnce(a, b, segs) {
   return n;
 }
 
-/** 后台任务轮询: 进度画在时间轴常驻区域上, 完成后写回字幕并提示 */
-let reRecogPoll = 0;
-function stopRerecogPoll() { clearInterval(reRecogPoll); reRecogPoll = 0; }
+// Background results wait for the user's edit to finish; never commit or recreate an active editor.
+let subtitleWriteGeneration = 0;
+async function waitForSubtitleInput(pid, label, valid = () => true) {
+  const project = state.project, generation = subtitleWriteGeneration;
+  const source = state.format === 'ass' ? state.assDoc : state.srtCues;
+  const current = () => state.project === project && project?.id === pid && generation === subtitleWriteGeneration
+    && source === (state.format === 'ass' ? state.assDoc : state.srtCues) && valid();
+  let reported = false;
+  while (current()) {
+    if (!panel.editItem && !window.__videoEditor?.isOpen) return true;
+    if (!reported) {
+      jobCardShow(label, '已完成，等待当前字幕输入结束后写回…', 100, '不会自动提交或关闭正在输入的字幕');
+      reported = true;
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return false;
+}
+
+function rerecogSignature(regions) {
+  return JSON.stringify((state.items || []).filter(it => regions.some(r => it.end > r.start + 0.001 && it.start < r.end - 0.001))
+    .map(it => [it.start, it.end, it.l1 || '', it.l2 || '', it.ref?.en?.words || [], it.ref?.zh?.words || []]));
+}
+
+/** 前端会话队列与服务端的单项目互斥配合：上一条结果收尾后才启动下一条。 */
+const reRecogQueue = [];
+let reRecogActive = null, reRecogPoll = 0, reRecogPollGeneration = 0;
+function stopRerecogPoll() { clearInterval(reRecogPoll); reRecogPoll = 0; reRecogPollGeneration++; }
 function setReRecogRegion(a, b, patch) {
   const cur = timeline.reRecogRegion || { a, b };
+  if (!timeline.reRecogRegion) cur.guard = rerecogSignature(patch?.regions || [{ start: a, end: b }]);
   if (a != null) cur.a = a;
   if (b != null) cur.b = b;
   timeline.reRecogRegion = Object.assign(cur, patch || {});
   timeline.touch();          // 区域/进度是直接改的 timeline 属性, 手动置脏才会立刻重绘
 }
-function clearReRecogRegion() { timeline.reRecogRegion = null; stopRerecogPoll(); timeline.touch(); }
+function clearReRecogRegion() {
+  timeline.reRecogRegion = null; stopRerecogPoll(); timeline.touch();
+  reRecogActive = null; reRecogBusy = false;
+  queueMicrotask(pumpRerecogQueue);
+}
 
 /** 重开项目(含刷新页面)时接回后台还在跑的重新识别任务:
  *  否则时间轴上不显示那个紫区、任务跑完了也收不到结果(用户以为白跑了)。
@@ -5542,9 +5572,11 @@ function clearReRecogRegion() { timeline.reRecogRegion = null; stopRerecogPoll()
  *  批量任务会丢掉 regions，时间轴上就只画第一段（实测踩过）。 */
 async function resumeRerecog(pid) {
   if (timeline.reRecogRegion || reRecogPoll) return;
+  const project = state.project, generation = subtitleWriteGeneration;
   let j;
-  try { j = (await (await fetch(`/api/projects/${pid}/reidentify`)).json()).job; } catch { return; }
-  if (!j || j.status !== 'running' || !state.project || state.project.id !== pid) return;
+  try { j = (await (await fetch(`/api/projects/${pid}/reidentify`, { signal: AbortSignal.timeout(8000) })).json()).job; } catch { return; }
+  if (!j || j.status !== 'running' || state.project !== project || project?.id !== pid
+      || generation !== subtitleWriteGeneration || timeline.reRecogRegion || reRecogPoll) return;
   setReRecogRegion(j.start, j.end, {
     status: j.status, progress: j.progress, message: j.message,
     regions: (Array.isArray(j.regions) && j.regions.length > 1) ? j.regions : null,
@@ -5554,51 +5586,72 @@ async function resumeRerecog(pid) {
 
 function startRerecogPoll(pid) {
   stopRerecogPoll();
+  const generation = reRecogPollGeneration;
+  let reading = false;
   reRecogPoll = setInterval(async () => {
-    if (!timeline.reRecogRegion) return stopRerecogPoll();
-    if (!state.project || state.project.id !== pid) return clearReRecogRegion();   // 切了项目: 收掉
-    let m;
-    /* 轮询 /reidentify 而不是 /rerecognize：前者的 GET 走 jobView()，会带上
-     * batch / regions / regionDone 这些批量字段；后者的 GET 直接回**原始 job**
-     * （没有 jobView 加工），于是"第 N/M 段"这种进度信息在前端拿不到（实测踩过）。
-     * 两者的任务存在同一个 Map 里，所以对单区间重识别同样有效。 */
-    try { m = await (await fetch(`/api/projects/${pid}/reidentify`)).json(); } catch { return; }
-    const j = m.job;
-    if (!j) return clearReRecogRegion();                    // 服务重启, 任务没了
-    setReRecogRegion(null, null, { status: j.status, progress: j.progress, message: j.message });
-    // 右下角进度卡：批量的显示"第 N/M 段"，单区间的显示阶段与百分比
-    if (j.status === 'running') {
-      const isBatch = !!j.batch && (j.regionTotal | 0) > 1;
-      const foot = isBatch
-        ? `第 <b>${(j.regionIndex | 0) + 1}</b>/${j.regionTotal} 段 · 已完成 ${j.regionDone | 0} 段`
-        : '正在重识别这一段；可以继续编辑其它字幕';
-      jobCardShow(isBatch ? '纠错重识别 · 逐段进行' : '重新识别 · 进行中',
-        j.message || '识别中…', j.progress, foot);
-      return;
-    }
-    stopRerecogPoll();
-    const a = timeline.reRecogRegion.a, b = timeline.reRecogRegion.b;
-    if (j.status === 'done') {
-      const segs = j.segments || [];
-      /* 批量纠错返回**多个互不相邻**的区间，必须逐段写回（见 applyRecognized 的说明）——
-       * 早期只传 [首段起点, 末段终点] 的总跨度，会把段与段之间未重识别的内容一起删掉，
-       * 造成"识别后大量空缺"。 */
-      const regs = (Array.isArray(j.regions) && j.regions.length) ? j.regions : null;
-      const n = segs.length ? applyRecognized(a, b, segs, regs) : 0;
-      clearReRecogRegion();
-      // warning 里可能是「API Key 为空，未翻译」这类必须让用户看到的提示
-      const span = regs
-        ? `（${regs.length} 段，共 ${Math.round(regs.reduce((s, r) => s + (r.end - r.start), 0))} 秒音频）`
-        : '';
-      jobCardDone('重新识别 · 完成', `${n} 行已写回字幕${span}`
-        + (j.warning ? ` —— ${j.warning}` : ''), true);
-      toast(`重新识别已完成：${n} 行已写回字幕${span}` + (j.warning ? ' —— ' + j.warning : ''), 9000);
-    } else {
-      const err = j.error || '未知错误';
-      clearReRecogRegion();
-      jobCardDone('重新识别 · 失败', String(err).slice(0, 160), false);
-      toast(`重新识别失败：${err}`, 6600);
-    }
+    if (reading || generation !== reRecogPollGeneration) return;
+    reading = true;
+    try {
+      if (!timeline.reRecogRegion) return stopRerecogPoll();
+      if (!state.project || state.project.id !== pid) return clearReRecogRegion();   // 切了项目: 收掉
+      let m;
+      /* 轮询 /reidentify 而不是 /rerecognize：前者的 GET 走 jobView()，会带上
+       * batch / regions / regionDone 这些批量字段；后者的 GET 直接回**原始 job**
+       * （没有 jobView 加工），于是"第 N/M 段"这种进度信息在前端拿不到（实测踩过）。
+       * 两者的任务存在同一个 Map 里，所以对单区间重识别同样有效。 */
+      try { m = await (await fetch(`/api/projects/${pid}/reidentify`, { signal: AbortSignal.timeout(8000) })).json(); } catch { return; }
+      if (generation !== reRecogPollGeneration || state.project?.id !== pid || !timeline.reRecogRegion) return;
+      const j = m.job;
+      if (!j) return clearReRecogRegion();                    // 服务重启, 任务没了
+      setReRecogRegion(null, null, { status: j.status, progress: j.progress, message: j.message });
+      // 右下角进度卡：批量的显示"第 N/M 段"，单区间的显示阶段与百分比
+      if (j.status === 'running') {
+        const isBatch = !!j.batch && (j.regionTotal | 0) > 1;
+        const foot = isBatch
+          ? `第 <b>${(j.regionIndex | 0) + 1}</b>/${j.regionTotal} 段 · 已完成 ${j.regionDone | 0} 段`
+          : '正在重识别这一段；可以继续编辑其它字幕';
+        jobCardShow(isBatch ? '纠错重识别 · 逐段进行' : '重新识别 · 进行中',
+          j.message || '识别中…', j.progress, foot + (reRecogQueue.length ? ` · 另有 ${reRecogQueue.length} 个任务排队` : ''));
+        return;
+      }
+      stopRerecogPoll();
+      const region = timeline.reRecogRegion;
+      const a = timeline.reRecogRegion.a, b = timeline.reRecogRegion.b;
+      if (j.status === 'done') {
+        if (!await waitForSubtitleInput(pid, '重新识别 · 等待写回', () => timeline.reRecogRegion === region)) return;
+        const segs = j.segments || [];
+        /* 批量纠错返回**多个互不相邻**的区间，必须逐段写回（见 applyRecognized 的说明）——
+         * 早期只传 [首段起点, 末段终点] 的总跨度，会把段与段之间未重识别的内容一起删掉，
+         * 造成"识别后大量空缺"。 */
+        const regs = (Array.isArray(j.regions) && j.regions.length) ? j.regions : null;
+        if (region.guard !== rerecogSignature(regs || [{ start: a, end: b }])) {
+          clearReRecogRegion();
+          jobCardDone('重新识别 · 已保留当前修改', '该区间在识别期间被修改，识别结果未覆盖当前字幕', false);
+          toast('重新识别已完成，但该区间已被修改，已保留当前字幕', 7000);
+          return;
+        }
+        const n = segs.length ? applyRecognized(a, b, segs, regs) : 0;
+        clearReRecogRegion();
+        // warning 里可能是「API Key 为空，未翻译」这类必须让用户看到的提示
+        const span = regs
+          ? `（${regs.length} 段，共 ${Math.round(regs.reduce((s, r) => s + (r.end - r.start), 0))} 秒音频）`
+          : '';
+        jobCardDone('重新识别 · 完成', `${n} 行已写回字幕${span}`
+          + (j.warning ? ` —— ${j.warning}` : ''), true);
+        toast(`重新识别已完成：${n} 行已写回字幕${span}` + (j.warning ? ' —— ' + j.warning : ''), 9000);
+      } else {
+        const err = j.error || '未知错误';
+        clearReRecogRegion();
+        jobCardDone('重新识别 · 失败', String(err).slice(0, 160), false);
+        toast(`重新识别失败：${err}`, 6600);
+      }
+    } catch (e) {
+      if (state.project?.id === pid && generation + 1 === reRecogPollGeneration) {
+        clearReRecogRegion();
+        jobCardDone('重新识别 · 写回失败', String(e.message || e), false);
+        toast('重新识别写回失败：' + e.message, 6600);
+      }
+    } finally { reading = false; }
   }, 1000);
 }
 
@@ -5611,37 +5664,77 @@ function startRerecogPoll(pid) {
  * @param a,b    时间区间（秒）
  * @param why    日志/提示里说明来源（'选区' / '第 N 句'）
  */
-async function startRerecog(a, b, why) {
-  if (reRecogBusy) return false;
+async function startRerecog(a, b, why, ref = null) {
   if (!(b > a)) return false;
   if (!state.project) { toast('重新识别只在项目模式可用（需要项目里已保存的音频）', 4600); return false; }
   if (state.format !== 'ass' && state.format !== 'srt') { toast('当前字幕格式不支持重新识别'); return false; }
-  if (timeline.reRecogRegion) { toast('已有一个重新识别任务在进行中，请等它结束', 3800); return false; }
-  const pidAtStart = state.project.id;    // 下面的 await 期间用户可能切项目: 用捕获值, 返回前再校验
+  const project = state.project;
+  const same = task => task && task.project === project && ((ref && task.ref === ref) || (Math.abs(task.a - a) < 0.001 && Math.abs(task.b - b) < 0.001));
+  if (same(reRecogActive) || reRecogQueue.some(same)
+    || (timeline.reRecogRegion && Math.abs(timeline.reRecogRegion.a - a) < 0.001 && Math.abs(timeline.reRecogRegion.b - b) < 0.001)) {
+    toast('这段字幕已在重新识别或排队中', 3400); return false;
+  }
+  reRecogQueue.push({ a, b, why, ref, project });
+  if (reRecogActive || reRecogBusy || timeline.reRecogRegion || reflectApplying) {
+    toast(`已加入重新识别队列：排队第 ${reRecogQueue.length} 位`, 3800);
+  }
+  pumpRerecogQueue();
+  return true;
+}
+
+async function pumpRerecogQueue() {
+  if (reRecogActive || reRecogBusy || timeline.reRecogRegion || reflectApplying || !reRecogQueue.length) return;
+  const task = reRecogQueue.shift();
+  if (state.project !== task.project) { reRecogQueue.length = 0; return; }
+  if (task.ref) {
+    // Reconciliation rebuilds ASS row wrappers after every completed task.
+    const matches = state.items.filter(it => it.ref === task.ref || (Math.abs(it.start - task.a) < 0.001 && Math.abs(it.end - task.b) < 0.001));
+    const current = state.items.find(it => it.ref === task.ref) || (matches.length === 1 ? matches[0] : null);
+    if (!current) { toast('排队期间这条字幕已被删除，已跳过重新识别', 5200); queueMicrotask(pumpRerecogQueue); return; }
+    task.a = current.start; task.b = current.end;
+  }
+  reRecogActive = task; reRecogBusy = true;
+  const { a, b, why } = task, pidAtStart = task.project.id;
+  const current = () => state.project === task.project && reRecogActive === task;
   // API Key 为空时明确告诉用户"只识别不翻译", 别让结果悄无声息地缺了中文
   let llmReadyNow = false;
-  try { llmReadyNow = !!(await (await fetch('/api/translate/config')).json()).ready; } catch {}
-  if (!state.project || state.project.id !== pidAtStart) return;   // 期间切走了: 静默放弃
+  try { llmReadyNow = !!(await (await fetch('/api/translate/config', { signal: AbortSignal.timeout(8000) })).json()).ready; } catch {}
+  if (!current()) return;
   if (!llmReadyNow) toast('翻译未就绪（API Key 为空或本地模型缺失）：本次只重新识别、不翻译', 8000);
-  reRecogBusy = true;
+  const guard = rerecogSignature([{ start: a, end: b }]);
+  let started = false;
   try {
     const r = await fetch(`/api/projects/${pidAtStart}/rerecognize`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ start: a, end: b })
+      body: JSON.stringify({ start: a, end: b }), signal: AbortSignal.timeout(15000),
     });
     const m = await r.json();
-    if (!state.project || state.project.id !== pidAtStart) return;  // 响应回来前又切走了
-    if (!r.ok) { toast(m.error || '重新识别启动失败', 5600); return false; }
+    if (!current()) return;
+    if (!r.ok) {
+      // An existing server job may be discovered before the reload/resume request returns.
+      if (/已有.*重新识别/.test(m.error || '')) {
+        reRecogQueue.unshift(task);
+        await resumeRerecog(pidAtStart);
+        if (!current()) return;
+        if (timeline.reRecogRegion) { started = true; reRecogActive = null; reRecogBusy = false; return; }
+        reRecogQueue.shift();
+      }
+      throw new Error(m.error || '重新识别启动失败');
+    }
     if (timeline.rangeSel) timeline.clearRangeSel();   // 选区收起; 常驻区域留在时间轴上直到任务结束
-    setReRecogRegion(a, b, { status: 'running', progress: 2, message: '正在切出音频片段…' });
+    setReRecogRegion(a, b, { status: 'running', progress: 2, message: '正在切出音频片段…', guard });
     startRerecogPoll(pidAtStart);
+    started = true;
     toast(`重新识别已在后台开始（${why}），可以继续编辑其它字幕，完成后会提示`, 6600);
     return true;
   } catch (e) {
-    toast('重新识别启动失败: ' + e.message, 5600);
+    if (current()) toast('重新识别启动失败: ' + e.message, 5600);
     return false;
   } finally {
-    reRecogBusy = false;
+    if (current()) {
+      reRecogBusy = false;
+      if (!started) { reRecogActive = null; queueMicrotask(pumpRerecogQueue); }
+    }
   }
 }
 
@@ -6017,7 +6110,7 @@ async function applyReflect() {
   // 重入保护：本函数一进来就把弹窗关掉，用户看到的是"已回到编辑页"，
   // 很容易再点一次（或双击）—— 第二个请求必然撞上服务端的互斥锁，
   // 弹出"这个稿件已有重新识别任务在跑"，看起来像是上一次失败了。
-  if (reflectApplying) return;
+  if (reflectApplying || !state.project) return;
   if (!d || !reflectPicked.size) return;
   // 与后端同一套规则：排序后合并重叠/相接的区间（保证每段只跑一次）
   // gap 也是可执行项（补识别那段空档），不再过滤掉
@@ -6033,6 +6126,7 @@ async function applyReflect() {
   const total = uniq.reduce((s, r) => s + (r.end - r.start), 0);
   const spanSec = uniq[uniq.length - 1].end - uniq[0].start;
   reflectShow(false);
+  const project = state.project, generation = subtitleWriteGeneration, guard = rerecogSignature(uniq);
   reflectApplying = true;
   if (reflectEls.btn) reflectEls.btn.disabled = true;
   // 让用户先看到"要动多大一块、其中多少是真的要重听"——两者差别大时尤其要讲清楚，
@@ -6042,16 +6136,17 @@ async function applyReflect() {
       + `段与段之间的内容（约 ${(spanSec - total).toFixed(0)} 秒）不受影响`, 9000);
   }
   try {
-    const r = await fetch(`/api/projects/${state.project.id}/reidentify`, {
+    const r = await fetch(`/api/projects/${project.id}/reidentify`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ regions: uniq }),
     });
     const j = await r.json().catch(() => ({}));
+    if (state.project !== project || generation !== subtitleWriteGeneration) return;
     if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
     // 时间轴上把那几段画出来。传**各段区间**（uniq）而不是首尾跨度：
     // 逐段画紫带，段与段之间的空隙不涂色，用户才能一眼看出真正在重听的是哪几块。
     const a0 = uniq[0].start, b0 = uniq[uniq.length - 1].end;
-    setReRecogRegion(a0, b0, { status: 'running', progress: 1, regions: uniq, message: j.message || '纠错重识别中 …' });
+    setReRecogRegion(a0, b0, { status: 'running', progress: 1, regions: uniq, guard, message: j.message || '纠错重识别中 …' });
     startRerecogPoll(state.project.id);
     toast(`纠错重识别已在后台开始：${uniq.length} 段、约 ${total.toFixed(0)} 秒音频，完成后会自动写回`, 8000);
     logOp('reflect', `应用 ${picked.length} 条反思建议`,
@@ -6060,10 +6155,13 @@ async function applyReflect() {
       `模型通读全片给出的建议（合并/重识别${(d.findings || []).some(f => f.kind === 'gap') ? '/补漏识别' : ''}），`
       + `用户勾选后应用；写回按段进行，段与段之间的内容不动`);
   } catch (e) {
-    toast('纠错重识别启动失败: ' + e.message, 6000);
+    if (state.project === project && generation === subtitleWriteGeneration) toast('纠错重识别启动失败: ' + e.message, 6000);
   } finally {
-    reflectApplying = false;
-    if (reflectEls.btn) reflectEls.btn.disabled = false;
+    if (generation === subtitleWriteGeneration) {
+      reflectApplying = false;
+      if (reflectEls.btn) reflectEls.btn.disabled = false;
+      pumpRerecogQueue();
+    }
   }
 }
 
@@ -6141,7 +6239,7 @@ if (rbReRecog) rbReRecog.addEventListener('click', () => {
     if (!it) return;
     if (!(it.end > it.start)) { toast('这一句的时间区间无效，无法重识别', 4200); return; }
     // 行号：用列表里的显示序号更符合用户预期（卡片上没写序号，但提示里有更清楚）
-    startRerecog(it.start, it.end, `第 ${Number(card.dataset.idx) + 1} 句`);
+    startRerecog(it.start, it.end, `第 ${Number(card.dataset.idx) + 1} 句`, it.ref);
   });
 }
 
@@ -7127,12 +7225,13 @@ async function runRealign(queued) {
   }
   if (target.changed) toast('这条字幕在排队期间被改过，已按最新文本重排', 4200);
   const { pid, start, end, text } = target;
+  const project = state.project, doc = state.assDoc, generation = subtitleWriteGeneration;
+  const current = () => state.project === project && state.assDoc === doc && generation === subtitleWriteGeneration;
   realignBusy = true;
   realignRunningKey = target.key;
   const secs = (end - start).toFixed(1);
   jobCardShow('重排逐词时间', `正在用 Qwen3 对齐器重算（${secs} 秒）…`, null,
     '文本已确认，只重新量逐词时间；不跑 ASR、不改文本');
-  let editSnap = null;
   try {
     const r = await fetch(`/api/projects/${pid}/realign`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7140,20 +7239,15 @@ async function runRealign(queued) {
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-    if (!state.project || state.project.id !== pid) return;     // 期间切了项目
+    if (!current()) return;
     const b = (j.blocks || [])[0];
     if (!b) throw new Error('服务端没有返回结果');
     if (!b.ok || !(b.words || []).length) {
       throw new Error(b.note || '这次对齐不可信，未改动');
     }
     /* 排队期间前面几条已经重建过文档 → 按 targetKey 找**当前**那句，不能写回旧对象。 */
-    let sent = state.kar && state.kar.sentences.find(s => realignTargetKey(s) === target.key);
-    if (!sent) throw new Error('这条字幕在排队期间已改动，已跳过');
-    /* 后台对齐跑完写回时，用户可能正在编辑另一条：先保存编辑框文本，重建后恢复。 */
-    editSnap = panel.stashInlineEdit ? panel.stashInlineEdit() : null;
-    /* 提交编辑可能改了这一条本身（例如用户正在改这条的文本）→ 按 key 重新定位，
-     * 找不到就说明文本已经变了，不能拿旧文本的对齐结果覆盖它。 */
-    sent = state.kar.sentences.find(s => realignTargetKey(s) === target.key);
+    if (!await waitForSubtitleInput(pid, '重排逐词时间 · 等待写回', current)) return;
+    const sent = state.kar && state.kar.sentences.find(s => realignTargetKey(s) === target.key);
     if (!sent) throw new Error('这条字幕的文本刚被改过，已跳过重排');
     const beforeWords = sent.words.length;
     /* 写回：**先剥掉原有的逐词高亮标签再写 words**。
@@ -7173,7 +7267,6 @@ async function runRealign(queued) {
     sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
     reconcileKaraoke();
     rebuildItemsAndLanes(true, true);
-    if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
     if (state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
     const msec = Math.round((end - start) * 1000);
     jobCardDone('重排逐词时间 · 完成',
@@ -7184,21 +7277,24 @@ async function runRealign(queued) {
       + `；旧值 ${beforeWords} 词`,
       `Qwen3-ForcedAligner：用已确认文本对原片音频做纯对齐（不跑 ASR、不改文本）`);
   } catch (e) {
+    if (!current()) return;
     const msg = String((e && e.message) || e);
-    if (editSnap && panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
     jobCardDone('重排逐词时间 · 失败', msg.slice(0, 160), false);
     toast('重排失败：' + msg, 6600);
     logOp('realign', `第 ${target.no} 条 ${fmtTime(start)}~${fmtTime(end)}`,
       '重排逐词时间失败，未改动', msg.slice(0, 200));
   } finally {
-    realignBusy = false;
-    realignRunningKey = '';
-    const next = realignQueue.shift();
-    if (next) {
-      setTimeout(() => {
-        if (state.project && state.project.id === next.pid) runRealign(next);
-        else realignQueue.length = 0;      // 切了稿件：队列整个作废
-      }, 0);
+    if (generation === subtitleWriteGeneration) {
+      realignBusy = false;
+      realignRunningKey = '';
+      const next = realignQueue.shift();
+      if (next) {
+        setTimeout(() => {
+          if (generation !== subtitleWriteGeneration) return;
+          if (state.project && state.project.id === next.pid) runRealign(next);
+          else realignQueue.length = 0;
+        }, 0);
+      }
     }
   }
 }
@@ -7420,6 +7516,15 @@ function syncRealignApply() {
  * 于是从 A 稿切到 B 稿、浮层还开着时，界面上留着 A 的 3927 句数据（用户实测反馈）。
  * 由 project.js 的 openProject() 调（与 __notesReload 同一套路）。 */
 function resetRealignForProjectSwitch() {
+  subtitleWriteGeneration++;
+  reRecogQueue.length = 0;
+  reRecogActive = null;
+  reRecogBusy = false;
+  stopRerecogPoll();
+  timeline.reRecogRegion = null;
+  timeline.touch();
+  realignBusy = false;
+  reflectApplying = false;
   /* 切稿前先把旧项目的后台对齐停掉；否则它继续占着 GPU，用户还以为已经关了。 */
   if (realignRunning && realignPid) cancelRealignJob();
   resetRealignSignatures();                 // 换稿后签名表作废（开始时间会撞车）
@@ -7639,10 +7744,8 @@ async function applyRealignFull() {
   realignApplying = true;
   if (realignEls.apply) realignEls.apply.disabled = true;
   try {
-    /* 用户可能正在改另一条字幕：先把编辑框里的文本提交进数据（不重建列表），
-     * 重建后再把编辑状态恢复回去。否则这一步 rebuildItemsAndLanes 会把正在输入的
-     * 那条连同文字一起顶掉（用户实测：「逐词时间戳插入时不要顶掉输入操作」）。 */
-    const editSnap = panel.stashInlineEdit ? panel.stashInlineEdit() : null;
+    const dataAtStart = realignData;
+    if (!await waitForSubtitleInput(pid, '逐词重校对 · 等待写回', () => realignData === dataAtStart)) return;
     /* ⚠ **不能**拿 item.index 直接索引 state.kar.sentences：
      *   服务端返回的 index 是它那边的句子序号，而它解析出的句子集合与前端
      *   analyzeKaraoke 的**不一样** —— 实测导入 ASS 的稿件：
@@ -7654,10 +7757,11 @@ async function applyRealignFull() {
     const snapshot = doc.serialize();
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(snapshot));
     const revision = [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('');
-    if (state.project !== project || state.assDoc !== doc || doc.serialize() !== snapshot) {
-      if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
+    if (state.project !== project || state.assDoc !== doc || realignData !== data || doc.serialize() !== snapshot) {
       return;
     }
+    if (!await waitForSubtitleInput(pid, '逐词重校对 · 等待写回', () => state.assDoc === doc && realignData === data)) return;
+    if (doc.serialize() !== snapshot) return;
     const { changed: n, skipped: miss } = applyRealignItems(doc, state.kar, picks.map(k => data.items[k]),
       { projectId: pid, revision, repairWords: !!data.repair });
     const detail = picks.map(k => `${fmtTime(data.items[k].start)} · ${(data.items[k].words || []).length} 词`).join('、');
@@ -7673,10 +7777,8 @@ async function applyRealignFull() {
       logOp('realign', '全片逐词重校对：未应用',
         `对齐结果与当前字幕的文本/时间/逐词序列不一致，${miss || picks.length} 句全部跳过（文本未改动）`,
         'Qwen3-ForcedAligner 纯对齐；若字幕刚被改过，请重新跑一次重校对');
-      if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
       return;
     }
-    if (panel.resumeInlineEdit) panel.resumeInlineEdit(editSnap);
     toast(`已重排 ${n} 句的逐词时间${miss ? `（${miss} 句没对上，已跳过）` : ''}（文本未改动）`, 6200);
     logOp('realign', `全片逐词重校对：应用 ${n} 句`,
       `重排了 ${n} 句的逐词时间（文本与整句时间未改动）`,

@@ -79,7 +79,7 @@ ok(/第 <b>\$\{\(j\.regionIndex \| 0\) \+ 1\}<\/b>\/\$\{j\.regionTotal\} 段/.te
  * /rerecognize 的 GET 直接回原始 job，前端拿不到这些字段（实测踩过）。
  * 注意 POST 仍然打到 /rerecognize（那才是"发起单区间重识别"的接口），所以这里
  * 只禁 GET 形式的轮询写法。 */
-ok(/fetch\(`\/api\/projects\/\$\{pid\}\/reidentify`\)/.test(MJ),
+ok(/fetch\(`\/api\/projects\/\$\{pid\}\/reidentify`, \{ signal: AbortSignal\.timeout\(8000\) \}\)/.test(MJ),
   '轮询 /reidentify（走 jobView，才有批量字段）');
 ok(!/await \(await fetch\(`\/api\/projects\/\$\{pid\}\/rerecognize`\)\)/.test(MJ),
   '轮询不再用 /rerecognize（那条路由不做 jobView 加工）');
@@ -95,7 +95,7 @@ ok(/跟随全局设置/.test(MJ) && /全局设置 → 识别增强/.test(MJ),
 
 console.log('\n== 3. 前端调用了正确接口 ==');
 ok(/\/api\/projects\/\$\{state\.project\.id\}\/reflect/.test(MJ), '调 /reflect');
-ok(/\/api\/projects\/\$\{state\.project\.id\}\/reidentify/.test(MJ), '调 /reidentify');
+ok(/\/api\/projects\/\$\{project\.id\}\/reidentify/.test(MJ), '调发起时绑定稿件的 /reidentify');
 ok(/regions:\s*uniq/.test(MJ), '提交时带 regions 数组');
 
 console.log('\n== 4. 前端自己也求并区间（后端还会再求一次）==');

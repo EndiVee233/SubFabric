@@ -63,8 +63,8 @@ assert.match(applySrt, /Projects\.openProject\(pid\)/, '写完后重新载入项
 /* ── 逐词重校对写回：修复异常行 + 不顶掉正在输入的其它字幕 ── */
 const applyRealign = bodyOf(main, 'applyRealignFull');
 assert.match(applyRealign, /repairWords/, '「仅逐词异常行」应用时必须允许按文本分词修复词序列');
-assert.match(applyRealign, /stashInlineEdit/, '写回前要保存正在输入的字幕');
-assert.match(applyRealign, /resumeInlineEdit/, '重建后要恢复同一行的编辑');
+assert.match(applyRealign, /await waitForSubtitleInput/, '写回等待用户结束字幕输入');
+assert.doesNotMatch(applyRealign, /stashInlineEdit|resumeInlineEdit/, '后台结果不能自动提交或重建正在输入的编辑框');
 assert.match(main, /closest\('#op-range-overlay'\)/, '区域弹窗内的点击不能清掉时间轴选区');
 assert.match(main, /realignRepair = !!onlyKeys/, '只有「仅异常行」启用修复模式');
 

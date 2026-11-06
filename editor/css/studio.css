@@ -8261,27 +8261,21 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .sf-mu .sf-resume .sf-resume-actions .btn { min-width:84px; justify-content:center; text-align:center; margin-top:0; pointer-events:auto; border:1px solid transparent; transition:border-color .18s, transform .18s var(--sf-spring), box-shadow .18s, filter .18s; }
 .sf-mu .sf-resume .sf-resume-actions .btn:hover { border-color:var(--accent); transform:translateY(-1px); box-shadow:var(--sf-hover-shadow); filter:brightness(1.04); }
 .st-scheme-actions .btn { min-width:84px; justify-content:center; }
-/* 编辑器 Toast：去掉左侧色条，统一胶囊形 */
-#toast,
-#toast.toast-ok,
-#toast.toast-warn,
-#toast.toast-err,
-.sf-studio[data-design=uwp] #toast,
-.sf-studio[data-design=uwp] #toast.toast-ok,
-.sf-studio[data-design=uwp] #toast.toast-warn,
-.sf-studio[data-design=uwp] #toast.toast-err {
+/* 非 UWP Toast 使用胶囊；UWP 保持系统通知的直角与状态色条。 */
+.sf-studio:not([data-design=uwp]) #toast {
   border-left-width:1px;
   border-left-color:var(--line);
   border-radius:999px;
 }
 /* 单行 Toast 胶囊；多行长提示改用大圆角矩形 */
-#toast.toast-tall { border-radius:18px; }
-.sf-studio[data-design=uwp] #toast.toast-tall { border-radius:10px; }
+.sf-studio:not([data-design=uwp]) #toast.toast-tall { border-radius:18px; }
+.sf-studio[data-design=uwp] #toast.toast-tall { border-radius:2px; }
 /* Toast 文案与图标整体居中，左右留白对称 */
 #toast { justify-content:center; text-align:center; padding:9px 18px; }
 #toast > span { line-height:1.45; }
-.sf-studio[data-design=uwp] #toast { padding:10px 18px; }
+.sf-studio[data-design=uwp] #toast { justify-content:flex-start; text-align:left; padding:10px 14px 10px 16px; }
 #toast > span { position:relative; top:-1px; }
+.sf-studio[data-design=uwp] #toast > span { top:0; }
 /* 回退到整体旋转胶囊 + 文字反向旋转；文字按胶囊中心定位 */
 .sf-mu .sf-orbit,
 .sf-studio[data-theme-pack="material-you"] .sf-mu .sf-orbit,
