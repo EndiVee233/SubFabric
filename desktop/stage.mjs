@@ -12,7 +12,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'desktop/package.json'), 
 const server = fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8');
 const appVersion = /const APP_VERSION = '([^']+)'/.exec(server)?.[1];
 const fileVersion = /const APP_FILE_VERSION = '([^']+)'/.exec(server)?.[1];
-if (pkg.version !== '1.5.8-beta.3' || appVersion !== 'beta 1.5.8.2' || fileVersion !== '1.5.8.2') throw Error('Desktop/server version mismatch');
+if (pkg.version !== '1.5.9-beta.1' || appVersion !== 'beta 1.5.9.1' || fileVersion !== '1.5.9.1') throw Error('Desktop/server version mismatch');
 /* NSIS 包名是版本号第五处：artifactName 硬编码文件版本，漏改会让 Electron 包停在旧版本号。 */
 const expectedArtifact = `SubFabric-${fileVersion}-setup.\${ext}`;
 if (pkg.build?.win?.artifactName !== expectedArtifact) throw Error(`win.artifactName must be ${expectedArtifact}, got ${pkg.build?.win?.artifactName}`);

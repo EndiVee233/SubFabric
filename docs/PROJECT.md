@@ -21,9 +21,9 @@
 报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
 仅属历史验证，不覆盖本机功能增量；本次未跑全量 JS、Python、真实 GUI、GPU/ASR、媒体导出或安装验收。
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.8.2` / 文件版本
-  `1.5.8.2`（npm `1.5.8-beta.3`）。两条链路的安装包命名分别为 `SubFabric-1.5.8.2-setup.exe` 与
-  `SubFabric-1.5.8.2-sea-setup.exe`（Inno Setup + Node SEA）；此处是源码配置，不代表本次已构建或发布。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.9.1` / 文件版本
+  `1.5.9.1`（npm `1.5.9-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.9.1-setup.exe` 与
+  `SubFabric-1.5.9.1-sea-setup.exe`（Inno Setup + Node SEA）；本次 SEA 构建验收见 §6，Electron 本次未重建，未发布 Release。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
   后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
@@ -96,7 +96,7 @@
   需要旧托盘时直接 `node editor/server.js`。端口优先级为 `--port NNNN` > `PORT` > 默认 `8321`。
   此入口会在源码 root 创建 `logs/`、`projects/`、`asr/settings.json`；手工验收用一次性工作副本
   并确认端口空闲，正常测试不要直接启动源码服务。
-- **旧启动链路**：SEA 启动器端口写死 `8321`；`启动SubFabric(无窗口).vbs` 在 `8321–8324` 找空闲端口、
+- **SEA 启动链路**：启动器默认 `8321`，显式 `PORT` 环境变量可与后端共用其它有效端口；`启动SubFabric(无窗口).vbs` 在 `8321–8324` 找空闲端口、
   就绪后开浏览器。脚本保留，不是当前 Electron/NSIS 安装入口。
 
 ## 2. 目录地图
@@ -1264,9 +1264,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.8.2'`、`APP_FILE_VERSION = '1.5.8.2'`、npm version `1.5.8-beta.3`。
+  `APP_VERSION = 'beta 1.5.9.1'`、`APP_FILE_VERSION = '1.5.9.1'`、npm version `1.5.9-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.8.2-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.9.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
@@ -1313,7 +1313,23 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 以下脚本、限制、安装行为与验证记录仅适用于旧 SEA/Inno 包，不自动套用于 Electron/NSIS。
 
-- 旧链路只发 Inno Setup 安装包 `SubFabric-<版本>-setup.exe`，不再出便携版 zip。链路：
+- **本次 SEA 产物（2026-11-06，已完成且已验证：定向范围）**：显示 `beta 1.5.9.1` / 文件 `1.5.9.1`，
+  Node `22.22.2` + Inno Setup；`build/installer/SubFabric-1.5.9.1-sea-setup.exe` **38,301,988 B**，
+  SHA-256 `121bff4e8720a9f9ef77828e90f67db265f293def0e78a1648c11fb5d3811cce`。
+  独立构建目录按源码白名单与 4 个 vendor 文件准备 125 项输入，包含新 `log-import.js` / `style-preset.js`，
+  不依赖本地 Git 跟踪清单，不携带用户配置、稿件、模型或运行时；旧安装包与可执行文件保留。
+  新 SEA EXE 位于 `build/sea-1.5.9.1-*/build/SubFabric.exe`，**87,110,144 B**，
+  SHA-256 `0b2ed9d4b60480f6ea7886e4c3540a6f7fc20255d77fd1a39712aa5d695809c4`；
+  EXE/Setup 的 FileVersion、ProductVersion 均核对为 `1.5.9.1`，图标沿用现有 ICO（Pillow 缺失时的既有回退）。
+  默认 8321 被已有实例占用，未接管；启动器补齐既有 `PORT` 环境配置，在空闲端口实际运行 SEA 后端，
+  `/api/version` 返回新版本，Studio、新模块与 libass WASM 均 200；核对监听 PID 后通过本机退出接口正常退出。
+  安装验证使用另编的独立测试 AppId（仅身份/产物名不同、同一程序载荷），不写真实安装的登记或目录：
+  静默安装、覆盖安装、默认保留数据卸载通过，9 个合成项目/视频/模型/运行时/配置/浏览器数据文件哈希不变，
+  关键安装源码与 SEA EXE 哈希匹配。正式生产 AppId 包未覆盖安装到用户目录。
+  本次 14 组打包/安装边界与近期编辑器定向 JS 回归全部通过；未跑全量、真实 GPU/ASR、媒体导出或 Electron 构建，
+  相关 ESLint 0 error / 17 个既有 warning。
+  未创建 tag、Release 或上传资产。报告 `_test/maintenance/sea-build-report.json` 与 `sea-package-tests.json` 留本机。
+- SEA 链路只生成 Inno Setup 安装包 `SubFabric-<文件版本>-sea-setup.exe`，不出便携版 zip。链路：
   `node editor/scripts/fetch-vendor.js` → `python build_exe.py` →
   `"<Inno Setup 目录>\ISCC.exe" build/installer/SubFabric.iss`。
 - `build_exe.py` 生成 Node 22 SEA 单文件 `build/SubFabric.exe`（内嵌 `editor/scripts/sea-launcher.cjs`；
@@ -1334,9 +1350,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   前三段不变（如 `1.4.6.2` 的次日第一版是 `1.4.6.1`）；需要抬前三段时，抬完末段也从 `1` 开始。
   推出的号仍要与远端 tag/Release 列表比对，避免撞号。
 - **Release**：只上传 setup.exe 一个资产，发完核对 `assets[].digest` 与本地 sha256 一致。
-- **静默安装自检**：`/VERYSILENT ... /DIR=<临时目录>` 会被 Inno 默认的 `UsePreviousAppDir` 顶掉，
-  本机装过 SubFabric 时实际上是一次原地覆盖升级（`[Files]` 不含用户数据，属无害），但要知道它确实换了
-  用户机器上的版本；真要隔离得临时给 `.iss` 加 `UsePreviousAppDir=no` 重编。
+- **静默安装自检**：当前 `InitializeWizard` 仅在目录仍为默认值时预填检测到的旧目录，保留显式 `/DIR`。
+  安装仍会登记对应 AppId，隔离验收应另编独立测试身份、显式临时目录和 `/NOICONS`，不能拿生产 AppId
+  测试包去覆盖用户机器的安装登记。更早版本曾错误覆盖显式目录，不能沿用其旧验收结论。
 - **构建稳定性**：刚写出的约 90MB exe 会被杀毒/索引短暂占用，rcedit 报
   `Fatal error: Unable to commit changes`；`build_exe.py` 的 `embed_icon_and_version` 已做短重试
   （0.4–2.0s，最多 5 次），真失败仍退出。

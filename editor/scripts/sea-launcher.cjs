@@ -21,7 +21,9 @@ for (const k of ['log', 'error', 'warn', 'info']) {
   console[k] = (...a) => { try { orig(...a); } catch {} };
 }
 
-const PORT = 8321;
+// Use the same explicit PORT override as server.js, including isolated package smoke runs.
+const configuredPort = parseInt(process.env.PORT || '', 10);
+const PORT = configuredPort >= 1 && configuredPort <= 65535 ? configuredPort : 8321;
 const HOST = '127.0.0.1';
 const URL = `http://${HOST}:${PORT}/`;
 
