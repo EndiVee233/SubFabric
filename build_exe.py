@@ -208,6 +208,27 @@ def strip_invalid_signature(exe_path):
         f.write(data)
 
 
+def validate_sea_exe(exe_path):
+    """Reject a console executable or an incomplete SEA injection before deployment."""
+    import struct
+    with open(exe_path, 'rb') as f:
+        data = f.read()
+    if len(data) < 64 or data[:2] != b'MZ':
+        raise RuntimeError('SEA 输出不是有效的 Windows 程序')
+    pe = struct.unpack_from('<I', data, 0x3C)[0]
+    opt = pe + 24
+    if opt + 112 > len(data) or data[pe:pe + 4] != b'PE\x00\x00':
+        raise RuntimeError('SEA 输出的 PE 头无效')
+    magic = struct.unpack_from('<H', data, opt)[0]
+    if magic not in (0x10B, 0x20B) or struct.unpack_from('<H', data, opt + 68)[0] != 2:
+        raise RuntimeError('SEA 输出仍是控制台程序，拒绝发布会弹 CMD 的版本')
+    if b'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2:1' not in data:
+        raise RuntimeError('SEA 启动资源未成功注入')
+    security = opt + (112 if magic == 0x20B else 96) + 4 * 8
+    if security + 8 > len(data) or any(struct.unpack_from('<II', data, security)):
+        raise RuntimeError('SEA 输出残留失效的签名目录')
+
+
 def main():
     os.makedirs(BUILD, exist_ok=True)
 
@@ -247,6 +268,7 @@ def main():
     # 6. 清掉 node.exe 残留但已失效的 Authenticode 证书表（见函数注释：
     #    "有签名目录但哈希不匹配"比"未签名"更容易被杀软判成篡改/木马）
     strip_invalid_signature(OUT)
+    validate_sea_exe(OUT)
     print('完成:', OUT)
 
 

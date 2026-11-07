@@ -12,7 +12,7 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
   sentenceSpeakerNames, filterSentencesBySpeakers, continuousWordTimes } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
-import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace } from '../region-merge.js';
+import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace, eventsForReplacement } from '../region-merge.js';
 import { parseChangeLog, changedCues, modificationWindow, localProtection, planLogImport, resolveLogImport,
   captureLogScope, attachImportEvents, stageAssLogMerge } from './log-import.js';
 import { parseRegionTime } from '../region.js';
@@ -2179,7 +2179,7 @@ function scheduleAssRender(doc, fonts) {
   }
 }
 
-function setAss(text, name) {
+function setAss(text, name, options = {}) {
   // 换了稿子 → 就地编辑框必须收掉（它指向的是旧数据）。用 window 上的引用，避开 let 的 TDZ
   if (window.__videoEditor && window.__videoEditor.isOpen) window.__videoEditor.close();
   clearEditPreview(false);
@@ -2345,9 +2345,11 @@ function setAss(text, name) {
     { v: 'first', t: '仅中文' },
     { v: 'second', t: '仅英文' }
   ], 'bi');
-  timeline.clearRangeSel();      // 新文件 → 顺带取消批量选区
-  realignFailureKeys.clear();
-  timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
+  if (!options.preserveView) {
+    timeline.clearRangeSel();      // 新文件 → 顺带取消批量选区
+    realignFailureKeys.clear();
+    timeline.resetView();          // 新文件 → 时间轴回到"默认 30s 跨度"
+  }
   rebuildItemsAndLanes(true);
   setAssStyleControls();
   const renderFonts = state.assStyleTargets
@@ -3092,7 +3094,7 @@ function rimParseCues(text, name) {
      * 交给 ass-group.js 按"句"聚合（判据只看文本与时间，不依赖样式名）。 */
     const rows = evs.map(ev => ({
       start: ev.start, end: ev.end, style: ev.style || '',
-      name: ev.name || '', text: ev.text || '',
+      name: ev.name || '', text: ev.text || '', lineIdx: ev.lineIdx,
     }));
     const g = groupAssRows(rows);
     if (!g.ok) return [];
@@ -3376,18 +3378,50 @@ async function rimApply(force) {
       return c;
     };
     const before = state.items.length;
-    if (replaceSteps) {
-      for (const rg of res.replace) {
-        // 先删被覆盖的（用与批量删除同一套 removeItemData, 不手改数组）
-        for (const it of itemsInRange(rg.start, rg.end)) removeItemData(it, false);
-        step++;
-        if (step % 10 === 0) {
-          jobCardShow('分段导入', `正在清理冲突行 ${step}/${replaceSteps}…`, (step / total) * 100, note());
-          await new Promise(r => setTimeout(r, 0));
-        }
-      }
-    }
     let added = 0;
+    const rawAss = state.format === 'ass' && add.every(row => row.importEvents?.length
+      && row.importEvents.every(ev => state.assDoc.styleNames.some(style => style.toLowerCase() === ev.style.toLowerCase())));
+    if (rawAss) {
+      const removing = new Set();
+      for (const rg of res.replace || []) for (const item of itemsInRange(rg.start, rg.end)) removing.add(item);
+      const events = eventsForReplacement(state.assDoc.events, res.replace || []);
+      const edited = inlineEdit && state.items.find(item => item.ref === inlineEdit.ref);
+      const incoming = add.map(row => {
+        const color = colorForRow(row);
+        if (color) coloredRoles.add((roleNameOf(row.zh) || roleNameOf(row.en)).toLowerCase());
+        if (!color || color.toLowerCase() === String(row.color).toLowerCase()) return row;
+        const tag = `{\\c&H${hexToAss(color)}&}`;
+        return { ...row, importEvents: row.importEvents.map(ev => {
+          // Keep word-highlight spans and original k timing intact; recolor only a
+          // visible leading speaker label, where the project already knows this role.
+          if (!roleNameOf(ev.text) || /\\(?:[kK]|1?c&H[0-9a-f]{6}&[^}]*\}[^{}]*\{\\1?c)/i.test(ev.text)) return ev;
+          return { ...ev, text: ev.text.replace(/^(?:\s*\{[^}]*\})*/, head => head + tag) };
+        }) };
+      });
+      jobCardShow('分段导入', '正在合并字幕…', 50, note());
+      await new Promise(resolve => setTimeout(resolve, 0));
+      // Construct and validate once before committing. This preserves the source's
+      // real word timings/empty gaps and avoids thousands of whole-document sorts.
+      const next = stageAssLogMerge(state.assDoc, events, incoming, targetStyles);
+      setAss(next.serialize(), state.fileName, { preserveView: true });
+      added = incoming.length;
+      if (inlineEdit) {
+        const match = edited && !removing.has(edited) ? state.items.filter(item =>
+          item.start === edited.start && item.end === edited.end && item.l1 === edited.l1 && item.l2 === edited.l2) : [];
+        inlineEdit.ref = match.length === 1 ? match[0].ref : null;
+      }
+    } else {
+    if (replaceSteps) {
+      const removing = new Set();
+      for (const rg of res.replace) for (const item of itemsInRange(rg.start, rg.end)) removing.add(item);
+      // A malformed import can contain tens of thousands of slices. Remove its events
+      // once instead of repeatedly sorting the entire ASS document for every tiny row.
+      if (state.format === 'ass') removeAssItemsData([...removing], res.replace);
+      else for (const item of removing) removeItemData(item, false);
+      step = replaceSteps;
+      jobCardShow('分段导入', `正在清理冲突行 ${step}/${replaceSteps}…`, (step / total) * 100, note());
+      await new Promise(r => setTimeout(r, 0));
+    }
     for (let i = 0; i < add.length; i++) {
       const r = add[i];
       try {
@@ -3409,10 +3443,11 @@ async function rimApply(force) {
         await new Promise(r => setTimeout(r, 0));   // 让出一帧，进度条能刷新
       }
     }
+    }
     // ★ 导入后自动自愈：把"被清空/错位"的逐词文本搬回来。
     //   放在这个位置的原因：损坏一旦写进文件就会永久留下（列表里看不出、画面只是
     //   "整句一直亮着"），所以每次导入都顺手体检一遍，而不是等用户发现再处理。
-    const healed = healWordRows('分段导入后');
+    const healed = rawAss ? 0 : healWordRows('分段导入后');
     reconcileKaraoke();
     /* ★ 视频区（libass 渲染层）拿的是**序列化后的整份 ASS**，不重喂就一直是导入前的那份：
      * 列表和时间轴有新行、画面上却什么都没有，非得刷新一次才出现（用户报的
@@ -5176,6 +5211,19 @@ panel.kStyleLabel = karaokeStyleMenuLabel;
 
 /** 删除一条字幕(列表删除按钮 / 时间轴右键菜单共用) */
 /** 从文档/数据里摘掉一条字幕(**不重建界面**) —— 单条删除与批量删除共用, 批量时只重建一次 */
+function removeAssItemsData(items, ranges = null) {
+  const rows = new Set(items.map(item => item.ref).filter(Boolean));
+  const sentences = new Set();
+  for (const row of rows) for (const sent of [row.zh, row.en]) if (sent) sentences.add(sent);
+  const events = new Set();
+  for (const sent of sentences) for (const event of sent.events) events.add(event);
+  if (ranges) for (const event of eventsForReplacement(state.assDoc.events, ranges)) events.add(event);
+  if (events.size) state.assDoc.deleteEvents([...events]);
+  state.kar.sentences = state.kar.sentences.filter(sent => !sentences.has(sent));
+  state.kar.rows = state.kar.rows.filter(row => !rows.has(row));
+  for (const row of rows) state.newRows.delete(row);
+}
+
 function removeItemData(item, refreshPreview = true) {
   if (!item) return false;
   if (item.kind === 'srt') {
@@ -5388,8 +5436,8 @@ function addRecognizedRow(seg, targetStyles = null) {
   const assHex = seg.color ? hexToAss(seg.color) : null;
   const zhLead = assHex ? `{\\c&H${assHex}&}` : '';
   // ASS 里花括号是覆盖标签, 用户文本(译文/ASR)必须转义 —— 与服务端写初稿同一约定
-  const zh = zhStyle ? appendSentence(zhStyle, s, e, zhLead + escAss(zhText)) : null;
-  const en = enStyle ? appendSentence(enStyle, s, e, (zhText ? '' : zhLead) + escAss(enText)) : null;
+  const zh = zhStyle && zhText ? appendSentence(zhStyle, s, e, zhLead + escAss(zhText)) : null;
+  const en = enStyle && enText ? appendSentence(enStyle, s, e, (zhText ? '' : zhLead) + escAss(enText)) : null;
   if (!zh && !en) return null;
   // 英文: 有 ASR 的**真实词级时间**就按它铺（逐词高亮跟着真实发音走）
   if (en) {

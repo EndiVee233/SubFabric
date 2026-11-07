@@ -2,7 +2,7 @@
 // postject 需要通过 npm 拉一次(带 --yes), 之后走本地缓存。
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -15,10 +15,13 @@ if (!exe || !blob) { console.error('用法: node inject_postject.mjs <exe> <blob
 // 定位 npm 的 npx-cli.js(与 node 同发行版)
 const nodeDir = dirname(process.execPath);
 const candidates = [
+  process.env.SUBFABRIC_NPX_CLI,
   join(nodeDir, 'node_modules', 'npm', 'bin', 'npx-cli.js'),
   join(nodeDir, '..', 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+  ...(process.env.PATH || '').split(delimiter).filter(Boolean)
+    .map(directory => join(directory, 'node_modules', 'npm', 'bin', 'npx-cli.js')),
 ];
-const npxCli = candidates.find(existsSync);
+const npxCli = candidates.find(candidate => candidate && existsSync(candidate));
 if (!npxCli) { console.error('未找到 npx-cli.js:', candidates); process.exit(1); }
 
 function npx(args) {

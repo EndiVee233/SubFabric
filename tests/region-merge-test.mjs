@@ -222,5 +222,13 @@ console.log('\n== rowLabel: 预览用的短标签 ==');
   eq(rowLabel({ zh: 'a  b\n c' }), 'a b c', '空白折行压成单空格');
 }
 
+console.log('\n== 覆盖整句必须删除全部冲突切片，不能只删预览记录的第一块 ==');
+{
+  const p = planRegionMerge([{ start: 0, end: 3, lines: ['整句', 'One small problem.'] }],
+    [{ start: 0, end: .5 }, { start: .5, end: 1 }, { start: 1, end: 3 }], 0, 3);
+  const result = resolveReplace(p);
+  eq(result.replace, [{ start: 0, end: 3 }], '删除范围覆盖新整句，而不是第一个 0.5 秒切片');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

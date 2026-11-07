@@ -24,6 +24,22 @@ const MIN_ROW_SEC = 0.2;
 /** 行里有没有汉字：单行条目靠它决定进中文还是英文轨。 */
 const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
 
+/** Include orphaned ASS slices too, not only events still reachable from visible rows. */
+export function eventsForReplacement(events, ranges) {
+  const merged = [];
+  for (const range of (ranges || []).filter(r => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start)
+    .slice().sort((a, b) => a.start - b.start)) {
+    const last = merged[merged.length - 1];
+    if (last && range.start <= last.end) last.end = Math.max(last.end, range.end);
+    else merged.push({ start: range.start, end: range.end });
+  }
+  return events.filter(event => {
+    let low = 0, high = merged.length;
+    while (low < high) { const middle = (low + high) >> 1; if (merged[middle].end <= event.start + 1e-3) low = middle + 1; else high = middle; }
+    return low < merged.length && merged[low].start < event.end - 1e-3;
+  });
+}
+
 /** 把区间外的行剔掉，区间内的原样留下（时间**不动**） */
 function pickInRange(cues, start, end, active) {
   const list = (Array.isArray(cues) ? cues : []).slice()
@@ -97,6 +113,7 @@ function planRegionMerge(cues, existing, start, end) {
     const row = { start: cs, end: ce, zh: zhText, en: enText, stretched: fix,
       color: String(c.color || ''),
       words: Array.isArray(c.words) ? c.words : [] };
+    if (Array.isArray(c.importEvents)) row.importEvents = c.importEvents;
     if (!row.zh && !row.en) continue;                // 空行丢弃（没有内容可放）
     // 与项目里**任何**已有行重叠 → 冲突（不静默覆盖）
     const hit = ex.find(r => overlaps(cs, ce, r.start, r.end));
@@ -155,8 +172,11 @@ function resolveFillOnly(plan) {
 function resolveReplace(plan) {
   const p = plan || {};
   const replace = [];
-  for (const c of (p.conflicts || [])) {
-    const w = c.with;
+  // `with` is only the first preview collision. The incoming sentence can cover
+  // many short existing rows; cover its whole span or later slices survive.
+  const spans = (p.conflicts || []).map(c => ({ start: Math.min(c.start, c.with.start), end: Math.max(c.end, c.with.end) }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  for (const w of spans) {
     const last = replace[replace.length - 1];
     if (last && w.start <= last.end + 1e-6) last.end = Math.max(last.end, w.end);
     else replace.push({ start: w.start, end: w.end });

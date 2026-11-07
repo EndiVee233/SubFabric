@@ -205,9 +205,16 @@ export function resolveLogImport(groups) {
 /** Copy original ASS events (including k/kf, word gaps, colors, margins and names), not estimates. */
 export function attachImportEvents(cues, source) {
   const index = new Map();
+  const byLine = new Map(source.events.map(ev => [ev.lineIdx, ev]));
   for (const ev of source.events) { const key = plainKey(ev.text); if (!index.has(key)) index.set(key, []); index.get(key).push(ev); }
   return cues.map(c => {
     const events = new Map();
+    for (const line of c.sourceIndices || []) {
+      const ev = byLine.get(line);
+      if (ev) events.set(ev.lineIdx, { ...ev,
+        margins: Object.fromEntries(source.format.map((f, i) => [f, ev._rawParts[i]]).filter(([f]) => f.startsWith('margin'))) });
+    }
+    if (events.size) return { ...c, importEvents: [...events.values()].sort((a, b) => a.lineIdx - b.lineIdx) };
     for (const key of cueKeys(c)) for (const ev of index.get(key) || []) {
       if (ev.start >= c.start - 0.03 && ev.end <= c.end + 0.03) events.set(ev.lineIdx, {
         ...ev, margins: Object.fromEntries(source.format.map((f, i) => [f, ev._rawParts[i]]).filter(([f]) => f.startsWith('margin'))),

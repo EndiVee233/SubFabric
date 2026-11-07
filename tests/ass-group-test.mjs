@@ -229,5 +229,25 @@ console.log('\n== ⑦ 用真实的 (5) 文件验证规模 ==');
   }
 }
 
+console.log('\n== 混合语言的高亮词不能让整份文件退化成逐事件导入 ==');
+{
+  const rows = [
+    r(0, 3, ZH, '[Speaker] 只有一个问题'),
+    r(0, .5, EN, '{\\c&H00FF00&}One{\\c} small problem.'),
+    r(.5, 1, EN, 'One small problem.'),
+    r(1, 1.5, EN, 'One {\\c&H00FF00&}small{\\c} problem.'),
+    r(1.5, 2, EN, 'One small problem.'),
+    r(2, 3, EN, 'One small {\\c&H00FF00&}problem.{\\c}'),
+    r(4, 5, ZH, '[Speaker] 好的'),
+    r(4, 5, EN, '{\\c&H00FF00&}嗯okay{\\c}'),
+  ];
+  const g = groupAssRows(rows);
+  eq(g.stats.wordStyles, [EN], '混合语言词仍保留逐词样式');
+  eq(g.lines.length, 2, '整句与无高亮空档正确聚合，不受另一句中文词影响');
+  eq(g.lines[0].lines, ['[Speaker] 只有一个问题', 'One small problem.'], '中英仍归为同一块');
+  eq(g.lines[0].words, [{ word: 'One', start: 0, end: .5 }, { word: 'small', start: 1, end: 1.5 }, { word: 'problem.', start: 2, end: 3 }], '真实词时间与两处空档保留');
+  eq(g.lines[1].words, [{ word: '嗯okay', start: 4, end: 5 }], '混合语言词本身也不丢');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

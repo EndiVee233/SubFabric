@@ -115,14 +115,14 @@ function groupAssRows(rows) {
   //   于是"样式名不含 word"（用户的叫 Default）的稿件永远认不出逐词样式。
   //   真实文件能过是因为它同时命中了"同跨度多条"（那句代码里 add 了）。
   for (const st of tagStyles) {
-    const hasSentence = list.some(r => r.style === st && CJK.test(sentenceText(r.text)));
-    if (hasSentence) { tagStyles.delete(st); continue; }   // 该样式也承载整句 → 不是纯逐词样式
+    // A real word highlight remains word-level even when a speaker mixes Chinese
+    // into the English track. One such token must not disable grouping for the file.
     wordStyles.add(st);
   }
   // Repeated Chinese notes/roles can share a span. They remain sentence rows,
   // even if duplicate timestamps originally nominated the style as word-level.
   for (const st of wordStyles) {
-    if (list.some(r => r.style === st && CJK.test(sentenceText(r.text)))) wordStyles.delete(st);
+    if (!tagStyles.has(st) && list.some(r => r.style === st && CJK.test(sentenceText(r.text)))) wordStyles.delete(st);
   }
 
   const wordRows = list.filter(r => wordStyles.has(r.style));
@@ -198,6 +198,7 @@ function groupAssRows(rows) {
     const enRole = s.rows.find(r => /^\[[^\]]+\]/.test(plain(r.text)) && leadColorHex(r.text, true));
     out.push({
       start: s.start, end: s.end, lines, words: s.words || [], _wordCount: s.n,
+      sourceIndices: [...s.rows, ...(zh ? [zh] : [])].map(r => r.lineIdx).filter(Number.isInteger),
       color: (zh && leadColorHex(zh.text)) || (enRole ? leadColorHex(enRole.text, true) : ''),
     });
   }
@@ -206,6 +207,7 @@ function groupAssRows(rows) {
     if (usedSent.has(r)) continue;
     out.push({
       start: Number(r.start), end: Number(r.end), lines: [plain(r.text)], _wordCount: 0,
+      sourceIndices: Number.isInteger(r.lineIdx) ? [r.lineIdx] : [],
       color: leadColorHex(r.text),
     });
   }
@@ -238,6 +240,7 @@ function groupAssRows(rows) {
         && sentenceText(line.lines[0]) === sentenceText(prev.lines[1])) {
         prev.end = Math.max(prev.end, line.end);
         prev.words = mergeWords(prev.words, line.words);
+        prev.sourceIndices = [...new Set([...(prev.sourceIndices || []), ...(line.sourceIndices || [])])];
         prev._wordCount = (prev._wordCount || 0) + (line._wordCount || 0);
         continue;
       }
@@ -245,6 +248,7 @@ function groupAssRows(rows) {
         && sentenceText(prev.lines[0]) === sentenceText(line.lines[1])) {
         line.start = Math.min(line.start, prev.start);
         line.words = mergeWords(prev.words, line.words);
+        line.sourceIndices = [...new Set([...(prev.sourceIndices || []), ...(line.sourceIndices || [])])];
         line._wordCount = (prev._wordCount || 0) + (line._wordCount || 0);
         merged[merged.length - 1] = line;
         continue;

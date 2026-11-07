@@ -6,12 +6,13 @@ import { AssDoc } from '../editor/js/ass.js';
 import * as K from '../editor/js/karaoke.js';
 import { escapeAssUser } from '../editor/js/segment.js';
 import { makeSyntheticAss } from './ass-fixture.mjs';
-import { planRegionMerge, resolveFillOnly, resolveReplace } from '../editor/region-merge.js';
+import { planRegionMerge, resolveFillOnly, resolveReplace, eventsForReplacement } from '../editor/region-merge.js';
 import { Timeline } from '../editor/js/timeline.js';
 
 const src = fs.readFileSync(new URL('../editor/js/main.js', import.meta.url), 'utf8');
 function slice(a, b) { const i = src.indexOf(a), j = src.indexOf(b, i + a.length); assert.ok(i >= 0 && j > i); return src.slice(i, j); }
 const functions = slice('async function rimApply(force)', '\nif (btnRegionImport)')
+  + slice('function removeAssItemsData(', '\nfunction removeItemData(')
   + slice('function removeItemData(', '\nfunction deleteItem(')
   + slice('function addRecognizedRow(', '\n/** 把建好的行')
   + slice('function registerRecognizedRow(', '\n/** 删掉')
@@ -31,7 +32,7 @@ async function run(force, color = '#ab1234', known = []) {
   const updates = [], calls = [], timeline = { touch() { calls.push('touch'); }, drawIfNeeded() {}, setPlayingByTime() {} };
   const ctx = { state, rimBusy: false, rimName: 'fixture.ass',
     rimPlan: planRegionMerge([{ start: force ? 1 : 260, end: force ? 3 : 263, lines: ['[NEW] 导入字幕', 'fresh imported words'], color, words: [] }], state.items, 0, 300),
-    resolveFillOnly, resolveReplace, ROLE_PALETTE: K.ROLE_PALETTE, HIGHLIGHT_COLORS: K.HIGHLIGHT_COLORS,
+    resolveFillOnly, resolveReplace, eventsForReplacement, ROLE_PALETTE: K.ROLE_PALETTE, HIGHLIGHT_COLORS: K.HIGHLIGHT_COLORS,
     ...Object.fromEntries(['sentenceFromEvent','speakerColorOf','speakerTagOf','buildWordSpecs','recalcWords'].map(k => [k, K[k]])),
     hexToAss: h => h.slice(5,7) + h.slice(3,5) + h.slice(1,3), escAss: escapeAssUser,
     itemsInRange: (a,b) => state.items.filter(x => x.end > a && x.start < b),
