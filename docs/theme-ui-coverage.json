@@ -2054,7 +2054,7 @@
     },
     {
       "file": "editor/js/workload-panel.js",
-      "sha256": "47f34702c9e7483d98b5881bc2f73fa030ae7b97c541da2311921b0c9bf0ef67",
+      "sha256": "b0011f56e9f06617af197ae17c590fe37930005914820fbdfa5bd09e59c3a886",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -2063,11 +2063,11 @@
           "method": "innerHTML"
         },
         {
-          "line": 46,
+          "line": 49,
           "method": "replaceChildren"
         },
         {
-          "line": 52,
+          "line": 55,
           "method": "innerHTML"
         }
       ],
@@ -2075,7 +2075,7 @@
     },
     {
       "file": "editor/js/workload.js",
-      "sha256": "da78963b28f72892254530df19e2e88a19cf47137afddd5153cb1a945d843f59",
+      "sha256": "6310f772019ec8fbb8d7164618cb4a369edb5327f77ea398cc2cb68decd20657",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2091,7 +2091,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "4b3705bde4bd4c172ec04cac8bcfe4afdd491096d25dd9cc94003f48429930e3",
+      "sha256": "cdfa32466d830f96149993a732bfc8cc536854a4f5d7dc32df23a252ae9c375e",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],

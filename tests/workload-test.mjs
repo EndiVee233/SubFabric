@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { confidenceBand, workloadOptions, estimateWorkload } from '../editor/js/workload.js';
+import { WORKLOAD_BANDS, WORKLOAD_CALIBRATION, confidenceBand, workloadOptions, estimateWorkload } from '../editor/js/workload.js';
+
+assert.deepEqual(WORKLOAD_BANDS.map(band => band.automatic), [6, 5, 3, 3, 1, 0]);
+assert.deepEqual(WORKLOAD_CALIBRATION.calibratedBands, ['60to75', '75to90']);
+assert.equal(WORKLOAD_CALIBRATION.samples['60to75'], 195);
+assert.equal(WORKLOAD_CALIBRATION.samples['75to90'], 801);
+assert.equal(WORKLOAD_CALIBRATION.samples['90to100'], 0, 'unobserved scores retain their prior rather than inventing evidence');
+assert.equal(estimateWorkload([{ start: 0, end: 1, confidence: { score: .7 } }], 1).operations, 3);
+assert.equal(estimateWorkload([{ start: 0, end: 1, confidence: { score: .8 } }], 1).operations, 3);
 
 const cue = (start, score, end = start + 2) => ({ start, end, confidence: score === undefined ? null : { score } });
 const items = [cue(0, .49), cue(60, .5), cue(120, .6), cue(180, .75), cue(240, .9), cue(299, .999, 301),
@@ -16,7 +24,7 @@ assert.equal(result.baseline, 11); assert.equal(result.segments[2].relative, 1);
 assert.equal(result.segments[0].relative, 17 / 11); assert.equal(result.segments[1].relative, 0);
 assert.equal(result.belowThreshold, 7);
 
-assert.deepEqual(estimateWorkload(items, 1200, { minutes: 5, threshold: 75 }).segments.map(s => s.operations), [15, 0, 9, 0]);
+assert.deepEqual(estimateWorkload(items, 1200, { minutes: 5, threshold: 75 }).segments.map(s => s.operations), [14, 0, 8, 0]);
 assert.deepEqual(estimateWorkload(items, 1200, { minutes: 5, threshold: 100 }).segments.map(s => s.operations), [19, 0, 11, 0]);
 assert.equal(estimateWorkload(items, 1200, { minutes: 10 }).segments.length, 2);
 result = estimateWorkload(items, 1200, { minutes: 20 });

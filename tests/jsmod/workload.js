@@ -1,9 +1,15 @@
 /** Read-only estimates from sentence confidence; never rescore or mutate subtitles. */
+export const WORKLOAD_CALIBRATION = Object.freeze({
+  version: 'visible-edits-20261107', method: 'visible-edit-categories', videos: 1, engine: 'whisperx',
+  matchedRows: 997, confidenceRange: Object.freeze([0.49, 0.83]),
+  calibratedBands: Object.freeze(['60to75', '75to90']),
+  samples: Object.freeze({ under50: 1, '50to60': 0, '60to75': 195, '75to90': 801, '90to100': 0, perfect: 0 }),
+});
 export const WORKLOAD_BANDS = Object.freeze([
   { id: 'under50', label: '<50%', upper: 0.5, automatic: 6 },
   { id: '50to60', label: '50–<60%', upper: 0.6, automatic: 5 },
-  { id: '60to75', label: '60–<75%', upper: 0.75, automatic: 4 },
-  { id: '75to90', label: '75–<90%', upper: 0.9, automatic: 2 },
+  { id: '60to75', label: '60–<75%', upper: 0.75, automatic: 3 },
+  { id: '75to90', label: '75–<90%', upper: 0.9, automatic: 3 },
   { id: '90to100', label: '90–<100%', upper: 1, automatic: 1 },
   { id: 'perfect', label: '100%', upper: Infinity, automatic: 0 },
 ].map(Object.freeze));
