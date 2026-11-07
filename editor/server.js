@@ -332,7 +332,7 @@ const STATIC_RESOURCES = new Set([
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'log-import'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'log-import', 'workload', 'workload-panel'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',

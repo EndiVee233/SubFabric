@@ -14,8 +14,8 @@
 **接管基线（2026-11-06）**：项目结构与入口核对已完成且已验证；当前工作区功能完整验收仍为进行中。
 本地 Git 无有效 HEAD，已有 639 个索引新增条目（其中 25 个另有工作区修改）及 3 个未跟踪文件；
 接管时已记录文件哈希，保留全部已有工作，不能把索引或旧测试结果视为当前功能已验收。
-`main.js` 已静态导入未跟踪的 `editor/js/style-preset.js`，而 `desktop/stage.mjs` 只收集 Git 跟踪源码；
-后续打包前须核对该模块已纳入 payload，不能直接沿用当前跟踪清单。
+`main.js` 静态导入的 `style-preset.js` / `log-import.js` 仍未进入本地既有索引；当前 stage 已显式补入
+这两个既有模块、新工作量模块和 WhisperX worker。打包前仍须核对 manifest 的相对导入闭包，不以索引推断齐全。
 本次 Node 22.22.2 定向回归：7 组中 6 组最终通过；`electron-desktop-test` 首次临时目录 rename
 遇 EPERM，改用工作区隔离临时目录复跑通过；`ui-integration-test` 两次均在隔离服务就绪检查超时，尚未通过。
 报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
@@ -106,7 +106,7 @@
 | `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`migration.cjs` 只补缺继承旧版文件与浏览器状态，`installer.nsh` 复用旧安装目录，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式禁用后端托盘（由桌面壳自建托盘）并通过 IPC 报告实际 port/pid/version 就绪 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
-| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含首次启动的 `welcome-model.js` 可见性纯逻辑）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 只读页签控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
@@ -123,6 +123,11 @@
 | `eslint.config.js` | ESLint 9 flat config，仅开发/CI 期使用，不是运行时依赖 |
 
 ## 3. 后端与数据流
+
+- **分段工作量预测数据**：只读当前编辑器的整句视图模型 `state.items[].confidence.score`（ASS 的
+  `SubFabricConfidence` 注释在原有加载路径解析），不按双语行或逐词事件重复计数，不请求操作日志、LLM
+  或识别模型。缺失/非法评分单列，不伪造为 100%；没有评分的 SRT/外部 ASS 也不生成假预测。
+  服务端仅在 `STATIC_RESOURCES` 明确加入两个新 ESM 文件，不扩大其它静态文件访问范围；无新增后端接口或依赖。
 
 - **WhisperX large-v2（2026-11-07）**：模型 id `whisperx-large-v2` / engine `whisperx`，转写与 wav2vec2
   对齐由 `asr/whisperx_asr.py` 一次完成，接入初稿、长音频分片、单句/选区重新识别及全模型速度测试。
@@ -381,6 +386,27 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **分段工作量预测（2026-11-07，已完成且已验证：源码与隔离验收）**：编辑器右侧新增与字幕/角色/设置/日志
+  同级的「工作量」页签。分段可选 5/10/20 分钟，默认 10；阈值可选 75%/90%/100%，默认 90%；显示可选
+  预计修改次数/相对工作量，默认相对。按句子起点归段，跨界只计一次；范围覆盖媒体时长及最晚字幕结尾，
+  无视频时用字幕结尾。时间无效的句子排除并提示；异常超大范围显式报错，不截断后冒充完整结果。
+  置信度区间为 `<50%`、`50–<60%`、`60–<75%`、`75–<90%`、`90–<100%`、`100%`；
+  前五档自动操作次数依次为 6/5/4/2/1，可逐档选自动或手动 1–6 次，100% 固定为 0 次基准。
+  这是可调整的启发式估算，不是由操作日志训练得到的概率/实际完成量，也不会自动扣除已编辑的句子。
+  仅对严格低于当前阈值的句子累加档位次数；已有评分与缺评分混合的段显示部分估算并标缺失数，完全无评分
+  的有字幕段显示「无法估算」。用户确认零修改段为 0；相对值 = 本段次数 / 全部非零段的最小次数，
+  全零时统一 0，未知段与空白段不进入基准。每段列出六档句数、低于阈值数及缺评分数。
+  条宽按全稿最大预计次数缩放，颜色按全稿非零最小/最大值在 success → warning → danger 主题色间插值，
+  不把翻页后的局部段重新归一化；零次条不填充。每页显示 20 段，时间按钮复用现有播放定位。
+  偏好仅保存在本源 `localStorage` 的 `sf-workload-v1`，不修改字幕或项目。字幕重建与媒体时长变化使缓存失效，
+  仅页签可见时按帧合并重算；不订阅播放 tick。MY 随现有圆角/色板，UWP 用 2px 角，窄面板下控件折行。
+  本次 8 组定向 JS 回归通过（计算、模块 API、置信度、文案、主题、桌面边界）；ESLint 0 error / 17 个既有
+  server warning。MY 深色/UWP 浅色隔离浏览器验证计数、阈值、权重、配置重载、删除后更新、无置信度切稿及
+  44 段分页，未见运行时异常或横向溢出。初次浏览器验收发现新模块不在静态白名单，已修复并加真实 API 回归；
+  其余测试夹具的欢迎状态/删除后重用问题已修正后复跑。stage 核对 112 文件及 64 条相对导入闭包；首次 staging
+  与测试共用 Node 时遇文件占用，待自有测试结束后复跑通过。未跑全量回归、真实用户稿件或安装版重启验收，
+  未重打包安装器；本机报告 `_test/maintenance/workload-*.json` / `.png` 不入库。
 
 - **WhisperX 设置入口（2026-11-07，已完成且已验证：定向范围）**：「语音识别 → Whisper 系列」新增
   WhisperX large-v2，模型与独立运行时分别显示下载/安装状态。参数面板支持语言、批量大小（默认 4）、

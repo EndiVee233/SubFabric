@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "ac830df226bac2da7115d2b93a0b2cb6051ec8e1ca3a10805a8ca19f36b94966",
+      "sha256": "f6d023cd15ac255b0119738c4b442c57bb61d0be9b80be69655c48c8b18f06c2",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -557,7 +557,7 @@
     },
     {
       "file": "editor/js/editor.js",
-      "sha256": "e64fb04c4badf4b5552162c7755e0dcb20a3cc6d0f98d70d53f7337eac29a131",
+      "sha256": "1624baea550bec3888467c9065784b72a857f7cb01f4f45db01d408b63a17b4d",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -832,7 +832,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "d12b66f6cf6399467d85358b449eb01e47e8952cf8f529279c8fa214a52757b1",
+      "sha256": "353192b1d34d8e145d2379df924507da0abec691a4728dd839bcbc32aefe0b0e",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -843,239 +843,239 @@
       ],
       "dynamic": [
         {
-          "line": 228,
+          "line": 233,
           "method": "createElement"
         },
         {
-          "line": 246,
+          "line": 251,
           "method": "innerHTML"
         },
         {
-          "line": 296,
+          "line": 301,
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 1002,
+          "line": 1008,
           "method": "innerHTML"
         },
         {
-          "line": 1004,
+          "line": 1010,
           "method": "createElement"
         },
         {
-          "line": 1474,
+          "line": 1480,
           "method": "innerHTML"
         },
         {
-          "line": 1477,
+          "line": 1483,
           "method": "innerHTML"
         },
         {
-          "line": 2092,
+          "line": 2098,
           "method": "replaceChildren"
         },
         {
-          "line": 2093,
+          "line": 2099,
           "method": "createElement"
         },
         {
-          "line": 2102,
+          "line": 2108,
           "method": "createElement"
         },
         {
-          "line": 2940,
+          "line": 2947,
           "method": "replaceChildren"
         },
         {
-          "line": 2940,
+          "line": 2947,
           "method": "replaceChildren"
         },
         {
-          "line": 2951,
+          "line": 2958,
           "method": "innerHTML"
         },
         {
-          "line": 3130,
+          "line": 3137,
           "method": "innerHTML"
         },
         {
-          "line": 3139,
+          "line": 3146,
           "method": "innerHTML"
         },
         {
-          "line": 3189,
+          "line": 3196,
           "method": "innerHTML"
         },
         {
-          "line": 3271,
+          "line": 3278,
           "method": "innerHTML"
         },
         {
-          "line": 3968,
+          "line": 3975,
           "method": "innerHTML"
         },
         {
-          "line": 5791,
+          "line": 5799,
           "method": "innerHTML"
         },
         {
-          "line": 5792,
+          "line": 5800,
           "method": "innerHTML"
         },
         {
-          "line": 5998,
+          "line": 6006,
           "method": "innerHTML"
         },
         {
-          "line": 6016,
+          "line": 6024,
           "method": "innerHTML"
         },
         {
-          "line": 6103,
+          "line": 6111,
           "method": "innerHTML"
         },
         {
-          "line": 6188,
+          "line": 6196,
           "method": "innerHTML"
         },
         {
-          "line": 6214,
+          "line": 6222,
           "method": "innerHTML"
         },
         {
-          "line": 6293,
+          "line": 6301,
           "method": "innerHTML"
         },
         {
-          "line": 6733,
+          "line": 6741,
           "method": "innerHTML"
         },
         {
-          "line": 6737,
+          "line": 6745,
           "method": "createElement"
         },
         {
-          "line": 6739,
+          "line": 6747,
           "method": "innerHTML"
         },
         {
-          "line": 6787,
+          "line": 6795,
           "method": "innerHTML"
         },
         {
-          "line": 6953,
+          "line": 6961,
           "method": "createElement"
         },
         {
-          "line": 6955,
+          "line": 6963,
           "method": "innerHTML"
         },
         {
-          "line": 7496,
+          "line": 7504,
           "method": "innerHTML"
         },
         {
-          "line": 7561,
+          "line": 7569,
           "method": "innerHTML"
         },
         {
-          "line": 7722,
+          "line": 7730,
           "method": "innerHTML"
         },
         {
-          "line": 8052,
+          "line": 8060,
           "method": "createElement"
         },
         {
-          "line": 8090,
+          "line": 8098,
           "method": "createElement"
         },
         {
-          "line": 8112,
+          "line": 8120,
           "method": "innerHTML"
         },
         {
-          "line": 8114,
+          "line": 8122,
           "method": "innerHTML"
         },
         {
-          "line": 8114,
+          "line": 8122,
           "method": "innerHTML"
         },
         {
-          "line": 8279,
+          "line": 8287,
           "method": "createElement"
         },
         {
-          "line": 8307,
+          "line": 8315,
           "method": "createElement"
         },
         {
-          "line": 8318,
+          "line": 8326,
           "method": "innerHTML"
         },
         {
-          "line": 8423,
+          "line": 8431,
           "method": "innerHTML"
         },
         {
-          "line": 8447,
+          "line": 8455,
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 8448,
+          "line": 8456,
           "method": "innerHTML"
         },
         {
-          "line": 8479,
+          "line": 8487,
           "method": "innerHTML"
         },
         {
-          "line": 8761,
+          "line": 8769,
           "method": "innerHTML"
         },
         {
-          "line": 8916,
+          "line": 8924,
           "method": "replaceChildren"
         },
         {
-          "line": 8922,
+          "line": 8930,
           "method": "innerHTML"
         },
         {
-          "line": 8967,
+          "line": 8975,
           "method": "innerHTML"
         },
         {
-          "line": 8968,
+          "line": 8976,
           "method": "innerHTML"
         },
         {
-          "line": 8989,
+          "line": 8997,
           "method": "innerHTML"
         },
         {
-          "line": 9002,
+          "line": 9010,
           "method": "innerHTML"
         },
         {
-          "line": 9305,
+          "line": 9313,
           "method": "createElement"
         },
         {
-          "line": 9310,
+          "line": 9318,
           "method": "innerHTML"
-        },
-        {
-          "line": 9319,
-          "method": "createElement"
-        },
-        {
-          "line": 9325,
-          "method": "createElement"
         },
         {
           "line": 9327,
+          "method": "createElement"
+        },
+        {
+          "line": 9333,
+          "method": "createElement"
+        },
+        {
+          "line": 9335,
           "method": "createElement"
         }
       ],
@@ -2053,6 +2053,35 @@
       "literals": []
     },
     {
+      "file": "editor/js/workload-panel.js",
+      "sha256": "47f34702c9e7483d98b5881bc2f73fa030ae7b97c541da2311921b0c9bf0ef67",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 25,
+          "method": "innerHTML"
+        },
+        {
+          "line": 46,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 52,
+          "method": "innerHTML"
+        }
+      ],
+      "literals": []
+    },
+    {
+      "file": "editor/js/workload.js",
+      "sha256": "da78963b28f72892254530df19e2e88a19cf47137afddd5153cb1a945d843f59",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
       "file": "editor/js/zip.js",
       "sha256": "10c87960954290b89280b4038fa43a8fce1b732dccd2f0b1f335eee3f994bda5",
       "ids": [],
@@ -2062,7 +2091,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "f8099e7063001e326396e425281027ce0558be435fde576d27d3dac2dfe70689",
+      "sha256": "ee4e402b714a8d5d7bf10e25deb2db8de07ef9b929f4fc9a8d5b1a2af373b4cc",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2102,7 +2131,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "9f472d6b19a5ae7586110b834975506ecfb05ff4110a2d6c199eb002bd754f47",
+      "sha256": "acd4328c57d9a1644628e17e966b64f960704c6de98892e156b85c11905ae193",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2994,6 +3023,7 @@
         "tab-roles",
         "tab-settings",
         "tab-subs",
+        "tab-workload",
         "theme-color",
         "theme-color-global",
         "theme-reset",
@@ -3039,7 +3069,18 @@
         "word-convert-hint",
         "word-convert-loading",
         "word-convert-scope",
-        "word-convert-style"
+        "word-convert-style",
+        "workload-list",
+        "workload-minutes",
+        "workload-mode",
+        "workload-next",
+        "workload-page",
+        "workload-pager",
+        "workload-previous",
+        "workload-status",
+        "workload-summary",
+        "workload-threshold",
+        "workload-weights"
       ],
       "dynamicIds": [],
       "dynamic": [],

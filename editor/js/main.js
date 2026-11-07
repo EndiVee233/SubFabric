@@ -43,6 +43,7 @@ import { VideoCueEditor, CueTextDialog } from './videoedit.js';
 import { splitSegments, replaceSegmentInRaw, escapeAssUser, leadPrefixLen, htmlPlainAndMap } from './segment.js';
 import { initExportVideoButton } from './export-video.js';
 import { initGlossaryReview } from './glossary-review.js';
+import { initWorkloadPanel } from './workload-panel.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -217,6 +218,10 @@ let previewTrack = null;
 let previewFrame = 0;
 const pendingPlaybackRows = new Set(); // 非播放句已提交，但视频轨等待播放到该句才同步
 const EDIT_SETTLE_MS = 260;
+const workloadPanel = initWorkloadPanel({
+  element: document.getElementById('tab-workload'), getItems: () => state.items,
+  getDuration: () => video.duration, onSeek: time => requestSeek(time),
+});
 
 /* ─────────── Toast ───────────
  * 分四级(成功/警告/失败/信息)：按文案里的关键词自动判级, 所以 100+ 个调用点不用改；
@@ -698,6 +703,7 @@ video.addEventListener('loadedmetadata', () => {
   timeline.setVideo(video);               // 确保胶片缩略图取到新的 currentSrc
   overlay.fitToVideo();
   tlDuration.textContent = fmtTime(video.duration);
+  workloadPanel?.invalidate();
 });
 window.addEventListener('resize', () => overlay.fitToVideo());
 /* 上面这个 window resize 收不到"面板挤压"：拖分栏/收展侧栏只改 CSS grid 轨道，窗口本身没变。
@@ -2769,6 +2775,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
       }
     }
     panel.setItems(state.items, keepView);
+    workloadPanel?.invalidate();
     panel.setRoles(computeRoles()); // 角色 Tab: 解析所有说话人(字幕 Name 栏的 [人物]); computeRoles 见模块级定义
   }
 
@@ -4844,6 +4851,7 @@ panel.onDeleteCard = (item) => deleteItem(item);   // 字幕列表右键删除(�
 panel.onTabChange = (name) => {
   pruneUnusedRoles(name === 'roles');
   if (name === 'logs' && window.__onLogsTabShown) window.__onLogsTabShown();
+  workloadPanel?.setVisible(name === 'workload');
 };
 
 /* ═══════════ 修复字幕(右键菜单) ═══════════ */

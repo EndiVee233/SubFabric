@@ -20,6 +20,9 @@ const tracked = execFileSync('git', ['-C', root, 'ls-files', '-z', 'editor', 'as
 const paths = tracked.filter(p => !p.startsWith('editor/scripts/') || p === 'editor/scripts/7z.exe' || p === 'editor/scripts/7z-README.txt');
 // This workspace preserves its pre-existing index; explicitly include the new worker until Git tracks it.
 if (!paths.includes('asr/whisperx_asr.py')) paths.push('asr/whisperx_asr.py');
+for (const file of ['editor/js/style-preset.js', 'editor/js/log-import.js', 'editor/js/workload.js', 'editor/js/workload-panel.js']) {
+  if (!paths.includes(file)) paths.push(file);
+}
 const vendor = ['editor/vendor/subtitles-octopus.js', 'editor/vendor/subtitles-octopus-worker.js', 'editor/vendor/subtitles-octopus-worker.wasm', 'editor/vendor/fonts/NotoSansCJKsc-Regular.otf'];
 paths.push(...vendor);
 const minima = [50000, 300000, 2000000, 10000000];

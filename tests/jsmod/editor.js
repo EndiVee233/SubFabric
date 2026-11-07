@@ -568,7 +568,7 @@ export class EditorPanel {
   }
 
   showTab(name, opts = {}) {
-    if (!['subs', 'roles', 'settings', 'logs'].includes(name)) name = 'subs';
+    if (!['subs', 'roles', 'settings', 'logs', 'workload'].includes(name)) name = 'subs';
     if (name === 'roles' && !this._rolesEnabled) name = 'subs';
     const prevTab = this._tab;
     this._tab = name;
@@ -576,7 +576,7 @@ export class EditorPanel {
        点「角色」标签 = 看完整角色列表，不会和并排打架。 */
     this._splitRoles = !!(this._splitPref && this._rolesEnabled && name === 'subs');
     this._applySplit();
-    const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings', logs: 'tab-logs' };
+    const bodies = { subs: 'tab-subs', roles: 'tab-roles', settings: 'tab-settings', logs: 'tab-logs', workload: 'tab-workload' };
     /* 新建字幕必须立刻看到输入框：跳过 .tab-body 的 260ms 入场，
        否则会表现为“已经切过去了但卡住零点几秒”。 */
     const targetBody = document.getElementById(bodies[name]);

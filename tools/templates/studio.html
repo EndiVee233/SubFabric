@@ -172,6 +172,7 @@
       <button class="ptab" data-tab="roles" title="角色(说话人)总览">角色</button>
       <button class="ptab" data-tab="settings" title="设置">设置</button>
       <button class="ptab" data-tab="logs" title="服务端运行日志">日志</button>
+      <button class="ptab" data-tab="workload" title="分段工作量预测">工作量</button>
       <!-- 字幕 + 角色并排：只改布局，不新增数据源；角色栏在右侧单列显示。 -->
       <button class="ptab-split" id="panel-split-roles" type="button" aria-pressed="false" title="字幕和角色并排显示（需要 ASS 角色）" hidden><span data-ico="columns"></span></button>
     </div>
@@ -249,6 +250,31 @@
       <div id="role-list" class="role-list"></div>
     </div>
     <!-- ⚠ 上面这个 </div> 是 #tab-roles 的闭合，同样曾经缺失 -->
+
+    <div id="tab-workload" class="tab-body">
+      <div class="tab-head"><span class="tab-head-title">分段工作量预测</span></div>
+      <div class="workload-scroll">
+        <div class="workload-controls">
+          <label>每段时长<select id="workload-minutes" class="select"><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="20">20 分钟</option></select></label>
+          <label>置信度阈值<select id="workload-threshold" class="select"><option value="75">75%</option><option value="90" selected>90%</option><option value="100">100%</option></select></label>
+          <label>显示方式<select id="workload-mode" class="select"><option value="relative">相对工作量</option><option value="operations">预计修改次数</option></select></label>
+        </div>
+        <p class="workload-note">统计置信度严格低于阈值的句子，100% 置信度计 0 次修改。</p>
+        <details class="workload-estimates"><summary>每句预计修改次数</summary>
+          <p class="workload-note">自动档按置信度由低到高估算；每档可手动选择 1–6 次。次数可包括时间轴调整、字幕内容修改、人物标注、逐词时间戳调整、重新识别和逐词重排。</p>
+          <div id="workload-weights" class="workload-weights"></div>
+          <p class="workload-note">同一句跨段时按起始时间归入一段。置信度仅反映识别可靠程度，估算用于分工参考，不会自动扣除已完成的操作。</p>
+        </details>
+        <p class="workload-note">最轻的非零分段 = 1；零修改段 = 0。缺置信度的句子不参与估算。</p>
+        <div id="workload-summary" class="workload-summary" aria-live="polite"></div>
+        <p id="workload-status" class="workload-note" role="status"></p>
+        <div class="workload-legend"><span>较少</span><i></i><span>较多</span></div>
+        <div id="workload-list" class="workload-list"></div>
+        <div id="workload-pager" class="workload-pager" hidden>
+          <button type="button" id="workload-previous" class="btn btn-mini">上一页</button><span id="workload-page"></span><button type="button" id="workload-next" class="btn btn-mini">下一页</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 设置 Tab: 分组卡片 -->
     <div id="tab-settings" class="tab-body">
