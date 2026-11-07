@@ -1,27 +1,38 @@
 /** Read-only estimates from sentence confidence; never rescore or mutate subtitles. */
 export const WORKLOAD_CALIBRATION = Object.freeze({
-  version: 'visible-edits-20261107', method: 'visible-edit-categories', videos: 1, engine: 'whisperx',
+  version: 'visible-edits-20261108', method: 'visible-edit-categories', videos: 1, engine: 'whisperx',
   matchedRows: 997, confidenceRange: Object.freeze([0.49, 0.83]),
-  calibratedBands: Object.freeze(['60to75', '75to90']),
-  samples: Object.freeze({ under50: 1, '50to60': 0, '60to75': 195, '75to90': 801, '90to100': 0, perfect: 0 }),
+  calibratedBands: Object.freeze(['60to70', '70to80', '80to90']),
+  samples: Object.freeze({ under60: 1, '60to70': 39, '70to80': 625, '80to90': 332, '90to100': 0 }),
 });
 export const WORKLOAD_BANDS = Object.freeze([
-  { id: 'under50', label: '<50%', upper: 0.5, automatic: 6 },
-  { id: '50to60', label: '50–<60%', upper: 0.6, automatic: 5 },
-  { id: '60to75', label: '60–<75%', upper: 0.75, automatic: 3 },
-  { id: '75to90', label: '75–<90%', upper: 0.9, automatic: 3 },
-  { id: '90to100', label: '90–<100%', upper: 1, automatic: 1 },
-  { id: 'perfect', label: '100%', upper: Infinity, automatic: 0 },
+  { id: 'under60', label: '<60%', upper: 0.6, automatic: 6 },
+  { id: '60to70', label: '60–<70%', upper: 0.7, automatic: 4 },
+  { id: '70to80', label: '70–<80%', upper: 0.8, automatic: 3 },
+  { id: '80to90', label: '80–<90%', upper: 0.9, automatic: 3 },
+  { id: '90to100', label: '90–100%', upper: Infinity, automatic: 1 },
 ].map(Object.freeze));
 
 export function workloadOptions(value = {}) {
   if (!value || typeof value !== 'object') value = {};
+  const valid = n => Number.isInteger(n) && n >= 1 && n <= 6;
+  const raw = value.weights && typeof value.weights === 'object' ? value.weights : {};
+  const oldKeys = ['under50', '50to60', '60to75', '75to90', '90to100'];
+  const sanitizeLegacy = source => Object.fromEntries(oldKeys.filter(key => source
+    && (valid(source[key]) || source[key] === 'auto')).map(key => [key, source[key]]));
+  const migrating = value.bandsVersion !== 2 && oldKeys.slice(0, -1).some(key => valid(raw[key]));
+  const backup = sanitizeLegacy(migrating ? raw : value.legacyWeights);
+  const legacyWeights = Object.keys(backup).length ? backup : null;
+  const sources = { under60: ['under50', '50to60'], '60to70': ['60to75'],
+    '70to80': ['60to75', '75to90'], '80to90': ['75to90'] };
   const weights = {};
-  for (const band of WORKLOAD_BANDS.slice(0, -1)) {
-    const n = value.weights?.[band.id];
-    weights[band.id] = Number.isInteger(n) && n >= 1 && n <= 6 ? n : 'auto';
+  for (const band of WORKLOAD_BANDS) {
+    const previous = migrating ? (sources[band.id] || []).map(key => raw[key]).filter(valid) : [];
+    const n = raw[band.id];
+    weights[band.id] = valid(n) ? n : previous.length ? Math.max(...previous) : 'auto';
   }
   return {
+    bandsVersion: 2, collapseDetails: value.collapseDetails !== false, legacyWeights,
     minutes: [5, 10, 20].includes(value.minutes) ? value.minutes : 10,
     threshold: [75, 90, 100].includes(value.threshold) ? value.threshold : 90,
     mode: value.mode === 'operations' ? 'operations' : 'relative', weights,
@@ -59,7 +70,7 @@ export function estimateWorkload(items, duration, preferences) {
     const bandIndex = confidenceBand(item.confidence?.score);
     if (bandIndex < 0) { segment.unknown++; continue; }
     segment.known++; segment.counts[bandIndex]++;
-    if (item.confidence.score < options.threshold / 100) {
+    if (options.threshold === 100 || item.confidence.score < options.threshold / 100) {
       segment.belowThreshold++;
       const band = WORKLOAD_BANDS[bandIndex];
       segment.operations += options.weights[band.id] === 'auto' ? band.automatic : options.weights[band.id];

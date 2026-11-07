@@ -259,7 +259,8 @@
           <label>置信度阈值<select id="workload-threshold" class="select"><option value="75">75%</option><option value="90" selected>90%</option><option value="100">100%</option></select></label>
           <label>显示方式<select id="workload-mode" class="select"><option value="relative">相对工作量</option><option value="operations">预计修改次数</option></select></label>
         </div>
-        <p class="workload-note">统计置信度严格低于阈值的句子，100% 置信度计 0 次修改。</p>
+        <label class="workload-fold-option"><input type="checkbox" id="workload-collapse" checked>默认折叠分段详情</label>
+        <p class="workload-note">统计置信度低于阈值的句子；阈值为 100% 时包含所有已评分句子。</p>
         <details class="workload-estimates"><summary>每句预计修改次数</summary>
           <p class="workload-note">自动档按置信度由低到高估算；每档可手动选择 1–6 次。次数可包括时间轴调整、字幕内容修改、人物标注、逐词时间戳调整、重新识别和逐词重排。</p>
           <div id="workload-weights" class="workload-weights"></div>

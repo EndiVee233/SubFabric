@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "f313454dcbbf637da8a78174bd2053b9a50c7fda8264d94974c19f8f695889ee",
+      "sha256": "1e9f19e43bdea30ce24ebae3ca91bc676c0fa9ae0a6deff52a1489d0a7a370fc",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2054,20 +2054,20 @@
     },
     {
       "file": "editor/js/workload-panel.js",
-      "sha256": "b0011f56e9f06617af197ae17c590fe37930005914820fbdfa5bd09e59c3a886",
+      "sha256": "17e616e3cefd8ed5bfd6a9b7fc3e4a762c636f9c3758cc91a939ecee37e2a3c7",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
         {
-          "line": 25,
+          "line": 28,
           "method": "innerHTML"
         },
         {
-          "line": 49,
+          "line": 53,
           "method": "replaceChildren"
         },
         {
-          "line": 55,
+          "line": 59,
           "method": "innerHTML"
         }
       ],
@@ -2075,7 +2075,7 @@
     },
     {
       "file": "editor/js/workload.js",
-      "sha256": "6310f772019ec8fbb8d7164618cb4a369edb5327f77ea398cc2cb68decd20657",
+      "sha256": "fdf4d175045055f33e97fcf37908ce54f549acf6d48be5bfe98cdc325e923370",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2091,7 +2091,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "af6101c064a5795d6cfd30f2dadd538f1bdfb9f58d84b2e799e6c043c5e01345",
+      "sha256": "a82642a0428be9480cd02220117db6e77af888116f5ea983ae1de995dee504f7",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2131,7 +2131,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "49d133b9ec564ba10febda9c2498ebf087a3e417ee97531e6c238dc015a1dbb2",
+      "sha256": "cf88c36148770fc5643469d5d018a74e5efcbaaa022639b8cc91cc03dcc43268",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -3070,6 +3070,7 @@
         "word-convert-loading",
         "word-convert-scope",
         "word-convert-style",
+        "workload-collapse",
         "workload-list",
         "workload-minutes",
         "workload-mode",

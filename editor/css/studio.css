@@ -716,6 +716,12 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .workload-legend i { flex:1; height:5px; border-radius:5px; background:linear-gradient(90deg,var(--success),var(--warning),var(--danger)); }
 .workload-list { display:flex; flex-direction:column; gap:10px; }
 .workload-card { padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--bg-2); }
+.workload-fold-option { display:flex; align-items:center; gap:7px; margin-top:10px; color:var(--text-1); font-size:12px; cursor:pointer; }
+.workload-card-summary { display:block; list-style:none; cursor:pointer; }
+.workload-card-summary::-webkit-details-marker { display:none; }
+.workload-card-summary:focus-visible { outline:2px solid var(--accent); outline-offset:4px; border-radius:2px; }
+.workload-card-summary .workload-meter { display:block; margin-bottom:0; }
+.workload-card[open] .workload-card-meta { margin-top:10px; }
 .workload-card-head { display:flex; align-items:center; gap:8px; justify-content:space-between; }
 .workload-seek { border:0; padding:0; background:transparent; color:var(--text-0); font-size:12px; font-variant-numeric:tabular-nums; cursor:pointer; text-align:left; }
 .workload-seek:hover { color:var(--accent-text,var(--accent)); }
