@@ -1869,6 +1869,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 }
 .dp-msg { min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dp-msg.dp-err { color: var(--danger); }
+.dp-msg.dp-detailed { white-space: normal; overflow-wrap: anywhere; }
+.dp-line:has(.dp-detailed) > span:first-child { flex-shrink: 0; }
 /* 进度详情：当前阶段 / 已用 / 预计剩余 / 下载量与速度（能从消息里解析出来时才显示）。 */
 .dp-meta {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
@@ -2637,6 +2639,7 @@ input[type=number]:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px v
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 .jc-foot { font-size: 11px; color: var(--text-2); }
+#job-card.jc-detailed .jc-msg { display: block; overflow: visible; -webkit-line-clamp: unset; overflow-wrap: anywhere; }
 .jc-foot[hidden] { display: none; }
 .jc-foot b { color: var(--text-1); }
 

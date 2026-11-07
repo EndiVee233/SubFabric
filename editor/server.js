@@ -5387,6 +5387,28 @@ function startPrepare(id, videoPath, mode) {
     }
   }
 
+  /** Heartbeats prove communication, not model advancement; never synthesize percent. */
+  function diarizeProgressView(detail, now = Date.now()) {
+    const clock = sec => {
+      const n = Math.max(0, Math.floor(sec));
+      return Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+    };
+    const elapsedSec = Math.max(0, Math.floor((now - detail.startedAt) / 1000));
+    const progressAgeSec = Math.max(0, Math.floor((now - detail.lastProgressAt) / 1000));
+    const reportAgeSec = detail.lastWorkerAt ? Math.max(0, Math.floor((now - detail.lastWorkerAt) / 1000)) : null;
+    const parts = [detail.msg || '等待分离进程启动…'];
+    if (detail.provider) parts.push('推理配置 ' + detail.provider.toUpperCase());
+    if (detail.durationSec > 0) parts.push('音频 ' + clock(detail.durationSec));
+    if (detail.total > 0) parts.push('模型分块 ' + detail.done + '/' + detail.total
+      + '（' + Math.floor(detail.done * 100 / detail.total) + '%）');
+    parts.push('分离已用 ' + clock(elapsedSec));
+    if (detail.phase === 'inference') parts.push('上次模型推进 ' + clock(progressAgeSec) + ' 前');
+    parts.push(reportAgeSec == null ? '等待工作进程首次上报' : '工作进程上报 ' + clock(reportAgeSec) + ' 前');
+    if (reportAgeSec != null && reportAgeSec >= 30) parts.push('暂未收到新状态；不能据此确认卡死');
+    return { ...detail, elapsedSec, progressAgeSec, reportAgeSec,
+      phaseElapsedSec: Math.max(0, Math.floor((now - detail.phaseStartedAt) / 1000)), message: parts.join(' · ') };
+  }
+
   /* ═══════════ 说话人分离（后台, 跑在音频上与引擎无关） ═══════════ */
   function runDiarize(id, wav, onProgress, speakerCount, log, ctl) {
     const segModel = path.join(DIARIZE_DIR(), DIARIZE_MODELS[0].file);
@@ -5412,40 +5434,77 @@ function startPrepare(id, videoPath, mode) {
       trackProjProc(id, p);   // 分离进程读项目 audio.wav 且可能跑很久, 删除项目前必须能停掉它
       if (ctl) ctl.child = p;
       if (ctl && ctl.canceled) { try { killProc(p); } catch {} }
-      let pyErr = '', timedOut = false, lastLogs = [];
+      let pyErr = '', pending = '', workerError = '', timedOut = false, settled = false, lastLogs = [];
       const startedAt = Date.now();
+      const detail = { phase: 'starting', pct: 0, msg: '等待分离进程启动…', provider: '',
+        startedAt, phaseStartedAt: startedAt, lastProgressAt: startedAt, lastWorkerAt: 0,
+        durationSec: durSec, done: null, total: null };
+      const publish = () => {
+        if (settled || (ctl && ctl.canceled)) return;
+        const view = diarizeProgressView(detail);
+        if (onProgress) onProgress(view.pct, view.message, view);
+      };
+      const heartbeat = setInterval(publish, 5000);
+      publish();
       const timer = setTimeout(() => { timedOut = true; killProc(p); }, budgetMs);
       const done = (fn) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
+        clearInterval(heartbeat);
         if (ctl && ctl.child === p) ctl.child = null;
         try { fs.unlinkSync(outJson); } catch {}
         fn();
       };
-      p.stderr.on('data', d => {
-        const s = String(d);
-        if (pyErr.length < 2000) pyErr += s;
-        for (const line of s.split('\n')) {
+      const consume = (line) => {
           const tt = line.trim();
-          if (!tt.startsWith('{')) continue;
-          let o; try { o = JSON.parse(tt); } catch { continue; }
-          if (o.type === 'progress' && onProgress) onProgress(o.pct, o.msg);
+          if (!tt.startsWith('{')) return;
+          let o; try { o = JSON.parse(tt); } catch { return; }
+          if (o.type === 'error' && o.msg) workerError = String(o.msg).slice(0, 2000);
+          if (o.type === 'progress') {
+            const now = Date.now(), phase = String(o.phase || detail.phase).slice(0, 40);
+            const pct = Number.isFinite(o.pct) ? Math.max(0, Math.min(99, o.pct)) : detail.pct;
+            const hasCount = Number.isInteger(o.done) && Number.isInteger(o.total) && o.total > 0 && o.done >= 0 && o.done <= o.total;
+            if (phase !== detail.phase || pct > detail.pct || (hasCount && o.done > (detail.done || 0))) detail.lastProgressAt = now;
+            if (phase !== detail.phase) {
+              detail.phaseStartedAt = now; detail.done = null; detail.total = null;
+              if (log) log(String(o.msg || phase));
+            }
+            Object.assign(detail, { phase, pct: Math.max(detail.pct, pct), lastWorkerAt: now, msg: String(o.msg || detail.msg).slice(0, 240) });
+            if (['cpu', 'cuda'].includes(o.provider)) detail.provider = o.provider;
+            if (Number.isFinite(o.durationSec) && o.durationSec > 0) detail.durationSec = o.durationSec;
+            if (hasCount) { detail.done = o.done; detail.total = o.total; }
+            publish();
+          }
           // 留几行普通日志: 用的 provider(CUDA/CPU)、音频多长、内存多大 —— 出问题时靠它们定位,
           // 而不只是拿到一个干巴巴的"退出码 1"。
           if (o.type === 'log' && o.msg) {
             lastLogs.push(String(o.msg));
             if (lastLogs.length > 6) lastLogs.shift();
+            if (log) log(String(o.msg));
           }
+      };
+      p.stderr.setEncoding('utf8');
+      p.stderr.on('data', d => {
+        const s = String(d);
+        pyErr = (pyErr + s).slice(-4000);
+        pending += s;
+        let end;
+        while ((end = pending.indexOf('\n')) >= 0) {
+          consume(pending.slice(0, end)); pending = pending.slice(end + 1);
         }
+        if (pending.length > 65536) pending = ''; // Bound malformed native log output.
       });
       p.on('error', e => done(() => reject(new Error('无法启动分离进程: ' + e.message))));
       p.on('close', c => {
+        if (settled) return;
+        if (pending.trim()) consume(pending);
         if (ctl && ctl.canceled) {
           return done(() => reject(Object.assign(new Error('已停止'), { name: 'AbortError' })));
         }
         let data = null;
         try { data = JSON.parse(fs.readFileSync(outJson, 'utf8')); } catch {}
         if (c !== 0 || !data || !Array.isArray(data.regions)) {
-          const m = /"type":"error","msg":"([^"]*)"/.exec(pyErr || '');
           const mins = Math.round((Date.now() - startedAt) / 60000);
           const tail = lastLogs.length ? '；最后日志：' + lastLogs.slice(-3).join(' / ') : '';
           if (timedOut) {
@@ -5453,7 +5512,7 @@ function startPrepare(id, videoPath, mode) {
               + ' 分钟）—— 长音频 + CPU 推理最容易触发。看上面日志确认是否回退了 CPU，'
               + '或在设置里关掉「区分说话人」先出稿' + tail)));
           }
-          return done(() => reject(new Error((m && m[1]) || ('分离失败（' + asrExitHint(c)
+          return done(() => reject(new Error(workerError || ('分离失败（' + asrExitHint(c)
             + (pyErrTail(pyErr) ? '｜' + pyErrTail(pyErr) : '') + '）'))
             + '（已跑 ' + mins + ' 分钟' + tail + '）'));
         }
@@ -7076,6 +7135,7 @@ function startPrepare(id, videoPath, mode) {
     return {
       status: j.status, pct: j.pct, msg: j.msg, estSec: j.estSec || 0,
       speakers: j.speakers || 0, regions: j.regions || [], error: j.error || '',
+      detail: j.detail || null,
     };
   }
   function diarizeJobRunning(id) {
@@ -7096,7 +7156,6 @@ function startPrepare(id, videoPath, mode) {
     const log = (m) => pushDraftLog(id, stamp() + '[说话人分离] ' + m);
     const fmtMin = (sec) => Math.max(1, Math.round(Number(sec) / 60)) + ' 分钟';
     (async () => {
-      let hb = 0;
       try {
         const meta = readMeta(id);
         if (!meta) throw new Error('项目不存在');
@@ -7108,8 +7167,8 @@ function startPrepare(id, videoPath, mode) {
         if (!diarizeReady()) {
           throw new Error('说话人分离模型没装好：到「全局设置 → 语音识别 → 前置」里下载（约 32MB）');
         }
-        /* 分离整段一次处理、不做分片；本机实测约 20s/音频分钟（10min≈201s）。
-         * 先把预计时长告诉用户（4h 约 80min），并用心跳更新"已用/预计"。 */
+        /* 分离整段一次处理、不做分片；粗略历史时长只写日志。
+         * 展示真实回调与通信时间，不用预计耗时制造进度。 */
         let durSec = 0;
         try { durSec = fs.statSync(wav).size / (16000 * 2); } catch {}
         job.estSec = Math.max(60, Math.round(durSec * 0.335));
@@ -7121,20 +7180,12 @@ function startPrepare(id, videoPath, mode) {
           : (Number(d.speakerCount) > 0 ? Math.max(1, Math.min(20, Math.round(Number(d.speakerCount)))) : 0);
         log('开始，' + (spk ? '按 ' + spk + ' 人聚类' : '自动判断说话人数')
           + '；音频约 ' + Math.round(durSec / 60) + ' 分钟，预计约 ' + fmtMin(job.estSec));
-        const onProg = (pct, msg) => {
+        const onProg = (pct, msg, detail) => {
           if (ctl.canceled) return;
           job.pct = Math.max(0, Math.min(99, Math.round(Number(pct) || 0)));
           job.msg = String(msg || '区分说话人中 …');
+          job.detail = detail;
         };
-        /* sherpa 的进度回调很稀疏（长音频可能在 30% 停很久），用心跳补一个
-         * "已用/预计"的估算进度；真实回调更高时不会被压回去。 */
-        hb = setInterval(() => {
-          if (job.status !== 'running') return;
-          const elapsed = (Date.now() - job.startedAt) / 1000;
-          const estPct = 30 + Math.min(54, Math.floor((elapsed / Math.max(1, job.estSec)) * 54));
-          if (Number(job.pct) < estPct) job.pct = Math.min(84, estPct);
-          job.msg = '区分说话人中…（已用 ' + fmtMin(elapsed) + '，预计约 ' + fmtMin(job.estSec) + '）';
-        }, 15000);
         const r = await runDiarize(id, wav, onProg, spk, log, ctl);
         if (ctl.canceled) throw Object.assign(new Error('已停止'), { name: 'AbortError' });
         const regions = (r.regions || [])
@@ -7159,7 +7210,6 @@ function startPrepare(id, videoPath, mode) {
           log(job.msg);
         }
       } finally {
-        clearInterval(hb);
         if (ctl.child) ctl.child = null;
       }
     })();
@@ -8360,7 +8410,10 @@ function startPrepare(id, videoPath, mode) {
         }
         const spkCount = (cs && Number(cs.speakerCount)) || Number(d0.speakerCount) || 0;
         setDraft(id, { stage: STAGE.diarize, progress: 82, message: '区分说话人中 …' });
-        return runDiarize(id, wav, (pct, msg) => setDraft(id, { stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03), message: msg || '区分说话人中 …' }), spkCount,
+        return runDiarize(id, wav, (pct, msg, detail) => setDraft(id, {
+          stage: STAGE.diarize, progress: 82 + Math.round((pct || 0) * 0.03),
+          message: msg || '区分说话人中 …', diarizeProgress: detail,
+        }), spkCount,
           (m) => pushDraftLog(id, stamp() + m));
       }).then((r) => safeDraftStep(id, async () => {
         let segs = [];

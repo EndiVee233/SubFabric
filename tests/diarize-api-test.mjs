@@ -50,7 +50,10 @@ const server = await isolatedServer({
       "slow = os.path.exists(os.path.join(os.path.dirname(__file__), 'slow.flag'))",
       "if slow:",
       "    open(os.path.join(os.path.dirname(__file__), 'diarize-worker.pid'), 'w').write(str(os.getpid()))",
-      "    sys.stderr.write(json.dumps({'type': 'progress', 'pct': 30, 'msg': '区分说话人中 …'}) + '\\n'); sys.stderr.flush()",
+      "    payload = json.dumps({'type': 'progress', 'pct': 41, 'msg': '声纹提取与聚类…', 'phase': 'inference', 'provider': 'cpu', 'done': 2, 'total': 10}, ensure_ascii=False) + '\\n'",
+      "    middle = len(payload) // 2",
+      "    sys.stderr.write(payload[:middle]); sys.stderr.flush(); time.sleep(0.1)",
+      "    sys.stderr.write(payload[middle:]); sys.stderr.flush()",
       '    time.sleep(60)',
       '    sys.exit(0)',
       "sys.stderr.write(json.dumps({'type': 'progress', 'pct': 30, 'msg': '加载分离模型 …'}) + '\\n')",
@@ -146,6 +149,22 @@ try {
     assert.ok(Date.now() < until, '慢 worker 没有启动');
     await sleep(100);
   }
+  let detailed;
+  for (let i = 0; i < 30; i++) {
+    detailed = (await (await server.call(`/api/projects/${PID}/diarize`)).json()).job;
+    if (detailed.detail?.phase === 'inference') break;
+    await sleep(100);
+  }
+  assert.equal(detailed.detail?.provider, 'cpu', 'split JSON progress retains device information');
+  assert.equal(detailed.detail.done, 2); assert.equal(detailed.detail.total, 10);
+  assert.match(detailed.msg, /模型分块 2\/10/);
+  const nativePct = detailed.pct;
+  await sleep(5300);
+  const heartbeat = (await (await server.call(`/api/projects/${PID}/diarize`)).json()).job;
+  assert.equal(heartbeat.pct, nativePct, 'server heartbeat cannot fabricate advancement');
+  assert.ok(heartbeat.detail.elapsedSec >= 5);
+  assert.ok(heartbeat.detail.progressAgeSec >= 4);
+  assert.ok(heartbeat.detail.reportAgeSec >= 4);
   const c = await server.call(`/api/projects/${PID}/diarize-cancel`, { method: 'POST' });
   assert.equal(c.status, 200);
   assert.equal((await c.json()).ok, true);

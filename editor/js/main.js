@@ -5835,6 +5835,7 @@ function jobCardShow(title, msg, pct, foot, onClose, owner) {
   clearTimeout(jobCardHideTimer);
   jobCardOnClose = typeof onClose === 'function' ? onClose : null;
   jobCardOwner = owner || '';
+  e.box.classList.toggle('jc-detailed', owner === 'diarize');
   if (e.close) e.close.title = jobCardOnClose ? '停止任务' : '收起（任务仍在后台继续）';
   e.box.hidden = false;
   e.box.classList.remove('jc-done', 'jc-err');
@@ -7990,7 +7991,7 @@ async function startDiarize() {
   diarizePid = pid;
   if (btnDiarize) btnDiarize.disabled = true;
   jobCardShow('说话人分离', '正在启动…', null, '本地分离模型；只改角色标注，不改文本与时间；点右上角 × 停止',
-    cancelDiarizeJob);
+    cancelDiarizeJob, 'diarize');
   try {
     await Projects.flushSave();
     if (!state.project || state.project.id !== pid) return;
@@ -8018,7 +8019,7 @@ function pollDiarize(pid) {
       const job = j.job;
       if (!job) { jobCardHide(); diarizeFinishUi(); return; }
       jobCardShow('说话人分离', `${job.msg || '处理中…'}${job.pct ? `（${job.pct}%）` : ''}`, job.pct,
-        '本地分离模型；只改角色标注，不改文本与时间；点右上角 × 停止', cancelDiarizeJob);
+        '本地分离模型；只改角色标注，不改文本与时间；点右上角 × 停止', cancelDiarizeJob, 'diarize');
       if (job.status === 'running' || job.status === 'pending') { pollDiarize(pid); return; }
       jobCardHide();
       diarizeFinishUi();

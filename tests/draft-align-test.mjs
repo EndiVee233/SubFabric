@@ -62,8 +62,8 @@ ok(/align && !\(await draftAlignerReady\(m\)\)/.test(srv), '★ 勾选对齐但�
 ok(/alignDraftAsrJson/.test(srv), '★ 原生模型勾对齐时有统一后对齐');
 ok(/segs\[i\]\.words = item\.words\.map\(w => \(\{ word: w\.w, start: w\.s, end: w\.e \}\)\)/.test(srv),
   '对齐结果转换成 asr.json 的 word/start/end 形态');
-ok(/if \(meta0\.draft && meta0\.draft\.align && model\.engine !== 'qwen'\)/.test(srv),
-  '非 Qwen 引擎在生成字幕后、分句前做对齐');
+ok(/if \(meta0\.draft && meta0\.draft\.align && !\['qwen', 'whisperx'\]\.includes\(model\.engine\)\)/.test(srv),
+  'Qwen/WhisperX 原生对齐不重复运行，其它引擎在分句前做后对齐');
 ok(/wordLevel: draftPlan\.wordLevel, align: draftPlan\.align/.test(srv), 'meta 同时记录 effective wordLevel 与 align');
 
 console.log('\n== 3. Qwen ASR worker 对齐器可选 ==');

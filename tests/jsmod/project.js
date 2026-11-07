@@ -1257,6 +1257,9 @@ export function initProjects(ctx) {
       eta = elapsed * (100 - d.progress) / d.progress;
     }
     const running = d.status === 'running';
+    // The 82–85% draft stage is weighted, so it cannot predict diarization ETA.
+    // Model callback counts and worker freshness are shown in the detailed message.
+    if (running && d.stage === '区分说话人中' && d.diarizeProgress) eta = null;
     if (map.stage) map.stage.textContent = d.status === 'done' ? '阶段：完成'
       : `阶段：${dpStepName(d.failedStage || d.stage)}${d.status === 'error' ? '（失败）' : ''}`;
     if (map.elapsed) map.elapsed.textContent = elapsed > 0 ? `已用 ${dpClock(elapsed)}` : '';
@@ -1274,6 +1277,7 @@ export function initProjects(ctx) {
     }
     if (map.pct) map.pct.textContent = Math.max(0, Math.min(100, Number(d.progress) || 0)) + '%';
     if (map.msg) {
+      map.msg.classList.toggle('dp-detailed', running && d.stage === '区分说话人中' && !!d.diarizeProgress);
       map.msg.textContent = d.error ? ('✗ ' + d.error) : (d.message || '');
       map.msg.classList.toggle('dp-err', !!d.error);
     }

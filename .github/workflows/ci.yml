@@ -80,7 +80,7 @@ jobs:
           set -e
           for t in confidence-test draft-role-gap-test fetch-format-test \
                    glommed-split-test frame-units-test asr-segment-parity-test \
-                   vibevoice-worker-test diarize-wav-test parent-watch-test \
+                   vibevoice-worker-test diarize-wav-test diarize-progress-test parent-watch-test \
                    fetch-boundary-test whisperx-worker-test; do
             echo "───────── tests/$t.py ─────────"
             python "tests/$t.py"

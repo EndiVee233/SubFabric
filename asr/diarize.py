@@ -26,6 +26,7 @@ import json
 import os
 import sys
 import time
+import threading
 import wave
 
 # 嵌入式 Python 的 ._pth 不把脚本目录加入 sys.path，显式补上。
@@ -50,6 +51,46 @@ def log(msg):
 
 def progress(pct, msg):
     emit({"type": "progress", "pct": max(0, min(100, int(pct))), "msg": str(msg)})
+
+
+class DiarizeProgress:
+    """Report real phase/counters separately from a periodic worker heartbeat."""
+
+    def __init__(self, interval=5):
+        self.started = time.monotonic()
+        self.phase_started = self.started
+        self.state = {}
+        self.lock = threading.Lock()
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self._heartbeat, args=(interval,), daemon=True)
+        self.thread.start()
+
+    def update(self, pct, msg, **fields):
+        with self.lock:
+            if fields.get("phase") != self.state.get("phase"):
+                self.phase_started = time.monotonic()
+                self.state.pop("done", None)
+                self.state.pop("total", None)
+            self.state.update(fields, pct=max(0, min(100, int(pct))), msg=str(msg))
+        self.report(False)
+
+    def report(self, heartbeat):
+        with self.lock:
+            if not self.state:
+                return
+            payload = dict(self.state)
+            payload.update(type="progress", heartbeat=heartbeat,
+                           elapsedSec=round(time.monotonic() - self.started, 1),
+                           phaseElapsedSec=round(time.monotonic() - self.phase_started, 1))
+            emit(payload)
+
+    def _heartbeat(self, interval):
+        while not self.stopped.wait(interval):
+            self.report(True)
+
+    def close(self):
+        self.stopped.set()
+        self.thread.join(timeout=1)
 
 
 def read_wav_mono16k(path):
@@ -133,12 +174,13 @@ def main():
                     help="推理设备: auto(默认, 先试 CUDA GPU, 失败回退 CPU) / cpu(强制 CPU)")
     args = ap.parse_args()
     watch_parent()
-
+    status = DiarizeProgress()
     try:
+        status.update(0, "加载分离运行时…", phase="runtime")
         import numpy as np
         import sherpa_onnx
 
-        log("读取音频 …")
+        status.update(2, "读取音频…", phase="read_audio")
         samples, sr = read_wav_mono16k(args.audio)
         dur = len(samples) / float(sr)
         # 长音频这一行很关键: 分离是**整段一次性处理**(不像识别会分片), 出了问题时
@@ -151,7 +193,7 @@ def main():
         if dur < 0.5:
             raise RuntimeError("音频过短或无有效采样")
 
-        progress(15, "加载分离模型 …")
+        status.update(15, "加载分段与声纹模型…", phase="load_models", durationSec=round(dur, 1))
         t0 = time.time()
 
         def make_sd(provider):
@@ -199,7 +241,7 @@ def main():
             sd = make_sd("cpu")
         log("分离模型加载完成(provider=%s), 耗时 %.1fs" % (used, time.time() - t0))
 
-        progress(30, "区分说话人中 …")
+        status.update(30, "声纹提取与聚类…", phase="inference", provider=used)
         t1 = time.time()
         last = [0]
 
@@ -208,13 +250,15 @@ def main():
                 pct = done * 100 // total
                 if pct != last[0]:
                     last[0] = pct
-                    progress(30 + pct * 55 // 100, "区分说话人中 … %d%%" % pct)
+                    status.update(30 + pct * 55 // 100, "声纹提取与聚类…", phase="inference",
+                                  done=int(done), total=int(total))
             return 0
 
         res = sd.process(samples, cb)
         log("分离完成: %d 人 / %d 片段, 耗时 %.1fs"
             % (res.num_speakers, res.num_segments, time.time() - t1))
 
+        status.update(90, "整理并写入分离结果…", phase="write_result")
         regions = [{"start": round(s.start, 3), "end": round(s.end, 3), "speaker": int(s.speaker)}
                    for s in res.sort_by_start_time() if s.end > s.start]
 
@@ -223,7 +267,7 @@ def main():
             json.dump({"speakers": res.num_speakers, "regions": regions}, f, ensure_ascii=False)
         os.replace(tmp, args.out)
 
-        progress(100, "分离完成: %d 人" % res.num_speakers)
+        status.update(100, "分离完成: %d 人" % res.num_speakers, phase="done")
         log("结果已写入 %s" % args.out)
         return 0
 
@@ -245,6 +289,8 @@ def main():
             pass
         emit({"type": "error", "msg": msg})
         return 1
+    finally:
+        status.close()
 
 
 if __name__ == "__main__":
