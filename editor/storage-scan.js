@@ -25,7 +25,7 @@ const crypto = require('crypto');
 const PROJECT_INTERMEDIATE = Object.freeze(['audio.wav', 'peaks.bin', 'asr.json', 'reseg.json', 'draft.log']);
 
 /** asr/ 下可整体删除的运行时目录（基础 Python 环境单独保护）。 */
-const RUNTIMES = Object.freeze(['runtime-python', '.venv', 'whisper.cpp', 'crispasr', 'faster-whisper-xxl', 'runtime-vibevoice', 'ytdlp']);
+const RUNTIMES = Object.freeze(['runtime-python', '.venv', 'whisper.cpp', 'crispasr', 'faster-whisper-xxl', 'runtime-vibevoice', 'runtime-whisperx', 'ytdlp']);
 const BASE_RUNTIMES = Object.freeze(['runtime-python', '.venv']);
 
 /** 纯缓存目录：删掉只会触发重建。 */

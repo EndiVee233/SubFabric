@@ -18,6 +18,8 @@ const expectedArtifact = `SubFabric-${fileVersion}-setup.\${ext}`;
 if (pkg.build?.win?.artifactName !== expectedArtifact) throw Error(`win.artifactName must be ${expectedArtifact}, got ${pkg.build?.win?.artifactName}`);
 const tracked = execFileSync('git', ['-C', root, 'ls-files', '-z', 'editor', 'asr'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const paths = tracked.filter(p => !p.startsWith('editor/scripts/') || p === 'editor/scripts/7z.exe' || p === 'editor/scripts/7z-README.txt');
+// This workspace preserves its pre-existing index; explicitly include the new worker until Git tracks it.
+if (!paths.includes('asr/whisperx_asr.py')) paths.push('asr/whisperx_asr.py');
 const vendor = ['editor/vendor/subtitles-octopus.js', 'editor/vendor/subtitles-octopus-worker.js', 'editor/vendor/subtitles-octopus-worker.wasm', 'editor/vendor/fonts/NotoSansCJKsc-Regular.otf'];
 paths.push(...vendor);
 const minima = [50000, 300000, 2000000, 10000000];

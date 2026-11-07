@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const PROTECTED = new Set(['vendor', 'models', 'runtime-python', 'runtime-vibevoice', 'whisper.cpp', 'crispasr', 'ytdlp', 'projects', 'logs', 'node_modules', '__pycache__', '.venv']);
+const PROTECTED = new Set(['vendor', 'models', 'runtime-python', 'runtime-vibevoice', 'runtime-whisperx', 'whisper.cpp', 'crispasr', 'ytdlp', 'projects', 'logs', 'node_modules', '__pycache__', '.venv']);
 const SOURCE_EXT = new Set(['.js', '.mjs', '.cjs', '.json', '.css', '.html', '.py', '.ps1', '.cmd', '.bat', '.command', '.svg', '.ico', '.png', '.md']);
 /** 递归复制目录：**不要用 fs.cpSync**。
  *  Windows + 非 ASCII 源路径（中文项目目录很常见）时，cpSync 会让整个进程 fast-fail

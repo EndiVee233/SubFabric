@@ -1138,7 +1138,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "5362518e229fc381e1bf72af30d06c1ffa3cf80104dc886a74aec64082d55798",
+      "sha256": "f1a412b82c9c2c465a109df185f4b523c47474ef0c7b4cbcf008b2b6d8f347ad",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1351,111 +1351,103 @@
           "method": "innerHTML"
         },
         {
-          "line": 2675,
+          "line": 2678,
           "method": "innerHTML"
         },
         {
-          "line": 2703,
+          "line": 2706,
           "method": "innerHTML"
         },
         {
-          "line": 2752,
+          "line": 2755,
           "method": "innerHTML"
         },
         {
-          "line": 2855,
+          "line": 2858,
           "method": "innerHTML"
-        },
-        {
-          "line": 2905,
-          "method": "createElement"
         },
         {
           "line": 2909,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2978,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3011,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3030,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3198,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3212,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3218,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3252,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3302,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3444,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3631,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3750,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3872,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3879,
-          "method": "replaceChildren"
-        },
-        {
-          "line": 4216,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4317,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4318,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4333,
-          "method": "innerHTML"
-        },
-        {
-          "line": 4436,
           "method": "createElement"
         },
         {
-          "line": 4632,
+          "line": 2913,
           "method": "innerHTML"
         },
         {
-          "line": 4658,
+          "line": 2982,
           "method": "innerHTML"
         },
         {
-          "line": 4660,
+          "line": 3015,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3034,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3203,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3217,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3223,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3257,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3307,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3450,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3637,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3756,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3878,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3885,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 4222,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4323,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4324,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4339,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4442,
+          "method": "createElement"
+        },
+        {
+          "line": 4638,
           "method": "innerHTML"
         },
         {
@@ -1467,63 +1459,71 @@
           "method": "innerHTML"
         },
         {
-          "line": 4840,
+          "line": 4670,
           "method": "innerHTML"
         },
         {
-          "line": 4851,
+          "line": 4672,
           "method": "innerHTML"
         },
         {
-          "line": 4853,
+          "line": 4846,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4857,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4859,
           "method": "createElement"
         },
         {
-          "line": 4855,
+          "line": 4861,
           "method": "innerHTML"
         },
         {
-          "line": 5400,
+          "line": 5406,
           "method": "innerHTML"
         },
         {
-          "line": 5403,
+          "line": 5409,
           "method": "innerHTML"
         },
         {
-          "line": 5421,
+          "line": 5427,
           "method": "innerHTML"
         },
         {
-          "line": 5424,
+          "line": 5430,
           "method": "innerHTML"
         },
         {
-          "line": 5453,
+          "line": 5459,
           "method": "innerHTML"
         },
         {
-          "line": 5683,
+          "line": 5689,
           "method": "createElement"
         },
         {
-          "line": 6231,
+          "line": 6237,
           "method": "innerHTML"
         },
         {
-          "line": 6300,
+          "line": 6306,
           "method": "innerHTML"
         },
         {
-          "line": 6300,
+          "line": 6306,
           "method": "innerHTML"
         },
         {
-          "line": 6538,
+          "line": 6544,
           "method": "innerHTML"
         },
         {
-          "line": 6555,
+          "line": 6561,
           "method": "innerHTML"
         }
       ],
@@ -2062,7 +2062,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "1b5d46832ba7fe9f1b25c8b35e6213420d7f6dd706daa09a1688330e11ef740b",
+      "sha256": "f8099e7063001e326396e425281027ce0558be435fde576d27d3dac2dfe70689",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],

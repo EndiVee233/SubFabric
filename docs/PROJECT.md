@@ -110,7 +110,7 @@
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
-| `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`qwen_asr.py`、`qwen_align.py`、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`（分句/能量计算及 worker 父进程看护共用）；`asr/faster-whisper-xxl/` 是服务端按需下载的 XXL 运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
+| `asr/` | Python 侧能力：`asr.py`、`asr_dual.py`、`asr_npu.py`、`asr_perf.py`、`vibevoice.py`、`diarize.py`、`qwen_asr.py`、`qwen_align.py`、`whisperx_asr.py`（WhisperX 转写/逐词对齐及运行时探针）、`multitalker.py`、`mt_nllb.py`、`confidence.py`、`common.py`（分句/能量计算及 worker 父进程看护共用）；`asr/faster-whisper-xxl/`、`asr/runtime-whisperx/` 为按需安装的运行时（不入库），`asr/settings.json` 为含密文本机设置（不入库） |
 | `asr/fetch/` | bilibili / YouTube 下载内核（见 §9） |
 | `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端自动同步镜像（入库）；`electron-desktop-test.mjs` 检查 payload、旧版数据/路径/浏览器偏好迁移、路径与窗口安全边界，`electron-backend-smoke.mjs` 检查随包 Node、接口、重启保留数据与断线退出 |
 | `tools/` | 探针与验收脚本：`build-install.mjs`（旧链路事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs`；Electron 安装构建改走 `desktop/` |
@@ -123,6 +123,29 @@
 | `eslint.config.js` | ESLint 9 flat config，仅开发/CI 期使用，不是运行时依赖 |
 
 ## 3. 后端与数据流
+
+- **WhisperX large-v2（2026-11-07）**：模型 id `whisperx-large-v2` / engine `whisperx`，转写与 wav2vec2
+  对齐由 `asr/whisperx_asr.py` 一次完成，接入初稿、长音频分片、单句/选区重新识别及全模型速度测试。
+  继续使用通用 `asrEngineArgs/asrArgsFor`，每个入口读取当前参数并使用独立解释器，不进入常驻 sherpa 服务，
+  不再重复跑 Qwen 后对齐；语义分句、术语表、翻译及说话人后处理沿用现有流水线，LLM 配置仍是分句前置条件。
+  逐词输出保持 `{word,start,end,score?}`，无法完整对齐或词序/文本不一致的句子保留全文和句时间、清空部分词表，
+  避免后处理按残缺词表重建时丢字。日志提示这些句子的对齐未完成；不会把缺失词时间宣称为测量结果。
+  worker 使用真实 VAD 分批进度回调、2 小时截止与父进程看护，退出错误由既有任务机制收尾。
+  本次状态：**已完成且已验证（集成与模拟链路）**；真实 WhisperX CUDA 推理、依赖下载安装与准确率/显存实测**未验证**。
+
+  模型下载复用现有 HF 下载器：独立 `asr/models/whisperx-large-v2/` 存放 Systran large-v2 CTranslate2 权重，
+  `align/en/` 随包下载 facebook/wav2vec2-base-960h 的 safetensors 与处理器文件（合计约 3.46GB）。
+  英语强制使用这些本地权重，其它语言由 WhisperX 首次加载对应模型并缓存到程序目录。
+  设置页「安装运行时」使用独立 `asr/runtime-whisperx/`：嵌入式 Python 3.12.10、WhisperX 3.8.6、
+  CUDA PyTorch/torchaudio 2.8.0 + torchvision 0.23.0（cu128）、Transformers <5、随包 pyannote VAD 与 punkt_tab。
+  安装前撤销旧就绪标记，实际导入与 CUDA 检查通过后原子写 `ready.json`；失败不标就绪。
+  安装器 pip 使用 isolated 参数与本目录缓存/临时目录；`runCapture/pipInstallRetry` 新增可选子进程环境参数，
+  旧调用默认不变。worker 的 HF/Torch/NLTK/Matplotlib/Numba/CUDA 缓存也在独立运行时中；不改 Qwen/基础 Python。
+  `SUBFABRIC_WHISPERX_PYTHON` 可指定独立解释器。当前接入只使用 NVIDIA CUDA，实际启动再次校验设备。
+  Electron/SEA 打包只带脚本，排除运行时；默认卸载保留数据，明确删除 ASR 数据时才清理它。
+  存储页识别该运行时，并在它作为当前/重新识别模型使用时保护；stage 显式补入新 worker，兼容本地既有索引。
+  接口依据 [WhisperX 3.8.6](https://github.com/m-bain/whisperX/tree/v3.8.6) 与
+  [PyTorch 2.8 安装组合](https://pytorch.org/get-started/previous-versions/#v280)，未取开发版。
 
 - **重新识别会话队列（2026-11-06，已完成且已验证：定向范围）**：前端按稿件会话 FIFO 排队单句/选区请求，
   在翻译配置检查前锁定启动状态；同一句/相同范围去重，上一条完成写回或失败后才启动下一条。
@@ -209,7 +232,7 @@
 - **初稿流水线**：创建 → 下载（`startFetchJob` → `asr/fetch/fetch_cli.py`，10 分钟无输出看门狗）→
   prepare（ffprobe → ffmpeg 抽 `audio.wav` + `peaks.bin`；**ASR 默认用原声 `mode='raw'`**，降噪版实测会让
   Whisper large-v2 的 WER 从 8.70% 升到 11.02%）→ ASR（Faster-Whisper-XXL / Parakeet NPU /
-  Parakeet Vulkan / Qwen3-ASR + 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
+  Parakeet Vulkan / Qwen3-ASR + 对齐 / WhisperX large-v2 + wav2vec2 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
   Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
 - **批量初稿独立页（2026-10-27）**：`#/batch` 新页面，不再用项目列表弹窗。点「＋ 添加视频」一次选多个
@@ -354,6 +377,15 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **WhisperX 设置入口（2026-11-07，已完成且已验证：定向范围）**：「语音识别 → Whisper 系列」新增
+  WhisperX large-v2，模型与独立运行时分别显示下载/安装状态。参数面板支持语言、批量大小（默认 4）、
+  float16/int8_float16、束搜索、VAD 合并长度与起止阈值；保存后影响下一次识别。模型就绪后可供新建、
+  批量初稿、详情页及重新识别选择；当前按 CUDA 后端与硬件过滤。全模型速度测试也包含该引擎。
+  本次 15 组定向 JS 回归、5 项 Python worker 测试通过，Python 语法通过，ESLint 0 error / 20 个既有 warning。
+  MY/UWP 隔离浏览器验证模型与运行时入口、7 项参数布局/保存；真实 HTTP + ffmpeg 与模拟 GPU/worker/LLM
+  验证重新识别完成、逐词时间返回且未自动覆盖原字幕。无浏览器运行时异常；真实模型推理及运行时安装未执行，
+  Ruff 未运行（本机未安装），未跑全量回归或重打包。报告 `_test/maintenance/whisperx-*.json` 只留本机。
 
 - **分段导入人物颜色保真（2026-11-07，已完成且已验证：定向范围）**：复现了明确 `[人物]` 的绿色
   整句在 `speakerColorOf` 被当逐词高亮排除、`rimApply` 又拒绝源绿色而改用调色板的问题；行首独立几何标签后

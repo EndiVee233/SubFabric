@@ -2562,7 +2562,7 @@ async function benchLoadModels(force) {
       confEl.dataset.init = '1';
     }
     const models = (d.models || []).filter(m => m && m.ready && !m.cloud
-      && m.engine !== 'dual' && ['openvino', 'faster-whisper', 'crispasr', 'qwen'].includes(m.engine));
+      && m.engine !== 'dual' && ['openvino', 'faster-whisper', 'whisperx', 'crispasr', 'qwen'].includes(m.engine));
     benchModelsLoaded = true;
     if (!models.length) {
       box.innerHTML = '<div class="bench-empty">没有已安装完成的本地模型。先在「语音识别」里下载模型和运行时。</div>';
@@ -2593,6 +2593,9 @@ async function benchLoadModels(force) {
 function benchFixButton(r) {
   const err = String(r.error || '');
   if (!err) return '';
+  if (r.engine === 'whisperx' && /运行时|版本不匹配|No module named|cannot import/i.test(err)) {
+    return '<div class="bench-fix-row"><span class="bench-fix-status" data-status></span><button type="button" class="btn btn-mini bench-fix" data-fix="runtime:whisperx">安装 WhisperX 运行时</button></div>';
+  }
   // 停用：VibeVoice 修复入口
   // if (r.engine === 'vibevoice' && /bitsandbytes|VibeVoice|CUDA|运行时|module/i.test(err)) {
   //   return '<div class="bench-fix-row"><span class="bench-fix-status" data-status></span><button type="button" class="btn btn-mini bench-fix" data-fix="runtime:vibevoice" data-force="1">安装 / 修复 VibeVoice 运行时</button></div>';
@@ -2629,7 +2632,7 @@ async function benchInstallRuntime(btn) {
     toast('已开始安装运行时，进度会显示在这一行', 4200);
     // 在页面上看进度，而不是让用户去别的页签猜：2 秒一轮，最多 40 分钟。
     const fix = String(btn.dataset.fix || '');
-    const dlKey = fix.includes('vibevoice') ? 'vibevoice' : 'runtime:faster-whisper';
+    const dlKey = fix === 'runtime:whisperx' ? fix : (fix.includes('vibevoice') ? 'vibevoice' : 'runtime:faster-whisper');
     const deadline = Date.now() + 40 * 60 * 1000;
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -2890,6 +2893,7 @@ let asrParamClosing = false;
 let asrParamCloseTimer = 0;
 let asrParamCloseHandler = null;
 const ASR_PARAM_ENGINE_LABEL = {
+  'whisperx': 'WhisperX · CUDA',
   'faster-whisper': 'Faster-Whisper-XXL',
   'whisper.cpp': 'whisper.cpp',
   'crispasr': 'CrispASR',
@@ -3166,6 +3170,7 @@ const ENTRY_CHIP = {
   'dual': { label: 'Parakeet', cls: 'ok' },
   'whisper.cpp': { label: 'Whisper', cls: 'blue' },
   'faster-whisper': { label: 'Whisper', cls: 'blue' },
+  'whisperx': { label: 'WhisperX', cls: 'blue' },
   'qwen': { label: 'Qwen3', cls: 'violet' },
   'vibevoice': { label: 'VibeVoice', cls: 'violet' },
   'nemo': { label: 'NeMo', cls: 'violet' },
@@ -3359,7 +3364,7 @@ function modelRowHtml(m, d, dlOf) {
     if (!pyBlocked && !vibeBlocked) btn += `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
   } else if (m.ready || m.filesOk) btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
   else if (!pyBlocked && !vibeBlocked) btn = `<button type="button" class="btn btn-mini sm-dl" data-id="${esc(m.id)}">下载</button>`;
-  if ((studioUI || m.engine === 'vibevoice' || m.engine === 'faster-whisper') && m.needRuntime && !dlThis && !vibeBlocked) {
+  if ((studioUI || ['vibevoice', 'faster-whisper', 'whisperx'].includes(m.engine)) && m.needRuntime && !dlThis && !vibeBlocked) {
     // 已经装了一部分（例如 torch/transformers 在、bitsandbytes 缺）时叫「修复运行时」，
     // 点进去仍然是同一个安装接口：已满足的包 pip 会跳过，只补缺的。
     const partialVibe = m.engine === 'vibevoice' && d.vibevoice
@@ -3374,7 +3379,8 @@ function modelRowHtml(m, d, dlOf) {
     : '';
   let rtText = '';
   if (m.needRuntime && !dlThis) {
-    if (m.engine === 'vibevoice') rtText = '独立 CUDA 4bit 运行时 · 通过“安装运行时”获取 · 不支持 CPU/NPU';
+    if (m.engine === 'whisperx') rtText = '需要 WhisperX 独立 CUDA 运行时（首次安装约数 GB，包含 PyTorch 与 VAD）';
+    else if (m.engine === 'vibevoice') rtText = '独立 CUDA 4bit 运行时 · 通过“安装运行时”获取 · 不支持 CPU/NPU';
     else if (m.engine === 'qwen') rtText = '需要 Qwen3 CUDA 运行时（Transformers 5.20 + Accelerate，复用 CUDA Python 环境）';
     else if (m.engine && m.engine.indexOf('crispasr') === 0) rtText = `需要 CrispASR 运行时（约 ${m.runtimeSizeMB || 34}MB，含 Vulkan；无 N 卡时使用）`;
     else if (m.engine === 'faster-whisper') rtText = `需要 ${esc(m.runtimeName || 'Faster-Whisper-XXL')} 运行时（下载约 ${m.runtimeSizeMB || 1450}MB / 解压约 4.4GB，含 CUDA/cuDNN）`;
@@ -3435,7 +3441,7 @@ function extraModelRowHtml(m, d, dlOf) {
  *  按 engine 分而不是按名字猜 —— 名字里带什么字都会变，engine 是服务端给的稳定字段。 */
 const MODEL_FAMILY = (m) => {
   if (m.cloud || m.engine === 'bcut' || m.engine === 'capcut') return '云端识别';
-  if (m.engine === 'whisper.cpp' || m.engine === 'faster-whisper' || m.engine === 'crispasr-whisper') return 'Whisper 系列';
+  if (['whisper.cpp', 'faster-whisper', 'whisperx', 'crispasr-whisper'].includes(m.engine)) return 'Whisper 系列';
   if (m.engine === 'qwen' || m.engine === 'crispasr-qwen') return 'Qwen 系列';
   if (m.engine === 'vibevoice') return 'VibeVoice 系列';
   if (m.engine === 'nemo') return 'NeMo 多说话人';

@@ -122,7 +122,7 @@ Source: "{#Root}\editor\*"; DestDir: "{app}\editor"; \
 ; 2026-10-21 起 VibeVoice / NeMo / 双引擎模型已停用，对应脚本与 runtime-vibevoice 也不再打包。
 Source: "{#Root}\asr\*"; DestDir: "{app}\asr"; \
     Flags: ignoreversion recursesubdirs createallsubdirs; \
-    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\crispasr\*,\faster-whisper-xxl\*,\runtime-python\*,\runtime-vibevoice\*,\multitalker.py,\vibevoice.py,\asr_dual.py,\asr_perf.py,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*,.qwen-runtime-ok.json"
+    Excludes: ".venv\*,\models\*,\settings.json,\whisper.cpp\*,\crispasr\*,\faster-whisper-xxl\*,\runtime-python\*,\runtime-vibevoice\*,\runtime-whisperx\*,\multitalker.py,\vibevoice.py,\asr_dual.py,\asr_perf.py,\ytdlp\*,\logs\*,\__pycache__\*,*\__pycache__\*,.qwen-runtime-ok.json"
 
 [Icons]
 ; 显式写 IconFilename 指向程序本体（而不是 .iss 里的 SetupIconFile），
@@ -485,6 +485,7 @@ begin
     DelTree(App + '\asr\models', True, True, True);
     DelTree(App + '\asr\runtime-python', True, True, True);
     DelTree(App + '\asr\runtime-vibevoice', True, True, True);
+    DelTree(App + '\asr\runtime-whisperx', True, True, True);
     DelTree(App + '\asr\whisper.cpp', True, True, True);
     DelTree(App + '\asr\crispasr', True, True, True);
     DelTree(App + '\asr\faster-whisper-xxl', True, True, True);

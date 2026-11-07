@@ -2,7 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const FORBIDDEN = new Set(['settings.json', 'perf-result.json', 'models', 'runtime-python', 'runtime-vibevoice', 'whisper.cpp', 'crispasr', 'faster-whisper-xxl', 'ytdlp', 'logs', 'projects', 'videos', 'node_modules', '__pycache__']);
+const FORBIDDEN = new Set(['settings.json', 'perf-result.json', 'models', 'runtime-python', 'runtime-vibevoice', 'runtime-whisperx', 'whisper.cpp', 'crispasr', 'faster-whisper-xxl', 'ytdlp', 'logs', 'projects', 'videos', 'node_modules', '__pycache__']);
 function sourcePath(relative) {
   if (typeof relative !== 'string' || relative.includes('\\') || relative.includes(':') || relative.includes('\0')) throw Error('Invalid payload path');
   const parts = relative.split('/');

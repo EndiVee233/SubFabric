@@ -230,6 +230,7 @@ FunctionEnd
       RMDir /r "$INSTDIR\asr\models"
       RMDir /r "$INSTDIR\asr\runtime-python"
       RMDir /r "$INSTDIR\asr\runtime-vibevoice"
+      RMDir /r "$INSTDIR\asr\runtime-whisperx"
       RMDir /r "$INSTDIR\asr\whisper.cpp"
       RMDir /r "$INSTDIR\asr\crispasr"
       RMDir /r "$INSTDIR\asr\faster-whisper-xxl"

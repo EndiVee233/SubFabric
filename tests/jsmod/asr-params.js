@@ -37,6 +37,19 @@ const VAD_METHOD_OPTIONS = [
 ];
 
 const PROFILES = {
+  'whisperx': [
+    { key: 'language', label: '识别语言', type: 'select', default: 'en', options: LANGUAGE_OPTIONS_AUTO,
+      help: '英语对齐权重随模型下载；其它语言首次使用会下载对应对齐模型。' },
+    { key: 'batchSize', label: '批量大小', type: 'number', default: 4, min: 1, max: 32, step: 1,
+      help: '显存不足时先减小批量大小。' },
+    { key: 'computeType', label: '计算精度', type: 'select', default: 'float16', options: [
+      { value: 'float16', label: 'float16' }, { value: 'int8_float16', label: 'int8_float16（省显存）' }],
+      help: '两种精度均使用 CUDA，不切换到 CPU。' },
+    { key: 'beamSize', label: '束搜索大小', type: 'number', default: 5, min: 1, max: 10, step: 1 },
+    { key: 'chunkSize', label: 'VAD 合并长度（秒）', type: 'number', default: 30, min: 5, max: 30, step: 1 },
+    { key: 'vadOnset', label: 'VAD 起始阈值', type: 'number', default: 0.5, min: 0.01, max: 0.99, step: 0.01 },
+    { key: 'vadOffset', label: 'VAD 结束阈值', type: 'number', default: 0.36, min: 0.01, max: 0.99, step: 0.01 },
+  ],
   'faster-whisper': [
     {
       key: 'language', label: '识别语言', type: 'select', default: 'en',
@@ -216,6 +229,7 @@ function normalizeFor(model, input) {
 
 function summaryFor(model, values) {
   const v = resolveFor(model, values);
+  if (model && model.engine === 'whisperx') return `WhisperX · ${v.language} · 批量 ${v.batchSize} · ${v.computeType} · wav2vec2 对齐`;
   if (model && model.engine === 'faster-whisper') {
     return `VAD ${v.vad ? '开' : '关'} · 阈值 ${v.vadThreshold} · MDX ${v.vocalExtract ? '开' : '关'} · 逐词 ${v.wordTimestamps ? '开' : '关'}`;
   }

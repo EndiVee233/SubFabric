@@ -820,6 +820,25 @@ const ASR_MODELS = [
     runtimeSizeMB: 1450,
   },
   {
+    id: 'whisperx-large-v2',
+    name: 'WhisperX large-v2（多语·逐词对齐·CUDA）',
+    engine: 'whisperx',
+    repo: 'Systran/faster-whisper-large-v2',
+    files: ['config.json', 'model.bin', 'tokenizer.json', 'vocabulary.txt',
+      ...['config.json', 'model.safetensors', 'preprocessor_config.json', 'tokenizer_config.json',
+        'special_tokens_map.json', 'vocab.json'].map(f => 'align/en/' + f)],
+    fileRepos: Object.fromEntries(['config.json', 'model.safetensors', 'preprocessor_config.json',
+      'tokenizer_config.json', 'special_tokens_map.json', 'vocab.json'].map(f => ['align/en/' + f, 'facebook/wav2vec2-base-960h'])),
+    fileSources: Object.fromEntries(['config.json', 'model.safetensors', 'preprocessor_config.json',
+      'tokenizer_config.json', 'special_tokens_map.json', 'vocab.json'].map(f => ['align/en/' + f, f])),
+    fileSizes: { 'model.bin': 3086912962 },
+    sizeMB: 3305,
+    dirName: 'whisperx-large-v2',
+    draftAllowed: true,
+    runtimeKey: 'runtime:whisperx',
+    desc: 'WhisperX 批量转写 + wav2vec2 逐词对齐；英语对齐权重随模型下载，其它语言首次使用会下载对应对齐权重。需要 NVIDIA CUDA，运行时独立安装。',
+  },
+  {
     /* Qwen3：ASR 只生成文本，配套对齐器再把这段文本变成逐词时间。
      * 对齐器已拆成独立模型（ALIGNER_MODELS / 对齐模型下载项），这里只下载 ASR 权重。 */
     id: 'qwen3-asr-1.7b',
@@ -1081,6 +1100,7 @@ const nativeWordLevelOf = (m) => !!m && m.nativeWordLevel !== false;
  *  ⚠ Qwen3-ASR 的 `--aligner` 只接受 HF 目录（`qwen_asr.py` 内加载），所以它必须用 CUDA 对齐器；
  *    Vulkan GGUF 只适合非 Qwen 引擎的后对齐。 */
 async function draftAlignerReady(m) {
+  if (m?.engine === 'whisperx') return modelReady(m.id);
   const cudaFiles = fs.existsSync(path.join(modelDirFor('qwen3-forced-aligner-0.6b'), 'model.safetensors'));
   if (qwenRuntimeOk() && cudaFiles) {
     // nvidiaCache 在服务器刚起、还没人查过设置时会话是空的 —— 这里补一次探测，
@@ -1096,6 +1116,7 @@ async function draftAlignerReady(m) {
 /** 对齐器不可用时的可操作原因：区分「没下载」「下载了但运行时缺失」「有模型没 N 卡」。
  *  以前统一报「先下载」，模型明明已经在盘上会让人以为下载坏了（用户实测反馈）。 */
 function draftAlignerMissingHint(m) {
+  if (m?.engine === 'whisperx') return 'WhisperX 模型或独立运行时未就绪，请在「设置 → 语音识别」下载完整模型并安装运行时';
   const cuda = alignerById('qwen3-forced-aligner-0.6b');
   const vulkan = alignerById('qwen3-forced-aligner-0.6b-vulkan');
   const cudaFiles = !!cuda && modelFilesOk(modelDirFor(cuda.id), cuda);
@@ -1241,6 +1262,78 @@ const vibevoiceRuntimeOk = () => !!(vibevoiceProbeCache && vibevoiceProbeCache.o
   && vibevoiceProbeCache.nativeModel && vibevoiceProbeCache.nativeProcessor
   && vibevoiceProbeCache.bitsandbytes && vibevoiceProbeCache.bnbCudaKernel);
 
+/* WhisperX keeps its PyTorch/Transformers dependencies and caches separate from Qwen. */
+const WHISPERX_RUNTIME = { key: 'runtime:whisperx', version: '3.8.6',
+  dir: path.join(ASR_DIR, 'runtime-whisperx'), sizeMB: 3500 };
+const whisperxPython = () => process.env.SUBFABRIC_WHISPERX_PYTHON || path.join(WHISPERX_RUNTIME.dir, 'python.exe');
+function whisperxRuntimeOk() {
+  try {
+    const mark = JSON.parse(fs.readFileSync(path.join(WHISPERX_RUNTIME.dir, 'ready.json'), 'utf8'));
+    return mark.version === WHISPERX_RUNTIME.version && mark.python === whisperxPython() && mark.cuda === true
+      && mark.pythonMtime === fs.statSync(whisperxPython()).mtimeMs;
+  } catch { return false; }
+}
+function startWhisperxRuntimeInstall() {
+  const key = WHISPERX_RUNTIME.key;
+  if (dlState(key).running) return;
+  const prog = (pct, msg, error = null) => dlState(key, { running: !error && pct < 100, kind: key, pct, msg, error });
+  prog(1, '准备 WhisperX 独立运行时…');
+  (async () => {
+    try {
+      const py = whisperxPython(), dir = WHISPERX_RUNTIME.dir;
+      fs.mkdirSync(dir, { recursive: true });
+      const cache = path.join(dir, 'cache'), temp = path.join(cache, 'tmp');
+      fs.mkdirSync(temp, { recursive: true });
+      const env = { TEMP: temp, TMP: temp, PIP_CACHE_DIR: path.join(cache, 'pip'), PIP_USER: '0', PIP_DISABLE_PIP_VERSION_CHECK: '1' };
+      const capture = (args, timeout) => runCapture(py, args, timeout, undefined, env);
+      // Never let a stale marker authorize a partially upgraded environment.
+      fs.rmSync(path.join(dir, 'ready.json'), { force: true });
+      if (!fs.existsSync(py)) {
+        if (process.env.SUBFABRIC_WHISPERX_PYTHON) throw new Error('指定的 WhisperX Python 不存在');
+        if (process.platform !== 'win32') throw new Error('请通过 SUBFABRIC_WHISPERX_PYTHON 指定独立 Python 环境');
+        prog(3, '下载 WhisperX 独立 Python…');
+        const zip = path.join(dir, 'python-embed.zip');
+        await downloadAny(EMBEDDED_PY.zipUrls, zip, () => {});
+        const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+        await runCapture(tar, ['-xf', zip, '-C', dir], 300000);
+        fs.unlinkSync(zip);
+      }
+      if (!process.env.SUBFABRIC_WHISPERX_PYTHON) {
+        const pth = fs.readdirSync(dir).find(n => /^python\d+\._pth$/i.test(n));
+        if (!pth) throw new Error('WhisperX 独立 Python 缺少 _pth 配置');
+        fs.writeFileSync(path.join(dir, pth), 'python312.zip\n.\nLib/site-packages\nimport site\n');
+      }
+      try { await capture(['-m', 'pip', '--version'], 30000); }
+      catch {
+        const getpip = path.join(dir, 'get-pip.py');
+        await downloadAny([EMBEDDED_PY.getPipUrl], getpip, () => {});
+        await capture([getpip, '--no-warn-script-location', '--isolated', '--cache-dir', env.PIP_CACHE_DIR, '-i', EMBEDDED_PY.pipIndex], 300000);
+        fs.unlinkSync(getpip);
+      }
+      prog(12, '安装 WhisperX CUDA PyTorch 2.8（首次下载较大）…');
+      await pipInstallRetry(py, ['-m', 'pip', '--isolated', '--cache-dir', env.PIP_CACHE_DIR,
+        'install', 'torch==2.8.0', 'torchaudio==2.8.0', 'torchvision==0.23.0',
+        '--index-url', 'https://download.pytorch.org/whl/cu128'], 3600000, () => prog(28, '安装 WhisperX CUDA PyTorch…'), 3, env);
+      prog(45, '安装 WhisperX 3.8.6 与独立依赖…');
+      await pipInstallRetry(py, ['-m', 'pip', '--isolated', '--cache-dir', env.PIP_CACHE_DIR,
+        'install', 'whisperx==' + WHISPERX_RUNTIME.version, 'transformers<5',
+        '--no-warn-script-location', '-i', EMBEDDED_PY.pipIndex], 3600000, () => prog(65, '安装 WhisperX 依赖…'), 3, env);
+      prog(85, '验证 WhisperX / CUDA 并准备本地断句资源…');
+      const probe = await capture([path.join(ASR_DIR, 'whisperx_asr.py'), '--prepare-runtime',
+        '--cache-dir', path.join(dir, 'cache')], 600000);
+      const result = JSON.parse(probe.stdout.trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
+      if (result.version !== WHISPERX_RUNTIME.version || !result.cuda) throw new Error('WhisperX 运行时验证失败，未标记为就绪');
+      const mark = { version: result.version, cuda: true, python: py, pythonMtime: fs.statSync(py).mtimeMs };
+      fs.writeFileSync(path.join(dir, 'ready.json.tmp'), JSON.stringify(mark));
+      fs.renameSync(path.join(dir, 'ready.json.tmp'), path.join(dir, 'ready.json'));
+      prog(100, 'WhisperX CUDA 运行时就绪');
+    } catch (e) {
+      const msg = String(e.message || e).slice(0, 400);
+      prog(0, 'WhisperX 安装失败：' + msg, msg);
+    }
+  })();
+}
+
 /* Qwen3 复用 runtime-vibevoice 的 CUDA PyTorch，但要求 Transformers 5.20+。
  * 装好后写一个标记文件；不再让每个状态轮询都 import torch。 */
 const QWEN_RUNTIME_MARK = path.join(ASR_DIR, '.qwen-runtime-ok.json');
@@ -1346,6 +1439,11 @@ function asrGpuGateError(model) {
   // 所以这里不能套用下面"必须是 CUDA 版 sherpa-onnx"的那条判断, 否则没有 N 卡的机器
   // 会在创建初稿前就被挡下来。
   if (model && model.engine === 'openvino') return null;
+  if (model?.engine === 'whisperx') {
+    if (!whisperxRuntimeOk()) return 'WhisperX 独立运行时未就绪，请到「设置 → 语音识别 → Whisper 系列」安装运行时';
+    // The worker validates CUDA again; a cold nvidia-smi cache must not reject an installed runtime.
+    return null;
+  }
   if (model && model.engine === 'whisper.cpp') {
     if (!whisperRuntimeOk()) return 'whisper.cpp 运行时没装好，到「设置 → 识别模型」下载';
     if (!whisperVulkanOk()) return '未检测到 Vulkan 运行库（ggml-vulkan.dll）。语音识别不支持纯 CPU，要装/更新支持 Vulkan 的显卡驱动，或在设置里重新下载 whisper.cpp 运行时';
@@ -2490,6 +2588,16 @@ const asrEngineArgs = (model) => {
     };
   }
   const mp = modelParamsFor(model);
+  if (eng === 'whisperx') {
+    return {
+      script: path.join(ASR_DIR, 'whisperx_asr.py'), provider: 'cuda', python: whisperxPython(),
+      hotwords: [], noThreads: true, noTta: true,
+      extra: ['--language', mp.language, '--batch-size', String(mp.batchSize), '--compute-type', mp.computeType,
+        '--beam-size', String(mp.beamSize), '--chunk-size', String(mp.chunkSize),
+        '--vad-onset', String(mp.vadOnset), '--vad-offset', String(mp.vadOffset),
+        '--cache-dir', path.join(WHISPERX_RUNTIME.dir, 'cache')],
+    };
+  }
   if (eng === 'qwen') {
     const q = modelParamsFor(model);
     return {
@@ -2854,6 +2962,7 @@ function modelReady(modelId) {
   if (isCrispEngine(m.engine) && !crispasrRuntimeOk()) return false;
   if (m.engine === 'faster-whisper' && !fasterWhisperRuntimeOk()) return false;
   if (m.engine === 'qwen' && !qwenRuntimeOk()) return false;
+  if (m.engine === 'whisperx' && !whisperxRuntimeOk()) return false;
   if (m.engine === 'aligner') {
     if (m.runtimeKey === 'runtime:qwen' && !qwenRuntimeOk()) return false;
     if (m.runtimeKey === 'runtime:crispasr' && !crispasrRuntimeOk()) return false;
@@ -3464,9 +3573,9 @@ function startFasterWhisperRuntimeDownload() {
  * 进度走 downloads Map(key='pyenv'), 设置面板与其它下载共用同一套进度 UI。 */
 
 /** 跑一个子进程收集输出; 非零退出抛错(带输出尾部)。 */
-function runCapture(cmd, args, timeoutMs, onLine) {
+function runCapture(cmd, args, timeoutMs, onLine, envExtra = null) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+    const p = spawn(cmd, args, { windowsHide: true, cwd: ASR_DIR, env: Object.assign(pySpawnEnv(), envExtra || {}) });
     let out = '', err = '';
     const timer = setTimeout(() => { try { p.kill(); } catch {} reject(new Error('执行超时（' + Math.round(timeoutMs / 1000) + 's）: ' + cmd)); }, timeoutMs);
     const feed = (chunk, isErr) => {
@@ -3489,10 +3598,10 @@ function runCapture(cmd, args, timeoutMs, onLine) {
 /** pip 装大包在 Windows 上偶发「WinError 5 拒绝访问」: 杀软/Defender 实时扫描刚写入的文件,
  *  把它锁住 → pip rename dist-info 失败整个安装中断。属**可重试**错误(已装好的不会重下),
  *  所以这里重试几次再去报错 —— 实测 2.5GB 的 PyTorch 安装踩过两次。 */
-async function pipInstallRetry(pyExe, args, timeoutMs, onLine, tries = 3) {
+async function pipInstallRetry(pyExe, args, timeoutMs, onLine, tries = 3, envExtra = null) {
   let lastErr = null;
   for (let i = 0; i < tries; i++) {
-    try { return await runCapture(pyExe, args, timeoutMs, onLine); }
+    try { return await runCapture(pyExe, args, timeoutMs, onLine, envExtra); }
     catch (e) {
       lastErr = e;
       const msg = String((e && e.message) || e);
@@ -4101,7 +4210,7 @@ async function runFasterWhisper(wav, modelDir, onProgress, opts) {
 /* ── 全模型速度测试 ───────────────────────────────────────────────
  * 用同一段音频把用户勾选的已安装模型各跑一次，倍率 = 音频秒数 / 墙钟秒数。
  * 串行执行避免多模型同时抢 GPU；结果包含模型加载时间，反映真实“点下去等多久”。 */
-const BENCH_ENGINES = new Set(['openvino', 'faster-whisper', 'crispasr', 'crispasr-whisper', 'crispasr-qwen', 'qwen']);
+const BENCH_ENGINES = new Set(['openvino', 'faster-whisper', 'whisperx', 'crispasr', 'crispasr-whisper', 'crispasr-qwen', 'qwen']);
 
 function benchSupported(model) {
   return !!model && !model.cloud && !isRetiredEngine(model.engine)
@@ -4334,8 +4443,8 @@ async function benchRunModel(model, wav, tempDir, seconds, cond) {
     /* ⚠ VibeVoice 有自己的独立 Python（asr/runtime-vibevoice，装 torch 4bit/bitsandbytes）；
      * 共享的 ASR_PY 里没有这些包。旧速度测试统一用 ASR_PY 跑 vibevoice.py，于是即使探针
      * 显示运行时 OK，bench 仍报「No module named 'bitsandbytes'」——实测就是这条。 */
-    const python = model.engine === 'vibevoice' ? vibevoicePython()
-      : (model.engine === 'qwen' ? qwenPython() : ASR_PY);
+    const python = ea.python || (model.engine === 'vibevoice' ? vibevoicePython()
+      : (model.engine === 'qwen' ? qwenPython() : ASR_PY));
     task = benchSpawn(python, [ea.script, ...asrArgsFor(ea, mdir, wav, outPath, confMode)], timeoutMs);
   } else {
     throw new Error('该模型不支持速度测试');
@@ -8614,7 +8723,7 @@ function startPrepare(id, videoPath, mode) {
     // 三步都与识别引擎无关: 分离跑在音频上, 任何引擎都能配;
     // 语义分句**所有引擎都做**, 没配 LLM 就直接失败停在这里, 不会跳过它往下走。
     const finishAsr = async () => {
-      if (meta0.draft && meta0.draft.align && model.engine !== 'qwen') {
+      if (meta0.draft && meta0.draft.align && !['qwen', 'whisperx'].includes(model.engine)) {
         try { await alignDraftAsrJson(id); }
         catch (e) { draftJobs.delete(id); return finishDraft(id, new Error('对齐失败：' + ((e && e.message) || e))); }
       }
@@ -8954,12 +9063,12 @@ function startPrepare(id, videoPath, mode) {
 
     // ── sherpa-onnx / Qwen3 引擎: 通用 Python worker ──
     // 预检通过才 spawn: 给远程用户可操作的修复指引, 而不是一句「异常退出(9009)」
-    const precheck = model.engine === 'qwen'
-      ? Promise.resolve({ ok: true, msg: 'Qwen3 CUDA 运行时（已通过设置页标记校验）' })
+    const precheck = model.engine === 'qwen' || model.engine === 'whisperx'
+      ? Promise.resolve({ ok: true, msg: model.name + ' CUDA 运行时（已通过设置页标记校验）' })
       : probePython(model.engine);
     precheck.then(pre => {
       const ts = () => new Date().toLocaleTimeString();
-      const pyExe = model.engine === 'qwen' ? qwenPython() : ASR_PY;
+      const pyExe = asrEngineArgs(model).python || ASR_PY;
       if (!pre.ok) {
         pushDraftLog(id, `[${ts()}] [预检失败] ${pre.msg}`);
         pushDraftLog(id, `[${ts()}] [修复方法] ① 安装 Python 3.10~3.12（python.org，安装时勾选 Add python.exe to PATH）`);
@@ -8969,7 +9078,7 @@ function startPrepare(id, videoPath, mode) {
         return finishDraft(id, new Error('语音识别需要 Python 环境。到「设置 → 识别模型 → Python 环境」点「安装」（详见日志：' + pre.msg + '）'));
       }
       pushDraftLog(id, `[${ts()}] Python: ${pyExe}${pre.msg ? '（' + pre.msg + '）' : ''}`);
-      pushDraftLog(id, `[${ts()}] [提示] ${model.engine === 'qwen' ? 'Qwen3 推理设备：GPU·CUDA' : 'Parakeet 推理设备：GPU·CUDA'}（已通过 GPU 校验）`);
+      pushDraftLog(id, `[${ts()}] [提示] ${model.name} · GPU·CUDA（已通过 GPU 校验）`);
 
       if (chunkPlan) {
         // 本地 sherpa: 逐片切片 → 逐片跑 asr.py → 合并。片间不等候（本地没有限流问题）。
@@ -9063,7 +9172,7 @@ function startPrepare(id, videoPath, mode) {
       };
       proc.stderr.on('data', sink);
       proc.stdout.on('data', sink);
-      proc.on('error', e => finishDraft(id, new Error('无法启动识别进程（Python: ' + ASR_PY + '）: ' + e.message)));
+      proc.on('error', e => finishDraft(id, new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + e.message)));
       proc.on('close', (code) => {
         if (code !== 0) { draftJobs.delete(id); return finishDraft(id, new Error(lastErr || ('识别进程异常退出（' + asrExitHint(code) + '）'))); }
         finishAsr();
@@ -9569,11 +9678,13 @@ function handleAsrRoutes(req, res, u) {
           ? { key: 'runtime:crispasr', name: 'CrispASR', sizeMB: CRISPASR_RUNTIME.sizeMB, ok: crispasrRuntimeOk() }
           : (m.engine === 'faster-whisper'
             ? { key: FASTER_WHISPER_RUNTIME.key, name: 'Faster-Whisper-XXL', sizeMB: FASTER_WHISPER_RUNTIME.sizeMB, ok: fasterWhisperRuntimeOk() }
+            : (m.engine === 'whisperx'
+              ? { key: WHISPERX_RUNTIME.key, name: 'WhisperX CUDA 独立运行时', sizeMB: WHISPERX_RUNTIME.sizeMB, ok: whisperxRuntimeOk() }
             : (m.engine === 'qwen'
               ? { key: 'runtime:qwen', name: 'Qwen3 CUDA 运行时', sizeMB: 0, ok: qwenRuntimeOk() }
               : (m.engine === 'vibevoice'
                 ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
-                : null))));
+                : null)))));
       const ready = filesOk && (!rt || rt.ok);
       const backendAllowed = modelAllowedByBackends(m) && modelAllowedByHardware(m, hw);
       // usable: 文件齐 + 该引擎的运行时都就位 + 当前加速后端允许(NeMo 模型还要 torch/NeMo + CUDA)
@@ -9934,6 +10045,13 @@ function handleAsrRoutes(req, res, u) {
         startCrispasrRuntimeDownload();
         return sendJson(res, 200, { started: true, kind: 'runtime:crispasr' });
       }
+      if (kind === 'runtime:whisperx') {
+        if (whisperxRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
+        if (dlState(WHISPERX_RUNTIME.key).running) return sendJson(res, 200, { started: true, kind, already: true });
+        if (!await nvidiaGpu().catch(() => null)) return sendJson(res, 400, { error: 'WhisperX 运行时需要 NVIDIA CUDA GPU' });
+        startWhisperxRuntimeInstall();
+        return sendJson(res, 200, { started: true, kind });
+      }
       if (kind === 'runtime:faster-whisper' || kind === 'runtime:fw') {
         if (fasterWhisperRuntimeOk()) return sendJson(res, 200, { started: false, ready: true });
         if (dlState(FASTER_WHISPER_RUNTIME.key).running) {
@@ -9987,8 +10105,10 @@ function handleAsrRoutes(req, res, u) {
       if (model.engine === 'vibevoice' && !gpuNameForDl) {
         return sendJson(res, 400, { error: 'VibeVoice 4bit 只支持 NVIDIA CUDA GPU；不支持 CPU 或 NPU，不能下载' });
       }
-      if (model.engine === 'faster-whisper' && !gpuNameForDl) {
-        return sendJson(res, 400, { error: 'Whisper large-v2（Faster-Whisper-XXL）需要 NVIDIA CUDA GPU；这台机器没检测到 N 卡，不能下载' });
+      if (['faster-whisper', 'whisperx'].includes(model.engine) && !gpuNameForDl) {
+        return sendJson(res, 400, { error: model.engine === 'whisperx'
+          ? 'WhisperX 需要 NVIDIA CUDA GPU；这台机器没检测到 N 卡，不能下载'
+          : 'Whisper large-v2（Faster-Whisper-XXL）需要 NVIDIA CUDA GPU；这台机器没检测到 N 卡，不能下载' });
       }
       const key = 'model:' + model.id;
       // 未指定目录 → 模型根目录(modelsRoot 可被用户指定)下的 <dirName>
@@ -10629,10 +10749,11 @@ function createStorageSession() {
   const runtimeForEngine = {
     'whisper.cpp': 'whisper.cpp', 'faster-whisper': 'faster-whisper-xxl',
     'crispasr': 'crispasr', 'crispasr-whisper': 'crispasr', 'crispasr-qwen': 'crispasr',
-    'vibevoice': 'runtime-vibevoice',
+    'vibevoice': 'runtime-vibevoice', 'whisperx': 'runtime-whisperx',
   }[engine];
   const protectedRuntimes = new Set(['ytdlp']);   // 链接下载依赖它，删了会让"从链接新建"失败
   if (runtimeForEngine) protectedRuntimes.add(runtimeForEngine);
+  if ([settings.selectedModel, settings.rerecogModel].some(id => modelById(id)?.engine === 'whisperx')) protectedRuntimes.add('runtime-whisperx');
   const asrBusy = draftJobs.size > 0 || pendingAsr.size > 0;
   return new StorageService({
     root: ROOT,

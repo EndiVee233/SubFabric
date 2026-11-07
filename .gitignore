@@ -50,6 +50,7 @@ asr/logs/
 asr/models/
 asr/runtime-python/
 asr/runtime-vibevoice/
+asr/runtime-whisperx/
 asr/settings.json
 asr/whisper.cpp/
 asr/crispasr/
