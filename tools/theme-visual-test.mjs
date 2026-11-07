@@ -44,9 +44,19 @@ try {
     localStorage.setItem('sf-welcome-v1',JSON.stringify({done:true,vulkan:true}));
     if(!localStorage.getItem('subfabric-studio-v1')) localStorage.setItem('subfabric-studio-v1',JSON.stringify({motion:'off',background:'solid'}));
     const nativeFetch=window.fetch;
-    window.fetch=(input,init)=>String(input).startsWith('/api/asr/hardware')
-      ? Promise.resolve(new Response(JSON.stringify({ok:true,cuda:{available:false},vulkan:{available:true,devices:['Fixture GPU']},npu:{available:false},backends:{vulkan:true}}),{headers:{'Content-Type':'application/json'}}))
-      : nativeFetch(input,init);
+    const json = data => Promise.resolve(new Response(JSON.stringify(data), {headers:{'Content-Type':'application/json'}}));
+    window.fetch = (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/asr/hardware')) {
+        return json({ok:true,cuda:{available:false},vulkan:{available:true,devices:['Fixture GPU']},npu:{available:false},backends:{vulkan:true}});
+      }
+      // Native encoder probes synchronously start ffmpeg processes. Render the
+      // real controls with a stable capability response so later requests can run.
+      if (url === '/api/projects/p-theme-audit/export-video/capabilities') {
+        return json({ffmpeg:'fixture',tools:{ok:true},accelerators:{},cpu:{h264:{usable:true}},subtitleFile:'subtitle.ass'});
+      }
+      return nativeFetch(input, init);
+    };
   ` });
   await b.goto(server.origin + '/#/dashboard');
   await b.waitFor('window.__sfStudio && window.__dbg && window.__sfWelcome');
@@ -98,7 +108,11 @@ try {
         await b.eval('document.querySelector(".sm-params").click()');
         await b.waitFor('document.querySelector("#sf-asr-params") && !document.querySelector("#sf-asr-params").hidden');
         await collect('asr-parameters-loading', '#sf-asr-params .sf-ap-panel');
-        await b.waitFor('document.querySelectorAll("#sf-ap-fields [data-param]").length > 0');
+        try { await b.waitFor('document.querySelectorAll("#sf-ap-fields [data-param]").length > 0'); }
+        catch (error) {
+          const detail = await b.eval('({id:document.querySelector(".sm-params")?.dataset.id,model:document.querySelector("#sf-ap-model")?.textContent,fields:document.querySelector("#sf-ap-fields")?.textContent})');
+          throw new Error('ASR parameter panel did not render: ' + JSON.stringify(detail), { cause: error });
+        }
         await collect('asr-parameters', '#sf-asr-params .sf-ap-panel', true);
         await b.eval('document.querySelector("#sf-ap-fields [data-param]").dispatchEvent(new Event("input",{bubbles:true}));document.querySelector(".sf-ap-body").scrollTop=document.querySelector(".sf-ap-body").scrollHeight');
         await collect('asr-parameters-edited-bottom', '#sf-asr-params .sf-ap-panel');
@@ -115,6 +129,7 @@ try {
       await collect('advanced-export', '#adv-export-overlay .modal-surface', true);
       await b.eval('document.querySelector("#adv-export-cancel").click()');
       await b.eval('document.querySelector("#btn-export-video").click()');
+      await b.waitFor('document.querySelector("#sf-ev-cap")?.textContent.includes("ffmpeg fixture")');
       await collect('video-export', '#sf-export-video .sf-ev-panel', true);
       await b.eval('document.querySelector("#sf-ev-close").click()');
       await b.eval('window.__panel.showAddRoleDialog(()=>{})');

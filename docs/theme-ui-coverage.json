@@ -2091,7 +2091,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "cdfa32466d830f96149993a732bfc8cc536854a4f5d7dc32df23a252ae9c375e",
+      "sha256": "af6101c064a5795d6cfd30f2dadd538f1bdfb9f58d84b2e799e6c043c5e01345",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2131,7 +2131,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "acd4328c57d9a1644628e17e966b64f960704c6de98892e156b85c11905ae193",
+      "sha256": "49d133b9ec564ba10febda9c2498ebf087a3e417ee97531e6c238dc015a1dbb2",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",

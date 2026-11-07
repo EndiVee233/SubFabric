@@ -31,7 +31,6 @@ const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
  * 只认开标签会把**整行角色色**（如 `{\c&H00FFFF&}[路人] They're immortal!`，
  * 没有复位）也当成词行，结果整句被当成"一个词"，还会拆散相邻的词序列。
  * 因此必须同时看到 `{\c}` 复位才算词行。 */
-const HAS_WORDTAG = (s) => /\{\\1?c&H[0-9A-Fa-f]{6}&[^}]*\}[^{}]*\{\\1?c[^}]*\}/.test(String(s || ''));
 /**
  * 从一条逐词行里取出**这一行高亮的那个词**。
  *
@@ -44,7 +43,8 @@ const HAS_WORDTAG = (s) => /\{\\1?c&H[0-9A-Fa-f]{6}&[^}]*\}[^{}]*\{\\1?c[^}]*\}/
  * 所以规则是：找到高亮标签，**跳过它所在的整个 `{…}` 块**，紧跟其后的、由非 `{` `\` 组成的
  * 那一段就是这个词。
  */
-const WORD_AT_RE = /\{\\1?c&H[0-9A-Fa-f]{6}&[^}]*\}([^{}\\]+)\{\\1?c[^}]*\}/;
+const WORD_AT_RE = /\{\\1?c&H[0-9a-f]{6}&[^}]*\}([^{}\\]+)\{\\1?c\s*(?:\\[^}]*)?\}/i;
+const HAS_WORDTAG = (s) => WORD_AT_RE.test(String(s || ''));
 function highlightedWord(text) {
   const m = WORD_AT_RE.exec(String(text || ''));
   const w = m ? m[1] : '';

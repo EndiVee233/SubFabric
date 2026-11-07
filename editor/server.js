@@ -1649,7 +1649,8 @@ function assignSpeakers(segments, regions) {
 }
 
 /* 翻译(LLM): 全部服务端发起, 便于把进度写进项目列表。
- * 预设只给常见的 OpenAI 兼容端点; 选 custom 时三项都自己填。 */
+ * 服务商预设决定协议，地址和模型可以覆盖。 */
+const ANTHROPIC_PROVIDER = 'anthropic';
 const LLM_PRESETS = [
   { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
@@ -1657,6 +1658,7 @@ const LLM_PRESETS = [
   { id: 'zhipu', name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
   { id: 'qwen', name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
   { id: 'siliconflow', name: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'Qwen/Qwen2.5-7B-Instruct' },
+  { id: ANTHROPIC_PROVIDER, name: 'Anthropic（Claude / 兼容接口）', baseUrl: 'https://api.anthropic.com/v1', model: '' },
   { id: 'custom', name: '自定义（OpenAI 兼容）', baseUrl: '', model: '' },
   // 本地模型：不联网、不需要 API Key。真正的实现在 editor/mt-local.js（CTranslate2 + NLLB），
   // 这里只是一条"让下拉框能选到它"的记录 —— baseUrl/model 留空，llmReady 对它有单独判断。
@@ -1687,32 +1689,32 @@ function dualCfg() {
            source: (manual && manual !== 'auto') ? 'manual' : 'auto' };
 }
 
-/** 翻译(LLM)配置。API Key 与 fetch Cookie 同款处理（见 fetchSettings 的迁移逻辑）：
- *  ① 旧版**明文** apiKey 读完即迁成密文 apiKeyEnc 并清掉明文字段；
- *  ② 解密后的明文只用于服务端内部（llmReady / llmChat 等），**绝不回传前端**
- *     —— 对前端一律走 translateCfgPublic()，只回 hasKey。 */
-function translateCfg() {
-  const t = (readAsrSettings().translate) || {};
-  const preset = LLM_PRESETS.find(p => p.id === t.provider) || null;
-  let apiKey = String(t.apiKey || '');
-  if (apiKey) {
-    let enc = '';
-    try { enc = secretStore.encrypt(apiKey); } catch (e) { console.error('[translate] API Key 加密失败:', e && e.message); }
-    if (enc) {
-      try {
-        const s = readAsrSettings();
-        s.translate = Object.assign({}, s.translate || {}, { apiKey: '', apiKeyEnc: enc });
-        writeAsrSettings(s);
-        console.log('[translate] API Key 已从明文迁移为密文（' + secretStore.backend() + '）');
-      } catch (e) { console.error('[translate] API Key 迁移写盘失败:', e && e.message); }
-    }
-  } else if (t.apiKeyEnc) {
-    try { apiKey = secretStore.decrypt(String(t.apiKeyEnc)); }
-    catch (e) {
-      console.error('[translate] API Key 解不开（换过机器或 Windows 用户？）：' + ((e && e.message) || e) + '。重新填一次 Key 就能恢复');
-      apiKey = '';
-    }
+/** 旧版明文凭证读完即迁成密文；对外配置只回传 hasKey。 */
+function readLlmKey(section, raw) {
+  const legacyKey = String(raw.apiKey || '');
+  if (legacyKey) {
+    try {
+      const apiKeyEnc = secretStore.encrypt(legacyKey);
+      if (apiKeyEnc) {
+        const settings = readAsrSettings();
+        settings[section] = { ...settings[section], apiKeyEnc };
+        delete settings[section].apiKey;
+        writeAsrSettings(settings);
+      }
+    } catch { console.error('[' + section + '] API Key 迁移失败'); }
+    return legacyKey;
   }
+  if (raw.apiKeyEnc) {
+    try { return secretStore.decrypt(String(raw.apiKeyEnc)); }
+    catch { console.error('[' + section + '] API Key 无法解密，请重新填写'); }
+  }
+  return '';
+}
+
+function translateCfg() {
+  const t = readAsrSettings().translate || {};
+  const preset = LLM_PRESETS.find(p => p.id === t.provider) || null;
+  const apiKey = readLlmKey('translate', t);
   return {
     provider: t.provider || 'deepseek',
     baseUrl: t.baseUrl || (preset ? preset.baseUrl : ''),
@@ -1748,25 +1750,24 @@ function correctUseTranslate(raw) {
   return !String(t.baseUrl || '').trim() && !String(t.model || '').trim();
 }
 
+function secondaryLlmConnection(section, raw, follow, base) {
+  if (follow) return { provider: base.provider, baseUrl: base.baseUrl, model: base.model, apiKey: base.apiKey };
+  const ownUrl = String(raw.baseUrl || '').trim();
+  const provider = raw.provider || (base.provider === ANTHROPIC_PROVIDER && ownUrl && ownUrl !== base.baseUrl ? 'custom' : base.provider);
+  const preset = raw.provider ? LLM_PRESETS.find(p => p.id === provider) : null;
+  const baseUrl = ownUrl || (preset ? preset.baseUrl : base.baseUrl);
+  const model = String(raw.model || '').trim() || (preset ? preset.model : base.model);
+  // 不把 Anthropic 凭证带到另一套接口，也不拿 OpenAI 凭证请求 Anthropic。
+  const canShareKey = provider !== ANTHROPIC_PROVIDER && base.provider !== ANTHROPIC_PROVIDER
+    || (provider === base.provider && baseUrl === base.baseUrl);
+  const apiKey = readLlmKey(section, raw) || (canShareKey ? base.apiKey : '');
+  return { provider, baseUrl, model, apiKey };
+}
+
 function correctCfg() {
-  const t = (readAsrSettings().correct) || {};
-  const base = translateCfg();
-  const follow = correctUseTranslate(t);
-  /* 跟随翻译时，把自定义值**整体忽略**（`f` 置空对象），地址/模型/Key/provider 一律走 base。
-   *
-   * ⚠ 这里踩过一次：只把 `follow` 用在 provider 上、却仍用 pick(t.baseUrl, …) 读自定义字段，
-   *   于是「勾选用字幕翻译的模型」后实际调用的还是自定义的那个模型 ——
-   *   开关看似生效（useTranslate=true），实际没生效。凡是 follow 要管的字段，
-   *   都必须从 `f` 取，不能从 `t` 取。 */
-  const f = follow ? {} : t;
-  const provider = f.provider || '';
-  const preset = LLM_PRESETS.find(p => p.id === provider) || null;
-  const pick = (v, fb) => (v === undefined || v === null || String(v).trim() === '') ? fb : String(v).trim();
+  const t = readAsrSettings().correct || {};
   return {
-    provider: provider || base.provider,
-    baseUrl: pick(f.baseUrl, preset ? preset.baseUrl : base.baseUrl),
-    apiKey: pick(f.apiKey, base.apiKey),
-    model: pick(f.model, preset ? preset.model : base.model),
+    ...secondaryLlmConnection('correct', t, correctUseTranslate(t), translateCfg()),
     // 纠错比翻译更考验理解力，默认给多点输出预算（批数多、每批都要出 JSON）
     maxTokens: Math.max(512, Math.min(8192, parseInt(t.maxTokens, 10) || 2048)),
     mode: (t.mode === 'off' || t.mode === 'preview' || t.mode === 'auto') ? t.mode : 'preview',
@@ -1805,18 +1806,9 @@ function analyzeUseTranslate(raw) {
 
 function analyzeCfg() {
   const t = (readAsrSettings().analyze) || {};
-  const base = translateCfg();
   const follow = analyzeUseTranslate(t);
-  // 跟随时要管的字段一律从 f 取，不能从 t 取（否则开关看似生效、实际没生效）
-  const f = follow ? {} : t;
-  const provider = f.provider || '';
-  const preset = LLM_PRESETS.find(p => p.id === provider) || null;
-  const pick = (v, fb) => (v === undefined || v === null || String(v).trim() === '') ? fb : String(v).trim();
   return {
-    provider: provider || base.provider,
-    baseUrl: pick(f.baseUrl, preset ? preset.baseUrl : base.baseUrl),
-    apiKey: pick(f.apiKey, base.apiKey),
-    model: pick(f.model, preset ? preset.model : base.model),
+    ...secondaryLlmConnection('analyze', t, follow, translateCfg()),
     // 分析一次只回一小段 JSON，但**推理模型（qwen3 等）会先想一大段再答**——
     // 预算给小了会只吐思考、content 为空。默认 4096（实测 qwen3:8b 思考约 1500-2500 token）。
     maxTokens: Math.max(512, Math.min(8192, parseInt(t.maxTokens, 10) || 8192)),
@@ -1888,46 +1880,76 @@ const LLM_TIMEOUT_MS = Number(process.env.SUBFABRIC_LLM_TIMEOUT_MS) || 120000;
 
 async function llmChat(cfg, messages, opts) {
   const o = opts || {};
-  const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  const anthropic = cfg.provider === ANTHROPIC_PROVIDER;
   const maxTokens = Math.max(256, Math.min(16384, Number(o.maxTokens) || 4096));
   /* 超时：优先 cfg.timeoutMs（按次覆盖，热词分析会用 —— 推理模型慢），
    * 其次 opts.timeoutMs，最后默认值。 */
   const timeoutMs = Number(cfg.timeoutMs || o.timeoutMs) || LLM_TIMEOUT_MS;
   /* 采样温度：以前写死 0.3。现在可在「全局设置 → 模型设置 → LLM 语言模型 → 采样温度」里调，
    * 走 cfg.temperature（saveTranslateCfg 已夹到 0~2）。没设过就还是旧值 —— 默认行为不变。 */
-  const temperature = (cfg && cfg.temperature != null) ? llmText.clampTemperature(cfg.temperature) : 0.3;
-  const reqBody = { model: cfg.model, messages, temperature, max_tokens: maxTokens };
-  if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
-  let resp = null, text = '', body = null;
+  const reqBody = { model: cfg.model, messages, max_tokens: maxTokens };
+  const headers = { 'Content-Type': 'application/json' };
+  let url;
+  if (anthropic) {
+    const endpoint = URL.parse(cfg.baseUrl);
+    if (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+      throw new LlmError('API 地址只支持 HTTP/HTTPS，凭证请填入 API Key', 'http');
+    }
+    const prefix = endpoint.pathname.replace(/\/+$/, '');
+    if (!prefix.endsWith('/messages')) {
+      endpoint.pathname = prefix + (prefix.endsWith('/v1') ? '/messages' : '/v1/messages');
+    } else {
+      endpoint.pathname = prefix;
+    }
+    url = endpoint.toString();
+    headers['anthropic-version'] = '2023-06-01';
+    if (cfg.apiKey) headers['x-api-key'] = cfg.apiKey;
+    const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
+    if (system) reqBody.system = system;
+    reqBody.messages = messages.filter(m => m.role !== 'system');
+    // JSON 格式由现有提示词约定。新模型可能拒绝显式 temperature。
+  } else {
+    url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+    headers.Authorization = 'Bearer ' + cfg.apiKey;
+    reqBody.temperature = cfg.temperature != null ? llmText.clampTemperature(cfg.temperature) : 0.3;
+    if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
+  }
+  let resp, text, body = null;
   try {
     resp = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+      headers,
+      redirect: anthropic ? 'error' : 'follow', // fetch 不会跨域自动移除 x-api-key
       body: JSON.stringify(reqBody),
       signal: AbortSignal.timeout(timeoutMs),
     });
+    text = await resp.text();
   } catch (e) {
     const timeout = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
     const msg = timeout ? `请求超时（${Math.round(timeoutMs / 1000)}s）` : ('网络错误：' + ((e && e.message) || e));
-    console.error(`[llm] ${msg}  url=${url} model=${cfg.model}`);
+    console.error(`[llm] ${msg}  model=${cfg.model}`);
     throw new LlmError(msg, timeout ? 'timeout' : 'net');
   }
   const retryAfter = Number(resp.headers.get('retry-after')) || 0;
-  try { text = await resp.text(); } catch { text = ''; }
   try { body = JSON.parse(text); } catch { body = null; }
   if (!resp.ok) {
-    const detail = (body && body.error && (body.error.message || JSON.stringify(body.error))) || text.slice(0, 300) || ('HTTP ' + resp.status);
+    const rawDetail = (body && body.error && (body.error.message || JSON.stringify(body.error))) || text || ('HTTP ' + resp.status);
+    const detail = cfg.apiKey ? String(rawDetail).replaceAll(cfg.apiKey, '[redacted]') : String(rawDetail);
     const kind = resp.status === 429 ? 'rate' : (resp.status >= 500 ? 'net' : 'http');
     console.error(`[llm] HTTP ${resp.status}（${kind}）model=${cfg.model}：${String(detail).slice(0, 300)}`);
     throw new LlmError(`HTTP ${resp.status}：${String(detail).slice(0, 300)}`, kind, { status: resp.status, retryAfter });
   }
   const choice = body && body.choices && body.choices[0];
   const message = choice && choice.message;
-  const finishReason = choice && choice.finish_reason;
-  const rawContent = (message && typeof message.content === 'string') ? message.content : '';
+  const blocks = anthropic && Array.isArray(body?.content) ? body.content : [];
+  const stop = body?.stop_reason;
+  const finishReason = anthropic ? (stop === 'max_tokens' ? 'length' : stop) : choice && choice.finish_reason;
+  const rawContent = anthropic ? blocks.filter(b => b?.type === 'text').map(b => b.text).join('')
+    : (message && typeof message.content === 'string' ? message.content : '');
   // 思考文本的字段名各家不同：OpenAI/DeepSeek 用 reasoning_content，**Ollama 用 reasoning**。
   // 只认前者的话，本地 Qwen3 被截断时会报成"接口返回内容为空"，看不出真实原因（实测踩过）。
-  const reasoning = (message && typeof message.reasoning_content === 'string') ? message.reasoning_content
+  const reasoning = anthropic ? blocks.filter(b => b?.type === 'thinking').map(b => b.thinking).join('')
+    : (message && typeof message.reasoning_content === 'string') ? message.reasoning_content
     : ((message && typeof message.reasoning === 'string') ? message.reasoning : '');
   const content = llmText.stripReasoning(rawContent);
   const debugBase = { kind: o.kind || '', model: cfg.model, status: resp.status, finishReason, maxTokens };
@@ -2088,6 +2110,15 @@ function systemPromptWithGlossary(cfg, strict) {
   return sys + '\n\n【术语表】下面的词必须按给定译法翻译，不要音译、不要另译（未列出的按常规翻译）：\n'
     + g.map(([a, b]) => `${a} = ${b}`).join('\n');
 }
+function updateLlmKey(current, patch) {
+  const key = String(patch.apiKey || '').trim();
+  if (key || patch.apiKeyClear) {
+    current.apiKeyEnc = patch.apiKeyClear ? '' : secretStore.encrypt(key);
+    delete current.apiKey;
+  }
+  delete patch.apiKey;
+  delete patch.apiKeyClear;
+}
 function saveTranslateCfg(patch) {
   const s = readAsrSettings();
   const cur = Object.assign({}, s.translate || {});
@@ -2097,23 +2128,12 @@ function saveTranslateCfg(patch) {
     if (preset) { cur.baseUrl = preset.baseUrl; cur.model = preset.model; }
   }
   const p = Object.assign({}, patch);
-  // apiKey 永不落盘明文: 非空 → 加密存 apiKeyEnc; 空串 → 视为「不改」
-  // (前端输入框不再回显明文 Key, 留空的含义就是保持原值不变)
-  if (Object.prototype.hasOwnProperty.call(p, 'apiKey')) {
-    const v = String(p.apiKey || '');
-    delete p.apiKey;
-    if (v) {
-      try { p.apiKeyEnc = secretStore.encrypt(v); }
-      catch (e) { console.error('[translate] API Key 加密失败, 暂按明文存:', e && e.message); p.apiKey = v; }
-    }
-  }
-  if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }   // 显式清除(设置里的「清除已存 Key」链接)
+  updateLlmKey(cur, p);
   /* 数值项**在入口夹范围**，不信任前端：越界的温度会让服务商直接 400，
    * 负的上下文行数会让切片逻辑算出怪数组。夹取规则与 llm-text.js 的纯函数同一份，
    * 有单测钉住（tests/llm-params-test.mjs）。 */
   if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
   if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
-  delete cur.apiKey;                        // 清掉历史明文残留(迁移写盘失败时的兜底)
   s.translate = Object.assign(cur, p);
   s.translateSchemeId = '';
   writeAsrSettings(s);
@@ -2243,16 +2263,7 @@ function saveAnalyzeCfg(patch) {
     if (preset) { cur.baseUrl = preset.baseUrl; cur.model = preset.model; }
   }
   const p = Object.assign({}, patch);
-  if (Object.prototype.hasOwnProperty.call(p, 'apiKey')) {
-    const v = String(p.apiKey || '');
-    delete p.apiKey;
-    if (v) {
-      try { p.apiKeyEnc = secretStore.encrypt(v); }
-      catch (e) { console.error('[analyze] API Key 加密失败, 暂按明文存:', e && e.message); p.apiKey = v; }
-    }
-  }
-  if (p.apiKeyClear) { delete p.apiKeyClear; p.apiKeyEnc = ''; }
-  delete cur.apiKey;
+  updateLlmKey(cur, p);
   s.analyze = Object.assign(cur, p);
   writeAsrSettings(s);
   return analyzeCfg();
@@ -9994,7 +10005,7 @@ function handleAsrRoutes(req, res, u) {
         provider: String(raw.provider || ''),
         baseUrl: String(raw.baseUrl || ''),
         model: String(raw.model || ''),
-        hasKey: !!String(raw.apiKey || '').trim() || !!(useTranslate && base.apiKey),
+        hasKey: useTranslate ? !!base.apiKey : !!(raw.apiKey || raw.apiKeyEnc),
         // 最终会用的模型（跟随翻译时显示翻译的模型名，用户才知道真正调的是谁）
         effectiveModel: cfg.model,
         effectiveBaseUrl: cfg.baseUrl,
@@ -10019,7 +10030,10 @@ function handleAsrRoutes(req, res, u) {
       if (p.provider !== undefined) cur.provider = String(p.provider || '').trim();
       if (p.baseUrl !== undefined) cur.baseUrl = String(p.baseUrl || '').trim();
       if (p.model !== undefined) cur.model = String(p.model || '').trim();
-      if (p.apiKey !== undefined) cur.apiKey = String(p.apiKey || '').trim();
+      if (p.apiKey !== undefined) {
+        try { updateLlmKey(cur, { apiKey: p.apiKey, apiKeyClear: !String(p.apiKey || '').trim() }); }
+        catch { return sendJson(res, 500, { error: '凭证加密失败，设置未保存' }); }
+      }
       /* 「跟随字幕翻译的模型」是**显式开关**，不是靠空值推断。
        * 早期只处理 `=== true`，于是前端的 `useTranslate:false` 被完全忽略 ——
        * 用户取消勾选后，服务端仍按"地址为空 ⇒ 跟随翻译"算回去，勾选框被回弹、
@@ -10392,7 +10406,9 @@ function handleAsrRoutes(req, res, u) {
       for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'useTranslate', 'maxEdits']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
-      const c = saveAnalyzeCfg(keep);
+      let c;
+      try { c = saveAnalyzeCfg(keep); }
+      catch { return sendJson(res, 500, { error: '模型设置保存失败' }); }
       return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: analyzeReady(c), useTranslate: !!c.useTranslate });
     });
   }
@@ -10664,7 +10680,9 @@ function handleLlmRoutes(req, res, u) {
       for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'autoTranslate', 'prompt', 'glossary', 'glossaryLang', 'batchSize', 'temperature', 'contextRows']) {
         if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
       }
-      const c = saveTranslateCfg(keep);
+      let c;
+      try { c = saveTranslateCfg(keep); }
+      catch { return sendJson(res, 500, { error: '模型设置保存失败' }); }
       return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: llmReady(c) });
     });
   }

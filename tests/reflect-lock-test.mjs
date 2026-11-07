@@ -44,13 +44,16 @@ ok(/job\.touch\(\);/.test(SRV), '等待每段完成时刷新心跳（长任务�
 
 console.log('\n== Bug 1 前端：防重入 ==');
 ok(/let reflectApplying = false;/.test(MJ), '有重入标志');
-ok(/if \(reflectApplying\) return;/.test(MJ), 'applyReflect 进来先检查');
+const applyReflect = MJ.match(/^async function applyReflect\(\) \{\n[\s\S]*?^}/m)?.[0] || '';
+ok(/if \(reflectApplying\b[^)]*\) return;/.test(applyReflect), 'applyReflect 进来先检查');
 ok(/reflectApplying = true;/.test(MJ), '进入时置位');
 ok(/reflectApplying = false;[\s\S]{0,80}reflectEls\.btn\.disabled = false;/.test(MJ),
   'finally 里复位（失败也要能再试）');
 // 弹窗一关用户就以为"回到编辑页"，最容易连点
-ok(/reflectShow\(false\);[\s\S]{0,80}reflectApplying = true;/.test(MJ),
-  '关弹窗与置位在同一处（那正是用户连点的时机）');
+const hide = applyReflect.indexOf('reflectShow(false);');
+const lock = applyReflect.indexOf('reflectApplying = true;');
+const firstAwait = applyReflect.indexOf('await ');
+ok(hide >= 0 && lock > hide && firstAwait > lock, '关弹窗和置位都发生在第一次异步等待前');
 
 console.log('\n== Bug 2：开关必须是显式的 ==');
 ok(/function correctUseTranslate\(raw\)/.test(SRV), '有统一的开关解析函数');
@@ -80,26 +83,7 @@ ok(/mode: \(t\.mode === 'off' \|\| t\.mode === 'preview' \|\| t\.mode === 'auto'
 ok(/batchLines: Math\.max\(20, Math\.min\(200, parseInt\(t\.batchLines, 10\) \|\| reflectMod\.BATCH_LINES\)\)/.test(SRV),
   'correctCfg 仍给出 batchLines 默认值');
 ok(/maxTokens: Math\.max\(512, Math\.min\(8192/.test(SRV), 'correctCfg 仍给出 maxTokens 默认值');
-// 跟随翻译时要真的用翻译的 Key/模型
-ok(/provider: provider \|\| base\.provider/.test(SRV), '跟随翻译时 provider 兜底到翻译配置');
-ok(/model: pick\(f\.model, preset \? preset\.model : base\.model\)/.test(SRV),
-  '跟随翻译时 model 兜底到翻译配置');
-
-console.log('\n== 跟随开关必须真的作用到字段上（这里踩过一次"半接线"）==');
-/* 真实 bug：correctCfg 里算了 follow，却只拿它决定 provider，
- * 地址/模型仍用 pick(t.baseUrl/t.model) 直接读自定义值 ——
- * 于是勾选"用字幕翻译的模型"后 useTranslate=true、实际调用的却还是自定义模型。
- * 上面几条按源码匹配的断言抓不到这种错，所以这里专测"开关有没有接到字段上"。
- * （真正的行为验证在 correct-switch-test.mjs，那个要连运行中的服务。） */
-ok(/const f = follow \? \{\} : t;/.test(SRV),
-  '跟随翻译时把自定义值整体置空（f = {}），字段一律从 f 取');
-ok(/baseUrl: pick\(f\.baseUrl,/.test(SRV), 'baseUrl 从 f 取（不是 t）');
-ok(/apiKey: pick\(f\.apiKey,/.test(SRV), 'apiKey 从 f 取（不是 t）');
-ok(!/baseUrl: pick\(t\.baseUrl/.test(SRV), 'baseUrl 没有残留直接读 t 的写法');
-ok(!/model: pick\(t\.model/.test(SRV), 'model 没有残留直接读 t 的写法');
-ok(!/apiKey: pick\(t\.apiKey/.test(SRV), 'apiKey 没有残留直接读 t 的写法');
-ok(!/const provider = follow \? '' : \(t\.provider \|\| ''\);/.test(SRV),
-  'provider 也走统一的 f，不再单独特判（特判正是当初漏掉其它字段的原因）');
-
+// 独立地址、模型及凭证的行为由 correct-switch-test.mjs 和 anthropic-llm-test.mjs
+// 通过隔离服务验证（含实际请求）。
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

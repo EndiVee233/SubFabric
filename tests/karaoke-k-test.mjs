@@ -287,8 +287,8 @@ ok(speakerColorOf(fake('{\\1c&H00FF00&\\2c&H0B0BE5&}[Spoke]{\\k50}hi')) === '#e5
   'k 行 + 角色标签 → 角色色取自 \\2c（&HBBGGRR → #rrggbb）');
 ok(speakerColorOf(fake('{\\1c&H00FF00&\\2c&H0B0BE5&}{\\k50}hi')) === null,
   'k 行但**无角色** → 不把未唱默认色当成角色色（防整行染色）');
-ok(speakerColorOf(fake('{\\1c&H00FF00&\\2c&H00FF00&}[Spoke]{\\k50}hi')) === null,
-  '\\2c 恰为高亮色 → 不算角色色');
+ok(speakerColorOf(fake('{\\1c&H00FF00&\\2c&H00FF00&}[Spoke]{\\k50}hi')) === '#00ff00',
+  '明确标注的角色可以使用与高亮色相同的绿色');
 ok(speakerTagOf(fake('{\\1c&H00FF00&}{\\k50}[Spoke]hi')) === '[Spoke]',
   'k 行角色标签识别（\\k 段包住 [Spoke] 也能认）');
 ok(speakerColorOf({ style: 'Default', start: 1, end: 2, text: 'x', words: [], karStyle: 'color',

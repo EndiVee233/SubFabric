@@ -37,7 +37,7 @@ const stats={total:2,byAction:JSON.parse('{"edit":1,"__proto__":1}')};
   api.renderOpLog([],{total:0,byAction:{}});assert.equal(elements.get('oplog-empty').hidden,false);
 }
 {
-  let loads=0;const panel={},ctx=vm.createContext({panel,pruneUnusedRoles(){},window:{__onLogsTabShown(){loads++;}}});
+  let loads=0;const panel={},ctx=vm.createContext({panel,workloadPanel:null,pruneUnusedRoles(){},window:{__onLogsTabShown(){loads++;}}});
   const hook=source.match(/^panel\.onTabChange = \(name\) => \{\n[\s\S]*?^};/m)?.[0];assert.ok(hook);
   vm.runInContext(hook,ctx);panel.onTabChange('logs');panel.onTabChange('subs');assert.equal(loads,1,'first logs tab entry loads statistics');
 }
