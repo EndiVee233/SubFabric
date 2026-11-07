@@ -70,6 +70,14 @@ def finite(value):
         return None
 
 
+def validate_nltk():
+    import nltk
+    try:
+        nltk.sent_tokenize("WhisperX runtime validation.", language="english")
+    except LookupError as error:
+        raise RuntimeError("WhisperX 缺少本地 punkt_tab 断句资源，请重新安装独立运行时") from error
+
+
 def normalized_segments(result, duration):
     """Never discard transcript tokens or invent measured timing for unaligned words."""
     output = []
@@ -208,9 +216,7 @@ def main():
                 pass
             raise
         if args.prepare_runtime:
-            import nltk
-            if not nltk.download("punkt_tab", download_dir=os.environ["NLTK_DATA"], quiet=True, raise_on_error=True):
-                raise RuntimeError("WhisperX 断句资源下载失败")
+            validate_nltk()
         if args.probe or args.prepare_runtime:
             result = {"version": VERSION, "cuda": True}
         else:

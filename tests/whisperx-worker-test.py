@@ -7,6 +7,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 WORKER = Path(__file__).resolve().parents[1] / "asr" / "whisperx_asr.py"
 spec = importlib.util.spec_from_file_location("sf_whisperx_adapter", WORKER)
@@ -15,6 +16,20 @@ spec.loader.exec_module(worker)
 
 
 class AdapterTest(unittest.TestCase):
+    def test_nltk_validation_uses_only_local_data(self):
+        calls = []
+        nltk = SimpleNamespace(sent_tokenize=lambda text, **kw: calls.append((text, kw)))
+        with patch.dict(sys.modules, {"nltk": nltk}):
+            worker.validate_nltk()
+        self.assertEqual(calls[0][1]["language"], "english")
+
+    def test_missing_nltk_data_requires_runtime_repair(self):
+        def missing(*args, **kwargs):
+            raise LookupError("punkt_tab")
+        with patch.dict(sys.modules, {"nltk": SimpleNamespace(sent_tokenize=missing)}):
+            with self.assertRaisesRegex(RuntimeError, "punkt_tab"):
+                worker.validate_nltk()
+
     def test_complete_word_timing_and_confidence(self):
         result = worker.normalized_segments({"segments": [{"start": 1, "end": 3, "text": "Okay. now",
             "words": [{"word": "Okay.", "start": 1, "end": 1.5, "score": 0.9},

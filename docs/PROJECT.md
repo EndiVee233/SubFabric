@@ -131,16 +131,20 @@
   逐词输出保持 `{word,start,end,score?}`，无法完整对齐或词序/文本不一致的句子保留全文和句时间、清空部分词表，
   避免后处理按残缺词表重建时丢字。日志提示这些句子的对齐未完成；不会把缺失词时间宣称为测量结果。
   worker 使用真实 VAD 分批进度回调、2 小时截止与父进程看护，退出错误由既有任务机制收尾。
-  本次状态：**已完成且已验证（集成与模拟链路）**；真实 WhisperX CUDA 推理、依赖下载安装与准确率/显存实测**未验证**。
+  状态：**已完成且已验证（集成、安装与短样本真实 CUDA 推理）**，安装验收见 §6；
+  长视频显存峰值、识别准确率基准及真实 LLM 初稿全链路仍未验收，不能以短样本替代。
 
   模型下载复用现有 HF 下载器：独立 `asr/models/whisperx-large-v2/` 存放 Systran large-v2 CTranslate2 权重，
   `align/en/` 随包下载 facebook/wav2vec2-base-960h 的 safetensors 与处理器文件（合计约 3.46GB）。
   英语强制使用这些本地权重，其它语言由 WhisperX 首次加载对应模型并缓存到程序目录。
   设置页「安装运行时」使用独立 `asr/runtime-whisperx/`：嵌入式 Python 3.12.10、WhisperX 3.8.6、
-  CUDA PyTorch/torchaudio 2.8.0 + torchvision 0.23.0（cu128）、Transformers <5、随包 pyannote VAD 与 punkt_tab。
+  CUDA PyTorch/torchaudio 2.8.0 + torchvision 0.23.0（cu128）、Transformers <5、显式安装 soundfile、
+  随包 pyannote VAD 与 punkt_tab。WhisperX 自身不依赖 soundfile，但本项目用它预读项目 WAV，不能漏装。
   安装前撤销旧就绪标记，实际导入与 CUDA 检查通过后原子写 `ready.json`；失败不标就绪。
   安装器 pip 使用 isolated 参数与本目录缓存/临时目录；`runCapture/pipInstallRetry` 新增可选子进程环境参数，
   旧调用默认不变。worker 的 HF/Torch/NLTK/Matplotlib/Numba/CUDA 缓存也在独立运行时中；不改 Qwen/基础 Python。
+  punkt_tab 由现有 Node 下载器从 NLTK 官方固定包地址取回，解压到 `cache/nltk/tokenizers/`，缺英语四个数据文件
+  才补装；worker 用本地 `sent_tokenize` 实际验证，不再请求动态索引，不关闭 NLTK 的代理/SSRF 保护。
   `SUBFABRIC_WHISPERX_PYTHON` 可指定独立解释器。当前接入只使用 NVIDIA CUDA，实际启动再次校验设备。
   Electron/SEA 打包只带脚本，排除运行时；默认卸载保留数据，明确删除 ASR 数据时才清理它。
   存储页识别该运行时，并在它作为当前/重新识别模型使用时保护；stage 显式补入新 worker，兼容本地既有索引。
@@ -1452,8 +1456,26 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 - **安装包与已停用运行时**：`SubFabric.iss` 现在排除 `asr/runtime-vibevoice` 以及
   `multitalker.py` / `vibevoice.py` / `asr_dual.py` / `asr_perf.py`，不会再打包约 2.2GB 的
   VibeVoice 运行时；用户已下载的旧目录不会被安装/卸载碰到。
-- **旧 SEA 安装版修改后必须重打包**：源码运行重启即生效；旧已安装版是 SEA 单文件
-  `SubFabric.exe`，不重跑 `python build_exe.py` 与 ISCC 不会带上修复；仅旧链路按上面的三处同步规则推进。
+- **旧 SEA 安装版更新边界**：`SubFabric.exe` 内嵌的是 `sea-launcher.cjs`，启动时由
+  `Module._compile` 加载安装目录的 `editor/server.js`；前后端源码仍是外置文件。
+  仅更新这些源码时，先备份、按白名单局部部署并重启即可生效，不能只更新源码仓库后声称安装版已更新。
+  启动器、Node 或图标变更须重新构建 SEA；交付安装包还须运行 ISCC。安装版验收须核对实际程序文件哈希、
+  `/api/version` 与启动日志，保留稿件、配置、浏览器状态及原模型/运行时。
+- **安装与真实推理验收（2026-11-07）**：在既有 SEA 安装目录先备份再按白名单局部部署，111 个程序/渲染
+  文件核对通过，部署时 25 个稿件及配置文件哈希一致；large-v2 权重独立复制复用，原模型保留。
+  WhisperX 独立 Python 3.12.10、3.8.6/cu128 依赖及英语对齐模型完成安装，RTX 4060 Laptop 8GB 上真实
+  CUDA 探针通过；自制约 36 秒双音色录音产出 9 段、65 个有效逐词时间，无残缺对齐或词时间重叠。
+  同一录音用既有 sherpa-onnx 分离模型实际 CUDA 推理，返回 2 位说话人、9 个有效片段，交替音色归属一致。
+  安装版 API 的 `filesOk/runtimeReady/ready/usable` 与 `diarize.ready` 均为 true；默认识别模型未切换。
+  实装暴露并修复 soundfile 漏装、NLTK 动态索引拒绝代理请求两处问题；定向 JS 合约/API 与 7 项 Python
+  worker 测试通过，JS 语法通过，ESLint 0 error / 17 个既有 warning。API 测试首次因沙箱回环网络限制
+  超时，获准本机网络后复跑通过；SEA 构建首次因随包 Node 没有 npx CLI 失败，改用已有系统 npm 完成
+  postject 注入，图标生成因缺 Pillow 使用已有 ICO，安装后启动日志确认实际 Node 22.22.2。
+  包解码库 TorchCodec 因缺共享版 FFmpeg 给出导入警告；本接入由 soundfile 读 WAV、内存交给 VAD，真实推理
+  已通过，未宣称 TorchCodec 自带解码可用。界面自动化因无法可靠确定浏览器地址停止，未完成本次界面验收；
+  安装器最后两处外置文件修复已同步，当前进程重启加载须先确认保存，不能静默关闭可能有未保存编辑的窗口。
+  本次未做安装包构建、全量回归、长视频/显存峰值或真实 LLM 初稿验收；本机报告位于
+  `_test/maintenance/install-*-20261107.*` 与 `_test/maintenance/whisperx-real/`，不含入库模型或用户稿件。
 - **构建记录（2026-10-26，波形分桶修复）**：版本按四段规则定为 `beta 1.4.6.1` / `1.4.6.1`（末段 = 当天
   第几版，今天第一版）。`fetch-vendor` → `build_exe.py` 得 `build/SubFabric.exe` 93,613,568 B
   （FileVersion/ProductVersion `1.4.6.1`；SEA sentinel 与 `NODE_SEA_BLOB` 在）；Inno Setup 7.1 编译

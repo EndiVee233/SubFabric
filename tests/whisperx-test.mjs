@@ -32,10 +32,11 @@ const temp=fs.mkdtempSync(path.join(os.tmpdir(),'sf-whisperx-contract-'));
 try{
   const python=path.join(temp,'independent python.exe');fs.writeFileSync(python,'fixture');
   const qwen=path.join(temp,'qwen.txt');fs.writeFileSync(qwen,'keep existing runtime');
-  const downloads=new Map(),commands=[];let badProbe=false;
+  const downloads=new Map(),commands=[],assets=[];let badProbe=false;
   const runtime=vm.createContext({fs,path,process:{env:{SUBFABRIC_WHISPERX_PYTHON:python},platform:'win32'},
     WHISPERX_RUNTIME:{key:'runtime:whisperx',version:'3.8.6',dir:temp},ASR_DIR:'fixture-asr',EMBEDDED_PY:{pipIndex:'fixture-index'},
     whisperxPython:()=>python,
+    async downloadAny(urls,file){assets.push(Array.from(urls));fs.writeFileSync(file,'fixture archive');},
     dlState(key,value){if(value)downloads.set(key,value);return downloads.get(key)||{};},
     async runCapture(exe,args,_timeout,_line,env){commands.push([exe,args,env]);return{stdout:args.includes('--prepare-runtime')?JSON.stringify({version:'3.8.6',cuda:!badProbe}):'pip'};},
     async pipInstallRetry(exe,args,_timeout,_line,_tries,env){commands.push([exe,args,env]);},});
@@ -43,7 +44,10 @@ try{
   assert.equal(runtime.ready(),false);runtime.install();
   for(let i=0;i<100&&downloads.get('runtime:whisperx').running;i++)await new Promise(r=>setTimeout(r,2));
   assert.equal(downloads.get('runtime:whisperx').pct,100,JSON.stringify(downloads.get('runtime:whisperx')));assert.equal(runtime.ready(),true);
-  assert.ok(commands.every(c=>c[0]===python));assert.ok(commands.some(c=>c[1].includes('whisperx==3.8.6')));
+  assert.ok(commands.every(c=>c[0]===python||c[0]===path.join('C:\\Windows','System32','tar.exe')));assert.ok(commands.some(c=>c[1].includes('whisperx==3.8.6')));
+  assert.ok(commands.some(c=>c[1].includes('whisperx==3.8.6')&&c[1].includes('soundfile')),'install the audio reader used by the real worker; WhisperX does not depend on it');
+  assert.deepEqual(assets,[['https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt_tab.zip']]);
+  assert.ok(commands.some(c=>c[1][0]==='-xf'&&c[1].includes(path.join(temp,'cache','nltk','tokenizers'))),'prepare local NLTK data before the runtime probe');
   assert.ok(commands.every(c=>c[2].TMP.startsWith(temp)&&c[2].PIP_CACHE_DIR.startsWith(temp)),'installer caches/temp stay in its own runtime');
   assert.equal(fs.readFileSync(qwen,'utf8'),'keep existing runtime');
   badProbe=true;runtime.install();

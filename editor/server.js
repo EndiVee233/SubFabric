@@ -1316,9 +1316,21 @@ function startWhisperxRuntimeInstall() {
         '--index-url', 'https://download.pytorch.org/whl/cu128'], 3600000, () => prog(28, '安装 WhisperX CUDA PyTorch…'), 3, env);
       prog(45, '安装 WhisperX 3.8.6 与独立依赖…');
       await pipInstallRetry(py, ['-m', 'pip', '--isolated', '--cache-dir', env.PIP_CACHE_DIR,
-        'install', 'whisperx==' + WHISPERX_RUNTIME.version, 'transformers<5',
+        'install', 'whisperx==' + WHISPERX_RUNTIME.version, 'transformers<5', 'soundfile',
         '--no-warn-script-location', '-i', EMBEDDED_PY.pipIndex], 3600000, () => prog(65, '安装 WhisperX 依赖…'), 3, env);
       prog(85, '验证 WhisperX / CUDA 并准备本地断句资源…');
+      // Fetch a fixed official asset through the existing downloader; NLTK's dynamic index
+      // rejects proxied requests. Never weaken its proxy/SSRF checks to install the data.
+      const tokenizers = path.join(cache, 'nltk', 'tokenizers');
+      const punktFiles = ['abbrev_types.txt', 'collocations.tab', 'ortho_context.tab', 'sent_starters.txt'];
+      if (!punktFiles.every(file => fs.existsSync(path.join(tokenizers, 'punkt_tab', 'english', file)))) {
+        fs.mkdirSync(tokenizers, { recursive: true });
+        const zip = path.join(cache, 'punkt_tab.zip');
+        await downloadAny(['https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt_tab.zip'], zip, () => {});
+        const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+        await runCapture(tar, ['-xf', zip, '-C', tokenizers], 300000, undefined, env);
+        fs.unlinkSync(zip);
+      }
       const probe = await capture([path.join(ASR_DIR, 'whisperx_asr.py'), '--prepare-runtime',
         '--cache-dir', path.join(dir, 'cache')], 600000);
       const result = JSON.parse(probe.stdout.trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
