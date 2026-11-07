@@ -7466,6 +7466,7 @@ function startPrepare(id, videoPath, mode) {
     if (subtitleRevision(fs.readFileSync(source.file)) !== source.revision) throw new Error('翻译冲突：稿件在翻译期间已编辑，请重新翻译');
     const raw = source.raw.slice(), inserts = new Map();
     const zhStyle = '中文字幕';
+    const draft = (readMeta(id) || {}).draft;
     source.rows.forEach((row, i) => {
       if (!lines[i] || lines[i] === row.zh) return;
       const zh = llmText.normalizeZhPunctuation(lines[i]);
@@ -7477,13 +7478,15 @@ function startPrepare(id, videoPath, mode) {
           const parts = ev._rawParts.slice();
           const prefix = /^(?:\{[^}]*\})*(?:\[[^\]]+\]\s*)?/.exec(ev.text)[0];
           const tags = ev.text.slice(prefix.length).match(/\{[^}]*\}/g) || [];
-          parts[source.doc.format.indexOf('text')] = prefix + escAss(zh) + tags.join('');
+          parts[source.doc.format.indexOf('text')] = karaokeMod.draftSpeakerText(
+            prefix + escAss(zh) + tags.join(''), ev.name || row.name, draft);
           raw[ev.lineIdx] = 'Dialogue: ' + parts.join(',');
         }
       } else {
         const ev = row.events[0], parts = ev._rawParts.slice(), fmt = source.doc.format;
         parts[fmt.indexOf('start')] = fmtAssTime(row.start); parts[fmt.indexOf('end')] = fmtAssTime(row.end);
-        parts[fmt.indexOf('style')] = zhStyle; parts[fmt.indexOf('text')] = escAss(zh);
+        parts[fmt.indexOf('style')] = zhStyle;
+        parts[fmt.indexOf('text')] = karaokeMod.draftSpeakerText(escAss(zh), row.name, draft);
         inserts.set(ev.lineIdx, 'Dialogue: ' + parts.join(','));
       }
     });

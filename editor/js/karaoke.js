@@ -1425,6 +1425,54 @@ export function stripSpeakerTag(text) {
  *  服务端初稿生成与编辑器「说话人分离」共用这一份，避免两边给同一个 SPK 不同的颜色。 */
 export const ROLE_PALETTE = ['#ff00d0', '#00b0f0', '#ffb400', '#00d26a', '#b066ff', '#ff5f6b', '#00e0b0', '#c2c2c2'];
 
+/** Only identities produced by this project's diarization may become visible labels. */
+export function draftSpeakerIdentity(name, draft) {
+  if (draft?.speakers !== true) return null;
+  const value = String(name || '').trim();
+  if (!value || /[\[\]{}\\\r\n,]/.test(value)) return null;
+  let number = /^SPK([1-9]\d*)$/i.exec(value)?.[1];
+  for (const [key, mapped] of Object.entries(draft.cast?.map || {})) {
+    if (typeof mapped === 'string' && mapped.trim().toLowerCase() === value.toLowerCase()) {
+      number = /^SPK([1-9]\d*)$/i.exec(key)?.[1];
+      break;
+    }
+  }
+  const index = Number(number);
+  return Number.isInteger(index) && index >= 1 && index <= 20
+    ? { name: value, color: ROLE_PALETTE[(index - 1) % ROLE_PALETTE.length] } : null;
+}
+
+/** Restore a missing label; keep an explicit visible identity and its existing color. */
+export function draftSpeakerText(text, name, draft) {
+  const original = String(text || ''), identity = draftSpeakerIdentity(name, draft);
+  if (!identity || !assPlainText(original, true).trim()) return original;
+  const sentence = { proto: { name }, events: [{ text: original }], words: [] };
+  if (speakerTextTagOf(sentence)) return original;
+  const tagged = setSpeakerTagInText(original, '[' + identity.name + ']');
+  if (speakerColorOf(sentence)) return tagged;
+  const hex = identity.color.slice(1);
+  return '{\\c&H' + hex.slice(4, 6) + hex.slice(2, 4) + hex.slice(0, 2) + '&}' + tagged;
+}
+
+/** Repair old generated anchor tracks only; never put identity tokens into a word track. */
+export function restoreDraftSpeakerLabels(doc, sentences, wordStyle, draft) {
+  let count = 0;
+  for (const sent of sentences || []) {
+    if (sent.style === wordStyle || sent.words?.length) continue;
+    let changed = false;
+    for (const event of sent.events || []) {
+      const text = draftSpeakerText(event.text, event.name || sent.proto?.name, draft);
+      if (text === event.text) continue;
+      doc.setEventText(event, text); changed = true;
+    }
+    if (!changed) continue;
+    sent.text = assPlainText(sent.events[0].text, true);
+    sent.color = speakerColorOf(sent); sent.speaker = speakerTagOf(sent);
+    count++;
+  }
+  return count;
+}
+
 /**
  * 按"行的时长区间"给每条字幕找主要说话人，并按**首次出现**重新编号（0 起始）。
  *

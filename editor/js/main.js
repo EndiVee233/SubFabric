@@ -9,7 +9,7 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
   speakerNames, sortRoles, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
   highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows,
-  sentenceSpeakerNames, filterSentencesBySpeakers, continuousWordTimes } from './karaoke.js';
+  sentenceSpeakerNames, filterSentencesBySpeakers, continuousWordTimes, restoreDraftSpeakerLabels } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace, eventsForReplacement } from '../region-merge.js';
@@ -2205,6 +2205,8 @@ function setAss(text, name, options = {}) {
   const fixedColors = normalizeAssColorTags();   // 必须在分析/渲染之前
   // 双轨分析: 干净整句(编辑/列表/时间轴) + 词级映射; 原始逐词文档保留给视频渲染
   state.kar = analyzeKaraoke(state.assDoc);
+  const speakerLabelsFixed = restoreDraftSpeakerLabels(state.assDoc, state.kar.sentences,
+    state.kar.wordStyle, state.project?.meta?.draft);
   if (/^#[0-9a-f]{6}$/i.test(savedWordColor)) {
     const tag = assHexToTag(savedWordColor);
     for (const sentence of state.kar.sentences) if (sentence.style === state.kar.wordStyle) sentence.highlightTag = tag;
@@ -2339,6 +2341,7 @@ function setAss(text, name, options = {}) {
   if (fixedColors) toast(`已把 ${fixedColors} 行的颜色标签统一为大写（兼容 Subforges 等只认大写的工具）`, 5000);
   if (punctFixed) toast(`已规范 ${punctFixed} 行中文标点（，、。 → 空格；! ? 保留）`, 5000);
   if (gapFixed) toast(`已规范 ${gapFixed} 行的角色名间距（[角色] 与正文之间一个空格）`, 4000);
+  if (speakerLabelsFixed) toast(`已恢复 ${speakerLabelsFixed} 行说话人的可见标签与角色色`, 5000);
   if (spanAligned) toast(`已自动对齐 ${spanAligned} 行的中英起止（英文逐词原来比中文行短一截）`, 5000);
   panel.setModeOptions([
     { v: 'bi', t: '中英双行' },
