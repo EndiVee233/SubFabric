@@ -1,6 +1,7 @@
 """Deterministic WhisperX adapter tests; no models, GPU or package installation."""
 import importlib.util
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -31,12 +32,34 @@ class AdapterTest(unittest.TestCase):
                 worker.validate_nltk()
 
     def test_complete_word_timing_and_confidence(self):
-        result = worker.normalized_segments({"segments": [{"start": 1, "end": 3, "text": "Okay. now",
+        result = worker.normalized_segments({"segments": [{"start": 1, "end": 3, "text": "Okay. now", "avg_logprob": math.log(0.8),
             "words": [{"word": "Okay.", "start": 1, "end": 1.5, "score": 0.9},
                       {"word": "now", "start": 2, "end": 3, "score": 1.3}]}]}, 4)
         self.assertEqual([w["word"] for w in result[0]["words"]], ["Okay.", "now"])
         self.assertEqual(result[0]["words"][1]["score"], 1)
         self.assertFalse(result[0]["alignmentIncomplete"])
+        self.assertEqual(result[0]["confidence"]["score"], 0.8)
+        self.assertEqual(result[0]["confidence"]["parts"], {"token": 0.8})
+        self.assertFalse(result[0]["confidence"]["low"])
+        self.assertEqual(result[0]["confidence"]["source"], "whisperx.avg_logprob")
+
+    def test_alignment_score_is_not_recognition_confidence(self):
+        for logprob in [None, float("nan"), float("inf"), 0.2]:
+            raw = {"start": 0, "end": 1, "text": "Okay.", "avg_logprob": logprob,
+                   "words": [{"word": "Okay.", "start": 0, "end": 1, "score": 0.99}]}
+            segment = worker.normalized_segments({"segments": [raw]}, 1)[0]
+            self.assertNotIn("confidence", segment, "missing/invalid ASR probability must stay unknown")
+            self.assertEqual(segment["words"][0]["score"], 0.99)
+
+    def test_low_confidence_and_incomplete_alignment_keep_native_probability(self):
+        for probability in [0.0, 0.59, 0.60, 1.0]:
+            raw = {"start": 0, "end": 1, "text": "Keep full text", "words": [],
+                   "avg_logprob": math.log(probability) if probability else -1000}
+            segment = worker.normalized_segments({"segments": [raw]}, 1)[0]
+            self.assertEqual(segment["confidence"]["score"], probability)
+            self.assertEqual(segment["confidence"]["low"], probability < 0.60)
+            self.assertTrue(segment["alignmentIncomplete"])
+            self.assertEqual(segment["text"], raw["text"])
 
     def test_unaligned_words_keep_full_text(self):
         for words in [[], [{"word": "In", "start": 0, "end": 0.5}, {"word": "2014"}],
@@ -67,7 +90,7 @@ class AdapterTest(unittest.TestCase):
             class Model:
                 def transcribe(self, audio, **kwargs):
                     calls.append(("transcribe", kwargs))
-                    return {"language": "en", "segments": [{"start": 0, "end": 2, "text": "Okay."}]}
+                    return {"language": "en", "segments": [{"start": 0, "end": 2, "text": "Okay.", "avg_logprob": math.log(0.85)}]}
             def load_model(path, device, **kwargs):
                 calls.append(("load", path, device, kwargs))
                 return Model()
@@ -76,7 +99,7 @@ class AdapterTest(unittest.TestCase):
                 return "align-model", {"type": "fixture"}
             def align(segments, model, metadata, audio, device, **kwargs):
                 calls.append(("align", device))
-                return {"segments": [{"start": 0, "end": 2, "text": "Okay.",
+                return {"segments": [{"start": 0, "end": 2, "text": "Okay.", "avg_logprob": segments[0]["avg_logprob"],
                                       "words": [{"word": "Okay.", "start": 0.1, "end": 1.8}]}]}
             torch = SimpleNamespace(set_num_threads=lambda n: None, cuda=SimpleNamespace(empty_cache=lambda: calls.append("free")))
             sf = SimpleNamespace(read=lambda *a, **kw: (Matrix(), 16000))
@@ -84,6 +107,7 @@ class AdapterTest(unittest.TestCase):
             args = worker.parser().parse_args(["--model", temp, "--audio", "fixture.wav", "--batch-size", "2", "--cache-dir", temp])
             result = worker.transcribe(args, (torch, None, load_model, load_align, align, None, sf, np))
             self.assertEqual(result["segments"][0]["words"][0]["start"], 0.1)
+            self.assertEqual(result["segments"][0]["confidence"]["score"], 0.85)
             self.assertEqual(calls[0][2], "cuda")
             self.assertTrue(calls[0][3]["local_files_only"])
             self.assertEqual(calls[1][1]["batch_size"], 2)

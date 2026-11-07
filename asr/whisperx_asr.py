@@ -116,8 +116,21 @@ def normalized_segments(result, duration):
         # Downstream reseg may rebuild text from words. A partial word array would lose the remaining text.
         if not complete:
             words = []
-        output.append({"id": len(output), "start": start, "end": end, "text": text,
-                       "words": words, "alignmentIncomplete": not complete})
+        segment = {"id": len(output), "start": start, "end": end, "text": text,
+                   "words": words, "alignmentIncomplete": not complete}
+        # WhisperX carries the ASR decoder's average log probability through align().
+        # Word `score` comes from wav2vec2 alignment, so it must not stand in for ASR confidence.
+        logprob = finite(raw.get("avg_logprob"))
+        if logprob is not None and logprob <= 0:
+            probability = math.exp(logprob)
+            score = round(probability, 3)
+            segment["avg_logprob"] = logprob
+            segment["confidence"] = {
+                "score": score, "low": probability < 0.60, "worstWord": None,
+                "parts": {"token": score}, "missing": ["audio", "stability"],
+                "source": "whisperx.avg_logprob",
+            }
+        output.append(segment)
     return output
 
 
