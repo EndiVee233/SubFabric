@@ -3357,15 +3357,13 @@ async function rimApply(force) {
     };
     const coloredRoles = new Set();
     const colorForRow = (r) => {
-      const name = roleNameOf(r.zh);
+      const name = roleNameOf(r.zh) || roleNameOf(r.en);
       if (!name) return '';                       // 没有角色标签就不该凭空上色
       const key = name.toLowerCase();
       if (roleColor.has(key)) return roleColor.get(key);
-      /* 源文件的色标原样沿用 —— 但**逐词高亮色（默认绿）不能当角色色**：
-       * speakerColorOf() 会把 #00ff00 当成"逐词高亮"排除掉，写回去等于没写
-       * （块仍然是灰的，且用户看不出为什么）。这种就退回调色板。 */
+      // Explicit speaker colors, including green, belong to the source; word highlights were excluded while parsing.
       const raw = String(r.color || '').toLowerCase();
-      const src = /^#[0-9a-f]{6}$/.test(raw) && !HIGHLIGHT_COLORS.has(raw) ? raw : '';
+      const src = /^#[0-9a-f]{6}$/.test(raw) ? raw : '';
       const c = src || nextColor();
       roleColor.set(key, c);
       return c;
@@ -3390,7 +3388,7 @@ async function rimApply(force) {
          * 不传的话 addRecognizedRow 会调 recalcWords 按字母数铺开 ——
          * 词序看着对，但节奏是假的（用户实测："逐词不准确，这不是原字幕里的逐词顺序吧"）。 */
         const color = colorForRow(r);
-        if (color) coloredRoles.add(roleNameOf(r.zh).toLowerCase());
+        if (color) coloredRoles.add((roleNameOf(r.zh) || roleNameOf(r.en)).toLowerCase());
         const row = addRecognizedRow({
           start: r.start, end: r.end, zh: r.zh, text: r.en, color,
           words: (r.words || []).map(w => ({ word: w.word, start: w.start, end: w.end })),
@@ -5383,7 +5381,7 @@ function addRecognizedRow(seg, targetStyles = null) {
   const zhLead = assHex ? `{\\c&H${assHex}&}` : '';
   // ASS 里花括号是覆盖标签, 用户文本(译文/ASR)必须转义 —— 与服务端写初稿同一约定
   const zh = zhStyle ? appendSentence(zhStyle, s, e, zhLead + escAss(zhText)) : null;
-  const en = enStyle ? appendSentence(enStyle, s, e, escAss(enText)) : null;
+  const en = enStyle ? appendSentence(enStyle, s, e, (zhText ? '' : zhLead) + escAss(enText)) : null;
   if (!zh && !en) return null;
   // 英文: 有 ASR 的**真实词级时间**就按它铺（逐词高亮跟着真实发音走）
   if (en) {
@@ -5403,7 +5401,8 @@ function addRecognizedRow(seg, targetStyles = null) {
       en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
     }
   }
-  return registerRecognizedRow({ zh, en, start: s, end: e, no: 0, color: (zh && zh.color) || null, speaker: (zh && zh.speaker) || '' });
+  return registerRecognizedRow({ zh, en, start: s, end: e, no: 0,
+    color: zh?.color || en?.color || null, speaker: zh?.speaker || en?.speaker || '' });
 }
 
 /** 把建好的行挂进 karaoke 数据（rebuildItemsAndLanes 从 state.kar.rows 重建列表, 漏了就不显示） */

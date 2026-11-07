@@ -95,7 +95,7 @@ function planRegionMerge(cues, existing, start, end) {
      * 带上它，导入端才能把「同名角色用本稿已有的色、新角色沿用源文件的色」这条规则做出来；
      * 丢掉的话时间轴上一律是中性灰（用户报「导入后没有分角色色彩」）。 */
     const row = { start: cs, end: ce, zh: zhText, en: enText, stretched: fix,
-      color: zhText ? String(c.color || '') : '',
+      color: String(c.color || ''),
       words: Array.isArray(c.words) ? c.words : [] };
     if (!row.zh && !row.en) continue;                // 空行丢弃（没有内容可放）
     // 与项目里**任何**已有行重叠 → 冲突（不静默覆盖）

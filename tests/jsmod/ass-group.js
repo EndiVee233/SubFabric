@@ -75,11 +75,13 @@ const sentenceText = (s) => plain(s).replace(ROLE_PREFIX, '');
  * 只看**行首连续覆盖标签块**里的 `\c`：正文中间的 `{\c&H..&}词{\c}` 是逐词高亮，
  * 不是角色色（那份绿由 buildWordSpecs 管，不能当角色色写回去）。
  */
-function leadColorHex(text) {
+function leadColorHex(text, excludeWordSpan = false) {
+  if (excludeWordSpan && /^(?:\s*\{[^}]*\})+[^{}]+\{\\1?c(?:\\[^}]*)?\}/i.test(String(text || ''))) return '';
   const head = /^(?:\s*\{[^}]*\})*/.exec(String(text || ''))[0];
-  const m = /\\1?c&H([0-9A-Fa-f]{6})&/.exec(head);
-  if (!m) return '';
-  const h = m[1].toUpperCase();                       // ASS 是 BGR
+  let primary = '';
+  for (const m of head.matchAll(/\\1?c(?:&H([0-9a-f]{1,8})&?)?(?=\\|\s|\}|$)/gi)) primary = m[1] || '';
+  if (!primary) return '';
+  const h = primary.padStart(6, '0').slice(-6).toUpperCase(); // ASS 是 BGR，最后一个主色标签生效
   return '#' + h[4] + h[5] + h[2] + h[3] + h[0] + h[1];
 }
 
@@ -193,9 +195,10 @@ function groupAssRows(rows) {
     const lines = [];
     if (zh) lines.push(plain(zh.text));
     lines.push(s.text);
+    const enRole = s.rows.find(r => /^\[[^\]]+\]/.test(plain(r.text)) && leadColorHex(r.text, true));
     out.push({
       start: s.start, end: s.end, lines, words: s.words || [], _wordCount: s.n,
-      color: zh ? leadColorHex(zh.text) : '',
+      color: (zh && leadColorHex(zh.text)) || (enRole ? leadColorHex(enRole.text, true) : ''),
     });
   }
   // ④ 没被逐词句认领的整句行（单语行）也要带上，否则会漏内容

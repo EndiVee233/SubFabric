@@ -17,7 +17,7 @@ const functions = slice('async function rimApply(force)', '\nif (btnRegionImport
   + slice('function registerRecognizedRow(', '\n/** 删掉')
   + slice('function appendSentence(', '\n/** 在指定区间');
 
-async function run(force) {
+async function run(force, color = '#ab1234', known = []) {
   const seed = new AssDoc(makeSyntheticAss()), initial = K.analyzeKaraoke(seed);
   const first = K.pairRows(initial.sentences, initial.wordStyle)[0];
   const keep = new Set([...(first.zh?.events || []), ...(first.en?.events || [])]);
@@ -30,12 +30,12 @@ async function run(force) {
   const original = state.items.length, oldFirst = state.items[0].ref;
   const updates = [], calls = [], timeline = { touch() { calls.push('touch'); }, drawIfNeeded() {}, setPlayingByTime() {} };
   const ctx = { state, rimBusy: false, rimName: 'fixture.ass',
-    rimPlan: planRegionMerge([{ start: force ? 1 : 260, end: force ? 3 : 263, lines: ['[NEW] 导入字幕', 'fresh imported words'], color: '#ab1234', words: [] }], state.items, 0, 300),
+    rimPlan: planRegionMerge([{ start: force ? 1 : 260, end: force ? 3 : 263, lines: ['[NEW] 导入字幕', 'fresh imported words'], color, words: [] }], state.items, 0, 300),
     resolveFillOnly, resolveReplace, ROLE_PALETTE: K.ROLE_PALETTE, HIGHLIGHT_COLORS: K.HIGHLIGHT_COLORS,
     ...Object.fromEntries(['sentenceFromEvent','speakerColorOf','speakerTagOf','buildWordSpecs','recalcWords'].map(k => [k, K[k]])),
     hexToAss: h => h.slice(5,7) + h.slice(3,5) + h.slice(1,3), escAss: escapeAssUser,
     itemsInRange: (a,b) => state.items.filter(x => x.end > a && x.start < b),
-    computeRoles: () => [], healWordRows: () => 0, reconcileKaraoke() {},
+    computeRoles: () => known, healWordRows: () => 0, reconcileKaraoke() {},
     assPlayer: { updateNow: t => updates.push(t) }, overlay: { setCues() {}, update() {} }, timeline,
     panel: { stashInlineEdit() { calls.push('commit'); return null; }, resumeInlineEdit() {} },
     clearEditPreview: () => calls.push('clear-edit'), clearWordPreview: () => calls.push('clear-word'), pendingPlaybackRows: new Set([oldFirst]),
@@ -50,11 +50,15 @@ async function run(force) {
   const imported = kar.rows.find(r => r.en && r.en.text === 'fresh imported words');
   assert.ok(imported && imported.zh && imported.en, 'both tracks survive even when their last anchors were removed');
   assert.equal(imported.zh.style, zhStyle, 'destination Chinese style survives full replacement');
-  assert.equal(imported.color.toLowerCase(), '#ab1234');
+  const expected = known.find(r => r.name === 'NEW')?.color || color;
+  assert.equal(imported.color.toLowerCase(), expected);
   assert.ok(imported.en.words.length === 3, 'imported word timing is present');
   assert.equal(updates.length, 1, 'one final renderer track update, not one per deleted row');
   assert.match(updates[0], /fresh/);
   const reload = new AssDoc(doc.serialize());
+  const parsed = K.analyzeKaraoke(reload);
+  const reloadedRow = K.pairRows(parsed.sentences, parsed.wordStyle).find(r => r.speaker === '[NEW]');
+  assert.equal(reloadedRow?.color, expected, 'imported role color survives save/reload, including green');
   assert.ok(reload.events.some(e => e.text.includes('导入字幕')), 'Chinese events survive serialization');
   assert.ok(reload.events.some(e => e.text.includes('fresh')), 'English events survive serialization');
   assert.ok(calls.indexOf('clear-edit') < calls.indexOf('rebuild'), 'stale edit preview is canceled before rebuilding');
@@ -62,6 +66,9 @@ async function run(force) {
 }
 await run(true);
 await run(false);
+await run(true, '#00ff00');
+await run(false, '#00ff00');
+await run(true, '#00ff00', [{ name: 'NEW', color: '#123abc' }]);
 {
   // Empty Events followed by another section: append inside Events and keep style offsets valid.
   const doc = new AssDoc('[Script Info]\nScriptType: v4.00+\n[Events]\n'

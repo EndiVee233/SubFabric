@@ -78,10 +78,7 @@ const K_ANY_RE = /\\[kK](?:[fot])?\s*\d+/;
 /** 这行是不是 \k 卡拉OK形态（供 main.js 的行内改写 / 坏行检测复用同一判据） */
 export const isKaraokeLine = (text) => K_ANY_RE.test(String(text || ''));
 
-/** 行首样式覆盖: {\c&H......&} → ASS 为 &HAABBGGRR, 返回 '#rrggbb' */
-const LEAD_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
-
-/** 逐词高亮色(默认绿), 不是说话人颜色, 提取时需排除 */
+/** 默认逐词高亮色；无角色整句的泄漏修复使用它，明确角色色按标签结构判定。 */
 export const HIGHLIGHT_COLORS = new Set(['#00ff00']);
 
 /**
@@ -184,31 +181,29 @@ export function replaceKaraokeTag(doc, style, tag, eventScope = null) {
 
 /**
  * 说话人颜色: 取句子首个事件行首 {\c&H......&} 的颜色(如 [Spoke] → 红 #e50b0b)。
- * 默认绿按颜色排除；自定义逐词色按逐词 span 结构排除。整句样式(如"中文字幕")行上才带说话人色。
+ * 按逐词 span 结构排除高亮；明确标注角色的整句可使用绿色。k 行从未唱位取角色色。
  */
 export function speakerColorOf(sent) {
   if (!sent) return null;
   for (const ev of (sent.events || [])) {
     const text = String(ev.text || '');
-    const m = LEAD_COLOR_RE.exec(text);
-    if (!m) {
-      // k 卡拉OK行: 说话人色在颜色头的 \2c(未唱位)。只有"该行确有角色"时才认它,
-      // 否则无角色行的"未唱默认色"会被误当成角色色(行卡片会整片染色)。
-      if (sent.karStyle === 'k' && speakerTagOf(sent)) {
-        const k2 = /\\2c&H([0-9A-Fa-f]{6})&/.exec(text);
-        if (k2) {
-          const khex = assColorToHex(k2[1].toUpperCase());
-          if (!HIGHLIGHT_COLORS.has(khex)) return khex;
-        }
-      }
+    const head = /^(?:\s*\{[^}]*\})*/.exec(text)[0];
+    if (sent.karStyle === 'k') {
+      if (!speakerTagOf(sent)) continue;
+      const base = [...head.matchAll(/\\2c&H([0-9a-f]{1,8})&?/gi)].at(-1);
+      if (base) return assColorToHex(base[1].padStart(6, '0').slice(-6).toUpperCase());
       continue;
     }
-    const hex = assColorToHex(m[1].toUpperCase());
-    const trimmed = text.trimStart();
-    const leadingSpan = HL_RE.exec(trimmed);
-    const isWordHighlight = !!(sent.words && sent.words.length && leadingSpan && leadingSpan.index === 0
-      && leadingSpan[0].startsWith(m[1] ? `{\\c&H${m[1]}&}` : ''));
-    if (!HIGHLIGHT_COLORS.has(hex) && !isWordHighlight) return hex;
+    let primary = null;
+    for (const m of head.matchAll(/\\1?c(?:&H([0-9a-f]{1,8})&?)?(?=\\|\s|\}|$)/gi)) primary = m[1] || null;
+    if (!primary) {
+      continue;
+    }
+    const hex = assColorToHex(primary.padStart(6, '0').slice(-6).toUpperCase());
+    const isWordHighlight = !!(sent.words?.length
+      && /^(?:\s*\{[^}]*\})+[^{}]+\{\\1?c(?:\\[^}]*)?\}/i.test(text));
+    // A tagged speaker may legitimately be green. Only actual word spans are excluded.
+    if (!isWordHighlight && (!HIGHLIGHT_COLORS.has(hex) || speakerTagOf(sent))) return hex;
   }
   return null;
 }
