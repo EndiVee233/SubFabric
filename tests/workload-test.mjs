@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { WORKLOAD_BANDS, WORKLOAD_CALIBRATION, confidenceBand, workloadOptions, estimateWorkload } from '../editor/js/workload.js';
+import { WORKLOAD_BANDS, WORKLOAD_CALIBRATION, WORKLOAD_STANDARDS, confidenceBand, workloadOptions, estimateWorkload } from '../editor/js/workload.js';
 
 assert.deepEqual(WORKLOAD_BANDS.map(band => band.automatic), [6, 5, 4, 3, 1]);
+assert.deepEqual(WORKLOAD_STANDARDS.precise.automatic, WORKLOAD_BANDS.map(band => band.automatic));
+assert.deepEqual(WORKLOAD_STANDARDS.regular.automatic, [6, 3, 3, 2, 1]);
+assert.equal(WORKLOAD_CALIBRATION.regular.timingSentences, 1454);
 assert.deepEqual(WORKLOAD_CALIBRATION.calibratedBands, ['60to70', '70to80', '80to90']);
 assert.equal(WORKLOAD_CALIBRATION.method, 'time-attributed-log-transactions');
 assert.equal(WORKLOAD_CALIBRATION.durationSeconds, 7200);
@@ -40,6 +43,10 @@ assert.equal(JSON.stringify(items), before, 'forecasting never changes subtitle/
 const defaults = workloadOptions(null);
 assert.equal(defaults.mode, 'relative'); assert.equal(defaults.minutes, 10); assert.equal(defaults.threshold, 90);
 assert.equal(defaults.collapseDetails, true); assert.equal(defaults.bandsVersion, 2);
+assert.equal(defaults.standard, 'precise');
+assert.equal(workloadOptions({standard:'unknown'}).standard, 'precise');
+assert.equal(workloadOptions({standard:'regular'}).standard, 'regular');
+assert.deepEqual(workloadOptions({regularWeights:{'70to80':7}}).regularWeights, defaults.regularWeights);
 assert.equal(workloadOptions({collapseDetails:false}).collapseDetails, false);
 const invalid = workloadOptions({ minutes: 0, threshold: '90', mode: 'invalid', weights: { under50: 0, '50to60': 7, '60to75': 1.5 } });
 assert.deepEqual(invalid, defaults);
@@ -80,4 +87,14 @@ const population = [9, 84, 1698, 403, 6].flatMap((n, band) => Array.from({length
 assert.equal(estimateWorkload(population, 7200).operations, 8475);
 assert.equal(estimateWorkload(population, 7200, {threshold:100}).operations, 8481);
 assert.equal(estimateWorkload(population, 7200, {weights:{'70to80':2}}).operations, 5079, 'manual weights remain independent of recalibration');
+assert.equal(estimateWorkload(population, 7200, {standard:'regular'}).operations, 6206);
+assert.equal(estimateWorkload(population, 7200, {standard:'regular',threshold:100}).operations, 6212);
+const separate = workloadOptions({weights:{'70to80':1},regularWeights:{'70to80':6}});
+const separateBefore = JSON.stringify(separate);
+assert.equal(estimateWorkload([cue(0,.75)], 1, separate).operations, 1);
+assert.equal(estimateWorkload([cue(0,.75)], 1, {...separate,standard:'regular'}).operations, 6);
+assert.equal(JSON.stringify(separate), separateBefore, 'standards and manual weights are not mutated by forecasting');
+assert.deepEqual(workloadOptions(separate), separate, 'two-standard preferences survive normalization/reload');
+assert.equal(estimateWorkload([cue(0,.75)], 1, {...separate,standard:'regular',regularWeights:{}}).operations, 3);
+assert.deepEqual(estimateWorkload([cue(0),cue(300,1)], 900, {standard:'regular',minutes:5}).segments.map(s=>s.operations), [null,0,0]);
 console.log('Workload forecast: confidence boundaries, thresholds, weights, normalization, missing data, segmentation, read-only data and large drafts passed');

@@ -345,7 +345,10 @@ function place() {
       ring.style.top = `${r.top}px`;
       ring.style.width = `${r.width}px`;
       ring.style.height = `${r.height}px`;
-      const br = getComputedStyle(el).borderRadius;
+      const style = getComputedStyle(el);
+      // Menus may sit above export dialogs; their detached rim must stay above its owner too.
+      ring.style.zIndex = String(Math.max(100001, (parseInt(style.zIndex, 10) || 0) + 1));
+      const br = style.borderRadius;
       if (br) ring.style.borderRadius = br;
       ring.style.setProperty('--sf-rim-pos', `${-r.left}px ${-r.top}px`);
       ring.style.setProperty('--sf-rim-sat', m.kSat.toFixed(3));

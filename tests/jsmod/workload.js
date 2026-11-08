@@ -7,6 +7,13 @@ export const WORKLOAD_CALIBRATION = Object.freeze({
   confidenceRange: Object.freeze([0.49, 0.93]),
   calibratedBands: Object.freeze(['60to70', '70to80', '80to90']),
   samples: Object.freeze({ under60: 9, '60to70': 84, '70to80': 1698, '80to90': 403, '90to100': 6 }),
+  regular: Object.freeze({ method: 'per-draft-sentence-timeline-once', timingSentences: 1454,
+    timingTransactions: 4774.887, operations: 6333.336,
+    timingKinds: Object.freeze(['time_adjust', 'english_boundary_adjust', 'subtitle_time_adjust']) }),
+});
+export const WORKLOAD_STANDARDS = Object.freeze({
+  precise: Object.freeze({ label: '精翻标准', automatic: Object.freeze([6, 5, 4, 3, 1]) }),
+  regular: Object.freeze({ label: '常规标准', automatic: Object.freeze([6, 3, 3, 2, 1]) }),
 });
 export const WORKLOAD_BANDS = Object.freeze([
   { id: 'under60', label: '<60%', upper: 0.6, automatic: 6 },
@@ -29,16 +36,20 @@ export function workloadOptions(value = {}) {
   const sources = { under60: ['under50', '50to60'], '60to70': ['60to75'],
     '70to80': ['60to75', '75to90'], '80to90': ['75to90'] };
   const weights = {};
+  const regularWeights = {};
   for (const band of WORKLOAD_BANDS) {
     const previous = migrating ? (sources[band.id] || []).map(key => raw[key]).filter(valid) : [];
     const n = raw[band.id];
     weights[band.id] = valid(n) ? n : previous.length ? Math.max(...previous) : 'auto';
+    const regular = value.regularWeights?.[band.id];
+    regularWeights[band.id] = valid(regular) ? regular : 'auto';
   }
   return {
     bandsVersion: 2, collapseDetails: value.collapseDetails !== false, legacyWeights,
     minutes: [5, 10, 20].includes(value.minutes) ? value.minutes : 10,
     threshold: [75, 90, 100].includes(value.threshold) ? value.threshold : 90,
-    mode: value.mode === 'operations' ? 'operations' : 'relative', weights,
+    mode: value.mode === 'operations' ? 'operations' : 'relative',
+    standard: value.standard === 'regular' ? 'regular' : 'precise', weights, regularWeights,
   };
 }
 
@@ -49,6 +60,8 @@ export function confidenceBand(score) {
 
 export function estimateWorkload(items, duration, preferences) {
   const options = workloadOptions(preferences), seconds = options.minutes * 60;
+  const automatic = WORKLOAD_STANDARDS[options.standard].automatic;
+  const weights = options.standard === 'regular' ? options.regularWeights : options.weights;
   let endTime = Number.isFinite(duration) && duration > 0 ? duration : 0;
   const valid = [];
   let invalid = 0;
@@ -76,7 +89,7 @@ export function estimateWorkload(items, duration, preferences) {
     if (options.threshold === 100 || item.confidence.score < options.threshold / 100) {
       segment.belowThreshold++;
       const band = WORKLOAD_BANDS[bandIndex];
-      segment.operations += options.weights[band.id] === 'auto' ? band.automatic : options.weights[band.id];
+      segment.operations += weights[band.id] === 'auto' ? automatic[bandIndex] : weights[band.id];
     }
   }
   let baseline = Infinity, max = 0;

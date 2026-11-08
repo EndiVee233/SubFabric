@@ -703,6 +703,8 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 /* Read-only workload forecasts: lazy rendering; the subtitle editor remains independent. */
 .workload-scroll { flex:1; min-height:0; overflow-y:auto; padding:12px; scrollbar-width:thin; container-type:inline-size; }
 .workload-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr); gap:8px; }
+.workload-standard-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; color:var(--text-1); font-size:12px; }
+.workload-standard-row > :is(select,.sf-choice-shell) { min-width:0; max-width:150px; flex:0 1 150px; }
 .workload-controls > label { display:flex; flex-direction:column; gap:6px; min-width:0; color:var(--text-1); font-size:12px; }
 .workload-controls .select { width:100%; min-width:0; font-size:12px; }
 .workload-note { margin:9px 0; color:var(--text-2); font-size:11px; line-height:1.65; overflow-wrap:anywhere; }

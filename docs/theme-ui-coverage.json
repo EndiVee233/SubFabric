@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "1e9f19e43bdea30ce24ebae3ca91bc676c0fa9ae0a6deff52a1489d0a7a370fc",
+      "sha256": "c8d5c51b9f130c3f4bc64cfc788bb4676b7f5d39339841fb9ac0e8f6aa6228cd",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -1533,7 +1533,7 @@
     },
     {
       "file": "editor/js/rim-curve.js",
-      "sha256": "83c63000a9c80e3169bff974e27e82154437bbd2492fcdd79e20feb347869070",
+      "sha256": "dbfdf8d382101e0692ea8d4cef532d4debabc30fab6d791b05c37e3374f92565",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -2054,20 +2054,20 @@
     },
     {
       "file": "editor/js/workload-panel.js",
-      "sha256": "d49f2ea6507b4ddb850cdb5150593ee39757f68b4d72b58e0e13ea59b2a87057",
+      "sha256": "f02e9d39f0a48c3070df96c310264114b6fe7bf799d1a6066029b52df64f356f",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
         {
-          "line": 28,
+          "line": 29,
           "method": "innerHTML"
         },
         {
-          "line": 53,
+          "line": 64,
           "method": "replaceChildren"
         },
         {
-          "line": 59,
+          "line": 70,
           "method": "innerHTML"
         }
       ],
@@ -2075,7 +2075,7 @@
     },
     {
       "file": "editor/js/workload.js",
-      "sha256": "17edfeedf770f8ca8f2f43cdf309dc2d3798bda163343645b4a26e8228fb1744",
+      "sha256": "5b588bdd2568907e9b3cbc3edcdb3654b9dd3eb7f86c31e9c7257fe14c0ae299",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2091,7 +2091,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "0f6477455f9396b4d0cfc0846faa668c1316b09b495da6f35ddd1ebdc02a3984",
+      "sha256": "a7ecf32865e6090994fed8ddb22519e0d3d5add192ddf057ce796ccca3a4c6de",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2131,7 +2131,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "cf88c36148770fc5643469d5d018a74e5efcbaaa022639b8cc91cc03dcc43268",
+      "sha256": "fa9a537c5adc7310de123b71abb7cf425785fccb8e0a6f6ccbaeeb7a8de2c930",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -3078,6 +3078,7 @@
         "workload-page",
         "workload-pager",
         "workload-previous",
+        "workload-standard",
         "workload-status",
         "workload-summary",
         "workload-threshold",

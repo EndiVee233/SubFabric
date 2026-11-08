@@ -1,4 +1,4 @@
-import { WORKLOAD_BANDS, workloadOptions, estimateWorkload } from './workload.js';
+import { WORKLOAD_BANDS, WORKLOAD_STANDARDS, workloadOptions, estimateWorkload } from './workload.js';
 import { escapeHtml, fmtTime } from './util.js';
 import { t } from './i18n.js';
 
@@ -17,20 +17,29 @@ export function initWorkloadPanel({ element, getItems, getDuration, onSeek }) {
   const controls = {
     minutes: element.querySelector('#workload-minutes'), threshold: element.querySelector('#workload-threshold'),
     mode: element.querySelector('#workload-mode'), weights: element.querySelector('#workload-weights'),
+    standard: element.querySelector('#workload-standard'),
     collapse: element.querySelector('#workload-collapse'),
     summary: element.querySelector('#workload-summary'), list: element.querySelector('#workload-list'),
     status: element.querySelector('#workload-status'), pager: element.querySelector('#workload-pager'),
     previous: element.querySelector('#workload-previous'), next: element.querySelector('#workload-next'),
     page: element.querySelector('#workload-page'),
   };
-  for (const key of ['minutes', 'threshold', 'mode']) controls[key].value = String(options[key]);
+  for (const key of ['minutes', 'threshold', 'mode', 'standard']) controls[key].value = String(options[key]);
   controls.collapse.checked = options.collapseDetails;
   controls.weights.innerHTML = WORKLOAD_BANDS.map(band =>
     `<label class="workload-weight"><span>${escapeHtml(band.label)}</span><select class="select" data-band="${band.id}" aria-label="${escapeHtml(copy('置信度 ◇ 的每句预计修改次数', band.label))}">`
     + `<option value="auto">${escapeHtml(copy('自动（◇ 次）', band.automatic))}</option>`
     + Array.from({ length: 6 }, (_, i) => `<option value="${i + 1}">${escapeHtml(copy('◇ 次', i + 1))}</option>`).join('')
     + '</select></label>').join('');
-  for (const select of controls.weights.querySelectorAll('select')) select.value = String(options.weights[select.dataset.band]);
+  const activeWeights = () => options.standard === 'regular' ? options.regularWeights : options.weights;
+  function syncWeights() {
+    const automatic = WORKLOAD_STANDARDS[options.standard].automatic;
+    [...controls.weights.querySelectorAll('select')].forEach((select, i) => {
+      select.querySelector('[value="auto"]').textContent = copy('自动（◇ 次）', automatic[i]);
+      select.value = String(activeWeights()[select.dataset.band]);
+    });
+  }
+  syncWeights();
 
   function render() {
     frame = 0;
@@ -43,10 +52,12 @@ export function initWorkloadPanel({ element, getItems, getDuration, onSeek }) {
           : model.unknown ? copy('有 ◇ 句缺少置信度，预计次数仅覆盖已有评分的句子。', model.unknown)
           : t('已按全部句子的现有置信度生成预测。');
         if (model.invalid) controls.status.textContent += ' ' + copy('另有 ◇ 句时间无效，未纳入分段。', model.invalid);
-        if (model.known && Object.values(options.weights).includes('auto')) {
-          controls.status.textContent += ' ' + t('自动档参考一份视频前两小时的日志提交与 WhisperX 初稿对照；不等于实际点击次数，样本不足档位沿用原估值。');
+        if (model.known && Object.values(activeWeights()).includes('auto')) {
+          controls.status.textContent += ' ' + (options.standard === 'regular'
+            ? t('常规标准：同一句的整句和逐词时间调整合计一次，其他操作保留。自动档参考历史日志，样本不足档位沿用原估值。')
+            : t('精翻标准：按日志逐次统计时间调整。自动档参考一份视频前两小时的日志与初稿对照，不等于实际点击次数。'));
         }
-        if (options.legacyWeights) controls.status.textContent += ' ' + t('旧手动权重已迁移；跨档采用较高的手动值，原设置已保留，可在每句预计修改次数中调整。');
+        if (options.standard === 'precise' && options.legacyWeights) controls.status.textContent += ' ' + t('旧手动权重已迁移；跨档采用较高的手动值，原设置已保留，可在每句预计修改次数中调整。');
         dirty = false;
       } catch (error) {
         controls.status.textContent = t(error.message); controls.summary.textContent = '';
@@ -82,14 +93,16 @@ export function initWorkloadPanel({ element, getItems, getDuration, onSeek }) {
   function schedule() { if (visible && !frame) frame = requestAnimationFrame(render); }
   element.addEventListener('change', event => {
     const select = event.target;
-    if (select.dataset.band) options.weights[select.dataset.band] = select.value === 'auto' ? 'auto' : Number(select.value);
+    if (select.dataset.band) activeWeights()[select.dataset.band] = select.value === 'auto' ? 'auto' : Number(select.value);
     else if (select === controls.minutes) options.minutes = Number(select.value);
     else if (select === controls.threshold) options.threshold = Number(select.value);
     else if (select === controls.mode) options.mode = select.value;
+    else if (select === controls.standard) options.standard = select.value;
     else if (select === controls.collapse) { options.collapseDetails = select.checked; expanded.clear(); }
     else return;
     if (select === controls.minutes) expanded.clear();
     options = workloadOptions(options); page = 0; dirty = true;
+    if (select === controls.standard) syncWeights();
     try { localStorage.setItem(KEY, JSON.stringify(options)); } catch { /* Session preferences still work. */ }
     schedule();
   });
