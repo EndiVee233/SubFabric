@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { WORKLOAD_BANDS, WORKLOAD_CALIBRATION, confidenceBand, workloadOptions, estimateWorkload } from '../editor/js/workload.js';
 
-assert.deepEqual(WORKLOAD_BANDS.map(band => band.automatic), [6, 4, 3, 3, 1]);
+assert.deepEqual(WORKLOAD_BANDS.map(band => band.automatic), [6, 5, 4, 3, 1]);
 assert.deepEqual(WORKLOAD_CALIBRATION.calibratedBands, ['60to70', '70to80', '80to90']);
-assert.equal(WORKLOAD_CALIBRATION.samples['60to70'], 39);
-assert.equal(WORKLOAD_CALIBRATION.samples['70to80'], 625);
-assert.equal(WORKLOAD_CALIBRATION.samples['80to90'], 332);
-assert.equal(WORKLOAD_CALIBRATION.samples['90to100'], 0, 'unobserved scores retain their prior rather than inventing evidence');
-assert.equal(estimateWorkload([{ start: 0, end: 1, confidence: { score: .7 } }], 1).operations, 3);
+assert.equal(WORKLOAD_CALIBRATION.method, 'time-attributed-log-transactions');
+assert.equal(WORKLOAD_CALIBRATION.durationSeconds, 7200);
+assert.equal(WORKLOAD_CALIBRATION.samples['60to70'], 84);
+assert.equal(WORKLOAD_CALIBRATION.samples['70to80'], 1698);
+assert.equal(WORKLOAD_CALIBRATION.samples['80to90'], 403);
+assert.equal(WORKLOAD_CALIBRATION.samples['90to100'], 6, 'sparse observations retain their prior rather than overfitting a single segment');
+assert.equal(estimateWorkload([{ start: 0, end: 1, confidence: { score: .7 } }], 1).operations, 4);
 assert.equal(estimateWorkload([{ start: 0, end: 1, confidence: { score: .8 } }], 1).operations, 3);
 
 const cue = (start, score, end = start + 2) => ({ start, end, confidence: score === undefined ? null : { score } });
@@ -17,16 +19,16 @@ const before = JSON.stringify(items);
 let result = estimateWorkload(items, 1200, { minutes: 5 });
 assert.equal(result.segments.length, 4);
 assert.equal(result.total, 12); assert.equal(result.known, 11); assert.equal(result.unknown, 1);
-assert.deepEqual(result.segments.map(s => s.operations), [19, 0, 12, 0]);
+assert.deepEqual(result.segments.map(s => s.operations), [21, 0, 13, 0]);
 assert.deepEqual(result.segments[0].counts, [2, 1, 1, 0, 2]);
 assert.equal(result.segments[0].total, 6, 'cross-boundary sentence is counted in its starting segment once');
 assert.equal(result.segments[1].total, 2, 'a start at exactly five minutes goes in the next segment');
-assert.equal(result.baseline, 12); assert.equal(result.segments[2].relative, 1);
-assert.equal(result.segments[0].relative, 19 / 12); assert.equal(result.segments[1].relative, 0);
+assert.equal(result.baseline, 13); assert.equal(result.segments[2].relative, 1);
+assert.equal(result.segments[0].relative, 21 / 13); assert.equal(result.segments[1].relative, 0);
 assert.equal(result.belowThreshold, 7);
 
-assert.deepEqual(estimateWorkload(items, 1200, { minutes: 5, threshold: 75 }).segments.map(s => s.operations), [16, 0, 9, 0]);
-assert.deepEqual(estimateWorkload(items, 1200, { minutes: 5, threshold: 100 }).segments.map(s => s.operations), [21, 1, 12, 1]);
+assert.deepEqual(estimateWorkload(items, 1200, { minutes: 5, threshold: 75 }).segments.map(s => s.operations), [17, 0, 10, 0]);
+assert.deepEqual(estimateWorkload(items, 1200, { minutes: 5, threshold: 100 }).segments.map(s => s.operations), [23, 1, 13, 1]);
 assert.equal(estimateWorkload(items, 1200, { minutes: 10 }).segments.length, 2);
 result = estimateWorkload(items, 1200, { minutes: 20 });
 assert.equal(result.segments.length, 1); assert.equal(result.segments[0].relative, 1);
@@ -73,4 +75,9 @@ assert.equal(result.segments[2].heat, 1);
 assert.ok(result.segments[1].fraction > result.segments[0].fraction);
 const large = Array.from({ length: 10000 }, (_, i) => cue(i * 2, .5));
 assert.equal(estimateWorkload(large, 20000).total, 10000);
+// Aggregate-only calibration fixture: no private dialogue or log identities are embedded.
+const population = [9, 84, 1698, 403, 6].flatMap((n, band) => Array.from({length:n}, () => cue(0, [.5,.65,.75,.85,.95][band])));
+assert.equal(estimateWorkload(population, 7200).operations, 8475);
+assert.equal(estimateWorkload(population, 7200, {threshold:100}).operations, 8481);
+assert.equal(estimateWorkload(population, 7200, {weights:{'70to80':2}}).operations, 5079, 'manual weights remain independent of recalibration');
 console.log('Workload forecast: confidence boundaries, thresholds, weights, normalization, missing data, segmentation, read-only data and large drafts passed');

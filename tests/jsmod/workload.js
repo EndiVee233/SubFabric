@@ -1,14 +1,17 @@
 /** Read-only estimates from sentence confidence; never rescore or mutate subtitles. */
 export const WORKLOAD_CALIBRATION = Object.freeze({
-  version: 'visible-edits-20261108', method: 'visible-edit-categories', videos: 1, engine: 'whisperx',
-  matchedRows: 997, confidenceRange: Object.freeze([0.49, 0.83]),
+  // Historical log transactions attributed to a new draft; not edits replayed against that draft.
+  version: 'log-transactions-20261108', method: 'time-attributed-log-transactions', videos: 1, engine: 'whisperx',
+  durationSeconds: 7200, sourceRows: 2200, referenceRows: 3163, matchedRows: 1993, draftSpeakers: false,
+  logRecords: 15521, attributedTransactions: 9659, unmatchedTransactions: 794, truncatedRecords: 3,
+  confidenceRange: Object.freeze([0.49, 0.93]),
   calibratedBands: Object.freeze(['60to70', '70to80', '80to90']),
-  samples: Object.freeze({ under60: 1, '60to70': 39, '70to80': 625, '80to90': 332, '90to100': 0 }),
+  samples: Object.freeze({ under60: 9, '60to70': 84, '70to80': 1698, '80to90': 403, '90to100': 6 }),
 });
 export const WORKLOAD_BANDS = Object.freeze([
   { id: 'under60', label: '<60%', upper: 0.6, automatic: 6 },
-  { id: '60to70', label: '60–<70%', upper: 0.7, automatic: 4 },
-  { id: '70to80', label: '70–<80%', upper: 0.8, automatic: 3 },
+  { id: '60to70', label: '60–<70%', upper: 0.7, automatic: 5 },
+  { id: '70to80', label: '70–<80%', upper: 0.8, automatic: 4 },
   { id: '80to90', label: '80–<90%', upper: 0.9, automatic: 3 },
   { id: '90to100', label: '90–100%', upper: Infinity, automatic: 1 },
 ].map(Object.freeze));

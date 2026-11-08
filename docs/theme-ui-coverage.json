@@ -2054,7 +2054,7 @@
     },
     {
       "file": "editor/js/workload-panel.js",
-      "sha256": "17e616e3cefd8ed5bfd6a9b7fc3e4a762c636f9c3758cc91a939ecee37e2a3c7",
+      "sha256": "d49f2ea6507b4ddb850cdb5150593ee39757f68b4d72b58e0e13ea59b2a87057",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -2075,7 +2075,7 @@
     },
     {
       "file": "editor/js/workload.js",
-      "sha256": "fdf4d175045055f33e97fcf37908ce54f549acf6d48be5bfe98cdc325e923370",
+      "sha256": "17edfeedf770f8ca8f2f43cdf309dc2d3798bda163343645b4a26e8228fb1744",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2091,7 +2091,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "a82642a0428be9480cd02220117db6e77af888116f5ea983ae1de995dee504f7",
+      "sha256": "0f6477455f9396b4d0cfc0846faa668c1316b09b495da6f35ddd1ebdc02a3984",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],

@@ -44,7 +44,7 @@ export function initWorkloadPanel({ element, getItems, getDuration, onSeek }) {
           : t('已按全部句子的现有置信度生成预测。');
         if (model.invalid) controls.status.textContent += ' ' + copy('另有 ◇ 句时间无效，未纳入分段。', model.invalid);
         if (model.known && Object.values(options.weights).includes('auto')) {
-          controls.status.textContent += ' ' + t('自动档参考单份 WhisperX 稿件的可见修改项，不等于实际点击次数；未覆盖档位沿用原估值。');
+          controls.status.textContent += ' ' + t('自动档参考一份视频前两小时的日志提交与 WhisperX 初稿对照；不等于实际点击次数，样本不足档位沿用原估值。');
         }
         if (options.legacyWeights) controls.status.textContent += ' ' + t('旧手动权重已迁移；跨档采用较高的手动值，原设置已保留，可在每句预计修改次数中调整。');
         dirty = false;
