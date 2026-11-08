@@ -36,6 +36,9 @@ try {
   const main = fs.readFileSync(path.join(root, 'desktop/main.cjs'), 'utf8');
   for (const rule of ['nodeIntegration: false', 'contextIsolation: true', 'sandbox: true', 'webSecurity: true', 'requestSingleInstanceLock', 'setWindowOpenHandler', 'will-attach-webview', 'await flush()']) assert.ok(main.includes(rule), rule);
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'desktop/package.json'), 'utf8'));
+  const fileVersion = /const APP_FILE_VERSION = '([^']+)'/.exec(fs.readFileSync(path.join(root,'editor/server.js'),'utf8'))[1];
+  assert.equal(pkg.build.buildVersion, fileVersion, 'Windows FileVersion matches backend release version');
+  assert.equal(pkg.build.buildNumber, fileVersion.split('.').at(-1), 'Windows ProductVersion uses the fourth release component');
   assert.equal(pkg.build.nsis.deleteAppDataOnUninstall, false);
   assert.equal(pkg.build.nsis.runAfterFinish, false);
   assert.ok(!fs.existsSync(path.join(root, 'package.json')), 'Do not alter backend mixed module inference');

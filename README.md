@@ -117,11 +117,11 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 
 从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases) 列表选择已发布的 Windows 安装包。
 
-当前桌面源码实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.9.1`，
-安装包命名为 `SubFabric-1.5.9.1-setup.exe`；实际已发布资产以 Releases 列表为准。
+当前桌面源码实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.10.1`，
+安装包命名为 `SubFabric-1.5.10.1-setup.exe`；实际已发布资产以 Releases 列表为准。
 这是未签名的测试版；实际 GPU 推理与真实媒体导出仍需单独验收。
 
-SEA 链路安装包命名为 `SubFabric-1.5.9.1-sea-setup.exe`（Inno Setup + Node SEA 单文件）。
+SEA 链路安装包命名为 `SubFabric-1.5.10.1-sea-setup.exe`（Inno Setup + Node SEA 单文件）。
 
 **两个版本可以装进同一个目录，数据完全互通**：模型、项目、视频、翻译方案与热词都放在程序目录里，
 所以你可以先装 SEA 版、再用 Electron 版覆盖安装（或反过来），装完直接接着用，不需要搬数据。
@@ -160,7 +160,7 @@ node editor/scripts/fetch-vendor.js
 npm --prefix desktop run dist:win
 ```
 
-安装包输出到 `build/electron/build-<id>/SubFabric-1.5.9.1-setup.exe`；
+安装包输出到 `build/electron/build-<id>/SubFabric-1.5.10.1-setup.exe`；
 `build/electron/latest-build.json` 记录最新成功构建的位置和 SHA-256。每次使用新目录，不删除旧构建。
 只启动开发版时，前两步完成后执行：
 

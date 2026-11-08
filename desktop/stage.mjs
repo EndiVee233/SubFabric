@@ -12,10 +12,11 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'desktop/package.json'), 
 const server = fs.readFileSync(path.join(root, 'editor/server.js'), 'utf8');
 const appVersion = /const APP_VERSION = '([^']+)'/.exec(server)?.[1];
 const fileVersion = /const APP_FILE_VERSION = '([^']+)'/.exec(server)?.[1];
-if (pkg.version !== '1.5.9-beta.1' || appVersion !== 'beta 1.5.9.1' || fileVersion !== '1.5.9.1') throw Error('Desktop/server version mismatch');
+if (pkg.version !== '1.5.10-beta.1' || appVersion !== 'beta 1.5.10.1' || fileVersion !== '1.5.10.1') throw Error('Desktop/server version mismatch');
 /* NSIS 包名是版本号第五处：artifactName 硬编码文件版本，漏改会让 Electron 包停在旧版本号。 */
 const expectedArtifact = `SubFabric-${fileVersion}-setup.\${ext}`;
 if (pkg.build?.win?.artifactName !== expectedArtifact) throw Error(`win.artifactName must be ${expectedArtifact}, got ${pkg.build?.win?.artifactName}`);
+if (pkg.build.buildVersion !== fileVersion || pkg.build.buildNumber !== fileVersion.split('.').at(-1)) throw Error('Windows PE buildVersion/buildNumber must match APP_FILE_VERSION');
 const tracked = execFileSync('git', ['-C', root, 'ls-files', '-z', 'editor', 'asr'], { encoding: 'utf8' }).split('\0').filter(Boolean);
 const paths = tracked.filter(p => !p.startsWith('editor/scripts/') || p === 'editor/scripts/7z.exe' || p === 'editor/scripts/7z-README.txt');
 // This workspace preserves its pre-existing index; explicitly include the new worker until Git tracks it.

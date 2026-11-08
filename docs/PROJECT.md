@@ -21,9 +21,9 @@
 报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
 仅属历史验证，不覆盖本机功能增量；本次未跑全量 JS、Python、真实 GUI、GPU/ASR、媒体导出或安装验收。
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.9.1` / 文件版本
-  `1.5.9.1`（npm `1.5.9-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.9.1-setup.exe` 与
-  `SubFabric-1.5.9.1-sea-setup.exe`（Inno Setup + Node SEA）；本次 SEA 构建验收见 §6，Electron 本次未重建，未发布 Release。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.10.1` / 文件版本
+  `1.5.10.1`（npm `1.5.10-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.10.1-setup.exe` 与
+  `SubFabric-1.5.10.1-sea-setup.exe`（Inno Setup + Node SEA）；本次双包构建与安装验收见 §6，Release 待发布。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
   后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
@@ -165,7 +165,7 @@
   `SubFabricConfidence` 注释在原有加载路径解析），不按双语行或逐词事件重复计数，不请求操作日志、LLM
   或识别模型。缺失/非法评分单列，不伪造为 100%；没有评分的 SRT/外部 ASS 也不生成假预测。
   服务端仅在 `STATIC_RESOURCES` 明确加入两个新 ESM 文件，不扩大其它静态文件访问范围；无新增后端接口或依赖。
-  **精翻标准日志提交校准（2026-11-08，源码已完成且已验证；尚未实装）**：用户提供精校前两小时 ASS 与外部 JSONL
+  **精翻标准日志提交校准（2026-11-08，已完成且已验证；已实装，见 §6）**：用户提供精校前两小时 ASS 与外部 JSONL
   历史日志，对照安装版最新生成的同视频 WhisperX 初稿。仅取起点 <7200s 的 2,200 句（均有评分、未启用分离），
   参考 3,163 句；英文词序及 ≤3s 的时间一致性覆盖 91.27% 词，1,993 句的词覆盖率至少 70%。
   15,521 个唯一提交含 19,131 个内部操作，一提交最多 114 项；以提交为单位，批量 ASS 删行不逐事件累计。
@@ -188,8 +188,8 @@
   8,475 次、100% 阈值 8,481 次及手动覆盖不被校准冲掉。MY 深色/UWP 浅色隔离浏览器验证五个自动值、新说明、
   相对/次数切换、阈值、偏好保存重载、旧权重迁移、折叠与分页，310px 窄面板无溢出、无运行时异常；stage 112 文件通过。
   参考初稿与安装版原字幕的 SHA-256 仍相同，私有报告脚本的字段名笔误修正后生成成功。未跑全量回归、独立视频
-  或新模型识别/训练；本次只更新源码及 stage，安装目录保留上一版参数，未重启用户界面。
-  **常规标准（2026-11-08，源码已完成且已验证；尚未实装）**：沿用同一快照与提交归属，以 2,200 条初稿句
+  或新模型识别/训练；后续已按用户指示实装并正常启动为 beta 1.5.10.1，双包及发布状态见 §6。
+  **常规标准（2026-11-08，已完成且已验证；已实装，见 §6）**：沿用同一快照与提交归属，以 2,200 条初稿句
   为归并单位，将 `time_adjust`（整句/动态组起止）、`english_boundary_adjust`（逐词边界）及
   `subtitle_time_adjust` 的全部调整合计为一项；文本、角色、插入/删除、分合句、重识别等其他操作不压缩。
   每句成本 = 精翻成本 − 时间调整折算 +（有时间调整则 1，否则 0）。原 4,774.887 个时间调整折算归并到
@@ -202,7 +202,7 @@
   `WORKLOAD_CALIBRATION.regular` 仅公开计数规则与聚合支持，不含私有字幕或日志身份。
   六组定向 JS（计算/API/描边/文案/主题/导航）、ESLint 0 error / 0 warning 通过；MY 深色/UWP 浅色隔离浏览器
   验证真实下拉切换、各档自动值、独立手动设置、重载、旧配置迁移、折叠/分页、相对/次数及 310px 窄布局，无异常或溢出。
-  统计与截图留在 `_test/maintenance/workload-standards-20261108/`（仅本机）；未跑全量/真实媒体/独立视频，未实装。
+  统计与截图留在 `_test/maintenance/workload-standards-20261108/`（仅本机）；本次全量与实装结果见 §6，未重新进行真实媒体/独立视频验收。
   **历史可见修改项校准（2026-11-07，曾实装，验收见 §6）**：按用户同意的无日志口径，将初稿与精翻做时间约束的
   英文词序多对多对齐，逐句分别记英文/中文/角色归属/整句起止/逐词边界/分合句六类 0/1 可见项；
   不把每个边界变动冒充一次真实点击，先抵消 SPK 的统一改名，也不逐句计软件标签缺陷或全局换色。
@@ -901,7 +901,7 @@
   使用 2px 选中环，UWP 保留其中性 `--muted` 悬浮边框。
 - **描边映射开关**：`#sf-rim-enabled` 复用共享 `.switch` 组件（默认 38×20 / 14px，UWP 40×20 / 12px），
   不再使用 26×15 的自绘双伪元素开关；`configureRim()` 继续同步 `checked`。
-- **下拉菜单描边层级（2026-11-08，已完成且已验证：源码，尚未实装）**：CSV/JSON 与新预测标准菜单复用
+- **下拉菜单描边层级（2026-11-08，已完成且已验证：源码与安装文件/API）**：CSV/JSON 与新预测标准菜单复用
   `.sf-choice-menu`，为高于导出浮层已升到 z-index 100010；MY 外置描边环仍为 100001。环挂载后菜单
   `.sf-has-rim` 隐去原边框，而环被不透明菜单盖住，表现为边线闪一下消失。`rim-curve.place()` 现在按所属
   fixed 弹层的 computed z-index +1 定位环，仍以 100001 为下限；不改变菜单、导出弹窗层级或交互命中。
@@ -1538,6 +1538,28 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
+**beta 1.5.10.1（2026-11-08）**：双版本构建、SEA 实装已完成且已验证；Release 进行中，尚未宣称发布成功。
+固定 main 快照加本次版本/PE 配置增量构建，保留本地已有修改；隔离构建中的 stage 文件发现改用该快照路径表，
+并复用已安装 Electron 45.1.0，仅为工具链适配、不进入程序载荷。两包都带精翻 6/5/4/3/1、常规 6/3/3/2/1、
+默认折叠与菜单描边修复。显示版本 `beta 1.5.10.1`、文件版本 `1.5.10.1`、npm `1.5.10-beta.1`；
+`buildVersion`/`buildNumber` 显式固定 Windows 四段资源，stage 与桌面测试校验其和后端一致。
+SEA/Inno 包 **38,324,197 B**，SHA-256 `ce52df5c7e0f59579c8444be4e5a75f6e5fb401bb2fa31133c05b40da552c9b2`；
+Electron/NSIS 包 **158,585,598 B**，SHA-256 `222b07d3abb35be61094ad2fa1ba08b566010f051b84eabb09b55520da7aa74a`。
+两种真实 EXE 的版本/API/隔离启动、正常退出和六份合成数据保留通过；Electron 验证托盘隐藏、沙箱、独立 Node
+及程序目录内 Chromium 配置，SEA 主程序与安装器 PE 版本为 1.5.10.1、GUI 子系统 2。NSIS FileVersion 为
+1.5.10.1，ProductVersion 文案保留 npm beta 标识；Electron 主程序的 FileVersion/ProductVersion 均为 1.5.10.1。
+SEA 独立测试 AppId 的新装/覆盖/默认保留卸载通过，九份合成用户数据不变；未对真实用户目录执行 Electron 安装。
+固定快照全量 JS 196 项：182 passed、13 partial、1 diagnostic、0 failed，另按约定排除两项真实项目/GUI 测试。
+partial 为私有样本、Python/模型或独立浏览器条件缺失，不视为完全通过；PE 配置修正后另三组相关桌面/安装回归通过。
+SEA Python PE 单测三项通过。首轮完整回归报告路径落在工作区父目录，正文零失败而报告写入失败，纠正后复跑成功；
+Python 首轮默认沙箱临时目录无写权限，改为工作区临时目录复跑通过；Electron 首次四段资源不一致，修正配置后重建并复核。
+Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它们和 package.json；审计夹具的 Windows 分隔符断言归一化后通过。
+用户明确确认保存后，备份 120 个程序文件（实际变更 10 个）及最新稿件数据，正常退出已核实 PID 后，以 SEA 安装包
+覆盖原安装目录并正常启动；120 文件哈希、六个 HTTP 前端内容、监听进程/数据根、两种标准及描边代码核对通过。
+31 份 ASS/SRT/项目 JSON/日志/设置哈希不变，WhisperX 与说话人分离均就绪；模型/运行时/媒体不随包覆盖或删除。
+备份位于安装目录 `.maintenance/release-1.5.10.1-*`，本机证据位于 `_test/maintenance/release-15101-20261108/`。
+未签名测试版；未重新验收长稿 GPU/真实翻译服务/媒体导出，不能把模型就绪等同推理通过。
+
 ### 当前主链路：Electron + NSIS
 
 - **独立子包**：`desktop/package.json` / 锁文件固定 Electron `45.1.0`、electron-builder `26.18.0`
@@ -1554,9 +1576,9 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.9.1'`、`APP_FILE_VERSION = '1.5.9.1'`、npm version `1.5.9-beta.1`。
+  `APP_VERSION = 'beta 1.5.10.1'`、`APP_FILE_VERSION = '1.5.10.1'`、npm version `1.5.10-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.9.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.10.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
