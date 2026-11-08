@@ -23,7 +23,7 @@
 
 - **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.10.1` / 文件版本
   `1.5.10.1`（npm `1.5.10-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.10.1-setup.exe` 与
-  `SubFabric-1.5.10.1-sea-setup.exe`（Inno Setup + Node SEA）；本次双包构建与安装验收见 §6，Release 待发布。
+  `SubFabric-1.5.10.1-sea-setup.exe`（Inno Setup + Node SEA）；本次双包构建、实装与已发布 Release 验收见 §6。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
   后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
@@ -1538,7 +1538,7 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-**beta 1.5.10.1（2026-11-08）**：双版本构建、SEA 实装已完成且已验证；Release 进行中，尚未宣称发布成功。
+**beta 1.5.10.1（2026-11-08）**：双版本构建、SEA 实装及 Release 均已完成且已验证；云端提交成功且已核对。
 固定 main 快照加本次版本/PE 配置增量构建，保留本地已有修改；隔离构建中的 stage 文件发现改用该快照路径表，
 并复用已安装 Electron 45.1.0，仅为工具链适配、不进入程序载荷。两包都带精翻 6/5/4/3/1、常规 6/3/3/2/1、
 默认折叠与菜单描边修复。显示版本 `beta 1.5.10.1`、文件版本 `1.5.10.1`、npm `1.5.10-beta.1`；
@@ -1559,6 +1559,10 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 31 份 ASS/SRT/项目 JSON/日志/设置哈希不变，WhisperX 与说话人分离均就绪；模型/运行时/媒体不随包覆盖或删除。
 备份位于安装目录 `.maintenance/release-1.5.10.1-*`，本机证据位于 `_test/maintenance/release-15101-20261108/`。
 未签名测试版；未重新验收长稿 GPU/真实翻译服务/媒体导出，不能把模型就绪等同推理通过。
+已发布 [v1.5.10-beta.1](https://github.com/EndiVee233/SubFabric/releases/tag/v1.5.10-beta.1)（prerelease），
+包含上述 Electron/SEA 两个 setup.exe；标签指向本次版本提交，108 个受 Git 管理的入包源码逐文件 Git blob SHA
+与该提交一致，另四个 libass/字体资源核对本地构建哈希。发布后两个远端资产 digest、文件名、大小及固定目标提交
+全部核对通过，版本提交 GitHub CI 成功。没有上传私有字幕、日志、模型、用户 ASR 运行时或构建目录；未修改既有 Release。
 
 ### 当前主链路：Electron + NSIS
 
@@ -1661,7 +1665,7 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   一版 `+1`，次日重新从 `1` 开始；因此第四段可以比前一天更小，跨天比较看前三段。当天只修 bug 时保持
   前三段不变（如 `1.4.6.2` 的次日第一版是 `1.4.6.1`）；需要抬前三段时，抬完末段也从 `1` 开始。
   推出的号仍要与远端 tag/Release 列表比对，避免撞号。
-- **Release**：只上传 setup.exe 一个资产，发完核对 `assets[].digest` 与本地 sha256 一致。
+- **Release**：SEA 链路只上传其 setup.exe，不另发便携 zip；双版本同发时同一 Release 再上传 Electron setup.exe。发布后分别核对 `assets[].digest` 与本地 SHA-256 一致。
 - **静默安装自检**：当前 `InitializeWizard` 仅在目录仍为默认值时预填检测到的旧目录，保留显式 `/DIR`。
   安装仍会登记对应 AppId，隔离验收应另编独立测试身份、显式临时目录和 `/NOICONS`，不能拿生产 AppId
   测试包去覆盖用户机器的安装登记。更早版本曾错误覆盖显式目录，不能沿用其旧验收结论。
