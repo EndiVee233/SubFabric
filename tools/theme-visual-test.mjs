@@ -119,7 +119,7 @@ try {
         await b.eval('document.querySelector("#sf-ap-cancel").click()');
       }
       await go('#/project/p-theme-audit');
-      await b.waitFor('window.__dbg.state.format === "ass" && document.querySelectorAll(".cue-card").length > 0');
+      await b.waitFor('window.__dbg.state.project?.id === "p-theme-audit" && window.__dbg.state.format === "ass" && document.querySelectorAll(".cue-card").length > 0');
       await b.eval('if(!document.querySelector("#confirm-overlay").hidden)document.querySelector("#confirm-no").click()');
       for (const tab of ['sub','roles','settings','logs']) {
         await b.eval(`window.__panel.showTab(${JSON.stringify(tab)},{instant:true})`);
@@ -129,7 +129,11 @@ try {
       await collect('advanced-export', '#adv-export-overlay .modal-surface', true);
       await b.eval('document.querySelector("#adv-export-cancel").click()');
       await b.eval('document.querySelector("#btn-export-video").click()');
-      await b.waitFor('document.querySelector("#sf-ev-cap")?.textContent.includes("ffmpeg fixture")');
+      try { await b.waitFor('document.querySelector("#sf-ev-cap")?.textContent.includes("ffmpeg fixture")'); }
+      catch (error) {
+        const detail = await b.eval('({project:window.__dbg.state.project?.id,capability:document.querySelector("#sf-ev-cap")?.textContent,status:document.querySelector("#sf-ev-status")?.textContent})');
+        throw new Error('Export capability fixture did not render: ' + JSON.stringify(detail), {cause:error});
+      }
       await collect('video-export', '#sf-export-video .sf-ev-panel', true);
       await b.eval('document.querySelector("#sf-ev-close").click()');
       await b.eval('window.__panel.showAddRoleDialog(()=>{})');
@@ -193,6 +197,11 @@ try {
   if (report.issues.length && !diagnostic) process.exitCode = 1;
 } catch(error) {
   report.error=String(error.stack || error);
+  if (browser) {
+    report.runtime = await browser.eval('({route:location.hash,project:window.__dbg?.state.project?.id,format:window.__dbg?.state.format,confirm:document.querySelector("#confirm-overlay")?.textContent,toasts:Array.from(document.querySelectorAll(".sf-toast,.toast")).map(el=>el.textContent)})').catch(()=>null);
+    report.exceptions = browser.logs.filter(line=>line.startsWith('[exception]'));
+    console.error(JSON.stringify({runtime:report.runtime,exceptions:report.exceptions}));
+  }
   throw error;
 } finally {
   report.status=report.error||report.issues.length?'failed':report.persistence==='passed'?'passed':'incomplete';

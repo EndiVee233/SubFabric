@@ -130,8 +130,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.10.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.10.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.11.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.11.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -332,7 +332,7 @@ const STATIC_RESOURCES = new Set([
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'log-import'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'log-import', 'workload', 'workload-panel'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
@@ -1316,9 +1316,21 @@ function startWhisperxRuntimeInstall() {
         '--index-url', 'https://download.pytorch.org/whl/cu128'], 3600000, () => prog(28, '安装 WhisperX CUDA PyTorch…'), 3, env);
       prog(45, '安装 WhisperX 3.8.6 与独立依赖…');
       await pipInstallRetry(py, ['-m', 'pip', '--isolated', '--cache-dir', env.PIP_CACHE_DIR,
-        'install', 'whisperx==' + WHISPERX_RUNTIME.version, 'transformers<5',
+        'install', 'whisperx==' + WHISPERX_RUNTIME.version, 'transformers<5', 'soundfile',
         '--no-warn-script-location', '-i', EMBEDDED_PY.pipIndex], 3600000, () => prog(65, '安装 WhisperX 依赖…'), 3, env);
       prog(85, '验证 WhisperX / CUDA 并准备本地断句资源…');
+      // Fetch a fixed official asset through the existing downloader; NLTK's dynamic index
+      // rejects proxied requests. Never weaken its proxy/SSRF checks to install the data.
+      const tokenizers = path.join(cache, 'nltk', 'tokenizers');
+      const punktFiles = ['abbrev_types.txt', 'collocations.tab', 'ortho_context.tab', 'sent_starters.txt'];
+      if (!punktFiles.every(file => fs.existsSync(path.join(tokenizers, 'punkt_tab', 'english', file)))) {
+        fs.mkdirSync(tokenizers, { recursive: true });
+        const zip = path.join(cache, 'punkt_tab.zip');
+        await downloadAny(['https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt_tab.zip'], zip, () => {});
+        const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+        await runCapture(tar, ['-xf', zip, '-C', tokenizers], 300000, undefined, env);
+        fs.unlinkSync(zip);
+      }
       const probe = await capture([path.join(ASR_DIR, 'whisperx_asr.py'), '--prepare-runtime',
         '--cache-dir', path.join(dir, 'cache')], 600000);
       const result = JSON.parse(probe.stdout.trim().split(/\r?\n/).filter(Boolean).pop() || '{}');
@@ -2650,10 +2662,14 @@ const asrEngineArgs = (model) => {
     // NPU 后端由 OpenVINO 自管线程（asr_npu.py 接受 --threads 但会忽略），
     // 所以 Parakeet CUDA 的线程数与 blank 惩罚只对 sherpa-onnx 生效。
     threads: openvino ? 4 : threads,
-    variant: openvino ? '' : `threads=${threads};blank=${mp.blankPenalty}`,
+    variant: openvino ? `blank=${mp.blankPenalty};symbols=${mp.maxSymbolsPerFrame};norm=${mp.normalizationScope}`
+      : `threads=${threads};blank=${mp.blankPenalty}`,
     // 热词只对 sherpa-onnx 后端有效(asr_npu.py 会接受参数并在日志里说明忽略)
     hotwords: openvino ? [] : parakeetHotwordArgs(),
-    extra: openvino ? [] : ['--blank-penalty', String(mp.blankPenalty)],
+    extra: openvino ? ['--blank-penalty', String(mp.blankPenalty),
+      '--max-symbols-per-frame', String(mp.maxSymbolsPerFrame),
+      '--normalization-scope', mp.normalizationScope]
+      : ['--blank-penalty', String(mp.blankPenalty)],
   };
 };
 
@@ -9718,6 +9734,8 @@ function handleAsrRoutes(req, res, u) {
     // 选的是 NPU 引擎就永远拿不到 openvino 的探测结果，界面会一直停在检测中…（实测踩过）。
     const _selForProbe = modelById(selectedModelId()) || resolveAsrModel();
     if (!_selForProbe || _selForProbe.engine !== 'qwen') probePython(_selForProbe && _selForProbe.engine).catch(() => {});
+    // NPU 卡片也要独立检查 OpenVINO；选中其它模型不能让它仅凭权重文件显示可用。
+    probePython('openvino').catch(() => {});
     nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
     // 停用：NeMo / VibeVoice 的后台预检不再启动；对应模型条目已注释。
     // probeNemo().catch(() => {});
@@ -9737,6 +9755,8 @@ function handleAsrRoutes(req, res, u) {
       // 有文件但没通过完整性校验（中断的下载、被替换/截断的文件）：界面要给“下载续传 + 删除”，
       // 只有下载没有删除时，尺寸偏大/内容坏掉的文件会一直卡在 Range 416，用户只能去资源管理器清。
       const partial = !m.cloud && !filesOk && !!dir && missing.length < m.files.length;
+      const npuPython = m.engine === 'openvino'
+        ? ((pyProbeCache && pyProbeCache.openvino) || { ok: false, msg: 'OpenVINO 预检中…' }) : null;
       // 引擎级运行时: whisper.cpp→'runtime'、crispasr→'runtime:crispasr'（key 也是前端的下载/轮询键）。
       // 注意两个键的差异是刻意的: 'runtime' 是 whisper 的老键, 动它会打断前端既有轮询逻辑。
       const rt = m.engine === 'whisper.cpp'
@@ -9752,14 +9772,15 @@ function handleAsrRoutes(req, res, u) {
               : (m.engine === 'vibevoice'
                 ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
                 : null)))));
-      const ready = filesOk && (!rt || rt.ok);
+      const ready = filesOk && (!rt || rt.ok) && (!npuPython || npuPython.ok);
       const backendAllowed = modelAllowedByBackends(m) && modelAllowedByHardware(m, hw);
       // usable: 文件齐 + 该引擎的运行时都就位 + 当前加速后端允许(NeMo 模型还要 torch/NeMo + CUDA)
       const usable = ready && backendAllowed
         && (m.engine !== 'nemo' || (nemo.ok && nemo.cuda))
         && (m.engine !== 'vibevoice' || (vibevoiceProbeCache && vibevoiceProbeCache.ok && vibevoiceProbeCache.cuda && Number(vibevoiceProbeCache.vramMB || 0) >= VIBEVOICE_RUNTIME.minVramMB));
       return {
-        id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
+        id: m.id, name: m.name, engine: m.engine,
+        desc: m.desc + (npuPython && !npuPython.ok ? ' ' + npuPython.msg : ''), sizeMB: m.sizeMB,
         dir, missing, filesOk, partial, ready, usable, cloud: !!m.cloud,
         backend: modelBackendOf(m), backendAllowed,
         nativeWordLevel: m.nativeWordLevel !== false,
@@ -9767,7 +9788,8 @@ function handleAsrRoutes(req, res, u) {
         draftAllowed: draftAllowedOf(m),
         needRuntime: !!rt && !rt.ok,
         runtimeKey: rt ? rt.key : '', runtimeName: rt ? rt.name : '',
-        runtimeSizeMB: rt ? rt.sizeMB : 0, runtimeReady: rt ? rt.ok : false,
+        runtimeSizeMB: rt ? rt.sizeMB : 0,
+        runtimeReady: npuPython ? !!npuPython.ok : (rt ? rt.ok : false),
         needNemo: m.engine === 'nemo' && !(nemo.ok && nemo.cuda),
         needVibeVoice: m.engine === 'vibevoice' && !vibevoiceRuntimeOk(),
         // 有可调参数的模型才带这个字段；前端据此决定是否显示「参数」入口。

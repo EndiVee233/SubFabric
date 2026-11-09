@@ -21,9 +21,9 @@
 报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
 仅属历史验证，不覆盖本机功能增量；本次未跑全量 JS、Python、真实 GUI、GPU/ASR、媒体导出或安装验收。
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.10.1` / 文件版本
-  `1.5.10.1`（npm `1.5.10-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.10.1-setup.exe` 与
-  `SubFabric-1.5.10.1-sea-setup.exe`（Inno Setup + Node SEA）；本次双包构建、实装与已发布 Release 验收见 §6。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.11.1` / 文件版本
+  `1.5.11.1`（npm `1.5.11-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.11.1-setup.exe` 与
+  `SubFabric-1.5.11.1-sea-setup.exe`（Inno Setup + Node SEA）；本次双包构建、实装与已发布 Release 验收见 §6。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
   后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
@@ -1549,6 +1549,25 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
+**beta 1.5.11.1（2026-11-09）**：双版本构建已完成且已验证；本次云端保存与发布结果以对应提交/Release 为准。
+修复 NPU 参数摘要缺失的 i18n 模板词条，并更新主题清单中的语言文件哈希；未放宽文案或主题守卫。
+全主题脚本等待真实稿件身份就绪再检查编辑器，失败时附带路由/稿件/弹窗诊断，避免旧字幕 DOM 冒充加载完成。
+从固定 main 加本次增量构建，保留 NPU 修复及既有 Anthropic 支持，不夹带本机范围外修改。
+显示版本 `beta 1.5.11.1` / 文件版本 `1.5.11.1` / npm `1.5.11-beta.1`；两种安装包均为 GUI 子系统 2。
+SEA/Inno 包 38,325,538 B，SHA-256 `b2e58fa916b2e48e01561006d134120ed3a94196d76e365b306c8729d96e0ae2`；
+Electron/NSIS 包 158,586,967 B，SHA-256 `e2513393a825c8e565ac01e825def843a4651a6ee033d3bc962fcc33505c2ff0`。
+固定快照全量 JS 为 181 passed / 14 partial / 1 diagnostic / 0 failed，另两项按约定排除；partial 来自私有夹具、
+Python/模型/独立浏览器条件，不算完整验收。ESLint 全量 0 error / 29 warning（既有项）；本次未本机重跑 Ruff/Python，
+上一 NPU 提交的 Python CI 成功是历史验证。全主题实际 Chromium 最终 4 套、723 状态、0 问题。
+主题前两轮曾在能力/稿件等待时超时，补强身份同步与错误诊断后通过；一次工作目录错误未进入检查。
+最终四组定向回归通过；桌面复核首次受默认沙箱临时目录 rename EPERM 影响，改工作区隔离目录后通过。
+两种真实 EXE 的隔离启动、版本/API、正常退出及 6 份合成数据保留通过；SEA 独立测试 AppId 的新装/覆盖/
+默认保留数据卸载通过，9 份合成用户数据不变。四个桌面模块与固定源码逐字节一致，112 项后台/渲染载荷哈希一致；
+package.json 按 builder 裁剪规则核对运行元数据（辅助审计首次误作全文比较，修正后通过）。
+未覆盖安装至真实用户目录、未停止其编辑器，未重新验收长媒体推理、真实翻译服务和编码导出；安装包未签名。
+本机证据位于 `_test/maintenance/release-15111-20261109/`，发布时核对远端两个资产 digest 与上述 SHA-256 一致。
+
+
 - **NPU 修复局部实装（2026-11-09，已完成且已验证）**：安装版补齐 OpenVINO 2026.4.1 与其 telemetry，
   只合并 `asr/asr_npu.py`、`editor/asr-params.js`、`editor/server.js`、`editor/lang/zh-CN.json`；
   四文件先备份并校验前后哈希，保留安装版既有 Anthropic 功能。未改项目、设置、视频或模型，未结束当前编辑器。
@@ -1598,9 +1617,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.10.1'`、`APP_FILE_VERSION = '1.5.10.1'`、npm version `1.5.10-beta.1`。
+  `APP_VERSION = 'beta 1.5.11.1'`、`APP_FILE_VERSION = '1.5.11.1'`、npm version `1.5.11-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.10.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.11.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
