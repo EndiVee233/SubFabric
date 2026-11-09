@@ -9325,7 +9325,7 @@ function startPrepare(id, videoPath, mode) {
    *  对话框自身的输出与编码差异（实测同一脚本换个启动方式就变成 UTF-16LE 带 BOM，
    *  Node 按 UTF-8 解出来是夹着 NUL 的乱码）。直接拼接 stdout 字符串就是这样坏掉的。
    */
-  function nativePick(kind, cb) {
+  function nativePick(kind, cb, purpose = '') {
     const isFolder = kind === 'folder';
     const filter = kind === 'python'
       ? 'Python|python.exe|Executable|*.exe|All files|*.*'
@@ -9334,7 +9334,8 @@ function startPrepare(id, videoPath, mode) {
         : (kind === 'video'
           ? 'Video|*.mp4;*.m4v;*.webm;*.mkv;*.avi;*.mov|All files|*.*'
           : 'Subtitle|*.srt;*.ass;*.ssa|All files|*.*'));
-    const title = kind === 'python' ? '选择 Python 解释器（python.exe）'
+    const title = isFolder ? (purpose === 'video-export' ? '选择导出视频保存目录' : '选择文件夹')
+      : kind === 'python' ? '选择 Python 解释器（python.exe）'
       : (kind === 'audio' ? '选择测试用音频/视频'
         : (kind === 'video' ? 'Select video file' : 'Select subtitle file'));
     const tmp = path.join(os.tmpdir(), `kass-pick-${process.pid}-${Date.now().toString(36)}.txt`);
@@ -9345,8 +9346,9 @@ function startPrepare(id, videoPath, mode) {
      *   ② 也不能让属主**隐藏** —— 隐藏窗口当不了前台窗口，后台进程又被前台锁拦住，
      *      对话框会开在浏览器后面（最初的问题）。
      *   所以：属主是真实 Show() 的 1×1、近乎透明、屏幕中心、**普通（非 topmost）** 窗口，
-     *   先把本线程挂到前台线程抢一次激活；对话框出现后再由 Timer 找到它（#32770 + 标题 +
-     *   本进程 PID）补一次 SetForegroundWindow，必要时把上次遗留的最大化状态还原成普通窗口
+     *   先把本线程挂到前台线程抢一次激活；对话框出现后再由 Timer 按本进程 PID、属主与
+     *   #32770 类找到它（文件夹标题由系统本地化，不能按文件选择器标题查找），再补一次
+     *   SetForegroundWindow，必要时把上次遗留的最大化状态还原成普通窗口
      *   （最大化时不能拖动）。这样它只像浏览器自己的文件框那样浮在应用上层，不会压住别的 app。 */
     const fgMembers = [
       '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
@@ -9354,7 +9356,13 @@ function startPrepare(id, videoPath, mode) {
       '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);',
       '[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);',
       '[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();',
-      '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);',
+      'public delegate bool EnumWindowProc(IntPtr hWnd, IntPtr lParam);',
+      '[DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowProc callback, IntPtr lParam);',
+      '[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);',
+      '[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint command);',
+      '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder name, int size);',
+      '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern bool SetWindowText(IntPtr hWnd, string title);',
+      'public static IntPtr FindDialog(uint processId, IntPtr owner) { IntPtr found = IntPtr.Zero; EnumWindows((h, p) => { uint id; GetWindowThreadProcessId(h, out id); if (id != processId || !IsWindowVisible(h) || GetWindow(h, 4) != owner) return true; var name = new System.Text.StringBuilder(256); GetClassName(h, name, name.Capacity); if (name.ToString() != "#32770") return true; found = h; return false; }, IntPtr.Zero); return found; }',
       '[DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);',
       '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);',
     ].join(' ');
@@ -9374,7 +9382,7 @@ function startPrepare(id, videoPath, mode) {
       '$form.Size = [System.Drawing.Size]::new(1, 1)',
       isFolder ? '$d = New-Object System.Windows.Forms.FolderBrowserDialog'
                : '$d = New-Object System.Windows.Forms.OpenFileDialog',
-      isFolder ? "$d.Description = '选择语音识别模型存放目录(必须为空目录)'"
+      isFolder ? `$d.Description = '${title}'`
                : `$d.Title = '${title}'`,
       isFolder ? '$d.ShowNewFolderButton = $true' : `$d.Filter = '${filter}'`,
       ...(isFolder ? [] : ['$d.CheckFileExists = $true']),
@@ -9394,7 +9402,7 @@ function startPrepare(id, videoPath, mode) {
       '$tick = 0',
       '$timer = New-Object System.Windows.Forms.Timer',
       '$timer.Interval = 60',
-      `$timer.Add_Tick({ try { $script:tick++; $dlg = [Kass.FG]::FindWindow('#32770', '${title}'); if ($dlg -ne [IntPtr]::Zero) { $dlgPid = [uint32]0; $null = [Kass.FG]::GetWindowThreadProcessId($dlg, [ref]$dlgPid); if ($dlgPid -eq $PID) { if ([Kass.FG]::IsZoomed($dlg)) { $null = [Kass.FG]::ShowWindow($dlg, 9) }; $fg2 = [Kass.FG]::GetForegroundWindow(); $fg2Pid = [uint32]0; $fg2Tid = [uint32]0; if ($fg2 -ne [IntPtr]::Zero) { $fg2Tid = [Kass.FG]::GetWindowThreadProcessId($fg2, [ref]$fg2Pid) }; $myTid2 = [Kass.FG]::GetCurrentThreadId(); if ($fg2Tid -ne 0 -and $fg2Tid -ne $myTid2) { $null = [Kass.FG]::AttachThreadInput($myTid2, $fg2Tid, $true) }; $null = [Kass.FG]::SetForegroundWindow($dlg); if ($fg2Tid -ne 0 -and $fg2Tid -ne $myTid2) { $null = [Kass.FG]::AttachThreadInput($myTid2, $fg2Tid, $false) } } }; if ($script:tick -ge 40) { $timer.Stop() } } catch { } })`,
+      `$timer.Add_Tick({ try { $script:tick++; $dlg = [Kass.FG]::FindDialog([uint32]$PID, $form.Handle); if ($dlg -ne [IntPtr]::Zero) { $null = [Kass.FG]::SetWindowText($dlg, '${title}'); if ([Kass.FG]::IsZoomed($dlg)) { $null = [Kass.FG]::ShowWindow($dlg, 9) }; $fg2 = [Kass.FG]::GetForegroundWindow(); $fg2Pid = [uint32]0; $fg2Tid = [uint32]0; if ($fg2 -ne [IntPtr]::Zero) { $fg2Tid = [Kass.FG]::GetWindowThreadProcessId($fg2, [ref]$fg2Pid) }; $myTid2 = [Kass.FG]::GetCurrentThreadId(); if ($fg2Tid -ne 0 -and $fg2Tid -ne $myTid2) { $null = [Kass.FG]::AttachThreadInput($myTid2, $fg2Tid, $true) }; $null = [Kass.FG]::SetForegroundWindow($dlg); if ($fg2Tid -ne 0 -and $fg2Tid -ne $myTid2) { $null = [Kass.FG]::AttachThreadInput($myTid2, $fg2Tid, $false) } }; if ($script:tick -ge 40) { $timer.Stop() } } catch { } })`,
       '$timer.Start()',
       '$r = $d.ShowDialog($form)',
       '$timer.Stop()',
@@ -9561,9 +9569,9 @@ function handleFetchRoutes(req, res, u) {
   const pathname = u.pathname;
   if (pathname === '/api/pick' && req.method === 'POST') {
     return readBody(req, res, 64 * 1024, (err, body) => {
-      let kind = 'video';
-      try { kind = (JSON.parse(body.toString('utf8')) || {}).kind || 'video'; } catch {}
-      nativePick(kind, r => sendJson(res, 200, r));   // 'video' | 'sub' | 'folder' 统一走一个实现
+      let kind = 'video', purpose = '';
+      try { const options = JSON.parse(body.toString('utf8')) || {}; kind = options.kind || 'video'; purpose = options.purpose === 'video-export' ? 'video-export' : ''; } catch {}
+      nativePick(kind, r => sendJson(res, 200, r), purpose);   // 固定用途白名单，不把客户端标题拼入 PowerShell
     });
   }
 

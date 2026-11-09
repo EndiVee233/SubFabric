@@ -628,7 +628,7 @@
     },
     {
       "file": "editor/js/export-video.js",
-      "sha256": "e288f0bde945a8b8e8fd721d157bc18c862b9f895a5cda6c3cd93f05f3533e02",
+      "sha256": "f64083a08049600d7d27d0bf4bfef61265f0e5fda492967f2a3304abc6483df5",
       "ids": [],
       "dynamicIds": [
         "sf-ev-accel",
@@ -2091,7 +2091,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "f824842459a654a276f7148b5243b6ef425e5692ed209ff64fc05a4ab9ebcea6",
+      "sha256": "633060cab90e9ec4524639c8e92b68047e388562b4837601ef44d50b1bfa9d4c",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],

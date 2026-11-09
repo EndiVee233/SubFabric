@@ -408,7 +408,7 @@ async function browseFolder() {
     const r = await fetch('/api/pick', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'folder' }),
+      body: JSON.stringify({ kind: 'folder', purpose: 'video-export' }),
       signal: ctl.signal,
     });
     clearTimeout(killer);
