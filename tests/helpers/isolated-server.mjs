@@ -53,7 +53,13 @@ export async function isolatedServer(options = {}) {
           if (!await waitForClose()) throw new Error('Isolated server did not close; temporary files retained');
         }
       }
-      fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      // Windows 探针退出后，目录句柄可能稍晚释放；异步 rm 才能在重试期间让事件循环推进。
+      // 只允许清理本函数在 temp 下创建的直接子目录。
+      const target = path.resolve(root), temp = path.resolve(os.tmpdir());
+      if (path.dirname(target) !== temp || !path.basename(target).startsWith('subfabric-repair-')) {
+        throw new Error('Unexpected isolated-server cleanup target; temporary files retained');
+      }
+      await fs.promises.rm(target, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     })();
     return closePromise;
   };

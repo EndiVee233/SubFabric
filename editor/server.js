@@ -2662,10 +2662,14 @@ const asrEngineArgs = (model) => {
     // NPU 后端由 OpenVINO 自管线程（asr_npu.py 接受 --threads 但会忽略），
     // 所以 Parakeet CUDA 的线程数与 blank 惩罚只对 sherpa-onnx 生效。
     threads: openvino ? 4 : threads,
-    variant: openvino ? '' : `threads=${threads};blank=${mp.blankPenalty}`,
+    variant: openvino ? `blank=${mp.blankPenalty};symbols=${mp.maxSymbolsPerFrame};norm=${mp.normalizationScope}`
+      : `threads=${threads};blank=${mp.blankPenalty}`,
     // 热词只对 sherpa-onnx 后端有效(asr_npu.py 会接受参数并在日志里说明忽略)
     hotwords: openvino ? [] : parakeetHotwordArgs(),
-    extra: openvino ? [] : ['--blank-penalty', String(mp.blankPenalty)],
+    extra: openvino ? ['--blank-penalty', String(mp.blankPenalty),
+      '--max-symbols-per-frame', String(mp.maxSymbolsPerFrame),
+      '--normalization-scope', mp.normalizationScope]
+      : ['--blank-penalty', String(mp.blankPenalty)],
   };
 };
 
@@ -9730,6 +9734,8 @@ function handleAsrRoutes(req, res, u) {
     // 选的是 NPU 引擎就永远拿不到 openvino 的探测结果，界面会一直停在检测中…（实测踩过）。
     const _selForProbe = modelById(selectedModelId()) || resolveAsrModel();
     if (!_selForProbe || _selForProbe.engine !== 'qwen') probePython(_selForProbe && _selForProbe.engine).catch(() => {});
+    // NPU 卡片也要独立检查 OpenVINO；选中其它模型不能让它仅凭权重文件显示可用。
+    probePython('openvino').catch(() => {});
     nvidiaGpu().catch(() => {});            // 后台探测 N 卡(缓存 5 分钟)
     // 停用：NeMo / VibeVoice 的后台预检不再启动；对应模型条目已注释。
     // probeNemo().catch(() => {});
@@ -9749,6 +9755,8 @@ function handleAsrRoutes(req, res, u) {
       // 有文件但没通过完整性校验（中断的下载、被替换/截断的文件）：界面要给“下载续传 + 删除”，
       // 只有下载没有删除时，尺寸偏大/内容坏掉的文件会一直卡在 Range 416，用户只能去资源管理器清。
       const partial = !m.cloud && !filesOk && !!dir && missing.length < m.files.length;
+      const npuPython = m.engine === 'openvino'
+        ? ((pyProbeCache && pyProbeCache.openvino) || { ok: false, msg: 'OpenVINO 预检中…' }) : null;
       // 引擎级运行时: whisper.cpp→'runtime'、crispasr→'runtime:crispasr'（key 也是前端的下载/轮询键）。
       // 注意两个键的差异是刻意的: 'runtime' 是 whisper 的老键, 动它会打断前端既有轮询逻辑。
       const rt = m.engine === 'whisper.cpp'
@@ -9764,14 +9772,15 @@ function handleAsrRoutes(req, res, u) {
               : (m.engine === 'vibevoice'
                 ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
                 : null)))));
-      const ready = filesOk && (!rt || rt.ok);
+      const ready = filesOk && (!rt || rt.ok) && (!npuPython || npuPython.ok);
       const backendAllowed = modelAllowedByBackends(m) && modelAllowedByHardware(m, hw);
       // usable: 文件齐 + 该引擎的运行时都就位 + 当前加速后端允许(NeMo 模型还要 torch/NeMo + CUDA)
       const usable = ready && backendAllowed
         && (m.engine !== 'nemo' || (nemo.ok && nemo.cuda))
         && (m.engine !== 'vibevoice' || (vibevoiceProbeCache && vibevoiceProbeCache.ok && vibevoiceProbeCache.cuda && Number(vibevoiceProbeCache.vramMB || 0) >= VIBEVOICE_RUNTIME.minVramMB));
       return {
-        id: m.id, name: m.name, engine: m.engine, desc: m.desc, sizeMB: m.sizeMB,
+        id: m.id, name: m.name, engine: m.engine,
+        desc: m.desc + (npuPython && !npuPython.ok ? ' ' + npuPython.msg : ''), sizeMB: m.sizeMB,
         dir, missing, filesOk, partial, ready, usable, cloud: !!m.cloud,
         backend: modelBackendOf(m), backendAllowed,
         nativeWordLevel: m.nativeWordLevel !== false,
@@ -9779,7 +9788,8 @@ function handleAsrRoutes(req, res, u) {
         draftAllowed: draftAllowedOf(m),
         needRuntime: !!rt && !rt.ok,
         runtimeKey: rt ? rt.key : '', runtimeName: rt ? rt.name : '',
-        runtimeSizeMB: rt ? rt.sizeMB : 0, runtimeReady: rt ? rt.ok : false,
+        runtimeSizeMB: rt ? rt.sizeMB : 0,
+        runtimeReady: npuPython ? !!npuPython.ok : (rt ? rt.ok : false),
         needNemo: m.engine === 'nemo' && !(nemo.ok && nemo.cuda),
         needVibeVoice: m.engine === 'vibevoice' && !vibevoiceRuntimeOk(),
         // 有可调参数的模型才带这个字段；前端据此决定是否显示「参数」入口。

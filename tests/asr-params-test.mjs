@@ -17,7 +17,8 @@ assert.equal(params.schemaFor(crisp).length, 2);
 assert.equal(params.schemaFor(sherpa).length, 2);
 assert.equal(params.schemaFor(vibevoice).length, 2);
 assert.equal(params.schemaFor(cloud).length, 0);
-assert.equal(params.schemaFor({ engine: 'openvino' }).length, 0, 'NPU Parakeet 没有可暴露的运行时参数');
+assert.equal(params.schemaFor({ engine: 'openvino' }).length, 3, 'NPU exposes supported parameters');
+assert.deepEqual(params.defaultsFor({ engine: 'openvino' }), { blankPenalty: 0.9, maxSymbolsPerFrame: 10, normalizationScope: 'window' });
 assert.equal(params.schemaFor({ engine: 'nemo' }).length, 0);
 
 const fwDefaults = params.defaultsFor(fw);

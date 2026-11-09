@@ -33,11 +33,15 @@ for (const [engine, keys, flags] of contracts) {
   }
 }
 
-// Parakeet NPU 没有可暴露参数：不能凭空出现 --blank-penalty / --threads 的假开关。
-assert.equal(params.schemaFor({ engine: 'openvino' }).length, 0);
+// NPU 的参数必须传给实际支持它们的 worker，并进入常驻实例键。
+assert.equal(params.schemaFor({ engine: 'openvino' }).length, 3);
 assert.equal(params.schemaFor({ engine: 'dual' }).length, 0);
-assert.match(SRC, /const openvino = eng === 'openvino';[\s\S]*?extra: openvino \? \[\] : \['--blank-penalty'/,
-  'NPU Parakeet does not receive the CUDA-only blank penalty');
+assert.match(SRC, /extra: openvino \? \['--blank-penalty', String\(mp\.blankPenalty\),\s*'--max-symbols-per-frame', String\(mp\.maxSymbolsPerFrame\)/);
+assert.match(SRC, /variant: openvino \? `blank=\$\{mp\.blankPenalty\};symbols=\$\{mp\.maxSymbolsPerFrame\};norm=\$\{mp\.normalizationScope\}`/);
+assert.ok(SRC.includes("'--normalization-scope', mp.normalizationScope"));
+const npuPy = fs.readFileSync(path.join(root, 'asr/asr_npu.py'), 'utf8');
+assert.match(npuPy, /add_argument\("--blank-penalty"/);
+assert.match(npuPy, /add_argument\("--max-symbols-per-frame"/);
 
 // 常驻识别服务把构造期参数放进 worker，并计入缓存键；否则改参数不会生效。
 const calls = SRC.match(/asrSvc\.transcribe\(\{[\s\S]*?\n\s*\}\);/g) || [];

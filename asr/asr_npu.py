@@ -64,7 +64,7 @@ DURATION_BINS = (0, 1, 2, 3, 4)
 WORD_BOUNDARY = "\u2581"
 
 # 编码器输入宽度固定为 1501 帧 mel(实测 100 帧/秒 => 15.01 秒); 更长音频按此窗口推进,
-# 窗口之间重叠一部分, 并把 LSTM 状态与已解码 token 带过去, 保证跨窗连贯。
+# 窗口之间重叠一部分，独立解码后按时间边界去重，避免错误 LSTM 状态传染后续窗口。
 ENCODER_WINDOW_FRAMES = 1501
 OVERLAP_FRAMES = 166
 ENCODER_FRAME_RATE = 12.5          # 编码器帧率 = 100 / 下采样 8
@@ -79,7 +79,6 @@ WIN_LENGTH = 400                   # 25 ms
 HOP_LENGTH = 160                   # 10 ms
 LOG_GUARD = 2.0 ** -24
 NORM_EPS = 1e-5
-NORM_MAX = 4.0
 
 # 基础断句阈值已移到 asr/common.py（两个引擎同一份），本文件不再重复定义。
 
@@ -319,7 +318,9 @@ class MelFrontend:
     def __init__(self, n_mels=MEL_BINS):
         import numpy as np
         self.n_mels = n_mels
-        self._window = np.hanning(WIN_LENGTH + 1)[:-1].astype(np.float64)
+        # ONNX 导出使用 NeMo 前端：非周期 Hann、居中补到 n_fft。
+        self._window = np.pad(np.hanning(WIN_LENGTH),
+                              ((N_FFT - WIN_LENGTH) // 2,) * 2).astype(np.float32)
 
         fft_freqs = np.fft.rfftfreq(N_FFT, 1.0 / SAMPLE_RATE)
         pts = _mel_to_hz(np.linspace(_hz_to_mel(0.0), _hz_to_mel(SAMPLE_RATE / 2.0), n_mels + 2))
@@ -330,34 +331,37 @@ class MelFrontend:
             upper = ramps[i + 2] / (pts[i + 2] - pts[i + 1])
             fb[i] = np.maximum(0.0, np.minimum(lower, upper))
         enorm = 2.0 / (pts[2:n_mels + 2] - pts[:n_mels])
-        self._fb = fb * enorm[:, None]
+        self._fb = (fb * enorm[:, None]).astype(np.float32)
 
     def log_mel(self, samples, normalize=True):
         import numpy as np
-        x = np.asarray(samples, dtype=np.float64).reshape(-1)
-        if x.size < WIN_LENGTH:
-            x = np.pad(x, (0, WIN_LENGTH - x.size))
-        n_frames = 1 + (x.size - WIN_LENGTH) // HOP_LENGTH
+        x = np.asarray(samples, dtype=np.float32).reshape(-1)
+        n_frames = x.size // HOP_LENGTH
+        if n_frames < 1:
+            return np.empty((self.n_mels, 0), dtype=np.float32)
+        # 缺少预加重会把错误频谱送给模型，轻声/背景语音尤其容易被判 blank。
+        x = np.concatenate((x[:1], x[1:] - np.float32(0.97) * x[:-1]))
+        x = np.pad(x, (N_FFT // 2,) * 2)
         # 分块计算帧索引（与 asr.frame_energies 同一个教训）：一次性广播
         # (n_frames, WIN_LENGTH) 的索引在 1 小时音频上 ≈ 1.4 亿元素，长音频有 OOM 风险；
         # 分块后内存只与块大小有关。rfft 逐行独立，分块数值与一次性计算完全一致。
-        win_offs = np.arange(WIN_LENGTH)[None, :]
+        win_offs = np.arange(N_FFT)[None, :]
         mel_bins = self._fb.shape[0]
-        feat_t = np.empty((n_frames, mel_bins), dtype=np.float64)   # [frames, mel]
-        block = max(1, 2000000 // WIN_LENGTH)                       # 每块索引元素 ≤200万(int64 约16MB)
+        feat_t = np.empty((n_frames, mel_bins), dtype=np.float32)   # [frames, mel]
+        block = max(1, 2000000 // N_FFT)                           # 每块索引元素 ≤200万(int64 约16MB)
         for b0 in range(0, n_frames, block):
             b1 = min(n_frames, b0 + block)
             idx = win_offs + HOP_LENGTH * np.arange(b0, b1, dtype=np.int64)[:, None]
             spec = np.fft.rfft(x[idx] * self._window[None, :], n=N_FFT, axis=1)
-            power = spec.real ** 2 + spec.imag ** 2
-            feat_t[b0:b1] = np.log(power @ self._fb.T + LOG_GUARD)
+            power = np.abs(spec).astype(np.float32) ** 2
+            feat_t[b0:b1] = np.log(power @ self._fb.T + np.float32(LOG_GUARD))
         feat = feat_t.T                                             # [mel, frames]
         if not normalize:
             return feat.astype(np.float32)
         mean = feat.mean(axis=1, keepdims=True)
-        std = feat.std(axis=1, keepdims=True)
+        std = feat.std(axis=1, keepdims=True, ddof=1) if n_frames > 1 else np.zeros_like(mean)
         normed = (feat - mean) / (std + NORM_EPS)
-        return (np.clip(normed, -NORM_MAX, NORM_MAX)).astype(np.float32)
+        return normed.astype(np.float32)
 
 
 # --------------------------------------------------------------------------
@@ -374,11 +378,15 @@ PROVIDER_DEVICES = {
 class NpuRecognizer:
     """OpenVINO 版 parakeet TDT: 编码器 + LSTM 预测 + Joint, TDT 贪心解码。"""
 
-    def __init__(self, model_dir, provider="npu"):
+    def __init__(self, model_dir, provider="npu", blank_penalty=0.9, max_symbols_per_frame=10,
+                 normalization_scope="window"):
         import numpy as np  # noqa: F401  提前确认 numpy 可导入, 报错更清楚
         import openvino as ov
 
         self.ov = ov
+        self.blank_penalty = float(blank_penalty)
+        self.max_symbols_per_frame = int(max_symbols_per_frame)
+        self.normalization_scope = normalization_scope
         self.model_dir = model_dir
         self.mel = MelFrontend()
         want_enc, want_joint = PROVIDER_DEVICES.get(provider, PROVIDER_DEVICES["npu"])
@@ -540,13 +548,17 @@ class NpuRecognizer:
             return row, h_out, c_out, (exp / exp.sum()).astype(np.float32)
 
         limit = valid if frame_limit is None else max(0, min(valid, int(frame_limit)))
+        symbols_at_frame = 0
         while frame < limit:
             logits, h_next, c_next, probs_row = step(last_token, state["hidden"], state["cell"], frame)
             head = logits[:vocab]
-            best = int(np.argmax(head))
-            dur = DURATION_BINS[int(np.argmax(logits[vocab:vocab + len(DURATION_BINS)]))] or 1
+            penalized = head.copy()
+            penalized[BLANK_TOKEN_ID] -= self.blank_penalty
+            best = int(np.argmax(penalized))
+            dur = DURATION_BINS[int(np.argmax(logits[vocab:vocab + len(DURATION_BINS)]))]
             if best == BLANK_TOKEN_ID:
-                frame = min(frame + dur, valid)
+                frame = min(frame + max(1, dur), valid)
+                symbols_at_frame = 0
                 continue
             tokens.append(best)
             # ⚠ 单位换算：`frame` 是**编码器帧**索引（12.5fps，和 while 条件、at=frame 同一口径），
@@ -560,24 +572,12 @@ class NpuRecognizer:
             state["hidden"] = np.ascontiguousarray(h_next, dtype=np.float32)
             state["cell"] = np.ascontiguousarray(c_next, dtype=np.float32)
             state["last_token"] = best
-            frame = min(frame + dur, valid)
-
-        if is_last and tokens:
-            last_frame = max(0, valid - 1)
-            for _ in range(8):
-                logits, h_next, c_next, probs_row = step(last_token, state["hidden"], state["cell"], last_frame)
-                head = logits[:vocab]
-                best = int(np.argmax(head))
-                if best == BLANK_TOKEN_ID:
-                    break
-                tokens.append(best)
-                # 同上的单位换算：last_frame 也是编码器帧索引（valid 是编码器帧数）
-                timings.append({"id": best, "frame": last_frame * ENC_TO_MEL})
-                probs.append(float(probs_row[best]))
-                last_token = best
-                state["hidden"] = np.ascontiguousarray(h_next, dtype=np.float32)
-                state["cell"] = np.ascontiguousarray(c_next, dtype=np.float32)
-                state["last_token"] = best
+            # TDT 的零时长是合法输出：同一声学帧可以发出多个字词片段。
+            # 强制 +1 会在快语速/多 subword 时跳过尚未解码的 token。
+            symbols_at_frame += 1
+            if dur > 0 or symbols_at_frame >= self.max_symbols_per_frame:
+                frame = min(frame + max(1, dur), valid)
+                symbols_at_frame = 0
         return tokens, timings, probs
 
     # ------------------------------------------------------------ 词级时间轴
@@ -636,6 +636,10 @@ class NpuRecognizer:
             size = min(ENCODER_WINDOW_FRAMES, frames - offset)
             is_last = (offset + size) >= frames
             chunk = mel[:, offset:offset + size]
+            if self.normalization_scope == "window":
+                mean = chunk.mean(axis=1, keepdims=True)
+                std = chunk.std(axis=1, keepdims=True, ddof=1) if size > 1 else np.zeros_like(mean)
+                chunk = (chunk - mean) / (std + NORM_EPS)
             window = np.zeros((MEL_BINS, ENCODER_WINDOW_FRAMES), dtype=np.float32)
             window[:, :size] = chunk
 
@@ -647,10 +651,10 @@ class NpuRecognizer:
                 acts, valid = hit
             # 非末窗：只保留重叠区之前的内容（重叠区会被下一个窗口重新解码一遍）。
             # 这一步对**每一遍**（干净与加噪）都必须做，否则多录的内容会把时间戳推高。
-            # 单位与 token 的 frame 一致（mel 帧 @100fps）：截到重叠区之前。
+            # 循环索引/valid 是编码器帧，不能直接传 mel 帧数（相差八倍）。
             lim = None
             if not is_last and size > OVERLAP_FRAMES:
-                lim = int(size - OVERLAP_FRAMES)
+                lim = int(np.ceil((size - OVERLAP_FRAMES) / ENC_TO_MEL))
             tokens, timings, probs = self._tdt_loop(acts, valid, state, is_last,
                                                     collect_probs=collect_probs, noise=noise,
                                                     frame_limit=lim)
@@ -711,7 +715,7 @@ class NpuRecognizer:
         变的只是"不再重复算同一件事"。
         """
         import numpy as np
-        mel = self.mel.log_mel(samples, normalize=True)
+        mel = self.mel.log_mel(samples, normalize=self.normalization_scope == "global")
         if mel.shape[1] <= 0:
             return {"words": [], "confidence": C.fuse(0.0, 0.0, 0.0), "audio": {}}
 
@@ -948,7 +952,15 @@ def main():
     ap.add_argument("--tta", type=int, default=2,
                     help="稳定性重跑的遍数(默认 2): 给编码器输出加微小噪声重跑, "
                          "看有多少词变了 —— 置信度的第三个信号。设 0 可关掉(更快但没有稳定性项)")
+    ap.add_argument("--blank-penalty", type=float, default=0.9,
+                    help="TDT blank logit 惩罚，0 关闭；过大会产生插词")
+    ap.add_argument("--max-symbols-per-frame", type=int, default=10,
+                    help="单声学帧最多输出 token 数，防止零时长解码复读")
+    ap.add_argument("--normalization-scope", choices=["window", "global"], default="window",
+                    help="按识别窗口归一化，或兼容整段音频归一化")
     args = ap.parse_args()
+    if not 0 <= args.blank_penalty <= 2 or not 1 <= args.max_symbols_per_frame <= 20:
+        ap.error("blank 惩罚应为 0-2，单帧 token 上限应为 1-20")
 
     if args.hotwords_file:
         log("[提示] Intel NPU 后端暂不支持热词偏置, 本次忽略热词文件")
@@ -958,12 +970,18 @@ def main():
     try:
         if args.serve:
             return serve_loop(args,
-                              lambda: NpuRecognizer(args.model, provider=args.provider),
+                              lambda: NpuRecognizer(args.model, provider=args.provider,
+                                                    blank_penalty=args.blank_penalty,
+                                                    max_symbols_per_frame=args.max_symbols_per_frame,
+                                                    normalization_scope=args.normalization_scope),
                               _serve_recognize, log)
         if args.manifest:
             if not args.out:
                 raise RuntimeError("manifest 模式需要 --out（或 manifest 里的 out 字段）")
-            return run_manifest(args, lambda: NpuRecognizer(args.model, provider=args.provider))
+            return run_manifest(args, lambda: NpuRecognizer(args.model, provider=args.provider,
+                                                            blank_penalty=args.blank_penalty,
+                                                            max_symbols_per_frame=args.max_symbols_per_frame,
+                                                            normalization_scope=args.normalization_scope))
         if not args.out:
             raise RuntimeError("--out 是必需的（除非用 --serve 或 --manifest）")
         log("读取音频 …")
@@ -978,7 +996,10 @@ def main():
         def on_progress(done, total):
             progress(25 + int(done / max(1, total) * 60), "asr", "识别中 … 第 %d/%d 块" % (done, total))
 
-        rec = NpuRecognizer(args.model, provider=args.provider)
+        rec = NpuRecognizer(args.model, provider=args.provider,
+                            blank_penalty=args.blank_penalty,
+                            max_symbols_per_frame=args.max_symbols_per_frame,
+                            normalization_scope=args.normalization_scope)
         t0 = time.time()
         res = rec.recognize_words(samples, on_progress=on_progress,
                                  tta_runs=max(0, args.tta), log=log)

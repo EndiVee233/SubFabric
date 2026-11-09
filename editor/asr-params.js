@@ -10,7 +10,8 @@
  *   · qwen（Qwen3-ASR；对齐器单独列出）：分块长度、ASR 最大生成 token
  *   · sherpa-onnx（Parakeet CUDA）：CPU 线程数、TDT blank 惩罚
  *   · vibevoice（VibeVoice 4bit CUDA）：音频编码分块、最大生成 token
- * Parakeet 的 NPU / 双引擎变体没有可安全暴露的参数（稳定性重跑遍数由置信度档位统一控制，
+ * Parakeet NPU 暴露 blank 惩罚、单帧 token 上限与特征归一化范围；双引擎变体
+ * 没有独立参数（稳定性重跑遍数由置信度档位统一控制，
  * 双引擎分工在「性能与调度」里设置），NeMo 与云端同样没有 schema，界面不显示“参数”按钮。
  *
  * 保存值放在 asr/settings.json 的 modelParams[modelId] 下；缺失字段回落默认值。
@@ -37,6 +38,17 @@ const VAD_METHOD_OPTIONS = [
 ];
 
 const PROFILES = {
+  'openvino': [
+    { key: 'blankPenalty', label: '空白惩罚', type: 'number', default: 0.9,
+      min: 0, max: 2, step: 0.01,
+      help: '降低 blank 的相对分数以减少漏词；默认 0.9，过大可能插词。请用短音频比较。' },
+    { key: 'maxSymbolsPerFrame', label: '单帧 token 上限', type: 'number', default: 10,
+      min: 1, max: 20, step: 1,
+      help: '允许同一声学帧输出多个词片段；过小会漏词，上限用于防止零时长复读。' },
+    { key: 'normalizationScope', label: '音频特征归一化', type: 'select', default: 'window',
+      options: [{value: 'window', label: '每个识别窗口'}, {value: 'global', label: '整段音频（兼容）'}],
+      help: '长音频建议按窗口归一化，避免响亮旁白影响后续轻声对话。' },
+  ],
   'whisperx': [
     { key: 'language', label: '识别语言', type: 'select', default: 'en', options: LANGUAGE_OPTIONS_AUTO,
       help: '英语对齐权重随模型下载；其它语言首次使用会下载对应对齐模型。' },
@@ -228,6 +240,10 @@ function normalizeFor(model, input) {
 }
 
 function summaryFor(model, values) {
+  if (model && model.engine === 'openvino') {
+    const v = values || defaultsFor(model);
+    return `blank 惩罚 ${v.blankPenalty} · 单帧 ${v.maxSymbolsPerFrame} token · ${v.normalizationScope}`;
+  }
   const v = resolveFor(model, values);
   if (model && model.engine === 'whisperx') return `WhisperX · ${v.language} · 批量 ${v.batchSize} · ${v.computeType} · wav2vec2 对齐`;
   if (model && model.engine === 'faster-whisper') {

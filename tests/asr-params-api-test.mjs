@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { isolatedServer } from './helpers/isolated-server.mjs';
 
-const server = await isolatedServer();
+// 参数/API 测试不运行识别，禁止探测时调用系统 python 别名（Windows 可能打开商店）。
+const server = await isolatedServer({ env: { ASR_PYTHON: process.execPath } });
 try {
   const status = await (await server.call('/api/asr/status')).json();
   const fw = (status.models || []).find(m => m.id === 'faster-whisper-large-v2');
@@ -11,6 +12,15 @@ try {
   assert.ok(fw.params, 'Whisper large-v2 应带参数摘要');
   assert.equal(fw.params.count, 7);
   assert.ok(fw.params.summary.includes('VAD 关'), '默认摘要应显示 VAD 关');
+  const npu = status.models.find(m => m.id === 'parakeet-tdt-0.6b-v2-npu');
+  assert.equal(npu.params.count, 3);
+  const np = await (await server.call('/api/asr/params', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({model: npu.id, values: {blankPenalty: 0.3, maxSymbolsPerFrame: 12}}),
+  })).json();
+  assert.deepEqual(np.values, {blankPenalty: 0.3, maxSymbolsPerFrame: 12, normalizationScope: 'window'});
+  const npAgain = await (await server.call('/api/asr/params?model=' + npu.id)).json();
+  assert.deepEqual(npAgain.values, np.values);
 
   const got = await (await server.call('/api/asr/params?model=faster-whisper-large-v2')).json();
   assert.equal(got.ok, true);
@@ -58,7 +68,8 @@ try {
   assert.equal(reset.isDefault, true);
   assert.equal(reset.values.vad, false);
   const after = JSON.parse(fs.readFileSync(path.join(server.root, 'asr/settings.json'), 'utf8'));
-  assert.equal(after.modelParams, undefined, '恢复默认后应删掉该模型的覆盖值');
+  assert.equal(after.modelParams['faster-whisper-large-v2'], undefined, '仅删除恢复默认的模型覆盖值');
+  assert.equal(after.modelParams[npu.id].blankPenalty, 0.3, '其它模型参数保留');
 
   // 已停用模型：状态里不出现，参数接口也不接受
   for (const id of ['ggml-large-v3-turbo', 'parakeet-tdt-0.6b-v2', 'vibevoice-asr-4bit',

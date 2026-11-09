@@ -69,7 +69,7 @@ def main() -> int:
 
     print("\n== 3. 每一处 timings.append 都做了换算 ==")
     sites = re.findall(r"timings\.append\(\{[^}]*\}\)", text)
-    ok(len(sites) >= 2, f"找到 {len(sites)} 处 timings.append")
+    ok(len(sites) >= 1, f"找到 {len(sites)} 处 timings.append")
     for s in sites:
         has = "ENC_TO_MEL" in s
         ok(has, f"已换算: {s[:64]}", "这处没乘换算系数 → 该 token 的时间戳会压缩 8 倍")
@@ -81,8 +81,8 @@ def main() -> int:
        "limit 仍按编码器帧数 valid 计算")
     ok(re.search(r'"frame": frame \* ENC_TO_MEL', text) is not None,
        "记录时乘系数（而不是把 frame 变量本身改掉）")
-    ok(re.search(r"last_frame = max\(0, valid - 1\)", text) is not None,
-       "last_frame 仍按编码器帧口径（valid - 1）")
+    ok('"frame": last_frame' not in text,
+       "不在末帧强行追加缺少声学推进的 token")
 
     print("\n== 5. 下游确实按 mel 帧解释（这是换算的依据）==")
     ok(re.search(r"fps = 1\.0 / MEL_FRAME_RATE", text) is not None,

@@ -124,6 +124,13 @@
 
 ## 3. 后端与数据流
 
+- **NPU Parakeet 漏词修复（2026-11-09，已完成且已验证）**：`asr_npu.py` 修正 TDT 非 blank
+  零时长的解码推进、跨窗口裁剪的 mel/encoder 帧换算，移除末帧强补 token；前端按 NeMo 的预加重、
+  非周期 Hann/居中补零、样本标准差计算特征。默认逐 15.01s 窗口归一化，避免长音频响亮旁白污染轻声段。
+  `asrEngineArgs` 统一传入 blank 惩罚、单帧 token 上限、归一化范围，三者都进入常驻 worker 键。
+  `/api/asr/status` 独立探测 OpenVINO，模型文件齐全但运行时缺失时不再报 ready/usable。
+  真实媒体验证与局限见 §7；不改变其它识别引擎的已保存参数。
+
 - **外部 LLM 共用 `server.js` 的 `llmChat`**。翻译及连通性测试、语义分句与全片重分句、角色推断、
   术语表校对、反思纠错与热词分析按配置的服务商选择协议。既有服务商使用 OpenAI Chat Completions，
   `anthropic` 使用非流式 Anthropic Messages。Anthropic 地址可填服务根地址、带 `/v1` 的基址或完整
@@ -493,6 +500,10 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **NPU 参数面板（2026-11-09）**：共用既有 ASR 参数模态与读写 API，新增空白惩罚（默认 0.9，
+  0–2）、单帧 token 上限（默认 10，1–20）、归一化范围（默认每个窗口，可选整段兼容）。
+  参数仍保存在 `modelParams[modelId]`，稳定性重跑次数继续由置信度档位管理。
 
 - **Anthropic 设置**：翻译方案、自动纠错和热词分析的服务商列表由后端预设提供。选「Anthropic（Claude / 兼容接口）」，
   填写服务商给出的模型 ID 与 API Key；兼容网关可以改 API 地址。翻译方案可保存、切换和测试连接。
@@ -1538,6 +1549,13 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
+- **NPU 修复局部实装（2026-11-09，已完成且已验证）**：安装版补齐 OpenVINO 2026.4.1 与其 telemetry，
+  只合并 `asr/asr_npu.py`、`editor/asr-params.js`、`editor/server.js`、`editor/lang/zh-CN.json`；
+  四文件先备份并校验前后哈希，保留安装版既有 Anthropic 功能。未改项目、设置、视频或模型，未结束当前编辑器。
+  真实 NPU 60 秒推理通过，完整置信度重跑不改变主词序列/时间起点；隔离候选服务实际验证缺运行时不可用、
+  已安装运行时可用及参数保存。识别 worker 已更新，新参数面板/状态路由待下次正常重启加载；
+  未重打安装包、未发布 Release。
+
 **beta 1.5.10.1（2026-11-08）**：双版本构建、SEA 实装及 Release 均已完成且已验证；云端提交成功且已核对。
 固定 main 快照加本次版本/PE 配置增量构建，保留本地已有修改；隔离构建中的 stage 文件发现改用该快照路径表，
 并复用已安装 Electron 45.1.0，仅为工具链适配、不进入程序载荷。两包都带精翻 6/5/4/3/1、常规 6/3/3/2/1、
@@ -1840,6 +1858,19 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 
 ### ASR 准确率（Whisper large-v2 与 Parakeet 实测）
 
+**NPU 修复后的新验证（2026-11-09）**：同一份 56m21.824s 英文视频和精翻参考，参考英文归一化后
+8,616 词；以词序列编辑距离计，非时间轴/句子数准确率。旧 NPU WER 34.47%、删除率 26.47%；
+修复后 blank=0.9 / 单帧上限=10 / window 归一化为 WER **17.44%**、删除率 **6.48%**，
+删除词 2,281→558，插词 97→277，不能把增加的词都当正确。干净一遍推理 82.3→76.9s，
+模型加载约 2.7s（已有编译缓存）；实际 encoder=NPU，预测/联合网络=Intel GPU。
+12 分钟抽样的前 9 分钟调参、后 3 分钟检查，比较 blank 0/0.3/0.6/0.9/1.2 与单帧上限 5/10/20，
+保留 0.9/10；独立 NeMo 数值对照最大特征差 0.000947。7 项新 Python 解码/特征测试、10 项帧单位测试、
+24 项分句一致性检查、4 组 JS 参数/HTTP/WhisperX 回归通过；帧单位旧私有媒体检查缺夹具跳过。
+ESLint 0 error / 17 个既有 warning；Ruff 未运行（本机未安装），未跑全量 JS 或重新打包。
+最终 HTTP 回归通过；早轮曾因旧断言、沙箱回环限制和 Windows 临时目录 EBUSY 失败，已分别修正与复测。
+仍会漏重叠人声、弱背景声和专名；同一 12 分钟 WhisperX 对照只降低 VAD 阈值反而更差，保留原配置。
+以下表格是另一段视频的**历史验证**，其中“当前默认”是当时口径，不覆盖以上 NPU 新默认与其它已保存参数。
+
 **口径**：`How I Saved the World's Largest Minecraft Server.webm` 前 10 分钟；参考文本由
 `人工精校的字幕（前两小时）.ass` 还原（去掉颜色标签、按相同文本合并逐词事件）；WER 比较前做
 大小写、标点、撇号与数字统一，不比较时间轴。数字只对本机/本段素材有效，换素材必须重跑。
@@ -1882,8 +1913,8 @@ WhisperX（Whisper large-v2 + 对齐）+ 人工修正生成，Whisper 在专名/
     MDX 人声分离、逐词时间戳、识别提示词。
   - CrispASR/Parakeet（Vulkan）：CPU 线程数、词时间戳阈值。
   - Qwen3-ASR：分块长度（默认 150s，30–240）、ASR 最大生成 token（默认 4096，1024–8192）。
-  - Parakeet NPU 没有可安全暴露的参数：稳定性重跑遍数由置信度档位统一控制，线程数由 OpenVINO
-    自管，所以不显示「参数」按钮。
+  - Parakeet NPU：blank 惩罚、单帧 token 上限、特征归一化范围；稳定性重跑遍数仍由置信度档位统一控制，
+    线程数仍由 OpenVINO 自管。已实际暴露的三个参数均传给 worker。
   - **已停用**：whisper.cpp、Parakeet CUDA（sherpa-onnx）、VibeVoice 的 schema 保留在
     `editor/asr-params.js` 作为回滚参考，但模型条目已注释，`GET/POST /api/asr/params` 对它们返回 400。
   - schema / 默认值 / 范围校验集中在 `editor/asr-params.js`（支持 `multipleOf` 吸附）；
