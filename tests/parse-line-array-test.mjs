@@ -60,7 +60,8 @@ eq('首尾多余空行被裁掉 n=2', parseLineArrayReply('\n甲\n乙\n\n', 2), 
  * 现实里不会出现「一批全是空原文行」——待翻译行本来就是筛过非空的，
  * 所以这里不做特判，避免把「模型只吐了空白」误判成成功。 */
 eq('空行 + 不足行数仍判失败', parseLineArrayReply('甲\n\n', 3), null);
-eq('空行不影响编号剥离 n=3', parseLineArrayReply('1. 甲\n\n3. 丙', 3), ['甲', '', '丙']);
+eq('缺失编号不能用空行凑数', parseLineArrayReply('1. 甲\n\n3. 丙', 3), null);
+eq('显式空编号保留原位', parseLineArrayReply('1. 甲\n2. \n3. 丙', 3), ['甲', '', '丙']);
 
 console.log('\n【6】编号输入 / 按序号归位 / 降批阶梯');
 /* 只靠换行时模型容易把两行合成一句；给每行加序号后可以按序号归位，
@@ -70,7 +71,7 @@ eq('空行也带序号', numberLines(['甲', '', '丙']), ['1. 甲', '2. ', '3. 
 eq('按序号归位（顺序被打乱）', parseNumberedReply('2. 乙\n1. 甲', 2), ['甲', '乙']);
 eq('按序号归位（缺号返回 null）', parseNumberedReply('1. 甲', 2), null);
 eq('序号超出范围不算', parseNumberedReply('1. 甲\n9. 乙', 2), null);
-eq('重复序号只认第一个', parseNumberedReply('1. 甲\n1. 乙\n2. 丙', 2), ['甲', '丙']);
+eq('重复序号拒绝整批', parseNumberedReply('1. 甲\n1. 乙\n2. 丙', 2), null);
 eq('整体解析走编号路径', parseLineArrayReply('1. 甲\n2. 乙', 2), ['甲', '乙']);
 eq('编号之间夹空行仍按编号取回', parseLineArrayReply('1. 甲\n\n2. 乙', 2), ['甲', '乙']);
 ok('编号缺失时回退到逐行兜底', JSON.stringify(parseLineArrayReply('甲\n乙', 2)) === '["甲","乙"]');

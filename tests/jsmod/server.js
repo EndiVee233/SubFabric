@@ -2099,12 +2099,15 @@ function parseGlossary(text, lang) {
 }
 
 /** 系统提示词 = 用户提示词 + 术语表块(有术语表时才追加) */
-function systemPromptWithGlossary(cfg, strict) {
+function systemPromptWithGlossary(cfg, strict, bindSources = false) {
+  const format = bindSources
+    ? '【本次输出格式优先】只输出 JSON 数组，每条为 {"id":1,"source":"输入原文","translation":"中文译文"}。'
+      + 'id 必须与本次输入的序号一一对应，source 必须逐字复制该条原文（包括标点、空白和换行）。'
+      + '即使两条原文连成一句或重复，也要分别翻译，禁止合并后重新编号，禁止把漏掉的译文补在后面。'
+      + '每个 id 恰好出现一次，非空原文的 translation 必须非空，不要解释或 Markdown 围栏。'
+    : '【输出格式】每行输出「序号. 译文」，序号与输入行号一致且连续；不要 JSON、不要 markdown 代码块、不要解释。';
   const sys = (cfg.prompt || DEFAULT_TRANSLATE_PROMPT) + '\n\n'
-    + (strict
-      ? '【极其重要】上一次的回复没有按输入逐行返回。这一次严格按「序号. 译文」输出：'
-        + '序号与输入完全一致、连续不缺号，不要 JSON、不要 markdown 代码块、不要解释。'
-      : '【输出格式】每行输出「序号. 译文」，序号与输入行号一致且连续；不要 JSON、不要 markdown 代码块、不要解释。');
+    + (strict ? '【重试】上一回复未通过逐行校验，请严格检查每条原文与译文的对应关系。\n' : '') + format;
   const g = parseGlossary(cfg.glossary, cfg.glossaryLang);
   if (!g.length) return sys;
   return sys + '\n\n【术语表】下面的词必须按给定译法翻译，不要音译、不要另译（未列出的按常规翻译）：\n'
@@ -7537,10 +7540,10 @@ function startPrepare(id, videoPath, mode) {
   /* 解析模型回复的工具都在 editor/llm-text.js（纯函数, 可单测）:
    *  · stripReasoning   —— 剥掉  thinking… 思维链（推理模型必踩的坑, 以前完全没处理）
    *  · parseJsonArray   —— 平衡扫描取**第一个完整闭合**的数组（不再"首个 [ 到末个 ]", 那会被思考里的示例数组带偏）
-   *  · parseLineArrayReply —— 标准 JSON 之外的兜底: 逐行纯文本/编号行/引号行, 并过滤思考行与寒暄行
-   *    （它内部自己调 parseJsonArray, 所以这里不需要再绑一个别名 —— 以前有, 无人调用已删）
+   *  · parseTranslationReply —— 批量核对 ID / 原文回显 / 译文，单句兼容既有文本形态
+   *    内部复用 parseJsonArray / parseLineArrayReply。
    *  · punctPairsSane   —— 标点密度合理性（防小模型"每词加逗号"） */
-  const parseTranslationReply = llmText.parseLineArrayReply;
+  const parseTranslationReply = llmText.parseTranslationReply;
 
 
   /** 落盘译文（每批一次），服务重启/刷新后可续翻。
@@ -7554,7 +7557,7 @@ function startPrepare(id, videoPath, mode) {
     fs.renameSync(tp + '.tmp', tp);
   }
 
-  /** 请求一次译文。strict=true 时追加"必须逐行输出纯文本"的强化指令；JSON 仅作兼容输入。 */
+  /** 请求一次译文。批量绑定序号及原文，strict=true 时追加逐行校验的重试指令。 */
   /** 本地引擎的翻译入口。目标语言取自「术语表语言」设置（简体/繁體）。 */
   async function translateLocal(cfg, texts) {
     const lang = String((cfg && cfg.glossaryLang) || '简体');
@@ -7581,16 +7584,16 @@ function startPrepare(id, videoPath, mode) {
       }
       return arr;
     }
-    const sys = systemPromptWithGlossary(cfg, strict);
+    const sys = systemPromptWithGlossary(cfg, strict, texts.length > 1);
     const r = await llmChat(cfg, [
       { role: 'system', content: sys },
-      { role: 'user', content: llmText.buildTranslateUserMessage(texts, o.refs) },
+      { role: 'user', content: llmText.buildTranslateUserMessage(texts, o.refs, texts.length > 1) },
     ], { maxTokens: o.maxTokens, debugFile: o.debugFile, kind: 'translate' });
-    const arr = parseTranslationReply(r.content, texts.length);
+    const arr = parseTranslationReply(r.content, texts);
     if (!arr) {
       const head = String(r.content).slice(0, 300);
       console.error(`[llm] 译文回复不合规（${texts.length} 行, finish_reason=${r.finishReason || '?'}）：${head}`);
-      throw new LlmError('返回既不是与输入等行数的逐行文本、也不是兼容的 JSON 数组：' + String(r.content).slice(0, 300), 'format', { rawHead: head });
+      throw new LlmError('译文未通过逐行对应校验（序号、原文或行数不匹配）：' + String(r.content).slice(0, 300), 'format', { rawHead: head });
     }
     return arr;
   }

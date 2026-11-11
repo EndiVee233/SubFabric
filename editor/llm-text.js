@@ -106,7 +106,7 @@ function unwrapJsonArrayString(v) {
 /* ── 编号输入 ────────────────────────────────────────────────
  * 给每行加「序号. 」再送给模型。只靠换行分隔时，模型很容易把两行合成一句
  * （尤其是连续的叙述性台词），行数一少整批就判失败 —— 提示词再怎么写都压不住。
- * 有显式序号后，「第 3 行」成了可锚定的位置，模型漏一行/并一行都能被我们按序号补回来。
+ * 有显式序号后，「第 3 行」成了可锚定的位置，缺号/重复号必须拒绝，不能按位置补齐。
  * 同一思路见 Cerlancism/chatgpt-subtitle-translator 的 prefixNumber。 */
 function numberLines(texts) {
   const list = Array.isArray(texts) ? texts : [];
@@ -125,6 +125,28 @@ function nextBatchSize(n) {
   const target = Math.floor(v / 3);            // 至少砍到 1/3，比折半更狠
   for (const s of BATCH_LADDER) if (s <= target) return s;
   return Math.max(1, target);
+}
+
+/** 批量译文必须同时返回序号和原文，防止漏行后重新编号仍凑够行数。 */
+function parseTranslationReply(text, texts) {
+  const sources = texts.map(value => String(value == null ? '' : value));
+  const records = parseJsonArray(text);
+  if (records && records.every(record => record && !Array.isArray(record) && typeof record === 'object')) {
+    if (records.length !== sources.length) return null;
+    const output = new Array(sources.length);
+    for (const record of records) {
+      const index = record.id - 1;
+      if (!Number.isInteger(record.id) || index < 0 || index >= sources.length || output[index] !== undefined
+        || record.source !== sources[index] || typeof record.translation !== 'string'
+        || (sources[index].trim() && !record.translation.trim())) return null;
+      output[index] = unwrapJsonArrayString(record.translation);
+    }
+    return output;
+  }
+  // 单句没有跨行错位风险，保留既有服务商的纯文本和字符串数组兼容。
+  if (sources.length !== 1) return null;
+  const output = parseLineArrayReply(text, 1);
+  return output && (!sources[0].trim() || output[0].trim()) ? output : null;
 }
 
 function parseLineArrayReply(text, n) {
@@ -152,9 +174,11 @@ function parseLineArrayReply(text, n) {
 
   /* 按序号取回：输入是「1. …」编号的，模型多半也照着编号输出。
      只要有 1..n 的完整编号，就**按序号归位** —— 即使模型顺序有偏移也能对齐，
-     这是编号输入带来的额外好处。缺号则落到下面的逐行兜底。 */
+     这是编号输入带来的额外好处。编号有歧义则拒绝整批。 */
   const numbered = parseNumberedReply(s, n);
   if (numbered) return numbered;
+  // 编号已出现但校验失败时，不能丢掉编号再按位置收下同样多的行。
+  if (/^\s*\d{1,4}\s*[.、):：]/m.test(s)) return null;
 
   /* keepBlank = 空行是否算作一行译文。
    * 提示词第 5 条要求「原文为空的行输出空行」，合规回包里就会出现空行；
@@ -201,14 +225,14 @@ function parseLineArrayReply(text, n) {
 }
 
 /** 从「1. 译文」这种带序号的回包里按序号归位。要求 1..n 全部出现且非空判断交给上层。
- *  序号只认行首、且必须在 1..n 范围内（避免把台词里的「3. 」当成序号）。 */
+ *  序号只认行首，且必须在 1..n 范围内并恰好出现一次。 */
 function parseNumberedReply(text, n) {
   const map = new Map();
   for (const raw of String(text == null ? '' : text).split(/\r?\n/)) {
     const m = /^\s*(\d{1,4})\s*[.、):：]\s*(.*)$/.exec(raw);
     if (!m) continue;
     const idx = Number(m[1]);
-    if (!(idx >= 1 && idx <= n) || map.has(idx)) continue;
+    if (!(idx >= 1 && idx <= n) || map.has(idx)) return null;
     map.set(idx, unwrapJsonArrayString(String(m[2]).trim()));
   }
   if (map.size !== n) return null;
@@ -301,9 +325,11 @@ function clampContextRows(v) {
 
 /** 拼给模型的待翻译正文。带上下文时把参考行放在**同一个 user 消息**里、用显式标记隔开。
  *  ⚠ 字符串里"待翻译的行数"必须仍然等于 texts.length —— 调用方按它校验译文行数。 */
-function buildTranslateUserMessage(texts, refs) {
+function buildTranslateUserMessage(texts, refs, bindSources = false) {
   const list = (Array.isArray(texts) ? texts : []).map(t => String(t == null ? '' : t));
-  const body = numberLines(list).join('\n');   // 编号输入：每行带「序号. 」，便于逐行对齐
+  const body = bindSources
+    ? JSON.stringify(list.map((text, i) => ({ id: i + 1, source: String(text == null ? '' : text) })))
+    : numberLines(list).join('\n');   // 编号输入：每行带「序号. 」，便于逐行对齐
   const r = (Array.isArray(refs) ? refs : []).filter(x => x && (x.text || x.zh));
   if (!r.length) return body;
   const ctx = r.map(x => `${String(x.text == null ? '' : x.text)}\t=> ${String(x.zh == null ? '' : x.zh)}`).join('\n');
@@ -355,7 +381,7 @@ function normalizeZhPunctuation(text) {
 
 module.exports = {
   stripReasoning, looksLikeReasoning, extractJsonArray, parseJsonArray,
-  parseLineArrayReply, unwrapJsonArrayString, punctPairsSane, chattyLine, LlmError,
+  parseTranslationReply, parseLineArrayReply, unwrapJsonArrayString, punctPairsSane, chattyLine, LlmError,
   clampBatchSize, planChunks, normalizeZhPunctuation, BATCH_MIN, BATCH_MAX, BATCH_DEFAULT,
   clampTemperature, clampContextRows, buildTranslateUserMessage, planJobs, translationRefs,
   TEMP_MIN, TEMP_MAX, TEMP_DEFAULT, CTX_MIN, CTX_MAX, CTX_DEFAULT,
