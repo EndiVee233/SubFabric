@@ -21,9 +21,9 @@
 报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
 仅属历史验证，不覆盖本机功能增量；本次未跑全量 JS、Python、真实 GUI、GPU/ASR、媒体导出或安装验收。
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.11.1` / 文件版本
-  `1.5.11.1`（npm `1.5.11-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.11.1-setup.exe` 与
-  `SubFabric-1.5.11.1-sea-setup.exe`（Inno Setup + Node SEA）；本次双包构建、实装与已发布 Release 验收见 §6。
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.12.1` / 文件版本
+  `1.5.12.1`（npm `1.5.12-beta.1`）。两条链路的安装包命名分别为 `SubFabric-1.5.12.1-setup.exe` 与
+  `SubFabric-1.5.12.1-sea-setup.exe`（Inno Setup + Node SEA）；历史双包构建、实装与已发布 Release 验收见 §6。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
   后装的一方接管该目录 —— 清掉对方只剩程序文件的残留（`resources/`、`*.dll`、`*.pak`、`unins000.*`、
@@ -1563,6 +1563,22 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
+**beta 1.5.12.1（2026-11-11）**：Electron/NSIS 安装包构建完成且已验证；本次云端保存与发布结果以对应提交/Release 为准。
+承接 `ced32ff` 的导出目录文案与原生选择器前台激活修复；按四段版本规则抬补丁段，避开 11-09 已发布的
+`1.5.11.1` 撞号，不修改既有 Release。既有 Anthropic Messages 协议兼容保留且定向回归通过，版本常量同步到
+显示版本 / 文件版本 / npm 版本 / stage 校验 / 旧链路 `.iss` / 用户向 README 与测试镜像共 8 个文件。
+构建环境未安装 Inno Setup，旧 SEA/Inno 包本次未构建，Release 只含 Electron/NSIS 单包。
+本机代理会让 Node 侧 HTTPS 下载挂起：Electron 45.1.0 win32-x64 zip 与 winCodeSign 2.6.0、
+nsis 3.0.4.1、nsis-resources 3.4.1 三个工具包改由镜像下载并预置缓存后离线构建；zip 与三个 7z 的
+SHA-256 均与官方校验和逐项一致。未改仓库构建脚本，仅本次构建以 `electronDist` 指向本地 zip。
+Electron/NSIS 包 **158,590,565 B**，SHA-256 `7f2068b7661751ed8de05f4e9b47a5692a257d754716709fe5fcdc73014b53f5`；
+PE FileVersion `1.5.12.1` / ProductVersion `1.5.12-beta.1`，staging manifest 112 文件、
+appVersion `beta 1.5.12.1`、fileVersion `1.5.12.1`、Node `v22.22.2`。
+全量 JS 回归 181 passed / 13 partial / 1 diagnostic / 2 failed / 2 excluded。`oplog-editor-test` 与
+`reflect-lock-test` 的源码静态断言在未改动的 `ced32ff` 基线上同样失败，属既有项、非本次版本改动引入；
+partial 来自私有夹具、Python/模型与独立浏览器条件，不算完整验收。未做真实安装/覆盖安装、GUI 启动、
+长媒体推理、真实翻译服务与编码导出验收；安装包未签名。
+
 **beta 1.5.11.1（2026-11-09）**：双版本构建已完成且已验证；本次云端保存与发布结果以对应提交/Release 为准。
 修复 NPU 参数摘要缺失的 i18n 模板词条，并更新主题清单中的语言文件哈希；未放宽文案或主题守卫。
 全主题脚本等待真实稿件身份就绪再检查编辑器，失败时附带路由/稿件/弹窗诊断，避免旧字幕 DOM 冒充加载完成。
@@ -1631,9 +1647,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.11.1'`、`APP_FILE_VERSION = '1.5.11.1'`、npm version `1.5.11-beta.1`。
+  `APP_VERSION = 'beta 1.5.12.1'`、`APP_FILE_VERSION = '1.5.12.1'`、npm version `1.5.12-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.11.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.12.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
