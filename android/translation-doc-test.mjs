@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import {translationDocument} from './translation-doc.mjs';
+import {assFixture} from './ass-fixture.mjs';
+import {AssDoc} from '../editor/js/ass.js';
+const snapshot=translationDocument(assFixture,'sample.ass');
+assert.equal(snapshot.rows.length,2);assert.equal(snapshot.rows[0].text,'Hello world.');
+const result=snapshot.patch(['新的译文','保留标题']),after=new AssDoc(result),before=new AssDoc(assFixture);
+const english=doc=>doc.events.filter(e=>!/中文|Chinese|^zh/.test(e.style));
+assert.deepEqual(english(after).map(e=>e._rawParts),english(before).map(e=>e._rawParts));
+assert.ok(result.includes('Custom Metadata: keep this exact value'));assert.ok(result.includes('preserve comment'));
+assert.ok(result.includes('{\\pos(640,160)\\bord4\\i1}Keep, this title'));
+assert.ok(after.events.some(e=>e.text.includes('新的译文')));assert.ok(after.events.some(e=>e.text.includes('保留标题')));
+assert.equal(translationDocument(result,'sample.ass').rows.filter(row=>!row.zh).length,0);
+const malicious=snapshot.patch(['{\\pos(0,0)}\nDialogue: Evil']);assert.ok(!malicious.includes('｛\\pos'));assert.ok(!malicious.includes('\nDialogue: Evil'));
+const srt='4\r\n00:00:01,000 --> 00:00:02,000\r\n<b>Hello</b>\r\n\r\n5\r\n00:00:03,000 --> 00:00:04,000\r\n旧译\r\nWorld\r\n';
+const st=translationDocument(srt,'sample.srt');assert.equal(st.rows.length,2);assert.equal(st.rows[1].zh,'旧译');
+assert.equal(st.patch(['你好','世界']),'4\r\n00:00:01,000 --> 00:00:02,000\r\n你好\r\n<b>Hello</b>\r\n\r\n5\r\n00:00:03,000 --> 00:00:04,000\r\n世界\r\nWorld\r\n');
+console.log('Android translation document: original ASS events, words, tags, comments, metadata and SRT layout preserved');

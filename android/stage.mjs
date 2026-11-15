@@ -26,6 +26,16 @@ function include(file) {
 for(const file of fs.readdirSync(path.join(root,'editor/js')))if(file.endsWith('.js'))include('editor/js/'+file);
 fs.mkdirSync(path.join(target,'themes'),{recursive:true});
 fs.copyFileSync(path.join(root,'editor/themes/windows-uwp.theme.json'),path.join(target,'themes/windows-uwp.theme.json'));
+// Pure translation contracts are shared with desktop; no server startup / credential code is staged.
+const server=fs.readFileSync(path.join(root,'editor/server.js'),'utf8').replace(/\r\n/g,'\n');
+function section(start,end){const a=server.indexOf(start),b=server.indexOf(end,a);if(a<0||b<0)throw new Error('Review Android LLM shared source: '+start);return server.slice(a,b);}
+const presets=section('const LLM_PRESETS = [','/** 双引擎的分工配置。');
+const prompts=section('function parseGlossary(text, lang)', 'function updateLlmKey(');
+fs.writeFileSync(path.join(target,'android-llm-defaults.js'),`const ANTHROPIC_PROVIDER='anthropic';\n${presets}\n${prompts}\nexport {LLM_PRESETS,DEFAULT_TRANSLATE_PROMPT,systemPromptWithGlossary};\n`);
+const llmText=fs.readFileSync(path.join(root,'editor/llm-text.js'),'utf8');
+if(!llmText.includes('module.exports = {'))throw new Error('Review Android LLM parser exports');
+fs.writeFileSync(path.join(target,'android-llm-text.js'),llmText.replace('module.exports = {','export {'));
+fs.writeFileSync(path.join(target,'android-translation-doc.js'),fs.readFileSync(path.join(root,'android/translation-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
 let html=fs.readFileSync(path.join(root,'editor/studio.html'),'utf8');
 html=html.replace('<script src="js/accent.js">','<script src="/studio/android-boot.js"></script><link rel="stylesheet" href="/studio/android.css"><script src="js/accent.js">');
 html=html.replace('<script type="module" src="js/main.js"></script>','<script type="module" src="js/main.js"></script><script type="module" src="/studio/android-ui.js"></script>');
@@ -42,4 +52,10 @@ const emptyGuard="if (!hasEvents) throw new Error('字幕没有有效事件');";
 if(!project.includes(emptyGuard))throw new Error('Review Android empty ASS document integration');
 project=project.replace(emptyGuard,"if (!hasEvents && !(m.androidProject && isAss && /^\\s*\\[Events\\]/im.test(text))) throw new Error('字幕没有有效事件');");
 fs.writeFileSync(projectFile,project);
+const mainFile=path.join(target,'js/main.js');
+let main=fs.readFileSync(mainFile,'utf8');
+const debugAnchor='window.__dbg = { state, assPlayer,';
+if(!main.includes(debugAnchor))throw new Error('Review Android project refresh hook');
+main=main.replace(debugAnchor,'window.__androidRefreshProject = async id => { Projects.detachProject(); await Projects.openProject(id); };\n'+debugAnchor);
+fs.writeFileSync(mainFile,main);
 console.log(`Android Studio: ${visited.size} shared browser modules, complete ASS editor + libass`);

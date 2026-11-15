@@ -40,7 +40,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.2 · ASS 编辑器',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.3 · ASS 与翻译',vendorOk:true,stamp:''});
     if(path==='/api/samples')return response({videos:[],subtitles:[]});
     if(path==='/api/fonts')return response({fonts:['Noto Sans CJK SC']});
     if(path==='/api/asr/hardware')return response({cuda:{available:false},vulkan:{available:false,devices:[]},npu:{available:false}});
@@ -48,8 +48,13 @@
     if(path==='/api/asr/status')return response({models:[],aligners:[],selected:'',backends:{cuda:false,vulkan:false},runtime:{},prereq:{},python:{ok:false},ffmpeg:{ready:false}});
     if(path==='/api/asr/confidence')return response({mode:'off'});
     if(path==='/api/oplog/stats')return response({days:[],total:0});
-    if(path==='/api/translate/config')return response({ready:false,cfg:{},presets:[],schemes:[]});
-    if(path==='/api/translate/schemes')return response({schemes:[],activeId:''});
+    if(path.startsWith('/api/translate/')){
+      const snapshot=()=>window.__dbg?.state.assDoc?.serialize()||JSON.stringify(window.__dbg?.state.items.map(row=>[row.start,row.end,row.l1,row.l2]));
+      const project=window.__dbg?.state.project,before=path==='/api/translate/one'?snapshot():null;
+      const translation=await import('/studio/android-translate.js'),result=await translation.route(path,method,await jsonBody(options.body));
+      if(before!==null&&(project!==window.__dbg?.state.project||before!==snapshot()))return response({error:'翻译期间稿件已变化，请重试'},409);
+      return response(result);
+    }
     if(path==='/api/youtube/updates')return response({channels:[],items:[],stale:false});
     if(path==='/api/logs/client'||path==='/api/diag'){if(path==='/api/logs/client'&&options.body)errors.push(String(options.body).slice(0,4000));return response({ok:true});}
     if(path==='/api/projects'){

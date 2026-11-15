@@ -21,12 +21,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.*;
 import com.k2fsa.sherpa.onnx.*;
 
-/** Offline prototype: no desktop server, network permission, or broad storage permission. */
+/** Android Studio: embedded editor, SAF storage and native translation transport. */
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://subfabric.local";
     private static final int MEDIA = 10, SUBTITLE = 11, MODEL = 12, EXPORT = 13, PACK = 15;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService storeWorker = Executors.newSingleThreadExecutor();
+    private final ExecutorService llmWorker = Executors.newFixedThreadPool(2);
+    private LlmStore llmStore;
+    private LlmClient llmClient;
     private final Map<String,Uri> selectedFiles=new HashMap<>();
     private final AtomicBoolean busy = new AtomicBoolean(), cancelled = new AtomicBoolean();
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
@@ -51,6 +54,7 @@ public final class MainActivity extends Activity {
         media = new File(getFilesDir(), "media"); media.mkdirs();
         models = new File(getFilesDir(), "parakeet"); models.mkdirs();
         studio = new StudioStore(getFilesDir());
+        llmStore=new LlmStore(this);llmClient=new LlmClient(llmStore);
         getWindow().setStatusBarColor(0xff10131b);
         getWindow().setNavigationBarColor(0xff10131b);
         web = new WebView(this);
@@ -154,6 +158,23 @@ public final class MainActivity extends Activity {
             if (destroyed || id == null || id.length() > 80) return;
             if(json.length()>32*1024*1024){reply(id,false,"内容超过安卓传输上限");return;}
             if (action.equals("cancel")) { cancelled.set(true); reply(id, true, new JSONObject()); return; }
+            if(action.equals("llmCancel")){try{llmClient.cancel(new JSONObject(json).getString("requestId"));reply(id,true,new JSONObject());}catch(Exception e){reply(id,false,message(e));}return;}
+            if(action.startsWith("llm")){
+                llmWorker.execute(()->{try{
+                    JSONObject arg=new JSONObject(json);Object result;
+                    switch(action){
+                        case "llmConfig":
+                            if(arg.optString("method").equals("POST"))llmStore.update(arg.getJSONObject("input"));
+                            JSONObject cfg=llmStore.config("");result=llmStore.list().put("cfg",LlmStore.publicConfig(cfg)).put("ready",LlmClient.ready(cfg));break;
+                        case "llmSchemes":
+                            result=arg.optString("method","GET").equals("GET")?llmStore.list():llmStore.mutate(arg.getString("method"),arg.optString("id"),arg.optBoolean("activate"),arg.optJSONObject("input")==null?new JSONObject():arg.getJSONObject("input"));break;
+                        case "llmChat":result=llmClient.chat(arg,false);break;
+                        case "llmTest":result=llmClient.chat(arg,true);break;
+                        default:throw new IOException("未知翻译操作");
+                    }
+                    reply(id,true,result);
+                }catch(Exception e){reply(id,false,message(e));}});return;
+            }
             if(action.equals("rememberRoute")){try{String route=new JSONObject(json).getString("route");if(route.matches("#/([A-Za-z0-9_/-]*)"))getSharedPreferences("window",MODE_PRIVATE).edit().putString("route",route).apply();reply(id,true,new JSONObject());}catch(Exception e){reply(id,false,message(e));}return;}
             if (busy.get() && !action.equals("status") && !action.startsWith("studio")) { reply(id, false, "任务进行中，请先等待或停止"); return; }
             if(action.equals("close")){runOnUiThread(()->finish());reply(id,true,new JSONObject());return;}
@@ -199,7 +220,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.2.0"); break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.3.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
@@ -440,5 +461,5 @@ public final class MainActivity extends Activity {
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
     @Override public void onBackPressed(){if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
-    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
 }
