@@ -114,8 +114,18 @@ const themes=window.SF_THEMES;window.SF_THEMES=Object.freeze({...themes,builtins
 document.querySelectorAll('[data-theme-pack]').forEach(node=>{if(node.dataset.themePack!=='windows-uwp')node.hidden=true;});
 // Screen keyboard gets room; the selected text remains scrollable and the original editor handles IME composition.
 let redraw;
-function resize(){const height=visualViewport?.height||innerHeight;document.documentElement.style.setProperty('--android-height',height+'px');document.body.classList.toggle('android-keyboard',height<innerHeight*.78);dbg.timeline.touch();clearTimeout(redraw);redraw=setTimeout(()=>{if(dbg.assPlayer.ready&&dbg.state.assDoc){dbg.assPlayer.instance.resize();dbg.assPlayer.updateNow(dbg.state.assDoc.serialize());dbg.assPlayer.seek(video.currentTime);}},180);}
+let viewportWidth=innerWidth,fullHeight=visualViewport?.height||innerHeight;
+function resize(){
+  const height=visualViewport?.height||innerHeight;
+  if(Math.abs(innerWidth-viewportWidth)>Math.max(50,viewportWidth*.25)){viewportWidth=innerWidth;fullHeight=height;}
+  else fullHeight=Math.max(fullHeight,height);
+  const focused=document.activeElement,editing=focused&&(focused.isContentEditable||/^(INPUT|TEXTAREA)$/.test(focused.tagName));
+  document.documentElement.style.setProperty('--android-height',height+'px');
+  document.body.classList.toggle('android-keyboard',height<innerHeight*.78||!!editing&&height<fullHeight*.78);
+  dbg.timeline.touch();clearTimeout(redraw);redraw=setTimeout(()=>{if(dbg.assPlayer.ready&&dbg.state.assDoc){dbg.assPlayer.instance.resize();dbg.assPlayer.updateNow(dbg.state.assDoc.serialize());dbg.assPlayer.seek(video.currentTime);}},180);
+}
 visualViewport?.addEventListener('resize',resize);window.addEventListener('resize',resize);resize();
+document.addEventListener('focusout',()=>setTimeout(resize,0));
 let lastRoute='';
 function route(){if(location.hash!==lastRoute){previewTime=0;previewPaused=true;lastRoute=location.hash;}document.body.dataset.androidEditor=String(/^#\/(?:project\/|editor)/.test(location.hash));document.body.classList.remove('android-nav-open');native.rpc('rememberRoute',{route:location.hash||'#/home'}).catch(()=>{});}
 window.addEventListener('hashchange',route);route();

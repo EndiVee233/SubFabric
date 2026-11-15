@@ -1458,9 +1458,12 @@
 - 390/320/1024px 实际 WebView 视口检查通过：工具栏不越界，手机列表保留编辑高度，时间轴可用；500 句/1000 事件
   长稿仅挂载 8 张卡片且可滚到第 500 句。此为 WSA 单机结果，不是手机性能承诺或 ARM 真机验收。
 - 本次曾发现并修复：手机控件溢出/列表被挤压、预览画布在尺寸变化后未重画、首次字幕时钟延迟重置跳转、
-  系统文件创建器追加 .txt、字体选择器引发页面重建。修正后定向复验；最终云端全量结果以实际 CI 为准。
+  系统文件创建器追加 .txt、字体选择器引发页面重建、键盘使 WebView 同步变矮时未切换紧凑布局。
+  修正后定向复验；同宽度收缩/恢复布局回归通过（390×650 → 390×350 → 恢复），真实软键盘仍待手工验收。
+  ASS 阶段云端全量 JS/Python 与主题浏览器检查已通过；后续增量以对应 CI 为准。
 - 恢复入口：`node android/ass-core-test.mjs`、`node android/test-ass-wsa.mjs`、
-  `node android/test-ass-touch-wsa.mjs`、`node android/test-ass-actions-wsa.mjs`、`node android/test-ass-large-wsa.mjs`（后三项需要 WSA/ADB）。
+  `node android/test-ass-touch-wsa.mjs`、`node android/test-ass-actions-wsa.mjs`、`node android/test-ass-large-wsa.mjs`、
+  `node android/test-ass-keyboard-wsa.mjs`（设备脚本需要 WSA/ADB）。
   纯 ASS 回归已由 `tests/android-ass-test.mjs` 纳入统一入口。报告、系统导出文件和截图在 `android/out/`。
 - 未做：物理 ARM 手机、真实软键盘手工输入、4 小时级稿件与 Android 中途杀进程的任务恢复；翻译/下载/压制等完整
   移植尚未完成，不能把桌面历史验证当成安卓验收。旧原型数据升级前已备份；不回滚用户已保存的新稿件。
