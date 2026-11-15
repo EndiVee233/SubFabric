@@ -24,10 +24,11 @@ import com.k2fsa.sherpa.onnx.*;
 /** Android Studio: embedded editor, SAF storage and native translation transport. */
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://subfabric.local";
-    private static final int MEDIA = 10, SUBTITLE = 11, MODEL = 12, EXPORT = 13, PACK = 15;
+    private static final int MEDIA = 10, SUBTITLE = 11, MODEL = 12, EXPORT = 13, PACK = 15, DIRECTORY = 16;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService storeWorker = Executors.newSingleThreadExecutor();
     private final ExecutorService llmWorker = Executors.newFixedThreadPool(2);
+    private final ExecutorService videoWorker = Executors.newSingleThreadExecutor();
     private LlmStore llmStore;
     private LlmClient llmClient;
     private final Map<String,Uri> selectedFiles=new HashMap<>();
@@ -158,6 +159,21 @@ public final class MainActivity extends Activity {
             if (destroyed || id == null || id.length() > 80) return;
             if(json.length()>32*1024*1024){reply(id,false,"内容超过安卓传输上限");return;}
             if (action.equals("cancel")) { cancelled.set(true); reply(id, true, new JSONObject()); return; }
+            if(action.equals("videoCancel")){try{VideoExport.get(MainActivity.this).cancel(new JSONObject(json).getString("id"));reply(id,true,new JSONObject());}catch(Exception e){reply(id,false,message(e));}return;}
+            if(action.startsWith("video")){
+                if(action.equals("videoStart")&&android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)runOnUiThread(()->requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},44));
+                videoWorker.execute(()->{try{
+                    JSONObject arg=new JSONObject(json);VideoExport engine=VideoExport.get(MainActivity.this);Object result;
+                    switch(action){
+                        case "videoCapabilities":result=engine.capabilities(arg.getString("id"));break;
+                        case "videoStatus":result=engine.status(arg.getString("id"));break;
+                        case "videoStart":result=engine.start(arg.getString("id"),arg.getJSONObject("options"));break;
+                        case "videoFont":result=engine.font(arg.getString("base64"));break;
+                        case "videoDebugCrash":engine.debugCrash(arg.getString("id"));result=new JSONObject();break;
+                        default:throw new IOException("未知视频操作");
+                    }reply(id,true,result);
+                }catch(Throwable e){reply(id,false,message(e));}});return;
+            }
             if(action.equals("llmCancel")){try{llmClient.cancel(new JSONObject(json).getString("requestId"));reply(id,true,new JSONObject());}catch(Exception e){reply(id,false,message(e));}return;}
             if(action.startsWith("llm")){
                 llmWorker.execute(()->{try{
@@ -181,7 +197,7 @@ public final class MainActivity extends Activity {
             if(action.equals("uploadSelected")){
                 runOnUiThread(()->{try{Uri uri=selectedFiles.get(new JSONObject(json).getString("name"));if(uri==null)throw new IOException("请重新选择媒体文件");pickerId=id;onActivityResult(MEDIA,RESULT_OK,new Intent().setData(uri));}catch(Exception e){reply(id,false,message(e));}});return;
             }
-            if (action.equals("pickMedia") || action.equals("pickSubtitle") || action.equals("pickModel") || action.equals("pickPack") || action.equals("export")) {
+            if (action.equals("pickMedia") || action.equals("pickSubtitle") || action.equals("pickModel") || action.equals("pickPack") || action.equals("pickExportDirectory") || action.equals("export")) {
                 runOnUiThread(() -> {
                     if (pickerId != null) { reply(id, false, "请先完成当前文件选择"); return; }
                     try {
@@ -189,7 +205,8 @@ public final class MainActivity extends Activity {
                         pickerId = id;
                         Intent intent;
                         int request;
-                        if (action.equals("pickModel")) { request = MODEL; intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE); }
+                        if(action.equals("pickExportDirectory")){request=DIRECTORY;intent=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI,DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:Movies"));}
+                        else if (action.equals("pickModel")) { request = MODEL; intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE); }
                         else if (action.equals("export")) {
                             request = EXPORT; exportText = arg.optString("text");exportBase64=arg.optString("base64",null);
                             String exportName=arg.optString("name","SubFabric.ass");
@@ -220,7 +237,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.3.0"); break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.4.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
@@ -277,7 +294,10 @@ public final class MainActivity extends Activity {
         worker.execute(() -> {
             try {
                 Object response;
-                if (request == MEDIA) {
+                if(request==DIRECTORY){
+                    int flags=data.getFlags()&(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);getContentResolver().takePersistableUriPermission(uri,flags);
+                    SafDirectory directory=new SafDirectory(MainActivity.this,uri.toString());String name=directory.name();getSharedPreferences("export",MODE_PRIVATE).edit().putString("tree",uri.toString()).putString("name",name).commit();response=new JSONObject().put("path",name);
+                } else if (request == MEDIA) {
                     String projectId = UUID.randomUUID().toString(); File target=mediaFile(projectId);
                     String name = "导入的媒体";
                     try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)) { if(cursor!=null && cursor.moveToFirst()) name=cursor.getString(0); }
@@ -461,5 +481,5 @@ public final class MainActivity extends Activity {
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
     @Override public void onBackPressed(){if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
-    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
 }

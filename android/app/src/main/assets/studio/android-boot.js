@@ -40,7 +40,12 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.3 · ASS 与翻译',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.4 · 视频导出',vendorOk:true,stamp:''});
+    if(path==='/api/pick'&&method==='POST'){
+      const input=await jsonBody(options.body);
+      if(input.kind==='folder'&&input.purpose==='video-export')return response(await rpc('pickExportDirectory')||{});
+      return response({error:'此选择器用途尚未适配安卓'},501);
+    }
     if(path==='/api/samples')return response({videos:[],subtitles:[]});
     if(path==='/api/fonts')return response({fonts:['Noto Sans CJK SC']});
     if(path==='/api/asr/hardware')return response({cuda:{available:false},vulkan:{available:false,devices:[]},npu:{available:false}});
@@ -71,6 +76,10 @@
     }
     const match=/^\/api\/projects\/([0-9a-f-]{36})(?:\/(.*))?$/.exec(path);
     if(match){
+      if((match[2]||'').startsWith('export-video')){
+        const video=await import('/studio/android-video.js');
+        return response(await video.route(match[1],match[2].slice('export-video'.length),method,await jsonBody(options.body)));
+      }
       const id=match[1],action=match[2]||'',project=await load(id);
       if(!action){if(method==='DELETE')return response(await rpc('studioDelete',{id}));return response(documentMeta(project));}
       if(action==='subtitle'){

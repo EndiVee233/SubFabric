@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hardsubBrowserModule } from './export-shared.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const assets=process.argv[2];
 if(!assets) throw new Error('Pass the fresh Android assets directory');
@@ -58,4 +59,14 @@ const debugAnchor='window.__dbg = { state, assPlayer,';
 if(!main.includes(debugAnchor))throw new Error('Review Android project refresh hook');
 main=main.replace(debugAnchor,'window.__androidRefreshProject = async id => { Projects.detachProject(); await Projects.openProject(id); };\n'+debugAnchor);
 fs.writeFileSync(mainFile,main);
+const hardsub=fs.readFileSync(path.join(root,'editor/hardsub.js'),'utf8');
+fs.writeFileSync(path.join(target,'android-hardsub.js'),hardsubBrowserModule(hardsub));
+const exportFile=path.join(target,'js/export-video.js');
+let exporter=fs.readFileSync(exportFile,'utf8');
+for(const [before,after] of [
+  ["auto: '自动（优先独显）'","hardware: 'MediaCodec 硬件', auto: '自动（优先硬件）'"],
+  ["const order = ['auto'];","const order = ['auto']; if(d.androidHardware)order.push('hardware');"],
+  ["$('sf-ev-cap').textContent = bits.join(' · ');","$('sf-ev-cap').textContent = d.androidSummary || bits.join(' · ');\n    if(d.android){$('sf-ev-dir').readOnly=true;$('sf-ev-dir').placeholder='请选择安卓导出文件夹';$('sf-ev-dir').value=d.directory||'';const codec=$('sf-ev-codec'),chosen=codec.value;for(const option of [...codec.options])if(!d.codecs[option.value]?.software&&!d.codecs[option.value]?.hardware?.length)option.remove();codec.value=[...codec.options].some(o=>o.value===chosen)?chosen:codec.options[0]?.value||'';}"],
+]){if(!exporter.includes(before))throw new Error('Review Android export controls: '+before);exporter=exporter.replace(before,after);}
+fs.writeFileSync(exportFile,exporter);
 console.log(`Android Studio: ${visited.size} shared browser modules, complete ASS editor + libass`);

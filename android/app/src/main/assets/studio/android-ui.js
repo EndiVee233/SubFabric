@@ -46,6 +46,7 @@ button('关联媒体',async()=>{
 button('保存',async()=>{await flush();status('稿件已保存到安卓本机');});
 button('翻译字幕',async()=>{const translation=await import('./android-translate.js');await translation.showTranslation();});
 button('翻译设置',async()=>{await flush();location.hash='#/settings';});
+button('导出视频',async()=>{await flush();const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const {openExportVideoDialog}=await import('/editor/js/export-video.js');await openExportVideoDialog(id);});
 button('导出原件',async()=>{const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const p=await native.load(id);await native.rpc('export',{name:'original-'+p.subtitleName,text:p.originalText??p.text,mime:'text/plain'});});
 button('导入项目包',async()=>{await flush();const p=await native.rpc('pickPack');if(p)await open(p.id);});
 for(const [label,direction]of[['撤销','undo'],['重做','redo']])button(label,async()=>{
@@ -97,7 +98,7 @@ for(const [id,label]of [['btn-open-sub','打开字幕'],['btn-open-video','关�
   event.preventDefault();event.stopImmediatePropagation();[...bar.querySelectorAll('button')].find(node=>node.textContent===label)?.click();
 },true);
 const exporting=new WeakSet();
-for(const id of ['btn-export','btn-export-pack','btn-export-clean','btn-export-zh','btn-export-en','btn-export-full','btn-export-json','btn-export-advanced'])$(id)?.addEventListener('click',event=>{
+for(const id of ['btn-export','btn-export-pack','btn-export-clean','btn-export-zh','btn-export-en','btn-export-full','btn-export-json','btn-export-advanced','btn-export-video'])$(id)?.addEventListener('click',event=>{
   const node=event.currentTarget;if(exporting.has(node))return;event.preventDefault();event.stopImmediatePropagation();
   flush().then(()=>{exporting.add(node);try{node.click();}finally{exporting.delete(node);}}).catch(error=>status(error.message));
 },true);
@@ -132,5 +133,10 @@ let lastRoute='';
 function route(){if(location.hash!==lastRoute){previewTime=0;previewPaused=true;lastRoute=location.hash;}document.body.dataset.androidEditor=String(/^#\/(?:project\/|editor)/.test(location.hash));document.body.classList.remove('android-nav-open');native.rpc('rememberRoute',{route:location.hash||'#/home'}).catch(()=>{});}
 window.addEventListener('hashchange',route);route();
 document.addEventListener('visibilitychange',()=>{if(document.hidden)flush().catch(()=>{});});
-window.androidBack=async()=>{await flush();if(location.hash!=='#/home')location.hash='#/home';else native.rpc('close');};
+window.androidBack=async()=>{
+  if($('sf-export-video')?.hidden===false){$('sf-ev-close').click();return;}
+  const translation=document.querySelector('.android-translation-dialog[open]');if(translation){translation.dispatchEvent(new Event('cancel',{cancelable:true}));return;}
+  if(!more.hidden){more.hidden=true;return;}
+  await flush();if(location.hash!=='#/home')location.hash='#/home';else native.rpc('close');
+};
 window.androidReady=true;

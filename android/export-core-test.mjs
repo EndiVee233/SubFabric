@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import {hardsubBrowserModule} from './export-shared.mjs';
+import {assFixture} from './ass-fixture.mjs';
+import {AssDoc} from '../editor/js/ass.js';
+const source=await fs.readFile(new URL('../editor/hardsub.js',import.meta.url),'utf8');
+const browser=await import('data:text/javascript;base64,'+Buffer.from(hardsubBrowserModule(source)).toString('base64'));
+const result=browser.injectSacrificialEvent(assFixture);
+assert.equal(result.inserted,true);
+const original=new AssDoc(assFixture),exported=new AssDoc(result.text);
+assert.equal(exported.events.length,original.events.length+1);
+assert.equal(exported.events[0].text,'');assert.equal(exported.events[0].start,0);assert.equal(exported.events[0].end,.01);
+assert.deepEqual(exported.events.slice(1).map(e=>e._rawParts),original.events.map(e=>e._rawParts));
+assert.equal(browser.injectSacrificialEvent('not ASS').inserted,false);
+console.log('Android staged ASS export helper runs with original events/timing/tags intact');

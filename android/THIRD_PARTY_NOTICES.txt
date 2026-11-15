@@ -19,3 +19,20 @@ Corresponding build sources and dependency revisions:
 https://github.com/libass/JavascriptSubtitlesOctopus/tree/4.1.0
 The only worker modification forces redraw after setTrack; see editor/scripts/fetch-vendor.js.
 Noto Sans CJK SC: SIL Open Font License 1.1; see licenses/LICENSE-Noto-CJK.txt.
+
+FFmpegKit maintained full 8.1.9 (non-GPL variant), LGPL-3.0, dynamic Android shared libraries.
+AAR SHA-256: 40b52770a339af3bf8c02d8a9808c89b5f0e0e56eca39c10dc76c01b90f32306
+Pinned build and corresponding build scripts/patches/dependency source retrieval:
+https://github.com/ffmpegkit-maintained/ffmpeg/tree/v8.1.9-lts-android/android-8.1-lts
+https://github.com/ffmpegkit-maintained/ffmpeg/releases/tag/v8.1.9-lts-android
+The binary reports FFmpeg n8.1.3. Rebuild instructions are in the pinned tree (android.sh/scripts).
+FFmpegKit's original source.txt is retained verbatim with all external-library notices in
+licenses/ffmpeg-kit/raw/. The pinned fork above supersedes that original upstream contact/version.
+The app dynamically loads the replaceable .so files; build.ps1 provides the source rebuild/repack
+entry. No x264/x265 GPL variant is included. libass, OpenH264, kvazaar and libaom use their
+respective notices. Windows desktop FFmpeg tooling is not shipped in the APK.
+
+Smart Exception Java + Common 0.2.1, BSD-3-Clause
+https://github.com/tanersener/smart-exception/tree/v0.2.1
+Java JAR SHA-256: 5b96aaa5f191dedbef72fb0c38f1a2b01807920afc0d92a75a2acd6e0cc7703c
+Common JAR SHA-256: 1cad0fb4dfa01755a014331b5ed199281d2c3fab5aca5c9d7abd0b41d0ec3f7b
