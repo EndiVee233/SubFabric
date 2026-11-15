@@ -1,7 +1,7 @@
 # SubFabric
 
-Android 早期原型位于 [`android/`](android/)：适配手机与平板，支持 Parakeet 英文本地识别、字幕编辑、自动保存及 SRT 导出。
-已在 WSA 验证；还不包含桌面版的翻译、ASS 特效和视频压制。构建、模型准备与限制见 [项目文档](docs/PROJECT.md#android-原型构建与安装)。
+Android 移植位于 [`android/`](android/)：当前 0.2 优先移植原版 ASS 编辑器，支持逐词、中英、角色、样式、字体、预览与项目保存，适配手机和平板，主题只保留 Windows。
+已在 WSA 验证编辑链路；完整应用移植仍在进行，翻译、下载和压制尚未完成。构建与验证范围见 [项目文档](docs/PROJECT.md#android-构建与安装当前-02)。
 
 受 [Subforges](https://www.subforges.com/) 启发制作的本地动态字幕编辑器 专注于编辑 预览和导出逐词高亮字幕
 

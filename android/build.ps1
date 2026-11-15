@@ -42,6 +42,7 @@ Copy-Item -LiteralPath "$root/../editor/js/srt.js","$root/../editor/js/util.js" 
 Copy-Item -LiteralPath "$root/../editor/assets/app-logo.png" -Destination "$assets/logo.png"
 Copy-Item -LiteralPath "$root/THIRD_PARTY_NOTICES.txt" -Destination $assets
 Copy-Item -LiteralPath "$root/licenses" -Destination $assets -Recurse
+Run 'node' @("$root/stage.mjs",$assets)
 Copy-Item -LiteralPath "$root/../editor/assets/app-logo.png" -Destination "$out/res/drawable/app_logo.png"
 $sources = @(Get-ChildItem "$root/app/src/main/java" -Filter '*.java' -Recurse | ForEach-Object FullName)
 $classpath = "$androidJar;$sherpa/classes.jar;$KotlinStdlib"
@@ -59,7 +60,7 @@ Run "$Jdk/bin/jar.exe" @('uf',"$out/unsigned.apk",'-C',$pack,'.')
 Run "$buildTools/zipalign.exe" @('-f','4',"$out/unsigned.apk","$out/aligned.apk")
 $keystore = Join-Path $cache 'prototype.jks'
 if (!(Test-Path $keystore)) { Run "$Jdk/bin/keytool.exe" @('-genkeypair','-keystore',$keystore,'-storepass','android','-keypass','android','-alias','prototype','-dname','CN=SubFabric Android Prototype','-keyalg','RSA','-keysize','2048','-validity','3650') }
-$apk = Join-Path $root 'out/SubFabric-Android-0.1.0.apk'
+$apk = Join-Path $root 'out/SubFabric-Android-0.2.0.apk'
 Run "$buildTools/apksigner.bat" @('sign','--ks',$keystore,'--ks-key-alias','prototype','--ks-pass','pass:android','--key-pass','pass:android','--out',$apk,"$out/aligned.apk")
 Run "$buildTools/apksigner.bat" @('verify','--verbose',$apk)
 Get-FileHash $apk -Algorithm SHA256

@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { AssDoc } from '../editor/js/ass.js';
+import { analyzeKaraoke } from '../editor/js/karaoke.js';
+import { assFixture } from './ass-fixture.mjs';
+const doc = new AssDoc(assFixture);
+assert.equal(doc.events.length,4);
+assert.equal(doc.playResX,1280);
+const before=doc.serialize();
+assert.ok(before.includes('Custom Metadata: keep this exact value'));
+assert.ok(before.includes('preserve comment'));
+assert.ok(before.includes('{\\pos(640,160)\\bord4\\i1}Keep, this title'));
+const untouched=doc.events.at(-1).text;
+doc.setEventTime(doc.events[0],1.1,3.6);
+assert.equal(doc.events.at(-1).text,untouched);
+assert.ok(doc.serialize().includes('0:00:01.10,0:00:03.60'));
+const analyzed=analyzeKaraoke(new AssDoc(assFixture));
+assert.ok(analyzed);
+console.log('Android ASS shared document: metadata/comments/tags/margins/time editing passed');

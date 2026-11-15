@@ -1,0 +1,54 @@
+package com.subfabric.android;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.security.MessageDigest;
+import java.util.*;
+import org.json.*;
+
+/** Android-owned project documents. Original ASS remains the authoritative text. */
+final class StudioStore {
+    final File directory;
+    StudioStore(File root) { directory=new File(root,"studio"); directory.mkdirs(); }
+    File file(String id,String suffix) throws IOException {
+        if(!id.matches("[0-9a-f-]{36}")) throw new IOException("无效的稿件 ID");
+        return new File(directory,id+suffix);
+    }
+    JSONObject load(String id) throws Exception { return new JSONObject(new String(Files.readAllBytes(file(id,".json").toPath()),StandardCharsets.UTF_8)); }
+    static String revision(String text) throws Exception {
+        byte[] bytes=MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+        StringBuilder out=new StringBuilder(); for(byte b:bytes) out.append(String.format("%02x",b&255)); return out.toString();
+    }
+    synchronized void write(JSONObject project) throws Exception {
+        File dest=file(project.getString("id"),".json"), temp=new File(directory,dest.getName()+".tmp");
+        try(FileOutputStream out=new FileOutputStream(temp)) {out.write(project.toString().getBytes(StandardCharsets.UTF_8));out.getFD().sync();}
+        Files.move(temp.toPath(),dest.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
+    }
+    synchronized Object call(String action,JSONObject args) throws Exception {
+        switch(action) {
+            case "studioList": {
+                JSONArray list=new JSONArray(); File[] files=directory.listFiles((d,n)->n.endsWith(".json"));
+                if(files!=null) {Arrays.sort(files,(a,b)->Long.compare(b.lastModified(),a.lastModified()));for(File f:files){JSONObject p=load(f.getName().replace(".json","")); p.remove("text");p.remove("originalText");p.remove("packExtras");p.remove("oplog");p.remove("notes");list.put(p);}}
+                return list;
+            }
+            case "studioLoad": return load(args.getString("id"));
+            case "studioCreate": {
+                JSONObject p=args.getJSONObject("project");p.put("id",UUID.randomUUID().toString());p.put("modifiedAt",System.currentTimeMillis());
+                p.put("revision",revision(p.optString("text")));write(p);return p;
+            }
+            case "studioUpdate": {
+                JSONObject p=load(args.getString("id")); JSONObject patch=args.getJSONObject("patch");
+                if(patch.has("text") && args.has("revision") && !args.getString("revision").equals(p.optString("revision"))) throw new IOException("CONFLICT: 稿件已被更新，请重新打开");
+                for(Iterator<String> keys=patch.keys();keys.hasNext();) {String key=keys.next();if(!key.equals("id")&&!key.equals("revision"))p.put(key,patch.get(key));}
+                if(patch.has("text"))p.put("revision",revision(p.getString("text")));
+                p.put("modifiedAt",System.currentTimeMillis());write(p);return p;
+            }
+            case "studioDelete": {
+                // Preserve a recoverable private snapshot instead of deleting project assets.
+                JSONObject p=load(args.getString("id")); p.put("archived",true);write(p);return new JSONObject().put("ok",true);
+            }
+            default: throw new IOException("未知的稿件操作");
+        }
+    }
+}

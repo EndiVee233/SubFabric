@@ -9,7 +9,9 @@ function add(value) {
   value = value.trim().replace(/\$\{[^}]*\}/g, '◇');
   if (/[\u4e00-\u9fa5]/u.test(value)) found.add(value);
 }
-for (const file of fs.readdirSync(path.join(root, 'app/src/main/assets'))) {
+const assets=path.join(root,'app/src/main/assets');
+function walk(dir){return fs.readdirSync(dir,{withFileTypes:true}).flatMap(entry=>entry.isDirectory()?walk(path.join(dir,entry.name)):[path.relative(assets,path.join(dir,entry.name))]);}
+for (const file of walk(assets)) {
   if (!/\.(?:html|js)$/.test(file)) continue;
   const text = fs.readFileSync(path.join(root, 'app/src/main/assets', file), 'utf8');
   if (file.endsWith('.html')) {

@@ -7,7 +7,7 @@ export async function connect() {
   if (!/^\d+$/.test(pid)) throw new Error('Launch the prototype in WSA first');
   shell('forward', 'tcp:19325', `localabstract:webview_devtools_remote_${pid}`);
   const targets = await (await fetch('http://127.0.0.1:19325/json')).json();
-  const target = targets.find(target => target.url === 'https://subfabric.local/');
+  const target = targets.find(target => target.url.startsWith('https://subfabric.local/'));
   if (!target) throw new Error('No prototype WebView debugging target');
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });

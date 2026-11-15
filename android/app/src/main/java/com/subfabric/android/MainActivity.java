@@ -24,8 +24,10 @@ import com.k2fsa.sherpa.onnx.*;
 /** Offline prototype: no desktop server, network permission, or broad storage permission. */
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://subfabric.local";
-    private static final int MEDIA = 10, SUBTITLE = 11, MODEL = 12, EXPORT = 13;
+    private static final int MEDIA = 10, SUBTITLE = 11, MODEL = 12, EXPORT = 13, PACK = 15;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService storeWorker = Executors.newSingleThreadExecutor();
+    private final Map<String,Uri> selectedFiles=new HashMap<>();
     private final AtomicBoolean busy = new AtomicBoolean(), cancelled = new AtomicBoolean();
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
     private WebView web;
@@ -33,6 +35,9 @@ public final class MainActivity extends Activity {
     private volatile boolean destroyed;
     private volatile long deadline;
     private File projects, media, models;
+    private StudioStore studio;
+    private ValueCallback<Uri[]> fileChooser;
+    private String exportBase64;
     private final Runnable watchdog = new Runnable() {
         public void run() {
             if (busy.get() && System.currentTimeMillis() > deadline) cancelled.set(true);
@@ -45,6 +50,7 @@ public final class MainActivity extends Activity {
         projects = new File(getFilesDir(), "projects"); projects.mkdirs();
         media = new File(getFilesDir(), "media"); media.mkdirs();
         models = new File(getFilesDir(), "parakeet"); models.mkdirs();
+        studio = new StudioStore(getFilesDir());
         getWindow().setStatusBarColor(0xff10131b);
         getWindow().setNavigationBarColor(0xff10131b);
         web = new WebView(this);
@@ -64,13 +70,22 @@ public final class MainActivity extends Activity {
                 if (!"https".equals(uri.getScheme()) || !"subfabric.local".equals(uri.getHost())) return empty(403);
                 String path = uri.getPath();
                 try {
+                    if(path.equals("/api/media")) return serveMedia(uri.getQueryParameter("path"),req.getRequestHeaders().get("Range"));
+                    if(path.matches("/api/projects/[0-9a-f-]{36}/(audio|peaks)")) {
+                        String id=path.split("/")[3]; boolean audio=path.endsWith("audio");
+                        File f=studio.file(id,audio?".audio.wav":".peaks.bin");
+                        if(!f.isFile())return empty(404);
+                        WebResourceResponse r=new WebResourceResponse(audio?"audio/wav":"application/octet-stream",null,new FileInputStream(f));
+                        Map<String,String> headers=new HashMap<>();headers.put("X-Peak-Rate","100");headers.put("X-Peak-Ch","2");r.setResponseHeaders(headers);return r;
+                    }
+                    if(path.equals("/api/font-file")) return new WebResourceResponse("font/otf",null,getAssets().open("editor/vendor/fonts/NotoSansCJKsc-Regular.otf"));
                     if (path.startsWith("/media/")) return serveMedia(path.substring(7), req.getRequestHeaders().get("Range"));
-                    String asset = path.equals("/") ? "index.html" : path.substring(1);
+                    String asset = path.equals("/") ? "editor/studio.html" : path.substring(1);
                     if (!asset.matches("[a-zA-Z0-9_./-]+") || asset.contains("..")) return empty(403);
-                    String mime = asset.endsWith(".js") ? "text/javascript" : asset.endsWith(".css") ? "text/css" : asset.endsWith(".png") ? "image/png" : asset.endsWith(".json") ? "application/json" : "text/html";
+                    String mime = asset.endsWith(".js") ? "text/javascript" : asset.endsWith(".css") ? "text/css" : asset.endsWith(".png") ? "image/png" : asset.endsWith(".json") ? "application/json" : asset.endsWith(".wasm")?"application/wasm":asset.endsWith(".otf")?"font/otf":asset.endsWith(".svg")?"image/svg+xml":"text/html";
                     WebResourceResponse response = new WebResourceResponse(mime, "UTF-8", getAssets().open(asset));
                     Map<String,String> headers = new HashMap<>();
-                    headers.put("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'");
+                    headers.put("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' blob:; worker-src 'self' blob:; font-src 'self' blob: data:; base-uri 'none'; form-action 'none'; frame-src 'none'");
                     headers.put("X-Content-Type-Options", "nosniff");
                     response.setResponseHeaders(headers);
                     return response;
@@ -80,6 +95,16 @@ public final class MainActivity extends Activity {
         });
         web.addJavascriptInterface(new Bridge(), "SubFabric");
         web.setWebChromeClient(new WebChromeClient() {
+            @Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> callback,FileChooserParams params) {
+                if(fileChooser!=null)fileChooser.onReceiveValue(null);fileChooser=callback;
+                Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);
+                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,params.getMode()==FileChooserParams.MODE_OPEN_MULTIPLE);
+                try {startActivityForResult(intent,14);}catch(Exception e){fileChooser.onReceiveValue(null);fileChooser=null;}
+                return true;
+            }
+            @Override public boolean onJsAlert(WebView v,String url,String message,JsResult result) {
+                new android.app.AlertDialog.Builder(MainActivity.this).setMessage(message).setPositiveButton("确定",(d,w)->result.confirm()).setOnCancelListener(d->result.confirm()).show();return true;
+            }
             @Override public boolean onJsConfirm(WebView v,String url,String message,JsResult result) {
                 new android.app.AlertDialog.Builder(MainActivity.this).setMessage(message).setPositiveButton("继续",(d,w)->result.confirm()).setNegativeButton("取消",(d,w)->result.cancel()).setOnCancelListener(d->result.cancel()).show(); return true;
             }
@@ -87,7 +112,9 @@ public final class MainActivity extends Activity {
         });
         setContentView(web);
         handler.post(watchdog);
-        web.loadUrl(ORIGIN + "/");
+        String route=state!=null?state.getString("route","#/home"):getSharedPreferences("window",MODE_PRIVATE).getString("route","#/home");
+        if(!route.matches("#/([A-Za-z0-9_/-]*)"))route="#/home";
+        web.loadUrl(ORIGIN + "/editor/studio.html"+route);
     }
 
     private WebResourceResponse empty(int status) {
@@ -124,10 +151,16 @@ public final class MainActivity extends Activity {
 
     public final class Bridge {
         @JavascriptInterface public void call(String id, String action, String json) {
-            if (destroyed || id == null || id.length() > 80 || json.length() > 8 * 1024 * 1024) return;
+            if (destroyed || id == null || id.length() > 80) return;
+            if(json.length()>32*1024*1024){reply(id,false,"内容超过安卓传输上限");return;}
             if (action.equals("cancel")) { cancelled.set(true); reply(id, true, new JSONObject()); return; }
-            if (busy.get() && !action.equals("status")) { reply(id, false, "任务进行中，请先等待或停止"); return; }
-            if (action.equals("pickMedia") || action.equals("pickSubtitle") || action.equals("pickModel") || action.equals("export")) {
+            if(action.equals("rememberRoute")){try{String route=new JSONObject(json).getString("route");if(route.matches("#/([A-Za-z0-9_/-]*)"))getSharedPreferences("window",MODE_PRIVATE).edit().putString("route",route).apply();reply(id,true,new JSONObject());}catch(Exception e){reply(id,false,message(e));}return;}
+            if (busy.get() && !action.equals("status") && !action.startsWith("studio")) { reply(id, false, "任务进行中，请先等待或停止"); return; }
+            if(action.equals("close")){runOnUiThread(()->finish());reply(id,true,new JSONObject());return;}
+            if(action.equals("uploadSelected")){
+                runOnUiThread(()->{try{Uri uri=selectedFiles.get(new JSONObject(json).getString("name"));if(uri==null)throw new IOException("请重新选择媒体文件");pickerId=id;onActivityResult(MEDIA,RESULT_OK,new Intent().setData(uri));}catch(Exception e){reply(id,false,message(e));}});return;
+            }
+            if (action.equals("pickMedia") || action.equals("pickSubtitle") || action.equals("pickModel") || action.equals("pickPack") || action.equals("export")) {
                 runOnUiThread(() -> {
                     if (pickerId != null) { reply(id, false, "请先完成当前文件选择"); return; }
                     try {
@@ -137,11 +170,13 @@ public final class MainActivity extends Activity {
                         int request;
                         if (action.equals("pickModel")) { request = MODEL; intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE); }
                         else if (action.equals("export")) {
-                            request = EXPORT; exportText = arg.getString("text");
-                            intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/x-subrip").addCategory(Intent.CATEGORY_OPENABLE);
-                            intent.putExtra(Intent.EXTRA_TITLE, "SubFabric.srt");
+                            request = EXPORT; exportText = arg.optString("text");exportBase64=arg.optString("base64",null);
+                            String exportName=arg.optString("name","SubFabric.ass");
+                            String exportMime=exportName.matches("(?i).*\\.(ass|ssa|srt)$")?"application/octet-stream":arg.optString("mime","application/octet-stream");
+                            intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType(exportMime).addCategory(Intent.CATEGORY_OPENABLE);
+                            intent.putExtra(Intent.EXTRA_TITLE,exportName);
                         } else {
-                            request = action.equals("pickMedia") ? MEDIA : SUBTITLE;
+                            request = action.equals("pickMedia") ? MEDIA : action.equals("pickPack")?PACK:SUBTITLE;
                             intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);
                             if (request == MEDIA) intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"video/*", "audio/*"});
                         }
@@ -150,12 +185,21 @@ public final class MainActivity extends Activity {
                 });
                 return;
             }
-            worker.execute(() -> {
+            ExecutorService executor=action.startsWith("studio")&&!action.equals("studioPrepare")?storeWorker:worker;
+            executor.execute(() -> {
                 try {
                     JSONObject arg = new JSONObject(json);
                     Object result;
                     switch (action) {
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.1.0"); break;
+                        case "studioExportPack":result=android.util.Base64.encodeToString(StudioPack.export(studio.load(arg.getString("id"))),android.util.Base64.NO_WRAP);break;
+                        case "studioPrepare": {
+                            String pid=arg.getString("id");busy.set(true);cancelled.set(false);deadline=System.currentTimeMillis()+30*60*1000;progress("正在生成音频与波形",-1);
+                            try{AudioTools.prepare(mediaFile(arg.getString("mediaId")),studio.file(pid,".audio.wav"),studio.file(pid,".peaks.bin"),()->cancelled.get()||destroyed||System.currentTimeMillis()>deadline);
+                                JSONObject patch=new JSONObject().put("hasAudio",true).put("hasPeaks",true).put("prepare",new JSONObject().put("status","done"));result=studio.call("studioUpdate",new JSONObject().put("id",pid).put("patch",patch));
+                            }finally{busy.set(false);}break;
+                        }
+                        case "studioList": case "studioLoad": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.2.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
@@ -201,11 +245,13 @@ public final class MainActivity extends Activity {
 
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request,result,data);
+        if(request==14){if(fileChooser!=null){Uri[] uris=WebChromeClient.FileChooserParams.parseResult(result,data);if(uris!=null)for(Uri uri:uris){try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())selectedFiles.put(c.getString(0),uri);}}fileChooser.onReceiveValue(uris);fileChooser=null;}return;}
         String id = pickerId; pickerId = null;
         if (id == null) return;
         if (result != RESULT_OK || data == null || data.getData() == null) { reply(id,true,JSONObject.NULL); return; }
         Uri uri = data.getData();
         String output = exportText; exportText = null;
+        String bytes64=exportBase64;exportBase64=null;
         busy.set(true); cancelled.set(false); deadline=System.currentTimeMillis()+15*60*1000;
         worker.execute(() -> {
             try {
@@ -219,10 +265,18 @@ public final class MainActivity extends Activity {
                     } catch(Throwable e) { target.delete(); throw e; }
                     JSONObject p=new JSONObject().put("id",projectId).put("title",name).put("mime",getContentResolver().getType(uri)).put("media",true).put("cues",new JSONArray()).put("updated",System.currentTimeMillis());
                     writeProject(p); response=p;
+                } else if(request==PACK) {
+                    try(InputStream input=getContentResolver().openInputStream(uri)){response=StudioPack.read(input,studio);}
                 } else if(request==SUBTITLE) {
                     ByteArrayOutputStream out=new ByteArrayOutputStream();
                     try(InputStream input=getContentResolver().openInputStream(uri)) { copy(input,out,8*1024*1024,"正在导入字幕"); }
-                    response=new JSONObject().put("text",out.toString("UTF-8"));
+                    String name="subtitle.ass";
+                    try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(cursor!=null&&cursor.moveToFirst())name=cursor.getString(0);}
+                    byte[] bytes=out.toByteArray();String text;
+                    if(bytes.length>=2&&(bytes[0]&255)==255&&(bytes[1]&255)==254)text=new String(bytes,2,bytes.length-2,java.nio.charset.StandardCharsets.UTF_16LE);
+                    else if(bytes.length>=2&&(bytes[0]&255)==254&&(bytes[1]&255)==255)text=new String(bytes,2,bytes.length-2,java.nio.charset.StandardCharsets.UTF_16BE);
+                    else {try{text=StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();}catch(java.nio.charset.CharacterCodingException e){text=new String(bytes,java.nio.charset.Charset.forName("GB18030"));}}
+                    response=new JSONObject().put("text",text).put("name",name);
                 } else if(request==MODEL) {
                     Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(uri,DocumentsContract.getTreeDocumentId(uri));
                     Map<String,Uri> found=new HashMap<>();
@@ -240,7 +294,7 @@ public final class MainActivity extends Activity {
                     }
                     response=new JSONObject().put("modelReady",modelReady());
                 } else {
-                    try(OutputStream out=getContentResolver().openOutputStream(uri,"wt")) { out.write(output.getBytes(StandardCharsets.UTF_8)); }
+                    try(OutputStream out=getContentResolver().openOutputStream(uri,"wt")) { out.write(bytes64==null?output.getBytes(StandardCharsets.UTF_8):android.util.Base64.decode(bytes64,android.util.Base64.DEFAULT)); }
                     response=new JSONObject().put("exported",true);
                 }
                 reply(id,true,response);
@@ -384,5 +438,7 @@ public final class MainActivity extends Activity {
         } finally { stream.release(); }
     }
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
-    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
+    @Override public void onBackPressed(){if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
+    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
 }
