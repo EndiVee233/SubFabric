@@ -25,7 +25,7 @@ final class LlmStore {
         try(FileOutputStream out=new FileOutputStream(tmp)){out.write(settings.toString().getBytes(StandardCharsets.UTF_8));out.getFD().sync();}
         Files.move(tmp.toPath(),file.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);
     }
-    private javax.crypto.SecretKey key() throws Exception {
+    private static synchronized javax.crypto.SecretKey key() throws Exception {
         KeyStore ks=KeyStore.getInstance("AndroidKeyStore");ks.load(null);
         if(!ks.containsAlias(ALIAS)){
             KeyGenerator gen=KeyGenerator.getInstance("AES","AndroidKeyStore");
@@ -39,6 +39,8 @@ final class LlmStore {
         Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key());
         return Base64.encodeToString(c.getIV(),Base64.NO_WRAP)+":"+Base64.encodeToString(c.doFinal(text.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP);
     }
+    String seal(String text) throws Exception {return encrypt(text);}
+    String unseal(String text) throws Exception {return decrypt(new JSONObject().put("apiKeyEnc",text));}
     String decrypt(JSONObject cfg) throws Exception {
         String enc=cfg.optString("apiKeyEnc");if(enc.isEmpty())return "";
         try{String[] p=enc.split(":");Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.DECRYPT_MODE,key(),new GCMParameterSpec(128,Base64.decode(p[0],Base64.NO_WRAP)));return new String(c.doFinal(Base64.decode(p[1],Base64.NO_WRAP)),StandardCharsets.UTF_8);}

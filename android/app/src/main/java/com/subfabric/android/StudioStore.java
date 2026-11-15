@@ -28,7 +28,7 @@ final class StudioStore {
     synchronized Object call(String action,JSONObject args) throws Exception {
         switch(action) {
             case "studioList": {
-                JSONArray list=new JSONArray(); File[] files=directory.listFiles((d,n)->n.endsWith(".json"));
+                JSONArray list=new JSONArray(); File[] files=directory.listFiles((d,n)->n.matches("[0-9a-f-]{36}\\.json"));
                 if(files!=null) {Arrays.sort(files,(a,b)->Long.compare(b.lastModified(),a.lastModified()));for(File f:files){JSONObject p=load(f.getName().replace(".json","")); p.remove("text");p.remove("originalText");p.remove("packExtras");p.remove("oplog");p.remove("notes");list.put(p);}}
                 return list;
             }

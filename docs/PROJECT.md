@@ -101,11 +101,13 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.4 ASS、翻译与视频导出阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
+- `android/`：Android 移植（当前 0.5 ASS、翻译、视频导出与下载阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
   `android-translate.js` 负责共享翻译协议与批次，`translation-doc.mjs` 保留原文事件写回译文。
-  `VideoExport/ExportService/SafDirectory` 负责独立进程编码、前台服务与目录发布；`android-video.js` 接原导出 API。`build.ps1` 用 SDK 直接构建 APK，无前端打包器。
+  `VideoExport/ExportService/SafDirectory` 负责独立进程编码、前台服务与目录发布；`android-video.js` 接原导出 API。
+  `DownloadManager/DownloadService/DownloadRuntime` 在独立进程管理下载、固定版本 Python 运行时与媒体发布；
+  `download.py` 复用 `asr/fetch` 选择器，`android-download.js` 接下载设置、任务与关联稿件。`build.ps1` 用 SDK 直接构建 APK，无前端打包器。
   `.tools/`、`out/`、模型、字体缓存和用户稿件不入库。
 
 | 路径 | 职责 |
@@ -140,7 +142,7 @@
   无视频的 ASS 采用明确的字幕预览时钟和原文 PlayRes 驱动渲染/时间轴，不伪造媒体文件；窗口变化后强制重画。
   ZIP 仅带桌面核心文件，导入生成新 ID、保留字幕/备注/操作日志，媒体重新关联；有条数、体积、重复名与路径限制。
   0.1 稿件仅补缺转换为 SRT 项目，原文件和 Parakeet 模型保留。完整移植仍进行中；0.3 外部字幕翻译见下文，尚未接入的服务返回明确错误。
-  WebView 仅运行内置虚拟源、禁止外部页面；WASM/worker/blob 权限限于内置页面所需。应用不启动 Node/Python。
+  WebView 仅运行内置虚拟源、禁止外部页面；WASM/worker/blob 权限限于内置页面所需。应用不启动 Node；0.5 仅在下载服务中嵌入私有 Python，ASS 编辑、翻译和视频导出不依赖 Python。
   当前仍为可调试开发签名，后续正式分发要切换发布签名并关闭调试。
 
 - **Android 外部翻译（0.3）**：原有翻译方案/术语表/单句菜单继续使用共享界面；API 适配到原生
@@ -154,13 +156,13 @@
   每批用 revision 条件原子写字幕，已完成批次保留，重启后补翻仍缺失的行；不自动重新发起付费请求。
   ASS 使用共享 AssDoc/karaoke 分析，原英文逐词事件不重建，未知段/注释/样式/标签保留，译文不能注入 ASS 标签。
   模态任务期间阻止编辑；完成后经 Android 专用 detach/open 钩子读取最新稿件与 revision，避免旧内存继续保存冲突。
-  单句请求返回前也核对当前项目/文本快照；变化则拒绝迟到回复。视频导出见 0.4 链路；下载及其它 LLM 辅助流程仍未移植。
+  单句请求返回前也核对当前项目/文本快照；变化则拒绝迟到回复。视频导出见 0.4 链路，下载见 0.5 链路；其它 LLM 辅助流程仍未移植。
 
 - **Android 视频导出（0.4）**：复用原导出窗口、已烘入微光/淡入等效果的字幕快照和桌面首条垫背纯函数。
   `android-video.js` 转接能力/开始/状态/取消及系统目录选择，字体从原 IndexedDB/内存缓存镜像到私有哈希缓存，
   每个任务只带本次使用的字体和内置 Noto。垫背事件仅放渲染临时 ASS，导出的 ASS 不附加它；稿件正文不被导出改写。
   原生 FFmpegKit full 8.1.9（非 GPL 变体，运行时报告 FFmpeg n8.1.3）以动态库接入；有摘要固定的 SDK/JAR 依赖，
-  不依赖系统命令行 FFmpeg，不启动 Node/Python。第三方许可和对应构建源码入口随包提供，见 `android/THIRD_PARTY_NOTICES.txt`。
+  不依赖系统命令行 FFmpeg，视频导出不启动 Node/Python。第三方许可和对应构建源码入口随包提供，见 `android/THIRD_PARTY_NOTICES.txt`。
   编辑进程以私有 `export-jobs/<UUID>/request.json` 保存不可变任务，服务在独立 `:export` 进程运行，用单独原子状态文件通信。
   前台通知提供停止；Activity/WebView 销毁后继续编码，编码器原生崩溃不会带走编辑器。每次编码前先以同一字幕滤镜试跑，
   硬件候选失败才回退软件。总任务上限 6h；试跑/检测各有超时，取消或超时无法正常收尾时只终止本次编码进程。
@@ -171,6 +173,23 @@
   失败清理只针对本任务临时文档/缓存；提供者清理或回滚失败会显示需检查临时文件/备份的错误。
   非正常中断的缓存可能留在私有任务目录；重开显示中断并要求重新导出，不冒充完成。视频音轨转 AAC，原片导出逐字节复制。
   画质参数映射到编码码率，线程限制 1–8（自动至多 4）；视频编码仅允许私有媒体及 file/pipe 输入协议。
+
+- **Android 下载（0.5）**：`DownloadService` 在独立 `:download` 进程运行，前台通知和唤醒锁维持后台任务。
+  `DownloadRuntime` 从 APK 解出固定 SHA-256 的 yt-dlp 2026.10.26 / EJS 0.8.0 / certifi 2026.10.23，
+  使用 Chaquopy 17 / CPython 3.13；QuickJS 从已固定提交的 Android 原生目录执行，不在可写数据目录运行二进制。
+  无设备端 pip、自更新或远程脚本组件；`stage.mjs` 的内容摘要隔离工作代码版本，不改桌面 `asr/fetch`。
+  `download.py` 复用原画质/站点选择器，支持单个 bilibili、YouTube 和 yt-dlp 可解析链接；不下载直播或整播放列表。
+  公开链接必须 HTTPS，明文 HTTP 仅用于回环/数字私网；拒绝 URL 账号密码。代理支持 HTTP/HTTPS/SOCKS5，
+  代理凭据不在本版范围。下载 Cookie 经 Keystore 加密，接口只返回存在状态，Netscape Cookie 限 YouTube/Google 域，
+  bilibili 登录 Cookie 限本站域且强制 Secure；不读取 Android 其它应用的浏览器数据库。
+  不可变请求和状态原子保存到 `download-jobs/<UUID>/`，签名链接加密、公开状态去掉查询，错误诊断只存密文。
+  开发诊断接口对带登录信息的任务拒绝明文输出；产品错误只返回固定说明和 HTTP 状态码。
+  单并发，解析最多 120s、下载最多 4h、媒体合并最多 10min；取消或超时收尾失败只终止下载子进程。
+  重试先校验终态；已知站点允许 yt-dlp 续传，通用链接把旧分片留为重试快照再重新下载。
+  总媒体上限 2GB。下载视频/音频轨经原生 FFmpeg 合并为 MP4，再由 MediaExtractor 验证；完成前不发布给编辑器。
+  服务只创建新的私有媒体 UUID，不写现有 Studio 稿件；关联/新建由编辑进程先提交编辑，再复用稿件 API 完成。
+  `StudioStore.studioList` 只识别 UUID.json，排除 .export.json 等辅助记录，避免既有导出任务使整个稿件库打不开。
+  系统重投递旧控制指令时按 startId 收尾，不能停止后续任务；冷启动按实际进程属主识别中断，不伪报完成。
 
 - **批量翻译逐条绑定原文（2026-11-11，已完成且已验证）**：多行请求携带 JSON `{id, source}`，回复必须返回
   `{id, source, translation}`。服务端核对 ID 唯一且完整、原文逐字一致、非空原文有非空译文，
@@ -577,6 +596,9 @@
   手机改为横向分类栏、单列方案字段，平板保留侧栏。Windows 仍是唯一主题。
   0.4 的“更多 → 导出视频”复用原导出弹窗，安卓目录由系统选择器返回，界面显示文件夹名；
   手机参数单列、对话框可滚动，Android 返回键先关闭导出窗口，任务继续由通知管理。
+  0.5 的“更多 → 下载素材”支持画质、解析、任务进度/历史、取消/重试、关联当前稿件与新建 ASS；
+  320/390/1024px 可滚动布局，下载窗口返回/关闭后后台继续。下载设置复用原界面，安卓隐藏跨应用浏览器读取，
+  Cookie 导入和代理保留；链接元数据经 textContent 显示，不插入远端 HTML。
 
 - **导出目录用途（2026-11-10）**：导出视频“浏览”明确发送 `purpose: video-export`；成功回填目录，
   取消保留原输入；提示文案及主题覆盖清单随改动核对，不改变编码或输出目录的既有校验。
@@ -1481,6 +1503,32 @@
 
 ## 5. 测试与验证
 
+### Android 下载验证（2026-11-15）
+
+- **当前状态**：0.5 下载链路已完成且已验证（WSA Android 13 x86_64，真实 HTTP/MP4/DASH 与两站短视频）。
+  完整应用移植仍进行中；识别层不在本阶段，物理 ARM、会员/地区限制、真实登录 Cookie、长视频/大文件未验收。
+- 本次通过：单文件 MP4 与来源逐字节相同；DASH 分轨下载/原生合并并完整解码，含音轨且时长约 8s；
+  纯音频下载不误判视频轨。原下载窗口 320/390/1024px 模拟视口触控布局，新建 ASS 与素材关联，保留已有稿件和导出记录。
+  实际传输中取消、同任务重试、下载进程故障隔离、Activity/WebView 销毁后继续完成，以及强制停止后重开识别中断。
+  首轮验收发现自定义下拉触控高度、旧任务重投递/同 ID 重试服务状态问题，均修复后完整流程复跑通过；
+  测试脚本的首次 DASH 夹具输出目录、稿件 meta 取值和行尾保存等待已纠正，失败记录保留在忽略输出目录。
+- 公网验证：WSA 直连域名解析失败（shell ping 同样 unknown host），未修改系统网络。
+  用仅绑定主机回环、经 ADB reverse 的临时 CONNECT 代理保留端到端 TLS 校验；两站真实解析通过。
+  YouTube 19.014s / 475,990B、bilibili 11.605s / 301,315B 的短视频实际下载、合并、双轨探测和全片解码通过。
+  测试结束恢复原代理设置；这不代表 WSA 当前可直连，也不代表全部站点/格式已验收。
+- 登录设置：生产 Cookie 保存/Netscape 文件导入、清空输入、API 不回显、私有文件密文与冷重开保留通过；
+  仅使用隔离假凭据，未向真实服务发送用户 Cookie；带登录信息的任务拒绝开发明文诊断。
+- 离线回归：5 组 Android JS、主题/文案 2 组、4 个 Python 边界用例及本次 Python Ruff/JS ESLint 通过。
+  完整 JS 本机 Node 24：186 passed / 14 partial / 1 diagnostic / 2 failed / 2 excluded；
+  失败为未改动的 `oplog-editor-test` / `reflect-lock-test` 对本机 CRLF 文件使用 LF 正则；
+  有关源文件/测试与远程 0.4 基线规范化行尾后逐字节一致，隔离 LF 副本两项均通过，未改桌面代码或断言。
+  部分执行/排除涉及模型、私有素材和独立浏览器条件，不算通过。WSA ASS 与既有 LLM 设备回归复跑通过；
+  LLM 首次在设置载入期间填值导致保存超时，重跑生产表单及完整协议/中断/冲突场景通过。
+  历史 0.4 视频导出验证独立保留在下节，本次未重新编码覆盖其全部场景。
+- 设备脚本：`android/test-download-wsa.mjs`（合成媒体/任务/布局）、`test-download-public-wsa.mjs`（临时测试代理/公网）、
+  `test-download-settings-wsa.mjs`（隔离设置，不适用于已配置真实下载 Cookie 的档案）。证据保存在 `android/out/`，不入库。
+- **GitHub 保存**：本节与阶段代码一起按预期 HEAD 事务保存；最终仓库/提交/CI 状态单独核对并在交付汇报中使用约定状态。
+
 ### Android 视频导出验证（2026-11-15）
 
 - **当前状态**：0.4 导出链路已完成且已验证（WSA Android 13 x86_64，实际本地视频/系统目录/编码器）。
@@ -1693,16 +1741,16 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.4）
+### Android 构建与安装（当前 0.5）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.4.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
-  用同一开发签名覆盖 0.1/0.2/0.3，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
+  输出 `android/out/SubFabric-Android-0.5.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  用同一开发签名覆盖 0.1/0.2/0.3/0.4，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。
-- Parakeet v2 int8 的既有原生层/模型保留，0.4 已接外部翻译和视频导出，其新 UI 识别流水线待接入。
+- Parakeet v2 int8 的既有原生层/模型保留，0.5 已接外部翻译、视频导出和素材下载，其新 UI 识别流水线待接入。
   准备模型仍可用 `./android/prepare-model.ps1` 或 WSA 的 `-InstallToWsa` 参数；模型不随源码或 APK 保存。
 - 开发签名和构建缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立构建目录。第三方许可与对应源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包解压内容上限 16MB。

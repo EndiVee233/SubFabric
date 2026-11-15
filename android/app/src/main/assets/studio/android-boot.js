@@ -40,7 +40,11 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.4 · 视频导出',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.5 · 下载素材',vendorOk:true,stamp:''});
+    if(path.startsWith('/api/fetch/')||path.startsWith('/api/downloads')){
+      const download=await import('/studio/android-download.js');
+      return response(await download.route(path,method,await jsonBody(options.body),options.signal));
+    }
     if(path==='/api/pick'&&method==='POST'){
       const input=await jsonBody(options.body);
       if(input.kind==='folder'&&input.purpose==='video-export')return response(await rpc('pickExportDirectory')||{});
@@ -66,7 +70,13 @@
       if(method==='GET'){await migrate;return response({projects:(await rpc('studioList')).filter(p=>!p.archived).map(documentMeta)});}
       if(method==='POST'){
         const data=await jsonBody(options.body);if(data.draft)return response({error:'识别流水线将在编辑器移植后接入'},501);
-        const project=await rpc('studioCreate',{project:{name:data.name||data.subtitle?.name||'未命名稿件',subtitleName:data.subtitle?.name||'subtitle.ass',text:data.subtitle?.text||'',originalText:data.subtitle?.text||'',mediaId:data.video?.path||'',mediaName:data.video?.name||'',notes:[],oplog:[],createdAt:Date.now()}});
+        let media=data.video||{},source=data.source;
+        if(data.fetch?.url&&!media.path){
+          const download=await import('/studio/android-download.js');
+          const result=await download.finish(await rpc('downloadStart',{...data.fetch,kind:'download'}),options.signal);
+          media={path:result.mediaId,name:result.mediaName};source=result.source;
+        }
+        const project=await rpc('studioCreate',{project:{name:data.name||data.subtitle?.name||'未命名稿件',subtitleName:data.subtitle?.name||'subtitle.ass',text:data.subtitle?.text||'',originalText:data.subtitle?.text||'',mediaId:media.path||'',mediaName:media.name||'',source,notes:[],oplog:[],createdAt:Date.now()}});
         return response(documentMeta(project));
       }
     }
@@ -122,7 +132,7 @@
   window.fetch=async(input,options={})=>{
     const url=new URL(typeof input==='string'?input:input.url,location.href);
     if(url.origin!==location.origin||!url.pathname.startsWith('/api/'))return originalFetch(input,options);
-    if(url.pathname==='/api/media'||/\/(audio|peaks)$/.test(url.pathname)||url.pathname==='/api/font-file')return originalFetch(input,options);
+    if(url.pathname==='/api/media'||/\/(audio|peaks|thumbnail)$/.test(url.pathname)||url.pathname==='/api/font-file')return originalFetch(input,options);
     try{return await api(url,options);}catch(error){return response({error:error.message},error.message.startsWith('CONFLICT:')?409:500);}
   };
   navigator.sendBeacon=(url,body)=>{window.fetch(url,{method:'POST',body}).catch(()=>{});return true;};

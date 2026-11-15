@@ -36,3 +36,26 @@ Smart Exception Java + Common 0.2.1, BSD-3-Clause
 https://github.com/tanersener/smart-exception/tree/v0.2.1
 Java JAR SHA-256: 5b96aaa5f191dedbef72fb0c38f1a2b01807920afc0d92a75a2acd6e0cc7703c
 Common JAR SHA-256: 1cad0fb4dfa01755a014331b5ed199281d2c3fab5aca5c9d7abd0b41d0ec3f7b
+
+Android downloader (0.5) additionally bundles an embedded CPython 3.13 / Chaquopy 17 runtime
+from yt-dlp-android 2.0.2. Only the Python bridge/assets/native libraries are used;
+the AAR downloader Java facade is not included. AAR source and build recipe:
+https://github.com/ffmpegkit-maintained/yt-dlp-android/tree/v2.0.2
+AAR SHA-256: 6a836fed71490fcd7ecbcf50d4ec36b0f0919eff58d51faf843db6dc497a2e61
+Chaquopy MIT: https://github.com/chaquo/chaquopy/tree/17.0.0
+CPython and bundled OpenSSL/SQLite notices: licenses/download/Python-3.13-LICENSE.txt
+The runtime AAR retains its original bundled requirements; the pinned wheels below take
+precedence in an app-private versioned import directory. No on-device pip or remote code update.
+
+yt-dlp 2026.10.26 (Unlicense with dependency notices in its LICENSE),
+yt-dlp-ejs 0.8.0 (Unlicense), certifi 2026.10.23 (MPL-2.0 certificate bundle):
+https://github.com/yt-dlp/yt-dlp/tree/2026.10.26
+https://github.com/yt-dlp/ejs/tree/0.8.0
+https://github.com/certifi/python-certifi/tree/2026.10.23
+Wheel hashes and immutable download URLs are pinned in build.ps1.
+
+QuickJS native executables for x86_64 and arm64-v8a, MIT (see QuickJS-LICENSE.txt),
+obtained without modifications from this pinned Android build tree:
+https://github.com/yausername/youtubedl-android/tree/d725d5c9a18c3a99a13ee0308bf78275dc310760/library/src/main/jniLibs
+Upstream source: https://bellard.org/quickjs/
+All new license texts are retained under licenses/download/ and packaged with the APK.

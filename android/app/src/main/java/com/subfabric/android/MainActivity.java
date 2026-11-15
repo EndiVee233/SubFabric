@@ -29,6 +29,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService storeWorker = Executors.newSingleThreadExecutor();
     private final ExecutorService llmWorker = Executors.newFixedThreadPool(2);
     private final ExecutorService videoWorker = Executors.newSingleThreadExecutor();
+    private final ExecutorService downloadWorker = Executors.newSingleThreadExecutor();
     private LlmStore llmStore;
     private LlmClient llmClient;
     private final Map<String,Uri> selectedFiles=new HashMap<>();
@@ -75,6 +76,9 @@ public final class MainActivity extends Activity {
                 if (!"https".equals(uri.getScheme()) || !"subfabric.local".equals(uri.getHost())) return empty(403);
                 String path = uri.getPath();
                 try {
+                    if(path.matches("/api/downloads/[0-9a-f-]{36}/thumbnail")){
+                        String id=path.split("/")[3];File image=new File(DownloadManager.get(MainActivity.this).folder(id),"thumbnail.bin");if(!image.isFile())return empty(404);return new WebResourceResponse("image/jpeg",null,new FileInputStream(image));
+                    }
                     if(path.equals("/api/media")) return serveMedia(uri.getQueryParameter("path"),req.getRequestHeaders().get("Range"));
                     if(path.matches("/api/projects/[0-9a-f-]{36}/(audio|peaks)")) {
                         String id=path.split("/")[3]; boolean audio=path.endsWith("audio");
@@ -159,6 +163,23 @@ public final class MainActivity extends Activity {
             if (destroyed || id == null || id.length() > 80) return;
             if(json.length()>32*1024*1024){reply(id,false,"内容超过安卓传输上限");return;}
             if (action.equals("cancel")) { cancelled.set(true); reply(id, true, new JSONObject()); return; }
+            if(action.startsWith("download")){
+                if(action.equals("downloadStart")&&android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)runOnUiThread(()->requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},45));
+                downloadWorker.execute(()->{try{
+                    JSONObject arg=new JSONObject(json);DownloadManager manager=DownloadManager.get(MainActivity.this);Object result;
+                    switch(action){
+                        case "downloadStart":result=manager.start(arg);break;
+                        case "downloadRetry":result=manager.retry(arg.getString("id"));break;
+                        case "downloadStatus":result=manager.status(arg.getString("id"));break;
+                        case "downloadList":result=manager.list();break;
+                        case "downloadCancel":manager.cancel(arg.getString("id"));result=new JSONObject();break;
+                        case "downloadDebugCrash":manager.debugCrash(arg.getString("id"));result=new JSONObject();break;
+                        case "downloadDebugDiagnostic":result=manager.diagnostic(arg.getString("id"));break;
+                        case "downloadSettings":DownloadSettings config=new DownloadSettings(MainActivity.this);result=arg.has("patch")?config.update(arg.getJSONObject("patch")):config.publicConfig();break;
+                        default:throw new IOException("未知下载操作");
+                    }reply(id,true,result);
+                }catch(Throwable e){reply(id,false,message(e));}});return;
+            }
             if(action.equals("videoCancel")){try{VideoExport.get(MainActivity.this).cancel(new JSONObject(json).getString("id"));reply(id,true,new JSONObject());}catch(Exception e){reply(id,false,message(e));}return;}
             if(action.startsWith("video")){
                 if(action.equals("videoStart")&&android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)runOnUiThread(()->requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},44));
@@ -237,7 +258,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.4.0"); break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.5.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
@@ -481,5 +502,5 @@ public final class MainActivity extends Activity {
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
     @Override public void onBackPressed(){if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
-    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();downloadWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
 }

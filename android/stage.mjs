@@ -6,6 +6,14 @@ const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const assets=process.argv[2];
 if(!assets) throw new Error('Pass the fresh Android assets directory');
 const target=path.join(assets,'editor');
+const download=path.join(assets,'download/python');fs.mkdirSync(path.join(download,'fetch'),{recursive:true});
+const pythonFiles=['__init__.py','selector.py','bilibili.py','bili_format.py','yt_format.py','priority.py'];
+for(const file of pythonFiles)fs.copyFileSync(path.join(root,'asr/fetch',file),path.join(download,'fetch',file));
+fs.copyFileSync(path.join(root,'android/download.py'),path.join(download,'sf_download.py'));
+const {createHash}=await import('node:crypto');
+const wheels=['yt_dlp-2026.10.26-py3-none-any.whl','yt_dlp_ejs-0.8.0-py3-none-any.whl','certifi-2026.10.23-py3-none-any.whl'];
+const digest=createHash('sha256');digest.update('2.0.2:'+wheels.join(','));for(const file of ['sf_download.py',...pythonFiles.map(f=>'fetch/'+f)])digest.update(fs.readFileSync(path.join(download,file)));
+fs.writeFileSync(path.join(assets,'download/runtime.json'),JSON.stringify({id:digest.digest('hex'),wheels}));
 fs.mkdirSync(target,{recursive:true});
 for(const folder of ['js','css','assets','lang','vendor']) {
   const source=path.join(root,'editor',folder);
@@ -38,6 +46,9 @@ if(!llmText.includes('module.exports = {'))throw new Error('Review Android LLM p
 fs.writeFileSync(path.join(target,'android-llm-text.js'),llmText.replace('module.exports = {','export {'));
 fs.writeFileSync(path.join(target,'android-translation-doc.js'),fs.readFileSync(path.join(root,'android/translation-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
 let html=fs.readFileSync(path.join(root,'editor/studio.html'),'utf8');
+html=html.replace('只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。','支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。');
+html=html.replace('Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。','Cookie 加密保存在安卓本机，界面不会回显。');
+html=html.replace(/<div class="st-grid">\s*<span class="st-lbl">从浏览器读<\/span>[\s\S]*?<select id="st-fetch-browser"[\s\S]*?<\/div>\s*<p class="gl-hint">[\s\S]*?<\/p>/,'<select id="st-fetch-browser" hidden><option value="">（不用）</option></select><p class="gl-hint">安卓请导入浏览器导出的 Netscape Cookie 文件。</p>');
 html=html.replace('<script src="js/accent.js">','<script src="/studio/android-boot.js"></script><link rel="stylesheet" href="/studio/android.css"><script src="js/accent.js">');
 html=html.replace('<script type="module" src="js/main.js"></script>','<script type="module" src="js/main.js"></script><script type="module" src="/studio/android-ui.js"></script>');
 fs.writeFileSync(path.join(target,'studio.html'),html);
