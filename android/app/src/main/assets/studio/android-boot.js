@@ -40,7 +40,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.5 · 下载素材',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.6 · 字幕辅助',vendorOk:true,stamp:''});
     if(path.startsWith('/api/fetch/')||path.startsWith('/api/downloads')){
       const download=await import('/studio/android-download.js');
       return response(await download.route(path,method,await jsonBody(options.body),options.signal));
@@ -86,6 +86,10 @@
     }
     const match=/^\/api\/projects\/([0-9a-f-]{36})(?:\/(.*))?$/.exec(path);
     if(match){
+      if(['glossary-review','glossary-apply-project','reseg-plan'].includes(match[2])){
+        const assist=await import('/studio/android-assist.js');
+        return response(await assist.route(match[1],match[2],method,await jsonBody(options.body),options.signal));
+      }
       if((match[2]||'').startsWith('export-video')){
         const video=await import('/studio/android-video.js');
         return response(await video.route(match[1],match[2].slice('export-video'.length),method,await jsonBody(options.body)));

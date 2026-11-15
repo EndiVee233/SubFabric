@@ -101,13 +101,15 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.5 ASS、翻译、视频导出与下载阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
+- `android/`：Android 移植（当前 0.6 ASS、翻译、导出、下载与字幕辅助阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
   `android-translate.js` 负责共享翻译协议与批次，`translation-doc.mjs` 保留原文事件写回译文。
   `VideoExport/ExportService/SafDirectory` 负责独立进程编码、前台服务与目录发布；`android-video.js` 接原导出 API。
   `DownloadManager/DownloadService/DownloadRuntime` 在独立进程管理下载、固定版本 Python 运行时与媒体发布；
-  `download.py` 复用 `asr/fetch` 选择器，`android-download.js` 接下载设置、任务与关联稿件。`build.ps1` 用 SDK 直接构建 APK，无前端打包器。
+  `download.py` 复用 `asr/fetch` 选择器，`android-download.js` 接下载设置、任务与关联稿件。
+  `android-assist.js` 负责术语/语义规划与预览身份，`glossary-doc.mjs` 只替换目标轨可见文字；
+  `stage.mjs` 派生桌面术语表合并和重分句规划纯函数。`build.ps1` 用 SDK 直接构建 APK，无前端打包器。
   `.tools/`、`out/`、模型、字体缓存和用户稿件不入库。
 
 | 路径 | 职责 |
@@ -156,7 +158,7 @@
   每批用 revision 条件原子写字幕，已完成批次保留，重启后补翻仍缺失的行；不自动重新发起付费请求。
   ASS 使用共享 AssDoc/karaoke 分析，原英文逐词事件不重建，未知段/注释/样式/标签保留，译文不能注入 ASS 标签。
   模态任务期间阻止编辑；完成后经 Android 专用 detach/open 钩子读取最新稿件与 revision，避免旧内存继续保存冲突。
-  单句请求返回前也核对当前项目/文本快照；变化则拒绝迟到回复。视频导出见 0.4 链路，下载见 0.5 链路；其它 LLM 辅助流程仍未移植。
+  单句请求返回前也核对当前项目/文本快照；变化则拒绝迟到回复。视频导出见 0.4 链路，下载见 0.5 链路；术语校对和语义重分句见 0.6；其它辅助流程仍未移植。
 
 - **Android 视频导出（0.4）**：复用原导出窗口、已烘入微光/淡入等效果的字幕快照和桌面首条垫背纯函数。
   `android-video.js` 转接能力/开始/状态/取消及系统目录选择，字体从原 IndexedDB/内存缓存镜像到私有哈希缓存，
@@ -190,6 +192,21 @@
   服务只创建新的私有媒体 UUID，不写现有 Studio 稿件；关联/新建由编辑进程先提交编辑，再复用稿件 API 完成。
   `StudioStore.studioList` 只识别 UUID.json，排除 .export.json 等辅助记录，避免既有导出任务使整个稿件库打不开。
   系统重投递旧控制指令时按 startId 收尾，不能停止后续任务；冷启动按实际进程属主识别中断，不伪报完成。
+
+- **Android 字幕辅助（0.6）**：术语校对和语义重分句继续使用原 Studio 预览/编辑/勾选/确认界面，
+  沿用当前翻译方案和原生 `LlmClient`，不依赖识别结果或新模型。读取前提交编辑并保存，规划阶段只读不写。
+  `android-assist.js` 的模块级任务/预览表绑定项目对象、原文 revision、内存字幕快照与公开翻译配置；
+  切换稿件、修改文本或方案后拒绝旧结果/旧预览。关闭、Android 返回、Escape 和切换路由会取消原生请求；
+  单请求最多 120s，总规划最多 10min；Activity 销毁沿用原生请求清退，不在后台重新发起请求。
+  术语校对读取中文轨（没有中文时退回源文），逐词 ASS 先归并，最多通读 6 万字符；预览沿用已有译法，
+  拒绝空词/多行/ASS 控制符，最多 400 条。应用只改中文轨可见文字，保护说话人前缀、原位置覆盖标签、
+  SRT 格式标签、ASS 绘图指令、英文逐词事件、时间、样式、注释与未知段；不重建英文轨。文本以 revision 条件原子更新，
+  同步编辑器新版本，并保留会话内撤销快照。独立方案保存只合并目标语言术语，保留注释、顺序和其它分组。
+  原生 `llmGlossary` 在 `LlmStore` 锁内重读 active scheme/原术语/语言，冲突时拒绝，不能覆盖期间变化的配置。
+  先保存字幕、后保存术语方案；后者失败单独回报 saveError，不把已修改的字幕冒充整体失败。
+  重分句由 `stage.mjs` 从 `server.js` 派生原批次规划/拼回原文校验，最多 2000 行、每批 120 行；
+  非 JSON 回复显式失败，改写原文的条目丢弃，重复行号去重。确认后仍调用原 `splitRowAt`，保留逐词时间与角色；
+  应用前核对快照，每行操作前再核对项目对象，不能把旧规划应用到后来打开的稿件。桌面源码/模板保持不变。
 
 - **批量翻译逐条绑定原文（2026-11-11，已完成且已验证）**：多行请求携带 JSON `{id, source}`，回复必须返回
   `{id, source, translation}`。服务端核对 ID 唯一且完整、原文逐字一致、非空原文有非空译文，
@@ -599,6 +616,8 @@
   0.5 的“更多 → 下载素材”支持画质、解析、任务进度/历史、取消/重试、关联当前稿件与新建 ASS；
   320/390/1024px 可滚动布局，下载窗口返回/关闭后后台继续。下载设置复用原界面，安卓隐藏跨应用浏览器读取，
   Cookie 导入和代理保留；链接元数据经 textContent 显示，不插入远端 HTML。
+  0.6 的“更多 → 术语校对 / 语义重分句”连接原预览弹窗；手机术语字段上下排列，平板并排，
+  内容与操作可滚动，目标至少 44px。浮层高于后台稿件进度卡，避免确认按钮被遮住；Android 返回优先取消并关闭预览。
 
 - **导出目录用途（2026-11-10）**：导出视频“浏览”明确发送 `purpose: video-export`；成功回填目录，
   取消保留原输入；提示文案及主题覆盖清单随改动核对，不改变编码或输出目录的既有校验。
@@ -1503,6 +1522,23 @@
 
 ## 5. 测试与验证
 
+### Android 字幕辅助验证（2026-11-15）
+
+- **当前状态**：0.6 字幕辅助链路已完成且已验证（WSA Android 13 x86_64，隔离 LLM 协议接口）。
+  完整移植仍进行中，识别层不在本阶段。
+- 原界面预览/编辑/确认、模拟 320/390/1024px 布局、术语保留已有译法/方案注释与分组、字幕标签/逐词/时间保留、
+  稿件 revision 冲突、过期术语配置拒绝、语义旧预览拒绝、模型改写拒绝、重复行号去重、非法 JSON、
+  返回/切换稿件取消、迟到结果拒绝和术语撤销等 12 组设备专项通过。逐词时间前后逐项相同，
+  原有方案的注释、其它语言分组和 Key 均保留；独立方案快照冲突在原生层拒绝。术语保存的迟到响应不会切回旧稿件或把日志记到后来打开的稿件。
+  原编辑器 ASS 与完整翻译协议/冷启动/中断/并发编辑的设备回归通过；本次 10 组定向 JS 和新测试 ESLint 通过。
+  首次构建被 CRLF 锚点校验拦住，stage 读取行尾规范化后通过；首次设备脚本的标点/混合行尾期待
+  与共享编辑器载入规范化冲突，改以已保存快照验收后完整复跑通过。浮层曾被后台进度卡遮挡，调整层级后触点命中检查通过。
+- 证据：`android/test-assist-wsa.mjs` 和 `tests/android-assist-test.mjs`，输出在忽略的 `android/out/`。
+  使用隔离 OpenAI 兼容接口及假凭据；不调用真实付费 LLM。真实服务、ARM 真机和长稿未验收；
+  历史 0.5 公网下载/0.4 编码结果在下节独立保留，不据此宣称本次重新验收。
+- 本机全量 JS 本次未重跑（上一阶段 CRLF 正则失败及隔离 LF 复测见下节）；本次定向回归与云端 CI 单独核对。
+- **GitHub 保存**：本节与阶段代码按预期 HEAD 事务一起保存，最终提交与 CI 状态在交付中单独核对。
+
 ### Android 下载验证（2026-11-15）
 
 - **当前状态**：0.5 下载链路已完成且已验证（WSA Android 13 x86_64，真实 HTTP/MP4/DASH 与两站短视频）。
@@ -1741,16 +1777,16 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.5）
+### Android 构建与安装（当前 0.6）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.5.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
-  用同一开发签名覆盖 0.1/0.2/0.3/0.4，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
+  输出 `android/out/SubFabric-Android-0.6.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  用同一开发签名覆盖 0.1–0.5，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。
-- Parakeet v2 int8 的既有原生层/模型保留，0.5 已接外部翻译、视频导出和素材下载，其新 UI 识别流水线待接入。
+- Parakeet v2 int8 的既有原生层/模型保留，0.6 已接外部翻译、视频导出、素材下载、术语校对与语义重分句，其新 UI 识别流水线待接入。
   准备模型仍可用 `./android/prepare-model.ps1` 或 WSA 的 `-InstallToWsa` 参数；模型不随源码或 APK 保存。
 - 开发签名和构建缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立构建目录。第三方许可与对应源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包解压内容上限 16MB。

@@ -40,7 +40,15 @@ const server=fs.readFileSync(path.join(root,'editor/server.js'),'utf8').replace(
 function section(start,end){const a=server.indexOf(start),b=server.indexOf(end,a);if(a<0||b<0)throw new Error('Review Android LLM shared source: '+start);return server.slice(a,b);}
 const presets=section('const LLM_PRESETS = [','/** 双引擎的分工配置。');
 const prompts=section('function parseGlossary(text, lang)', 'function updateLlmKey(');
-fs.writeFileSync(path.join(target,'android-llm-defaults.js'),`const ANTHROPIC_PROVIDER='anthropic';\n${presets}\n${prompts}\nexport {LLM_PRESETS,DEFAULT_TRANSLATE_PROMPT,systemPromptWithGlossary};\n`);
+fs.writeFileSync(path.join(target,'android-llm-defaults.js'),`const ANTHROPIC_PROVIDER='anthropic';\n${presets}\n${prompts}\nexport {LLM_PRESETS,DEFAULT_TRANSLATE_PROMPT,systemPromptWithGlossary,parseGlossary};\n`);
+const glossaryMerge=fs.readFileSync(path.join(root,'editor/glossary-merge.js'),'utf8');
+if(!glossaryMerge.includes('module.exports = {'))throw new Error('Review Android glossary merge exports');
+fs.writeFileSync(path.join(target,'android-glossary-merge.js'),glossaryMerge.replace('module.exports = {','export {'));
+fs.writeFileSync(path.join(target,'android-glossary-doc.js'),fs.readFileSync(path.join(root,'android/glossary-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
+let reseg=section('  const RESEG_MAX_ROWS =','  /* ── 长稿反思纠错');
+reseg=reseg.replace('async function planResegRows(id, rows, cfg)','async function planResegRows(id, rows, cfg, llmChat)').replace(", debugFile: path.join(projDir(id), 'llm-debug.jsonl')",'');
+if(/path\.|projDir/.test(reseg))throw new Error('Review Android semantic planning dependencies');
+fs.writeFileSync(path.join(target,'android-reseg-plan.js'),reseg+'\nexport {planResegRows,parseJsonArrayLoose};\n');
 const llmText=fs.readFileSync(path.join(root,'editor/llm-text.js'),'utf8');
 if(!llmText.includes('module.exports = {'))throw new Error('Review Android LLM parser exports');
 fs.writeFileSync(path.join(target,'android-llm-text.js'),llmText.replace('module.exports = {','export {'));
@@ -64,11 +72,25 @@ const emptyGuard="if (!hasEvents) throw new Error('字幕没有有效事件');";
 if(!project.includes(emptyGuard))throw new Error('Review Android empty ASS document integration');
 project=project.replace(emptyGuard,"if (!hasEvents && !(m.androidProject && isAss && /^\\s*\\[Events\\]/im.test(text))) throw new Error('字幕没有有效事件');");
 fs.writeFileSync(projectFile,project);
+const glossaryFile=path.join(target,'js/glossary-review.js');
+let glossary=fs.readFileSync(glossaryFile,'utf8');
+for(const [before,after]of [
+  ["if (logOp) logOp('glossary',","if (state.project?.id === pid && logOp) logOp('glossary',"],
+  ['if (projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }','if (state.project?.id === pid && projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }'],
+]){if(!glossary.includes(before))throw new Error('Review Android glossary late-apply guard');glossary=glossary.replace(before,after);}
+fs.writeFileSync(glossaryFile,glossary);
 const mainFile=path.join(target,'js/main.js');
-let main=fs.readFileSync(mainFile,'utf8');
+let main=fs.readFileSync(mainFile,'utf8').replace(/\r\n/g,'\n');
 const debugAnchor='window.__dbg = { state, assPlayer,';
 if(!main.includes(debugAnchor))throw new Error('Review Android project refresh hook');
 main=main.replace(debugAnchor,'window.__androidRefreshProject = async id => { Projects.detachProject(); await Projects.openProject(id); };\n'+debugAnchor);
+const applyAnchor='async function resegApplyNow() {\n';
+if(!main.includes(applyAnchor))throw new Error('Review Android semantic preview apply guard');
+main=main.replace(applyAnchor,applyAnchor+"  try { await window.__androidAssistCheck('reseg'); } catch(error) { toast(error.message,5000); return; }\n");
+const loopAnchor='    for (const p of picked) {\n';
+const resegStart=main.indexOf(applyAnchor),resegEnd=main.indexOf('function initResegLLM()',resegStart);
+if(resegEnd<0||!main.slice(resegStart,resegEnd).includes(loopAnchor))throw new Error('Review Android semantic apply owner guard');
+main=main.slice(0,resegStart)+main.slice(resegStart,resegEnd).replace(loopAnchor,loopAnchor+"      await window.__androidAssistOwner('reseg');\n")+main.slice(resegEnd);
 fs.writeFileSync(mainFile,main);
 const hardsub=fs.readFileSync(path.join(root,'editor/hardsub.js'),'utf8');
 fs.writeFileSync(path.join(target,'android-hardsub.js'),hardsubBrowserModule(hardsub));

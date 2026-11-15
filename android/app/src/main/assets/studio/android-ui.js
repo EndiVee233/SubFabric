@@ -45,6 +45,8 @@ button('关联媒体',async()=>{
 });
 button('保存',async()=>{await flush();status('稿件已保存到安卓本机');});
 button('下载素材',async()=>{const download=await import('./android-download.js');await download.showDownload({flush,open,status});});
+button('术语校对',async()=>{await flush();if(!dbg.state.project)throw new Error('请先打开字幕');$('btn-glossary-review').click();});
+button('语义重分句',async()=>{await flush();if(!dbg.state.project)throw new Error('请先打开字幕');$('btn-reseg-llm').click();});
 button('翻译字幕',async()=>{const translation=await import('./android-translate.js');await translation.showTranslation();});
 button('翻译设置',async()=>{await flush();location.hash='#/settings';});
 button('导出视频',async()=>{await flush();const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const {openExportVideoDialog}=await import('/editor/js/export-video.js');await openExportVideoDialog(id);});
@@ -135,6 +137,7 @@ function route(){if(location.hash!==lastRoute){previewTime=0;previewPaused=true;
 window.addEventListener('hashchange',route);route();
 document.addEventListener('visibilitychange',()=>{if(document.hidden)flush().catch(()=>{});});
 window.androidBack=async()=>{
+  for(const kind of ['glossary','reseg'])if($(kind+'-overlay')?.hidden===false){$(kind+'-cancel').click();return;}
   const download=document.querySelector('.android-download-dialog[open]');if(download){download.close();return;}
   if($('sf-export-video')?.hidden===false){$('sf-ev-close').click();return;}
   const translation=document.querySelector('.android-translation-dialog[open]');if(translation){translation.dispatchEvent(new Event('cancel',{cancelable:true}));return;}
@@ -142,3 +145,8 @@ window.androidBack=async()=>{
   await flush();if(location.hash!=='#/home')location.hash='#/home';else native.rpc('close');
 };
 window.androidReady=true;
+window.__androidAssistCheck=async kind=>{const assist=await import('./android-assist.js');return assist.checkPreview(kind);};
+window.__androidAssistOwner=async kind=>{const assist=await import('./android-assist.js');return assist.checkOwner(kind);};
+for(const kind of ['glossary','reseg'])$(kind+'-cancel')?.addEventListener('click',()=>import('./android-assist.js').then(m=>m.cancel(kind)),true);
+window.addEventListener('hashchange',()=>{for(const kind of ['glossary','reseg']){if($(kind+'-overlay')?.hidden===false)$(kind+'-cancel').click();else import('./android-assist.js').then(m=>m.cancel(kind));}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')for(const kind of ['glossary','reseg'])if($(kind+'-overlay')?.hidden===false)import('./android-assist.js').then(m=>m.cancel(kind));},true);

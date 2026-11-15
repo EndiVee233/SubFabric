@@ -27,8 +27,10 @@ for (const file of fs.readdirSync(path.join(root, 'app/src/main/java/com/subfabr
 }
 let count = 0;
 for(const message of ['支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。','Cookie 加密保存在安卓本机，界面不会回显。','安卓请导入浏览器导出的 Netscape Cookie 文件。'])add(message);
-const python=fs.readFileSync(path.join(root,'download.py'),'utf8');
-for(const match of python.matchAll(/(['"])((?:\\.|(?!\1)[^\\\r\n])*)\1/g))add(match[2]);
+for(const file of ['download.py','glossary-doc.mjs']){
+  const source=fs.readFileSync(path.join(root,file),'utf8');
+  for(const match of source.matchAll(/(['"])((?:\\.|(?!\1)[^\\\r\n])*)\1/g))add(match[2]);
+}
 for (const key of found) if (dictionary[key] == null) { dictionary[key] = key; count++; }
 fs.writeFileSync(dictionaryPath, JSON.stringify(dictionary, null, 2) + '\n');
 console.log(`Registered ${count} Android copy entries`);

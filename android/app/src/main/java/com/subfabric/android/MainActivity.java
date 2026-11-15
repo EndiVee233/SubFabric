@@ -206,6 +206,7 @@ public final class MainActivity extends Activity {
                         case "llmSchemes":
                             result=arg.optString("method","GET").equals("GET")?llmStore.list():llmStore.mutate(arg.getString("method"),arg.optString("id"),arg.optBoolean("activate"),arg.optJSONObject("input")==null?new JSONObject():arg.getJSONObject("input"));break;
                         case "llmChat":result=llmClient.chat(arg,false);break;
+                        case "llmGlossary":result=llmStore.glossary(arg);break;
                         case "llmTest":result=llmClient.chat(arg,true);break;
                         default:throw new IOException("未知翻译操作");
                     }
@@ -258,7 +259,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.5.0"); break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.6.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));

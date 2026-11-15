@@ -110,4 +110,16 @@ final class LlmStore {
         JSONObject s=read(),cfg=patch(s.optJSONObject("current")==null?new JSONObject():s.getJSONObject("current"),input);
         s.put("current",cfg).put("activeSchemeId","");save(s);return publicConfig(cfg);
     }
+    synchronized JSONObject glossary(JSONObject input) throws Exception {
+        JSONObject s=read(),cfg=s.optJSONObject("current");String id=s.optString("activeSchemeId");
+        if(cfg==null||!id.equals(input.optString("schemeId"))||!cfg.optString("glossary").equals(input.getString("previous"))||!cfg.optString("glossaryLang","简体").equals(input.getString("lang")))throw new IOException("CONFLICT: 翻译方案或术语表已变化，请重新校对");
+        String next=input.getString("glossary");if(next.length()>100000)throw new IOException("术语表超过 10 万字符，请先清理旧条目");
+        if(!id.isEmpty()){
+            JSONObject item=find(s,id);
+            if(!item.optString("glossary").equals(input.getString("previous"))||!item.optString("glossaryLang","简体").equals(input.getString("lang")))throw new IOException("CONFLICT: 翻译方案或术语表已变化，请重新校对");
+            item.put("glossary",next);
+        }
+        cfg.put("glossary",next);save(s);
+        return new JSONObject().put("saved",true).put("scheme",id.isEmpty()?JSONObject.NULL:new JSONObject().put("id",id).put("name",find(s,id).getString("name")));
+    }
 }
