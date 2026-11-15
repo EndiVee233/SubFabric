@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark"><title>SubFabric Android</title>
+  <link rel="stylesheet" href="app.css"><script type="module" src="app.js"></script>
+</head>
+<body>
+  <nav class="rail" aria-label="主导航">
+    <div class="brand"><img src="logo.png" alt=""><span>SubFabric<small>ANDROID · 原型 01</small></span></div>
+    <button data-view="home" class="nav active"><span>▦</span>工作台</button>
+    <button data-view="editor" class="nav"><span>▤</span>字幕编辑</button>
+    <button data-view="settings" class="nav"><span>⚙</span>识别设置</button>
+    <div class="rail-foot"><span class="dot"></span> 离线工作空间<small>你的素材，留在你的设备。</small></div>
+  </nav>
+  <main>
+    <header><div><span class="eyebrow">SUBFABRIC / 移动字幕工作室</span><h1 id="page-title">工作台</h1></div><span class="platform" id="layout-label">ANDROID</span></header>
+    <section id="home" class="view">
+      <div class="hero"><div class="hero-copy"><span class="eyebrow mint">从声音，到字幕</span><h2>随时开始，<br>把每一句留住。</h2><p>导入音频或视频，用 Parakeet 在本机生成字幕。<br>校对、编辑，然后带走你的作品。</p><div class="actions"><button class="primary" id="import-media">＋ 导入媒体</button><button class="secondary" id="new-project">新建空白稿件</button></div></div><div class="hero-art" aria-hidden="true"><div class="art-line">Make every</div><div class="art-line bright">word count.</div><div class="art-cue"><span>00:01.20</span>让每一句，都恰到好处。</div><div class="signal"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><small>LOCAL AUDIO → PARAKEET → SUBTITLES</small></div></div>
+      <div class="info-row"><article><span class="info-icon">◉</span><div><strong>本机识别</strong><small id="home-model">正在检测模型</small></div></article><article><span class="info-icon">↗</span><div><strong>自由编辑</strong><small>时间调整 · 双语字幕 · SRT 导出</small></div></article></div>
+      <div class="section-heading"><h3>最近稿件 <span id="project-count">0</span></h3><button class="text-button" id="demo">体验编辑示例 ↗</button></div>
+      <div id="project-list" data-user-content class="project-grid"></div><div id="empty" class="empty"><span>▤</span><h3>第一个故事，从这里开始</h3><p>导入一段媒体，或先体验字幕编辑示例。</p></div>
+      <p class="scope-note">早期原型 · 本地识别与 SRT 编辑流程。翻译服务、角色分离、ASS 特效和视频压制尚未移植。</p>
+    </section>
+    <section id="editor" class="view" hidden>
+      <div class="editor-top"><input id="project-title" aria-label="稿件名称" placeholder="稿件名称" maxlength="180"><span id="save-state" role="status">已保存</span><button class="secondary" id="import-subtitle">导入 SRT</button><button class="primary" id="export">导出 SRT ↗</button></div>
+      <div id="no-project" class="empty"><h3>先选择一份稿件</h3><p>从工作台导入媒体或创建空白稿件。</p><button class="primary" id="go-home">返回工作台</button></div>
+      <div class="workspace" id="workspace" hidden>
+        <div class="preview-pane"><div class="preview"><video id="video" controls playsinline preload="metadata"></video><audio id="audio" controls preload="metadata" hidden></audio><div id="preview-empty"><span>▤</span><p id="preview-label">字幕预览</p><small id="preview-description">未关联媒体 · 可直接编辑字幕</small></div><div id="subtitle-overlay" data-user-content aria-live="off"></div></div>
+          <div class="transport"><span id="clock">00:00.000</span><span id="cue-total">0 条字幕</span><button class="text-button" id="recognize">✦ 本地识别</button></div>
+          <div class="timeline-wrap"><span class="eyebrow">字幕时间轴</span><svg id="timeline" viewBox="0 0 600 56" preserveAspectRatio="none" role="img" aria-label="字幕时间轴"></svg><input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="播放位置"></div>
+          <div class="editor-tip"><span class="mint">PARAKEET TDT v2</span><p>仅识别英文。20 秒分块控制内存；块边界可能影响完整句子。时间来自模型输出，可在右侧校对。</p></div>
+        </div>
+        <div class="cue-pane"><div class="cue-heading"><h3>字幕片段</h3><button id="add-cue" class="text-button">＋ 添加</button></div><div id="cue-list"></div><p id="cue-empty" class="empty-small">还没有字幕。开始本地识别，或导入 SRT。</p></div>
+      </div>
+    </section>
+    <section id="settings" class="view" hidden>
+      <div class="settings-card"><span class="eyebrow mint">一个引擎，专注离线</span><h2>Parakeet TDT v2</h2><p>通过 sherpa-onnx 在安卓 CPU 上运行。英文模型，int8 权重约 661 MB；首次运行还需额外内存。</p><div class="model-state"><span class="dot"></span><strong id="model-state">正在检测</strong><span id="abi"></span></div><button id="import-model" class="primary">导入模型文件夹</button><p>选择解压后的官方 v2 int8 文件夹，内含 encoder.int8.onnx、decoder.int8.onnx、joiner.int8.onnx 和 tokens.txt。导入会核对文件大小与 SHA-256。</p><details><summary>如何准备模型</summary><p>在电脑运行仓库里的 android/prepare-model.ps1，脚本下载并校验官方模型。WSA 可以用同一脚本的 -InstallToWsa 参数部署。也可把解压文件夹复制到安卓“下载”，再从此处导入。</p></details></div>
+      <div class="settings-card"><h3>当前原型范围</h3><p>手机窄屏采用上下布局；平板宽屏采用预览和字幕双栏。支持系统文件选择、音视频导入、原生解码、本地识别、字幕编辑、自动保存和 SRT 导出。</p><p>无需电脑后台或云端识别。此版本不包含下载器、翻译服务、角色分离、ASS 渲染和视频压制。大于 2 GB 的媒体暂不支持；识别期间请保持应用打开。</p></div>
+    </section>
+  </main>
+  <div id="job" class="job" hidden role="status"><div><strong id="job-label">正在处理</strong><button id="cancel" class="text-button">停止</button></div><progress id="progress" max="100"></progress><small>请保持应用打开。停止识别会保留原字幕。</small></div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>

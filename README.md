@@ -1,5 +1,8 @@
 # SubFabric
 
+Android 早期原型位于 [`android/`](android/)：适配手机与平板，支持 Parakeet 英文本地识别、字幕编辑、自动保存及 SRT 导出。
+已在 WSA 验证；还不包含桌面版的翻译、ASS 特效和视频压制。构建、模型准备与限制见 [项目文档](docs/PROJECT.md#android-原型构建与安装)。
+
 受 [Subforges](https://www.subforges.com/) 启发制作的本地动态字幕编辑器 专注于编辑 预览和导出逐词高亮字幕
 
 SubFabric 适合制作这类字幕

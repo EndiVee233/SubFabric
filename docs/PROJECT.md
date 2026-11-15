@@ -101,6 +101,10 @@
 
 ## 2. 目录地图
 
+- `android/`：与桌面链路隔离的 Android 0.1 原型；`app/src/main/java/` 为原生存储、SAF、媒体解码与 sherpa-onnx 桥，
+  `app/src/main/assets/` 为无打包步骤的 ESM 响应式界面。`build.ps1` 复制上游 SRT/时间模块、字典和图标后直接用
+  Android SDK 构建 APK；`model-files.json` 固定模型来源、大小与摘要；`.tools/`、`out/` 不入库。
+
 | 路径 | 职责 |
 | --- | --- |
 | `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`migration.cjs` 只补缺继承旧版文件与浏览器状态，`installer.nsh` 复用旧安装目录，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
@@ -123,6 +127,15 @@
 | `eslint.config.js` | ESLint 9 flat config，仅开发/CI 期使用，不是运行时依赖 |
 
 ## 3. 后端与数据流
+
+- **Android 原型（2026-11-15）**：不启动 Electron、Node 服务或 Python。系统 SAF 选取媒体 → 复制到应用私有目录
+  → WAV PCM 流式读取，或 MediaExtractor/MediaCodec 解码并下混单声道 → sherpa-onnx 2.0.1 CPU 的
+  Parakeet TDT v2 int8 → 句末标点/长度分段 → 私有 JSON 稿件原子保存 → 系统 SAF 导出 SRT。
+  只有一个 ASR 引擎，仅英文；原型按 20 秒分块，跨块句子可能切断，不承诺桌面完整分句/逐词能力。
+  模型由官方校验归档单独下载，导入时逐文件 SHA-256 校验，推理前再次核对；约 661 MB，不随 APK/源码提交。
+  后台任务串行，支持取消和 30 分钟识别上限、2 分钟解码停滞检查；成功后才替换原字幕，取消/失败保留原稿。
+  应用无 INTERNET/广泛存储权限；WebView 只服务内置 HTTPS 虚拟源，阻止外部页面、框架与文件访问。
+  JavaScript 桥只供内置页面调用。此包是可调试的开发原型，后续正式分发必须另做发布签名与关闭调试。
 
 - **批量翻译逐条绑定原文（2026-11-11，已完成且已验证）**：多行请求携带 JSON `{id, source}`，回复必须返回
   `{id, source, translation}`。服务端核对 ID 唯一且完整、原文逐字一致、非空原文有非空译文，
@@ -517,6 +530,13 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **Android 界面**：独立的深色工作台、稿件编辑和识别设置，不改现有桌面入口。
+  ≤740 CSS px 为手机底部导航与上下编辑布局，宽屏为侧栏及媒体/字幕双栏；320px 时间输入框可收缩。
+  音视频播放器、字幕预览、真实字幕区间时间轴、SRT 导入导出、时间与双语文本编辑、自动保存均走本地链路。
+  SRT 解析/序列化和时间格式复用 `editor/js/srt.js`、`util.js`，构建时复制，不维护另一个镜像。
+  产品文案登记在 `editor/lang/zh-CN.json`；安卓文案层跳过字幕正文与文件名。示例明确标注并非识别结果。
+  未移植：LLM 翻译、下载器、说话人分离、ASS/libass 特效、视频压制、桌面主题包。
 
 - **导出目录用途（2026-11-10）**：导出视频“浏览”明确发送 `purpose: video-export`；成功回填目录，
   取消保留原输入；提示文案及主题覆盖清单随改动核对，不改变编码或输出目录的既有校验。
@@ -1421,6 +1441,20 @@
 
 ## 5. 测试与验证
 
+### Android 原型验证（2026-11-15）
+
+- 恢复入口：`node android/core-test.mjs`；WSA 启动后设置 `SUBFABRIC_ADB`，执行 `node android/test-wsa.mjs`。
+  WSA 测试要求先通过系统选择器导入并识别官方 `test_wavs/0.wav`（名为 `SubFabric-sample.wav`），以及其三次重复、
+  44.1kHz 双声道 AAC 的 MP4（名为 `SubFabric-sample-multichunk.mp4`）。这些夹具与报告不入库。
+- 已完成且已验证：SDK 编译、APK v2/v3 签名与 WSA Android 13 x86_64 安装启动；真实 WAV 识别出 2 句；
+  真实 MP4 原生解码、下混、重采样与跨 20 秒分块识别出 6 句；系统媒体选择器、SRT 导入及系统文件创建器导出。
+  SRT 往返、非法时间拒绝、编辑后导航强制保存/磁盘重读、已保存稿件强停应用后重开、取消识别保留原字幕、
+  1024/390/320px 三页布局检查通过；文案覆盖检查和安卓 JS 定向 ESLint 0 错误通过。
+- 手机尺寸是实际 Android WebView 内的视口检查；不是物理手机验收。arm64-v8a 原生库已包含，未在 ARM 真机运行。
+  模型实际部署由 `prepare-model.ps1 -InstallToWsa` 完成，应用内 SAF 模型文件夹导入尚未人工验收。
+  未运行桌面全量 JS/Python/GPU、长时媒体、后台常驻/识别中杀进程后的任务恢复、翻译、ASS 或硬字幕验收。
+  本地报告与截图在 `android/out/`；不得把本节的桌面历史测试当成本轮安卓验收。
+
 - `translation-alignment-test.mjs` 覆盖模型合并原文后重新编号并重复末句凑数、缺号/重复号、
   原文回显不符、空译文、重复原文和特殊字符；隔离 HTTP 服务验证前批失败后后批原位落盘、
   只补未完成行及补翻后缓存/字幕一一对应。`repair13` 验证新契约下的上下文、稀疏待翻行和拆批。
@@ -1571,6 +1605,20 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 该维护阶段已按用户授权合入 main，云端 CI 通过；后续 UI 审查检查点另见 §4，独立保存，不发布安装包。
 
 ## 6. 打包与发版
+
+### Android 原型构建与安装
+
+- 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools；前端仍是原生 ESM，无 npm 依赖。
+  执行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`；脚本按固定摘要下载
+  sherpa-onnx 2.0.1 AAR、R8 8.13.25 和 Kotlin stdlib 2.2.0，保留每次构建目录，不清理历史产物。
+  输出 `android/out/SubFabric-Android-0.1.0.apk`，含 x86_64 / arm64-v8a；包名 `com.subfabric.android`。
+  默认开发签名保存在忽略目录 `.tools/`，仅供原型升级；源码、APK 均不含模型、用户稿件或私密配置。
+- 执行 `./android/prepare-model.ps1` 下载并校验官方 v2 int8 模型；可把解压文件夹传到安卓后在识别设置导入，
+  或在 WSA 原型已安装时执行 `./android/prepare-model.ps1 -InstallToWsa -Adb <adb路径> -Device <设备>`。
+  后者只通过此可调试应用的 `run-as` 写入自己的模型目录，不修改其他应用。
+- 原型仅包含本地识别、编辑与 SRT 流程，媒体上限 2GB、字幕上限 20,000 条；识别时需保持应用打开。
+  模型许可与运行库许可在 `android/THIRD_PARTY_NOTICES.txt` 和 `android/licenses/`，随 APK 附带。
+  此版本不创建 GitHub Release，不属于正式安卓发布；云端源码保存状态以本次实际提交核对为准。
 
 - **翻译错位增量修复（2026-11-11，已完成且已验证）**：Node 22 全量 JS 回归 183 通过、
   1 项诊断、14 部分执行、0 失败、2 排除；定向 ESLint 0 错误、17 个既有 warning。

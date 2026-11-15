@@ -1,0 +1,13 @@
+SubFabric Android prototype bundles:
+
+sherpa-onnx 2.0.1, Apache License 2.0
+https://github.com/k2-fsa/sherpa-onnx/tree/v2.0.1
+ONNX Runtime (included in sherpa-onnx AAR), MIT License
+https://github.com/microsoft/onnxruntime
+Kotlin standard library, Apache License 2.0
+https://github.com/JetBrains/kotlin
+
+Parakeet weights are downloaded separately and are not bundled in the APK.
+Model source: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2
+ONNX conversion: https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
+Model license: CC-BY-4.0 (see original model card).
