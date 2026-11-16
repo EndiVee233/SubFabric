@@ -96,6 +96,8 @@ button('更多',()=>{more.hidden=!more.hidden;});document.body.append(more);
 more.addEventListener('click',event=>{if(event.target.closest('button'))more.hidden=true;});
 document.addEventListener('pointerdown',event=>{if(!more.contains(event.target)&&!bar.contains(event.target))more.hidden=true;});
 document.body.prepend(bar);
+const {initMobile}=await import('./android-mobile.js');
+const mobile=initMobile({bar,more,flush,open,status});
 // Route the original editor's file buttons through the same persistent Android workflow.
 for(const [id,label]of [['btn-open-sub','打开字幕'],['btn-open-video','关联媒体']])$(id)?.addEventListener('click',event=>{
   event.preventDefault();event.stopImmediatePropagation();[...bar.querySelectorAll('button')].find(node=>node.textContent===label)?.click();
@@ -137,6 +139,9 @@ function route(){if(location.hash!==lastRoute){previewTime=0;previewPaused=true;
 window.addEventListener('hashchange',route);route();
 document.addEventListener('visibilitychange',()=>{if(document.hidden)flush().catch(()=>{});});
 window.androidBack=async()=>{
+  if(mobile.hasSheet()){mobile.close();return;}
+  if($('stg-dialog')?.open){$('stg-dialog').close();return;}
+  if($('sf-folder-dialog')?.hidden===false){$('sf-folder-dialog').querySelector('[data-folder-cancel]').click();return;}
   for(const kind of ['glossary','reseg'])if($(kind+'-overlay')?.hidden===false){$(kind+'-cancel').click();return;}
   const download=document.querySelector('.android-download-dialog[open]');if(download){download.close();return;}
   if($('sf-export-video')?.hidden===false){$('sf-ev-close').click();return;}

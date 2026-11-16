@@ -54,12 +54,23 @@ if(!llmText.includes('module.exports = {'))throw new Error('Review Android LLM p
 fs.writeFileSync(path.join(target,'android-llm-text.js'),llmText.replace('module.exports = {','export {'));
 fs.writeFileSync(path.join(target,'android-translation-doc.js'),fs.readFileSync(path.join(root,'android/translation-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
 let html=fs.readFileSync(path.join(root,'editor/studio.html'),'utf8');
+html=html.replace('以下内容会被删除，且不会进入回收站。删除后只能通过重新识别、重新下载或重新安装恢复。','仅删除选中的音频与波形缓存；重新打开稿件时从原媒体生成。字幕、原媒体、模型、任务与配置不会删除。');
 html=html.replace('只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。','支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。');
 html=html.replace('Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。','Cookie 加密保存在安卓本机，界面不会回显。');
 html=html.replace(/<div class="st-grid">\s*<span class="st-lbl">从浏览器读<\/span>[\s\S]*?<select id="st-fetch-browser"[\s\S]*?<\/div>\s*<p class="gl-hint">[\s\S]*?<\/p>/,'<select id="st-fetch-browser" hidden><option value="">（不用）</option></select><p class="gl-hint">安卓请导入浏览器导出的 Netscape Cookie 文件。</p>');
 html=html.replace('<script src="js/accent.js">','<script src="/studio/android-boot.js"></script><link rel="stylesheet" href="/studio/android.css"><script src="js/accent.js">');
 html=html.replace('<script type="module" src="js/main.js"></script>','<script type="module" src="js/main.js"></script><script type="module" src="/studio/android-ui.js"></script>');
 fs.writeFileSync(path.join(target,'studio.html'),html);
+const storageFile=path.join(target,'js/storage.js');
+let storage=fs.readFileSync(storageFile,'utf8');
+for(const [before,after]of [['音频、波形与识别原始结果','音频与波形缓存；原稿与原媒体保留'],['删除后需要重新下载','模型保留，不参与本页清理'],['未启用的后端环境','应用组件与下载环境，均受保护'],['字节码缓存会自动重建','任务、字体与浏览器数据保留']]){
+  if(!storage.includes(before))throw new Error('Review Android storage descriptions');storage=storage.replace(before,after);
+}
+for(const [before,after]of [
+  ['if (state.loading && !force) return;','if (state.loading) return;'],
+  ["    $('stg-scan-state').textContent = state.loading", "    $('stg-rescan').disabled = state.loading || state.busy;\n    $('stg-scan-state').textContent = state.loading"],
+]){if(!storage.includes(before))throw new Error('Review Android storage scan serialization');storage=storage.replace(before,after);}
+fs.writeFileSync(storageFile,storage);
 // Keep shared source unchanged: this Android-only branch omits the missing-video modal for subtitle-only documents.
 const projectFile=path.join(target,'js/project.js');
 let project=fs.readFileSync(projectFile,'utf8');

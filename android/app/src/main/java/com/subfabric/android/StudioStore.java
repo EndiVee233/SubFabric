@@ -33,6 +33,18 @@ final class StudioStore {
                 return list;
             }
             case "studioLoad": return load(args.getString("id"));
+            case "studioOpStats": {
+                int days=Math.max(1,Math.min(365,args.optInt("days",7))),total=0;long cutoff=System.currentTimeMillis()-days*86400000L,deadline=System.currentTimeMillis()+5000;
+                List<JSONObject> output=new ArrayList<>();File[] files=directory.listFiles((d,n)->n.matches("[0-9a-f-]{36}\\.json"));
+                if(files!=null)for(File f:files){
+                    if(System.currentTimeMillis()>deadline)throw new IOException("操作统计读取超时，请稍后重试");
+                    JSONObject p=load(f.getName().substring(0,36));if(p.optBoolean("archived"))continue;JSONArray logs=p.optJSONArray("oplog");int count=0;
+                    if(logs!=null)for(int i=0;i<logs.length();i++){JSONObject entry=logs.optJSONObject(i);if(entry==null)continue;try{if(java.time.Instant.parse(entry.optString("t")).toEpochMilli()>=cutoff)count++;}catch(Exception ignored){}}
+                    if(count>0){total+=count;output.add(new JSONObject().put("id",p.getString("id")).put("name",p.optString("name")).put("count",count).put("modifiedAt",p.optLong("modifiedAt")));}
+                }
+                output.sort((a,b)->Integer.compare(b.optInt("count"),a.optInt("count")));
+                return new JSONObject().put("days",days).put("total",total).put("projects",new JSONArray(output));
+            }
             case "studioCreate": {
                 JSONObject p=args.getJSONObject("project");p.put("id",UUID.randomUUID().toString());p.put("modifiedAt",System.currentTimeMillis());
                 p.put("revision",revision(p.optString("text")));write(p);return p;

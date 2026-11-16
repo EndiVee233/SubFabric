@@ -40,7 +40,13 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.6 · 字幕辅助',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.7 · 手机底部导航',vendorOk:true,stamp:''});
+    if(path==='/api/storage'||path==='/api/storage/clean'){
+      const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
+      if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));
+      if(path.endsWith('/clean')&&method==='POST')return response(await rpc('storageClean',{...await jsonBody(options.body),protectedProject}));
+      return response({error:'存储接口操作无效'},405);
+    }
     if(path.startsWith('/api/fetch/')||path.startsWith('/api/downloads')){
       const download=await import('/studio/android-download.js');
       return response(await download.route(path,method,await jsonBody(options.body),options.signal));
@@ -56,7 +62,7 @@
     if(path==='/api/asr/backends')return response({configured:true,cuda:false,vulkan:false});
     if(path==='/api/asr/status')return response({models:[],aligners:[],selected:'',backends:{cuda:false,vulkan:false},runtime:{},prereq:{},python:{ok:false},ffmpeg:{ready:false}});
     if(path==='/api/asr/confidence')return response({mode:'off'});
-    if(path==='/api/oplog/stats')return response({days:[],total:0});
+    if(path==='/api/oplog/stats')return response(await rpc('studioOpStats',{days:Number(url.searchParams.get('days'))||7}));
     if(path.startsWith('/api/translate/')){
       const snapshot=()=>window.__dbg?.state.assDoc?.serialize()||JSON.stringify(window.__dbg?.state.items.map(row=>[row.start,row.end,row.l1,row.l2]));
       const project=window.__dbg?.state.project,before=path==='/api/translate/one'?snapshot():null;

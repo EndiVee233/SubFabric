@@ -32,6 +32,7 @@ public final class MainActivity extends Activity {
     private final ExecutorService downloadWorker = Executors.newSingleThreadExecutor();
     private LlmStore llmStore;
     private LlmClient llmClient;
+    private AppStorage appStorage;
     private final Map<String,Uri> selectedFiles=new HashMap<>();
     private final AtomicBoolean busy = new AtomicBoolean(), cancelled = new AtomicBoolean();
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
@@ -163,6 +164,9 @@ public final class MainActivity extends Activity {
             if (destroyed || id == null || id.length() > 80) return;
             if(json.length()>32*1024*1024){reply(id,false,"内容超过安卓传输上限");return;}
             if (action.equals("cancel")) { cancelled.set(true); reply(id, true, new JSONObject()); return; }
+            if(action.equals("storageScan")||action.equals("storageClean")){
+                worker.execute(()->{try{if(appStorage==null)appStorage=new AppStorage(MainActivity.this,studio);JSONObject arg=new JSONObject(json);String protectedProject=arg.optString("protectedProject");reply(id,true,action.equals("storageScan")?appStorage.scan(protectedProject):appStorage.clean(arg.getJSONArray("ids"),protectedProject));}catch(Throwable e){reply(id,false,message(e));}});return;
+            }
             if(action.startsWith("download")){
                 if(action.equals("downloadStart")&&android.os.Build.VERSION.SDK_INT>=33&&checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED)runOnUiThread(()->requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},45));
                 downloadWorker.execute(()->{try{
@@ -258,8 +262,8 @@ public final class MainActivity extends Activity {
                                 JSONObject patch=new JSONObject().put("hasAudio",true).put("hasPeaks",true).put("prepare",new JSONObject().put("status","done"));result=studio.call("studioUpdate",new JSONObject().put("id",pid).put("patch",patch));
                             }finally{busy.set(false);}break;
                         }
-                        case "studioList": case "studioLoad": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.6.0"); break;
+                        case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.7.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
