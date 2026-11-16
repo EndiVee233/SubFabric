@@ -40,7 +40,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.8 · 手机独立编辑器',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.9 · 手机触控与导出',vendorOk:true,stamp:''});
     if(path==='/api/storage'||path==='/api/storage/clean'){
       const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
       if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));

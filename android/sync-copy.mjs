@@ -27,6 +27,7 @@ for (const file of fs.readdirSync(path.join(root, 'app/src/main/java/com/subfabr
 }
 let count = 0;
 for(const message of ['支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。','Cookie 加密保存在安卓本机，界面不会回显。','安卓请导入浏览器导出的 Netscape Cookie 文件。'])add(message);
+add('请先关联视频，再导出到相册；字幕请使用导出菜单保存。');
 for(const message of ['仅删除选中的音频与波形缓存；重新打开稿件时从原媒体生成。字幕、原媒体、模型、任务与配置不会删除。','音频与波形缓存；原稿与原媒体保留','模型保留，不参与本页清理','应用组件与下载环境，均受保护','任务、字体与浏览器数据保留'])add(message);
 for(const file of ['download.py','glossary-doc.mjs']){
   const source=fs.readFileSync(path.join(root,file),'utf8');

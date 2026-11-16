@@ -22,6 +22,7 @@ export async function route(id,path,method,options){
   if(path==='/status')return rpc('videoStatus',{id});
   if(path==='/cancel'&&method==='POST')return rpc('videoCancel',{id});
   if(path===''&&method==='POST'){
+    if(options.outDir==='相册 / SubFabric'){options.destination='gallery';options.overwrite=false;}
     if(options.kinds?.includes('bilingual')){
       const {injectSacrificialEvent}=await import('/editor/android-hardsub.js');
       const raw=options.subtitleText??(await window.androidStudio.load(id)).text;

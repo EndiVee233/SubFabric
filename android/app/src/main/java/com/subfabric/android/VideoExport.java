@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.*;
 import com.arthenica.ffmpegkit.*;
 
-/** One foreground export at a time. Immutable input snapshot, private staging, SAF commit after validation. */
+/** One foreground export at a time. Immutable input snapshot, private staging, gallery/SAF publication after validation. */
 final class VideoExport {
     private static VideoExport instance;
     static synchronized VideoExport get(Context context){if(instance==null)instance=new VideoExport(context.getApplicationContext());return instance;}
@@ -113,8 +113,8 @@ final class VideoExport {
             MediaExtractor extractor=new MediaExtractor();try{extractor.setDataSource(media(p).getPath());for(int i=0;i<extractor.getTrackCount();i++)if(extractor.getTrackFormat(i).getString(MediaFormat.KEY_MIME).startsWith("video/"))hasVideo=true;}finally{extractor.release();}
         }
         JSONObject codecs=new JSONObject();for(String codec:new String[]{"h264","h265","av1"})codecs.put(codec,new JSONObject().put("software",encoders.contains(software(codec))&&(!codec.equals("h265")||!platformCodecs(codec,false).isEmpty())?software(codec):"").put("platformSoftware",new JSONArray(platformCodecs(codec,false))).put("hardware",encoders.contains(hardwareEncoder(codec))?new JSONArray(hardware(codec)):new JSONArray()));
-        String dir=context.getSharedPreferences("export",0).getString("name","");
-        return new JSONObject().put("hasVideo",hasVideo).put("tools",new JSONObject().put("ok",true)).put("ffmpeg",FFmpegKitConfig.getFFmpegVersion()).put("android",true).put("codecs",codecs).put("directory",dir);
+        String dir=GalleryVideo.available()?GalleryVideo.NAME:context.getSharedPreferences("export",0).getString("name","");
+        return new JSONObject().put("hasVideo",hasVideo).put("tools",new JSONObject().put("ok",true)).put("ffmpeg",FFmpegKitConfig.getFFmpegVersion()).put("android",true).put("album",GalleryVideo.available()).put("codecs",codecs).put("directory",dir);
     }
     JSONObject font(String encoded) throws Exception {
         byte[] bytes=android.util.Base64.decode(encoded,android.util.Base64.DEFAULT);if(bytes.length==0||bytes.length>16*1024*1024)throw new IOException("字体文件超过导出上限");
@@ -125,7 +125,9 @@ final class VideoExport {
         if(working||serviceAlive()||(job!=null&&status(job.optString("projectId")).optString("status").equals("running")))throw new IOException("已有视频正在导出");
         JSONObject project=store.load(id);JSONArray kinds=args.getJSONArray("kinds");Set<String> unique=new LinkedHashSet<>();for(int i=0;i<kinds.length();i++){String kind=kinds.getString(i);if(!kind.matches("bilingual|raw|subtitle"))throw new IOException("导出内容无效");unique.add(kind);}if(unique.isEmpty())throw new IOException("请至少选择一种导出内容");
         String tree=context.getSharedPreferences("export",0).getString("tree",""),name=context.getSharedPreferences("export",0).getString("name","");
-        if(!args.optString("outDir").equals(name))throw new IOException("请重新选择安卓导出文件夹");SafDirectory directory=new SafDirectory(context,tree);
+        boolean gallery=args.optString("destination").equals("gallery");
+        if(gallery){if(!GalleryVideo.available())throw new IOException("当前安卓版本请使用系统文件夹导出视频");if(unique.contains("subtitle"))throw new IOException("字幕请使用导出字幕并选择保存位置");}
+        else{if(!args.optString("outDir").equals(name))throw new IOException("请重新选择安卓导出文件夹");new SafDirectory(context,tree);}
         String codec=args.optString("codec","h264"),accel=args.optString("accel","auto");if(!codec.matches("h264|h265|av1")||!accel.matches("auto|hardware|cpu"))throw new IOException("编码参数无效");
         if(unique.contains("bilingual")){JSONObject support=capabilities(id).getJSONObject("codecs").getJSONObject(codec);if(support.optString("software").isEmpty()&&(accel.equals("cpu")||support.getJSONArray("hardware").length()==0))throw new IOException("当前设备不支持此视频编码格式");}
         String subtitle=args.has("subtitleText")?args.getString("subtitleText"):project.optString("text");if(subtitle.length()>16*1024*1024)throw new IOException("字幕超过导出上限");
@@ -148,7 +150,7 @@ final class VideoExport {
         job.put("pid",android.os.Process.myPid());persist();working=true;cancelled.set(false);deadline=System.currentTimeMillis()+6*60*60*1000;
         jobTimeout=clock.schedule(()->hardStopJob(token,"error","导出任务超时，请重新开始"),6,TimeUnit.HOURS);
         Set<String> kinds=new LinkedHashSet<>();JSONArray list=request.getJSONArray("kinds");for(int i=0;i<list.length();i++)kinds.add(list.getString(i));
-        SafDirectory directory=new SafDirectory(context,request.getString("tree"));worker.execute(()->run(request.optJSONObject("project"),request.optJSONObject("options"),kinds,directory,folder,request.optString("text")));
+        SafDirectory directory=request.getJSONObject("options").optString("destination").equals("gallery")?null:new SafDirectory(context,request.getString("tree"));worker.execute(()->run(request.optJSONObject("project"),request.optJSONObject("options"),kinds,directory,folder,request.optString("text")));
     }
     private List<String> encodeArgs(File input,File output,File subtitle,File jobFonts,String encoder,String codecName,JSONObject stream,JSONObject args,boolean trial){
         int quality=Math.max(0,Math.min(51,args.optInt("quality",23))),threads=Math.max(1,Math.min(8,args.optInt("threads",0)>0?args.optInt("threads"):Math.min(4,Runtime.getRuntime().availableProcessors())));
@@ -186,7 +188,7 @@ final class VideoExport {
                 }else if(kind.equals("raw")){
                     source=input;String original=project.optString("mediaName","source.mp4"),ext=original.contains(".")?original.substring(original.lastIndexOf('.')).toLowerCase(Locale.ROOT):".bin";if(!ext.matches("\\.[a-z0-9]{1,8}"))ext=".bin";outputName=base+"_生肉"+ext;mime="application/octet-stream";
                 }else{source=subtitle;outputName=base+"_字幕"+subExt;mime="application/octet-stream";}
-                step(kind,"running",96,"正在写入所选文件夹");JSONObject output=directory.publish(source,outputName,mime,args.optBoolean("overwrite"),this::check);output.put("kind",kind);
+                step(kind,"running",96,directory==null?"正在导入相册":"正在写入所选文件夹");JSONObject output=directory==null?GalleryVideo.publish(context,source,outputName,this::check):directory.publish(source,outputName,mime,args.optBoolean("overwrite"),this::check);output.put("kind",kind);
                 synchronized(this){job.getJSONArray("outputs").put(output);if(output.has("warning"))job.getJSONArray("notes").put(output.getString("warning"));}
                 step(kind,"done",100,"已导出并验证写入");
             }

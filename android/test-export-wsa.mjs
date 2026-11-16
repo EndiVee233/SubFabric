@@ -50,6 +50,9 @@ try{
   const before=await c.evaluate(`androidStudio.load('${p.id}')`);
   // Use the production Android More action and shared export dialog.
   await c.evaluate(`[...document.querySelectorAll('#android-more>button')].find(b=>b.textContent==='导出视频').click()`);
+  // Exercise the retained SAF compatibility route explicitly; gallery defaults have their own device test.
+  await until(`document.getElementById('sf-ev-dir')?.value==='相册 / SubFabric'||document.getElementById('sf-ev-dir')?.value===${JSON.stringify(fixture.dir)}`);
+  await c.evaluate(`document.getElementById('sf-ev-dir').value=${JSON.stringify(fixture.dir)};document.getElementById('sf-ev-k-subtitle').closest('label').hidden=false;document.getElementById('sf-ev-overwrite').closest('label').hidden=false`);
   await until(`document.getElementById('sf-export-video')?.hidden===false&&document.getElementById('sf-ev-dir').value===${JSON.stringify(fixture.dir)}&&!document.getElementById('sf-ev-start').disabled`);
   assert.equal(await c.evaluate(`document.getElementById('sf-ev-dir').value`),fixture.dir);
   await c.evaluate(`document.getElementById('sf-ev-adv').open=true`);

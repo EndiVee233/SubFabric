@@ -74,7 +74,6 @@ body.sf-studio #editor-panel .panel-foot{display:none!important}
 @media(max-width:759px), (max-width:1000px) and (max-height:500px){#job-card{bottom:calc(var(--android-bottom) + 12px);max-width:calc(100vw - 24px)}body.android-keyboard #job-card{display:none!important}}
 
 /* Phone pages use the complete viewport. The editor is a separate screen. */
-#android-editor-actions{display:none}
 body.sf-studio .pc-actions>.btn{min-height:44px!important;min-width:44px!important}
 @media(max-width:759px), (max-width:1000px) and (max-height:500px){
 body.sf-studio.android-phone{--sf-nav-w:0px}
@@ -104,7 +103,6 @@ body.sf-studio.android-phone #toolbar{grid-area:1/1!important;padding:0 6px!impo
 body.sf-studio.android-phone #toolbar .tb-right{gap:4px}
 body.sf-studio.android-phone #toolbar .btn{min-height:40px;padding:0 8px;font-size:12px}
 body.sf-studio.android-phone #save-state{max-width:64px;font-size:10px}
-body.sf-studio.android-phone #android-editor-actions{display:inline-flex}
 body.sf-studio.android-phone #stage-wrap{grid-area:2/1!important;padding:0!important;min-height:0;min-width:0;border-radius:0!important}
 body.sf-studio.android-phone #video-stage{inset:0 0 40px!important;width:100%!important;height:auto!important;min-height:0!important;border-radius:0!important;background:#000}
 body.sf-studio.android-phone #video{width:100%!important;height:100%!important;object-fit:contain}
@@ -135,3 +133,21 @@ body.sf-studio.android-phone.android-keyboard #app{grid-template-columns:minmax(
 body.sf-studio.android-phone.android-keyboard #toolbar{grid-area:1/1!important}
 body.sf-studio.android-phone.android-keyboard #editor-panel{grid-area:4/1!important}
 }
+
+/* Touch press states mirror Windows button depression, including canvas blocks. */
+.cue-card,.role-card{transition:transform 80ms ease,filter 80ms ease;transform-origin:center}
+.cue-card.android-touch-pressed,.role-card.android-touch-pressed{transform:translateY(2px) scale(.985)!important;filter:brightness(.92)}
+#android-editor-tools .android-inline-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+#android-editor-tools button{min-height:44px;min-width:0;padding:8px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);font:14px system-ui}
+#android-editor-tools button:active,#android-mobile-sheet button:active{transform:translateY(2px) scale(.98)}
+body.android-gallery-export #sf-ev-k-subtitle{display:none}
+
+@media(max-width:759px), (max-width:1000px) and (max-height:500px){
+body.sf-studio.android-phone #toolbar #btn-export{min-width:64px;min-height:44px}
+body.sf-studio.android-phone #toolbar #save-state{max-width:100px}
+}
+
+body.sf-studio #range-bar .rb-btn{min-height:44px}
+
+body.sf-studio #tl-menu,body.sf-studio #card-menu{max-height:calc(var(--android-height) - 24px);max-width:calc(100vw - 16px);overflow-y:auto}
+body.sf-studio #tl-menu button,body.sf-studio #card-menu button{min-height:44px!important}

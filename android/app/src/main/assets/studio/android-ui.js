@@ -104,21 +104,16 @@ for(const [id,label]of [['btn-open-sub','打开字幕'],['btn-open-video','关�
   event.preventDefault();event.stopImmediatePropagation();[...bar.querySelectorAll('button')].find(node=>node.textContent===label)?.click();
 },true);
 const exporting=new WeakSet();
+$('btn-export').textContent='导出';$('btn-export').title='导出';$('btn-export').setAttribute('aria-label','导出');
+async function exportVideo(){const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const {openExportVideoDialog}=await import('/editor/js/export-video.js');await openExportVideoDialog(id);}
 for(const id of ['btn-export','btn-export-pack','btn-export-clean','btn-export-zh','btn-export-en','btn-export-full','btn-export-json','btn-export-advanced','btn-export-video'])$(id)?.addEventListener('click',event=>{
   const node=event.currentTarget;if(exporting.has(node))return;event.preventDefault();event.stopImmediatePropagation();
-  flush().then(()=>{exporting.add(node);try{node.click();}finally{exporting.delete(node);}}).catch(error=>status(error.message));
+  flush().then(()=>{const original=()=>{exporting.add(node);exporting.add($('btn-export'));try{node.click();}finally{exporting.delete(node);exporting.delete($('btn-export'));}};if(id==='btn-export')mobile.exportSheet({subtitle:original,video:exportVideo});else original();}).catch(error=>status(error.message));
 },true);
 document.addEventListener('android-progress',event=>status(event.detail.message));
 document.addEventListener('android-export',event=>{if(event.detail)status('文件已导出到所选位置');});
-// Touch access to desktop context menus, including role rename/color and word operations.
-let hold,origin;
-document.addEventListener('pointerdown',event=>{
-  if(event.pointerType!=='touch'||event.target.closest('input,textarea,[contenteditable]'))return;
-  const target=event.target.closest('.role-card,.cue-card,#timeline');if(!target)return;
-  origin={x:event.clientX,y:event.clientY};hold=setTimeout(()=>target.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:origin.x,clientY:origin.y})),550);
-});
-for(const name of ['pointerup','pointercancel','scroll'])document.addEventListener(name,()=>clearTimeout(hold),true);
-document.addEventListener('pointermove',event=>{if(origin&&Math.hypot(event.clientX-origin.x,event.clientY-origin.y)>9)clearTimeout(hold);});
+const {initTouch}=await import('./android-touch.js');
+initTouch({timeline:dbg.timeline,panel:dbg.panel});
 const themes=window.SF_THEMES;window.SF_THEMES=Object.freeze({...themes,builtins:themes.builtins.filter(p=>p.id==='windows-uwp'),visibleBuiltins:themes.visibleBuiltins.filter(p=>p.id==='windows-uwp'),list:()=>themes.builtins.filter(p=>p.id==='windows-uwp'),get:()=>themes.get('windows-uwp',[])});
 document.querySelectorAll('[data-theme-pack]').forEach(node=>{if(node.dataset.themePack!=='windows-uwp')node.hidden=true;});
 // Screen keyboard gets room; the selected text remains scrollable and the original editor handles IME composition.

@@ -46,11 +46,22 @@ export function initMobile({bar,more,flush,status}){
     document.body.classList.toggle('android-phone',phone.matches);if(!phone.matches)close();
     document.body.classList.remove('android-nav-open');
   }
-  const tools=document.createElement('button');tools.type='button';tools.id='android-editor-actions';tools.className='btn';tools.textContent='操作';tools.setAttribute('aria-label','稿件操作');tools.onclick=actionSheet;document.querySelector('#toolbar .tb-right').prepend(tools);
+  // Editing tools remain available in the Settings panel without crowding the header.
+  const group=document.createElement('section');group.id='android-editor-tools';group.className='set-group';
+  const heading=document.createElement('h3');heading.textContent='稿件工具';group.append(heading);
+  const actions=document.createElement('div');actions.className='android-inline-tools';group.append(actions);
+  for(const original of [...bar.children,...more.children]){
+    if(original.tagName!=='BUTTON'||['☰','更多','导出视频'].includes(original.textContent))continue;
+    button(actions,original.textContent,()=>original.click());
+  }
+  document.getElementById('tab-settings').prepend(group);
+  function exportSheet({subtitle,video}){
+    const body=panel('导出');button(body,'导出字幕',async()=>{close();await subtitle();});button(body,'导出视频',async()=>{close();await video();});
+  }
   // Dashboard shortcuts lead to the library; only a draft Open action enters the editor.
   document.getElementById('dashboard-view').addEventListener('click',event=>{
     if(event.target.closest('[data-widget=resume],#sf-mu-resume,[data-mu-attn=resume]')){event.preventDefault();event.stopImmediatePropagation();go('#/home').catch(e=>status(e.message));}
   },true);
   phone.addEventListener('change',sync);window.addEventListener('hashchange',()=>{close();sync();});sync();
-  return {close,hasSheet:()=>!!sheet,actionSheet,moreSheet};
+  return {close,hasSheet:()=>!!sheet,actionSheet,moreSheet,exportSheet};
 }

@@ -117,6 +117,14 @@ for(const [before,after]of [
   ['if (projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }','if (state.project?.id === pid && projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }'],
 ]){if(!glossary.includes(before))throw new Error('Review Android glossary late-apply guard');glossary=glossary.replace(before,after);}
 fs.writeFileSync(glossaryFile,glossary);
+const timelineFile=path.join(target,'js/timeline.js');
+let timelineSource=fs.readFileSync(timelineFile,'utf8').replace(/\r\n/g,'\n');
+const pressStart='        const entering = enterP < 1;',pressEnd='        if (entering) ctx.restore();';
+if(timelineSource.split(pressStart).length!==2||timelineSource.split(pressEnd).length!==2)throw new Error('Review Android timeline press rendering');
+timelineSource=timelineSource.replace(pressStart,`        const androidPressed = this.androidPressedCue === c;
+        if(androidPressed){ctx.save();ctx.translate((x1+x2)/2,band.y+band.h/2+2);ctx.scale(.98,.94);ctx.translate(-(x1+x2)/2,-band.y-band.h/2);}
+`+pressStart).replace(pressEnd,pressEnd+'\n        if(androidPressed) ctx.restore();');
+fs.writeFileSync(timelineFile,timelineSource);
 const mainFile=path.join(target,'js/main.js');
 let main=fs.readFileSync(mainFile,'utf8').replace(/\r\n/g,'\n');
 const debugAnchor='window.__dbg = { state, assPlayer,';
@@ -139,5 +147,14 @@ for(const [before,after] of [
   ["const order = ['auto'];","const order = ['auto']; if(d.androidHardware)order.push('hardware');"],
   ["$('sf-ev-cap').textContent = bits.join(' · ');","$('sf-ev-cap').textContent = d.androidSummary || bits.join(' · ');\n    if(d.android){$('sf-ev-dir').readOnly=true;$('sf-ev-dir').placeholder='请选择安卓导出文件夹';$('sf-ev-dir').value=d.directory||'';const codec=$('sf-ev-codec'),chosen=codec.value;for(const option of [...codec.options])if(!d.codecs[option.value]?.software&&!d.codecs[option.value]?.hardware?.length)option.remove();codec.value=[...codec.options].some(o=>o.value===chosen)?chosen:codec.options[0]?.value||'';}"],
 ]){if(!exporter.includes(before))throw new Error('Review Android export controls: '+before);exporter=exporter.replace(before,after);}
+const galleryAnchor="    $('sf-ev-k-subtitle').checked = $('sf-ev-k-subtitle').checked || !cap.hasVideo;";
+if(!exporter.includes(galleryAnchor))throw new Error('Review Android gallery selection');
+exporter=exporter.replace(galleryAnchor,`    document.body.classList.toggle('android-gallery-export',!!cap.album);
+    $('sf-ev-browse').hidden=!!cap.album;
+    $('sf-ev-k-subtitle').closest('label').hidden=true;
+    $('sf-ev-overwrite').closest('label').hidden=!!cap.album;
+    $('sf-ev-k-subtitle').checked=false;if(cap.hasVideo&&!kbd.checked&&!kr.checked)kbd.checked=true;
+    if(cap.album)$('sf-ev-overwrite').checked=false;`);
+exporter=exporter.replace('这个项目没有关联视频，只能导出字幕文件。','请先关联视频，再导出到相册；字幕请使用导出菜单保存。');
 fs.writeFileSync(exportFile,exporter);
 console.log(`Android Studio: ${visited.size} shared browser modules, complete ASS editor + libass`);
