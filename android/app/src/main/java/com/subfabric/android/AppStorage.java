@@ -33,7 +33,7 @@ final class AppStorage {
         if(android.os.Build.VERSION.SDK_INT>=27)value+=":"+s.st_mtim.tv_nsec+":"+s.st_ctim.tv_nsec;
         return value;
     }
-    @SuppressWarnings("deprecation") private boolean mediaTask(){for(ActivityManager.RunningServiceInfo s:context.getSystemService(ActivityManager.class).getRunningServices(64))if(s.pid>0&&(s.service.getClassName().equals(ExportService.class.getName())||s.service.getClassName().equals(DownloadService.class.getName())))return true;return false;}
+    @SuppressWarnings("deprecation") private boolean mediaTask(){for(ActivityManager.RunningServiceInfo s:context.getSystemService(ActivityManager.class).getRunningServices(64))if(s.pid>0&&(s.service.getClassName().equals(ExportService.class.getName())||s.service.getClassName().equals(DownloadService.class.getName())||s.service.getClassName().equals(AsrService.class.getName())))return true;return false;}
     private void item(JSONArray items,String category,String name,String detail,long bytes,Entry entry) throws Exception {
         if(bytes==0)return;String id=UUID.randomUUID().toString();if(entry!=null){entry.id=id;registered.put(id,entry);}
         items.put(new JSONObject().put("id",id).put("category",category).put("name",name).put("detail",detail).put("size",bytes).put("removable",entry!=null));

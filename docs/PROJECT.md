@@ -101,7 +101,7 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.10 相册与文件导入阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
+- `android/`：Android 移植（当前 0.11 手机布局与 Parakeet 阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
   `android-translate.js` 负责共享翻译协议与批次，`translation-doc.mjs` 保留原文事件写回译文。
@@ -114,7 +114,9 @@
   转接到原时间轴创建/框选/编辑处理器，复用原右键菜单。Android staging 移除主播更新组件和轮询；
   `project.js` 的平台刷新钩子让同一稿件页中新建/导入立即显示。`AppStorage` 负责应用存储清单和受限缓存回收；
   `StudioStore` 提供真实的主页操作统计。`build.ps1` 用 SDK 直接构建 APK，无前端打包器。
-  MediaPicker 统一 WebView 视频文件框和原生关联媒体的相册/文件来源菜单及单选/多选结果。
+  `MediaPicker` 统一 WebView 视频文件框和原生关联媒体的相册/文件来源菜单及单选/多选结果。
+  `AsrManager/AsrService` 管理独立识别进程与固定模型，`android-asr.js` 接原初稿/区间识别入口，
+  `asr-doc.mjs` 用共享 ASS/karaoke 构造文档。`android-dialogs.css/js` 只适配手机弹窗及调用原取消处理器。
   `.tools/`、`out/`、模型、字体缓存和用户稿件不入库。
 
 | 路径 | 职责 |
@@ -159,6 +161,22 @@
   name-only 旧请求遇到歧义即拒绝。临时 URI 仅用于复制到原有私有媒体存储，不依赖持久化外部路径。
   浏览文件期间无 60s 自动放弃；系统完成/取消结果驱动清理。relink 接收共享 videoPath/name 字段并失效旧音频准备标记。
   字幕、字体和项目包仍使用各自文件选择器；网络下载保持独立。
+
+- **Android Parakeet（0.11）**：设置的语音识别页显示 Parakeet 方块与模型详情，新建/批量初稿沿用原表单，
+  通过 `android-asr.js` 将 `/api/asr/*` 和稿件 draft/retry/rerecognize/reidentify 映射到原生 CPU int8。
+  仅支持英文；原生逐词可输出颜色切片或 k ASS，关闭逐词输出 SRT。区间重识别返回原媒体绝对时间，
+  复用共享编辑器的区间内容守卫与写回；多区间请求明确拒绝，不能把未识别的空档当成已识别结果。
+  说话人分离、独立对齐、置信度复跑和自动后处理尚未接入，表单禁用并由接口再次校验；翻译由用户在出稿后启动。
+  `AsrService` 在独立 `:asr` 前台进程运行，通知/新建页/详情页可停止；逐 20s 块流式解码，单次媒体范围最长 4h，
+  总任务最长 6h，解码停滞 120s 超时。取消或看门狗无法收尾时只终止本次识别进程，不影响编辑器进程。
+  原生服务只读私有媒体，写 `asr-jobs/<UUID>/` 请求/状态/结果；不修改字幕。WebView 重建后读持久任务继续显示进度，
+  完成经 `StudioStore.studioApplyAsr` 在锁内校验 taskId/revision/mediaId 后原子写回；识别期间文本或媒体变化则保留用户修改。
+  失败/取消不产生空的成功稿件，重试只允许尚未编辑的初稿。无声或坏结果转为对应稿件错误，不使整个稿件库打不开。
+  模型仍在 `files/parakeet`，不随 APK 打包。支持文件夹导入及固定官方 HTTPS 模型逐文件下载，
+  大小与 SHA-256 使用 `ModelFiles` 固定值，写 part、校验后原子替换，合法现有文件跳过；下载总限 1h。
+  推理前再次完整校验；识别/下载期间禁止导入替换模型。新服务运行时存储清理受保护。
+  模型来源与运行方式见 [sherpa-onnx 官方说明](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html)
+  及 [固定校验值对应的官方模型文件](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/tree/main)。
 
 - **Android 外部翻译（0.3）**：原有翻译方案/术语表/单句菜单继续使用共享界面；API 适配到原生
   `LlmStore/LlmClient`，不启动 Node。方案与活动配置私有原子落盘，Key 用 Android Keystore AES-GCM 加密，
@@ -643,7 +661,7 @@
   字体导入继续用共享编辑器的 IndexedDB，系统选择器返回和 Activity 重建保留当前稿件路由，退出前提交编辑并保存。
   产品文案仍进入 `editor/lang/zh-CN.json`；桌面入口/模板与功能源码不被安卓布局覆盖。
   0.3 的“更多 → 翻译字幕”提供补翻/重翻、进度和停止；“翻译设置”进入原全局设置，
-  手机改为横向分类栏、单列方案字段，平板保留侧栏。Windows 仍是唯一主题。
+  手机分类网格和单列方案字段，平板保留 Windows 侧栏布局。Windows 仍是唯一主题。
   0.9 的顶部“导出”先选择字幕或视频，视频复用原导出弹窗，Android 10+ 固定显示相册位置；
   手机参数单列、对话框可滚动，Android 返回键先关闭导出窗口，任务继续由通知管理。
   0.5 的“更多 → 下载素材”支持画质、解析、任务进度/历史、取消/重试、关联当前稿件与新建 ASS；
@@ -670,6 +688,13 @@
   剩余手指不会接着创建或改时，批量操作按钮至少 44px 高。长按 500ms 打开时间轴块/字幕列表的原右键菜单，按下立即下沉，松开或取消恢复；
   长按后释放不穿透成文字编辑。列表保留原生纵向滚动，移动超出阈值取消长按；失焦、切稿、指针取消会清退手势。
   单击跳转、字幕块/逐词改时和鼠标原逻辑保留。Android-only staging 为 canvas 块加入按压变换，不改桌面源码。
+
+- **Android 手机布局（0.11）**：手机设置分类改为两列（宽手机三列），隐藏桌面分组标题，正文占满宽度，
+  外观/方案字段单列；工作页统一边距，稿件列表模式操作放到次行。桌面最小宽度不再挤出初稿表单。
+  字幕/角色/设置/日志/工作量面板与共享弹窗保证手机尺寸、独立滚动和至少 44px 操作按钮；
+  旧拖动弹窗位置在手机重新居中，状态提示避开底栏，字体/颜色窗口和日志列可滚动。
+  Android 返回先调用前台弹窗原取消处理器，取消确认/角色/查找/高级导出等不离开稿件、不自动应用。
+  新增布局规则限手机断点（≤759px，或宽≤1000px且高≤500px）；平板继续 Windows 宽屏结构。
 
 - **导出目录用途（2026-11-10）**：导出视频“浏览”明确发送 `purpose: video-export`；成功回填目录，
   取消保留原输入；提示文案及主题覆盖清单随改动核对，不改变编码或输出目录的既有校验。
@@ -1574,9 +1599,27 @@
 
 ## 5. 测试与验证
 
-### Android 视频输入验证（0.10，2026-11-16）
+### Android 手机布局与 Parakeet 验证（0.11，2026-11-16）
 
-- **当前状态**：已完成且已验证（WSA Android 13 x86_64）；完整移植仍进行中。
+- **当前状态**：已完成且已验证（WSA Android 13 x86_64，具体范围如下）；完整移植仍进行中。
+- 最终 APK 实际资源：工作页 65 项、Parakeet 动态页面 20 项通过，覆盖 320×480、390×844、626×998、900×420、1024×768，含 7 工作页、
+  稿件库网格/列表、设置 6 分类；编辑器 5 页签与 13 共享弹窗专项实际 APK 76 项通过。
+  动态初稿模式曾额外发现 320px 管理模型按钮/长标签横溢，修复后实际 APK 复测通过。
+- 真实本机 WAV 生成 23 词颜色 ASS，44.1kHz 立体声 MP4 跨块生成 69 词 k ASS；
+  取消保留初稿、并发文本修改拒绝覆盖、区间重识别绝对时间验证通过；模型 SHA 校验/单并发/导入保护通过。
+  推理期间重载 WebView 后任务正常完成；取消状态不会误标为待翻译。原 ASS 设备回归、布局 10 项与真实 Android 返回取消通过。
+  本次升级前 182 份既有稿件 revision 不变；保留升级前稿件/配置/WebView 备份，未回滚覆盖用户数据。
+  `android/test-asr-wsa.mjs` 只创建隔离稿件，使用既有官方测试媒体，不改真实稿件。
+- `tests/android-asr-test.mjs` 验证真实词时间结构在颜色/k/SRT 通道保留、坏时间和控制标签拒绝；
+  本次 9 组 Android/主题/文案定向 JS 通过，修改 JS 的 ESLint 通过。
+- 设备恢复入口：`android/test-phone-pages-wsa.mjs`、`test-phone-dialogs-wsa.mjs`、`test-asr-wsa.mjs`；
+  另有 `android/test-phone-asr-pages-wsa.mjs`；布局脚本 `--source` 只供构建前预览，最终验收必须不带此参数；证据在忽略的 `android/out/`。
+- 未验证：物理 ARM 手机/平板、真实软键盘、旧 Android、长视频全程识别、模型缺失时完整公网下载。
+  现有模型完整校验不能代替公网模型下载验收；短音频识别成功也不代表任意素材准确率。
+
+### Android 视频输入历史验证（0.10，2026-11-16）
+
+- **历史状态**：已完成且已验证（WSA Android 13 x86_64）；完整移植仍进行中。
 - 实际系统相册单选、文件选择、相册多选均复制真实隔离视频并校验字节；两个目录中的同名视频
   先后选择后仍分别导入正确内容，歧义 name-only 请求被拒绝。文件选择停留 133s 后仍成功，
   来源菜单取消立即恢复新建页按钮并保留前次文件，原生 pickMedia 取消返回 null。
@@ -1896,21 +1939,21 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.10）
+### Android 构建与安装（当前 0.11）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.10.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
-  用同一开发签名覆盖 0.1–0.9，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
+  输出 `android/out/SubFabric-Android-0.11.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  用同一开发签名覆盖 0.1–0.10，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。
-- Parakeet v2 int8 的既有原生层/模型保留，0.10 已接外部翻译、视频导出、素材下载、术语校对、语义重分句和应用存储管理，其新 UI 识别流水线待接入。
+- Parakeet v2 int8 的既有原生层/模型保留；0.11 已接新版界面中的初稿/批量/区间识别，外部翻译、视频导出、素材下载、术语校对、语义重分句和应用存储管理沿用既有实现。
   准备模型仍可用 `./android/prepare-model.ps1` 或 WSA 的 `-InstallToWsa` 参数；模型不随源码或 APK 保存。
 - 开发签名和构建缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立构建目录。第三方许可与对应源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包解压内容上限 16MB。
-  当前 0.10.0 APK 为本地构建并已覆盖安装 WSA，设备包与本地产物 SHA-256 一致：
-  `6860626db2b86e7c9322b6ebaa5799677f2abd38bd9394a77fb1da1d3bacbfe6`；尚未创建新版 Release。此前按用户要求发布 Android 0.9.0 验收预发行，完整移植仍在进行；不作为正式版或真机验收完成的证明。
+  当前 0.11.0 APK 已覆盖安装 WSA，设备包与本地产物大小/哈希一致（100,573,048 bytes）：
+  `3180572f7f4696cc831f979cfeada67669934169ce064975e6de55f6d4f4dc12`；尚未创建新版 Release。此前按用户要求发布 Android 0.9.0 验收预发行，完整移植仍在进行；不作为正式版或真机验收完成的证明。
 - **0.9.0 成员验收发布（2026-11-16）**：已完成且已验证（发布与资产校验）；成员真机验收未开始，待反馈。
   [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.9.0) 标记为预发行，不接管桌面版 Latest；
   标签 `android-v0.9.0` 指向已验证源码 `19432fc9f981fcac95425f84850f06568962a62a`，对应 CI 已通过。
@@ -2187,8 +2230,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 - 第一阶段 ASS 编辑器：已完成且已验证（WSA，范围见 §5）。Windows 为唯一可选主题。
 - 外部 LLM 字幕翻译/配置与 Android 凭据存储：0.3 已完成且已验证（隔离服务，见 §5）。
 - 视频导出：0.4 已完成且已验证（WSA 软件 H.264/AV1，HEVC/硬件条件与限制见 §5）。
-- 下载器、其它 LLM 辅助工作流、识别入口和完整后台任务生命周期仍未完成；
-  相关后台服务不能用空响应或旧桌面测试充当功能验收。保留完整移植目标，后续按可用链路继续交付。
+- 下载器 0.5、字幕辅助 0.6、应用管理 0.7 已完成且已验证（范围与限制见 §5）。
+- 0.11 Parakeet 原生 CPU 与新版界面的初稿/区间识别已完成且已验证（WSA 短音频，见 §5）。说话人分离、独立对齐、
+  置信度复跑、其它 LLM 辅助及完整中断恢复仍未完成；保留完整移植目标，不以空响应或旧桌面测试代替验收。
 
 ### `\k` 逐词字幕
 

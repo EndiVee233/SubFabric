@@ -53,6 +53,7 @@ const llmText=fs.readFileSync(path.join(root,'editor/llm-text.js'),'utf8');
 if(!llmText.includes('module.exports = {'))throw new Error('Review Android LLM parser exports');
 fs.writeFileSync(path.join(target,'android-llm-text.js'),llmText.replace('module.exports = {','export {'));
 fs.writeFileSync(path.join(target,'android-translation-doc.js'),fs.readFileSync(path.join(root,'android/translation-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
+fs.writeFileSync(path.join(target,'android-asr-doc.js'),fs.readFileSync(path.join(root,'android/asr-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
 let html=fs.readFileSync(path.join(root,'editor/studio.html'),'utf8');
 // Android omits the optional creator feed, including its DOM, cache reader and polling.
 for(const pattern of [/<section class="sf-uwp-youtube"[\s\S]*?<\/section>/,/<section class="sf-mu-yt"[\s\S]*?<\/section>/,/<button type="button" class="sf-orbit"[\s\S]*?<\/button>/]){
@@ -72,9 +73,10 @@ fs.writeFileSync(studioFile,studio);
 html=html.replace('以下内容会被删除，且不会进入回收站。删除后只能通过重新识别、重新下载或重新安装恢复。','仅删除选中的音频与波形缓存；重新打开稿件时从原媒体生成。字幕、原媒体、模型、任务与配置不会删除。');
 html=html.replace('只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。','支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。');
 html=html.replace('Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。','Cookie 加密保存在安卓本机，界面不会回显。');
+html=html.replace('模型操作和下载位置即时保存；已有模型不会随目录移动。','模型保存在安卓本机，可下载或从文件夹导入。');
 html=html.replace(/<div class="st-grid">\s*<span class="st-lbl">从浏览器读<\/span>[\s\S]*?<select id="st-fetch-browser"[\s\S]*?<\/div>\s*<p class="gl-hint">[\s\S]*?<\/p>/,'<select id="st-fetch-browser" hidden><option value="">（不用）</option></select><p class="gl-hint">安卓请导入浏览器导出的 Netscape Cookie 文件。</p>');
 html=html.replace('<script src="js/accent.js">','<script src="/studio/android-boot.js"></script><script src="js/accent.js">');
-html=html.replace('</head>','<link rel="stylesheet" href="/studio/android.css"></head>');
+html=html.replace('</head>','<link rel="stylesheet" href="/studio/android.css"><link rel="stylesheet" href="/studio/android-dialogs.css"></head>');
 html=html.replace('<script type="module" src="js/main.js"></script>','<script type="module" src="js/main.js"></script><script type="module" src="/studio/android-ui.js"></script>');
 fs.writeFileSync(path.join(target,'studio.html'),html);
 const storageFile=path.join(target,'js/storage.js');
@@ -92,6 +94,10 @@ const projectFile=path.join(target,'js/project.js');
 let project=fs.readFileSync(projectFile,'utf8');
 const before='      } else {\n        promptRelink(m);\n      }';
 project=project.replace(/\r\n/g,'\n');
+for(const [before,after]of [
+ ['  function filterStatusModels(d) {','  function filterStatusModels(d) {\n    if(d?.android)return d;'],
+ ['      if (generation !== asrRenderGeneration) return;\n      const preparing =','      if (generation !== asrRenderGeneration) return;\n      if(raw.android){const android=await import("/studio/android-asr.js");android.renderSettings(raw);return;}\n      const preparing ='],
+]){if(project.split(before).length!==2)throw new Error('Review Android Parakeet UI integration');project=project.replace(before,after);}
 if(!project.includes(before))throw new Error('Review Android subtitle-only project integration against upstream');
 project=project.replace(before,'      } else if (!m.androidStandalone) {\n        promptRelink(m);\n      } else { video.removeAttribute("src"); video.load(); }');
 project=project.replace('st && st.done && (st.cuda || st.vulkan)','st && st.done && (st.android || st.cuda || st.vulkan)');

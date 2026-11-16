@@ -151,3 +151,56 @@ body.sf-studio #range-bar .rb-btn{min-height:44px}
 
 body.sf-studio #tl-menu,body.sf-studio #card-menu{max-height:calc(var(--android-height) - 24px);max-width:calc(100vw - 16px);overflow-y:auto}
 body.sf-studio #tl-menu button,body.sf-studio #card-menu button{min-height:44px!important}
+
+/* Work pages share one phone gutter. Desktop settings and list rows remain unchanged. */
+@media(max-width:759px), (max-width:1000px) and (max-height:500px){
+body.sf-studio.android-phone .workspace-page,body.sf-studio.android-phone .sf-page{padding:16px 12px 24px!important}
+body.sf-studio.android-phone .workspace-page>.page-inner,body.sf-studio.android-phone .sf-page>.sf-page-content,body.sf-studio.android-phone .dashboard-inner{box-sizing:border-box;min-width:0;width:100%!important;max-width:none!important;margin:0!important;padding:0!important}
+body.sf-studio.android-phone .page-intro{padding:8px 0 20px!important;min-width:0}
+body.sf-studio.android-phone :is(.ws-panel,.st-card,.stg-panel,.batch-side){min-width:0;box-sizing:border-box}
+body.sf-studio.android-phone .ws-panel{padding:14px!important;width:100%;max-width:100%}
+body.sf-studio.android-phone :is(.ws-grid,.batch-layout){display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:12px!important}
+body.sf-studio.android-phone :is(.ws-head,.np-actions,.batch-queue-head,.batch-runbar,.batch-runbar>div,.stg-panel-head){flex-wrap:wrap;gap:8px}
+body.sf-studio.android-phone :is(.np-file-row,.np-row,.ws-row,.st-row,.st-scheme-actions,.st-drawer-foot){flex-wrap:wrap;min-width:0}
+body.sf-studio.android-phone :is(.np-draft-only,.np-model,.ws-group,.ws-col){min-width:0;max-width:100%}
+body.sf-studio.android-phone .ws-row>.sf-choice-shell{min-width:0;max-width:100%;flex:1 1 180px}
+body.sf-studio.android-phone :is(.np-switch,.np-switch>span){min-width:0;white-space:normal!important;line-height:1.5}
+body.sf-studio.android-phone .np-switch{align-items:flex-start;flex:1 1 180px!important}
+body.sf-studio.android-phone .workspace-page :is(.btn,.sf-choice-toggle){min-height:44px}
+body.sf-studio.android-phone .workspace-page :is(.st-input,.st-area,.np-input){min-width:0;max-width:100%;box-sizing:border-box}
+body.sf-studio.android-phone #st-view{scrollbar-gutter:auto}
+body.sf-studio.android-phone #st-view .settings-inner{height:auto!important;min-height:100%!important;align-items:stretch}
+body.sf-studio.android-phone #st-view .st-box{display:flex!important;flex-direction:column!important;width:100%!important;min-height:0!important;align-items:stretch!important;gap:16px!important}
+body.sf-studio.android-phone #st-view .st-tabs{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));width:100%!important;box-sizing:border-box;position:static!important;align-self:stretch!important;max-height:none!important;overflow:visible!important;gap:4px!important;padding:0!important}
+body.sf-studio.android-phone #st-view .sf-settings-nav-label{display:none!important}
+body.sf-studio.android-phone #st-view .st-tab{width:100%!important;min-width:0!important;min-height:48px!important;height:auto!important;box-sizing:border-box;white-space:normal!important;line-height:1.4;gap:8px!important;padding:10px!important}
+body.sf-studio.android-phone #st-view .st-tab.active::before{left:0!important;top:8px!important;bottom:8px!important;height:auto!important}
+body.sf-studio.android-phone #st-view .st-body{width:100%!important;max-width:100%!important;box-sizing:border-box;padding:0!important;align-self:stretch!important}
+body.sf-studio.android-phone #st-view :is(.st-panel,.st-subview,.sf-asr-catalog,.sf-asr-families,.st-scheme-inline,.st-scheme-inner){width:100%;max-width:100%;min-width:0;box-sizing:border-box}
+body.sf-studio.android-phone #st-view .st-panel{margin:0!important;gap:14px}
+body.sf-studio.android-phone #st-view :is(.st-card,.set-group,.st-section){padding:12px!important;max-width:100%;box-sizing:border-box}
+body.sf-studio.android-phone #st-view .sf-asr-families,body.sf-studio.android-phone #st-view #st-models[data-family="前置"]{grid-template-columns:minmax(0,1fr)!important}
+body.sf-studio.android-phone #st-view .sf-asr-family{min-height:144px!important;width:100%;padding:18px!important}
+body.sf-studio.android-phone #st-view .sf-settings-line{flex-direction:column;align-items:stretch;gap:10px;min-width:0}
+body.sf-studio.android-phone #st-view .sf-settings-line>div:first-child{min-width:0;flex:auto}
+body.sf-studio.android-phone #st-view .sf-settings-line>.sf-choice-shell{flex:auto!important;width:100%!important;max-width:none!important}
+body.sf-studio.android-phone #st-view .sf-settings-segments{max-width:100%;box-sizing:border-box;flex-wrap:wrap}
+body.sf-studio.android-phone #st-view .sf-settings-segments button{min-height:44px;flex:1 1 auto;padding:8px}
+body.sf-studio.android-phone #st-view .sf-settings-backgrounds{grid-template-columns:minmax(0,1fr)!important;margin:14px 0}
+body.sf-studio.android-phone #st-view .sf-theme-tools{display:flex;flex-wrap:wrap;gap:8px}
+body.sf-studio.android-phone #st-view :is(.st-card-title,.st-card-note,.st-help,.sm-desc,.sf-settings-save-note){overflow-wrap:anywhere;min-width:0}
+body.sf-studio.android-phone #st-view .st-card-title{flex-wrap:wrap;gap:6px}
+body.sf-studio.android-phone #st-view .st-card-note{margin-left:0;text-align:left;flex-basis:100%}
+body.sf-studio.android-phone .sf-settings-status{bottom:calc(var(--android-bottom,0px) + 10px)}
+body.sf-studio.android-phone #home-view:not([data-list=list]) .proj-card{flex-wrap:nowrap!important}
+body.sf-studio.android-phone #home-view:not([data-list=list]) .proj-card .pc-main{flex:0 0 auto!important}
+body.sf-studio.android-phone #home-view[data-list=list] .proj-card{grid-template-columns:34px minmax(0,1fr)!important;grid-template-areas:"cover main" "actions actions"!important;gap:8px!important;min-width:0;padding:12px!important}
+body.sf-studio.android-phone #home-view[data-list=list] .proj-card .pc-main{min-width:0}
+body.sf-studio.android-phone #home-view[data-list=list] .proj-card .pc-name{white-space:normal!important;overflow-wrap:anywhere}
+body.sf-studio.android-phone #home-view[data-list=list] .proj-card .pc-actions{width:100%!important;min-width:0;box-sizing:border-box;display:flex!important;padding:0!important}
+body.sf-studio.android-phone #home-view[data-list=list] .proj-card .pc-actions>.btn{width:auto!important;min-width:0!important;min-height:44px!important;flex:1 1 0!important}
+body.sf-studio.android-phone #home-view[data-list=list] .proj-card .pc-actions>.btn.ico-only{flex:0 0 44px!important}
+}
+@media(min-width:560px) and (max-width:759px), (min-width:760px) and (max-width:1000px) and (max-height:500px){
+body.sf-studio.android-phone #st-view .st-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}
+}

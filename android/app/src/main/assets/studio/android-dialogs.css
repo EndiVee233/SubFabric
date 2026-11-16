@@ -1,0 +1,62 @@
+/* Phone editor and dialogs; tablet geometry is owned by the Windows stylesheet. */
+@media(max-width:759px), (max-width:1000px) and (max-height:500px){
+body.sf-studio.android-phone :is(#fr-overlay,#batch-draft-overlay,#batch-item-overlay,#adv-export-overlay,#confirm-overlay,#reflect-overlay,#rim-overlay,#realign-overlay,#glossary-overlay,#reseg-overlay,#op-range-overlay,#role-new,#pick-overlay,#cue-text-overlay,#fix-overlay,#sf-asr-params,#sf-export-video){
+  box-sizing:border-box!important;padding:8px!important;max-height:var(--android-height);align-items:center!important;
+}
+body.sf-studio.android-phone :is(.rn-box,.fr-box,.fix-box,.pick-box,.ctd-box,.sf-ap-panel,.sf-ev-panel){
+  box-sizing:border-box!important;min-width:0!important;width:min(680px,calc(100vw - 16px))!important;max-width:100%!important;
+  max-height:calc(var(--android-height) - 16px)!important;overflow-y:auto;overflow-x:hidden;
+}
+/* A previously dragged desktop dialog must not keep an offscreen inline position. */
+body.sf-studio.android-phone .modal-surface.modal-dragged{position:relative!important;left:auto!important;top:auto!important;margin:auto!important;transform:none!important}
+body.sf-studio.android-phone :is(.rn-box,.fr-box,.fix-box,.sf-ap-panel,.sf-ev-panel) :is(.rn-actions,.fr-actions,.sf-ap-foot,.sf-ev-foot){
+  flex:none;flex-wrap:wrap;gap:8px;justify-content:flex-end;
+}
+body.sf-studio.android-phone :is(.rn-box,.fr-box,.fix-box,.pick-box,.sf-ap-panel,.sf-ev-panel) button{min-height:44px!important;min-width:44px;white-space:normal;overflow-wrap:anywhere}
+body.sf-studio.android-phone :is(.rn-box,.fr-box,.fix-box,.pick-box,.sf-ap-panel,.sf-ev-panel) :is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select,.sf-choice-toggle){min-height:44px!important;min-width:0;max-width:100%;box-sizing:border-box}
+body.sf-studio.android-phone :is(.rn-box,.fr-box,.fix-box,.pick-box,.sf-ap-panel,.sf-ev-panel) :is(p,.rn-msg,.ctd-preview,.fr-hint){overflow-wrap:anywhere;min-width:0}
+body.sf-studio.android-phone .rn-actions .rn-custom{flex:1 1 100%;min-height:44px;min-width:0}
+body.sf-studio.android-phone .rn-colors{gap:6px}
+body.sf-studio.android-phone .rn-colors .rn-swatch{width:44px;height:44px;min-width:44px;box-sizing:border-box}
+body.sf-studio.android-phone :is(.fr-grid,.sf-ap-fields){grid-template-columns:minmax(0,1fr)!important}
+body.sf-studio.android-phone .fr-combo{min-width:0}
+body.sf-studio.android-phone .fr-combo .fr-input{min-width:0;box-sizing:border-box}
+body.sf-studio.android-phone :is(.fr-tabs,.fr-text-opts,.bd-options,.adv-export-format,.np-file-row,.np-region-row){flex-wrap:wrap;min-width:0}
+body.sf-studio.android-phone .fr-tabs{border-radius:4px;max-width:100%;box-sizing:border-box}
+body.sf-studio.android-phone .ctd-input{min-height:112px;max-height:40vh;box-sizing:border-box;min-width:0;width:100%}
+body.sf-studio.android-phone :is(.reflect-list,.fix-list,.bd-list,.adv-role-list,.pick-list){min-height:0;overflow:auto}
+body.sf-studio.android-phone #rim-overlay .reflect-box{max-height:calc(var(--android-height) - 16px)!important}
+body.sf-studio.android-phone .rim-log-date{flex-wrap:wrap;min-width:0}
+body.sf-studio.android-phone .rim-log-date input{width:100%;max-width:100%;box-sizing:border-box}
+body.sf-studio.android-phone :is(.sscp,.fp-panel){box-sizing:border-box;max-width:calc(100vw - 16px)!important;max-height:calc(var(--android-height) - 16px)!important;overflow-y:auto}
+body.sf-studio.android-phone .sscp{inset:8px 8px auto!important;width:auto!important}
+body.sf-studio.android-phone .sscp :is(button,.btn){min-height:44px;min-width:44px}
+body.sf-studio.android-phone .sscp-head{height:auto;min-height:44px}
+body.sf-studio.android-phone .sscp-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+body.sf-studio.android-phone .sscp-fields input{min-height:44px}
+body.sf-studio.android-phone .sscp-palette{grid-template-columns:repeat(6,minmax(0,1fr));gap:5px}
+body.sf-studio.android-phone .sscp-palette .sscp-swatch{min-width:0;min-height:44px}
+body.sf-studio.android-phone #editor-panel .tab-head{flex-wrap:wrap;gap:6px}
+body.sf-studio.android-phone #editor-panel .tab-head-sub{white-space:normal;overflow-wrap:anywhere}
+body.sf-studio.android-phone #editor-panel :is(.setting-row,.ass-style-row,.ass-style-options,.ass-style-preset-row,.sf-preset-row,.log-toolbar,.workload-standard-row){flex-wrap:wrap;min-width:0;max-width:100%}
+body.sf-studio.android-phone #editor-panel :is(button,.sf-choice-toggle,.fp-open){min-height:44px!important}
+body.sf-studio.android-phone #editor-panel :is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select){min-height:44px!important;max-width:100%;box-sizing:border-box}
+body.sf-studio.android-phone #editor-panel :is(.role-card,.role-name){min-width:0;overflow-wrap:anywhere}
+body.sf-studio.android-phone #editor-panel .role-card :is(button,.role-color){min-width:44px;min-height:44px}
+body.sf-studio.android-phone #editor-panel .log-subtabs{flex-wrap:wrap}
+body.sf-studio.android-phone #editor-panel .log-subtab{flex:1;min-width:0;white-space:normal}
+body.sf-studio.android-phone #editor-panel .oplog-row{grid-template-columns:62px minmax(0,1fr)}
+body.sf-studio.android-phone #editor-panel .oplog-body{grid-column:1/-1}
+body.sf-studio.android-phone #editor-panel :is(.workload-scroll,.settings-list,.role-list,.log-pane){box-sizing:border-box;min-width:0;max-width:100%}
+body.sf-studio.android-phone #editor-panel .workload-controls{grid-template-columns:minmax(0,1fr)}
+body.sf-studio.android-phone #editor-panel .workload-weights{grid-template-columns:repeat(2,minmax(0,1fr))}
+body.sf-studio.android-phone #editor-panel .workload-counts{grid-template-columns:minmax(0,1fr)}
+body.sf-studio.android-phone :is(#role-menu,#role-rename){box-sizing:border-box;min-width:0;max-width:calc(100vw - 16px);max-height:calc(var(--android-height) - 16px);overflow:auto}
+body.sf-studio.android-phone :is(#role-menu,#role-rename) button{min-height:44px;min-width:44px}
+body.sf-studio.android-phone #role-rename-input{min-height:44px;min-width:0;max-width:100%;box-sizing:border-box}
+body.sf-studio.android-phone .fp-filter{min-height:44px}
+body.sf-studio.android-phone .fp-item{min-height:44px;box-sizing:border-box;display:flex;align-items:center}
+body.sf-studio.android-phone :is(#toast,.sf-settings-status){box-sizing:border-box;max-width:calc(100vw - 24px)!important;bottom:calc(var(--android-bottom,0px) + 12px)!important;overflow-wrap:anywhere}
+body.sf-studio.android-phone #toast{right:12px!important;left:auto!important}
+body.sf-studio.android-phone :is(.rn-box,.fr-box,.fix-box,.sf-ap-panel,.sf-ev-panel) label:has(input[type=checkbox]){display:flex;align-items:center;gap:8px;min-height:44px;white-space:normal}
+}

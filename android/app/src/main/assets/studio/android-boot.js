@@ -57,7 +57,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.10 · 相册与文件导入',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.11 · 手机布局与 Parakeet',vendorOk:true,stamp:''});
     if(path==='/api/storage'||path==='/api/storage/clean'){
       const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
       if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));
@@ -75,10 +75,8 @@
     }
     if(path==='/api/samples')return response({videos:[],subtitles:[]});
     if(path==='/api/fonts')return response({fonts:['Noto Sans CJK SC']});
-    if(path==='/api/asr/hardware')return response({cuda:{available:false},vulkan:{available:false,devices:[]},npu:{available:false}});
-    if(path==='/api/asr/backends')return response({configured:true,cuda:false,vulkan:false});
-    if(path==='/api/asr/status')return response({models:[],aligners:[],selected:'',backends:{cuda:false,vulkan:false},runtime:{},prereq:{},python:{ok:false},ffmpeg:{ready:false}});
-    if(path==='/api/asr/confidence')return response({mode:'off'});
+    if(path.startsWith('/api/asr/')){const asr=await import('/studio/android-asr.js');return response(await asr.route(path,method,await jsonBody(options.body)));}
+    if(path==='/api/cast/config'){if(method==='POST'&&(await jsonBody(options.body)).enabled)return response({error:'安卓端暂不支持自动分角色'},400);return response({enabled:false,prompt:''});}
     if(path==='/api/oplog/stats')return response(await rpc('studioOpStats',{days:Number(url.searchParams.get('days'))||7}));
     if(path.startsWith('/api/translate/')){
       const snapshot=()=>window.__dbg?.state.assDoc?.serialize()||JSON.stringify(window.__dbg?.state.items.map(row=>[row.start,row.end,row.l1,row.l2]));
@@ -90,15 +88,16 @@
     if(path==='/api/youtube/updates')return response({channels:[],items:[],stale:false});
     if(path==='/api/logs/client'||path==='/api/diag'){if(path==='/api/logs/client'&&options.body)errors.push(String(options.body).slice(0,4000));return response({ok:true});}
     if(path==='/api/projects'){
-      if(method==='GET'){await migrate;return response({projects:(await rpc('studioList')).filter(p=>!p.archived).map(documentMeta)});}
+      if(method==='GET'){await migrate;const asr=await import('/studio/android-asr.js');return response({projects:(await Promise.all((await rpc('studioList')).filter(p=>!p.archived).map(p=>p.draft?.status==='running'?asr.refresh(p):p))).map(documentMeta)});}
       if(method==='POST'){
-        const data=await jsonBody(options.body);if(data.draft)return response({error:'识别流水线将在编辑器移植后接入'},501);
+        const data=await jsonBody(options.body);
         let media=data.video||{},source=data.source;
         if(data.fetch?.url&&!media.path){
           const download=await import('/studio/android-download.js');
           const result=await download.finish(await rpc('downloadStart',{...data.fetch,kind:'download'}),options.signal);
           media={path:result.mediaId,name:result.mediaName};source=result.source;
         }
+        if(data.draft){const asr=await import('/studio/android-asr.js');return response(documentMeta(await asr.create(data,media,source)));}
         const project=await rpc('studioCreate',{project:{name:data.name||data.subtitle?.name||'未命名稿件',subtitleName:data.subtitle?.name||'subtitle.ass',text:data.subtitle?.text||'',originalText:data.subtitle?.text||'',mediaId:media.path||'',mediaName:media.name||'',source,notes:[],oplog:[],createdAt:Date.now()}});
         return response(documentMeta(project));
       }
@@ -109,6 +108,7 @@
     }
     const match=/^\/api\/projects\/([0-9a-f-]{36})(?:\/(.*))?$/.exec(path);
     if(match){
+      if(['draft','retry','asr-cancel','rerecognize','reidentify'].includes(match[2])){const asr=await import('/studio/android-asr.js'),result=await asr.projectRoute(match[1],match[2],method,await jsonBody(options.body));return response(match[2]==='draft'?documentMeta(result):result);}
       if(['glossary-review','glossary-apply-project','reseg-plan'].includes(match[2])){
         const assist=await import('/studio/android-assist.js');
         return response(await assist.route(match[1],match[2],method,await jsonBody(options.body),options.signal));
@@ -150,9 +150,7 @@
         const byAction={};for(const entry of entries)byAction[entry.action]=(byAction[entry.action]||0)+1;
         return response({ok:true,entries,items:entries,total:entries.length,stats:{total:entries.length,byAction},snapshotTotal:entries.length,nextOffset:entries.length,hasMore:false});
       }
-      if(action==='reidentify')return response({job:null});
       if(action==='realign-skip')return response({ok:true});
-      if(action==='draft')return response({status:'done'});
     }
     return response({error:'此功能尚未完成安卓移植，当前先提供完整 ASS 编辑工作流'},501);
   }

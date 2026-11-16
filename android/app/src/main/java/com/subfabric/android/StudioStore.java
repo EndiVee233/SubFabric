@@ -56,6 +56,14 @@ final class StudioStore {
                 if(patch.has("text"))p.put("revision",revision(p.getString("text")));
                 p.put("modifiedAt",System.currentTimeMillis());write(p);return p;
             }
+            case "studioApplyAsr": {
+                JSONObject p=load(args.getString("id")),draft=p.optJSONObject("draft");
+                if(draft==null||!draft.optString("taskId").equals(args.getString("taskId"))||!p.optString("revision").equals(args.getString("revision"))||!p.optString("mediaId").equals(args.getString("mediaId")))throw new IOException("CONFLICT: 识别期间稿件已变化，原字幕保留");
+                JSONObject patch=args.getJSONObject("patch");
+                for(String key:new String[]{"text","originalText","subtitleName","draft"})if(patch.has(key))p.put(key,patch.get(key));
+                if(patch.has("text"))p.put("revision",revision(p.getString("text")));
+                p.put("modifiedAt",System.currentTimeMillis());write(p);return p;
+            }
             case "studioDelete": {
                 // Preserve a recoverable private snapshot instead of deleting project assets.
                 JSONObject p=load(args.getString("id")); p.put("archived",true);write(p);return new JSONObject().put("ok",true);

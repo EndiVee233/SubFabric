@@ -167,6 +167,18 @@ public final class MainActivity extends Activity {
             if (destroyed || id == null || id.length() > 80) return;
             if(json.length()>32*1024*1024){reply(id,false,"内容超过安卓传输上限");return;}
             if (action.equals("cancel")) { cancelled.set(true); reply(id, true, new JSONObject()); return; }
+            if(action.startsWith("asr")){
+                downloadWorker.execute(()->{try{JSONObject arg=new JSONObject(json);AsrManager manager=AsrManager.get(MainActivity.this);Object result;
+                    switch(action){
+                        case "asrModelStatus":result=AsrManager.modelStatus(MainActivity.this);break;
+                        case "asrStart":if(busy.get()||pickerId!=null||fileChooser!=null)throw new IOException("请先完成当前媒体或模型导入");result=manager.start(arg);break;
+                        case "asrStatus":result=manager.status(arg.getString("id"));break;
+                        case "asrCancel":manager.cancel(arg.getString("id"));result=new JSONObject();break;
+                        case "asrActive":result=manager.active();if(result==null)result=JSONObject.NULL;break;
+                        default:throw new IOException("未知本机识别操作");
+                    }reply(id,true,result);
+                }catch(Throwable error){reply(id,false,message(error));}});return;
+            }
             if(action.equals("storageScan")||action.equals("storageClean")){
                 worker.execute(()->{try{if(appStorage==null)appStorage=new AppStorage(MainActivity.this,studio);JSONObject arg=new JSONObject(json);String protectedProject=arg.optString("protectedProject");reply(id,true,action.equals("storageScan")?appStorage.scan(protectedProject):appStorage.clean(arg.getJSONArray("ids"),protectedProject));}catch(Throwable e){reply(id,false,message(e));}});return;
             }
@@ -234,6 +246,7 @@ public final class MainActivity extends Activity {
                     if (pickerId != null) { reply(id, false, "请先完成当前文件选择"); return; }
                     try {
                         JSONObject arg = new JSONObject(json);
+                        if(action.equals("pickModel")&&AsrManager.get(MainActivity.this).active()!=null)throw new IOException("请先停止本机识别或模型下载");
                         if(pickerId!=null||fileChooser!=null)throw new IOException("请先完成当前文件选择");
                         pickerId = id;
                         if(action.equals("pickMedia")){chooseMedia(MEDIA,false,true);return;}
@@ -270,8 +283,8 @@ public final class MainActivity extends Activity {
                                 JSONObject patch=new JSONObject().put("hasAudio",true).put("hasPeaks",true).put("prepare",new JSONObject().put("status","done"));result=studio.call("studioUpdate",new JSONObject().put("id",pid).put("patch",patch));
                             }finally{busy.set(false);}break;
                         }
-                        case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.10.0"); break;
+                        case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioApplyAsr": case "studioDelete": result=studio.call(action,arg);break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.11.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
@@ -377,6 +390,7 @@ public final class MainActivity extends Activity {
                     else {try{text=StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();}catch(java.nio.charset.CharacterCodingException e){text=new String(bytes,java.nio.charset.Charset.forName("GB18030"));}}
                     response=new JSONObject().put("text",text).put("name",name);
                 } else if(request==MODEL) {
+                    if(AsrManager.get(MainActivity.this).active()!=null)throw new IOException("请先停止本机识别或模型下载");
                     Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(uri,DocumentsContract.getTreeDocumentId(uri));
                     Map<String,Uri> found=new HashMap<>();
                     try(Cursor cursor=getContentResolver().query(children,new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,DocumentsContract.Document.COLUMN_DISPLAY_NAME},null,null,null)) {

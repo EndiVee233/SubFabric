@@ -1,5 +1,7 @@
 const $=id=>document.getElementById(id);
 const native=window.androidStudio;
+const {closeTopDialog}=await import('./android-dialogs.js');
+const asr=await import('./android-asr.js');
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 while(!window.__dbg)await wait(50);
 const dbg=window.__dbg;
@@ -135,6 +137,7 @@ function route(){if(location.hash!==lastRoute){previewTime=0;previewPaused=true;
 window.addEventListener('hashchange',route);route();
 document.addEventListener('visibilitychange',()=>{if(document.hidden)flush().catch(()=>{});});
 window.androidBack=async()=>{
+  if(closeTopDialog())return;
   if(mobile.hasSheet()){mobile.close();return;}
   if($('stg-dialog')?.open){$('stg-dialog').close();return;}
   if($('sf-folder-dialog')?.hidden===false){$('sf-folder-dialog').querySelector('[data-folder-cancel]').click();return;}
@@ -146,6 +149,7 @@ window.androidBack=async()=>{
   await flush();if(location.hash!=='#/home')location.hash='#/home';else native.rpc('close');
 };
 window.androidReady=true;
+asr.init();
 window.__androidAssistCheck=async kind=>{const assist=await import('./android-assist.js');return assist.checkPreview(kind);};
 window.__androidAssistOwner=async kind=>{const assist=await import('./android-assist.js');return assist.checkOwner(kind);};
 for(const kind of ['glossary','reseg'])$(kind+'-cancel')?.addEventListener('click',()=>import('./android-assist.js').then(m=>m.cancel(kind)),true);
