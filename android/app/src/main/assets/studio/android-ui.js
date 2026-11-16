@@ -28,6 +28,7 @@ let noticeTimer;
 function status(message){notice.textContent=message;notice.hidden=false;clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>notice.hidden=true,4000);}
 async function flush(){dbg.panel.commitEdit();await wait(50);await window.__subfabricFlushSave();}
 async function open(id){await flush();location.hash='#/project/'+id;if(dbg.state.project?.id===id)await window.__androidRefreshProject(id);}
+async function library(){if(location.hash==='#/home')await window.__androidRefreshLibrary();else location.hash='#/home';}
 function button(label,fn){const node=document.createElement('button');node.textContent=label;node.type='button';node.onclick=()=>Promise.resolve().then(fn).catch(error=>status(error.message));bar.append(node);return node;}
 button('☰',()=>document.body.classList.toggle('android-nav-open')).setAttribute('aria-label','展开导航');
 button('打开字幕',async()=>{
@@ -35,7 +36,7 @@ button('打开字幕',async()=>{
   const {isAssSubtitle,AssDoc}=await import('/editor/js/ass.js');const {parseSRT}=await import('/editor/js/srt.js');
   if(isAssSubtitle(file.text,file.name)){new AssDoc(file.text);if(!/^\s*\[Events\]/im.test(file.text))throw new Error('ASS 缺少 Events 段');}
   else if(!parseSRT(file.text).length)throw new Error('字幕格式无效，请选择 ASS 或 SRT');
-  const project=await native.create(file.name,file.text,file.name);await open(project.id);
+  await native.create(file.name,file.text,file.name);await library();status('字幕已导入，请从稿件库打开');
 });
 button('关联媒体',async()=>{
   await flush();const id=dbg.state.project?.id;if(!id)throw new Error('请先打开一份字幕');
@@ -44,14 +45,14 @@ button('关联媒体',async()=>{
   location.hash='#/home';await wait(100);await open(id);
 });
 button('保存',async()=>{await flush();status('稿件已保存到安卓本机');});
-button('下载素材',async()=>{const download=await import('./android-download.js');await download.showDownload({flush,open,status});});
+button('下载素材',async()=>{const download=await import('./android-download.js');await download.showDownload({flush,open,library,status});});
 button('术语校对',async()=>{await flush();if(!dbg.state.project)throw new Error('请先打开字幕');$('btn-glossary-review').click();});
 button('语义重分句',async()=>{await flush();if(!dbg.state.project)throw new Error('请先打开字幕');$('btn-reseg-llm').click();});
 button('翻译字幕',async()=>{const translation=await import('./android-translate.js');await translation.showTranslation();});
 button('翻译设置',async()=>{await flush();location.hash='#/settings';});
 button('导出视频',async()=>{await flush();const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const {openExportVideoDialog}=await import('/editor/js/export-video.js');await openExportVideoDialog(id);});
 button('导出原件',async()=>{const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const p=await native.load(id);await native.rpc('export',{name:'original-'+p.subtitleName,text:p.originalText??p.text,mime:'text/plain'});});
-button('导入项目包',async()=>{await flush();const p=await native.rpc('pickPack');if(p)await open(p.id);});
+button('导入项目包',async()=>{await flush();const p=await native.rpc('pickPack');if(p){await library();status('项目包已导入，请从稿件库打开');}});
 for(const [label,direction]of[['撤销','undo'],['重做','redo']])button(label,async()=>{
   await flush();const id=dbg.state.project?.id,h=native.history.get(id);if(!h?.[direction]?.length)throw new Error('没有可恢复的编辑');
   const p=await native.load(id),text=h[direction].pop();h[direction==='undo'?'redo':'undo'].push(p.text);await native.update(id,{text},p.revision);
@@ -87,7 +88,7 @@ button('备注',()=>document.body.classList.toggle('android-notes-open'));
 for(const [label,focus]of[['专注字幕','subs'],['专注时间轴','timeline']])button(label,()=>{document.body.dataset.androidFocus=document.body.dataset.androidFocus===focus?'':focus;window.dispatchEvent(new Event('resize'));});
 const newButton=button('新建 ASS',async()=>{
   const text='[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK SC,64,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,50,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:04.00,Default,,0,0,0,,请在字幕列表编辑这一句\n';
-  await flush();const p=await native.create('未命名 ASS',text,'subtitle.ass');await open(p.id);
+  await flush();await native.create('未命名 ASS',text,'subtitle.ass');await library();status('稿件已创建，请从稿件库打开');
 });
 newButton.id='android-new-ass';
 const more=document.createElement('div');more.id='android-more';more.hidden=true;more.setAttribute('role','menu');
@@ -97,7 +98,7 @@ more.addEventListener('click',event=>{if(event.target.closest('button'))more.hid
 document.addEventListener('pointerdown',event=>{if(!more.contains(event.target)&&!bar.contains(event.target))more.hidden=true;});
 document.body.prepend(bar);
 const {initMobile}=await import('./android-mobile.js');
-const mobile=initMobile({bar,more,flush,open,status});
+const mobile=initMobile({bar,more,flush,status});
 // Route the original editor's file buttons through the same persistent Android workflow.
 for(const [id,label]of [['btn-open-sub','打开字幕'],['btn-open-video','关联媒体']])$(id)?.addEventListener('click',event=>{
   event.preventDefault();event.stopImmediatePropagation();[...bar.querySelectorAll('button')].find(node=>node.textContent===label)?.click();

@@ -28,7 +28,7 @@ export async function attach(result,id){
   return id;
 }
 function element(tag,text,parent){const node=document.createElement(tag);if(text)node.textContent=text;parent?.append(node);return node;}
-export async function showDownload({flush,open,status}){
+export async function showDownload({flush,open,library=()=>{location.hash='#/home';},status}){
   const previous=document.querySelector('.android-download-dialog');if(previous){previous.showModal();return;}
   const dialog=element('dialog');dialog.className='android-download-dialog';
   const header=element('header',null,dialog);element('h2','下载素材',header);
@@ -77,7 +77,7 @@ export async function showDownload({flush,open,status}){
           if(job.status==='running')action(controls,'取消下载',()=>rpc('downloadCancel',{id:job.id}));
           if(['error','cancelled','interrupted'].includes(job.status))action(controls,'重新下载',async()=>{await rpc('downloadRetry',{id:job.id});refresh();});
           if(job.status==='done'){
-            const use=async current=>{await flush();const id=current?window.__dbg.state.project?.id:null;if(current&&!id)throw new Error('请先打开一份字幕');const target=await attach(job.result,id);dialog.close();await open(target);status('下载素材已关联');};
+            const use=async current=>{await flush();const id=current?window.__dbg.state.project?.id:null;if(current&&(!id||!/^#\/project\//.test(location.hash)))throw new Error('请先打开一份字幕');const target=await attach(job.result,id);dialog.close();if(current)await open(target);else await library();status(current?'下载素材已关联':'稿件已创建，请从稿件库打开');};
             action(controls,'关联当前稿件',()=>use(true));action(controls,'新建 ASS 稿件',()=>use(false));
           }
         }

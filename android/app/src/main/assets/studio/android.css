@@ -65,10 +65,73 @@ body.sf-studio #editor-panel .panel-foot{display:none!important}
 /* Phones use a persistent bottom bar; wide screens retain the existing desktop navigation. */
 #android-bottom-nav{display:none}#android-mobile-sheet{box-sizing:border-box;margin:auto 0 0;width:100%;max-width:none;max-height:calc(var(--android-height) - 16px);padding:16px 16px max(16px,env(safe-area-inset-bottom));border:1px solid var(--line);border-radius:12px 12px 0 0;background:var(--surface);color:var(--text);overflow:auto}#android-mobile-sheet::backdrop{background:#0007}#android-mobile-sheet header{display:flex;justify-content:space-between;align-items:center;gap:12px}#android-mobile-sheet h2{font-size:19px;margin:0}#android-mobile-sheet h3{grid-column:1/-1;font-size:14px;margin:10px 0 0}#android-mobile-sheet button{min-height:48px;border:1px solid var(--line);background:var(--surface-2);color:var(--text);padding:10px;font:15px system-ui}#android-mobile-sheet .android-mobile-sheet-body{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:14px}#android-mobile-sheet .android-mobile-folder{display:flex;gap:6px;grid-column:1/-1}#android-mobile-sheet .android-mobile-folder button:first-child{flex:1;min-width:0;text-align:left;overflow-wrap:anywhere}
 @media(max-width:759px), (max-width:1000px) and (max-height:500px){
-:root{--android-tools:0px;--android-bottom:calc(60px + env(safe-area-inset-bottom))}body.sf-studio{padding-top:0!important;padding-bottom:var(--android-bottom);box-sizing:border-box}body.sf-studio #android-tools,body.sf-studio .sf-nav,body.sf-studio.android-nav-open .sf-nav{display:none!important}#android-bottom-nav{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));position:fixed;inset:auto 0 0;top:calc(var(--android-height) - var(--android-bottom));height:var(--android-bottom);padding:0 4px env(safe-area-inset-bottom);box-sizing:border-box;background:var(--surface);border-top:1px solid var(--line);z-index:700}#android-bottom-nav button{min-width:0;min-height:48px;border:0;background:transparent;color:var(--muted);font:13px system-ui;border-radius:4px;padding:4px}#android-bottom-nav button[aria-current=page]{color:var(--accent);background:var(--accent-soft);font-weight:600}body.sf-studio #app{height:calc(var(--android-height) - var(--android-bottom))!important}body.sf-studio .workspace-page,body.sf-studio .sf-page{top:0!important;left:0!important;margin-left:0!important;width:100%!important;height:calc(var(--android-height) - var(--android-bottom))!important;box-sizing:border-box;padding-bottom:20px!important}#android-status{bottom:calc(var(--android-bottom) + 10px)}body.android-keyboard{--android-bottom:50px}#storage-view .stg-overview,#storage-view .stg-summary{grid-template-columns:minmax(0,1fr)}#storage-view .stg-row{min-width:0;overflow-wrap:anywhere}#storage-view .stg-row-copy{min-width:0}#stg-dialog{max-width:calc(100vw - 16px);max-height:calc(var(--android-height) - 16px);overflow:auto}#stg-dialog button{min-height:44px}}
+:root{--android-tools:0px;--android-bottom:calc(60px + env(safe-area-inset-bottom))}body.sf-studio{padding-top:0!important;padding-bottom:var(--android-bottom);box-sizing:border-box}body.sf-studio #android-tools,body.sf-studio .sf-nav,body.sf-studio.android-nav-open .sf-nav{display:none!important}#android-bottom-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));position:fixed;inset:auto 0 0;top:calc(var(--android-height) - var(--android-bottom));height:var(--android-bottom);padding:0 4px env(safe-area-inset-bottom);box-sizing:border-box;background:var(--surface);border-top:1px solid var(--line);z-index:700}#android-bottom-nav button{min-width:0;min-height:48px;border:0;background:transparent;color:var(--muted);font:13px system-ui;border-radius:4px;padding:4px}#android-bottom-nav button[aria-current=page]{color:var(--accent);background:var(--accent-soft);font-weight:600}body.sf-studio #app{height:calc(var(--android-height) - var(--android-bottom))!important}body.sf-studio .workspace-page,body.sf-studio .sf-page{top:0!important;left:0!important;margin-left:0!important;width:100%!important;height:calc(var(--android-height) - var(--android-bottom))!important;box-sizing:border-box;padding-bottom:20px!important}#android-status{bottom:calc(var(--android-bottom) + 10px)}body.android-keyboard{--android-bottom:50px}#storage-view .stg-overview,#storage-view .stg-summary{grid-template-columns:minmax(0,1fr)}#storage-view .stg-row{min-width:0;overflow-wrap:anywhere}#storage-view .stg-row-copy{min-width:0}#stg-dialog{max-width:calc(100vw - 16px);max-height:calc(var(--android-height) - 16px);overflow:auto}#stg-dialog button{min-height:44px}}
 @media(max-width:759px), (max-width:1000px) and (max-height:500px){#android-bottom-nav button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px}#android-bottom-nav svg{width:20px;height:20px;flex:none}}
 
 #android-mobile-sheet header{position:sticky;top:-16px;background:var(--surface);padding:6px 0;z-index:1}
 @media(max-width:759px){body.sf-studio #app{grid-template-rows:44px minmax(70px,24%) 100px minmax(0,1fr)!important}body.android-keyboard #app{grid-template-rows:40px 0 65px minmax(0,1fr)!important}}
 @media(max-width:759px), (max-width:1000px) and (max-height:500px){#sf-folder-dialog button{min-height:48px}#sf-folder-dialog input{min-height:44px}#sf-folder-dialog .sf-folder-box{box-sizing:border-box;max-width:calc(100vw - 24px);max-height:calc(var(--android-height) - 24px);overflow:auto}}
 @media(max-width:759px), (max-width:1000px) and (max-height:500px){#job-card{bottom:calc(var(--android-bottom) + 12px);max-width:calc(100vw - 24px)}body.android-keyboard #job-card{display:none!important}}
+
+/* Phone pages use the complete viewport. The editor is a separate screen. */
+#android-editor-actions{display:none}
+body.sf-studio .pc-actions>.btn{min-height:44px!important;min-width:44px!important}
+@media(max-width:759px), (max-width:1000px) and (max-height:500px){
+body.sf-studio.android-phone{--sf-nav-w:0px}
+body.sf-studio.android-phone #home-view,body.sf-studio.android-phone .workspace-page,body.sf-studio.android-phone .sf-page{left:0!important;right:0!important;width:100%!important;margin:0!important;top:0!important;height:calc(var(--android-height) - var(--android-bottom))!important}
+body.sf-studio.android-phone #home-view{padding:0!important}
+body.sf-studio.android-phone .home-inner{box-sizing:border-box;width:100%!important;max-width:none!important;padding:16px 12px 24px!important;margin:0!important}
+body.sf-studio.android-phone .home-toolbar,body.sf-studio.android-phone .home-toolbar-btns{flex-wrap:wrap;gap:8px}
+body.sf-studio.android-phone .home-toolbar-btns{margin-left:0;max-width:100%}
+body.sf-studio.android-phone .sf-library-tools{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:10px!important;min-width:0}
+body.sf-studio.android-phone #sf-filters{grid-column:1/-1;display:flex!important;gap:4px;min-width:0}
+body.sf-studio.android-phone #sf-filters button{flex:1;white-space:nowrap;min-height:40px;padding:6px 8px!important;font-size:12px}
+body.sf-studio.android-phone #sf-search{min-width:0!important;width:100%!important;box-sizing:border-box;min-height:40px}
+body.sf-studio.android-phone #sf-list-mode{min-height:40px;white-space:nowrap}
+body.sf-studio.android-phone #home-view:not([data-list=list]) .proj-card{display:flex!important;flex-direction:column!important;min-width:0;overflow:hidden}
+body.sf-studio.android-phone #home-view:not([data-list=list]) .sf-cover{width:100%!important;aspect-ratio:16/9;height:auto!important;min-height:0;flex:none}
+body.sf-studio.android-phone #home-view:not([data-list=list]) .pc-main{width:100%!important;box-sizing:border-box;padding:12px!important}
+body.sf-studio.android-phone .pc-name{overflow-wrap:anywhere}
+body.sf-studio.android-phone #home-view:not([data-list=list]) .pc-actions{width:100%!important;box-sizing:border-box;padding:0 12px 12px!important;flex:none}
+body.sf-studio.android-phone #home-view .pc-actions>.btn{min-height:44px!important}
+body.sf-studio.android-phone .home-filters{flex-wrap:wrap}
+body.sf-studio.android-phone .home-filters button{white-space:nowrap;flex-shrink:0;min-height:40px}
+body.sf-studio.android-phone .home-list{grid-template-columns:minmax(0,1fr)!important}
+body.sf-studio.android-phone[data-android-editor=true]{--android-bottom:0px;padding-bottom:0!important}
+body.sf-studio.android-phone[data-android-editor=true] #android-bottom-nav{display:none!important}
+body.sf-studio.android-phone #app{padding:0!important;gap:0!important;display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-rows:44px calc(56.25vw + 40px) clamp(108px,26vw,164px) minmax(0,1fr)!important;grid-template-areas:none!important}
+body.sf-studio.android-phone #toolbar{grid-area:1/1!important;padding:0 6px!important;min-width:0;overflow:visible!important}
+body.sf-studio.android-phone #toolbar .tb-right{gap:4px}
+body.sf-studio.android-phone #toolbar .btn{min-height:40px;padding:0 8px;font-size:12px}
+body.sf-studio.android-phone #save-state{max-width:64px;font-size:10px}
+body.sf-studio.android-phone #android-editor-actions{display:inline-flex}
+body.sf-studio.android-phone #stage-wrap{grid-area:2/1!important;padding:0!important;min-height:0;min-width:0;border-radius:0!important}
+body.sf-studio.android-phone #video-stage{inset:0 0 40px!important;width:100%!important;height:auto!important;min-height:0!important;border-radius:0!important;background:#000}
+body.sf-studio.android-phone #video{width:100%!important;height:100%!important;object-fit:contain}
+body.sf-studio.android-phone #sf-player{inset:auto 6px 0!important;height:40px!important;gap:6px!important}
+body.sf-studio.android-phone #timeline-panel{grid-area:3/1!important;height:auto!important;min-height:0!important;overflow:hidden}
+body.sf-studio.android-phone #editor-panel{grid-area:4/1!important;display:flex;flex-direction:column;min-height:0!important;height:auto!important;overflow:hidden;padding-bottom:env(safe-area-inset-bottom)}
+body.sf-studio.android-phone #hsplit,body.sf-studio.android-phone #vsplit{display:none!important}
+body.sf-studio.android-phone #editor-panel #list-actions,body.sf-studio.android-phone #editor-panel .panel-foot{display:none!important}
+body.sf-studio.android-phone #editor-panel .panel-head{padding:0!important}
+body.sf-studio.android-phone #editor-panel .ph-search{display:none!important}
+body.sf-studio.android-phone.android-filter-open #editor-panel .panel-head{padding:8px!important}
+body.sf-studio.android-phone.android-filter-open #editor-panel .ph-search{display:flex!important}
+body.sf-studio.android-phone #editor-panel .ph-row{display:none!important}
+body.sf-studio.android-phone.android-filter-open #editor-panel .ph-row{display:flex!important}
+body.sf-studio.android-phone #panel-tabs{flex:none;min-height:44px}
+body.sf-studio.android-phone #panel-tabs .ptab{min-height:44px}
+body.sf-studio.android-phone.android-keyboard #app,body.sf-studio.android-phone[data-android-focus=subs] #app{grid-template-rows:44px 0 0 minmax(0,1fr)!important}
+body.sf-studio.android-phone[data-android-focus=timeline]:not(.android-keyboard) #app{grid-template-rows:44px calc(56.25vw + 40px) minmax(108px,1fr) 88px!important}
+}
+/* A landscape phone keeps a proportional video beside the functional panel. */
+@media(min-width:760px) and (max-width:1000px) and (max-height:500px){
+body.sf-studio.android-phone #app{grid-template-columns:minmax(0,45fr) minmax(0,55fr)!important;grid-template-rows:44px calc(25.3125vw + 40px) minmax(0,1fr)!important}
+body.sf-studio.android-phone #toolbar{grid-area:1/1/2/3!important}
+body.sf-studio.android-phone #stage-wrap{grid-area:2/1!important}
+body.sf-studio.android-phone #timeline-panel{grid-area:3/1!important}
+body.sf-studio.android-phone #editor-panel{grid-area:2/2/4/3!important}
+body.sf-studio.android-phone.android-keyboard #app{grid-template-columns:minmax(0,1fr)!important;grid-template-rows:44px 0 0 minmax(0,1fr)!important}
+body.sf-studio.android-phone.android-keyboard #toolbar{grid-area:1/1!important}
+body.sf-studio.android-phone.android-keyboard #editor-panel{grid-area:4/1!important}
+}

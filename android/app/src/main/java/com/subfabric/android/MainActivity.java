@@ -263,7 +263,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.7.0"); break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.8.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));

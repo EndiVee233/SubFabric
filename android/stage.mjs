@@ -54,11 +54,27 @@ if(!llmText.includes('module.exports = {'))throw new Error('Review Android LLM p
 fs.writeFileSync(path.join(target,'android-llm-text.js'),llmText.replace('module.exports = {','export {'));
 fs.writeFileSync(path.join(target,'android-translation-doc.js'),fs.readFileSync(path.join(root,'android/translation-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
 let html=fs.readFileSync(path.join(root,'editor/studio.html'),'utf8');
+// Android omits the optional creator feed, including its DOM, cache reader and polling.
+for(const pattern of [/<section class="sf-uwp-youtube"[\s\S]*?<\/section>/,/<section class="sf-mu-yt"[\s\S]*?<\/section>/,/<button type="button" class="sf-orbit"[\s\S]*?<\/button>/]){
+  if(!pattern.test(html))throw new Error('Review Android creator feed markup');html=html.replace(pattern,'');
+}
+const studioFile=path.join(target,'js/studio.js');
+let studio=fs.readFileSync(studioFile,'utf8').replace(/\r\n/g,'\n');
+const feedStart=studio.indexOf('let ytState = null,'),feedEnd=studio.indexOf('function renderMaterialHome()',feedStart);
+if(feedStart<0||feedEnd<0)throw new Error('Review Android creator feed module');
+studio=studio.slice(0,feedStart)+studio.slice(feedEnd);
+for(const text of ["  renderYoutubeUpdates();\n", "  loadYoutubeUpdates();\n", "  write('sf-mu-status-num', ytRecentWeekCount());\n", "  else if (!dashboard.hidden && document.body.dataset.design === 'uwp') { renderYoutubeUpdates(); loadYoutubeUpdates(); }\n", "$('sf-mu-temp').addEventListener('click', () => loadYoutubeUpdates(true));\n", "$('sf-uwp-yt-refresh')?.addEventListener('click', () => loadYoutubeUpdates(true));\n", "const youtubeTimer = setInterval(() => { if (!document.hidden) loadYoutubeUpdates(); }, YT_REFRESH_MS);\n", "if (youtubeTimer && typeof youtubeTimer.unref === 'function') youtubeTimer.unref();\n", "hydrateYoutubeCache();\n"]){
+  if(!studio.includes(text))throw new Error('Review Android creator feed integration: '+text);studio=studio.replace(text,'');
+}
+if(/loadYoutubeUpdates|hydrateYoutubeCache|ytRecentWeekCount|\/api\/youtube\/updates/.test(studio))throw new Error('Android creator feed is still connected');
+fs.writeFileSync(studioFile,studio);
+
 html=html.replace('以下内容会被删除，且不会进入回收站。删除后只能通过重新识别、重新下载或重新安装恢复。','仅删除选中的音频与波形缓存；重新打开稿件时从原媒体生成。字幕、原媒体、模型、任务与配置不会删除。');
 html=html.replace('只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。','支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。');
 html=html.replace('Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。','Cookie 加密保存在安卓本机，界面不会回显。');
 html=html.replace(/<div class="st-grid">\s*<span class="st-lbl">从浏览器读<\/span>[\s\S]*?<select id="st-fetch-browser"[\s\S]*?<\/div>\s*<p class="gl-hint">[\s\S]*?<\/p>/,'<select id="st-fetch-browser" hidden><option value="">（不用）</option></select><p class="gl-hint">安卓请导入浏览器导出的 Netscape Cookie 文件。</p>');
-html=html.replace('<script src="js/accent.js">','<script src="/studio/android-boot.js"></script><link rel="stylesheet" href="/studio/android.css"><script src="js/accent.js">');
+html=html.replace('<script src="js/accent.js">','<script src="/studio/android-boot.js"></script><script src="js/accent.js">');
+html=html.replace('</head>','<link rel="stylesheet" href="/studio/android.css"></head>');
 html=html.replace('<script type="module" src="js/main.js"></script>','<script type="module" src="js/main.js"></script><script type="module" src="/studio/android-ui.js"></script>');
 fs.writeFileSync(path.join(target,'studio.html'),html);
 const storageFile=path.join(target,'js/storage.js');
@@ -82,7 +98,18 @@ project=project.replace('st && st.done && (st.cuda || st.vulkan)','st && st.done
 const emptyGuard="if (!hasEvents) throw new Error('字幕没有有效事件');";
 if(!project.includes(emptyGuard))throw new Error('Review Android empty ASS document integration');
 project=project.replace(emptyGuard,"if (!hasEvents && !(m.androidProject && isAss && /^\\s*\\[Events\\]/im.test(text))) throw new Error('字幕没有有效事件');");
+if(project.split('p.videoExists || p.fetching').length!==3)throw new Error('Review Android standalone library cards');
+project=project.replaceAll('p.videoExists || p.fetching','p.videoExists || p.fetching || p.androidStandalone');
+const libraryAnchor='  return {\n    openProject, detachProject, flushSave, saveNow,';
+if(!project.includes(libraryAnchor))throw new Error('Review Android library refresh hook');
+project=project.replace(libraryAnchor,'  window.__androidRefreshLibrary = renderList;\n'+libraryAnchor);
 fs.writeFileSync(projectFile,project);
+const stateFile=path.join(target,'js/studio-state.js');
+let studioState=fs.readFileSync(stateFile,'utf8');
+const missingMedia='project.videoExists === false';
+if(!studioState.includes(missingMedia))throw new Error('Review Android standalone draft status');
+studioState=studioState.replace(missingMedia,'(project.videoExists === false && !project.androidStandalone)');
+fs.writeFileSync(stateFile,studioState);
 const glossaryFile=path.join(target,'js/glossary-review.js');
 let glossary=fs.readFileSync(glossaryFile,'utf8');
 for(const [before,after]of [
