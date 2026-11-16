@@ -101,7 +101,7 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.12 Vulkan ASR 阶段，GPU 验证未通过）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
+- `android/`：Android 移植（当前 0.12.1，Vulkan ASR 的 GPU 验证未通过）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
   `android-translate.js` 负责共享翻译协议与批次，`translation-doc.mjs` 保留原文事件写回译文。
@@ -117,6 +117,7 @@
   转接到原时间轴创建/框选/编辑处理器，复用原右键菜单。Android staging 移除主播更新组件和轮询；
   `project.js` 的平台刷新钩子让同一稿件页中新建/导入立即显示。`AppStorage` 负责应用存储清单和受限缓存回收；
   `StudioStore` 提供真实的主页操作统计。`build.ps1` 用 SDK 直接构建 APK，无前端打包器。
+  `MediaResponse` 负责原媒体与 WAV 的 WebView 范围流，避免重复 seek 和重复长度头。
   `MediaPicker` 统一 WebView 视频文件框和原生关联媒体的相册/文件来源菜单及单选/多选结果。
   `AsrManager/AsrService` 管理独立识别进程与固定模型，`android-asr.js` 接原初稿/区间识别入口，
   `asr-doc.mjs` 用共享 ASS/karaoke 构造文档。`android-dialogs.css/js` 只适配手机弹窗及调用原取消处理器。
@@ -164,6 +165,14 @@
   name-only 旧请求遇到歧义即拒绝。临时 URI 仅用于复制到原有私有媒体存储，不依赖持久化外部路径。
   浏览文件期间无 60s 自动放弃；系统完成/取消结果驱动清理。relink 接收共享 videoPath/name 字段并失效旧音频准备标记。
   字幕、字体和项目包仍使用各自文件选择器；网络下载保持独立。
+
+- **Android 媒体播放（0.12.1）**：`MediaResponse` 统一原视频与已生成 WAV 的 WebView 字节范围响应。
+  WebView 的 `InputStreamReader` 自行解析 Range 并调用 `skip`，所以返回流必须从文件 0 开始，只约束结束位置；
+  不预先移动至请求起点，避免双重偏移。流的 `available/read/skip` 共用剩余长度，支持定长、开放尾段和后缀范围；
+  `Content-Range` 保留真实全长，`Content-Length` 由 WebView 生成一次，避免重复且不一致的长度导致解复用失败。
+  两个原媒体入口 `/api/media?path=…` 与 `/media/:id` 以及 `/api/projects/:id/audio` 共用实现，Range 请求头不区分大小写。
+  私有原文件与关联信息不重写，不转码，不把完整长视频读进 WebView 内存；回归探针同样流式限量读取。
+  实现依据：[Chromium InputStreamReader](https://chromium.googlesource.com/chromium/src/+/refs/tags/118.0.5993.65/components/embedder_support/android/util/input_stream_reader.cc)。
 
 - **Android Vulkan ASR（0.12）**：已实现但未验证；本轮 WSA 实际模型推理未通过，不能按 0.11 的 CPU 历史验收推断可用。
   APK 移除 sherpa/ONNX CPU 引擎，旧 CPU RPC 明确拒绝；旧模型文件保留。仅编入 CrispASR v0.8.54 的
@@ -1619,6 +1628,21 @@
 
 ## 5. 测试与验证
 
+### Android 长视频播放修复（0.12.1，2026-11-16）
+
+- **当前状态**：已完成且已验证（WSA Android 13 / WebView 118，范围如下）。源码检查点按 §10 保存与回读，云端结果不代替设备验收。
+- 已复现原包对非零 Range 二次偏移：请求第 128 字节实际得到第 256 字节，靠后区间报读取失败，
+  浏览器报告 `PIPELINE_ERROR_READ: FFmpegDemuxer: data source error`；原媒体存在、文件未损坏。
+- 最终 APK 的 20 项检查通过：1,296,989,376-byte HEVC 视频正确读取为 1920×1080、3178.218833s；
+  首部/中段/尾部精确字节、单一长度头、后缀/开放尾段、全文件前缀、两个视频 URL、WAV 首尾范围、四个位置跳转、
+  原播放按钮的真实视频/音频解码、列表/时间轴时钟和 ASS 像素均通过。6 组定向 JS 回归与相关 ESLint 通过。
+- 0.12.1 APK 为 103,616,814 bytes，SHA-256 `6147ef8f22235656777505d48db55df01985dc2576c465080601720dc8aa717f`；
+  开发签名校验、保留数据覆盖安装和设备 APK 同摘要核对通过。之前 0.12.0 的验证记录保留为历史。
+- 开始前保留 201 份稿件元数据快照与当前稿件完整备份，测试只读取原媒体；最终字幕 revision 和媒体关联均未改变。
+  一次诊断误读整文件曾导致 WebView 退出，已改为限量流式探针；重开后修订与媒体关联核对一致。
+- 已解码视频帧的实际图像内容已核对；Windows UI 枚举未提供 WSA 前台窗口，本次未做该窗口的目视验收。
+- 未验证：ARM64 真机播放、其他系统 WebView 版本及连续播放完整 52 分钟；不会用本次播放检查代替 Vulkan ASR 验收。
+
 ### Android Vulkan ASR 阶段（0.12，2026-11-16）
 
 - **当前状态**：已实现但未验证；WSA 真实 GPU 模型推理未通过。ARM64 真机未运行，不把构建、模型文件校验或传输夹具当作模型验收。
@@ -1978,12 +2002,12 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.12）
+### Android 构建与安装（当前 0.12.1）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.12.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  输出 `android/out/SubFabric-Android-0.12.1.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
   用同一开发签名覆盖 0.1–0.11，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。

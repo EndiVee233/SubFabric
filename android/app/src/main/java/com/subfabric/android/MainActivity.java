@@ -83,16 +83,17 @@ public final class MainActivity extends Activity {
                     if(path.matches("/api/downloads/[0-9a-f-]{36}/thumbnail")){
                         String id=path.split("/")[3];File image=new File(DownloadManager.get(MainActivity.this).folder(id),"thumbnail.bin");if(!image.isFile())return empty(404);return new WebResourceResponse("image/jpeg",null,new FileInputStream(image));
                     }
-                    if(path.equals("/api/media")) return serveMedia(uri.getQueryParameter("path"),req.getRequestHeaders().get("Range"));
+                    if(path.equals("/api/media")) return serveMedia(uri.getQueryParameter("path"),requestHeader(req,"Range"));
                     if(path.matches("/api/projects/[0-9a-f-]{36}/(audio|peaks)")) {
                         String id=path.split("/")[3]; boolean audio=path.endsWith("audio");
                         File f=studio.file(id,audio?".audio.wav":".peaks.bin");
                         if(!f.isFile())return empty(404);
-                        WebResourceResponse r=new WebResourceResponse(audio?"audio/wav":"application/octet-stream",null,new FileInputStream(f));
+                        if(audio)return MediaResponse.open(f,"audio/wav",requestHeader(req,"Range"));
+                        WebResourceResponse r=new WebResourceResponse("application/octet-stream",null,new FileInputStream(f));
                         Map<String,String> headers=new HashMap<>();headers.put("X-Peak-Rate","100");headers.put("X-Peak-Ch","2");r.setResponseHeaders(headers);return r;
                     }
                     if(path.equals("/api/font-file")) return new WebResourceResponse("font/otf",null,getAssets().open("editor/vendor/fonts/NotoSansCJKsc-Regular.otf"));
-                    if (path.startsWith("/media/")) return serveMedia(path.substring(7), req.getRequestHeaders().get("Range"));
+                    if (path.startsWith("/media/")) return serveMedia(path.substring(7), requestHeader(req,"Range"));
                     String asset = path.equals("/") ? "editor/studio.html" : path.substring(1);
                     if (!asset.matches("[a-zA-Z0-9_./-]+") || asset.contains("..")) return empty(403);
                     String mime = asset.endsWith(".js") ? "text/javascript" : asset.endsWith(".css") ? "text/css" : asset.endsWith(".png") ? "image/png" : asset.endsWith(".json") ? "application/json" : asset.endsWith(".wasm")?"application/wasm":asset.endsWith(".otf")?"font/otf":asset.endsWith(".svg")?"image/svg+xml":"text/html";
@@ -135,32 +136,13 @@ public final class MainActivity extends Activity {
         return new WebResourceResponse("text/plain", "UTF-8", status, status == 404 ? "Not Found" : "Forbidden", Collections.emptyMap(), new ByteArrayInputStream(new byte[0]));
     }
 
-    private WebResourceResponse serveMedia(String id, String range) throws Exception {
-        File file = mediaFile(id);
-        long size = file.length(), start = 0, end = size - 1;
-        if (!file.isFile() || size == 0) return empty(404);
-        boolean partial = range != null && range.matches("bytes=\\d*-\\d*");
-        if (partial) {
-            String[] parts = range.substring(6).split("-", -1);
-            if (parts[0].isEmpty()) start = Math.max(0, size - Long.parseLong(parts[1]));
-            else {
-                start = Long.parseLong(parts[0]);
-                if (!parts[1].isEmpty()) end = Math.min(end, Long.parseLong(parts[1]));
-            }
-            if (start >= size || end < start) return new WebResourceResponse("text/plain", "UTF-8", 416, "Range Not Satisfiable", Collections.singletonMap("Content-Range", "bytes */" + size), new ByteArrayInputStream(new byte[0]));
-        }
-        FileInputStream input = new FileInputStream(file); input.getChannel().position(start);
-        final long limit = end - start + 1;
-        InputStream bounded = new FilterInputStream(input) {
-            long remaining = limit;
-            @Override public int read(byte[] b, int off, int len) throws IOException { if (remaining <= 0) return -1; int n = super.read(b, off, (int)Math.min(len, remaining)); if(n > 0) remaining -= n; return n; }
-            @Override public int read() throws IOException { if(remaining <= 0) return -1; int n=super.read(); if(n >= 0) remaining--; return n; }
-        };
-        Map<String,String> headers = new HashMap<>();
-        headers.put("Accept-Ranges", "bytes"); headers.put("Content-Length", String.valueOf(limit));
-        if (partial) headers.put("Content-Range", "bytes " + start + "-" + end + "/" + size);
-        String mime = readProject(id).optString("mime", "video/mp4");
-        return new WebResourceResponse(mime, null, partial ? 206 : 200, partial ? "Partial Content" : "OK", headers, bounded);
+    private String requestHeader(WebResourceRequest request,String name) {
+        for(Map.Entry<String,String> header:request.getRequestHeaders().entrySet())if(header.getKey().equalsIgnoreCase(name))return header.getValue();
+        return null;
+    }
+    private WebResourceResponse serveMedia(String id,String range) throws Exception {
+        String mime=readProject(id).optString("mime","video/mp4");
+        return MediaResponse.open(mediaFile(id),mime,range);
     }
 
     public final class Bridge {
@@ -285,7 +267,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioApplyAsr": case "studioApplyAlignment": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", AsrManager.modelStatus(MainActivity.this).optBoolean("ready")).put("engine", "Vulkan · CPU 回退已禁用").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.12.0"); break;
+                        case "status": result = new JSONObject().put("modelReady", AsrManager.modelStatus(MainActivity.this).optBoolean("ready")).put("engine", "Vulkan · CPU 回退已禁用").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.12.1"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));

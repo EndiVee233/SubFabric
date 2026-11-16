@@ -83,7 +83,7 @@ Run "$Jdk/bin/jar.exe" @('uf',"$out/unsigned.apk",'-C',$pack,'.')
 Run "$buildTools/zipalign.exe" @('-f','4',"$out/unsigned.apk","$out/aligned.apk")
 $keystore = Join-Path $cache 'prototype.jks'
 if (!(Test-Path $keystore)) { Run "$Jdk/bin/keytool.exe" @('-genkeypair','-keystore',$keystore,'-storepass','android','-keypass','android','-alias','prototype','-dname','CN=SubFabric Android Prototype','-keyalg','RSA','-keysize','2048','-validity','3650') }
-$apk = Join-Path $root 'out/SubFabric-Android-0.12.0.apk'
+$apk = Join-Path $root 'out/SubFabric-Android-0.12.1.apk'
 Run "$buildTools/apksigner.bat" @('sign','--ks',$keystore,'--ks-key-alias','prototype','--ks-pass','pass:android','--key-pass','pass:android','--out',$apk,"$out/aligned.apk")
 Run "$buildTools/apksigner.bat" @('verify','--verbose',$apk)
 Get-FileHash $apk -Algorithm SHA256
