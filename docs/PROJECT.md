@@ -1882,7 +1882,15 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   准备模型仍可用 `./android/prepare-model.ps1` 或 WSA 的 `-InstallToWsa` 参数；模型不随源码或 APK 保存。
 - 开发签名和构建缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立构建目录。第三方许可与对应源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包解压内容上限 16MB。
-  当前不创建 GitHub Release，不宣称正式安卓发布。
+  按用户要求发布 Android 0.9.0 验收预发行，完整移植仍在进行；不作为正式版或真机验收完成的证明。
+- **0.9.0 成员验收发布（2026-11-16）**：已完成且已验证（发布与资产校验）；成员真机验收未开始，待反馈。
+  [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.9.0) 标记为预发行，不接管桌面版 Latest；
+  标签 `android-v0.9.0` 指向已验证源码 `19432fc9f981fcac95425f84850f06568962a62a`，对应 CI 已通过。
+  附件仅为 `SubFabric-Android-0.9.0.apk`（100,548,163 bytes）和 `SHA256SUMS.txt`，未上传签名私钥、模型或用户数据。
+  APK SHA-256：`8d2dfd015de2b083d085474bfabba4ecea06e9d011d77c3eae02dd71464238ca`；
+  GitHub 资产 digest、大小、标签目标及公开下载 HTTP 200 已核对，与 WSA 已验证包一致，未重新构建。
+  发布说明含触控/编辑/保存/相册验收要点，以及 ARM64 真机、物理触屏、真实软键盘、旧 Android 等未验证范围。
+  本次只核对原有构建、签名与已通过的检查，没有重复执行设备或全量功能测试。
 
 - **翻译错位增量修复（2026-11-11，已完成且已验证）**：Node 22 全量 JS 回归 183 通过、
   1 项诊断、14 部分执行、0 失败、2 排除；定向 ESLint 0 错误、17 个既有 warning。

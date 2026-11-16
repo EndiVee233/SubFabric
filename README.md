@@ -1,5 +1,7 @@
 # SubFabric
 
+[下载 Android 0.9.0 验收版](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.9.0)（预发行；WSA 已验证，真机等范围待成员验收）。
+
 Android 移植位于 [`android/`](android/)：当前 0.9 复用原版 ASS 编辑器，支持逐词、中英、角色、样式、字体、预览与项目保存，适配手机和平板，主题只保留 Windows。
 已接入外部 LLM 翻译方案、术语表、单句与全片翻译；Key 在安卓本机加密保存，已完成批次可在中断后补翻。WSA 隔离接口验证通过，真实付费服务与 ARM 真机尚未验收。
 已加入系统文件夹导出、原片复制、字幕导出与 ASS 硬字幕压制，支持取消和后台前台服务，编码故障与编辑器隔离。WSA 已验证 H.264/AV1 软件成片；HEVC 需要设备编码器，硬件编码与 ARM 真机未验收。
