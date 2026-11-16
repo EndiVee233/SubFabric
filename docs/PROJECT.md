@@ -2231,6 +2231,21 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   旧 localStorage/项目配置也不会再生效；生长引擎与旧存档解析保留，生产 UI/运行时不可达。Glow/Fade 仍在。
 - `stripEffectTagsSafe` 对 k 行逐字节零改动。
 
+### WhisperX 前置 MDX 人声分离（2026-11-16）
+
+- **需求**：WhisperX 与 Whisper large-v2 面对带 BGM 的素材应有同等人声清理能力，而不是只有
+  Faster-Whisper-XXL 一路能开 MDX。
+- **实现**：XXL 的 MDX 只存在于 exe 内部，没有可独立调用的入口。`prepareWhisperxMdxAudio()`
+  用 `faster-whisper-xxl.exe --ff_dump` 把 16k 预处理音频 dump 到隔离临时目录，轮询发现 dump 文件
+  后立刻杀掉 XXL 的后续 ASR，再把这份音频交给 WhisperX worker。输入用硬链接复用、模型目录优先复用
+  已下载的 `faster-whisper-large-v2`（没有就建 junction），不复制大 WAV 或 3GB 权重。
+  dump 出来的 stem 可能仍是 44.1kHz，统一 ffmpeg 重采样成 16k 单声道，不把 XXL 构建差异泄漏给 worker。
+- **参数**：`asr-params.js` 的 `whisperx` profile 新增 `vocalExtract`（默认开），摘要行显示 `MDX 开/关`；
+  `asrEngineArgs()` 据此补 `--vocal-extract` 到 worker 契约（worker 只保留该开关，实做仍在 Node 侧）。
+  分片路径每片各自做人声分离，进度按片内比例折算到 30–75%。
+- **验证**：`whisperx-api-test` 断言 8 项参数与 `vocalExtract` 默认值，`whisperx-test`、`asr-params-test`、
+  `asr-params-api-test`、`faster-whisper-test`、`asr-model-args-test` 通过；未做真实 GPU WhisperX + MDX 推理验收。
+
 ### 双引擎（NPU + GPU）
 
 > **2026-10-21 起已停用**：`parakeet-tdt-0.6b-v2-dual` 模型、`/api/asr/dual`、`/api/asr/perf/*`

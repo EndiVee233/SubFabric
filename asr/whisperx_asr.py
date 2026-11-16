@@ -194,6 +194,9 @@ def parser():
     cli.add_argument("--chunk-size", type=int, default=30)
     cli.add_argument("--vad-onset", type=float, default=0.5)
     cli.add_argument("--vad-offset", type=float, default=0.36)
+    # MDX is prepared by the Node dispatcher with Faster-Whisper-XXL before this worker starts.
+    # The flag is retained in the worker contract so the selected model parameters are explicit.
+    cli.add_argument("--vocal-extract", action="store_true")
     cli.add_argument("--cache-dir", default=str(Path(__file__).parent / "runtime-whisperx" / "cache"))
     cli.add_argument("--probe", action="store_true")
     cli.add_argument("--prepare-runtime", action="store_true")

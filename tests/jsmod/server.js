@@ -2621,7 +2621,8 @@ const asrEngineArgs = (model) => {
       extra: ['--language', mp.language, '--batch-size', String(mp.batchSize), '--compute-type', mp.computeType,
         '--beam-size', String(mp.beamSize), '--chunk-size', String(mp.chunkSize),
         '--vad-onset', String(mp.vadOnset), '--vad-offset', String(mp.vadOffset),
-        '--cache-dir', path.join(WHISPERX_RUNTIME.dir, 'cache')],
+        '--cache-dir', path.join(WHISPERX_RUNTIME.dir, 'cache'),
+        ...(mp.vocalExtract ? ['--vocal-extract'] : [])],
     };
   }
   if (eng === 'qwen') {
@@ -4234,6 +4235,99 @@ async function runFasterWhisper(wav, modelDir, onProgress, opts) {
       if (!parsed.segments.length) return reject(new Error('未识别到语音内容（Faster-Whisper 输出为空）'));
       resolve(parsed);
     });
+  });
+}
+
+/* WhisperX 与 Faster-Whisper-XXL 必须吃同一份人声输入。
+ * XXL 的 MDX 实现只提供在 exe 内部；用 --ff_dump 让它把 16kHz 预处理音频落到隔离临时目录，
+ * 发现 dump 文件后立即停止 XXL 的后续 ASR，只把这份音频交给 WhisperX。输入用硬链接复用，
+ * 不复制用户的大 WAV；如果系统不允许硬链接才退回复制。 */
+async function prepareWhisperxMdxAudio(wav, whisperModelDir, onProgress, register) {
+  if (!fasterWhisperRuntimeOk()) throw new Error('WhisperX 需要已安装 Faster-Whisper-XXL 运行时来做人声分离');
+  if (!whisperModelDir) throw new Error('缺少 WhisperX 模型目录');
+  const root = fs.mkdtempSync(path.join(path.dirname(wav), '.whisperx-mdx-'));
+  const input = path.join(root, 'input.wav');
+  let linkRoot = '';
+  let child = null;
+  let timer = null;
+  let poll = null;
+  let settled = false;
+  try { fs.linkSync(wav, input); } catch { fs.copyFileSync(wav, input); }
+
+  // 优先复用已下载的 Faster-Whisper 模型；只有 WhisperX 目录时建临时 junction，避免复制 3GB 权重。
+  const fwModel = modelDirFor('faster-whisper-large-v2');
+  const fwReady = dirHasModelFile(fwModel, modelById('faster-whisper-large-v2'));
+  const sourceModel = fwReady ? fwModel : whisperModelDir;
+  let modelParent = path.dirname(sourceModel);
+  if (path.basename(sourceModel).toLowerCase() !== 'faster-whisper-large-v2') {
+    linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'whisperx-mdx-model-'));
+    fs.symlinkSync(sourceModel, path.join(linkRoot, 'faster-whisper-large-v2'), 'junction');
+    modelParent = linkRoot;
+  }
+  const help = await fasterWhisperHelp();
+  const mdx = fasterWhisper.mdxArgs(help);
+  const args = [input, '--model', 'large-v2', '--model_dir', modelParent,
+    '--output_dir', root, '--output_format', 'json', '--language', 'en',
+    '--word_timestamps', 'False', '--vad_filter', 'False', '--beep_off',
+    '--ff_dump', ...mdx];
+  const findDump = () => {
+    let files = [];
+    try { files = fs.readdirSync(root).filter(name => /\.wav$/i.test(name) && name !== 'input.wav'); } catch {}
+    const candidates = files.map(name => {
+      const file = path.join(root, name);
+      try { return { file, name: name.toLowerCase(), size: fs.statSync(file).size }; } catch { return null; }
+    }).filter(x => x && x.size > 44);
+    if (!candidates.length) return '';
+    candidates.sort((a, b) => ((/mdx|vocal|dump/.test(b.name) ? 2 : 0) - (/mdx|vocal|dump/.test(a.name) ? 2 : 0)) || b.size - a.size);
+    return candidates[0].file;
+  };
+  const cleanup = () => {
+    if (timer) clearTimeout(timer);
+    if (poll) clearInterval(poll);
+    try { if (child && child.exitCode == null) child.kill(); } catch {}
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch {}
+    if (linkRoot) { try { fs.rmSync(linkRoot, { recursive: true, force: true }); } catch {} }
+  };
+  return await new Promise((resolve, reject) => {
+    const fail = error => { if (settled) return; settled = true; cleanup(); reject(error); };
+    const found = file => {
+      if (settled || !file) return;
+      settled = true;
+      if (poll) clearInterval(poll);
+      try { if (child && child.exitCode == null) child.kill(); } catch {}
+      // r245.4 的 MDX stem 可能保留 44.1kHz；WhisperX worker 合约是 16kHz WAV。
+      // 统一重采样，避免不同 XXL 构建的 dump 命名/采样率差异泄漏到 worker。
+      const normalized = path.join(root, 'mdx-16k.wav');
+      const convert = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-i', file,
+        '-ac', '1', '-ar', '16000', normalized], { windowsHide: true });
+      let errorText = '';
+      convert.stderr.on('data', d => { errorText = (errorText + String(d)).slice(-400); });
+      convert.on('error', e => { cleanup(); reject(new Error('MDX 人声文件重采样失败：' + e.message)); });
+      convert.on('close', code => {
+        if (code !== 0) { cleanup(); return reject(new Error('MDX 人声文件重采样失败（退出码 ' + code + '）' + (errorText ? '：' + errorText : ''))); }
+        // The caller owns root/linkRoot through this cleanup closure until Python exits.
+        resolve({ audio: normalized, cleanup });
+      });
+    };
+    child = spawn(fasterWhisperCli(), args, { windowsHide: true, cwd: FASTER_WHISPER_RUNTIME.dir });
+    if (register) { try { register(child); } catch {} }
+    let last = -1;
+    const sink = chunk => {
+      const text = String(chunk);
+      for (const line of text.split(/[\r\n]+/)) {
+        const pct = fasterWhisper.parseProgress(line);
+        if (pct != null && pct !== last) { last = pct; if (onProgress) onProgress(pct); }
+      }
+    };
+    child.stdout.on('data', sink); child.stderr.on('data', sink);
+    child.on('error', e => fail(new Error('无法启动 MDX 人声分离: ' + e.message)));
+    child.on('close', code => {
+      const file = findDump();
+      if (file) return found(file);
+      fail(new Error('MDX 人声分离失败（退出码 ' + code + '）'));
+    });
+    poll = setInterval(() => found(findDump()), 250);
+    timer = setTimeout(() => fail(new Error('MDX 人声分离超时（2 小时）')), 2 * 60 * 60 * 1000);
   });
 }
 
@@ -9172,11 +9266,23 @@ function startPrepare(id, videoPath, mode) {
           const outP = path.join(projDir(id), 'asr.chunk' + c.index + '.json');
           let sliceErr = '', sbuf = '';
           const ea = asrEngineArgs(model);
-          const asrArgs = [ea.script,
-                           ...asrArgsFor(ea, mdir, slice, outP, confMode)];
-          const pr = spawn(pyExe, asrArgs,
-            { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
-          draftProcs.set(id, pr);
+          let prepared = null;
+          let pr = null;
+          const launch = async () => {
+            if (model.engine === 'whisperx' && mp.vocalExtract !== false) {
+              pushDraftLog(id, `[${ts()}] [MDX] 第 ${c.index + 1}/${chunkPlan.length} 片先做人声分离…`);
+              prepared = await prepareWhisperxMdxAudio(slice, mdir, pct => {
+                setDraft(id, { stage: STAGE.asr,
+                  progress: 30 + Math.round(((c.index + Math.min(100, Number(pct) || 0) / 100) / chunkPlan.length) * 45),
+                  message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：MDX 人声分离…', });
+              }, p => draftProcs.set(id, p));
+            }
+            const asrArgs = [ea.script,
+                             ...asrArgsFor(ea, mdir, prepared ? prepared.audio : slice, outP, confMode)];
+            pr = spawn(pyExe, asrArgs,
+              { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+            draftProcs.set(id, pr);
+          };
           const sink2 = (chunk) => {
             sbuf += String(chunk);
             let i;
@@ -9201,16 +9307,25 @@ function startPrepare(id, videoPath, mode) {
               }
             }
           };
-          pr.stderr.on('data', sink2);
-          pr.stdout.on('data', sink2);
-          pr.on('error', e => reject(new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + e.message)));
-          pr.on('close', (code) => {
-            let parsed = null;
-            try { parsed = JSON.parse(fs.readFileSync(outP, 'utf8')); } catch {}
-            try { fs.unlinkSync(outP); } catch {}
-            if (code !== 0) return reject(new Error(sliceErr || ('识别进程异常退出（' + asrExitHint(code) + '）')));
-            if (!parsed) return reject(new Error('这一片的识别结果读不出来（' + outP + '）'));
-            resolve(parsed);
+          launch().then(() => {
+            pr.stderr.on('data', sink2);
+            pr.stdout.on('data', sink2);
+            pr.on('error', e => {
+              if (prepared) prepared.cleanup();
+              reject(new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + e.message));
+            });
+            pr.on('close', (code) => {
+              let parsed = null;
+              try { parsed = JSON.parse(fs.readFileSync(outP, 'utf8')); } catch {}
+              try { fs.unlinkSync(outP); } catch {}
+              if (prepared) prepared.cleanup();
+              if (code !== 0) return reject(new Error(sliceErr || ('识别进程异常退出（' + asrExitHint(code) + '）')));
+              if (!parsed) return reject(new Error('这一片的识别结果读不出来（' + outP + '）'));
+              resolve(parsed);
+            });
+          }).catch(e => {
+            if (prepared) prepared.cleanup();
+            reject(e);
           });
         });
         transcribeLocalChunked({
@@ -9228,11 +9343,21 @@ function startPrepare(id, videoPath, mode) {
       }
       let lastErr = '', buf = '';
       const ea = asrEngineArgs(model);
-      const asrArgs = [ea.script,
-                       ...asrArgsFor(ea, mdir, wav, outJson, confMode)];
-      const proc = spawn(pyExe, asrArgs,
-        { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
-      draftProcs.set(id, proc);
+      let prepared = null;
+      let proc = null;
+      const launch = async () => {
+        if (model.engine === 'whisperx' && mp.vocalExtract !== false) {
+          pushDraftLog(id, `[${ts()}] [MDX] 先做人声分离，再启动 WhisperX…`);
+          prepared = await prepareWhisperxMdxAudio(wav, mdir, pct => {
+            setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round((Number(pct) || 0) * 0.2), message: 'MDX 人声分离…' });
+          }, p => draftProcs.set(id, p));
+        }
+        const asrArgs = [ea.script,
+                         ...asrArgsFor(ea, mdir, prepared ? prepared.audio : wav, outJson, confMode)];
+        proc = spawn(pyExe, asrArgs,
+          { windowsHide: true, cwd: ASR_DIR, env: pySpawnEnv() });
+        draftProcs.set(id, proc);
+      };
 
       const sink = (chunk) => {
         buf += String(chunk);
@@ -9256,12 +9381,22 @@ function startPrepare(id, videoPath, mode) {
           }
         }
       };
-      proc.stderr.on('data', sink);
-      proc.stdout.on('data', sink);
-      proc.on('error', e => finishDraft(id, new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + e.message)));
-      proc.on('close', (code) => {
-        if (code !== 0) { draftJobs.delete(id); return finishDraft(id, new Error(lastErr || ('识别进程异常退出（' + asrExitHint(code) + '）'))); }
-        finishAsr();
+      launch().then(() => {
+        proc.stderr.on('data', sink);
+        proc.stdout.on('data', sink);
+        proc.on('error', e => {
+          if (prepared) prepared.cleanup();
+          finishDraft(id, new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + e.message));
+        });
+        proc.on('close', (code) => {
+          if (prepared) prepared.cleanup();
+          if (code !== 0) { draftJobs.delete(id); return finishDraft(id, new Error(lastErr || ('识别进程异常退出（' + asrExitHint(code) + '）'))); }
+          finishAsr();
+        });
+      }).catch(e => {
+        if (prepared) prepared.cleanup();
+        draftJobs.delete(id);
+        finishDraft(id, e);
       });
     });
   }

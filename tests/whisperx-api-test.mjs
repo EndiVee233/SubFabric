@@ -11,10 +11,11 @@ try{
   assert.equal(model.draftAllowed,true);assert.equal(model.runtimeKey,'runtime:whisperx');
   assert.equal(model.needRuntime,true);assert.equal(model.runtimeReady,false);assert.equal(model.ready,false);
   assert.ok(model.missing.includes('align/en/model.safetensors'));
-  assert.equal(model.params.count,7);
+  assert.equal(model.params.count,8);
   const query='/api/asr/params?model=whisperx-large-v2';
   const initial=await(await server.call(query)).json();
   assert.equal(initial.ok,true);assert.equal(initial.values.batchSize,4);assert.equal(initial.values.language,'en');
+  assert.equal(initial.values.vocalExtract,true);
   const saved=await(await server.call('/api/asr/params',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({model:'whisperx-large-v2',values:{batchSize:2,computeType:'int8_float16',language:'auto'}})})).json();
   assert.equal(saved.ok,true);assert.equal(saved.values.batchSize,2);

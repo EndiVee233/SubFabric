@@ -52,6 +52,8 @@ const PROFILES = {
   'whisperx': [
     { key: 'language', label: '识别语言', type: 'select', default: 'en', options: LANGUAGE_OPTIONS_AUTO,
       help: '英语对齐权重随模型下载；其它语言首次使用会下载对应对齐模型。' },
+    { key: 'vocalExtract', label: 'MDX 人声分离', type: 'bool', default: true,
+      help: '先用与 Whisper large-v2 相同的 MDX Kim 人声分离清理背景音；会增加识别时间。' },
     { key: 'batchSize', label: '批量大小', type: 'number', default: 4, min: 1, max: 32, step: 1,
       help: '显存不足时先减小批量大小。' },
     { key: 'computeType', label: '计算精度', type: 'select', default: 'float16', options: [
@@ -245,7 +247,7 @@ function summaryFor(model, values) {
     return `blank 惩罚 ${v.blankPenalty} · 单帧 ${v.maxSymbolsPerFrame} token · ${v.normalizationScope}`;
   }
   const v = resolveFor(model, values);
-  if (model && model.engine === 'whisperx') return `WhisperX · ${v.language} · 批量 ${v.batchSize} · ${v.computeType} · wav2vec2 对齐`;
+  if (model && model.engine === 'whisperx') return `WhisperX · ${v.language} · 批量 ${v.batchSize} · ${v.computeType} · MDX ${v.vocalExtract ? '开' : '关'} · wav2vec2 对齐`;
   if (model && model.engine === 'faster-whisper') {
     return `VAD ${v.vad ? '开' : '关'} · 阈值 ${v.vadThreshold} · MDX ${v.vocalExtract ? '开' : '关'} · 逐词 ${v.wordTimestamps ? '开' : '关'}`;
   }
