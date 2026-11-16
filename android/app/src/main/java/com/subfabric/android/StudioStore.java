@@ -29,7 +29,7 @@ final class StudioStore {
         switch(action) {
             case "studioList": {
                 JSONArray list=new JSONArray(); File[] files=directory.listFiles((d,n)->n.matches("[0-9a-f-]{36}\\.json"));
-                if(files!=null) {Arrays.sort(files,(a,b)->Long.compare(b.lastModified(),a.lastModified()));for(File f:files){JSONObject p=load(f.getName().replace(".json","")); p.remove("text");p.remove("originalText");p.remove("packExtras");p.remove("oplog");p.remove("notes");list.put(p);}}
+                if(files!=null) {Arrays.sort(files,(a,b)->Long.compare(b.lastModified(),a.lastModified()));for(File f:files){JSONObject p=load(f.getName().replace(".json","")); p.remove("text");p.remove("originalText");p.remove("srtOriginalText");p.remove("packExtras");p.remove("oplog");p.remove("notes");list.put(p);}}
                 return list;
             }
             case "studioLoad": return load(args.getString("id"));
@@ -63,6 +63,13 @@ final class StudioStore {
                 for(String key:new String[]{"text","originalText","subtitleName","draft"})if(patch.has(key))p.put(key,patch.get(key));
                 if(patch.has("text"))p.put("revision",revision(p.getString("text")));
                 p.put("modifiedAt",System.currentTimeMillis());write(p);return p;
+            }
+            case "studioApplyAlignment": {
+                JSONObject p=load(args.getString("id")),task=p.optJSONObject("androidRealign");
+                if(task==null||!task.optString("taskId").equals(args.getString("taskId"))||!p.optString("revision").equals(args.getString("revision"))||!p.optString("mediaId").equals(args.getString("mediaId"))||!task.optString("sourceFormat").equals("srt")||!task.optString("sourceRevision").equals(args.getString("revision"))||!task.optString("mediaId").equals(args.getString("mediaId"))||!task.optString("projectId").equals(p.getString("id")))throw new IOException("CONFLICT: 对齐期间稿件已变化，原字幕保留");
+                if(!p.has("srtOriginalText"))p.put("srtOriginalText",p.optString("text"));
+                if(!p.has("originalSubtitleName"))p.put("originalSubtitleName",p.optString("subtitleName","subtitle.srt"));
+                p.put("text",args.getString("text")).put("subtitleName","subtitle.ass").put("revision",revision(args.getString("text"))).put("modifiedAt",System.currentTimeMillis());write(p);return p;
             }
             case "studioDelete": {
                 // Preserve a recoverable private snapshot instead of deleting project assets.

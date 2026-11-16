@@ -54,6 +54,7 @@ if(!llmText.includes('module.exports = {'))throw new Error('Review Android LLM p
 fs.writeFileSync(path.join(target,'android-llm-text.js'),llmText.replace('module.exports = {','export {'));
 fs.writeFileSync(path.join(target,'android-translation-doc.js'),fs.readFileSync(path.join(root,'android/translation-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
 fs.writeFileSync(path.join(target,'android-asr-doc.js'),fs.readFileSync(path.join(root,'android/asr-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/"));
+fs.writeFileSync(path.join(target,'android-alignment-doc.js'),fs.readFileSync(path.join(root,'android/alignment-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/").replace("'./asr-doc.mjs'","'./android-asr-doc.js'"));
 let html=fs.readFileSync(path.join(root,'editor/studio.html'),'utf8');
 // Android omits the optional creator feed, including its DOM, cache reader and polling.
 for(const pattern of [/<section class="sf-uwp-youtube"[\s\S]*?<\/section>/,/<section class="sf-mu-yt"[\s\S]*?<\/section>/,/<button type="button" class="sf-orbit"[\s\S]*?<\/button>/]){
@@ -70,6 +71,7 @@ for(const text of ["  renderYoutubeUpdates();\n", "  loadYoutubeUpdates();\n", "
 if(/loadYoutubeUpdates|hydrateYoutubeCache|ytRecentWeekCount|\/api\/youtube\/updates/.test(studio))throw new Error('Android creator feed is still connected');
 fs.writeFileSync(studioFile,studio);
 
+html=html.replaceAll('未勾选/失败的行按句内时长平均分配','未勾选/失败的行保留整句字幕');
 html=html.replace('以下内容会被删除，且不会进入回收站。删除后只能通过重新识别、重新下载或重新安装恢复。','仅删除选中的音频与波形缓存；重新打开稿件时从原媒体生成。字幕、原媒体、模型、任务与配置不会删除。');
 html=html.replace('只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。','支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。');
 html=html.replace('Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。','Cookie 加密保存在安卓本机，界面不会回显。');
@@ -96,6 +98,7 @@ const before='      } else {\n        promptRelink(m);\n      }';
 project=project.replace(/\r\n/g,'\n');
 for(const [before,after]of [
  ['  function filterStatusModels(d) {','  function filterStatusModels(d) {\n    if(d?.android)return d;'],
+ ['  function npSyncSpeakers() {',"  function npSyncSpeakers() {\n    if(window.androidRpc){$('#np-speakers').checked=false;$('#np-speakers').disabled=true;$('#np-spk-count').disabled=true;$('#np-row-spk').classList.add('disabled');return;}"],
  ['      if (generation !== asrRenderGeneration) return;\n      const preparing =','      if (generation !== asrRenderGeneration) return;\n      if(raw.android){const android=await import("/studio/android-asr.js");android.renderSettings(raw);return;}\n      const preparing ='],
 ]){if(project.split(before).length!==2)throw new Error('Review Android Parakeet UI integration');project=project.replace(before,after);}
 if(!project.includes(before))throw new Error('Review Android subtitle-only project integration against upstream');
@@ -125,6 +128,9 @@ project=project.slice(0,browserStart)+`  function browserPickVideo() {
     });
   }
 `+project.slice(browserEnd);
+const gpuHintAnchor="    let why = '';\n    if (!hasSource) why =";
+if(project.split(gpuHintAnchor).length!==2)throw new Error('Review Android Vulkan availability hint');
+project=project.replace(gpuHintAnchor,"    let why = '';\n    if (npMode==='draft' && asrStatus?.android && !asrStatus.native?.gpu?.available) why = asrStatus.native?.gpu?.error || 'Vulkan GPU 不可用；CPU 识别已禁用';\n    else if (!hasSource) why =");
 fs.writeFileSync(projectFile,project);
 const stateFile=path.join(target,'js/studio-state.js');
 let studioState=fs.readFileSync(stateFile,'utf8');
@@ -159,6 +165,7 @@ const loopAnchor='    for (const p of picked) {\n';
 const resegStart=main.indexOf(applyAnchor),resegEnd=main.indexOf('function initResegLLM()',resegStart);
 if(resegEnd<0||!main.slice(resegStart,resegEnd).includes(loopAnchor))throw new Error('Review Android semantic apply owner guard');
 main=main.slice(0,resegStart)+main.slice(resegStart,resegEnd).replace(loopAnchor,loopAnchor+"      await window.__androidAssistOwner('reseg');\n")+main.slice(resegEnd);
+main=main.replaceAll('未勾选/失败的行按句内时长平均分配','未勾选/失败的行保留整句字幕').replaceAll('（失败行按句内时长分配）','（失败行保留原句）');
 fs.writeFileSync(mainFile,main);
 const hardsub=fs.readFileSync(path.join(root,'editor/hardsub.js'),'utf8');
 fs.writeFileSync(path.join(target,'android-hardsub.js'),hardsubBrowserModule(hardsub));

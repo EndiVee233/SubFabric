@@ -5,7 +5,7 @@ import {serializeSRT} from '../editor/js/srt.js';
 export const emptyAss='[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK SC,64,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,50,1\nStyle: 中文字幕,Noto Sans CJK SC,64,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,130,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n';
 const safe=text=>String(text||'').replace(/[{}\\\r\n]/g,' ').replace(/\s+/g,' ').trim();
 export function recognitionSegments(result){
- if(!Array.isArray(result?.cues)||!result.cues.length)throw Error('没有识别到英文语音，原字幕保留');
+ if(!Array.isArray(result?.cues)||!result.cues.length)throw Error('没有识别到语音，原字幕保留');
  return result.cues.map(c=>{
   const start=Number(c.start),end=Number(c.end),text=safe(c.text);
   if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||!text)throw Error('识别结果时间或文字无效，原字幕保留');
@@ -24,8 +24,10 @@ export function draftDocument(result,options={}){
  for(const s of segments){
   const proto=doc.appendEvent({start:s.start,end:s.end,style:'Default',text:s.text});
   // Keep real native timings; a tokenizer mismatch leaves a readable sentence instead of invented timing.
-  if(s.words.length&&splitEnglishWords(s.text).length===s.words.length){
-   const specs=buildWordSpecs({...s,style:'Default',proto,highlightTag:'{\\c&H00FF00&}',karStyle,kTag:options.karaokeSweep?'\\kf':'\\k',kBaseHex:options.karaokeBase||'#FFFFFF',words:s.words.map(w=>({w:w.word,s:w.start,e:w.end}))});
+  if(s.words.length){
+   let position=0;const realWords=s.words.map(w=>{const at=s.text.indexOf(w.word,position);if(at<0)throw Error('逐词结果与原文不一致，未生成估算时间');position=at+w.word.length;return {w:w.word,s:w.start,e:w.end,pStart:at,pEnd:position};});
+   const generic=splitEnglishWords(s.text).length!==s.words.length;
+   const specs=buildWordSpecs({...s,style:'Default',proto,highlightTag:'{\\c&H00FF00&}',karStyle:generic?'k':karStyle,kTag:options.karaokeSweep?'\\kf':'\\k',kBaseHex:options.karaokeBase||'#FFFFFF',words:realWords});
    doc.replaceEvents([proto],specs);
   }
  }

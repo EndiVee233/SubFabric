@@ -1,0 +1,38 @@
+[
+  {
+    "id": "parakeet-tdt-0.6b-v2-android",
+    "name": "Parakeet TDT v2",
+    "kind": 1,
+    "repository": "cstr/parakeet-tdt-0.6b-v2-GGUF",
+    "revision": "8878172f3c45ba231fac8cfd4aff2542b13bc875",
+    "filename": "parakeet-tdt-0.6b-v2-q4_k.gguf",
+    "size": 396937984,
+    "sha256": "287f8a46b64e7785bbd634c2d17fe178145b70266c33f7e7aa8acbf7854d8518",
+    "downloadUrl": "https://huggingface.co/cstr/parakeet-tdt-0.6b-v2-GGUF/resolve/8878172f3c45ba231fac8cfd4aff2542b13bc875/parakeet-tdt-0.6b-v2-q4_k.gguf",
+    "license": "cc-by-4.0"
+  },
+  {
+    "repository": "cstr/qwen3-asr-0.6b-GGUF",
+    "revision": "58bd3202f835f46b24b17142cb503b0860c737a5",
+    "filename": "qwen3-asr-0.6b-q4_k.gguf",
+    "size": 631026336,
+    "sha256": "f63771c02dfa486d9399d41ab6ab8cd2d8ca24e077cd32130ea1f67f4fd8dade",
+    "downloadUrl": "https://huggingface.co/cstr/qwen3-asr-0.6b-GGUF/resolve/58bd3202f835f46b24b17142cb503b0860c737a5/qwen3-asr-0.6b-q4_k.gguf",
+    "license": "apache-2.0",
+    "id": "qwen3-asr-0.6b-android",
+    "name": "Qwen3-ASR 0.6B",
+    "kind": 2
+  },
+  {
+    "id": "qwen3-forced-aligner-android",
+    "name": "Qwen3 Forced Aligner 0.6B",
+    "kind": 3,
+    "repository": "cstr/qwen3-forced-aligner-0.6b-GGUF",
+    "revision": "1ec5110602ccab18c878ddebedab0891e290a95c",
+    "filename": "qwen3-forced-aligner-0.6b-q8_0.gguf",
+    "size": 985594624,
+    "sha256": "539df5dd0fe1721e378ac13bfac9a26b1260dafb62d892c518c1f21244762636",
+    "downloadUrl": "https://huggingface.co/cstr/qwen3-forced-aligner-0.6b-GGUF/resolve/1ec5110602ccab18c878ddebedab0891e290a95c/qwen3-forced-aligner-0.6b-q8_0.gguf",
+    "license": "apache-2.0"
+  }
+]

@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';import fs from 'node:fs/promises';import {pathToFileURL} from 'node:url';import path from 'node:path';
+const catalog=JSON.parse(await fs.readFile('android/vulkan-models.json','utf8'));let available=true,createFails=false;const calls=[],values=new Map(),project={id:'fixture',subtitleName:'subtitle.ass',mediaId:'media',text:'',revision:'revision'};
+globalThis.localStorage={getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v)};
+globalThis.window={androidRpc:async(a,p={})=>{calls.push({a,p});if(a==='asrModelStatus')return {gpu:{available,device:'Fixture GPU',error:available?'':'No compatible Vulkan GPU'},models:catalog.map(m=>({...m,filesOk:true,ready:available,totalBytes:m.size})),segmentSeconds:600,cpuFallback:false};if(a==='asrStart')return {id:'task',status:'running',stage:'Fixture job'};if(a==='studioLoad')return project;if(a==='studioCreate'){if(createFails)throw Error('Fixture save failed');return p.project;}return {ok:true};}};
+let source=await fs.readFile('android/app/src/main/assets/studio/android-asr.js','utf8');source=source.replace("'/editor/android-asr-doc.js'",JSON.stringify(pathToFileURL(path.resolve('android/asr-doc.mjs')).href));const asr=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const state=await asr.status();assert.equal(state.models.length,2);assert.equal(state.aligners.length,1);assert.ok(state.models.every(m=>m.backend==='vulkan'&&!m.cloud));assert.equal(state.models.find(m=>m.id===asr.qwenId).nativeWordLevel,false);
+await asr.route('/api/asr/select','POST',{modelId:asr.qwenId});assert.equal((await asr.status()).selectedModel,asr.qwenId);
+const draft=await asr.create({wordLevel:false,align:true},{path:'media',name:'Fixture'},'local');assert.equal(draft.draft.modelId,asr.qwenId);assert.equal(draft.draft.align,true);assert.equal(draft.draft.wordLevel,true);assert.equal(draft.draft.segmentSeconds,600);assert.equal(calls.findLast(x=>x.a==='asrStart').p.modelId,asr.qwenId);
+await assert.rejects(asr.create({modelId:asr.qwenId,wordLevel:true},{path:'media'},'local'),/原生逐词/);
+await assert.rejects(asr.create({modelId:'whisper'},{path:'media'},'local'),/Vulkan/);
+await assert.rejects(asr.create({modelId:'cloud'},{path:'media'},'local'),/Vulkan/);
+await asr.route('/api/asr/select-rerecog','POST',{modelId:asr.qwenId});await asr.projectRoute('fixture','rerecognize','POST',{start:1,end:3});assert.equal(calls.findLast(x=>x.a==='asrStart').p.align,true);
+available=false;let before=calls.filter(x=>x.a==='asrStart').length;await assert.rejects(asr.create({modelId:asr.modelId},{path:'media'},'local'),/Vulkan/);assert.equal(calls.filter(x=>x.a==='asrStart').length,before);
+available=true;createFails=true;await assert.rejects(asr.create({modelId:asr.modelId},{path:'media'},'local'),/save failed/);assert.ok(calls.some(x=>x.a==='asrCancel'&&x.p.id==='task'));
+console.log('Android Vulkan protocol: catalog, persistent selection, Qwen alignment, interval inheritance, 600s and GPU/error guards passed (transport fixture; not model inference)');

@@ -16,7 +16,7 @@ public final class AsrService extends Service {
         String id=job==null?"":job.optString("id");
         Intent cancel=new Intent(context,AsrService.class).setAction("cancel").putExtra("jobId",id);
         return new Notification.Builder(context,CHANNEL).setSmallIcon(context.getApplicationInfo().icon)
-            .setContentTitle("SubFabric 本地语音识别").setContentText(job==null?"正在准备 Parakeet":job.optString("stage"))
+            .setContentTitle("SubFabric "+(job!=null&&job.optString("kind").equals("align")?"字幕对齐":job!=null&&job.optString("kind").equals("model")?"模型下载":"Vulkan 语音识别")).setContentText(job==null?"正在准备 Vulkan 任务":job.optString("stage"))
             .setOngoing(true).setOnlyAlertOnce(true).setProgress(100,job==null?0:job.optInt("pct"),false)
             .setContentIntent(PendingIntent.getActivity(context,6,new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE))
             .addAction(new Notification.Action.Builder(null,"停止",PendingIntent.getService(context,7,cancel,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE)).build()).build();

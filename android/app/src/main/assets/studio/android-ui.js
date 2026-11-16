@@ -53,7 +53,7 @@ button('语义重分句',async()=>{await flush();if(!dbg.state.project)throw new
 button('翻译字幕',async()=>{const translation=await import('./android-translate.js');await translation.showTranslation();});
 button('翻译设置',async()=>{await flush();location.hash='#/settings';});
 button('导出视频',async()=>{await flush();const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const {openExportVideoDialog}=await import('/editor/js/export-video.js');await openExportVideoDialog(id);});
-button('导出原件',async()=>{const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const p=await native.load(id);await native.rpc('export',{name:'original-'+p.subtitleName,text:p.originalText??p.text,mime:'text/plain'});});
+button('导出原件',async()=>{const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const p=await native.load(id);await native.rpc('export',{name:'original-'+(p.originalSubtitleName||p.subtitleName),text:p.originalText??p.text,mime:'text/plain'});});
 button('导入项目包',async()=>{await flush();const p=await native.rpc('pickPack');if(p){await library();status('项目包已导入，请从稿件库打开');}});
 for(const [label,direction]of[['撤销','undo'],['重做','redo']])button(label,async()=>{
   await flush();const id=dbg.state.project?.id,h=native.history.get(id);if(!h?.[direction]?.length)throw new Error('没有可恢复的编辑');

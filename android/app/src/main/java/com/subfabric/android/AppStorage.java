@@ -54,9 +54,9 @@ final class AppStorage {
         }
         item(items,"project","稿件、备注与操作记录","字幕、项目包附加信息与历史记录受保护",documents,null);
         File root=context.getFilesDir();
-        for(String[] group:new String[][]{{"media","project","原始媒体"},{"projects","project","媒体索引"},{"models","model","语音模型"},{"parakeet","model","Parakeet 语音模型"},{"chaquopy","runtime","Python 运行组件"},{"download-runtime","runtime","下载运行时"},{"download-jobs","cache","下载任务与分片"},{"export-jobs","cache","导出任务与快照"},{"export-fonts","cache","导出字体"},{"fonts","cache","字体"}})
+        for(String[] group:new String[][]{{"media","project","原始媒体"},{"projects","project","媒体索引"},{"models","model","语音模型"},{"parakeet","model","旧 Parakeet 模型"},{"asr-models","model","Vulkan 语音模型"},{"asr-jobs","cache","识别与对齐任务"},{"chaquopy","runtime","Python 运行组件"},{"download-runtime","runtime","下载运行时"},{"download-jobs","cache","下载任务与分片"},{"export-jobs","cache","导出任务与快照"},{"export-fonts","cache","导出字体"},{"fonts","cache","字体"}})
             item(items,group[1],group[2],"保留，不参与本页清理",size(new File(root,group[0])),null);
-        Set<String> known=new HashSet<>(Arrays.asList("studio","media","projects","models","parakeet","chaquopy","download-runtime","download-jobs","export-jobs","export-fonts","fonts"));long other=0;File[] children=root.listFiles();if(children!=null)for(File f:children)if(!known.contains(f.getName()))other+=size(f);
+        Set<String> known=new HashSet<>(Arrays.asList("studio","media","projects","models","parakeet","asr-models","asr-jobs","chaquopy","download-runtime","download-jobs","export-jobs","export-fonts","fonts"));long other=0;File[] children=root.listFiles();if(children!=null)for(File f:children)if(!known.contains(f.getName()))other+=size(f);
         for(String dir:new String[]{"app_webview","shared_prefs","databases","code_cache","cache"})other+=size(new File(context.getDataDir(),dir));
         item(items,"cache","配置、浏览器数据及其它应用文件","包含登录配置、导入字体与界面偏好，均受保护",other,null);
         File apk=new File(context.getApplicationInfo().sourceDir);item(items,"runtime","应用安装包","应用代码与内置组件，受系统管理",apk.length(),null);

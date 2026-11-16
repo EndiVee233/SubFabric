@@ -1,16 +1,28 @@
 SubFabric Android prototype bundles:
 
-sherpa-onnx 2.0.1, Apache License 2.0
-https://github.com/k2-fsa/sherpa-onnx/tree/v2.0.1
-ONNX Runtime (included in sherpa-onnx AAR), MIT License
-https://github.com/microsoft/onnxruntime
-Kotlin standard library, Apache License 2.0
-https://github.com/JetBrains/kotlin
+CrispASR v0.8.54 (6221fbb79532be2e5a1ad6fde641ce5037971cf1), MIT.
+https://github.com/CrispStrobe/CrispASR/tree/6221fbb79532be2e5a1ad6fde641ce5037971cf1
+Selected Parakeet, Qwen3-ASR and Qwen3 Forced Aligner code only; no Whisper/cloud engines.
+ggml (CrispStrobe/ggml 1b972bb754aa5f83e2d872ccf37a335717f6658d), MIT.
+https://github.com/CrispStrobe/ggml/tree/1b972bb754aa5f83e2d872ccf37a335717f6658d
+Vulkan-Headers (b26454f3ccd67e704117a39295fa13935fd3804c), Apache-2.0 / MIT.
+SPIRV-Headers (5c6004e758e0c80185ef2cee93ae5c10fa342a5b), MIT / Khronos notices.
+Build sources, archive digests and strict GPU/platform patches: build-native.ps1 and native/.
+libc++ / libc++abi (Android NDK 27), Apache-2.0 WITH LLVM-exception, statically linked into JNI.
+https://github.com/llvm/llvm-project/tree/llvmorg-18.1.8/libcxx
+Kotlin standard library, Apache License 2.0; https://github.com/JetBrains/kotlin
+sherpa-onnx / ONNX Runtime were removed from the APK in 0.12; old user model files are retained.
 
-Parakeet weights are downloaded separately and are not bundled in the APK.
-Model source: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2
-ONNX conversion: https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models
-Model license: CC-BY-4.0 (see original model card).
+Model weights are separate downloads, not bundled in the APK:
+Parakeet TDT 0.6B v2: NVIDIA, CC-BY-4.0; GGUF conversion by CrispStrobe.
+https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2
+https://huggingface.co/cstr/parakeet-tdt-0.6b-v2-GGUF
+Qwen3-ASR 0.6B / Qwen3 Forced Aligner 0.6B: Qwen, Apache-2.0; GGUF by CrispStrobe.
+https://huggingface.co/Qwen/Qwen3-ASR-0.6B
+https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B
+https://huggingface.co/cstr/qwen3-asr-0.6b-GGUF
+https://huggingface.co/cstr/qwen3-forced-aligner-0.6b-GGUF
+Exact pinned revisions / sizes / SHA-256 / licenses: vulkan-models.json.
 
 ASS editor additionally bundles libass-wasm / JavascriptSubtitlesOctopus 4.1.0.
 JavaScript wrapper: MIT. Compiled dependency license expression from the 4.1.0 npm package:

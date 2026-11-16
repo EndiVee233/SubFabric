@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {alignedSrtDocument,alignmentRows} from '../android/alignment-doc.mjs';
+import {draftDocument} from '../android/asr-doc.mjs';
+import {AssDoc} from '../editor/js/ass.js';
+import {analyzeKaraoke} from '../editor/js/karaoke.js';
+const source='1\n00:00:01,000 --> 00:00:04,000\nHello there\nGeneral Kenobi\n你好将军\n\n2\n00:00:05,000 --> 00:00:07,000\nKeep {literal} C:\\video\n';
+const items=[{index:0,targetKey:'one',ok:true,words:[{w:'Hello',s:1.08,e:1.48},{w:'there',s:1.64,e:2.04},{w:'General',s:2.4,e:2.88},{w:'Kenobi',s:3.12,e:3.84}]}];
+assert.equal(alignmentRows(source)[0].text,'Hello there General Kenobi');
+const output=alignedSrtDocument(source,items,['one']),doc=new AssDoc(output.text),analysis=analyzeKaraoke(doc);
+assert.equal(output.applied,1);assert.match(output.text,/Hello there\\NGeneral Kenobi/);
+assert.ok(output.text.includes('你好将军'));assert.ok(output.text.includes('Keep \\{literal\\} C:\\\\video'));
+assert.ok(analysis.sentences.some(s=>s.words.length===4));assert.throws(()=>alignedSrtDocument(source,items,[]),/选择/);
+assert.throws(()=>alignedSrtDocument(source,[{...items[0],words:[{w:'missing',s:1,e:2}]}],['one']),/词序/);
+assert.throws(()=>alignedSrtDocument(source,[{...items[0],words:[{w:'Hello',s:1,e:9}]}],['one']),/词序/);
+const chinese={cues:[{start:0,end:1,text:'你好世界',words:[...('你好世界')].map((text,i)=>({text,start:i*.24,end:(i+1)*.24}))}]};
+const zh=draftDocument(chinese),zhDoc=new AssDoc(zh.text);assert.match(zh.text,/\\k24/);assert.ok(zhDoc.events.some(e=>e.text.includes('你')&&e.text.includes('界')));
+console.log('Android Vulkan documents: measured CJK timing, multiline bilingual SRT, literal escapes, selection and invalid alignment protection passed');

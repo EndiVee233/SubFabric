@@ -36,7 +36,7 @@
   window.androidRpc=rpc;
   const originalFetch=window.fetch.bind(window);
   const response=(data,status=200,headers={})=>new Response(typeof data==='string'?data:JSON.stringify(data),{status,headers:{'Content-Type':typeof data==='string'?'text/plain':'application/json',...headers}});
-  const documentMeta=p=>({ ...p, text:undefined,originalText:undefined,packExtras:undefined,oplog:undefined,notes:undefined,
+  const documentMeta=p=>({ ...p, text:undefined,originalText:undefined,srtOriginalText:undefined,packExtras:undefined,oplog:undefined,notes:undefined,
     name:p.name||'未命名稿件', format:/\.(ass|ssa)$/i.test(p.subtitleName||'')?'ass':'srt',
     subtitle:{name:p.subtitleName||'subtitle.ass',file:p.subtitleName||'subtitle.ass'},
     video:p.mediaId?{path:p.mediaId,name:p.mediaName||'媒体'}:null,videoExists:!!p.mediaId,androidStandalone:!p.mediaId,androidProject:true,
@@ -57,7 +57,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.11 · 手机布局与 Parakeet',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.12 · Vulkan 识别与 Qwen 对齐',vendorOk:true,stamp:''});
     if(path==='/api/storage'||path==='/api/storage/clean'){
       const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
       if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));
@@ -150,7 +150,7 @@
         const byAction={};for(const entry of entries)byAction[entry.action]=(byAction[entry.action]||0)+1;
         return response({ok:true,entries,items:entries,total:entries.length,stats:{total:entries.length,byAction},snapshotTotal:entries.length,nextOffset:entries.length,hasMore:false});
       }
-      if(action==='realign-skip')return response({ok:true});
+      if(['realign','realign-full','realign-full-cancel','realign-full-apply','realign-skip'].includes(action)){const align=await import('/studio/android-realign.js');return response(await align.route(id,action,method,await jsonBody(options.body)));}
     }
     return response({error:'此功能尚未完成安卓移植，当前先提供完整 ASS 编辑工作流'},501);
   }

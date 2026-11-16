@@ -14,14 +14,14 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.*;
-import com.k2fsa.sherpa.onnx.*;
+import com.arthenica.ffmpegkit.*;
 
 /** Immutable media request and separate result files; recognition never edits a Studio document. */
 final class AsrManager {
     private static AsrManager instance;
     static synchronized AsrManager get(Context context){if(instance==null)instance=new AsrManager(context.getApplicationContext());return instance;}
     private final Context context;
-    private final File root,models;
+    private final File root;
     private final boolean child;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService clock=Executors.newScheduledThreadPool(2);
@@ -32,16 +32,13 @@ final class AsrManager {
     private ScheduledFuture<?> watchdog;
     private long lastProgress;
     private volatile boolean timedOut;
+    private volatile long decodeSession=-1;
     private AsrManager(Context context){
-        this.context=context;root=new File(context.getFilesDir(),"asr-jobs");root.mkdirs();models=new File(context.getFilesDir(),"parakeet");
+        this.context=context;root=new File(context.getFilesDir(),"asr-jobs");root.mkdirs();
         boolean found=false;List<ActivityManager.RunningAppProcessInfo> processes=context.getSystemService(ActivityManager.class).getRunningAppProcesses();
         if(processes!=null)for(ActivityManager.RunningAppProcessInfo process:processes)if(process.pid==Process.myPid())found=process.processName.equals(context.getPackageName()+":asr");child=found;
     }
-    static JSONObject modelStatus(Context context) throws Exception {
-        File directory=new File(context.getFilesDir(),"parakeet");JSONArray files=new JSONArray();long bytes=0,total=0;boolean ready=true;
-        for(String name:ModelFiles.NAMES){File file=new File(directory,name);long size=ModelFiles.size(name),actual=file.isFile()?file.length():0;boolean ok=actual==size;ready&=ok;bytes+=actual;total+=size;files.put(new JSONObject().put("name",name).put("bytes",actual).put("size",size).put("ready",ok));}
-        return new JSONObject().put("ready",ready).put("bytes",bytes).put("totalBytes",total).put("files",files);
-    }
+    static JSONObject modelStatus(Context context) throws Exception { return VulkanModels.status(context); }
     private File folder(String id) throws IOException {if(id==null||!id.matches("[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}"))throw new IOException("识别任务 ID 无效");return new File(root,id);}
     private JSONObject read(String id,String name) throws Exception {return new JSONObject(new String(Files.readAllBytes(new File(folder(id),name).toPath()),StandardCharsets.UTF_8));}
     private void write(String id,String name,JSONObject value) throws Exception {
@@ -57,23 +54,28 @@ final class AsrManager {
     synchronized JSONObject start(JSONObject input) throws Exception {
         if(child)throw new IOException("识别任务必须从编辑器启动");
         if(alive(null)||active()!=null)throw new IOException("已有本地识别任务进行中");
-        String kind=input.optString("kind","recognize");if(!kind.matches("recognize|model"))throw new IOException("识别任务类型无效");
-        if(kind.equals("model"))return startModel();
-        if(!modelStatus(context).getBoolean("ready"))throw new IOException("请先导入 Parakeet v2 int8 模型");
+        String kind=input.optString("kind","recognize");if(!kind.matches("recognize|model|align"))throw new IOException("识别任务类型无效");
+        if(kind.equals("model"))return startModel(input);
+        String modelId=input.optString("modelId",VulkanModels.ALL[0].id);VulkanModels.Spec spec=VulkanModels.find(kind.equals("align")?VulkanModels.ALL[2].id:modelId);
+        if(!kind.equals("align")&&spec.kind==3)throw new IOException("对齐模型不能用于语音识别");
+        JSONObject hardware=VulkanModels.gpuStatus(context);if(!hardware.optBoolean("available"))throw new IOException("Vulkan GPU 不可用；CPU 识别已禁用："+hardware.optString("error"));
+        if(!spec.path(context).isFile())throw new IOException("请先下载或导入 "+spec.name);
+        if(input.optBoolean("align")&&!VulkanModels.ALL[2].path(context).isFile())throw new IOException("请先下载 Qwen 对齐器");
         String mediaId=input.getString("mediaId");File source=media(mediaId);
         double start=input.optDouble("start",0),end=input.has("end")&&!input.isNull("end")?input.optDouble("end",Double.NaN):-1;
         if(!Double.isFinite(start)||start<0||start>86400||end!=-1&&(!Double.isFinite(end)||end<=start||end-start>14400))throw new IOException("识别时间范围无效，单次最长四小时");
         int threads=input.optInt("threads",Math.min(4,Math.max(1,Runtime.getRuntime().availableProcessors())));if(threads<1||threads>8)throw new IOException("识别线程数需为 1–8");
         String id=UUID.randomUUID().toString();if(!folder(id).mkdir())throw new IOException("无法准备识别目录");
-        JSONObject request=new JSONObject().put("kind","recognize").put("mediaId",mediaId).put("start",start).put("end",end).put("threads",threads).put("mediaBytes",source.length()).put("mediaModified",source.lastModified());
-        JSONObject job=new JSONObject().put("id",id).put("kind","recognize").put("mediaId",mediaId).put("status","running").put("stage","正在准备 Parakeet").put("pct",0).put("startedAt",System.currentTimeMillis());
+        JSONObject request=new JSONObject(input.toString()).put("kind",kind).put("modelId",spec.id).put("segmentSeconds",600).put("mediaId",mediaId).put("start",start).put("end",end).put("threads",threads).put("mediaBytes",source.length()).put("mediaModified",source.lastModified());
+        JSONObject job=new JSONObject().put("id",id).put("kind",kind).put("modelId",spec.id).put("segmentSeconds",600).put("backend","vulkan").put("cpuFallback",false).put("mediaId",mediaId).put("status","running").put("stage","正在准备 Vulkan 识别").put("pct",0).put("startedAt",System.currentTimeMillis());
         write(id,"request.json",request);write(id,"job.json",job);context.getSharedPreferences("asr",0).edit().putString("active",id).commit();
         try{context.startForegroundService(new Intent(context,AsrService.class).putExtra("jobId",id));}catch(Exception error){job.put("status","error").put("error","无法启动本地识别前台任务");write(id,"job.json",job);throw error;}
         return job;
     }
-    private JSONObject startModel() throws Exception {
+    private JSONObject startModel(JSONObject input) throws Exception {
+        VulkanModels.Spec spec=VulkanModels.find(input.optString("modelId",VulkanModels.ALL[0].id));
         String id=UUID.randomUUID().toString();if(!folder(id).mkdir())throw new IOException("无法准备模型下载目录");
-        JSONObject request=new JSONObject().put("kind","model"),job=new JSONObject().put("id",id).put("kind","model").put("status","running").put("stage","正在检查 Parakeet 模型").put("pct",0).put("bytes",0).put("total",modelStatus(context).getLong("totalBytes")).put("startedAt",System.currentTimeMillis());
+        JSONObject request=new JSONObject().put("kind","model").put("modelId",spec.id),job=new JSONObject().put("id",id).put("kind","model").put("status","running").put("stage","正在检查 Vulkan 模型").put("pct",0).put("bytes",0).put("total",spec.bytes).put("modelId",spec.id).put("startedAt",System.currentTimeMillis());
         write(id,"request.json",request);write(id,"job.json",job);context.getSharedPreferences("asr",0).edit().putString("active",id).commit();
         try{context.startForegroundService(new Intent(context,AsrService.class).putExtra("jobId",id));}catch(Exception error){job.put("status","error").put("error","无法启动模型下载前台任务");write(id,"job.json",job);throw error;}return job;
     }
@@ -96,13 +98,13 @@ final class AsrManager {
         JSONObject job=status(id);if(!job.optString("status").equals("running"))return;
         if(!child){Files.write(new File(folder(id),"cancel.flag").toPath(),new byte[]{1});if(alive(null))context.startService(new Intent(context,AsrService.class).setAction("cancel").putExtra("jobId",id));return;}
         synchronized(this){if(current==null||!current.optString("id").equals(id)||!working)return;cancelled.set(true);current.put("stage","正在停止识别");persist();}
-        Thread thread=workerThread;if(thread!=null)thread.interrupt();forceStop(id,"cancelled","识别已停止，原稿保留",3);
+        if(decodeSession>=0)FFmpegKit.cancel(decodeSession);Thread thread=workerThread;if(thread!=null)thread.interrupt();forceStop(id,"cancelled","识别已停止，原稿保留",3);
     }
     private void forceStop(String id,String state,String message,int seconds){clock.schedule(()->{synchronized(this){if(child&&working&&current!=null&&current.optString("id").equals(id)){try{current.put("status",state).put("error",message);persist();}catch(Exception ignored){}Process.killProcess(Process.myPid());}}},seconds,TimeUnit.SECONDS);}
     synchronized void receive(String id) throws Exception {
         if(!child||working)throw new IOException("本地识别任务启动失败");JSONObject job=read(id,"job.json");if(!job.optString("status").equals("running"))return;
         JSONObject request=read(id,"request.json");current=job;current.put("pid",Process.myPid());working=true;cancelled.set(false);timedOut=false;persist();
-        watchdog=clock.schedule(()->{timedOut=true;cancelled.set(true);forceStop(id,"error","Parakeet 任务超时，原稿保留",3);Thread thread=workerThread;if(thread!=null)thread.interrupt();},request.optString("kind").equals("model")?1:6,TimeUnit.HOURS);
+        watchdog=clock.schedule(()->{timedOut=true;cancelled.set(true);forceStop(id,"error","Vulkan 任务超时，原稿保留",3);Thread thread=workerThread;if(thread!=null)thread.interrupt();},request.optString("kind").equals("model")?1:6,TimeUnit.HOURS);
         worker.execute(()->run(id,request));
     }
     void stopped(String id){try{if(child&&working)cancel(id);}catch(Exception ignored){}}
@@ -116,34 +118,36 @@ final class AsrManager {
     private void run(String id,JSONObject request){
         workerThread=Thread.currentThread();
         try{
-            if(request.optString("kind").equals("model")){downloadModels(id);return;}
+            if(request.optString("kind").equals("model")){downloadModels(id,request);return;}
             check();File source=media(request.getString("mediaId"));if(source.length()!=request.getLong("mediaBytes")||source.lastModified()!=request.getLong("mediaModified"))throw new IOException("识别源媒体已经变化，请重新选择");
-            progress("正在校验 Parakeet 模型",0);for(String name:ModelFiles.NAMES){check();ModelFiles.verify(new File(models,name),name);}
-            progress("正在加载 Parakeet 模型",1);
-            OfflineModelConfig model=new OfflineModelConfig();model.getTransducer().setEncoder(new File(models,"encoder.int8.onnx").getPath());model.getTransducer().setDecoder(new File(models,"decoder.int8.onnx").getPath());model.getTransducer().setJoiner(new File(models,"joiner.int8.onnx").getPath());
-            model.setTokens(new File(models,"tokens.txt").getPath());model.setModelType("nemo_transducer");model.setProvider("cpu");model.setNumThreads(request.getInt("threads"));
-            OfflineRecognizerConfig config=new OfflineRecognizerConfig();config.setModelConfig(model);OfflineRecognizer recognizer=new OfflineRecognizer(null,config);
-            JSONArray cues;
-            try{check();cues=wave(source,recognizer,request);if(cues==null)cues=decode(source,recognizer,request);}finally{recognizer.release();}
-            check();if(cues.length()==0)throw new IOException("没有识别到英文语音，原稿保留");
-            JSONObject result=new JSONObject().put("cues",cues).put("engine","parakeet-tdt-v2-int8").put("language","en").put("mediaId",request.getString("mediaId")).put("start",request.getDouble("start")).put("end",request.getDouble("end"));
+            VulkanModels.Spec spec=VulkanModels.find(request.getString("modelId"));
+            progress("正在校验 "+spec.name,0);VulkanModels.verify(spec.path(context),spec);
+            JSONObject result;
+            if(request.optString("kind").equals("align"))result=alignBlocks(source,request);
+            else {
+                JSONArray cues=recognize(source,spec,request);check();
+                if(cues.length()==0)throw new IOException("没有识别到语音，原稿保留");
+                if(request.optBoolean("align"))cues=alignCues(source,cues);
+                result=new JSONObject().put("cues",cues).put("engine",spec.id).put("backend","vulkan").put("cpuFallback",false).put("segmentSeconds",600).put("mediaId",request.getString("mediaId")).put("start",request.getDouble("start")).put("end",request.getDouble("end"));
+            }
             if(result.toString().length()>12*1024*1024)throw new IOException("识别结果过大，请分段识别");write(id,"result.json",result);check();
             synchronized(this){current.put("status","done").put("pct",100).put("stage","本地识别完成，等待写入稿件");persist();}
         }catch(Throwable error){
-            try{synchronized(this){boolean stopped=!timedOut&&(cancelled.get()||Thread.currentThread().isInterrupted()||new File(folder(id),"cancel.flag").isFile());String message=timedOut?"Parakeet 任务超时，原稿保留":stopped?"Parakeet 任务已停止，原稿保留":error instanceof IOException?error.getMessage():"Parakeet 识别失败，原稿保留";current.put("status",stopped?"cancelled":"error").put("error",message).put("stage",message);persist();}}catch(Exception ignored){}
+            if(error.getMessage()!=null&&error.getMessage().contains("self-check"))try{VulkanModels.gpuFailure(context,error.getMessage());}catch(Exception ignored){}
+            try{synchronized(this){boolean stopped=!timedOut&&(cancelled.get()||Thread.currentThread().isInterrupted()||new File(folder(id),"cancel.flag").isFile());String message=timedOut?"Vulkan 任务超时，原稿保留":stopped?"Vulkan 任务已停止，原稿保留":error instanceof IOException?error.getMessage():"Vulkan 识别失败，原稿保留";current.put("status",stopped?"cancelled":"error").put("error",message).put("stage",message);persist();}}catch(Exception ignored){}
         }finally{Thread.interrupted();workerThread=null;if(watchdog!=null)watchdog.cancel(false);synchronized(this){working=false;}context.stopService(new Intent(context,AsrService.class));}
     }
-    private void downloadModels(String id) throws Exception {
-        models.mkdirs();long total=0,completed=0;for(long size:ModelFiles.SIZES)total+=size;
-        for(String name:ModelFiles.NAMES){
-            check();File target=new File(models,name);boolean valid=false;
-            if(target.isFile())try{progress("正在校验模型 · "+name,100.0*completed/total);ModelFiles.verify(target,name);valid=true;}catch(IOException error){check();}
-            if(valid){completed+=ModelFiles.size(name);continue;}
-            File part=new File(folder(id),name+".part");long expected=ModelFiles.size(name);
-            if(folder(id).getUsableSpace()<expected+32L*1024*1024)throw new IOException("空间不足，无法下载 Parakeet 模型");
+    private void downloadModels(String id,JSONObject request) throws Exception {
+        VulkanModels.Spec spec=VulkanModels.find(request.getString("modelId"));File directory=spec.path(context).getParentFile();directory.mkdirs();long total=spec.bytes,completed=0;
+        for(String name:new String[]{spec.file}){
+            check();File target=new File(directory,name);boolean valid=false;
+            if(target.isFile())try{progress("正在校验模型 · "+name,100.0*completed/total);VulkanModels.verify(target,spec);valid=true;}catch(IOException error){check();}
+            if(valid){completed+=spec.bytes;continue;}
+            File part=new File(folder(id),name+".part");long expected=spec.bytes;
+            if(folder(id).getUsableSpace()<expected+32L*1024*1024)throw new IOException("空间不足，无法下载 Vulkan 模型");
             HttpsURLConnection connection=null;
             try{
-                URL url=new URL("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/main/"+name);
+                URL url=new URL(spec.url);
                 for(int hop=0;hop<=5;hop++){
                     check();if(!url.getProtocol().equals("https")||url.getUserInfo()!=null)throw new IOException("模型下载重定向无效");
                     connection=(HttpsURLConnection)url.openConnection();connection.setConnectTimeout(15000);connection.setReadTimeout(30000);connection.setInstanceFollowRedirects(false);connection.setRequestProperty("Accept-Encoding","identity");
@@ -153,93 +157,83 @@ final class AsrManager {
                 if(connection==null)throw new IOException("模型下载连接失败");long declared=connection.getContentLengthLong();if(declared>=0&&declared!=expected)throw new IOException("模型下载大小不匹配");
                 long downloaded=0,last=0;byte[] buffer=new byte[262144];
                 try(InputStream in=connection.getInputStream();FileOutputStream out=new FileOutputStream(part)){
-                    for(int count;(count=in.read(buffer))!=-1;){check();downloaded+=count;if(downloaded>expected)throw new IOException("模型下载超过预期大小");out.write(buffer,0,count);long now=System.currentTimeMillis();if(now-last>=350){last=now;synchronized(this){current.put("bytes",completed+downloaded).put("total",total);}progress("正在下载 Parakeet · "+name,100.0*(completed+downloaded)/total);}}
+                    for(int count;(count=in.read(buffer))!=-1;){check();downloaded+=count;if(downloaded>expected)throw new IOException("模型下载超过预期大小");out.write(buffer,0,count);long now=System.currentTimeMillis();if(now-last>=350){last=now;synchronized(this){current.put("bytes",completed+downloaded).put("total",total);}progress("正在下载 Vulkan 模型 · "+name,100.0*(completed+downloaded)/total);}}
                     out.getFD().sync();
                 }
-                check();progress("正在校验模型 · "+name,100.0*(completed+downloaded)/total);ModelFiles.verify(part,name);check();
+                check();progress("正在校验模型 · "+name,100.0*(completed+downloaded)/total);VulkanModels.verify(part,spec);check();
                 Files.move(part.toPath(),target.toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);completed+=expected;
             }catch(IOException error){check();String message=error.getMessage();if(message!=null&&(message.startsWith("模型")||message.startsWith("空间不足")))throw error;throw new IOException("模型下载失败，请检查网络后重试");}
             finally{if(connection!=null)connection.disconnect();if(part.isFile())part.delete();}
         }
-        check();write(id,"result.json",new JSONObject().put("modelReady",true));
-        synchronized(this){current.put("status","done").put("stage","Parakeet 模型已就绪").put("pct",100).put("bytes",total).put("total",total);persist();}
+        check();write(id,"result.json",new JSONObject().put("filesOk",true).put("modelReady",VulkanModels.gpuStatus(context).optBoolean("available")).put("modelId",spec.id));
+        synchronized(this){current.put("status","done").put("stage","Vulkan 模型文件已校验").put("pct",100).put("bytes",total).put("total",total);persist();}
     }
     private double end(JSONObject request,double duration) throws Exception {
         double value=request.getDouble("end"),start=request.getDouble("start");if(value<0)value=duration;else if(duration>0)value=Math.min(value,duration);
         if(!Double.isFinite(value)||value<=start||value-start>14400)throw new IOException("音轨时长无效，单次识别最长四小时");return value;
     }
-    /** Direct PCM WAV support: MediaCodec does not provide an audio/raw decoder. */
-    private JSONArray wave(File source,OfflineRecognizer recognizer,JSONObject request) throws Exception {
-        try(RandomAccessFile input=new RandomAccessFile(source,"r")){
-            byte[] h=new byte[12];if(input.read(h)!=12||!new String(h,0,4,StandardCharsets.US_ASCII).equals("RIFF")||!new String(h,8,4,StandardCharsets.US_ASCII).equals("WAVE"))return null;
-            int type=0,channels=0,rate=0,bits=0;long data=-1,size=0;
-            while(input.getFilePointer()+8<=input.length()){
-                byte[] header=new byte[8];input.readFully(header);String name=new String(header,0,4,StandardCharsets.US_ASCII);long count=ByteBuffer.wrap(header,4,4).order(ByteOrder.LITTLE_ENDIAN).getInt()&0xffffffffL,next=input.getFilePointer()+count+(count%2);
-                if(next>input.length()+1)throw new IOException("WAV 文件不完整");
-                if(name.equals("fmt ")){if(count<16)throw new IOException("WAV 格式无效");byte[] format=new byte[16];input.readFully(format);ByteBuffer b=ByteBuffer.wrap(format).order(ByteOrder.LITTLE_ENDIAN);type=b.getShort()&65535;channels=b.getShort()&65535;rate=b.getInt();b.getInt();b.getShort();bits=b.getShort()&65535;}
-                else if(name.equals("data")){data=input.getFilePointer();size=count;}input.seek(next);
-            }
-            if(data<0||rate<8000||rate>192000||channels<1||channels>8||!((type==1&&bits==16)||(type==3&&bits==32)))throw new IOException("WAV 需使用 16 位 PCM 或 32 位浮点编码");
-            int bytes=bits/8,frame=channels*bytes;double start=request.getDouble("start"),finish=end(request,size/(double)frame/rate);long first=(long)Math.ceil(start*rate),last=Math.min(size/frame,(long)Math.floor(finish*rate));input.seek(data+first*frame);
-            Collector out=new Collector(recognizer,rate,start,finish);byte[] buffer=new byte[Math.min(rate,48000)*frame];long position=first;
-            while(position<last){check();int frames=(int)Math.min(buffer.length/frame,last-position);input.readFully(buffer,0,frames*frame);ByteBuffer pcm=ByteBuffer.wrap(buffer,0,frames*frame).order(ByteOrder.LITTLE_ENDIAN);out.accept(pcm,channels,type==3?AudioFormat.ENCODING_PCM_FLOAT:AudioFormat.ENCODING_PCM_16BIT,position/(double)rate);position+=frames;}
-            return out.finish();
-        }
+    private double duration(File source)throws Exception{
+        FFprobeSession probe=FFprobeSession.create(new String[]{"-v","error","-show_entries","format=duration","-of","json",source.getPath()});decodeSession=probe.getSessionId();
+        ScheduledFuture<?> timer=clock.schedule(()->FFmpegKit.cancel(probe.getSessionId()),120,TimeUnit.SECONDS);
+        try{FFmpegKitConfig.ffprobeExecute(probe);check();if(!ReturnCode.isSuccess(probe.getReturnCode()))throw new IOException("无法读取音轨时长或读取超时");
+            double value=new JSONObject(probe.getOutput()).getJSONObject("format").optDouble("duration",Double.NaN);if(!Double.isFinite(value)||value<=0)throw new IOException("音轨时长无效");return value;
+        }finally{timer.cancel(false);decodeSession=-1;}
     }
-    private JSONArray decode(File source,OfflineRecognizer recognizer,JSONObject request) throws Exception {
-        MediaExtractor extractor=new MediaExtractor();MediaCodec codec=null;
-        try{
-            extractor.setDataSource(source.getPath());MediaFormat format=null;
-            for(int i=0;i<extractor.getTrackCount();i++){MediaFormat value=extractor.getTrackFormat(i);if(value.getString(MediaFormat.KEY_MIME).startsWith("audio/")){format=value;extractor.selectTrack(i);break;}}
-            if(format==null)throw new IOException("媒体没有可解码的音轨");
-            double start=request.getDouble("start"),duration=format.containsKey(MediaFormat.KEY_DURATION)?format.getLong(MediaFormat.KEY_DURATION)/1000000.0:-1,finish=end(request,duration);
-            int rate=format.getInteger(MediaFormat.KEY_SAMPLE_RATE),channels=format.getInteger(MediaFormat.KEY_CHANNEL_COUNT),encoding=format.containsKey(MediaFormat.KEY_PCM_ENCODING)?format.getInteger(MediaFormat.KEY_PCM_ENCODING):AudioFormat.ENCODING_PCM_16BIT;
-            Collector out=new Collector(recognizer,rate,start,finish);extractor.seekTo((long)(start*1000000),MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
-            if(format.getString(MediaFormat.KEY_MIME).equals("audio/raw")){
-                ByteBuffer buffer=ByteBuffer.allocate(2*1024*1024);while(true){check();buffer.clear();long stamp=extractor.getSampleTime();int count=extractor.readSampleData(buffer,0);if(count<0||stamp/1000000.0>=finish)break;buffer.position(0);buffer.limit(count);out.accept(buffer,channels,encoding,stamp/1000000.0);extractor.advance();}return out.finish();
-            }
-            codec=MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME));codec.configure(format,null,null,0);codec.start();
-            boolean inputEnd=false,outputEnd=false;MediaCodec.BufferInfo info=new MediaCodec.BufferInfo();long lastOutput=System.currentTimeMillis();
-            while(!outputEnd){
-                check();if(System.currentTimeMillis()-lastOutput>120000)throw new IOException("音频解码超时，请换用 WAV / MP4");
-                if(!inputEnd){int i=codec.dequeueInputBuffer(10000);if(i>=0){ByteBuffer buffer=codec.getInputBuffer(i);long stamp=extractor.getSampleTime();int count=extractor.readSampleData(buffer,0);if(count<0||stamp/1000000.0>finish+.5){codec.queueInputBuffer(i,0,0,0,MediaCodec.BUFFER_FLAG_END_OF_STREAM);inputEnd=true;}else{codec.queueInputBuffer(i,0,count,stamp,0);extractor.advance();}}}
-                int i=codec.dequeueOutputBuffer(info,10000);
-                if(i==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED){MediaFormat actual=codec.getOutputFormat();channels=actual.getInteger(MediaFormat.KEY_CHANNEL_COUNT);int next=actual.getInteger(MediaFormat.KEY_SAMPLE_RATE);if(next!=rate)throw new IOException("音轨采样率发生变化");encoding=actual.containsKey(MediaFormat.KEY_PCM_ENCODING)?actual.getInteger(MediaFormat.KEY_PCM_ENCODING):AudioFormat.ENCODING_PCM_16BIT;}
-                else if(i>=0){ByteBuffer buffer=codec.getOutputBuffer(i);buffer.position(info.offset);buffer.limit(info.offset+info.size);out.accept(buffer,channels,encoding,info.presentationTimeUs/1000000.0);lastOutput=System.currentTimeMillis();outputEnd=(info.flags&MediaCodec.BUFFER_FLAG_END_OF_STREAM)!=0||info.presentationTimeUs/1000000.0>=finish;codec.releaseOutputBuffer(i,false);}
-            }
-            return out.finish();
-        }finally{if(codec!=null){try{codec.stop();}catch(Exception ignored){}codec.release();}extractor.release();}
+    private File decodePcm(File source,double start,double seconds)throws Exception{
+        check();if(seconds<=0||seconds>600.001)throw new IOException("解码分段必须在 10 分钟内");
+        File pcm=new File(folder(current.getString("id")),"audio.f32");
+        FFmpegSession session=FFmpegSession.create(new String[]{"-hide_banner","-loglevel","error","-nostdin","-y","-ss",Double.toString(start),"-i",source.getPath(),"-t",Double.toString(seconds),"-vn","-ac","1","-ar","16000","-f","f32le",pcm.getPath()});decodeSession=session.getSessionId();
+        ScheduledFuture<?> timer=clock.schedule(()->FFmpegKit.cancel(session.getSessionId()),120,TimeUnit.SECONDS);
+        try{FFmpegKitConfig.ffmpegExecute(session);check();if(!ReturnCode.isSuccess(session.getReturnCode())||!pcm.isFile()||pcm.length()<4||pcm.length()>600L*16000*4+64000)throw new IOException("音频解码失败或超时");return pcm;}
+        finally{timer.cancel(false);decodeSession=-1;}
     }
-    private final class Collector {
-        final OfflineRecognizer recognizer;final int rate;final double start,end;final float[] samples;final JSONArray cues=new JSONArray();int used,wordCount;double offset;
-        Collector(OfflineRecognizer recognizer,int rate,double start,double end) throws IOException {if(rate<8000||rate>192000)throw new IOException("音频采样率不受支持");this.recognizer=recognizer;this.rate=rate;this.start=start;this.end=end;samples=new float[rate*20];}
-        void accept(ByteBuffer pcm,int channels,int encoding,double stamp) throws Exception {
-            if(channels<1||channels>8||encoding!=AudioFormat.ENCODING_PCM_FLOAT&&encoding!=AudioFormat.ENCODING_PCM_16BIT)throw new IOException("不支持该 PCM 音频格式");
-            int bytes=encoding==AudioFormat.ENCODING_PCM_FLOAT?4:2,index=0;pcm.order(ByteOrder.LITTLE_ENDIAN);
-            while(pcm.remaining()>=bytes*channels){float value=0;for(int c=0;c<channels;c++)value+=encoding==AudioFormat.ENCODING_PCM_FLOAT?pcm.getFloat():pcm.getShort()/32768f;double time=stamp+index++/(double)rate;if(time<start||time>=end)continue;if(!Float.isFinite(value))value=0;if(used==0)offset=time;samples[used++]=Math.max(-1,Math.min(1,value/channels));if(used==samples.length)flush();}
+    private float[] readPcm(RandomAccessFile file,int count)throws Exception{
+        check();byte[] data=new byte[count*4];file.readFully(data);float[] samples=new float[count];ByteBuffer b=ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);b.asFloatBuffer().get(samples);return samples;
+    }
+    private JSONArray recognize(File source,VulkanModels.Spec spec,JSONObject request)throws Exception{
+        double from=request.getDouble("start"),finish=end(request,duration(source));JSONArray cues=new JSONArray();int total=(int)Math.ceil((finish-from)/600.0),part=0;
+        progress("正在加载 "+spec.name+" · Vulkan",1);
+        try(VulkanAsr model=new VulkanAsr(spec.path(context).getPath(),spec.kind,request.getInt("threads"))){
+            for(double offset=from;offset<finish-.0001;offset+=600){check();part++;double span=Math.min(600,finish-offset);progress("第 "+part+" / "+total+" 段 · 每段最多 10 分钟",2+90*(offset-from)/(finish-from));
+                File pcm=decodePcm(source,offset,span);
+                try(RandomAccessFile audio=new RandomAccessFile(pcm,"r")){
+                    long samples=audio.length()/4;for(long at=0;at<samples;){int count=(int)Math.min(16000*30,samples-at);float[] values=readPcm(audio,count);double energy=0;for(float value:values)energy+=value*value;double start=offset+at/16000.0,stop=Math.min(finish,start+count/16000.0);at+=count;
+                        if(energy/count<1e-9)continue;check();JSONObject result=model.recognize(values,start);check();String text=result.optString("text").trim();if(text.isEmpty())continue;
+                        if(spec.kind==1)appendParakeet(cues,result,start,stop);else cues.put(new JSONObject().put("text",text).put("start",start).put("end",stop).put("words",new JSONArray()));
+                        if(cues.length()>100000)throw new IOException("字幕数量过多，请缩小范围");progress("第 "+part+" / "+total+" 段 · 已生成 "+cues.length()+" 条字幕",2+90*(stop-from)/(finish-from));
+                    }
+                }finally{pcm.delete();}
+            }
+        }return cues;
+    }
+    private void appendParakeet(JSONArray cues,JSONObject result,double start,double stop)throws Exception{
+        JSONArray source=result.getJSONArray("words"),words=new JSONArray();StringBuilder text=new StringBuilder();double last=start;
+        for(int i=0;i<source.length();i++){JSONObject word=source.getJSONObject(i);double from=word.getDouble("start"),end=word.getDouble("end");String value=word.getString("text").trim();
+            if(value.isEmpty()||!Double.isFinite(from)||!Double.isFinite(end)||from<last-.02||from<start-.02||from>=stop||end>stop+.08||end<=from)throw new IOException("Parakeet 返回的逐词时间无效，原稿保留");end=Math.min(stop,end);word.put("end",end);last=end;words.put(word);if(text.length()>0)text.append(' ');text.append(value);
+            if(value.matches(".*[.!?]$")||words.length()>=18||text.length()>100||i==source.length()-1){cues.put(new JSONObject().put("start",words.getJSONObject(0).getDouble("start")).put("end",last).put("text",text.toString()).put("words",words));words=new JSONArray();text.setLength(0);}
         }
-        void flush() throws Exception {
-            if(used==0)return;check();double chunkEnd=offset+used/(double)rate;OfflineStream stream=recognizer.createStream();
-            try{
-                stream.acceptWaveform(used==samples.length?samples:Arrays.copyOf(samples,used),rate);recognizer.decode(stream);check();
-                OfflineRecognizerResult result=recognizer.getResult(stream);String[] tokens=result.getTokens();float[] stamps=result.getTimestamps(),durations=result.getDurations();
-                if(tokens.length>0&&stamps.length!=tokens.length)throw new IOException("模型未返回逐词时间，请检查模型版本");
-                JSONArray words=new JSONArray();StringBuilder word=new StringBuilder();double wordStart=0,wordEnd=0,previous=0;
-                for(int i=0;i<tokens.length;i++){
-                    String token=tokens[i];if(token==null||token.isEmpty()||token.startsWith("<")&&token.endsWith(">"))continue;
-                    double at=stamps[i],duration=i<durations.length?durations[i]:0;if(!Double.isFinite(at)||at<previous-.001||at<0)throw new IOException("模型返回的逐词时间无效");previous=at;
-                    double from=Math.max(offset,Math.min(chunkEnd,offset+at)),to=Math.min(chunkEnd,offset+at+(Double.isFinite(duration)&&duration>0?duration:i+1<stamps.length?Math.max(0,stamps[i+1]-at):Math.max(0,chunkEnd-offset-at)));
-                    String text=token.replace('▁',' ');boolean starts=Character.isWhitespace(text.charAt(0));
-                    if(starts&&word.length()>0){words.put(new JSONObject().put("text",word.toString()).put("start",wordStart).put("end",Math.max(wordStart,wordEnd)));word.setLength(0);}
-                    text=text.trim();if(text.isEmpty())continue;if(word.length()==0)wordStart=from;word.append(text);wordEnd=Math.max(from,to);
-                }
-                if(word.length()>0)words.put(new JSONObject().put("text",word.toString()).put("start",wordStart).put("end",Math.max(wordStart,wordEnd)));
-                wordCount+=words.length();if(wordCount>100000)throw new IOException("识别结果过多，请分段识别");
-                JSONArray sentence=new JSONArray();StringBuilder text=new StringBuilder();
-                for(int i=0;i<words.length();i++){JSONObject item=words.getJSONObject(i);sentence.put(item);if(text.length()>0)text.append(' ');text.append(item.getString("text"));if(item.getString("text").matches(".*[.!?]$" )||text.length()>=100||sentence.length()>=18||i==words.length()-1){double from=sentence.getJSONObject(0).getDouble("start"),to=sentence.getJSONObject(sentence.length()-1).getDouble("end");if(to>from)cues.put(new JSONObject().put("start",from).put("end",to).put("text",text.toString()).put("words",sentence));sentence=new JSONArray();text.setLength(0);}}
-                progress("识别中 · 已生成 "+cues.length()+" 条字幕",2+96*Math.min(1,(chunkEnd-start)/(end-start)));
-            }finally{stream.release();used=0;}
-        }
-        JSONArray finish() throws Exception {flush();check();return cues;}
+        if(source.length()==0&&!result.optString("text").isEmpty())throw new IOException("Parakeet 没有返回逐词时间，原稿保留");
+    }
+    private String[] splitWords(String text){
+        List<String> words=new ArrayList<>();StringBuilder latin=new StringBuilder();
+        for(int offset=0;offset<text.length();){int cp=text.codePointAt(offset);offset+=Character.charCount(cp);Character.UnicodeScript script=Character.UnicodeScript.of(cp);boolean cjk=script==Character.UnicodeScript.HAN||script==Character.UnicodeScript.HIRAGANA||script==Character.UnicodeScript.KATAKANA;
+            if(Character.isWhitespace(cp)||cjk){if(latin.length()>0){words.add(latin.toString());latin.setLength(0);}if(cjk)words.add(new String(Character.toChars(cp)));}else latin.appendCodePoint(cp);
+        }if(latin.length()>0)words.add(latin.toString());return words.toArray(new String[0]);
+    }
+    private JSONArray alignCues(File source,JSONArray cues)throws Exception{
+        VulkanModels.Spec spec=VulkanModels.ALL[2];progress("正在校验 Qwen 对齐器",93);VulkanModels.verify(spec.path(context),spec);
+        try(VulkanAsr model=new VulkanAsr(spec.path(context).getPath(),3)){
+            for(int i=0;i<cues.length();i++){JSONObject cue=cues.getJSONObject(i);double start=cue.getDouble("start"),end=cue.getDouble("end");if(end-start>120)throw new IOException("单条对齐范围不可超过 120 秒，请先分句");
+                File pcm=decodePcm(source,start,end-start);float[] values;try(RandomAccessFile input=new RandomAccessFile(pcm,"r")){values=readPcm(input,(int)(input.length()/4));}finally{pcm.delete();}
+                String[] words=splitWords(cue.getString("text"));JSONArray tokens=cue.optJSONArray("tokens");if(tokens!=null){if(tokens.length()==0||tokens.length()>2048)throw new IOException("对齐词序无效");words=new String[tokens.length()];StringBuilder joined=new StringBuilder();for(int j=0;j<words.length;j++){words[j]=tokens.getString(j);joined.append(words[j]);}if(!joined.toString().replaceAll("\\s+", "").equals(cue.getString("text").replaceAll("\\s+", "")))throw new IOException("对齐词序与原文不一致");}if(words.length==0)throw new IOException("对齐文本为空");check();long[] times=model.align(values,words);check();if(times==null||times.length!=words.length*2)throw new IOException("对齐结果不完整，原字幕保留");JSONArray output=new JSONArray();
+                for(int j=0;j<words.length;j++)output.put(new JSONObject().put("text",words[j]).put("start",start+times[2*j]/1000.0).put("end",start+times[2*j+1]/1000.0));
+                cue.put("words",output);progress("Qwen 对齐 · "+(i+1)+" / "+cues.length(),93+6.0*(i+1)/cues.length());
+            }
+        }return cues;
+    }
+    private JSONObject alignBlocks(File source,JSONObject request)throws Exception{
+        JSONArray blocks=request.optJSONArray("blocks");if(blocks==null||blocks.length()==0||blocks.length()>10000)throw new IOException("对齐字幕范围无效");
+        JSONArray cues=new JSONArray();double duration=duration(source);for(int i=0;i<blocks.length();i++){JSONObject item=new JSONObject(blocks.getJSONObject(i).toString());double start=item.optDouble("start",Double.NaN),end=item.optDouble("end",Double.NaN);String text=item.optString("text");if(!Double.isFinite(start)||!Double.isFinite(end)||start<0||end<=start||end>duration+.08||end-start>120||text.trim().isEmpty()||text.length()>12000)throw new IOException("对齐字幕时间或文字无效");cues.put(item);}
+        return new JSONObject().put("cues",alignCues(source,cues)).put("backend","vulkan").put("cpuFallback",false).put("segmentSeconds",600).put("mediaId",request.getString("mediaId"));
     }
 }

@@ -19,7 +19,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.*;
-import com.k2fsa.sherpa.onnx.*;
+
 
 /** Android Studio: embedded editor, SAF storage and native translation transport. */
 public final class MainActivity extends Activity {
@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
     private WebView web;
     private String pickerId, exportText;
+    private String importModelId;
     private volatile boolean destroyed;
     private volatile long deadline;
     private File projects, media, models;
@@ -253,7 +254,7 @@ public final class MainActivity extends Activity {
                         Intent intent;
                         int request;
                         if(action.equals("pickExportDirectory")){request=DIRECTORY;intent=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI,DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:Movies"));}
-                        else if (action.equals("pickModel")) { request = MODEL; intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE); }
+                        else if (action.equals("pickModel")) { request = MODEL; importModelId=VulkanModels.find(arg.optString("modelId",VulkanModels.ALL[0].id)).id; intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE); }
                         else if (action.equals("export")) {
                             request = EXPORT; exportText = arg.optString("text");exportBase64=arg.optString("base64",null);
                             String exportName=arg.optString("name","SubFabric.ass");
@@ -283,8 +284,8 @@ public final class MainActivity extends Activity {
                                 JSONObject patch=new JSONObject().put("hasAudio",true).put("hasPeaks",true).put("prepare",new JSONObject().put("status","done"));result=studio.call("studioUpdate",new JSONObject().put("id",pid).put("patch",patch));
                             }finally{busy.set(false);}break;
                         }
-                        case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioApplyAsr": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.11.0"); break;
+                        case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioApplyAsr": case "studioApplyAlignment": case "studioDelete": result=studio.call(action,arg);break;
+                        case "status": result = new JSONObject().put("modelReady", AsrManager.modelStatus(MainActivity.this).optBoolean("ready")).put("engine", "Vulkan · CPU 回退已禁用").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.12.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
@@ -301,7 +302,7 @@ public final class MainActivity extends Activity {
                             JSONObject p = new JSONObject().put("id", UUID.randomUUID().toString()).put("title", "未命名稿件").put("cues", new JSONArray()).put("updated", System.currentTimeMillis());
                             writeProject(p); result = p; break;
                         }
-                        case "recognize": result = recognize(arg.getString("id")); break;
+                        case "recognize": throw new IOException("旧 CPU 识别入口已停用，请从新建初稿选择 Vulkan 模型");
                         default: throw new IOException("未知操作");
                     }
                     reply(id, true, result);
@@ -325,7 +326,6 @@ public final class MainActivity extends Activity {
         try(FileOutputStream output = new FileOutputStream(temp)) { output.write(p.toString().getBytes(StandardCharsets.UTF_8)); output.getFD().sync(); }
         Files.move(temp.toPath(),dest.toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);
     }
-    private boolean modelReady() { for(String name: ModelFiles.NAMES) { if(!new File(models,name).isFile() || new File(models,name).length() != ModelFiles.size(name)) return false; } return true; }
     private void checkCancelled() throws IOException { if(cancelled.get() || destroyed || Thread.currentThread().isInterrupted()) throw new IOException("任务已停止；原字幕保留"); }
 
     private void completeWebChooser(Uri[] uris){
@@ -391,21 +391,12 @@ public final class MainActivity extends Activity {
                     response=new JSONObject().put("text",text).put("name",name);
                 } else if(request==MODEL) {
                     if(AsrManager.get(MainActivity.this).active()!=null)throw new IOException("请先停止本机识别或模型下载");
-                    Uri children=DocumentsContract.buildChildDocumentsUriUsingTree(uri,DocumentsContract.getTreeDocumentId(uri));
-                    Map<String,Uri> found=new HashMap<>();
-                    try(Cursor cursor=getContentResolver().query(children,new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,DocumentsContract.Document.COLUMN_DISPLAY_NAME},null,null,null)) {
-                        while(cursor!=null && cursor.moveToNext()) found.put(cursor.getString(1),DocumentsContract.buildDocumentUriUsingTree(uri,cursor.getString(0)));
-                    }
-                    for(String name:ModelFiles.NAMES) if(!found.containsKey(name)) throw new IOException("所选文件夹缺少 " + name);
-                    for(String name:ModelFiles.NAMES) {
-                        File temp=new File(models,name+".part");
-                        try {
-                            try(InputStream input=getContentResolver().openInputStream(found.get(name)); OutputStream out=new FileOutputStream(temp)) { copy(input,out,ModelFiles.size(name),"正在导入 "+name); }
-                            ModelFiles.verify(temp,name);
-                            Files.move(temp.toPath(),new File(models,name).toPath(),StandardCopyOption.REPLACE_EXISTING);
-                        } finally { temp.delete(); }
-                    }
-                    response=new JSONObject().put("modelReady",modelReady());
+                    VulkanModels.Spec spec=VulkanModels.find(importModelId);File target=spec.path(MainActivity.this);target.getParentFile().mkdirs();File part=new File(target.getPath()+".part");
+                    try {
+                        try(InputStream input=getContentResolver().openInputStream(uri);FileOutputStream out=new FileOutputStream(part)){copy(input,out,spec.bytes,"正在导入 "+spec.name);out.getFD().sync();}
+                        VulkanModels.verify(part,spec);Files.move(part.toPath(),target.toPath(),StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);
+                    } finally {part.delete();}
+                    response=AsrManager.modelStatus(MainActivity.this);
                 } else {
                     try(OutputStream out=getContentResolver().openOutputStream(uri,"wt")) { out.write(bytes64==null?output.getBytes(StandardCharsets.UTF_8):android.util.Base64.decode(bytes64,android.util.Base64.DEFAULT)); }
                     response=new JSONObject().put("exported",true);
@@ -422,134 +413,6 @@ public final class MainActivity extends Activity {
         for(int n;(n=in.read(buffer))!=-1;) { checkCancelled(); total+=n; if(total>max) throw new IOException("文件超过原型大小上限"); out.write(buffer,0,n); if(System.currentTimeMillis()-last>500) { progress(label+" · "+total/1048576+" MB",-1); last=System.currentTimeMillis(); } }
     }
 
-    private JSONObject recognize(String id) throws Exception {
-        if(!modelReady()) throw new IOException("请先在识别设置导入 Parakeet v2 int8 模型");
-        if(!busy.compareAndSet(false,true)) throw new IOException("已有任务进行中");
-        cancelled.set(false); deadline=System.currentTimeMillis()+30*60*1000;
-        OfflineRecognizer recognizer=null; MediaExtractor extractor=new MediaExtractor(); MediaCodec codec=null;
-        try {
-            JSONObject project=readProject(id);
-            if(!project.optBoolean("media")) throw new IOException("请先导入音频或视频");
-            progress("加载 Parakeet · 仅在本机识别",0);
-            // Verify hashes before passing any imported ONNX into native code.
-            for(String name:ModelFiles.NAMES) { checkCancelled(); ModelFiles.verify(new File(models,name),name); }
-            OfflineModelConfig model=new OfflineModelConfig();
-            model.getTransducer().setEncoder(new File(models,"encoder.int8.onnx").getPath());
-            model.getTransducer().setDecoder(new File(models,"decoder.int8.onnx").getPath());
-            model.getTransducer().setJoiner(new File(models,"joiner.int8.onnx").getPath());
-            model.setTokens(new File(models,"tokens.txt").getPath()); model.setModelType("nemo_transducer");
-            model.setProvider("cpu"); model.setNumThreads(Math.min(4,Math.max(1,Runtime.getRuntime().availableProcessors())));
-            OfflineRecognizerConfig config=new OfflineRecognizerConfig(); config.setModelConfig(model);
-            recognizer=new OfflineRecognizer(null,config);
-            JSONArray wavCues=recognizeWave(mediaFile(id),recognizer);
-            if(wavCues!=null) return finishRecognition(id,wavCues);
-            extractor.setDataSource(mediaFile(id).getPath());
-            MediaFormat format=null;
-            for(int t=0;t<extractor.getTrackCount();t++) { MediaFormat f=extractor.getTrackFormat(t); if(f.getString(MediaFormat.KEY_MIME).startsWith("audio/")) { extractor.selectTrack(t); format=f; break; } }
-            if(format==null) throw new IOException("媒体没有可解码的音轨");
-            long duration=format.containsKey(MediaFormat.KEY_DURATION)?format.getLong(MediaFormat.KEY_DURATION):0;
-            codec=MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)); codec.configure(format,null,null,0); codec.start();
-            int rate=format.getInteger(MediaFormat.KEY_SAMPLE_RATE), channels=format.getInteger(MediaFormat.KEY_CHANNEL_COUNT), encoding=AudioFormat.ENCODING_PCM_16BIT;
-            float[] samples=new float[rate*20]; int used=0; double chunkStart=0; boolean inputEnd=false,outputEnd=false;
-            JSONArray cues=new JSONArray(); MediaCodec.BufferInfo info=new MediaCodec.BufferInfo(); long lastOutput=System.currentTimeMillis();
-            while(!outputEnd) {
-                checkCancelled();
-                if(System.currentTimeMillis()-lastOutput>120000) throw new IOException("音频解码超时，请换用 WAV / MP4");
-                if(!inputEnd) { int idx=codec.dequeueInputBuffer(10000); if(idx>=0) { ByteBuffer buffer=codec.getInputBuffer(idx); int n=extractor.readSampleData(buffer,0); if(n<0) { codec.queueInputBuffer(idx,0,0,0,MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputEnd=true; } else { codec.queueInputBuffer(idx,0,n,extractor.getSampleTime(),0); extractor.advance(); } } }
-                int idx=codec.dequeueOutputBuffer(info,10000);
-                if(idx==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    MediaFormat f=codec.getOutputFormat(); rate=f.getInteger(MediaFormat.KEY_SAMPLE_RATE); channels=f.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
-                    encoding=f.containsKey(MediaFormat.KEY_PCM_ENCODING)?f.getInteger(MediaFormat.KEY_PCM_ENCODING):AudioFormat.ENCODING_PCM_16BIT;
-                    if(encoding!=AudioFormat.ENCODING_PCM_FLOAT && encoding!=AudioFormat.ENCODING_PCM_16BIT) throw new IOException("暂不支持该 PCM 音频编码");
-                    if(used!=0) throw new IOException("不支持中途改变采样率的音轨");
-                    samples=new float[rate*20];
-                } else if(idx>=0) {
-                    lastOutput=System.currentTimeMillis();
-                    ByteBuffer buffer=codec.getOutputBuffer(idx); buffer.position(info.offset); buffer.limit(info.offset+info.size); buffer.order(ByteOrder.LITTLE_ENDIAN);
-                    if(used==0 && info.size>0) chunkStart=info.presentationTimeUs/1000000.0;
-                    int bytes=encoding==AudioFormat.ENCODING_PCM_FLOAT?4:2;
-                    while(buffer.remaining()>=bytes*channels) {
-                        float value=0; for(int c=0;c<channels;c++) value+=encoding==AudioFormat.ENCODING_PCM_FLOAT?buffer.getFloat():buffer.getShort()/32768f;
-                        samples[used++]=value/channels;
-                        if(used==samples.length) {
-                            appendResult(recognizer,samples,rate,chunkStart,cues); checkCancelled();
-                            chunkStart+=used/(double)rate; used=0;
-                            progress("识别中 · 已生成 "+cues.length()+" 条字幕",duration>0?Math.min(99,100*chunkStart/(duration/1000000.0)):-1);
-                        }
-                    }
-                    outputEnd=(info.flags&MediaCodec.BUFFER_FLAG_END_OF_STREAM)!=0; codec.releaseOutputBuffer(idx,false);
-                }
-            }
-            if(used>0) appendResult(recognizer,Arrays.copyOf(samples,used),rate,chunkStart,cues);
-            checkCancelled();
-            if(cues.length()==0) throw new IOException("没有识别到英文语音，原字幕保留");
-            // Reload metadata so this worker only replaces its own result fields.
-            return finishRecognition(id,cues);
-        } finally {
-            if(codec!=null) { try { codec.stop(); } catch(Exception ignored) {} codec.release(); }
-            extractor.release(); if(recognizer!=null) recognizer.release(); busy.set(false);
-        }
-    }
-
-    private JSONObject finishRecognition(String id,JSONArray cues) throws Exception {
-        checkCancelled();
-        if(cues.length()==0) throw new IOException("没有识别到英文语音，原字幕保留");
-        JSONObject project=readProject(id); project.put("cues",cues).put("updated",System.currentTimeMillis()).put("engine","parakeet-tdt-v2-int8");
-        writeProject(project); progress("本地识别完成",100); return project;
-    }
-
-    /** WAV PCM is read directly: Android MediaCodec has no audio/raw decoder. */
-    private JSONArray recognizeWave(File file,OfflineRecognizer recognizer) throws Exception {
-        try(RandomAccessFile input=new RandomAccessFile(file,"r")) {
-            byte[] header=new byte[12]; if(input.read(header)!=12 || !new String(header,0,4,StandardCharsets.US_ASCII).equals("RIFF") || !new String(header,8,4,StandardCharsets.US_ASCII).equals("WAVE")) return null;
-            int type=0,channels=0,rate=0,bits=0; long dataOffset=-1,dataSize=0;
-            while(input.getFilePointer()+8<=input.length()) {
-                byte[] chunk=new byte[8]; input.readFully(chunk); String name=new String(chunk,0,4,StandardCharsets.US_ASCII);
-                long size=ByteBuffer.wrap(chunk,4,4).order(ByteOrder.LITTLE_ENDIAN).getInt()&0xffffffffL;
-                long next=input.getFilePointer()+size+(size%2);
-                if(next>input.length()+1) throw new IOException("WAV 文件不完整");
-                if(name.equals("fmt ")) {
-                    if(size<16) throw new IOException("WAV 格式无效");
-                    byte[] fmt=new byte[16]; input.readFully(fmt); ByteBuffer b=ByteBuffer.wrap(fmt).order(ByteOrder.LITTLE_ENDIAN);
-                    type=b.getShort()&65535; channels=b.getShort()&65535; rate=b.getInt(); b.getInt(); b.getShort(); bits=b.getShort()&65535;
-                } else if(name.equals("data")) { dataOffset=input.getFilePointer(); dataSize=size; }
-                input.seek(next);
-            }
-            if(dataOffset<0 || rate<8000 || rate>192000 || channels<1 || channels>8 || !((type==1 && bits==16)||(type==3 && bits==32))) throw new IOException("WAV 需使用 16 位 PCM 或 32 位浮点编码");
-            input.seek(dataOffset); int bytes=bits/8, frame=channels*bytes; long consumed=0; JSONArray cues=new JSONArray();
-            byte[] buffer=new byte[rate*20*frame];
-            while(consumed<dataSize) {
-                checkCancelled(); int count=(int)Math.min(buffer.length,dataSize-consumed); count-=count%frame;
-                if(count==0) break; input.readFully(buffer,0,count); ByteBuffer pcm=ByteBuffer.wrap(buffer,0,count).order(ByteOrder.LITTLE_ENDIAN);
-                float[] samples=new float[count/frame];
-                for(int i=0;i<samples.length;i++) { float value=0; for(int c=0;c<channels;c++) value+=type==3?pcm.getFloat():pcm.getShort()/32768f; samples[i]=value/channels; }
-                appendResult(recognizer,samples,rate,consumed/(double)frame/rate,cues); consumed+=count;
-                progress("识别中 · 已生成 "+cues.length()+" 条字幕",100.0*consumed/dataSize);
-            }
-            return cues;
-        }
-    }
-
-    private void appendResult(OfflineRecognizer recognizer,float[] samples,int rate,double offset,JSONArray cues) throws Exception {
-        checkCancelled(); OfflineStream stream=recognizer.createStream();
-        try {
-            stream.acceptWaveform(samples,rate); recognizer.decode(stream); checkCancelled();
-            OfflineRecognizerResult result=recognizer.getResult(stream);
-            String[] tokens=result.getTokens(); float[] stamps=result.getTimestamps(); float[] durations=result.getDurations();
-            StringBuilder text=new StringBuilder(); double start=offset,end=offset;
-            for(int i=0;i<tokens.length;i++) {
-                if(text.length()==0) start=offset+(i<stamps.length?stamps[i]:0);
-                text.append(tokens[i].replace('▁',' '));
-                end=offset+(i<stamps.length?stamps[i]:0)+(i<durations.length?durations[i]:0.08);
-                boolean boundary=text.toString().trim().matches(".*[.!?]$") || text.length()>100 || i==tokens.length-1;
-                if(boundary && text.toString().trim().length()>0) {
-                    double chunkEnd=offset+samples.length/(double)rate;
-                    cues.put(new JSONObject().put("id",cues.length()+1).put("start",Math.max(offset,start)).put("end",Math.min(chunkEnd,Math.max(start+0.08,end))).put("lines",new JSONArray().put(text.toString().trim())));
-                    text.setLength(0);
-                }
-            }
-        } finally { stream.release(); }
-    }
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
     @Override public void onBackPressed(){if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}

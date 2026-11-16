@@ -101,7 +101,7 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.11 手机布局与 Parakeet 阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
+- `android/`：Android 移植（当前 0.12 Vulkan ASR 阶段，GPU 验证未通过）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
   `android-translate.js` 负责共享翻译协议与批次，`translation-doc.mjs` 保留原文事件写回译文。
@@ -110,6 +110,9 @@
   `download.py` 复用 `asr/fetch` 选择器，`android-download.js` 接下载设置、任务与关联稿件。
   `android-assist.js` 负责术语/语义规划与预览身份，`glossary-doc.mjs` 只替换目标轨可见文字；
   `stage.mjs` 派生桌面术语表合并和重分句规划纯函数。
+  `native/` 与 `build-native.ps1` 固定 CrispASR/ggml 源码、严格 Vulkan 补丁和两种 ABI 的 JNI 构建；
+  `VulkanModels/VulkanAsr/AsrManager` 负责独立模型资产、GPU 探测/数值自检和前台任务，
+  `android-realign.js/alignment-doc.mjs` 接逐句/全片对齐预览与受保护的 SRT→ASS 写回。
   `android-mobile.js` 提供工作页底部导航、编辑器导出二级菜单与设置工具区；`android-touch.js` 将 Android 触控
   转接到原时间轴创建/框选/编辑处理器，复用原右键菜单。Android staging 移除主播更新组件和轮询；
   `project.js` 的平台刷新钩子让同一稿件页中新建/导入立即显示。`AppStorage` 负责应用存储清单和受限缓存回收；
@@ -162,21 +165,38 @@
   浏览文件期间无 60s 自动放弃；系统完成/取消结果驱动清理。relink 接收共享 videoPath/name 字段并失效旧音频准备标记。
   字幕、字体和项目包仍使用各自文件选择器；网络下载保持独立。
 
-- **Android Parakeet（0.11）**：设置的语音识别页显示 Parakeet 方块与模型详情，新建/批量初稿沿用原表单，
-  通过 `android-asr.js` 将 `/api/asr/*` 和稿件 draft/retry/rerecognize/reidentify 映射到原生 CPU int8。
-  仅支持英文；原生逐词可输出颜色切片或 k ASS，关闭逐词输出 SRT。区间重识别返回原媒体绝对时间，
-  复用共享编辑器的区间内容守卫与写回；多区间请求明确拒绝，不能把未识别的空档当成已识别结果。
-  说话人分离、独立对齐、置信度复跑和自动后处理尚未接入，表单禁用并由接口再次校验；翻译由用户在出稿后启动。
-  `AsrService` 在独立 `:asr` 前台进程运行，通知/新建页/详情页可停止；逐 20s 块流式解码，单次媒体范围最长 4h，
-  总任务最长 6h，解码停滞 120s 超时。取消或看门狗无法收尾时只终止本次识别进程，不影响编辑器进程。
-  原生服务只读私有媒体，写 `asr-jobs/<UUID>/` 请求/状态/结果；不修改字幕。WebView 重建后读持久任务继续显示进度，
-  完成经 `StudioStore.studioApplyAsr` 在锁内校验 taskId/revision/mediaId 后原子写回；识别期间文本或媒体变化则保留用户修改。
-  失败/取消不产生空的成功稿件，重试只允许尚未编辑的初稿。无声或坏结果转为对应稿件错误，不使整个稿件库打不开。
-  模型仍在 `files/parakeet`，不随 APK 打包。支持文件夹导入及固定官方 HTTPS 模型逐文件下载，
-  大小与 SHA-256 使用 `ModelFiles` 固定值，写 part、校验后原子替换，合法现有文件跳过；下载总限 1h。
-  推理前再次完整校验；识别/下载期间禁止导入替换模型。新服务运行时存储清理受保护。
-  模型来源与运行方式见 [sherpa-onnx 官方说明](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html)
-  及 [固定校验值对应的官方模型文件](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/tree/main)。
+- **Android Vulkan ASR（0.12）**：已实现但未验证；本轮 WSA 实际模型推理未通过，不能按 0.11 的 CPU 历史验收推断可用。
+  APK 移除 sherpa/ONNX CPU 引擎，旧 CPU RPC 明确拒绝；旧模型文件保留。仅编入 CrispASR v0.8.54 的
+  Parakeet、Qwen3-ASR、Qwen3 Forced Aligner 与 ggml Vulkan，不接 Whisper、云端识别或 Python ASR。
+  固定源码/ggml 提交和校验值在 `build-native.ps1`，平台补丁在 `native/patch-crisp.mjs`。
+  GPU 初始化失败不改选 CPU；Parakeet 强制 GPU 编码、解码及编码投影，投影失败直接停止；Qwen 禁止层与 KV 溢出 CPU。
+  ggml 调度器拒绝交给 CPU 的模型矩阵/卷积运算；音频解码、mel、形状处理、少量查表与结果校验仍需 CPU，不宣称零 CPU 占用。
+  仅接受硬件 Vulkan 1.2 GPU，拒绝软件 Vulkan；加载模型前以 F32/F16/Q4 矩阵与输入更新验证 GPU 数值。
+  已实测失败的 WSA Dozen/Direct3D12 驱动版本 `96477283` 标记不可用，模型方块仍显示原因，不能启动识别。
+  基础矩阵自检通过不能替代真实 ASR 验收；WSA 测得 Qwen 生成循环、Parakeet 错误词时间与无效对齐，均未写回。
+  失败的矩阵自检按设备、系统与 APK 更新身份记录；应用/驱动环境改变后重新检测。
+  
+  `vulkan-models.json` 固定三份独立 GGUF：Parakeet TDT 0.6B v2 Q4_K、Qwen3-ASR **0.6B** Q4_K、
+  Qwen3 Forced Aligner 0.6B Q8_0。Qwen 1.7B 在 WSA 的 lm_head 超过驱动缓冲区限制，未列入手机目录。
+  模型不打包，位于私有 `asr-models/`；可固定 revision HTTPS 下载或 SAF 单文件导入，大小/SHA-256 完整验证后原子替换。
+  文件完整与 GPU 可用分开返回；默认/重识别模型独立保存，并实际传入初稿、批量、重试与区间请求。
+  
+  `AsrService` 保留独立 `:asr` 前台进程、通知、持久任务、取消标记、6h 看门狗与 3s 独立进程终止兜底；模型下载上限 1h。
+  识别范围最多 4h，**外层每段最多 600 秒**解码为私有 16kHz 单声道 PCM，模型内部最多 30 秒安全窗口，绝对时间只加一次；
+  结果合并回同一稿件，不创建每段独立稿件。600 秒分段不是把 10 分钟直接送入 Qwen 单次上下文。
+  每个媒体解码步骤 120s 超时；任务只读私有原媒体，字幕经 taskId/revision/mediaId 守卫原子写入，失败/取消不覆盖原稿。
+  Parakeet 原生逐词；Qwen 原生句级 SRT，需独立对齐器才能生成实测逐词 ASS。Qwen 输出必须完整到 EOS，
+  对齐必须返回完整、单调、位于字幕范围内的每词时间，不用残段或均分时间伪造成功。CJK 原生词跨度采用 k ASS 保留实测时间。
+  
+  `/api/projects/:id/realign`、`realign-full`/查询/取消/应用及 `realign-skip` 接原编辑器入口。
+  ASS 仍先预览勾选，再由原共享句子身份守卫应用；SRT 转 ASS 另由 `StudioStore.studioApplyAlignment`
+  核对任务、媒体与 revision 后写入，原 SRT 与原件名称保留；多行英文、译文及字面花括号/反斜杠保留。
+  未勾选行保留整句，不均分伪造词时间。单条对齐字幕最长 120 秒；不完整的一批返回错误，不自动写入。
+  说话人分离、置信度复跑、自动后处理仍不接入；翻译独立由用户出稿后操作。
+  模型与运行库来源：[CrispASR](https://github.com/CrispStrobe/CrispASR)、
+  [Parakeet GGUF](https://huggingface.co/cstr/parakeet-tdt-0.6b-v2-GGUF)、
+  [Qwen ASR GGUF](https://huggingface.co/cstr/qwen3-asr-0.6b-GGUF)、
+  [Qwen 对齐器 GGUF](https://huggingface.co/cstr/qwen3-forced-aligner-0.6b-GGUF)。
 
 - **Android 外部翻译（0.3）**：原有翻译方案/术语表/单句菜单继续使用共享界面；API 适配到原生
   `LlmStore/LlmClient`，不启动 Node。方案与活动配置私有原子落盘，Key 用 Android Keystore AES-GCM 加密，
@@ -1599,7 +1619,26 @@
 
 ## 5. 测试与验证
 
-### Android 手机布局与 Parakeet 验证（0.11，2026-11-16）
+### Android Vulkan ASR 阶段（0.12，2026-11-16）
+
+- **当前状态**：已实现但未验证；WSA 真实 GPU 模型推理未通过。ARM64 真机未运行，不把构建、模型文件校验或传输夹具当作模型验收。
+- 已核对三份 GGUF 的固定 revision、字节数、LFS SHA-256 和许可，并完整下载校验后放入本机隔离测试环境；旧 ONNX 文件保留。
+- WSA 枚举到 RTX 4060 Ti 的 Dozen Vulkan，基础 F32/F16/Q4 矩阵及输入更新自检通过；
+  实际 Qwen ASR 无 EOS 循环、Parakeet 返回错误文本/零时长词、Qwen 对齐返回无效时间，因此本版本明确禁用已知失败的 WSA 驱动。
+  中间的 Vulkan 扩展、shader 编译、推理与对齐失败均如实计为失败，没有使用 CPU 兜底；中途 WSA 客户端崩溃后已恢复连接。
+- 本轮离线字幕文档与协议测试通过：真实时间的 ASS/SRT 序列化、CJK k 时间、多行双语 SRT、字面转义、无效结果拒绝、
+  真实 modelId 下传、选择持久化、Qwen 对齐选项、600s 配置与无 GPU/保存失败守卫；协议测试为传输夹具，不是模型运行。
+- 已完成且已验证：最终 APK 的 20 项模型/初稿手机和平板页面、6 项原生 GPU/旧 CPU 拦截与对齐写回守卫、
+  8 项 ASS 编辑器回归全部通过；8 组定向 JS 回归与相关 ESLint 通过。五种页面尺寸为 320×480、390×844、626×998、900×420、1024×768。
+  最终复查发现共享表单异步重新启用说话人分离，已在 Android staging 修正并复跑通过；早期界面失败不计入最终通过数。
+- 已完成且已验证：固定归档的 8 个原生补丁文件可重新生成、重复执行不变且与构建缓存一致；修正过缓存换行差异。
+  x86_64/arm64-v8a 均编译通过，JNI LOAD 段为 16KB 对齐；APK 不含 sherpa/ONNX 推理库，开发签名验证与覆盖安装通过。
+  最终 APK 为 103,612,718 bytes，SHA-256 `95327e8fd87d114b41e3644ba45b00808a0f94e1f79d7a3e596cc59f314633d7`，与 WSA 安装包逐字节摘要一致。
+- 已完成且已验证：升级前稿件/配置与旧模型已备份，195 份原有稿件 revision 未改变；测试只写隔离夹具。
+  本轮源码检查点按 §10 的预期 HEAD 原子提交、回读范围检查与 CI 流程保存；云端保存不代表模型验收。
+- 未验证：兼容 Vulkan 的 ARM 手机/平板实际推理、600 秒边界及长媒体全程识别、公网模型完整下载、实际触屏/软键盘。
+
+### Android 手机布局与 Parakeet 历史验证（0.11，2026-11-16）
 
 - **当前状态**：已完成且已验证（WSA Android 13 x86_64，具体范围如下）；完整移植仍进行中。
 - 最终 APK 实际资源：工作页 65 项、Parakeet 动态页面 20 项通过，覆盖 320×480、390×844、626×998、900×420、1024×768，含 7 工作页、
@@ -1939,21 +1978,22 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.11）
+### Android 构建与安装（当前 0.12）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.11.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
-  用同一开发签名覆盖 0.1–0.10，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
+  输出 `android/out/SubFabric-Android-0.12.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  用同一开发签名覆盖 0.1–0.11，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。
-- Parakeet v2 int8 的既有原生层/模型保留；0.11 已接新版界面中的初稿/批量/区间识别，外部翻译、视频导出、素材下载、术语校对、语义重分句和应用存储管理沿用既有实现。
-  准备模型仍可用 `./android/prepare-model.ps1` 或 WSA 的 `-InstallToWsa` 参数；模型不随源码或 APK 保存。
-- 开发签名和构建缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立构建目录。第三方许可与对应源码入口见
-  `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包解压内容上限 16MB。
-  当前 0.11.0 APK 已覆盖安装 WSA，设备包与本地产物大小/哈希一致（100,573,048 bytes）：
-  `3180572f7f4696cc831f979cfeada67669934169ce064975e6de55f6d4f4dc12`；尚未创建新版 Release。此前按用户要求发布 Android 0.9.0 验收预发行，完整移植仍在进行；不作为正式版或真机验收完成的证明。
+- 原生构建还需 NDK `27.0.12077973`、SDK CMake `3.22.1`（含 Ninja / NDK glslc）。
+  `build-native.ps1` 在忽略目录获取固定归档并核验 SHA-256，使用固定 Zig 0.13 构建 Windows 宿主 shader 生成器，
+  分别构建 x86_64 / arm64-v8a 静态 ggml 和 JNI；不安装系统编译器、不初始化 Git。JNI ELF 链接使用 16KB 对齐。
+  模型改用设置中的独立 GGUF 导入/下载；`prepare-model.ps1` 仅用于旧 CPU 版历史模型，不是 0.12 的准备入口。
+- 开发签名和缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立 APK 构建目录。第三方许可与源码入口见
+  `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包内容上限 16MB。
+  当前候选尚未创建新版 Release；最终包与设备核对见本轮 §5 状态。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
 - **0.9.0 成员验收发布（2026-11-16）**：已完成且已验证（发布与资产校验）；成员真机验收未开始，待反馈。
   [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.9.0) 标记为预发行，不接管桌面版 Latest；
   标签 `android-v0.9.0` 指向已验证源码 `19432fc9f981fcac95425f84850f06568962a62a`，对应 CI 已通过。
@@ -2231,8 +2271,8 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 - 外部 LLM 字幕翻译/配置与 Android 凭据存储：0.3 已完成且已验证（隔离服务，见 §5）。
 - 视频导出：0.4 已完成且已验证（WSA 软件 H.264/AV1，HEVC/硬件条件与限制见 §5）。
 - 下载器 0.5、字幕辅助 0.6、应用管理 0.7 已完成且已验证（范围与限制见 §5）。
-- 0.11 Parakeet 原生 CPU 与新版界面的初稿/区间识别已完成且已验证（WSA 短音频，见 §5）。说话人分离、独立对齐、
-  置信度复跑、其它 LLM 辅助及完整中断恢复仍未完成；保留完整移植目标，不以空响应或旧桌面测试代替验收。
+- 0.12 Parakeet/Qwen ASR/Qwen 对齐器的 Vulkan 适配已实现但未验证（当前 WSA 推理未通过，见 §5）；CPU 识别停用。
+  说话人分离、置信度复跑、其它 LLM 辅助及完整中断恢复仍未完成；Whisper 与云端 ASR 按本轮要求不接入。
 
 ### `\k` 逐词字幕
 
