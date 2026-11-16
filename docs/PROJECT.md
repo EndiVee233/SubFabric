@@ -2020,11 +2020,19 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   模型改用设置中的独立 GGUF 导入/下载；`prepare-model.ps1` 仅用于旧 CPU 版历史模型，不是 0.12 的准备入口。
 - 开发签名和缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立 APK 构建目录。第三方许可与源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包内容上限 16MB。
-  当前候选尚未创建新版 Release；最终包与设备核对见本轮 §5 状态。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
+  当前 0.12.1 已发布成员验收预发行版，资产核对见下方；设备验证见 §5。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
+- **0.12.1 成员验收发布（2026-11-16）**：已完成且已验证（发布与资产校验）；成员真机验收未开始。
+  [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.12.1) 标记为预发行，不接管桌面版 Latest；
+  标签 `android-v0.12.1` 固定至 `b3d0661ba297896cacb4600a6c6ded94c33fa373`，该源码 CI 已通过。
+  公开附件为 `SubFabric-Android-0.12.1.apk`（103,616,814 bytes）与 `SHA256SUMS.txt`；
+  APK SHA-256 为 `6147ef8f22235656777505d48db55df01985dc2576c465080601720dc8aa717f`。
+  本轮核对 GitHub 两份资产的大小/digest、公开 APK HTTP 200、公开摘要文件内容和标签目标，均通过；
+  使用与 WSA 已验证包相同的 APK，没有重新构建或重复运行设备/模型测试，未上传模型、用户数据和签名私钥。
+  发布说明明确记录当前 WSA Vulkan ASR 推理失败且被禁用、CPU 识别停用及 ARM64 等未验收范围，并列出视频播放修复与成员验收要点。
 - **0.9.0 成员验收发布（2026-11-16）**：已完成且已验证（发布与资产校验）；成员真机验收未开始，待反馈。
   [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.9.0) 标记为预发行，不接管桌面版 Latest；
   标签 `android-v0.9.0` 指向已验证源码 `19432fc9f981fcac95425f84850f06568962a62a`，对应 CI 已通过。
-  附件仅为 `SubFabric-Android-0.9.0.apk`（100,548,163 bytes）和 `SHA256SUMS.txt`，未上传签名私钥、模型或用户数据。
+  当前公开附件为 `SubFabric-Android-0.9.0.apk`（100,548,163 bytes），摘要记录见下方；未上传签名私钥、模型或用户数据。
   APK SHA-256：`8d2dfd015de2b083d085474bfabba4ecea06e9d011d77c3eae02dd71464238ca`；
   GitHub 资产 digest、大小、标签目标及公开下载 HTTP 200 已核对，与 WSA 已验证包一致，未重新构建。
   发布说明含触控/编辑/保存/相册验收要点，以及 ARM64 真机、物理触屏、真实软键盘、旧 Android 等未验证范围。
