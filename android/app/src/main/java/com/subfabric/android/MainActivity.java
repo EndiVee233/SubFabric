@@ -34,6 +34,8 @@ public final class MainActivity extends Activity {
     private LlmClient llmClient;
     private AppStorage appStorage;
     private final Map<String,Uri> selectedFiles=new HashMap<>();
+    private final Map<String,String> selectedNames=new HashMap<>();
+    private boolean fileChooserMedia;
     private final AtomicBoolean busy = new AtomicBoolean(), cancelled = new AtomicBoolean();
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
     private WebView web;
@@ -106,10 +108,11 @@ public final class MainActivity extends Activity {
         web.addJavascriptInterface(new Bridge(), "SubFabric");
         web.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onShowFileChooser(WebView view,ValueCallback<Uri[]> callback,FileChooserParams params) {
-                if(fileChooser!=null)fileChooser.onReceiveValue(null);fileChooser=callback;
-                Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);
-                intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,params.getMode()==FileChooserParams.MODE_OPEN_MULTIPLE);
-                try {startActivityForResult(intent,14);}catch(Exception e){fileChooser.onReceiveValue(null);fileChooser=null;}
+                if(fileChooser!=null||pickerId!=null){callback.onReceiveValue(null);return true;}
+                fileChooser=callback;fileChooserMedia=MediaPicker.acceptsVideo(params.getAcceptTypes());
+                boolean multiple=params.getMode()==FileChooserParams.MODE_OPEN_MULTIPLE;
+                if(fileChooserMedia){emit("media-picker-start",new JSONObject());chooseMedia(14,multiple,false);}
+                else{Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,multiple);try{startActivityForResult(intent,14);}catch(Exception e){pickerError(14,e);}}
                 return true;
             }
             @Override public boolean onJsAlert(WebView v,String url,String message,JsResult result) {
@@ -221,14 +224,19 @@ public final class MainActivity extends Activity {
             if (busy.get() && !action.equals("status") && !action.startsWith("studio")) { reply(id, false, "任务进行中，请先等待或停止"); return; }
             if(action.equals("close")){runOnUiThread(()->finish());reply(id,true,new JSONObject());return;}
             if(action.equals("uploadSelected")){
-                runOnUiThread(()->{try{Uri uri=selectedFiles.get(new JSONObject(json).getString("name"));if(uri==null)throw new IOException("请重新选择媒体文件");pickerId=id;onActivityResult(MEDIA,RESULT_OK,new Intent().setData(uri));}catch(Exception e){reply(id,false,message(e));}});return;
+                runOnUiThread(()->{try{JSONObject selection=new JSONObject(json);Uri uri=null;
+                    if(selection.has("token"))uri=selectedFiles.get(selection.getString("token"));
+                    else for(String token:selectedNames.keySet())if(selectedNames.get(token).equals(selection.optString("name"))){Uri candidate=selectedFiles.get(token);if(uri!=null&&!uri.equals(candidate))throw new IOException("媒体名称重复，请重新选择文件");uri=candidate;}
+                    if(uri==null)throw new IOException("请重新选择媒体文件");if(pickerId!=null||fileChooser!=null)throw new IOException("请先完成当前文件选择");pickerId=id;onActivityResult(MEDIA,RESULT_OK,new Intent().setData(uri));}catch(Exception e){reply(id,false,message(e));}});return;
             }
             if (action.equals("pickMedia") || action.equals("pickSubtitle") || action.equals("pickModel") || action.equals("pickPack") || action.equals("pickExportDirectory") || action.equals("export")) {
                 runOnUiThread(() -> {
                     if (pickerId != null) { reply(id, false, "请先完成当前文件选择"); return; }
                     try {
                         JSONObject arg = new JSONObject(json);
+                        if(pickerId!=null||fileChooser!=null)throw new IOException("请先完成当前文件选择");
                         pickerId = id;
+                        if(action.equals("pickMedia")){chooseMedia(MEDIA,false,true);return;}
                         Intent intent;
                         int request;
                         if(action.equals("pickExportDirectory")){request=DIRECTORY;intent=new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI,DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:Movies"));}
@@ -245,7 +253,7 @@ public final class MainActivity extends Activity {
                             if (request == MEDIA) intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"video/*", "audio/*"});
                         }
                         startActivityForResult(intent, request);
-                    } catch (Exception e) { pickerId = null; reply(id, false, message(e)); }
+                    } catch (Exception e) { if(id.equals(pickerId))pickerId = null; reply(id, false, message(e)); }
                 });
                 return;
             }
@@ -263,7 +271,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.9.0"); break;
+                        case "status": result = new JSONObject().put("modelReady", modelReady()).put("engine", "Parakeet TDT v2 · int8 · CPU").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.10.0"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));
@@ -307,9 +315,33 @@ public final class MainActivity extends Activity {
     private boolean modelReady() { for(String name: ModelFiles.NAMES) { if(!new File(models,name).isFile() || new File(models,name).length() != ModelFiles.size(name)) return false; } return true; }
     private void checkCancelled() throws IOException { if(cancelled.get() || destroyed || Thread.currentThread().isInterrupted()) throw new IOException("任务已停止；原字幕保留"); }
 
+    private void completeWebChooser(Uri[] uris){
+        ValueCallback<Uri[]> callback=fileChooser;boolean mediaSelection=fileChooserMedia;fileChooser=null;fileChooserMedia=false;
+        if(callback!=null)callback.onReceiveValue(uris);
+        if(mediaSelection&&(uris==null||uris.length==0))emit("media-picker-cancel",new JSONObject());
+    }
+    private void pickerCancel(int request){if(request==14)completeWebChooser(null);else{String id=pickerId;pickerId=null;if(id!=null)reply(id,true,JSONObject.NULL);}}
+    private void pickerError(int request,Exception error){if(request==14){completeWebChooser(null);android.widget.Toast.makeText(this,message(error),android.widget.Toast.LENGTH_LONG).show();}else{String id=pickerId;pickerId=null;if(id!=null)reply(id,false,message(error));}}
+    private void chooseMedia(int request,boolean multiple,boolean audio){
+        MediaPicker.show(this,multiple,audio,new MediaPicker.Selection(){
+            public void choose(Intent intent){startActivityForResult(intent,request);}
+            public void cancel(){pickerCancel(request);}
+            public void error(Exception error){pickerError(request,error);}
+        });
+    }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request,result,data);
-        if(request==14){if(fileChooser!=null){Uri[] uris=WebChromeClient.FileChooserParams.parseResult(result,data);if(uris!=null)for(Uri uri:uris){try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())selectedFiles.put(c.getString(0),uri);}}fileChooser.onReceiveValue(uris);fileChooser=null;}return;}
+        if(request==14){
+            if(fileChooser==null)return;Uri[] uris=MediaPicker.result(result,data);
+            try{
+                if(fileChooserMedia&&uris!=null&&uris.length>0){JSONArray files=new JSONArray();
+                    for(Uri uri:uris){String name=uri.getLastPathSegment();try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(cursor!=null&&cursor.moveToFirst())name=cursor.getString(0);}
+                        if(name==null||name.isEmpty())name="导入的媒体";String token=UUID.randomUUID().toString();selectedFiles.put(token,uri);selectedNames.put(token,name);files.put(new JSONObject().put("token",token));}
+                    emit("media-selection",new JSONObject().put("files",files));
+                }
+                completeWebChooser(uris);
+            }catch(Exception error){pickerError(14,error);}return;
+        }
         String id = pickerId; pickerId = null;
         if (id == null) return;
         if (result != RESULT_OK || data == null || data.getData() == null) { reply(id,true,JSONObject.NULL); return; }
@@ -507,5 +539,5 @@ public final class MainActivity extends Activity {
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
     @Override public void onBackPressed(){if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
-    @Override protected void onDestroy() { destroyed=true; cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();downloadWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true;if(fileChooser!=null)completeWebChooser(null); cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();downloadWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
 }

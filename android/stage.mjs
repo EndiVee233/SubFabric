@@ -103,6 +103,22 @@ project=project.replaceAll('p.videoExists || p.fetching','p.videoExists || p.fet
 const libraryAnchor='  return {\n    openProject, detachProject, flushSave, saveNow,';
 if(!project.includes(libraryAnchor))throw new Error('Review Android library refresh hook');
 project=project.replace(libraryAnchor,'  window.__androidRefreshLibrary = renderList;\n'+libraryAnchor);
+const relinkBody='body: JSON.stringify({ videoPath: pick.path })';
+if(project.split(relinkBody).length!==2)throw new Error('Review Android relink media name');
+project=project.replace(relinkBody,'body: JSON.stringify({ videoPath: pick.path, name: pick.name })');
+project=project.replace("npVideo.name + '（浏览器选择）'",'npVideo.name');
+const browserStart=project.indexOf('  function browserPickVideo() {'),browserEnd=project.indexOf('  /* ── 区域字幕导入',browserStart);
+if(browserStart<0||browserEnd<0)throw new Error('Review Android browser media picker cancellation');
+project=project.slice(0,browserStart)+`  function browserPickVideo() {
+    return new Promise(resolve=>{
+      const input=document.createElement('input');input.type='file';input.accept='video/*,.mkv,.avi,.mov,.m4v';input.hidden=true;
+      let finished=false;
+      const done=file=>{if(finished)return;finished=true;document.removeEventListener('android-media-picker-cancel',cancel);input.remove();resolve(file||null);};
+      const cancel=()=>done(null);input.addEventListener('change',()=>done(input.files?.[0]));input.addEventListener('cancel',cancel);
+      document.addEventListener('android-media-picker-cancel',cancel);document.body.append(input);input.click();
+    });
+  }
+`+project.slice(browserEnd);
 fs.writeFileSync(projectFile,project);
 const stateFile=path.join(target,'js/studio-state.js');
 let studioState=fs.readFileSync(stateFile,'utf8');

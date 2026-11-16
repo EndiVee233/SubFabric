@@ -101,7 +101,7 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.9 手机触控与相册导出阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
+- `android/`：Android 移植（当前 0.10 相册与文件导入阶段）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
   `android-translate.js` 负责共享翻译协议与批次，`translation-doc.mjs` 保留原文事件写回译文。
@@ -114,6 +114,7 @@
   转接到原时间轴创建/框选/编辑处理器，复用原右键菜单。Android staging 移除主播更新组件和轮询；
   `project.js` 的平台刷新钩子让同一稿件页中新建/导入立即显示。`AppStorage` 负责应用存储清单和受限缓存回收；
   `StudioStore` 提供真实的主页操作统计。`build.ps1` 用 SDK 直接构建 APK，无前端打包器。
+  MediaPicker 统一 WebView 视频文件框和原生关联媒体的相册/文件来源菜单及单选/多选结果。
   `.tools/`、`out/`、模型、字体缓存和用户稿件不入库。
 
 | 路径 | 职责 |
@@ -150,6 +151,14 @@
   0.1 稿件仅补缺转换为 SRT 项目，原文件和 Parakeet 模型保留。完整移植仍进行中；0.3 外部字幕翻译见下文，尚未接入的服务返回明确错误。
   WebView 仅运行内置虚拟源、禁止外部页面；WASM/worker/blob 权限限于内置页面所需。应用不启动 Node；0.5 仅在下载服务中嵌入私有 Python，ASS 编辑、翻译和视频导出不依赖 Python。
   当前仍为可调试开发签名，后续正式分发要切换发布签名并关闭调试。
+
+- **Android 视频输入（0.10）**：新建/导入稿件、批量添加视频、缺失视频重新关联及编辑器关联媒体均使用
+  MediaPicker 的“从相册导入 / 从文件导入”。相册优先系统 Photo Picker（video/*，按输入支持多选），
+  旧系统回退可解析的系统视频选择器；文件用 SAF，原生关联媒体保留音频选择。未增加全库读写权限。
+  多选显式读取 ClipData；每个 WebView File 绑定不透明 URI token，后续选择同名视频不改变已有 File 的来源，
+  name-only 旧请求遇到歧义即拒绝。临时 URI 仅用于复制到原有私有媒体存储，不依赖持久化外部路径。
+  浏览文件期间无 60s 自动放弃；系统完成/取消结果驱动清理。relink 接收共享 videoPath/name 字段并失效旧音频准备标记。
+  字幕、字体和项目包仍使用各自文件选择器；网络下载保持独立。
 
 - **Android 外部翻译（0.3）**：原有翻译方案/术语表/单句菜单继续使用共享界面；API 适配到原生
   `LlmStore/LlmClient`，不启动 Node。方案与活动配置私有原子落盘，Key 用 Android Keystore AES-GCM 加密，
@@ -642,6 +651,7 @@
   Cookie 导入和代理保留；链接元数据经 textContent 显示，不插入远端 HTML。
   0.6 的“更多 → 术语校对 / 语义重分句”连接原预览弹窗；手机术语字段上下排列，平板并排，
   内容与操作可滚动，目标至少 44px。浮层高于后台稿件进度卡，避免确认按钮被遮住；Android 返回优先取消并关闭预览。
+  0.10 所有本地视频选择先显示相册/文件来源菜单，取消保留先前选择，批量入口保留多选；非视频文件框不显示相册。
   **0.9 手机独立编辑器**：宽度 ≤759px 或紧凑横屏（宽 ≤1000px、高 ≤500px）时，工作页使用底部
   “主页 / 稿件 / 操作 / 更多”，没有“编辑”目的地。编辑器只能从稿件“打开”进入；主页继续编辑入口先到稿件库，
   新建 ASS、导入字幕/项目包及下载后新建稿件也先回库。同页新建/导入主动刷新原列表，避免需切页才看见新稿件。
@@ -1564,9 +1574,26 @@
 
 ## 5. 测试与验证
 
-### Android 手机触控与导出验证（2026-11-16）
+### Android 视频输入验证（0.10，2026-11-16）
 
-- **当前状态**：0.9 已完成且已验证（WSA Android 13 x86_64）；完整移植仍进行中。
+- **当前状态**：已完成且已验证（WSA Android 13 x86_64）；完整移植仍进行中。
+- 实际系统相册单选、文件选择、相册多选均复制真实隔离视频并校验字节；两个目录中的同名视频
+  先后选择后仍分别导入正确内容，歧义 name-only 请求被拒绝。文件选择停留 133s 后仍成功，
+  来源菜单取消立即恢复新建页按钮并保留前次文件，原生 pickMedia 取消返回 null。
+- 排查新建/导入、批量添加、缺失媒体重选、手机设置工具/平板关联媒体及原打开视频按钮，
+  视频文件输入和原生 RPC 都落到同一来源选择器；字幕、项目包、字体与网络下载未改成视频选择器。
+- 初测批量相册确认后未返回文件，已改为显式解析 ClipData；复测两段视频返回且各自字节完全一致。
+  relink 以真实导入 ID 验证 videoPath/name 更新、空请求拒绝和 ASS 原文保留。
+- 本次手机/平板布局 10 项、ASS 编辑/渲染/保存/冲突设备回归、4 组 Android/主题/文案定向 JS 与修改文件 ESLint 通过；
+  173 份既有稿件 revision 未变。初次静态检查因检查脚本缺少浏览器全局声明失败，补齐声明后 0 错误/警告。
+- 设备恢复脚本 android/test-media-input-wsa.mjs（先用系统选择隔离夹具保存实际 File 引用，
+  --batch 验证多选；夹具清单/结果在忽略的 android/out/media-input-*）。
+- ARM 真机、Android 8–12 回退相册、远程文档提供者、长媒体未验证；批量识别流水线仍未接入，
+  本次只验收批量视频选择与导入，不把选择成功记作识别成功。0.9 触控/导出历史结果独立保留。
+
+### Android 手机触控与导出历史验证（0.9，2026-11-16）
+
+- **历史状态**：0.9 已完成且已验证（WSA Android 13 x86_64）；完整移植仍进行中。
 - `android/test-touch-wsa.mjs` 使用真实 CDP Touch/Mouse 输入验证单指新增并保存、双指框选/剩余指隔离、
   取消不新增、时间轴块与列表的下沉/长按菜单、超过两秒释放不穿透、鼠标兼容，以及英文逐词时间/元数据/注释保留。
 - `android/test-gallery-wsa.mjs` 验证原视频窗口和窄屏布局、真实 H.264 成片写媒体库、非 pending/位置/字节校验、
@@ -1869,20 +1896,21 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.9）
+### Android 构建与安装（当前 0.10）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.9.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
-  用同一开发签名覆盖 0.1–0.8，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
+  输出 `android/out/SubFabric-Android-0.10.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  用同一开发签名覆盖 0.1–0.9，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。
-- Parakeet v2 int8 的既有原生层/模型保留，0.9 已接外部翻译、视频导出、素材下载、术语校对、语义重分句和应用存储管理，其新 UI 识别流水线待接入。
+- Parakeet v2 int8 的既有原生层/模型保留，0.10 已接外部翻译、视频导出、素材下载、术语校对、语义重分句和应用存储管理，其新 UI 识别流水线待接入。
   准备模型仍可用 `./android/prepare-model.ps1` 或 WSA 的 `-InstallToWsa` 参数；模型不随源码或 APK 保存。
 - 开发签名和构建缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立构建目录。第三方许可与对应源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包解压内容上限 16MB。
-  按用户要求发布 Android 0.9.0 验收预发行，完整移植仍在进行；不作为正式版或真机验收完成的证明。
+  当前 0.10.0 APK 为本地构建并已覆盖安装 WSA，设备包与本地产物 SHA-256 一致：
+  `6860626db2b86e7c9322b6ebaa5799677f2abd38bd9394a77fb1da1d3bacbfe6`；尚未创建新版 Release。此前按用户要求发布 Android 0.9.0 验收预发行，完整移植仍在进行；不作为正式版或真机验收完成的证明。
 - **0.9.0 成员验收发布（2026-11-16）**：已完成且已验证（发布与资产校验）；成员真机验收未开始，待反馈。
   [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.9.0) 标记为预发行，不接管桌面版 Latest；
   标签 `android-v0.9.0` 指向已验证源码 `19432fc9f981fcac95425f84850f06568962a62a`，对应 CI 已通过。

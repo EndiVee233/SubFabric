@@ -10,10 +10,27 @@
   localStorage.setItem('subfabric-studio-v1',JSON.stringify({...prefs,themePack:'windows-uwp',custom:[],background:'solid',motion:'off',accent:prefs.accent||'#0078D7'}));
   const waiting=new Map();let sequence=0;
   const errors=[],requests=[],history=new Map();
+  // Each File retains the exact native URI token across later picks and duplicate filenames.
+  const mediaTokens=new WeakMap(),mediaWaiters=new Map();let nativeMedia=null,changedMedia=null;
+  const acceptsVideo=input=>/(?:video\/|\.(?:mp4|mkv|avi|mov|m4v|webm|3gp|mpeg|mpg|ts|m2ts)(?:,|$))/i.test(input.accept||'');
+  function bindMedia(){
+    if(!nativeMedia||!changedMedia)return;
+    if(nativeMedia.length!==changedMedia.length){nativeMedia=changedMedia=null;return;}
+    changedMedia.forEach((file,index)=>{const token=nativeMedia[index].token;mediaTokens.set(file,token);const pending=mediaWaiters.get(file);if(pending){clearTimeout(pending.timer);mediaWaiters.delete(file);pending.resolve(token);}});nativeMedia=changedMedia=null;
+  }
+  document.addEventListener('change',event=>{const input=event.target;if(input instanceof HTMLInputElement&&input.type==='file'&&acceptsVideo(input)&&input.files?.length){changedMedia=[...input.files];bindMedia();}},true);
+  document.addEventListener('cancel',event=>{if(event.target instanceof HTMLInputElement&&acceptsVideo(event.target))nativeMedia=changedMedia=null;},true);
+  function mediaToken(file){
+    if(mediaTokens.has(file))return Promise.resolve(mediaTokens.get(file));
+    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{mediaWaiters.delete(file);reject(new Error('选择结果未就绪，请重新选择视频'));},3000);mediaWaiters.set(file,{resolve,reject,timer});});
+  }
   window.androidErrors=errors;window.androidRequests=requests;
   window.nativeEvent=(type,data)=>{
     if(type==='response') {const p=waiting.get(data.id);if(!p)return;waiting.delete(data.id);data.ok?p.resolve(data.data):p.reject(new Error(data.data));}
     if(type==='progress')document.dispatchEvent(new CustomEvent('android-progress',{detail:data}));
+    if(type==='media-picker-start')nativeMedia=changedMedia=null;
+    if(type==='media-selection'){nativeMedia=data.files;bindMedia();}
+    if(type==='media-picker-cancel'){nativeMedia=changedMedia=null;document.dispatchEvent(new Event('android-media-picker-cancel'));}
   };
   const rpc=(action,payload={})=>new Promise((resolve,reject)=>{const id='studio-'+(++sequence);waiting.set(id,{resolve,reject});window.SubFabric.call(id,action,JSON.stringify(payload));});
   window.androidRpc=rpc;
@@ -40,7 +57,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.9 · 手机触控与导出',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.10 · 相册与文件导入',vendorOk:true,stamp:''});
     if(path==='/api/storage'||path==='/api/storage/clean'){
       const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
       if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));
@@ -87,7 +104,7 @@
       }
     }
     if(path==='/api/upload-video'){
-      const imported=await rpc('uploadSelected',{name:url.searchParams.get('name')});
+      const imported=await rpc('uploadSelected',{name:url.searchParams.get('name'),token:await mediaToken(options.body)});
       return response({path:imported.id,name:imported.title});
     }
     const match=/^\/api\/projects\/([0-9a-f-]{36})(?:\/(.*))?$/.exec(path);
@@ -115,7 +132,7 @@
         const encoded=await rpc('studioExportPack',{id}),bytes=Uint8Array.from(atob(encoded),c=>c.charCodeAt(0));
         return new Response(bytes,{headers:{'Content-Type':'application/zip','Content-Disposition':"attachment; filename*=UTF-8''"+encodeURIComponent(project.name||'SubFabric')+'.zip'}});
       }
-      if(action==='relink'){const data=await jsonBody(options.body);return response(documentMeta(await update(id,{mediaId:data.path||data.video?.path,mediaName:data.name||data.video?.name,hasAudio:false,hasPeaks:false,prepare:null})));}
+      if(action==='relink'){const data=await jsonBody(options.body),mediaId=data.path||data.videoPath||data.video?.path;if(!mediaId)return response({error:'请重新选择视频'},400);return response(documentMeta(await update(id,{mediaId,mediaName:data.name||data.video?.name||project.mediaName,hasAudio:false,hasPeaks:false,prepare:null})));}
       if(action==='prepare'){
         const settings=await jsonBody(options.body);if(settings.mode&&settings.mode!=='raw')return response({error:'安卓端目前使用原声音轨，降噪处理尚未适配'},501);
         if(!project.mediaId)return response({error:'尚未关联媒体'},400);
