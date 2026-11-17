@@ -1645,7 +1645,7 @@
   最终复测通过。首次流式安装停在未提交会话，已只放弃该安装会话并用固定 APK 推送安装成功，未重启 WSA 或操作其它应用。
 - 最终 APK 103,645,798 bytes，SHA-256 `99fc04bcbe63e2f13f08abb83cb721d8b0f3fc8e4314950adc59ebc9babd850f`；
   与已安装包、随包 15 个 studio JS 和字典逐字节核对一致。证据在忽略的 `android/out/lean-*.json`。
-- **GitHub 保存**：尚未提交 GitHub；源码及公开预发行待本轮检查点完成后保存。
+- **GitHub 保存**：云端提交成功且已核对；源码、APK 与公开预发行的目标和内容一致，范围外源文件与旧 Release 均保留。
 
 ### Android 原生控件与捏合（0.13.0，2026-11-17）
 
@@ -2075,7 +2075,13 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   模型改用设置中的独立 GGUF 导入/下载；`prepare-model.ps1` 仅用于旧 CPU 版历史模型，不是 0.12 的准备入口。
 - 开发签名和缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立 APK 构建目录。第三方许可与源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包内容上限 16MB。
-  0.14.0 精简版已构建并覆盖安装验证，公开预发行待源码检查点与 CI 完成；当前公开版仍为 0.13.0；设备验证见 §5。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
+  0.14.0 精简版已发布成员验收预发行版；设备验证见 §5。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
+- **0.14.0 核心工作流精简发布（2026-11-17）**：已完成且已验证（WSA 与发布核对范围）；成员真机验收未开始。
+  [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.14.0) 为预发行，未设为 Latest；
+  源码提交 `16551c523578e60c9f2f67713f22890f4e7c138e`，[源码 CI](https://github.com/EndiVee233/SubFabric/actions/runs/44011361767) 第 1 次通过 JS / Python / 实际主题渲染。
+  APK 103,645,798 bytes，SHA-256 `99fc04bcbe63e2f13f08abb83cb721d8b0f3fc8e4314950adc59ebc9babd850f`；
+  与已安装包和上传资产一致，公开 APK HTTP 200，公开校验文件一致。7 份本次夹具仅归档，219 条既有记录未改写，原文件保留；
+  实际手机主页/稿件/设置及宽屏左栏已核对。真实 ARM64/触屏/软键盘、GPU ASR 与真实付费翻译仍未验收，见 §5。
 - **0.13.0 原生界面验收发布（2026-11-17）**：已完成且已验证（WSA 与发布核对范围）；成员真机验收未开始。
   [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.13.0) 为预发行，未设为 Latest；
   标签固定至 `02396e1c4b701453612c8890ea17185d32991c83`，源码 CI `44003225892` 第 2 次运行成功。
