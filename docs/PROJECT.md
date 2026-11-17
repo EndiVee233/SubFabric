@@ -1644,7 +1644,8 @@
   这是实际 Android 页面上的 300 行合成 ASS 与字幕预览时钟测试，不是长视频完整播放验收。
 - 原媒体稿件另有 4 个真实 seek 位置核对通过；312.49s 时字幕顶部从 975px 调整至约 691px，
   列表顶部约 649px，当前卡片完整落在屏内偏上。原始 201 份稿件的 revision 与媒体关联均未变。
-- 8 组定向 JS 回归及相关 ESLint 通过；桌面 `editor.js` 原文件未改变。源码检查点按 §10 原子保存并回读。
+- 8 组定向 JS 回归及相关 ESLint 通过；桌面 `editor.js` 原文件未改变。源码检查点云端提交成功且已核对。
+  CI 首次主题渲染因 Chrome 启动未找到页面目标失败，复跑全部检查通过；partial/排除项不计完整模型或 GUI 验收。
   早期检查发现末行边距、隐藏页尺寸时序、自动选中绕过手动保护以及预览时钟 seeked 误判，均已修正并复跑通过；
   测试脚本冷启动曾未等页面就绪，已补等待，不计入最终通过数。
 - 最终 APK 为 103,616,891 bytes，SHA-256 `d887a5939f2ef8163f7c815fffdcbfd8d4737f9bbced947687c725c33f3ba3a5`；
@@ -2034,7 +2035,7 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
   输出 `android/out/SubFabric-Android-0.12.2.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
-  用同一开发签名覆盖 0.1–0.11，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
+  沿用开发签名，已从 0.12.1 覆盖升级并保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。
 - 原生构建还需 NDK `27.0.12077973`、SDK CMake `3.22.1`（含 Ninja / NDK glslc）。
@@ -2043,7 +2044,14 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   模型改用设置中的独立 GGUF 导入/下载；`prepare-model.ps1` 仅用于旧 CPU 版历史模型，不是 0.12 的准备入口。
 - 开发签名和缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立 APK 构建目录。第三方许可与源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包内容上限 16MB。
-  当前 0.12.1 已发布成员验收预发行版，资产核对见下方；设备验证见 §5。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
+  当前 0.12.2 已发布成员验收预发行版，资产核对见下方；设备验证见 §5。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
+- **0.12.2 成员验收发布（2026-11-17）**：已完成且已验证（发布与资产校验）；成员真机验收未开始。
+  [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.12.2) 为预发行，不接管桌面版 Latest；
+  标签固定至 `419d2ec7551d8b62f5f54fb10a1e5a19d1fd91e2`，对应源码 CI 复跑通过。
+  附件为 `SubFabric-Android-0.12.2.apk`（103,616,891 bytes）和 `SHA256SUMS.txt`；APK SHA-256 为
+  `d887a5939f2ef8163f7c815fffdcbfd8d4737f9bbced947687c725c33f3ba3a5`，与最终设备安装包一致。
+  已核对两份资产的大小/digest、公开 APK HTTP 200、公开摘要文件内容、标签目标，以及既有 Release/资产未变。
+  发布说明写明手机偏上跟随修复、42 项自动化及真实稿件 4 个位置、物理触屏/ARM64 与 Vulkan ASR 未验收范围。
 - **0.12.1 成员验收发布（2026-11-16）**：已完成且已验证（发布与资产校验）；成员真机验收未开始。
   [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.12.1) 标记为预发行，不接管桌面版 Latest；
   标签 `android-v0.12.1` 固定至 `b3d0661ba297896cacb4600a6c6ded94c33fa373`，该源码 CI 已通过。
