@@ -267,7 +267,7 @@ public final class MainActivity extends Activity {
                             }finally{busy.set(false);}break;
                         }
                         case "studioList": case "studioLoad": case "studioOpStats": case "studioCreate": case "studioUpdate": case "studioApplyAsr": case "studioApplyAlignment": case "studioDelete": result=studio.call(action,arg);break;
-                        case "status": result = new JSONObject().put("modelReady", AsrManager.modelStatus(MainActivity.this).optBoolean("ready")).put("engine", "Vulkan · CPU 回退已禁用").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.12.1"); break;
+                        case "status": result = new JSONObject().put("modelReady", AsrManager.modelStatus(MainActivity.this).optBoolean("ready")).put("engine", "Vulkan · CPU 回退已禁用").put("abi", android.os.Build.SUPPORTED_ABIS[0]).put("version", "0.12.2"); break;
                         case "list": {
                             JSONArray list = new JSONArray();
                             File[] files = projects.listFiles((dir, name) -> name.endsWith(".json"));

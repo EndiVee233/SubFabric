@@ -101,6 +101,8 @@ document.addEventListener('pointerdown',event=>{if(!more.contains(event.target)&
 document.body.prepend(bar);
 const {initMobile}=await import('./android-mobile.js');
 const mobile=initMobile({bar,more,flush,status});
+const {initFollow}=await import('./android-follow.js');
+initFollow(dbg.panel,video);
 // Route the original editor's file buttons through the same persistent Android workflow.
 for(const [id,label]of [['btn-open-sub','打开字幕'],['btn-open-video','关联媒体']])$(id)?.addEventListener('click',event=>{
   event.preventDefault();event.stopImmediatePropagation();[...bar.querySelectorAll('button')].find(node=>node.textContent===label)?.click();

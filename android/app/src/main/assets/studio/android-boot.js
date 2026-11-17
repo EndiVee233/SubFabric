@@ -57,7 +57,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.12.1 · Vulkan 识别与 Qwen 对齐',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.12.2 · Vulkan 识别与 Qwen 对齐',vendorOk:true,stamp:''});
     if(path==='/api/storage'||path==='/api/storage/clean'){
       const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
       if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));

@@ -101,7 +101,7 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.12.1，Vulkan ASR 的 GPU 验证未通过）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
+- `android/`：Android 移植（当前 0.12.2，Vulkan ASR 的 GPU 验证未通过）。`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
   `android-translate.js` 负责共享翻译协议与批次，`translation-doc.mjs` 保留原文事件写回译文。
@@ -113,6 +113,7 @@
   `native/` 与 `build-native.ps1` 固定 CrispASR/ggml 源码、严格 Vulkan 补丁和两种 ABI 的 JNI 构建；
   `VulkanModels/VulkanAsr/AsrManager` 负责独立模型资产、GPU 探测/数值自检和前台任务，
   `android-realign.js/alignment-doc.mjs` 接逐句/全片对齐预览与受保护的 SRT→ASS 写回。
+  `android-follow.js` 负责 Android 列表宽度/手机断点的高度缓存失效、可见区域偏上跟随与末行滚动留白。
   `android-mobile.js` 提供工作页底部导航、编辑器导出二级菜单与设置工具区；`android-touch.js` 将 Android 触控
   转接到原时间轴创建/框选/编辑处理器，复用原右键菜单。Android staging 移除主播更新组件和轮询；
   `project.js` 的平台刷新钩子让同一稿件页中新建/导入立即显示。`AppStorage` 负责应用存储清单和受限缓存回收；
@@ -713,6 +714,11 @@
   Android staging 删除主播更新 DOM、缓存读取、刷新入口与定时网络请求，不改桌面模板和共享功能源码。
   返回先关闭面板；离开前提交并保存，保存失败留在原页。平板保留宽屏导航/双栏，切换到平板时关闭手机面板。
   Windows 仍是唯一主题，明暗模式保留。
+  **0.12.2 手机字幕跟随**：按实际可见列表与视口交集，把当前字幕放在顶部下方约 12%（最多 48px）；
+  卡片超过可见高度时优先显示卡片顶部，末行保留滚动空间。旋转、宽度/断点和页签变化后重测高度，
+  隐藏测量容器使用相同的 44px 按钮样式；当前行附近最多 25 张卡片优先同步测量，其余保留分片测量。
+  手动滚动保留原 5s 暂缓跟随，之后随下一条字幕恢复，输入编辑期间不抢滚动，关闭跟随时不自动定位；主动跳转和切回字幕页重新定位。
+  平板仍使用共享的跟随位置策略；桌面源码不改，平台钩子仅由 Android staging 注入。
   **触控手势**：空白轨道单指拖动复用桌面新增逻辑；双指以中心点拖动复用 Ctrl 框选，任意一指松开即结束，
   剩余手指不会接着创建或改时，批量操作按钮至少 44px 高。长按 500ms 打开时间轴块/字幕列表的原右键菜单，按下立即下沉，松开或取消恢复；
   长按后释放不穿透成文字编辑。列表保留原生纵向滚动，移动超出阈值取消长按；失焦、切稿、指针取消会清退手势。
@@ -1628,6 +1634,23 @@
 
 ## 5. 测试与验证
 
+### Android 手机字幕跟随（0.12.2，2026-11-17）
+
+- **当前状态**：已完成且已验证（WSA 自动化范围如下）；完整真机验收未开始。
+- 已复现 626×998 的当前字幕顶部 975px、底部 1101px 超出列表可见底部 997px；
+  宽度缓存仍为 1112px、实际列表 616px，隐藏按钮 20px 而真实触点 44px，每行少算 24px。
+- 最终 APK 的 42 项设备检查通过：320×650、390×844、626×998、900×420 和 1024×768，
+  含首行/超长行/末行、旋转、隐藏页恢复、连续预览时钟、手动滚动保护/恢复、关闭跟随、编辑不受干扰。
+  这是实际 Android 页面上的 300 行合成 ASS 与字幕预览时钟测试，不是长视频完整播放验收。
+- 原媒体稿件另有 4 个真实 seek 位置核对通过；312.49s 时字幕顶部从 975px 调整至约 691px，
+  列表顶部约 649px，当前卡片完整落在屏内偏上。原始 201 份稿件的 revision 与媒体关联均未变。
+- 8 组定向 JS 回归及相关 ESLint 通过；桌面 `editor.js` 原文件未改变。源码检查点按 §10 原子保存并回读。
+  早期检查发现末行边距、隐藏页尺寸时序、自动选中绕过手动保护以及预览时钟 seeked 误判，均已修正并复跑通过；
+  测试脚本冷启动曾未等页面就绪，已补等待，不计入最终通过数。
+- 最终 APK 为 103,616,891 bytes，SHA-256 `d887a5939f2ef8163f7c815fffdcbfd8d4737f9bbced947687c725c33f3ba3a5`；
+  开发签名验证与保留数据覆盖安装通过，双 ABI 仍为 x86_64 / arm64-v8a。
+- 未验证：真实手指滚动与软键盘、ARM64 真机、Vulkan ASR。之前 0.12.1 的播放验收仍属于历史范围。
+
 ### Android 长视频播放修复（0.12.1，2026-11-16）
 
 - **当前状态**：已完成且已验证（WSA Android 13 / WebView 118，范围如下）。源码检查点按 §10 保存与回读，云端结果不代替设备验收。
@@ -2005,12 +2028,12 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.12.1）
+### Android 构建与安装（当前 0.12.2）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.12.1.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  输出 `android/out/SubFabric-Android-0.12.2.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
   用同一开发签名覆盖 0.1–0.11，保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。

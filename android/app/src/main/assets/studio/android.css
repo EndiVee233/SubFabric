@@ -204,3 +204,5 @@ body.sf-studio.android-phone #home-view[data-list=list] .proj-card .pc-actions>.
 @media(min-width:560px) and (max-width:759px), (min-width:760px) and (max-width:1000px) and (max-height:500px){
 body.sf-studio.android-phone #st-view .st-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
+
+#android-follow-tail{height:0;pointer-events:none;flex:none}

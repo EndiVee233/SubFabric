@@ -145,6 +145,18 @@ for(const [before,after]of [
   ['if (projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }','if (state.project?.id === pid && projects && projects.openProject) { try { await projects.openProject(pid); } catch {} }'],
 ]){if(!glossary.includes(before))throw new Error('Review Android glossary late-apply guard');glossary=glossary.replace(before,after);}
 fs.writeFileSync(glossaryFile,glossary);
+const editorFile=path.join(target,'js/editor.js');
+let editor=fs.readFileSync(editorFile,'utf8').replace(/\r\n/g,'\n');
+const followAnchor='        // 正常跟随受"用户刚手动滚动"保护；切回字幕页的强制同步不受它影响。';
+if(editor.split(followAnchor).length!==2)throw new Error('Review Android subtitle follow hook');
+editor=editor.replace(followAnchor,'        if(window.__androidFollowPlaying?.(this,idx,force))return;\n'+followAnchor);
+const restoreAnchor='    if (Number.isFinite(top)) this.listEl.scrollTop = Math.max(0, top);';
+if(editor.split(restoreAnchor).length!==2)throw new Error('Review Android list measurement anchor');
+editor=editor.replace(restoreAnchor,'    if (Number.isFinite(top)) { const before=this.listEl.scrollTop; this.listEl.scrollTop=Math.max(0,top); if(this.listEl.scrollTop!==before)this._progScroll=true; }');
+const selectByTime="    if (t >= it.start && t < it.end) this.select(it, 'keep');";
+if(editor.split(selectByTime).length!==2)throw new Error('Review Android playback selection scroll');
+editor=editor.replace(selectByTime,"    if (t >= it.start && t < it.end) this.select(it, document.body.classList.contains('android-phone') ? false : 'keep');");
+fs.writeFileSync(editorFile,editor);
 const timelineFile=path.join(target,'js/timeline.js');
 let timelineSource=fs.readFileSync(timelineFile,'utf8').replace(/\r\n/g,'\n');
 const pressStart='        const entering = enterP < 1;',pressEnd='        if (entering) ctx.restore();';
@@ -155,6 +167,9 @@ timelineSource=timelineSource.replace(pressStart,`        const androidPressed =
 fs.writeFileSync(timelineFile,timelineSource);
 const mainFile=path.join(target,'js/main.js');
 let main=fs.readFileSync(mainFile,'utf8').replace(/\r\n/g,'\n');
+const phoneSeekAnchor='  previewSeekT = target;\n  const token = ++previewSeekToken;';
+if(main.split(phoneSeekAnchor).length!==2)throw new Error('Review Android explicit seek follow');
+main=main.replace(phoneSeekAnchor,phoneSeekAnchor+'\n  window.__androidFollowSeek?.(target);');
 const debugAnchor='window.__dbg = { state, assPlayer,';
 if(!main.includes(debugAnchor))throw new Error('Review Android project refresh hook');
 main=main.replace(debugAnchor,'window.__androidRefreshProject = async id => { Projects.detachProject(); await Projects.openProject(id); };\n'+debugAnchor);

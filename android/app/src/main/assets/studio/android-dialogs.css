@@ -39,7 +39,7 @@ body.sf-studio.android-phone .sscp-palette .sscp-swatch{min-width:0;min-height:4
 body.sf-studio.android-phone #editor-panel .tab-head{flex-wrap:wrap;gap:6px}
 body.sf-studio.android-phone #editor-panel .tab-head-sub{white-space:normal;overflow-wrap:anywhere}
 body.sf-studio.android-phone #editor-panel :is(.setting-row,.ass-style-row,.ass-style-options,.ass-style-preset-row,.sf-preset-row,.log-toolbar,.workload-standard-row){flex-wrap:wrap;min-width:0;max-width:100%}
-body.sf-studio.android-phone #editor-panel :is(button,.sf-choice-toggle,.fp-open){min-height:44px!important}
+body.sf-studio.android-phone :is(#editor-panel,.cue-measure) :is(button,.sf-choice-toggle,.fp-open){min-height:44px!important}
 body.sf-studio.android-phone #editor-panel :is(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),select){min-height:44px!important;max-width:100%;box-sizing:border-box}
 body.sf-studio.android-phone #editor-panel :is(.role-card,.role-name){min-width:0;overflow-wrap:anywhere}
 body.sf-studio.android-phone #editor-panel .role-card :is(button,.role-color){min-width:44px;min-height:44px}
