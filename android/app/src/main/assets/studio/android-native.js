@@ -10,6 +10,7 @@ export function initNative({dbg,flush,status,workspace}){
   const itemKey=item=>{if(!items.has(item)){const id=String(++itemSerial);items.set(item,id);itemNodes.set(id,item);}return items.get(item);};
   const clean=s=>(s||'').replace(/\s+/g,' ').trim();
   const buttonText=node=>node.classList.contains('pc-del')?'删除':node.id==='np-mode-draft'?'识别视频':node.id==='np-mode-import'?'导入字幕':clean(node.textContent)||node.getAttribute('aria-label')||node.title||'操作';
+  const buttonTone=node=>node.matches('.btn-accent,#android-home-flow > button:first-of-type')?'primary':'';
   const visible=node=>{for(let n=node;n&&n!==body;n=n.parentElement){if(n.hidden||getComputedStyle(n).display==='none'||getComputedStyle(n).visibility==='hidden')return false;if(n!==node&&n.tagName==='DETAILS'&&!n.open&&!n.querySelector('summary')?.contains(node))return false;}return true;};
   function fieldLabel(node){
     const explicit=node.id&&document.querySelector('label[for="'+CSS.escape(node.id)+'"]');
@@ -34,18 +35,18 @@ export function initNative({dbg,flush,status,workspace}){
         if(source){const url=new URL(source,location.href),id=url.pathname.startsWith('/media/')?url.pathname.slice(7):url.searchParams.get('path');if(/^[0-9a-f-]{36}$/.test(id||''))out.push({kind:'video',mediaId:id});}return;
       }
       if(node.matches('.home-toolbar-btns,#sf-filters,.pc-actions,.android-inline-tools,.st-tabs')){
-        const choices=[...node.querySelectorAll('button')].filter(visible).map(n=>({id:key(n),text:buttonText(n),disabled:!!n.disabled,active:n.classList.contains('active')}));
+        const choices=[...node.querySelectorAll('button')].filter(visible).map(n=>({id:key(n),text:buttonText(n),tone:buttonTone(n),disabled:!!n.disabled,active:n.classList.contains('active')}));
         if(choices.length){out.push({kind:'buttons',columns:node.matches('#sf-filters')?4:node.matches('.home-toolbar-btns,.pc-actions')?3:2,choices});return;}
       }
       if(node.tagName==='LABEL'&&!node.querySelector('button')){const field=node.querySelector('input:not([type=hidden]),textarea,select');if(field){control(field);return;}}
       if(node.matches('button,a[href],[role=button],[role=option],summary,.role-card,.rn-swatch,[data-hex]')){
         const text=buttonText(node);
-        out.push({kind:'button',id:key(node),text:node.classList.contains('rn-swatch')?node.dataset.c:text,context:node.classList.contains('role-card'),disabled:!!node.disabled,active:node.classList.contains('active')||node.getAttribute('aria-selected')==='true'});return;
+        out.push({kind:'button',id:key(node),text:node.classList.contains('rn-swatch')?node.dataset.c:text,tone:buttonTone(node),context:node.classList.contains('role-card'),disabled:!!node.disabled,active:node.classList.contains('active')||node.getAttribute('aria-selected')==='true'});return;
       }
       if(node.matches('input,textarea,select,[contenteditable=true]')){control(node);return;}
       if(node.matches('img'))return;
       if(node.matches('h1,h2,h3,h4,legend,.pc-name')){out.push({kind:'heading',text:clean(node.textContent),large:node.matches('h1,h2')});return;}
-      if(node.matches('progress')){out.push({kind:'progress',value:node.value,max:node.max});return;}
+      if(node.matches('progress')){out.push({kind:'progress',id:key(node),value:node.value,max:node.max,indeterminate:!node.hasAttribute('value')});return;}
       if(node.matches('details')&&!node.open){const summary=node.querySelector('summary');if(summary)walk(summary);return;}
       for(const child of node.childNodes)walk(child);
       if(node.matches('section,.sf-card,.proj-card,.cue-card,.role-card,.set-group,.stg-row,tr'))out.push({kind:'divider'});

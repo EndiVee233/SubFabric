@@ -150,6 +150,7 @@ public final class MainActivity extends Activity {
     }
 
     public final class Bridge {
+        @JavascriptInterface public boolean animationsEnabled(){return android.animation.ValueAnimator.areAnimatorsEnabled();}
         @JavascriptInterface public void ui(String json){
             if(destroyed||json==null||json.length()>8*1024*1024)return;
             try{JSONObject snapshot=new JSONObject(json);runOnUiThread(()->{if(!destroyed&&nativeStudio!=null)nativeStudio.accept(snapshot);});}catch(JSONException ignored){}
@@ -435,5 +436,7 @@ public final class MainActivity extends Activity {
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
     @Override public void onBackPressed(){if(nativeStudio!=null&&nativeStudio.back())return;if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
+    @Override protected void onResume(){super.onResume();if(nativeStudio!=null)nativeStudio.visible(true);}
+    @Override protected void onPause(){if(nativeStudio!=null)nativeStudio.visible(false);super.onPause();}
     @Override protected void onDestroy() { destroyed=true;if(nativeStudio!=null)nativeStudio.close();if(fileChooser!=null)completeWebChooser(null); cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();downloadWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
 }

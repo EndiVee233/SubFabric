@@ -8,5 +8,16 @@
         <item name="android:navigationBarColor">#151515</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:alertDialogTheme">@style/NativeDialogTheme</item>
+    </style>
+    <style name="NativeDialogTheme" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#0078d7</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowBackground">#242424</item>
+        <item name="android:windowAnimationStyle">@style/NativeDialogAnimation</item>
+    </style>
+    <style name="NativeDialogAnimation">
+        <item name="android:windowEnterAnimation">@anim/native_dialog_enter</item>
+        <item name="android:windowExitAnimation">@anim/native_dialog_exit</item>
     </style>
 </resources>

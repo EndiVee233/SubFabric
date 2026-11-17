@@ -101,7 +101,7 @@
 
 ## 2. 目录地图
 
-- `android/`：Android 移植（当前 0.14.0，Vulkan ASR 的 GPU 验证未通过）。`NativeStudio` 提供原生 View 界面，
+- `android/`：Android 移植（当前 0.15.0，Vulkan ASR 的 GPU 验证未通过）。`NativeStudio` 提供原生 View 界面，`NativeMotion` 实现原生 UWP 动效与局部 Reveal，
   `android-native.js` 传输控件描述并复用共享文档控制器；`android-workspace.js` 集中管理精简工作流、页面顺序与折叠范围；`stage.mjs` 复制共享编辑器的 43 个浏览器模块、
   Windows 样式和 libass 资源；`assets/studio/` 为平台接口与触屏布局，`StudioStore/StudioPack/AudioTools`
   分别负责私有稿件、兼容项目 ZIP、原生解码与真实波形。`LlmStore/LlmClient` 负责 Keystore 凭据和原生 HTTP，
@@ -148,7 +148,7 @@
 
 ## 3. 后端与数据流
 
-- **Android 原生界面桥接（0.14.0）**：Activity 的 `NativeStudio` 承担真实控件树；内置 WebView 保留共享 ESM
+- **Android 原生界面桥接（0.15.0）**：Activity 的 `NativeStudio` 承担真实控件树；内置 WebView 保留共享 ESM
   文档控制器与专用渲染面，`SubFabric.ui` 仅传输当前页控件描述/播放状态，来源仍被原同源导航策略锁定。
   播放由原生按钮触发，WebView 不再要求 DOM 用户激活；仍只加载应用内置源。
   原生控件的文件输入不依赖浏览器用户激活：`uiPickFiles` 使用 MediaPicker/SAF，视频仅复制一次至私有媒体存储，
@@ -690,7 +690,7 @@
 
 ## 4. 前端与主题
 
-- **Android 原生界面（0.14.0）**：`NativeStudio` 使用 Android View 实现顶栏、手机工作页底栏、平板左栏、
+- **Android 原生界面（0.15.0）**：`NativeStudio` 使用 Android View 实现顶栏、手机工作页底栏、平板左栏、
   Pivot 页签、稿件/字幕/角色列表、普通菜单与参数窗口；`ListView` 回收字幕行，输入、选择、开关、进度分别使用
   `EditText`、`Spinner`、`Switch`、`SeekBar` / `ProgressBar`，不是给 HTML 换皮。视觉固定为 Windows Phone 深色：
   深灰纯色、直角、蓝色强调、大号轻字重标题，按下立即下沉。外观与体验、主题包和流光设置入口均已移除。
@@ -712,6 +712,18 @@
   原生输入只在实际触摸/输入字段期间暂停表单重建，输入和 change 分开派发；切页/设置分类重置滚动，折叠项拒绝旧字段动作。
   翻译方案在独立原生窗口中编辑，取消/返回调用原处理器。被原生页覆盖的 WebView 不暴露重复可访问性控件。
   原生字幕编辑保持 `panel.editItem` 保护，保存检查项目、条目身份、文档引用、修订与原始时间/文本，复用 `onApply` 写回。
+  **Windows 动效对照（0.15.0）**：以当前 Windows 10/UWP 主题实际渲染与 `studio.css` / `studio.js` 为基准；
+  `NativeMotion` 用 Android `ViewPropertyAnimator`、`ValueAnimator`、`Drawable` 和原生窗口动画实现对应交互。
+  页面/设置分类与编辑 Pivot 切换时，仅可见项进行 180ms、24ms 错峰缩放淡入，字幕卡为 120ms 上浮淡入；
+  输入/选择/进度轮询不重播入场。Pivot 及底栏/平板左栏使用保持身份的控件与滑动强调条，不随快照重建。
+  按压以真实触点为轴产生约 2.6° 上限的透视倾斜、105ms 下沉，松开 420ms 轻回弹，取消/多指/脱离窗口恢复原位；
+  触点或鼠标/笔悬停对应局部 Reveal 面光及边缘亮光，无全屏模糊、相邻卡扫描或常驻刷新循环。
+  字幕选中/播放背景和输入焦点边框在 120ms 内过渡，主要操作使用强调色；进度补间保持真实任务数值。
+  普通弹窗、编辑、筛选与系统式选择框使用 220ms 缩放上浮淡入、180ms 退场，取消与保存仍由原处理器决定。
+  系统动画策略经只读 `animationsEnabled` 桥接；移除动画时原生动画和共享 WebView 的 `data-motion` 一同关闭，
+  设置变化通过 `ContentObserver` 同步；应用后台/销毁时结束自有动画，不重放已有页面。未新增外观或动画设置入口。
+  背景保持纯色，不恢复桌面主题/流光、已移除的功能或会遮挡操作的整页 2.1 倍磁贴退场；原生 UI 动效不改 ASS 标签和字幕特效。
+
   安卓产品目标已调整为识别、翻译、编辑，不再追求桌面全部入口；不得把本阶段当作物理手机已验收。
   已移除下载/登录、性能与调度、帮助/快捷键、未接入的自动增强/分角色、日志/工作量/备注、项目包与样式方案管理、
   复杂发光/淡入特效和连续性转换入口。原始 ASS/效果标签、历史归档、模型与翻译配置保留，桌面代码和功能不受裁剪。
@@ -1630,6 +1642,22 @@
 
 ## 5. 测试与验证
 
+### Android Windows 动效迁移（0.15.0，2026-11-17）
+
+- **当前状态**：已完成且已验证（下述 WSA 范围）；原生动效实装完成，成员物理设备验收未开始。
+- Windows 对照使用隔离服务与合成 ASS，实际核对首页/设置/编辑器及按压矩阵：105ms 按压、180ms UWP 入场、
+  24ms 错峰、Reveal 面光与边光；没有打开或改写安装版用户稿件。
+- 首轮 Java 构建因同名 `Interpolator` 导入歧义失败，已限定接口；首轮设备包因系统资源 ID 用作状态标签而崩溃，
+  已改为弱引用动画映射，后续启动和真实按压检查通过；这些失败不计通过。
+- 最终包通过 5 项专项检查：真实按压改变几何、取消恢复且不触发跳转、导航中间动画帧、共享渲染减少动画分支、
+  既有数据保留。设备原生动画策略为开启；导航采样绘制 56 帧，稳定后 1.2 秒空闲 0 帧。初测在异步模型载入尚未稳定
+  时记录到刷新；另行稳定后的 2 秒空闲对比（WebView 动画开/关）均为 0 帧。
+- 本轮另通过 16 项编辑/导出/手势与五尺寸检查、12 项精简流程检查，原生视频/音频播放暂停通过。
+- 本轮 12 组 Android/主题 JS 回归、相关 ESLint 通过。ARM64 物理触屏、高刷新率设备和系统移除动画的实际开关验收未运行。
+- 最终 APK 103,658,319 bytes，SHA-256 `649249c1c9c7f6dff67caf7625e9e2282c67c64a5767cbd169216d2f86920509`；
+  已安装 APK、随包 15 个 studio JS 和字典逐字节核对一致。
+- **GitHub 保存**：尚未提交 GitHub。对照、构建与设备证据位于忽略的 `android/out/motion-*`。
+
 ### Android 工作流精简（0.14.0，2026-11-17）
 
 - **当前状态**：已完成且已验证（下述 WSA 界面范围）；手机产品按 §4/产品范围精简，原生控件与专用渲染边界保留。
@@ -2060,13 +2088,13 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
 
 ## 6. 打包与发版
 
-### Android 构建与安装（当前 0.14.0）
+### Android 构建与安装（当前 0.15.0）
 
 - 需要 JDK 17+、Android SDK platform 34 / build-tools 34.0.0 / platform-tools。
   首次执行 `node editor/scripts/fetch-vendor.js` 下载带必需重画补丁的 libass WASM/worker 与 Noto CJK 字体。
   运行 `./android/build.ps1 -Sdk <SDK目录> -Jdk <JDK目录> -Install -Device <ADB设备>`。
-  输出 `android/out/SubFabric-Android-0.14.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
-  沿用开发签名，versionCode 16，已从 0.13.0 覆盖升级并保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
+  输出 `android/out/SubFabric-Android-0.15.0.apk`；含 x86_64 / arm64-v8a，包名仍为 `com.subfabric.android`，
+  沿用开发签名，versionCode 17，已从 0.14.0 覆盖升级并保留旧数据。仅复制浏览器导入闭包、样式、图标、字典与渲染资源，不打包桌面后端、凭据或稿件。
 - `stage.mjs` 对字幕单独项目、空 ASS 文档和 Android 欢迎逻辑作有锚点检查的局部适配；上游结构变化时构建报错，
   不静默打补丁。前端仍为无 npm/打包步骤的原生 ESM，桌面源码与模板保持不变。
 - 原生构建还需 NDK `27.0.12077973`、SDK CMake `3.22.1`（含 Ninja / NDK glslc）。
@@ -2075,7 +2103,7 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   模型改用设置中的独立 GGUF 导入/下载；`prepare-model.ps1` 仅用于旧 CPU 版历史模型，不是 0.12 的准备入口。
 - 开发签名和缓存仅在忽略目录 `.tools/`、`out/`；每次保留独立 APK 构建目录。第三方许可与源码入口见
   `android/THIRD_PARTY_NOTICES.txt`、`android/licenses/`，随 APK 附带。媒体上限 2GB，项目包内容上限 16MB。
-  0.14.0 精简版已发布成员验收预发行版；设备验证见 §5。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
+  0.15.0 动效版设备验证进行中，当前公开版为 0.14.0；设备验证见 §5。0.11 的 CPU 推理验收是历史结果，不能代替 0.12 Vulkan 验收。
 - **0.14.0 核心工作流精简发布（2026-11-17）**：已完成且已验证（WSA 与发布核对范围）；成员真机验收未开始。
   [验收 Release](https://github.com/EndiVee233/SubFabric/releases/tag/android-v0.14.0) 为预发行，未设为 Latest；
   源码提交 `16551c523578e60c9f2f67713f22890f4e7c138e`，[源码 CI](https://github.com/EndiVee233/SubFabric/actions/runs/44011361767) 第 1 次通过 JS / Python / 实际主题渲染。

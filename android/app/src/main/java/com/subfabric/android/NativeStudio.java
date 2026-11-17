@@ -19,8 +19,10 @@ final class NativeStudio {
     private static final int BG=0xff151515,SURFACE=0xff242424,FG=0xfff4f4f4,MUTED=0xffa9a9a9,ACCENT=0xff0078d7;
     private final Activity activity;
     private final WebView web;
+    private final NativeMotion motion;
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private final LinearLayout root,header,nav,panel,tabs,editorBody;
+    private final LinearLayout root,header,panel,editorBody;
+    private final NativeMotion.Pivot nav,tabs;
     private final FrameLayout middle;
     private final TextView title,save;
     private final Button back,export;
@@ -47,6 +49,7 @@ final class NativeStudio {
 
     NativeStudio(Activity activity,WebView web){
         this.activity=activity;this.web=web;
+        motion=new NativeMotion(activity,enabled->web.evaluateJavascript("window.__androidSetMotion?.("+enabled+")",null));
         root=column();root.setBackgroundColor(BG);root.setFocusableInTouchMode(true);
         header=row();header.setPadding(dp(8),0,dp(8),0);header.setBackgroundColor(SURFACE);
         back=button("‹",()->send("back"));back.setContentDescription("返回稿件库");header.addView(back,new LinearLayout.LayoutParams(dp(64),dp(48)));
@@ -67,12 +70,12 @@ final class NativeStudio {
         rate=button("1×",()->{String[] values={"0.5×","0.75×","1×","1.25×","1.5×","2×"};double[] speeds={.5,.75,1,1.25,1.5,2};new AlertDialog.Builder(activity).setTitle("播放速度").setItems(values,(d,i)->command(obj("kind","rate","value",speeds[i]))).show();});player.addView(rate,new LinearLayout.LayoutParams(dp(50),dp(40)));
         FrameLayout.LayoutParams playerLayout=new FrameLayout.LayoutParams(-1,dp(40),Gravity.BOTTOM);playerLayout.bottomMargin=dp(140);surface.addView(player,playerLayout);
         editorBody=column();panel=column();panel.setBackgroundColor(BG);
-        tabs=row();panel.addView(tabs,new LinearLayout.LayoutParams(-1,dp(48)));
+        tabs=motion.new Pivot();tabs.setGravity(Gravity.CENTER_VERTICAL);panel.addView(tabs,new LinearLayout.LayoutParams(-1,dp(48)));
         cueList=list();cueTail=new View(activity);cueTail.setLayoutParams(new AbsListView.LayoutParams(-1,dp(300)));cueList.addFooterView(cueTail,null,false);cueList.setAdapter(cues);cueList.setDividerHeight(dp(6));
         cueList.setOnTouchListener((v,event)->{if(event.getActionMasked()==MotionEvent.ACTION_DOWN)manualUntil=System.currentTimeMillis()+5000;return false;});
         cueList.setOnScrollListener(new AbsListView.OnScrollListener(){public void onScrollStateChanged(AbsListView v,int mode){if(mode!=SCROLL_STATE_IDLE)manualUntil=System.currentTimeMillis()+5000;}public void onScroll(AbsListView v,int a,int b,int c){}});
         controlList=list();controlList.setAdapter(controlRows);
-        nav=row();nav.setBackgroundColor(SURFACE);
+        nav=motion.new Pivot();nav.setGravity(Gravity.CENTER_VERTICAL);nav.setBackgroundColor(SURFACE);
         for(String label:new String[]{"主页","稿件","设置"}){
             Button b=button(label,()->command(obj("kind","route","route",label.equals("主页")?"#/dashboard":label.equals("稿件")?"#/home":"#/settings")));
             nav.addView(b,new LinearLayout.LayoutParams(0,dp(56),1));
@@ -86,9 +89,9 @@ final class NativeStudio {
     private LinearLayout column(){LinearLayout v=new LinearLayout(activity);v.setOrientation(LinearLayout.VERTICAL);return v;}
     private LinearLayout row(){LinearLayout v=new LinearLayout(activity);v.setOrientation(LinearLayout.HORIZONTAL);v.setGravity(Gravity.CENTER_VERTICAL);return v;}
     private TextView text(String value,int size,int color){TextView v=new TextView(activity);v.setText(value);v.setTextSize(size);v.setTextColor(color);v.setGravity(Gravity.CENTER_VERTICAL);v.setFontFeatureSettings("kern");return v;}
-    private GradientDrawable background(int fill,int border){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(0);d.setStroke(dp(1),border);return d;}
-    private void press(View v){v.setOnTouchListener((view,event)->{int action=event.getActionMasked();if(action==MotionEvent.ACTION_DOWN)view.animate().scaleX(.98f).scaleY(.95f).translationY(dp(1)).setDuration(70).start();else if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL)view.animate().scaleX(1).scaleY(1).translationY(0).setDuration(100).start();return false;});}
-    private Button button(String label,Runnable click){Button b=new Button(activity);b.setAllCaps(false);b.setText(label);b.setTextSize(14);b.setTextColor(FG);b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(12),0,dp(12),0);b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(0x55ffffff),background(SURFACE,0xff666666),null));b.setOnClickListener(v->{blur();click.run();});press(b);return b;}
+    private Drawable background(int fill,int border){return motion.background(fill,border);}
+    private void press(View v){motion.press(v);}
+    private Button button(String label,Runnable click){Button b=new Button(activity);b.setAllCaps(false);b.setText(label);b.setTextSize(14);b.setTextColor(FG);b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(12),0,dp(12),0);b.setBackground(background(SURFACE,0xff666666));b.setOnClickListener(v->{blur();click.run();});press(b);return b;}
     private ListView list(){ListView l=new ListView(activity);l.setBackgroundColor(BG);l.setDivider(null);l.setClipToPadding(false);l.setPadding(dp(10),dp(8),dp(10),dp(24));l.setItemsCanFocus(true);l.setFocusableInTouchMode(true);l.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);return l;}
     private static JSONObject obj(Object... values){JSONObject o=new JSONObject();try{for(int i=0;i<values.length;i+=2)o.put((String)values[i],values[i+1]);}catch(JSONException e){throw new IllegalArgumentException(e);}return o;}
     private void send(String kind){command(obj("kind",kind));}
@@ -112,13 +115,18 @@ final class NativeStudio {
         if(tabChanged)controlList.post(()->controlList.setSelection(0));
         applying=false;
         syncModal(next.optJSONObject("modal"));syncEdit(next.optJSONObject("edit"));
-        for(int i=0;i<nav.getChildCount();i++){Button b=(Button)nav.getChildAt(i);boolean active=i==0&&route.equals("#/dashboard")||i==1&&(route.equals("#/home")||route.equals("#/new")||route.startsWith("#/details/"))||i==2&&(route.startsWith("#/settings")||route.equals("#/storage"));b.setTextColor(active?0xff48b8ff:FG);}
+        for(int i=0;i<nav.getChildCount();i++){Button b=(Button)nav.getChildAt(i);boolean active=i==0&&route.equals("#/dashboard")||i==1&&(route.equals("#/home")||route.equals("#/new")||route.startsWith("#/details/"))||i==2&&(route.startsWith("#/settings")||route.equals("#/storage"));b.setActivated(active);motion.color(b,active?0xff48b8ff:FG);if(active)nav.select(i);}
+        if(changed||sectionChanged||editor&&tabChanged){ListView list=editor?(tab.equals("subs")?cueList:controlList):pageList;motion.page(list,changed?title:null,editor&&tab.equals("subs"));}
     }
     private void showContent(View child){if(child.getParent()==panel)return;for(int i=panel.getChildCount()-1;i>=1;i--)panel.removeViewAt(i);detach(child);panel.addView(child,new LinearLayout.LayoutParams(-1,0,1));}
     private void buildTabs(){
-        tabs.removeAllViews();String[][] choices={{"subs","字幕"},{"roles","角色"},{"settings","工具"}};
-        for(String[] choice:choices){Button b=button(choice[1],()->command(obj("kind","tab","tab",choice[0])));b.setTextColor(tab.equals(choice[0])?0xff48b8ff:MUTED);b.setBackground(background(BG,tab.equals(choice[0])?ACCENT:BG));tabs.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));}
-        if(tab.equals("subs")){Button filter=button("⌕",()->{if(filterDialog!=null)filterDialog.dismiss();filterDialog=dialog("筛选字幕",state.optJSONArray("controls"),null);});filter.setContentDescription("筛选字幕");tabs.addView(filter,new LinearLayout.LayoutParams(dp(44),dp(48)));}
+        String[][] choices={{"subs","字幕"},{"roles","角色"},{"settings","工具"}};
+        if(tabs.getChildCount()==0){
+            for(String[] choice:choices){Button b=button(choice[1],()->command(obj("kind","tab","tab",choice[0])));b.setBackground(background(BG,Color.TRANSPARENT));tabs.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));}
+            Button filter=button("⌕",()->{if(filterDialog!=null)filterDialog.dismiss();filterDialog=dialog("筛选字幕",state.optJSONArray("controls"),null);});filter.setContentDescription("筛选字幕");tabs.addView(filter,new LinearLayout.LayoutParams(dp(44),dp(48)));
+        }
+        for(int i=0;i<choices.length;i++){Button b=(Button)tabs.getChildAt(i);boolean active=tab.equals(choices[i][0]);b.setActivated(active);motion.color(b,active?0xff48b8ff:MUTED);if(active)tabs.select(i);}
+        tabs.getChildAt(3).setVisibility(tab.equals("subs")?View.VISIBLE:View.GONE);
     }
     private void layoutSurface(){
         int w=middle.getWidth(),h=middle.getHeight();if(w<=0||h<=0||w==lastWidth&&h==lastHeight)return;lastWidth=w;lastHeight=h;
@@ -143,7 +151,7 @@ final class NativeStudio {
     private void tick(JSONObject tick){
         String active=tick.optString("playing"),select=tick.optString("selected");boolean change=!active.equals(playing)||!select.equals(selected);playing=active;selected=select;
         double duration=tick.optDouble("duration",0),time=tick.optDouble("time",0);try{state.put("duration",duration);}catch(JSONException ignored){}
-        if(!seeking&&duration>0)seek.setProgress((int)(100000*time/duration));play.setText(tick.optBoolean("paused")?"▷":"Ⅱ");clock.setText(String.format(Locale.ROOT,"%02d:%02d",(int)time/60,(int)time%60));mute.setText(tick.optBoolean("muted")?"×":"♪");rate.setText(tick.optString("rate","1")+"×");
+        if(!seeking&&duration>0){int progress=(int)(100000*time/duration);seek.setProgress(progress,motion.enabled()&&Math.abs(progress-seek.getProgress())<10000);}play.setText(tick.optBoolean("paused")?"▷":"Ⅱ");clock.setText(String.format(Locale.ROOT,"%02d:%02d",(int)time/60,(int)time%60));mute.setText(tick.optBoolean("muted")?"×":"♪");rate.setText(tick.optString("rate","1")+"×");
         if(change)for(int i=0;i<cueList.getChildCount();i++)cues.highlight(cueList.getChildAt(i));
         if(!editor||!tab.equals("subs")||!tick.optBoolean("follow")||editDialog!=null||System.currentTimeMillis()<manualUntil||active.isEmpty()||active.equals(lastFollow))return;
         int index=cues.index(active);if(index>=0){lastFollow=active;cueList.setSelectionFromTop(index,Math.min(dp(48),Math.round(cueList.getHeight()*.12f)));}
@@ -175,18 +183,19 @@ final class NativeStudio {
         editDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{command(obj("kind","editApply","l1",l1.getText().toString(),"l2",l2.getText().toString(),"start",start.getText().toString(),"end",end.getText().toString()));blur();});
         editDialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
     }
-    private EditText input(LinearLayout parent,String label,String value,boolean multi){parent.addView(text(label,12,MUTED));EditText input=new EditText(activity);input.setTextColor(FG);input.setTextSize(16);input.setText(value);input.setSingleLine(!multi);input.setMinHeight(dp(48));parent.addView(input,new LinearLayout.LayoutParams(-1,-2));return input;}
+    private EditText input(LinearLayout parent,String label,String value,boolean multi){parent.addView(text(label,12,MUTED));EditText input=new EditText(activity);input.setTextColor(FG);input.setTextSize(16);input.setText(value);input.setSingleLine(!multi);input.setMinHeight(dp(48));input.setPadding(dp(10),dp(8),dp(10),dp(8));input.setBackground(background(SURFACE,0xff666666));parent.addView(input,new LinearLayout.LayoutParams(-1,-2));return input;}
     boolean back(){if(editDialog!=null){send("editCancel");return true;}if(modal!=null){command(obj("kind","dismiss","id",modalId));return true;}if(filterDialog!=null&&filterDialog.isShowing()){filterDialog.dismiss();return true;}blur();send("back");return true;}
-    void close(){closed=true;handler.removeCallbacksAndMessages(null);if(modal!=null)modal.dismiss();if(editDialog!=null)editDialog.dismiss();if(filterDialog!=null)filterDialog.dismiss();}
+    void visible(boolean visible){motion.visible(visible);}
+    void close(){closed=true;motion.close();handler.removeCallbacksAndMessages(null);if(modal!=null)modal.dismiss();if(editDialog!=null)editDialog.dismiss();if(filterDialog!=null)filterDialog.dismiss();}
 
     private final class Cues extends BaseAdapter {
         private JSONArray data=new JSONArray();
         void set(JSONArray next){if(next==null)next=new JSONArray();if(data.toString().equals(next.toString()))return;data=next;notifyDataSetChanged();}
         int index(String id){for(int i=0;i<data.length();i++)if(data.optJSONObject(i).optString("id").equals(id))return i;return -1;}
         public int getCount(){return data.length();}public Object getItem(int i){return data.optJSONObject(i);}public long getItemId(int i){return i;}
-        void highlight(View view){String id=String.valueOf(view.getTag());view.setBackground(background(id.equals(playing)||id.equals(selected)?0xff173c54:SURFACE,0xff555555));}
+        void highlight(View view){String id=String.valueOf(view.getTag());view.setActivated(id.equals(playing)||id.equals(selected));}
         public View getView(int position,View old,ViewGroup parent){
-            JSONObject item=data.optJSONObject(position);String id=item.optString("id");LinearLayout card=column();card.setTag(id);card.setPadding(dp(12),dp(8),dp(12),dp(8));
+            JSONObject item=data.optJSONObject(position);String id=item.optString("id");LinearLayout card=column();card.setTag(id);card.setPadding(dp(12),dp(8),dp(12),dp(8));card.setBackground(background(SURFACE,0xff555555));
             LinearLayout top=row();TextView times=text(item.optString("start")+"  →  "+item.optString("end"),11,MUTED);top.addView(times,new LinearLayout.LayoutParams(0,dp(36),1));
             times.setOnClickListener(v->command(obj("kind","seekCue","item",id)));
             Button edit=button("编辑",()->command(obj("kind","edit","item",id)));top.addView(edit,new LinearLayout.LayoutParams(dp(66),dp(44)));card.addView(top);
@@ -198,15 +207,16 @@ final class NativeStudio {
     }
     private final class Rows extends BaseAdapter {
         private JSONArray data=new JSONArray();
-        void set(JSONArray next){data=next==null?new JSONArray():next;notifyDataSetChanged();}
+        private final Map<String,Integer> progressValues=new HashMap<>();
+        void set(JSONArray next){if(next==null)next=new JSONArray();if(data.toString().equals(next.toString()))return;data=next;Set<String> keep=new HashSet<>();for(int i=0;i<data.length();i++){JSONObject node=data.optJSONObject(i);if(node!=null&&node.optString("kind").equals("progress"))keep.add(node.optString("id",String.valueOf(i)));}progressValues.keySet().retainAll(keep);notifyDataSetChanged();}
         public int getCount(){return data.length();}public Object getItem(int i){return data.optJSONObject(i);}public long getItemId(int i){return i;}
         public View getView(int position,View old,ViewGroup parent){
             JSONObject node=data.optJSONObject(position);String kind=node.optString("kind"),id=node.optString("id"),name=node.optString("text");
             LinearLayout wrap=column();wrap.setPadding(dp(2),dp(3),dp(2),dp(3));
-            if(kind.equals("button")){Button b=button(name,()->command(node.has("command")?node.optJSONObject("command"):obj("kind","click","id",id)));b.setEnabled(!node.optBoolean("disabled"));if(node.optBoolean("active"))b.setTextColor(0xff48b8ff);if(node.optBoolean("context"))b.setOnLongClickListener(v->{command(obj("kind","context","id",id));return true;});wrap.addView(b,new LinearLayout.LayoutParams(-1,dp(48)));}
+            if(kind.equals("button")){Button b=button(name,()->command(node.has("command")?node.optJSONObject("command"):obj("kind","click","id",id)));b.setEnabled(!node.optBoolean("disabled"));if(node.optString("tone").equals("primary"))b.setBackground(background(ACCENT,ACCENT));b.setActivated(node.optBoolean("active"));if(node.optBoolean("active"))b.setTextColor(0xff48b8ff);if(node.optBoolean("context"))b.setOnLongClickListener(v->{command(obj("kind","context","id",id));return true;});wrap.addView(b,new LinearLayout.LayoutParams(-1,dp(48)));}
             else if(kind.equals("buttons")){
                 JSONArray choices=node.optJSONArray("choices");int columns=node.optInt("columns",2);LinearLayout line=null;
-                for(int i=0;choices!=null&&i<choices.length();i++){if(i%columns==0){line=row();wrap.addView(line);}JSONObject choice=choices.optJSONObject(i);String target=choice.optString("id");Button b=button(choice.optString("text"),()->command(obj("kind","click","id",target)));b.setTextSize(13);b.setPadding(dp(4),0,dp(4),0);b.setEnabled(!choice.optBoolean("disabled"));if(choice.optBoolean("active"))b.setTextColor(0xff48b8ff);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(48),1);p.setMargins(dp(2),dp(2),dp(2),dp(2));line.addView(b,p);}
+                for(int i=0;choices!=null&&i<choices.length();i++){if(i%columns==0){line=row();wrap.addView(line);}JSONObject choice=choices.optJSONObject(i);String target=choice.optString("id");Button b=button(choice.optString("text"),()->command(obj("kind","click","id",target)));b.setTextSize(13);b.setPadding(dp(4),0,dp(4),0);b.setEnabled(!choice.optBoolean("disabled"));if(choice.optString("tone").equals("primary"))b.setBackground(background(ACCENT,ACCENT));b.setActivated(choice.optBoolean("active"));if(choice.optBoolean("active"))b.setTextColor(0xff48b8ff);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(48),1);p.setMargins(dp(2),dp(2),dp(2),dp(2));line.addView(b,p);}
             }
             else if(kind.equals("video")){
                 String mediaId=node.optString("mediaId");if(mediaId.matches("[0-9a-f-]{36}")){VideoView preview=new VideoView(activity);preview.setVideoPath(new java.io.File(activity.getFilesDir(),"media/"+mediaId+".media").getPath());MediaController controls=new MediaController(activity);preview.setMediaController(controls);controls.setAnchorView(preview);preview.setOnPreparedListener(media->preview.seekTo(1));wrap.addView(preview,new LinearLayout.LayoutParams(-1,dp(200)));}
@@ -228,7 +238,7 @@ final class NativeStudio {
             }else if(kind.equals("range")){
                 wrap.addView(text(name+" · "+node.optString("value"),12,MUTED));SeekBar bar=new SeekBar(activity);double min=node.optDouble("min",0),max=node.optDouble("max",100),step=node.optDouble("step",1);if(step<=0)step=1;final double increment=step;bar.setMax((int)Math.min(10000,Math.ceil((max-min)/step)));bar.setProgress((int)Math.round((node.optDouble("value")-min)/step));bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){command(obj("kind","value","id",id,"value",min+b.getProgress()*increment));}public void onProgressChanged(SeekBar b,int p,boolean user){}});wrap.addView(bar,new LinearLayout.LayoutParams(-1,dp(48)));
             }else if(kind.equals("color")){Button color=button(name+"  "+node.optString("value"),()->{EditText input=new EditText(activity);input.setText(node.optString("value"));new AlertDialog.Builder(activity).setTitle(name).setView(input).setPositiveButton("确定",(d,w)->command(obj("kind","value","id",id,"value",input.getText().toString()))).setNegativeButton("取消",null).show();});wrap.addView(color);}
-            else if(kind.equals("progress")){ProgressBar progress=new ProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);progress.setProgress((int)(1000*node.optDouble("value")/Math.max(1,node.optDouble("max",1))));wrap.addView(progress);}
+            else if(kind.equals("progress")){ProgressBar progress=new ProgressBar(activity,null,android.R.attr.progressBarStyleHorizontal);progress.setMax(1000);String key=node.optString("id",String.valueOf(position));int value=(int)(1000*node.optDouble("value")/Math.max(1,node.optDouble("max",1)));progress.setProgress(progressValues.containsKey(key)?progressValues.get(key):value);progress.setProgress(value,motion.enabled());progressValues.put(key,value);progress.setIndeterminate(node.optBoolean("indeterminate")&&motion.enabled());wrap.addView(progress);}
             return wrap;
         }
     }

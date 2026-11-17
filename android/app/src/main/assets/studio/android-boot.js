@@ -7,7 +7,12 @@
   localStorage.setItem('sf-welcome-v1', JSON.stringify({ done: true, android: true, cuda: false, vulkan: false }));
   localStorage.setItem('sf-welcome-synced', '1');
   let prefs={}; try {prefs=JSON.parse(localStorage.getItem('subfabric-studio-v1')||'{}');}catch{}
-  localStorage.setItem('subfabric-studio-v1',JSON.stringify({...prefs,themePack:'windows-uwp',custom:[],background:'solid',motion:'off',accent:prefs.accent||'#0078D7'}));
+  const animations=window.SubFabric.animationsEnabled?.()??!matchMedia('(prefers-reduced-motion:reduce)').matches;
+  localStorage.setItem('subfabric-studio-v1',JSON.stringify({...prefs,themePack:'windows-uwp',custom:[],background:'solid',motion:animations?'on':'off',accent:prefs.accent||'#0078D7'}));
+  window.__androidSetMotion=enabled=>{
+    const motion=enabled?'on':'off';if(document.body)document.body.dataset.motion=motion;
+    const current=JSON.parse(localStorage.getItem('subfabric-studio-v1')||'{}');if(current.motion!==motion)localStorage.setItem('subfabric-studio-v1',JSON.stringify({...current,motion}));
+  };
   const waiting=new Map();let sequence=0;
   const errors=[],requests=[],history=new Map();
   // Each File retains the exact native URI token across later picks and duplicate filenames.
@@ -75,7 +80,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.14.0 · 识别 · 翻译 · 编辑',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.15.0 · Windows 动效',vendorOk:true,stamp:''});
     if(path==='/api/storage'||path==='/api/storage/clean'){
       const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
       if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));
