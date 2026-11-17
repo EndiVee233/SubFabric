@@ -24,7 +24,7 @@ import org.json.*;
 /** Android Studio: embedded editor, SAF storage and native translation transport. */
 public final class MainActivity extends Activity {
     private static final String ORIGIN = "https://subfabric.local";
-    private static final int MEDIA = 10, SUBTITLE = 11, MODEL = 12, EXPORT = 13, PACK = 15, DIRECTORY = 16;
+    private static final int MEDIA = 10, SUBTITLE = 11, MODEL = 12, EXPORT = 13, PACK = 15, DIRECTORY = 16, INPUT_FILES = 17;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService storeWorker = Executors.newSingleThreadExecutor();
     private final ExecutorService llmWorker = Executors.newFixedThreadPool(2);
@@ -33,12 +33,15 @@ public final class MainActivity extends Activity {
     private LlmStore llmStore;
     private LlmClient llmClient;
     private AppStorage appStorage;
-    private final Map<String,Uri> selectedFiles=new HashMap<>();
-    private final Map<String,String> selectedNames=new HashMap<>();
+    private final Map<String,Uri> selectedFiles=new ConcurrentHashMap<>();
+    private final Map<String,String> selectedNames=new ConcurrentHashMap<>();
+    private final Map<String,JSONObject> importedFiles=new ConcurrentHashMap<>();
+    private boolean inputVideo;
     private boolean fileChooserMedia;
     private final AtomicBoolean busy = new AtomicBoolean(), cancelled = new AtomicBoolean();
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
     private WebView web;
+    private NativeStudio nativeStudio;
     private String pickerId, exportText;
     private String importModelId;
     private volatile boolean destroyed;
@@ -71,7 +74,8 @@ public final class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(false);
-        settings.setMediaPlaybackRequiresUserGesture(true);
+        // Playback is explicitly started by Android buttons, outside DOM user activation.
+        settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) { return true; }
@@ -125,7 +129,7 @@ public final class MainActivity extends Activity {
             }
             @Override public boolean onConsoleMessage(ConsoleMessage message) { android.util.Log.d("SubFabricWeb",message.message()+" @"+message.lineNumber()); return true; }
         });
-        setContentView(web);
+        nativeStudio=new NativeStudio(this,web);
         handler.post(watchdog);
         String route=state!=null?state.getString("route","#/home"):getSharedPreferences("window",MODE_PRIVATE).getString("route","#/home");
         if(!route.matches("#/([A-Za-z0-9_/-]*)"))route="#/home";
@@ -146,6 +150,10 @@ public final class MainActivity extends Activity {
     }
 
     public final class Bridge {
+        @JavascriptInterface public void ui(String json){
+            if(destroyed||json==null||json.length()>8*1024*1024)return;
+            try{JSONObject snapshot=new JSONObject(json);runOnUiThread(()->{if(!destroyed&&nativeStudio!=null)nativeStudio.accept(snapshot);});}catch(JSONException ignored){}
+        }
         @JavascriptInterface public void call(String id, String action, String json) {
             if (destroyed || id == null || id.length() > 80) return;
             if(json.length()>32*1024*1024){reply(id,false,"内容超过安卓传输上限");return;}
@@ -218,8 +226,17 @@ public final class MainActivity extends Activity {
             if(action.equals("rememberRoute")){try{String route=new JSONObject(json).getString("route");if(route.matches("#/([A-Za-z0-9_/-]*)"))getSharedPreferences("window",MODE_PRIVATE).edit().putString("route",route).apply();reply(id,true,new JSONObject());}catch(Exception e){reply(id,false,message(e));}return;}
             if (busy.get() && !action.equals("status") && !action.startsWith("studio")) { reply(id, false, "任务进行中，请先等待或停止"); return; }
             if(action.equals("close")){runOnUiThread(()->finish());reply(id,true,new JSONObject());return;}
+            if(action.equals("uiPickFiles")){
+                runOnUiThread(()->{try{
+                    if(pickerId!=null||fileChooser!=null||busy.get())throw new IOException("请先完成当前文件选择");
+                    JSONObject arg=new JSONObject(json);pickerId=id;inputVideo=arg.optBoolean("video");
+                    if(inputVideo){chooseMedia(INPUT_FILES,arg.optBoolean("multiple"),false);return;}
+                    Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,arg.optBoolean("multiple"));startActivityForResult(intent,INPUT_FILES);
+                }catch(Exception error){if(id.equals(pickerId))pickerId=null;reply(id,false,message(error));}});return;
+            }
             if(action.equals("uploadSelected")){
                 runOnUiThread(()->{try{JSONObject selection=new JSONObject(json);Uri uri=null;
+                    if(importedFiles.containsKey(selection.optString("token"))){reply(id,true,importedFiles.get(selection.optString("token")));return;}
                     if(selection.has("token"))uri=selectedFiles.get(selection.getString("token"));
                     else for(String token:selectedNames.keySet())if(selectedNames.get(token).equals(selection.optString("name"))){Uri candidate=selectedFiles.get(token);if(uri!=null&&!uri.equals(candidate))throw new IOException("媒体名称重复，请重新选择文件");uri=candidate;}
                     if(uri==null)throw new IOException("请重新选择媒体文件");if(pickerId!=null||fileChooser!=null)throw new IOException("请先完成当前文件选择");pickerId=id;onActivityResult(MEDIA,RESULT_OK,new Intent().setData(uri));}catch(Exception e){reply(id,false,message(e));}});return;
@@ -310,6 +327,12 @@ public final class MainActivity extends Activity {
     }
     private void checkCancelled() throws IOException { if(cancelled.get() || destroyed || Thread.currentThread().isInterrupted()) throw new IOException("任务已停止；原字幕保留"); }
 
+    private JSONObject importPickedMedia(Uri uri,String name) throws Exception {
+        String mediaId=UUID.randomUUID().toString();File target=mediaFile(mediaId);
+        try(InputStream input=getContentResolver().openInputStream(uri);OutputStream output=new FileOutputStream(target)){copy(input,output,2L*1024*1024*1024,"正在导入媒体");}catch(Throwable error){target.delete();throw error;}
+        JSONObject result=new JSONObject().put("id",mediaId).put("title",name).put("mime",getContentResolver().getType(uri)).put("media",true).put("cues",new JSONArray()).put("updated",System.currentTimeMillis());writeProject(result);return result;
+    }
+
     private void completeWebChooser(Uri[] uris){
         ValueCallback<Uri[]> callback=fileChooser;boolean mediaSelection=fileChooserMedia;fileChooser=null;fileChooserMedia=false;
         if(callback!=null)callback.onReceiveValue(uris);
@@ -326,6 +349,20 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request,result,data);
+        if(request==INPUT_FILES){
+            final String id=pickerId;pickerId=null;final boolean video=inputVideo;inputVideo=false;
+            if(id==null)return;final Uri[] uris=MediaPicker.result(result,data);if(uris==null||uris.length==0){reply(id,true,JSONObject.NULL);return;}
+            busy.set(true);cancelled.set(false);deadline=System.currentTimeMillis()+15*60*1000;
+            worker.execute(()->{try{
+                JSONArray files=new JSONArray();for(Uri uri:uris){
+                    String name="导入的文件";long size=0;try(Cursor cursor=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME,OpenableColumns.SIZE},null,null,null)){if(cursor!=null&&cursor.moveToFirst()){name=cursor.getString(0);size=cursor.getLong(1);}}
+                    JSONObject file=new JSONObject().put("name",name).put("size",size).put("type",getContentResolver().getType(uri));
+                    if(video){String token=UUID.randomUUID().toString();JSONObject imported=importPickedMedia(uri,name);selectedFiles.put(token,uri);selectedNames.put(token,name);importedFiles.put(token,imported);file.put("token",token).put("mediaId",imported.getString("id")).put("size",mediaFile(imported.getString("id")).length());}
+                    else{ByteArrayOutputStream bytes=new ByteArrayOutputStream();try(InputStream input=getContentResolver().openInputStream(uri)){copy(input,bytes,32L*1024*1024,"正在读取文件");}file.put("base64",android.util.Base64.encodeToString(bytes.toByteArray(),android.util.Base64.NO_WRAP));}
+                    files.put(file);
+                }reply(id,true,files);
+            }catch(Throwable error){reply(id,false,message(error));}finally{busy.set(false);}});return;
+        }
         if(request==14){
             if(fileChooser==null)return;Uri[] uris=MediaPicker.result(result,data);
             try{
@@ -397,6 +434,6 @@ public final class MainActivity extends Activity {
 
     @Override public void onConfigurationChanged(Configuration config) { super.onConfigurationChanged(config); }
     @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);String url=web.getUrl();if(url!=null&&url.contains("#"))state.putString("route",url.substring(url.indexOf('#')));}
-    @Override public void onBackPressed(){if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
-    @Override protected void onDestroy() { destroyed=true;if(fileChooser!=null)completeWebChooser(null); cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();downloadWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
+    @Override public void onBackPressed(){if(nativeStudio!=null&&nativeStudio.back())return;if(web!=null)web.evaluateJavascript("window.androidBack?window.androidBack():history.back()",null);else super.onBackPressed();}
+    @Override protected void onDestroy() { destroyed=true;if(nativeStudio!=null)nativeStudio.close();if(fileChooser!=null)completeWebChooser(null); cancelled.set(true); handler.removeCallbacks(watchdog); worker.shutdownNow();llmClient.close();llmWorker.shutdownNow();videoWorker.shutdownNow();downloadWorker.shutdownNow();storeWorker.shutdownNow(); if(web!=null) {web.removeJavascriptInterface("SubFabric"); web.destroy();} super.onDestroy(); }
 }

@@ -1,7 +1,8 @@
+import {twoFingerMode,pinchView} from './android-gesture.js';
 /** Translate Android touch gestures into the existing editor's pointer operations. */
 export function initTouch({timeline,panel}){
   const canvas=timeline.canvas,replayed=new WeakSet(),points=new Map();
-  let gesture=null,listPress=null,suppressUntil=0,suppressTarget=null,swallowClick=false;
+  let gesture=null,listPress=null,suppressUntil=0,suppressTarget=null,swallowClick=false,twoFrame=0;
   const position=e=>{const r=canvas.getBoundingClientRect();return {x:(e.clientX-r.left)*timeline._cssW()/r.width,y:(e.clientY-r.top)*timeline._cssH()/r.height,clientX:e.clientX,clientY:e.clientY};};
   function feedback(cue){
     timeline.androidPressedCue=cue;timeline._enterBaseKey='';timeline._enterSpriteKey='';timeline.touch();
@@ -16,12 +17,14 @@ export function initTouch({timeline,panel}){
   }
   function clearList(){if(listPress){clearTimeout(listPress.timer);listPress.target.classList.remove('android-touch-pressed');listPress=null;}}
   function cancel(){
+    cancelAnimationFrame(twoFrame);twoFrame=0;
     clearList();swallowClick=false;if(!gesture){points.clear();return;}
-    clearTimeout(gesture.timer);if(gesture.started)send('pointercancel',gesture.last,gesture.pointerType,gesture.kind==='range');
+    clearTimeout(gesture.timer);if(gesture.started&&gesture.kind!=='pinch')send('pointercancel',gesture.last,gesture.pointerType,gesture.kind==='range');
     if(gesture.kind==='range')timeline.clearRangeSel();gesture=null;feedback(null);
     const ids=[...points.keys()];points.clear();for(const id of ids)try{canvas.releasePointerCapture(id);}catch{}
   }
   function center(){const a=[...points.values()];return {x:(a[0].x+a[1].x)/2,y:(a[0].y+a[1].y)/2,clientX:(a[0].clientX+a[1].clientX)/2,clientY:(a[0].clientY+a[1].clientY)/2};}
+  function distance(){const a=[...points.values()];return a.length<2?0:Math.hypot(a[1].x-a[0].x,a[1].y-a[0].y);}
   function rangePoint(p){
     const y=Math.max(timeline._lanesTop()+2,Math.min(timeline._lanesBottom()-2,p.y)),r=canvas.getBoundingClientRect();
     return {...p,y,clientY:r.top+y*r.height/timeline._cssH()};
@@ -38,12 +41,32 @@ export function initTouch({timeline,panel}){
     }else if(points.size===2&&gesture&&!gesture.ignore){
       clearTimeout(gesture.timer);feedback(null);
       if(gesture.started)send('pointercancel',gesture.last,gesture.pointerType);
-      const p=rangePoint(center());gesture={id:gesture.id,start:p,last:p,kind:'range',pointerType:'mouse',started:true};send('pointerdown',p,'mouse',true);
+      const p=center();
+      if(timeline._zoomAnim){cancelAnimationFrame(timeline._zoomAnim);timeline._zoomAnim=0;}
+      gesture={id:gesture.id,start:p,last:p,kind:'two',pointerType:'mouse',started:false,distance:distance(),scale:timeline.pxPerSec,anchor:timeline.x2t(p.x)};
     }else if(points.size>2){cancel();gesture={ignore:true};}
+  }
+  function moveTwo(){
+    twoFrame=0;
+    if(gesture&&['two','pinch','range'].includes(gesture.kind)&&points.size===2){
+      const c=center(),d=distance(),g=gesture;
+      if(g.kind==='two'){
+        const mode=twoFingerMode(g.distance,d,Math.hypot(c.x-g.start.x,c.y-g.start.y));
+        if(!mode)return;g.kind=mode;g.started=true;
+        if(mode==='range')send('pointerdown',rangePoint(g.start),'mouse',true);
+      }
+      if(g.kind==='pinch'){
+        const view=pinchView(g.scale,g.distance,d,g.anchor,c.x,timeline._zoomLimits());
+        timeline.pxPerSec=view.scale;timeline.viewStart=view.start;timeline._clampView();timeline._viewReady=true;
+        timeline._followHoldUntil=performance.now()+2000;timeline.onLayout?.();timeline.touch();g.last=c;return;
+      }
+      const p=rangePoint(c);g.last=p;send('pointermove',p,'mouse',true);
+    }
   }
   function move(event){
     if(replayed.has(event)||event.pointerType!=='touch'||!points.has(event.pointerId))return;
     event.preventDefault();event.stopImmediatePropagation();points.set(event.pointerId,position(event));if(!gesture||gesture.ignore||gesture.held)return;
+    if(['two','pinch','range'].includes(gesture.kind)&&points.size===2){if(!twoFrame)twoFrame=requestAnimationFrame(moveTwo);return;}
     const p=gesture.kind==='range'?rangePoint(center()):points.get(gesture.id);if(!p)return;
     if(!gesture.started){if(Math.hypot(p.x-gesture.start.x,p.y-gesture.start.y)<8)return;clearTimeout(gesture.timer);feedback(null);send('pointerdown',gesture.start,gesture.pointerType);gesture.started=true;}
     gesture.last=p;send('pointermove',p,gesture.pointerType,gesture.kind==='range');
@@ -51,10 +74,11 @@ export function initTouch({timeline,panel}){
   function up(event){
     if(replayed.has(event)||event.pointerType!=='touch')return;
     event.preventDefault();event.stopImmediatePropagation();if(!points.has(event.pointerId)){if(!points.size)gesture=null;return;}
+    if(twoFrame){cancelAnimationFrame(twoFrame);twoFrame=0;moveTwo();}
     const g=gesture;if(g&&!g.ignore){
       clearTimeout(g.timer);feedback(null);const p=g.kind==='range'?rangePoint(center()):position(event);
       if(g.held){suppressUntil=performance.now()+900;suppressTarget=canvas;swallowClick=true;}
-      if(!g.held){if(!g.started)send('pointerdown',g.start,'touch');send('pointerup',p,g.started?g.pointerType:'touch',g.kind==='range');}
+      if(!g.held&&!['two','pinch'].includes(g.kind)){if(!g.started)send('pointerdown',g.start,'touch');send('pointerup',p,g.started?g.pointerType:'touch',g.kind==='range');}
       gesture={ignore:true};
     }
     points.delete(event.pointerId);if(!points.size)gesture=null;

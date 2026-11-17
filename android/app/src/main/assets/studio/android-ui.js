@@ -152,6 +152,8 @@ window.androidBack=async()=>{
 };
 window.androidReady=true;
 asr.init();
+const {initNative}=await import('./android-native.js');
+initNative({dbg,flush,status,mobile});
 window.__androidAssistCheck=async kind=>{const assist=await import('./android-assist.js');return assist.checkPreview(kind);};
 window.__androidAssistOwner=async kind=>{const assist=await import('./android-assist.js');return assist.checkOwner(kind);};
 for(const kind of ['glossary','reseg'])$(kind+'-cancel')?.addEventListener('click',()=>import('./android-assist.js').then(m=>m.cancel(kind)),true);

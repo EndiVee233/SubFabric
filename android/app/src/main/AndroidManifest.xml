@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.subfabric.android" android:versionCode="14" android:versionName="0.12.2">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.subfabric.android" android:versionCode="15" android:versionName="0.13.0">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -10,7 +10,7 @@
         <intent><action android:name="android.intent.action.PICK"/><data android:mimeType="video/*"/></intent>
         <intent><action android:name="android.intent.action.GET_CONTENT"/><category android:name="android.intent.category.OPENABLE"/><data android:mimeType="video/*"/></intent>
     </queries>
-    <application android:label="SubFabric Android" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="true" android:extractNativeLibs="true" android:largeHeap="true" android:debuggable="true" android:icon="@drawable/app_logo">
+    <application android:label="SubFabric Android" android:theme="@style/NativeStudioTheme" android:allowBackup="false" android:usesCleartextTraffic="true" android:extractNativeLibs="true" android:largeHeap="true" android:debuggable="true" android:icon="@drawable/app_logo">
         <service android:name=".ExportService" android:exported="false" android:process=":export" android:foregroundServiceType="dataSync" />
         <service android:name=".DownloadService" android:exported="false" android:process=":download" android:foregroundServiceType="dataSync" />
         <service android:name=".AsrService" android:exported="false" android:process=":asr" android:foregroundServiceType="dataSync" />

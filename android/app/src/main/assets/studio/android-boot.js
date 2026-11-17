@@ -34,6 +34,24 @@
   };
   const rpc=(action,payload={})=>new Promise((resolve,reject)=>{const id='studio-'+(++sequence);waiting.set(id,{resolve,reject});window.SubFabric.call(id,action,JSON.stringify(payload));});
   window.androidRpc=rpc;
+  const previewFiles=new WeakMap(),createObjectURL=URL.createObjectURL.bind(URL);
+  URL.createObjectURL=value=>previewFiles.has(value)?previewFiles.get(value):createObjectURL(value);
+  window.androidChooseInput=async input=>{
+    nativeMedia=changedMedia=null;
+    const files=await rpc('uiPickFiles',{video:acceptsVideo(input),multiple:input.multiple,accept:input.accept});
+    if(!input.isConnected)return;
+    if(!files){input.dispatchEvent(new Event('cancel',{bubbles:true}));if(acceptsVideo(input))document.dispatchEvent(new Event('android-media-picker-cancel'));return;}
+    const transfer=new DataTransfer();
+    for(const descriptor of files){
+      const bytes=descriptor.base64?Uint8Array.from(atob(descriptor.base64),char=>char.charCodeAt(0)):new Uint8Array();
+      const file=new File([bytes],descriptor.name,{type:descriptor.type||''});
+      if(descriptor.token){mediaTokens.set(file,descriptor.token);previewFiles.set(file,'https://subfabric.local/media/'+descriptor.mediaId);Object.defineProperty(file,'size',{value:descriptor.size});}
+      transfer.items.add(file);
+    }
+    input.files=transfer.files;
+    [...input.files].forEach((file,index)=>{const descriptor=files[index];if(descriptor.token){mediaTokens.set(file,descriptor.token);previewFiles.set(file,'https://subfabric.local/media/'+descriptor.mediaId);}});
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+  };
   const originalFetch=window.fetch.bind(window);
   const response=(data,status=200,headers={})=>new Response(typeof data==='string'?data:JSON.stringify(data),{status,headers:{'Content-Type':typeof data==='string'?'text/plain':'application/json',...headers}});
   const documentMeta=p=>({ ...p, text:undefined,originalText:undefined,srtOriginalText:undefined,packExtras:undefined,oplog:undefined,notes:undefined,
@@ -57,7 +75,7 @@
   async function api(url,options) {
     const path=url.pathname,method=(options.method||'GET').toUpperCase();
     requests.push({path,method});if(requests.length>300)requests.shift();
-    if(path==='/api/version')return response({version:'Android 0.12.2 · Vulkan 识别与 Qwen 对齐',vendorOk:true,stamp:''});
+    if(path==='/api/version')return response({version:'Android 0.13.0 · 原生控件与时间轴捏合',vendorOk:true,stamp:''});
     if(path==='/api/storage'||path==='/api/storage/clean'){
       const protectedProject=window.__dbg?.state.project?.id||localStorage.getItem('android-last-project')||'';
       if(path==='/api/storage'&&method==='GET')return response(await rpc('storageScan',{protectedProject}));

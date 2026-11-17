@@ -1,0 +1,12 @@
+<resources>
+    <style name="NativeStudioTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:colorAccent">#0078d7</item>
+        <item name="android:windowBackground">#151515</item>
+        <item name="android:colorBackground">#151515</item>
+        <item name="android:statusBarColor">#151515</item>
+        <item name="android:navigationBarColor">#151515</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>
