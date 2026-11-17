@@ -1,14 +1,16 @@
 import {fmtTime,parseTime} from '/editor/js/util.js';
+import {editorTabs} from './android-workspace.js';
 
 /** Native widgets consume view descriptions; shared controllers still own all document edits. */
-export function initNative({dbg,flush,status,mobile}){
+export function initNative({dbg,flush,status,workspace}){
   if(typeof window.SubFabric?.ui!=='function')return;
   const body=document.body,ids=new WeakMap(),nodes=new Map(),items=new WeakMap(),itemNodes=new Map();
   let serial=0,itemSerial=0,last='',edit=null,stopped=false,editGeneration=0;
   const key=node=>{if(!ids.has(node)){const id=String(++serial);ids.set(node,id);nodes.set(id,node);}return ids.get(node);};
   const itemKey=item=>{if(!items.has(item)){const id=String(++itemSerial);items.set(item,id);itemNodes.set(id,item);}return items.get(item);};
   const clean=s=>(s||'').replace(/\s+/g,' ').trim();
-  const visible=node=>{for(let n=node;n&&n!==body;n=n.parentElement){if(n.hidden||getComputedStyle(n).display==='none'||getComputedStyle(n).visibility==='hidden')return false;}return true;};
+  const buttonText=node=>node.classList.contains('pc-del')?'删除':node.id==='np-mode-draft'?'识别视频':node.id==='np-mode-import'?'导入字幕':clean(node.textContent)||node.getAttribute('aria-label')||node.title||'操作';
+  const visible=node=>{for(let n=node;n&&n!==body;n=n.parentElement){if(n.hidden||getComputedStyle(n).display==='none'||getComputedStyle(n).visibility==='hidden')return false;if(n!==node&&n.tagName==='DETAILS'&&!n.open&&!n.querySelector('summary')?.contains(node))return false;}return true;};
   function fieldLabel(node){
     const explicit=node.id&&document.querySelector('label[for="'+CSS.escape(node.id)+'"]');
     const parent=node.closest('label');
@@ -32,12 +34,12 @@ export function initNative({dbg,flush,status,mobile}){
         if(source){const url=new URL(source,location.href),id=url.pathname.startsWith('/media/')?url.pathname.slice(7):url.searchParams.get('path');if(/^[0-9a-f-]{36}$/.test(id||''))out.push({kind:'video',mediaId:id});}return;
       }
       if(node.matches('.home-toolbar-btns,#sf-filters,.pc-actions,.android-inline-tools,.st-tabs')){
-        const choices=[...node.querySelectorAll('button')].filter(visible).map(n=>({id:key(n),text:clean(n.textContent)||n.title||'操作',disabled:!!n.disabled,active:n.classList.contains('active')}));
+        const choices=[...node.querySelectorAll('button')].filter(visible).map(n=>({id:key(n),text:buttonText(n),disabled:!!n.disabled,active:n.classList.contains('active')}));
         if(choices.length){out.push({kind:'buttons',columns:node.matches('#sf-filters')?4:node.matches('.home-toolbar-btns,.pc-actions')?3:2,choices});return;}
       }
       if(node.tagName==='LABEL'&&!node.querySelector('button')){const field=node.querySelector('input:not([type=hidden]),textarea,select');if(field){control(field);return;}}
       if(node.matches('button,a[href],[role=button],[role=option],summary,.role-card,.rn-swatch,[data-hex]')){
-        const text=clean(node.textContent)||node.getAttribute('aria-label')||node.title||'操作';
+        const text=buttonText(node);
         out.push({kind:'button',id:key(node),text:node.classList.contains('rn-swatch')?node.dataset.c:text,context:node.classList.contains('role-card'),disabled:!!node.disabled,active:node.classList.contains('active')||node.getAttribute('aria-selected')==='true'});return;
       }
       if(node.matches('input,textarea,select,[contenteditable=true]')){control(node);return;}
@@ -61,7 +63,7 @@ export function initNative({dbg,flush,status,mobile}){
     walk(root);return out;
   }
   function modalRoot(){
-    const selectors='dialog[open],[role=dialog],.modal-overlay,.sf-choice-menu,.sscp,.fp-panel,#sf-export-video,#st-drawer,#role-new,#role-rename,#sf-folder-dialog,#sf-asr-params,#stg-dialog';
+    const selectors='dialog[open],[role=dialog],.modal-overlay,.sf-choice-menu,.sscp,.fp-panel,#sf-export-video,#st-drawer,#st-scheme-drawer,#role-new,#role-rename,#sf-folder-dialog,#sf-asr-params,#stg-dialog';
     const dialogs=[...document.querySelectorAll(selectors+', [id$="-overlay"]')].filter(n=>!['srt-overlay','cue-hit-shield'].includes(n.id)&&visible(n));
     const candidates=[...dialogs,...[dbg.panel.cardMenu,dbg.panel.roleMenu,dbg.timeline.menuEl].filter(n=>n&&visible(n))];
     if(body.classList.contains('android-notes-open'))candidates.push(document.getElementById('note-bar'));
@@ -69,10 +71,13 @@ export function initNative({dbg,flush,status,mobile}){
   }
   function snapshot(){
     if(stopped)return;
+    workspace.sync();
     for(const [id,node]of nodes)if(!node.isConnected)nodes.delete(id);
     const current=new Set(dbg.state.items||[]);for(const [id,item]of itemNodes)if(!current.has(item)&&edit?.item!==item)itemNodes.delete(id);
     const editor=/^#\/project\//.test(location.hash),root=modalRoot();
-    const state={route:location.hash,editor,title:editor?'':clean(document.querySelector('.workspace-page:not([hidden]) h1,#home-view:not([hidden]) h1')?.textContent)||'SubFabric',save:document.getElementById('save-state')?.textContent||'',tab:dbg.panel._tab||'subs',dark:true};
+    const titles={'#/dashboard':'主页','#/home':'稿件','#/settings':'设置','#/storage':'存储空间'};
+    const state={route:location.hash,editor,title:editor?'':titles[location.hash]||clean(document.querySelector('.workspace-page:not([hidden]) h1,#home-view:not([hidden]) h1')?.textContent)||'SubFabric',save:document.getElementById('save-state')?.textContent||'',tab:dbg.panel._tab||'subs',dark:true};
+    state.section=location.hash==='#/settings'?document.querySelector('#st-view .st-tab.active')?.dataset.stp||'models':'';
     if(editor){
       state.project=dbg.state.project?.id||'';
       if(state.tab==='subs'){
@@ -82,9 +87,17 @@ export function initNative({dbg,flush,status,mobile}){
       }else state.controls=describe(document.getElementById('tab-'+state.tab));
     }else{
       const page=[...document.querySelectorAll('.workspace-page,#home-view,#help-view,#welcome-view')].find(visible);
-      state.controls=page?describe(page):[];
+      const roots=workspace.roots(location.hash);
+      state.controls=roots?roots.flatMap(describe):page?describe(page):[];
+      if(roots){const actions=state.controls.filter(n=>['np-create','np-cancel'].includes(nodes.get(n.id)?.id));state.controls=state.controls.filter(n=>!actions.includes(n)).concat(actions);}
     }
-    if(root){root.classList.add('android-native-modal');state.modal={id:key(root),title:clean(root.querySelector('h1,h2,h3,.modal-title')?.textContent)||'操作',controls:describe(root)};}
+    if(root){
+      root.classList.add('android-native-modal');state.modal={id:key(root),title:clean(root.querySelector('.st-drawer-title,h1,h2,h3,.modal-title')?.textContent)||'操作',controls:describe(root)};
+      if(root===dbg.panel.cardMenu&&dbg.panel._cardMenuItem){
+        const item=dbg.panel._cardMenuItem;
+        state.modal.controls.unshift({kind:'button',text:'重新识别该句',command:{kind:'rowAction',item:itemKey(item),action:'rerecog'}},{kind:'button',text:item.realignSkip?'恢复逐词校对':'标记为已校对',command:{kind:'rowAction',item:itemKey(item),action:'skip'}});
+      }
+    }
     if(edit)state.edit=edit.descriptor;
     const encoded=JSON.stringify(state);
     if(encoded!==last){last=encoded;window.SubFabric.ui(encoded);}
@@ -110,15 +123,13 @@ export function initNative({dbg,flush,status,mobile}){
       const item=action.item?itemNodes.get(action.item):null;
       if(action.routeOwner&&action.routeOwner!==location.hash)throw Error('页面已切换，请重新操作');
       if(action.project&&action.project!==dbg.state.project?.id)throw Error('稿件已切换，请重新操作');
-      if(action.kind==='route'){await flush();location.hash=action.route;}
+      if(action.kind==='route'){await workspace.navigate(action.route);}
       else if(action.kind==='play'){if(dbg.video.paused)await dbg.video.play();else dbg.video.pause();}
       else if(action.kind==='seek'){dbg.video.currentTime=Math.max(0,Math.min(dbg.video.duration,Number(action.time)||0));window.__androidFollowSeek?.(dbg.video.currentTime);}
       else if(action.kind==='mute'){dbg.video.muted=!dbg.video.muted;}
       else if(action.kind==='rate'){dbg.video.playbackRate=Number(action.value)||1;}
-      else if(action.kind==='tab'){await flush();dbg.panel.showTab(action.tab);}
+      else if(action.kind==='tab'){if(!editorTabs.has(action.tab))throw Error('此页签已从安卓界面移除');await flush();dbg.panel.showTab(action.tab);}
       else if(action.kind==='back'){if(edit)edit=null;else await window.androidBack();}
-      else if(action.kind==='actions')mobile.actionSheet();
-      else if(action.kind==='more')mobile.moreSheet();
       else if(action.kind==='export')document.getElementById('btn-export').click();
       else if(['select','seekCue','edit','menu','rowAction'].includes(action.kind)){
         if(!item||!dbg.state.items.includes(item))throw Error('字幕已变化，请重新选择');
@@ -128,6 +139,7 @@ export function initNative({dbg,flush,status,mobile}){
         if(action.kind==='edit')await beginEdit(item);
         if(action.kind==='menu')dbg.panel._showCardMenu(12,100,item);
         if(action.kind==='rowAction'&&['skip','rerecog'].includes(action.action)){
+          dbg.panel._hideCardMenu();
           const index=dbg.panel.filtered.indexOf(item);if(index<0)throw Error('字幕筛选已变化');
           const card=document.createElement('div'),button=document.createElement('button');card.dataset.idx=index;card.className='cue-card';button.className='cc-'+action.action;button.dataset.act=action.action;card.append(button);dbg.panel.spacerEl.append(card);try{button.click();}finally{card.remove();}
         }
@@ -145,7 +157,7 @@ export function initNative({dbg,flush,status,mobile}){
         await flush();edit=null;
       }else if(action.kind==='dismiss'){
         const root=nodes.get(action.id);if(root?.isConnected){
-          if(root.id==='note-bar')body.classList.remove('android-notes-open');else if(root===dbg.panel.cardMenu)dbg.panel._hideCardMenu();else if(root===dbg.timeline.menuEl)dbg.timeline._hideMenu();else if(root===dbg.panel.roleMenu)dbg.panel._hideRoleMenu();else await window.androidBack();
+          if(root.id==='st-scheme-drawer')document.getElementById('st-drawer-cancel').click();else if(root.id==='note-bar')body.classList.remove('android-notes-open');else if(root===dbg.panel.cardMenu)dbg.panel._hideCardMenu();else if(root===dbg.timeline.menuEl)dbg.timeline._hideMenu();else if(root===dbg.panel.roleMenu)dbg.panel._hideRoleMenu();else await window.androidBack();
         }
       }else{
         const node=nodes.get(action.id);
@@ -162,6 +174,8 @@ export function initNative({dbg,flush,status,mobile}){
     finally{setTimeout(snapshot,80);}
   }
   body.classList.add('android-native');
+  document.getElementById('sf-player')?.setAttribute('aria-hidden','true');
+  document.getElementById('editor-panel')?.setAttribute('aria-hidden','true');
   const style=document.createElement('style');style.textContent=`
     body.android-native[data-android-editor=true]{padding:0!important;--android-bottom:0px!important}
     body.android-native[data-android-editor=true] #app{display:grid!important;width:100%!important;height:100vh!important;padding:0!important;margin:0!important;gap:0!important;grid-template-columns:100%!important;grid-template-rows:minmax(0,1fr) 140px!important}

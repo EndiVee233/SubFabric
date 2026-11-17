@@ -33,13 +33,14 @@ final class NativeStudio {
     private final Rows pageRows=new Rows(),controlRows=new Rows();
     private final Cues cues=new Cues();
     private JSONObject state=new JSONObject();
-    private String route="",tab="",project="",modalId="",editId="",playing="",selected="";
+    private String route="",tab="",section="",project="",modalId="",editId="",playing="",selected="";
     private AlertDialog modal,editDialog,filterDialog;
     private boolean editor,applying,closed;
     private int lastWidth,lastHeight;
     private long manualUntil;
     private String lastFollow="";
     private JSONObject pending;
+    private EditText activeInput;
     private Rows modalRows,lastDialogRows;
     private String modalContents="";
     private final View cueTail;
@@ -72,8 +73,8 @@ final class NativeStudio {
         cueList.setOnScrollListener(new AbsListView.OnScrollListener(){public void onScrollStateChanged(AbsListView v,int mode){if(mode!=SCROLL_STATE_IDLE)manualUntil=System.currentTimeMillis()+5000;}public void onScroll(AbsListView v,int a,int b,int c){}});
         controlList=list();controlList.setAdapter(controlRows);
         nav=row();nav.setBackgroundColor(SURFACE);
-        for(String label:new String[]{"主页","稿件","操作","更多"}){
-            Button b=button(label,()->{if(label.equals("主页"))command(obj("kind","route","route","#/dashboard"));else if(label.equals("稿件"))command(obj("kind","route","route","#/home"));else send(label.equals("操作")?"actions":"more");});
+        for(String label:new String[]{"主页","稿件","设置"}){
+            Button b=button(label,()->command(obj("kind","route","route",label.equals("主页")?"#/dashboard":label.equals("稿件")?"#/home":"#/settings")));
             nav.addView(b,new LinearLayout.LayoutParams(0,dp(56),1));
         }
         root.addView(nav,new LinearLayout.LayoutParams(-1,dp(56)));
@@ -88,7 +89,7 @@ final class NativeStudio {
     private GradientDrawable background(int fill,int border){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(0);d.setStroke(dp(1),border);return d;}
     private void press(View v){v.setOnTouchListener((view,event)->{int action=event.getActionMasked();if(action==MotionEvent.ACTION_DOWN)view.animate().scaleX(.98f).scaleY(.95f).translationY(dp(1)).setDuration(70).start();else if(action==MotionEvent.ACTION_UP||action==MotionEvent.ACTION_CANCEL)view.animate().scaleX(1).scaleY(1).translationY(0).setDuration(100).start();return false;});}
     private Button button(String label,Runnable click){Button b=new Button(activity);b.setAllCaps(false);b.setText(label);b.setTextSize(14);b.setTextColor(FG);b.setMinHeight(dp(48));b.setMinimumHeight(dp(48));b.setMinWidth(0);b.setMinimumWidth(0);b.setPadding(dp(12),0,dp(12),0);b.setBackground(new RippleDrawable(android.content.res.ColorStateList.valueOf(0x55ffffff),background(SURFACE,0xff666666),null));b.setOnClickListener(v->{blur();click.run();});press(b);return b;}
-    private ListView list(){ListView l=new ListView(activity);l.setBackgroundColor(BG);l.setDivider(null);l.setClipToPadding(false);l.setPadding(dp(10),dp(8),dp(10),dp(24));l.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);return l;}
+    private ListView list(){ListView l=new ListView(activity);l.setBackgroundColor(BG);l.setDivider(null);l.setClipToPadding(false);l.setPadding(dp(10),dp(8),dp(10),dp(24));l.setItemsCanFocus(true);l.setFocusableInTouchMode(true);l.setDescendantFocusability(ViewGroup.FOCUS_BEFORE_DESCENDANTS);return l;}
     private static JSONObject obj(Object... values){JSONObject o=new JSONObject();try{for(int i=0;i<values.length;i+=2)o.put((String)values[i],values[i+1]);}catch(JSONException e){throw new IllegalArgumentException(e);}return o;}
     private void send(String kind){command(obj("kind",kind));}
     private void command(JSONObject action){if(closed)return;try{action.put("routeOwner",route);if(editor&&!action.has("project"))action.put("project",project);}catch(JSONException ignored){}web.evaluateJavascript("window.androidNative?.command("+action.toString()+")",null);}
@@ -99,27 +100,29 @@ final class NativeStudio {
         if(next.has("error")){Toast.makeText(activity,next.optString("error"),Toast.LENGTH_LONG).show();return;}
         if(next.optBoolean("tick")){tick(next);return;}
         View focus=modal!=null?modal.getCurrentFocus():activity.getCurrentFocus();
-        if(focus instanceof EditText&&!next.has("edit")&&next.optString("route").equals(route)&&next.optString("tab").equals(tab)){pending=next;return;}
-        state=next;boolean changed=editor!=next.optBoolean("editor")||!route.equals(next.optString("route"));
+        if(focus instanceof EditText&&focus==activeInput&&!next.has("edit")&&next.optString("route").equals(route)&&next.optString("tab").equals(tab)){pending=next;return;}
+        state=next;boolean changed=editor!=next.optBoolean("editor")||!route.equals(next.optString("route"));boolean tabChanged=!tab.equals(next.optString("tab")),sectionChanged=!section.equals(next.optString("section"));section=next.optString("section");
         editor=next.optBoolean("editor");route=next.optString("route");project=next.optString("project");tab=next.optString("tab");
         back.setText(editor?"‹ 稿件":"‹");title.setText(editor?"":next.optString("title","SubFabric"));save.setText(editor?next.optString("save"):"");export.setVisibility(editor?View.VISIBLE:View.GONE);nav.setVisibility(editor?View.GONE:View.VISIBLE);
         if(changed){manualUntil=0;lastFollow="";lastWidth=0;layoutSurface();}
         applying=true;
         if(editor){buildTabs();if(tab.equals("subs")){cues.set(next.optJSONArray("rows"));showContent(cueList);}else{controlRows.set(next.optJSONArray("controls"));showContent(controlList);}}
         else pageRows.set(next.optJSONArray("controls"));
+        if(changed||sectionChanged){root.requestFocus();pageList.post(()->pageList.setSelection(0));}
+        if(tabChanged)controlList.post(()->controlList.setSelection(0));
         applying=false;
         syncModal(next.optJSONObject("modal"));syncEdit(next.optJSONObject("edit"));
-        for(int i=0;i<nav.getChildCount();i++){Button b=(Button)nav.getChildAt(i);boolean active=i==0&&route.equals("#/dashboard")||i==1&&route.equals("#/home")||i==3&&route.startsWith("#/settings");b.setTextColor(active?0xff48b8ff:FG);}
+        for(int i=0;i<nav.getChildCount();i++){Button b=(Button)nav.getChildAt(i);boolean active=i==0&&route.equals("#/dashboard")||i==1&&(route.equals("#/home")||route.equals("#/new")||route.startsWith("#/details/"))||i==2&&(route.startsWith("#/settings")||route.equals("#/storage"));b.setTextColor(active?0xff48b8ff:FG);}
     }
     private void showContent(View child){if(child.getParent()==panel)return;for(int i=panel.getChildCount()-1;i>=1;i--)panel.removeViewAt(i);detach(child);panel.addView(child,new LinearLayout.LayoutParams(-1,0,1));}
     private void buildTabs(){
-        tabs.removeAllViews();String[][] choices={{"subs","字幕"},{"roles","角色"},{"settings","设置"},{"logs","日志"},{"workload","工作量"}};
+        tabs.removeAllViews();String[][] choices={{"subs","字幕"},{"roles","角色"},{"settings","工具"}};
         for(String[] choice:choices){Button b=button(choice[1],()->command(obj("kind","tab","tab",choice[0])));b.setTextColor(tab.equals(choice[0])?0xff48b8ff:MUTED);b.setBackground(background(BG,tab.equals(choice[0])?ACCENT:BG));tabs.addView(b,new LinearLayout.LayoutParams(0,dp(48),1));}
         if(tab.equals("subs")){Button filter=button("⌕",()->{if(filterDialog!=null)filterDialog.dismiss();filterDialog=dialog("筛选字幕",state.optJSONArray("controls"),null);});filter.setContentDescription("筛选字幕");tabs.addView(filter,new LinearLayout.LayoutParams(dp(44),dp(48)));}
     }
     private void layoutSurface(){
         int w=middle.getWidth(),h=middle.getHeight();if(w<=0||h<=0||w==lastWidth&&h==lastHeight)return;lastWidth=w;lastHeight=h;
-        detach(surface);detach(pageList);detach(editorBody);detach(panel);editorBody.removeAllViews();
+        detach(surface);detach(pageList);detach(editorBody);detach(panel);editorBody.removeAllViews();surface.setImportantForAccessibility(editor?View.IMPORTANT_FOR_ACCESSIBILITY_AUTO:View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         boolean tablet=w/activity.getResources().getDisplayMetrics().density>=760;
         if(!editor){
             detach(nav);nav.setOrientation(tablet?LinearLayout.VERTICAL:LinearLayout.HORIZONTAL);
@@ -190,7 +193,6 @@ final class NativeStudio {
             TextView role=text(item.optString("role"),12,ACCENT);try{role.setTextColor(Color.parseColor(item.optString("color")));}catch(Exception ignored){}if(!role.getText().toString().isEmpty())card.addView(role);
             String meta=item.optString("style")+(item.optString("confidence").isEmpty()?"":" · "+item.optString("confidence"));if(!meta.isEmpty())card.addView(text(meta,11,MUTED));if(!item.optString("bad").isEmpty())card.addView(text("⚠ "+item.optString("bad"),12,0xffffbb44));
             TextView l1=text(item.optString("l1"),16,FG),l2=text(item.optString("l2"),14,MUTED);l1.setPadding(0,dp(5),0,dp(5));l2.setPadding(0,0,0,dp(8));if(!item.optString("l1").isEmpty())card.addView(l1);if(!item.optString("l2").isEmpty())card.addView(l2);
-            LinearLayout actions=row();Button recognize=button("↻",()->command(obj("kind","rowAction","item",id,"action","rerecog")));recognize.setContentDescription("重新识别");actions.addView(recognize,new LinearLayout.LayoutParams(dp(48),dp(44)));Button skip=button(item.optBoolean("skip")?"✓ 已校对":"逐词校对",()->command(obj("kind","rowAction","item",id,"action","skip")));actions.addView(skip,new LinearLayout.LayoutParams(dp(110),dp(44)));card.addView(actions);
             card.setOnClickListener(v->command(obj("kind","select","item",id)));card.setOnLongClickListener(v->{command(obj("kind","menu","item",id));return true;});press(card);highlight(card);return card;
         }
     }
@@ -201,7 +203,7 @@ final class NativeStudio {
         public View getView(int position,View old,ViewGroup parent){
             JSONObject node=data.optJSONObject(position);String kind=node.optString("kind"),id=node.optString("id"),name=node.optString("text");
             LinearLayout wrap=column();wrap.setPadding(dp(2),dp(3),dp(2),dp(3));
-            if(kind.equals("button")){Button b=button(name,()->command(obj("kind","click","id",id)));b.setEnabled(!node.optBoolean("disabled"));if(node.optBoolean("active"))b.setTextColor(0xff48b8ff);if(node.optBoolean("context"))b.setOnLongClickListener(v->{command(obj("kind","context","id",id));return true;});wrap.addView(b,new LinearLayout.LayoutParams(-1,dp(48)));}
+            if(kind.equals("button")){Button b=button(name,()->command(node.has("command")?node.optJSONObject("command"):obj("kind","click","id",id)));b.setEnabled(!node.optBoolean("disabled"));if(node.optBoolean("active"))b.setTextColor(0xff48b8ff);if(node.optBoolean("context"))b.setOnLongClickListener(v->{command(obj("kind","context","id",id));return true;});wrap.addView(b,new LinearLayout.LayoutParams(-1,dp(48)));}
             else if(kind.equals("buttons")){
                 JSONArray choices=node.optJSONArray("choices");int columns=node.optInt("columns",2);LinearLayout line=null;
                 for(int i=0;choices!=null&&i<choices.length();i++){if(i%columns==0){line=row();wrap.addView(line);}JSONObject choice=choices.optJSONObject(i);String target=choice.optString("id");Button b=button(choice.optString("text"),()->command(obj("kind","click","id",target)));b.setTextSize(13);b.setPadding(dp(4),0,dp(4),0);b.setEnabled(!choice.optBoolean("disabled"));if(choice.optBoolean("active"))b.setTextColor(0xff48b8ff);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(48),1);p.setMargins(dp(2),dp(2),dp(2),dp(2));line.addView(b,p);}
@@ -216,8 +218,9 @@ final class NativeStudio {
             else if(kind.equals("input")){
                 EditText input=input(wrap,name,node.optString("value"),node.optBoolean("multiline"));input.setHint(node.optString("placeholder"));input.setHintTextColor(MUTED);input.setEnabled(!node.optBoolean("disabled")&&!node.optBoolean("readonly"));
                 String type=node.optString("type");if(type.equals("password"))input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);else if(type.equals("number"))input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL|android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
-                input.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){if(!applying)command(obj("kind","value","id",id,"value",s.toString(),"phase","input"));}public void afterTextChanged(Editable e){}});
-                input.setOnFocusChangeListener((v,focused)->{if(!focused&&!applying)command(obj("kind","value","id",id,"value",input.getText().toString(),"phase","change"));});
+                input.setOnTouchListener((v,event)->{if(event.getActionMasked()==MotionEvent.ACTION_DOWN)activeInput=input;return false;});
+                input.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){if(!applying){if(input.isFocused())activeInput=input;command(obj("kind","value","id",id,"value",s.toString(),"phase","input"));}}public void afterTextChanged(Editable e){}});
+                input.setOnFocusChangeListener((v,focused)->{if(!focused){if(activeInput==input)activeInput=null;if(!applying)command(obj("kind","value","id",id,"value",input.getText().toString(),"phase","change"));}});
             }else if(kind.equals("select")){
                 wrap.addView(text(name,12,MUTED));JSONArray options=node.optJSONArray("options");ArrayList<String> labels=new ArrayList<>();int active=0;if(options!=null)for(int i=0;i<options.length();i++){JSONObject option=options.optJSONObject(i);labels.add(option.optString("text"));if(option.optString("value").equals(node.optString("value")))active=i;}
                 Spinner spinner=new Spinner(activity);ArrayAdapter<String> adapter=new ArrayAdapter<String>(activity,android.R.layout.simple_spinner_item,labels);adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);spinner.setAdapter(adapter);spinner.setSelection(active,false);spinner.setMinimumHeight(dp(48));spinner.setEnabled(!node.optBoolean("disabled"));final int initial=active;

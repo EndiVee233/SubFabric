@@ -9,7 +9,11 @@ async function until(source){for(let n=0;n<100;n++){const value=await ev(source)
 function decode(value){return value.replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');}
 async function hierarchy(){
   shell('shell','uiautomator','dump','/sdcard/subfabric-native-test.xml');
-  const xml=shell('shell','cat','/sdcard/subfabric-native-test.xml');
+  let xml=shell('shell','cat','/sdcard/subfabric-native-test.xml');
+  if(!xml.includes('package="com.subfabric.android"')){
+    shell('shell','am','start','-W','--activity-single-top','--activity-reorder-to-front','-n','com.subfabric.android/.MainActivity');
+    shell('shell','uiautomator','dump','/sdcard/subfabric-native-test.xml');xml=shell('shell','cat','/sdcard/subfabric-native-test.xml');
+  }
   const stack=[],nodes=[];
   for(const match of xml.matchAll(/<node\b[^>]*>|<\/node>/g)){
     if(match[0]==='</node>'){stack.pop();continue;}
@@ -21,7 +25,7 @@ async function hierarchy(){
 async function tap(text,kind='android.widget.Button'){
   let nodes,node;
   for(let i=0;i<7;i++){
-    nodes=await hierarchy();node=nodes.find(n=>n.text===text&&n.class===kind);if(node)break;
+    nodes=await hierarchy();node=nodes.find(n=>n.text===text&&n.class===kind&&n.bounds!=='[0,0][0,0]');if(node)break;
     const list=nodes.filter(n=>n.class==='android.widget.ListView').at(-1);if(!list)break;const b=list.bounds.match(/\d+/g).map(Number);
     shell('shell','input','swipe',String((b[0]+b[2])/2),String(b[3]-35),String((b[0]+b[2])/2),String(b[1]+45),'220');await wait(200);
   }
@@ -76,7 +80,7 @@ try{
   await ev('__dbg.timeline.fit()');const blank=await ev('(()=>{const t=__dbg.timeline,r=t.canvas.getBoundingClientRect();return {a:r.left+t.t2x(3.8),b:r.left+t.t2x(4.5),y:r.top+t._laneTop(0)+t._laneH(0)*.25}})()');const count=await ev('__dbg.state.items.length');
   await touch('touchStart',[{id:9,x:blank.a,y:blank.y}]);await touch('touchMove',[{id:9,x:blank.b,y:blank.y}]);await touch('touchEnd');await until('!!androidNative.snapshot().edit');assert.equal(await ev('!!__dbg.panel.editItem?.isNew'),true);shell('shell','input','keyevent','4');await until('!androidNative.snapshot().edit');assert.equal(await ev('__dbg.state.items.length'),count);results.push('Single-finger blank drag opens native editor; Back cancels an empty new caption without leaving a ghost row');
   nodes=await hierarchy();const held=nodes.find(n=>n.text==='Keep, this title');assert.ok(held);const hb=held.bounds.match(/\d+/g).map(Number);shell('shell','input','swipe',String((hb[0]+hb[2])/2),String((hb[1]+hb[3])/2),String((hb[0]+hb[2])/2),String((hb[1]+hb[3])/2),'650');await until('!!androidNative.snapshot().modal');nodes=await hierarchy();assert.ok(nodes.some(n=>n.class==='android.widget.Button'&&n.text.includes('删除')));shell('shell','input','keyevent','4');await until('!androidNative.snapshot().modal');assert.equal(await ev('__dbg.state.items.length'),count);results.push('Native subtitle-row long press opens the original contextual menu; Back does not delete');
-  await ev('androidNative.command({kind:"route",route:"#/home"})');await until('location.hash==="#/home"');nodes=await hierarchy();assert.ok(['主页','稿件','操作','更多'].every(text=>nodes.some(n=>n.text===text&&n.class==='android.widget.Button')));results.push('Work navigation is native and returns outside editor only');
+  await ev('androidNative.command({kind:"route",route:"#/home"})');await until('location.hash==="#/home"');nodes=await hierarchy();assert.ok(['主页','稿件','设置'].every(text=>nodes.some(n=>n.text===text&&n.class==='android.widget.Button')));results.push('Work navigation is native and returns outside editor only');
   await ev('androidNative.command({kind:"route",route:"#/settings"})');await wait(600);nodes=await hierarchy();assert.ok(nodes.some(n=>n.class==='android.widget.ListView'));results.push('Global settings use scrollable native rows');
   const after=await ev('androidStudio.rpc("studioList").then(rows=>rows.map(p=>({id:p.id,revision:p.revision,mediaId:p.mediaId})))');for(const row of original.projects)assert.deepEqual(after.find(p=>p.id===row.id),row);results.push(`${original.projects.length} pre-existing drafts retain revision/media identity`);
   await fs.writeFile('android/out/native-ui-wsa-results.json',JSON.stringify({fixtureId:fixture.id,results},null,2));console.log(JSON.stringify(results,null,2));
@@ -84,6 +88,6 @@ try{
 finally{
   await touch('touchCancel').catch(()=>{});
   if(bounds)shell('shell','am','task','resize',task,...bounds.map(String));
-  if(original){await ev(`androidNative.command({kind:'editCancel'});if(androidNative.snapshot().modal)await window.androidBack();location.hash=${JSON.stringify(original.route)}`).catch(()=>{});await wait(600);await ev(`__dbg.video.pause();__dbg.video.currentTime=${Number(original.time)||0}`).catch(()=>{});}
+  if(original){await ev(`(async()=>{await androidNative.command({kind:'editCancel'});if(androidNative.snapshot().modal)await window.androidBack();await androidNative.command({kind:'route',route:${JSON.stringify(original.route)}})})()`).catch(()=>{});await wait(600);await ev(`__dbg.video.pause();__dbg.video.currentTime=${Number(original.time)||0}`).catch(()=>{});}
   c.close();
 }

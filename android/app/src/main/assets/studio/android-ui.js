@@ -51,7 +51,8 @@ button('下载素材',async()=>{const download=await import('./android-download.
 button('术语校对',async()=>{await flush();if(!dbg.state.project)throw new Error('请先打开字幕');$('btn-glossary-review').click();});
 button('语义重分句',async()=>{await flush();if(!dbg.state.project)throw new Error('请先打开字幕');$('btn-reseg-llm').click();});
 button('翻译字幕',async()=>{const translation=await import('./android-translate.js');await translation.showTranslation();});
-button('翻译设置',async()=>{await flush();location.hash='#/settings';});
+button('翻译设置',async()=>{await window.__androidWorkspace.settings('translate');});
+button('逐词对齐',async()=>{await flush();$('btn-realign-full').click();});
 button('导出视频',async()=>{await flush();const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const {openExportVideoDialog}=await import('/editor/js/export-video.js');await openExportVideoDialog(id);});
 button('导出原件',async()=>{const id=dbg.state.project?.id;if(!id)throw new Error('请先打开字幕');const p=await native.load(id);await native.rpc('export',{name:'original-'+(p.originalSubtitleName||p.subtitleName),text:p.originalText??p.text,mime:'text/plain'});});
 button('导入项目包',async()=>{await flush();const p=await native.rpc('pickPack');if(p){await library();status('项目包已导入，请从稿件库打开');}});
@@ -101,6 +102,8 @@ document.addEventListener('pointerdown',event=>{if(!more.contains(event.target)&
 document.body.prepend(bar);
 const {initMobile}=await import('./android-mobile.js');
 const mobile=initMobile({bar,more,flush,status});
+const {initWorkspace}=await import('./android-workspace.js');
+const workspace=initWorkspace({dbg,bar,more,flush,status});
 const {initFollow}=await import('./android-follow.js');
 initFollow(dbg.panel,video);
 // Route the original editor's file buttons through the same persistent Android workflow.
@@ -139,6 +142,7 @@ function route(){if(location.hash!==lastRoute){previewTime=0;previewPaused=true;
 window.addEventListener('hashchange',route);route();
 document.addEventListener('visibilitychange',()=>{if(document.hidden)flush().catch(()=>{});});
 window.androidBack=async()=>{
+  if($('st-scheme-drawer')?.hidden===false){$('st-drawer-cancel').click();return;}
   if(closeTopDialog())return;
   if(mobile.hasSheet()){mobile.close();return;}
   if($('stg-dialog')?.open){$('stg-dialog').close();return;}
@@ -153,7 +157,7 @@ window.androidBack=async()=>{
 window.androidReady=true;
 asr.init();
 const {initNative}=await import('./android-native.js');
-initNative({dbg,flush,status,mobile});
+initNative({dbg,flush,status,workspace});
 window.__androidAssistCheck=async kind=>{const assist=await import('./android-assist.js');return assist.checkPreview(kind);};
 window.__androidAssistOwner=async kind=>{const assist=await import('./android-assist.js');return assist.checkOwner(kind);};
 for(const kind of ['glossary','reseg'])$(kind+'-cancel')?.addEventListener('click',()=>import('./android-assist.js').then(m=>m.cancel(kind)),true);
