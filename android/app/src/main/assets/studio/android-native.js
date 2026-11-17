@@ -4,6 +4,8 @@ import {editorTabs} from './android-workspace.js';
 /** Native widgets consume view descriptions; shared controllers still own all document edits. */
 export function initNative({dbg,flush,status,workspace}){
   if(typeof window.SubFabric?.ui!=='function')return;
+  // Views own page/form transitions. Offscreen DOM view-transition callbacks can reorder draft resets.
+  const viewTransition=document.startViewTransition;document.startViewTransition=undefined;
   const body=document.body,ids=new WeakMap(),nodes=new Map(),items=new WeakMap(),itemNodes=new Map();
   let serial=0,itemSerial=0,last='',edit=null,stopped=false,editGeneration=0;
   const key=node=>{if(!ids.has(node)){const id=String(++serial);ids.set(node,id);nodes.set(id,node);}return ids.get(node);};
@@ -18,10 +20,11 @@ export function initNative({dbg,flush,status,workspace}){
     const source=explicit||parent,copy=source?.cloneNode(true);copy?.querySelectorAll('input,textarea,select,.sf-choice-shell,svg').forEach(n=>n.remove());
     return clean(copy?.textContent||node.getAttribute('aria-label')||node.title||node.placeholder||node.id);
   }
-  function describe(root){
+  function describe(root,exclude=null){
     const out=[];
     function walk(node){
       if(out.length>=6000)return;
+      if(node===exclude)return;
       if(node.nodeType===3){const text=clean(node.textContent);if(text)out.push({kind:'text',text});return;}
       if(node.nodeType!==1||/^(SCRIPT|STYLE|SVG|PATH|CANVAS|OPTION|TEMPLATE)$/.test(node.tagName))return;
       if(node.matches('#st-panel-theme .sf-appearance-card')){out.push({kind:'heading',text:'Windows Phone',large:true},{kind:'text',text:'深色背景 · 直角布局 · 蓝色强调'});return;}
@@ -30,6 +33,8 @@ export function initNative({dbg,flush,status,workspace}){
         const select=node.querySelector('select');if(select){control(select);return;}
       }
       if(!visible(node))return;
+      if(node.matches('.st-drawer-title,#st-scheme-close'))return;
+      if(node.matches('label[for]')&&document.getElementById(node.htmlFor)?.matches('input,textarea,select'))return;
       if(node.tagName==='VIDEO'){
         const source=node.currentSrc||node.src;
         if(source){const url=new URL(source,location.href),id=url.pathname.startsWith('/media/')?url.pathname.slice(7):url.searchParams.get('path');if(/^[0-9a-f-]{36}$/.test(id||''))out.push({kind:'video',mediaId:id});}return;
@@ -84,12 +89,12 @@ export function initNative({dbg,flush,status,workspace}){
       if(state.tab==='subs'){
         const mode=dbg.panel._mode;
         state.rows=(dbg.panel.filtered||dbg.state.items||[]).map(it=>({id:itemKey(it),start:fmtTime(it.start),end:fmtTime(it.end),l1:mode==='second'?'':(it.l1||'').replace(/^\s*\[[^\]]+\]\s*/,''),l2:mode==='first'?'':it.l2||'',role:(it.speaker||'').replace(/^\[|\]$/g,''),color:it.color||'#0078d7',skip:!!it.realignSkip,confidence:typeof it.confidence?.score==='number'?Math.round(it.confidence.score*100)+'%':'',bad:it.bad?it.badReason||'异常行':'',style:[it.badge1,it.badge2].filter(Boolean).join(' · ')}));
-        state.controls=describe(document.querySelector('#tab-subs .panel-head'));
-      }else state.controls=describe(document.getElementById('tab-'+state.tab));
+        state.controls=describe(document.querySelector('#tab-subs .panel-head'),root);
+      }else state.controls=describe(document.getElementById('tab-'+state.tab),root);
     }else{
       const page=[...document.querySelectorAll('.workspace-page,#home-view,#help-view,#welcome-view')].find(visible);
       const roots=workspace.roots(location.hash);
-      state.controls=roots?roots.flatMap(describe):page?describe(page):[];
+      state.controls=roots?roots.flatMap(node=>describe(node,root)):page?describe(page,root):[];
       if(roots){const actions=state.controls.filter(n=>['np-create','np-cancel'].includes(nodes.get(n.id)?.id));state.controls=state.controls.filter(n=>!actions.includes(n)).concat(actions);}
     }
     if(root){
@@ -196,5 +201,5 @@ export function initNative({dbg,flush,status,workspace}){
   const clickInput=HTMLInputElement.prototype.click;
   HTMLInputElement.prototype.click=function(){if(this.type==='file'){window.androidChooseInput(this).catch(error=>{status(error.message);window.SubFabric.ui(JSON.stringify({error:error.message}));});return;}return clickInput.call(this);};
   setInterval(snapshot,350);setInterval(playing,200);snapshot();
-  return ()=>{stopped=true;};
+  return ()=>{stopped=true;document.startViewTransition=viewTransition;};
 }

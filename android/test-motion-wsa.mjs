@@ -37,6 +37,16 @@ try{
  await ev('__androidSetMotion(false)');assert.equal(await ev('document.body.dataset.motion'),'off');
  await ev(`__androidSetMotion(${allowed})`);assert.equal(await ev('document.body.dataset.motion'),allowed?'on':'off');
  results.push('Shared rendering can settle into reduced motion and restore the current system policy without changing OS settings');
+ const config=await ev('androidRpc("llmConfig")');
+ await ev('__androidWorkspace.settings("translate")');await until('!document.getElementById("st-panel-translate").hidden');
+ const add=await ev('androidNative.snapshot().controls.find(n=>n.kind==="button"&&n.text==="添加方案").id');
+ await ev(`androidNative.command({kind:'click',id:${JSON.stringify(add)}})`);await until('!!androidNative.snapshot().modal');
+ const form=await ev('androidNative.snapshot()');
+ assert.ok(form.modal.controls.some(n=>n.kind==='input'&&n.text==='方案名称'));
+ assert.ok(!form.modal.controls.some(n=>n.kind==='text'&&n.text==='方案名称'),'Field label should appear once');
+ assert.ok(!form.controls.some(n=>n.kind==='input'&&n.text==='方案名称'),'Modal form must not be rendered again behind its window');
+ await ev(`androidNative.command({kind:'dismiss',id:${JSON.stringify(form.modal.id)}})`);await until('!androidNative.snapshot().modal');assert.deepEqual(await ev('androidRpc("llmConfig")'),config);
+ results.push('Native translation dialog has one copy of each field, a clean background page, and Cancel preserves schemes');
  assert.deepEqual(await ev('androidStudio.rpc("studioList").then(rows=>rows.map(p=>({id:p.id,revision:p.revision,mediaId:p.mediaId,archived:!!p.archived})))'),before);
  results.push(`${before.length} existing drafts retain revision, media association and archive state`);
  await fs.writeFile('android/out/motion-wsa-results.json',JSON.stringify({allowed,idle,pressed,released,transitionFrames,idleFrames,results},null,2));console.log(JSON.stringify(results,null,2));

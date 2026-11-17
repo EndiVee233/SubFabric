@@ -14,6 +14,8 @@ async function hierarchy(){
   }return nodes.filter(n=>!n.web);
 }
 async function tap(text){
+  // Native entrances and closing windows may still be moving when UIAutomator reports idle.
+  await wait(500);
   for(let i=0;i<7;i++){
     const nodes=await hierarchy(),node=nodes.find(n=>n.class==='android.widget.Button'&&n.text===text&&n.bounds!=='[0,0][0,0]');
     if(node){const b=node.bounds.match(/\d+/g).map(Number);shell('shell','input','tap',String((b[0]+b[2])/2),String((b[1]+b[3])/2));await wait(250);return;}
@@ -37,7 +39,7 @@ try{
   assert.ok(await ev('document.getElementById("np-word").closest("#np-cast-group")&&!getComputedStyle(document.getElementById("np-cast-group")).display.includes("none")'),'Word/alignment options retain their backing group');
   results.push('New draft defaults to recognition; unsupported automation, diarization and URL download inputs are absent');
   await tap('选择视频');nodes=await hierarchy();assert.ok(['从相册导入','从文件导入'].every(t=>nodes.some(n=>n.text===t)));await tap('取消');results.push('The retained local video input opens both native gallery and file sources, and cancels safely');
-  await tap('设置');await until('location.hash==="#/settings"&&document.querySelector("#sf-settings-tab-models").classList.contains("active")');
+  await tap('设置');await until('location.hash==="#/settings"');await tap('语音识别');await until('document.querySelector("#sf-settings-tab-models").classList.contains("active")');
   await until('!!document.getElementById("android-parakeet-tile")');state=await snapshot();for(const text of removed)assert.ok(!texts(state).includes(text),text);assert.ok(texts(state).includes('Parakeet'));assert.ok(texts(state).includes('Qwen'));assert.ok(texts(state).includes('存储空间'));results.push('Settings retain ASR, translation and storage; unavailable desktop categories are removed');
   await ev('document.getElementById("android-parakeet-tile").click()');await wait(500);state=await snapshot();assert.ok(texts(state).includes('从文件导入 GGUF'));assert.ok(texts(state).includes('校验模型')||texts(state).includes('下载模型'));assert.ok(!texts(state).includes('配置与依赖'));await ev('document.getElementById("sf-asr-back").click()');results.push('Model detail still offers real GGUF management without the obsolete prerequisites tile');
   await tap('翻译与术语');await until('!document.getElementById("st-panel-translate").hidden');await tap('添加方案');await until('!document.getElementById("st-scheme-drawer").hidden');
@@ -54,7 +56,7 @@ try{
   assert.deepEqual(await ev('androidRpc("llmConfig")'),config);assert.deepEqual(await ev('[localStorage.getItem("android-asr-model"),localStorage.getItem("android-asr-rerecog")]'),modelPrefs);
   const after=await ev('androidStudio.rpc("studioList").then(rows=>rows.map(p=>({id:p.id,revision:p.revision,mediaId:p.mediaId})))');for(const p of before)assert.deepEqual(after.find(r=>r.id===p.id),p);results.push(`${before.length} existing drafts, ASR choices and translation schemes retain their identities/settings`);
   await fs.writeFile('android/out/lean-wsa-results.json',JSON.stringify({fixtureId:fixture.id,results},null,2));console.log(JSON.stringify(results,null,2));
-}catch(error){await fs.writeFile('android/out/lean-wsa-failure.json',JSON.stringify({fixtureId:fixture?.id,error:error.stack,results},null,2));throw error;}
+}catch(error){await fs.writeFile('android/out/lean-wsa-failure.json',JSON.stringify({fixtureId:fixture?.id,error:error.stack,results,state:await ev('({route:location.hash,mode:document.getElementById("np-mode-draft").className,section:document.querySelector(".st-tab.active")?.dataset.stp,modal:androidNative.snapshot().modal?.title})').catch(()=>null)},null,2));throw error;}
 finally{
   if(original){await ev(`(async()=>{if(androidNative.snapshot().modal)await window.androidBack();await androidNative.command({kind:'route',route:${JSON.stringify(original.route)}})})()`).catch(()=>{});await wait(450);await ev(`__dbg.video.pause();__dbg.video.currentTime=${Number(original.time)||0}`).catch(()=>{});}
   c.close();
