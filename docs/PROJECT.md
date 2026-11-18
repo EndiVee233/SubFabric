@@ -1362,6 +1362,9 @@
   确认后才启动。`#btn-diarize` 点击走 `beginDiarize` → `panel.showConfirm`，确认后才 POST
   `/api/projects/:id/diarize`；SRT 稿件不直接跑，提示先用全片逐词重校对转 ASS。
   两个入口都在 `#editor-advanced-actions` 的网格里，模板改动后必须重新生成 `editor/studio.html`。
+- **逐词字幕修复**：打开或分段导入 ASS 时，始终自动检查同时间戳的逐词文本错位，只搬回唯一可匹配的文本。
+  单行「修复字幕」从字幕卡或时间轴块的右键菜单进入。英文角色标签须位于行首，并与 ASS 的 Name 栏或配对中文行的
+  角色标签相符才提示移除。异常行徽标沿用同一判据，逐词检测按完整英文正文计数。
 - **全片术语表校对**：`#btn-glossary-review`（设置 → 高级字幕操作）。`POST /api/projects/:id/glossary-review`
   用「字幕翻译」那套模型通读全片中文字幕（行首 `[角色]` 与 ASS 覆盖标签先剥掉；正文超过 6 万字截断
   并在界面注明），找出中英文专有名词；**当前方案**术语表里已有的词由服务端带出现有译法

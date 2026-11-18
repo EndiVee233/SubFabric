@@ -323,7 +323,6 @@
           <p class="set-group-note">低频或耗时操作集中在这里，避免打断字幕浏览。常用的角色、搜索、显示模式、跟随播放和异常快速筛选仍保留在字幕列表顶部。</p>
           <div class="editor-advanced-actions-grid">
             <button class="btn btn-mini" id="btn-refresh-subs" title="按字幕列表的整句和逐词时间重新生成动态字幕，并重新应用到视频区。程序漏更新时可以手动兜底，只修真的对不上的行">↻ 刷新字幕</button>
-            <button class="btn btn-mini fix-subs-btn" id="btn-fix-subs" data-ico="wrench" title="检查并修复当前选中的 ASS 字幕" disabled>修复字幕</button>
             <div class="badcat-wrap" id="badcat-wrap">
               <button class="btn btn-mini" id="btn-badcat" title="按异常类别筛选（可多选）：时间异常、字幕重叠、缺语言行、角色问题、逐词缺词">▾ 异常筛选<span id="badcat-count"></span></button>
               <div class="badcat-panel" id="badcat-panel" hidden></div>
@@ -2429,24 +2428,6 @@
           <p class="gl-hint">
             对齐器只负责时间。如果这句话本身还不确定，请用独立的「重新识别」功能，
             不要让对齐器去猜文本。
-          </p>
-        </div>
-        <!-- 逐词字幕自愈开关（默认开）。
-             它只修一种特定损坏：**逐词行被清空、文本跑到同时间戳的另一行上**
-             （旧版导入 bug 的遗留；一旦写进文件，界面上看不出来）。
-             实测在 140 多个 .ass 里只命中过 1 个真坏的 —— 正常稿件上是空转。
-             给开关是因为它会**改动稿件**，用户应当能关掉。 -->
-        <div class="st-card">
-          <div class="st-card-title">逐词字幕自愈
-            <label class="switch switch-mini" style="margin-left:8px" title="开启后，载入字幕或分段导入时自动修复「逐词行被清空」的损坏">
-              <input type="checkbox" id="cb-heal-words" checked>
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          <p class="gl-hint">
-            载入或导入时，若发现「逐词行的文本被清空、文本跑到了**同时间戳**的另一行上」
-            （旧版导入 bug 的遗留），自动把文本搬回来。<b>正常稿件上是空转，不会误改</b>。
-            关掉之后只会在控制台提示，不动稿件。
           </p>
         </div>
         <div class="st-card">

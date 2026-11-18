@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "7cf9db9108c41fd9570cc54e6a1e5ed315a5f4581d740375ad020e3b98204041",
+      "sha256": "1a0d39faef2ee6f8cc3aded47aca86a2f29e1e081a7c52304b15d35d1da16698",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -557,7 +557,7 @@
     },
     {
       "file": "editor/js/editor.js",
-      "sha256": "46fd38eae3fb1e87ef82a9a1c6abb11c0f22733ae495d84a58cf8f05af434acc",
+      "sha256": "e490069d5a990d71fbb442edd9fdc1fb81a5a0053071a66252c92c8b85286bfe",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
@@ -877,7 +877,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "bbaa26fe7667db52f952236294e09f43911c0373cbdb6900067d94544e71bc4c",
+      "sha256": "a351799a96f405b0d30562d5d8bca0245e29bccef10ac60428f6eb742b16f954",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -888,239 +888,239 @@
       ],
       "dynamic": [
         {
-          "line": 227,
+          "line": 226,
           "method": "createElement"
         },
         {
-          "line": 245,
+          "line": 244,
           "method": "innerHTML"
         },
         {
-          "line": 295,
+          "line": 294,
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 1013,
+          "line": 1012,
           "method": "innerHTML"
         },
         {
-          "line": 1015,
+          "line": 1014,
           "method": "createElement"
         },
         {
-          "line": 1485,
+          "line": 1484,
           "method": "innerHTML"
         },
         {
-          "line": 1488,
+          "line": 1487,
           "method": "innerHTML"
+        },
+        {
+          "line": 2134,
+          "method": "replaceChildren"
         },
         {
           "line": 2135,
+          "method": "createElement"
+        },
+        {
+          "line": 2144,
+          "method": "createElement"
+        },
+        {
+          "line": 2988,
           "method": "replaceChildren"
         },
         {
-          "line": 2136,
-          "method": "createElement"
-        },
-        {
-          "line": 2145,
-          "method": "createElement"
-        },
-        {
-          "line": 2989,
+          "line": 2988,
           "method": "replaceChildren"
         },
         {
-          "line": 2989,
-          "method": "replaceChildren"
-        },
-        {
-          "line": 3000,
+          "line": 2999,
           "method": "innerHTML"
         },
         {
-          "line": 3179,
+          "line": 3178,
           "method": "innerHTML"
         },
         {
-          "line": 3188,
+          "line": 3187,
           "method": "innerHTML"
         },
         {
-          "line": 3238,
+          "line": 3237,
           "method": "innerHTML"
         },
         {
-          "line": 3320,
+          "line": 3291,
           "method": "innerHTML"
         },
         {
-          "line": 4050,
+          "line": 4020,
           "method": "innerHTML"
         },
         {
-          "line": 5887,
+          "line": 5847,
           "method": "innerHTML"
         },
         {
-          "line": 5888,
+          "line": 5848,
           "method": "innerHTML"
         },
         {
-          "line": 6094,
+          "line": 6054,
           "method": "innerHTML"
         },
         {
-          "line": 6112,
+          "line": 6072,
           "method": "innerHTML"
         },
         {
-          "line": 6199,
+          "line": 6159,
           "method": "innerHTML"
         },
         {
-          "line": 6284,
+          "line": 6244,
           "method": "innerHTML"
         },
         {
-          "line": 6310,
+          "line": 6270,
           "method": "innerHTML"
         },
         {
-          "line": 6389,
+          "line": 6349,
           "method": "innerHTML"
         },
         {
-          "line": 6829,
+          "line": 6774,
           "method": "innerHTML"
         },
         {
-          "line": 6833,
+          "line": 6778,
           "method": "createElement"
         },
         {
-          "line": 6835,
+          "line": 6780,
           "method": "innerHTML"
         },
         {
-          "line": 6883,
+          "line": 6828,
           "method": "innerHTML"
         },
         {
-          "line": 7049,
+          "line": 6994,
           "method": "createElement"
         },
         {
-          "line": 7051,
+          "line": 6996,
           "method": "innerHTML"
         },
         {
-          "line": 7592,
+          "line": 7537,
           "method": "innerHTML"
         },
         {
-          "line": 7657,
+          "line": 7602,
           "method": "innerHTML"
         },
         {
-          "line": 7818,
+          "line": 7763,
           "method": "innerHTML"
         },
         {
-          "line": 8148,
+          "line": 8093,
           "method": "createElement"
         },
         {
-          "line": 8186,
+          "line": 8131,
           "method": "createElement"
         },
         {
-          "line": 8208,
+          "line": 8153,
           "method": "innerHTML"
         },
         {
-          "line": 8210,
+          "line": 8155,
           "method": "innerHTML"
         },
         {
-          "line": 8210,
+          "line": 8155,
           "method": "innerHTML"
         },
         {
-          "line": 8373,
+          "line": 8318,
           "method": "createElement"
         },
         {
-          "line": 8401,
+          "line": 8346,
           "method": "createElement"
         },
         {
-          "line": 8412,
+          "line": 8357,
           "method": "innerHTML"
         },
         {
-          "line": 8517,
+          "line": 8462,
           "method": "innerHTML"
         },
         {
-          "line": 8541,
+          "line": 8486,
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 8542,
+          "line": 8487,
           "method": "innerHTML"
         },
         {
-          "line": 8573,
+          "line": 8518,
           "method": "innerHTML"
         },
         {
-          "line": 8836,
+          "line": 8781,
           "method": "innerHTML"
         },
         {
-          "line": 8991,
+          "line": 8936,
           "method": "replaceChildren"
         },
         {
-          "line": 8997,
+          "line": 8942,
           "method": "innerHTML"
         },
         {
-          "line": 9042,
+          "line": 8987,
           "method": "innerHTML"
         },
         {
-          "line": 9043,
+          "line": 8988,
           "method": "innerHTML"
         },
         {
-          "line": 9064,
+          "line": 9009,
           "method": "innerHTML"
         },
         {
-          "line": 9077,
+          "line": 9022,
           "method": "innerHTML"
         },
         {
-          "line": 9406,
+          "line": 9351,
           "method": "createElement"
         },
         {
-          "line": 9411,
+          "line": 9356,
           "method": "innerHTML"
         },
         {
-          "line": 9420,
+          "line": 9365,
           "method": "createElement"
         },
         {
-          "line": 9426,
+          "line": 9371,
           "method": "createElement"
         },
         {
-          "line": 9428,
+          "line": 9373,
           "method": "createElement"
         }
       ],
@@ -1678,7 +1678,7 @@
     },
     {
       "file": "editor/js/studio.js",
-      "sha256": "67dca45cc59a7f5c4c76a1b00776cd443441656a5f7ba83aa15873ce95997a3e",
+      "sha256": "a86086458ade69b006d11d50c4b3ee2d1d728abc147c73ef5f3a428496006693",
       "ids": [],
       "dynamicIds": [
         "sf-choice-menu",
@@ -1725,103 +1725,111 @@
           "method": "createElement"
         },
         {
+          "line": 1100,
+          "method": "createElement"
+        },
+        {
+          "line": 1101,
+          "method": "createElement"
+        },
+        {
+          "line": 1107,
+          "method": "createElement"
+        },
+        {
           "line": 1108,
           "method": "createElement"
         },
         {
-          "line": 1109,
+          "line": 1284,
           "method": "createElement"
         },
         {
-          "line": 1115,
-          "method": "createElement"
-        },
-        {
-          "line": 1116,
-          "method": "createElement"
-        },
-        {
-          "line": 1292,
-          "method": "createElement"
+          "line": 1286,
+          "method": "innerHTML"
         },
         {
           "line": 1294,
           "method": "innerHTML"
         },
         {
+          "line": 1300,
+          "method": "createElement"
+        },
+        {
           "line": 1302,
           "method": "innerHTML"
         },
         {
-          "line": 1308,
-          "method": "createElement"
-        },
-        {
-          "line": 1310,
+          "line": 1455,
           "method": "innerHTML"
         },
         {
-          "line": 1463,
+          "line": 1476,
           "method": "innerHTML"
         },
         {
-          "line": 1484,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1634,
+          "line": 1626,
           "method": "replaceChildren"
         },
         {
-          "line": 1778,
+          "line": 1770,
           "method": "replaceChildren"
         },
         {
-          "line": 1781,
+          "line": 1773,
           "method": "createElement"
         },
         {
-          "line": 1788,
+          "line": 1780,
           "method": "createElement"
         },
         {
-          "line": 1791,
+          "line": 1783,
+          "method": "createElement"
+        },
+        {
+          "line": 1793,
+          "method": "createElement"
+        },
+        {
+          "line": 1795,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1796,
+          "method": "createElement"
+        },
+        {
+          "line": 1799,
           "method": "createElement"
         },
         {
           "line": 1801,
-          "method": "createElement"
-        },
-        {
-          "line": 1803,
           "method": "innerHTML"
         },
         {
-          "line": 1804,
-          "method": "createElement"
-        },
-        {
-          "line": 1807,
-          "method": "createElement"
-        },
-        {
-          "line": 1809,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1842,
+          "line": 1834,
           "method": "replaceChildren"
         },
         {
-          "line": 1846,
+          "line": 1838,
           "method": "createElement"
         },
         {
-          "line": 1859,
+          "line": 1851,
           "method": "createElement"
         },
         {
-          "line": 1862,
+          "line": 1854,
+          "method": "createElement"
+        },
+        {
+          "line": 1863,
+          "method": "createElement"
+        },
+        {
+          "line": 1866,
           "method": "createElement"
         },
         {
@@ -1829,15 +1837,19 @@
           "method": "createElement"
         },
         {
-          "line": 1874,
+          "line": 1873,
           "method": "createElement"
         },
         {
-          "line": 1879,
+          "line": 1875,
           "method": "createElement"
         },
         {
-          "line": 1881,
+          "line": 1877,
+          "method": "createElement"
+        },
+        {
+          "line": 1880,
           "method": "createElement"
         },
         {
@@ -1849,47 +1861,43 @@
           "method": "createElement"
         },
         {
-          "line": 1888,
+          "line": 1887,
           "method": "createElement"
         },
         {
-          "line": 1891,
+          "line": 2717,
           "method": "createElement"
         },
         {
-          "line": 1893,
-          "method": "createElement"
-        },
-        {
-          "line": 1895,
-          "method": "createElement"
-        },
-        {
-          "line": 2725,
-          "method": "createElement"
-        },
-        {
-          "line": 2725,
+          "line": 2717,
           "method": "innerHTML"
         },
         {
-          "line": 2728,
+          "line": 2720,
           "method": "createElement"
         },
         {
-          "line": 2740,
+          "line": 2732,
           "method": "createElement"
         },
         {
-          "line": 2747,
+          "line": 2739,
           "method": "innerHTML"
         },
         {
-          "line": 2747,
+          "line": 2739,
           "method": "innerHTML"
         },
         {
-          "line": 2753,
+          "line": 2745,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2765,
+          "method": "createElement"
+        },
+        {
+          "line": 2766,
           "method": "innerHTML"
         },
         {
@@ -1897,91 +1905,83 @@
           "method": "createElement"
         },
         {
-          "line": 2774,
+          "line": 2776,
           "method": "innerHTML"
         },
         {
-          "line": 2781,
+          "line": 2779,
           "method": "createElement"
         },
         {
           "line": 2784,
+          "method": "createElement"
+        },
+        {
+          "line": 2786,
+          "method": "createElement"
+        },
+        {
+          "line": 2789,
           "method": "innerHTML"
         },
         {
-          "line": 2787,
+          "line": 2790,
           "method": "createElement"
         },
         {
           "line": 2792,
-          "method": "createElement"
-        },
-        {
-          "line": 2794,
-          "method": "createElement"
-        },
-        {
-          "line": 2797,
           "method": "innerHTML"
         },
         {
-          "line": 2798,
-          "method": "createElement"
-        },
-        {
-          "line": 2800,
+          "line": 2858,
           "method": "innerHTML"
         },
         {
-          "line": 2866,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3077,
+          "line": 3069,
           "method": "createElement"
         },
         {
-          "line": 3120,
+          "line": 3112,
           "method": "replaceChildren"
+        },
+        {
+          "line": 3118,
+          "method": "createElement"
+        },
+        {
+          "line": 3121,
+          "method": "createElement"
+        },
+        {
+          "line": 3125,
+          "method": "createElement"
         },
         {
           "line": 3126,
           "method": "createElement"
         },
         {
-          "line": 3129,
-          "method": "createElement"
-        },
-        {
-          "line": 3133,
-          "method": "createElement"
-        },
-        {
-          "line": 3134,
-          "method": "createElement"
-        },
-        {
-          "line": 3134,
+          "line": 3126,
           "method": "innerHTML"
         },
         {
-          "line": 3207,
+          "line": 3199,
           "method": "createElement"
         },
         {
-          "line": 3209,
+          "line": 3201,
           "method": "createElement"
         },
         {
-          "line": 3212,
+          "line": 3204,
           "method": "createElement"
         },
         {
-          "line": 3213,
+          "line": 3205,
           "method": "createElement"
         },
         {
-          "line": 3213,
+          "line": 3205,
           "method": "innerHTML"
         }
       ],
@@ -2120,7 +2120,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "2b3f053e35a3fa3d7303662851c0b2c292f48a9ff5a4d1ec0d94808c0a70c1b9",
+      "sha256": "184009408e770aa768328a2660e9a60c7dacd5d6adc203332b8915f393cdb753",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2160,7 +2160,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "2dc3c7008559c6d81aba2e87e7d7668cc9bef66d528b0f6998eb880837e3dc54",
+      "sha256": "ce03f47be4e85ff47755715058e0b47c17a46904d1f791ad2e8c60c4734853ab",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2302,7 +2302,6 @@
         "btn-export-pack",
         "btn-export-video",
         "btn-export-zh",
-        "btn-fix-subs",
         "btn-glossary-review",
         "btn-home",
         "btn-log-clear",
@@ -2328,7 +2327,6 @@
         "card-menu",
         "cb-danmaku",
         "cb-follow-toolbar",
-        "cb-heal-words",
         "cb-log-follow",
         "cb-log-only-warn",
         "cie-input",

@@ -42,6 +42,8 @@ const group = template.slice(groupAt, groupEnd);
 assert.match(group, /id="btn-realign-full"/, '全片逐词重校对在高级字幕操作组内');
 assert.match(group, /id="btn-diarize"/, '说话人分离在高级字幕操作组内');
 assert.match(group, /id="btn-diarize"[^>]*title="[^"]*先确认再跑/, '说话人分离按钮提示二次确认');
+assert.doesNotMatch(group, /id="btn-fix-subs"/, '高级字幕操作不再重复提供单行修复');
+assert.equal([...template.matchAll(/data-act="fix"/g)].length, 2, '字幕卡和时间轴右键菜单仍可修复');
 
 /* ── 全片逐词重校对：先确认，再启动 ── */
 assert.match(main, /realignEls\.btn\.addEventListener\('click', \(\) => beginRealignFull\(\)\)/,

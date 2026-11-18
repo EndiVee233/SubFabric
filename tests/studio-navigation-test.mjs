@@ -629,7 +629,7 @@ assert.ok($('bench-word') && $('bench-confidence') && $('bench-speakers'), 'benc
 const benchCast = document.getElementById('bench-cast');
 assert.ok(!benchCast || benchCast.closest('[hidden]'), 'benchmark does not expose LLM cast');
 assert.ok($('btn-reflect').hidden, 'the editor does not expose reflection');
-assert.ok($('tab-settings').contains($('cb-heal-words')), 'load repair stays in editor preferences');
+assert.ok(!document.getElementById('cb-heal-words') && !document.getElementById('btn-fix-subs'), 'editor settings omit the automatic repair toggle and duplicate repair action');
 assert.ok($('st-panel-models').contains($('dual-ratio')), 'ratio retains original delegated ancestor');
 const keyboardTab = $('sf-settings-tab-theme');
 keyboardTab.dispatchEvent(Object.assign(new Event('keydown', {cancelable:true}), {key:'ArrowDown'})); await settle();

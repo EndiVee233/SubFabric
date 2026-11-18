@@ -64,7 +64,6 @@ const btnExportFull = document.getElementById('btn-export-full');
 const btnExportAdvanced = document.getElementById('btn-export-advanced');
 // 导出视频（硬字幕压制 / 生肉 / 字幕）—— 见 js/export-video.js
 const btnExportVideo = document.getElementById('btn-export-video');
-const btnFix = document.getElementById('btn-fix-subs');
 const btnDiarize = document.getElementById('btn-diarize');
 const wordConvertStyle = document.getElementById('word-convert-style');
 const wordConvertScope = document.getElementById('word-convert-scope');
@@ -2518,7 +2517,7 @@ const BAD_CATS = [
   { k: 'time',   t: '时间异常',   hint: '句时长≤0 / 时间解析失败 / 结束早于开始 / 中英时间不一致' },
   { k: 'overlap', t: '字幕重叠',  hint: '与其它字幕时间相交，或英文行内部有重复切片' },
   { k: 'lang',   t: '缺语言行',   hint: '只有中文没有英文，或只有英文没有中文' },
-  { k: 'role',   t: '角色问题',   hint: '英文行含 [方括号]，或中文字幕行首没标 [人物]' },
+  { k: 'role',   t: '角色问题',   hint: '英文行首有角色标签，或中文字幕行首没标 [人物]' },
   { k: 'words',  t: '逐词异常',   hint: '逐词数量不足，或逐词高亮不是 0→1→2… 的对角线顺序' },
 ];
 
@@ -2537,7 +2536,7 @@ function classifyBadReason(reason) {
   // 缺语言行
   if (/单中文行|单英文行/.test(s)) return 'lang';
   // 角色 / 方括号
-  if (/英文行含方括号/.test(s)) return 'role';
+  if (/英文行首有角色标签/.test(s)) return 'role';
   if (/未标注角色/.test(s)) return 'role';
   // 逐词缺词 / 逐词高亮顺序
   if (/英文行缺词|逐词高亮/.test(s)) return 'words';
@@ -2582,7 +2581,7 @@ function wordHighlightIssue(sent) {
     : String.raw`\{\\c&H[0-9A-Fa-f]{6}&[^}]*\}`;
   const close = String.raw`\{\\c(?:&H[0-9A-Fa-f]{6}&)?[^}]*\}`;
   const re = new RegExp(open + String.raw`([^{}]*?)` + close, 'g');
-  const total = splitEnglishWords(String(sent.text || '').replace(/\[[^\]]+\]/g, '')).length;
+  const total = splitEnglishWords(String(sent.text || '')).length;
   if (!total) return '';
   const indices = [];
   let multi = false;
@@ -2592,9 +2591,9 @@ function wordHighlightIssue(sent) {
     if (!spans.length) continue;                    // 词间 gap：无高亮，正常
     if (spans.length > 1) { multi = true; continue; }
     const m = spans[0];
-    const highlighted = splitEnglishWords(assPlainText(m[1] || '').replace(/\[[^\]]+\]/g, ''));
+    const highlighted = splitEnglishWords(assPlainText(m[1] || ''));
     if (highlighted.length !== 1) { multi = true; continue; }
-    const before = splitEnglishWords(assPlainText(text.slice(0, m.index)).replace(/\[[^\]]+\]/g, '')).length;
+    const before = splitEnglishWords(assPlainText(text.slice(0, m.index))).length;
     indices.push(before);
   }
   if (multi) return '逐词高亮重复（同一逐词切片含多个高亮词）';
@@ -2617,7 +2616,7 @@ function wordHighlightIssue(sent) {
 /**
  * 汇总坏行原因(供列表 ⚠ 筛选与 tooltip):
  *   · 字幕重叠 —— 与其它条目时间相交(两种格式都检测)
- *   · 仅 ASS: 时间异常(解析失败 / 结束早于开始) / 英文行含方括号 / 单中文行 / 单英文行
+ *   · 仅 ASS: 时间异常(解析失败 / 结束早于开始) / 英文行首有角色标签 / 单中文行 / 单英文行
  *             / 未标注角色 / 英文行缺词 / 英文行重叠
  *   · SRT 只检测重叠(用户要求: SRT 的坏行检测重叠就好)
  */
@@ -2643,7 +2642,8 @@ function markBadRows(items) {
       const zhS = it.ref && it.ref.zh;
       const enS = it.ref && it.ref.en;
       if (it.badReason) reasons.push(it.badReason);
-      if (/[[\]]/.test(it.l2 || '')) reasons.push('英文行含方括号');
+      const rolePrefix = englishRolePrefix(it.ref);
+      if (rolePrefix) reasons.push('英文行首有角色标签');
       const hasL1 = !!it.l1, hasL2 = !!it.l2;
       if (hasL1 && !hasL2) reasons.push('单中文行(缺英文)');
       if (!hasL1 && hasL2) reasons.push('单英文行(缺中文)');
@@ -2674,11 +2674,11 @@ function markBadRows(items) {
       // 英文行逐词缺词(切片数 < 单词数) —— 用户报的 bug#3(缺词无警告)。
       // 注: 反向的「逐词多余」(同一词被重复高亮) 在真实文件里很常见(本示例 57 行),
       //     全量点亮会淹掉 ⚠ 徽标, 因此不并入坏行; 交给「修复字幕」按需深度检测。
-      if (it.enWordCount && it.enTokenCount && it.enWordCount < it.enTokenCount) {
+      if (!rolePrefix && it.enWordCount && it.enTokenCount && it.enWordCount < it.enTokenCount) {
         reasons.push(`英文行缺词（逐词 ${it.enWordCount} 个 / 文本 ${it.enTokenCount} 词）`);
       }
       // 数量齐或多词时再校验高亮顺序；少词已单独报“缺词”，避免同一条重复刷屏。
-      if (enS && it.enWordCount && it.enWordCount >= it.enTokenCount) {
+      if (!rolePrefix && enS && it.enWordCount && it.enWordCount >= it.enTokenCount) {
         const wordIssue = wordHighlightIssue(enS);
         if (wordIssue) reasons.push(wordIssue);
       }
@@ -2800,7 +2800,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
           badReason: [badReasonOf(zhS), badReasonOf(enS)].filter(Boolean).join(' / '),
           // 英文逐词缺词/重复/交叠检测用(用户报: 重复字幕被并成一句、缺词无警告)
           enWordCount: enS && enS.words ? enS.words.length : 0,
-          enTokenCount: enS ? splitEnglishWords(enS.text.replace(/\[[^\]]+\]/g, '')).length : 0,
+          enTokenCount: enS ? splitEnglishWords(enS.text).length : 0,
           enOverlap: enSlicesOverlap(enS),
           confidence: row.confidence || null      // ASR 置信度（没有该元数据时为 null）
         };
@@ -2810,7 +2810,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
     } else {
       state.items = [];
     }
-    markBadRows(state.items);      // 时间异常 + 重叠 + 英文含方括号 + 单语行
+    markBadRows(state.items);      // 时间异常 + 重叠 + 英文行首有角色标签 + 单语行
     const markedSkip = markEditedRealignRows(state.items);   // 文本变了的行默认标成「已校对」
     if (markedSkip.size) {
       for (const it of state.items) {
@@ -2829,7 +2829,7 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   // 坏行计数 → 搜索框旁的 ⚠ 按钮
   panel.setBadCount(state.items.filter(i => i.bad).length,
     state.format === 'ass'
-      ? '时间异常 / 重叠 / 未标注角色 / 单语行 / 中英时间不一致 / 英文含方括号 / 英文缺词 / 英文行重叠'
+      ? '时间异常 / 重叠 / 未标注角色 / 单语行 / 中英时间不一致 / 英文行首有角色标签 / 英文缺词 / 英文行重叠'
       : '字幕重叠');
 
   // 时间轴车道: 每个样式一条轨道(中文 / 英文各归其位); 块内带文本
@@ -2916,7 +2916,6 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
   } else {
     state.selected = null;
   }
-  updateFixButton();
   // 批量选区的条目数可能因增删/改时间而变 → 重建后同步一下浮条(没有选区时什么都不做)
   if (timeline.rangeSel) refreshRangeBar();
   // 没载入字幕时「刷新字幕」不可点
@@ -3239,25 +3238,6 @@ function rimRenderList(plan) {
   box.hidden = !rows.length;
 }
 
-/** 逐词字幕自愈开关（全局设置里那个勾，默认**开**）。
- *  默认开的原因：它会修的那种损坏一旦写进文件、界面上**看不出来**
- *  （列表显示"中英双行"，只是英文列是空的），而修复时机是"打开/导入"——
- *  那时对话框已经关了，用户没机会点。所以默认替用户兜着，但要给关掉的入口。 */
-const HEAL_WORDS_KEY = 'ss-heal-words';
-function healWordsEnabled() {
-  try { return localStorage.getItem(HEAL_WORDS_KEY) !== '0'; } catch { return true; }
-}
-function initHealWordsToggle() {
-  const cb = document.getElementById('cb-heal-words');
-  if (!cb) return;
-  cb.checked = healWordsEnabled();
-  cb.addEventListener('change', () => {
-    try { localStorage.setItem(HEAL_WORDS_KEY, cb.checked ? '1' : '0'); } catch { /* ignore */ }
-    toast(cb.checked ? '已开启逐词字幕自愈' : '已关闭逐词字幕自愈（仍会在控制台提示）', 4200);
-  });
-}
-initHealWordsToggle();
-
 /** 逐词字幕自愈：把"被清空 / 错位"的逐词文本搬回来。
  *
  *  用户实测过这种损坏（逐行对比正常稿件与坏文件，时间戳一模一样）：
@@ -3270,7 +3250,6 @@ initHealWordsToggle();
  *  实测：你的真实项目（3676 行）与 Downloads 里 140 多个 .ass 中，
  *  只有 1 个真坏的命中 —— 其余全部空转。
  *  调用点：分段导入之后（主要防线）+ 载入字幕之后（兜底）。
- *  开关：全局设置里的「逐词字幕自愈」（关掉后只提示不改）。
  *
  *  @returns {number} 实际修复的行数
  */
@@ -3282,14 +3261,6 @@ function healWordRows(where) {
   const analysis = analyzeDamage(rows);
   if (!analysis.damaged) return 0;
   const plan = planWordRepair(analysis);
-  if (!healWordsEnabled()) {
-    // 关掉了开关：只提示、不动稿件。
-    // 而且**不弹 toast**（关掉就是不想被打扰），但控制台一定留一条，
-    // 否则用户永远不知道自己的文件是坏的。
-    console.warn(`[heal] ${where || ''} 检测到逐词字幕错位 ${plan.edits.length} 行（自愈已关闭，未改动）；`
-      + `在「全局设置 → 逐词字幕自愈」里可以打开`);
-    return 0;
-  }
   let n = 0;
   for (const e of plan.edits) {
     try { state.assDoc.setEventText(e.row.ev, e.text); n++; }
@@ -3774,7 +3745,6 @@ function selectItem(item, seek = true) {
   state.selected = item;
   panel.select(item);
   timeline.setSelected(item.ref);
-  updateFixButton();
   if (seek && item) {
     requestSeek(item.start + 0.001);
   }
@@ -4929,9 +4899,6 @@ panel.onTabChange = (name) => {
 };
 
 /* ═══════════ 修复字幕(右键菜单) ═══════════ */
-/** 行首角色色标(非绿)判定用: {\c&H......&} */
-const EN_ROLE_COLOR_RE = /^\s*\{[^}]*?\\c&H([0-9A-Fa-f]{6})&/;
-
 /* ─────────── 中英起止对齐 ───────────
  * 云端识别(必剪/剪映)常给出"首词起点晚于句首"或"整段英文只覆盖一小截"的结果：
  *   中文行 0.00–2.88 / 英文逐词 0.04–2.88（首词晚 40ms）
@@ -5055,10 +5022,20 @@ function autoAlignEnSpans() {
   return n;
 }
 
+/** 只有能与角色元数据核对的英文行首标签才可移除，方括号正文和高亮色不参与判定。 */
+function englishRolePrefix(row) {
+  const text = row?.en?.text || '';
+  const match = /^\s*\[([^\]\r\n]+)\]\s*/.exec(text);
+  if (!match || match[0].length === text.length) return '';
+  const label = match[1].trim().toLowerCase();
+  const names = [row.en.proto?.name, row.zh?.proto?.name, speakerTextTagOf(row.zh)];
+  return label && names.some(name => name?.trim().toLowerCase() === label) ? match[0] : '';
+}
+
 /**
  * 检测一行字幕有哪些问题(供右键「修复字幕」).
  * 返回 { issues, needConfirm, prefill }：
- *   issues 子集 { karaokeMissing(自动加逐词), overlapNoKaraoke(仅提示), roleName(自动删角色),
+ *   issues 子集 { karaokeMissing(自动加逐词), overlapNoKaraoke(仅提示), roleName(待移除的角色前缀),
  *                 wordsMismatch(逐词与文本不一致), enOverlap(英文行重复/交叠) }
  *   needConfirm=true 表示 wordsMismatch/enOverlap —— 必须让用户确认这句话到底是什么再修。
  */
@@ -5071,27 +5048,20 @@ function detectRowProblems(row) {
     if (computeOverlapRows().has(row)) issues.overlapNoKaraoke = true;  // 重叠的不加逐词(会丢特效)
     else issues.karaokeMissing = true;                                  // 不重叠 → 可自动加
   }
-  // ② 英文行含角色名([..]) 或 行首非绿角色色标
-  if (en) {
-    const txt = en.text || '';
-    let roleName = /\[[^\]]+\]/.test(txt);
-    if (!roleName && en.events) {
-      for (const ev of en.events) {
-        const m = EN_ROLE_COLOR_RE.exec(ev.text || '');
-        if (m && !HIGHLIGHT_COLORS.has(assColorToHex(m[1].toUpperCase()))) { roleName = true; break; }
-      }
-    }
-    if (roleName) issues.roleName = true;
-  }
+  const rolePrefix = englishRolePrefix(row);
+  if (rolePrefix) issues.roleName = rolePrefix;
+
   // ③ 英文行逐词与文本不一致(缺词/多余) 或 英文行内部切片交叠(重复字幕) —— 都是英文行脏了,
   //    需要用户确认这句话到底是什么(用户明确要求), 才能重建出正确的逐词。
   if (en && en.words && en.words.length) {
-    const clean = (en.text || '').replace(/^\s*\[[^\]]+\]\s*/, '').trim();
+    const clean = (en.text || '').slice(rolePrefix.length).trim();
     // k 卡拉OK行的分词由文件自身的 \k 段序列决定（一段一音节），与本应用"按 , . ? ! 再切一刀"
     // 的 splitEnglishWords 口径本就不同 —— 拿后者去判会一打开外来 k 文件就整轨误报"英文缺词"。
     // 对 k 行改比"内存模型 ⟷ 落盘段数": 两者不一致才是真漂移。
     const toks = en.karStyle === 'k' ? kLineTokens(en) : splitEnglishWords(clean).length;
-    if (toks && en.words.length !== toks) {
+    // 旧文件可能把角色前缀也做成了逐词。只要正文与带前缀两种计数之一吻合，先按角色问题修复。
+    const includesRole = rolePrefix && en.karStyle !== 'k' && splitEnglishWords(en.text).length === en.words.length;
+    if (toks && en.words.length !== toks && !includesRole) {
       issues.wordsMismatch = { text: clean, have: en.words.length, need: toks };
     }
     if (enSlicesOverlap(en)) issues.enOverlap = true;
@@ -5110,7 +5080,7 @@ function detectRowProblems(row) {
 /** 用目标文本重建英文逐词行: 并整体替换该句全部切片。
  *  replaceEvents 会**换掉该句所有事件** → 重复/交叠的脏切片一并清除。
  *  clearName=true 时把角色名从 Name 栏也删掉(角色名在英文行时)。 */
-function rebuildEnglishFromText(en, text, clearName) {
+function rebuildEnglishFromText(en, text, { clearName, addWords }) {
   if (clearName && en.proto) en.proto.name = '';
   en.text = text;
   /* ⚠ 这里以前写死 `{\c&H00FF00&}`（注释还写着"逐词高亮回绿"）—— 用户报的正是这个：
@@ -5119,7 +5089,7 @@ function rebuildEnglishFromText(en, text, clearName) {
    *   修复字幕的语义是修坏掉的逐词/文本，**不该顺手改颜色** —— 优先沿用这一行原有的
    *   高亮色，行上没有/非法才退回当前配置色。与"新增字幕 / 重新识别不得写死绿"同一类修复。 */
   en.highlightTag = highlightTagForRebuild(en.highlightTag);
-  en.words = recalcWords(en, en.text, en.start, en.end);
+  if (addWords) en.words = recalcWords(en, en.text, en.start, en.end);
   en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
   en.bad = false;   // 重建后时间一律合法, 清掉分析时可能留下的时间异常标记
   en.overlap = enSlicesOverlap(en);
@@ -5139,26 +5109,17 @@ function fixRow(row, issues, confirmedText) {
   if (!en) { toast('该行没有英文逐词行，无法修复'); return; }
   const done = [];
   const mismatch = issues.wordsMismatch || issues.enOverlap;
-  if (issues.roleName || mismatch) {
-    let target;
-    if (mismatch) {
-      // 逐词与文本不一致 / 英文行重复交叠 → 以用户确认的句子为准
-      target = ((confirmedText != null ? confirmedText : '') || (issues.wordsMismatch ? issues.wordsMismatch.text : '')).trim();
-    } else {
-      // 仅角色名场景: 文本从词级时间轴重建(词才是逐词真值, 切片明文不可靠)
-      target = (en.words && en.words.length) ? en.words.map(w => w.w).join(' ') : (en.text || '').trim();
-    }
-    target = target.replace(/^\s*\[[^\]]+\]\s*/, '');   // 防用户把角色名也带进来
+  if (issues.roleName || mismatch || issues.karaokeMissing) {
+    const text = en.text || assPlainText(en.events[0]?.text);
+    const target = mismatch
+      ? (confirmedText ?? issues.wordsMismatch?.text ?? text).trim()
+      : text.slice((issues.roleName || '').length).trim();
     if (target) {
-      rebuildEnglishFromText(en, target, !!issues.roleName);
-      if (issues.roleName) done.push('已删除英文行角色名并校正逐词色');
+      rebuildEnglishFromText(en, target, { clearName: !!issues.roleName, addWords: !issues.overlapNoKaraoke });
+      if (issues.roleName) done.push('已移除英文行的角色标签');
       if (mismatch) done.push('已按确认句子重建逐词');
+      if (issues.karaokeMissing) done.push('已自动添加逐词效果');
     }
-  }
-  if (issues.karaokeMissing) {
-    const t = (en.text || assPlainText(en.events[0].text)).trim();
-    rebuildEnglishFromText(en, t, false);
-    done.push('已自动添加逐词效果');
   }
   if (issues.spanMismatch) {
     if (alignEnSpanToZh(row)) done.push('已把英文逐词起止对齐到中文行');
@@ -5179,8 +5140,7 @@ function openFixForRow(ref) {
   if (!row) { toast('没有找到这条字幕'); return; }
   const { issues, needConfirm, prefill } = detectRowProblems(row);
   if (!Object.keys(issues).length) { toast('这条字幕没有问题'); return; }
-  const fixable = ['karaokeMissing', 'roleName', 'wordsMismatch', 'enOverlap'].filter(k => issues[k]);
-  if (!fixable.length) {
+  if (Object.keys(issues).every(key => key === 'overlapNoKaraoke')) {
     toast('这条字幕没有可自动修复的问题：它和别的字幕重叠，重叠时不加逐词');
     return;
   }
@@ -6464,15 +6424,6 @@ function initBadCatFilter() {
 /* ─────────── 手动刷新动态字幕(渲染层兜底) ─────────── */
 const btnRefresh = document.getElementById('btn-refresh-subs');
 
-function updateFixButton() {
-  if (!btnFix) return;
-  const enabled = state.format === 'ass' && !!state.kar && !!state.selected;
-  btnFix.disabled = !enabled;
-  btnFix.title = enabled
-    ? '检查并修复当前选中的 ASS 字幕'
-    : '请先选中一条 ASS 字幕';
-}
-
 /**
  * 按「字幕列表里的干净整句 + 词级时间(JSON)」重新生成动态字幕(逐词切片), 然后重新应用到视频区。
  * 用途: 某些路径漏了 update / 渲染器没初始化好时, 给用户一个手动兜底(重复点无副作用)。
@@ -6532,12 +6483,6 @@ function refreshDynamicSubtitles() {
 }
 
 if (btnRefresh) btnRefresh.addEventListener('click', () => refreshDynamicSubtitles());
-if (btnFix) btnFix.addEventListener('click', () => {
-  if (!state.selected) { toast('请先选中一条字幕'); return; }
-  openFixForRow(state.selected.ref);
-});
-updateFixButton();
-
 /** 为某样式在文档末尾追加一条新事件, 返回与 analyzeKaraoke 同构的句子对象 */
 function appendSentence(style, start, end, text) {
   const evs = state.assDoc.sorted.filter(e => e.style === style);
@@ -6607,7 +6552,7 @@ timeline.onCreate = (s, e) => createRowAt(s, e);
  * 用户可能改了字还没离开编辑框, 先把最新文本落盘再动结构, 否则会丢改动。 */
 
 /** 角色标记 [Spoke] 在**中文行**文本里(英文行不该有)。复制到新的中/英半句时,
- *  英文那半必须剥掉, 否则会触发「英文行含方括号」坏行告警。 */
+ *  英文那半必须剥掉, 否则会触发「英文行首有角色标签」坏行告警。 */
 function stripLeadSpeakerTag(text) {
   return String(text || '').replace(/^(\s*\{[^}]*\})*\s*\[[^\]]+\]\s*/, '');
 }

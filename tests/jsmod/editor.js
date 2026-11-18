@@ -860,7 +860,7 @@ export class EditorPanel {
     const labels = {
       karaokeMissing: '这句没有逐词效果，也不和其他字幕重叠，会自动补上逐词（按字母数铺满整句时长）',
       overlapNoKaraoke: '这句和其他字幕重叠，重叠时不加逐词，免得两句高亮糊在一起',
-      roleName: '英文行里带了角色名 [..]，会删掉它，并让逐词颜色保持绿色',
+      roleName: '英文行首有已核实的角色标签，修复时会移除标签并保留逐词高亮颜色',
       wordsMismatch: '英文行的逐词和文本对不上，缺词或多词',
       enOverlap: '英文行内部有重叠或重复的字幕，同一段时间里有两条英文',
       spanMismatch: '中英起止对不上，会按比例把英文逐词的时间对齐到中文行'

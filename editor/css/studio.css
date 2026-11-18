@@ -398,8 +398,6 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
   font-weight: 700;
 }
 .warn-toggle:disabled { opacity: .38; }
-.fix-subs-btn:not(:disabled) { border-color: var(--accent-a55); color: var(--accent-text, var(--accent-2)); }
-.fix-subs-btn:not(:disabled):hover { background: var(--accent-a12); }
 
 /* 虚拟滚动列表 (卡片式) */
 #cue-list {
@@ -6927,7 +6925,7 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
   background-color:var(--surface); border-color:var(--accent); box-shadow:none;
 }
 .sf-studio[data-design=uwp] #st-view .sf-pack[aria-current=true] .sf-pack-name svg { color:var(--accent-text, var(--accent)); }
-/* 编辑器 #tab-settings 的动态卡片也收紧 2px（逐词字幕自愈等）。 */
+/* 编辑器 #tab-settings 的动态卡片也收紧 2px。 */
 .sf-studio[data-design=uwp] #tab-settings .st-card,
 .sf-studio[data-design=uwp] #tab-settings .settings-list > .st-card { border-radius:2px; }
 /* 开关打开态：UWP 全尺寸 4px 内边距、mini 3px；MY 已在上方去缩放。 */

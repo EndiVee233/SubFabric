@@ -46,6 +46,12 @@ assert.match(wordHighlightIssue(sent([eventAt(0), `${HL}two${END} ${HL}three${EN
 assert.equal(wordHighlightIssue(sent([eventAt(0), eventAt(1), eventAt(2)], { karStyle: 'k' })), '',
   'karaoke \\k lines are not treated as color slices');
 
+const bracketWords = ['cue', '[Music]', 'now'];
+const bracketEvents = bracketWords.map((_, index) =>
+  bracketWords.map((word, i) => i === index ? HL + word + END : word).join(' '));
+assert.equal(wordHighlightIssue(sent(bracketEvents, { text: bracketWords.join(' ') })), '',
+  'bracketed text is counted as an ordinary word in the highlighter');
+
 // 真实文件的 spans 常叠 \3c/\3a/\blur，关闭块也带这些标签；最后一个事件重复高亮首词。
 const fancyWords = ['I,', 'SpokeIsHere,', 'plan'];
 const open = String.raw`{\c&HFFFFFF&\3c&H0C0CF3&\3a&H40&\blur12.0}`;

@@ -49,7 +49,7 @@ const cases = [
   ['英文行重叠(重复字幕)', 'overlap'],
   ['单中文行(缺英文)', 'lang'],
   ['单英文行(缺中文)', 'lang'],
-  ['英文行含方括号', 'role'],
+  ['英文行首有角色标签', 'role'],
   ['未标注角色', 'role'],
   ['英文行缺词（逐词 8 个 / 文本 9 词）', 'words'],
   ['逐词高亮不连续（第 5 个高亮切片指向第 6 词，应为第 5 词）', 'words'],
@@ -76,7 +76,7 @@ ok(classifyBadReason('随便一句正常文本') === null, '正常文本 → nul
 ok(badCatsOf('').size === 0, '空串 → 空集合');
 // 关键：'字幕重叠' 的 ^...$ 锚定，别把 "英文行重叠" 也算成同一个
 ok(classifyBadReason('英文行重叠(重复字幕)') === 'overlap', '英文行重叠 → overlap');
-ok(badCatsOf('英文行含方括号; 单英文行(缺中文)').size === 2, '方括号与缺行是两类');
+ok(badCatsOf('英文行首有角色标签; 单英文行(缺中文)').size === 2, '角色标签与缺行是两类');
 
 console.log('\n== BAD_CATS 表自洽 ==');
 ok(BAD_CATS.length === 5, '5 个类别', BAD_CATS.length);

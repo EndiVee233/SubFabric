@@ -13,6 +13,7 @@
 'use strict';
 import path from 'path';
 import fs from 'fs';
+import { runInNewContext } from 'node:vm';
 import { fileURLToPath } from 'url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -111,6 +112,40 @@ console.log('\n== 5. 没设过配置色时默认仍是绿（默认行为不变�
 setWordHighlightColor('#00ff00');
 ok(wordHighlightTag() === '{\\c&H00FF00&}', '默认 tag 是绿');
 ok(highlightTagForRebuild(null) === '{\\c&H00FF00&}', '没有行内色时回退到默认绿');
+
+console.log('\n== 6. 右键检测只报告可核对的行首角色标签 ==');
+{
+  const main = fs.readFileSync(path.join(SRC, 'main.js'), 'utf8');
+  const detectRowProblems = runInNewContext(
+    main.slice(main.indexOf('function englishRolePrefix('), main.indexOf('/** 用目标文本重建英文逐词行'))
+      + '\ndetectRowProblems;',
+    { ...K, enSlicesOverlap: () => false, enSpanMismatch: () => false },
+  );
+  const rowOf = (text, name = '', zh = null) => {
+    const en = {
+      style: 'Default', text, start: 0, end: 3, words: [],
+      proto: { layer: '0', name, effect: '', margins: {} },
+      highlightTag: wordHighlightTag('#ff8800'),
+    };
+    en.words = recalcWords(en, text, 0, 3);
+    en.events = buildWordSpecs(en);
+    return { en, zh };
+  };
+  const clean = rowOf('All these players');
+  ok(clean.en.events[0].text.startsWith('{\\c&H0088FF&}'), '夹具首词用非绿色高亮');
+  ok(!Object.keys(detectRowProblems(clean).issues).length, '正常的自定义高亮字幕无修复项');
+  ok(!Object.keys(detectRowProblems(rowOf('I heard [Music]')).issues).length, '正文中的方括号保留');
+  ok(!Object.keys(detectRowProblems(rowOf('[Music] I heard', 'Alice')).issues).length, '未核实的行首方括号文字保留');
+  const duplicateTag = rowOf('[Alice] Do you hear [Music]?', '', { events: [{ text: '[Alice] 你听见了吗' }] });
+  const issues = detectRowProblems(duplicateTag).issues;
+  ok(issues.roleName === '[Alice] ' && Object.keys(issues).length === 1, '配对中文字幕确认角色，只报告角色问题');
+  ok(detectRowProblems(rowOf('[Alice] Hello', 'alice')).issues.roleName === '[Alice] ', '可用 ASS Name 栏确认角色');
+  const damaged = rowOf('[Music] I heard');
+  damaged.en.words.pop();
+  const result = detectRowProblems(damaged);
+  ok(result.needConfirm && result.prefill === '[Music] I heard' && !result.issues.roleName,
+    '有真实缺词时保留行首方括号正文');
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

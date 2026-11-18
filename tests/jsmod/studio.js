@@ -1093,14 +1093,6 @@ function moveStyles() {}
 // 增强配置按使用顺序组织，控件的 ID、值、事件及模型委托祖先不变。
 const enhance = $('st-panel-enhance');
 const cardOf = id => $(id).closest('.st-card');
-const heal = cardOf('cb-heal-words');
-// 必须放回 .settings-list（滚动区）内部；直接挂到 #tab-settings 会落在滚动区外，
-// 在编辑器设置底部形成一张固定/遮挡内容的浮窗。优先放在「高级字幕操作」组后面，
-// 与它的语义位置一致；找不到时退化为设置列表末尾。
-const settingsList = $('tab-settings').querySelector('.settings-list') || $('tab-settings');
-const advanced = $('editor-advanced-actions');
-if (advanced && advanced.parentElement === settingsList) advanced.after(heal);
-else settingsList.appendChild(heal);
 for (const [title, ids] of [
   ['识别结果', ['st-conf-mode']],
   ['热词与专有名词', ['ah-terms-list', 'ah-score']]
@@ -1121,7 +1113,7 @@ explain(assStyleGroup, '工作方式与使用说明', [...assStyleGroup.children
 const performanceCard = $('perf-start').closest('.st-section');
 explain(performanceCard, '测试方法与硬件要求', [performanceCard.querySelector('.st-help')]);
 // 老版 setting-name 只是 span；重排后补上可访问名称，键盘和读屏仍能辨认每个参数。
-for (const group of [...styleGroups, $('ass-style-group'), $('ass-fx-group'), $('word-convert-group'), heal]) {
+for (const group of [...styleGroups, $('ass-style-group'), $('ass-fx-group'), $('word-convert-group')]) {
   group.querySelectorAll('.setting-row').forEach(row => {
     const label = row.querySelector('.setting-name')?.textContent.trim();
     if (!label) return;
