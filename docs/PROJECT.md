@@ -134,7 +134,7 @@
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 只读页签控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/js/project.js`、`editor/js/studio.js`、`editor/js/storage.js` | 桌面设置的业务表单与热词自动保存、设置分类和路由、存储扫描与清理界面 |
-| `editor/js/effect-schemes.js`、`editor/js/postprocess.js` | 桌面特效方案管理和稿件选择，方案快照归一化与 ASS 后处理 |
+| `editor/js/effect-schemes.js`、`editor/js/subtitle-scheme-preview.js`、`editor/js/postprocess.js` | 桌面字幕方案管理与选择、示例视频的 libass 预览、稿件快照归一化与 ASS 后处理 |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
@@ -152,8 +152,10 @@
 
 ## 3. 后端与数据流
 
-- **稿件特效**：桌面 `PUT /api/projects/:id/effect-scheme` 归一化并原子保存方案标识、名称和参数到
-  `project.json`。项目包可携带这份快照，导入时再次归一化。打开稿件先载入快照，再构建字幕预览。
+- **稿件字幕方案**：ASS 样式落到字幕轨，同一次字幕自动保存将方案标识、版本、特效和预览字号记录在
+  `SubFabricSubtitleScheme` 注释中，避免字幕和特效分两次写入。打开稿件先载入快照，再构建字幕预览。
+  SRT 的预览字号及旧项目特效快照走 `/api/projects/:id/effect-scheme` 的原子元数据保存。项目包带上 ASS
+  原文及经归一化的元数据，旧稿件仍读取 `project.json` 或原本的本机特效偏好。
 
 - **Android 原生界面桥接（0.15.0）**：Activity 的 `NativeStudio` 承担真实控件树；内置 WebView 保留共享 ESM
   文档控制器与专用渲染面，`SubFabric.ui` 仅传输当前页控件描述/播放状态，来源仍被原同源导航策略锁定。
@@ -1601,7 +1603,7 @@
   下载与登录 / 性能与调度」。帮助与快捷键页面入口暂停展示。语音识别的「前置」依赖卡片同高同宽，
   对齐模型每张卡片显示一处状态。Windows Electron 安装版额外显示「软件更新」，含当前版本、手动检查、自动检查与下载开关、
   下载进度及「安装并重启」。默认启动后检查，此后每六小时检查，下载完成通过托盘提示。安装经原生确认，
-  保存稿件并停止后台任务后交给 NSIS 原地升级和重启。ASS 双语样式与特效方案选择在稿件的 `#tab-settings`。
+  保存稿件并停止后台任务后交给 NSIS 原地升级和重启。稿件的 `#tab-settings` 提供统一的字幕方案下拉。
 - **性能与调度**：设置页显示本机加速方式和重新进入欢迎界面的入口。全模型速度页签及测试面板暂时隐藏，
   前端不初始化这组控件。基准测试接口保留供现有调用者使用。
 - **热词自动保存**：「识别与校对」编辑热词或强度后，合并连续输入并保存到本机设置；正常退出时先写完待保存输入。
@@ -1613,10 +1615,11 @@
   手动登录态输入。YouTube 卡片提供浏览器入口、文件导入与清除，画质与代理在同页配置。
   Windows x64 打包版已实测打开官方登录页和取消反馈，
   加密写入及复用由模拟登录接口验证，真实账号登录、会员画质下载和安装覆盖未运行。
-- **桌面特效方案**：全局设置管理保存在本机的具名方案，编辑器设置只选择方案或关闭特效。选择即写入稿件，
-  预览与导出共用所保存的参数。以后编辑或删除全局方案，已套用的稿件仍保留原有参数；重新选择可更新。
-  未套用方案的旧稿件继续读取原本的本机特效偏好。完整字幕样式预设的 JSON 保留兼容性，套用其中的特效也写入稿件。
-  Android 保留现有入口和行为。
+- **桌面字幕方案**：中英字体、字号、颜色、粗斜、字幕顺序、逐词样式及后处理特效共用一个本机方案库。
+  套用时写入稿件，更新或删除库中条目不更改已套用的稿件。单条与整库走原字幕样式预设 JSON 协议，
+  兼容旧纯 ASS 样式预设，本机视图继承旧样式预设及特效方案。导入重名自动编号，只导出参数及字体名称。
+  编辑窗用内置 480×270 无音轨示例视频和现有 libass/后处理链实时渲染示例字幕，离开释放预览渲染器。
+  SRT 套用预览字号缩放；Android 保留原编辑入口。
 - **设置作用域**：字体/字号/颜色等 ASS 设置写入当前项目稿件；文件夹只在浏览器本地记录分组，
   不移动 `projects/` 实际文件。
 - **原型隔离**：`prototypes/` 各原型只用合成数据与独立命名空间，不连接真实 API、设置或 `projects/`；

@@ -681,13 +681,13 @@ function _pickStyleName(doc, wanted, lang, used) {
  * @returns {{ok:boolean,changed:number,applied:object,error?:string}}
  *          applied 记录"预设的哪个轨落到了稿件的哪个样式名"，供界面回显。
  */
-export function applyAssStylePreset(doc, preset, targets) {
+export function applyAssStylePreset(doc, preset, targets, languages = ['zh', 'en']) {
   if (!doc || !preset || !preset.tracks) return { ok: false, changed: 0, applied: {}, error: '预设为空' };
   const plan = [];
   // `used` 记已落轨的样式名：**两条轨绝不能落到同一个样式上**，否则后一条会静默
   // 覆盖前一条还报成功（只有一条样式的稿件就会这样）。单测 ⑤ 钉的正是它。
   const used = new Set();
-  for (const lang of ['zh', 'en']) {
+  for (const lang of languages) {
     const t = preset.tracks[lang];
     if (!t) continue;
     // 目标样式名：优先当前稿件的双语目标；没有再按预设里记的名字；再没有按语言线索
@@ -702,7 +702,7 @@ export function applyAssStylePreset(doc, preset, targets) {
     used.add(dest.toLowerCase());
     plan.push({ lang, dest, t });
   }
-  if (plan.length < 2) return { ok: false, changed: 0, applied: {}, error: '预设里缺少中文或英文轨' };
+  if (!plan.length || plan.length < languages.length) return { ok: false, changed: 0, applied: {}, error: '预设里缺少中文或英文轨' };
 
   const applied = {};
   let changed = 0;

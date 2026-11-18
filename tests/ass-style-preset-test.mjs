@@ -203,6 +203,8 @@ console.log('\n── ⑤ 稿件里认不出中英样式时明确失败 ──')
   check('单样式稿件导入失败', res.ok === false, JSON.stringify(res));
   check('失败时不改任何东西（changed=0）', res.changed === 0);
   check('失败原因指向找不到的轨道', /找不到/.test(String(res.error)), res.error);
+  const only = applyAssStylePreset(doc, preset, { en: doc.styleNames[0] }, ['en']);
+  check('稿件明确指定单轨时只套用对应语言', only.ok && only.changed === 1 && doc.getStyle(doc.styleNames[0]).fontname === 'Y');
 
   const doc2 = new AssDoc(assText());
   const empty = applyAssStylePreset(doc2, null, TARGETS);

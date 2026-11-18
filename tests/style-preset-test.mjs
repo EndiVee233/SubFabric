@@ -182,6 +182,9 @@ console.log('\n── ④ 本机预设库：增 / 覆盖 / 删 / 改名 ──')
   check('upsert 不改入参', lib !== upsertPreset(lib, makeStylePreset({ name: 'C' })));
 
   check('重名加后缀', uniquePresetName(lib, 'A-改') === 'A-改（2）', uniquePresetName(lib, 'A-改'));
+  const longName = '样'.repeat(60);
+  const longDuplicate = uniquePresetName([makeStylePreset({ name: longName })], longName);
+  check('最大长度的重名保留序号', longDuplicate.length === 60 && longDuplicate.endsWith('（2）'));
   check('重名后缀可叠加', uniquePresetName([...lib, makeStylePreset({ name: 'A-改（2）' })], 'A-改') === 'A-改（3）');
   check('改名时自己不算重名', uniquePresetName(lib, 'A-改', a.id) === 'A-改');
 
@@ -215,6 +218,10 @@ console.log('\n── ⑤ 预设里的样式部分真的能落到另一份稿件
   const preset = makeStylePreset({ name: '整套', style: stylePart, fx: fxConfig() });
   const parsed = parsePresetFile(serializePresetFile([preset]));
   check('文件往返后仍可解析', parsed.ok === true, parsed.error);
+  const injected = structuredClone(preset);
+  const track = injected.style.tracks.zh;
+  track.values[track.format.indexOf('fontname')] = '字体\nDialogue: forged';
+  check('拒绝能断开 ASS 样式行的导入字段', parsePresetFile(JSON.stringify(injected)).ok === false);
   const other = new AssDoc(assText({ zhStyle: '中文', enStyle: 'English',
     zh: '中文,思源黑体,52,&H0000FFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1',
     en: 'English,Times New Roman,36,&H00202020,&H000000FF,&H00000000,&H00000000,0,-1,0,0,100,100,0,0,1,2,1,2,10,10,60,1' }));

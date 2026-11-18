@@ -1019,17 +1019,17 @@ function loadSystemFontList() {
 
 /** 让这个字体名在预览里可用。
  *  @returns 'present'(本来就有) | 'loaded'(刚从本机字体库取来) | 'missing'(本机没装) */
-async function ensureSystemFont(name) {
+async function ensureSystemFont(name, player = assPlayer) {
   const key = String(name || '').trim();
   if (!key) return 'missing';
-  if (await assPlayer.isFontAvailable(key)) return 'present';
+  if (await player.isFontAvailable(key)) return 'present';
   const lib = await loadSystemFontList();
   if (!lib.names.has(key.toLowerCase())) return 'missing';
   try {
     const r = await fetch('/api/font-file?name=' + encodeURIComponent(key));
     if (!r.ok) return 'missing';
     const blob = await r.blob();
-    await assPlayer.cacheFont(key, new File([blob], key + '.ttf', { type: 'font/ttf' }), false);
+    await player.cacheFont(key, new File([blob], key + '.ttf', { type: 'font/ttf' }), false);
     return 'loaded';
   } catch { return 'missing'; }
 }
@@ -1545,14 +1545,37 @@ function saveCurrentStylePreset() {
 }
 
 /** 套用选中的预设：样式写进稿件 → 重排中英顺序 → 换特效配置 → 换字号缩放。 */
-async function applyStylePresetFromLibrary() {
+function applySubtitleSchemeStyle(preset) {
+  const doc = state.assDoc;
+  if (doc.styleNames.length === 1) {
+    const styleName = doc.styleNames[0];
+    const hasChinese = findStyleForLang(doc, 'zh') || doc.events.some(event => /\p{Script=Han}/u.test(assPlainText(event.text)));
+    const lang = hasChinese ? 'zh' : 'en';
+    const result = applyAssStylePreset(doc, preset.style, { [lang]: styleName }, [lang]);
+    if (result.ok) {
+      const font = doc.getStyle(styleName)?.fontname;
+      ensureSystemFont(font).then(() => {
+        if (state.assDoc === doc && doc.getStyle(styleName)?.fontname === font) assPlayer.load(doc.serialize(), [font]);
+      });
+    }
+    return result;
+  }
+  const result = applyAssStylePresetObject(preset.style);
+  if (result.ok) {
+    if (preset.order) applyZhEnOrder(preset.order);
+    const styles = [result.zh, result.en];
+    const fonts = styles.map(style => doc.getStyle(style)?.fontname);
+    Promise.all(fonts.map(font => ensureSystemFont(font))).then(loaded => {
+      if (loaded.includes('loaded') && state.assDoc === doc &&
+          styles.every((style, i) => doc.getStyle(style)?.fontname === fonts[i])) assPlayer.load(doc.serialize(), fonts);
+    });
+  }
+  return result;
+}
+
+function applyStylePresetFromLibrary() {
   const preset = presetById(presetActiveId);
   if (!preset) { toast('先在下拉框里选一条预设'); return; }
-  if (preset.fx && effectSchemes) {
-    const project = state.project, doc = state.assDoc, cues = state.srtCues;
-    const saved = await effectSchemes.applySnapshot({ id: '', name: preset.name, config: cloneConfig(preset.fx) });
-    if (!saved || project !== state.project || doc !== state.assDoc || cues !== state.srtCues) return;
-  }
   const notes = [];
   let styleOk = false;
   if (preset.style) {
@@ -1567,11 +1590,9 @@ async function applyStylePresetFromLibrary() {
     refreshOrderControl();
   }
   if (preset.fx) {
-    if (!effectSchemes) {
-      state.postProcessConfig = cloneConfig(preset.fx);
-      savePostProcessConfig(state.postProcessConfig);
-      syncFxUi(state.postProcessConfig);
-    }
+    state.postProcessConfig = cloneConfig(preset.fx);
+    savePostProcessConfig(state.postProcessConfig);
+    syncFxUi(state.postProcessConfig);
     notes.push(state.postProcessConfig.enabled ? '特效已开启' : '特效已关闭');
   }
   if (typeof preset.overlayFontScale === 'number' && rngFont) {
@@ -1645,7 +1666,6 @@ async function importStylePresetFile(file) {
   toast(`已导入 ${names.length} 条预设`, 2800);
 }
 
-let stylePresetSave = null;
 function initStylePresetControls() {
   if (!presetEls.group) return;
   renderPresetSelect();
@@ -1661,12 +1681,7 @@ function initStylePresetControls() {
       else setPresetHint('应用预设会写进当前稿件（自动保存）；特效与字号缩放立即作用到视频预览与导出。');
     });
   }
-  if (presetEls.apply) presetEls.apply.addEventListener('click', () => {
-    if (stylePresetSave) return;
-    stylePresetSave = applyStylePresetFromLibrary()
-      .catch(error => toast(error.message, 4500))
-      .finally(() => { stylePresetSave = null; });
-  });
+  if (presetEls.apply) presetEls.apply.addEventListener('click', applyStylePresetFromLibrary);
   if (presetEls.save) presetEls.save.addEventListener('click', () => saveCurrentStylePreset());
   if (presetEls.rename) presetEls.rename.addEventListener('click', () => renameSelectedPreset());
   if (presetEls.del) presetEls.del.addEventListener('click', () => deleteSelectedPreset());
@@ -2070,6 +2085,7 @@ function setSrt(text, name) {
   state.format = 'srt';
   state.fileName = name;
   state.assDoc = null;
+  effectSchemes?.loadSelection();
   state.kar = null;
   updateWordConvertStyles();
   state.assStyleTargets = null;
@@ -2206,6 +2222,7 @@ function setAss(text, name, options = {}) {
   state.fileName = name;
   state.srtCues = [];
   state.assDoc = new AssDoc(text);
+  effectSchemes?.loadSelection(state.assDoc);
   /* ★ 载入即自愈：先修"逐词行被清空/文本错位"再往下分析。
    *   必须在下面 normalizeAssColorTags / analyzeKaraoke **之前** ——
    *   修好之后再分析，配对看到的才是干净数据；
@@ -9169,14 +9186,26 @@ initFxControls();
 initStylePresetControls();
 const effectSchemes = initEffectSchemes({
   getProject: () => state.project,
-  getConfig: () => state.postProcessConfig,
+  getDocument: () => state.assDoc,
+  getFormat: () => state.format,
+  capturePreset: captureStylePreset,
   legacyConfig: legacyFxConfig,
-  applyConfig(config, refresh) {
+  applyConfig(config, refresh, scale) {
     state.postProcessConfig = config;
+    if (typeof scale === 'number') {
+      rngFont.value = String(scale);
+      rngFont.dispatchEvent(new Event('input'));
+    }
     if (refresh && state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
   },
+  applyStyle: applySubtitleSchemeStyle,
+  saveSubtitle: () => Projects.scheduleSave(),
   syncControls: syncFxUi,
-  confirmDelete: onYes => panel.showConfirm('删除方案', '删除这个特效方案？已套用的稿件会保留当前效果。', '删除', '取消', onYes),
+  confirmDelete: onYes => panel.showConfirm('删除方案', '删除这个字幕方案？已套用的稿件会保留当前样式和效果。', '删除', '取消', onYes),
+  download,
+  ensureFont: ensureSystemFont,
+  enhanceFontInput,
+  rememberFont: (font, file) => assPlayer.cacheFont(font, file, false),
   toast,
 });
 
@@ -9188,8 +9217,8 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
   state, video, timeline, panel, toast, toastAfterCueIntro, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
-  onProjectChanged: effectSchemes?.projectChanged,
-  waitForEffectSave: () => stylePresetSave || effectSchemes?.waitForSave(),
+  onProjectChanged: effectSchemes?.loadSelection,
+  waitForEffectSave: effectSchemes?.waitForSave,
   onEditorLeave: rimClose,
   // 打开项目的进度卡（右下角 #job-card）：读 3~4MB 字幕 + 同步解析的这段时间里
   // 界面是静止的，得让用户看见"在打开"，也得看见打开了多大的稿子。

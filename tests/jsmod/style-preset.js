@@ -67,6 +67,12 @@ function validStyle(style) {
     const t = tr[lang];
     if (!t || !Array.isArray(t.format) || !Array.isArray(t.values)) return `tracks.${lang} 缺少 format/values`;
     if (t.format.length !== t.values.length) return `tracks.${lang} 的 format 与 values 数量不一致`;
+    if (t.format.length > 64 || t.format.some(field => typeof field !== 'string' || !/^[a-z]\w{0,31}$/i.test(field))) {
+      return 'ASS 样式字段无效';
+    }
+    if (t.values.some(value => value != null && (
+      !['string', 'number'].includes(typeof value) || /[,\u0000-\u001f]/.test(String(value)) || String(value).length > 256
+    ))) return 'ASS 样式参数无效';
     if (!t.format.some(f => String(f).toLowerCase() === 'fontname')) return `tracks.${lang} 里没有 fontname 字段`;
   }
   return '';
@@ -246,7 +252,8 @@ export function uniquePresetName(list, want, excludeId) {
     .map(p => cleanPresetName(p.name).toLowerCase()));
   if (!taken.has(base.toLowerCase())) return base;
   for (let n = 2; n < 1000; n++) {
-    const cand = `${base}（${n}）`.slice(0, MAX_NAME_LEN);
+    const suffix = `（${n}）`;
+    const cand = base.slice(0, MAX_NAME_LEN - suffix.length) + suffix;
     if (!taken.has(cand.toLowerCase())) return cand;
   }
   return `${base}（${Date.now().toString(36)}）`.slice(0, MAX_NAME_LEN);

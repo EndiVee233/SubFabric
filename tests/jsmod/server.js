@@ -329,11 +329,13 @@ function safeJoin(root, urlPath) {
 // 提供访问（文件仍留在仓库里可随时恢复，只是没有 HTTP 入口）。
 const STATIC_RESOURCES = new Set([
   '/editor/studio.html', '/editor/css/studio.css', '/editor/css/classic.css', '/editor/lang/zh-CN.json', '/editor/assets/app-logo.png',
+  '/editor/assets/subtitle-preview.webm',
   ...['accent', 'ass', 'assplayer', 'color-picker', 'editor', 'font-picker', 'i18n', 'icons',
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'effect-schemes', 'log-import', 'workload', 'workload-panel'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'effect-schemes', 'subtitle-scheme-preview',
+    'log-import', 'workload', 'workload-panel'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',

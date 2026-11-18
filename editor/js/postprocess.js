@@ -206,7 +206,10 @@ export function normalizeEffectScheme(raw) {
   if (!raw?.config || typeof raw.config !== 'object' || Array.isArray(raw.config)) return null;
   const id = typeof raw.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(raw.id) ? raw.id : '';
   const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 60) : '';
-  return { id, name, config: cloneConfig(raw.config) };
+  const snapshot = { id, name, config: cloneConfig(raw.config) };
+  if (typeof raw.revision === 'string' && raw.revision.length <= 64) snapshot.revision = raw.revision;
+  if (Number.isFinite(raw.overlayFontScale)) snapshot.overlayFontScale = clamp(raw.overlayFontScale, 0.6, 1.8);
+  return snapshot;
 }
 
 /** 从本地存储读取后处理配置 */

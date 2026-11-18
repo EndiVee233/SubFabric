@@ -1,26 +1,34 @@
 import { cloneConfig, normalizeEffectScheme } from './postprocess.js';
-import { cleanPresetName, newPresetId } from './style-preset.js';
+import { cleanPresetName, newPresetId, makeStylePreset, normalizeStylePreset, loadPresetLibrary, PRESET_STORE_KEY,
+  parsePresetFile, serializePresetFile, presetSummary, uniquePresetName } from './style-preset.js';
+import { initSubtitleSchemePreview } from './subtitle-scheme-preview.js';
 import { t } from './i18n.js';
 
-const STORAGE_KEY = 'subfabric_effect_schemes';
+const STORAGE_KEY = 'subfabric_subtitle_schemes';
+const LEGACY_KEY = 'subfabric_effect_schemes';
+const ASS_SCHEME_COMMENT = 'SubFabricSubtitleScheme';
 
 function loadSchemes() {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    return Array.isArray(raw) ? raw.map(normalizeEffectScheme).filter(scheme => scheme?.id && scheme.name) : [];
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved != null) {
+      const rows = JSON.parse(saved);
+      return Array.isArray(rows) ? rows.map(raw => normalizeStylePreset(raw).preset).filter(Boolean) : [];
+    }
+    const schemes = loadPresetLibrary();
+    let effects;
+    try { effects = JSON.parse(localStorage.getItem(LEGACY_KEY) || '[]'); } catch { return schemes; }
+    if (Array.isArray(effects)) for (const raw of effects) {
+      const row = normalizeEffectScheme(raw);
+      if (!row?.id || !row.name || schemes.some(item => item.id === row.id)) continue;
+      schemes.push(makeStylePreset({ id: row.id, name: uniquePresetName(schemes, row.name), fx: row.config }));
+    }
+    return schemes;
   } catch { return []; }
 }
 
-function describe(config) {
-  if (!config.enabled) return t('关闭特效');
-  const effects = [];
-  if (config.glow.enabled && (config.glow.zh.enabled || config.glow.en.enabled)) effects.push(t('微光'));
-  if (config.fadein.enabled) effects.push(t('柔和淡入'));
-  if (config.grow.enabled) effects.push(t('词生长'));
-  return effects.join(' · ') || t('未启用任何效果');
-}
-
-export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyConfig, syncControls, confirmDelete, toast }) {
+export function initEffectSchemes({ getProject, getDocument, getFormat, capturePreset, legacyConfig, applyConfig,
+  applyStyle, saveSubtitle, syncControls, confirmDelete, download, ensureFont, enhanceFontInput, rememberFont, toast }) {
   const el = id => document.getElementById(id);
   const controls = el('ass-fx-group');
   const select = el('sf-effect-select');
@@ -33,9 +41,14 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
   controls.hidden = false;
   el('sf-effect-picker').hidden = false;
   el('sf-settings-tab-effects').hidden = false;
+  el('ass-style-group').hidden = true;
+  el('sf-preset-group').hidden = true;
+  el('rng-font').closest('.setting-row').hidden = true;
 
   const list = el('st-effect-list'), form = el('st-effect-form'), name = el('st-effect-name');
   const add = el('st-effect-new'), status = el('sf-effect-status'), listStatus = el('st-effect-status');
+  const file = el('st-effect-file'), exportButton = el('st-effect-export');
+  const preview = initSubtitleSchemePreview({ ensureFont, enhanceFontInput, rememberFont, toast });
   let selection = null;
   let pending = null;
   let editId = '';
@@ -44,32 +57,55 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
   function renderPicker() {
     const schemes = loadSchemes();
     const current = schemes.find(scheme => scheme.id === selection?.id);
-    const sameConfig = current && JSON.stringify(current.config) === JSON.stringify(selection.config);
+    const sameConfig = current && JSON.stringify(current.fx) === JSON.stringify(selection.config)
+      && (selection.revision ? current.updatedAt === selection.revision : !current.style);
     const localSnapshot = selection?.name || selection?.config.enabled;
     const value = sameConfig ? 'scheme:' + current.id
       : localSnapshot || (!selection && legacyConfig.enabled) ? 'snapshot' : 'off';
     const option = (label, key) => new Option(label, key, value === key, value === key);
-    const choices = [option(t('关闭特效'), 'off')];
+    const choices = [option(t('保留稿件样式 · 关闭特效'), 'off')];
     if (value === 'snapshot') {
-      const label = selection ? (selection.name || t('稿件特效')) + ' · ' + t('已保存参数') : t('沿用原有特效');
+      const label = selection ? (selection.name || t('稿件字幕方案')) + ' · ' + t('已保存参数') : t('沿用原有特效');
       choices.push(option(label, 'snapshot'));
     }
     choices.push(...schemes.map(scheme => option(scheme.name, 'scheme:' + scheme.id)));
     select.replaceChildren(...choices);
-    select.disabled = !!pending;
-    status.textContent = pending ? t('正在保存特效方案…')
+    select.disabled = !!pending || !getFormat();
+    status.textContent = pending ? t('正在保存字幕方案…')
       : value === 'snapshot' && current ? t('当前稿件保留已保存的参数。重新选择同名方案可套用新版。')
+      : getFormat() === 'srt' ? t('SRT 仅应用预览字号缩放。')
       : t('用于 ASS 字幕的预览与导出。');
   }
 
-  function projectChanged() {
-    selection = normalizeEffectScheme(getProject()?.meta?.effectScheme);
-    applyConfig(cloneConfig(selection?.config || legacyConfig), false);
+  function loadSelection(doc) {
+    let embedded;
+    try { embedded = JSON.parse(doc?.getScriptInfoComment(ASS_SCHEME_COMMENT) || 'null'); } catch { /* 兼容旧稿 */ }
+    selection = normalizeEffectScheme(embedded) || normalizeEffectScheme(getProject()?.meta?.effectScheme);
+    applyConfig(cloneConfig(selection?.config || legacyConfig), false, selection?.overlayFontScale ?? 1);
     renderPicker();
   }
 
-  async function applySnapshot(snapshot) {
+  async function applyScheme(scheme) {
     if (pending) return false;
+    const doc = getDocument();
+    const snapshot = scheme ? normalizeEffectScheme({
+      id: scheme.id, name: scheme.name, config: scheme.fx,
+      revision: scheme.style || scheme.overlayFontScale != null ? scheme.updatedAt : undefined,
+      overlayFontScale: scheme.overlayFontScale,
+    }) : normalizeEffectScheme({ config: cloneConfig(), overlayFontScale: selection?.overlayFontScale });
+    if (doc) {
+      if (scheme?.style) {
+        const result = applyStyle(scheme);
+        if (!result.ok) { toast(t(result.error), 4500); renderPicker(); return false; }
+      }
+      // 将样式行与特效快照作为同一份 ASS 自动保存。原有项目级快照仍可读取。
+      doc.setScriptInfoComment(ASS_SCHEME_COMMENT, JSON.stringify(snapshot));
+      selection = snapshot;
+      applyConfig(cloneConfig(snapshot.config), true, snapshot.overlayFontScale);
+      saveSubtitle();
+      renderPicker();
+      return true;
+    }
     const project = getProject();
     const work = async () => {
       let saved = snapshot;
@@ -85,12 +121,12 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
           project.meta.effectScheme = saved;
         }
       } catch (error) {
-        toast(t('特效方案保存失败') + '：' + error.message, 4500);
+        toast(t('字幕方案保存失败') + '：' + error.message, 4500);
         return false;
       }
       if (getProject() === project) {
         selection = saved;
-        applyConfig(cloneConfig(saved.config), true);
+        applyConfig(cloneConfig(saved.config), true, saved.overlayFontScale);
       }
       return true;
     };
@@ -105,11 +141,9 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
 
   select.addEventListener('change', () => {
     const value = select.value;
-    if (value === 'snapshot' || pending) return;
-    const scheme = value === 'off'
-      ? { id: '', name: '', config: cloneConfig() }
-      : loadSchemes().find(row => 'scheme:' + row.id === value);
-    if (scheme) void applySnapshot(scheme);
+    if (value === 'snapshot' || pending || !getFormat()) { renderPicker(); return; }
+    const scheme = loadSchemes().find(row => 'scheme:' + row.id === value);
+    if (scheme || value === 'off') void applyScheme(scheme);
     else renderPicker();
   });
 
@@ -124,10 +158,11 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
 
   function renderList(schemes = loadSchemes()) {
     list.replaceChildren();
+    exportButton.disabled = !schemes.length;
     if (!schemes.length && !draftConfig) {
       const empty = document.createElement('p');
       empty.className = 'sf-scheme-empty';
-      empty.textContent = t('还没有特效方案');
+      empty.textContent = t('还没有字幕方案');
       list.append(empty);
     }
     for (const scheme of schemes) {
@@ -142,7 +177,7 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
       title.className = 'st-scheme-name';
       title.textContent = scheme.name;
       summary.className = 'st-scheme-desc';
-      summary.textContent = describe(scheme.config);
+      summary.textContent = t(presetSummary(scheme));
       open.replaceChildren(title, summary);
       const remove = button('删除', 'btn btn-mini', () => confirmDelete(() => {
         if (storeSchemes(loadSchemes().filter(row => row.id !== scheme.id))) {
@@ -150,7 +185,8 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
           add.focus();
         }
       }));
-      card.append(open, remove);
+      const exportOne = button('导出', 'btn btn-mini', () => exportSchemes([scheme]));
+      card.append(open, exportOne, remove);
       list.append(card);
     }
   }
@@ -158,7 +194,7 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
   function storeSchemes(schemes) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(schemes)); }
     catch {
-      toast(t('无法写入本机特效方案'), 4000);
+      toast(t('无法写入本机字幕方案'), 4000);
       return false;
     }
     listStatus.hidden = true;
@@ -168,17 +204,19 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
   }
 
   function startEdit(scheme) {
+    const preset = scheme || capturePreset();
     editId = scheme?.id || '';
-    draftConfig = cloneConfig(scheme?.config || getConfig());
-    if (!scheme) draftConfig.enabled = true;
+    draftConfig = cloneConfig(preset.fx);
     name.value = scheme?.name || '';
     name.setCustomValidity('');
     el('st-effect-title').textContent = t(scheme ? '编辑方案' : '添加方案');
     form.hidden = false;
     form.classList.add('open');
     syncControls(draftConfig);
+    preview.configure({ ...preset, style: scheme ? preset.style : preset.style || preview.defaultStyle });
     renderList();
-    name.focus();
+    form.scrollIntoView({ block: 'start' });
+    name.focus({ preventScroll: true });
   }
 
   function closeForm(id = editId) {
@@ -187,8 +225,42 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
     form.hidden = true;
     form.classList.remove('open');
     renderList();
-    (id && list.querySelector(`[data-effect-edit="${id}"]`) || add).focus({ preventScroll: true });
+    const previous = [...list.querySelectorAll('[data-effect-edit]')].find(row => row.dataset.effectEdit === id);
+    (previous || add).focus({ preventScroll: true });
   }
+
+  function exportSchemes(schemes) {
+    if (!schemes.length) return;
+    const title = schemes.length === 1 ? schemes[0].name : t('字幕方案');
+    const safeName = title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_');
+    download(safeName + '.style-preset.json', serializePresetFile(schemes), 'application/json;charset=utf-8');
+  }
+
+  function announce(message) {
+    listStatus.textContent = t(message);
+    listStatus.hidden = false;
+  }
+
+  exportButton.addEventListener('click', () => exportSchemes(loadSchemes()));
+  el('st-effect-import').addEventListener('click', () => file.click());
+  file.addEventListener('change', async () => {
+    const picked = file.files?.[0];
+    file.value = '';
+    if (!picked) return;
+    if (picked.size > 1024 * 1024) { announce('方案文件超过 1 MB'); return; }
+    try {
+      const parsed = parsePresetFile(await picked.text());
+      if (!parsed.ok) { announce(parsed.error); return; }
+      const schemes = loadSchemes();
+      for (const row of parsed.presets) {
+        const title = uniquePresetName(schemes, row.name);
+        schemes.push({ ...row, id: newPresetId(), name: title });
+      }
+      if (storeSchemes(schemes)) announce(parsed.skipped
+        ? `已导入 ${parsed.presets.length} 条方案，跳过 ${parsed.skipped} 条无效记录`
+        : `已导入 ${parsed.presets.length} 条方案`);
+    } catch (error) { announce(t('方案导入失败') + '：' + error.message); }
+  });
 
   add.addEventListener('click', () => startEdit());
   el('st-effect-cancel').addEventListener('click', () => closeForm());
@@ -203,18 +275,22 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
       name.reportValidity();
       return;
     }
-    const scheme = normalizeEffectScheme({ id: editId || newPresetId(), name: title, config: draftConfig });
+    const existing = schemes.find(row => row.id === editId);
+    const result = normalizeStylePreset(makeStylePreset({
+      id: editId || newPresetId(), name: title, createdAt: existing?.createdAt, fx: draftConfig, ...preview.read(),
+    }));
+    if (!result.ok) { toast(t(result.error), 4500); return; }
+    const scheme = result.preset;
     const index = schemes.findIndex(row => row.id === editId);
     if (index >= 0) schemes[index] = scheme;
     else schemes.push(scheme);
     if (storeSchemes(schemes)) {
       closeForm(scheme.id);
-      listStatus.textContent = t('方案已保存');
-      listStatus.hidden = false;
+      announce('方案已保存');
     }
   });
   window.addEventListener('storage', event => {
-    if (event.key !== STORAGE_KEY && event.key !== null) return;
+    if (![STORAGE_KEY, LEGACY_KEY, PRESET_STORE_KEY, null].includes(event.key)) return;
     renderList();
     renderPicker();
   });
@@ -222,13 +298,13 @@ export function initEffectSchemes({ getProject, getConfig, legacyConfig, applyCo
   renderList();
   renderPicker();
   return {
-    projectChanged,
-    applySnapshot,
+    loadSelection,
     waitForSave: () => pending,
     editConfig(mutate) {
       if (!draftConfig) return;
       mutate(draftConfig);
       syncControls(draftConfig);
+      preview.queue(draftConfig);
     },
   };
 }
