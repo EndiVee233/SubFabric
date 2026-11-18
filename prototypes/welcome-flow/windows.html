@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubFabric · Windows 欢迎流程原型</title>
+  <link rel="stylesheet" href="../../editor/css/studio.css">
+  <link rel="stylesheet" href="windows.css">
+  <script defer src="../../editor/js/studio-themes.js"></script>
+  <script defer src="windows.js"></script>
+</head>
+<body class="sf-studio win-demo" data-theme="dark" data-design="uwp" data-theme-pack="windows-uwp" data-bg="solid">
+  <main class="win-setup">
+    <header class="win-bar">
+      <span class="win-brand"><img src="../../editor/assets/app-logo.png" alt=""><b>SubFabric</b></span>
+      <span class="win-preview">Windows 主题 · 欢迎原型</span>
+    </header>
+    <div class="win-layout">
+      <aside class="win-guide" aria-label="配置进度">
+        <ol class="win-steps">
+          <li aria-current="step">欢迎</li>
+          <li>模型方案</li>
+          <li>模型与前置</li>
+          <li>大模型方案</li>
+          <li>网站登录</li>
+        </ol>
+      </aside>
+      <div id="st-view" class="win-work">
+        <div class="win-scroll" id="win-scroll">
+          <section class="win-pane win-intro" aria-labelledby="win-welcome">
+            <h1 id="win-welcome" tabindex="-1">欢迎使用 SubFabric</h1>
+            <p>配置这台电脑的语音识别方式。字幕翻译和网站登录也可以稍后在设置里完成。</p>
+            <div class="win-caption-art" aria-hidden="true">
+              <div></div><div></div><div><span></span><span></span></div>
+            </div>
+          </section>
+          <section class="win-pane" aria-labelledby="win-backends" hidden>
+            <h1 id="win-backends" tabindex="-1">选择模型方案</h1>
+            <p>勾选此电脑要使用的加速方式。后续模型目录会按选中的方案显示。</p>
+            <div class="sf-asr-families win-choices">
+              <label class="sf-asr-family">
+                <span class="sf-asr-family-name">CUDA</span>
+                <span class="sf-asr-family-desc">NVIDIA 显卡专用</span>
+                <span class="sf-asr-count">示例设备 · GeForce RTX 4060 Ti</span>
+                <input type="checkbox" name="backend" value="cuda" checked>
+              </label>
+              <label class="sf-asr-family">
+                <span class="sf-asr-family-name">Vulkan</span>
+                <span class="sf-asr-family-desc">支持 AMD、Intel 与 NVIDIA 显卡</span>
+                <span class="sf-asr-count">示例设备 · Vulkan 可用</span>
+                <input type="checkbox" name="backend" value="vulkan" checked>
+              </label>
+            </div>
+            <p class="gl-hint" id="win-accel-status" role="status"></p>
+          </section>
+          <section class="win-pane" aria-labelledby="win-models" hidden>
+            <h1 id="win-models" tabindex="-1">配置模型与前置</h1>
+            <p>选择一个系列查看模型，也可以先准备运行环境再返回目录。</p>
+            <!-- Catalog snapshot from tools/templates/studio.html. -->
+            <div id="sf-asr-families" class="sf-asr-families">
+          <button type="button" class="sf-asr-family" data-asr-family="Whisper 系列"><span class="sf-asr-family-name">Whisper 系列</span><span class="sf-asr-family-desc">Faster-Whisper · 本地识别</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="Parakeet 系列"><span class="sf-asr-family-name">Parakeet 系列</span><span class="sf-asr-family-desc">NPU / Vulkan</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="Qwen 系列"><span class="sf-asr-family-name">Qwen 系列</span><span class="sf-asr-family-desc">ASR · CUDA / Vulkan</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="对齐模型"><span class="sf-asr-family-name">对齐模型</span><span class="sf-asr-family-desc">Qwen3-ForcedAligner · 词级时间</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="云端识别"><span class="sf-asr-family-name">云端系列</span><span class="sf-asr-family-desc">必剪 / 剪映 · 免下载模型</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <button type="button" class="sf-asr-family" data-asr-family="前置"><span class="sf-asr-family-name">前置</span><span class="sf-asr-family-desc">运行环境、模型目录与说话人分离</span><span class="sf-asr-count">配置与依赖</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          <!-- 停用：VibeVoice 系列入口
+          <button type="button" class="sf-asr-family" data-asr-family="VibeVoice 系列"><span class="sf-asr-family-name">VibeVoice 系列</span><span class="sf-asr-family-desc">多语 · CUDA 4bit · 说话人时间轴</span><span class="sf-asr-count">读取中…</span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+          -->
+          <button type="button" class="sf-asr-family" data-asr-family="其它模型" hidden><span class="sf-asr-family-name">其它模型</span><span class="sf-asr-family-desc">旧版本下载 · 当前加速方式未启用</span><span class="sf-asr-count"></span><span class="sf-asr-arrow" aria-hidden="true">↗</span></button>
+        </div>
+            <div class="win-model-detail" id="win-model-detail" hidden>
+              <div id="sf-asr-detail" class="sf-asr-detail" hidden><button type="button" class="btn" id="sf-asr-back">← 返回系列</button><h3 id="sf-asr-detail-title"></h3></div>
+              <div class="st-card">
+                <div class="st-card-title">模型与配置</div>
+                <div class="st-models" id="st-models"></div>
+              </div>
+            </div>
+          </section>
+          <section class="win-pane" aria-labelledby="win-schemes" hidden>
+            <h1 id="win-schemes" tabindex="-1">大模型方案</h1>
+            <p>为字幕翻译选一套方案，或添加自己的配置。</p>
+            <!-- Scheme toolbar and inline editor from tools/templates/studio.html. -->
+            <div class="st-subhead">
+          <div>
+            <div class="st-subtitle-strong st-scheme-title">方案列表</div>
+            
+          </div>
+          <div class="st-scheme-actions">
+            <button type="button" class="btn btn-mini" id="st-scheme-import">导入方案</button>
+            <button type="button" class="btn btn-mini" id="st-scheme-export">导出方案</button>
+            <button type="button" class="btn btn-mini" id="st-scheme-new">添加方案</button>
+            <input type="file" id="st-scheme-file" accept=".json,application/json" hidden>
+          </div>
+        </div>
+            <div class="st-schemes" id="st-scheme-list"></div>
+            <section class="st-scheme-inline" id="st-scheme-drawer" hidden inert aria-hidden="true"><div class="sf-scheme-content">
+        <div class="st-drawer-head">
+          <button type="button" class="st-drawer-x" id="st-scheme-close" title="关闭" data-ico="x"></button>
+          <span class="st-drawer-title" id="st-scheme-title">大模型方案</span>
+          <span class="st-scheme-cur" id="st-scheme-cur" hidden>当前使用</span>
+          <span class="st-drawer-actions">
+            <button type="button" class="btn btn-mini" id="st-scheme-test">测试 API</button>
+            <button type="button" class="btn btn-mini" id="st-scheme-reset">恢复默认</button>
+          </span>
+        </div>
+
+        <div class="st-drawer-body">
+          <div class="st-picks" id="st-drawer-picks" hidden></div>
+
+          <div class="st-card">
+            <div class="st-card-title">方案与服务商</div>
+            <div class="st-grid">
+              <label class="st-lbl" for="st-scheme-name">方案名称</label><input id="st-scheme-name" class="st-input" maxlength="80" required placeholder="为这个方案命名"><small class="st-field-error" id="st-scheme-name-error" aria-live="polite"></small>
+              <span class="st-lbl">服务商</span>
+              <select id="st-provider" class="st-select"></select>
+              <span class="st-lbl">API 接口地址</span>
+              <input type="text" id="st-baseurl" class="st-input" spellcheck="false" placeholder="https://api.deepseek.com/v1">
+              <label class="st-lbl" for="st-key">API Key</label>
+              <div class="st-scheme-key-row">
+                <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
+                <button type="button" class="btn btn-mini" id="st-key-eye">显示</button>
+                <button type="button" class="btn btn-mini" id="st-model-discover" hidden>获取可用模型</button>
+              </div>
+            </div>
+            <p class="gl-hint" id="st-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="st-key-clear" class="st-key-clear">清除已存 Key</a></p>
+            <p class="gl-hint">接口地址可选，留空使用默认接口地址。Key 只存在此机器，不会同步到服务器。</p>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">模型</div>
+            <div class="st-grid">
+              <label class="st-lbl" for="st-model">LLM 模型</label>
+              <div class="st-scheme-model-field">
+                <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+                <select id="st-model-options" class="st-select" aria-label="可用模型" hidden></select>
+              </div>
+              <span class="st-lbl">采样温度</span>
+              <input type="number" id="st-temp" class="st-input" min="0" max="2" step="0.1" value="0.3" style="max-width:120px">
+            </div>
+            <p class="gl-hint" id="st-model-list-status" role="status" hidden></p>
+            <p class="gl-hint">可以选择已获取的模型，或手动输入模型名称。Anthropic 兼容接口请选择 Anthropic 服务商。采样温度适用于 OpenAI 兼容接口。</p>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">调用参数</div>
+            <div class="st-grid">
+              <span class="st-lbl">每批行数</span>
+              <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="75" style="max-width:120px">
+              <span class="st-lbl">上下文行数</span>
+              <input type="number" id="st-ctx" class="st-input" min="0" max="200" step="5" value="0" style="max-width:120px">
+            </div>
+            <p class="gl-hint">
+              每批行数：一次请求最多带多少行给翻译模型（5~100）。批越大请求越少，但译文行数一旦和输入对不上，整批都要重来；批越小越稳，请求也越多。失败时程序会自动拆成两半重试。
+              <br>上下文行数：每批额外把前面 N 行「原文 + 已定译文」当参考送给模型，让它接着上文译（0 = 不送，与旧行为一致）。参考行不参与译文行数校验。
+            </p>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">术语表</div>
+            <div class="gl-wrap">
+              <button type="button" class="gl-add" id="gl-add">＋ 添加词条</button>
+              <div class="gl-head">
+                <span>原文</span>
+                <span>译法</span>
+                <span></span>
+              </div>
+              <div class="gl-rows" id="gl-rows"></div>
+            </div>
+          </div>
+
+          <div class="st-card">
+            <div class="st-card-title">LLM 提示词 <span class="st-card-note">随此方案保存</span></div>
+            <textarea id="st-prompt" class="st-area" spellcheck="false" rows="7"></textarea>
+          </div>
+<div class="sf-scheme-options"><label><input type="checkbox" id="st-scheme-activate" checked> 保存后使用此方案</label></div>
+        </div>
+
+        <div class="st-drawer-foot">
+          <span class="st-msg" id="st-drawer-msg"></span>
+          <span class="st-spacer"></span>
+          <button type="button" class="btn" id="st-drawer-cancel">取消</button>
+          <button type="button" class="btn btn-accent" id="st-drawer-save">保存方案</button>
+        </div>
+      </div></section>
+            <p class="gl-hint" id="win-scheme-status" role="status"></p>
+          </section>
+          <section class="win-pane" aria-labelledby="win-login" hidden>
+            <h1 id="win-login" tabindex="-1">登录素材网站</h1>
+            <p>配置下载时使用的网站登录态。可以随时在设置中补充。</p>
+            <div class="win-account-list">
+              <article class="st-card win-account">
+                <div><h2 class="st-card-title">bilibili 登录</h2><span class="gl-hint">在应用内打开官方登录窗口。</span></div>
+                <button type="button" class="btn btn-mini" data-account="bilibili">演示登录</button>
+              </article>
+              <article class="st-card win-account">
+                <div><h2 class="st-card-title">YouTube 登录</h2><span class="gl-hint">在系统浏览器登录后，手动导入登录文件。</span></div>
+                <button type="button" class="btn btn-mini" data-account="YouTube">演示导入</button>
+              </article>
+            </div>
+            <p class="st-card win-complete" id="win-complete" role="status" hidden>欢迎流程演示完成。</p>
+          </section>
+        </div>
+        <footer class="win-footer">
+          <span class="win-counter" id="win-counter" aria-live="polite">1 / 5</span>
+          <div class="win-nav-buttons">
+            <button type="button" class="btn" id="win-back" hidden>上一步</button>
+            <button type="button" class="btn" id="win-skip" hidden>稍后配置</button>
+            <button type="button" class="btn btn-accent" id="win-next">开始配置</button>
+          </div>
+        </footer>
+      </div>
+    </div>
+  </main>
+  <dialog class="win-dialog" id="win-account-dialog" aria-labelledby="win-account-title">
+    <form method="dialog">
+      <h2 id="win-account-title"></h2>
+      <p class="gl-hint">查看完成操作后的界面反馈。</p>
+      <div class="win-nav-buttons"><button class="btn" value="cancel" autofocus>取消</button><button class="btn btn-accent" value="accept">确认演示</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
