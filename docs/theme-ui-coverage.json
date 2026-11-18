@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "efa6218300847619823d9ebf98c7475ccac34a558170f0aed9d372d1c818b771",
+      "sha256": "40692e70c14d860ccca1b723d7e92ffae188f2eff0fc85c3fd2da3d2589554f5",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -1138,7 +1138,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "511faf10f9fef2d17d526894881996acefb5883348b779ab87a214b1a3b55b48",
+      "sha256": "043f7cdfe1d63b21ea812149e38c14f8f36138bb302ad8cdbbc3b4c267c98926",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1299,207 +1299,207 @@
           "method": "innerHTML"
         },
         {
-          "line": 2180,
+          "line": 2184,
           "method": "innerHTML"
         },
         {
-          "line": 2229,
+          "line": 2231,
           "method": "innerHTML"
         },
         {
-          "line": 2233,
+          "line": 2235,
           "method": "innerHTML"
         },
         {
-          "line": 2243,
+          "line": 2245,
           "method": "innerHTML"
         },
         {
-          "line": 2257,
+          "line": 2259,
           "method": "innerHTML"
         },
         {
-          "line": 2406,
+          "line": 2408,
           "method": "innerHTML"
         },
         {
-          "line": 2509,
+          "line": 2511,
           "method": "innerHTML"
         },
         {
-          "line": 2522,
+          "line": 2524,
           "method": "innerHTML"
         },
         {
-          "line": 2526,
+          "line": 2528,
           "method": "innerHTML"
         },
         {
-          "line": 2537,
+          "line": 2539,
           "method": "innerHTML"
         },
         {
-          "line": 2632,
+          "line": 2634,
           "method": "innerHTML"
         },
         {
-          "line": 2660,
+          "line": 2662,
           "method": "innerHTML"
         },
         {
-          "line": 2709,
+          "line": 2711,
           "method": "innerHTML"
         },
         {
-          "line": 2806,
+          "line": 2808,
           "method": "innerHTML"
         },
         {
-          "line": 2857,
+          "line": 2859,
           "method": "createElement"
         },
         {
-          "line": 2861,
+          "line": 2863,
           "method": "innerHTML"
         },
         {
-          "line": 2930,
+          "line": 2932,
           "method": "innerHTML"
         },
         {
-          "line": 2963,
+          "line": 2965,
           "method": "innerHTML"
         },
         {
-          "line": 2982,
+          "line": 2984,
           "method": "innerHTML"
         },
         {
-          "line": 3151,
+          "line": 3153,
           "method": "innerHTML"
         },
         {
-          "line": 3165,
+          "line": 3167,
           "method": "innerHTML"
         },
         {
-          "line": 3171,
+          "line": 3173,
           "method": "innerHTML"
         },
         {
-          "line": 3205,
+          "line": 3207,
           "method": "innerHTML"
         },
         {
-          "line": 3255,
+          "line": 3257,
           "method": "innerHTML"
         },
         {
-          "line": 3398,
+          "line": 3400,
           "method": "innerHTML"
         },
         {
-          "line": 3584,
+          "line": 3586,
           "method": "innerHTML"
         },
         {
-          "line": 3703,
+          "line": 3705,
           "method": "innerHTML"
         },
         {
-          "line": 3825,
+          "line": 3827,
           "method": "innerHTML"
         },
         {
-          "line": 3832,
+          "line": 3834,
           "method": "replaceChildren"
         },
         {
-          "line": 4166,
+          "line": 4168,
           "method": "replaceChildren"
         },
         {
-          "line": 4189,
+          "line": 4191,
           "method": "replaceChildren"
         },
         {
-          "line": 4190,
+          "line": 4192,
           "method": "createElement"
         },
         {
-          "line": 4241,
+          "line": 4243,
           "method": "innerHTML"
         },
         {
-          "line": 4344,
+          "line": 4346,
           "method": "innerHTML"
         },
         {
-          "line": 4345,
+          "line": 4347,
           "method": "innerHTML"
         },
         {
-          "line": 4360,
+          "line": 4362,
           "method": "innerHTML"
         },
         {
-          "line": 4463,
+          "line": 4465,
           "method": "createElement"
-        },
-        {
-          "line": 4735,
-          "method": "innerHTML"
         },
         {
           "line": 4737,
-          "method": "createElement"
+          "method": "innerHTML"
         },
         {
           "line": 4739,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5279,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5282,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5300,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5303,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5332,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5562,
           "method": "createElement"
         },
         {
-          "line": 6110,
+          "line": 4741,
           "method": "innerHTML"
         },
         {
-          "line": 6179,
+          "line": 5281,
           "method": "innerHTML"
         },
         {
-          "line": 6179,
+          "line": 5284,
           "method": "innerHTML"
         },
         {
-          "line": 6417,
+          "line": 5302,
           "method": "innerHTML"
         },
         {
-          "line": 6434,
+          "line": 5305,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5334,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5564,
+          "method": "createElement"
+        },
+        {
+          "line": 6125,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6267,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6267,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6519,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6536,
           "method": "innerHTML"
         }
       ],
@@ -2067,7 +2067,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "a022c7a5b25d003ecbacb7d16f3331f72acf779cac21f74d022bf5f7173ea2a1",
+      "sha256": "53a48118f2f4bc432dfddf3afe3b578bf23067ee66d9572597deea9652b0d026",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2107,7 +2107,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "ffdafd0f98467af36760b24aae2d3864618faea2dacb5b16e641b822b3d4c0fa",
+      "sha256": "2b69d65668933fd063f4ff12162357ca2976f7a967744bfed6df6585e36859e5",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2890,6 +2890,7 @@
         "st-fetch-cookie-manual",
         "st-fetch-cookie-note",
         "st-fetch-cookie-save",
+        "st-fetch-download-card",
         "st-fetch-proxy",
         "st-fetch-quality",
         "st-fetch-youtube-card",
@@ -3013,20 +3014,27 @@
         "welcome-asr-mount",
         "welcome-back",
         "welcome-cancel",
+        "welcome-caption-art",
         "welcome-cards",
+        "welcome-content",
         "welcome-cuda",
         "welcome-cuda-card",
         "welcome-cuda-state",
+        "welcome-fetch-mount",
         "welcome-foot",
         "welcome-go",
         "welcome-next",
         "welcome-prep",
+        "welcome-prep-advice",
         "welcome-prep-refresh",
         "welcome-prep-status",
         "welcome-prep-summary",
         "welcome-prep-title",
         "welcome-retry",
+        "welcome-scheme-mount",
+        "welcome-skip",
         "welcome-step",
+        "welcome-steps",
         "welcome-sub",
         "welcome-title",
         "welcome-view",
@@ -3243,6 +3251,7 @@
       "--uwp-tile-rgb",
       "--view-enter-delay",
       "--warning",
+      "--welcome-active",
       "--welcome-card-bg",
       "--welcome-card-checked",
       "--welcome-gap",
@@ -3434,6 +3443,7 @@
       "--uwp-tile-rgb",
       "--view-enter-delay",
       "--warning",
+      "--welcome-active",
       "--welcome-card-bg",
       "--welcome-card-checked",
       "--welcome-gap",

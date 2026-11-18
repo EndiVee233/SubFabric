@@ -1068,8 +1068,9 @@
   `js/color-picker.js` 等）。主 hash 路由：`#/dashboard`、`#/home`、`#/new`、`#/settings`、
   `#/project/<id>`、`#/editor`；无 hash 默认 `#/dashboard`，旧 `#/resources` 转 `#/settings`、
   旧 `#/tasks` 转 `#/home`。
-- **首次启动（加速方式）**：浏览器没有 `localStorage.sf-welcome-v1` 时先显示 `#welcome-view`，
-  `#app` 置 `inert` 并隐藏；只提供 **CUDA / Vulkan** 两个勾选，至少勾一个才能进入（不支持 CPU 推理）。
+- **首次启动**：缺少有效的 `localStorage.sf-welcome-v1` 时显示 `#welcome-view`，编辑工作区置 `inert` 并隐藏。
+  Windows Electron 采用欢迎、模型方案、模型与前置、大模型方案、网站登录五步。现有完成记录继续生效，
+  可从「性能与调度」重新进入。浏览器保留两步流程。至少选择 CUDA 或 Vulkan 之一才可继续，不支持 CPU 推理。
   NPU 不在欢迎页出现：`GET /api/asr/hardware` 探到 Intel AI Boost / Ryzen AI 才在设置页显示。
   硬件探测：CUDA 走 `nvidia-smi`；Vulkan 用 `System32\vulkan-1.dll` + 非虚拟显卡列表；NPU 用
   `Win32_PnPEntity` 匹配 `AI Boost|Ryzen AI|NPU|IPU`（排除 Input/HID）。结果缓存 5 分钟，
@@ -1086,20 +1087,20 @@
   未选中卡片使用主题 `surface-2` 的浅色底（不再回落到深色 `--bg-3`）；提示条用
   `grid-template-rows: 0fr → 1fr` 展开/收起，配合负 gap 抵消与 440ms 非线性曲线，
   选择状态切换时卡片、按钮、提示条连续移动，不跳帧。
-- **欢迎页两步与模型/前置准备（同步 15e8ef5）**：第一步只选 CUDA/Vulkan；点「下一步」进入
-  `#welcome-prep`，再按所选后端展示显存建议（`welcome-model.js` 的 `welcomeRecommendations()`，
-  CUDA 只看第 0 张卡、Vulkan 多卡取最保守单卡容量，下载体积不换算显存）。第二步把原「语音识别」
+- **模型与前置准备**：选择 CUDA/Vulkan 后进入 `#welcome-prep`，按所选后端展示显存建议（`welcome-model.js` 的 `welcomeRecommendations()`，
+  CUDA 只看第 0 张卡、Vulkan 多卡取最保守单卡容量，下载体积不换算显存）。进入模型步骤时把原「语音识别」
   目录整体移动到 `#welcome-asr-mount`，复用系列卡、模型行、前置安装、目录选择与事件处理；
   「上一步」把目录移回 `#sf-asr-home`、停止准备轮询并保留勾选。`#welcome-next` / `#welcome-back`
-  与 `#welcome-prep-refresh` 由 `project.js` 接线；回退/取消/完成都恢复原目录，完成只在第二步保存。
+  与 `#welcome-prep-refresh` 由 `project.js` 接线。离开模型步骤后恢复原目录。Windows 欢迎流程
+  临时挂载设置中的大模型方案和网站登录控件，复用现有接口及凭据存储，支持跳过这两步。
+  离开步骤时将控件移回设置，最终确认才保存 GPU 选择及欢迎完成标记。
 - **UWP 浅色前景色（同步 15e8ef5）**：`studio-themes.js` 新增 `uwpLightColors()`，按强调色生成
   `--accent-text` / `--on-accent-hover` / `--on-accent-pressed` 与语义色；`applyTheme()` 在
   UWP 浅色下把角色写进控件与 canvas，并先清掉上一套内联语义色，避免切主题残留。
   `tests/uwp-light-test.mjs` 覆盖 9 组强调色与状态对比度。
-- **UWP 欢迎页磁贴**：CUDA / Vulkan 两张选择卡加 `uwp-tile`，与工作台磁贴共用 Reveal 面光、
-  2px 直角和实色底；`data-theme-pack="windows-uwp"` 同时兜底圆角，避免首帧 `data-design`
-  尚未写入时出现大圆角。红色错误条也固定 2px 直角。欢迎卡、UWP 原生 checkbox、下拉选择
-  的勾选图标统一用 `inset:0 + margin:auto` 居中；UWP 复选/单选的下拉选择勾也走同一规则。
+- **Windows 欢迎页磁贴**：整张 CUDA/Vulkan 卡可点击。隐藏可见复选框并保留键盘和辅助技术语义，
+  已选底色在悬停与按下时保持。流程采用固定底栏及可滚动内容区，转场遵守系统与应用动效偏好。
+  已在 Windows x64 打包版验证真实 CUDA/Vulkan 探测、五步完成与保存。真实模型下载和账号登录未运行。
 - **文案层（i18n）**：`editor/js/i18n.js` 是显示出口；`editor/lang/zh-CN.json` 是「原文 → 可润色译文」
   词典，键缺失回退原文。`tests/gen-lang.mjs` 用共享 `tools/lib/copy_scan.mjs` 扫描
   `editor/studio.html`（文本/title/placeholder/aria-label/alt/value）、`editor/js/*.js`、

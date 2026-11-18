@@ -285,6 +285,62 @@ try {
   await b.waitFor('document.readyState === "complete" && document.body && window.__sfStudio && window.__dbg');
   assert.deepEqual(await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})'),persisted,'theme persists across reload');
   report.persistence = 'passed';
+
+  // Exercise native-only onboarding with the real Studio, isolated settings, and a stable hardware response.
+  await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Electron/45.1.0' });
+    const desktopFetch = window.fetch;
+    window.fetch = (url, init) => String(url).startsWith('/api/asr/hardware')
+      ? Promise.resolve(Response.json({ok:true,cuda:{available:true,device:'Fixture GPU'},vulkan:{available:true,devices:['Fixture GPU']},backends:{cuda:true,vulkan:true}}))
+      : String(url) === '/api/asr/backends' ? Promise.resolve(Response.json({ok:true})) : desktopFetch(url, init);
+  ` });
+  await b.setViewport(1440, 960);
+  await b.goto(server.origin + '/?desktop-welcome=1#/settings');
+  await b.waitFor('window.__sfWelcome');
+  await b.eval('window.__sfWelcome.open({firstRun:true,returnHash:"#/settings"})');
+  await b.waitFor('document.querySelector("#welcome-step").textContent === "1 / 5"');
+  await collect('desktop-welcome-intro', '#welcome-view', true);
+  const welcomeClick = async id => { await b.eval(`document.getElementById(${JSON.stringify(id)}).click()`); await settle(); };
+  await welcomeClick('welcome-next');
+  await b.waitFor('window.__sfWelcome.state().selected.cuda && window.__sfWelcome.state().selected.vulkan');
+  const cardBackground = 'getComputedStyle(document.querySelector("#welcome-cuda-card")).backgroundColor';
+  const color = await b.eval(cardBackground);
+  assert.equal(await b.eval('getComputedStyle(document.querySelector("#welcome-cuda")).opacity'), '0');
+  assert.equal(await b.eval('document.querySelector("#welcome-cuda-card .welcome-card-check").getClientRects().length'), 0);
+  const [cardX, cardY] = await b.eval('(() => {const r=document.querySelector("#welcome-cuda-card").getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2];})()');
+  await b.mouse('mouseMoved', cardX, cardY, { button: 'none', buttons: 0 });
+  await b.waitFor('document.querySelector("#welcome-cuda-card").matches(":hover")');
+  await new Promise(resolve => setTimeout(resolve, 450));
+  assert.equal(await b.eval(cardBackground), color, 'selected tile retains its color under the mouse');
+  await b.click(cardX, cardY);
+  assert.equal(await b.eval('window.__sfWelcome.state().selected.cuda'), false);
+  await b.eval('document.querySelector("#welcome-cuda").focus()');
+  await b.send('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:32});
+  await b.send('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space',windowsVirtualKeyCode:32});
+  assert.equal(await b.eval('window.__sfWelcome.state().selected.cuda'), true, 'checkbox is still usable from the keyboard');
+  await collect('desktop-welcome-backends', '#welcome-view', true);
+  await welcomeClick('welcome-next');
+  await b.waitFor('document.querySelector("#welcome-asr-mount #sf-asr-catalog")');
+  await b.waitFor('!document.querySelector("#sf-asr-catalog").inert');
+  await collect('desktop-welcome-models', '#welcome-view', true);
+  await welcomeClick('welcome-next');
+  await b.waitFor('document.querySelector("#welcome-scheme-mount #st-scheme-list").textContent.trim().length > 0');
+  await welcomeClick('st-scheme-new');
+  await b.waitFor('document.querySelector("#st-scheme-drawer").classList.contains("open")');
+  await welcomeClick('st-drawer-cancel');
+  await collect('desktop-welcome-schemes', '#welcome-view', true);
+  await welcomeClick('welcome-skip');
+  assert.ok(await b.eval('document.querySelector("#welcome-fetch-mount #st-fetch-youtube-open").getClientRects().length > 0'));
+  await collect('desktop-welcome-login', '#welcome-view', true);
+  await welcomeClick('welcome-back');
+  assert.ok(await b.eval('document.querySelector("#st-view #st-panel-fetch") && document.querySelector("#welcome-scheme-mount #st-panel-translate")'));
+  await welcomeClick('welcome-next');
+  await welcomeClick('welcome-go');
+  await b.waitFor('document.querySelector("#welcome-view").hidden');
+  assert.ok(await b.eval('document.querySelector("#st-view #st-panel-fetch") && document.querySelector("#st-view #st-panel-translate") && document.querySelector("#st-view #sf-asr-catalog")'));
+  assert.ok(await b.eval('JSON.parse(localStorage.getItem("sf-welcome-v1")).done'));
+  report.desktopWelcome = 'five steps, mouse and keyboard selection, live settings reuse, and completion passed';
+
   report.exceptions = b.logs.filter(line => line.startsWith('[exception]'));
   for (const error of report.exceptions) report.issues.push({error});
   console.log(`Theme render: ${report.samples.length} states, ${report.themes.length} themes, ${report.issues.length} findings; ${out}`);

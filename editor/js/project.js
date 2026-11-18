@@ -2162,17 +2162,21 @@ export function initProjects(ctx) {
     const msgEl = $('#st-msg');
     msgEl.textContent = '';
     msgEl.classList.remove('err');
-    let data;
     try {
-      const resp = await fetch('/api/translate/config', { signal: AbortSignal.timeout(8000) });
-      data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+      await loadTranslationSettings();
     } catch (e) {
       msgEl.textContent = '✗ 读取设置失败：' + String((e && e.message) || e) + '。本地服务可能已退出，重开程序再试';
       msgEl.classList.add('err');
       renderAsrModels();      // 翻译配置读不到也要让模型列表自己报错/自己重试
-      return;                 // initPerfPanel / initDualRatio 已在上面无条件调用过
+      return;
     }
+    renderAsrModels();
+    bindModelDirSettings();
+  }
+  async function loadTranslationSettings() {
+    const resp = await fetch('/api/translate/config', { signal: AbortSignal.timeout(8000) });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
     stPresets = data.presets || [];
     if (studioUI) { acceptSchemes(data); defaultSchemePrompt = data.defaultPrompt || ''; }
     const drawerOpen = studioUI && schemeEls.drawer && !schemeEls.drawer.hidden && !schemeEls.drawer.inert;
@@ -2198,8 +2202,6 @@ export function initProjects(ctx) {
     }
     // 方案列表/胶囊用的是刚拿到的 stPresets 与当前 provider，必须在这之后画
     if (typeof renderSchemes === 'function') renderSchemes();
-    renderAsrModels();
-    bindModelDirSettings();
   }
   /** 模型管理: 列出所有识别模型(状态/下载/删除) + whisper.cpp 运行时 */
   /* ──────────────────────────────────────────────────────────────────────────
@@ -6066,6 +6068,14 @@ async function renderAsrModels(providedStatus = null) {
      · 设置 → 性能与调度 → 「重新进入欢迎界面」可再次打开。
      ═══════════════════════════════════════════════════════════════ */
   const welcomeView = $('#welcome-view');
+  const desktopWelcome = studioUI && /Windows NT.*Electron\//.test(navigator.userAgent);
+  const desktopWelcomeSteps = [
+    ['欢迎使用 SubFabric', '配置这台电脑的语音识别方式。字幕翻译和网站登录也可以稍后在设置里完成。'],
+    ['选择模型方案', '选择要使用的显卡加速方式。模型目录会按所选方案显示。'],
+    ['配置模型与前置', '点击系列卡片管理模型，或进入「前置」准备运行环境。'],
+    ['大模型方案', '选择现有方案或添加配置，用于字幕翻译。'],
+    ['登录素材网站', '配置下载时使用的网站登录态。也可以稍后在设置中完成。'],
+  ];
   const welcomeCuda = $('#welcome-cuda');
   const welcomeVulkan = $('#welcome-vulkan');
   const welcomeCudaCard = $('#welcome-cuda-card');
@@ -6075,6 +6085,7 @@ async function renderAsrModels(providedStatus = null) {
   const welcomeGo = $('#welcome-go');
   const welcomeNext = $('#welcome-next');
   const welcomeBack = $('#welcome-back');
+  const welcomeSkip = $('#welcome-skip');
   const welcomeRetry = $('#welcome-retry');
   const welcomeCancel = $('#welcome-cancel');
   const welcomeAlert = $('#welcome-alert');
@@ -6089,21 +6100,25 @@ async function renderAsrModels(providedStatus = null) {
   let welcomeLoadGeneration = 0;
   let welcomeCatalogFamily = '';
   let welcomeCatalogMounted = false;
+  let welcomeRestorePanels;
+  let welcomeSettingsInert;
 
 
   function welcomeSetStep(step) {
-    welcomeStep = step === 2 ? 2 : 1;
+    const previous = welcomeStep;
+    welcomeStep = desktopWelcome ? step : step === 2 ? 2 : 1;
     const preparing = welcomeStep === 2;
     if (welcomeView) {
       welcomeView.dataset.welcomeStep = String(welcomeStep);
       welcomeView.scrollTop = 0;
     }
-    const cards = $('#welcome-cards'); if (cards) cards.hidden = preparing;
+    const cards = $('#welcome-cards'); if (cards) cards.hidden = welcomeStep !== 1;
     const prep = $('#welcome-prep'); if (prep) prep.hidden = !preparing;
-    if (welcomeNext) welcomeNext.hidden = preparing;
-    if (welcomeGo) welcomeGo.hidden = !preparing;
-    if (welcomeBack) welcomeBack.hidden = !preparing;
-    if (welcomeRetry) welcomeRetry.hidden = preparing;
+    if (welcomeNext) welcomeNext.hidden = desktopWelcome ? welcomeStep === 4 : preparing;
+    if (welcomeGo) welcomeGo.hidden = desktopWelcome ? welcomeStep !== 4 : !preparing;
+    if (welcomeBack) welcomeBack.hidden = welcomeStep === (desktopWelcome ? 0 : 1);
+    if (welcomeSkip) welcomeSkip.hidden = !desktopWelcome || welcomeStep < 3;
+    if (welcomeRetry) welcomeRetry.hidden = welcomeStep !== 1;
     const indicator = $('#welcome-step');
     if (indicator) indicator.textContent = preparing ? '2 / 2 · 模型与前置' : '1 / 2 · 加速方式';
     const title = $('#welcome-title');
@@ -6121,19 +6136,92 @@ async function renderAsrModels(providedStatus = null) {
       welcomePrepGeneration++;
     }
     welcomeMoveCatalog(preparing);
+    if (desktopWelcome) {
+      const [heading, summary] = desktopWelcomeSteps[welcomeStep];
+      if (title) title.textContent = heading;
+      if (sub) sub.textContent = summary;
+      if (welcomeNext) welcomeNext.textContent = welcomeStep === 0 ? '开始配置' : '下一步';
+      if (indicator) indicator.textContent = `${welcomeStep + 1} / ${desktopWelcomeSteps.length}`;
+      const steps = $('#welcome-steps');
+      steps.hidden = false;
+      [...steps.children].forEach((item, index) => {
+        item.classList.toggle('is-done', index < welcomeStep);
+        if (index === welcomeStep) item.setAttribute('aria-current', 'step');
+        else item.removeAttribute('aria-current');
+      });
+      $('#welcome-caption-art').hidden = welcomeStep !== 0;
+      welcomeMovePanels(welcomeStep);
+      if (welcomeStep === 3) {
+        const message = $('#st-msg');
+        message.textContent = '';
+        loadTranslationSettings().catch(error => {
+          message.textContent = '方案读取失败：' + error.message;
+        });
+      }
+      if (welcomeStep === 4) void loadFetchSettings();
+      const content = $('#welcome-content');
+      content.scrollTop = 0;
+      if (welcomeStep !== previous && document.body.dataset.motion !== 'off'
+        && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        for (const effect of content.getAnimations()) effect.cancel();
+        content.animate([
+          { opacity: .25, transform: `translateX(${Math.sign(welcomeStep - previous) * 16}px)` },
+          { opacity: 1, transform: 'translateX(0)' },
+        ], { duration: 245, easing: 'cubic-bezier(.18,.75,.24,1)' });
+      }
+      title?.focus({ preventScroll: true });
+    }
     welcomeSyncSelection();
   }
   function welcomeAdvance() {
+    if (desktopWelcome && welcomeStep === 0) {
+      welcomeSetStep(1);
+      return;
+    }
     const sel = welcomeSelected();
-    if (welcomeStep !== 1 || welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan)) return;
-    welcomeSetStep(2);
-    welcomeRefreshPrep();
-    $('#welcome-prep-title')?.focus({ preventScroll: true });
+    if (welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan) || (desktopWelcome ? welcomeStep >= 4 : welcomeStep !== 1)) return;
+    welcomeSetStep(welcomeStep + 1);
+    if (welcomeStep === 2) {
+      welcomeRefreshPrep();
+      if (!desktopWelcome) $('#welcome-prep-title')?.focus({ preventScroll: true });
+    }
   }
   function welcomePrevious() {
-    if (welcomeBusy || welcomeStep !== 2) return;
-    welcomeSetStep(1);
-    welcomeNext?.focus({ preventScroll: true });
+    if (welcomeBusy || welcomeStep <= (desktopWelcome ? 0 : 1)) return;
+    welcomeSetStep(welcomeStep - 1);
+    if (welcomeStep === 2) welcomeRefreshPrep();
+    if (!desktopWelcome) welcomeNext?.focus({ preventScroll: true });
+  }
+
+  // Move the live controls with their listeners and restore their original position on exit.
+  function welcomeMovePanels(step) {
+    welcomeRestorePanels?.();
+    welcomeRestorePanels = undefined;
+    const schemeMount = $('#welcome-scheme-mount'), fetchMount = $('#welcome-fetch-mount');
+    schemeMount.hidden = step !== 3;
+    fetchMount.hidden = step !== 4;
+    const target = step === 3 ? schemeMount : step === 4 ? fetchMount : null;
+    if (!target) return;
+    const panel = $(step === 3 ? '#st-panel-translate' : '#st-panel-fetch');
+    const subview = panel.querySelector('.st-subview');
+    const subviewHidden = subview?.hidden;
+    if (subview) subview.hidden = false;
+    const nodes = step === 3 ? [panel, $('#st-msg')] : [panel];
+    const positions = nodes.map(node => {
+      const anchor = document.createComment('welcome settings');
+      const hidden = node.hidden;
+      node.before(anchor);
+      target.appendChild(node);
+      node.hidden = false;
+      return { node, anchor, hidden };
+    });
+    welcomeRestorePanels = () => {
+      for (const { node, anchor, hidden } of positions) {
+        anchor.replaceWith(node);
+        node.hidden = hidden;
+      }
+      if (subview) subview.hidden = subviewHidden;
+    };
   }
 
   function welcomeMoveCatalog(preparing) {
@@ -6163,7 +6251,7 @@ async function renderAsrModels(providedStatus = null) {
     const summary = $('#welcome-prep-summary');
     if (!message || !summary) return;
     message.textContent = welcomePrepError || (!welcomePrepStatus ? '正在读取模型与前置状态…'
-      : '点击下方系列卡片管理模型，或进入「前置」准备运行环境。');
+      : desktopWelcome ? '' : '点击下方系列卡片管理模型，或进入「前置」准备运行环境。');
     const groups = welcomeRecommendations(welcomePrepStatus, welcomeHardware, welcomeSelected());
     const html = groups.map(group => {
       const recommended = group.models.filter(m => m.fits);
@@ -6247,8 +6335,9 @@ async function renderAsrModels(providedStatus = null) {
     if (welcomeCudaCard) welcomeCudaCard.classList.toggle('is-checked', sel.cuda);
     if (welcomeVulkanCard) welcomeVulkanCard.classList.toggle('is-checked', sel.vulkan);
     if (welcomeGo) welcomeGo.disabled = welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan);
-    if (welcomeNext) welcomeNext.disabled = welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan);
+    if (welcomeNext) welcomeNext.disabled = welcomeStep !== 0 && (welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan));
     if (welcomeBack) welcomeBack.disabled = welcomeBusy;
+    if (welcomeSkip) welcomeSkip.disabled = welcomeGo?.disabled;
     welcomeRenderPrep();
     if (!welcomeHardware) {
       welcomeAlertText(welcomeError || '');
@@ -6299,7 +6388,7 @@ async function renderAsrModels(providedStatus = null) {
     welcomeError = '';
     welcomeBusy = true;
     if (welcomeGo) welcomeGo.disabled = true;
-    if (welcomeNext) welcomeNext.disabled = true;
+    if (welcomeNext && welcomeStep !== 0) welcomeNext.disabled = true;
     if (welcomeRetry) welcomeRetry.disabled = true;
     if (welcomeCudaState) welcomeCudaState.textContent = '检测中…';
     if (welcomeVulkanState) welcomeVulkanState.textContent = '检测中…';
@@ -6325,7 +6414,7 @@ async function renderAsrModels(providedStatus = null) {
     }
   }
   function welcomeShow(opts) {
-    if (!welcomeView) return;
+    if (!welcomeView || welcomeBlocking) return;
     clearWelcomePending();
     const o = opts || {};
     welcomeFirstRun = !!o.firstRun;
@@ -6334,6 +6423,12 @@ async function renderAsrModels(providedStatus = null) {
     document.body.classList.add('sf-welcome-open');
     document.body.dataset.workspace = 'welcome';
     const app = $('#app'); if (app) app.inert = true;
+    if (desktopWelcome) {
+      welcomeView.dataset.welcomeMode = 'desktop';
+      $('#welcome-prep-advice').open = false;
+      welcomeSettingsInert = stView.inert;
+      stView.inert = true;
+    }
     welcomeView.hidden = false;
     welcomeView.classList.remove('is-open');
     void welcomeView.offsetWidth;
@@ -6343,10 +6438,10 @@ async function renderAsrModels(providedStatus = null) {
     welcomeHardware = null;
     welcomePrepStatus = null;
     welcomePrepError = '';
-    welcomeSetStep(1);
+    welcomeSetStep(desktopWelcome ? 0 : 1);
     welcomeRender();
     welcomeLoad(true).then(() => {
-      if (!welcomeBlocking) return;
+      if (!welcomeBlocking || welcomeStep !== 1) return;
       const target = welcomeCuda && !welcomeCuda.disabled ? welcomeCuda
         : welcomeVulkan && !welcomeVulkan.disabled ? welcomeVulkan
         : (welcomeRetry || welcomeGo);
@@ -6354,13 +6449,17 @@ async function renderAsrModels(providedStatus = null) {
     });
   }
   function welcomeHide() {
-    if (!welcomeView) return;
+    if (!welcomeView || !welcomeBlocking) return;
     clearWelcomePending();
     welcomeBlocking = false;
     clearTimeout(welcomePrepTimer);
     welcomePrepGeneration++;
     welcomeLoadGeneration++;
     welcomeMoveCatalog(false);
+    if (desktopWelcome) {
+      welcomeMovePanels(-1);
+      stView.inert = welcomeSettingsInert;
+    }
     document.body.classList.remove('sf-welcome-open');
     const app = $('#app'); if (app) app.inert = false;
     welcomeView.hidden = true;
@@ -6369,11 +6468,13 @@ async function renderAsrModels(providedStatus = null) {
   }
   async function welcomeContinue() {
     const sel = welcomeSelected();
-    if (welcomeStep !== 2 || welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan)) return;
+    if (welcomeStep !== (desktopWelcome ? 4 : 2) || welcomeBusy || !welcomeHardware || (!sel.cuda && !sel.vulkan)) return;
     const label = welcomeGo ? welcomeGo.textContent : '';
     welcomeBusy = true;
     if (welcomeBack) welcomeBack.disabled = true;
     if (welcomeGo) { welcomeGo.disabled = true; welcomeGo.textContent = '保存中…'; }
+    if (welcomeSkip) welcomeSkip.disabled = true;
+    if (welcomeCancel) welcomeCancel.disabled = true;
     const target = welcomeReturnHash || (['#/dashboard', '#/home', '#/settings', '#/new'].includes(location.hash) ? location.hash : '#/dashboard');
     try {
       const r = await fetch('/api/asr/backends', {
@@ -6403,6 +6504,7 @@ async function renderAsrModels(providedStatus = null) {
       welcomeAlertText(welcomeError);
     } finally {
       welcomeBusy = false;
+      if (welcomeCancel) welcomeCancel.disabled = false;
       if (welcomeGo) { welcomeGo.textContent = label; welcomeSyncSelection(); }
     }
   }
@@ -6462,16 +6564,18 @@ async function renderAsrModels(providedStatus = null) {
     $('#welcome-prep-refresh')?.addEventListener('click', welcomeRefreshPrep);
     welcomeGo?.addEventListener('click', welcomeContinue);
     welcomeNext?.addEventListener('click', welcomeAdvance);
+    welcomeSkip?.addEventListener('click', () => { if (welcomeStep === 4) welcomeContinue(); else welcomeAdvance(); });
     welcomeBack?.addEventListener('click', welcomePrevious);
     welcomeRetry?.addEventListener('click', () => welcomeLoad(true));
     welcomeCancel?.addEventListener('click', () => { welcomeHide(); applyHash(); renderAsrModels(); });
     document.addEventListener('keydown', (e) => {
       if (!welcomeBlocking) return;
       if ((asrParamDialog && !asrParamDialog.hidden) || $('#confirm-overlay')?.hidden === false) return;
-      if (e.key === 'Escape' && !welcomeFirstRun) { e.preventDefault(); welcomeHide(); applyHash(); }
+      if (e.key === 'Escape' && !welcomeFirstRun) { e.preventDefault(); if (!welcomeCancel?.disabled) { welcomeHide(); applyHash(); } }
       if (e.key === 'Enter' && e.target === welcomeView) {
         e.preventDefault();
-        if (welcomeStep === 1) welcomeAdvance(); else if (!welcomeGo?.disabled) welcomeContinue();
+        if (welcomeGo && !welcomeGo.hidden && !welcomeGo.disabled) welcomeContinue();
+        else if (welcomeNext && !welcomeNext.hidden && !welcomeNext.disabled) welcomeAdvance();
       }
     });
     $('#st-accel-open')?.addEventListener('click', () => welcomeShow({ returnHash: location.hash || '#/settings' }));

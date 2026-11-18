@@ -92,8 +92,15 @@ body.win-demo {
 .win-caption-art span { width: 34%; height: 3px; background: var(--accent-text, var(--text)); }
 .win-caption-art span + span { width: 18%; opacity: .43; }
 .win-choices label { cursor: pointer; }
-.win-demo #st-view .win-choices label:has(input:checked) { border-color: var(--accent); background-color: var(--accent-soft); }
-.win-choices input { position: absolute; top: 22px; right: 18px; accent-color: var(--accent); }
+.win-demo[data-design=uwp] #st-view .win-choices label:has(input:checked) {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+}
+.win-demo #st-view .win-choices input[type=checkbox] {
+  position: absolute !important; width: 1px !important; height: 1px !important;
+  margin: 0 !important; opacity: 0 !important; pointer-events: none;
+}
+.win-choices label:has(input:focus-visible) { outline: 2px solid var(--outline); outline-offset: 3px; }
 .win-demo #st-view .win-model-detail > .st-card { margin-bottom: 10px; }
 .win-model-detail .st-models > .sm-model:last-child { margin-bottom: 0; }
 .win-demo #st-view .win-model-detail .st-card-title { margin-bottom: 12px; }
@@ -131,7 +138,6 @@ body.win-demo {
 @media (max-width: 515px) {
   .win-demo #st-view .sf-asr-families { grid-template-columns: minmax(0, 1fr); }
   .win-demo #st-view .sf-asr-family { min-height: 110px; padding: 14px; }
-  .win-choices input { top: 12px; }
   .win-account { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -30,7 +30,7 @@ const openedParams = [];
 const catalog = element('#sf-asr-catalog');
 element('#sf-asr-home').appendChild(catalog);
 const sandbox = {
-  $: element, welcomeBlocking: false, welcomeHardware: null, welcomeBusy: false,
+  $: element, studioUI: false, welcomeBlocking: false, welcomeHardware: null, welcomeBusy: false,
   welcomeFirstRun: true, welcomeReturnHash: '', WELCOME_KEY: 'sf-welcome-v1',
   document: { body: element('body'), documentElement: element('html') },
   setTimeout(fn) { timers.set(++timerId, fn); return timerId; }, clearTimeout(id) { timers.delete(id); },

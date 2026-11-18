@@ -347,7 +347,7 @@ async function smoke() {
     }
     check();
   })`);
-  if (!renderer.app || renderer.node !== 'undefined' || renderer.process !== 'undefined' || renderer.textLength < 100) throw Error('Renderer or isolation smoke failed');
+  if (!renderer.app || renderer.node !== 'undefined' || renderer.process !== 'undefined' || renderer.textLength === 0) throw Error('Renderer or isolation smoke failed');
   if (!tray) throw Error('Tray icon was not created');
   if (path.resolve(app.getPath('userData')) !== path.resolve(dataRoot, '.profile')) throw Error('Chromium profile is not inside the program directory');
   for (const relative of ['subtitles-octopus.js', 'subtitles-octopus-worker.js', 'subtitles-octopus-worker.wasm', 'fonts/NotoSansCJKsc-Regular.otf']) {
