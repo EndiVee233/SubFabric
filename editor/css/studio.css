@@ -980,6 +980,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .sf-effect-picker-row > .btn { flex:none; }
 #st-effect-form.open, #st-effect-form.open > .sf-scheme-content { overflow:visible; }
 #st-effect-form { --sf-subtitle-preview-width: min(560px, 70vh); }
+#st-effect-form .st-drawer-body { isolation:isolate; }
 #st-effect-form .st-drawer-body :is(input, button, select) { scroll-margin-top:calc(var(--sf-subtitle-preview-width) * 9 / 16 + 78px); }
 #st-subtitle-style { min-width:0; }
 .sf-subtitle-sample { position:sticky; top:0; z-index:2; padding:10px 16px 12px; background:var(--surface-2); border:1px solid var(--line); border-top:0; }
@@ -4360,8 +4361,8 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio[data-design=uwp] .np-scheme-card.is-active { border-color: var(--accent); background: var(--surface-2); }
 .sf-studio #tab-settings>.st-card,
 .sf-studio #tab-settings .settings-list>.st-card { padding:16px; border:1px solid var(--line); border-radius:16px; margin:12px 0; }
-/* 编辑器设置：分组标题回到卡片顶部，不再吸顶悬浮遮挡上一组内容。 */
-.sf-studio #tab-settings .set-group-head {
+/* 编辑器与字幕方案的分组标题随各自卡片滚动。 */
+.sf-studio :is(#tab-settings,#st-effect-form) .set-group-head {
   position: static;
   background: transparent;
   border-radius: 0;

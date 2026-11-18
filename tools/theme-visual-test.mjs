@@ -308,12 +308,32 @@ try {
     })()`);
     assert.ok(Math.abs(pinned.top) < 2 && pinned.leavesRoom,
       `subtitle preview stays at the top with room to edit at ${width}×${height} (${JSON.stringify(pinned)})`);
+    await b.eval(`(() => {
+      const video = document.querySelector('#st-subtitle-video').getBoundingClientRect();
+      const effects = document.querySelector('#ass-fx-group').getBoundingClientRect();
+      document.querySelector('#st-view').scrollBy(0, effects.top - (video.top + video.height / 2));
+    })()`);
+    await settle();
+    const layers = await b.eval(`(() => {
+      const sample = document.querySelector('.sf-subtitle-sample');
+      const video = sample.querySelector('video').getBoundingClientRect();
+      const heading = document.querySelector('#ass-fx-group .set-group-head').getBoundingClientRect();
+      const x = video.left + video.width / 2;
+      const y = heading.top + heading.height / 2;
+      return {
+        overlap: x > heading.left && x < heading.right && y > video.top && y < video.bottom,
+        previewOnTop: sample.contains(document.elementFromPoint(x, y)),
+      };
+    })()`);
+    assert.deepEqual(layers, { overlap: true, previewOnTop: true },
+      `scrolling the effect heading behind the video leaves the preview on top at ${width}×${height}`);
+    await collect('subtitle-preview-overlap', '.sf-subtitle-sample', true);
     await b.eval('document.querySelector("#st-subtitle-play").click()');
     await b.waitFor('document.querySelector("#st-subtitle-video").currentTime > 1.05');
     await b.eval('document.querySelector("#st-effect-cancel").click()');
     assert.ok(await b.eval('document.querySelector("#st-subtitle-video").paused'), 'closing the form pauses the sample');
   }
-  report.subtitlePreview = 'top placement, frozen frame, playback, and sticky scrolling passed at both window sizes';
+  report.subtitlePreview = 'top placement, frozen frame, playback, sticky scrolling, and effect heading layering passed at both window sizes';
   const persisted = await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})');
   await b.goto(server.origin + '/?theme-persistence=1#/batch');
   await b.waitFor('document.readyState === "complete" && document.body && window.__sfStudio && window.__dbg');
