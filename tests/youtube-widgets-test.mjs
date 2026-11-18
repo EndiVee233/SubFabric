@@ -2,6 +2,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { runInNewContext } from 'node:vm';
+import { isolatedServer } from './helpers/isolated-server.mjs';
 const root = path.resolve(import.meta.dirname, '..');
 const template = fs.readFileSync(path.join(root, 'tools/templates/studio.html'), 'utf8');
 const studio = fs.readFileSync(path.join(root, 'editor/js/studio.js'), 'utf8');
@@ -16,9 +18,7 @@ assert.match(server, /youtubePowerShellFetch/, 'Node 直连失败时走系统代
 assert.match(server, /UCkzzNLnuM-VsATWC53ehwOQ/, 'Wemmbu 主频道 ID 固定');
 assert.match(server, /mqdefault\.jpg/, '封面使用 16:9 mqdefault，避免黑边');
 assert.match(server, /youtube-updates\.json/, '缓存落盘');
-assert.match(server, /断网\/频道请求失败：保留此前的频道视频/, '失败时保留已有数据');
-assert.match(studio, /const YT_CHANNELS = \[/, '前端保留四位主播占位');
-assert.match(studio, /loaded.length \? loaded : YT_CHANNELS/, '无数据时仍渲染四宫格');
+assert.match(template, /id="st-panel-theme"[\s\S]*?id="sf-youtube-follows"[\s\S]*?class="hotword-list"/, '名单在外观与体验复用热词布局');
 assert.match(studio, /\$\{d\.getFullYear\(\)\}-\$\{pad\(d\.getMonth\(\) \+ 1\)\}/, '更新时间显示绝对日期时间');
 assert.match(studio, /function ytRecentWeekCount[\s\S]*?7 \* 86400000/, '圆环胶囊统计一周内更新视频');
 assert.match(template, /一周内更新/, '胶囊文案改为近期更新数');
@@ -46,4 +46,88 @@ assert.match(studio, /uwpGlowCards[\s\S]*?sf-uwp-yt-card/, '主播磁贴共用�
 assert.doesNotMatch(studio, /sf-uwp-yt-play/, '主播磁贴不再渲染播放按钮');
 assert.doesNotMatch(css, /\.sf-uwp-yt-play/, '主播磁贴不再有播放按钮样式');
 assert.match(css, /is-uwp-tile-leaving :is\(\.dashboard-head,\.dashboard-foot,\.sf-uwp-yt-head\)/, '点磁贴离场时非磁贴文字立即淡出');
-console.log('youtube-widgets: 四位主播、RSS 缓存、5 分钟自动刷新通过');
+const start = server.indexOf('const YOUTUBE_CHANNELS =');
+const end = server.indexOf('let desktopUpdateState;', start);
+const fixtures = new Map(), outbound = [];
+const channelId = 'UC' + 'A'.repeat(22);
+const videoId = 'testvideo01';
+const channelPage = 'https://www.youtube.com/@%E5%B0%8F%E6%98%8E/videos';
+const feed = 'https://www.youtube.com/feeds/videos.xml?channel_id=' + channelId;
+fixtures.set(channelPage, '{"externalId":"' + channelId + '"}');
+fixtures.set(feed, '<feed><author><name>频道显示名</name></author><entry><yt:videoId>' + videoId
+  + '</yt:videoId><title>新视频</title><published>2026-01-01T12:34:56Z</published></entry></feed>');
+fixtures.set('https://www.youtube.com/watch?v=' + videoId, '{"lengthSeconds":"120"}');
+let inputs;
+const saved = new Map();
+const { youtubeChannelInput, youtubeConfiguredChannels, youtubeUpdates } = runInNewContext(
+  server.slice(start, end) + '\n({ youtubeChannelInput, youtubeConfiguredChannels, youtubeUpdates });', {
+    ROOT: '/fixture', path, URL, AbortSignal, process: { platform: 'linux' },
+    fs: {
+      readFileSync: file => saved.get(file) || '',
+      mkdirSync() {},
+      writeFileSync: (file, value) => saved.set(file, value),
+      renameSync: (from, to) => { saved.set(to, saved.get(from)); saved.delete(from); },
+    },
+    readAsrSettings: () => ({ youtubeChannels: inputs }),
+    fetch: async url => {
+      outbound.push(url);
+      if (!fixtures.has(url)) throw Error('fixture offline');
+      return new Response(fixtures.get(url));
+    },
+  }
+);
+assert.equal(youtubeConfiguredChannels().length, 4, 'existing installs retain the original four defaults');
+assert.equal(youtubeChannelInput('m.youtube.com/@%E5%B0%8F%E6%98%8E/featured?si=share'), '@小明');
+assert.equal(youtubeChannelInput('https://youtube.com/channel/' + channelId), 'https://www.youtube.com/channel/' + channelId);
+assert.equal(youtubeChannelInput('https://youtube.com/c/ClassicCreator/videos'), 'https://www.youtube.com/c/ClassicCreator');
+assert.equal(youtubeChannelInput('https://youtube.com/user/OldCreator/'), 'https://www.youtube.com/user/OldCreator');
+for (const invalid of ['https://youtube.com.example.org/@foo', 'https://youtube.com/watch?v=foo',
+  'https://youtube.com:8080/@foo', 'https://youtube.com/@foo%2Fbar', 'https://www.youtube.com/@foo/videos/extra',
+  'https://youtu.be/example', 'http://www.youtube.com@localhost/@foo', 'file:///youtube.com/@foo']) {
+  assert.equal(youtubeChannelInput(invalid), null, invalid);
+}
+assert.equal(youtubeConfiguredChannels(['@Creator', 'https://youtube.com/@creator']).length, 1);
+inputs = ['@小明'];
+const data = await youtubeUpdates(true);
+assert.equal(data.channels[0].name, '频道显示名');
+assert.equal(data.channels[0].video.duration, 120);
+assert.equal(outbound[0], channelPage, 'only a canonical YouTube channel URL is fetched');
+fixtures.set(channelPage, '{"key":"browse_id","value":"' + channelId + '"}');
+inputs = ['@小明', 'https://youtube.com/channel/' + channelId];
+assert.equal((await youtubeUpdates(true)).channels.length, 1, 'different aliases of one resolved channel share a card');
+fixtures.clear();
+const offline = await youtubeUpdates(true);
+assert.equal(offline.stale, true, 'failed refresh reported');
+assert.equal(offline.channels[0].video.id, videoId, 'saved video is retained offline');
+fixtures.set(feed, '<feed><yt:channelId>' + channelId.slice(2) + '</yt:channelId><author><name>空频道</name></author></feed>');
+const noVideos = await youtubeUpdates(true);
+assert.equal(noVideos.channels[0].name, '空频道', 'a recognized channel with no videos retains its name');
+assert.equal(noVideos.channels[0].video, null);
+inputs = [];
+const networkCount = outbound.length;
+assert.equal((await youtubeUpdates(true)).channels.length, 0, 'empty follows do not resurrect defaults');
+assert.equal(outbound.length, networkCount, 'empty follows skip network access');
+
+const api = await isolatedServer();
+try {
+  const config = '/api/youtube/channels';
+  const put = inputs => api.call(config, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inputs }),
+  });
+  assert.equal((await (await api.call(config)).json()).inputs.length, 4);
+  api.settings({ asr: { prompt: 'other settings remain' } });
+  const save = await put(['@OtherCreator', 'https://youtube.com/@othercreator/videos']);
+  assert.equal(save.status, 200);
+  const committed = await save.json();
+  assert.deepEqual(committed.inputs, ['@OtherCreator']);
+  assert.equal(committed.channels.length, 1);
+  const bad = await put(['@OtherCreator', 'https://example.org/@somebody']);
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).invalid, 1);
+  assert.deepEqual((await (await api.call(config)).json()).inputs, ['@OtherCreator']);
+  assert.equal((await put([])).status, 200);
+  assert.deepEqual((await (await api.call('/api/youtube/updates?refresh=1')).json()).channels, []);
+  const settings = JSON.parse(fs.readFileSync(path.join(api.root, 'asr/settings.json'), 'utf8'));
+  assert.deepEqual(settings, { asr: { prompt: 'other settings remain' }, youtubeChannels: [] });
+} finally { await api.close(); }
+console.log('youtube-widgets: channel formats, default migration, API persistence, offline cache and empty follows passed');

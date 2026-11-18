@@ -213,6 +213,7 @@ globalThis.cancelAnimationFrame = id => frames.delete(id);
 const requests = [], unexpected = [], toasts = [], created = [];
 let schemes = [], schemeActive = '', schemeFailure = false, schemeConfirm = true;
 let pythonProbeReady = false;
+let followedChannels = ['@wemmbumc', '@parrotx2', '@spokeishere', '@flamefragsmc'];
 window.confirm = () => schemeConfirm;
 const subtitle = serializeSRT([{ start: 0, end: 2, lines: ['Original subtitle'] }]);
 const revision = 'a'.repeat(64);
@@ -226,7 +227,16 @@ globalThis.fetch = async (url, options = {}) => {
   if (url === '/api/projects') return json({ projects: [] });
   if (url === '/api/storage') return json({ items: [] });
   if (url === '/api/oplog/stats?days=7') return json({ days: 7, total: 0, projects: [] });
-  if (url === '/api/youtube/updates' || url === '/api/youtube/updates?refresh=1') {
+  if (url === '/api/youtube/channels') {
+    if (options.method === 'PUT') {
+      const { inputs } = JSON.parse(options.body);
+      const invalid = inputs.indexOf('not a YouTube channel');
+      if (invalid >= 0) return Response.json({ invalid }, { status: 400 });
+      followedChannels = inputs;
+    }
+    return json({ inputs: followedChannels, channels: followedChannels.map(input => ({ id: input, name: input, video: null })) });
+  }
+  if (url.startsWith('/api/youtube/updates')) {
     return json({ channels: [
       { id: 'wemmbu', name: 'Wemmbu', video: null }, { id: 'parrot', name: 'Parrot', video: null },
       { id: 'spoke', name: 'Spoke', video: null }, { id: 'flame', name: 'Flame', video: null },
@@ -576,6 +586,23 @@ stableInput.addEventListener('input', () => preferenceChanges++);
 stableInput.value = '260';
 await navigate('#/settings');
 assert.equal($('sf-settings-tab-theme').getAttribute('aria-selected'), 'true', 'settings starts with common appearance preferences');
+const channelList = $('sf-youtube-follows-list');
+assert.ok($('st-panel-theme').contains(channelList));
+assert.equal(channelList.querySelectorAll('input').length, 4, 'existing default follows appear as editable rows');
+$('sf-youtube-follows-add').click();
+const addedChannel = [...channelList.querySelectorAll('input')].at(-1);
+addedChannel.value = 'https://www.youtube.com/@newcreator';
+addedChannel.dispatchEvent(new Event('change'));
+await settle();
+assert.equal(followedChannels.at(-1), 'https://www.youtube.com/@newcreator', 'channel link autosaves');
+addedChannel.value = 'not a YouTube channel';
+addedChannel.dispatchEvent(new Event('change'));
+await settle();
+assert.equal(addedChannel.getAttribute('aria-invalid'), 'true');
+assert.equal(followedChannels.length, 5, 'invalid edit does not replace the committed list');
+addedChannel.parentElement.querySelector('button').click();
+await settle();
+assert.equal(followedChannels.length, 4, 'removing a row autosaves');
 assert.equal(document.getElementById('st-save'), null, 'settings no longer needs a manual save button');
 assert.equal(document.querySelector('#st-view .st-actions'), null, 'settings page no longer renders a global action bar');
 assert.ok($('st-msg').closest('.sf-settings-status'), 'settings status has a non-frame home');

@@ -1253,7 +1253,7 @@
             <button type="button" class="btn sf-resume-detail" id="sf-mu-resume-detail">详情信息</button>
           </div>
         </div>
-        <button type="button" class="sf-orbit" id="sf-mu-temp" title="立即刷新四位主播的最近视频">
+        <button type="button" class="sf-orbit" id="sf-mu-temp" title="刷新关注的主播">
           <span><b id="sf-mu-status-num">0</b><small>一周内更新</small></span>
         </button>
       </section>
@@ -1290,6 +1290,7 @@
       </div>
       <section class="sf-mu-yt" id="sf-mu-youtube" aria-label="主播最近更新">
         <div class="sf-mu-yt-grid" id="sf-mu-yt-grid"></div>
+        <p class="gl-hint" id="sf-mu-yt-empty" hidden>在「设置 → 外观与体验」添加 YouTube 主播。</p>
       </section>
     </div>
   </div>
@@ -1303,14 +1304,15 @@
     <section class="sf-uwp-youtube" id="sf-uwp-youtube" aria-labelledby="sf-uwp-yt-title">
       <div class="sf-uwp-yt-head">
         <h2 id="sf-uwp-yt-title">关注的主播</h2>
-        <span class="sf-uwp-yt-count" id="sf-uwp-yt-count">4</span>
+        <span class="sf-uwp-yt-count" id="sf-uwp-yt-count">0</span>
         <p>YouTube 最近更新 · 按发布时间排序</p>
         <div class="sf-uwp-yt-refresh">
           <span id="sf-uwp-yt-at">尚未刷新</span>
-          <button type="button" class="btn" id="sf-uwp-yt-refresh" title="立即刷新四位主播的最近视频"><span data-ico="refresh"></span><span id="sf-uwp-yt-refresh-label">刷新</span></button>
+          <button type="button" class="btn" id="sf-uwp-yt-refresh" title="刷新关注的主播"><span data-ico="refresh"></span><span id="sf-uwp-yt-refresh-label">刷新</span></button>
         </div>
       </div>
       <div class="sf-uwp-yt-grid" id="sf-uwp-yt-grid"></div>
+      <p class="gl-hint" id="sf-uwp-yt-empty" hidden>在「设置 → 外观与体验」添加 YouTube 主播。</p>
     </section>
     <div class="dashboard-foot"><a class="btn" href="#/home" data-ico="folder">打开稿件库</a></div>
   </div>
@@ -2446,6 +2448,13 @@
            放在全局设置里是因为侧栏只在打开项目时才在，首页进不来。 -->
       <div class="st-panel active" id="st-panel-theme" role="tabpanel" data-stp="theme">
         <div class="sf-settings-heading"><span class="sf-settings-scope">此浏览器</span><h2 id="sf-settings-heading-theme">外观与体验</h2><p>安静的背景、恰好的层次，以及自然的反馈。</p><p class="sf-settings-save-note">外观更改即时保存，稿件库与编辑器同步使用。</p></div>
+        <section class="st-card" id="sf-youtube-follows" aria-labelledby="sf-youtube-follows-title">
+          <div class="st-card-title"><span id="sf-youtube-follows-title">关注的主播</span> <span class="st-card-note">一格一个频道</span></div>
+          <div class="hotword-list" id="sf-youtube-follows-list"></div>
+          <button type="button" class="btn btn-mini" id="sf-youtube-follows-add" disabled>＋ 添加主播</button>
+          <p class="gl-hint">填写 YouTube 频道主页链接或 @账号，按 Enter 或离开输入框后自动保存。</p>
+          <p class="gl-hint" id="sf-youtube-follows-status" role="status" hidden></p>
+        </section>
         <div class="st-card sf-appearance-card"><h3>让工作空间，成为你的空间。</h3><p class="gl-hint">背景留在内容之下，清晰阅读始终优先。</p>
           <div class="sf-settings-backgrounds" role="group" aria-label="背景材质"><button type="button" class="sf-background-choice" data-appearance-background="solid" aria-pressed="false"><span class="sf-background-thumb solid"><i></i></span><span>纯色<span class="sf-background-check" aria-hidden="true">✓</span></span></button><button type="button" class="sf-background-choice" data-appearance-background="aurora" aria-pressed="false"><span class="sf-background-thumb aurora"><i></i></span><span>模糊流光<span class="sf-background-check" aria-hidden="true">✓</span></span></button><button type="button" class="sf-background-choice" data-appearance-background="image" aria-pressed="false"><span class="sf-background-thumb image"><i></i></span><span>自定义图片<span class="sf-background-check" aria-hidden="true">✓</span></span></button></div>
           <div hidden><select id="sf-background" aria-label="背景材质"><option value="solid">纯色</option><option value="aurora">模糊流光</option><option value="image">自定义图片</option></select></div>

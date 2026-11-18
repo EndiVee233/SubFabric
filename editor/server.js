@@ -12864,9 +12864,8 @@ function handleProjectsRoutes(req, res, u) {
   sendJson(res, 404, { error: 'not found' });
 }
 
-/* ═══════════ YouTube 主播最近更新（MY 主页小组件）═══════════
- * 只用 YouTube 公开 RSS / 频道页，不依赖 API Key；缓存落盘，断网时继续显示上一次数据。
- * 四位主播用 handle 先解析 channelId，避免把频道 ID 写死后改名失效。 */
+/* ═══════════ YouTube 主播最近更新 ═══════════
+ * 读取用户关注的公开频道；优先用已知 channelId 获取 RSS，断网时保留上一次数据。 */
 const YOUTUBE_CHANNELS = Object.freeze([
   { id: 'wemmbu', name: 'Wemmbu', handle: '@wemmbumc', channelIds: ['UCkzzNLnuM-VsATWC53ehwOQ'] },
   { id: 'parrot', name: 'Parrot', handle: '@parrotx2', channelIds: ['UCPLMPHT-d8GZOqL_AHJFdQQ'] },
@@ -12876,7 +12875,57 @@ const YOUTUBE_CHANNELS = Object.freeze([
 const YOUTUBE_CACHE_FILE = path.join(ROOT, 'cache', 'youtube-updates.json');
 const YOUTUBE_TTL = 5 * 60 * 1000;
 let youtubeMemory = null;
-let youtubeInflight = null;
+const youtubeInflight = new Map();
+const YOUTUBE_CHANNEL_ID = /^UC[A-Za-z0-9_-]{22}$/;
+const YOUTUBE_HANDLE = /^@[\p{L}\p{M}\p{N}_.·-]{1,30}$/u;
+
+function youtubeChannelInput(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  let parts = [text];
+  if (!text.startsWith('@')) {
+    try {
+      const url = new URL(/^https?:\/\//i.test(text) ? text : 'https://' + text);
+      if (!['youtube.com', 'www.youtube.com', 'm.youtube.com'].includes(url.hostname)
+          || url.username || url.password || url.port) return null;
+      parts = url.pathname.replace(/\/+$/, '').slice(1).split('/').map(decodeURIComponent);
+    } catch { return null; }
+  }
+  const [type, slug] = parts;
+  const handle = YOUTUBE_HANDLE.test(type);
+  const pathLength = handle ? 1 : 2;
+  if (parts.length > pathLength && (parts.length !== pathLength + 1
+      || !/^(?:featured|videos|shorts|streams|playlists|community|posts|about|live)$/.test(parts[pathLength]))) return null;
+  if (handle) return type;
+  if (!(type === 'channel' ? YOUTUBE_CHANNEL_ID.test(slug || '')
+      : ['c', 'user'].includes(type) && /^[\p{L}\p{M}\p{N}_.·-]{1,100}$/u.test(slug || '')
+        && slug !== '.' && slug !== '..')) return null;
+  return 'https://www.youtube.com/' + type + '/' + slug;
+}
+
+function youtubeConfiguredChannels(inputs = readAsrSettings().youtubeChannels) {
+  if (!Array.isArray(inputs)) return YOUTUBE_CHANNELS.map(channel => ({ ...channel, input: channel.handle }));
+  const channels = new Map();
+  for (const value of inputs) {
+    const input = youtubeChannelInput(value);
+    if (!input) continue;
+    const handle = input.startsWith('@') ? input : '';
+    const path = handle ? encodeURIComponent(handle).replace(/^%40/, '@')
+      : new URL(input).pathname.slice(1);
+    const channelId = path.startsWith('channel/') ? path.slice(8) : '';
+    const known = YOUTUBE_CHANNELS.find(channel => channel.handle === handle.toLowerCase()
+      || (channelId && channel.channelIds.includes(channelId)));
+    const id = known?.id || (channelId || input.toLowerCase());
+    if (!channels.has(id)) channels.set(id, known ? { ...known, input: known.handle }
+      : { id, input, handle, name: handle || decodeURIComponent(path.split('/').at(-1)),
+          path, channelIds: channelId ? [channelId] : [] });
+  }
+  return [...channels.values()];
+}
+
+function youtubeConfigKey(channels) {
+  return JSON.stringify(channels.map(channel => channel.id));
+}
 
 function youtubeReadCache() {
   if (youtubeMemory) return youtubeMemory;
@@ -12909,72 +12958,87 @@ function xmlText(raw) {
     return Number.isFinite(n) ? String.fromCodePoint(n) : all;
   });
 }
-function youtubePowerShellFetch(url) {
+function youtubePowerShellFetch(url, signal) {
   if (process.platform !== 'win32') throw Error('没有可用的系统代理回退');
-  /* Node fetch 不读 Windows 系统代理（浏览器/Invoke-WebRequest 会读）。
-     本机开了代理、浏览器能上 YouTube 但 Node 直连超时时，用系统 PowerShell 兜底。 */
-  const safeUrl = String(url).replace(/"/g, '%22');
-  const script = `[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Invoke-WebRequest -Uri "${safeUrl}" -UseBasicParsing -TimeoutSec 25).Content`;
-  return childProcess.execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    encoding: 'utf8', timeout: 32000, maxBuffer: 32 * 1024 * 1024, windowsHide: true,
+  /* URL 已由本站固定域名和编码后的频道/视频 ID 生成。Node 直连失败时读系统代理。 */
+  const script = '[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Invoke-WebRequest -Uri "'
+    + url + '" -UseBasicParsing -TimeoutSec 25).Content';
+  return new Promise((resolve, reject) => {
+    const worker = childProcess.execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8', timeout: 32000, maxBuffer: 32 * 1024 * 1024, windowsHide: true, signal,
+    }, (err, output) => { if (err) reject(err); else resolve(output); });
+    CHILDREN.add(worker);
+    worker.once('close', () => CHILDREN.delete(worker));
   });
 }
-async function youtubeFetch(url, timeout = 5000) {
+async function youtubeFetch(url, signal) {
   try {
     const response = await fetch(url, {
       headers: { 'user-agent': 'Mozilla/5.0 SubFabric/1.0', 'accept-language': 'en-US,en;q=0.8' },
-      signal: AbortSignal.timeout(timeout),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
     });
     if (!response.ok) throw Error('HTTP ' + response.status);
     return await response.text();
   } catch (error) {
-    try { return youtubePowerShellFetch(url); }
-    catch { throw error; }
+    if (!signal.aborted) {
+      try { return await youtubePowerShellFetch(url, signal); } catch { /* 保留直连错误 */ }
+    }
+    throw error;
   }
 }
 function youtubeVideoId(xml) {
   const m = /<yt:videoId>([^<]+)<\/yt:videoId>/.exec(xml);
   return m ? xmlText(m[1]) : '';
 }
-async function youtubeDuration(videoId) {
+async function youtubeDuration(videoId, signal) {
   try {
-    const html = await youtubeFetch('https://www.youtube.com/watch?v=' + encodeURIComponent(videoId));
+    const html = await youtubeFetch('https://www.youtube.com/watch?v=' + encodeURIComponent(videoId), signal);
     const m = /"lengthSeconds":"(\d+)"/.exec(html) || /"approxDurationMs":"(\d+)"/.exec(html);
     if (!m) return 0;
     return /lengthSeconds/.test(m[0]) ? Number(m[1]) : Math.round(Number(m[1]) / 1000);
   } catch { return 0; }
 }
-async function youtubeChannelVideo(channel, previous) {
+async function youtubeChannelVideo(channel, previous, signal) {
   const ids = [];
   if (previous && previous.channelId) ids.push(previous.channelId);
   for (const id of channel.channelIds || []) if (!ids.includes(id)) ids.push(id);
   /* 先用已知 channelId 直连 RSS，避免频道页的同意页/验证页解析不到 ID；
      全部失败再打开频道页解析一次（频道迁移时兜底）。 */
   const tryId = async (channelId) => {
-    const xml = await youtubeFetch('https://www.youtube.com/feeds/videos.xml?channel_id=' + encodeURIComponent(channelId));
+    const xml = await youtubeFetch('https://www.youtube.com/feeds/videos.xml?channel_id=' + encodeURIComponent(channelId), signal);
+    const author = /<author>\s*<name>([\s\S]*?)<\/name>/.exec(xml);
+    const name = author ? xmlText(author[1]) : '';
     const entry = /<entry>([\s\S]*?)<\/entry>/.exec(xml);
-    if (!entry) throw Error('频道还没有视频');
+    if (!entry) {
+      const rssId = /<yt:channelId>([^<]+)<\/yt:channelId>/.exec(xml)?.[1];
+      if (rssId === channelId || rssId === channelId.slice(2)) return { channelId, name };
+      throw Error('频道 RSS 不可用');
+    }
     const block = entry[1];
     const id = youtubeVideoId(block);
     const titleM = /<title>([\s\S]*?)<\/title>/.exec(block);
     const publishedM = /<published>([^<]+)<\/published>/.exec(block);
-    const thumbM = /<media:thumbnail\s+url="([^"]+)"/.exec(block);
-    if (!id || !titleM) throw Error('RSS 内容不完整');
-    return { channelId, id, titleM, publishedM, thumbM };
+    if (!/^[A-Za-z0-9_-]{11}$/.test(id) || !titleM) throw Error('RSS 内容不完整');
+    return { channelId, id, titleM, publishedM, name };
   };
   let hit = null, lastError = null;
   for (const channelId of ids) {
     try { hit = await tryId(channelId); break; } catch (e) { lastError = e; }
   }
   if (!hit) {
-    const html = await youtubeFetch('https://www.youtube.com/' + channel.handle + '/videos');
+    const page = channel.path || channel.handle;
+    if (!page || page.startsWith('channel/')) throw lastError || Error('无法读取频道');
+    const html = await youtubeFetch('https://www.youtube.com/' + page + '/videos', signal);
     const m = /"externalId":"(UC[0-9A-Za-z_-]{20,})"/.exec(html)
+      || /"key":"browse_id","value":"(UC[0-9A-Za-z_-]{22})"/.exec(html)
       || /"channelId":"(UC[0-9A-Za-z_-]{20,})"/.exec(html)
       || /channel_id=(UC[0-9A-Za-z_-]{20,})/.exec(html);
     if (!m) throw lastError || Error('无法解析频道 ID');
     hit = await tryId(m[1]);
   }
+  const entry = { channelId: hit.channelId, name: hit.name || channel.name, video: null, checkedAt: new Date().toISOString() };
   const id = hit.id;
+  if (!id) return entry;
   const video = {
     id,
     title: xmlText(hit.titleM[1]),
@@ -12983,58 +13047,96 @@ async function youtubeChannelVideo(channel, previous) {
     duration: previous && previous.video && previous.video.id === id ? Number(previous.video.duration) || 0 : 0,
     url: 'https://www.youtube.com/watch?v=' + encodeURIComponent(id),
   };
-  if (!video.duration) video.duration = await youtubeDuration(id);
-  return { channelId: hit.channelId, video, checkedAt: new Date().toISOString() };
+  if (!video.duration) video.duration = await youtubeDuration(id, signal);
+  return { ...entry, video };
 }
 async function youtubeUpdates(force) {
+  const configured = youtubeConfiguredChannels();
   const cache = youtubeReadCache();
-  const fresh = cache.at && (Date.now() - Number(cache.at) < YOUTUBE_TTL);
-  if (!force && cache.channels && Object.keys(cache.channels).length) {
-    /* 启动先返回本地缓存，过期也先显示；后台再刷新，避免每次重启空白等待。 */
-    if (!fresh) setTimeout(() => { youtubeUpdates(true).catch(() => {}); }, 0);
-    return { ...youtubeResult(cache), stale: !fresh };
-  }
-  if (youtubeInflight) return youtubeInflight;
-  youtubeInflight = (async () => {
-    const channels = { ...(cache.channels || {}) };
-    let anyFresh = false;
+  const key = youtubeConfigKey(configured);
+  if (!configured.length) return { ...youtubeResult(cache, configured), stale: false };
+  const fresh = cache.key === key && Date.now() - Number(cache.at) < YOUTUBE_TTL;
+  if (!force && fresh) return { ...youtubeResult(cache, configured), stale: false };
+  const job = youtubeInflight.get(key);
+  if (job) return job;
+  const work = (async () => {
+    const signal = AbortSignal.timeout(40000);
+    const channels = { ...cache.channels };
     const errors = [];
-    /* 四个频道并发抓取：断网时最多等一轮超时，而不是串行等 4 次。 */
-    const fetched = await Promise.all(YOUTUBE_CHANNELS.map(async channel => {
-      try {
-        return [channel.id, await youtubeChannelVideo(channel, channels[channel.id]), null];
-      } catch (e) {
-        // 断网/频道请求失败：保留此前的频道视频，不把组件清空。
-        return [channel.id, null, `${channel.name}: ${String((e && e.message) || e)}`];
-      }
-    }));
-    for (const [id, entry, error] of fetched) {
-      if (entry) { channels[id] = entry; anyFresh = true; }
-      else if (error) errors.push(error);
+    let anyFresh = false;
+    // 限制单次刷新并发，失败的频道继续显示缓存。网络访问最多占用一个刷新周期的时限。
+    for (let i = 0; i < configured.length && !signal.aborted; i += 4) {
+      await Promise.all(configured.slice(i, i + 4).map(async channel => {
+        try {
+          channels[channel.id] = await youtubeChannelVideo(channel, channels[channel.id], signal);
+          anyFresh = true;
+        } catch (e) {
+          errors.push(channel.name + ': ' + String(e?.message || e));
+        }
+      }));
     }
-    const next = { at: anyFresh ? Date.now() : (cache.at || 0), channels };
-    if (anyFresh) youtubeWriteCache(next);
-    return { ...youtubeResult(next), stale: !anyFresh, errors };
-  })().finally(() => { youtubeInflight = null; });
-  return youtubeInflight;
+    if (signal.aborted) errors.push('刷新主播更新超时');
+    const next = { key, at: anyFresh ? Date.now() : (cache.at || 0), channels };
+    if (anyFresh && youtubeConfigKey(youtubeConfiguredChannels()) === key) youtubeWriteCache(next);
+    return { ...youtubeResult(next, configured), stale: errors.length > 0, errors };
+  })().finally(() => youtubeInflight.delete(key));
+  youtubeInflight.set(key, work);
+  return work;
 }
-function youtubeResult(cache) {
+
+function youtubeResult(cache, configured) {
+  const seen = new Set();
+  const channels = [];
+  for (const channel of configured) {
+    const entry = cache.channels?.[channel.id];
+    const id = entry?.channelId || channel.channelIds[0] || channel.id;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    channels.push({
+      id: channel.id, name: entry?.name || channel.name, handle: channel.handle, video: entry?.video || null,
+    });
+  }
   return {
-    updatedAt: cache.at ? new Date(Number(cache.at)).toISOString() : '',
-    channels: YOUTUBE_CHANNELS.map(channel => ({
-      id: channel.id, name: channel.name, handle: channel.handle,
-      video: (cache.channels && cache.channels[channel.id] && cache.channels[channel.id].video) || null,
-    })),
+    updatedAt: channels.some(channel => channel.video) && cache.at ? new Date(Number(cache.at)).toISOString() : '',
+    channels,
   };
 }
 function handleYoutubeRoutes(req, res, u) {
-  if (u.pathname !== '/api/youtube/updates' || req.method !== 'GET') {
-    return sendJson(res, 404, { error: 'not found' });
+  if (u.pathname === '/api/youtube/channels') {
+    if (req.method === 'GET') {
+      return sendJson(res, 200, { inputs: youtubeConfiguredChannels().map(channel => channel.input) });
+    }
+    if (req.method === 'PUT') return readBody(req, res, 64 * 1024, (err, body) => {
+      if (err) return sendJson(res, 400, { error: '主播名单无效' });
+      let inputs;
+      try { inputs = JSON.parse(body).inputs; } catch { /* 无效请求 */ }
+      if (!Array.isArray(inputs)) return sendJson(res, 400, { error: '主播名单无效' });
+      const invalid = inputs.findIndex(input => !youtubeChannelInput(input));
+      if (invalid >= 0) return sendJson(res, 400, { error: '请输入 YouTube 频道主页链接或 @账号', invalid });
+      const configured = youtubeConfiguredChannels(inputs);
+      const normalized = configured.map(channel => channel.input);
+      try {
+        const settings = readAsrSettings();
+        writeAsrSettings({ ...settings, youtubeChannels: normalized });
+      } catch { return sendJson(res, 500, { error: '无法保存主播名单' }); }
+      return sendJson(res, 200, { inputs: normalized, ...youtubeResult(youtubeReadCache(), configured) });
+    });
   }
-  const force = u.searchParams.get('refresh') === '1';
-  youtubeUpdates(force)
-    .then(data => sendJson(res, 200, data))
-    .catch(e => sendJson(res, 200, { ...youtubeResult(youtubeReadCache()), stale: true, errors: [String((e && e.message) || e)] }));
+  if (u.pathname === '/api/youtube/updates' && req.method === 'GET') {
+    const force = u.searchParams.get('refresh') === '1';
+    const configured = youtubeConfiguredChannels();
+    const cached = youtubeReadCache();
+    if (!force && u.searchParams.get('wait') !== '1') {
+      const stale = configured.length > 0
+        && (cached.key !== youtubeConfigKey(configured) || !(Date.now() - Number(cached.at) < YOUTUBE_TTL));
+      if (stale) youtubeUpdates(false).catch(() => {});
+      return sendJson(res, 200, { ...youtubeResult(cached, configured), stale });
+    }
+    return youtubeUpdates(force)
+      .then(data => sendJson(res, 200, data))
+      .catch(e => sendJson(res, 200, { ...youtubeResult(cached, configured), stale: true, errors: [String(e?.message || e)] }));
+  }
+  sendJson(res, 404, { error: 'not found' });
 }
 
 let desktopUpdateState;

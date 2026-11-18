@@ -57,7 +57,7 @@ fs.writeFileSync(path.join(target,'android-asr-doc.js'),fs.readFileSync(path.joi
 fs.writeFileSync(path.join(target,'android-alignment-doc.js'),fs.readFileSync(path.join(root,'android/alignment-doc.mjs'),'utf8').replaceAll("'../editor/js/","'./js/").replace("'./asr-doc.mjs'","'./android-asr-doc.js'"));
 let html=fs.readFileSync(path.join(root,'editor/studio.html'),'utf8');
 // Android omits the optional creator feed, including its DOM, cache reader and polling.
-for(const pattern of [/<section class="sf-uwp-youtube"[\s\S]*?<\/section>/,/<section class="sf-mu-yt"[\s\S]*?<\/section>/,/<button type="button" class="sf-orbit"[\s\S]*?<\/button>/]){
+for(const pattern of [/<section class="sf-uwp-youtube"[\s\S]*?<\/section>/,/<section class="sf-mu-yt"[\s\S]*?<\/section>/,/<button type="button" class="sf-orbit"[\s\S]*?<\/button>/,/<section class="st-card" id="sf-youtube-follows"[\s\S]*?<\/section>/]){
   if(!pattern.test(html))throw new Error('Review Android creator feed markup');html=html.replace(pattern,'');
 }
 const studioFile=path.join(target,'js/studio.js');
@@ -68,7 +68,7 @@ studio=studio.slice(0,feedStart)+studio.slice(feedEnd);
 for(const text of ["  renderYoutubeUpdates();\n", "  loadYoutubeUpdates();\n", "  write('sf-mu-status-num', ytRecentWeekCount());\n", "  else if (!dashboard.hidden && document.body.dataset.design === 'uwp') { renderYoutubeUpdates(); loadYoutubeUpdates(); }\n", "$('sf-mu-temp').addEventListener('click', () => loadYoutubeUpdates(true));\n", "$('sf-uwp-yt-refresh')?.addEventListener('click', () => loadYoutubeUpdates(true));\n", "const youtubeTimer = setInterval(() => { if (!document.hidden) loadYoutubeUpdates(); }, YT_REFRESH_MS);\n", "if (youtubeTimer && typeof youtubeTimer.unref === 'function') youtubeTimer.unref();\n", "hydrateYoutubeCache();\n"]){
   if(!studio.includes(text))throw new Error('Review Android creator feed integration: '+text);studio=studio.replace(text,'');
 }
-if(/loadYoutubeUpdates|hydrateYoutubeCache|ytRecentWeekCount|\/api\/youtube\/updates/.test(studio))throw new Error('Android creator feed is still connected');
+if(/loadYoutubeUpdates|hydrateYoutubeCache|ytRecentWeekCount|\/api\/youtube\//.test(studio))throw new Error('Android creator feed is still connected');
 fs.writeFileSync(studioFile,studio);
 
 html=html.replaceAll('未勾选/失败的行按句内时长平均分配','未勾选/失败的行保留整句字幕');

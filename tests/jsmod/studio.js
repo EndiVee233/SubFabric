@@ -1659,12 +1659,105 @@ async function refreshEditStats() {
 }
 let ytState = null, ytAt = 0, ytBusy = false, ytRefreshQueued = false;
 const YT_LOCAL_KEY = 'subfabric.youtube.updates.v1';
+let ytRevision = 0;
+const ytFollowList = $('sf-youtube-follows-list');
+const ytFollowAdd = $('sf-youtube-follows-add');
+const ytFollowStatus = $('sf-youtube-follows-status');
+let ytFollowsLoading = false, ytFollowsLoaded = false, ytFollowSave = Promise.resolve(), ytFollowEdit = 0;
+
+function youtubeFollowStatus(message) {
+  ytFollowStatus.textContent = message ? t(message) : '';
+  ytFollowStatus.hidden = !message;
+}
+
+function appendYoutubeFollow(input = '') {
+  const row = document.createElement('div');
+  row.className = 'hotword-row';
+  const field = document.createElement('input');
+  field.type = 'text'; field.className = 'st-input hotword-input'; field.spellcheck = false;
+  field.placeholder = t('YouTube 频道主页链接或 @账号');
+  field.setAttribute('aria-label', field.placeholder);
+  field.value = input;
+  field.addEventListener('input', () => field.removeAttribute('aria-invalid'));
+  field.addEventListener('change', saveYoutubeFollows);
+  field.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); field.blur(); }
+  });
+  const remove = document.createElement('button');
+  remove.type = 'button'; remove.className = 'btn btn-mini hotword-del'; remove.textContent = '−';
+  remove.setAttribute('aria-label', t('移除此主播'));
+  remove.addEventListener('click', () => { row.remove(); saveYoutubeFollows(); });
+  row.append(field, remove);
+  ytFollowList.appendChild(row);
+  return field;
+}
+
+async function loadYoutubeFollows() {
+  if (!ytFollowList || ytFollowsLoaded || ytFollowsLoading) return;
+  ytFollowsLoading = true;
+  try {
+    const response = await fetch('/api/youtube/channels', { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.inputs)) throw Error();
+    data.inputs.forEach(appendYoutubeFollow);
+    ytFollowAdd.disabled = false;
+    ytFollowsLoaded = true;
+    youtubeFollowStatus('');
+  } catch { youtubeFollowStatus('无法读取主播名单，重新打开设置可重试。'); }
+  finally { ytFollowsLoading = false; }
+}
+
+function saveYoutubeFollows() {
+  if (!ytFollowsLoaded) return;
+  const fields = [...ytFollowList.querySelectorAll('input')].filter(field => field.value.trim());
+  const inputs = fields.map(field => field.value.trim());
+  fields.forEach(field => field.removeAttribute('aria-invalid'));
+  const edit = ++ytFollowEdit;
+  youtubeFollowStatus('正在保存主播名单…');
+  // 串行写入，较慢的响应不会将之后的编辑覆盖回去。
+  ytFollowSave = ytFollowSave.then(async () => {
+    try {
+      const response = await fetch('/api/youtube/channels', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs }), signal: AbortSignal.timeout(8000),
+      });
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.channels)) {
+        if (edit === ytFollowEdit && Number.isInteger(data.invalid)) {
+          fields[data.invalid]?.setAttribute('aria-invalid', 'true');
+          youtubeFollowStatus('请输入 YouTube 频道主页链接或 @账号。');
+          return;
+        }
+        throw Error();
+      }
+      ++ytRevision;
+      ytState = data;
+      ytAt = 0;
+      persistYoutubeCache(data);
+      renderYoutubeUpdates();
+      loadYoutubeUpdates();
+      if (edit === ytFollowEdit) youtubeFollowStatus('主播名单已自动保存。');
+    } catch {
+      if (edit === ytFollowEdit) youtubeFollowStatus('无法保存主播名单，请修改后重试。');
+    }
+  });
+}
+
+ytFollowAdd?.addEventListener('click', () => appendYoutubeFollow().focus());
+window.addEventListener('sf-settings-panel-shown', event => {
+  if (event.detail?.panel?.id === 'st-panel-theme') loadYoutubeFollows();
+});
+function maybeLoadYoutubeFollows() {
+  if (location.hash === '#/settings' && !$('st-panel-theme')?.hidden) loadYoutubeFollows();
+}
+window.addEventListener('hashchange', maybeLoadYoutubeFollows);
+maybeLoadYoutubeFollows();
 function hydrateYoutubeCache() {
   try {
     const raw = localStorage.getItem(YT_LOCAL_KEY);
     if (!raw || ytState) return;
     const cached = JSON.parse(raw);
-    if (!cached || !Array.isArray(cached.channels) || !cached.channels.length) return;
+    if (!cached || !Array.isArray(cached.channels)) return;
     ytState = { channels: cached.channels, updatedAt: cached.updatedAt || '', stale: true };
   } catch { /* 本地缓存不可用就等接口 */ }
 }
@@ -1676,10 +1769,6 @@ function persistYoutubeCache(data) {
   } catch { /* 隐私模式/配额不足时忽略 */ }
 }
 const ytCoverSeeds = new Map();
-const YT_CHANNELS = [
-  { id: 'wemmbu', name: 'Wemmbu' }, { id: 'parrot', name: 'Parrot' },
-  { id: 'spoke', name: 'Spoke' }, { id: 'flame', name: 'FlameFrags' },
-];
 /* Windows 10 主播磁贴的频道色：只用于封面顶条、色块底纹和首字母，
    磁贴本身仍是中性 --surface，不改变主题语言。 */
 const YT_CHANNEL_TONES = { wemmbu: '#B18CFF', parrot: '#6CCB5F', spoke: '#FF7A7A', flame: '#FFB86B' };
@@ -1714,9 +1803,8 @@ function fmtYtShort(iso) {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 function ytSortedChannels() {
-  const loaded = ytState && Array.isArray(ytState.channels) ? ytState.channels : [];
-  const channels = loaded.length ? loaded : YT_CHANNELS.map(channel => ({ ...channel, video: null }));
-  /* 按发布时间从新到旧；还没有视频的频道排在最后，保持四位主播的占位顺序。 */
+  const channels = ytState?.channels || [];
+  /* 按发布时间从新到旧；还没有视频的频道排在最后，保持名单顺序。 */
   return [...channels].sort((a, b) => {
     const at = Date.parse((a && a.video && a.video.published) || '');
     const bt = Date.parse((b && b.video && b.video.published) || '');
@@ -1765,8 +1853,9 @@ async function tintYoutubeCard(card, video) {
 function renderMuYoutube() {
   const grid = $('sf-mu-yt-grid');
   if (!grid) return;
-  const loaded = ytState && Array.isArray(ytState.channels) ? ytState.channels : [];
-  const channels = loaded.length ? loaded : YT_CHANNELS.map(channel => ({ ...channel, video: null }));
+  const channels = ytSortedChannels();
+  const empty = $('sf-mu-yt-empty');
+  if (empty) empty.hidden = !ytState || channels.length > 0;
   grid.replaceChildren();
   for (const channel of channels) {
     const video = channel.video || null;
@@ -1825,9 +1914,11 @@ function renderUwpYoutube() {
   if (!grid) return;
   const channels = ytSortedChannels();
   syncUwpYoutubeHead(channels);
+  const empty = $('sf-uwp-yt-empty');
+  if (empty) empty.hidden = !ytState || channels.length > 0;
   const signature = channels.map(channel => {
     const video = channel.video || null;
-    return [channel.id, video ? [video.id, video.title, video.published, video.duration, video.url, video.thumbnail].join('~') : ''].join(':');
+    return [channel.id, channel.name, video ? [video.id, video.title, video.published, video.duration, video.url, video.thumbnail].join('~') : ''].join(':');
   }).join('|');
   if (signature === uwpYtSignature) return;
   uwpYtSignature = signature;
@@ -1918,44 +2009,37 @@ async function loadYoutubeUpdates(force = false) {
     uwpRefresh?.classList.add('is-busy');
     uwpRefresh?.setAttribute('aria-busy', 'true');
     if (uwpRefreshLabel) uwpRefreshLabel.textContent = t('刷新中');
-    notice('正在刷新四位主播的最近更新…');
+    notice(t('正在刷新关注的主播…'));
   }
   ytBusy = true;
-  try {
-    const response = await fetch('/api/youtube/updates' + (force ? '?refresh=1' : ''), {
+  const revision = ytRevision;
+  const readUpdates = async query => {
+    const response = await fetch('/api/youtube/updates' + query, {
       cache: 'no-store', signal: AbortSignal.timeout(45000),
     });
-    const data = await response.json().catch(() => null);
-    if (response.ok && data && Array.isArray(data.channels)) {
-      ytState = data;
-      ytAt = Date.now();
-      persistYoutubeCache(data);
-      renderYoutubeUpdates();
-      if (force) {
-        const got = data.channels.filter(channel => channel && channel.video).length;
-        notice(got ? `主播更新已刷新（${got}/4）` : '刷新完成，但暂时没有拿到视频');
-      }
-    } else {
-      ytState = {
-        ...(ytState || {}),
-        channels: (ytState && ytState.channels) || YT_CHANNELS.map(channel => ({ ...channel, video: null })),
-        stale: true,
-        errors: [`接口返回 ${response.status}`],
-      };
-      /* 失败也记一次时间：否则 UWP 主页每次项目快照（1.5s）都会重试接口。 */
-      ytAt = Date.now();
-      renderYoutubeUpdates();
-      if (force) notice(`刷新失败：接口返回 ${response.status}，请重启 SubFabric 后重试`);
+    const data = await response.json();
+    if (!response.ok || !Array.isArray(data.channels)) throw Error('HTTP ' + response.status);
+    if (revision !== ytRevision) return null;
+    ytState = data;
+    ytAt = Date.now();
+    persistYoutubeCache(data);
+    renderYoutubeUpdates();
+    return data;
+  };
+  try {
+    let data = await readUpdates(force ? '?refresh=1' : '');
+    // 缓存先绘制，再读取同一次后台刷新结果。
+    if (!force && data?.stale) data = await readUpdates('?wait=1');
+    if (force && data) {
+      const got = data.channels.filter(channel => channel.video).length;
+      notice(got ? t('主播更新已刷新（◇/◇）').replace('◇', got).replace('◇', data.channels.length)
+        : t('刷新完成，但暂时没有拿到视频'));
     }
   } catch (error) {
-    const message = String((error && error.message) || error || '未知错误');
-    /* 断网保留上次数据；首次失败时把原因显示在组件占位里。 */
-    ytAt = Date.now();
-    if (!ytState) {
-      ytState = { channels: YT_CHANNELS.map(channel => ({ ...channel, video: null })), stale: true, errors: [message] };
-      renderYoutubeUpdates();
+    if (revision === ytRevision) {
+      ytAt = Date.now();
+      if (force) notice('刷新失败：' + String(error?.message || error).slice(0, 100));
     }
-    if (force) notice('刷新失败：' + message.slice(0, 100));
   }
   finally {
     ytBusy = false;
@@ -1967,7 +2051,7 @@ async function loadYoutubeUpdates(force = false) {
     if (ytRefreshQueued) {
       ytRefreshQueued = false;
       loadYoutubeUpdates(true);
-    }
+    } else if (revision !== ytRevision) loadYoutubeUpdates();
   }
 }
 function renderMaterialHome() {

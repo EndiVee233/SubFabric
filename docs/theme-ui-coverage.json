@@ -1678,7 +1678,7 @@
     },
     {
       "file": "editor/js/studio.js",
-      "sha256": "a86086458ade69b006d11d50c4b3ee2d1d728abc147c73ef5f3a428496006693",
+      "sha256": "35bd45c33a821d69800d7f0e1db6e2503a7cc809978d2ad2f24c8b439bc11d6e",
       "ids": [],
       "dynamicIds": [
         "sf-choice-menu",
@@ -1773,207 +1773,191 @@
           "method": "replaceChildren"
         },
         {
-          "line": 1770,
+          "line": 1674,
+          "method": "createElement"
+        },
+        {
+          "line": 1676,
+          "method": "createElement"
+        },
+        {
+          "line": 1686,
+          "method": "createElement"
+        },
+        {
+          "line": 1859,
           "method": "replaceChildren"
         },
         {
-          "line": 1773,
+          "line": 1862,
           "method": "createElement"
         },
         {
-          "line": 1780,
+          "line": 1869,
           "method": "createElement"
         },
         {
-          "line": 1783,
+          "line": 1872,
           "method": "createElement"
         },
         {
-          "line": 1793,
+          "line": 1882,
           "method": "createElement"
         },
         {
-          "line": 1795,
+          "line": 1884,
           "method": "innerHTML"
-        },
-        {
-          "line": 1796,
-          "method": "createElement"
-        },
-        {
-          "line": 1799,
-          "method": "createElement"
-        },
-        {
-          "line": 1801,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1834,
-          "method": "replaceChildren"
-        },
-        {
-          "line": 1838,
-          "method": "createElement"
-        },
-        {
-          "line": 1851,
-          "method": "createElement"
-        },
-        {
-          "line": 1854,
-          "method": "createElement"
-        },
-        {
-          "line": 1863,
-          "method": "createElement"
-        },
-        {
-          "line": 1866,
-          "method": "createElement"
-        },
-        {
-          "line": 1871,
-          "method": "createElement"
-        },
-        {
-          "line": 1873,
-          "method": "createElement"
-        },
-        {
-          "line": 1875,
-          "method": "createElement"
-        },
-        {
-          "line": 1877,
-          "method": "createElement"
-        },
-        {
-          "line": 1880,
-          "method": "createElement"
-        },
-        {
-          "line": 1883,
-          "method": "createElement"
         },
         {
           "line": 1885,
           "method": "createElement"
         },
         {
-          "line": 1887,
+          "line": 1888,
           "method": "createElement"
         },
         {
-          "line": 2717,
-          "method": "createElement"
-        },
-        {
-          "line": 2717,
+          "line": 1890,
           "method": "innerHTML"
         },
         {
-          "line": 2720,
-          "method": "createElement"
-        },
-        {
-          "line": 2732,
-          "method": "createElement"
-        },
-        {
-          "line": 2739,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2739,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2745,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2765,
-          "method": "createElement"
-        },
-        {
-          "line": 2766,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2773,
-          "method": "createElement"
-        },
-        {
-          "line": 2776,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2779,
-          "method": "createElement"
-        },
-        {
-          "line": 2784,
-          "method": "createElement"
-        },
-        {
-          "line": 2786,
-          "method": "createElement"
-        },
-        {
-          "line": 2789,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2790,
-          "method": "createElement"
-        },
-        {
-          "line": 2792,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2858,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3069,
-          "method": "createElement"
-        },
-        {
-          "line": 3112,
+          "line": 1925,
           "method": "replaceChildren"
         },
         {
-          "line": 3118,
+          "line": 1929,
           "method": "createElement"
         },
         {
-          "line": 3121,
+          "line": 1942,
           "method": "createElement"
         },
         {
-          "line": 3125,
+          "line": 1945,
           "method": "createElement"
         },
         {
-          "line": 3126,
+          "line": 1954,
           "method": "createElement"
         },
         {
-          "line": 3126,
+          "line": 1957,
+          "method": "createElement"
+        },
+        {
+          "line": 1962,
+          "method": "createElement"
+        },
+        {
+          "line": 1964,
+          "method": "createElement"
+        },
+        {
+          "line": 1966,
+          "method": "createElement"
+        },
+        {
+          "line": 1968,
+          "method": "createElement"
+        },
+        {
+          "line": 1971,
+          "method": "createElement"
+        },
+        {
+          "line": 1974,
+          "method": "createElement"
+        },
+        {
+          "line": 1976,
+          "method": "createElement"
+        },
+        {
+          "line": 1978,
+          "method": "createElement"
+        },
+        {
+          "line": 2801,
+          "method": "createElement"
+        },
+        {
+          "line": 2801,
           "method": "innerHTML"
         },
         {
-          "line": 3199,
+          "line": 2804,
           "method": "createElement"
         },
         {
-          "line": 3201,
+          "line": 2816,
           "method": "createElement"
         },
         {
-          "line": 3204,
+          "line": 2823,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2823,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2829,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2849,
+          "method": "createElement"
+        },
+        {
+          "line": 2850,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2857,
+          "method": "createElement"
+        },
+        {
+          "line": 2860,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2863,
+          "method": "createElement"
+        },
+        {
+          "line": 2868,
+          "method": "createElement"
+        },
+        {
+          "line": 2870,
+          "method": "createElement"
+        },
+        {
+          "line": 2873,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2874,
+          "method": "createElement"
+        },
+        {
+          "line": 2876,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2942,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3153,
+          "method": "createElement"
+        },
+        {
+          "line": 3196,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 3202,
           "method": "createElement"
         },
         {
@@ -1981,7 +1965,35 @@
           "method": "createElement"
         },
         {
-          "line": 3205,
+          "line": 3209,
+          "method": "createElement"
+        },
+        {
+          "line": 3210,
+          "method": "createElement"
+        },
+        {
+          "line": 3210,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3283,
+          "method": "createElement"
+        },
+        {
+          "line": 3285,
+          "method": "createElement"
+        },
+        {
+          "line": 3288,
+          "method": "createElement"
+        },
+        {
+          "line": 3289,
+          "method": "createElement"
+        },
+        {
+          "line": 3289,
           "method": "innerHTML"
         }
       ],
@@ -2120,7 +2132,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "184009408e770aa768328a2660e9a60c7dacd5d6adc203332b8915f393cdb753",
+      "sha256": "0573d8091c890363b3d2da5d3ea19ce426f511ca3e86f1c65f37c1d49db584d4",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2160,7 +2172,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "a75d6f11d5451414280eed76c994406062a25ff70187a27e49ea08d3f996ad8b",
+      "sha256": "ae35fca990b529a791e4e085e32cb861d36cfa52496208354e5a4615a2703dfd",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2835,6 +2847,7 @@
         "sf-mu-temp",
         "sf-mu-widgets",
         "sf-mu-youtube",
+        "sf-mu-yt-empty",
         "sf-mu-yt-grid",
         "sf-nav",
         "sf-notice",
@@ -2902,11 +2915,17 @@
         "sf-uwp-youtube",
         "sf-uwp-yt-at",
         "sf-uwp-yt-count",
+        "sf-uwp-yt-empty",
         "sf-uwp-yt-grid",
         "sf-uwp-yt-refresh",
         "sf-uwp-yt-refresh-label",
         "sf-uwp-yt-title",
         "sf-widgets",
+        "sf-youtube-follows",
+        "sf-youtube-follows-add",
+        "sf-youtube-follows-list",
+        "sf-youtube-follows-status",
+        "sf-youtube-follows-title",
         "split-note-holder",
         "split-pane-head",
         "split-role-grip",

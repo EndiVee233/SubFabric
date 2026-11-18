@@ -152,6 +152,11 @@
 
 ## 3. 后端与数据流
 
+- **关注的主播**：`GET/PUT /api/youtube/channels` 读取或更新本机 `asr/settings.json` 的
+  `youtubeChannels`。配置缺失时沿用原四个频道，明确存空数组时保留空名单。允许 YouTube 的 @账号、
+  频道 ID、旧自定义及用户名主页链接，请求地址从固定 YouTube 域名重新组装。主页接口先返回配置和上次的视频，
+  按名单合并同一次刷新任务，最多四个频道并行，每次刷新最多 40 秒。在途旧名单结果不覆盖新名单缓存。
+
 - **稿件字幕方案**：ASS 样式落到字幕轨，同一次字幕自动保存将方案标识、版本、特效和预览字号记录在
   `SubFabricSubtitleScheme` 注释中，避免字幕和特效分两次写入。打开稿件先载入快照，再构建字幕预览。
   SRT 的预览字号及旧项目特效快照走 `/api/projects/:id/effect-scheme` 的原子元数据保存。项目包带上 ASS
@@ -1435,15 +1440,12 @@
   数据来自 `GET /api/oplog/stats?days=7`（读取各项目 `oplog.json` 的操作日志条数，
   近 7 天一个改动计一次）；圆环按项目计数分段，中心显示所有项目总改动次数；
   颜色取主题 accent/info/success/warning/danger，超过五种时用 `color-mix` 派生。
-- **YouTube 主播最近更新（2026-11-04）**：MY 主页新增 `#sf-mu-youtube` 四宫格，
-  固定 Wemmbu（@wemmbumc 主频道）/ Parrot / Spoke / FlameFrags 四位主播；
-  `GET /api/youtube/updates` 先用固定 channelId 直读 RSS（失败再从频道页 `externalId` 解析），
-  解析封面、标题、发布时间，并用 watch 页 `lengthSeconds` 补时长；结果落盘
-  `cache/youtube-updates.json`，网络失败时保留上一次频道数据并标注“显示上次数据”；Node 直连超时会回退到
-  Windows PowerShell `Invoke-WebRequest`（走系统代理）。
-  前端首次进入加载、每 5 分钟自动刷新；主播区不显示标题和刷新按钮，卡片直接接在其他卡下方；
-  即使首次没有缓存也先渲染四张占位卡，不会整块空白。更新时间用绝对日期时间。
-  MY 主页整体 `padding-top` 54→64px。新建稿件与批量初稿合并为一张横跨两列的长卡，新建稿件主卡铺满整张长卡（`--surface-2` 底色、点击响应覆盖全宽）；批量初稿绝对定位覆盖在右侧（`sf-mu-combo`），子卡约占 47.5% 宽，左边界与上一排卡片对齐，右侧留出与上下一致的 8px 内边距。MY 胶囊只保留轻微上浮、边框和阴影，不再 hover 放大；点击胶囊手动刷新四位主播。当前稿件卡新增「详情信息」按钮：点整卡或「继续编辑」进编辑器，点详情进 `#/details/<id>`；两个按钮悬浮时亮框并上浮 1px。批量初稿在长卡悬浮时同步亮框，自身再小幅上浮 1px。胶囊整体固定 `rotate(40deg)`，文字层反向 `rotate(-40deg)` 并微调 1px 保持水平居中；hover 只用 `translate` 上浮，不插值旋转/缩放。
+- **YouTube 主播最近更新**：Windows 10 与 MY 主页使用同一个名单。桌面「设置 → 外观与体验」
+  用热词输入行编辑 YouTube 频道主页链接或 @账号，离开输入框或按 Enter 自动保存；删除立即保存。
+  有效名单应用到主页，按视频发布时间倒序。每 5 分钟检查更新，也可手动刷新。
+  `GET /api/youtube/updates` 先显示按当前名单过滤的缓存；RSS 提供标题、频道显示名和发布时间，
+  watch 页补时长；网络失败继续显示已有结果。Android staging 保留原有范围，省略主播组件、设置卡及请求。
+  MY 主页整体 `padding-top` 54→64px。新建稿件与批量初稿合并为一张横跨两列的长卡，新建稿件主卡铺满整张长卡（`--surface-2` 底色、点击响应覆盖全宽）；批量初稿绝对定位覆盖在右侧（`sf-mu-combo`），子卡约占 47.5% 宽，左边界与上一排卡片对齐，右侧留出与上下一致的 8px 内边距。MY 胶囊只保留轻微上浮、边框和阴影，不再 hover 放大；点击胶囊手动刷新关注的主播。当前稿件卡新增「详情信息」按钮：点整卡或「继续编辑」进编辑器，点详情进 `#/details/<id>`；两个按钮悬浮时亮框并上浮 1px。批量初稿在长卡悬浮时同步亮框，自身再小幅上浮 1px。胶囊整体固定 `rotate(40deg)`，文字层反向 `rotate(-40deg)` 并微调 1px 保持水平居中；hover 只用 `translate` 上浮，不插值旋转/缩放。
 - **Material 主页悬浮**：除时钟外，`sf-resume` / `sf-orbit` / `sf-mu-widget` / 注意力卡 / 项目卡统一为 1px `--accent` 边框提亮 + `--sf-hover-shadow` + `brightness(1.04)` + `translateY(-2px)`；时钟没有边框，只做 drop-shadow + brightness + 上浮。注意力卡在卡片悬浮时同时提亮四瓣描边和两个按钮边框。
 - **新建项目页布局**：`#np-view` 导入模式为左右两列：左列「稿件预览 + 处理进度」，右列「输入与配置 + 生成设置」；两列等高（`align-items:stretch`），上卡顶边同线、下卡底边同线，中段因预览/输入高度不同自然错开，底部卡片 `flex:1` 填满列高。切到**创建初稿**时加 `is-draft`，变成三列：左列仍是预览+进度，中间输入，右下角的生成设置移到第三列并展开；三列按内容高度，底部不再 flex 拉伸，处理进度保持 `min-height:340px`。模式切换只用一个 View Transition：四张卡（输入、生成设置、稿件预览、处理进度）在同一个 `.46s cubic-bezier(.2,.8,.2,1)` 里整体移动/缩放，模式字段在同一次切换中完成；右侧两张不再单独做垂直 height 动画、100ms 停顿或分段展开/收起。`view-transition-name` 为 `np-input` / `np-generate` / `np-preview` / `np-process`。View Transition 处于 top layer；顶栏单独命名 `np-topbar` 并置于 `z-index:999`，卡片动画不覆盖顶栏，同时顶栏与侧栏文字不会被裁掉。减少动效或不支持时直接切换。稿件预览区固定 16:9、封面 `object-fit:cover`。置信度档位说明 `#np-confidence-desc` 用 `.np-conf-desc` 独占一行显示在置信度选项下方，长文案不再挤在选项右侧；「只导入一段」的 checkbox 标签 `.np-lbl-check` 用 auto 宽度 + nowrap，避免在时间范围行折成两行。处理进度卡内加 `.np-progress-box` 小框，`min-height:170px` 向下延伸到 idle 上方，显示当前百分比/状态和处理记录占位；卡片按内容自然增高，不再用固定高度或 flex 拉伸小框。分角色识别标题与「开启」同一行，开启在标题右侧。导入模式下语音识别组整体隐藏时，生成设置卡片说明与「翻译方案」标题之间不再保留空档。识别来源的 `openvino` 显示为「本机 Parakeet TDT V2（Intel NPU）」；说话人数字紧跟标签，与逐词样式/置信度控件左对齐，「区分说话人（中文行标 [SPKn]，按颜色区分）」独占下一行并保持单行。创建初稿的逐词输出使用颜色高亮。≤1080px 单列恢复预览 → 输入 → 进度 → 设置的顺序；详细信息页仍用原来的 2×2 网格。
 - **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；「停留」在主题皮肤里被替换成
