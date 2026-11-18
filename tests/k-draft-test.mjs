@@ -100,14 +100,11 @@ assert.ok(!write([seg(['hello','world'])],false,'color').text.includes('{\\k'),'
 }
 {
   const ui = fs.readFileSync(new URL('../editor/js/project.js',import.meta.url),'utf8');
-  const fn = /^  function draftKaraokeSettings\([^\n]*\n[\s\S]*?^  }/m.exec(ui)?.[0]; assert.ok(fn);
-  const storage = { getItem: key => ({'sf-k-style':'k','sf-k-sweep':'1','sf-k-base':'#abcdef'})[key] };
-  const settings = vm.runInNewContext('('+fn+')', { localStorage: storage });
-  assert.equal(settings().karaokeStyle,'k','batch follows remembered draft style');
-  assert.equal(settings().karaokeSweep,true); assert.equal(settings().karaokeBase,'#abcdef');
-  assert.equal(settings('color').karaokeStyle,'color','explicit current choice wins');
-  const restricted = vm.runInNewContext('('+fn+')', { localStorage: { getItem() { throw Error('blocked'); } } });
-  assert.equal(restricted('k').karaokeStyle,'k','unavailable storage does not discard current choice');
+  const html = fs.readFileSync(new URL('../tools/templates/studio.html',import.meta.url),'utf8');
+  const colorDrafts = ui.match(/\b(payload0?)\.karaokeStyle = 'color'/g) || [];
+  assert.equal(colorDrafts.length, 3, 'local, link and batch drafts explicitly use color word highlighting');
+  assert.doesNotMatch(ui, /sf-k-style|\bautoPost\s*[:=]/, 'draft creation cannot use the previous karaoke style or enable automatic realignment');
+  assert.doesNotMatch(html, /id="(?:np-kstyle|np-autopost|batch-autopost)"/);
 }
 const swept=kLine.wordKText([{word:'hello',start:0,end:1}],0,1,'00FF00','FFFFFF','\\kf');
 assert.equal(parseKLine(swept,0,1).kTag,'\\kf');

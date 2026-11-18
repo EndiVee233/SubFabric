@@ -15,6 +15,7 @@ import { AssDoc, prepareImportedSubtitle } from './ass.js';
 import { normalizeRegion, filterCues, regionSummary } from '../region.js';
 import { t } from './i18n.js';
 import { ico } from './icons.js';
+import { initWorkloadPanel } from './workload-panel.js';
 import { stripEffectTagsSafe } from './postprocess.js';
 // ⚠ 原来这里漏了 import：perfRenderApplied / perfRenderResult 直接调 escapeHtml，
 //   而它只从 util.js 导出给 editor.js —— 结果是每次渲染"双引擎/性能测试"结果都抛
@@ -26,25 +27,9 @@ import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL,
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp,
     openCardBegin = async () => {}, openCardLabel = () => {}, openCardFail = () => {}, onEditorLeave = () => {},
-    onProjectChanged = () => {}, waitForEffectSave = () => {} } = ctx;
+    onProjectChanged = () => {}, waitForEffectSave = () => {}, readWorkloadItems } = ctx;
   const $ = (s) => document.querySelector(s);
   const studioUI = document.body?.classList?.contains('sf-studio') === true;
-
-  /** 初稿入口共用：单个稿件按下拉选择，批量稿件沿用最近记住的逐词形态。 */
-  function draftKaraokeSettings(style) {
-    let saved = '', sweep = '', base = '';
-    try {
-      saved = localStorage.getItem('sf-k-style') || '';
-      sweep = localStorage.getItem('sf-k-sweep') || '';
-      base = localStorage.getItem('sf-k-base') || '';
-    } catch { /* 偏好不可读时仍可使用本次下拉选择。 */ }
-    const karaokeStyle = (style || saved) === 'k' ? 'k' : 'color';
-    return {
-      karaokeStyle,
-      karaokeSweep: karaokeStyle === 'k' && sweep === '1',
-      karaokeBase: /^#[0-9a-f]{6}$/i.test(base) ? base : '#FFFFFF',
-    };
-  }
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
   let saveTimer = 0;
@@ -99,7 +84,7 @@ export function initProjects(ctx) {
     if (!p || !target || target.id !== p.id) return;
     const duration = Number(video.duration);
     const t = Number(target.time);
-    if (!(t > 0) || !(duration > 0)) return;
+    if (!Number.isFinite(t) || t < 0 || !(duration > 0)) return;
     try { video.currentTime = Math.min(t, Math.max(0, duration - 0.05)); } catch {}
     pendingPlayback = null;
   }
@@ -364,6 +349,55 @@ export function initProjects(ctx) {
   const detailName = $('#detail-name');
   const detailError = $('#detail-error');
   const detailSave = $('#detail-save');
+  const workloadSection = $('#detail-workload'), workloadBody = $('#detail-workload-body');
+  const workloadStatus = $('#detail-workload-status');
+  let workloadProject = null, workloadItems = null, workloadRequest = null, workloadSeek = null;
+  const workload = readWorkloadItems && !window.androidRpc && initWorkloadPanel({
+    element: workloadBody, getItems: () => workloadItems || [],
+    getDuration: () => Number(workloadProject?.duration || workloadProject?.source?.duration) || 0,
+    onSeek(time) {
+      if (!workloadProject || !Number.isFinite(time) || time < 0) return;
+      const id = workloadProject.id;
+      workloadSeek = { id, time };
+      location.hash = '#/project/' + id;
+    },
+  });
+  function resetWorkload() {
+    if (!workload) return;
+    workload.setVisible(false);
+    workloadSection.open = false;
+    workloadSection.hidden = true;
+    workloadBody.hidden = true;
+    workloadStatus.hidden = true;
+    workloadProject = workloadItems = null;
+    workloadRequest?.abort();
+    workloadRequest = null;
+  }
+  if (workload) workloadSection.addEventListener('toggle', async () => {
+    if (!workloadSection.open || !workloadProject) { workload.setVisible(false); return; }
+    if (workloadItems) { workload.setVisible(true); return; }
+    if (workloadRequest) return;
+    const { id, subtitle } = workloadProject;
+    const controller = new AbortController();
+    workloadRequest = controller;
+    workloadStatus.textContent = t('正在读取字幕…');
+    workloadStatus.hidden = false;
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(id)}/subtitle`, { signal: controller.signal });
+      if (!response.ok) throw new Error(t('读取字幕失败'));
+      const text = await response.text();
+      if (workloadRequest !== controller) return;
+      workloadItems = readWorkloadItems(text, subtitle.name || subtitle.file || '');
+      workloadStatus.hidden = true;
+      workloadBody.hidden = false;
+      workload.invalidate();
+      workload.setVisible(workloadSection.open);
+    } catch (error) {
+      if (workloadRequest === controller) workloadStatus.textContent = error.message || t('读取字幕失败');
+    } finally {
+      if (workloadRequest === controller) workloadRequest = null;
+    }
+  });
   function openProjectDetails(project) {
     const id = project && project.id;
     if (!id) return;
@@ -375,6 +409,7 @@ export function initProjects(ctx) {
   }
   async function loadDetailsPage(id) {
     const requestId = ++detailLoadToken;
+    resetWorkload();
     detailProjectId = id;
     detailName.value = '';
     detailError.textContent = '';
@@ -399,6 +434,10 @@ export function initProjects(ctx) {
       return;
     }
     if (requestId !== detailLoadToken || location.hash !== '#/details/' + id) return;
+    if (workload && project.subtitle && !project.fetching && project.draft?.status !== 'running') {
+      workloadProject = project;
+      workloadSection.hidden = false;
+    }
     detailName.value = project.name || '';
     $('#detail-video').textContent = project.fetching ? '正在下载…' : (project.video && project.video.name || '未关联视频');
     $('#detail-subtitle').textContent = (project.subtitle && project.subtitle.name) || '尚无字幕';
@@ -768,7 +807,7 @@ export function initProjects(ctx) {
   // openProject 竞态守卫代次: applyHash 快速切换项目(A→B)会并发进入, 每次进入自增;
   // 旧的响应晚回来时代次不符 → 直接丢弃, 避免旧数据覆盖新项目状态。
   let _openGen = 0;
-  async function openProject(pid) {
+  async function openProject(pid, startAt) {
     const gen = ++_openGen;
     clearInterval(pollTimer); pollTimer = 0;
     let m, rSub;
@@ -831,7 +870,7 @@ export function initProjects(ctx) {
       saveConflict = false;
       pendingText = null;
       // 2) 视频: 按保存的路径经服务端 Range 流式播放; 失效则要求重选
-      pendingPlayback = { id: pid, time: readPlayback(pid) };
+      pendingPlayback = { id: pid, time: startAt ?? readPlayback(pid) };
       if (m.videoExists && m.video && m.video.path) {
         loadVideoUrl('/api/media?path=' + encodeURIComponent(m.video.path), m.video.name);
       } else {
@@ -1620,7 +1659,6 @@ export function initProjects(ctx) {
       wordLevel: !!($('#batch-word') && $('#batch-word').checked),
       align: !!($('#batch-align') && $('#batch-align').checked),
       speakers: !!($('#batch-speakers') && $('#batch-speakers').checked),
-      autoPost: !!($('#batch-autopost') && $('#batch-autopost').checked),
     };
   }
   function batchEffective(item, global) {
@@ -1631,7 +1669,6 @@ export function initProjects(ctx) {
       wordLevel: pick(item.wordLevel, global.wordLevel),
       align: pick(item.align, global.align),
       speakers: pick(item.speakers, global.speakers),
-      autoPost: global.autoPost,
     };
   }
   function batchAddFiles(files) {
@@ -1725,9 +1762,8 @@ export function initProjects(ctx) {
           name: item.name, video: { path: um.path, name: um.name || item.file.name }, draft: true,
           modelId: opts.modelId, wordLevel: opts.wordLevel, align: opts.align,
           speakers: opts.speakers && opts.wordLevel, speakerCount: 6, confidence: 'full',
-          autoPost: opts.autoPost,
         };
-        if (payload.wordLevel || payload.align) Object.assign(payload, draftKaraokeSettings());
+        if (payload.wordLevel || payload.align) payload.karaokeStyle = 'color';
         const r = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const m = await r.json().catch(() => ({}));
         if (!r.ok || !m.id) throw new Error(m.error || '创建项目失败');
@@ -4963,7 +4999,6 @@ async function renderAsrModels(providedStatus = null) {
   function npFieldPlan(mode) {
     const draft = mode === 'draft';
     const word = $('#np-word');
-    const align = $('#np-align');
     const entries = [];
     const add = (sel, hidden) => { const el = $(sel); if (el) entries.push({ el, hidden }); };
     add('#np-row-sub', draft);
@@ -4976,10 +5011,8 @@ async function renderAsrModels(providedStatus = null) {
     add('#np-row-part', !draft);
     add('#np-row-word', !draft);
     add('#np-row-align', !draft || !!(word && word.checked));
-    add('#np-row-kstyle', !draft || !((word && word.checked) || (align && align.checked)));
     add('#np-row-conf', !draft);
     add('#np-row-spk', !draft);
-    add('#np-auto-wrap', !draft);
     for (const sel of ['#np-voice-group', '#np-cast-group']) add(sel, !draft);
     return entries;
   }
@@ -4987,7 +5020,7 @@ async function renderAsrModels(providedStatus = null) {
   function npApplyFields(mode) {
     const draft = mode === 'draft';
     for (const { el, hidden } of npFieldPlan(mode)) el.hidden = hidden;
-    if (draft) { npSyncVibeVoice(); npSyncKStyle(); }
+    if (draft) npSyncVibeVoice();
     // 切进初稿模式时，把开关同步成**全局默认**（用户没动过就跟随；动过则以他刚选的为准）。
     // 只在第一次进入时拉一次，避免每次切模式都把用户的改动冲掉。
     if (draft && !npConfSynced) { npConfSynced = true; syncConfidenceFromGlobal(); }
@@ -5184,8 +5217,6 @@ async function renderAsrModels(providedStatus = null) {
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
     if ($('#np-align')) { $('#np-align').checked = false; delete $('#np-align').dataset.touched; }
     delete $('#np-word').dataset.touched;
-    const kSel = $('#np-kstyle');
-    if (kSel) { delete kSel.dataset.touched; npSyncKStyle(); }   // 逐词样式回到记住的选择
     $('#np-speakers').checked = false;
     $('#np-spk-count').value = '';
     $('#np-part').value = '1';
@@ -5504,25 +5535,8 @@ async function renderAsrModels(providedStatus = null) {
       : (align.checked
         ? t('勾选 → 不跑原生逐词，改用对齐模型生成逐词 ASS')
         : t('不勾选 → 输出 SRT；勾选 → 用对齐模型生成逐词 ASS'));
-    $('#np-row-kstyle').hidden = vibe || !(word.checked || align.checked);
     npSyncSpeakers();
   }
-  /** 逐词样式（颜色高亮 / \k 卡拉OK）：记住上次选择（main.js 的设置面板用同一组 localStorage 键）。
-   *  \kf 扫过 / 未唱默认色属于"打开稿件后"的设置（设置面板），这里只带默认值过去。 */
-  function npSyncKStyle() {
-    const sel = $('#np-kstyle');
-    if (!sel) return;
-    if (!sel.dataset.touched) {
-      let saved = '';
-      try { saved = localStorage.getItem('sf-k-style') || ''; } catch (e) {}
-      if (saved === 'k' || saved === 'color') sel.value = saved;   // 默认 color = 升级前行为
-    }
-  }
-  $('#np-kstyle') && $('#np-kstyle').addEventListener('change', () => {
-    const sel = $('#np-kstyle');
-    sel.dataset.touched = '1';
-    try { localStorage.setItem('sf-k-style', sel.value); } catch (e) {}
-  });
   $('#np-word').addEventListener('change', () => {
     $('#np-word').dataset.touched = '1';
     $('#np-align').dataset.touched = '1';
@@ -5786,14 +5800,9 @@ async function renderAsrModels(providedStatus = null) {
           speakers: !!($('#np-speakers') && $('#np-speakers').checked),
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
           confidence: ($('#np-confidence') || {}).value || 'full',
-          // 创建初稿后按选项自动重校逐词时间。
-          autoPost: !!($('#np-autopost') && $('#np-autopost').checked),
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
-        // 逐词样式与"本地视频初稿"同款(见下方 payload 的注释)
-        if (payload0.wordLevel || payload0.align) {
-          Object.assign(payload0, draftKaraokeSettings($('#np-kstyle')?.value));
-        }
+        if (payload0.wordLevel || payload0.align) payload0.karaokeStyle = 'color';
         if (payload0.speakers) localStorage.setItem('ss-role-annot', '1');
         const r0 = await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload0) });
         const m0 = await r0.json();
@@ -5886,15 +5895,10 @@ async function renderAsrModels(providedStatus = null) {
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;
-        // 逐词样式: 颜色高亮(默认) / \k 卡拉OK。扫过(\kf)与未唱默认色跟随设置面板记住的偏好。
-        if (payload.wordLevel || payload.align) {
-          Object.assign(payload, draftKaraokeSettings($('#np-kstyle')?.value));
-        }
+        if (payload.wordLevel || payload.align) payload.karaokeStyle = 'color';
         // 逐句置信度档位（off/fast/full）：显式发给服务端，存进 project.json 的
         // draft.confidence。这是个**项目级**选择 —— 建稿时定了，重新识别也沿用。
         payload.confidence = ($('#np-confidence') || {}).value || 'full';
-        // 创建初稿后按选项自动重校逐词时间。
-        payload.autoPost = !!($('#np-autopost') && $('#np-autopost').checked);
         // 勾了「区分说话人」→ 编辑器的「启用角色标注」帮用户打开(字幕里会带 [SPKn] 标签, 禁着没意义)
         if (payload.speakers) localStorage.setItem('ss-role-annot', '1');
       } else {
@@ -5977,6 +5981,8 @@ async function renderAsrModels(providedStatus = null) {
       history.replaceState(null, '', h);
     }
     if (h !== previousRoute && (previousRoute === '#/editor' || previousRoute.startsWith('#/project/'))) onEditorLeave();
+    const requestedSeek = workloadSeek;
+    workloadSeek = null;
     $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/new' || h === '#/batch' || h === '#/settings' || androidPages.includes(h) || !!detailsMatch;
     setPageVisible(dashboardView, h === '#/dashboard');
     setPageVisible(elHome, h === '#/home');
@@ -5987,6 +5993,7 @@ async function renderAsrModels(providedStatus = null) {
     setPageVisible(detailView, !!detailsMatch);
     if (!detailsMatch && previousRoute.startsWith('#/details/')) {
       stopDp(); dpId = ''; detailLoadToken++;
+      resetWorkload();
     }
     /* 离开新建页就停掉它的进度轮询；回到 #/new 时若作业还在，用户可以从项目列表/详情页继续看。 */
     if (h !== '#/new') stopNpDraft();
@@ -6003,9 +6010,16 @@ async function renderAsrModels(providedStatus = null) {
       if (previousRoute !== h || detailProjectId !== id) loadDetailsPage(id);
     } else if (h.startsWith('#/project/')) {
       const pid = h.slice('#/project/'.length);
+      const startAt = requestedSeek?.id === pid ? requestedSeek.time : null;
       setAudioControlsVisible(true);
-      if (!state.project || state.project.id !== pid) openProject(pid);
-      else syncAudioModeUI(state.project.meta);
+      if (!state.project || state.project.id !== pid) openProject(pid, startAt);
+      else {
+        syncAudioModeUI(state.project.meta);
+        if (startAt != null) {
+          pendingPlayback = { id: pid, time: startAt };
+          restorePlaybackPosition();
+        }
+      }
     } else if (h === '#/editor') {
       setAudioControlsVisible(false);
       setPlaybackAudioMode(null, false);

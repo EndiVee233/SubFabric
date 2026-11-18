@@ -43,7 +43,7 @@ export function initEffectSchemes({ getProject, getDocument, getFormat, captureP
   el('sf-settings-tab-effects').hidden = false;
   el('ass-style-group').hidden = true;
   el('sf-preset-group').hidden = true;
-  el('rng-font').closest('.setting-row').hidden = true;
+  el('sf-editor-display').hidden = true;
 
   const list = el('st-effect-list'), form = el('st-effect-form'), name = el('st-effect-name');
   const add = el('st-effect-new'), status = el('sf-effect-status'), listStatus = el('st-effect-status');

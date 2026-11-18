@@ -132,7 +132,7 @@
 | `desktop/bilibili-login.cjs` | 在 Electron 独立会话中打开 bilibili 官方登录页，递交该会话的登录态并在结束时清理会话 |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 8 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式通过 IPC 报告就绪、转接 Windows 更新状态与指令 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
-| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 只读页签控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 稿件详情只读控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/js/project.js`、`editor/js/studio.js`、`editor/js/storage.js` | 桌面设置的业务表单与热词自动保存、设置分类和路由、存储扫描与清理界面 |
 | `editor/js/effect-schemes.js`、`editor/js/subtitle-scheme-preview.js`、`editor/js/postprocess.js` | 桌面字幕方案管理与选择、示例视频的 libass 预览、稿件快照归一化与 ASS 后处理 |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
@@ -366,9 +366,9 @@
   同样式 ASS 经 `stageAssLogMerge` 一次构建并校验新文档再写回，保留原标签、词间空档与真实起止时间；
   SRT/未知样式仍走既有转换入口，但批量删除只改写一次 ASS，不为缺失语言创建空白句。
 
-- **分段工作量预测数据**：只读当前编辑器的整句视图模型 `state.items[].confidence.score`（ASS 的
-  `SubFabricConfidence` 注释在原有加载路径解析），不按双语行或逐词事件重复计数，不请求操作日志、LLM
-  或识别模型。缺失/非法评分单列，不伪造为 100%；没有评分的 SRT/外部 ASS 也不生成假预测。
+- **分段工作量预测数据**：展开稿件详情中的预测区才读取项目字幕，复用 ASS 双语整句分组和
+  `SubFabricConfidence` 注释解析，不按双语行或逐词事件重复计数，不请求操作日志、LLM 或识别模型。
+  缺失/非法评分单列；没有评分的 SRT/外部 ASS 显示无可用置信度。
   服务端仅在 `STATIC_RESOURCES` 明确加入两个新 ESM 文件，不扩大其它静态文件访问范围；无新增后端接口或依赖。
   **精翻标准日志提交校准（2026-11-08，已完成且已验证；已实装，见 §6）**：用户提供精校前两小时 ASS 与外部 JSONL
   历史日志，对照安装版最新生成的同视频 WhisperX 初稿。仅取起点 <7200s 的 2,200 句（均有评分、未启用分离），
@@ -817,8 +817,8 @@
   改用正式保存后读取夹具磁盘验证，最终保存/重载通过。未跑全量回归、ASR/GPU 或视频导出。
   本机私有样本和修复预览仅放 `_test/maintenance/region-slices-20261107/`，不入库。
 
-- **分段工作量预测（2026-11-07，已完成且已验证：源码与隔离验收）**：编辑器右侧新增与字幕/角色/设置/日志
-  同级的「工作量」页签。分段可选 5/10/20 分钟，默认 10；阈值可选 75%/90%/100%，默认 90%；显示可选
+- **分段工作量预测**：从稿件卡片「更多」展开「分段工作量预测」，点击时间段进入编辑器并定位播放位置。
+  分段可选 5/10/20 分钟，默认 10；阈值可选 75%/90%/100%，默认 90%；显示可选
   预计修改次数/相对工作量，默认相对。按句子起点归段，跨界只计一次；范围覆盖媒体时长及最晚字幕结尾，
   无视频时用字幕结尾。时间无效的句子排除并提示；异常超大范围显式报错，不截断后冒充完整结果。
   当前置信度区间（2026-11-08）为 `<60%`、`60–<70%`、`70–<80%`、`80–<90%`、`90–100%`；
@@ -834,7 +834,7 @@
   不把翻页后的局部段重新归一化；零次条不填充。每页显示 20 段，时间按钮复用现有播放定位。
   卡片用原生 `details/summary`，默认折叠，仅显示时间段、进度条、当前选择的倍率或次数；点击摘要/进度条或
   聚焦摘要按 Enter 展开详情，时间按钮只定位、不切换展开。默认勾选「默认折叠分段详情」，可取消并记住偏好；
-  每次重新进入页签按该选项重置，当前访问中的手动展开跨重算/翻页保留，改变分段时长时重置。
+  每次重新展开预测区按该选项重置，当前访问中的手动展开跨重算/翻页保留，改变分段时长时重置。
   偏好仅保存在本源 `localStorage` 的 `sf-workload-v1`，不修改字幕或项目；`bandsVersion:2` 区分新档位，
   旧手动权重按覆盖区间迁移，交叉时取较高值，新档明确值优先；`legacyWeights` 保留旧有效值并提示可调整。
   `standard` 记住精翻/常规选择；已有 `weights` 仍表示精翻手动值，`regularWeights` 独立保存常规手动值。
@@ -1439,7 +1439,7 @@
   即使首次没有缓存也先渲染四张占位卡，不会整块空白。更新时间用绝对日期时间。
   MY 主页整体 `padding-top` 54→64px。新建稿件与批量初稿合并为一张横跨两列的长卡，新建稿件主卡铺满整张长卡（`--surface-2` 底色、点击响应覆盖全宽）；批量初稿绝对定位覆盖在右侧（`sf-mu-combo`），子卡约占 47.5% 宽，左边界与上一排卡片对齐，右侧留出与上下一致的 8px 内边距。MY 胶囊只保留轻微上浮、边框和阴影，不再 hover 放大；点击胶囊手动刷新四位主播。当前稿件卡新增「详情信息」按钮：点整卡或「继续编辑」进编辑器，点详情进 `#/details/<id>`；两个按钮悬浮时亮框并上浮 1px。批量初稿在长卡悬浮时同步亮框，自身再小幅上浮 1px。胶囊整体固定 `rotate(40deg)`，文字层反向 `rotate(-40deg)` 并微调 1px 保持水平居中；hover 只用 `translate` 上浮，不插值旋转/缩放。
 - **Material 主页悬浮**：除时钟外，`sf-resume` / `sf-orbit` / `sf-mu-widget` / 注意力卡 / 项目卡统一为 1px `--accent` 边框提亮 + `--sf-hover-shadow` + `brightness(1.04)` + `translateY(-2px)`；时钟没有边框，只做 drop-shadow + brightness + 上浮。注意力卡在卡片悬浮时同时提亮四瓣描边和两个按钮边框。
-- **新建项目页布局**：`#np-view` 导入模式为左右两列：左列「稿件预览 + 处理进度」，右列「输入与配置 + 生成设置」；两列等高（`align-items:stretch`），上卡顶边同线、下卡底边同线，中段因预览/输入高度不同自然错开，底部卡片 `flex:1` 填满列高。切到**创建初稿**时加 `is-draft`，变成三列：左列仍是预览+进度，中间输入，右下角的生成设置移到第三列并展开；三列按内容高度，底部不再 flex 拉伸，处理进度保持 `min-height:340px`。模式切换只用一个 View Transition：四张卡（输入、生成设置、稿件预览、处理进度）在同一个 `.46s cubic-bezier(.2,.8,.2,1)` 里整体移动/缩放，模式字段在同一次切换中完成；右侧两张不再单独做垂直 height 动画、100ms 停顿或分段展开/收起。`view-transition-name` 为 `np-input` / `np-generate` / `np-preview` / `np-process`。View Transition 处于 top layer；顶栏单独命名 `np-topbar` 并置于 `z-index:999`，卡片动画不覆盖顶栏，同时顶栏与侧栏文字不会被裁掉。减少动效或不支持时直接切换。稿件预览区固定 16:9、封面 `object-fit:cover`。置信度档位说明 `#np-confidence-desc` 用 `.np-conf-desc` 独占一行显示在置信度选项下方，长文案不再挤在选项右侧；「只导入一段」的 checkbox 标签 `.np-lbl-check` 用 auto 宽度 + nowrap，避免在时间范围行折成两行。处理进度卡内加 `.np-progress-box` 小框，`min-height:170px` 向下延伸到 idle 上方，显示当前百分比/状态和处理记录占位；卡片按内容自然增高，不再用固定高度或 flex 拉伸小框。分角色识别标题与「开启」同一行，开启在标题右侧。导入模式下语音识别组整体隐藏时，生成设置卡片说明与「翻译方案」标题之间不再保留空档。识别来源的 `openvino` 显示为「本机 Parakeet TDT V2（Intel NPU）」；说话人数字紧跟标签，与逐词样式/置信度控件左对齐，「区分说话人（中文行标 [SPKn]，按颜色区分）」独占下一行并保持单行。逐词样式下拉 `#np-kstyle` 与置信度下拉同宽（`max-width:230px`），不再撑满整行；选项文案只保留「颜色高亮」「\k 卡拉OK」，去掉括号解释。≤1080px 单列恢复预览 → 输入 → 进度 → 设置的顺序；详细信息页仍用原来的 2×2 网格。
+- **新建项目页布局**：`#np-view` 导入模式为左右两列：左列「稿件预览 + 处理进度」，右列「输入与配置 + 生成设置」；两列等高（`align-items:stretch`），上卡顶边同线、下卡底边同线，中段因预览/输入高度不同自然错开，底部卡片 `flex:1` 填满列高。切到**创建初稿**时加 `is-draft`，变成三列：左列仍是预览+进度，中间输入，右下角的生成设置移到第三列并展开；三列按内容高度，底部不再 flex 拉伸，处理进度保持 `min-height:340px`。模式切换只用一个 View Transition：四张卡（输入、生成设置、稿件预览、处理进度）在同一个 `.46s cubic-bezier(.2,.8,.2,1)` 里整体移动/缩放，模式字段在同一次切换中完成；右侧两张不再单独做垂直 height 动画、100ms 停顿或分段展开/收起。`view-transition-name` 为 `np-input` / `np-generate` / `np-preview` / `np-process`。View Transition 处于 top layer；顶栏单独命名 `np-topbar` 并置于 `z-index:999`，卡片动画不覆盖顶栏，同时顶栏与侧栏文字不会被裁掉。减少动效或不支持时直接切换。稿件预览区固定 16:9、封面 `object-fit:cover`。置信度档位说明 `#np-confidence-desc` 用 `.np-conf-desc` 独占一行显示在置信度选项下方，长文案不再挤在选项右侧；「只导入一段」的 checkbox 标签 `.np-lbl-check` 用 auto 宽度 + nowrap，避免在时间范围行折成两行。处理进度卡内加 `.np-progress-box` 小框，`min-height:170px` 向下延伸到 idle 上方，显示当前百分比/状态和处理记录占位；卡片按内容自然增高，不再用固定高度或 flex 拉伸小框。分角色识别标题与「开启」同一行，开启在标题右侧。导入模式下语音识别组整体隐藏时，生成设置卡片说明与「翻译方案」标题之间不再保留空档。识别来源的 `openvino` 显示为「本机 Parakeet TDT V2（Intel NPU）」；说话人数字紧跟标签，与逐词样式/置信度控件左对齐，「区分说话人（中文行标 [SPKn]，按颜色区分）」独占下一行并保持单行。创建初稿的逐词输出使用颜色高亮。≤1080px 单列恢复预览 → 输入 → 进度 → 设置的顺序；详细信息页仍用原来的 2×2 网格。
 - **弹幕备注条**：输入框、停留时长下拉与发送按钮统一 34px 高；「停留」在主题皮肤里被替换成
   `.sf-choice-toggle`（原生 select 隐藏），其默认高度只有 30~32px，所以备注条内单独钉
   `height/min-height:34px; box-sizing:border-box`；MY 下再把下拉圆角对齐输入框的 12px
@@ -1620,7 +1620,9 @@
   兼容旧纯 ASS 样式预设，本机视图继承旧样式预设及特效方案。导入重名自动编号，只导出参数及字体名称。
   编辑窗的预览固定在顶部，样式与特效表单在预览下方滚动，特效标题随卡片滚动。内置无音轨视频默认停在示例帧，可手动播放或重播。
   调参数时用现有 libass/后处理链实时重绘字幕，离开释放预览渲染器。
-  SRT 套用预览字号缩放；Android 保留原编辑入口。
+  方案表单隐藏逐词扫过和 SRT 预览字号，原方案字段仍可读取。Android 保留原编辑入口。
+- **桌面编辑入口**：编辑器隐藏胶片图和外观设置，主题颜色在全局外观中管理。新建初稿的逐词输出统一使用
+  颜色高亮，涵盖本地、链接和批量任务；创建流程隐藏自动重校入口。
 - **设置作用域**：字体/字号/颜色等 ASS 设置写入当前项目稿件；文件夹只在浏览器本地记录分组，
   不移动 `projects/` 实际文件。
 - **原型隔离**：`prototypes/` 各原型只用合成数据与独立命名空间，不连接真实 API、设置或 `projects/`；

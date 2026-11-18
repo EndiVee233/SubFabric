@@ -20,7 +20,9 @@ report.limitations = ['Only visible ordinary text on compositable neutral surfac
 const server = await isolatedServer({ prepare(dir, editor) {
   const project = path.join(dir, 'projects/p-theme-audit');
   fs.mkdirSync(project, { recursive: true });
-  fs.writeFileSync(path.join(project, 'subtitle.ass'), makeSyntheticAss().replace(/第 (\d+) 句/g, '[Speaker] 第 $1 句'));
+  fs.writeFileSync(path.join(project, 'subtitle.ass'), makeSyntheticAss()
+    .replace('[Script Info]', '[Script Info]\n; SubFabricConfidence: 0:0.48:0,1:0.65:0')
+    .replace(/第 (\d+) 句/g, '[Speaker] 第 $1 句'));
   fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({ id: 'p-theme-audit', name: 'Theme fixture', duration: 240,
     createdAt: '2026-01-01T00:00:00Z', modifiedAt: '2026-01-01T00:00:00Z', subtitle: { format: 'ass', file: 'subtitle.ass', name: 'fixture.ass' } }));
   fs.writeFileSync(path.join(project, 'draft.log'), 'Storage layout fixture\n');
@@ -281,11 +283,26 @@ try {
   assert.deepEqual(await hover('#home-list .pc-name'), ['1', '0'], 'leaving the button restores the card light');
   report.wideDesktop = { homeWidth, settingsWidth, storageWidth, newLayout, reveal: 'passed', hiddenSettings: 'passed' };
 
+  const subtitleURL = '/api/projects/p-theme-audit/subtitle';
+  const subtitleReads = () => b.net.filter(row => row.phase === 'req' && row.url.endsWith(subtitleURL)).length;
+  const priorReads = subtitleReads();
+  await b.eval('document.querySelector("#home-list .pc-details").click()');
+  await b.waitFor('!document.querySelector("#detail-view").hidden && !document.querySelector("#detail-workload").hidden');
+  assert.equal(subtitleReads(), priorReads, 'showing details alone does not parse the subtitle for workload');
+  await b.eval('document.querySelector("#detail-workload > summary").click()');
+  await b.waitFor('document.querySelector("#workload-summary").textContent.includes("2 句纳入预测")');
+  assert.equal(subtitleReads(), priorReads + 1);
+  assert.ok(await b.eval('!document.querySelector("#panel-tabs [data-tab=workload],#set-film,#theme-swatches-side,#np-kstyle,#np-autopost,#batch-autopost")'));
+  await collect('detail-workload', '#detail-workload', true);
+  report.workloadLocation = 'draft card More opens a lazy read-only preview on the details page';
+
   await go('#/settings');
   await b.eval('document.querySelector("#sf-settings-tab-effects").click()');
   for (const [width, height] of [[1440, 900], [960, 660]]) {
     await b.setViewport(width, height);
     await b.eval('document.querySelector("#st-effect-new").click()');
+    assert.ok(await b.eval(`['st-subtitle-k-sweep','st-subtitle-scale'].every(id =>
+      !document.getElementById(id).getClientRects().length)`));
     await b.waitFor(`(() => {
       const video = document.querySelector('#st-subtitle-video');
       return video.readyState >= 2 && video.paused && Math.abs(video.currentTime - 0.75) < 0.04;

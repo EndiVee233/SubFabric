@@ -11,10 +11,10 @@ const omitted=[
   '#sf-asr-families > button:not([id="android-parakeet-tile"]):not([id="qwen3-asr-0.6b-android"]):not([id="qwen3-forced-aligner-android"])',
   '#st-entry-asr','#st-entry-llm','.st-entries','.sf-settings-nav-label','.sf-settings-kicker',
   '#btn-settings','#btn-batch-draft','#sf-list-mode','.pc-actions .sf-choice-shell',
-  '#tab-logs','#tab-workload','[data-tab="logs"]','[data-tab="workload"]',
+  '#tab-logs','[data-tab="logs"]',
   '#word-convert-group','#sf-editor-timeline','#editor-advanced-actions','#ass-fx-group',
   '#sf-editor-media','#sf-editor-export','#ass-style-preset-export','#ass-style-preset-import',
-  '#np-row-url','#np-row-part','#np-auto-wrap','#np-cast-group .np-cast-head','#np-row-conf','#np-row-spk','#np-row-kstyle',
+  '#np-row-url','#np-row-part','#np-cast-group .np-cast-head','#np-row-conf','#np-row-spk',
   '#dt-set-speakers-note','#dt-advanced',
   '#detail-url','#detail-probe','#btn-low-conf','#btn-badcat',
   '#card-menu [data-act="fix"]','#card-menu [data-act="karaoke-style"]','#card-menu [data-act="word-continuity"]',
@@ -65,7 +65,6 @@ export function initWorkspace({dbg,bar,more,flush,status}){
     const field=$(input);if(field)fold(field.closest('.st-card'),input==='st-prompt'?'高级翻译提示词':'高级调用参数');
   }
   // These desktop-only pipeline switches must not be silently submitted as enabled.
-  const auto=$('np-autopost');if(auto)auto.checked=false;
   for(const id of ['dt-set-cast','dt-set-speakers'])$(id)?.closest('label')?.setAttribute('data-android-omit','');
   const cast=$('dt-set-cast')?.closest('.ws-checks')?.previousElementSibling;if(cast)cast.dataset.androidOmit='';
   $('dt-set-confidence')?.closest('.ws-row')?.setAttribute('data-android-omit','');

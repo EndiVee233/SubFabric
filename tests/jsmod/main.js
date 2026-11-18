@@ -44,7 +44,6 @@ import { VideoCueEditor, CueTextDialog } from './videoedit.js';
 import { splitSegments, replaceSegmentInRaw, escapeAssUser, leadPrefixLen, htmlPlainAndMap } from './segment.js';
 import { initExportVideoButton } from './export-video.js';
 import { initGlossaryReview } from './glossary-review.js';
-import { initWorkloadPanel } from './workload-panel.js';
 
 /* ─────────── DOM ─────────── */
 const video = document.getElementById('video');
@@ -217,10 +216,6 @@ let previewTrack = null;
 let previewFrame = 0;
 const pendingPlaybackRows = new Set(); // 非播放句已提交，但视频轨等待播放到该句才同步
 const EDIT_SETTLE_MS = 260;
-const workloadPanel = initWorkloadPanel({
-  element: document.getElementById('tab-workload'), getItems: () => state.items,
-  getDuration: () => video.duration, onSeek: time => requestSeek(time),
-});
 
 /* ─────────── Toast ───────────
  * 分四级(成功/警告/失败/信息)：按文案里的关键词自动判级, 所以 100+ 个调用点不用改；
@@ -702,7 +697,6 @@ video.addEventListener('loadedmetadata', () => {
   timeline.setVideo(video);               // 确保胶片缩略图取到新的 currentSrc
   overlay.fitToVideo();
   tlDuration.textContent = fmtTime(video.duration);
-  workloadPanel?.invalidate();
 });
 window.addEventListener('resize', () => overlay.fitToVideo());
 /* 上面这个 window resize 收不到"面板挤压"：拖分栏/收展侧栏只改 CSS grid 轨道，窗口本身没变。
@@ -771,6 +765,18 @@ function parseConfidenceMeta(assDoc) {
     });
   }
   return out;
+}
+
+function readWorkloadItems(text, name) {
+  if (!isAssSubtitle(text, name)) return parseSRT(text);
+  const doc = new AssDoc(stripEffectTagsSafe(text).text);
+  const kar = analyzeKaraoke(doc);
+  const rows = pairRows(kar.sentences, kar.wordStyle);
+  const scores = parseConfidenceMeta(doc);
+  const ghosts = new Set(ghostZhRows(rows));
+  return rows.flatMap((row, i) => ghosts.has(row) ? [] : [
+    { start: row.start, end: row.end, confidence: scores.get(i) || null },
+  ]);
 }
 
 function resolveAssStyleTargets(doc, kar) {
@@ -2812,7 +2818,6 @@ function rebuildItemsAndLanes(rebuildItems, keepView = false) {
       }
     }
     panel.setItems(state.items, keepView);
-    workloadPanel?.invalidate();
     panel.setRoles(computeRoles()); // 角色 Tab: 解析所有说话人(字幕 Name 栏的 [人物]); computeRoles 见模块级定义
   }
 
@@ -4921,7 +4926,6 @@ panel.onDeleteCard = (item) => deleteItem(item);   // 字幕列表右键删除(�
 panel.onTabChange = (name) => {
   pruneUnusedRoles(name === 'roles');
   if (name === 'logs' && window.__onLogsTabShown) window.__onLogsTabShown();
-  workloadPanel?.setVisible(name === 'workload');
 };
 
 /* ═══════════ 修复字幕(右键菜单) ═══════════ */
@@ -8772,10 +8776,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ─────────── 设置 Tab: 界面显示 + 时间轴灵敏度 ─────────── */
-const FILM_KEY = 'ss-film';
 const PAN_KEY = 'ss-pan-sens', ZOOM_KEY = 'ss-zoom-sens';
-const setFilm = document.getElementById('set-film');
-const setFilmVal = document.getElementById('set-film-val');
 const setPan = document.getElementById('set-pan');
 const setZoom = document.getElementById('set-zoom');
 const setPanVal = document.getElementById('set-pan-val');
@@ -8798,17 +8799,6 @@ if (setZoom) setZoom.addEventListener('input', () => {
   localStorage.setItem(ZOOM_KEY, String(timeline.zoomSensitivity));
   setZoomVal.textContent = timeline.zoomSensitivity.toFixed(2) + ' ×';
 });
-function applyFilmSetting() {
-  const on = localStorage.getItem(FILM_KEY) === '1';   // 胶片预览图默认关
-  timeline.showFilm = on;
-  timeline.touch();                                    // 直接改属性 → 手动置脏
-  if (setFilm) setFilm.checked = on;
-  if (setFilmVal) setFilmVal.textContent = on ? '开' : '关';
-}
-if (setFilm) setFilm.addEventListener('change', () => {
-  localStorage.setItem(FILM_KEY, setFilm.checked ? '1' : '0');
-  applyFilmSetting();
-});
 /** 字幕轨模式: 单行(默认, 现状) / 双行(重叠块自动分到下面第二条轨)。切换后立刻重排时间轴。 */
 const TRACKS_KEY = 'ss-track-mode';
 const setTracks = document.getElementById('set-tracks');
@@ -8830,12 +8820,7 @@ if (setTracks) setTracks.addEventListener('change', () => {
  * 这里只做设置面板交互：点色块换色 / 拖色盘实时预览 / 一键恢复默认。
  * 自定义色用 input 事件做实时预览, change(松手) 时才重画选中态。 */
 const ACC = window.SSAccent;
-/* 主题色控件现在有**两处实例**：项目内设置侧栏（#theme-swatches-side 那份）与
- * 全局设置 → 外观与主题（st-panel-theme 里那份）。两处共用同一份状态：
- *   · 色块容器一律带 `data-theme-swatches`，这里往**所有**容器里画；
- *   · 自定义色输入 / 恢复默认按钮按"离触发点最近的那一组"取，
- *     并在改完之后把**所有**实例的选中态与输入框值同步一遍。
- * 这样在任一处改色，另一处立刻跟着变，不会出现两个面板各显示一个颜色。 */
+/* 全局外观设置的色块与自定义输入共用同一份强调色。 */
 function themeSlots() {
   return [...document.querySelectorAll('[data-theme-swatches]')];
 }
@@ -9178,7 +9163,6 @@ video.addEventListener('timeupdate', () => {
 /* 界面语言: 只有中文(zh-CN)。工具是给国人做双语字幕的, 英文 UI 没有意义, 已移除。
  * 文案层(js/i18n.js)保留 —— 它的另一个用途是 lang/zh-CN.json(键=原文, 值可改) 让用户自己润色措辞。 */
 applySensitivity();
-applyFilmSetting();
 applyTrackMode(false);
 applyTlHeight();
 applyPanelWidth();
@@ -9217,6 +9201,7 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
   state, video, timeline, panel, toast, toastAfterCueIntro, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
+  readWorkloadItems,
   onProjectChanged: effectSchemes?.loadSelection,
   waitForEffectSave: effectSchemes?.waitForSave,
   onEditorLeave: rimClose,

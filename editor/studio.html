@@ -184,7 +184,6 @@
       <button class="ptab" data-tab="roles" title="角色(说话人)总览">角色</button>
       <button class="ptab" data-tab="settings" title="设置">设置</button>
       <button class="ptab" data-tab="logs" title="服务端运行日志">日志</button>
-      <button class="ptab" data-tab="workload" title="分段工作量预测">工作量</button>
       <!-- 字幕 + 角色并排：只改布局，不新增数据源；角色栏在右侧单列显示。 -->
       <button class="ptab-split" id="panel-split-roles" type="button" aria-pressed="false" title="字幕和角色并排显示（需要 ASS 角色）" hidden><span data-ico="columns"></span></button>
     </div>
@@ -262,33 +261,6 @@
       <div id="role-list" class="role-list"></div>
     </div>
     <!-- ⚠ 上面这个 </div> 是 #tab-roles 的闭合，同样曾经缺失 -->
-
-    <div id="tab-workload" class="tab-body">
-      <div class="tab-head"><span class="tab-head-title">分段工作量预测</span></div>
-      <div class="workload-scroll">
-        <div class="workload-standard-row"><label for="workload-standard">预测标准</label><select id="workload-standard" class="select" aria-label="工作量预测标准"><option value="precise" selected>精翻标准</option><option value="regular">常规标准</option></select></div>
-        <div class="workload-controls">
-          <label>每段时长<select id="workload-minutes" class="select"><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="20">20 分钟</option></select></label>
-          <label>置信度阈值<select id="workload-threshold" class="select"><option value="75">75%</option><option value="90" selected>90%</option><option value="100">100%</option></select></label>
-          <label>显示方式<select id="workload-mode" class="select"><option value="relative">相对工作量</option><option value="operations">预计修改次数</option></select></label>
-        </div>
-        <label class="workload-fold-option"><input type="checkbox" id="workload-collapse" checked>默认折叠分段详情</label>
-        <p class="workload-note">统计置信度低于阈值的句子；阈值为 100% 时包含所有已评分句子。</p>
-        <details class="workload-estimates"><summary>每句预计修改次数</summary>
-          <p class="workload-note">自动档按置信度由低到高估算；每档可手动选择 1–6 次。次数可包括时间轴调整、字幕内容修改、人物标注、逐词时间戳调整、重新识别和逐词重排。</p>
-          <div id="workload-weights" class="workload-weights"></div>
-          <p class="workload-note">同一句跨段时按起始时间归入一段。置信度仅反映识别可靠程度，估算用于分工参考，不会自动扣除已完成的操作。</p>
-        </details>
-        <p class="workload-note">最轻的非零分段 = 1；零修改段 = 0。缺置信度的句子不参与估算。</p>
-        <div id="workload-summary" class="workload-summary" aria-live="polite"></div>
-        <p id="workload-status" class="workload-note" role="status"></p>
-        <div class="workload-legend"><span>较少</span><i></i><span>较多</span></div>
-        <div id="workload-list" class="workload-list"></div>
-        <div id="workload-pager" class="workload-pager" hidden>
-          <button type="button" id="workload-previous" class="btn btn-mini">上一页</button><span id="workload-page"></span><button type="button" id="workload-next" class="btn btn-mini">下一页</button>
-        </div>
-      </div>
-    </div>
 
     <!-- 设置 Tab: 分组卡片 -->
     <div id="tab-settings" class="tab-body">
@@ -676,14 +648,6 @@
         <div class="set-group" id="sf-editor-display">
           <div class="set-group-head"><i class="set-dot" style="background:#4fd1a5"></i><span class="set-group-title">字幕显示</span></div>
           <div class="setting-row">
-            <span class="setting-name" title="视频与字幕块之间那一条视频缩略图预览">显示胶片预览图</span>
-            <label class="switch">
-              <input type="checkbox" id="set-film">
-              <span class="switch-slider"></span>
-            </label>
-            <span class="setting-val" id="set-film-val">关</span>
-          </div>
-          <div class="setting-row">
             <span class="setting-name" title="视频叠加字幕的字号缩放(适用于 SRT 双语叠加)">字幕字号</span>
             <input type="range" id="rng-font" min="0.6" max="1.8" step="0.05" value="1" class="range" title="字幕字号缩放">
             <span class="setting-val" id="rng-font-val">1.00 ×</span>
@@ -722,19 +686,6 @@
           <div class="setting-row" id="set-regen-audio-row" hidden>
             <span class="setting-name" title="按当前音频源从视频重新提取 audio.wav 和波形，识别与波形都用这一版。字幕内容不动，要更新字幕用「重新识别」">重新生成音频</span>
             <button class="btn btn-mini" id="btn-regen-audio" data-ico="refresh">重新生成音频</button>
-          </div>
-        </div>
-
-        <div class="set-group">
-          <div class="set-group-head"><i class="set-dot" style="background:var(--accent)"></i><span class="set-group-title">外观</span><span class="set-group-note">主题色</span></div>
-          <div class="theme-row">
-            <div class="theme-swatches" id="theme-swatches-side" data-theme-swatches="1"></div>
-            <label class="theme-custom" title="自定义主题色"><input type="text" data-color-input="1" id="theme-color" value="#ff7a45">自定义</label>
-            <button type="button" class="btn btn-mini" id="theme-reset">恢复默认</button>
-          </div>
-          <div class="theme-preview">
-            <span class="tp-chip">主题色</span>
-            <span class="gl-hint" style="flex:1">只改界面强调色，不影响字幕颜色和角色色。设置存在本机浏览器里。</span>
           </div>
         </div>
 
@@ -1408,6 +1359,34 @@
       <p>查看稿件资料与处理进度，也可以修改项目名称。</p>
     </div>
 
+    <details id="detail-workload" class="sf-settings-details page-surface" hidden>
+      <summary>分段工作量预测</summary>
+      <p id="detail-workload-status" class="workload-note" role="status" hidden></p>
+      <div id="detail-workload-body" class="workload-scroll" hidden>
+        <div class="workload-standard-row"><label for="workload-standard">预测标准</label><select id="workload-standard" class="select" aria-label="工作量预测标准"><option value="precise" selected>精翻标准</option><option value="regular">常规标准</option></select></div>
+        <div class="workload-controls">
+          <label>每段时长<select id="workload-minutes" class="select"><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="20">20 分钟</option></select></label>
+          <label>置信度阈值<select id="workload-threshold" class="select"><option value="75">75%</option><option value="90" selected>90%</option><option value="100">100%</option></select></label>
+          <label>显示方式<select id="workload-mode" class="select"><option value="relative">相对工作量</option><option value="operations">预计修改次数</option></select></label>
+        </div>
+        <label class="workload-fold-option"><input type="checkbox" id="workload-collapse" checked>默认折叠分段详情</label>
+        <p class="workload-note">统计置信度低于阈值的句子；阈值为 100% 时包含所有已评分句子。</p>
+        <details class="workload-estimates"><summary>每句预计修改次数</summary>
+          <p class="workload-note">自动档按置信度由低到高估算；每档可手动选择 1–6 次。次数可包括时间轴调整、字幕内容修改、人物标注、逐词时间戳调整、重新识别和逐词重排。</p>
+          <div id="workload-weights" class="workload-weights"></div>
+          <p class="workload-note">同一句跨段时按起始时间归入一段。置信度仅反映识别可靠程度，估算用于分工参考，不会自动扣除已完成的操作。</p>
+        </details>
+        <p class="workload-note">最轻的非零分段 = 1；零修改段 = 0。缺置信度的句子不参与估算。</p>
+        <div id="workload-summary" class="workload-summary" aria-live="polite"></div>
+        <p id="workload-status" class="workload-note" role="status"></p>
+        <div class="workload-legend"><span>较少</span><i></i><span>较多</span></div>
+        <div id="workload-list" class="workload-list"></div>
+        <div id="workload-pager" class="workload-pager" hidden>
+          <button type="button" id="workload-previous" class="btn btn-mini">上一页</button><span id="workload-page"></span><button type="button" id="workload-next" class="btn btn-mini">下一页</button>
+        </div>
+      </div>
+    </details>
+
     <div class="ws-grid">
       <!-- ① 稿件预览 -->
       <section class="ws-panel page-surface" aria-labelledby="dt-preview-title">
@@ -1591,7 +1570,7 @@
           <h3>默认设置</h3><p class="gl-hint">新加入队列的视频默认使用这里；每个视频也可以在列表里单独设置。</p>
           <div class="batch-setting"><label for="batch-model">识别模型</label><select id="batch-model"></select></div>
           <div class="batch-setting"><label for="batch-scheme">翻译方案</label><select id="batch-scheme"><option value="">跟随当前方案</option></select></div>
-          <div class="batch-checks"><label class="np-lbl-check"><input type="checkbox" id="batch-word" checked> 逐词</label><label class="np-lbl-check"><input type="checkbox" id="batch-align"> 对齐</label><label class="np-lbl-check"><input type="checkbox" id="batch-speakers"> 区分说话人</label><label class="np-lbl-check"><input type="checkbox" id="batch-autopost"> 创建后重校逐词时间</label></div>
+          <div class="batch-checks"><label class="np-lbl-check"><input type="checkbox" id="batch-word" checked> 逐词</label><label class="np-lbl-check"><input type="checkbox" id="batch-align"> 对齐</label><label class="np-lbl-check"><input type="checkbox" id="batch-speakers"> 区分说话人</label></div>
           <p class="gl-hint">识别模型与逐词/对齐/说话人按视频生效；翻译方案会在处理该视频前切换，全部结束后恢复原来的方案。</p>
         </section>
         <section class="st-card batch-help"><h3>处理顺序</h3><p>队列从上到下串行执行：上传 → 创建项目 → 识别 → 语义分句 → 翻译。一个视频失败不会中断后面的视频。</p></section>
@@ -1717,14 +1696,6 @@
           </button>
         </div>
 
-        <label class="np-auto" id="np-auto-wrap" hidden>
-          <input type="checkbox" id="np-autopost">
-          <span>
-            <b>创建后重校逐词时间</b>
-            <span class="np-auto-note">用 Qwen3 对齐器重算逐词时间，通过校验后自动保存。</span>
-          </span>
-        </label>
-
         <div class="ws-group-title">视频来源</div>
         <div class="np-file-row" id="np-row-url">
           <span class="np-lbl">链接</span>
@@ -1838,15 +1809,6 @@
             <label class="np-switch">
               <input type="checkbox" id="np-align">
               <span id="np-align-desc">不勾选逐词时可用；勾选 → 用对齐模型生成逐词 ASS</span>
-            </label>
-          </div>
-          <div class="np-file-row" id="np-row-kstyle" hidden>
-            <span class="np-lbl">逐词样式</span>
-            <label class="np-switch">
-              <select id="np-kstyle" class="np-select">
-                <option value="color">颜色高亮</option>
-                <option value="k">\k 卡拉OK</option>
-              </select>
             </label>
           </div>
           <div class="np-file-row" id="np-row-conf" hidden>
@@ -2383,8 +2345,8 @@
                     </label>
                     <label class="ass-style-field">逐词高亮色<input id="st-subtitle-highlight" type="color"></label>
                     <label class="ass-style-field">未唱默认色<input id="st-subtitle-k-base" type="color"></label>
-                    <label class="ass-style-check"><input id="st-subtitle-k-sweep" type="checkbox">逐词扫过</label>
-                    <label class="ass-style-field">SRT 预览字号缩放<input id="st-subtitle-scale" type="number" min="0.6" max="1.8" step="0.05" placeholder="1.00"></label>
+                    <label class="ass-style-check" hidden><input id="st-subtitle-k-sweep" type="checkbox">逐词扫过</label>
+                    <label class="ass-style-field" hidden>SRT 预览字号缩放<input id="st-subtitle-scale" type="number" min="0.6" max="1.8" step="0.05" placeholder="1.00"></label>
                   </div>
                   <template id="st-subtitle-track-fields">
                     <label class="ass-style-field">字体名称<input type="text" data-style-field="fontname" maxlength="120" pattern="[^,]+" required list="ass-font-list" autocomplete="off"></label>
