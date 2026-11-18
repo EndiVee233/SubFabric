@@ -2367,7 +2367,7 @@ function setAss(text, name, options = {}) {
   if (btnExportFull) btnExportFull.disabled = false;
   if (btnExportVideo) btnExportVideo.disabled = false;
   // 反思纠错：只在项目模式可用（要用项目里保存的 audio.wav 重识别那几段）
-  if (reflectEls.btn) reflectEls.btn.disabled = !state.project;
+  if (reflectEls.btn && !reflectEls.btn.hidden) reflectEls.btn.disabled = !state.project;
   // 分段导入：只要有稿件就能用（它不依赖音频，纯字幕合并）
   if (btnRegionImport) btnRegionImport.disabled = !state.format;
   /* 全片逐词重校对：同样要项目模式。**不**在这里判"有没有逐词行"——
@@ -9172,7 +9172,7 @@ const Projects = initProjects({
 });
 
 // Narrow, renderer-only close hook: no Node or privileged IPC is exposed to the page.
-window.__subfabricFlushSave = () => Projects.flushSave();
+window.__subfabricFlushSave = () => Promise.all([Projects.flushSave(), Projects.flushHotwordSettings()]);
 
 /* 术语表校对要用 Projects.openProject() 在应用后重新载入稿件，所以放在 Projects 之后接线。 */
 initGlossaryReview({ state, toast, projects: Projects, logOp });

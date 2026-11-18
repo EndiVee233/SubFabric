@@ -60,7 +60,7 @@ export function initProjects(ctx) {
   const elList = $('#home-list');
   const elEmpty = $('#home-empty');
   const detailView = $('#detail-view');
-  const storageView = $('#storage-view');
+  const storageView = window.androidRpc ? $('#storage-view') : null;
   const pageTimers = new WeakMap();
   let previousRoute = '';
   let welcomeBlocking = false;      // 欢迎界面打开时拦截路由，App 不可交互
@@ -69,7 +69,6 @@ export function initProjects(ctx) {
   let welcomeHardware = null;
   let welcomeBusy = false;
   let settingsReturnRoute = '#/home';
-  let settingsVisit = 0;
   let settingsOpenedFromApp = false;
   let newOpenedFromApp = false;
   let detailReturnRoute = '#/home';
@@ -131,9 +130,9 @@ export function initProjects(ctx) {
     applyHash();
   }
   function returnFromSettings() {
-    // 设置页里改了什么（翻译配置 / 分角色 / 下载或删了模型）这边都不知道，
+    // 设置页里改了什么（翻译配置 / 下载或删了模型）这边都不知道，
     // 所以统一作废生成设置面板的缓存，下次进页面重新拉。
-    genAsr = genTr = genCast = null;
+    genAsr = genTr = null;
     if (studioUI) replaceRoute(settingsReturnRoute);
     else if (settingsOpenedFromApp) history.back();
     else replaceRoute(settingsReturnRoute === '#/settings' ? '#/home' : settingsReturnRoute);
@@ -148,16 +147,14 @@ export function initProjects(ctx) {
 
   /* ─────────── 生成设置面板（新建项目 / 详细信息 共用同一份逻辑） ───────────
    * 两个页面的面板结构一模一样，只有 id 前缀不同（np- / dt-），所以逻辑只写一份。
-   * 语音识别模型 / 翻译参数 / 分角色开关都是**全局设置**（asr/settings.json），
+   * 语音识别模型和翻译参数是全局设置（asr/settings.json），
    * 点「保存设置」才写回；「自动区分说话人」是项目级参数：新建时选定，详细信息里只读回显。 */
   const GEN_IDS = {
     np: { asr: '#np-model-sel', provider: '#np-set-provider', model: '#np-set-model',
-          cast: '#np-set-cast',
-          prompt: '#np-set-prompt', castPrompt: '#np-set-castprompt',
+          prompt: '#np-set-prompt',
           save: '#np-set-save', state: '#np-set-state' },
     dt: { asr: '#dt-model-sel', provider: '#dt-set-provider', model: '#dt-set-model',
-          cast: '#dt-set-cast',
-          prompt: '#dt-set-prompt', castPrompt: '#dt-set-castprompt',
+          prompt: '#dt-set-prompt',
           save: '#dt-set-save', state: '#dt-set-state' },
   };
   const genEls = (scope) => {
@@ -165,7 +162,7 @@ export function initProjects(ctx) {
     for (const k of Object.keys(src)) out[k] = $(src[k]);
     return out;
   };
-  let genAsr = null, genTr = null, genCast = null;    // 三份缓存，两个面板共用
+  let genAsr = null, genTr = null;    // 两个面板共用
 
   /* ── 加速后端（欢迎界面写入）──
    * 服务端 asr/settings.json 的 backends 是准绳；浏览器 localStorage 只负责“是否已看过欢迎页”
@@ -251,18 +248,13 @@ export function initProjects(ctx) {
       }
       if (e.prompt) e.prompt.value = cfg.prompt || '';
     }
-    if (genCast) {
-      if (e.cast) e.cast.checked = genCast.enabled !== false;
-      if (e.castPrompt) e.castPrompt.value = genCast.prompt || '';
-    }
   }
-  /** 拉三份配置；有缓存就不重复拉（force=true 时强制刷新）。
+  /** 有缓存就不重复拉（force=true 时强制刷新）。
    *  preferredModel：详情页传入项目当初实际使用的模型（跟随已选模型，而不是全局默认）。 */
   async function genLoad(scope, force, preferredModel) {
     try {
       if (force || !genAsr) genAsr = filterStatusModels(await ensureHardware(await (await fetch('/api/asr/status')).json()));
       if (force || !genTr) genTr = await (await fetch('/api/translate/config')).json();
-      if (force || !genCast) genCast = await (await fetch('/api/cast/config')).json();
     } catch { /* 拉不到就保持旧值，别打断页面 */ }
     genRender(scope, preferredModel);
     genSetState(scope, (genTr && genTr.ready) ? '已配置' : '翻译未配置');
@@ -283,10 +275,6 @@ export function initProjects(ctx) {
             prompt: e.prompt ? e.prompt.value : undefined,
           }),
         }),
-        fetch('/api/cast/config', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: !!(e.cast && e.cast.checked), prompt: e.castPrompt ? e.castPrompt.value : '' }),
-        }),
       ];
       if (e.asr && e.asr.value) {
         jobs.push(fetch('/api/asr/select', {
@@ -302,7 +290,7 @@ export function initProjects(ctx) {
         genSetState(scope, '保存失败');
         return;
       }
-      genAsr = genTr = genCast = null;      // 让两个面板下次都拿到新值
+      genAsr = genTr = null;      // 让两个面板下次都拿到新值
       genSetState(scope, '已保存');
       toast('生成设置已保存');
     } catch (err) {
@@ -316,7 +304,7 @@ export function initProjects(ctx) {
     const e = genEls(scope);
     if (scope === 'np' && e.asr) e.asr.addEventListener('change', () => npSyncVibeVoice());
     if (e.save) e.save.addEventListener('click', () => genSave(scope));
-    for (const k of ['provider', 'model', 'prompt', 'castPrompt', 'cast']) {
+    for (const k of ['provider', 'model', 'prompt']) {
       const el = e[k];
       if (!el) continue;
       el.addEventListener((el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input',
@@ -636,6 +624,9 @@ export function initProjects(ctx) {
   // 页面关闭/刷新兜底: 未保存的改动用 sendBeacon 补一刀(服务端 PUT/POST 都收)
   window.addEventListener('beforeunload', () => {
     savePlaybackPosition();
+    if (!hotwordsWriting && Object.keys(hotwordsPatch).length) {
+      navigator.sendBeacon('/api/asr/hint', new Blob([JSON.stringify(hotwordsPatch)], { type: 'application/json' }));
+    }
     if (!state.project || saveConflict) return;
     clearTimeout(saveTimer);
     const text = currentText();
@@ -1833,7 +1824,7 @@ export function initProjects(ctx) {
     row.className = 'hotword-row';
     const inp = document.createElement('input');
     inp.type = 'text'; inp.className = 'st-input hotword-input'; inp.spellcheck = false;
-    inp.placeholder = '一个单词'; inp.value = val || '';
+    inp.placeholder = '一个热词'; inp.value = val || '';
     inp.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const add = $('#ah-add'); if (add) add.click(); }
     });
@@ -1851,7 +1842,7 @@ export function initProjects(ctx) {
   function collectHotwords() {
     const seen = new Set(), out = [];
     document.querySelectorAll('#ah-terms-list .hotword-input').forEach(inp => {
-      String(inp.value || '').split(/\s+/).forEach(w => {
+      String(inp.value || '').split(/[\n,，、;；]/).forEach(w => {
         w = w.trim();
         if (!w) return;
         const k = w.toLowerCase();
@@ -1862,6 +1853,79 @@ export function initProjects(ctx) {
     return out.join(', ');
   }
   const ahAdd = $('#ah-add');
+  const ahList = $('#ah-terms-list');
+  const ahScore = $('#ah-score');
+  const ahSaveStatus = $('#ah-save-status');
+  let hotwordsLoaded = false, hotwordsLoading, hotwordsWriting, hotwordsTimer;
+  let hotwordsPatch = {};
+
+  function showHotwordSaveStatus(message) {
+    if (!ahSaveStatus) return;
+    ahSaveStatus.textContent = message;
+    ahSaveStatus.hidden = !message;
+  }
+  function setHotwordControls(enabled) {
+    if (ahAdd) ahAdd.disabled = !enabled;
+    if (ahScore) ahScore.disabled = !enabled;
+    ahList?.querySelectorAll('input, button').forEach(control => { control.disabled = !enabled; });
+  }
+  function loadHotwords() {
+    if (!ahList || window.androidRpc || hotwordsLoaded || hotwordsLoading) return;
+    hotwordsLoading = (async () => {
+      try {
+        const response = await fetch('/api/asr/hint', { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) throw Error('热词读取失败');
+        const { hint } = await response.json();
+        renderHotwords(String(hint?.prompt || '').split(/[\n,，、;；]/).map(term => term.trim()).filter(Boolean));
+        if (ahScore) ahScore.value = hint?.hotwordsScore ?? 3;
+        hotwordsLoaded = true;
+        setHotwordControls(true);
+        showHotwordSaveStatus('');
+      } catch {
+        showHotwordSaveStatus('热词读取失败，重新打开设置可重试。');
+      } finally { hotwordsLoading = null; }
+    })();
+  }
+  function flushHotwordSettings() {
+    clearTimeout(hotwordsTimer);
+    if (hotwordsWriting) return hotwordsWriting;
+    if (!Object.keys(hotwordsPatch).length) return Promise.resolve();
+    hotwordsWriting = (async () => {
+      showHotwordSaveStatus('正在保存热词设置…');
+      while (Object.keys(hotwordsPatch).length) {
+        const patch = hotwordsPatch;
+        hotwordsPatch = {};
+        try {
+          const response = await fetch('/api/asr/hint', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(patch), signal: AbortSignal.timeout(8000),
+          });
+          if (!response.ok) throw Error('热词设置保存失败');
+        } catch (error) {
+          hotwordsPatch = { ...patch, ...hotwordsPatch };
+          showHotwordSaveStatus('热词设置保存失败，下次编辑时会重试。');
+          throw error;
+        }
+      }
+      showHotwordSaveStatus('热词设置已保存。');
+    })().finally(() => { hotwordsWriting = null; });
+    return hotwordsWriting;
+  }
+  function scheduleHotwordSave(patch) {
+    if (!hotwordsLoaded) return;
+    Object.assign(hotwordsPatch, patch);
+    clearTimeout(hotwordsTimer);
+    hotwordsTimer = setTimeout(() => { void flushHotwordSettings().catch(() => {}); }, 350);
+  }
+  function hotwordInput(e) {
+    if (!e.isComposing && e.target.matches('.hotword-input')) scheduleHotwordSave({ prompt: collectHotwords() });
+  }
+  ahList?.addEventListener('input', hotwordInput);
+  ahList?.addEventListener('compositionend', hotwordInput);
+  ahScore?.addEventListener('input', () => {
+    if (ahScore.value && ahScore.validity.valid) scheduleHotwordSave({ hotwordsScore: ahScore.valueAsNumber });
+  });
+
   if (ahAdd) ahAdd.addEventListener('click', () => {
     const list = $('#ah-terms-list');
     if (!list) return;
@@ -1869,10 +1933,11 @@ export function initProjects(ctx) {
     list.appendChild(row);
     row.querySelector('input').focus();
   });
-  const ahList = $('#ah-terms-list');
   if (ahList) ahList.addEventListener('click', (e) => {
     const del = e.target.closest('.hotword-del');
-    if (del) del.closest('.hotword-row').remove();
+    if (!del) return;
+    del.closest('.hotword-row').remove();
+    scheduleHotwordSave({ prompt: collectHotwords() });
   });
 
   /* ═══════════ 从操作日志挖热词 ═══════════
@@ -1994,7 +2059,7 @@ export function initProjects(ctx) {
       parts.push(`规则挖到 ${rule.length} 个`);
       if (useLlm) {
         if (li.ok) parts.push(`模型（${li.model || '?'}）给出 ${llm.length} 个`);
-        else if (li.code === 'not-ready') parts.push('模型没配好 —— 去「全局设置 → 增强 → 用于分析热词的模型」里选一个');
+        else if (li.code === 'not-ready') parts.push('请先在「大模型方案」配置并启用翻译模型');
         else parts.push(`模型分析失败：${li.error || '未知原因'}`);
       }
       const total = merged.length;
@@ -2033,7 +2098,9 @@ export function initProjects(ctx) {
     if (!picked.length) { toast('先勾选要加入的热词', 2600); return; }
     const hint = $('#ah-mine-hint');
     ahMineApply.disabled = true;
+    setHotwordControls(false);
     try {
+      await flushHotwordSettings();
       const r = await fetch(`/api/projects/${pid}/hotword-candidates`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ selected: picked }),
@@ -2065,124 +2132,10 @@ export function initProjects(ctx) {
     } catch (e) {
       if (hint) hint.textContent = '✗ 加入失败：' + String((e && e.message) || e);
     } finally {
+      setHotwordControls(hotwordsLoaded);
       ahMineApply.disabled = false;
       hwUpdateCount();
     }
-  });
-
-  /* ═══════════ 热词分析用的模型（全局设置 → 增强）═══════════
-   * 默认跟随字幕翻译那套配置（用户不必配两遍）。想单独用别的模型就取消跟随 ——
-   * 典型用法：翻译用在线 API（快、便宜），热词分析用**本地 Qwen**（不联网、不花钱、可反复跑）。
-   * 配置落在 asr/settings.json 的 analyze 段（服务端 analyzeCfg 负责解析）。
-   */
-  let anPresets = [];
-
-  function anSetFieldsEnabled(on) {
-    const f = $('#an-fields');
-    if (!f) return;
-    f.querySelectorAll('input,select').forEach(x => { x.disabled = !on; });
-    f.style.opacity = on ? '1' : '.5';
-  }
-
-  function anStatus(j) {
-    const el = $('#an-status');
-    if (!el || !j) return;
-    const c = (j.cfg || {});
-    if (j.useTranslate) {
-      const t = j.translate || {};
-      el.innerHTML = t.model
-        ? `跟随翻译：实际用 <b>${esc(t.model)}</b>${t.ready ? '' : '（但翻译那套还没配好：缺接口地址或 Key）'}`
-        : '跟随翻译，但翻译那套还没配好 —— 先去「翻译」页填接口地址与模型名';
-    } else {
-      el.innerHTML = j.ready
-        ? `用 <b>${esc(c.model || '')}</b>${c.baseUrl ? ' @ ' + esc(c.baseUrl) : ''}`
-        : '✗ 还没配好：接口地址与模型名都要填（本地地址 http://127.0.0.1:… 免 Key）';
-    }
-  }
-
-  async function anLoad() {
-    const sel = $('#an-provider');
-    if (!sel) return;
-    try {
-      const r = await fetch('/api/analyze/config', { signal: AbortSignal.timeout(8000) });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      anPresets = j.presets || [];
-      sel.innerHTML = anPresets.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
-      const c = j.cfg || {};
-      sel.value = c.provider || 'custom';
-      $('#an-baseurl').value = c.baseUrl || '';
-      $('#an-key').value = '';
-      $('#an-key').placeholder = j.hasKey ? '已保存（留空不修改）' : '本地地址免填';
-      const kh = $('#an-key-hint');
-      if (kh) kh.hidden = !j.hasKey;
-      $('#an-model').value = c.model || '';
-      if ($('#an-maxedits')) $('#an-maxedits').value = (j.limits && j.limits.maxEdits) || 40;
-      const cb = $('#an-use-translate');
-      if (cb) cb.checked = j.useTranslate !== false;
-      anSetFieldsEnabled(!(cb && cb.checked));
-      anStatus(j);
-    } catch (e) {
-      const el = $('#an-status');
-      if (el) el.textContent = '✗ 读不到分析模型配置：' + String((e && e.message) || e);
-    }
-  }
-
-  async function anSave() {
-    const cb = $('#an-use-translate');
-    const body = {
-      useTranslate: !!(cb && cb.checked),
-      provider: $('#an-provider') ? $('#an-provider').value : 'custom',
-      baseUrl: $('#an-baseurl') ? $('#an-baseurl').value.trim() : '',
-      model: $('#an-model') ? $('#an-model').value.trim() : '',
-      maxEdits: $('#an-maxedits') ? (parseInt($('#an-maxedits').value, 10) || 40) : 40,
-    };
-    const key = $('#an-key') ? $('#an-key').value : '';
-    if (key) body.apiKey = key;          // 留空 = 不修改已存的 Key
-    try {
-      const r = await fetch('/api/analyze/config', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(10000),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      if ($('#an-key')) { $('#an-key').value = ''; }
-      await anLoad();
-      if (typeof toast === 'function') toast('分析模型设置已保存', 2600);
-    } catch (e) {
-      const el = $('#an-status');
-      if (el) el.textContent = '✗ 保存失败：' + String((e && e.message) || e);
-    }
-  }
-
-  const anCb = $('#an-use-translate');
-  if (anCb) anCb.addEventListener('change', () => {
-    anSetFieldsEnabled(!anCb.checked);
-    anSave();
-  });
-  const anSel = $('#an-provider');
-  if (anSel) anSel.addEventListener('change', () => {
-    // 切服务商时把该家的预设地址/模型填上（与「翻译」页同一行为），用户可再手改
-    const p = (anPresets || []).find(x => x.id === anSel.value);
-    if (p && $('#an-baseurl')) {
-      $('#an-baseurl').value = p.baseUrl || '';
-      $('#an-model').value = p.model || '';
-    }
-  });
-  for (const id of ['#an-baseurl', '#an-key', '#an-model', '#an-maxedits']) {
-    const el = $(id);
-    if (el) el.addEventListener('change', anSave);
-  }
-  const anClear = $('#an-key-clear');
-  if (anClear) anClear.addEventListener('click', async (e) => {
-    e.preventDefault();
-    try {
-      const r = await fetch('/api/analyze/config', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKeyClear: true }), signal: AbortSignal.timeout(10000),
-      });
-      if (r.ok) { if (typeof toast === 'function') toast('已清除分析模型的 API Key', 2600); await anLoad(); }
-    } catch { /* 忽略 */ }
   });
 
   /* ── API Key 字段: 服务端只回 hasKey(明文不回传), 输入框留空 = 不修改已存的 Key;
@@ -2193,9 +2146,8 @@ export function initProjects(ctx) {
   }
   async function loadSettings() {
     loadFetchSettings();
-    loadCastSettings();
     loadConfidenceSettings();
-    correctLoad();
+    loadHotwords();
     /* ⚠ initPerfPanel / initDualRatio 必须**无条件**调用。
      *   2026-10-11 无头浏览器实测发现：这两个以前只写在下面 catch 分支里
      *   （翻译配置读失败时才跑），于是**正常启动时从不执行** ——
@@ -2223,32 +2175,31 @@ export function initProjects(ctx) {
     }
     stPresets = data.presets || [];
     if (studioUI) { acceptSchemes(data); defaultSchemePrompt = data.defaultPrompt || ''; }
+    const drawerOpen = studioUI && schemeEls.drawer && !schemeEls.drawer.hidden && !schemeEls.drawer.inert;
+    const selectedProvider = $('#st-provider').value;
     $('#st-provider').innerHTML = (studioUI ? '<option value="">选择服务商</option>' : '') + stPresets
       .map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
     const c = data.cfg || {};
-    $('#st-provider').value = c.provider || 'custom';
-    $('#st-baseurl').value = c.baseUrl || '';
-    // 明文 Key 不回传(只回 hasKey): 输入框永远留空起步, 留空 = 不修改已存的 Key
-    $('#st-key').value = '';
-    $('#st-key').placeholder = c.hasKey ? '已保存（留空不修改）' : 'sk-…';
-    refreshKeyHint(c);
-    $('#st-model').value = c.model || '';
-    if ($('#st-batch')) $('#st-batch').value = c.batchSize || 25;      // 每批行数(用户可调)
-    if ($('#st-temp')) $('#st-temp').value = (c.temperature == null ? 0.3 : c.temperature);   // 采样温度
-    if ($('#st-ctx')) $('#st-ctx').value = c.contextRows || 0;                                 // 上下文行数
-    $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
+    if (drawerOpen) {
+      $('#st-provider').value = selectedProvider;
+    } else {
+      $('#st-provider').value = c.provider || 'custom';
+      $('#st-baseurl').value = c.baseUrl || '';
+      // 明文 Key 不回传。留空保持已存的 Key。
+      $('#st-key').value = '';
+      $('#st-key').placeholder = c.hasKey ? '已保存（留空不修改）' : 'sk-…';
+      refreshKeyHint(c);
+      $('#st-model').value = c.model || '';
+      if ($('#st-batch')) $('#st-batch').value = c.batchSize || 75;
+      if ($('#st-temp')) $('#st-temp').value = c.temperature ?? 0.3;
+      if ($('#st-ctx')) $('#st-ctx').value = c.contextRows ?? 0;
+      $('#st-prompt').value = c.prompt || data.defaultPrompt || '';
+      glLoad(c.glossary, c.glossaryLang);
+    }
     // 方案列表/胶囊用的是刚拿到的 stPresets 与当前 provider，必须在这之后画
     if (typeof renderSchemes === 'function') renderSchemes();
-    try {
-      const h = await (await fetch('/api/asr/hint')).json();
-      const hint = h.hint || {};
-      renderHotwords(String(hint.prompt || '').split(/[,\n;，；]+/).map(s => s.trim()).filter(Boolean));
-      $('#ah-score').value = hint.hotwordsScore || 3;
-    } catch { /* 识别提示词读不到不影响其它设置 */ }
-    glLoad(c.glossary, c.glossaryLang);
     renderAsrModels();
     bindModelDirSettings();
-    anLoad();            // 热词分析模型（自己拉 /api/analyze/config，与翻译配置分开）
   }
   /** 模型管理: 列出所有识别模型(状态/下载/删除) + whisper.cpp 运行时 */
   /* ──────────────────────────────────────────────────────────────────────────
@@ -2522,8 +2473,7 @@ function benchApplyConditions(c) {
   const set = (id, prop, value) => { const el = $(id); if (el) el[prop] = value; };
   set('#bench-word', 'checked', c.word !== false);
   set('#bench-confidence', 'value', c.confidence || 'full');
-  set('#bench-cast', 'checked', c.cast === true);
-  set('#bench-speakers', 'checked', c.speakers === true || c.cast === true);
+  set('#bench-speakers', 'checked', c.speakers === true);
   set('#bench-speaker-count', 'value', c.speakerCount ? String(c.speakerCount) : '');
   const conf = $('#bench-confidence');
   if (conf) conf.dataset.init = '1';
@@ -2751,7 +2701,7 @@ async function benchStart() {
   const conditions = {
     word: $('#bench-word') ? !!$('#bench-word').checked : true,
     confidence: ($('#bench-confidence') && $('#bench-confidence').value) || 'full',
-    cast: !!($('#bench-cast') && $('#bench-cast').checked),
+    cast: false,
     speakers: !!($('#bench-speakers') && $('#bench-speakers').checked),
     speakerCount: Number(($('#bench-speaker-count') || {}).value) || 0,
   };
@@ -2815,12 +2765,6 @@ function initBenchPanel() {
   if (cancel) cancel.addEventListener('click', async () => {
     try { await fetch('/api/asr/bench/cancel', { method: 'POST' }); } catch {}
   });
-  // 与创建页一致：分角色识别以说话人区分为前提；关掉说话人时一并关掉分角色。
-  const cast = $('#bench-cast'), speakers = $('#bench-speakers');
-  if (cast && speakers) {
-    cast.addEventListener('change', () => { if (cast.checked) speakers.checked = true; });
-    speakers.addEventListener('change', () => { if (!speakers.checked) cast.checked = false; });
-  }
 }
 
 /* 双引擎分工下拉。为什么挂在 renderAsrModels 之后：那个面板是整体重建的，
@@ -3535,8 +3479,7 @@ function alignerRowHtml(a, dlOf) {
     }
   }
   return `<div class="sm-model sf-aligner">
-    <div class="sm-head"><span class="sm-name">${esc(a.name || 'Qwen3-ForcedAligner')}</span>
-      <span class="sm-state${a.ready ? ' ok' : ''}">${a.ready ? '✓ 已就绪' : '未就绪'}</span>${btn}</div>
+    <div class="sm-head"><span class="sm-name">${esc(a.name || 'Qwen3-ForcedAligner')}</span><span class="sm-actions">${btn}</span></div>
     <div class="sm-desc">${esc(a.desc || '')}</div>
     <div class="sm-params-summary">${backend ? backend + ' · ' : ''}${esc(a.source || '独立对齐模型')} · 自动匹配，无需手动选择</div>
     ${state}
@@ -3750,7 +3693,7 @@ async function renderAsrModels(providedStatus = null) {
       } else {
         ffState = '<span class="sm-state">检测中…</span>';
       }
-      const ffmpegCard = ff ? `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">ffmpeg</span>${ffState}${ffBtn}</div>${ffDesc}</div>` : '';
+      const ffmpegCard = `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">ffmpeg</span>${ffState}${ffBtn}</div>${ffDesc}</div>`;
       rows = ffmpegCard + `<div class="sm-model sf-prerequisite"><div class="sm-head"><span class="sm-name">Python</span><span class="sm-state${py?.ok ? ' ok' : ''}">${esc(pyStatus)}</span>${pyButton}</div><details class="sf-settings-details sf-details-anim"${GROUP_OPEN.get('python-options') ? ' open' : ''}><summary>Python 路径设置</summary><div class="sf-details-body"><code>${esc(pyExe || '(未定)')}</code><div class="sf-prerequisite-actions"><button type="button" class="btn btn-mini sm-pyset">指定其他 Python…</button><button type="button" class="btn btn-mini sm-pyreset">用回默认</button></div><div class="sm-pymsg" role="status"></div></div></details></div>`;
     }
     // 各任务 key: model:<id> / runtime / runtime:crispasr / diarize（运行时按 runtimeKey 取，服务端给）
@@ -4190,6 +4133,77 @@ async function renderAsrModels(providedStatus = null) {
   // Studio 使用独立命名方案；旧入口继续使用原来的单套配置。
   let savedSchemes = [], activeSchemeId = '', editingSchemeId = '', schemeKeyClear = false;
   let schemeSaving = false, defaultSchemePrompt = '';
+  let modelDiscovery;
+  const modelDiscoverButton = $('#st-model-discover');
+  const modelOptions = $('#st-model-options');
+  const modelListStatus = $('#st-model-list-status');
+  function showModelListStatus(message) {
+    if (!modelListStatus) return;
+    modelListStatus.textContent = message;
+    modelListStatus.hidden = !message;
+  }
+  function modelDiscoveryInput() {
+    const provider = $('#st-provider').value;
+    const baseUrl = $('#st-baseurl').value.trim();
+    const apiKey = $('#st-key').value.trim();
+    const preset = stPresets.find(item => item.id === provider);
+    const endpoint = value => (value || preset?.baseUrl || '').replace(/\/+$/, '');
+    const saved = savedSchemes.find(item => item.id === editingSchemeId);
+    const useSaved = !schemeKeyClear && saved?.hasKey && saved.provider === provider
+      && endpoint(saved.baseUrl) === endpoint(baseUrl);
+    if (window.androidRpc || !provider || preset?.local || (!apiKey && !useSaved)) return;
+    return { provider, baseUrl, ...(apiKey ? { apiKey } : { id: saved.id }) };
+  }
+  function resetModelDiscovery() {
+    if (!modelDiscoverButton) return;
+    modelDiscovery?.abort();
+    modelDiscovery = null;
+    const canDiscover = !!modelDiscoveryInput();
+    modelDiscoverButton.hidden = !!window.androidRpc || (!canDiscover && !$('#st-key').value.trim());
+    modelDiscoverButton.disabled = !canDiscover;
+    modelDiscoverButton.textContent = '获取可用模型';
+    modelOptions.hidden = true;
+    modelOptions.replaceChildren();
+    showModelListStatus('');
+  }
+  for (const field of ['#st-key', '#st-baseurl']) $(field)?.addEventListener('input', resetModelDiscovery);
+  modelOptions?.addEventListener('change', () => {
+    if (modelOptions.value) $('#st-model').value = modelOptions.value;
+  });
+  $('#st-model')?.addEventListener('input', () => {
+    if (modelOptions && !modelOptions.hidden) modelOptions.value = '';
+  });
+  modelDiscoverButton?.addEventListener('click', async () => {
+    const input = modelDiscoveryInput();
+    if (!input || modelDiscovery) return;
+    const request = new AbortController();
+    modelDiscovery = request;
+    modelDiscoverButton.disabled = true;
+    modelDiscoverButton.textContent = '正在获取模型…';
+    showModelListStatus('');
+    try {
+      const data = await schemeRequest('/api/translate/schemes/models', 'POST', input,
+        AbortSignal.any([request.signal, AbortSignal.timeout(20000)]));
+      if (modelDiscovery !== request) return;
+      const models = Array.isArray(data.models) ? data.models : [];
+      modelOptions.replaceChildren(...['', ...models].map(model => {
+        const option = document.createElement('option');
+        option.value = model;
+        option.textContent = model || '选择模型';
+        return option;
+      }));
+      modelOptions.hidden = !models.length;
+      showModelListStatus(models.length ? '' : '服务商未返回可用模型，仍可手动输入。');
+    } catch (error) {
+      if (modelDiscovery === request) showModelListStatus(error.message || '获取模型失败，请重试。');
+    } finally {
+      if (modelDiscovery === request) {
+        modelDiscovery = null;
+        modelDiscoverButton.disabled = false;
+        modelDiscoverButton.textContent = '获取可用模型';
+      }
+    }
+  });
   function acceptSchemes(data) {
     savedSchemes = data.schemes || []; activeSchemeId = data.activeSchemeId || '';
   }
@@ -4197,18 +4211,19 @@ async function renderAsrModels(providedStatus = null) {
     const payload = {
       name: $('#st-scheme-name').value.trim(), provider: $('#st-provider').value,
       baseUrl: $('#st-baseurl').value.trim(), model: $('#st-model').value.trim(),
-      prompt: $('#st-prompt').value, glossary: glSerialize(), glossaryLang: glState.lang,
-      batchSize: Number($('#st-batch').value), temperature: Number($('#st-temp').value),
+      prompt: $('#st-prompt').value,
+      batchSize: Number($('#st-batch').value) || 75, temperature: Number($('#st-temp').value),
       contextRows: Number($('#st-ctx').value), activate: $('#st-scheme-activate').checked,
-      autoTranslate: $('#st-scheme-auto').checked,
     };
+    const glossary = glSerialize();
+    if (glossary !== loadedGlossary) payload.glossary = glSaveText(glossary);
     if ($('#st-key').value.trim()) payload.apiKey = $('#st-key').value.trim();
     if (schemeKeyClear) payload.apiKeyClear = true;
     return payload;
   }
-  async function schemeRequest(url, method, payload) {
+  async function schemeRequest(url, method, payload, signal = AbortSignal.timeout(url.endsWith('/test') ? 90000 : 12000)) {
     const response = await fetch(url, { method, headers: { 'Content-Type': 'application/json' },
-      ...(payload ? { body: JSON.stringify(payload) } : {}), signal: AbortSignal.timeout(url.endsWith('/test') ? 90000 : 12000) });
+      ...(payload ? { body: JSON.stringify(payload) } : {}), signal });
     const data = await response.json();
     if (!response.ok) throw Error(data.error || '操作失败');
     return data;
@@ -4275,14 +4290,16 @@ async function renderAsrModels(providedStatus = null) {
     $('#st-key').value = ''; $('#st-key').type = 'password'; $('#st-key-eye').textContent = '显示';
     $('#st-key').placeholder = item?.hasKey ? '已保存（留空不修改）' : 'sk-…'; refreshKeyHint(item);
     $('#st-temp').value = item?.temperature ?? 0.3; $('#st-ctx').value = item?.contextRows ?? 0;
-    $('#st-batch').value = item?.batchSize ?? 25; $('#st-prompt').value = item?.prompt || defaultSchemePrompt;
+    $('#st-batch').value = item?.batchSize ?? 75; $('#st-prompt').value = item?.prompt || defaultSchemePrompt;
     $('#st-scheme-activate').checked = !item || item.id === activeSchemeId;
-    $('#st-scheme-auto').checked = item?.autoTranslate !== false;
     $('#st-drawer-msg').textContent = ''; $('#st-msg').textContent = '';
     glLoad(item?.glossary || '', item?.glossaryLang || '简体');
+    resetModelDiscovery();
     schemeEls.list.after(schemeEls.drawer);
     openDrawer(item?.name || '添加方案', item?.id === activeSchemeId);
-    renderSavedSchemes(); $('#st-scheme-name').focus();
+    renderSavedSchemes();
+    // The drawer is still expanding. Focusing with scroll would clip its heading.
+    $('#st-scheme-name').focus({ preventScroll: true });
   }
   async function saveNamedScheme() {
     if (schemeSaving) return;
@@ -4369,7 +4386,7 @@ async function renderAsrModels(providedStatus = null) {
   function openDrawer(title, isCur) {
     const generation = ++drawerGeneration;
     if (!schemeEls.drawer) return;
-    if (schemeEls.drawerTitle) schemeEls.drawerTitle.textContent = title || '翻译方案';
+    if (schemeEls.drawerTitle) schemeEls.drawerTitle.textContent = title || '大模型方案';
     if (schemeEls.drawerCur) schemeEls.drawerCur.hidden = !isCur;
     if (studioUI) schemeEls.drawer.inert = false;
     schemeEls.drawer.hidden = false;
@@ -4383,6 +4400,7 @@ async function renderAsrModels(providedStatus = null) {
     if (studioUI) {
       editingSchemeId = ''; schemeEls.list.hidden = false;
       schemeEls.drawer.inert = true; $('#st-key').value = ''; $('#st-key').type = 'password';
+      resetModelDiscovery();
       schemeEls.list.querySelectorAll('.sf-scheme-open').forEach(button => button.setAttribute('aria-expanded', 'false'));
       if (schemeEls.drawer.contains(document.activeElement)) $('#st-scheme-new').focus();
     }
@@ -4397,11 +4415,10 @@ async function renderAsrModels(providedStatus = null) {
   const drawerCancel = document.getElementById('st-drawer-cancel');
   if (drawerCancel) drawerCancel.addEventListener('click', closeDrawer);
   const drawerSave = document.getElementById('st-drawer-save');
-  if (drawerSave) drawerSave.addEventListener('click', () => {
+  if (drawerSave) drawerSave.addEventListener('click', async () => {
     if (studioUI) return saveNamedScheme();
-    const sb = document.getElementById('st-save');       // 复用既有的"保存设置"链路，不另写一份保存
-    if (sb) sb.click();
-    closeDrawer();
+    try { await postSettings(); closeDrawer(); }
+    catch (error) { $('#st-drawer-msg').textContent = error.message; }
   });
   const schemeNew = document.getElementById('st-scheme-new');
   if (schemeNew) schemeNew.addEventListener('click', () => {
@@ -4421,7 +4438,7 @@ async function renderAsrModels(providedStatus = null) {
    * 导出不包含 API Key（只带 hasKey 标记）；导入后 Key 需重新填写。
    * 这样配置文件可以安全备份/分享，不需要把凭证写进明文。 */
   const SCHEME_FILE_FORMAT = 'subfabric.translate-schemes';
-  const schemeFileFields = ['name', 'provider', 'baseUrl', 'model', 'autoTranslate', 'prompt',
+  const schemeFileFields = ['name', 'provider', 'baseUrl', 'model', 'prompt',
     'glossary', 'glossaryLang', 'batchSize', 'temperature', 'contextRows', 'hasKey'];
   function schemeExportJson() {
     const schemes = savedSchemes.map(item => {
@@ -4570,23 +4587,6 @@ async function renderAsrModels(providedStatus = null) {
       }
     } catch {}
   }
-  async function loadCastSettings() {
-    try {
-      const d = await (await fetch('/api/cast/config', { signal: AbortSignal.timeout(8000) })).json();
-      const el = document.getElementById('st-cast-enabled');
-      if (el) el.checked = d.enabled !== false;
-      const note = document.getElementById('st-cast-note');
-      if (note && !d.llmReady) note.textContent = '⚠ 还没配模型：到「字幕翻译」里填接口地址、API Key 和模型名，否则这一步会自动跳过。';
-    } catch {}
-  }
-  const castToggle = document.getElementById('st-cast-enabled');
-  if (castToggle) castToggle.addEventListener('change', async () => {
-    try {
-      await fetch('/api/cast/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !!castToggle.checked }) });
-      toast(castToggle.checked ? '已开启 LLM 分角色' : '已关闭 LLM 分角色', 2600);
-    } catch (e) { toast('保存失败: ' + e.message, 3600); }
-  });
-
   /* 逐句置信度（全局默认，三档）。与上面分角色同一模式：改了立刻存，不等「保存并返回」。
      它是**全局默认**；单个项目可以在新建时的生成设置里单独指定档位（存进 project.json）。 */
   async function loadConfidenceSettings() {
@@ -4608,139 +4608,6 @@ async function renderAsrModels(providedStatus = null) {
     } catch (e) { toast('保存失败: ' + e.message, 3600); }
   });
 
-  /* 自动纠错（反思纠错的配置）。与上面两块同一模式：改了立刻存。
-     「用字幕翻译的模型」勾上时不填自定义地址；要**本地部署**（Qwen3 等）就取消勾选，
-     把地址指向本机的 OpenAI 兼容服务 —— 本机地址免 API Key（见服务端 correctReady）。 */
-  function correctFill(v) {
-    if (!v) return;
-    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    const chk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
-    set('st-correct-mode', v.mode || 'preview');
-    set('st-correct-pad', v.padSec);
-    set('st-correct-max', v.maxSec);
-    set('st-correct-batch', v.batchLines);
-    chk('st-correct-usetranslate', v.useTranslate);
-    const box = document.getElementById('st-correct-custom');
-    if (box) {
-      box.hidden = !!v.useTranslate;
-      /* 跟随翻译时把这些输入框**一起 disable**：
-       * 只 hidden 不 disable 的话，它们仍参与 Tab 焦点与表单语义，
-       * 而且用户会以为"填了就能生效"（其实服务端整段忽略，见 correctCfg 的 `f = follow ? {} : t`）。 */
-      box.querySelectorAll('input,select').forEach(el => { el.disabled = !!v.useTranslate; });
-    }
-    set('st-correct-baseurl', v.baseUrl || '');
-    set('st-correct-model', v.model || '');
-    const prov = document.getElementById('st-correct-provider');
-    if (prov) {
-      if (!prov.options.length && v.presets) {
-        /* ⚠ 这里必须滤掉**不能做纠错**的本地引擎（NLLB）。
-         * NLLB 是翻译专用的编码器-解码器模型：它只会"把一句翻成另一种语言"，
-         * 不做自由文本生成，所以「通读全片找语句不通顺」这件事它根本干不了
-         * （服务端 correctCfg 也完全没为它分流，选了只会拿到一个空 baseUrl → 永远不可用）。
-         * 实测踩过：用户选了它，卡片就卡在"模型还不可用"且提示文案还是错的。 */
-        const usable = (v.presets || []).filter(p => !p.local);
-        prov.innerHTML = '<option value="">（不指定，用下面的地址）</option>'
-          + usable.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
-        // 旧配置里存着 local 预设时，下拉里没这个 option → 强制回到"不指定"，别显示成空白
-        prov._presets = usable;
-      }
-      prov.value = v.provider || '';
-      if (prov.value !== (v.provider || '')) prov.value = '';
-    }
-    const eff = document.getElementById('st-correct-eff');
-    if (eff) {
-      /* 取消勾选后，若地址与模型都还空着，服务端会**回退**到翻译配置
-       * （correctCfg 的 pick() 兜底）。这是刻意的容错，但直接显示
-       * "实际调用：deepseek-chat" 会让人以为"我明明取消了怎么还在用它" —— 说清楚。 */
-      eff.textContent = v.useTranslate
-        ? `实际调用：${v.effectiveModel}（跟随字幕翻译）`
-        : (v.baseUrl && v.model
-          ? `实际调用：${v.effectiveModel} @ ${v.effectiveBaseUrl}`
-          : `还没填地址与模型名；在填好之前仍会临时沿用「${v.effectiveModel}」（跟随字幕翻译）`);
-    }
-    const note = document.getElementById('st-correct-note');
-    if (note) {
-      /* ⚠ 报错要指向**真正缺的那个东西**。
-       * 原来不管什么原因都写"非本机地址必须填 API Key" ——
-       * 地址明明是空的时候也这么说，把人往错方向引（实测踩过：
-       * 用户以为要补 Key，其实是要么跟翻译、要么填地址）。 */
-      if (v.ready) {
-        note.innerHTML = '✓ 模型可用。纠错会消耗模型调用（长稿分批多次）；实际重识别的音频量由上面的「上下文」决定。';
-      } else if (!v.effectiveBaseUrl || !v.effectiveModel) {
-        note.innerHTML = '<span style="color:var(--danger)">模型还不可用：还没填「接口地址」与「模型名」</span>'
-          + '<span class="gl-hint"> —— 想省事就勾上「用字幕翻译的模型」（跟着「翻译」页那套走）；'
-          + '想单独指定就填一个 OpenAI 兼容服务的地址，本机地址（127.0.0.1）免 Key。</span>';
-      } else if (!v.hasKey) {
-        note.innerHTML = '<span style="color:var(--danger)">模型还不可用：这是非本机地址，必须填 API Key</span>';
-      } else {
-        note.innerHTML = `<span style="color:var(--danger)">模型还不可用：${esc(v.effectiveBaseUrl)} 这套配置没通过检查</span>`;
-      }
-    }
-  }
-  async function correctLoad() {
-    try {
-      correctFill(await (await fetch('/api/asr/correct', { signal: AbortSignal.timeout(8000) })).json());
-    } catch {}
-  }
-
-  async function correctSave(patch) {
-    try {
-      const r = await fetch('/api/asr/correct', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
-      const v = await r.json().catch(() => null);
-      if (!r.ok) throw new Error((v && v.error) || ('HTTP ' + r.status));
-      correctFill(v);
-    } catch (e) { toast('纠错设置保存失败: ' + e.message, 4200); }
-  }
-  {
-    const bind = (id, key, num) => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('change', () => correctSave({ [key]: num ? Number(el.value) : el.value }));
-    };
-    bind('st-correct-mode', 'mode');
-    bind('st-correct-pad', 'padSec', true);
-    bind('st-correct-max', 'maxSec', true);
-    bind('st-correct-batch', 'batchLines', true);
-    bind('st-correct-baseurl', 'baseUrl');
-    bind('st-correct-model', 'model');
-    bind('st-correct-key', 'apiKey');
-    /* 选服务商时**把该家的地址与模型名一起填上**（与「翻译」页同一行为）。
-     * 原来只发 provider、不填地址 —— 于是选了 DeepSeek 地址栏还是空的，
-     * 卡片继续报"还不可用"，用户以为选择没生效（实测踩过）。 */
-    {
-      const prov = document.getElementById('st-correct-provider');
-      if (prov) prov.addEventListener('change', () => {
-        const p = (prov._presets || []).find(x => x.id === prov.value);
-        const patch = { provider: prov.value };
-        if (p) {
-          const bu = document.getElementById('st-correct-baseurl');
-          const md = document.getElementById('st-correct-model');
-          if (bu) bu.value = p.baseUrl || '';
-          if (md) md.value = p.model || '';
-          patch.baseUrl = p.baseUrl || '';
-          patch.model = p.model || '';
-        }
-        correctSave(patch);
-      });
-    }
-    const ut = document.getElementById('st-correct-usetranslate');
-    if (ut) ut.addEventListener('change', async () => {
-      const box = document.getElementById('st-correct-custom');
-      if (box) {
-        box.hidden = ut.checked;
-        box.querySelectorAll('input,select').forEach(el => { el.disabled = ut.checked; });
-      }
-      /* 明确把开关状态发给服务端（两个方向都发）。
-       * 早期这里在取消勾选时发的是 `{ baseUrl: 当前值 }`，而服务端靠"地址为空 ⇒ 跟随翻译"
-       * 推断 —— 取消勾选那一刻地址还是空的，服务端又算回"跟随翻译"，勾选框被回弹，
-       * **用户根本取消不掉**（实测复现）。现在走显式开关。 */
-      await correctSave({ useTranslate: ut.checked });
-      // 刚切到自定义而地址还空着时，把输入框顶到眼前，别让用户找不到该填什么
-      if (!ut.checked) {
-        const bu = document.getElementById('st-correct-baseurl');
-        if (bu && !bu.value) bu.focus();
-      }
-    });
-  }
   async function saveFetchSettings(patch) {
     try {
       const r = await fetch('/api/fetch/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
@@ -4807,57 +4674,20 @@ async function renderAsrModels(providedStatus = null) {
     const p = stPresets.find(x => x.id === $('#st-provider').value);
     if (p) { $('#st-baseurl').value = p.baseUrl || ''; $('#st-model').value = p.model || ''; }
     if (studioUI) { schemeKeyClear = true; $('#st-key').value = ''; $('#st-key').placeholder = 'sk-…'; refreshKeyHint(null); }
+    resetModelDiscovery();
   });
 
-  /* ─────────── 术语表词条编辑器 ───────────
-   * 按目标语言分组: 每组一张词条表(原文 → 译法), 翻译时只把当前组的词条注入提示词。
-   * 存盘格式仍是文本('##组名' 分节 + '原文=译法' 行), 服务端 parseGlossary 按目标语言取组。 */
-  const GL_LANGS = ['简体', '繁體', 'English'];
-  const glState = { lang: '简体', terms: {} };
-  function glReset() { for (const l of GL_LANGS) glState.terms[l] = []; }
-  glReset();
-
-  function glParse(text) {
-    glReset();
-    let cur = '简体';
-    for (const raw of String(text || '').split(/\r?\n/)) {
-      const l = raw.trim();
-      if (!l) continue;
-      const sec = /^##\s*(.+)$/.exec(l);
-      if (sec) {
-        const name = sec[1].trim();
-        cur = GL_LANGS.includes(name) ? name : (GL_LANGS.find(x => x.toLowerCase() === name.toLowerCase()) || '简体');
-        continue;
-      }
-      if (l.startsWith('#')) continue;
-      const m = /^(.+?)\s*=\s*(.+)$/.exec(l) || /^(\S+)\s+(.+)$/.exec(l);
-      if (m) glState.terms[cur].push([m[1].trim(), m[2].trim()]);
-    }
-  }
+  let glossaryRows = [], loadedGlossary = '';
+  let glSaveText = rows => rows;
   function glSerialize() {
-    const out = [];
-    for (const l of GL_LANGS) {
-      const rows = glState.terms[l].filter(([a, b]) => a && b);
-      if (!rows.length) continue;
-      out.push('##' + l);
-      for (const [a, b] of rows) out.push(a + '=' + b);
-    }
-    return out.join('\n');
+    return glossaryRows.map(([src, dst]) => [src.trim(), dst.trim()])
+      .filter(([src, dst]) => src && dst)
+      .map(([src, dst]) => src + '=' + dst).join('\n');
   }
   function glRender() {
-    const tabs = $('#gl-tabs'), box = $('#gl-rows'), name = $('#gl-langname');
-    if (!tabs || !box) return;
-    tabs.innerHTML = GL_LANGS.map(l => {
-      const n = glState.terms[l].filter(([a, b]) => a && b).length;
-      return `<button type="button" class="gl-tab${l === glState.lang ? ' active' : ''}" data-lang="${esc(l)}"
-        title="${esc(l)}：${n} 条词条">${esc(l)}${n ? ' · ' + n : ''}</button>`;
-    }).join('');
-    tabs.querySelectorAll('.gl-tab').forEach(b => b.addEventListener('click', () => {
-      glState.lang = b.dataset.lang;
-      glRender();
-    }));
-    if (name) name.textContent = glState.lang;
-    const rows = glState.terms[glState.lang];
+    const box = $('#gl-rows');
+    if (!box) return;
+    const rows = glossaryRows;
     box.innerHTML = rows.length ? '' : '<div class="gl-empty">' + esc(t('还没有词条，点上面的「＋ 添加词条」')) + '</div>';
     rows.forEach((pair, i) => {
       const row = document.createElement('div');
@@ -4875,58 +4705,61 @@ async function renderAsrModels(providedStatus = null) {
     });
   }
   function glLoad(text, lang) {
-    glParse(text);
-    if (GL_LANGS.includes(lang)) glState.lang = lang;
-    else {
-      // 旧配置没有分组标记时, 落在哪组就切到哪组(免得用户以为词条丢了)
-      const only = GL_LANGS.filter(l => glState.terms[l].length);
-      if (only.length === 1) glState.lang = only[0];
+    // Desktop provides a single table. Keep supporting grouped data from older or Android stores.
+    const groups = [{ name: '', lines: [] }];
+    for (const raw of String(text || '').split(/\r?\n/)) {
+      const section = /^##\s*(.+)$/.exec(raw.trim());
+      if (section) groups.push({ name: section[1].trim(), lines: [] });
+      else groups.at(-1).lines.push(raw);
     }
+    const preferred = groups.find(group => group.name.toLowerCase() === String(lang || '简体').toLowerCase()) || groups[0];
+    const preserveGroups = window.androidRpc && groups.length > 1;
+    glSaveText = preserveGroups
+      ? rows => groups.flatMap(group => [
+          ...(group.name ? ['##' + group.name] : []),
+          ...(group === preferred
+            ? [...group.lines.filter(line => line.trimStart().startsWith('#')), rows]
+            : group.lines),
+        ]).join('\n')
+      : rows => rows;
+    const shown = preserveGroups ? [preferred] : [preferred, ...groups.filter(group => group !== preferred)];
+    const terms = new Map();
+    for (const { lines } of shown) {
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        const pair = /^(.+?)\s*=\s*(.+)$/.exec(line) || /^(\S+)\s+(.+)$/.exec(line);
+        if (!pair) continue;
+        const src = pair[1].trim(), key = src.toLowerCase();
+        if (!terms.has(key)) terms.set(key, [src, pair[2].trim()]);
+      }
+    }
+    glossaryRows = [...terms.values()];
+    loadedGlossary = glSerialize();
     glRender();
   }
   const glAddBtn = $('#gl-add');
   if (glAddBtn) glAddBtn.addEventListener('click', () => {
-    glState.terms[glState.lang].push(['', '']);
+    glossaryRows.push(['', '']);
     glRender();
     const srcs = $('#gl-rows').querySelectorAll('.gl-src');
     if (srcs.length) srcs[srcs.length - 1].focus();
   });
 
-  async function collectSettings() {
-    // 识别提示词是独立的一块(asr/settings.json 的 asr 段), 与翻译配置分开存
-    try {
-      await fetch('/api/asr/hint', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: collectHotwords(),
-          hotwordsScore: parseFloat($('#ah-score').value) || 3,
-        })
-      });
-    } catch { /* 保存失败不阻断翻译配置的保存 */ }
+  async function postSettings() {
     const payload = {
       provider: $('#st-provider').value,
       baseUrl: $('#st-baseurl').value.trim(),
       model: $('#st-model').value.trim(),
-      batchSize: parseInt(($('#st-batch') || {}).value, 10) || 25,     // 每批行数(服务端还会夹到 5~100)
-      // 采样温度 / 上下文行数（设计稿 ③ 的两项，服务端同样会夹范围；解析失败时用默认值）
-      temperature: Number.isFinite(parseFloat(($('#st-temp') || {}).value)) ? parseFloat($('#st-temp').value) : 0.3,
-      contextRows: parseInt(($('#st-ctx') || {}).value, 10) || 0,
+      batchSize: Number($('#st-batch').value) || 75,
+      temperature: Number($('#st-temp').value),
+      contextRows: Number($('#st-ctx').value) || 0,
       prompt: $('#st-prompt').value,
-      glossary: glSerialize(),
-      glossaryLang: glState.lang,
     };
-    // API Key: 非空才提交(服务端加密落盘); 留空 = 保持已存 Key 不变 —— 绝不把空串当"清除"
-    const newKey = $('#st-key').value.trim();
-    if (newKey) payload.apiKey = newKey;
-    return payload;
-  }
-  async function postSettings() {
-    if (studioUI) {
-      const response = await fetch('/api/asr/hint', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: collectHotwords(), hotwordsScore: parseFloat($('#ah-score').value) || 3 }) });
-      if (!response.ok) throw Error('热词保存失败');
-      return { ready: true };
-    }
-    const payload = await collectSettings();     // collectSettings 会顺带保存识别提示词(异步)
+    const glossary = glSerialize();
+    if (glossary !== loadedGlossary) payload.glossary = glSaveText(glossary);
+    const apiKey = $('#st-key').value.trim();
+    if (apiKey) payload.apiKey = apiKey;
     const r = await fetch('/api/translate/config', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
     });
@@ -4953,27 +4786,19 @@ async function renderAsrModels(providedStatus = null) {
       $('#st-msg').classList.add('err');
     } finally { btn.disabled = false; btn.textContent = '测试连接'; }
   });
-  $('#st-save').addEventListener('click', async () => {
-    const msgEl = $('#st-msg'), btn = $('#st-save');
-    btn.disabled = true; btn.textContent = '保存中…';
-    try {
-      const m = await postSettings();
-      /* Studio 的保存只写热词与强度；旧入口仍会写翻译配置。 */
-      msgEl.textContent = studioUI ? '✓ 已保存' : (m.ready ? '✓ 已保存，翻译可用' : '已保存，但接口地址、API Key、模型名没填全，暂时不能翻译');
-      msgEl.classList.remove('err');
-      /* 保存后留在设置页；返回由侧边栏负责，不再重复一个“保存并返回”。 */
-    } catch (e) {
-      msgEl.textContent = '✗ ' + e.message;
-      msgEl.classList.add('err');
-    } finally {
-      btn.disabled = false; btn.textContent = '保存';
-    }
-  });
   /* 「清除已存 Key」: 立即生效(独立于普通保存), 避免"留空=不修改"之后没有办法删 Key */
   const stKeyClearLink = $('#st-key-clear');
   if (stKeyClearLink) stKeyClearLink.addEventListener('click', async (e) => {
     e.preventDefault();
-    if (studioUI) { schemeKeyClear = true; $('#st-key').value = ''; $('#st-key').placeholder = 'sk-…'; refreshKeyHint(null); $('#st-drawer-msg').textContent = '保存方案后清除 Key'; return; }
+    if (studioUI) {
+      schemeKeyClear = true;
+      $('#st-key').value = '';
+      $('#st-key').placeholder = 'sk-…';
+      refreshKeyHint(null);
+      resetModelDiscovery();
+      $('#st-drawer-msg').textContent = '保存方案后清除 Key';
+      return;
+    }
     const msgEl = $('#st-msg');
     try {
       const r = await fetch('/api/translate/config', {
@@ -5530,7 +5355,7 @@ async function renderAsrModels(providedStatus = null) {
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.defaultPrevented || !$('#confirm-overlay').hidden) return;
     if (location.hash === '#/new') leaveNew();
-    else if (location.hash === '#/settings' && !$('#st-save').disabled) returnFromSettings();
+    else if (location.hash === '#/settings' && !schemeSaving) returnFromSettings();
     else if (location.hash.startsWith('#/details/') && !detailSave.disabled) returnFromDetails();
   });
 
@@ -5910,7 +5735,7 @@ async function renderAsrModels(providedStatus = null) {
           speakers: !!($('#np-speakers') && $('#np-speakers').checked),
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
           confidence: ($('#np-confidence') || {}).value || 'full',
-          // 「创建后自动处理」：出稿后自动跑 反思纠错 + 全片逐词重校对
+          // 创建初稿后按选项自动重校逐词时间。
           autoPost: !!($('#np-autopost') && $('#np-autopost').checked),
           fetch: { url: npUrl, part: Math.max(1, parseInt((npPartEl || {}).value, 10) || 1) },
         };
@@ -6017,7 +5842,7 @@ async function renderAsrModels(providedStatus = null) {
         // 逐句置信度档位（off/fast/full）：显式发给服务端，存进 project.json 的
         // draft.confidence。这是个**项目级**选择 —— 建稿时定了，重新识别也沿用。
         payload.confidence = ($('#np-confidence') || {}).value || 'full';
-        // 「创建后自动处理」：出稿后自动跑 反思纠错 + 全片逐词重校对
+        // 创建初稿后按选项自动重校逐词时间。
         payload.autoPost = !!($('#np-autopost') && $('#np-autopost').checked);
         // 勾了「区分说话人」→ 编辑器的「启用角色标注」帮用户打开(字幕里会带 [SPKn] 标签, 禁着没意义)
         if (payload.speakers) localStorage.setItem('ss-role-annot', '1');
@@ -6085,27 +5910,28 @@ async function renderAsrModels(providedStatus = null) {
       toast('正在提交稿件，请等待上传完成。', 3200);
       return;
     }
-    // 资源管理曾是设置的重复别名；保留旧书签可用，但统一落到设置页。
-    if (studioUI && h === '#/resources') { h = '#/settings'; history.replaceState(null, '', h); }
+    // 桌面存储并入设置，已有书签仍直达相应面板。Android 沿用原生导航启动独立存储页。
+    const settingsSection = h === '#/storage' && !storageView ? 'storage' : '';
+    if (studioUI && (h === '#/resources' || settingsSection)) { h = '#/settings'; history.replaceState(null, '', h); }
     // 任务中心已移除，旧书签统一回稿件库；任务视图与稿件库本就是同一组项目卡。
     if (studioUI && h === '#/tasks') { h = '#/home'; history.replaceState(null, '', h); }
-    const studioPages = studioUI ? ['#/help'] : [];
+    const androidPages = storageView ? ['#/storage', '#/help'] : [];
     if (studioUI && h === '#/settings' && previousRoute !== '#/settings') {
       settingsReturnRoute = previousRoute || '#/home';
       settingsOpenedFromApp = !!previousRoute;
     }
     const detailsMatch = /^#\/details\/([A-Za-z0-9_-]{1,64})$/.exec(h);
-    if (!location.hash || !['#/dashboard', '#/home', '#/storage', '#/new', '#/batch', '#/settings', '#/editor', ...studioPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
+    if (!location.hash || !['#/dashboard', '#/home', '#/new', '#/batch', '#/settings', '#/editor', ...androidPages].includes(h) && !h.startsWith('#/project/') && !detailsMatch) {
       h = '#/dashboard';
       history.replaceState(null, '', h);
     }
     if (h !== previousRoute && (previousRoute === '#/editor' || previousRoute.startsWith('#/project/'))) onEditorLeave();
-    $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/storage' || h === '#/new' || h === '#/batch' || h === '#/settings' || studioPages.includes(h) || !!detailsMatch;
+    $('#app').inert = h === '#/dashboard' || h === '#/home' || h === '#/new' || h === '#/batch' || h === '#/settings' || androidPages.includes(h) || !!detailsMatch;
     setPageVisible(dashboardView, h === '#/dashboard');
     setPageVisible(elHome, h === '#/home');
     setPageVisible(npView, h === '#/new');
     setPageVisible(batchView, h === '#/batch');
-    setPageVisible(storageView, h === '#/storage');
+    if (storageView) setPageVisible(storageView, h === '#/storage');
     setPageVisible(stView, h === '#/settings');
     setPageVisible(detailView, !!detailsMatch);
     if (!detailsMatch && previousRoute.startsWith('#/details/')) {
@@ -6166,7 +5992,6 @@ async function renderAsrModels(providedStatus = null) {
       }
     } else if (h === '#/settings') {
       if (previousRoute !== h) {
-        settingsVisit++;
         if (previousRoute.startsWith('#/project/') || previousRoute === '#/editor') {
           video.pause();
           if (state.project) saveNow();
@@ -6182,7 +6007,7 @@ async function renderAsrModels(providedStatus = null) {
       video.pause();
       if (state.project) saveNow();
     }
-    if (studioUI) window.__sfStudio?.route(h, state.project, state.format);
+    if (studioUI) window.__sfStudio?.route(h, state.project, state.format, settingsSection);
     previousRoute = h;
   }
   window.addEventListener('hashchange', applyHash);
@@ -6616,6 +6441,7 @@ async function renderAsrModels(providedStatus = null) {
 
   return {
     openProject, detachProject, flushSave, saveNow,
+    flushHotwordSettings,
     applyHash,
     scheduleSave,                                    // main.js 在数据变化后调
     getProject: () => state.project

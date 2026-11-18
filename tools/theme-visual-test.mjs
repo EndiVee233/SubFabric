@@ -23,6 +23,10 @@ const server = await isolatedServer({ prepare(dir, editor) {
   fs.writeFileSync(path.join(project, 'subtitle.ass'), makeSyntheticAss().replace(/第 (\d+) 句/g, '[Speaker] 第 $1 句'));
   fs.writeFileSync(path.join(project, 'project.json'), JSON.stringify({ id: 'p-theme-audit', name: 'Theme fixture', duration: 240,
     createdAt: '2026-01-01T00:00:00Z', modifiedAt: '2026-01-01T00:00:00Z', subtitle: { format: 'ass', file: 'subtitle.ass', name: 'fixture.ass' } }));
+  fs.writeFileSync(path.join(project, 'draft.log'), 'Storage layout fixture\n');
+  const cache = path.join(dir, 'asr', '__pycache__');
+  fs.mkdirSync(cache, { recursive: true });
+  fs.writeFileSync(path.join(cache, 'theme-fixture.pyc'), Buffer.alloc(2048));
   // Optional installed libass files are copied explicitly, never runtime/model/user directories.
   for (const name of ['subtitles-octopus.js', 'subtitles-octopus-worker.js', 'subtitles-octopus-worker.wasm', 'fonts/NotoSansCJKsc-Regular.otf']) {
     const source = path.join(root, 'editor/vendor', name), dest = path.join(editor, 'vendor', name);
@@ -50,6 +54,7 @@ try {
       if (url.startsWith('/api/asr/hardware')) {
         return json({ok:true,cuda:{available:false},vulkan:{available:true,devices:['Fixture GPU']},npu:{available:false},backends:{vulkan:true}});
       }
+      if (url === '/api/translate/schemes/models') return json({models:['fixture-standard','fixture-compact']});
       // Native encoder probes synchronously start ffmpeg processes. Render the
       // real controls with a stable capability response so later requests can run.
       if (url === '/api/projects/p-theme-audit/export-video/capabilities') {
@@ -92,17 +97,55 @@ try {
     for (const [name, value] of Object.entries(tokens)) if (!value) report.issues.push({theme:pack.id,mode,error:'Missing token',name});
     for (const width of [1440, 900]) {
       await b.setViewport(width, 1000);
-      for (const [route, selector] of [['dashboard','#dashboard-view'],['home','#home-view'],['new','#np-view'],['batch','#batch-view'],['help','#sf-help'],['details/p-theme-audit','#detail-view']]) {
+      for (const [route, selector] of [['dashboard','#dashboard-view'],['home','#home-view'],['new','#np-view'],['batch','#batch-view'],['details/p-theme-audit','#detail-view']]) {
         await go('#/' + route);
         await b.waitFor(`!document.querySelector(${JSON.stringify(selector)}).hidden`);
         await collect(route.split('/')[0], selector, ['dashboard','batch'].includes(route));
       }
       await go('#/settings');
-      for (const tab of ['theme','models','translate','enhance','fetch','perf']) {
+      for (const tab of ['theme','models','translate','enhance','fetch','perf','storage']) {
         await b.eval(`document.querySelector('#sf-settings-tab-${tab}').click()`);
-        await collect('settings-' + tab, '#st-panel-' + tab, tab === 'models');
+        if (tab === 'storage') await b.waitFor('document.querySelector("#stg-scan-state").textContent.includes("上次扫描")');
+        await collect('settings-' + tab, '#st-panel-' + tab, ['models','storage'].includes(tab));
       }
+      assert.ok(await b.eval('(() => {const el=document.querySelector("#st-panel-storage");return el.scrollWidth<=el.clientWidth+1;})()'),
+        `${pack.id} ${mode} ${width}: storage fits its settings panel`);
+      await b.eval('document.querySelector("#sf-settings-tab-translate").click();document.querySelector("#st-scheme-new").click()');
+      await b.waitFor('!!document.querySelector(\'#st-provider option[value="custom"]\')');
+      await b.eval(`(() => {
+        const provider=document.querySelector('#st-provider'), key=document.querySelector('#st-key');
+        provider.value='custom'; provider.dispatchEvent(new Event('change',{bubbles:true}));
+        key.value='theme-fixture-key'; key.dispatchEvent(new Event('input',{bubbles:true}));
+      })()`);
+      await b.waitFor('!document.querySelector("#st-model-discover").hidden');
+      const keyLayout = await b.eval(`(() => {
+        const key=document.querySelector('#st-key').getBoundingClientRect();
+        const button=document.querySelector('#st-model-discover').getBoundingClientRect();
+        const group=document.querySelector('.st-scheme-key-row').getBoundingClientRect();
+        return { width:group.width, fits:button.right<=group.right+1, beside:button.top<key.bottom && button.bottom>key.top };
+      })()`);
+      assert.ok(keyLayout.fits && (keyLayout.width<245 || keyLayout.beside),
+        `${pack.id} ${mode} ${width}: model discovery fits beside the key when there is room (${JSON.stringify(keyLayout)})`);
+      await b.eval('document.querySelector("#st-model-discover").click()');
+      await b.waitFor('!!document.querySelector(\'#st-model-options option[value="fixture-standard"]\')');
+      assert.ok(await b.eval(`(() => {
+        const drawer=document.querySelector('#st-scheme-drawer');
+        const heading=drawer.querySelector('.st-drawer-head').getBoundingClientRect();
+        return heading.top>=drawer.getBoundingClientRect().top-1 && heading.height>0;
+      })()`), `${pack.id} ${mode} ${width}: scheme heading remains visible when the name field gains focus`);
+      await collect('scheme-form', '#st-scheme-drawer', true);
+      await b.eval('document.querySelector("#st-drawer-cancel").click()');
       await b.eval('document.querySelector("#sf-settings-tab-models").click()');
+      await b.waitFor('document.querySelectorAll("#st-models > .sf-prerequisite").length === 3');
+      await b.eval('document.querySelector(\'[data-asr-family="前置"]\').click()');
+      const cards = await b.eval('Array.from(document.querySelectorAll("#st-models > .sf-prerequisite")).map(el=>[el.offsetWidth,el.offsetHeight])');
+      for (let i = 0; i < 2; i++) {
+        const sizes = cards.map(card => card[i]);
+        assert.ok(Math.min(...sizes) > 0 && Math.max(...sizes) - Math.min(...sizes) <= 1,
+          `${pack.id} ${mode} ${width}: prerequisites have matching dimensions (${JSON.stringify(cards)})`);
+      }
+      await collect('prerequisites', '#st-models > .sf-prerequisite', true);
+      await b.eval('document.querySelector("#sf-asr-back").click()');
       const parameters = await b.eval('!!document.querySelector(".sm-params")');
       if(parameters) {
         await b.eval('document.querySelector(".sm-params").click()');

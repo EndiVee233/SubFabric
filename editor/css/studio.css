@@ -1104,7 +1104,6 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .st-field-error { display:none; grid-column:1/-1; }
 .st-field-error:not(:empty) { display:block; margin-top:5px; color:var(--danger); font-size:10px; line-height:1.5; }
 .st-actions .st-msg { flex:1; min-width:0; }
-.st-actions #st-save { min-width:68px; }
 .st-panel .st-row { margin-bottom:0; }
 .st-card .gl-hint { margin:6px 0 0; }
 .st-card .gl-wrap { margin:0; }
@@ -2025,15 +2024,6 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .gl-hint { font-size: 12px; line-height: 1.6; color: var(--text-2); }
 .st-key-clear { margin-left: 6px; color: var(--accent-text, var(--accent)); text-decoration: underline; cursor: pointer; }
 .st-key-clear:hover { color: var(--accent-2, var(--accent)); }
-.gl-tabs { display: inline-flex; gap: 4px; padding: 3px; background: var(--surface-2, var(--bg-3)); border: 1px solid var(--line-soft, var(--border)); border-radius: 999px; align-self: flex-start; }
-.gl-tabs:empty { display: none; }
-.gl-tab {
-  border: none; background: transparent; color: var(--text-1);
-  font: inherit; font-size: 12px; font-weight: 700;
-  padding: 4px 14px; border-radius: 999px; cursor: pointer; transition: background .12s, color .12s;
-}
-.gl-tab:hover { color: var(--text-0); }
-.gl-tab.active { background: var(--accent); color: var(--accent-ink); }
 .gl-add {
   width: 100%; padding: 9px 12px;
   background: transparent; color: var(--accent-text, var(--accent));
@@ -2130,11 +2120,11 @@ select#st-rerecog-sel { width: 100%; margin-top: 4px; }
 .tab-body:not([hidden]), .st-panel:not([hidden]) { animation: fade-up var(--dur-3) var(--ease-out) both; }
 /* 新建字幕自动切回字幕页时直接显示，不让 260ms 面板入场遮住输入框。 */
 .tab-body.is-instant-reveal { animation:none!important; }
-.ptab, .st-tab, .gl-tab {
+.ptab, .st-tab {
   transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease),
               border-color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease-out);
 }
-.ptab:active, .st-tab:active, .gl-tab:active { transform: scale(.97); }
+.ptab:active, .st-tab:active { transform: scale(.97); }
 
 /* ── 4. 弹窗：遮罩淡入 + 对话框缩放上浮 ─────────────────────────── */
 #fr-overlay:not([hidden]), #confirm-overlay:not([hidden]), #role-new:not([hidden]),
@@ -3268,7 +3258,7 @@ body::before {
 .np-actions, .st-actions, .fr-actions, .rn-actions, .pick-actions, .dp-actions {
   border-top: 1px solid var(--hair); padding-top: 12px; margin-top: 14px;
 }
-.fr-tab.active, .gl-tab.active { box-shadow: var(--sh-1); }
+.fr-tab.active { box-shadow: var(--sh-1); }
 .np-mode, .np-mode.active { border-radius: var(--r-2); }
 .np-mode.active { box-shadow: 0 6px 18px var(--accent-a24), inset 0 1px 0 var(--hair); }
 .dp-steps { gap: 6px; }
@@ -3963,9 +3953,6 @@ body.sf-studio .sf-settings-status .st-msg { display:block; margin:0; padding:9p
 body.sf-studio .sf-settings-status .st-msg:empty { display:none; }
 body.sf-studio .sf-settings-status .st-msg.err { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 48%,var(--line)); }
 /* 识别与校对的手动保存留在面板末尾，随内容滚动，不再占用全局动作栏。 */
-.sf-studio #st-view .st-panel-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin:0; padding:16px 2px 2px; border-top:1px solid var(--line); }
-.sf-studio #st-view .st-panel-actions .sf-settings-save-note { margin-right:auto; color:var(--muted); font-size:11px; line-height:1.7; }
-.sf-studio #st-view .st-panel-actions #st-save { min-width:76px; }
 .sf-studio #st-view .st-card,.sf-studio #st-view .set-group,.sf-studio #st-view .st-section { background:color-mix(in srgb,var(--surface) 97%,transparent); border:1px solid var(--line); border-radius:18px; padding:22px; margin:0; box-shadow:0 4px 20px -16px #14221b40; }
 .sf-studio #st-view .st-card-title,.sf-studio #st-view .set-group-title,.sf-studio #st-view .st-section-title { font-size:14px; font-weight:550; }
 .sf-studio #st-view h3 { font-size:15px; font-weight:550; color:var(--text); margin:0 0 6px; }
@@ -4308,6 +4295,11 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio .sf-scheme-open .st-scheme-desc { overflow-wrap:anywhere; }
 .sf-studio .st-scheme { gap:8px; }
 .sf-studio .sf-scheme-empty { padding:46px 24px; text-align:center; border:1px dashed var(--line); border-radius:16px; color:var(--muted); }
+.st-scheme-key-row, .st-scheme-model-field { display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; min-width:0; }
+.st-scheme-key-row > .st-input, .st-scheme-model-field > .st-input { flex:1 1 12rem; min-width:0; width:auto; }
+.st-scheme-key-row > .st-input { flex-basis:0; min-width:6ch; }
+.st-scheme-key-row > .btn { white-space:nowrap; }
+.st-scheme-model-field > :is(.st-select,.sf-choice-shell) { flex:1 1 9rem; width:auto; min-width:0; }
 .sf-studio .sf-scheme-options { display:flex; gap:18px; flex-wrap:wrap; font-size:12px; color:var(--text); padding:8px; }
 .sf-studio .sf-asr-families { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:16px 0; }
 .sf-studio .sf-asr-family { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:12px; min-height:164px; padding:24px; border:1px solid var(--line); border-radius:16px; background:var(--surface); color:var(--text); text-align:left; box-shadow:0 8px 24px -24px #15221960; transition:transform .18s ease,background .18s ease,border-color .18s ease; }
@@ -4411,9 +4403,18 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio .sf-aurora-color { display:flex; align-items:center; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
 .sf-studio .sf-aurora-color input { width:105px; }
 
-.sf-studio #st-view #st-models[data-family="前置"] { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); align-items:start; }
+.sf-studio #st-view .st-card:has(> #st-models[data-family="前置"]) { container-type:inline-size; }
+.sf-studio #st-view #st-models[data-family="前置"] {
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); grid-auto-rows:1fr; align-items:stretch;
+}
+@container (width < 500px) {
+  .sf-studio #st-view #st-models[data-family="前置"] { grid-template-columns:minmax(0,1fr); }
+}
 .sf-studio #st-models[data-family="前置"] .sm-name { flex-basis:100%; }
-.sf-studio #st-models[data-family="前置"] .sm-state { flex:1; font-size:11px; overflow-wrap:anywhere; }
+.sf-studio #st-models[data-family="前置"] .sm-state {
+  display:flex; align-items:center; min-height:26px; flex:1; font-size:11px; overflow-wrap:anywhere;
+}
+.sf-studio #st-models :is(.sf-prerequisite,.sf-aligner) .sm-state.ok { color:var(--success); }
 
 /* 子视图曾隔断父级 gap；让常驻卡片容器本身承接间距。 */
 .sf-studio #st-view .st-subview:not([hidden]) { display:flex; flex-direction:column; gap:16px; }
@@ -4490,6 +4491,9 @@ body.sf-studio .sf-unavailable { opacity: .5; }
 .sf-studio #st-view .settings-inner { position:relative; height:auto; min-height:100%; padding-bottom:40px; }
 .sf-studio #st-view .st-box { position:static; flex:none; grid-template-rows:auto auto; align-items:start; }
 .sf-studio #st-view .st-body { overflow:visible; scrollbar-gutter:auto; padding:0 0 8px; }
+@media (max-width:720px) {
+  .sf-studio #st-view .st-box { align-items:stretch; }
+}
 .sf-studio #st-view .st-tabs { position:sticky; top:24px; align-self:start; max-height:calc(100dvh - 48px); }
 .sf-studio #st-view .page-intro { padding-right:280px; }
 .sf-studio #st-view .st-actions { position:absolute; top:28px; right:34px; display:flex; align-items:center; justify-content:flex-end; width:auto; max-width:260px; padding:0; gap:10px; }
@@ -6862,20 +6866,8 @@ body[data-theme="light"] :is(#editor-panel #cue-list, .cue-measure) {
 .sf-studio .sf-folder-dialog.is-closing .sf-folder-box { animation:sf-dialog-box-out .12s ease-in both; }
 
 /* T. 用户反馈收口（2026-10-19）：术语表、热词模型行、主题卡遮罩、编辑器设置卡、开关。 */
-/* 术语表：分段/虚线/表格全部走 UWP 的 2px、surface-2、accent-soft + 2px 底线。 */
+/* 术语表沿用 UWP 表格与按钮样式。 */
 .sf-studio[data-design=uwp] .gl-wrap { gap:8px; }
-.sf-studio[data-design=uwp] .gl-tabs {
-  display:inline-flex; gap:2px; padding:3px; border:1px solid var(--line); border-radius:2px;
-  background:var(--surface-2); align-self:flex-start;
-}
-.sf-studio[data-design=uwp] .gl-tab {
-  min-height:30px; padding:5px 12px; border:1px solid transparent; border-radius:2px;
-  background:transparent; color:var(--muted); font-size:12px; font-weight:600;
-}
-.sf-studio[data-design=uwp] .gl-tab:hover { background:var(--surface-3); color:var(--text); }
-.sf-studio[data-design=uwp] .gl-tab.active {
-  background:var(--accent-soft); color:var(--accent-text, var(--accent)); box-shadow:inset 0 -2px 0 var(--accent);
-}
 .sf-studio[data-design=uwp] .gl-add {
   min-height:32px; padding:7px 10px; border:1px dashed var(--line); border-radius:2px;
   background:var(--surface); color:var(--accent-text, var(--accent)); font-size:12px; font-weight:600; box-shadow:none;
@@ -7947,7 +7939,7 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .dt-source-row .np-input { flex:1; min-width:0; }
 
 /* ══════════════════════════════════════════════════════════════════════
-   存储空间（#/storage）
+   存储空间
    ----------------------------------------------------------------------
    基础版用中性令牌，两种在线主题各自覆盖材质：
      · Material You：大圆角容器、tonal 色块、胶囊筛选、填充按钮
@@ -7957,6 +7949,16 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 .stg-inner { width: min(1180px, 100%); }
 .stg-head-actions { display: flex; align-items: center; gap: 12px; }
 .stg-scan-state { color: var(--text-2); font: 10px/1 var(--mono); letter-spacing: .4px; }
+#st-panel-storage { container-type: inline-size; }
+#st-panel-storage .stg-settings-heading {
+  display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px 18px;
+}
+#st-panel-storage .stg-settings-heading > div:first-child { flex: 1 1 270px; min-width: 0; }
+#st-panel-storage .stg-head-actions { flex-wrap: wrap; }
+#st-panel-storage .stg-inner {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; width: 100%; margin: 0; padding: 0;
+}
+#st-panel-storage :is(.stg-note,.stg-tiles) { margin: 0; }
 
 .stg-note { margin: 0 0 14px; padding: 9px 13px; border: 1px solid var(--hair-2); border-radius: var(--r-2); background: var(--accent-a07); color: var(--text-1); font-size: 12px; }
 .stg-note[data-tone="warn"] { border-color: color-mix(in srgb, var(--danger) 38%, transparent); background: color-mix(in srgb, var(--danger) 9%, transparent); color: var(--text-0); }
@@ -8164,6 +8166,16 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
   .stg-toolbar-note { order: 3; width: 100%; }
   .stg-foot { flex-wrap: wrap; }
   .stg-foot .btn { width: 100%; margin-left: 0; }
+}
+@container (width < 700px) {
+  #st-panel-storage .stg-grid { grid-template-columns: minmax(0, 1fr); }
+  #st-panel-storage .stg-side { grid-template-columns: repeat(auto-fit, minmax(min(216px, 100%), 1fr)); }
+}
+@container (width < 440px) {
+  #st-panel-storage .stg-hero { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 18px; }
+  #st-panel-storage .stg-ring { justify-self: start; width: 124px; height: 124px; }
+  #st-panel-storage .stg-tiles { grid-template-columns: repeat(auto-fit, minmax(min(124px, 100%), 1fr)); }
+  #st-panel-storage :is(.stg-toolbar,.stg-foot) { flex-wrap: wrap; gap: 8px; }
 }
 
 /* 添加方案抽屉：#st-view .st-card 的 margin:0 会压过 .st-scheme-inline，需同级 ID 提高优先级 */

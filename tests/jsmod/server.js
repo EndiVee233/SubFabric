@@ -1689,6 +1689,48 @@ function dualCfg() {
            source: (manual && manual !== 'auto') ? 'manual' : 'auto' };
 }
 
+const DESKTOP_TRANSLATE_BATCH_DEFAULT = 75;
+const CAST_ENABLED = false;
+const REFLECTION_ENABLED = false;
+
+function desktopBatchSize(value) {
+  const size = Number(value);
+  return llmText.clampBatchSize(Number.isFinite(size) && size > 0 ? size : DESKTOP_TRANSLATE_BATCH_DEFAULT);
+}
+
+// 桌面方案只有一张表。旧方案同一原文的译法优先沿用原选中组，再合入其余组的独有词条。
+// Android staging 仍提取原 parseGlossary 实现，按自己的现行分组契约运行。
+function desktopGlossary(text, lang = '简体') {
+  const original = String(text || '');
+  const sections = [{ language: '', lines: [] }];
+  for (const line of original.split(/\r?\n/)) {
+    const heading = /^##\s*(.+)$/.exec(line.trim());
+    if (heading) sections.push({ language: heading[1].trim(), lines: [] });
+    else sections.at(-1).lines.push(line);
+  }
+  if (sections.length === 1) return original;
+  const seen = new Set();
+  return [...sections.filter(s => s.language === lang), ...sections.filter(s => s.language !== lang)]
+    .flatMap(section => section.lines)
+    .filter(line => {
+      const term = glossaryMerge.parseEntry(line);
+      if (!term) return true;
+      const key = term.src.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).join('\n').trim();
+}
+
+function withGlossary(raw, next) {
+  const old = String(raw.glossary || '');
+  const effective = desktopGlossary(old, raw.glossaryLang);
+  if (next === old || next === effective) return raw;
+  const updated = { ...raw, glossary: next };
+  if (old !== effective && !updated.glossaryLegacy) updated.glossaryLegacy = old;
+  return updated;
+}
+
 /** 旧版明文凭证读完即迁成密文；对外配置只回传 hasKey。 */
 function readLlmKey(section, raw) {
   const legacyKey = String(raw.apiKey || '');
@@ -1712,7 +1754,11 @@ function readLlmKey(section, raw) {
 }
 
 function translateCfg() {
-  const t = readAsrSettings().translate || {};
+  const settings = readAsrSettings();
+  const t = settings.translate || {};
+  const glossary = settings.translateSchemeId
+    ? (settings.translateSchemes || []).find(item => item.id === settings.translateSchemeId) || t
+    : t;
   const preset = LLM_PRESETS.find(p => p.id === t.provider) || null;
   const apiKey = readLlmKey('translate', t);
   return {
@@ -1720,11 +1766,11 @@ function translateCfg() {
     baseUrl: t.baseUrl || (preset ? preset.baseUrl : ''),
     apiKey,
     model: t.model || (preset ? preset.model : ''),
-    autoTranslate: t.autoTranslate !== false,
+    autoTranslate: true,
     prompt: t.prompt || DEFAULT_TRANSLATE_PROMPT,
-    glossary: t.glossary || '',
-    glossaryLang: t.glossaryLang || '简体',
-    batchSize: llmText.clampBatchSize(t.batchSize),   // 每批行数(用户可调, 见「全局设置 → 模型设置 → LLM」)
+    glossary: desktopGlossary(glossary.glossary, glossary.glossaryLang),
+    glossaryLang: glossary.glossaryLang || '简体',
+    batchSize: desktopBatchSize(t.batchSize),
     // 采样温度 / 上下文行数（同上那两栏；都由 llm-text.js 的纯函数夹范围 + 单测钉住）
     temperature: llmText.clampTemperature(t.temperature),
     contextRows: llmText.clampContextRows(t.contextRows),
@@ -1785,36 +1831,18 @@ function correctReady(cfg) {
   return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(c.baseUrl);
 }
 
-/* ── 热词分析的 LLM 配置 ──────────────────────────────────────────
- * 与 correctCfg 同一套路：默认**跟随翻译配置**（用户不必配两遍），
- * 想单独用别的模型时在 asr/settings.json 的 analyze 段覆盖。
- *
- * 典型用途（也是做这个功能的原因）：翻译用在线 API（快、便宜），
- * 热词分析用**本地 Qwen**（不联网、不花钱、可以反复跑）——
- *   起一个 OpenAI 兼容服务（Ollama: http://127.0.0.1:11434/v1，model=qwen3:8b），
- *   或者在全局设置里直接选「本地模型」。
- *
- * ⚠ 「跟随翻译」用**显式开关** analyze.useTranslate，不靠空值推断 ——
- *   correctCfg 那边踩过：用"baseUrl 与 model 都为空 ⇒ 跟随"推断时，
- *   用户取消勾选、还没填地址，服务端又算回"跟随"，勾选框被回弹、根本取消不掉。
- */
-function analyzeUseTranslate(raw) {
-  const t = raw || {};
-  if (typeof t.useTranslate === 'boolean') return t.useTranslate;
-  return !String(t.baseUrl || '').trim() && !String(t.model || '').trim();
-}
-
+/* 热词分析复用活动翻译方案的连接。旧 analyze 段只保留单次分析上限。 */
 function analyzeCfg() {
   const t = (readAsrSettings().analyze) || {};
-  const follow = analyzeUseTranslate(t);
+  const { provider, baseUrl, model, apiKey } = translateCfg();
   return {
-    ...secondaryLlmConnection('analyze', t, follow, translateCfg()),
+    provider, baseUrl, model, apiKey,
     // 分析一次只回一小段 JSON，但**推理模型（qwen3 等）会先想一大段再答**——
-    // 预算给小了会只吐思考、content 为空。默认 4096（实测 qwen3:8b 思考约 1500-2500 token）。
+    // 预算给小了会只吐思考、content 为空。默认 8192，给推理过程留出预算。
     maxTokens: Math.max(512, Math.min(8192, parseInt(t.maxTokens, 10) || 8192)),
     // 一次最多送几条编辑给模型（多了既费钱又容易让它抓不住重点）
     maxEdits: Math.max(5, Math.min(80, parseInt(t.maxEdits, 10) || 40)),
-    useTranslate: follow,
+    useTranslate: true,
   };
 }
 
@@ -1878,6 +1906,69 @@ function dumpLlmDebug(file, rec) {
  * ──────────────────────────────────────────────────────────── */
 const LLM_TIMEOUT_MS = Number(process.env.SUBFABRIC_LLM_TIMEOUT_MS) || 120000;
 
+function llmEndpoint(cfg, resource) {
+  const endpoint = URL.parse(cfg.baseUrl);
+  if (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
+    throw new LlmError('API 地址只支持 HTTP/HTTPS，凭证请填入 API Key', 'http');
+  }
+  const prefix = endpoint.pathname.replace(/\/+$/, '');
+  const anthropic = cfg.provider === ANTHROPIC_PROVIDER;
+  const base = prefix.replace(anthropic ? /\/(?:messages|models)$/ : /\/(?:chat\/completions|models)$/, '');
+  const version = anthropic && base === prefix && !base.endsWith('/v1') ? '/v1' : '';
+  endpoint.pathname = base + version + '/' + resource;
+  endpoint.hash = '';
+  return endpoint;
+}
+
+function llmAuthHeaders(cfg) {
+  if (cfg.provider === ANTHROPIC_PROVIDER) {
+    return { 'anthropic-version': '2023-06-01', ...(cfg.apiKey ? { 'x-api-key': cfg.apiKey } : {}) };
+  }
+  return cfg.apiKey ? { Authorization: 'Bearer ' + cfg.apiKey } : {};
+}
+
+async function listLlmModels(cfg, url) {
+  const signal = AbortSignal.timeout(10000);
+  const headers = { Accept: 'application/json', ...llmAuthHeaders(cfg) };
+  const models = new Set(), cursors = new Set();
+  const anthropic = cfg.provider === ANTHROPIC_PROVIDER;
+  if (anthropic) {
+    url.searchParams.delete('before_id');
+    url.searchParams.delete('after_id');
+    url.searchParams.set('limit', '100');
+  }
+  for (let page = 0; page < 10; page++) {
+    const reply = await fetch(url, { headers, signal, redirect: 'error' });
+    if (!reply.ok) {
+      await reply.body?.cancel();
+      throw new LlmError('获取可用模型失败（HTTP ' + reply.status + '）', 'http');
+    }
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of reply.body || []) {
+      bytes += chunk.byteLength;
+      if (bytes > 4 * 1024 * 1024) throw new LlmError('服务商返回的模型列表过大', 'format');
+      chunks.push(chunk);
+    }
+    let body;
+    try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* validated below */ }
+    if (!Array.isArray(body?.data)) throw new LlmError('服务商返回的模型列表格式无效', 'format');
+    for (const entry of body.data) {
+      const id = typeof entry?.id === 'string' ? entry.id.trim() : '';
+      if (id && id.length <= 256 && !/[\u0000-\u001f\u007f]/.test(id)
+        && (!cfg.apiKey || !id.includes(cfg.apiKey))) models.add(id);
+    }
+    if (!anthropic || body.has_more !== true || models.size >= 2000) break;
+    const cursor = body.last_id;
+    if (typeof cursor !== 'string' || !cursor || cursor.length > 256 || cursors.has(cursor)) {
+      throw new LlmError('服务商返回的模型列表分页无效', 'format');
+    }
+    cursors.add(cursor);
+    url.searchParams.set('after_id', cursor);
+  }
+  return [...models].slice(0, 2000);
+}
+
 async function llmChat(cfg, messages, opts) {
   const o = opts || {};
   const anthropic = cfg.provider === ANTHROPIC_PROVIDER;
@@ -1885,32 +1976,17 @@ async function llmChat(cfg, messages, opts) {
   /* 超时：优先 cfg.timeoutMs（按次覆盖，热词分析会用 —— 推理模型慢），
    * 其次 opts.timeoutMs，最后默认值。 */
   const timeoutMs = Number(cfg.timeoutMs || o.timeoutMs) || LLM_TIMEOUT_MS;
-  /* 采样温度：以前写死 0.3。现在可在「全局设置 → 模型设置 → LLM 语言模型 → 采样温度」里调，
+  /* 采样温度：以前写死 0.3。现在可在「设置 → 大模型方案 → 采样温度」里调，
    * 走 cfg.temperature（saveTranslateCfg 已夹到 0~2）。没设过就还是旧值 —— 默认行为不变。 */
   const reqBody = { model: cfg.model, messages, max_tokens: maxTokens };
-  const headers = { 'Content-Type': 'application/json' };
-  let url;
+  const headers = { 'Content-Type': 'application/json', ...llmAuthHeaders(cfg) };
+  const url = llmEndpoint(cfg, anthropic ? 'messages' : 'chat/completions');
   if (anthropic) {
-    const endpoint = URL.parse(cfg.baseUrl);
-    if (!endpoint || !['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password) {
-      throw new LlmError('API 地址只支持 HTTP/HTTPS，凭证请填入 API Key', 'http');
-    }
-    const prefix = endpoint.pathname.replace(/\/+$/, '');
-    if (!prefix.endsWith('/messages')) {
-      endpoint.pathname = prefix + (prefix.endsWith('/v1') ? '/messages' : '/v1/messages');
-    } else {
-      endpoint.pathname = prefix;
-    }
-    url = endpoint.toString();
-    headers['anthropic-version'] = '2023-06-01';
-    if (cfg.apiKey) headers['x-api-key'] = cfg.apiKey;
     const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
     if (system) reqBody.system = system;
     reqBody.messages = messages.filter(m => m.role !== 'system');
     // JSON 格式由现有提示词约定。新模型可能拒绝显式 temperature。
   } else {
-    url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
-    headers.Authorization = 'Bearer ' + cfg.apiKey;
     reqBody.temperature = cfg.temperature != null ? llmText.clampTemperature(cfg.temperature) : 0.3;
     if (o.jsonMode) reqBody.response_format = { type: 'json_object' };
   }
@@ -1977,7 +2053,7 @@ async function llmChat(cfg, messages, opts) {
 async function analyzeHotwordsWithLlm(edits) {
   const cfg = analyzeCfg();
   if (!analyzeReady(cfg)) {
-    const err = new Error('分析模型没配好：需要在「全局设置」里填接口地址与模型名（本地地址免 Key）');
+    const err = new Error('请在「设置 → 大模型方案」配置可供热词分析使用的翻译模型。');
     err.code = 'not-ready';
     throw err;
   }
@@ -2125,6 +2201,12 @@ function updateLlmKey(current, patch) {
 function saveTranslateCfg(patch) {
   const s = readAsrSettings();
   const cur = Object.assign({}, s.translate || {});
+  const active = (s.translateSchemes || []).find(item => item.id === s.translateSchemeId);
+  if (active) {
+    cur.glossary = active.glossary;
+    cur.glossaryLang = active.glossaryLang;
+    cur.glossaryLegacy = active.glossaryLegacy;
+  }
   // provider 切换时, 若用户没手改过 baseUrl/model 就跟着预设走
   if (patch.provider && patch.provider !== cur.provider) {
     const preset = LLM_PRESETS.find(p => p.id === patch.provider);
@@ -2137,7 +2219,10 @@ function saveTranslateCfg(patch) {
    * 有单测钉住（tests/llm-params-test.mjs）。 */
   if (Object.prototype.hasOwnProperty.call(p, 'temperature')) p.temperature = llmText.clampTemperature(p.temperature);
   if (Object.prototype.hasOwnProperty.call(p, 'contextRows')) p.contextRows = llmText.clampContextRows(p.contextRows);
+  const glossary = p.glossary;
+  delete p.glossary;
   s.translate = Object.assign(cur, p);
+  if (typeof glossary === 'string') s.translate = withGlossary(s.translate, glossary);
   s.translateSchemeId = '';
   writeAsrSettings(s);
   return translateCfg();
@@ -2148,9 +2233,9 @@ function schemeConfig(raw = {}) {
   const preset = LLM_PRESETS.find(p => p.id === raw.provider);
   return {
     provider: raw.provider || '', baseUrl: raw.baseUrl || (preset && preset.baseUrl) || '',
-    model: raw.model || (preset && preset.model) || '', autoTranslate: raw.autoTranslate !== false,
+    model: raw.model || (preset && preset.model) || '', autoTranslate: true,
     prompt: raw.prompt || DEFAULT_TRANSLATE_PROMPT, glossary: raw.glossary || '',
-    glossaryLang: raw.glossaryLang || '简体', batchSize: llmText.clampBatchSize(raw.batchSize),
+    glossaryLang: raw.glossaryLang || '简体', batchSize: desktopBatchSize(raw.batchSize),
     temperature: llmText.clampTemperature(raw.temperature), contextRows: llmText.clampContextRows(raw.contextRows),
   };
 }
@@ -2158,7 +2243,8 @@ function schemesPublic(settings = readAsrSettings()) {
   return {
     activeSchemeId: settings.translateSchemeId || '',
     schemes: (settings.translateSchemes || []).map(item => ({
-      id: item.id, name: item.name, ...schemeConfig(item), hasKey: !!item.apiKeyEnc,
+      id: item.id, name: item.name, ...schemeConfig(item),
+      glossary: desktopGlossary(item.glossary, item.glossaryLang), hasKey: !!item.apiKeyEnc,
     })),
   };
 }
@@ -2168,10 +2254,14 @@ function schemePatch(input, previous = {}, requireName = true) {
   if (requireName && (!name || name.length > 80)) throw Error('请填写 1–80 字的方案名称');
   const provider = String(input.provider ?? previous.provider ?? '');
   if (!LLM_PRESETS.some(p => p.id === provider)) throw Error('请选择服务商');
-  const merged = { ...previous, provider };
+  let merged = { ...previous, provider };
   for (const field of TRANSLATE_FIELDS) {
-    if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
-    merged[field] = field === 'autoTranslate' ? input[field] !== false : input[field];
+    if (field === 'glossary' || !Object.prototype.hasOwnProperty.call(input, field)) continue;
+    merged[field] = input[field];
+  }
+  if (input.glossary !== undefined) {
+    if (typeof input.glossary !== 'string') throw Error('配置字段格式无效');
+    merged = withGlossary(merged, input.glossary);
   }
   for (const field of ['baseUrl', 'model', 'prompt', 'glossary', 'glossaryLang']) {
     if (merged[field] !== undefined && typeof merged[field] !== 'string') throw Error('配置字段格式无效');
@@ -2192,19 +2282,52 @@ function schemePatch(input, previous = {}, requireName = true) {
     apiKeyEnc = secretStore.encrypt(input.apiKey.trim());
     if (!apiKeyEnc) throw Error('凭证加密失败，方案未保存');
   }
-  return { id: previous.id || crypto.randomUUID(), name, ...cfg, apiKeyEnc };
+  return { id: previous.id || crypto.randomUUID(), name, ...cfg, apiKeyEnc,
+    ...(merged.glossaryLegacy ? { glossaryLegacy: merged.glossaryLegacy } : {}) };
 }
 function activateScheme(settings, item) {
   settings.translateSchemeId = item.id;
   settings.translate = Object.fromEntries(TRANSLATE_FIELDS.map(field => [field, item[field]]));
   settings.translate.apiKeyEnc = item.apiKeyEnc || '';
+  if (item.glossaryLegacy) settings.translate.glossaryLegacy = item.glossaryLegacy;
+}
+async function handleModelDiscovery(res, input, previous) {
+  let url, cfg;
+  try {
+    if (input.apiKey != null && (typeof input.apiKey !== 'string' || input.apiKey.length > 8192)
+        || input.baseUrl != null && (typeof input.baseUrl !== 'string' || input.baseUrl.length > 4096)) {
+      throw Error('API 地址或 Key 格式无效');
+    }
+    const provider = input.provider ?? previous?.provider;
+    const preset = LLM_PRESETS.find(p => p.id === provider);
+    if (!preset || preset.local) throw Error('请先选择提供 API 的服务商');
+    cfg = {
+      provider, baseUrl: (input.baseUrl ?? previous?.baseUrl ?? '').trim() || preset.baseUrl,
+      apiKey: (input.apiKey || '').trim(),
+    };
+    url = llmEndpoint(cfg, 'models');
+    if (!cfg.apiKey && previous?.apiKeyEnc && previous.provider === provider
+        && llmEndpoint(schemeConfig(previous), 'models').href === url.href) {
+      try { cfg.apiKey = secretStore.decrypt(previous.apiKeyEnc); }
+      catch { throw Error('已存 Key 无法解密，请重新填写'); }
+    }
+    if (!cfg.apiKey && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) throw Error('请填写 API Key');
+  } catch (error) {
+    return sendJson(res, 400, { error: error.message });
+  }
+  try {
+    return sendJson(res, 200, { models: await listLlmModels(cfg, url) });
+  } catch (error) {
+    return sendJson(res, 502, { error: error instanceof LlmError ? error.message : '无法获取可用模型，请检查服务商、接口地址、Key 和网络' });
+  }
 }
 function handleSchemeRoutes(req, res, pathname) {
   const match = /^\/api\/translate\/schemes(?:\/([a-zA-Z0-9-]+)(?:\/(activate))?)?$/.exec(pathname);
   if (!match) return sendJson(res, 404, { error: 'not found' });
   const id = match[1] || '', action = match[2] || '';
+  const models = id === 'models' && !action;
   if (!id && req.method === 'GET') return sendJson(res, 200, schemesPublic());
-  if (id && id !== 'test' && !action && req.method === 'DELETE') {
+  if (id && id !== 'test' && !models && !action && req.method === 'DELETE') {
     const settings = readAsrSettings(), items = settings.translateSchemes || [];
     if (!items.some(item => item.id === id)) return sendJson(res, 404, { error: '方案不存在' });
     settings.translateSchemes = items.filter(item => item.id !== id);
@@ -2212,13 +2335,19 @@ function handleSchemeRoutes(req, res, pathname) {
     try { writeAsrSettings(settings); } catch { return sendJson(res, 500, { error: '保存失败' }); }
     return sendJson(res, 200, schemesPublic(settings));
   }
-  if (!(req.method === 'POST' && (!id || id === 'test' || action === 'activate') || req.method === 'PUT' && id && !action)) return sendJson(res, 405, { error: 'method not allowed' });
+  if (!(req.method === 'POST' && (!id || id === 'test' || models || action === 'activate')
+        || req.method === 'PUT' && id && !models && !action)) return sendJson(res, 405, { error: 'method not allowed' });
   return readBody(req, res, 256 * 1024, (err, body) => {
     if (err) return sendJson(res, 400, { error: '方案内容过大或读取失败' });
     let input;
     try { input = JSON.parse(body.toString('utf8') || '{}'); } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
     if (!input || typeof input !== 'object' || Array.isArray(input)) return sendJson(res, 400, { error: '方案格式无效' });
     const settings = readAsrSettings(), items = settings.translateSchemes || [];
+    if (models) {
+      const existing = items.find(item => item.id === input.id);
+      if (input.id && !existing) return sendJson(res, 404, { error: '方案不存在' });
+      return handleModelDiscovery(res, input, existing);
+    }
     const previous = items.find(item => item.id === (id === 'test' ? input.id : id));
     if (id && id !== 'test' && !previous) return sendJson(res, 404, { error: '方案不存在' });
     if (id === 'test' && input.id && !previous) return sendJson(res, 404, { error: '方案不存在' });
@@ -2255,22 +2384,6 @@ const llmReady = (cfg) => {
   if (cfg.provider === 'nllb-local') return !!localMt().probe().modelOk;
   return !!(cfg.baseUrl && cfg.apiKey && cfg.model);
 };
-
-/** 保存热词分析的 LLM 配置（asr/settings.json 的 analyze 段）。
- *  与 saveTranslateCfg 同一套：provider 切换跟随预设、apiKey 加密落盘、空串=不改。 */
-function saveAnalyzeCfg(patch) {
-  const s = readAsrSettings();
-  const cur = Object.assign({}, s.analyze || {});
-  if (patch.provider && patch.provider !== cur.provider) {
-    const preset = LLM_PRESETS.find(p => p.id === patch.provider);
-    if (preset) { cur.baseUrl = preset.baseUrl; cur.model = preset.model; }
-  }
-  const p = Object.assign({}, patch);
-  updateLlmKey(cur, p);
-  s.analyze = Object.assign(cur, p);
-  writeAsrSettings(s);
-  return analyzeCfg();
-}
 
 /* ═══════════ 识别提示词 / 热词(提升专有名词识别率) ═══════════
  * 两个引擎各有各的注入方式, 实测(2026-09-25, 本机):
@@ -2846,10 +2959,7 @@ function stripConfidence(segs) {
 function castPromptCfg() {
   try { return String((readAsrSettings().cast || {}).prompt || ''); } catch { return ''; }
 }
-/** 分角色总开关（settings.cast.enabled 默认开）。速度测试的分角色后处理也走它。 */
-const castEnabled = () => {
-  try { return (readAsrSettings().cast || {}).enabled !== false; } catch { return true; }
-};
+const castEnabled = () => CAST_ENABLED && readAsrSettings().cast?.enabled === true;
 /* 每个模型一个目录: asr/models/<dirName>。settings.models 记录各模型目录,
  * asrModelDir 是旧字段(仅 parakeet 兼容)。selectedModel = 创建初稿默认用的模型。 */
 /** 目录里是否已经有该模型的任一文件（不管大小对不对）。给 modelDirFor 判断“注册目录是否还有效”。 */
@@ -4411,7 +4521,7 @@ function benchSpawn(cmd, args, timeoutMs) {
 function normalizeBenchConditions(raw) {
   const c = raw && typeof raw === 'object' ? raw : {};
   const confidence = CONFIDENCE_MODES.includes(c.confidence) ? c.confidence : asrConfidenceDefault();
-  const cast = c.cast === true;
+  const cast = castEnabled() && c.cast === true;
   return {
     word: c.word !== false,
     confidence,
@@ -4468,7 +4578,7 @@ function benchDiarize(wav, speakerCount, onProgress) {
 /** 速度测试里的分角色识别计时：用第一份成功识别结果跑与创建流程相同的两步 LLM。
  *  会产生一次真实的模型调用；未配置 LLM 时跳过并说明原因。 */
 async function benchCast(segments, speakerCount) {
-  if (!castEnabled()) return { sec: 0, note: '分角色识别已在设置中关闭' };
+  if (!castEnabled()) return { sec: 0, note: 'LLM 分角色暂未开放' };
   const cfg = translateCfg();
   if (!llmReady(cfg)) return { sec: 0, note: '未配置 LLM，已跳过分角色识别（不影响识别耗时）' };
   const call = (msgs) => llmChat(cfg, msgs, { jsonMode: true, maxTokens: 1200 }).then(r => r.content);
@@ -5961,14 +6071,6 @@ function startPrepare(id, videoPath, mode) {
     const item = (s.translateSchemes || []).find(it => it.id === s.translateSchemeId);
     return item ? { id: item.id, name: String(item.name || '') } : null;
   }
-  /** 当前生效的术语表文本与语言：有命名方案用方案自己的，否则用 translate 配置。 */
-  function activeGlossary() {
-    const s = readAsrSettings();
-    const item = (s.translateSchemes || []).find(it => it.id === s.translateSchemeId);
-    if (item) return { text: String(item.glossary || ''), lang: String(item.glossaryLang || '简体') };
-    const t = s.translate || {};
-    return { text: String(t.glossary || ''), lang: String(t.glossaryLang || '简体') };
-  }
   /** 模型返回的 JSON 数组 → [{src,dst}]；容忍代码块围栏、前后说明、以及逐行 "原文=译法"。 */
   function parseGlossaryJsonList(raw) {
     const s = String(raw || '').trim();
@@ -6026,12 +6128,11 @@ function startPrepare(id, videoPath, mode) {
   async function reviewGlossary(id) {
     const cfg = translateCfg();
     if (!llmReady(cfg)) {
-      throw new Error('术语表校对要用「字幕翻译」的模型：先到「全局设置 → 翻译方案」把接口地址、模型和 API Key 配好');
+      throw new Error('术语表校对要用「字幕翻译」的模型：先到「设置 → 大模型方案」把接口地址、模型和 API Key 配好');
     }
     const lines = subtitleLinesForReview(id);
     if (!lines.length) throw new Error('这个稿件还没有可校对的字幕文本');
-    const knownGlossary = activeGlossary();
-    const known = parseGlossary(knownGlossary.text, knownGlossary.lang);
+    const known = parseGlossary(cfg.glossary, cfg.glossaryLang);
     const knownMap = new Map(known.map(([a, b]) => [a.toLowerCase(), { src: a, dst: b }]));
     let text = lines.join('\n');
     const truncated = text.length > 60000;
@@ -6087,15 +6188,16 @@ function startPrepare(id, videoPath, mode) {
   /** 把确认的术语写进当前翻译方案（或当前翻译配置）。返回 saved/count/scheme。 */
   function saveGlossaryToScheme(terms) {
     const clean = cleanGlossaryTerms(terms);
-    const base = activeGlossary();
-    const next = glossaryMerge.mergeGlossary(base.text, base.lang, clean);
-    if (next.length > 100000) throw new Error('术语表超过 10 万字符，请先清理旧条目');
     const s = readAsrSettings();
     const schemeId = s.translateSchemeId || '';
     const items = s.translateSchemes || [];
     const idx = items.findIndex(it => it.id === schemeId);
-    if (idx >= 0) items[idx].glossary = next;
-    s.translate = Object.assign({}, s.translate || {}, { glossary: next });
+    const base = items[idx] || s.translate || {};
+    const plain = desktopGlossary(base.glossary, base.glossaryLang);
+    const next = glossaryMerge.mergeGlossary(plain, null, clean);
+    if (next.length > 100000) throw new Error('术语表超过 10 万字符，请先清理旧条目');
+    if (idx >= 0) items[idx] = withGlossary(items[idx], next);
+    s.translate = withGlossary(s.translate || {}, next);
     writeAsrSettings(s);
     return {
       saved: true, count: clean.length,
@@ -6901,7 +7003,7 @@ function startPrepare(id, videoPath, mode) {
     const s = readAsrSettings();
     const a = (s.autoPost) || {};
     return {
-      reflect: a.reflect !== false,          // 默认开
+      reflect: REFLECTION_ENABLED && a.reflect !== false,
       realign: a.realign !== false,          // 默认开
       // 反思：只自动应用"确定性"的发现（合并/空档这种有硬依据的），
       // 模型主观判断的"疑似听错"留给人工 —— 见下面 runAutoReflect 的说明
@@ -7499,7 +7601,7 @@ function startPrepare(id, videoPath, mode) {
     finally { if (fd !== undefined) fs.closeSync(fd); }
   }
 
-  /** 识别完成: 先落英文初稿, 再按设置决定要不要接着翻译 */
+  /** 识别完成后先落英文初稿；翻译模型可用时自动继续。 */
   function buildDraftSubtitle(id, wordLevel) {
     setDraft(id, { stage: STAGE.asr, progress: 88, message: '写入初稿字幕 …' });
     let segs, info;
@@ -7509,25 +7611,19 @@ function startPrepare(id, videoPath, mode) {
       info = writeSubtitle(id, wordLevel, segs, null, { tail: 0.15 });
     } catch (e) { return finishDraft(id, e); }
 
-    const cfg = translateCfg();
-    // 识别还在跑时就点了「翻译」→ 记成排队, 等这一步结束自动接上, 而不是被静默吞掉
     const metaQ = readMeta(id);
-    const queued = !!(metaQ && metaQ.draft && metaQ.draft.translateQueued);
-    if (queued) { metaQ.draft.translateQueued = false; writeMeta(metaQ); }
-    if (cfg.autoTranslate || queued) {
-      if (!llmReady(cfg)) {
-        return finishDraft(id, null, { status: 'paused', stage: STAGE.translate, progress: 86,
-          translated: false, needTranslate: true, lines: segs.length, words: info.totalWords,
-          message: '语音识别完成。要生成译文，在右上角「设置」里填接口地址、API Key 和模型名' });
-      }
-      // ASR 阶段结束要交棒: draftJobs 里还留着本 id(startDraftAsr 成功时不删,
-      // 好让 metaView 判定任务仍活着), 不先清掉会让 startTranslate 的防重入直接 return。
-      draftJobs.delete(id);
-      return startTranslate(id);
+    if (metaQ?.draft?.translateQueued) {
+      metaQ.draft.translateQueued = false;
+      writeMeta(metaQ);
     }
-    finishDraft(id, null, { status: 'paused', stage: STAGE.translate, progress: 86,
-      translated: false, needTranslate: true, lines: segs.length, words: info.totalWords,
-      message: `语音识别完成：${segs.length} 行。点「开始翻译」生成中文字幕（或在设置里勾选自动翻译）` });
+    if (!llmReady(translateCfg())) {
+      return finishDraft(id, null, { status: 'paused', stage: STAGE.translate, progress: 86,
+        translated: false, needTranslate: true, lines: segs.length, words: info.totalWords,
+        message: '语音识别完成。请在「设置 → 大模型方案」配置翻译模型后继续。' });
+    }
+    // ASR 与翻译共用任务锁，交棒时先清掉已结束的识别任务。
+    draftJobs.delete(id);
+    return startTranslate(id);
   }
 
   /* ── 翻译 ── */
@@ -7629,7 +7725,7 @@ function startPrepare(id, videoPath, mode) {
   /* 翻译批量大小：**用户可调**（「全局设置 → 字幕翻译 → 每批行数」，5~100，默认 25）。
    * 过去是写死的 25：小模型希望更小（"返回行数必须等于输入行数"这条对齐越容易整批翻车），
    * 强模型希望更大（请求数更少）。夹取与切批都在 llm-text.js（纯函数，有单测），这里只取配置。 */
-  const transBatchSize = (cfg) => llmText.clampBatchSize(cfg && cfg.batchSize);
+  const transBatchSize = (cfg) => desktopBatchSize(cfg?.batchSize);
 
   /* 解析模型回复的工具都在 editor/llm-text.js（纯函数, 可单测）:
    *  · stripReasoning   —— 剥掉  thinking… 思维链（推理模型必踩的坑, 以前完全没处理）
@@ -8488,13 +8584,9 @@ function startPrepare(id, videoPath, mode) {
     }
     const wantSpk = !!d0.speakers && diarizeReady() && !d0.diarizeSkipped;
 
-    /** 分角色开关（默认开; 关掉就完全不动, 行为与以前一致） */
-    const castOn = () => {
-      try { return (readAsrSettings().cast || {}).enabled !== false; } catch { return true; }
-    };
     const stamp = () => '[' + new Date().toLocaleTimeString() + '] ';
-    const cfgLLM = translateCfg();
-    const castUsable = () => castOn() && llmReady(cfgLLM);
+    const cfgLLM = castEnabled() ? translateCfg() : null;
+    const castUsable = () => llmReady(cfgLLM);
     // 注意: llmChat 返回的是 { content, finishReason, ... } —— 必须取 .content（分句那边也是这么用的）
     const llmCall = (msgs) => llmChat(cfgLLM, msgs, { jsonMode: true, maxTokens: 1200 }).then((r) => r.content);
 
@@ -10152,7 +10244,7 @@ function handleAsrRoutes(req, res, u) {
       // 显式开关（旧配置回退到"有没有自定义地址"的推断，见 correctUseTranslate）
       const useTranslate = correctUseTranslate(raw);
       return {
-        mode: cfg.mode,
+        mode: REFLECTION_ENABLED ? cfg.mode : 'off',
         // 预览时前后各留多少秒 / 单段上限 —— 直接决定"要重识别多少音频"
         padSec: Number.isFinite(Number(raw.padSec)) ? Number(raw.padSec) : reflectMod.PAD_SEC,
         maxSec: Number.isFinite(Number(raw.maxSec)) ? Number(raw.maxSec) : reflectMod.MAX_REGION_SEC,
@@ -10165,7 +10257,7 @@ function handleAsrRoutes(req, res, u) {
         // 最终会用的模型（跟随翻译时显示翻译的模型名，用户才知道真正调的是谁）
         effectiveModel: cfg.model,
         effectiveBaseUrl: cfg.baseUrl,
-        ready: correctReady(cfg),
+        ready: REFLECTION_ENABLED && correctReady(cfg),
         presets: LLM_PRESETS.map(p => ({ id: p.id, name: p.name, baseUrl: p.baseUrl, model: p.model, local: !!p.local })),
       };
     };
@@ -10536,9 +10628,7 @@ function handleAsrRoutes(req, res, u) {
     return sendJson(res, 405, { error: '仅支持 GET / POST' });
   }
 
-  /* 热词分析的模型配置（全局设置里选）—— 存 asr/settings.json 的 analyze 段。
-   * 默认跟随翻译配置；想单独用别的模型（典型：翻译用在线、分析用本地 Qwen）就关掉跟随。
-   * GET 顺带把 LLM_PRESETS 给前端填下拉框，并把"跟随翻译时实际会用哪个模型"讲清楚。 */
+  /* 旧版调用方仍可读取热词分析目前复用的翻译模型。 */
   if (pathname === '/api/analyze/config' && req.method === 'GET') {
     const c = analyzeCfg();
     const t = translateCfg();
@@ -10554,19 +10644,7 @@ function handleAsrRoutes(req, res, u) {
   }
 
   if (pathname === '/api/analyze/config' && req.method === 'POST') {
-    return readBody(req, res, 256 * 1024, (err, body) => {
-      if (err) return sendJson(res, 413, { error: '请求体过大' });
-      let p = {};
-      try { p = JSON.parse(body.toString('utf8')) || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
-      const keep = {};
-      for (const k of ['provider', 'baseUrl', 'apiKey', 'apiKeyClear', 'model', 'useTranslate', 'maxEdits']) {
-        if (Object.prototype.hasOwnProperty.call(p, k)) keep[k] = p[k];
-      }
-      let c;
-      try { c = saveAnalyzeCfg(keep); }
-      catch { return sendJson(res, 500, { error: '模型设置保存失败' }); }
-      return sendJson(res, 200, { cfg: translateCfgPublic(c), ready: analyzeReady(c), useTranslate: !!c.useTranslate });
-    });
+    return sendJson(res, 409, { error: '热词分析复用当前大模型方案' });
   }
 
   /* 双引擎分工比例：供「识别模型」页的下拉读写。
@@ -10844,33 +10922,31 @@ function handleLlmRoutes(req, res, u) {
   }
 
   /* 识别提示词 / 热词: 存 asr/settings.json 的 asr 段 */
-  /* LLM 分角色开关 + 角色分析提示词（asr/settings.json 的 cast 段; enabled 默认开）
+  /* LLM 分角色开关 + 角色分析提示词（asr/settings.json 的 cast 段）。
    * prompt 留空 = 用 cast.js 内置的 CAST_SYSTEM，GET 一并把内置文案给前端做占位。 */
   if (pathname === '/api/cast/config' && req.method === 'GET') {
-    let on = true, prompt = '';
-    try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
+    const castSettings = readAsrSettings().cast || {};
     const c = translateCfg();
     return sendJson(res, 200, {
-      enabled: on, prompt, defaultPrompt: cast.DEFAULT_CAST_PROMPT,
+      enabled: castEnabled(), prompt: String(castSettings.prompt || ''), defaultPrompt: cast.DEFAULT_CAST_PROMPT,
       llmReady: llmReady(c), model: c.model || '', baseUrl: c.baseUrl || '',
     });
   }
 
   if (pathname === '/api/cast/config' && req.method === 'POST') {
+    if (!CAST_ENABLED) return sendJson(res, 409, { error: 'LLM 分角色暂未开放' });
     return readBody(req, res, 64 * 1024, (err, body) => {
       if (err) return sendJson(res, 400, { error: String(err.message) });
       let d = null;
       try { d = JSON.parse(body.toString('utf8') || '{}') || {}; } catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
       try {
         const st = readAsrSettings();
-        const patch = { enabled: d.enabled !== false };
+        const patch = { enabled: d.enabled === true };
         if (Object.prototype.hasOwnProperty.call(d, 'prompt')) patch.prompt = String(d.prompt || '').slice(0, 8000);
         st.cast = Object.assign({}, st.cast || {}, patch);
         writeAsrSettings(st);
       } catch (e) { return sendJson(res, 500, { error: '保存失败: ' + e.message }); }
-      let on = true, prompt = '';
-      try { const c0 = readAsrSettings().cast || {}; on = c0.enabled !== false; prompt = String(c0.prompt || ''); } catch {}
-      return sendJson(res, 200, { enabled: on, prompt });
+      return sendJson(res, 200, { enabled: castEnabled(), prompt: castPromptCfg() });
     });
   }
 
@@ -11996,7 +12072,7 @@ function handleProjectsRoutes(req, res, u) {
         if (!rows.length) return sendJson(res, 400, { error: '没有可重分句的字幕行（需要中英都有文本）' });
         const cfg = translateCfg();
         if (!llmReady(cfg)) {
-          return sendJson(res, 400, { error: '重分句要用「字幕翻译」的模型：先到「全局设置 → 翻译方案」把接口地址、模型和 API Key 配好' });
+          return sendJson(res, 400, { error: '重分句要用「字幕翻译」的模型：先到「设置 → 大模型方案」把接口地址、模型和 API Key 配好' });
         }
         try {
           const out = await planResegRows(id, rows, cfg);
@@ -12017,6 +12093,7 @@ function handleProjectsRoutes(req, res, u) {
      *   用户点了就在等这个结果，给个转圈比轮询简单可靠。批数多时前端会显示进度文案。
      */
     if (action === 'reflect' && req.method === 'GET') {
+      if (!REFLECTION_ENABLED) return sendJson(res, 409, { error: '反思纠错暂未开放' });
       if (reflectBusy.has(id)) return sendJson(res, 409, { error: '这个稿件正在反思中，等它跑完' });
       reflectBusy.add(id);
       return (async () => {
@@ -12557,7 +12634,7 @@ function handleProjectsRoutes(req, res, u) {
       return sendJson(res, 200, { job });
     }
 
-    // 手动触发翻译(自动翻译没勾选时点「翻译」按钮走这里)
+    // 手动触发翻译，例如保存方案后继续暂挂的初稿。
     if (action === 'translate' && req.method === 'POST') {
       const cfg = translateCfg();
       if (!llmReady(cfg)) return sendJson(res, 400, { error: '还没配置翻译：在主界面右上角「设置」里填接口地址、API Key 和模型名' });

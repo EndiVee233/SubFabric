@@ -72,54 +72,46 @@ try {
   assert.equal((await call(project + '/glossary-review', {})).terms[0].dst, '亚历克斯');
   assert.match(request('/v1/messages').system, /JSON/);
 
-  // The default correction model follows the active translation scheme, including
-  // its protocol and key. A thinking-only truncation must trigger a larger budget.
-  reply([thinking], 'max_tokens');
-  reply([text('{"findings":[]}')]);
-  assert.deepEqual((await call(project + '/reflect')).findings, []);
-  const first = request('/v1/messages');
-  const second = request('/v1/messages');
-  assert.ok(second.max_tokens > first.max_tokens);
-  assert.match(second.system, /findings/);
-
   const correction = await call('/api/asr/correct', {
     useTranslate: false, provider: 'anthropic', baseUrl: base + '/correction/v1/', model: 'correct-fixture',
-    apiKey: 'correct-fixture-key',
+    apiKey: 'correct-fixture-key', mode: 'auto',
   });
-  assert.equal(correction.ready, true);
-  reply([text('{"findings":[]}')]);
-  assert.deepEqual((await call(project + '/reflect')).findings, []);
-  request('/correction/v1/messages', 'correct-fixture', 'correct-fixture-key');
-  await call('/api/asr/correct', { useTranslate: true });
-  reply([text('{"findings":[]}')]);
-  assert.deepEqual((await call(project + '/reflect')).findings, []);
-  request('/v1/messages');
+  assert.equal(correction.ready, false);
+  assert.equal(correction.mode, 'off');
+  await call(project + '/reflect', undefined, 409);
+  assert.deepEqual(requests, [], 'paused correction sends no model request');
 
-  await call('/api/analyze/config', {
-    useTranslate: false, provider: 'anthropic', baseUrl: base + '/analysis/v1/messages/?tenant=test',
-    model: 'analyze-fixture', apiKey: 'analyze-fixture-key',
-  });
-  reply([text('[]')]);
-  assert.equal((await call(project + '/hotword-candidates?llm=1')).llm.ok, true);
-  assert.match(request('/analysis/v1/messages?tenant=test', 'analyze-fixture', 'analyze-fixture-key').system, /JSON 数组/);
-
+  await call('/api/analyze/config', { useTranslate: false }, 409);
   const saved = JSON.parse(fs.readFileSync(path.join(server.root, 'asr/settings.json'), 'utf8'));
-  for (const section of ['translate', 'correct', 'analyze']) {
-    assert.ok(saved[section].apiKeyEnc);
-    assert.ok(!saved[section].apiKey);
-  }
+  assert.ok(saved.translate.apiKeyEnc && saved.correct.apiKeyEnc);
+  assert.ok(!saved.translate.apiKey && !saved.correct.apiKey);
+  assert.equal(saved.correct.mode, 'auto', 'old correction preference is preserved');
+  const analyze = { useTranslate: false, provider: 'custom', baseUrl: base + '/legacy/v1', model: 'legacy' };
+  server.settings({ ...saved, analyze, cast: { enabled: true, prompt: 'fixture prompt' } });
+  assert.equal((await call('/api/cast/config')).enabled, false);
+  await call('/api/cast/config', { enabled: true }, 409);
+  reply([text('[]')]);
+  const analysis = await call(project + '/hotword-candidates?llm=1');
+  assert.equal(analysis.llm.ok, true);
+  assert.equal(analysis.llm.viaTranslate, true);
+  assert.match(request('/v1/messages').system, /JSON 数组/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(server.root, 'asr/settings.json'), 'utf8')).analyze, analyze);
 
-  // An independent legacy OpenAI-compatible analysis URL keeps its protocol
-  // and cannot inherit the Anthropic translation credential.
-  server.settings({ ...saved, analyze: { baseUrl: base + '/legacy/v1', model: 'legacy' } });
-  replies.push({ body: { choices: [{ message: { content: '[]' } }] } });
-  assert.equal((await call(project + '/hotword-candidates?llm=1')).llm.ok, true);
-  const legacy = requests.shift();
-  assert.equal(legacy.url, '/legacy/v1/chat/completions');
-  assert.equal(legacy.headers['x-api-key'], undefined);
-  assert.ok(!legacy.headers.authorization.includes(key));
-  assert.equal(legacy.body.messages[0].role, 'system');
-  assert.equal(legacy.body.temperature, 0.3);
+  replies.push(
+    { body: { data: [{ id: 'claude-first' }, { id: key }], has_more: true, last_id: 'claude-first' } },
+    { body: { data: [{ id: 'claude-first' }, { id: 'claude-second' }], has_more: false } }
+  );
+  const discovered = await call('/api/translate/schemes/models', { id: scheme.savedId, provider: 'anthropic', baseUrl: base + '/v1/messages/' });
+  assert.deepEqual(discovered.models, ['claude-first', 'claude-second']);
+  for (const after of [null, 'claude-first']) {
+    const req = requests.shift();
+    const url = new URL(req.url, base);
+    assert.equal(url.pathname, '/v1/models');
+    assert.equal(url.searchParams.get('after_id'), after);
+    assert.equal(req.headers['x-api-key'], key);
+    assert.equal(req.headers['anthropic-version'], '2023-06-01');
+    assert.equal(req.body, null);
+  }
 
   replies.push({ status: 429, headers: { 'Retry-After': '1' },
     body: { type: 'error', error: { message: 'Rate limit: ' + key } } });
@@ -133,7 +125,7 @@ try {
   request('/v1/messages');
   assert.deepEqual(requests, [], 'redirects do not forward the Anthropic key');
   assert.deepEqual(replies, []);
-  console.log('Anthropic Messages: schemes, translation, glossary, correction, analysis, key storage, truncation and HTTP errors passed');
+  console.log('Anthropic Messages and Models: schemes, translation, glossary, paused correction and cast, shared hotword model, pagination, key storage and HTTP errors passed');
 } finally {
   await server.close();
   await new Promise(resolve => upstream.close(resolve));

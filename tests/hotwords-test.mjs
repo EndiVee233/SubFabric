@@ -168,13 +168,12 @@ console.log('\n== ⑧ LLM 分析这条链路的接线（踩过的坑都钉住）
   ok(/\/no_think/.test(seg), '★ 带 /no_think（否则推理模型思考吃光预算、正文为空）');
   ok(/timeoutMs/.test(seg) && /analyzeTimeoutMs/.test(SRV),
     '★ 分析有自己的超时（推理模型比翻译慢得多）');
-  ok(/analyzeUseTranslate|useTranslate/.test(SRV), '★ 有「跟随翻译」的显式开关');
-
-  // 路由与界面
-  ok(/pathname === '\/api\/analyze\/config'/.test(SRV), '有 /api/analyze/config 路由');
-  for (const id of ['ah-use-llm', 'an-use-translate', 'an-provider', 'an-baseurl', 'an-key', 'an-model', 'an-maxedits']) {
-    ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
-  }
+  const cfg = SRV.slice(SRV.indexOf('function analyzeCfg()'), SRV.indexOf('function analyzeReady('));
+  ok(/\{ provider, baseUrl, model, apiKey \} = translateCfg\(\)/.test(cfg),
+    '★ 热词分析复用当前翻译方案');
+  ok(/id="ah-use-llm"/.test(HTML), '可选择用 LLM 筛选候选热词');
+  ok(!/id="an-(?:use-translate|provider|baseurl|key|model|maxedits)"/.test(HTML),
+    '热词分析没有独立模型设置');
   ok(/llm=1/.test(PJS), 'project.js 会按开关带 ?llm=1');
   ok(/hw-mine-tag/.test(PJS) && /hw-mine-tag/.test(
     fs.readFileSync(path.join(REPO, 'editor', 'css', 'studio.css'), 'utf8')),
@@ -220,53 +219,18 @@ console.log('\n== ⑨ 「模型管理」状态卡不能误报（三个实测撞�
     '★ 缓存读取只出现在缓存函数、探测状态或已完成探测的 GPU 门禁', bizCacheReads);
 }
 
-console.log('\n== ⑩ 「自动纠错」卡：不能选做不了纠错的模型、报错要指向真原因 ==');
+console.log('\n== ⑩ 暂停的选项与热词自动保存 ==');
 {
   const REPO = path.resolve(HERE, '..');
+  const HTML = fs.readFileSync(path.join(REPO, 'editor', 'studio.html'), 'utf8');
   const PJS = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
-  const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
-
-  /* ① 服务商下拉必须滤掉本地引擎（NLLB）。
-   * NLLB 是翻译专用的编码器-解码器模型，不做自由文本生成，
-   * 所以「通读全片找语句不通顺」它干不了；correctCfg 也没为它分流。
-   * 实测踩过：用户选了它，baseUrl 是空的 → 卡片永远"不可用"。 */
-  const provLine = PJS.split('\n').find(l => /const usable = \(v\.presets/.test(l)) || '';
-  ok(/filter\(p => !p\.local\)/.test(provLine),
-    '★ 纠错的服务商下拉滤掉了 local 预设（NLLB）', provLine.trim().slice(0, 90));
-  ok(/prov\._presets = usable/.test(PJS),
-    '★ 存下过滤后的列表，change 时用它填地址');
-  ok(/if \(prov\.value !== \(v\.provider \|\| ''\)\) prov\.value = '';/.test(PJS),
-    '★ 旧配置里存的 local 预设值会被清掉，不显示成空白');
-
-  /* ② 选服务商时要**连带填地址与模型名**。
-   * 原来只发 provider —— 选了 DeepSeek 地址栏还是空的，卡片继续报不可用。 */
-  const chgSeg = PJS.slice(PJS.indexOf("const prov = document.getElementById('st-correct-provider')"),
-                           PJS.indexOf("const ut = document.getElementById('st-correct-usetranslate')"));
-  ok(/patch\.baseUrl = p\.baseUrl/.test(chgSeg) && /patch\.model = p\.model/.test(chgSeg),
-    '★ 选预设时把 baseUrl/model 一起填并保存');
-
-  /* ③ 报错要指向**真正缺的那个东西**。
-   * 原来不管什么原因都写"非本机地址必须填 API Key" —— 地址明明是空的时候也这么说。 */
-  const noteSeg = PJS.slice(PJS.indexOf("const note = document.getElementById('st-correct-note')"),
-                           PJS.indexOf('async function correctLoad'));
-  ok(/!v\.effectiveBaseUrl \|\| !v\.effectiveModel/.test(noteSeg),
-    '★ 先判"地址/模型名是否为空"');
-  ok(/还没填「接口地址」与「模型名」/.test(noteSeg),
-    '★ 缺地址时说"还没填接口地址与模型名"');
-  ok(/非本机地址，必须填 API Key/.test(noteSeg),
-    '★ 只有地址存在、Key 缺失时才说 Key 的事');
-  ok(/127\.0\.0\.1/.test(noteSeg), '★ 顺带告诉用户本机地址免 Key');
-
-  /* ④ 跟随翻译时自定义区要 disable，不能只是 hidden。
-   * 只 hidden 的话输入框仍参与焦点，用户会以为"填了能生效"（服务端整段忽略）。 */
-  ok(/box\.querySelectorAll\('input,select'\)\.forEach\(el => \{ el\.disabled = !!v\.useTranslate; \}\)/.test(PJS),
-    '★ 跟随状态下把自定义区输入框一并 disable');
-  ok(/box\.querySelectorAll\('input,select'\)\.forEach\(el => \{ el\.disabled = ut\.checked; \}\)/.test(PJS),
-    '★ 切换勾选框时同步 disable 状态');
-
-  // ⑤ 服务端确实有 local 标记可供过滤
-  ok(/local: !!p\.local/.test(SRV) || /local: !!/i.test(SRV),
-    '★ 服务端 presets 里带 local 标记（前端靠它过滤）');
+  const MAIN = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
+  ok(!/id="(?:st-correct-[^"]+|st-cast-enabled|st-save)"/.test(HTML),
+    '设置页省去纠错、LLM 分角色和热词手动保存表单');
+  ok(/function flushHotwordSettings\(\)/.test(PJS) && /Projects\.flushHotwordSettings\(\)/.test(MAIN),
+    '热词保存与桌面退出共用队列');
+  ok(/hotwordsPatch = \{ \.\.\.patch, \.\.\.hotwordsPatch \}/.test(PJS),
+    '写入失败时保留待保存的热词改动');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

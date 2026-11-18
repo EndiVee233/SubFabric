@@ -132,6 +132,7 @@
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 8 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式通过 IPC 报告就绪、转接 Windows 更新状态与指令 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 只读页签控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/js/project.js`、`editor/js/studio.js`、`editor/js/storage.js` | 桌面设置的业务表单与热词自动保存、设置分类和路由、存储扫描与清理界面 |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
@@ -552,6 +553,12 @@
   Parakeet Vulkan / Qwen3-ASR + 对齐 / WhisperX large-v2 + wav2vec2 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
   Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
+- **桌面大模型方案**：初稿写出后，有可用方案即自动进入翻译流程。沿用稿件或批量队列选中的方案，
+  旧配置中的自动翻译开关不再参与决定。热词分析通过当前翻译方案调用 LLM。LLM 分角色与反思纠错暂时停用；
+  说话人分离、手动或自动逐词重校仍各走已有链路。
+  方案编辑器用 `POST /api/translate/schemes/models` 按服务商协议查询模型 ID。
+  已存 API Key 仅在服务商与有效接口地址一致时复用，模型列表响应只带模型 ID。
+  每个方案使用一份术语表。旧术语分组汇入时保留各组独有词条，同一原文的冲突按旧选中分组优先。
 - **批量初稿独立页（2026-10-27）**：`#/batch` 新页面，不再用项目列表弹窗。点「＋ 添加视频」一次选多个
   文件进入**本地队列**；每条显示状态/进度/项目，提供单独「设置」按钮（模型、翻译方案、逐词/对齐/
   区分说话人可逐条覆盖，空=跟随默认）。右侧默认设置含模型、翻译方案、逐词/对齐/说话人/自动处理。
@@ -752,9 +759,10 @@
   0–2）、单帧 token 上限（默认 10，1–20）、归一化范围（默认每个窗口，可选整段兼容）。
   参数仍保存在 `modelParams[modelId]`，稳定性重跑次数继续由置信度档位管理。
 
-- **Anthropic 设置**：翻译方案、自动纠错和热词分析的服务商列表由后端预设提供。选「Anthropic（Claude / 兼容接口）」，
-  填写服务商给出的模型 ID 与 API Key；兼容网关可以改 API 地址。翻译方案可保存、切换和测试连接。
-  翻译采样温度适用于 OpenAI 兼容接口，Anthropic 使用服务端默认值。
+- **大模型方案**：在「方案与服务商」的 API Key 旁可查询 OpenAI 兼容或 Anthropic 的可用模型。
+  模型框支持选取返回的 ID 和直接输入。方案支持自定义接口地址、保存、切换和测试连接。
+  新方案调用参数为每批 75 行、上下文 0 行；保留已有方案的显式参数。
+  温度用于 OpenAI 兼容接口，Anthropic 使用服务端默认值。术语表随方案保存，统一编辑原文与译法。
 
 - **旧分离稿的标签恢复（2026-11-07，已完成且已验证；已实装，验收见 §6）**：项目打开时在逐词分析之后、双语配对
   之前调用 `restoreDraftSpeakerLabels`，按上述严格身份范围只恢复非逐词锚点轨，更新句子的标签/角色色模型；
@@ -1106,7 +1114,8 @@
   `author` `design` `seed` `tokens` `assets` `builtin` `personalization`）、`#RRGGBB` 颜色令牌与内嵌 PNG/JPEG/WebP 预览；
   **不能**含脚本、CSS、HTML、SVG 或远程 URL。导入同名自定义包替换旧版，导入内置包生成 `-custom` 副本，
   内置包不可删除。
-- **存储空间（2026-11-02）**：新增 `#/storage` 页面与 `GET /api/storage`、`POST /api/storage/clean`。
+- **存储空间**：桌面从「全局设置 → 存储空间」进入，旧 `#/storage` 链接打开这一分类。
+  统计、筛选与清理使用 `GET /api/storage` 和 `POST /api/storage/clean`。
   `editor/storage-scan.js` 只扫描白名单目录（项目中间文件 `audio.wav`/`peaks.bin`/`asr.json`/`reseg.json`/`draft.log`、
   `asr/models/*`、`asr/` 下的可选运行时、`__pycache__`、7 天前的日志），字幕、`project.json`、视频目录与
   `videos/` 永不进入清理集。客户端只回传扫描生成的 id，服务端按登记表与前缀边界复核；统计与删除都走
@@ -1571,8 +1580,9 @@
   **UWP 的主卡 `.sf-widget-resume` 跨 2 行**，网格少一行可用空间，第 3 行 `2+2` 会把稿件库挤到
   第 4 行、独占两列并空出右半边；因此 UWP 下这两个磁贴必须退回 `grid-column:auto`（`2+1+1=4`）。
   改这条规则前先数一遍「主卡占几行 × 后面还有几个 span 2」。
-- **设置分类**：全局设置六个一级分类为「外观与体验 / 语音识别 / 翻译与术语 / 识别与校对 / 下载与登录 /
-  性能与调度」。Windows Electron 安装版额外显示「软件更新」，含当前版本、手动检查、自动检查与下载开关、
+- **设置分类**：桌面全局设置提供「外观与体验 / 存储空间 / 语音识别 / 大模型方案 / 识别与校对 /
+  下载与登录 / 性能与调度」。帮助与快捷键页面入口暂停展示。语音识别的「前置」依赖卡片同高同宽，
+  对齐模型每张卡片显示一处状态。Windows Electron 安装版额外显示「软件更新」，含当前版本、手动检查、自动检查与下载开关、
   下载进度及「安装并重启」。默认启动后检查，此后每六小时检查，下载完成通过托盘提示。安装经原生确认，
   保存稿件并停止后台任务后交给 NSIS 原地升级和重启。ASS 双语样式与后处理固定在稿件的 `#tab-settings`。
 - **性能页卡片间距**：`#perf-dual-view` 里「双引擎分工性能测试」与「当前已应用的配置」是两张直接相邻的
@@ -1580,9 +1590,10 @@
   现由 `.perf-view { display:flex; flex-direction:column; gap:16px }` 提供垂直间距（与其它设置面板一致），
   `.perf-view[hidden]` 仍保持 `display:none`。不要改成给 `.st-section` 加 margin —— 设置页卡片规则带
   `#st-view` ID 且写死 `margin:0`，普通选择器会被覆盖。
-- **设置保存位置**：设置页不再渲染底部全局动作栏，改由「识别与校对」面板末尾的 `.st-panel-actions`
-  手动保存热词与强度；其它分类即时保存。`#st-msg` 作为设置页浮动状态（`.sf-settings-status`），
-  无消息时不占位，不再留下空框线；`#st-cancel` / `#st-test` 仅保留隐藏的 DOM 兼容节点。
+- **热词自动保存**：「识别与校对」编辑热词或强度后，合并连续输入并保存到本机设置；正常退出时先写完待保存输入。
+  挖掘热词仍可交给 LLM 判断，使用当前大模型方案。设置浮动状态 `#st-msg` 在空闲时不占位。
+  `tests/studio-navigation-test.mjs` 覆盖自动保存、退出写入和模型选择，`tools/theme-visual-test.mjs`
+  核对前置尺寸、方案表单和存储空间的实际 Chromium 布局。模型列表的请求协议使用回环服务测试。
 - **设置作用域**：字体/字号/颜色等 ASS 设置写入当前项目稿件，后处理特效属本机偏好；文件夹只在浏览器
   本地记录分组，不移动 `projects/` 实际文件。
 - **原型隔离**：`prototypes/` 各原型只用合成数据与独立命名空间，不连接真实 API、设置或 `projects/`；

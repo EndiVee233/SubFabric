@@ -88,7 +88,8 @@ try {
   assert.equal(st.translateSchemeId, 'sc-1', '不改变当前方案');
   const sc = st.translateSchemes.find(x => x.id === 'sc-1');
   assert.ok(sc.glossary.includes('Cookie=饼干'), '写进方案 A 的术语表');
-  assert.ok(sc.glossary.includes('##简体'), '分组保留');
+  assert.ok(!sc.glossary.includes('##简体'), '写入后使用统一表');
+  assert.equal(sc.glossaryLegacy, '##简体\nAlex=亚历克斯\n', '保留原分组文本');
   assert.ok(st.translate.glossary.includes('Cookie=饼干'), '当前翻译配置同步');
 
   // 导入的 ASS（没有 asr.json）也要能校对：从当前字幕取中文行

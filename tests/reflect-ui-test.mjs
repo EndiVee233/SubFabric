@@ -2,11 +2,11 @@
  * 反思纠错的 UI 接线回归。
  *
  * 后端已有 tests/reflect-test.mjs（60 项）覆盖纯逻辑。这里只管**接线**：
- *   · 稿件页有触发按钮，且只在项目模式可用
+ *   · 稿件页触发按钮保持隐藏禁用
  *   · 预览弹窗的结构齐全（概览 / 全选 / 清单 / 三个按钮）
  *   · 前端确实调了 /reflect 与 /reidentify
  *   · 前端**自己也要求并区间**再提交（后端还会再求一次，两边都不能漏）
- *   · 全局设置里有纠错配置（含指向本地部署的入口）
+ *   · 全局设置不展示纠错配置
  */
 
 import fs from 'node:fs';
@@ -29,8 +29,8 @@ const ok = (c, n, extra) => {
 
 console.log('== 1. 稿件页触发按钮 ==');
 ok(/id="btn-reflect"/.test(HTML), '有「反思纠错」按钮');
-ok(/id="btn-reflect"[^>]*disabled/.test(HTML), '初始是禁用的（要有项目才能用）');
-ok(/reflectEls\.btn\.disabled = !state\.project/.test(MJ), '载入字幕时按"是否有项目"解禁');
+ok(/id="btn-reflect"[^>]*hidden disabled/.test(HTML), '暂时隐藏并禁用触发按钮');
+ok(/!reflectEls\.btn\.hidden\) reflectEls\.btn\.disabled = !state\.project/.test(MJ), '载入字幕时保留隐藏按钮的禁用状态');
 ok(/if \(reflectEls\.btn\) reflectEls\.btn\.addEventListener\('click', startReflect\);/.test(MJ),
   '点了就调 startReflect');
 
@@ -134,18 +134,9 @@ console.log('\n== 6. 复用现有轮询与写回（不另起一套）==');
 ok(/startRerecogPoll\(state\.project\.id\)/.test(MJ), '复用 startRerecogPoll');
 ok(/setReRecogRegion\(a0, b0/.test(MJ), '时间轴上画出正在跑的跨度');
 
-console.log('\n== 7. 全局设置里的纠错配置 ==');
-for (const id of ['st-correct-mode', 'st-correct-pad', 'st-correct-max', 'st-correct-batch',
-                  'st-correct-usetranslate', 'st-correct-provider', 'st-correct-baseurl',
-                  'st-correct-model', 'st-correct-key', 'st-correct-eff', 'st-correct-note']) {
-  ok(new RegExp(`id="${id}"`).test(HTML), `有 #${id}`);
-}
-ok(/value="preview">预览优先/.test(HTML), '默认档是「预览优先」');
-ok(/value="off">关闭/.test(HTML) && /value="auto">/.test(HTML), '另有 关闭 / 自动 两档');
-ok(/127\.0\.0\.1/.test(HTML), '提示里给了本地部署的地址写法');
-ok(/correctLoad\(\)/.test(PJ), '设置页加载时读取纠错配置');
-ok(/correctSave\(/.test(PJ), '改动即时保存');
-ok(/实际调用：/.test(PJ), '显示"最终会调哪个模型"（跟随翻译时要让用户知道）');
+console.log('\n== 7. 纠错设置暂时不显示 ==');
+ok(!/id="st-correct-/.test(HTML), '设置页没有纠错表单');
+ok(!/\/api\/asr\/correct/.test(PJ), '设置页不再加载或保存纠错配置');
 
 console.log('\n== 8. 服务端两处必须都在（防单侧实现）==');
 ok(/action === 'reflect' && req\.method === 'GET'/.test(SRV), '服务端有 GET /reflect');

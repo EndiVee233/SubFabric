@@ -1102,9 +1102,8 @@ const advanced = $('editor-advanced-actions');
 if (advanced && advanced.parentElement === settingsList) advanced.after(heal);
 else settingsList.appendChild(heal);
 for (const [title, ids] of [
-  ['识别结果', ['st-conf-mode', 'st-cast-enabled']],
-  ['热词与专有名词', ['ah-terms-list', 'ah-score', 'an-use-translate']],
-  ['纠错', ['st-correct-mode']]
+  ['识别结果', ['st-conf-mode']],
+  ['热词与专有名词', ['ah-terms-list', 'ah-score']]
 ]) {
   const group = document.createElement('section'); group.className = 'sf-settings-cluster';
   const heading = document.createElement('h3'); heading.className = 'sf-settings-group-title'; heading.textContent = t(title);
@@ -1117,13 +1116,8 @@ function explain(card, summary, nodes) {
   const label = document.createElement('summary'); label.textContent = t(summary); details.appendChild(label);
   nodes.forEach(node => details.appendChild(node)); card.appendChild(details);
 }
-for (const id of ['an-use-translate', 'ass-style-group']) {
-  const card = id === 'ass-style-group' ? $(id) : cardOf(id);
-  const notes = [...card.children].filter(el => el.tagName === 'P' && !el.id);
-  explain(card, '工作方式与使用说明', notes);
-}
-const correctCard = cardOf('st-correct-mode');
-explain(correctCard, '重识别范围与批量参数', [$('st-correct-pad').closest('.st-row')]);
+const assStyleGroup = $('ass-style-group');
+explain(assStyleGroup, '工作方式与使用说明', [...assStyleGroup.children].filter(el => el.tagName === 'P' && !el.id));
 const performanceCard = $('perf-start').closest('.st-section');
 explain(performanceCard, '测试方法与硬件要求', [performanceCard.querySelector('.st-help')]);
 // 老版 setting-name 只是 span；重排后补上可访问名称，键盘和读屏仍能辨认每个参数。
@@ -1136,11 +1130,7 @@ for (const group of [...styleGroups, $('ass-style-group'), $('ass-fx-group'), $(
     });
   });
 }
-for (const [id, label] of Object.entries({
-  'st-conf-mode': '置信度模式', 'st-correct-mode': '自动纠错', 'ah-score': '热词强度',
-  'st-correct-provider': '纠错服务商', 'st-correct-pad': '前后上下文秒数',
-  'st-correct-max': '单段时长上限', 'st-correct-batch': '每批字幕行数',
-})) $(id).setAttribute('aria-label', t(label));
+$('st-conf-mode').setAttribute('aria-label', t('置信度模式'));
 document.querySelectorAll('#st-view .st-grid').forEach(grid => {
   let label = '';
   for (const child of grid.children) {
@@ -1152,8 +1142,6 @@ document.querySelectorAll('#st-view .st-grid').forEach(grid => {
 const settingTabs = [...document.querySelectorAll('#st-view .st-tab')];
 function settingPresentation(name) {
   $('st-test').hidden = true;
-  /* 手动保存只属于「识别与校对」；按钮已在该面板底部，不再占用全局动作栏。 */
-  $('st-save').hidden = name !== 'enhance';
   for (const tab of settingTabs) {
     tab.setAttribute('tabindex', tab.dataset.stp === name ? '0' : '-1');
     const panel = $('st-panel-' + tab.dataset.stp);
@@ -1166,6 +1154,7 @@ settingTabs.forEach(tab => {
     if (name !== 'translate' && !$('st-scheme-drawer').hidden) $('st-scheme-close').click();
     // 原二级入口仍管理服务商列表刷新，一级分类只委托给它。
     if (name === 'translate' || name === 'models') document.querySelector(`.st-subtab[data-stsub="${name === 'translate' ? 'llm' : 'asr'}"]`)?.click();
+    if (name === 'storage') window.__sfStorage?.open();
     $('st-view').scrollTop = 0;
   });
   tab.addEventListener('keydown', event => {
@@ -2028,7 +2017,7 @@ let dashboardEnterTimer = 0;
 let libraryEnterTimer = 0;
 /* UWP 页面入场：页面整体 .92→1 淡入；元素按可视位置“下→上、右→左”依次
    scale(.94→1)+淡入。所有 UWP 页面共用同一套 keyframes/easing，和主页 Tab 一致。 */
-const SETTINGS_ENTER_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .st-entry, .sf-prerequisite, .ws-panel, .st-hw, .st-subhead, .sf-scheme-empty';
+const SETTINGS_ENTER_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .st-entry, .sf-prerequisite, .ws-panel, .st-hw, .st-subhead, .sf-scheme-empty, .stg-hero, .stg-panel, .stg-card';
 const UWP_ENTER_ITEM_SELECTORS = {
   'dashboard-view': '#sf-widgets > .sf-widget, #sf-uwp-youtube > .sf-uwp-yt-head, #sf-uwp-yt-grid > .sf-uwp-yt-card',
   'home-view': '.home-list > .proj-card',
@@ -2100,7 +2089,7 @@ function animateUwpPage(root, itemsOnly = false) {
 }
 /* Material You 页面卡片：与主页同一套 .42s 上浮，按可视位置 top→bottom、left→right
    依次错峰；只作用于稿件库/文件夹/设置/帮助，不接管主页本身。 */
-const MY_SETTINGS_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .st-entry, .sf-prerequisite, .sf-settings-heading';
+const MY_SETTINGS_ITEMS = '.st-card, .st-scheme, .sf-asr-family, .sm-model, .st-entry, .sf-prerequisite, .sf-settings-heading, .stg-hero, .stg-panel, .stg-card';
 const MY_ENTER_ITEMS = {
   'home-view': '.home-list > .proj-card',
   'st-view': `.st-panel:not([hidden]) :is(${MY_SETTINGS_ITEMS})`,
@@ -3008,7 +2997,7 @@ window.__sfStudio = {
     if (folderSnapshotSignature() !== folderSnapshotSig) renderFolders();
     refreshLibrary();
   },
-  route(h, project, format) {
+  route(h, project, format, settingsSection) {
     if (h === '#/resources') h = '#/settings';
     const previous = route; route = h;
     /* 第一次收到路由（含 F5 直接刷新在 #/project/...）也要播入场：
@@ -3019,13 +3008,16 @@ window.__sfStudio = {
     const editor = h === '#/editor' || h.startsWith('#/project/');
     const wasEditor = previous === '#/editor' || previous.startsWith('#/project/');
     document.body.dataset.workspace = editor ? 'editor' : h.slice(2).split('/')[0];
-    $('sf-nav').hidden = editor; $('sf-help').hidden = h !== '#/help'; $('sf-help').inert = h !== '#/help';
+    $('sf-nav').hidden = editor;
+    const showHelp = !!window.androidRpc && h === '#/help';
+    $('sf-help').hidden = !showHelp;
+    $('sf-help').inert = !showHelp;
     const global = h === '#/settings';
     moveStyles(global);
     document.querySelectorAll('[data-route]').forEach(a => { const active = h === '#/' + a.dataset.route; a.classList.toggle('active', active); if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     if (global) {
       $('st-view').querySelector('.page-intro h1').textContent = t('设置');
-      if (pendingSetting) selectSetting(pendingSetting);
+      if (settingsSection || pendingSetting) selectSetting(settingsSection || pendingSetting);
     }
     if (editor && h.startsWith('#/project/') && prefs.recent !== h.slice(10)) commit({ recent: h.slice(10) });
     refreshLibrary();
@@ -3284,5 +3276,22 @@ window.__sfStorage = createStoragePage({
   },
   notify: message => notice(message),
 });
+// Android 的原生设置已提供独立存储入口，桌面设置复用同一存储面板和扫描逻辑。
+if (!window.androidRpc) {
+  const storage = $('storage-view');
+  const panel = $('st-panel-storage');
+  const heading = panel.querySelector('.stg-settings-heading');
+  const intro = storage.querySelector('.page-intro');
+  const header = storage.querySelector('.page-head');
+  heading.querySelector('div').appendChild(intro.querySelector('p'));
+  heading.appendChild(header.querySelector('.stg-head-actions'));
+  intro.remove();
+  header.remove();
+  storage.classList.remove('workspace-page');
+  storage.setAttribute('aria-labelledby', 'stg-settings-title');
+  storage.hidden = false;
+  panel.appendChild(storage);
+  $('sf-settings-tab-storage').hidden = false;
+}
 // #/editor 的旧直开 boot 不经过项目路由，也须初始化独立工作台可见性。
 window.__sfStudio.route(route, null, '');

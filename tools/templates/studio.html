@@ -42,10 +42,9 @@
   <span class="sf-nav-label">工作空间</span>
   <a href="#/dashboard" data-route="dashboard" data-ico="home">主页</a>
   <a href="#/home" data-route="home" data-ico="folder">稿件库</a>
-  <a href="#/storage" data-route="storage" data-ico="storage">存储空间</a>
   <div class="sf-folder-head"><span>文件夹</span><button type="button" id="sf-folder-add" data-ico="plus" aria-label="新建文件夹"></button></div>
   <div id="sf-folders"></div>
-  <div class="sf-nav-bottom"><a href="#/settings" data-route="settings" data-ico="sliders">设置</a><a href="#/help" data-route="help" data-ico="info">帮助与快捷键</a><p>本地工作空间 · 自动保存</p></div>
+  <div class="sf-nav-bottom"><a href="#/settings" data-route="settings" data-ico="sliders">设置</a><p>本地工作空间 · 自动保存</p></div>
 </aside>
 
 <div id="sf-notice" role="status" hidden></div>
@@ -344,7 +343,7 @@
               <button class="btn btn-mini" id="btn-badcat" title="按异常类别筛选（可多选）：时间异常、字幕重叠、缺语言行、角色问题、逐词缺词">▾ 异常筛选<span id="badcat-count"></span></button>
               <div class="badcat-panel" id="badcat-panel" hidden></div>
             </div>
-            <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处，先给预览，确认后再重识别那几段" disabled><span data-ico="wand"></span> 反思纠错</button>
+            <button class="btn btn-mini" id="btn-reflect" title="让 LLM 通读全片，找出语句不通顺之处，先给预览，确认后再重识别那几段" hidden disabled><span data-ico="wand"></span> 反思纠错</button>
             <button class="btn btn-mini" id="btn-realign-full" title="用 Qwen3 对齐器重算全片逐词时间；只改时间、不改文本，先出预览再确认" disabled><span data-ico="wand"></span> 全片逐词重校对</button>
             <button class="btn btn-mini" id="btn-word-continuity" title="将词高亮延长到下一个词开始，消除词间空档；末词结束和整句起止保持原样" disabled><span data-ico="music"></span> 逐词连续性转换</button>
             <button class="btn btn-mini" id="btn-glossary-review" title="用 LLM 通读全片字幕，找出中英文专有名词；术语表里已有的词带出现有译法，其余自动生成，确认后写入翻译方案术语表"><span data-ico="book"></span> 术语表校对</button>
@@ -775,7 +774,7 @@
             <button type="button" class="btn btn-mini" id="btn-oplog-refresh">刷新</button>
             <select id="oplog-export-format" class="select" aria-label="操作日志导出格式"><option value="csv">CSV</option><option value="json">JSON</option></select>
             <button type="button" class="btn btn-mini" id="btn-oplog-export" disabled>导出操作日志</button>
-            <span class="log-hint">记录你对字幕做的每一步：改文本 / 切分 / 合并 / 重排逐词 / 重识别 / 反思纠错 / 导入导出。
+            <span class="log-hint">记录你对字幕做的每一步：改文本 / 切分 / 合并 / 重排逐词 / 重识别 / 导入导出。
               每条写明改了什么、为什么。随项目完整保存；统计和导出包含全部记录。</span>
           </div>
           <div id="oplog-summary" aria-live="polite"></div>
@@ -783,7 +782,7 @@
           <button type="button" class="btn btn-mini" id="btn-oplog-more" hidden>加载更早的操作</button>
           <div class="log-empty" id="oplog-empty">
             还没有操作记录。<br>
-            编辑字幕、重排逐词时间、应用反思纠错、重新识别、分段导入……这些操作都会自动记在这里，
+            编辑字幕、重排逐词时间、重新识别、分段导入……这些操作都会自动记在这里，
             并带上"为什么"。改完一段回来看看，就知道自己做过什么了。
           </div>
         </div>
@@ -1503,7 +1502,7 @@
 
         <div class="ws-group-title">识别后处理 · 分角色识别</div>
         <div class="ws-checks">
-          <label class="ws-check"><input type="checkbox" id="dt-set-cast"> 开启</label>
+          <label class="ws-check" hidden><input type="checkbox" id="dt-set-cast" disabled> 开启</label>
           <label class="ws-check"><input type="checkbox" id="dt-set-speakers"> 自动区分说话人</label>
         </div>
         <div class="ws-row" style="margin-top:8px">
@@ -1540,8 +1539,8 @@
           <div class="ws-group-title">翻译提示词</div>
           <textarea id="dt-set-prompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
 
-          <div class="ws-group-title">角色分析提示词</div>
-          <textarea id="dt-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词"></textarea>
+          <div class="ws-group-title" hidden>角色分析提示词</div>
+          <textarea id="dt-set-castprompt" class="np-area" rows="5" spellcheck="false" placeholder="留空 = 用内置提示词" hidden disabled></textarea>
 
           <div class="ws-actions">
             <button type="button" class="btn btn-accent" id="dt-set-save">保存自定义参数</button>
@@ -1570,7 +1569,7 @@
           <h3>默认设置</h3><p class="gl-hint">新加入队列的视频默认使用这里；每个视频也可以在列表里单独设置。</p>
           <div class="batch-setting"><label for="batch-model">识别模型</label><select id="batch-model"></select></div>
           <div class="batch-setting"><label for="batch-scheme">翻译方案</label><select id="batch-scheme"><option value="">跟随当前方案</option></select></div>
-          <div class="batch-checks"><label class="np-lbl-check"><input type="checkbox" id="batch-word" checked> 逐词</label><label class="np-lbl-check"><input type="checkbox" id="batch-align"> 对齐</label><label class="np-lbl-check"><input type="checkbox" id="batch-speakers"> 区分说话人</label><label class="np-lbl-check"><input type="checkbox" id="batch-autopost"> 创建后自动处理</label></div>
+          <div class="batch-checks"><label class="np-lbl-check"><input type="checkbox" id="batch-word" checked> 逐词</label><label class="np-lbl-check"><input type="checkbox" id="batch-align"> 对齐</label><label class="np-lbl-check"><input type="checkbox" id="batch-speakers"> 区分说话人</label><label class="np-lbl-check"><input type="checkbox" id="batch-autopost"> 创建后重校逐词时间</label></div>
           <p class="gl-hint">识别模型与逐词/对齐/说话人按视频生效；翻译方案会在处理该视频前切换，全部结束后恢复原来的方案。</p>
         </section>
         <section class="st-card batch-help"><h3>处理顺序</h3><p>队列从上到下串行执行：上传 → 创建项目 → 识别 → 语义分句 → 翻译。一个视频失败不会中断后面的视频。</p></section>
@@ -1696,21 +1695,11 @@
           </button>
         </div>
 
-        <!-- 全流程自动处理：仅在「创建初稿」时可用。
-             出稿后自动接着跑 ①反思纠错 ②全片逐词重校对。
-             两步都**只应用达标的**，不达标的原样保留（自动不等于无脑）。 -->
         <label class="np-auto" id="np-auto-wrap" hidden>
           <input type="checkbox" id="np-autopost">
           <span>
-            <b>创建后自动处理</b>（全流程全自动）
-            <span class="np-auto-note">
-              出稿后自动接着跑：<b>反思纠错</b>（让模型通读全片，把"几行本该是一句 / 那段漏了字幕"
-              这类有硬依据的问题重识别一遍）+ <b>全片逐词重校对</b>（用 Qwen3 对齐器
-              按已确认文本重算逐词时间，不跑 ASR、不改文本）。<br>
-              全程<b>只改该改的</b>：达标的才动，不达标的原样保留。
-              反思的重识别结果会留在「反思纠错」预览里等你复核；逐词重校对自动写回。
-              已出稿的字幕不受影响 —— 这两步都只读已落盘的稿件。
-            </span>
+            <b>创建后重校逐词时间</b>
+            <span class="np-auto-note">用 Qwen3 对齐器重算逐词时间，通过校验后自动保存。</span>
           </span>
         </label>
 
@@ -1812,7 +1801,7 @@
           <div class="np-cast-head">
             <div class="ws-group-title">识别后处理 · 分角色识别</div>
             <div class="ws-checks">
-              <label class="ws-check"><input type="checkbox" id="np-set-cast"> 开启</label>
+              <label class="ws-check" hidden><input type="checkbox" id="np-set-cast" disabled> 开启</label>
             </div>
           </div>
           <div class="np-file-row" id="np-row-word" hidden>
@@ -1898,14 +1887,14 @@
          studio.css 的 `#st-view .st-box` 是 grid（192px + 1fr），
          `.st-tabs` / `.st-body` 都是它的**直接子元素**并按 grid-area 定位。
          套一层 wrapper 会让 grid 拿不到这些子元素 → 右栏被压成 0 宽（实测踩过）。
-         底部全局动作栏已移除；保存按钮在识别与校对面板末尾。
          JS 侧沿用 `.st-tab` + `data-stp`，切换逻辑不用改。 -->
     <div class="st-tabs" role="tablist" aria-label="设置分类" aria-orientation="vertical">
       <span class="sf-settings-nav-label">工作空间</span>
       <button type="button" id="sf-settings-tab-theme" class="st-tab active" role="tab" tabindex="0" aria-selected="true" aria-controls="st-panel-theme" data-stp="theme" data-ico="palette">外观与体验</button>
+      <button type="button" id="sf-settings-tab-storage" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-storage" data-stp="storage" data-ico="storage" hidden>存储空间</button>
       <span class="sf-settings-nav-label">生成与处理</span>
       <button type="button" id="sf-settings-tab-models" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-models" data-stp="models" data-ico="film">语音识别</button>
-      <button type="button" id="sf-settings-tab-translate" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-translate" data-stp="translate" data-ico="globe">翻译与术语</button>
+      <button type="button" id="sf-settings-tab-translate" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-translate" data-stp="translate" data-ico="globe">大模型方案</button>
       <button type="button" id="sf-settings-tab-enhance" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-enhance" data-stp="enhance" data-ico="wand">识别与校对</button>
       <button type="button" id="sf-settings-tab-fetch" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-fetch" data-stp="fetch" data-ico="download">下载与登录</button>
       <button type="button" id="sf-settings-tab-perf" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-perf" data-stp="perf" data-ico="activity">性能与调度</button>
@@ -1913,6 +1902,11 @@
     </div>
 
     <div class="st-body">
+      <section class="st-panel" id="st-panel-storage" role="tabpanel" data-stp="storage" hidden>
+        <header class="sf-settings-heading stg-settings-heading">
+          <div><h2 id="stg-settings-title">存储空间</h2></div>
+        </header>
+      </section>
       <div class="st-panel" id="st-panel-update" role="tabpanel" data-stp="update" hidden>
         <div class="sf-settings-heading"><h2>软件更新</h2></div>
         <div class="st-card">
@@ -2108,7 +2102,7 @@
                     <option value="off">关闭</option>
                   </select>
                 </label>
-                <label class="bench-check"><input type="checkbox" id="bench-cast"> 分角色识别</label>
+                <label class="bench-check" hidden><input type="checkbox" id="bench-cast" disabled> 分角色识别</label>
                 <label class="bench-check"><input type="checkbox" id="bench-speakers"> 说话人区分</label>
                 <input type="number" id="bench-speaker-count" class="st-input" min="1" max="12" placeholder="6" style="max-width:74px" title="说话人数；留空默认 6">
               </div>
@@ -2190,11 +2184,11 @@
       </div>
       <!-- LLM 真实配置在下面独立翻译分类中，保存链路与旧UI共用。 -->
       <!-- 翻译常驻表单成为独立分类，保留原子视图与控件 ID。 -->
-      <div class="st-panel" id="st-panel-translate" role="tabpanel" data-stp="translate" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局方案</span><h2 id="sf-settings-heading-translate">翻译与术语</h2></div>
+      <div class="st-panel" id="st-panel-translate" role="tabpanel" data-stp="translate" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局方案</span><h2 id="sf-settings-heading-translate">大模型方案</h2></div>
       <div class="st-subview" data-stsub="llm" hidden>
         <div class="st-subhead">
           <div>
-            <div class="st-subtitle-strong st-scheme-title">翻译方案</div>
+            <div class="st-subtitle-strong st-scheme-title">方案列表</div>
             
           </div>
           <div class="st-scheme-actions">
@@ -2214,7 +2208,7 @@
 <section class="st-scheme-inline" id="st-scheme-drawer" hidden inert aria-hidden="true"><div class="sf-scheme-content">
         <div class="st-drawer-head">
           <button type="button" class="st-drawer-x" id="st-scheme-close" title="关闭" data-ico="x"></button>
-          <span class="st-drawer-title" id="st-scheme-title">翻译方案</span>
+          <span class="st-drawer-title" id="st-scheme-title">大模型方案</span>
           <span class="st-scheme-cur" id="st-scheme-cur" hidden>当前使用</span>
           <span class="st-drawer-actions">
             <button type="button" class="btn btn-mini" id="st-scheme-test">测试 API</button>
@@ -2233,30 +2227,37 @@
               <select id="st-provider" class="st-select"></select>
               <span class="st-lbl">API 接口地址</span>
               <input type="text" id="st-baseurl" class="st-input" spellcheck="false" placeholder="https://api.deepseek.com/v1">
-              <span class="st-lbl">API Key</span>
-              <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
+              <label class="st-lbl" for="st-key">API Key</label>
+              <div class="st-scheme-key-row">
+                <input type="password" id="st-key" class="st-input" spellcheck="false" placeholder="sk-…">
+                <button type="button" class="btn btn-mini" id="st-key-eye">显示</button>
+                <button type="button" class="btn btn-mini" id="st-model-discover" hidden>获取可用模型</button>
+              </div>
             </div>
             <p class="gl-hint" id="st-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="st-key-clear" class="st-key-clear">清除已存 Key</a></p>
-            <button type="button" class="btn btn-mini" id="st-key-eye" style="margin-top:6px">显示</button>
             <p class="gl-hint">接口地址可选，留空使用默认接口地址。Key 只存在此机器，不会同步到服务器。</p>
           </div>
 
           <div class="st-card">
             <div class="st-card-title">模型</div>
             <div class="st-grid">
-              <span class="st-lbl">LLM 模型</span>
-              <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+              <label class="st-lbl" for="st-model">LLM 模型</label>
+              <div class="st-scheme-model-field">
+                <input type="text" id="st-model" class="st-input" spellcheck="false" placeholder="deepseek-chat">
+                <select id="st-model-options" class="st-select" aria-label="可用模型" hidden></select>
+              </div>
               <span class="st-lbl">采样温度</span>
               <input type="number" id="st-temp" class="st-input" min="0" max="2" step="0.1" value="0.3" style="max-width:120px">
             </div>
-            <p class="gl-hint">模型名称请参考对应服务商的 API 文档。Anthropic 兼容接口请选择 Anthropic 服务商。采样温度适用于 OpenAI 兼容接口。</p>
+            <p class="gl-hint" id="st-model-list-status" role="status" hidden></p>
+            <p class="gl-hint">可以选择已获取的模型，或手动输入模型名称。Anthropic 兼容接口请选择 Anthropic 服务商。采样温度适用于 OpenAI 兼容接口。</p>
           </div>
 
           <div class="st-card">
             <div class="st-card-title">调用参数</div>
             <div class="st-grid">
               <span class="st-lbl">每批行数</span>
-              <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="25" style="max-width:120px">
+              <input type="number" id="st-batch" class="st-input" min="5" max="100" step="5" value="75" style="max-width:120px">
               <span class="st-lbl">上下文行数</span>
               <input type="number" id="st-ctx" class="st-input" min="0" max="200" step="5" value="0" style="max-width:120px">
             </div>
@@ -2267,13 +2268,12 @@
           </div>
 
           <div class="st-card">
-            <div class="st-card-title">术语表 <span class="st-card-note">按目标语言分组 · 翻译时只应用当前组</span></div>
+            <div class="st-card-title">术语表</div>
             <div class="gl-wrap">
-              <div class="gl-tabs" id="gl-tabs"></div>
               <button type="button" class="gl-add" id="gl-add">＋ 添加词条</button>
               <div class="gl-head">
                 <span>原文</span>
-                <span>译法 · <b id="gl-langname">简体</b></span>
+                <span>译法</span>
                 <span></span>
               </div>
               <div class="gl-rows" id="gl-rows"></div>
@@ -2290,7 +2290,7 @@
                本项目的 LLM 请求全部由**本地 Node 服务端**发出（server.js 的 llmChat 直接 fetch），
                服务端之间没有浏览器同源策略，CORS 这个问题**根本不存在**；
                再加一层中转只会多一个要维护的失败点。所以这里如实说明，不摆一个空开关。 -->
-<div class="sf-scheme-options"><label><input type="checkbox" id="st-scheme-activate" checked> 保存后使用此方案</label><label><input type="checkbox" id="st-scheme-auto" checked> 创建稿件后自动翻译</label></div>
+<div class="sf-scheme-options"><label><input type="checkbox" id="st-scheme-activate" checked> 保存后使用此方案</label></div>
         </div>
 
         <div class="st-drawer-foot">
@@ -2308,11 +2308,12 @@
       </div>
       </div>
 
-      <div class="st-panel" id="st-panel-enhance" role="tabpanel" data-stp="enhance" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局默认</span><h2 id="sf-settings-heading-enhance">识别与校对</h2><p>从专有名词到逐词时间，逐步提高稿件的可靠性。</p><p class="sf-settings-save-note">其余增强选项修改后即时保存。</p></div>
+      <div class="st-panel" id="st-panel-enhance" role="tabpanel" data-stp="enhance" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局默认</span><h2 id="sf-settings-heading-enhance">识别与校对</h2><p class="sf-settings-save-note">热词列表与强度自动保存。</p></div>
         <div class="st-card">
-          <div class="st-card-title">热词 <span class="st-card-note">一格一个单词 · ＋ 添加 · − 删除</span></div>
+          <div class="st-card-title">热词 <span class="st-card-note">一格一个词条</span></div>
           <div id="ah-terms-list" class="hotword-list"></div>
-          <button type="button" class="btn btn-mini" id="ah-add">＋ 添加热词</button>
+          <button type="button" class="btn btn-mini" id="ah-add" disabled>＋ 添加热词</button>
+          <p class="gl-hint" id="ah-save-status" role="status" hidden></p>
           <p class="gl-hint">whisper 用作初始提示词，Parakeet 用作热词加权。术语表的「原文」列会自动并进来。</p>
 
           <!-- 从操作日志挖热词：用户把 A 改成 B，就是"B 才是对的词"的弱标注。
@@ -2337,17 +2338,8 @@
             <label class="hw-llm-toggle">
               <input type="checkbox" id="ah-use-llm">
               <span>交给 LLM 再分析一遍</span>
-              <span class="hw-llm-note" id="ah-llm-note">用模型判断哪些真是专有名词（模型在下面「用于分析热词的模型」里选）</span>
+              <span class="hw-llm-note" id="ah-llm-note">使用当前大模型方案的翻译模型判断专有名词</span>
             </label>
-          </div>
-        </div>
-        <div class="st-card">
-          <div class="st-card-title">LLM 分角色 <span class="st-card-note">用视频简介推断人物，再把说话人对应到角色名</span></div>
-          <div class="st-row">
-            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
-              <input type="checkbox" id="st-cast-enabled"> 启用
-            </label>
-            <span class="gl-hint" style="flex:1" id="st-cast-note">先用视频标题/简介让模型判断有几个人物，按这个人数做说话人分离；分离后把说话人换成真实角色名，没对应上的保留说话人编号。模型用「字幕翻译」里配的那份。</span>
           </div>
         </div>
         <div class="st-card">
@@ -2360,48 +2352,6 @@
             </select>
             <span class="gl-hint" style="flex:1" id="st-conf-note">置信度由三个信号融合：<b>词级概率</b>与<b>音频质量</b>在解码时白送、不花时间；<b>稳定性</b>要把音频加噪<b>重跑 2 遍</b> —— 实测 236 秒音频 10.7s → 20.8s，<b>约慢一倍</b>。默认「完整」。</span>
           </div>
-        </div>
-        <div class="st-card">
-          <div class="st-card-title">自动纠错 <span class="st-card-note">让 LLM 通读全片找"语句不通顺"</span></div>
-          <div class="st-row">
-            <select id="st-correct-mode" class="st-input" style="max-width:230px">
-              <option value="preview">预览优先（默认）</option>
-              <option value="off">关闭</option>
-              <option value="auto">建稿后自动跑一次（仍需确认才改）</option>
-            </select>
-            <span class="gl-hint" style="flex:1">在稿件页点「反思纠错」触发。它会找出<b>没说完 / 被硬切 / 拼接痕迹 / 疑似听错</b>的地方，先给预览清单，你勾选后才重识别那几段。</span>
-          </div>
-          <div class="st-row" style="margin-top:8px">
-            <span class="st-lbl" style="min-width:auto">上下文</span>
-            <input type="number" id="st-correct-pad" class="st-input" min="0" max="15" step="1" value="2" style="max-width:74px" title="每段建议前后各取多少秒音频一起重听">
-            <span class="gl-hint">秒／前后各取；单段上限</span>
-            <input type="number" id="st-correct-max" class="st-input" min="3" max="120" step="1" value="30" style="max-width:74px" title="单段重识别区间的时长上限，避免一段吞掉全片">
-            <span class="gl-hint">秒；每批</span>
-            <input type="number" id="st-correct-batch" class="st-input" min="20" max="200" step="10" value="60" style="max-width:74px" title="每次送给模型的字幕行数（长稿会分多批）">
-            <span class="gl-hint">行（长稿会分批通读）</span>
-          </div>
-          <div class="st-row" style="margin-top:8px">
-            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
-              <input type="checkbox" id="st-correct-usetranslate" checked> 用字幕翻译的模型
-            </label>
-            <span class="gl-hint" style="flex:1" id="st-correct-eff"></span>
-          </div>
-          <div id="st-correct-custom" hidden>
-            <div class="st-row" style="margin-top:6px">
-              <select id="st-correct-provider" class="st-input" style="max-width:230px"></select>
-            </div>
-            <div class="st-row" style="margin-top:6px">
-              <input type="text" id="st-correct-baseurl" class="st-input" spellcheck="false" placeholder="接口地址，例如 http://127.0.0.1:8000/v1">
-            </div>
-            <div class="st-row" style="margin-top:6px">
-              <input type="text" id="st-correct-model" class="st-input" spellcheck="false" placeholder="模型名，例如 Qwen3-8B">
-            </div>
-            <div class="st-row" style="margin-top:6px">
-              <input type="password" id="st-correct-key" class="st-input" spellcheck="false" placeholder="API Key（本机地址可留空）">
-            </div>
-            <p class="gl-hint">想用<b>本地部署</b>的模型（如 Qwen3 量化版）：起一个 OpenAI 兼容服务后，把地址填成 <code>http://127.0.0.1:端口/v1</code>、模型名填服务暴露的名字，<b>Key 可留空</b>。</p>
-          </div>
-          <p class="gl-hint" id="st-correct-note"></p>
         </div>
         <div class="st-card">
           <div class="st-card-title">重排逐词时间 <span class="st-card-note">Qwen3 对齐 · 文本不改</span></div>
@@ -2436,48 +2386,9 @@
         <div class="st-card">
           <div class="st-card-title">热词强度 <span class="st-card-note">仅 Parakeet</span></div>
           <div class="st-row">
-            <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" style="max-width:120px">
+            <input type="number" id="ah-score" class="st-input" min="1" max="6" step="0.5" value="3" aria-label="热词强度" style="max-width:120px" disabled>
             <span class="gl-hint" style="flex:1">实测：1.5 无效 / 3.0 生效且正确 / ≥6 会复读崩坏，所以上限卡在 6</span>
           </div>
-        </div>
-        <!-- 热词分析用的模型：默认跟随「翻译」那套配置，不必配两遍。
-             想单独用别的模型（典型：翻译用在线 API，分析用**本地 Qwen**，不联网不花钱、
-             可以反复跑）就关掉「跟随翻译」，自己填地址与模型名。
-             本地 OpenAI 兼容服务（Ollama）地址形如 http://127.0.0.1:11434/v1，本机地址免 Key。 -->
-        <div class="st-card">
-          <div class="st-card-title">用于分析热词的模型
-            <span class="st-card-note">从操作日志挖热词时，用哪个模型判断"这词是不是专有名词"</span>
-          </div>
-          <div class="st-row" style="margin-bottom:8px">
-            <label class="st-lbl" style="display:flex;align-items:center;gap:6px;min-width:auto">
-              <input type="checkbox" id="an-use-translate" checked> 跟随字幕翻译的模型
-            </label>
-            <span class="gl-hint" style="flex:1" id="an-follow-note">跟着「翻译」页里配的那套走</span>
-          </div>
-          <div class="st-grid" id="an-fields">
-            <span class="st-lbl">服务商</span>
-            <select id="an-provider" class="st-select"></select>
-            <span class="st-lbl">接口地址</span>
-            <input type="text" id="an-baseurl" class="st-input" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
-            <span class="st-lbl">API Key</span>
-            <input type="password" id="an-key" class="st-input" spellcheck="false" placeholder="本地地址免填">
-            <span class="st-lbl">模型名</span>
-            <input type="text" id="an-model" class="st-input" spellcheck="false" placeholder="qwen3:8b">
-            <span class="st-lbl">最多送几条编辑</span>
-            <input type="number" id="an-maxedits" class="st-input" min="5" max="80" step="5" value="40" style="max-width:120px">
-          </div>
-          <p class="gl-hint" id="an-key-hint" hidden>已保存 API Key（密文存储，输入框留空 = 不修改）。<a href="#" id="an-key-clear" class="st-key-clear">清除已存 Key</a></p>
-          <p class="gl-hint" id="an-status"></p>
-          <p class="gl-hint">
-            <b>本地 Qwen</b>：起一个 OpenAI 兼容服务（Ollama 装好后地址填
-            <code>http://127.0.0.1:11434/v1</code>、模型名填 <code>qwen3:8b</code>），本机地址免 API Key。
-            <b>在线</b>：选 DeepSeek 等，填 Key 即可（要花钱，但一次只送几十条编辑、很便宜）。
-            跟随翻译时这里留空也不会报错，直接用翻译那套。
-          </p>
-        </div>
-        <div class="st-panel-actions">
-          <span class="sf-settings-save-note">热词列表与强度需手动保存</span>
-          <button type="button" class="btn btn-accent" id="st-save" hidden>保存</button>
         </div>
       </div>
 

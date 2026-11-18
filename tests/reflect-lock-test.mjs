@@ -21,6 +21,7 @@ const REPO = path.resolve(HERE, '..');
 const SRV = fs.readFileSync(path.join(REPO, 'editor', 'server.js'), 'utf8');
 const MJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'main.js'), 'utf8');
 const PJ = fs.readFileSync(path.join(REPO, 'editor', 'js', 'project.js'), 'utf8');
+const HTML = fs.readFileSync(path.join(REPO, 'tools', 'templates', 'studio.html'), 'utf8');
 
 let pass = 0, fail = 0;
 const ok = (c, n, extra) => {
@@ -68,13 +69,10 @@ ok(!/if \(p\.useTranslate === true\) \{ cur\.baseUrl = ''/.test(SRV),
 ok(/raw\.baseUrl/.test(SRV) === false || /const useTranslate = correctUseTranslate\(raw\);/.test(SRV),
   'view() 用统一的解析函数，不自己再推断一遍');
 
-console.log('\n== Bug 2 前端 ==');
-ok(/await correctSave\(\{ useTranslate: ut\.checked \}\);/.test(PJ),
-  '两个方向都发显式开关');
-ok(!/correctSave\(ut\.checked \? \{ useTranslate: true \} : \{ baseUrl:/.test(PJ),
-  '不再在取消勾选时发 baseUrl（那会被服务端算回"跟随翻译"）');
-ok(/还没填地址与模型名；在填好之前仍会临时沿用/.test(PJ),
-  '空值时会说明"临时沿用翻译模型"，避免用户以为取消无效');
+console.log('\n== 暂停桌面纠错时保留旧配置契约 ==');
+ok(!/id="st-correct-usetranslate"/.test(HTML), '设置不显示已暂停功能的开关');
+ok(!/await correctSave\(/.test(PJ), '设置不会改写已保存的纠错字段');
+ok(/const REFLECTION_ENABLED = false;/.test(SRV), '后台不执行已暂停功能');
 
 console.log('\n== 不破坏既有行为 ==');
 // correctCfg 不能因为改造丢掉 mode/batchLines 的兜底

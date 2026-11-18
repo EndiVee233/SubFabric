@@ -78,6 +78,8 @@ class Element extends Surface {
     if (this.tagName === 'SELECT') this.value = this.children.find(child => child.selected)?.value ?? this.children[0]?.value ?? '';
   }
   get options() { return this.querySelectorAll('option'); }
+  get valueAsNumber() { return this.value === '' ? NaN : Number(this.value); }
+  get validity() { return { valid: Number.isFinite(this.valueAsNumber) }; }
   get selectedIndex() { return this.tagName === 'SELECT' ? this.options.findIndex(option => option.value === this.value) : undefined; }
   set selectedIndex(index) { if (this.tagName === 'SELECT') this.value = this.options[index]?.value ?? ''; }
   setAttribute(key, value = '') {
@@ -176,6 +178,9 @@ function parseHtml(root, source) {
 }
 
 const documentSurface = new Surface(), body = new Element('body'); body.className = 'sf-studio';
+globalThis.Option = class extends Element {
+  constructor(text, value) { super('option'); this.textContent = text; this.value = value; }
+};
 globalThis.document = Object.assign(documentSurface, { body, documentElement: new Element('html'), hidden: false,
   getElementById: id => body.querySelector('#' + id), querySelector: selector => body.querySelector(selector),
   querySelectorAll: selector => body.querySelectorAll(selector), createElement: tag => new Element(tag),
@@ -219,6 +224,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (url.startsWith('/api/upload-video?')) { assert.ok(upload, 'upload must be deliberately deferred'); return upload.promise; }
   if (url === '/api/projects' && options.method === 'POST') { created.push(JSON.parse(options.body)); return json({ id: 'created' }); }
   if (url === '/api/projects') return json({ projects: [] });
+  if (url === '/api/storage') return json({ items: [] });
   if (url === '/api/oplog/stats?days=7') return json({ days: 7, total: 0, projects: [] });
   if (url === '/api/youtube/updates' || url === '/api/youtube/updates?refresh=1') {
     return json({ channels: [
@@ -235,7 +241,7 @@ globalThis.fetch = async (url, options = {}) => {
     return json({ revision, savedAt: '2026-10-13T00:00:00Z' });
   }
   if (url === '/api/asr/select-rerecog') return json({ok:true});
-  if (url === '/api/asr/status') return json({ pythonProbe: pythonProbeReady ? {ok:false,msg:'Missing fixture Python'} : null, nemo: {ok:false,msg:'Missing fixture NeMo'}, vibevoice: {ok:false,cuda:true,vramMB:8188,msg:'Missing fixture bitsandbytes'}, diarize:{ready:false}, ready: true,
+  if (url === '/api/asr/status') return json({ pythonProbe: pythonProbeReady ? {ok:false,msg:'Missing fixture Python'} : null, nemo: {ok:false,msg:'Missing fixture NeMo'}, vibevoice: {ok:false,cuda:true,vramMB:8188,msg:'Missing fixture bitsandbytes'}, diarize:{ready:false}, ffmpeg:{ok:true,ffmpeg:{source:'common',path:'C:/fixture/ffmpeg.exe'}}, ready: true,
     // 返回用户：加速方式已配置，且硬件探测已在 status 里，避免 renderAsrModels 再打 /api/asr/hardware
     hardware: { cuda: { available: true, device: 'Fixture RTX' }, vulkan: { available: true, devices: ['Fixture RTX'] }, npu: { available: true, devices: ['Fixture NPU'] } },
     backends: { cuda: true, vulkan: true },
@@ -254,6 +260,7 @@ globalThis.fetch = async (url, options = {}) => {
     // GET 只读，绝不能走下面的"新建方案"分支；创建页进入时会读一次方案列表。
     if ((options.method || 'GET') === 'GET') return json({ schemes, activeSchemeId: schemeActive });
     if (url.endsWith('/test')) return json({ok:true,reply:'ok'});
+    if (url.endsWith('/models')) return json({models:['fixture-listed', 'fixture-second']});
     const payload = options.body ? JSON.parse(options.body) : {}, id=url.split('/')[4];
     if (url.endsWith('/activate')) schemeActive=id;
     else if (options.method === 'DELETE') { schemes=schemes.filter(item=>item.id!==id); if(schemeActive===id) schemeActive=''; }
@@ -567,9 +574,8 @@ stableInput.addEventListener('input', () => preferenceChanges++);
 stableInput.value = '260';
 await navigate('#/settings');
 assert.equal($('sf-settings-tab-theme').getAttribute('aria-selected'), 'true', 'settings starts with common appearance preferences');
-assert.equal($('st-save').hidden, true, 'instant preference category does not imply a global manual save');
+assert.equal(document.getElementById('st-save'), null, 'settings no longer needs a manual save button');
 assert.equal(document.querySelector('#st-view .st-actions'), null, 'settings page no longer renders a global action bar');
-assert.equal($('st-save').closest('.st-panel')?.id, 'st-panel-enhance', 'manual save belongs to the enhance panel');
 assert.ok($('st-msg').closest('.sf-settings-status'), 'settings status has a non-frame home');
 const rimToggle = $('sf-rim-enabled').closest('label');
 assert.ok(rimToggle.classList.contains('switch'), 'rim curve toggle reuses the shared switch component');
@@ -588,8 +594,9 @@ assert.ok(themeColorPanel.querySelector('.sf-settings-swatches'), 'theme color p
 // Theme pack cards are delegated controls: exercise every built-in pack through
 // the same click path users take in the released Studio UI, including the
 // rerender that happens after applyTheme().
-assert.ok(document.querySelector('[data-route="storage"]'), 'sidebar exposes the storage page');
-assert.ok(document.getElementById('storage-view'), 'storage page exists as a workspace page');
+assert.ok(!document.querySelector('[data-route="storage"]'), 'the sidebar no longer has a storage page');
+assert.ok($('st-panel-storage').contains($('storage-view')), 'desktop mounts storage inside settings');
+assert.ok(!document.querySelector('[data-route="help"]'), 'help is hidden from the sidebar');
 for (const id of ['windows-uwp', 'material-you']) {
   const packButton = document.querySelector(`[data-pack-select="${id}"]`);
   assert.ok(packButton, 'built-in theme pack is rendered: ' + id);
@@ -606,7 +613,7 @@ for (const id of ['subfabric-classic', 'claude']) {
   assert.equal(document.querySelector(`[data-pack-select="${id}"]`), null, 'retired theme pack is not rendered: ' + id);
   assert.equal(document.querySelector(`[data-pack="${id}"]`), null, 'retired theme pack card is not rendered: ' + id);
 }
-for (const [name, input] of [['models', 'st-model-dir'], ['translate', 'st-scheme-list'], ['enhance', 'st-conf-mode'], ['fetch', 'st-fetch-quality'], ['perf', 'perf-start'], ['theme', 'sf-color']]) {
+for (const [name, input] of [['models', 'st-model-dir'], ['translate', 'st-scheme-list'], ['enhance', 'st-conf-mode'], ['fetch', 'st-fetch-quality'], ['perf', 'perf-start'], ['storage', 'stg-rescan'], ['theme', 'sf-color']]) {
   await click('sf-settings-tab-' + name);
   assertAssInEditor(name);
   const panel = $('st-panel-' + name);
@@ -615,21 +622,20 @@ for (const [name, input] of [['models', 'st-model-dir'], ['translate', 'st-schem
   assert.equal(document.querySelectorAll('.st-panel').filter(el => !el.hidden).length, 1, name + ' has exactly one visible panel');
   assert.equal($('sf-settings-tab-' + name).getAttribute('tabindex'), '0', name + ' is the keyboard focus stop');
   assert.equal($('st-test').hidden, true, 'connection test belongs inside scheme form');
-  assert.equal($('st-save').hidden, name !== 'enhance', name + ' matches actual save behavior');
   assert.equal(document.querySelector('.st-subview[data-stsub="llm"]').closest('.st-panel').hidden, name !== 'translate', 'translation subtree cannot leak into other categories');
 }
 assert.equal(document.getElementById('st-panel-general'),null,'removed global workbench category');
-// 全模型速度：测试条件控件与创建页一致；分角色识别以说话人区分为前提。
-assert.ok($('bench-word') && $('bench-confidence') && $('bench-cast') && $('bench-speakers'), 'bench condition controls are present');
-$('bench-cast').checked = true; $('bench-cast').dispatchEvent(new Event('change'));
-assert.equal($('bench-speakers').checked, true, '分角色识别自动开启说话人区分');
-$('bench-speakers').checked = false; $('bench-speakers').dispatchEvent(new Event('change'));
-assert.equal($('bench-cast').checked, false, '关闭说话人区分时同时关闭分角色识别');
+assert.ok($('bench-word') && $('bench-confidence') && $('bench-speakers'), 'benchmark keeps speaker separation and ASR conditions');
+const benchCast = document.getElementById('bench-cast');
+assert.ok(!benchCast || benchCast.closest('[hidden]'), 'benchmark does not expose LLM cast');
+assert.ok($('btn-reflect').hidden, 'the editor does not expose reflection');
 assert.ok($('tab-settings').contains($('cb-heal-words')), 'load repair stays in editor preferences');
 assert.ok($('st-panel-models').contains($('dual-ratio')), 'ratio retains original delegated ancestor');
 const keyboardTab = $('sf-settings-tab-theme');
 keyboardTab.dispatchEvent(Object.assign(new Event('keydown', {cancelable:true}), {key:'ArrowDown'})); await settle();
-assert.equal(document.activeElement, $('sf-settings-tab-models'), 'arrow key changes category and moves focus');
+assert.equal(document.activeElement.id, 'sf-settings-tab-storage', 'arrow key reaches the new storage category');
+$('sf-settings-tab-storage').dispatchEvent(Object.assign(new Event('keydown', {cancelable:true}), {key:'ArrowDown'})); await settle();
+assert.equal(document.activeElement.id, 'sf-settings-tab-models', 'arrow key changes category and moves focus');
 assert.equal($('st-panel-models').hidden, false);
 for (const id of editorPrefs) assert.equal($(id).parentNode, originalParents.get(id), 'workbench control always remains in editor ' + id);
 assert.equal($('set-pan'), stableInput); assert.equal(stableInput.value, '260', 'tab switching preserves entered preference');
@@ -672,10 +678,27 @@ assert.equal(location.hash, '#/new', 'legacy resource alias preserves the origin
 assertMaterials('legacy resource alias');
 assert.equal(historyBacks, 0, 'Studio return uses its recorded caller rather than stale browser history');
 
-// Save no longer implies navigation; leaving settings is the sidebar's job.
-await navigate('#/settings'); await click('st-save');
-assert.ok(requests.some(request => request.url === '/api/asr/hint' && request.method === 'POST'), 'global enhancement save calls its own API');
-assert.equal(requests.some(request => request.url === '/api/translate/config' && request.method === 'POST'),false,'global save does not silently overwrite named translation schemes');
+// Edits save via the enhancement endpoint and never change the active LLM.
+await navigate('#/storage');
+assert.equal(location.hash, '#/settings', 'old desktop storage bookmark opens Settings');
+assert.equal($('st-panel-storage').hidden, false);
+await click('sf-settings-tab-enhance');
+const hotword = $('ah-terms-list').querySelector('.hotword-input');
+hotword.value = 'FixtureTerm';
+const hotwordInput = new Event('input', { bubbles: true });
+Object.defineProperty(hotwordInput, 'target', { value: hotword });
+$('ah-terms-list').dispatchEvent(hotwordInput);
+$('ah-score').value = '4';
+$('ah-score').dispatchEvent(new Event('input', { bubbles: true }));
+await runTimer(350);
+const hintWrites = requests.filter(request => request.url === '/api/asr/hint' && request.method === 'POST');
+assert.deepEqual(JSON.parse(hintWrites.at(-1).body), {prompt: 'FixtureTerm', hotwordsScore: 4});
+$('ah-score').value = '1.5';
+$('ah-score').dispatchEvent(new Event('input'));
+await api.flushHotwordSettings();
+const flushedHint = requests.filter(request => request.url === '/api/asr/hint' && request.method === 'POST').at(-1);
+assert.deepEqual(JSON.parse(flushedHint.body), {hotwordsScore: 1.5}, 'normal desktop close can flush a pending strength change');
+assert.equal(requests.some(request => request.url === '/api/translate/config' && request.method === 'POST'),false,'hotword save does not overwrite named LLM schemes');
 await settle();
 assert.equal(location.hash, '#/settings', 'save stays in settings; sidebar handles navigation');
 assertMaterials('settings save');
@@ -686,10 +709,21 @@ assert.equal($('st-scheme-list').querySelectorAll('.st-scheme').length,0,'no pre
 await click('st-scheme-new');
 assert.equal($('st-scheme-drawer').hidden,false); assert.equal($('st-scheme-drawer').inert,false);
 assert.equal($('st-provider').value,'','new scheme requires explicit provider');
+assert.equal(Number($('st-batch').value), 75);
+assert.equal(Number($('st-ctx').value), 0);
+assert.equal(document.getElementById('st-scheme-auto'), null);
+assert.equal(document.getElementById('gl-tabs'), null);
 await click('st-drawer-save'); assert.equal(schemes.length,0,'missing name cannot save');
 assert.equal(document.activeElement,$('st-scheme-name'));
 $('st-scheme-name').value='First scheme'; $('st-provider').value='fixture'; $('st-provider').dispatchEvent(new Event('change'));
-$('st-key').value='fake-secret'; $('st-model').value='first-model';
+$('st-key').value='fake-secret'; $('st-key').dispatchEvent(new Event('input', { bubbles: true }));
+assert.equal($('st-model-discover').hidden, false, 'API key exposes model discovery');
+await click('st-model-discover');
+assert.ok($('st-model-options').querySelectorAll('option').some(option => option.value === 'fixture-listed'));
+$('st-model-options').value = 'fixture-listed';
+$('st-model-options').dispatchEvent(new Event('change', { bubbles: true }));
+assert.equal($('st-model').value, 'fixture-listed', 'dropdown selection fills the editable model field');
+$('st-model').value='first-model';
 await click('gl-add'); $('gl-rows').querySelector('.gl-src').value='hello'; $('gl-rows').querySelector('.gl-src').dispatchEvent(new Event('input'));
 $('gl-rows').querySelector('.gl-dst').value='你好'; $('gl-rows').querySelector('.gl-dst').dispatchEvent(new Event('input'));
 schemeFailure=true; await click('st-drawer-save');
@@ -793,6 +827,9 @@ const partialAligner=[...$('st-models').querySelectorAll('.sf-aligner')].find(ro
 assert.ok(partialAligner, 'incomplete aligner files are reported as 不完整');
 assert.ok(partialAligner.querySelector('.sm-del'), 'incomplete aligner keeps the delete action');
 assert.ok(partialAligner.querySelector('.sm-dl'), 'incomplete aligner can resume download');
+for (const row of $('st-models').querySelectorAll('.sf-aligner')) {
+  assert.equal(row.querySelectorAll('.sm-state').length, 1, 'aligner status is shown once');
+}
 await click('sf-asr-back'); assert.equal($('sf-asr-families').hidden,false);
 assert.equal(familyButtons.find(button=>button.dataset.asrFamily==='VibeVoice 系列'),undefined,
   'VibeVoice 系列入口已停用');
@@ -817,7 +854,7 @@ assert.ok(!$('st-models').textContent.includes('检测中'),
 assert.equal($('st-model-dir').closest('.st-card').hidden,false);
 assert.equal($('st-runtime-env').closest('.st-card').hidden,true,'duplicate environment card stays hidden');
 assert.equal($('sf-asr-rerecog-mount').hidden,true,'re-recognition belongs to overview');
-assert.equal($('st-models').querySelectorAll('.sf-prerequisite').length,2);
+assert.equal($('st-models').querySelectorAll('.sf-prerequisite').length,3);
 assert.equal($('st-models').querySelectorAll('.sm-pyinstall').length,1);
 assert.equal($('st-models').querySelectorAll('.sm-nemoinstall').length,0);
 assert.equal($('st-models').querySelectorAll('.sf-prerequisite .sm-dl').length,1);

@@ -119,8 +119,7 @@ assert.match(fs.readFileSync(path.join(root, 'editor/js/timeline.js'), 'utf8'), 
 assert.match(fs.readFileSync(path.join(root, 'editor/js/timeline.js'), 'utf8'), /this\.uwp \? 1 : 2\.5/, 'UWP timeline uses the 1px selection frame');
 assert.match(fs.readFileSync(path.join(root, 'editor/js/color-picker.js'), 'utf8'), /sscp-swatch\[data-color\]/, 'color picker marks the active swatch');
 /* 用户反馈（2026-10-19）：术语表/热词行/主题卡遮罩/编辑器卡/开关。 */
-assert.match(css, /\.sf-studio\[data-design=uwp\] \.gl-tabs \{[\s\S]*?border-radius:2px/, 'UWP glossary tabs use the compact segmented geometry');
-assert.match(css, /\.sf-studio\[data-design=uwp\] \.gl-tab\.active \{[\s\S]*?accent-soft[\s\S]*?inset 0 -2px 0 var\(--accent\)/, 'UWP glossary active tab uses accent-soft + underline');
+assert.doesNotMatch(fs.readFileSync(path.join(root, 'editor/studio.html'), 'utf8'), /id="gl-tabs"/, 'the glossary editor uses one table');
 assert.match(css, /\.sf-studio\[data-design=uwp\] \.gl-add \{[\s\S]*?border:1px dashed/, 'UWP glossary add row uses a dashed drop line');
 assert.match(css, /#st-view \.st-row > label\.st-lbl[\s\S]*?white-space:nowrap/, 'UWP hotword model label stays horizontal');
 assert.match(css, /#st-view \.sf-pack\[aria-current=true\] \{[\s\S]*?background-color:var\(--surface\); border-color:var\(--accent\); box-shadow:none/, 'UWP selected theme card is a tile, not a blue rail/overlay');
@@ -158,8 +157,7 @@ assert.match(css, /#app\.is-uwp-editor-entering[\s\S]*?uwp-editor-in/, 'UWP edit
 assert.match(css, /#cue-list\.is-uwp-cue-entering \.cue-card[\s\S]*?uwp-cue-in 120ms[\s\S]*?--uwp-cue-delay/, 'UWP subtitle cards use 120ms sequential delays');
 assert.match(css, /\.sf-studio\[data-design=uwp\] \.tl-edge-hint \{[\s\S]*?background:var\(--surface\)[\s\S]*?border-radius:2px/, 'UWP timeline edge hint follows the theme surface');
 assert.match(css, /body\.sf-studio \.sf-settings-status[\s\S]*?\.st-msg:empty \{ display:none; \}/, 'settings status collapses when empty instead of leaving an action bar');
-assert.match(css, /#st-view \.st-panel-actions[\s\S]*?border-top:1px solid var\(--line\)/, 'manual save row sits at the end of its own panel');
-assert.doesNotMatch(fs.readFileSync(path.join(root, 'editor/studio.html'), 'utf8'), /class="st-actions"|id="sf-settings-footer-note"/, 'settings page no longer renders the empty global action bar');
+assert.doesNotMatch(fs.readFileSync(path.join(root, 'editor/studio.html'), 'utf8'), /class="st-actions"|id="sf-settings-footer-note"|id="st-save"/, 'settings has no global action bar or manual hotword save');
 assert.match(studioSource, /dataset\.modeTransition = 'uwp-fade'/, 'Windows 10 light/dark uses a dedicated transition');
 assert.match(css, /data-mode-transition="uwp-fade"[\s\S]*?uwp-mode-fade-in[\s\S]*?uwp-mode-fade-out|uwp-mode-fade-out[\s\S]*?uwp-mode-fade-in/, 'Windows 10 light/dark crossfades old and new themes');
 assert.match(studioSource, /dataset\.bgTransition = 'fade'/, 'background mode changes use a crossfade');
