@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "40692e70c14d860ccca1b723d7e92ffae188f2eff0fc85c3fd2da3d2589554f5",
+      "sha256": "57486d2f2391c570f23baf19d7f9083c5a28b908a06fbdcfabb3dd35efa96b75",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -1138,7 +1138,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "043f7cdfe1d63b21ea812149e38c14f8f36138bb302ad8cdbbc3b4c267c98926",
+      "sha256": "676af55eda637a11304fa59a9c97a55cac88c36172f981fed060b195278454be",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1487,19 +1487,19 @@
           "method": "innerHTML"
         },
         {
-          "line": 6267,
+          "line": 6266,
           "method": "innerHTML"
         },
         {
-          "line": 6267,
+          "line": 6266,
           "method": "innerHTML"
         },
         {
-          "line": 6519,
+          "line": 6518,
           "method": "innerHTML"
         },
         {
-          "line": 6536,
+          "line": 6535,
           "method": "innerHTML"
         }
       ],
@@ -2107,7 +2107,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "2b69d65668933fd063f4ff12162357ca2976f7a967744bfed6df6585e36859e5",
+      "sha256": "4977031ec2b9da676fe7164bedf16b2a369c0a5c13efb6868b3dbcc3f1eea747",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -3014,7 +3014,6 @@
         "welcome-asr-mount",
         "welcome-back",
         "welcome-cancel",
-        "welcome-caption-art",
         "welcome-cards",
         "welcome-content",
         "welcome-cuda",

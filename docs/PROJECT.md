@@ -1100,6 +1100,7 @@
   `tests/uwp-light-test.mjs` 覆盖 9 组强调色与状态对比度。
 - **Windows 欢迎页磁贴**：整张 CUDA/Vulkan 卡可点击。隐藏可见复选框并保留键盘和辅助技术语义，
   已选底色在悬停与按下时保持。流程采用固定底栏及可滚动内容区，转场遵守系统与应用动效偏好。
+  首步只显示欢迎说明，方案步骤的外层采用透明背景，选中态由方案卡片本身显示。
   已在 Windows x64 打包版验证真实 CUDA/Vulkan 探测、五步完成与保存。真实模型下载和账号登录未运行。
 - **文案层（i18n）**：`editor/js/i18n.js` 是显示出口；`editor/lang/zh-CN.json` 是「原文 → 可润色译文」
   词典，键缺失回退原文。`tests/gen-lang.mjs` 用共享 `tools/lib/copy_scan.mjs` 扫描

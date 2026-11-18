@@ -76,21 +76,6 @@ body.win-demo {
 .win-intro { padding-top: clamp(28px, 9vh, 92px); }
 .win-intro > h1 { font-size: clamp(31px, 5vw, 52px); }
 .win-intro > p { max-width: 32em; }
-.win-caption-art { display: grid; gap: 5px; max-width: 420px; margin: 46px 0 15px; }
-.win-caption-art > div {
-  height: 30px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-}
-.win-caption-art > div:first-child { width: 67%; opacity: .38; }
-.win-caption-art > div:nth-child(2) { width: 83%; opacity: .65; }
-.win-caption-art > div:last-child {
-  display: flex; align-items: center; gap: 7px; padding: 0 12px;
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.win-caption-art span { width: 34%; height: 3px; background: var(--accent-text, var(--text)); }
-.win-caption-art span + span { width: 18%; opacity: .43; }
 .win-choices label { cursor: pointer; }
 .win-demo[data-design=uwp] #st-view .win-choices label:has(input:checked) {
   border-color: var(--accent);

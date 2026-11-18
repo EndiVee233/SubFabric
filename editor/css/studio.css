@@ -7518,11 +7518,6 @@ body.sf-welcome-open #confirm-overlay { z-index: 401; }
 .welcome-view[data-welcome-mode=desktop][data-welcome-step="0"] .welcome-copy { padding-top: clamp(28px, 9vh, 90px); }
 .welcome-view[data-welcome-mode=desktop][data-welcome-step="0"] .welcome-copy h1 { font-size: clamp(30px, 5vw, 52px); }
 .welcome-view[data-welcome-mode=desktop][data-welcome-step="0"] .welcome-alert-slot { display: none; }
-.welcome-caption-art { display: grid; gap: 5px; max-width: 420px; margin-top: 42px; }
-.welcome-caption-art i { height: 30px; border: 1px solid var(--line); background: var(--surface); }
-.welcome-caption-art i:nth-child(1) { width: 67%; opacity: .48; }
-.welcome-caption-art i:nth-child(2) { width: 83%; opacity: .72; }
-.welcome-caption-art i:nth-child(3) { border-color: var(--accent); background: var(--welcome-active); }
 .welcome-view[data-welcome-mode=desktop] .welcome-card {
   display: flex; align-items: flex-start; min-height: 164px; padding: 24px;
   border-radius: 2px; transform: none; background-color: var(--surface);
@@ -7544,6 +7539,7 @@ body.sf-welcome-open #confirm-overlay { z-index: 401; }
 #welcome-asr-mount #st-models[data-family="前置"] .sf-prerequisite { height: 100%; margin: 0; }
 #welcome-asr-mount .sf-asr-family { align-self: stretch; }
 .welcome-view[data-welcome-mode=desktop] :is(#welcome-scheme-mount,#welcome-fetch-mount) .st-panel:not([hidden]) { display: flex; gap: 14px; }
+#welcome-scheme-mount > #st-panel-translate { background: transparent; border-color: transparent; box-shadow: none; }
 #welcome-scheme-mount .sf-settings-heading,
 #welcome-fetch-mount :is(.sf-settings-heading,#st-fetch-download-card) { display: none; }
 .welcome-view[data-welcome-mode=desktop] :is(.st-card,.st-section,.st-scheme,.sm-model) { border-radius: 2px; }

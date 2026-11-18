@@ -6149,7 +6149,6 @@ async function renderAsrModels(providedStatus = null) {
         if (index === welcomeStep) item.setAttribute('aria-current', 'step');
         else item.removeAttribute('aria-current');
       });
-      $('#welcome-caption-art').hidden = welcomeStep !== 0;
       welcomeMovePanels(welcomeStep);
       if (welcomeStep === 3) {
         const message = $('#st-msg');

@@ -294,11 +294,20 @@ try {
       ? Promise.resolve(Response.json({ok:true,cuda:{available:true,device:'Fixture GPU'},vulkan:{available:true,devices:['Fixture GPU']},backends:{cuda:true,vulkan:true}}))
       : String(url) === '/api/asr/backends' ? Promise.resolve(Response.json({ok:true})) : desktopFetch(url, init);
   ` });
+  for (const [name, activate] of [['常用字幕翻译', true], ['备用翻译方案', false]]) {
+    const response = await server.call('/api/translate/schemes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, provider: 'deepseek', model: 'deepseek-chat', activate }),
+    });
+    const data = await response.json();
+    assert.ok(response.ok, data.error);
+  }
   await b.setViewport(1440, 960);
   await b.goto(server.origin + '/?desktop-welcome=1#/settings');
   await b.waitFor('window.__sfWelcome');
   await b.eval('window.__sfWelcome.open({firstRun:true,returnHash:"#/settings"})');
   await b.waitFor('document.querySelector("#welcome-step").textContent === "1 / 5"');
+  assert.equal(await b.eval('document.querySelector(".welcome-caption-art") === null'), true);
   await collect('desktop-welcome-intro', '#welcome-view', true);
   const welcomeClick = async id => { await b.eval(`document.getElementById(${JSON.stringify(id)}).click()`); await settle(); };
   await welcomeClick('welcome-next');
@@ -324,10 +333,18 @@ try {
   await b.waitFor('!document.querySelector("#sf-asr-catalog").inert');
   await collect('desktop-welcome-models', '#welcome-view', true);
   await welcomeClick('welcome-next');
-  await b.waitFor('document.querySelector("#welcome-scheme-mount #st-scheme-list").textContent.trim().length > 0');
+  await b.waitFor('document.querySelectorAll("#welcome-scheme-mount .st-scheme").length === 2');
+  const schemeAppearance = await b.eval(`(() => {
+    const panel = getComputedStyle(document.querySelector('#welcome-scheme-mount > #st-panel-translate'));
+    const active = getComputedStyle(document.querySelector('#welcome-scheme-mount .st-scheme.cur'));
+    return [panel.backgroundColor, panel.backgroundImage, panel.boxShadow, active.backgroundColor];
+  })()`);
+  assert.deepEqual(schemeAppearance.slice(0, 3), ['rgba(0, 0, 0, 0)', 'none', 'none']);
+  assert.notEqual(schemeAppearance[3], schemeAppearance[0], 'active scheme keeps its card background');
   await welcomeClick('st-scheme-new');
   await b.waitFor('document.querySelector("#st-scheme-drawer").classList.contains("open")');
   await welcomeClick('st-drawer-cancel');
+  await b.waitFor('document.querySelector("#st-scheme-drawer").hidden');
   await collect('desktop-welcome-schemes', '#welcome-view', true);
   await welcomeClick('welcome-skip');
   assert.ok(await b.eval('document.querySelector("#welcome-fetch-mount #st-fetch-youtube-open").getClientRects().length > 0'));
