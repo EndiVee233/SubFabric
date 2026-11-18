@@ -32,6 +32,7 @@ const llmText = require('./llm-text.js');
 // 长稿反思纠错：让 LLM 通读全片找"语句不通顺"，产出可预览的建议与去重后的重识别区间
 const reflectMod = require('./reflect.js');
 const packMod = require('./project-pack.js');      // 项目压缩包: 文件分类与校验(纯逻辑)
+const { normalizeEffectScheme } = require('./js/postprocess.js');
 const alignMod = require('./align.js');           // 逐词时间映射/对齐纯逻辑（realign 用 Qwen3 对齐器）
 const speechGapMod = require('./speech-gap.js');   // 波形漏字幕检测: 有说话、没字幕覆盖的区间
 const mtLocal = require('./mt-local.js');
@@ -332,7 +333,7 @@ const STATIC_RESOURCES = new Set([
     'karaoke', 'main', 'modal', 'overlay', 'postprocess', 'project', 'segment', 'shortcuts',
     'srt', 'timeline', 'util', 'video-hover-tip', 'videoedit', 'studio', 'studio-state',
     'studio-themes', 'studio-progress', 'rim-curve', 'export-video', 'welcome-model', 'welcome-boot', 'glass-contrast',
-    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'log-import', 'workload', 'workload-panel'].map(n => '/editor/js/' + n + '.js'),
+    'monet', 'zip', 'glossary-review', 'storage', 'style-preset', 'effect-schemes', 'log-import', 'workload', 'workload-panel'].map(n => '/editor/js/' + n + '.js'),
   ...['region', 'region-merge', 'repair-words', 'ass-group', 'danmaku'].map(n => '/editor/' + n + '.js'),
   '/editor/glossary-merge.js',
   '/editor/vendor/subtitles-octopus.js', '/editor/vendor/subtitles-octopus-worker.js',
@@ -12120,6 +12121,22 @@ function handleProjectsRoutes(req, res, u) {
     }
 
     if (!action && req.method === 'GET') return sendJson(res, 200, metaView(meta));
+
+    if (action === 'effect-scheme' && req.method === 'PUT') {
+      return readBody(req, res, 8 * 1024, (err, body) => {
+        if (err) return sendJson(res, 400, { error: err.message });
+        let effectScheme;
+        try { effectScheme = normalizeEffectScheme(JSON.parse(body.toString('utf8'))); }
+        catch { return sendJson(res, 400, { error: 'JSON 解析失败' }); }
+        if (!effectScheme) return sendJson(res, 400, { error: '特效方案无效' });
+        if (!fs.existsSync(metaPath(id))) return sendJson(res, 404, { error: '项目不存在' });
+        updateMeta(id, latest => {
+          latest.effectScheme = effectScheme;
+          latest.modifiedAt = new Date().toISOString();
+        });
+        return sendJson(res, 200, { effectScheme });
+      });
+    }
 
     /* ═══════════ 长稿反思纠错（预览优先） ═══════════
      * GET  /api/projects/:id/reflect

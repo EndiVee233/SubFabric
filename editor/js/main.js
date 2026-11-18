@@ -25,6 +25,7 @@ import { analyzeDamage, planRepair as planWordRepair, repairSummary } from '../r
 import { groupAssRows } from '../ass-group.js';
 import { AssPlayer } from './assplayer.js';
 import { loadPostProcessConfig, savePostProcessConfig, applyPostProcess, stripEffectTagsSafe, cloneConfig } from './postprocess.js';
+import { initEffectSchemes } from './effect-schemes.js';
 // 字幕样式预设库：命名保存 / 导入 / 导出（样式 + 后处理特效，纯逻辑见 tests/style-preset-test.mjs）
 import {
   makeStylePreset, presetSummary, parsePresetFile, serializePresetFile, loadPresetLibrary, savePresetLibrary,
@@ -182,18 +183,16 @@ window.__timeline = timeline;
 window.__panel = panel;
 
 /* ─────────── 状态 ─────────── */
+const legacyFxConfig = loadPostProcessConfig();
+// 词生长入口已关闭。保留旧样式预设中的参数，但原本的本机偏好照旧禁用该效果。
+legacyFxConfig.grow.enabled = false;
 const state = {
   format: null,          // 'srt' | 'ass'
   fileName: '',
   srtCues: [],
   assDoc: null,
   assStyleTargets: null,
-  postProcessConfig: (() => {
-    const cfg = loadPostProcessConfig();
-    /* 词生长（Grow）暂不符合预期：UI 已注释，旧存档里的 grow 配置也强制关闭。 */
-    if (cfg.grow) cfg.grow.enabled = false;
-    return cfg;
-  })(),
+  postProcessConfig: cloneConfig(legacyFxConfig),
   items: [],             // 编辑面板视图模型
   itemByRef: new Map(),  // ref(cue|event) → item
   newRows: new Set(),    // 新建但还没输入内容的行(用户不输入就离开 → 撤销)
@@ -1546,9 +1545,14 @@ function saveCurrentStylePreset() {
 }
 
 /** 套用选中的预设：样式写进稿件 → 重排中英顺序 → 换特效配置 → 换字号缩放。 */
-function applyStylePresetFromLibrary() {
+async function applyStylePresetFromLibrary() {
   const preset = presetById(presetActiveId);
   if (!preset) { toast('先在下拉框里选一条预设'); return; }
+  if (preset.fx && effectSchemes) {
+    const project = state.project, doc = state.assDoc, cues = state.srtCues;
+    const saved = await effectSchemes.applySnapshot({ id: '', name: preset.name, config: cloneConfig(preset.fx) });
+    if (!saved || project !== state.project || doc !== state.assDoc || cues !== state.srtCues) return;
+  }
   const notes = [];
   let styleOk = false;
   if (preset.style) {
@@ -1563,9 +1567,11 @@ function applyStylePresetFromLibrary() {
     refreshOrderControl();
   }
   if (preset.fx) {
-    state.postProcessConfig = cloneConfig(preset.fx);
-    savePostProcessConfig(state.postProcessConfig);
-    syncFxUi();
+    if (!effectSchemes) {
+      state.postProcessConfig = cloneConfig(preset.fx);
+      savePostProcessConfig(state.postProcessConfig);
+      syncFxUi(state.postProcessConfig);
+    }
     notes.push(state.postProcessConfig.enabled ? '特效已开启' : '特效已关闭');
   }
   if (typeof preset.overlayFontScale === 'number' && rngFont) {
@@ -1639,6 +1645,7 @@ async function importStylePresetFile(file) {
   toast(`已导入 ${names.length} 条预设`, 2800);
 }
 
+let stylePresetSave = null;
 function initStylePresetControls() {
   if (!presetEls.group) return;
   renderPresetSelect();
@@ -1654,7 +1661,12 @@ function initStylePresetControls() {
       else setPresetHint('应用预设会写进当前稿件（自动保存）；特效与字号缩放立即作用到视频预览与导出。');
     });
   }
-  if (presetEls.apply) presetEls.apply.addEventListener('click', () => applyStylePresetFromLibrary());
+  if (presetEls.apply) presetEls.apply.addEventListener('click', () => {
+    if (stylePresetSave) return;
+    stylePresetSave = applyStylePresetFromLibrary()
+      .catch(error => toast(error.message, 4500))
+      .finally(() => { stylePresetSave = null; });
+  });
   if (presetEls.save) presetEls.save.addEventListener('click', () => saveCurrentStylePreset());
   if (presetEls.rename) presetEls.rename.addEventListener('click', () => renameSelectedPreset());
   if (presetEls.del) presetEls.del.addEventListener('click', () => deleteSelectedPreset());
@@ -1799,8 +1811,7 @@ function fxNormFadeIn(block) {
   };
 }
 
-function syncFxUi() {
-  const cfg = state.postProcessConfig;
+function syncFxUi(cfg) {
   if (!fxEls.enable) return;
 
   fxEls.enable.checked = !!cfg.enabled;
@@ -1864,9 +1875,13 @@ function syncFxUi() {
 }
 
 function updateFxConfig(mutateFn) {
+  if (effectSchemes) {
+    effectSchemes.editConfig(mutateFn);
+    return;
+  }
   if (typeof mutateFn === 'function') mutateFn(state.postProcessConfig);
   savePostProcessConfig(state.postProcessConfig);
-  syncFxUi();
+  syncFxUi(state.postProcessConfig);
   // 及时更新视频区 ASS 渲染
   if (state.format === 'ass' && state.assDoc) {
     assPlayer.updateNow(state.assDoc.serialize());
@@ -1893,7 +1908,7 @@ function mutateFxEffect(key, mutateFn) {
 function initFxControls() {
   if (!fxEls.enable) return;
 
-  syncFxUi();
+  syncFxUi(state.postProcessConfig);
 
   fxEls.enable.addEventListener('change', () => {
     updateFxConfig(cfg => { cfg.enabled = fxEls.enable.checked; });
@@ -8285,9 +8300,7 @@ if (btnExportFull) btnExportFull.addEventListener('click', () => btnExport.click
 /* 导出视频：选目录 + 勾选「双语硬字幕 / 生肉 / 字幕」，压制沿用稿件里的 ASS 样式。
  * 对话框的 DOM 与逻辑都在 js/export-video.js（那边自己建元素，模板里只有一个按钮）。
  *
- * 为什么要交这三个函数过去：后处理特效（微光/淡入）的配置存在浏览器 localStorage，
- * 服务端读不到。要让"压出来的画面 == 编辑器预览"，就得先把特效烘进字幕正文再送过去。
- * 只暴露这三个窄接口，不把整个 state 交出去。 */
+ * 用与预览相同的当前特效配置烘进字幕正文，再交给压制服务。 */
 window.__sfExportContext = {
   getAssDoc: () => (state.format === 'ass' ? state.assDoc : null),
   getPostProcessConfig: () => state.postProcessConfig,
@@ -9154,6 +9167,18 @@ applyTlHeight();
 applyPanelWidth();
 initFxControls();
 initStylePresetControls();
+const effectSchemes = initEffectSchemes({
+  getProject: () => state.project,
+  getConfig: () => state.postProcessConfig,
+  legacyConfig: legacyFxConfig,
+  applyConfig(config, refresh) {
+    state.postProcessConfig = config;
+    if (refresh && state.format === 'ass' && state.assDoc) assPlayer.updateNow(state.assDoc.serialize());
+  },
+  syncControls: syncFxUi,
+  confirmDelete: onYes => panel.showConfirm('删除方案', '删除这个特效方案？已套用的稿件会保留当前效果。', '删除', '取消', onYes),
+  toast,
+});
 
 /* 调试钩子(测试用) */
 initBadCatFilter();
@@ -9163,6 +9188,8 @@ window.__dbg = { state, assPlayer, overlay, timeline, panel, video, selectItem, 
 /* ═══════════ 项目系统接线 ═══════════ */
 const Projects = initProjects({
   state, video, timeline, panel, toast, toastAfterCueIntro, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog,
+  onProjectChanged: effectSchemes?.projectChanged,
+  waitForEffectSave: () => stylePresetSave || effectSchemes?.waitForSave(),
   onEditorLeave: rimClose,
   // 打开项目的进度卡（右下角 #job-card）：读 3~4MB 字幕 + 同步解析的这段时间里
   // 界面是静止的，得让用户看见"在打开"，也得看见打开了多大的稿子。

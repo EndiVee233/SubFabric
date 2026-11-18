@@ -201,6 +201,14 @@ export function cloneConfig(cfg) {
   };
 }
 
+/** 项目与本机方案库共用同一种无路径、无外部引用的特效快照。 */
+export function normalizeEffectScheme(raw) {
+  if (!raw?.config || typeof raw.config !== 'object' || Array.isArray(raw.config)) return null;
+  const id = typeof raw.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(raw.id) ? raw.id : '';
+  const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 60) : '';
+  return { id, name, config: cloneConfig(raw.config) };
+}
+
 /** 从本地存储读取后处理配置 */
 export function loadPostProcessConfig() {
   if (typeof localStorage === 'undefined') return cloneConfig(DEFAULT_POSTPROCESS_CONFIG);

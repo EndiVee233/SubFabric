@@ -15,7 +15,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'subfabric-export-'));
 const project = path.join(root, "中文项目'甲"), elsewhere = path.join(root, '其他启动目录');
 fs.mkdirSync(project); fs.mkdirSync(elsewhere);
 const sub = '1\n00:00:01,000 --> 00:00:02,000\n当前目标文本\n';
-const content = { 'project.json': JSON.stringify({ name: '当前项目', subtitle: { file: 'subtitle.srt' } }),
+const content = { 'project.json': JSON.stringify({ id: 'p-export', name: '当前项目', subtitle: { file: 'subtitle.srt' } }),
   'subtitle.srt': sub, 'notes.json': '[{"text":"备注"}]', 'asr.json': '{"segments":[]}' };
 for (const [name, body] of Object.entries(content)) {
   fs.writeFileSync(path.join(project, name), body); fs.writeFileSync(path.join(elsewhere, name), 'wrong-cwd');
@@ -72,11 +72,27 @@ try {
       const dir = path.join(s.root, 'projects/p-export'); fs.mkdirSync(dir, { recursive: true });
       for (const [name, body] of Object.entries(content)) fs.writeFileSync(path.join(dir, name), body);
       fs.writeFileSync(path.join(dir, 'audio.wav'), 'excluded');
+      const writeEffects = payload => s.call('/api/projects/p-export/effect-scheme', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      const previous = await (await s.call('/api/projects/p-export')).json();
+      assert.equal(previous.effectScheme, undefined);
+      assert.equal((await writeEffects({ config: [] })).status, 400);
+      const saved = await writeEffects({
+        id: 'warm-glow', name: ' 双语暖光 ', ignored: 'drop',
+        config: { enabled: true, glow: { target: 'all', en: { radius: 999, color: '#ffaa77' } } },
+      });
+      assert.equal(saved.status, 200, await saved.clone().text());
+      const { effectScheme } = await saved.json();
+      assert.equal(effectScheme.name, '双语暖光');
+      assert.equal(effectScheme.config.glow.en.radius, 40);
+      assert.equal(effectScheme.ignored, undefined);
       const r = await s.call('/api/projects/p-export/export-pack'); assert.equal(r.status, 200);
       const bytes = Buffer.from(await r.arrayBuffer()); assert.match(r.headers.get('content-disposition'), /filename\*=UTF-8/);
       const imported = await s.call('/api/projects/import-pack', { method: 'POST', body: bytes }); assert.equal(imported.status, 200);
       const id = (await imported.json()).id;
       assert.equal(await (await s.call(`/api/projects/${id}/subtitle`)).text(), sub);
+      assert.deepEqual((await (await s.call(`/api/projects/${id}`)).json()).effectScheme, effectScheme);
       assert.equal(fs.existsSync(path.join(s.root, 'projects', id, 'audio.wav')), false);
       assert.ok(/\[pack\].*，tar/.test(s.output()));
       assert.deepEqual(fs.readdirSync(os.tmpdir()).filter(n => n.startsWith('kass-pack-') && !before.has(n)), []);

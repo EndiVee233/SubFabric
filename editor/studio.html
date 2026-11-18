@@ -463,7 +463,16 @@
           <p class="set-group-note">直接填字体名即可（有补全）：本机装了的字体，预览会自动取来用，不用自己找文件。本机没装的字体，预览会回退到内置字体，「载入字体」可导入 .ttf/.otf 补上。行内 \fn/\fs/\b/\i 标签可能覆盖此处样式。</p>
         </div>
 
-        <div id="ass-fx-group" class="set-group">
+        <div id="sf-effect-picker" class="set-group" hidden>
+          <div class="set-group-head"><i class="set-dot" style="background:var(--accent)"></i><label class="set-group-title" for="sf-effect-select">特效方案</label></div>
+          <div class="setting-row sf-effect-picker-row">
+            <select id="sf-effect-select" class="select select-dark" aria-describedby="sf-effect-status"></select>
+            <button type="button" class="btn btn-mini" data-setting="effects">管理方案</button>
+          </div>
+          <p id="sf-effect-status" class="set-group-note" role="status">用于 ASS 字幕的预览与导出。</p>
+        </div>
+
+        <div id="ass-fx-group" class="set-group" hidden>
           <div class="set-group-head"><i class="set-dot" style="background:#38bdf8"></i><span class="set-group-title">字幕后处理特效</span></div>
           <div class="setting-row">
             <span class="setting-name" title="开启后，在保留原有文字和时间轴的基础上叠加后处理特效（导出与视频预览完全一致）">启用特效</span>
@@ -1908,6 +1917,7 @@
       <span class="sf-settings-nav-label">生成与处理</span>
       <button type="button" id="sf-settings-tab-models" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-models" data-stp="models" data-ico="film">语音识别</button>
       <button type="button" id="sf-settings-tab-translate" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-translate" data-stp="translate" data-ico="globe">大模型方案</button>
+      <button type="button" id="sf-settings-tab-effects" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-effects" data-stp="effects" data-ico="wand" hidden>特效方案</button>
       <button type="button" id="sf-settings-tab-enhance" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-enhance" data-stp="enhance" data-ico="wand">识别与校对</button>
       <button type="button" id="sf-settings-tab-fetch" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-fetch" data-stp="fetch" data-ico="download">下载与登录</button>
       <button type="button" id="sf-settings-tab-perf" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-perf" data-stp="perf" data-ico="activity">性能与调度</button>
@@ -2313,6 +2323,41 @@
           <p class="gl-hint" id="st-scheme-hint">点击方案卡片或右侧「设置」，在卡片下方编辑凭证、模型、分批参数、术语表和提示词。</p>
         </div>
       </div>
+      </div>
+
+      <div class="st-panel" id="st-panel-effects" role="tabpanel" data-stp="effects" hidden>
+        <div class="sf-settings-heading">
+          <span class="sf-settings-scope">全局方案</span>
+          <h2>特效方案</h2>
+          <p>保存字幕微光与淡入参数，在稿件的编辑器设置中选择。稿件保留套用时的参数。</p>
+        </div>
+        <div class="st-subhead">
+          <div class="st-subtitle-strong st-scheme-title">方案列表</div>
+          <button type="button" class="btn btn-mini" id="st-effect-new">添加方案</button>
+        </div>
+        <div class="st-schemes" id="st-effect-list"></div>
+        <p id="st-effect-status" role="status" class="gl-hint" hidden></p>
+        <form class="st-scheme-inline" id="st-effect-form" hidden>
+          <div class="sf-scheme-content">
+            <div class="st-drawer-head">
+              <span class="st-drawer-title" id="st-effect-title">添加方案</span>
+            </div>
+            <div class="st-drawer-body">
+              <div class="st-card">
+                <div class="st-row">
+                  <label for="st-effect-name" class="st-lbl">方案名称</label>
+                  <input id="st-effect-name" class="st-input" maxlength="60" autocomplete="off" required placeholder="例如 双语暖光">
+                </div>
+              </div>
+              <div id="st-effect-controls"></div>
+            </div>
+            <div class="st-drawer-foot">
+              <span class="st-spacer"></span>
+              <button type="button" class="btn" id="st-effect-cancel">取消</button>
+              <button type="submit" class="btn btn-accent">保存方案</button>
+            </div>
+          </div>
+        </form>
       </div>
 
       <div class="st-panel" id="st-panel-enhance" role="tabpanel" data-stp="enhance" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">全局默认</span><h2 id="sf-settings-heading-enhance">识别与校对</h2><p class="sf-settings-save-note">热词列表与强度自动保存。</p></div>

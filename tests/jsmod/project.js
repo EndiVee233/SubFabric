@@ -25,7 +25,8 @@ import { visibleModels, extraModels, pickVisibleModel, backendOf, BACKEND_LABEL,
 
 export function initProjects(ctx) {
   const { state, video, timeline, panel, toast, toastAfterCueIntro = toast, routeSub, loadVideoUrl, setPlaybackAudioMode, resumeRerecog, logOp,
-    openCardBegin = async () => {}, openCardLabel = () => {}, openCardFail = () => {}, onEditorLeave = () => {} } = ctx;
+    openCardBegin = async () => {}, openCardLabel = () => {}, openCardFail = () => {}, onEditorLeave = () => {},
+    onProjectChanged = () => {}, waitForEffectSave = () => {} } = ctx;
   const $ = (s) => document.querySelector(s);
   const studioUI = document.body?.classList?.contains('sf-studio') === true;
 
@@ -579,6 +580,7 @@ export function initProjects(ctx) {
   async function flushSave() {
     const project = state.project;
     clearTimeout(saveTimer);
+    await waitForEffectSave();
     if (!project) return;
     if (savePromise) await savePromise;
     if (state.project !== project) return;
@@ -822,6 +824,7 @@ export function initProjects(ctx) {
        *  · 第一次 rebuildItemsAndLanes 就能读到新项目的 realignSkip（旧实现要重建两次）。
        * 中间没有 await / 用户事件，stale 文档不会有机会写进新项目。 */
       state.project = { id: pid, meta: m, loadPeaks };
+      onProjectChanged();
       window.__sfCurrentProjectId = () => pid;
       lastSavedText = text;
       saveRevision = (rSub.headers.get('ETag') || '').replace(/^"|"$/g, '');
@@ -848,6 +851,7 @@ export function initProjects(ctx) {
       if (gen !== _openGen) return;
       if (state.project && state.project.id === pid) {
         state.project = null;    // 解析失败：不要留下指向新项目却没有完整文档的半状态
+        onProjectChanged();
         location.hash = '#/home';
       }
       toast('项目字幕读取失败: ' + e.message, 3600);
@@ -4871,6 +4875,7 @@ async function renderAsrModels(providedStatus = null) {
     clearTimeout(saveTimer);
     clearInterval(pollTimer); pollTimer = 0;
     state.project = null;
+    onProjectChanged();
     /* 离开项目时把仍在跑的重校对/说话人分离停掉。以前只断轮询，服务端 worker
      * 会继续占 GPU（用户实测退出/切走后还有 Python 在跑）。 */
     if (typeof window.__realignReset === 'function') window.__realignReset();

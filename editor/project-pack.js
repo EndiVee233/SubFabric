@@ -13,6 +13,8 @@
  * 这个模块只回答"哪些文件该进包、哪些该被拒"，读写文件由调用方做。
  */
 
+const { normalizeEffectScheme } = require('./js/postprocess.js');
+
 /** 要进包的文件（核心内容；缺了不报错，只是不写进去）。 */
 const CORE_FILES = [
   'project.json',      // 项目元信息（名称/时长/来源/逐句置信度档位等）
@@ -172,6 +174,8 @@ function remapMeta(meta, newId, nowIso) {
     }
   }
   if (src.autoPost) m.autoPost = true;
+  const effectScheme = normalizeEffectScheme(src.effectScheme);
+  if (effectScheme) m.effectScheme = effectScheme;
 
   /* ⚠ 有意**不带过来**的字段（不是遗漏）：
    *   peaks —— 派生数据（波形包络），导入端从视频重建；且 peaks.file 同样是路径字段
