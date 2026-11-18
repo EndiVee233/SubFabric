@@ -65,6 +65,7 @@ try {
   fail=true;messages.length=0;await handlers.get('change')();assert.equal(messages.length,0,'failed save never reports success');
   file.files=[{size:256*1024+1}];const count=patches.length;await handlers.get('change')();assert.equal(patches.length,count);
   fail=false;await handlers.get('clear-click')();assert.equal(patches.at(-1).youtubeCookies,'');
+  assert.equal(patches.at(-1).cookiesFromBrowser,'');
 }
 const python=process.env.SUBFABRIC_PYTHON||path.resolve('asr/runtime-python/python.exe');
 if(!fs.existsSync(python))console.log('SKIP: Python unavailable; JS cookie routing passed, Python retry cases not run');

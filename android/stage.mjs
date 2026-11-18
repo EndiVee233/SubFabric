@@ -76,7 +76,7 @@ html=html.replace('以下内容会被删除，且不会进入回收站。删除�
 html=html.replace('只支持 bilibili 与 YouTube 链接。下载的视频存在项目目录里（删项目会连视频一起删）。','支持 bilibili、YouTube 与可解析的媒体链接。下载保存在安卓本机，可关联已有字幕或新建 ASS 稿件。');
 html=html.replace('Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。','Cookie 加密保存在安卓本机，界面不会回显。');
 html=html.replace('模型操作和下载位置即时保存；已有模型不会随目录移动。','模型保存在安卓本机，可下载或从文件夹导入。');
-html=html.replace(/<div class="st-grid">\s*<span class="st-lbl">从浏览器读<\/span>[\s\S]*?<select id="st-fetch-browser"[\s\S]*?<\/div>\s*<p class="gl-hint">[\s\S]*?<\/p>/,'<select id="st-fetch-browser" hidden><option value="">（不用）</option></select><p class="gl-hint">安卓请导入浏览器导出的 Netscape Cookie 文件。</p>');
+html=html.replace(/^\s*<a class="btn btn-mini" id="st-fetch-youtube-open"[^\n]*\n/m,'\n');
 html=html.replace('<script src="js/accent.js">','<script src="/studio/android-boot.js"></script><script src="js/accent.js">');
 html=html.replace('</head>','<link rel="stylesheet" href="/studio/android.css"><link rel="stylesheet" href="/studio/android-dialogs.css"></head>');
 html=html.replace('<script type="module" src="js/main.js"></script>','<script type="module" src="js/main.js"></script><script type="module" src="/studio/android-ui.js"></script>');

@@ -2724,7 +2724,7 @@ async function benchStart() {
 
 function initBenchPanel() {
   const modelsView = $('#perf-models-view');
-  if (!modelsView || modelsView.dataset.bound) return;
+  if (!modelsView || $('#perf-tab-models')?.hidden || modelsView.dataset.bound) return;
   modelsView.dataset.bound = '1';
   document.querySelectorAll('[data-perf-tab]').forEach((b) => {
     b.addEventListener('click', () => selectPerfTab(b.dataset.perfTab));
@@ -4569,12 +4569,13 @@ async function renderAsrModels(providedStatus = null) {
       const d = await (await fetch('/api/fetch/settings', { signal: AbortSignal.timeout(8000) })).json();
       if ($('#st-fetch-quality')) $('#st-fetch-quality').value = d.quality || 'best';
       if ($('#st-fetch-proxy')) $('#st-fetch-proxy').value = d.proxy || '';
-      if ($('#st-fetch-browser')) $('#st-fetch-browser').value = d.cookiesFromBrowser || '';
       const youtubeNote = $('#st-fetch-youtube-note');
       if (youtubeNote) youtubeNote.textContent = d.hasYoutubeCookies
         ? '已加密保存 YouTube Cookie；将优先使用导入的登录态，登录是否有效以实际解析为准。'
-        : '未保存 YouTube cookies.txt；可导入浏览器导出的 Netscape Cookie 文件，避开 Chrome / Edge 数据库读取限制。';
-      if ($('#st-fetch-youtube-clear')) $('#st-fetch-youtube-clear').disabled = !d.hasYoutubeCookies;
+        : d.cookiesFromBrowser
+          ? '当前仍使用以前配置的浏览器来源。可清除该设置，或导入登录文件。'
+          : '选择自己的 YouTube cookies.txt 登录文件。文件内容加密保存在本机。';
+      if ($('#st-fetch-youtube-clear')) $('#st-fetch-youtube-clear').disabled = !(d.hasYoutubeCookies || d.cookiesFromBrowser);
       const note = $('#st-fetch-cookie-note');
       if (note) {
         note.textContent = cookieNote(d, null);
@@ -4622,7 +4623,7 @@ async function renderAsrModels(providedStatus = null) {
       return d;
     } catch (e) { toast('保存失败: ' + e.message, 3600); return null; }
   }
-  for (const pair of [['st-fetch-quality', 'quality'], ['st-fetch-proxy', 'proxy'], ['st-fetch-browser', 'cookiesFromBrowser']]) {
+  for (const pair of [['st-fetch-quality', 'quality'], ['st-fetch-proxy', 'proxy']]) {
     const el = document.getElementById(pair[0]);
     if (el) el.addEventListener('change', () => saveFetchSettings({ [pair[1]]: el.value }));
   }
@@ -4705,7 +4706,7 @@ async function renderAsrModels(providedStatus = null) {
   });
   const youtubeClear = $('#st-fetch-youtube-clear');
   if (youtubeClear) youtubeClear.addEventListener('click', async () => {
-    const d = await saveFetchSettings({ youtubeCookies: '' });
+    const d = await saveFetchSettings({ youtubeCookies: '', cookiesFromBrowser: '' });
     if (d) toast('已清除 YouTube Cookie', 3000);
   });
   // 编辑器工具栏也有一个设置入口(同一套面板)

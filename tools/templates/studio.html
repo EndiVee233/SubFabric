@@ -2022,7 +2022,7 @@
         </div><!-- /st-subview asr -->
       </div>
 
-      <div class="st-panel" id="st-panel-perf" role="tabpanel" data-stp="perf" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机硬件</span><h2 id="sf-settings-heading-perf">性能与调度</h2><p>用实际测试选择适合本机的全模型速度配置。</p><p class="sf-settings-save-note">测试由你手动启动，会运行识别引擎；当前页面不会自动开始。</p></div>
+      <div class="st-panel" id="st-panel-perf" role="tabpanel" data-stp="perf" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机硬件</span><h2 id="sf-settings-heading-perf">性能与调度</h2><p>查看当前的语音识别加速方式。</p></div>
         <div class="st-card sf-accel-card" id="sf-accel-card">
           <div class="st-card-title" data-ico="activity">加速方式</div>
           <p class="gl-hint">决定语音识别里显示哪些模型。CUDA 需要 NVIDIA 显卡；Vulkan 适用于 AMD / Intel / NVIDIA。不提供 CPU 推理。</p>
@@ -2032,9 +2032,9 @@
             <span class="st-help" id="st-accel-note"></span>
           </div>
         </div>
-        <div class="perf-tabs" role="tablist" aria-label="性能测试类型">
+        <div class="perf-tabs" role="tablist" aria-label="性能测试类型" hidden>
           <button type="button" class="perf-tab" id="perf-tab-dual" data-perf-tab="dual" role="tab" aria-selected="false" aria-controls="perf-dual-view" hidden>双引擎分工</button>
-          <button type="button" class="perf-tab active" id="perf-tab-models" data-perf-tab="models" role="tab" aria-selected="true" aria-controls="perf-models-view">全模型速度</button>
+          <button type="button" class="perf-tab" id="perf-tab-models" data-perf-tab="models" role="tab" aria-selected="false" aria-controls="perf-models-view" hidden>全模型速度</button>
         </div>
         <div id="perf-dual-view" class="perf-view" role="tabpanel" aria-labelledby="perf-tab-dual" hidden>
         <div class="st-section">
@@ -2074,7 +2074,7 @@
           <div class="st-help" id="perf-applied">读取中…</div>
         </div>
         </div>
-        <div id="perf-models-view" class="perf-view" role="tabpanel" aria-labelledby="perf-tab-models">
+        <div id="perf-models-view" class="perf-view" role="tabpanel" aria-labelledby="perf-tab-models" hidden>
           <div class="st-section">
             <div class="st-section-title">全模型速度测试</div>
             <div class="st-help">
@@ -2128,7 +2128,7 @@
           </div>
         </div>
       </div>
-      <div class="st-panel" id="st-panel-fetch" role="tabpanel" data-stp="fetch" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-fetch">下载与登录</h2><p>设置下载画质、代理与 bilibili 登录。</p></div>
+      <div class="st-panel" id="st-panel-fetch" role="tabpanel" data-stp="fetch" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-fetch">下载与登录</h2><p>设置下载画质、代理及网站登录态。</p></div>
         <div class="st-card">
           <div class="st-card-title">下载</div>
           <div class="st-grid">
@@ -2165,24 +2165,15 @@
           <p class="gl-hint" id="st-fetch-bili-status" role="status" hidden></p>
           <p class="gl-hint">Cookie 只存在本机 asr/settings.json，界面永远不会回显它的值。</p>
         </div>
-        <div class="st-card" id="st-fetch-youtube-card" hidden>
+        <div class="st-card" id="st-fetch-youtube-card">
           <div class="st-card-title">YouTube 登录</div>
-          <div class="st-grid">
-            <span class="st-lbl">从浏览器读</span>
-            <select id="st-fetch-browser" class="select">
-              <option value="">（不用）</option>
-              <option value="chrome">Chrome</option>
-              <option value="edge">Edge</option>
-              <option value="firefox">Firefox</option>
-            </select>
-          </div>
-          <p class="gl-hint">需要先在该浏览器里登录 YouTube。Chrome / Edge 可能锁定 Cookie 数据库或限制解密；可完全退出浏览器后重试，或导入 cookies.txt。读取失败时会尝试以未登录方式解析公开链接。</p>
           <div class="st-row">
+            <a class="btn btn-mini" id="st-fetch-youtube-open" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer">在浏览器打开 YouTube</a>
             <input type="file" id="st-fetch-youtube-file" accept=".txt,text/plain" hidden>
             <button type="button" class="btn btn-mini btn-accent" id="st-fetch-youtube-import">导入 YouTube cookies.txt</button>
-            <button type="button" class="btn btn-mini" id="st-fetch-youtube-clear">清除 YouTube Cookie</button>
+            <button type="button" class="btn btn-mini" id="st-fetch-youtube-clear" disabled>清除 YouTube 登录设置</button>
           </div>
-          <p class="gl-hint" id="st-fetch-youtube-note">可导入浏览器导出的 Netscape cookies.txt；加密保存在本机，不回显。导入的 Cookie 优先于浏览器读取。</p>
+          <p class="gl-hint" id="st-fetch-youtube-note" role="status">选择自己的 YouTube cookies.txt 登录文件。文件内容加密保存在本机。</p>
         </div>
       </div>
       <!-- LLM 真实配置在下面独立翻译分类中，保存链路与旧UI共用。 -->

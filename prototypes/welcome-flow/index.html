@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SubFabric · 欢迎流程原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font: 14px/1.5 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+      --ink: #192c27;
+      --muted: #51675e;
+      --green: #1a6754;
+      --pressed: #134f40;
+      --line: #d4dfd8;
+      --white: #fbfdfb;
+      --wash: #edf5ef;
+      color: var(--ink);
+      background: #e7efe9;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body {
+      margin: 0; min-height: 100vh; min-height: 100svh;
+      background:
+        radial-gradient(ellipse at 3% 7%, #c8ddd2 0, transparent 35%),
+        radial-gradient(ellipse at 95% 94%, #e6deca 0, transparent 38%), #eaf1ec;
+    }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    :focus-visible { outline: 2px solid var(--green); outline-offset: 4px; }
+    h1, h2, h3, p, ol, ul { margin: 0; }
+    .screen { min-height: 100svh; display: grid; place-content: center; padding: 30px 24px; }
+    .window-header {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      margin-bottom: 14px; padding-inline: 4px; color: var(--muted); font-size: 12px;
+    }
+    .brand { display: inline-flex; align-items: center; gap: 9px; color: var(--ink); font-size: 15px; font-weight: 660; }
+    .brand img { width: 28px; height: 28px; }
+    .wizard {
+      width: min(1116px, calc(100vw - 48px)); min-height: 690px; display: grid;
+      grid-template-columns: minmax(270px, 34%) minmax(0, 1fr);
+      border: 1px solid #cbd9d0; border-radius: 26px; overflow: clip; background: var(--white);
+      box-shadow: 0 28px 84px #24473625, 0 5px 16px #253d3110;
+    }
+    .guide {
+      display: flex; flex-direction: column; justify-content: space-between; gap: 30px;
+      padding: 36px 29px 32px; color: #e2f0e5;
+      background: radial-gradient(ellipse at 10% 2%, #3d6f60, transparent 60%), linear-gradient(160deg, #234e45, #1c4039 62%, #17342f);
+    }
+    .guide h2 { font-weight: 630; font-size: 16px; }
+    .steps { display: grid; gap: 5px; margin-top: 18px; padding: 0; list-style: none; }
+    .steps li {
+      display: flex; align-items: center; gap: 10px; padding: 8px 9px;
+      border-radius: 9px; font-size: 13px; color: #c2d8ca;
+      transition: color 220ms, background-color 220ms;
+    }
+    .steps li[aria-current="step"] { background: #ffffff19; color: #fcfff9; font-weight: 620; }
+    .steps li.done { color: #eef9e9; }
+    .steps .dot {
+      flex: 0 0 22px; display: grid; place-items: center; aspect-ratio: 1;
+      border: 1px solid #91b5a6; border-radius: 50%; font-size: 11px;
+    }
+    .steps [aria-current] .dot { background: #d4ead3; color: #24483e; border-color: transparent; }
+    .art {
+      position: relative; isolation: isolate; min-height: 164px;
+      display: grid; place-items: center; padding: 24px 12px 15px;
+    }
+    .art::before, .art::after {
+      position: absolute; content: ""; width: 69%; aspect-ratio: 12/5; z-index: -1;
+      border-radius: 15px; border: 1px solid #aed4bd68; background: #a2cbb61b;
+      transform: translateY(-16px) rotate(-10deg);
+      transition: transform 460ms cubic-bezier(.2,.75,.2,1);
+    }
+    .art::after { transform: translate(9px, 17px) rotate(8deg); }
+    .wizard[data-step="2"] .art::before, .wizard[data-step="4"] .art::before { transform: translate(-18px, -18px) rotate(-5deg); }
+    .wizard[data-step="2"] .art::after, .wizard[data-step="4"] .art::after { transform: translate(20px, 22px) rotate(11deg); }
+    .art-note {
+      width: 84%; padding: 14px 16px; border: 1px solid #9bc5b496; border-radius: 13px;
+      background: #437064; box-shadow: 0 15px 30px #122b2355;
+    }
+    .art-note b { display: block; font: 650 11px/1.7 "Cascadia Code", Consolas, monospace; letter-spacing: .03em; }
+    .art-note span { display: block; height: 5px; margin-top: 9px; width: 78%; border-radius: 3px; background: #bdd5bf; }
+    .art-note span + span { width: 54%; margin-top: 6px; background: #88b59f; }
+    .work {
+      display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+      min-width: 0; padding: 40px clamp(27px, 4.7vw, 65px) 28px;
+    }
+    .progress { display: flex; gap: 5px; margin: 0 0 28px; max-width: 180px; }
+    .progress i {
+      height: 4px; flex: 1; border-radius: 8px; background: #dce8df;
+      transition: background-color 240ms, flex-grow 380ms cubic-bezier(.2,.75,.2,1);
+    }
+    .progress i.current { flex: 1.7; background: var(--green); }
+    .progress i.done { background: #7cab95; }
+    .pane { min-width: 0; }
+    .pane header { margin-bottom: 22px; }
+    .pane h1 { font-size: clamp(26px, 3.3vw, 37px); font-weight: 650; line-height: 1.18; letter-spacing: -.026em; }
+    .pane header p { max-width: 44ch; margin-top: 9px; color: var(--muted); }
+    .intro { padding-top: 21px; }
+    .intro h1 { max-width: 16ch; font-size: clamp(31px, 4vw, 48px); }
+    .intro .summary {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px;
+      margin-top: 31px;
+    }
+    .summary article { background: var(--wash); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+    .summary h2, .section-title { font-size: 14px; font-weight: 650; }
+    .summary p { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .choice {
+      position: relative; display: grid; gap: 6px; align-content: start; min-height: 134px; padding: 15px;
+      border: 1px solid var(--line); border-radius: 11px; background: #f5f8f5; cursor: pointer;
+      transition: background-color 180ms, border-color 180ms, transform 180ms;
+    }
+    .choice:hover { transform: translateY(-2px); border-color: #7ba294; }
+    .choice:has(input:checked) { border-color: #639484; background: #e7f3eb; }
+    .choice strong { font-size: 22px; font-weight: 650; line-height: 1.3; padding-right: 25px; }
+    .choice input { position: absolute; top: 16px; right: 12px; width: 16px; height: 16px; accent-color: var(--green); }
+    .choice small, .hint { color: var(--muted); font-size: 12px; }
+    .hint { margin-top: 12px; }
+    .choices + .hint { margin-top: 18px; }
+    .setup-group + .setup-group { margin-top: 16px; }
+    .section-title { margin-bottom: 6px; }
+    .rows { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #f8fbf8; }
+    .row { display: flex; align-items: center; gap: 12px; min-height: 51px; padding: 6px 11px; }
+    .row + .row { border-top: 1px solid var(--line); }
+    .row-info { flex: 1; min-width: 0; }
+    .row-info > * { display: block; overflow-wrap: anywhere; }
+    .row-info small { color: var(--muted); }
+    .status { flex: none; color: #24644c; font-size: 12px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; min-height: 37px; padding: 6px 15px;
+      color: var(--ink); border: 1px solid var(--line); border-radius: 8px; background: #f7faf7;
+      transition: background-color 160ms, transform 160ms; white-space: nowrap;
+    }
+    .btn:hover:not(:disabled) { background: #e3eee6; }
+    .btn:active:not(:disabled) { transform: scale(.97); }
+    .btn.primary { color: #fff; background: var(--green); border-color: transparent; font-weight: 620; min-width: 108px; }
+    .btn.primary:hover:not(:disabled) { background: var(--pressed); }
+    .btn.compact { min-height: 31px; padding: 4px 9px; font-size: 12px; }
+    .btn.quiet { background: transparent; border-color: transparent; }
+    .model-list .row:nth-child(1 of :not([hidden])) { border-top: 0; }
+    progress { accent-color: var(--green); width: 78px; }
+    .fields { display: grid; gap: 14px; }
+    .fields label { display: grid; gap: 5px; font-weight: 620; }
+    .fields label[for="key"] { margin-bottom: 5px; }
+    .fields :is(input, select) {
+      width: 100%; min-width: 0; min-height: 39px; padding: 6px 9px;
+      color: var(--ink); background: #f8fbf8; border: 1px solid #c6d7cb; border-radius: 7px;
+    }
+    .fields input[readonly] { color: var(--muted); }
+    .field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+    .key-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+    .short-note { min-height: 18px; margin-top: 8px; }
+    .login-list { display: grid; gap: 10px; }
+    .login-list article {
+      display: flex; align-items: center; gap: 11px; padding: 13px 12px;
+      border: 1px solid var(--line); border-radius: 10px; background: #f7faf7;
+    }
+    .login-list h2 { font-size: 15px; }
+    .service-icon {
+      display: grid; place-items: center; flex: 0 0 35px; aspect-ratio: 1; border-radius: 8px;
+      color: #19576c; background: #ddedf4; font-weight: 700;
+    }
+    .service-icon.youtube { color: #923934; background: #f5e7e3; }
+    .completion { margin-top: 14px; padding: 12px; background: var(--wash); border: 1px solid var(--line); border-radius: 9px; }
+    .footer {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      margin-top: 24px; padding-top: 17px; border-top: 1px solid var(--line);
+    }
+    .footer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    dialog {
+      width: min(390px, calc(100vw - 32px)); color: var(--ink); background: var(--white);
+      padding: 24px; border: 1px solid var(--line); border-radius: 15px; box-shadow: 0 24px 80px #162f2852;
+    }
+    dialog[open] { animation: dialog-in 220ms cubic-bezier(.2,.75,.2,1) both; }
+    dialog::backdrop { background: #142b2670; }
+    dialog h2 { font-size: 21px; }
+    dialog p { margin-top: 8px; color: var(--muted); }
+    dialog .footer { justify-content: flex-end; }
+    @keyframes dialog-in { from { opacity: 0; transform: translateY(9px) scale(.98); } }
+    @media (max-width: 760px) {
+      .wizard { display: block; min-height: auto; }
+      .guide { padding: 17px 22px; }
+      .guide :is(h2, .art) { display: none; }
+      .steps { display: flex; flex-wrap: wrap; gap: 5px; margin: 0; }
+      .steps li { padding: 4px 6px; font-size: 11px; gap: 4px; }
+      .steps .dot { flex-basis: 17px; font-size: 10px; }
+      .progress { margin-bottom: 20px; }
+      .work { padding: 25px 22px 19px; }
+    }
+    @media (max-width: 460px) {
+      .screen { padding: 12px; }
+      .wizard { width: calc(100vw - 24px); border-radius: 17px; }
+      .work, .guide { padding-inline: 14px; }
+      .pane header { margin-bottom: 15px; }
+      .field-pair, .choices { grid-template-columns: minmax(0, 1fr); }
+      .choice { min-height: 0; }
+      .row, .login-list article { gap: 8px; padding-inline: 8px; }
+      .footer { flex-wrap: wrap; }
+      .intro .summary { gap: 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="screen">
+    <header class="window-header">
+      <div class="brand"><img src="../../editor/assets/app-logo.png" alt="">SubFabric</div>
+      <span>欢迎流程原型</span>
+    </header>
+    <div class="wizard" id="wizard" data-step="1">
+      <aside class="guide" aria-label="配置进度">
+        <div>
+          <h2>首次配置</h2>
+          <ol class="steps">
+            <li aria-current="step"><span class="dot" aria-hidden="true">1</span>欢迎</li>
+            <li><span class="dot" aria-hidden="true">2</span>模型方案</li>
+            <li><span class="dot" aria-hidden="true">3</span>模型与前置</li>
+            <li><span class="dot" aria-hidden="true">4</span>大模型配置</li>
+            <li><span class="dot" aria-hidden="true">5</span>网站登录</li>
+          </ol>
+        </div>
+        <div class="art" aria-hidden="true">
+          <div class="art-note"><b>00:23.180 → 00:25.640</b><span></span><span></span></div>
+        </div>
+      </aside>
+      <div class="work">
+        <div class="progress" aria-hidden="true"><i class="current"></i><i></i><i></i><i></i><i></i></div>
+        <div id="panes">
+          <section class="pane intro" aria-labelledby="welcome-heading">
+            <header><h1 id="welcome-heading" tabindex="-1">欢迎使用 SubFabric</h1><p>为你的字幕工作区选择识别方案、翻译模型和下载账户。完成后随时可以在设置中调整。</p></header>
+            <div class="summary">
+              <article><h2>本机语音识别</h2><p>配置显卡加速和所需模型。</p></article>
+              <article><h2>翻译与素材下载</h2><p>大模型和站点登录可稍后设置。</p></article>
+            </div>
+          </section>
+          <section class="pane" aria-labelledby="backend-heading" hidden>
+            <header><h1 id="backend-heading" tabindex="-1">选择模型方案</h1><p>选择显卡加速方式。可以同时启用两种方案。</p></header>
+            <div class="choices">
+              <label class="choice"><strong>CUDA</strong><span>NVIDIA 专用</span><small>示例设备 · GeForce RTX 4060 Ti</small><input type="checkbox" name="backend" value="cuda" checked></label>
+              <label class="choice"><strong>Vulkan</strong><span>支持 AMD、Intel 和 NVIDIA</span><small>示例设备 · Vulkan 可用</small><input type="checkbox" name="backend" value="vulkan"></label>
+            </div>
+            <p class="hint" id="backend-hint" role="status">已选择 CUDA。</p>
+          </section>
+          <section class="pane" aria-labelledby="models-heading" hidden>
+            <header><h1 id="models-heading" tabindex="-1">配置模型与前置</h1><p>先检查本机工具，再选择要下载的语音模型。</p></header>
+            <div class="setup-group">
+              <h2 class="section-title">前置组件</h2>
+              <div class="rows">
+                <div class="row"><div class="row-info"><b>ffmpeg</b><small>媒体转码与音频准备</small></div><span class="status">已就绪</span></div>
+                <div class="row" data-backend="cuda"><div class="row-info"><b>Python</b><small>CUDA 模型运行环境</small></div><button class="btn compact demo-download" type="button">演示安装</button></div>
+                <div class="row"><div class="row-info"><b>说话人分离</b><small>按需区分同一段音频中的说话人</small></div><button class="btn compact demo-download" type="button">演示下载</button></div>
+              </div>
+            </div>
+            <div class="setup-group">
+              <h2 class="section-title">语音识别模型</h2>
+              <div class="rows model-list">
+                <div class="row" data-backend="cuda"><div class="row-info"><b>Faster-Whisper Large V2</b><small>CUDA · 常规字幕识别</small></div><button class="btn compact demo-download" type="button">演示下载</button></div>
+                <div class="row" data-backend="vulkan" hidden><div class="row-info"><b>Qwen3-ASR 0.6B</b><small>Vulkan · 本机语音转写</small></div><button class="btn compact demo-download" type="button">演示下载</button></div>
+                <div class="row"><div class="row-info"><b>Qwen3 Forced Aligner</b><small>可选 · 根据确认过的文本校对逐词时间</small></div><button class="btn compact demo-download" type="button">演示下载</button></div>
+              </div>
+            </div>
+            <p class="hint">可以先完成配置，再到「语音识别」下载模型。</p>
+          </section>
+          <section class="pane" aria-labelledby="llm-heading" hidden>
+            <header><h1 id="llm-heading" tabindex="-1">配置大模型</h1><p>为字幕翻译选择服务商和模型。</p></header>
+            <div class="fields">
+              <div class="field-pair">
+                <label>服务商<select id="provider"><option value="deepseek">DeepSeek</option><option value="anthropic">Anthropic</option><option value="compatible">OpenAI 兼容</option></select></label>
+                <label>接口地址<input id="endpoint" type="url" value="https://api.deepseek.com/v1" spellcheck="false"></label>
+              </div>
+              <div><label for="key">API Key</label>
+                <span class="key-tools"><input id="key" type="password" value="demonstration" readonly><button class="btn" id="get-models" type="button">获取可用模型</button></span>
+              </div>
+              <label>LLM 模型<input id="llm-model" list="model-options" placeholder="选择或输入模型名"><datalist id="model-options"></datalist></label>
+            </div>
+            <p class="hint short-note" id="llm-note" role="status">原型使用示例密钥和模型列表。</p>
+          </section>
+          <section class="pane" aria-labelledby="login-heading" hidden>
+            <header><h1 id="login-heading" tabindex="-1">登录素材网站</h1><p>为下载配置网站登录态。也可以稍后设置。</p></header>
+            <div class="login-list">
+              <article><span class="service-icon" aria-hidden="true">B</span><div class="row-info"><h2>bilibili</h2><small>从应用内打开官方登录窗口</small></div><button class="btn compact demo-login" data-site="bilibili" type="button">演示登录</button></article>
+              <article><span class="service-icon youtube" aria-hidden="true">▶</span><div class="row-info"><h2>YouTube</h2><small>在浏览器登录后，按需导入登录文件</small></div><button class="btn compact demo-login" data-site="YouTube" type="button">演示导入</button></article>
+            </div>
+            <p class="completion" id="completion" role="status" hidden>演示完成。真实应用会在这里进入字幕工作区。</p>
+          </section>
+        </div>
+        <footer class="footer">
+          <button class="btn quiet" id="back" type="button" hidden>上一步</button>
+          <div class="footer-actions">
+            <button class="btn quiet" id="skip" type="button" hidden>稍后配置</button>
+            <button class="btn primary" id="next" type="button">开始配置</button>
+          </div>
+        </footer>
+      </div>
+    </div>
+  </main>
+  <dialog id="login-demo" aria-labelledby="dialog-heading">
+    <form method="dialog">
+      <h2 id="dialog-heading"></h2>
+      <p>此处演示完成后的界面反馈。</p>
+      <div class="footer"><button class="btn" value="cancel" autofocus>取消</button><button class="btn primary" value="confirm">确认演示</button></div>
+    </form>
+  </dialog>
+  <script>
+    const wizard = document.getElementById('wizard');
+    const panes = [...document.querySelectorAll('.pane')];
+    const steps = [...document.querySelectorAll('.steps li')];
+    const bars = [...document.querySelectorAll('.progress i')];
+    const back = document.getElementById('back');
+    const next = document.getElementById('next');
+    const skip = document.getElementById('skip');
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    const backends = [...document.querySelectorAll('input[name=backend]')];
+    let page = 0;
+    let busy = false;
+    let completed = false;
+
+    function activeBackends() {
+      return backends.filter(input => input.checked).map(input => input.value);
+    }
+    function setFooter() {
+      back.hidden = page === 0 || completed;
+      skip.hidden = page < 3 || completed;
+      back.disabled = skip.disabled = busy;
+      next.disabled = busy || (page === 1 && activeBackends().length === 0);
+      next.textContent = completed ? '重新演示' : ['开始配置', '下一步', '下一步', '下一步', '进入工作区'][page];
+    }
+    function syncModels() {
+      const selected = activeBackends();
+      for (const row of document.querySelectorAll('[data-backend]')) row.hidden = !selected.includes(row.dataset.backend);
+      document.getElementById('backend-hint').textContent = selected.length
+        ? '已选择 ' + selected.map(backend => ({ cuda: 'CUDA', vulkan: 'Vulkan' })[backend]).join(' 和 ') + '。'
+        : '请选择至少一种方案。';
+      setFooter();
+    }
+    async function go(target) {
+      if (busy || target < 0 || target >= panes.length || target === page) return;
+      busy = true;
+      setFooter();
+      const direction = target > page ? 1 : -1;
+      const old = panes[page];
+      if (!motion.matches) await old.animate(
+        [{ opacity: 1, transform: 'translateX(0)' }, { opacity: 0, transform: 'translateX(' + (-direction * 12) + 'px)' }],
+        { duration: 125, easing: 'ease-in', fill: 'both' }).finished;
+      old.hidden = true;
+      for (const effect of old.getAnimations()) effect.cancel();
+      page = target;
+      const pane = panes[page];
+      pane.hidden = false;
+      wizard.dataset.step = String(page + 1);
+      for (const [index, item] of steps.entries()) {
+        item.classList.toggle('done', index < page);
+        bars[index].classList.toggle('done', index < page);
+        bars[index].classList.toggle('current', index === page);
+        if (index === page) item.setAttribute('aria-current', 'step');
+        else item.removeAttribute('aria-current');
+      }
+      if (!motion.matches) await pane.animate(
+        [{ opacity: 0, transform: 'translateX(' + (direction * 17) + 'px)' }, { opacity: 1, transform: 'translateX(0)' }],
+        { duration: 365, easing: 'cubic-bezier(.18,.75,.25,1)' }).finished;
+      busy = false;
+      setFooter();
+      pane.querySelector('h1').focus({ preventScroll: true });
+      if (window.scrollY > wizard.offsetTop) window.scrollTo(0, wizard.offsetTop);
+    }
+    function nextStep() {
+      if (completed) return location.reload();
+      if (page < panes.length - 1) return go(page + 1);
+      completed = true;
+      document.getElementById('completion').hidden = false;
+      setFooter();
+      next.focus();
+    }
+    back.addEventListener('click', () => go(page - 1));
+    next.addEventListener('click', nextStep);
+    skip.addEventListener('click', nextStep);
+    backends.forEach(input => input.addEventListener('change', syncModels));
+    syncModels();
+
+    for (const button of document.querySelectorAll('.demo-download')) {
+      button.addEventListener('click', () => {
+        const meter = document.createElement('progress');
+        meter.max = 100;
+        meter.value = 0;
+        meter.setAttribute('aria-label', button.closest('.row').querySelector('b').textContent + '演示进度');
+        button.replaceWith(meter);
+        const tick = setInterval(() => {
+          meter.value += 9;
+          if (meter.value < meter.max) return;
+          clearInterval(tick);
+          const notice = document.createElement('span');
+          notice.className = 'status';
+          notice.setAttribute('role', 'status');
+          notice.textContent = '演示完成';
+          meter.replaceWith(notice);
+        }, 85);
+      });
+    }
+    const provider = document.getElementById('provider');
+    const endpoint = document.getElementById('endpoint');
+    const options = document.getElementById('model-options');
+    const llmNote = document.getElementById('llm-note');
+    const providers = {
+      deepseek: ['https://api.deepseek.com/v1', ['deepseek-example', 'deepseek-example-fast']],
+      anthropic: ['https://api.anthropic.com', ['claude-example', 'claude-example-fast']],
+      compatible: ['', ['model-example', 'model-example-fast']],
+    };
+    provider.addEventListener('change', () => {
+      endpoint.value = providers[provider.value][0];
+      options.replaceChildren();
+      document.getElementById('llm-model').value = '';
+      llmNote.textContent = '原型使用示例密钥和模型列表。';
+    });
+    document.getElementById('get-models').addEventListener('click', () => {
+      const names = providers[provider.value][1];
+      options.replaceChildren(...names.map(name => Object.assign(document.createElement('option'), { value: name })));
+      llmNote.textContent = '已载入 ' + names.length + ' 个示例模型。可下拉选择或直接输入。';
+      document.getElementById('llm-model').focus();
+    });
+    const dialog = document.getElementById('login-demo');
+    let activeLogin;
+    for (const button of document.querySelectorAll('.demo-login')) {
+      button.addEventListener('click', () => {
+        activeLogin = button;
+        dialog.returnValue = '';
+        document.getElementById('dialog-heading').textContent = button.dataset.site + ' · ' + button.textContent;
+        dialog.showModal();
+      });
+    }
+    dialog.addEventListener('close', () => {
+      if (dialog.returnValue !== 'confirm') return;
+      const notice = document.createElement('span');
+      notice.className = 'status';
+      notice.setAttribute('role', 'status');
+      notice.textContent = activeLogin.dataset.site === 'bilibili' ? '模拟已登录' : '模拟已导入';
+      activeLogin.replaceWith(notice);
+      next.focus();
+    });
+  </script>
+</body>
+</html>

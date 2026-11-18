@@ -142,7 +142,7 @@
 | `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端自动同步镜像（入库）；`electron-desktop-test.mjs` 检查 payload、旧版数据/路径/浏览器偏好迁移、路径与窗口安全边界，`electron-backend-smoke.mjs` 检查随包 Node、接口、重启保留数据与断线退出 |
 | `tools/` | 探针与验收脚本：`build-install.mjs`（旧链路事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs`；Electron 安装构建改走 `desktop/` |
 | `tools/templates/studio.html` | Studio 入口的唯一上游模板，改界面先改模板再生成 |
-| `prototypes/` | 与生产隔离的无构建原型：`cue-card-redesign/`、`subtitle-editor/`、`adaptive-selection/`、`wide-desktop/` |
+| `prototypes/` | 与生产隔离的无构建原型：`cue-card-redesign/`、`subtitle-editor/`、`adaptive-selection/`、`wide-desktop/`、`welcome-flow/` |
 | `build/` | 打包产物目录：`electron-stage/` 为 payload、真实 Node 与 manifest，`electron/` 为 NSIS 输出；旧 `installer/` 的 `.iss`、图标与启动脚本保留入库 |
 | `docs/` | 本文件 + `ui-integration-baseline.json`、`repair15-baseline.json` 等被测试读取的数据文件 |
 | `main.py` | 历史遗留的 Python 字幕处理工具（`ass`/`srt`/`config`/`fonts` 子命令与 GUI），与编辑器主线关系弱 |
@@ -542,6 +542,9 @@
   凭据走带控制 token 的独立回环请求，Studio 只收到状态。后端到 bilibili 验证登录成功后才通过
   `secret-store.js` 加密保存，沿用现有视频下载设置；关闭、失败、超时均结束窗口并清理临时会话。
   登录窗口与 Studio 分别执行各自的导航策略，关闭外部弹窗、网页权限、文件下载和 Node 集成。
+- **YouTube 登录态**：用户可从设置打开系统浏览器和手动导入自己的登录文件，导入内容沿用加密存储与下载链路。
+  Google OAuth 要求使用受支持的浏览器。当前未接入 Google 应用授权，设置页没有自动取登录态入口。
+  已有浏览器来源配置可通过「清除 YouTube 登录设置」取消。
 - **安全基线**：Host 必须回环；有 Origin 的读写请求校验明确集合，无 Origin 的写请求须带
   `X-SubFabric-Token`；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用；`safeJoin` 解码后归一化并补路径
   分隔符边界，拒绝编码穿越。
@@ -1591,18 +1594,15 @@
   对齐模型每张卡片显示一处状态。Windows Electron 安装版额外显示「软件更新」，含当前版本、手动检查、自动检查与下载开关、
   下载进度及「安装并重启」。默认启动后检查，此后每六小时检查，下载完成通过托盘提示。安装经原生确认，
   保存稿件并停止后台任务后交给 NSIS 原地升级和重启。ASS 双语样式与后处理固定在稿件的 `#tab-settings`。
-- **性能页卡片间距**：`#perf-dual-view` 里「双引擎分工性能测试」与「当前已应用的配置」是两张直接相邻的
-  `.st-section`；`.st-panel` 的 flex `gap` 只作用到 `.perf-view` 这一层，两张卡片之间因此没有间距。
-  现由 `.perf-view { display:flex; flex-direction:column; gap:16px }` 提供垂直间距（与其它设置面板一致），
-  `.perf-view[hidden]` 仍保持 `display:none`。不要改成给 `.st-section` 加 margin —— 设置页卡片规则带
-  `#st-view` ID 且写死 `margin:0`，普通选择器会被覆盖。
+- **性能与调度**：设置页显示本机加速方式和重新进入欢迎界面的入口。全模型速度页签及测试面板暂时隐藏，
+  前端不初始化这组控件。基准测试接口保留供现有调用者使用。
 - **热词自动保存**：「识别与校对」编辑热词或强度后，合并连续输入并保存到本机设置；正常退出时先写完待保存输入。
   设置页隐藏操作日志挖掘及 LLM 分析选项、重排逐词时间说明卡片。编辑器仍提供逐词对齐操作。
   设置浮动状态 `#st-msg` 在空闲时不占位。`tests/studio-navigation-test.mjs` 覆盖自动保存、退出写入和模型选择。
 - **桌面布局与悬停**：生产界面采用原有紧凑宽度，新建项目沿用原列布局。Windows 10 主题中按钮独占
   指针位置的 Reveal，其父卡片停止面光与边光。`tools/theme-visual-test.mjs` 覆盖 2560px 下的布局和指针移动。
 - **下载与登录设置**：桌面检测到 Electron 登录能力后显示「登录 bilibili」及本机登录态管理，浏览器保留
-  手动登录态输入。设置页隐藏 YouTube 登录卡片，画质、代理及已有下载偏好继续使用。
+  手动登录态输入。YouTube 卡片提供浏览器入口、文件导入与清除，画质与代理在同页配置。
   Windows x64 打包版已实测打开官方登录页和取消反馈，
   加密写入及复用由模拟登录接口验证，真实账号登录、会员画质下载和安装覆盖未运行。
 - **设置作用域**：字体/字号/颜色等 ASS 设置写入当前项目稿件，后处理特效属本机偏好；文件夹只在浏览器
@@ -1611,6 +1611,8 @@
   其模拟识别/进度数据不得当作真实引擎结果。
   可直接打开 `prototypes/wide-desktop/index.html` 试阅主页与存储空间。两页共享双栏框架，左列承载当前任务，
   右列承载主播动态或磁盘摘要。设置分类放在页头，窗口缩窄时右列移到主内容下方。原型待视觉确认。
+  `prototypes/welcome-flow/index.html` 演示欢迎、CUDA/Vulkan、模型与前置、大模型配置和网站登录五步。
+  切换保留前一步选择。模型准备、模型列表和网站登录均使用本地模拟，支持系统减少动效偏好。
 
 ### 全主题覆盖与防回归（2026-10-27）
 

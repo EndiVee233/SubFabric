@@ -250,7 +250,13 @@ try {
   await b.eval('document.querySelector("#sf-settings-tab-enhance").click()');
   assert.equal(await b.eval('[...document.querySelectorAll("#st-panel-enhance .hw-mine, #st-word-realign-note")].filter(el => el.hidden && el.getClientRects().length === 0).length'), 2);
   await b.eval('document.querySelector("#sf-settings-tab-fetch").click()');
-  assert.ok(await b.eval('document.querySelector("#st-fetch-youtube-card").getClientRects().length === 0'));
+  assert.ok(await b.eval('document.querySelector("#st-fetch-youtube-card").getClientRects().length > 0'));
+  assert.equal(await b.eval('document.querySelector("#st-fetch-youtube-open").origin'), 'https://www.youtube.com');
+  assert.ok(await b.eval('document.querySelector("#st-fetch-youtube-import").getClientRects().length > 0'));
+  await b.eval('document.querySelector("#sf-settings-tab-perf").click()');
+  assert.ok(await b.eval('document.querySelector("#sf-accel-card").getClientRects().length > 0'));
+  assert.equal(await b.eval('document.querySelector("#perf-models-view").getClientRects().length'), 0);
+  assert.equal(await b.eval('document.querySelector("#perf-tab-models").getClientRects().length'), 0);
   await go('#/new');
   const newLayout = await b.eval('getComputedStyle(document.querySelector("#np-view .ws-grid")).display');
   assert.equal(newLayout, 'flex', 'new project keeps its original two-column layout');

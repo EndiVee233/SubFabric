@@ -1138,7 +1138,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "7d533b67b4512fd3eb684ad480b2cc5e220b6284e39064464bc49259a0d78769",
+      "sha256": "511faf10f9fef2d17d526894881996acefb5883348b779ab87a214b1a3b55b48",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1447,59 +1447,59 @@
           "method": "createElement"
         },
         {
-          "line": 4734,
+          "line": 4735,
           "method": "innerHTML"
         },
         {
-          "line": 4736,
+          "line": 4737,
           "method": "createElement"
         },
         {
-          "line": 4738,
+          "line": 4739,
           "method": "innerHTML"
         },
         {
-          "line": 5278,
+          "line": 5279,
           "method": "innerHTML"
         },
         {
-          "line": 5281,
+          "line": 5282,
           "method": "innerHTML"
         },
         {
-          "line": 5299,
+          "line": 5300,
           "method": "innerHTML"
         },
         {
-          "line": 5302,
+          "line": 5303,
           "method": "innerHTML"
         },
         {
-          "line": 5331,
+          "line": 5332,
           "method": "innerHTML"
         },
         {
-          "line": 5561,
+          "line": 5562,
           "method": "createElement"
         },
         {
-          "line": 6109,
+          "line": 6110,
           "method": "innerHTML"
         },
         {
-          "line": 6178,
+          "line": 6179,
           "method": "innerHTML"
         },
         {
-          "line": 6178,
+          "line": 6179,
           "method": "innerHTML"
         },
         {
-          "line": 6416,
+          "line": 6417,
           "method": "innerHTML"
         },
         {
-          "line": 6433,
+          "line": 6434,
           "method": "innerHTML"
         }
       ],
@@ -2067,7 +2067,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "3b0eb142d29e62da7cd37238f9c5f3558a1d8ffe43f59c30911b9dff5dc10b89",
+      "sha256": "a022c7a5b25d003ecbacb7d16f3331f72acf779cac21f74d022bf5f7173ea2a1",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2107,7 +2107,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "8fd38b9d94772d51c949d98bd5302669a959bfb68c8912ba991996de7792ae70",
+      "sha256": "ffdafd0f98467af36760b24aae2d3864618faea2dacb5b16e641b822b3d4c0fa",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2885,7 +2885,6 @@
         "st-fetch-bili-hint",
         "st-fetch-bili-login",
         "st-fetch-bili-status",
-        "st-fetch-browser",
         "st-fetch-cookie",
         "st-fetch-cookie-clear",
         "st-fetch-cookie-manual",
@@ -2898,6 +2897,7 @@
         "st-fetch-youtube-file",
         "st-fetch-youtube-import",
         "st-fetch-youtube-note",
+        "st-fetch-youtube-open",
         "st-hardware",
         "st-key",
         "st-key-clear",
