@@ -55,7 +55,7 @@ async function startBackend({ resourceRoot, dataRoot, port = 8325, onExit = () =
   } catch (error) { stopping = true; await killTree(child); throw error; }
   let stopPromise;
   return {
-    ...info, origin, child, dataRoot,
+    ...info, origin, child, dataRoot, token, fileVersion: manifest.fileVersion,
     stop() {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {

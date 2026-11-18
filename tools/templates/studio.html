@@ -1909,9 +1909,27 @@
       <button type="button" id="sf-settings-tab-enhance" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-enhance" data-stp="enhance" data-ico="wand">识别与校对</button>
       <button type="button" id="sf-settings-tab-fetch" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-fetch" data-stp="fetch" data-ico="download">下载与登录</button>
       <button type="button" id="sf-settings-tab-perf" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-perf" data-stp="perf" data-ico="activity">性能与调度</button>
+      <button type="button" id="sf-settings-tab-update" class="st-tab" role="tab" tabindex="-1" aria-selected="false" aria-controls="st-panel-update" data-stp="update" data-ico="download" hidden>软件更新</button>
     </div>
 
     <div class="st-body">
+      <div class="st-panel" id="st-panel-update" role="tabpanel" data-stp="update" hidden>
+        <div class="sf-settings-heading"><h2>软件更新</h2></div>
+        <div class="st-card">
+          <div class="sf-settings-line">
+            <div><b>当前版本</b><p id="st-update-version"></p></div>
+            <button type="button" class="btn" id="st-update-check">检查更新</button>
+          </div>
+          <div class="sf-settings-line">
+            <div><label for="st-update-auto">自动检查并下载更新</label><p>下载完成后，可选择安装并重启。</p></div>
+            <input type="checkbox" role="switch" id="st-update-auto">
+          </div>
+          <div class="sf-settings-line">
+            <div><p id="st-update-status" role="status"></p><progress id="st-update-progress" max="100" value="0" aria-label="更新下载进度" hidden></progress></div>
+            <button type="button" class="btn primary" id="st-update-install" hidden>安装并重启</button>
+          </div>
+        </div>
+      </div>
       <div class="st-panel" id="st-panel-models" role="tabpanel" data-stp="models" hidden><div class="sf-settings-heading"><span class="sf-settings-scope">本机配置</span><h2 id="sf-settings-heading-models">语音识别</h2><p>准备识别引擎、模型文件和本机运行环境。</p><p class="sf-settings-save-note">模型操作和下载位置即时保存；已有模型不会随目录移动。</p></div>
         <!-- 隐藏旧二级入口供业务刷新兼容；新界面使用独立一级分类。 -->
         <div class="st-subtabs" hidden role="tablist" aria-label="模型设置">

@@ -1160,7 +1160,7 @@ function settingPresentation(name) {
     panel.setAttribute('aria-labelledby', tab.id);
   }
 }
-settingTabs.forEach((tab, index) => {
+settingTabs.forEach(tab => {
   tab.addEventListener('click', () => {
     const name = tab.dataset.stp; settingPresentation(name);
     if (name !== 'translate' && !$('st-scheme-drawer').hidden) $('st-scheme-close').click();
@@ -1172,10 +1172,90 @@ settingTabs.forEach((tab, index) => {
     const delta = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
     if (!delta && !['Home', 'End'].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
-    const next = settingTabs[event.key === 'Home' ? 0 : event.key === 'End' ? settingTabs.length - 1 : (index + delta + settingTabs.length) % settingTabs.length];
+    const visible = settingTabs.filter(item => !item.hidden);
+    const index = visible.indexOf(tab);
+    const next = visible[event.key === 'Home' ? 0 : event.key === 'End' ? visible.length - 1 : (index + delta + visible.length) % visible.length];
     next.click(); next.focus();
   });
 });
+
+function setupWindowsUpdateSettings() {
+  const tab = $('sf-settings-tab-update');
+  if (!tab || !navigator.userAgent?.includes('Electron/')) return;
+  const auto = $('st-update-auto'), check = $('st-update-check'), install = $('st-update-install');
+  const progress = $('st-update-progress'), status = $('st-update-status');
+  const endpoint = '/api/desktop-update';
+  let polling = false, pending = false, unsupported = false, commandFailed = false, state;
+
+  function render() {
+    const { phase, available, percent, error } = state;
+    const messages = {
+      idle: t('可以手动检查更新。'),
+      current: t('已是最新版本。'),
+      checking: t('正在检查更新…'),
+      downloading: t(`正在下载版本 ${available}…`),
+      ready: t(`版本 ${available} 已下载，可以安装。`),
+      installing: t('正在准备安装更新…')
+    };
+    const errors = {
+      check: '检查更新失败，请稍后重试。',
+      download: '下载或校验更新失败，请重新检查。',
+      install: '无法安装更新。请确认稿件已保存后重试。',
+      settings: '无法保存自动更新设置。'
+    };
+    $('st-update-version').textContent = state.version;
+    const message = commandFailed ? t('更新操作失败，请重试。') : errors[error] ? t(errors[error]) : messages[phase] || '';
+    if (status.textContent !== message) status.textContent = message;
+    auto.checked = state.enabled;
+    auto.disabled = pending || phase === 'installing';
+    check.disabled = pending || ['checking', 'downloading', 'installing'].includes(phase);
+    install.hidden = !['ready', 'installing'].includes(phase);
+    install.disabled = pending || phase !== 'ready';
+    progress.hidden = phase !== 'downloading';
+    progress.value = percent;
+  }
+
+  async function refresh() {
+    if (polling || pending || unsupported) return;
+    polling = true;
+    try {
+      const response = await fetch(endpoint, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+      if (response.status === 404 && !state) { unsupported = true; return; }
+      if (!response.ok) throw Error('Update status unavailable');
+      state = await response.json();
+      tab.hidden = false;
+      render();
+    } catch {
+      if (state) status.textContent = t('暂时无法读取更新状态。');
+    } finally { polling = false; }
+  }
+
+  async function command(action) {
+    if (pending || !state) return;
+    pending = true;
+    commandFailed = false;
+    render();
+    try {
+      const response = await fetch(endpoint + '/' + action, { method: 'POST', signal: AbortSignal.timeout(3000) });
+      if (!response.ok) throw Error('Update command rejected');
+    } catch {
+      commandFailed = true;
+    } finally {
+      pending = false;
+      render();
+      void refresh();
+    }
+  }
+  auto.addEventListener('change', () => void command(auto.checked ? 'enable' : 'disable'));
+  check.addEventListener('click', () => void command('check'));
+  install.addEventListener('click', () => void command('install'));
+  void refresh();
+  setInterval(() => {
+    if (location.hash === '#/settings' && (tab.hidden || tab.getAttribute('aria-selected') === 'true')) void refresh();
+  }, 750);
+}
+setupWindowsUpdateSettings();
+
 $('st-entry-asr').addEventListener('click', () => document.querySelector('.st-tab[data-stp="models"]').click());
 $('st-entry-llm').addEventListener('click', () => document.querySelector('.st-tab[data-stp="translate"]').click());
 for (const id of ['btn-open-video', 'btn-open-sub']) $(id).addEventListener('click', () => {

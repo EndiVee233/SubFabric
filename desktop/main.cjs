@@ -1,10 +1,12 @@
 'use strict';
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, shell, session, net } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { startBackend } = require('./backend.cjs');
 const { sameOrigin, externalURL } = require('./security.cjs');
+const { createUpdater, fetchWithElectron, ACTIONS } = require('./update.cjs');
 const {
   LEGACY_PORTS, migrateLegacyWorkspace, migrateLegacyProfile, hasWorkspaceState,
   readReport, writeReport, importLegacyBrowserState, applyBrowserState
@@ -12,6 +14,7 @@ const {
 
 let backend, window, tray, quitting = false, quitPending = false, ready = false, trayHintShown = false, storageError = null;
 let browserMigration = null;
+let updater;
 const smokeReport = process.env.SUBFABRIC_ELECTRON_SMOKE_REPORT;
 
 /* ── 数据目录与旧版继承 ──────────────────────────────────────────────────
@@ -131,12 +134,16 @@ async function openMigrationBrowser(url) {
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
 }
 
-async function flush() {
+async function flush(freeze = false) {
   if (!window || window.isDestroyed() || !ready) return;
   let timer;
   try {
     await Promise.race([
-      window.webContents.executeJavaScript('(async () => { if (typeof window.__subfabricFlushSave !== "function") throw new Error("Editor is not ready to save"); await window.__subfabricFlushSave(); return true; })()'),
+      window.webContents.executeJavaScript(`(async () => {
+        if (typeof window.__subfabricFlushSave !== "function") throw new Error("Editor is not ready to save");
+        if (${freeze}) document.documentElement.inert = true;
+        await window.__subfabricFlushSave();
+      })()`),
       new Promise((_, reject) => { timer = setTimeout(() => reject(Error('Saving timed out; the window was kept open')), 10000); })
     ]);
   } finally { clearTimeout(timer); }
@@ -167,6 +174,7 @@ async function requestQuit(source) {
 async function quitApp(code) {
   if (quitting) return;
   quitting = true;
+  updater?.stop();
   if (tray) { try { tray.destroy(); } catch {} tray = null; }
   if (backend) {
     try { await backend.stop(); }
@@ -178,6 +186,79 @@ async function quitApp(code) {
 
 app.on('before-quit', event => { if (!quitting) { event.preventDefault(); requestQuit('系统退出'); } });
 app.on('window-all-closed', () => { if (!quitting) quitApp(0); });
+
+async function installUpdate(installer, version) {
+  if (!ready || quitPending || quitting || !window || window.isDestroyed()) throw Error('SubFabric is not ready to restart');
+  const relative = path.relative(programRoot, installer);
+  if (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) throw Error('Installer must run outside the installation directory');
+  quitPending = true;
+  let stopping = false;
+  try {
+    const { response } = await dialog.showMessageBox(window, {
+      type: 'question', title: 'SubFabric', message: '安装更新并重启 SubFabric？',
+      detail: '版本 ' + version + '。SubFabric 会先保存稿件并结束后台任务。',
+      buttons: ['取消', '安装并重启'], defaultId: 0, cancelId: 0
+    });
+    if (response !== 1 || quitting) return;
+    await flush(true);
+    stopping = true;
+    await backend.stop();
+    // NSIS takes the rest of the raw command line as /D=. Keep it last and unquoted.
+    await new Promise((resolve, reject) => {
+      const child = spawn(installer, ['/S', '--updated', '--force-run', '/D=' + programRoot], {
+        argv0: '"' + installer + '"', cwd: path.dirname(installer),
+        detached: true, stdio: 'ignore', windowsVerbatimArguments: true
+      });
+      child.once('spawn', () => { child.unref(); resolve(); });
+      child.once('error', reject);
+    });
+    await quitApp(0);
+  } catch (error) {
+    if (stopping) {
+      await dialog.showMessageBox(window, { type: 'error', title: 'SubFabric', message: '无法启动更新安装程序。SubFabric 将重新打开。' });
+      app.relaunch();
+      await quitApp(1);
+    }
+    throw error;
+  } finally {
+    if (!quitting && window && !window.isDestroyed()) void window.webContents.executeJavaScript('document.documentElement.inert = false').catch(() => {});
+    quitPending = false;
+  }
+}
+
+function startWindowsUpdates() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  const base = backend.origin + '/api/desktop-update';
+  const routes = new Set([base, ...ACTIONS.map(action => base + '/' + action)]);
+  const contents = window.webContents;
+  contents.session.webRequest.onBeforeSendHeaders({ urls: [backend.origin + '/api/desktop-update*'] }, (details, callback) => {
+    if (!contents.isDestroyed() && details.webContentsId === contents.id && details.frame === contents.mainFrame
+      && details.initiatorOrigin === backend.origin && routes.has(details.url)) {
+      details.requestHeaders['X-SubFabric-Token'] = backend.token;
+    }
+    callback({ requestHeaders: details.requestHeaders });
+  });
+  let notifiedVersion;
+  // NSIS scans running processes under the destination directory. Its own image must live outside it.
+  const key = createHash('sha256').update(programRoot.toLowerCase()).digest('hex').slice(0, 24);
+  const cacheRoot = path.join(app.getPath('temp'), 'subfabric-update-' + key);
+  updater = createUpdater({
+    profileRoot, cacheRoot, version: backend.fileVersion, beta: app.getVersion().includes('-beta.'),
+    fetcher: (url, options) => fetchWithElectron(net, url, options),
+    publish(state) {
+      if (backend.child.connected) backend.child.send({ type: 'subfabric-update-state', state }, () => {});
+      if (tray && state.phase === 'ready' && state.available !== notifiedVersion) {
+        notifiedVersion = state.available;
+        try { tray.displayBalloon({ title: 'SubFabric 更新已就绪', content: '在全局设置的「软件更新」中安装版本 ' + state.available }); } catch {}
+      }
+    },
+    install: installUpdate
+  });
+  backend.child.on('message', message => {
+    if (message?.type === 'subfabric-update-command') updater.command(message.action);
+  });
+  updater.start();
+}
 
 async function launch() {
   if (storageError) {
@@ -235,6 +316,7 @@ async function launch() {
       });
     }
   }
+  startWindowsUpdates();
   await window.loadURL(backend.origin + '/editor/studio.html');
   createTray();
   ready = true;

@@ -12905,6 +12905,20 @@ function handleYoutubeRoutes(req, res, u) {
     .catch(e => sendJson(res, 200, { ...youtubeResult(youtubeReadCache()), stale: true, errors: [String((e && e.message) || e)] }));
 }
 
+let desktopUpdateState;
+function handleDesktopUpdateRoutes(req, res, u) {
+  if (!desktopUpdateState || !nativeAuthorized(req)) return sendJson(res, 404, { error: 'not found' });
+  if (u.pathname === '/api/desktop-update' && req.method === 'GET') return sendJson(res, 200, desktopUpdateState);
+  const action = /^\/api\/desktop-update\/(check|enable|disable|install)$/.exec(u.pathname)?.[1];
+  if (action && req.method === 'POST' && process.connected) {
+    process.send({ type: 'subfabric-update-command', action }, error => {
+      if (!res.destroyed) sendJson(res, error ? 503 : 202, { ok: !error });
+    });
+    return;
+  }
+  sendJson(res, 404, { error: 'not found' });
+}
+
 /* 路由段表: 前缀互不相交, 顺序即原 handleRequest 的书写顺序。
  * 命中前缀即由该段全权处理(未匹配的 method/路径组合由段内兜底回 404)。 */
 const API_SECTIONS = [
@@ -12913,6 +12927,7 @@ const API_SECTIONS = [
   [/^\/api\/(asr|analyze)\b/, handleAsrRoutes],
   [/^\/api\/(translate|cast|mt)\b/, handleLlmRoutes],
   [/^\/api\/(logs|lifecycle|quit)\b/, handleLogsRoutes],
+  [/^\/api\/desktop-update\b/, handleDesktopUpdateRoutes],
   [/^\/api\/(diag|media)\b/, handleDiagRoutes],
   [/^\/api\/storage\b/, handleStorageRoutes],
   [/^\/api\/youtube\//, handleYoutubeRoutes],
@@ -13050,7 +13065,10 @@ function shutdown(reason) {
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 if (process.env.SUBFABRIC_DESKTOP === '1') {
-  process.on('message', message => { if (message && message.type === 'subfabric-quit') shutdown('desktop'); });
+  process.on('message', message => {
+    if (message?.type === 'subfabric-quit') shutdown('desktop');
+    if (process.platform === 'win32' && message?.type === 'subfabric-update-state') desktopUpdateState = message.state;
+  });
   process.on('disconnect', () => shutdown('desktop-disconnected'));
 }
 

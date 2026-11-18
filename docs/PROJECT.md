@@ -128,7 +128,8 @@
 | 路径 | 职责 |
 | --- | --- |
 | `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`migration.cjs` 只补缺继承旧版文件与浏览器状态，`installer.nsh` 复用旧安装目录，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
-| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 7 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式禁用后端托盘（由桌面壳自建托盘）并通过 IPC 报告实际 port/pid/version 就绪 |
+| `desktop/update.cjs` | Windows 安装版自动更新：筛选 GitHub Release、下载与复核 SHA-256，维护自动检查开关和下载状态 |
+| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 8 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式通过 IPC 报告就绪、转接 Windows 更新状态与指令 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 只读页签控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
@@ -527,9 +528,13 @@
   `draftAborts`、`rerecogJobs`、`projProcs`、`MEDIA_ALLOW`、`mediaMetaCache`、`logBuf`、`logClients`、
   `lifeClients`、`dlState`、`CHILDREN`、`realignJobs`、`diarizeJobs`、`subtitleCommits`、`deletedProjects`。
   放进路由段函数等于每请求重置。
-- **路由结构**：`SIMPLE_ROUTE_MAP` 承接同步无副作用端点，`API_SECTIONS` 前缀表分发到 7 个段函数
+- **路由结构**：`SIMPLE_ROUTE_MAP` 承接同步无副作用端点，`API_SECTIONS` 前缀表分发到 8 个段函数
   `handleWaveRoutes` / `handleFetchRoutes` / `handleAsrRoutes` / `handleLlmRoutes` / `handleLogsRoutes` /
-  `handleDiagRoutes` / `handleProjectsRoutes`，签名统一 `(req, res, u)`，段末 404 JSON 兜底，最后静态回落。
+  `handleDiagRoutes` / `handleProjectsRoutes` / `handleDesktopUpdateRoutes`，签名统一 `(req, res, u)`，段末 404 JSON 兜底，最后静态回落。
+- **Windows 更新数据流**：Electron 主进程通过自有 Node IPC 推送更新快照并接收四种固定指令（检查、启用、停用、安装）。
+  `GET /api/desktop-update` 返回状态，`POST /api/desktop-update/<action>` 接受指令。
+  仅 Windows 打包版启动更新器。主进程只为自身 Studio 顶层窗口对这些端点的同源请求附加本机控制 token。
+  更新源、缓存路径、校验与安装均由主进程控制。自动检查偏好写入 `.profile/update-settings.json`。
 - **安全基线**：Host 必须回环；有 Origin 的读写请求校验明确集合，无 Origin 的写请求须带
   `X-SubFabric-Token`；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用；`safeJoin` 解码后归一化并补路径
   分隔符边界，拒绝编码穿越。
@@ -1567,7 +1572,9 @@
   第 4 行、独占两列并空出右半边；因此 UWP 下这两个磁贴必须退回 `grid-column:auto`（`2+1+1=4`）。
   改这条规则前先数一遍「主卡占几行 × 后面还有几个 span 2」。
 - **设置分类**：全局设置六个一级分类为「外观与体验 / 语音识别 / 翻译与术语 / 识别与校对 / 下载与登录 /
-  性能与调度」；ASS 双语样式与后处理固定在稿件的 `#tab-settings`，不进全局设置。
+  性能与调度」。Windows Electron 安装版额外显示「软件更新」，含当前版本、手动检查、自动检查与下载开关、
+  下载进度及「安装并重启」。默认启动后检查，此后每六小时检查，下载完成通过托盘提示。安装经原生确认，
+  保存稿件并停止后台任务后交给 NSIS 原地升级和重启。ASS 双语样式与后处理固定在稿件的 `#tab-settings`。
 - **性能页卡片间距**：`#perf-dual-view` 里「双引擎分工性能测试」与「当前已应用的配置」是两张直接相邻的
   `.st-section`；`.st-panel` 的 flex `gap` 只作用到 `.perf-view` 这一层，两张卡片之间因此没有间距。
   现由 `.perf-view { display:flex; flex-direction:column; gap:16px }` 提供垂直间距（与其它设置面板一致），
@@ -2251,6 +2258,13 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   `build/electron/build-<id>/SubFabric-1.5.12.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
+- **可自动更新的 Release**：发布 `v<主>.<次>.<补丁>` 或 `v<主>.<次>.<补丁>-beta.<序号>`，
+  附上与标签前三段匹配的四段版号 NSIS 安装包 `SubFabric-<四段版号>-setup.exe`，并核对 GitHub
+  资产的 SHA-256 与字节数。每个发布包使用唯一四段版号。已发布的当前版本按发布时间识别同补丁版本的跨日构建；
+  缺少当前版本发布记录时按数值比较四段版号。beta 可接收预发布与正式包，正式版只接收正式包。
+  安装包缓存于系统临时目录中按安装目录区分的子目录。下载安装分别核对 SHA-256 和字节数，
+  成功提交安装前先保存稿件、停止自有后端，再以 `/S --updated --force-run /D=<当前安装目录>` 启动 NSIS。
+  `tests/windows-update-test.mjs` 覆盖发布筛选、分页、校验失败、缓存复用、取消与安装交接。
 - **安装与数据边界**：NSIS 安装允许选择目录，`desktop/installer.nsh` 优先复用当前 Electron、首个 Electron
   或旧 SEA/Inno 的已有安装目录（含 Inno 在 32 位 `WOW6432Node` 视图的登记）；调用方显式 `/D=` 时仍以调用方目录为准。默认按用户安装到
   `%LOCALAPPDATA%\Programs\SubFabric`（可改到任意可写目录，例如非系统盘目录），随包代码校验后复制进
