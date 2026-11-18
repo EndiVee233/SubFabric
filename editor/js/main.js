@@ -198,6 +198,7 @@ const state = {
   trackMode: 'single',   // 字幕轨模式: 'single'=单行轨(所有块挤一条) | 'double'=双行轨(重叠块自动分到第 2 条)
   selected: null,
   videoLoaded: false,
+  videoName: '',
   project: null          // 项目模式: { id, meta, loadPeaks } (project.js 维护; null=未用项目管理)
 };
 // Session-only acknowledgements; sentence signatures survive ASS row reconciliation.
@@ -484,6 +485,7 @@ function loadVideoUrl(url, name) {
   if (old && old !== url && String(old).startsWith('blob:')) URL.revokeObjectURL(old);
   video.src = url;
   state.videoUrl = url;
+  state.videoName = name || '';
   state.videoLoaded = true;
   timeline.setVideo(video);
   stageHint.classList.add('hidden');
@@ -8097,13 +8099,23 @@ function download(name, text, mime = 'text/plain;charset=utf-8') {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
+function editedAssFileName() {
+  const meta = state.project?.meta;
+  const videoName = meta ? (meta.video?.name?.trim() || meta.video?.path || '') : state.videoName;
+  const videoStem = videoName.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  const title = meta?.source?.title?.trim() || videoStem || meta?.name?.trim()
+    || state.fileName.replace(/\.(ass|ssa)$/i, '');
+  const stem = title.replace(/[<>:"/\\|?*\p{Cc}]/gu, '_').trim().replace(/\.+$/, '') || 'subtitle';
+  return stem + '_edited.ASS';
+}
+
 btnExport.addEventListener('click', () => {
   if (state.format === 'srt') {
     download(state.fileName.replace(/\.srt$/i, '') + '_edited.srt', serializeSRT(state.srtCues));
   } else if (state.format === 'ass' && state.assDoc) {
     const raw = state.assDoc.serialize();
     const out = applyPostProcess(raw, state.postProcessConfig, state.assStyleTargets);
-    download(state.fileName.replace(/\.(ass|ssa)$/i, '') + '_edited.ass', out);
+    download(editedAssFileName(), out);
   }
 });
 

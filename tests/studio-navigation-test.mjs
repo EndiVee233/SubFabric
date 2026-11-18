@@ -467,7 +467,7 @@ roleSelect.disabled = true; roleSelect.dispatchEvent(new Event('change'));
 assert.equal(choice.disabled, true, 'native disabled state reaches replacement control');
 choice.click(); assert.equal(choiceMenu.hidden, true);
 roleSelect.disabled = false; roleSelect.dispatchEvent(new Event('change'));
-const settingsSelect = $('word-convert-scope'), settingsChoice = $('word-convert-scope-choice');
+const settingsSelect = $('audio-mode'), settingsChoice = $('audio-mode-choice');
 let settingsChanges = 0; settingsSelect.addEventListener('change', () => settingsChanges++);
 settingsChoice.click();
 const enabledSettingsOption = choiceMenu.querySelectorAll('[data-choice-index]').find(row => Number(row.dataset.choiceIndex) !== settingsSelect.selectedIndex && !row.disabled);
@@ -555,6 +555,8 @@ assert.equal($('np-create').disabled, false, 'real selections enable creation');
 // ASS controls stay in the editor throughout global navigation, retaining node/value/listener identity.
 const assGroups = ['ass-style-group', 'ass-fx-group', 'word-convert-group'];
 const assNodes = new Map(assGroups.map(id => [id, $(id)]));
+assert.ok($('word-convert-group').hidden, 'ASS word conversion card is hidden');
+assert.ok($('btn-settings-ed').hidden, 'editor toolbar hides the global settings shortcut');
 const assInput = $('ass-style-zh-size'); const assValue = assInput.value; let assChanges = 0;
 assInput.addEventListener('input', () => assChanges++);
 function assertAssInEditor(context) {

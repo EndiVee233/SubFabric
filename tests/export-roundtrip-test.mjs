@@ -9,6 +9,8 @@
  * 与 serialize() 不是同一份代码，很可能只有其中一条有问题。
  */
 
+import assert from 'node:assert/strict';
+import { runInNewContext } from 'node:vm';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -102,4 +104,35 @@ console.log('  最晚 3 条起点: ' + list.slice(-3).map(s => s[0].toFixed(2)).
 
 console.log('');
 console.log(pass + ' passed, ' + fail + ' failed');
+console.log('\n== 普通导出：ASS 以视频标题命名，保留字幕内容 ==');
+const main = fs.readFileSync(path.join(REPO, 'editor/js/main.js'), 'utf8');
+const handlerStart = main.indexOf('function editedAssFileName(');
+const handlerEnd = main.indexOf('/* 导出项目压缩包', handlerStart);
+assert.ok(handlerStart >= 0 && handlerEnd > handlerStart);
+const state = { format: 'ass', fileName: 'subtitle.ass', videoName: '', assDoc: doc };
+let clickExport, downloaded;
+runInNewContext(main.slice(handlerStart, handlerEnd), {
+  state,
+  btnExport: { addEventListener(type, callback) { assert.equal(type, 'click'); clickExport = callback; } },
+  download: (name, text) => { downloaded = { name, text }; },
+  applyPostProcess: text => text,
+  serializeSRT: () => 'SRT body',
+});
+for (const [meta, videoName, fileName, expected] of [
+  [{ source: { title: '  视频标题：第 1 集 | 测试?  ' }, video: { name: 'download-id.mp4' }, name: '稿件名' }, '', 'subtitle.ass', '视频标题：第 1 集 _ 测试__edited.ASS'],
+  [{ video: { name: '本地素材.v2.MP4' }, name: '稿件名' }, '', 'subtitle.ass', '本地素材.v2_edited.ASS'],
+  [{ video: { path: 'C:\\media\\视频.mkv' }, name: '旧稿件' }, '', 'subtitle.ass', '视频_edited.ASS'],
+  [{ name: '只有字幕的稿件' }, '上个稿件的视频.mp4', 'subtitle.ass', '只有字幕的稿件_edited.ASS'],
+  [null, '直开视频.mov', 'subtitle.ass', '直开视频_edited.ASS'],
+  [null, '', '原字幕.SSA', '原字幕_edited.ASS'],
+]) {
+  Object.assign(state, { project: meta ? { meta } : null, videoName, fileName });
+  clickExport();
+  assert.deepEqual(downloaded, { name: expected, text: outText });
+}
+Object.assign(state, { format: 'srt', fileName: 'subtitle.srt', videoName: '本地素材.mp4' });
+clickExport();
+assert.deepEqual(downloaded, { name: 'subtitle_edited.srt', text: 'SRT body' });
+
+
 process.exit(fail ? 1 : 0);

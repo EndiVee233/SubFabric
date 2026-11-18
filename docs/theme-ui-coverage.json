@@ -877,7 +877,7 @@
     },
     {
       "file": "editor/js/main.js",
-      "sha256": "a351799a96f405b0d30562d5d8bca0245e29bccef10ac60428f6eb742b16f954",
+      "sha256": "6ccf0b4c34757b121723858ce7958ede5cb2fafb70e4fe89044b8fb2580abeeb",
       "ids": [],
       "dynamicIds": [
         "${escapeHtml(n.id)}",
@@ -888,239 +888,239 @@
       ],
       "dynamic": [
         {
-          "line": 226,
+          "line": 227,
           "method": "createElement"
         },
         {
-          "line": 244,
+          "line": 245,
           "method": "innerHTML"
         },
         {
-          "line": 294,
+          "line": 295,
           "method": "insertAdjacentHTML"
-        },
-        {
-          "line": 1012,
-          "method": "innerHTML"
         },
         {
           "line": 1014,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1016,
           "method": "createElement"
         },
         {
-          "line": 1484,
+          "line": 1486,
           "method": "innerHTML"
         },
         {
-          "line": 1487,
+          "line": 1489,
           "method": "innerHTML"
         },
         {
-          "line": 2134,
+          "line": 2136,
           "method": "replaceChildren"
         },
         {
-          "line": 2135,
+          "line": 2137,
           "method": "createElement"
         },
         {
-          "line": 2144,
+          "line": 2146,
           "method": "createElement"
         },
         {
-          "line": 2988,
+          "line": 2990,
           "method": "replaceChildren"
         },
         {
-          "line": 2988,
+          "line": 2990,
           "method": "replaceChildren"
         },
         {
-          "line": 2999,
+          "line": 3001,
           "method": "innerHTML"
         },
         {
-          "line": 3178,
+          "line": 3180,
           "method": "innerHTML"
         },
         {
-          "line": 3187,
+          "line": 3189,
           "method": "innerHTML"
         },
         {
-          "line": 3237,
+          "line": 3239,
           "method": "innerHTML"
         },
         {
-          "line": 3291,
+          "line": 3293,
           "method": "innerHTML"
         },
         {
-          "line": 4020,
+          "line": 4022,
           "method": "innerHTML"
         },
         {
-          "line": 5847,
+          "line": 5849,
           "method": "innerHTML"
         },
         {
-          "line": 5848,
+          "line": 5850,
           "method": "innerHTML"
         },
         {
-          "line": 6054,
+          "line": 6056,
           "method": "innerHTML"
         },
         {
-          "line": 6072,
+          "line": 6074,
           "method": "innerHTML"
         },
         {
-          "line": 6159,
+          "line": 6161,
           "method": "innerHTML"
         },
         {
-          "line": 6244,
+          "line": 6246,
           "method": "innerHTML"
         },
         {
-          "line": 6270,
+          "line": 6272,
           "method": "innerHTML"
         },
         {
-          "line": 6349,
+          "line": 6351,
           "method": "innerHTML"
         },
         {
-          "line": 6774,
+          "line": 6776,
           "method": "innerHTML"
-        },
-        {
-          "line": 6778,
-          "method": "createElement"
         },
         {
           "line": 6780,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6828,
-          "method": "innerHTML"
-        },
-        {
-          "line": 6994,
           "method": "createElement"
+        },
+        {
+          "line": 6782,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6830,
+          "method": "innerHTML"
         },
         {
           "line": 6996,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7537,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7602,
-          "method": "innerHTML"
-        },
-        {
-          "line": 7763,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8093,
           "method": "createElement"
         },
         {
-          "line": 8131,
+          "line": 6998,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7539,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7604,
+          "method": "innerHTML"
+        },
+        {
+          "line": 7765,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8095,
           "method": "createElement"
         },
         {
-          "line": 8153,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8155,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8155,
-          "method": "innerHTML"
-        },
-        {
-          "line": 8318,
+          "line": 8143,
           "method": "createElement"
         },
         {
-          "line": 8346,
+          "line": 8165,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8167,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8167,
+          "method": "innerHTML"
+        },
+        {
+          "line": 8330,
           "method": "createElement"
         },
         {
-          "line": 8357,
+          "line": 8358,
+          "method": "createElement"
+        },
+        {
+          "line": 8369,
           "method": "innerHTML"
         },
         {
-          "line": 8462,
+          "line": 8474,
           "method": "innerHTML"
         },
         {
-          "line": 8486,
+          "line": 8498,
           "method": "insertAdjacentHTML"
         },
         {
-          "line": 8487,
+          "line": 8499,
           "method": "innerHTML"
         },
         {
-          "line": 8518,
+          "line": 8530,
           "method": "innerHTML"
         },
         {
-          "line": 8781,
+          "line": 8793,
           "method": "innerHTML"
         },
         {
-          "line": 8936,
+          "line": 8948,
           "method": "replaceChildren"
         },
         {
-          "line": 8942,
+          "line": 8954,
           "method": "innerHTML"
         },
         {
-          "line": 8987,
+          "line": 8999,
           "method": "innerHTML"
         },
         {
-          "line": 8988,
+          "line": 9000,
           "method": "innerHTML"
         },
         {
-          "line": 9009,
+          "line": 9021,
           "method": "innerHTML"
         },
         {
-          "line": 9022,
+          "line": 9034,
           "method": "innerHTML"
         },
         {
-          "line": 9351,
+          "line": 9363,
           "method": "createElement"
         },
         {
-          "line": 9356,
+          "line": 9368,
           "method": "innerHTML"
         },
         {
-          "line": 9365,
+          "line": 9377,
           "method": "createElement"
         },
         {
-          "line": 9371,
+          "line": 9383,
           "method": "createElement"
         },
         {
-          "line": 9373,
+          "line": 9385,
           "method": "createElement"
         }
       ],
@@ -2160,7 +2160,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "ce03f47be4e85ff47755715058e0b47c17a46904d1f791ad2e8c60c4734853ab",
+      "sha256": "a75d6f11d5451414280eed76c994406062a25ff70187a27e49ea08d3f996ad8b",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",

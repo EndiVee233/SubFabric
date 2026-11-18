@@ -131,7 +131,7 @@
     <div class="tb-group tb-right">
       <span id="save-state" class="save-state" hidden title="编辑内容会实时自动保存到项目，不怕忘记导出"></span>
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
-      <button class="btn" id="btn-settings-ed" data-ico="sliders" title="识别模型 / 字幕翻译（LLM）设置（与右侧「设置」页签区分）">全局设置</button>
+      <button class="btn" id="btn-settings-ed" hidden data-ico="sliders" title="识别模型 / 字幕翻译（LLM）设置（与右侧「设置」页签区分）">全局设置</button>
       <button class="btn btn-accent" id="btn-export" disabled data-ico="download" title="导出原始格式(含逐词特效)">导出字幕</button>
       <button class="btn" id="btn-export-pack" disabled data-ico="download" title="把项目打包成 zip：字幕 / 识别结果 / 译文 / 备注 / 操作日志。不含视频与音频 —— 导入端选好视频后自动重新生成，所以包很小">导出项目包</button>
     </div>
@@ -269,7 +269,7 @@
       </div>
       <div class="settings-list">
 
-        <div class="set-group" id="word-convert-group">
+        <div class="set-group" id="word-convert-group" hidden>
           <div class="set-group-head"><i class="set-dot" style="background:#8b7cf6"></i><span class="set-group-title">ASS 英文逐词转换</span></div>
           <div class="setting-row"><label class="setting-name" for="word-convert-style">英文样式</label>
             <select id="word-convert-style" class="select select-dark" disabled><option value="">先打开 ASS 文件</option></select></div>
