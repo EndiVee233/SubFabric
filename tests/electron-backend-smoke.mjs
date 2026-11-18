@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
@@ -22,6 +23,25 @@ else {
       const response = await fetch(backend.origin + route, { signal: AbortSignal.timeout(15000) });
       assert.equal(response.status, 200, route);
     }
+    const loginRoute = backend.origin + '/api/fetch/bilibili-login';
+    const auth = { 'X-SubFabric-Token': backend.token };
+    const signal = AbortSignal.timeout(5000);
+    const publishLoginState = state => new Promise((resolve, reject) => {
+      backend.child.send({ type: 'subfabric-bilibili-login-state', state }, error => error ? reject(error) : resolve());
+    });
+    await publishLoginState('idle');
+    assert.equal((await fetch(loginRoute, { signal })).status, 404);
+    assert.deepEqual(await (await fetch(loginRoute, { headers: auth, signal })).json(), { state: 'idle' });
+    const open = once(backend.child, 'message', { signal });
+    assert.equal((await fetch(loginRoute, { method: 'POST', headers: auth, signal })).status, 202);
+    assert.deepEqual((await open)[0], { type: 'subfabric-bilibili-login-open' });
+    await publishLoginState('pending');
+    const complete = (headers, body) => fetch(loginRoute + '/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body, signal,
+    });
+    assert.equal((await complete({}, '{}')).status, 403);
+    assert.equal((await complete({ ...auth, Origin: backend.origin }, '{}')).status, 404);
+    assert.equal((await complete(auth, '{}')).status, 400);
     fs.mkdirSync(path.join(dataRoot, 'projects/keep'), { recursive: true });
     fs.writeFileSync(path.join(dataRoot, 'projects/keep/user.txt'), 'preserve user file');
     await backend.stop(); assert.equal(backend.child.exitCode, 0);

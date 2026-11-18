@@ -4564,6 +4564,7 @@ async function renderAsrModels(providedStatus = null) {
     return v + ' · ' + (keys || 'Cookie') + enc;
   }
   async function loadFetchSettings() {
+    void loadDesktopBiliLogin();
     try {
       const d = await (await fetch('/api/fetch/settings', { signal: AbortSignal.timeout(8000) })).json();
       if ($('#st-fetch-quality')) $('#st-fetch-quality').value = d.quality || 'best';
@@ -4643,7 +4644,49 @@ async function renderAsrModels(providedStatus = null) {
   });
   const cookieClearBtn = document.getElementById('st-fetch-cookie-clear');
   if (cookieClearBtn) cookieClearBtn.addEventListener('click', async () => {
-    if (await saveFetchSettings({ biliCookie: '' })) toast('已清除 bilibili Cookie', 3000);
+    if (await saveFetchSettings({ biliCookie: '' })) toast('已清除 bilibili 登录态', 3000);
+  });
+  const biliLoginButton = $('#st-fetch-bili-login');
+  const biliLoginRoute = '/api/fetch/bilibili-login';
+  async function loadDesktopBiliLogin() {
+    if (!biliLoginButton?.hidden || window.androidRpc || !navigator.userAgent?.includes('Electron/')) return;
+    try {
+      const response = await fetch(biliLoginRoute, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+      if (!response.ok) return;
+      biliLoginButton.hidden = false;
+      $('#st-fetch-bili-hint').hidden = false;
+      $('#st-fetch-cookie-manual').hidden = true;
+      $('#st-fetch-cookie-save').hidden = true;
+    } catch {}
+  }
+  biliLoginButton?.addEventListener('click', async () => {
+    if (biliLoginButton.disabled) return;
+    const notice = $('#st-fetch-bili-status');
+    notice.hidden = false;
+    notice.textContent = '请在 bilibili 登录窗口中完成登录。';
+    biliLoginButton.disabled = true;
+    cookieClearBtn.disabled = true;
+    try {
+      const opened = await fetch(biliLoginRoute, { method: 'POST', signal: AbortSignal.timeout(3000) });
+      if (!opened.ok) throw Error('无法打开 bilibili 登录窗口');
+      const deadline = Date.now() + 260000;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const response = await fetch(biliLoginRoute, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+        if (!response.ok) throw Error('无法读取 bilibili 登录状态');
+        const { state } = await response.json();
+        if (state === 'pending' || state === 'idle') continue;
+        if (state === 'saved') {
+          notice.textContent = 'bilibili 登录已保存。';
+          await loadFetchSettings();
+        } else if (state === 'cancelled') notice.textContent = '已关闭 bilibili 登录窗口。';
+        else if (state === 'timeout') notice.textContent = 'bilibili 登录超时，请重新打开登录窗口。';
+        else notice.textContent = 'bilibili 登录未保存，请重试。';
+        return;
+      }
+      notice.textContent = 'bilibili 登录超时，请重新打开登录窗口。';
+    } catch { notice.textContent = 'bilibili 登录未完成，请重试。'; }
+    finally { biliLoginButton.disabled = false; cookieClearBtn.disabled = false; }
   });
   const youtubeFile = $('#st-fetch-youtube-file'), youtubeImport = $('#st-fetch-youtube-import');
   if (youtubeImport && youtubeFile) youtubeImport.addEventListener('click', () => youtubeFile.click());

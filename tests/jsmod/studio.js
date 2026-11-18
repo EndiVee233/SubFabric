@@ -2452,12 +2452,15 @@ function updateUwpGlow() {
   uwpGlowFrame = 0;
   if (document.body.dataset.design !== 'uwp' || !uwpGlowPoint) return;
   const px = uwpGlowPoint.x, py = uwpGlowPoint.y;
+  const control = uwpGlowPoint.control;
   const radius = 46;
   const cards = uwpGlowCards();
   const rects = new Map();
   let activeEl = null;
   for (const el of cards) {
     const r = el.getBoundingClientRect();
+    // The child control owns Reveal while the pointer is over it.
+    if (control && control !== el && el.contains(control)) { setUwpGlow(el, 0, 0, 0); continue; }
     rects.set(el, r);
     if (r.width <= 0 || r.height <= 0) { setUwpGlow(el, 0, 0, 0); continue; }
     const dx = Math.max(r.left - px, 0, px - r.right);
@@ -2495,7 +2498,7 @@ function updateUwpGlow() {
 }
 function scheduleUwpGlow(e) {
   if (document.body.dataset.design !== 'uwp') return;
-  uwpGlowPoint = { x: e.clientX, y: e.clientY };
+  uwpGlowPoint = { x: e.clientX, y: e.clientY, control: uwpTilesTarget(e) };
   if (uwpGlowFrame) return;
   if (typeof requestAnimationFrame === 'function') uwpGlowFrame = requestAnimationFrame(updateUwpGlow);
   else updateUwpGlow();

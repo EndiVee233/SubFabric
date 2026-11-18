@@ -229,6 +229,52 @@ try {
     }
     console.log(`${pack.id} ${mode}: captured`);
   }
+  await b.eval(`(() => {
+    const key = 'subfabric-studio-v1';
+    const next = JSON.stringify({ ...JSON.parse(localStorage.getItem(key)), themePack: 'windows-uwp', mode: 'dark' });
+    localStorage.setItem(key, next);
+    window.dispatchEvent(new StorageEvent('storage', { key, newValue: next }));
+  })()`);
+  await b.setViewport(2560, 1350);
+  await go('#/settings');
+  await b.eval('document.querySelector("#sf-settings-tab-storage").click()');
+  await b.waitFor('document.querySelector("#stg-scan-state").textContent.includes("上次扫描")');
+  const settingsWidth = await b.eval('document.querySelector(".settings-inner").getBoundingClientRect().width');
+  assert.ok(settingsWidth >= 1750 && settingsWidth <= 1960, `wide settings width: ${settingsWidth}`);
+  const storage = await b.eval(`(() => {
+    const panel = document.querySelector('#st-panel-storage').getBoundingClientRect();
+    const nav = document.querySelector('#st-view .st-tabs').getBoundingClientRect();
+    return { width: panel.width, gap: panel.left - nav.right };
+  })()`);
+  assert.ok(storage.width >= 1400 && storage.gap >= 16 && storage.gap <= 40, JSON.stringify(storage));
+  await collect('wide-storage', '#st-panel-storage', true);
+  await b.eval('document.querySelector("#sf-settings-tab-enhance").click()');
+  assert.equal(await b.eval('[...document.querySelectorAll("#st-panel-enhance .hw-mine, #st-word-realign-note")].filter(el => el.hidden && el.getClientRects().length === 0).length'), 2);
+  await b.eval('document.querySelector("#sf-settings-tab-fetch").click()');
+  assert.ok(await b.eval('document.querySelector("#st-fetch-youtube-card").getClientRects().length === 0'));
+  await go('#/new');
+  const columns = await b.eval('getComputedStyle(document.querySelector("#np-view .ws-grid")).gridTemplateColumns');
+  assert.equal(columns.split(' ').length, 3, `wide new-project columns: ${columns}`);
+  await collect('wide-new', '#np-view', true);
+  await go('#/home');
+  await b.waitFor('document.querySelector("#home-list .pc-details")?.getBoundingClientRect().width > 0');
+  const hover = async selector => {
+    const [x, y] = await b.eval(`(() => {
+      const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return [r.x + r.width / 2, r.y + r.height / 2];
+    })()`);
+    await b.mouse('mouseMoved', x, y, { button: 'none', buttons: 0 });
+    await settle();
+    return b.eval(`(() => {
+      const card = document.querySelector('#home-list .proj-card');
+      const button = card.querySelector('.pc-details');
+      return [card.style.getPropertyValue('--uwp-face'), button.style.getPropertyValue('--uwp-face')];
+    })()`);
+  };
+  assert.deepEqual(await hover('#home-list .pc-name'), ['1', ''], 'card face lights by itself');
+  assert.deepEqual(await hover('#home-list .pc-details'), ['0', '1'], 'button lights without the parent card');
+  assert.deepEqual(await hover('#home-list .pc-name'), ['1', '0'], 'leaving the button restores the card light');
+  report.wideDesktop = { settingsWidth, storage, columns, reveal: 'passed', hiddenSettings: 'passed' };
   const persisted = await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})');
   await b.goto(server.origin + '/?theme-persistence=1#/batch');
   await b.waitFor('document.readyState === "complete" && document.body && window.__sfStudio && window.__dbg');

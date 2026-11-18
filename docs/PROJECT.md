@@ -129,6 +129,7 @@
 | --- | --- |
 | `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`migration.cjs` 只补缺继承旧版文件与浏览器状态，`installer.nsh` 复用旧安装目录，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
 | `desktop/update.cjs` | Windows 安装版自动更新：筛选 GitHub Release、下载与复核 SHA-256，维护自动检查开关和下载状态 |
+| `desktop/bilibili-login.cjs` | 在 Electron 独立会话中打开 bilibili 官方登录页，递交该会话的登录态并在结束时清理会话 |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 8 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式通过 IPC 报告就绪、转接 Windows 更新状态与指令 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 只读页签控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
@@ -536,6 +537,11 @@
   `GET /api/desktop-update` 返回状态，`POST /api/desktop-update/<action>` 接受指令。
   仅 Windows 打包版启动更新器。主进程只为自身 Studio 顶层窗口对这些端点的同源请求附加本机控制 token。
   更新源、缓存路径、校验与安装均由主进程控制。自动检查偏好写入 `.profile/update-settings.json`。
+- **Electron 下载登录**：Studio 的同源主帧经 `/api/fetch/bilibili-login` 发起登录和读取进度。主进程以临时
+  Chromium 会话打开 bilibili 官方登录页，仅接收该会话中属于 bilibili 的根路径安全会话 Cookie。
+  凭据走带控制 token 的独立回环请求，Studio 只收到状态。后端到 bilibili 验证登录成功后才通过
+  `secret-store.js` 加密保存，沿用现有视频下载设置；关闭、失败、超时均结束窗口并清理临时会话。
+  登录窗口与 Studio 分别执行各自的导航策略，关闭外部弹窗、网页权限、文件下载和 Node 集成。
 - **安全基线**：Host 必须回环；有 Origin 的读写请求校验明确集合，无 Origin 的写请求须带
   `X-SubFabric-Token`；`/__test/` 仅 `SUBFABRIC_TEST_MODE=1` 启用；`safeJoin` 解码后归一化并补路径
   分隔符边界，拒绝编码穿越。
@@ -1591,9 +1597,15 @@
   `.perf-view[hidden]` 仍保持 `display:none`。不要改成给 `.st-section` 加 margin —— 设置页卡片规则带
   `#st-view` ID 且写死 `margin:0`，普通选择器会被覆盖。
 - **热词自动保存**：「识别与校对」编辑热词或强度后，合并连续输入并保存到本机设置；正常退出时先写完待保存输入。
-  挖掘热词仍可交给 LLM 判断，使用当前大模型方案。设置浮动状态 `#st-msg` 在空闲时不占位。
-  `tests/studio-navigation-test.mjs` 覆盖自动保存、退出写入和模型选择，`tools/theme-visual-test.mjs`
-  核对前置尺寸、方案表单和存储空间的实际 Chromium 布局。模型列表的请求协议使用回环服务测试。
+  设置页隐藏操作日志挖掘及 LLM 分析选项、重排逐词时间说明卡片。编辑器仍提供逐词对齐操作。
+  设置浮动状态 `#st-msg` 在空闲时不占位。`tests/studio-navigation-test.mjs` 覆盖自动保存、退出写入和模型选择。
+- **桌面宽屏与悬停**：设置、主页、稿件库及工作页在 1500px 起随窗口加宽，最长正文保留阅读行长；
+  新建项目在 1900px 起并排展示预览与进度、输入与配置、生成设置。Windows 10 主题中按钮独占指针位置的
+  Reveal，其父卡片停止面光与边光。用 `tools/theme-visual-test.mjs` 覆盖宽屏布局与 Chromium 指针移动。
+- **下载与登录设置**：桌面检测到 Electron 登录能力后显示「登录 bilibili」及本机登录态管理，浏览器保留
+  手动登录态输入。设置页隐藏 YouTube 登录卡片，画质、代理及已有下载偏好继续使用。
+  宽屏布局、Reveal 和隐藏入口已完成且已验证。Windows x64 打包版已实测打开官方登录页和取消反馈，
+  加密写入及复用由模拟登录接口验证，真实账号登录、会员画质下载和安装覆盖未运行。
 - **设置作用域**：字体/字号/颜色等 ASS 设置写入当前项目稿件，后处理特效属本机偏好；文件夹只在浏览器
   本地记录分组，不移动 `projects/` 实际文件。
 - **原型隔离**：`prototypes/` 各原型只用合成数据与独立命名空间，不连接真实 API、设置或 `projects/`；
@@ -2704,7 +2716,8 @@ yt-dlp（2026.08 与 2026.10 的 Python API 都已核对同为此格式），并
   不把 `server.js` 拆成多文件；跨请求状态不得放进路由段函数体；新增后台任务必须有超时/看门狗与异常收尾；
   新增用户可见文案进 `editor/lang/zh-CN.json`（键=原文）。SEA 脚本保留为旧链路，当前安装主链路是 NSIS。
 - **桌面安全与资产**：保持 sandbox/contextIsolation 开启、nodeIntegration 关闭、无 preload；
-  只同源导航，新窗口 deny，http(s) 外链先确认。只校验并同步白名单代码/vendor，设置、项目、视频、模型与
+  Studio 只允许同源导航，新窗口 deny，http(s) 外链先确认。bilibili 登录窗口使用 §3 的独立会话与域名限制。
+  只校验并同步白名单代码/vendor，设置、项目、视频、模型与
   已下载运行时不随包复制或删除；旧版状态仅按 §3–§4 的既有流程只补缺继承，保留来源，不扩大迁移范围。关闭先冻结编辑再 flushSave，
   保存失败默认保持编辑、丢弃须明确确认；quit / IPC 断线仅回收自有进程且必须有超时。
 - **敏感值**：桌面统一走 `editor/secret-store.js`（DPAPI 密文，降级 AES）；Android 走 `LlmStore` 的 Android Keystore AES-GCM，不进命令行参数、不进日志、

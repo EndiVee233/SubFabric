@@ -27,6 +27,7 @@
       "backend.cjs",
       "security.cjs",
       "migration.cjs",
+      "bilibili-login.cjs",
       "update.cjs",
       "package.json"
     ],

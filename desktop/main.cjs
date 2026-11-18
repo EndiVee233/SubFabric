@@ -7,6 +7,7 @@ const { spawn } = require('node:child_process');
 const { startBackend } = require('./backend.cjs');
 const { sameOrigin, externalURL } = require('./security.cjs');
 const { createUpdater, fetchWithElectron, ACTIONS } = require('./update.cjs');
+const { createBilibiliLogin, LOGIN_ROUTE } = require('./bilibili-login.cjs');
 const {
   LEGACY_PORTS, migrateLegacyWorkspace, migrateLegacyProfile, hasWorkspaceState,
   readReport, writeReport, importLegacyBrowserState, applyBrowserState
@@ -15,6 +16,7 @@ const {
 let backend, window, tray, quitting = false, quitPending = false, ready = false, trayHintShown = false, storageError = null;
 let browserMigration = null;
 let updater;
+let biliLogin;
 const smokeReport = process.env.SUBFABRIC_ELECTRON_SMOKE_REPORT;
 
 /* ── 数据目录与旧版继承 ──────────────────────────────────────────────────
@@ -175,6 +177,7 @@ async function quitApp(code) {
   if (quitting) return;
   quitting = true;
   updater?.stop();
+  biliLogin?.close();
   if (tray) { try { tray.destroy(); } catch {} tray = null; }
   if (backend) {
     try { await backend.stop(); }
@@ -226,18 +229,26 @@ async function installUpdate(installer, version) {
   }
 }
 
-function startWindowsUpdates() {
-  if (process.platform !== 'win32' || !app.isPackaged) return;
+function registerDesktopRequests() {
   const base = backend.origin + '/api/desktop-update';
-  const routes = new Set([base, ...ACTIONS.map(action => base + '/' + action)]);
+  const biliRoute = backend.origin + LOGIN_ROUTE;
+  const routes = new Set([biliRoute, base, ...ACTIONS.map(action => base + '/' + action)]);
   const contents = window.webContents;
-  contents.session.webRequest.onBeforeSendHeaders({ urls: [backend.origin + '/api/desktop-update*'] }, (details, callback) => {
+  contents.session.webRequest.onBeforeSendHeaders({ urls: [biliRoute, base + '*'] }, (details, callback) => {
     if (!contents.isDestroyed() && details.webContentsId === contents.id && details.frame === contents.mainFrame
       && details.initiatorOrigin === backend.origin && routes.has(details.url)) {
       details.requestHeaders['X-SubFabric-Token'] = backend.token;
     }
     callback({ requestHeaders: details.requestHeaders });
   });
+  biliLogin = createBilibiliLogin({ BrowserWindow, session, backend, parent: window });
+  backend.child.on('message', message => {
+    if (!quitting && message?.type === 'subfabric-bilibili-login-open') biliLogin.open();
+  });
+}
+
+function startWindowsUpdates() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
   let notifiedVersion;
   // NSIS scans running processes under the destination directory. Its own image must live outside it.
   const key = createHash('sha256').update(programRoot.toLowerCase()).digest('hex').slice(0, 24);
@@ -316,6 +327,7 @@ async function launch() {
       });
     }
   }
+  registerDesktopRequests();
   startWindowsUpdates();
   await window.loadURL(backend.origin + '/editor/studio.html');
   createTray();

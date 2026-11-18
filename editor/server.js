@@ -5116,6 +5116,7 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
  * Cookie/代理 存在 asr/settings.json 的 fetch 段; **对外只回"有没有", 绝不回传值**。 */
 const FETCH_SCRIPT = path.join(ASR_DIR, 'fetch', 'fetch_cli.py');
 const FETCH_STAGE = '下载中';
+let desktopBiliLoginState;
 /* 敏感值统一走 secret-store(require 在文件头部): bilibili Cookie / LLM API Key 都走密文, 不明文进 settings.json */
 /* (这里曾有 fetchJobs 下载登记表: 全项目只有写 / 删两个动作, 从无人读取 —— 纯死状态, 已删。
  *  后来确实出现了"按项目反查下载进程"的需求: 删除项目时必须先杀掉它 —— 那份登记
@@ -5263,6 +5264,7 @@ async function biliLoginCheck(cookieText) {
         'Referer': 'https://www.bilibili.com/',
         'Cookie': ck,
       },
+      redirect: 'error',
       signal: AbortSignal.timeout(12000),
     });
     const j = await r.json().catch(() => null);
@@ -5271,7 +5273,7 @@ async function biliLoginCheck(cookieText) {
     if (!d.isLogin) {
       return {
         ok: false, isLogin: false, code: j.code,
-        message: j.code === -101 ? '未登录：Cookie 不完整或已过期，重新复制一份' : ('未登录（code=' + j.code + '）'),
+        message: j.code === -101 ? '登录信息不完整或已过期' : ('未登录（code=' + j.code + '）'),
       };
     }
     const vip = d.vipStatus === 1;
@@ -9807,6 +9809,40 @@ function handleFetchRoutes(req, res, u) {
 
   /* ═══════════ 初稿 / 语音识别模型 ═══════════ */
 /* 下载相关的设置路由: GET/POST /api/fetch/settings（Cookie 只写不读回） */
+  if (pathname === '/api/fetch/bilibili-login' || pathname === '/api/fetch/bilibili-login/complete') {
+    if (!desktopBiliLoginState || !nativeAuthorized(req)) return sendJson(res, 404, { error: 'not found' });
+    if (pathname.endsWith('/complete')) {
+      // Session material comes only from the privileged desktop process, never from Studio.
+      if (req.method !== 'POST' || req.headers.origin || desktopBiliLoginState !== 'pending') {
+        return sendJson(res, 404, { error: 'not found' });
+      }
+      return readBody(req, res, 8 * 1024, async (error, body) => {
+        try {
+          if (error) return sendJson(res, 400, { ok: false });
+          let value;
+          try { value = JSON.parse(body.toString('utf8'))?.session; } catch {}
+          if (typeof value !== 'string' || !/^[^\s;\x00-\x1f\x7f]{1,4096}$/.test(value)) {
+            return sendJson(res, 400, { ok: false });
+          }
+          const cookie = 'SESSDATA=' + value;
+          const check = await biliLoginCheck(cookie);
+          if (res.destroyed) return;
+          if (!check.isLogin || desktopBiliLoginState !== 'pending') return sendJson(res, 409, { ok: false });
+          patchFetchSettings({ biliCookie: '', biliCookieEnc: secretStore.encrypt(cookie), biliCookieSavedAt: new Date().toISOString() });
+          return sendJson(res, 200, { ok: true });
+        } catch { if (!res.destroyed) return sendJson(res, 500, { ok: false }); }
+      });
+    }
+    if (req.method === 'GET') return sendJson(res, 200, { state: desktopBiliLoginState });
+    if (req.method === 'POST' && process.connected) {
+      process.send({ type: 'subfabric-bilibili-login-open' }, error => {
+        if (!res.destroyed) sendJson(res, error ? 503 : 202, { ok: !error });
+      });
+      return;
+    }
+    return sendJson(res, 404, { error: 'not found' });
+  }
+
   if (pathname === '/api/fetch/settings' && req.method === 'GET') {
     return sendJson(res, 200, fetchPublicSettings());
   }
@@ -13145,6 +13181,7 @@ if (process.env.SUBFABRIC_DESKTOP === '1') {
   process.on('message', message => {
     if (message?.type === 'subfabric-quit') shutdown('desktop');
     if (process.platform === 'win32' && message?.type === 'subfabric-update-state') desktopUpdateState = message.state;
+    if (message?.type === 'subfabric-bilibili-login-state') desktopBiliLoginState = message.state;
   });
   process.on('disconnect', () => shutdown('desktop-disconnected'));
 }
