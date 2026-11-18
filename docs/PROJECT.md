@@ -142,7 +142,7 @@
 | `tests/` | Node/Python 测试与统一入口 `tests/run-all.mjs`；`tests/jsmod/` 是前端自动同步镜像（入库）；`electron-desktop-test.mjs` 检查 payload、旧版数据/路径/浏览器偏好迁移、路径与窗口安全边界，`electron-backend-smoke.mjs` 检查随包 Node、接口、重启保留数据与断线退出 |
 | `tools/` | 探针与验收脚本：`build-install.mjs`（旧链路事务构建入口）、`generate-studio.mjs`、`studio-install.mjs`、`repair15-regression.mjs`；Electron 安装构建改走 `desktop/` |
 | `tools/templates/studio.html` | Studio 入口的唯一上游模板，改界面先改模板再生成 |
-| `prototypes/` | 与生产隔离的无构建原型：`cue-card-redesign/`、`subtitle-editor/`、`adaptive-selection/` |
+| `prototypes/` | 与生产隔离的无构建原型：`cue-card-redesign/`、`subtitle-editor/`、`adaptive-selection/`、`wide-desktop/` |
 | `build/` | 打包产物目录：`electron-stage/` 为 payload、真实 Node 与 manifest，`electron/` 为 NSIS 输出；旧 `installer/` 的 `.iss`、图标与启动脚本保留入库 |
 | `docs/` | 本文件 + `ui-integration-baseline.json`、`repair15-baseline.json` 等被测试读取的数据文件 |
 | `main.py` | 历史遗留的 Python 字幕处理工具（`ass`/`srt`/`config`/`fonts` 子命令与 GUI），与编辑器主线关系弱 |
@@ -1599,17 +1599,18 @@
 - **热词自动保存**：「识别与校对」编辑热词或强度后，合并连续输入并保存到本机设置；正常退出时先写完待保存输入。
   设置页隐藏操作日志挖掘及 LLM 分析选项、重排逐词时间说明卡片。编辑器仍提供逐词对齐操作。
   设置浮动状态 `#st-msg` 在空闲时不占位。`tests/studio-navigation-test.mjs` 覆盖自动保存、退出写入和模型选择。
-- **桌面宽屏与悬停**：设置、主页、稿件库及工作页在 1500px 起随窗口加宽，最长正文保留阅读行长；
-  新建项目在 1900px 起并排展示预览与进度、输入与配置、生成设置。Windows 10 主题中按钮独占指针位置的
-  Reveal，其父卡片停止面光与边光。用 `tools/theme-visual-test.mjs` 覆盖宽屏布局与 Chromium 指针移动。
+- **桌面布局与悬停**：生产界面采用原有紧凑宽度，新建项目沿用原列布局。Windows 10 主题中按钮独占
+  指针位置的 Reveal，其父卡片停止面光与边光。`tools/theme-visual-test.mjs` 覆盖 2560px 下的布局和指针移动。
 - **下载与登录设置**：桌面检测到 Electron 登录能力后显示「登录 bilibili」及本机登录态管理，浏览器保留
   手动登录态输入。设置页隐藏 YouTube 登录卡片，画质、代理及已有下载偏好继续使用。
-  宽屏布局、Reveal 和隐藏入口已完成且已验证。Windows x64 打包版已实测打开官方登录页和取消反馈，
+  Windows x64 打包版已实测打开官方登录页和取消反馈，
   加密写入及复用由模拟登录接口验证，真实账号登录、会员画质下载和安装覆盖未运行。
 - **设置作用域**：字体/字号/颜色等 ASS 设置写入当前项目稿件，后处理特效属本机偏好；文件夹只在浏览器
   本地记录分组，不移动 `projects/` 实际文件。
 - **原型隔离**：`prototypes/` 各原型只用合成数据与独立命名空间，不连接真实 API、设置或 `projects/`；
   其模拟识别/进度数据不得当作真实引擎结果。
+  可直接打开 `prototypes/wide-desktop/index.html` 试阅主页与存储空间。两页共享双栏框架，左列承载当前任务，
+  右列承载主播动态或磁盘摘要。设置分类放在页头，窗口缩窄时右列移到主内容下方。原型待视觉确认。
 
 ### 全主题覆盖与防回归（2026-10-27）
 

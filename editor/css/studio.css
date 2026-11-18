@@ -7956,26 +7956,6 @@ body.sf-welcome-open .sf-vendor-banner { display: none !important; }
 }
 #st-panel-storage :is(.stg-note,.stg-tiles) { margin: 0; }
 
-/* Use wider monitors without turning forms into full-width reading columns. */
-@media (min-width: 1500px) {
-  .sf-studio[data-design=uwp] .dashboard-inner,
-  .sf-studio :is(.home-inner,.sf-page-content,.ws-inner,.settings-inner,.sf-mu-shell) {
-    width:min(100%, clamp(1280px, 76vw, 1920px));
-    max-width:none;
-  }
-  .sf-studio #st-view .st-box { grid-template-columns:clamp(180px, 10vw, 232px) minmax(0, 1fr); }
-  .sf-studio #st-view .st-panel { max-width:1280px; margin-inline:0; }
-  .sf-studio #st-view :is(#st-panel-storage,#st-panel-models) { max-width:none; }
-  .sf-studio #st-view :is(.sf-settings-heading p,.st-card > .gl-hint) { max-inline-size:95ch; }
-}
-@media (min-width: 1900px) {
-  .sf-studio #np-view .ws-grid {
-    display:grid; grid-template-columns:minmax(0, 1.25fr) repeat(2, minmax(0, 1fr)); align-items:start;
-  }
-  .sf-studio #np-view .ws-col-input { display:contents; }
-  .sf-studio #np-view .ws-col > .ws-panel:last-child { flex:0 0 auto; }
-}
-
 .stg-note { margin: 0 0 14px; padding: 9px 13px; border: 1px solid var(--hair-2); border-radius: var(--r-2); background: var(--accent-a07); color: var(--text-1); font-size: 12px; }
 .stg-note[data-tone="warn"] { border-color: color-mix(in srgb, var(--danger) 38%, transparent); background: color-mix(in srgb, var(--danger) 9%, transparent); color: var(--text-0); }
 .stg-note[data-tone="ok"] { border-color: var(--accent-a40); background: var(--accent-a10); color: var(--text-0); }
