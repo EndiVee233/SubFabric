@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "da06082cc9bebb592afa7d54b2e8415f05c9f259b705906ea313e260fd948688",
+      "sha256": "fef0bffc28bc92aa9e33702ee93ba66075910b5faea8774acef337056df004d5",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -628,40 +628,44 @@
     },
     {
       "file": "editor/js/effect-schemes.js",
-      "sha256": "9a9189c616aa3b316cc9679744859fd8fa5eb362aa2341cbf4b4fc3975895d84",
+      "sha256": "74ed81cc4a9c984d578ddce9d4ba9ed5dddad50aea38a3e28bf9fcd63e965a38",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
         {
-          "line": 72,
-          "method": "replaceChildren"
-        },
-        {
-          "line": 151,
+          "line": 66,
           "method": "createElement"
         },
         {
-          "line": 160,
+          "line": 78,
           "method": "replaceChildren"
         },
         {
-          "line": 163,
+          "line": 157,
           "method": "createElement"
+        },
+        {
+          "line": 166,
+          "method": "replaceChildren"
         },
         {
           "line": 169,
           "method": "createElement"
         },
         {
-          "line": 176,
+          "line": 175,
           "method": "createElement"
         },
         {
-          "line": 176,
+          "line": 182,
           "method": "createElement"
         },
         {
-          "line": 181,
+          "line": 182,
+          "method": "createElement"
+        },
+        {
+          "line": 187,
           "method": "replaceChildren"
         }
       ],
@@ -1993,7 +1997,7 @@
     },
     {
       "file": "editor/js/subtitle-scheme-preview.js",
-      "sha256": "d23810bf3bef16c8fa1b78e479761cf6cf7f70dff1109f01147777c2c5e67776",
+      "sha256": "e3f1f94db7ab9244791dd4b77ab1439a834cec8ee3850d9fc1c9bfcf6bf47a92",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2156,7 +2160,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "18589d2aa1478e9dbb1e1a0299423a7cb149ebc4b41e2755ccc7aeb9ab4fe266",
+      "sha256": "ddaa09e46148b37897268875e42e7306930d1e08b7d55c963eb57401b5edef2f",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -3012,6 +3016,7 @@
         "st-subtitle-order",
         "st-subtitle-play",
         "st-subtitle-preview-status",
+        "st-subtitle-preview-title",
         "st-subtitle-replay",
         "st-subtitle-scale",
         "st-subtitle-style",
@@ -3280,6 +3285,7 @@
       "--sf-rim-sat",
       "--sf-rim-spec",
       "--sf-spring",
+      "--sf-subtitle-preview-width",
       "--sf-thumb",
       "--sf-top-h",
       "--sf-volume",
@@ -3470,6 +3476,7 @@
       "--sf-rim-sat",
       "--sf-rim-spec",
       "--sf-spring",
+      "--sf-subtitle-preview-width",
       "--sf-thumb",
       "--sf-top-h",
       "--sf-volume",

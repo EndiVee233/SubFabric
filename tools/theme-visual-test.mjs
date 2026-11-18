@@ -280,6 +280,40 @@ try {
   assert.deepEqual(await hover('#home-list .pc-details'), ['0', '1'], 'button lights without the parent card');
   assert.deepEqual(await hover('#home-list .pc-name'), ['1', '0'], 'leaving the button restores the card light');
   report.wideDesktop = { homeWidth, settingsWidth, storageWidth, newLayout, reveal: 'passed', hiddenSettings: 'passed' };
+
+  await go('#/settings');
+  await b.eval('document.querySelector("#sf-settings-tab-effects").click()');
+  for (const [width, height] of [[1440, 900], [960, 660]]) {
+    await b.setViewport(width, height);
+    await b.eval('document.querySelector("#st-effect-new").click()');
+    await b.waitFor(`(() => {
+      const video = document.querySelector('#st-subtitle-video');
+      return video.readyState >= 2 && video.paused && Math.abs(video.currentTime - 0.75) < 0.04;
+    })()`, { label: 'subtitle preview opens on a still frame' });
+    const layout = await b.eval(`(() => {
+      const form = document.querySelector('#st-effect-form').getBoundingClientRect();
+      const video = document.querySelector('#st-subtitle-video').getBoundingClientRect();
+      const style = document.querySelector('#st-subtitle-style').getBoundingClientRect();
+      return { videoWidth: video.width, aboveFields: video.bottom < style.top, cardGutter: form.width - style.width };
+    })()`);
+    assert.ok(layout.aboveFields && layout.cardGutter < 56 && layout.videoWidth >= (width === 1440 ? 530 : 320),
+      `subtitle preview sits above full-width settings at ${width}×${height} (${JSON.stringify(layout)})`);
+    await collect('subtitle-preview', '.sf-subtitle-sample', true);
+    await b.eval('document.querySelector("#fx-enable").click(); document.querySelector("#st-view").scrollBy(0, 380)');
+    await settle();
+    const pinned = await b.eval(`(() => {
+      const sample = document.querySelector('.sf-subtitle-sample').getBoundingClientRect();
+      const settings = document.querySelector('#st-view').getBoundingClientRect();
+      return { top: sample.top - settings.top, leavesRoom: settings.bottom - sample.bottom > 180 };
+    })()`);
+    assert.ok(Math.abs(pinned.top) < 2 && pinned.leavesRoom,
+      `subtitle preview stays at the top with room to edit at ${width}×${height} (${JSON.stringify(pinned)})`);
+    await b.eval('document.querySelector("#st-subtitle-play").click()');
+    await b.waitFor('document.querySelector("#st-subtitle-video").currentTime > 1.05');
+    await b.eval('document.querySelector("#st-effect-cancel").click()');
+    assert.ok(await b.eval('document.querySelector("#st-subtitle-video").paused'), 'closing the form pauses the sample');
+  }
+  report.subtitlePreview = 'top placement, frozen frame, playback, and sticky scrolling passed at both window sizes';
   const persisted = await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})');
   await b.goto(server.origin + '/?theme-persistence=1#/batch');
   await b.waitFor('document.readyState === "complete" && document.body && window.__sfStudio && window.__dbg');

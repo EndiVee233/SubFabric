@@ -6,6 +6,7 @@ import { t } from './i18n.js';
 const LANGS = ['zh', 'en'];
 const TARGETS = { zh: 'Chinese', en: 'English' };
 const MEDIA_URL = new URL('../assets/subtitle-preview.webm', import.meta.url).href;
+const STILL_FRAME = 0.75;
 const EXAMPLE = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1920
@@ -75,7 +76,7 @@ export function initSubtitleSchemePreview({ ensureFont, enhanceFontInput, rememb
   const video = el('st-subtitle-video'), status = el('st-subtitle-preview-status');
   const play = el('st-subtitle-play');
   const sample = video.closest('.sf-subtitle-sample');
-  let shouldPlay = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let shouldPlay = false;
   let missingFonts = [];
   const player = new AssPlayer(video, msg => {
     status.textContent = msg === 'ASS 渲染就绪'
@@ -155,6 +156,9 @@ export function initSubtitleSchemePreview({ ensureFont, enhanceFontInput, rememb
   }
 
   function configure(preset) {
+    shouldPlay = false;
+    video.pause();
+    if (video.readyState >= 1) video.currentTime = STILL_FRAME;
     base = preset.style || defaults;
     apply.checked = !!preset.style;
     container.disabled = !apply.checked;
@@ -189,8 +193,9 @@ export function initSubtitleSchemePreview({ ensureFont, enhanceFontInput, rememb
   video.addEventListener('play', () => { play.textContent = t('暂停预览'); });
   video.addEventListener('pause', () => { play.textContent = t('播放预览'); });
   video.addEventListener('loadedmetadata', () => {
-    if (!shouldPlay) video.currentTime = 0.75;
+    if (!shouldPlay) video.currentTime = STILL_FRAME;
   });
+  video.addEventListener('seeked', () => player.seek(video.currentTime));
   el('st-subtitle-replay').addEventListener('click', () => {
     shouldPlay = true;
     video.currentTime = 0;

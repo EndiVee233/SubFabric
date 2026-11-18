@@ -62,7 +62,13 @@ export function initEffectSchemes({ getProject, getDocument, getFormat, captureP
     const localSnapshot = selection?.name || selection?.config.enabled;
     const value = sameConfig ? 'scheme:' + current.id
       : localSnapshot || (!selection && legacyConfig.enabled) ? 'snapshot' : 'off';
-    const option = (label, key) => new Option(label, key, value === key, value === key);
+    const option = (label, key) => {
+      const row = document.createElement('option');
+      row.textContent = label;
+      row.value = key;
+      row.defaultSelected = row.selected = value === key;
+      return row;
+    };
     const choices = [option(t('保留稿件样式 · 关闭特效'), 'off')];
     if (value === 'snapshot') {
       const label = selection ? (selection.name || t('稿件字幕方案')) + ' · ' + t('已保存参数') : t('沿用原有特效');
