@@ -130,7 +130,7 @@
 | `desktop/` | 独立 npm 子包（`package.json` / 锁文件）：`main.cjs` 管理隔离窗口与关闭，`backend.cjs` 管理真实 Node 的 fork/IPC 生命周期，`security.cjs` 校验 payload/路径/导航，`migration.cjs` 只补缺继承旧版文件与浏览器状态，`installer.nsh` 复用旧安装目录，`stage.mjs` 生成白名单源码、vendor 与 Node manifest；当前 NSIS 构建入口 |
 | `desktop/update.cjs` | Windows 安装版自动更新：筛选 GitHub Release、下载与复核 SHA-256，维护自动检查开关和下载状态 |
 | `desktop/bilibili-login.cjs` | 在 Electron 独立会话中打开 bilibili 官方登录页，递交该会话的登录态并在结束时清理会话 |
-| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 8 段路由、项目系统、下载/prepare/ASR/翻译流水线、退出；浏览器入口保留旧托盘，Electron 模式通过 IPC 报告就绪、转接 Windows 更新状态与指令 |
+| `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 8 段路由、项目系统、下载/prepare/ASR/翻译流水线、识别并发队列、退出；浏览器入口保留旧托盘，Electron 模式通过 IPC 报告就绪、转接 Windows 更新状态与指令 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 稿件详情只读控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/js/project.js`、`editor/js/studio.js`、`editor/js/storage.js` | 桌面设置的业务表单与热词自动保存、设置分类和路由、存储扫描与清理界面 |
@@ -538,6 +538,7 @@
   收回自有 ASR/项目任务与子进程，不按端口杀未知进程。启动限时 30s，quit 请求限时 2s，等待退出 6s
   后收自有进程树；后端 shutdown 另有 4s 退出兜底。
 - **铁律：跨请求状态必须放模块作用域**——`prepareJobs`、`draftJobs`、`pendingAsr`、`draftProcs`、
+  `asrWaiting`、`asrActive`、`draftAsrSlots`、
   `draftAborts`、`rerecogJobs`、`projProcs`、`MEDIA_ALLOW`、`mediaMetaCache`、`logBuf`、`logClients`、
   `lifeClients`、`dlState`、`CHILDREN`、`realignJobs`、`diarizeJobs`、`subtitleCommits`、`deletedProjects`。
   放进路由段函数等于每请求重置。
@@ -613,6 +614,12 @@
 - **流水线状态**写 `meta.draft`（`running` / `paused` / `error` / `done`），前端轮询
   `GET /api/projects/:id/draft`；防重入用 `draftJobs.has(id)`，每步统一走 `safeDraftStep`
   （同步异常与 async reject 都收）。
+- **识别并发**由 `editor/server.js` 的同进程队列管理，初稿、选区及批量重识别、本地模型测速共享名额。
+  Whisper（含 WhisperX）和 Qwen 各含 CUDA/Vulkan 版本，各最多 2 个且合计最多 3 个；Parakeet 的各版本共享 4 个独立名额，
+  其他本地引擎各最多 2 个，必剪和剪映不受限制。等待中的任务按可运行顺序补位，排队满 2 小时可重试。
+  长音频按整项识别占一个名额，识别与随附对齐结束后释放。语义分句、说话人处理、写字幕与翻译在池外运行。
+  项目删除和应用退出会取消仍在等待的任务。`tests/asr-concurrency-test.mjs` 用隔离 HTTP 服务和受控识别结果
+  验证容量、失败后补位、等待时删除及语义分句释放名额。
 - **项目内操作**统一为 `/api/projects/:id/<action>`：`info`(PUT 改名)、`retry`、`skip`、`rerecognize`、
   `translate`、`draft`、`subtitle`、`relink`、`prepare`、`peaks`、`audio`、`realign-full-apply`、
   `glossary-review`、`glossary-apply`、`diarize`；`DELETE` 无 action 即删项目。
@@ -728,6 +735,9 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **识别排队**在稿件卡片和「详细信息」中归入语音识别步骤，显示等待识别名额；
+  任务获得名额后沿用同一进度视图。
 
 - **初稿逐词分组**：`karaoke.js` 读取带翻译的 ASS 时优先认领完整包含短切片的句子；
   未翻译的初稿按切片中的整句文本分组。编辑器与翻译源读取共用同文首词重启判断，

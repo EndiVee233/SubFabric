@@ -1215,7 +1215,7 @@ export function initProjects(ctx) {
   const SKIP_AFTER_RETRIES = 3;
   const DP_STEPS = [
     // skipAfterRetries = 重试满 N 次仍失败后允许跳过；语音识别永远不可跳
-    { name: '语音识别', enabled: true, skippable: false, skipAfterRetries: false, stages: ['提取音频中', 'ASR识别中'] },
+    { name: '语音识别', enabled: true, skippable: false, skipAfterRetries: false, stages: ['提取音频中', '识别排队中', 'ASR识别中'] },
     { name: '语义分句', enabled: true, skippable: true, skipAfterRetries: true, stages: ['语义分句中'] },
     { name: '说话人分离', enabled: true, skippable: true, skipAfterRetries: true, stages: ['区分说话人中'] },
     { name: '翻译', enabled: true, skippable: false, skipAfterRetries: true, stages: ['翻译中'] },

@@ -736,6 +736,9 @@ const batchDraftJobs = new Map();
 let batchDraftSeq = 0;
 const draftAborts = new Map();   // 项目 id → AbortController(云端识别没有子进程, 靠它取消)
 const pendingAsr = new Map();    // prepare 成功后待跑识别的项目 id -> { wordLevel }
+const draftAsrSlots = new Map(); // 初稿项目 id -> 释放识别名额
+const asrWaiting = new Set();
+const asrActive = new Set();
 const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId -> job
 /* ⚠ 全片逐词重校对的作业也属于这一类。一开始把它写在 handleRequest 里
  *   （`const realignJobs = new Map()`），结果 POST 里 set 成功（size=1）
@@ -1613,6 +1616,7 @@ function probeVibeVoice(force) {
  * diarize / reseg(语义分句, 所有引擎都走) 均已实现。 */
 const STAGE = {
   extract: '提取音频中',
+  asrQueued: '识别排队中',
   asr: 'ASR识别中',
   diarize: '区分说话人中',
   cast: '分角色中',
@@ -1623,6 +1627,72 @@ const STAGE = {
 
 // 用户手动续跑满这么多次仍不成功, 就放开「跳过此步」(LLM 偶发怎么重试都不对, 得留条出路)
 const SKIP_AFTER_RETRIES = 3;
+
+const ASR_QUEUE_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const ASR_WAITING_MESSAGE = '等待语音识别名额…';
+
+function asrEngineGroup(model) {
+  if (model.id.includes('parakeet')) return 'parakeet';
+  if (model.engine.includes('whisper')) return 'whisper';
+  if (model.engine.includes('qwen')) return 'qwen';
+  return model.engine;
+}
+
+function dispatchAsrQueue() {
+  if (shuttingDown) return;
+  const counts = new Map();
+  for (const task of asrActive) counts.set(task.group, (counts.get(task.group) || 0) + 1);
+  for (const task of asrWaiting) {
+    const { group } = task;
+    const count = counts.get(group) || 0;
+    if (count >= (group === 'parakeet' ? 4 : 2)) continue;
+    if ((group === 'whisper' || group === 'qwen')
+        && (counts.get('whisper') || 0) + (counts.get('qwen') || 0) >= 3) continue;
+    asrWaiting.delete(task);
+    clearTimeout(task.timer);
+    counts.set(group, count + 1);
+    asrActive.add(task);
+    task.resolve(() => { if (asrActive.delete(task)) dispatchAsrQueue(); });
+  }
+}
+
+function checkAsrOwner(owner) {
+  if (shuttingDown || deletedProjects.has(owner)) throw new Error('语音识别任务已取消');
+}
+
+async function acquireAsrSlot(model, owner, onQueued) {
+  checkAsrOwner(owner);
+  if (model.cloud) return () => {};
+  return new Promise((resolve, reject) => {
+    const task = { owner, group: asrEngineGroup(model), resolve, reject, timer: null };
+    asrWaiting.add(task);
+    dispatchAsrQueue();
+    if (asrWaiting.has(task)) {
+      try { onQueued(); }
+      catch (error) { asrWaiting.delete(task); reject(error); return; }
+      task.timer = setTimeout(() => {
+        asrWaiting.delete(task);
+        reject(new Error('等待语音识别名额超时，请重试'));
+      }, ASR_QUEUE_TIMEOUT_MS);
+      task.timer.unref();
+    }
+  });
+}
+
+function cancelAsrWaiters(owner) {
+  for (const task of asrWaiting) {
+    if (owner !== undefined && task.owner !== owner) continue;
+    asrWaiting.delete(task);
+    clearTimeout(task.timer);
+    task.reject(new Error('语音识别任务已取消'));
+  }
+}
+
+function releaseDraftAsrSlot(id) {
+  const release = draftAsrSlots.get(id);
+  draftAsrSlots.delete(id);
+  release?.();
+}
 
 /* 说话人角色色板(轮转使用): #RRGGBB, 写进中文行行首色标 —— 编辑器的角色色来源。
  * 与编辑器的角色色板共用 karaoke.js 那一份，避免初稿与手动说话人分离给出两套颜色。 */
@@ -5759,6 +5829,7 @@ function startPrepare(id, videoPath, mode) {
   }
 
   function setDraft(id, patch) {
+    if (deletedProjects.has(id)) return;
     const meta = readMeta(id);
     if (!meta) return;
     meta.draft = Object.assign(
@@ -5826,6 +5897,8 @@ function startPrepare(id, videoPath, mode) {
     draftJobs.delete(id);
     pendingAsr.delete(id);
     killDraftProc(id);
+    releaseDraftAsrSlot(id);
+    if (deletedProjects.has(id)) return;
     const meta = readMeta(id);
     if (!meta) return;
     const d = Object.assign({ words: 0, lines: 0 }, meta.draft || {}, extra || {});
@@ -7974,7 +8047,14 @@ function startPrepare(id, videoPath, mode) {
       // 收尾函数提到 try 外面: catch 分支也要能清理临时文件 —— 识别失败时 25 分钟长
       // 的 wav 切片(~45MB)不该留在 %TEMP%（此前 catch 不调 cleanup，每次失败泄漏一份）。
       let cleanup = () => {};
+      let releaseAsr;
       try {
+        releaseAsr = await acquireAsrSlot(model, id, () => {
+          setRr({ stage: STAGE.asrQueued, message: ASR_WAITING_MESSAGE });
+        });
+        checkAsrOwner(id);
+        if (job.status === 'error') return;
+        setRr({ stage: '切音频', message: '正在切出音频片段…' });
         const wav = path.join(projDir(id), 'audio.wav');
         const mdir = model.cloud ? '' : modelDirFor(model.id);
         const mp = modelParamsFor(model);
@@ -7982,7 +8062,7 @@ function startPrepare(id, videoPath, mode) {
         // GPU 硬校验: ASR 必须跑在 GPU 上, 不做 CPU 兜底
         const gpuGate = asrGpuGateError(model);
         if (gpuGate) throw new Error(gpuGate);
-        const segWav = path.join(os.tmpdir(), `kass-rr-${process.pid}-${Date.now().toString(36)}.wav`);
+        const segWav = path.join(os.tmpdir(), `kass-rr-${process.pid}-${crypto.randomUUID()}.wav`);
         const outJson = segWav + '.json';
         cleanup = () => { for (const f of [segWav, outJson]) { try { fs.unlinkSync(f); } catch {} } };
 
@@ -7999,6 +8079,7 @@ function startPrepare(id, videoPath, mode) {
           ff.on('close', c => { clearTimeout(t); c === 0 ? resolve() : reject(new Error('切音频失败: ' + e2.slice(-200))); });
         });
 
+        checkAsrOwner(id);
         // 2) 识别（按引擎分流: whisper.cpp → whisper-cli；sherpa-onnx → asr.py）
         setRr({ stage: '识别中', progress: 10, message: '识别中（' + model.name + '）…' });
         let data;
@@ -8167,6 +8248,8 @@ function startPrepare(id, videoPath, mode) {
           });
         }
         cleanup();
+        releaseAsr();
+        checkAsrOwner(id);
 
         // 3) 时间戳加回区间偏移
         let segs = data.segments
@@ -8277,6 +8360,8 @@ function startPrepare(id, videoPath, mode) {
           return;
         }
         setRr({ status: 'error', error: msg, message: msg });
+      } finally {
+        releaseAsr?.();
       }
     })();
     return job;
@@ -8302,6 +8387,7 @@ function startPrepare(id, videoPath, mode) {
   const JOB_STALE_MS = 15 * 60 * 1000;
   function jobStillRunning(job) {
     if (!job || job.status !== 'running') return false;
+    if (job.stage === STAGE.asrQueued) return true;
     const beat = job.updatedAt ? Date.parse(job.updatedAt) : NaN;
     if (Number.isFinite(beat) && Date.now() - beat > JOB_STALE_MS) return false;   // 心跳停了 → 当作死任务
     return true;
@@ -8310,10 +8396,14 @@ function startPrepare(id, videoPath, mode) {
   /** 等一个后台作业跑完（自动后处理必须串行：下一步要读上一步的结果）。
    *  与前端轮询同一套判定（jobStillRunning 看状态+心跳），所以"死任务"不会把自动流程挂住。 */
   async function waitJob(job, timeoutMs) {
-    const t0 = Date.now();
     const limit = Number.isFinite(timeoutMs) ? timeoutMs : 30 * 60 * 1000;
+    let activeMs = 0;
+    let lastCheck = Date.now();
     while (jobStillRunning(job)) {
-      if (Date.now() - t0 > limit) throw new Error('等待后台任务超时');
+      const now = Date.now();
+      if (job.stage !== STAGE.asrQueued) activeMs += now - lastCheck;
+      if (activeMs > limit) throw new Error('等待后台任务超时');
+      lastCheck = now;
       await new Promise(r => setTimeout(r, 1000));
     }
     if (job && job.status === 'error') throw new Error(job.error || '后台任务失败');
@@ -8340,6 +8430,7 @@ function startPrepare(id, videoPath, mode) {
            *   而"上一段失败"里混着"该段没有语音"这种正常结果 —— 那会让整个第①步归零
            *   （实测：26 段里 6 段是空档，全批被判失败）。现在单区间的空结果已被归为"跳过"
            *   （见 startRerecognize 的 catch），能走到这里的 error 才是真问题。 */
+          checkAsrOwner(id);
           if (job.status === 'error') return;              // 中途失败：不再往下跑
           const r = regions[i];
           job.regionIndex = i;
@@ -8352,9 +8443,10 @@ function startPrepare(id, videoPath, mode) {
           const n0 = (job.segments || []).length;
           const done0 = job.regionDone || 0;
           // 轮询等待：简单可靠，且不会与单区间流程的内部 await 链打架
-          const t0 = Date.now();
+          let t0 = Date.now();
           // eslint-disable-next-line no-await-in-loop
           while (job.regionDone === done0 && job.status !== 'error' && Date.now() - t0 < 30 * 60 * 1000) {
+            if (job.stage === STAGE.asrQueued) t0 = Date.now();
             job.touch();                       // 心跳：本段还在跑，别被当成死任务
             // eslint-disable-next-line no-await-in-loop
             await new Promise(res => setTimeout(res, 250));
@@ -8738,9 +8830,11 @@ function startPrepare(id, videoPath, mode) {
         stage: STAGE.asr, progress: 30 + Math.round((done / total) * 45), message: '第 ' + done + '/' + total + ' 片识别中 …',
       }),
       runOne: async (c) => {
+        checkAsrOwner(id);
         const slice = path.join(os.tmpdir(), 'ss-slice-' + process.pid + '-' + c.index + '-' + Date.now().toString(36) + '.wav');
         tmp.push(slice);
         await sliceAudio(o.wav, c.start, c.end, slice, false);
+        checkAsrOwner(id);
         return await o.runOne(slice, c);
       },
     }).then((r) => {
@@ -8930,6 +9024,11 @@ function startPrepare(id, videoPath, mode) {
     // 逐句置信度：项目级设置优先，没表态就跟随全局。算一次，三处 spawn 与常驻服务共用。
     const confMode = asrConfidenceFor(meta0);   // off | fast | full
     draftJobs.add(id);
+    const releaseAsr = await acquireAsrSlot(model, id, () => {
+      setDraft(id, { status: 'running', stage: STAGE.asrQueued, progress: 28, message: ASR_WAITING_MESSAGE });
+    });
+    draftAsrSlots.set(id, releaseAsr);
+    checkAsrOwner(id);
     const wav = path.join(projDir(id), 'audio.wav');
     const outJson = path.join(projDir(id), 'asr.json');
     try { fs.unlinkSync(draftLogFile(id)); } catch {}
@@ -8944,6 +9043,7 @@ function startPrepare(id, videoPath, mode) {
       setDraft(id, { stage: STAGE.asr, progress: 30, message: '分析静音，准备分片 …' });
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 音频较长（' + Math.round(durSec / 60) + ' 分钟），先找静音切点 …');
       chunkSilences = await detectSilences(wav, durSec);
+      checkAsrOwner(id);
       const plan1 = asrChunks.planAudioChunks({ duration: durSec, silences: chunkSilences });
       chunkPlan = plan1.length > 1 ? plan1 : null;
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 找到 ' + chunkSilences.length + ' 段静音 → '
@@ -8979,10 +9079,13 @@ function startPrepare(id, videoPath, mode) {
     // 三步都与识别引擎无关: 分离跑在音频上, 任何引擎都能配;
     // 语义分句**所有引擎都做**, 没配 LLM 就直接失败停在这里, 不会跳过它往下走。
     const finishAsr = async () => {
+      if (deletedProjects.has(id) || shuttingDown) return finishDraft(id, new Error('语音识别任务已取消'));
       if (meta0.draft && meta0.draft.align && !['qwen', 'whisperx'].includes(model.engine)) {
         try { await alignDraftAsrJson(id); }
         catch (e) { draftJobs.delete(id); return finishDraft(id, new Error('对齐失败：' + ((e && e.message) || e))); }
       }
+      releaseDraftAsrSlot(id);
+      if (deletedProjects.has(id) || shuttingDown) return finishDraft(id, new Error('语音识别任务已取消'));
       if (model.engine === 'vibevoice') {
         pushDraftLog(id, '[VibeVoice] 保留原生句级时间戳与说话人；该模型不提供逐词时间戳');
         return continueDraftAfterAsr(id, false);
@@ -9323,6 +9426,7 @@ function startPrepare(id, videoPath, mode) {
       ? Promise.resolve({ ok: true, msg: model.name + ' CUDA 运行时（已通过设置页标记校验）' })
       : probePython(model.engine);
     precheck.then(pre => {
+      checkAsrOwner(id);
       const ts = () => new Date().toLocaleTimeString();
       const pyExe = asrEngineArgs(model).python || ASR_PY;
       if (!pre.ok) {
@@ -9353,6 +9457,7 @@ function startPrepare(id, videoPath, mode) {
                   message: '第 ' + (c.index + 1) + '/' + chunkPlan.length + ' 片：MDX 人声分离…', });
               }, p => draftProcs.set(id, p));
             }
+            checkAsrOwner(id);
             const asrArgs = [ea.script,
                              ...asrArgsFor(ea, mdir, prepared ? prepared.audio : slice, outP, confMode)];
             pr = spawn(pyExe, asrArgs,
@@ -9428,6 +9533,7 @@ function startPrepare(id, videoPath, mode) {
             setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round((Number(pct) || 0) * 0.2), message: 'MDX 人声分离…' });
           }, p => draftProcs.set(id, p));
         }
+        checkAsrOwner(id);
         const asrArgs = [ea.script,
                          ...asrArgsFor(ea, mdir, prepared ? prepared.audio : wav, outJson, confMode)];
         proc = spawn(pyExe, asrArgs,
@@ -9460,12 +9566,11 @@ function startPrepare(id, videoPath, mode) {
       launch().then(() => {
         proc.stderr.on('data', sink);
         proc.stdout.on('data', sink);
-        proc.on('error', e => {
-          if (prepared) prepared.cleanup();
-          finishDraft(id, new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + e.message));
-        });
+        let spawnError;
+        proc.on('error', e => { spawnError = e; });
         proc.on('close', (code) => {
           if (prepared) prepared.cleanup();
+          if (spawnError) return finishDraft(id, new Error('无法启动识别进程（Python: ' + pyExe + '）: ' + spawnError.message));
           if (code !== 0) { draftJobs.delete(id); return finishDraft(id, new Error(lastErr || ('识别进程异常退出（' + asrExitHint(code) + '）'))); }
           finishAsr();
         });
@@ -9474,7 +9579,7 @@ function startPrepare(id, videoPath, mode) {
         draftJobs.delete(id);
         finishDraft(id, e);
       });
-    });
+    }).catch(e => finishDraft(id, e));
   }
 
   /** 逐文件深删目录: 项目删除已由 UI 二次确认, 逐个 unlink 以兼容
@@ -10804,6 +10909,7 @@ function handleAsrRoutes(req, res, u) {
   if (pathname === '/api/asr/bench/cancel' && req.method === 'POST') {
     if (!benchState.running) return sendJson(res, 200, { ok: true, running: false });
     benchCancel = true;
+    cancelAsrWaiters(benchState);
     benchState.cancelled = true;
     benchState.msg = '正在取消…';
     try { benchProc?.kill(); } catch {}
@@ -10854,9 +10960,12 @@ function handleAsrRoutes(req, res, u) {
             if (benchCancel) break;
             const m = models[i];
             benchState.current = m.id;
-            benchState.msg = '正在测试 ' + (i + 1) + '/' + total + '：' + m.name;
             benchState.pct = Math.round((i / total) * 100);
+            let releaseAsr;
             try {
+              releaseAsr = await acquireAsrSlot(m, benchState, () => { benchState.msg = ASR_WAITING_MESSAGE; });
+              if (benchCancel || shuttingDown) break;
+              benchState.msg = '正在测试 ' + (i + 1) + '/' + total + '：' + m.name;
               const r = await benchRunModel(m, clip.wav, clip.dir, clip.duration, conditions);
               if (!postSegments && Array.isArray(r.segments) && r.segments.length) postSegments = r.segments;
               const segments = Array.isArray(r.segments) ? r.segments : [];
@@ -10873,6 +10982,8 @@ function handleAsrRoutes(req, res, u) {
                 id: m.id, name: m.name, engine: m.engine, backend: modelBackendOf(m),
                 audioSec: +clip.duration.toFixed(3), error: String((e && e.message) || e).slice(0, 400),
               });
+            } finally {
+              releaseAsr?.();
             }
             benchState.done = i + 1;
             benchState.pct = Math.round(((i + 1) / total) * 100);
@@ -12655,7 +12766,7 @@ function handleProjectsRoutes(req, res, u) {
       // 卡死自愈: running 但 20 分钟没有任何进展(updatedAt 由 setRr 每次刷新) → 判失败。
       // 没有它: 任务一旦 hang 住(如云端识别请求挂起), 上面「已有一个重新识别任务在运行」
       // 会把按钮永久挡死, 刷新页面也救不回来。
-      if (job && job.status === 'running') {
+      if (job && job.status === 'running' && job.stage !== STAGE.asrQueued) {
         const beat = Date.parse(job.updatedAt || job.startedAt || '') || 0;
         if (beat && Date.now() - beat > 20 * 60 * 1000) {
           Object.assign(job, {
@@ -12701,6 +12812,7 @@ function handleProjectsRoutes(req, res, u) {
     }
     if (!action && req.method === 'DELETE') {
       deletedProjects.add(id);
+      cancelAsrWaiters(id);
       subtitleCommits.delete(id);
       // 先停掉该项目还在跑的所有任务, 再删文件 —— 顺序不能反:
       //   ① 识别进程(draftProcs/draftAborts, 精确跟踪, 不误伤别的 python);
@@ -13243,6 +13355,7 @@ let shuttingDown = false;
 function shutdown(reason) {
   if (shuttingDown) return;
   shuttingDown = true;
+  cancelAsrWaiters();
   console.log('[shutdown] 完全退出：' + (reason || '未注明来源'));
   broadcastLife('shutdown', { reason: String(reason || ''), pid: process.pid });
 
