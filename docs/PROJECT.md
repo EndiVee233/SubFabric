@@ -575,6 +575,11 @@
   Parakeet Vulkan / Qwen3-ASR + 对齐 / WhisperX large-v2 + wav2vec2 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
   Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
+- **初稿结构**：`reseg.js` 拆分粘连的英文与数字，保留千分位、小数和可辨认的型号。
+  长句强制分行时，紧贴的数字和常见计数单位留在同一行。逐词 ASS 由 `realign-words.js`
+  先定句界，`k-line.js` 再按厘秒分配连续、非重叠的词界，颜色高亮与旧版卡拉 OK 共用这套边界。
+  句内时间不足时保留整句文本。通过真实 Whisper large-v2、Parakeet Vulkan 和 Qwen CUDA 短片段
+  验证结构，未对全模型或全片识别准确率作验收。
 - **桌面大模型方案**：初稿写出后，有可用方案即自动进入翻译流程。沿用稿件或批量队列选中的方案，
   旧配置中的自动翻译开关不再参与决定。热词分析通过当前翻译方案调用 LLM。LLM 分角色与反思纠错暂时停用；
   说话人分离、手动或自动逐词重校仍各走已有链路。
@@ -671,8 +676,8 @@
     `writeSubtitle(..., { tail: 0.15 })`，每句结尾补 0.15s（不超过下一句起点）；`writeSubtitle` 的
     `tail` 默认 0，SRT→ASS 等路径不会越出原片区间（有 `srt-ass-e2e-test` 断言）。
   - **初稿首末词时间（2026-10-23 修）**：`writeSubtitle` 生成逐词 ASS 时，句块时间取
-    「句时间 ∪ 实测词跨度」（`realign-words.js` 的 `wordSpanRange`，±1s 容差防脏数据），
-    首片从首词实测起点开始、末片收在末词实测终点；中文行与英文行共用同一组时间。
+    首词实测起点和末词实测终点（`realign-words.js` 的 `wordSpanRange`，±1s 容差防脏数据）。
+    初稿尊重语义分句确定的相邻边界，末词补尾到下一句起点为止；中英文从同一组厘秒边界写出。
     旧实现把首片硬贴 `s.start`、末片硬收 `s.end`，当 ASR 句时间比词时间早一截时，
     首词高亮与末词收音都会比真实语音早。
   - **批量化与可停止（2026-10-23 修）**：`realign-batch.js` 把相邻行合并成 ≤60s / ≤24 行、
@@ -723,6 +728,10 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **初稿逐词分组**：`karaoke.js` 读取带翻译的 ASS 时优先认领完整包含短切片的句子；
+  未翻译的初稿按切片中的整句文本分组。编辑器与翻译源读取共用同文首词重启判断，
+  相邻重复说出的句子也保留为独立条目。
 
 - **Android 原生界面（0.15.0）**：`NativeStudio` 使用 Android View 实现顶栏、手机工作页底栏、平板左栏、
   Pivot 页签、稿件/字幕/角色列表、普通菜单与参数窗口；`ListView` 回收字幕行，输入、选择、开关、进度分别使用

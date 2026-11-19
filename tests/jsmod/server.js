@@ -6666,13 +6666,8 @@ function startPrepare(id, videoPath, mode) {
       format = 'ass';
       file = 'subtitle.ass';
       let out = withConfidence(assHeader(engineLabel, styleColors), segs);
-      segs.forEach((s, i) => {
+      realignWordsMod.assCueSpans(segs, false, tailSec).forEach((s, i) => {
         const zh = zhText(i);
-        /* 末词尾巴：本地 Whisper v2 的末词终点常比真实收音早 100~200ms（用户实测「末词结束
-         * 有点早」）。每句结尾补 0.15s，但不超过下一句起点（避免两条字幕时间重叠）。 */
-        const nextStart = segs[i + 1] ? Number(segs[i + 1].start) : Infinity;
-        const want = tailSec > 0 ? Math.min(Number(s.end) + tailSec, nextStart - 0.001) : Number(s.end);
-        if (want > Number(s.end)) s.end = want;
         if (zh) out += zhLine(s, zh, roleOf(s));
         out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,,0,0,0,,${escAss(s.text)}\n`;
       });
@@ -6681,28 +6676,14 @@ function startPrepare(id, videoPath, mode) {
       format = 'ass';
       file = 'subtitle.ass';
       let out = withConfidence(assHeader(engineLabel, styleColors, kOpt ? kOpt.base : null), segs);
-      segs.forEach((s, i) => {
+      realignWordsMod.assCueSpans(segs, true, tailSec).forEach((s, i) => {
         const ws = s.words || [];
-        /* 句块时间取**实测词跨度**（±1s 容差，防止脏数据把整行拉飞）。
-         * 旧实现把首片硬贴 s.start、末片硬收 s.end：当 ASR 的句时间比词时间早一截时
-         * （分段含句前静音 / 句尾被截短），首词高亮和末词收音就都比真实语音早 ——
-         * 用户实测「首词开始、末词结束略微偏早」。现在首词=首词实测起点、末词=末词实测终点，
-         * 中文行仍与英文行共用同一组时间，中英一致性不变。 */
-        if (ws.length) {
-          // 纯逻辑在 realign-words.js 的 wordSpanRange（有单测）：首词实测起点 / 末词实测终点。
-          const span = realignWordsMod.wordSpanRange(s);
-          s.start = span.start; s.end = span.end;
-          /* 末词尾巴：本地 Whisper v2 的末词终点常比真实收音早 100~200ms。补 0.15s，
-           * 但不超过下一句起点（避免两条字幕重叠）。 */
-          const nextStart = segs[i + 1] ? Number(segs[i + 1].start) : Infinity;
-          const want = tailSec > 0 ? Math.min(Number(s.end) + tailSec, nextStart - 0.001) : Number(s.end);
-          if (want > Number(s.end)) s.end = want;
-        }
+        const boundaries = kLine.wordBoundaries(ws, s.start, s.end);
         const zh = zhText(i);
-        if (zh) out += zhLine(s, zh, roleOf(s));
         const role = roleOf(s);
-        // 某句缺词时间时保留整句正文，不能生成空的卡拉OK行或直接漏掉这句。
-        if (!ws.length) {
+        if (zh) out += zhLine(s, zh, role);
+        // 缺词时间或句内放不下所有切片时，保留整句正文和起止时间。
+        if (!boundaries) {
           const tag = role ? `{\\c&H${role.color}&}` : '';
           out += `Dialogue: 0,${fmtAssTime(s.start)},${fmtAssTime(s.end)},Default,${role ? spkName(role.n) : ''},0,0,0,,${tag}${escAss(s.text)}\n`;
           return;
@@ -6715,11 +6696,7 @@ function startPrepare(id, videoPath, mode) {
           return;
         }
         for (let k = 0; k < ws.length; k++) {
-          // 每片从**该词实测起点**开始（s.start 已归一为首词起点），一直高亮到下一词起点
-          // （最后一片到句尾 s.end，即末词实测终点）。
-          const st = Math.max(s.start, ws[k].start);
-          const en = (k + 1 < ws.length) ? Math.max(ws[k + 1].start, st + 0.01) : Math.max(s.end, st + 0.01);
-          out += wordSliceLine(ws, k, st, en, role ? `${spkName(role.n)}` : '', wordAss);
+          out += wordSliceLine(ws, k, boundaries[k] / 100, boundaries[k + 1] / 100, role ? spkName(role.n) : '', wordAss);
         }
       });
       text = out;
@@ -7644,6 +7621,7 @@ function startPrepare(id, videoPath, mode) {
     let rows = [], format = /\.srt$/i.test(file) ? 'srt' : 'ass', doc = null;
     if (format === 'ass') {
       doc = new AssDoc(text);
+      const draftColor = karaokeMod.hasDraftColorSlices(doc);
       const isZh = e => /中文|翻译|translation|^zh|chinese|chs|cht|简体|繁體|繁体/i.test(e.style)
         || /[\u3400-\u9fff]/.test(assSentencesMod.plainText(e.text));
       const targets = doc.events.filter(isZh);
@@ -7654,7 +7632,8 @@ function startPrepare(id, videoPath, mode) {
         const last = rows[rows.length - 1];
         const color = /\\c&H[\da-f]{6}&/i.test(ev.text);
         if (last && (color || last.color) && last.text === plain && last.style === ev.style && last.name === ev.name
-            && ev.start >= last.start && ev.start - last.end <= 0.05) {
+            && ev.start >= last.start && ev.start - last.end <= 0.05
+            && !(draftColor && karaokeMod.restartsColorCue(last.events.at(-1), ev))) {
           last.end = Math.max(last.end, ev.end); last.events.push(ev); last.color ||= color;
         } else rows.push({ text: plain, start: ev.start, end: ev.end, style: ev.style, name: ev.name, color, events: [ev] });
       }
@@ -7687,7 +7666,7 @@ function startPrepare(id, videoPath, mode) {
     return { segs: rows, rows, sourceKey, revision, file, text, raw, eol, format, doc };
   }
   function patchSubtitleTranslations(id, source, lines) {
-    if (!source.file) return writeSubtitle(id, !!((readMeta(id) || {}).draft || {}).wordLevel, source.segs, lines);
+    if (!source.file) return writeSubtitle(id, !!((readMeta(id) || {}).draft || {}).wordLevel, source.segs, lines, { tail: 0.15 });
     if (subtitleRevision(fs.readFileSync(source.file)) !== source.revision) throw new Error('翻译冲突：稿件在翻译期间已编辑，请重新翻译');
     const raw = source.raw.slice(), inserts = new Map();
     const zhStyle = '中文字幕';

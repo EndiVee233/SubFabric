@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { serverFunctions } from './helpers/server-functions.mjs';
 import { AssDoc } from '../editor/js/ass.js';
-import { analyzeKaraoke, buildWordSpecs, parseKLine } from '../editor/js/karaoke.js';
+import { analyzeKaraoke, buildWordSpecs, hasDraftColorSlices, pairRows, parseKLine, restartsColorCue, splitEnglishWords } from '../editor/js/karaoke.js';
 import * as realignWordsMod from '../editor/realign-words.js';
 const require = createRequire(import.meta.url), kLine = require('../editor/k-line.js');
 const source = fs.readFileSync(new URL('../editor/server.js', import.meta.url), 'utf8');
@@ -51,7 +51,7 @@ assert.equal(draftKaraokeOptions({ karaokeStyle: 'invalid', karaokeBase: 'bad' }
   assert.equal(meta.draft.karaokeStyle, 'k'); assert.equal(meta.draft.karaokeSweep, true);
   assert.equal(meta.draft.karaokeBase, '#123ABC');
 }
-function write(segments, sweep = false, style = 'k') {
+function write(segments, sweep = false, style = 'k', opts, translated = true) {
   const files = new Map(), logs = [];
   let meta = { id: 'p-write', draft: { modelId: 'fixture', karaokeStyle: style, karaokeSweep: sweep, karaokeBase: '#FFFFFF' } };
   const { writeSubtitle } = serverFunctions(['writeSubtitle','assHeader','wordKLine','wordSliceLine','confidenceMeta',
@@ -64,11 +64,56 @@ function write(segments, sweep = false, style = 'k') {
     pushDraftLog: (_id, line) => logs.push(line),
   });
   const segs = structuredClone(segments);
-  const info = writeSubtitle('p-write', true, segs, segs.map(() => '中文字幕'));
+  const info = writeSubtitle('p-write', true, segs, translated ? segs.map(() => '中文字幕') : null, opts);
   return { text: files.get(path.join('/isolated', info.file)), logs };
 }
 const seg = (words, start=0) => ({ start, end: start + words.length, text: words.join(' '),
   words: words.map((word,i) => ({ word, start: start+i, end: start+i+1 })) });
+{
+  const left = seg(['almost', 'ready', 'to', 'post', 'it.'], 1);
+  left.end = 2;
+  [1, 1.4, 1.97, 1.97, 1.98].forEach((start, i) => { left.words[i].start = start; });
+  left.words.at(-1).end = 2;
+  const right = seg(['next', 'sentence.'], 2);
+  right.words[0].start = 1.97;
+  for (const style of ['k', 'color']) {
+    const { text } = write([left, right], false, style, { tail: 0.15 });
+    const kar = analyzeKaraoke(new AssDoc(text));
+    const rows = pairRows(kar.sentences, kar.wordStyle);
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows.map(r => r.en.words.map(w => w.w)), [left, right].map(s => s.words.map(w => w.word)));
+    assert.deepEqual(rows[0].en.words.map(w => [w.s, w.e]), [
+      [1, 1.4], [1.4, 1.97], [1.97, 1.98], [1.98, 1.99], [1.99, 2],
+    ]);
+    assert.equal(rows[1].en.words[0].s, 2, 'the next cue keeps the segmented boundary');
+    assert.equal(rows[0].zh.end, rows[1].zh.start, 'translation cues have the same boundaries as the English');
+    assert.equal(rows[0].en.events.at(-1).end, rows[0].zh.end);
+  }
+}
+{
+  const short = { ...seg(['two', 'words']), end: 0.01,
+    words: [{ word: 'two', start: 0, end: 0.005 }, { word: 'words', start: 0.005, end: 0.01 }] };
+  const regular = seg(['there', 'are', 'more', 'words', 'here.'], 2);
+  const { text } = write([short, regular], false, 'color');
+  const doc = new AssDoc(text);
+  assert.equal(doc.events.find(e => e.style === 'Default').text, 'two words');
+  assert.ok(doc.events.every(e => e.end > e.start));
+}
+assert.deepEqual(splitEnglishWords('At 26,000 views and 3.75 percent, views.24'),
+  ['At', '26,000', 'views', 'and', '3.75', 'percent,', 'views.', '24']);
+{
+  const source = [seg(['this', 'one', 'ends.']), seg(['it', 'repeats.'], 3), seg(['it', 'repeats.'], 5)];
+  const { text } = write(source, false, 'color', { tail: 0.15 }, false);
+  assert.deepEqual(analyzeKaraoke(new AssDoc(text)).sentences.map(s => s.text), source.map(s => s.text),
+    'an English-only draft keeps adjacent cues separate, including repeated text');
+  const { subtitleSource } = serverFunctions(['subtitleSource'], {
+    fs: { existsSync: () => true, readFileSync: () => text }, AssDoc,
+    readMeta: () => ({ subtitle: { file: 'subtitle.ass' } }), safeProjectFile: () => '/isolated/subtitle.ass',
+    subtitleRevision: () => 'revision', karaokeMod: { hasDraftColorSlices, restartsColorCue },
+    assSentencesMod: require('../editor/ass-sentences.js'),
+  });
+  assert.equal(subtitleSource('p-write').rows.length, source.length, 'translation also receives each repeated cue separately');
+}
 for (const sweep of [false,true]) for (const words of [['hello'], ['hello','world'], ['one','two','three','four','five','six','seven']]) {
   const { text, logs } = write([seg(words)], sweep), doc = new AssDoc(text), kar = analyzeKaraoke(doc);
   assert.ok(text.includes(sweep ? '{\\kf' : '{\\k'), 'even a short draft uses the selected karaoke tag');

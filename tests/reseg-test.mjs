@@ -107,6 +107,10 @@ ok(gf[0].length === 21 && gf[1].length === 11, 'softFold 折在逗号处（第 2
 const noComma = Array.from({ length: 32 }, (_, i) => w('w' + i, i * 0.3, i * 0.3 + 0.25));
 const gf2 = R.softFold(noComma);
 ok(gf2.length === 2 && gf2[0].length === 30, 'softFold 没有逗号时按词数硬折', JSON.stringify(gf2.map(g => g.length)));
+const counted = noComma.map((word, i) => ({ ...word, word: i === 29 ? '24' : i === 30 ? 'subscribers' : word.word }));
+const countedGroups = R.softFold(counted);
+ok(countedGroups[0].length === 29 && countedGroups[1].slice(0, 2).map(x => x.word).join(' ') === '24 subscribers',
+  '超长行优先在数字和紧接的计数单位之前断开');
 
 /* ── planBatches: 批边界优先落在停顿处（旧实现每 400 词盲切, 必然切在半句上） ── */
 const mixed = Array.from({ length: 300 }, (_, i) => w('w' + i, i * 0.3, i * 0.3 + 0.25));
@@ -268,6 +272,13 @@ const mockChat = async () => '[[5, ","],[16, "."],[22, ","],[34, "."],[44, ","]]
     '单数字缩写/常见型号不拆');
   ok(R.fusedEnglishNumberParts('got24,').word === 'got'
     && R.fusedEnglishNumberParts('got24,').number === '24,', '末尾标点留在数字 token 上');
+  const packed = [{ start: 1, end: 4, text: 'at26,000 views.24 subscribers', words: [
+    w('at26,000', 1, 2), w('views.24', 2, 3), w('subscribers', 3, 4),
+  ] }];
+  const unpacked = R.repairFusedEnglishNumbers(packed)[0];
+  ok(unpacked.text === 'at 26,000 views. 24 subscribers', '识别词里的千分位数字保持完整，断开的词有自己的切片');
+  ok(unpacked.words.length === 5 && unpacked.words[0].end === unpacked.words[1].start
+    && unpacked.words[2].end === unpacked.words[3].start, '拆开的相邻词共享边界');
 
   /* 词太少 → 不调 LLM 原样返回 */
   let called = 0;

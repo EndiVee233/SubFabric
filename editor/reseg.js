@@ -68,16 +68,19 @@ function isFusedWordException(token) {
     || core === 'win32' || core === 'win64';
 }
 function fusedEnglishNumberParts(raw) {
-  const m = /^([a-z]{2,})(\d{2,})([.,!?;:…]*)$/.exec(String(raw || '').trim());
-  if (!m || isFusedWordException(m[0])) return null;
-  return { word: m[1], number: m[2] + m[3] };
+  const text = String(raw || '').trim();
+  const separated = /^([A-Za-z]+[.!?,])(\d+(?:,\d{3})*(?:\.\d+)?[.,!?;:…]*)$/.exec(text);
+  if (separated) return { word: separated[1], number: separated[2] };
+  const joined = /^([a-z]{2,})(\d{2,}(?:,\d{3})*(?:\.\d+)?)([.,!?;:…]*)$/.exec(text);
+  if (!joined || isFusedWordException(joined[1] + joined[2])) return null;
+  return { word: joined[1], number: joined[2] + joined[3] };
 }
 function repairFusedEnglishNumberText(text) {
-  return String(text || '').replace(/(^|[^A-Za-z0-9])([a-z]{2,})(\d{2,})(?=[\s.,!?;:…]|$)/g,
-    (full, boundary, word, digits) => {
-      const token = word + digits;
-      return isFusedWordException(token) ? full : boundary + word + ' ' + digits;
-    });
+  return String(text || '').replace(/\S+/g, token => {
+    const match = /^([^A-Za-z0-9]*)(.*)$/.exec(token);
+    const parts = fusedEnglishNumberParts(match[2]);
+    return parts ? match[1] + parts.word + ' ' + parts.number : token;
+  });
 }
 
 /** 修复 ASR 融合 token。带词级时间时按字符占比估算拆分边界；
@@ -296,8 +299,15 @@ function softFold(group) {
   for (let k = cut - 1; k >= Math.floor(cut / 2); k--) {
     if (SOFT_END_RE.test(g[k].word)) { at = k; break; }
   }
-  const head = at >= 0 ? g.slice(0, at + 1) : g.slice(0, cut);
-  const tail = at >= 0 ? g.slice(at + 1) : g.slice(cut);
+  let split = at >= 0 ? at + 1 : cut;
+  // 硬折时把紧挨着的数字和计数单位留在同一行，例如「24 subscribers」。
+  if (split > 1 && /^\d+(?:,\d{3})*(?:\.\d+)?$/.test(g[split - 1].word)
+      && /^(?:views?|subscribers?|likes?|followers?|comments?|seconds?|minutes?|hours?|days?|years?|percent)\b/i.test(g[split].word)
+      && g[split].start - g[split - 1].end <= 0.25) {
+    split--;
+  }
+  const head = g.slice(0, split);
+  const tail = g.slice(split);
   if (!head.length || !tail.length) return [g];
   return [head].concat(softFold(tail));
 }

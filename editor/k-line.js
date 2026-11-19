@@ -20,6 +20,22 @@
 const escAss = (s) => String(s == null ? '' : s)
   .replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}').replace(/\r?\n/g, '\\N');
 
+/** 颜色切片和卡拉 OK 共用的厘秒边界。每个词至少留一格，末尾固定在句尾。 */
+function wordBoundaries(words, start, end) {
+  const startCs = Math.round(start * 100);
+  const endCs = Math.round(end * 100);
+  if (!words.length || !Number.isFinite(endCs - startCs) || endCs - startCs < words.length) return null;
+  const boundaries = [startCs];
+  for (let i = 1; i < words.length; i++) {
+    const earliest = boundaries[i - 1] + 1;
+    const latest = endCs - (words.length - i);
+    const measured = Math.round(Number(words[i].start) * 100);
+    boundaries.push(Number.isFinite(measured) ? Math.max(earliest, Math.min(measured, latest)) : earliest);
+  }
+  boundaries.push(endCs);
+  return boundaries;
+}
+
 /**
  * 一条 \k 卡拉OK行的**文本字段**（不含 "Dialogue: 0,<start>,<end>,Default,<name>,0,0,0,," 前缀）。
  *
@@ -32,23 +48,13 @@ const escAss = (s) => String(s == null ? '' : s)
  */
 function wordKText(words, start, end, sungBgr, baseBgr, kTag = '\\k') {
   const tag = kTag === '\\kf' ? '\\kf' : '\\k';
-  const startCs = Math.round(start * 100);
-  const endCs = Math.max(startCs + 1, Math.round(end * 100));
+  const bounds = wordBoundaries(words, start, end);
+  if (!bounds) return words.map(w => escAss(w.word)).join(' ');
   let txt = '{\\1c&H' + sungBgr + '&' + (baseBgr ? '\\2c&H' + baseBgr + '&' : '') + '}';
-  let cursor = startCs;
   for (let k = 0; k < words.length; k++) {
-    // 与颜色切片同一条夹取规则：首词贴句首、每词收在下一词起点、末词收在句尾、时长至少 1cs；
-    // 起点同时不越过上一段的终点（单调），保证段时长恒正、总和严格 = 行时长
-    let sCs = Math.max(cursor, Math.min(endCs - 1, Math.round(words[k].start * 100)));
-    if (sCs >= endCs) sCs = Math.max(startCs, endCs - 1);
-    let eCs = Math.max(sCs + 1, Math.min(endCs,
-      Math.round((k + 1 < words.length ? words[k + 1].start : end) * 100)));
-    if (eCs <= sCs) eCs = Math.min(endCs, sCs + 1);
-    txt += '{' + tag + (eCs - sCs) + '}' + escAss(words[k].word) + (k + 1 < words.length ? ' ' : '');
-    cursor = eCs;
+    txt += '{' + tag + (bounds[k + 1] - bounds[k]) + '}' + escAss(words[k].word) + (k + 1 < words.length ? ' ' : '');
   }
-  if (cursor < endCs) txt += '{' + tag + (endCs - cursor) + '}';   // 行尾兜底（保持段总和 = 行时长）
   return txt;
 }
 
-module.exports = { wordKText, escAss };
+module.exports = { wordBoundaries, wordKText, escAss };

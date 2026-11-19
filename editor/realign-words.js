@@ -108,4 +108,27 @@ function wordSpanRange(seg, tolerance) {
   };
 }
 
-export { hotwordCandidates, matchPickedWords, sliceRange, wordSpanRange };
+/** 先确定所有句子的实际起点，再截断初稿句尾，避免补尾或词级跨度压到下一句。 */
+function assCueSpans(segs, useWordSpans, tail) {
+  const spans = segs.map(s => {
+    const measured = useWordSpans ? wordSpanRange(s) : s;
+    const start = Math.max(0, Math.round(measured.start * 100));
+    const padding = s.words?.length || !useWordSpans ? tail : 0;
+    const end = Math.round((measured.end + padding) * 100);
+    return { start, end, spokenEnd: Math.round(measured.end * 100) };
+  });
+  if (tail > 0) {
+    for (let i = 1; i < spans.length; i++) {
+      const prev = spans[i - 1], next = spans[i];
+      // 分句已把下一句移到上一句的末词之后时，保留这个边界。
+      const sourceStart = Math.round(segs[i].start * 100);
+      next.start = Math.max(next.start, prev.start + 1, Math.min(sourceStart, prev.spokenEnd));
+      prev.end = Math.min(prev.end, next.start);
+    }
+  }
+  return spans.map((span, i) => ({
+    ...segs[i], start: span.start / 100, end: Math.max(span.start + 1, span.end) / 100,
+  }));
+}
+
+export { hotwordCandidates, matchPickedWords, sliceRange, wordSpanRange, assCueSpans };
