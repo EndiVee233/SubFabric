@@ -1183,7 +1183,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "851bbca233a1a300caf5a0ed3b5fd948005d619df42b919ad68228a83ef298b0",
+      "sha256": "9be197acd50c334ed366415d6961b1f0d908e5464cf7fa46bddf5e5de92c42f0",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",

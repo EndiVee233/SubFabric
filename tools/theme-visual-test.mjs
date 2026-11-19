@@ -163,6 +163,13 @@ try {
         await collect('asr-parameters-edited-bottom', '#sf-asr-params .sf-ap-panel');
         await b.eval('document.querySelector("#sf-ap-cancel").click()');
       }
+      await b.eval(`document.querySelector('[data-asr-family="云端识别"]').click()`);
+      await b.eval('document.querySelector("[data-openai-key]").click()');
+      await b.waitFor('!!document.querySelector("dialog[open].sf-ap-panel input[type=password]")');
+      assert.ok(await b.eval(`document.querySelector('dialog[open].sf-ap-panel').textContent.includes('ChatGPT Pro')
+        && document.querySelector('dialog[open].sf-ap-panel').textContent.includes('API 余额')`));
+      await b.eval('document.querySelector("[data-openai-cancel]").click()');
+      await b.eval('document.querySelector("#sf-asr-back").click()');
       await go('#/project/p-theme-audit');
       await b.waitFor('window.__dbg.state.project?.id === "p-theme-audit" && window.__dbg.state.format === "ass" && document.querySelectorAll(".cue-card").length > 0');
       await b.eval('if(!document.querySelector("#confirm-overlay").hidden)document.querySelector("#confirm-no").click()');
