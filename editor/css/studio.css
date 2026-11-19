@@ -3946,6 +3946,14 @@ body.sf-studio { background:var(--bg); color:var(--text); font-size:13px; }
 .sf-cover.has-cover::before,.sf-cover.has-cover::after{display:none!important;}
 .sf-studio .pc-badge { position:absolute; top:20px; left:20px; font-size:9px; background:var(--surface); color:var(--accent-text, var(--accent)); }.sf-studio .pc-main { padding:15px 8px 10px; }.sf-studio .pc-name { font-size:13px; font-weight:500; white-space:normal; line-height:1.7; }.sf-studio .pc-st { display:inline-flex; margin-left:5px; font-size:9px; }.sf-studio .pc-meta { font-size:10px; margin-top:5px; line-height:1.7; color:var(--muted); }.sf-studio .pc-actions { padding:0 6px 6px; gap:6px; margin:0; flex-wrap:wrap; }.sf-studio .pc-actions .btn { opacity:1; font-size:10px; padding:6px 10px; min-height:28px; }.sf-assign { max-width:100%; min-width:0; width:100%; margin-top:7px; padding:5px 8px; font-size:10px!important; }
 .sf-studio #home-view[data-list=list] .home-list { display:flex; flex-direction:column; gap:12px; }.sf-studio #home-view[data-list=list] .proj-card { display:grid; grid-template-columns:135px minmax(0,1fr) 210px; align-items:center; gap:10px; }.sf-studio #home-view[data-list=list] .sf-cover { height:76px; }.sf-studio #home-view[data-list=list] .pc-badge { top:16px; left:16px; }.sf-studio #home-view[data-list=list] .pc-actions { justify-content:flex-end; }.sf-studio #home-view[data-list=list] .pc-name { white-space:nowrap; }
+.pc-asr {
+  position:absolute; inset-block-start:20px; inset-inline-end:20px; z-index:2;
+  max-inline-size:10ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  padding:3px 6px; border:1px solid var(--line); border-radius:4px;
+  background:var(--surface-2); color:var(--text); font-size:10px; line-height:1.2;
+}
+.sf-studio[data-design=uwp] .pc-asr { inset-block-start:12px; inset-inline-end:12px; border-radius:2px; }
+#home-view[data-list=list] .pc-asr { position:static; align-self:center; flex:0 0 auto; order:1; }
 #sf-filter-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:52px 20px 40px; }
 #sf-filter-empty[hidden] { display:none!important; }
 #sf-filter-empty .sf-filter-empty-title { margin:0; color:var(--muted); font-size:13px; line-height:1.7; }

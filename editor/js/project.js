@@ -30,6 +30,27 @@ export function initProjects(ctx) {
     onProjectChanged = () => {}, waitForEffectSave = () => {}, readWorkloadItems } = ctx;
   const $ = (s) => document.querySelector(s);
   const studioUI = document.body?.classList?.contains('sf-studio') === true;
+  const alignmentPreferences = new WeakMap();
+  const alignmentLockLabel = 'OpenAI 必须开启对齐，生成逐词 ASS';
+
+  function syncRequiredAlignment(word, align, required) {
+    if (!word || !align) return;
+    for (const [input, enabled] of [[word, false], [align, true]]) {
+      const field = input.type === 'checkbox' ? 'checked' : 'value';
+      const saved = alignmentPreferences.get(input);
+      if (required) {
+        if (!saved) alignmentPreferences.set(input, { value: input[field], disabled: input.disabled, title: input.title });
+        input[field] = field === 'checked' ? enabled : (enabled ? '1' : '0');
+        input.disabled = true;
+        input.title = t(alignmentLockLabel);
+      } else if (saved) {
+        input[field] = saved.value;
+        input.disabled = saved.disabled;
+        input.title = saved.title;
+        alignmentPreferences.delete(input);
+      }
+    }
+  }
 
   let lastSavedText = '';      // 上次保存成功的字幕内容(脏检查用)
   let saveTimer = 0;
@@ -288,7 +309,10 @@ export function initProjects(ctx) {
   }
   for (const scope of ['np', 'dt']) {
     const e = genEls(scope);
-    if (scope === 'np' && e.asr) e.asr.addEventListener('change', () => npSyncVibeVoice());
+    if (scope === 'np' && e.asr) e.asr.addEventListener('change', () => {
+      npSyncVibeVoice();
+      npMaybeEnable();
+    });
     if (e.save) e.save.addEventListener('click', () => genSave(scope));
     for (const k of ['provider', 'model', 'prompt']) {
       const el = e[k];
@@ -953,12 +977,24 @@ export function initProjects(ctx) {
   let listAnim = false;                             // 入场动画开关(轮询刷新时不重播, 否则每 1.5s 抖一次)
   const lastSig = new Map();                        // 项目 id → 上次渲染内容的签名(定点更新用)
   const pctAnimations = new WeakMap();              // 新进度使旧动画失效，避免快速轮询时两个动画互相写数字
+  function draftModelLabel(draft) {
+    const id = String(draft?.usedModelId || draft?.modelId || draft?.engine || '').toLowerCase();
+    if (id.includes('whisper')) return 'Whisper';
+    if (id.includes('qwen')) return 'Qwen';
+    if (id.includes('parakeet') || ['crispasr', 'openvino', 'dual'].includes(id)) return 'Parakeet';
+    if (id === 'gpt-transcribe' || id === 'openai-asr') return 'OpenAI';
+    if (id.startsWith('bcut')) return t('必剪');
+    if (id.startsWith('capcut')) return t('剪映');
+    if (id.startsWith('vibevoice')) return 'VibeVoice';
+    return draft?.usedModelId || draft?.modelId || '';
+  }
+
   /** 结构字段变化才重建卡片；进度、消息与修改时间就地更新，避免每次 touchMeta 重建动画。 */
   function cardSig(p) {
     const dr = p.draft || null;
     return [p.name, p.format, p.videoExists ? 1 : 0, p.fetching ? 1 : 0,
       (p.prepare && p.prepare.status) || '', p.video && p.video.name, p.subName || '',
-      dr ? [dr.status, dr.stage, dr.pendingTranslate, dr.lines,
+      dr ? [dr.status, dr.stage, dr.pendingTranslate, dr.lines, dr.usedModelId, dr.modelId, dr.engine,
         dr.translated ? 1 : 0, dr.skippedTranslate ? 1 : 0].join('|') : '',
     ].join('\u0001');
   }
@@ -1105,6 +1141,8 @@ export function initProjects(ctx) {
       /* UWP 设计稿的 cover/body/badges/actions：状态与“可编辑”放在独立 badges 行，
          标题只保留项目名，避免徽标挤进标题造成换行。 */
       const badges = `${stChip}${hasSub && !locked ? `<span class="pc-st st-done">${t('可编辑')}</span>` : ''}`;
+      const modelLabel = draftModelLabel(dr);
+      const modelBadge = modelLabel ? `<span class="pc-asr" title="${esc(dr.usedModelId || dr.modelId || modelLabel)}">${esc(modelLabel)}</span>` : '';
       card.innerHTML = `
         <span class="pc-badge ${fmt === 'srt' ? 'srt' : ''}">${badge}</span>
         <div class="pc-main">
@@ -1117,6 +1155,7 @@ export function initProjects(ctx) {
           ${progBtn}
           <button type="button" class="btn btn-accent pc-open" ${locked ? 'disabled' : ''}>打开</button>
           <button type="button" class="btn pc-del ico-only" title="删除项目（音频、波形、字幕副本一起删）" aria-label="删除项目">${ico('trash')}</button>
+          ${modelBadge}
         </div>`;
       /* 处理中（提取/识别/翻译还没跑完）点卡片进**详情页**看进度；完成后再进编辑器。
        * 以前只有"还没字幕"时才拦，识别中已有部分字幕的卡片会直接跳编辑器，
@@ -1488,8 +1527,9 @@ export function initProjects(ctx) {
       const sel = $('#bd-model');
       if (sel) {
         sel.innerHTML = models.length
-          ? models.map(m => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name || m.id)}</option>`).join('')
+          ? models.map(m => `<option value="${escapeHtml(m.id)}" data-requires-alignment="${m.requiresAlignment ? '1' : '0'}">${escapeHtml(m.name || m.id)}</option>`).join('')
           : '<option value="">没有可用模型</option>';
+        bdSyncAlignment();
       }
       const items = ps.map(p => ({ id: p.id, name: p.name, meta: [p.video && p.video.name, p.duration ? fmtTime(p.duration) : ''].filter(Boolean).join(' · '), checked: true }));
       bdRenderList(items, false);
@@ -1548,6 +1588,11 @@ export function initProjects(ctx) {
     }
   }
   $('#btn-batch-draft')?.addEventListener('click', () => { location.hash = '#/batch'; });
+  function bdSyncAlignment() {
+    const option = $('#bd-model')?.selectedOptions[0];
+    syncRequiredAlignment($('#bd-word'), $('#bd-align'), option?.dataset.requiresAlignment === '1');
+  }
+  $('#bd-model')?.addEventListener('change', bdSyncAlignment);
   $('#bd-close')?.addEventListener('click', () => { const ov = $('#batch-draft-overlay'); if (ov) ov.hidden = true; });
   $('#bd-start')?.addEventListener('click', async () => {
     if (bdBusy) return;
@@ -1641,6 +1686,7 @@ export function initProjects(ctx) {
         sel.innerHTML = (extra ? extra : '') + (options || '<option value="">没有可用模型</option>');
         if (old && [...sel.options].some(o => o.value === old)) sel.value = old;
       }
+      batchSyncAlignment();
       for (const [id, extra] of [['#batch-scheme', '<option value="">跟随当前方案</option>'], ['#batch-item-scheme', '<option value="">跟随默认</option>']]) {
         const sel = $(id);
         if (!sel) continue;
@@ -1652,22 +1698,39 @@ export function initProjects(ctx) {
       toast('读取批量初稿设置失败：' + ((e && e.message) || e), 4600);
     }
   }
+  function batchRequiresAlignment(modelId) {
+    return batchState.models.some(model => model.id === modelId && model.requiresAlignment);
+  }
+  function batchSyncAlignment() {
+    const modelId = $('#batch-model')?.value;
+    syncRequiredAlignment($('#batch-word'), $('#batch-align'), batchRequiresAlignment(modelId));
+  }
+  function batchItemSyncAlignment() {
+    const modelId = $('#batch-item-model')?.value || $('#batch-model')?.value;
+    syncRequiredAlignment($('#batch-item-word'), $('#batch-item-align'), batchRequiresAlignment(modelId));
+  }
   function batchGlobalOptions() {
+    const requested = id => {
+      const input = $(id);
+      return input ? (alignmentPreferences.get(input)?.value ?? input.checked) : false;
+    };
     return {
       modelId: ($('#batch-model') || {}).value || '',
       schemeId: ($('#batch-scheme') || {}).value || '',
-      wordLevel: !!($('#batch-word') && $('#batch-word').checked),
-      align: !!($('#batch-align') && $('#batch-align').checked),
+      wordLevel: requested('#batch-word'),
+      align: requested('#batch-align'),
       speakers: !!($('#batch-speakers') && $('#batch-speakers').checked),
     };
   }
   function batchEffective(item, global) {
     const pick = (v, fallback) => v === null || v === undefined ? fallback : v;
+    const modelId = item.modelId || global.modelId;
+    const required = batchRequiresAlignment(modelId);
     return {
-      modelId: item.modelId || global.modelId,
+      modelId,
       schemeId: item.schemeId || global.schemeId,
-      wordLevel: pick(item.wordLevel, global.wordLevel),
-      align: pick(item.align, global.align),
+      wordLevel: !required && pick(item.wordLevel, global.wordLevel),
+      align: required || pick(item.align, global.align),
       speakers: pick(item.speakers, global.speakers),
     };
   }
@@ -1686,6 +1749,7 @@ export function initProjects(ctx) {
     const item = batchState.items[index];
     if (!item || batchState.running) return;
     batchState.editing = item;
+    syncRequiredAlignment($('#batch-item-word'), $('#batch-item-align'), false);
     $('#batch-item-name').textContent = item.name || item.file?.name || '';
     const set = (id, value) => { const el = $(id); if (el) el.value = value == null ? '' : String(value); };
     set('#batch-item-model', item.modelId || '');
@@ -1693,12 +1757,17 @@ export function initProjects(ctx) {
     set('#batch-item-word', item.wordLevel == null ? '' : (item.wordLevel ? '1' : '0'));
     set('#batch-item-align', item.align == null ? '' : (item.align ? '1' : '0'));
     set('#batch-item-speakers', item.speakers == null ? '' : (item.speakers ? '1' : '0'));
+    batchItemSyncAlignment();
     const ov = $('#batch-item-overlay'); if (ov) ov.hidden = false;
   }
   function batchSaveItem() {
     const item = batchState.editing;
     if (!item) return;
-    const tri = id => { const v = ($(id) || {}).value; return v === '' ? null : v === '1'; };
+    const tri = id => {
+      const input = $(id);
+      const value = alignmentPreferences.get(input)?.value ?? input?.value;
+      return value === '' ? null : value === '1';
+    };
     item.modelId = ($('#batch-item-model') || {}).value || null;
     item.schemeId = ($('#batch-item-scheme') || {}).value || null;
     item.wordLevel = tri('#batch-item-word');
@@ -1793,6 +1862,8 @@ export function initProjects(ctx) {
   $('#batch-files')?.addEventListener('change', (e) => {
     batchAddFiles(e.target.files || []); e.target.value = '';
   });
+  $('#batch-model')?.addEventListener('change', batchSyncAlignment);
+  $('#batch-item-model')?.addEventListener('change', batchItemSyncAlignment);
   $('#batch-start')?.addEventListener('click', batchStart);
   $('#batch-stop')?.addEventListener('click', () => { batchState.stop = true; toast('已请求停止：当前视频处理完后不再开始下一个', 4800); });
   $('#batch-clear')?.addEventListener('click', () => {
@@ -5274,6 +5345,7 @@ async function renderAsrModels(providedStatus = null) {
     npVideoFile = null;
     npProbeSource = null;
     $('#np-name').value = '';
+    syncRequiredAlignment($('#np-word'), $('#np-align'), false);
     $('#np-word').checked = true;
     $('#np-remove-linebreaks').checked = true;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
@@ -5338,11 +5410,14 @@ async function renderAsrModels(providedStatus = null) {
     // 填了非法区间就别让点（提示已经在 npRegionFeedback 里给了）
     const regionOk = npReadRegion().ok;
     // 初稿模式必须有可用的识别模型（导入模式不需要）
-    const draftReady = npMode !== 'draft' || !!asrStatus.ready;
+    const model = npSelectedModel();
+    const missingRequiredAligner = npMode === 'draft' && model?.requiresAlignment && !npAlignerReady(model);
+    const draftReady = npMode !== 'draft' || (!!asrStatus.ready && !missingRequiredAligner);
     let why = '';
     if (!hasSource) why = npMode === 'draft' ? '先粘贴视频链接（或选择视频文件）' : '先选择要导入的字幕文件或项目包';
     else if (!hasSubOrPack) why = '先选择字幕文件或项目包';
     else if (!hasModel) why = '先在「语音识别」里选一个模型';
+    else if (missingRequiredAligner) why = npAlignerHint(model);
     else if (!regionOk) why = '时间区间无效：结束时间要晚于开始时间';
     else if (!draftReady) why = npModelBlockReason();
     $('#np-create').disabled = !!why;
@@ -5569,6 +5644,15 @@ async function renderAsrModels(providedStatus = null) {
     const m = npSelectedModel();
     const vibe = (m && m.id === 'vibevoice-asr-4bit') || $('#np-model-sel')?.value === 'vibevoice-asr-4bit';
     const native = !m || m.nativeWordLevel !== false;
+    const required = !!m?.requiresAlignment;
+    syncRequiredAlignment(word, align, required);
+    if (required) {
+      rowAlign.hidden = false;
+      $('#np-word-desc').textContent = t(alignmentLockLabel);
+      $('#np-align-desc').textContent = t(npAlignerReady(m) ? alignmentLockLabel : npAlignerHint(m));
+      npSyncSpeakers();
+      return;
+    }
     if (vibe) {
       word.disabled = true; word.checked = false;
     } else if (!native) {
@@ -5583,8 +5667,7 @@ async function renderAsrModels(providedStatus = null) {
       align.disabled = true;
     } else {
       align.disabled = false;
-      if (m?.engine === 'openai-asr' && !align.dataset.touched) align.checked = false;
-      else if (!native && !align.dataset.touched) align.checked = true;
+      if (!native && !align.dataset.touched) align.checked = true;
     }
     if (word.checked) { align.checked = false; rowAlign.hidden = true; }
     else rowAlign.hidden = false;

@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "1a0d39faef2ee6f8cc3aded47aca86a2f29e1e081a7c52304b15d35d1da16698",
+      "sha256": "d754e6687f94fc664fd4f41aa6261976e7e3a4550e7f573addb0baa51080d99c",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -1183,7 +1183,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "9be197acd50c334ed366415d6961b1f0d908e5464cf7fa46bddf5e5de92c42f0",
+      "sha256": "fc28c14d10ccd9d9725c36016799193d3326a5f68a92b70a9e4409d165309c94",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1212,75 +1212,67 @@
       ],
       "dynamic": [
         {
-          "line": 211,
+          "line": 232,
           "method": "innerHTML"
         },
         {
-          "line": 227,
+          "line": 248,
           "method": "innerHTML"
         },
         {
-          "line": 1016,
+          "line": 1052,
           "method": "innerHTML"
         },
         {
-          "line": 1024,
+          "line": 1060,
           "method": "innerHTML"
         },
         {
-          "line": 1026,
+          "line": 1062,
           "method": "innerHTML"
         },
         {
-          "line": 1036,
+          "line": 1072,
           "method": "innerHTML"
         },
         {
-          "line": 1051,
+          "line": 1087,
           "method": "createElement"
         },
         {
-          "line": 1057,
+          "line": 1093,
           "method": "innerHTML"
         },
         {
-          "line": 1059,
+          "line": 1095,
           "method": "replaceChildren"
         },
         {
-          "line": 1108,
+          "line": 1146,
           "method": "innerHTML"
         },
         {
-          "line": 1239,
+          "line": 1278,
           "method": "innerHTML"
         },
         {
-          "line": 1461,
+          "line": 1500,
           "method": "innerHTML"
         },
         {
-          "line": 1464,
+          "line": 1503,
           "method": "innerHTML"
         },
         {
-          "line": 1480,
+          "line": 1519,
           "method": "innerHTML"
         },
         {
-          "line": 1490,
+          "line": 1529,
           "method": "innerHTML"
         },
         {
-          "line": 1601,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1603,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1641,
+          "line": 1646,
           "method": "innerHTML"
         },
         {
@@ -1288,271 +1280,279 @@
           "method": "innerHTML"
         },
         {
-          "line": 1863,
+          "line": 1686,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1694,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1934,
           "method": "createElement"
         },
         {
-          "line": 1865,
+          "line": 1936,
           "method": "createElement"
         },
         {
-          "line": 1871,
+          "line": 1942,
           "method": "createElement"
         },
         {
-          "line": 1879,
+          "line": 1950,
           "method": "innerHTML"
         },
         {
-          "line": 1997,
+          "line": 2068,
           "method": "innerHTML"
         },
         {
-          "line": 1999,
+          "line": 2070,
           "method": "createElement"
         },
         {
-          "line": 2001,
+          "line": 2072,
           "method": "innerHTML"
         },
         {
-          "line": 2010,
+          "line": 2081,
           "method": "createElement"
         },
         {
-          "line": 2012,
+          "line": 2083,
           "method": "createElement"
         },
         {
-          "line": 2016,
+          "line": 2087,
           "method": "createElement"
         },
         {
-          "line": 2018,
+          "line": 2089,
           "method": "createElement"
         },
         {
-          "line": 2023,
+          "line": 2094,
           "method": "createElement"
         },
         {
-          "line": 2039,
+          "line": 2110,
           "method": "createElement"
         },
         {
-          "line": 2158,
+          "line": 2229,
           "method": "innerHTML"
         },
         {
-          "line": 2224,
+          "line": 2295,
           "method": "innerHTML"
         },
         {
-          "line": 2271,
+          "line": 2342,
           "method": "innerHTML"
         },
         {
-          "line": 2275,
+          "line": 2346,
           "method": "innerHTML"
         },
         {
-          "line": 2285,
+          "line": 2356,
           "method": "innerHTML"
         },
         {
-          "line": 2299,
+          "line": 2370,
           "method": "innerHTML"
         },
         {
-          "line": 2448,
+          "line": 2519,
           "method": "innerHTML"
         },
         {
-          "line": 2551,
+          "line": 2622,
           "method": "innerHTML"
         },
         {
-          "line": 2564,
+          "line": 2635,
           "method": "innerHTML"
         },
         {
-          "line": 2568,
+          "line": 2639,
           "method": "innerHTML"
         },
         {
-          "line": 2579,
+          "line": 2650,
           "method": "innerHTML"
         },
         {
-          "line": 2674,
+          "line": 2745,
           "method": "innerHTML"
         },
         {
-          "line": 2702,
+          "line": 2773,
           "method": "innerHTML"
         },
         {
-          "line": 2751,
+          "line": 2822,
           "method": "innerHTML"
         },
         {
-          "line": 2848,
+          "line": 2919,
           "method": "innerHTML"
         },
         {
-          "line": 2899,
+          "line": 2970,
           "method": "createElement"
         },
         {
-          "line": 2903,
+          "line": 2974,
           "method": "innerHTML"
         },
         {
-          "line": 2972,
+          "line": 3043,
           "method": "innerHTML"
         },
         {
-          "line": 3005,
+          "line": 3076,
           "method": "innerHTML"
         },
         {
-          "line": 3024,
+          "line": 3095,
           "method": "innerHTML"
         },
         {
-          "line": 3139,
+          "line": 3210,
           "method": "createElement"
         },
         {
-          "line": 3142,
+          "line": 3213,
           "method": "innerHTML"
         },
         {
-          "line": 3250,
+          "line": 3321,
           "method": "innerHTML"
         },
         {
-          "line": 3264,
+          "line": 3335,
           "method": "innerHTML"
         },
         {
-          "line": 3270,
+          "line": 3341,
           "method": "innerHTML"
         },
         {
-          "line": 3304,
+          "line": 3375,
           "method": "innerHTML"
         },
         {
-          "line": 3354,
+          "line": 3425,
           "method": "innerHTML"
         },
         {
-          "line": 3502,
+          "line": 3573,
           "method": "innerHTML"
         },
         {
-          "line": 3688,
+          "line": 3759,
           "method": "innerHTML"
         },
         {
-          "line": 3807,
+          "line": 3878,
           "method": "innerHTML"
         },
         {
-          "line": 3929,
+          "line": 4000,
           "method": "innerHTML"
         },
         {
-          "line": 3936,
+          "line": 4007,
           "method": "replaceChildren"
         },
         {
-          "line": 4270,
+          "line": 4341,
           "method": "replaceChildren"
         },
         {
-          "line": 4293,
+          "line": 4364,
           "method": "replaceChildren"
         },
         {
-          "line": 4294,
+          "line": 4365,
           "method": "createElement"
         },
         {
-          "line": 4345,
+          "line": 4416,
           "method": "innerHTML"
         },
         {
-          "line": 4448,
+          "line": 4519,
           "method": "innerHTML"
         },
         {
-          "line": 4449,
+          "line": 4520,
           "method": "innerHTML"
         },
         {
-          "line": 4464,
+          "line": 4535,
           "method": "innerHTML"
         },
         {
-          "line": 4567,
+          "line": 4638,
           "method": "createElement"
         },
         {
-          "line": 4839,
+          "line": 4910,
           "method": "innerHTML"
         },
         {
-          "line": 4841,
+          "line": 4912,
           "method": "createElement"
         },
         {
-          "line": 4843,
+          "line": 4914,
           "method": "innerHTML"
         },
         {
-          "line": 5379,
+          "line": 5454,
           "method": "innerHTML"
         },
         {
-          "line": 5382,
+          "line": 5457,
           "method": "innerHTML"
         },
         {
-          "line": 5400,
+          "line": 5475,
           "method": "innerHTML"
         },
         {
-          "line": 5403,
+          "line": 5478,
           "method": "innerHTML"
         },
         {
-          "line": 5432,
+          "line": 5507,
           "method": "innerHTML"
         },
         {
-          "line": 5646,
+          "line": 5729,
           "method": "createElement"
         },
         {
-          "line": 6207,
+          "line": 6290,
           "method": "innerHTML"
         },
         {
-          "line": 6348,
+          "line": 6431,
           "method": "innerHTML"
         },
         {
-          "line": 6348,
+          "line": 6431,
           "method": "innerHTML"
         },
         {
-          "line": 6600,
+          "line": 6683,
           "method": "innerHTML"
         },
         {
-          "line": 6617,
+          "line": 6700,
           "method": "innerHTML"
         }
       ],
@@ -2140,7 +2140,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "3245b7ece1e44a7813e7aa43c4ab9846df2dd2c2c95d1c8a588eb79f5308d505",
+      "sha256": "fe63720db66f1fd5c4acc997ae9740948b081293815dcfb97614241266d09f7f",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],

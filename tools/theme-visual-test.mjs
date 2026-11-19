@@ -358,6 +358,79 @@ try {
     assert.ok(await b.eval('document.querySelector("#st-subtitle-video").paused'), 'closing the form pauses the sample');
   }
   report.subtitlePreview = 'top placement, frozen frame, playback, sticky scrolling, and effect heading layering passed at both window sizes';
+
+  await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    if (!new URLSearchParams(location.search).has('asr-badge-fixture')) return;
+    const fetchOriginal = window.fetch;
+    window.fetch = async (...args) => {
+      const response = await fetchOriginal(...args);
+      const url = String(args[0]);
+      if (url === '/api/projects') {
+        const data = await response.json();
+        const project = data.projects.find(item => item.id === 'p-theme-audit');
+        project.draft = { status:'done', modelId:'bcut-asr', usedModelId:'whisper-large-v2-vulkan', translated:true };
+        return Response.json(data);
+      }
+      if (url === '/api/asr/status') {
+        const data = await response.json();
+        for (const model of data.models) if (['gpt-transcribe','whisper-large-v2-vulkan'].includes(model.id)) {
+          Object.assign(model,{ready:true,usable:true,backendAllowed:true});
+        }
+        const aligner = data.aligners.find(entry => entry.backend === 'vulkan');
+        aligner.ready = true;
+        data.ready = true;
+        return Response.json(data);
+      }
+      return response;
+    };
+  })()` });
+  await b.setViewport(1440, 960);
+  await b.goto(server.origin + '/editor/studio.html?asr-badge-fixture=1#/home');
+  await b.waitFor('document.querySelector(".proj-card .pc-asr")?.textContent === "Whisper"');
+  const checkBadge = view => b.eval(`(() => {
+    const root = document.querySelector('#home-view'), button = document.querySelector('#sf-list-mode');
+    if (root.dataset.list !== ${JSON.stringify(view)}) button.click();
+    const badge = document.querySelector('.pc-asr');
+    const bounds = badge.getBoundingClientRect(), card = badge.closest('.proj-card').getBoundingClientRect();
+    const last = badge.previousElementSibling.getBoundingClientRect();
+    return bounds.width > 0 && bounds.right <= card.right && card.right - bounds.right < 35
+      && (${JSON.stringify(view)} === 'list' ? bounds.left >= last.right : bounds.top - card.top < 35);
+  })()`);
+  assert.ok(await checkBadge('grid'), 'actual model appears in the upper right of the card');
+  assert.ok(await checkBadge('list'), 'actual model appears at the right of the list actions');
+  await checkBadge('grid');
+  await go('#/new');
+  await b.eval('document.querySelector("#np-mode-draft").click()');
+  await b.waitFor('!!document.querySelector(\'#np-model-sel option[value="gpt-transcribe"]\')');
+  const chooseModel = (selector, model) => b.eval(`(() => {
+    const select = document.querySelector(${JSON.stringify(selector)});
+    select.value = ${JSON.stringify(model)};
+    if (!select.value) throw new Error('requested model is missing: ' + ${JSON.stringify(model)});
+    select.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  const locked = (word, align, select = false) => b.eval(`(() => {
+    const word = document.querySelector(${JSON.stringify(word)}), align = document.querySelector(${JSON.stringify(align)});
+    return word.disabled && align.disabled && (${select} ? word.value === '0' && align.value === '1' : !word.checked && align.checked);
+  })()`);
+  await chooseModel('#np-model-sel', 'gpt-transcribe');
+  assert.ok(await locked('#np-word','#np-align'), 'OpenAI alignment is forced when creating a draft');
+  await chooseModel('#np-model-sel','whisper-large-v2-vulkan');
+  assert.ok(await b.eval('!document.querySelector("#np-align").disabled'), 'switching to Whisper releases the OpenAI lock');
+  await go('#/batch');
+  await b.waitFor('!!document.querySelector(\'#batch-model option[value="gpt-transcribe"]\')');
+  await chooseModel('#batch-model','gpt-transcribe');
+  assert.ok(await locked('#batch-word','#batch-align'), 'batch default follows the OpenAI alignment policy');
+  await b.eval(`(() => { const input=document.querySelector('#batch-files'), dt=new DataTransfer();
+    dt.items.add(new File(['fixture'],'alignment-fixture.mp4',{type:'video/mp4'}));
+    input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+    document.querySelector('[data-batch-settings]').click();
+  })()`);
+  assert.ok(await locked('#batch-item-word','#batch-item-align',true), 'inherited OpenAI model locks per-item alignment');
+  await chooseModel('#batch-item-model','whisper-large-v2-vulkan');
+  assert.ok(await b.eval('!document.querySelector("#batch-item-align").disabled'), 'a different model retains per-item controls');
+  await b.eval('document.querySelector("#batch-item-cancel").click();document.querySelector("#batch-clear").click()');
+  report.asrDraft = 'actual model badge on cards and list; OpenAI alignment locked on new and batch draft controls';
+
   const persisted = await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})');
   await b.goto(server.origin + '/?theme-persistence=1#/batch');
   await b.waitFor('document.readyState === "complete" && document.body && window.__sfStudio && window.__dbg');

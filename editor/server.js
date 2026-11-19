@@ -1062,10 +1062,11 @@ const ASR_MODELS = [
     engine: 'openai-asr',
     cloud: true,
     nativeWordLevel: false,
+    requiresAlignment: true,
     files: [],
     sizeMB: 0,
     dirName: '',
-    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。勾选对齐可生成逐词 ASS。',
+    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。必须使用对齐模型生成逐词 ASS。',
   },
 ];
 /* 对齐模型独立于 ASR：下载 Qwen3-ASR 时不再夹带对齐器；realign / 初稿「对齐」都从这里取。 */
@@ -1157,11 +1158,11 @@ function draftAlignerMissingHint(m) {
 async function draftOutputPlan(m, data) {
   if (m.engine === 'openai-asr' && !openAiAsrKey()) throw new Error(OPENAI_ASR_KEY_MISSING);
   const native = nativeWordLevelOf(m);
-  const nativeWanted = !!data.wordLevel;
+  const nativeWanted = !m.requiresAlignment && !!data.wordLevel;
   if (nativeWanted && !native) {
     throw new Error('「' + m.name + '」没有原生逐词时间；请取消「逐词」，改勾「对齐」用对齐模型生成逐词');
   }
-  const align = !nativeWanted && !!data.align;
+  const align = !!m.requiresAlignment || (!nativeWanted && !!data.align);
   if (align && !(await draftAlignerReady(m))) {
     throw new Error(draftAlignerMissingHint(m));
   }
@@ -6152,6 +6153,10 @@ function startPrepare(id, videoPath, mode) {
     if (!segs.length) throw new Error('识别结果为空');
     return segs;
   }
+  function asrHasAlignedSegments(id) {
+    try { return readSegments(id).every(segment => Array.isArray(segment.words) && segment.words.length); }
+    catch { return false; }
+  }
   /** 已有译文(行数对得上才算数, 否则视为无译文) */
   function readTranslations(id, n, sourceKey) {
     try {
@@ -7025,25 +7030,36 @@ function startPrepare(id, videoPath, mode) {
 
   /** 初稿勾了「对齐」但不是 Qwen 引擎：ASR 可能已给原生词，也可能没给。
    *  统一用对齐器按 ASR 的句级文本重算，再写回 asr.json（只改词时间，不动文本）。 */
-  async function alignDraftAsrJson(id) {
-    const p = path.join(projDir(id), 'asr.json');
-    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const segs = (d.segments || []).filter(s => String(s.text || '').trim());
+  async function alignAsrSegments(id, segments, requireAll = false, onProgress = () => {}) {
+    const segs = segments.filter(s => String(s.text || '').trim());
     if (!segs.length) throw new Error('没有可对齐的字幕段');
     const prep = await realignPrep(id, {});
-    const r = await realignAlignBatch(prep, segs, () => {});
+    const r = await realignAlignBatch(prep, segs, onProgress);
+    checkAsrOwner(id);
     let changed = 0;
     for (let i = 0; i < segs.length; i++) {
       const item = r.items[i];
       if (item && item.ok && item.words && item.words.length) {
         segs[i].words = item.words.map(w => ({ word: w.w, start: w.s, end: w.e }));
+        if (requireAll) {
+          segs[i].start = segs[i].words[0].start;
+          segs[i].end = segs[i].words.at(-1).end;
+        }
         changed++;
       }
     }
     if (!changed) throw new Error('对齐器没有给出有效的逐词时间');
+    if (requireAll && changed !== segs.length) throw new Error('OpenAI 转录有分块对齐失败，请重试对齐');
+    return { changed, total: segs.length };
+  }
+
+  async function alignDraftAsrJson(id, requireAll = false) {
+    const p = path.join(projDir(id), 'asr.json');
+    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const { changed, total } = await alignAsrSegments(id, d.segments || [], requireAll);
     fs.writeFileSync(p + '.tmp', JSON.stringify(d));
     fs.renameSync(p + '.tmp', p);
-    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [对齐] 已用 Qwen3 对齐器补齐 ${changed}/${segs.length} 段逐词时间`);
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [对齐] 已用 Qwen3 对齐器补齐 ${changed}/${total} 段逐词时间`);
     return changed;
   }
 
@@ -7973,10 +7989,6 @@ function startPrepare(id, videoPath, mode) {
 
   /** 重试：按现有产物决定从哪一步续跑 —— 有识别结果就只补翻译（已有译文不重翻），
    *  识别结果都没有才重跑识别。不会重头再来，所以已有进度不会丢。 */
-  function draftUsesOpenAiText(draft) {
-    return !draft?.align && !draft?.wordLevel && modelById(draft?.modelId)?.engine === 'openai-asr';
-  }
-
   function retryDraft(id) {
     const meta = readMeta(id);
     if (!meta) return { error: '项目不存在' };
@@ -7988,14 +8000,15 @@ function startPrepare(id, videoPath, mode) {
     const hasAsr = fs.existsSync(path.join(projDir(id), 'asr.json'));
     const wordLevel = !!meta.draft.wordLevel;
     const wavOk = fs.existsSync(path.join(projDir(id), 'audio.wav'));
-    if (hasAsr && modelById(meta.draft.modelId)?.engine === 'vibevoice' && !meta.subtitle) {
+    const draftModel = modelById(meta.draft.modelId);
+    if (hasAsr && draftModel?.engine === 'vibevoice' && !meta.subtitle) {
       draftJobs.add(id);
       safeDraftStep(id, () => continueDraftAfterAsr(id, false));
       return { ok: true, from: 'subtitle' };
     }
     // 先做校验再计数：配置不全、点了也不会真正跑的情况，不该消耗重试次数
     const needsReseg = !meta.draft.resegDone;
-    if (hasAsr && !(needsReseg && draftUsesOpenAiText(meta.draft)) && !llmReady(translateCfg())) {
+    if (hasAsr && !llmReady(translateCfg())) {
       return { error: '还没配置 LLM（语义分句和翻译都要用）：在右上角「设置」里填接口地址、API Key 和模型名' };
     }
     draftJobs.delete(id);
@@ -8011,9 +8024,18 @@ function startPrepare(id, videoPath, mode) {
         //   漏登记时每批都在正常跑，界面却显示 ✕「服务已重启，处理被中断」→ 用户以为点不动（实测踩过）。
         draftJobs.add(id);
         setDraft(id, { status: 'running', stage: STAGE.reseg, progress: 76, message: '重试语义分句…', error: null, failedStage: '' });
-        Promise.resolve(runDraftReseg(id))
-          .then(() => continueDraftAfterAsr(id, wordLevel))
-          .catch(e => { draftJobs.delete(id); finishDraft(id, e); });
+        safeDraftStep(id, async () => {
+          if (draftModel?.requiresAlignment) {
+            setDraft(id, { align: true, wordLevel: true });
+            if (!asrHasAlignedSegments(id)) {
+              setDraft(id, { stage: STAGE.asr, message: '正在对齐逐词时间…' });
+              if (!(await draftAlignerReady(draftModel))) throw new Error(draftAlignerMissingHint(draftModel));
+              await alignDraftAsrJson(id, true);
+            }
+          }
+          await runDraftReseg(id);
+          return continueDraftAfterAsr(id, wordLevel || !!draftModel?.requiresAlignment);
+        });
         return { ok: true, from: 'reseg' };
       }
       setDraft(id, { status: 'running', stage: STAGE.translate, progress: 86, message: '准备重试翻译…', error: null });
@@ -8082,6 +8104,10 @@ function startPrepare(id, videoPath, mode) {
         });
         checkAsrOwner(id);
         if (job.status === 'error') return;
+        if (model.requiresAlignment && !(await draftAlignerReady(model))) {
+          throw new Error(draftAlignerMissingHint(model));
+        }
+        checkAsrOwner(id);
         setRr({ stage: '切音频', message: '正在切出音频片段…' });
         const wav = path.join(projDir(id), 'audio.wav');
         const mdir = model.cloud ? '' : modelDirFor(model.id);
@@ -8313,10 +8339,12 @@ function startPrepare(id, videoPath, mode) {
           return;
         }
 
-        // 3.5) 选区分句：OpenAI 给的是块级文本，复用初稿的纯文本分句。
-        if (model.engine === 'openai-asr') {
-          segs = resegMod.resegTextOnly(segs, { splitOnComma: resegSplitOnComma() });
-        } else if (model.engine !== 'vibevoice') {
+        // 3.5) OpenAI 的块级转录先取得实际时间，再进入语义分句。
+        if (model.requiresAlignment) {
+          setRr({ message: '正在对齐逐词时间…' });
+          await alignAsrSegments(id, segs, true, (_pct, message) => setRr({ message }));
+        }
+        if (model.engine !== 'vibevoice') {
         if (!llmReady(translateCfg())) {
           throw new Error('没配置 LLM：语义分句走不了，先在右上角「设置」里填接口地址、API Key 和模型名，再重新识别这一段');
         }
@@ -8620,12 +8648,10 @@ function startPrepare(id, videoPath, mode) {
     // 进度条与服务端流水线的顺序一致(识别 → 语义分句 → 说话人分离 → 翻译), 而且不许倒退:
     // 语义分句占 76~82, 说话人分离接在 82 之后; 从当前值接着走, 绝不硬跳回 76。
     const curDraft = (readMeta(id) || {}).draft || {};
-    const textOnly = draftUsesOpenAiText(curDraft);
     const base = Math.max(76, Math.min(Number(curDraft.progress) || 0, 80));
     const span = Math.max(1, 82 - base);
     setDraft(id, { status: 'running', stage: STAGE.reseg, progress: base, message: '语义分句中 …', error: null, failedStage: '' });
-    const method = textOnly ? '按原文标点切句并估算句级时间' : 'LLM 补标点 → 按逗号/句号切句';
-    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（${method}）`);
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（LLM 补标点 → 按逗号/句号切句）`);
     const p = path.join(projDir(id), 'asr.json');
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
     const before = (data.segments || []).length;
@@ -8647,8 +8673,7 @@ function startPrepare(id, videoPath, mode) {
       } catch {}
     };
     const stats = {};
-    const segs2 = textOnly ? resegMod.resegTextOnly(data.segments, { splitOnComma: resegSplitOnComma() })
-      : await resegMod.resegWithLLM(
+    const segs2 = await resegMod.resegWithLLM(
       // chat 注入: 带上诊断转储文件, 并把 llmChat 的新返回形状(content+元数据)拆成纯文本给 reseg
       (messages, o) => llmChat(cfg, messages, Object.assign({ debugFile: path.join(projDir(id), 'llm-debug.jsonl') }, o))
         .then(r => r.content),
@@ -9116,6 +9141,15 @@ function startPrepare(id, videoPath, mode) {
     }
     const model = resolveDraftModel(meta0);
     if (!model) return finishDraft(id, new Error('语音识别模型不可用，先到设置里下载，或换一个已经装好的模型'));
+    draftJobs.add(id);
+    if (model.requiresAlignment) {
+      if (!(await draftAlignerReady(model))) return finishDraft(id, new Error(draftAlignerMissingHint(model)));
+      checkAsrOwner(id);
+      align = true;
+      wordLevel = true;
+      Object.assign(meta0.draft, { align, wordLevel });
+      setDraft(id, { align, wordLevel });
+    }
     // GPU 硬校验: ASR 必须跑在 GPU 上, 不做 CPU 兜底
     const gpuGate = asrGpuGateError(model);
     if (gpuGate) {
@@ -9126,7 +9160,6 @@ function startPrepare(id, videoPath, mode) {
     const mp = modelParamsFor(model);
     // 逐句置信度：项目级设置优先，没表态就跟随全局。算一次，三处 spawn 与常驻服务共用。
     const confMode = asrConfidenceFor(meta0);   // off | fast | full
-    draftJobs.add(id);
     const releaseAsr = await acquireAsrSlot(model, id, () => {
       setDraft(id, { status: 'running', stage: STAGE.asrQueued, progress: 28, message: ASR_WAITING_MESSAGE });
     });
@@ -9184,7 +9217,7 @@ function startPrepare(id, videoPath, mode) {
     const finishAsr = async () => {
       if (deletedProjects.has(id) || shuttingDown) return finishDraft(id, new Error('语音识别任务已取消'));
       if (meta0.draft && meta0.draft.align && !['qwen', 'whisperx'].includes(model.engine)) {
-        try { await alignDraftAsrJson(id); }
+        try { await alignDraftAsrJson(id, !!model.requiresAlignment); }
         catch (e) { draftJobs.delete(id); return finishDraft(id, new Error('对齐失败：' + ((e && e.message) || e))); }
       }
       releaseDraftAsrSlot(id);
@@ -9230,8 +9263,8 @@ function startPrepare(id, videoPath, mode) {
           pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [置信度] 丢弃失败（不影响识别）：${(e && e.message) || e}`);
         }
       }
-      // OpenAI 的无对齐初稿按原文分句；逐词分句路径仍需 LLM。
-      if (!draftUsesOpenAiText(meta0.draft) && !llmReady(translateCfg())) {
+      // 逐词语义分句需要 LLM 配置。
+      if (!llmReady(translateCfg())) {
         setDraft(id, { stage: STAGE.reseg, message: '语义分句需要 LLM …', error: null, failedStage: '' });
         pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [错误] 没配置 LLM，语义分句走不了，流水线停在这一步`);
         return finishDraft(id, new Error('没配置 LLM：语义分句走不了，先在右上角「设置」里填接口地址、API Key 和模型名，再点「重试」'));
@@ -10281,6 +10314,7 @@ function handleAsrRoutes(req, res, u) {
         dir, missing, filesOk, partial, ready, usable, cloud: !!m.cloud,
         backend: modelBackendOf(m), backendAllowed,
         nativeWordLevel: m.nativeWordLevel !== false,
+        requiresAlignment: !!m.requiresAlignment,
         npuAvailable: hw ? !!hw.npu?.available : null,
         draftAllowed: draftAllowedOf(m),
         needRuntime: !!rt && !rt.ok,
@@ -12828,6 +12862,9 @@ function handleProjectsRoutes(req, res, u) {
         return sendJson(res, 400, { error: `重试满 ${SKIP_AFTER_RETRIES} 次后才能跳过此步（当前已重试 ${d.retries || 0} 次）` });
       }
       const failedStage = d.failedStage || '';
+      if (modelById(d.modelId)?.requiresAlignment && !d.resegDone && !asrHasAlignedSegments(id)) {
+        return sendJson(res, 400, { error: 'OpenAI 初稿需要完成对齐才能继续' });
+      }
       const wordLevel = !!meta.draft.wordLevel;
       draftJobs.delete(id);
       pendingAsr.delete(id);

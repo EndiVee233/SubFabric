@@ -38,17 +38,20 @@ globalThis.fetch = async (url, options) => {
   if (info.project === 'p-empty' && info.start === 60) text = '  ';
   return Response.json({ text, usage: { seconds: info.end - info.start } }, { headers: { 'x-request-id': 'req_fixture' } });
 };
-translateCfg = () => fs.existsSync(path.join(ROOT, 'without-translation'))
-  ? {} : { baseUrl: 'http://127.0.0.1:1', model: 'fixture', apiKey: 'fixture', autoTranslate: false };
+translateCfg = () => ({ baseUrl: 'http://127.0.0.1:1', model: 'fixture', apiKey: 'fixture', autoTranslate: false });
 startTranslate = async id => finishDraft(id, null);
-alignDraftAsrJson = async id => {
-  const file = path.join(projDir(id), 'asr.json');
-  const result = JSON.parse(fs.readFileSync(file, 'utf8'));
-  for (const seg of result.segments) {
-    seg.words = [{ word: 'Hello', start: seg.start, end: seg.start + 0.5 },
-      { word: 'world.', start: seg.start + 0.5, end: seg.start + 1 }];
-  }
-  fs.writeFileSync(file, JSON.stringify(result));
+draftAlignerReady = async () => !fs.existsSync(path.join(ROOT, 'without-aligner'));
+realignPrep = async id => ({ meta: { id } });
+realignAlignBatch = async (prep, segments) => ({
+  items: segments.map((seg, idx) => {
+    if (prep.meta.id === 'p-partial-align' && idx === 1) return { ok: false, words: [] };
+    const ws = seg.text.split(/ +/), start = seg.start + 0.1, step = (seg.end - start - 0.1) / ws.length;
+    return { ok: true, words: ws.map((w, i) => ({ w, s: start + i * step, e: start + (i + 1) * step })) };
+  }),
+});
+runDraftReseg = async id => {
+  const stored = readSegments(id);
+  if (!stored.every(seg => seg.words.length > 0)) throw new Error('OpenAI entered reseg before alignment');
 };
 ` + listen));
   },
@@ -88,6 +91,7 @@ try {
   const initial = await modelStatus();
   assert.equal(initial.cloud, true);
   assert.equal(initial.nativeWordLevel, false);
+  assert.equal(initial.requiresAlignment, true);
   assert.equal(initial.usable, false);
   const missing = await draft('p-missing');
   assert.match(missing.draft.error, /填写 OpenAI API Key/);
@@ -100,14 +104,16 @@ try {
 
   const plain = await draft('p-plain', { duration: 302 });
   assert.equal(plain.draft.error, null);
-  assert.ok(fs.existsSync(path.join(plain.dir, 'subtitle.srt')));
+  assert.equal(plain.draft.align, true);
+  assert.equal(plain.draft.wordLevel, true);
+  assert.ok(fs.existsSync(path.join(plain.dir, 'subtitle.ass')));
+  assert.equal(fs.existsSync(path.join(plain.dir, 'subtitle.srt')), false);
   const stored = JSON.parse(fs.readFileSync(path.join(plain.dir, 'asr.json'), 'utf8')).segments;
-  assert.equal(plain.draft.resegDone, true);
-  assert.ok(stored.length > 30, 'text-only drafts split the original five upload chunks');
-  assert.ok(stored.every(seg => seg.words.length === 0 && seg.end - seg.start <= 10 + 1e-8));
+  assert.equal(stored.length, 5);
+  assert.ok(stored.every(seg => seg.words.length > 0 && seg.start === seg.words[0].start
+    && seg.end === seg.words.at(-1).end));
+  assert.equal(stored[0].start, 0.1, 'use measured word start even at the beginning of a chunk');
   assert.equal(stored.map(seg => seg.text).join(' '), Array(5).fill(punctuated).join(' '));
-  assert.equal(stored.at(-1).end, 302);
-  assert.equal(fs.existsSync(path.join(plain.dir, 'subtitle.ass')), false);
   const report = JSON.parse(fs.readFileSync(path.join(plain.dir, 'asr-chunks.json'), 'utf8'));
   assert.equal(report.source, 'silence');
   assert.equal(report.chunkSec, 60);
@@ -125,22 +131,36 @@ try {
   assert.ok(fs.existsSync(path.join(aligned.dir, 'subtitle.ass')));
   assert.equal(JSON.parse(fs.readFileSync(path.join(aligned.dir, 'asr.json'), 'utf8')).segments[0].words.length, 2);
 
-  const translationOff = path.join(server.root, 'without-translation');
-  fs.writeFileSync(translationOff, '');
+  const cached = await draft('p-cached', { duration: 60,
+    cachedSegments: [{ start: 0, end: 60, text: punctuated, words: [] }] });
+  assert.equal(cached.draft.error, null);
+  assert.equal(cached.draft.align, true);
+  assert.ok(fs.existsSync(path.join(cached.dir, 'subtitle.ass')));
+  const partial = await draft('p-partial-align', { duration: 120 });
+  assert.match(partial.draft.error, /分块对齐失败/);
+  assert.equal(fs.existsSync(path.join(partial.dir, 'subtitle.ass')), false);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(partial.dir, 'asr.json'), 'utf8')).segments.every(s => !s.words.length),
+    'failed alignment preserves the original cached transcript for retry');
+  const partialMetaFile = path.join(partial.dir, 'project.json');
+  const oldMeta = JSON.parse(fs.readFileSync(partialMetaFile, 'utf8'));
+  Object.assign(oldMeta.draft, { retries: 10, failedStage: '语义分句中' });
+  fs.writeFileSync(partialMetaFile, JSON.stringify(oldMeta));
+  const skip = await post('/api/projects/p-partial-align/skip', {});
+  assert.equal(skip.status, 400);
+  assert.match((await skip.json()).error, /需要完成对齐/);
+  const alignerOff = path.join(server.root, 'without-aligner');
+  fs.writeFileSync(alignerOff, '');
   try {
-    const cached = await draft('p-cached', { duration: 60,
-      cachedSegments: [{ start: 0, end: 60, text: punctuated, words: [] }] });
-    assert.equal(cached.draft.status, 'paused');
-    assert.equal(cached.draft.resegDone, true);
-    assert.ok(fs.existsSync(path.join(cached.dir, 'subtitle.srt')));
-    assert.ok(cached.draft.lines > 1);
-  } finally { fs.unlinkSync(translationOff); }
+    const unavailable = await draft('p-no-aligner');
+    assert.match(unavailable.draft.error, /没有可用的对齐模型/);
+    assert.equal(fs.existsSync(path.join(unavailable.dir, 'asr.json')), false);
+  } finally { fs.unlinkSync(alignerOff); }
 
   const quota = await draft('p-quota');
   assert.match(quota.draft.error, /OpenAI API 余额不足/);
   const calls = fs.readFileSync(path.join(server.root, 'openai-calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.deepEqual(calls.map(call => call.project), [
-    'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-empty', 'p-empty', 'p-aligned', 'p-quota',
+    'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-empty', 'p-empty', 'p-aligned', 'p-partial-align', 'p-partial-align', 'p-quota',
   ]);
   assert.equal(server.output().includes(key), false);
   assert.deepEqual(await (await post('/api/asr/openai-key', { clear: true })).json(), { hasKey: false });
