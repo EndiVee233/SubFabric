@@ -1183,7 +1183,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "3f893598cc210b2a1ab03c8f3ba82edfad4e1c01fc922e34d38d06f2634828d0",
+      "sha256": "88f8420be398422a60684f81b1a4f061678689244a34728f9c2d55ce8264f350",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -2132,7 +2132,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "0573d8091c890363b3d2da5d3ea19ce426f511ca3e86f1c65f37c1d49db584d4",
+      "sha256": "1cac200579e979f8fcc49437a8e513498d9c7da375742ff3e4d24a2de036db46",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
