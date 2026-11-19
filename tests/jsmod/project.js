@@ -3192,12 +3192,11 @@ function initAsrParams() {
   if (!box || box.dataset.asrParamsBound) return;
   box.dataset.asrParamsBound = '1';
   box.addEventListener('click', (e) => {
-    const openAi = e.target.closest('[data-openai-key]');
-    if (openAi) {
-      openAiAsrKeyDialog(openAi.dataset.openaiKey === '1');
+    const btn = e.target.closest('.sm-params');
+    if (btn?.dataset.openaiKey) {
+      openAiAsrKeyDialog(btn.dataset.openaiKey === '1');
       return;
     }
-    const btn = e.target.closest('.sm-params');
     if (!btn || !btn.dataset.id) return;
     e.preventDefault();
     openAsrParamsDialog(btn.dataset.id);
@@ -3410,7 +3409,7 @@ function modelRowHtml(m, d, dlOf) {
   } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
   else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
   if (dlThis) btn = '';
-  else if (m.engine === 'openai-asr') btn = `<button type="button" class="btn btn-mini" data-openai-key="${m.ready ? '1' : '0'}">${esc(t('配置 API Key'))}</button>`;
+  else if (m.engine === 'openai-asr') btn = `<button type="button" class="btn btn-mini sm-params" data-openai-key="${m.ready ? '1' : '0'}">${esc(t('配置 API Key'))}</button>`;
   else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
   else if (m.partial) {
     btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
@@ -5584,7 +5583,8 @@ async function renderAsrModels(providedStatus = null) {
       align.disabled = true;
     } else {
       align.disabled = false;
-      if (!native && !align.dataset.touched) align.checked = m?.engine !== 'openai-asr';
+      if (m?.engine === 'openai-asr' && !align.dataset.touched) align.checked = false;
+      else if (!native && !align.dataset.touched) align.checked = true;
     }
     if (word.checked) { align.checked = false; rowAlign.hidden = true; }
     else rowAlign.hidden = false;
