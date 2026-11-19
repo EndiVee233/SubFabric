@@ -11,7 +11,11 @@ const server = await isolatedServer({
     const source = fs.readFileSync(file, 'utf8');
     const listen = 'server.listen(PORT, HOST,';
     assert.ok(source.includes(listen) && source.includes('const sliceAudio ='));
-    fs.writeFileSync(file, source.replace('const sliceAudio =', 'let sliceAudio =').replace(listen, `
+    assert.ok(source.includes('const detectSilences ='));
+    fs.writeFileSync(file, source.replace('const sliceAudio =', 'let sliceAudio =')
+      .replace('const detectSilences =', 'let detectSilences =').replace(listen, `
+detectSilences = async wav => path.basename(path.dirname(wav)) === 'p-plain'
+  ? [{ start: 71, end: 73 }, { start: 135, end: 137 }] : [];
 sliceAudio = async (wav, start, end, out, asMp3) => {
   if (!asMp3) throw new Error('Expected MP3');
   fs.writeFileSync(out, JSON.stringify({ start, end, project: path.basename(path.dirname(wav)) }));
@@ -24,7 +28,8 @@ globalThis.fetch = async (url, options) => {
   const info = JSON.parse(await options.body.get('file').text());
   fs.appendFileSync(path.join(ROOT, 'openai-calls.jsonl'), JSON.stringify(info) + '\\n');
   if (info.project === 'p-quota') return Response.json({ error: { code: 'credit_balance_exhausted' } }, { status: 429 });
-  return Response.json({ text: 'Hello world.' });
+  const text = info.project === 'p-empty' && info.start === 60 ? '  ' : 'Hello world.';
+  return Response.json({ text, usage: { seconds: info.end - info.start } }, { headers: { 'x-request-id': 'req_fixture' } });
 };
 translateCfg = () => ({ baseUrl: 'http://127.0.0.1:1', model: 'fixture', apiKey: 'fixture', autoTranslate: false });
 runDraftReseg = async () => {};
@@ -87,7 +92,18 @@ try {
   assert.equal(plain.draft.error, null);
   assert.ok(fs.existsSync(path.join(plain.dir, 'subtitle.srt')));
   const stored = JSON.parse(fs.readFileSync(path.join(plain.dir, 'asr.json'), 'utf8')).segments;
-  assert.deepEqual(stored.map(seg => [seg.start, seg.end, seg.words.length]), [[0, 150, 0], [150, 300, 0], [300, 302, 0]]);
+  assert.deepEqual(stored.map(seg => [seg.start, seg.end, seg.words.length]),
+    [[0, 72, 0], [72, 136, 0], [136, 196, 0], [196, 256, 0], [256, 302, 0]]);
+  const report = JSON.parse(fs.readFileSync(path.join(plain.dir, 'asr-chunks.json'), 'utf8'));
+  assert.equal(report.source, 'silence');
+  assert.equal(report.chunkSec, 60);
+  assert.deepEqual(report.chunks.map(chunk => chunk.cut ?? null), ['silence', 'silence', 'nominal', 'nominal', null]);
+  const empty = await draft('p-empty', { duration: 120 });
+  assert.equal(empty.draft.error, null);
+  assert.match(fs.readFileSync(path.join(empty.dir, 'draft.log'), 'utf8'), /未返回转录文本 .*1:00–2:00.*req_fixture/);
+  const emptyReport = JSON.parse(fs.readFileSync(path.join(empty.dir, 'asr-chunks.json'), 'utf8'));
+  assert.deepEqual(emptyReport.chunks.map(chunk => [chunk.segments, chunk.textChars, chunk.requestId, chunk.usageSeconds]),
+    [[1, 12, 'req_fixture', 60], [0, 0, 'req_fixture', 60]]);
   const aligned = await draft('p-aligned', { align: true });
   assert.equal(aligned.draft.error, null);
   assert.ok(fs.existsSync(path.join(aligned.dir, 'subtitle.ass')));
@@ -96,7 +112,9 @@ try {
   const quota = await draft('p-quota');
   assert.match(quota.draft.error, /OpenAI API 余额不足/);
   const calls = fs.readFileSync(path.join(server.root, 'openai-calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual(calls.map(call => call.project), ['p-plain', 'p-plain', 'p-plain', 'p-aligned', 'p-quota']);
+  assert.deepEqual(calls.map(call => call.project), [
+    'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-empty', 'p-empty', 'p-aligned', 'p-quota',
+  ]);
   assert.equal(server.output().includes(key), false);
   assert.deepEqual(await (await post('/api/asr/openai-key', { clear: true })).json(), { hasKey: false });
   assert.equal((await modelStatus()).usable, false);

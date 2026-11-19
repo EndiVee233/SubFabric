@@ -58,6 +58,24 @@ const j = (x) => JSON.stringify(x);
   ok(late[late.length - 1].end === dur, '尾巴过小时不采用该静音');
 }
 
+/* ── OpenAI 分块 ── */
+{
+  const spans = chunks => chunks.map(({ start, end }) => [start, end]);
+  const quiet = [{ start: 24, end: 26 }, { start: 118, end: 122 }, { start: 128, end: 132 }, { start: 199, end: 201 }];
+  ok(j(spans(C.planOpenAiChunks(210, quiet))) === j([[0, 120], [120, 180], [180, 210]]),
+    '使用 120 秒边界内的静音，忽略首块过短、超长与尾块过短的切点');
+  ok(j(spans(C.planOpenAiChunks(25))) === j([[0, 25]]), '不足 30 秒的整段直接上传');
+  ok(j(spans(C.planOpenAiChunks(125.25))) === j([[0, 60], [60, 125.25]]), '短尾音并到前块且保留总时长');
+  ok(C.planOpenAiChunks(0).length === 0 && C.planOpenAiChunks(Infinity).length === 0, '无效时长不生成分块');
+  const candidates = Array.from({ length: 260 }, (_, i) => ({ start: i * 31 + 1.375, end: i * 31 + 2.875 }));
+  for (const duration of [30, 59, 90, 111, 120, 120.01, 150, 181.39, 939.274, 1090.154, 3600, 10000]) {
+    const chunks = C.planOpenAiChunks(duration, candidates);
+    ok(chunks.at(-1).end === duration && chunks.every((chunk, i) =>
+      chunk.start === (i === 0 ? 0 : chunks[i - 1].end) && chunk.end - chunk.start >= 30 && chunk.end - chunk.start <= 120),
+      '分块连续且长 30–120 秒，总时长 ' + duration);
+  }
+}
+
 /* ── 边界: 短视频不分片 / 时长未知 ── */
 {
   const one = C.planAudioChunks({ duration: 10 * 60 });

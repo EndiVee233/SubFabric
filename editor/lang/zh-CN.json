@@ -4982,6 +4982,7 @@
   "OpenAI 转录结果格式无效": "OpenAI 转录结果格式无效",
   "OpenAI GPT-Transcribe：音频分块上传至 OpenAI，按量计费": "OpenAI GPT-Transcribe：音频分块上传至 OpenAI，按量计费",
   "OpenAI 没有识别到语音": "OpenAI 没有识别到语音",
+  "OpenAI 未返回转录文本": "OpenAI 未返回转录文本",
   "请填写有效的 OpenAI API Key": "请填写有效的 OpenAI API Key",
   "OpenAI API Key 加密失败": "OpenAI API Key 加密失败"
 }

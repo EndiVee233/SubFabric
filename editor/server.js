@@ -131,8 +131,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.13.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.13.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.13.2'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.13.2'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -8789,7 +8789,7 @@ function startPrepare(id, videoPath, mode) {
         createdAt: new Date().toISOString(),
         engine: info.engine || '',
         duration: info.duration,
-        chunkSec: asrChunks.CHUNK_SEC,
+        chunkSec: info.chunkSec ?? asrChunks.CHUNK_SEC,
         source: info.source || 'nominal',            // silence = 按静音切 / nominal = 名义切点
         silenceCount: info.silenceCount || 0,
         chunks: (info.plan || []).map((c, i) => Object.assign({}, c, (info.perChunk && info.perChunk[i]) || {})),
@@ -8909,19 +8909,20 @@ function startPrepare(id, videoPath, mode) {
     if (!(duration > 0 && Number.isFinite(duration))) {
       duration = await new Promise(resolve => probeDuration(wav, resolve));
     }
-    if (!duration) throw new Error('无法确定音频时长');
-    // 和 Qwen 文件识别一样，按有起止时间的短块生成文本，随后由初稿对齐器补逐词。
-    const chunkSec = 150;
-    const total = Math.ceil(duration / chunkSec);
+    if (!(duration > 0 && Number.isFinite(duration))) throw new Error('无法确定音频时长');
+    checkAsrOwner(id);
+    signal?.throwIfAborted();
+    const { OPENAI_CHUNK_SEC, OPENAI_MIN_CHUNK_SEC } = asrChunks;
+    const silences = duration >= OPENAI_CHUNK_SEC + OPENAI_MIN_CHUNK_SEC ? await detectSilences(wav, duration) : [];
+    const plan = asrChunks.planOpenAiChunks(duration, silences);
     const segments = [];
-    for (let index = 0; index < total; index++) {
+    const perChunk = [];
+    for (const { index, start, end } of plan) {
       checkAsrOwner(id);
       signal?.throwIfAborted();
-      const start = index * chunkSec;
-      const end = Math.min(duration, start + chunkSec);
       const mp3 = path.join(os.tmpdir(), 'sf-openai-' + crypto.randomUUID() + '.mp3');
       try {
-        onProgress(index / total * 100, 'OpenAI 正在转录音频分块…');
+        onProgress(index / plan.length * 100, 'OpenAI 正在转录音频分块…');
         await sliceAudio(wav, start, end, mp3, true);
         checkAsrOwner(id);
         signal?.throwIfAborted();
@@ -8944,12 +8945,28 @@ function startPrepare(id, videoPath, mode) {
         if (!response.ok) throw new Error(`OpenAI 转录请求失败（HTTP ${response.status}）`);
         if (typeof result?.text !== 'string') throw new Error('OpenAI 转录结果格式无效');
         const transcript = result.text.trim();
+        const requestHeader = response.headers.get('x-request-id') || '';
+        const requestId = /^req_[a-zA-Z0-9_-]{1,124}$/.test(requestHeader) ? requestHeader : null;
+        const usageSeconds = result.usage?.seconds;
+        perChunk.push({
+          seconds: +(end - start).toFixed(3), segments: transcript ? 1 : 0,
+          textChars: transcript.length, requestId, usageSeconds: Number.isFinite(usageSeconds) ? usageSeconds : null,
+        });
         if (transcript) segments.push({ start, end, text: transcript, words: [] });
+        else pushDraftLog(id, 'OpenAI 未返回转录文本'
+          + ' [' + asrChunks.fmtT(start) + '–' + asrChunks.fmtT(end) + ']'
+          + (requestId ? ' ' + requestId : ''));
       } finally {
         try { fs.unlinkSync(mp3); } catch {}
       }
     }
-    return { segments };
+    return {
+      segments,
+      chunkReport: {
+        engine: 'openai-asr', duration, chunkSec: OPENAI_CHUNK_SEC, plan, perChunk,
+        source: plan.some(chunk => chunk.cut === 'silence') ? 'silence' : 'nominal', silenceCount: silences.length,
+      },
+    };
   }
 
   async function transcribeCloud({ engine, audioPath, log, onProgress, signal }) {
@@ -9436,8 +9453,9 @@ function startPrepare(id, videoPath, mode) {
         setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: msg });
       });
       checkAsrOwner(id);
+      writeChunkReport(id, result.chunkReport);
       if (!result.segments.length) throw new Error('OpenAI 没有识别到语音');
-      fs.writeFileSync(outJson + '.tmp', JSON.stringify(result));
+      fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: result.segments }));
       fs.renameSync(outJson + '.tmp', outJson);
       draftAborts.delete(id);
       return finishAsr();

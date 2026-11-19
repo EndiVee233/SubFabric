@@ -23,6 +23,10 @@ const MIN_HEAD_SEC = 30;            // 一片最短 30 秒（避免切出碎渣�
 const CLOUD_WAIT_MIN_MS = 10000;    // 云端片间等待下限
 const CLOUD_WAIT_MAX_MS = 15000;    // 云端片间等待上限
 
+const OPENAI_CHUNK_SEC = 60;
+const OPENAI_MIN_CHUNK_SEC = 30;
+const OPENAI_MAX_CHUNK_SEC = 120;
+
 /** ffmpeg silencedetect 输出 → [{start,end}]（末尾未闭合的静音按 duration 收尾） */
 function parseSilences(text, duration) {
   const out = [];
@@ -47,23 +51,22 @@ function parseSilences(text, duration) {
   return out;
 }
 
-/** 在名义切点附近挑一个静音中点当地真切点；挑不到就返回名义切点。
+/** 在允许的范围内选离名义切点最近的静音中点。
  *  minChunk / searchSec 都由片长推导（见 planAudioChunks）：25 分钟片长时是 30 秒 / 90 秒，
  *  片长调小时会按比例收紧 —— 否则 12 秒的片长也会被吸到 30 秒外的静音上（离线探针抓到过）。 */
-function snapCut(nominal, silences, { start, duration, searchSec, minTailSec, minChunk }) {
+function snapCut(nominal, silences, { earliest, latest, searchSec }) {
   let best = null, bestD = Infinity;
   for (const s of silences || []) {
     if (!(s.end > s.start)) continue;
     const mid = (s.start + s.end) / 2;
-    if (mid < start + minChunk) continue;                      // 太靠前 → 会切出碎渣
-    if (mid > duration - minTailSec) continue;                 // 太靠后 → 尾巴会太小
+    if (mid < earliest || mid > latest) continue;
     const d = Math.abs(mid - nominal);
     // 优先离名义切点最近的静音；距离相同则挑更长的那段静音（切得更"空"）
     if (d < searchSec && (d < bestD - 1e-6 || (Math.abs(d - bestD) <= 1e-6 && best && (s.end - s.start) > (best.end - best.start)))) {
       best = s; bestD = d;
     }
   }
-  return best ? (best.start + best.end) / 2 : nominal;
+  return best ? (best.start + best.end) / 2 : null;
 }
 
 /**
@@ -81,7 +84,9 @@ function planAudioChunks({ duration, silences = [], chunkSec = CHUNK_SEC, minTai
   let guard = 0;
   while (dur - start > chunkSec + minTailSec && guard++ < 1000) {
     const nominal = Math.min(start + chunkSec, dur - minTailSec);
-    let cut = snapCut(nominal, silences, { start, duration: dur, searchSec: search, minTailSec, minChunk });
+    let cut = snapCut(nominal, silences, {
+      earliest: start + minChunk, latest: dur - minTailSec, searchSec: search,
+    }) ?? nominal;
     if (!(cut > start + minChunk)) cut = nominal;               // 兜底：切点必须真的往后走
     if (!(cut > start + minChunk)) break;
     out.push({ index: out.length, start: +start.toFixed(3), end: +cut.toFixed(3) });
@@ -89,6 +94,27 @@ function planAudioChunks({ duration, silences = [], chunkSec = CHUNK_SEC, minTai
   }
   out.push({ index: out.length, start: +start.toFixed(3), end: +dur.toFixed(3) });
   return out;
+}
+
+/** OpenAI 音频首尾连续，优先选合法区间内最靠近 60 秒的静音中点。 */
+function planOpenAiChunks(duration, silences = []) {
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  const chunks = [];
+  let start = 0;
+  // 给后续至少留 30 秒，避免把不足 30 秒的尾音单独上传。
+  while (duration - start >= OPENAI_CHUNK_SEC + OPENAI_MIN_CHUNK_SEC) {
+    const nominal = start + OPENAI_CHUNK_SEC;
+    const silenceCut = snapCut(nominal, silences, {
+      earliest: start + OPENAI_MIN_CHUNK_SEC,
+      latest: Math.min(start + OPENAI_MAX_CHUNK_SEC, duration - OPENAI_MIN_CHUNK_SEC),
+      searchSec: Infinity,
+    });
+    const end = silenceCut ?? nominal;
+    chunks.push({ index: chunks.length, start, end, cut: silenceCut === null ? 'nominal' : 'silence' });
+    start = end;
+  }
+  chunks.push({ index: chunks.length, start, end: duration });
+  return chunks;
 }
 
 /** 把各片的识别结果按偏移合并成一条时间轴（句子与逐词都加 offset）*/
@@ -181,5 +207,6 @@ async function runChunks(o) {
 
 module.exports = {
   CHUNK_SEC, MIN_TAIL_SEC, SILENCE_SEARCH_SEC, CLOUD_WAIT_MIN_MS, CLOUD_WAIT_MAX_MS,
-  parseSilences, planAudioChunks, mergeChunkSegments, randomWaitMs, runChunks, fmtT,
+  OPENAI_CHUNK_SEC, OPENAI_MIN_CHUNK_SEC, OPENAI_MAX_CHUNK_SEC,
+  parseSilences, planAudioChunks, planOpenAiChunks, mergeChunkSegments, randomWaitMs, runChunks, fmtT,
 };
