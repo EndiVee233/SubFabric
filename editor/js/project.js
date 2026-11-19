@@ -331,17 +331,19 @@ export function initProjects(ctx) {
     return (h ? h + ':' : '') + pad(Math.floor((s % 3600) / 60)) + ':' + pad(s % 60);
   }
   /** prefix: 'np' | 'detail' —— 两页预览面板的 id 前缀不同，结构一样 */
-  function fillPreview(prefix, source) {
+  function fillPreview(prefix, source, coverUrl = '') {
     const s = source || null;
     const has = !!(s && (s.title || s.uploader || s.description));
     const thumb = $('#' + prefix + '-thumb');
     const empty = $('#' + prefix + '-preview-empty');
     if (thumb) {
-      if (s && s.thumbnail) {
+      const imageUrl = coverUrl || s?.thumbnail || '';
+      thumb.dataset.remoteFallback = coverUrl && s?.thumbnail ? s.thumbnail : '';
+      if (imageUrl) {
         // b 站图床有防盗链：带上 localhost 的 Referer 会 403，索性不发
         thumb.referrerPolicy = 'no-referrer';
-        if (thumb.getAttribute('src') !== s.thumbnail) thumb.src = s.thumbnail;
-        thumb.alt = s.title || '视频缩略图';
+        if (thumb.getAttribute('src') !== imageUrl) thumb.src = imageUrl;
+        thumb.alt = s?.title || '视频缩略图';
         thumb.hidden = false;
       } else {
         thumb.hidden = true;
@@ -351,13 +353,18 @@ export function initProjects(ctx) {
         thumb.dataset.errBound = '1';
         // 图裂了别留个破图标：收起来，退回空态说明（文字信息还在下面）
         thumb.addEventListener('error', () => {
+          const fallback = thumb.dataset.remoteFallback;
+          if (fallback && thumb.getAttribute('src') !== fallback) {
+            thumb.src = fallback;
+            return;
+          }
           thumb.hidden = true;
           const box = $('#' + prefix + '-preview-empty');
           if (box) box.hidden = false;
         });
       }
     }
-    if (empty) empty.hidden = !!(s && (s.thumbnail || has));
+    if (empty) empty.hidden = !!(coverUrl || s?.thumbnail || has);
     const set = (id, v) => { const el = $(id); if (el) el.textContent = (v === undefined || v === null || v === '') ? '—' : String(v); };
     set('#' + prefix + '-m-title', s && s.title);
     set('#' + prefix + '-m-uploader', s && s.uploader);
@@ -373,6 +380,14 @@ export function initProjects(ctx) {
   const detailName = $('#detail-name');
   const detailError = $('#detail-error');
   const detailSave = $('#detail-save');
+  const detailCoverExport = $('#detail-cover-export');
+  function fillDetailPreview(source, coverAvailable) {
+    if (detailCoverExport) detailCoverExport.hidden = !coverAvailable;
+    const coverUrl = coverAvailable
+      ? `/api/projects/${encodeURIComponent(detailProjectId)}/cover?png=1&v=${encodeURIComponent(source?.fetchedAt || '')}`
+      : '';
+    fillPreview('detail', source, coverUrl);
+  }
   const workloadSection = $('#detail-workload'), workloadBody = $('#detail-workload-body');
   const workloadStatus = $('#detail-workload-status');
   let workloadProject = null, workloadItems = null, workloadRequest = null, workloadSeek = null;
@@ -435,6 +450,7 @@ export function initProjects(ctx) {
     const requestId = ++detailLoadToken;
     resetWorkload();
     detailProjectId = id;
+    fillDetailPreview(null, false);
     detailName.value = '';
     detailError.textContent = '';
     detailError.hidden = true;
@@ -470,7 +486,7 @@ export function initProjects(ctx) {
     $('#detail-modified').textContent = fmtDate(project.modifiedAt) || '—';
     // 稿件预览：从链接创建的项目带 source（标题/作者/简介/缩略图），本地文件没有
     detailSource = project.source || null;
-    fillPreview('detail', detailSource);
+    fillDetailPreview(detailSource, project.coverAvailable);
     const detailUrl = $('#detail-url');
     if (detailUrl) detailUrl.value = detailSource && detailSource.url ? detailSource.url : '';
     // 生成设置里的全局项；「自动区分说话人」是项目级参数，这里只回显当时的选择
@@ -516,6 +532,31 @@ export function initProjects(ctx) {
   $('#detail-back').addEventListener('click', returnFromDetails);
   $('#detail-cancel').addEventListener('click', returnFromDetails);
   $('#dp-close').addEventListener('click', returnFromDetails);
+  detailCoverExport?.addEventListener('click', async () => {
+    const id = detailProjectId;
+    if (!id || detailCoverExport.disabled) return;
+    detailCoverExport.disabled = true;
+    detailCoverExport.textContent = t('正在导出封面…');
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(id)}/cover?download=1`, { signal: AbortSignal.timeout(50000) });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || '导出封面失败');
+      }
+      const filename = response.headers.get('Content-Disposition')?.split("filename*=UTF-8''")[1];
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename ? decodeURIComponent(filename) : 'cover.png';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) {
+      toast(t('导出封面失败') + ' · ' + t(e.message), 4500);
+    } finally {
+      detailCoverExport.disabled = false;
+      detailCoverExport.textContent = t('导出封面');
+    }
+  });
   $('#detail-probe')?.addEventListener('click', async () => {
     const id = detailProjectId;
     const input = $('#detail-url');
@@ -542,11 +583,12 @@ export function initProjects(ctx) {
       });
       const saved = await save.json().catch(() => ({}));
       if (!save.ok) throw new Error(saved.error || ('HTTP ' + save.status));
-      detailSource = source;
+      if (detailProjectId !== id || location.hash !== '#/details/' + id) return;
+      detailSource = saved.source || source;
       /* 这里刻意不写本地缓存：项目列表由 renderList() 每次重新拉取 /api/projects，
          之前的 `(projects || [])` 引用了一个不存在的变量，点「解析」必抛 ReferenceError，
          后面的预览与刷新全被跳过（保存其实已成功，界面却停在旧状态）。 */
-      fillPreview('detail', source);
+      fillDetailPreview(detailSource, saved.coverAvailable);
       $('#detail-modified').textContent = fmtDate(saved.modifiedAt) || $('#detail-modified').textContent;
       renderList();
       toast('已解析并保存在线视频信息（没有下载视频、没有改动字幕）', 5200);

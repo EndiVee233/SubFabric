@@ -2806,9 +2806,9 @@ function refreshLibrary() {
       assign.addEventListener('change', e => { e.stopPropagation(); if (commit({ assignments: { ...prefs.assignments, [p.id]: assign.value } })) { renderFolders(); refreshLibrary(); } });
       card.querySelector('.pc-actions').appendChild(assign);
     }
-    // 在线来源优先使用来源缩略图；没有绑定来源时使用服务端从本地视频抽取的封面。
+    // 已生成的封面优先显示本地缓存，在线项目尚无缓存时显示来源缩略图。
     const cover = card.querySelector('.sf-cover');
-    const coverUrl = /^https?:\/\//.test(p.source?.thumbnail || '') ? p.source.thumbnail : (p.cover || '');
+    const coverUrl = p.cover || (/^https?:\/\//.test(p.source?.thumbnail || '') ? p.source.thumbnail : '');
     cover.classList.toggle('has-cover', !!coverUrl);
     let coverImg = cover.querySelector('img');
     if (coverUrl) {

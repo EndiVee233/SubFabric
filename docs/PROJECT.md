@@ -21,8 +21,8 @@
 报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
 仅属历史验证，不覆盖本机功能增量；本次未跑全量 JS、Python、真实 GUI、GPU/ASR、媒体导出或安装验收。
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.13.3` / 文件版本
-  `1.5.13.3`（npm `1.5.13-beta.3`）。两条链路的安装包命名分别为 `SubFabric-1.5.13.3-setup.exe` 与
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.13.4` / 文件版本
+  `1.5.13.4`（npm `1.5.13-beta.4`）。两条链路的安装包命名分别为 `SubFabric-1.5.13.4-setup.exe` 与
   `SubFabric-1.5.12.1-sea-setup.exe`（Inno Setup + Node SEA）；历史双包构建、实装与已发布 Release 验收见 §6。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
@@ -740,11 +740,17 @@
   `project.json` 最后删；新增读写 `projects/<id>/` 的子进程必须 `trackProjProc(id, proc)`。
 - **元数据**：`updateMeta(id, mutate)` 同步读取最新内容、字段更新、唯一临时文件原子替换，
   禁止旧对象整体覆盖；跨 await 的新更新优先用它。
+- **稿件封面**：本地视频抽帧、已有 JPEG 和 YouTube/bilibili 的 CDN 缩略图统一生成
+  `cover.png`。在线封面进入详情或导出时生成，预览和导出并发共用转码任务。
+  `GET /api/projects/:id/cover?download=1` 返回 PNG 附件，已有 JPEG 原文件保留。
 - **数据文件**（`projects/<id>/`，全部不入库）：`project.json`、`subtitle.ass` / `subtitle.srt`、
   `audio.wav`、`peaks.bin`、`asr.json`、`translation.json`、`reseg.json`、`asr-chunks.json`、
-  `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
+  `cover.png`、`source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **导出封面**：稿件的「更多 → 详细信息」在预览区提供「导出封面」，
+  按当前稿件名称保存 PNG。在线封面保留来源图片尺寸，本地抽帧沿用 640 像素宽预览。
 
 - **OpenAI GPT-Transcribe** 在「设置 → 语音识别 → 云端识别」显示用量条件和独立的 API Key 配置。
   可用已激活的 ChatGPT Pro API 赠额或项目现有 API 余额。选择 OpenAI 时，新建项目、批量默认设置和
@@ -2364,9 +2370,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.13.3'`、`APP_FILE_VERSION = '1.5.13.3'`、npm version `1.5.13-beta.3`。
+  `APP_VERSION = 'beta 1.5.13.4'`、`APP_FILE_VERSION = '1.5.13.4'`、npm version `1.5.13-beta.4`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.13.3-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.13.4-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **可自动更新的 Release**：发布 `v<主>.<次>.<补丁>` 或 `v<主>.<次>.<补丁>-beta.<序号>`，

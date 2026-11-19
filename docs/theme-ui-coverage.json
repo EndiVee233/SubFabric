@@ -1183,7 +1183,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "fc28c14d10ccd9d9725c36016799193d3326a5f68a92b70a9e4409d165309c94",
+      "sha256": "c5a4d8f968134e47d627914802624f28fdca0e77bdcb5d250614581ad5e3762b",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1220,339 +1220,343 @@
           "method": "innerHTML"
         },
         {
-          "line": 1052,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1060,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1062,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1072,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1087,
+          "line": 548,
           "method": "createElement"
         },
         {
-          "line": 1093,
+          "line": 1094,
           "method": "innerHTML"
         },
         {
-          "line": 1095,
+          "line": 1102,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1104,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1114,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1129,
+          "method": "createElement"
+        },
+        {
+          "line": 1135,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1137,
           "method": "replaceChildren"
         },
         {
-          "line": 1146,
+          "line": 1188,
           "method": "innerHTML"
         },
         {
-          "line": 1278,
+          "line": 1320,
           "method": "innerHTML"
         },
         {
-          "line": 1500,
+          "line": 1542,
           "method": "innerHTML"
         },
         {
-          "line": 1503,
+          "line": 1545,
           "method": "innerHTML"
         },
         {
-          "line": 1519,
+          "line": 1561,
           "method": "innerHTML"
         },
         {
-          "line": 1529,
+          "line": 1571,
           "method": "innerHTML"
         },
         {
-          "line": 1646,
+          "line": 1688,
           "method": "innerHTML"
         },
         {
-          "line": 1648,
+          "line": 1690,
           "method": "innerHTML"
         },
         {
-          "line": 1686,
+          "line": 1728,
           "method": "innerHTML"
         },
         {
-          "line": 1694,
+          "line": 1736,
           "method": "innerHTML"
         },
         {
-          "line": 1934,
+          "line": 1976,
           "method": "createElement"
         },
         {
-          "line": 1936,
+          "line": 1978,
           "method": "createElement"
         },
         {
-          "line": 1942,
+          "line": 1984,
           "method": "createElement"
         },
         {
-          "line": 1950,
+          "line": 1992,
           "method": "innerHTML"
-        },
-        {
-          "line": 2068,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2070,
-          "method": "createElement"
-        },
-        {
-          "line": 2072,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2081,
-          "method": "createElement"
-        },
-        {
-          "line": 2083,
-          "method": "createElement"
-        },
-        {
-          "line": 2087,
-          "method": "createElement"
-        },
-        {
-          "line": 2089,
-          "method": "createElement"
-        },
-        {
-          "line": 2094,
-          "method": "createElement"
         },
         {
           "line": 2110,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2112,
           "method": "createElement"
         },
         {
-          "line": 2229,
+          "line": 2114,
           "method": "innerHTML"
         },
         {
-          "line": 2295,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2342,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2346,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2356,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2370,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2519,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2622,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2635,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2639,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2650,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2745,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2773,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2822,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2919,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2970,
+          "line": 2123,
           "method": "createElement"
         },
         {
-          "line": 2974,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3043,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3076,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3095,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3210,
+          "line": 2125,
           "method": "createElement"
         },
         {
-          "line": 3213,
+          "line": 2129,
+          "method": "createElement"
+        },
+        {
+          "line": 2131,
+          "method": "createElement"
+        },
+        {
+          "line": 2136,
+          "method": "createElement"
+        },
+        {
+          "line": 2152,
+          "method": "createElement"
+        },
+        {
+          "line": 2271,
           "method": "innerHTML"
         },
         {
-          "line": 3321,
+          "line": 2337,
           "method": "innerHTML"
         },
         {
-          "line": 3335,
+          "line": 2384,
           "method": "innerHTML"
         },
         {
-          "line": 3341,
+          "line": 2388,
           "method": "innerHTML"
         },
         {
-          "line": 3375,
+          "line": 2398,
           "method": "innerHTML"
         },
         {
-          "line": 3425,
+          "line": 2412,
           "method": "innerHTML"
         },
         {
-          "line": 3573,
+          "line": 2561,
           "method": "innerHTML"
         },
         {
-          "line": 3759,
+          "line": 2664,
           "method": "innerHTML"
         },
         {
-          "line": 3878,
+          "line": 2677,
           "method": "innerHTML"
         },
         {
-          "line": 4000,
+          "line": 2681,
           "method": "innerHTML"
         },
         {
-          "line": 4007,
+          "line": 2692,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2787,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2815,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2864,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2961,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3012,
+          "method": "createElement"
+        },
+        {
+          "line": 3016,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3085,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3118,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3137,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3252,
+          "method": "createElement"
+        },
+        {
+          "line": 3255,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3363,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3377,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3383,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3417,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3467,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3615,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3801,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3920,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4042,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4049,
           "method": "replaceChildren"
         },
         {
-          "line": 4341,
+          "line": 4383,
           "method": "replaceChildren"
         },
         {
-          "line": 4364,
+          "line": 4406,
           "method": "replaceChildren"
         },
         {
-          "line": 4365,
+          "line": 4407,
           "method": "createElement"
         },
         {
-          "line": 4416,
+          "line": 4458,
           "method": "innerHTML"
         },
         {
-          "line": 4519,
+          "line": 4561,
           "method": "innerHTML"
         },
         {
-          "line": 4520,
+          "line": 4562,
           "method": "innerHTML"
         },
         {
-          "line": 4535,
+          "line": 4577,
           "method": "innerHTML"
         },
         {
-          "line": 4638,
+          "line": 4680,
           "method": "createElement"
         },
         {
-          "line": 4910,
+          "line": 4952,
           "method": "innerHTML"
         },
         {
-          "line": 4912,
+          "line": 4954,
           "method": "createElement"
         },
         {
-          "line": 4914,
+          "line": 4956,
           "method": "innerHTML"
         },
         {
-          "line": 5454,
+          "line": 5496,
           "method": "innerHTML"
         },
         {
-          "line": 5457,
+          "line": 5499,
           "method": "innerHTML"
         },
         {
-          "line": 5475,
+          "line": 5517,
           "method": "innerHTML"
         },
         {
-          "line": 5478,
+          "line": 5520,
           "method": "innerHTML"
         },
         {
-          "line": 5507,
+          "line": 5549,
           "method": "innerHTML"
         },
         {
-          "line": 5729,
+          "line": 5771,
           "method": "createElement"
         },
         {
-          "line": 6290,
+          "line": 6332,
           "method": "innerHTML"
         },
         {
-          "line": 6431,
+          "line": 6473,
           "method": "innerHTML"
         },
         {
-          "line": 6431,
+          "line": 6473,
           "method": "innerHTML"
         },
         {
-          "line": 6683,
+          "line": 6725,
           "method": "innerHTML"
         },
         {
-          "line": 6700,
+          "line": 6742,
           "method": "innerHTML"
         }
       ],
@@ -1686,7 +1690,7 @@
     },
     {
       "file": "editor/js/studio.js",
-      "sha256": "35bd45c33a821d69800d7f0e1db6e2503a7cc809978d2ad2f24c8b439bc11d6e",
+      "sha256": "bfbc43126be479c49d852ff675662a692e1570f7a9a250a2f051c9d4b32abfeb",
       "ids": [],
       "dynamicIds": [
         "sf-choice-menu",
@@ -2140,7 +2144,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "fe63720db66f1fd5c4acc997ae9740948b081293815dcfb97614241266d09f7f",
+      "sha256": "2260c1a28c448684cf13129d82aac8d1509abb8c2d6c262521ded493c88b1a66",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2180,7 +2184,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "ae35fca990b529a791e4e085e32cb861d36cfa52496208354e5a4615a2703dfd",
+      "sha256": "c9c5a9dcbc4dfa2f0ecc298a845e4b865a7d554b8dee4523641c5131d5ac1dd2",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2371,6 +2375,7 @@
         "dashboard-view",
         "detail-back",
         "detail-cancel",
+        "detail-cover-export",
         "detail-created",
         "detail-error",
         "detail-form",

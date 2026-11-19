@@ -131,8 +131,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.13.3'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.13.3'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.13.4'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.13.4'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -718,7 +718,7 @@ function serveFile(req, res, filePath, opts) {
   fs.createReadStream(filePath, readOpts).pipe(res);
 }
 
-const coverJobs = new Set();
+const coverJobs = new Map();
 
 /* ═══════════ 项目系统 · 跨请求状态 ═══════════
  * prepareJobs 必须放模块作用域: 若放进下方请求回调, 每个请求都会得到新的空 Set,
@@ -5075,45 +5075,82 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
   }
   function touchMeta(meta) { meta.modifiedAt = new Date().toISOString(); writeMeta(meta); }
 
-  /* 本地视频没有在线来源封面时，后台抽取一帧缓存到项目目录。 */
-  function ensureProjectCover(meta) {
-    if (!meta || !validId(meta.id) || meta.source?.thumbnail) return;
-    const videoPath = meta.video && meta.video.path;
-    if (!videoPath) return;
-    let st;
-    try { st = fs.statSync(videoPath); } catch { return; }
-    if (!st.isFile() || !VIDEO_EXTS.includes(path.extname(videoPath).toLowerCase())) return;
-    const existing = meta.cover && meta.cover.file ? safeProjectFile(meta.id, meta.cover.file) : null;
-    if (existing && fs.existsSync(existing)) return;
-    if (coverJobs.has(meta.id)) return;
-    coverJobs.add(meta.id);
-    const tmp = path.join(projDir(meta.id), 'cover.jpg.tmp-' + process.pid + '-' + Date.now());
-    const out = path.join(projDir(meta.id), 'cover.jpg');
-    let settled = false;
-    const finish = () => { if (settled) return; settled = true; coverJobs.delete(meta.id); };
-    let proc;
+  function coverSource(meta) {
+    const thumbnail = projectThumbnailUrl(meta.source?.thumbnail);
+    const video = meta.video?.path || '';
+    return { thumbnail, video, key: thumbnail || video };
+  }
+
+  function projectCoverFile(meta, source = coverSource(meta)) {
+    const cover = meta.cover;
+    if (!cover || !['cover.png', 'cover.jpg'].includes(cover.file)) return null;
+    if ((cover.thumbnail || '') !== source.thumbnail || (cover.video && cover.video !== source.video)) return null;
+    const file = safeProjectFile(meta.id, cover.file);
+    try { return file && fs.lstatSync(file).isFile() ? file : null; }
+    catch { return null; }
+  }
+
+  function canMakeProjectCover(meta, source = coverSource(meta)) {
+    if (source.thumbnail || projectCoverFile(meta, source)) return true;
     try {
-      proc = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-ss', '0', '-i', videoPath,
-        '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', '-y', tmp], { windowsHide: true });
-    } catch { finish(); return; }
-    // 封面同样握着视频/项目目录句柄；删除项目或完全退出时必须能收掉它。
-    trackProjProc(meta.id, proc);
-    const timer = setTimeout(() => { try { proc.kill(); } catch {} }, 45000);
-    proc.on('error', () => { clearTimeout(timer); try { fs.unlinkSync(tmp); } catch {} finish(); });
-    proc.on('close', code => {
-      clearTimeout(timer);
-      if (code === 0) {
-        try {
-          fs.renameSync(tmp, out);
-          const latest = readMeta(meta.id);
-          if (latest && !latest.source?.thumbnail) {
-            latest.cover = { file: 'cover.jpg', generatedAt: new Date().toISOString() };
-            touchMeta(latest);
-          }
-        } catch { try { fs.unlinkSync(tmp); } catch {} }
-      } else { try { fs.unlinkSync(tmp); } catch {} }
-      finish();
-    });
+      return VIDEO_EXTS.includes(path.extname(source.video).toLowerCase()) && fs.statSync(source.video).isFile();
+    } catch { return false; }
+  }
+
+  /* 同一稿件的预览与导出共享一次转换，只有有效结果才更新封面元数据。 */
+  async function ensureProjectCover(meta) {
+    const { id } = meta;
+    const source = coverSource(meta);
+    const cached = projectCoverFile(meta, source);
+    if (cached && path.extname(cached) === '.png') return cached;
+    if (!canMakeProjectCover(meta, source)) return null;
+    const active = coverJobs.get(id);
+    if (active) {
+      if (active.key === source.key) return active.task;
+      await active.task.catch(() => {});
+      const latest = readMeta(id);
+      return latest ? ensureProjectCover(latest) : null;
+    }
+    const task = (async () => {
+      const tmp = path.join(projDir(id), 'cover-' + crypto.randomUUID() + '.tmp');
+      const out = path.join(projDir(id), 'cover.png');
+      const remote = source.thumbnail ? await fetchProjectThumbnail(source.thumbnail) : null;
+      checkAsrOwner(id);
+      const fromVideo = !remote && !cached;
+      const input = remote ? ['-f', remote.format, '-i', 'pipe:0'] :
+        fromVideo ? ['-ss', '0', '-i', source.video] : ['-f', 'jpeg_pipe', '-i', cached];
+      try {
+        await new Promise((resolve, reject) => {
+          const proc = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-protocol_whitelist', 'file,pipe',
+            '-max_pixels', '20000000', '-threads', '1', ...input, '-map', '0:v:0',
+            ...(fromVideo ? ['-filter_threads', '1', '-vf', 'scale=640:-2'] : []),
+            '-frames:v', '1', '-threads', '1', '-c:v', 'png', '-f', 'image2', '-update', '1', '-y', tmp],
+          { windowsHide: true, stdio: [remote ? 'pipe' : 'ignore', 'ignore', 'ignore'] });
+          trackProjProc(id, proc);
+          const timer = setTimeout(() => { try { proc.kill(); } catch {} }, 30000);
+          proc.once('error', () => { clearTimeout(timer); reject(new Error('无法启动 FFmpeg 生成封面')); });
+          proc.once('close', code => {
+            clearTimeout(timer);
+            if (code === 0 && fs.existsSync(tmp)) resolve();
+            else reject(new Error('生成 PNG 封面失败'));
+          });
+          if (remote) { proc.stdin.on('error', () => {}); proc.stdin.end(remote.bytes); }
+        });
+        checkAsrOwner(id);
+        const latest = readMeta(id);
+        if (!latest || coverSource(latest).key !== source.key) return null;
+        fs.renameSync(tmp, out);
+        updateMeta(id, current => {
+          current.cover = { file: 'cover.png', generatedAt: new Date().toISOString(),
+            ...(source.thumbnail ? { thumbnail: source.thumbnail } : { video: source.video }) };
+        });
+        return out;
+      } finally {
+        try { fs.unlinkSync(tmp); } catch {}
+      }
+    })().finally(() => coverJobs.delete(id));
+    coverJobs.set(id, { key: source.key, task });
+    return task;
   }
 
   /** 峰值包络是否覆盖了整段音频。
@@ -5160,9 +5197,11 @@ const UNSAFE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
       && peaksCoversAudio(meta, pkPath));
     const auPath = (meta.audio && meta.audio.file) ? safeProjectFile(meta.id, meta.audio.file) : null;
     v.hasAudio = !!(auPath && fs.existsSync(auPath));
-    ensureProjectCover(meta);
-    const coverPath = (meta.cover && meta.cover.file) ? safeProjectFile(meta.id, meta.cover.file) : null;
-    v.cover = coverPath && fs.existsSync(coverPath)
+    const coverSrc = coverSource(meta);
+    const coverPath = projectCoverFile(meta, coverSrc);
+    v.coverAvailable = canMakeProjectCover(meta, coverSrc);
+    if (!coverSrc.thumbnail && !coverPath && v.coverAvailable && coverJobs.size < 2) ensureProjectCover(meta).catch(() => {});
+    v.cover = coverPath
       ? `/api/projects/${encodeURIComponent(meta.id)}/cover?v=${encodeURIComponent(String(meta.cover.generatedAt || ''))}` : '';
     if (v.prepare && v.prepare.status === 'running' && !prepareJobs.has(meta.id)) {
       v.prepare.status = 'error';
@@ -5428,6 +5467,48 @@ function cleanProjectSource(raw) {
   };
   if (!source.title && !source.uploader && !source.description && !source.thumbnail) return null;
   return source;
+}
+
+/** 只下载受支持平台的图片 CDN，阻止项目资料里的任意地址访问本机或内网。 */
+function projectThumbnailUrl(raw) {
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password) return '';
+    if (!/^(?:i[0-9]?\.ytimg\.com|img\.youtube\.com|i[0-9]\.hdslb\.com)$/.test(url.hostname)) return '';
+    url.protocol = 'https:';
+    return url.href;
+  } catch { return ''; }
+}
+
+async function fetchProjectThumbnail(url) {
+  const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(12000) })
+    .catch(() => { throw new Error('无法读取在线封面'); });
+  const limit = 12 * 1024 * 1024;
+  if (!response.ok || !response.body || Number(response.headers.get('content-length')) > limit) {
+    await response.body?.cancel();
+    throw new Error('无法读取在线封面');
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > limit) throw new Error('在线封面文件过大');
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  const bytes = Buffer.concat(chunks, size);
+  let format;
+  if (bytes.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') format = 'png_pipe';
+  else if (bytes.subarray(0, 3).toString('hex') === 'ffd8ff') format = 'jpeg_pipe';
+  else if (bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') format = 'webp_pipe';
+  else throw new Error('在线封面的图像格式不受支持');
+  return { bytes, format };
 }
 /** bilibili Cookie 文本规范化: 用户常常**只复制到值**（DevTools / 扩展里点一下就复制了值本身，
  *  形如 `ac87ca47%2C1806119310%2C…`），这种文本里没有任何 name=value →
@@ -12305,8 +12386,26 @@ function handleProjectsRoutes(req, res, u) {
     if (!meta) return sendJson(res, 404, { error: '项目不存在' });
 
     if (action === 'cover' && ['GET', 'HEAD'].includes(req.method)) {
-      const file = meta.cover && meta.cover.file ? safeProjectFile(id, meta.cover.file) : null;
-      if (!file || !fs.existsSync(file)) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'cover not ready');
+      const download = u.searchParams.get('download') === '1';
+      if (req.method === 'GET' && (download || u.searchParams.get('png') === '1')) {
+        return (async () => {
+          try {
+            const file = await ensureProjectCover(meta);
+            if (!file) return sendJson(res, 404, { error: '没有可导出的封面' });
+            if (!download) return serveFile(req, res, file);
+            const name = String(readMeta(id)?.name || id).replace(/[\\/:*?"<>|]/g, '_').trim();
+            const safeName = Array.from(name).slice(0, 60).join('').toWellFormed() || id;
+            const encoded = encodeURIComponent(safeName + ' - 封面.png').replace(/['()*]/g, ch => '%' + ch.charCodeAt(0).toString(16));
+            const bytes = fs.readFileSync(file);
+            return send(res, 200, { 'Content-Type': 'image/png', 'Content-Length': bytes.length,
+              'Content-Disposition': `attachment; filename="cover.png"; filename*=UTF-8''${encoded}`, 'Cache-Control': 'no-cache' }, bytes);
+          } catch (e) {
+            return sendJson(res, 500, { error: String(e.message || e) });
+          }
+        })();
+      }
+      const file = projectCoverFile(meta);
+      if (!file) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'cover not ready');
       return serveFile(req, res, file);
     }
 
@@ -12841,7 +12940,7 @@ function handleProjectsRoutes(req, res, u) {
         }
         touchMeta(current);
         return sendJson(res, 200, { ok: true, name: current.name, modifiedAt: current.modifiedAt,
-          source: current.source || null });
+          source: current.source || null, coverAvailable: canMakeProjectCover(current) });
       });
     }
 
