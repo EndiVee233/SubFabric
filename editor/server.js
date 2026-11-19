@@ -1056,6 +1056,17 @@ const ASR_MODELS = [
     dirName: '',
     draftAllowed: true,
   },
+  {
+    id: 'gpt-transcribe',
+    name: 'OpenAI GPT-Transcribe（云端）',
+    engine: 'openai-asr',
+    cloud: true,
+    nativeWordLevel: false,
+    files: [],
+    sizeMB: 0,
+    dirName: '',
+    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。勾选对齐可生成逐词 ASS。',
+  },
 ];
 /* 对齐模型独立于 ASR：下载 Qwen3-ASR 时不再夹带对齐器；realign / 初稿「对齐」都从这里取。 */
 const ALIGNER_MODELS = [
@@ -1144,6 +1155,7 @@ function draftAlignerMissingHint(m) {
 /** 初稿输出计划：原生逐词 / 对齐 / SRT 三者互斥。
  *  没有原生逐词的模型（Qwen ASR、Whisper Vulkan）禁止 wordLevel=true，只能 align=true 生成 ASS。 */
 async function draftOutputPlan(m, data) {
+  if (m.engine === 'openai-asr' && !openAiAsrKey()) throw new Error(OPENAI_ASR_KEY_MISSING);
   const native = nativeWordLevelOf(m);
   const nativeWanted = !!data.wordLevel;
   if (nativeWanted && !native) {
@@ -2958,6 +2970,13 @@ function writeAsrSettings(obj) {
   fs.renameSync(tmp, ASR_SETTINGS);
 }
 
+const OPENAI_ASR_KEY_MISSING = '请到「设置 → 语音识别 → 云端识别」填写 OpenAI API Key';
+
+function openAiAsrKey(settings = readAsrSettings()) {
+  try { return secretStore.decrypt(settings.openAiAsrKeyEnc || ''); }
+  catch { return ''; }
+}
+
 /** 某个模型实际生效的参数：保存值 + 当前 schema 的默认值；非法/过期的键会被忽略。 */
 function modelParamsFor(model) {
   if (!model || !asrParams.schemaFor(model).length) return {};
@@ -3169,6 +3188,7 @@ async function verifyDownloadedModelFiles(dir, model) {
 function modelReady(modelId) {
   const m = anyModelById(modelId);
   if (!m) return false;
+  if (m.engine === 'openai-asr') return !!openAiAsrKey();
   if (m.cloud) return true;        // 云端识别: 没有本地文件可查(能不能用取决于联网, 由识别时报错说清)
   const dir = modelDirFor(modelId);
   if (!dir || !modelFilesOk(dir, m)) return false;
@@ -3238,9 +3258,13 @@ function resolveRerecogModel(meta) {
   const sel = rerecogModelId();
   if (sel) {
     const m = modelById(sel);
+    if (m.engine === 'openai-asr' && !openAiAsrKey()) return { error: OPENAI_ASR_KEY_MISSING };
     if (!modelReady(m.id)) return { error: '「重新识别模型」选中的「' + m.name + '」还没装好，先到设置里下载模型' };
     if (!modelAllowedForUser(m)) return { error: '「重新识别模型」选中的「' + m.name + '」不属于当前启用的加速方式，请到设置 → 性能与调度重新配置加速方式' };
     return { model: m };
+  }
+  if (modelById(meta?.draft?.modelId)?.engine === 'openai-asr' && !openAiAsrKey()) {
+    return { error: OPENAI_ASR_KEY_MISSING };
   }
   const dm = resolveDraftModel(meta);
   if (dm) return { model: dm };
@@ -8166,6 +8190,10 @@ function startPrepare(id, videoPath, mode) {
               resolve(out);
             });
           });
+        } else if (model.engine === 'openai-asr') {
+          data = await transcribeOpenAiAudio(id, segWav, end - start, null, (pct, msg) => {
+            setRr({ progress: 10 + Math.round(pct * 0.62), message: msg });
+          });
         } else if (model.cloud) {
           // 云端引擎: 选区音频同样转 mp3 上传识别(本地无模型、无子进程); 同样享受"两个引擎互为备份"
           const mp3 = await toCloudAudio(segWav);
@@ -8874,6 +8902,56 @@ function startPrepare(id, videoPath, mode) {
     { engine: 'bcut', modelId: 'bcut-asr', name: '必剪 ASR', where: 'bilibili 服务器', client: bcutAsr },
     { engine: 'capcut', modelId: 'capcut-asr', name: '剪映 ASR', where: '字节跳动服务器', client: capcutAsr },
   ];
+
+  async function transcribeOpenAiAudio(id, wav, duration, signal, onProgress) {
+    const key = openAiAsrKey();
+    if (!key) throw new Error(OPENAI_ASR_KEY_MISSING);
+    if (!(duration > 0 && Number.isFinite(duration))) {
+      duration = await new Promise(resolve => probeDuration(wav, resolve));
+    }
+    if (!duration) throw new Error('无法确定音频时长');
+    // 和 Qwen 文件识别一样，按有起止时间的短块生成文本，随后由初稿对齐器补逐词。
+    const chunkSec = 150;
+    const total = Math.ceil(duration / chunkSec);
+    const segments = [];
+    for (let index = 0; index < total; index++) {
+      checkAsrOwner(id);
+      signal?.throwIfAborted();
+      const start = index * chunkSec;
+      const end = Math.min(duration, start + chunkSec);
+      const mp3 = path.join(os.tmpdir(), 'sf-openai-' + crypto.randomUUID() + '.mp3');
+      try {
+        onProgress(index / total * 100, 'OpenAI 正在转录音频分块…');
+        await sliceAudio(wav, start, end, mp3, true);
+        checkAsrOwner(id);
+        signal?.throwIfAborted();
+        const bytes = await fs.promises.readFile(mp3);
+        if (bytes.length > 25_000_000) throw new Error('OpenAI 单个音频文件不能超过 25 MB');
+        const form = new FormData();
+        form.set('model', 'gpt-transcribe');
+        form.set('file', new Blob([bytes], { type: 'audio/mpeg' }), 'audio.mp3');
+        const timeout = AbortSignal.timeout(120000);
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: form, redirect: 'error',
+          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        });
+        const result = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) throw new Error('OpenAI API Key 无效或项目没有转录权限');
+        if (response.status === 429 && ['insufficient_quota', 'credit_balance_exhausted'].includes(result?.error?.code)) {
+          throw new Error('OpenAI API 余额不足，请检查绑定项目的额度');
+        }
+        if (response.status === 429) throw new Error('OpenAI API 请求过于频繁，请稍后重试');
+        if (!response.ok) throw new Error(`OpenAI 转录请求失败（HTTP ${response.status}）`);
+        if (typeof result?.text !== 'string') throw new Error('OpenAI 转录结果格式无效');
+        const transcript = result.text.trim();
+        if (transcript) segments.push({ start, end, text: transcript, words: [] });
+      } finally {
+        try { fs.unlinkSync(mp3); } catch {}
+      }
+    }
+    return { segments };
+  }
+
   async function transcribeCloud({ engine, audioPath, log, onProgress, signal }) {
     const primary = CLOUD_ASR.find(x => x.engine === engine) || CLOUD_ASR[0];
     const order = [primary, ...CLOUD_ASR.filter(x => x !== primary)];
@@ -9001,6 +9079,7 @@ function startPrepare(id, videoPath, mode) {
     const meta0 = readMeta(id) || {};
     const wantId = meta0.draft && meta0.draft.modelId;
     const want = wantId ? modelById(wantId) : null;
+    if (want?.engine === 'openai-asr' && !openAiAsrKey()) return finishDraft(id, new Error(OPENAI_ASR_KEY_MISSING));
     // 停用：VibeVoice 不再预检；旧稿件里的 vibevoice modelId 会走 resolveDraftModel 的可用模型回退。
     // if (want?.engine === 'vibevoice') {
     //   draftJobs.add(id);
@@ -9039,7 +9118,7 @@ function startPrepare(id, videoPath, mode) {
     // 长音频 → 先规划分片（静音优先）。短视频不走这里：不做静音检测、不切片，行为与以前完全一致。
     const durSec = Number(meta0.duration) || Number(meta0.prepare && meta0.prepare.duration) || 0;
     let chunkPlan = null, chunkSilences = [];
-    if (durSec > CHUNK_MIN_SEC) {
+    if (durSec > CHUNK_MIN_SEC && model.engine !== 'openai-asr') {
       setDraft(id, { stage: STAGE.asr, progress: 30, message: '分析静音，准备分片 …' });
       pushDraftLog(id, '[' + new Date().toLocaleTimeString() + '] [分片] 音频较长（' + Math.round(durSec / 60) + ' 分钟），先找静音切点 …');
       chunkSilences = await detectSilences(wav, durSec);
@@ -9349,6 +9428,20 @@ function startPrepare(id, videoPath, mode) {
 
     // ── 云端引擎(必剪 / 剪映): 没有本地模型、没有子进程, 走"转 mp3 → 上传 → 提交 → 轮询" ──
     // 取消靠 AbortController(见 killDraftProc); 两个引擎互为备份(转 mp3 只做一次, 失败换引擎直接复用)。
+    if (model.engine === 'openai-asr') {
+      const ctl = new AbortController();
+      draftAborts.set(id, ctl);
+      pushDraftLog(id, 'OpenAI GPT-Transcribe：音频分块上传至 OpenAI，按量计费');
+      const result = await transcribeOpenAiAudio(id, wav, durSec, ctl.signal, (pct, msg) => {
+        setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: msg });
+      });
+      checkAsrOwner(id);
+      if (!result.segments.length) throw new Error('OpenAI 没有识别到语音');
+      fs.writeFileSync(outJson + '.tmp', JSON.stringify(result));
+      fs.renameSync(outJson + '.tmp', outJson);
+      draftAborts.delete(id);
+      return finishAsr();
+    }
     if (model.cloud && chunkPlan) {
       const ctl = new AbortController();
       draftAborts.set(id, ctl);
@@ -10038,6 +10131,25 @@ function handleFetchRoutes(req, res, u) {
 /* 路由段: 语音识别模型管理 + 语义/热词分析(asr/analyze) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleAsrRoutes(req, res, u) {
   const pathname = u.pathname;
+  if (pathname === '/api/asr/openai-key' && req.method === 'POST') {
+    return readBody(req, res, 16 * 1024, (_err, body) => {
+      let input;
+      try { input = JSON.parse(body.toString('utf8')); } catch {}
+      const key = typeof input?.apiKey === 'string' ? input.apiKey.trim() : '';
+      const clear = input?.clear === true;
+      if (clear ? !!key : !/^[!-~]{1,8192}$/.test(key)) {
+        return sendJson(res, 400, { error: '请填写有效的 OpenAI API Key' });
+      }
+      const settings = readAsrSettings();
+      if (clear) delete settings.openAiAsrKeyEnc;
+      else {
+        try { settings.openAiAsrKeyEnc = secretStore.encrypt(key); }
+        catch { return sendJson(res, 500, { error: 'OpenAI API Key 加密失败' }); }
+      }
+      writeAsrSettings(settings);
+      return sendJson(res, 200, { hasKey: !clear });
+    });
+  }
   // 停用：双引擎与「双引擎分工」性能测试。模型条目已注释，接口也直接封死，
   // 防止旧前端/旧脚本继续启动 asr_dual.py / asr_perf.py。
   if (pathname === '/api/asr/dual' || pathname.startsWith('/api/asr/perf/')) {
@@ -10133,7 +10245,7 @@ function handleAsrRoutes(req, res, u) {
               : (m.engine === 'vibevoice'
                 ? { key: 'vibevoice', name: VIBEVOICE_RUNTIME.name, sizeMB: VIBEVOICE_RUNTIME.sizeMB, ok: vibevoiceRuntimeOk() }
                 : null)))));
-      const ready = filesOk && (!rt || rt.ok) && (!npuPython || npuPython.ok);
+      const ready = m.engine === 'openai-asr' ? !!openAiAsrKey() : filesOk && (!rt || rt.ok) && (!npuPython || npuPython.ok);
       const backendAllowed = modelAllowedByBackends(m) && modelAllowedByHardware(m, hw);
       // usable: 文件齐 + 该引擎的运行时都就位 + 当前加速后端允许(NeMo 模型还要 torch/NeMo + CUDA)
       const usable = ready && backendAllowed

@@ -576,6 +576,11 @@
   Parakeet Vulkan / Qwen3-ASR + 对齐 / WhisperX large-v2 + wav2vec2 对齐 / 必剪 / 剪映；CUDA Parakeet、Whisper large-v3-turbo、
   Multitalker、双引擎、VibeVoice 已于 2026-10-21 停用）→ **术语表拼写修复**（`glossary-repair.js`，所有引擎共用）→
   语义分句 `reseg`（所有引擎必经）→ 可选 `diarize` → 写字幕（逐词 ASS 或 SRT）→ LLM `translate`。
+- **OpenAI 云端语音识别**由 `editor/server.js` 内的 `transcribeOpenAiAudio` 对接 `gpt-transcribe`。
+  原声按 Qwen 的 150 秒分块方式转 MP3 后串行上传，以原始区间定位返回文本。勾选对齐时，初稿复用
+  Qwen3-ForcedAligner 补逐词时间并生成 ASS，否则生成 SRT。OpenAI 云端识别使用独立 API 项目 Key，
+  不占用本地识别并发名额，也不参与必剪和剪映的互相回退。凭据由 `POST /api/asr/openai-key`
+  保存或清除，使用 `secret-store.js` 加密；状态接口只返回配置是否就绪。
 - **初稿结构**：`reseg.js` 拆分粘连的英文与数字，保留千分位、小数和可辨认的型号。
   长句强制分行时，紧贴的数字和常见计数单位留在同一行。逐词 ASS 由 `realign-words.js`
   先定句界，`k-line.js` 再按厘秒分配连续、非重叠的词界，颜色高亮与旧版卡拉 OK 共用这套边界。
@@ -735,6 +740,9 @@
   `source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
 ## 4. 前端与主题
+
+- **OpenAI GPT-Transcribe** 在「设置 → 语音识别 → 云端识别」显示用量条件和独立的 API Key 配置。
+  可用已激活的 ChatGPT Pro API 赠额或项目现有 API 余额。建稿时可手动启用对齐以生成逐词 ASS。
 
 - **识别排队**在稿件卡片和「详细信息」中归入语音识别步骤，显示等待识别名额；
   任务获得名额后沿用同一进度视图。

@@ -3134,11 +3134,69 @@ async function resetAsrParams() {
   }
 }
 
+function openAiAsrKeyDialog(hasKey) {
+  const title = t('OpenAI API Key');
+  const dialog = document.createElement('dialog');
+  dialog.className = 'sf-ap-panel';
+  dialog.setAttribute('aria-label', title);
+  dialog.innerHTML = `
+    <form>
+      <div class="sf-ap-head"><div class="sf-ap-heading"><h2>${esc(title)}</h2></div></div>
+      <div class="sf-ap-body">
+        <p class="sf-ap-note">${esc(t('需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。请填写该项目的 API Key。'))}</p>
+        <label class="sf-ap-field">${esc(title)}<input type="password" name="apiKey" autocomplete="off" maxlength="8192" required autofocus></label>
+      </div>
+      <div class="sf-ap-foot">
+        <button type="button" class="btn btn-mini" data-openai-clear${hasKey ? '' : ' disabled'}>${esc(t('清除已存 Key'))}</button>
+        <span class="sf-ap-msg" role="status"></span>
+        <button type="button" class="btn" data-openai-cancel>${esc(t('取消'))}</button>
+        <button type="submit" class="btn btn-accent">${esc(t('保存'))}</button>
+      </div>
+    </form>`;
+  const form = dialog.querySelector('form');
+  const input = form.elements.namedItem('apiKey');
+  const msg = dialog.querySelector('[role="status"]');
+  const save = form.querySelector('[type="submit"]');
+  const clear = form.querySelector('[data-openai-clear]');
+  const update = async (payload) => {
+    save.disabled = clear.disabled = true;
+    msg.textContent = t('保存中…');
+    try {
+      const response = await fetch('/api/asr/openai-key', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload), signal: AbortSignal.timeout(10000),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+      dialog.close();
+      await renderAsrModels();
+    } catch (e) {
+      msg.textContent = String(e.message || e);
+      save.disabled = false;
+      clear.disabled = !hasKey;
+    }
+  };
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    update({ apiKey: input.value });
+  });
+  clear.addEventListener('click', () => update({ clear: true }));
+  form.querySelector('[data-openai-cancel]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => { input.value = ''; dialog.remove(); }, { once: true });
+  document.body.appendChild(dialog);
+  dialog.showModal();
+}
+
 function initAsrParams() {
   const box = $('#sf-asr-catalog');
   if (!box || box.dataset.asrParamsBound) return;
   box.dataset.asrParamsBound = '1';
   box.addEventListener('click', (e) => {
+    const openAi = e.target.closest('[data-openai-key]');
+    if (openAi) {
+      openAiAsrKeyDialog(openAi.dataset.openaiKey === '1');
+      return;
+    }
     const btn = e.target.closest('.sm-params');
     if (!btn || !btn.dataset.id) return;
     e.preventDefault();
@@ -3315,7 +3373,11 @@ function modelRowHtml(m, d, dlOf) {
     || (m.engine === 'nemo' && !d.gpu && !gpuUnknown);
   const vibeBlocked = m.engine === 'vibevoice' && !d.gpu && !gpuUnknown;
   let state, btn = '';
-  if (m.cloud) {
+  if (m.engine === 'openai-asr') {
+    state = m.ready
+      ? '<span class="sm-state ok">' + esc(t('已配置 OpenAI API Key')) + '</span>'
+      : '<span class="sm-state">' + esc(t('尚未配置 OpenAI API Key')) + '</span>';
+  } else if (m.cloud) {
     // 云端模型没有本地文件: 不给"下载/删除"按钮, 只说清代价(要联网 + 音频会传出去)
     state = '<span class="sm-state ok">✓ 云端识别（免下载 · 免显卡 · 需要联网）</span>';
   } else if (st.running || (m.needRuntime && rtSt.running)) {
@@ -3348,6 +3410,7 @@ function modelRowHtml(m, d, dlOf) {
   } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
   else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
   if (dlThis) btn = '';
+  else if (m.engine === 'openai-asr') btn = `<button type="button" class="btn btn-mini" data-openai-key="${m.ready ? '1' : '0'}">${esc(t('配置 API Key'))}</button>`;
   else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
   else if (m.partial) {
     btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;
@@ -3894,7 +3957,7 @@ async function renderAsrModels(providedStatus = null) {
           button.hidden = list.length === 0;
           continue;
         }
-        if (count && family !== '前置') count.textContent = `${models.length} 个模型 · ${models.filter(model => model.ready || model.cloud).length} 就绪`;
+        if (count && family !== '前置') count.textContent = `${models.length} 个模型 · ${models.filter(model => model.ready).length} 就绪`;
         // 当前加速方式下整个系列都没有模型 → 隐藏入口，避免点进去空白
         if (family !== '前置') button.hidden = models.length === 0;
       }
@@ -5521,7 +5584,7 @@ async function renderAsrModels(providedStatus = null) {
       align.disabled = true;
     } else {
       align.disabled = false;
-      if (!native && !align.dataset.touched) align.checked = true;
+      if (!native && !align.dataset.touched) align.checked = m?.engine !== 'openai-asr';
     }
     if (word.checked) { align.checked = false; rowAlign.hidden = true; }
     else rowAlign.hidden = false;

@@ -1183,7 +1183,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "88f8420be398422a60684f81b1a4f061678689244a34728f9c2d55ce8264f350",
+      "sha256": "4f953ef74ac6e38389bedbdf853a6e632f0b1a5a211ca9f557269ab4797e978b",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1420,131 +1420,139 @@
           "method": "innerHTML"
         },
         {
-          "line": 3193,
+          "line": 3139,
+          "method": "createElement"
+        },
+        {
+          "line": 3142,
           "method": "innerHTML"
         },
         {
-          "line": 3207,
+          "line": 3251,
           "method": "innerHTML"
         },
         {
-          "line": 3213,
+          "line": 3265,
           "method": "innerHTML"
         },
         {
-          "line": 3247,
+          "line": 3271,
           "method": "innerHTML"
         },
         {
-          "line": 3297,
+          "line": 3305,
           "method": "innerHTML"
         },
         {
-          "line": 3440,
+          "line": 3355,
           "method": "innerHTML"
         },
         {
-          "line": 3626,
+          "line": 3503,
           "method": "innerHTML"
         },
         {
-          "line": 3745,
+          "line": 3689,
           "method": "innerHTML"
         },
         {
-          "line": 3867,
+          "line": 3808,
           "method": "innerHTML"
         },
         {
-          "line": 3874,
+          "line": 3930,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3937,
           "method": "replaceChildren"
         },
         {
-          "line": 4208,
+          "line": 4271,
           "method": "replaceChildren"
         },
         {
-          "line": 4231,
+          "line": 4294,
           "method": "replaceChildren"
         },
         {
-          "line": 4232,
+          "line": 4295,
           "method": "createElement"
         },
         {
-          "line": 4283,
+          "line": 4346,
           "method": "innerHTML"
         },
         {
-          "line": 4386,
+          "line": 4449,
           "method": "innerHTML"
         },
         {
-          "line": 4387,
+          "line": 4450,
           "method": "innerHTML"
         },
         {
-          "line": 4402,
+          "line": 4465,
           "method": "innerHTML"
         },
         {
-          "line": 4505,
+          "line": 4568,
           "method": "createElement"
         },
         {
-          "line": 4777,
+          "line": 4840,
           "method": "innerHTML"
         },
         {
-          "line": 4779,
+          "line": 4842,
           "method": "createElement"
         },
         {
-          "line": 4781,
+          "line": 4844,
           "method": "innerHTML"
         },
         {
-          "line": 5317,
+          "line": 5380,
           "method": "innerHTML"
         },
         {
-          "line": 5320,
+          "line": 5383,
           "method": "innerHTML"
         },
         {
-          "line": 5338,
+          "line": 5401,
           "method": "innerHTML"
         },
         {
-          "line": 5341,
+          "line": 5404,
           "method": "innerHTML"
         },
         {
-          "line": 5370,
+          "line": 5433,
           "method": "innerHTML"
         },
         {
-          "line": 5583,
+          "line": 5646,
           "method": "createElement"
         },
         {
-          "line": 6144,
+          "line": 6207,
           "method": "innerHTML"
         },
         {
-          "line": 6285,
+          "line": 6348,
           "method": "innerHTML"
         },
         {
-          "line": 6285,
+          "line": 6348,
           "method": "innerHTML"
         },
         {
-          "line": 6537,
+          "line": 6600,
           "method": "innerHTML"
         },
         {
-          "line": 6554,
+          "line": 6617,
           "method": "innerHTML"
         }
       ],
@@ -2132,7 +2140,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "1cac200579e979f8fcc49437a8e513498d9c7da375742ff3e4d24a2de036db46",
+      "sha256": "00249e9648d6a5129d700211b2e1df88e0185f5934dab7e827929207dafbc588",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
