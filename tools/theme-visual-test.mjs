@@ -359,6 +359,7 @@ try {
   }
   report.subtitlePreview = 'top placement, frozen frame, playback, sticky scrolling, and effect heading layering passed at both window sizes';
 
+  const persisted = await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})');
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
     if (!new URLSearchParams(location.search).has('asr-badge-fixture')) return;
     const fetchOriginal = window.fetch;
@@ -373,6 +374,8 @@ try {
       }
       if (url === '/api/asr/status') {
         const data = await response.json();
+        data.backends = {cuda:false,vulkan:true};
+        data.hardware = {cuda:{available:false},vulkan:{available:true},npu:{available:false}};
         for (const model of data.models) if (['gpt-transcribe','whisper-large-v2-vulkan'].includes(model.id)) {
           Object.assign(model,{ready:true,usable:true,backendAllowed:true});
         }
@@ -387,6 +390,8 @@ try {
   await b.setViewport(1440, 960);
   await b.goto(server.origin + '/editor/studio.html?asr-badge-fixture=1#/home');
   await b.waitFor('document.querySelector(".proj-card .pc-asr")?.textContent === "Whisper"');
+  assert.deepEqual(await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})'),persisted,'theme persists across reload');
+  report.persistence = 'passed';
   const checkBadge = view => b.eval(`(() => {
     const root = document.querySelector('#home-view'), button = document.querySelector('#sf-list-mode');
     if (root.dataset.list !== ${JSON.stringify(view)}) button.click();
@@ -430,12 +435,6 @@ try {
   assert.ok(await b.eval('!document.querySelector("#batch-item-align").disabled'), 'a different model retains per-item controls');
   await b.eval('document.querySelector("#batch-item-cancel").click();document.querySelector("#batch-clear").click()');
   report.asrDraft = 'actual model badge on cards and list; OpenAI alignment locked on new and batch draft controls';
-
-  const persisted = await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})');
-  await b.goto(server.origin + '/?theme-persistence=1#/batch');
-  await b.waitFor('document.readyState === "complete" && document.body && window.__sfStudio && window.__dbg');
-  assert.deepEqual(await b.eval('({pack:document.body.dataset.themePack,mode:document.body.dataset.theme})'),persisted,'theme persists across reload');
-  report.persistence = 'passed';
 
   // Exercise native-only onboarding with the real Studio, isolated settings, and a stable hardware response.
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `
