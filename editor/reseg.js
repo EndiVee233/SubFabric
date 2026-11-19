@@ -312,6 +312,44 @@ function softFold(group) {
   return [head].concat(softFold(tail));
 }
 
+const textSentences = new Intl.Segmenter(undefined, { granularity: 'sentence' });
+const textWords = new Intl.Segmenter(undefined, { granularity: 'word' });
+
+/** 只有块级时间的转录：用原文句读与长行规则分句，在本块内按文字位置估算句级时间。 */
+function resegTextOnly(segs, { splitOnComma = false } = {}) {
+  const out = [];
+  for (const seg of segs || []) {
+    const text = String(seg.text || '').replace(/\s+/g, ' ').trim();
+    const start = Number(seg.start), end = Number(seg.end);
+    if (!text || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const timeAt = index => index === text.length ? end : start + (end - start) * (index / text.length);
+    for (const { segment, index } of textSentences.segment(text)) {
+      const starts = [...textWords.segment(segment)].filter(part => part.isWordLike).map(part => part.index);
+      const cuts = [0, ...starts.slice(1), segment.length];
+      let units = [];
+      for (let i = 0; i < cuts.length - 1; i++) {
+        const from = index + cuts[i], to = index + cuts[i + 1];
+        const word = text.slice(from, to).trim().replace(/，$/, ',');
+        units.push({ word, start: timeAt(from), end: timeAt(to), from, to });
+        if (splitOnComma && word.endsWith(',')) {
+          appendTextCues(out, text, units);
+          units = [];
+        }
+      }
+      appendTextCues(out, text, units);
+    }
+  }
+  return out;
+}
+
+function appendTextCues(out, text, units) {
+  for (const group of softFold(units)) {
+    const first = group[0], last = group[group.length - 1];
+    const body = text.slice(first.from, last.to).trim();
+    if (body) out.push({ start: first.start, end: last.end, text: body, words: [] });
+  }
+}
+
 /** 极短碎片（<2 词且 <1s）并入**更近**的一侧。
  *
  *  旧实现一律并进下一句：用户实测问句后面的「,Spoke」被并到下一句，下一句的文本和时间
@@ -544,5 +582,5 @@ async function resegWithLLM(chat, segs, onProgress, opts) {
 module.exports = {
   SENT_PUNCT, cleanWordText, flattenWords, fusedEnglishNumberParts, repairFusedEnglishNumbers,
   parsePunctReply, parsePunctTextReply, applyPunct, groupResegWords, mergeTinyFrags, groupsToSegments, resegWithLLM,
-  planBatches, softFold, wordsSig,
+  planBatches, softFold, wordsSig, resegTextOnly,
 };

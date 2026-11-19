@@ -21,8 +21,8 @@
 报告位于 `_test/maintenance/takeover-*-20261106.json`（本机生成，不入库）。远程接管基线提交的 CI 成功
 仅属历史验证，不覆盖本机功能增量；本次未跑全量 JS、Python、真实 GUI、GPU/ASR、媒体导出或安装验收。
 
-- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.13.2` / 文件版本
-  `1.5.13.2`（npm `1.5.13-beta.2`）。两条链路的安装包命名分别为 `SubFabric-1.5.13.2-setup.exe` 与
+- **当前桌面链路**：`SubFabric`（产品名与旧版一致），Windows x64 用 NSIS 安装，源码版本 `beta 1.5.13.3` / 文件版本
+  `1.5.13.3`（npm `1.5.13-beta.3`）。两条链路的安装包命名分别为 `SubFabric-1.5.13.3-setup.exe` 与
   `SubFabric-1.5.12.1-sea-setup.exe`（Inno Setup + Node SEA）；历史双包构建、实装与已发布 Release 验收见 §6。
   两条链路**可以装进同一个目录、共用同一份数据**：数据就在程序目录里（`asr/`、`projects/`、`videos/`、
   `.profile/` …），所以先装 SEA 再叠 Electron、或反过来都行，模型、项目、翻译方案与热词原样继续用；
@@ -580,8 +580,10 @@
   初稿与选区重识别均由 asr-chunks.js 规划约 60 秒一块，优先选择允许区间内接近目标的静音中点。
   每块长 30–120 秒，整段不足 30 秒时直接上传。没有合适静音时按目标切分，保持时间连续。
   各块转 MP3 后串行上传，按原始时间定位文本。初稿的 asr-chunks.json 记录每块边界、文本长度、
-  请求 ID 与回报用量，空文本区间另记任务日志。勾选对齐时，初稿复用
-  Qwen3-ForcedAligner 补逐词时间并生成 ASS，否则生成 SRT。OpenAI 云端识别使用独立 API 项目 Key，
+  请求 ID 与回报用量，空文本区间另记任务日志。勾选对齐时，初稿复用 Qwen3-ForcedAligner
+  补逐词时间并生成 ASS。关闭对齐时，reseg.js 使用原文句读和长行限制切分字幕，在各转录块内按
+  文字位置估算句级时间，保留块间缺口，生成 SRT 后沿用原翻译流程。选区重识别复用这套纯文本分句。
+  OpenAI 云端识别使用独立 API 项目 Key，
   不占用本地识别并发名额，也不参与必剪和剪映的互相回退。凭据由 `POST /api/asr/openai-key`
   保存或清除，使用 `secret-store.js` 加密；状态接口只返回配置是否就绪。
 - **初稿结构**：`reseg.js` 拆分粘连的英文与数字，保留千分位、小数和可辨认的型号。
@@ -2253,6 +2255,12 @@ speech-gap、srt-ass-e2e、vibevoice-worker-behavior、word-boundary、zh-ghost-
   拆分合并译文，其余使用已有译文归位；字幕/缓存/项目元数据保留备份，英文事件与逐词时间核对一致。
   列表与视频预览在重开后验证对应关系。未调用真实 LLM 重新翻译，未做全片逐句人工验收或重打包安装器。
 
+**beta 1.5.13.3（2026-11-19）**：OpenAI 无逐词对齐初稿按原文句读和长度输出 SRT。
+从一份历史缓存的 6 段转录经隔离建稿接口生成 349 条 SRT，最长 9.9 秒，保留原文和原始转录缺口。
+验证文字分句、无翻译配置的续跑、逐词 ASS 回归及界面词典等九项定向检查。未重新调用真实转录或翻译服务。
+Windows 沙盒从 1.5.13.2 覆盖升级、启动和三份模拟数据保留通过，115 个后台载荷文件已核对。
+Electron/NSIS 安装包 158,569,366 B，未签名，SHA-256 `07a3223e22f3e4ca1b7ac142303a94e781140f910e0c132b82fb5a0af12d5314`。
+
 **beta 1.5.13.2（2026-11-19）**：OpenAI 改为静音优先的 30–120 秒分块，目标 60 秒。
 两份真实媒体共 33 个块均返回文本，实测 45.4–113.9 秒且无时间缺口。另以 FFmpeg 合成音频验证静音中点，
 并通过分片规划、OpenAI 接口模拟、ASR 并发、Electron 文件同步和 Windows 更新五项定向回归。
@@ -2352,9 +2360,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.13.2'`、`APP_FILE_VERSION = '1.5.13.2'`、npm version `1.5.13-beta.2`。
+  `APP_VERSION = 'beta 1.5.13.3'`、`APP_FILE_VERSION = '1.5.13.3'`、npm version `1.5.13-beta.3`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.13.2-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.13.3-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **可自动更新的 Release**：发布 `v<主>.<次>.<补丁>` 或 `v<主>.<次>.<补丁>-beta.<序号>`，

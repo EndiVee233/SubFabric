@@ -5,6 +5,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { isolatedServer } from './helpers/isolated-server.mjs';
 
 const key = 'fixture-credential-for-openai-asr';
+const punctuated = (
+  'The first recorded sentence has enough words for an ordinary subtitle. '
+  + 'The next statement will continue after the speaker takes a short breath. '
+  + 'The last line ends the test without changing any of the original words. '
+).repeat(3).trim();
 const server = await isolatedServer({
   prepare(_root, editor) {
     const file = path.join(editor, 'server.js');
@@ -28,11 +33,13 @@ globalThis.fetch = async (url, options) => {
   const info = JSON.parse(await options.body.get('file').text());
   fs.appendFileSync(path.join(ROOT, 'openai-calls.jsonl'), JSON.stringify(info) + '\\n');
   if (info.project === 'p-quota') return Response.json({ error: { code: 'credit_balance_exhausted' } }, { status: 429 });
-  const text = info.project === 'p-empty' && info.start === 60 ? '  ' : 'Hello world.';
+  let text = 'Hello world.';
+  if (info.project === 'p-plain') text = ${JSON.stringify(punctuated)};
+  if (info.project === 'p-empty' && info.start === 60) text = '  ';
   return Response.json({ text, usage: { seconds: info.end - info.start } }, { headers: { 'x-request-id': 'req_fixture' } });
 };
-translateCfg = () => ({ baseUrl: 'http://127.0.0.1:1', model: 'fixture', apiKey: 'fixture', autoTranslate: false });
-runDraftReseg = async () => {};
+translateCfg = () => fs.existsSync(path.join(ROOT, 'without-translation'))
+  ? {} : { baseUrl: 'http://127.0.0.1:1', model: 'fixture', apiKey: 'fixture', autoTranslate: false };
 startTranslate = async id => finishDraft(id, null);
 alignDraftAsrJson = async id => {
   const file = path.join(projDir(id), 'asr.json');
@@ -59,12 +66,15 @@ async function modelStatus() {
   return status.models.find(m => m.id === 'gpt-transcribe');
 }
 
-async function draft(id, { align = false, duration = 3 } = {}) {
+async function draft(id, { align = false, duration = 3, cachedSegments = null } = {}) {
   const dir = path.join(server.root, 'projects', id);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'audio.wav'), 'fixture');
   fs.writeFileSync(path.join(dir, 'project.json'), JSON.stringify({ id, name: id, duration,
     draft: { status: 'error', modelId: 'gpt-transcribe', engine: 'openai-asr', align, wordLevel: align } }));
+  if (cachedSegments) {
+    fs.writeFileSync(path.join(dir, 'asr.json'), JSON.stringify({ segments: cachedSegments }));
+  }
   assert.equal((await post('/api/projects/' + id + '/retry', {})).status, 200);
   for (let i = 0; i < 120; i++) {
     const state = await (await server.call('/api/projects/' + id + '/draft')).json();
@@ -92,11 +102,17 @@ try {
   assert.equal(plain.draft.error, null);
   assert.ok(fs.existsSync(path.join(plain.dir, 'subtitle.srt')));
   const stored = JSON.parse(fs.readFileSync(path.join(plain.dir, 'asr.json'), 'utf8')).segments;
-  assert.deepEqual(stored.map(seg => [seg.start, seg.end, seg.words.length]),
-    [[0, 72, 0], [72, 136, 0], [136, 196, 0], [196, 256, 0], [256, 302, 0]]);
+  assert.equal(plain.draft.resegDone, true);
+  assert.ok(stored.length > 30, 'text-only drafts split the original five upload chunks');
+  assert.ok(stored.every(seg => seg.words.length === 0 && seg.end - seg.start <= 10 + 1e-8));
+  assert.equal(stored.map(seg => seg.text).join(' '), Array(5).fill(punctuated).join(' '));
+  assert.equal(stored.at(-1).end, 302);
+  assert.equal(fs.existsSync(path.join(plain.dir, 'subtitle.ass')), false);
   const report = JSON.parse(fs.readFileSync(path.join(plain.dir, 'asr-chunks.json'), 'utf8'));
   assert.equal(report.source, 'silence');
   assert.equal(report.chunkSec, 60);
+  assert.deepEqual(report.chunks.map(({ start, end }) => [start, end]),
+    [[0, 72], [72, 136], [136, 196], [196, 256], [256, 302]]);
   assert.deepEqual(report.chunks.map(chunk => chunk.cut ?? null), ['silence', 'silence', 'nominal', 'nominal', null]);
   const empty = await draft('p-empty', { duration: 120 });
   assert.equal(empty.draft.error, null);
@@ -108,6 +124,17 @@ try {
   assert.equal(aligned.draft.error, null);
   assert.ok(fs.existsSync(path.join(aligned.dir, 'subtitle.ass')));
   assert.equal(JSON.parse(fs.readFileSync(path.join(aligned.dir, 'asr.json'), 'utf8')).segments[0].words.length, 2);
+
+  const translationOff = path.join(server.root, 'without-translation');
+  fs.writeFileSync(translationOff, '');
+  try {
+    const cached = await draft('p-cached', { duration: 60,
+      cachedSegments: [{ start: 0, end: 60, text: punctuated, words: [] }] });
+    assert.equal(cached.draft.status, 'paused');
+    assert.equal(cached.draft.resegDone, true);
+    assert.ok(fs.existsSync(path.join(cached.dir, 'subtitle.srt')));
+    assert.ok(cached.draft.lines > 1);
+  } finally { fs.unlinkSync(translationOff); }
 
   const quota = await draft('p-quota');
   assert.match(quota.draft.error, /OpenAI API 余额不足/);

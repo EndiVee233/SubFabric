@@ -131,8 +131,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.13.2'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.13.2'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.13.3'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.13.3'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -7973,6 +7973,10 @@ function startPrepare(id, videoPath, mode) {
 
   /** 重试：按现有产物决定从哪一步续跑 —— 有识别结果就只补翻译（已有译文不重翻），
    *  识别结果都没有才重跑识别。不会重头再来，所以已有进度不会丢。 */
+  function draftUsesOpenAiText(draft) {
+    return !draft?.align && !draft?.wordLevel && modelById(draft?.modelId)?.engine === 'openai-asr';
+  }
+
   function retryDraft(id) {
     const meta = readMeta(id);
     if (!meta) return { error: '项目不存在' };
@@ -7990,7 +7994,8 @@ function startPrepare(id, videoPath, mode) {
       return { ok: true, from: 'subtitle' };
     }
     // 先做校验再计数：配置不全、点了也不会真正跑的情况，不该消耗重试次数
-    if (hasAsr && !llmReady(translateCfg())) {
+    const needsReseg = !meta.draft.resegDone;
+    if (hasAsr && !(needsReseg && draftUsesOpenAiText(meta.draft)) && !llmReady(translateCfg())) {
       return { error: '还没配置 LLM（语义分句和翻译都要用）：在右上角「设置」里填接口地址、API Key 和模型名' };
     }
     draftJobs.delete(id);
@@ -8000,9 +8005,8 @@ function startPrepare(id, videoPath, mode) {
     writeMeta(meta);
 
     if (hasAsr) {
-      // 语义分句还欠着（LLM 可用 + 没做完/没跳过）→ 先补这一步再往下走。
-      // 不再按引擎区分: 所有引擎的初稿都要过语义分句（老项目 resegDone 为空, 重试时正好补上）。
-      if (!meta.draft.resegDone && llmReady(translateCfg())) {
+      // 语义分句还欠着时，从已保存的识别结果继续。
+      if (needsReseg) {
         // ★ 必须登记到 draftJobs：metaView 靠它区分"真在跑"和"服务重启被中断"。
         //   漏登记时每批都在正常跑，界面却显示 ✕「服务已重启，处理被中断」→ 用户以为点不动（实测踩过）。
         draftJobs.add(id);
@@ -8309,10 +8313,10 @@ function startPrepare(id, videoPath, mode) {
           return;
         }
 
-        // 3.5) 语义分句(所有引擎都做, 与初稿同一条规则) —— LLM 补标点 → 按逗号/句号切句。
-        //      语义分句是必经步骤: 没配 LLM 就直接报错, 不许静默降级成引擎自带的断句;
-        //      LLM 真跑失败时才是"小区域不致命", 回退到原断句继续走(见下面 catch)。
-        if (model.engine !== 'vibevoice') {
+        // 3.5) 选区分句：OpenAI 给的是块级文本，复用初稿的纯文本分句。
+        if (model.engine === 'openai-asr') {
+          segs = resegMod.resegTextOnly(segs, { splitOnComma: resegSplitOnComma() });
+        } else if (model.engine !== 'vibevoice') {
         if (!llmReady(translateCfg())) {
           throw new Error('没配置 LLM：语义分句走不了，先在右上角「设置」里填接口地址、API Key 和模型名，再重新识别这一段');
         }
@@ -8616,10 +8620,12 @@ function startPrepare(id, videoPath, mode) {
     // 进度条与服务端流水线的顺序一致(识别 → 语义分句 → 说话人分离 → 翻译), 而且不许倒退:
     // 语义分句占 76~82, 说话人分离接在 82 之后; 从当前值接着走, 绝不硬跳回 76。
     const curDraft = (readMeta(id) || {}).draft || {};
+    const textOnly = draftUsesOpenAiText(curDraft);
     const base = Math.max(76, Math.min(Number(curDraft.progress) || 0, 80));
     const span = Math.max(1, 82 - base);
     setDraft(id, { status: 'running', stage: STAGE.reseg, progress: base, message: '语义分句中 …', error: null, failedStage: '' });
-    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（LLM 补标点 → 按逗号/句号切句）`);
+    const method = textOnly ? '按原文标点切句并估算句级时间' : 'LLM 补标点 → 按逗号/句号切句';
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（${method}）`);
     const p = path.join(projDir(id), 'asr.json');
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
     const before = (data.segments || []).length;
@@ -8641,7 +8647,8 @@ function startPrepare(id, videoPath, mode) {
       } catch {}
     };
     const stats = {};
-    const segs2 = await resegMod.resegWithLLM(
+    const segs2 = textOnly ? resegMod.resegTextOnly(data.segments, { splitOnComma: resegSplitOnComma() })
+      : await resegMod.resegWithLLM(
       // chat 注入: 带上诊断转储文件, 并把 llmChat 的新返回形状(content+元数据)拆成纯文本给 reseg
       (messages, o) => llmChat(cfg, messages, Object.assign({ debugFile: path.join(projDir(id), 'llm-debug.jsonl') }, o))
         .then(r => r.content),
@@ -9223,9 +9230,8 @@ function startPrepare(id, videoPath, mode) {
           pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [置信度] 丢弃失败（不影响识别）：${(e && e.message) || e}`);
         }
       }
-      // 语义分句是**必经步骤**: 没配 LLM 就在这里失败, 绝不静默降级成引擎自带的断句往下走。
-      // retryDraft 对「没配 LLM」也是直接拒绝(连重试次数都不涨), 所以出路只有一条: 把 Key 填上。
-      if (!llmReady(translateCfg())) {
+      // OpenAI 的无对齐初稿按原文分句；逐词分句路径仍需 LLM。
+      if (!draftUsesOpenAiText(meta0.draft) && !llmReady(translateCfg())) {
         setDraft(id, { stage: STAGE.reseg, message: '语义分句需要 LLM …', error: null, failedStage: '' });
         pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [错误] 没配置 LLM，语义分句走不了，流水线停在这一步`);
         return finishDraft(id, new Error('没配置 LLM：语义分句走不了，先在右上角「设置」里填接口地址、API Key 和模型名，再点「重试」'));
