@@ -49,6 +49,8 @@ try {
   await b.send('Page.addScriptToEvaluateOnNewDocument', { source: `
     localStorage.setItem('sf-welcome-v1',JSON.stringify({done:true,vulkan:true}));
     if(!localStorage.getItem('subfabric-studio-v1')) localStorage.setItem('subfabric-studio-v1',JSON.stringify({motion:'off',background:'solid'}));
+    // Repeated navigations can exhaust HTTP/1 connections with idle log and lifecycle streams.
+    window.EventSource = undefined;
     const nativeFetch=window.fetch;
     const json = data => Promise.resolve(new Response(JSON.stringify(data), {headers:{'Content-Type':'application/json'}}));
     window.fetch = (input, init) => {
