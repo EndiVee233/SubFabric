@@ -1066,7 +1066,7 @@ const ASR_MODELS = [
     files: [],
     sizeMB: 0,
     dirName: '',
-    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。必须使用对齐模型生成逐词 ASS。',
+    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。空块最多请求三次，再依次尝试必剪、剪映及本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。',
   },
 ];
 /* 对齐模型独立于 ASR：下载 Qwen3-ASR 时不再夹带对齐器；realign / 初稿「对齐」都从这里取。 */
@@ -4582,17 +4582,16 @@ function benchClip(audio, seconds) {
   }
 }
 
-function benchSpawn(cmd, args, timeoutMs) {
+function benchSpawn(cmd, args, timeoutMs, register) {
   return new Promise((resolve, reject) => {
     let p;
     try { p = spawn(cmd, args, { windowsHide: true, cwd: ROOT, env: pySpawnEnv() }); }
     catch (e) { return reject(e); }
-    benchProc = p;
+    register(p);
     let err = '', settled = false;
     const finish = (fn, value) => {
       if (settled) return; settled = true;
       clearTimeout(timer);
-      if (benchProc === p) benchProc = null;
       fn(value);
     };
     const timer = setTimeout(() => {
@@ -4603,7 +4602,6 @@ function benchSpawn(cmd, args, timeoutMs) {
     p.stderr.on('data', d => { err = (err + String(d)).slice(-4000); });
     p.on('error', e => finish(reject, e));
     p.on('close', code => {
-      if (benchCancel) return finish(reject, new Error('已取消测试'));
       if (code !== 0) {
         const tail = err.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean).slice(-3).join(' | ');
         return finish(reject, new Error('退出码 ' + code + (tail ? '：' + tail.slice(-300) : '')));
@@ -4746,6 +4744,23 @@ function benchConfidenceSummary(segments) {
 }
 
 async function benchRunModel(model, wav, tempDir, seconds, cond) {
+  try {
+    return await runLocalClip(model, wav, tempDir, seconds, cond, p => { benchProc = p; });
+  } catch (error) {
+    if (benchCancel) throw new Error('已取消测试');
+    throw error;
+  } finally { benchProc = null; }
+}
+
+async function runLocalClip(model, wav, tempDir, seconds, cond, register, signal) {
+  let child;
+  const stop = () => killProc(child);
+  const onSpawn = p => {
+    child = p;
+    register(p);
+    if (signal?.aborted) stop();
+  };
+  signal?.throwIfAborted();
   const mdir = modelDirFor(model.id);
   if (!mdir) throw new Error('找不到模型目录');
   const mp = modelParamsFor(model);
@@ -4759,32 +4774,33 @@ async function benchRunModel(model, wav, tempDir, seconds, cond) {
   if (model.engine === 'whisper.cpp') {
     // whisper-cli 固定 -ml 1 -sow，词级输出不可关；这个开关对它是只读条件。
     task = runWhisperCpp(path.join(mdir, model.files[0]), wav, () => {},
-      Object.assign({}, mp, { register: p => { benchProc = p; } }));
+      Object.assign({}, mp, { register: onSpawn }));
   } else if (model.engine === 'faster-whisper') {
     task = runFasterWhisper(wav, mdir, () => {},
       Object.assign({}, mp, {
         wordTimestamps: word && mp.wordTimestamps !== false,
-        outRoot: tempDir, register: p => { benchProc = p; },
+        outRoot: tempDir, register: onSpawn,
       }));
   } else if (isCrispEngine(model.engine)) {
     const bin = path.join(mdir, model.crispModelFile || model.files[0]);
-    task = runCrispAsr(bin, wav, () => {}, crispOptionsFor(model, mdir, { register: p => { benchProc = p; } }));
+    task = runCrispAsr(bin, wav, () => {}, crispOptionsFor(model, mdir, { register: onSpawn }));
   } else if (BENCH_ENGINES.has(model.engine)) {
     const ea = asrEngineArgs(model);
-    outPath = path.join(tempDir, 'bench-' + model.id.replace(/[^\w.-]+/g, '_') + '.json');
+    outPath = path.join(tempDir, 'clip-' + model.id.replace(/[^\w.-]+/g, '_') + '.json');
     /* ⚠ VibeVoice 有自己的独立 Python（asr/runtime-vibevoice，装 torch 4bit/bitsandbytes）；
      * 共享的 ASR_PY 里没有这些包。旧速度测试统一用 ASR_PY 跑 vibevoice.py，于是即使探针
      * 显示运行时 OK，bench 仍报「No module named 'bitsandbytes'」——实测就是这条。 */
     const python = ea.python || (model.engine === 'vibevoice' ? vibevoicePython()
       : (model.engine === 'qwen' ? qwenPython() : ASR_PY));
-    task = benchSpawn(python, [ea.script, ...asrArgsFor(ea, mdir, wav, outPath, confMode)], timeoutMs);
+    task = benchSpawn(python, [ea.script, ...asrArgsFor(ea, mdir, wav, outPath, confMode)], timeoutMs, onSpawn);
   } else {
     throw new Error('该模型不支持速度测试');
   }
+  signal?.addEventListener('abort', stop, { once: true });
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
-      try { benchProc?.kill(); } catch {}
+      stop();
       reject(new Error('模型测试超时（' + Math.round(timeoutMs / 1000) + 's）'));
     }, timeoutMs + 2000);
   });
@@ -4803,7 +4819,7 @@ async function benchRunModel(model, wav, tempDir, seconds, cond) {
       segments: (data && Array.isArray(data.segments)) ? data.segments : [] };
   } finally {
     clearTimeout(timer);
-    benchProc = null;
+    signal?.removeEventListener('abort', stop);
   }
 }
 
@@ -9016,7 +9032,94 @@ function startPrepare(id, videoPath, mode) {
     { engine: 'capcut', modelId: 'capcut-asr', name: '剪映 ASR', where: '字节跳动服务器', client: capcutAsr },
   ];
 
-  async function transcribeOpenAiAudio(id, wav, duration, signal, onProgress) {
+  async function requestOpenAiClip(key, bytes, signal) {
+    const form = new FormData();
+    form.set('model', 'gpt-transcribe');
+    form.set('file', new Blob([bytes], { type: 'audio/mpeg' }), 'audio.mp3');
+    const timeout = AbortSignal.timeout(120000);
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: form, redirect: 'error',
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+    const result = await response.json().catch(() => null);
+    if (response.status === 401 || response.status === 403) throw new Error('OpenAI API Key 无效或项目没有转录权限');
+    if (response.status === 429 && ['insufficient_quota', 'credit_balance_exhausted'].includes(result?.error?.code)) {
+      throw new Error('OpenAI API 余额不足，请检查绑定项目的额度');
+    }
+    if (response.status === 429) throw new Error('OpenAI API 请求过于频繁，请稍后重试');
+    if (!response.ok) throw new Error(`OpenAI 转录请求失败（HTTP ${response.status}）`);
+    if (typeof result?.text !== 'string') throw new Error('OpenAI 转录结果格式无效');
+    const header = response.headers.get('x-request-id') || '';
+    return {
+      text: result.text.trim(),
+      requestId: /^req_[a-zA-Z0-9_-]{1,124}$/.test(header) ? header : null,
+      usageSeconds: Number.isFinite(result.usage?.seconds) ? result.usage.seconds : null,
+    };
+  }
+
+  function localRecoveryModels() {
+    return ['qwen', 'whisper', 'parakeet'].flatMap(group => ASR_MODELS.filter(m =>
+      !m.cloud && draftAllowedOf(m) && asrEngineGroup(m) === group
+      && modelAllowedForUser(m) && modelReady(m.id) && !asrGpuGateError(m)));
+  }
+
+  async function recognizeOpenAiChunk({ id, wav, key, start, end, signal, onMessage, attempts = [] }) {
+    const range = '[' + asrChunks.fmtT(start) + '–' + asrChunks.fmtT(end) + ']';
+    const check = () => { checkAsrOwner(id); signal?.throwIfAborted(); };
+    const log = m => { pushDraftLog(id, m); onMessage(m); };
+    const dir = await fs.promises.mkdtemp(path.join(projDir(id), '.asr-recovery-'));
+    const mp3 = path.join(dir, 'audio.mp3'), pcm = path.join(dir, 'audio.wav');
+    const combine = r => (r.segments || []).map(s => typeof s?.text === 'string' ? s.text.trim() : '').filter(Boolean).join(' ');
+    try {
+      check();
+      await sliceAudio(wav, start, end, mp3, true);
+      const bytes = await fs.promises.readFile(mp3);
+      if (bytes.length > 25_000_000) throw new Error('OpenAI 单个音频文件不能超过 25 MB');
+      for (let n = attempts.length; n < 3; n++) {
+        check();
+        const { text, requestId, usageSeconds } = await requestOpenAiClip(key, bytes, signal);
+        attempts.push({ model: 'gpt-transcribe', textChars: text.length, requestId, usageSeconds });
+        if (text) return { text, model: 'gpt-transcribe' };
+        log('OpenAI 未返回转录文本 ' + range + '（' + (n + 1) + '/3）' + (requestId ? ' ' + requestId : ''));
+      }
+      for (const cloud of CLOUD_ASR) {
+        check();
+        log(range + ' 尝试 ' + cloud.name);
+        try {
+          const text = combine(await cloud.client.transcribe({ audioPath: mp3, signal, log: onMessage, onProgress: (_pct, msg) => onMessage(msg) }));
+          attempts.push({ model: cloud.modelId, textChars: text.length });
+          if (text) return { text, model: cloud.modelId };
+        } catch (e) {
+          check();
+          attempts.push({ model: cloud.modelId, failed: true });
+          log(range + ' ' + cloud.name + ' 请求失败');
+        }
+      }
+      check();
+      const models = localRecoveryModels();
+      if (models.length) await sliceAudio(wav, start, end, pcm, false);
+      for (const model of models) {
+        check();
+        log(range + ' 尝试 ' + model.name);
+        const release = await acquireAsrSlot(model, id, () => onMessage(ASR_WAITING_MESSAGE));
+        try {
+          check();
+          const text = combine(await runLocalClip(model, pcm, dir, end - start, { word: false }, p => trackProjProc(id, p), signal));
+          attempts.push({ model: model.id, textChars: text.length });
+          if (text) return { text, model: model.id };
+        } catch (e) {
+          check();
+          attempts.push({ model: model.id, failed: true });
+          log(range + ' ' + model.name + ' 识别失败');
+        } finally { release(); }
+      }
+      throw new Error(range + ' 所有可用模型均未返回转录文本，请重试识别');
+    } finally {
+      await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    }
+  }
+
+  async function transcribeOpenAiAudio(id, wav, duration, signal, onProgress, isDraft = false) {
     const key = openAiAsrKey();
     if (!key) throw new Error(OPENAI_ASR_KEY_MISSING);
     if (!(duration > 0 && Number.isFinite(duration))) {
@@ -9028,58 +9131,56 @@ function startPrepare(id, videoPath, mode) {
     const { OPENAI_CHUNK_SEC, OPENAI_MIN_CHUNK_SEC } = asrChunks;
     const silences = duration >= OPENAI_CHUNK_SEC + OPENAI_MIN_CHUNK_SEC ? await detectSilences(wav, duration) : [];
     const plan = asrChunks.planOpenAiChunks(duration, silences);
-    const segments = [];
-    const perChunk = [];
+    const segments = [], perChunk = [];
+    const report = { engine: 'openai-asr', duration, chunkSec: OPENAI_CHUNK_SEC, plan, perChunk,
+      source: plan.some(c => c.cut === 'silence') ? 'silence' : 'nominal', silenceCount: silences.length };
+    const cacheFile = path.join(projDir(id), 'openai-partial.json');
+    const stat = await fs.promises.stat(wav);
+    const signature = JSON.stringify([stat.size, stat.mtimeMs, plan]);
+    let saved = [];
+    if (isDraft) {
+      try {
+        const cache = JSON.parse(await fs.promises.readFile(cacheFile, 'utf8'));
+        if (cache.signature === signature && Array.isArray(cache.blocks)) saved = cache.blocks;
+      } catch {}
+    }
     for (const { index, start, end } of plan) {
       checkAsrOwner(id);
       signal?.throwIfAborted();
-      const mp3 = path.join(os.tmpdir(), 'sf-openai-' + crypto.randomUUID() + '.mp3');
-      try {
-        onProgress(index / plan.length * 100, 'OpenAI 正在转录音频分块…');
-        await sliceAudio(wav, start, end, mp3, true);
-        checkAsrOwner(id);
-        signal?.throwIfAborted();
-        const bytes = await fs.promises.readFile(mp3);
-        if (bytes.length > 25_000_000) throw new Error('OpenAI 单个音频文件不能超过 25 MB');
-        const form = new FormData();
-        form.set('model', 'gpt-transcribe');
-        form.set('file', new Blob([bytes], { type: 'audio/mpeg' }), 'audio.mp3');
-        const timeout = AbortSignal.timeout(120000);
-        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-          method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: form, redirect: 'error',
-          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-        });
-        const result = await response.json().catch(() => null);
-        if (response.status === 401 || response.status === 403) throw new Error('OpenAI API Key 无效或项目没有转录权限');
-        if (response.status === 429 && ['insufficient_quota', 'credit_balance_exhausted'].includes(result?.error?.code)) {
-          throw new Error('OpenAI API 余额不足，请检查绑定项目的额度');
+      const pct = index / plan.length * 100;
+      onProgress(pct, 'OpenAI 正在转录音频分块…');
+      let block = saved[index];
+      if (!block?.text || !block.detail?.model) {
+        const attempts = [];
+        const detail = { seconds: +(end - start).toFixed(3), attempts, segments: 0, textChars: 0 };
+        perChunk[index] = detail;
+        let result;
+        try {
+          result = await recognizeOpenAiChunk({ id, wav, key, start, end, signal,
+            onMessage: msg => onProgress(pct, msg), attempts });
+        } catch (error) {
+          detail.failed = true;
+          throw error;
+        } finally {
+          const last = attempts.filter(a => a.model === 'gpt-transcribe').at(-1);
+          detail.requestId = last?.requestId ?? null;
+          detail.usageSeconds = last?.usageSeconds ?? null;
+          if (detail.failed && isDraft && !signal?.aborted && !deletedProjects.has(id)) {
+            writeChunkReport(id, report);
+            fs.writeFileSync(cacheFile + '.tmp', JSON.stringify({ signature, blocks: saved }));
+            fs.renameSync(cacheFile + '.tmp', cacheFile);
+          }
         }
-        if (response.status === 429) throw new Error('OpenAI API 请求过于频繁，请稍后重试');
-        if (!response.ok) throw new Error(`OpenAI 转录请求失败（HTTP ${response.status}）`);
-        if (typeof result?.text !== 'string') throw new Error('OpenAI 转录结果格式无效');
-        const transcript = result.text.trim();
-        const requestHeader = response.headers.get('x-request-id') || '';
-        const requestId = /^req_[a-zA-Z0-9_-]{1,124}$/.test(requestHeader) ? requestHeader : null;
-        const usageSeconds = result.usage?.seconds;
-        perChunk.push({
-          seconds: +(end - start).toFixed(3), segments: transcript ? 1 : 0,
-          textChars: transcript.length, requestId, usageSeconds: Number.isFinite(usageSeconds) ? usageSeconds : null,
-        });
-        if (transcript) segments.push({ start, end, text: transcript, words: [] });
-        else pushDraftLog(id, 'OpenAI 未返回转录文本'
-          + ' [' + asrChunks.fmtT(start) + '–' + asrChunks.fmtT(end) + ']'
-          + (requestId ? ' ' + requestId : ''));
-      } finally {
-        try { fs.unlinkSync(mp3); } catch {}
+        const { text, model } = result;
+        Object.assign(detail, { model, segments: 1, textChars: text.length });
+        block = { text, detail };
+        saved[index] = block;
+        if (model !== 'gpt-transcribe') pushDraftLog(id, '分块补识别成功：' + model + ' [' + asrChunks.fmtT(start) + '–' + asrChunks.fmtT(end) + ']');
       }
+      perChunk[index] = block.detail;
+      segments.push({ start, end, text: block.text, words: [] });
     }
-    return {
-      segments,
-      chunkReport: {
-        engine: 'openai-asr', duration, chunkSec: OPENAI_CHUNK_SEC, plan, perChunk,
-        source: plan.some(chunk => chunk.cut === 'silence') ? 'silence' : 'nominal', silenceCount: silences.length,
-      },
-    };
+    return { segments, chunkReport: report };
   }
 
   async function transcribeCloud({ engine, audioPath, log, onProgress, signal }) {
@@ -9571,12 +9672,13 @@ function startPrepare(id, videoPath, mode) {
       pushDraftLog(id, 'OpenAI GPT-Transcribe：音频分块上传至 OpenAI，按量计费');
       const result = await transcribeOpenAiAudio(id, wav, durSec, ctl.signal, (pct, msg) => {
         setDraft(id, { stage: STAGE.asr, progress: 30 + Math.round(pct * 0.45), message: msg });
-      });
+      }, true);
       checkAsrOwner(id);
       writeChunkReport(id, result.chunkReport);
       if (!result.segments.length) throw new Error('OpenAI 没有识别到语音');
       fs.writeFileSync(outJson + '.tmp', JSON.stringify({ segments: result.segments }));
       fs.renameSync(outJson + '.tmp', outJson);
+      try { fs.unlinkSync(path.join(projDir(id), 'openai-partial.json')); } catch {}
       draftAborts.delete(id);
       return finishAsr();
     }

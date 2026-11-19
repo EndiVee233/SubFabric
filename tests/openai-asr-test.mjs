@@ -21,8 +21,31 @@ const server = await isolatedServer({
       .replace('const detectSilences =', 'let detectSilences =').replace(listen, `
 detectSilences = async wav => path.basename(path.dirname(wav)) === 'p-plain'
   ? [{ start: 71, end: 73 }, { start: 135, end: 137 }] : [];
+let currentProject = '';
+const counts = new Map();
+for (const cloud of CLOUD_ASR) {
+  cloud.client.transcribe = async () => {
+    if (currentProject === 'p-bcut') return { segments: [{ text: 'First cloud.' }] };
+    if (cloud.engine === 'bcut') throw new Error('fixture unavailable');
+    return { segments: currentProject === 'p-cloud' ? [{ text: 'Cloud result.' }] : [] };
+  };
+}
+const available = ['qwen3-asr-1.7b', 'whisperx-large-v2', 'parakeet-tdt-0.6b-v2-vulkan'];
+modelReady = id => {
+  if (id === 'gpt-transcribe') return !!openAiAsrKey();
+  if (currentProject === 'p-no-local') return false;
+  if (currentProject === 'p-whisper' && id === available[0]) return false;
+  if (currentProject === 'p-parakeet' && id !== available[2]) return false;
+  return available.includes(id);
+};
+asrGpuGateError = () => null;
+modelAllowedForUser = () => true;
+runLocalClip = async model => {
+  const target = { 'p-local': available[2], 'p-qwen': available[0], 'p-whisper': available[1], 'p-parakeet': available[2] };
+  return { segments: model.id === target[currentProject] ? [{ text: 'Local result.' }] : [] };
+};
 sliceAudio = async (wav, start, end, out, asMp3) => {
-  if (!asMp3) throw new Error('Expected MP3');
+  currentProject = path.basename(path.dirname(wav));
   fs.writeFileSync(out, JSON.stringify({ start, end, project: path.basename(path.dirname(wav)) }));
 };
 const fixtureFetch = globalThis.fetch;
@@ -35,7 +58,13 @@ globalThis.fetch = async (url, options) => {
   if (info.project === 'p-quota') return Response.json({ error: { code: 'credit_balance_exhausted' } }, { status: 429 });
   let text = 'Hello world.';
   if (info.project === 'p-plain') text = ${JSON.stringify(punctuated)};
-  if (info.project === 'p-empty' && info.start === 60) text = '  ';
+  const counter = info.project + ':' + info.start;
+  counts.set(counter, (counts.get(counter) || 0) + 1);
+  if (info.start === 60 && ['p-empty', 'p-bcut', 'p-cloud', 'p-local', 'p-retry', 'p-qwen', 'p-whisper', 'p-parakeet', 'p-no-local'].includes(info.project)) {
+    if (info.project === 'p-retry') text = counts.get(counter) < 3 ? ' ' : 'Recovered.';
+    else if (info.project === 'p-empty' && counts.get(counter) > 3) text = 'Recovered.';
+    else text = ' ';
+  }
   return Response.json({ text, usage: { seconds: info.end - info.start } }, { headers: { 'x-request-id': 'req_fixture' } });
 };
 translateCfg = () => ({ baseUrl: 'http://127.0.0.1:1', model: 'fixture', apiKey: 'fixture', autoTranslate: false });
@@ -121,11 +150,39 @@ try {
     [[0, 72], [72, 136], [136, 196], [196, 256], [256, 302]]);
   assert.deepEqual(report.chunks.map(chunk => chunk.cut ?? null), ['silence', 'silence', 'nominal', 'nominal', null]);
   const empty = await draft('p-empty', { duration: 120 });
-  assert.equal(empty.draft.error, null);
-  assert.match(fs.readFileSync(path.join(empty.dir, 'draft.log'), 'utf8'), /未返回转录文本 .*1:00–2:00.*req_fixture/);
-  const emptyReport = JSON.parse(fs.readFileSync(path.join(empty.dir, 'asr-chunks.json'), 'utf8'));
-  assert.deepEqual(emptyReport.chunks.map(chunk => [chunk.segments, chunk.textChars, chunk.requestId, chunk.usageSeconds]),
-    [[1, 12, 'req_fixture', 60], [0, 0, 'req_fixture', 60]]);
+  assert.match(empty.draft.error, /1:00–2:00.*请重试识别/);
+  assert.match(empty.draft.failedStage, /ASR/);
+  for (const name of ['asr.json', 'reseg.json', 'subtitle.ass']) assert.equal(fs.existsSync(path.join(empty.dir, name)), false);
+  const reportFor = dir => JSON.parse(fs.readFileSync(path.join(dir, 'asr-chunks.json'), 'utf8')).chunks;
+  const fullChain = ['gpt-transcribe', 'gpt-transcribe', 'gpt-transcribe', 'bcut-asr', 'capcut-asr',
+    'qwen3-asr-1.7b', 'whisperx-large-v2', 'parakeet-tdt-0.6b-v2-vulkan'];
+  assert.deepEqual(reportFor(empty.dir)[1].attempts.map(a => a.model), fullChain);
+  assert.equal(reportFor(empty.dir)[1].failed, true);
+  assert.equal((await post('/api/projects/p-empty/retry', {})).status, 200);
+  for (let i = 0; i < 120 && !fs.existsSync(path.join(empty.dir, 'subtitle.ass')); i++) await delay(25);
+  assert.ok(fs.existsSync(path.join(empty.dir, 'subtitle.ass')), 'manual retry recovers missing block');
+  for (const [id, wanted, n] of [['p-retry', 'gpt-transcribe', 3], ['p-cloud', 'capcut-asr', 5],
+    ['p-local', 'parakeet-tdt-0.6b-v2-vulkan', 8]]) {
+    const result = await draft(id, { duration: 120 });
+    assert.equal(result.draft.error, null);
+    const detail = reportFor(result.dir)[1];
+    assert.equal(detail.model, wanted);
+    assert.deepEqual(detail.attempts.map(a => a.model), fullChain.slice(0, n));
+    assert.ok(JSON.parse(fs.readFileSync(path.join(result.dir, 'asr.json'))).segments[1].start >= 60);
+  }
+  for (const [id, chain] of [
+    ['p-bcut', fullChain.slice(0, 4)], ['p-qwen', fullChain.slice(0, 6)],
+    ['p-whisper', [...fullChain.slice(0, 5), 'whisperx-large-v2']],
+    ['p-parakeet', [...fullChain.slice(0, 5), 'parakeet-tdt-0.6b-v2-vulkan']],
+  ]) {
+    const r = await draft(id, { duration: 120 });
+    assert.equal(r.draft.error, null);
+    assert.deepEqual(reportFor(r.dir)[1].attempts.map(a => a.model), chain);
+  }
+  const unavailableLocal = await draft('p-no-local', { duration: 120 });
+  assert.match(unavailableLocal.draft.error, /请重试识别/);
+  assert.equal(reportFor(unavailableLocal.dir)[1].attempts.length, 5);
+  assert.equal(fs.existsSync(path.join(unavailableLocal.dir, 'reseg.json')), false);
   const aligned = await draft('p-aligned', { align: true });
   assert.equal(aligned.draft.error, null);
   assert.ok(fs.existsSync(path.join(aligned.dir, 'subtitle.ass')));
@@ -159,9 +216,10 @@ try {
   const quota = await draft('p-quota');
   assert.match(quota.draft.error, /OpenAI API 余额不足/);
   const calls = fs.readFileSync(path.join(server.root, 'openai-calls.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-  assert.deepEqual(calls.map(call => call.project), [
-    'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-plain', 'p-empty', 'p-empty', 'p-aligned', 'p-partial-align', 'p-partial-align', 'p-quota',
-  ]);
+  assert.equal(calls.filter(c => c.project === 'p-empty' && c.start === 0).length, 1);
+  assert.equal(calls.filter(c => c.project === 'p-empty' && c.start === 60).length, 4);
+  assert.equal(calls.filter(c => c.project === 'p-quota').length, 1);
+  assert.equal(calls.filter(c => c.project === 'p-plain').length, 5);
   assert.equal(server.output().includes(key), false);
   assert.deepEqual(await (await post('/api/asr/openai-key', { clear: true })).json(), { hasKey: false });
   assert.equal((await modelStatus()).usable, false);
