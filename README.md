@@ -117,8 +117,8 @@ ASS 的 `\t()` 变换会让 libass 关闭该行的碰撞避让 —— libass 源
 
 从 [GitHub Releases](https://github.com/EndiVee233/SubFabric/releases) 列表选择已发布的 Windows 安装包。
 
-当前桌面源码实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.12.1`，
-安装包命名为 `SubFabric-1.5.12.1-setup.exe`；实际已发布资产以 Releases 列表为准。
+当前桌面源码实现为 **SubFabric**（NSIS，Windows x64），版本 `beta 1.5.13.1`，
+安装包命名为 `SubFabric-1.5.13.1-setup.exe`；实际已发布资产以 Releases 列表为准。
 这是未签名的测试版；实际 GPU 推理与真实媒体导出仍需单独验收。
 
 带有自动更新功能的 Windows 安装版可在「全局设置 → 软件更新」查看版本、检查更新或关闭自动检查与下载。
@@ -163,7 +163,7 @@ node editor/scripts/fetch-vendor.js
 npm --prefix desktop run dist:win
 ```
 
-安装包输出到 `build/electron/build-<id>/SubFabric-1.5.12.1-setup.exe`；
+安装包输出到 `build/electron/build-<id>/SubFabric-1.5.13.1-setup.exe`；
 `build/electron/latest-build.json` 记录最新成功构建的位置和 SHA-256。每次使用新目录，不删除旧构建。
 只启动开发版时，前两步完成后执行：
 
