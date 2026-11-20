@@ -131,8 +131,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.13.4'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.13.4'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.14.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.14.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -1066,7 +1066,7 @@ const ASR_MODELS = [
     files: [],
     sizeMB: 0,
     dirName: '',
-    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。空块最多请求三次，再依次尝试必剪、剪映及本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。',
+    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。空块最多请求三次，再依次尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。',
   },
 ];
 /* 对齐模型独立于 ASR：下载 Qwen3-ASR 时不再夹带对齐器；realign / 初稿「对齐」都从这里取。 */
@@ -9081,19 +9081,6 @@ function startPrepare(id, videoPath, mode) {
         attempts.push({ model: 'gpt-transcribe', textChars: text.length, requestId, usageSeconds });
         if (text) return { text, model: 'gpt-transcribe' };
         log('OpenAI 未返回转录文本 ' + range + '（' + (n + 1) + '/3）' + (requestId ? ' ' + requestId : ''));
-      }
-      for (const cloud of CLOUD_ASR) {
-        check();
-        log(range + ' 尝试 ' + cloud.name);
-        try {
-          const text = combine(await cloud.client.transcribe({ audioPath: mp3, signal, log: onMessage, onProgress: (_pct, msg) => onMessage(msg) }));
-          attempts.push({ model: cloud.modelId, textChars: text.length });
-          if (text) return { text, model: cloud.modelId };
-        } catch (e) {
-          check();
-          attempts.push({ model: cloud.modelId, failed: true });
-          log(range + ' ' + cloud.name + ' 请求失败');
-        }
       }
       check();
       const models = localRecoveryModels();

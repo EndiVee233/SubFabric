@@ -581,7 +581,7 @@
   每块长 30–120 秒，整段不足 30 秒时直接上传。没有合适静音时按目标切分，保持时间连续。
   各块转 MP3 后串行上传，按原始时间定位文本。初稿的 asr-chunks.json 记录每块边界、文本长度、
   每次 OpenAI 请求的 ID 与回报用量，以及实际返回文本的模型。相同音频块出现空文本时最多向 OpenAI 请求三次，
-  之后依次尝试必剪、剪映与本机已就绪的 Qwen、Whisper、Parakeet。本地回退进入对应识别并发池。
+  之后仅尝试本机已就绪的 Qwen、Whisper、Parakeet，顺序固定，使用对应识别并发池。
   任一块耗尽回退，初稿即停在 ASR 并提示重试。重试复用同一音频及切分计划中已成功的块。初稿与选区重识别固定使用 Qwen3-ForcedAligner
   先取得真实的逐词时间，并以词的边界确定分句时间；初稿输出逐词 ASS。对齐器未就绪时停止在上传前，
   分块对齐不完整时停止在分句前。中断初稿优先用缓存的原始转录续跑对齐；已完成的 SRT 仍可打开和续译。
@@ -757,6 +757,7 @@
 - **OpenAI GPT-Transcribe** 在「设置 → 语音识别 → 云端识别」显示用量条件和独立的 API Key 配置。
   可用已激活的 ChatGPT Pro API 赠额或项目现有 API 余额。选择 OpenAI 时，新建项目、批量默认设置和
   单项设置的「对齐」固定勾选；切换到其他模型时恢复此前的选择。建稿需要已就绪的对齐模型。
+  模型详情注明空块重试和本地备用模型顺序。
 
 - **稿件识别模型标签**放在卡片右上角和列表操作区右侧。优先读取 draft.usedModelId（云端回退后的实际模型），
   其次读取初稿的 draft.modelId，显示 Whisper、Qwen、Parakeet、OpenAI 等家族名。
@@ -2372,9 +2373,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.13.4'`、`APP_FILE_VERSION = '1.5.13.4'`、npm version `1.5.13-beta.4`。
+  `APP_VERSION = 'beta 1.5.14.1'`、`APP_FILE_VERSION = '1.5.14.1'`、npm version `1.5.14-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.13.4-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.14.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **可自动更新的 Release**：发布 `v<主>.<次>.<补丁>` 或 `v<主>.<次>.<补丁>-beta.<序号>`，
