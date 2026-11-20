@@ -1066,7 +1066,7 @@ const ASR_MODELS = [
     files: [],
     sizeMB: 0,
     dirName: '',
-    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。空块最多请求三次，再依次尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。',
+    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。音频分块并行上传，失败块最多请求三次，之后集中尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。',
   },
 ];
 /* 对齐模型独立于 ASR：下载 Qwen3-ASR 时不再夹带对齐器；realign / 初稿「对齐」都从这里取。 */
@@ -7145,8 +7145,12 @@ function startPrepare(id, videoPath, mode) {
         changed++;
       }
     }
+    if (requireAll && changed !== segs.length) {
+      const failed = segs.filter((_, i) => !r.items[i]?.ok || !r.items[i]?.words?.length);
+      for (const chunk of failed) pushDraftLog(id, 'OpenAI 分块对齐失败 ' + openAiChunkRange(chunk));
+      if (changed) throw new Error('OpenAI 转录有分块对齐失败，请重试对齐');
+    }
     if (!changed) throw new Error('对齐器没有给出有效的逐词时间');
-    if (requireAll && changed !== segs.length) throw new Error('OpenAI 转录有分块对齐失败，请重试对齐');
     return { changed, total: segs.length };
   }
 
@@ -9042,17 +9046,26 @@ function startPrepare(id, videoPath, mode) {
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
     const result = await response.json().catch(() => null);
-    if (response.status === 401 || response.status === 403) throw new Error('OpenAI API Key 无效或项目没有转录权限');
-    if (response.status === 429 && ['insufficient_quota', 'credit_balance_exhausted'].includes(result?.error?.code)) {
-      throw new Error('OpenAI API 余额不足，请检查绑定项目的额度');
-    }
-    if (response.status === 429) throw new Error('OpenAI API 请求过于频繁，请稍后重试');
-    if (!response.ok) throw new Error(`OpenAI 转录请求失败（HTTP ${response.status}）`);
-    if (typeof result?.text !== 'string') throw new Error('OpenAI 转录结果格式无效');
     const header = response.headers.get('x-request-id') || '';
+    const requestId = /^req_[a-zA-Z0-9_-]{1,124}$/.test(header) ? header : null;
+    const failure = (message, fatal = false) => Object.assign(new Error(message), {
+      fatal, httpStatus: response.status, requestId,
+    });
+    if (response.status === 401 || response.status === 403) throw failure('OpenAI API Key 无效或项目没有转录权限', true);
+    if (response.status === 429 && ['insufficient_quota', 'credit_balance_exhausted'].includes(result?.error?.code)) {
+      throw failure('OpenAI API 余额不足，请检查绑定项目的额度', true);
+    }
+    if (response.status === 429) {
+      const raw = response.headers.get('retry-after');
+      const seconds = raw && /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : (Date.parse(raw) - Date.now()) / 1000;
+      const retryAfterMs = Number.isFinite(seconds) ? Math.max(0, Math.min(seconds * 1000, 60000)) : 1000;
+      throw Object.assign(failure('OpenAI API 请求过于频繁，请稍后重试'), { retryAfterMs });
+    }
+    if (!response.ok) throw failure(`OpenAI 转录请求失败（HTTP ${response.status}）`);
+    if (typeof result?.text !== 'string') throw failure('OpenAI 转录结果格式无效');
     return {
       text: result.text.trim(),
-      requestId: /^req_[a-zA-Z0-9_-]{1,124}$/.test(header) ? header : null,
+      requestId,
       usageSeconds: Number.isFinite(result.usage?.seconds) ? result.usage.seconds : null,
     };
   }
@@ -9063,25 +9076,13 @@ function startPrepare(id, videoPath, mode) {
       && modelAllowedForUser(m) && modelReady(m.id) && !asrGpuGateError(m)));
   }
 
-  async function recognizeOpenAiChunk({ id, wav, key, start, end, signal, onMessage, attempts = [] }) {
-    const range = '[' + asrChunks.fmtT(start) + '–' + asrChunks.fmtT(end) + ']';
+  async function recoverOpenAiChunk({ id, wav, start, end, signal, onMessage, attempts }) {
+    const range = openAiChunkRange({ start, end });
     const check = () => { checkAsrOwner(id); signal?.throwIfAborted(); };
     const log = m => { pushDraftLog(id, m); onMessage(m); };
     const dir = await fs.promises.mkdtemp(path.join(projDir(id), '.asr-recovery-'));
-    const mp3 = path.join(dir, 'audio.mp3'), pcm = path.join(dir, 'audio.wav');
-    const combine = r => (r.segments || []).map(s => typeof s?.text === 'string' ? s.text.trim() : '').filter(Boolean).join(' ');
+    const pcm = path.join(dir, 'audio.wav');
     try {
-      check();
-      await sliceAudio(wav, start, end, mp3, true);
-      const bytes = await fs.promises.readFile(mp3);
-      if (bytes.length > 25_000_000) throw new Error('OpenAI 单个音频文件不能超过 25 MB');
-      for (let n = attempts.length; n < 3; n++) {
-        check();
-        const { text, requestId, usageSeconds } = await requestOpenAiClip(key, bytes, signal);
-        attempts.push({ model: 'gpt-transcribe', textChars: text.length, requestId, usageSeconds });
-        if (text) return { text, model: 'gpt-transcribe' };
-        log('OpenAI 未返回转录文本 ' + range + '（' + (n + 1) + '/3）' + (requestId ? ' ' + requestId : ''));
-      }
       check();
       const models = localRecoveryModels();
       if (models.length) await sliceAudio(wav, start, end, pcm, false);
@@ -9091,7 +9092,8 @@ function startPrepare(id, videoPath, mode) {
         const release = await acquireAsrSlot(model, id, () => onMessage(ASR_WAITING_MESSAGE));
         try {
           check();
-          const text = combine(await runLocalClip(model, pcm, dir, end - start, { word: false }, p => trackProjProc(id, p), signal));
+          const r = await runLocalClip(model, pcm, dir, end - start, { word: false }, p => trackProjProc(id, p), signal);
+          const text = (r.segments || []).map(s => typeof s?.text === 'string' ? s.text.trim() : '').filter(Boolean).join(' ');
           attempts.push({ model: model.id, textChars: text.length });
           if (text) return { text, model: model.id };
         } catch (e) {
@@ -9100,11 +9102,18 @@ function startPrepare(id, videoPath, mode) {
           log(range + ' ' + model.name + ' 识别失败');
         } finally { release(); }
       }
-      throw new Error(range + ' 所有可用模型均未返回转录文本，请重试识别');
+      return null;
     } finally {
       await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
     }
   }
+
+  function openAiChunkRange({ start, end }) {
+    return '[' + asrChunks.fmtT(start) + '–' + asrChunks.fmtT(end) + ']';
+  }
+
+  const OPENAI_UPLOAD_CONCURRENCY = 6;
+  const OPENAI_MAX_ATTEMPTS = 3;
 
   async function transcribeOpenAiAudio(id, wav, duration, signal, onProgress, isDraft = false) {
     const key = openAiAsrKey();
@@ -9118,7 +9127,7 @@ function startPrepare(id, videoPath, mode) {
     const { OPENAI_CHUNK_SEC, OPENAI_MIN_CHUNK_SEC } = asrChunks;
     const silences = duration >= OPENAI_CHUNK_SEC + OPENAI_MIN_CHUNK_SEC ? await detectSilences(wav, duration) : [];
     const plan = asrChunks.planOpenAiChunks(duration, silences);
-    const segments = [], perChunk = [];
+    const perChunk = [];
     const report = { engine: 'openai-asr', duration, chunkSec: OPENAI_CHUNK_SEC, plan, perChunk,
       source: plan.some(c => c.cut === 'silence') ? 'silence' : 'nominal', silenceCount: silences.length };
     const cacheFile = path.join(projDir(id), 'openai-partial.json');
@@ -9131,43 +9140,122 @@ function startPrepare(id, videoPath, mode) {
         if (cache.signature === signature && Array.isArray(cache.blocks)) saved = cache.blocks;
       } catch {}
     }
+    const check = () => { checkAsrOwner(id); signal?.throwIfAborted(); };
+    const pending = () => plan.filter(c => !saved[c.index]?.text);
+    const checkpoint = () => {
+      if (!isDraft || signal?.aborted || shuttingDown || deletedProjects.has(id)) return;
+      writeChunkReport(id, report);
+      fs.writeFileSync(cacheFile + '.tmp', JSON.stringify({ signature, blocks: saved }));
+      fs.renameSync(cacheFile + '.tmp', cacheFile);
+    };
     for (const { index, start, end } of plan) {
-      checkAsrOwner(id);
-      signal?.throwIfAborted();
-      const pct = index / plan.length * 100;
-      onProgress(pct, 'OpenAI 正在转录音频分块…');
-      let block = saved[index];
-      if (!block?.text || !block.detail?.model) {
-        const attempts = [];
-        const detail = { seconds: +(end - start).toFixed(3), attempts, segments: 0, textChars: 0 };
-        perChunk[index] = detail;
-        let result;
-        try {
-          result = await recognizeOpenAiChunk({ id, wav, key, start, end, signal,
-            onMessage: msg => onProgress(pct, msg), attempts });
-        } catch (error) {
-          detail.failed = true;
-          throw error;
-        } finally {
-          const last = attempts.filter(a => a.model === 'gpt-transcribe').at(-1);
-          detail.requestId = last?.requestId ?? null;
-          detail.usageSeconds = last?.usageSeconds ?? null;
-          if (detail.failed && isDraft && !signal?.aborted && !deletedProjects.has(id)) {
-            writeChunkReport(id, report);
-            fs.writeFileSync(cacheFile + '.tmp', JSON.stringify({ signature, blocks: saved }));
-            fs.renameSync(cacheFile + '.tmp', cacheFile);
-          }
-        }
-        const { text, model } = result;
-        Object.assign(detail, { model, segments: 1, textChars: text.length });
-        block = { text, detail };
-        saved[index] = block;
-        if (model !== 'gpt-transcribe') pushDraftLog(id, '分块补识别成功：' + model + ' [' + asrChunks.fmtT(start) + '–' + asrChunks.fmtT(end) + ']');
+      const block = saved[index];
+      if (block?.text && block.detail?.model) {
+        perChunk[index] = block.detail;
+      } else {
+        saved[index] = null;
+        perChunk[index] = { seconds: +(end - start).toFixed(3), attempts: [], segments: 0, textChars: 0 };
       }
-      perChunk[index] = block.detail;
-      segments.push({ start, end, text: block.text, words: [] });
     }
-    return { segments, chunkReport: report };
+    const saveResult = ({ index }, { text, model }) => {
+      const detail = perChunk[index];
+      Object.assign(detail, { model, segments: 1, textChars: text.length });
+      saved[index] = { text, detail };
+    };
+    const log = m => pushDraftLog(id, m);
+    const clips = await fs.promises.mkdtemp(path.join(projDir(id), '.asr-openai-'));
+    try {
+      for (let round = 1; round <= OPENAI_MAX_ATTEMPTS; round++) {
+        const roundChunks = pending();
+        if (!roundChunks.length) break;
+        check();
+        let cursor = 0, done = 0, stop = null, retryAt = 0;
+        const progress = () => onProgress(
+          ((round - 1) + done / roundChunks.length) / OPENAI_MAX_ATTEMPTS * 80,
+          `OpenAI 并行识别第 ${round}/${OPENAI_MAX_ATTEMPTS} 轮 · ${done}/${roundChunks.length} 块`);
+        progress();
+        const worker = async () => {
+          while (!stop && cursor < roundChunks.length) {
+            const chunk = roundChunks[cursor++];
+            const { index, start, end } = chunk;
+            const detail = perChunk[index], range = openAiChunkRange(chunk);
+            const mp3 = path.join(clips, index + '.mp3');
+            try {
+              check();
+              if (!fs.existsSync(mp3)) await sliceAudio(wav, start, end, mp3, true);
+              check();
+              const bytes = await fs.promises.readFile(mp3);
+              if (bytes.length > 25_000_000) throw new Error('OpenAI 单个音频文件不能超过 25 MB');
+              const { text, requestId, usageSeconds } = await requestOpenAiClip(key, bytes, signal);
+              check();
+              detail.attempts.push({ model: 'gpt-transcribe', textChars: text.length, requestId, usageSeconds });
+              Object.assign(detail, { requestId, usageSeconds });
+              if (text) {
+                saveResult(chunk, { text, model: 'gpt-transcribe' });
+                try { fs.unlinkSync(mp3); } catch {}
+              } else {
+                log('OpenAI 未返回转录文本 ' + range + '（' + round + '/' + OPENAI_MAX_ATTEMPTS + '）' + (requestId ? ' ' + requestId : ''));
+              }
+            } catch (error) {
+              try { check(); } catch (cancelled) { stop ||= cancelled; return; }
+              // Persist only the HTTP code, request ID and a safe error label.
+              const reason = error.httpStatus ? error.message : (error.name === 'TimeoutError' ? 'OpenAI 请求超时' : 'OpenAI 音频分块处理或网络请求失败');
+              detail.attempts.push({ model: 'gpt-transcribe', failed: true, reason,
+                httpStatus: error.httpStatus ?? null, requestId: error.requestId ?? null });
+              Object.assign(detail, { requestId: error.requestId ?? null, usageSeconds: null });
+              log('OpenAI 转录失败 ' + range + '（' + round + '/' + OPENAI_MAX_ATTEMPTS + '） ' + reason);
+              // The slice may have failed after writing a partial MP3.
+              if (!error.httpStatus) { try { fs.unlinkSync(mp3); } catch {} }
+              if (error.retryAfterMs) retryAt = Math.max(retryAt, Date.now() + error.retryAfterMs);
+              if (error.fatal) { detail.failed = true; stop ||= error; }
+            }
+            done++;
+            if (!stop) progress();
+          }
+        };
+        const settled = await Promise.allSettled(Array.from(
+          { length: Math.min(OPENAI_UPLOAD_CONCURRENCY, roundChunks.length) }, worker));
+        check();
+        checkpoint();
+        if (stop) throw stop;
+        for (const outcome of settled) if (outcome.status === 'rejected') throw outcome.reason;
+        if (round < OPENAI_MAX_ATTEMPTS && retryAt > Date.now()) {
+          await require('node:timers/promises').setTimeout(Math.max(0, retryAt - Date.now()), undefined, { signal });
+        }
+      }
+      const remaining = pending();
+      for (const [i, chunk] of remaining.entries()) {
+        check();
+        const { index, start, end } = chunk;
+        const pct = 80 + i / remaining.length * 20;
+        const say = msg => onProgress(pct, `本地补识别 ${i + 1}/${remaining.length} 块 · ${msg}`);
+        const detail = perChunk[index];
+        try {
+          const result = await recoverOpenAiChunk({ id, wav, start, end, signal, onMessage: say, attempts: detail.attempts });
+          if (result) {
+            saveResult(chunk, result);
+            log('分块补识别成功：' + result.model + ' ' + openAiChunkRange(chunk));
+          } else detail.failed = true;
+        } catch (error) {
+          check();
+          detail.failed = true;
+          log(openAiChunkRange(chunk) + ' 本地补识别失败');
+        }
+      }
+      checkpoint();
+      const failed = pending();
+      if (failed.length) {
+        const ranges = failed.slice(0, 4).map(openAiChunkRange).join(' ');
+        const more = failed.length > 4 ? ' 等 ' + failed.length + ' 块' : '';
+        throw new Error(ranges + more + ' 所有可用模型均未返回转录文本，请重试识别');
+      }
+      return {
+        segments: plan.map(({ index, start, end }) => ({ start, end, text: saved[index].text, words: [] })),
+        chunkReport: report,
+      };
+    } finally {
+      await fs.promises.rm(clips, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    }
   }
 
   async function transcribeCloud({ engine, audioPath, log, onProgress, signal }) {

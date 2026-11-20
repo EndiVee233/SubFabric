@@ -1,5 +1,12 @@
 {
-  "需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。空块最多请求三次，再依次尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。": "需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。空块最多请求三次，再依次尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。",
+  "OpenAI 分块对齐失败": "OpenAI 分块对齐失败",
+  "OpenAI 转录失败": "OpenAI 转录失败",
+  "OpenAI 音频分块处理或网络请求失败": "OpenAI 音频分块处理或网络请求失败",
+  "OpenAI 请求超时": "OpenAI 请求超时",
+  "本地补识别失败": "本地补识别失败",
+  "本地补识别 ◇/◇ 块 · ◇": "本地补识别 ◇/◇ 块 · ◇",
+  "OpenAI 并行识别第 ◇/◇ 轮 · ◇/◇ 块": "OpenAI 并行识别第 ◇/◇ 轮 · ◇/◇ 块",
+  "需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。音频分块并行上传，失败块最多请求三次，之后集中尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。": "需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。音频分块并行上传，失败块最多请求三次，之后集中尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。",
   "分块补识别成功：": "分块补识别成功：",
   "请求失败": "请求失败",
   "尝试": "尝试",

@@ -22,6 +22,12 @@ const server = await isolatedServer({
 detectSilences = async wav => path.basename(path.dirname(wav)) === 'p-plain'
   ? [{ start: 71, end: 73 }, { start: 135, end: 137 }] : [];
 let currentProject = '';
+let parallelInFlight = 0, parallelPeak = 0;
+const parallelEvents = [];
+const record = (type, start) => {
+  parallelEvents.push([type, start]);
+  fs.writeFileSync(path.join(ROOT, 'parallel-events.json'), JSON.stringify({ parallelPeak, parallelEvents }));
+};
 const counts = new Map();
 for (const cloud of CLOUD_ASR) {
   cloud.client.transcribe = async () => {
@@ -39,7 +45,12 @@ modelReady = id => {
 };
 asrGpuGateError = () => null;
 modelAllowedForUser = () => true;
-runLocalClip = async model => {
+runLocalClip = async (model, wav) => {
+  if (currentProject === 'p-parallel') {
+    const info = JSON.parse(fs.readFileSync(wav, 'utf8'));
+    record('local', info.start);
+    return { segments: [{ text: 'Recovered locally.' }] };
+  }
   const target = { 'p-local': available[2], 'p-qwen': available[0], 'p-whisper': available[1], 'p-parakeet': available[2] };
   return { segments: model.id === target[currentProject] ? [{ text: 'Local result.' }] : [] };
 };
@@ -59,6 +70,20 @@ globalThis.fetch = async (url, options) => {
   if (info.project === 'p-plain') text = ${JSON.stringify(punctuated)};
   const counter = info.project + ':' + info.start;
   counts.set(counter, (counts.get(counter) || 0) + 1);
+  if (info.project === 'p-parallel') {
+    parallelPeak = Math.max(parallelPeak, ++parallelInFlight);
+    record('upload', info.start);
+    await new Promise(resolve => setTimeout(resolve, 45 - (info.start % 150) / 5));
+    parallelInFlight--;
+    if (info.start === 60 && counts.get(counter) === 1) {
+      return Response.json({error:{message:'service unavailable'}}, {status:429,headers:{'retry-after':'0.01','x-request-id':'req_rate'}});
+    }
+    if (info.start === 120 && counts.get(counter) <= 2) {
+      return Response.json({error:{message:'service unavailable'}}, {status:503,headers:{'x-request-id':'req_retry'}});
+    }
+    if (info.start === 180) text = '';
+    if (info.start === 240) throw new TypeError('fetch failed');
+  }
   if (info.start === 60 && ['p-empty', 'p-local', 'p-retry', 'p-qwen', 'p-whisper', 'p-parakeet', 'p-no-local'].includes(info.project)) {
     if (info.project === 'p-retry') text = counts.get(counter) < 3 ? ' ' : 'Recovered.';
     else if (info.project === 'p-empty' && counts.get(counter) > 3) text = 'Recovered.';
@@ -178,10 +203,29 @@ try {
     assert.equal(r.draft.error, null);
     assert.deepEqual(reportFor(r.dir)[1].attempts.map(a => a.model), chain);
   }
-  const unavailableLocal = await draft('p-no-local', { duration: 120 });
+  const unavailableLocal = await draft('p-no-local', { duration: 180 });
   assert.match(unavailableLocal.draft.error, /请重试识别/);
   assert.deepEqual(reportFor(unavailableLocal.dir)[1].attempts.map(a => a.model), fullChain.slice(0, 3));
+  assert.equal(reportFor(unavailableLocal.dir)[2].model, 'gpt-transcribe',
+    'an unresolved block must not discard later successful uploads');
   assert.equal(fs.existsSync(path.join(unavailableLocal.dir, 'reseg.json')), false);
+  const parallel = await draft('p-parallel', { duration: 480 });
+  assert.equal(parallel.draft.error, null);
+  const { parallelPeak, parallelEvents } = JSON.parse(fs.readFileSync(path.join(server.root, 'parallel-events.json')));
+  assert.equal(parallelPeak, 6, 'enforce the upload pool limit while taking advantage of concurrency');
+  assert.deepEqual(parallelEvents.slice(0, 8).map(([, start]) => start).sort((a, b) => a - b),
+    [0, 60, 120, 180, 240, 300, 360, 420]);
+  assert.deepEqual(parallelEvents.slice(8, 12).map(([, start]) => start).sort((a, b) => a - b), [60, 120, 180, 240]);
+  assert.deepEqual(parallelEvents.slice(12, 15).map(([, start]) => start).sort((a, b) => a - b), [120, 180, 240]);
+  assert.deepEqual(parallelEvents.slice(15), [['local', 180], ['local', 240]]);
+  const details = reportFor(parallel.dir);
+  assert.equal(details[1].attempts[0].httpStatus, 429);
+  assert.deepEqual(details[2].attempts.map(a => a.httpStatus ?? null), [503, 503, null]);
+  assert.equal(details[2].attempts[0].requestId, 'req_retry');
+  assert.equal(details[3].model, 'qwen3-asr-1.7b');
+  assert.ok(details[4].attempts.slice(0, 3).every(a => a.failed && a.httpStatus === null));
+  const ordered = JSON.parse(fs.readFileSync(path.join(parallel.dir, 'asr.json'))).segments;
+  assert.deepEqual(ordered.map(s => Math.round(s.start)), [0, 60, 120, 180, 240, 300, 360, 420]);
   const aligned = await draft('p-aligned', { align: true });
   assert.equal(aligned.draft.error, null);
   assert.ok(fs.existsSync(path.join(aligned.dir, 'subtitle.ass')));
