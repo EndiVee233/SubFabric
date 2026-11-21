@@ -1,0 +1,35 @@
+# ---- 构建产物 ----
+build/
+.hvigor/
+.cxx/
+*.hap
+*.har
+*.hsp
+*.app
+*.abc
+*.unsigned
+
+# ---- 依赖 ----
+node_modules/
+oh_modules/
+oh-package-lock.json5
+package-lock.json
+
+# ---- 预览器 / IDE ----
+.preview/
+.idea/
+.clangd
+.clang-format
+.clang-tidy
+*.iml
+
+# ---- 内置模型（体积很大，不要进仓库）----
+# 用 tools/embed_model.py add 放入、remove 清除；
+# 若确实要随仓库分发小模型（例如 110M 的 126 MB），把下面两行注释掉。
+entry/src/main/resources/rawfile/parakeet/
+entry/src/main/resources/rawfile/
+
+# ---- 运行期数据 ----
+*.log
+.DS_Store
+Thumbs.db

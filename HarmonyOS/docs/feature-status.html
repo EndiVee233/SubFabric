@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SubFabric HarmonyOS · 功能接入状态</title>
+<style>
+  :root {
+    --bg: #eef2f8; --card: #fff; --ink: #172033; --muted: #66748a;
+    --line: #dde5f1; --accent: #2f6fdb;
+    --done: #16875b; --done-bg: #e5f6ee;
+    --partial: #a66a00; --partial-bg: #fff4db;
+    --blocked: #c23d45; --blocked-bg: #fdecee;
+    --todo: #66748a; --todo-bg: #edf1f7;
+    --shadow: 0 18px 48px rgba(27, 50, 88, .09);
+    --radius: 22px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; color: var(--ink); line-height: 1.65;
+    background:
+      radial-gradient(circle at 8% 0%, rgba(143,186,255,.28), transparent 28rem),
+      radial-gradient(circle at 96% 8%, rgba(201,189,255,.24), transparent 30rem),
+      var(--bg);
+    font-family: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .page { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 56px; }
+  .hero {
+    position: relative; overflow: hidden; padding: 40px 42px; border-radius: 30px;
+    color: #fff; box-shadow: 0 26px 70px rgba(17,47,91,.24);
+    background:
+      radial-gradient(circle at 86% 10%, rgba(143,186,255,.32), transparent 24rem),
+      linear-gradient(132deg, #0d213d 0%, #173f70 48%, #2f6fdb 100%);
+  }
+  .hero::after {
+    content: ""; position: absolute; width: 320px; height: 320px; right: -110px; bottom: -180px;
+    border-radius: 50%; border: 1px solid rgba(255,255,255,.16);
+    box-shadow: 0 0 0 46px rgba(255,255,255,.04), 0 0 0 92px rgba(255,255,255,.025);
+  }
+  .eyebrow {
+    margin: 0 0 10px; color: #bcd8ff; font-size: 12px; font-weight: 700;
+    letter-spacing: .18em; text-transform: uppercase;
+  }
+  h1 { margin: 0; font-size: clamp(30px,5vw,48px); line-height: 1.15; letter-spacing: -.035em; }
+  .hero p.lead { max-width: 780px; margin: 16px 0 0; color: #d7e5fa; font-size: 15px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .chip {
+    padding: 7px 12px; border: 1px solid rgba(255,255,255,.19); border-radius: 999px;
+    color: #e7f0ff; background: rgba(255,255,255,.08); font-size: 12px; backdrop-filter: blur(10px);
+  }
+  .summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; margin: 20px 0; }
+  .stat {
+    padding: 20px 20px 18px; border: 1px solid rgba(221,229,241,.92); border-radius: var(--radius);
+    background: rgba(255,255,255,.9); box-shadow: var(--shadow);
+  }
+  .stat .num { display: block; font-size: 34px; font-weight: 800; line-height: 1; letter-spacing: -.04em; }
+  .stat .label { display: block; margin-top: 8px; color: var(--muted); font-size: 13px; }
+  .stat.done .num { color: var(--done); }
+  .stat.partial .num { color: var(--partial); }
+  .stat.blocked .num { color: var(--blocked); }
+  .stat.todo .num { color: var(--todo); }
+  .bar { display: flex; overflow: hidden; height: 10px; margin: 4px 0 10px; border-radius: 999px; background: #e7edf6; }
+  .bar-seg { width: 0; transition: width .5s ease; }
+  .bar-seg.done { background: var(--done); }
+  .bar-seg.partial { background: var(--partial); }
+  .bar-seg.blocked { background: var(--blocked); }
+  .bar-seg.todo { background: #a7b3c5; }
+  .bar-caption { margin: 0 0 22px; color: var(--muted); font-size: 13px; }
+  .grid-2 { display: grid; grid-template-columns: 1.1fr .9fr; gap: 18px; margin: 18px 0; }
+  .panel {
+    padding: 24px 26px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: rgba(255,255,255,.92); box-shadow: var(--shadow);
+  }
+  .panel h2 { margin: 0 0 12px; font-size: 18px; letter-spacing: -.02em; }
+  .panel ul { margin: 0; padding-left: 20px; }
+  .panel li { margin: 7px 0; }
+  .section {
+    margin-top: 26px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: rgba(255,255,255,.94); box-shadow: var(--shadow); overflow: hidden;
+  }
+  .section-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 18px;
+    padding: 22px 26px 12px;
+  }
+  .section-head h2 { margin: 0; font-size: 20px; letter-spacing: -.025em; }
+  .section-head span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  th {
+    padding: 10px 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    color: var(--muted); background: #f8fafd; text-align: left; font-size: 12px;
+    font-weight: 700; letter-spacing: .04em; white-space: nowrap;
+  }
+  td { padding: 14px 20px; border-bottom: 1px solid #edf1f7; vertical-align: top; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover td { background: #fbfcff; }
+  td.feature { width: 27%; color: var(--ink); font-weight: 650; }
+  td.status { width: 11%; white-space: nowrap; }
+  td.detail { color: #526077; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px;
+    border-radius: 999px; font-size: 11.5px; font-weight: 700; white-space: nowrap;
+  }
+  .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .badge.done { color: var(--done); background: var(--done-bg); }
+  .badge.partial { color: var(--partial); background: var(--partial-bg); }
+  .badge.blocked { color: var(--blocked); background: var(--blocked-bg); }
+  .badge.todo { color: var(--todo); background: var(--todo-bg); }
+  .gallery { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin-top: 18px; }
+  figure {
+    margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 18px;
+    background: #fff; box-shadow: 0 12px 30px rgba(27,50,88,.07);
+  }
+  figure img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; background: #edf1f7; }
+  figcaption { padding: 10px 13px 12px; color: var(--muted); font-size: 12px; }
+  .note {
+    margin-top: 22px; padding: 20px 24px; border: 1px dashed #c9d6e9; border-radius: 18px;
+    background: rgba(232,240,255,.42); color: #40516b; font-size: 13px;
+  }
+  .note strong { color: #173f70; }
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; text-align: center; }
+  footer a { color: var(--accent); text-decoration: none; }
+  @media (max-width: 900px) {
+    .summary, .gallery { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .grid-2 { grid-template-columns: 1fr; }
+    .hero { padding: 30px 26px; }
+  }
+  @media (max-width: 620px) {
+    .page { width: calc(100% - 20px); padding-top: 12px; }
+    .summary, .gallery { grid-template-columns: 1fr; }
+    .section-head { align-items: flex-start; flex-direction: column; gap: 4px; }
+    th, td { padding-left: 14px; padding-right: 14px; }
+  }
+  @media print {
+    body { background: #fff; }
+    .page { width: 100%; padding: 0; }
+    .hero, .stat, .section, .panel, figure { box-shadow: none; }
+    .section, figure { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="hero">
+    <p class="eyebrow">SubFabric · HarmonyOS Status</p>
+    <h1>鸿蒙版功能接入状态</h1>
+    <p class="lead">
+      只统计可核对的功能，不把“接口预留”写成“已接入”。状态来自当前代码、构建结果和本轮平板模拟器实测；
+      真实模型、NPU 与 arm64 真机另行标注。
+    </p>
+    <div class="chips">
+      <span class="chip">统计日期：2026-11-17</span>
+      <span class="chip">平板模拟器 · 2880×1920 · x86_64</span>
+      <span class="chip">entry-default-signed.hap · BUILD SUCCESSFUL</span>
+      <span class="chip">arm64 真机未连接</span>
+    </div>
+  </header>
+
+  <section class="summary" aria-label="状态统计">
+    <div class="stat done"><span class="num" data-count="done">20</span><span class="label">已完成且已验证</span></div>
+    <div class="stat partial"><span class="num" data-count="partial">13</span><span class="label">已接上，未完全验证 / 条件可用</span></div>
+    <div class="stat blocked"><span class="num" data-count="blocked">3</span><span class="label">有实现，被外部条件阻塞</span></div>
+    <div class="stat todo"><span class="num" data-count="todo">14</span><span class="label">未接上 / 仅接口预留</span></div>
+  </section>
+
+  <div class="bar" aria-hidden="true">
+    <span class="bar-seg done" data-seg="done" style="width:40%"></span>
+    <span class="bar-seg partial" data-seg="partial" style="width:26%"></span>
+    <span class="bar-seg blocked" data-seg="blocked" style="width:6%"></span>
+    <span class="bar-seg todo" data-seg="todo" style="width:28%"></span>
+  </div>
+  <p class="bar-caption" id="bar-caption">共 50 项：已接上 33 项（20 项已验证 + 13 项部分验证），未接上 17 项（3 项阻塞 + 14 项未接）。</p>
+
+  <section class="grid-2">
+    <div class="panel">
+      <h2>一句话结论</h2>
+      <ul>
+        <li><strong>核心编辑链路已经接上：</strong>项目/稿件、视频播放、ASS 逐词字幕、时间轴、右侧字幕与人物、字幕行内编辑、浅色/深色、设置二级页、模型下载器与模型页后端接线。</li>
+        <li><strong>真正缺的是“能力后端”：</strong>Parakeet 真实推理、Qwen ASR、对齐模型、Vulkan 推理、视频压制/字幕烧录、波形、批量初稿、账号/云同步。</li>
+        <li><strong>模型下载链路本身已跑通：</strong>本地 HTTP 12 MB 测试完成进度、取消、Range 续传、忽略 Range 重下与 SHA-256；真实 HF 清单仍返回 401。</li>
+        <li><strong>验收边界：</strong>目前只有 x86_64 平板模拟器证据；arm64 真机、真实 NPU、真实 622 MB 模型下载/杀进程续传未验收。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h2>状态口径</h2>
+      <ul>
+        <li><span class="badge done">已完成</span> 已实现，且在至少一个真实运行环境跑通并截图/日志核对。</li>
+        <li><span class="badge partial">部分验证</span> 代码路径已接上，但受模型、硬件、API Key、缺少样例或未做端到端而无法完全验收。</li>
+        <li><span class="badge blocked">阻塞</span> 有实现，但外部条件明确缺失（模型权重、NPU、真实下载地址等）。</li>
+        <li><span class="badge todo">未接上</span> 没有可用功能实现，或只有接口桩/设置说明。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="panel" style="margin:18px 0 26px;">
+    <h2>未接上重点（按对产品完整度的影响排序）</h2>
+    <ul>
+      <li><strong>真实语音识别：</strong>Parakeet NPU 推理缺 <code>.ms</code> 权重与 NPU 真机；初稿成功路径、识别测试、模型加载测试都无法完成。</li>
+      <li><strong>其他识别后端：</strong>Qwen ASR、对齐模型、Vulkan 推理只有接口桩，没有权重与原生实现。</li>
+      <li><strong>视频导出：</strong>没有视频压制/字幕烧录入口；AVCodec 硬解 → NativeWindow/Canvas 合成 → 硬编路线尚未实现。</li>
+      <li><strong>批量初稿：</strong>波形与时间轴逐词拖拽已接；批量初稿仍是主页提示。</li>
+      <li><strong>真实模型下载：</strong>下载器已跑通本地测试，但默认 HF 清单 401、没有可用 622 MB <code>.ms</code> 权重。</li>
+      <li><strong>账号 / 云同步：</strong>HarmonyOS 端未接移动账号，项目、字幕、模型均只在本机。</li>
+      <li><strong>识别与校对增强：</strong>反思纠错、逐词时间重排、热词挖掘未迁移。</li>
+      <li><strong>平台验收：</strong>缺 arm64 真机、真实 NPU、AV1 硬解、AVCodec 硬编与 AudioSuite 降噪真机证据。</li>
+    </ul>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>01 · 应用框架与外观</h2><span>导航、主题、背景与底栏</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>功能</th><th>状态</th><th>说明 / 证据</th></tr></thead>
+      <tbody>
+        <tr data-status="done"><td class="feature">四分区导航与浮动底栏</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">主页 / 项目 / 模型 / 设置四个 HdsTabs 分区；浮动胶囊、握姿适配；<code>.scrollable(false)</code> 阻止滚轮/横向滑动切页。</td></tr>
+        <tr data-status="done"><td class="feature">浅色 / 深色 / 跟随系统</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">ThemeManager + HomeTokens 双主题；系统栏图标同步；重启后保持选择；平板模拟器浅色主页/项目/模型/设置/编辑页已核对。</td></tr>
+        <tr data-status="done"><td class="feature">沉浸背景 / 玻璃卡 / 流光配色 / 动效</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">纯色、模糊流光、自定义图片三种背景；流光配色、动效/速度、毛玻璃三档滑杆；全局页面跟随主题令牌。</td></tr>
+        <tr data-status="done"><td class="feature">底栏高度深色阴影带移除</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">删除 ImmersiveBackground 底部 120vp 压暗渐变；主 HdsTabs 的 gradientMask 改为透明。浅色主页/模型页底部已复验。</td></tr>
+        <tr data-status="partial"><td class="feature">自定义背景图 / 莫奈取色</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">选图、复制到沙箱、effectKit 取色并应用为流光色彩的代码已接；系统图片选择器与真实图片取色的端到端截图未单独复验。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>02 · 项目与新建</h2><span>主页、项目列表、建稿与导入</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>功能</th><th>状态</th><th>说明 / 证据</th></tr></thead>
+      <tbody>
+        <tr data-status="done"><td class="feature">主页聚合 / 最近稿件 / 快捷入口</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">处理中、全部稿件、可编辑、需处理、新建/批量/设置、最近稿件；按 sm / md / lg 切换 2 / 3 / 4 列瀑布流。</td></tr>
+        <tr data-status="done"><td class="feature">项目瀑布流 / 侧栏 / 文件夹菜单 / 项目卡菜单</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">项目卡点击进入编辑页；长按/鼠标右键支持重命名、详细信息、删除并二次确认；文件夹重命名/删除；lg 同级侧栏与 sm/md 覆盖式抽屉。</td></tr>
+        <tr data-status="done"><td class="feature">新建页四板块 / 视频与字幕导入 / 自动进编辑页</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">预览 / 输入与配置 / 处理进度 / 生成设置；SRT、VTT、ASS、JSON 导入；视频在创建时复制进沙箱；创建成功后 320ms 自动打开编辑页。</td></tr>
+        <tr data-status="partial"><td class="feature">项目包 zip 导入</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">读取 <code>subtitle.srt/ass</code>、<code>translation.json</code>、<code>project.json</code> 的代码已实现；用 8.4 MB ASS 打成 914 KB 项目包实测成功，解压约 31–47 ms、完整读取 2.1–2.2 s，5919 条字幕进入待创建状态；带 translation.json 的完整包与真机低内存场景未单独复验。</td></tr>
+        <tr data-status="partial"><td class="feature">创建初稿（媒体 → 建项目 → ASR → 写 cues）</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">选媒体、复制沙箱、创建项目、调用 <code>runRecognition()</code>、失败删除空项目与本次媒体，均已接；成功识别需模型 + NPU，本轮只验证了失败清理路径。</td></tr>
+        <tr data-status="todo"><td class="feature">批量初稿</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">主页入口仍提示“端上尚未接入”；没有批量选择、队列、进度面板与结果落盘。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>03 · 编辑器与字幕</h2><span>播放、时间轴、右侧栏与字幕</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>功能</th><th>状态</th><th>说明 / 证据</th></tr></thead>
+      <tbody>
+        <tr data-status="done"><td class="feature">卡片 → 编辑页共享元素转场</td><td class="status"><span class="badge done">已完成</span></td><td class="detail"><code>bindContentCover</code> + <code>geometryTransition</code> + <code>animateTo</code>；<code>ModalTransition.NONE</code>，卡片与全屏编辑页共享 id，关闭在 <code>onWillDismiss</code> 中缩回卡片；旧截图替身/NavPathStack 动画已移除。</td></tr>
+        <tr data-status="done"><td class="feature">系统 Video 播放 / seek / 前后帧</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">H.264/H.265 原片走系统 AVCodec；播放/暂停、进度、音量、上一帧/下一帧；平板模拟器已播放验证。</td></tr>
+        <tr data-status="done"><td class="feature">AV1 无硬解 → FFmpeg H.264 代理</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">FFmpeg libdav1d 软解 + OpenH264 编码，生成 720p H.264 代理；x86_64 8 秒 AV1 样例约 1.6–1.7 秒生成，系统 Video 可播放。</td></tr>
+        <tr data-status="partial"><td class="feature">AV1 系统硬解</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">代码路径已按 <code>OH_AVCodec_GetCapabilityByCategory(AV1, HARDWARE)</code> 分支；模拟器无 AV1 硬解，未在真机验证硬解画面与功耗。</td></tr>
+        <tr data-status="done"><td class="feature">ASS 逐词字幕 / 中英双语 / 当前词高亮</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">严格按 ASS 逐词时间渲染；中文颜色取每行内联 \c 与说话人色，英文未唱色取 Sub 样式色、当前词取文件高亮色；80ms ticker 切词。平板播放到 00:03 已核对中英颜色与人物色。</td></tr>
+        <tr data-status="done"><td class="feature">时间轴真实 cue / 字幕列表 / 人物列表 / 双栏</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">List + LazyForEach 渲染真实 Cue；右边栏「字幕/人物/设置/日志/工作量」改为 HdsTabs；字幕与人物双栏；人物两列 Grid + 添加按钮，点击标注当前句、长按编辑名字/颜色，双栏人物单列。</td></tr>
+        <tr data-status="done"><td class="feature">字幕卡双击行内编辑 / 保存</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">单击 seek，双击进入中文/英文两个 TextArea；保存更新 <code>targetText/sourceText/edited</code> 并写入 cues.json；修改英文原文会清空旧逐词时间。</td></tr>
+        <tr data-status="done"><td class="feature">日志 Tab / 工作量 Tab</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">日志读取 Logger 环形缓冲；工作量显示真实 cue/word/speaker/duration 统计。</td></tr>
+        <tr data-status="partial"><td class="feature">字幕导出 SRT / VTT / ASS / JSON</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail"><code>AppStore.exportAs()</code> 与 common 的写文件函数已存在，但编辑页没有导出按钮/分享入口，用户无法从 UI 触发。</td></tr>
+        <tr data-status="done"><td class="feature">波形显示 / 块内逐词拖拽</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">随包 FFmpeg NAPI 把任意媒体转 16 kHz 单声道 WAV 后算峰值；波形嵌入每个字幕块，随块一起横向滚动/缩放。块宽按句长比例变化，中英各占一半、单行显示，逐词线位于中英之间；双击展开后拖动白色方块调整词起点并自动保存。</td></tr>
+        <tr data-status="todo"><td class="feature">视频压制 / 字幕烧录导出</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">没有导出入口与原生合成管线；当前字幕只是预览叠加层，不会烧进视频文件。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>04 · 语音识别与模型</h2><span>模型页、推理测试与硬件</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>功能</th><th>状态</th><th>说明 / 证据</th></tr></thead>
+      <tbody>
+        <tr data-status="done"><td class="feature">模型页下载 / 取消 / 清理 / 状态</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">Parakeet NPU/Vulkan、Qwen ASR、对齐模型、手动导入、下载部署、语音识别测试卡；下载按钮已接 AppStore/ModelDownloader，下载中可取消，清理需二次确认。</td></tr>
+        <tr data-status="partial"><td class="feature">语音识别测试 / 模型加载测试</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">选音频/视频 → 16 kHz PCM → <code>transcribeSamples()</code> 的后端链路已接；本轮实际返回“缺少 encoder.ms、encoder.msw、decoder_joint.ms、vocab.txt”，未完成真实识别。</td></tr>
+        <tr data-status="partial"><td class="feature">NPU 自检</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">NAPI <code>npuSelfTest</code> 与设置页/模型页按钮已接；平板模拟器 NPU=false，自检按钮禁用，未在真机跑通。</td></tr>
+        <tr data-status="partial"><td class="feature">手动导入模型（文件 / zip）</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">多选编码器/解码器/vocab/encoder.msw 与 zip 导入代码已实现；模拟器系统文件选择器与权限提示导致未完成端到端导入。</td></tr>
+        <tr data-status="blocked"><td class="feature">Parakeet NPU 真实推理</td><td class="status"><span class="badge blocked">阻塞</span></td><td class="detail">缺 <code>encoder.ms / encoder.msw / decoder_joint.ms / vocab.txt</code>；模拟器无 NPU；arm64 真机未连接。没有可用权重，无法验收识别结果。</td></tr>
+        <tr data-status="todo"><td class="feature">Qwen ASR</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">模型页只有 Vulkan 接口说明与“接口预留 · 未安装”；没有权重、原生推理或下载地址。</td></tr>
+        <tr data-status="todo"><td class="feature">对齐模型</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">同 Qwen：只有接口卡和“词级时间戳”说明；没有权重与推理实现。</td></tr>
+        <tr data-status="todo"><td class="feature">Vulkan 推理</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail"><code>VulkanHardware</code>/<code>VulkanModelInterface</code> 只有 <code>prepare/release/interfaceNote</code> 接口桩，<code>isAvailable()</code> 返回 false。</td></tr>
+        <tr data-status="todo"><td class="feature">麦克风听写 UI</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail"><code>AudioCaptureService</code> 采集 16 kHz PCM 的底层代码存在，但没有录音按钮、时长/波形界面或听写结果写回。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>05 · 下载 / 翻译 / 设置</h2><span>网络、偏好与设置页</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>功能</th><th>状态</th><th>说明 / 证据</th></tr></thead>
+      <tbody>
+        <tr data-status="done"><td class="feature">模型下载器（进度 / 取消 / 续传 / SHA-256）</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">manifest 解析、流式写盘、进度/速度、取消、Range 续传、服务端忽略 Range 时从 0 重下、SHA-256 校验、.part 改名、模型清理；本地 HTTP 12 MB 测试通过。</td></tr>
+        <tr data-status="blocked"><td class="feature">真实 HF 清单 / 622 MB .ms 下载</td><td class="status"><span class="badge blocked">阻塞</span></td><td class="detail">默认 HuggingFace 地址返回 HTTP 401（不可匿名读取），模拟器请求超时；没有可用的真实 .ms 权重与公开 manifest。真实 622 MB 下载/杀进程续传未验收。</td></tr>
+        <tr data-status="partial"><td class="feature">翻译服务（OpenAI 兼容 API）</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">TranslationService 已实现 endpoint/key/model、HTTP 请求与批量翻译；设置页可填地址/Key，但本轮没有可用 API Key，未验证真实翻译结果。</td></tr>
+        <tr data-status="todo"><td class="feature">账号登录 / 云同步</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">设置页显示“账号：未登录”，并明确 HarmonyOS 端未接入移动账号；项目、字幕、模型均在本地，无云同步。</td></tr>
+        <tr data-status="done"><td class="feature">设置二级页 Navigation（单栏 / 双栏）</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">NavPathStack + NavigationMode.Stack；窄屏 push/pop，宽屏右栏 push/replace/pop；左栏常驻，转屏同步；平板双栏与强制单栏均验证。</td></tr>
+        <tr data-status="partial"><td class="feature">设置分类页（个性化 / ASR / 翻译 / 校对 / 下载 / 性能 / 存储）</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">页面与表单已接；翻译 API 未实测，识别与校对页仍以说明为主，下载页受真实模型地址阻塞，性能页的 NPU/Vulkan 为接口状态。</td></tr>
+        <tr data-status="todo"><td class="feature">识别与校对（反思纠错 / 逐词重排 / 热词）</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">设置页明确“电脑端的反思纠错、逐词时间重排与热词挖掘尚未迁移”；当前只能在编辑页手动改字幕。</td></tr>
+        <tr data-status="done"><td class="feature">存储空间统计</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">模型、项目、导出目录大小与本机可用/总空间；设置页“储存空间”可刷新。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>06 · 媒体编解码与硬件</h2><span>FFmpeg、AVCodec 与降噪</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>功能</th><th>状态</th><th>说明 / 证据</th></tr></thead>
+      <tbody>
+        <tr data-status="done"><td class="feature">FFmpeg 双 ABI + libdav1d + OpenH264</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">x86_64 / arm64-v8a 共享库与 NAPI probe、AV1→H.264 代理；x86_64 模拟器已验证，arm64 运行未验证。</td></tr>
+        <tr data-status="partial"><td class="feature">编解码器切换（AVCodec + FFmpeg / 全流程 FFmpeg）</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">设置项已持久化；默认优先 AVCodec，全流程 FFmpeg 会强制 AV1 走 FFmpeg。播放、音频提取仍走系统路径；AVCodec 硬编导出未接，功耗差异未测。</td></tr>
+        <tr data-status="todo"><td class="feature">FFmpeg 播放器（替换系统 Video）</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">编辑页始终用系统 <code>Video</code>；没有 FFmpeg + SDL/OHNativeWindow 播放器，所以“全流程 FFmpeg”目前只影响处理链路，不影响预览。</td></tr>
+        <tr data-status="todo"><td class="feature">AVCodec H.264/H.265 硬解 / 硬编导出</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">评估结论是 <code>OH_VideoEncoder</code> HARDWARE 为主路径，但当前没有导出入口、编码配置与封装实现；FFmpeg/OpenH264 仍是软件兜底。</td></tr>
+        <tr data-status="todo"><td class="feature">AVCodec 解码 → NativeWindow/Canvas → 硬编（字幕烧录）</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">路线已在 <code>MEDIA_PIPELINE.md</code> §5 评估：解码到 Surface、原生绘制字幕后送编码器；ArkUI Canvas 不能直接当原生画布，需要 NativeWindow/EGL + Drawing/FreeType。</td></tr>
+        <tr data-status="partial"><td class="feature">AudioSuite 人声降噪</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">原生 NAPI + 设置页自检已接；模拟器 <code>isNoiseReductionSupported()</code> 返回 false，真机（Kirin + API 22+）未复验。</td></tr>
+        <tr data-status="todo"><td class="feature">降噪实际处理链（ASR 前处理 / 导出）</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">目前只有 1 秒自检；没有“解码 → 降噪 → 写回 WAV / 送入识别 / 导出”的完整链路。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>07 · 平台与验收边界</h2><span>哪些结论已经过运行验证</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>项目</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr data-status="done"><td class="feature">x86_64 平板模拟器主流程</td><td class="status"><span class="badge done">已完成</span></td><td class="detail">2880×1920 平板模拟器：主页/项目/模型/设置/编辑页、浅色/深色、字幕播放、下载本地测试、设置 Navigation 均验证。</td></tr>
+        <tr data-status="todo"><td class="feature">arm64 真机 / NPU</td><td class="status"><span class="badge todo">未接上</span></td><td class="detail">没有 arm64 真机连接；Parakeet NPU、AV1 硬解、AudioSuite 降噪和真实硬编都缺设备验收。</td></tr>
+        <tr data-status="partial"><td class="feature">arm64 FFmpeg / AV1 转码</td><td class="status"><span class="badge partial">部分验证</span></td><td class="detail">arm64-v8a 库已随包编译，但当前只验证了 x86_64 模拟器；arm64 转码耗时、发热与稳定性未测。</td></tr>
+        <tr data-status="blocked"><td class="feature">真实 Parakeet .ms + NPU 成功识别</td><td class="status"><span class="badge blocked">阻塞</span></td><td class="detail">缺模型权重与 NPU 设备；设置/下载/识别/初稿的成功路径都卡在这一步。</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>关键截图</h2><span>来自 docs/preview</span></div>
+    <div style="padding:0 26px 26px;">
+      <div class="gallery">
+        <figure><img loading="lazy" src="preview/shot-lg-light-home.jpeg" alt="浅色主页" /><figcaption>浅色主页 · HdsTabs 浮动底栏与四列卡片</figcaption></figure>
+        <figure><img loading="lazy" src="preview/shot-lg-editor-subtitles.jpeg" alt="编辑页逐词字幕" /><figcaption>编辑页 · 系统 Video + ASS 逐词字幕</figcaption></figure>
+        <figure><img loading="lazy" src="preview/shot-lg-models-backend.jpeg" alt="模型页后端接线" /><figcaption>模型页 · 下载、导入、识别测试卡</figcaption></figure>
+        <figure><img loading="lazy" src="preview/shot-lg-settings-nav.jpeg" alt="设置二级页 Navigation" /><figcaption>设置 · Navigation 双栏二级页</figcaption></figure>
+        <figure><img loading="lazy" src="preview/shot-lg-codec-settings.jpeg" alt="媒体编解码切换" /><figcaption>性能与调度 · 媒体编解码切换</figcaption></figure>
+        <figure><img loading="lazy" src="preview/shot-lg-new-project-draft.jpeg" alt="创建初稿" /><figcaption>新建稿件 · 创建初稿模式</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <div class="note">
+    <strong>统计边界：</strong>
+    本页是当前工作快照，不代表商店发布验收。真实模型、NPU、arm64 真机、真实 HF 下载、
+    AVCodec 硬编/字幕烧录、批量初稿、账号/云同步仍待后续阶段。
+    详细实现与验证记录见 <a href="HOME_MATERIAL.md">HOME_MATERIAL.md</a>、
+    <a href="MEDIA_PIPELINE.md">MEDIA_PIPELINE.md</a>、
+    <a href="MODEL_DOWNLOAD.md">MODEL_DOWNLOAD.md</a>。
+  </div>
+
+  <footer>SubFabric HarmonyOS · 功能状态页 · 2026-11-17 · 由代码与模拟器实测定稿</footer>
+</div>
+
+<script>
+  (function () {
+    var statuses = ['done', 'partial', 'blocked', 'todo'];
+    var counts = { done: 0, partial: 0, blocked: 0, todo: 0 };
+    var rows = document.querySelectorAll('tr[data-status]');
+    rows.forEach(function (row) {
+      var status = row.getAttribute('data-status');
+      if (counts[status] !== undefined) counts[status] += 1;
+    });
+    var total = rows.length;
+    statuses.forEach(function (status) {
+      var countNode = document.querySelector('[data-count="' + status + '"]');
+      if (countNode) countNode.textContent = counts[status];
+      var seg = document.querySelector('[data-seg="' + status + '"]');
+      if (seg && total > 0) seg.style.width = (counts[status] / total * 100).toFixed(2) + '%';
+    });
+    var connected = counts.done + counts.partial;
+    var missing = counts.blocked + counts.todo;
+    var caption = document.getElementById('bar-caption');
+    if (caption) {
+      caption.textContent = '共 ' + total + ' 项：已接上 ' + connected + ' 项（' +
+        counts.done + ' 项已验证 + ' + counts.partial + ' 项部分验证），未接上 ' +
+        missing + ' 项（' + counts.blocked + ' 项阻塞 + ' + counts.todo + ' 项未接）。';
+    }
+  })();
+</script>
+</body>
+</html>

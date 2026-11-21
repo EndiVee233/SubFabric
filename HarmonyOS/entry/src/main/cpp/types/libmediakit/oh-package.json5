@@ -1,0 +1,6 @@
+{
+  "name": "libmediakit.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "HarmonyOS AudioSuite 人声降噪 NAPI"
+}

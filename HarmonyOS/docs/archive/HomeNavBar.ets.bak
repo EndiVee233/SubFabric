@@ -1,0 +1,132 @@
+/*
+ * 底部导航栏：主页 / 稿件 / 模型 / 设置（从左到右固定顺序）。
+ *
+ * 三件事在这里落地：
+ *   1. **沉浸光感**：玻璃底 + 深色材质（`colorMode: DARK`，否则浅色系统下会被染白），
+ *      透明度随光感强度档位变化；选中项用主色玻璃块 + 光晕。
+ *   2. **智感握姿**：整条胶囊往持握手那一侧靠（左手靠左、右手靠右），
+ *      手机上只显示图标、选中项才展开文字，拇指不用横跨半屏。
+ *   3. 顺序永远不变，握姿只影响「靠哪边」和「展开多少」，不改语义。
+ */
+
+import { curves } from '@kit.ArkUI';
+import { HomeDims } from '../home/HomeBreakpoints';
+import { HomeTokens } from '../home/HomeTokens';
+import { HomePrefs, scaleAlpha } from '../home/HomePreferences';
+import { GripAwareness } from './GripAwareness';
+
+/** 一项导航。 */
+export class NavEntry {
+  readonly key: string;
+  readonly label: string;
+  readonly glyph: string;
+
+  constructor(key: string, label: string, glyph: string) {
+    this.key = key;
+    this.label = label;
+    this.glyph = glyph;
+  }
+}
+
+/** 固定四项，顺序即从左到右。 */
+const NAV_ITEMS: NavEntry[] = [
+  new NavEntry('home', '主页', '⌂'),
+  new NavEntry('projects', '稿件', '▤'),
+  new NavEntry('models', '模型', '◈'),
+  new NavEntry('settings', '设置', '⚙'),
+];
+
+@Component
+export struct HomeNavBar {
+  @Prop dims: HomeDims;
+  /** 当前选中项：home / projects / models / settings。 */
+  @Prop selected: string;
+
+  @StorageProp(HomePrefs.LIGHT) light: number = 1;
+  @StorageProp(HomePrefs.GRIP_MODE) gripMode: string = 'auto';
+  @StorageProp(HomePrefs.GRIP_HAND) gripHand: string = 'right';
+
+  onSelect: (key: string) => void = (): void => {};
+
+  /** 光感系数：卡片/胶囊的透光度都乘它。 */
+  private k(): number {
+    return this.light <= 0 ? 0.62 : (this.light >= 2 ? 1.38 : 1.0);
+  }
+
+  /** 整条胶囊靠哪边：平板居中，手机贴持握手。 */
+  private alignMode(): FlexAlign {
+    if (this.dims.twoPane) {
+      return FlexAlign.Center;
+    }
+    const hand = this.gripMode === 'auto' ? this.gripHand : this.gripMode;
+    return hand === 'left' ? FlexAlign.Start : FlexAlign.End;
+  }
+
+  /**
+   * 文字一律显示（未选中用淡色）。
+   * 之前是「只展开选中项」，结果选中项比其它项高，圆角块顶出整条栏 —— 高度必须一致。
+   */
+  private showLabel(item: NavEntry): boolean {
+    return true;
+  }
+
+  @Builder
+  navItem(item: NavEntry) {
+    Column({ space: 2 }) {
+      Text(item.glyph)
+        .fontSize(this.dims.titleSize)
+        .fontColor(item.key === this.selected ? HomeTokens.primary : HomeTokens.textDim)
+      if (this.showLabel(item)) {
+        Text(item.label)
+          .fontSize(this.dims.miniSize)
+          .fontColor(item.key === this.selected ? HomeTokens.primary : HomeTokens.textFaint)
+      }
+    }
+    .height(this.dims.twoPane ? 56 : 50)
+    .padding({
+      left: this.dims.twoPane ? 16 : 12,
+      right: this.dims.twoPane ? 16 : 12,
+      top: 0,
+      bottom: 0
+    })
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(this.dims.radiusPill)
+    .backgroundColor(item.key === this.selected
+      ? scaleAlpha(HomeTokens.accentGlass, this.k())
+      : '#00000000')
+    // 选中项的光晕
+    .shadow(item.key === this.selected
+      ? { radius: 10, color: HomeTokens.primaryGlow, offsetX: 0, offsetY: 0 }
+      : { radius: 0, color: '#00000000', offsetX: 0, offsetY: 0 })
+    .onClick((event: ClickEvent): void => {
+      // 握姿推断放在 onClick 里：如果放在 onTouch(Down) 里改 AppStorage，
+      // 会在手指抬起前触发一次重建，把这次点击吞掉。
+      GripAwareness.noteTouch(event.x, this.dims.twoPane ? 720 : this.dims.pagePaddingH * 2 + 320);
+      this.onSelect(item.key);
+    })
+  }
+
+  build() {
+    Row() {
+      Row({ space: 4 }) {
+        ForEach(NAV_ITEMS, (item: NavEntry) => {
+          this.navItem(item)
+        }, (item: NavEntry) => item.key)
+      }
+      .padding({ left: 6, right: 6, top: 6, bottom: 6 })
+      .borderRadius(this.dims.radiusPill)
+      .backgroundColor(scaleAlpha(HomeTokens.glassFillStrong, this.k() + 0.25))
+      .backgroundBlurStyle(this.dims.glassBlur, { colorMode: ThemeColorMode.DARK })
+      .border({ width: 1, color: scaleAlpha(HomeTokens.glassEdge, this.k()) })
+      .shadow({ radius: 24, color: '#66000000', offsetX: 0, offsetY: 12 })
+    }
+    .width('100%')
+    .justifyContent(this.alignMode())
+    .padding({
+      left: this.dims.pagePaddingH,
+      right: this.dims.pagePaddingH,
+      bottom: 10
+    })
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+}

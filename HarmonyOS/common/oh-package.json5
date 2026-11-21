@@ -1,0 +1,9 @@
+{
+  "name": "common",
+  "version": "1.0.0",
+  "description": "SubFabric 跨端共享核心：字幕模型、SRT/VTT/ASS 读写、log-mel 前端、TDT 解码器、处理流水线",
+  "main": "Index.ets",
+  "author": "SubFabric",
+  "license": "Apache-2.0",
+  "dependencies": {}
+}

@@ -1,0 +1,155 @@
+/*
+ * 右栏（平板 SplitMode 的内容区 / 手机 push 进来的页面）。
+ *
+ * 指标卡用 12 栅格：手机 sm 跨 12（单列），平板 md/lg 跨 6（双列），
+ * 所以「手机单列、平板双列」在这一层也成立。
+ */
+
+import { LengthMetrics } from '@kit.ArkUI';
+import { HomeDims } from './HomeBreakpoints';
+import { HomeTokens, relativeLabel } from './HomeTokens';
+import { GlowButton } from './GlowButton';
+import { formatClock } from 'common';
+
+@Component
+export struct DetailPane {
+  @Prop dims: HomeDims;
+  /** 是否选中了稿件（页面把 store.current/选中项拍平成这几个字段传进来）。 */
+  @Prop hasProject: boolean;
+  @Prop name: string;
+  @Prop cueCount: number;
+  @Prop durationSec: number;
+  @Prop updatedAt: number;
+  @Prop deviceLabel: string;
+
+  onOpenEditor: () => void = (): void => {};
+  onImportSubtitle: () => void = (): void => {};
+
+  @Builder
+  metric(kicker: string, value: string, hint: string) {
+    Column({ space: 4 }) {
+      Text(kicker)
+        .fontSize(this.dims.miniSize)
+        .letterSpacing(1)
+        .fontColor(HomeTokens.textDim)
+      Text(value)
+        .fontSize(this.dims.bigNumberSize)
+        .fontWeight(FontWeight.Regular)
+        .fontColor(HomeTokens.text)
+      Text(hint)
+        .fontSize(this.dims.miniSize)
+        .fontColor(HomeTokens.textFaint)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%')
+    .padding(this.dims.cardPadding)
+    .alignItems(HorizontalAlign.Start)
+    .borderRadius(this.dims.radiusInner)
+    .backgroundColor(HomeTokens.glassFill)
+    .backgroundBlurStyle(this.dims.glassBlur)
+    .border({ width: 1, color: HomeTokens.glassEdge })
+  }
+
+  build() {
+    Scroll() {
+      Flex({ direction: FlexDirection.Column, alignItems: ItemAlign.Start }) {
+        if (!this.hasProject) {
+          // 平板右栏初始态：不塞假数据，只说明这里会出现什么
+          Column({ space: this.dims.gap }) {
+            Text('◍')
+              .fontSize(this.dims.flowerSize * 0.5)
+              .fontColor(HomeTokens.primary)
+            Text('选一个稿件看详情')
+              .fontSize(this.dims.titleSize)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(HomeTokens.text)
+            Text('左栏点「最近稿件」或「全部稿件」，详情会出现在这里；手机上则是整页打开。')
+              .fontSize(this.dims.bodySize)
+              .fontColor(HomeTokens.textDim)
+              .textAlign(TextAlign.Center)
+              .constraintSize({ maxWidth: 420 })
+          }
+          .width('100%')
+          .padding({ top: this.dims.flowerSize * 0.6, bottom: this.dims.rowGap * 2 })
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          Column({ space: 4 }) {
+            Text('当前稿件')
+              .fontSize(this.dims.miniSize)
+              .letterSpacing(1)
+              .fontColor(HomeTokens.textDim)
+            Text(this.name.length > 0 ? this.name : '未命名稿件')
+              .fontSize(this.dims.titleSize)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(HomeTokens.text)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(relativeLabel(this.updatedAt, Date.now()))
+              .fontSize(this.dims.labelSize)
+              .fontColor(HomeTokens.textFaint)
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          GridRow({
+            columns: 12,
+            gutter: { x: this.dims.gap, y: this.dims.gap },
+            breakpoints: { value: ['600vp', '840vp'], reference: BreakpointsReference.WindowSize }
+          }) {
+            GridCol({ span: { sm: 12, md: 6, lg: 6 } }) {
+              this.metric('SUBTITLES', `${this.cueCount}`, '字幕条数')
+            }
+            GridCol({ span: { sm: 12, md: 6, lg: 6 } }) {
+              this.metric('DURATION', this.durationSec > 0 ? formatClock(this.durationSec) : '—', '素材时长')
+            }
+            GridCol({ span: { sm: 12, md: 6, lg: 6 } }) {
+              this.metric('ENGINE', this.deviceLabel, '识别后端')
+            }
+            GridCol({ span: { sm: 12, md: 6, lg: 6 } }) {
+              this.metric('STATE', this.cueCount > 0 ? '可编辑' : '待识别', '稿件状态')
+            }
+          }
+          .width('100%')
+          .margin({ top: this.dims.rowGap, bottom: this.dims.rowGap })
+
+          Flex({
+            wrap: FlexWrap.Wrap,
+            space: { main: LengthMetrics.vp(this.dims.gap), cross: LengthMetrics.vp(this.dims.gap) }
+          }) {
+            GlowButton({
+              label: '打开编辑器',
+              glyph: '▶',
+              dims: this.dims,
+              accent: true,
+              onTap: (): void => {
+                this.onOpenEditor();
+              }
+            })
+            GlowButton({
+              label: '导入字幕',
+              glyph: '⇩',
+              dims: this.dims,
+              onTap: (): void => {
+                this.onImportSubtitle();
+              }
+            })
+          }
+          .width('100%')
+        }
+      }
+      .width('100%')
+      .padding({
+        left: this.dims.pagePaddingH,
+        right: this.dims.pagePaddingH,
+        top: this.dims.pagePaddingTop,
+        bottom: this.dims.pagePaddingBottom
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .align(Alignment.TopStart)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+  }
+}

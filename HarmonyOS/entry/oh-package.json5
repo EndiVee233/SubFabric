@@ -1,0 +1,14 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "SubFabric HarmonyOS 应用入口",
+  "main": "",
+  "author": "SubFabric",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "common": "file:../common",
+    "libmslite.so": "file:./src/main/cpp/types/libmslite",
+    "libmediakit.so": "file:./src/main/cpp/types/libmediakit",
+    "libffmpeg.so": "file:./src/main/cpp/types/libffmpeg"
+  }
+}

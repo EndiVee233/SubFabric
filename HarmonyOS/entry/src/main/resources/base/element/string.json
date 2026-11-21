@@ -1,0 +1,32 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "SubFabric 视频字幕工作台"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "端侧语音识别与字幕编辑"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "SubFabric"
+    },
+    {
+      "name": "reason_microphone",
+      "value": "用于录制语音并实时转写为字幕"
+    },
+    {
+      "name": "reason_internet",
+      "value": "用于下载语音识别模型与调用翻译服务"
+    },
+    {
+      "name": "reason_background",
+      "value": "用于在后台继续识别长音频"
+    },
+    {
+      "name": "reason_vibrate",
+      "value": "用于主页卡片的按压反馈"
+    }
+  ]
+}

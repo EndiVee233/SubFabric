@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.subfabric.harmony",
+    "vendor": "SubFabric",
+    "versionCode": 1000002,
+    "versionName": "preview{0.1}",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}

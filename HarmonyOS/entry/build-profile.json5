@@ -1,0 +1,37 @@
+{
+  "apiType": "stageMode",
+  "buildOption": {
+    // NAPI 原生模块：MindSpore Lite 的 C API 桥梁。
+    // ArkTS 绑定在 NNRt 后端下 getInputs() 返回 undefined，
+    // 只能靠原生层绕开（详见 src/main/cpp/mslite_napi.cpp 顶部说明）。
+    "externalNativeOptions": {
+      "path": "./src/main/cpp/CMakeLists.txt",
+      "arguments": "",
+      "cppFlags": "-std=c++17",
+      // x86_64 是给 DevEco 模拟器用的：SDK 的 sysroot 里两套 ABI 都有
+      // libmindspore_lite_ndk.so，CMakeLists 也已做 ABI→目录名映射。
+      // 不打包 x86_64 的话，模拟器装包会报 code:9568347 Abi 不匹配。
+      "abiFilters": ["arm64-v8a", "x86_64"]
+    }
+  },
+  "buildOptionSet": [
+    {
+      "name": "release",
+      "arkOptions": {
+        "obfuscation": {
+          "ruleOptions": {
+            "enable": false,
+            "files": [
+              "./obfuscation-rules.txt"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "targets": [
+    {
+      "name": "default"
+    }
+  ]
+}

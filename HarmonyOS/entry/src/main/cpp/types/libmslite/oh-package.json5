@@ -1,0 +1,6 @@
+{
+  "name": "libmslite.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "MindSpore Lite C API 的 NAPI 桥梁（绕开 ArkTS 绑定在 NNRt 后端下的 getInputs 限制）"
+}

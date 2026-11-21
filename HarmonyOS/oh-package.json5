@@ -1,0 +1,5 @@
+{
+  "modelVersion": "6.0.0",
+  "description": "SubFabric HarmonyOS — 视频字幕工作台（端侧 NPU 语音识别 + 双轨字幕编辑）",
+  "dependencies": {}
+}

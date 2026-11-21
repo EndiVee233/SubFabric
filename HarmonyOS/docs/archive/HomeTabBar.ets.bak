@@ -1,0 +1,121 @@
+/*
+ * 横屏专用：底部水平胶囊标签栏。
+ *
+ * 为什么不用 HdsTabs 自带的浮动栏：HdsTabs 只提供对称的 `barSideMargin`，
+ * 没有「水平偏移」能力，做不出「靠左三分之一 / 靠右三分之一」。
+ * 所以横屏把 HdsTabs 的栏高度收成 0，改用这里这条**外观与竖屏一致**的自绘胶囊：
+ * 同样的 296 / 360 / 420 宽度档、56 高、选中主色块、玻璃 + backdropBlur + 阴影，
+ * 只是整条胶囊的位置随点击焦点 / 智感握持切到左右三分之一。
+ */
+
+import { curves } from '@kit.ArkUI';
+import { HomeDims } from '../home/HomeBreakpoints';
+import { HomeTokens } from '../home/HomeTokens';
+import { HomePrefs, scaleAlpha } from '../home/HomePreferences';
+
+/** 一项。 */
+class BarItem {
+  readonly key: string;
+  readonly label: string;
+  readonly normal: Resource;
+  readonly active: Resource;
+
+  constructor(key: string, label: string, normal: Resource, active: Resource) {
+    this.key = key;
+    this.label = label;
+    this.normal = normal;
+    this.active = active;
+  }
+}
+
+const BAR_HEIGHT: number = 56;
+
+@Component
+export struct HomeTabBar {
+  @Prop dims: HomeDims;
+  /** 当前选中下标 0..3。 */
+  @Prop selected: number;
+  /** 靠哪一侧：left / right。 */
+  @Prop side: string;
+
+  @StorageProp(HomePrefs.LIGHT) light: number = 1;
+
+  onSelect: (index: number) => void = (): void => {};
+
+  private k(): number {
+    return this.light <= 0 ? 0.82 : (this.light >= 2 ? 1.15 : 1.0);
+  }
+
+  /** 与竖屏 HdsTabs 的 barWidth 同档：窄屏 296 / 中 360 / 宽 420。 */
+  private capsuleWidth(): number {
+    const w: number = this.dims.widthVp;
+    if (w < 440) {
+      return 296;
+    }
+    return w < 840 ? 360 : 420;
+  }
+
+  private items(): BarItem[] {
+    return [
+      new BarItem('home', '主页', $r('sys.symbol.house'), $r('sys.symbol.house_fill')),
+      new BarItem('projects', '项目', $r('sys.symbol.folder'), $r('sys.symbol.folder_fill')),
+      new BarItem('models', '模型', $r('sys.symbol.memory_module'), $r('sys.symbol.memory_module')),
+      new BarItem('settings', '设置', $r('sys.symbol.gearshape'), $r('sys.symbol.gearshape_fill'))
+    ];
+  }
+
+  @Builder
+  item(entry: BarItem, index: number) {
+    Column({ space: 2 }) {
+      SymbolGlyph(index === this.selected ? entry.active : entry.normal)
+        .fontSize(21)
+        .fontColor([index === this.selected ? HomeTokens.primary : HomeTokens.textDim])
+      Text(entry.label)
+        .fontSize(this.dims.miniSize)
+        .fontColor(index === this.selected ? HomeTokens.primary : HomeTokens.textFaint)
+    }
+    .layoutWeight(1)
+    .height(BAR_HEIGHT - 12)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(this.dims.radiusPill)
+    .backgroundColor(index === this.selected
+      ? scaleAlpha(HomeTokens.accentGlass, this.k())
+      : '#00000000')
+    .onClick((): void => {
+      this.onSelect(index);
+    })
+  }
+
+  build() {
+    Row() {
+      Row() {
+        ForEach(this.items(), (entry: BarItem, index: number) => {
+          this.item(entry, index)
+        }, (entry: BarItem) => entry.key)
+      }
+      .width(this.capsuleWidth())
+      .height(BAR_HEIGHT)
+      .padding({ left: 6, right: 6, top: 6, bottom: 6 })
+      .borderRadius(this.dims.radiusPill)
+      .backgroundColor(scaleAlpha(HomeTokens.glassFillStrong, this.k() + 0.2))
+      // 与竖屏同一套深色玻璃材质：不强制 DARK 的话浅色系统会把它染白
+      .backgroundBlurStyle(BlurStyle.COMPONENT_THICK, { colorMode: ThemeColorMode.DARK })
+      .linearGradient({
+        angle: 180,
+        colors: [[`#26FFFFFF`, 0.0], ['#0DFFFFFF', 0.42], ['#14000000', 1.0]]
+      })
+      .border({ width: 1, color: scaleAlpha(HomeTokens.glassEdge, this.k()) })
+      .shadow({ radius: 26, color: '#70000000', offsetX: 0, offsetY: 10 })
+    }
+    .width('100%')
+    .justifyContent(this.side === 'left' ? FlexAlign.Start : FlexAlign.End)
+    // 左右三分之一：胶囊宽度约占屏宽 44%，再留 6% 边距，重心落在 1/3 / 2/3 附近
+    .padding({
+      left: this.side === 'left' ? this.dims.widthVp * 0.06 : 0,
+      right: this.side === 'right' ? this.dims.widthVp * 0.06 : 0,
+      bottom: 16
+    })
+    .hitTestBehavior(HitTestMode.Transparent)
+    .animation({ duration: 260, curve: curves.springMotion(0.36, 0.9) })
+  }
+}

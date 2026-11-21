@@ -1,0 +1,1404 @@
+/*
+ * SubFabric HarmonyOS 主页面 —— 一多适配的实际落点。
+ *
+ * 一份代码覆盖三种形态，全部由**窗口宽度断点**驱动（不是折叠状态）：
+ *
+ *   SM  [320,600)   直板手机 / 折叠屏折叠态
+ *       -> 底部 Tab 导航，单栏；播放器与字幕列表纵向堆叠。
+ *
+ *   MD  [600,840)   折叠屏展开 / 手机横屏
+ *       -> 左侧导航栏 + 单栏内容；播放器变矮，字幕列表成为主体。
+ *
+ *   LG  [840,1440)  平板
+ *       -> 左导航 + **双栏**（左：播放器+控制；右：字幕编辑表格）。
+ *
+ *   XL  [1440,+∞)   PC / 2in1
+ *       -> 双栏 + 更宽侧栏 + 内容居中限宽，正文放大 1.15 倍。
+ *
+ * 折叠状态只用于「功能开关」，不参与整体结构决策。
+ */
+
+import { common, abilityAccessCtrl, Permissions } from '@kit.AbilityKit';
+import { picker } from '@kit.CoreFileKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { promptAction } from '@kit.ArkUI';
+import { deviceInfo } from '@kit.BasicServicesKit';
+
+import { Cue } from 'common';
+import { formatClock, formatSeconds } from 'common';
+import { AppStore, ProjectMeta, RunState } from '../store/AppStore';
+import { STORE_KEY } from '../entryability/EntryAbility';
+import { LayoutObserver, LayoutSpec } from '../ui/Layout';
+import { SafeAreaInsets } from '../ui/SafeArea';
+import { MsLiteRuntime } from '../engine/MindSporeLite';
+import { Logger } from '../engine/Logger';
+import { DownloadStage } from '../engine/ModelDownloader';
+import { importToSandbox, safeFileName } from '../platform/FileUtil';
+import { AudioCaptureService } from '../platform/AudioCapture';
+
+const TAG = 'Index';
+const MIC: Permissions = 'ohos.permission.MICROPHONE';
+
+/** 导航标签。 */
+class NavTab {
+  readonly key: string;
+  readonly label: string;
+  readonly icon: string;
+
+  constructor(key: string, label: string, icon: string) {
+    this.key = key;
+    this.label = label;
+    this.icon = icon;
+  }
+}
+
+/** 底栏总高（含上下留白），内容区需要留出同样的底部空间避免被压住。 */
+const TAB_BAR_HEIGHT: number = 62;
+/** 悬浮胶囊相对屏幕两侧的内缩。 */
+const TAB_BAR_INSET: number = 16;
+
+/**
+ * 玻璃通透度档位。
+ *
+ * 底色不透明度直接决定「通透感」——它压在模糊材质之上，
+ * alpha 越高越像实心板、越低越透。这里给三档方便真机微调：
+ *
+ *   0  通透（默认）  alpha ≈ 22% —— 材质最明显，需配合较亮的描边保证可读性
+ *   1  均衡          alpha ≈ 40%
+ *   2  沉稳          alpha ≈ 62% —— 内容花哨时用它压住底噪
+ *
+ * 调完只看一个数：`GLASS_ALPHA`。
+ */
+const GLASS_TINT_LEVEL: number = 0;
+const GLASS_ALPHA: number[] = [0x38, 0x66, 0x9E];
+/** 玻璃底色（不含 alpha，运行时按档位拼）。 */
+const GLASS_BASE: string = '151A23';
+/** 当前档位对应的 alpha 十六进制串，供 Theme.glassTint 使用。 */
+const GLASS_ALPHA_HEX: string = hex2(GLASS_ALPHA[GLASS_TINT_LEVEL]);
+
+/** 0..255 -> 两位小写十六进制。 */
+function hex2(v: number): string {
+  const clamped = Math.max(0, Math.min(255, Math.round(v)));
+  const s = clamped.toString(16);
+  return s.length === 1 ? `0${s}` : s;
+}
+/** 胶囊圆角。高度 58，取 28 > 高度一半，即完全药丸形。 */
+const TAB_BAR_RADIUS: number = 28;
+
+const TABS: NavTab[] = [
+  new NavTab('projects', '项目', '\u{1F4C1}'),
+  new NavTab('editor', '编辑', '\u{1F3AC}'),
+  new NavTab('dictate', '听写', '\u{1F3A4}'),
+  new NavTab('models', '模型', '\u{1F9E0}'),
+  new NavTab('settings', '设置', '\u{2699}')
+];
+
+/** 主题色板（深色为主，配合字幕工具的使用场景）。 */
+class Theme {
+  static readonly bg: string = '#0B0E14';
+  static readonly panel: string = '#151A23';
+  static readonly panelAlt: string = '#1C2230';
+  static readonly border: string = '#2A3243';
+  static readonly text: string = '#E6EAF2';
+  static readonly textDim: string = '#8A94A6';
+  static readonly accent: string = '#4C8DFF';
+  static readonly accentDim: string = '#2E5BA8';
+  static readonly ok: string = '#3DD68C';
+  static readonly warn: string = '#FFB020';
+  static readonly danger: string = '#FF5C5C';
+
+  // ---- 沉浸材质相关 ----
+  /**
+   * 毛玻璃底栏的「上亮下透」渐变底色。
+   *
+   * 用渐变而不是纯色有两个好处：
+   *   1. 顶部略亮、底部更透，模拟玻璃边缘聚光（这就是「光感」的一部分）；
+   *   2. 配合低 alpha，材质能真正透出来，而不是被一层实心色盖住。
+   */
+  static readonly glassTop: string = '#48FFFFFF';
+  static readonly glassBottom: string = '#00FFFFFF';
+  /** 玻璃中段染色（按档位拼 alpha），让底色不至于完全无色偏。 */
+  static glassTint(alphaHex: string): string {
+    return `#${alphaHex}${GLASS_BASE}`;
+  }
+
+  /** 毛玻璃边缘描边：比底色亮一档，在低不透明度下界定胶囊边界。 */
+  static readonly glassBorder: string = '#3DFFFFFF';
+}
+
+@Component
+export struct StudioPage {
+  @StorageLink(STORE_KEY) store: AppStore = new AppStore();
+  /** 从主页路由进来时指定初始页签（projects / editor / settings）。 */
+  @Prop entryTab: string = 'projects';
+
+  @State spec: LayoutSpec = new LayoutSpec();
+  /** 安全区（vp）。沉浸式窗口必须消费，否则内容被状态栏/导航条遮挡。 */
+  @State safeArea: SafeAreaInsets = new SafeAreaInsets();
+  @State tab: string = 'projects';
+  @State ready: boolean = false;
+  @State initError: string = '';
+  /** 正在编辑的字幕行下标，-1 表示没有。 */
+  @State editingIndex: number = -1;
+  @State editingText: string = '';
+  /** 听写状态。 */
+  @State dictating: boolean = false;
+  @State dictateText: string = '';
+  @State dictateSeconds: number = 0;
+
+  private observer: LayoutObserver | null = null;
+  private capture: AudioCaptureService | null = null;
+  private dictateTimer: number = -1;
+
+  // ------------------------------------------------------------ 生命周期
+
+  async aboutToAppear(): Promise<void> {
+    const ctx = this.getUIContext();
+    // 设备类型只影响「形态」的细节（例如 2in1 允许自由窗口），
+    // 布局本身始终由宽度断点决定。
+    this.observer = new LayoutObserver(ctx, this.deviceType(),
+      (spec: LayoutSpec): void => {
+        this.spec = spec;
+        this.store.breakpoint = spec.breakpoint;
+        this.store.form = spec.form;
+      },
+      (insets: SafeAreaInsets): void => {
+        this.safeArea = insets;
+      });
+    await this.observer.start();
+
+    const abilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      await this.store.init(abilityContext);
+      this.ready = true;
+      if (this.entryTab !== 'projects') {
+        // 主页直接路由到具体页签
+        this.tab = this.entryTab;
+      } else if (this.store.cues.length > 0) {
+        // 有正在编辑的项目时默认进入编辑页
+        this.tab = 'editor';
+      }
+    } catch (err) {
+      const e = err as Error;
+      this.initError = e.message;
+      Logger.error(TAG, `初始化失败：${e.message}`);
+    }
+  }
+
+  aboutToDisappear(): void {
+    if (this.observer !== null) {
+      this.observer.stop();
+      this.observer = null;
+    }
+    this.stopDictation();
+  }
+
+  /**
+   * 设备类型。
+   *
+   * ⚠️ ApplicationInfo 上**没有** deviceType 字段；设备类型在 @ohos.deviceInfo。
+   * 另外折叠屏折叠与展开会报同一个值，所以**不能**用它判形态 ——
+   * 形态始终由窗口宽度断点决定，这里只用于区分 2in1/平板这类稳定属性。
+   */
+  private deviceType(): string {
+    try {
+      return deviceInfo.deviceType;
+    } catch (err) {
+      return 'phone';
+    }
+  }
+
+  private toast(msg: string): void {
+    try {
+      promptAction.showToast({ message: msg, duration: 2200 });
+    } catch (err) {
+      Logger.info(TAG, msg);
+    }
+  }
+
+  // ------------------------------------------------------------ 导入 / 导出
+
+  private async pickMedia(): Promise<void> {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      options.fileSuffixFilters = ['视频或音频|.mp4,.mkv,.mov,.m4a,.mp3,.wav,.flac,.aac,.ogg'];
+      const viewPicker = new picker.DocumentViewPicker(ctx);
+      const uris = await viewPicker.select(options);
+      if (uris.length === 0) {
+        return;
+      }
+      this.toast('正在导入媒体…');
+      const uri = uris[0];
+      const name = safeFileName(uri.substring(uri.lastIndexOf('/') + 1), 'media');
+      const local = await importToSandbox(ctx, uri, name);
+      const project = await this.store.createProject(name, local, name);
+      // 读一次时长（失败不影响后续流程）。
+      try {
+        const info = await this.store.decoderForProbe().probe(local);
+        project.durationSec = info.durationSec;
+        this.store.saveProjects();
+      } catch (err) {
+        Logger.warn(TAG, '读取媒体时长失败（忽略）');
+      }
+      this.tab = 'editor';
+      this.toast(`已导入 ${name}`);
+    } catch (err) {
+      const e = err as BusinessError;
+      Logger.error(TAG, `导入媒体失败：${e.message}`);
+      this.toast(`导入失败：${e.message}`);
+    }
+  }
+
+  private async pickSubtitle(asTranslated: boolean): Promise<void> {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    try {
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      options.fileSuffixFilters = ['字幕文件|.srt,.vtt,.ass,.ssa,.json,.txt'];
+      const viewPicker = new picker.DocumentViewPicker(ctx);
+      const uris = await viewPicker.select(options);
+      if (uris.length === 0) {
+        return;
+      }
+      const name = safeFileName(uris[0].substring(uris[0].lastIndexOf('/') + 1), 'subtitle.srt');
+      const local = await importToSandbox(ctx, uris[0], name);
+      if (this.store.current === null) {
+        await this.store.createProject(name, '', name);
+      }
+      await this.store.importSubtitle(local, asTranslated);
+      this.tab = 'editor';
+      this.toast(this.store.statusText);
+    } catch (err) {
+      const e = err as BusinessError;
+      Logger.error(TAG, `导入字幕失败：${e.message}`);
+      this.toast(`导入字幕失败：${e.message}`);
+    }
+  }
+
+  private doExport(kind: string): void {
+    try {
+      const path = this.store.exportAs(kind);
+      this.toast(`已导出 ${path.substring(path.lastIndexOf('/') + 1)}`);
+    } catch (err) {
+      const e = err as Error;
+      this.toast(`导出失败：${e.message}`);
+    }
+  }
+
+  // ------------------------------------------------------------ 识别
+
+  private async runRecognition(): Promise<void> {
+    if (this.store.current === null) {
+      this.toast('请先导入媒体文件');
+      return;
+    }
+    if (!this.store.hasModels()) {
+      this.toast(`模型未就绪：${this.store.modelStatus()}`);
+      this.tab = 'models';
+      return;
+    }
+    this.tab = 'editor';
+    await this.store.runRecognition();
+    this.toast(this.store.statusText);
+  }
+
+  // ------------------------------------------------------------ 麦克风听写
+
+  private async toggleDictation(): Promise<void> {
+    if (this.dictating) {
+      await this.stopDictation();
+      return;
+    }
+    const ok = await this.requestMic();
+    if (!ok) {
+      this.toast('需要麦克风权限才能听写');
+      return;
+    }
+    try {
+      const capture = new AudioCaptureService();
+      capture.setStateListener((state: string, message: string): void => {
+        Logger.info(TAG, `采集状态 ${state}：${message}`);
+      });
+      await capture.start();
+      this.capture = capture;
+      this.dictating = true;
+      this.dictateText = '';
+      this.dictateSeconds = 0;
+      // 每秒更新计时，UI 上显示已录制时长。
+      this.dictateTimer = setInterval((): void => {
+        this.dictateSeconds++;
+      }, 1000);
+    } catch (err) {
+      const e = err as Error;
+      this.toast(`无法开始录音：${e.message}`);
+    }
+  }
+
+  private async stopDictation(): Promise<void> {
+    if (this.dictateTimer >= 0) {
+      clearInterval(this.dictateTimer);
+      this.dictateTimer = -1;
+    }
+    this.dictating = false;
+    const capture = this.capture;
+    this.capture = null;
+    if (capture === null) {
+      return;
+    }
+    await capture.stop();
+    const samples = capture.takeBuffer();
+    if (samples.length < 16000) {
+      this.toast('录音太短，已忽略');
+      return;
+    }
+    if (!this.store.hasModels()) {
+      this.toast('模型未就绪，无法识别');
+      return;
+    }
+    this.toast('正在识别…');
+    try {
+      this.dictateText = await this.store.transcribeSamples(samples);
+      this.toast(this.dictateText.length > 0 ? '识别完成' : '没有识别到语音');
+    } catch (err) {
+      const e = err as Error;
+      this.toast(`识别失败：${e.message}`);
+    }
+  }
+
+  private async requestMic(): Promise<boolean> {
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const mgr = abilityAccessCtrl.createAtManager();
+      const result = await mgr.requestPermissionsFromUser(ctx, [MIC]);
+      return result.authResults.length > 0 && result.authResults[0] === 0;
+    } catch (err) {
+      const e = err as Error;
+      Logger.error(TAG, `申请麦克风权限失败：${e.message}`);
+      return false;
+    }
+  }
+
+  // ------------------------------------------------------------ 构建
+
+  build() {
+    Stack() {
+      Column() {
+        this.TopBar()
+        if (!this.ready && this.initError.length === 0) {
+          this.LoadingView()
+        } else if (this.initError.length > 0) {
+          this.ErrorView()
+        } else if (this.spec.showSideNav) {
+          // ---- 平板 / 折叠展开 / PC：左侧导航 + 内容
+          Row() {
+            this.SideNav()
+            Column() {
+              this.ContentArea()
+            }
+            .layoutWeight(1)
+            .height('100%')
+            .backgroundColor(Theme.bg)
+          }
+          .layoutWeight(1)
+          .width('100%')
+        } else {
+          // ---- 手机：内容铺满 + 底栏**浮在内容之上**
+          //
+          // 必须用 Stack 叠层而不是 Column 顺序排列：毛玻璃（backgroundBlurStyle）
+          // 虚化的是「该组件之下的内容」，如果底栏在 Column 里独占一行、
+          // 下面什么都没有，材质就只能糊到根背景色，是假的毛玻璃。
+          Stack({ alignContent: Alignment.Bottom }) {
+            Column() {
+              this.ContentArea()
+            }
+            .width('100%')
+            .height('100%')
+            this.BottomTabs()
+          }
+          .layoutWeight(1)
+          .width('100%')
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Theme.bg)
+      // 沉浸式：状态栏与底部导航条之下不排内容
+      .padding({
+        top: this.safeArea.top,
+        bottom: this.safeArea.bottom,
+        left: this.safeArea.left,
+        right: this.safeArea.right
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Theme.bg)
+  }
+
+  @Builder
+  TopBar() {
+    Row() {
+      Text('SubFabric')
+        .fontSize(this.fs(19))
+        .fontWeight(FontWeight.Bold)
+        .fontColor(Theme.text)
+      Blank()
+      // 后端指示：让用户一眼看到识别是不是真的走了 NPU。
+      Row({ space: 6 }) {
+        Circle({ width: 8, height: 8 })
+          .fill(this.store.npuAvailable ? Theme.ok : Theme.warn)
+        Text(this.store.backendLabel === '未加载'
+          ? (this.store.npuAvailable ? 'NPU 就绪' : 'CPU 模式')
+          : this.store.backendLabel)
+          .fontSize(this.fs(12))
+          .fontColor(Theme.textDim)
+      }
+      if (this.store.runState === RunState.BUSY) {
+        Row({ space: 6 }) {
+          LoadingProgress().width(16).height(16).color(Theme.accent)
+          Text(`${Math.round(this.store.progress.ratio * 100)}%`)
+            .fontSize(this.fs(12))
+            .fontColor(Theme.accent)
+        }
+        .margin({ left: 12 })
+      }
+    }
+    .width('100%')
+    .height(52)
+    .padding({ left: 16, right: 16 })
+    .backgroundColor(Theme.panel)
+    .border({ width: { bottom: 1 }, color: Theme.border })
+  }
+
+  @Builder
+  LoadingView() {
+    Column({ space: 12 }) {
+      LoadingProgress().width(36).height(36).color(Theme.accent)
+      Text('正在初始化…').fontSize(this.fs(14)).fontColor(Theme.textDim)
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  ErrorView() {
+    Column({ space: 12 }) {
+      Text('初始化失败').fontSize(this.fs(16)).fontColor(Theme.danger)
+      Text(this.initError).fontSize(this.fs(13)).fontColor(Theme.textDim)
+        .textAlign(TextAlign.Center).padding({ left: 24, right: 24 })
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  // ------------------------------------------------------------ 导航
+
+  @Builder
+  SideNav() {
+    Column() {
+      ForEach(TABS, (item: NavTab) => {
+        Row({ space: 12 }) {
+          Text(item.icon).fontSize(18)
+          Text(item.label).fontSize(this.fs(14))
+            .fontColor(this.tab === item.key ? Theme.text : Theme.textDim)
+          Blank()
+        }
+        .width('100%')
+        .height(46)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(8)
+        .backgroundColor(this.tab === item.key ? Theme.panelAlt : Color.Transparent)
+        .onClick((): void => {
+          this.tab = item.key;
+        })
+      }, (item: NavTab) => item.key)
+      Blank()
+      Text(`断点 ${this.spec.breakpoint.toUpperCase()} · ${this.spec.widthVp}vp`)
+        .fontSize(this.fs(11)).fontColor(Theme.textDim)
+        .padding({ left: 16, bottom: 12 })
+    }
+    .width(this.spec.sideNavWidth)
+    .height('100%')
+    .padding({ top: 8, left: 8, right: 8 })
+    .backgroundColor(Theme.panel)
+    .border({ width: { right: 1 }, color: Theme.border })
+  }
+
+  /**
+   * 沉浸光感底栏。
+   *
+   * 三件事叠在一起才是「沉浸光感」：
+   *
+   * 1. **毛玻璃材质** —— `backgroundBlurStyle` 而不是普通半透明背景。
+   *    `BlurStyle.COMPONENT_THICK` 提供足够的厚度让底下的内容「透而不清」；
+   *    `adaptiveColor: AdaptiveColor.AVERAGE` 让材质取背景平均色自动适配，
+   *    内容偏亮/偏暗时底栏不会显得突兀。
+   *
+   * 2. **光感** —— `backgroundBrightness({ rate, lightUpDegree })`：
+   *    组件会响应环境光照自动提亮（rate 是亮度变化比例，
+   *    lightUpDegree 是提亮程度），这是系统级的「光感」效果，
+   *    比手写高光渐变更自然，也不会在暗光下过曝。
+   *
+   * 3. **悬浮胶囊造型** —— 左右内缩 + 圆角 + 投影 + 细描边。
+   *    让底栏看起来是「浮」在内容之上的一层材质，而不是贴着屏幕底边的一条硬边。
+   *
+   * 注意：底栏本身不再画顶部分隔线（那会破坏材质感），
+   * 改用一圈细描边来界定边界。
+   */
+  @Builder
+  BottomTabs() {
+    Row() {
+      ForEach(TABS, (item: NavTab) => {
+        Column({ space: 3 }) {
+          Text(item.icon).fontSize(this.tab === item.key ? 20 : 18)
+            .animation({ duration: 180, curve: Curve.EaseOut })
+          Text(item.label).fontSize(10)
+            .fontWeight(this.tab === item.key ? FontWeight.Medium : FontWeight.Normal)
+            .fontColor(this.tab === item.key ? Theme.accent : Theme.textDim)
+        }
+        .layoutWeight(1)
+        .height(46)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(16)
+        // 选中项加一层很淡的底，配合毛玻璃形成「材质上的材质」
+        .backgroundColor(this.tab === item.key ? '#1F4C8DFF' : Color.Transparent)
+        .onClick((): void => {
+          this.tab = item.key;
+        })
+      }, (item: NavTab) => item.key)
+    }
+    .width(`calc(100% - ${TAB_BAR_INSET * 2}vp)`)
+    .height(TAB_BAR_HEIGHT)
+    .padding({ left: 4, right: 4, top: 0, bottom: 0 })
+    .margin({ bottom: 10 })
+    // 高度 60 - 上下边距 0 = 实际 60vp；圆角 28 > 60/2，完全药丸形
+    .borderRadius(TAB_BAR_RADIUS)
+    .clip(true)
+    // ---- 毛玻璃材质 ----
+    //
+    // 通透的关键是「薄材质 + 低不透明底色」这两个一起调：
+    //   ULTRA_THIN(8) 是最薄的材质档，比 THICK 通透得多；
+    //   底色 alpha 由 GLASS_TINT_LEVEL 控制，默认 22%。
+    // 只调其中一个都不到位：厚材质配低 alpha 会显得脏，
+    // 薄材质配高 alpha 会显得像实心板。
+    .linearGradient({
+      angle: 180,
+      colors: [
+        [Theme.glassTop, 0.0],
+        [Theme.glassTint(GLASS_ALPHA_HEX), 0.45],
+        [Theme.glassTint(GLASS_ALPHA_HEX), 0.55],
+        [Theme.glassBottom, 1.0]
+      ]
+    })
+    .backgroundBlurStyle(BlurStyle.COMPONENT_ULTRA_THIN, {
+      // 应用是深色主题，固定 DARK 避免浅色内容把底栏拉白
+      colorMode: ThemeColorMode.DARK,
+      // 取背景平均色自适应，内容变化时色调跟着走
+      adaptiveColor: AdaptiveColor.AVERAGE,
+      // 放大采样范围：低不透明度下更需要柔和的材质过渡
+      scale: 1.2
+    })
+    // ---- 光感：响应环境光照提亮 ----
+    .backgroundBrightness({ rate: 0.5, lightUpDegree: 0.3 })
+    // 细描边界定胶囊边界（低不透明度下靠它兜住形状）
+    .border({ width: 1, color: Theme.glassBorder })
+    .shadow({ radius: 28, color: '#73000000', offsetX: 0, offsetY: 8 })
+  }
+
+  // ------------------------------------------------------------ 内容路由
+
+  /**
+   * 内容路由外层。
+   *
+   * 手机形态下底栏是**浮**在内容之上的（见 build() 的 Stack），
+   * 所以这里统一在底部垫一个等高占位，避免最后一行内容被毛玻璃栏压住。
+   * 平板/桌面形态底栏在左侧导航里，不需要占位。
+   */
+  @Builder
+  ContentArea() {
+    if (this.spec.showSideNav) {
+      this.ContentRoute()
+    } else {
+      Column() {
+        this.ContentRoute()
+        // 等高占位：给悬浮底栏让出空间
+        Row().width('100%').height(TAB_BAR_HEIGHT + 16)
+      }
+      .width('100%')
+      .height('100%')
+    }
+  }
+
+  /** 各页面分发（不含占位逻辑）。 */
+  @Builder
+  ContentRoute() {
+    if (this.tab === 'projects') {
+      this.ProjectsPage()
+    } else if (this.tab === 'editor') {
+      this.EditorPage()
+    } else if (this.tab === 'dictate') {
+      this.DictatePage()
+    } else if (this.tab === 'models') {
+      this.ModelsPage()
+    } else {
+      this.SettingsPage()
+    }
+  }
+
+  // ------------------------------------------------------------ 项目页
+
+  @Builder
+  ProjectsPage() {
+    Column() {
+      Row({ space: 10 }) {
+        Button('导入视频/音频').fontSize(this.fs(13))
+          .backgroundColor(Theme.accent)
+          .onClick((): void => {
+            this.pickMedia();
+          })
+        Button('导入字幕').fontSize(this.fs(13))
+          .backgroundColor(Theme.accentDim)
+          .onClick((): void => {
+            this.pickSubtitle(false);
+          })
+        Blank()
+      }
+      .width('100%')
+      .padding(12)
+
+      if (this.store.projects.length === 0) {
+        Column({ space: 10 }) {
+          Text('\u{1F4C1}').fontSize(40)
+          Text('还没有项目').fontSize(this.fs(15)).fontColor(Theme.text)
+          Text('导入一个视频或音频开始制作字幕。')
+            .fontSize(this.fs(12)).fontColor(Theme.textDim)
+        }
+        .layoutWeight(1).width('100%').justifyContent(FlexAlign.Center)
+      } else {
+        GridRow({
+          columns: { sm: 1, md: 2, lg: 3, xl: 4 },
+          gutter: { x: 12, y: 12 }
+        }) {
+          ForEach(this.store.projects, (p: ProjectMeta) => {
+            GridCol({ span: 1 }) {
+              this.ProjectCard(p)
+            }
+          }, (p: ProjectMeta) => p.id)
+        }
+        .layoutWeight(1)
+        .padding({ left: 12, right: 12, bottom: 12 })
+        .width('100%')
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  ProjectCard(p: ProjectMeta) {
+    Column({ space: 6 }) {
+      Text(p.name)
+        .fontSize(this.fs(14)).fontColor(Theme.text).maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Text(p.mediaName.length > 0 ? p.mediaName : '（无媒体）')
+        .fontSize(this.fs(11)).fontColor(Theme.textDim).maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+      Row() {
+        Text(`${p.cueCount} 条`).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        Blank()
+        if (p.durationSec > 0) {
+          Text(formatClock(p.durationSec)).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        }
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding(12)
+    .borderRadius(10)
+    .backgroundColor(Theme.panel)
+    .border({ width: 1, color: this.store.current?.id === p.id ? Theme.accent : Theme.border })
+    .onClick((): void => {
+      this.store.openProject(p).then((): void => {
+        this.tab = 'editor';
+      });
+    })
+    .gesture(LongPressGesture().onAction((): void => {
+      this.confirmDelete(p);
+    }))
+  }
+
+  private confirmDelete(p: ProjectMeta): void {
+    try {
+      promptAction.showDialog({
+        title: '删除项目',
+        message: `确定删除「${p.name}」？该操作不可撤销。`,
+        buttons: [
+          { text: '取消', color: Theme.textDim },
+          { text: '删除', color: Theme.danger }
+        ]
+      }).then((res: promptAction.ShowDialogSuccessResponse): void => {
+        if (res.index === 1) {
+          this.store.deleteProject(p);
+          this.toast('已删除');
+        }
+      });
+    } catch (err) {
+      Logger.warn(TAG, '弹窗失败');
+    }
+  }
+
+  // ------------------------------------------------------------ 编辑页
+
+  @Builder
+  EditorPage() {
+    Column() {
+      this.EditorToolbar()
+      if (this.spec.twoPane) {
+        // 平板 / PC：左播放器+状态，右字幕表格
+        Row() {
+          Column() {
+            this.PlayerPanel()
+            this.RunStatusPanel()
+          }
+          .width(this.spec.breakpoint === 'xl' ? 420 : 340)
+          .height('100%')
+          .padding({ right: 10 })
+
+          Column() {
+            this.CueTable()
+          }
+          .layoutWeight(1)
+          .height('100%')
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .padding(12)
+        .alignItems(VerticalAlign.Top)
+      } else {
+        // 手机：纵向堆叠，播放器按 16:9 收缩，字幕列表占满剩余空间
+        Column() {
+          this.PlayerPanel()
+          this.RunStatusPanel()
+          this.CueTable()
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .padding(10)
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  EditorToolbar() {
+    Scroll() {
+      Row({ space: 8 }) {
+        Button('开始识别').fontSize(this.fs(12))
+          .backgroundColor(Theme.accent)
+          .enabled(this.store.runState !== RunState.BUSY)
+          .onClick((): void => {
+            this.runRecognition();
+          })
+        Button(this.store.runState === RunState.BUSY ? '取消' : '重识别全部')
+          .fontSize(this.fs(12))
+          .backgroundColor(this.store.runState === RunState.BUSY ? Theme.danger : Theme.panelAlt)
+          .onClick((): void => {
+            if (this.store.runState === RunState.BUSY) {
+              this.store.cancelRecognition();
+            } else {
+              this.store.redoAll('asr');
+            }
+          })
+        Button('重翻译全部').fontSize(this.fs(12)).backgroundColor(Theme.panelAlt)
+          .onClick((): void => {
+            this.store.redoAll('mt');
+          })
+        Button('导出 SRT').fontSize(this.fs(12)).backgroundColor(Theme.panelAlt)
+          .onClick((): void => this.doExport('bilingual'))
+        Button('导出 ASS').fontSize(this.fs(12)).backgroundColor(Theme.panelAlt)
+          .onClick((): void => this.doExport('ass'))
+        Button('逐词卡拉OK').fontSize(this.fs(12)).backgroundColor(Theme.accentDim)
+          .onClick((): void => this.doExport('ass-karaoke'))
+        Button('导出 VTT').fontSize(this.fs(12)).backgroundColor(Theme.panelAlt)
+          .onClick((): void => this.doExport('vtt'))
+        Button('逐词 JSON').fontSize(this.fs(12)).backgroundColor(Theme.panelAlt)
+          .onClick((): void => this.doExport('json'))
+      }
+      .padding({ left: 12, right: 12 })
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .width('100%')
+    .height(48)
+    .backgroundColor(Theme.panel)
+    .border({ width: { bottom: 1 }, color: Theme.border })
+  }
+
+  @Builder
+  PlayerPanel() {
+    Column({ space: 6 }) {
+      // 视频预览占位：真正的播放需要 AVPlayer + XComponent，
+      // 这里先给出媒体信息与时长，播放能力见 docs/VERIFICATION.md 的待办。
+      Stack() {
+        Column({ space: 6 }) {
+          Text('\u{1F3AC}').fontSize(28)
+          Text(this.store.current === null
+            ? '未选择媒体'
+            : (this.store.current.mediaName.length > 0
+              ? this.store.current.mediaName : '未选择媒体'))
+            .fontSize(this.fs(12)).fontColor(Theme.textDim)
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.store.current !== null && this.store.current.durationSec > 0) {
+            Text(`时长 ${formatClock(this.store.current.durationSec)}`)
+              .fontSize(this.fs(11)).fontColor(Theme.textDim)
+          }
+        }
+        .justifyContent(FlexAlign.Center)
+      }
+      .width('100%')
+      .height(this.spec.playerHeight)
+      .borderRadius(10)
+      .backgroundColor('#000000')
+      .border({ width: 1, color: Theme.border })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  RunStatusPanel() {
+    Column({ space: 4 }) {
+      Row() {
+        Text(this.store.statusText)
+          .fontSize(this.fs(12)).fontColor(Theme.textDim)
+          .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        Blank()
+      }
+      .width('100%')
+      if (this.store.runState === RunState.BUSY) {
+        Progress({ value: Math.round(this.store.progress.ratio * 100), total: 100 })
+          .width('100%').color(Theme.accent)
+      }
+    }
+    .width('100%')
+    .padding({ top: 8, bottom: 8 })
+  }
+
+  @Builder
+  CueTable() {
+    Column() {
+      // 表头
+      Row() {
+        Text('#').width(40).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        Text('开始').width(64).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        Text('结束').width(64).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        Text('原文').layoutWeight(1).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        Text('译文').layoutWeight(1).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        if (this.spec.showWordColumn) {
+          Text('词').width(48).fontSize(this.fs(11)).fontColor(Theme.textDim)
+        }
+        Text('操作').width(this.spec.twoPane ? 120 : 76)
+          .fontSize(this.fs(11)).fontColor(Theme.textDim)
+      }
+      .width('100%').height(32).padding({ left: 8, right: 8 })
+      .backgroundColor(Theme.panelAlt)
+
+      if (this.store.cues.length === 0) {
+        Column({ space: 8 }) {
+          Text('\u{1F4DD}').fontSize(32)
+          Text('还没有字幕').fontSize(this.fs(14)).fontColor(Theme.text)
+          Text(this.store.hasModels()
+            ? '点「开始识别」从媒体生成字幕初稿。'
+            : '先在「模型」页面准备识别模型。')
+            .fontSize(this.fs(12)).fontColor(Theme.textDim)
+        }
+        .layoutWeight(1).width('100%').justifyContent(FlexAlign.Center)
+      } else {
+        List() {
+          ForEach(this.store.cues, (cue: Cue, index: number) => {
+            ListItem() {
+              this.CueRow(cue, index)
+            }
+          }, (cue: Cue, index: number) => `${index}-${cue.start}`)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .divider({ strokeWidth: 1, color: Theme.border })
+      }
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .borderRadius(10)
+    .backgroundColor(Theme.panel)
+    .border({ width: 1, color: Theme.border })
+    .clip(true)
+  }
+
+  @Builder
+  CueRow(cue: Cue, index: number) {
+    Row() {
+      Text(`${index + 1}`).width(40)
+        .fontSize(this.fs(12)).fontColor(Theme.textDim)
+      Text(formatSeconds(cue.start, 2)).width(64)
+        .fontSize(this.fs(12)).fontColor(Theme.textDim)
+      Text(formatSeconds(cue.end, 2)).width(64)
+        .fontSize(this.fs(12)).fontColor(Theme.textDim)
+
+      // 原文：点一下进入行内编辑
+      Text(this.editingIndex === index ? this.editingText : cue.sourceText)
+        .layoutWeight(1).fontSize(this.fs(13))
+        .fontColor(cue.edited ? Theme.warn : Theme.text)
+        .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        .padding({ left: 4, right: 4 })
+        .onClick((): void => {
+          this.editingIndex = index;
+          this.editingText = cue.sourceText;
+        })
+
+      // 译文
+      Text(cue.targetText.length > 0 ? cue.targetText : '—')
+        .layoutWeight(1).fontSize(this.fs(13))
+        .fontColor(cue.targetText.length > 0 ? Theme.text : Theme.textDim)
+        .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        .padding({ left: 4, right: 4 })
+
+      if (this.spec.showWordColumn) {
+        Text(`${cue.words.length}`).width(48)
+          .fontSize(this.fs(11)).fontColor(Theme.textDim)
+      }
+
+      Row({ space: 4 }) {
+        Button('重识').fontSize(this.fs(11)).height(28)
+          .backgroundColor(Theme.panelAlt)
+          .onClick((): void => {
+            this.store.retranscribe(index).then((): void => {
+              this.toast(this.store.statusText);
+            });
+          })
+        Button('重译').fontSize(this.fs(11)).height(28)
+          .backgroundColor(Theme.panelAlt)
+          .onClick((): void => {
+            this.store.retranslate(index).then((): void => {
+              this.toast(this.store.statusText);
+            });
+          })
+        if (this.spec.twoPane) {
+          Button('定位').fontSize(this.fs(11)).height(28)
+            .backgroundColor(Theme.panelAlt)
+            .onClick((): void => {
+              this.toast(`跳转到 ${formatSeconds(cue.start, 2)}s`);
+            })
+        }
+      }
+      .width(this.spec.twoPane ? 120 : 76)
+    }
+    .width('100%')
+    .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+    .backgroundColor(this.editingIndex === index ? Theme.panelAlt : Color.Transparent)
+  }
+
+  // ------------------------------------------------------------ 听写页
+
+  @Builder
+  DictatePage() {
+    Column({ space: 16 }) {
+      Text('\u{1F3A4}').fontSize(48)
+      Text(this.dictating ? `正在聆听… ${this.dictateSeconds}s` : '点按开始录音')
+        .fontSize(this.fs(15)).fontColor(Theme.text)
+      Text('录音结束后会在本机用 NPU 识别，音频不会离开设备。')
+        .fontSize(this.fs(12)).fontColor(Theme.textDim)
+        .textAlign(TextAlign.Center).padding({ left: 32, right: 32 })
+
+      Button(this.dictating ? '停止并识别' : '开始录音')
+        .width(200).height(48)
+        .backgroundColor(this.dictating ? Theme.danger : Theme.accent)
+        .onClick((): void => {
+          this.toggleDictation();
+        })
+
+      if (this.dictateText.length > 0) {
+        Column({ space: 8 }) {
+          Text('识别结果').fontSize(this.fs(12)).fontColor(Theme.textDim)
+          Text(this.dictateText)
+            .fontSize(this.fs(14)).fontColor(Theme.text)
+            .padding(12).width('100%')
+            .borderRadius(8).backgroundColor(Theme.panel)
+        }
+        .width(this.spec.contentMaxWidth)
+        .padding({ left: 16, right: 16 })
+      }
+      Blank()
+    }
+    .width('100%').height('100%')
+    .justifyContent(FlexAlign.Center)
+    .padding({ top: 24 })
+  }
+
+  // ------------------------------------------------------------ 模型页
+
+  @Builder
+  ModelsPage() {
+    Scroll() {
+      Column({ space: 14 }) {
+        this.SectionCard('语音识别模型', this.modelHint())
+
+        this.InfoRow('引擎', 'MindSpore Lite（.ms）')
+        this.InfoRow('NPU 可用', this.store.npuAvailable ? '是' : '否')
+        this.InfoRow('识别后端', this.store.backendLabel)
+        this.InfoRow('模型目录', this.store.modelDir())
+        this.InfoRow('模型状态', this.store.modelStatus())
+
+        Row({ space: 10 }) {
+          Button('重新探测 NPU').fontSize(this.fs(13)).backgroundColor(Theme.panelAlt)
+            .onClick((): void => {
+              this.store.npuAvailable = MsLiteRuntime.hasNpu();
+              this.toast(this.store.npuAvailable ? '检测到 NPU' : '未检测到 NPU');
+            })
+          Button('重载引擎').fontSize(this.fs(13)).backgroundColor(Theme.panelAlt)
+            .onClick((): void => {
+              this.store.releaseEngine().then((): void => {
+                this.store.backendLabel = '未加载';
+                this.toast('引擎已释放，下次识别会重新加载');
+              });
+            })
+        }
+        .width('100%')
+
+        // 下载卡片无条件显示：即使没配下载地址，也有「从本地压缩包导入」这条路
+        this.DownloadCard()
+        if (!this.store.canDownloadModel()) {
+          this.SectionCard('未配置下载地址',
+            '「下载模型」按钮不可用（未配置清单地址）。'
+              + '仍可用上面的「从本地压缩包导入」离线导入模型。')
+        }
+      }
+      .width('100%')
+      .padding(16)
+      .constraintSize({ maxWidth: this.spec.contentMaxWidth })
+    }
+    .width('100%').height('100%')
+    .align(Alignment.Top)
+  }
+
+  /**
+   * 应用内下载卡片。
+   *
+   * 状态机与 store.downloadStage 对齐：checking / downloading / verifying /
+   * done / cancelled / failed。下载中显示进度、速度与剩余时间，并允许取消。
+   */
+  @Builder
+  DownloadCard() {
+    Column({ space: 10 }) {
+      Row() {
+        Text('下载模型').fontSize(this.fs(14)).fontColor(Theme.text)
+          .fontWeight(FontWeight.Medium)
+        Blank()
+        Text(this.store.hasModels() ? '已就绪' : '未就绪')
+          .fontSize(this.fs(12))
+          .fontColor(this.store.hasModels() ? Theme.ok : Theme.warn)
+      }
+      .width('100%')
+
+      if (this.store.isDownloading()) {
+        // ---- 进行中
+        Progress({ value: Math.round(this.store.downloadRatio * 100), total: 100 })
+          .width('100%').color(Theme.accent)
+        Row() {
+          Text(this.store.downloadText)
+            .fontSize(this.fs(12)).fontColor(Theme.textDim)
+            .layoutWeight(1).maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.store.downloadSpeed > 0) {
+            Text(this.formatSpeed())
+              .fontSize(this.fs(12)).fontColor(Theme.accent)
+          }
+        }
+        .width('100%')
+        Button('取消下载').fontSize(this.fs(13))
+          .width('100%').backgroundColor(Theme.panelAlt)
+          .onClick((): void => {
+            this.store.cancelModelDownload();
+            this.toast('已取消，下次可续传');
+          })
+      } else {
+        // ---- 空闲 / 结束态
+        Text(this.store.hasModels()
+          ? '模型已就绪，可以直接识别。'
+          : '将从配置的地址下载模型并自动校验完整性。'
+            + '中断后再次点击会从断点继续，不会重新下载。')
+          .fontSize(this.fs(12)).fontColor(Theme.textDim)
+          .width('100%')
+        if (this.store.downloadText.length > 0 && !this.store.hasModels()) {
+          Text(this.store.downloadText)
+            .fontSize(this.fs(12))
+            .fontColor(this.store.downloadStage === DownloadStage.FAILED
+              ? Theme.danger : Theme.textDim)
+            .width('100%').maxLines(3)
+        }
+        Row({ space: 10 }) {
+          Button(this.store.hasModels() ? '重新下载' : '下载模型')
+            .fontSize(this.fs(13)).layoutWeight(1)
+            .backgroundColor(Theme.accent)
+            .onClick((): void => {
+              this.store.downloadModel().then((): void => {
+                this.toast(this.store.downloadText);
+              });
+            })
+          if (this.store.hasModels()) {
+            Button('删除模型').fontSize(this.fs(13)).layoutWeight(1)
+              .backgroundColor(Theme.panelAlt)
+              .onClick((): void => {
+                this.store.removeModels().then((): void => {
+                  this.toast('已删除');
+                });
+              })
+          }
+        }
+        .width('100%')
+
+        // ---- 离线导入 ----
+        //
+        // 两条路：多选文件（不解压，最稳）/ 选 zip。
+        // 真机上 zlib 会以 900003 拒绝结构合法的 zip，所以把多选文件
+        // 放在第一位并标注推荐。
+        Row({ space: 10 }) {
+          Button('选择模型文件导入').fontSize(this.fs(13)).layoutWeight(1)
+            .backgroundColor(Theme.accent)
+            .onClick((): void => {
+              const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+              this.store.importModelFromFiles(ctx).then((): void => {
+                this.toast(this.store.statusText);
+              });
+            })
+          Button('选 zip 导入').fontSize(this.fs(13)).layoutWeight(1)
+            .backgroundColor(Theme.panelAlt)
+            .onClick((): void => {
+              const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+              this.store.importModelFromZip(ctx).then((): void => {
+                this.toast(this.store.statusText);
+              });
+            })
+        }
+        .width('100%')
+
+        // ---- 导入进度 ----
+        if (this.store.isImporting()) {
+          Column({ space: 6 }) {
+            // `type` 是构造参数里的字段（不是链式方法）；
+            // value 传 -1 表示「不确定进度」，进度条会自己滚动，
+            // 避免比例未知时停在 0 让人以为卡死。
+            Progress({
+              value: this.store.importRatio >= 0
+                ? Math.round(this.store.importRatio * 100) : -1,
+              total: 100,
+              type: ProgressType.Linear
+            })
+              .width('100%').color(Theme.accent)
+            Text(this.store.importText)
+              .fontSize(this.fs(12)).fontColor(Theme.textDim)
+              .width('100%').maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text('导入 2 GB 级模型需要一到几分钟，请勿退出')
+              .fontSize(this.fs(11)).fontColor(Theme.warn)
+              .width('100%')
+          }
+          .width('100%').padding(10)
+          .borderRadius(8).backgroundColor(Theme.bg)
+        }
+
+        Text('「选择模型文件导入」：一次多选 encoder.ms、encoder.msw、'
+          + 'decoder_joint.ms、vocab.txt（有 manifest.json 一并选上会做完整校验）。'
+          + '\n「选 zip 导入」：选打包好的 zip，但部分系统会拒绝解压。')
+          .fontSize(this.fs(11)).fontColor(Theme.textDim)
+          .width('100%')
+
+        // ---- NPU 原生通路自检 ----
+        //
+        // ArkTS 绑定在 NNRt 下拿不到输入张量，本工程改用 NAPI 直调 C API。
+        // 这个按钮用最小代价验证那条通路：在 NPU 上加载 encoder 并读输入张量名。
+        Button('NPU 原生通路自检').fontSize(this.fs(13))
+          .width('100%').backgroundColor(Theme.panelAlt)
+          .onClick((): void => {
+            this.store.runNpuSelfTest().then((): void => {
+              this.toast(this.store.statusText);
+            });
+          })
+        Text('用 NAPI 层（libmslite.so）在 NPU(NNRt) 上加载 encoder 并列出输入张量，'
+          + '验证是否能绕开 ArkTS 绑定「NPU 下 getInputs() 返回 undefined」的限制。'
+          + '结果看日志标签 NpuSelfTest。')
+          .fontSize(this.fs(11)).fontColor(Theme.textDim)
+          .width('100%')
+
+        // ---- NPU 对照实验：最小模型 ----
+        Button('NPU 对照实验（最小模型）').fontSize(this.fs(13))
+          .width('100%').backgroundColor(Theme.panelAlt)
+          .onClick((): void => {
+            this.store.runNpuTinyTest().then((): void => {
+              this.toast(this.store.statusText);
+            });
+          })
+        Text('用内置的 33 KB 最小模型（只有 MatMul+Add+Relu）在 NPU 上构建。'
+          + '它能构建说明设备/NNRt 正常、问题在 encoder 的算子；'
+          + '它也不能构建说明是设备或配置问题。')
+          .fontSize(this.fs(11)).fontColor(Theme.textDim)
+          .width('100%')
+      }
+    }
+    .width('100%').padding(12).alignItems(HorizontalAlign.Start)
+    .borderRadius(10).backgroundColor(Theme.panel)
+    .border({ width: 1, color: Theme.border })
+  }
+
+  /** 把字节/秒格式化成可读速度。 */
+  private formatSpeed(): string {
+    const bps = this.store.downloadSpeed;
+    if (bps >= 1048576) {
+      return `${(bps / 1048576).toFixed(1)} MB/s`;
+    }
+    if (bps >= 1024) {
+      return `${(bps / 1024).toFixed(0)} KB/s`;
+    }
+    return `${bps.toFixed(0)} B/s`;
+  }
+
+  private modelHint(): string {
+    if (this.store.hasModels()) {
+      return '三个模型文件都在，可以直接识别。';
+    }
+    return `尚未就绪：${this.store.modelStatus()}。`;
+  }
+
+  // ------------------------------------------------------------ 设置页
+
+  @Builder
+  SettingsPage() {
+    Scroll() {
+      Column({ space: 14 }) {
+        this.SectionCard('识别',
+          '编码器默认走 NPU；预测网络与 joint 固定在 CPU 上运行。');
+
+        Row() {
+          Column({ space: 2 }) {
+            Text('优先使用 NPU').fontSize(this.fs(14)).fontColor(Theme.text)
+            Text('关闭后全部走 CPU（更省电，但明显更慢）')
+              .fontSize(this.fs(11)).fontColor(Theme.textDim)
+          }
+          .alignItems(HorizontalAlign.Start).layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.store.preferNpu })
+            .onChange((on: boolean): void => {
+              this.store.preferNpu = on;
+              this.store.saveSettings();
+              this.store.releaseEngine();
+            })
+        }
+        .width('100%').padding({ top: 8, bottom: 8 })
+
+        Row() {
+          Column({ space: 2 }) {
+            Text('语音活动检测（VAD）').fontSize(this.fs(14)).fontColor(Theme.text)
+            Text('按静音切分后再识别，长音频更准也更快')
+              .fontSize(this.fs(11)).fontColor(Theme.textDim)
+          }
+          .alignItems(HorizontalAlign.Start).layoutWeight(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.store.useVad })
+            .onChange((on: boolean): void => {
+              this.store.useVad = on;
+              this.store.saveSettings();
+            })
+        }
+        .width('100%').padding({ top: 8, bottom: 8 })
+
+        this.SectionCard('模型下载',
+          '填写模型清单（manifest.json）的地址后，「模型」页面会出现下载按钮。'
+            + '清单格式见 docs/MODEL_DOWNLOAD.md；服务器需支持 Range 请求才能断点续传。'
+            + '留空则关闭应用内下载。'
+            + '\n\n⚠️ 默认那个地址是占位地址。HuggingFace 上的 parakeet 仓库只有 ONNX '
+            + '或高通 Hexagon 产物，MindSpore Lite 都用不了 —— 需要先自己用 '
+            + 'converter_lite 转出 .ms 并上传，或在这里改成你自己的地址。')
+        this.TextField('模型清单地址', 'https://example.com/parakeet/manifest.json',
+          this.store.modelDownloadUrl,
+          (v: string): void => {
+            this.store.modelDownloadUrl = v;
+            this.store.saveSettings();
+          })
+
+        this.SectionCard('翻译',
+          '端侧不打包翻译模型（NLLB-600M 约 1.2 GB），翻译走 OpenAI 兼容接口。'
+            + '留空地址即关闭翻译。')
+
+        this.TextField('服务地址', 'https://api.openai.com', this.store.translateEndpoint,
+          (v: string): void => {
+            this.store.translateEndpoint = v;
+            this.store.saveSettings();
+          })
+        this.TextField('API Key', 'sk-…', this.store.translateApiKey,
+          (v: string): void => {
+            this.store.translateApiKey = v;
+            this.store.saveSettings();
+          }, true)
+        this.TextField('模型名', 'gpt-4o-mini', this.store.translateModel,
+          (v: string): void => {
+            this.store.translateModel = v;
+            this.store.saveSettings();
+          })
+
+        this.SectionCard('诊断', Logger.dump().substring(0, 1200))
+      }
+      .width('100%')
+      .padding(16)
+      .constraintSize({ maxWidth: this.spec.contentMaxWidth })
+    }
+    .width('100%').height('100%')
+    .align(Alignment.Top)
+  }
+
+  // ------------------------------------------------------------ 小组件
+
+  @Builder
+  SectionCard(title: string, body: string) {
+    Column({ space: 6 }) {
+      Text(title).fontSize(this.fs(14)).fontColor(Theme.text).fontWeight(FontWeight.Medium)
+      Text(body).fontSize(this.fs(12)).fontColor(Theme.textDim)
+    }
+    .width('100%').padding(12).alignItems(HorizontalAlign.Start)
+    .borderRadius(10).backgroundColor(Theme.panel)
+    .border({ width: 1, color: Theme.border })
+  }
+
+  @Builder
+  InfoRow(label: string, value: string) {
+    Row() {
+      Text(label).fontSize(this.fs(12)).fontColor(Theme.textDim).width(90)
+      Text(value).fontSize(this.fs(12)).fontColor(Theme.text)
+        .layoutWeight(1).maxLines(3).textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .width('100%').padding({ top: 4, bottom: 4 })
+  }
+
+  @Builder
+  TextField(label: string, placeholder: string, value: string,
+            onChanged: (v: string) => void, secret: boolean = false) {
+    Column({ space: 4 }) {
+      Text(label).fontSize(this.fs(12)).fontColor(Theme.textDim)
+      TextInput({ text: value, placeholder: placeholder })
+        .type(secret ? InputType.Password : InputType.Normal)
+        .fontSize(this.fs(13))
+        .backgroundColor(Theme.panel)
+        .onChange((v: string): void => {
+          onChanged(v);
+        })
+    }
+    .width('100%').alignItems(HorizontalAlign.Start)
+  }
+
+  /** 字号随断点缩放。 */
+  private fs(base: number): number {
+    return Math.round(base * this.spec.fontScale);
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "libffmpeg.so",
+  "types": "./index.d.ts",
+  "version": "1.0.0",
+  "description": "随包 FFmpeg 媒体探测与 AV1 软件解码代理 NAPI"
+}
