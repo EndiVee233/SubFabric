@@ -56,6 +56,24 @@ checkWords(healthy.words);
 assert.deepEqual(healthy.words.map(w => w.w), phrase);
 assert.ok(healthy.words[0].s >= 10.1 && healthy.words.at(-1).e <= 11.2, 'repair stays within measured speech span');
 
+// The aligner can place caption-ending words in padding past the clip boundary.
+const boundaryTokens = ['we', 'can', 'keep', 'going'];
+const edge = assign([task(0, 10, 14, boundaryTokens)], [
+  { word: 'we', start: 10.3, end: 10.6 },
+  { word: 'can', start: 10.7, end: 11.1 },
+  { word: 'keep', start: 13.92, end: 14.1 },
+  { word: 'going', start: 14.11, end: 14.18 },
+]).get(0);
+assert.equal(edge.ok, true, 'clipping the final word must not discard healthy measured timing');
+checkWords(edge.words);
+assert.deepEqual(edge.words.map(w => w.w), boundaryTokens);
+assert.equal(edge.words[0].s, 10.3);
+assert.equal(edge.words.at(-1).e, 14);
+const paddingOnly = assign([task(0, 10, 14, boundaryTokens)], boundaryTokens.map(
+  (word, i) => ({ word, start: 14.01 + i * .04, end: 14.04 + i * .04 }),
+)).get(0);
+assert.equal(paddingOnly.ok, false, 'the measured span must intersect the requested clip');
+
 for (const kind of ['color', 'k']) {
   const doc = fixture(kind, phrase), kar = analyzeKaraoke(doc), sent = kar.sentences.find(s => s.words.length);
   const proposal = { projectId: 'p', targetKey: realignTargetKey(sent), text: sent.text,

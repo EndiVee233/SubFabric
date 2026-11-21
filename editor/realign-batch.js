@@ -66,8 +66,13 @@ function itemResult(plan, item, measured) {
   const lo = Math.max(Math.round(Number(item.start) * 100), Math.round(Math.min(...stamps.map(w => w.start)) * 100));
   const hi = Math.min(Math.round(Number(item.end) * 100), Math.round(Math.max(...stamps.map(w => w.end)) * 100));
   const words = [];
+  // planBlock clips padded anchors to the row end before rounding to milliseconds.
+  // Give words clipped at that edge space inside the measured span during centisecond allocation.
+  const rowEndMs = Number(Number(item.end).toFixed(3));
+  const validPosition = w => Number.isFinite(w.s) && Number.isFinite(w.e)
+    && (w.e > w.s || (w.s === rowEndMs && w.e === rowEndMs));
   if (source.length && Number.isFinite(lo) && Number.isFinite(hi) && hi - lo >= source.length
-    && source.every(w => Number.isFinite(w.s) && Number.isFinite(w.e) && w.e > w.s)) {
+    && source.some(w => w.e > w.s) && source.every(validPosition)) {
     let cursor = lo;
     for (let i = 0; i < source.length; i++) {
       const w = source[i], tail = source.length - i - 1;
