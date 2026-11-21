@@ -2375,9 +2375,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.15.1'`、`APP_FILE_VERSION = '1.5.15.1'`、npm version `1.5.15-beta.1`。
+  `APP_VERSION = 'beta 1.5.15.2'`、`APP_FILE_VERSION = '1.5.15.2'`、npm version `1.5.15-beta.2`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.15.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.15.2-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **可自动更新的 Release**：发布 `v<主>.<次>.<补丁>` 或 `v<主>.<次>.<补丁>-beta.<序号>`，
