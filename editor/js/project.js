@@ -3300,12 +3300,152 @@ function openAiAsrKeyDialog(hasKey) {
   dialog.showModal();
 }
 
+function openAiFallbackDialog() {
+  const title = t('OpenAI 回退设置');
+  const dialog = document.createElement('dialog');
+  dialog.className = 'sf-ap-panel';
+  dialog.dataset.openaiFallbackPanel = '';
+  dialog.setAttribute('aria-label', title);
+  dialog.innerHTML = `
+    <form>
+      <div class="sf-ap-head"><div class="sf-ap-heading"><h2>${esc(title)}</h2></div></div>
+      <div class="sf-ap-body">
+        <label class="sf-ap-switch"><input type="checkbox" name="enabled" disabled> ${esc(t('空转录时尝试本地模型'))}</label>
+        <p class="sf-ap-note">${esc(t('OpenAI 尝试三次后，按下列顺序使用本地模型，不可用的模型会自动跳过。关闭后，未识别的分块会报错并提示重试。'))}</p>
+        <p class="sf-ap-note">${esc(t('可拖动模型排序，或用上移和下移按钮。保存后对下一次识别任务生效。'))}</p>
+        <ol class="sf-asr-fallback-order" aria-label="${esc(t('本地模型回退顺序'))}"></ol>
+      </div>
+      <div class="sf-ap-foot">
+        <span class="sf-ap-msg" role="status"></span>
+        <button type="button" class="btn" data-fallback-cancel>${esc(t('取消'))}</button>
+        <button type="submit" class="btn btn-accent" disabled>${esc(t('保存'))}</button>
+      </div>
+    </form>`;
+  const form = dialog.querySelector('form');
+  const enabled = form.elements.namedItem('enabled');
+  const list = form.querySelector('ol');
+  const msg = form.querySelector('[role="status"]');
+  const save = form.querySelector('[type="submit"]');
+  let order = [];
+  let names = new Map();
+  let dragged = '';
+  let saving = false;
+  const rowOf = event => event.target.closest('li[data-model]');
+  const clearDrop = () => list.querySelector('[data-drop-edge]')?.removeAttribute('data-drop-edge');
+  const render = () => {
+    const active = enabled.checked && !saving;
+    list.innerHTML = order.map((id, index) => {
+      const name = names.get(id);
+      return `<li data-model="${esc(id)}" draggable="${active}">
+        <span class="sf-asr-fallback-handle" aria-hidden="true">⠿</span>
+        <span class="sf-asr-fallback-name">${esc(name)}</span>
+        <button type="button" class="btn btn-mini" data-direction="-1" aria-label="${esc(t('上移') + ' ' + name)}"${active && index > 0 ? '' : ' disabled'}>${esc(t('上移'))}</button>
+        <button type="button" class="btn btn-mini" data-direction="1" aria-label="${esc(t('下移') + ' ' + name)}"${active && index < order.length - 1 ? '' : ' disabled'}>${esc(t('下移'))}</button>
+      </li>`;
+    }).join('');
+  };
+  const move = (id, index, direction) => {
+    const from = order.indexOf(id);
+    if (from < 0 || index < 0 || index >= order.length || index === from) return;
+    order.splice(from, 1);
+    order.splice(index, 0, id);
+    render();
+    if (direction) {
+      const row = list.children[index];
+      const button = row.querySelector(`[data-direction="${direction}"]:enabled`) || row.querySelector('button:enabled');
+      button?.focus();
+    }
+  };
+  list.addEventListener('click', event => {
+    const button = event.target.closest('button[data-direction]');
+    if (!button || !enabled.checked || saving) return;
+    const id = rowOf(event).dataset.model;
+    move(id, order.indexOf(id) + Number(button.dataset.direction), button.dataset.direction);
+  });
+  list.addEventListener('dragstart', event => {
+    const row = rowOf(event);
+    if (!enabled.checked || saving || !row || event.target.closest('button')) {
+      event.preventDefault();
+      return;
+    }
+    dragged = row.dataset.model;
+    event.dataTransfer.setData('text/plain', dragged);
+    event.dataTransfer.effectAllowed = 'move';
+  });
+  list.addEventListener('dragover', event => {
+    const row = rowOf(event);
+    if (!dragged || !row) return;
+    event.preventDefault();
+    clearDrop();
+    const { top, height } = row.getBoundingClientRect();
+    row.dataset.dropEdge = event.clientY >= top + height / 2 ? 'after' : 'before';
+    event.dataTransfer.dropEffect = 'move';
+  });
+  list.addEventListener('drop', event => {
+    const row = rowOf(event);
+    if (!dragged || !row) return;
+    event.preventDefault();
+    const from = order.indexOf(dragged);
+    const target = order.indexOf(row.dataset.model);
+    if (from !== target) {
+      const insertion = target + Number(row.dataset.dropEdge === 'after');
+      move(dragged, insertion - Number(from < insertion));
+    }
+    dragged = '';
+    clearDrop();
+  });
+  list.addEventListener('dragend', () => { dragged = ''; clearDrop(); });
+  list.addEventListener('dragleave', event => {
+    if (!list.contains(event.relatedTarget)) clearDrop();
+  });
+  enabled.addEventListener('change', render);
+  const request = async (options = {}) => {
+    const response = await fetch('/api/asr/openai-fallback', { ...options, signal: AbortSignal.timeout(10000) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+    return data;
+  };
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (save.disabled || saving) return;
+    saving = save.disabled = enabled.disabled = true;
+    msg.textContent = t('保存中…');
+    render();
+    try {
+      await request({ method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: enabled.checked, order }) });
+      dialog.close();
+    } catch (e) {
+      msg.textContent = String(e.message || e);
+      saving = save.disabled = enabled.disabled = false;
+      render();
+    }
+  });
+  form.querySelector('[data-fallback-cancel]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => dialog.remove(), { once: true });
+  document.body.appendChild(dialog);
+  dialog.showModal();
+  msg.textContent = t('正在读取当前参数…');
+  request().then(data => {
+    order = [...data.order];
+    names = new Map(data.models.map(({ id, name }) => [id, name]));
+    enabled.checked = data.enabled;
+    save.disabled = enabled.disabled = false;
+    msg.textContent = '';
+    render();
+  }).catch(e => { msg.textContent = String(e.message || e); });
+}
+
 function initAsrParams() {
   const box = $('#sf-asr-catalog');
   if (!box || box.dataset.asrParamsBound) return;
   box.dataset.asrParamsBound = '1';
   box.addEventListener('click', (e) => {
-    const btn = e.target.closest('.sm-params, [data-openai-key]');
+    const btn = e.target.closest('.sm-params, [data-openai-key], [data-openai-fallback]');
+    if (btn?.hasAttribute('data-openai-fallback')) {
+      openAiFallbackDialog();
+      return;
+    }
     if (btn?.dataset.openaiKey) {
       openAiAsrKeyDialog(btn.dataset.openaiKey === '1');
       return;
@@ -3522,7 +3662,10 @@ function modelRowHtml(m, d, dlOf) {
   } else if (m.ready) state = '<span class="sm-state ok">✓ 已就绪</span>';
   else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
   if (dlThis) btn = '';
-  else if (m.engine === 'openai-asr') btn = `<button type="button" class="btn btn-mini" data-openai-key="${m.ready ? '1' : '0'}">${esc(t('配置 API Key'))}</button>`;
+  else if (m.engine === 'openai-asr') {
+    btn = `<button type="button" class="btn btn-mini" data-openai-fallback>${esc(t('回退设置'))}</button>
+      <button type="button" class="btn btn-mini" data-openai-key="${m.ready ? '1' : '0'}">${esc(t('配置 API Key'))}</button>`;
+  }
   else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
   else if (m.partial) {
     btn = `<button type="button" class="btn btn-mini sm-del" data-id="${esc(m.id)}" title="删除模型文件（释放磁盘）">删除</button>`;

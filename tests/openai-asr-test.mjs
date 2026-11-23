@@ -46,6 +46,9 @@ modelReady = id => {
 asrGpuGateError = () => null;
 modelAllowedForUser = () => true;
 runLocalClip = async (model, wav) => {
+  if (currentProject === 'p-reordered' || currentProject === 'p-fallback-off') {
+    return { segments: [{ text: 'Configurable fallback result.' }] };
+  }
   if (currentProject === 'p-parallel') {
     const info = JSON.parse(fs.readFileSync(wav, 'utf8'));
     record('local', info.start);
@@ -62,6 +65,7 @@ const fixtureFetch = globalThis.fetch;
 globalThis.fetch = async (url, options) => {
   if (url !== 'https://api.openai.com/v1/audio/transcriptions') return fixtureFetch(url, options);
   if (options.method !== 'POST' || options.body.get('model') !== 'gpt-transcribe'
+      || options.body.getAll('languages[]').join(',') !== 'en'
       || options.headers.Authorization !== 'Bearer ' + ${JSON.stringify(key)}) throw new Error('Unexpected OpenAI request');
   const info = JSON.parse(await options.body.get('file').text());
   fs.appendFileSync(path.join(ROOT, 'openai-calls.jsonl'), JSON.stringify(info) + '\\n');
@@ -84,7 +88,7 @@ globalThis.fetch = async (url, options) => {
     if (info.start === 180) text = '';
     if (info.start === 240) throw new TypeError('fetch failed');
   }
-  if (info.start === 60 && ['p-empty', 'p-local', 'p-retry', 'p-qwen', 'p-whisper', 'p-parakeet', 'p-no-local'].includes(info.project)) {
+  if (info.start === 60 && ['p-empty', 'p-local', 'p-retry', 'p-qwen', 'p-whisper', 'p-parakeet', 'p-no-local', 'p-reordered', 'p-fallback-off'].includes(info.project)) {
     if (info.project === 'p-retry') text = counts.get(counter) < 3 ? ' ' : 'Recovered.';
     else if (info.project === 'p-empty' && counts.get(counter) > 3) text = 'Recovered.';
     else text = ' ';
@@ -226,6 +230,35 @@ try {
   assert.ok(details[4].attempts.slice(0, 3).every(a => a.failed && a.httpStatus === null));
   const ordered = JSON.parse(fs.readFileSync(path.join(parallel.dir, 'asr.json'))).segments;
   assert.deepEqual(ordered.map(s => Math.round(s.start)), [0, 60, 120, 180, 240, 300, 360, 420]);
+  const fallbackUrl = '/api/asr/openai-fallback';
+  const defaults = await (await server.call(fallbackUrl)).json();
+  assert.equal(defaults.enabled, true);
+  assert.equal(defaults.order[0], 'qwen3-asr-1.7b');
+  assert.ok(defaults.models.every(m => defaults.order.includes(m.id)));
+  assert.ok(!defaults.order.some(id => ['gpt-transcribe', 'bcut-asr', 'capcut-asr'].includes(id)));
+  assert.equal((await post(fallbackUrl, { enabled: 'false', order: [] })).status, 400);
+
+  const parakeet = 'parakeet-tdt-0.6b-v2-vulkan';
+  const unknown = 'not-a-candidate';
+  const update = await post(fallbackUrl, { enabled: true, order: [parakeet, unknown, parakeet] });
+  assert.equal(update.status, 200);
+  const sorted = await (await server.call(fallbackUrl)).json();
+  assert.deepEqual(sorted.order, [parakeet, ...defaults.order.filter(id => id !== parakeet)]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(server.root, 'asr/settings.json'), 'utf8')).openAiAsrFallback,
+    { enabled: true, order: sorted.order });
+  const reordered = await draft('p-reordered', { duration: 120 });
+  assert.equal(reordered.draft.error, null);
+  assert.deepEqual(reportFor(reordered.dir)[1].attempts.map(a => a.model), [...fullChain.slice(0, 3), parakeet]);
+
+  const disable = await post(fallbackUrl, { enabled: false, order: sorted.order });
+  assert.equal(disable.status, 200);
+  assert.deepEqual(await disable.json(), { enabled: false, order: sorted.order });
+  const disabled = await draft('p-fallback-off', { duration: 120 });
+  assert.match(disabled.draft.error, /本地回退已关闭/);
+  assert.deepEqual(reportFor(disabled.dir)[1].attempts.map(a => a.model), fullChain.slice(0, 3));
+  assert.equal(fs.existsSync(path.join(disabled.dir, 'reseg.json')), false);
+  assert.equal((await post(fallbackUrl, { enabled: true, order: defaults.order })).status, 200);
+
   const aligned = await draft('p-aligned', { align: true });
   assert.equal(aligned.draft.error, null);
   assert.ok(fs.existsSync(path.join(aligned.dir, 'subtitle.ass')));

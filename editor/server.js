@@ -1066,7 +1066,7 @@ const ASR_MODELS = [
     files: [],
     sizeMB: 0,
     dirName: '',
-    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。音频分块并行上传，失败块最多请求三次，之后集中尝试本机可用的 Qwen、Whisper、Parakeet。必须使用对齐模型生成逐词 ASS。',
+    desc: '需要已激活 API 赠额的 ChatGPT Pro，或有可用 API 余额的 OpenAI 项目。使用该项目的 API Key，音频上传至 OpenAI 按量识别。音频分块并行上传并提供英语提示。失败块最多请求三次，之后按「回退设置」处理。必须使用对齐模型生成逐词 ASS。',
   },
 ];
 /* 对齐模型独立于 ASR：下载 Qwen3-ASR 时不再夹带对齐器；realign / 初稿「对齐」都从这里取。 */
@@ -2977,6 +2977,19 @@ function openAiAsrKey(settings = readAsrSettings()) {
   try { return secretStore.decrypt(settings.openAiAsrKeyEnc || ''); }
   catch { return ''; }
 }
+
+function openAiFallbackModels() {
+  return ['qwen', 'whisper', 'parakeet'].flatMap(group => ASR_MODELS.filter(model =>
+    !model.cloud && draftAllowedOf(model) && asrEngineGroup(model) === group));
+}
+
+function openAiFallbackConfig(saved) {
+  const models = openAiFallbackModels();
+  const defaults = models.map(model => model.id);
+  const stored = Array.isArray(saved?.order) ? saved.order.filter(id => defaults.includes(id)) : [];
+  return { enabled: saved?.enabled !== false, order: [...new Set([...stored, ...defaults])] };
+}
+
 
 /** 某个模型实际生效的参数：保存值 + 当前 schema 的默认值；非法/过期的键会被忽略。 */
 function modelParamsFor(model) {
@@ -9039,6 +9052,7 @@ function startPrepare(id, videoPath, mode) {
   async function requestOpenAiClip(key, bytes, signal) {
     const form = new FormData();
     form.set('model', 'gpt-transcribe');
+    form.append('languages[]', 'en');
     form.set('file', new Blob([bytes], { type: 'audio/mpeg' }), 'audio.mp3');
     const timeout = AbortSignal.timeout(120000);
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -9070,13 +9084,7 @@ function startPrepare(id, videoPath, mode) {
     };
   }
 
-  function localRecoveryModels() {
-    return ['qwen', 'whisper', 'parakeet'].flatMap(group => ASR_MODELS.filter(m =>
-      !m.cloud && draftAllowedOf(m) && asrEngineGroup(m) === group
-      && modelAllowedForUser(m) && modelReady(m.id) && !asrGpuGateError(m)));
-  }
-
-  async function recoverOpenAiChunk({ id, wav, start, end, signal, onMessage, attempts }) {
+  async function recoverOpenAiChunk({ id, wav, start, end, signal, onMessage, attempts, models }) {
     const range = openAiChunkRange({ start, end });
     const check = () => { checkAsrOwner(id); signal?.throwIfAborted(); };
     const log = m => { pushDraftLog(id, m); onMessage(m); };
@@ -9084,7 +9092,6 @@ function startPrepare(id, videoPath, mode) {
     const pcm = path.join(dir, 'audio.wav');
     try {
       check();
-      const models = localRecoveryModels();
       if (models.length) await sliceAudio(wav, start, end, pcm, false);
       for (const model of models) {
         check();
@@ -9116,8 +9123,10 @@ function startPrepare(id, videoPath, mode) {
   const OPENAI_MAX_ATTEMPTS = 3;
 
   async function transcribeOpenAiAudio(id, wav, duration, signal, onProgress, isDraft = false) {
-    const key = openAiAsrKey();
+    const settings = readAsrSettings();
+    const key = openAiAsrKey(settings);
     if (!key) throw new Error(OPENAI_ASR_KEY_MISSING);
+    const fallback = openAiFallbackConfig(settings.openAiAsrFallback);
     if (!(duration > 0 && Number.isFinite(duration))) {
       duration = await new Promise(resolve => probeDuration(wav, resolve));
     }
@@ -9224,14 +9233,18 @@ function startPrepare(id, videoPath, mode) {
         }
       }
       const remaining = pending();
-      for (const [i, chunk] of remaining.entries()) {
+      const models = fallback.enabled && remaining.length
+        ? fallback.order.map(modelById).filter(model =>
+          modelAllowedForUser(model) && modelReady(model.id) && !asrGpuGateError(model))
+        : [];
+      for (const [i, chunk] of (models.length ? remaining : []).entries()) {
         check();
         const { index, start, end } = chunk;
         const pct = 80 + i / remaining.length * 20;
         const say = msg => onProgress(pct, `本地补识别 ${i + 1}/${remaining.length} 块 · ${msg}`);
         const detail = perChunk[index];
         try {
-          const result = await recoverOpenAiChunk({ id, wav, start, end, signal, onMessage: say, attempts: detail.attempts });
+          const result = await recoverOpenAiChunk({ id, wav, start, end, signal, onMessage: say, attempts: detail.attempts, models });
           if (result) {
             saveResult(chunk, result);
             log('分块补识别成功：' + result.model + ' ' + openAiChunkRange(chunk));
@@ -9242,12 +9255,15 @@ function startPrepare(id, videoPath, mode) {
           log(openAiChunkRange(chunk) + ' 本地补识别失败');
         }
       }
-      checkpoint();
       const failed = pending();
+      for (const { index } of failed) perChunk[index].failed = true;
+      checkpoint();
       if (failed.length) {
         const ranges = failed.slice(0, 4).map(openAiChunkRange).join(' ');
         const more = failed.length > 4 ? ' 等 ' + failed.length + ' 块' : '';
-        throw new Error(ranges + more + ' 所有可用模型均未返回转录文本，请重试识别');
+        const message = fallback.enabled ? '所有可用模型均未返回转录文本，请重试识别'
+          : 'OpenAI 未返回转录文本，本地回退已关闭，请重试识别';
+        throw new Error(ranges + more + ' ' + message);
       }
       return {
         segments: plan.map(({ index, start, end }) => ({ start, end, text: saved[index].text, words: [] })),
@@ -10446,6 +10462,27 @@ function handleFetchRoutes(req, res, u) {
 /* 路由段: 语音识别模型管理 + 语义/热词分析(asr/analyze) —— 前缀命中即全权处理, 段内保持原 handleRequest 的 if 链与书写顺序。 */
 function handleAsrRoutes(req, res, u) {
   const pathname = u.pathname;
+  if (pathname === '/api/asr/openai-fallback') {
+    if (req.method === 'GET') {
+      const config = openAiFallbackConfig(readAsrSettings().openAiAsrFallback);
+      const models = openAiFallbackModels().map(({ id, name }) => ({ id, name }));
+      return sendJson(res, 200, { ...config, models });
+    }
+    if (req.method === 'POST') {
+      return readBody(req, res, 16 * 1024, (_err, body) => {
+        let input;
+        try { input = JSON.parse(body.toString('utf8')); } catch {}
+        if (typeof input?.enabled !== 'boolean' || !Array.isArray(input.order)) {
+          return sendJson(res, 400, { error: 'OpenAI 回退设置无效' });
+        }
+        const config = openAiFallbackConfig(input);
+        const settings = readAsrSettings();
+        settings.openAiAsrFallback = config;
+        writeAsrSettings(settings);
+        return sendJson(res, 200, config);
+      });
+    }
+  }
   if (pathname === '/api/asr/openai-key' && req.method === 'POST') {
     return readBody(req, res, 16 * 1024, (_err, body) => {
       let input;

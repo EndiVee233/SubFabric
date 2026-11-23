@@ -7034,6 +7034,17 @@ body.sf-ap-open { overflow: hidden; }
 .sf-ap-switch input { width: 15px; height: 15px; accent-color: var(--accent, #ff7a45); }
 .sf-ap-switch .sf-ap-default { margin-left: auto; }
 .sf-ap-help { margin: 0; font-size: 10.5px; line-height: 1.65; color: var(--muted, #6b756e); }
+.sf-asr-fallback-order { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.sf-asr-fallback-order li {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 1px solid var(--line); background: var(--surface-2);
+}
+.sf-asr-fallback-order li[draggable="true"] { cursor: grab; }
+.sf-asr-fallback-order li[data-drop-edge="before"] { box-shadow: inset 0 2px var(--accent); }
+.sf-asr-fallback-order li[data-drop-edge="after"] { box-shadow: inset 0 -2px var(--accent); }
+.sf-asr-fallback-name { flex: 1; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.sf-asr-fallback-handle { color: var(--muted); font-size: 16px; }
+.sf-asr-fallback-order button { flex: none; }
 .sf-ap-loading, .sf-ap-error { margin: 0; padding: 14px 4px; font-size: 11.5px; color: var(--muted, #6b756e); }
 .sf-ap-error { color: var(--danger, #d94a3d); }
 .sf-ap-foot {
