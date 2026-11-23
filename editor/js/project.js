@@ -3442,7 +3442,7 @@ function initAsrParams() {
   box.dataset.asrParamsBound = '1';
   box.addEventListener('click', (e) => {
     const btn = e.target.closest('.sm-params, [data-openai-key], [data-openai-fallback]');
-    if (btn?.hasAttribute('data-openai-fallback')) {
+    if (btn?.dataset.openaiFallback === '1') {
       openAiFallbackDialog();
       return;
     }
@@ -3663,7 +3663,7 @@ function modelRowHtml(m, d, dlOf) {
   else state = `<span class="sm-state">未下载 · ${m.sizeMB} MB</span>`;
   if (dlThis) btn = '';
   else if (m.engine === 'openai-asr') {
-    btn = `<button type="button" class="btn btn-mini" data-openai-fallback>${esc(t('回退设置'))}</button>
+    btn = `<button type="button" class="btn btn-mini" data-openai-fallback="1">${esc(t('回退设置'))}</button>
       <button type="button" class="btn btn-mini" data-openai-key="${m.ready ? '1' : '0'}">${esc(t('配置 API Key'))}</button>`;
   }
   else if (m.cloud) btn = '';       // 云端模型没有本地文件: 不给「下载/删除」按钮(服务端也拦了删除接口)
