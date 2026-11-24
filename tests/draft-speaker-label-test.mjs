@@ -34,7 +34,7 @@ try{
  });
  const source=funcs.subtitleSource('p-test'),english=doc.events.map(e=>doc.lines[e.lineIdx]);
  assert.equal(source.rows.length,2);
- funcs.patchSubtitleTranslations('p-test',source,['你好 世界','好的 现在']);
+ funcs.patchSubtitleTranslations('p-test',source,['你好,世界.','好的;现在!']);
  const translated=new AssDoc(fs.readFileSync(file,'utf8')),anchors=translated.events.filter(e=>e.style==='中文字幕');
  assert.equal(anchors.length,2);
  assert.ok(anchors[0].text.includes('[SPK1] 你好 世界'));
@@ -56,8 +56,8 @@ try{
  assert.ok(karaoke.pairRows(reloaded.sentences,reloaded.wordStyle).every(row=>!karaoke.isUnassignedRole(row)&&row.color));
  // Retranslation preserves the explicit identity/color while changing only the translated text.
  fs.writeFileSync(file,translated.serialize());
- funcs.patchSubtitleTranslations('p-test',funcs.subtitleSource('p-test'),['新译文','第二句新译文']);
+ funcs.patchSubtitleTranslations('p-test',funcs.subtitleSource('p-test'),['新译文.','第二句新译文?']);
  const final=new AssDoc(fs.readFileSync(file,'utf8')).events.filter(e=>e.style==='中文字幕');
- assert.ok(final[0].text.includes('[SPK1] 新译文'));assert.ok(final[1].text.includes('[Alice] 第二句新译文'));
+ assert.ok(final[0].text.endsWith('[SPK1] 新译文'));assert.ok(final[1].text.endsWith('[Alice] 第二句新译文'));
  console.log('Draft speaker labels: translation insertion, legacy restoration, palette, external metadata protection and word timings passed');
 }finally{fs.rmSync(temp,{recursive:true,force:true});}

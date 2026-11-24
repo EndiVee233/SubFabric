@@ -362,7 +362,7 @@ function planJobs(items, size, ctx, pendingIdxs = null) {
 }
 
 /* ── 中文译文的标点归一化 ────────────────────────────────────────
- * 项目约定: 中文行用**空格**分词, 不出现 ，、。 (半角 , . 与 ! ? 保留不动)。
+ * 中文译文以空格断行。全角 ，、。 和半角 , . ; : ! ? 作为断行点，保留数字内的分隔符。
  * 这是"外部文本(LLM 译文 / ASR)入库前"的统一口径 —— 用户手动编辑不走这里。
  *
  * 为什么单独抽成一个函数: 这条规则以前散在 server.js 写初稿、main.js 选区重新识别两处,
@@ -372,10 +372,10 @@ function planJobs(items, size, ctx, pendingIdxs = null) {
  * ──────────────────────────────────────────────────────────── */
 function normalizeZhPunctuation(text) {
   return String(text == null ? '' : text)
-    .replace(/\r?\n/g, ' ')
-    .replace(/[，、。]+/g, ' ')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/[ \t]*\\N[ \t]*/g, '\\N')   // 别在 ASS 换行符旁留下空格
+    .replace(/\{\\[^{}]*\}|(?<!\d)[,.:]|[,.:](?!\d)|[，、。;!?]|\r?\n/g,
+      part => part.startsWith('{') ? part : ' ')
+    .replace(/\{\\[^{}]*\}|[ \t]*\\N[ \t]*|[ \t]{2,}/g,
+      part => part.startsWith('{') ? part : part.includes('\\N') ? '\\N' : ' ')
     .trim();
 }
 

@@ -4,7 +4,7 @@
  *  3) 编辑文本后按原词时长加权重算逐词时间
  *  4) 依据干净文本 + 词级映射重建逐词切片
  */
-import { assPlainText } from './ass.js';
+import { assPlainText, findStyleForLang } from './ass.js';
 
 // 服务端与浏览器共用同一句身份：重复台词也必须匹配原始事件位置和完整词序。
 export function realignTargetKey(sentence) {
@@ -1551,37 +1551,36 @@ export function sortRoles(roles) {
 }
 
 /* ── 中文译文的标点归一化 ────────────────────────────────────────
- * 项目约定: 中文行用**空格**分词, 不出现 ，、。 (半角 , . 与 ! ? 保留不动)。
+ * 中文译文以空格断行。全角 ，、。 和半角 , . ; : ! ? 作为断行点，保留数字内的分隔符。
  * 这是"外部文本(LLM 译文 / ASR)入库前"的统一口径 —— 用户手动编辑不走这里。
  * 服务端同款实现在 editor/llm-text.js 的 normalizeZhPunctuation;
  * tests/zh-punct-test.mjs 断言两者对同一语料输出一致, 防止再次分叉。
  * ──────────────────────────────────────────────────────────── */
 export function normalizeZhPunctuation(text) {
   return String(text == null ? '' : text)
-    .replace(/\r?\n/g, ' ')
-    .replace(/[，、。]+/g, ' ')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/[ \t]*\\N[ \t]*/g, '\\N')   // 别在 ASS 换行符旁留下空格
+    .replace(/\{\\[^{}]*\}|(?<!\d)[,.:]|[,.:](?!\d)|[，、。;!?]|\r?\n/g,
+      part => part.startsWith('{') ? part : ' ')
+    .replace(/\{\\[^{}]*\}|[ \t]*\\N[ \t]*|[ \t]{2,}/g,
+      part => part.startsWith('{') ? part : part.includes('\\N') ? '\\N' : ' ')
     .trim();
 }
 
 /**
- * 载入自愈: 把**中文整句行**(非逐词样式)里的 ，、。 归一成空格。
- * 用户报「存量稿件的中文行里还带 ，。」—— 外部工具(WhisperX 等)导入的字幕常常带这些标点,
- * 逐行手改太累, 载入时统一清一遍(与译文写入同一口径)。返回改动的行数。
- *
- * 只动整句样式行: 逐词样式行的文本是英文、且带 {\c..&}..{\c} 高亮 span, 碰了会毁掉逐词特效。
- * 行首 {\c..&} 色标与 [角色] 标签原样保留(它们不含中文标点)。
- * 必须在 analyzeKaraoke 之后调用(wordStyle 已知), 且要同步重算 sent.text(纯文本)。
+ * 载入 ASS 时归一中文整句行的标点，返回更新的行数。
+ * 在 analyzeKaraoke 之后调用，保留逐词样式、角色标签、覆盖标签与手动换行。
  */
 export function normalizeZhPunctuationInSentences(doc, sentences, wordStyle) {
+  const zhStyle = findStyleForLang(doc, 'zh');
   let n = 0;
   for (const s of sentences || []) {
     if (wordStyle && s.style === wordStyle) continue;
     const ev = (s.events || [])[0];
     if (!ev) continue;
     const before = String(ev.text || '');
-    const after = normalizeZhPunctuation(before);
+    const prefix = /^(?:\{\\[^{}]*\})*[ \t]*\[[^\]]+\][ \t]*/.exec(before)?.[0] || '';
+    const body = before.slice(prefix.length);
+    if ((!zhStyle || s.style !== zhStyle) && !/\p{Script=Han}/u.test(assPlainText(body))) continue;
+    const after = prefix + normalizeZhPunctuation(body);
     if (after === before) continue;
     doc.setEventText(ev, after);
     s.text = assPlainText(after, true);

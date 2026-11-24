@@ -1,7 +1,7 @@
 {
   "name": "subfabric-desktop",
   "productName": "SubFabric",
-  "version": "1.5.16-beta.1",
+  "version": "1.5.17-beta.1",
   "description": "SubFabric local subtitle editor — Electron desktop edition",
   "author": "EndiVee233",
   "private": true,
@@ -41,7 +41,7 @@
           ]
         }
       ],
-      "artifactName": "SubFabric-1.5.16.1-setup.${ext}"
+      "artifactName": "SubFabric-1.5.17.1-setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -53,7 +53,7 @@
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": false
     },
-    "buildVersion": "1.5.16.1",
+    "buildVersion": "1.5.17.1",
     "buildNumber": "1"
   }
 }

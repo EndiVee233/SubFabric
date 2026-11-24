@@ -6,7 +6,7 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
   // ── 上游 2.1.13 新增的导出（角色换色串色修复 / 中文标点归一 / 中文行预览 / 角色排序）──
   // 这些纯函数放在 karaoke.js 里以便单测；main.js 必须**显式导入**，
   // 否则下面的调用会在运行时 ReferenceError（fork 一直没导入 → 上游改动无从生效）。
-  speakerNames, sortRoles, normalizeZhPunctuationInSentences,
+  speakerNames, sortRoles, normalizeZhPunctuation, normalizeZhPunctuationInSentences,
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
   highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows,
   sentenceSpeakerNames, filterSentencesBySpeakers, continuousWordTimes, restoreDraftSpeakerLabels } from './karaoke.js';
@@ -2250,7 +2250,7 @@ function setAss(text, name, options = {}) {
     const tag = assHexToTag(savedWordColor);
     for (const sentence of state.kar.sentences) if (sentence.style === state.kar.wordStyle) sentence.highlightTag = tag;
   }
-  // 载入自愈: 清掉中文整句行里的中文标点 ，、。 (→ 空格)。外部工具(WhisperX 等)导入的存量稿件
+  // 载入自愈: 把中文整句行的标点归一为空格。外部工具(WhisperX 等)导入的存量稿件
   // 常带这些标点, 而本项目的约定是中文用空格分词。必须在 analyzeKaraoke 之后(wordStyle 已知,
   // 逐词样式行不能碰)、pairRows 之前(配对看到的就是干净文本)。
   const punctFixed = normalizeZhPunctuationInSentences(state.assDoc, state.kar.sentences, state.kar.wordStyle);
@@ -2378,7 +2378,7 @@ function setAss(text, name, options = {}) {
   panel.setFileName(name);
   applyRoleAnnot(false);    // 重读开关(初稿勾了「区分说话人」时创建页会帮用户打开) + 同步角色 Tab/筛选
   if (fixedColors) toast(`已把 ${fixedColors} 行的颜色标签统一为大写（兼容 Subforges 等只认大写的工具）`, 5000);
-  if (punctFixed) toast(`已规范 ${punctFixed} 行中文标点（，、。 → 空格；! ? 保留）`, 5000);
+  if (punctFixed) toast(`已规范 ${punctFixed} 行中文译文标点`, 5000);
   if (gapFixed) toast(`已规范 ${gapFixed} 行的角色名间距（[角色] 与正文之间一个空格）`, 4000);
   if (speakerLabelsFixed) toast(`已恢复 ${speakerLabelsFixed} 行说话人的可见标签与角色色`, 5000);
   if (spanAligned) toast(`已自动对齐 ${spanAligned} 行的中英起止（英文逐词原来比中文行短一截）`, 5000);
@@ -5415,8 +5415,7 @@ let reRecogBusy = false;
 /** 按一条识别结果建字幕块: 中文整句 + 英文逐词句（用 ASR 给的真实词级时间） */
 function addRecognizedRow(seg, targetStyles = null) {
   const s = seg.start, e = seg.end;
-  // 与初稿写入同一约定: 中文译文里的逗号/顿号/句号替换成空格(! ? 保留)
-  const zhText = String(seg.zh || '').replace(/[，、。]/g, ' ').trim();
+  const zhText = normalizeZhPunctuation(seg.zh);
   const enText = String(seg.text || '').trim();
   if (!zhText && !enText) return null;
   if (state.format === 'srt') {

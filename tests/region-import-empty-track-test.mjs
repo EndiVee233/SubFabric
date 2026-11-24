@@ -1,10 +1,11 @@
 import fs from 'node:fs';import vm from 'node:vm';import assert from 'node:assert/strict';
+import { normalizeZhPunctuation } from '../editor/js/karaoke.js';
 const source=fs.readFileSync(new URL('../editor/js/main.js',import.meta.url),'utf8');
 const start=source.indexOf('function addRecognizedRow('),end=source.indexOf('\n}',start)+2;
 const created=[];
 const context=vm.createContext({
   state:{format:'ass',kar:{wordStyle:'Default',sentences:[{style:'中文字幕'}]},assDoc:{replaceEvents:(events,specs)=>specs}},
-  hexToAss:()=> '123456',escAss:t=>t,
+  normalizeZhPunctuation,hexToAss:()=> '123456',escAss:t=>t,
   appendSentence(style,start,end,text){created.push({style,start,end,text});return{text,events:[{}],words:[]};},
   buildWordSpecs:s=>s.words.map(w=>({...w})),recalcWords:()=>[],registerRecognizedRow:r=>r,
 });
@@ -14,8 +15,8 @@ assert.deepEqual(created.map(x=>x.style),['Default'],'an English-only import mus
 assert.equal(row.zh,null);assert.equal(row.en.words[0].s,1.2);assert.equal(row.en.words[0].e,2.7);
 created.length=0;row=context.add({start:4,end:5,zh:'你好'});
 assert.deepEqual(created.map(x=>x.style),['中文字幕'],'a Chinese-only import must not add a blank English event');assert.equal(row.en,null);
-created.length=0;row=context.add({start:6,end:8,zh:'你好',text:'Hello.'});
-assert.deepEqual(created.map(x=>x.style),['中文字幕','Default']);assert.ok(row.zh&&row.en);
+created.length=0;row=context.add({start:6,end:8,zh:'你好,世界.',text:'Hello.'});
+assert.deepEqual(created.map(x=>x.style),['中文字幕','Default']);assert.ok(row.zh&&row.en);assert.equal(created[0].text,'你好 世界');assert.equal(created[1].text,'Hello.');
 console.log('Region import: missing language stays absent; real word timings remain unchanged');
 
 const removed=[],a={events:[{id:1},{id:2}]},b={events:[{id:3}]},keep={events:[{id:4}]};

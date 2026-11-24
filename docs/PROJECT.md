@@ -758,7 +758,12 @@
   `audio.wav`、`peaks.bin`、`asr.json`、`translation.json`、`reseg.json`、`asr-chunks.json`、
   `cover.png`、`source.json`、`draft.log`、`llm-debug.jsonl`、`video/`。
 
+- **中文译文断行**：写入 ASS/SRT 时将 `，、。` 与 `,.;:!?` 归一为空格，数字内的分隔符保留。初稿、重新翻译、
+  选区重识别使用同一规则，让字幕渲染器在这些空格处断行。
+
 ## 4. 前端与主题
+
+- **既有 ASS 的中文译文**：载入整句轨时同步归一标点。保留英文原文、逐词样式、角色标签、ASS 覆盖标签与手动换行。
 
 - **导出封面**：稿件的「更多 → 详细信息」在预览区提供「导出封面」，
   按当前稿件名称保存 PNG。在线封面保留来源图片尺寸，本地抽帧沿用 640 像素宽预览。
@@ -2383,9 +2388,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.16.1'`、`APP_FILE_VERSION = '1.5.16.1'`、npm version `1.5.16-beta.1`。
+  `APP_VERSION = 'beta 1.5.17.1'`、`APP_FILE_VERSION = '1.5.17.1'`、npm version `1.5.17-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.16.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.17.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **可自动更新的 Release**：发布 `v<主>.<次>.<补丁>` 或 `v<主>.<次>.<补丁>-beta.<序号>`，

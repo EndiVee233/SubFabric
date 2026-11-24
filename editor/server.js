@@ -131,8 +131,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.16.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.16.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.17.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.17.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -6813,7 +6813,7 @@ function startPrepare(id, videoPath, mode) {
       return m ? m.name : '';
     })();
     // 部分翻译时 lines 里会有空洞 —— 空洞不写中文行, 免得出现空字幕
-    // 用户要求: 翻译写入时把中文的逗号/顿号/句号替换成空格(! ? 保留不动)
+    // 译文写入时统一标点形成的断行空格。
     // 口径统一在 llmText.normalizeZhPunctuation(浏览器侧同款见 karaoke.js) ——
     // 以前这条规则散在两处、右键「重新翻译」漏了, 那一路径的中文会带回 ，。 (上游 2.1.13 修复)
     const zhText = (i) => (hasTrans && String(trans[i] || '').trim())
@@ -11621,7 +11621,7 @@ function handleLlmRoutes(req, res, u) {
       try { text = String((JSON.parse(body.toString('utf8')) || {}).text || '').trim(); } catch {}
       if (!text) return sendJson(res, 400, { error: '缺少 text' });
       translateLines(c, [text], 0)
-        // 与写初稿同一口径: 中文里的 ，、。 → 空格(! ? 保留)。在这里归一,
+        // 与写初稿使用相同的中文译文断行规则。
         // 所有调用方(右键「重新翻译」等)拿到的就是干净文本, 不会再漏。
         .then(arr => sendJson(res, 200, { zh: llmText.normalizeZhPunctuation((arr && arr[0]) || '') }))
         .catch(e => sendJson(res, 500, { error: String((e && e.message) || e) }));

@@ -33,7 +33,7 @@ async function run(force, color = '#ab1234', known = []) {
   const ctx = { state, rimBusy: false, rimName: 'fixture.ass',
     rimPlan: planRegionMerge([{ start: force ? 1 : 260, end: force ? 3 : 263, lines: ['[NEW] 导入字幕', 'fresh imported words'], color, words: [] }], state.items, 0, 300),
     resolveFillOnly, resolveReplace, eventsForReplacement, ROLE_PALETTE: K.ROLE_PALETTE, HIGHLIGHT_COLORS: K.HIGHLIGHT_COLORS,
-    ...Object.fromEntries(['sentenceFromEvent','speakerColorOf','speakerTagOf','buildWordSpecs','recalcWords'].map(k => [k, K[k]])),
+    ...Object.fromEntries(['sentenceFromEvent','speakerColorOf','speakerTagOf','buildWordSpecs','recalcWords','normalizeZhPunctuation'].map(k => [k, K[k]])),
     hexToAss: h => h.slice(5,7) + h.slice(3,5) + h.slice(1,3), escAss: escapeAssUser,
     itemsInRange: (a,b) => state.items.filter(x => x.end > a && x.start < b),
     computeRoles: () => known, healWordRows: () => 0, reconcileKaraoke() {},

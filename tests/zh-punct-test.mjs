@@ -52,7 +52,11 @@ for (const [label, fn] of [['浏览器', N_JS], ['服务端', N_PY]]) {
   ok(fn('甲、乙、丙。') === '甲 乙 丙', label + ': 顿号/句号 → 空格', JSON.stringify(fn('甲、乙、丙。')));
   ok(fn('好，。 好') === '好 好', label + ': 连续标点 + 多余空格 → 收成一个', JSON.stringify(fn('好，。 好')));
   ok(fn('什么？真的！') === '什么？真的！', label + ': ! ? 保留不动', JSON.stringify(fn('什么？真的！')));
-  ok(fn('Wait, what?') === 'Wait, what?', label + ': 英文半角标点不动', JSON.stringify(fn('Wait, what?')));
+  ok(fn('这是管理员,为了利益而滥权.我成了目标;接下来:快跑!?') === '这是管理员 为了利益而滥权 我成了目标 接下来 快跑',
+    label + ': 半角句读形成空格断行点');
+  ok(fn('版本1.21.4,花费1,000.50;12:30出发.') === '版本1.21.4 花费1,000.50 12:30出发',
+    label + ': 保留版本、小数、千位分隔与数字时间');
+  ok(fn('Wait, what?') === 'Wait what', label + ': 译文中的半角句读统一处理');
   ok(fn('  前导与尾随  ') === '前导与尾随', label + ': 去首尾空白', JSON.stringify(fn('  前导与尾随  ')));
   ok(fn('换行\n接回') === '换行 接回', label + ': 真换行 → 空格', JSON.stringify(fn('换行\n接回')));
   ok(fn('A。\\NB') === 'A\\NB', label + ': \\N 旁不留空格', JSON.stringify(fn('A。\\NB')));
@@ -63,7 +67,7 @@ console.log('\n== 两侧对同一语料输出一致(防分叉) ==');
 {
   const corpus = [
     '我来挡。', '好 好。', '太危险了，太危险了', '甲、乙、丙。', '好，。 好',
-    '什么？真的！', 'Wait, what?', '  前后  ', '换行\n接回', 'A。\\NB',
+    '什么？真的！', 'Wait, what?', '  前后  ', '换行\n接回', 'A。\\NB', '甲,乙;丙:丁!?', '交了1,000.25',
     '。', '，，，', '。。。', '', '   ', null, undefined,
     '这，是。一，个。混合，测试。', '哦..... 这', '做点什么。',
   ];
@@ -85,7 +89,8 @@ console.log('\n== 载入自愈: 只清中文整句行, 不碰逐词样式行 =='
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
     // 中文整句行: 带行首色标 + [角色] 标签 + 中文标点
-    'Dialogue: 0,0:00:00.00,0:00:02.00,中文字幕,Minute,0,0,0,,{\\c&HFFFFFF&}[Minute] 我来挡。',
+    'Dialogue: 0,0:00:00.00,0:00:02.00,中文字幕,Minute,0,0,0,,{\\c&HFFFFFF&}[Minute, Jr.] 我来挡,{\\pos(320,  120)}先等等.\\N好了。',
+    'Dialogue: 0,0:00:04.00,0:00:06.00,Alt,Minute,0,0,0,,Look, out.',
     // 英文逐词行: 行首 {\c..&}..{\c} 高亮 span 里**有**句号, 绝不能被当标点清掉
     "Dialogue: 0,0:00:00.00,0:00:00.70,Default,Minute,0,0,0,,{\\c&HFFFFFF&}Ill{\\c} block.",
     "Dialogue: 0,0:00:00.70,0:00:01.40,Default,Minute,0,0,0,,Ill {\\c&HFFFFFF&}block.{\\c}",
@@ -100,11 +105,13 @@ console.log('\n== 载入自愈: 只清中文整句行, 不碰逐词样式行 =='
 
   ok(kar.wordStyle === 'Default', '逐词样式识别为 Default', kar.wordStyle);
   ok(n === 1, '只改了 1 行(中文整句行)', 'n=' + n);
-  ok(zhEv.text === '{\\c&HFFFFFF&}[Minute] 我来挡', '中文行: 色标与 [角色] 保留、句号去掉', zhEv.text);
+  ok(zhEv.text === '{\\c&HFFFFFF&}[Minute, Jr.] 我来挡 {\\pos(320,  120)}先等等\\N好了',
+    '中文行保留覆盖标签、角色名与手动换行', zhEv.text);
+  ok(doc.sorted.find(e => e.style === 'Alt').text === 'Look, out.', '英文整句的逗号与句号原样保留');
   const enAfter = doc.sorted.filter(e => e.style === 'Default').map(e => e.text);
   ok(JSON.stringify(enAfter) === JSON.stringify(enBefore), '英文逐词行的 span 与句号原样不动');
   const zhSent = kar.sentences.find(s => s.style === '中文字幕');
-  ok(zhSent.text === '[Minute] 我来挡', 'sent.text(纯文本)同步刷新', zhSent.text);
+  ok(zhSent.text === '[Minute, Jr.] 我来挡 先等等\\N好了', 'sent.text(纯文本)同步刷新', zhSent.text);
 }
 
 console.log('\n== 真实稿件: 载入自愈后中文行不再有 ，、。 ==');
