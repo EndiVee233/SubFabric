@@ -6263,8 +6263,9 @@ function startPrepare(id, videoPath, mode) {
     if (!segs.length) throw new Error('识别结果为空');
     return segs;
   }
+  const hasAlignedWords = segment => Array.isArray(segment.words) && segment.words.length > 0;
   function asrHasAlignedSegments(id) {
-    try { return readSegments(id).every(segment => Array.isArray(segment.words) && segment.words.length); }
+    try { return readSegments(id).every(hasAlignedWords); }
     catch { return false; }
   }
   /** 已有译文(行数对得上才算数, 否则视为无译文) */
@@ -7159,9 +7160,17 @@ function startPrepare(id, videoPath, mode) {
       }
     }
     if (requireAll && changed !== segs.length) {
-      const failed = segs.filter((_, i) => !r.items[i]?.ok || !r.items[i]?.words?.length);
-      for (const chunk of failed) pushDraftLog(id, 'OpenAI 分块对齐失败 ' + openAiChunkRange(chunk));
-      if (changed) throw new Error('OpenAI 转录有分块对齐失败，请重试对齐');
+      const failed = [];
+      for (const [i, chunk] of segs.entries()) {
+        const item = r.items[i];
+        if (item?.ok && item.words?.length) continue;
+        const range = openAiChunkRange(chunk);
+        failed.push(range);
+        pushDraftLog(id, 'OpenAI 分块对齐失败 ' + range + (item?.note ? ' ' + item.note : ''));
+      }
+      const ranges = failed.slice(0, 4).join(' ');
+      const more = failed.length > 4 ? ' 等 ' + failed.length + ' 块' : '';
+      throw new Error('OpenAI 转录有分块对齐失败，请重试对齐 ' + ranges + more);
     }
     if (!changed) throw new Error('对齐器没有给出有效的逐词时间');
     return { changed, total: segs.length };
@@ -7170,10 +7179,35 @@ function startPrepare(id, videoPath, mode) {
   async function alignDraftAsrJson(id, requireAll = false) {
     const p = path.join(projDir(id), 'asr.json');
     const d = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const { changed, total } = await alignAsrSegments(id, d.segments || [], requireAll);
-    fs.writeFileSync(p + '.tmp', JSON.stringify(d));
-    fs.renameSync(p + '.tmp', p);
-    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [对齐] 已用 Qwen3 对齐器补齐 ${changed}/${total} 段逐词时间`);
+    const segments = d.segments || [];
+    let pending = segments;
+    if (requireAll) {
+      const meta = readMeta(id);
+      const wav = safeProjectFile(id, meta?.audio?.file || 'audio.wav');
+      const muted = wav ? await detectMutedAudio(wav, meta?.duration) : [];
+      checkAsrOwner(id);
+      d.segments = segments.filter(segment => {
+        if (hasAlignedWords(segment) || !isMutedRange(segment, muted)) return true;
+        pushDraftLog(id, 'OpenAI 跳过静音分块 ' + openAiChunkRange(segment));
+        return false;
+      });
+      pending = d.segments.filter(segment => !hasAlignedWords(segment));
+    }
+    let result;
+    try {
+      if (requireAll && !d.segments.length) throw new Error('OpenAI 没有识别到语音');
+      if (pending.length || !requireAll) result = await alignAsrSegments(id, pending, requireAll);
+    } finally {
+      // Keep measured results when other blocks fail. A retry only aligns the remaining blocks.
+      if (result || (requireAll && (d.segments.length !== segments.length || pending.some(hasAlignedWords)))) {
+        checkAsrOwner(id);
+        fs.writeFileSync(p + '.tmp', JSON.stringify(d));
+        fs.renameSync(p + '.tmp', p);
+      }
+    }
+    const changed = result?.changed || 0;
+    const total = result?.total || 0;
+    if (changed) pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [对齐] 已用 Qwen3 对齐器补齐 ${changed}/${total} 段逐词时间`);
     return changed;
   }
 
@@ -8927,6 +8961,11 @@ function startPrepare(id, videoPath, mode) {
      tools/chunk_probe.mjs 能跑**同一份实现**做离线验证，而不是在探针里另抄一遍。 */
   /* durationSec: 音频总时长 —— 交给 parseSilences 收尾"末尾未闭合的静音"(不传时按 open+0.5 兜底) */
   const detectSilences = (wav, durationSec) => audioSlice.detectSilences(FFMPEG, wav, undefined, durationSec);
+  // Detect only near-digital silence before skipping full blocks. The regular silence
+  // scan also includes quiet audio and is used for cut points.
+  const detectMutedAudio = (wav, durationSec) => audioSlice.detectSilences(
+    FFMPEG, wav, undefined, durationSec, { nearDigital: true });
+  const isMutedRange = ({ start, end }, muted) => muted.some(s => s.start <= start && s.end >= end);
   const sliceAudio = (wav, start, end, out, asMp3) => audioSlice.sliceAudio(FFMPEG, wav, start, end, out, asMp3);
   /** 分片数据落盘（用户要的「返回分片数据」）：projects/<id>/asr-chunks.json + 草稿摘要 */
   function writeChunkReport(id, info) {
@@ -9134,7 +9173,10 @@ function startPrepare(id, videoPath, mode) {
     checkAsrOwner(id);
     signal?.throwIfAborted();
     const { OPENAI_CHUNK_SEC, OPENAI_MIN_CHUNK_SEC } = asrChunks;
-    const silences = duration >= OPENAI_CHUNK_SEC + OPENAI_MIN_CHUNK_SEC ? await detectSilences(wav, duration) : [];
+    const [silences, muted] = await Promise.all([
+      duration >= OPENAI_CHUNK_SEC + OPENAI_MIN_CHUNK_SEC ? detectSilences(wav, duration) : [],
+      detectMutedAudio(wav, duration),
+    ]);
     const plan = asrChunks.planOpenAiChunks(duration, silences);
     const perChunk = [];
     const report = { engine: 'openai-asr', duration, chunkSec: OPENAI_CHUNK_SEC, plan, perChunk,
@@ -9150,7 +9192,7 @@ function startPrepare(id, videoPath, mode) {
       } catch {}
     }
     const check = () => { checkAsrOwner(id); signal?.throwIfAborted(); };
-    const pending = () => plan.filter(c => !saved[c.index]?.text);
+    const pending = () => plan.filter(c => !perChunk[c.index].silence && !saved[c.index]?.text);
     const checkpoint = () => {
       if (!isDraft || signal?.aborted || shuttingDown || deletedProjects.has(id)) return;
       writeChunkReport(id, report);
@@ -9159,7 +9201,11 @@ function startPrepare(id, videoPath, mode) {
     };
     for (const { index, start, end } of plan) {
       const block = saved[index];
-      if (block?.text && block.detail?.model) {
+      if (isMutedRange({ start, end }, muted)) {
+        saved[index] = null;
+        perChunk[index] = { seconds: +(end - start).toFixed(3), attempts: [], segments: 0, textChars: 0, silence: true };
+        pushDraftLog(id, 'OpenAI 跳过静音分块 ' + openAiChunkRange({ start, end }));
+      } else if (block?.text && block.detail?.model) {
         perChunk[index] = block.detail;
       } else {
         saved[index] = null;
@@ -9266,7 +9312,8 @@ function startPrepare(id, videoPath, mode) {
         throw new Error(ranges + more + ' ' + message);
       }
       return {
-        segments: plan.map(({ index, start, end }) => ({ start, end, text: saved[index].text, words: [] })),
+        segments: plan.filter(c => !perChunk[c.index].silence)
+          .map(({ index, start, end }) => ({ start, end, text: saved[index].text, words: [] })),
         chunkReport: report,
       };
     } finally {

@@ -10,6 +10,7 @@
   "OpenAI 未返回转录文本，本地回退已关闭，请重试识别": "OpenAI 未返回转录文本，本地回退已关闭，请重试识别",
   "OpenAI 回退设置无效": "OpenAI 回退设置无效",
   "OpenAI 分块对齐失败": "OpenAI 分块对齐失败",
+  "OpenAI 跳过静音分块": "OpenAI 跳过静音分块",
   "OpenAI 转录失败": "OpenAI 转录失败",
   "OpenAI 音频分块处理或网络请求失败": "OpenAI 音频分块处理或网络请求失败",
   "OpenAI 请求超时": "OpenAI 请求超时",

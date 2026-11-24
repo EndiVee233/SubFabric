@@ -16,18 +16,24 @@ let spawnImpl = childProcess.spawn;
 function setSpawnImpl(fn) { if (typeof fn === 'function') spawnImpl = fn; }
 
 /** ffmpeg silencedetect 找静音区间；失败/超时返回 []（退化成名义切点，不阻塞识别） */
-function detectSilences(ffmpeg, wav, timeoutMs = 10 * 60 * 1000, durationSec = 0) {
+function detectSilences(ffmpeg, wav, timeoutMs = 10 * 60 * 1000, durationSec = 0, options = {}) {
+  // Only the near-digital scan is evidence for skipping a complete 16-bit PCM block.
+  const filter = options.nearDigital ? 'silencedetect=noise=-88dB:d=0.1' : 'silencedetect=noise=-35dB:d=0.35';
   return new Promise((resolve) => {
     let err = '';
     let p;
     try {
       p = spawnImpl(ffmpeg, ['-hide_banner', '-nostats', '-i', wav,
-        '-af', 'silencedetect=noise=-35dB:d=0.35', '-f', 'null', '-'], { windowsHide: true });
+        '-af', filter, '-f', 'null', '-'], { windowsHide: true });
     } catch { return resolve([]); }
     const t = setTimeout(() => { try { p.kill(); } catch {} }, timeoutMs);
     p.stderr.on('data', (d) => { if (err.length < 200000) err += String(d); });
     p.on('error', () => { clearTimeout(t); resolve([]); });
-    p.on('close', () => { clearTimeout(t); resolve(asrChunks.parseSilences(err, durationSec)); });
+    p.on('close', code => {
+      clearTimeout(t);
+      if (options.nearDigital && (code !== 0 || err.length >= 200000)) return resolve([]);
+      resolve(asrChunks.parseSilences(err, durationSec));
+    });
   });
 }
 

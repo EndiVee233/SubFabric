@@ -16,11 +16,17 @@ const server = await isolatedServer({
     const source = fs.readFileSync(file, 'utf8');
     const listen = 'server.listen(PORT, HOST,';
     assert.ok(source.includes(listen) && source.includes('const sliceAudio ='));
-    assert.ok(source.includes('const detectSilences ='));
+    assert.ok(source.includes('const detectSilences =') && source.includes('const detectMutedAudio ='));
     fs.writeFileSync(file, source.replace('const sliceAudio =', 'let sliceAudio =')
-      .replace('const detectSilences =', 'let detectSilences =').replace(listen, `
+      .replace('const detectSilences =', 'let detectSilences =')
+      .replace('const detectMutedAudio =', 'let detectMutedAudio =').replace(listen, `
 detectSilences = async wav => path.basename(path.dirname(wav)) === 'p-plain'
   ? [{ start: 71, end: 73 }, { start: 135, end: 137 }] : [];
+detectMutedAudio = async wav => {
+  const id = path.basename(path.dirname(wav));
+  if (id === 'p-muted' || id === 'p-muted-cached') return [{ start: 60, end: 120 }, { start: 150, end: 180 }];
+  return id === 'p-all-muted' ? [{ start: 0, end: 3 }] : [];
+};
 let currentProject = '';
 let parallelInFlight = 0, parallelPeak = 0;
 const parallelEvents = [];
@@ -101,7 +107,11 @@ draftAlignerReady = async () => !fs.existsSync(path.join(ROOT, 'without-aligner'
 realignPrep = async id => ({ meta: { id } });
 realignAlignBatch = async (prep, segments) => ({
   items: segments.map((seg, idx) => {
-    if (prep.meta.id === 'p-partial-align' && idx === 1) return { ok: false, words: [] };
+    if (prep.meta.id === 'p-partial-align') {
+      const retry = fs.existsSync(path.join(ROOT, 'align-fixed'));
+      if (retry && seg.start < 60) throw new Error('completed segment was aligned again');
+      if (!retry && idx === 1) return { ok: false, words: [], note: 'No measured word time' };
+    }
     const ws = seg.text.split(/ +/), start = seg.start + 0.1, step = (seg.end - start - 0.1) / ws.length;
     return { ok: true, words: ws.map((w, i) => ({ w, s: start + i * step, e: start + (i + 1) * step })) };
   }),
@@ -269,11 +279,26 @@ try {
   assert.equal(cached.draft.error, null);
   assert.equal(cached.draft.align, true);
   assert.ok(fs.existsSync(path.join(cached.dir, 'subtitle.ass')));
+  const muted = await draft('p-muted', { duration: 180 });
+  assert.equal(muted.draft.error, null);
+  assert.deepEqual(reportFor(muted.dir).map(x => x.silence || false), [false, true, false]);
+  assert.equal(reportFor(muted.dir)[1].attempts.length, 0);
+  const legacySegments = [0, 60, 120].map(start => ({ start, end: start + 60, text: 'Cached words.', words: [] }));
+  const mutedCache = await draft('p-muted-cached', { duration: 180, cachedSegments: legacySegments });
+  assert.equal(mutedCache.draft.error, null);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(mutedCache.dir, 'asr.json'), 'utf8')).segments
+    .map(s => Math.floor(s.start)), [0, 120]);
+  const allMuted = await draft('p-all-muted');
+  assert.match(allMuted.draft.error, /没有识别到语音/);
+  assert.equal(fs.existsSync(path.join(allMuted.dir, 'subtitle.ass')), false);
   const partial = await draft('p-partial-align', { duration: 120 });
-  assert.match(partial.draft.error, /分块对齐失败/);
+  assert.match(partial.draft.error, /分块对齐失败.*1:00–2:00/);
+  assert.match(fs.readFileSync(path.join(partial.dir, 'draft.log'), 'utf8'), /No measured word time/);
   assert.equal(fs.existsSync(path.join(partial.dir, 'subtitle.ass')), false);
-  assert.ok(JSON.parse(fs.readFileSync(path.join(partial.dir, 'asr.json'), 'utf8')).segments.every(s => !s.words.length),
-    'failed alignment preserves the original cached transcript for retry');
+  const partialAsr = path.join(partial.dir, 'asr.json');
+  const beforeRetry = JSON.parse(fs.readFileSync(partialAsr, 'utf8')).segments;
+  assert.deepEqual(beforeRetry.map(s => s.words.length), [2, 0], 'checkpoint aligned segments before returning the error');
+  assert.equal(beforeRetry[1].text, 'Hello world.', 'preserve the unaligned text for retry');
   const partialMetaFile = path.join(partial.dir, 'project.json');
   const oldMeta = JSON.parse(fs.readFileSync(partialMetaFile, 'utf8'));
   Object.assign(oldMeta.draft, { retries: 10, failedStage: '语义分句中' });
@@ -281,6 +306,11 @@ try {
   const skip = await post('/api/projects/p-partial-align/skip', {});
   assert.equal(skip.status, 400);
   assert.match((await skip.json()).error, /需要完成对齐/);
+  fs.writeFileSync(path.join(server.root, 'align-fixed'), '');
+  assert.equal((await post('/api/projects/p-partial-align/retry', {})).status, 200);
+  for (let i = 0; i < 120 && !fs.existsSync(path.join(partial.dir, 'subtitle.ass')); i++) await delay(25);
+  assert.ok(fs.existsSync(path.join(partial.dir, 'subtitle.ass')), 'resume with only the previously unaligned segment');
+  assert.deepEqual(JSON.parse(fs.readFileSync(partialAsr, 'utf8')).segments[0], beforeRetry[0]);
   const alignerOff = path.join(server.root, 'without-aligner');
   fs.writeFileSync(alignerOff, '');
   try {
@@ -296,6 +326,9 @@ try {
   assert.equal(calls.filter(c => c.project === 'p-empty' && c.start === 60).length, 4);
   assert.equal(calls.filter(c => c.project === 'p-quota').length, 1);
   assert.equal(calls.filter(c => c.project === 'p-plain').length, 5);
+  assert.deepEqual(calls.filter(c => c.project === 'p-muted').map(c => c.start).sort((a, b) => a - b), [0, 120]);
+  assert.equal(calls.filter(c => ['p-muted-cached', 'p-all-muted'].includes(c.project)).length, 0);
+  assert.equal(calls.filter(c => c.project === 'p-partial-align').length, 2);
   assert.equal(fs.existsSync(path.join(server.root, 'unexpected-cloud-calls.log')), false);
   assert.equal(server.output().includes(key), false);
   assert.deepEqual(await (await post('/api/asr/openai-key', { clear: true })).json(), { hasKey: false });
