@@ -1556,10 +1556,19 @@ export function sortRoles(roles) {
  * 服务端同款实现在 editor/llm-text.js 的 normalizeZhPunctuation;
  * tests/zh-punct-test.mjs 断言两者对同一语料输出一致, 防止再次分叉。
  * ──────────────────────────────────────────────────────────── */
+// The browser and service use the same token priority. URL punctuation is protected
+// inside the address, with trailing sentence punctuation eligible as a break point.
+const zhPunctuation = new RegExp([
+  /\{\\[^{}]*\}/,
+  /(?<![a-z\d])(?:(?:[a-z]\.)+[a-z]\.?|(?:ph\.d|ed\.d|[bm]\.sc|m\.eng|d\.phil|ll\.[bm]|mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|inc|ltd|fig)\.)(?!\.?[a-z\d])/,
+  /(?<address>(?<![a-z\d._-])(?:https?:\/\/(?:[a-z\d._~-]+|\[[a-f\d:]+\])|(?:[a-z\d](?:[a-z\d-]*[a-z\d])?\.)+[a-z]{2,63}(?![a-z\d_-]))(?::\d{1,5})?(?:[/?#][a-z\d._~:\/?#\[\]@!$&'()*+,;=%-]*)?)/,
+  /(?<separator>(?<!\d)[,.:]|[,.:](?!\d)|[，、。;!?]|\r?\n)/,
+].map(pattern => pattern.source).join('|'), 'gi');
+
 export function normalizeZhPunctuation(text) {
   return String(text == null ? '' : text)
-    .replace(/\{\\[^{}]*\}|(?<!\d)[,.:]|[,.:](?!\d)|[，、。;!?]|\r?\n/g,
-      part => part.startsWith('{') ? part : ' ')
+    .replace(zhPunctuation, (part, address, separator) =>
+      address ? address.replace(/[,.!?;:]+$/, ' ') : separator ? ' ' : part)
     .replace(/\{\\[^{}]*\}|[ \t]*\\N[ \t]*|[ \t]{2,}/g,
       part => part.startsWith('{') ? part : part.includes('\\N') ? '\\N' : ' ')
     .trim();

@@ -56,6 +56,14 @@ for (const [label, fn] of [['浏览器', N_JS], ['服务端', N_PY]]) {
     label + ': 半角句读形成空格断行点');
   ok(fn('版本1.21.4,花费1,000.50;12:30出发.') === '版本1.21.4 花费1,000.50 12:30出发',
     label + ': 保留版本、小数、千位分隔与数字时间');
+  ok(fn('看example.com,再找U.S.,然后问Dr. Smith.') === '看example.com 再找U.S. 然后问Dr. Smith',
+    label + ': 保留裸域名和英文缩写，外侧标点提供断行点');
+  ok(fn('访问https://example.com:8443/a,b?q=x:y;z=1#p,然后继续!')
+    === '访问https://example.com:8443/a,b?q=x:y;z=1#p 然后继续', label + ': 保留网址内部的标点');
+  ok(fn('参考e.g.或i.e.,也可看sub.example.org/path.') === '参考e.g.或i.e. 也可看sub.example.org/path',
+    label + ': 保留小写缩写和带路径的域名');
+  ok(fn('他拿到Ph.D.和B.Sc.,详情看u.s.example.com.') === '他拿到Ph.D.和B.Sc. 详情看u.s.example.com',
+    label + ': 多字母缩写与包含单字母子域的地址');
   ok(fn('Wait, what?') === 'Wait what', label + ': 译文中的半角句读统一处理');
   ok(fn('  前导与尾随  ') === '前导与尾随', label + ': 去首尾空白', JSON.stringify(fn('  前导与尾随  ')));
   ok(fn('换行\n接回') === '换行 接回', label + ': 真换行 → 空格', JSON.stringify(fn('换行\n接回')));
