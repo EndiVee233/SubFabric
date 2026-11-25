@@ -1183,7 +1183,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "4ff7d207f173b2aea6eaafc306285fcbf74cf1406b7ee1ed4271532fde136acf",
+      "sha256": "0f113a4dc9dfe83c48dbbd76779e5ad0ffb925f7227ca099ba118cbb832ba6cf",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1276,63 +1276,59 @@
           "method": "innerHTML"
         },
         {
-          "line": 1688,
+          "line": 1689,
           "method": "innerHTML"
         },
         {
-          "line": 1690,
+          "line": 1691,
           "method": "innerHTML"
         },
         {
-          "line": 1728,
+          "line": 1729,
           "method": "innerHTML"
         },
         {
-          "line": 1736,
+          "line": 1737,
           "method": "innerHTML"
         },
         {
-          "line": 1976,
+          "line": 1981,
           "method": "createElement"
         },
         {
-          "line": 1978,
+          "line": 1983,
           "method": "createElement"
         },
         {
-          "line": 1984,
+          "line": 1989,
           "method": "createElement"
         },
         {
-          "line": 1992,
+          "line": 1997,
           "method": "innerHTML"
         },
         {
-          "line": 2110,
+          "line": 2115,
           "method": "innerHTML"
         },
         {
-          "line": 2112,
+          "line": 2117,
           "method": "createElement"
         },
         {
-          "line": 2114,
+          "line": 2119,
           "method": "innerHTML"
         },
         {
-          "line": 2123,
+          "line": 2128,
           "method": "createElement"
         },
         {
-          "line": 2125,
+          "line": 2130,
           "method": "createElement"
         },
         {
-          "line": 2129,
-          "method": "createElement"
-        },
-        {
-          "line": 2131,
+          "line": 2134,
           "method": "createElement"
         },
         {
@@ -1340,235 +1336,239 @@
           "method": "createElement"
         },
         {
-          "line": 2152,
+          "line": 2141,
           "method": "createElement"
         },
         {
-          "line": 2271,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2337,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2384,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2388,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2398,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2412,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2561,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2664,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2677,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2681,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2692,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2787,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2815,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2864,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2961,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3012,
+          "line": 2157,
           "method": "createElement"
         },
         {
-          "line": 3016,
+          "line": 2276,
           "method": "innerHTML"
         },
         {
-          "line": 3085,
+          "line": 2342,
           "method": "innerHTML"
         },
         {
-          "line": 3118,
+          "line": 2389,
           "method": "innerHTML"
         },
         {
-          "line": 3137,
+          "line": 2393,
           "method": "innerHTML"
         },
         {
-          "line": 3252,
+          "line": 2403,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2417,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2566,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2669,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2682,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2686,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2697,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2792,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2820,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2869,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2966,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3017,
           "method": "createElement"
         },
         {
-          "line": 3255,
+          "line": 3021,
           "method": "innerHTML"
         },
         {
-          "line": 3305,
+          "line": 3090,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3123,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3142,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3257,
           "method": "createElement"
         },
         {
-          "line": 3309,
+          "line": 3260,
           "method": "innerHTML"
         },
         {
-          "line": 3337,
+          "line": 3310,
+          "method": "createElement"
+        },
+        {
+          "line": 3314,
           "method": "innerHTML"
         },
         {
-          "line": 3503,
+          "line": 3342,
           "method": "innerHTML"
         },
         {
-          "line": 3517,
+          "line": 3508,
           "method": "innerHTML"
         },
         {
-          "line": 3523,
+          "line": 3522,
           "method": "innerHTML"
         },
         {
-          "line": 3557,
+          "line": 3528,
           "method": "innerHTML"
         },
         {
-          "line": 3607,
+          "line": 3562,
           "method": "innerHTML"
         },
         {
-          "line": 3758,
+          "line": 3612,
           "method": "innerHTML"
         },
         {
-          "line": 3944,
+          "line": 3763,
           "method": "innerHTML"
         },
         {
-          "line": 4063,
+          "line": 3949,
           "method": "innerHTML"
         },
         {
-          "line": 4185,
+          "line": 4068,
           "method": "innerHTML"
         },
         {
-          "line": 4192,
+          "line": 4190,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4197,
           "method": "replaceChildren"
         },
         {
-          "line": 4526,
+          "line": 4531,
           "method": "replaceChildren"
         },
         {
-          "line": 4549,
+          "line": 4554,
           "method": "replaceChildren"
         },
         {
-          "line": 4550,
+          "line": 4555,
           "method": "createElement"
         },
         {
-          "line": 4601,
+          "line": 4606,
           "method": "innerHTML"
         },
         {
-          "line": 4704,
+          "line": 4709,
           "method": "innerHTML"
         },
         {
-          "line": 4705,
+          "line": 4710,
           "method": "innerHTML"
         },
         {
-          "line": 4720,
+          "line": 4725,
           "method": "innerHTML"
         },
         {
-          "line": 4823,
+          "line": 4828,
           "method": "createElement"
         },
         {
-          "line": 5095,
+          "line": 5100,
           "method": "innerHTML"
         },
         {
-          "line": 5097,
+          "line": 5102,
           "method": "createElement"
         },
         {
-          "line": 5099,
+          "line": 5104,
           "method": "innerHTML"
         },
         {
-          "line": 5639,
+          "line": 5646,
           "method": "innerHTML"
         },
         {
-          "line": 5642,
+          "line": 5649,
           "method": "innerHTML"
         },
         {
-          "line": 5660,
+          "line": 5667,
           "method": "innerHTML"
         },
         {
-          "line": 5663,
+          "line": 5670,
           "method": "innerHTML"
         },
         {
-          "line": 5692,
+          "line": 5699,
           "method": "innerHTML"
         },
         {
-          "line": 5914,
+          "line": 5921,
           "method": "createElement"
         },
         {
-          "line": 6475,
+          "line": 6484,
           "method": "innerHTML"
         },
         {
-          "line": 6616,
+          "line": 6625,
           "method": "innerHTML"
         },
         {
-          "line": 6616,
+          "line": 6625,
           "method": "innerHTML"
         },
         {
-          "line": 6868,
+          "line": 6877,
           "method": "innerHTML"
         },
         {
-          "line": 6885,
+          "line": 6894,
           "method": "innerHTML"
         }
       ],
@@ -2156,7 +2156,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "647b19803529acf7d51a57ac7267e74bab2fd27cab4e0f14d4dd8f1bc2daf01c",
+      "sha256": "4a85f22351a5065321a7e9000861448281fb13a9aa3e3781a8ea0b8bf9affacd",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2196,7 +2196,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "c9c5a9dcbc4dfa2f0ecc298a845e4b865a7d554b8dee4523641c5131d5ac1dd2",
+      "sha256": "cd87a1f5d6ab3b1870d6e95cd8181ed449042d3a2d7b11cff16b4c1320ab3b4f",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2274,9 +2274,11 @@
         "batch-back",
         "batch-clear",
         "batch-draft-overlay",
+        "batch-extreme-reseg",
         "batch-files",
         "batch-item-align",
         "batch-item-cancel",
+        "batch-item-extreme-reseg",
         "batch-item-model",
         "batch-item-name",
         "batch-item-ok",
@@ -2295,6 +2297,7 @@
         "batch-word",
         "bd-align",
         "bd-close",
+        "bd-extreme-reseg",
         "bd-list",
         "bd-model",
         "bd-speakers",
@@ -2582,6 +2585,7 @@
         "np-dl-msg",
         "np-elapsed",
         "np-eta",
+        "np-extreme-reseg",
         "np-file-pack",
         "np-file-sub",
         "np-hint",
@@ -2619,6 +2623,7 @@
         "np-remove-linebreaks",
         "np-row-align",
         "np-row-conf",
+        "np-row-extreme-reseg",
         "np-row-pack",
         "np-row-part",
         "np-row-region",

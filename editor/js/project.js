@@ -1652,6 +1652,7 @@ export function initProjects(ctx) {
           modelId,
           wordLevel: !!($('#bd-word') && $('#bd-word').checked),
           align: !!($('#bd-align') && $('#bd-align').checked),
+          extremeReseg: !!$('#bd-extreme-reseg')?.checked,
           speakers: !!($('#bd-speakers') && $('#bd-speakers').checked),
         } }),
       });
@@ -1761,6 +1762,7 @@ export function initProjects(ctx) {
       schemeId: ($('#batch-scheme') || {}).value || '',
       wordLevel: requested('#batch-word'),
       align: requested('#batch-align'),
+      extremeReseg: !!$('#batch-extreme-reseg')?.checked,
       speakers: !!($('#batch-speakers') && $('#batch-speakers').checked),
     };
   }
@@ -1773,6 +1775,7 @@ export function initProjects(ctx) {
       schemeId: item.schemeId || global.schemeId,
       wordLevel: !required && pick(item.wordLevel, global.wordLevel),
       align: required || pick(item.align, global.align),
+      extremeReseg: pick(item.extremeReseg, global.extremeReseg),
       speakers: pick(item.speakers, global.speakers),
     };
   }
@@ -1782,7 +1785,7 @@ export function initProjects(ctx) {
     for (const file of videos) {
       batchState.items.push({
         id: ++batchState.seq, file, name: file.name.replace(/\.[^.]+$/, ''), status: 'queued',
-        pct: 0, message: '', modelId: null, schemeId: null, wordLevel: null, align: null, speakers: null,
+        pct: 0, message: '', modelId: null, schemeId: null, wordLevel: null, align: null, speakers: null, extremeReseg: null,
       });
     }
     batchRender();
@@ -1798,6 +1801,7 @@ export function initProjects(ctx) {
     set('#batch-item-scheme', item.schemeId || '');
     set('#batch-item-word', item.wordLevel == null ? '' : (item.wordLevel ? '1' : '0'));
     set('#batch-item-align', item.align == null ? '' : (item.align ? '1' : '0'));
+    set('#batch-item-extreme-reseg', item.extremeReseg == null ? '' : (item.extremeReseg ? '1' : '0'));
     set('#batch-item-speakers', item.speakers == null ? '' : (item.speakers ? '1' : '0'));
     batchItemSyncAlignment();
     const ov = $('#batch-item-overlay'); if (ov) ov.hidden = false;
@@ -1814,6 +1818,7 @@ export function initProjects(ctx) {
     item.schemeId = ($('#batch-item-scheme') || {}).value || null;
     item.wordLevel = tri('#batch-item-word');
     item.align = tri('#batch-item-align');
+    item.extremeReseg = tri('#batch-item-extreme-reseg');
     item.speakers = tri('#batch-item-speakers');
     batchState.editing = null;
     const ov = $('#batch-item-overlay'); if (ov) ov.hidden = true;
@@ -1871,7 +1876,7 @@ export function initProjects(ctx) {
         }
         const payload = {
           name: item.name, video: { path: um.path, name: um.name || item.file.name }, draft: true,
-          modelId: opts.modelId, wordLevel: opts.wordLevel, align: opts.align,
+          modelId: opts.modelId, wordLevel: opts.wordLevel, align: opts.align, extremeReseg: opts.extremeReseg,
           speakers: opts.speakers && opts.wordLevel, speakerCount: 6, confidence: 'full',
         };
         if (payload.wordLevel || payload.align) payload.karaokeStyle = 'color';
@@ -5330,6 +5335,7 @@ async function renderAsrModels(providedStatus = null) {
     add('#np-row-word', !draft);
     add('#np-row-align', !draft || !!(word && word.checked));
     add('#np-row-conf', !draft);
+    add('#np-row-extreme-reseg', !draft);
     add('#np-row-spk', !draft);
     for (const sel of ['#np-voice-group', '#np-cast-group']) add(sel, !draft);
     return entries;
@@ -5533,6 +5539,7 @@ async function renderAsrModels(providedStatus = null) {
     syncRequiredAlignment($('#np-word'), $('#np-align'), false);
     $('#np-word').checked = true;
     $('#np-remove-linebreaks').checked = true;
+    $('#np-extreme-reseg').checked = false;
     $('#np-word-desc').textContent = '开启 → 生成 ASS 逐词字幕';
     if ($('#np-align')) { $('#np-align').checked = false; delete $('#np-align').dataset.touched; }
     delete $('#np-word').dataset.touched;
@@ -6127,6 +6134,7 @@ async function renderAsrModels(providedStatus = null) {
           draft: true,
           wordLevel: !!$('#np-word').checked,
           align: !!($('#np-align') && $('#np-align').checked),
+          extremeReseg: !!$('#np-extreme-reseg')?.checked,
           modelId: $('#np-model-sel') ? $('#np-model-sel').value : '',
           speakers: !!($('#np-speakers') && $('#np-speakers').checked),
           speakerCount: parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6,
@@ -6223,6 +6231,7 @@ async function renderAsrModels(providedStatus = null) {
         payload.draft = true;
         payload.wordLevel = !!$('#np-word').checked;
         payload.align = !!($('#np-align') && $('#np-align').checked);
+        payload.extremeReseg = !!$('#np-extreme-reseg')?.checked;
         payload.modelId = $('#np-model-sel') ? $('#np-model-sel').value : '';
         payload.speakers = !!($('#np-speakers') && $('#np-speakers').checked);
         payload.speakerCount = parseInt($('#np-spk-count') ? $('#np-spk-count').value : '', 10) || 6;

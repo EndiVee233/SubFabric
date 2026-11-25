@@ -38,9 +38,11 @@ const { punctPairsSane, LlmError } = require('./llm-text.js');
 
 /** LLM 允许返回的标点 */
 const SENT_PUNCT = new Set([',', '.', '?', '!', '…']);
+const EXTREME_PUNCT = new Set([...SENT_PUNCT, ';', ':', '—', '–']);
 
 /** 句末标点：一定切句 */
 const SENT_END_RE = /[.?!…]$/;
+const EXTREME_END_RE = /[,.;:?!…—–]$/;
 /** 句内停顿：只在整行过长时用来软折（逗号/分号/破折号） */
 const SOFT_END_RE = /[,;:—–]$/;
 
@@ -120,30 +122,54 @@ function repairFusedEnglishNumbers(segs) {
  *  其时间并入前一个词（前词 end 延到标点 end）。
  *  **整段没有 words 但有 text**（multitalker 的兜底段 / 云端某句没给词级时间）时，
  *  用整句当「一个词」补进来 —— 宁可切不细，也不能把这段文本丢掉。 */
-function flattenWords(segs) {
+function trailingPunctuation(token, marks) {
+  const match = String(token || '').match(/([,.;:?!…—–]+)(?:["'”’»\])}]*)$/);
+  if (!match) return '';
+  const mark = [...match[1]].reverse().find(p => marks.has(p));
+  return mark === '…' ? '.' : (mark || '');
+}
+
+function flattenWords(segs, extreme = false) {
   const words = [];
   for (const s of (segs || [])) {
     const before = words.length;
     for (const w of (s && s.words) || []) {
       if (!w) continue;
       const c = cleanWordText(w.word);
+      const punct = extreme ? trailingPunctuation(w.word, EXTREME_PUNCT) : '';
       if (!c) {
-        if (words.length) words[words.length - 1].end = Math.max(words[words.length - 1].end, w.end);
+        if (words.length) {
+          const prev = words[words.length - 1];
+          prev.end = Math.max(prev.end, w.end);
+          if (punct) prev.punct = punct;
+        }
         continue;
       }
-      words.push({ word: c, start: w.start, end: w.end });
+      words.push({ word: c, start: w.start, end: w.end, ...(punct ? { punct } : {}) });
     }
     if (words.length !== before) continue;                 // 这段有词级时间, 正常走
     const text = cleanWordText((s && s.text) || '');       // 只有标点的段不算内容, 丢掉无妨
     const start = Number(s && s.start), end = Number(s && s.end);
-    if (text && end > start) words.push({ word: text, start, end });
+    if (!text || !(end > start)) continue;
+    if (!extreme) { words.push({ word: text, start, end }); continue; }
+    // Text-only ASR has block timing. Use character offsets to place cue boundaries and
+    // keep these internal estimates out of exported word timings.
+    const body = String(s.text).trim();
+    const timeAt = offset => start + (end - start) * offset / body.length;
+    for (const token of body.matchAll(/\S+/g)) {
+      const word = cleanWordText(token[0]);
+      const punct = trailingPunctuation(token[0], EXTREME_PUNCT);
+      const endAt = timeAt(token.index + token[0].length);
+      if (word) words.push({ word, punct, start: timeAt(token.index), end: endAt, textBlock: s });
+      else if (punct && words.length > before) Object.assign(words.at(-1), { punct, end: endAt });
+    }
   }
   return words;
 }
 
 /** 兼容解析旧版 JSON 标点对 → 合法的 [[idx, punct], …]（升序、去重、范围校验）。
  *  默认纯文本格式由 parsePunctTextReply 解析；这里保留 JSON 仅用于旧模型/缓存兼容。 */
-function parsePunctReply(content, n) {
+function parsePunctReply(content, n, marks = SENT_PUNCT) {
   const { parseJsonArray } = require('./llm-text.js');
   const arr = parseJsonArray(content);
   if (!Array.isArray(arr)) return null;
@@ -153,7 +179,7 @@ function parsePunctReply(content, n) {
     const i = Number(it[0]);
     const p = String(it[1] || '').trim();
     if (!Number.isInteger(i) || i < 0 || i >= n) continue;
-    if (!SENT_PUNCT.has(p)) continue;
+    if (!marks.has(p)) continue;
     if (!seen.has(i)) seen.set(i, p === '…' ? '.' : p);   // 省略号按句号切
   }
   if (!seen.size) return null;
@@ -167,7 +193,7 @@ function parsePunctReply(content, n) {
  * `, . ? !`，程序再按词序映射回逐词时间轴。JSON 标点对仍由
  * parsePunctReply 兼容解析，便于旧模型/缓存平滑过渡。
  */
-function parsePunctTextReply(content, words, lo, hi) {
+function parsePunctTextReply(content, words, lo, hi, marks = SENT_PUNCT) {
   const { stripReasoning } = require('./llm-text.js');
   let text = stripReasoning(content);
   text = text.replace(/```(?:text|plaintext|markdown)?/gi, '').replace(/```/g, '').trim();
@@ -179,14 +205,6 @@ function parsePunctTextReply(content, words, lo, hi) {
     .replace(/^[.,!?;:…—–\-"'“”‘’(){}\[\]«»]+/, '')
     .replace(/[.,!?;:…—–\-"'“”‘’(){}\[\]«»]+$/, '')
     .toLowerCase();
-  const trailingPunct = (token) => {
-    const m = String(token || '').match(/([,.?!…]+)(?:["'”’»\])}]*)$/);
-    if (!m) return '';
-    const marks = m[1];
-    const end = [...marks].reverse().find(p => SENT_PUNCT.has(p));
-    return end === '…' ? '.' : (end || '');
-  };
-
   const tokens = text.match(/\S+/g) || [];
   const pairs = [];
   let si = 0;
@@ -197,13 +215,24 @@ function parsePunctTextReply(content, words, lo, hi) {
     if ((/^\d+$/.test(token) || /^\d+[.):、：-]$/.test(token))
       && si < src.length && Number(token.replace(/[.):、：-]$/, '')) === lo + si) continue;
     // 独立标点 token 贴回前一个词；模型偶尔会把句号单独换行。
-    if (/^[,.?!…]+$/.test(token)) {
-      const p = [...token].reverse().find(x => SENT_PUNCT.has(x));
-      if (p && si > 0) pairs.push([lo + si - 1, p === '…' ? '.' : p]);
+    if ([...token].every(mark => marks.has(mark))) {
+      if (si > 0) pairs.push([lo + si - 1, trailingPunctuation(token, marks)]);
       continue;
     }
-    if (si >= src.length || clean(token) !== clean(src[si].word)) return null;
-    const p = trailingPunct(token);
+    if (si >= src.length) return null;
+    const expected = clean(src[si].word);
+    if (marks === EXTREME_PUNCT && clean(token) !== expected) {
+      // Recover joined output such as "Wait,go!" only if the prefix is the exact source word.
+      const cut = [...token.matchAll(/[,.;:?!…—–]+(?=\p{L}|\d)/gu)]
+        .find(mark => clean(token.slice(0, mark.index)) === expected);
+      if (cut) {
+        const next = cut.index + cut[0].length;
+        tokens.splice(oi + 1, 0, token.slice(next));
+        token = token.slice(0, next);
+      }
+    }
+    if (clean(token) !== expected) return null;
+    const p = trailingPunctuation(token, marks);
     if (p) pairs.push([lo + si, p]);
     si++;
   }
@@ -215,10 +244,14 @@ function parsePunctTextReply(content, words, lo, hi) {
 }
 
 /** 把标点贴回词上（词尾直接拼，"pearl" → "pearl,"） */
-function applyPunct(words, pairs) {
+function applyPunct(words, pairs, extreme = false) {
   for (const [i, p] of (pairs || [])) {
-    if (words[i]) words[i].word += p;
+    if (words[i]) {
+      if (extreme) words[i].punct = p;
+      else words[i].word += p;
+    }
   }
+  if (extreme) for (const w of words) if (w.punct) w.word += w.punct;
   return words;
 }
 
@@ -262,13 +295,15 @@ function planBatches(words) {
  * opts.splitOnComma === true 恢复旧行为（遇到逗号也切），供 settings 回退。
  */
 function groupResegWords(words, opts) {
-  const splitOnComma = !!(opts && opts.splitOnComma);
+  const splitOnComma = !!opts?.splitOnComma;
+  const endMark = opts?.extreme ? EXTREME_END_RE : SENT_END_RE;
   const raw = [];
   let cur = [];
   for (const w of (words || [])) {
     if (cur.length) {
       const prev = cur[cur.length - 1];
-      const split = SENT_END_RE.test(prev.word)
+      const split = endMark.test(prev.word)
+        || prev.textBlock !== w.textBlock
         || (w.start - prev.end) > 0.8
         || (splitOnComma && /,$/.test(prev.word));
       if (split) { raw.push(cur); cur = []; }
@@ -379,7 +414,7 @@ function groupsToSegments(groups) {
     start: +ws[0].start.toFixed(3),
     end: +ws[ws.length - 1].end.toFixed(3),
     text: ws.map(w => w.word).join(' ').trim(),
-    words: ws.map(w => ({ word: w.word, start: +w.start.toFixed(3), end: +w.end.toFixed(3) })),
+    words: ws[0].textBlock ? [] : ws.map(w => ({ word: w.word, start: +w.start.toFixed(3), end: +w.end.toFixed(3) })),
   }));
   for (let i = 1; i < segs.length; i++) if (segs[i].start < segs[i - 1].end) segs[i].start = segs[i - 1].end;
   return segs;
@@ -412,7 +447,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
  *   · net/rate/timeout      → 指数退避（尊重 Retry-After）
  *   · format（解析不出来/密度异常）→ 换 strict 提示词再来
  */
-async function askBatch(chat, words, lo, hi, onProgress, label) {
+async function askBatch(chat, words, lo, hi, onProgress, label, extreme) {
+  const marks = extreme ? EXTREME_PUNCT : SENT_PUNCT;
   const n = words.length;
   const list = words.slice(lo, hi).map((w, k) => (lo + k) + ' ' + w.word).join('\n');
   // 输出长度按"每个词都可能被标点"估：模型在大喊大叫的段落会给出很密的标点对，
@@ -423,12 +459,13 @@ async function askBatch(chat, words, lo, hi, onProgress, label) {
   for (const s of ['', STRICT_PROMPT]) {
     for (let a = 0; a < 2; a++) {
       try {
-        const content = await chat([{ role: 'system', content: s || SYS_PROMPT }, { role: 'user', content: list }],
+        const prompt = (s || SYS_PROMPT) + (extreme ? ' Semicolons, colons and dashes may mark natural boundaries as well.' : '');
+        const content = await chat([{ role: 'system', content: prompt }, { role: 'user', content: list }],
           { maxTokens, kind: 'reseg' });
         // 首选纯文本解析；JSON 标点对作为兼容输入保留。
-        const pairs = parsePunctTextReply(content, words, lo, hi) || parsePunctReply(content, n);
+        const pairs = parsePunctTextReply(content, words, lo, hi, marks) || parsePunctReply(content, n, marks);
         if (!pairs) { lastErr = '未返回合法标点对: ' + String(content || '').slice(0, 160); }
-        else if (!punctPairsSane(pairs, hi - lo)) {
+        else if (!extreme && !punctPairsSane(pairs, hi - lo)) {
           lastErr = `标点密度异常（${pairs.length} 个标点 / ${hi - lo} 词）—— 疑似"每词都加逗号"，已丢弃`;
           dense = pairs;
           console.error('[reseg] ' + lastErr);
@@ -479,16 +516,16 @@ function findSplit(words, lo, hi) {
 /** 递归处理一个批次：失败就拆半（优先在停顿处拆），拆到 MIN_SPLIT_WORDS 为止。
  *  返回 { pairs[, salvaged][, partial] }（partial = 有一半没做出来，那半的词按停顿兜底）；
  *  两半都做不出来 → 返回 { failed: true }，由**调用方**决定这批怎么办（不再一路抛到顶）。 */
-async function resegRange(chat, words, lo, hi, depth, onProgress, label) {
-  const r = await askBatch(chat, words, lo, hi, onProgress, label);
+async function resegRange(chat, words, lo, hi, depth, onProgress, label, extreme) {
+  const r = await askBatch(chat, words, lo, hi, onProgress, label, extreme);
   if (r && !r.failed) return r;                        // { pairs } / { pairs, salvaged }
   const len = hi - lo;
   if (len > MIN_SPLIT_WORDS && depth < 4) {
     let cut = findSplit(words, lo, hi);
     if (cut < 0) cut = lo + Math.ceil(len / 2);
     console.error(`[reseg] 批次 ${label} 拆半重试：${lo}-${cut - 1} / ${cut}-${hi - 1}`);
-    const head = await resegRange(chat, words, lo, cut, depth + 1, onProgress, `${label}a`);
-    const tail = await resegRange(chat, words, cut, hi, depth + 1, onProgress, `${label}b`);
+    const head = await resegRange(chat, words, lo, cut, depth + 1, onProgress, `${label}a`, extreme);
+    const tail = await resegRange(chat, words, cut, hi, depth + 1, onProgress, `${label}b`, extreme);
     const bad = (x) => !x || x.failed;
     if (bad(head) && bad(tail)) return head || tail;   // 两半都不行 → 报失败（由调用方放弃这批）
     return {
@@ -510,9 +547,10 @@ async function resegRange(chat, words, lo, hi, depth, onProgress, label) {
  *  词太少(<8)跳过 LLM 标点处理；入口仍会先修复有明确边界特征的英数粘连。 */
 async function resegWithLLM(chat, segs, onProgress, opts) {
   const repairedSegs = repairFusedEnglishNumbers(segs);
-  const words = flattenWords(repairedSegs);
-  if (words.length < 8) return repairedSegs;
   const o = opts || {};
+  const words = flattenWords(repairedSegs, o.extreme);
+  if (words.length < 8) return o.extreme && words.length
+    ? groupsToSegments(groupResegWords(applyPunct(words, [], true), o)) : repairedSegs;
   const onLog = o.onLog || (() => {});
   const stats = o.stats || {};
   stats.skipped = stats.skipped || [];
@@ -523,7 +561,7 @@ async function resegWithLLM(chat, segs, onProgress, opts) {
   onLog(`切批方案：${words.length} 词 → ${batches.length} 批（批边界优先落在停顿处）`);
 
   // 断点续跑：上一轮已经做好的批次直接用（词表指纹对得上才算数）
-  const sig = wordsSig(words);
+  const sig = wordsSig(words) + (o.extreme ? '|extreme' : '');
   const ck = (typeof o.loadCheckpoint === 'function') ? o.loadCheckpoint() : null;
   const done = (ck && ck.words === words.length && ck.sig === sig && ck.batches) ? ck.batches : {};
   const doneIdx = Object.keys(done).filter(k => Array.isArray(done[k]));
@@ -541,7 +579,7 @@ async function resegWithLLM(chat, segs, onProgress, opts) {
       pairs = done[b];
     } else {
       try {
-        const r = await resegRange(chat, words, lo, hi, 0, onProgress, label);
+        const r = await resegRange(chat, words, lo, hi, 0, onProgress, label, o.extreme);
         if (r && r.failed) {
           stats.skipped.push({ label, err: r.err || '未知原因' });
           onLog(`批次 ${label} 没做出标点（${String(r.err || '').slice(0, 80)}），这些词按停顿兜底`);
@@ -574,9 +612,9 @@ async function resegWithLLM(chat, segs, onProgress, opts) {
   if (batches.length && stats.skipped.length === batches.length) {
     throw new LlmError(`语义分句失败（${batches.length} 批全部没做出标点）：${stats.skipped[0].err}`, 'format');
   }
-  applyPunct(words, allPairs);
-  const groups = mergeTinyFrags(groupResegWords(words, o));
-  return groupsToSegments(groups);
+  applyPunct(words, allPairs, o.extreme);
+  const groups = groupResegWords(words, o);
+  return groupsToSegments(o.extreme ? groups : mergeTinyFrags(groups));
 }
 
 module.exports = {

@@ -378,6 +378,25 @@ const mockChat = async () => '[[5, ","],[16, "."],[22, ","],[34, "."],[44, ","]]
     ok(out.reduce((n, s) => n + s.words.length, 0) === 204, '续跑结果词数守恒');
   }
 
+  {
+    const expected = ['Wait,', 'Go now.', 'Really?', 'Yes!', 'Stop;', 'please:', 'Thanks.'];
+    const words = 'Wait Go now Really Yes Stop please Thanks'.split(' ').map((word, i) => w(word, i * 0.2, i * 0.2 + 0.18));
+    const segs = [{ start: 0, end: 1.6, text: words.map(x => x.word).join(' '), words }];
+    const chat = async () => 'Wait,Go now. Really? Yes! Stop; please: Thanks…';
+    const result = await R.resegWithLLM(chat, segs, null, { extreme: true });
+    ok(JSON.stringify(result.map(s => s.text)) === JSON.stringify(expected),
+      '极端断句保留所有分隔符产生的短字幕，包括未加空格的逗号', JSON.stringify(result.map(s => s.text)));
+    ok(JSON.stringify(result.flatMap(s => s.words.map(x => [x.start,x.end]))) ===
+      JSON.stringify(words.map(x => [Number(x.start.toFixed(3)),Number(x.end.toFixed(3))])), '沿用原逐词时间');
+    const shortWords = [w('Wait,', 0, 0.2), w('go!', 0.3, 0.5)];
+    const short = await R.resegWithLLM(() => { throw Error('short ASR should not call LLM'); },
+      [{start:0,end:0.5,text:'Wait, go!',words:shortWords}], null, {extreme:true});
+    ok(short.length === 2 && short[0].text === 'Wait,', '短稿保留识别已有的标点边界');
+    const textOnly = await R.resegWithLLM(chat, segs.map(s => ({...s, words:[]})), null, {extreme:true});
+    ok(JSON.stringify(textOnly.map(s => s.text)) === JSON.stringify(expected) && textOnly.every(s => s.words.length === 0),
+      '块级转录按模型分句并保持无逐词时间', JSON.stringify(textOnly));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

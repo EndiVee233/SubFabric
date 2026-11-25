@@ -961,6 +961,7 @@
       <label class="bd-check"><input type="checkbox" id="bd-word" checked> 逐词</label>
       <label class="bd-check"><input type="checkbox" id="bd-align"> 对齐</label>
       <label class="bd-check"><input type="checkbox" id="bd-speakers"> 区分说话人</label>
+      <label class="bd-check"><input type="checkbox" id="bd-extreme-reseg"> 极端断句</label>
     </div>
     <div id="bd-list" class="bd-list"></div>
     <div id="bd-status" class="bd-status" hidden></div>
@@ -1572,7 +1573,7 @@
           <h3>默认设置</h3><p class="gl-hint">新加入队列的视频默认使用这里；每个视频也可以在列表里单独设置。</p>
           <div class="batch-setting"><label for="batch-model">识别模型</label><select id="batch-model"></select></div>
           <div class="batch-setting"><label for="batch-scheme">翻译方案</label><select id="batch-scheme"><option value="">跟随当前方案</option></select></div>
-          <div class="batch-checks"><label class="np-lbl-check"><input type="checkbox" id="batch-word" checked> 逐词</label><label class="np-lbl-check"><input type="checkbox" id="batch-align"> 对齐</label><label class="np-lbl-check"><input type="checkbox" id="batch-speakers"> 区分说话人</label></div>
+          <div class="batch-checks"><label class="np-lbl-check"><input type="checkbox" id="batch-word" checked> 逐词</label><label class="np-lbl-check"><input type="checkbox" id="batch-align"> 对齐</label><label class="np-lbl-check"><input type="checkbox" id="batch-speakers"> 区分说话人</label><label class="np-lbl-check"><input type="checkbox" id="batch-extreme-reseg"> 极端断句</label></div>
           <p class="gl-hint">识别模型与逐词/对齐/说话人按视频生效；翻译方案会在处理该视频前切换，全部结束后恢复原来的方案。</p>
         </section>
         <section class="st-card batch-help"><h3>处理顺序</h3><p>队列从上到下串行执行：上传 → 创建项目 → 识别 → 语义分句 → 翻译。一个视频失败不会中断后面的视频。</p></section>
@@ -1590,6 +1591,7 @@
     <div class="batch-setting"><label for="batch-item-scheme">翻译方案</label><select id="batch-item-scheme"><option value="">跟随默认</option></select></div>
     <div class="batch-setting"><label for="batch-item-word">逐词</label><select id="batch-item-word"><option value="">跟随默认</option><option value="1">开启</option><option value="0">关闭</option></select></div>
     <div class="batch-setting"><label for="batch-item-align">对齐</label><select id="batch-item-align"><option value="">跟随默认</option><option value="1">开启</option><option value="0">关闭</option></select></div>
+    <div class="batch-setting"><label for="batch-item-extreme-reseg">极端断句</label><select id="batch-item-extreme-reseg"><option value="">跟随默认</option><option value="1">开启</option><option value="0">关闭</option></select></div>
     <div class="batch-setting"><label for="batch-item-speakers">区分说话人</label><select id="batch-item-speakers"><option value="">跟随默认</option><option value="1">开启</option><option value="0">关闭</option></select></div>
     <div class="rn-actions"><button type="button" class="btn" id="batch-item-cancel">取消</button><button type="button" class="btn btn-accent" id="batch-item-ok">保存</button></div>
   </div>
@@ -1811,6 +1813,13 @@
             <label class="np-switch">
               <input type="checkbox" id="np-align">
               <span id="np-align-desc">不勾选逐词时可用；勾选 → 用对齐模型生成逐词 ASS</span>
+            </label>
+          </div>
+          <div class="np-file-row" id="np-row-extreme-reseg" hidden>
+            <span class="np-lbl">极端断句</span>
+            <label class="np-switch">
+              <input type="checkbox" id="np-extreme-reseg">
+              <span>遇到逗号、句号等英文分隔符就另起一条字幕</span>
             </label>
           </div>
           <div class="np-file-row" id="np-row-conf" hidden>

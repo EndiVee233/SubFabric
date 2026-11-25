@@ -131,8 +131,8 @@ const PORT = (() => {
   return process.env.PORT ? Number(process.env.PORT) : 8321;
 })();
 const HOST = '127.0.0.1';
-const APP_VERSION = 'beta 1.5.17.1'; // 产品显示版本
-const APP_FILE_VERSION = '1.5.17.1'; // Windows PE 文件版本，仅允许四段数字
+const APP_VERSION = 'beta 1.5.18.1'; // 产品显示版本
+const APP_FILE_VERSION = '1.5.18.1'; // Windows PE 文件版本，仅允许四段数字
 
 /* ── 子进程登记表 ──────────────────────────────────────────────
  * ffmpeg(抽音频/波形)、Python 识别(可能占着几 GB 显存)、PowerShell 选择文件对话框,
@@ -8503,7 +8503,8 @@ function startPrepare(id, videoPath, mode) {
           segs = await resegMod.resegWithLLM(
             (messages, o) => llmChat(cfgR, messages, o).then(r => r.content), segs,
             (frac, msg) => setRr({ stage: '语义分句中', progress: 72 + Math.round((frac || 0) * 3), message: msg || '语义分句中 …' }),
-            { splitOnComma: resegSplitOnComma(), onLog: (m) => setRr({ message: '语义分句中 … ' + m }) });
+            { extreme: readMeta(id)?.draft?.extremeReseg === true, splitOnComma: resegSplitOnComma(),
+              onLog: (m) => setRr({ message: '语义分句中 … ' + m }) });
           setRr({ message: `语义分句完成：${before} 行 → ${segs.length} 行` });
         } catch (e) {
           setRr({ message: '语义分句失败，按标点/停顿兜底：' + String((e && e.message) || e).slice(0, 80) });
@@ -8796,10 +8797,11 @@ function startPrepare(id, videoPath, mode) {
     // 进度条与服务端流水线的顺序一致(识别 → 语义分句 → 说话人分离 → 翻译), 而且不许倒退:
     // 语义分句占 76~82, 说话人分离接在 82 之后; 从当前值接着走, 绝不硬跳回 76。
     const curDraft = (readMeta(id) || {}).draft || {};
+    const extreme = curDraft.extremeReseg === true;
     const base = Math.max(76, Math.min(Number(curDraft.progress) || 0, 80));
     const span = Math.max(1, 82 - base);
     setDraft(id, { status: 'running', stage: STAGE.reseg, progress: base, message: '语义分句中 …', error: null, failedStage: '' });
-    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（LLM 补标点 → 按逗号/句号切句）`);
+    pushDraftLog(id, `[${new Date().toLocaleTimeString()}] 开始语义分句（${extreme ? '极端断句' : '按句末标点切句'}）`);
     const p = path.join(projDir(id), 'asr.json');
     const data = JSON.parse(fs.readFileSync(p, 'utf8'));
     const before = (data.segments || []).length;
@@ -8828,7 +8830,7 @@ function startPrepare(id, videoPath, mode) {
       data.segments || [],
       (frac, msg) => setDraft(id, { stage: STAGE.reseg, progress: base + Math.round((frac || 0) * span), message: msg || '语义分句中 …' }),
       {
-        splitOnComma: resegSplitOnComma(),
+        extreme, splitOnComma: resegSplitOnComma(),
         model: cfg.model,
         stats, loadCheckpoint, saveCheckpoint,
         onLog: (m) => pushDraftLog(id, `[${new Date().toLocaleTimeString()}] [分句] ${m}`),
@@ -9366,6 +9368,7 @@ function startPrepare(id, videoPath, mode) {
       status: 'running', stage: STAGE.extract, progress: 3, message: '准备创建初稿…',
       wordLevel: plan.wordLevel, align: plan.align, lines: 0, words: 0,
       translated: false, needTranslate: false,
+      extremeReseg: o.extremeReseg === true,
       ...draftKaraokeOptions(o, plan.wordLevel),
       modelId: model.id, engine: model.engine || '',
       speakers: wantSpeakers, speakerCount: wantSpeakers ? speakerCount : 0,
@@ -12002,6 +12005,7 @@ function handleProjectsRoutes(req, res, u) {
           draft: {
             status: 'running', stage: FETCH_STAGE, progress: 1, message: '准备下载…', error: null,
             wordLevel: wordLevelF, align: planF.align, lines: 0, words: 0, translated: false, needTranslate: false,
+            extremeReseg: data.extremeReseg === true,
             ...draftKaraokeOptions(data, wordLevelF),
             modelId: mF.id, engine: mF.engine || '',
             speakers: wantSpkF, speakerCount: wantSpkF ? spkCountF : 0,
@@ -12105,6 +12109,7 @@ function handleProjectsRoutes(req, res, u) {
           status: 'running', stage: STAGE.extract, progress: 3,
           message: '提取音频与波形…', wordLevel: draftPlan ? draftPlan.wordLevel : false, align: draftPlan ? draftPlan.align : false, lines: 0, words: 0,
           translated: false, needTranslate: false,
+          extremeReseg: data.extremeReseg === true,
           ...karaoke,
           modelId: draftModel ? draftModel.id : null,
           engine: draftModel ? (draftModel.engine || '') : '',

@@ -628,6 +628,9 @@
   与字幕错位。旧 `peaks.bin` 由 `metaView` 的 `peaksCoversAudio` 对照同项目 `audio.wav` 字节数校验：
   覆盖时长短超过 0.3% 即 `hasPeaks=false`，打开项目时自动走 prepare 重提取（不会误伤音轨本身比视频短的项目）。
   `tests/peaks-span-test.mjs` 覆盖 160 采样/桶、末尾残桶与真实项目短包络判定，`tools/peaks_e2e.mjs` 覆盖桶覆盖时长。
+- **极端断句**：项目初稿 `draft.extremeReseg` 选择启用。映射模型补出的英文逗号、句号、问号、感叹号、
+  分号、冒号、破折号和省略号后，在每个边界另起一条字幕，并保留由此得到的单词短行。保留逐词时间，
+  仅有块级时间时按文本位置估算句级时间。普通分句仍按原规则工作。
 - **语义分句的短碎片（2026-10-23 修）**：`groupResegWords` 只按句末标点 / >0.8s 停顿断句，
   之后 `mergeTinyFrags` 处理 <2 词且 <1s 的碎片：按**前后空档**决定并入哪一侧
   （句内词间停短、句间停长），离上一句更近就并回上一句；首组只能并进下一句、末组并回上一句。
@@ -762,6 +765,8 @@
   选区重识别使用同一规则，让字幕渲染器在这些空格处断行。网址、域名和带点的英文缩写保留原文。
 
 ## 4. 前端与主题
+
+- **初稿极端断句**：新建初稿和批量建稿可勾选「极端断句」。批量队列可设置默认值并按稿件覆盖。
 
 - **既有 ASS 的中文译文**：载入整句轨时同步归一标点。保留英文原文、逐词样式、角色标签、ASS 覆盖标签与手动换行。
   归一后的改动沿用项目自动保存，保存目标为项目内的字幕副本。
@@ -2389,9 +2394,9 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
   输出 `build/electron-stage/{payload,manifest.json,node.exe}`；随包真实 Node 限定 22.12+ 的 22.x
   （当前 `22.22.2`，可用 `SUBFABRIC_NODE` 指定），manifest 记录版本与逐文件 SHA-256。
 - **产品与版本**：产品 `SubFabric`，appId `com.endivee233.subfabric`；
-  `APP_VERSION = 'beta 1.5.17.1'`、`APP_FILE_VERSION = '1.5.17.1'`、npm version `1.5.17-beta.1`。
+  `APP_VERSION = 'beta 1.5.18.1'`、`APP_FILE_VERSION = '1.5.18.1'`、npm version `1.5.18-beta.1`。
   `stage.mjs` 检查子包与后端版本匹配；安装文件名配置同步为
-  `build/electron/build-<id>/SubFabric-1.5.17.1-setup.exe`；`build/electron/latest-build.json`
+  `build/electron/build-<id>/SubFabric-1.5.18.1-setup.exe`；`build/electron/latest-build.json`
   记录最新成功安装包路径与 SHA-256，版本推进沿用下述四段规则。
   旧 `.iss` 版本仅在构建旧链路时同步，不是 Electron 主构建入口。
 - **可自动更新的 Release**：发布 `v<主>.<次>.<补丁>` 或 `v<主>.<次>.<补丁>-beta.<序号>`，
