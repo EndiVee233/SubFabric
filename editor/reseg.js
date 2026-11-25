@@ -302,9 +302,13 @@ function groupResegWords(words, opts) {
   for (const w of (words || [])) {
     if (cur.length) {
       const prev = cur[cur.length - 1];
+      const gap = w.start - prev.end;
+      // Text-only blocks have estimated positions, so use the shorter pause threshold
+      // only for measured word timings. Allow for floating-point roundoff at 0.5 s.
+      const splitForPause = opts?.extreme && !w.textBlock ? gap > 0.5 + 1e-9 : gap > 0.8;
       const split = endMark.test(prev.word)
         || prev.textBlock !== w.textBlock
-        || (w.start - prev.end) > 0.8
+        || splitForPause
         || (splitOnComma && /,$/.test(prev.word));
       if (split) { raw.push(cur); cur = []; }
     }

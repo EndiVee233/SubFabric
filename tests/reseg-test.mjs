@@ -93,6 +93,15 @@ ok(g1b.length === 3, 'splitOnComma:true 可恢复"逗号也切"的旧行为', JS
 /* 兜底: 无标点但停顿>0.8s */
 const g2 = R.groupResegWords([w('a', 0, 0.3), w('b', 0.3, 0.6), w('c', 1.6, 1.9)]);
 ok(g2.length === 2, 'groupResegWords 停顿>0.8s兜底');
+const pauseWords = [w('one', 0, 0.57), w('two', 1.07, 1.2), w('three', 1.699, 1.9), w('four', 2.401, 2.6)];
+const extremePauses = R.groupResegWords(pauseWords, { extreme: true });
+ok(extremePauses.length === 2 && extremePauses[0].length === 3 && extremePauses[1][0] === pauseWords[3],
+  '极端断句只在实际词间停顿超过 0.5 秒时切分，恰好 0.5 秒不切');
+ok(R.groupResegWords(pauseWords).length === 1, '普通断句仍使用 0.8 秒停顿门槛');
+const estimatedBlock = {};
+const estimatedPauses = pauseWords.map(word => ({ ...word, textBlock: estimatedBlock }));
+ok(R.groupResegWords(estimatedPauses, { extreme: true }).length === 1,
+  '块级估算时间不触发 0.5 秒实际停顿规则');
 
 /* 兜底: 无标点持续语流超10s（现在走"软折"而不是硬切） */
 const cont = Array.from({ length: 24 }, (_, i) => w('w' + i, i * 0.5, i * 0.5 + 0.4));
