@@ -1381,11 +1381,13 @@
         <p class="workload-note">最轻的非零分段 = 1；零修改段 = 0。缺置信度的句子不参与估算。</p>
         <div id="workload-summary" class="workload-summary" aria-live="polite"></div>
         <p id="workload-status" class="workload-note" role="status"></p>
-        <div class="workload-legend"><span>较少</span><i></i><span>较多</span></div>
-        <div id="workload-list" class="workload-list"></div>
+        <div class="workload-standard-row"><label for="workload-chart-type">图表类型</label><select id="workload-chart-type" class="select"><option value="line">折线图</option><option value="bar">柱状图</option><option value="hidden">隐藏图表</option></select></div>
+        <figure id="workload-chart" class="workload-chart" hidden></figure>
         <div id="workload-pager" class="workload-pager" hidden>
           <button type="button" id="workload-previous" class="btn btn-mini">上一页</button><span id="workload-page"></span><button type="button" id="workload-next" class="btn btn-mini">下一页</button>
         </div>
+        <div class="workload-legend"><span>较少</span><i></i><span>较多</span></div>
+        <div id="workload-list" class="workload-list"></div>
       </div>
     </details>
 

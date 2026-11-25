@@ -132,7 +132,7 @@
 | `desktop/bilibili-login.cjs` | 在 Electron 独立会话中打开 bilibili 官方登录页，递交该会话的登录态并在结束时清理会话 |
 | `editor/server.js` | 后端全部逻辑的单一文件：安全守卫、薄分发器 + 8 段路由、项目系统、下载/prepare/ASR/翻译流水线、识别并发队列、退出；浏览器入口保留旧托盘，Electron 模式通过 IPC 报告就绪、转接 Windows 更新状态与指令 |
 | `editor/studio.html` | 唯一生产界面入口，由 `tools/templates/studio.html` 经 `node tools/generate-studio.mjs` 逐字节生成 |
-| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 稿件详情只读控制器）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
+| `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 稿件详情卡片和图表）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/js/project.js`、`editor/js/studio.js`、`editor/js/storage.js` | 桌面设置的业务表单与热词自动保存、设置分类和路由、存储扫描与清理界面 |
 | `editor/js/effect-schemes.js`、`editor/js/subtitle-scheme-preview.js`、`editor/js/postprocess.js` | 桌面字幕方案管理与选择、示例视频的 libass 预览、稿件快照归一化与 ASS 后处理 |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
@@ -374,6 +374,7 @@
 - **分段工作量预测数据**：展开稿件详情中的预测区才读取项目字幕，复用 ASS 双语整句分组和
   `SubFabricConfidence` 注释解析，不按双语行或逐词事件重复计数，不请求操作日志、LLM 或识别模型。
   缺失/非法评分单列；没有评分的 SRT/外部 ASS 显示无可用置信度。
+  折线图和柱状图读取同一份分段估算，使用全稿最大值和相对基准。
   服务端仅在 `STATIC_RESOURCES` 明确加入两个新 ESM 文件，不扩大其它静态文件访问范围；无新增后端接口或依赖。
   **精翻标准日志提交校准（2026-11-08，已完成且已验证；已实装，见 §6）**：用户提供精校前两小时 ASS 与外部 JSONL
   历史日志，对照安装版最新生成的同视频 WhisperX 初稿。仅取起点 <7200s 的 2,200 句（均有评分、未启用分离），
@@ -904,6 +905,11 @@
   全零时统一 0，未知段与空白段不进入基准。每段详情列出五档句数、纳入预测数及缺评分数。
   条宽按全稿最大预计次数缩放，颜色按全稿非零最小/最大值在 success → warning → danger 主题色间插值，
   不把翻页后的局部段重新归一化；零次条不填充。每页显示 20 段，时间按钮复用现有播放定位。
+  **工作量图表（2026-11-25，已完成且已验证）**：图表位于分段卡片上方，可切换折线图（默认）、柱状图或隐藏。
+  类型随现有偏好保存，切换时保留当前页。图表直接使用卡片的分段结果，横轴随当前页翻动，纵轴按全稿范围，
+  随显示方式切换次数或倍率。无法估算的分段留空、折线断开，有效零值仍在基线上显示。
+  Node 22 的五组定向回归和隔离 Chromium 的 310px 面板交互通过；首次接口测试在沙箱回环连接处超时，
+  放行隔离回环后复跑通过。本次未跑全量回归或构建安装包。
   卡片用原生 `details/summary`，默认折叠，仅显示时间段、进度条、当前选择的倍率或次数；点击摘要/进度条或
   聚焦摘要按 Enter 展开详情，时间按钮只定位、不切换展开。默认勾选「默认折叠分段详情」，可取消并记住偏好；
   每次重新展开预测区按该选项重置，当前访问中的手动展开跨重算/翻页保留，改变分段时长时重置。

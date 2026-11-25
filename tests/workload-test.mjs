@@ -44,6 +44,11 @@ const defaults = workloadOptions(null);
 assert.equal(defaults.mode, 'relative'); assert.equal(defaults.minutes, 10); assert.equal(defaults.threshold, 90);
 assert.equal(defaults.collapseDetails, true); assert.equal(defaults.bandsVersion, 2);
 assert.equal(defaults.standard, 'precise');
+assert.equal(defaults.chart, 'line');
+assert.equal(workloadOptions({ chart: 'invalid' }).chart, 'line');
+for (const chart of ['line', 'bar', 'hidden']) {
+  assert.equal(workloadOptions(JSON.parse(JSON.stringify(workloadOptions({ chart })))).chart, chart);
+}
 assert.equal(workloadOptions({standard:'unknown'}).standard, 'precise');
 assert.equal(workloadOptions({standard:'regular'}).standard, 'regular');
 assert.deepEqual(workloadOptions({regularWeights:{'70to80':7}}).regularWeights, defaults.regularWeights);

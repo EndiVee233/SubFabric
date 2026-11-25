@@ -714,6 +714,15 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .workload-weight { display:flex; flex-direction:column; gap:5px; min-width:0; color:var(--text-1); font-size:11px; }
 .workload-weight .select { width:100%; min-width:0; font-size:12px; }
 .workload-summary { color:var(--text-0); font-size:13px; font-weight:600; line-height:1.7; }
+.workload-chart { margin:0 0 12px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--bg-2); }
+.workload-chart figcaption { font-size:12px; color:var(--text-1); }
+.workload-chart svg { display:block; width:100%; height:auto; max-height:220px; margin-top:6px; }
+.workload-chart svg text { fill:var(--text-2); font-size:12px; font-variant-numeric:tabular-nums; }
+.workload-chart-grid { stroke:var(--border); }
+.workload-chart-series { color:var(--accent-text,var(--accent)); }
+.workload-chart-series :is(circle,rect) { fill:currentColor; }
+.workload-chart-series path { fill:none; stroke:currentColor; stroke-width:2; }
+.workload-chart .workload-note { margin:4px 0 0; }
 .workload-legend { display:flex; align-items:center; gap:8px; margin:12px 0; color:var(--text-2); font-size:11px; }
 .workload-legend i { flex:1; height:5px; border-radius:5px; background:linear-gradient(90deg,var(--success),var(--warning),var(--danger)); }
 .workload-list { display:flex; flex-direction:column; gap:10px; }
@@ -735,7 +744,7 @@ select.btn option { background: var(--bg-3); color: var(--text-0); }
 .workload-counts > span { display:flex; justify-content:space-between; gap:4px; padding:5px 6px; min-width:0; border:1px solid var(--border); border-radius:5px; color:var(--text-2); font-size:10px; font-variant-numeric:tabular-nums; }
 .workload-counts b { color:var(--text-0); font-weight:600; }
 .workload-pager { display:flex; justify-content:space-between; align-items:center; gap:8px; margin:12px 0; font-size:11px; color:var(--text-1); }
-.sf-studio[data-design=uwp] :is(.workload-estimates,.workload-card,.workload-meter,.workload-counts > span) { border-radius:2px; }
+.sf-studio[data-design=uwp] :is(.workload-estimates,.workload-card,.workload-meter,.workload-chart,.workload-counts > span) { border-radius:2px; }
 @container (max-width:320px) {
   .workload-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .workload-controls > label:last-child { grid-column:1/-1; }

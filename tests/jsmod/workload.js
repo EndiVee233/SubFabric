@@ -49,6 +49,7 @@ export function workloadOptions(value = {}) {
     minutes: [5, 10, 20].includes(value.minutes) ? value.minutes : 10,
     threshold: [75, 90, 100].includes(value.threshold) ? value.threshold : 90,
     mode: value.mode === 'operations' ? 'operations' : 'relative',
+    chart: ['bar', 'hidden'].includes(value.chart) ? value.chart : 'line',
     standard: value.standard === 'regular' ? 'regular' : 'precise', weights, regularWeights,
   };
 }

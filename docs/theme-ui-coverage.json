@@ -12,7 +12,7 @@
     },
     {
       "file": "editor/css/studio.css",
-      "sha256": "92d19d4ef53d349440783d0f5aeb641dda5743c12c6ea0fe3174a950b44a8e44",
+      "sha256": "e203066606633321c50943f9de9535b749ef3fb0f07271018308464888e02ed9",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2119,20 +2119,28 @@
     },
     {
       "file": "editor/js/workload-panel.js",
-      "sha256": "f02e9d39f0a48c3070df96c310264114b6fe7bf799d1a6066029b52df64f356f",
+      "sha256": "83b0328fb312185b4589a8742955f2f5491340cd11edf8043ceb2778ae2fd1b5",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [
         {
-          "line": 29,
+          "line": 78,
           "method": "innerHTML"
         },
         {
-          "line": 64,
+          "line": 113,
           "method": "replaceChildren"
         },
         {
-          "line": 70,
+          "line": 114,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 121,
+          "method": "innerHTML"
+        },
+        {
+          "line": 123,
           "method": "innerHTML"
         }
       ],
@@ -2140,7 +2148,7 @@
     },
     {
       "file": "editor/js/workload.js",
-      "sha256": "5b588bdd2568907e9b3cbc3edcdb3654b9dd3eb7f86c31e9c7257fe14c0ae299",
+      "sha256": "7122e97e139ce8d50d116e5a2f5b0c95bd3f49bee51ad1b293c34c173d92c1cf",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2156,7 +2164,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "8c31b0d27d472216c5970c6ad94ee339a296b5668a55fcc3ea4be0a0768c003f",
+      "sha256": "64610d4fac20025926ed12a3922ce554e59f2c81405794faeb515cfffc97a7a5",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2196,7 +2204,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "c1c813bee0c274703f6f69435bff7d514b61c7f82a8a035ed8dc0da707232b21",
+      "sha256": "d5bccf067be55a60a0e0d866fb55c1910cc800c08b2ccb5d662f93d3a89badfb",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -3166,6 +3174,8 @@
         "word-convert-loading",
         "word-convert-scope",
         "word-convert-style",
+        "workload-chart",
+        "workload-chart-type",
         "workload-collapse",
         "workload-list",
         "workload-minutes",
