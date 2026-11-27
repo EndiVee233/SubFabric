@@ -135,6 +135,7 @@
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 稿件详情卡片和图表）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/js/project.js`、`editor/js/studio.js`、`editor/js/storage.js` | 桌面设置的业务表单与热词自动保存、设置分类和路由、存储扫描与清理界面 |
 | `editor/js/effect-schemes.js`、`editor/js/subtitle-scheme-preview.js`、`editor/js/postprocess.js` | 桌面字幕方案管理与选择、示例视频的 libass 预览、稿件快照归一化与 ASS 后处理 |
+| `editor/collab-session.js` | 联机编辑会话核心，维护条目映射、版本、租约与回执。写入由调用方提供，目前尚未接到服务路由。 |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
@@ -151,6 +152,8 @@
 | `eslint.config.js` | ESLint 9 flat config，仅开发/CI 期使用，不是运行时依赖 |
 
 ## 3. 后端与数据流
+
+- **联机编辑接线**：联机编辑会话核心通过同步持久化回调比较稿件原文，内容有变才原子替换。替换成功后才推进版本并记录回执；当前仅有隔离回归调用，现有项目保存 API 仍沿用原路径。
 
 - **关注的主播**：`GET/PUT /api/youtube/channels` 读取或更新本机 `asr/settings.json` 的
   `youtubeChannels`。配置缺失时沿用原四个频道，明确存空数组时保留空名单。允许 YouTube 的 @账号、
@@ -767,6 +770,8 @@
   选区重识别使用同一规则，让字幕渲染器在这些空格处断行。网址、域名和带点的英文缩写保留原文。
 
 ## 4. 前端与主题
+
+- **联机编辑接线**：字幕列表提交、整句拖动和手动逐词拖动调用 karaoke.js / srt.js 的共享文档编辑函数。渲染、日志、自动保存与跨句重叠处理仍由 main.js 编排。
 
 - **初稿极端断句**：新建初稿和批量建稿可勾选「极端断句」。批量队列可设置默认值并按稿件覆盖。
 
@@ -2580,7 +2585,11 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 
 ### 局域网联机编辑（设计草案）
 
-**实现状态：未开始。** 一位主机打开现有稿件并邀请成员。主机与成员在同一份稿件上校对字幕，
+**实现状态：进行中。** 单机共享编辑函数及 SEA 加载检查已完成且已验证。阶段 1 已有会话核心，
+支持稳定条目 ID、写入租约、条目版本、重复回执和写盘后的版本更新。浏览器与主机的会话接线、撤销重做、
+旧稿件写入守卫、双窗口和 LAN 验收待完成。当前会话核心拒绝不能保真往返的 SRT 和无法稳定映射的 ASS。
+
+**产品目标。** 一位主机打开现有稿件并邀请成员。主机与成员在同一份稿件上校对字幕，
 各自播放、定位和缩放时间轴。主机服务是唯一写入者，所有在线编辑都走同一提交队列。
 首版目标为 Windows 桌面主机（Electron 或源码服务）和桌面浏览器成员，单主机进程一个房间，
 每房最多 5 人（含主机）。入口放在稿件编辑器；房间内显示连接、谁在编辑哪句、待保存数量与恢复入口。
@@ -2690,8 +2699,7 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 隔离测试走 `tests/helpers/isolated-server.mjs` 与 `tests/run-all.mjs`。除正常路径外，必须注入
 「写盘前失败」「写盘后、回执前断线」「重复请求并发抵达」「快照到订阅间产生新提交」「租约过期后迟到提交」
 及「主机提交时旧窗口发出整稿保存」。断言稿件落盘与在线版本收敛、已确认修改在强制结束进程后仍在、
-未确认修改可恢复、其他条目不串写、导出固定于选定版本、越权请求无副作用。本节仅核对设计与源码接点，
-功能和实机验收尚未执行。
+未确认修改可恢复、其他条目不串写、导出固定于选定版本、越权请求无副作用。当前回归由两个独立成员身份验证不同条目可提交、同条抢锁、序列化重排后 ID 不变、写失败不推进版本及丢失回执后安全重试。未运行双窗口和 LAN 实机验收。
 
 ### Android 产品范围（0.14.0）
 

@@ -1,6 +1,6 @@
 /** 主逻辑: 状态管理 + 视频/字幕加载 + 各模块联动 */
 import { fmtTime, parseTime, escapeHtml } from './util.js';
-import { parseSRT, serializeSRT, splitBilingual } from './srt.js';
+import { parseSRT, serializeSRT, splitBilingual, editSrtCue } from './srt.js';
 import { AssDoc, assPlainText, isAssSubtitle, assStylePresetOf, parseAssStylePreset, applyAssStylePreset, findStyleForLang } from './ass.js';
 import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpecs, buildCleanAss, buildSpeakerAss, buildLangAss, sameTime, sentenceFromEvent, assColorToHex, speakerColorOf, speakerTagOf, speakerTextTagOf, HIGHLIGHT_COLORS, replaceWordHighlightColor, replaceKaraokeBaseColor, replaceKaraokeTag, normalizeRoleGap, splitEnglishWords, kLineTokens, eligibleForWordConversion, mergeRowParts, setSpeakerTagInText, UNASSIGNED_ROLE, isUnassignedRole, stripSpeakerTag, ghostZhRows,
   // ── 上游 2.1.13 新增的导出（角色换色串色修复 / 中文标点归一 / 中文行预览 / 角色排序）──
@@ -10,6 +10,8 @@ import { analyzeKaraoke, pairRows, recalcWords, allocateWordTimes, buildWordSpec
   buildAnchorText, recolorRoleInRows, setWordHighlightColor, getWordHighlightColor,
   highlightTagForRebuild, applyRealignItems, realignTargetKey, ROLE_PALETTE, speakerSpansForRows,
   sentenceSpeakerNames, filterSentencesBySpeakers, continuousWordTimes, restoreDraftSpeakerLabels } from './karaoke.js';
+import { editAnchorSentence, editWordSentence, editAssRow, retimeAssRow,
+  WORD_MIN_GAP, moveAssWordBoundary, rebuildAssWordEvents } from './karaoke.js';
 import { SrtOverlay } from './overlay.js';
 // 分段导入（多人协作）：把一段字幕并进已有稿件的**纯逻辑**判定（有 tests/region-merge-test.mjs）
 import { planRegionMerge, rowLabel, mergeSummary, resolveFillOnly, resolveReplace, eventsForReplacement } from '../region-merge.js';
@@ -4210,7 +4212,6 @@ function reconcileKaraoke() {
 /** 拖动英文逐词的开始标记: 该词的起点 + 前一个词的结束一起移动(两词共享边界)。
  *  严格夹取——不越过前后词、不超出字幕块范围; **按住 Shift 也不放宽**。
  *  结果写回 ASS 的逐词切片(视频区高亮与导出都跟着变)。 */
-const WORD_MIN_GAP = 0.02;    // 每个词至少保留的时长(秒)
 let wordPreviewFrame = 0;
 let wordPreviewTrackRow = null;
 function clearWordPreview(restore = true) {
@@ -4229,63 +4230,15 @@ timeline.onBeforeWordDrag = (row, cue) => {
 };
 
 timeline.onWordRetime = (row, idx, t, done, edge, hiLimit, loLimit) => {
-  const en = row && row.en;
-  const words = en && en.words;
-  if (!words || !words[idx]) return;
-  const w = words[idx];
-  if (edge === 'word-end') {
-    // 独立词尾拖柄只改该词，不带动下一词或整句边界。
-    const lo = w.s + WORD_MIN_GAP;
-    const hi = idx + 1 < words.length ? words[idx + 1].s : en.end;
-    if (hi < lo) return;
-    w.e = Math.min(Math.max(t, lo), hi);
-  } else if (edge === 'end') {
-    // 拖末词的**结束**边界: 字幕块最后面 = 末词结束时间(块 end 同步延伸, 中英同行)
-    const lo = w.s + WORD_MIN_GAP;                           // 不能压过自己的开始
-    let hi = (video && video.duration) ? video.duration : Infinity;
-    if (hiLimit != null) hi = Math.min(hi, hiLimit);         // 不越过后一个字幕块
-    const nt = Math.min(Math.max(t, lo), Math.max(lo, hi));
-    w.e = nt;
-    if (idx + 1 < words.length) words[idx + 1].s = nt;       // 保险: 后一词起点贴上来
-    en.end = nt;
-    if (row.zh) {
-      row.zh.end = nt;
-      for (const ev of row.zh.events) state.assDoc.setEventTime(ev, row.zh.start, nt);
-    }
-    row.end = nt;
-  } else {
-    const blockEdge = edge === 'start' && idx === 0;         // 块左边缘拖首词: 字幕块起始时间跟着变
-    const lo = idx > 0
-      ? (edge === 'word-start' ? words[idx - 1].e : words[idx - 1].s + WORD_MIN_GAP)
-      : (blockEdge
-          ? (loLimit != null ? loLimit + 1e-3 : 0)           // 块边缘: 不越过前一个字幕块
-          : Math.max(row.start, en.start));                  // 词把柄拖动: 保持原约束(不超出字幕块)
-    const hiRaw = Math.min(
-      w.e - WORD_MIN_GAP,                                    // 不能晚于自己的结束
-      (idx + 1 < words.length) ? words[idx + 1].s - WORD_MIN_GAP : Infinity   // 不能压过下一个词的起点
-    );
-    if (edge === 'word-start' && hiRaw < lo) return;
-    const hi = Math.max(lo, hiRaw);
-    const nt = Math.min(Math.max(t, lo), hi);
-    if (idx > 0 && edge !== 'word-start') words[idx - 1].e = nt; // 块边缘沿用共享边界；独立拖柄保留空档
-    w.s = nt;
-    if (blockEdge) {
-      // 块最前面 = 首词开始时间: 整块起点(含中文行)同步前移/后移
-      en.start = nt;
-      row.start = nt;
-      if (row.zh) {
-        row.zh.start = nt;
-        for (const ev of row.zh.events) state.assDoc.setEventTime(ev, nt, row.zh.end);
-      }
-    }
-  }
+  if (!moveAssWordBoundary(state.assDoc, row, idx, t, edge, video?.duration || Infinity, hiLimit, loLimit)) return;
+  const en = row.en;
   if (done) {
     const hadTransient = !!wordPreviewTrackRow;
     clearWordPreview(false);
     /* 逐词把柄拖动也记一次；批量重校对/重分句/术语表不是逐次拖动，不能在这里记。 */
     logOp('adjust', `第 ${row.no || '?'} 条`);
     // mouseup / pointercancel 一律做最终单句重建，即使上一帧尚未送到渲染器。
-    en.events = state.assDoc.replaceEvents(en.events, buildWordSpecs(en));
+    rebuildAssWordEvents(state.assDoc, en);
     if (editRowVisible(row) || hadTransient) {
       assPlayer.updateNow(state.assDoc.serialize());
       pendingPlaybackRows.clear();
@@ -4315,19 +4268,9 @@ timeline.onRetime = (row, s, e, done, shift) => {
   if (!opRetimeOrigins.has(row)) opRetimeOrigins.set(row, { start: item.start, end: item.end });
   item.start = s; item.end = e;
   if (state.format === 'srt') {
-    row.start = s; row.end = e;
+    editSrtCue(row, s, e);
   } else {
-    if (row.zh) { row.zh.start = s; row.zh.end = e; state.assDoc.setEventTime(row.zh.events[0], s, e); }
-    if (row.en) {
-      if (row.en.words.length) {
-        row.en.words = recalcWords(row.en, row.en.text, s, e);
-        row.en.events = state.assDoc.replaceEvents(row.en.events, buildWordSpecs(row.en));
-      } else {
-        for (const ev of row.en.events) state.assDoc.setEventTime(ev, s, e);
-      }
-      row.en.start = s; row.en.end = e;
-    }
-    row.start = s; row.end = e;
+    retimeAssRow(state.assDoc, row, s, e);
     if (row.zh || row.en) assPlayer.update(state.assDoc.serialize());
   }
   if (state.selected === item) panel.select(item, false);
@@ -4359,53 +4302,13 @@ timeline.onRetime = (row, s, e, done, shift) => {
   rebuildItemsAndLanes(true, true);
 };
 
-/** 整句样式(如中文字幕): 保留原颜色标签, 更新时间与文本 */
+/** 整句样式和逐词样式共用文档命令，UI 仅提供当前字幕文档。 */
 function applyAnchorSentence(sent, s, e, text) {
-  // 铁律: 整句样式一句话**只有一条事件**。若句子残留词级切片(events>1 或 words 非空 ——
-  // 旧版脏数据, 表现是画面上同一句中文渲染两遍), 先把整句折叠回单事件再改写:
-  // 词 2..n 的切片绝不能留在文档里, 否则重载后各自成行、继续上屏。
-  if ((sent.words && sent.words.length) || sent.events.length > 1) {
-    const keep = sent.events[0];
-    let keepText = keep.text || '';
-    // 切片行首的逐词绿标不能被下面的"继承前置标签"逻辑捡走；但角色色本身也可能是绿色
-    // （JamatoP）。有可见 [角色] 时保留绿标，只有无角色行才当作切片泄漏剥掉。
-    const mLead = /^\s*(\{\\c&H([0-9A-Fa-f]{6})&\})/.exec(keepText);
-    if (mLead && HIGHLIGHT_COLORS.has(assColorToHex(mLead[2].toUpperCase())) && !speakerTextTagOf(sent)) {
-      keepText = keepText.slice(mLead[1].length);
-    }
-    const p = sent.proto || { layer: keep.layer, name: keep.name, effect: keep.effect, margins: keep.margins };
-    sent.events = state.assDoc.replaceEvents(sent.events, [{
-      layer: p.layer, style: sent.style, name: p.name,
-      effect: p.effect, margins: p.margins, start: s, end: e, text: keepText
-    }]);
-    sent.words = [];
-  }
-  const ev = sent.events[0];
-  // 角色名标签与正文之间恒为**一个空格**（用户要求 '[wato] 我'）——编辑框随便打，落盘时规范
-  let newText = normalizeRoleGap(text);
-  if (!/^\s*\{/.test(newText)) {
-    const m = /^\s*(\{\\[^}]*\})/.exec(ev.text);   // 继承 {\c&H....&} 之类的前置标签
-    if (m) newText = m[1] + newText;
-  }
-  newText = newText.replace(/\r\n?|\n/g, '\\N');
-  state.assDoc.setEventTime(ev, s, e);
-  state.assDoc.setEventText(ev, newText);
-  sent.start = s; sent.end = e; sent.text = assPlainText(newText, true);
+  editAnchorSentence(state.assDoc, sent, s, e, text);
 }
 
-/** 逐词样式(如英文): 重算词级时间并重建切片 */
 function applyWordSentence(sent, s, e, text) {
-  // 铁律: 只有逐词样式(Default)才允许切片。整句样式(中文)走到这里只能是历史脏数据或行
-  // 错位 —— 一律按整句折叠处理, 绝不给中文造逐词切片(画面上会出现两遍同一句)。
-  if (!state.kar || !state.kar.wordStyle || sent.style !== state.kar.wordStyle) {
-    applyAnchorSentence(sent, s, e, text);
-    return;
-  }
-  text = normalizeRoleGap(text);                // 角色名标签与正文之间恒为一个空格（同上）
-  sent.words = recalcWords(sent, text, s, e);   // 词数不变→保留原时间; 变化→加权重算
-  sent.text = text;
-  sent.start = s; sent.end = e;
-  sent.events = state.assDoc.replaceEvents(sent.events, buildWordSpecs(sent));
+  editWordSentence(state.assDoc, state.kar?.wordStyle, sent, s, e, text);
 }
 
 /** 应用一行(中英双行)编辑: 中文整句 + 英文逐词句同步更新, 视频区立即重渲染 */
@@ -4552,18 +4455,8 @@ panel.onEditFinish = () => clearEditPreview();
 
 function applyAssRow(item, s, e, text) {
   const row = item.ref;
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
-  const zhText = (lines[0] || '').trim();
-  const enText = lines.length > 1 ? lines.slice(1).join(' ').trim() : '';
-  const timeChanged = Math.abs(row.start - s) > 1e-4 || Math.abs(row.end - e) > 1e-4;
-  // 英文改动不能重写中文事件；停顿时生成的仅是草稿，提交时每个变动句至多替换一次。
-  const oldZh = row.zh ? row.zh.text : '';
-  const oldEn = row.en ? row.en.text : '';
-  const oldStart = row.start, oldEnd = row.end;
-  const zhChanged = !!row.zh && zhText !== oldZh;
-  const enChanged = !!row.en && enText !== oldEn;
-  if (row.zh && (timeChanged || zhText !== row.zh.text)) applyAnchorSentence(row.zh, s, e, zhText);
-  if (row.en && (timeChanged || enText !== row.en.text)) applyWordSentence(row.en, s, e, enText);
+  const { zhChanged, enChanged, timeChanged, oldZh, oldEn, oldStart, oldEnd, zhText, enText } =
+    editAssRow(state.assDoc, state.kar?.wordStyle, row, s, e, text);
   /* 操作日志：**编辑字幕文本**这一路以前完全没记（`logOp` 只在切分/合并/重排/重识别里调），
    * 而"我改了哪句、改成什么"恰恰是用户最想看的那一栏。
    * 只记真的变了的，并把「改前 → 改后」写进去（why 里带时间是否也动了）。 */
@@ -4578,7 +4471,6 @@ function applyAssRow(item, s, e, text) {
       timeChanged ? `时间 ${fmtTime(oldStart)}~${fmtTime(oldEnd)} → ${fmtTime(s)}~${fmtTime(e)}`
         : '在字幕列表里直接改的文本');
   }
-  row.start = s; row.end = e;
   const hadTransient = !!previewTrack;
   clearEditPreview(false);
   if (editRowVisible(row) || hadTransient) {
@@ -4611,8 +4503,7 @@ panel.onApply = ({ item: editItem, start, end, dur, text, switching = false }) =
   if (item.kind === 'srt') {
     const cue = item.ref;
     const oldStart = cue.start, oldEnd = cue.end, oldText = cue.lines.join('\n');
-    cue.start = s; cue.end = e;
-    cue.lines = text.replace(/\r\n?/g, '\n').split('\n');
+    editSrtCue(cue, s, e, text);
     if (oldStart !== s || oldEnd !== e || oldText !== cue.lines.join('\n')) logOp('edit', `第 ${item.no} 条`, '编辑 SRT 字幕', '',
       { version: 1, global: false, ranges: [{ start: oldStart, end: oldEnd }, { start: s, end: e }] });
     state.srtCues.sort((a, b) => a.start - b.start || a.end - b.end);

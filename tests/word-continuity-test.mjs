@@ -1,3 +1,4 @@
+import { moveAssWordBoundary } from '../editor/js/karaoke.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -64,7 +65,7 @@ for(const kind of ['color','k']) {
   const main=fs.readFileSync(new URL('../editor/js/main.js',import.meta.url),'utf8');
   const code=main.match(/^timeline\.onWordRetime = \([^\n]*\n[\s\S]*?^};/m)?.[0];assert.ok(code);
   const timeline={},en=sentence(1,'color'),row={start:1,end:5,en,zh:{start:1,end:5,events:[]}};
-  const ctx=vm.createContext({timeline,WORD_MIN_GAP:.02,video:{duration:20},state:{},wordPreviewFrame:0,editRowVisible:()=>false});
+  const ctx=vm.createContext({timeline,moveAssWordBoundary,video:{duration:20},state:{},wordPreviewFrame:0,editRowVisible:()=>false});
   vm.runInContext(code,ctx);
   timeline.onWordRetime(row,0,2.4,false,'word-end');assert.equal(en.words[0].e,2.4);assert.equal(en.words[1].s,2.5);
   timeline.onWordRetime(row,0,9,false,'word-end');assert.equal(en.words[0].e,2.5,'end stops at next start');

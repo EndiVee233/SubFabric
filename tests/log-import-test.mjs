@@ -1,3 +1,4 @@
+import { editSrtCue } from '../editor/js/srt.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -40,7 +41,7 @@ const rows = [cue(1, 3, '第一句'), cue(5, 7, '第二句'), cue(10, 12, '[甲]
 {
   const source = fs.readFileSync(new URL('../editor/js/main.js', import.meta.url), 'utf8');
   const row = { start: 1, end: 3 }, item = { no: 1, start: 1, end: 3 }, timeline = {}, logs = [];
-  const context = vm.createContext({ timeline, state: { format: 'srt', itemByRef: new Map([[row, item]]) },
+  const context = vm.createContext({ timeline, editSrtCue, state: { format: 'srt', itemByRef: new Map([[row, item]]) },
     logOp: (...args) => logs.push(args), reconcileKaraoke: () => 0, rebuildItemsAndLanes() {}, toast() {} });
   vm.runInContext(source.slice(source.indexOf('const opRetimeOrigins ='), source.indexOf('/** 整句样式', source.indexOf('const opRetimeOrigins ='))), context);
   timeline.onRetime(row, 2, 4, false, false); assert.equal(logs.length, 0);

@@ -75,3 +75,10 @@ export function srtLineToHtml(line) {
 export function srtPlainText(lines) {
   return lines.map(l => l.replace(/<[^>]+>/g, '')).join(' / ');
 }
+
+/** 正文按提供的文本写入，单改时间时保留原行数组。 */
+export function editSrtCue(cue, start, end, text) {
+  cue.start = start;
+  cue.end = end;
+  if (text !== undefined) cue.lines = text.replace(/\r\n?/g, '\n').split('\n');
+}
