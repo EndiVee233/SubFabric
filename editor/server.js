@@ -44,6 +44,9 @@ const assSentencesMod = require('./ass-sentences.js'); // 从 karaoke 式 ASS �
 const { AssDoc } = require('./js/ass.js');
 const karaokeMod = require('./js/karaoke.js');
 
+const { createCollabSession } = require('./collab-session.js');
+const { startCollabLoopback } = require('./collab-loopback.js');
+
 /* 测试用页面：仅 SUBFABRIC_TEST_MODE=1 时 `__test/<name>` 提供 tests 的普通前端文件。
  * 为什么需要：`tests/*.html` 的验证页要用 fetch 调 /api/*，而 file:// 下是跨源、
  * 拿不到数据（实测踩过：验证页里 fetch('/api/fonts') 静默失败 → 组件空转，
@@ -747,6 +750,15 @@ const rerecogJobs = new Map();   // 选区重新识别的后台任务: projectId
  *   教训：**凡是跨请求的作业状态，一律放这一段。** */
 const realignJobs = new Map();   // 全片逐词重校对: projectId -> job
 const diarizeJobs = new Map();   // 高级字幕操作里的说话人分离: projectId -> job
+let collabRoom = null;
+const projectWrites = new Map();
+const COLLAB_BUSY = '稿件正在本机协作，请结束房间后再试';
+const projectWriteKey = id => process.platform === 'win32' ? id.toLowerCase() : id;
+const collabOwns = id => !!collabRoom && projectWriteKey(collabRoom.projectId) === projectWriteKey(id);
+function assertProjectWritable(id) {
+  if (collabOwns(id)) throw Object.assign(new Error(COLLAB_BUSY), { statusCode: 409 });
+}
+
 const subtitleCommits = new Map(); // 项目最后提交：同一窗口 PUT/beacon 有序衔接，其他窗口走版本冲突
 const deletedProjects = new Set();
 const subtitleRevision = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -6485,6 +6497,7 @@ function startPrepare(id, videoPath, mode) {
         if (subtitleRevision(fs.readFileSync(source.file)) !== source.revision) {
           throw new Error('字幕在应用期间被改动过，请重新打开稿件再试');
         }
+        assertProjectWritable(id);
         fs.writeFileSync(source.file, raw.join(source.eol));
       }
     } else {
@@ -6798,6 +6811,7 @@ function startPrepare(id, videoPath, mode) {
   /** 组装初稿字幕: 英文段 segs + 可选中文译文 trans(长度必须等于 segs)。
    *  有译文时 ASS 会多写一轨「中文字幕」行 —— 那才是本编辑器的双语结构 */
   function writeSubtitle(id, wordLevel, segs, trans, opts) {
+    assertProjectWritable(id);
     /* 末词尾巴（秒）：只给**初稿识别**用（本地 Whisper v2 的末词终点常比真实收音早）。
      * SRT→ASS 转换等路径必须保持"不越出原片区间"，所以默认 0。 */
     const tailSec = opts && Number.isFinite(Number(opts.tail)) ? Number(opts.tail) : 0;
@@ -7392,6 +7406,7 @@ function startPrepare(id, videoPath, mode) {
    *     自己再拼一遍必然与初稿不一致（实测差异会体现在"中英双行时间对不上"）。
    *   · 改动只是把 asr.json 里对应句子的 words 换掉，再整体重写。 */
   async function applyRealignToProject(id, items) {
+    assertProjectWritable(id);
     const meta = readMeta(id);
     const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
     if (!file) throw new Error('项目或字幕不存在');
@@ -7563,6 +7578,7 @@ function startPrepare(id, videoPath, mode) {
    *  勾选且对齐成功的行用对齐器时间，其余行在句内平均分配；中文行原样进译文轨。
    *  写入复用 writeSubtitle（初稿同一个生成器），再把 meta.subtitle 指向新的 ASS。 */
   function applySrtRealignToProject(id, job, pickedKeys) {
+    assertProjectWritable(id);
     const meta = readMeta(id);
     const file = meta && meta.subtitle && safeProjectFile(id, meta.subtitle.file);
     if (!file || !/\.srt$/i.test(file)) throw new Error('当前字幕已不是 SRT，无法按 SRT 方式转换');
@@ -7927,6 +7943,7 @@ function startPrepare(id, videoPath, mode) {
     return { segs: rows, rows, sourceKey, revision, file, text, raw, eol, format, doc };
   }
   function patchSubtitleTranslations(id, source, lines) {
+    assertProjectWritable(id);
     if (!source.file) return writeSubtitle(id, !!((readMeta(id) || {}).draft || {}).wordLevel, source.segs, lines, { tail: 0.15 });
     if (subtitleRevision(fs.readFileSync(source.file)) !== source.revision) throw new Error('翻译冲突：稿件在翻译期间已编辑，请重新翻译');
     const raw = source.raw.slice(), inserts = new Map();
@@ -8735,6 +8752,7 @@ function startPrepare(id, videoPath, mode) {
   const jobRerecog = rerecogJobs;
 
   async function startTranslate(id, opts = {}) {
+    assertProjectWritable(id);
     const cfg = translateCfg();
     if (!llmReady(cfg)) return finishDraft(id, new Error('还没配置翻译：在主界面右上角「设置」里填接口地址、API Key 和模型名'));
     if (draftJobs.has(id)) return;
@@ -9350,6 +9368,7 @@ function startPrepare(id, videoPath, mode) {
    *  与「新建项目」不同：视频/音频通常已经在项目里，能直接进 ASR；没有音频才补 prepare。
    *  只允许无字幕项目 —— 批量功能不应覆盖已有稿件。 */
   async function startDraftForExisting(id, options) {
+    assertProjectWritable(id);
     const o = options || {};
     const meta = readMeta(id);
     if (!meta) throw new Error('项目不存在');
@@ -13404,6 +13423,7 @@ function handleProjectsRoutes(req, res, u) {
       out.on('error', () => finish(500, { error: '写入失败(磁盘/权限?)' }));
       out.on('finish', () => {
         if (done) return;
+        if (collabOwns(id)) return finish(409, { error: COLLAB_BUSY });
         try {
           // 同一事件循环内完成比较和提交（无 await），项目间上传不互相等待。
           const current = subtitleRevision(fs.readFileSync(subPath));
@@ -13785,6 +13805,7 @@ function handleDesktopUpdateRoutes(req, res, u) {
 /* 路由段表: 前缀互不相交, 顺序即原 handleRequest 的书写顺序。
  * 命中前缀即由该段全权处理(未匹配的 method/路径组合由段内兜底回 404)。 */
 const API_SECTIONS = [
+  [/^\/api\/collab\b/, handleCollabRoutes],
   [/^\/api\/(waveform|peaks|upload-video|image)\b/, handleWaveRoutes],
   [/^\/api\/(pick|fetch)\b/, handleFetchRoutes],
   [/^\/api\/(asr|analyze)\b/, handleAsrRoutes],
@@ -13798,6 +13819,109 @@ const API_SECTIONS = [
   [/^\/api\/projects\b/, handleProjectsRoutes],
 ];
 
+function guardProjectWrites(req, res, pathname) {
+  const id = /^\/api\/projects\/([A-Za-z0-9_-]{1,64})(?:\/|$)/.exec(pathname)?.[1];
+  if (!id) return true;
+  if (collabOwns(id) && (UNSAFE_METHODS.has(req.method) || pathname.endsWith('/export-pack'))) {
+    sendJson(res, 409, { error: COLLAB_BUSY });
+    return false;
+  }
+  if (!UNSAFE_METHODS.has(req.method)) return true;
+  const key = projectWriteKey(id);
+  projectWrites.set(key, (projectWrites.get(key) || 0) + 1);
+  const settle = () => {
+    res.off('finish', settle);
+    res.off('close', settle);
+    const count = projectWrites.get(key);
+    if (count === 1) projectWrites.delete(key);
+    else projectWrites.set(key, count - 1);
+  };
+  res.once('finish', settle);
+  res.once('close', settle);
+  return true;
+}
+
+function handleCollabRoutes(req, res, u) {
+  if (req.method !== 'POST' || u.pathname !== '/api/collab/open') return sendJson(res, 404, { error: 'not found' });
+  return readBody(req, res, 2048, async (_error, body) => {
+    let data;
+    try { data = JSON.parse(body.toString('utf8')); } catch {}
+    const id = data?.projectId;
+    if (typeof id !== 'string' || !validId(id)) {
+      return sendJson(res, 400, { error: '稿件版本无效，请重新打开项目' });
+    }
+    if (shuttingDown) return sendJson(res, 409, { error: '服务正在退出' });
+    if (collabRoom) {
+      if (collabOwns(id) && collabRoom.listener) {
+        const { hostUrl, inviteUrl } = collabRoom.listener;
+        return sendJson(res, 200, { hostUrl, inviteUrl });
+      }
+      return sendJson(res, 409, { error: '已有本机协作房间，请先结束该房间' });
+    }
+    if (data.existingOnly === true) return sendJson(res, 404, { reason: 'no_room' });
+    if (typeof data.revision !== 'string' || !/^[a-f0-9]{64}$/.test(data.revision)) {
+      return sendJson(res, 400, { error: '稿件版本无效，请重新打开项目' });
+    }
+    const meta = readMeta(id);
+    if (!meta) return sendJson(res, 404, { error: '项目不存在' });
+    if (projectWrites.get(projectWriteKey(id)) || prepareJobs.has(id) || draftJobs.has(id) || pendingAsr.has(id) ||
+        draftProcs.has(id) || projProcs.has(id) || meta.draft?.autoPost?.status === 'running' ||
+        [realignJobs, diarizeJobs, rerecogJobs].some(jobs => jobs.get(id)?.status === 'running')) {
+      return sendJson(res, 409, { error: '稿件有正在进行的保存或后台任务，请稍后重试' });
+    }
+    const file = meta.subtitle?.file;
+    const format = /\.srt$/i.test(file) ? 'srt' : 'ass';
+    const source = safeProjectFile(id, file);
+    let bytes, text;
+    try {
+      if (!source || !/\.(?:ass|ssa|srt)$/i.test(file) || path.dirname(source) !== projDir(id) ||
+          fs.lstatSync(projDir(id)).isSymbolicLink() || !fs.lstatSync(source).isFile()) throw new Error();
+      if (fs.statSync(source).size > 4 * 1024 * 1024) return sendJson(res, 413, { error: '本机协作支持最大 4 MiB 的字幕稿件' });
+      bytes = fs.readFileSync(source);
+      text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+    } catch { return sendJson(res, 400, { error: '无法读取该稿件的 UTF-8 字幕' }); }
+    if (subtitleRevision(bytes) !== data.revision) return sendJson(res, 409, { error: '稿件已更新，请重新打开项目' });
+
+    const room = { projectId: id, listener: null };
+    let session;
+    try {
+      session = createCollabSession({ format, text, persist({ expected, text: next }) {
+        if (collabRoom !== room || readMeta(id)?.subtitle?.file !== file ||
+            !fs.readFileSync(source).equals(Buffer.from(expected))) throw new Error('stale subtitle');
+        if (next === expected) return;
+        const tmp = source + '.' + crypto.randomUUID() + '.tmp';
+        try {
+          fs.writeFileSync(tmp, next, { flag: 'wx' });
+          fs.renameSync(tmp, source);
+        } finally {
+          try { fs.unlinkSync(tmp); } catch {}
+        }
+        try { updateMeta(id, m => { m.modifiedAt = new Date().toISOString(); }); }
+        catch (err) { console.warn('[collab] project timestamp:', err.message); }
+      }});
+    } catch { return sendJson(res, 422, { error: '该字幕结构暂时无法安全用于协作' }); }
+    collabRoom = room;
+    for (const key of subtitleCommits.keys()) {
+      if (projectWriteKey(key) === projectWriteKey(id)) subtitleCommits.delete(key);
+    }
+    try {
+      room.listener = await startCollabLoopback({
+        session,
+        readAsset: name => fs.readFileSync(path.join(__dirname, '..', name)),
+        onClose() {
+          if (collabRoom === room) collabRoom = null;
+        }
+      });
+      if (shuttingDown) room.listener.close();
+      const { hostUrl, inviteUrl } = room.listener;
+      return sendJson(res, 200, { hostUrl, inviteUrl });
+    } catch {
+      if (collabRoom === room) collabRoom = null;
+      return sendJson(res, 500, { error: '无法启动本机协作房间' });
+    }
+  });
+}
+
 function handleRequest(req, res) {
   if (!LOOPBACK_HOST_RE.test(String(req.headers.host || '').trim())) {
     return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, 'forbidden: host');
@@ -13810,6 +13934,7 @@ function handleRequest(req, res) {
   }
   const u = new URL(req.url, `http://${req.headers.host || HOST}`);
   const pathname = u.pathname;
+  if (!guardProjectWrites(req, res, pathname)) return;
 
   /* 本 fork 专属：tests/*.html 的验证页必须从 http:// 打开才能 fetch /api/*（file:// 是跨源，
    * 拿不到数据）。上游 2.3.0 没有这条（serveTestPage 在上游出现 0 次），合并时补回来的。 */
@@ -13893,6 +14018,7 @@ let shuttingDown = false;
 function shutdown(reason) {
   if (shuttingDown) return;
   shuttingDown = true;
+  collabRoom?.listener?.close();
   cancelAsrWaiters();
   console.log('[shutdown] 完全退出：' + (reason || '未注明来源'));
   broadcastLife('shutdown', { reason: String(reason || ''), pid: process.pid });

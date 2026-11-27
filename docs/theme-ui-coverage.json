@@ -11,6 +11,14 @@
       "literals": []
     },
     {
+      "file": "editor/css/collab.css",
+      "sha256": "fd098f4d7f8ba840c7c99d5b0629b5d73d16f5e233df4aa3be8af78b5bee1e76",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [],
+      "literals": []
+    },
+    {
       "file": "editor/css/studio.css",
       "sha256": "e203066606633321c50943f9de9535b749ef3fb0f07271018308464888e02ed9",
       "ids": [],
@@ -518,6 +526,47 @@
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
+      "literals": []
+    },
+    {
+      "file": "editor/js/collab-room.js",
+      "sha256": "6c761b881eab07968607fb0b039268f06aca484559b41efc479e5f6725667c42",
+      "ids": [],
+      "dynamicIds": [],
+      "dynamic": [
+        {
+          "line": 77,
+          "method": "createElement"
+        },
+        {
+          "line": 78,
+          "method": "createElement"
+        },
+        {
+          "line": 82,
+          "method": "createElement"
+        },
+        {
+          "line": 84,
+          "method": "createElement"
+        },
+        {
+          "line": 90,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 113,
+          "method": "replaceChildren"
+        },
+        {
+          "line": 114,
+          "method": "createElement"
+        },
+        {
+          "line": 289,
+          "method": "createElement"
+        }
+      ],
       "literals": []
     },
     {
@@ -1183,7 +1232,7 @@
     },
     {
       "file": "editor/js/project.js",
-      "sha256": "0f113a4dc9dfe83c48dbbd76779e5ad0ffb925f7227ca099ba118cbb832ba6cf",
+      "sha256": "867513d2bf68de1cb3265972fc7bc7b4bfa2e0352344bd00e2a4063aad127d5a",
       "ids": [],
       "dynamicIds": [
         "${esc(a.id)}",
@@ -1224,11 +1273,7 @@
           "method": "createElement"
         },
         {
-          "line": 1094,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1102,
+          "line": 1096,
           "method": "innerHTML"
         },
         {
@@ -1236,47 +1281,47 @@
           "method": "innerHTML"
         },
         {
-          "line": 1114,
+          "line": 1106,
           "method": "innerHTML"
         },
         {
-          "line": 1129,
+          "line": 1116,
+          "method": "innerHTML"
+        },
+        {
+          "line": 1131,
           "method": "createElement"
         },
         {
-          "line": 1135,
+          "line": 1137,
           "method": "innerHTML"
         },
         {
-          "line": 1137,
+          "line": 1139,
           "method": "replaceChildren"
         },
         {
-          "line": 1188,
+          "line": 1190,
           "method": "innerHTML"
         },
         {
-          "line": 1320,
+          "line": 1322,
           "method": "innerHTML"
         },
         {
-          "line": 1542,
+          "line": 1544,
           "method": "innerHTML"
         },
         {
-          "line": 1545,
+          "line": 1547,
           "method": "innerHTML"
         },
         {
-          "line": 1561,
+          "line": 1563,
           "method": "innerHTML"
         },
         {
-          "line": 1571,
-          "method": "innerHTML"
-        },
-        {
-          "line": 1689,
+          "line": 1573,
           "method": "innerHTML"
         },
         {
@@ -1284,51 +1329,51 @@
           "method": "innerHTML"
         },
         {
-          "line": 1729,
+          "line": 1693,
           "method": "innerHTML"
         },
         {
-          "line": 1737,
+          "line": 1731,
           "method": "innerHTML"
         },
         {
-          "line": 1981,
-          "method": "createElement"
+          "line": 1739,
+          "method": "innerHTML"
         },
         {
           "line": 1983,
           "method": "createElement"
         },
         {
-          "line": 1989,
+          "line": 1985,
           "method": "createElement"
         },
         {
-          "line": 1997,
-          "method": "innerHTML"
+          "line": 1991,
+          "method": "createElement"
         },
         {
-          "line": 2115,
+          "line": 1999,
           "method": "innerHTML"
         },
         {
           "line": 2117,
-          "method": "createElement"
-        },
-        {
-          "line": 2119,
           "method": "innerHTML"
         },
         {
-          "line": 2128,
+          "line": 2119,
           "method": "createElement"
+        },
+        {
+          "line": 2121,
+          "method": "innerHTML"
         },
         {
           "line": 2130,
           "method": "createElement"
         },
         {
-          "line": 2134,
+          "line": 2132,
           "method": "createElement"
         },
         {
@@ -1336,239 +1381,243 @@
           "method": "createElement"
         },
         {
-          "line": 2141,
+          "line": 2138,
           "method": "createElement"
         },
         {
-          "line": 2157,
+          "line": 2143,
           "method": "createElement"
         },
         {
-          "line": 2276,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2342,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2389,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2393,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2403,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2417,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2566,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2669,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2682,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2686,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2697,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2792,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2820,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2869,
-          "method": "innerHTML"
-        },
-        {
-          "line": 2966,
-          "method": "innerHTML"
-        },
-        {
-          "line": 3017,
+          "line": 2159,
           "method": "createElement"
         },
         {
-          "line": 3021,
+          "line": 2278,
           "method": "innerHTML"
         },
         {
-          "line": 3090,
+          "line": 2344,
           "method": "innerHTML"
         },
         {
-          "line": 3123,
+          "line": 2391,
           "method": "innerHTML"
         },
         {
-          "line": 3142,
+          "line": 2395,
           "method": "innerHTML"
         },
         {
-          "line": 3257,
+          "line": 2405,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2419,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2568,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2671,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2684,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2688,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2699,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2794,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2822,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2871,
+          "method": "innerHTML"
+        },
+        {
+          "line": 2968,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3019,
           "method": "createElement"
         },
         {
-          "line": 3260,
+          "line": 3023,
           "method": "innerHTML"
         },
         {
-          "line": 3310,
+          "line": 3092,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3125,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3144,
+          "method": "innerHTML"
+        },
+        {
+          "line": 3259,
           "method": "createElement"
         },
         {
-          "line": 3314,
+          "line": 3262,
           "method": "innerHTML"
         },
         {
-          "line": 3342,
+          "line": 3312,
+          "method": "createElement"
+        },
+        {
+          "line": 3316,
           "method": "innerHTML"
         },
         {
-          "line": 3508,
+          "line": 3344,
           "method": "innerHTML"
         },
         {
-          "line": 3522,
+          "line": 3510,
           "method": "innerHTML"
         },
         {
-          "line": 3528,
+          "line": 3524,
           "method": "innerHTML"
         },
         {
-          "line": 3562,
+          "line": 3530,
           "method": "innerHTML"
         },
         {
-          "line": 3612,
+          "line": 3564,
           "method": "innerHTML"
         },
         {
-          "line": 3763,
+          "line": 3614,
           "method": "innerHTML"
         },
         {
-          "line": 3949,
+          "line": 3765,
           "method": "innerHTML"
         },
         {
-          "line": 4068,
+          "line": 3951,
           "method": "innerHTML"
         },
         {
-          "line": 4190,
+          "line": 4070,
           "method": "innerHTML"
         },
         {
-          "line": 4197,
+          "line": 4192,
+          "method": "innerHTML"
+        },
+        {
+          "line": 4199,
           "method": "replaceChildren"
         },
         {
-          "line": 4531,
+          "line": 4533,
           "method": "replaceChildren"
         },
         {
-          "line": 4554,
+          "line": 4556,
           "method": "replaceChildren"
         },
         {
-          "line": 4555,
+          "line": 4557,
           "method": "createElement"
         },
         {
-          "line": 4606,
+          "line": 4608,
           "method": "innerHTML"
         },
         {
-          "line": 4709,
+          "line": 4711,
           "method": "innerHTML"
         },
         {
-          "line": 4710,
+          "line": 4712,
           "method": "innerHTML"
         },
         {
-          "line": 4725,
+          "line": 4727,
           "method": "innerHTML"
         },
         {
-          "line": 4828,
+          "line": 4830,
           "method": "createElement"
-        },
-        {
-          "line": 5100,
-          "method": "innerHTML"
         },
         {
           "line": 5102,
-          "method": "createElement"
+          "method": "innerHTML"
         },
         {
           "line": 5104,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5646,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5649,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5667,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5670,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5699,
-          "method": "innerHTML"
-        },
-        {
-          "line": 5921,
           "method": "createElement"
         },
         {
-          "line": 6484,
+          "line": 5106,
           "method": "innerHTML"
         },
         {
-          "line": 6625,
+          "line": 5648,
           "method": "innerHTML"
         },
         {
-          "line": 6625,
+          "line": 5651,
           "method": "innerHTML"
         },
         {
-          "line": 6877,
+          "line": 5669,
           "method": "innerHTML"
         },
         {
-          "line": 6894,
+          "line": 5672,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5701,
+          "method": "innerHTML"
+        },
+        {
+          "line": 5923,
+          "method": "createElement"
+        },
+        {
+          "line": 6524,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6665,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6665,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6917,
+          "method": "innerHTML"
+        },
+        {
+          "line": 6934,
           "method": "innerHTML"
         }
       ],
@@ -2164,7 +2213,7 @@
     },
     {
       "file": "editor/lang/zh-CN.json",
-      "sha256": "64610d4fac20025926ed12a3922ce554e59f2c81405794faeb515cfffc97a7a5",
+      "sha256": "2c845112e2619b0a703ff8f1ca0740d41e73293b64b32a2be39c385d406cdfc3",
       "ids": [],
       "dynamicIds": [],
       "dynamic": [],
@@ -2204,7 +2253,7 @@
     },
     {
       "file": "tools/templates/studio.html",
-      "sha256": "d5bccf067be55a60a0e0d866fb55c1910cc800c08b2ccb5d662f93d3a89badfb",
+      "sha256": "3296ea8b9a36c252553fb019f65a292a91809b5b45e19f8a51f5dbd20dedd75d",
       "ids": [
         "adv-export-all",
         "adv-export-cancel",
@@ -2338,6 +2387,7 @@
         "btn-bad-rows",
         "btn-badcat",
         "btn-batch-draft",
+        "btn-collab",
         "btn-convert-words",
         "btn-diarize",
         "btn-export",
@@ -2377,6 +2427,11 @@
         "cb-log-follow",
         "cb-log-only-warn",
         "cie-input",
+        "collab-copy",
+        "collab-host-link",
+        "collab-invite-link",
+        "collab-launch",
+        "collab-launch-title",
         "confirm-msg",
         "confirm-no",
         "confirm-overlay",
@@ -3294,6 +3349,18 @@
       "--r-4",
       "--role",
       "--role-i",
+      "--room-accent",
+      "--room-accent-text",
+      "--room-background",
+      "--room-border",
+      "--room-brand",
+      "--room-control",
+      "--room-control-border",
+      "--room-muted",
+      "--room-panel",
+      "--room-selected",
+      "--room-subtle",
+      "--room-text",
       "--row-h",
       "--secondary-container",
       "--settings-i",
@@ -3485,6 +3552,18 @@
       "--reflect-bar",
       "--role",
       "--role-i",
+      "--room-accent",
+      "--room-accent-text",
+      "--room-background",
+      "--room-border",
+      "--room-brand",
+      "--room-control",
+      "--room-control-border",
+      "--room-muted",
+      "--room-panel",
+      "--room-selected",
+      "--room-subtle",
+      "--room-text",
       "--secondary-container",
       "--settings-i",
       "--sf-aurora-1",

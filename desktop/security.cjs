@@ -9,7 +9,7 @@ function sourcePath(relative) {
   if (!['editor', 'asr'].includes(parts[0]) || parts.some(p => !p || p.startsWith('.') || FORBIDDEN.has(p.toLowerCase()))) throw Error('Unsafe payload path: ' + relative);
   if (parts.some(p => /[ .]$/.test(p) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) throw Error('Invalid Windows payload path');
   const allowed = /^editor\/[a-z0-9-]+\.js$/i.test(relative)
-    || relative === 'editor/studio.html' || relative === 'editor/wordlist-en.json' || relative === 'editor/assets/subtitle-preview.webm'
+    || ['editor/studio.html', 'editor/collab.html'].includes(relative) || relative === 'editor/wordlist-en.json' || relative === 'editor/assets/subtitle-preview.webm'
     || /^editor\/(?:js\/[a-z0-9-]+\.js|css\/[a-z0-9-]+\.css|lang\/zh-CN\.json|themes\/[a-z0-9-]+\.theme\.json|assets\/app-logo\.png)$/i.test(relative)
     || ['editor/scripts/7z.exe', 'editor/scripts/7z-README.txt', 'editor/vendor/subtitles-octopus.js', 'editor/vendor/subtitles-octopus-worker.js', 'editor/vendor/subtitles-octopus-worker.wasm', 'editor/vendor/fonts/NotoSansCJKsc-Regular.otf'].includes(relative)
     || /^asr\/(?:[a-z0-9_]+\.py|requirements\.txt|fetch\/[a-z0-9_]+\.py|fetch\/README\.md)$/i.test(relative);

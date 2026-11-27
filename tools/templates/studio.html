@@ -133,6 +133,7 @@
       <span id="status-file" class="status-file" title="当前字幕文件"></span>
       <button class="btn" id="btn-settings-ed" hidden data-ico="sliders" title="识别模型 / 字幕翻译（LLM）设置（与右侧「设置」页签区分）">全局设置</button>
       <button class="btn btn-accent" id="btn-export" disabled data-ico="download" title="导出原始格式(含逐词特效)">导出字幕</button>
+      <button class="btn" id="btn-collab" hidden>本机协作</button>
       <button class="btn" id="btn-export-pack" disabled data-ico="download" title="把项目打包成 zip：字幕 / 识别结果 / 译文 / 备注 / 操作日志。不含视频与音频 —— 导入端选好视频后自动重新生成，所以包很小">导出项目包</button>
     </div>
   </header>
@@ -2657,5 +2658,17 @@
 
 <!-- 全应用统一取色器：所有 data-color-input 入口都由它接管，不触发浏览器原生颜色弹窗。 -->
 <script type="module" src="js/color-picker.js"></script>
+
+<dialog id="collab-launch" class="stg-dialog" aria-labelledby="collab-launch-title">
+  <form method="dialog" class="stg-dialog-body">
+    <h2 id="collab-launch-title">本机协作</h2>
+    <p class="stg-dialog-lede">在同一台电脑的另一个浏览器窗口打开邀请。房间开启时，在房间页编辑字幕，结束后重新打开原稿件。</p>
+    <p><a id="collab-host-link" target="_blank" rel="noopener noreferrer">打开主机窗口</a></p>
+    <label for="collab-invite-link">成员邀请链接</label>
+    <input id="collab-invite-link" type="text" readonly>
+    <button class="btn" type="button" id="collab-copy">复制邀请</button>
+    <button class="btn">关闭</button>
+  </form>
+</dialog>
 </body>
 </html>

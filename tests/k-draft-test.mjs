@@ -40,7 +40,8 @@ assert.equal(draftKaraokeOptions({ karaokeStyle: 'invalid', karaokeBase: 'bad' }
 // Existing-project batch start uses the same normalization rather than resetting sweep/base.
 {
   let meta = { id: 'p-existing', video: { path: '/isolated/video.mp4' }, prepare: { status: 'done' } };
-  const { startDraftForExisting } = serverFunctions(['startDraftForExisting'], {
+  const { startDraftForExisting } = serverFunctions(['startDraftForExisting','assertProjectWritable'], {
+    collabOwns: () => false,
     readMeta: () => meta, writeMeta: x => { meta = x; }, fs: { existsSync: () => true }, path,
     projDir: () => '/isolated', modelById: () => ({ id: 'fixture', name: 'fixture' }), resolveAsrModel: () => ({ id: 'fixture' }),
     draftAllowedOf: () => true, draftOutputPlan: async () => ({ wordLevel: true, align: false }), draftKaraokeOptions,
@@ -54,8 +55,9 @@ assert.equal(draftKaraokeOptions({ karaokeStyle: 'invalid', karaokeBase: 'bad' }
 function write(segments, sweep = false, style = 'k', opts, translated = true) {
   const files = new Map(), logs = [];
   let meta = { id: 'p-write', draft: { modelId: 'fixture', karaokeStyle: style, karaokeSweep: sweep, karaokeBase: '#FFFFFF' } };
-  const { writeSubtitle } = serverFunctions(['writeSubtitle','assHeader','wordKLine','wordSliceLine','confidenceMeta',
+  const { writeSubtitle } = serverFunctions(['writeSubtitle','assertProjectWritable','assHeader','wordKLine','wordSliceLine','confidenceMeta',
     'withConfidence','fmtAssTime','fmtSrtTime','hexToAssBgr','assColorFromRgb'], {
+    collabOwns: () => false,
     path, fs: { writeFileSync: (p,t) => files.set(p,t), renameSync: (a,b) => { files.set(b,files.get(a)); files.delete(a); } },
     readMeta: () => meta, writeMeta: x => { meta = x; }, readSavedWordColor: () => null,
     modelById: () => ({ name: 'Fixture', engine: 'test' }), projDir: () => '/isolated',

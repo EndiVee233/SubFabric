@@ -659,6 +659,8 @@ export function initProjects(ctx) {
     const el = $('#save-state');
     if (!el) return;
     el.hidden = !state.project;
+    const collab = $('#btn-collab');
+    if (collab) collab.hidden = !state.project || !!window.androidRpc;
     el.className = 'save-state' + (cls ? ' ' + cls : '');
     el.textContent = text;
   }
@@ -6416,6 +6418,44 @@ async function renderAsrModels(providedStatus = null) {
     previousRoute = h;
   }
   window.addEventListener('hashchange', applyHash);
+  const collabButton = $('#btn-collab');
+  const collabDialog = $('#collab-launch');
+  collabButton?.addEventListener('click', async () => {
+    const project = state.project;
+    if (!project || !collabDialog || collabButton.disabled) return;
+    collabButton.disabled = true;
+    try {
+      const requestRoom = existingOnly => fetch('/api/collab/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: project.id, revision: saveRevision, existingOnly })
+      });
+      let response = await requestRoom(true);
+      if (response.status === 404) {
+        if (state.project !== project) return;
+        if (panel.editItem) panel.commitEdit({ switching: true });
+        await flushSave();
+        if (state.project !== project) return;
+        response = await requestRoom(false);
+      }
+      const room = await response.json();
+      if (state.project !== project) return;
+      if (!response.ok) throw new Error(room.error);
+      $('#collab-host-link').href = room.hostUrl;
+      $('#collab-invite-link').value = room.inviteUrl;
+      collabDialog.showModal();
+    } catch (error) {
+      toast(error.message || '无法启动本机协作房间');
+    } finally { collabButton.disabled = false; }
+  });
+  $('#collab-copy')?.addEventListener('click', async () => {
+    const field = $('#collab-invite-link');
+    try {
+      await navigator.clipboard.writeText(field.value);
+      toast('已复制协作邀请');
+    } catch { field.select(); }
+  });
+
   $('#btn-home').addEventListener('click', () => { location.hash = '#/home'; });
 
   /* ═══════════════════════════════════════════════════════════════

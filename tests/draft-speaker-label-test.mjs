@@ -26,8 +26,8 @@ try{
  ])doc.appendEvent(event);
  fs.writeFileSync(file,doc.serialize());
  const meta={subtitle:{file:'subtitle.ass'},draft};
- const funcs=serverFunctions(['subtitleSource','patchSubtitleTranslations','fmtAssTime'],{
-  fs,path,AssDoc,crypto,karaokeMod:karaoke,readMeta:()=>meta,safeProjectFile:()=>file,
+ const funcs=serverFunctions(['subtitleSource','patchSubtitleTranslations','fmtAssTime','assertProjectWritable'],{
+  collabOwns:()=>false,fs,path,AssDoc,crypto,karaokeMod:karaoke,readMeta:()=>meta,safeProjectFile:()=>file,
   assSentencesMod:require('../editor/ass-sentences.js'),llmText:require('../editor/llm-text.js'),
   escAss:require('../editor/k-line.js').escAss,
   subtitleRevision:bytes=>crypto.createHash('sha256').update(bytes).digest('hex'),

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>本机协作 · SubFabric</title>
+  <link rel="stylesheet" href="/room.css">
+  <script type="module" src="/room.js"></script>
+</head>
+<body>
+  <header>
+    <div><strong>SubFabric</strong><h1>本机协作</h1><p id="connection" role="status">正在连接房间…</p></div>
+    <button type="button" id="exit" hidden>结束协作</button>
+  </header>
+  <main>
+    <section class="cue-list" aria-labelledby="list-heading">
+      <h2 id="list-heading">字幕</h2>
+      <label class="search">查找字幕<input type="search" id="filter"></label>
+      <ol id="cues"></ol>
+    </section>
+    <section aria-labelledby="edit-heading">
+      <h2 id="edit-heading">条目编辑</h2>
+      <p id="selection">选择一条字幕开始编辑。</p>
+      <form id="editor" hidden>
+        <fieldset id="fields">
+          <label>编辑内容<select id="mode"><option value="text">文字</option><option value="time">整句时间</option><option value="word">逐词时间</option></select></label>
+          <div id="text-fields">
+            <label id="side-label">字幕行<select id="side"><option value="zh">整句行</option><option value="en">逐词行</option></select></label>
+            <label>字幕正文<textarea id="body" rows="6" maxlength="16384" spellcheck="false"></textarea></label>
+          </div>
+          <div id="time-fields" class="pair" hidden>
+            <label>起始秒数<input id="start" type="number" min="0" max="359999.99" step="any"></label>
+            <label>结束秒数<input id="end" type="number" min="0" max="359999.99" step="any"></label>
+          </div>
+          <div id="word-fields" hidden>
+            <label>词<select id="word"></select></label>
+            <div class="pair">
+              <label>边界<select id="edge"><option value="word-start">开始</option><option value="word-end">结束</option></select></label>
+              <label>时间（秒）<input id="word-time" type="number" min="0" max="359999.99" step="any"></label>
+            </div>
+          </div>
+        </fieldset>
+        <div class="actions">
+          <button class="primary" id="save">保存修改</button>
+          <button type="button" id="discard">放弃本次修改</button>
+        </div>
+      </form>
+      <p id="message" role="status"></p>
+      <pre id="comparison" hidden></pre>
+      <button type="button" id="download" hidden>下载待恢复修改</button>
+    </section>
+  </main>
+</body>
+</html>

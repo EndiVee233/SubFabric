@@ -160,6 +160,17 @@ function createCollabSession({ format, text, persist, now = Date.now }) {
     if (lease && lease.token === token && lease.memberId === memberId) leases.delete(entryId);
   }
 
+  function releaseMember(memberId) {
+    for (const [entryId, lease] of leases) {
+      if (lease.memberId === memberId) leases.delete(entryId);
+    }
+  }
+
+  function receipt(memberId, requestId) {
+    const record = receipts.get(JSON.stringify([memberId, requestId]));
+    return record ? structuredClone(record.result) : null;
+  }
+
   function submit(memberId, command) {
     if (command?.sessionId !== sessionId || typeof command.requestId !== 'string' || !/^[\w-]{1,80}$/.test(command.requestId)) {
       return { ok: false, reason: 'invalid_request' };
@@ -231,7 +242,7 @@ function createCollabSession({ format, text, persist, now = Date.now }) {
     return structuredClone(result);
   }
 
-  return { sessionId, snapshot, lock, release, submit };
+  return { sessionId, snapshot, lock, release, releaseMember, receipt, submit };
 }
 
 module.exports = { createCollabSession };

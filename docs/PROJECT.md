@@ -135,7 +135,8 @@
 | `editor/css/`、`editor/js/`、`editor/lang/`、`editor/themes/`、`editor/assets/`、`editor/vendor/` | 样式、前端 ESM 模块（含 `welcome-model.js` 首次启动可见性逻辑、`workload.js` 分段工作量纯计算及 `workload-panel.js` 稿件详情卡片和图表）、`zh-CN.json` 文案、主题包 JSON、Logo、libass 资源（vendor 不入库） |
 | `editor/js/project.js`、`editor/js/studio.js`、`editor/js/storage.js` | 桌面设置的业务表单与热词自动保存、设置分类和路由、存储扫描与清理界面 |
 | `editor/js/effect-schemes.js`、`editor/js/subtitle-scheme-preview.js`、`editor/js/postprocess.js` | 桌面字幕方案管理与选择、示例视频的 libass 预览、稿件快照归一化与 ASS 后处理 |
-| `editor/collab-session.js` | 联机编辑会话核心，维护条目映射、版本、租约与回执。写入由调用方提供，目前尚未接到服务路由。 |
+| `editor/collab-session.js` | 联机编辑会话核心，维护条目映射、版本、租约与回执。持久化由主机项目服务提供。 |
+| `editor/collab-loopback.js`、`editor/collab.html` | 独立回环房间的 HTTP/SSE、邀请鉴权与校对页。 |
 | `editor/*.js`（顶层） | 后端 CJS 辅助模块：`cast.js`、`llm-text.js`、`reseg.js`、`k-line.js`、`fonts.js`、`secret-store.js`、`asr-chunks.js`、`audio-slice.js`、`bcut-asr.js`、`capcut-asr.js`、`faster-whisper.js`（Whisper large-v2 参数/JSON 适配）、`glossary-repair.js`（术语表拼写修复，所有 ASR 共用）、`hardsub.js`（视频导出，见 §11）、`ffmpeg-tool.js`（ffmpeg 定位与自动下载）、
 `asr-params.js`（Faster-Whisper / CrispASR 的参数 schema；Parakeet CUDA / whisper.cpp / VibeVoice 的旧 schema 保留但模型已停用），以及 fork 并入的 `align.js`、`asr-service.js`、`ass-group.js`、`danmaku.js`、`hotwords.js`、`mt-local.js`、`project-pack.js`、`realign-batch.js`（全片重校对的批量分段）、`reflect.js`、`region.js`、`region-merge.js`、`repair-words.js`、`srt-ass.js`（SRT→逐词 ASS 的纯逻辑）、`speech-gap.js` |
 | `editor/scripts/` | `fetch-vendor.js`（拉 libass）、`7z.exe`（7-Zip standalone，解 Faster-Whisper-XXL 的 .7z 运行时）与 `7z-README.txt`；`sea-launcher.cjs`、`tray.ps1`、图标生成脚本保留为旧 SEA/托盘链路，不进入 Electron payload |
@@ -153,7 +154,9 @@
 
 ## 3. 后端与数据流
 
-- **联机编辑接线**：联机编辑会话核心通过同步持久化回调比较稿件原文，内容有变才原子替换。替换成功后才推进版本并记录回执；当前仅有隔离回归调用，现有项目保存 API 仍沿用原路径。
+- **本机协作**：主机通过 `POST /api/collab/open` 以现有字幕哈希打开一个回环房间。有未完成的旧保存或
+  后台任务时拒绝开房。通过检查后读取原稿件。房间期间，旧写入接口和项目包导出被拦截，字幕提交核对磁盘原文后原子替换。
+  独立监听只提供房间前端和有凭据的会话 API。SSE 通知已保存版本，浏览器按需读取最新快照。
 
 - **关注的主播**：`GET/PUT /api/youtube/channels` 读取或更新本机 `asr/settings.json` 的
   `youtubeChannels`。配置缺失时沿用原四个频道，明确存空数组时保留空名单。允许 YouTube 的 @账号、
@@ -772,6 +775,8 @@
 ## 4. 前端与主题
 
 - **联机编辑接线**：字幕列表提交、整句拖动和手动逐词拖动调用 karaoke.js / srt.js 的共享文档编辑函数。渲染、日志、自动保存与跨句重叠处理仍由 main.js 编排。
+  稿件工具栏的「本机协作」先确认当前编辑并等自动保存完成，再提供主机及成员链接。两个窗口在独立校对页
+  编辑文字、整句起止与逐词起止。关房后重新打开原稿件；同一标签页可恢复暂存输入或下载恢复记录。
 
 - **初稿极端断句**：新建初稿和批量建稿可勾选「极端断句」。批量队列可设置默认值并按稿件覆盖。
 
@@ -2585,9 +2590,10 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 
 ### 局域网联机编辑（设计草案）
 
-**实现状态：进行中。** 单机共享编辑函数及 SEA 加载检查已完成且已验证。阶段 1 已有会话核心，
-支持稳定条目 ID、写入租约、条目版本、重复回执和写盘后的版本更新。浏览器与主机的会话接线、撤销重做、
-旧稿件写入守卫、双窗口和 LAN 验收待完成。当前会话核心拒绝不能保真往返的 SRT 和无法稳定映射的 ASS。
+**实现状态：进行中。** 阶段 0 的共享编辑及 SEA 加载已完成且已验证。阶段 1 已接通实际回环房间，
+使用独立校对页、邀请链接、本机 HTTP 和 SSE。通过两个独立 Chromium 窗口验证了 SRT
+文字、整句时间和 ASS 词时的提交、同步、抢锁及关房时保留未提交输入。旧 PUT 流、后续整稿保存、
+翻译与删稿入口的隔离回归通过。正式双窗口阶段还需接入按成员撤销重做与完整编辑器体验，LAN、媒体与安装版未验收。
 
 **产品目标。** 一位主机打开现有稿件并邀请成员。主机与成员在同一份稿件上校对字幕，
 各自播放、定位和缩放时间轴。主机服务是唯一写入者，所有在线编辑都走同一提交队列。
@@ -2606,6 +2612,14 @@ Electron ASAR 中四个程序模块逐字节等于固定源码，归档仅含它
 房间以「复制邀请链接」为主，二维码可复用同一链接。加入者填写昵称，主机确认后才可取稿。
 区分邀请、确认中、连接中、同步中、可编辑、断线和会话已结束。播放状态、视图滚动、搜索及主题保留在各端。
 局域网发现、主持转让、离线多人合并、聊天与批注留作后续评估。正式首版以可信局域网为使用边界。
+
+#### 当前的本机协作入口
+
+打开字幕稿件，点击工具栏「本机协作」，从弹窗打开主机窗口并复制邀请。在同一台机器的另一浏览器窗口打开
+邀请可加入。最多 5 人含主机，字幕上限 4 MiB。参与者用独立校对页，修改成功后直接保存到该稿件。
+房间仅绑定 `127.0.0.1`，没有独立后台服务需要手动启动。阶段 1 仅允许高熵邀请直接加入，授权审批留待 LAN。
+终止前可下载仍在页面的输入。回归命令为 `node tests/run-all.mjs collab-loopback-test.mjs collab-session-test.mjs`，
+双窗使用 `node tools/collab-browser-test.mjs`（需 Chromium）。
 
 #### 现有资产与接线
 

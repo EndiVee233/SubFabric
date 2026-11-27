@@ -96,7 +96,7 @@ export default [
   {
     files: [
       'desktop/**/*.cjs',
-      'editor/server.js', 'editor/collab-session.js', 'editor/asr-chunks.js', 'editor/ass-sentences.js', 'editor/audio-slice.js',
+      'editor/server.js', 'editor/collab-session.js', 'editor/collab-loopback.js', 'editor/asr-chunks.js', 'editor/ass-sentences.js', 'editor/audio-slice.js',
       'editor/bcut-asr.js', 'editor/capcut-asr.js', 'editor/cast.js', 'editor/fonts.js',
       'editor/glued-words.js', 'editor/k-line.js', 'editor/llm-text.js', 'editor/project-pack.js',
       'editor/reseg.js', 'editor/secret-store.js', 'editor/speech-gap.js',

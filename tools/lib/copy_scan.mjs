@@ -107,15 +107,16 @@ export function scanCopy(root) {
 
   // studio.html
   {
-    const file = 'editor/studio.html';
-    let html = '';
-    try { html = readFileSync(path.join(root, file), 'utf8'); } catch { return out; }
-    // 注释是开发说明，不是界面文案；不剥掉会把整段注释写进词典。
-    html = html.replace(/<!--[\s\S]*?-->/g, '');
-    html.split('\n').forEach((raw, i) => {
-      for (const m of raw.matchAll(/>([^<>{}]*[\u4e00-\u9fa5][^<>{}]*)</g)) add(file, i + 1, 'text', m[1]);
-      for (const m of raw.matchAll(/\b(title|placeholder|aria-label|alt|value)="([^"]*[\u4e00-\u9fa5][^"]*)"/g)) add(file, i + 1, m[1], m[2]);
-    });
+    for (const file of ['editor/studio.html', 'editor/collab.html']) {
+      let html = '';
+      try { html = readFileSync(path.join(root, file), 'utf8'); } catch { continue; }
+      // 注释是开发说明，不是界面文案；不剥掉会把整段注释写进词典。
+      html = html.replace(/<!--[\s\S]*?-->/g, '');
+      html.split('\n').forEach((raw, i) => {
+        for (const m of raw.matchAll(/>([^<>{}]*[\u4e00-\u9fa5][^<>{}]*)</g)) add(file, i + 1, 'text', m[1]);
+        for (const m of raw.matchAll(/\b(title|placeholder|aria-label|alt|value)="([^"]*[\u4e00-\u9fa5][^"]*)"/g)) add(file, i + 1, m[1], m[2]);
+      });
+    }
   }
 
   const scanJs = (rel) => {
